@@ -26,8 +26,11 @@ const SHIKI_LIGHT = 'light-plus'
 let highlighterPromise: Promise<Highlighter> | null = null
 let cachedMarkdown: MarkdownIt | null = null
 
-/** 获取（惰性创建）shiki highlighter 单例 */
-function getHighlighter(): Promise<Highlighter> {
+/**
+ * 获取（惰性创建）shiki highlighter 单例。
+ * 导出供 CodeBlock / DiffView 等组件复用同一单例，避免重复 WASM/语法加载。
+ */
+export function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
       themes: [SHIKI_DARK, SHIKI_LIGHT],
@@ -84,4 +87,32 @@ async function getMarkdown(): Promise<MarkdownIt> {
 export async function renderMarkdown(content: string): Promise<string> {
   const md = await getMarkdown()
   return md.render(content)
+}
+
+/**
+ * 用 shiki 单例高亮一段代码，返回双主题 HTML（带 --shiki-dark/--shiki-light 变量的 span）。
+ *
+ * 供 CodeBlock.vue / DiffView.vue 等非 markdown 场景复用同一 highlighter 单例。
+ * 调用方需 await 首次加载（highlighter 单例建好后，codeToHtml 同步）。
+ *
+ * XSS 安全（与 markdown highlight 回调同论证）：shiki codeToHtml 转义所有非 token 文本，
+ * 只发 scoped <span>，输出可由调用方在受控 v-html 点注入。
+ *
+ * @param code 代码文本
+ * @param lang shiki 语言名（未加载的 lang fallback 'typescript'）
+ * @returns shiki 产出的 HTML 字串（含 <pre class="shiki">）；未知语言/失败返回 ''
+ */
+export async function highlightCode(code: string, lang: string): Promise<string> {
+  const hl = await getHighlighter()
+  const resolved = hl.getLoadedLanguages().includes(lang) ? lang : 'typescript'
+  try {
+    return hl.codeToHtml(code, {
+      lang: resolved,
+      themes: { dark: SHIKI_DARK, light: SHIKI_LIGHT },
+      defaultColor: false,
+    })
+  } catch {
+    // 未知语言/解析失败：返回空，调用方降级为纯文本渲染
+    return ''
+  }
 }

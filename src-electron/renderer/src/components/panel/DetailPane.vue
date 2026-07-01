@@ -74,7 +74,8 @@
       <p class="font-mono text-[10px] text-subtle opacity-60">无法显示差异</p>
     </div>
 
-    <!-- 内容区：diff patch 或文件内容（禁 v-html，<pre> + 文本插值，XSS 安全） -->
+    <!-- 内容区：按 viewMode + kind 分发渲染（禁 v-html，<pre> + 文本插值，XSS 安全；
+         markdown/code/diff 经各自渲染器的受控 v-html 点处理，论证 XSS 安全） -->
     <div v-else class="min-h-0 flex-1 overflow-auto" data-testid="detail-content">
       <!-- 截断提示（>1MB，AC-6.5/T6.5） -->
       <div
@@ -84,23 +85,79 @@
       >
         文件超过 1MB，已截断显示
       </div>
-      <pre class="whitespace-pre-wrap break-all p-2 font-mono text-[11px] leading-[1.5] text-fg/90">{{ state.content }}</pre>
+
+      <!-- ── diff 模式：所有文件类型统一走 DiffView（parseDiff 着色）── -->
+      <DiffView
+        v-if="state.viewMode === 'diff'"
+        :patch="state.content"
+        :path="state.path ?? undefined"
+        data-testid="detail-diff"
+      />
+
+      <!-- ── preview 模式：按 kind 分发 ── -->
+      <template v-else>
+        <!-- markdown：复用 MarkdownRenderer（shiki + markdown-it） -->
+        <MarkdownRenderer
+          v-if="state.kind === 'markdown'"
+          :content="state.content"
+          class="detail-md p-2"
+          data-testid="detail-markdown"
+        />
+        <!-- image：local-file:// 协议直载（main.ts:142 注册，绕过 file.read 的 utf8 损坏） -->
+        <div
+          v-else-if="state.kind === 'image'"
+          class="flex items-center justify-center p-2"
+          data-testid="detail-image"
+        >
+          <img
+            v-if="imageUrl"
+            :src="imageUrl"
+            :alt="fileName"
+            class="max-h-full max-w-full object-contain"
+            @error="onImageError"
+          />
+          <!-- 图片加载失败（403 白名单/文件损坏）降级占位 -->
+          <div v-else class="flex flex-col items-center gap-1 text-center">
+            <ImageIcon class="size-6 text-subtle opacity-50" />
+            <p class="text-[11px] text-muted">无法加载图片</p>
+            <p class="font-mono text-[10px] text-subtle opacity-60">{{ state.path }}</p>
+          </div>
+        </div>
+        <!-- code：CodeBlock shiki 高亮 -->
+        <div
+          v-else-if="state.kind === 'code'"
+          class="p-2"
+          data-testid="detail-code"
+        >
+          <CodeBlock :code="state.content" :lang="lang" />
+        </div>
+        <!-- text（兜底）：纯文本插值 -->
+        <pre
+          v-else
+          class="whitespace-pre-wrap break-all p-2 font-mono text-[11px] leading-[1.5] text-fg/90"
+          data-testid="detail-text"
+        >{{ state.content }}</pre>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { FileText, Loader2, AlertCircle, Image as ImageIcon } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useDetailPane, type DetailViewMode } from '@/composables/features/useDetailPane'
+import { extToLang } from '@/composables/logic/file-type'
+import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
+import CodeBlock from '@/components/panel/detail-renderers/CodeBlock.vue'
+import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
 
 const props = defineProps<{
   /** widget 订阅的 session 标识（与 SideDrawer sessionId 一致，useDetailPane watch 用） */
   sessionId: string | null
 }>()
 
-const { state, toggleView } = useDetailPane(
+const { state, toggleView, sessionCwd } = useDetailPane(
   computed(() => props.sessionId),
 )
 
@@ -110,6 +167,42 @@ const fileName = computed(() => {
   const parts = state.value.path.split('/')
   return parts[parts.length - 1] ?? state.value.path
 })
+
+/** shiki 语言名（code 类文件高亮用） */
+const lang = computed(() => extToLang(state.value.path ?? ''))
+
+/**
+ * 图片加载失败标志（local-file:// 403 白名单/文件损坏时 onerror 置 true，降级占位）。
+ * 切文件时重置。
+ */
+const imageLoadFailed = ref(false)
+
+/**
+ * 图片 URL：session cwd 绝对路径 + 文件相对路径拼成 local-file:// 协议 URL。
+ * - main.ts:142 的 protocol.handle('local-file') 拦截，白名单含 homedir()（cwd 通常在其下）
+ * - encodeURIComponent 处理中文/空格路径（main.ts:143 decodeURIComponent 还原）
+ * - 无 cwd 或加载失败 → null（模板走占位分支）
+ */
+const imageUrl = computed(() => {
+  if (imageLoadFailed.value) return null
+  const cwd = sessionCwd(props.sessionId)
+  if (!cwd || !state.value.path) return null
+  const absPath = `${cwd.replace(/\/+$/, '')}/${state.value.path}`
+  return `local-file:///${encodeURIComponent(absPath)}`
+})
+
+/** img onerror：白名单 403 / 文件损坏 → 标记失败降级占位 */
+function onImageError(): void {
+  imageLoadFailed.value = true
+}
+
+// 切文件时重置图片失败标志（新文件应重新尝试加载）
+watch(
+  () => state.value.path,
+  () => {
+    imageLoadFailed.value = false
+  },
+)
 
 function onToggleView(mode: DetailViewMode): void {
   void toggleView(mode)

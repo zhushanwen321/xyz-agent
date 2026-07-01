@@ -17,7 +17,9 @@
  */
 import { ref, watch, type Ref } from 'vue'
 import { useFileTreeStore } from '@/stores/fileTree'
+import { useSessionStore } from '@/stores/session'
 import { file as fileApi, git as gitApi } from '@/api'
+import { detectFileKind, type FileKind } from '@/composables/logic/file-type'
 
 /** 预览加载态 */
 export type PreviewStatus = 'idle' | 'loading' | 'content' | 'error'
@@ -41,6 +43,11 @@ export interface DetailPaneState {
   path: string | null
   /** 该文件是否有 git 改动（决定默认 viewMode：改动→diff，未改动→preview） */
   hasGitChange: boolean
+  /**
+   * 文件渲染类别（preview 模式下由 detectFileKind 判定，决定 DetailPane 选哪个渲染器）。
+   * diff 模式下渲染层用 DiffView（统一），kind 仅供兜底参考。
+   */
+  kind: FileKind
 }
 
 function initialState(): DetailPaneState {
@@ -53,12 +60,23 @@ function initialState(): DetailPaneState {
     viewMode: 'preview',
     path: null,
     hasGitChange: false,
+    kind: 'text',
   }
 }
 
 export function useDetailPane(sessionId: Ref<string | null>) {
   const store = useFileTreeStore()
+  const sessionStore = useSessionStore()
   const state = ref<DetailPaneState>(initialState())
+
+  /**
+   * 取当前 session 的 cwd 绝对路径（图片渲染拼 local-file:// URL 用）。
+   * sessionStore.list 按 id 查 SessionSummary.cwd；无 session 返回 null。
+   */
+  function sessionCwd(sid: string | null): string | null {
+    if (!sid) return null
+    return sessionStore.list.find((s) => s.id === sid)?.cwd ?? null
+  }
 
   /**
    * 加载文件预览（code-architecture §4 功能3 时序）。
@@ -74,6 +92,8 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     state.value.hasGitChange = !!gitStatus
     // 默认 viewMode：有 git 改动 → diff；无 → preview（首次加载时定，不覆盖用户手动切换）
     state.value.viewMode = gitStatus ? 'diff' : 'preview'
+    // 文件渲染类别（preview 模式渲染器选择依据；diff 模式统一走 DiffView）
+    state.value.kind = detectFileKind(path)
 
     try {
       if (state.value.viewMode === 'diff') {
@@ -147,5 +167,6 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     openPreview,
     toggleView,
     clearPreview,
+    sessionCwd,
   }
 }

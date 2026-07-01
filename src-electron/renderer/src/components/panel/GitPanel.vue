@@ -50,18 +50,20 @@
     <!-- 错误提示（操作失败 inline 回显） -->
     <p v-if="error" class="rounded-sm bg-danger/12 px-2 py-1 text-[11px] text-danger">{{ error }}</p>
 
-    <!-- 文件列表 -->
+    <!-- 文件列表（点击跳转 detail tab 查看 diff：selectFile 设 selectedPath + drawer 切 detail） -->
     <ul v-if="result.files.length" class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
       <li
         v-for="f in result.files"
         :key="f.path"
-        class="flex items-center gap-2"
+        class="flex cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 hover:bg-surface-2"
+        :title="`查看 ${f.path} 的差异`"
+        @click="onFileClick(f.path)"
       >
         <span
           class="w-4 shrink-0 text-center font-mono text-[10px] font-semibold"
           :class="statusBadgeClass(f.status)"
         >{{ statusBadge(f.status) }}</span>
-        <span class="min-w-0 flex-1 truncate text-subtle" :title="f.path">{{ f.path }}</span>
+        <span class="min-w-0 flex-1 truncate text-subtle">{{ f.path }}</span>
       </li>
     </ul>
 
@@ -106,6 +108,8 @@ import { GitBranch, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useGitStatusOrFail, type GitState } from '@/composables/features/useGitStatus'
+import { useFileTreeStore } from '@/stores/fileTree'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 /** 注入 Panel 提供的唯一 git 状态实例（缺失即装配错误） */
@@ -121,6 +125,24 @@ const {
   unstageAll,
   commit,
 } = useGitStatusOrFail()
+
+const fileTreeStore = useFileTreeStore()
+const drawer = useSideDrawer()
+
+/**
+ * 点击文件项 → 跳 detail tab 查看 diff（复刻 FileTreeRow.onSelectFile 模式）。
+ * - selectFile 设 store.selectedPath（useDetailPane watch 自动加载内容）
+ * - drawer.open('detail') 打开抽屉切 detail tab
+ *
+ * 数据一致性：result.files 与 fileTreeStore.gitOverlay 均来自 git.status RPC（同源），
+ * 故 DetailPane 的 getGitStatus(sid, path) 能命中该文件记录 → viewMode='diff'。
+ * 边界：session 文件树未加载时 gitOverlay 为空，此时 DetailPane 会走 preview 模式（无 diff），
+ * 属可接受的降级（正常流程文件树已加载）。
+ */
+function onFileClick(path: string): void {
+  fileTreeStore.selectFile(path)
+  drawer.open('detail')
+}
 
 const pillLabel = computed(
   () => ({ clean: 'Clean', staged: 'Staged', dirty: 'Dirty', conflict: 'Conflict' })[state.value],
