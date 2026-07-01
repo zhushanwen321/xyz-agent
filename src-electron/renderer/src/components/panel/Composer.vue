@@ -49,7 +49,7 @@
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
         <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
-        <ThinkingLevelPopover :level="currentThinkingLevel" @select="onThinkingSelect" />
+        <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" @select="onThinkingSelect" />
 
         <!-- 发送位三态：S6 streaming→stop / S5 sending→spinner / S1·S2 idle→send -->
         <Button
@@ -115,6 +115,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSettingsStore } from '@/stores/settings'
 import { useCommandStore } from '@/stores/command'
 import { model as modelApi, session as sessionApi } from '@/api'
+import { useThinkingLevelSync } from '@/composables/panel/useThinkingLevelSync'
 
 const props = withDefaults(
   defineProps<{
@@ -149,6 +150,13 @@ const draft = ref('')
  */
 const currentModelId = computed(
   () => sessionStore.active?.modelId || settingsStore.defaultModel || '',
+)
+/** 当前模型的思考档位映射 + 切换模型后重置不可用等级（逻辑见 useThinkingLevelSync） */
+const currentThinkingLevelMap = useThinkingLevelSync(
+  currentModelId,
+  currentThinkingLevel,
+  computed(() => props.sessionId),
+  (level) => { void onThinkingSelect(level) },
 )
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)

@@ -27,7 +27,7 @@
       >
         <span>思考等级</span>
       </div>
-      <!-- 6 级列表 -->
+      <!-- 6 级列表（available 由当前模型的 thinkingLevelMap 动态决定） -->
       <Button
         v-for="opt in THINKING_LEVELS"
         :key="opt.level"
@@ -35,7 +35,7 @@
         class="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
         :class="[
           level === opt.level && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent',
-          !opt.available && 'cursor-not-allowed opacity-50',
+          !availableLevels.has(opt.level) && 'cursor-not-allowed opacity-50',
         ]"
         @click="onSelect(opt)"
       >
@@ -58,7 +58,12 @@ import { computed, ref, watch } from 'vue'
 import { Check, ChevronDown, Brain } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { THINKING_LEVELS, type ThinkingLevelOption, type ThinkingLevel } from './thinking-levels'
+import {
+  THINKING_LEVELS,
+  resolveAvailableLevels,
+  type ThinkingLevelOption,
+  type ThinkingLevel,
+} from './thinking-levels'
 
 const emit = defineEmits<{
   select: [level: ThinkingLevel]
@@ -68,6 +73,9 @@ const emit = defineEmits<{
 // 值合法时映射到 ThinkingLevel，否则 fallback max。无则默认 max。
 const props = defineProps<{
   level?: string
+  /** 当前模型的思考档位映射（per-model thinkingLevelMap）。value 非 null = 可用。
+   *  undefined = 全可用（all-levels 预设）。切换模型后 Composer 传入新模型的 map。 */
+  levelMap?: Record<string, string | null>
 }>()
 
 const open = ref(false)
@@ -83,12 +91,15 @@ watch(() => props.level, (v) => {
   if (v && isValidLevel(v)) level.value = v
 })
 
+/** 当前模型的可用档位集合（按 levelMap 的 value 非 null 判定） */
+const availableLevels = computed(() => new Set(resolveAvailableLevels(props.levelMap)))
+
 const currentLabel = computed(
   () => THINKING_LEVELS.find((l) => l.level === level.value)?.label ?? '思考',
 )
 
 function onSelect(opt: ThinkingLevelOption): void {
-  if (!opt.available) return
+  if (!availableLevels.value.has(opt.level)) return
   level.value = opt.level
   emit('select', opt.level)
   open.value = false
