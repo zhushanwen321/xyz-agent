@@ -80,6 +80,8 @@ export interface ISessionService {
   rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
+  /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/attachUsageListener） */
+  getInputTokens(sessionId: string): number
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
   getRpcClient(sessionId: string): IRpcClient | undefined
 

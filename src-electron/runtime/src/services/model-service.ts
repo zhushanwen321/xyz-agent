@@ -12,6 +12,9 @@ import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
 import type { IModelSource } from './ports/model.js'
 
+/** 百分比上限（与 index.ts onContextUpdate 一致） */
+const MAX_PERCENT = 100
+
 export class ModelService implements IModelService {
   private sessionService!: ISessionService
   private configService!: IConfigService
@@ -44,8 +47,13 @@ export class ModelService implements IModelService {
   /**
    * Unified switchModel entry point.
    *
-   * Orchestrates: pi RPC → persist default → broadcast to all panels.
-   * Persist failure is logged but does not block the response.
+   * Orchestrates: pi RPC → persist default → broadcast session 级状态变更（含按新模型
+   * contextWindow 重算的用量）→ broadcast 全局默认模型。
+   *
+   * 为什么除 config.defaults 外还要广播 session.state_changed：config.defaults 是全局默认
+   * （不带 sessionId），前端无法据它定位「哪个 session 换了模型」。session.state_changed 带
+   * sessionId，前端据它同步 Composer 工具条（模型显示 / 用量 / 思考强度）。缺这条广播导致
+   * 切换模型后 UI 不跟随（用量停在旧值、模型显示靠 defaultModel fallback 而非 per-session 真值）。
    */
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<void> {
     this.ensureInitialized()
@@ -60,11 +68,43 @@ export class ModelService implements IModelService {
       console.error('[ModelService] failed to persist default model:', persistErr)
     }
 
-    // 3. Broadcast to all frontend panels
+    // 3. Broadcast session 级状态变更（modelId + 按新 contextWindow 重算用量 + thinkingLevel）
+    this.broadcastSessionState(sessionId, provider, modelId)
+
+    // 4. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
     this.broker.broadcast({
       type: 'config.defaults',
       id: this.nextPushId(),
       payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' as const },
+    })
+  }
+
+  /**
+   * 广播 session.state_changed：切换模型后立即把新 modelId + 按新 contextWindow 重算的用量
+   * 推给前端，无需等下一次 agent_end。算法与 index.ts onContextUpdate 一致。
+   */
+  private broadcastSessionState(sessionId: string, provider: string, modelId: string): void {
+    const summary = this.sessionService.getSummary(sessionId)
+    if (!summary) return // session 不在活跃 Map（磁盘 session），无法重算
+    const providers = this.configService.listProviders()
+    const models = this.aggregateModels(providers)
+    const model = models.find(m => m.providerId === provider && m.id === modelId)
+    const contextWindow = model?.contextWindow ?? 0
+    const inputTokens = this.sessionService.getInputTokens(sessionId)
+    const usagePercent = contextWindow > 0
+      ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
+      : 0
+    this.broker.broadcast({
+      type: 'session.state_changed',
+      id: this.nextPushId(),
+      payload: {
+        sessionId,
+        modelId: summary.modelId,
+        thinkingLevel: summary.thinkingLevel,
+        usagePercent,
+        inputTokens,
+        contextLimit: contextWindow,
+      },
     })
   }
 

@@ -173,6 +173,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return session ? this.toSummary(session) : undefined
   }
 
+  getInputTokens(sessionId: string): number {
+    return this.sessions.get(sessionId)?.inputTokens ?? 0
+  }
+
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
       this.treeService.unregisterSession(session.id)
@@ -259,7 +263,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
-      tokenCount: 0, isGenerating: false,
+      tokenCount: 0, inputTokens: 0, isGenerating: false,
       adapter, interceptor, unsubUsageListener: unsubUsage, sessionFilePath,
     }
     this.sessions.set(id, session)
@@ -280,7 +284,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         const payload = e.payload as Record<string, unknown> | undefined
         const usage = payload?.usage as
           { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
-        if (usage) s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
+        if (usage) {
+          s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
+          // 缓存 inputTokens 供 switchModel 重算 usagePercent（无需等下一次 agent_end）
+          if (typeof usage.inputTokens === 'number') s.inputTokens = usage.inputTokens
+        }
       }
     })
   }

@@ -30,6 +30,8 @@ export interface IManagedSessionView {
   createdAt: number
   lastActiveAt: number
   tokenCount: number
+  /** 最近一次 agent_end / context.update 的 inputTokens 缓存，供 switchModel 重算用量 */
+  inputTokens: number
   isGenerating: boolean
   thinkingLevel?: string
   sessionFilePath?: string

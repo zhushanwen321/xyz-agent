@@ -138,9 +138,12 @@ interface MockClient {
   kill: MockInstance<() => Promise<void>>
   start: MockInstance<() => Promise<void>>
   exited: boolean
+  /** onEvent 注册的 listener 列表（测试触发 agent_end 用） */
+  eventListeners: PiEventListener[]
 }
 
 function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
+  const eventListeners: PiEventListener[] = []
   return {
     prompt: vi.fn<(content: string) => Promise<unknown>>().mockResolvedValue(undefined),
     abort: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
@@ -153,11 +156,16 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     getHistory: vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: { messages: [] } }),
     sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
     getCommands: vi.fn<() => Promise<unknown>>().mockResolvedValue([]),
-    onEvent: vi.fn<(listener: PiEventListener) => () => void>().mockReturnValue(vi.fn()),
+    // 保存 listener 到 eventListeners，测试可取出触发 agent_end 事件
+    onEvent: vi.fn<(listener: PiEventListener) => () => void>((listener) => {
+      eventListeners.push(listener)
+      return () => { /* noop unsub */ }
+    }),
     onExit: vi.fn<(callback: (code: number | null) => void) => void>(),
     kill: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     start: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     exited: false,
+    eventListeners,
     ...overrides,
   }
 }
@@ -681,6 +689,27 @@ describe('SessionService · Facade', () => {
       await setup.service.setThinkingLevel(id, 'high')
       expect(client.setThinkingLevel).toHaveBeenCalledWith('high')
       expect(setup.service.getSummary(id)?.thinkingLevel).toBe('high')
+    })
+  })
+
+  describe('inputTokens 缓存（attachUsageListener）', () => {
+    it('agent_end 的 usage.inputTokens 被缓存到 session，getInputTokens 可读', async () => {
+      const { id, client } = await setup.seedSession()
+      // initializeManagedSession 注册了 onEvent listener，取出触发 agent_end
+      expect(client.eventListeners.length).toBeGreaterThan(0)
+      client.eventListeners.forEach((fn) => fn({ type: 'agent_end', payload: { usage: { inputTokens: 15000, totalTokens: 20000 } } }))
+      expect(setup.service.getInputTokens(id)).toBe(15000)
+      expect(setup.service.getSummary(id)?.tokenCount).toBe(20000)
+    })
+
+    it('agent_end payload 无 usage 字段时不抛错，inputTokens 保持原值', async () => {
+      const { id, client } = await setup.seedSession()
+      client.eventListeners.forEach((fn) => fn({ type: 'agent_end', payload: {} }))
+      expect(setup.service.getInputTokens(id)).toBe(0) // 未收到 usage，保持初始 0
+    })
+
+    it('getInputTokens 对未知 session 返回 0', () => {
+      expect(setup.service.getInputTokens('ghost')).toBe(0)
     })
   })
 

@@ -222,6 +222,7 @@ export type ServerMessageType =
   | 'config.skillDirs' | 'config.agentDirs'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
+  | 'session.state_changed'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
   | 'extension.discovered' | 'extension.installCancelled'
@@ -239,6 +240,7 @@ export type ServerMessageType =
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
   | 'message.file_changes'
+  | 'message.changeSetInvalidated'
   | 'file.read:result'
   | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result'
   | 'git.diff:result'
@@ -288,8 +290,20 @@ export interface ServerMessageMapBase {
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
-  // FileChanges 通道（ADR-0024 D7）：runtime event-adapter 从 write/edit 工具提取 + git 对账。
-  // accumulating（isFullSet=false，每条 tool_end 增量）+ ready（isFullSet=true，agent_end git 对账全集）。
+  // session.state_changed：session 级状态变更（model.switch 成功后推送，含新 modelId + 按新 contextWindow
+  // 重算的用量 + 当前 thinkingLevel）。前端据 modelId/thinkingLevel 同步 Composer 工具条，据 usage 三字段
+  // 刷新 ContextCapacityPopover。thinkingLevel optional（未设置时省略）。
+  'session.state_changed': {
+    sessionId: string
+    modelId: string
+    thinkingLevel?: string
+    usagePercent: number
+    inputTokens: number
+    contextLimit: number
+  }
+  // FileChanges 通道（ADR-0024 D5 重构：git 作为唯一真值源）。baseline diff 机制——
+  // message_start 采集 git status 快照，write/edit/bash 结束后 diff vs baseline 推 accumulating，
+  // agent_end 推 ready。isFullSet 恒 true（每次 diff 都是全量结果，前端全集替换不增量合并）。
   // partially-reviewed/resolved/superseded 审查态由前端驱动，不经 runtime 推送。
   'message.file_changes': {
     sessionId: string
@@ -297,6 +311,13 @@ export interface ServerMessageMapBase {
     fileChanges: FileChange[]
     changeSetStatus: ChangeSetStatus
     isFullSet: boolean
+  }
+  // changeSet 失效广播（ADR-0024 D5 重构）：git.commit 成功后工作区 diff 已重置，
+  // 旧的 changeSet 卡片成为过期数据。runtime 广播此帧通知前端把该 session 的 changeSet 推 superseded。
+  'message.changeSetInvalidated': {
+    sessionId: string
+    /** 失效原因：'committed'（git commit 后工作区重置） */
+    reason: 'committed'
   }
   // git.status:result：git.status 请求的同步 reply（Wave 1a git domain 经 pending.resolve 消费）。
   // git.stage/unstage/commit 的 ack 复用既有 'message.status'（payload {sessionId, status}），非新增。
