@@ -121,7 +121,10 @@ export async function createWindow(
     if (options?.sessionId) params.set('sessionId', options.sessionId)
     await waitForVite(VITE_DEV_URL)
     win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
-    win.webContents.openDevTools()
+    // DevTools 默认关闭：需要时显式 XYZ_DEVTOOLS=1 npm run dev 打开
+    if (process.env.XYZ_DEVTOOLS === '1') {
+      win.webContents.openDevTools()
+    }
   } else {
     const query: Record<string, string> = { windowId }
     if (options?.sessionId) query.sessionId = options.sessionId
