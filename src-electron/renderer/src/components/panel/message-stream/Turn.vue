@@ -204,6 +204,7 @@ import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls } from '@/composables/logic/messageTurns'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
+import { useCopy } from '@/composables/effects/useCopy'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useCommandStore } from '@/stores/command'
@@ -218,8 +219,6 @@ import MarkdownRenderer from './MarkdownRenderer.vue'
 const MS_PER_SEC = 1000
 const SEC_PER_MIN = 60
 const SEC_PAD_WIDTH = 2
-/** 复制反馈持续时长 */
-const COPIED_FEEDBACK_MS = 1200
 
 const props = defineProps<{
   turn: MessageTurn
@@ -337,19 +336,11 @@ const changeSetStatus = computed(() => {
   return chat.getChangeSetStatus(props.sessionId, msg.id)
 })
 
-/** 复制反馈：记录最近复制的 key，1.2s 后清除 */
-const copied = ref<string | null>(null)
+/** 复制反馈：复用 useCopy composable（单一真相源） */
+const { copied, copy } = useCopy()
 const userCopyKey = computed(() => `user-${props.turn.user?.id ?? props.turn.index}`)
 const aiCopyKey = computed(() => `ai-${props.turn.index}`)
 const aiMdKey = computed(() => `md-${props.turn.index}`)
-
-function copy(text: string, key: string): void {
-  navigator.clipboard.writeText(text).catch(() => {})
-  copied.value = key
-  setTimeout(() => {
-    if (copied.value === key) copied.value = null
-  }, COPIED_FEEDBACK_MS)
-}
 
 /* ── 编辑（= fork）：编辑 user 消息后 fork 新会话 ── */
 const editingUserId = ref<string | null>(null)
