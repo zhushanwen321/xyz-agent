@@ -17,6 +17,7 @@
 import type { Ref } from 'vue'
 import type {
   ChangeSetStatus,
+  ContentBlock,
   FileChange,
   Message,
   ServerMessage,
@@ -104,6 +105,7 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
           content: '',
           status: 'streaming',
           timestamp: Date.now(),
+          contentBlocks: [],
         },
       ])
       break
@@ -113,7 +115,12 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
       if (idx < 0) return
       const delta = readString(msg.payload, 'delta') ?? ''
       const next = [...prev]
-      next[idx] = { ...next[idx], content: next[idx].content + delta }
+      // 首个 text_delta push text 块到 contentBlocks（幂等：已含 text 块则不重复 push）。
+      const prevBlocks = next[idx].contentBlocks ?? []
+      const contentBlocks = prevBlocks.some((b) => b.type === 'text')
+        ? prevBlocks
+        : [...prevBlocks, { type: 'text', refId: 'text' } satisfies ContentBlock]
+      next[idx] = { ...next[idx], content: next[idx].content + delta, contentBlocks }
       messages.value.set(sessionId, next)
       break
     }
@@ -123,7 +130,9 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
       const blockId = readString(msg.payload, 'thinkingId') ?? `th-${crypto.randomUUID()}`
       const next = [...prev]
       const thinking = [...(next[idx].thinking ?? []), { id: blockId, content: '', collapsed: true, startTime: Date.now() }]
-      next[idx] = { ...next[idx], thinking }
+      // push 到 contentBlocks 尾部（refId 复用 blockId，防两处分别 randomUUID 断链）。
+      const contentBlocks = [...(next[idx].contentBlocks ?? []), { type: 'thinking', refId: blockId } satisfies ContentBlock]
+      next[idx] = { ...next[idx], thinking, contentBlocks }
       messages.value.set(sessionId, next)
       break
     }
@@ -168,7 +177,9 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
       }
       const next = [...prev]
       const toolCalls = [...(next[idx].toolCalls ?? []), call]
-      next[idx] = { ...next[idx], toolCalls }
+      // push 到 contentBlocks 尾部（callId 复用，与 toolCalls[].id 一致）。
+      const contentBlocks = [...(next[idx].contentBlocks ?? []), { type: 'toolCall', refId: callId } satisfies ContentBlock]
+      next[idx] = { ...next[idx], toolCalls, contentBlocks }
       messages.value.set(sessionId, next)
       break
     }
