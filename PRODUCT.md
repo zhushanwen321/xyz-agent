@@ -96,6 +96,7 @@ xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类
 - slash 命令：自然语言匹配（预留字段）、新增 ws 协议类型（复用已有）、Skill 管理（独立 SkillPane）
 - Tree：Summarize(branch summary)、Label 编辑、直接写入 JSONL
 - Agent 配置：OverrideParams、ToolPermissions（默认全部允许）
+- 搜索：文件内容全文搜索（需 ripgrep 二进制，打包分发成本高）、符号搜索真实数据（需 LSP/tree-sitter，zero base）、危险命令分级与二次确认（当前无真正危险命令）、会话跳转进概览视图（只切换 active session）。`[from: 2026-06-30-search-modal §requirements §8]`
 - 前端：原生 HTML 表单元素、Emoji、硬编码颜色、魔数间距
 
 **DEFERRED 到后续 Phase**：

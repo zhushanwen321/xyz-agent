@@ -51,6 +51,9 @@
 - **命令超时善后**：默认 30s，超时 reject + 删 pending Map + 迟到响应静默丢弃
 - **文件操作超时**：FileService listDir/stat/readFile 共用 `READ_TIMEOUT_MS=10_000`（10s），超时抛 `FileError('timeout')`；withTimeout 用单 Promise 构造器 + 手动 settle 避免 unhandledRejection。验证：`runtime/services/file-service.ts`。`[from: 2026-06-28-sidebar-project-file-tree §K-2]`
 - **展开请求幂等去重**：同 path expand 在途时不重发（inFlight Map），loaded 复用缓存。验证：`renderer/composables/features/useFileTree.ts`。`[from: 2026-06-28-sidebar-project-file-tree §AC-3.8]`
+- **error 冒泡链不经吞错层（S-6）**：编排层（composable）消费 WS 源须直调 domain 方法（如 `composer.getFileCandidates`），**不经**会吞错的中间层（如 `useFileSearch.load` 在 :39-43 静默 catch 降级空数组）；file 跳转须直调 `fileApi.read` 校验，不经 `useDetailPane.openPreview` 吞错层（后者 try/catch 吞错设 status='error' 不抛）。吞错层阻断失败冒泡 → catch 永不触发 → 错误处理假性 PASS。验证：`useSearch.ts` grep `composerApi.getFileCandidates` 无 `useFileSearch.load`；`useSearchJump.ts` grep `fileApi.read` 无 `openPreview`。`[from: 2026-06-30-search-modal §nfr MR-4.5/MR-6.2]`
+- **WS 源超时 race（S-7）**：UI 消费 WS pending 的查询须包 `Promise.race` 超时（搜索 10s 量级，对齐 runtime），防 WS 断连时 `ws-client.ts onclose` 不 reject in-flight pending（pending.ts 无 clear/flush）→ pending 永不 settle → allSettled 永不 resolve → UI 永久 loading 挂死。超时→reject→allSettled settle→降级空态+toast。验证：`useSearch.ts` `withWsTimeout` + `WS_SOURCE_TIMEOUT_MS`。`[from: 2026-06-30-search-modal §nfr MR-17.1]`
+- **查询乱序守卫 loadSeq（S-8）**：快速连续查询（用户快速输入）时，编排层（useSearch.query）须维护自增 loadSeq 序列号，await 后比对 `seq !== loadSeq` 丢弃旧响应，防旧响应晚到覆盖新结果（数据错乱）。验证：`useSearch.ts` grep `loadSeq` + `seq !== loadSeq return []`。`[from: 2026-06-30-search-modal §nfr MR-4.1]`
 
 ## 6. 兼容性
 

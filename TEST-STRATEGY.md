@@ -9,6 +9,7 @@
 > - [03-chat-flow.md](docs/testing/03-chat-flow.md) — 对话流（流式消息 + 工具调用 + 变更集）
 > - [04-file-tree.md](docs/testing/04-file-tree.md) — 文件树（懒加载 + 过滤 + git 角标，11 E2E 用例已落地）
 > - [05-side-drawer.md](docs/testing/05-side-drawer.md) — SideDrawer（文件预览 / diff / git tab）
+> - [06-search-modal.md](docs/testing/06-search-modal.md) — 搜索浮层（⌘K 四类搜索 + recents + 跳转，7 E2E 用例已落地）
 
 ## 1. 测试框架 [HISTORICAL]
 
@@ -86,6 +87,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 | **错误状态重置** | 错误路径必须重置 isGenerating + streamingMessage（否则 UI 卡死） | CLAUDE.md 规则#3 | useChat 错误路径测试 |
 | **emit 单 payload** | emit 不传多参数 | CLAUDE.md 规则#1 | - |
 | **runtime broadcast 时序** | session 级 broadcast 早于 renderer 订阅会丢消息；切换/创建 session 后需立即消费的状态必须主动拉取（`session.getCommands` RPC） | `2026-06-28-lite-slash-command-fix` | U1-U3 + U4/U5（见上） |
+| **搜索查询乱序守卫** | useSearch.query 内 loadSeq 自增序列号，await 后 `seq !== loadSeq` 丢弃旧响应；快速连续查询时旧响应晚到不得覆盖新结果（数据错乱=事故） | NFR S-8 `[from: 2026-06-30-search-modal §execution T1.12]` | `src/__tests__/composables/useSearch.test.ts` T1.12（BC-9 乱序 loadSeq 守卫）+ T3.10（file 分级匹配复用）|
 
 ## 5. mock 策略
 

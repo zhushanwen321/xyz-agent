@@ -72,6 +72,7 @@
 | `2026-06-01-global-nav-stack` / `-navigation` | 全局导航栈 |
 | `2026-06-22-sidebar-polish` | 侧栏打磨 |
 | `2026-06-28-sidebar-project-file-tree` | 侧栏项目文件树（archived 2026-06-30 → ADR-0025/0026/0027, NFR.md, TEST-STRATEGY.md §2）|
+| `2026-06-30-search-modal` | ⌘K 全局搜索浮层（archived 2026-07-01 → ADR-0028/0029/0030, NFR.md S-6/S-7/S-8, TEST-STRATEGY.md §4, PRODUCT.md 非目标）|
 
 ### 渲染 / Markdown / 状态展示
 

@@ -53,6 +53,8 @@ pi 子进程事件 → infra/pi/event-adapter(翻译) → ServerMessage(WS)
   → Vue 响应式组件
 ```
 
+**跨 store 编排在 composable 层（实例）**：⌘K 全局搜索（useSearch）聚合 4 源——commandStore（内存）+ fileSearchStore（缓存，未命中调 composer domain WS + 超时 race）+ session domain（WS）+ useRecents（localStorage）。编排归 composable 非 domain（domain 严格只调 transport+pending，编排跨 store 违反铁律），见 [ADR-0028](docs/architecture/adr/0028-search-orchestration-in-composable.md)。`[from: 2026-06-30-search-modal §system-arch]`
+
 ## 关键状态机
 
 | 状态机 | 状态流 | 来源 |
@@ -80,5 +82,6 @@ pi 子进程事件 → infra/pi/event-adapter(翻译) → ServerMessage(WS)
 - [`docs/architecture/context.md`](docs/architecture/context.md) — 领域术语表完整版
 - [`docs/architecture/design.md`](docs/architecture/design.md) — ⚠️ 旧四层设计，部分已 superseded
 - **文件树子系统架构决策**：[ADR-0025](docs/architecture/adr/0025-file-view-full-project-tree.md)（File View 全项目树语义）/ [ADR-0026](docs/architecture/adr/0026-file-tree-lazy-loading.md)（懒加载）/ [ADR-0027](docs/architecture/adr/0027-fileservice-three-layer.md)（FileService 三层）。`[from: 2026-06-28-sidebar-project-file-tree §子系统]`
+- **搜索子系统架构决策**：[ADR-0028](docs/architecture/adr/0028-search-orchestration-in-composable.md)（编排归 composable）/ [ADR-0029](docs/architecture/adr/0029-domain-types-ssot-in-lib.md)（领域类型 SSOT 归 lib）/ [ADR-0030](docs/architecture/adr/0030-reuse-file-match-algorithm.md)（文件匹配算法复用）。`[from: 2026-06-30-search-modal §decisions D-026/D-028/D-029]`
 - [`docs/standards.md`](docs/standards.md) — 编码标准（streaming 生命周期/mock 策略/路径规范等）
 - [`CONTEXT.md`](CONTEXT.md) — design workflow 精简统一语言（指向 context.md 完整版）
