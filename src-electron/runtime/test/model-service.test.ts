@@ -67,7 +67,7 @@ describe('ModelService · switchModel 广播 session.state_changed', () => {
   it('切换成功后广播 session.state_changed，含按新 contextWindow 重算的用量（U6）', async () => {
     const providers = [makeProvider('anthropic', 'claude-4', 200000)]
     const sessionSummary: SessionSummary = {
-      id: 's1', label: 'test', cwd: '/tmp', status: 'waiting',
+      id: 's1', label: 'test', cwd: '/tmp', status: 'idle',
       lastActiveAt: Date.now(), modelId: 'old/p', thinkingLevel: 'high', tokenCount: 20000,
     } as SessionSummary
     const sessionService = makeMockSessionService({
@@ -117,7 +117,7 @@ describe('ModelService · switchModel 广播 session.state_changed', () => {
   it('新模型 contextWindow 为 undefined 时，contextLimit=0, usagePercent=0，仍广播（U8）', async () => {
     const providers = [makeProvider('anthropic', 'claude-4')] // 无 contextWindow
     const sessionSummary: SessionSummary = {
-      id: 's1', label: 'test', cwd: '/tmp', status: 'waiting',
+      id: 's1', label: 'test', cwd: '/tmp', status: 'idle',
       lastActiveAt: Date.now(), modelId: 'anthropic/claude-4', tokenCount: 0,
     } as SessionSummary
     const sessionService = makeMockSessionService({
@@ -144,7 +144,7 @@ describe('ModelService · switchModel 广播 session.state_changed', () => {
   it('session.inputTokens 为 0（新 session 未对话）时，usagePercent=0，仍广播（U9）', async () => {
     const providers = [makeProvider('openai', 'gpt-4', 128000)]
     const sessionSummary: SessionSummary = {
-      id: 's1', label: 'new', cwd: '/tmp', status: 'waiting',
+      id: 's1', label: 'new', cwd: '/tmp', status: 'idle',
       lastActiveAt: Date.now(), modelId: 'openai/gpt-4', tokenCount: 0,
     } as SessionSummary
     const sessionService = makeMockSessionService({
@@ -171,7 +171,7 @@ describe('ModelService · switchModel 广播 session.state_changed', () => {
   it('广播顺序：session.state_changed 先于 config.defaults（U10 顺序验证）', async () => {
     const providers = [makeProvider('anthropic', 'claude-4', 200000)]
     const sessionSummary: SessionSummary = {
-      id: 's1', label: 'test', cwd: '/tmp', status: 'waiting',
+      id: 's1', label: 'test', cwd: '/tmp', status: 'idle',
       lastActiveAt: Date.now(), modelId: 'anthropic/claude-4', tokenCount: 0,
     } as SessionSummary
     const sessionService = makeMockSessionService({
