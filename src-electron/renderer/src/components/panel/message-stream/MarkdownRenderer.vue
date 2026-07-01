@@ -14,7 +14,7 @@
     shiki codeToHtml 转义所有非 token 文本（只发 scoped <span>），markdown-it 不透传用户原始 HTML，
     代码/mermaid 源码经 base64 编码进 data 属性。故在此受控渲染点局部放开 taste-lint vue/no-v-html。仅此组件。
   -->
-  <div class="md-render" @click="onClick">
+  <div class="md-render select-text" @click="onClick">
     <!-- eslint-disable-next-line vue/no-v-html -- shiki+markdown-it(html:false) 输出 XSS 安全：shiki 转义所有非 token 文本（只发 scoped span），markdown-it 不透传用户原始 HTML，code/mermaid 经 base64 编码。仅此受控渲染点放开。 -->
     <div ref="contentEl" v-html="html" />
   </div>
@@ -29,15 +29,24 @@
  */
 import { ref, watch, onUpdated, onBeforeUnmount, nextTick, h, render, type VNode } from 'vue'
 import { renderMarkdown } from '@/composables/logic/markdown'
+import { useFileTree } from '@/composables/features/useFileTree'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { openExternal } from '@/lib/ipc'
 import MermaidRenderer from './MermaidRenderer.vue'
 
 const props = defineProps<{
   content: string
+  /** 所属 session（文件路径打开 DetailPane 走 cwd 守门用）；命令文档等无 session 场景传 undefined */
+  sessionId?: string | null
 }>()
 
 const html = ref('')
 const contentEl = ref<HTMLElement | null>(null)
 let renderSeq = 0
+
+/** 文件路径打开 SideDrawer detail tab（复用 FileTreeRow/GitPanel/useSearchJump 的双步模式） */
+const { selectFile } = useFileTree()
+const drawer = useSideDrawer()
 
 /** 复制反馈持续时长（ms）—— 与 useCopy composable 保持一致（事件委托场景无法复用 ref，用同等常量） */
 const COPY_FEEDBACK_MS = 1200
@@ -63,20 +72,51 @@ function clearCopiedState(): void {
 
 function onClick(e: MouseEvent): void {
   const target = e.target as HTMLElement
+
+  // ① 代码块复制按钮
   const btn = target.closest('.md-codeblock__copy') as HTMLElement | null
-  if (!btn) return
-  const dataCode = btn.dataset.code
-  if (!dataCode) return
-  const code = decodeBase64(dataCode)
-  navigator.clipboard.writeText(code).catch(() => {
-    /* 剪贴板失败静默：非关键路径 */
-  })
-  // 反馈态：切换为"已复制"（CSS 控制 icon），1.2s 后还原
-  clearCopiedState()
-  btn.classList.add('is-copied')
-  copiedBtn = btn
-  if (copyResetTimer) clearTimeout(copyResetTimer)
-  copyResetTimer = setTimeout(clearCopiedState, COPY_FEEDBACK_MS)
+  if (btn) {
+    const dataCode = btn.dataset.code
+    if (dataCode) {
+      const code = decodeBase64(dataCode)
+      navigator.clipboard.writeText(code).catch(() => {
+        /* 剪贴板失败静默：非关键路径 */
+      })
+      clearCopiedState()
+      btn.classList.add('is-copied')
+      copiedBtn = btn
+      if (copyResetTimer) clearTimeout(copyResetTimer)
+      copyResetTimer = setTimeout(clearCopiedState, COPY_FEEDBACK_MS)
+    }
+    return
+  }
+
+  // ② 文件路径链接：点击在 SideDrawer detail tab 打开（复用 selectFile + drawer.open 双步模式）
+  const filepathLink = target.closest('.md-filepath') as HTMLElement | null
+  if (filepathLink) {
+    e.preventDefault()
+    const pathB64 = filepathLink.dataset.path
+    if (pathB64) {
+      const path = decodeBase64(pathB64)
+      selectFile(path)
+      drawer.open('detail')
+    }
+    return
+  }
+
+  // ③ 外链 <a href="http(s)://">：Electron file:// 下 target=_blank 不会开系统浏览器，
+  //    走 lib/ipc.openExternal → electronAPI.openExternal IPC（main 侧 isValidExternalUrl 校验只放行 http(s)://）
+  const anchor = target.closest('a[href]') as HTMLAnchorElement | null
+  if (anchor) {
+    const href = anchor.getAttribute('href') ?? ''
+    if (/^https?:\/\//i.test(href)) {
+      e.preventDefault()
+      openExternal(href).catch(() => {
+        /* 打开失败静默：非关键路径 */
+      })
+    }
+    // 非 http(s) 链接（如锚点）走默认行为
+  }
 }
 
 /* ── mermaid 占位 → 动态挂载 MermaidRenderer ──
@@ -144,7 +184,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* ── markdown 排版（design-tokens 语义色，不硬编码）── */
+/* ── markdown 排版（design-tokens 语义色，不硬编码）──
+   user-select:text 走 Tailwind select-text 类（template 的 .md-render div），
+   覆盖 body 全局 user-select:none（style.css:165）—— 那条全局 none 是为让
+   chrome/按钮区不可选，markdown 正文/代码是可读内容应允许框选。 */
 .md-render :deep(h1),
 .md-render :deep(h2),
 .md-render :deep(h3),
@@ -184,6 +227,19 @@ onBeforeUnmount(() => {
   text-decoration: none;
 }
 .md-render :deep(a:hover) { text-decoration: underline; }
+
+/* 文件路径链接：等宽 + 下划线点示，区别于普通外链（提示是文件而非网页） */
+.md-render :deep(.md-filepath) {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.md-render :deep(.md-filepath:hover) {
+  text-decoration: underline;
+}
 
 /* 行内代码：弱底色 + 等宽，区分正文 */
 .md-render :deep(code:not(pre code)) {

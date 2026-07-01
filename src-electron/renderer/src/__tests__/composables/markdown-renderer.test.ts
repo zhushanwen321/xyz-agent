@@ -44,12 +44,31 @@ vi.mock('@/components/panel/message-stream/MermaidRenderer.vue', () => ({
   },
 }))
 
+// useFileTree / useSideDrawer stub（MarkdownRenderer 用它们打开文件路径）
+const mockSelectFile = vi.fn()
+const mockDrawerOpen = vi.fn()
+vi.mock('@/composables/features/useFileTree', () => ({
+  useFileTree: () => ({ selectFile: mockSelectFile }),
+}))
+vi.mock('@/composables/features/useSideDrawer', () => ({
+  useSideDrawer: () => ({ open: mockDrawerOpen }),
+}))
+// lib/ipc.openExternal stub（外链打开走此门面，不再直调 window.electronAPI）
+const mockOpenExternal = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/lib/ipc', () => ({
+  openExternal: (url: string) => mockOpenExternal(url),
+  getRuntimePort: vi.fn(),
+}))
+
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
 
 describe('MarkdownRenderer（W4）', () => {
   beforeEach(() => {
     mockRenderMarkdown.mockReset()
     mockMermaidMount.mockReset()
+    mockSelectFile.mockReset()
+    mockDrawerOpen.mockReset()
+    mockOpenExternal.mockClear()
     vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
   })
 
@@ -110,5 +129,31 @@ describe('MarkdownRenderer（W4）', () => {
     await nextTick()
     expect(wrapper.find('.md-codeblock').exists()).toBe(false)
     expect(mockMermaidMount).not.toHaveBeenCalled()
+  })
+
+  it('U10: 点外链 <a href=http> → openExternal 唤起浏览器', async () => {
+    mockRenderMarkdown.mockResolvedValue('<a href="https://example.com">link</a>')
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'x' } })
+    await nextTick()
+    await nextTick()
+    const link = wrapper.find('a[href="https://example.com"]')
+    expect(link.exists()).toBe(true)
+    await link.trigger('click')
+    expect(mockOpenExternal).toHaveBeenCalledWith('https://example.com')
+  })
+
+  it('U11: 点文件路径 .md-filepath → selectFile + drawer.open(detail)', async () => {
+    const path = 'src/foo.ts'
+    mockRenderMarkdown.mockResolvedValue(
+      `<a class="md-filepath" data-path="${encodeB64(path)}">src/foo.ts</a>`,
+    )
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'x', sessionId: 's1' } })
+    await nextTick()
+    await nextTick()
+    const link = wrapper.find('.md-filepath')
+    expect(link.exists()).toBe(true)
+    await link.trigger('click')
+    expect(mockSelectFile).toHaveBeenCalledWith(path)
+    expect(mockDrawerOpen).toHaveBeenCalledWith('detail')
   })
 })

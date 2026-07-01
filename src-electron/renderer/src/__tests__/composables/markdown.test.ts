@@ -102,4 +102,37 @@ describe('markdown fence 规则覆盖（W3）', () => {
     // 段落文本不被包进 codeblock
     expect(html.indexOf('正文段落')).toBeLessThan(html.indexOf('md-codeblock'))
   })
+
+  it('U9: 含/的文件路径识别为可点击 .md-filepath', async () => {
+    const html = await freshRender('修改了 src/foo.ts 文件\n')
+    expect(html).toContain('class="md-filepath"')
+    expect(html).toContain('data-path="')
+    // 路径文本在链接内
+    expect(html).toContain('>src/foo.ts<')
+  })
+
+  it('U10: 单独文件名(无/)不识别，避免误伤版本号/小数', async () => {
+    const html = await freshRender('版本 v1.0.0 和 foo.ts\n')
+    expect(html).not.toContain('md-filepath')
+  })
+
+  it('U11: 文件路径 base64 编码（防 XSS 注入）', async () => {
+    const html = await freshRender('见 a/b.ts\n')
+    const m = html.match(/data-path="([^"]+)"/)
+    expect(m).not.toBeNull()
+    // base64 解码后才是路径
+    const decoded = new TextDecoder().decode(
+      Uint8Array.from(atob(m![1]), (c) => c.charCodeAt(0)),
+    )
+    expect(decoded).toBe('a/b.ts')
+    // data-path 不含原始路径字符的注入风险（base64 只有 A-Za-z0-9+/=）
+    expect(m![1]).toMatch(/^[A-Za-z0-9+/=]+$/)
+  })
+
+  it('U12: 行内 code 内的路径不识别为链接', async () => {
+    const html = await freshRender('运行 `src/foo.ts` 命令\n')
+    // 反引号内是 code token，不应被 filepath rule 消费
+    expect(html).not.toContain('md-filepath')
+    expect(html).toContain('<code>')
+  })
 })

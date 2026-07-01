@@ -20,7 +20,7 @@
       <template v-if="skill">
         <!-- skill 完整文档（SKILL.md 经 markdown 渲染） -->
         <div v-if="skill.description" class="mb-3 text-[13px] text-muted">{{ skill.description }}</div>
-        <MarkdownRenderer v-if="skill.content" :content="skill.content" />
+        <MarkdownRenderer v-if="skill.content" :content="skill.content" :session-id="sessionId ?? undefined" />
         <div v-else class="py-6 text-center text-[12px] text-subtle">该 skill 无文档正文</div>
         <!-- skill 元信息：sourcePath / tools / triggers -->
         <div v-if="skill.sourcePath" class="mt-4 border-t border-border pt-3">

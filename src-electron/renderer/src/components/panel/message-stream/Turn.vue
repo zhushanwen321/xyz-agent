@@ -50,7 +50,7 @@
             <span>{{ slashChip.name }}</span>
           </span>
         </Button>
-        <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" />
+        <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" :session-id="sessionId" />
       </div>
       <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示 -->
       <div
@@ -117,6 +117,7 @@
             v-if="isMidAssistant(aIdx) && assistant.content.trim()"
             type="text"
             :content="assistant.content"
+            :session-id="sessionId"
           />
           <Block
             v-for="th in assistant.thinking ?? []"
@@ -140,7 +141,7 @@
 
       <!-- 收尾 summary：仅最后一条 assistant.content，含 hover 复制/复制MD/fork（markdown 渲染） -->
       <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
-        <MarkdownRenderer :content="summaryText" />
+        <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <span v-if="isStreamingText" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
         <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
         <div

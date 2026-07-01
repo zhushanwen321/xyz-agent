@@ -22,6 +22,27 @@ import MarkdownIt from 'markdown-it'
 import { createHighlighter } from 'shiki'
 import type { Highlighter } from 'shiki'
 
+/**
+ * markdown-it StateInline 的最小结构类型（@types/markdown-it 极简，未导出 StateInline）。
+ * 仅声明 filepath rule 用到的字段。
+ */
+interface InlineState {
+  src: string
+  pos: number
+  posMax: number
+  pending: string
+  push(type: string, tag: string, nesting: number): InlineStateToken
+}
+interface InlineStateToken {
+  content: string
+  attrSet(key: string, value: string): void
+}
+
+/** markdown-it 实例上 inline ruler 的最小结构类型（@types 未暴露 md.inline.ruler） */
+interface InlineRulerHost {
+  inline: { ruler: { before(beforeName: string, ruleName: string, fn: (s: InlineState, silent: boolean) => boolean): void } }
+}
+
 /** 代码块高亮覆盖的语言（按 wave review 要点：ts/vue/json/bash/md + 常见派生） */
 const SHIKI_LANGS = ['typescript', 'javascript', 'vue', 'json', 'bash', 'shell', 'markdown', 'css', 'html', 'yaml', 'python', 'go', 'rust']
 
@@ -133,8 +154,75 @@ async function getMarkdown(): Promise<MarkdownIt> {
     token.attrSet('rel', 'noopener noreferrer')
     return defaultLinkOpen(tokens, idx, options, env, self)
   }
+
+  // ── 文件路径识别（inline rule）：正文里含 / 的路径片段 → 可点击 <a data-path> ──
+  // 仅识别含路径分隔符的（如 src/foo.ts、a/b/c.vue），单独 foo.ts 不识别（避免误伤版本号/小数）。
+  // 在 text 规则前注册：markdown-it 逐字符推进 pos，每到一个 pos 先试本规则——
+  // 仅当 pos 正好是路径起始（且前一字符是边界符）时消费，否则 return false 让后续规则（text 等）推进。
+  // 不识别行内 code 内的路径：backticks 规则在 text 之前，反引号内容会被 backticks 消费成 code token，
+  // 不会进入 text 流；本规则虽排在 text 前，但 backticks 已先把 code 内容拿走。
+  // @types/markdown-it 未暴露 md.inline.ruler，运行时确存在（parser_inline.mjs）。用结构类型断言。
+  ;(md as unknown as InlineRulerHost).inline.ruler.before('text', 'filepath', filepathRule)
+  // 自定义 token type 的 renderer：输出 <a class="md-filepath" data-path="...">
+  // data-path base64 编码（与 code/mermaid 同 XSS 防线，防引号注入）
+  md.renderer.rules.filepath_open = (tokens, idx) => {
+    const path = tokens[idx].attrGet('data-path') ?? ''
+    return `<a class="md-filepath" data-path="${path}">`
+  }
+  md.renderer.rules.filepath_close = () => '</a>'
+
   cachedMarkdown = md
   return md
+}
+
+/**
+ * 文件路径 inline rule（markdown-it StateInline 签名）。
+ *
+ * 匹配「至少含一个 / 且以源码扩展名结尾」的路径片段。
+ * 仅在 pos 正好是路径首字符、且前一字符是边界符（或行首）时消费——
+ * 这样普通文本 `see src/foo.ts` 中，text 规则会吃到 `see `（空格是路径前边界），
+ * 到 `src` 时本规则命中。中间含 markdown 语法的文本不被跳过。
+ *
+ * 故意保守：单独 foo.ts（无 /）不识别，避免污染版本号/小数/普通词。
+ */
+// 字符集内 `-` 转义为 `\-`（防 `_-`/`/-` 倒序范围触发 "Range out of order"）
+// g 标志 + 从 pos 之后找第一个含/路径。捕获组 1 = 路径（去掉前导边界符）。
+// 前导边界符故意不含反引号 ` —— 行内 code `src/foo.ts` 内的路径不应识别（backticks
+// 在 text 之后，filepath 在 text 之前会先吃掉路径；靠反引号不作为边界符来排除 code 内路径）。
+const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+(?:\/[a-zA-Z0-9._\-]+)+\.[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
+
+function filepathRule(state: InlineState, silent: boolean): boolean {
+  const pos = state.pos
+  // 从当前 pos 起搜索第一个含/路径。text rule 会一次吃掉整段非 terminator 文本
+  // （空格不是 terminator），故本规则必须在 text 之前主动扫描并拦截路径。
+  const rest = state.src.slice(pos)
+  FILEPATH_RE.lastIndex = 0
+  const match = FILEPATH_RE.exec(rest)
+  if (!match) return false
+
+  // match.index = 边界符位置（或 0）；路径起点 = match.index + 前导边界符长度
+  const leadLen = match[0].length - match[1].length
+  const pathStartInRest = match.index + leadLen
+  const path = match[1]
+  const pathEndInRest = pathStartInRest + path.length
+
+  if (silent) return true
+
+  // 前置文本（边界符 + 之前）累积进 pending —— state.push 会把 pending 自动 flush 成 text token
+  if (pathStartInRest > 0) {
+    state.pending += rest.slice(0, pathStartInRest)
+  }
+
+  // push filepath_open + text + filepath_close（push 前会自动 flush pending 为 text token）
+  const openToken = state.push('filepath_open', 'a', 1)
+  openToken.attrSet('data-path', encodeBase64(path))
+  const textToken = state.push('text', '', 0)
+  textToken.content = path
+  state.push('filepath_close', 'a', -1)
+
+  // pos 推进到路径结尾（前置文本已通过 pending 记录，不丢）
+  state.pos = pos + pathEndInRest
+  return true
 }
 
 /** markdown-it 的 escapeHtml（复用其与 fence 一致的转义语义） */

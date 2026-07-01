@@ -100,6 +100,7 @@
         <MarkdownRenderer
           v-if="state.kind === 'markdown'"
           :content="state.content"
+          :session-id="sessionId ?? undefined"
           class="detail-md p-2"
           data-testid="detail-markdown"
         />

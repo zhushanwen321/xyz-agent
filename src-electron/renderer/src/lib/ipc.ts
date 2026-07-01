@@ -74,3 +74,10 @@ export function windowToggleMaximize(): Promise<void> {
 export function windowClose(): Promise<void> {
   return api?.windowClose() ?? Promise.resolve()
 }
+
+/** 用系统默认浏览器打开外链（main 侧 isValidExternalUrl 校验只放行 http(s)://）。
+ *  Electron file:// 下 <a target=_blank> 不会开系统浏览器，须走此 IPC。
+ *  无 IPC（web/mock）静默 no-op。 */
+export function openExternal(url: string): Promise<void> {
+  return api?.openExternal(url) ?? Promise.resolve()
+}
