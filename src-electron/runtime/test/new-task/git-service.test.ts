@@ -140,6 +140,22 @@ describe('GitService.getStatus per-file 行数（W1 文件树 +N −M 角标）'
     expect(untracked?.deletions).toBeUndefined()
     expect(modified).toMatchObject({ additions: 3, deletions: 1 })
   })
+
+  it('status 命令带 --untracked-files=all 展开未跟踪目录到单文件（修复目录徽章失配）', async () => {
+    // -uall 输出：untracked 目录展开到文件级（无尾斜杠），与 FileNode.path 一致
+    executor.exec
+      .mockResolvedValueOnce(res({ stdout: '## main\u0000??\tredis-learn/a.py\u0000??\tredis-learn/b.md\u0000' }))
+      .mockResolvedValueOnce(res({ stdout: '' })) // numstat 空（无 tracked 改动）
+      .mockResolvedValueOnce(res({ stdout: 'main\n' }))
+    const r = await svc().getStatus('s1')
+    // 展开后的每个 untracked 文件单独报告（无尾斜杠目录折叠）
+    expect(r.files.map((f) => f.path)).toEqual(['redis-learn/a.py', 'redis-learn/b.md'])
+    expect(r.files.every((f) => f.status === 'untracked')).toBe(true)
+    // 验证 status 命令确实带了 --untracked-files=all
+    expect(executor.exec).toHaveBeenNthCalledWith(1, '/repo', 'status', [
+      '--porcelain=v1', '-z', '-b', '--untracked-files=all',
+    ])
+  })
 })
 
 describe('GitService.createBranch (#7 创建并检出分支)', () => {

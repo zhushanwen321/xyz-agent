@@ -98,8 +98,12 @@ export class GitService {
     }
 
     try {
-      // status --porcelain=v1 -z -b：-z NUL 分隔（路径安全），-b 带 branch 头
-      const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z', '-b'])
+      // status --porcelain=v1 -z -b --untracked-files=all：
+      // -z NUL 分隔（路径安全），-b 带 branch 头，-uall 强制展开 untracked 目录到单文件。
+      //   默认 git 把整个 untracked 目录折叠成一行 `?? dir/`（带尾斜杠），文件树 node.path 无尾斜杠
+      //   → overlay key 失配，目录徽章误显、子文件无角标。展开后每个 untracked 文件单独报告，
+      //   与 FileNode.path 一致。忽略规则（.gitignore）仍生效，只展开未忽略的 untracked。
+      const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z', '-b', '--untracked-files=all'])
       if (statusRes.exitCode !== 0) {
         // 非 git 仓库（git status 在非仓库返回 128 + "not a git repository"）
         return notRepoResult(sessionId)
