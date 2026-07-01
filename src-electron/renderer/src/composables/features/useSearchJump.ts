@@ -111,7 +111,10 @@ export function useSearchJump(options: UseSearchJumpOptions = {}) {
       // read 成功后：selectFile(path) 设置 selectedPath → useDetailPane watch 链自动渲染（绕过吞错层直调）
       fileTreeStore.selectFile(item.sub)
       writeRecent(item)
-      return { ok: true }
+      // drawerTab:'detail' 提示调用方（SearchModal）打开 SideDrawer detail tab——
+      // DetailPane 只在 activeTab==='detail' 时挂载，selectFile 单独设置 selectedPath 无法触发渲染。
+      // 对比 FileTreeRow.onSelectFile：selectFile(path) + drawer.open('detail') 双步，此处同构。
+      return { ok: true, drawerTab: 'detail' }
     } catch (e) {
       // AC-6.5：file.read reject → {ok:false}（直调使 reject 真冒泡，不经吞错层）
       return { ok: false, error: (e as Error)?.message ?? '文件打开失败' }

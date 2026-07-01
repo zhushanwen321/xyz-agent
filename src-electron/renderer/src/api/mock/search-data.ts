@@ -14,10 +14,8 @@ export type { SearchItem, SearchType }
 export const SEARCH_MOCK: Record<SearchType, SearchItem[]> = {
   command: [
     { type: 'command', title: '新建任务', sub: '创建一个新会话 · ⌘N' },
-    { type: 'command', title: '切换分支', sub: 'git checkout' },
     { type: 'command', title: '收起侧栏', sub: 'toggle sidebar · ⌘B' },
-    { type: 'command', title: '打开概览', sub: 'Mission Control' },
-    { type: 'command', title: '提交并推送', sub: 'git commit && push' },
+    { type: 'command', title: '概览', sub: 'Mission Control' },
   ],
   file: [
     { type: 'file', title: 'auth/session.ts', sub: 'refactor-arch/src/auth' },
@@ -43,7 +41,7 @@ export const SEARCH_MOCK: Record<SearchType, SearchItem[]> = {
 export const SEARCH_RECENTS: SearchItem[] = [
   { type: 'file', title: 'auth/session.ts', sub: 'refactor-arch/src/auth' },
   { type: 'session', title: 'Auth 重构 · token 轮转', sub: 'refactor-arch · main' },
-  { type: 'command', title: '切换分支', sub: 'git checkout' },
+  { type: 'command', title: '收起侧栏', sub: 'toggle sidebar · ⌘B' },
 ]
 
 export const SEARCH_SUGGESTED_COUNT = 3

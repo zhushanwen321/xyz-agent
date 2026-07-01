@@ -133,6 +133,7 @@ import { type SearchItem } from '@/api'
 import { useSearch } from '@/composables/features/useSearch'
 import { useSearchJump } from '@/composables/features/useSearchJump'
 import { useRecents } from '@/composables/features/useRecents'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { segments } from '@/lib/match-engine'
 import { useToast } from '@/composables/useToast'
 
@@ -172,6 +173,8 @@ const { query: runQuery } = useSearch(activeSessionIdRef)
 const { confirm } = useSearchJump()
 void useRecents() // 接线触发 recents 读（useSearch 内部已用 useRecents，此行保留显式接线意图）
 const { error: toastError } = useToast()
+// file 跳转返 drawerTab:'detail'，confirmSel 据此打开 SideDrawer detail tab（与 FileTreeRow.onSelectFile 同构）
+const { open: drawerOpen } = useSideDrawer()
 
 const query = ref('')
 const selIdx = ref(0)
@@ -262,6 +265,9 @@ async function confirmSel(): Promise<void> {
   const { type, title, sub } = cur
   const result = await confirm({ type, title, sub }, { activeSessionId: props.activeSessionId ?? null })
   if (result.ok) {
+    // file 跳转返 drawerTab:'detail'：打开 SideDrawer detail tab 让 DetailPane 挂载渲染文件内容。
+    // （DetailPane 只在 activeTab==='detail' 时挂载；useSearchJump 编排层不直接调 drawer，由本组件接线）
+    if (result.drawerTab) drawerOpen(result.drawerTab)
     emit('update:open', false)
   } else {
     toastError(result.error)

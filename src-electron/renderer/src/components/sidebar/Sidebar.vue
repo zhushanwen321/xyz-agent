@@ -230,11 +230,12 @@ onMounted(() => {
  * - ⌘N 新建 session（shell spec §五）
  * - ⌘B 折叠侧栏（shell spec §⌘B；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED）
  *
- * [DEVIATED] AC-10.1 原文「改读 useCommandRegistry」未完全达成：commandStore.appCommands 在运行时
- * 为空（registerApp 未被调用），且若把 ⌘N/⌘B/⌘K 注册为 appCommands 会污染搜索源（useSearch 聚合
- * appCommands 作命令建议）。完全通用化需独立 keymap 注册表 + shortcut DSL（'mod+n'）+ 匹配引擎，
- * 属 D-019 标注「搭便车待⑤骨架验证确认」的额外基础设施，超 P2 scope，登记 P3 后续迭代。
- * 本地 keymap 已消除硬编码 if/else（AC 可 grep 的字面要求），⌘N/⌘B 仍可触发，⌘K 改 toggle。
+ * [DEVIATED] AC-10.1 原文「改读 useCommandRegistry」未完全达成。现状（2026-07 修正后）：
+ * commandStore.appCommands 已由 useSidebar.initApp → registerAppCommands 注册（新建任务/收起侧栏/概览），
+ * 搜索浮层（⌘K）命令源聚合正常工作，点击命令能执行对应 action。
+ * 但本地 keymap 仍保留，未完全切换为「读 useCommandRegistry 派发」：⌘K 不注册为 appCommand
+ * （搜索结果里出现「搜索」命令是逻辑自指），完全通用化需独立 keymap 注册表 + shortcut DSL
+ * （'mod+n'）+ 匹配引擎，属 D-019 标注的额外基础设施，超 P2 scope，登记 P3 后续迭代。
  */
 interface KeymapEntry {
   key: string

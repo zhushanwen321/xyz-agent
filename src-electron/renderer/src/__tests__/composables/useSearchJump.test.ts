@@ -151,14 +151,15 @@ describe('T3.4（AC-6.5/6.9）file.read 失败', () => {
 })
 
 describe('T3.6 file.read 成功 DetailPane 打开', () => {
-  it('mock fileApi.read resolve → fileTreeStore.selectFile 调用 + {ok:true}', async () => {
+  it('mock fileApi.read resolve → fileTreeStore.selectFile 调用 + {ok:true, drawerTab:detail}', async () => {
     fileReadMock.mockResolvedValueOnce({ content: 'file body', truncated: false })
     const { confirm } = useSearchJump()
     const item: SearchItem = { type: 'file', title: 'auth/token.ts', sub: 'src/auth/token.ts' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
 
-    expect(result).toEqual({ ok: true })
+    // drawerTab:'detail' 提示调用方（SearchModal）打开 SideDrawer detail tab（DetailPane 挂载渲染）
+    expect(result).toEqual({ ok: true, drawerTab: 'detail' })
     // AC-6.9：直调 fileApi.read 成功后调 selectFile（触发 useDetailPane watch 链渲染）
     expect(fileReadMock).toHaveBeenCalledWith('src/auth/token.ts', 's1')
     // selectFile 走真实 fileTreeStore（pinia），断言 selectedPath 已设置

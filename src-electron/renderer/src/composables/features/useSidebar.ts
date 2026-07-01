@@ -26,6 +26,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
+import { registerAppCommands } from '@/composables/features/useAppCommands'
 import type { DerivedStatus } from '@/types'
 
 /**
@@ -376,6 +377,14 @@ export function useSidebar() {
     appBootstrapped = true
     const flow = useNewTaskFlow()
     try {
+      // 0) 注册应用内置命令（新建/收起侧栏/概览）到 commandStore.appCommands。
+      //    AC-2.4：启动一次性注册。供搜索浮层（⌘K）命令源聚合 + useSearchJump 跳转执行。
+      //    放在 await 之前同步执行，确保 SearchModal 首次打开时 appCommands 已就绪。
+      //    actions 注入打破与 useAppCommands 的循环 import（后者不反向 import 本模块）。
+      registerAppCommands({
+        newSession: () => { void newSession() },
+        goOverview,
+      })
       // 1) 同步进 landing（空 chip 态）：AppShell 渲染 Landing 时 state 已是 landing → chip 合法可点。
       //    必须先于 await loadSessions()，消除「渲染 Landing 时 state=idle」的启动窗口。
       await newSession()

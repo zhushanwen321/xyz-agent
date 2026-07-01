@@ -9,7 +9,9 @@
  *  - FileNode：@xyz-agent/shared/file-tree
  *  - SessionSummary / SessionGroup：@xyz-agent/shared/session
  *  - SessionCommand：stores/command.ts
+ *  - SideDrawerTab：composables/features/useSideDrawer（纯类型，JumpResult.drawerTab 用）
  */
+import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 
 /** 搜索项类型（四类：命令/文件/符号/会话） */
 export type SearchType = 'command' | 'file' | 'symbol' | 'session'
@@ -57,8 +59,17 @@ export interface JumpCtx {
   activeSessionId: string | null // file 跳转需 cwd（AC-6.9 直调 fileApi.read）
 }
 
-/** useSearchJump.confirm 的返回（AC-6.7 异常恢复：失败时浮层保持打开） */
-export type JumpResult = { ok: true } | { ok: false; error: string }
+/**
+ * useSearchJump.confirm 的返回（AC-6.7 异常恢复：失败时浮层保持打开）。
+ *
+ * drawerTab：成功跳转后需打开的 SideDrawer tab（可选）。当前仅 file 跳转返 'detail'（文件
+ * 预览需 DetailPane 挂载，由调用方 SearchModal 接线 useSideDrawer.open）。命令/会话跳转无
+ * 此需求（命令触发自身 action，会话切换载入 panel），故缺省。编排层 useSearchJump 不依赖
+ * useSideDrawer（架构约束：composable 层只返 JumpResult，不直接调 UI 状态）。
+ */
+export type JumpResult =
+  | { ok: true; drawerTab?: SideDrawerTab }
+  | { ok: false; error: string }
 
 /** localStorage key（MR-3.2 骨架约束，对齐 xyz-agent: 冒号约定） */
 export const RECENTS_STORAGE_KEY = 'xyz-agent:search-recents'
