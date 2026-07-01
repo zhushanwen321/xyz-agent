@@ -99,6 +99,10 @@ export function convertPiHistory(raw: unknown[]): Message[] {
     for (const part of parts) {
       if (part.type === 'text') {
         textContent += part.text ?? ''
+        // text 块按真实到达顺序 push（首次遇到时 push 一次，多次 text part 只累加不重复 push）。
+        if (!contentBlocks.some((b) => b.type === 'text')) {
+          contentBlocks.push({ type: 'text', refId: 'text' })
+        }
       } else if (part.type === 'thinking') {
         const thkId = crypto.randomUUID()
         thinking.push({
@@ -118,11 +122,6 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         })
         contentBlocks.push({ type: 'toolCall', refId: tcId })
       }
-    }
-
-    // Add text block once after loop (if any text was accumulated)
-    if (textContent) {
-      contentBlocks.unshift({ type: 'text', refId: 'text' })
     }
 
     const msg: Message = {

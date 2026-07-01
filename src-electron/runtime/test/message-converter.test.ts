@@ -137,3 +137,57 @@ describe('convertPiHistory - skill block parsing', () => {
     expect(messages[0].content).toBe('')
   })
 })
+
+describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', () => {
+  // U9：parts=[thinking, text, toolCall] → contentBlocks 按真实到达顺序
+  it('U9: parts=[thinking, text, toolCall] → contentBlocks 顺序=[thinking, text, toolCall]', () => {
+    const raw: PiHistoryMessage[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '先思考' },
+          { type: 'text', text: '结论' },
+          { type: 'toolCall', id: 'tc1', name: 'read', arguments: { path: '/x' } },
+        ],
+        timestamp: 1000,
+      },
+    ]
+    const messages = convertPiHistory(raw)
+    const cb = messages[0].contentBlocks
+    expect(cb).toBeDefined()
+    expect(cb?.map((b) => b.type)).toEqual(['thinking', 'text', 'toolCall'])
+    // text 块 refId 统一为 'text'，不再被强制置顶
+    const textBlock = cb?.find((b) => b.type === 'text')
+    expect(textBlock?.refId).toBe('text')
+  })
+
+  // U10：纯 text part → contentBlocks 仅一个 text 块
+  it('U10: parts=[{type:text}] → contentBlocks=[{type:text,refId:text}]（仅一个）', () => {
+    const raw: PiHistoryMessage[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '纯文字回答' }],
+        timestamp: 1000,
+      },
+    ]
+    const messages = convertPiHistory(raw)
+    expect(messages[0].contentBlocks).toEqual([{ type: 'text', refId: 'text' }])
+  })
+
+  // U10b：text part 在前（非末位）→ text 能落在 contentBlocks 非末位
+  it('U10b: parts=[text, thinking] → contentBlocks=[text, thinking]（text 不被强制置顶）', () => {
+    const raw: PiHistoryMessage[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '先说话' },
+          { type: 'thinking', thinking: '后思考' },
+        ],
+        timestamp: 1000,
+      },
+    ]
+    const messages = convertPiHistory(raw)
+    const cb = messages[0].contentBlocks
+    expect(cb?.map((b) => b.type)).toEqual(['text', 'thinking'])
+  })
+})
