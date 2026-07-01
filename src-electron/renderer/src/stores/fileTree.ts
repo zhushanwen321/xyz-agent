@@ -80,6 +80,23 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     return gitOverlay.value.get(sessionId)?.get(path)
   }
 
+  /**
+   * [W2] 统计目录子树内改动文件数（用于目录行的改动数徽章）。
+   * 遍历 session 的 gitOverlay，统计 path 以 `dirPath + '/'` 开头的条目数。
+   * 精确前缀匹配（'src/'），兄弟目录（如 'src-other/'）不误算。O(n)，n=改动文件数（通常 <100）。
+   * 空 overlay / session 不存在 → 0。
+   */
+  function getDirChangeCount(sessionId: string, dirPath: string): number {
+    const map = gitOverlay.value.get(sessionId)
+    if (!map || map.size === 0) return 0
+    const prefix = `${dirPath}/`
+    let count = 0
+    for (const path of map.keys()) {
+      if (path.startsWith(prefix)) count++
+    }
+    return count
+  }
+
   /** 当前选中文件节点（computed，跨 tree 查找——selectedPath 全局，tree per-session） */
   const currentFile: ComputedRef<FileNode | null> = computed(() => {
     if (!selectedPath.value) return null
@@ -238,6 +255,7 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     getExpanded,
     getNodeState,
     getGitStatus,
+    getDirChangeCount,
     // actions
     setTree,
     setNodeState,

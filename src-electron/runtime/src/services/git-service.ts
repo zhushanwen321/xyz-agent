@@ -23,7 +23,7 @@ import type { GitCommand, GitExecutorResult, IGitExecutor } from './ports/git-ex
 import { GitExecutorError } from './ports/git-executor.js'
 import { isUnderOrEqual } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
-import { parseGitStatus, deriveCounts, parseNumstat } from '../infra/git-status-parser.js'
+import { parseGitStatus, deriveCounts, parseNumstat, parseNumstatByFile } from '../infra/git-status-parser.js'
 
 /** git 操作失败分类错误。handler 按 code 转 error envelope（D10/P0-B）。 */
 export class GitError extends Error {
@@ -113,6 +113,17 @@ export class GitService {
       const diffRes = await this.execSafe(cwd, 'diff', ['--numstat', 'HEAD'])
       if (diffRes.exitCode === 0) {
         stats = parseNumstat(diffRes.stdout)
+        // W1 文件树 +N −M 角标：per-file 行数填充 files[]。numstat 不含 untracked/unmerged/二进制
+        // → 这些文件 numstatMap 无匹配，additions/deletions 保持 undefined（前端降级展示）。
+        // rename 文件 numstat 输出新路径（与 porcelain path 一致），正常匹配。
+        const numstatMap = parseNumstatByFile(diffRes.stdout)
+        for (const file of files) {
+          const ns = numstatMap.get(file.path)
+          if (ns) {
+            file.additions = ns.add
+            file.deletions = ns.del
+          }
+        }
       }
 
       // 本地分支列表（#6 选分支 popover 数据源，架构 §4.3 GitStatusResult 含分支列表）。

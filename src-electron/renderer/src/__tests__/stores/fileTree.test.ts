@@ -144,6 +144,53 @@ describe('fileTreeStore T4.6 invalidate graceful', () => {
   })
 })
 
+describe('fileTreeStore W2 getDirChangeCount（目录改动文件数徽章）', () => {
+  it('统计 dirPath 子树内改动文件数（path 以 dirPath/ 开头）', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/b.ts', xyCode: 'A ', status: 'added' },
+      { path: 'README.md', xyCode: 'M ', status: 'modified' },
+    ])
+    // dirPath='src' → 'src/a.ts' + 'src/b.ts' = 2
+    expect(store.getDirChangeCount('s1', 'src')).toBe(2)
+  })
+
+  it('空 overlay / 不存在的 session → 0', () => {
+    const store = useFileTreeStore()
+    expect(store.getDirChangeCount('s1', 'src')).toBe(0)
+  })
+
+  it('嵌套子树也算（前缀匹配 dirPath/，含深层路径）', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/utils/c.ts', xyCode: ' M', status: 'modified' },
+      { path: 'README.md', xyCode: 'M ', status: 'modified' },
+    ])
+    // dirPath='src' → 'src/a.ts' + 'src/utils/c.ts' = 2（深层也匹配 'src/' 前缀）
+    expect(store.getDirChangeCount('s1', 'src')).toBe(2)
+  })
+
+  it('兄弟同名前缀不误算（只算精确 dirPath/ 前缀，不算 src-other/）', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src-other/b.ts', xyCode: ' M', status: 'modified' },
+    ])
+    // 'src-other/b.ts' 不应算进 'src/' 前缀（兄弟目录，非子树）
+    expect(store.getDirChangeCount('s1', 'src')).toBe(1)
+  })
+
+  it('无改动 → 0（dirPath 子树下无匹配条目）', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'README.md', xyCode: 'M ', status: 'modified' },
+    ])
+    expect(store.getDirChangeCount('s1', 'src')).toBe(0)
+  })
+})
+
 describe('fileTreeStore 展开态 rehydrate', () => {
   it('addExpanded/getExpanded per-session', () => {
     const store = useFileTreeStore()

@@ -4,7 +4,7 @@
  * deriveCounts（staged/unstaged/hasConflict 计数 + 未跟踪计入 unstaged）、parseNumstat。
  */
 import { describe, it, expect } from 'vitest'
-import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstat } from '../src/infra/git-status-parser.js'
+import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstat, parseNumstatByFile } from '../src/infra/git-status-parser.js'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 describe('xyToGitStatus', () => {
@@ -104,5 +104,28 @@ describe('parseNumstat', () => {
   })
   it('empty output → zeros', () => {
     expect(parseNumstat('')).toEqual({ add: 0, del: 0 })
+  })
+})
+
+describe('parseNumstatByFile', () => {
+  it('多文件 → Map 含每文件 {add, del}', () => {
+    const m = parseNumstatByFile('10\t2\tsrc/a.ts\n5\t0\tsrc/b.ts')
+    expect(m.size).toBe(2)
+    expect(m.get('src/a.ts')).toEqual({ add: 10, del: 2 })
+    expect(m.get('src/b.ts')).toEqual({ add: 5, del: 0 })
+  })
+  it('二进制文件（add/del 为 -）跳过，不进 Map', () => {
+    const m = parseNumstatByFile('-\t-\timg.png\n3\t1\tcode.ts')
+    expect(m.size).toBe(1)
+    expect(m.has('img.png')).toBe(false)
+    expect(m.get('code.ts')).toEqual({ add: 3, del: 1 })
+  })
+  it('空输入 → 空 Map', () => {
+    expect(parseNumstatByFile('').size).toBe(0)
+  })
+  it('单文件 → Map 含一项', () => {
+    const m = parseNumstatByFile('7\t4\tlib/util.ts')
+    expect(m.size).toBe(1)
+    expect(m.get('lib/util.ts')).toEqual({ add: 7, del: 4 })
   })
 })

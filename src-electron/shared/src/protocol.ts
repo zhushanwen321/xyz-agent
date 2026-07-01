@@ -454,12 +454,20 @@ export type GitStatusResult = {
 
 /** 单文件的 git 状态（git --porcelain 的 XY 码解析结果）。
  *  status 由 xyCode 派生：U* → unmerged（冲突），?? → untracked，其余按 added/modified/deleted/renamed。
- *  staged/unstaged 维度由 xyCode 的两列体现（X=staged，Y=unstaged），不进 status 枚举。 */
+ *  staged/unstaged 维度由 xyCode 的两列体现（X=staged，Y=unstaged），不进 status 枚举。
+ *
+ *  additions/deletions：tracked 改动文件的增删行数（来自 git diff --numstat HEAD per-file）。
+ *  untracked/unmerged/二进制 文件无 numstat → undefined，前端降级展示（untracked 显文件大小，
+ *  二进制显 'binary'）。这是文件树 +N −M 行数角标的数据源。 */
 export interface GitFileStatus {
   path: string
   /** 原始 git --porcelain 双列状态码（如 'A ', ' M', 'UU', '??', 'R '）。前端可据 xyCode[0]/xyCode[1] 细分暂存/工作区态。 */
   xyCode: string
   status: 'added' | 'modified' | 'deleted' | 'unmerged' | 'renamed' | 'untracked'
+  /** 增加行数（numstat per-file）。tracked 改动文件有值；untracked/二进制/unmerged 为 undefined。 */
+  additions?: number
+  /** 删除行数（numstat per-file）。tracked 改动文件有值；untracked/二进制/unmerged 为 undefined。 */
+  deletions?: number
 }
 
 // 注：ExtensionInstallErrorPayload 已删除（D10/P0-B）——install 失败现在走统一 error envelope，

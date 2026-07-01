@@ -34,6 +34,11 @@ function sleep(ms: number): Promise<void> {
  *
  * 派生：stagedCount=3（A /M /R ），unstagedCount=3（ M/ D/??），hasConflict=true（UU）。
  * stats 为 git diff --numstat 聚合（+42/-7）。
+ *
+ * [W2] files[].additions/deletions 对齐 GitFileStatus 新契约（git diff --numstat HEAD per-file）：
+ * - added/modified/renamed/deleted（tracked 改动）有 numstat
+ * - untracked（??）无 numstat → undefined，前端降级显文件大小（FileNode.size）
+ * - unmerged（UU）无 numstat → undefined，前端不显行数
  */
 export const fixtureGitStatus: GitStatusResult = {
   sessionId: '',
@@ -44,12 +49,13 @@ export const fixtureGitStatus: GitStatusResult = {
   stats: { add: 42, del: 7 },
   hasConflict: true,
   files: [
-    { path: 'src/new-feature.ts', xyCode: 'A ', status: 'added' },
-    { path: 'src/existing.ts', xyCode: 'M ', status: 'modified' },
-    { path: 'src/dirty.ts', xyCode: ' M', status: 'modified' },
-    { path: 'src/old-file.ts', xyCode: ' D', status: 'deleted' },
+    { path: 'src/new-feature.ts', xyCode: 'A ', status: 'added', additions: 30 },
+    { path: 'src/existing.ts', xyCode: 'M ', status: 'modified', additions: 12, deletions: 3 },
+    { path: 'src/dirty.ts', xyCode: ' M', status: 'modified', additions: 8, deletions: 5 },
+    { path: 'src/old-file.ts', xyCode: ' D', status: 'deleted', deletions: 40 },
     { path: 'src/conflict.ts', xyCode: 'UU', status: 'unmerged' },
-    { path: 'README.md', xyCode: 'R ', status: 'renamed' },
+    { path: 'README.md', xyCode: 'R ', status: 'renamed', additions: 5, deletions: 2 },
+    // untracked 无 numstat → undefined，前端降级显 ~size（FileNode.size）
     { path: 'untracked.log', xyCode: '??', status: 'untracked' },
   ],
 }

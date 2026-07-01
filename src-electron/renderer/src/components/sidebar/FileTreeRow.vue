@@ -29,6 +29,12 @@
         </span>
         <Folder class="size-3.5 shrink-0 text-muted" />
         <span class="flex-1 truncate" :class="node.ignored ? 'text-subtle italic' : 'text-fg'">{{ node.name }}</span>
+        <!-- W2 目录改动数徽章（子树改动文件数，>0 才显） -->
+        <span
+          v-if="dirChangeCount > 0"
+          class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 font-mono text-[10px] text-accent"
+          :data-testid="`file-tree-dir-badge-${node.path}`"
+        >{{ dirChangeCount > 999 ? '999+' : dirChangeCount }}</span>
       </div>
 
       <!-- 展开态子节点 -->
@@ -100,6 +106,16 @@
         class="rounded-sm px-1 py-0.5 font-mono text-[10px]"
         :class="gitBadgeClass"
       >{{ gitBadge }}</span>
+      <!-- W2 文件行数 +N −M（tracked 改动有 numstat；untracked 降级显 ~size） -->
+      <span
+        v-if="lineStats"
+        class="shrink-0 font-mono text-[10px]"
+        :data-testid="`file-tree-linestats-${node.path}`"
+      >
+        <span v-if="lineStats.add !== undefined" class="text-success">+{{ formatCount(lineStats.add) }}</span>
+        <span v-if="lineStats.del !== undefined" class="text-danger">−{{ formatCount(lineStats.del) }}</span>
+        <span v-if="lineStats.size !== undefined" class="text-subtle">~{{ formatCount(lineStats.size) }}</span>
+      </span>
     </div>
   </div>
 </template>
@@ -194,6 +210,45 @@ const gitBadgeClass = computed(() => {
     default: return ''
   }
 })
+
+/**
+ * [W2] 目录改动数徽章：子树内改动文件数（store.getDirChangeCount）。
+ * O(n) per 渲染，n=改动文件数（通常 <100），可接受。
+ */
+const dirChangeCount = computed(() => store.getDirChangeCount(props.sessionId, props.node.path))
+
+/** [W2] 行数压缩阈值：≥此值显 9.9k（对齐 ProviderPage 上下文数压缩策略） */
+const LINE_COUNT_COMPACT_THRESHOLD = 10000
+/** [W2] 行数压缩除数（1000 → 显 k 后缀） */
+const LINE_COUNT_COMPACT_DIVISOR = 1000
+
+/** [W2] 文件行数结构：tracked 改动 {add/del}，untracked 降级 {size}，无数据 null */
+interface LineStats { add?: number; del?: number; size?: number }
+
+/**
+ * [W2] 文件行数（从 gitOverlay 的 additions/deletions 取）。
+ * - tracked 改动（modified/added/deleted/renamed）有 numstat → {add, del}
+ * - untracked 无 numstat 但有 FileNode.size → {size}（降级显 ~size）
+ * - unmerged/二进制/无标注 → null（不显）
+ */
+const lineStats = computed<LineStats | null>(() => {
+  const git = store.getGitStatus(props.sessionId, props.node.path)
+  if (!git) return null
+  if (git.additions !== undefined || git.deletions !== undefined) {
+    return { add: git.additions, del: git.deletions }
+  }
+  if (git.status === 'untracked' && props.node.size !== undefined) {
+    return { size: props.node.size }
+  }
+  return null
+})
+
+/** [W2] 格式化行数/大小（≥阈值显 9.9k，否则原值） */
+function formatCount(n: number): string {
+  return n >= LINE_COUNT_COMPACT_THRESHOLD
+    ? `${(n / LINE_COUNT_COMPACT_DIVISOR).toFixed(1)}k`
+    : String(n)
+}
 
 /** 展开/折叠目录（loaded 复用缓存 / loading 幂等 / error 重试，全在 useFileTree.expandNode） */
 function toggle(): void {

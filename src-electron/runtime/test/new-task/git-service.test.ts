@@ -113,6 +113,35 @@ describe('GitService.getStatus 分支列表（#6 popover 数据源）', () => {
   })
 })
 
+describe('GitService.getStatus per-file 行数（W1 文件树 +N −M 角标）', () => {
+  it('tracked modified 文件填充 additions/deletions', async () => {
+    // status：两个 modified 文件（XY=' M'）；diff numstat 提供 per-file 行数
+    executor.exec
+      .mockResolvedValueOnce(res({ stdout: '## main\u0000 M\tsrc/a.ts\u0000 M\tsrc/b.ts\u0000' })) // status
+      .mockResolvedValueOnce(res({ stdout: '10\t2\tsrc/a.ts\n5\t0\tsrc/b.ts' })) // diff numstat
+      .mockResolvedValueOnce(res({ stdout: 'main\n' })) // branch --list
+    const r = await svc().getStatus('s1')
+    const a = r.files.find((f) => f.path === 'src/a.ts')
+    const b = r.files.find((f) => f.path === 'src/b.ts')
+    expect(a).toMatchObject({ additions: 10, deletions: 2 })
+    expect(b).toMatchObject({ additions: 5, deletions: 0 })
+  })
+
+  it('untracked 文件 additions/deletions 为 undefined（numstat 不含未跟踪）', async () => {
+    executor.exec
+      .mockResolvedValueOnce(res({ stdout: '## main\u0000??\tnew.tmp\u0000 M\tcode.ts\u0000' })) // status
+      .mockResolvedValueOnce(res({ stdout: '3\t1\tcode.ts' })) // diff numstat（无 new.tmp）
+      .mockResolvedValueOnce(res({ stdout: 'main\n' })) // branch --list
+    const r = await svc().getStatus('s1')
+    const untracked = r.files.find((f) => f.path === 'new.tmp')
+    const modified = r.files.find((f) => f.path === 'code.ts')
+    expect(untracked).toMatchObject({ status: 'untracked' })
+    expect(untracked?.additions).toBeUndefined()
+    expect(untracked?.deletions).toBeUndefined()
+    expect(modified).toMatchObject({ additions: 3, deletions: 1 })
+  })
+})
+
 describe('GitService.createBranch (#7 创建并检出分支)', () => {
   it('T6.1 合法名→execSafe(cwd,checkout,[-b,name]) exit 0→resolve', async () => {
     executor.exec.mockResolvedValueOnce(res())

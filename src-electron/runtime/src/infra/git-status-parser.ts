@@ -149,3 +149,29 @@ export function parseNumstat(output: string): { add: number; del: number } {
   }
   return { add, del }
 }
+
+/**
+ * 解析 `git diff --numstat [...]` stdout → per-file {add, del} Map（W1 文件树 +N −M 角标数据源）。
+ * 每行格式：`<added>\t<deleted>\t<path>`；path 用 tab 分隔取第 3 列（路径可含空格，numstat 用 tab 分隔故安全）。
+ *
+ * 二进制文件计数为 `-`（add 或 del 非数字）→ 跳过，不进 Map（与 parseNumstat 聚合逻辑一致）。
+ * rename 文件：numstat 输出新路径，与 porcelain 的 path 一致，正常匹配。
+ *
+ * 调用方负责选择 diff 范围（HEAD / --cached / 无参 working tree）；本函数不聚合，只拆解 per-file。
+ */
+export function parseNumstatByFile(output: string): Map<string, { add: number; del: number }> {
+  const map = new Map<string, { add: number; del: number }>()
+  if (!output) return map
+  for (const line of output.split('\n')) {
+    if (!line) continue
+    const cols = line.split('\t')
+    if (cols.length < 3) continue
+    const a = Number.parseInt(cols[0], 10)
+    const d = Number.parseInt(cols[1], 10)
+    // 二进制（add 或 del 为 `-`）跳过
+    if (!Number.isFinite(a) || !Number.isFinite(d)) continue
+    const path = cols[2]
+    if (path) map.set(path, { add: a, del: d })
+  }
+  return map
+}

@@ -195,6 +195,116 @@ describe('FileTreeRow 视觉一致性（D-007 字号 / D-022 chevron 槽）', ()
   })
 })
 
+describe('FileTreeRow W2 目录改动徽章', () => {
+  it('目录子树有改动文件 → 渲染徽章（含改动数）', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/a.ts', xyCode: ' M', status: 'modified' },
+      { path: 'src/b.ts', xyCode: 'A ', status: 'added' },
+    ])
+    const node: FileNode = { path: 'src', name: 'src', type: 'dir' }
+    const wrapper = mountRow({ node })
+
+    const badge = wrapper.find('[data-testid="file-tree-dir-badge-src"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('2')
+  })
+
+  it('目录子树无改动 → 不渲染徽章', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [{ path: 'README.md', xyCode: 'M ', status: 'modified' }])
+    const node: FileNode = { path: 'src', name: 'src', type: 'dir' }
+    const wrapper = mountRow({ node })
+
+    expect(wrapper.find('[data-testid="file-tree-dir-badge-src"]').exists()).toBe(false)
+  })
+
+  it('改动数 > 999 → 显 999+', () => {
+    const store = useFileTreeStore()
+    // 构造 1000 条改动路径都在 src/ 下
+    const files = Array.from({ length: 1000 }, (_, i) => ({
+      path: `src/f${i}.ts`,
+      xyCode: ' M',
+      status: 'modified' as const,
+    }))
+    store.setGitOverlay('s1', files)
+    const node: FileNode = { path: 'src', name: 'src', type: 'dir' }
+    const wrapper = mountRow({ node })
+
+    expect(wrapper.find('[data-testid="file-tree-dir-badge-src"]').text()).toBe('999+')
+  })
+})
+
+describe('FileTreeRow W2 文件行数 +N −M', () => {
+  it('tracked 改动文件（有 additions/deletions）→ 显 +N −M', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/existing.ts', xyCode: ' M', status: 'modified', additions: 12, deletions: 3 },
+    ])
+    const node: FileNode = { path: 'src/existing.ts', name: 'existing.ts', type: 'file' }
+    const wrapper = mountRow({ node })
+
+    const linestats = wrapper.find('[data-testid="file-tree-linestats-src/existing.ts"]')
+    expect(linestats.exists()).toBe(true)
+    const success = linestats.find('.text-success')
+    const danger = linestats.find('.text-danger')
+    expect(success.exists()).toBe(true)
+    expect(success.text()).toBe('+12')
+    expect(danger.exists()).toBe(true)
+    expect(danger.text()).toBe('−3')
+  })
+
+  it('仅 additions（如 added 文件）→ 只显 +N', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'src/new.ts', xyCode: 'A ', status: 'added', additions: 50 },
+    ])
+    const node: FileNode = { path: 'src/new.ts', name: 'new.ts', type: 'file' }
+    const wrapper = mountRow({ node })
+
+    const linestats = wrapper.find('[data-testid="file-tree-linestats-src/new.ts"]')
+    expect(linestats.exists()).toBe(true)
+    expect(linestats.find('.text-success').text()).toBe('+50')
+    expect(linestats.find('.text-danger').exists()).toBe(false)
+  })
+
+  it('untracked 文件（无 numstat，有 size）→ 显 ~size 降级', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'untracked.log', xyCode: '??', status: 'untracked' },
+    ])
+    const node: FileNode = { path: 'untracked.log', name: 'untracked.log', type: 'file', size: 30 }
+    const wrapper = mountRow({ node })
+
+    const linestats = wrapper.find('[data-testid="file-tree-linestats-untracked.log"]')
+    expect(linestats.exists()).toBe(true)
+    // untracked 显 ~size（降级，非 +N −M）
+    expect(linestats.text()).toContain('~')
+    expect(linestats.text()).toContain('30')
+    // 不显 +N −M
+    expect(linestats.find('.text-success').exists()).toBe(false)
+  })
+
+  it('行数 ≥10000 → 显 9.xk 格式', () => {
+    const store = useFileTreeStore()
+    store.setGitOverlay('s1', [
+      { path: 'big.ts', xyCode: ' M', status: 'modified', additions: 12345, deletions: 0 },
+    ])
+    const node: FileNode = { path: 'big.ts', name: 'big.ts', type: 'file' }
+    const wrapper = mountRow({ node })
+
+    const linestats = wrapper.find('[data-testid="file-tree-linestats-big.ts"]')
+    expect(linestats.find('.text-success').text()).toBe('+12.3k')
+  })
+
+  it('文件无 git 标注 → 不显行数', () => {
+    const node: FileNode = { path: 'clean.ts', name: 'clean.ts', type: 'file' }
+    const wrapper = mountRow({ node })
+
+    expect(wrapper.find('[data-testid="file-tree-linestats-clean.ts"]').exists()).toBe(false)
+  })
+})
+
 describe('FileTreeRow 交互', () => {
   it('点折叠目录 → expandNode 被调', async () => {
     const node: FileNode = { path: 'src', name: 'src', type: 'dir' }
