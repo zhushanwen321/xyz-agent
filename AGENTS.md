@@ -1,4 +1,4 @@
-# xyz-agent CLAUDE.md
+# xyz-agent AGENTS.md
 
 ## 项目概述
 
