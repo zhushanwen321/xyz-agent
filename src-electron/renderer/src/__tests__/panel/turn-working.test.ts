@@ -66,13 +66,48 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
   })
 
   it('U9: isWorking true→false 复位 expanded，trace 从 DOM 消失', async () => {
-    const wrapper = mountTurn({ turn: makeTurn({ isWorking: true }) })
-    // working 态 trace 展开
-    expect(wrapper.find('.trace').exists()).toBe(true)
+    // 含可折叠 thinking 块 + text：working 态 thinking 块展开渲染
+    const turn = makeTurn({
+      isWorking: true,
+      assistants: [
+        msg({
+          content: 'answer',
+          thinking: [{ id: 'th1', content: 'r', collapsed: true }],
+          contentBlocks: [
+            { type: 'thinking', refId: 'th1' },
+            { type: 'text', refId: 'text' },
+          ],
+        }),
+      ],
+    })
+    const wrapper = mountTurn({ turn })
+    // working 态：stream 渲染 + thinking 块（type=thinking）在 DOM
+    expect(wrapper.find('.stream').exists()).toBe(true)
+    expect(
+      wrapper.findAllComponents({ name: 'Block' }).some((c) => c.props('type') === 'thinking'),
+    ).toBe(true)
     // 切换到完成态
-    await wrapper.setProps({ turn: makeTurn({ isWorking: false }) })
-    // trace 区消失（expanded 复位，showTrace=false）
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    await wrapper.setProps({
+      turn: makeTurn({
+        isWorking: false,
+        assistants: [
+          msg({
+            status: 'complete',
+            content: 'answer',
+            thinking: [{ id: 'th1', content: 'r', collapsed: true }],
+            contentBlocks: [
+              { type: 'thinking', refId: 'th1' },
+              { type: 'text', refId: 'text' },
+            ],
+          }),
+        ],
+      }),
+    })
+    // 完成态：expanded 复位 → thinking 块折叠消失，但 text 仍在（最终答案可见）
+    const blockTypes = wrapper.findAllComponents({ name: 'Block' }).map((c) => c.props('type'))
+    expect(blockTypes).not.toContain('thinking')
+    // text 块容器（.turn-text）仍渲染（MarkdownRenderer 被 stub，故查容器）
+    expect(wrapper.find('.turn-text').exists()).toBe(true)
   })
 
   it('U10: working 态 elapsed 随 setInterval 实时增长', async () => {

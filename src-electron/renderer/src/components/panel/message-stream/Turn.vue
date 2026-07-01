@@ -2,12 +2,13 @@
   <!--
     展示组件 · 回合（message-stream 单个 turn，draft-message-stream §1）。
     结构：user 气泡（靠右，可编辑分叉）+ assistant 区。
-    assistant 区 = turn-meta（已工作按钮 / 工作中态）+ 折叠 trace（thinking/tool/中间 text）+ 收尾 summary。
+    assistant 区 = turn-meta（已工作按钮 / 工作中态）+ 单一连续渲染流（W2：按 contentBlocks 到达顺序）。
+    - 渲染流：遍历 turn.assistants，每个按 contentBlocks 顺序产出 thinking/tool/text 块。
+      text 块恒显（折叠时仍是最终答案可见）；thinking/tool 块受 showTrace（isWorking||expanded）控制。
+      末尾 assistant 的最后一个 text 块挂 streaming 光标 + complete hover actions。
     - user 气泡下方 hover：复制（常驻）+ 编辑（仅 AI 停止，编辑=fork 新会话）
-    - 收尾 summary 下方 hover：复制 + 复制为 MD + fork（modal 确认后 clone+fork 到另一 panel）
-
-    Output Text 中间/收尾拆分（draft §4）：多 assistant 回合，非最后一条 content 折进 trace，
-    仅最后一条作收尾 summary 恒显。
+    - 末尾 text 下方 hover：复制 + 复制为 MD + fork（modal 确认后 clone+fork 到另一 panel）
+    - 旧数据（无 contentBlocks）回退：thinking→tool 顺序（受折叠）+ text 取 content 恒显。
   -->
   <div class="flex flex-col gap-3.5">
     <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
@@ -110,75 +111,76 @@
         </span>
       </Button>
 
-      <!-- 折叠 trace：working 或 expanded 时展开 -->
-      <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-        <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
+      <!-- W2：单一连续渲染流，按 contentBlocks 到达顺序。
+           text 块恒显（折叠时仍是最终答案），thinking/tool 块仅 showTrace 时渲染。
+           末尾 assistant 的最后一个 text 块挂 streaming 光标 + hover actions。 -->
+      <div v-if="blocks.length > 0" class="stream mt-1 mb-1 flex flex-col">
+        <template v-for="blk in blocks" :key="blk.key">
+          <!-- thinking / tool 块：受 showTrace 控制（已在 renderedBlocks 内过滤） -->
           <Block
-            v-if="isMidAssistant(aIdx) && assistant.content.trim()"
-            type="text"
-            :content="assistant.content"
-          />
-          <Block
-            v-for="th in assistant.thinking ?? []"
-            :key="`th-${th.id}`"
+            v-if="blk.kind === 'thinking'"
             type="thinking"
-            :content="th.content"
-            :collapsed="th.collapsed"
+            :content="blk.content"
+            :collapsed="blk.collapsed"
             :working="turn.isWorking"
           />
           <Block
-            v-for="tc in assistant.toolCalls ?? []"
-            :key="`tc-${tc.id}`"
+            v-else-if="blk.kind === 'tool'"
             type="tool"
-            :tool="tc"
+            :tool="blk.tool"
             :working="turn.isWorking"
           />
+          <!-- text 块：恒显。末尾 text 接 streaming 光标 + complete hover actions -->
+          <div
+            v-else-if="blk.kind === 'text'"
+            class="turn-text group/ai pt-3 text-[13.5px] leading-7 text-fg"
+          >
+            <MarkdownRenderer :content="blk.content ?? ''" />
+            <span
+              v-if="blk.isLastText && isStreamingText"
+              class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink"
+            />
+            <!-- hover actions：复制 / 复制为 MD / fork（仅末尾 text 且 AI 停止时） -->
+            <div
+              v-if="blk.isLastText && !isStreaming && lastAssistant"
+              class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100"
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-6 text-subtle hover:text-fg"
+                title="复制"
+                @click="copy(summaryText, aiCopyKey)"
+              >
+                <Check v-if="copied === aiCopyKey" class="size-3 text-success" />
+                <Copy v-else class="size-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="relative size-6 text-subtle hover:text-fg"
+                title="复制为 Markdown"
+                @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
+              >
+                <Check v-if="copied === aiMdKey" class="size-3 text-success" />
+                <Copy v-else class="size-3" />
+                <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[8px] font-bold leading-[10px] text-white">MD</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-6 text-subtle hover:text-fg"
+                title="克隆并分叉到另一面板"
+                @click="openFork"
+              >
+                <GitFork class="size-3" />
+              </Button>
+            </div>
+          </div>
         </template>
       </div>
 
       <hr v-if="turn.hasFoldable || turn.assistants.length > 0" class="border-0 border-t border-border" />
-
-      <!-- 收尾 summary：仅最后一条 assistant.content，含 hover 复制/复制MD/fork（markdown 渲染） -->
-      <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
-        <MarkdownRenderer :content="summaryText" />
-        <span v-if="isStreamingText" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
-        <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
-        <div
-          v-if="!isStreaming && lastAssistant"
-          class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100"
-        >
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-6 text-subtle hover:text-fg"
-            title="复制"
-            @click="copy(summaryText, aiCopyKey)"
-          >
-            <Check v-if="copied === aiCopyKey" class="size-3 text-success" />
-            <Copy v-else class="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="relative size-6 text-subtle hover:text-fg"
-            title="复制为 Markdown"
-            @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
-          >
-            <Check v-if="copied === aiMdKey" class="size-3 text-success" />
-            <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[8px] font-bold leading-[10px] text-white">MD</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-6 text-subtle hover:text-fg"
-            title="克隆并分叉到另一面板"
-            @click="openFork"
-          >
-            <GitFork class="size-3" />
-          </Button>
-        </div>
-      </div>
 
       <!-- 变更集卡（W10，ADR-0024）：最后一条 assistant 有 fileChanges 时渲染 -->
       <ChangeSetCard
@@ -201,7 +203,7 @@ import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Pencil, Wrench }
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
-import { countThinking, countToolCalls } from '@/composables/logic/messageTurns'
+import { countThinking, countToolCalls, renderedBlocks } from '@/composables/logic/messageTurns'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useChat } from '@/composables/features/useChat'
@@ -271,6 +273,12 @@ const toolCount = computed(() => countToolCalls(props.turn))
 /** working 或 expanded 时展开 trace */
 const expanded = ref(false)
 const showTrace = computed(() => props.turn.isWorking || expanded.value)
+
+/**
+ * W2：按 contentBlocks 到达顺序展平的单一连续渲染流。
+ * text 块恒显（折叠时仍是最终答案），thinking/tool 块受 showTrace 控制。
+ */
+const blocks = computed(() => renderedBlocks(props.turn, showTrace.value))
 
 /**
  * 工作耗时：working 态 live 计时（setInterval 每秒重算 now-firstTs），
@@ -394,20 +402,15 @@ async function onForkConfirm(): Promise<void> {
 }
 
 /**
- * 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠，作回合焦点）。
+ * 收尾 text 内容（hover actions 的「复制」「复制为 MD」目标）：取末尾 assistant.content。
+ * 用于 MD 复制（assistantToMarkdown）与纯文本复制——渲染本身已由 blocks 流接管。
  */
 const summaryText = computed(() => {
-  const as = props.turn.assistants
-  const last = as[as.length - 1]
+  const last = lastAssistant.value
   return last?.content?.trim() ? last.content : ''
 })
 
-/** 该 assistant 是否为「中间产出」（非最后一条）→ content 折进 trace 而非收尾 */
-function isMidAssistant(idx: number): boolean {
-  return idx < props.turn.assistants.length - 1
-}
-
-/** 最后一条 assistant 是否仍 streaming（光标） */
+/** 最后一条 assistant 是否仍 streaming（末块 text 接光标） */
 const isStreamingText = computed(() => {
   const last = props.turn.assistants[props.turn.assistants.length - 1]
   return props.turn.isWorking && last?.status === 'streaming'

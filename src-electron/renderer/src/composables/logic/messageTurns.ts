@@ -13,7 +13,7 @@
  * - 遇到 system 消息 → 产出独立 SystemNotice 项（不并入 turn）
  * - streaming 中的 turn（最后一条 assistant status==='streaming'）→ working 态，默认展开 trace
  */
-import type { Message } from '@xyz-agent/shared'
+import type { ContentBlock, Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /** 一个渲染回合：起点 user + 其后的 assistant 消息序列 */
 export interface MessageTurn {
@@ -97,9 +97,7 @@ export function toRenderItems(messages: Message[]): RenderItem[] {
   turnItems.forEach(({ turn }, i) => {
     const last = turn.assistants[turn.assistants.length - 1]
     turn.isWorking = i === turnItems.length - 1 && last?.status === 'streaming'
-    turn.hasFoldable = turn.assistants.some(
-      (m) => (m.thinking?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0,
-    )
+    turn.hasFoldable = hasFoldable(turn)
   })
 
   return items
@@ -120,4 +118,169 @@ export function hasFailedTool(turn: MessageTurn): boolean {
   return turn.assistants.some((m) =>
     m.toolCalls?.some((t) => t.status === 'error'),
   )
+}
+
+/**
+ * turn 是否含可折叠块（thinking/toolCall）。
+ * 新数据基于 contentBlocks 判定（含非 text 块 → true）；
+ * 旧数据无 contentBlocks 时回退看 thinking/toolCalls 数组（兼容）。
+ */
+export function hasFoldable(turn: MessageTurn): boolean {
+  return turn.assistants.some((m) => {
+    const blocks = m.contentBlocks
+    if (blocks && blocks.length > 0) {
+      return blocks.some((b) => b.type !== 'text')
+    }
+    return (m.thinking?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0
+  })
+}
+
+/* ── W2 渲染层：按 contentBlocks 到达顺序展平 turn 为单一连续流 ── */
+
+/** 展平后的可渲染块（thinking/tool/text 三种） */
+export type RenderedBlockKind = 'thinking' | 'tool' | 'text'
+
+export interface RenderedBlock {
+  kind: RenderedBlockKind
+  /** 渲染顺序 key（assistantId + kind + refId） */
+  key: string
+  /** 所属 assistant id（fork/MD 复制等按 assistant 取数） */
+  assistantId: string
+  /** thinking 内容（kind==='thinking'） */
+  content?: string
+  /** thinking 初始折叠态（kind==='thinking'） */
+  collapsed?: boolean
+  /** tool 数据（kind==='tool'） */
+  tool?: ToolCall
+  /** 是否为最后一个 assistant 的最后一个 text 块（挂光标 + hover actions） */
+  isLastText: boolean
+}
+
+/** 从 assistant.thinking 数组按 id 查找块（找不到返回 null） */
+function findThinking(m: Message, refId: string): ThinkingBlock | null {
+  return m.thinking?.find((t) => t.id === refId) ?? null
+}
+
+/** 从 assistant.toolCalls 数组按 id 查找（找不到返回 null） */
+function findToolCall(m: Message, refId: string): ToolCall | null {
+  return m.toolCalls?.find((t) => t.id === refId) ?? null
+}
+
+/** content 去空白判定（空 text 块跳过） */
+function hasText(content: string | undefined): boolean {
+  return !!content && content.trim().length > 0
+}
+
+/**
+ * 把单个 assistant 的内容按到达顺序展平为 RenderedBlock 列表。
+ *
+ * 新数据（有 contentBlocks）：按 contentBlocks 顺序遍历，text 块恒显，
+ * thinking/tool 块仅在 showTrace 为 true 时渲染；refId 未命中 → 跳过（防御）。
+ * 旧数据（无 contentBlocks）：回退——thinking → toolCalls 顺序（受折叠），
+ * text 取 assistant.content 恒显。
+ *
+ * @param m assistant 消息
+ * @param showTrace 是否展开 trace（working || expanded）；false 时隐藏 thinking/tool
+ * @param isLastAssistant 是否最后一个 assistant（影响 isLastText 标记）
+ */
+export function flattenAssistant(
+  m: Message,
+  showTrace: boolean,
+  isLastAssistant: boolean,
+): RenderedBlock[] {
+  const out: RenderedBlock[] = []
+  const blocks = m.contentBlocks
+  if (blocks && blocks.length > 0) {
+    // 找出最后一个 text 块的索引（仅最后一个 assistant 才标 isLastText）
+    let lastTextIdx = -1
+    for (let i = blocks.length - 1; i >= 0; i -= 1) {
+      if (blocks[i].type === 'text') {
+        lastTextIdx = i
+        break
+      }
+    }
+    blocks.forEach((b: ContentBlock, i: number) => {
+      if (b.type === 'text') {
+        if (!hasText(m.content)) return // 空内容 text 跳过（U18c）
+        out.push({
+          kind: 'text',
+          key: `${m.id}-text`,
+          assistantId: m.id,
+          content: m.content,
+          isLastText: isLastAssistant && i === lastTextIdx,
+        })
+      } else if (b.type === 'thinking') {
+        if (!showTrace) return // 折叠时隐藏（U14）
+        const th = findThinking(m, b.refId)
+        if (!th) return // refId 未命中 → 跳过（U18b）
+        out.push({
+          kind: 'thinking',
+          key: `${m.id}-th-${b.refId}`,
+          assistantId: m.id,
+          content: th.content,
+          collapsed: th.collapsed,
+          isLastText: false,
+        })
+      } else {
+        // toolCall
+        if (!showTrace) return // 折叠时隐藏（U14）
+        const tc = findToolCall(m, b.refId)
+        if (!tc) return // refId 未命中 → 跳过（防御）
+        out.push({
+          kind: 'tool',
+          key: `${m.id}-tc-${b.refId}`,
+          assistantId: m.id,
+          tool: tc,
+          isLastText: false,
+        })
+      }
+    })
+    return out
+  }
+
+  // ── 旧数据回退：thinking → toolCalls（受折叠），text 取 content 恒显 ──
+  if (showTrace) {
+    for (const th of m.thinking ?? []) {
+      out.push({
+        kind: 'thinking',
+        key: `${m.id}-th-${th.id}`,
+        assistantId: m.id,
+        content: th.content,
+        collapsed: th.collapsed,
+        isLastText: false,
+      })
+    }
+    for (const tc of m.toolCalls ?? []) {
+      out.push({
+        kind: 'tool',
+        key: `${m.id}-tc-${tc.id}`,
+        assistantId: m.id,
+        tool: tc,
+        isLastText: false,
+      })
+    }
+  }
+  if (hasText(m.content)) {
+    out.push({
+      kind: 'text',
+      key: `${m.id}-text`,
+      assistantId: m.id,
+      content: m.content,
+      isLastText: isLastAssistant,
+    })
+  }
+  return out
+}
+
+/**
+ * 把整个 turn 展平为按 contentBlocks 到达顺序的单一连续 RenderedBlock 流。
+ * text 块恒显（无论 showTrace），thinking/tool 块受 showTrace 控制。
+ */
+export function renderedBlocks(turn: MessageTurn, showTrace: boolean): RenderedBlock[] {
+  const assistants = turn.assistants
+  const out: RenderedBlock[] = []
+  assistants.forEach((m, idx) => {
+    out.push(...flattenAssistant(m, showTrace, idx === assistants.length - 1))
+  })
+  return out
 }
