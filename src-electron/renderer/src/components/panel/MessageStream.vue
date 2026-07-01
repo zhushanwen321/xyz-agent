@@ -29,10 +29,10 @@
     </div>
     </div>
 
-    <!-- 回到底部浮层：非贴底且有未读时显示，点之平滑滚回并恢复锚定 -->
+    <!-- 回到底部浮层：非贴底时显示（showJumpButton = 用户不在底部），点之平滑滚回并恢复锚定 -->
     <Transition name="fade">
       <Button
-        v-if="unreadBelow"
+        v-if="showJumpButton"
         variant="default"
         size="icon"
         class="absolute bottom-4 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg"
@@ -89,8 +89,12 @@ const lastRenderTurn = computed(() => {
   return null
 })
 
-/** auto-scroll：stickToBottom guard —— 非贴底时不强制拉回，仅标记未读显「回到底部」浮层 */
-const { scrollEl, unreadBelow, onScroll, scrollToBottom } = useChatScroll()
+/**
+ * auto-scroll：stickToBottom guard —— 非贴底时不强制拉回。
+ * showJumpButton 驱动「回到底部」浮层显隐（= !stickToBottom，修复 W3：点击后上滑按钮重现）。
+ * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
+ */
+const { scrollEl, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
 
 watch(
   () => currentMessages.value.length,

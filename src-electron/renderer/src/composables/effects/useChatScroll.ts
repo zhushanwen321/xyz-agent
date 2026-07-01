@@ -21,8 +21,10 @@ export function useChatScroll() {
   const scrollEl: Ref<HTMLElement | null> = ref(null)
   /** 是否贴底（onScroll 维护） */
   const stickToBottom = ref(true)
-  /** 非贴底时有新内容到达 → 置 true（驱动「回到底部」浮层）；回贴底清零 */
+  /** 非贴底时有新内容到达 → 置 true（标记「下方有未读新内容」）；回贴底清零 */
   const unreadBelow = ref(false)
+  /** 用户当前不在底部 → true（驱动「回到底部」浮层显隐）。与 stickToBottom 互斥 */
+  const showJumpButton = ref(false)
 
   /** scroll 事件回调：据距底距离判定贴底，回贴底清未读标记 */
   function onScroll(): void {
@@ -31,6 +33,7 @@ export function useChatScroll() {
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight
     const stick = distance <= BOTTOM_THRESHOLD
     stickToBottom.value = stick
+    showJumpButton.value = !stick
     if (stick) unreadBelow.value = false
   }
 
@@ -50,7 +53,8 @@ export function useChatScroll() {
     el.scrollTo({ top: el.scrollHeight, behavior })
     stickToBottom.value = true
     unreadBelow.value = false
+    showJumpButton.value = false
   }
 
-  return { scrollEl, stickToBottom, unreadBelow, onScroll, scrollToBottom }
+  return { scrollEl, stickToBottom, unreadBelow, showJumpButton, onScroll, scrollToBottom }
 }
