@@ -39,5 +39,10 @@ export default defineConfig(({ mode }) => {
       },
     },
   },
+  // mermaid ~3MB，显式预构建避免 dev 首次冷启动 esbuild 重新打包时慢 + warning。
+  // (shiki 同为大体积库已验证该路径无需额外 build 配置)
+  optimizeDeps: {
+    include: ['mermaid'],
+  },
   }
 })
