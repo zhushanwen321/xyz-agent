@@ -9,24 +9,26 @@
   <div class="relative flex min-h-0 flex-1 flex-col">
     <div
       ref="scrollEl"
-      class="message-stream flex flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-[18px]"
+      class="message-stream flex flex-1 overflow-y-auto"
       @scroll.passive="onScroll"
     >
-    <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
-      <Turn
-        v-if="item.kind === 'turn'"
-        :turn="item.turn"
-        :session-id="sessionId"
-        :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
-      />
-      <SystemNotice v-else :message="item.message" />
-    </template>
+      <div ref="contentEl" class="flex flex-1 flex-col gap-[22px] px-5 py-[18px]">
+        <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
+          <Turn
+            v-if="item.kind === 'turn'"
+            :turn="item.turn"
+            :session-id="sessionId"
+            :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
+          />
+          <SystemNotice v-else :message="item.message" />
+        </template>
 
-    <!-- 空态欢迎语（G2-004） -->
-    <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
-      <Sparkles class="size-6 text-accent opacity-70" />
-      <p class="text-[13px] text-muted">开始对话，或从左侧选择一个会话</p>
-    </div>
+        <!-- 空态欢迎语（G2-004） -->
+        <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
+          <Sparkles class="size-6 text-accent opacity-70" />
+          <p class="text-[13px] text-muted">开始对话，或从左侧选择一个会话</p>
+        </div>
+      </div>
     </div>
 
     <!-- 回到底部浮层：非贴底时显示（showJumpButton = 用户不在底部），点之平滑滚回并恢复锚定 -->
@@ -46,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { ChevronDown, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
@@ -94,7 +96,10 @@ const lastRenderTurn = computed(() => {
  * showJumpButton 驱动「回到底部」浮层显隐（= !stickToBottom，修复 W3：点击后上滑按钮重现）。
  * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
  */
-const { scrollEl, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
+const { scrollEl, showJumpButton, onScroll, scrollToBottom, observe } = useChatScroll()
+
+/** 内容根元素（ResizeObserver 监听目标，W4） */
+const contentEl = ref<HTMLElement | null>(null)
 
 watch(
   () => currentMessages.value.length,
@@ -122,6 +127,11 @@ watch(
   () => props.sessionId,
   () => scrollToBottom('auto', true),
 )
+
+// W4：ResizeObserver 监听内容根高度变化，贴底时自动跟随滚动
+watchEffect(() => {
+  if (contentEl.value) observe(contentEl.value)
+})
 </script>
 
 <style scoped>

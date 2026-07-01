@@ -15,6 +15,7 @@
  * 运行：cd src-electron/renderer && npx vitest run src/__tests__/effects/use-chat-scroll.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 
 /**
@@ -202,5 +203,127 @@ describe('useChatScroll · showJumpButton', () => {
     // 切会话强制滚到底
     await scrollToBottom('auto', true)
     expect(showJumpButton.value).toBe(false)
+  })
+})
+
+/**
+ * ResizeObserver 自动跟随滚动（W4）—— 解决流式渲染竞态：
+ * - thinking/tool 块增高内容但 content.length 不变 → watcher 不触发，靠 ResizeObserver 兜底
+ * - Markdown/shiki 异步渲染，内容增高时贴底态自动 scrollToBottom 跟随
+ * observe(target) 接受内容根元素，内容增高回调里 if (stickToBottom) scrollToBottom('auto')。
+ */
+describe('useChatScroll · ResizeObserver auto-follow', () => {
+  /** mock 构造函数，捕获回调 cb + 记录实例方法；返回用于手动驱动回调的辅助器 */
+  function mockResizeObserver(): {
+    trigger: () => void
+    instances: Array<{ observe: ReturnType<typeof vi.fn>; unobserve: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }>
+  } {
+    const instances: Array<{ observe: ReturnType<typeof vi.fn>; unobserve: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = []
+    let latestCb: ((entries: unknown[]) => void) | null = null
+    // 用 class 形式（原生支持 new）；实例方法用 vi.fn 以便断言
+    class MockRO {
+      constructor(cb: (entries: unknown[]) => void) {
+        latestCb = cb
+        const inst = { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() }
+        instances.push(inst)
+        return inst
+      }
+    }
+    globalThis.ResizeObserver = MockRO as unknown as typeof ResizeObserver
+    return {
+      trigger: () => {
+        if (latestCb) latestCb([])
+      },
+      instances,
+    }
+  }
+
+  beforeEach(() => {
+    HTMLElement.prototype.scrollTo = vi.fn()
+  })
+
+  it('U26: stickToBottom=true，observe 后触发高度变化回调 → scrollToBottom 被调用（内容增高自动跟随）', async () => {
+    const ro = mockResizeObserver()
+    const { scrollEl, onScroll, observe } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200) // 贴底
+    onScroll()
+    observe(el)
+    // 模拟内容增高触发 ResizeObserver 回调（scrollToBottom 内 await nextTick + rAF）
+    ro.trigger()
+    await nextTick()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(el.scrollTo).toHaveBeenCalled()
+  })
+
+  it('U27: stickToBottom=false（上滑），触发高度变化回调 → 不滚动（尊重上滑）', async () => {
+    const ro = mockResizeObserver()
+    const { scrollEl, onScroll, observe } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 100) // 非贴底
+    onScroll()
+    observe(el)
+    ro.trigger()
+    await nextTick()
+    expect(el.scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('U28: 回调入队时贴底，回调执行前用户上滑 → 回调读当前 stickToBottom=false → 不拉回', async () => {
+    const ro = mockResizeObserver()
+    const { scrollEl, onScroll, observe, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200) // 贴底
+    onScroll()
+    expect(stickToBottom.value).toBe(true)
+    observe(el)
+    // 回调已入队（待执行）。执行前用户手动上滑：
+    setScroll(el, 1000, 800, 100)
+    onScroll()
+    expect(stickToBottom.value).toBe(false)
+    // 回调现在执行 → 读 stickToBottom 当前值=false → 不应滚动
+    ro.trigger()
+    await nextTick()
+    expect(el.scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('U29: 贴底态，trace 折叠高度减小触发回调 → scrollToBottom 仍只往底滚（视口对齐底部，不上漂）', async () => {
+    const ro = mockResizeObserver()
+    const { scrollEl, onScroll, observe } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200) // 贴底
+    onScroll()
+    observe(el)
+    // trace 折叠：scrollHeight 骤减，但回调触发 scrollToBottom 仍 scrollTo({ top: scrollHeight })
+    // 这里验证：scrollTo 被调用，且 top 参数 = 当前 scrollHeight（不反向跳到更上方）
+    setScroll(el, 700, 800, 200)
+    ro.trigger()
+    await nextTick()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(el.scrollTo).toHaveBeenCalledTimes(1)
+    expect(el.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ top: 700 }))
+  })
+
+  it('U30: 触发 onScopeDispose → observer.disconnect() 被调用，无泄漏', async () => {
+    const ro = mockResizeObserver()
+    // effectScope 包裹以驱动 onScopeDispose
+    const { effectScope } = await import('vue')
+    const scope = effectScope()
+    let api: ReturnType<typeof useChatScroll> | null = null
+    await scope.run(() => {
+      api = useChatScroll()
+      const el = document.createElement('div')
+      api!.scrollEl.value = el
+      api!.observe(el)
+      return undefined
+    })
+    expect(ro.instances.length).toBe(1)
+    expect(ro.instances[0].disconnect).not.toHaveBeenCalled()
+    // 销毁作用域 → onScopeDispose 触发 → disconnect
+    scope.stop()
+    expect(ro.instances[0].disconnect).toHaveBeenCalledTimes(1)
   })
 })
