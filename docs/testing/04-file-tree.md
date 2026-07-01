@@ -114,7 +114,7 @@ file-filter-input input → store.setFilter(query)
 |------|------|
 | `MOCK_TREE` | 顶层：src / README.md / package.json / untracked.log / node_modules(ignored) |
 | MOCK_TREE src 子项 | index.ts / new-feature.ts / existing.ts / utils/ |
-| `MOCK_IGNORED` | node_modules / dist / .env（showIgnored 控制显隐） |
+| `MOCK_IGNORED` | node_modules / dist / .env（始终返回并标 ignored=true，前端 showIgnored 开关控制显隐） |
 | `fixtureGitStatus` | src/new-feature.ts=added(A) / README.md=modified(M) / 其他 |
 | `file.read` mock | 按扩展名返回内容（.ts 含 'export function'；含 `<script>` 路径用于 XSS 测试） |
 | `git.getDiff` mock | 按路径返回 patch（含 'diff --git'；含 `<script>` 用于 XSS） |
@@ -199,7 +199,7 @@ async function gotoFileTree(page: import('@playwright/test').Page): Promise<void
 | T4.1 | 过滤命中 | `file-tree-file-README.md` 可见 / `file-tree-file-package.json` count=0 | 输入 'readme' 后只 README 命中 |
 | T4.2 | 无匹配 → 空态 | `file-empty` | 输入 'zzz_no_match_zzz' 显示空态 |
 | T4.5 | 清空 → 恢复完整树 | `file-tree-file-package.json` | 清空过滤后恢复 |
-| D-020 | showIgnored 开关 | `file-tree-dir-node_modules` | 默认隐藏；开关开后可见 |
+| D-020 | showIgnored 开关 | `file-tree-dir-node_modules` | 默认隐藏（前端 computed 过滤）；开关开后瞬时可见，无重拉闪烁 |
 
 ### 8.4 完整 E2E 代码（现有，可作其他功能 E2E 的参考模板）
 
@@ -268,10 +268,12 @@ test.describe('文件树 E2E', () => {
     await expect(page.getByTestId('file-empty')).toBeVisible()
   })
 
-  test('D-020 showIgnored: 开关切换 → ignored 节点显示/隐藏', async ({ page }) => {
+  test('D-020 showIgnored: 开关切换 → ignored 节点瞬时显示/隐藏（前端 computed 过滤，无重拉闪烁）', async ({ page }) => {
     await gotoFileTree(page)
+    // 默认被前端 computed 过滤（store 含 ignored 节点但不渲染）
     await expect(page.getByTestId('file-tree-dir-node_modules')).toHaveCount(0)
     await page.getByTestId('file-show-ignored-toggle').click()
+    // 纯前端切换，瞬时可见
     await expect(page.getByTestId('file-tree-dir-node_modules')).toBeVisible({ timeout: 5_000 })
   })
 

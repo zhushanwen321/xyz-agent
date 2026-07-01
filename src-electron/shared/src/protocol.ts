@@ -109,8 +109,8 @@ export interface ClientMessageMap {
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
   'file.read': { path: string; sessionId?: string }
-  'file.tree': { sessionId: string; showIgnored?: boolean }
-  'file.tree.expand': { sessionId: string; path: string; showIgnored?: boolean }
+  'file.tree': { sessionId: string }
+  'file.tree.expand': { sessionId: string; path: string }
   /** file.search：composer # 文件候选，全量递归当前 cwd（受 ignore 过滤 + 深度上限 8 + DoS 上限 5000）*/
   'file.search': { sessionId: string; showIgnored?: boolean }
   'git.diff': { sessionId: string; path: string }

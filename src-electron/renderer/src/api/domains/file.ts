@@ -15,12 +15,12 @@ import * as pending from '../pending'
 
 /**
  * 文件树首加载（UC-1）。返回顶层 + 一级子 FileNode[]。
- * @param showIgnored true 时 ignored 节点保留并标 ignored=true（D-020）
+ * ignored 节点始终返回并标 ignored=true，前端按 showIgnored 开关本地过滤。
  */
-export function tree(sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
+export function tree(sessionId: string): Promise<FileNode[]> {
   const id = pending.create()
   const result = pending.register<{ sessionId: string; tree: FileNode[] }>(id)
-  transport.send({ type: 'file.tree', id, payload: { sessionId, showIgnored } })
+  transport.send({ type: 'file.tree', id, payload: { sessionId } })
   return result.then((r) => r.tree)
 }
 
@@ -28,10 +28,10 @@ export function tree(sessionId: string, showIgnored?: boolean): Promise<FileNode
  * 展开目录单层子（UC-3）。
  * @param path 相对 cwd 的目录路径（如 'src/utils'）
  */
-export function expand(sessionId: string, path: string, showIgnored?: boolean): Promise<FileNode[]> {
+export function expand(sessionId: string, path: string): Promise<FileNode[]> {
   const id = pending.create()
   const result = pending.register<{ sessionId: string; children: FileNode[] }>(id)
-  transport.send({ type: 'file.tree.expand', id, payload: { sessionId, path, showIgnored } })
+  transport.send({ type: 'file.tree.expand', id, payload: { sessionId, path } })
   return result.then((r) => r.children)
 }
 

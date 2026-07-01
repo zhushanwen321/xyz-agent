@@ -10,7 +10,7 @@
  * - T1.6 session 不存在（getSummary=undefined）→ FileError('session_not_found')
  * - T2.1 expandDir 单层（不递归）
  * - T2.10 expandDir 越界（相对 ../）→ FileError('out_of_cwd')
- * - AC-2.x ignore 双模式：默认隐藏 / showIgnored=true 保留+标记 ignored=true
+ * - AC-2.x ignore 标记：.gitignore 命中节点始终保留并标 ignored=true（前端按开关过滤）
  * - readFile 截断（stat.size > MAX_FILE_SIZE → truncated=true）
  *
  * mock 策略（test-strategy §2.2，照 git-service.test.ts 范式）：
@@ -122,7 +122,7 @@ describe('FileService.listTree (#2 首加载)', () => {
     expect(executor.listDir).not.toHaveBeenCalled()
   })
 
-  it('AC-2.x ignore 默认模式：.gitignore 含 node_modules → 默认隐藏（被过滤）', async () => {
+  it('AC-2.x ignore 标记：.gitignore 命中节点始终保留并标 ignored=true（前端按开关过滤）', async () => {
     executor.readFile.mockResolvedValueOnce('node_modules\n') // /repo/.gitignore
     executor.listDir
       .mockResolvedValueOnce([
@@ -130,38 +130,22 @@ describe('FileService.listTree (#2 首加载)', () => {
         { name: 'src', type: 'dir' },
         { name: 'package.json', type: 'file', size: 10 },
       ] as FsEntry[])
-      // node_modules 被过滤，不展开；src 展开
-      .mockResolvedValueOnce([{ name: 'index.ts', type: 'file', size: 5 }] as FsEntry[])
+      // 两个 dir 都展开一级子（node_modules 不再被丢弃，仍下钻拿一级子）
+      .mockResolvedValueOnce([] as FsEntry[]) // node_modules 子
+      .mockResolvedValueOnce([{ name: 'index.ts', type: 'file', size: 5 }] as FsEntry[]) // src 子
 
-    const tree = await svc().listTree('s1') // 默认 showIgnored=false
+    const tree = await svc().listTree('s1')
 
-    // node_modules 被过滤（只剩 src + package.json）
-    expect(tree.map((n) => n.name).sort()).toEqual(['package.json', 'src'])
-    // 过滤的 node 不触达其 listDir（仅 src 触发 1 次子层）
-    expect(executor.listDir).toHaveBeenCalledTimes(2)
-    // 保留的节点不应带 ignored 标志（默认模式不标记）
-    expect(tree.every((n) => n.ignored === undefined)).toBe(true)
-  })
-
-  it('AC-2.x ignore 显示模式：showIgnored=true → node_modules 保留且 ignored=true', async () => {
-    executor.readFile.mockResolvedValueOnce('node_modules\n')
-    executor.listDir
-      .mockResolvedValueOnce([
-        { name: 'node_modules', type: 'dir' },
-        { name: 'src', type: 'dir' },
-      ] as FsEntry[])
-      // 两个 dir 都展开一级子
-      .mockResolvedValueOnce([] as FsEntry[])
-      .mockResolvedValueOnce([] as FsEntry[])
-
-    const tree = await svc().listTree('s1', true) // showIgnored=true
-
+    // 全部保留（node_modules 不再被过滤）
+    expect(tree.map((n) => n.name).sort()).toEqual(['node_modules', 'package.json', 'src'])
     const nm = tree.find((n) => n.name === 'node_modules')
     const src = tree.find((n) => n.name === 'src')
+    const pkg = tree.find((n) => n.name === 'package.json')
     expect(nm).toBeDefined()
-    expect(nm!.ignored).toBe(true) // 保留并标记
+    expect(nm!.ignored).toBe(true) // .gitignore 命中 → 标记 ignored=true
     expect(src).toBeDefined()
     expect(src!.ignored).toBeUndefined() // 非 ignore 节点不标记
+    expect(pkg!.ignored).toBeUndefined()
   })
 
   it('AC-2.x 排序：dir 在前、同类型内 name 降序（listTree 顶层 + 子层一致）', async () => {

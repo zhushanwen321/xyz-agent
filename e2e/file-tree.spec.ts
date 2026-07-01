@@ -152,13 +152,16 @@ test.describe('文件树 E2E', () => {
     await expect(page.getByTestId('file-tree-file-package.json')).toBeVisible()
   })
 
-  test('D-020 showIgnored: 开关切换 → ignored 节点显示/隐藏', async ({ page }) => {
+  test('D-020 showIgnored: 开关切换 → ignored 节点瞬时显示/隐藏（前端 computed 过滤，无重拉闪烁）', async ({ page }) => {
     await gotoFileTree(page)
-    // 默认 showIgnored=false：node_modules 不存在
+    // 默认 showIgnored=false：node_modules 被前端 computed 过滤（数据在 store 但不渲染）
     await expect(page.getByTestId('file-tree-dir-node_modules')).toHaveCount(0)
-    // 点「忽略项」开关
+    // 点「忽略项」开关 → 纯前端 computed 切换，无网络重拉
     await page.getByTestId('file-show-ignored-toggle').click()
-    // showIgnored=true：node_modules 出现（mock MOCK_IGNORED）
+    // showIgnored=true：node_modules 立即出现（mock MOCK_IGNORED 始终返回并标 ignored=true）
     await expect(page.getByTestId('file-tree-dir-node_modules')).toBeVisible({ timeout: 5_000 })
+    // 再点关掉 → 立即隐藏
+    await page.getByTestId('file-show-ignored-toggle').click()
+    await expect(page.getByTestId('file-tree-dir-node_modules')).toHaveCount(0)
   })
 })

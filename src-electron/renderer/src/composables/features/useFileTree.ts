@@ -54,9 +54,10 @@ export function useFileTree() {
     }
 
     // 未缓存 → 并行拉取（file.tree + git.status overlay 独立，Promise.allSettled）
+    // file.tree 始终返回 ignored 节点（标 ignored=true），前端按 store.showIgnored 本地过滤
     store.setNodeState(sessionId, '', { status: 'loading' })
     const [treeResult, overlayResult] = await Promise.allSettled([
-      fileApi.tree(sessionId, store.showIgnored),
+      fileApi.tree(sessionId),
       gitApi.status(sessionId),
     ])
 
@@ -116,7 +117,7 @@ export function useFileTree() {
     store.setNodeState(sessionId, path, { status: 'loading' })
     markInFlight(sessionId, path)
     try {
-      const children = await fileApi.expand(sessionId, path, store.showIgnored)
+      const children = await fileApi.expand(sessionId, path)
       // 在途切 session 丢弃 stale（AC-3.7）——校验当前 store 的 session 上下文仍一致
       // （此处 sessionId 是闭包捕获的请求发起时的值，store 状态可能已变；setNodeState 仍写原 sessionId 分桶）
       store.setNodeState(sessionId, path, { status: 'loaded' }, children)

@@ -48,7 +48,7 @@ describe('useFileTree.loadTree 编排', () => {
     const store = useFileTreeStore()
     await loadTree('s1')
 
-    expect(mockFileTree).toHaveBeenCalledWith('s1', false)
+    expect(mockFileTree).toHaveBeenCalledWith('s1')
     expect(store.getTree('s1')).toEqual(nodes)
     expect(store.getGitStatus('s1', 'src/x.ts')?.status).toBe('modified')
     expect(store.getNodeState('s1', '').status).toBe('loaded')
@@ -138,7 +138,7 @@ describe('useFileTree.expandNode T2.3/T2.4/T2.5', () => {
     const { expandNode } = useFileTree()
     await expandNode('s1', 'src')
 
-    expect(mockFileExpand).toHaveBeenCalledWith('s1', 'src', false)
+    expect(mockFileExpand).toHaveBeenCalledWith('s1', 'src')
     expect(store.getNodeState('s1', 'src').status).toBe('loaded')
     expect(store.getTree('s1')![0].children).toEqual(children)
   })
@@ -154,7 +154,7 @@ describe('useFileTree.expandNode T2.3/T2.4/T2.5', () => {
     const { expandNode } = useFileTree()
     await expandNode('s1', 'src')
 
-    expect(mockFileExpand).toHaveBeenCalledWith('s1', 'src', false) // 重发
+    expect(mockFileExpand).toHaveBeenCalledWith('s1', 'src') // 重发
     expect(store.getNodeState('s1', 'src').status).toBe('loaded') // 重试成功
   })
 

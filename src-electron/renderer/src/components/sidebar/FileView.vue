@@ -35,7 +35,10 @@
 
       <!-- 过滤框：实时按 path 模糊匹配（store.filterText，useFileTree.setFilter 驱动） -->
       <div class="relative px-2 pb-1.5">
-        <Search class="pointer-events-none absolute left-4 top-1/2 size-3 -translate-y-1/2 text-subtle" />
+        <!-- 图标按 input(h-6=24px) 高度居中：top-3(12px)=input 中心，再 -translate-y-1/2。
+             不能用 top-1/2：容器有 pb-1.5(底部6px) 无顶部 padding，容器 box 高 30px，
+             top-1/2=15px 会让图标相对整个容器居中而偏低 3px（padding/2）。 -->
+        <Search class="pointer-events-none absolute left-4 top-3 size-3 -translate-y-1/2 text-subtle" />
         <Input
           :model-value="store.filterText"
           class="h-6 pl-6 pr-2 text-[11px]"
@@ -129,11 +132,18 @@ function nodeMatchesFilter(node: FileNode, q: string): boolean {
 
 const hasFilter = computed(() => store.filterText.trim().length > 0)
 
-/** 过滤后的可见顶层节点（无过滤 = 全量；有过滤 = 保留子树含命中的顶层节点） */
+/**
+ * 过滤后的可见顶层节点：
+ * - showIgnored 关：剔除 ignored 节点（FileTreeRow 内部对 children 同样递归剔除）
+ * - filterText：保留子树含命中的顶层节点（nodeMatchesFilter）
+ */
 const visibleNodes = computed<FileNode[]>(() => {
   const q = store.filterText.trim().toLowerCase()
-  if (!q) return treeNodes.value
-  return treeNodes.value.filter((n) => nodeMatchesFilter(n, q))
+  const afterIgnore = store.showIgnored
+    ? treeNodes.value
+    : treeNodes.value.filter((n) => !n.ignored)
+  if (!q) return afterIgnore
+  return afterIgnore.filter((n) => nodeMatchesFilter(n, q))
 })
 
 /** 过滤输入：透传 useFileTree.setFilter（#4） */
@@ -146,13 +156,13 @@ function retry(): void {
   void loadTree(props.sessionId)
 }
 
-/** 切换 showIgnored（D-020：显示/隐藏 gitignore 忽略项，切换后重 loadTree 拿 ignored 节点） */
+/**
+ * 切换 showIgnored：纯前端 computed 过滤（与过滤框同机制），瞬时无闪烁。
+ * tree 已含全部 ignored 节点（后端始终返回并标记），切换只改 store.showIgnored，
+ * visibleNodes computed + FileTreeRow.visibleChildren 同步重算，无需重拉。
+ */
 function onToggleShowIgnored(): void {
   toggleShowIgnored()
-  // 切换后需重 loadTree（showIgnored 影响 FileService 过滤，store 缓存的 tree 不含 ignored 节点）
-  // 清缓存重拉：直接调 loadTree，但因已缓存会跳过。这里强制清该 session 的 tree 后重拉。
-  store.clearSession(props.sessionId)
-  void loadTree(props.sessionId)
 }
 
 /**

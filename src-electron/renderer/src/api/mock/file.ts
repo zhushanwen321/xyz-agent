@@ -6,6 +6,9 @@
  *
  * [E2E 数据自洽] MOCK_TREE/MOCK_EXPAND 的路径与 mock/git.ts fixtureGitStatus 对齐，
  * 使 E2E 能验证角标渲染（git overlay per-path 挂载）。
+ *
+ * ignore 策略：与 real FileService 一致——始终返回 ignored 节点并标 ignored=true，
+ * 前端按 showIgnored 开关做本地 computed 过滤。
  */
 import type { FileNode } from '@xyz-agent/shared'
 
@@ -42,7 +45,7 @@ const MOCK_TREE: FileNode[] = [
   { path: 'package.json', name: 'package.json', type: 'file', size: 200 },
 ]
 
-/** mock 被忽略的文件 fixture（D-020，仅 showIgnored=true 时返回并标 ignored=true） */
+/** mock 被忽略的文件 fixture（始终返回并标 ignored=true，前端按 showIgnored 开关过滤） */
 const MOCK_IGNORED: FileNode[] = [
   { path: 'node_modules', name: 'node_modules', type: 'dir' },
   { path: 'dist', name: 'dist', type: 'dir' },
@@ -63,19 +66,17 @@ function cloneNode(n: FileNode): FileNode {
 }
 
 export const file = {
-  async tree(_sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
+  async tree(_sessionId: string): Promise<FileNode[]> {
     await sleep(MOCK_ACK_MS)
     const nodes = MOCK_TREE.map(cloneNode)
-    // D-020：showIgnored=true 时追加 ignored 节点并标 ignored=true（灰斜体渲染）
-    if (showIgnored) {
-      for (const ig of MOCK_IGNORED) {
-        nodes.push({ ...ig, ignored: true })
-      }
+    // 始终追加 ignored 节点并标 ignored=true（与 real FileService 契约一致，灰斜体渲染 / 本地过滤）
+    for (const ig of MOCK_IGNORED) {
+      nodes.push({ ...ig, ignored: true })
     }
     return nodes
   },
 
-  async expand(_sessionId: string, path: string, _showIgnored?: boolean): Promise<FileNode[]> {
+  async expand(_sessionId: string, path: string): Promise<FileNode[]> {
     await sleep(MOCK_ACK_MS)
     return (MOCK_EXPAND[path] ?? []).map(cloneNode)
   },

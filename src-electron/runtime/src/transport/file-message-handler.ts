@@ -47,18 +47,18 @@ export class FileMessageHandler {
   async handleFileMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'file.tree': {
-        const { sessionId, showIgnored } = msg.payload
+        const { sessionId } = msg.payload
         try {
-          const tree = await this.ctx.fileService.listTree(sessionId, showIgnored)
+          const tree = await this.ctx.fileService.listTree(sessionId)
           return this.ctx.reply(ws, msg.id, 'file.tree:result', { sessionId, tree: tree as unknown as Record<string, unknown>[] })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId, e)
         }
       }
       case 'file.tree.expand': {
-        const { sessionId, path, showIgnored } = msg.payload
+        const { sessionId, path } = msg.payload
         try {
-          const children = await this.ctx.fileService.expandDir(sessionId, path, showIgnored)
+          const children = await this.ctx.fileService.expandDir(sessionId, path)
           return this.ctx.reply(ws, msg.id, 'file.tree.expand:result', { sessionId, children: children as unknown as Record<string, unknown>[] })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId, e)

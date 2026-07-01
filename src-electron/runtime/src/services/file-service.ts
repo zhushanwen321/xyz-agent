@@ -1,11 +1,11 @@
 /**
  * FileService —— 文件树编排深模块（code-architecture §3，#2/#7/#16，D-008 三层+port）。
  *
- * 职责（单一变化轴「文件树编排」）：cwd 解析 / 越界统一守门 / 懒加载分层 / ignore 双模式 / readFile 截断。
+ * 职责（单一变化轴「文件树编排」）：cwd 解析 / 越界统一守门 / 懒加载分层 / ignore 标记 / readFile 截断。
  *
  * 数据流（§4 功能1）：listTree → sessionService.getSummary(sid).cwd → isUnderOrEqual 守门 →
  *   executor.listDir ×N（1+M 次，F-1：顶层 1 次 + 每个顶层 dir 再 1 次拿一级子）→
- *   ignore-parser 双模式过滤 → FileNode[]（path 相对 cwd，不含前导斜杠）。
+ *   ignore-parser 标记（命中的节点标 ignored=true，前端按开关过滤）→ FileNode[]（path 相对 cwd，不含前导斜杠）。
  *
  * 分层：FileService 经 IFileExecutor（port）做 IO，经 shared 纯函数（compileIgnoreRules/matchPath）
  *   做 ignore 计算，经 ISessionService 取 cwd。不直接 import node:fs（AC-2 grep 验证）。
@@ -70,25 +70,26 @@ export class FileService {
 
   /**
    * 文件树首加载（UC-1，#2，AC-2.1/2.2/2.4，T1.1-1.6）。
-   * 编排：顶层 listDir(cwd) + 对每个顶层 dir 再 listDir（1+M 次，F-1）→ ignore 双模式过滤。
+   * 编排：顶层 listDir(cwd) + 对每个顶层 dir 再 listDir（1+M 次，F-1）→ ignore 标记。
    * 顶层 FileNode.path = name（相对 cwd）；dir 的一级子 children.path = name/sub（相对 cwd）。
    * 返回前按 sortNodes 排序（dir 在前、同类型内 name 降序），与 listLevel 一致。
+   *
+   * ignore 策略：始终返回所有节点，对 .gitignore 命中的节点标记 `ignored=true`，
+   * 由前端按 showIgnored 开关做本地 computed 过滤（瞬时切换不重拉，避免闪烁）。
    * @throws FileError('session_not_found' | 'permission_denied' | 'timeout')
    */
-  async listTree(sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
+  async listTree(sessionId: string): Promise<FileNode[]> {
     const cwd = this.requireCwd(sessionId)
     // 越界守门（NFR-AC-S2 统一守门，cwd 自身恒在子树内，守门为一致性）
     if (!isUnderOrEqual(cwd, cwd)) throw new FileError('out_of_cwd', cwd)
     const matcher = await this.loadMatcher(cwd)
     const topEntries = await this.callFs(() => this.opts.executor.listDir(cwd))
-    const showIgn = showIgnored ?? false
     const topNodes: FileNode[] = []
     for (const e of topEntries) {
       const node = this.entryToNode(e, '') // 顶层 relParent='' → path=name
-      if (matchPath(matcher, node.path) && !showIgn) continue // 默认隐藏 ignored
-      if (matchPath(matcher, node.path)) node.ignored = true // 显示模式：保留并标记
+      if (matchPath(matcher, node.path)) node.ignored = true // 标记 ignored，前端按开关过滤
       if (e.type === 'dir') {
-        node.children = await this.listLevel(join(cwd, e.name), e.name, matcher, showIgn)
+        node.children = await this.listLevel(join(cwd, e.name), e.name, matcher)
       }
       topNodes.push(node)
     }
@@ -97,15 +98,16 @@ export class FileService {
 
   /**
    * 展开目录单层子（UC-3，#3，AC-2.3/2.5，T2.1/T2.10）。
+   * 同 listTree 的 ignore 策略：始终返回所有节点并标记 ignored=true。
    * @throws FileError('out_of_cwd' | 'session_not_found' | 'permission_denied' | 'timeout')
    */
-  async expandDir(sessionId: string, path: string, showIgnored?: boolean): Promise<FileNode[]> {
+  async expandDir(sessionId: string, path: string): Promise<FileNode[]> {
     const cwd = this.requireCwd(sessionId)
     const resolvePath_ = resolvePath(cwd, path)
     if (!isUnderOrEqual(cwd, resolvePath_)) throw new FileError('out_of_cwd', path) // 越界统一守门
     const relParent = relative(cwd, resolvePath_) || '' // 相对 cwd 的目录路径（无前导斜杠）
     const matcher = await this.loadMatcher(cwd, resolvePath_)
-    return this.listLevel(resolvePath_, relParent, matcher, showIgnored ?? false)
+    return this.listLevel(resolvePath_, relParent, matcher)
   }
 
   /**
@@ -240,7 +242,8 @@ export class FileService {
   }
 
   /**
-   * 列单层并映射 FileNode（ignore 双模式过滤，D-020）。
+   * 列单层并映射 FileNode（ignore 标记）。
+   * 始终返回所有节点，对 .gitignore 命中的节点标记 ignored=true（前端按 showIgnored 开关过滤）。
    * 返回前按 sortNodes 排序（dir 在前、同类型内 name 降序）。
    * @param absPath  目录绝对路径（executor.listDir 用）
    * @param relParent 相对 cwd 的目录路径（FileNode.path 前缀，顶层为 ''）
@@ -249,15 +252,12 @@ export class FileService {
     absPath: string,
     relParent: string,
     matcher: IgnoreMatcher,
-    showIgnored: boolean,
   ): Promise<FileNode[]> {
     const entries = await this.callFs(() => this.opts.executor.listDir(absPath))
     const nodes: FileNode[] = []
     for (const e of entries) {
       const node = this.entryToNode(e, relParent)
-      const ignored = matchPath(matcher, node.path)
-      if (ignored && !showIgnored) continue // 默认隐藏 ignored
-      if (ignored) node.ignored = true // 显示模式：保留并标记
+      if (matchPath(matcher, node.path)) node.ignored = true // 标记 ignored，前端按开关过滤
       nodes.push(node)
     }
     return FileService.sortNodes(nodes)

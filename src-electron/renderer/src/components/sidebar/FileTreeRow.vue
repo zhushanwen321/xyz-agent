@@ -57,15 +57,15 @@
         </div>
         <template v-else>
           <FileTreeRow
-            v-for="child in node.children"
+            v-for="child in visibleChildren"
             :key="child.path"
             :node="child"
             :depth="depth + 1"
             :session-id="sessionId"
           />
-          <!-- 已加载但空目录 -->
+          <!-- 已加载但空目录（按过滤后判定：全部 ignored 被过滤后也视为空） -->
           <div
-            v-if="node.children && node.children.length === 0"
+            v-if="node.children && visibleChildren.length === 0"
             class="py-1 pr-2 font-mono text-[10.5px] text-subtle italic"
             :style="childHintPaddingStyle"
           >
@@ -151,6 +151,15 @@ const childHintPaddingStyle = computed(() => ({
 
 /** 展开态从 store 读（D-019 rehydrate：切回 session 自动恢复） */
 const isExpanded = computed(() => store.getExpanded(props.sessionId).has(props.node.path))
+
+/**
+ * 渲染用子节点：showIgnored 关时递归剔除 ignored（与 FileView.visibleNodes 同策略）。
+ * 后端始终返回 ignored 节点并标记，过滤纯前端完成，切换瞬时无闪烁。
+ */
+const visibleChildren = computed<FileNode[]>(() => {
+  const children = props.node.children ?? []
+  return store.showIgnored ? children : children.filter((c) => !c.ignored)
+})
 
 /** 目录加载态（loading/error/其它）—— 用于展开在途指示 */
 const dirState = computed(() => store.getNodeState(props.sessionId, props.node.path).status)
