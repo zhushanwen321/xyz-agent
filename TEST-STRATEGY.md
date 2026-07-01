@@ -88,6 +88,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 | **emit 单 payload** | emit 不传多参数 | CLAUDE.md 规则#1 | - |
 | **runtime broadcast 时序** | session 级 broadcast 早于 renderer 订阅会丢消息；切换/创建 session 后需立即消费的状态必须主动拉取（`session.getCommands` RPC） | `2026-06-28-lite-slash-command-fix` | U1-U3 + U4/U5（见上） |
 | **搜索查询乱序守卫** | useSearch.query 内 loadSeq 自增序列号，await 后 `seq !== loadSeq` 丢弃旧响应；快速连续查询时旧响应晚到不得覆盖新结果（数据错乱=事故） | NFR S-8 `[from: 2026-06-30-search-modal §execution T1.12]` | `src/__tests__/composables/useSearch.test.ts` T1.12（BC-9 乱序 loadSeq 守卫）+ T3.10（file 分级匹配复用）|
+| **搜索 slash 命令注入链路** | SearchModal 点击 slash 命令 → commandStore.pendingSlash 一次性通道 → Composer watch 消费 → insertSlashChip 注入 chip。watch 非 immediate（防残留误注入）+ sessionId 过滤（split 不串台）+ 先注入后清除（防读到 null）。commandKind 区分 slash/app（pi 命令名无 / 前缀，不可靠 title 猜测） | `2026-07-01-search-slash-injection`（injectSlash 回调断链 + commandKind 误判） `[from: 2026-07-01-search-slash-injection §plan]` | `src/__tests__/panel/composer-slash-injection.test.ts`（U12-U16,U18）+ `src/__tests__/composables/useSearchJump.test.ts`（U7-U11 commandKind 分发）+ `src/__tests__/stores/command-store.test.ts`（U1-U4 pendingSlash 通道）|
 
 ## 5. mock 策略
 
