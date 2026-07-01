@@ -49,6 +49,19 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
+   * 更新 session 的模型/思考等级状态（session.state_changed 广播驱动）。
+   * 局部更新，非全量 setGroups —— 模型切换后 runtime 推送新 modelId/thinkingLevel，
+   * 前端据此同步 Composer 工具条，不触发整表覆盖（避免磁盘 session 的 '' modelId 覆盖真值）。
+   * patch 中 undefined 字段跳过（不更新）。
+   */
+  function updateSessionState(id: string, patch: { modelId?: string; thinkingLevel?: string }): void {
+    const target = list.value.find((s) => s.id === id)
+    if (!target) return
+    if (patch.modelId !== undefined) target.modelId = patch.modelId
+    if (patch.thinkingLevel !== undefined) target.thinkingLevel = patch.thinkingLevel
+  }
+
+  /**
    * 从分组移除 session；移空组时连同组移除（不留空组标题）。
    * 若移除的是 active，回退到列表首项。
    */
@@ -76,5 +89,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { groups, list, activeId, active, derivedStatus, setGroups, appendSession, updateLabel, removeFromList }
+  return { groups, list, activeId, active, derivedStatus, setGroups, appendSession, updateLabel, updateSessionState, removeFromList }
 })

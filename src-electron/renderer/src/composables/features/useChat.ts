@@ -68,6 +68,19 @@ function ensureStreamSubscription(
         }
         break
       }
+      case 'session.state_changed': {
+        // 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel
+        // + 按新 contextWindow 重算的用量）。局部更新 session 状态，不触发整表 setGroups。
+        // thinkingLevel optional：未设置时（undefined）不更新，保留旧值。
+        const p = msg.payload as { sessionId?: string; modelId?: string; thinkingLevel?: string }
+        if (p.sessionId) {
+          sessionStore.updateSessionState(p.sessionId, {
+            ...(p.modelId !== undefined && { modelId: p.modelId }),
+            ...(p.thinkingLevel !== undefined && { thinkingLevel: p.thinkingLevel }),
+          })
+        }
+        break
+      }
       default:
         break
     }
