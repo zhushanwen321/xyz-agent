@@ -200,45 +200,29 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
       return
     }
 
-    // 重启策略判定
-    if (!this.policy.shouldRestart()) {
-      console.error(`[runtime] Restart attempts exhausted (${this.policy.count}). Broadcasting runtime-failed.`)
-      this.broadcastToAllWindows('runtime-failed', {
-        attempts: this.policy.count,
-        message: `runtime 崩溃后已重试 ${this.policy.count} 次仍失败`,
-      })
-      return
-    }
-
-    const delay = this.policy.recordCrashAndGetDelay()
-    const attempt = this.policy.count
-    console.log(`[runtime] Restart attempt ${attempt} scheduled in ${delay}ms`)
-
-    // 广播重启中状态（前端进 restarting 态，展示状态条）
-    this.broadcastToAllWindows('runtime-restarting', { attempt })
-
-    this.restartTimer = setTimeout(async () => {
-      this.restartTimer = null
-      try {
-        const newPort = await this.start()
-        console.log(`[runtime] Restart succeeded on port ${newPort}`)
-        // 广播新端口（所有窗口重连）
-        this.broadcastToAllWindows('runtime-port', newPort)
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e)
-        console.error(`[runtime] Restart attempt ${attempt} failed: ${message}`)
-        // 重启失败 → 当作又一次崩溃，递归走 onRuntimeExit 逻辑（但 child 已 null，
-        // 需手动触发判定。start() 失败不会触发 exit 事件，故直接再判定一次）
-        this.handleRestartFailure()
-      }
-    }, delay)
+    this.scheduleRestart('crash')
   }
 
   /**
    * 重启失败后处理（start() 抛错路径，不会触发 onExit）。
-   * 递归走 onRuntimeExit 的判定逻辑（计数已在上次 recordCrash 递增）。
+   * 递归走重启判定逻辑（计数已在上次 recordCrash 递增）。
    */
   private handleRestartFailure(): void {
+    this.scheduleRestart('after failure')
+  }
+
+  /**
+   * 统一重启编排：shouldRestart 门 → recordCrashAndGetDelay → 广播 'runtime-restarting'
+   * → setTimeout(attemptRestart)。crash 路径（onRuntimeExit）与 after-failure 路径
+   * （handleRestartFailure）共用，仅入口 reason 不同（日志区分）。
+   *
+   * 行为不变量（与重构前逐字一致）：
+   * - shouldRestart=false → 广播 'runtime-failed'（attempts + 中文 message）后返回
+   * - 延迟由 policy.recordCrashAndGetDelay 给出（指数退避，计数递增）
+   * - 广播 'runtime-restarting' { attempt }（前端进 restarting 态）
+   * - attemptRestart 成功广播 'runtime-port'，失败递归 handleRestartFailure
+   */
+  private scheduleRestart(reason: 'crash' | 'after failure'): void {
     if (!this.policy.shouldRestart()) {
       console.error(`[runtime] Restart attempts exhausted (${this.policy.count}). Broadcasting runtime-failed.`)
       this.broadcastToAllWindows('runtime-failed', {
@@ -249,7 +233,7 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     }
     const delay = this.policy.recordCrashAndGetDelay()
     const attempt = this.policy.count
-    console.log(`[runtime] Restart attempt ${attempt} scheduled in ${delay}ms (after failure)`)
+    console.log(`[runtime] Restart attempt ${attempt} scheduled in ${delay}ms${reason === 'after failure' ? ' (after failure)' : ''}`)
     this.broadcastToAllWindows('runtime-restarting', { attempt })
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null

@@ -21,7 +21,7 @@ import type { FileNode, IgnoreMatcher } from '@xyz-agent/shared'
 import { compileIgnoreRules, matchPath } from '@xyz-agent/shared'
 import { isUnderOrEqual } from '../utils/path-utils.js'
 import type { IFileExecutor, FsEntry } from './ports/file-executor.js'
-import type { ISessionService } from '../interfaces.js'
+import type { ISessionService, IFileService } from '../interfaces.js'
 import { FileError } from './file-error.js'
 
 /** FileService 依赖（accept deps，可测性：executor + sessionService 经构造注入）。 */
@@ -65,7 +65,7 @@ export const BUILTIN_IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.cache', '.turbo',
 ])
 
-export class FileService {
+export class FileService implements IFileService {
   constructor(private opts: FileServiceOptions) {}
 
   /**

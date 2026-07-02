@@ -17,8 +17,11 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
   PluginInfo,
+  GitStatusResult,
+  FileNode,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
+import type { TreeData, NavigateResult, ForkResult } from './types.js'
 
 /**
  * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
@@ -247,4 +250,54 @@ export interface IPluginService {
   handleBridgeToolExecute?(request: import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest): Promise<import('./services/plugin-service/plugin-types.js').BridgeToolExecuteResponse>
   handleBridgeEvent?(eventName: string, data: unknown, sessionId: string): void
   handleBridgeIntercept?(eventName: string, data: Record<string, unknown>, sessionId: string): Promise<import('./services/plugin-service/plugin-types.js').BridgeInterceptResponse>
+}
+
+// ── IGitService ───────────────────────────────────────────────────
+
+/**
+ * Git 域 service port（与 ISessionService / IExtensionService 对称的 DI seam）。
+ * GitMessageHandler 经此接口依赖 git 能力，不直接 import 具体的 GitService 类。
+ * 方法签名与 GitService（services/git-service.ts）逐字对齐——行为保持不变。
+ */
+export interface IGitService {
+  getStatus(sessionId: string): Promise<GitStatusResult>
+  getFileDiff(sessionId: string, path: string): Promise<{ patch: string; binary: boolean }>
+  stage(sessionId: string, filePaths?: string[]): Promise<void>
+  unstage(sessionId: string, filePaths?: string[]): Promise<void>
+  commit(sessionId: string, message?: string): Promise<void>
+  checkout(sessionId: string, name: string): Promise<void>
+  createBranch(sessionId: string, name: string): Promise<void>
+}
+
+// ── IFileService ──────────────────────────────────────────────────
+
+/**
+ * 文件树编排 service port（与 ISessionService / IExtensionService 对称的 DI seam）。
+ * FileMessageHandler 经此接口依赖文件树能力，不直接 import 具体的 FileService 类。
+ * 方法签名与 FileService（services/file-service.ts）逐字对齐——行为保持不变。
+ */
+export interface IFileService {
+  listTree(sessionId: string): Promise<FileNode[]>
+  expandDir(sessionId: string, path: string): Promise<FileNode[]>
+  searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]>
+  readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }>
+  readFileFromWhitelist(path: string): Promise<{ content: string; truncated: boolean }>
+  createFile(sessionId: string, path: string, content: string): Promise<never>
+  renameFile(sessionId: string, oldPath: string, newPath: string): Promise<never>
+  deleteFile(sessionId: string, path: string): Promise<never>
+}
+
+// ── ITreeService ──────────────────────────────────────────────────
+
+/**
+ * Session tree service port（与 ISessionService / IExtensionService 对称的 DI seam）。
+ * TreeMessageHandler 经此接口依赖 tree 能力，不直接 import 具体的 TreeService 类。
+ * 方法签名取 TreeService（services/tree-service.ts）中 handler 实际调用的公开方法。
+ */
+export interface ITreeService {
+  getTree(sessionId: string): Promise<TreeData>
+  navigateTree(sessionId: string, targetEntryId: string): Promise<NavigateResult>
+  forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult>
+  cloneSession(sessionId: string): Promise<ForkResult>
+  isNavigateCapable(sessionId: string): boolean
 }

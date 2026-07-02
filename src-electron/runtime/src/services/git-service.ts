@@ -19,7 +19,7 @@
 import { resolve as resolvePath } from 'node:path'
 import type { GitStatusResult } from '@xyz-agent/shared'
 import { parseGitStatus, deriveCounts, parseNumstat, parseNumstatByFile } from '@xyz-agent/shared'
-import type { ISessionService } from '../interfaces.js'
+import type { ISessionService, IGitService } from '../interfaces.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from './ports/git-executor.js'
 import { GitExecutorError } from './ports/git-executor.js'
 import { isUnderOrEqual } from '../utils/path-utils.js'
@@ -60,7 +60,7 @@ function notRepoResult(sessionId: string): GitStatusResult {
   }
 }
 
-export class GitService {
+export class GitService implements IGitService {
   constructor(private opts: GitServiceOptions) {}
 
   private getCwd(sessionId: string): string {

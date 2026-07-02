@@ -17,13 +17,13 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
-import type { FileService } from '../services/file-service.js'
+import type { IFileService } from '../interfaces.js'
 import { FileError } from '../services/file-error.js'
 import { sendHandlerError } from './handler-utils.js'
 
 /** File handler 的上下文（extends 共享发消息契约 + 领域依赖） */
 export interface FileHandlerContext extends MessageHandlerContext {
-  fileService: FileService
+  fileService: IFileService
 }
 
 export class FileMessageHandler {

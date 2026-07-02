@@ -4,15 +4,14 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
-import type { ISessionService } from '../interfaces.js'
-import type { TreeService } from '../services/tree-service.js'
+import type { ISessionService, ITreeService } from '../interfaces.js'
 import type { MessageHandlerContext } from './message-context.js'
 import { isNotFound } from '../utils/errors.js'
 
 /** D9: TreeHandlerContext 现在正确 extends MessageHandlerContext（此前自声明 send、未继承基接口）。 */
 export interface TreeHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
-  treeService: TreeService
+  treeService: ITreeService
   broadcastSessionList(): void
 }
 

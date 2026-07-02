@@ -17,15 +17,14 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
-import type { ISessionService } from '../interfaces.js'
-import type { GitService } from '../services/git-service.js'
+import type { ISessionService, IGitService } from '../interfaces.js'
 import { GitError } from '../services/git-service.js'
 import { sendHandlerError } from './handler-utils.js'
 
 /** Interface for server methods needed by this handler */
 export interface GitHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
-  gitService: GitService
+  gitService: IGitService
   /**
    * 广播 changeSet 失效通知（ADR-0024 D5 重构）。commit 成功后工作区 diff 已重置，
    * 旧的 changeSet 卡片成为过期数据。server 注入此方法向所有订阅该 session 的前端广播。
