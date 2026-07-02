@@ -72,12 +72,12 @@ describe('ContextCapacityPopover 订阅 session.state_changed', () => {
     })
     await flushPromises()
 
-    // 未收到目标 session 的推送，hasData=false，显示「—」
-    const text = wrapper.find('[title="上下文容量"]').text()
-    expect(text).toContain('—')
+    // 未收到目标 session 的推送，hasData=false → 按钮隐藏（v-show 设 display:none）
+    const btn = wrapper.find('[title="上下文容量"]')
+    expect(btn.element.style.display).toBe('none')
   })
 
-  it('U31: 切换后 contextLimit=0（模型未配 contextWindow）→ hasData=false，显示「—」', async () => {
+  it('U31: 切换后 contextLimit=0（模型未配 contextWindow）→ hasData=false，按钮隐藏', async () => {
     const wrapper = mount(ContextCapacityPopover, {
       props: { sessionId: 's2' },
     })
@@ -96,8 +96,9 @@ describe('ContextCapacityPopover 订阅 session.state_changed', () => {
     })
     await flushPromises()
 
-    const text = wrapper.find('[title="上下文容量"]').text()
-    expect(text).toContain('—')
+    // contextLimit=0 → hasData=false → 按钮隐藏
+    const btn = wrapper.find('[title="上下文容量"]')
+    expect(btn.element.style.display).toBe('none')
   })
 
   it('context.update 仍正常工作（不回归）', async () => {

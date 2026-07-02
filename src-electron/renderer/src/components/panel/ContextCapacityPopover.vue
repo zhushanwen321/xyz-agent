@@ -8,6 +8,7 @@
   <HoverCard>
     <HoverCardTrigger>
       <Button
+        v-show="hasData"
         variant="ghost"
         :class="
           cn(
@@ -17,9 +18,9 @@
         "
         title="上下文容量"
       >
-        <span class="tabular-nums">{{ hasData ? usedWan : '—' }}</span>
+        <span class="tabular-nums">{{ usedWan }}</span>
         <span aria-hidden="true">·</span>
-        <span class="tabular-nums">{{ hasData ? `${stats.percent}%` : '—' }}</span>
+        <span class="tabular-nums">{{ stats.percent }}%</span>
       </Button>
     </HoverCardTrigger>
     <HoverCardContent side="top" class="w-[260px] p-0">
