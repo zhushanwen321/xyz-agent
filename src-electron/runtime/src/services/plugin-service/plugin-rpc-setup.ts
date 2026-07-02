@@ -12,50 +12,34 @@ import type { StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js
 import type { SessionDataStore } from './session-data-store.js'
 import { registerToolRpcHandlers } from './tool-api.js'
 import { registerHookRpcHandlers } from './hook-api.js'
-import { registerSessionRpcHandlers } from './api/session-api.js'
-import { registerConfigRpcHandlers } from './api/config-api.js'
+import { registerSessionRpcHandlers, ActiveSessionResolver } from './api/session-api.js'
+import { registerConfigRpcHandlers, toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
+import { registerStorageRpcHandlers, storageHandlersFrom } from './api/storage-api.js'
+import { registerNotifyRpcHandler, notifyHandlersFrom } from './api/notify-api.js'
 import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
-import type { SessionSummary } from '../../../../shared/src/session.js'
 import type { ToolEntry } from './plugin-types.js'
 
 const MAX_FIND_FILES_RESULTS = 1000
 const DEFAULT_STATUS_BAR_PRIORITY = 100
 const MIN_MODEL_PARTS = 2
 
-// Lightweight cache for active session lookup (avoid full disk scan per RPC call)
-let _activeSessionCache: { sessionId: string; ts: number } | null = null
-// eslint-disable-next-line no-magic-numbers -- 2 seconds TTL for active session cache
-const ACTIVE_SESSION_CACHE_TTL_MS = 2 * 1000
-
-function findActiveSession(deps: IPluginServiceDeps): SessionSummary | undefined {
-  if (!deps.sessionService) return undefined
-  const now = Date.now()
-  if (_activeSessionCache && (now - _activeSessionCache.ts) < ACTIVE_SESSION_CACHE_TTL_MS) {
-    // Cache hit — look up session summary by cached ID (no full disk scan)
-    const cached = _activeSessionCache
-    const summary = deps.sessionService.getSummary(cached.sessionId)
-    if (summary) return summary
-    // Cached session no longer valid — fall through to full scan
-    _activeSessionCache = null
-  }
-  // Cache miss or expired — do the full scan
-  const groups = deps.sessionService.listPersistedSessions()
-  const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
-  if (active) {
-    _activeSessionCache = { sessionId: active.id, ts: now }
-  } else {
-    _activeSessionCache = null
-  }
-  return active
-}
-
-/** Test helper: clear the active session cache between tests */
+/**
+ * 向后兼容的 test helper（P6 后为 no-op）。
+ *
+ * 活跃 session 缓存已从模块级全局状态收口为 `ActiveSessionResolver` 实例（每个
+ * PluginService 持有自己的 resolver，缓存随实例生灭）。测试每个 beforeEach 创建
+ * 新 service，resolver 天然干净，故此 helper 不再需要真正清理——保留导出仅为不破坏
+ * 既有测试 import（plugin-agent-real.test.ts）。
+ */
 export function clearActiveSessionCache(): void {
-  _activeSessionCache = null
+  /* no-op: cache is now per-resolver-instance, see ActiveSessionResolver */
 }
+
+// Re-export：测试与外部仍可拿到 resolver 类型
+export { ActiveSessionResolver }
 
 export interface RpcSetupContext {
   rpcServer: PluginRpcServer
@@ -69,6 +53,8 @@ export interface RpcSetupContext {
   syncToolsToBridge: () => Promise<void>
   getDescriptor: (pluginId: string) => import('./plugin-types.js').PluginDescriptor | undefined
   sessionDataStore: SessionDataStore
+  /** 活跃 session 解析器（P6：替代模块级全局 _activeSessionCache） */
+  activeSessionResolver: ActiveSessionResolver
 }
 
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
@@ -86,36 +72,11 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     getDescriptor: ctx.getDescriptor,
   })
 
-  // Storage RPC methods — global + workspace scope（storage 已 sync，handler 保持 async 守 RPC 约定）
-  for (const scope of ['global', 'workspace'] as const) {
-    rpcServer.registerMethod(`plugin.storage.${scope}.get`, async (params) => {
-      return storage.get(params.pluginId as string, params.key as string, scope)
-    })
-    rpcServer.registerMethod(`plugin.storage.${scope}.set`, async (params) => {
-      storage.set(params.pluginId as string, params.key as string, params.value, scope)
-    })
-    rpcServer.registerMethod(`plugin.storage.${scope}.delete`, async (params) => {
-      storage.delete(params.pluginId as string, params.key as string, scope)
-    })
-    rpcServer.registerMethod(`plugin.storage.${scope}.keys`, async (params) => {
-      return storage.keys(params.pluginId as string, scope)
-    })
-  }
+  // Storage RPC handlers — P6 收口到 api/storage-api.ts（与其它域一致）
+  registerStorageRpcHandlers(rpcServer, storageHandlersFrom(storage))
 
-  // Notify RPC method
-  rpcServer.registerMethod('plugin.notify', async (params) => {
-    // Notify 是 fire-and-forget，直接通过 broadcastFn 或 broker 广播
-    const payload = {
-      pluginId: params.pluginId as string,
-      level: params.level as string,
-      message: params.message as string,
-    }
-    if (deps.broadcastFn) {
-      deps.broadcastFn('plugin:notification', payload)
-    } else {
-      console.warn('[plugin-rpc-setup] plugin.notify dropped: no broadcastFn configured')
-    }
-  })
+  // Notify RPC handler — P6 收口到 api/notify-api.ts（fire-and-forget via broadcastFn）
+  registerNotifyRpcHandler(rpcServer, notifyHandlersFrom(deps.broadcastFn))
 
   // ── Sessions RPC handlers ────────────────────────────────
   registerSessionRpcHandlers(rpcServer, {
@@ -138,7 +99,7 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       return { id: s.id, label: s.label, cwd: s.cwd, status: s.status, createdAt: 0, lastActiveAt: s.lastActiveAt }
     },
     getActiveSession: () => {
-      const active = findActiveSession(deps)
+      const active = ctx.activeSessionResolver.resolve()
       if (!active) return undefined
       return { id: active.id, label: active.label, cwd: active.cwd, status: active.status, createdAt: 0, lastActiveAt: active.lastActiveAt }
     },
@@ -149,22 +110,22 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   })
 
   // ── Config RPC handlers ──────────────────────────────────
+  // key 前缀约定委托 config-api（P7 收口），与 plugin-service.ts 共用单一真相源。
   registerConfigRpcHandlers(rpcServer, {
     get: async (pluginId: string, key: string) => {
-      return storage.get(pluginId, `config:${key}`)
+      return storage.get(pluginId, toConfigKey(key))
     },
     getAll: async (pluginId: string) => {
       const allKeys = storage.keys(pluginId)
-      const configKeys = allKeys.filter(k => k.startsWith('config:'))
+      const configKeys = allKeys.filter(isConfigKey)
       const result: Record<string, unknown> = {}
       for (const key of configKeys) {
-        const rawKey = key.replace('config:', '')
-        result[rawKey] = storage.get(pluginId, key)
+        result[fromConfigKey(key)] = storage.get(pluginId, key)
       }
       return result
     },
     set: async (pluginId: string, key: string, value: unknown) => {
-      storage.set(pluginId, `config:${key}`, value)
+      storage.set(pluginId, toConfigKey(key), value)
     },
   })
 
@@ -218,12 +179,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   registerAgentRpcHandlers(rpcServer, {
     getModel: () => {
       if (!deps.sessionService) return ''
-      const active = findActiveSession(deps)
+      const active = ctx.activeSessionResolver.resolve()
       return active?.modelId ?? ''
     },
     setModel: async (model: string) => {
       if (!deps.sessionService) return
-      const active = findActiveSession(deps)
+      const active = ctx.activeSessionResolver.resolve()
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
@@ -239,12 +200,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     },
     getThinkingLevel: () => {
       if (!deps.sessionService) return 'off'
-      const active = findActiveSession(deps)
+      const active = ctx.activeSessionResolver.resolve()
       return active?.thinkingLevel ?? 'off'
     },
     setThinkingLevel: async (level: string) => {
       if (!deps.sessionService) return
-      const active = findActiveSession(deps)
+      const active = ctx.activeSessionResolver.resolve()
       if (!active) return
       if (deps.modelService) {
         await deps.modelService.setThinkingLevel(active.id, level)

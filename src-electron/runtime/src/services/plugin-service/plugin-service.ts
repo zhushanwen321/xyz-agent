@@ -11,8 +11,11 @@ import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
+import { bootstrapPluginService } from './plugin-lifecycle.js'
+import { ActiveSessionResolver } from './api/session-api.js'
 import { PluginInstaller, type InstallResult } from './plugin-installer.js'
-import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
+import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache } from './bridge-interop.js'
+import { toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { HookPipeline } from './hook-pipeline.js'
 import { UiRequestQueue } from './ui-request-queue.js'
 import { StatusBarRegistry } from './status-bar-registry.js'
@@ -65,10 +68,13 @@ export class PluginService implements IPluginService {
   /** xyz-agent 配置根（~/.xyz-agent/），plugin/session-data 持久化根。组合根注入。 */
   private readonly configDir: string
 
-  /** bridge 轮询缓存的工具 schema 列表 */
-  private bridgeToolSchemas: ToolRegistration[] = []
+  /** bridge 工具 schema 缓存 + sync 负载塑形（P5：职责收口到 bridge-interop） */
+  private readonly bridgeToolCache = new BridgeToolCache()
 
   private permissionChecker: PermissionChecker
+
+  /** 活跃 session 解析器（P6：取代 plugin-rpc-setup 模块级全局缓存，随实例生命周期） */
+  private readonly activeSessionResolver: ActiveSessionResolver
 
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry
@@ -85,6 +91,9 @@ export class PluginService implements IPluginService {
     this.installer = new PluginInstaller(pluginsDir)
     this.sessionDataStore = new SessionDataStore(configDir)
     this.permissionChecker = new PermissionChecker(registry, new PermissionStorage(pluginsDir))
+
+    // 活跃 session 解析器：持有同一 deps 引用（setSessionService 后续 mutate 可见）
+    this.activeSessionResolver = new ActiveSessionResolver(this.deps)
 
     // Hook 管道：持有共享 hookRegistry（rpc-setup 注册侧与本类消费侧同一实例），
     // 复用 host / rpcServer 引用。
@@ -126,25 +135,38 @@ export class PluginService implements IPluginService {
   async initialize(): Promise<void> {
     if (this.initialized) return
 
-    // 1. 扫描插件
-    const descriptors = await this.registry.scan()
-    this.activator.registerDescriptors(descriptors)
+    // Worker 回调（crash/rebuilt/reply）紧耦合多个私有协作者（activator/broker/
+    // registry/host），搬出会引入更宽的注入缝，故作为委托缝留在本类（P4 PARTIAL）。
+    this.registerWorkerCallbacks()
 
-    // 2. 初始化存储
-    this.storage.init(this.configDir, process.cwd())
-
-    // 3. 注册 RPC 方法
-    this.registerRpcMethods()
-
-    // 3b. 加载权限
-    await this.permissionChecker.load()
-
-    // 3c. 设置 RPC 权限检查
-    this.rpcServer.setPermissionChecker((pluginId, method) => {
-      return this.permissionChecker.check(pluginId, method)
+    // 9 步顺序启动装配委托 plugin-lifecycle（god-orchestrator 收口）。
+    await bootstrapPluginService({
+      registry: this.registry,
+      storage: this.storage,
+      rpcServer: this.rpcServer,
+      host: this.host,
+      activator: this.activator,
+      permissionChecker: this.permissionChecker,
+      sessionDataStore: this.sessionDataStore,
+      configDir: this.configDir,
+      registerRpcMethods: () => this.registerRpcMethods(),
+      broadcastPluginList: () => this.broadcastPluginList(),
+      watchExternalIfActive: (desc) => this.watchExternalIfActive(desc),
+      registerSendMessageHook: () => this.registerSendMessageHook(),
     })
 
-    // 4. 设置 Worker crash callback
+    this.initialized = true
+  }
+
+  /**
+   * 注册 Worker 生命周期回调（crash / rebuilt / reply）。
+   *
+   * P4：这三个回调紧耦合 activator.markCrashed、broker.broadcast、
+   * registry.getDescriptor、host.loadPlugin、activator.activatePlugin 等
+   * 私有协作者，搬出 plugin-service 会引入更宽的注入缝，故作为委托缝留在本类。
+   */
+  private registerWorkerCallbacks(): void {
+    // 4. Worker crash callback
     this.host.setCrashCallback((workerId, pluginIds, error) => {
       for (const pluginId of pluginIds) {
         this.activator.markCrashed(pluginId)
@@ -159,7 +181,7 @@ export class PluginService implements IPluginService {
       // Trusted Worker 崩溃后通过 rebuildWorker 自动重建
     })
 
-    // 4a. 设置 Worker 重建后的重新加载回调
+    // 4a. Worker 重建后的重新加载回调
     this.host.setRebuiltCallback((newWorkerId, pluginIds) => {
       for (const pluginId of pluginIds) {
         try {
@@ -179,38 +201,10 @@ export class PluginService implements IPluginService {
       }
     })
 
-    // 4b. 设置 Worker 生命周期回复回调（activated/deactivated/error）
+    // 4b. Worker 生命周期回复回调（activated/deactivated/error）
     this.host.setReplyCallback((msg) => {
       this.activator.handleWorkerReply(msg as import('./plugin-types.js').WorkerToHostMessage)
     })
-
-    // 5. 启动内存监控
-    this.host.startMemoryMonitor()
-
-    // 6. 触发 onStartupFinished
-    await this.activator.handleEvent(
-      { type: 'onStartupFinished' },
-      this.host,
-    )
-
-    // 7. 广播插件列表
-    this.broadcastPluginList()
-
-    // 8. 启动 sessionData flush 定时器
-    this.sessionDataStore.startFlushTimer()
-
-    // 8b. Restore sessionData from disk（WriteBackCache lazy load，扫描目录预热分区）
-    this.sessionDataStore.restoreFromDisk()
-
-    // 9. 为 external 已激活插件启动 hot-reload 监听
-    for (const desc of this.registry.getAllDescriptors()) {
-      this.watchExternalIfActive(desc)
-    }
-
-    this.initialized = true
-
-    // 注册 onBeforeSendMessage hook
-    this.registerSendMessageHook()
   }
 
   /**
@@ -339,21 +333,20 @@ export class PluginService implements IPluginService {
 
   async getPluginConfig(pluginId: string, key?: string): Promise<unknown> {
     if (key === undefined || key === '__all__') {
-      // Return all config
+      // Return all config（key 前缀约定委托 config-api，P7 收口）
       const allKeys = this.storage.keys(pluginId)
-      const configKeys = allKeys.filter(k => k.startsWith('config:'))
+      const configKeys = allKeys.filter(isConfigKey)
       const result: Record<string, unknown> = {}
       for (const configKey of configKeys) {
-        const rawKey = configKey.replace('config:', '')
-        result[rawKey] = this.storage.get(pluginId, configKey)
+        result[fromConfigKey(configKey)] = this.storage.get(pluginId, configKey)
       }
       return result
     }
-    return this.storage.get(pluginId, `config:${key}`)
+    return this.storage.get(pluginId, toConfigKey(key))
   }
 
   async setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void> {
-    this.storage.set(pluginId, `config:${key}`, value)
+    this.storage.set(pluginId, toConfigKey(key), value)
   }
 
   async shutdown(): Promise<void> {
@@ -380,6 +373,7 @@ export class PluginService implements IPluginService {
       syncToolsToBridge: () => this.syncToolsToBridge(),
       getDescriptor: (pluginId) => this.registry.getDescriptor(pluginId),
       sessionDataStore: this.sessionDataStore,
+      activeSessionResolver: this.activeSessionResolver,
     })
   }
 
@@ -388,26 +382,21 @@ export class PluginService implements IPluginService {
     return this.hookPipeline.execute(hookType, context)
   }
 
-  /** 同步 toolRegistry schema 到 bridge 轮询缓存 */
+  /** 同步 toolRegistry schema 到 bridge 轮询缓存（委托 bridge-interop） */
   async syncToolsToBridge(): Promise<void> {
-    this.bridgeToolSchemas = Array.from(this.toolRegistry.values()).map(e => e.schema)
+    this.bridgeToolCache.syncFrom(this.toolRegistry)
   }
 
-  /** 获取 bridge 轮询缓存的工具 schema */
+  /** 获取 bridge 轮询缓存的工具 schema（委托 bridge-interop） */
   getToolSchemas(): ToolRegistration[] {
-    return this.bridgeToolSchemas
+    return this.bridgeToolCache.getSchemas()
   }
 
   /**
-   * 构造 bridge:sync 同步负载（plugin 工具 schema 塑形）。
-   *
-   * 把 ToolRegistration[] 塑形成 {name,description,parameters} 数组——这是插件域能力
-   * 塑形，归 service 而非 transport。transport 只 reply 本方法的返回值。
-   * commands 目前固定空（pi 侧命令发现另走 getCommands）。
+   * 构造 bridge:sync 同步负载（工具 schema 塑形下沉 bridge-interop，transport 只 reply）。
    */
   getBridgeSyncPayload(): BridgeSyncPayload {
-    const tools = this.bridgeToolSchemas.map(s => ({ name: s.name, description: s.description, parameters: s.parameters }))
-    return { tools, commands: [], success: true }
+    return this.bridgeToolCache.getSyncPayload()
   }
 
   /**

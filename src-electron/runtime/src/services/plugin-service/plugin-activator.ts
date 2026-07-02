@@ -23,19 +23,18 @@ import {
   findMissingDependencies,
 } from './plugin-deps.js'
 import { PluginHotReloader, type HotReloadHooks, type StatusChangeCallback } from './plugin-hot-reload.js'
+// 本地类型别名：方法签名 host: PluginHost 用（re-export 不进本地作用域，需单独 import）
+import type { PluginHostContract as PluginHost } from './plugin-host.js'
 
 // re-export：既有调用方（plugin-service.ts、测试）从 plugin-activator.js 导入
 // StatusChangeCallback，保持该导出以维持 NON-BREAKING。上方 import 仅供本文件
 // 方法签名本地使用。
 export type { StatusChangeCallback } from './plugin-hot-reload.js'
 
-/** PluginHost 的最小接口——Activator 只依赖这几个方法 */
-export interface PluginHost {
-  assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string>
-  loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
-  terminateWorker(workerId: string): Promise<void>
-  getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined
-}
+// P8 收口：PluginHost 契约已迁移到供应商 plugin-host.ts（PluginHostContract）。
+// 此处 re-export 为 `PluginHost` 之名，保持所有既有导入（plugin-host.ts 本身、
+// 5 个测试文件 import `PluginHost as ActivatorHost`）不破坏（NON-BREAKING）。
+export type { PluginHostContract as PluginHost } from './plugin-host.js'
 
 const DEACTIVATE_TIMEOUT_MS = 5_000
 const ACTIVATE_TIMEOUT_MS = 30_000
