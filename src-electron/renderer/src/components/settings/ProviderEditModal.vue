@@ -7,9 +7,10 @@
   <Dialog :open="!!provider" @update:open="emit('close')">
     <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
     <DialogContent hide-close class="flex max-w-[780px] flex-col overflow-hidden p-0">
-      <!-- 标题栏 -->
+      <!-- 标题栏。DialogTitle/DialogDescription 给 reka-ui a11y context（视觉用自绘 span） -->
       <div class="flex items-center justify-between border-b border-border px-5 py-4">
-        <span class="text-[15px] font-semibold text-fg">{{ provider ? '编辑供应商' : '添加供应商' }}</span>
+        <DialogTitle class="text-[15px] font-semibold text-fg">{{ provider ? '编辑供应商' : '添加供应商' }}</DialogTitle>
+        <DialogDescription class="sr-only">配置供应商凭据与模型清单</DialogDescription>
         <Button
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0 text-muted hover:bg-surface-hover hover:text-fg"
@@ -133,14 +134,14 @@
                   <Button
                     variant="ghost"
                     class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-                    :class="newModel.inputType === 'text' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
-                    @click="newModel.inputType = 'text'"
+                    :class="newModel.inputTypes.includes('text') ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
+                    @click="toggleNewInput('text')"
                   ><FileText /> 文本</Button>
                   <Button
                     variant="ghost"
                     class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-                    :class="newModel.inputType === 'image' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
-                    @click="newModel.inputType = 'image'"
+                    :class="newModel.inputTypes.includes('image') ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
+                    @click="toggleNewInput('image')"
                   ><ImageIcon /> 图片</Button>
                 </div>
               </div>
@@ -275,7 +276,7 @@ import {
   Eye, EyeOff, Loader2, Wifi, RefreshCw, CheckCircle2, AlertCircle,
   X, FileText, ImageIcon,
 } from '@lucide/vue'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
@@ -309,10 +310,22 @@ const ctxOptions = [
   { label: '1M', value: 1_000_000 },
 ]
 
+/**
+ * 思考策略预设 → thinkingLevelMap。
+ *
+ * thinkingLevelMap 语义（key-based）：
+ * - **key** = UI 可选档位（ThinkingLevel 枚举：off/low/medium/high/xhigh/max）
+ * - **value** = 发给 runtime/pi 的实际 level（string = 可用，null = 不可用）
+ *
+ * 三个预设：
+ * - all-levels: undefined（空 map）→ 全 6 档可用，发 key 自身
+ * - on-off: off + high 两档（关 或 高强度思考）
+ * - high-max: high + max 两档（高 或 最高），max 档发 xhigh
+ */
 const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
   'all-levels': undefined,
-  'on-off': { minimal: null, low: null, medium: null, high: null, xhigh: 'xhigh' },
-  'high-max': { off: null, minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' },
+  'on-off': { off: 'off', high: 'high' },
+  'high-max': { off: 'off', high: 'high', max: 'xhigh' },
 }
 
 const thinkingStrategies: Array<{ key: ThinkingStrategy; fullLabel: string }> = [
@@ -335,14 +348,28 @@ const saving = ref(false)
 const actionError = ref('')
 
 const form = reactive({ name: '', api: 'anthropic-messages', baseUrl: '', apiKey: '' })
-const newModel = reactive({ name: '', contextWindow: 200_000, inputType: 'text' as 'text' | 'image', thinking: 'on-off' as ThinkingStrategy })
+const newModel = reactive({ name: '', contextWindow: 200_000, inputTypes: ['text'] as Array<'text' | 'image'>, thinking: 'on-off' as ThinkingStrategy })
 
 // ── Helpers ──
 
+/**
+ * 从 thinkingLevelMap 反推策略预设（用于 Select 回显当前选中策略）。
+ *
+ * 按 value 空间匹配（兼容新旧 key 格式——新格式 key=max value=xhigh，
+ * 旧格式 key=xhigh value=max；value 是发给 pi 的实际值，更稳定）：
+ * - undefined/空 → all-levels
+ * - value 含 'max' 或 'xhigh'（高强度值）→ high-max
+ * - value 含 'high' → on-off（on-off 的 on 对应 high）
+ * - 其他 → all-levels（用户手改的 map 不强匹配）
+ */
 function getStrategyFromMap(map?: Record<string, string | null>): ThinkingStrategy {
-  if (!map) return 'all-levels'
-  if (map.xhigh === 'max') return 'high-max'
-  return 'on-off'
+  if (!map || Object.keys(map).length === 0) return 'all-levels'
+  const values = Object.values(map).filter((v): v is string => v !== null)
+  // high-max：含 max 或 xhigh 值（新旧格式均覆盖）
+  if (values.includes('max') || values.includes('xhigh')) return 'high-max'
+  // on-off：含 high 值
+  if (values.includes('high')) return 'on-off'
+  return 'all-levels'
 }
 
 // ── Actions ──
@@ -440,6 +467,7 @@ async function onSave() {
         id: m.id,
         name: m.name,
         contextWindow: m.contextWindow,
+        input: m.input,
         thinkingLevelMap: m.thinkingLevelMap,
       })),
     })
@@ -458,6 +486,13 @@ function toggleInput(m: LocalModel, type: 'text' | 'image') {
   else m.input.push(type)
 }
 
+/** 新增模型表单的输入类型 toggle（多选，与行级 toggleInput 同语义） */
+function toggleNewInput(type: 'text' | 'image') {
+  const idx = newModel.inputTypes.indexOf(type)
+  if (idx >= 0) newModel.inputTypes.splice(idx, 1)
+  else newModel.inputTypes.push(type)
+}
+
 function updateCtx(m: LocalModel, value: number) {
   m.contextWindow = value
 }
@@ -473,7 +508,7 @@ function addModel() {
     id: name,
     name,
     contextWindow: newModel.contextWindow,
-    input: [newModel.inputType],
+    input: [...newModel.inputTypes],
     thinkingLevelMap: THINKING_PRESETS[newModel.thinking] ? structuredClone(THINKING_PRESETS[newModel.thinking]) : undefined,
   })
   newModel.name = ''

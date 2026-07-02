@@ -20,6 +20,7 @@ const flowMock = vi.hoisted(() => ({
   // Landing.vue 的 composerSid/cwd/branch computed 真源；默认空（首次启动态）
   currentSessionId: { value: null as string | null },
   currentCwd: { value: null as string | null },
+  currentModel: { value: null as string | null },
   gitInfo: { value: { branch: 'main' } as { branch: string } | null },
   state: { value: 'idle' as string },
   openDirPopover: vi.fn(),
@@ -30,6 +31,7 @@ const flowMock = vi.hoisted(() => ({
   confirmDirtySwitch: vi.fn(),
   openDirDialog: vi.fn(),
   openBranchModal: vi.fn(),
+  setPendingModel: vi.fn(),
 }))
 vi.mock('@/composables/features/useNewTaskFlow', () => ({
   useNewTaskFlow: () => flowMock,

@@ -1,67 +1,109 @@
 /**
- * thinking-levels 纯函数单测（W5 · Q3 核心）。
+ * thinking-levels 纯函数单测。
  *
- * resolveAvailableLevels / highestAvailableLevel 按 thinkingLevelMap 的 value（非 null）
- * 判定可用档位。注意 key 空间（含 minimal/off）与 ThinkingLevel 枚举（含 max）不一致。
+ * thinkingLevelMap 语义（key-based）：
+ * - key = UI 可选档位（ThinkingLevel 枚举：off/low/medium/high/xhigh/max）
+ * - value = 发给 runtime/pi 的实际 level（string = 可用，null = 不可用）
  *
  * fixture 来自真实预设（ProviderEditModal.vue THINKING_PRESETS）：
  * - all-levels: undefined → 全 6 档
- * - on-off: { minimal:null, low:null, medium:null, high:null, xhigh:'xhigh' } → 仅 xhigh
- * - high-max: { off:null, minimal:null, low:null, medium:null, high:'high', xhigh:'max' } → high, max
+ * - on-off: { off:'off', high:'high' } → off + high
+ * - high-max: { high:'high', max:'xhigh' } → high + max
  *
  * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/thinking-levels.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import {
   resolveAvailableLevels,
+  resolveThinkingValue,
+  resolveThinkingKey,
   highestAvailableLevel,
   THINKING_LEVELS,
 } from '@/components/panel/thinking-levels'
 
-// 真实预设（从 ProviderEditModal.vue:312-316 复制）
-const ON_OFF_MAP = { minimal: null, low: null, medium: null, high: null, xhigh: 'xhigh' }
-const HIGH_MAX_MAP = { off: null, minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' }
+// 真实预设（从 ProviderEditModal.vue THINKING_PRESETS 同步）
+const ON_OFF_MAP = { off: 'off', high: 'high' }
+const HIGH_MAX_MAP = { off: 'off', high: 'high', max: 'xhigh' }
 const ALL_LEVELS = ['off', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const SORTED_ALL = [...ALL_LEVELS].sort()
 
-describe('resolveAvailableLevels', () => {
-  it('U20: map=undefined（all-levels 预设）→ 全 6 档', () => {
+describe('resolveAvailableLevels（按 key 判定可用档位）', () => {
+  it('map=undefined（all-levels 预设）→ 全 6 档', () => {
     expect([...resolveAvailableLevels(undefined)].sort()).toEqual(SORTED_ALL)
   })
 
-  it('U21: high-max 预设 → 可用 high + max（按 value 非 null）', () => {
-    const result = resolveAvailableLevels(HIGH_MAX_MAP)
-    expect(result).toEqual(['high', 'max']) // 按强度升序
+  it('high-max 预设 {off,high,max} → 可用 off + high + max（按 key 非 null）', () => {
+    expect(resolveAvailableLevels(HIGH_MAX_MAP)).toEqual(['off', 'high', 'max'])
   })
 
-  it('U22: on-off 预设 → 仅 xhigh（其余 value 为 null）', () => {
-    expect(resolveAvailableLevels(ON_OFF_MAP)).toEqual(['xhigh'])
+  it('on-off 预设 {off,high} → off + high', () => {
+    expect(resolveAvailableLevels(ON_OFF_MAP)).toEqual(['off', 'high'])
   })
 
   it('空对象 {} → 全 6 档（fallback 全可用）', () => {
     expect([...resolveAvailableLevels({})].sort()).toEqual(SORTED_ALL)
   })
 
-  it('全 null 值的 map → 全 6 档（无可用 value，fallback）', () => {
+  it('全 null 值的 map → 全 6 档（无可用 key，fallback）', () => {
     expect([...resolveAvailableLevels({ off: null, low: null })].sort()).toEqual(SORTED_ALL)
   })
 })
 
+describe('resolveThinkingValue（UI 档位 key → 发 runtime 的 value）', () => {
+  it('high-max: max 档发 xhigh', () => {
+    expect(resolveThinkingValue('max', HIGH_MAX_MAP)).toBe('xhigh')
+  })
+
+  it('high-max: high 档发 high', () => {
+    expect(resolveThinkingValue('high', HIGH_MAX_MAP)).toBe('high')
+  })
+
+  it('on-off: off 档发 off', () => {
+    expect(resolveThinkingValue('off', ON_OFF_MAP)).toBe('off')
+  })
+
+  it('all-levels（map 空）→ 发 key 自身', () => {
+    expect(resolveThinkingValue('medium', undefined)).toBe('medium')
+  })
+})
+
+describe('resolveThinkingKey（runtime value → UI 档位 key）', () => {
+  it('high-max: value xhigh → key max', () => {
+    expect(resolveThinkingKey('xhigh', HIGH_MAX_MAP)).toBe('max')
+  })
+
+  it('high-max: value high → key high', () => {
+    expect(resolveThinkingKey('high', HIGH_MAX_MAP)).toBe('high')
+  })
+
+  it('on-off: value off → key off', () => {
+    expect(resolveThinkingKey('off', ON_OFF_MAP)).toBe('off')
+  })
+
+  it('all-levels（map 空）→ value 直接是 key', () => {
+    expect(resolveThinkingKey('medium', undefined)).toBe('medium')
+  })
+
+  it('无法映射时 fallback max', () => {
+    expect(resolveThinkingKey('unknown', HIGH_MAX_MAP)).toBe('max')
+  })
+})
+
 describe('highestAvailableLevel', () => {
-  it('U23: high-max 预设 → max（value 强度序最高）', () => {
+  it('high-max 预设 → max（强度最高的可用档）', () => {
     expect(highestAvailableLevel(HIGH_MAX_MAP)).toBe('max')
   })
 
-  it('U24: map=undefined → max（全可用时最高档）', () => {
+  it('on-off 预设 → high（强度最高的可用档）', () => {
+    expect(highestAvailableLevel(ON_OFF_MAP)).toBe('high')
+  })
+
+  it('map=undefined → max（全可用时最高档）', () => {
     expect(highestAvailableLevel(undefined)).toBe('max')
   })
 
-  it('U25: 空对象 {} → max（fallback）', () => {
+  it('空对象 {} → max（fallback）', () => {
     expect(highestAvailableLevel({})).toBe('max')
-  })
-
-  it('on-off 预设 → xhigh（唯一可用档）', () => {
-    expect(highestAvailableLevel(ON_OFF_MAP)).toBe('xhigh')
   })
 
   it('返回值始终是合法 ThinkingLevel', () => {

@@ -27,42 +27,110 @@ const LEVEL_STRENGTH: Record<ThinkingLevel, number> = {
   off: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5,
 }
 
-/**
- * 解析当前模型的可用思考档位。
- *
- * thinkingLevelMap 语义：value 非 null = 该档位可用，value 值 = 发给 pi 的实际 level。
- * - map 为 undefined 或空对象 → 全 6 档可用（all-levels 预设）
- * - map 非空 → value 非 null 的 entry 为可用档位
- *
- * 注意 key 空间（off/minimal/low/medium/high/xhigh）与 ThinkingLevel 枚举
- * （off/low/medium/high/xhigh/max）不一致：按 value（非 null 且为合法 ThinkingLevel）
- * 判定可用，不依赖 key。
- *
- * @returns 可用的 ThinkingLevel 列表（按强度升序）
- */
-export function resolveAvailableLevels(
-  map?: Record<string, string | null>,
-): ThinkingLevel[] {
-  if (!map || Object.keys(map).length === 0) return [...THINKING_LEVELS.map((o) => o.level)]
-  const available = new Set<ThinkingLevel>()
-  for (const value of Object.values(map)) {
-    if (value !== null && isThinkingLevel(value)) available.add(value)
-  }
-  return available.size > 0
-    ? [...available].sort((a, b) => LEVEL_STRENGTH[a] - LEVEL_STRENGTH[b])
-    : [...THINKING_LEVELS.map((o) => o.level)] // 全 null fallback 全可用
-}
-
 /** 判断字符串是否为合法 ThinkingLevel 枚举值 */
 export function isThinkingLevel(v: string): v is ThinkingLevel {
   return v in LEVEL_STRENGTH
 }
 
 /**
+ * 解析当前模型的可用思考档位（按 **key** 判定）。
+ *
+ * thinkingLevelMap 语义（key-based）：
+ * - **key** = UI 可选档位（前端 ThinkingLevel 枚举值）
+ * - **value** = 发给 runtime/pi 的实际 level（string = 可用，null = 不可用）
+ * - key 存在且 value 非 null → 该档可用
+ * - key 存在且 value = null → 该档不可用
+ * - map 为 undefined 或空 → 全 6 档可用（all-levels 预设，用 key 自身作 value）
+ *
+ * @returns 可用的 ThinkingLevel 列表（按强度升序）
+ */
+export function resolveAvailableLevels(
+  map?: Record<string, string | null>,
+): ThinkingLevel[] {
+  if (!map || Object.keys(map).length === 0) {
+    return THINKING_LEVELS.map((o) => o.level)
+  }
+  const available = new Set<ThinkingLevel>()
+  for (const key of Object.keys(map)) {
+    if (map[key] !== null && isThinkingLevel(key)) {
+      available.add(key)
+    }
+  }
+  return available.size > 0
+    ? [...available].sort((a, b) => LEVEL_STRENGTH[a] - LEVEL_STRENGTH[b])
+    : THINKING_LEVELS.map((o) => o.level) // 全 null fallback 全可用
+}
+
+/**
+ * on/off 模式判定：map 只有 off + high 两个可用档位。
+ * 该模式下 high 档 UI 显示「开」（而非通用 label「高」），语义为开/关二选一。
+ */
+function isOnOffMap(map?: Record<string, string | null>): boolean {
+  if (!map) return false
+  const keys = Object.keys(map).filter((k) => map[k] !== null)
+  // on/off 预设恰好两个可用档：off + high
+  const ON_OFF_AVAILABLE_COUNT = 2
+  return keys.length === ON_OFF_AVAILABLE_COUNT && keys.includes('off') && keys.includes('high')
+}
+
+/**
+ * 取某档位的显示 label。on/off 模式下 high → 「开」，其余用通用 label。
+ */
+export function getDisplayLabel(level: ThinkingLevel, map?: Record<string, string | null>): string {
+  if (level === 'high' && isOnOffMap(map)) return '开'
+  return THINKING_LEVELS.find((o) => o.level === level)?.label ?? '思考'
+}
+
+/**
+ * 将 UI 档位（key）解析为发给 runtime 的实际 level（value）。
+ *
+ * thinkingLevelMap 的 value 是发给 runtime/pi 的字符串。选中某档位时：
+ * - key 存在且 value 非 null → 发 value
+ * - map 为 undefined/空（all-levels）→ 发 key 自身（档位名 = 发送值）
+ *
+ * @returns 发给 runtime 的 level 字符串；key 无映射时回退 key 自身
+ */
+export function resolveThinkingValue(
+  key: ThinkingLevel,
+  map?: Record<string, string | null>,
+): string {
+  if (!map || Object.keys(map).length === 0) return key
+  const v = map[key]
+  return v ?? key
+}
+
+/**
+ * 将 runtime 返回的 level（value）反向解析为 UI 档位（key）。
+ *
+ * pi/session.thinkingLevel 存的是发给 pi 的 value（如 'xhigh'），需反查 map
+ * 找到对应的 UI 档位 key（如 'max'）才能正确高亮 popover。
+ * - value 能反查到 key → 返回该 key
+ * - value 等于某个 ThinkingLevel 枚举值且不在 map 的 value 里 → value 本身就是 key（all-levels 或 value=key）
+ * - 都不匹配 → 返回 fallback
+ *
+ * @returns UI 档位 ThinkingLevel；无法映射时回退 fallback
+ */
+export function resolveThinkingKey(
+  value: string,
+  map?: Record<string, string | null>,
+  fallback: ThinkingLevel = 'max',
+): ThinkingLevel {
+  // 反查 map：value → key
+  if (map && Object.keys(map).length > 0) {
+    for (const [key, val] of Object.entries(map)) {
+      if (val === value && isThinkingLevel(key)) return key
+    }
+  }
+  // all-levels（map 为空）或 value 直接是档位名
+  if (isThinkingLevel(value)) return value
+  return fallback
+}
+
+/**
  * 取当前模型的最高可用思考档位。
  *
- * 用于切换模型后当前选中档位不可用时，重置到最高可用档。
- * 按 value 强度序取最大；map 为 undefined/空 → 'max'（全可用时的最高档）。
+ * 用于切换模型后当前选中档位不可用时，自动重置到最高可用档。
+ * map 为 undefined/空 → 'max'（全可用时的最高档）。
  */
 export function highestAvailableLevel(
   map?: Record<string, string | null>,

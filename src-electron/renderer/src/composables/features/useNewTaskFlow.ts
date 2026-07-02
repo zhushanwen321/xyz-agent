@@ -18,7 +18,7 @@
 import { ref, computed, readonly } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
-import { session as sessionApi, git as gitApi } from '@/api'
+import { session as sessionApi, git as gitApi, model as modelApi } from '@/api'
 import { resolveDefaultCwd, deriveSessionLabel } from '@/lib/utils'
 import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
@@ -86,6 +86,12 @@ const state: Ref<NewTaskFlowState> = ref('idle')
 const currentSession: Ref<SessionSummary | null> = ref(null)
 /** landing 态用户选定但尚未 create 的 cwd（选目录只记值不建 session；首发提交才用它 create）。null=空 chip 态 */
 const pendingCwd: Ref<string | null> = ref(null)
+/**
+ * landing 态用户选定但尚未 apply 的模型（"provider/modelId" 复合串，与 SessionSummary.modelId 同格式）。
+ * landing 态 session 尚未 create，无法调 model.switch RPC。记 pendingModel 供 Composer 显示，
+ * 首发提交 create session 后 apply（model.switch）。null=未选，回退全局默认。
+ */
+const pendingModel: Ref<string | null> = ref(null)
 /** submitFirstMessage in-flight 标记（双击并发只建 1 session） */
 const createInFlight = ref(false)
 /** submitCreateBranch in-flight 标记（AC-7.9 飞行中 disabled 防重复 + T6.6 composable 层守卫） */
@@ -99,6 +105,7 @@ export function resetNewTaskFlow(): void {
   state.value = 'idle'
   currentSession.value = null
   pendingCwd.value = null
+  pendingModel.value = null
   createInFlight.value = false
   branchCreateInFlight.value = false
 }
@@ -116,6 +123,13 @@ export function useNewTaskFlow() {
   /** 当前 flow 工作的 cwd（chip 回灌）：session 已建用 session.cwd，否则用 landing 选定的 pendingCwd */
   const currentCwd: ComputedRef<string | null> = computed(
     () => currentSession.value?.cwd ?? pendingCwd.value,
+  )
+  /**
+   * 当前 flow 选定模型（Composer 显示用）：session 已建用 session.modelId，
+   * 否则用 landing 选定的 pendingModel。两者均空时 Composer 自行回退全局 defaultModel。
+   */
+  const currentModel: ComputedRef<string | null> = computed(
+    () => currentSession.value?.modelId ?? pendingModel.value,
   )
 
   /**
@@ -164,6 +178,7 @@ export function useNewTaskFlow() {
       state.value = 'idle'
       currentSession.value = null
       pendingCwd.value = null
+      pendingModel.value = null
     }
     if (createInFlight.value) return // submitFirstMessage 飞行中，忽略重复触发
     // 幂等：已 landing 态再 startFlow（initApp 重试 / 多次 ⌘N）→ 不翻 state（landing→landing
@@ -173,6 +188,7 @@ export function useNewTaskFlow() {
     }
     // 进 landing：预设 cwd（有则 chip 所见即所得，无则空 chip 态）
     pendingCwd.value = presetCwd ?? null
+    pendingModel.value = null
     currentSession.value = null
     // 强制不变量：landing 态无 session 绑定。清 activeId + active panel leaf.sessionId，
     // 让 Panel 的 sessionId prop 变 null → 渲染落到 Landing（而非旧会话 MessageStream）。
@@ -186,8 +202,12 @@ export function useNewTaskFlow() {
    * 预创建后 session 已在选目录时建立，这里只负责载入 panel + 发送。
    * - 无绑定 session（未选目录直接输入发送，用 resolveDefaultCwd 兑底 create）→ create 后发送
    * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
+   *
+   * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
+   * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
+   * 用 runtime 默认。
    */
-  async function submitFirstMessage(text: string): Promise<void> {
+  async function submitFirstMessage(text: string, thinkingLevel?: string): Promise<void> {
     const trimmed = text.trim()
     if (!trimmed) return
     if (state.value !== 'landing') {
@@ -204,6 +224,24 @@ export function useNewTaskFlow() {
         const created = await sessionApi.create(cwd, label)
         currentSession.value = created
         session.appendSession(created)
+        // apply landing 态选定的模型（session 已 create，可调 model.switch RPC）。
+        // pendingModel 为 "provider/modelId" 复合串；未选（null）则用 runtime 默认，不切换。
+        const pending = pendingModel.value
+        if (pending) {
+          const slashIdx = pending.indexOf('/')
+          if (slashIdx > 0) {
+            const provider = pending.slice(0, slashIdx)
+            const modelId = pending.slice(slashIdx + 1)
+            await modelApi.switchModel(created.id, provider, modelId)
+            // 乐观更新刚创建 session 的 modelId，Composer 显示立即跟随
+            session.updateSessionState(created.id, { modelId: pending })
+          }
+        }
+        // apply landing 态选定的思考等级（session 已 create，可调 setThinkingLevel RPC）
+        if (thinkingLevel) {
+          await sessionApi.setThinkingLevel(created.id, thinkingLevel)
+          session.updateSessionState(created.id, { thinkingLevel })
+        }
       }
       // 载入 panel + 设 activeId（预建或刚建统一处理）
       session.activeId = currentSession.value!.id
@@ -252,6 +290,19 @@ export function useNewTaskFlow() {
   function presetCwd(cwd: string): void {
     if (state.value !== 'landing') return
     pendingCwd.value = cwd
+  }
+
+  /**
+   * setPendingModel —— landing 态记录用户选定但尚未 apply 的模型。
+   *
+   * landing 态 session 尚未 create，无法调 model.switch RPC。记 pendingModel 供 Composer
+   * 显示所选模型（currentModel computed），首发提交 submitFirstMessage create session 后 apply。
+   * 守卫：仅 landing 态生效（其他态 noop，避免污染 overlay/终态流程）。
+   * payload 为 "provider/modelId" 复合串（ModelSelectPopover emit 的格式约定）。
+   */
+  function setPendingModel(model: string): void {
+    if (state.value !== 'landing') return
+    pendingModel.value = model
   }
 
   /**
@@ -376,6 +427,7 @@ export function useNewTaskFlow() {
     currentSession: readonly(currentSession),
     currentSessionId,
     currentCwd,
+    currentModel,
     gitInfo,
     isInflight: readonly(createInFlight),
     isBranchCreating: readonly(branchCreateInFlight),
@@ -384,6 +436,7 @@ export function useNewTaskFlow() {
     startFlow,
     submitFirstMessage,
     presetCwd,
+    setPendingModel,
     openDirPopover,
     openBranchPopover,
     selectWorkspace,

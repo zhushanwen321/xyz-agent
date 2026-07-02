@@ -85,7 +85,7 @@
           :title="canSend ? '发送 · ⏎' : '输入内容后发送'"
           @click="onSend"
         >
-          <ArrowRight class="size-[15px]" />
+          <ArrowUp class="size-[15px]" />
         </Button>
       </div>
     </div>
@@ -96,7 +96,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowRight, Loader2, Square } from '@lucide/vue'
+import { ArrowUp, Loader2, Square } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
@@ -111,11 +111,8 @@ import QueueBubble from './QueueBubble.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
-import { useSessionStore } from '@/stores/session'
-import { useSettingsStore } from '@/stores/settings'
 import { useCommandStore } from '@/stores/command'
-import { model as modelApi, session as sessionApi } from '@/api'
-import { useThinkingLevelSync } from '@/composables/panel/useThinkingLevelSync'
+import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
 
 const props = withDefaults(
   defineProps<{
@@ -126,38 +123,26 @@ const props = withDefaults(
 )
 
 const chatStore = useChatStore()
-const sessionStore = useSessionStore()
-const settingsStore = useSettingsStore()
 const commandStore = useCommandStore()
 const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort, compact } = useChat()
-const { submitFirstMessage } = useNewTaskFlow()
+const flow = useNewTaskFlow()
 
-/** 当前 session 的思考等级（从 SessionSummary.thinkingLevel 透传给 ThinkingLevelPopover） */
-const currentThinkingLevel = computed(() => sessionStore.active?.thinkingLevel)
+// 模型 + 思考等级状态（含 landing 态延迟 apply）—— 见 useComposerModelThinking
+const {
+  currentModelId,
+  currentThinkingLevel,
+  currentThinkingLevelMap,
+  localThinkingLevel,
+  onModelSelect,
+  onThinkingSelect,
+} = useComposerModelThinking(computed(() => props.sessionId))
+
 /** #13 retry/queue 指示位数据源（store 由 W0/#8 维护，不可变 Map 更新触发响应） */
 const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(props.sessionId) : undefined))
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
 
 const draft = ref('')
-/**
- * 当前选中模型 id —— "provider/modelId" 复合串（与 SessionSummary.modelId / config.defaults 同格式）。
- * 优先取 active session 的 modelId（per-session 真值）；landing 态（无 active session）
- * 回退到全局默认模型（settingsStore.defaultModel，经 config.defaults 订阅）。
- *
- * 用 || 而非 ??：session.list 广播里的已退出/磁盘 session 的 modelId 硬编码为 ''（空串），
- * ?? 不兜底空串（'' ?? fallback === ''），导致模型显示消失。|| 兜底空串到 defaultModel。
- */
-const currentModelId = computed(
-  () => sessionStore.active?.modelId || settingsStore.defaultModel || '',
-)
-/** 当前模型的思考档位映射 + 切换模型后重置不可用等级（逻辑见 useThinkingLevelSync） */
-const currentThinkingLevelMap = useThinkingLevelSync(
-  currentModelId,
-  currentThinkingLevel,
-  computed(() => props.sessionId),
-  (level) => { void onThinkingSelect(level) },
-)
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 /**
@@ -273,26 +258,6 @@ function onCmdSelect(payload: { type: 'file' | 'slash'; name: string; icon?: str
   }
 }
 
-/** 模型切换：调 runtime model.switch（sessionId + provider + modelId）；
- * 成功后乐观更新 sessionStore（立即生效，不依赖 state_changed 广播到达——
- * 未发消息的 session 可能无 streamSubscription，广播会丢）。
- * runtime 广播 session.state_changed 作为多 panel 同步的补充。
- * landing 态（sid=null）延迟 create，不切换模型。 */
-async function onModelSelect(payload: { modelId: string; provider: string }): Promise<void> {
-  if (!props.sessionId) return // landing 态延迟 create（sid=null）时不切换模型
-  await modelApi.switchModel(props.sessionId, payload.provider, payload.modelId)
-  // 乐观更新：立即同步 active.modelId（复合串 "provider/modelId"）
-  sessionStore.updateSessionState(props.sessionId, {
-    modelId: `${payload.provider}/${payload.modelId}`,
-  })
-}
-
-/** 思考等级切换：调 runtime session.setThinkingLevel（成功后 session store 持久） */
-async function onThinkingSelect(level: string): Promise<void> {
-  if (!props.sessionId) return // landing 态延迟 create（sid=null）时不切思考等级
-  await sessionApi.setThinkingLevel(props.sessionId, level)
-}
-
 const hasInput = computed(() => draft.value.trim().length > 0)
 /** 可发送：有输入且非 streaming 非 sending 非 compacting。
  *  landing 态（sessionId=null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
@@ -333,7 +298,7 @@ async function onSend(): Promise<void> {
     clearInput()
     isSending.value = true
     try {
-      await submitFirstMessage(text)
+      await flow.submitFirstMessage(text, localThinkingLevel.value)
     } catch (e) {
       restoreInput(text)
       throw e

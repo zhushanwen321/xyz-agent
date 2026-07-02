@@ -168,7 +168,7 @@ export interface IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; contextWindow?: number }>
+    models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } }
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }

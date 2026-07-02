@@ -111,7 +111,7 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }>
+    models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } } {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
@@ -129,6 +129,11 @@ export class ConfigService implements IConfigService {
         const model: Record<string, unknown> = { ...base, id }
         if (m.name) model.name = String(m.name)
         if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
+        if (Array.isArray(m.input)) {
+          model.input = (m.input as unknown[]).filter(
+            (v): v is 'text' | 'image' => v === 'text' || v === 'image',
+          )
+        }
         if (isValidThinkingLevelMap(m.thinkingLevelMap)) {
           model.thinkingLevelMap = m.thinkingLevelMap
         } else if (m.thinkingLevelMap === undefined && base.thinkingLevelMap) {

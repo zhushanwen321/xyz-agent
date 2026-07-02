@@ -27,23 +27,20 @@
       >
         <span>思考等级</span>
       </div>
-      <!-- 6 级列表（available 由当前模型的 thinkingLevelMap 动态决定） -->
+      <!-- 可用档位列表（由当前模型的 thinkingLevelMap 动态决定，只显示可用的） -->
       <Button
-        v-for="opt in THINKING_LEVELS"
+        v-for="opt in availableOptions"
         :key="opt.level"
         variant="ghost"
         class="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
-        :class="[
-          level === opt.level && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent',
-          !availableLevels.has(opt.level) && 'cursor-not-allowed opacity-50',
-        ]"
+        :class="level === opt.level && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
         @click="onSelect(opt)"
       >
         <span
           class="size-[7px] shrink-0 rounded-full"
           :class="level === opt.level ? 'bg-accent' : 'bg-subtle'"
         />
-        <span class="flex-1 text-left">{{ opt.label }} {{ opt.en }}</span>
+        <span class="flex-1 text-left">{{ getDisplayLabel(opt.level, props.levelMap) }}</span>
         <Check
           class="size-[13px] text-accent transition-opacity"
           :class="level === opt.level ? 'opacity-100' : 'opacity-0'"
@@ -61,47 +58,51 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import {
   THINKING_LEVELS,
   resolveAvailableLevels,
+  resolveThinkingValue,
+  resolveThinkingKey,
+  getDisplayLabel,
   type ThinkingLevelOption,
   type ThinkingLevel,
 } from './thinking-levels'
 
 const emit = defineEmits<{
-  select: [level: ThinkingLevel]
+  /** 选中档位后，发给 runtime 的实际 level（经 thinkingLevelMap value 映射） */
+  select: [level: string]
 }>()
 
-// 外部当前等级（Composer 从 SessionSummary.thinkingLevel 透传，string 类型）；
-// 值合法时映射到 ThinkingLevel，否则 fallback max。无则默认 max。
+// 外部当前等级（Composer 从 SessionSummary.thinkingLevel 透传，是 runtime 返回的 value）。
+// 需经 resolveThinkingKey 反向映射为 UI 档位 key 才能正确高亮。
 const props = defineProps<{
   level?: string
-  /** 当前模型的思考档位映射（per-model thinkingLevelMap）。value 非 null = 可用。
+  /** 当前模型的思考档位映射（per-model thinkingLevelMap）。
+   *  key = UI 可选档位，value = 发给 runtime 的实际 level（非 null = 可用）。
    *  undefined = 全可用（all-levels 预设）。切换模型后 Composer 传入新模型的 map。 */
   levelMap?: Record<string, string | null>
 }>()
 
 const open = ref(false)
-/** 传入的 level 是否为合法 ThinkingLevel 枚举值 */
-function isValidLevel(v: string): v is ThinkingLevel {
-  return THINKING_LEVELS.some((opt) => opt.level === v)
-}
-// 本地态初始化自 prop（合法则用，否则 fallback max）；prop 变化时同步
+// prop level 是 runtime 返回的 value，反查 map 得到 UI 档位 key
 const level = ref<ThinkingLevel>(
-  props.level && isValidLevel(props.level) ? props.level : 'max',
+  props.level ? resolveThinkingKey(props.level, props.levelMap) : 'max',
 )
 watch(() => props.level, (v) => {
-  if (v && isValidLevel(v)) level.value = v
+  if (v) level.value = resolveThinkingKey(v, props.levelMap)
 })
 
-/** 当前模型的可用档位集合（按 levelMap 的 value 非 null 判定） */
-const availableLevels = computed(() => new Set(resolveAvailableLevels(props.levelMap)))
+/** 当前模型的可用档位选项（只渲染可用的，不灰显不可用档位） */
+const availableOptions = computed<ThinkingLevelOption[]>(() => {
+  const available = new Set(resolveAvailableLevels(props.levelMap))
+  return THINKING_LEVELS.filter((opt) => available.has(opt.level))
+})
 
 const currentLabel = computed(
-  () => THINKING_LEVELS.find((l) => l.level === level.value)?.label ?? '思考',
+  () => getDisplayLabel(level.value, props.levelMap),
 )
 
 function onSelect(opt: ThinkingLevelOption): void {
-  if (!availableLevels.value.has(opt.level)) return
   level.value = opt.level
-  emit('select', opt.level)
+  // 发给 runtime 的是 map 映射后的 value（如 max 档发 xhigh），而非 UI 档位名
+  emit('select', resolveThinkingValue(opt.level, props.levelMap))
   open.value = false
 }
 </script>
