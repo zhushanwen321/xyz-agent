@@ -1,7 +1,8 @@
 /**
  * Pi 路径解析（env-var-aware，支持实例隔离）
  *
- * 所有路径从 XYZ_AGENT_DATA_DIR 推导。未设置时回退 ~/.xyz-agent/
+ * 数据根目录委托 shared 的 getDataDir（SSOT，ADR-0009 隔离）。
+ * 其余 pi 子路径在此派生。
  *
  * 目录结构：
  *   ~/.xyz-agent/                    ← xyz-agent 配置根目录
@@ -16,11 +17,12 @@
  *       sessions/                    ← Session jsonl 文件
  */
 
-import { homedir } from 'node:os'
+import { getDataDir } from '@xyz-agent/shared'
 import { join } from 'node:path'
 
+/** xyz-agent 数据根目录（委托 shared SSOT，读 XYZ_AGENT_DATA_DIR，缺省 ~/.xyz-agent）。 */
 export function getConfigDir(): string {
-  return process.env.XYZ_AGENT_DATA_DIR ?? join(homedir(), '.xyz-agent')
+  return getDataDir()
 }
 
 /** xyz-pi root: ~/.xyz-agent/pi/ */

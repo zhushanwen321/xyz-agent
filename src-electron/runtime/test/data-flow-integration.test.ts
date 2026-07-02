@@ -133,6 +133,7 @@ vi.mock('../src/infra/system/trash.js', () => ({
 
 import { RuntimeServer } from '../src/transport/server.js'
 import { EventAdapter } from '../src/infra/pi/event-adapter.js'
+import { createEventAdapter } from './helpers/event-adapter-test-fixture.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
@@ -236,9 +237,9 @@ async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   const rpcClient = createMockRpcClient()
   vi.mocked(sessionService.getRpcClient).mockReturnValue(rpcClient as never)
 
-  // 真实 EventAdapter，send 输出到收集数组
+  // 真实 EventAdapter + EventInterpreter，send 输出到收集数组
   const adapterSent: ServerMessage[] = []
-  const adapter = new EventAdapter('test-session-1', (msg) => adapterSent.push(msg), {
+  const adapter = createEventAdapter('test-session-1', (msg) => adapterSent.push(msg), {
     onExtensionUIRequest: (requestId, sid, method) => {
       server.registerExtensionTimeout(sid, requestId, method)
     },

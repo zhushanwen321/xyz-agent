@@ -10,7 +10,7 @@
  */
 import { basename } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus } from '@xyz-agent/shared'
-import type { ISessionServiceInternal } from '../../interfaces.js'
+import type { ISessionServiceInternal } from './session-internal.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
 import type { ScannedSession } from './types.js'

@@ -4,7 +4,7 @@
  * deriveCounts（staged/unstaged/hasConflict 计数 + 未跟踪计入 unstaged）、parseNumstat。
  */
 import { describe, it, expect } from 'vitest'
-import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstat, parseNumstatByFile } from '@xyz-agent/shared'
+import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstat, parseNumstatByFile, parseNumstatEntries } from '@xyz-agent/shared'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 describe('xyToGitStatus', () => {
@@ -127,5 +127,30 @@ describe('parseNumstatByFile', () => {
     const m = parseNumstatByFile('7\t4\tlib/util.ts')
     expect(m.size).toBe(1)
     expect(m.get('lib/util.ts')).toEqual({ add: 7, del: 4 })
+  })
+})
+
+describe('parseNumstatEntries', () => {
+  it('lossless：二进制（-/-）→ add/del 为 undefined（不丢弃条目）', () => {
+    const entries = parseNumstatEntries('-\t-\tbinary.png')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toEqual({ add: undefined, del: undefined, path: 'binary.png' })
+  })
+
+  it('lossless：单字段为 -（add 有效、del 二进制）→ add 保留、del undefined', () => {
+    const entries = parseNumstatEntries('5\t-\tmixed.bin')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].add).toBe(5)
+    expect(entries[0].del).toBeUndefined()
+  })
+
+  it('路径含 tab（第 3 列起 join tab 还原）', () => {
+    const entries = parseNumstatEntries('1\t0\tweird\tname.ts')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].path).toBe('weird\tname.ts')
+  })
+
+  it('空输出 → 空数组', () => {
+    expect(parseNumstatEntries('')).toEqual([])
   })
 })

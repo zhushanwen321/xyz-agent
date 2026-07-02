@@ -5,8 +5,8 @@
  * 消费方：sendInitialState（新连接推送 config.skillDirs/config.agentDirs）+
  * 两个 broadcast helper（目录变更后广播）。
  */
-import { homedir } from 'node:os'
 import type { SkillDirConfig } from '@xyz-agent/shared'
+import { expandHome } from '../utils/path-utils.js'
 
 /**
  * ADR-0020 §2/§3 预设可选目录候选（层 A「可选目录」的固定来源）。
@@ -25,16 +25,6 @@ export const PRESET_AGENT_DIRS = [
   '~/.agents/agents',
   '.agents/agents',
 ]
-
-/** 展开 ~ 前缀（与 scanner-base.expandHome 对齐）。 */
-function expandHomePath(p: string): string {
-  return p.startsWith('~') ? `${homedir()}${p.slice(1)}` : p
-}
-
-/** 归一化目录路径用于比较：展开 ~ 后取绝对路径（~/.pi 与 /Users/.../pi 归一为同值）。 */
-function normalizeDirPath(p: string): string {
-  return expandHomePath(p)
-}
 
 /**
  * 把预设候选目录 + discovery 启用列表 组合成 UI 用的 SkillDirConfig[]。
@@ -59,9 +49,9 @@ export function buildDirConfigs(preset: string[], enabledDirs: string[]): SkillD
   }
 
   // 2. 预设候选中尚未启用的，按 preset 固定顺序追加（供勾选）
-  const enabledNormalized = new Set(enabledDirs.map(normalizeDirPath))
+  const enabledNormalized = new Set(enabledDirs.map(expandHome))
   for (const path of preset) {
-    if (!enabledNormalized.has(normalizeDirPath(path))) {
+    if (!enabledNormalized.has(expandHome(path))) {
       configs.push({ path, enabled: false })
     }
   }

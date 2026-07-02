@@ -13,7 +13,8 @@
  * 运行：cd src-electron/runtime && npx vitest run test/event-adapter-toolresult.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender } from '../src/infra/pi/event-adapter.js'
+import { createEventAdapter, type WsSender } from './helpers/event-adapter-test-fixture.js'
+import type { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
@@ -22,7 +23,7 @@ type PiTestEvent = PiMessage & Record<string, unknown>
 function createAdapter(): { adapter: EventAdapter; sent: ServerMessage[] } {
   const sent: ServerMessage[] = []
   const send: WsSender = (msg) => { sent.push(msg) }
-  const adapter = new EventAdapter('test-session-1', send)
+  const adapter = createEventAdapter('test-session-1', send)
   return { adapter, sent }
 }
 

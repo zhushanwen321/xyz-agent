@@ -12,7 +12,8 @@
  * 依赖：git CLI（child_process execSync）。非 git 仓库时返回 null（调用方跳过 baseline diff）。
  */
 import { execSync } from 'node:child_process'
-import type { FileChange, FileChangeStatus } from '@xyz-agent/shared'
+import type { FileChange, FileChangeStatus, NumstatEntry } from '@xyz-agent/shared'
+import { parseNumstatEntries, xyToGitStatus } from '@xyz-agent/shared'
 
 /** git status --porcelain 的单行解析结果（XY 码 + 路径） */
 interface GitStatusEntry {
@@ -23,13 +24,11 @@ interface GitStatusEntry {
 }
 
 // git status --porcelain 行格式固定偏移：`XY <path>`（XY 码 2 字符 + 1 空格 + 路径）。
-// git numstat 行格式：`<added>\t<deleted>\t<path>`（前 2 段 + 路径，最少 3 段）。
+// git numstat 解析已统一到 shared 的 parseNumstatEntries（lossless SSOT，含二进制 - 处理）。
 const PORCELAIN_XY_LEN = 2
 const PORCELAIN_PATH_START = 3
 const RENAME_ARROW = ' -> '
 const RENAME_ARROW_LEN = RENAME_ARROW.length
-const NUMSTAT_MIN_PARTS = 3
-const NUMSTAT_PATH_START = 2
 
 /**
  * 解析 `git status --porcelain` 输出为条目数组。
@@ -52,23 +51,30 @@ export function parseGitStatusPorcelain(output: string): GitStatusEntry[] {
 
 /**
  * XY 码 → FileChangeStatus 映射（ADR-0024 D5）。
- * X=staged，Y=working tree。优先取已标的状态；未跟踪 `??` → added。
+ *
+ * 基于 shared 的 6 态 xyToGitStatus 做降级映射（4 态 FileChangeStatus），
+ * 避免与 xyToGitStatus 重复 XY 字符判定逻辑。降级规则集中在 SIX_TO_FOUR 映射表：
+ * - untracked → added（未跟踪视为新增）
+ * - added → added
+ * - deleted → deleted
+ * - renamed → modified（目标路径记 modified，src 删除细节留 diff 层）
+ * - unmerged → modified（冲突文件视为已修改）
+ * - modified → modified
+ *
+ * 与原手写分支的语义差异：冲突态（DD/AA/U*）原分支因 if 顺序分别落 deleted/added/modified，
+ * 现统一降级为 modified。baseline diff 机制不依赖冲突态细分，无影响。
  */
+const SIX_TO_FOUR: Record<string, FileChangeStatus> = {
+  untracked: 'added',
+  added: 'added',
+  deleted: 'deleted',
+  modified: 'modified',
+  renamed: 'modified',
+  unmerged: 'modified',
+}
+
 export function xyToStatus(xy: string): FileChangeStatus {
-  const x = xy[0]
-  const y = xy[1]
-  // 未跟踪文件
-  if (x === '?' && y === '?') return 'added'
-  // 删除（staged D 或 working tree D）
-  if (x === 'D' || y === 'D') return 'deleted'
-  // 新增（staged A）
-  if (x === 'A') return 'added'
-  // 重命名/拷贝 → 目标路径记 modified（src 删除细节留 diff 层）
-  if (x === 'R' || x === 'C') return 'modified'
-  // 修改（M，含 staged/working tree）
-  if (x === 'M' || y === 'M') return 'modified'
-  // 兜底：其它（如 T 类型变更）记 modified
-  return 'modified'
+  return SIX_TO_FOUR[xyToGitStatus(xy)]
 }
 
 /** git status 快照：filePath → status（A/M/D）。null 表示非 git 仓库或采集失败。 */
@@ -137,35 +143,6 @@ export function diffSnapshots(baseline: StatusSnapshot, current: StatusSnapshot)
 }
 
 /**
- * numstat 输出的单行解析结果。
- */
-interface NumstatEntry {
-  add: number | undefined
-  del: number | undefined
-  path: string
-}
-
-/**
- * 解析 `git diff --numstat` 输出。
- * 格式：`<added>\t<deleted>\t<path>`，二进制文件显示 `-`。
- */
-export function parseNumstat(output: string): NumstatEntry[] {
-  const entries: NumstatEntry[] = []
-  for (const line of output.split('\n')) {
-    if (!line) continue
-    const parts = line.split('\t')
-    if (parts.length < NUMSTAT_MIN_PARTS) continue
-    const addRaw = parts[0]
-    const delRaw = parts[1]
-    const path = parts.slice(NUMSTAT_PATH_START).join('\t')
-    const add = addRaw === '-' ? undefined : Number(addRaw)
-    const del = delRaw === '-' ? undefined : Number(delRaw)
-    entries.push({ add: Number.isNaN(add) ? undefined : add, del: Number.isNaN(del) ? undefined : del, path })
-  }
-  return entries
-}
-
-/**
  * 为 FileChange[] 填充行数（addLines/delLines）。
  *
  * 两路行数来源（ADR-0024 重构）：
@@ -195,7 +172,7 @@ export function computeLineCounts(
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000,
     })
-    numstatMap = new Map(parseNumstat(output).map((e) => [e.path, e]))
+    numstatMap = new Map(parseNumstatEntries(output).map((e) => [e.path, e]))
     // eslint-disable-next-line taste/no-silent-catch -- 降级路径：numstat 失败不能中断 changeSet 推送，行数靠 content 回退
   } catch (e) {
     console.debug(`[file-change-reconciler] git diff --numstat failed: ${e instanceof Error ? e.message : String(e)}`)

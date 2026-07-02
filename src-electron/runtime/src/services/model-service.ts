@@ -21,6 +21,7 @@ import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
 import type { IModelSource } from './ports/model.js'
 import { toErrorMessage } from '../utils/errors.js'
+import { toModelInfo } from './model-mapper.js'
 
 /** discoverModelsFromApi 错误码（domain→文案映射归 service）。 */
 export type ModelDiscoveryErrorCode =
@@ -114,20 +115,9 @@ export class ModelService implements IModelService {
   }
 
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
+    // model→ModelInfo 的字段映射收敛到 toModelInfo（R6，与 config-service.listProviders 共享）。
     return providers.flatMap(p =>
-      p.models.map(m => ({
-        id: m.id,
-        name: m.name ?? m.id,
-        providerId: p.id,
-        providerName: p.name,
-        api: m.api ?? p.api,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        thinkingLevelMap: m.thinkingLevelMap,
-        cost: m.cost,
-        enabled: true,
-      } as ModelInfo)),
+      p.models.map(m => toModelInfo(p.id, p.name, p.api, m)),
     )
   }
 

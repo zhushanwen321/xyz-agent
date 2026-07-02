@@ -13,9 +13,10 @@
 import { existsSync } from 'node:fs'
 import type { SessionSummary, SessionGroup, SessionStatus, Message } from '@xyz-agent/shared'
 import type {
-  ISessionService, ISessionServiceInternal, IMessageBroker,
+  ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService,
 } from '../../interfaces.js'
+import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { readPiState } from '../ports/pi-engine.js'
 import { TreeService } from '../tree-service.js'

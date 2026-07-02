@@ -1,7 +1,8 @@
 /**
  * file-change-reconciler 单测（ADR-0024 D5 重构：baseline diff 引擎）。
  *
- * 覆盖纯函数：parseGitStatusPorcelain / xyToStatus / diffSnapshots / parseNumstat。
+ * 覆盖纯函数：parseGitStatusPorcelain / xyToStatus / diffSnapshots。
+ * numstat 解析已统一到 shared parseNumstatEntries（lossless SSOT），单测见 git-status-parser.test.ts。
  * snapshotGitStatus / computeLineCounts 依赖外部 git（execSync），集成测试覆盖。
  *
  * 运行：cd src-electron/runtime && npx vitest run test/file-change-reconciler.test.ts
@@ -12,7 +13,6 @@ import {
   parseGitStatusPorcelain,
   xyToStatus,
   diffSnapshots,
-  parseNumstat,
 } from '../src/infra/pi/file-change-reconciler.js'
 
 describe('file-change-reconciler', () => {
@@ -127,32 +127,6 @@ describe('file-change-reconciler', () => {
       // gone.ts 不报告，keep.ts 不报告
       expect(byPath.has('gone.ts')).toBe(false)
       expect(byPath.has('keep.ts')).toBe(false)
-    })
-  })
-
-  describe('parseNumstat', () => {
-    it('解析标准 added/deleted/path', () => {
-      const entries = parseNumstat('5\t2\tsrc/a.ts\n10\t0\tsrc/b.ts')
-      expect(entries).toHaveLength(2)
-      expect(entries[0]).toEqual({ add: 5, del: 2, path: 'src/a.ts' })
-      expect(entries[1]).toEqual({ add: 10, del: 0, path: 'src/b.ts' })
-    })
-
-    it('二进制文件（-/-）→ undefined', () => {
-      const entries = parseNumstat('-\t-\tbinary.png')
-      expect(entries).toHaveLength(1)
-      expect(entries[0].add).toBeUndefined()
-      expect(entries[0].del).toBeUndefined()
-    })
-
-    it('路径含 tab（多段 join）', () => {
-      const entries = parseNumstat('1\t0\tweird\tname.ts')
-      expect(entries).toHaveLength(1)
-      expect(entries[0].path).toBe('weird\tname.ts')
-    })
-
-    it('空输出返回空数组', () => {
-      expect(parseNumstat('')).toEqual([])
     })
   })
 })

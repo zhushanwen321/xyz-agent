@@ -1,12 +1,9 @@
 import { readdirSync, statSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import type { ScanSourceType } from '@xyz-agent/shared'
-
-/** Expand `~` prefix to the user's home directory. */
-export function expandHome(p: string): string {
-  return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
-}
+// expandHome 的权威定义已收敛到 utils/path-utils.ts（R4）；re-export 供 scanner 调用方沿用。
+export { expandHome } from '../../utils/path-utils.js'
+import { expandHome } from '../../utils/path-utils.js'
 
 /**
  * Walk every subdirectory under the given scan sources (D6/D21).

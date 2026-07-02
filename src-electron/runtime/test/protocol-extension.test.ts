@@ -2,10 +2,6 @@ import { describe, it, expect } from 'vitest'
 import type {
   ClientMessage,
   ServerMessage,
-  ExtensionUIRequestPayload,
-  ExtensionUIResponsePayload,
-  ExtensionErrorPayload,
-  ToolCallUpdatePayload,
   ExtensionInfo,
   ExtensionDiscoveredPayload,
 } from '@xyz-agent/shared'
@@ -123,91 +119,8 @@ describe('Protocol: extension types', () => {
     expect(msg.type).toBe('config.extensions')
   })
 
-  // ── Payload interfaces ──────────────────────────────────────────
-
-  it('ExtensionUIRequestPayload has correct shape for confirm', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'confirm',
-      title: 'Allow?',
-      message: 'Please confirm',
-    }
-    expect(payload.method).toBe('confirm')
-    expect(payload.options).toBeUndefined()
-    expect(payload.default).toBeUndefined()
-  })
-
-  it('ExtensionUIRequestPayload has correct shape for select with options', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'select',
-      title: 'Choose one',
-      options: ['opt-a', 'opt-b'],
-    }
-    expect(payload.method).toBe('select')
-    expect(payload.options).toEqual(['opt-a', 'opt-b'])
-  })
-
-  it('ExtensionUIRequestPayload has correct shape for input', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'input',
-      title: 'Enter value',
-      default: 'placeholder',
-    }
-    expect(payload.method).toBe('input')
-    expect(payload.default).toBe('placeholder')
-  })
-
-  it('ExtensionUIRequestPayload has correct shape for notify', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'notify',
-      message: 'Something happened',
-      level: 'warn',
-    }
-    expect(payload.method).toBe('notify')
-    expect(payload.level).toBe('warn')
-  })
-
-  it('ExtensionUIResponsePayload has correct shape', () => {
-    const payload: ExtensionUIResponsePayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      result: true,
-    }
-    expect(payload.result).toBe(true)
-  })
-
-  it('ExtensionErrorPayload has correct shape', () => {
-    const payload: ExtensionErrorPayload = {
-      sessionId: 's1',
-      extensionName: 'my-ext',
-      error: 'something went wrong',
-    }
-    expect(payload.extensionName).toBe('my-ext')
-  })
-
-  it('ToolCallUpdatePayload has required and optional fields', () => {
-    const minimal: ToolCallUpdatePayload = {
-      sessionId: 's1',
-      toolCallId: 'tc1',
-    }
-    expect(minimal.progress).toBeUndefined()
-    expect(minimal.detail).toBeUndefined()
-
-    const full: ToolCallUpdatePayload = {
-      sessionId: 's1',
-      toolCallId: 'tc1',
-      progress: 75,
-      detail: 'almost done',
-    }
-    expect(full.progress).toBe(75)
-  })
+  // 注：ExtensionUIRequestPayload / ExtensionUIResponsePayload / ExtensionErrorPayload /
+  // ToolCallUpdatePayload 的形状测试已随类型删除（reserved 占位契约，无生产消费方）。
 
   it('ClientMessage accepts extension.install type', () => {
     const msg: ClientMessage = {

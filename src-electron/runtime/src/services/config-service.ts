@@ -8,7 +8,6 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
 
 import type {
   ProviderInfo,
@@ -21,8 +20,10 @@ import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { extractFrontmatter, extractDescription } from '../utils/frontmatter.js'
+import { expandHome } from '../utils/path-utils.js'
 import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
 import { scanAgents } from './scanners/agent-scanner.js'
+import { pickModelCapabilityFields } from './model-mapper.js'
 
 // ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
@@ -36,11 +37,6 @@ const FORCED_PROJECT_SKILL_DIR = '.xyz-agent/skills'
 const FORCED_GLOBAL_SKILL_DIR = '~/.xyz-agent/skills'
 const FORCED_PROJECT_AGENT_DIR = '.xyz-agent/agents'
 const FORCED_GLOBAL_AGENT_DIR = '~/.xyz-agent/agents'
-
-/** 展开路径中的 ~ 前缀（与 scanner-base.expandHome 对齐）。 */
-function expandHome(p: string): string {
-  return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
-}
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -94,13 +90,9 @@ export class ConfigService implements IConfigService {
         name: m.name,
         api: m.api,
         baseUrl: m.baseUrl,
-        reasoning: m.reasoning,
         input: m.input,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        thinkingLevelMap: m.thinkingLevelMap,
-        cost: m.cost,
         compat: m.compat,
+        ...pickModelCapabilityFields(m),
       })),
       enabled: true,
     }))

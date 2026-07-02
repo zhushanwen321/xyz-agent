@@ -1,6 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
 
+/**
+ * 动态装配真实的 EventAdapter + EventInterpreter（绕过本文件顶部的 vi.mock(event-adapter.js)）。
+ * 返回的 adapter 与生产装配等价：translate 纯翻译 → interpreter 业务编排。
+ */
+async function buildRealAdapter(
+  sessionId: string,
+  send: (msg: unknown) => void,
+  options: Record<string, unknown>,
+): Promise<{ attach(c: unknown): void; detach(): void }> {
+  const [{ EventAdapter }, { EventInterpreter }] = await Promise.all([
+    vi.importActual<typeof import('../src/infra/pi/event-adapter.js')>('../src/infra/pi/event-adapter.js'),
+    vi.importActual<typeof import('../src/services/session/event-interpreter.js')>('../src/services/session/event-interpreter.js'),
+  ])
+  const interpreter = new EventInterpreter(sessionId, { send: send as never, ...options } as never)
+  return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
+}
+
 // IGitInfoReader 桩：SessionService 被 vi.mock 整体替换（构造参数不被使用），仅满足构造签名。
 const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
@@ -170,11 +187,9 @@ function attachAndEmit(adapter: any, mockClient: { onEvent: ReturnType<typeof vi
 
 describe('EventAdapter: bridge method detection', () => {
   it('detects bridge: prefix in extension_ui_request and calls callback', async () => {
-    const { EventAdapter } = await vi.importActual<typeof import('../src/infra/pi/event-adapter.js')>('../src/infra/pi/event-adapter.js')
-
     const bridgeCallback = vi.fn()
     const wsSender = vi.fn()
-    const adapter = new EventAdapter('test-session', wsSender, {
+    const adapter = await buildRealAdapter('test-session', wsSender, {
       onBridgeUIRequest: bridgeCallback,
     })
 
@@ -201,12 +216,10 @@ describe('EventAdapter: bridge method detection', () => {
   })
 
   it('routes multiple bridge methods without frontend timeout registration', async () => {
-    const { EventAdapter } = await vi.importActual<typeof import('../src/infra/pi/event-adapter.js')>('../src/infra/pi/event-adapter.js')
-
     const bridgeCallback = vi.fn()
     const extensionCallback = vi.fn()
     const wsSender = vi.fn()
-    const adapter = new EventAdapter('test-session', wsSender, {
+    const adapter = await buildRealAdapter('test-session', wsSender, {
       onExtensionUIRequest: extensionCallback,
       onBridgeUIRequest: bridgeCallback,
     })
@@ -231,12 +244,10 @@ describe('EventAdapter: bridge method detection', () => {
   })
 
   it('does not interfere with non-bridge extension_ui_request methods', async () => {
-    const { EventAdapter } = await vi.importActual<typeof import('../src/infra/pi/event-adapter.js')>('../src/infra/pi/event-adapter.js')
-
     const extensionCallback = vi.fn()
     const bridgeCallback = vi.fn()
     const wsSender = vi.fn()
-    const adapter = new EventAdapter('test-session', wsSender, {
+    const adapter = await buildRealAdapter('test-session', wsSender, {
       onExtensionUIRequest: extensionCallback,
       onBridgeUIRequest: bridgeCallback,
     })
@@ -302,31 +313,17 @@ describe('RuntimeServer: bridge request routing', () => {
 
     it('aggregates tools from plugin contributions', async () => {
       const pluginService = new PluginService({} as never, server)
-      // Override getDiscoveredPlugins to return a plugin with tools
+      // Override getDiscoveredPlugins to return a plugin (PluginInfo[]; tools
+      // are now surfaced via getBridgeSyncPayload, not descriptor contributes)
       vi.mocked(pluginService.getDiscoveredPlugins).mockReturnValue([
         {
           pluginId: 'test-plugin',
           version: '1.0.0',
           displayName: 'Test Plugin',
           description: 'A test plugin',
-          main: 'index.js',
-          activationEvents: ['onStartupFinished'],
+          status: 'active',
           trustLevel: 'sandbox',
-          status: 'ACTIVE' as const,
-          contributes: {
-            tools: [
-              { name: 'hello', description: 'Says hello', parameters: { type: 'object', properties: {} } },
-              { name: 'goodbye', description: 'Says goodbye', parameters: { type: 'object', properties: {} } },
-            ],
-            slashCommands: [
-              { name: '/test', description: 'Test command' },
-            ],
-          },
-          permissions: [],
-          engines: { 'xyz-agent': '>=0.1.0' },
-          pluginPath: '/tmp/plugins/test-plugin',
-          source: 'built-in' as const,
-          extensionDependencies: [],
+          enabled: true,
         },
       ])
 

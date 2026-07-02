@@ -15,8 +15,10 @@ import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
+import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { NavigateInterceptorFactory } from './infra/pi/navigate-interceptor.js'
 import { SessionTreeReaderAdapter } from './infra/pi/session-tree-reader-adapter.js'
+import { EventInterpreter } from './services/session/event-interpreter.js'
 import { join, resolve } from 'node:path'
 import type { INavigateInterceptor } from './services/ports/tree.js'
 import { ExtensionService } from './services/extension-service.js'
@@ -113,42 +115,54 @@ async function main(): Promise<void> {
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 
-  // adapterFactory closure captures pluginService / configService / modelService by reference.
-  // All three are already assigned above — no temporal coupling.
+  // ── R1 重构：EventAdapter（infra 纯翻译）+ EventInterpreter（service 编排）──
+  // adapterFactory closure captures pluginService / sessionService / server by reference.
+  // All are already assigned above — no temporal coupling.
   // Note: onContextUpdate also references `sessionService` (assigned below) as a self-reference —
-  // the adapter queries its owning session's data. createAdapter is only called at session
+  // the interpreter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
-  const createAdapter = (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => new EventAdapter(sessionId, interceptor.send, {
-    // #8 G1 cwd：注入 session cwd（write 工具 added/modified 判定 + agent_end git 对账用）。
-    // SessionService.initializeManagedSession 调用时传入（该处已有 cwd 参数）。
-    cwd,
-    onExtensionUIRequest: (requestId, sid, method) => {
-      server.registerExtensionTimeout(sid, requestId, method)
-    },
-    onBridgeUIRequest: (requestId, sid, method, data) => {
-      server.handleBridgeRequest(sid, requestId, method, data)
-    },
-    onStatusSetUpdate: (payload) => {
-      server.handleStatusSetUpdate(payload)
-    },
-    onContextUpdate: (sid, ctxData) => {
-      // session 级状态单一 owner：inputTokens 回写 + usagePercent 计算 + context.update 广播
-      // 全部由 SessionService.applyContextUpdate 负责（contextWindow 经注入的 resolver 解析）。
-      // context.update 与 switchModel 的竞态保护（inputTokens 回写打通数据源）也收敛在该方法内。
-      sessionService.applyContextUpdate(sid, ctxData.inputTokens)
-    },
-    onThinkingLevelChanged: (sid, level) => {
-      // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
-      // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
-      sessionService.setThinkingLevelCache(sid, level)
-    },
-    onHookExecute: (hookType, context) => pluginService.executeHooks(hookType, {
-      pluginId: '',
-      hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
-      data: { ...context, sessionId },
-      timestamp: Date.now(),
-    }),
-  })
+  //
+  // fileChangeDiff：infra 纯函数的 port 实现（无状态，全局单例复用）。
+  const fileChangeDiff = new FileChangeDiffAdapter()
+  const createAdapter = (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => {
+    // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
+    // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
+    const interpreter = new EventInterpreter(sessionId, {
+      // #8 G1 cwd：注入 session cwd（write 工具 added/modified 判定 + agent_end git 对账用）。
+      // SessionService.initializeManagedSession 调用时传入（该处已有 cwd 参数）。
+      cwd,
+      send: interceptor.send,
+      fileChangeDiff,
+      onExtensionUIRequest: (requestId, sid, method) => {
+        server.registerExtensionTimeout(sid, requestId, method)
+      },
+      onBridgeUIRequest: (requestId, sid, method, data) => {
+        server.handleBridgeRequest(sid, requestId, method, data)
+      },
+      onStatusSetUpdate: (payload) => {
+        server.handleStatusSetUpdate(payload)
+      },
+      onContextUpdate: (sid, ctxData) => {
+        // session 级状态单一 owner：inputTokens 回写 + usagePercent 计算 + context.update 广播
+        // 全部由 SessionService.applyContextUpdate 负责（contextWindow 经注入的 resolver 解析）。
+        // context.update 与 switchModel 的竞态保护（inputTokens 回写打通数据源）也收敛在该方法内。
+        sessionService.applyContextUpdate(sid, ctxData.inputTokens)
+      },
+      onThinkingLevelChanged: (sid, level) => {
+        // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
+        // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
+        sessionService.setThinkingLevelCache(sid, level)
+      },
+      executeHooks: (hookType, context) => pluginService.executeHooks(hookType, {
+        pluginId: '',
+        hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
+        data: { ...context, sessionId },
+        timestamp: Date.now(),
+      }),
+    })
+    // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
+    return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
+  }
 
   const sessionService = new SessionService(
     pm,

@@ -16,9 +16,9 @@ import type {
   AgentInfo,
   ScannedSkillInfo,
   ScannedAgentInfo,
+  PluginInfo,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
-import type { IManagedSessionView, ScannedSession } from './services/session/types.js'
 
 /**
  * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
@@ -117,51 +117,9 @@ export interface ISessionService {
 }
 
 // ── ISessionServiceInternal ───────────────────────────────────────
-
-/**
- * Facade 暴露给 session/ 子模块(lifecycle / dispatcher / scanner)的内部协议。
- *
- * 放在 interfaces.ts(独立文件)而非 session-service.ts,是为了打断模块级循环:
- * 子模块 `import type { ISessionServiceInternal } from '../../interfaces.js'`,
- * Facade `implements` 此接口 —— 子模块 → 接口 → Facade 单向,无 import 环。
- * (运行期 Facade 调子模块、子模块经接口回调 Facade 是调用环,非依赖环。)
- *
- * sessions Map 单写者:Facade 唯一持有,子模块只经此接口拿到元素引用做字段更新,
- * 不直接 new / 持有 Map。
- */
-export interface ISessionServiceInternal {
-  // ── lifecycle 使用的共享 helper ──
-  /** 初始化 ManagedSession 并写入 sessions Map,返回子模块可见视图。 */
-  initializeManagedSession(id: string, client: IRpcClient, cwd: string, label: string, sessionFilePath?: string): Promise<IManagedSessionView>
-  /** Detach adapter + 退订 usage listener(按 id 查 Map)。 */
-  detachSession(sessionId: string): void
-  /** 将 ManagedSession 转为对外 SessionSummary(含 git 信息)。 */
-  toSummary(s: IManagedSessionView): SessionSummary
-  /** 从 scanPiSessions 结果中按 id 查找持久化 session。 */
-  findScannedSession(sessionId: string): ScannedSession | undefined
-  /** 收集有效的 skill 路径(pi-provider-store + 存在性过滤)。 */
-  getSkillPaths(cwd: string): string[]
-  /** 收集有效的 extension 路径(经 ExtensionService)。 */
-  getExtensionPaths(): Promise<string[]>
-
-  // ── dispatcher 使用 ──
-  /** 确保会话活跃,必要时自动 restore。 */
-  ensureActive(sessionId: string): Promise<IRpcClient>
-  /** 按 RPC client 反查 managed session(更新 lastActiveAt / isGenerating 用)。 */
-  getSessionByClient(client: IRpcClient): IManagedSessionView | undefined
-
-  // ── lifecycle 使用(Map 单写者:查/删经 Facade)──
-  /** 只读查 Map,返回 managed session 视图(active 判定 + 字段读改)。 */
-  getSession(sessionId: string): IManagedSessionView | undefined
-  /** 从 Map 删除条目(仅删条目,不 detach adapter / 不 destroy 进程)。 */
-  removeSessionEntry(sessionId: string): void
-
-  // ── scanner 使用 ──
-  /** 当前活跃会话的 summary 列表(已含 git 信息)。 */
-  getActiveSummaries(): SessionSummary[]
-  /** 当前活跃会话占用的 session 文件路径集合(去重用)。 */
-  getActiveFilePaths(): Set<string>
-}
+// R5：已迁移到 services/session/session-internal.ts（session 域内部契约收归 session 目录）。
+// 此处 re-export 保持向后兼容，新代码请从 services/session/session-internal.js 导入。
+export type { ISessionServiceInternal } from './services/session/session-internal.js'
 
 // ── IConfigService ────────────────────────────────────────────────
 
@@ -250,12 +208,19 @@ export interface IModelService {
 /** Plugin lifecycle: discovery, activation, deactivation, shutdown. */
 export interface IPluginService {
   initialize(): Promise<void>
-  getDiscoveredPlugins(): import('./services/plugin-service/plugin-types.js').PluginDescriptor[]
-  togglePlugin(pluginId: string, enabled: boolean): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
+  /**
+   * 已发现插件列表，按 WS 协议契约返回 PluginInfo[]（config.plugins）。
+   *
+   * 内部 PluginDescriptor（含 main/activationEvents/contributes 等私有字段）由
+   * PluginRegistry.getDescriptor/getAllDescriptors 暴露给 service 内部协作；
+   * 对 transport 仅暴露协议类型，避免内部类型外泄。
+   */
+  getDiscoveredPlugins(): PluginInfo[]
+  togglePlugin(pluginId: string, enabled: boolean): Promise<PluginInfo[]>
   shutdown(): Promise<void>
 
   /** Uninstall a plugin: deactivate, remove files, rescan registry */
-  uninstallPlugin(pluginId: string): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
+  uninstallPlugin(pluginId: string): Promise<PluginInfo[]>
   /** Approve specific permissions for a plugin */
   approvePermissions(pluginId: string, permissions: string[]): Promise<void>
   /** Revoke all permissions for a plugin */

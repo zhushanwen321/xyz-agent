@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type EventAdapterOptions } from '../src/infra/pi/event-adapter.js'
+import { createEventAdapter, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
+import type { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function createAdapter(options?: EventAdapterOptions): {
@@ -8,7 +9,7 @@ function createAdapter(options?: EventAdapterOptions): {
 } {
   const sent: ServerMessage[] = []
   const send = vi.fn((msg: ServerMessage) => { sent.push(msg) })
-  const adapter = new EventAdapter('test-session-id', send, options)
+  const adapter = createEventAdapter('test-session-id', send, options)
   return { adapter, sent }
 }
 

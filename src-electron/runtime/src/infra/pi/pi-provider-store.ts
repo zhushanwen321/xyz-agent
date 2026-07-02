@@ -9,10 +9,10 @@
 
 import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 import { JsonStore } from '../../utils/json-store.js'
+import { normalizeToHome } from '../../utils/path-utils.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsSync/PiSettings/缓存/原子写
 // 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
@@ -377,17 +377,6 @@ export function migrateSettingsSkillsToDiscovery(): void {
   setDiscoverySkillDirs(normalized)
   syncSkillDirsToSettings()
   console.log(`[provider-store] migrated ${legacy.length} legacy skill paths → ${normalized.length} container dirs in discovery.json`)
-}
-
-/**
- * 家目录下的绝对路径归一化为 ~ 前缀（~/.pi/agent/skills），便于与 UI 预设候选统一比较。
- * 非家目录路径原样返回。与 scanner-base.expandHome 互逆。
- */
-function normalizeToHome(p: string): string {
-  const home = homedir()
-  if (p === home) return '~'
-  if (p.startsWith(`${home}/`)) return `~${p.slice(home.length)}`
-  return p
 }
 
 export function getSkillPaths(): string[] {

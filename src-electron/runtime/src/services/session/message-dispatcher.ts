@@ -11,7 +11,8 @@
  * 依赖经构造注入:svc(Facade 内部协议,访问 sessions/共享 helper)、
  * pm(getClient / 进程操作)、broker(broadcast)。
  */
-import type { IMessageBroker, ISessionServiceInternal } from '../../interfaces.js'
+import type { IMessageBroker } from '../../interfaces.js'
+import type { ISessionServiceInternal } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook } from './types.js'
 import { toErrorMessage } from '../../utils/errors.js'

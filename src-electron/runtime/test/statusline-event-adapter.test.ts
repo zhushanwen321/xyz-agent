@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender, type EventAdapterOptions } from '../src/infra/pi/event-adapter.js'
+import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
+import type { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
@@ -19,7 +20,7 @@ function piEvent(fields: PiTestEvent): PiTestEvent {
 function createAdapter(opts?: EventAdapterOptions): { adapter: EventAdapter; sent: ServerMessage[] } {
   const sent: ServerMessage[] = []
   const send: WsSender = (msg) => { sent.push(msg) }
-  const adapter = new EventAdapter('test-session-1', send, opts)
+  const adapter = createEventAdapter('test-session-1', send, opts)
   return { adapter, sent }
 }
 

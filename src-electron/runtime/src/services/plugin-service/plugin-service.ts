@@ -1,6 +1,6 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
 import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, BridgeSyncPayload, ToolRegistration, IPluginServiceDeps } from './plugin-types.js'
-import type { StatusBarItem } from '@xyz-agent/shared'
+import type { StatusBarItem, PluginInfo } from '@xyz-agent/shared'
 import type { IPluginService, ISessionService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -233,14 +233,11 @@ export class PluginService implements IPluginService {
     }
   }
 
-  getDiscoveredPlugins(): PluginDescriptor[] {
-    return this.registry.getAllDescriptors().map(p => ({
-      ...p,
-      status: this.mapStateForProtocol(p.status) as PluginDescriptor['status'],
-    }))
+  getDiscoveredPlugins(): PluginInfo[] {
+    return this.toPluginInfos(this.registry.getAllDescriptors())
   }
 
-  async togglePlugin(pluginId: string, enabled: boolean): Promise<PluginDescriptor[]> {
+  async togglePlugin(pluginId: string, enabled: boolean): Promise<PluginInfo[]> {
     const descriptor = this.registry.getDescriptor(pluginId)
     if (!descriptor) throw new Error(`Plugin not found: ${pluginId}`)
 
@@ -274,7 +271,7 @@ export class PluginService implements IPluginService {
     })
   }
 
-  async uninstallPlugin(pluginId: string): Promise<PluginDescriptor[]> {
+  async uninstallPlugin(pluginId: string): Promise<PluginInfo[]> {
     // 停用插件
     await this.activator.deactivatePlugin(pluginId, this.host)
 
@@ -485,7 +482,7 @@ export class PluginService implements IPluginService {
   }
 
   /** 将内部 PluginState（UPPER_CASE）映射为协议层展示状态（lower_case） */
-  private mapStateForProtocol(state: string): string {
+  private mapStateForProtocol(state: string): PluginInfo['status'] {
     switch (state) {
       case 'ACTIVE': return 'active'
       case 'CRASHED': return 'crashed'
@@ -495,5 +492,32 @@ export class PluginService implements IPluginService {
       default:
         return 'inactive'
     }
+  }
+
+  /**
+   * PluginDescriptor（runtime 内部，PluginInfo 超集）→ PluginInfo（WS 协议契约）。
+   *
+   * 字段挑选 + status 经 mapStateForProtocol 转 lower_case + enabled 推导。
+   * 这是 config.plugins 协议债的正式收口点：之前 transport 层用 `as unknown as PluginInfo[]`
+   * 强转（仅类型缝合、不改运行时序列化），现在下沉到 service 做真实的字段裁剪。
+   *
+   * enabled 语义：runtime 无独立「启用」持久化（togglePlugin 直接驱动激活/停用），
+   * 故以激活态推导——ACTIVE 视为 enabled，其余 disabled。
+   */
+  private toPluginInfo(descriptor: PluginDescriptor): PluginInfo {
+    const status = this.mapStateForProtocol(descriptor.status)
+    return {
+      pluginId: descriptor.pluginId,
+      version: descriptor.version,
+      displayName: descriptor.displayName,
+      description: descriptor.description,
+      status,
+      trustLevel: descriptor.trustLevel,
+      enabled: status === 'active',
+    }
+  }
+
+  private toPluginInfos(descriptors: PluginDescriptor[]): PluginInfo[] {
+    return descriptors.map(d => this.toPluginInfo(d))
   }
 }
