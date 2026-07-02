@@ -13,7 +13,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { homedir } from 'node:os'
+import { getDataDir } from '@xyz-agent/shared'
 
 /**
  * 将端口写入 $XYZ_AGENT_DATA_DIR/runtime.port。
@@ -23,7 +23,7 @@ import { homedir } from 'node:os'
  */
 export function writePortFile(port: number): void {
   try {
-    const dataDir = process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
+    const dataDir = getDataDir()
     mkdirSync(dataDir, { recursive: true })
     writeFileSync(path.join(dataDir, 'runtime.port'), String(port))
   // eslint-disable-next-line taste/no-silent-catch -- 端口文件非关键路径，写失败仅记录不阻塞

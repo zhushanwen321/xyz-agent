@@ -2,7 +2,7 @@
  * 桥接 IPC handler（纯转发，无副作用）。
  *
  * 对应 spec §4.2 M4「桥接 handler」：getRuntimePort / getRuntimePortOffset /
- * getWindows / focusWindow / updateWindowState / findSessionWindow / createWindow。
+ * getWindows / focusWindow / findSessionWindow / createWindow。
  * 只读 Main 内部状态或委托给 windowManager/runtime，无 OS 副作用。
  *
  * [HISTORICAL] 不变量：
@@ -13,7 +13,6 @@
  * 依赖方向：bridge-handlers → electron(ipcMain) + interfaces
  */
 import { ipcMain, BrowserWindow } from 'electron'
-import type { WindowState } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { initialWindowState } from '../window/panel-tree-utils.js'
 
@@ -49,10 +48,6 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle('focus-window', (_event, windowId: string) => {
     deps.windowManager.focus(windowId)
-  })
-
-  ipcMain.handle('update-window-state', (_event, windowId: string, state: Partial<WindowState>) => {
-    deps.windowManager.updateState(windowId, state)
   })
 
   ipcMain.handle('find-session-window', (_event, sessionId: string) => {

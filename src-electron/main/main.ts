@@ -17,7 +17,7 @@
  *    - XYZ_AGENT_PORT_OFFSET ?? DEV_PORT_OFFSET
  *    - app.setPath('userData', 隔离目录)  ← 防 Chromium LevelDB LOCK 竞争
  *
- * 3. local-file:// 协议路径白名单（app.getAppPath/getConfigDir/homedir/tmpdir + path.sep 后缀）
+ * 3. local-file:// 协议路径白名单（app.getAppPath/getDataDir/homedir/tmpdir + path.sep 后缀）
  *
  * 4. Runtime 启动时序（D1 决策）：createWindow 先于 spawn runtime
  *    - whenReady: createWindow → register → registerShortcuts → runtime.startAndNotify
@@ -54,7 +54,7 @@
 import path from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { app, protocol, net, BrowserWindow } from 'electron'
-import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
+import { DEV_PORT_OFFSET, getDataDir } from '@xyz-agent/shared'
 import { createMainContext } from './context.js'
 import type { MainContext } from './interfaces.js'
 import { RuntimeSupervisor } from './supervisor/runtime-supervisor.js'
@@ -77,10 +77,8 @@ process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => {
 // ── 路径 & 模式 ──────────────────────────────────────────────────
 const isDev = !app.isPackaged
 
-/** Mirror of runtime's getConfigDir — reads XYZ_AGENT_DATA_DIR with fallback to ~/.xyz-agent/ */
-function getConfigDir(): string {
-  return process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
-}
+// getDataDir（shared SSOT）：读 XYZ_AGENT_DATA_DIR，缺省 ~/.xyz-agent。
+// dev 模式下方块会把它覆盖为 ~/.xyz-agent-dev（隔离 prod 实例）。
 
 // Dev 模式：自动隔离数据目录和端口，防止与 prod 实例冲突
 if (isDev) {
@@ -145,7 +143,7 @@ app.whenReady().then(async () => {
     // Restrict to safe directories: project cwd, config dir, home, temp
     // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
     const sep = path.sep
-    const allowedPrefixes = [app.getAppPath(), getConfigDir(), homedir(), tmpdir()]
+    const allowedPrefixes = [app.getAppPath(), getDataDir(), homedir(), tmpdir()]
       .map(p => p.endsWith(sep) ? p : p + sep)
     const resolved = path.resolve(filePath)
     // 校验逻辑集中到 input-validators，拒绝不在白名单前缀内的路径（防目录穿越）

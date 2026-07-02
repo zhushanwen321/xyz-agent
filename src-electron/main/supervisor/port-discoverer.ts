@@ -25,7 +25,7 @@
  * 依赖方向：port-discoverer → shared（BASE_PORT/MAX_PORT/DEV_PORT_OFFSET）+ node:child_process + health-checker
  */
 import { execSync } from 'node:child_process'
-import { BASE_PORT, MAX_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
+import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 import { isPortInUse } from './health-checker.js'
 
 /** 端口范围大小（BASE_PORT..BASE_PORT+10） */
@@ -49,8 +49,6 @@ export const SAFE_KILL_NAMES = /(?:^|[\/\\])(?:node|pi|tsx|electron|xyz-agent|ba
  */
 export function getPortOffset(): number {
   const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
-  // DEV_PORT_OFFSET 是 dev 模式惯用偏移（+100 → 3310-3320），实际偏移仍读 env。
-  void DEV_PORT_OFFSET
   return Math.max(0, Math.min(raw, MAX_PORT - BASE_PORT))
 }
 
