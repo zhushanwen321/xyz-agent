@@ -19,7 +19,7 @@ import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { FileService } from '../services/file-service.js'
 import { FileError } from '../services/file-error.js'
-import { toErrorMessage } from '../utils/errors.js'
+import { sendHandlerError } from './handler-utils.js'
 
 /** File handler 的上下文（extends 共享发消息契约 + 领域依赖） */
 export interface FileHandlerContext extends MessageHandlerContext {
@@ -134,12 +134,9 @@ export class FileMessageHandler {
    * - FileError → 取其 code（session_not_found / permission_denied / out_of_cwd / timeout / not_found / read_failed）
    * - 其它 → 'file_failed' + toErrorMessage
    * 注意：not_implemented 不走此方法（file.write 骨架在上游 catch 转结构化 result）。
+   * sessionId 为空串时省略 details（保持既有行为）。
    */
   private sendFileError(ws: WsType, id: string | undefined, sessionId: string, e: unknown): void {
-    if (e instanceof FileError) {
-      this.ctx.sendError(ws, e.code, e.message, id, sessionId ? { sessionId } : undefined)
-    } else {
-      this.ctx.sendError(ws, 'file_failed', toErrorMessage(e), id, sessionId ? { sessionId } : undefined)
-    }
+    sendHandlerError(this.ctx, ws, FileError, 'file_failed', e, id, sessionId ? { sessionId } : undefined)
   }
 }

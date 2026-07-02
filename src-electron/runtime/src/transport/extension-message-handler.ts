@@ -8,6 +8,7 @@ import type { ISessionService, IExtensionService } from '../interfaces.js'
 import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ExtensionInstallError } from '../services/extension-service.js'
 import { toErrorMessage } from '../utils/errors.js'
+import { sendHandlerError } from './handler-utils.js'
 import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
@@ -15,6 +16,10 @@ export interface ExtensionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   extensionService: IExtensionService | undefined
   extensionTimeoutMgr: ExtensionTimeoutManager
+  /** 广播给所有连接（extension.ui_timeout 超时通知用）。 */
+  broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
+  /** push 消息 id 生成器（extension.ui_timeout 广播 id）。 */
+  nextPushId(): string
 }
 
 export class ExtensionMessageHandler {
@@ -38,6 +43,29 @@ export class ExtensionMessageHandler {
       return undefined
     }
     return this.ctx.extensionService
+  }
+
+  /**
+   * 扩展 UI 请求超时后的响应编排：向 pi 进程发默认 extension_ui_response（confirm→false，
+   * 其余→null），并广播 extension.ui_timeout 通知前端。
+   *
+   * 此前这段逻辑内联在 server.registerExtensionTimeout 的 onTimeout 回调里——属于扩展响应
+   * 编排，不该留在 transport 层。server 现在只负责注册 timer，超时后委托本方法。
+   * 行为与原内联实现逐字一致（默认值计算、RPC 取值判空、sendCommand + 广播顺序）。
+   */
+  handleExtensionTimeout(sessionId: string, requestId: string, method: string): void {
+    const defaultResponse = method === 'confirm' ? false : null
+    const client = this.ctx.sessionService.getRpcClient(sessionId)
+    if (client) {
+      client.sendCommand('extension_ui_response', { id: requestId, response: defaultResponse }).catch((e: unknown) => {
+        console.error('[runtime] extension timeout response failed:', e)
+      })
+    }
+    this.ctx.broadcast({
+      type: 'extension.ui_timeout',
+      id: this.ctx.nextPushId(),
+      payload: { sessionId, requestId },
+    })
   }
 
   async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
@@ -168,10 +196,7 @@ export class ExtensionMessageHandler {
    * Primary: instanceof check. Fallback: branded property check (handles cross-bundle scenarios).
    */
   private sendInstallError(ws: WsType, id: string | undefined, e: unknown): void {
-    if (e instanceof ExtensionInstallError) {
-      this.ctx.sendError(ws, e.code, e.message, id, e.hint ? { hint: e.hint } : undefined)
-    } else {
-      this.ctx.sendError(ws, 'install_failed', toErrorMessage(e), id)
-    }
+    // matched 分支透传 e.hint；fallback 分支不带 details（保持既有行为）。
+    sendHandlerError(this.ctx, ws, ExtensionInstallError, 'install_failed', e, id, (matched) => matched.hint ? { hint: matched.hint } : undefined)
   }
 }

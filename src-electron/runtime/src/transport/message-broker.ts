@@ -80,29 +80,59 @@ export class ServerMessageBroker implements IMessageBroker {
     this.send(ws, { type, id, payload })
   }
 
+  // ── Shared payload builders ─────────────────────────────────────
+  // broadcast helpers 与 sendInitialState 此前各自重建同一组 provider/skill/agent/dir/model
+  // payload（两份「initial/config state」表示）。现抽取私有 builder：只负责 load + 构造
+  // ServerMessage（id 用 nextPushId），不含路由。broadcast 走 this.broadcast、sendInitialState
+  // 走 this.send(ws,·)，共用同一 builder，消除 payload 构造重复。
+  // 每个 builder 返回 1~2 条消息（provider 段含 config.providers + model.list）。
+
+  private buildSessionListMsg(): ServerMessage {
+    return { type: 'session.list', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } }
+  }
+  private buildProviderListMsgs(): ServerMessage[] {
+    const providers = this.services.configService.listProviders()
+    return [
+      { type: 'config.providers', id: this.nextPushId(), payload: { providers } },
+      { type: 'model.list', id: this.nextPushId(), payload: { models: this.services.modelService.aggregateModels(providers) } },
+    ]
+  }
+  private buildSkillListMsg(): ServerMessage {
+    return { type: 'config.skills', id: this.nextPushId(), payload: { skills: this.services.configService.loadSkills(this.services.projectRoot) } }
+  }
+  private buildAgentListMsg(): ServerMessage {
+    return { type: 'config.agents', id: this.nextPushId(), payload: { agents: this.services.configService.loadAgents(this.services.projectRoot) } }
+  }
+  /** skill 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  private buildSkillDirsMsg(): ServerMessage {
+    return { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.services.configService.getSkillDirs()) } }
+  }
+  /** agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  private buildAgentDirsMsg(): ServerMessage {
+    return { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentDirs()) } }
+  }
+
   // ── Broadcast helpers ──────────────────────────────────────────
 
   broadcastSessionList(): void {
-    this.broadcast({ type: 'session.list', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } })
+    this.broadcast(this.buildSessionListMsg())
   }
   broadcastProviderList(): void {
-    const providers = this.services.configService.listProviders()
-    this.broadcast({ type: 'config.providers', id: this.nextPushId(), payload: { providers } })
-    this.broadcast({ type: 'model.list', id: this.nextPushId(), payload: { models: this.services.modelService.aggregateModels(providers) } })
+    for (const msg of this.buildProviderListMsgs()) this.broadcast(msg)
   }
   broadcastSkillList(): void {
-    this.broadcast({ type: 'config.skills', id: this.nextPushId(), payload: { skills: this.services.configService.loadSkills(this.services.projectRoot) } })
+    this.broadcast(this.buildSkillListMsg())
   }
   broadcastAgentList(): void {
-    this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents: this.services.configService.loadAgents(this.services.projectRoot) } })
+    this.broadcast(this.buildAgentListMsg())
   }
   /** 广播 skill 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastSkillDirs(): void {
-    this.broadcast({ type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.services.configService.getSkillDirs()) } })
+    this.broadcast(this.buildSkillDirsMsg())
   }
   /** 广播 agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastAgentDirs(): void {
-    this.broadcast({ type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentDirs()) } })
+    this.broadcast(this.buildAgentDirsMsg())
   }
 
   /**
@@ -110,21 +140,21 @@ export class ServerMessageBroker implements IMessageBroker {
    * 此前 6 段同构 best-effort try/catch（eslint-disable 注释也复制了 6 次）。
    * 现在每段是一个 { label, run } descriptor，共享 try/catch 包装器只写一次。
    * run 内含 load + 条件 + send，领域差异保留在各自 descriptor。
+   *
+   * 与 broadcast helper 去重：前 7 段（session/provider+model/skills/skillDirs/agents/agentDirs）
+   * 改为调用与 broadcast helper 共享的 buildXxx builder，消除此前两处独立重建同一 payload。
+   * 仅 config.defaults / config.plugins 两段为 initial-state 独有（无对应 broadcast helper），保留 inline。
    */
   sendInitialState(ws: WsType): void {
-    const { sessionService, configService, modelService, pluginService, projectRoot } = this.services
+    const { configService, pluginService } = this.services
     const steps: Array<{ label: string; run: () => void }> = [
       {
         label: 'session.list',
-        run: () => this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups: sessionService.listPersistedSessions() } }),
+        run: () => this.send(ws, this.buildSessionListMsg()),
       },
       {
         label: 'config.providers/model.list',
-        run: () => {
-          const providers = configService.listProviders()
-          this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
-          this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models: modelService.aggregateModels(providers) } })
-        },
+        run: () => { for (const msg of this.buildProviderListMsgs()) this.send(ws, msg) },
       },
       {
         label: 'config.defaults',
@@ -137,19 +167,19 @@ export class ServerMessageBroker implements IMessageBroker {
       },
       {
         label: 'config.skills',
-        run: () => this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills: configService.loadSkills(projectRoot) } }),
+        run: () => this.send(ws, this.buildSkillListMsg()),
       },
       {
         label: 'config.skillDirs',
-        run: () => this.send(ws, { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, configService.getSkillDirs()) } }),
+        run: () => this.send(ws, this.buildSkillDirsMsg()),
       },
       {
         label: 'config.agents',
-        run: () => this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents: configService.loadAgents(projectRoot) } }),
+        run: () => this.send(ws, this.buildAgentListMsg()),
       },
       {
         label: 'config.agentDirs',
-        run: () => this.send(ws, { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, configService.getAgentDirs()) } }),
+        run: () => this.send(ws, this.buildAgentDirsMsg()),
       },
       {
         label: 'config.plugins',

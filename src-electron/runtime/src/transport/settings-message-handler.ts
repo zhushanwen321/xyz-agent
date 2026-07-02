@@ -140,10 +140,13 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'session.thinkingLevelSet', { sessionId: sid, level })
         return true
       }
-      case 'tool.approve':
-      case 'tool.deny':
-      case 'tool.always_allow':
-        return true
+      // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。
+      // 这些 type 此前只是 `return true` 以避免 unknown_type，但工具审批的实际路径是
+      // pi 的 extension_ui_request（method:'confirm'）→ extension.ui_request/ui_response 流
+      // （event-adapter 翻译，见 infra/pi/event-adapter.ts），「总是允许」由 config.setToolPermissions
+      // 声明式 toolPermissions 配置覆盖。renderer 从不发送 tool.approve/deny/always_allow，
+      // 无真实 handler。现在这些消息会落入 default → return false → server 发 unknown_type，
+      // 即对真正未知 type 的正确兜底行为。
       default: return false
     }
   }

@@ -135,6 +135,8 @@ export class RuntimeServer implements IMessageBroker {
       sessionService: this.sessionService,
       extensionService: this.extensionService,
       extensionTimeoutMgr: this.extensionTimeoutMgr,
+      broadcast: (msg) => this.broker.broadcast(msg),
+      nextPushId: () => this.broker.nextPushId(),
     })
     this.pluginMessageHandler = new PluginMessageHandler({
       ...messaging,
@@ -218,19 +220,10 @@ export class RuntimeServer implements IMessageBroker {
   // ── Extension timeout delegation ─────────────────────────────────
 
   registerExtensionTimeout(sessionId: string, requestId: string, method: string): void {
+    // 只注册 timer + 委托：超时后的扩展响应编排（默认值 / RPC / 广播）已下沉到
+    // extensionHandler.handleExtensionTimeout，不再让 transport 层承载扩展响应业务逻辑。
     this.extensionTimeoutMgr.registerTimeout(sessionId, requestId, method, () => {
-      const defaultResponse = method === 'confirm' ? false : null
-      const client = this.sessionService.getRpcClient(sessionId)
-      if (client) {
-        client.sendCommand('extension_ui_response', { id: requestId, response: defaultResponse }).catch((e: unknown) => {
-          console.error('[runtime] extension timeout response failed:', e)
-        })
-      }
-      this.broker.broadcast({
-        type: 'extension.ui_timeout',
-        id: this.broker.nextPushId(),
-        payload: { sessionId, requestId },
-      })
+      this.extensionHandler.handleExtensionTimeout(sessionId, requestId, method)
     })
   }
 

@@ -139,10 +139,16 @@ describe('SettingsMessageHandler', () => {
       expect(ctx.broadcastAgentList).toHaveBeenCalledOnce()
       expect(ctx.broadcastAgentDirs).toHaveBeenCalledOnce()
     })
-    it('tool.approve → no-op return true', async () => {
+    it('tool.approve/deny/always_allow → 落入 default return false（no-op 已移除，由 server unknown_type 兜底）', async () => {
+      // 工具审批实际走 pi extension_ui_request (confirm) 流 + config.setToolPermissions，
+      // 这些 type 无真实 handler，故 return false → server 发 unknown_type（对未知 type 的正确兜底）。
       const { handler } = makeHandler()
-      const ok = await handler.handleSettingsMessage(msg('tool.approve', {}), WS)
-      expect(ok).toBe(true)
+      const okApprove = await handler.handleSettingsMessage(msg('tool.approve', {}), WS)
+      const okDeny = await handler.handleSettingsMessage(msg('tool.deny', {}), WS)
+      const okAlways = await handler.handleSettingsMessage(msg('tool.always_allow', {}), WS)
+      expect(okApprove).toBe(false)
+      expect(okDeny).toBe(false)
+      expect(okAlways).toBe(false)
     })
   })
 

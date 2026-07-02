@@ -130,77 +130,14 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
 }
 
-export type ClientMessage =
-  | { type: 'ping'; id?: string; payload: Record<string, never> }
-  | { type: 'session.create'; id?: string; payload: ClientMessageMap['session.create'] }
-  | { type: 'session.delete'; id?: string; payload: ClientMessageMap['session.delete'] }
-  | { type: 'session.list'; id?: string; payload: Record<string, never> }
-  | { type: 'session.switch'; id?: string; payload: ClientMessageMap['session.switch'] }
-  | { type: 'session.history'; id?: string; payload: ClientMessageMap['session.history'] }
-  | { type: 'session.getCommands'; id?: string; payload: ClientMessageMap['session.getCommands'] }
-  | { type: 'session.compact'; id?: string; payload: ClientMessageMap['session.compact'] }
-  | { type: 'session.rename'; id?: string; payload: ClientMessageMap['session.rename'] }
-  | { type: 'message.send'; id?: string; payload: ClientMessageMap['message.send'] }
-  | { type: 'message.abort'; id?: string; payload: ClientMessageMap['message.abort'] }
-  | { type: 'message.steer'; id?: string; payload: ClientMessageMap['message.steer'] }
-  | { type: 'message.follow_up'; id?: string; payload: ClientMessageMap['message.follow_up'] }
-  | { type: 'session.tree-data'; id?: string; payload: ClientMessageMap['session.tree-data'] }
-  | { type: 'session.tree-navigate'; id?: string; payload: ClientMessageMap['session.tree-navigate'] }
-  | { type: 'session.tree-fork'; id?: string; payload: ClientMessageMap['session.tree-fork'] }
-  | { type: 'session.tree-clone'; id?: string; payload: ClientMessageMap['session.tree-clone'] }
-  | { type: 'session.tree-capability'; id?: string; payload: ClientMessageMap['session.tree-capability'] }
-  | { type: 'config.getProviders'; id?: string; payload: Record<string, never> }
-  | { type: 'config.setProvider'; id?: string; payload: ClientMessageMap['config.setProvider'] }
-  | { type: 'config.deleteProvider'; id?: string; payload: ClientMessageMap['config.deleteProvider'] }
-  | { type: 'config.setToolPermissions'; id?: string; payload: ClientMessageMap['config.setToolPermissions'] }
-  | { type: 'config.discoverModels'; id?: string; payload: ClientMessageMap['config.discoverModels'] }
-  | { type: 'config.scanSkills'; id?: string; payload: ClientMessageMap['config.scanSkills'] }
-  | { type: 'config.setSkill'; id?: string; payload: ClientMessageMap['config.setSkill'] }
-  | { type: 'config.deleteSkill'; id?: string; payload: ClientMessageMap['config.deleteSkill'] }
-  | { type: 'config.scanAgents'; id?: string; payload: ClientMessageMap['config.scanAgents'] }
-  | { type: 'config.setAgent'; id?: string; payload: ClientMessageMap['config.setAgent'] }
-  | { type: 'config.deleteAgent'; id?: string; payload: ClientMessageMap['config.deleteAgent'] }
-  | { type: 'config.setSkillDirs'; id?: string; payload: ClientMessageMap['config.setSkillDirs'] }
-  | { type: 'config.setAgentDirs'; id?: string; payload: ClientMessageMap['config.setAgentDirs'] }
-  | { type: 'model.list'; id?: string; payload: Record<string, never> }
-  | { type: 'model.switch'; id?: string; payload: ClientMessageMap['model.switch'] }
-  | { type: 'session.setThinkingLevel'; id?: string; payload: ClientMessageMap['session.setThinkingLevel'] }
-  | { type: 'tool.approve'; id?: string; payload: ClientMessageMap['tool.approve'] }
-  | { type: 'tool.deny'; id?: string; payload: ClientMessageMap['tool.deny'] }
-  | { type: 'tool.always_allow'; id?: string; payload: ClientMessageMap['tool.always_allow'] }
-  | { type: 'extension.ui_response'; id?: string; payload: ClientMessageMap['extension.ui_response'] }
-  | { type: 'extension.toggle'; id?: string; payload: ClientMessageMap['extension.toggle'] }
-  | { type: 'extension.list'; id?: string; payload: ClientMessageMap['extension.list'] }
-  | { type: 'extension.install'; id?: string; payload: ClientMessageMap['extension.install'] }
-  | { type: 'extension.uninstall'; id?: string; payload: ClientMessageMap['extension.uninstall'] }
-  | { type: 'extension.installDir'; id?: string; payload: ClientMessageMap['extension.installDir'] }
-  | { type: 'extension.installGit'; id?: string; payload: ClientMessageMap['extension.installGit'] }
-  | { type: 'extension.finishInstall'; id?: string; payload: ClientMessageMap['extension.finishInstall'] }
-  | { type: 'extension.cancelInstall'; id?: string; payload: ClientMessageMap['extension.cancelInstall'] }
-  | { type: 'plugin.list'; id?: string; payload: Record<string, never> }
-  | { type: 'plugin.toggle'; id?: string; payload: ClientMessageMap['plugin.toggle'] }
-  | { type: 'plugin.install'; id?: string; payload: ClientMessageMap['plugin.install'] }
-  | { type: 'plugin.uninstall'; id?: string; payload: ClientMessageMap['plugin.uninstall'] }
-  | { type: 'plugin.approvePermissions'; id?: string; payload: ClientMessageMap['plugin.approvePermissions'] }
-  | { type: 'plugin.revokePermissions'; id?: string; payload: ClientMessageMap['plugin.revokePermissions'] }
-  | { type: 'plugin.executeCommand'; id?: string; payload: ClientMessageMap['plugin.executeCommand'] }
-  | { type: 'plugin.config.get'; id?: string; payload: ClientMessageMap['plugin.config.get'] }
-  | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
-  | { type: 'plugin.uiResponse'; id?: string; payload: ClientMessageMap['plugin.uiResponse'] }
-  | { type: 'file.read'; id?: string; payload: ClientMessageMap['file.read'] }
-  | { type: 'file.tree'; id?: string; payload: ClientMessageMap['file.tree'] }
-  | { type: 'file.tree.expand'; id?: string; payload: ClientMessageMap['file.tree.expand'] }
-  | { type: 'file.search'; id?: string; payload: ClientMessageMap['file.search'] }
-  | { type: 'git.diff'; id?: string; payload: ClientMessageMap['git.diff'] }
-  | { type: 'file.write.create'; id?: string; payload: ClientMessageMap['file.write.create'] }
-  | { type: 'file.write.rename'; id?: string; payload: ClientMessageMap['file.write.rename'] }
-  | { type: 'file.write.delete'; id?: string; payload: ClientMessageMap['file.write.delete'] }
-  | { type: 'git.status'; id?: string; payload: ClientMessageMap['git.status'] }
-  | { type: 'git.stage'; id?: string; payload: ClientMessageMap['git.stage'] }
-  | { type: 'git.unstage'; id?: string; payload: ClientMessageMap['git.unstage'] }
-  | { type: 'git.commit'; id?: string; payload: ClientMessageMap['git.commit'] }
-  | { type: 'git.checkout'; id?: string; payload: ClientMessageMap['git.checkout'] }
-  | { type: 'git.createBranch'; id?: string; payload: ClientMessageMap['git.createBranch'] }
+// ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
+// { type: K; id?: string; payload: ClientMessageMap[K] }。此前是一份 ~70 行手写
+// discriminated union，与 ClientMessageMap 逐条重复——加新 type 要改两处且易漂移。
+// 映射派生后 ClientMessageMap 成为唯一真值源；消费侧的 Extract<ClientMessage, { type: 'X' }>
+// 收窄与 switch narrowing 行为完全一致。
+export type ClientMessage = {
+  [K in keyof ClientMessageMap]: { type: K; id?: string; payload: ClientMessageMap[K] }
+}[keyof ClientMessageMap]
 
 // ── Runtime → Client message types ──────────────────────────────
 

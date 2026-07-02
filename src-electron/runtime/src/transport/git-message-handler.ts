@@ -20,7 +20,7 @@ import type { MessageHandlerContext } from './message-context.js'
 import type { ISessionService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import { GitError } from '../services/git-service.js'
-import { toErrorMessage } from '../utils/errors.js'
+import { sendHandlerError } from './handler-utils.js'
 
 /** Interface for server methods needed by this handler */
 export interface GitHandlerContext extends MessageHandlerContext {
@@ -115,12 +115,9 @@ export class GitMessageHandler {
    * 统一 git 错误回复（D10/P0-B）。
    * - GitError → 取其 code（session_not_found / path_not_allowed / git_conflict / commit_message_required / *_failed / invalid_branch_name / git_unavailable / git_failed）
    * - 其它 → 'git_failed' + toErrorMessage
+   * sessionId 透传 details（matched 与 fallback 两分支都带）。
    */
   private sendGitError(ws: WsType, id: string | undefined, sessionId: string, e: unknown): void {
-    if (e instanceof GitError) {
-      this.ctx.sendError(ws, e.code, e.message, id, { sessionId })
-    } else {
-      this.ctx.sendError(ws, 'git_failed', toErrorMessage(e), id, { sessionId })
-    }
+    sendHandlerError(this.ctx, ws, GitError, 'git_failed', e, id, { sessionId })
   }
 }
