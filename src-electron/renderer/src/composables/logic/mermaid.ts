@@ -125,6 +125,11 @@ export async function renderMermaid(
   const ID_LEN = 6
   const id = `md-${Date.now()}-${Math.random().toString(ID_RADIX).slice(ID_SKIP_PREFIX, ID_SKIP_PREFIX + ID_LEN)}`
   const { svg } = await mermaid.render(id, source)
+  // mermaid.render 在不完整 DOM 环境（happy-dom/jsdom）会静默返回空串（不抛错）。
+  // 真实 Chromium 不应如此——空 svg 视为失败，让上层显示「渲染失败」而非空白。
+  if (!svg || !svg.includes('<svg')) {
+    throw new Error(`mermaid.render 返回空 svg（source 长度=${source.length}，可能 DOM 环境不完整或源码解析失败）`)
+  }
   return { svg }
 }
 
