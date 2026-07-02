@@ -29,9 +29,12 @@
         </div>
       </div>
       <!-- 展示态气泡：右下尖角（user content 走 markdown 渲染；slash 命令前缀渲染为 chip） -->
+      <!-- whitespace-pre-wrap：markdown.ts breaks:false 不把单 \n 转 <br>，
+           此处用 CSS 保留软换行，兑现"用户输入的换行在气泡里可见"。
+           代码块 <pre> 自带 white-space:pre，不受影响。仅用户气泡加，不影响 assistant。 -->
       <div
         v-else
-        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
+        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
       >
         <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），后接剩余文本 -->
         <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），可点击在 drawer 查看文档。
