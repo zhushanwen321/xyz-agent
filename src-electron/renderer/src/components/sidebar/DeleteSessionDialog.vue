@@ -1,34 +1,23 @@
 <template>
-  <Dialog :open="open" @update:open="emit('update:open', $event)">
-    <DialogContent class="sm:max-w-[360px]">
-      <DialogHeader>
-        <DialogTitle>删除会话</DialogTitle>
-        <DialogDescription>
-          确定删除 <span class="font-medium text-fg">"{{ sessionLabel }}"</span>？此操作不可撤销。
-        </DialogDescription>
-      </DialogHeader>
-
-      <div class="mt-2 flex justify-end gap-2">
-        <Button variant="ghost" size="sm" @click="emit('update:open', false)">
-          取消
-        </Button>
-        <Button variant="danger" size="sm" @click="onConfirm">
-          删除
-        </Button>
-      </div>
-    </DialogContent>
-  </Dialog>
+  <!--
+    薄封装：会话删除的领域确认框。
+    复用 ConfirmDialog 原语，仅负责把标题/描述填充为会话语义，
+    并把无 payload 的 confirm 回调映射为带 sessionId 的领域事件（供 Sidebar 消费）。
+  -->
+  <ConfirmDialog
+    v-model:open="innerOpen"
+    variant="danger"
+    title="删除会话"
+    :description="confirmDescription"
+    confirm-text="删除"
+    cancel-text="取消"
+    @confirm="onConfirm"
+  />
 </template>
 
 <script setup lang="ts">
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { computed } from 'vue'
+import { ConfirmDialog } from '@/components/ui/dialog'
 
 const props = defineProps<{
   open: boolean
@@ -40,6 +29,17 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
   confirm: [sessionId: string]
 }>()
+
+/** v-model:open 双向中转（ConfirmDialog 受控 open ↔ 父级 open） */
+const innerOpen = computed({
+  get: () => props.open,
+  set: (v: boolean) => emit('update:open', v),
+})
+
+/** 确认描述：嵌入会话名（引号强调被删对象） */
+const confirmDescription = computed(
+  () => `确定删除 "${props.sessionLabel}"？此操作不可撤销。`,
+)
 
 function onConfirm(): void {
   emit('confirm', props.sessionId)

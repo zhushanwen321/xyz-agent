@@ -12,10 +12,10 @@
  * 依赖方向：useFileTree → fileTreeStore + api/domains（file/git）。不直接 import chat store
  * （W6 的 invalidateOnFileChanges 经 composable 层 watch，不违反 stores 间禁 import）。
  */
-import { watch, type Ref } from 'vue'
+import type { Ref } from 'vue'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useChatStore } from '@/stores/chat'
 import { file as fileApi, git as gitApi } from '@/api'
+import { watchFileChangesForInvalidation } from './useFileChangeInvalidation'
 import type { FileNode } from '@xyz-agent/shared'
 
 /** 在途请求追踪（expandNode 幂等去重：同 path loading 时不重发） */
@@ -179,48 +179,19 @@ export function useFileTree() {
 
   /**
    * [K-9/W6 #3.11] 跨 store 失效编排：watch chat store 该 session 的 fileChanges 变化
-   * → 提取最新 filePaths → store.invalidate（loaded→invalidated）。
+   * → store.invalidate（loaded→invalidated）。
    *
-   * composable 层 watch（stores 间禁止 import，但 composable 可 watch 多个 store）。
-   * file_changes ready 帧由 chat-chunk-processor 合并进 message.fileChanges，
-   * 此处 watch 其变化触发失效。 invalidated 节点下次展开时重发请求（expandNode 的 invalidated 分支）。
+   * 共享 watch + 提取 + diff 逻辑抽至 useFileChangeInvalidation（消除与 useFileSearch 的重复）。
+   * 此处仅表达 fileTree 的增量语义——把 diff 出的 changed paths 传给 store.invalidate，
+   * invalidated 节点下次展开时重发请求（expandNode 的 invalidated 分支）。
    *
    * @param sessionIdRef session id 的 ref（变化时重订阅）
    * @returns unwatch 函数（组件 onBeforeUnmount 调用，避免泄漏）
    */
   function setupInvalidation(sessionIdRef: Ref<string>): () => void {
-    const chatStore = useChatStore()
-    // 上次处理的 fileChanges paths 快照（去重：仅 paths 集合变化时才 invalidate）
-    let lastPaths = new Set<string>()
-
-    const unwatch = watch(
-      [() => sessionIdRef.value, () => chatStore.messages],
-      () => {
-        const sid = sessionIdRef.value
-        if (!sid) {
-          lastPaths = new Set()
-          return
-        }
-        // 提取该 session 所有 assistant message 的 fileChanges paths
-        const msgs = chatStore.getMessages(sid)
-        const currentPaths = new Set<string>()
-        for (const m of msgs) {
-          if (m.role !== 'assistant') continue
-          for (const fc of m.fileChanges ?? []) {
-            currentPaths.add(fc.filePath)
-          }
-        }
-        // 仅当 paths 集合变化时 invalidate（避免每帧重复）
-        const changed = [...currentPaths].filter((p) => !lastPaths.has(p))
-        if (changed.length > 0) {
-          store.invalidate(sid, changed)
-        }
-        lastPaths = currentPaths
-      },
-      { deep: true, immediate: true },
-    )
-
-    return unwatch
+    return watchFileChangesForInvalidation(sessionIdRef, (sid, changed) => {
+      store.invalidate(sid, changed)
+    })
   }
 
   return {

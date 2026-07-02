@@ -14,7 +14,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useSettingsStore } from '@/stores/settings'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
-import { model as modelApi, session as sessionApi } from '@/api'
+import { useModel } from '@/composables/features/useModel'
 import { useThinkingLevelSync } from '@/composables/panel/useThinkingLevelSync'
 
 export function useComposerModelThinking(
@@ -30,6 +30,9 @@ export function useComposerModelThinking(
   const sessionStore = useSessionStore()
   const settingsStore = useSettingsStore()
   const flow = useNewTaskFlow()
+  // 模型切换 + 思考等级设置的 RPC + 乐观更新编排（features 层，ADR-0028）。
+  // 本 composable（panel 层）只负责 UI 派生与态分发，不直调 @/api。
+  const { switchModel, setThinkingLevel: applyThinkingLevel } = useModel()
 
   /**
    * landing 态本地思考等级（session 尚未 create，无 sessionStore.active.thinkingLevel）。
@@ -64,9 +67,7 @@ export function useComposerModelThinking(
   )
 
   /**
-   * 模型切换：调 runtime model.switch（sessionId + provider + modelId）；
-   * 成功后乐观更新 sessionStore（立即生效，不依赖 state_changed 广播到达——
-   * 未发消息的 session 可能无 streamSubscription，广播会丢）。
+   * 模型切换：session 已建走 features 层编排（RPC + 乐观更新）；
    * landing 态（sid=null）session 尚未 create，记 pendingModel 供首发提交后 apply。
    */
   async function onModelSelect(payload: { modelId: string; provider: string }): Promise<void> {
@@ -75,21 +76,19 @@ export function useComposerModelThinking(
       flow.setPendingModel(`${payload.provider}/${payload.modelId}`)
       return
     }
-    await modelApi.switchModel(sessionId.value, payload.provider, payload.modelId)
-    // 乐观更新：立即同步 active.modelId（复合串 "provider/modelId"）
-    sessionStore.updateSessionState(sessionId.value, {
-      modelId: `${payload.provider}/${payload.modelId}`,
-    })
+    // 已建态：RPC + 乐观更新（编排逻辑归 features/useModel，ADR-0028）
+    await switchModel(sessionId.value, payload.provider, payload.modelId)
   }
 
-  /** 思考等级切换：session 已建调 runtime RPC，landing 态记 localThinkingLevel（submitFirstMessage 后 apply） */
+  /** 思考等级切换：session 已建走 features 层编排（RPC + 乐观更新），landing 态记 localThinkingLevel（submitFirstMessage 后 apply） */
   async function onThinkingSelect(level: string): Promise<void> {
     // landing 态延迟 create：记本地态，submitFirstMessage create session 后 apply
     if (!sessionId.value) {
       localThinkingLevel.value = level
       return
     }
-    await sessionApi.setThinkingLevel(sessionId.value, level)
+    // 已建态：RPC + 乐观更新（编排逻辑归 features/useModel，ADR-0028）
+    await applyThinkingLevel(sessionId.value, level)
   }
 
   return {

@@ -63,12 +63,13 @@ import { FilePen } from '@lucide/vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
+import { DOT_CLASS } from '@/composables/logic/sessionStatus'
 
 const props = defineProps<{
   session: SessionSummary
   /** 当前激活 session（Card-Active inset ring） */
   active: boolean
-  /** 派生状态点（D6），由容器注入 useSidebar.derivedStatus */
+  /** 派生状态点（D6），由容器注入 useSessionDerivations.derivedStatus */
   status: DerivedStatus
   /** 末条 assistant 文本摘要（无则空，卡片不渲染摘要区） */
   summary?: string
@@ -84,14 +85,7 @@ const emit = defineEmits<{
   open: [sessionId: string]
 }>()
 
-/** 状态点语义类：背景色 + 脉冲动画。keyframes 收敛到 tailwind.config（与 SessionItem 共享 SSOT） */
-const DOT_CLASS: Record<DerivedStatus, string> = {
-  running: 'bg-accent animate-pulse-accent',
-  waiting: 'bg-warning animate-pulse-warn',
-  done: 'bg-success',
-  stopped: 'bg-subtle opacity-50',
-  error: 'bg-danger',
-}
+/** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
 const dotClass = computed(() => DOT_CLASS[props.status])
 
 /** 是否渲染改动指标（任一计数 > 0） */

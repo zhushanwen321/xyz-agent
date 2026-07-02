@@ -6,16 +6,14 @@
     附件暂为 TODO（附件功能单独开任务，涉及系统文件对话框 + pi 对接）。
   -->
   <Popover v-model:open="open">
-    <PopoverTrigger as-child>
-      <Button
-        variant="ghost"
-        size="icon"
-        class="size-[28px] shrink-0 rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-muted"
-        title="添加内容（附件 / 命令）"
-      >
-        <Plus class="size-4" />
-      </Button>
-    </PopoverTrigger>
+    <PopoverTriggerButton
+      :open="open"
+      variant="icon"
+      :show-chevron="false"
+      title="添加内容（附件 / 命令）"
+    >
+      <Plus class="size-4" />
+    </PopoverTriggerButton>
     <PopoverContent side="top" align="start" class="w-[208px] p-1">
       <Button
         v-for="item in items"
@@ -37,7 +35,7 @@ import { markRaw, ref } from 'vue'
 import type { Component } from 'vue'
 import { Paperclip, Plus, Slash } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTriggerButton } from '@/components/ui/popover'
 
 type AddType = 'attach' | 'slash'
 

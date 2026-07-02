@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { git as gitApi } from '@/api'
 import { useToast } from '@/composables/useToast'
+import { useFlatListNav } from '@/composables/logic/useFlatListNav'
 import type { GitStatusResult } from '@xyz-agent/shared'
 
 /** T4.9 / AC-6.9：分支极多时渲染上限，超出靠搜索过滤（v1 限制渲染数，不引入虚拟滚动库） */
@@ -50,7 +51,6 @@ const status = ref<GitStatusResult | null>(null)
 const statusError = ref<unknown>(null)
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
-const activeIndex = ref(0)
 /** dirty 二次确认条待确认的目标分支名（null = 无确认条） */
 const pendingDirtyBranch = ref<string | null>(null)
 
@@ -88,10 +88,6 @@ const filtered = computed<string[]>(() => {
   return list.slice(0, MAX_RENDER_BRANCHES)
 })
 
-function isActiveItem(idx: number): boolean {
-  return idx === activeIndex.value
-}
-
 function selectBranch(name: string): void {
   if (name === currentBranch.value) {
     emit('close') // 已在当前分支，仅关 popover
@@ -123,31 +119,20 @@ function gitGraphStub(): void {
   toastError(GIT_GRAPH_UNSUPPORTED_MSG)
 }
 
-function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    emit('close')
-    return
-  }
-  const total = filtered.value.length + ACTION_ITEM_COUNT
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value + 1) % total
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value - 1 + total) % total
-  } else if (e.key === 'Enter') {
-    e.preventDefault()
-    activate(activeIndex.value)
-  }
-}
-
+/** 扁平化激活：列表项区间 → selectBranch，尾部动作项 → openBranchModal / gitGraphStub */
 function activate(idx: number): void {
   const listLen = filtered.value.length
   if (idx < listLen) selectBranch(filtered.value[idx])
   else if (idx === listLen) openBranchModal()
   else gitGraphStub()
 }
+
+// 键盘导航收敛到 logic/useFlatListNav（与 DirSelectPopover 共用）。
+const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
+  getTotal: () => filtered.value.length + ACTION_ITEM_COUNT,
+  onActivate: activate,
+  onEscape: () => emit('close'),
+})
 </script>
 
 <template>

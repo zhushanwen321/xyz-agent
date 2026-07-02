@@ -120,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import type { Component } from 'vue'
 import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -128,7 +128,7 @@ import GitPanel from './GitPanel.vue'
 import CommandDocPanel from './CommandDocPanel.vue'
 import DetailPane from './DetailPane.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
-import { extension } from '@/api'
+import { useSessionEvents } from '@/composables/features/useSessionEvents'
 
 const props = defineProps<{
   isOpen: boolean
@@ -230,42 +230,53 @@ function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
   return null
 }
 
-let unsubWidget: (() => void) | null = null
-let unsubStatus: (() => void) | null = null
-
 /** extension status 缓冲：statusKey → 最新 text（runtime 推送全量替换，与 widget 同语义） */
 const statusMap = ref<Map<string, string>>(new Map())
 const statusEntries = computed(() =>
   Array.from(statusMap.value.entries()).map(([statusKey, text]) => ({ statusKey, text })),
 )
 
-function subscribeWidget(sid: string): void {
-  terminalLines.value = []
-  browserLines.value = []
-  unknownWidget.value = null
-  statusMap.value = new Map()
-  // 签名已与 real extension.ts OnWidgetHandler 对齐（mock 侧同步修复），facade 不再退化为 unknown
-  unsubWidget = extension.onWidget(sid, (payload) => {
-    const tab = mapWidgetKeyToTab(payload.widgetKey)
-    if (tab === 'terminal') terminalLines.value = payload.lines
-    else if (tab === 'browser') browserLines.value = payload.lines
-    else unknownWidget.value = { key: payload.widgetKey, lines: payload.lines }
-  })
-  // 对称订阅 extension:status（statusKey 维度聚合，同 key 覆盖）
-  unsubStatus = extension.onStatus(sid, (payload) => {
-    statusMap.value.set(payload.statusKey, payload.text)
-    statusMap.value = new Map(statusMap.value)
-  })
+/** widget 缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
+const WIDGET_MAX_LINES = 1000
+
+/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，对齐原 extension.onWidget 截断语义） */
+function truncateLines(lines: string[]): string[] {
+  if (lines.length <= WIDGET_MAX_LINES) return lines
+  return lines.slice(lines.length - WIDGET_MAX_LINES)
 }
 
+/**
+ * widget/status 订阅编排（#11 W3a）：订阅时机、sessionId 切换重订、卸载退订归 useSessionEvents
+ * （features 层，session 通道）。本组件只保留 widget 缓冲逻辑（tab 路由 + lines 截断 + status 聚合）。
+ *
+ * sessionId 变化时清空缓冲（与原 watch 行为等价：terminalLines/browserLines/unknownWidget/statusMap 复位），
+ * 由下方 watch(sessionId) 负责；本处 handler 只处理消息分发。
+ */
+const onMessage = useSessionEvents(toRef(props, 'sessionId'))
+// extension:widget：按 widgetKey 路由到 terminal/browser tab，未匹配走 fallback
+onMessage('extension:widget', (msg) => {
+  const payload = msg.payload
+  const lines = truncateLines(payload.lines)
+  const tab = mapWidgetKeyToTab(payload.widgetKey)
+  if (tab === 'terminal') terminalLines.value = lines
+  else if (tab === 'browser') browserLines.value = lines
+  else unknownWidget.value = { key: payload.widgetKey, lines }
+})
+// extension:status：statusKey 维度聚合，同 key 覆盖（与原 extension.onStatus 对称语义）
+onMessage('extension:status', (msg) => {
+  const payload = msg.payload
+  statusMap.value.set(payload.statusKey, payload.text)
+  statusMap.value = new Map(statusMap.value)
+})
+
+// sessionId 变化时清空缓冲（useSessionEvents 已负责底层订阅重订，这里只复位组件缓冲状态）
 watch(
   () => props.sessionId,
-  (sid) => {
-    unsubWidget?.()
-    unsubStatus?.()
-    unsubWidget = null
-    unsubStatus = null
-    if (sid) subscribeWidget(sid)
+  () => {
+    terminalLines.value = []
+    browserLines.value = []
+    unknownWidget.value = null
+    statusMap.value = new Map()
   },
   { immediate: true },
 )
@@ -290,8 +301,6 @@ watch(
 )
 
 onBeforeUnmount(() => {
-  unsubWidget?.()
-  unsubStatus?.()
   window.removeEventListener('keydown', onKeyDown)
 })
 </script>

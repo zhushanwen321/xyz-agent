@@ -4,7 +4,7 @@
  * 数据流链（plan-frontend §3 UC-2）：
  *   Composer → useChat.send → store.appendUser + api.chat.send
  *            → api.transport.send(ws) → mock 回流 ServerMessage
- *            → api.events.streamSubscribe → store.appendAssistantChunk
+ *            → api.events.streamSubscribe → store.applyMessageEvent（message.* 单一入口）
  *            → MessageStream 响应式渲染 + useChatScroll.scrollToBottom
  *
  * hydrate：首次进入 session 调 api.chat.getHistory 注入历史 fixture（含 tool_call/summary），
@@ -38,19 +38,17 @@ function ensureStreamSubscription(
 ): void {
   if (streamSubscriptions.has(sid)) return
   const unsub = chatApi.streamSubscribe(sid, (msg) => {
-    chat.appendAssistantChunk(sid, msg)
-    // 流式状态由事件驱动，不随 send() ack 翻转
+    // message.* → 单一入口（F2 重构：消除 double-dispatch）。
+    // applyMessageEvent 内部经 effect 注册表执行该 type 的全部副作用（chunk 状态更新
+    // + setStreaming flag），useChat 不再自己 switch message.*。message.* 处理完即 return，
+    // 下方 session.* 分支仅处理跨 store 事件（compacting/renamed 等）。
+    if (msg.type.startsWith('message.')) {
+      chat.applyMessageEvent(sid, msg)
+      return
+    }
+    // session.* → 跨 store 协调（sessionStore.updateLabel/updateSessionState/setCompacting），
+    // 保留在 useChat（stores 间禁止互相 import）。
     switch (msg.type) {
-      case 'message.message_start':
-        chat.setStreaming(true)
-        break
-      case 'message.complete':
-      case 'message.error':
-      case 'message.stream_error':
-        // stream_error 也属终态：若 pi 发了 message_update{error} 后不再发 agent_end，
-        // 必须在此复位 isStreaming，否则 UI 卡在「思考中」（规则 #3/#7 防护的失败模式）。
-        chat.setStreaming(false)
-        break
       case 'session.compacting':
         // #6：compact 生命周期开始（runtime server-push，走 session 通道）
         chat.setCompacting(sid, true)

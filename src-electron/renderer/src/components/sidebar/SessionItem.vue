@@ -72,18 +72,11 @@ const emit = defineEmits<{
   delete: [sessionId: string]
 }>()
 
-/** 状态点语义类：背景色 + 脉冲动画。keyframes 收敛到 tailwind.config（与 SessionCard 共享 SSOT） */
-const DOT_CLASS: Record<DerivedStatus, string> = {
-  running: 'bg-accent animate-pulse-accent',
-  waiting: 'bg-warning animate-pulse-warn',
-  done: 'bg-success',
-  stopped: 'bg-subtle opacity-50',
-  error: 'bg-danger',
-}
+/** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
 const dotClass = computed(() => DOT_CLASS[props.status])
 
-/** 工作目录名（cwd 末段），长路径只显末段防溢出 */
-const dirName = computed(() => props.session.cwd.split('/').filter(Boolean).pop() ?? props.session.cwd)
+/** 工作目录名（cwd 末段），长路径只显末段防溢出（dirNameOf 收敛到 logic/path SSOT） */
+const dirName = computed(() => dirNameOf(props.session.cwd))
 
 /** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
@@ -93,5 +86,7 @@ import { Pencil, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
+import { DOT_CLASS } from '@/composables/logic/sessionStatus'
+import { dirNameOf } from '@/composables/logic/path'
 </script>
 

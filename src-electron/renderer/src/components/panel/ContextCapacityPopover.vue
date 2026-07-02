@@ -64,11 +64,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
-import * as events from '@/api/events'
+import { useSessionEvents } from '@/composables/features/useSessionEvents'
 
 interface ContextStats {
   used: number
@@ -100,30 +100,23 @@ const props = defineProps<{
  *
  * session.state_changed：模型切换后 runtime 推送（含按新 contextWindow 重算的用量），
  * 使用量随模型切换立即刷新，无需等下一次 agent_end。
+ *
+ * 订阅编排（重订 / 退订）归 useSessionEvents（features 层），本组件只声明 type 白名单 + handler。
  */
-let unsubContext: (() => void) | null = null
-function subscribeContext(sid: string | undefined): void {
-  unsubContext?.()
-  unsubContext = null
-  if (!sid) return
-  unsubContext = events.on(sid, (msg) => {
-    if (msg.type !== 'context.update' && msg.type !== 'session.state_changed') return
-    // msg 经 type 守卫后 payload 仍为联合宽类型（events.on 非 onGlobalType，无 per-type 泛型收窄），
-    // 故窄断言取字段（payload 已契约化，见 protocol.ts ServerMessageMap）
-    const { inputTokens, contextLimit, usagePercent } = msg.payload as {
-      sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number
-    }
-    stats.value = {
-      ...stats.value,
-      used: inputTokens,
-      total: contextLimit,
-      percent: usagePercent,
-    }
-  })
-}
-onMounted(() => subscribeContext(props.sessionId))
-onBeforeUnmount(() => unsubContext?.())
-watch(() => props.sessionId, (sid) => subscribeContext(sid))
+const onMessage = useSessionEvents(toRef(props, 'sessionId'))
+onMessage(['context.update', 'session.state_changed'], (msg) => {
+  // 多 type handler：payload 仍为联合宽类型（context.update 与 session.state_changed 结构不同，
+  // 无法静态收窄为单一类型），按契约窄断言取共用三字段（见 protocol.ts ServerMessageMap）
+  const { inputTokens, contextLimit, usagePercent } = msg.payload as {
+    sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number
+  }
+  stats.value = {
+    ...stats.value,
+    used: inputTokens,
+    total: contextLimit,
+    percent: usagePercent,
+  }
+})
 
 // 阈值常量（避免 magic number）
 const WAN_UNIT = 10_000

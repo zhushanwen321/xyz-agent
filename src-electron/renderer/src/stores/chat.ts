@@ -28,7 +28,8 @@ import type {
   ServerMessage,
 } from '@xyz-agent/shared'
 import { mergeFileChanges } from './chat-readers'
-import { applyChunk, findLastAssistantIndex } from './chat-chunk-processor'
+import { findLastAssistantIndex } from './chat-chunk-processor'
+import { dispatchMessageEvent } from './chat-message-effects'
 export type { RetryState, QueueState } from './chat-store-types'
 import type { RetryState, QueueState } from './chat-store-types'
 
@@ -118,19 +119,27 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 按 ServerMessage.type 追加 assistant 流式 chunk（text/thinking/tool_call/error）。
-   * - message.message_start → 新建 streaming assistant message
-   * - message.text_delta → 文本追加到最后一条 assistant message
-   * - message.thinking_* → thinking 块管理
-   * - message.tool_call_* → toolCall 块管理
-   * - message.complete → 标记 complete（stopReason:error → status:error）
-   * - message.error → 标记 error
+   * message.* 事件的单一入口（F2 重构：消除 double-dispatch）。
    *
-   * 实现（switch 分发）提取到模块级 applyChunk，避免 setup 函数过长（max-lines-per-function）。
+   * useChat.ensureStreamSubscription 收到 message.* 后调本方法，不再自己 switch。
+   * 内部经 dispatchMessageEvent 查 effect 注册表，执行该 type 的全部副作用：
+   * (a) chunk 状态更新（messages/retryStates/queueStates）+ (b) lifecycle flag 翻转
+   * （setStreaming）。注册表见 chat-message-effects.ts。
+   *
+   * 行为等价：与原 appendAssistantChunk(applyChunk) + useChat.setStreaming 的串联一致——
+   * handler 内先更新 chunk 状态后翻 flag，对应原「先 appendAssistantChunk 再 switch 翻 flag」顺序。
+   * 非 message.* / 未注册 type no-op（等价原 applyChunk default return）。
    */
-  function appendAssistantChunk(sessionId: string, msg: ServerMessage): void {
-    applyChunk(
-      { messages, retryStates, queueStates, applyFileChanges, markChangeSetsSuperseded },
+  function applyMessageEvent(sessionId: string, msg: ServerMessage): void {
+    dispatchMessageEvent(
+      {
+        messages,
+        retryStates,
+        queueStates,
+        applyFileChanges,
+        markChangeSetsSuperseded,
+        setStreaming,
+      },
       sessionId,
       msg,
     )
@@ -261,7 +270,7 @@ export const useChatStore = defineStore('chat', () => {
     clearHistoryError,
     hydrate,
     appendUser,
-    appendAssistantChunk,
+    applyMessageEvent,
     setStreaming,
     isCompacting,
     setCompacting,

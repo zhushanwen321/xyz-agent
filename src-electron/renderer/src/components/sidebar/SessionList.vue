@@ -57,13 +57,14 @@ import { computed } from 'vue'
 import { Plus, Folder } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { dirNameOf } from '@/composables/logic/path'
 import SessionItem from './SessionItem.vue'
 
 const props = defineProps<{
   /** 按 cwd 分组的会话（D7，对齐后端 SessionGroup[]） */
   groups: SessionGroup[]
   activeId: string | null
-  /** 派生状态点（D6），由容器注入 useSidebar.derivedStatus */
+  /** 派生状态点（D6），由容器注入 useSessionDerivations.derivedStatus */
   statusOf: (id: string) => DerivedStatus
 }>()
 
@@ -78,11 +79,6 @@ const emit = defineEmits<{
 const totalCount = computed(() =>
   props.groups.reduce((sum, g) => sum + g.sessions.length, 0),
 )
-
-/** cwd 末段（组标题 + SessionItem 都用此逻辑，统一信息原子） */
-function dirNameOf(cwd: string): string {
-  return cwd.split('/').filter(Boolean).pop() ?? cwd
-}
 
 // 显式声明 props 已读（避免某些 lint 规则误报未使用）。
 void props

@@ -150,29 +150,26 @@
     <!-- 编辑弹窗 -->
     <ProviderEditModal :provider="editingProvider" @close="editingProvider = null" />
 
-    <!-- 删除确认弹窗（hide-close：内容区已有「取消」按钮作为唯一关闭入口，避免右上角默认 X 与之重复） -->
-    <Dialog :open="!!deleteTarget" @update:open="deleteTarget = null">
-      <DialogContent hide-close class="max-w-[360px]">
-        <DialogHeader>
-          <DialogTitle>删除 {{ deleteTarget?.name }}？</DialogTitle>
-          <DialogDescription>将移除其下所有模型配置。此操作不可撤销。</DialogDescription>
-        </DialogHeader>
-        <p v-if="actionError" class="pt-2 text-[12px] text-danger">{{ actionError }}</p>
-        <div class="flex justify-end gap-2 pt-4">
-          <Button variant="ghost" @click="deleteTarget = null">取消</Button>
-          <Button variant="danger" :disabled="deleting" @click="confirmDelete">
-            {{ deleting ? '删除中…' : '确认删除' }}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <!-- 删除确认弹窗（ConfirmDialog 原语：标题+描述+取消/危险确认；actionError 经默认 slot 注入） -->
+    <ConfirmDialog
+      v-model:open="deleteDialogOpen"
+      variant="danger"
+      :title="`删除 ${deleteTarget?.name ?? ''}？`"
+      description="将移除其下所有模型配置。此操作不可撤销。"
+      confirm-text="确认删除"
+      cancel-text="取消"
+      :loading="deleting"
+      @confirm="confirmDelete"
+    >
+      <p v-if="actionError" class="pt-2 text-[12px] text-danger">{{ actionError }}</p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Settings, Plus, Pencil, Trash2, FileText, ImageIcon } from '@lucide/vue'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
@@ -190,6 +187,13 @@ const expanded = ref(new Set<string>())
 const editingProvider = ref<ProviderInfo | null>(null)
 const deleteTarget = ref<ProviderInfo | null>(null)
 const deleting = ref(false)
+/** 删除弹窗开关：派生自 deleteTarget（有目标即开），关闭时清空目标 */
+const deleteDialogOpen = computed({
+  get: () => deleteTarget.value !== null,
+  set: (open: boolean) => {
+    if (!open) deleteTarget.value = null
+  },
+})
 /** 动作错误（删除/启用失败时显示，非静默吞） */
 const actionError = ref('')
 // 默认供应商/模型：本轮无 setDefault 协议（config.setProvider 不含默认位），

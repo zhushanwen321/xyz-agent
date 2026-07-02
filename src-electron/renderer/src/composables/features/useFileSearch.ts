@@ -11,10 +11,10 @@
  *
  * 依赖方向：useFileSearch → fileSearchStore + api/composer + chatStore（watch only）。
  */
-import { watch, type Ref } from 'vue'
+import type { Ref } from 'vue'
 import { useFileSearchStore } from '@/stores/fileSearch'
-import { useChatStore } from '@/stores/chat'
 import { composer as composerApi } from '@/api'
+import { watchFileChangesForInvalidation } from './useFileChangeInvalidation'
 import type { FileNode } from '@xyz-agent/shared'
 
 /** debounce 延迟（ms），防浮层开关/输入抖动重复触发全量递归 */
@@ -55,43 +55,17 @@ export function useFileSearch() {
    * 跨 store 失效编排（G9）：watch chatStore 该 session 的 fileChanges 变化
    * → store.invalidate（删缓存，不重拉）。
    *
-   * 复用 useFileTree.setupInvalidation 模式：composable 层 watch（stores 间禁止 import，
-   * 但 composable 可 watch 多个 store）。fileChanges 变化 = agent 改了文件 → 缓存过期，
+   * 共享 watch + 提取 + diff 逻辑抽至 useFileChangeInvalidation（消除与 useFileTree 的重复）。
+   * 此处仅表达 fileSearch 的全量语义——只要 paths 集合变化就以 sid 整体失效缓存，
    * 下次 load 重拉。
    *
    * @param sessionIdRef session id 的 ref（变化时重订阅）
    * @returns unwatch 函数（组件 onBeforeUnmount 调用，避免泄漏）
    */
   function setupInvalidation(sessionIdRef: Ref<string>): () => void {
-    const chatStore = useChatStore()
-    let lastPaths = new Set<string>()
-
-    const unwatch = watch(
-      [() => sessionIdRef.value, () => chatStore.messages],
-      () => {
-        const sid = sessionIdRef.value
-        if (!sid) {
-          lastPaths = new Set()
-          return
-        }
-        const msgs = chatStore.getMessages(sid)
-        const currentPaths = new Set<string>()
-        for (const m of msgs) {
-          if (m.role !== 'assistant') continue
-          for (const fc of m.fileChanges ?? []) {
-            currentPaths.add(fc.filePath)
-          }
-        }
-        const changed = [...currentPaths].filter((p) => !lastPaths.has(p))
-        if (changed.length > 0) {
-          store.invalidate(sid)
-        }
-        lastPaths = currentPaths
-      },
-      { deep: true, immediate: true },
-    )
-
-    return unwatch
+    return watchFileChangesForInvalidation(sessionIdRef, (sid) => {
+      store.invalidate(sid)
+    })
   }
 
   return { load, debouncedLoad, setupInvalidation }

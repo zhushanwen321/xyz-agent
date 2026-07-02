@@ -61,6 +61,7 @@ import type { PanelLeaf } from '@xyz-agent/shared'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import { provideGitStatus } from '@/composables/features/useGitStatus'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
@@ -69,7 +70,8 @@ import SideDrawer from '@/components/panel/SideDrawer.vue'
 
 const panel = usePanelStore()
 const session = useSessionStore()
-const { derivedStatus, newSessionToStandby } = useSidebar()
+const { newSessionToStandby } = useSidebar()
+const { derivedStatus } = useSessionDerivations()
 
 // sidebar 选 session → panel 载入的编排在 useSidebar.selectSession（主路径）
 // 与 AppShell watch(navigation.pointer)（⌘[/⌘] 同步），不在此组件 watch：

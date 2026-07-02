@@ -24,8 +24,8 @@ import { provide, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
-import { useSettingsStore } from '@/stores/settings'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
+import { useSettings } from '@/composables/features/useSettings'
 import { useSidebar } from '@/composables/features/useSidebar'
 import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
@@ -45,11 +45,11 @@ provide('openSettings', () => { settingsOpen.value = true })
 // 平台 + 全屏态同步到 <html>（data-platform / data-fullscreen），驱动 traffic-light / app-nav-controls 两态。
 usePlatformChrome()
 
-// Settings store 应用级 init：常驻订阅 5 域 + 同步 system 偏好到 DOM(data-theme)/i18n。
-// 幂等（initialized 去重）；订阅随 AppShell 生命周期常驻，settings 数据全局可消费。
+// Settings 域订阅编排：useSettings.init 挂载 7 域常驻订阅 + 同步 system 偏好到 DOM(data-theme)/i18n。
+// 幂等（模块级 initialized 去重）；订阅随 AppShell 生命周期常驻，settings store 数据全局可消费。
 // fire-and-forget：init 内部已处理订阅挂载，无需 await 阻塞渲染。
-const settingsStore = useSettingsStore()
-void settingsStore.init()
+const { init: initSettings } = useSettings()
+void initSettings()
 
 // 导航栈指针变化 → 同步 session.activeId + panel 载入（shell spec §八.5 G3-003「历史状态正确恢复」）。
 // 覆盖 ⌘[/⌘] 与 AppNavControls 后退/前进：pointer 变后若落在 chat+sessionId 条目，恢复该 session 到 panel。

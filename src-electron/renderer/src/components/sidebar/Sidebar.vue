@@ -145,6 +145,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
@@ -156,7 +157,8 @@ const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
-const { selectSession, newSession, goOverview, loadSessions, derivedStatus, renameSession, deleteSession } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession } = useSidebar()
+const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
 
 /** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
@@ -188,7 +190,7 @@ const fileCount = computed(() => {
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
 
-/** 状态点派生（D6）：useSidebar 读 chat+session store 派生 5 态 */
+/** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
   return derivedStatus(id).value
 }

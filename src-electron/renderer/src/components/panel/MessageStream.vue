@@ -64,7 +64,7 @@ const chat = useChatStore()
 /**
  * 当前 session 的消息（响应式）。
  * 直接读 messages ref 的 Map.get 建立对 Map 的依赖（storeToRefs 等价），
- * appendUser/appendAssistantChunk 的 Map.set 触发更新。
+ * appendUser/applyMessageEvent 的 Map.set 触发更新。
  */
 const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
 

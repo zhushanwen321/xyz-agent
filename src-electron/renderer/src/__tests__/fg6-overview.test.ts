@@ -19,6 +19,7 @@ import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 
 /** useSidebar 经 @/api 门面调真实 transport 会挂起；测试统一替成 mock 实现。
@@ -76,7 +77,8 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
   }, 10_000)
 
   it('sessionDigest：s1 fixture 末条 assistant 摘要 + 回合计数', async () => {
-    const { selectSession, sessionDigest } = useSidebar()
+    const { selectSession } = useSidebar()
+    const { sessionDigest } = useSessionDerivations()
     await selectSession('s1')
     const digest = sessionDigest('s1').value
     // fixture s1 有 2 个 user 回合，末条 assistant 为「提交时遇到文件锁…」
@@ -86,7 +88,7 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
 
   it('sessionDigest：空 session（s3）摘要为空、回合 0', () => {
     const chat = useChatStore()
-    const { sessionDigest } = useSidebar()
+    const { sessionDigest } = useSessionDerivations()
     chat.hydrate('s3', [])
     const digest = sessionDigest('s3').value
     expect(digest.summary).toBe('')

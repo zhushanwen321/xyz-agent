@@ -23,11 +23,11 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
     const store = useChatStore()
     const sid = 'sx'
     // 建一条 streaming assistant（流中途）
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a1' },
     })
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.text_delta',
       payload: { sessionId: sid, delta: '部分内容' },
     })
@@ -35,7 +35,7 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
     expect(before[0].status).toBe('streaming')
 
     // 流中途错误（event-adapter error / 进程崩溃）
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.error',
       payload: { sessionId: sid, message: '进程崩溃' },
     })
@@ -53,7 +53,7 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
     const sid = 'sy'
     store.appendUser(sid, 'hi')
     // 无 assistant 流，直接 error
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.error',
       payload: { sessionId: sid, message: 'hook 拒绝' },
     })
@@ -67,11 +67,11 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
   it('已 complete 的历史 assistant 遇 message.error：不回写历史，新建独立 error 消息', () => {
     const store = useChatStore()
     const sid = 'sz'
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a-old' },
     })
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.complete',
       payload: { sessionId: sid },
     })
@@ -79,7 +79,7 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
     expect(before[0].status).toBe('complete')
 
     // 后续错误到达，历史 complete 消息不应被改写
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.error',
       payload: { sessionId: sid, message: '后置错误' },
     })
@@ -95,12 +95,12 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
   it(`errorText 缺省时落 'Unknown error'（流中途仍复位 streaming）`, () => {
     const store = useChatStore()
     const sid = 'sw'
-    store.appendAssistantChunk(sid, {
+    store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a2' },
     })
     // payload 无 message 字段
-    store.appendAssistantChunk(sid, { type: 'message.error', payload: { sessionId: sid } })
+    store.applyMessageEvent(sid, { type: 'message.error', payload: { sessionId: sid } })
     const after = store.getMessages(sid)
     expect(after).toHaveLength(1)
     expect(after[0].status).toBe('error')

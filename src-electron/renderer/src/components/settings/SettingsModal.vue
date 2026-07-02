@@ -58,17 +58,19 @@
           <ScrollArea class="min-h-0 flex-1">
             <div class="px-6 py-4">
               <ProviderPage v-if="activeMenu === 'provider'" :providers="providers" />
-              <SkillPage
+              <SettingsResourcePage
                 v-else-if="activeMenu === 'skill'"
-                :skills="skills"
-                :skill-dirs="skillDirs"
-                @update-skill-dirs="onUpdateSkillDirs"
+                kind="skill"
+                :items="skills"
+                :dirs="skillDirs"
+                @update-dirs="onUpdateSkillDirs"
               />
-              <AgentPage
+              <SettingsResourcePage
                 v-else-if="activeMenu === 'agent'"
-                :agents="agents"
-                :agent-dirs="agentDirs"
-                @update-agent-dirs="onUpdateAgentDirs"
+                kind="agent"
+                :items="agents"
+                :dirs="agentDirs"
+                @update-dirs="onUpdateAgentDirs"
               />
               <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
               <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
@@ -100,10 +102,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSettingsStore, type SystemSettings } from '@/stores/settings'
+import { useSettings } from '@/composables/features/useSettings'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import ProviderPage from './ProviderPage.vue'
-import SkillPage from './SkillPage.vue'
-import AgentPage from './AgentPage.vue'
+import SettingsResourcePage from './SettingsResourcePage.vue'
 import ExtensionPage from './ExtensionPage.vue'
 import SystemPage from './SystemPage.vue'
 
@@ -125,10 +127,11 @@ const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) 
 // storeToRefs 保持响应性解构。
 const settingsStore = useSettingsStore()
 const { providers, skills, agents, extensions, system, skillDirs, agentDirs } = storeToRefs(settingsStore)
+const { refreshProviders } = useSettings()
 
 // 打开时刷新 providers（拿最新快照）；skills/agents/extensions 靠订阅，无需主动拉。
 watch(() => props.open, (isOpen) => {
-  if (isOpen) settingsStore.refreshProviders()
+  if (isOpen) refreshProviders()
 })
 
 function getItemCount(id: string): number {

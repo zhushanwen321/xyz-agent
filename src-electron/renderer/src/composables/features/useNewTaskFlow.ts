@@ -18,13 +18,14 @@
 import { ref, computed, readonly } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
-import { session as sessionApi, git as gitApi, model as modelApi } from '@/api'
+import { session as sessionApi, git as gitApi } from '@/api'
 import { resolveDefaultCwd, deriveSessionLabel } from '@/lib/utils'
 import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
+import { useModel } from '@/composables/features/useModel'
 
 /** NewTaskFlow 8 态枚举（②§5） */
 export type NewTaskFlowState =
@@ -115,6 +116,9 @@ export function useNewTaskFlow() {
   const panel = usePanelStore()
   const navigation = useNavigationStore()
   const chat = useChat()
+  // 模型切换 + 思考等级设置的 RPC + 乐观更新编排（features 层，ADR-0028）。
+  // landing 态 apply 逻辑统一走此 composable，消除原先与 useComposerModelThinking 的重复。
+  const { switchModel, setThinkingLevel } = useModel()
 
   /** 当前 flow 绑定 session 的 id（统一延迟 create 后，landing 态恒为 null） */
   const currentSessionId: ComputedRef<string | null> = computed(
@@ -226,21 +230,19 @@ export function useNewTaskFlow() {
         session.appendSession(created)
         // apply landing 态选定的模型（session 已 create，可调 model.switch RPC）。
         // pendingModel 为 "provider/modelId" 复合串；未选（null）则用 runtime 默认，不切换。
+        // RPC + 乐观更新编排统一走 features/useModel（ADR-0028），消除重复。
         const pending = pendingModel.value
         if (pending) {
           const slashIdx = pending.indexOf('/')
           if (slashIdx > 0) {
             const provider = pending.slice(0, slashIdx)
             const modelId = pending.slice(slashIdx + 1)
-            await modelApi.switchModel(created.id, provider, modelId)
-            // 乐观更新刚创建 session 的 modelId，Composer 显示立即跟随
-            session.updateSessionState(created.id, { modelId: pending })
+            await switchModel(created.id, provider, modelId)
           }
         }
         // apply landing 态选定的思考等级（session 已 create，可调 setThinkingLevel RPC）
         if (thinkingLevel) {
-          await sessionApi.setThinkingLevel(created.id, thinkingLevel)
-          session.updateSessionState(created.id, { thinkingLevel })
+          await setThinkingLevel(created.id, thinkingLevel)
         }
       }
       // 载入 panel + 设 activeId（预建或刚建统一处理）

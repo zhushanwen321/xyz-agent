@@ -16,7 +16,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import { findToolCallOwner } from '@/stores/chat-chunk-processor'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
-import { deriveStatus } from '@/composables/features/useSidebar'
+import { deriveStatus } from '@/composables/logic/sessionStatus'
 import type { Message, ToolCall } from '@xyz-agent/shared'
 
 describe('findToolCallOwner — ID 锚定查找', () => {
@@ -54,15 +54,15 @@ describe('tool_call_end/update — ID 锚定（乱序免疫）', () => {
     const store = useChatStore()
     const sid = 's5'
     // assistant#0 建 tc-1(running)
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: { path: '/f' } } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: { path: '/f' } } })
 
     // 模拟 toolResult 噪声：空 assistant#1 插在后面（虽然 W1 已在 runtime 侧过滤，
     // 但防御：万一漏网，前端 ID 锚定仍应正确命中）
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } })
 
     // tool_call_end(tc-1) 必须命中 assistant#0（ID 锚定），不能落在空 assistant#1
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-1', output: 'done', status: 'completed' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-1', output: 'done', status: 'completed' } })
 
     const msgs = store.getMessages(sid)
     const owner = msgs[0] // assistant#0
@@ -76,11 +76,11 @@ describe('tool_call_end/update — ID 锚定（乱序免疫）', () => {
   it('U8: tool_call_update 命中正确 toolCall（ID 锚定，非位置）', () => {
     const store = useChatStore()
     const sid = 's8'
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'bash', input: {} } })
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'bash', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } })
 
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_update', payload: { sessionId: sid, toolCallId: 'tc-1', detail: '读取中' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_update', payload: { sessionId: sid, toolCallId: 'tc-1', detail: '读取中' } })
 
     const msgs = store.getMessages(sid)
     expect(msgs[0].toolCalls![0].detail).toBe('读取中')
@@ -90,11 +90,11 @@ describe('tool_call_end/update — ID 锚定（乱序免疫）', () => {
   it('U9: toolCallId 未命中任何 message 时安全 return（不崩溃、不误改其它 toolCall）', () => {
     const store = useChatStore()
     const sid = 's9'
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
 
     // toolCallId 'tc-ghost' 不存在任何 message（历史消息无索引 / 已归档场景）
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-ghost', output: 'ghost', status: 'completed' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-ghost', output: 'ghost', status: 'completed' } })
 
     const msgs = store.getMessages(sid)
     // tc-1 不被误改（仍 running，未被 ghost 的 end 污染）
@@ -109,10 +109,10 @@ describe('message.complete — 残留 running toolCall 收口', () => {
   it('U6: 正常 stopReason，残留 running 收口为 end_not_received', () => {
     const store = useChatStore()
     const sid = 's6'
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
     // 跳过 tool_call_end（模拟丢失），直接 complete
-    store.appendAssistantChunk(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'end_turn' } })
+    store.applyMessageEvent(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'end_turn' } })
 
     const msgs = store.getMessages(sid)
     expect(msgs[0].status).toBe('complete')
@@ -122,9 +122,9 @@ describe('message.complete — 残留 running toolCall 收口', () => {
   it('U7: error stopReason，残留 running 收口为 error', () => {
     const store = useChatStore()
     const sid = 's7'
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
-    store.appendAssistantChunk(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } })
 
     const msgs = store.getMessages(sid)
     expect(msgs[0].status).toBe('error')
@@ -134,10 +134,10 @@ describe('message.complete — 残留 running toolCall 收口', () => {
   it('U11: 正常到达的 tool_call_end 不被收口覆盖（仍是 completed）', () => {
     const store = useChatStore()
     const sid = 's11'
-    store.appendAssistantChunk(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
-    store.appendAssistantChunk(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-1', output: 'ok', status: 'completed' } })
-    store.appendAssistantChunk(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'end_turn' } })
+    store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a0' } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_start', payload: { sessionId: sid, toolCallId: 'tc-1', toolName: 'read', input: {} } })
+    store.applyMessageEvent(sid, { type: 'message.tool_call_end', payload: { sessionId: sid, toolCallId: 'tc-1', output: 'ok', status: 'completed' } })
+    store.applyMessageEvent(sid, { type: 'message.complete', payload: { sessionId: sid, stopReason: 'end_turn' } })
 
     const msgs = store.getMessages(sid)
     expect(msgs[0].toolCalls![0].status).toBe('completed') // 未被收口覆盖

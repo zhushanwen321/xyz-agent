@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { useSessionStore } from '@/stores/session'
 import { recentWorkspaces } from '@/lib/utils'
 import { useToast } from '@/composables/useToast'
+import { useFlatListNav } from '@/composables/logic/useFlatListNav'
 import type { RecentWorkspace } from '@/lib/utils'
 
 const props = defineProps<{
@@ -43,8 +44,6 @@ const ACTION_ITEM_COUNT = 2
 
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
-/** 键盘焦点索引（跨组扁平化：列表项 + 动作项） */
-const activeIndex = ref(0)
 
 const workspaces = computed<RecentWorkspace[]>(() => recentWorkspaces(session.list))
 
@@ -64,10 +63,6 @@ onMounted(() => {
   nextTick(() => root.value?.querySelector('input')?.focus())
 })
 
-function isActiveItem(idx: number): boolean {
-  return idx === activeIndex.value
-}
-
 function selectWorkspace(ws: RecentWorkspace): void {
   emit('select', { cwd: ws.cwd })
 }
@@ -80,30 +75,20 @@ function remoteStub(): void {
   toastError(REMOTE_UNSUPPORTED_MSG)
 }
 
-function onKeydown(e: KeyboardEvent): void {
-  // 扁平化可选集：filtered 列表 + 动作项（spec §3.2 ↑↓ 跨组扁平化）
-  const total = filtered.value.length + ACTION_ITEM_COUNT
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value + 1) % total
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value - 1 + total) % total
-  } else if (e.key === 'Enter') {
-    e.preventDefault()
-    activate(activeIndex.value)
-  } else if (e.key === 'Escape') {
-    e.preventDefault()
-    emit('close')
-  }
-}
-
+/** 扁平化激活：列表项区间 → selectWorkspace，尾部动作项 → openFolder / remoteStub */
 function activate(idx: number): void {
   const listLen = filtered.value.length
   if (idx < listLen) selectWorkspace(filtered.value[idx])
   else if (idx === listLen) openFolder()
   else remoteStub()
 }
+
+// 键盘导航收敛到 logic/useFlatListNav（与 BranchSelectPopover 共用）。
+const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
+  getTotal: () => filtered.value.length + ACTION_ITEM_COUNT,
+  onActivate: activate,
+  onEscape: () => emit('close'),
+})
 </script>
 
 <template>

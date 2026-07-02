@@ -6,20 +6,15 @@
     不再按等级染紫相（去色要求）。等级强度靠 popover 内 off→max 的语义表达。
   -->
   <Popover v-model:open="open">
-    <PopoverTrigger as-child>
-      <Button
-        variant="ghost"
-        class="h-7 gap-1 rounded-sm px-2 text-[11.5px] text-subtle transition-colors hover:text-muted"
-        title="思考等级"
-      >
+    <PopoverTriggerButton
+      :open="open"
+      title="思考等级"
+    >
+      <template #leading>
         <Brain class="size-3 shrink-0" />
-        <span>{{ currentLabel }}</span>
-        <ChevronDown
-          class="ml-px size-[9px] transition-transform duration-200"
-          :class="open && 'rotate-180'"
-        />
-      </Button>
-    </PopoverTrigger>
+      </template>
+      <span>{{ currentLabel }}</span>
+    </PopoverTriggerButton>
     <PopoverContent side="top" class="w-[180px] p-0">
       <!-- head -->
       <div
@@ -33,7 +28,7 @@
         :key="opt.level"
         variant="ghost"
         class="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
-        :class="level === opt.level && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
+        :class="level === opt.level && SELECTED_ITEM_CLASS"
         @click="onSelect(opt)"
       >
         <span
@@ -52,9 +47,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Check, ChevronDown, Brain } from '@lucide/vue'
+import { Check, Brain } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTriggerButton } from '@/components/ui/popover'
+import { SELECTED_ITEM_CLASS } from '@/composables/logic/popover-styles'
 import {
   THINKING_LEVELS,
   resolveAvailableLevels,

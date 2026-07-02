@@ -70,11 +70,11 @@ describe('FG1 mock + chat store 数据流', () => {
     unsub()
   })
 
-  it('chat store appendUser + appendAssistantChunk 产出完整回合', async () => {
+  it('chat store appendUser + applyMessageEvent 产出完整回合', async () => {
     const store = useChatStore()
     store.appendUser('s1', '帮我重构')
     const unsub = mockApi.chat.streamSubscribe('s1', (msg) =>
-      store.appendAssistantChunk('s1', msg),
+      store.applyMessageEvent('s1', msg),
     )
     const done = waitForComplete('s1')
     await mockApi.chat.send('s1', '帮我重构')

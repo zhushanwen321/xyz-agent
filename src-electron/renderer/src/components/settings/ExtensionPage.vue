@@ -117,22 +117,17 @@
       </div>
     </section>
 
-    <!-- 卸载确认弹窗（hide-close：内容区已有「取消」按钮作为唯一关闭入口） -->
-    <Dialog :open="!!confirmTarget" @update:open="confirmTarget = ''">
-      <DialogContent hide-close class="max-w-[360px]">
-        <DialogHeader>
-          <DialogTitle>卸载 {{ confirmTarget }}？</DialogTitle>
-          <DialogDescription>此操作不可撤销，扩展将从本地移除。</DialogDescription>
-        </DialogHeader>
-        <div class="flex justify-end gap-2 pt-4">
-          <Button variant="ghost" :disabled="uninstalling" @click="confirmTarget = ''">取消</Button>
-          <Button variant="danger" :disabled="uninstalling" @click="onConfirmUninstall">
-            <Loader2 v-if="uninstalling" class="animate-spin" />
-            卸载
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <!-- 卸载确认弹窗（ConfirmDialog 原语：标题+描述+取消/危险确认，loading 态显 spinner） -->
+    <ConfirmDialog
+      v-model:open="uninstallDialogOpen"
+      variant="danger"
+      :title="`卸载 ${confirmTarget}？`"
+      description="此操作不可撤销，扩展将从本地移除。"
+      confirm-text="卸载"
+      cancel-text="取消"
+      :loading="uninstalling"
+      @confirm="onConfirmUninstall"
+    />
   </div>
 </template>
 
@@ -140,7 +135,7 @@
 import { computed, ref, watch } from 'vue'
 import { Trash2, Loader2, AlertCircle } from '@lucide/vue'
 import type { ExtensionDiscoveredPayload } from '@xyz-agent/shared'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -167,6 +162,13 @@ const tabs = [
 const activeTab = ref<'npm' | 'dir' | 'git'>('npm')
 const installInput = ref('')
 const confirmTarget = ref('')
+/** 卸载弹窗开关：派生自 confirmTarget（有目标即开），关闭时清空目标 */
+const uninstallDialogOpen = computed({
+  get: () => confirmTarget.value !== '',
+  set: (open: boolean) => {
+    if (!open) confirmTarget.value = ''
+  },
+})
 /** 动作错误（install/toggle/uninstall 失败时显示，非静默吞） */
 const actionError = ref('')
 /** 安装中（install/discover/finish 共用 loading） */

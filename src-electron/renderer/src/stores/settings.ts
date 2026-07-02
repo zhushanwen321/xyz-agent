@@ -1,26 +1,30 @@
 /**
- * Settings store —— 应用级配置的「单一真相源」。
+ * Settings store —— 应用级配置的「纯状态容器」。
  *
- * 重构前问题（2026-06-27 架构返工）：
- * 1. SettingsModal 自管 ref + onMounted 订阅 5 域 + props 下传，是全项目唯一的「组件内状态孤岛」
- *    （其余特性如 sidebar/session/navigation 均为 Pinia 单向流）。settings 数据无法被外部消费。
- * 2. SystemPage 调 settings.updateSystem 只写 localStorage，从不写 DOM → 主题/locale 切换是死设置。
- * 3. i18n 用独立 key 持久化 locale，与 system 偏好分裂成两份真相源。
+ * 重构演进（2026-07-02 架构返工 G2）：
+ * 原实现 store→api 直连 + 主动管理 7 个订阅生命周期（init/refreshProviders/dispose），
+ * 是全项目唯一打破「store 不拉数据」铁律的 store。现订阅编排下沉到
+ * useSettings composable（composables/features/useSettings.ts），本 store 退化为纯状态容器，
+ * 与其他 store（session/chat/navigation…）同构：只持 state + 纯写入方法，由 composable 喂数据。
  *
- * 重构后职责：
- * - 持有 providers / skills / agents / extensions / system 五份状态，统一对外。
- * - init()：幂等挂载 5 域订阅（去重），同步 system 偏好到 DOM + i18n。
- * - setSystem(patch)：写 localStorage + 同步 data-theme + 调 i18n.setLocale。
- *   （themePreset 状态保留供 SystemPage 选中态，CSS 切换暂未实装）
+ * 当前职责：
+ * - 持有 providers / models / skills / agents / extensions / system / skillDirs / agentDirs / defaultModel 九份 state。
+ * - setSystem(patch)：合并本地态 → 写 localStorage（settingsApi.updateSystem）→ 同步 DOM + i18n（applySystemToDom）。
+ *   这是纯函数式副作用（无订阅、无跨 store 依赖），符合 store action 定位；订阅生命周期才必须归 composable。
+ * - setSkillDirs / setAgentDirs：发请求持久化，靠后端广播推回权威值（订阅在 useSettings.init 注册）。
+ *
+ * 不再职责（已移至 useSettings composable）：
+ * - init / refreshProviders / dispose（订阅生命周期编排）。
  *
  * 依赖方向（stores 间禁止互相 import；跨域协调由 composables/features 做）：
- * - 读 @/api（config / extension / settings 域订阅与请求）+ @/i18n（locale 切换）。
+ * - 读 @/api settings（updateSystem 持久化）+ @/i18n（locale 切换）。
  * - 写 document.documentElement（data-theme 槽位）。
+ * - 不再 import config / model / extension 订阅域（订阅编排移至 useSettings）。
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig, ModelInfo } from '@xyz-agent/shared'
-import { config, model as modelApi, extension as extensionApi, settings as settingsApi } from '@/api'
+import { config, settings as settingsApi } from '@/api'
 import type { SystemSettings } from '@/api'
 import { setLocale } from '@/i18n'
 
@@ -57,7 +61,7 @@ export const useSettingsStore = defineStore('settings', () => {
   /**
    * 聚合模型列表（runtime aggregateModels 产出，config.providers 解析后的扁平模型）。
    * 与 providers 同源（sendInitialState 同 step 推、broadcastProviderList 同步广播），
-   * 故同样走常驻订阅（init 注册，应用生命周期不断开）。
+   * 故同样走常驻订阅（useSettings.init 注册，应用生命周期不断开）。
    * 放 store 而非 ModelSelectPopover 本地：组件随 Composer v-if 反复挂载卸载，
    * 本地 onMounted 订阅会错过 sendInitialState 一次性推送 → 列表空（2026-07-01 竞态修复）。
    */
@@ -74,52 +78,12 @@ export const useSettingsStore = defineStore('settings', () => {
   // landing 态（无 active session）的 composer 模型选择器取它作 fallback。
   const defaultModel = ref('')
 
-  /** 订阅句柄（init 幂等去重用） */
-  const unsubs: Array<() => void> = []
-  let initialized = false
-
-  // ── Actions ──
-
-  /**
-   * 幂等初始化：挂载 5 域常驻订阅 + 同步 system 偏好到 DOM / i18n。
-   * 由 AppShell（应用级，常驻）调用一次即可；多次调用安全（initialized 去重）。
-   * 订阅常驻不随 modal 关闭断开，保证 settings 数据全局可消费。
-   */
-  async function init(): Promise<void> {
-    if (initialized) return
-    initialized = true
-
-    unsubs.push(config.onProviders((p) => { providers.value = p }))
-    // models 与 providers 同源（sendInitialState 同 step 推、provider 增删同广播），故常驻订阅
-    unsubs.push(modelApi.onModels((m) => { models.value = m }))
-    unsubs.push(config.onSkills((s) => { skills.value = s }))
-    unsubs.push(config.onAgents((a) => { agents.value = a }))
-    unsubs.push(config.onSkillDirs((d) => { skillDirs.value = d }))
-    unsubs.push(config.onAgentDirs((d) => { agentDirs.value = d }))
-    unsubs.push(config.onDefaults((m) => { defaultModel.value = m }))
-    unsubs.push(extensionApi.onExtensions((e) => { extensions.value = e as ExtensionItem[] }))
-
-    // system 是纯前端偏好（localStorage），初始化时读并同步到 DOM + i18n
-    system.value = await settingsApi.getSystem()
-    applySystemToDom(system.value)
-  }
-
-  /**
-   * 打开 modal 时刷新 providers（拿最新快照）；skills/agents 靠订阅，不主动拉。
-   * 失败时不阻塞 UI：onProviders 订阅会兜底推回最新数据。
-   */
-  async function refreshProviders(): Promise<void> {
-    try {
-      providers.value = await config.listProviders()
-    // eslint-disable-next-line taste/no-silent-catch -- 拉取失败不阻塞 UI：onProviders 订阅会兜底推回最新数据，无需打扰用户
-    } catch (e) {
-      console.warn('[settings] listProviders 失败，依赖订阅兜底', e)
-    }
-  }
+  // ── Actions（纯写入；订阅生命周期在 useSettings composable）──
 
   /**
    * 更新 system 偏好：合并本地态 → 写 localStorage → 同步 DOM + i18n。
    * 消灭「死设置」：theme/locale 切换现在真正生效。
+   * useSettings.init 初始化 system 时也走此 action（确保 DOM/i18n 同步）。
    */
   async function setSystem(patch: Partial<SystemSettings>): Promise<void> {
     system.value = { ...system.value, ...patch }
@@ -142,12 +106,6 @@ export const useSettingsStore = defineStore('settings', () => {
     await config.setAgentDirs(dirs)
   }
 
-  /** 销毁订阅（AppShell 卸载时调用，应用生命周期内通常不触发）。 */
-  function dispose(): void {
-    unsubs.splice(0).forEach((u) => u())
-    initialized = false
-  }
-
   return {
     // state
     providers,
@@ -159,13 +117,10 @@ export const useSettingsStore = defineStore('settings', () => {
     skillDirs,
     agentDirs,
     defaultModel,
-    // actions
-    init,
-    refreshProviders,
+    // actions（纯写入）
     setSystem,
     setSkillDirs,
     setAgentDirs,
-    dispose,
   }
 })
 

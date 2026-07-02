@@ -190,17 +190,17 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(store.getMessages('s1')[0].content).toBe('原内容')
   })
 
-  it('appendAssistantChunk 处理 thinking 块（start + delta）', () => {
+  it('applyMessageEvent 处理 thinking 块（start + delta）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.message_start',
       payload: { sessionId: 'sx', messageId: 'a1' },
     })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.thinking_start',
       payload: { sessionId: 'sx', thinkingId: 'th1' },
     })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.thinking_delta',
       payload: { sessionId: 'sx', delta: '推理' },
     })
@@ -209,17 +209,17 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(msgs[0].thinking?.[0].content).toBe('推理')
   })
 
-  it('appendAssistantChunk 处理 tool_call 块（start + end）', () => {
+  it('applyMessageEvent 处理 tool_call 块（start + end）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.message_start',
       payload: { sessionId: 'sx', messageId: 'a1' },
     })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.tool_call_start',
       payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'read' },
     })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.tool_call_end',
       payload: { sessionId: 'sx', toolCallId: 'tc1', output: 'done', status: 'completed' },
     })
@@ -230,11 +230,11 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('complete with stopReason:error → status:error（错误块）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.message_start',
       payload: { sessionId: 'sx', messageId: 'a1' },
     })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.complete',
       payload: { sessionId: 'sx', stopReason: 'error' },
     })
@@ -245,30 +245,30 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('thinking_end 给最后 ThinkingBlock 设 endTime', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    store.appendAssistantChunk('sx', { type: 'message.thinking_start', payload: { sessionId: 'sx', thinkingId: 'th1' } })
-    store.appendAssistantChunk('sx', { type: 'message.thinking_delta', payload: { sessionId: 'sx', delta: '推理' } })
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.thinking_start', payload: { sessionId: 'sx', thinkingId: 'th1' } })
+    store.applyMessageEvent('sx', { type: 'message.thinking_delta', payload: { sessionId: 'sx', delta: '推理' } })
     expect(store.getMessages('sx')[0].thinking?.[0].endTime).toBeUndefined()
-    store.appendAssistantChunk('sx', { type: 'message.thinking_end', payload: { sessionId: 'sx' } })
+    store.applyMessageEvent('sx', { type: 'message.thinking_end', payload: { sessionId: 'sx' } })
     expect(store.getMessages('sx')[0].thinking?.[0].endTime).toBeTypeOf('number')
   })
 
   it('tool_call_update 更新 ToolCall.detail（对齐生产端，只读 detail）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    store.appendAssistantChunk('sx', { type: 'message.tool_call_start', payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'bash' } })
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.tool_call_start', payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'bash' } })
     // string detail
-    store.appendAssistantChunk('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: '执行中…' } })
+    store.applyMessageEvent('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: '执行中…' } })
     expect(store.getMessages('sx')[0].toolCalls?.[0].detail).toBe('执行中…')
     // object detail
-    store.appendAssistantChunk('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: { progress: 50 } } })
+    store.applyMessageEvent('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: { progress: 50 } } })
     expect(store.getMessages('sx')[0].toolCalls?.[0].detail).toEqual({ progress: 50 })
   })
 
   it('complete.usage 回填 Message.usage（inputTokens/outputTokens）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', {
       type: 'message.complete',
       payload: { sessionId: 'sx', stopReason: 'complete', usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 } },
     })
@@ -277,8 +277,8 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('message.status 接收不崩（运行态，不改 Message.status）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    store.appendAssistantChunk('sx', { type: 'message.status', payload: { sessionId: 'sx', status: 'steered', detail: '已转向' } })
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.status', payload: { sessionId: 'sx', status: 'steered', detail: '已转向' } })
     // status 仍是 streaming（message.status 是运行过程态，与 Message.status 正交）
     expect(store.getMessages('sx')[0].status).toBe('streaming')
   })
@@ -288,12 +288,12 @@ describe('FG5 chat store 块类型扩展', () => {
   it('auto_retry_start 设置 retryState，auto_retry_end 清空', () => {
     const store = useChatStore()
     expect(store.getRetryState('sx')).toBeUndefined()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.auto_retry_start',
       payload: { sessionId: 'sx', attempt: 2, maxAttempts: 3, delayMs: 500, errorMessage: 'timeout' },
     })
     expect(store.getRetryState('sx')).toEqual({ attempt: 2, maxAttempts: 3, delayMs: 500, errorMessage: 'timeout' })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.auto_retry_end',
       payload: { sessionId: 'sx', success: true, attempt: 2 },
     })
@@ -303,13 +303,13 @@ describe('FG5 chat store 块类型扩展', () => {
   it('queue_update 设置 queueState（steering/followUp）', () => {
     const store = useChatStore()
     expect(store.getQueueState('sx')).toBeUndefined()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: ['再快一点'], followUp: ['下一步'] },
     })
     expect(store.getQueueState('sx')).toEqual({ steering: ['再快一点'], followUp: ['下一步'] })
     // 两字段都缺 → 清空
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.queue_update',
       payload: { sessionId: 'sx' },
     })
@@ -318,8 +318,8 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('retry/queue 状态按 session 隔离（互不串扰）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sa', { type: 'message.auto_retry_start', payload: { sessionId: 'sa', attempt: 1 } })
-    store.appendAssistantChunk('sb', { type: 'message.queue_update', payload: { sessionId: 'sb', steering: ['x'] } })
+    store.applyMessageEvent('sa', { type: 'message.auto_retry_start', payload: { sessionId: 'sa', attempt: 1 } })
+    store.applyMessageEvent('sb', { type: 'message.queue_update', payload: { sessionId: 'sb', steering: ['x'] } })
     expect(store.getRetryState('sa')?.attempt).toBe(1)
     expect(store.getRetryState('sb')).toBeUndefined()
     expect(store.getQueueState('sb')?.steering).toEqual(['x'])
@@ -330,7 +330,7 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('bashExecution 作 system 消息追加（含 exitCode/truncated）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.bashExecution',
       payload: { sessionId: 'sx', command: 'npm test', exitCode: 1, truncated: true, fullOutputPath: '/tmp/out' },
     })
@@ -342,7 +342,7 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('compactionSummary 作 system 消息追加', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.compactionSummary',
       payload: { sessionId: 'sx', summary: '压缩完成', tokensBefore: 50000 },
     })
@@ -353,7 +353,7 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('branchSummary 作 system 消息追加', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.branchSummary',
       payload: { sessionId: 'sx', summary: '新分支', fromId: 'msg-9' },
     })
@@ -383,9 +383,9 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('message.file_changes accumulating 全集替换（baseline diff 每次 diff 是全量结果）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
     // 第一次 diff：写了一个文件
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
@@ -394,7 +394,7 @@ describe('FG5 chat store 块类型扩展', () => {
       },
     })
     // 第二次 diff：写了两个文件（包含第一次的）—— isFullSet=true 全集替换
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
@@ -414,9 +414,9 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('message.file_changes ready 全集替换（agent_end 最终对账）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
     // accumulating（agent 还在跑）
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
@@ -425,7 +425,7 @@ describe('FG5 chat store 块类型扩展', () => {
       },
     })
     // ready 全集替换（agent_end 最终 diff 发现完全不同的文件集）
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
@@ -441,9 +441,9 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('message.changeSetInvalidated 把该 session 的 changeSet 推 superseded（commit 后过期）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
     // 先有一条 ready changeSet
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
@@ -453,7 +453,7 @@ describe('FG5 chat store 块类型扩展', () => {
     })
     expect(store.getChangeSetStatus('sx', 'a1')).toBe('ready')
     // git commit 成功 → runtime 广播 changeSetInvalidated
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.changeSetInvalidated',
       payload: { sessionId: 'sx', reason: 'committed' },
     })
@@ -462,8 +462,8 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('message.changeSetInvalidated 不覆盖已 resolved 的 changeSet（保留审查记录）', () => {
     const store = useChatStore()
-    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
@@ -475,7 +475,7 @@ describe('FG5 chat store 块类型扩展', () => {
     store.setChangeSetStatus('sx', 'a1', 'resolved')
     expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
     // commit 后广播失效 —— resolved 不应被覆盖
-    store.appendAssistantChunk('sx', {
+    store.applyMessageEvent('sx', {
       type: 'message.changeSetInvalidated',
       payload: { sessionId: 'sx', reason: 'committed' },
     })

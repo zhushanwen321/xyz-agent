@@ -63,14 +63,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import * as events from '@/api/events'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore, type RawCommand } from '@/stores/command'
 import { useSettingsStore } from '@/stores/settings'
 import { useFileSearch } from '@/composables/features/useFileSearch'
+import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { toFileCandidates } from '@/lib/file-candidates'
 import { filterAndSortFileCandidates } from '@/lib/file-match'
 
@@ -144,26 +144,19 @@ const slashCommands = computed(() => {
 })
 
 /**
- * 订阅 session.commands（D8：走 session 通道 events.on(sessionId)，非 onGlobalType）。
+ * 订阅 session.commands（D8：走 session 通道，非 onGlobalType）。
  * 收到后写入 commandStore（持久化，跨组件重建）而非局部 ref。
  * sessionId 变化时重订（Composer 切 session）。
+ *
+ * 订阅编排（重订 / 退订）归 useSessionEvents（features 层），本组件只声明 type + handler。
  */
-let unsubCommands: (() => void) | null = null
-function subscribeCommands(sid: string | undefined): void {
-  unsubCommands?.()
-  unsubCommands = null
-  if (!sid) return
-  unsubCommands = events.on(sid, (msg) => {
-    if (msg.type !== 'session.commands') return
-    // msg 经 type 守卫后 payload 仍为联合宽类型（events.on 非 onGlobalType，无 per-type 泛型收窄），
-    // 故窄断言取 commands（payload 已契约化，见 protocol.ts ServerMessageMap）
-    const cmds = (msg.payload as { commands: RawCommand[] }).commands
-    commandStore.applyCommands(sid, cmds)
-  })
-}
-onMounted(() => subscribeCommands(props.sessionId))
-onBeforeUnmount(() => unsubCommands?.())
-watch(() => props.sessionId, (sid) => subscribeCommands(sid))
+const onMessage = useSessionEvents(toRef(props, 'sessionId'))
+onMessage('session.commands', (msg) => {
+  // 单 type handler：msg 已收窄为 ServerMessage<'session.commands'>，payload.commands 精确可用
+  const cmds = msg.payload.commands as RawCommand[]
+  const sid = props.sessionId
+  if (sid) commandStore.applyCommands(sid, cmds)
+})
 
 /** 统一候选项视图（file/slash 两路归一为 { id, name, kind, icon, description? }） */
 const items = computed(() => {

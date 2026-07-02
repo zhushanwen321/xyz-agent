@@ -19,6 +19,7 @@ import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { dirNameOf } from '@/composables/logic/path'
 
 const props = withDefaults(
   defineProps<{
@@ -51,9 +52,8 @@ const branch = computed(() => flow.gitInfo.value?.branch ?? props.gitBranch ?? n
 const dirLabel = computed(() => {
   const c = cwd.value
   if (!c) return '选择目录'
-  // 取末段目录名（与 PanelHeader mono cwd 风格一致）
-  const seg = c.split('/').filter(Boolean).pop()
-  return seg ?? c
+  // 取末段目录名（dirNameOf 收敛到 logic/path SSOT，与 PanelHeader mono cwd 风格一致）
+  return dirNameOf(c)
 })
 
 /** 时段问候语前缀（spec §3.1「上午好呀/下午好呀/晚上好呀」） */

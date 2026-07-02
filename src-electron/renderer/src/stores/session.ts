@@ -1,15 +1,14 @@
 /**
- * Session store —— session 列表 + D6 派生 status。
+ * Session store —— session 列表。
  *
  * 依赖方向：无（stores 间禁止互相 import；跨 store 协调由 composables/features 做）。
- * 骨架阶段：state/getter 合法初始值，action throw。
- * derivedStatus 骨架返回 computed(() => 'waiting')（合法默认，不 throw 以保响应式）。
+ *
+ * 注：session 的派生 5 态（D6 derivedStatus）不在此 store，由 useSidebar 派生
+ * （它需同时读 chat store 的消息分区 + 全局 isStreaming，跨 store 协调属 composable 职责）。
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { ComputedRef } from 'vue'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
-import type { DerivedStatus } from '@/types'
 
 export const useSessionStore = defineStore('session', () => {
   /**
@@ -19,7 +18,7 @@ export const useSessionStore = defineStore('session', () => {
   const groups = ref<SessionGroup[]>([])
 
   /**
-   * 扁平索引（groups.flatMap 展平），供 derivedStatus/sessionDigest/active 等按 id 查找。
+   * 扁平索引（groups.flatMap 展平），供 active/updateLabel/updateSessionState 等按 id 查找。
    * 派生自 groups：单一真源（groups）→ 扁平视图（list），避免两处分别维护导致漂移。
    */
   const list = computed<SessionSummary[]>(() =>
@@ -31,16 +30,6 @@ export const useSessionStore = defineStore('session', () => {
   const active = computed<SessionSummary | null>(
     () => list.value.find((s) => s.id === activeId.value) ?? null,
   )
-
-  /**
-   * 派生 session 5 态（D6：从 message/tool 状态派生）。
-   * 骨架阶段返回合法默认 'waiting'，实现阶段填派生逻辑。
-   */
-  function derivedStatus(id: string): ComputedRef<DerivedStatus> {
-    // ponytail: 骨架默认 'waiting'，实现阶段从 message/tool 状态派生（D6）
-    void id
-    return computed(() => 'waiting' as DerivedStatus)
-  }
 
   /** 更新 session label（乐观更新，rename 后调用） */
   function updateLabel(id: string, label: string): void {
@@ -89,5 +78,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { groups, list, activeId, active, derivedStatus, setGroups, appendSession, updateLabel, updateSessionState, removeFromList }
+  return { groups, list, activeId, active, setGroups, appendSession, updateLabel, updateSessionState, removeFromList }
 })

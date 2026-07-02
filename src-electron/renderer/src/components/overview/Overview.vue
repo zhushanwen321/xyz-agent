@@ -69,11 +69,13 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SessionCard from './SessionCard.vue'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
-const { selectSession, newSession, derivedStatus, sessionDigest } = useSidebar()
+const { selectSession, newSession } = useSidebar()
+const { derivedStatus, sessionDigest } = useSessionDerivations()
 
 /** 状态点派生（D6）：features 层读 chat+session store 派生 5 态 */
 function statusOf(id: string) {

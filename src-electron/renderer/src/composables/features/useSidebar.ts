@@ -10,11 +10,15 @@
  * - goOverview()：push view:'overview'（ADR-0022，main 区被 Overview 覆盖）
  * - toggleCollapse()：切换 sidebar.collapsed（折叠态 C）
  *
- * derivedStatus（D6）：session 5 态前端派生。本层能同时读 chat store 的消息分区 +
- * session store，是派生逻辑的正确落点（stores 互不 import，派生无法放在 store 内）。
+ * 重构演进（2026-07-02 架构返工 C3）：派生状态（derivedStatus / sessionDigest）原在本 composable，
+ * 现抽到 useSessionDerivations 轻量 composable（composables/features/useSessionDerivations.ts）。
+ * 派生纯函数 deriveStatus 下沉到 composables/logic/sessionStatus.ts（与 DOT_CLASS 同源 5 态 SSOT）。
+ * 本 composable 保留 session CRUD + panel/nav 同步 + hydrate + 命令时序 + 文件树预触发 + initApp
+ * （核心粘合价值，deletion test 证明不可删）。
+ *
+ * deriveStatus 仍从此处 re-export（向后兼容：历史上有调用方直接从 useSidebar import 该纯函数）。
  */
-import { computed, onScopeDispose } from 'vue'
-import type { ComputedRef } from 'vue'
+import { onScopeDispose } from 'vue'
 import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -27,47 +31,8 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
-import type { DerivedStatus } from '@/types'
-
-/**
- * 派生信号 → DerivedStatus 映射依据（D6，spec §5 D6 + §会话项）。
- * - toolCall.status 'running' → waiting（tool 执行中/待审批，agent 暂停）
- * - isStreaming 或 Message.status 'streaming' → running（文本流式）
- * - Message.status 'error' → error
- * - Message.isInterrupted → stopped（用户 abort / 进程退出）
- */
-const ERROR_STATUS = 'error'
-const STREAMING_STATUS = 'streaming'
-const TOOL_RUNNING = 'running'
-
-/**
- * 派生 session 5 态（D6）。
- * 优先级：waiting > running > error > stopped > done。
- * waiting 优先于 running：turn 活跃期 tool 执行属 waiting（无文本流），spec 区分二者。
- * 空消息（无回合）→ done。
- *
- * TODO 联调：waiting 真实信号待 pi tool_call_start/end 事件细化（待审 vs 执行中）；
- *       stopped 真实信号待 abort/exit 事件。当前从 message 字段派生，mock 已可验收。
- */
-export function deriveStatus(
-  sessionId: string,
-  chat: ReturnType<typeof useChatStore>,
-  isStreaming: boolean,
-): DerivedStatus {
-  const msgs = chat.getMessages(sessionId)
-  const last = msgs[msgs.length - 1]
-  if (last?.role === 'assistant') {
-    const tools = last.toolCalls ?? []
-    if (tools.length > 0 && tools[tools.length - 1].status === TOOL_RUNNING) {
-      return 'waiting'
-    }
-  }
-  if (isStreaming || last?.status === STREAMING_STATUS) return 'running'
-  if (!last) return 'done'
-  if (last.status === ERROR_STATUS) return 'error'
-  if (last.role === 'assistant' && last.isInterrupted) return 'stopped'
-  return 'done'
-}
+// deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
+export { deriveStatus } from '@/composables/logic/sessionStatus'
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
 // useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），
@@ -408,38 +373,6 @@ export function useSidebar() {
     sidebar.collapsed = !sidebar.collapsed
   }
 
-  /**
-   * 响应式派生指定 session 的状态点（D6）。
-   * 读 chat store 分区末尾消息 + 全局 isStreaming（当前活跃 session 的流式态）。
-   */
-  function derivedStatus(id: string): ComputedRef<DerivedStatus> {
-    return computed(() => {
-      const isActiveStreaming = chat.isStreaming && session.activeId === id
-      return deriveStatus(id, chat, isActiveStreaming)
-    })
-  }
-
-  /**
-   * 响应式派生指定 session 的鸟瞰摘要（Overview 卡片用）。
-   * - summary：末条 assistant 文本（content），无则空串（卡片不渲染摘要区）
-   * - turnCount：user 消息数（回合 = user + 其后 assistant 序列）
-   * 文件改动数无 mock 数据源（runtime file-changes 未联调），不臆造，卡片隐藏该指标。
-   */
-  function sessionDigest(id: string): ComputedRef<{ summary: string; turnCount: number }> {
-    return computed(() => {
-      const msgs = chat.getMessages(id)
-      let lastAssistant = ''
-      for (let i = msgs.length - 1; i >= 0; i -= 1) {
-        if (msgs[i].role === 'assistant') {
-          lastAssistant = msgs[i].content
-          break
-        }
-      }
-      const turnCount = msgs.filter((m) => m.role === 'user').length
-      return { summary: lastAssistant, turnCount }
-    })
-  }
-
   return {
     selectSession,
     newSession,
@@ -450,8 +383,6 @@ export function useSidebar() {
     initApp,
     toggleCollapse,
     syncSessionToPanel,
-    derivedStatus,
-    sessionDigest,
     renameSession,
     deleteSession,
     forkSession,
