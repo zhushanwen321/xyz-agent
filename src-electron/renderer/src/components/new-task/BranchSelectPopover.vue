@@ -18,9 +18,10 @@
  * - Esc → emit('close')
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { GitBranch, Plus, GitGraph, TriangleAlert, Check } from '@lucide/vue'
+import { GitBranch, Plus, GitGraph, TriangleAlert } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { git as gitApi } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
@@ -178,21 +179,18 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <span>{{ allBranches.length }}</span>
       </div>
 
-      <Button
+      <PopoverListItem
         v-for="(name, i) in filtered"
         :key="name"
-        data-testid="branch-item"
-        :data-active="name === currentBranch"
-        variant="ghost"
-        class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="[
-          name === currentBranch ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : '',
-          isActiveItem(i) ? 'bg-surface-hover' : '',
-        ]"
+        test-id="branch-item"
+        :active="isActiveItem(i)"
+        :selected="name === currentBranch"
         @click="selectBranch(name)"
         @mouseenter="activeIndex = i"
       >
-        <GitBranch class="shrink-0 text-subtle" />
+        <template #icon>
+          <GitBranch class="shrink-0 text-subtle" />
+        </template>
         <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
           <span class="truncate font-mono text-fg">{{ name }}</span>
           <!-- 当前分支 dirty subline（spec §3.3 warning dot + mono 小字） -->
@@ -204,39 +202,35 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
             未提交的更改：{{ dirtyCount }} 个文件
           </span>
         </span>
-        <Check
-          v-if="name === currentBranch"
-          class="size-4 shrink-0 text-accent"
-        />
-      </Button>
+      </PopoverListItem>
 
       <div class="my-1 h-px bg-border" />
 
       <!-- 动作项：创建并检出新分支 -->
-      <Button
-        data-testid="action-create-branch"
-        variant="ghost"
-        class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="isActiveItem(filtered.length) ? 'bg-surface-hover' : ''"
+      <PopoverActionItem
+        test-id="action-create-branch"
+        :active="isActiveItem(filtered.length)"
         @click="openBranchModal"
         @mouseenter="activeIndex = filtered.length"
       >
-        <Plus class="shrink-0 text-subtle" />
-        <span>创建并检出新分支...</span>
-      </Button>
+        <template #icon>
+          <Plus class="shrink-0 text-subtle" />
+        </template>
+        创建并检出新分支...
+      </PopoverActionItem>
 
       <!-- 动作项：Git 图谱（v1 stub） -->
-      <Button
-        data-testid="action-git-graph"
-        variant="ghost"
-        class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="isActiveItem(filtered.length + 1) ? 'bg-surface-hover' : ''"
+      <PopoverActionItem
+        test-id="action-git-graph"
+        :active="isActiveItem(filtered.length + 1)"
         @click="gitGraphStub"
         @mouseenter="activeIndex = filtered.length + 1"
       >
-        <GitGraph class="shrink-0 text-subtle" />
-        <span>Git 图谱</span>
-      </Button>
+        <template #icon>
+          <GitGraph class="shrink-0 text-subtle" />
+        </template>
+        Git 图谱
+      </PopoverActionItem>
     </div>
 
     <!-- dirty inline 二次确认条（spec §3.3，非 modal） -->

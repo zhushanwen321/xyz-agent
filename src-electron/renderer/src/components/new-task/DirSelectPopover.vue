@@ -14,9 +14,9 @@
  * 空态（T3.2 / AC-5.4）：recentWorkspaces=[] → 「暂无最近工作区 · 选择一个本地目录开始」。
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { Folder, FolderPlus, Cloud, Check } from '@lucide/vue'
+import { Folder, FolderPlus, Cloud } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
+import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useSessionStore } from '@/stores/session'
 import { recentWorkspaces } from '@/lib/utils'
 import { useToast } from '@/composables/useToast'
@@ -119,59 +119,52 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       </div>
 
       <!-- 列表项（非空态） -->
-      <Button
+      <PopoverListItem
         v-for="(ws, i) in filtered"
         :key="ws.cwd"
-        data-testid="workspace-item"
-        :data-active="ws.cwd === props.currentCwd"
-        variant="ghost"
-        class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="[
-          ws.cwd === props.currentCwd ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : '',
-          isActiveItem(i) ? 'bg-surface-hover' : '',
-        ]"
+        test-id="workspace-item"
+        :active="isActiveItem(i)"
+        :selected="ws.cwd === props.currentCwd"
         @click="selectWorkspace(ws)"
         @mouseenter="activeIndex = i"
       >
-        <Folder class="shrink-0 text-subtle" />
+        <template #icon>
+          <Folder class="shrink-0 text-subtle" />
+        </template>
         <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
           <span class="truncate text-fg">{{ ws.label }}</span>
           <span class="truncate font-mono text-[11px] text-subtle">{{ ws.cwd }}</span>
         </span>
-        <Check
-          v-if="ws.cwd === props.currentCwd"
-          class="size-4 shrink-0 text-accent"
-        />
-      </Button>
+      </PopoverListItem>
 
       <!-- 分隔线 -->
       <div class="my-1 h-px bg-border" />
 
       <!-- 动作项：打开文件夹（空态时即 Primary 入口，spec §6） -->
-      <Button
-        data-testid="action-open-dir"
-        variant="ghost"
-        class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="isActiveItem(filtered.length) ? 'bg-surface-hover' : ''"
+      <PopoverActionItem
+        test-id="action-open-dir"
+        :active="isActiveItem(filtered.length)"
         @click="openFolder"
         @mouseenter="activeIndex = filtered.length"
       >
-        <FolderPlus class="shrink-0 text-subtle" />
-        <span>打开文件夹</span>
-      </Button>
+        <template #icon>
+          <FolderPlus class="shrink-0 text-subtle" />
+        </template>
+        打开文件夹
+      </PopoverActionItem>
 
       <!-- 动作项：远程连接（v1 stub） -->
-      <Button
-        data-testid="action-remote"
-        variant="ghost"
-        class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="isActiveItem(filtered.length + 1) ? 'bg-surface-hover' : ''"
+      <PopoverActionItem
+        test-id="action-remote"
+        :active="isActiveItem(filtered.length + 1)"
         @click="remoteStub"
         @mouseenter="activeIndex = filtered.length + 1"
       >
-        <Cloud class="shrink-0 text-subtle" />
-        <span>远程连接</span>
-      </Button>
+        <template #icon>
+          <Cloud class="shrink-0 text-subtle" />
+        </template>
+        远程连接
+      </PopoverActionItem>
     </div>
   </div>
 </template>

@@ -13,13 +13,14 @@
  *
  * 四态派生（优先级 conflict > dirty > staged > clean）与原 GitZone 一致。
  *
- * 依赖方向：仅依赖 shared 类型 + api(git/events)。与 useChat/useSidebar 同属 features 层，
- * 但比它们轻——不触碰 stores，纯 per-session 数据 ref。
+ * 订阅收口（R2）：message.complete 订阅经 useSessionEvents（与 SideDrawer/CommandPopover/
+ * ContextCapacityPopover 同收口），不再直接 import @/api/events。依赖方向：shared 类型 + api(git)
+ * + useSessionEvents。与 useChat/useSidebar 同属 features 层，但比它们轻——不触碰 stores，纯 per-session 数据 ref。
  */
-import { ref, computed, watch, inject, provide, onScopeDispose, type InjectionKey, type Ref, type ComputedRef } from 'vue'
+import { ref, computed, watch, inject, provide, type InjectionKey, type Ref, type ComputedRef } from 'vue'
 import { git as gitApi } from '@/api'
-import { on as onSessionEvent } from '@/api/events'
-import type { ServerMessage, GitStatusResult } from '@xyz-agent/shared'
+import { useSessionEvents } from './useSessionEvents'
+import type { GitStatusResult } from '@xyz-agent/shared'
 
 /** git 四态（优先级 conflict > dirty > staged > clean） */
 export type GitState = 'conflict' | 'dirty' | 'staged' | 'clean'
@@ -153,21 +154,12 @@ export function useGitStatus(sessionIdRef: Ref<string | null> | (() => string | 
   )
 
   // agent_end 后刷新（G-R2-04/C14）：agent 改动文件后 git 状态变 stale，回合结束时重拉。
-  // 订阅会话级 message.complete（agent 回合结束），随 sessionId 变化重建订阅，避免轮询/filesystem watch。
-  let unsubComplete: (() => void) | null = null
-  watch(
-    getSessionId,
-    (sid) => {
-      unsubComplete?.()
-      unsubComplete = sid
-        ? onSessionEvent(sid, (msg: ServerMessage) => {
-          if (msg.type === 'message.complete') refresh()
-        })
-        : null
-    },
-    { immediate: true },
-  )
-  onScopeDispose(() => unsubComplete?.())
+  // 订阅会话级 message.complete（agent 回合结束）经 useSessionEvents 收口——随 sessionId 变化自动
+  // 重订（先退订旧 sid 再订新 sid），避免轮询/filesystem watch。getter 模式（PanelContainer 传
+  // () => activePanelSessionId.value）用本地 computed 归一为 useSessionEvents 所需的 Ref。
+  const sessionIdRefForEvents = computed(() => getSessionId())
+  const onMessage = useSessionEvents(sessionIdRefForEvents)
+  onMessage('message.complete', () => void refresh())
 
   return {
     result,

@@ -25,3 +25,17 @@ export const TRIGGER_ICON_CLASS =
  */
 export const SELECTED_ITEM_CLASS =
   'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
+
+/**
+ * 选择类 popover（DirSelect / BranchSelect）列表项与动作项基础类（架构审查 F5）。
+ * 贴合全宽 + 左对齐 + 紧凑高度 + hover 底色 + svg 等比 16px。
+ * DirSelect 的 workspace 列表项与 BranchSelect 的 branch 列表项、两者尾部的动作项共用此类。
+ */
+export const POPOVER_LIST_ITEM_CLASS =
+  'h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4'
+
+/**
+ * 列表项「已选」高亮类（当前 cwd / 当前分支）：surface-2 底 + accent inset ring。
+ */
+export const POPOVER_LIST_ITEM_ACTIVE_CLASS =
+  'bg-surface-2 ring-1 ring-inset ring-accent-ring'

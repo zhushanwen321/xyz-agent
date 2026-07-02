@@ -16,7 +16,7 @@ import type { Ref } from 'vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { file as fileApi, git as gitApi } from '@/api'
 import { watchFileChangesForInvalidation } from './useFileChangeInvalidation'
-import type { FileNode } from '@xyz-agent/shared'
+import { findNodeByPath, findNodePath } from '@/composables/logic/file-tree-utils'
 
 /** 在途请求追踪（expandNode 幂等去重：同 path loading 时不重发） */
 const inFlight = new Map<string, Set<string>>() // sessionId → Set<path>
@@ -203,25 +203,4 @@ export function useFileTree() {
     toggleShowIgnored,
     setupInvalidation,
   }
-}
-
-/** 在 FileNode[] 树中查找路径是否存在（深度优先，rehydrate 用） */
-function findNodePath(nodes: FileNode[], path: string): boolean {
-  for (const node of nodes) {
-    if (node.path === path) return true
-    if (node.children && findNodePath(node.children, path)) return true
-  }
-  return false
-}
-
-/** 在 FileNode[] 树中按 path 查找节点（深度优先，expandNode 复用 children 用） */
-function findNodeByPath(nodes: FileNode[], path: string): FileNode | null {
-  for (const node of nodes) {
-    if (node.path === path) return node
-    if (node.children) {
-      const found = findNodeByPath(node.children, path)
-      if (found) return found
-    }
-  }
-  return null
 }

@@ -18,6 +18,7 @@
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
 import { defineStore } from 'pinia'
 import type { FileNode, GitFileStatus } from '@xyz-agent/shared'
+import { findNodeByPath } from '@/composables/logic/file-tree-utils'
 
 /** 节点加载态（②§5 状态机：5 态） */
 export type LoadStatus = 'unloaded' | 'loading' | 'loaded' | 'error' | 'invalidated'
@@ -270,15 +271,3 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     clearSession,
   }
 })
-
-/** 在 FileNode[] 树中按 path 查找节点（深度优先） */
-function findNodeByPath(nodes: FileNode[], path: string): FileNode | null {
-  for (const node of nodes) {
-    if (node.path === path) return node
-    if (node.children) {
-      const found = findNodeByPath(node.children, path)
-      if (found) return found
-    }
-  }
-  return null
-}

@@ -1,8 +1,11 @@
 <template>
   <!--
-    Provider 编辑/添加弹窗（draft-provider.html §1 pmodal）。
+    Provider 编辑/添加弹窗（draft-provider.html §1 pmodel）。
     左右布局：左 = 凭据配置，右 = 模型清单。
     所有表单控件使用 ui 基础组件（Input / Select / Button），无原生 select/button。
+
+    受控表单：业务编排（test/discover/save + 模型 CRUD）下沉 useProviderEdit，
+    本组件只做展示 + 事件绑定（F1 拆分）。
   -->
   <Dialog :open="!!provider" @update:open="emit('close')">
     <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
@@ -162,7 +165,7 @@
               <div>
                 <Label class="mb-1 block text-[10px] text-muted">思考</Label>
                 <Select v-model="newModel.thinking">
-                  <SelectTrigger class="h-8 w-[130px] px-2 text-[11px]">
+                  <SelectTrigger class="h-8 w-[130px] px-1.5 py-0 text-[11px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -271,7 +274,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { toRef } from 'vue'
 import {
   Eye, EyeOff, Loader2, Wifi, RefreshCw, CheckCircle2, AlertCircle,
   X, FileText, ImageIcon,
@@ -282,239 +285,48 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import type { ProviderInfo } from '@xyz-agent/shared'
-import { config } from '@/api'
+import {
+  useProviderEdit,
+  CONTEXT_OPTIONS,
+  THINKING_STRATEGIES,
+  type ThinkingStrategy,
+} from '@/composables/features/useProviderEdit'
 
 const props = defineProps<{ provider: ProviderInfo | null }>()
 const emit = defineEmits<{ close: [] }>()
 
-// ── Types ──
+// 模板用的常量（composable 导出的纯数据）
+const ctxOptions = CONTEXT_OPTIONS
+const thinkingStrategies = THINKING_STRATEGIES
 
-interface LocalModel {
-  id: string
-  name?: string
-  reasoning?: boolean
-  contextWindow?: number
-  input?: Array<'text' | 'image'>
-  thinkingLevelMap?: Record<string, string | null>
-}
+// 业务编排全在 composable：本组件只做 props/emit + 调用（受控表单，F1 拆分）
+const {
+  form,
+  newModel,
+  localModels,
+  showKey,
+  testing,
+  discovering,
+  testResult,
+  discoverResult,
+  showAddModel,
+  saving,
+  actionError,
+  getStrategyFromMap,
+  testConnection,
+  autoDiscover,
+  save,
+  toggleInput,
+  toggleNewInput,
+  updateCtx,
+  pickStrategy,
+  addModel,
+  removeModel,
+} = useProviderEdit(toRef(props, 'provider'))
 
-type ThinkingStrategy = 'all-levels' | 'on-off' | 'high-max'
-
-// ── Constants ──
-
-const ctxOptions = [
-  { label: '128K', value: 128_000 },
-  { label: '200K', value: 200_000 },
-  { label: '256K', value: 256_000 },
-  { label: '512K', value: 512_000 },
-  { label: '1M', value: 1_000_000 },
-]
-
-/**
- * 思考策略预设 → thinkingLevelMap。
- *
- * thinkingLevelMap 语义（key-based）：
- * - **key** = UI 可选档位（ThinkingLevel 枚举：off/low/medium/high/xhigh/max）
- * - **value** = 发给 runtime/pi 的实际 level（string = 可用，null = 不可用）
- *
- * 三个预设：
- * - all-levels: undefined（空 map）→ 全 6 档可用，发 key 自身
- * - on-off: off + high 两档（关 或 高强度思考）
- * - high-max: high + max 两档（高 或 最高），max 档发 xhigh
- */
-const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
-  'all-levels': undefined,
-  'on-off': { off: 'off', high: 'high' },
-  'high-max': { off: 'off', high: 'high', max: 'xhigh' },
-}
-
-const thinkingStrategies: Array<{ key: ThinkingStrategy; fullLabel: string }> = [
-  { key: 'all-levels', fullLabel: 'All Levels' },
-  { key: 'on-off', fullLabel: 'On / Off' },
-  { key: 'high-max', fullLabel: 'High / Max' },
-]
-
-// ── State ──
-
-const showKey = ref(false)
-const testing = ref(false)
-const discovering = ref(false)
-const testResult = ref<'ok' | 'error' | null>(null)
-const discoverResult = ref('')
-const showAddModel = ref(false)
-const localModels = ref<LocalModel[]>([])
-const saving = ref(false)
-/** 动作错误（保存/测试/发现失败时显示在底栏，非静默吞） */
-const actionError = ref('')
-
-const form = reactive({ name: '', api: 'anthropic-messages', baseUrl: '', apiKey: '' })
-const newModel = reactive({ name: '', contextWindow: 200_000, inputTypes: ['text'] as Array<'text' | 'image'>, thinking: 'on-off' as ThinkingStrategy })
-
-// ── Helpers ──
-
-/**
- * 从 thinkingLevelMap 反推策略预设（用于 Select 回显当前选中策略）。
- *
- * 按 value 空间匹配（兼容新旧 key 格式——新格式 key=max value=xhigh，
- * 旧格式 key=xhigh value=max；value 是发给 pi 的实际值，更稳定）：
- * - undefined/空 → all-levels
- * - value 含 'max' 或 'xhigh'（高强度值）→ high-max
- * - value 含 'high' → on-off（on-off 的 on 对应 high）
- * - 其他 → all-levels（用户手改的 map 不强匹配）
- */
-function getStrategyFromMap(map?: Record<string, string | null>): ThinkingStrategy {
-  if (!map || Object.keys(map).length === 0) return 'all-levels'
-  const values = Object.values(map).filter((v): v is string => v !== null)
-  // high-max：含 max 或 xhigh 值（新旧格式均覆盖）
-  if (values.includes('max') || values.includes('xhigh')) return 'high-max'
-  // on-off：含 high 值
-  if (values.includes('high')) return 'on-off'
-  return 'all-levels'
-}
-
-// ── Actions ──
-
-watch(() => props.provider, (p) => {
-  if (p) {
-    form.name = p.name
-    form.api = p.api ?? 'anthropic-messages'
-    form.baseUrl = p.baseUrl ?? ''
-    form.apiKey = ''
-    showKey.value = false
-    testResult.value = null
-    discoverResult.value = ''
-    showAddModel.value = false
-    actionError.value = ''
-    localModels.value = p.models.map((m) => ({ ...m }))
-  }
-})
-
-/**
- * 测试连接：复用 discoverModels 探活（W08 决策——domain 无独立 testConnection 协议）。
- * 成功（success:true）= 连接可达；失败显示错误。
- */
-async function testConnection() {
-  testing.value = true
-  testResult.value = null
-  actionError.value = ''
-  try {
-    const res = await config.discoverModels({
-      baseUrl: form.baseUrl,
-      apiKey: form.apiKey || undefined,
-      providerType: form.api,
-      providerId: props.provider?.id,
-    })
-    testResult.value = res.success ? 'ok' : 'error'
-    if (!res.success && res.error) actionError.value = res.error
-  } catch (e) {
-    testResult.value = 'error'
-    actionError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    testing.value = false
-  }
-}
-
-/**
- * 自动发现模型：调 config.discoverModels，成功后合并结果到 localModels。
- * 运行时通过 discoverModelsFromApi 探活目标 baseUrl，返回可用模型清单。
- */
-async function autoDiscover() {
-  discovering.value = true
-  discoverResult.value = ''
-  actionError.value = ''
-  try {
-    const res = await config.discoverModels({
-      baseUrl: form.baseUrl,
-      apiKey: form.apiKey || undefined,
-      providerType: form.api,
-      providerId: props.provider?.id,
-    })
-    if (res.success) {
-      // 合并发现的模型（去重：已存在的 id 跳过）
-      const existing = new Set(localModels.value.map((m) => m.id))
-      const merged = res.models.filter((m) => !existing.has(m.id))
-      localModels.value.push(...merged.map((m) => ({
-        id: m.id,
-        name: m.name,
-        contextWindow: m.contextWindow,
-      })))
-      discoverResult.value = `已发现 ${res.models.length} 个模型，${merged.length > 0 ? `新增 ${merged.length} 个已合并` : '均已存在'}`
-    } else {
-      actionError.value = res.error ?? '发现失败'
-    }
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    discovering.value = false
-  }
-}
-
-/**
- * 保存：调 config.setProvider（新建用 providerId=form.name，编辑用原 id）。
- * 状态经 onProviders 订阅推回（单一数据源，避免竞态）。
- */
-async function onSave() {
-  saving.value = true
-  actionError.value = ''
-  const providerId = props.provider?.id ?? form.name
-  try {
-    await config.setProvider(providerId, {
-      name: form.name,
-      type: form.api,
-      baseUrl: form.baseUrl,
-      apiKey: form.apiKey || undefined,
-      models: localModels.value.map((m) => ({
-        id: m.id,
-        name: m.name,
-        contextWindow: m.contextWindow,
-        input: m.input,
-        thinkingLevelMap: m.thinkingLevelMap,
-      })),
-    })
-    emit('close')
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    saving.value = false
-  }
-}
-
-function toggleInput(m: LocalModel, type: 'text' | 'image') {
-  if (!m.input) m.input = []
-  const idx = m.input.indexOf(type)
-  if (idx >= 0) m.input.splice(idx, 1)
-  else m.input.push(type)
-}
-
-/** 新增模型表单的输入类型 toggle（多选，与行级 toggleInput 同语义） */
-function toggleNewInput(type: 'text' | 'image') {
-  const idx = newModel.inputTypes.indexOf(type)
-  if (idx >= 0) newModel.inputTypes.splice(idx, 1)
-  else newModel.inputTypes.push(type)
-}
-
-function updateCtx(m: LocalModel, value: number) {
-  m.contextWindow = value
-}
-
-function pickStrategy(m: LocalModel, strategy: ThinkingStrategy) {
-  m.thinkingLevelMap = THINKING_PRESETS[strategy] ? structuredClone(THINKING_PRESETS[strategy]) : undefined
-}
-
-function addModel() {
-  const name = newModel.name.trim()
-  if (!name) return
-  localModels.value.push({
-    id: name,
-    name,
-    contextWindow: newModel.contextWindow,
-    input: [...newModel.inputTypes],
-    thinkingLevelMap: THINKING_PRESETS[newModel.thinking] ? structuredClone(THINKING_PRESETS[newModel.thinking]) : undefined,
-  })
-  newModel.name = ''
-}
-
-function removeModel(index: number) {
-  localModels.value.splice(index, 1)
+/** 保存成功则关闭弹窗（状态经 onProviders 订阅推回，避免竞态） */
+async function onSave(): Promise<void> {
+  const ok = await save()
+  if (ok) emit('close')
 }
 </script>
