@@ -199,7 +199,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -214,15 +214,11 @@ import { useChatStore } from '@/stores/chat'
 import { useCommandStore } from '@/stores/command'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
 import ForkConfirmModal from './ForkConfirmModal.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-
-/** 时间格式化常量（elapsed 计算） */
-const MS_PER_SEC = 1000
-const SEC_PER_MIN = 60
-const SEC_PAD_WIDTH = 2
 
 const props = defineProps<{
   turn: MessageTurn
@@ -276,55 +272,16 @@ const expanded = ref(false)
 const showTrace = computed(() => props.turn.isWorking || expanded.value)
 
 /**
- * 工作耗时：working 态 live 计时（setInterval 每秒重算 now-firstTs），
- * 完成态静态（lastTs-firstTs）。watch isWorking true→false 复位 expanded + 停表。
+ * 工作耗时 live 计时（提取至 useTurnElapsed composable，纯计时关注点）。
+ * 完成回调：isWorking true→false 时复位折叠态（自动收起成一行 meta）。
  */
-const elapsed = ref(formatElapsed())
-let elapsedTimer: ReturnType<typeof setInterval> | null = null
-
-function formatElapsed(): string {
-  const as = props.turn.assistants
-  if (as.length === 0) return '0s'
-  const first = as[0].timestamp
-  const end = props.turn.isWorking ? Date.now() : as[as.length - 1].timestamp
-  const secs = Math.max(1, Math.round((end - first) / MS_PER_SEC))
-  const m = Math.floor(secs / SEC_PER_MIN)
-  const s = secs % SEC_PER_MIN
-  return m > 0 ? `${m}m ${String(s).padStart(SEC_PAD_WIDTH, '0')}s` : `${s}s`
-}
-
-function stopElapsedTimer(): void {
-  if (elapsedTimer) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = null
-  }
-}
-
-function startElapsedTimer(): void {
-  stopElapsedTimer()
-  elapsed.value = formatElapsed()
-  elapsedTimer = setInterval(() => {
-    elapsed.value = formatElapsed()
-  }, MS_PER_SEC)
-}
-
-if (props.turn.isWorking) startElapsedTimer()
-
-watch(
+const { elapsed } = useTurnElapsed(
+  () => props.turn.assistants,
   () => props.turn.isWorking,
-  (nw, old) => {
-    if (old && !nw) {
-      // 完成：复位折叠态（自动收起成一行 meta）+ 停表定格
-      expanded.value = false
-      stopElapsedTimer()
-      elapsed.value = formatElapsed()
-    } else if (!old && nw) {
-      startElapsedTimer()
-    }
+  () => {
+    expanded.value = false
   },
 )
-
-onUnmounted(stopElapsedTimer)
 
 /** 最后一条 assistant（收尾 summary + MD 复制 + fork 的目标消息） */
 const lastAssistant = computed(() => {

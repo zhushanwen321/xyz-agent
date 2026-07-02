@@ -31,13 +31,11 @@
  * - 首次渲染需 await shiki 加载（异步），期间显示空（极短，highlighter 单例只建一次）。
  * - content 变化（流式增量）触发重新渲染；markdown-it 实例已缓存，后续渲染同步。
  * - 渲染为 segments 数组：text 段走 v-html，mermaid 段走 <MermaidRenderer> 组件（template v-for）。
- * - 代码块复制按钮/链接点击用事件委托（v-html 内不能绑 Vue 事件）。
+ * - 代码块复制按钮/链接点击用事件委托（v-html 内不能绑 Vue 事件）→ useMarkdownInteractions。
  */
-import { ref, watch, onBeforeUnmount } from 'vue'
-import { renderMarkdownSegments, decodeBase64, type MarkdownSegment } from '@/composables/logic/markdown'
-import { useFileTree } from '@/composables/features/useFileTree'
-import { useSideDrawer } from '@/composables/features/useSideDrawer'
-import { openExternal } from '@/lib/ipc'
+import { ref, watch } from 'vue'
+import { renderMarkdownSegments, type MarkdownSegment } from '@/composables/logic/markdown'
+import { useMarkdownInteractions } from '@/composables/panel/useMarkdownInteractions'
 import MermaidRenderer from './MermaidRenderer.vue'
 
 const props = defineProps<{
@@ -49,73 +47,12 @@ const props = defineProps<{
 const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
 
-/** 文件路径打开 SideDrawer detail tab（复用 FileTreeRow/GitPanel/useSearchJump 的双步模式） */
-const { selectFile } = useFileTree()
-const drawer = useSideDrawer()
-
-/** 复制反馈持续时长（ms）—— 与 useCopy composable 保持一致（事件委托场景无法复用 ref，用同等常量） */
-const COPY_FEEDBACK_MS = 1200
-
-/* ── 代码块复制按钮：事件委托 ── */
-let copyResetTimer: ReturnType<typeof setTimeout> | null = null
-/** 当前处于"已复制"反馈态的按钮（同时只有一个） */
-let copiedBtn: HTMLElement | null = null
-
-function clearCopiedState(): void {
-  if (copiedBtn) {
-    copiedBtn.classList.remove('is-copied')
-    copiedBtn = null
-  }
-}
-
-function onClick(e: MouseEvent): void {
-  const target = e.target as HTMLElement
-
-  // ① 代码块复制按钮
-  const btn = target.closest('.md-codeblock__copy') as HTMLElement | null
-  if (btn) {
-    const dataCode = btn.dataset.code
-    if (dataCode) {
-      const code = decodeBase64(dataCode)
-      navigator.clipboard.writeText(code).catch(() => {
-        /* 剪贴板失败静默：非关键路径 */
-      })
-      clearCopiedState()
-      btn.classList.add('is-copied')
-      copiedBtn = btn
-      if (copyResetTimer) clearTimeout(copyResetTimer)
-      copyResetTimer = setTimeout(clearCopiedState, COPY_FEEDBACK_MS)
-    }
-    return
-  }
-
-  // ② 文件路径链接：点击在 SideDrawer detail tab 打开（复用 selectFile + drawer.open 双步模式）
-  const filepathLink = target.closest('.md-filepath') as HTMLElement | null
-  if (filepathLink) {
-    e.preventDefault()
-    const pathB64 = filepathLink.dataset.path
-    if (pathB64) {
-      const path = decodeBase64(pathB64)
-      selectFile(path)
-      drawer.open('detail')
-    }
-    return
-  }
-
-  // ③ 外链 <a href="http(s)://">：Electron file:// 下 target=_blank 不会开系统浏览器，
-  //    走 lib/ipc.openExternal → electronAPI.openExternal IPC（main 侧 isValidExternalUrl 校验只放行 http(s)://）
-  const anchor = target.closest('a[href]') as HTMLAnchorElement | null
-  if (anchor) {
-    const href = anchor.getAttribute('href') ?? ''
-    if (/^https?:\/\//i.test(href)) {
-      e.preventDefault()
-      openExternal(href).catch(() => {
-        /* 打开失败静默：非关键路径 */
-      })
-    }
-    // 非 http(s) 链接（如锚点）走默认行为
-  }
-}
+/**
+ * v-html 内点击事件委托路由（代码块复制 / 文件路径 / 外链）。
+ * 复制反馈态由 useMarkdownInteractions 内的 useCodeblockCopy 管理（DOM-imperative，
+ * 因 v-html 节点无 Vue 响应式——不复用 effects/useCopy 的 ref-based 版本）。
+ */
+const { onClick } = useMarkdownInteractions()
 
 watch(
   () => props.content,
@@ -133,10 +70,6 @@ watch(
   },
   { immediate: true },
 )
-
-onBeforeUnmount(() => {
-  if (copyResetTimer) clearTimeout(copyResetTimer)
-})
 </script>
 
 <style scoped>
