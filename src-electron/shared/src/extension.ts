@@ -20,42 +20,10 @@ export const EXTENSION_EVENTS = {
 } as const
 
 // ── Extension UI 交互 / 安装流 payload ────────────────────────────
-
-/** Interactive extension UI methods that produce extension.ui_request WS events */
-export type ExtensionUIMethod = 'confirm' | 'select' | 'input' | 'notify' | 'editor'
-
-export interface ExtensionUIRequestPayload {
-  sessionId: string
-  requestId: string
-  method: ExtensionUIMethod
-  title?: string
-  message?: string
-  options?: string[]
-  default?: string
-  level?: 'info' | 'warn' | 'error'
-  /** Origin of the request — determines which WS channel the response is sent to */
-  source?: 'extension' | 'plugin'
-}
-
-export interface ExtensionUIResponsePayload {
-  sessionId: string
-  requestId: string
-  result: boolean | string | null
-}
-
-export interface ExtensionErrorPayload {
-  sessionId: string
-  extensionName: string
-  error: string
-  errorEvent?: string
-}
-
-export interface ToolCallUpdatePayload {
-  sessionId: string
-  toolCallId: string
-  progress?: number
-  detail?: string | Record<string, unknown>
-}
+// 注：ExtensionUIRequestPayload / ExtensionUIResponsePayload / ExtensionErrorPayload /
+// ToolCallUpdatePayload 已删除（reserved 占位契约，无生产消费方）。对应消息
+// extension.ui_request / extension.ui_response / extension.error / message.tool_call_update
+// 的 payload 形状在 protocol.ts 的 ClientMessageMap / ServerMessageMap 内联定义。
 
 export interface ExtensionInfo {
   name: string
