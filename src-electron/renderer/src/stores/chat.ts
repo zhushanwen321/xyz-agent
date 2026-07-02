@@ -22,14 +22,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type {
-  ChangeSetStatus,
-  FileChange,
   Message,
   ServerMessage,
 } from '@xyz-agent/shared'
-import { mergeFileChanges } from './chat-readers'
-import { findLastAssistantIndex } from './chat-chunk-processor'
 import { dispatchMessageEvent } from './chat-message-effects'
+import { createChangeSetController } from './chat-changeset'
 export type { RetryState, QueueState } from './chat-store-types'
 import type { RetryState, QueueState } from './chat-store-types'
 
@@ -45,8 +42,14 @@ export const useChatStore = defineStore('chat', () => {
   const retryStates = ref<Map<string, RetryState>>(new Map())
   /** 按 sessionId 分区的消息队列态（W06-B，queue_update） */
   const queueStates = ref<Map<string, QueueState>>(new Map())
-  /** 按 `${sessionId}:${messageId}` 分区的变更集状态（W10，ChangeSetCard 5 态） */
-  const changeSetStatuses = ref<Map<string, ChangeSetStatus>>(new Map())
+  /**
+   * FileChanges 子域控制器（W10，ADR-0024 D5 baseline diff）。
+   * 变更集 5 态状态机 + FileChange 合并逻辑内聚在 chat-changeset.ts；messages ref 由
+   * 本 store 拥有并注入（applyFileChanges 据此定位目标 assistant message），changeSetStatuses
+   * ref 由控制器内部独占。设计选择与公共 API 见 chat-changeset.ts 顶部注释。
+   */
+  const changeset = createChangeSetController(messages)
+  const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
   /** getHistory 加载失败的 session（#2 AC-2.6：landing 重试出口，不永久卡住） */
   const failedHistory = ref<Set<string>>(new Set())
 
@@ -63,16 +66,6 @@ export const useChatStore = defineStore('chat', () => {
   /** 取指定 session 的消息队列态（无则 undefined） */
   function getQueueState(sessionId: string): QueueState | undefined {
     return queueStates.value.get(sessionId)
-  }
-
-  /** 取指定 message 的变更集状态（ChangeSetCard 渲染用，无则 undefined） */
-  function getChangeSetStatus(sessionId: string, messageId: string): ChangeSetStatus | undefined {
-    return changeSetStatuses.value.get(`${sessionId}:${messageId}`)
-  }
-
-  /** 设置变更集状态（用户 Accept/Reject 驱动 partially-reviewed/resolved/superseded） */
-  function setChangeSetStatus(sessionId: string, messageId: string, status: ChangeSetStatus): void {
-    changeSetStatuses.value = new Map(changeSetStatuses.value).set(`${sessionId}:${messageId}`, status)
   }
 
   /** 是否已加载历史（用于决定是否调 api.chat.getHistory） */
@@ -192,63 +185,6 @@ export const useChatStore = defineStore('chat', () => {
     if (idx === -1) return
     const end = inclusive ? idx : idx + 1
     messages.value.set(sessionId, prev.slice(0, end))
-  }
-
-  /**
-   * 处理 runtime 推送的文件变更帧（flow-2 FileChanges 通道，ADR-0024 D6/D7）。
-   *
-   * accumulating 帧（isFullSet=false）增量合并进目标 assistant message.fileChanges；
-   * ready 帧（isFullSet=true）用 git 对账后的全集替换（真值收口）。
-   * 同 filePath 合并、status 取最新。变更集卡 5 态状态机的审查态
-   * （partially-reviewed/resolved/superseded）由前端用户交互驱动，不经此函数。
-   */
-  function applyFileChanges(
-    sessionId: string,
-    messageId: string,
-    changes: FileChange[],
-    changeSetStatus: ChangeSetStatus,
-    isFullSet: boolean,
-  ): void {
-    const prev = messages.value.get(sessionId) ?? []
-    if (prev.length === 0) return
-    const idx = prev.findIndex((m) => m.id === messageId)
-    // messageId 未命中时挂到最后一条 assistant message（防御：runtime/前端 id 偶发不一致）
-    const targetIdx = idx >= 0 ? idx : findLastAssistantIndex(prev)
-    if (targetIdx < 0) return
-
-    const target = prev[targetIdx]
-    // ready 全集直接替换（git 对账真值）；accumulating 增量合并（同 filePath 取最新 status/行数）
-    const merged = isFullSet
-      ? mergeFileChanges(changes, [])
-      : mergeFileChanges(changes, target.fileChanges ?? [])
-
-    const next = [...prev]
-    next[targetIdx] = { ...target, fileChanges: merged }
-    messages.value.set(sessionId, next)
-
-    // 记录变更集状态（供 ChangeSetCard 渲染 5 态）
-    const statusKey = `${sessionId}:${messageId}`
-    changeSetStatuses.value = new Map(changeSetStatuses.value).set(statusKey, changeSetStatus)
-  }
-
-  /**
-   * 标记指定 session 的所有变更集为已过期（superseded）。
-   *
-   * D5 重构：git.commit 成功后工作区 diff 重置，runtime 广播 message.changeSetInvalidated，
-   * 前端把该 session 的非 resolved 态 changeSet 推 superseded（保留已 resolved 的历史审查记录）。
-   * resolved 态不覆盖——用户已明确接受的变更不应因后续 commit 而状态丢失。
-   */
-  function markChangeSetsSuperseded(sessionId: string): void {
-    const prefix = `${sessionId}:`
-    let changed = false
-    const next = new Map(changeSetStatuses.value)
-    for (const [key, status] of next) {
-      if (key.startsWith(prefix) && status !== 'resolved') {
-        next.set(key, 'superseded')
-        changed = true
-      }
-    }
-    if (changed) changeSetStatuses.value = next
   }
 
   return {

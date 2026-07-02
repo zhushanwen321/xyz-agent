@@ -1,8 +1,10 @@
 /**
- * chat store 的 payload 读取 + FileChange 合并辅助函数（从 chat.ts 提取，控制主文件行数）。
+ * chat store 的 payload 读取辅助函数（从 chat.ts 提取，控制主文件行数）。
  *
  * 所有函数是纯函数（payload 是 Record<string, unknown>，安全窄化到具体类型）。
  * event-adapter 生产端的 payload 形状见 runtime/src/infra/pi/event-adapter.ts 各 handler。
+ *
+ * 注：FileChange 合并逻辑 mergeFileChanges 已移至 chat-changeset.ts（FileChanges 子域）。
  */
 import type {
   BashExecution,
@@ -127,23 +129,4 @@ export function readChangeSetStatus(payload: Record<string, unknown>): ChangeSet
   const v = payload.changeSetStatus
   const valid: ChangeSetStatus[] = ['accumulating', 'ready', 'partially-reviewed', 'resolved', 'superseded']
   return typeof v === 'string' && valid.includes(v as ChangeSetStatus) ? v as ChangeSetStatus : 'accumulating'
-}
-
-/**
- * 合并 FileChange[]（accumulating 增量合并）。同 filePath 取最新项（后者覆盖前者），
- * 保留 addLines/delLines（若新项未带则沿用旧项）。ready 帧传 [] 作 baseline 即全集替换。
- */
-export function mergeFileChanges(incoming: FileChange[], baseline: FileChange[]): FileChange[] {
-  const byPath = new Map<string, FileChange>()
-  for (const c of baseline) byPath.set(c.filePath, c)
-  for (const c of incoming) {
-    const prev = byPath.get(c.filePath)
-    byPath.set(c.filePath, {
-      filePath: c.filePath,
-      status: c.status,
-      ...(c.addLines !== undefined ? { addLines: c.addLines } : prev?.addLines !== undefined ? { addLines: prev.addLines } : {}),
-      ...(c.delLines !== undefined ? { delLines: c.delLines } : prev?.delLines !== undefined ? { delLines: prev.delLines } : {}),
-    })
-  }
-  return Array.from(byPath.values())
 }
