@@ -11,7 +11,7 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, ISessionTreeService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
@@ -36,7 +36,7 @@ export class RuntimeServer implements IMessageBroker {
   private sessionService!: ISessionService
   private configService!: IConfigService
   private modelService!: IModelService
-  private treeService!: import('../services/tree-service.js').TreeService
+  private treeService!: ISessionTreeService
   private extensionService?: IExtensionService
   private pluginService!: IPluginService
   private gitService?: GitService
@@ -76,7 +76,7 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: ISessionTreeService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService): void {
     this.gitService = git
     this.fileService = file
     this.sessionService = session

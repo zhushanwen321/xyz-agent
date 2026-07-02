@@ -26,10 +26,8 @@ import { useChat } from '@/composables/features/useChat'
 import { useModel } from '@/composables/features/useModel'
 import {
   useNewTaskFlowState,
+  useNewTaskFlowController,
   transition,
-  setFlowState,
-  bindCurrentSession,
-  setCreateInFlight,
   OVERLAY_STATES,
   ACTIVE_STATES,
   type GitInfo,
@@ -57,6 +55,10 @@ export function useNewTaskFlow() {
     pendingModel,
     createInFlight,
   } = useNewTaskFlowState()
+
+  // 受控写入口 controller（父编排器独占）：setter 不再模块级 export，杜绝子 composable /
+  // 组件越权 import 调用。本编排器独占后，按需把具体 setter 作为参数下发给子 composable。
+  const controller = useNewTaskFlowController()
 
   /** 当前 flow 绑定 session 的 id（统一延迟 create 后，landing 态恒为 null） */
   const currentSessionId: ComputedRef<string | null> = computed(
@@ -102,10 +104,11 @@ export function useNewTaskFlow() {
    * 「页面不跳转、只 composer 消失」。此处清空后 sessionId=null → Landing 正确渲染。
    */
   async function startFlow(presetCwd?: string): Promise<void> {
-    // 终态重建（AC-3.12）：completed 后 ⌘N 销毁重建
+    // 终态重建（AC-3.12）：completed 后 ⌘N 销毁重建。completed→idle 不在 ALLOWED 表（completed 无出口），
+    // 必须用 transitionUnchecked（@internal 终态重建语义），随后 idle→landing 走正常 transition。
     if (state.value === 'completed') {
-      setFlowState('idle')
-      bindCurrentSession(null)
+      controller.transitionUnchecked('idle')
+      controller.bindCurrentSession(null)
     }
     if (createInFlight.value) return // submitFirstMessage 飞行中，忽略重复触发
     // 幂等：已 landing 态再 startFlow（initApp 重试 / 多次 ⌘N）→ 不翻 state（landing→landing
@@ -116,7 +119,7 @@ export function useNewTaskFlow() {
     // 进 landing：预设 cwd（有则 chip 所见即所得，无则空 chip 态）
     pendingCwd.value = presetCwd ?? null
     pendingModel.value = null
-    bindCurrentSession(null)
+    controller.bindCurrentSession(null)
     // 强制不变量：landing 态无 session 绑定。清 activeId + active panel leaf.sessionId，
     // 让 Panel 的 sessionId prop 变 null → 渲染落到 Landing（而非旧会话 MessageStream）。
     session.activeId = null
@@ -141,7 +144,7 @@ export function useNewTaskFlow() {
       throw new Error('NewTaskFlow: 非 landing 态不可首发提交')
     }
     if (createInFlight.value) return
-    setCreateInFlight(true)
+    controller.setCreateInFlight(true)
     try {
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
@@ -149,7 +152,7 @@ export function useNewTaskFlow() {
         // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
         const label = deriveSessionLabel(trimmed)
         const created = await sessionApi.create(cwd, label)
-        bindCurrentSession(created)
+        controller.bindCurrentSession(created)
         session.appendSession(created)
         // apply landing 态选定的模型（session 已 create，可调 model.switch RPC）。
         // pendingModel 为 "provider/modelId" 复合串；未选（null）则用 runtime 默认，不切换。
@@ -176,7 +179,7 @@ export function useNewTaskFlow() {
       await chat.send(trimmed)
       transition('completed') // landing→completed（首发成功，终态）
     } finally {
-      setCreateInFlight(false)
+      controller.setCreateInFlight(false)
     }
   }
 
@@ -211,9 +214,15 @@ export function useNewTaskFlow() {
   }
 
   // ── compose 子 composable（分支 + 选目录）── 传 computed 值的 getter，解耦于父内部 ──
+  // branch 子 composable 需要飞行标记 setter + 守卫失败回 idle 的 transitionUnchecked，
+  // 由父编排器从独占 controller 中按需注入（setter 不再模块级 export，无法被子 composable 直接 import）。
   const branch = useNewTaskBranch(
     () => currentSessionId.value,
     () => gitInfo.value,
+    {
+      setBranchCreateInFlight: controller.setBranchCreateInFlight,
+      transitionUnchecked: controller.transitionUnchecked,
+    },
   )
   const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
 

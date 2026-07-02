@@ -12,7 +12,7 @@
  * 依赖方向：lib/ipc(pickDirectory) + useNewTaskFlowState（transition + refs）。
  */
 import { pickDirectory } from '@/lib/ipc'
-import { transition, setFlowState, useNewTaskFlowState } from './useNewTaskFlowState'
+import { transition, useNewTaskFlowState } from './useNewTaskFlowState'
 
 /**
  * @param currentCwd 当前 flow 的 cwd（chip 回灌判定：cwd 未变则 noop 仅关 popover）
@@ -28,7 +28,9 @@ export function useNewTaskDirSelect(
 
   /** landing→dir-popover（点 directory chip）。overlay 互斥：已开 branch-popover 时先归 landing 再开。 */
   function openDirPopover(): void {
-    if (state.value === 'branch-popover') setFlowState('landing')
+    // overlay 互斥：已开 branch-popover 时先归 landing。branch-popover→landing 在 ALLOWED 表内合法，
+    // 走 transition（带守卫）而非直置后门——保持状态变更统一走守卫表，杜绝绕过。
+    if (state.value === 'branch-popover') transition('landing')
     transition('dir-popover')
   }
 

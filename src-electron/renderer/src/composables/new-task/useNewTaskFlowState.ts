@@ -5,7 +5,9 @@
  * - NewTaskFlowState 8 态枚举 + GitInfo 派生类型。
  * - ALLOWED 转换表 + OVERLAY_STATES/ACTIVE_STATES 集合常量。
  * - 模块级单实例 refs（state/currentSession/pendingCwd/pendingModel/createInFlight/branchCreateInFlight）。
- * - transition(target)：带守卫的状态转换（非法转换 → 回 idle + 抛错，AC-3.11）。
+ * - transition(target)：带守卫的**公开**状态转换（非法转换 → 回 idle + 抛错，AC-3.11）。
+ * - useNewTaskFlowState()：只读状态视图（人人可取）；useNewTaskFlowController()：受控写入口
+ *   controller（**仅父编排器独占**，setter 不再模块级 export，杜绝大多数场景绕过守卫的后门）。
  * - resetNewTaskFlow()：测试隔离 / 应用初始化重置单实例。
  *
  * 不含：动作编排（startFlow/submitFirstMessage/selectBranch/selectWorkspace/openDirDialog 等
@@ -103,6 +105,7 @@ export function resetNewTaskFlow(): void {
 
 /**
  * 状态转换（带守卫）。非法转换 → 回 idle + 抛错（Vue 错误边界兼底，AC-3.11）。
+ * 这是状态机的公开写入口：任何子 composable / 组件都可调用，ALLOWED 表保证合法性。
  * NFR④#3：此处为 logger debug 接线点（每次转换 log from→to）。
  */
 export function transition(target: NewTaskFlowState): void {
@@ -115,34 +118,66 @@ export function transition(target: NewTaskFlowState): void {
 }
 
 /**
- * 直接置 state（绕过守卫表）。仅用于既有的语义性直置：
- * - overlay 互斥复位（branch-popover→landing / dir-popover→landing，二者本身合法，直置省一次 transition 调用）
- * - 守卫失败回 idle（openBranchPopover 非 git 目录 / openBranchModal 来源非法，throw 前清态）
- * 正常流程必须走 transition()；本函数为兼容原直置语义保留，不应滥用。
+ * 直接置 state（绕过 ALLOWED 守卫表）。**模块私有**，不导出——仅经 useNewTaskFlowController()
+ * 暴露给父编排器独占，杜绝大多数场景误用绕过守卫的后门。
+ *
+ * @internal 仅供两类无法走 transition 的语义性直置：
+ * - 终态重建（startFlow 中 completed→idle，ALLOWED['completed']=[] 不允许任何出口）
+ * - 守卫失败回 idle（throw 前清态：openBranchPopover 非 git 目录 / openBranchModal 来源非法）
+ * 其他一切状态变更必须走 transition()（带守卫）。
  */
-export function setFlowState(target: NewTaskFlowState): void {
+function transitionUnchecked(target: NewTaskFlowState): void {
   state.value = target
 }
 
-/**
- * 受控写入口：仅 useNewTaskFlow 编排器（父）可写 currentSession / createInFlight。
- * 子 composable 不写这两个（语义上 currentSession 仅 submitFirstMessage 建/绑，createInFlight
- * 仅 submitFirstMessage 飞行守卫）。用具名 setter 而非暴露可写 ref，保留单一写路径的可读性。
- */
+// ── 受控写入口（模块私有，仅经下方 controller 暴露给父编排器）──
+// 设计意图：flow 状态是单实例共享态，写入口若逐个模块级 export 会被任意子 composable / 组件
+// 越权 import 调用（注释「仅父可写」零约束力）。改为不导出 + 经 useNewTaskFlowController()
+// 收敛成单一 controller 对象，父编排器独占后按需把具体 setter 作为参数下发给子 composable——
+// 既消除逐个 import 的滥用面，又让数据流在函数签名里显式可见。
 
 /** 绑定/替换当前 flow 的 session（submitFirstMessage create 后绑定） */
-export function bindCurrentSession(s: SessionSummary | null): void {
+function bindCurrentSession(s: SessionSummary | null): void {
   currentSession.value = s
 }
 
 /** 标记 submitFirstMessage 飞行中（true）/ 结束（false） */
-export function setCreateInFlight(v: boolean): void {
+function setCreateInFlight(v: boolean): void {
   createInFlight.value = v
 }
 
 /** 标记 submitCreateBranch 飞行中（true）/ 结束（false）（AC-7.9/T6.6） */
-export function setBranchCreateInFlight(v: boolean): void {
+function setBranchCreateInFlight(v: boolean): void {
   branchCreateInFlight.value = v
+}
+
+/**
+ * 受控写入口集合（controller）。**仅父编排器 useNewTaskFlow** 应调用本函数获取——
+ * 子 composable 与组件无法从模块直接 import 这些 setter（已不再模块级 export），
+ * 父编排器按需把具体 setter 作为参数传给子 composable（见 useNewTaskBranch 签名）。
+ */
+export interface NewTaskFlowController {
+  /** 绕过 ALLOWED 表直置 state：仅供终态重建（completed→idle）与守卫失败回 idle，见 transitionUnchecked @internal */
+  transitionUnchecked: (target: NewTaskFlowState) => void
+  /** 绑定/替换当前 flow 的 session（submitFirstMessage create 后绑定） */
+  bindCurrentSession: (s: SessionSummary | null) => void
+  /** 标记 submitFirstMessage 飞行中（true）/ 结束（false） */
+  setCreateInFlight: (v: boolean) => void
+  /** 标记 submitCreateBranch 飞行中（true）/ 结束（false）（AC-7.9/T6.6） */
+  setBranchCreateInFlight: (v: boolean) => void
+}
+
+/**
+ * 取得受控写入口 controller（**仅父编排器 useNewTaskFlow 调用**）。
+ * 子 composable 不调用本函数——它需要的 setter 由父编排器作为参数注入。
+ */
+export function useNewTaskFlowController(): NewTaskFlowController {
+  return {
+    transitionUnchecked,
+    bindCurrentSession,
+    setCreateInFlight,
+    setBranchCreateInFlight,
+  }
 }
 
 /** 单实例状态视图（子 composable + 父编排器消费；state/currentSession/createInFlight 只读） */
@@ -156,10 +191,10 @@ export interface NewTaskFlowStateRefs {
 }
 
 /**
- * 暴露单实例状态 refs（视图）供子 composable / 父编排器消费。
+ * 暴露单实例状态 refs（只读视图）供子 composable / 父编排器消费。
+ * 本函数**只返回视图**（不含写入口）——写入口经 useNewTaskFlowController() 独占获取，
+ * 从而读写分离：读视图人人可取，写入口仅父编排器独占。
  * pendingCwd/pendingModel 非只读——子 composable（dir-select）+ 父编排器需写它记 landing 选定值。
- * state/currentSession/createInFlight/branchCreateInFlight 只读：state 经 transition() 改，
- * currentSession 经 bindCurrentSession() 改，两个 in-flight 标记经各自受控写入口改。
  */
 export function useNewTaskFlowState(): NewTaskFlowStateRefs {
   return {

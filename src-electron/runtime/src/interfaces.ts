@@ -21,6 +21,7 @@ import type {
   FileNode,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
+import type { INavigateInterceptor } from './services/ports/tree.js'
 import type { TreeData, NavigateResult, ForkResult } from './types.js'
 
 /**
@@ -287,14 +288,30 @@ export interface IFileService {
   deleteFile(sessionId: string, path: string): Promise<never>
 }
 
-// ── ITreeService ──────────────────────────────────────────────────
+// ── ISessionTreeService ───────────────────────────────────────────
 
 /**
- * Session tree service port（与 ISessionService / IExtensionService 对称的 DI seam）。
- * TreeMessageHandler 经此接口依赖 tree 能力，不直接 import 具体的 TreeService 类。
- * 方法签名取 TreeService（services/tree-service.ts）中 handler 实际调用的公开方法。
+ * Session 历史树 port（与 ISessionService / IExtensionService 对称的 DI seam）。
+ *
+ * 命名澄清：此接口管的是 **session 历史树的读取/分叉导航**（getTree/navigate/fork），
+ * 与文件树无关（文件树见 IFileService.listTree）。故从 ITreeService 改名为
+ * ISessionTreeService，避免「tree」一词与文件树撞名（commit message 亦称其
+ * "Session tree service port"）。
+ *
+ * 方法签名与 TreeService（services/tree-service.ts）逐字对齐——包含 handler 调用的
+ * 读操作（getTree/navigateTree/forkFromEntry/cloneSession/isNavigateCapable）与
+ * session 注册/注销/能力设置（registerSession/unregisterSession/setNavigateCapable）。
+ * 后三者是 navigate 的 per-session 前置状态：registerSession 注册 navigate 拦截器，
+ * setNavigateCapable 写 navigate 能力 map，二者恰是 navigateTree/getTree 读取的对象，
+ * 与读操作高内聚，故合并进同一接口而非拆成 ITreeSessionRegistry。
  */
-export interface ITreeService {
+export interface ISessionTreeService {
+  /** 注册 session 的 navigate 拦截器 + 订阅 pi message_end 事件（session 创建时调用）。 */
+  registerSession(sessionId: string, interceptor: INavigateInterceptor): void
+  /** 注销 session：退订 pi 事件 + 清拦截器 + 清能力 map（session 销毁时调用）。 */
+  unregisterSession(sessionId: string): void
+  /** 写 navigate 能力（检测到 navigate 扩展命令后回写，navigateTree/getTree 读取此值）。 */
+  setNavigateCapable(sessionId: string, capable: boolean): void
   getTree(sessionId: string): Promise<TreeData>
   navigateTree(sessionId: string, targetEntryId: string): Promise<NavigateResult>
   forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult>

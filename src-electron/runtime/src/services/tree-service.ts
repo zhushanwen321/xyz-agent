@@ -10,7 +10,7 @@ import type { IProcessManager, IPiEngine } from './ports/pi-engine.js'
 import { readPiState } from './ports/pi-engine.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
 import type { ITreeReader, INavigateInterceptor } from './ports/tree.js'
-import type { ITreeService } from '../interfaces.js'
+import type { ISessionTreeService } from '../interfaces.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 interface TreeManagedSession {
@@ -18,7 +18,7 @@ interface TreeManagedSession {
   unsubPiEvents: (() => void) | null
 }
 
-export class TreeService implements ITreeService {
+export class TreeService implements ISessionTreeService {
   private sessions = new Map<string, TreeManagedSession>()
   private navigateCapableMap = new Map<string, boolean>()
 

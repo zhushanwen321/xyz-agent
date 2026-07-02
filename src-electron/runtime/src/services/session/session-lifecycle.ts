@@ -17,6 +17,7 @@ import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import { readPiState } from '../ports/pi-engine.js'
+import type { ISessionTreeService } from '../../interfaces.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -25,7 +26,7 @@ export class SessionLifecycle {
   constructor(
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
-    private readonly treeService: { unregisterSession: (sessionId: string) => void },
+    private readonly treeService: ISessionTreeService,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
   ) {}

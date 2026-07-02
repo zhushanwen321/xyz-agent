@@ -72,6 +72,9 @@ const {
   restoreSelection,
   clearSlashQueryText,
   clearHashQueryText,
+  clear,
+  setText,
+  insertTextAtCursor,
 } = useContenteditableInput(elRef, {
   onInput: (text) => emit('input', text),
   onSlashTrigger: (payload) => emit('slash-trigger', payload),
@@ -98,38 +101,9 @@ function onBlur(): void {
   saveSelection()
 }
 
-function clear(): void {
-  const el = elRef.value
-  if (!el) return
-  el.textContent = ''
-  syncEmpty()
-  emit('input', '')
-}
-
-/** 在当前光标处插入纯文本（+ 菜单插 @/#/ 符号用） */
-function insertTextAtCursor(text: string): void {
-  const el = elRef.value
-  if (!el) return
-  restoreSelection()
-  document.execCommand('insertText', false, text)
-  onInput()
-}
-
-/** 写入纯文本并把光标移到末尾（发送失败恢复草稿用） */
-function setText(text: string): void {
-  const el = elRef.value
-  if (!el) return
-  el.textContent = text
-  el.focus()
-  const range = document.createRange()
-  range.selectNodeContents(el)
-  range.collapse(false)
-  const sel = window.getSelection()
-  sel?.removeAllRanges()
-  sel?.addRange(range)
-  syncEmpty()
-  emit('input', text)
-}
+// clear / setText / insertTextAtCursor 不再在组件定义：DOM 写入已收口进 composable
+// （savedRange 闭包在 composable 内，组件层无法重置它；详见 useContenteditableInput 注释）。
+// 组件通过 defineExpose 透传 composable 返回的同名方法，维持对外 API 契约不变。
 
 function focus(): void {
   isFocused.value = true

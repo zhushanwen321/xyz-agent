@@ -13,23 +13,35 @@
  * 发送/创建 session 编排（在 useNewTaskFlow）。
  *
  * 依赖方向：@/api(git) + useNewTaskFlowState（transition + refs + gitInfo）。
+ * 受控写入口（setBranchCreateInFlight / 守卫失败回 idle 的 transitionUnchecked）不再模块级 export，
+ * 由父编排器 useNewTaskFlow 经 controller 参数注入（见 NewTaskBranchController）。
  */
 import { git as gitApi } from '@/api'
 import {
   transition,
-  setFlowState,
-  setBranchCreateInFlight,
   useNewTaskFlowState,
   type GitInfo,
 } from './useNewTaskFlowState'
 
 /**
+ * 父编排器注入的受控写入口子集（来自 useNewTaskFlowController()，独占 controller）。
+ * - setBranchCreateInFlight：submitCreateBranch 飞行守卫标记
+ * - transitionUnchecked：守卫失败回 idle（throw 前清态，ALLOWED 表不允许 landing→idle，故必须直置）
+ */
+export interface NewTaskBranchController {
+  setBranchCreateInFlight: (v: boolean) => void
+  transitionUnchecked: (target: 'idle') => void
+}
+
+/**
  * @param currentSessionId 当前 flow 绑定 session 的 id（无绑定→分支操作抛错守卫）
  * @param gitInfo 当前 flow 的 git 派生（openBranchPopover 守卫：非 git 目录不可达）
+ * @param controller 父编排器注入的受控写入口（飞行标记 + 守卫失败回 idle）
  */
 export function useNewTaskBranch(
   currentSessionId: () => string | null,
   gitInfo: () => GitInfo | null,
+  controller: NewTaskBranchController,
 ): {
   isBranchCreating: ReturnType<typeof useNewTaskFlowState>['branchCreateInFlight']
   openBranchPopover: () => void
@@ -39,6 +51,7 @@ export function useNewTaskBranch(
   submitCreateBranch: (name: string) => Promise<void>
 } {
   const { state, branchCreateInFlight } = useNewTaskFlowState()
+  const { setBranchCreateInFlight, transitionUnchecked } = controller
 
   /**
    * landing→branch-popover（点 branch chip）。
@@ -47,11 +60,13 @@ export function useNewTaskBranch(
    */
   function openBranchPopover(): void {
     if (gitInfo() == null) {
-      // 直接置 idle（非 transition，因为 throw 前状态已被守卫语义清空）
-      setFlowState('idle')
+      // 守卫失败回 idle：throw 前清态。landing→idle 不在 ALLOWED 表，必须用 transitionUnchecked（@internal 语义）
+      transitionUnchecked('idle')
       throw new Error('NewTaskFlow: 非 git 目录不可打开分支选择')
     }
-    if (state.value === 'dir-popover') setFlowState('landing')
+    // overlay 互斥：已开 dir-popover 时先归 landing。dir-popover→landing 在 ALLOWED 表内合法，
+    // 走 transition（带守卫）而非直置后门——保持状态变更统一走守卫表，杜绝绕过。
+    if (state.value === 'dir-popover') transition('landing')
     transition('branch-popover')
   }
 
@@ -61,7 +76,8 @@ export function useNewTaskBranch(
    */
   function openBranchModal(): void {
     if (state.value !== 'branch-popover') {
-      setFlowState('idle')
+      // 守卫失败回 idle：同上，非 ALLOWED 合法转换，用 transitionUnchecked
+      transitionUnchecked('idle')
       throw new Error('NewTaskFlow: 创建分支 modal 仅可从 branch-popover 进入')
     }
     transition('branch-modal')

@@ -7,6 +7,10 @@
  * - scrollCursorIntoView：Shift+Enter 后把光标滚动进可见区（contenteditable 不自动滚动）。
  * - saveSelection / restoreSelection：命令浮层夺焦前后保存/恢复光标 Range。
  * - clearSlashQueryText / clearHashQueryText：命令浮层选中后清过滤文本（slash 清整框 / # 只删到光标）。
+ * - clear / setText / insertTextAtCursor：程序化整框写入（清空/恢复草稿/光标处插文本）。
+ *   这些直接改 DOM 的操作必须收口在此 composable 内：因为 savedRange 闭包在此，
+ *   组件层无法触达，任何整框 textContent 写入后都要 savedRange = null 否则 restoreSelection
+ *   会恢复一个指向已被清空/替换节点的 stale Range（回归 bug：addRange 静默失败或光标错位）。
  * - onInput / onKeydown / onCompositionEnd / onPaste：输入事件处理（IME 守卫、Shift+Enter 换行、Enter 委派发送、纯文本粘贴）。
  * - onCompositionStart（由模板 @compositionstart="composing = true" 直绑，此处仅暴露 composing ref）。
  *
@@ -59,6 +63,9 @@ export function useContenteditableInput(
   restoreSelection: () => void
   clearSlashQueryText: () => void
   clearHashQueryText: () => void
+  clear: () => void
+  setText: (text: string) => void
+  insertTextAtCursor: (text: string) => void
 } {
   const {
     onInput: emitInput,
@@ -291,6 +298,52 @@ export function useContenteditableInput(
     emitInput(getText())
   }
 
+  /**
+   * 程序化清空整框（发送成功后清输入区）。
+   * CRITICAL：textContent='' 后 savedRange 指向的旧节点全部失效，必须置 null，
+   * 否则下次 restoreSelection 会恢复 stale Range（光标错位/addRange 静默失败）。
+   */
+  function clear(): void {
+    const el = getEl()
+    if (!el) return
+    el.textContent = ''
+    savedRange = null
+    syncEmpty()
+    emitInput('')
+  }
+
+  /** 在当前光标处插入纯文本（菜单插 @/# 符号用）。
+   *  不重置 savedRange：execCommand('insertText') 基于当前 selection 插入，不清空整框，
+   *  且本方法本身先 restoreSelection 用 savedRange 定位——这是设计意图，重置会破坏 chip 插入流程。 */
+  function insertTextAtCursor(text: string): void {
+    const el = getEl()
+    if (!el) return
+    restoreSelection()
+    document.execCommand('insertText', false, text)
+    onInput()
+  }
+
+  /**
+   * 写入纯文本并把光标移到末尾（发送失败恢复草稿）。
+   * CRITICAL：textContent= 替换整框内容，savedRange 指向的旧节点失效，必须置 null
+   * （同 clear 理由），随后手动建立新光标 Range。
+   */
+  function setText(text: string): void {
+    const el = getEl()
+    if (!el) return
+    el.textContent = text
+    savedRange = null
+    el.focus()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    syncEmpty()
+    emitInput(text)
+  }
+
   return {
     composing,
     isEmpty,
@@ -304,5 +357,8 @@ export function useContenteditableInput(
     restoreSelection,
     clearSlashQueryText,
     clearHashQueryText,
+    clear,
+    setText,
+    insertTextAtCursor,
   }
 }

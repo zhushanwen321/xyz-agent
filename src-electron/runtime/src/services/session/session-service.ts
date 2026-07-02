@@ -15,11 +15,11 @@ import type { SessionSummary, SessionGroup, SessionStatus, Message } from '@xyz-
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService,
+  ISessionTreeService,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { readPiState } from '../ports/pi-engine.js'
-import { TreeService } from '../tree-service.js'
 import { getHistoryFromFile } from '../session-history.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -71,7 +71,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly broker: IMessageBroker,
     private readonly adapterFactory: (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => IEventAdapter,
     private readonly projectRoot: string,
-    private readonly treeService: TreeService,
+    private readonly treeService: ISessionTreeService,
     private readonly extensionService: IExtensionService,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
@@ -287,7 +287,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionServiceInternal:子模块经此访问 sessions / 共享 helper ──
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires cwd param
   getSkillPaths(_cwd: string): string[] {
     return this.configStore.getSkillPaths().filter((p) => {
       if (existsSync(p)) return true

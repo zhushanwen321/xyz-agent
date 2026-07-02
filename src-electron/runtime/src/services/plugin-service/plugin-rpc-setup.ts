@@ -15,7 +15,7 @@ import { registerHookRpcHandlers } from './hook-api.js'
 import { registerSessionRpcHandlers, ActiveSessionResolver } from './api/session-api.js'
 import { registerConfigRpcHandlers, toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { registerStorageRpcHandlers, storageHandlersFrom } from './api/storage-api.js'
-import { registerNotifyRpcHandler, notifyHandlersFrom } from './api/notify-api.js'
+import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification } from './api/notify-api.js'
 import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
@@ -146,10 +146,9 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     showInput: (title: string, _defaultValue: string | undefined, pluginId: string) =>
       ctx.handleUiRequest('input', { title }, pluginId) as Promise<string | undefined>,
     notify: async (pluginId: string, level: string, message: string) => {
-      // Notify via broadcastFn
-      if (deps.broadcastFn) {
-        deps.broadcastFn('plugin:notification', { pluginId, level, message })
-      } else {
+      // Notify via broadcastFn —— 委托 notify-api 的单一广播真相源（P1 去重）
+      // 文案与重构前逐字一致（commit 8dd3034f 父版本）
+      if (!broadcastPluginNotification(deps.broadcastFn, pluginId, level, message)) {
         console.warn('[plugin-rpc-setup] ui-api notify dropped: no broadcastFn configured')
       }
     },
