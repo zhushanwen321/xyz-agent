@@ -17,8 +17,6 @@ export interface ElectronAPI {
   focusWindow(windowId: string): Promise<void>
   findSessionWindow(sessionId: string): Promise<{ windowId: string } | null>
   updateWindowState(windowId: string, state: Record<string, unknown>): Promise<void>
-  onWindowCreated(callback: (windowId: string) => void): () => void
-  onWindowClosed(callback: (windowId: string) => void): () => void
   onWindowListUpdated(callback: () => void): () => void
   pickDirectory(options?: { title?: string }): Promise<{ canceled: boolean; path: string | null }>
   openExternal(url: string): Promise<void>

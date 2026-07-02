@@ -63,6 +63,7 @@ import { initialWindowState } from './window/panel-tree-utils.js'
 import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
+import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 
 // ── EPIPE 兜底 ───────────────────────────────────────────────────
 // concurrently/终端关闭后 pipe 断开，console 写入触发 uncaught exception
@@ -147,8 +148,8 @@ app.whenReady().then(async () => {
     const allowedPrefixes = [app.getAppPath(), getConfigDir(), homedir(), tmpdir()]
       .map(p => p.endsWith(sep) ? p : p + sep)
     const resolved = path.resolve(filePath)
-    // Reject if not under any allowed prefix (check both with and without trailing sep for exact match)
-    if (!allowedPrefixes.some(p => resolved.startsWith(p)) && !allowedPrefixes.some(p => resolved + sep === p)) {
+    // 校验逻辑集中到 input-validators，拒绝不在白名单前缀内的路径（防目录穿越）
+    if (!isPathInAllowedPrefixes(resolved, allowedPrefixes)) {
       return new Response('Forbidden', { status: 403 })
     }
     return net.fetch(`file://${resolved}`)

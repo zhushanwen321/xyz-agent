@@ -29,10 +29,6 @@ export interface ElectronAPI {
   findSessionWindow(sessionId: string): Promise<{ windowId: string } | null>
   /** 更新指定窗口状态 */
   updateWindowState(windowId: string, state: Record<string, unknown>): Promise<void>
-  /** 监听窗口创建事件，返回取消监听函数 */
-  onWindowCreated(callback: (windowId: string) => void): () => void
-  /** 监听窗口关闭事件，返回取消监听函数 */
-  onWindowClosed(callback: (windowId: string) => void): () => void
   /** 监听窗口列表变化事件（创建/关闭/更新） */
   onWindowListUpdated(callback: () => void): () => void
   /** 打开目录选择对话框 */
@@ -86,16 +82,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   focusWindow: (windowId: string) => ipcRenderer.invoke('focus-window', windowId),
   findSessionWindow: (sessionId: string) => ipcRenderer.invoke('find-session-window', sessionId),
   updateWindowState: (windowId: string, state: Record<string, unknown>) => ipcRenderer.invoke('update-window-state', windowId, state),
-  onWindowCreated: (callback: (windowId: string) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, windowId: string) => callback(windowId)
-    ipcRenderer.on('window-created', handler)
-    return () => ipcRenderer.removeListener('window-created', handler)
-  },
-  onWindowClosed: (callback: (windowId: string) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, windowId: string) => callback(windowId)
-    ipcRenderer.on('window-closed', handler)
-    return () => ipcRenderer.removeListener('window-closed', handler)
-  },
   onWindowListUpdated: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('window-list-updated', handler)
