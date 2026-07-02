@@ -8,9 +8,6 @@
  * 调用本方法，Activator 解析 pending promises 完成异步等待。
  */
 
-import { watch, type FSWatcher } from 'node:fs'
-import { dirname } from 'node:path'
-
 import type {
   ActivationEvent,
   PluginState,
@@ -20,6 +17,17 @@ import type {
   Disposable,
   WorkerToHostMessage,
 } from './plugin-types.js'
+import {
+  topologicalSort,
+  detectCycle,
+  findMissingDependencies,
+} from './plugin-deps.js'
+import { PluginHotReloader, type HotReloadHooks, type StatusChangeCallback } from './plugin-hot-reload.js'
+
+// re-export：既有调用方（plugin-service.ts、测试）从 plugin-activator.js 导入
+// StatusChangeCallback，保持该导出以维持 NON-BREAKING。上方 import 仅供本文件
+// 方法签名本地使用。
+export type { StatusChangeCallback } from './plugin-hot-reload.js'
 
 /** PluginHost 的最小接口——Activator 只依赖这几个方法 */
 export interface PluginHost {
@@ -29,18 +37,9 @@ export interface PluginHost {
   getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined
 }
 
-/** Callback to broadcast plugin status changes */
-export type StatusChangeCallback = (payload: {
-  pluginId: string
-  oldStatus: string
-  newStatus: string
-}) => void
-
 const DEACTIVATE_TIMEOUT_MS = 5_000
 const ACTIVATE_TIMEOUT_MS = 30_000
 const PERMISSION_TIMEOUT_MS = 30_000
-const HOT_RELOAD_DEBOUNCE_MS = 300
-const HOT_RELOAD_DEACTIVATE_TIMEOUT_MS = 5_000
 
 interface PendingReply {
   resolve: (success: boolean) => void
@@ -49,11 +48,6 @@ interface PendingReply {
 
 interface PluginContextState {
   subscriptions: Disposable[]
-}
-
-interface ReloadContext {
-  host: PluginHost
-  onStatusChange: StatusChangeCallback
 }
 
 /** PermissionChecker 最小接口——Activator 只调用 getUnapproved */
@@ -88,12 +82,8 @@ export class PluginActivator {
   /** 待审批的权限请求 */
   private pendingPermissions = new Map<string, PendingPermission>()
 
-  /** Hot-reload watchers: pluginId → FSWatcher */
-  private watchers = new Map<string, FSWatcher>()
-  /** Hot-reload debounce timers: pluginId → timeout handle */
-  private reloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  /** Reload context (host + callback) for each watched plugin */
-  private reloadContexts = new Map<string, ReloadContext>()
+  /** Hot-reload 子系统（fs.watch + debounce + reload fan-out），自包含状态 */
+  private hotReloader = new PluginHotReloader()
 
   constructor(options?: ActivatorOptions) {
     this.permissionChecker = options?.permissionChecker
@@ -316,73 +306,25 @@ export class PluginActivator {
   }
 
   // ── Dependency Management ────────────────────────────────────────
+  //
+  // 图算法（topologicalSort / detectCycle / findMissingDependencies）已抽到
+  // ./plugin-deps.ts 作为纯函数，可独立单测。下方方法保留为薄封装，维持
+  // 既有 `activator.topologicalSort(...)` 调用契约（NON-BREAKING）。
 
   /**
    * 对插件列表进行拓扑排序（Kahn's algorithm）。
-   *
-   * 按 extensionDependencies 建立有向无环图，输出依赖顺序的插件列表。
-   * 依赖在前，依赖者在后。
-   *
-   * @param descriptors - 待排序的插件列表
-   * @returns 按拓扑顺序排列的插件列表
+   * 纯算法委托给 plugin-deps.ts 的 topologicalSort。
    */
   topologicalSort(descriptors: PluginDescriptor[]): PluginDescriptor[] {
-    const inDegree = new Map<string, number>()
-    const adjList = new Map<string, string[]>()
-    const descMap = new Map<string, PluginDescriptor>()
-
-    for (const desc of descriptors) {
-      const deps = desc.extensionDependencies ?? []
-      inDegree.set(desc.pluginId, deps.length)
-      // 不要覆盖 adjList：该 pluginId 可能已在依赖遍历时被添加
-      if (!adjList.has(desc.pluginId)) {
-        adjList.set(desc.pluginId, [])
-      }
-      descMap.set(desc.pluginId, desc)
-
-      for (const dep of deps) {
-        if (!adjList.has(dep)) adjList.set(dep, [])
-        adjList.get(dep)!.push(desc.pluginId)
-      }
-    }
-
-    const queue: string[] = []
-    for (const [id, degree] of inDegree) {
-      if (degree === 0) queue.push(id)
-    }
-
-    const result: PluginDescriptor[] = []
-    while (queue.length > 0) {
-      const id = queue.shift()!
-      result.push(descMap.get(id)!)
-
-      for (const neighbor of adjList.get(id) ?? []) {
-        const newDegree = (inDegree.get(neighbor) ?? 1) - 1
-        inDegree.set(neighbor, newDegree)
-        if (newDegree === 0) queue.push(neighbor)
-      }
-    }
-
-    return result
+    return topologicalSort(descriptors)
   }
 
   /**
    * 检测插件依赖图中的循环依赖。
-   *
-   * 利用 Kahn's algorithm 的特性：拓扑排序结果长度小于输入列表时，
-   * 未被排序的节点参与循环。
-   *
-   * @param descriptors - 待检测的插件列表
-   * @returns 参与循环的 pluginId 数组，无循环则返回 null
+   * 纯算法委托给 plugin-deps.ts 的 detectCycle。
    */
   detectCycle(descriptors: PluginDescriptor[]): string[] | null {
-    const sorted = this.topologicalSort(descriptors)
-    if (sorted.length === descriptors.length) return null
-
-    const sortedIds = new Set(sorted.map(d => d.pluginId))
-    return descriptors
-      .map(d => d.pluginId)
-      .filter(id => !sortedIds.has(id))
+    return detectCycle(descriptors)
   }
 
   /**
@@ -393,6 +335,9 @@ export class PluginActivator {
    * 2. 检测循环依赖
    * 3. 拓扑排序
    * 4. 按序逐个激活
+   *
+   * 图算法（步骤 1-3）调用 ./plugin-deps.ts 的纯函数；步骤 4 的激活
+   * 依赖实例状态（descriptors / pluginStates），故保留在 activator 内。
    *
    * @param descriptors - 待激活的插件列表
    * @param host - PluginHost 实例
@@ -405,30 +350,20 @@ export class PluginActivator {
     // 0. 注册描述符到内部状态（使激活流程能找到插件）
     this.registerDescriptors(descriptors)
 
-    // 1. 检查缺失依赖
-    const availableIds = new Set(descriptors.map(d => d.pluginId))
-    const missingDeps = new Set<string>()
-
-    for (const desc of descriptors) {
-      for (const dep of desc.extensionDependencies ?? []) {
-        if (!availableIds.has(dep)) {
-          missingDeps.add(dep)
-        }
-      }
+    // 1. 检查缺失依赖（纯函数）
+    const missingDeps = findMissingDependencies(descriptors)
+    if (missingDeps.length > 0) {
+      throw new Error(`Missing plugin dependencies: ${missingDeps.join(', ')}`)
     }
 
-    if (missingDeps.size > 0) {
-      throw new Error(`Missing plugin dependencies: ${[...missingDeps].join(', ')}`)
-    }
-
-    // 2. 检测循环依赖
-    const cycled = this.detectCycle(descriptors)
+    // 2. 检测循环依赖（纯函数）
+    const cycled = detectCycle(descriptors)
     if (cycled) {
       throw new Error(`Circular dependencies detected: ${cycled.join(' -> ')}`)
     }
 
     // 3. 拓扑排序 + 顺序激活
-    const sorted = this.topologicalSort(descriptors)
+    const sorted = topologicalSort(descriptors)
 
     for (const desc of sorted) {
       await this.activatePlugin(desc.pluginId, { type: 'onStartupFinished' }, host)
@@ -436,6 +371,29 @@ export class PluginActivator {
   }
 
   // ── Hot Reload ────────────────────────────────────────────────────
+  //
+  // fs.watch + debounce + reload fan-out 已抽到 ./plugin-hot-reload.ts 的
+  // PluginHotReloader（自包含 watchers / timers 状态）。下方方法保留为薄封装，
+  // 维持既有 `activator.watchAndReload(...)` / `performReload` / `stopWatching`
+  // / `stopAllWatchers` 调用契约（NON-BREAKING）。
+
+  /**
+   * 构造热重载 hooks：把 PluginHotReloader 需要的能力桥接到本 activator
+   * 的实例方法（deactivate / activate / 强杀 / 状态查询与设置）。
+   */
+  private buildHotReloadHooks(host: PluginHost): HotReloadHooks {
+    return {
+      deactivate: (pluginId) => this.deactivatePlugin(pluginId, host),
+      activate: (pluginId) => this.activatePlugin(pluginId, { type: 'onStartupFinished' }, host),
+      forceTerminate: async (pluginId) => {
+        const handle = host.getWorkerHandle(pluginId)
+        if (handle) await host.terminateWorker(handle.workerId)
+      },
+      disposeContext: (pluginId) => this.disposeContext(pluginId),
+      setState: (pluginId, state) => this.pluginStates.set(pluginId, state),
+      getState: (pluginId) => this.pluginStates.get(pluginId),
+    }
+  }
 
   /**
    * Watch an external plugin's directory for changes and auto-reload.
@@ -448,36 +406,13 @@ export class PluginActivator {
     host: PluginHost,
     onStatusChange: StatusChangeCallback,
   ): void {
-    // Built-in plugins: never watch
-    if (source === 'built-in') return
-
-    // Don't double-watch
-    if (this.watchers.has(pluginId)) return
-
-    // Store reload context for later use by debounce timer
-    this.reloadContexts.set(pluginId, { host, onStatusChange })
-
-    const watchDir = dirname(pluginPath)
-    const watcher = watch(watchDir, { recursive: true }, (eventType, filename) => {
-      if (!filename) return
-
-      // Only watch for JS/TS file changes
-      if (!filename.endsWith('.js') && !filename.endsWith('.ts')) return
-
-      // Debounce: 300ms
-      const existing = this.reloadTimers.get(pluginId)
-      if (existing) clearTimeout(existing)
-
-      this.reloadTimers.set(pluginId, setTimeout(async () => {
-        this.reloadTimers.delete(pluginId)
-        const ctx = this.reloadContexts.get(pluginId)
-        if (ctx) {
-          await this.performReload(pluginId, ctx.host, ctx.onStatusChange)
-        }
-      }, HOT_RELOAD_DEBOUNCE_MS))
-    })
-
-    this.watchers.set(pluginId, watcher)
+    this.hotReloader.watchAndReload(
+      pluginId,
+      pluginPath,
+      source,
+      this.buildHotReloadHooks(host),
+      onStatusChange,
+    )
   }
 
   /**
@@ -488,55 +423,21 @@ export class PluginActivator {
     host: PluginHost,
     onStatusChange: StatusChangeCallback,
   ): Promise<void> {
-    const currentState = this.pluginStates.get(pluginId)
-    if (currentState !== 'ACTIVE') return // Only reload active plugins
-
-    const oldStatus = 'active'
-
-    // 1. Deactivate (timeout 5s)
-    try {
-      await Promise.race([
-        this.deactivatePlugin(pluginId, host),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('deactivate timeout')), HOT_RELOAD_DEACTIVATE_TIMEOUT_MS)
-        ),
-      ])
-    } catch {
-      // Deactivate timeout → force terminate Worker
-      console.warn(`[plugin-activator] hot reload: force terminate for ${pluginId}`)
-      const handle = host.getWorkerHandle(pluginId)
-      if (handle) await host.terminateWorker(handle.workerId)
-      this.disposeContext(pluginId)
-      this.pluginStates.set(pluginId, 'UNLOADED')
-    }
-
-    // 2. Re-activate
-    await this.activatePlugin(pluginId, { type: 'onStartupFinished' }, host)
-
-    // 3. Notify frontend of status change
-    const newStatus = this.pluginStates.get(pluginId) === 'ACTIVE' ? 'active' : 'crashed'
-    onStatusChange({ pluginId, oldStatus, newStatus })
+    await this.hotReloader.performReload(
+      pluginId,
+      this.buildHotReloadHooks(host),
+      onStatusChange,
+    )
   }
 
   /** Stop watching a specific plugin */
   stopWatching(pluginId: string): void {
-    const watcher = this.watchers.get(pluginId)
-    if (watcher) {
-      watcher.close()
-      this.watchers.delete(pluginId)
-    }
-    const timer = this.reloadTimers.get(pluginId)
-    if (timer) {
-      clearTimeout(timer)
-      this.reloadTimers.delete(pluginId)
-    }
+    this.hotReloader.stopWatching(pluginId)
   }
 
   /** Stop all watchers (used during shutdown) */
   stopAllWatchers(): void {
-    for (const pluginId of this.watchers.keys()) {
-      this.stopWatching(pluginId)
-    }
+    this.hotReloader.stopAllWatchers()
   }
 
   // ── Private helpers ─────────────────────────────────────────────

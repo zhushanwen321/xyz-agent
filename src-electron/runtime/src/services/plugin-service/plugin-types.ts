@@ -1,5 +1,20 @@
 import type { ISessionService, IConfigService } from '../../interfaces.js'
 
+// 本文件内部仍引用以下「已拆分」域的类型（lifecycle/bridge/agent-api 等
+// 内联类型用到了它们），故在此 import 以供本地使用；对外仍通过文件末尾的
+// `export ... from` 重导出，保证 `from './plugin-types.js'` 不破坏。
+import type {
+  RpcRequest,
+  RpcResponse,
+  RpcNotification,
+} from './plugin-types/rpc-protocol.js'
+import type {
+  HookType,
+  HookInterceptor,
+  HookObserver,
+  PiEventCallback,
+} from './plugin-types/hook-types.js'
+
 /**
  * 插件系统内部类型定义
  *
@@ -7,63 +22,16 @@ import type { ISessionService, IConfigService } from '../../interfaces.js'
  * 不出现在前端↔runtime 的共享协议中。
  */
 
-// ── Manifest 类型（解析自 package.json 的 xyzAgent 字段）──────────
-
-/** 插件来源：随应用分发的内置插件 或 用户安装的外部插件 */
-export type PluginSource = 'built-in' | 'external'
-
-export interface XyzAgentManifest {
-  manifestVersion: 1
-  main: string
-  activationEvents: string[]
-  trustLevel?: 'trusted' | 'sandbox'
-  permissions?: string[]
-  contributes?: PluginContributes
-  /** 插件来源，由 registry 扫描时自动设置，manifest 中声明无效 */
-  source?: PluginSource
-  /** 该插件依赖的其他插件 ID 列表 */
-  extensionDependencies?: string[]
-}
-
-export interface XyzAgentPackageJson {
-  name: string
-  version: string
-  description?: string
-  displayName?: string
-  xyzAgent: XyzAgentManifest
-  engines?: { 'xyz-agent'?: string }
-}
-
-// ── Descriptor（扫描后产出的完整描述）──────────────────────────
-
-export interface PluginDescriptor {
-  pluginId: string
-  version: string
-  displayName: string
-  description: string
-  main: string
-  activationEvents: string[]
-  trustLevel: 'trusted' | 'sandbox'
-  status: PluginState
-  contributes: PluginContributes
-  permissions: string[]
-  engines: { 'xyz-agent': string }
-  pluginPath: string
-  /** 插件来源：built-in（随应用分发）或 external（用户安装） */
-  source: PluginSource
-  /** 该插件依赖的其他插件 ID 列表 */
-  extensionDependencies: string[]
-  /** 版本不兼容时的错误描述 */
-  compatibilityError?: string
-}
-
-export interface PluginContributes {
-  slashCommands?: Array<{ name: string; description: string }>
-  tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
-  hooks?: string[]
-  panels?: Array<{ id: string; title: string; view: string }>
-  statusBarItems?: Array<{ id: string; text: string; priority: number }>
-}
+// ── Descriptor / Manifest 域 ───────────────────────────────────────
+// 已拆分到 ./plugin-types/descriptor-types.ts。此处 re-export 保持
+// 现有 `from './plugin-types.js'` 导入不破坏（NON-BREAKING）。
+export type {
+  PluginSource,
+  XyzAgentManifest,
+  XyzAgentPackageJson,
+  PluginDescriptor,
+  PluginContributes,
+} from './plugin-types/descriptor-types.js'
 
 // ── Worker 类型 ─────────────────────────────────────────────────
 
@@ -104,6 +72,12 @@ export interface PluginModule {
 }
 
 // ── AgentAPI 类型（Phase 1 最小集）───────────────────────────────
+//
+// TODO(keystone): Phase1AgentAPI / Phase2AgentAPI / SessionInfo 是「漏的拱顶石」——
+// Phase2AgentAPI 跨域引用 ToolRegistration、HookInterceptor、PiEventCallback、
+// StatusBarItemOptions，SessionInfo 又被 api/session-api 等消费。把它移到独立文件
+// 只会搬运耦合、制造 import 纠缠，故本轮 P3 拆分刻意将其保留在此处。
+// 待 tool/hook 域各自稳定、API 表面收敛后再独立。
 
 export interface Phase1AgentAPI {
   readonly storage: {
@@ -148,36 +122,17 @@ export interface PluginStateStorage {
   keys(): Promise<string[]>
 }
 
-// ── RPC 类型 ─────────────────────────────────────────────────────
-
-export interface RpcRequest {
-  jsonrpc: '2.0'
-  id: number
-  method: string
-  params: Record<string, unknown>
-}
-
-export interface RpcSuccessResponse {
-  jsonrpc: '2.0'
-  id: number
-  result: unknown
-}
-
-export interface RpcErrorResponse {
-  jsonrpc: '2.0'
-  id: number
-  error: { code: number; message: string; data?: unknown }
-}
-
-export type RpcResponse = RpcSuccessResponse | RpcErrorResponse
-
-export interface RpcNotification {
-  jsonrpc: '2.0'
-  method: string
-  params: Record<string, unknown>
-}
-
-export type RpcMessage = RpcRequest | RpcResponse | RpcNotification
+// ── RPC 线协议域 ──────────────────────────────────────────────────
+// 已拆分到 ./plugin-types/rpc-protocol.ts。此处 re-export 保持
+// 现有 `from './plugin-types.js'` 导入不破坏（NON-BREAKING）。
+export type {
+  RpcRequest,
+  RpcSuccessResponse,
+  RpcErrorResponse,
+  RpcResponse,
+  RpcNotification,
+  RpcMessage,
+} from './plugin-types/rpc-protocol.js'
 
 // ── Lifecycle 消息类型（Worker ↔ 主线程）────────────────────────
 
@@ -210,20 +165,10 @@ export type PluginPermission = string
 
 export type PluginState = 'UNLOADED' | 'LOADING' | 'ACTIVATING' | 'ACTIVE' | 'DEACTIVATING' | 'CRASHED' | 'DEPS_MISSING'
 
-// ── Error Codes ──────────────────────────────────────────────────
-
-export const PluginRpcErrorCodes = {
-  RPC_TIMEOUT: -32000,
-  PERMISSION_DENIED: -32001,
-  PLUGIN_NOT_FOUND: -32010,
-  PLUGIN_NOT_ACTIVE: -32011,
-  STORAGE_FULL: -32040,
-  PAYLOAD_TOO_LARGE: -32021,
-  METHOD_NOT_FOUND: -32601,
-  INTERNAL_ERROR: -32603,
-} as const
-
-export type PluginRpcErrorCode = (typeof PluginRpcErrorCodes)[keyof typeof PluginRpcErrorCodes]
+// ── RPC Error Codes 域 ────────────────────────────────────────────
+// 已拆分到 ./plugin-types/rpc-protocol.ts。const 必须用 export-from 重导出。
+export { PluginRpcErrorCodes } from './plugin-types/rpc-protocol.js'
+export type { PluginRpcErrorCode } from './plugin-types/rpc-protocol.js'
 
 // ── Permission Constants ─────────────────────────────────────────
 
@@ -345,14 +290,8 @@ export interface HookEntry {
   priority: number
 }
 
-/** Hook 拦截器处理函数 — 可阻止或修改数据 */
-export type HookInterceptor = (context: HookContext) => Promise<InterceptorResult>
-
-/** Hook 观察者处理函数 — 只能读取数据 */
-export type HookObserver = (context: HookContext) => Promise<void>
-
-/** PiEvent 处理函数 */
-export type PiEventCallback = (eventName: string, data: unknown) => Promise<void>
+// HookInterceptor / HookObserver / PiEventCallback 已拆分到
+// ./plugin-types/hook-types.ts，下方 re-export 块统一导出。
 
 // ── Phase 2 AgentAPI（在 Phase 1 基础上增加 tools 和 hooks）─────────
 
@@ -401,48 +340,21 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
   }
 }
 
-// ── Hook 类型（插件拦截/观察机制）────────────────────────────────────
-
-/** 可拦截的 hook 类型，插件可阻止或修改数据 */
-export type InterceptorHookType = 'onToolCall' | 'onSlashCommand' | 'onMessageSend' | 'onBeforeSendMessage' | 'onBeforeToolCall' | 'onBeforeAgentStart' | 'onAfterToolResult'
-
-/** 只观察的 hook 类型，插件只能读取数据不能阻止 */
-export type ObserverHookType = 'onMessage' | 'onSessionCreate' | 'onSessionDestroy'
-
-/** 所有 hook 类型 */
-export type HookType = InterceptorHookType | ObserverHookType
-
-/** 拦截器返回结果：允许/阻止/修改数据 */
-export interface InterceptorResult {
-  proceed: boolean
-  reason?: string
-  modifiedData?: unknown
-}
-
-/** Hook 执行上下文 */
-export interface HookContext {
-  pluginId: string
-  hookType: HookType
-  data: unknown
-  timestamp: number
-  /** Phase 3: 从 event-adapter/index.ts 透传的额外上下文 */
-  sessionId?: string
-  content?: string
-}
-
-/** Hook 通用返回结果 */
-export interface HookResult {
-  blocked: boolean
-  blockedBy?: string
-  reason?: string
-  transformedData?: unknown
-}
-
-/** Hook 被阻止时的详细结果 */
-export interface HookBlockedResult extends HookResult {
-  blocked: true
-  reason: string
-}
+// ── Hook 域 ───────────────────────────────────────────────────────
+// 已拆分到 ./plugin-types/hook-types.ts。此处 re-export 保持
+// 现有 `from './plugin-types.js'` 导入不破坏（NON-BREAKING）。
+export type {
+  InterceptorHookType,
+  ObserverHookType,
+  HookType,
+  InterceptorResult,
+  HookContext,
+  HookInterceptor,
+  HookObserver,
+  HookResult,
+  HookBlockedResult,
+  PiEventCallback,
+} from './plugin-types/hook-types.js'
 
 // ── PluginService 依赖注入 ──────────────────────────────────────────
 
