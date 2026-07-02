@@ -14,7 +14,7 @@
  *   扩展信息（hint / path 等）进 details，不再为每个失败类型造独立 *Error 子类型。
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageMap, ServerMessageType } from '@xyz-agent/shared'
 
 /**
  * 所有 message-handler 共享的最小发消息契约。
@@ -32,8 +32,14 @@ export interface MessageHandlerContext {
   /**
    * 发送一条带请求 id 的回复（D2 reply 惯用法）。
    * 等价于 `send(ws, { type, id, payload })`，但省去每次手写 `id: msg.id`。
+   *
+   * E1 泛型化：`type` 字面量收窄 `payload` 到 `ServerMessageMap[T]`。
+   * ADR-0015 类型保护此前只单向生效（消费侧 on<T> 收窄），构造侧靠宽类型
+   * `Record<string, unknown>` 放行——任何字段拼错都不报错。泛型化后，构造点
+   * payload 字段对不上 `ServerMessageMap[T]` 时 tsc 报错（D5 的预期收益）。
+   * 某些 reply 的 type 是动态变量（非字面量），调用方需显式断言 type 为具体 ServerMessageType。
    */
-  reply(ws: WsType, id: string | undefined, type: ServerMessageType, payload: Record<string, unknown>): void
+  reply<T extends ServerMessageType>(ws: WsType, id: string | undefined, type: T, payload: ServerMessageMap[T]): void
 }
 
 /**

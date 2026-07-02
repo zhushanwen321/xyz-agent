@@ -252,6 +252,18 @@ export interface BridgeInterceptResponse {
   injectedMessages: unknown[]
 }
 
+/**
+ * bridge:sync 同步负载（plugin-service 塑形后返回）。
+ *
+ * transport 只 reply 此对象，不再做 schema 塑形。
+ * commands 目前固定为空数组（pi 侧命令发现另走 getCommands）。
+ */
+export interface BridgeSyncPayload {
+  tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
+  commands: Array<{ name: string }>
+  success: true
+}
+
 // ── Bridge 类型（插件 Worker ↔ 主进程桥接）─────────────────────────
 
 /** Bridge 连接状态 */

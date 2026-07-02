@@ -50,7 +50,7 @@ export class FileMessageHandler {
         const { sessionId } = msg.payload
         try {
           const tree = await this.ctx.fileService.listTree(sessionId)
-          return this.ctx.reply(ws, msg.id, 'file.tree:result', { sessionId, tree: tree as unknown as Record<string, unknown>[] })
+          return this.ctx.reply(ws, msg.id, 'file.tree:result', { sessionId, tree })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId, e)
         }
@@ -59,7 +59,7 @@ export class FileMessageHandler {
         const { sessionId, path } = msg.payload
         try {
           const children = await this.ctx.fileService.expandDir(sessionId, path)
-          return this.ctx.reply(ws, msg.id, 'file.tree.expand:result', { sessionId, children: children as unknown as Record<string, unknown>[] })
+          return this.ctx.reply(ws, msg.id, 'file.tree.expand:result', { sessionId, children })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId, e)
         }
@@ -70,7 +70,7 @@ export class FileMessageHandler {
         const { sessionId, showIgnored } = msg.payload
         try {
           const files = await this.ctx.fileService.searchFiles(sessionId, showIgnored)
-          return this.ctx.reply(ws, msg.id, 'file.search:result', { sessionId, files: files as unknown as Record<string, unknown>[] })
+          return this.ctx.reply(ws, msg.id, 'file.search:result', { sessionId, files })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId, e)
         }

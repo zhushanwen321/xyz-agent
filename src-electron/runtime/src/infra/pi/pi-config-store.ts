@@ -1,20 +1,34 @@
 /**
- * IConfigStore 的 infra 实现 —— 封装 pi-config-bridge，吸收 mapTypeToApi 翻译。
+ * IConfigStore 的 infra 实现 —— 封装 pi-provider-store/agent-crud/pi-paths，吸收 mapTypeToApi 翻译。
  *
  * 🔒 归属（R3a，三层架构）：infra/pi/ 内部，实现 services/ports.ts 的 IConfigStore。
  * pi 的协议类型（PiProviderConfig/PiModelDefinition）只在此处出现；
  * service 经 IConfigStore 拿到的是 ConfigProviderConfig（service 视图）。
  *
- * 本类是 pi 配置的「翻译 + 连接」合一层：连接 pi-config-bridge（pi 的 models.json
- * CRUD），翻译 xyz provider type → pi api（mapTypeToApi，从 config-service 迁入）。
+ * 本类是 pi 配置的「翻译 + 连接」合一层：连接 pi-provider-store（pi 的 models.json
+ * CRUD）、agent-crud（agent .md 文件）、pi-paths（配置目录），翻译 xyz provider type → pi
+ * api（mapTypeToApi，从 config-service 迁入）。
  */
 import type {
   IConfigStore,
   ConfigProviderConfig,
   ConfigModelsConfig,
 } from '../../services/ports/config.js'
-import * as piBridge from './pi-config-bridge.js'
-import { migrateSettingsSkillsToDiscovery } from './pi-provider-store.js'
+import {
+  getDefaultModel,
+  setDefaultModel,
+  readModels,
+  getProviderConfig,
+  upsertProvider,
+  removeProvider,
+  getSkillPaths,
+  setSkillPaths,
+  addSkillPath,
+  removeSkillPath,
+  migrateSettingsSkillsToDiscovery,
+} from './pi-provider-store.js'
+import { listAgentFiles, writeAgentFile, deleteAgentFile } from './agent-crud.js'
+import { getConfigDir, getPiAgentDir } from './pi-paths.js'
 import {
   getAgentDirs as getDiscoveryAgentDirs,
   setAgentDirs as setDiscoveryAgentDirs,
@@ -44,11 +58,11 @@ export class PiConfigStore implements IConfigStore {
   // ── 默认模型 ──
 
   getDefaultModel() {
-    return piBridge.getDefaultModel()
+    return getDefaultModel()
   }
 
   setDefaultModel(provider: string, modelId: string): void {
-    piBridge.setDefaultModel(provider, modelId)
+    setDefaultModel(provider, modelId)
   }
 
   // ── Provider CRUD ──
@@ -57,11 +71,11 @@ export class PiConfigStore implements IConfigStore {
     // pi-provider-store 的 readModels 返回 PiModelsConfig，其 providers 字段是
     // Record<string, PiProviderConfig>。PiProviderConfig 与 ConfigProviderConfig
     // 字段结构一致（name/apiKey/baseUrl/api/models），直接 as 即可（结构同构）。
-    return piBridge.readModels() as unknown as ConfigModelsConfig
+    return readModels() as unknown as ConfigModelsConfig
   }
 
   getProviderConfig(providerId: string): ConfigProviderConfig | undefined {
-    return piBridge.getProviderConfig(providerId) as unknown as ConfigProviderConfig | undefined
+    return getProviderConfig(providerId) as unknown as ConfigProviderConfig | undefined
   }
 
   /** 翻译 xyz provider type → pi api 标识。 */
@@ -70,32 +84,32 @@ export class PiConfigStore implements IConfigStore {
   }
 
   upsertProvider(providerId: string, merged: ConfigProviderConfig) {
-    return piBridge.upsertProvider(
+    return upsertProvider(
       providerId,
-      merged as unknown as Parameters<typeof piBridge.upsertProvider>[1],
+      merged as unknown as Parameters<typeof upsertProvider>[1],
     )
   }
 
   removeProvider(providerId: string) {
-    return piBridge.removeProvider(providerId)
+    return removeProvider(providerId)
   }
 
   // ── Skill paths（discovery.json SSOT）──
 
   getSkillPaths(): string[] {
-    return piBridge.getSkillPaths()
+    return getSkillPaths()
   }
 
   setSkillPaths(paths: string[]): void {
-    piBridge.setSkillPaths(paths)
+    setSkillPaths(paths)
   }
 
   addSkillPath(dir: string): void {
-    piBridge.addSkillPath(dir)
+    addSkillPath(dir)
   }
 
   removeSkillPath(dir: string): void {
-    piBridge.removeSkillPath(dir)
+    removeSkillPath(dir)
   }
 
   migrateSettingsSkillsToDiscovery(): void {
@@ -115,24 +129,24 @@ export class PiConfigStore implements IConfigStore {
   // ── Agent files ──
 
   listAgentFiles(dirs?: string[]) {
-    return piBridge.listAgentFiles(dirs)
+    return listAgentFiles(dirs)
   }
 
   writeAgentFile(name: string, content: string): void {
-    piBridge.writeAgentFile(name, content)
+    writeAgentFile(name, content)
   }
 
   deleteAgentFile(name: string): boolean {
-    return piBridge.deleteAgentFile(name)
+    return deleteAgentFile(name)
   }
 
   // ── 配置目录 ──
 
   getConfigDir(): string {
-    return piBridge.getConfigDir()
+    return getConfigDir()
   }
 
   getPiAgentDir(): string {
-    return piBridge.getPiAgentDir()
+    return getPiAgentDir()
   }
 }

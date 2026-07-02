@@ -3,6 +3,10 @@ import path from 'node:path'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
 import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+
+// IGitInfoReader 桩：本测试聚焦 skill 路径解析，不验证 git 摘要字段。
+const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -40,17 +44,31 @@ const mockScannedSessions: Array<{
   lastModified: number
   size: number
 }> = []
-vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => mockSkillPaths,
-  getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-  getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => mockScannedSessions,
-  refreshAll: () => {},
-  patchSessionCwd: () => true,
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => mockSkillPaths,
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => mockScannedSessions, patchSessionCwd: () => true }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return {
+    ...actual,
+    getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+  }
+})
 
 // Mock fs.existsSync to control path validation
 const existingPaths = new Set<string>([path.normalize('/project')])
@@ -118,7 +136,7 @@ async function createSessionService() {
   const { SessionService } = await import('../src/services/session/session-service.js')
   const pm = new ProcessManager()
   const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
-  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', {} as never, { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never, new PiConfigStore(), new PiSessionStore(), new NavigateInterceptorFactory())
+  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', {} as never, { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never, new PiConfigStore(), new PiSessionStore(), new NavigateInterceptorFactory(), noopGitInfoReader)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

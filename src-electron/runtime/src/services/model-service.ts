@@ -5,16 +5,43 @@
  * All callers (frontend WS handler, plugin RPC) must go through this
  * service to ensure consistent side-effects (persist, broadcast).
  *
+ * session 级状态（modelId / thinkingLevel / inputTokens / usagePercent）的单一 owner 是
+ * SessionService；本服务只负责「全局默认模型持久化 + config.defaults 广播」+ 委托
+ * SessionService 做 session 级 RPC/缓存/broadcast。usagePercent 不再在此计算（去重到
+ * SessionService.computeUsage）。
+ *
  * aggregateModels is pure data transformation (stays here). discoverFromApi is
  * external HTTP — delegated to IModelSource (injected, infra implements).
+ *
+ * discoverModelsFromApi 负责把 infra 抛出的原始错误（ByteString / fetch failed 等）
+ * 分类成结构化 ModelDiscoveryError（含 code + 中文文案）。transport 只 catch + reply，
+ * 不再硬编码中文错误文案。
  */
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
 import type { IModelSource } from './ports/model.js'
-import { readPiState } from './ports/pi-engine.js'
+import { toErrorMessage } from '../utils/errors.js'
 
-/** 百分比上限（与 index.ts onContextUpdate 一致） */
-const MAX_PERCENT = 100
+/** discoverModelsFromApi 错误码（domain→文案映射归 service）。 */
+export type ModelDiscoveryErrorCode =
+  | 'INVALID_AUTH_CHARS' // ByteString：Base URL / API Key 含 HTTP 不支持的字符
+  | 'UNREACHABLE'        // fetch failed：无法访问目标 /v1/models
+  | 'UNKNOWN'
+
+/**
+ * 结构化模型发现错误。code 供调用方分支判断，message 为可直接展示的中文文案。
+ *
+ * 与 ExtensionInstallError（extension-service）/ FileError 范式对称：readonly code + super(message)。
+ */
+export class ModelDiscoveryError extends Error {
+  readonly code: ModelDiscoveryErrorCode
+
+  constructor(code: ModelDiscoveryErrorCode, message: string) {
+    super(message)
+    this.name = 'ModelDiscoveryError'
+    this.code = code
+  }
+}
 
 export class ModelService implements IModelService {
   private sessionService!: ISessionService
@@ -48,17 +75,15 @@ export class ModelService implements IModelService {
   /**
    * Unified switchModel entry point.
    *
-   * Orchestrates: pi RPC → persist default → broadcast session 级状态变更（含按新模型
-   * contextWindow 重算的用量）→ broadcast 全局默认模型。
+   * 编排：pi RPC + 缓存更新 + 广播 session 级状态（全部委托 SessionService.switchModel，
+   * 它是 session 级状态唯一 owner）→ persist 全局默认模型 → 广播 config.defaults。
    *
-   * 为什么除 config.defaults 外还要广播 session.state_changed：config.defaults 是全局默认
-   * （不带 sessionId），前端无法据它定位「哪个 session 换了模型」。session.state_changed 带
-   * sessionId，前端据它同步 Composer 工具条（模型显示 / 用量 / 思考强度）。缺这条广播导致
-   * 切换模型后 UI 不跟随（用量停在旧值、模型显示靠 defaultModel fallback 而非 per-session 真值）。
+   * session.state_changed 的广播由 SessionService.switchModel 内部负责（含按新 contextWindow
+   * 重算的用量 + thinkingLevel），本方法不再自己 broadcastSessionState。
    */
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<void> {
     this.ensureInitialized()
-    // 1. Tell pi subprocess to switch model
+    // 1. pi RPC + 缓存更新 + 广播 session.state_changed（session 级状态单一 owner）
     await this.sessionService.switchModel(sessionId, provider, modelId)
 
     // 2. Persist default model (best-effort)
@@ -69,63 +94,11 @@ export class ModelService implements IModelService {
       console.error('[ModelService] failed to persist default model:', persistErr)
     }
 
-    // 3. Broadcast session 级状态变更（modelId + 按新 contextWindow 重算用量 + thinkingLevel）
-    await this.broadcastSessionState(sessionId, provider, modelId)
-
-    // 4. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
+    // 3. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
     this.broker.broadcast({
       type: 'config.defaults',
       id: this.nextPushId(),
       payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' as const },
-    })
-  }
-
-  /**
-   * 广播 session.state_changed：切换模型后立即把新 modelId + 按新 contextWindow 重算的用量
-   * + pi 当前 thinkingLevel 推给前端，无需等下一次 agent_end。
-   *
-   * thinkingLevel 从 pi get_state 查询（而非依赖 thinking_level_changed 事件）：
-   * pi 切模型时若新模型的 thinkingLevel 与当前相同则不 emit 事件（agent-session.ts setThinkingLevel
-   * 的 isChanging 守卫），导致 summary.thinkingLevel 恒为 undefined。get_state 是可靠来源。
-   */
-  private async broadcastSessionState(sessionId: string, provider: string, modelId: string): Promise<void> {
-    const summary = this.sessionService.getSummary(sessionId)
-    if (!summary) return // session 不在活跃 Map（磁盘 session），无法重算
-    // 查 pi get_state 拿当前 thinkingLevel 并回写 session 缓存
-    const client = this.sessionService.getRpcClient(sessionId)
-    let thinkingLevel = summary.thinkingLevel
-    if (client) {
-      try {
-        const state = await readPiState(client)
-        const level = state?.thinkingLevel as string | undefined
-        if (level) {
-          this.sessionService.setThinkingLevelCache(sessionId, level)
-          thinkingLevel = level
-        }
-      // eslint-disable-next-line taste/no-silent-catch -- get_state 失败不阻塞切换：thinkingLevel 回退到 summary 值
-      } catch (e) {
-        console.error('[ModelService] get_state for thinkingLevel failed:', e)
-      }
-    }
-    const providers = this.configService.listProviders()
-    const models = this.aggregateModels(providers)
-    const model = models.find(m => m.providerId === provider && m.id === modelId)
-    const contextWindow = model?.contextWindow ?? 0
-    const inputTokens = this.sessionService.getInputTokens(sessionId)
-    const usagePercent = contextWindow > 0
-      ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
-      : 0
-    this.broker.broadcast({
-      type: 'session.state_changed',
-      id: this.nextPushId(),
-      payload: {
-        sessionId,
-        modelId: summary.modelId,
-        thinkingLevel,
-        usagePercent,
-        inputTokens,
-        contextLimit: contextWindow,
-      },
     })
   }
 
@@ -163,6 +136,24 @@ export class ModelService implements IModelService {
     apiKey?: string,
     providerType?: string,
   ): Promise<Array<{ id: string; name: string; contextWindow?: number }>> {
-    return this.modelSource.discoverFromApi(baseUrl, apiKey, providerType)
+    try {
+      return await this.modelSource.discoverFromApi(baseUrl, apiKey, providerType)
+    } catch (e) {
+      // infra 原始错误分类成结构化 ModelDiscoveryError（含 code + 中文文案）。
+      // 文案映射归 service（域决策），transport 只 catch + reply，不硬编码中文。
+      throw this.classifyDiscoveryError(e, baseUrl)
+    }
+  }
+
+  /** 把 infra 抛出的原始错误分类成 ModelDiscoveryError（domain→文案）。 */
+  private classifyDiscoveryError(e: unknown, baseUrl: string): ModelDiscoveryError {
+    const raw = toErrorMessage(e)
+    if (raw.includes('ByteString')) {
+      return new ModelDiscoveryError('INVALID_AUTH_CHARS', '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符')
+    }
+    if (raw.includes('fetch failed')) {
+      return new ModelDiscoveryError('UNREACHABLE', `连接失败：无法访问 ${baseUrl}/v1/models`)
+    }
+    return new ModelDiscoveryError('UNKNOWN', raw)
   }
 }

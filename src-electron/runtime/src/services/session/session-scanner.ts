@@ -12,13 +12,14 @@ import { basename } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus } from '@xyz-agent/shared'
 import type { ISessionServiceInternal } from '../../interfaces.js'
 import type { ISessionStore } from '../ports/session.js'
-import { readGitInfo, pruneGitInfoCache } from '../git-info.js'
+import type { IGitInfoReader } from '../ports/git-info.js'
 import type { ScannedSession } from './types.js'
 
 export class SessionScanner {
   constructor(
     private readonly svc: ISessionServiceInternal,
     private readonly sessionStore: ISessionStore,
+    private readonly gitInfoReader: IGitInfoReader,
   ) {}
 
   listPersistedSessions(): SessionGroup[] {
@@ -52,11 +53,11 @@ export class SessionScanner {
   /** Prune git-info cache entries for cwds no longer represented in any session. */
   private pruneGitCache(allSummaries: SessionSummary[]): void {
     const cwds = new Set(allSummaries.map(s => s.cwd))
-    pruneGitInfoCache(cwds)
+    this.gitInfoReader.pruneStaleCache(cwds)
   }
 
   private scannedToSummary(s: ScannedSession): SessionSummary {
-    const git = readGitInfo(s.cwd)
+    const git = this.gitInfoReader.readGitInfo(s.cwd)
     return {
       id: s.id,
       label: s.name ?? basename(s.cwd),

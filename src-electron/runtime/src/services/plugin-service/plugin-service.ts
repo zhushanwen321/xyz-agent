@@ -1,8 +1,9 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
-import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, IPluginServiceDeps } from './plugin-types.js'
+import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, BridgeSyncPayload, ToolRegistration, IPluginServiceDeps } from './plugin-types.js'
 import type { StatusBarItem } from '@xyz-agent/shared'
 import type { IPluginService, ISessionService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
+import type { ServerMessage } from '@xyz-agent/shared'
 import { PluginRegistry } from './plugin-registry.js'
 import { PluginStorage } from './plugin-storage.js'
 import { SessionDataStore } from './session-data-store.js'
@@ -12,20 +13,30 @@ import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { PluginInstaller, type InstallResult } from './plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
+import { HookPipeline } from './hook-pipeline.js'
+import { UiRequestQueue } from './ui-request-queue.js'
+import { StatusBarRegistry } from './status-bar-registry.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
 import { join } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
-import { randomSuffix } from '../../utils/ids.js'
 
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
-const HOOK_HANDLER_TIMEOUT_MS = 5_000
 
+/**
+ * PluginService — 纯门面 + 初始化编排（ADR-0012/0013/0014/0023/0001）。
+ *
+ * 5 个原交职责已下沉到内聚模块，本类仅保留：
+ *  (a) initialize 编排（9 步生命周期装配）；
+ *  (b) 协作者装配（registry/storage/rpcServer/host/activator/...）；
+ *  (c) 薄门面方法：委托 HookPipeline / UiRequestQueue / StatusBarRegistry /
+ *      bridge-interop。
+ */
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
   private storage: PluginStorage
-  private rpcServer: PluginRpcServer
-  private host: PluginHost
+  rpcServer: PluginRpcServer
+  host: PluginHost
   private activator: PluginActivator
   private broker: IMessageBroker
   private initialized = false
@@ -33,12 +44,14 @@ export class PluginService implements IPluginService {
   /** Tool 注册表，key 为 toolKey（`${pluginId}:${name}`） */
   private toolRegistry = new Map<string, ToolEntry>()
 
-  /** Hook 注册表，key 为 hookType，value 为该类型的所有注册条目 */
-  private permissionChecker: PermissionChecker
-  private hookRegistry = new Map<string, HookEntry[]>()
+  /** Hook 执行管道（持有 hookRegistry、共享 host/rpcServer 引用） */
+  readonly hookPipeline: HookPipeline
 
-  /** Status bar items registry，key 为 `${pluginId}:${id}` */
-  private statusBarItems = new Map<string, StatusBarItem>()
+  /** Status bar 注册表（持有 items，广播交由注入回调） */
+  readonly statusBarRegistry: StatusBarRegistry
+
+  /** UI 请求串行队列（独立状态机，广播交由注入回调） */
+  readonly uiRequestQueue: UiRequestQueue
 
   /** SessionData 内存缓存 + flush + 持久化编排 */
   private readonly sessionDataStore: SessionDataStore
@@ -52,22 +65,17 @@ export class PluginService implements IPluginService {
   /** xyz-agent 配置根（~/.xyz-agent/），plugin/session-data 持久化根。组合根注入。 */
   private readonly configDir: string
 
-  /** 当前活跃的 UI 请求 ID（串行排队） */
-  private activeUiRequest: string | null = null
+  /** bridge 轮询缓存的工具 schema 列表 */
+  private bridgeToolSchemas: ToolRegistration[] = []
 
-  /** 等待中的 UI 请求队列 */
-  private uiRequestQueue: Array<{ params: Record<string, unknown>; resolve: (v: unknown) => void }> = []
-
-  /** 等待前端响应的 UI 请求 */
-  private pendingUiRequests = new Map<string, { resolve: (v: unknown) => void; timer: ReturnType<typeof setTimeout> }>()
+  private permissionChecker: PermissionChecker
 
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry
     this.broker = broker
     this.deps = deps ?? {}
     // configDir 注入：plugin 切片经此拿配置根（~/.xyz-agent/），不再直连 infra（design.md
-    // T5 切片自治，路径来源走组合根）。生产由 index.ts 注入；缺省回退 process.cwd() 仅供
-    // 单测（不触发磁盘 IO），生产缺失会在首次 persist 时失败暴露。
+    // T5 切片自治）。生产由 index.ts 注入；缺省回退 process.cwd() 仅供单测。
     const configDir = this.deps.configDir ?? process.cwd()
     this.configDir = configDir
     const pluginsDir = join(configDir, 'plugins')
@@ -77,16 +85,37 @@ export class PluginService implements IPluginService {
     this.installer = new PluginInstaller(pluginsDir)
     this.sessionDataStore = new SessionDataStore(configDir)
     this.permissionChecker = new PermissionChecker(registry, new PermissionStorage(pluginsDir))
+
+    // Hook 管道：持有共享 hookRegistry（rpc-setup 注册侧与本类消费侧同一实例），
+    // 复用 host / rpcServer 引用。
+    this.hookPipeline = new HookPipeline({
+      hookRegistry: new Map<string, HookEntry[]>(),
+      host: this.host,
+      rpcServer: this.rpcServer,
+    })
+
+    // UI 请求队列：广播走 broadcastFn（优先）或 broker.broadcast（回退），与原实现一致。
+    this.uiRequestQueue = new UiRequestQueue((type, payload) => this.broadcastOrBroker(type, `ui_${payload.requestId}`, payload))
+
+    // Status bar 注册表：广播保持 `plugin:statusBarUpdate` 契约（ADR-0023）。
+    this.statusBarRegistry = new StatusBarRegistry((payload) => this.broker.broadcast({
+      type: 'plugin:statusBarUpdate', id: `sb_${Date.now()}`, payload,
+    } as ServerMessage))
+
     this.activator = new PluginActivator({
       permissionChecker: this.permissionChecker,
-      onPermissionRequest: (payload) => {
-        if (this.deps.broadcastFn) {
-          this.deps.broadcastFn('plugin:permissionRequest', payload)
-        } else {
-          this.broker.broadcast({ type: 'plugin:permissionRequest', id: `perm_${payload.pluginId}`, payload })
-        }
-      },
+      onPermissionRequest: (payload) =>
+        this.broadcastOrBroker('plugin:permissionRequest', `perm_${payload.pluginId}`, payload),
     })
+  }
+
+  /** 广播优先走 broadcastFn，否则回退 broker.broadcast（广播契约不变） */
+  private broadcastOrBroker(type: string, id: string, payload: unknown): void {
+    if (this.deps.broadcastFn) {
+      this.deps.broadcastFn(type, payload)
+    } else {
+      this.broker.broadcast({ type, id, payload } as ServerMessage)
+    }
   }
 
   /** Wire sessionService after construction (breaks circular dependency at creation time) */
@@ -175,21 +204,7 @@ export class PluginService implements IPluginService {
 
     // 9. 为 external 已激活插件启动 hot-reload 监听
     for (const desc of this.registry.getAllDescriptors()) {
-      if (desc.source === 'external' && this.activator.getState(desc.pluginId) === 'ACTIVE') {
-        this.activator.watchAndReload(
-          desc.pluginId,
-          desc.pluginPath,
-          desc.source,
-          this.host,
-          (payload) => {
-            this.broker.broadcast({
-              type: 'plugin:statusChange',
-              id: `reload_${payload.pluginId}_${Date.now()}`,
-              payload,
-            })
-          },
-        )
-      }
+      this.watchExternalIfActive(desc)
     }
 
     this.initialized = true
@@ -232,24 +247,14 @@ export class PluginService implements IPluginService {
     try {
       if (enabled) {
         // 启用：只激活目标插件（非全部）
-        await this.activator.activatePlugin(
-          pluginId,
-          { type: 'onStartupFinished' },
-          this.host,
-        )
+        await this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
         // 激活成功后，对外部插件启动热重载监听
-        if (descriptor.source === 'external' && this.activator.getState(pluginId) === 'ACTIVE') {
-          this.activator.watchAndReload(pluginId, descriptor.pluginPath, descriptor.source, this.host, (payload) => {
-            this.broker.broadcast({ type: 'plugin:statusChange', id: `toggle_${payload.pluginId}_${Date.now()}`, payload })
-          })
-        }
+        this.watchExternalIfActive(descriptor)
       } else {
         // 禁用
         await this.activator.deactivatePlugin(pluginId, this.host)
-        // 停止热重载监听
-        this.activator.stopWatching(pluginId)
-        // 清理 status bar items
-        this.clearStatusBarItems(pluginId)
+        this.activator.stopWatching(pluginId) // 停止热重载监听
+        this.statusBarRegistry.clearForPlugin(pluginId) // 清理 status bar items
       }
     // eslint-disable-next-line taste/no-silent-catch -- toggle: failure returns plugin list for UI rollback
     } catch (err: unknown) {
@@ -259,6 +264,14 @@ export class PluginService implements IPluginService {
 
     this.broadcastPluginList()
     return this.getDiscoveredPlugins()
+  }
+
+  /** external 且已 ACTIVE 的插件启动 hot-reload 监听（重复逻辑统一） */
+  private watchExternalIfActive(descriptor: PluginDescriptor): void {
+    if (descriptor.source !== 'external' || this.activator.getState(descriptor.pluginId) !== 'ACTIVE') return
+    this.activator.watchAndReload(descriptor.pluginId, descriptor.pluginPath, descriptor.source, this.host, (payload) => {
+      this.broker.broadcast({ type: 'plugin:statusChange', id: `watch_${payload.pluginId}_${Date.now()}`, payload })
+    })
   }
 
   async uninstallPlugin(pluginId: string): Promise<PluginDescriptor[]> {
@@ -274,12 +287,12 @@ export class PluginService implements IPluginService {
         this.toolRegistry.delete(key)
       }
     }
-    for (const [hookType, entries] of this.hookRegistry) {
-      this.hookRegistry.set(hookType, entries.filter(e => e.pluginId !== pluginId))
+    for (const [hookType, entries] of this.hookPipeline.registry) {
+      this.hookPipeline.registry.set(hookType, entries.filter(e => e.pluginId !== pluginId))
     }
 
     // 清理 status bar items
-    this.clearStatusBarItems(pluginId)
+    this.statusBarRegistry.clearForPlugin(pluginId)
 
     await this.syncToolsToBridge()
     this.broadcastPluginList()
@@ -299,11 +312,7 @@ export class PluginService implements IPluginService {
     // If plugin was waiting for permissions, try to activate it
     if (this.activator.getState(pluginId) !== 'ACTIVE') {
       await this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
-      if (descriptor.source === 'external' && this.activator.getState(pluginId) === 'ACTIVE') {
-        this.activator.watchAndReload(pluginId, descriptor.pluginPath, descriptor.source, this.host, (payload) => {
-          this.broker.broadcast({ type: 'plugin:statusChange', id: `perms_${payload.pluginId}_${Date.now()}`, payload })
-        })
-      }
+      this.watchExternalIfActive(descriptor)
     }
   }
 
@@ -366,89 +375,23 @@ export class PluginService implements IPluginService {
       rpcServer: this.rpcServer,
       storage: this.storage,
       toolRegistry: this.toolRegistry,
-      hookRegistry: this.hookRegistry,
-      statusBarItems: this.statusBarItems,
+      hookRegistry: this.hookPipeline.registry,
+      statusBarItems: this.statusBarRegistry.items,
       deps: this.deps,
-      broadcastStatusBarItems: () => this.broadcastStatusBarItems(),
-      handleUiRequest: (method, params, pluginId) => this.handleUiRequest(method, params, pluginId),
+      broadcastStatusBarItems: () => this.statusBarRegistry.broadcastAll(),
+      handleUiRequest: (method, params, pluginId) => this.uiRequestQueue.handleRequest(method, params, pluginId),
       syncToolsToBridge: () => this.syncToolsToBridge(),
       getDescriptor: (pluginId) => this.registry.getDescriptor(pluginId),
       sessionDataStore: this.sessionDataStore,
     })
   }
 
-  /** bridge 轮询缓存的工具 schema 列表 */
-  private bridgeToolSchemas: ToolRegistration[] = []
-
-  /**
-   * 执行指定 hookType 的钩子管道。
-   *
-   * 从 hookRegistry 获取 handlers，按 priority 排序后串行执行。
-   * 支持 block（proceed === false 终止链路）和 content transform（modifiedData 传递）。
-   * 每个 handler 超时 5s，超时视为放行。
-   * Worker crashed → skip 该 handler。
-   *
-   * @param hookType - hook 类型（如 'onBeforeSendMessage'）
-   * @param context - Hook 执行上下文
-   * @returns HookResult
-   */
+  /** 执行 hookType 的钩子管道（委托 HookPipeline：排序/串行/5s 超时/block/transform） */
   async executeHooks(hookType: string, context: HookContext): Promise<HookResult> {
-    const entries = this.hookRegistry.get(hookType)
-    if (!entries || entries.length === 0) return { blocked: false }
-
-    // 按 priority 排序：built-in (0) → trusted (100) → sandbox (200)
-    const sorted = [...entries].sort((a, b) => a.priority - b.priority)
-
-    // 串行执行：await 每个 handler，支持 transform 和 block
-    for (const entry of sorted) {
-      const handle = this.host.getWorkerHandle(entry.pluginId)
-      if (!handle) continue // Worker crashed → skip
-
-      try {
-        const result = await this.rpcServer.invoke(
-          handle.workerId,
-          'plugin.hooks.invoke',
-          {
-            handlerId: entry.handlerId,
-            hookType,
-            context,
-          },
-          HOOK_HANDLER_TIMEOUT_MS, // 每个 handler 超时
-        ) as Record<string, unknown>
-
-        // 检查是否被阻止
-        if (result && typeof result === 'object' && 'proceed' in result && result.proceed === false) {
-          return {
-            blocked: true,
-            reason: (result.reason as string) ?? `Blocked by plugin ${entry.pluginId}`,
-            blockedBy: entry.pluginId,
-          }
-        }
-
-        // 检查是否需要转换内容
-        if (result && typeof result === 'object' && 'modifiedData' in result && result.modifiedData !== undefined) {
-          context = {
-            ...context,
-            data: result.modifiedData,
-          }
-        }
-      // eslint-disable-next-line taste/no-silent-catch -- hook: timeout/error means proceed, non-blocking by design
-      } catch (err: unknown) {
-        // 超时或错误 → 视为放行（不阻止链路）
-        console.warn(
-          `[plugin-service] hook handler ${entry.handlerId} failed/timed out:`,
-          toErrorMessage(err),
-        )
-      }
-    }
-
-    return { blocked: false }
+    return this.hookPipeline.execute(hookType, context)
   }
 
-  /**
-   * 同步工具注册表到 bridge 层。
-   * 收集 toolRegistry 中的 schema，供 bridge:sync 轮询获取。
-   */
+  /** 同步 toolRegistry schema 到 bridge 轮询缓存 */
   async syncToolsToBridge(): Promise<void> {
     this.bridgeToolSchemas = Array.from(this.toolRegistry.values()).map(e => e.schema)
   }
@@ -459,10 +402,19 @@ export class PluginService implements IPluginService {
   }
 
   /**
-   * 处理 bridge 发起的工具执行请求。
+   * 构造 bridge:sync 同步负载（plugin 工具 schema 塑形）。
    *
-   * 通过 toolRegistry 查找工具所属插件 → 获取 Worker handle
-   * → 通过 RPC 调用 Worker 中的 tool handler → 返回结果。
+   * 把 ToolRegistration[] 塑形成 {name,description,parameters} 数组——这是插件域能力
+   * 塑形，归 service 而非 transport。transport 只 reply 本方法的返回值。
+   * commands 目前固定空（pi 侧命令发现另走 getCommands）。
+   */
+  getBridgeSyncPayload(): BridgeSyncPayload {
+    const tools = this.bridgeToolSchemas.map(s => ({ name: s.name, description: s.description, parameters: s.parameters }))
+    return { tools, commands: [], success: true }
+  }
+
+  /**
+   * 处理 bridge 发起的工具执行请求（ADR-0012 契约不变）。委托 bridge-interop。
    */
   async handleBridgeToolExecute(request: BridgeToolExecuteRequest): Promise<BridgeToolExecuteResponse> {
     return handleBridgeToolExecute(request, this.toolRegistry, this.host, this.rpcServer)
@@ -472,7 +424,16 @@ export class PluginService implements IPluginService {
     handleBridgeEvent(eventName, data, sessionId, (hookType, context) => this.executeHooks(hookType, context))
   }
 
+  /**
+   * 处理 bridge 拦截请求。
+   *
+   * 仅 before_agent_start 事件需拦截（域能力：哪些事件可被拦截）。该判定下沉到 service，
+   * transport 不再做事件名白名单过滤。非拦截事件返回空响应，保留原协议行为。
+   */
   async handleBridgeIntercept(eventName: string, data: unknown, sessionId: string): Promise<BridgeInterceptResponse> {
+    if (eventName !== 'before_agent_start') {
+      return { injectedMessages: [] }
+    }
     return handleBridgeIntercept(eventName, data, sessionId, (hookType, context) => this.executeHooks(hookType, context))
   }
 
@@ -504,87 +465,9 @@ export class PluginService implements IPluginService {
     this.sessionDataStore.clearSession(sessionId)
   }
 
-  /**
-   * 处理 UI 弹窗请求（串行排队）。
-   * 同时只允许一个弹窗显示在前端，后续请求排队等待。
-   * 超时 60s 自动 resolve 为默认值。
-   */
-  private async handleUiRequest(method: string, params: Record<string, unknown>, pluginId: string): Promise<unknown> {
-    const requestId = `${pluginId}_${Date.now()}_${randomSuffix()}`
-    return new Promise<unknown>((resolve) => {
-      if (this.activeUiRequest !== null) {
-        this.uiRequestQueue.push({ params: { ...params, requestId, method, pluginId }, resolve })
-        return
-      }
-      this.activeUiRequest = requestId
-      this.dispatchUiRequest(requestId, method, params, pluginId, resolve)
-    })
-  }
-
-  /** 发送 UI 请求到前端，设置超时计时器 */
-  private dispatchUiRequest(
-    requestId: string,
-    method: string,
-    params: Record<string, unknown>,
-    pluginId: string,
-    resolve: (v: unknown) => void,
-  ): void {
-    const UI_REQUEST_TIMEOUT_MS = 60_000
-    // 超时默认值
-    const defaultResult = method === 'confirm' ? false : undefined
-
-    const timer = setTimeout(() => {
-      this.pendingUiRequests.delete(requestId)
-      this.processNextUiRequest()
-      resolve(defaultResult)
-    }, UI_REQUEST_TIMEOUT_MS)
-
-    this.pendingUiRequests.set(requestId, { resolve, timer })
-
-    // 通过 broadcastFn 或 broker 广播
-    const broadcastPayload = {
-      requestId,
-      pluginId,
-      method,
-      ...params,
-    }
-    if (this.deps.broadcastFn) {
-      this.deps.broadcastFn('plugin:uiRequest', broadcastPayload)
-    } else {
-      this.broker.broadcast({
-        type: 'plugin:uiRequest',
-        id: `ui_${requestId}`,
-        payload: broadcastPayload,
-      })
-    }
-  }
-
-  /** 处理前端返回的 UI 响应（供 server.ts 调用） */
+  /** 处理前端返回的 UI 响应（供 server.ts 调用）。委托 UiRequestQueue。 */
   handleUiResponse(requestId: string, result: unknown): void {
-    const pending = this.pendingUiRequests.get(requestId)
-    if (!pending) return
-
-    clearTimeout(pending.timer)
-    this.pendingUiRequests.delete(requestId)
-    pending.resolve(result)
-    this.processNextUiRequest()
-  }
-
-  /** 处理队列中的下一个 UI 请求 */
-  private processNextUiRequest(): void {
-    if (this.uiRequestQueue.length === 0) {
-      this.activeUiRequest = null
-      return
-    }
-    const next = this.uiRequestQueue.shift()!
-    this.activeUiRequest = next.params.requestId as string
-    this.dispatchUiRequest(
-      next.params.requestId as string,
-      next.params.method as string,
-      next.params,
-      next.params.pluginId as string,
-      next.resolve,
-    )
+    this.uiRequestQueue.handleResponse(requestId, result)
   }
 
   private broadcastPluginList(): void {
@@ -596,31 +479,9 @@ export class PluginService implements IPluginService {
     })
   }
 
-  /** Broadcast current status bar items to all clients */
-  private broadcastStatusBarItems(): void {
-    const items = Array.from(this.statusBarItems.values())
-    this.broker.broadcast({
-      type: 'plugin:statusBarUpdate',
-      id: `sb_${Date.now()}`,
-      payload: { items },
-    })
-  }
-
   /** Get all current status bar items */
   getStatusBarItems(): StatusBarItem[] {
-    return Array.from(this.statusBarItems.values())
-  }
-
-  /** Clear all status bar items for a given plugin (used during deactivation) */
-  clearStatusBarItems(pluginId: string): void {
-    let changed = false
-    for (const [key, item] of this.statusBarItems) {
-      if (item.pluginId === pluginId) {
-        this.statusBarItems.delete(key)
-        changed = true
-      }
-    }
-    if (changed) this.broadcastStatusBarItems()
+    return this.statusBarRegistry.getItems()
   }
 
   /** 将内部 PluginState（UPPER_CASE）映射为协议层展示状态（lower_case） */

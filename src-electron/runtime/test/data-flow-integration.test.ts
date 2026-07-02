@@ -17,6 +17,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebSocket } from 'ws'
 
 import type { ServerMessage } from '@xyz-agent/shared'
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+
+// IGitInfoReader 桩：这些集成测试 mock 了整个 SessionService（构造参数不被使用），
+// 仅需满足构造签名（port 化后第 10 个参数）。
+const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
 // ── Mocks (最外层边界) ────────────────────────────────────────────
 
@@ -98,15 +103,27 @@ vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => [],
-  refreshAll: () => {},
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => [] }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return { ...actual, getSessionsDir: () => '/mock/sessions' }
+})
 
 vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
@@ -203,7 +220,7 @@ interface WSFixture {
 async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   const port = await getFreePort()
   const server = new RuntimeServer(port, '/tmp/test-project')
-  const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+  const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
 
   server.setServices(
     sessionService,
@@ -436,7 +453,7 @@ describe('DF-1: Extension UI 超时路径', () => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
@@ -514,7 +531,7 @@ describe('DF-1: session 删除清理超时', () => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
@@ -675,7 +692,7 @@ describe('DF-4: Extension 列表管理', () => {
 
     const port = await getFreePort()
     server = new RuntimeServer(port, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
 
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
@@ -734,7 +751,7 @@ describe('DF-4: Extension 列表管理', () => {
   it('ExtensionService 为 null → 返回空列表', async () => {
     const port2 = await getFreePort()
     const server2 = new RuntimeServer(port2, '/tmp/test-project')
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
     server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()), {} as never)
     await server2.start()
     const ws2 = await connectClient(port2)
@@ -775,7 +792,7 @@ describe('DF-5: Extension 启用/禁用', () => {
 
     const port = await getFreePort()
     server = new RuntimeServer(port, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
 
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
@@ -829,7 +846,7 @@ describe('DF-5: Extension 启用/禁用', () => {
   it('ExtensionService 为 null → 返回 error', async () => {
     const port2 = await getFreePort()
     const server2 = new RuntimeServer(port2, '/tmp/test-project')
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
     server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()), {} as never)
     await server2.start()
     const ws2 = await connectClient(port2)

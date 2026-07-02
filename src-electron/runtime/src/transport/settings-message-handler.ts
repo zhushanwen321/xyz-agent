@@ -152,13 +152,12 @@ export class SettingsMessageHandler {
     const { baseUrl, apiKey, providerType, providerId } = msg.payload
     let resolvedApiKey = apiKey
     if (!resolvedApiKey && providerId) resolvedApiKey = this.ctx.configService.getProvider(providerId)?.apiKey
+    // 错误文案翻译（ByteString / fetch failed → 中文）已下沉 model-service；
+    // handler 只 reply service 返回的 models 或 error.message。
     this.ctx.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
       .then((models) => { this.ctx.reply(ws, msg.id, 'config.discoveredModels', { models, success: true }) })
       .catch((e: unknown) => {
-        const raw = toErrorMessage(e)
-        const message = raw.includes('ByteString') ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
-          : raw.includes('fetch failed') ? `连接失败：无法访问 ${baseUrl}/v1/models` : raw
-        this.ctx.reply(ws, msg.id, 'config.discoveredModels', { models: [], success: false, error: message })
+        this.ctx.reply(ws, msg.id, 'config.discoveredModels', { models: [], success: false, error: toErrorMessage(e) })
       })
     return true
   }

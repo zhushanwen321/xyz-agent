@@ -24,14 +24,13 @@ function createMockBroker(): IMessageBroker {
   }
 }
 
-/** 获取 PluginService 内部注册表的便捷方法 */
+/** 获取 PluginService 内部注册表的便捷方法（hookRegistry 下沉到 HookPipeline） */
 function serviceRegistry(service: PluginService) {
-  return service as unknown as {
-    hookRegistry: Map<string, HookEntry[]>
-    toolRegistry: Map<string, ToolEntry>
-    rpcServer: { broadcast: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn> }
-    host: { getWorkerHandle: ReturnType<typeof vi.fn> }
-  }
+  const hookPipeline = (service as unknown as { hookPipeline: { registry: Map<string, HookEntry[]> } }).hookPipeline
+  const toolRegistry = (service as unknown as { toolRegistry: Map<string, ToolEntry> }).toolRegistry
+  const host = (service as unknown as { host: { getWorkerHandle: ReturnType<typeof vi.fn> } }).host
+  const rpcServer = (service as unknown as { rpcServer: { broadcast: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn> } }).rpcServer
+  return { hookRegistry: hookPipeline.registry, toolRegistry, rpcServer, host }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -178,6 +177,42 @@ describe('PluginService.syncToolsToBridge', () => {
     })
     service.syncToolsToBridge()
     expect(service.getToolSchemas()).toHaveLength(2)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// getBridgeSyncPayload（schema 塑形下沉 service）
+// ══════════════════════════════════════════════════════════════════
+
+describe('PluginService.getBridgeSyncPayload', () => {
+  // ── 空 registry → 空 tools，commands 固定空，success:true ─────────
+  it('空 registry → { tools: [], commands: [], success: true }', () => {
+    const service = new PluginService({} as never, createMockBroker())
+    service.syncToolsToBridge()
+
+    expect(service.getBridgeSyncPayload()).toEqual({ tools: [], commands: [], success: true })
+  })
+
+  // ── 塑形 ToolRegistration → {name,description,parameters}（剔除 execute handler）──
+  it('把 toolRegistry schema 塑形成 {name,description,parameters}（transport 不再塑形）', () => {
+    const service = new PluginService({} as never, createMockBroker())
+    const reg = serviceRegistry(service)
+    reg.toolRegistry.set('p:t', {
+      pluginId: 'p', handlerId: 'p:t',
+      schema: {
+        name: 't', description: 'd',
+        parameters: { type: 'object', properties: {} },
+        execute: vi.fn(),
+      },
+    })
+    service.syncToolsToBridge()
+
+    const payload = service.getBridgeSyncPayload()
+    expect(payload.tools).toEqual([
+      { name: 't', description: 'd', parameters: { type: 'object', properties: {} } },
+    ])
+    // execute handler 不应泄漏到 sync payload
+    expect((payload.tools[0] as Record<string, unknown>).execute).toBeUndefined()
   })
 })
 

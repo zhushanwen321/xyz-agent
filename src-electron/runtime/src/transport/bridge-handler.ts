@@ -1,6 +1,12 @@
 /**
  * Bridge request handler for extension UI requests that bypass the frontend.
- * Routes to PluginService and sends extension_ui_response back to pi RPC.
+ *
+ * 纯路由铁律：本类只做 method→pluginService 分派 + pi response 回写。
+ * 所有领域逻辑（schema 塑形、事件白名单过滤）已下沉到 plugin-service：
+ *  - bridge:sync        → pluginService.getBridgeSyncPayload()（工具 schema 塑形）
+ *  - bridge:tool_execute → pluginService.handleBridgeToolExecute()（ADR-0012 契约）
+ *  - bridge:intercept    → pluginService.handleBridgeIntercept()（before_agent_start 判定下沉）
+ *  - bridge:event        → pluginService.handleBridgeEvent()（fire-and-forget）
  */
 import type { IPiEngine } from '../services/ports/pi-engine.js'
 import type { IPluginService } from '../interfaces.js'
@@ -17,62 +23,59 @@ export class BridgeHandler {
     client: IPiEngine,
   ): Promise<void> {
     try {
-      const methodName = method as string
-      switch (methodName) {
+      switch (method) {
+        // 同步工具 schema（塑形由 plugin-service 负责）
         case 'bridge:sync': {
-          const tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = []
-          const commands: Array<{ name: string }> = []
-          if (this.pluginService?.getToolSchemas) {
-            const schemas = this.pluginService.getToolSchemas()
-            for (const s of schemas) {
-              tools.push({ name: s.name, description: s.description, parameters: s.parameters })
-            }
-          }
-          await client.sendCommand('extension_ui_response', { id: requestId, response: { tools, commands, success: true } })
+          const payload = this.pluginService?.getBridgeSyncPayload
+            ? this.pluginService.getBridgeSyncPayload()
+            : { tools: [], commands: [], success: true }
+          await client.sendCommand('extension_ui_response', { id: requestId, response: payload })
           return
         }
 
+        // 执行 bridge 工具（ADR-0012 契约）；请求对象构造是 transport↔service 边界编组
         case 'bridge:tool_execute': {
-          const toolName = data.toolName as string
-          const params = data.params as Record<string, unknown> ?? {}
           if (!this.pluginService?.handleBridgeToolExecute) {
             await client.sendCommand('extension_ui_response', { id: requestId, response: { content: 'Plugin system not available', isError: true } })
             return
           }
           const result = await this.pluginService.handleBridgeToolExecute({
             type: 'bridge.tool.execute',
-            toolName, parameters: params, toolCallId: data.toolCallId as string ?? '', sessionId,
+            toolName: data.toolName as string,
+            parameters: (data.params as Record<string, unknown>) ?? {},
+            toolCallId: (data.toolCallId as string) ?? '',
+            sessionId,
           })
           await client.sendCommand('extension_ui_response', { id: requestId, response: result })
           return
         }
 
+        // fire-and-forget 事件
         case 'bridge:event': {
-          const eventName = data.eventName as string
-          const eventData = data.data as Record<string, unknown> ?? {}
-          console.log(`[server] bridge event: ${eventName} from session ${sessionId}`)
-          if (this.pluginService?.handleBridgeEvent) {
-            this.pluginService.handleBridgeEvent(eventName, eventData, sessionId)
-          }
+          console.log(`[server] bridge event: ${data.eventName as string} from session ${sessionId}`)
+          this.pluginService?.handleBridgeEvent?.(
+            data.eventName as string,
+            (data.data as Record<string, unknown>) ?? {},
+            sessionId,
+          )
           await client.sendCommand('extension_ui_response', { id: requestId, response: null })
           return
         }
 
+        // 拦截（before_agent_start 判定下沉 plugin-service）
         case 'bridge:intercept': {
           const eventName = data.eventName as string
-          const eventData = data.data as Record<string, unknown> ?? {}
-          if (this.pluginService?.handleBridgeIntercept && eventName === 'before_agent_start') {
-            const result = await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
-            await client.sendCommand('extension_ui_response', { id: requestId, response: result })
-            return
-          }
-          await client.sendCommand('extension_ui_response', { id: requestId, response: {} })
+          const eventData = (data.data as Record<string, unknown>) ?? {}
+          const result = this.pluginService?.handleBridgeIntercept
+            ? await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
+            : {}
+          await client.sendCommand('extension_ui_response', { id: requestId, response: result })
           return
         }
 
         default: {
-          console.warn(`[server] Unknown bridge method: ${methodName}`)
-          await client.sendCommand('extension_ui_response', { id: requestId, response: { error: `Unknown bridge method: ${methodName}` } })
+          console.warn(`[server] Unknown bridge method: ${method}`)
+          await client.sendCommand('extension_ui_response', { id: requestId, response: { error: `Unknown bridge method: ${method}` } })
         }
       }
     } catch (e) {
@@ -89,8 +92,6 @@ export class BridgeHandler {
 
   /** Handle statusSetUpdate events from event-adapter */
   handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
-    if (this.pluginService?.handleBridgeEvent) {
-      this.pluginService.handleBridgeEvent('plugin:statusSetUpdate', payload, payload.sessionId)
-    }
+    this.pluginService?.handleBridgeEvent?.('plugin:statusSetUpdate', payload, payload.sessionId)
   }
 }

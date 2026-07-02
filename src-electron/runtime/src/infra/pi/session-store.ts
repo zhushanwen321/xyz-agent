@@ -2,26 +2,26 @@
  * ISessionStore 的 infra 实现 —— 封装 pi session 文件操作 + 历史翻译 + 废纸篓。
  *
  * 🔒 归属（R3e1，三层架构）：infra/pi/，实现 services/ports.ts 的 ISessionStore。
- * 聚合 pi-config-bridge 的 session 函数（scanPiSessions/refreshAll/persistSessionName/
- * ensureSessionFile/patchSessionCwd）+ message-converter 的 convertPiHistory +
- * system/trash。service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
+ * 聚合 session-file-utils 的 session 函数（scanPiSessions/persistSessionName/
+ * ensureSessionFile/patchSessionCwd）+ pi-provider-store 的 refreshAll +
+ * message-converter 的 convertPiHistory + system/trash。
+ * service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
  */
 import type { ISessionStore, ScannedSessionMeta } from '../../services/ports/session.js'
 import type { Message } from '@xyz-agent/shared'
 import {
   scanPiSessions,
-  refreshAll,
   persistSessionName,
   ensureSessionFile,
   patchSessionCwd,
-} from './pi-config-bridge.js'
+} from './session-file-utils.js'
+import { refreshAll } from './pi-provider-store.js'
 import { convertPiHistory } from './message-converter.js'
 import { trash } from '../system/trash.js'
 
 export class PiSessionStore implements ISessionStore {
   scanSessions(): ScannedSessionMeta[] {
-    // scanPiSessions 返回的结构与 ScannedSessionMeta 同构（id/filePath/cwd/timestamp/name/lastModified/size）
-    return scanPiSessions() as ScannedSessionMeta[]
+    return scanPiSessions()
   }
 
   refreshAll(): void {

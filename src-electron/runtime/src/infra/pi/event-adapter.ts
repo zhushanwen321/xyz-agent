@@ -69,6 +69,22 @@ export interface EventAdapterOptions {
 }
 
 // ── Sub-handler types ──────────────────────────────────────────────
+//
+// [ADR-0003] translate() 入参故意用宽类型 Record<string, unknown>（而非 pi-protocol.ts
+// 的 Pi* 联合类型）：pi 实际发送的数据比类型声明更宽（见 handleToolExecutionEnd 的
+// result 多形态、handleToolExecutionStart 的 args??input 双读），且未知事件类型不能崩。
+// 下面的防御式 `?? ''` / `as` fallback 不是冗余——它们处理 pi 实际行为的非规范面。
+// 升级 pi 后若字段稳定，可逐 handler 引入 pi-protocol 类型做窄化（保留 default 容错）。
+//
+// [F3 待办 · 业务外迁] 本文件在 infra 层编排了 5 项业务语义，违反「infra 不含业务」铁律：
+//   1. plugin hook 触发（fireHook + onBeforeToolCall 的 block/transform）—— plugin 域业务
+//   2. file_changes baseline diff 触发时机（write/edit/bash 判定）—— 业务规则
+//   3. onContextUpdate 回调（已在 G1 收敛到 session-service.applyContextUpdate）✓
+//   4. thinkingLevel 回写 session 缓存（onThinkingLevelChanged）—— session 域业务
+//   5. toolResult 抑制决策（role==='toolResult' return null）—— 前端业务约束
+// design 文档（runtime-three-layer-design.md L219）设想的 PiTranslatedEvent 中间事件
+// 从未落地：event-adapter 直接产最终 ServerMessage 并驱动业务回调。彻底外迁需引入
+// EventInterpreter service 层，是结构性深化——单独立项评估，勿在增量改动中混入。
 type PiEvent = Record<string, unknown>
 type HandlerResult = ServerMessage | null | Promise<ServerMessage | null>
 type EventHandler = (event: PiEvent, ctx: HandlerContext) => HandlerResult
@@ -123,7 +139,9 @@ function handleMessageUpdate(event: PiEvent, ctx: HandlerContext): HandlerResult
 /** tool_execution_start — with optional plugin hook */
 async function handleToolExecutionStart(event: PiEvent, ctx: HandlerContext): Promise<ServerMessage | null> {
   const sid = ctx.sessionId
+  // pi-protocol.PiToolExecutionStartEvent 声明 toolName: string（必有），但 pi 实际可能缺省——保留 fallback
   const toolName = event.toolName ?? '' as string
+  // pi-protocol 声明 args（规范），但 pi 历史版本用 input——双读覆盖协议漂移（见 pi-protocol.ts TODO）
   let input = event.args ?? event.input
 
   if (ctx.hookCallback) {
@@ -197,6 +215,9 @@ async function handleToolExecutionEnd(event: PiEvent, ctx: HandlerContext): Prom
   const sid = ctx.sessionId
   let output: string
   let images: Array<{ data: string; mimeType: string }> | undefined
+  // pi-protocol.PiToolExecutionEndEvent 声明 result: PiToolExecutionResult（固定 content 数组），
+  // 但 pi 实际 result 可能是 string | object-with-content | 其他——双读 + 多形态判定覆盖协议漂移
+  // （见 pi-protocol.ts 的 TODO(pi-协议漂移) 注释）
   const raw = event.result ?? event.output
   if (typeof raw === 'string') {
     output = raw
@@ -251,6 +272,8 @@ async function handleToolExecutionEnd(event: PiEvent, ctx: HandlerContext): Prom
     }
     // 所有可能改文件的工具（write/edit/bash）都走 baseline diff。
     // bash 改的文件无法从参数静态解析（sed/echo/tee），只能靠 git diff 兜底。
+    // 注意：此处工具名与 message-converter 的 WRITE/EDIT_TOOL_NAMES 刻意不复用——
+    // 实时 pi 事件用规范工具名（无别名），且需含 bash（历史静态解析路径无法覆盖 bash，见 message-converter）。
     if (toolName === 'write' || toolName === 'edit' || toolName === 'bash') {
       sendDiffFileChanges(ctx, 'accumulating')
     }

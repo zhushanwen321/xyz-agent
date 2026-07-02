@@ -84,6 +84,13 @@ export interface ISessionService {
   getInputTokens(sessionId: string): number
   /** 回写 session 缓存的 inputTokens（onContextUpdate 拿到真实值后同步写入，打通 context.update 与 state_changed 数据源） */
   setInputTokens(sessionId: string, tokens: number): void
+  /**
+   * 处理 context.update（pi agent_end 推 inputTokens）。session 级状态单一 owner：
+   * 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。index.ts onContextUpdate 仅调本方法。
+   */
+  applyContextUpdate(sessionId: string, inputTokens: number): void
+  /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId contextWindow 算）。 */
+  getUsagePercent(sessionId: string): number
   /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
   setThinkingLevelCache(sessionId: string, level: string | undefined): void
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
@@ -132,7 +139,7 @@ export interface ISessionServiceInternal {
   toSummary(s: IManagedSessionView): SessionSummary
   /** 从 scanPiSessions 结果中按 id 查找持久化 session。 */
   findScannedSession(sessionId: string): ScannedSession | undefined
-  /** 收集有效的 skill 路径(pi-config-bridge + 存在性过滤)。 */
+  /** 收集有效的 skill 路径(pi-provider-store + 存在性过滤)。 */
   getSkillPaths(cwd: string): string[]
   /** 收集有效的 extension 路径(经 ExtensionService)。 */
   getExtensionPaths(): Promise<string[]>
@@ -270,6 +277,8 @@ export interface IPluginService {
   /** Install a plugin from an npm package specifier */
   installPlugin(packageSpecifier: string): Promise<import('./services/plugin-service/plugin-installer.js').InstallResult>
   getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]
+  /** 构造 bridge:sync 同步负载（工具 schema 塑形下沉 service，transport 只 reply） */
+  getBridgeSyncPayload?(): import('./services/plugin-service/plugin-types.js').BridgeSyncPayload
   handleBridgeToolExecute?(request: import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest): Promise<import('./services/plugin-service/plugin-types.js').BridgeToolExecuteResponse>
   handleBridgeEvent?(eventName: string, data: unknown, sessionId: string): void
   handleBridgeIntercept?(eventName: string, data: Record<string, unknown>, sessionId: string): Promise<import('./services/plugin-service/plugin-types.js').BridgeInterceptResponse>

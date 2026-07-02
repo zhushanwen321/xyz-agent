@@ -4,7 +4,7 @@
  * 负责 models.json 和 settings.json 的原子读写、内存缓存、
  * defaultModel 校验/修复、provider CRUD 同步。
  *
- * 不包含：路径解析（pi-paths）、session 扫描（pi-config-bridge）、agent 管理（pi-config-bridge）
+ * 不包含：路径解析（pi-paths）、session 扫描（session-file-utils）、agent 管理（agent-crud）
  */
 
 import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
@@ -224,7 +224,7 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 
 // ── Settings.json 操作 ───────────────────────────────────────
 // readSettings/updateSettingsSync 的实现收敛到 pi-settings-store（D17 唯一读写层）。
-// 本文件 re-export 以保持对 pi-config-bridge 的现有导出契约不变。
+// 本文件 re-export，供 pi-config-store 等直接消费。
 export { readSettings, writeSettings, updateSettingsSync } from './pi-settings-store.js'
 
 /**

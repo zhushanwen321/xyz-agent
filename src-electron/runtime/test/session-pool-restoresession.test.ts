@@ -25,17 +25,31 @@ const mockScannedSessions: Array<{
   size: number
 }> = []
 
-vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  getPiAgentDir: () => '/mock/xyz-agent/pi/agent',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => mockScannedSessions,
-  refreshAll: () => {},
-  patchSessionCwd: () => true,
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => mockScannedSessions, patchSessionCwd: () => true }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return {
+    ...actual,
+    getSessionsDir: () => '/mock/sessions',
+    getPiAgentDir: () => '/mock/xyz-agent/pi/agent',
+  }
+})
 
 vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
@@ -89,6 +103,10 @@ import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
 import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
 import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+
+// IGitInfoReader 桩：本测试聚焦 restore 语义，不验证 git 摘要字段（readGitInfo 恒 undefined）。
+const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
 /** Minimal scanned session fixture */
 function addScannedSession(id: string, cwd = tmpdir()) {
@@ -141,6 +159,7 @@ function createService(): SessionService {
     new PiConfigStore(),
     new PiSessionStore(),
     new NavigateInterceptorFactory(),
+    noopGitInfoReader,
   )
 }
 

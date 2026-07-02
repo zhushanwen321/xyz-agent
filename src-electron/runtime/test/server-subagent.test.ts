@@ -101,15 +101,27 @@ vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => [],
-  refreshAll: () => {},
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => [] }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return { ...actual, getSessionsDir: () => '/mock/sessions' }
+})
 
 vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
@@ -149,7 +161,7 @@ describe('RuntimeServer message.send with subagent field', () => {
   port = await getFreePort()
   server = new RuntimeServer(port, '/tmp/test-project')
   server.setServices(
-    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never),
+    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never),
     new ConfigService('/tmp', new PiConfigStore()),
     new ModelService(new ModelApiDiscoverer()),
     {} as never,

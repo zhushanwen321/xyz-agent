@@ -6,8 +6,9 @@
  * 拆分后此测试保持绿即证明行为不变。
  *
  * Mock 边界（不 spawn 真 pi、不碰真文件系统）：
- * - pi-config-bridge / trash / message-converter / session-history / git-info /
+ * - pi-config-bridge / trash / message-converter / session-history /
  *   navigate-interceptor 全部 vi.mock；工厂引用的 mock 用 vi.hoisted 声明以避开 TDZ。
+ * - IGitInfoReader 经构造注入（不再 vi.mock 模块），createSetup 提供桩实现。
  * - 构造函数依赖（pm / broker / treeService / extensionService）注入 mock 对象。
  * - pm 通过共享 clientMap 让 getClient/hasClient/rekey/getSessionIdByClient 行为自洽。
  * - existsSync 用真实 node:fs，测试数据用真实存在的 cwd（tmpdir）。
@@ -24,6 +25,8 @@ import type { MockInstance } from 'vitest'
 import { tmpdir } from 'node:os'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
 
 import type {
   IMessageBroker,
@@ -61,28 +64,41 @@ const mocks = vi.hoisted(() => ({
 
 const { mockScannedSessions } = mocks
 
-vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
-  getDefaultModel: () => mocks.defaultModel.value,
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  getPiAgentDir: () => '/mock/xyz-agent/pi/agent',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => mockScannedSessions,
-  refreshAll: mocks.refreshAllMock,
-  persistSessionName: mocks.persistSessionNameMock,
-  ensureSessionFile: mocks.ensureSessionFileMock,
-  patchSessionCwd: mocks.patchSessionCwdMock,
-}))
+// pi-config-bridge 已拆分：session 函数迁入 session-file-utils，model/settings 函数
+// 归 pi-provider-store，配置目录归 pi-paths。按 session-store/pi-config-store 的实际
+// import 来源分别 mock 各符号（其余实现保留原模块，importOriginal）。
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return {
+    ...actual,
+    scanPiSessions: () => mockScannedSessions,
+    persistSessionName: mocks.persistSessionNameMock,
+    ensureSessionFile: mocks.ensureSessionFileMock,
+    patchSessionCwd: mocks.patchSessionCwdMock,
+  }
+})
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    refreshAll: mocks.refreshAllMock,
+    getDefaultModel: () => mocks.defaultModel.value,
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+  }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return {
+    ...actual,
+    getPiAgentDir: () => '/mock/xyz-agent/pi/agent',
+  }
+})
 
 vi.mock('../src/infra/system/trash.js', () => ({ trash: mocks.trashMock }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: mocks.convertPiHistoryMock }))
 vi.mock('../src/services/session-history.js', () => ({ getHistoryFromFile: mocks.getHistoryFromFileMock }))
-
-vi.mock('../src/services/git-info.js', () => ({
-  readGitInfo: vi.fn(() => undefined),
-  pruneGitInfoCache: vi.fn(),
-}))
 
 // NavigateInterceptor 经 factory 创建，mock 成最小实现
 vi.mock('../src/infra/pi/navigate-interceptor.js', () => ({
@@ -190,6 +206,8 @@ interface Setup {
   }
   extensionService: IExtensionService
   clientMap: Map<string, MockClient>
+  /** mock 的 IGitInfoReader（readGitInfo 恒 undefined → 摘要 git 字段留空）。供 localSession 复用。 */
+  gitInfoReader: IGitInfoReader
   triggerExit: (sessionId: string, code: number | null) => void
   /** 直接挂载一个 client 到 clientMap（不走 create），用于 dispatcher 类测试。 */
   mountClient: (sessionId: string, client?: MockClient) => MockClient
@@ -259,6 +277,13 @@ function createSetup(): Setup {
     detach: vi.fn(),
   })
 
+  // IGitInfoReader 桩：readGitInfo 恒 undefined（摘要 git 字段留空），pruneStaleCache no-op。
+  // 经构造注入（git-info 已 port 化，不再 vi.mock 模块）。
+  const gitInfoReader: IGitInfoReader = {
+    readGitInfo: vi.fn(() => undefined),
+    pruneStaleCache: vi.fn(),
+  }
+
   const service = new SessionService(
     pm,
     broker,
@@ -269,6 +294,7 @@ function createSetup(): Setup {
     new PiConfigStore(),
     new PiSessionStore(),
     new NavigateInterceptorFactory(),
+    gitInfoReader,
   )
 
   const mountClient = (sessionId: string, client?: MockClient): MockClient => {
@@ -296,7 +322,7 @@ function createSetup(): Setup {
   }
 
   return {
-    service, pm, broker, treeService, extensionService, clientMap,
+    service, pm, broker, treeService, extensionService, clientMap, gitInfoReader,
     triggerExit: (sid, code) => exitCb?.(sid, code),
     mountClient, seedSession,
   }
@@ -666,7 +692,7 @@ describe('SessionService · Facade', () => {
     setup = createSetup()
   })
 
-  describe('switchModel', () => {
+  describe('switchModel（session 级状态单一 owner：RPC + 缓存 + 广播）', () => {
     it('calls client.setModel and updates cached modelId', async () => {
       const { id, client } = await setup.seedSession()
       vi.mocked(client.setModel).mockClear()
@@ -679,6 +705,60 @@ describe('SessionService · Facade', () => {
     it('returns sessionId unchanged when session not in map', async () => {
       const returned = await setup.service.switchModel('ghost', 'p', 'm')
       expect(returned).toBe('ghost')
+    })
+
+    it('切换后广播 session.state_changed（含按新 contextWindow 重算用量）', async () => {
+      const { id, client } = await setup.seedSession()
+      // 注入 resolver：anthropic/claude-x contextWindow=200000
+      setup.service.setModelContextWindowResolver((_p, _m) => 200000)
+      // 预置 inputTokens 缓存（模拟 onContextUpdate 已回写）
+      setup.service.setInputTokens(id, 12000)
+      vi.mocked(client.setModel).mockClear()
+      vi.mocked(setup.broker.broadcast).mockClear()
+      // get_state 返回 thinkingLevel（broadcastSessionState 查 pi get_state）
+      vi.mocked(client.sendCommand).mockResolvedValueOnce({ data: { thinkingLevel: 'high' } })
+
+      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+
+      const stateChanged = findBroadcast(setup, 'session.state_changed')
+      expect(stateChanged).toBeDefined()
+      expect(stateChanged!.payload).toMatchObject({
+        sessionId: id,
+        modelId: 'anthropic/claude-x',
+        thinkingLevel: 'high',
+        inputTokens: 12000,
+        contextLimit: 200000,
+        usagePercent: 6, // Math.round(12000 / 200000 * 100)
+      })
+    })
+
+    it('未注入 resolver 时 contextLimit=0 usagePercent=0，仍广播 state_changed', async () => {
+      const { id } = await setup.seedSession()
+      // 不注入 resolver
+      setup.service.setInputTokens(id, 5000)
+
+      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+
+      const stateChanged = findBroadcast(setup, 'session.state_changed')
+      expect(stateChanged).toBeDefined()
+      expect(stateChanged!.payload).toMatchObject({
+        contextLimit: 0,
+        usagePercent: 0,
+        inputTokens: 5000,
+      })
+    })
+
+    it('get_state 失败时不阻塞，thinkingLevel 回退缓存值', async () => {
+      const { id, client } = await setup.seedSession()
+      setup.service.setModelContextWindowResolver(() => 100000)
+      setup.service.setThinkingLevelCache(id, 'medium')
+      vi.mocked(client.sendCommand).mockRejectedValueOnce(new Error('get_state boom'))
+
+      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+
+      const stateChanged = findBroadcast(setup, 'session.state_changed')
+      expect(stateChanged).toBeDefined()
+      expect(stateChanged!.payload).toMatchObject({ thinkingLevel: 'medium' })
     })
   })
 
@@ -702,6 +782,82 @@ describe('SessionService · Facade', () => {
     it('U-setInput-2：setInputTokens 对不存在的 session 不抛错（静默忽略）', () => {
       expect(() => setup.service.setInputTokens('nonexistent', 100)).not.toThrow()
       expect(setup.service.getInputTokens('nonexistent')).toBe(0)
+    })
+  })
+
+  describe('applyContextUpdate（session 级状态单一 owner：回写缓存 + 算用量 + 广播）', () => {
+    it('回写 inputTokens 缓存 + 广播 context.update（含按 contextWindow 重算的 usagePercent）', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setModelContextWindowResolver(() => 100000)
+      // modelId 初始为 default 'test-provider/test-model'，resolver 按 provider/model 查 contextWindow
+      vi.mocked(setup.broker.broadcast).mockClear()
+
+      setup.service.applyContextUpdate(id, 25000)
+
+      expect(setup.service.getInputTokens(id)).toBe(25000)
+      const ctxUpdate = findBroadcast(setup, 'context.update')
+      expect(ctxUpdate).toBeDefined()
+      expect(ctxUpdate!.payload).toMatchObject({
+        sessionId: id,
+        inputTokens: 25000,
+        contextLimit: 100000,
+        usagePercent: 25, // Math.round(25000 / 100000 * 100)
+      })
+    })
+
+    it('inputTokens 为 0 时不回写不广播（agent_end 前的空 usage）', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setModelContextWindowResolver(() => 100000)
+      vi.mocked(setup.broker.broadcast).mockClear()
+
+      setup.service.applyContextUpdate(id, 0)
+
+      expect(setup.service.getInputTokens(id)).toBe(0) // 未回写
+      expect(findBroadcast(setup, 'context.update')).toBeUndefined()
+    })
+
+    it('session 不存在时不广播', async () => {
+      setup.service.setModelContextWindowResolver(() => 100000)
+      expect(() => setup.service.applyContextUpdate('ghost', 1000)).not.toThrow()
+      expect(findBroadcast(setup, 'context.update')).toBeUndefined()
+    })
+
+    it('未注入 resolver 时 contextLimit=0 usagePercent=0', async () => {
+      const { id } = await setup.seedSession()
+
+      setup.service.applyContextUpdate(id, 5000)
+
+      const ctxUpdate = findBroadcast(setup, 'context.update')
+      expect(ctxUpdate).toBeDefined()
+      expect(ctxUpdate!.payload).toMatchObject({ contextLimit: 0, usagePercent: 0, inputTokens: 5000 })
+    })
+  })
+
+  describe('getUsagePercent', () => {
+    it('按缓存 inputTokens + 当前 modelId contextWindow 算百分比', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setModelContextWindowResolver(() => 200000)
+      setup.service.setInputTokens(id, 100000)
+
+      expect(setup.service.getUsagePercent(id)).toBe(50) // 100000/200000*100
+    })
+
+    it('usagePercent 上限 100（inputTokens 超过 contextWindow）', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setModelContextWindowResolver(() => 100000)
+      setup.service.setInputTokens(id, 150000)
+
+      expect(setup.service.getUsagePercent(id)).toBe(100) // Math.min(150, 100)
+    })
+
+    it('未注入 resolver 返回 0', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setInputTokens(id, 99999)
+      expect(setup.service.getUsagePercent(id)).toBe(0)
+    })
+
+    it('session 不存在返回 0', () => {
+      expect(setup.service.getUsagePercent('ghost')).toBe(0)
     })
   })
 
@@ -955,6 +1111,7 @@ describe('SessionService · onSessionExit callback', () => {
       new PiConfigStore(),
       new PiSessionStore(),
       new NavigateInterceptorFactory(),
+      localSetup.gitInfoReader,
     )
     const piSid = 'pi-detach-1'
     const client = makeMockClient({

@@ -237,6 +237,9 @@ export interface PiToolExecutionStartEvent extends PiBaseMessage {
   type: 'tool_execution_start'
   toolCallId: string
   toolName: string
+  // TODO(pi-协议漂移): event-adapter 同时读 `args ?? input`——pi 历史版本用 input，
+  // 现版本用 args。ADR-0003 决定 translate() 入参保持 Record<string,unknown> 容错，
+  // 此处类型声明的是规范（args），但实际 pi 可能仍发 input。窄化时勿删 input fallback。
   /** pi uses "args", NOT "input". */
   args: Record<string, unknown>
 }
@@ -251,6 +254,12 @@ export interface PiToolExecutionUpdateEvent extends PiBaseMessage {
 /**
  * Tool execution end — provides the canonical tool result.
  * pi uses `result` field, NOT `output`.
+ *
+ * TODO(pi-协议漂移): event-adapter 的 handleToolExecutionEnd 同时读 `result ?? output`
+ * 且 result 可能是 string | object-with-content-array | 其他——比此处的
+ * `PiToolExecutionResult`（固定 {content: Array<{type,text}>}）声明更宽。
+ * ADR-0003 决定 translate() 入参保持 Record<string,unknown> 容错以覆盖实际数据形状。
+ * 升级 pi 后若确认 result 已稳定为 PiToolExecutionResult 形状，可收紧此类型并移除 fallback。
  */
 export interface PiToolExecutionEndEvent extends PiBaseMessage {
   type: 'tool_execution_end'

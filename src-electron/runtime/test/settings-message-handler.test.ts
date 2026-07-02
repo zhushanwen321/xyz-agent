@@ -146,31 +146,34 @@ describe('SettingsMessageHandler', () => {
     })
   })
 
-  describe('discoverModels 错误翻译', () => {
+  describe('discoverModels（handler 只 reply，错误翻译已下沉 model-service）', () => {
     it('成功 → reply discoveredModels success:true', async () => {
       const { replies, handler } = makeHandler({ discover: vi.fn().mockResolvedValue([{ id: 'm1' }]) })
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', apiKey: 'k' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
       expect(replies[0].payload).toMatchObject({ success: true, models: [{ id: 'm1' }] })
     })
-    it('ByteString 错误 → 翻译为「不支持的字符」', async () => {
-      const { replies, handler } = makeHandler({ discover: vi.fn().mockRejectedValue(new Error('invalid ByteString')) })
+    it('service 抛错 → handler 透传 error.message（不再做翻译）', async () => {
+      // model-service 已把 ByteString/fetch failed 翻译成中文文案（见 model-service.test.ts）；
+      // handler 只 reply service 给的 message，不硬编码中文。
+      const { replies, handler } = makeHandler({ discover: vi.fn().mockRejectedValue(new Error('请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符')) })
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
       expect(replies[0].payload.success).toBe(false)
       expect(replies[0].payload.error).toContain('不支持的字符')
-    })
-    it('fetch failed → 翻译为「无法访问」', async () => {
-      const { replies, handler } = makeHandler({ discover: vi.fn().mockRejectedValue(new Error('fetch failed')) })
-      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x' }), WS)
-      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
-      expect(replies[0].payload.error).toContain('无法访问')
     })
     it('其他错误 → 原始消息透传', async () => {
       const { replies, handler } = makeHandler({ discover: vi.fn().mockRejectedValue(new Error('rate limited')) })
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
       expect(replies[0].payload.error).toBe('rate limited')
+    })
+    it('providerId 解析 apiKey（resolvedApiKey 传给 service）', async () => {
+      const { ctx, replies, handler } = makeHandler()
+      ctx.configService.getProvider = vi.fn().mockReturnValue({ apiKey: 'resolved-key' }) as never
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'p1' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'resolved-key', undefined)
     })
   })
 })

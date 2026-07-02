@@ -62,7 +62,7 @@ export interface AgentFileEntry {
 
 /**
  * 配置存储 port —— Provider/Skill/Agent 的 CRUD + 默认模型 + 配置目录。
- * 实现位于 infra/pi/pi-config-store.ts（封装 pi-config-bridge + mapTypeToApi）。
+ * 实现位于 infra/pi/pi-config-store.ts（封装 pi-provider-store/agent-crud/pi-paths + mapTypeToApi）。
  */
 export interface IConfigStore {
   // ── 默认模型 ──

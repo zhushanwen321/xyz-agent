@@ -6,8 +6,8 @@ import { ModelService } from './services/model-service.js'
 
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 
-const MAX_PERCENT = 100
 import { ProcessManager } from './infra/pi/process-manager.js'
+import { migrateToPiSubdir } from './infra/pi/pi-provider-store.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
@@ -24,6 +24,7 @@ import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
+import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { FileService } from './services/file-service.js'
 import { FsExecutor } from './infra/fs-executor.js'
 
@@ -68,6 +69,13 @@ async function main(): Promise<void> {
   const server = new RuntimeServer(port, projectRoot)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
+
+  // 一次性迁移：将旧路径下的配置/session/agent 文件移到新的 xyz-pi 目录结构。
+  // 原为 pi-config-bridge 的 import 副作用，现改为组合根显式调用（启动时序显式化）。
+  // 必须在首次配置读取（readModels/readSettings/migrateSettingsSkillsToDiscovery）前完成。
+  // 幂等：新路径已存在文件则跳过。
+  migrateToPiSubdir()
+
   const configStore = new PiConfigStore()
   const sessionStore = new PiSessionStore()
   const modelSource = new ModelApiDiscoverer()
@@ -124,29 +132,10 @@ async function main(): Promise<void> {
       server.handleStatusSetUpdate(payload)
     },
     onContextUpdate: (sid, ctxData) => {
-      const providers = configService.listProviders()
-      const models = modelService.aggregateModels(providers)
-      const session = sessionService.getSummary(sid)
-      if (!session) return
-      const modelRef = session.modelId ?? ''
-      const sepIdx = modelRef.indexOf('/')
-      const model = sepIdx >= 0
-        ? models.find(m => m.providerId === modelRef.slice(0, sepIdx) && m.id === modelRef.slice(sepIdx + 1))
-        : undefined
-      const contextWindow = model?.contextWindow
-      const inputTokens = ctxData.inputTokens
-      if (!inputTokens || inputTokens === 0) return
-      // 回写 session 缓存：打通 context.update 与 switchModel 的 broadcastSessionState 数据源，
-      // 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）
-      sessionService.setInputTokens(sid, inputTokens)
-      const usagePercent = contextWindow
-        ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
-        : 0
-      server.broadcast({
-        type: 'context.update',
-        id: `ctx_${Date.now()}`,
-        payload: { sessionId: sid, usagePercent, inputTokens, contextLimit: contextWindow ?? 0 },
-      })
+      // session 级状态单一 owner：inputTokens 回写 + usagePercent 计算 + context.update 广播
+      // 全部由 SessionService.applyContextUpdate 负责（contextWindow 经注入的 resolver 解析）。
+      // context.update 与 switchModel 的竞态保护（inputTokens 回写打通数据源）也收敛在该方法内。
+      sessionService.applyContextUpdate(sid, ctxData.inputTokens)
     },
     onThinkingLevelChanged: (sid, level) => {
       // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
@@ -171,6 +160,9 @@ async function main(): Promise<void> {
     configStore,
     sessionStore,
     new NavigateInterceptorFactory(),
+    // IGitInfoReader：infra 实现（rev-parse 查询 + .git 文件判 worktree + 缓存），注入 session 摘要链。
+    // 与 GitExecutor 同为 git 域 infra，但语义不同（窄查询 vs 通用 exec）——故独立 port（services/ports/git-info.ts）。
+    new GitInfoReader(),
   )
 
   // ── Phase 3: wire cross-service runtime deps ──
@@ -195,6 +187,18 @@ async function main(): Promise<void> {
   })
 
   modelService.setServices(sessionService, configService, server)
+
+  // SessionService 是 session 级状态（modelId/thinkingLevel/inputTokens/usagePercent）单一 owner，
+  // 需读 model contextWindow 才能 switchModel / applyContextUpdate 时算 usagePercent。
+  // 直接注入 modelService/configService 会形成依赖环（modelService 反过来依赖 sessionService），
+  // 故注入窄 resolver（纯数据查询，等价 configService.listProviders + modelService.aggregateModels）。
+  sessionService.setModelContextWindowResolver((provider, modelId) => {
+    const providers = configService.listProviders()
+    const models = modelService.aggregateModels(providers)
+    const model = models.find(m => m.providerId === provider && m.id === modelId)
+    return model?.contextWindow ?? 0
+  })
+
   server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService, gitService, fileService)
 
   // Graceful shutdown on signals

@@ -1,14 +1,15 @@
 /**
  * Session 文件工具函数
  *
- * 提供 session .jsonl 文件的解析、创建、重命名等操作。
- * 从 pi-config-bridge.ts 提取以控制文件行数。
+ * 提供 session .jsonl 文件的解析、创建、重命名、扫描等操作。
+ * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, mkdirSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl } from '../../utils/jsonl.js'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { getSessionsDir } from './pi-paths.js'
 
 // ── 类型定义 ─────────────────────────────────────────────────
 
@@ -178,4 +179,91 @@ export function patchSessionCwd(filePath: string, newCwd: string): boolean {
     console.error(`[session-file-utils] failed to patch session cwd: ${filePath}`, e)
     return false
   }
+}
+
+// ── Session 扫描 ─────────────────────────────────────────────
+
+/** scanPiSessions 返回的单条 session 元信息（持久化会话扫描结果）。 */
+export interface ScannedSessionMeta {
+  id: string
+  filePath: string
+  cwd: string
+  timestamp: string
+  name: string | null
+  lastModified: number
+  size: number
+}
+
+/**
+ * 扫描 pi 的 sessions 目录（按 cwd 分组的子目录结构）。
+ * 返回扁平化的 session 列表。
+ */
+export function scanPiSessions(): ScannedSessionMeta[] {
+  if (!existsSync(getSessionsDir())) return []
+
+  const results: ScannedSessionMeta[] = []
+
+  const sessionsDir = getSessionsDir()
+  const entries = readdirSync(sessionsDir)
+
+  for (const entry of entries) {
+    const entryPath = join(sessionsDir, entry)
+    let stat
+    try {
+      stat = statSync(entryPath)
+    } catch {
+      continue
+    }
+
+    if (stat.isDirectory()) {
+      try {
+        const files = readdirSync(entryPath).filter(f => f.endsWith('.jsonl'))
+        for (const file of files) {
+          const filePath = join(entryPath, file)
+          const header = parseSessionHeader(filePath)
+          if (!header) continue
+          try {
+            const fstat = statSync(filePath)
+            const sessionName = extractSessionName(filePath)
+            results.push({
+              id: header.id,
+              filePath,
+              cwd: header.cwd,
+              timestamp: header.timestamp,
+              name: sessionName,
+              lastModified: fstat.mtimeMs,
+              size: fstat.size,
+            })
+          // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entries
+          } catch {
+            // skip
+          }
+        }
+      // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session subdirectory
+      } catch {
+        // skip unreadable dir
+      }
+    } else if (entry.endsWith('.jsonl')) {
+      const header = parseSessionHeader(entryPath)
+      if (!header) continue
+      try {
+        const sessionName = extractSessionName(entryPath)
+        results.push({
+          id: header.id,
+          filePath: entryPath,
+          cwd: header.cwd,
+          timestamp: header.timestamp,
+          name: sessionName,
+          lastModified: stat.mtimeMs,
+          size: stat.size,
+        })
+      // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entry
+      } catch {
+        // skip
+      }
+    }
+  }
+
+  results.sort((a, b) => b.lastModified - a.lastModified)
+  return results
 }

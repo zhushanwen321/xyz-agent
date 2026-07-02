@@ -17,11 +17,12 @@ import type {
   IEventAdapter, IExtensionService,
 } from '../../interfaces.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
+import { readPiState } from '../ports/pi-engine.js'
 import { TreeService } from '../tree-service.js'
-import { readGitInfo } from '../git-info.js'
 import { getHistoryFromFile } from '../session-history.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
+import type { IGitInfoReader } from '../ports/git-info.js'
 import type { INavigateInterceptor, INavigateInterceptorFactory } from '../ports/tree.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import { SessionLifecycle } from './session-lifecycle.js'
@@ -37,6 +38,20 @@ interface ManagedSession extends IManagedSessionView {
   unsubUsageListener: (() => void) | null
 }
 
+/** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
+const MAX_PERCENT = 100
+
+/**
+ * 按 provider/modelId 解析模型 contextWindow 的窄函数（port）。
+ *
+ * SessionService 作为 session 级状态单一 owner，需读 model contextWindow 才能算
+ * usagePercent。直接依赖 IModelService/IConfigService 会形成依赖环
+ * （ModelService 依赖 SessionService 反过来也成立），故抽出此窄 port，由组合根
+ * （index.ts）在所有服务构造完毕后经 setModelContextWindowResolver 注入。
+ * 取值与 IConfigService.listProviders + IModelService.aggregateModels 等价（纯数据查询）。
+ */
+export type ModelContextWindowResolver = (provider: string, modelId: string) => number
+
 export class SessionService implements ISessionService, ISessionServiceInternal {
   private readonly sessions = new Map<string, ManagedSession>()
   private readonly restoringSessions = new Set<string>()
@@ -44,6 +59,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   private readonly lifecycle: SessionLifecycle
   private readonly dispatcher: MessageDispatcher
   private readonly scanner: SessionScanner
+  /**
+   * model contextWindow 解析器（组合根注入）。算 usagePercent 用——按 provider/modelId
+   * 查 ProviderInfo→ModelInfo 得到 contextWindow。未注入时 fallback 0（无法算百分比）。
+   */
+  private modelContextWindowResolver: ModelContextWindowResolver | null = null
 
   constructor(
     private readonly pm: IProcessManager,
@@ -55,6 +75,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
     private readonly navigateFactory: INavigateInterceptorFactory,
+    private readonly gitInfoReader: IGitInfoReader,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(src-electron/ 父目录)
     this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
@@ -62,7 +83,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
     this.lifecycle = new SessionLifecycle(this, this.pm, this.treeService, this.configStore, this.sessionStore)
     this.dispatcher = new MessageDispatcher(this, this.pm, this.broker)
-    this.scanner = new SessionScanner(this, this.sessionStore)
+    this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / tree 注销 / 列表刷新 / error 广播
     this.pm.onSessionExit((sessionId, code) => {
@@ -75,6 +96,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` } })
     })
+  }
+
+  /**
+   * 注入 model contextWindow 解析器（组合根在所有服务构造后调用）。
+   * session 级状态 owner 需读 contextWindow 才能算 usagePercent / 推 contextLimit。
+   */
+  setModelContextWindowResolver(resolver: ModelContextWindowResolver): void {
+    this.modelContextWindowResolver = resolver
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
@@ -99,6 +128,29 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionService:Facade 直接实现(查 sessions / 经 rpc,轻量)─────
 
+  /**
+   * session 级状态单一 owner：切换模型的 RPC + 缓存更新 + 广播 session.state_changed。
+   *
+   * 时序（必须保留，原 model-service.broadcastSessionState 的竞态保护逻辑迁入此处）：
+   * 1. 先调 pi RPC setModel —— 确保切模型在 pi 侧生效，否则后续 get_state 读到旧值。
+   * 2. 写 session.modelId 缓存。
+   * 3. 查 pi get_state 拿当前 thinkingLevel 并回写缓存（thinkingLevel 从 get_state 查询
+   *    而非依赖 thinking_level_changed 事件：pi 切模型时若新模型 thinkingLevel 与当前相同
+   *    则不 emit 事件，导致缓存恒为 undefined。get_state 是可靠来源）。
+   * 4. 按「新 modelId 的 contextWindow + 当前 inputTokens」重算 usagePercent 并广播。
+   *
+   * 为什么除 config.defaults 外还要广播 session.state_changed（原 model-service 注释保留）：
+   * config.defaults 是全局默认（不带 sessionId），前端无法据它定位「哪个 session 换了模型」。
+   * session.state_changed 带 sessionId，前端据它同步 Composer 工具条（模型显示 / 用量 / 思考强度）。
+   * 缺这条广播导致切换模型后 UI 不跟随（用量停在旧值、模型显示靠 defaultModel fallback 而非
+   * per-session 真值）。
+   *
+   * context.update 与 switchModel 竞态（已踩过坑，2026-07-01 inputTokens 修复）：
+   * inputTokens 由 onContextUpdate（agent_end 触发）回写到 session 缓存。switchModel 重算
+   * usagePercent 时读的是该缓存。两者经 setInputTokens 缓存打通数据源——context.update 先回写、
+   * switchModel 后读取，时序由「缓存写入先于 switchModel 读取」保证。本方法读 inputTokens
+   * 必须在 setInputTokens 之后（getInputTokens），不可另起来源。
+   */
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<string> {
     const session = this.sessions.get(sessionId)
     if (!session) return sessionId
@@ -113,6 +165,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       }
     }
     session.modelId = newModelId
+
+    // 切模型后立即广播 session 级状态（modelId + 按新 contextWindow 重算用量 + thinkingLevel）
+    await this.broadcastSessionState(sessionId, provider, modelId)
     return sessionId
   }
 
@@ -187,6 +242,38 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (s && typeof tokens === 'number') s.inputTokens = tokens
   }
 
+  /**
+   * 处理 context.update（pi agent_end 推送 inputTokens）。session 级状态单一 owner：
+   * 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。index.ts onContextUpdate
+   * 仅调本方法，不再自己算 usagePercent。
+   *
+   * context.update 与 switchModel 竞态（已踩过坑，原 index.ts onContextUpdate 注释保留）：
+   * 此处回写 inputTokens 缓存是打通 context.update 与 switchModel 数据源的关键——
+   * 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）。
+   * 顺序保证：onContextUpdate 回写在先、switchModel 读取在后（缓存写入先于 switchModel 读）。
+   */
+  applyContextUpdate(sessionId: string, inputTokens: number): void {
+    if (!inputTokens || inputTokens === 0) return
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    // 回写缓存（打通数据源）
+    session.inputTokens = inputTokens
+    // 算 usagePercent + 广播
+    const { usagePercent, contextLimit } = this.computeUsage(sessionId, session.modelId)
+    this.broker.broadcast({
+      type: 'context.update',
+      id: `ctx_${Date.now()}`,
+      payload: { sessionId, usagePercent, inputTokens, contextLimit },
+    })
+  }
+
+  /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId 的 contextWindow 算）。 */
+  getUsagePercent(sessionId: string): number {
+    const session = this.sessions.get(sessionId)
+    if (!session) return 0
+    return this.computeUsage(sessionId, session.modelId).usagePercent
+  }
+
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
       this.treeService.unregisterSession(session.id)
@@ -222,7 +309,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   toSummary(s: IManagedSessionView): SessionSummary {
-    const git = readGitInfo(s.cwd)
+    const git = this.gitInfoReader.readGitInfo(s.cwd)
     return {
       id: s.id, label: s.label, cwd: s.cwd,
       gitBranch: git?.branch, gitIsWorktree: git?.isWorktree,
@@ -282,6 +369,74 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   // ── 私有协作者 ────────────────────────────────────────────────
+
+  /**
+   * usagePercent 计算的唯一实现（消除 model-service / index.ts 两处重复）。
+   * 公式：contextWindow>0 ? Math.min(Math.round(inputTokens/contextWindow*100), 100) : 0。
+   * 与原两处实现结果一致（验证见 model-service / index.ts 旧代码）。
+   * contextLimit 同步返回（广播 payload 用），未配置 contextWindow 时为 0。
+   */
+  private computeUsage(sessionId: string, modelId: string): { usagePercent: number; contextLimit: number } {
+    const inputTokens = this.getInputTokens(sessionId)
+    const contextWindow = this.resolveContextWindow(modelId)
+    const usagePercent = contextWindow > 0
+      ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
+      : 0
+    return { usagePercent, contextLimit: contextWindow }
+  }
+
+  /** 按 modelId（'provider/model' 形式）经 resolver 查 contextWindow；未注入 resolver 返回 0。 */
+  private resolveContextWindow(modelId: string): number {
+    if (!this.modelContextWindowResolver) return 0
+    const sepIdx = modelId.indexOf('/')
+    if (sepIdx < 0) return 0
+    const provider = modelId.slice(0, sepIdx)
+    const id = modelId.slice(sepIdx + 1)
+    return this.modelContextWindowResolver(provider, id) ?? 0
+  }
+
+  /**
+   * 广播 session.state_changed：切换模型后立即把新 modelId + 按新 contextWindow 重算的用量
+   * + pi 当前 thinkingLevel 推给前端，无需等下一次 agent_end。（原 model-service.broadcastSessionState
+   * 逻辑迁入，时序/竞态保护全部保留。）
+   *
+   * thinkingLevel 从 pi get_state 查询（而非依赖 thinking_level_changed 事件）：
+   * pi 切模型时若新模型的 thinkingLevel 与当前相同则不 emit 事件，导致缓存恒为 undefined。
+   * get_state 是可靠来源。
+   */
+  private async broadcastSessionState(sessionId: string, provider: string, modelId: string): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session) return // session 不在活跃 Map（磁盘 session），无法重算
+    const client = this.pm.getClient(sessionId)
+    let thinkingLevel = session.thinkingLevel
+    if (client) {
+      try {
+        const state = await readPiState(client)
+        const level = state?.thinkingLevel as string | undefined
+        if (level) {
+          this.setThinkingLevelCache(sessionId, level)
+          thinkingLevel = level
+        }
+      // eslint-disable-next-line taste/no-silent-catch -- get_state 失败不阻塞切换：thinkingLevel 回退到 summary 值
+      } catch (e) {
+        console.error('[session-service] get_state for thinkingLevel failed:', e)
+      }
+    }
+    const inputTokens = this.getInputTokens(sessionId)
+    const { usagePercent, contextLimit } = this.computeUsage(sessionId, `${provider}/${modelId}`)
+    this.broker.broadcast({
+      type: 'session.state_changed',
+      id: `push_${Date.now()}`,
+      payload: {
+        sessionId,
+        modelId: session.modelId,
+        thinkingLevel,
+        usagePercent,
+        inputTokens,
+        contextLimit,
+      },
+    })
+  }
 
   /** Attach agent_end listener:track token usage + isGenerating。 */
   private attachUsageListener(id: string, client: IPiEngine): () => void {

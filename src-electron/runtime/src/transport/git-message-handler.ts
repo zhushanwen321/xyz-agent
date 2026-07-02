@@ -45,7 +45,7 @@ export class GitMessageHandler {
         const { sessionId } = msg.payload
         try {
           const result = await this.ctx.gitService.getStatus(sessionId)
-          return this.ctx.reply(ws, msg.id, 'git.status:result', result as unknown as Record<string, unknown>)
+          return this.ctx.reply(ws, msg.id, 'git.status:result', result)
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)
         }

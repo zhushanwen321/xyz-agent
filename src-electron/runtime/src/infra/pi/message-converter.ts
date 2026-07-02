@@ -27,9 +27,15 @@ function parseSkillBlock(text: string): { skillName: string; skillLocation?: str
  * 按 AC-9.3 graceful 降级：write 一律标 modified（方案 B 兜底，与 event-adapter 缺 cwd 时一致），
  * edit 恒 modified。filePath 取 toolCall.arguments.path（pi 契约权威参数名，file_path 防御 fallback）。
  *
- * 与实时路径（event-adapter extractWriteChange/extractEditChange）语义对齐，但历史路径不计算行数
- * （patch 不在历史 toolCall 里，需 toolResult 解析，复杂度高且非 file-tree 主链路，留 TODO）。
+ * 与实时路径语义对齐（都按"工具改了哪些文件"判定），但两条路径实现不同：
+ * - 实时路径（event-adapter）：ADR-0024 D5 后改用 git baseline diff（file-change-reconciler），
+ *   覆盖 write/edit/bash（bash 经 sed/echo 改的文件无法静态解析，只能靠 diff 兜底），并计算行数。
+ * - 历史路径（此处）：从 toolCall 参数静态解析（无法覆盖 bash），且不计算行数
+ *   （patch 不在历史 toolCall 里，需 toolResult 解析，复杂度高且非 file-tree 主链路，留 TODO）。
  */
+// 下方 write/edit 工具名集合与 event-adapter 的实时 diff 触发条件（write/edit/bash）刻意不复用：
+// 此处面向历史 toolCall 静态解析，历史数据工具名更杂（含 write_file/str_replace 等别名）故需宽匹配，
+// 且历史无 bash（bash 改的文件无法从参数静态解析，历史路径无法还原）。
 const WRITE_TOOL_NAMES = new Set(['write', 'write_file', 'writeFile', 'create_file'])
 const EDIT_TOOL_NAMES = new Set(['edit', 'edit_file', 'editFile', 'str_replace', 'replace'])
 

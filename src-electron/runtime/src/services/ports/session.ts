@@ -2,7 +2,7 @@
  * Session 域 ports —— pi session 文件的发现/扫描/持久化 + 历史翻译。
  *
  * 🔒 三层架构：services 定义 port，infra/pi/session-store.ts 实现。
- * 封装 pi-config-bridge 的 session 相关函数 + message-converter 的 convertPiHistory
+ * 封装 session-file-utils 的 session 相关函数 + message-converter 的 convertPiHistory
  * + system/trash。session 域的 pi 文件/状态操作，service 经此 port 访问。
  */
 
