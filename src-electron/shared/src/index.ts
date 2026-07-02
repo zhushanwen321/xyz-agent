@@ -1,18 +1,7 @@
 export type {
   ClientMessageType, ClientMessage, ClientMessageMap,
-  ExtractPayload, SpecificClientMessage, SetProviderData,
+  SetProviderData,
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
-  ExtractServerPayload, SpecificServerMessage,
-  ExtensionUIRequestPayload, ExtensionUIResponsePayload,
-  ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
-  ExtensionDiscoveredPayload,
-  GitStatusResult, GitFileStatus,
-  StopReason,
-  StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload, PluginInfo,
-  UISendMode, ProtocolSendMode,
-} from './protocol'
-export {
-  toProtocolSendMode,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
@@ -29,14 +18,14 @@ export type {
   ScanSourceType, ScannedSkillInfo, ScannedAgentInfo,
   DiscoveryConfig, SkillDirConfig,
 } from './provider'
-export type {
-  AppErrorCode, AppError,
-} from './errors'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
   PanelLeaf, SplitNode, PanelTree, WindowState,
 } from './panel'
 export * from './extension'
+export * from './git'
+export * from './plugin'
 export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES } from './constants'
 export * from './file-tree'
 export * from './ignore-parser'
+export * from './git-status-parser'

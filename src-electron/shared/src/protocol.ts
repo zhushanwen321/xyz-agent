@@ -4,6 +4,11 @@ import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig } fr
 import type { SessionGroup } from './session'
 import type { FileChange, ChangeSetStatus } from './message'
 import type { FileNode } from './file-tree'
+// 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
+// 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
+import type { ExtensionInfo } from './extension'
+import type { GitStatusResult } from './git'
+import type { PluginInfo } from './plugin'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
@@ -197,14 +202,6 @@ export type ClientMessage =
   | { type: 'git.checkout'; id?: string; payload: ClientMessageMap['git.checkout'] }
   | { type: 'git.createBranch'; id?: string; payload: ClientMessageMap['git.createBranch'] }
 
-// ── 辅助类型 ────────────────────────────────────────────────────
-
-/** 根据 type 提取对应的 payload 类型 */
-export type ExtractPayload<T extends ClientMessageType> = T extends keyof ClientMessageMap ? ClientMessageMap[T] : never
-
-/** 构造特定 type 的 ClientMessage */
-export type SpecificClientMessage<T extends ClientMessageType> = Extract<ClientMessage, { type: T }>
-
 // ── Runtime → Client message types ──────────────────────────────
 
 export type ServerMessageType =
@@ -285,7 +282,7 @@ export interface ServerMessageMapBase {
   'extension:status': { sessionId: string; statusKey: string; text: string }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
   'session.compacting': { sessionId: string }
-  'session.compacted': { sessionId: string; success?: boolean; error?: string }
+  'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
@@ -366,12 +363,6 @@ export interface ServerMessage<T extends ServerMessageType = ServerMessageType> 
   payload: ServerMessageMap[T]
 }
 
-/** 根据 type 提取对应的 server payload 类型 */
-export type ExtractServerPayload<T extends ServerMessageType> = ServerMessageMap[T]
-
-/** 构造特定 type 的 ServerMessage */
-export type SpecificServerMessage<T extends ServerMessageType> = ServerMessage<T>
-
 /**
  * # 错误契约（D10/P0-B）
  *
@@ -391,198 +382,7 @@ export type SpecificServerMessage<T extends ServerMessageType> = ServerMessage<T
  *
  * 此前 6 种碎片化形状（extension.installError / file.read:error / ...）已统一：
  * `extension.installError` 和 `file.read:error` type 已删除（客户端 0 消费者时合并）。
- */
-
-// ── Extension payload interfaces ────────────────────────────────
-
-/** Interactive extension UI methods that produce extension.ui_request WS events */
-export type ExtensionUIMethod = 'confirm' | 'select' | 'input' | 'notify' | 'editor'
-
-export interface ExtensionUIRequestPayload {
-  sessionId: string
-  requestId: string
-  method: ExtensionUIMethod
-  title?: string
-  message?: string
-  options?: string[]
-  default?: string
-  level?: 'info' | 'warn' | 'error'
-  /** Origin of the request — determines which WS channel the response is sent to */
-  source?: 'extension' | 'plugin'
-}
-
-export interface ExtensionUIResponsePayload {
-  sessionId: string
-  requestId: string
-  result: boolean | string | null
-}
-
-export interface ExtensionErrorPayload {
-  sessionId: string
-  extensionName: string
-  error: string
-  errorEvent?: string
-}
-
-export interface ToolCallUpdatePayload {
-  sessionId: string
-  toolCallId: string
-  progress?: number
-  detail?: string | Record<string, unknown>
-}
-
-export interface ExtensionInfo {
-  name: string
-  /** Filesystem directory basename (may differ from npm package name for scoped packages) */
-  dirName: string
-  version: string
-  description: string
-  path: string
-  enabled: boolean
-  source: 'built-in' | 'user-installed'
-  /** Extension 暴露的工具名列表（MCP tools / pi extension tools）。可选：runtime 扫描到时填，
-   *  前端 ExtensionPage 据此渲染工具清单。可选而非必填——避免强制 runtime 生产侧同步改造。 */
-  tools?: string[]
-}
-
-// ── Extension install flow payload interfaces ──────────────────
-
-export interface ExtensionDiscoveredPayload {
-  tempDir: string
-  candidates: ExtensionInfo[]
-}
-
-// ── Git payload interfaces（#1 git 全栈 / #12 契约地基）──────────────────────────
-// 依据 code-architecture.md §3.1/§3.6/§3.7/§3.8/§4.1/§4.2 + spec-w11.md FR-12/G-R2-01。
-// 本契约仅定义类型；runtime 实现（git-service / IGitExecutor / git-message-handler）属 Wave 1a。
-
-/** git.status 的返回结构（FR-12/G-R2-01）。cwd 非 git 仓库时 isRepo=false，其余字段为默认值。
- *  用 type 别名而非 interface：ServerMessageMapBase 的 payload 需隐式索引签名才能赋给
- *  chat-chunk-processor 的 Record<string, unknown> 读取器（interface 无隐式索引签名，会报 TS2345）。 */
-export type GitStatusResult = {
-  sessionId: string
-  isRepo: boolean
-  branch?: string
-  stagedCount: number
-  unstagedCount: number
-  stats: { add: number; del: number }
-  hasConflict: boolean
-  files: GitFileStatus[]
-  /** 本地分支名列表（#6 选分支 popover 数据源，架构 §4.3 GitStatusResult 含分支列表）。
-   *  由 getStatus 经 `git branch --list` 填充；unborn HEAD / 列举失败 → []。 */
-  branches?: string[]
-}
-
-/** 单文件的 git 状态（git --porcelain 的 XY 码解析结果）。
- *  status 由 xyCode 派生：U* → unmerged（冲突），?? → untracked，其余按 added/modified/deleted/renamed。
- *  staged/unstaged 维度由 xyCode 的两列体现（X=staged，Y=unstaged），不进 status 枚举。
  *
- *  additions/deletions：tracked 改动文件的增删行数（来自 git diff --numstat HEAD per-file）。
- *  untracked/unmerged/二进制 文件无 numstat → undefined，前端降级展示（untracked 显文件大小，
- *  二进制显 'binary'）。这是文件树 +N −M 行数角标的数据源。 */
-export interface GitFileStatus {
-  path: string
-  /** 原始 git --porcelain 双列状态码（如 'A ', ' M', 'UU', '??', 'R '）。前端可据 xyCode[0]/xyCode[1] 细分暂存/工作区态。 */
-  xyCode: string
-  status: 'added' | 'modified' | 'deleted' | 'unmerged' | 'renamed' | 'untracked'
-  /** 增加行数（numstat per-file）。tracked 改动文件有值；untracked/二进制/unmerged 为 undefined。 */
-  additions?: number
-  /** 删除行数（numstat per-file）。tracked 改动文件有值；untracked/二进制/unmerged 为 undefined。 */
-  deletions?: number
-}
-
-// 注：ExtensionInstallErrorPayload 已删除（D10/P0-B）——install 失败现在走统一 error envelope，
-// hint 进 details.hint。见上方「错误契约」文档注释。
-
-// ── Plugin payload interfaces ───────────────────────────────────
-
-export interface PluginInfo {
-  pluginId: string
-  version: string
-  displayName: string
-  description: string
-  status: 'discovered' | 'loaded' | 'active' | 'inactive' | 'crashed'
-  trustLevel: 'trusted' | 'sandbox'
-  enabled: boolean
-}
-
-export interface PluginCrashedPayload {
-  pluginId: string
-  workerId: string
-  error: string
-}
-
-export interface PluginNotificationPayload {
-  pluginId: string
-  level: 'info' | 'warning' | 'error'
-  message: string
-}
-
-// ── Plugin Server → Client payload interfaces ────────────────────
-
-export interface PluginStatusChangePayload {
-  pluginId: string
-  oldStatus: string
-  newStatus: string
-}
-
-export interface PluginPermissionRequestPayload {
-  pluginId: string
-  permissions: string[]
-}
-
-export interface StatusBarItem {
-  id: string
-  pluginId: string
-  text: string
-  tooltip?: string
-  commandId?: string
-  priority: number
-  scope: 'per-session' | 'global'
-  sessionId?: string
-}
-
-export interface PluginStatusBarUpdatePayload {
-  items: StatusBarItem[]
-}
-
-export interface StatusSetUpdatePayload {
-  sessionId: string
-  key: string
-  text: string
-}
-
-export interface MessageDecoration {
-  type: string
-  pluginId: string
-  label: string
-  color?: string
-  commandId?: string
-}
-
-export interface PluginMessageDecorationPayload {
-  sessionId: string
-  messageId: string
-  decorations: MessageDecoration[]
-}
-
-export interface PluginConfigPayload {
-  pluginId: string
-  config: Record<string, unknown>
-}
-
-// ── StopReason / SendMode helpers ─────────────────────────────
-
-/** Possible reasons a stream completed */
-export type StopReason = 'complete' | 'aborted' | 'error' | 'length' | 'tool_use'
-
-/** UI-facing send mode values */
-export type UISendMode = 'send' | 'steer' | 'queue'
-
-/** Protocol-level send mode values (queue → follow-up) */
-export type ProtocolSendMode = 'send' | 'steer' | 'follow-up'
-
-/** UI send mode → protocol send mode mapping */
-export function toProtocolSendMode(mode: UISendMode): ProtocolSendMode {
-  return mode === 'queue' ? 'follow-up' : mode
-}
+ * 领域 DTO（ExtensionInfo / GitStatusResult / PluginInfo / StatusBarItem …）已下沉到
+ * extension.ts / git.ts / plugin.ts，本文件顶部 import 引用，ServerMessageMapBase 照常引用。
+ */
