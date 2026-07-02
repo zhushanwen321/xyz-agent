@@ -1,20 +1,24 @@
 <template>
   <!--
     思考等级 popover（draft-composer-states §2c）。
-    click 触发，6 级：off / low / medium / high / xhigh / max（默认 max）。
-    触发器与列表均中性配色（与上下文容量 / 模型触发器同款 text-subtle），仅选中态走 accent，
-    不再按等级染紫相（去色要求）。等级强度靠 popover 内 off→max 的语义表达。
+    触发器与列表均中性配色（与上下文容量 / 模型触发器同款 text-subtle），仅选中态走 accent。
+    等级强度靠 popover 内 off→max 的语义表达。
   -->
   <Popover v-model:open="open">
-    <PopoverTriggerButton
-      :open="open"
-      title="思考等级"
-    >
-      <template #leading>
+    <PopoverTrigger as-child>
+      <Button
+        variant="ghost"
+        class="h-7 gap-1 rounded-sm px-2 text-[11.5px] text-subtle transition-colors hover:text-muted"
+        title="思考等级"
+      >
         <Brain class="size-3 shrink-0" />
-      </template>
-      <span>{{ currentLabel }}</span>
-    </PopoverTriggerButton>
+        <span>{{ currentLabel }}</span>
+        <ChevronDown
+          class="ml-px size-[9px] transition-transform duration-200"
+          :class="open && 'rotate-180'"
+        />
+      </Button>
+    </PopoverTrigger>
     <PopoverContent side="top" class="w-[180px] p-0">
       <!-- head -->
       <div
@@ -28,7 +32,7 @@
         :key="opt.level"
         variant="ghost"
         class="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
-        :class="level === opt.level && SELECTED_ITEM_CLASS"
+        :class="level === opt.level && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
         @click="onSelect(opt)"
       >
         <span
@@ -47,10 +51,9 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Check, Brain } from '@lucide/vue'
+import { Check, ChevronDown, Brain } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTriggerButton } from '@/components/ui/popover'
-import { SELECTED_ITEM_CLASS } from '@/composables/logic/popover-styles'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   THINKING_LEVELS,
   resolveAvailableLevels,
@@ -71,7 +74,7 @@ const emit = defineEmits<{
 const props = defineProps<{
   level?: string
   /** 当前模型的思考档位映射（per-model thinkingLevelMap）。
-   *  key = UI 可选档位，value = 发给 runtime 的实际 level（非 null = 可用）。
+   *  key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime 的实际 level（非 null = 可用）。
    *  undefined = 全可用（all-levels 预设）。切换模型后 Composer 传入新模型的 map。 */
   levelMap?: Record<string, string | null>
 }>()

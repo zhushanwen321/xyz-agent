@@ -5,8 +5,8 @@
  * - 按 currentModelId 解析当前模型的 thinkingLevelMap
  * - 模型切换后若当前思考等级不在新模型可用档位，重置到最高可用档
  *
- * thinkingLevelMap 语义（key-based）：
- * key = UI 可选档位（ThinkingLevel 枚举），value = 发给 runtime/pi 的实际 level。
+ * thinkingLevelMap 语义：
+ * key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime/pi 的实际 level。
  * onReset 传给 Composer 的是 map 映射后的 value（发给 runtime 的字符串）。
  */
 import { computed, watch, type ComputedRef, type Ref } from 'vue'

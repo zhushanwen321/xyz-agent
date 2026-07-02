@@ -4,20 +4,22 @@
  * 核心场景（用户反馈）：landing 态从 A 模型（high-max）切到 B 模型（on-off），
  * 思考等级应自动从 max 重置为 high（on-off 最高可用档），而非停留在 max。
  *
- * 数据（对齐真实配置 / ProviderEditModal THINKING_PRESETS）：
- * - high-max 模型 map = { high:'high', max:'xhigh' }（可用 high + max，max 档发 xhigh）
- * - on-off 模型 map   = { off:'off', high:'high' }（可用 off + high，high 档发 high）
+ * 数据（对齐真实配置 / useProviderEdit THINKING_PRESETS）：
+ * - high-max 模型 map = { off:'off', high:'high', max:'xhigh' }（可用 off+high+max，max 档发 xhigh）
+ * - on-off 模型 map   = { off:'off', high:'high' }（可用 off+high）
  * - all-levels map    = undefined（全档可用）
+ *
+ * onReset 传的是 map 映射后的 value（如 max 档发 xhigh），不是 key。
  *
  * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/use-thinking-level-sync.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { ref, computed, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useThinkingLevelSync } from '@/composables/panel/useThinkingLevelSync'
 import { useSettingsStore } from '@/stores/settings'
 
-// 真实预设（对齐 ProviderEditModal THINKING_PRESETS）
+// 真实预设（对齐 useProviderEdit THINKING_PRESETS）
 const HIGH_MAX_MAP = { off: 'off', minimal: null, low: null, medium: null, high: 'high', max: 'xhigh' }
 const ON_OFF_MAP = { off: 'off', minimal: null, low: null, medium: null, high: 'high', xhigh: null }
 
@@ -48,7 +50,6 @@ describe('useThinkingLevelSync · 切模型自动重置思考等级', () => {
       computed(() => currentThinkingLevel.value),
       (level) => { resetCalls.push(level) },
     )
-    // 触发 computed 求值
     void map.value
     await nextTick()
 
@@ -70,7 +71,6 @@ describe('useThinkingLevelSync · 切模型自动重置思考等级', () => {
     ]
 
     const currentModelId = ref('p/A')
-    // A 模型选了 high 档（发 value='high'）
     const currentThinkingLevel = ref<string | undefined>('high')
     const resetCalls: string[] = []
     const map = useThinkingLevelSync(
@@ -96,7 +96,6 @@ describe('useThinkingLevelSync · 切模型自动重置思考等级', () => {
     ]
 
     const currentModelId = ref('p/B')
-    // landing 态初始无 thinkingLevel
     const currentThinkingLevel = ref<string | undefined>(undefined)
     const resetCalls: string[] = []
     const map = useThinkingLevelSync(

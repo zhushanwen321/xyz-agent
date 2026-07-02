@@ -12,7 +12,7 @@ unverified_count: 0
 | 1 | §nfr N2 | NFR.md S-9 | `[from: 2026-07-02-thinking-level-and-model-select §nfr N2]` | ✅ 代码已验证 |
 | 2 | §nfr N3 | NFR.md S-10 | `[from: 2026-07-02-thinking-level-and-model-select §nfr N3]` | ✅ 代码已验证 |
 | 3 | §nfr N4 | NFR.md S-11 | `[from: 2026-07-02-thinking-level-and-model-select §nfr N4]` | ✅ 代码已验证 |
-| 4 | §nfr N1 | NFR.md S-12 | `[from: 2026-07-02-thinking-level-and-model-select §nfr N1]` | ✅ 代码已验证（onSelect 直接发 key，resolveThinkingValue 已删除） |
+| 4 | §nfr N1 | NFR.md S-12 | `[from: 2026-07-02-thinking-level-and-model-select §nfr N1]` | ✅ 代码已验证（展示是展示，传递 value 是 value——onSelect 发 resolveThinkingValue 映射后的 value，前端枚举保留 max） |
 | 5 | §decisions D1/D4 | docs/adr/0001-thinking-level-map-key-based.md | `[from: 2026-07-02-thinking-level-and-model-select §decisions D1/D4]` | ✅ pi 源码验证 |
 | 6 | §execution | TEST-STRATEGY.md §4 回归基线 | `[from: 2026-07-02-thinking-level-and-model-select §execution]` | ✅ 4 单测覆盖 |
 

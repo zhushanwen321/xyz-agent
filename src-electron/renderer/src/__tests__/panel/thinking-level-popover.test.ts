@@ -14,8 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 import ThinkingLevelPopover from '@/components/panel/ThinkingLevelPopover.vue'
 
-// 真实预设（从 ProviderEditModal.vue THINKING_PRESETS 同步）
-// key = UI 档位，value = 发 runtime 的值
+// 真实预设（从 useProviderEdit.ts THINKING_PRESETS 同步）
 const HIGH_MAX_MAP = { off: 'off', high: 'high', max: 'xhigh' }
 const ON_OFF_MAP = { off: 'off', high: 'high' }
 

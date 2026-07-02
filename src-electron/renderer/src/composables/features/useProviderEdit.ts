@@ -38,16 +38,16 @@ export const CONTEXT_OPTIONS = [
 ] as const
 
 /**
- * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义（key-based，对齐 pi）：
- * - key = pi 档位名（off/minimal/low/medium/high/xhigh），前端直接发 key 给 pi
- * - value = provider 实际值（pi 内部 provider 层自查 map[key] 取 value 发 API）
- * - string = 可用，null = 不可用
- * 预设：all-levels(undefined=全档) / on-off(off+high) / high-max(off+high+xhigh)
+ * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义：
+ * - key = UI 可选档位（ThinkingLevel 枚举值，含 max），用于展示和判定可用
+ * - value = 发给 runtime/pi 的实际 level（string=可用，null=不可用）
+ * - 发给 pi 的是 value（如 max 档发 xhigh），不是 key——展示是展示，传递 value 是 value
+ * 预设：all-levels(undefined=全档) / on-off(off+high) / high-max(off+high+max→xhigh)
  */
 const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
   'all-levels': undefined,
   'on-off': { off: 'off', high: 'high' },
-  'high-max': { off: 'off', high: 'high', xhigh: 'xhigh' },
+  'high-max': { off: 'off', high: 'high', max: 'xhigh' },
 }
 
 /** 思考策略 Select 选项（template thinkingStrategies 来源） */
@@ -115,13 +115,13 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
 
   /**
    * 从 thinkingLevelMap 反推策略预设（Select 回显当前选中）。按可用档位 key 判定：
-   * 含 xhigh→high-max；含 high（无 xhigh）→on-off；空→all-levels。
+   * 含 max→high-max；含 high（无 max）→on-off；空→all-levels。
    */
   function getStrategyFromMap(map?: Record<string, string | null>): ThinkingStrategy {
     if (!map || Object.keys(map).length === 0) return 'all-levels'
     // 可用档位（key 存在且 value 非 null）
     const availableKeys = Object.keys(map).filter((k) => map[k] !== null)
-    if (availableKeys.includes('xhigh')) return 'high-max'
+    if (availableKeys.includes('max')) return 'high-max'
     if (availableKeys.includes('high')) return 'on-off'
     return 'all-levels'
   }

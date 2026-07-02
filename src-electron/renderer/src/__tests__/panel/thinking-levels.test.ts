@@ -1,14 +1,15 @@
 /**
  * thinking-levels 纯函数单测。
  *
- * thinkingLevelMap 语义（key-based）：
- * - key = UI 可选档位（ThinkingLevel 枚举：off/low/medium/high/xhigh/max）
- * - value = 发给 runtime/pi 的实际 level（string = 可用，null = 不可用）
+ * thinkingLevelMap 语义：
+ * - key = UI 可选档位（ThinkingLevel 枚举值，含 max），用于展示和判定可用
+ * - value = 发给 runtime/pi 的实际 level（string=可用，null=不可用）
+ * - 发给 pi 的是 value（如 max 档发 xhigh），不是 key
  *
- * fixture 来自真实预设（ProviderEditModal.vue THINKING_PRESETS）：
+ * fixture 来自真实预设（useProviderEdit.ts THINKING_PRESETS）：
  * - all-levels: undefined → 全 6 档
  * - on-off: { off:'off', high:'high' } → off + high
- * - high-max: { high:'high', max:'xhigh' } → high + max
+ * - high-max: { off:'off', high:'high', max:'xhigh' } → off + high + max（max 档发 xhigh）
  *
  * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/thinking-levels.test.ts
  */
@@ -18,18 +19,18 @@ import {
   resolveThinkingValue,
   resolveThinkingKey,
   highestAvailableLevel,
+  getDisplayLabel,
   THINKING_LEVELS,
 } from '@/components/panel/thinking-levels'
 
-// 真实预设（从 ProviderEditModal.vue THINKING_PRESETS 同步）
+// 真实预设（从 useProviderEdit.ts THINKING_PRESETS 同步）
 const ON_OFF_MAP = { off: 'off', high: 'high' }
 const HIGH_MAX_MAP = { off: 'off', high: 'high', max: 'xhigh' }
 const ALL_LEVELS = ['off', 'low', 'medium', 'high', 'xhigh', 'max'] as const
-const SORTED_ALL = [...ALL_LEVELS].sort()
 
 describe('resolveAvailableLevels（按 key 判定可用档位）', () => {
   it('map=undefined（all-levels 预设）→ 全 6 档', () => {
-    expect([...resolveAvailableLevels(undefined)].sort()).toEqual(SORTED_ALL)
+    expect([...resolveAvailableLevels(undefined)].sort()).toEqual([...ALL_LEVELS].sort())
   })
 
   it('high-max 预设 {off,high,max} → 可用 off + high + max（按 key 非 null）', () => {
@@ -41,16 +42,16 @@ describe('resolveAvailableLevels（按 key 判定可用档位）', () => {
   })
 
   it('空对象 {} → 全 6 档（fallback 全可用）', () => {
-    expect([...resolveAvailableLevels({})].sort()).toEqual(SORTED_ALL)
+    expect([...resolveAvailableLevels({})].sort()).toEqual([...ALL_LEVELS].sort())
   })
 
   it('全 null 值的 map → 全 6 档（无可用 key，fallback）', () => {
-    expect([...resolveAvailableLevels({ off: null, low: null })].sort()).toEqual(SORTED_ALL)
+    expect([...resolveAvailableLevels({ off: null, low: null })].sort()).toEqual([...ALL_LEVELS].sort())
   })
 })
 
 describe('resolveThinkingValue（UI 档位 key → 发 runtime 的 value）', () => {
-  it('high-max: max 档发 xhigh', () => {
+  it('high-max: max 档发 xhigh（展示是 max，传递 value 是 xhigh）', () => {
     expect(resolveThinkingValue('max', HIGH_MAX_MAP)).toBe('xhigh')
   })
 
@@ -68,7 +69,7 @@ describe('resolveThinkingValue（UI 档位 key → 发 runtime 的 value）', ()
 })
 
 describe('resolveThinkingKey（runtime value → UI 档位 key）', () => {
-  it('high-max: value xhigh → key max', () => {
+  it('high-max: value xhigh → key max（反查）', () => {
     expect(resolveThinkingKey('xhigh', HIGH_MAX_MAP)).toBe('max')
   })
 
@@ -86,6 +87,20 @@ describe('resolveThinkingKey（runtime value → UI 档位 key）', () => {
 
   it('无法映射时 fallback max', () => {
     expect(resolveThinkingKey('unknown', HIGH_MAX_MAP)).toBe('max')
+  })
+})
+
+describe('getDisplayLabel', () => {
+  it('on-off 模式 high → 「开」', () => {
+    expect(getDisplayLabel('high', ON_OFF_MAP)).toBe('开')
+  })
+
+  it('high-max 模式 high → 「高」（通用 label）', () => {
+    expect(getDisplayLabel('high', HIGH_MAX_MAP)).toBe('高')
+  })
+
+  it('high-max 模式 max → 「最高」', () => {
+    expect(getDisplayLabel('max', HIGH_MAX_MAP)).toBe('最高')
   })
 })
 
