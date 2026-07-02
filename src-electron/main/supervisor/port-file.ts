@@ -13,7 +13,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { getDataDir } from '@xyz-agent/shared'
+import { getDataDir } from '@xyz-agent/shared/paths'
 
 /**
  * 将端口写入 $XYZ_AGENT_DATA_DIR/runtime.port。

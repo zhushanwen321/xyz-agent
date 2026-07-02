@@ -17,7 +17,7 @@
  *       sessions/                    ← Session jsonl 文件
  */
 
-import { getDataDir } from '@xyz-agent/shared'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import { join } from 'node:path'
 
 /** xyz-agent 数据根目录（委托 shared SSOT，读 XYZ_AGENT_DATA_DIR，缺省 ~/.xyz-agent）。 */

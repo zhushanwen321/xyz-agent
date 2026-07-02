@@ -88,9 +88,13 @@ vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-// Mock @xyz-agent/shared — provide constants needed by rpc-client + pi-paths（getDataDir）
+// Mock @xyz-agent/shared barrel — provide constants needed by rpc-client
 vi.mock('@xyz-agent/shared', () => ({
   ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP'],
+}))
+
+// Mock @xyz-agent/shared/paths — getDataDir 被 pi-paths 子路径 import（Node-only，隔离于 barrel）
+vi.mock('@xyz-agent/shared/paths', () => ({
   getDataDir: () => '/mock/home/.xyz-agent',
 }))
 
