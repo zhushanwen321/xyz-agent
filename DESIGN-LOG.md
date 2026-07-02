@@ -50,6 +50,7 @@
 | `2026-05-15-agent-use` / `2026-05-15-agent...` | agent 扫描导入 |
 | `2026-05-30-provider-model-mapping` / `-thinking-level-preset` | provider 模型映射 + thinking level 预设 |
 | `2026-06-10-model-lifecycle-fixes` | model 生命周期修复 |
+| `2026-07-02-thinking-level-and-model-select` | thinkingLevelMap key-based 语义对齐 pi + landing 态模型选择联动（archived 2026-07-02 → ADR-0001, NFR.md S-9/S-10/S-11, TEST-STRATEGY.md §4）|
 
 ### 插件系统（最大子系统，占 runtime 49%）
 
