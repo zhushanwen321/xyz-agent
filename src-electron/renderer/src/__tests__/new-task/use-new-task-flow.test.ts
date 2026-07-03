@@ -56,8 +56,15 @@ const workspaceStoreMock = vi.hoisted(() => ({
   load: vi.fn(),
 }))
 
+// INV-7: mock useToast 捕获 toastError 调用（cwd fallback 通知）
+const toastMock = vi.hoisted(() => ({ error: vi.fn() }))
+
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: vi.fn(() => workspaceStoreMock),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ error: toastMock.error }),
 }))
 
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
@@ -147,6 +154,51 @@ describe('useNewTaskFlow 状态机', () => {
       await flow.selectWorkspace('/custom/path') // dir-popover→landing，记 pendingCwd
       await flow.submitFirstMessage('hello world!')
       expect(apiMock.create).toHaveBeenCalledWith('/custom/path', 'hello worl…')
+    })
+  })
+
+  /**
+   * INV-7 / D-008: submitFirstMessage create 后比对 cwd 判断 runtime 是否降级 homedir，
+   * fallback 则 toastError。真实断言（修正 T4.4 只测 emit 格式的语义偷换）。
+   */
+  describe('submitFirstMessage cwd fallback toast（INV-7, D-008）', () => {
+    it('create 返回 cwd != 请求 cwd（runtime 降级 homedir）→ toastError 被调且文案含原 cwd', async () => {
+      // 模拟 runtime create 因 cwd 失效降级：返回的 session.cwd 与请求 cwd 不一致
+      apiMock.create.mockResolvedValueOnce({
+        id: 'fallback-s', label: 'x', cwd: '/home/user',
+        status: 'idle', lastActiveAt: 1, modelId: 'm', tokenCount: 0,
+      })
+      setGroups([gitSession({ id: 'hist', cwd: '/gone', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/gone'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage('hello')
+      // create 用兑底 cwd 调用
+      expect(apiMock.create).toHaveBeenCalledWith('/gone', expect.any(String))
+      // toast 触发一次，文案含「已不存在」+ 原 cwd
+      expect(toastMock.error).toHaveBeenCalledTimes(1)
+      expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('已不存在'))
+      expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('/gone'))
+    })
+
+    it('create 返回 cwd == 请求 cwd（目录存在，未降级）→ 不 toast', async () => {
+      // apiMock.create 默认实现返回 cwd = 传入 cwd，一致，不触发 toast
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage('hello')
+      expect(toastMock.error).not.toHaveBeenCalled()
+    })
+
+    it('未选目录且 defaultCwd=undefined（cwd 为空）→ 不比对、不 toast', async () => {
+      // cwd 守卫：cwd 为 undefined 时不进入比对分支
+      setGroups([])
+      workspaceStoreMock.defaultCwd = undefined
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage('hello')
+      expect(toastMock.error).not.toHaveBeenCalled()
     })
   })
 

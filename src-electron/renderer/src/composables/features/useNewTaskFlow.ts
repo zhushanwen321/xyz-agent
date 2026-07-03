@@ -25,6 +25,7 @@ import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
 import { useModel } from '@/composables/features/useModel'
+import { useToast } from '@/composables/useToast'
 import {
   useNewTaskFlowState,
   useNewTaskFlowController,
@@ -46,6 +47,7 @@ export function useNewTaskFlow() {
   const panel = usePanelStore()
   const navigation = useNavigationStore()
   const chat = useChat()
+  const { error: toastError } = useToast()
   // 模型切换 + 思考等级设置的 RPC + 乐观更新编排（features 层，ADR-0028）。
   // landing 态 apply 逻辑统一走此 composable，消除原先与 useComposerModelThinking 的重复。
   const { switchModel, setThinkingLevel } = useModel()
@@ -154,6 +156,11 @@ export function useNewTaskFlow() {
         // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
         const label = deriveSessionLabel(trimmed)
         const created = await sessionApi.create(cwd, label)
+        // INV-7: runtime create 内部可能因 cwd 失效降级 homedir，比对 session.cwd
+        // 与请求 cwd 不一致则 toast 通知用户（D-008 选中失效 cwd 降级）。
+        if (cwd && created.cwd !== cwd) {
+          toastError(`目录 ${cwd} 已不存在，已切换到主目录`)
+        }
         controller.bindCurrentSession(created)
         session.appendSession(created)
         // apply landing 态选定的模型（session 已 create，可调 model.switch RPC）。

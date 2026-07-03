@@ -12,6 +12,7 @@
  * 运行：cd src-electron/runtime && npx vitest run test/workspace-message-handler.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { tmpdir } from 'node:os'
 import type { ClientMessage } from '@xyz-agent/shared'
 
 // ── T1.9: WorkspaceMessageHandler RPC 贯穿 ─────────────────────
@@ -109,9 +110,9 @@ describe('SessionLifecycle — 写入时机 record', () => {
       workspaceService as unknown as ConstructorParameters<typeof SessionLifecycle>[4],
     )
 
-    await lifecycle.create('/test', 'test')
+    await lifecycle.create(tmpdir(), 'test')
 
-    expect(workspaceRecord).toHaveBeenCalledWith('/test')
+    expect(workspaceRecord).toHaveBeenCalledWith(tmpdir())
     expect(workspaceRecord).toHaveBeenCalledTimes(1)
   })
 

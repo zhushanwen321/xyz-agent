@@ -82,7 +82,7 @@ describe('T4.3: 搜索过滤', () => {
   })
 })
 
-describe('T4.4: 选中失效 cwd 降级（D-008）', () => {
+describe('T4.4: select 事件 payload 格式（DirSelectPopover 只 emit {cwd}，降级逻辑在 runtime create + useNewTaskFlow INV-7 测试覆盖）', () => {
   it('select emit 单 payload 对象 { cwd }', async () => {
     setupWorkspaceStore([
       mkRecord('/repo-a', 300),

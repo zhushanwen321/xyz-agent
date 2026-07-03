@@ -21,7 +21,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { MockInstance } from 'vitest'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -534,6 +534,22 @@ describe('SessionService · lifecycle', () => {
     it('calls ensureSessionFile when pi provides sessionFile', async () => {
       await setup.service.create(tmpdir())
       expect(mocks.ensureSessionFileMock).toHaveBeenCalledTimes(1)
+    })
+
+    // INV-7: create 收到不存在的 cwd → 降级 homedir（与 restoreSession fallback 对称）
+    it('falls back to homedir when requested cwd does not exist (INV-7)', async () => {
+      const nonexistentCwd = '/tmp/xyz-agent-test-cwd-nonexistent-' + Date.now()
+      const summary = await setup.service.create(nonexistentCwd, 'label')
+      // createSession 收到 homedir 而非不存在的路径（existsSync 真实，路径保证不存在）
+      expect(setup.pm.createSession).toHaveBeenCalledWith(
+        expect.any(String),
+        homedir(),
+        expect.any(Object),
+      )
+      // 返回的 summary.cwd 也是 homedir（前端据此比对发现 fallback 并 toast）
+      expect(summary.cwd).toBe(homedir())
+      // workspaceService.record 记录的是 fallback 后的 homedir
+      expect(vi.mocked(setup.pm.createSession).mock.calls[0][1]).not.toContain('nonexistent')
     })
   })
 

@@ -40,7 +40,13 @@ export class SessionLifecycle {
 
   async create(cwd?: string, label?: string): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
-    const sessionCwd = cwd ?? process.cwd()
+    const requestedCwd = cwd ?? process.cwd()
+    // INV-7: cwd 可能已被删除（worktree 清理/手动删目录），降级 homedir（与 restoreSession 对称）。
+    // 前端 useNewTaskFlow 通过比对「请求 cwd」vs「reply session.cwd」判断是否 fallback 并 toast。
+    const sessionCwd = existsSync(requestedCwd) ? requestedCwd : (() => {
+      console.warn(`[session-lifecycle] create cwd does not exist: ${requestedCwd}, falling back to home`)
+      return homedir()
+    })()
 
     // 启动 pi 前检查 model 配置,避免 pi 因无 model 直接 exit(1)
     if (!this.configStore.getDefaultModel()) {
