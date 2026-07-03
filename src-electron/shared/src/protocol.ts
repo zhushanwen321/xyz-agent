@@ -9,6 +9,7 @@ import type { FileNode } from './file-tree'
 import type { ExtensionInfo } from './extension'
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
+import type { RecentWorkspaceRecord } from './workspace'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
@@ -38,6 +39,7 @@ export type ClientMessageType =
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
+  | 'workspace.listRecent'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -122,6 +124,7 @@ export interface ClientMessageMap {
   'git.commit': { sessionId: string; message?: string }
   'git.checkout': { sessionId: string; name: string }
   'git.createBranch': { sessionId: string; name: string }
+  'workspace.listRecent': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -174,6 +177,7 @@ export type ServerMessageType =
   | 'git.diff:result'
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
   | 'git.status:result'
+  | 'workspace.recentList'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -264,6 +268,7 @@ export interface ServerMessageMapBase {
   'file.write.create:result': { sessionId: string; path: string; implemented: false }
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
+  'workspace.recentList': { records: RecentWorkspaceRecord[] }
 
   // ── 消息流控制（W11+ 审查补充类型）──
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }

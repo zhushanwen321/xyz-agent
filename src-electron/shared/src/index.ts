@@ -32,3 +32,4 @@ export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES } from './
 export * from './file-tree'
 export * from './ignore-parser'
 export * from './git-status-parser'
+export type { RecentWorkspaceRecord } from './workspace'
