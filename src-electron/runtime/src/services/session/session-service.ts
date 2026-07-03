@@ -24,6 +24,7 @@ import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
+import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
@@ -72,13 +73,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
     private readonly gitInfoReader: IGitInfoReader,
+    private readonly workspaceService: WorkspaceService,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(src-electron/ 父目录)
     this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
-    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore)
-    this.dispatcher = new MessageDispatcher(this, this.pm, this.broker)
+    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService)
+    this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / error 广播

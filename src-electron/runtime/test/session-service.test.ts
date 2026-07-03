@@ -251,6 +251,12 @@ function createSetup(): Setup {
     pruneStaleCache: vi.fn(),
   }
 
+  // WorkspaceService 桩：record no-op，list 返空（W2 构造注入）。
+  const workspaceService = {
+    record: vi.fn(),
+    list: vi.fn().mockReturnValue([]),
+  }
+
   const service = new SessionService(
     pm,
     broker,
@@ -260,6 +266,7 @@ function createSetup(): Setup {
     new PiConfigStore(),
     new PiSessionStore(),
     gitInfoReader,
+    workspaceService as unknown as ConstructorParameters<typeof SessionService>[8],
   )
 
   const mountClient = (sessionId: string, client?: MockClient): MockClient => {
@@ -1047,6 +1054,7 @@ describe('SessionService · onSessionExit callback', () => {
       new PiConfigStore(),
       new PiSessionStore(),
       localSetup.gitInfoReader,
+      { record: vi.fn(), list: vi.fn().mockReturnValue([]) } as unknown as ConstructorParameters<typeof SessionService>[8],
     )
     const piSid = 'pi-detach-1'
     const client = makeMockClient({

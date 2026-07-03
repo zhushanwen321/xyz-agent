@@ -18,6 +18,7 @@ import type { ISessionServiceInternal } from './session-internal.js'
 import { readPiState } from '../ports/pi-engine.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
+import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 export class SessionLifecycle {
@@ -26,6 +27,7 @@ export class SessionLifecycle {
     private readonly pm: IProcessManager,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
+    private readonly workspaceService: WorkspaceService,
   ) {}
 
   /**
@@ -85,6 +87,7 @@ export class SessionLifecycle {
     }
 
     this.sessionStore.refreshAll()
+    this.workspaceService.record(sessionCwd)
     return this.svc.toSummary(session)
   }
 

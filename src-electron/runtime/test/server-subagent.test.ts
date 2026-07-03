@@ -161,7 +161,7 @@ describe('RuntimeServer message.send with subagent field', () => {
   port = await getFreePort()
   server = new RuntimeServer(port, '/tmp/test-project')
   server.setServices(
-    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never),
+    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never),
     new ConfigService('/tmp', new PiConfigStore()),
     new ModelService(new ModelApiDiscoverer()),
     {} as never,

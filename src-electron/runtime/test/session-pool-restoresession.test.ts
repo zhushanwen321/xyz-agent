@@ -157,6 +157,7 @@ function createService(): SessionService {
     new PiConfigStore(),
     new PiSessionStore(),
     noopGitInfoReader,
+    {} as never,
   )
 }
 

@@ -24,7 +24,9 @@ import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { GitMessageHandler } from './git-message-handler.js'
 import { FileMessageHandler } from './file-message-handler.js'
+import { WorkspaceMessageHandler } from './workspace-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
+import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 export class RuntimeServer implements IMessageBroker {
@@ -52,6 +54,7 @@ export class RuntimeServer implements IMessageBroker {
   private pluginMessageHandler!: PluginMessageHandler
   private gitMessageHandler?: GitMessageHandler
   private fileMessageHandler?: FileMessageHandler
+  private workspaceMessageHandler!: WorkspaceMessageHandler
 
   /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
@@ -73,7 +76,7 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, appInfo?: { appVersion: string; piVersion: string }): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }): void {
     this.gitService = git
     this.fileService = file
     this.sessionService = session
@@ -160,6 +163,12 @@ export class RuntimeServer implements IMessageBroker {
         fileService: this.fileService,
       })
     }
+    if (workspace) {
+      this.workspaceMessageHandler = new WorkspaceMessageHandler({
+        ...messaging,
+        workspaceService: workspace,
+      })
+    }
 
     // ── Build the central dispatch table (D1) ───────────────────────
     // ping 内联（无对应 handler）；file.read 已迁入 fileMessageHandler（W2）；settings 走兜底（见 handleMessage）。
@@ -167,6 +176,7 @@ export class RuntimeServer implements IMessageBroker {
     // 避免 `?.` 在 .map 闭包内类型收窄失效（async 回调里 TS 不保证 this.gitMessageHandler 未变）。
     const gitHandler = this.gitMessageHandler
     const fileHandler = this.fileMessageHandler
+    const workspaceHandler = this.workspaceMessageHandler
     this.routes = new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
@@ -175,6 +185,7 @@ export class RuntimeServer implements IMessageBroker {
       ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
       ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
       ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
+      ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
     ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
   }
 

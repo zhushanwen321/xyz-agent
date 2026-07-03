@@ -26,6 +26,8 @@ import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { FileService } from './services/file-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
+import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
+import { WorkspaceService } from './services/workspace/workspace-service.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -103,6 +105,12 @@ async function main(): Promise<void> {
   // PluginService.deps are all optional and only used at runtime (initialize / event handling),
   // so sessionService can be wired in after construction.
   const configDir = configService.getConfigDir()
+  // RecentWorkspacesStore：最近工作区持久化（WriteBackCache 固定 partition 'global'）。
+  // configDir 由 configService 动态推导，无硬编码路径（INV-5）。
+  const recentWorkspacesStore = new RecentWorkspacesStore(configDir)
+  const workspaceService = new WorkspaceService(recentWorkspacesStore)
+  // 启动定期 flush 计时器（全量周期，补充 per-write debounce 500ms）
+  recentWorkspacesStore.startFlushTimer()
   const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,
@@ -171,6 +179,7 @@ async function main(): Promise<void> {
     // IGitInfoReader：infra 实现（rev-parse 查询 + .git 文件判 worktree + 缓存），注入 session 摘要链。
     // 与 GitExecutor 同为 git 域 infra，但语义不同（窄查询 vs 通用 exec）——故独立 port（services/ports/git-info.ts）。
     new GitInfoReader(),
+    workspaceService,
   )
 
   // ── Phase 3: wire cross-service runtime deps ──
@@ -211,7 +220,7 @@ async function main(): Promise<void> {
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, appInfo)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo)
 
   // Graceful shutdown on signals
   let shuttingDown = false
@@ -220,6 +229,8 @@ async function main(): Promise<void> {
     shuttingDown = true
     console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
+      recentWorkspacesStore.flushAll()
+      recentWorkspacesStore.stopFlushTimer()
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {

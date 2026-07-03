@@ -140,7 +140,7 @@ async function createSessionService() {
   const { SessionService } = await import('../src/services/session/session-service.js')
   const pm = new ProcessManager('/tmp')
   const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
-  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never, new PiConfigStore(), new PiSessionStore(), noopGitInfoReader)
+  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never, new PiConfigStore(), new PiSessionStore(), noopGitInfoReader, {} as never)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

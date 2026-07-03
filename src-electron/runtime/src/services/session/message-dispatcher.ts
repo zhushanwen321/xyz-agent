@@ -15,6 +15,7 @@ import type { IMessageBroker } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook } from './types.js'
+import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 export class MessageDispatcher {
@@ -24,6 +25,7 @@ export class MessageDispatcher {
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
+    private readonly workspaceService: WorkspaceService,
   ) {}
 
   /** 注册消息发送前 hook(PluginService 调用,实现 beforeSend 拦截)。 */
@@ -82,6 +84,7 @@ export class MessageDispatcher {
     if (activeSession) {
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
+      this.workspaceService.record(activeSession.cwd)
     }
     // ── 发送 prompt + 错误广播 ──
     const promptText = buildPrompt()
