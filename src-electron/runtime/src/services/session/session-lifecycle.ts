@@ -8,7 +8,11 @@
  * detach(detachSession)/ 查持久化(findScannedSession)。
  *
  * 依赖经构造注入:svc(Facade 内部协议)、pm(进程创建/销毁/rekey)、
- * treeService(register/unregister)。
+ * treeService(unregisterSession)：session 销毁/fork 时从 tree 注销。
+ *
+ * 仅依赖 ISessionTreeRegistrar 窄接口（ISP）：本模块只调 unregisterSession，
+ * 不调 register/setNavigateCapable（二者由 session-service 调用）也不调读操作，
+ * 避免被迫依赖 ISessionTreeService 全部方法。
  */
 import { basename } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -17,7 +21,7 @@ import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import { readPiState } from '../ports/pi-engine.js'
-import type { ISessionTreeService } from '../../interfaces.js'
+import type { ISessionTreeRegistrar } from '../../interfaces.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -26,7 +30,7 @@ export class SessionLifecycle {
   constructor(
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
-    private readonly treeService: ISessionTreeService,
+    private readonly treeService: ISessionTreeRegistrar,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
   ) {}

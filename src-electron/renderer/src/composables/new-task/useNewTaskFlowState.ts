@@ -30,6 +30,13 @@ export type NewTaskFlowState =
   | 'completed'
   | 'cancelled'
 
+/**
+ * transitionUnchecked 唯一允许的目标态（类型层锁死，见 NewTaskFlowController）。
+ * 语义：只有"回 idle"是绕过 ALLOWED 守卫的合法直置——终态重建（completed→idle）
+ * 与守卫失败回 idle（throw 前清态）。其余状态变更必须走 transition()（带守卫）。
+ */
+export type TransitionUncheckedTarget = 'idle'
+
 /** 当前 session 的 git 派生（UC-7 chip 可见性 + openBranchPopover 守卫） */
 export interface GitInfo {
   branch: string
@@ -157,8 +164,13 @@ function setBranchCreateInFlight(v: boolean): void {
  * 父编排器按需把具体 setter 作为参数传给子 composable（见 useNewTaskBranch 签名）。
  */
 export interface NewTaskFlowController {
-  /** 绕过 ALLOWED 表直置 state：仅供终态重建（completed→idle）与守卫失败回 idle，见 transitionUnchecked @internal */
-  transitionUnchecked: (target: NewTaskFlowState) => void
+  /**
+   * 绕过 ALLOWED 表直置 state。target 类型锁定为 TransitionUncheckedTarget（= 'idle'），
+   * 使父编排器也无法用它跳到 landing/completed 等态——编译期堵死后门滥用。
+   * 仅供两类无法走 transition 的语义性直置（见 transitionUnchecked @internal）：
+   * 终态重建（completed→idle）与守卫失败回 idle。
+   */
+  transitionUnchecked: (target: TransitionUncheckedTarget) => void
   /** 绑定/替换当前 flow 的 session（submitFirstMessage create 后绑定） */
   bindCurrentSession: (s: SessionSummary | null) => void
   /** 标记 submitFirstMessage 飞行中（true）/ 结束（false） */

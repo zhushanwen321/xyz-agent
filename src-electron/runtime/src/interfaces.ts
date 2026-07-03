@@ -298,20 +298,28 @@ export interface IFileService {
  * ISessionTreeService，避免「tree」一词与文件树撞名（commit message 亦称其
  * "Session tree service port"）。
  *
- * 方法签名与 TreeService（services/tree-service.ts）逐字对齐——包含 handler 调用的
- * 读操作（getTree/navigateTree/forkFromEntry/cloneSession/isNavigateCapable）与
- * session 注册/注销/能力设置（registerSession/unregisterSession/setNavigateCapable）。
- * 后三者是 navigate 的 per-session 前置状态：registerSession 注册 navigate 拦截器，
- * setNavigateCapable 写 navigate 能力 map，二者恰是 navigateTree/getTree 读取的对象，
- * 与读操作高内聚，故合并进同一接口而非拆成 ITreeSessionRegistry。
+ * 拆成两层（ISP / 接口隔离）：
+ * - ISessionTreeRegistrar：session 在 tree 中的注册生命周期（register/unregister/
+ *   setNavigateCapable）。session-service（注册拦截器 + 写能力 map）和 session-lifecycle
+ *   （销毁时注销）都只依赖此窄接口，不被迫依赖它们不调用的读操作。
+ * - ISessionTreeService extends ISessionTreeRegistrar：再加 navigate 读操作
+ *   （getTree/navigateTree/forkFromEntry/cloneSession/isNavigateCapable）。
+ *   server.ts / tree-message-handler 等既读又注册的消费方依赖完整接口。
+ *
+ * registerSession 与 setNavigateCapable 虽是"写"，但它们写的数据恰是 navigateTree /
+ * getTree 读取的对象（registerSession 注册的拦截器被 navigateTree 消费，setNavigateCapable
+ * 写的能力 map 被 navigateTree/getTree 读取），数据高内聚，故仍合并在同一注册接口内。
  */
-export interface ISessionTreeService {
+export interface ISessionTreeRegistrar {
   /** 注册 session 的 navigate 拦截器 + 订阅 pi message_end 事件（session 创建时调用）。 */
   registerSession(sessionId: string, interceptor: INavigateInterceptor): void
   /** 注销 session：退订 pi 事件 + 清拦截器 + 清能力 map（session 销毁时调用）。 */
   unregisterSession(sessionId: string): void
   /** 写 navigate 能力（检测到 navigate 扩展命令后回写，navigateTree/getTree 读取此值）。 */
   setNavigateCapable(sessionId: string, capable: boolean): void
+}
+
+export interface ISessionTreeService extends ISessionTreeRegistrar {
   getTree(sessionId: string): Promise<TreeData>
   navigateTree(sessionId: string, targetEntryId: string): Promise<NavigateResult>
   forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult>

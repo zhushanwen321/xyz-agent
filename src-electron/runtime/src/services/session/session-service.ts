@@ -15,7 +15,7 @@ import type { SessionSummary, SessionGroup, SessionStatus, Message } from '@xyz-
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService,
-  ISessionTreeService,
+  ISessionTreeRegistrar,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
@@ -71,7 +71,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly broker: IMessageBroker,
     private readonly adapterFactory: (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => IEventAdapter,
     private readonly projectRoot: string,
-    private readonly treeService: ISessionTreeService,
+    private readonly treeService: ISessionTreeRegistrar,
     private readonly extensionService: IExtensionService,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
