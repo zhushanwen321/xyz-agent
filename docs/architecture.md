@@ -66,7 +66,9 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 | 层 | 位置 | 职责 | 铁律 |
 |----|------|------|------|
 | transport | `src/transport/` (7 file) | 路由 ClientMessage → service，管理 WS，广播 ServerMessage | 零业务逻辑 |
-| services | `src/services/` (48 file) | 业务逻辑 + 定义 `ports/` 接口（config/session/pi-engine/model/installer/tree 六域） | **零 infra 直连**，经 ports 访问 |
+| services | `src/services/` (49 file) | 业务逻辑 + 定义 `ports/` 接口（config/session/pi-engine/model/installer/tree/workspace 七域） | **零 infra 直连**，经 ports 访问 |
+
+> **workspace 域（2026-07-03 新增）**：`services/workspace/`（workspace-service 编排 + recent-workspaces-store LRU/去重/持久化）。pull-only RPC（`workspace.listRecent`，不做 broadcast），写入时机挂在 `session-lifecycle.create` + `message-dispatcher.sendPrompt`。详见 [ADR-0003](adr/0003-recent-workspaces-pull-only-rpc.md) / [ADR-0004](adr/0004-recent-workspaces-writeback-atomicwrite.md)。
 | infra | `src/infra/` (18 file) | 外部系统连接器（pi RPC / npm / git / HTTP），实现 ports 接口 | 唯一与 pi/npm/git 打交道的位置 |
 
 组合根 `index.ts` 构造 infra 实现 → 注入 services → 启动 server。依赖方向：`transport → services → ports ← infra`。

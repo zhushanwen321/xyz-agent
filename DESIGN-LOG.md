@@ -30,6 +30,7 @@
 | `2026-06-26-new-task-landing` | 新建任务 Landing 态（含 test-strategy.md） |
 | `2026-06-28-lite-composer-slash-trigger` | composer 输入 / 触发 slash 浮层（lite-plan） |
 | `2026-06-28-lite-slash-command-fix` | slash 时序竞争修复 + landing 预创建 session（含 retrospect.md） |
+| `2026-07-03-recent-workspaces` | 最近工作区记录独立持久化（解耦 pi session 扫描）+ pull-only RPC + write-back/atomicWrite（archived 2026-07-03 → ADR-0002/0003/0004, NFR.md S-13~S-17, PRODUCT.md 非目标）|
 
 ### Composer / 输入区
 

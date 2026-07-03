@@ -26,7 +26,7 @@
 
 **Runtime 三层**（取代旧 design.md D4 四层，adapters 已并入 infra）：
 - `transport/`（7 file）：纯路由 ClientMessage→service，零业务逻辑
-- `services/`（48 file）：业务编排 + 定义 `ports/` 接口（config/session/pi-engine/model/installer/tree 六域），**零 infra 直连**
+- `services/`（49 file）：业务编排 + 定义 `ports/` 接口（config/session/pi-engine/model/installer/tree/workspace 七域），**零 infra 直连**。workspace 域（2026-07-03 新增）：pull-only RPC（`workspace.listRecent`，不做 broadcast），写入时机挂 `session-lifecycle.create` + `message-dispatcher.sendPrompt`，详见 ADR-0003/0004。`[from: 2026-07-03-recent-workspaces §system-architecture]`
 - `infra/`（18 file）：唯一与 pi/npm/git 打交道的位置，实现 ports 接口
 
 依赖方向：`transport → services ← infra`（services 定义 ports，infra 实现 ports，无环）。

@@ -98,6 +98,8 @@ xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类
 - Agent 配置：OverrideParams、ToolPermissions（默认全部允许）
 - 搜索：文件内容全文搜索（需 ripgrep 二进制，打包分发成本高）、符号搜索真实数据（需 LSP/tree-sitter，zero base）、危险命令分级与二次确认（当前无真正危险命令）、会话跳转进概览视图（只切换 active session）。`[from: 2026-06-30-search-modal §requirements §8]`
 - 前端：原生 HTML 表单元素、Emoji、硬编码颜色、魔数间距
+- 数据持久化：不引入 SQLite（用户配置/记录数据量极小，JSON + atomicWrite 足够；SQLite 引入原生依赖与 Electron 打包冲突）；不做跨机器同步（单机本地记录）；冷启动从空数据开始不做历史迁移（YAGNI，老用户升级代价低）。`[from: 2026-07-03-recent-workspaces §requirements §7]`
+- 与 pi 的关系：不改 pi 侧任何东西（xyz-agent 数据目录 `~/.xyz-agent/` 与 pi `~/.pi/agent/` 完全隔离）；不清理 pi session 文件（xyz-agent 独立持久化解耦对 pi session 扫描的依赖）。`[from: 2026-07-03-recent-workspaces §requirements §7]`
 
 **DEFERRED 到后续 Phase**：
 - SubAgent 拆分/Tab/任务树（P5）、RPC 桥接交互式通信（P6）、Overview 全局鸟瞰（P4）、Drawer 右侧面板（P5）、分屏模式（P4）
