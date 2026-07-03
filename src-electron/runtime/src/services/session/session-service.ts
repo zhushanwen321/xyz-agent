@@ -11,11 +11,10 @@
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
 import { existsSync } from 'node:fs'
-import type { SessionSummary, SessionGroup, SessionStatus, Message } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage } from '@xyz-agent/shared'
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService,
-  ISessionTreeRegistrar,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
@@ -24,7 +23,6 @@ import { getHistoryFromFile } from '../session-history.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
-import type { INavigateInterceptor, INavigateInterceptorFactory } from '../ports/tree.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
@@ -32,10 +30,9 @@ import { SessionScanner } from './session-scanner.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 
-/** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter/interceptor/listener)。 */
+/** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter/listener)。 */
 interface ManagedSession extends IManagedSessionView {
   adapter: IEventAdapter
-  interceptor: INavigateInterceptor
   unsubUsageListener: (() => void) | null
 }
 
@@ -69,31 +66,28 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
-    private readonly adapterFactory: (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => IEventAdapter,
+    private readonly adapterFactory: (sessionId: string, send: (msg: ServerMessage) => void, cwd?: string) => IEventAdapter,
     private readonly projectRoot: string,
-    private readonly treeService: ISessionTreeRegistrar,
     private readonly extensionService: IExtensionService,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
-    private readonly navigateFactory: INavigateInterceptorFactory,
     private readonly gitInfoReader: IGitInfoReader,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(src-electron/ 父目录)
     this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
-    this.lifecycle = new SessionLifecycle(this, this.pm, this.treeService, this.configStore, this.sessionStore)
+    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore)
     this.dispatcher = new MessageDispatcher(this, this.pm, this.broker)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
-    // 进程崩溃清理:协调 adapter detach / Map 删 / tree 注销 / 列表刷新 / error 广播
+    // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / error 广播
     this.pm.onSessionExit((sessionId, code) => {
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
       if (session.unsubUsageListener) session.unsubUsageListener()
       this.sessions.delete(sessionId)
-      this.treeService.unregisterSession(sessionId)
       this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` } })
     })
@@ -113,9 +107,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
-  async rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void> {
-    return this.lifecycle.rebindAfterFork(oldSessionId, newSessionId, label, sessionFilePath)
-  }
   async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
   async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
@@ -277,7 +268,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
-      this.treeService.unregisterSession(session.id)
       session.adapter.detach()
       if (session.unsubUsageListener) session.unsubUsageListener()
     }
@@ -346,13 +336,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return filePaths
   }
 
-  /** 初始化 ManagedSession:建 interceptor/adapter、注册监听、入 Map、查 commands。 */
+  /** 初始化 ManagedSession:建 adapter、注册监听、入 Map、查 commands。 */
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string,
   ): Promise<IManagedSessionView> {
-    const interceptor = this.navigateFactory.createNavigateInterceptor((msg) => this.broker.broadcast(msg))
+    const send = (msg: ServerMessage) => this.broker.broadcast(msg)
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
-    const adapter = this.adapterFactory(id, interceptor, cwd)
+    const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
     const unsubUsage = this.attachUsageListener(id, client)
     const modelRef = this.configStore.getDefaultModel()
@@ -361,10 +351,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
       tokenCount: 0, inputTokens: 0, isGenerating: false,
-      adapter, interceptor, unsubUsageListener: unsubUsage, sessionFilePath,
+      adapter, unsubUsageListener: unsubUsage, sessionFilePath,
     }
     this.sessions.set(id, session)
-    await this.fetchAndBroadcastCommands(id, client, interceptor)
+    await this.fetchAndBroadcastCommands(id, client)
     return session
   }
 
@@ -469,16 +459,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return client.getCommands() as Promise<Array<{ name: string; description?: string; source: string }>>
   }
 
-  /** Query pi extension commands + register navigate capability。失败不阻塞 session。 */
-  private async fetchAndBroadcastCommands(id: string, client: IPiEngine, interceptor: INavigateInterceptor): Promise<void> {
+  /** Query pi extension commands 并广播。失败不阻塞 session。 */
+  private async fetchAndBroadcastCommands(id: string, client: IPiEngine): Promise<void> {
     try {
       const commands = await this.getCommands(id)
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
       this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
-      const navCapable = commands.some(c => c.name === 'xyz-navigate' && c.source === 'extension')
-      this.treeService.registerSession(id, interceptor)
-      this.treeService.setNavigateCapable(id, navCapable)
-      if (!navCapable) console.warn('[session-service] xyz-navigate extension not found, navigate will be unavailable')
     // eslint-disable-next-line taste/no-silent-catch -- getCommands failure must not block session
     } catch (e) {
       console.warn('[session-service] getCommands failed:', e)

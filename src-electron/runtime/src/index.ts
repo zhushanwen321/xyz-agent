@@ -1,6 +1,5 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
-import { TreeService } from './services/tree-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
 
@@ -16,11 +15,8 @@ import { ExtensionResolver } from './infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
-import { NavigateInterceptorFactory } from './infra/pi/navigate-interceptor.js'
-import { SessionTreeReaderAdapter } from './infra/pi/session-tree-reader-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
 import { join, resolve } from 'node:path'
-import type { INavigateInterceptor } from './services/ports/tree.js'
 import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
@@ -96,7 +92,6 @@ async function main(): Promise<void> {
     resolver: extensionResolver,
     extensionSettings,
   })
-  const treeService = new TreeService(pm, new SessionTreeReaderAdapter())
   const configService = new ConfigService(effectiveRoot, configStore)
   // ADR-0020 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
@@ -124,14 +119,14 @@ async function main(): Promise<void> {
   //
   // fileChangeDiff：infra 纯函数的 port 实现（无状态，全局单例复用）。
   const fileChangeDiff = new FileChangeDiffAdapter()
-  const createAdapter = (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => {
+  const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
     // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
     const interpreter = new EventInterpreter(sessionId, {
       // #8 G1 cwd：注入 session cwd（write 工具 added/modified 判定 + agent_end git 对账用）。
       // SessionService.initializeManagedSession 调用时传入（该处已有 cwd 参数）。
       cwd,
-      send: interceptor.send,
+      send,
       fileChangeDiff,
       onExtensionUIRequest: (requestId, sid, method) => {
         server.registerExtensionTimeout(sid, requestId, method)
@@ -169,11 +164,9 @@ async function main(): Promise<void> {
     server,
     createAdapter,
     effectiveRoot,
-    treeService,
     extensionService,
     configStore,
     sessionStore,
-    new NavigateInterceptorFactory(),
     // IGitInfoReader：infra 实现（rev-parse 查询 + .git 文件判 worktree + 缓存），注入 session 摘要链。
     // 与 GitExecutor 同为 git 域 infra，但语义不同（窄查询 vs 通用 exec）——故独立 port（services/ports/git-info.ts）。
     new GitInfoReader(),
@@ -213,7 +206,7 @@ async function main(): Promise<void> {
     return model?.contextWindow ?? 0
   })
 
-  server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService, gitService, fileService)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

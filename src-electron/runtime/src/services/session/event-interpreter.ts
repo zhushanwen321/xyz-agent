@@ -40,7 +40,7 @@ export type ExecuteHookFn = (
 export interface EventInterpreterOptions {
   /** pi session 工作目录（git baseline diff 用）。缺省 → 跳过 file_changes。 */
   cwd?: string
-  /** WS 帧发送（经 NavigateInterceptor 装饰的 sender）。 */
+  /** WS 帧发送。 */
   send: (msg: ServerMessage) => void
   /** file_changes baseline diff 引擎（port，组合根注入 infra 实现）。 */
   fileChangeDiff?: IFileChangeDiff

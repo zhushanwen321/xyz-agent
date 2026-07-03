@@ -11,7 +11,7 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, ISessionTreeService } from '../interfaces.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
@@ -22,7 +22,6 @@ import { SettingsMessageHandler } from './settings-message-handler.js'
 import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
-import { TreeMessageHandler } from './tree-message-handler.js'
 import { GitMessageHandler } from './git-message-handler.js'
 import { FileMessageHandler } from './file-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
@@ -36,7 +35,6 @@ export class RuntimeServer implements IMessageBroker {
   private sessionService!: ISessionService
   private configService!: IConfigService
   private modelService!: IModelService
-  private treeService!: ISessionTreeService
   private extensionService?: IExtensionService
   private pluginService!: IPluginService
   private gitService?: GitService
@@ -52,7 +50,6 @@ export class RuntimeServer implements IMessageBroker {
   private sessionHandler!: SessionMessageHandler
   private extensionHandler!: ExtensionMessageHandler
   private pluginMessageHandler!: PluginMessageHandler
-  private treeMessageHandler!: TreeMessageHandler
   private gitMessageHandler?: GitMessageHandler
   private fileMessageHandler?: FileMessageHandler
 
@@ -76,13 +73,12 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: ISessionTreeService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService): void {
     this.gitService = git
     this.fileService = file
     this.sessionService = session
     this.configService = config
     this.modelService = model
-    this.treeService = tree
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
 
@@ -142,12 +138,6 @@ export class RuntimeServer implements IMessageBroker {
       ...messaging,
       pluginService: this.pluginService ?? null,
     })
-    this.treeMessageHandler = new TreeMessageHandler({
-      ...messaging,
-      sessionService: this.sessionService,
-      treeService: this.treeService,
-      broadcastSessionList: () => this.broker.broadcastSessionList(),
-    })
     if (this.gitService) {
       this.gitMessageHandler = new GitMessageHandler({
         ...messaging,
@@ -180,7 +170,6 @@ export class RuntimeServer implements IMessageBroker {
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
       ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),
-      ...this.treeMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.treeMessageHandler.handleTreeMessage(msg, ws)] as const),
       ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
       ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
       ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => gitHandler.handleGitMessage(msg, ws)] as const) : []),

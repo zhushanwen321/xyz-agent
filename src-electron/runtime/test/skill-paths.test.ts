@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vites
 import path from 'node:path'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
-import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
 
 // IGitInfoReader 桩：本测试聚焦 skill 路径解析，不验证 git 摘要字段。
@@ -141,7 +140,7 @@ async function createSessionService() {
   const { SessionService } = await import('../src/services/session/session-service.js')
   const pm = new ProcessManager()
   const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
-  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', {} as never, { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never, new PiConfigStore(), new PiSessionStore(), new NavigateInterceptorFactory(), noopGitInfoReader)
+  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never, new PiConfigStore(), new PiSessionStore(), noopGitInfoReader)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

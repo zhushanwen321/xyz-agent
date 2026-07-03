@@ -134,7 +134,7 @@ export function readRpcData(resp: PiRpcResponse): Record<string, unknown> | unde
 
 /**
  * 发 get_state 并返回归一化后的 state 对象（兼容 data/payload）。
- * 消除 tree-service / session-lifecycle 中重复的
+ * 消除 session-lifecycle 等处重复的
  * `await client.sendCommand('get_state') as PiStateResponse; resp.data ?? resp.payload`。
  */
 export async function readPiState(client: IPiEngine): Promise<Record<string, unknown> | undefined> {

@@ -278,11 +278,10 @@ describe('RuntimeServer: bridge request routing', () => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader)
     const pluginService = new PluginService({} as never, server)
     server.setServices(
       sessionService,
-      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -328,8 +327,8 @@ describe('RuntimeServer: bridge request routing', () => {
       ])
 
       // Re-set services to use the overridden mock
-      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
-      server.setServices(sessionService, {} as never, {} as never, {} as never, {} as never, pluginService)
+      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader)
+      server.setServices(sessionService, {} as never, {} as never, {} as never, pluginService)
       mockSendCommand.mockClear()
 
       await server.handleBridgeRequest('sess-1', 'bridge-req-2', 'bridge:sync', {})
@@ -420,7 +419,7 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
     mockSendCommand.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     server.setServices(
-      new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader),
+      new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader),
       {} as never,
       {} as never,
       {} as never,

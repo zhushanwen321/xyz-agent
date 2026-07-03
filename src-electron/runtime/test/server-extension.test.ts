@@ -225,12 +225,11 @@ describe('RuntimeServer: extension message routing', () => {
     mockFinishInstall.mockClear()
     port = await getFreePort()
     server = new RuntimeServer(port, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader)
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(new ModelApiDiscoverer()),
-      {} as never,
       new ExtensionService({
         settingsDir: new PiConfigStore().getPiAgentDir(),
         installer: new NpmGitInstaller(),
@@ -630,12 +629,11 @@ describe('RuntimeServer: extension timeout mechanism', () => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never, noopGitInfoReader)
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader)
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(new ModelApiDiscoverer()),
-      {} as never,
       new ExtensionService({
         settingsDir: new PiConfigStore().getPiAgentDir(),
         installer: new NpmGitInstaller(),

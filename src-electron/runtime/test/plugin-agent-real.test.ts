@@ -42,7 +42,6 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
     compact: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue([]),
     restoreSession: vi.fn().mockResolvedValue(undefined),
-    rebindAfterFork: vi.fn().mockResolvedValue(undefined),
     hasActiveSession: vi.fn().mockReturnValue(true),
     getRpcClient: vi.fn().mockReturnValue(undefined),
     destroyAll: vi.fn().mockResolvedValue(undefined),

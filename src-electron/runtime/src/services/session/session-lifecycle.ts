@@ -1,18 +1,13 @@
 /**
  * SessionLifecycle — 从 session-service 巨石拆出的会话生命周期职责。
  *
- * 负责:create / delete / renameSession / restoreSession / rebindAfterFork。
+ * 负责:create / delete / renameSession / restoreSession。
  *
  * sessions Map 单写者:本模块不持有 Map,经 ISessionServiceInternal 接口
  * 查(getSession)/ 删(removeSessionEntry)/ 初始化(initializeManagedSession)/
  * detach(detachSession)/ 查持久化(findScannedSession)。
  *
- * 依赖经构造注入:svc(Facade 内部协议)、pm(进程创建/销毁/rekey)、
- * treeService(unregisterSession)：session 销毁/fork 时从 tree 注销。
- *
- * 仅依赖 ISessionTreeRegistrar 窄接口（ISP）：本模块只调 unregisterSession，
- * 不调 register/setNavigateCapable（二者由 session-service 调用）也不调读操作，
- * 避免被迫依赖 ISessionTreeService 全部方法。
+ * 依赖经构造注入:svc(Facade 内部协议)、pm(进程创建/销毁/rekey)。
  */
 import { basename } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -21,7 +16,6 @@ import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import { readPiState } from '../ports/pi-engine.js'
-import type { ISessionTreeRegistrar } from '../../interfaces.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -30,7 +24,6 @@ export class SessionLifecycle {
   constructor(
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
-    private readonly treeService: ISessionTreeRegistrar,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
   ) {}
@@ -120,7 +113,6 @@ export class SessionLifecycle {
       this.svc.detachSession(sessionId)
       await this.pm.destroySession(sessionId)
       this.svc.removeSessionEntry(sessionId)
-      this.treeService.unregisterSession(sessionId)
       if (session.sessionFilePath && existsSync(session.sessionFilePath)) {
         await this.sessionStore.trash(session.sessionFilePath)
       }
@@ -173,29 +165,5 @@ export class SessionLifecycle {
       id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
     )
     return this.svc.toSummary(session)
-  }
-
-  /**
-   * Fork 后重新绑定:原 session 的 pi 进程已被 rebind 到新 session,
-   * 需更新 runtime 的 sessions Map 和 process manager 的 key。
-   * 必须同步等待初始化完成,否则后续请求(tree-data、navigate)可能因注册未完成而失败。
-   */
-  async rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void> {
-    const old = this.svc.getSession(oldSessionId)
-    if (!old) throw new Error(`Session ${oldSessionId} not found in sessions map`)
-
-    // 先 rekey process manager(client 仍是同一个 pi 进程)。
-    // 必须在 detach/delete 之前执行,确保 rekey 失败时旧状态不被破坏。
-    this.pm.rekey(oldSessionId, newSessionId)
-
-    // rekey 成功后,安全地清理旧 session 的 adapter/listener/registry
-    this.svc.detachSession(oldSessionId)
-    this.treeService.unregisterSession(oldSessionId)
-    this.svc.removeSessionEntry(oldSessionId)
-
-    // 用新 ID 重新注册 managed session(label 由调用方传入,已含 -fork/-clone 后缀)
-    const client = this.pm.getClient(newSessionId)
-    if (!client) throw new Error(`Client not found after rekey: ${newSessionId}`)
-    await this.svc.initializeManagedSession(newSessionId, client, old.cwd, label, sessionFilePath)
   }
 }

@@ -1,7 +1,7 @@
 /**
  * parseJsonl 单测 — 覆盖契约「跳过空行与畸形行、按行序返回成功解析项」。
  *
- * 被 session-tree-reader / session-file-utils / session-history 三处共用，回归影响面大。
+ * 被 session-file-utils / session-history 两处共用，回归影响面大。
  *
  * 运行：cd src-electron/runtime && npx vitest run test/jsonl.test.ts
  */

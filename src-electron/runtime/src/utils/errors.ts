@@ -31,10 +31,10 @@ export function isEnoent(e: unknown): boolean {
 }
 
 /**
- * 判断错误是否为「not found」类（tree handler 的 session-not-active 嗅探，D6）。
+ * 判断错误是否为「not found」类（session-not-active 嗅探，D6）。
  *
- * 统一 tree-message-handler 5 处 `e instanceof Error && e.message.includes('not found')`
- * 字符串匹配。TreeService 抛「not found」串表示 session 未激活，handler 据此降级回复。
+ * 统一各处 `e instanceof Error && e.message.includes('not found')`
+ * 字符串匹配。抛「not found」串表示 session 未激活，调用方据此降级回复。
  */
 export function isNotFound(e: unknown): boolean {
   return e instanceof Error && e.message.includes('not found')

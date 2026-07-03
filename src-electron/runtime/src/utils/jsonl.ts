@@ -1,9 +1,8 @@
 /**
  * JSONL 解析工具（G2）。
  *
- * 统一散落 3 处的「逐行 JSON.parse + 跳过空行/畸形行」循环：
+ * 统一散落各处的「逐行 JSON.parse + 跳过空行/畸形行」循环：
  * - infra/pi/session-file-utils.extractSessionName（原倒序找首条匹配）
- * - infra/pi/session-tree-reader.buildTree（原正序收集 + per-line 逻辑）
  * - services/session-history.loadHistory（原正序 filter + 收集）
  *
  * 共性骨架：split 行 → 跳空行 → JSON.parse → 失败静默跳过 → 成功 yield。

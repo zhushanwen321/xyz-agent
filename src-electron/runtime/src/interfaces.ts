@@ -21,8 +21,6 @@ import type {
   FileNode,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
-import type { INavigateInterceptor } from './services/ports/tree.js'
-import type { TreeData, NavigateResult, ForkResult } from './types.js'
 
 /**
  * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
@@ -80,8 +78,6 @@ export interface ISessionService {
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   restoreSession(sessionId: string): Promise<SessionSummary>
-  /** Fork 后重新绑定 session（更新 runtime 和 process manager 的 key） */
-  rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
   /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/attachUsageListener） */
@@ -286,43 +282,4 @@ export interface IFileService {
   createFile(sessionId: string, path: string, content: string): Promise<never>
   renameFile(sessionId: string, oldPath: string, newPath: string): Promise<never>
   deleteFile(sessionId: string, path: string): Promise<never>
-}
-
-// ── ISessionTreeService ───────────────────────────────────────────
-
-/**
- * Session 历史树 port（与 ISessionService / IExtensionService 对称的 DI seam）。
- *
- * 命名澄清：此接口管的是 **session 历史树的读取/分叉导航**（getTree/navigate/fork），
- * 与文件树无关（文件树见 IFileService.listTree）。故从 ITreeService 改名为
- * ISessionTreeService，避免「tree」一词与文件树撞名（commit message 亦称其
- * "Session tree service port"）。
- *
- * 拆成两层（ISP / 接口隔离）：
- * - ISessionTreeRegistrar：session 在 tree 中的注册生命周期（register/unregister/
- *   setNavigateCapable）。session-service（注册拦截器 + 写能力 map）和 session-lifecycle
- *   （销毁时注销）都只依赖此窄接口，不被迫依赖它们不调用的读操作。
- * - ISessionTreeService extends ISessionTreeRegistrar：再加 navigate 读操作
- *   （getTree/navigateTree/forkFromEntry/cloneSession/isNavigateCapable）。
- *   server.ts / tree-message-handler 等既读又注册的消费方依赖完整接口。
- *
- * registerSession 与 setNavigateCapable 虽是"写"，但它们写的数据恰是 navigateTree /
- * getTree 读取的对象（registerSession 注册的拦截器被 navigateTree 消费，setNavigateCapable
- * 写的能力 map 被 navigateTree/getTree 读取），数据高内聚，故仍合并在同一注册接口内。
- */
-export interface ISessionTreeRegistrar {
-  /** 注册 session 的 navigate 拦截器 + 订阅 pi message_end 事件（session 创建时调用）。 */
-  registerSession(sessionId: string, interceptor: INavigateInterceptor): void
-  /** 注销 session：退订 pi 事件 + 清拦截器 + 清能力 map（session 销毁时调用）。 */
-  unregisterSession(sessionId: string): void
-  /** 写 navigate 能力（检测到 navigate 扩展命令后回写，navigateTree/getTree 读取此值）。 */
-  setNavigateCapable(sessionId: string, capable: boolean): void
-}
-
-export interface ISessionTreeService extends ISessionTreeRegistrar {
-  getTree(sessionId: string): Promise<TreeData>
-  navigateTree(sessionId: string, targetEntryId: string): Promise<NavigateResult>
-  forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult>
-  cloneSession(sessionId: string): Promise<ForkResult>
-  isNavigateCapable(sessionId: string): boolean
 }

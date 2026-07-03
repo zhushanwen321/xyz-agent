@@ -27,7 +27,6 @@ export type ClientMessageType =
   | 'extension.install' | 'extension.uninstall'
   | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
   | 'ping'
-  | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
   | 'plugin.list' | 'plugin.toggle'
   | 'plugin.install' | 'plugin.uninstall'
   | 'plugin.approvePermissions' | 'plugin.revokePermissions'
@@ -69,11 +68,6 @@ export interface ClientMessageMap {
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
-  'session.tree-data': { sessionId: string }
-  'session.tree-navigate': { sessionId: string; targetEntryId: string }
-  'session.tree-fork': { sessionId: string; entryId: string }
-  'session.tree-clone': { sessionId: string }
-  'session.tree-capability': { sessionId: string }
   'config.getProviders': Record<string, never>
   'config.setProvider': { providerId: string } & SetProviderData
   'config.deleteProvider': { providerId: string }
@@ -162,7 +156,6 @@ export type ServerMessageType =
   | 'extension.discovered' | 'extension.installCancelled'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
-  | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
@@ -280,7 +273,7 @@ export interface ServerMessageMapBase {
  *
  * 精确条目见 ServerMessageMapBase（已消费 + 已契约化的 type）；其余未消费 / 协议待定的
  * type 走 `Record<string, unknown>` 占位，待对应 wave 实装时收紧：
- * message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave，tree-* 不做。
+ * message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave。
  *
  * 收紧某条目时，runtime 构造点会同步得契约校验（若 payload 字段对不上，tsc 报错——D5 的预期收益）。
  */
@@ -313,8 +306,8 @@ export interface ServerMessage<T extends ServerMessageType = ServerMessageType> 
  * 2. **流式异步推送失败 → `message.error`**（message-dispatcher 在 streaming 过程中广播，
  *    非「请求回复」而是「server-push 通道」）。payload: `{ sessionId, message }`。
  *
- * 3. **部分成功的降级响应 → 内联 `success:false`**（tree 的 tree 部分可用 + 返回降级空数组；
- *    config.discoveredModels 成功/失败共用同 type 用 `success` 字段区分）。**不是错误**，
+ * 3. **部分成功的降级响应 → 内联 `success:false`**
+ *    （config.discoveredModels 成功/失败共用同 type 用 `success` 字段区分）。**不是错误**，
  *    是带错误信息的成功响应——保留各自 type，不并入 error envelope。
  *
  * 此前 6 种碎片化形状（extension.installError / file.read:error / ...）已统一：

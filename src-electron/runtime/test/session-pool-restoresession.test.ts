@@ -101,7 +101,6 @@ vi.mock('../src/infra/pi/process-manager.js', () => ({
 import { SessionService } from '../src/services/session/session-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
-import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
 import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
 
@@ -154,11 +153,9 @@ function createService(): SessionService {
     noopBroker,
     adapterFactory,
     '/tmp',
-    {} as never,
     { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never,
     new PiConfigStore(),
     new PiSessionStore(),
-    new NavigateInterceptorFactory(),
     noopGitInfoReader,
   )
 }

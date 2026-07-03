@@ -6,16 +6,15 @@
  * 拆分后此测试保持绿即证明行为不变。
  *
  * Mock 边界（不 spawn 真 pi、不碰真文件系统）：
- * - pi-config-bridge / trash / message-converter / session-history /
- *   navigate-interceptor 全部 vi.mock；工厂引用的 mock 用 vi.hoisted 声明以避开 TDZ。
+ * - pi-config-bridge / trash / message-converter / session-history 全部 vi.mock。
  * - IGitInfoReader 经构造注入（不再 vi.mock 模块），createSetup 提供桩实现。
- * - 构造函数依赖（pm / broker / treeService / extensionService）注入 mock 对象。
+ * - 构造函数依赖（pm / broker / extensionService）注入 mock 对象。
  * - pm 通过共享 clientMap 让 getClient/hasClient/rekey/getSessionIdByClient 行为自洽。
  * - existsSync 用真实 node:fs，测试数据用真实存在的 cwd（tmpdir）。
  *
  * 覆盖分类（对应 plan 归属表）：
  * - dispatcher：sendMessage / sendSubagentMessage / abort / steerMessage / followUpMessage / compact
- * - lifecycle：create / delete / renameSession / restoreSession / rebindAfterFork
+ * - lifecycle：create / delete / renameSession / restoreSession
  * - Facade：switchModel / setThinkingLevel / getHistory / hasActiveSession / getRpcClient /
  *           ensureActive / listPersistedSessions / getSummary / destroyAll / setSendMessageHook
  * - onSessionExit：构造函数注册的进程退出回调
@@ -100,32 +99,11 @@ vi.mock('../src/infra/system/trash.js', () => ({ trash: mocks.trashMock }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: mocks.convertPiHistoryMock }))
 vi.mock('../src/services/session-history.js', () => ({ getHistoryFromFile: mocks.getHistoryFromFileMock }))
 
-// NavigateInterceptor 经 factory 创建，mock 成最小实现
-vi.mock('../src/infra/pi/navigate-interceptor.js', () => ({
-  NavigateInterceptor: class MockNavigateInterceptor {
-    readonly send = vi.fn()
-    setResolver = vi.fn()
-    clearResolver = vi.fn()
-    onMessageEnd = vi.fn()
-  },
-  NavigateInterceptorFactory: class MockNavigateInterceptorFactory {
-    createNavigateInterceptor() {
-      return new (class MockNavigateInterceptor {
-        readonly send = vi.fn()
-        setResolver = vi.fn()
-        clearResolver = vi.fn()
-        onMessageEnd = vi.fn()
-      })()
-    }
-  },
-}))
-
 // ── Mock 之后再 import 被测对象 ─────────────────────────────────────
 
 import { SessionService } from '../src/services/session/session-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
-import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
 
 // ── Mock client / 依赖工厂 ─────────────────────────────────────────
 
@@ -199,11 +177,6 @@ interface Setup {
   service: SessionService
   pm: IProcessManager
   broker: IMessageBroker
-  treeService: {
-    registerSession: ReturnType<typeof vi.fn>
-    unregisterSession: ReturnType<typeof vi.fn>
-    setNavigateCapable: ReturnType<typeof vi.fn>
-  }
   extensionService: IExtensionService
   clientMap: Map<string, MockClient>
   /** mock 的 IGitInfoReader（readGitInfo 恒 undefined → 摘要 git 字段留空）。供 localSession 复用。 */
@@ -262,12 +235,6 @@ function createSetup(): Setup {
     sendError: vi.fn(),
   } as unknown as IMessageBroker
 
-  const treeService = {
-    registerSession: vi.fn(),
-    unregisterSession: vi.fn(),
-    setNavigateCapable: vi.fn(),
-  }
-
   const extensionService: IExtensionService = {
     getExtensionPaths: vi.fn().mockResolvedValue([]),
   } as unknown as IExtensionService
@@ -289,11 +256,9 @@ function createSetup(): Setup {
     broker,
     adapterFactory,
     '/tmp',
-    treeService as never,
     extensionService,
     new PiConfigStore(),
     new PiSessionStore(),
-    new NavigateInterceptorFactory(),
     gitInfoReader,
   )
 
@@ -322,7 +287,7 @@ function createSetup(): Setup {
   }
 
   return {
-    service, pm, broker, treeService, extensionService, clientMap, gitInfoReader,
+    service, pm, broker, extensionService, clientMap, gitInfoReader,
     triggerExit: (sid, code) => exitCb?.(sid, code),
     mountClient, seedSession,
   }
@@ -533,11 +498,8 @@ describe('SessionService · lifecycle', () => {
       expect(setup.service.getSummary(summary.id)?.label).toBe('my-label')
     })
 
-    it('registers tree session and queries commands', async () => {
+    it('queries commands and broadcasts session.commands on create', async () => {
       const { id } = await setup.seedSession({ commands: [{ name: 'xyz-navigate', source: 'extension' }] })
-      expect(setup.treeService.registerSession).toHaveBeenCalledWith(id, expect.anything())
-      // navigate 能力检测：command 命中 → setNavigateCapable(true)
-      expect(setup.treeService.setNavigateCapable).toHaveBeenCalledWith(id, true)
       // commands 广播给前端
       const cmds = findBroadcast(setup, 'session.commands')
       expect(cmds?.payload).toMatchObject({ sessionId: id })
@@ -569,11 +531,10 @@ describe('SessionService · lifecycle', () => {
   })
 
   describe('delete', () => {
-    it('detaches, destroys process, removes from map, unregisters tree (active session)', async () => {
+    it('detaches, destroys process, removes from map (active session)', async () => {
       const { id } = await setup.seedSession()
       await setup.service.delete(id)
       expect(setup.pm.destroySession).toHaveBeenCalledWith(id)
-      expect(setup.treeService.unregisterSession).toHaveBeenCalledWith(id)
       expect(setup.service.getSummary(id)).toBeUndefined()
       expect(mocks.refreshAllMock).toHaveBeenCalled()
     })
@@ -656,25 +617,6 @@ describe('SessionService · lifecycle', () => {
       vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       await expect(setup.service.restoreSession('persist-3')).rejects.toThrow('switch failed')
       expect(setup.pm.destroySession).toHaveBeenCalledWith('persist-3')
-    })
-  })
-
-  describe('rebindAfterFork', () => {
-    it('rekeys process manager and re-initializes session under new id', async () => {
-      const { id: oldId, client } = await setup.seedSession()
-      vi.mocked(client.getCommands).mockClear()
-      const newId = 'forked-' + oldId
-      await setup.service.rebindAfterFork(oldId, newId, 'forked-label', '/fake/forked.jsonl')
-      // rekey 调用
-      expect(setup.pm.rekey).toHaveBeenCalledWith(oldId, newId)
-      // 旧 session 注销，新 session 注册
-      expect(setup.treeService.unregisterSession).toHaveBeenCalledWith(oldId)
-      expect(setup.service.getSummary(oldId)).toBeUndefined()
-      expect(setup.service.getSummary(newId)?.label).toBe('forked-label')
-    })
-
-    it('throws when old session not in map', async () => {
-      await expect(setup.service.rebindAfterFork('ghost', 'new', 'l')).rejects.toThrow('Session ghost not found')
     })
   })
 })
@@ -1047,12 +989,10 @@ describe('SessionService · Facade', () => {
   })
 
   describe('destroyAll', () => {
-    it('unregisters all tree sessions, detaches, calls pm.destroyAll, clears map', async () => {
+    it('detaches, calls pm.destroyAll, clears map', async () => {
       const { id: id1 } = await setup.seedSession({ label: 's1' })
       const { id: id2 } = await setup.seedSession({ label: 's2' })
       await setup.service.destroyAll()
-      expect(setup.treeService.unregisterSession).toHaveBeenCalledWith(id1)
-      expect(setup.treeService.unregisterSession).toHaveBeenCalledWith(id2)
       expect(setup.pm.destroyAll).toHaveBeenCalledTimes(1)
       expect(setup.service.getSummary(id1)).toBeUndefined()
       expect(setup.service.getSummary(id2)).toBeUndefined()
@@ -1078,14 +1018,11 @@ describe('SessionService · onSessionExit callback', () => {
     expect(typeof vi.mocked(setup.pm.onSessionExit).mock.calls[0][0]).toBe('function')
   })
 
-  it('on exit: removes session, unregisters tree, broadcasts list + error', async () => {
+  it('on exit: removes session, broadcasts list + error', async () => {
     const { id } = await setup.seedSession()
-    vi.mocked(setup.treeService.unregisterSession).mockClear()
     setup.triggerExit(id, 1)
     // session 已移除
     expect(setup.service.getSummary(id)).toBeUndefined()
-    // tree 注销
-    expect(setup.treeService.unregisterSession).toHaveBeenCalledWith(id)
     // 广播 session.list（刷新列表）
     const listMsg = findBroadcast(setup, 'session.list')
     expect(listMsg).toBeDefined()
@@ -1106,11 +1043,9 @@ describe('SessionService · onSessionExit callback', () => {
       localSetup.broker,
       () => ({ attach: attachSpy, detach: detachSpy }),
       '/tmp',
-      localSetup.treeService as never,
       localSetup.extensionService,
       new PiConfigStore(),
       new PiSessionStore(),
-      new NavigateInterceptorFactory(),
       localSetup.gitInfoReader,
     )
     const piSid = 'pi-detach-1'
