@@ -108,6 +108,8 @@ export interface IProcessManager {
   onSessionExit(callback: PiExitCallback): () => void
   /** 销毁全部 pi 进程（关闭时清理用）。 */
   destroyAll(): Promise<void>
+  /** 探测 pi 二进制版本（首次 execSync，后续读缓存）。失败返回 'unknown'。 */
+  getPiVersion(): Promise<string>
 }
 
 // ── pi RPC 响应解析 helpers（D16 收口）──────────────────────────

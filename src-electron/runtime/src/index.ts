@@ -24,6 +24,7 @@ import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { FileService } from './services/file-service.js'
+import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
   const effectiveRoot = projectRoot ?? process.cwd()
 
   // Infrastructure
-  const pm = new ProcessManager()
+  const pm = new ProcessManager(effectiveRoot)
 
   // Transport layer
   const server = new RuntimeServer(port, projectRoot)
@@ -206,7 +207,11 @@ async function main(): Promise<void> {
     return model?.contextWindow ?? 0
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService)
+  // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
+  const piVersion = await pm.getPiVersion()
+  const appInfo = { appVersion: getAppVersion(), piVersion }
+
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, appInfo)
 
   // Graceful shutdown on signals
   let shuttingDown = false

@@ -12,9 +12,12 @@
   >
     <div class="sidebar__inner flex h-full w-[340px] flex-col pl-0.5">
       <!-- Brand -->
-      <div class="flex items-center gap-2 px-2 pb-3.5 text-[13px] font-semibold">
-        <span class="grid size-[22px] place-items-center rounded-md bg-accent text-[11px] font-bold text-white">x</span>
-        <span class="text-fg">xyz-agent</span>
+      <div class="flex items-center gap-2 px-2 pb-3.5">
+        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-white">x</span>
+        <div class="flex flex-col leading-tight">
+          <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
+          <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
+        </div>
       </div>
 
       <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
@@ -152,6 +155,7 @@ import FileView from './FileView.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import DeleteSessionDialog from './DeleteSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
+import * as events from '@/api/events'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
@@ -160,6 +164,11 @@ const fileTreeStore = useFileTreeStore()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
+
+/** pi 版本号（runtime 启动时经 app.info 推送；xyz-agent 版本走构建时 __APP_VERSION__） */
+const piVersion = ref('')
+/** xyz-agent 版本（vite define 构建时注入，见 renderer/vite.config.ts） */
+const appVersion = __APP_VERSION__
 
 /** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
 const searchOpen = ref(false)
@@ -221,9 +230,10 @@ async function onConfirmDelete(id: string): Promise<void> {
   await deleteSession(id)
 }
 
-/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api） */
+/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本 */
 onMounted(() => {
   void loadSessions()
+  events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
 })
 
 /**

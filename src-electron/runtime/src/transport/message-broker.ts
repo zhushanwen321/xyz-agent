@@ -33,6 +33,8 @@ export interface BrokerServices {
   modelService: IModelService
   pluginService: IPluginService | undefined
   projectRoot: string
+  /** 应用 + pi 版本号（sendInitialState 推 app.info）。 */
+  appInfo: { appVersion: string; piVersion: string }
 }
 
 export class ServerMessageBroker implements IMessageBroker {
@@ -146,8 +148,12 @@ export class ServerMessageBroker implements IMessageBroker {
    * 仅 config.defaults / config.plugins 两段为 initial-state 独有（无对应 broadcast helper），保留 inline。
    */
   sendInitialState(ws: WsType): void {
-    const { configService, pluginService } = this.services
+    const { configService, pluginService, appInfo } = this.services
     const steps: Array<{ label: string; run: () => void }> = [
+      {
+        label: 'app.info',
+        run: () => this.send(ws, { type: 'app.info', id: this.nextPushId(), payload: appInfo }),
+      },
       {
         label: 'session.list',
         run: () => this.send(ws, this.buildSessionListMsg()),

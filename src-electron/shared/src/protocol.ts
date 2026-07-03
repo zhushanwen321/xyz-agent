@@ -156,6 +156,7 @@ export type ServerMessageType =
   | 'extension.discovered' | 'extension.installCancelled'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
+  | 'app.info'
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
@@ -215,6 +216,8 @@ export interface ServerMessageMapBase {
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）
+  'app.info': { appVersion: string; piVersion: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
   // session.state_changed：session 级状态变更（model.switch 成功后推送，含新 modelId + 按新 contextWindow

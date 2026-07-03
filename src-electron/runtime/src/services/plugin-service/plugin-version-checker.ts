@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 /** 获取 xyz-agent 版本号。优先使用构建时注入的环境变量，回退到 cwd 向上查找 package.json。 */
-function getAppVersion(): string {
+export function getAppVersion(): string {
   // tsup define 在构建时注入（tsup.config.ts）
   const injected = process.env.XYZ_AGENT_VERSION
   if (injected) return injected

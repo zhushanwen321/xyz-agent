@@ -73,7 +73,7 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, appInfo?: { appVersion: string; piVersion: string }): void {
     this.gitService = git
     this.fileService = file
     this.sessionService = session
@@ -89,6 +89,7 @@ export class RuntimeServer implements IMessageBroker {
       modelService: this.modelService,
       pluginService: this.pluginService,
       projectRoot: this.projectRoot,
+      appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
     })
 
     // ── Assemble handlers with explicit context objects ──────────────

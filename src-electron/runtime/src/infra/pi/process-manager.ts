@@ -8,19 +8,18 @@ import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 
 // Find pi executable path (cross-platform). Search order:
-// 1. PATH (which/where pi)
-// 2. nvm managed node installations
-// 3. Common locations
-function findPiExecutable(): string {
+// Packaged: Resources/pi/pi-<plat>-<arch>
+// Dev: src-electron/resources/pi/pi-<plat>-<arch> (prepare-pi-resources.sh 产物)
+//   fallback: PATH (which/where pi) → nvm → common locations
+function findPiExecutable(projectRoot: string): string {
+  const platform = process.platform  // 'darwin' | 'win32' | 'linux'
+  const arch = process.arch          // 'arm64' | 'x64'
+  const binaryName = platform === 'win32'
+    ? `pi-windows-${arch}.exe`
+    : `pi-${platform}-${arch}`
+
   // Packaged mode: use bundled pi binary from resources
   if (isPackaged()) {
-    const platform = process.platform  // 'darwin' | 'win32' | 'linux'
-    const arch = process.arch          // 'arm64' | 'x64'
-
-    const binaryName = platform === 'win32'
-      ? `pi-windows-${arch}.exe`
-      : `pi-${platform}-${arch}`
-
     // Runtime's cwd = process.resourcesPath (set by runtime-manager.ts)
     const bundledPi = join(process.cwd(), 'pi', binaryName)
 
@@ -36,7 +35,15 @@ function findPiExecutable(): string {
     return bundledPi
   }
 
-  // Development mode: original discovery logic
+  // Development mode: 优先用 resources/pi 里 prepare 的二进制（与打包版本统一）
+  const devPi = join(projectRoot, 'src-electron', 'resources', 'pi', binaryName)
+  if (existsSync(devPi)) {
+    console.log(`[process-manager] using dev resources pi: ${devPi}`)
+    return devPi
+  }
+  console.warn(`[process-manager] resources/pi/${binaryName} not found, falling back to system PATH`)
+
+  // Development mode fallback: original discovery logic
   const isWindows = process.platform === 'win32'
 
   // 1. Try PATH
@@ -115,8 +122,9 @@ export class ProcessManager implements IProcessManager {
   private exitCallbacks = new Set<(sessionId: string, code: number | null) => void>()
   private piPath: string | null = null
   private piPathPromise: Promise<string> | null = null
+  private piVersionCache: string | null = null
 
-  constructor() {
+  constructor(private readonly projectRoot: string) {
     // 懒初始化：不在构造函数中执行同步 I/O，避免阻塞事件循环
     // piPath 在首次 createSession 时才解析
   }
@@ -126,7 +134,7 @@ export class ProcessManager implements IProcessManager {
     if (this.piPath) return Promise.resolve(this.piPath)
     if (this.piPathPromise) return this.piPathPromise
     this.piPathPromise = Promise.resolve().then(() => {
-      const resolved = findPiExecutable()
+      const resolved = findPiExecutable(this.projectRoot)
       this.piPath = resolved
       if (resolved !== 'pi') {
         console.log(`[process-manager] using pi at: ${resolved}`)
@@ -136,6 +144,21 @@ export class ProcessManager implements IProcessManager {
       return resolved
     })
     return this.piPathPromise
+  }
+
+  /** 探测 pi 版本（首次调用 execSync，后续读缓存）。失败返回 'unknown'。 */
+  async getPiVersion(): Promise<string> {
+    if (this.piVersionCache) return this.piVersionCache
+    try {
+      const piPath = await this.getPiPath()
+      const cmd = piPath !== 'pi' ? `"${piPath}" --version` : 'pi --version'
+      const version = execSync(cmd, { encoding: 'utf-8', timeout: 5_000 }).trim()
+      this.piVersionCache = version || 'unknown'
+    } catch (e) {
+      console.warn('[process-manager] failed to detect pi version:', e)
+      this.piVersionCache = 'unknown'
+    }
+    return this.piVersionCache
   }
 
   /**
