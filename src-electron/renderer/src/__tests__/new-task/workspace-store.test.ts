@@ -13,13 +13,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 
-// mock workspaceApi（vi.mock 自动 hoist）
-vi.mock('@/api/domains/workspace', () => ({
-  listRecent: vi.fn(),
+// mock @/api 门面的 workspace（store 走门面，mock 路径须与 store import 一致；vi.mock 自动 hoist）
+vi.mock('@/api', () => ({
+  workspace: { listRecent: vi.fn() },
 }))
 
 import { useWorkspaceStore } from '@/stores/workspace'
-import { listRecent as mockListRecent } from '@/api/domains/workspace'
+import { workspace } from '@/api'
+
+// store 现经门面调 workspace.listRecent；mock 后此处即 vi.fn 实例
+const mockListRecent = workspace.listRecent as unknown as ReturnType<typeof vi.fn>
 
 function mkRecord(cwd: string, lastUsedAt: number): RecentWorkspaceRecord {
   return { cwd, lastUsedAt, label: cwd.split('/').filter(Boolean).pop() ?? cwd }

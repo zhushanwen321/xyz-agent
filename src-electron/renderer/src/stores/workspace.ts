@@ -9,7 +9,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
-import { listRecent } from '@/api/domains/workspace'
+import { workspace } from '@/api'
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const records = ref<RecentWorkspaceRecord[]>([])
@@ -23,7 +23,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
    */
   async function load(): Promise<void> {
     try {
-      records.value = await listRecent()
+      records.value = await workspace.listRecent()
     } catch {
       records.value = []
     }
