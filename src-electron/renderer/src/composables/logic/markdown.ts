@@ -155,12 +155,12 @@ async function getMarkdown(): Promise<MarkdownIt> {
     return defaultLinkOpen(tokens, idx, options, env, self)
   }
 
-  // ── 文件路径识别（inline rule）：正文里含 / 的路径片段 → 可点击 <a data-path> ──
-  // 仅识别含路径分隔符的（如 src/foo.ts、a/b/c.vue），单独 foo.ts 不识别（避免误伤版本号/小数）。
-  // 在 text 规则前注册：markdown-it 逐字符推进 pos，每到一个 pos 先试本规则——
-  // 仅当 pos 正好是路径起始（且前一字符是边界符）时消费，否则 return false 让后续规则（text 等）推进。
-  // 不识别行内 code 内的路径：backticks 规则在 text 之前，反引号内容会被 backticks 消费成 code token，
-  // 不会进入 text 流；本规则虽排在 text 前，但 backticks 已先把 code 内容拿走。
+  // ── 文件路径识别：含 / 的路径片段 → 可点击 <a data-path> ──
+  // 两层覆盖，确保正文裸路径与反引号 `src/foo.ts` 内路径都能点击：
+  //  1. filepath inline rule（在 text 前）：拦截正文裸路径，push filepath_open/text/close token
+  //  2. code_inline renderer 覆盖：反引号内路径也链接化。backticks rule 先于 filepath rule
+  //     执行，反引号内容被消费成 code_inline token，filepath rule 接触不到——只能在渲染期二次识别
+  // AI 用反引号标注文件路径是 markdown 惯例，最该可点击的恰恰是这些反引号内的路径。
   // @types/markdown-it 未暴露 md.inline.ruler，运行时确存在（parser_inline.mjs）。用结构类型断言。
   ;(md as unknown as InlineRulerHost).inline.ruler.before('text', 'filepath', filepathRule)
   // 自定义 token type 的 renderer：输出 <a class="md-filepath" data-path="...">
@@ -170,26 +170,29 @@ async function getMarkdown(): Promise<MarkdownIt> {
     return `<a class="md-filepath" data-path="${path}">`
   }
   md.renderer.rules.filepath_close = () => '</a>'
+  // 反引号内路径链接化：覆盖 code_inline renderer，内容跑 linkifyFilePathsHtml，
+  // 产出 <code>...<a class="md-filepath" data-path="...">path</a>...</code>——
+  // 保留等宽 code 视觉，路径可点击（点击处理统一走 useMarkdownInteractions）。
+  md.renderer.rules.code_inline = (tokens, idx) => {
+    return `<code>${linkifyFilePathsHtml(tokens[idx].content)}</code>`
+  }
 
   cachedMarkdown = md
   return md
 }
 
 /**
- * 文件路径 inline rule（markdown-it StateInline 签名）。
+ * 文件路径识别正则（filepath inline rule 与 code_inline 二次识别共用）。
  *
- * 匹配「至少含一个 / 且以源码扩展名结尾」的路径片段。
- * 仅在 pos 正好是路径首字符、且前一字符是边界符（或行首）时消费——
- * 这样普通文本 `see src/foo.ts` 中，text 规则会吃到 `see `（空格是路径前边界），
- * 到 `src` 时本规则命中。中间含 markdown 语法的文本不被跳过。
- *
- * 故意保守：单独 foo.ts（无 /）不识别，避免污染版本号/小数/普通词。
+ * 匹配「至少含一个 / 且以源码扩展名结尾」的路径片段。两条判别：
+ *  1. 至少一个路径分隔符 / —— 单独 foo.ts（无 /）不识别，避免误伤版本号/小数/普通词
+ *  2. 扩展名前瞻 (?=\d*[a-zA-Z]) 要求至少含一个字母 —— 纯数字扩展名 .2/.0 不识别，
+ *     挡掉模型名（glm-5.2）、版本号（node/18.0）、小数（pi/3.14）等 a/b.<数字> 形态；
+ *     .7z 这类数字开头的真实扩展名仍可匹配（前瞻只要求「数字之后必有字母」）
  */
 // 字符集内 `-` 转义为 `\-`（防 `_-`/`/-` 倒序范围触发 "Range out of order"）
-// g 标志 + 从 pos 之后找第一个含/路径。捕获组 1 = 路径（去掉前导边界符）。
-// 前导边界符故意不含反引号 ` —— 行内 code `src/foo.ts` 内的路径不应识别（backticks
-// 在 text 之后，filepath 在 text 之前会先吃掉路径；靠反引号不作为边界符来排除 code 内路径）。
-const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+(?:\/[a-zA-Z0-9._\-]+)+\.[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
+// g 标志 + 捕获组 1 = 路径（去掉前导边界符）。前导边界符：行首或空白/括号/引号/标点。
+const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+(?:\/[a-zA-Z0-9._\-]+)+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
 
 function filepathRule(state: InlineState, silent: boolean): boolean {
   const pos = state.pos
@@ -232,6 +235,45 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+/**
+ * 在已转义的 code_inline HTML 文本中识别文件路径，包成可点击 <a class="md-filepath">。
+ *
+ * code_inline renderer 用：反引号内容被 backticks rule 消费成 code_inline token，
+ * filepath inline rule 接触不到（backticks 先于 filepath 执行），只能在渲染期二次识别。
+ *
+ * 输入是已 escapeHtml 的文本（renderer 拿到的 token.content 是原文，但 code_inline 的输出
+ * 会直接进 HTML，所以这里对非路径片段先 escape 再拼接）。匹配到的路径同样 escapeHtml，
+ * data-path 用 base64 编码（与 filepath rule 一致的 XSS 防线）。
+ */
+function linkifyFilePathsHtml(content: string): string {
+  // FILEPATH_RE 前导边界符含 [;: 等，但 code_inline 内容是孤立片段——
+  // 为让行首即路径（如 `src/foo.ts`，反引号内就一个路径，前面无边界符）也能识别，
+  // 用「相同正则」对原文跑一次：FILEPATH_RE 已含 ^ 行首分支，能覆盖这种情况。
+  FILEPATH_RE.lastIndex = 0
+  let result = ''
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = FILEPATH_RE.exec(content)) !== null) {
+    const leadLen = match[0].length - match[1].length
+    const pathStart = match.index + leadLen
+    const path = match[1]
+    const pathEnd = pathStart + path.length
+    // 前置文本（含边界符）转义后追加
+    if (pathStart > lastIndex) {
+      result += escapeHtml(content.slice(lastIndex, pathStart))
+    }
+    // 路径片段包成 .md-filepath 链接（data-path base64，路径文本 escapeHtml）
+    result += `<a class="md-filepath" data-path="${encodeBase64(path)}">${escapeHtml(path)}</a>`
+    lastIndex = pathEnd
+  }
+  // 剩余文本转义后追加
+  if (lastIndex < content.length) {
+    result += escapeHtml(content.slice(lastIndex))
+  }
+  // 无匹配时整段 escape（等价于原 code_inline 默认行为）
+  return result || escapeHtml(content)
 }
 
 /**

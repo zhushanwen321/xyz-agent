@@ -130,6 +130,22 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(html).not.toContain('md-filepath')
   })
 
+  it('U10b: 纯数字扩展名不识别，挡掉模型名/版本号/小数（扩展名前瞻要求含字母）', async () => {
+    // 三个典型误报形态：含 / 但扩展名是纯数字
+    const html1 = await freshRender('model zhipu-coding-plan-router/glm-5.2 done\n')
+    const html2 = await freshRender('升级 node/18.0 版本\n')
+    const html3 = await freshRender('见 pi/3.14 数值\n')
+    expect(html1).not.toContain('md-filepath')
+    expect(html2).not.toContain('md-filepath')
+    expect(html3).not.toContain('md-filepath')
+  })
+
+  it('U10c: 数字开头的真实扩展名仍识别（如 .7z）', async () => {
+    const html = await freshRender('下载 arch/a.7z\n')
+    expect(html).toContain('md-filepath')
+    expect(html).toContain('>arch/a.7z<')
+  })
+
   it('U11: 文件路径 base64 编码（防 XSS 注入）', async () => {
     const html = await freshRender('见 a/b.ts\n')
     const m = html.match(/data-path="([^"]+)"/)
@@ -143,9 +159,38 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(m![1]).toMatch(/^[A-Za-z0-9+/=]+$/)
   })
 
-  it('U12: 行内 code 内的路径不识别为链接', async () => {
+  it('U12: 反引号内的路径也链接化（code_inline 二次识别）', async () => {
     const html = await freshRender('运行 `src/foo.ts` 命令\n')
-    // 反引号内是 code token，不应被 filepath rule 消费
+    // 反引号内路径包成 .md-filepath，外层保留 <code> 等宽样式
+    expect(html).toContain('md-filepath')
+    expect(html).toContain('<code>')
+    expect(html).toContain('>src/foo.ts<')
+    // <code> 内含 <a class="md-filepath">
+    expect(html).toMatch(/<code><a class="md-filepath"/)
+  })
+
+  it('U12b: 反引号内路径 data-path base64 编码（与正文路径一致）', async () => {
+    const html = await freshRender('见 `a/b.ts`\n')
+    const m = html.match(/data-path="([^"]+)"/)
+    expect(m).not.toBeNull()
+    const decoded = new TextDecoder().decode(
+      Uint8Array.from(atob(m![1]), (c) => c.charCodeAt(0)),
+    )
+    expect(decoded).toBe('a/b.ts')
+  })
+
+  it('U12c: 反引号内多路径混合识别', async () => {
+    const html = await freshRender('改了 `a/b.ts` 和 `x/y.vue`\n')
+    // 两个 code_inline 各含一个 md-filepath 链接
+    const matches = html.match(/md-filepath/g)
+    expect(matches?.length).toBe(2)
+    expect(html).toContain('>a/b.ts<')
+    expect(html).toContain('>x/y.vue<')
+  })
+
+  it('U12d: 反引号内非路径代码不误识别', async () => {
+    const html = await freshRender('调用 `foo.bar.split("/")` 方法\n')
+    // 无 / 的片段不识别；含 / 但无源码扩展名的（split）也不识别
     expect(html).not.toContain('md-filepath')
     expect(html).toContain('<code>')
   })
