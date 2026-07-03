@@ -35,8 +35,9 @@ function findPiExecutable(projectRoot: string): string {
     return bundledPi
   }
 
-  // Development mode: 优先用 resources/pi 里 prepare 的二进制（与打包版本统一）
-  const devPi = join(projectRoot, 'src-electron', 'resources', 'pi', binaryName)
+  // Development mode: 优先用 resources/pi 里 prepare 的二进制（与打包版本统一）。
+  // projectRoot = src-electron/（dev 模式 app.getAppPath()，runtime 的 cwd），resources/pi 在其下。
+  const devPi = join(projectRoot, 'resources', 'pi', binaryName)
   if (existsSync(devPi)) {
     console.log(`[process-manager] using dev resources pi: ${devPi}`)
     return devPi
