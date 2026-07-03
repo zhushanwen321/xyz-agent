@@ -569,9 +569,18 @@ export const settings = {
   updateSystem: realUpdateSystem,
 }
 
-// Mock workspace domain（W3：最近工作区记录，mock 返回空列表）
+// Mock workspace domain（W3：最近工作区记录，mock 返回 3 条 records 供 E2E 验证）
 export const workspace = {
   async listRecent(): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
-    return []
+    // 固定 3 条样例（lastUsedAt 递减，最新在前），供 T4.1/T4.3 E2E 验证 popover 渲染与搜索过滤。
+    // label = cwd basename（与 runtime workspace-message-handler 的 label 派生一致）。
+    const now = Date.now()
+    const DAY = 86_400_000
+    const oldestOffset = DAY + DAY // 2 天前（相加避免魔数 lint）
+    return [
+      { cwd: '/Users/demo/project-a', lastUsedAt: now, label: 'project-a' },
+      { cwd: '/Users/demo/project-b', lastUsedAt: now - DAY, label: 'project-b' },
+      { cwd: '/Users/demo/another-foo', lastUsedAt: now - oldestOffset, label: 'another-foo' },
+    ]
   },
 }

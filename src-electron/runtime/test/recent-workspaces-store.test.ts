@@ -190,9 +190,11 @@ describe('RecentWorkspacesStore', () => {
     )
   })
 
-  // ── T1.10: flushAll 直接持久化不等 debounce ───────────────────
+  // 注：以下两条为 flushAll / startFlushTimer 的「行为测试」，不占用 NFR 用例 ID。
+  // T1.10（数据目录与 pi 隔离）与 T1.11（atomicWrite 原子性）属于 integration(real)
+  // NFR 测试，见 recent-workspaces-real.test.ts（用真实文件系统验证）。
 
-  it('T1.10: flushAll persists immediately without waiting for debounce', () => {
+  it('flushAll: persists immediately without waiting for debounce', () => {
     store.record('/project/a')
     store.record('/project/b')
 
@@ -203,9 +205,7 @@ describe('RecentWorkspacesStore', () => {
     expect(mockedAtomicWrite).toHaveBeenCalled()
   })
 
-  // ── T1.11: startFlushTimer 定期 flush ─────────────────────────
-
-  it('T1.11: startFlushTimer triggers periodic flushAll', () => {
+  it('startFlushTimer: triggers periodic flushAll', () => {
     store.record('/project/test')
     store.startFlushTimer()
 
