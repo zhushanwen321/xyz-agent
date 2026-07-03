@@ -21,6 +21,7 @@ import * as realSettings from './domains/settings'
 import * as realGit from './domains/git'
 import * as realFile from './domains/file'
 import * as realComposer from './domains/composer'
+import * as realWorkspace from './domains/workspace'
 import * as mockApi from './mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
@@ -38,6 +39,7 @@ export const file = isMock ? mockApi.file : realFile
 // composer：`#` 文件候选已接 real domain（file.search）；`@` 候选 real 返回空（已废弃）。
 // mock 模式仍走 mockApi.composer（fixture 演示）。
 export const composer = isMock ? mockApi.composer : realComposer
+export const workspace = isMock ? mockApi.workspace : realWorkspace
 // search（⌘K 全局搜索）编排归 useSearch composable（D-026，#5）：mock 轨走 mockApi.search fixture，
 // real 轨走真实 3 源聚合（命令/file/session domain）。本门面不再导出 search（useSearch 内部判 VITE_MOCK）。
 

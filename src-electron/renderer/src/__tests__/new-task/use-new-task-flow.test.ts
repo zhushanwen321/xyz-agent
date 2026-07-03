@@ -49,6 +49,17 @@ vi.mock('@/api', () => ({
   chat: { send: apiMock.chatSend, streamSubscribe: apiMock.streamSubscribe },
 }))
 
+// W3: mock workspaceStore 让 submitFirstMessage 能取到 defaultCwd
+const workspaceStoreMock = vi.hoisted(() => ({
+  records: [] as Array<{ cwd: string; lastUsedAt: number; label: string }>,
+  defaultCwd: undefined as string | undefined,
+  load: vi.fn(),
+}))
+
+vi.mock('@/stores/workspace', () => ({
+  useWorkspaceStore: vi.fn(() => workspaceStoreMock),
+}))
+
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
@@ -56,6 +67,9 @@ beforeEach(() => {
   setActivePinia(createPinia())
   resetNewTaskFlow()
   vi.clearAllMocks()
+  // 重置 workspaceStore mock
+  workspaceStoreMock.records = []
+  workspaceStoreMock.defaultCwd = undefined
 })
 
 /** 构造带 gitBranch 的 session（git 目录） */
@@ -105,6 +119,8 @@ describe('useNewTaskFlow 状态机', () => {
   describe('submitFirstMessage label 派生（session 名 = 提示词前 10 字）', () => {
     it('未选目录直接发送 → create 收到 (cwd, label)，label 是提示词前 10 字', async () => {
       setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      // W3: 设置 workspaceStore.defaultCwd 模拟工作区记录
+      workspaceStoreMock.defaultCwd = '/repo'
       const flow = useNewTaskFlow()
       await flow.startFlow()
       await flow.submitFirstMessage('一二三四五六七八九十十一') // 11 字
@@ -115,6 +131,8 @@ describe('useNewTaskFlow 状态机', () => {
 
     it('短提示词 → label = 原文（不加省略号），与提示词一致', async () => {
       setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      // W3: 设置 workspaceStore.defaultCwd 模拟工作区记录
+      workspaceStoreMock.defaultCwd = '/repo'
       const flow = useNewTaskFlow()
       await flow.startFlow()
       await flow.submitFirstMessage('修 bug') // 4 字

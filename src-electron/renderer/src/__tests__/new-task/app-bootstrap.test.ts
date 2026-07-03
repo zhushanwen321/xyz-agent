@@ -41,6 +41,17 @@ vi.mock('@/api', () => ({
   chat: { getHistory: chatCtrl.getHistory },
 }))
 
+// W3: mock workspaceStore 让 initApp 能正确预填 cwd
+const workspaceStoreMock = vi.hoisted(() => ({
+  records: [] as Array<{ cwd: string; lastUsedAt: number; label: string }>,
+  defaultCwd: undefined as string | undefined,
+  load: vi.fn(),
+}))
+
+vi.mock('@/stores/workspace', () => ({
+  useWorkspaceStore: vi.fn(() => workspaceStoreMock),
+}))
+
 // useNewTaskFlow / useSidebar 均用真实实现（不 mock）——这是本测试的核心价值
 import { useSidebar, resetAppBootstrap } from '@/composables/features/useSidebar'
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
@@ -54,6 +65,9 @@ beforeEach(() => {
   sessionCtrl.switchSession.mockResolvedValue(undefined)
   sessionCtrl.remove.mockResolvedValue(undefined)
   chatCtrl.getHistory.mockResolvedValue([])
+  // 重置 workspaceStore mock
+  workspaceStoreMock.records = []
+  workspaceStoreMock.defaultCwd = undefined
 })
 
 function mkSession(over: Partial<SessionSummary>): SessionSummary {
@@ -104,6 +118,8 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
       { cwd: '/a', sessions: [mkSession({ id: 'a', cwd: '/a', lastActiveAt: 100 })] },
       { cwd: '/b', sessions: [mkSession({ id: 'recent', cwd: '/b', lastActiveAt: 900 })] },
     ])
+    // W3: 设置 workspaceStore.defaultCwd 模拟工作区记录
+    workspaceStoreMock.defaultCwd = '/b'
     await useSidebar().initApp()
 
     const flow = useNewTaskFlow()

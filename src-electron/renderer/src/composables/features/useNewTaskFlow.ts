@@ -4,22 +4,23 @@
  * 职责（编排，非状态机实现）：NewTaskFlow 横切编排骨架——compose 状态机 + 分支 + 选目录三子 composable，
  * 自身仅保留跨子 composable 的编排动作：
  * - startFlow：进 landing（销毁重建终态 / in-flight 守卫 / presetCwd / 不变量强制清 activeId）。
- * - submitFirstMessage：landing 态首发提交（create session + apply 模型/思考等级 + 载入 panel + 发送）。
+ * - submitFirstMessage：landing 态首发提交（create session + apply 模型/思考等级 / 载入 panel + 发送）。
  * - presetCwd / setPendingModel：landing 态回灌选定值（create session 后 apply）。
  * - closeOverlay / cancelFlow / reenterFlow / completeFlow：薄转换封装。
  * - computed 视图（currentSessionId/currentCwd/currentModel/gitInfo/isInflight/isOverlay/isActive）。
  *
  * 状态机实现见 useNewTaskFlowState；git 分支见 useNewTaskBranch；选目录见 useNewTaskDirSelect。
  *
- * 依赖方向（§2 严格边界）：api/domains（session）+ lib/utils（resolveDefaultCwd）+ stores/session/panel/navigation
+ * 依赖方向（§2 严格边界）：api/domains（session）+ lib/utils（deriveSessionLabel）+ stores/session/workspace/panel/navigation
  * + composables/features(useChat/useModel) + composables/new-task/*（子 composable）。
  * 不直接 import transport（经 api/domains）。
  */
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { session as sessionApi } from '@/api'
-import { resolveDefaultCwd, deriveSessionLabel } from '@/lib/utils'
+import { deriveSessionLabel } from '@/lib/utils'
 import { useSessionStore } from '@/stores/session'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
@@ -41,6 +42,7 @@ export { resetNewTaskFlow } from '@/composables/new-task/useNewTaskFlowState'
 
 export function useNewTaskFlow() {
   const session = useSessionStore()
+  const workspaceStore = useWorkspaceStore()
   const panel = usePanelStore()
   const navigation = useNavigationStore()
   const chat = useChat()
@@ -130,7 +132,7 @@ export function useNewTaskFlow() {
    * submitFirstMessage —— landing 态首发提交：载入 panel + 发消息。
    *
    * 预创建后 session 已在选目录时建立，这里只负责载入 panel + 发送。
-   * - 无绑定 session（未选目录直接输入发送，用 resolveDefaultCwd 兑底 create）→ create 后发送
+   * - 无绑定 session（未选目录直接输入发送，用 workspaceStore.defaultCwd 兑底 create）→ create 后发送
    * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
    *
    * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
@@ -148,7 +150,7 @@ export function useNewTaskFlow() {
     try {
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
-        const cwd = pendingCwd.value ?? resolveDefaultCwd(session.list)
+        const cwd = pendingCwd.value ?? workspaceStore.defaultCwd
         // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
         const label = deriveSessionLabel(trimmed)
         const created = await sessionApi.create(cwd, label)

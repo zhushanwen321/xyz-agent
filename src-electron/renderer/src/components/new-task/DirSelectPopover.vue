@@ -4,24 +4,23 @@
  *
  * 形态：popover 内容面板（锚定 + 宽度由本组件定 380px；向上展开由父级 PopoverContent side="top" 控制）。
  *
- * 数据流（container for data）：useSessionStore().list → recentWorkspaces → RecentWorkspace[] top10。
+ * 数据流（container for data）：workspaceStore.records → RecentWorkspaceRecord[] top10。
  * 动作（presentational for actions，emit 单 payload 对象）：
  * - 选列表项 → emit('select', { cwd })（父接 useNewTaskFlow.selectWorkspace）
  * - 「打开文件夹」→ emit('open-dir-dialog')（父接 useNewTaskFlow.openDirDialog → OS 原生 dialog）
  * - 「远程连接」→ v1 stub toast「v1 暂未支持」（spec §6 / issues #11 P3 延后）
  * - Esc → emit('close')
  *
- * 空态（T3.2 / AC-5.4）：recentWorkspaces=[] → 「暂无最近工作区 · 选择一个本地目录开始」。
+ * 空态（T3.2 / AC-5.4）：records=[] → 「暂无最近工作区 · 选择一个本地目录开始」。
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { Folder, FolderPlus, Cloud } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
-import { useSessionStore } from '@/stores/session'
-import { recentWorkspaces } from '@/lib/utils'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { useToast } from '@/composables/useToast'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
-import type { RecentWorkspace } from '@/lib/utils'
+import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 
 const props = defineProps<{
   /** 当前 cwd（高亮已选项，Card-Active） */
@@ -34,7 +33,7 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const session = useSessionStore()
+const workspaceStore = useWorkspaceStore()
 const { error: toastError } = useToast()
 
 /** spec §6：远程连接 v1 stub（issues #11 P3），点开 toast 提示 */
@@ -45,10 +44,11 @@ const ACTION_ITEM_COUNT = 2
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
 
-const workspaces = computed<RecentWorkspace[]>(() => recentWorkspaces(session.list))
+/** W3: 改接 workspaceStore.records（取代旧 session.list 派生） */
+const workspaces = computed<RecentWorkspaceRecord[]>(() => workspaceStore.records)
 
 /** 搜索即时过滤（无 debounce，list < 50 本地缓存，spec §3.2） */
-const filtered = computed<RecentWorkspace[]>(() => {
+const filtered = computed<RecentWorkspaceRecord[]>(() => {
   const q = search.value.trim().toLowerCase()
   if (!q) return workspaces.value
   // label 已是 cwd basename，是其全路径 cwd 的子串，单独按 cwd 匹配即可覆盖两者
@@ -63,7 +63,7 @@ onMounted(() => {
   nextTick(() => root.value?.querySelector('input')?.focus())
 })
 
-function selectWorkspace(ws: RecentWorkspace): void {
+function selectWorkspace(ws: RecentWorkspaceRecord): void {
   emit('select', { cwd: ws.cwd })
 }
 

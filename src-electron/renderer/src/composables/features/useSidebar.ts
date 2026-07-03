@@ -19,7 +19,7 @@
  * deriveStatus 仍从此处 re-export（向后兼容：历史上有调用方直接从 useSidebar import 该纯函数）。
  */
 import { onScopeDispose } from 'vue'
-import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
+import type { SessionGroup } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
@@ -28,6 +28,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
@@ -73,6 +74,7 @@ export function useSidebar() {
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
   const commandStore = useCommandStore()
+  const workspaceStore = useWorkspaceStore()
 
   /**
    * session.list server-push 订阅（#7 方案 A）。
@@ -355,13 +357,12 @@ export function useSidebar() {
       await newSession()
       // 2) 异步加载侧栏列表（WS 往返 + 全量 history hydrate），不阻塞 landing 渲染。
       await loadSessions()
+      // 2b) INV-6: 加载最近工作区记录（workspaceStore.load 必须在 presetCwd 前）。
+      await workspaceStore.load()
       // 3) 预填 cwd（G1.1「沿用最近 session 目录」做新任务，chip 所见即所得）：
-      //    startFlow 已先进 landing（pendingCwd=null），这里用最近活跃 session 的 cwd 回灌。
-      let recent: SessionSummary | undefined
-      for (const s of session.list) {
-        if (!recent || s.lastActiveAt > recent.lastActiveAt) recent = s
-      }
-      if (recent?.cwd) flow.presetCwd(recent.cwd)
+      //    W3: 改接 workspaceStore.defaultCwd（取代从 session.list 派生 resolveDefaultCwd）。
+      const recentCwd = workspaceStore.defaultCwd
+      if (recentCwd) flow.presetCwd(recentCwd)
     } catch {
       // 启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试
       appBootstrapped = false

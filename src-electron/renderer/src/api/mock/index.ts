@@ -568,3 +568,10 @@ export const settings = {
   getSystem: realGetSystem,
   updateSystem: realUpdateSystem,
 }
+
+// Mock workspace domain（W3：最近工作区记录，mock 返回空列表）
+export const workspace = {
+  async listRecent(): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
+    return []
+  },
+}
