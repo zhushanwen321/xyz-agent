@@ -65,25 +65,19 @@ export class TreeService implements ISessionTreeService {
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
     const stateData = await readPiState(client)
-    let leafId = (stateData?.leafId as string | null) ?? null
     const sessionFile = stateData?.sessionFile as string | undefined
 
     if (!sessionFile) {
-      return { sessionId, tree: [], leafId, branchCount: 0, navigateCapable: this.isNavigateCapable(sessionId) }
+      return { sessionId, tree: [], leafId: null, branchCount: 0, navigateCapable: this.isNavigateCapable(sessionId) }
     }
 
     const { rootNodes, lastEntryId } = await this.treeReader.buildTreeFromFile(sessionFile)
     const branchCount = this.treeReader.countBranches(rootNodes)
 
-    // Fallback: 如果 get_state 仍然没返回 leafId（旧版 pi），用 tree 最后一个 entry 近似
-    if (!leafId) {
-      leafId = lastEntryId
-    }
-
     return {
       sessionId,
       tree: rootNodes,
-      leafId,
+      leafId: lastEntryId,
       branchCount,
       navigateCapable: this.isNavigateCapable(sessionId),
     }

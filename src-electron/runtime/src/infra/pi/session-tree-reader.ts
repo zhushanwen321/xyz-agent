@@ -56,7 +56,7 @@ interface BuildTreeResult {
   byId: Map<string, TreeNode>
   rootNodes: TreeNode[]
   labelsById: Map<string, string>
-  /** 最后一条 entry 的 id（近似 leafId，pi 不暴露真实 leafId 时使用） */
+  /** 最后一条 message entry 的 id，用作当前叶子节点（leaf）的近似定位。 */
   lastEntryId: string | null
   /** 原始 JSONL entry map（用于提取完整文本等场景，TreeNode.text 是截断预览） */
   rawEntries: Map<string, RawEntry>
@@ -128,10 +128,9 @@ export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResu
     byId.set(entry.id, node)
   }
 
-  // 最后一条 message entry 的 id（pi 的 leafId fallback）
-  // 注意：不使用 entries 最后一项，因为 JSONL 中可能有多棵树，
+  // 最后一条 message entry 的 id，用作当前叶子节点（leaf）的近似定位。
+  // 注意：不取 entries 最后一项，因为 JSONL 可能有多棵树，
   // 最后一棵可能全是 model_change/thinking_level_change，没有实际消息。
-  // 遍历所有 entry，找到最后一个 type=message 的作为 leafId 近似值。
   let lastEntryId: string | null = null
   for (let i = entries.length - 1; i >= 0; i--) {
     if (entries[i]!.type === 'message') {
@@ -161,29 +160,6 @@ export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResu
   sortChildrenRecursive(rootNodes)
 
   return { byId, rootNodes, labelsById, lastEntryId, rawEntries }
-}
-
-/**
- * Compute the active path from a leaf node to the root.
- *
- * @param byId - The node map from buildTreeFromFile.
- * @param leafId - The leaf entry ID to trace from.
- * @returns Set of all node IDs on the path (inclusive of leaf and root).
- */
-export function computeActivePath(byId: Map<string, TreeNode>, leafId: string): Set<string> {
-  const path = new Set<string>()
-  let current: string | null = leafId
-
-  while (current !== null) {
-    path.add(current)
-    const node = byId.get(current)
-    if (!node) break
-    current = node.parentId
-    // Guard against cycles
-    if (current !== null && path.has(current)) break
-  }
-
-  return path
 }
 
 /**

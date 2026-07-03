@@ -62,7 +62,7 @@
 ## 6. 兼容性
 
 - **向后兼容 env var**：`XYZ_AGENT_DATA_DIR` 未设时行为完全不变（prod 默认）；`XYZ_AGENT_PORT_OFFSET` 未设默认 0。验证：instance-isolation spec §5、§9
-- **pi fork 版本锁定**：必须用 `xyz-pi`（fork，含 `leafId` 字段），不能用原版 `@mariozechner/pi`，否则 session tree 失效
+- **pi 版本**：使用上游 `badlogic/pi-mono`（npm 包 `@earendil-works/pi-coding-agent`，当前 `0.80.3`）。session tree / fork / clone 核心能力为 pi 原生，不依赖 fork 改动。历史：曾用 fork `xyz-pi` 透出 `leafId`，该字段前端从未消费，已切回上游
 - **旧消息兼容**：不含 contentBlocks 的历史消息走 `groupByLegacyFields`，渲染不变
 - **plugin manifest 向后兼容**：semver 兼容性检查（`engines.xyz-agent`），不兼容跳过扫描
 - **shared 层禁 node 内置模块**：`src-electron/shared/src/` 是浏览器/runtime 共享层，禁 import `node:` 内置（node:path/fs/crypto），浏览器环境 vite externalize 成空代理访问即崩。验证：`grep -rn "from 'node:" src-electron/shared/src/` 返回空。事故来源：W1a 误迁 isUnderOrEqual 到 shared 导致 dev 崩溃（E2E mock 掩盖 8 Wave）。`[from: 2026-06-28-sidebar-project-file-tree §3.1]`（教训固化为 2026-06-30-e2e-retrospect）

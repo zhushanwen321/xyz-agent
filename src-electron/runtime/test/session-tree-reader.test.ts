@@ -2,7 +2,7 @@
  * session-tree-reader 单测 — 覆盖纯解析逻辑（report round5 must-fix #2）。
  *
  * session-tree 是 fork pi 的核心动机（leafId 透出），WS 入口风险最高。
- * buildTreeFromFile / computeActivePath / extractFullText / countBranches 共 ~286 行纯解析逻辑
+ * buildTreeFromFile / extractFullText / countBranches 共 ~286 行纯解析逻辑
  * 此前无专属单测（tree-message-handler.test.ts 把 treeService 全 mock 掉）。
  *
  * 运行：cd src-electron/runtime && npx vitest run test/session-tree-reader.test.ts
@@ -13,7 +13,6 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   buildTreeFromFile,
-  computeActivePath,
   extractFullText,
   countBranches,
 } from '../src/infra/pi/session-tree-reader.js'
@@ -209,38 +208,6 @@ describe('session-tree-reader', () => {
       ])
       const result = await buildTreeFromFile(fp)
       expect(result.lastEntryId).toBeNull()
-    })
-  })
-
-  describe('computeActivePath — 环路 guard', () => {
-    it('正常路径：从 leaf 到 root 全部 id 入集合', () => {
-      // 构造 byId: leaf -> mid -> root
-      const byId = new Map<string, { parentId: string | null }>([
-        ['root', { parentId: null }],
-        ['mid', { parentId: 'root' }],
-        ['leaf', { parentId: 'mid' }],
-      ])
-      const path = computeActivePath(byId as never, 'leaf')
-      expect(path).toEqual(new Set(['leaf', 'mid', 'root']))
-    })
-
-    it('环路 guard：遇到已访问节点即停止，避免死循环', () => {
-      // 构造环 a -> b -> a
-      const byId = new Map<string, { parentId: string | null }>([
-        ['a', { parentId: 'b' }],
-        ['b', { parentId: 'a' }],
-      ])
-      const path = computeActivePath(byId as never, 'a')
-      // 应包含 a, b 后即因 b.parentId=a 已在集合中而停止
-      expect(path.has('a')).toBe(true)
-      expect(path.has('b')).toBe(true)
-      expect(path.size).toBe(2)
-    })
-
-    it('leafId 不在 byId 时只包含 leafId 自身', () => {
-      const byId = new Map<string, { parentId: string | null }>()
-      const path = computeActivePath(byId as never, 'ghost')
-      expect(path).toEqual(new Set(['ghost']))
     })
   })
 

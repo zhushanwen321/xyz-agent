@@ -32,12 +32,10 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 **页面设计目录**: `docs/page-design/` — v3 设计 SSOT 与设计稿。结构：`design-tokens.md`（原子）+ `design-system.md`（原语）+ `v3/`（正式设计区，L0-L4 骨架）+ `zcode-demo/`（视觉原型）+ `archive/`（pre-v3 历史稿）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
 
 **外部项目源码**:
-- **xyz-pi（fork 版本）**: [zhushanwen321/pi](https://github.com/zhushanwen321/pi) — 基于 [pi](https://github.com/nicepkg/pi-coding-agent) 的 fork，增加了 session tree 透出（`leafId` in `get_state`）等定制功能
-  - **重要**: xyz-agent **不能**使用原版 pi，必须使用 fork 版本。原版 pi 不支持 `leafId` 字段，会导致 session tree 功能失效
-  - npm 包: `xyz-pi`（区别于原版 `@mariozechner/pi`）
-  - 本地源码: `~/Code/pi-mono-workspace/`（bare repo + worktree 模式）
-  - 当前版本: `0.75.5-xyz-0.1`
-  - fork 关键改动: `get_state` RPC 响应中增加 `leafId` 字段，用于 session tree 导航
+- **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
+  - npm 包: `@earendil-works/pi-coding-agent`
+  - 当前版本: `0.80.3`
+  - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游，leafId 改为从 JSONL session 文件解析近似值
   - Skill 加载: `packages/coding-agent/src/core/skills.ts`
   - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`
   - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts`

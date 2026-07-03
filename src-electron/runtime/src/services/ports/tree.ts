@@ -25,7 +25,7 @@ export interface BuildTreeResult {
   byId: Map<string, import('../../types.js').TreeNode>
   rootNodes: import('../../types.js').TreeNode[]
   labelsById: Map<string, string>
-  /** 最后一条 entry 的 id（近似 leafId，pi 不暴露真实 leafId 时使用）。 */
+  /** 最后一条 message entry 的 id，用作当前叶子节点（leaf）的近似定位。 */
   lastEntryId: string | null
   /** 原始 JSONL entry map（用于提取完整文本等场景）。 */
   rawEntries: Map<string, TreeRawEntry>
