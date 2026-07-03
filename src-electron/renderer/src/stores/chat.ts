@@ -36,6 +36,15 @@ export const useChatStore = defineStore('chat', () => {
   /** 已 hydrate 的 session（避免切换时重复注入历史） */
   const hydrated = ref<Set<string>>(new Set())
   const isStreaming = ref(false)
+  /**
+   * 当前正在流式生成的 session id（与 isStreaming 同源，per-session 视图）。
+   * message_start 记录 sid，终态（complete/error/stream_error）清空。
+   * 用途：Panel 渲染守卫需 per-session 判断「本 Panel 的 session 是否在生成」，
+   * 不能用全局 isStreaming——否则 A 会话流式时点新建切到空 session，空 session 的
+   * Landing 会被全局 isStreaming 误伤（分支走到兜底空态，new-task 渲染撕裂）。
+   * 单值足够：双 panel 并发流式目前不可达（G-023 DEFERRED），未来并发可扩展为 Set。
+   */
+  const streamingSessionId = ref<string | null>(null)
   /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离） */
   const compactingSessions = ref<Set<string>>(new Set())
   /** 按 sessionId 分区的自动重试态（W06-B，auto_retry_start/end） */
@@ -138,8 +147,10 @@ export const useChatStore = defineStore('chat', () => {
     )
   }
 
-  function setStreaming(value: boolean): void {
+  function setStreaming(value: boolean, sessionId?: string | null): void {
     isStreaming.value = value
+    // true 时记录哪个 session 在流式；false 时清空（终态事件不携带 sid 语义，直接清）
+    streamingSessionId.value = value ? (sessionId ?? null) : null
   }
 
   /** 指定 session 是否正在压缩上下文（#6） */
@@ -190,6 +201,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages,
     isStreaming,
+    streamingSessionId,
     compactingSessions,
     retryStates,
     queueStates,

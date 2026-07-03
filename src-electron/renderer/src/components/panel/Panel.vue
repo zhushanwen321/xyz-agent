@@ -125,8 +125,14 @@ const flow = useNewTaskFlow()
 const messageCount = computed(() =>
   props.sessionId ? chat.getMessages(props.sessionId).length : 0,
 )
-/** 生成态优先：isStreaming 时不渲染 landing（AC-2.8） */
-const isGenerating = computed(() => chat.isStreaming)
+/** 生成态优先：本 Panel 的 session 正在流式时不渲染 landing（AC-2.8）。
+ *  [HISTORICAL] 原用全局 chat.isStreaming，A 会话流式时点新建切到空 session（sessionId=null），
+ *  空 session 的 Landing 被 !isGenerating 守卫误伤 → 落到分支兜底空态（「选择左侧会话开始」），
+ *  new-task 渲染撕裂。改为 per-session：只有本 Panel 绑定的 session 在流式才算 generating。
+ *  landing 态 sessionId=null → streamingSessionId 恒不等 → isGenerating=false → Landing 正常渲染。 */
+const isGenerating = computed(
+  () => chat.isStreaming && chat.streamingSessionId === props.sessionId,
+)
 /** new-task landing 视图判据：完全无 session（首次启动/点新建）或 NewTaskFlow 处于 landing 态。
  *  Landing 的 directory/branch chip 仅在 flow.state==='landing' 时点击合法，故 Landing 只在此态渲染；
  *  恢复空 session（有 sid 无消息 但 flow.state=idle）不走 landing，避免 chip transition 非法死锁。 */

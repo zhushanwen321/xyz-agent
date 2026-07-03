@@ -119,9 +119,22 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
 
   it('T1.7 messages 空但 isGenerating=true → 不渲染 landing（生成态优先）', () => {
     const chat = useChatStore()
-    chat.isStreaming = true // isGenerating
+    // per-session 生成态：本 Panel 绑定的 session 在流式才算 generating
+    // （原用全局 isStreaming 会跨 session 误伤，见 panel-per-session-generating.test.ts）
+    chat.isStreaming = true
+    chat.streamingSessionId = 's1'
     const wrapper = mountPanel({ sessionId: 's1' })
     expect(wrapper.findComponent(Landing).exists()).toBe(false)
+  })
+
+  it('T1.7b 另一 session 流式中，本 Panel（空/landing）→ 仍渲染 landing（不跨 session 误伤）', () => {
+    const chat = useChatStore()
+    // A 会话在流式，但本 Panel 是 landing 态（sessionId=null）
+    chat.isStreaming = true
+    chat.streamingSessionId = 'session-A'
+    flowMock.state.value = 'landing'
+    const wrapper = mountPanel({ sessionId: null })
+    expect(wrapper.findComponent(Landing).exists()).toBe(true)
   })
 
   it('T1.6 有消息（messageCount>0）→ 不渲染 landing（走对话流）', () => {

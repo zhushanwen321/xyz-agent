@@ -69,8 +69,9 @@ export interface MessageEffectContext {
   ) => void
   /** changeSetInvalidated case 调 store.markChangeSetsSuperseded（commit 后旧卡片过期） */
   markChangeSetsSuperseded: (sessionId: string) => void
-  /** lifecycle flag 翻转（原 useChat.setStreaming，message_start→true / 终态→false） */
-  setStreaming: (value: boolean) => void
+  /** lifecycle flag 翻转（原 useChat.setStreaming，message_start→true / 终态→false）。
+   *  sessionId 仅 message_start 传入（记录哪个 session 在流式），终态不传（清空）。 */
+  setStreaming: (value: boolean, sessionId?: string | null) => void
 }
 
 /**
@@ -114,8 +115,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         contentBlocks: [],
       },
     ])
-    // lifecycle flag 翻转（原 useChat：message_start → setStreaming(true)）
-    setStreaming(true)
+    // lifecycle flag 翻转（原 useChat：message_start → setStreaming(true)）。
+    // 传 sid 记录正在流式的 session（Panel per-session 生成态守卫用，防跨 session 误伤）
+    setStreaming(true, sid)
   },
 
   'message.complete': (ctx, sid, payload) => {
