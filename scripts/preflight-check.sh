@@ -278,7 +278,8 @@ fi
 echo ""
 echo -e "${BLUE}[9/9] Disk space...${NC}"
 
-AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
+# df -g 是 BSD/macOS 特有，Linux 不支持。用 df -k（KB，跨平台）换算成 GB。
+AVAILABLE_GB=$(($(df -k . | tail -1 | awk '{print $4}') / 1024 / 1024))
 if [ "$AVAILABLE_GB" -lt 3 ]; then
     echo -e "  ${RED}✗ 磁盘空间不足: ${AVAILABLE_GB}GB（建议 ≥3GB）${NC}"
     FAILED=1
