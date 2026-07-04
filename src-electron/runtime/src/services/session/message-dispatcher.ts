@@ -133,7 +133,33 @@ export class MessageDispatcher {
 
   async abort(sessionId: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'abort')
-    await client.abort()
+    try {
+      await client.abort()
+    } catch (e) {
+      // [HISTORICAL] abort 失败也必须广播终态（规则 #3）：否则前端 isStreaming / runtime
+      // isGenerating 永不复位，UI 卡在「思考中」。pi 卡死时 client.abort() 无响应，靠这条兜底。
+      const errMsg = toErrorMessage(e)
+      console.error(`[message-dispatcher] abort failed: sessionId=${sessionId}`, errMsg)
+      const active = this.svc.getSessionByClient(client)
+      if (active) active.isGenerating = false
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: `Abort failed: ${errMsg}` },
+      })
+      return
+    }
+    // [HISTORICAL] abort 成功后必须主动广播 message.complete{stopReason:'aborted'} + 重置
+    // isGenerating。不能依赖 pi 自发 agent_end——pi 卡死（静默不退出）时永远不会发。
+    // session-message-handler 的 message.status{status:'aborted'} reply 走 pending 通道，
+    // 只让 renderer 的 abort() Promise resolve，不触发 chat store 的 message.complete 收口
+    // 逻辑（chat-message-effects 只认 'message.complete' type），isStreaming 仍为 true。
+    // 广播流式 message.complete 让前端正常收口（与 sendPrompt 错误路径广播 message.error 对称）。
+    const active = this.svc.getSessionByClient(client)
+    if (active) active.isGenerating = false
+    this.broker.broadcast({
+      type: 'message.complete',
+      payload: { sessionId, stopReason: 'aborted' },
+    })
   }
 
   async steerMessage(sessionId: string, content: string): Promise<void> {

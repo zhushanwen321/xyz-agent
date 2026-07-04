@@ -514,6 +514,21 @@ const DISPATCHER = new Map<string, (event: PiEvent, sid: string) => PiTranslated
 })()
 
 /**
+ * 诊断日志开关：`XYZ_DEBUG_PI_EVENTS=1` 时打印每个 pi 原始事件。
+ *
+ * 用途：定位「pi 卡死/坏 session」类问题（handoff 2026-07-04 P1）。坏 session 的特征
+ * 是 JSONL 只有 session + session_info 两行、零 message——pi 接收了 prompt 创建了
+ * session 但 LLM 调用从未成功产出 assistant 回复。开启此开关可观察坏 session 产生时
+ * pi 到底发了什么事件（或什么都没发），从而区分：
+ *   - 情况 A：pi 子进程静默卡死（无任何事件）→ 需 runtime 加 watchdog
+ *   - 情况 B：pi 发了异常事件流（被 adapter 误吞/误译）→ adapter 逻辑修复
+ *
+ * 默认关闭，生产无噪声。复现步骤：dev 模式启动前 `export XYZ_DEBUG_PI_EVENTS=1`，
+ * 复现坏 session 后查 runtime stdout 中该 sessionId 的事件序列。
+ */
+const DEBUG_PI_EVENTS = process.env.XYZ_DEBUG_PI_EVENTS === '1'
+
+/**
  * 纯翻译：把单个 pi 事件翻译为 0~N 个中间事件。
  *
  * 无副作用、无可变态、不 import services 域类型。组合根负责把 translate 的结果
@@ -521,6 +536,18 @@ const DISPATCHER = new Map<string, (event: PiEvent, sid: string) => PiTranslated
  */
 export function translate(event: PiEvent, sessionId: string): PiTranslatedEvent[] {
   const eventType = event.type as string
+
+  if (DEBUG_PI_EVENTS) {
+    // 抓 pi 原始事件全貌：type + sessionId + 完整 JSON。安全起见不截断（复现场景事件量可控）。
+    // JSON.stringify 对含循环引用的 pi 事件会 throw，降级打印对象本身（诊断目的已达成）。
+    let serialized: string
+    try {
+      serialized = JSON.stringify(event)
+    } catch {
+      serialized = '(JSON.stringify failed)'
+    }
+    console.log(`[PiEvent:raw] type=${eventType} sid=${sessionId} ${serialized}`, serialized === '(JSON.stringify failed)' ? event : '')
+  }
 
   // Lifecycle events that produce no output
   if (NULL_EVENTS.has(eventType)) return []
@@ -536,6 +563,24 @@ export function translate(event: PiEvent, sessionId: string): PiTranslatedEvent[
 
   console.warn('[EventAdapter] Unhandled pi event type:', eventType)
   return []
+}
+
+/**
+ * 记录 interpret 隔离失败：单批翻译事件的编排（hook/diff/WS 转发）抛错时调用。
+ *
+ * 设计决策——为何此处只记录而不 re-throw / 不向用户广播：
+ * - 不 re-throw：listener 跑在 pi 事件订阅回调里，re-throw 会让后续事件
+ *   （含 agent_end / 最终消息）无法投递，单条坏事件炸掉整条事件流。
+ * - 不在此广播 error 事件给用户：EventAdapter 是 infra 纯翻译器，按设计不持有
+ *   WS send 句柄（副作用收敛在 service 层 EventInterpreter）。用户可感知的错误
+ *   反馈应由 interpreter 在其自身 try 边界内负责，而非本层。
+ * 故此处仅做诊断日志 + 隔离（订阅保持存活，后续事件照常处理）。
+ */
+function logInterpretFailure(sessionId: string, eventCount: number, err: unknown): void {
+  console.error(
+    `[EventAdapter] interpret error (isolated; stream continues) sid=${sessionId} events=${eventCount}:`,
+    err,
+  )
 }
 
 // ── EventAdapter class ─────────────────────────────────────────────
@@ -566,7 +611,8 @@ export class EventAdapter {
       try {
         this.interpret(events)
       } catch (err: unknown) {
-        console.error('[EventAdapter] interpret error:', err)
+        // 单批事件编排失败被隔离——订阅保持存活，后续事件（含 agent_end）照常投递。
+        logInterpretFailure(this.sessionId, events.length, err)
       }
     })
   }

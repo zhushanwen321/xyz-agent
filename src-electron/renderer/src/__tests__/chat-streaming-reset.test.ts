@@ -107,3 +107,87 @@ describe('chat store message.error 流式状态复位（规则 #3）', () => {
     expect(after[0].content).toContain('Unknown error')
   })
 })
+
+describe('chat store message.complete 多 assistant 气泡收口', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  // [HISTORICAL] handoff 2026-07-04 L3：一个 turn 可能产生多个 streaming assistant 气泡
+  // （如工具调用气泡 + 文字总结气泡，或历史/fork 路径残留）。旧实现用 findLastAssistantIndex
+  // 只收口最后一条，前面的 toolCall 气泡永远 streaming——内部状态机不一致，影响后续定位逻辑。
+  // 修复后 message.complete 收口所有 status==='streaming' 的 assistant，usage 只回填最后一条。
+  it('message.complete 收口所有 streaming assistant 气泡（不只最后一条）', () => {
+    const store = useChatStore()
+    const sid = 'multi'
+    // 模拟一个 turn 产生两条 streaming assistant（如 toolCall 气泡 + 文字气泡）
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'tool-bubble' },
+    })
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'text-bubble' },
+    })
+    const before = store.getMessages(sid)
+    expect(before).toHaveLength(2)
+    expect(before[0].status).toBe('streaming')
+    expect(before[1].status).toBe('streaming')
+
+    store.applyMessageEvent(sid, {
+      type: 'message.complete',
+      payload: { sessionId: sid, stopReason: 'end_turn' },
+    })
+
+    const after = store.getMessages(sid)
+    // 关键：两条 assistant 都收口（旧行为只收最后一条，前一条卡 streaming）
+    expect(after[0].status).toBe('complete')
+    expect(after[1].status).toBe('complete')
+  })
+
+  it('message.complete usage 只回填最后一条 assistant（turn 级聚合，非末回填会语义错位）', () => {
+    const store = useChatStore()
+    const sid = 'usage'
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'bubble-a' },
+    })
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'bubble-b' },
+    })
+
+    store.applyMessageEvent(sid, {
+      type: 'message.complete',
+      payload: {
+        sessionId: sid,
+        stopReason: 'end_turn',
+        usage: { inputTokens: 100, outputTokens: 50 },
+      },
+    })
+
+    const after = store.getMessages(sid)
+    expect(after[0].usage).toBeUndefined() // 非末不回填
+    expect(after[1].usage).toMatchObject({ inputTokens: 100, outputTokens: 50 })
+  })
+
+  it('message.complete stopReason error 时所有 streaming assistant 收口为 error', () => {
+    const store = useChatStore()
+    const sid = 'err-multi'
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'e-a' },
+    })
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'e-b' },
+    })
+
+    store.applyMessageEvent(sid, {
+      type: 'message.complete',
+      payload: { sessionId: sid, stopReason: 'error' },
+    })
+
+    const after = store.getMessages(sid)
+    expect(after[0].status).toBe('error')
+    expect(after[1].status).toBe('error')
+  })
+})

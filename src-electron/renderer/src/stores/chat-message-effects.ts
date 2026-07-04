@@ -123,40 +123,45 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   'message.complete': (ctx, sid, payload) => {
     const { messages, setStreaming } = ctx
     const prev = messages.value.get(sid) ?? []
-    const idx = findLastAssistantIndex(prev)
-    if (idx >= 0) {
-      const last = prev[idx]
-      if (last.status === 'streaming') {
-        const stopReason = readString(payload, 'stopReason')
-        const isErrorStop = stopReason === 'error'
-        // 收口兜底：流结束时仍 status:'running' 的 toolCall 说明未收到 tool_call_end
-        // （进程崩溃/WS 断连/abort/event-adapter 乱序丢消息）。强收口避免 Block.vue
-        // 永久锁定展开（isRunning → toolExpanded 恒 true）。
-        // - error stopReason → 收口为 error（保留失败语义）
-        // - 其它 → 收口为 end_not_received（诚实态，区别于假装成功的 completed）
-        // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
-        const finalizedToolCalls = (last.toolCalls ?? []).map((c) =>
-          c.status === 'running'
-            ? {
-              ...c,
-              status: (isErrorStop ? 'error' : 'end_not_received') as ToolCall['status'],
-              endTime: c.endTime ?? Date.now(),
-            }
-            : c,
-        )
-        // W05-A：消费 message.complete.usage（{inputTokens,outputTokens,totalTokens}）
-        // 回填 Message.usage（字段已存在 message.ts:99）。stopReason:error → status:error。
-        const usage = readUsage(payload)
-        const next = [...prev]
-        next[idx] = {
-          ...last,
-          status: isErrorStop ? 'error' : 'complete',
-          toolCalls: finalizedToolCalls,
-          ...(usage ? { usage } : {}),
-        }
-        messages.value.set(sid, next)
-      }
-    }
+    const stopReason = readString(payload, 'stopReason')
+    const isErrorStop = stopReason === 'error'
+    // 收口兜底：流结束时仍 status:'running' 的 toolCall 说明未收到 tool_call_end
+    // （进程崩溃/WS 断连/abort/event-adapter 乱序丢消息）。强收口避免 Block.vue
+    // 永久锁定展开（isRunning → toolExpanded 恒 true）。
+    // - error stopReason → 收口为 error（保留失败语义）
+    // - 其它 → 收口为 end_not_received（诚实态，区别于假装成功的 completed）
+    // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
+    const finalizeToolCalls = (toolCalls: ToolCall[] | undefined): ToolCall[] =>
+      (toolCalls ?? []).map((c) =>
+        c.status === 'running'
+          ? {
+            ...c,
+            status: (isErrorStop ? 'error' : 'end_not_received') as ToolCall['status'],
+            endTime: c.endTime ?? Date.now(),
+          }
+          : c,
+      )
+    // [HISTORICAL] 收口**所有** status==='streaming' 的 assistant 气泡，不只用
+    // findLastAssistantIndex 收最后一条。一个 turn 可能产生多个 assistant 气泡
+    // （工具调用气泡 + 文字总结气泡）：只转最后一条会让前面的 toolCall 气泡永远 streaming，
+    // 内部 status 虽视觉无感（turn 整体收口），但状态机不一致且影响后续定位逻辑。
+    // usage（W05-A turn 级聚合）只回填最后一条 assistant——回填到非末 assistant 语义错位。
+    const lastAssistantIdx = findLastAssistantIndex(prev)
+    let changed = false
+    const next = prev.map((m, i) => {
+      if (m.role !== 'assistant' || m.status !== 'streaming') return m
+      changed = true
+      const finalizedToolCalls = finalizeToolCalls(m.toolCalls)
+      // 仅最后一条 assistant 回填 usage（turn 级聚合，回填非末会语义错位）
+      const usage = i === lastAssistantIdx ? readUsage(payload) : undefined
+      return {
+        ...m,
+        status: isErrorStop ? 'error' : 'complete',
+        toolCalls: finalizedToolCalls,
+        ...(usage ? { usage } : {}),
+      } satisfies Message
+    })
+    if (changed) messages.value.set(sid, next)
     // lifecycle flag 翻转（原 useChat：complete → setStreaming(false)）
     setStreaming(false)
   },

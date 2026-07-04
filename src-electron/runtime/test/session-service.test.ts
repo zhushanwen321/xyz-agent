@@ -428,6 +428,28 @@ describe('SessionService · dispatcher', () => {
       expect(client.abort).toHaveBeenCalledTimes(1)
     })
 
+    // [HISTORICAL] abort 必须广播 message.complete{stopReason:'aborted'} 终态。
+    // handoff 2026-07-04 P2：pi 卡死（静默不退出）时不发 agent_end，若 abort 只调
+    // client.abort() 不广播终态，前端 isStreaming 永不复位（违反规则 #3）。
+    // session-message-handler 的 message.status reply 走 pending 通道，不触发
+    // chat store 收口逻辑——必须走流式 message.complete 广播。
+    it('abort broadcasts message.complete with stopReason aborted', async () => {
+      setup.mountClient('sid-a')
+      await setup.service.abort('sid-a')
+      const complete = findBroadcast(setup, 'message.complete')
+      expect(complete?.payload).toMatchObject({ sessionId: 'sid-a', stopReason: 'aborted' })
+    })
+
+    it('abort broadcasts message.error when client.abort fails', async () => {
+      const client = setup.mountClient('sid-a')
+      client.abort.mockRejectedValueOnce(new Error('pi gone'))
+      // abort 失败不 rethrow（已广播 message.error 终态，与 sendPrompt 错误路径对称）
+      await setup.service.abort('sid-a')
+      const err = findBroadcast(setup, 'message.error')
+      expect(err?.payload).toMatchObject({ sessionId: 'sid-a' })
+      expect(String(err?.payload?.message)).toContain('pi gone')
+    })
+
     it('abort throws when session has no client', async () => {
       await expect(setup.service.abort('missing')).rejects.toThrow('Session missing not found')
     })
