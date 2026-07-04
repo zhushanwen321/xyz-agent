@@ -88,31 +88,32 @@
       <!--
         turn-meta：有 assistant 回复即显示（回合级耗时 + working 指示），左对齐收缩（self-start，
         对齐设计稿 align-self:flex-start —— 按钮宽度=内容宽度，hover 背景不撑满整行）。
-        - chevron 折叠入口仅在 hasFoldable 且完成态显示（无可折叠内容时不渲染展开按钮）
-        - working 态：脉冲点 + 禁用点击（trace 由 isWorking 强制展开）
-        - 完成态 + 无 foldable：纯展示耗时，不可点击
+        顺序：working 态行首脉冲点 → 「已工作/工作中 Xs」→ chevron（完成态有可折叠内容时）→ badge
+        - chevron 折叠入口在 elapsed 之后、badge 之前（紧贴耗时，语义为「展开详情」入口）
+        - working 态：行首脉冲点 + 禁用点击（trace 由 isWorking 强制展开）
+        - 完成态 + 无 foldable：无 chevron，纯展示耗时
       -->
       <Button
         v-if="turn.assistants.length > 0"
         variant="ghost"
         size="sm"
-        class="turn-meta h-auto w-fit justify-start gap-2.5 self-start rounded-none px-1 py-1 font-sans text-[12.5px] font-medium text-muted transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:text-fg"
+        class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start rounded-none px-1 py-1 font-sans text-[12.5px] font-medium text-muted transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:text-fg"
         :class="turn.isWorking || !turn.hasFoldable ? 'cursor-default hover:text-muted' : 'cursor-pointer'"
         :disabled="turn.isWorking || !turn.hasFoldable"
         @click="expanded = !expanded"
       >
+        <!-- working 态行首脉冲点（设计稿：动画点在「工作中」文字之前） -->
+        <span v-if="turn.isWorking" class="working-dot size-[7px] flex-shrink-0 rounded-full bg-accent animate-working-pulse" />
+        <span class="text-[12.5px] font-medium">
+          <span class="lbl text-muted">{{ turn.isWorking ? '工作中' : '已工作' }}</span>
+          <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
+        </span>
+        <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
         <ChevronRight
           v-if="turn.hasFoldable && !turn.isWorking"
           class="chev size-[9px] text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
           :class="expanded ? 'rotate-90 text-accent' : ''"
         />
-        <span v-else-if="turn.isWorking" class="working-dot size-[7px] flex-shrink-0 rounded-full bg-accent animate-working-pulse" />
-        <!-- 无 foldable 且非 working：chevron 位占位，保持 elapsed 文本左对齐基线一致 -->
-        <span v-else class="size-[9px] flex-shrink-0" />
-        <span class="text-[12.5px] font-medium">
-          <span class="lbl text-muted">{{ turn.isWorking ? '工作中' : '已工作' }}</span>
-          <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
-        </span>
         <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-[rgba(167,139,250,0.12)] px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-reasoning">
           <Brain class="size-2.5" />思考 ×{{ thinkCount }}
         </span>
