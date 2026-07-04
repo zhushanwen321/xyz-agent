@@ -13,10 +13,10 @@
 ### 1.1 三层架构 ✅
 
 ```
-Electron 主进程 (src-electron/main/)
-  → 渲染进程 (src-electron/renderer/)  Vue 3 + Pinia + Tailwind v3
-  → Sidecar (src-electron/sidecar/)     Node.js WebSocket 服务，通过 RPC 与 pi 通信
-  → 共享类型 (src-electron/shared/)     前端与 sidecar 之间共享 TypeScript 类型
+Electron 主进程 (apps/electron/main/)
+  → 渲染进程 (packages/renderer/)  Vue 3 + Pinia + Tailwind v3
+  → Sidecar (apps/electron/sidecar/)     Node.js WebSocket 服务，通过 RPC 与 pi 通信
+  → 共享类型 (packages/shared/)     前端与 sidecar 之间共享 TypeScript 类型
 ```
 
 | 模块 | 状态 | 文件 |

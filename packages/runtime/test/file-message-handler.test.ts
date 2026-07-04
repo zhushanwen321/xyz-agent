@@ -8,7 +8,7 @@
  * 它们的领域逻辑由 file-service.test.ts 覆盖，handler 是薄路由层。本文件聚焦 file.search
  * （新增 case，需独立覆盖 reply 形状 + error envelope 透传）。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/file-message-handler.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/file-message-handler.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
 import { FileMessageHandler } from '../src/transport/file-message-handler.js'

@@ -10,7 +10,7 @@
  * - 大小写不敏感（.MD/.TS）
  * - extToLang 映射 + fallback 'typescript'
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/lib/file-type.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/file-type.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { detectFileKind, extToLang } from '@/composables/logic/file-type'

@@ -8,7 +8,7 @@
  * - 未 init 时 no-op（不抛错、不产生副作用）
  * - size 轮转触发 .1 滚动
  *
- * 运行：cd src-electron/runtime && npx vitest run test/logger.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/logger.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { tmpdir } from 'node:os'

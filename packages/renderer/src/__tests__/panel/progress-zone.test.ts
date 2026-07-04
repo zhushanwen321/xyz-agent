@@ -9,7 +9,7 @@
  * 修复后组件不再 import @/api/mock/composer-data；真实数据源（runtime Flow3 任务状态）
  * 未接入前 state 恒为 null → v-if="state" 不渲染。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/progress-zone.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/progress-zone.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'

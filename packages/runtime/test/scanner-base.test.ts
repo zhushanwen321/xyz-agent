@@ -9,7 +9,7 @@
  *
  * 这两个是含分支/正则的纯函数，无 IO，测试成本极低。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/scanner-base.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/scanner-base.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'node:os'

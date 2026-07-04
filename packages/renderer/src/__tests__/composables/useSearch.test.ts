@@ -24,7 +24,7 @@
  *  - vi.mock('@/stores/fileSearch')：store.get/set/invalidate
  *  - vi.mock('@/composables/features/useFileSearch')：setupInvalidation 返 vi.fn()（验证 AC-4.10 接线）
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/useSearch.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearch.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

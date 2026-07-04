@@ -12,7 +12,7 @@
  * mock 策略：FileService 构造注入 mock executor + sessionService（写操作在抛错前不触达 executor，
  *   但 requireCwd 校验 session——需提供有效 cwd）。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/file-write-skeleton.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/file-write-skeleton.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {

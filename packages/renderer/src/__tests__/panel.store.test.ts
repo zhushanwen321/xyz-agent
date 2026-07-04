@@ -12,7 +12,7 @@
  * - setActive 已知 id / 未知 id no-op
  * - findPanelBySession 命中 / null
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel.store.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel.store.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

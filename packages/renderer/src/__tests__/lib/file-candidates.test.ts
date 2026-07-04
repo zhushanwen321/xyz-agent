@@ -7,7 +7,7 @@
  * - id/path/type 透传
  * - 空数组
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/lib/file-candidates.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/file-candidates.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { toFileCandidates } from '@/lib/file-candidates'

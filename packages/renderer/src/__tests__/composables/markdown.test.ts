@@ -5,7 +5,7 @@
  * mock 策略：vi.mock('shiki') stub createHighlighter 返回假 highlighter，
  * codeToHtml 返回固定 `<pre class="shiki">…</pre>`，使测试聚焦 fence 逻辑而非 shiki 真实渲染。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/markdown.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/markdown.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 

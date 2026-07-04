@@ -8,7 +8,7 @@
  *    mermaid 真实渲染在 happy-dom 必返回空，无法单测——见 mermaid-real 测试已证）。
  *  - 事件委托（复制/外链/文件路径）覆盖。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/markdown-renderer.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/markdown-renderer.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'

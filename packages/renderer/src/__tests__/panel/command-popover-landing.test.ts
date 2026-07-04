@@ -15,7 +15,7 @@
  * - session 源用 events.dispatchSession 推 session.commands（与 composer-slash-trigger 同模式）
  * - reka-ui PopoverContent teleport 到 body：body 内查 button/svg
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/command-popover-landing.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/command-popover-landing.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'

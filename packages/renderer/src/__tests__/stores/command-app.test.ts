@@ -4,7 +4,7 @@
  * 覆盖 D-016 物理隔离 + AC-2.4 幂等注册 + 现有 slash 功能回归。
  * 与 command-store.test.ts 互补：后者测 slash 分区，本文件测新增应用命令区与两区隔离。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/command-app.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/command-app.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

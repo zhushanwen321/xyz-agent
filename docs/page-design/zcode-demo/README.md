@@ -87,6 +87,6 @@ zcode-demo/
 
 1. 将 `*.js` 组件迁移为项目真正的 Vue SFC (`.vue`)。
 2. 用项目 `xyz-ui` 组件库替换原生 `<button>` / `<textarea>` 等 HTML 元素。
-3. 将颜色 token 提取到 `src-electron/renderer/src/style.css` 与 `../design-system.md`。
+3. 将颜色 token 提取到 `packages/renderer/src/style.css` 与 `../design-system.md`。
 4. 替换 demo 中的 emoji 图标为 lucide-vue-next 图标。
 5. 右侧抽屉接入真实数据：Diff、浏览器预览、终端输出。

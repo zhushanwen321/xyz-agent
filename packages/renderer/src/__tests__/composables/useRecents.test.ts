@@ -9,7 +9,7 @@
  * - T1.18 (MR-3.4) FIFO 淘汰 + 同 key 更新 + 计数器兜底（AC-3.2/3.5/3.6）
  *
  * 环境：vitest happy-dom（localStorage 可用）。每测前 localStorage.clear() 防污染。
- * 禁止 node:test。运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/useRecents.test.ts
+ * 禁止 node:test。运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useRecents.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useRecents } from '@/composables/features/useRecents'

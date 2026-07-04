@@ -9,7 +9,7 @@
  *
  * mock 策略：纯函数无外部依赖，直接 import 断言，无 mock。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/lib-utils.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/lib-utils.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { deriveSessionLabel } from '@/lib/utils'

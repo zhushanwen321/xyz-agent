@@ -4,7 +4,7 @@
  * 覆盖：GitCommand 联合类型含 'checkout'（编译期收窄），executor 只接受白名单内的子命令。
  * runtime git checkout 写路径（#6 切换 / #7 -b 创建）共用 'checkout' 白名单项。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/new-task/git-executor-port.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/new-task/git-executor-port.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import type { GitCommand, IGitExecutor, GitExecutorResult } from '../../src/services/ports/git-executor.js'

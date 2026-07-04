@@ -6,7 +6,7 @@
  * - 多实例 refCount 去重：N 次 useSidebar() 只注册 1 个 handler，一次广播只触发 1 次 setGroups
  * - 全部 effect scope 释放后监听取消（onScopeDispose 收尾），广播不再更新
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/useSidebar-session-list.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/useSidebar-session-list.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

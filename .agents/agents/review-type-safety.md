@@ -26,9 +26,9 @@ task prompt 中必须包含：
    - `(entry as any).customType` 模式应替换为类型守卫函数
    - 类型断言是否安全（as unknown as X 是坏味道）
 5. **运行类型检查**（xyz-agent 是 multi-workspace，根目录无统一 typecheck script）。各 workspace 对应的 npm package name：
-   - `src-electron/renderer` → `@xyz-agent/frontend`（`vue-tsc --noEmit`）
-   - `src-electron/runtime` → `@xyz-agent/runtime`（`tsc --noEmit`）
-   - `src-electron/shared` → `@xyz-agent/shared`（`tsc --noEmit`）
+   - `packages/renderer` → `@xyz-agent/frontend`（`vue-tsc --noEmit`）
+   - `packages/runtime` → `@xyz-agent/runtime`（`tsc --noEmit`）
+   - `packages/shared` → `@xyz-agent/shared`（`tsc --noEmit`）
    - main/preload 不在 workspaces 里（随 electron 构建），无需独立 typecheck
    - 在各 workspace 目录跑 `npm run typecheck`（或 `npx tsc --noEmit`）。报告**新增**的类型错误（diff 引入的），标注 TS 错误码（TS7006 / TS2345 等）
 6. **PiXxx 类型分层约束（runtime-three-layer-design.md）**：

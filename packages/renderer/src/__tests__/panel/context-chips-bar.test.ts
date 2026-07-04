@@ -8,7 +8,7 @@
  * 修复后组件不再 import @/api/mock/composer-data；真实数据源（runtime 已附上下文推送）
  * 未接入前 items 恒为空数组 → 整行 v-if="items.length" 不渲染。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/context-chips-bar.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/context-chips-bar.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'

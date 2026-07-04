@@ -9,7 +9,7 @@
  * mock 策略：vi.mock('@/api') 把整个 api 门面替掉（config / model / extension / settings
  * 订阅与请求），vi.mock('@/i18n') 避免 setLocale 拉起 i18n 实例 + locale 文件加载。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/settings-store-models.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/settings-store-models.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

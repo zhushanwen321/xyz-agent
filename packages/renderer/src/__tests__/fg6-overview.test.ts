@@ -10,7 +10,7 @@
  *
  * useSidebar 走 @/api 门面，测试用 vi.mock 替换为 mock 实现（避免 transport 挂起）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/fg6-overview.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/fg6-overview.test.ts
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

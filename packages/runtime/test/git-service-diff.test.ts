@@ -11,7 +11,7 @@
  *
  * mock 策略：IGitExecutor + sessionService 注入，不起真实 git。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/git-service-diff.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/git-service-diff.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { GitService, GitError, type GitServiceOptions } from '../src/services/git-service.js'

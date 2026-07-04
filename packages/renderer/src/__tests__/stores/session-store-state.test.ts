@@ -4,7 +4,7 @@
  * 覆盖 model.switch 后 session.state_changed 广播驱动的 store 局部更新。
  * 不含订阅路由（见 session-state-changed-sync.test.ts）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/session-store-state.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/session-store-state.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

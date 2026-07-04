@@ -19,7 +19,7 @@ export function isPackaged(): boolean {
  * 解析文件型 extension（xyz-agent-extension.js）的绝对路径。
  *
  * - 打包模式：在 `process.cwd()`（Resources 根）下
- * - 开发模式：在 `projectRoot/..`（repo root，src-electron/ 父目录）下
+ * - 开发模式：在 `projectRoot/..`（repo root，apps/electron/ 父目录）下
  */
 export function getExtensionFilePath(projectRoot: string, packaged: boolean): string {
   return packaged

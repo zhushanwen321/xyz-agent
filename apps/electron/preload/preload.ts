@@ -1,4 +1,4 @@
-// src-electron/preload/preload.ts
+// apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
 
 export interface ElectronAPI {

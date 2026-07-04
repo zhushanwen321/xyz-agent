@@ -4,7 +4,7 @@
  * 核心回归：slashCommands 归位 store 后，数据持久化、不随组件重建丢失（修复
  * 「slash 浮层对话一次后失效」：原 CommandPopover 局部 ref 被 v-if 销毁重建即空）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/command-store.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/command-store.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

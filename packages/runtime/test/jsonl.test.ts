@@ -3,7 +3,7 @@
  *
  * 被 session-file-utils / session-history 两处共用，回归影响面大。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/jsonl.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/jsonl.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { parseJsonl } from '../src/utils/jsonl.js'

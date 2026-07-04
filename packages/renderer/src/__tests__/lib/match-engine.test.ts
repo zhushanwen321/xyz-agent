@@ -7,7 +7,7 @@
  * - AC-1.3 边界条件（空查询 / 空 text / 空 items）
  * - AC-1.4 行为等价 BC-4（高亮切分 + 过滤正确性）
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/lib/match-engine.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/match-engine.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import {

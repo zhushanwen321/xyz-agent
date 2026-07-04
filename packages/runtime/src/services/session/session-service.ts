@@ -75,7 +75,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly gitInfoReader: IGitInfoReader,
     private readonly workspaceService: WorkspaceService,
   ) {
-    // 打包模式:extension 在 Resources 根;开发模式:在 repo root(src-electron/ 父目录)
+    // 打包模式:extension 在 Resources 根;开发模式:在 repo root(apps/electron/ 父目录)
     this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)

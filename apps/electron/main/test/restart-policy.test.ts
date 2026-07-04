@@ -7,7 +7,7 @@
  * - recordSuccess：稳定窗口清零（区分瞬时簇 vs 持续故障）
  * - markStopping / reset：主动停止生命周期
  *
- * 运行：cd src-electron && npx vitest run main/test/restart-policy.test.ts
+ * 运行：pnpm --filter @xyz-agent/electron run test:main -- main/test/restart-policy.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {

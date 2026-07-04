@@ -9,7 +9,7 @@
  * F2 重构后：原 applyChunk(ChunkContext) 已并入 dispatchMessageEvent(MessageEffectContext)，
  * 测试入口随之迁移（行为不变）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/chat-chunk-content-blocks.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/chat-chunk-content-blocks.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
 import { ref } from 'vue'

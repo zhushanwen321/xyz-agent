@@ -6,7 +6,7 @@
  * - discoverModels 三种错误翻译（ByteString / fetch failed / 原始）
  * - 基础路由：getProviders / model.list / model.switch / scanSkills / tool.approve
  *
- * 运行：cd src-electron/runtime && npx vitest run test/settings-message-handler.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/settings-message-handler.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'

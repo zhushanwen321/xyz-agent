@@ -10,7 +10,7 @@
  * - Landing 直挂载（presentational，props/emits），无 store 依赖。
  * - Panel v-if 条件：mount Panel（子组件 stub）+ 真 pinia chat store，操控 messages/isStreaming。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/landing.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/landing.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'

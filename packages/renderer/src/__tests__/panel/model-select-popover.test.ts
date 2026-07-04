@@ -12,7 +12,7 @@
  * 数据注入：setActivePinia(createPinia()) 后直接赋 useSettingsStore().models（不 mock store，
  * 与 command-popover-landing.test.ts 同模式——验证组件真实读 store）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/model-select-popover.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/model-select-popover.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'

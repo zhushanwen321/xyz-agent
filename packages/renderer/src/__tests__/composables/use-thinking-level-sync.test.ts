@@ -11,7 +11,7 @@
  *
  * onReset 传的是 map 映射后的 value（如 max 档发 xhigh），不是 key。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/use-thinking-level-sync.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/use-thinking-level-sync.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { ref, computed, nextTick } from 'vue'

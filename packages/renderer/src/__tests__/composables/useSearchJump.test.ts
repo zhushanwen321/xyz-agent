@@ -14,7 +14,7 @@
  * - T5.3（D-001）symbol 选中不跳转：confirm({type:'symbol'}) → {ok:false,error:'符号搜索暂不可用'}（不调 domain/store）
  *
  * 环境：vitest happy-dom + pinia（useCommandStore/useFileTreeStore 需 pinia）。
- * 禁止 node:test。运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/useSearchJump.test.ts
+ * 禁止 node:test。运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearchJump.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

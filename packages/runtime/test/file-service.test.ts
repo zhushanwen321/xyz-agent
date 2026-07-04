@@ -16,7 +16,7 @@
  * mock 策略（test-strategy §2.2，照 git-service.test.ts 范式）：
  * IFileExecutor + ISessionService 构造注入。不起真实 fs。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/file-service.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/file-service.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { FileService, READ_TIMEOUT_MS, MAX_FILE_SIZE, MAX_SEARCH_RESULTS, type FileServiceOptions } from '../src/services/file-service.js'

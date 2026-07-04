@@ -1,7 +1,7 @@
 /**
  * FG1 step B 自检 —— 验证 mock + chat store 数据流跑通（非 UI）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/fg1-dataflow.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/fg1-dataflow.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

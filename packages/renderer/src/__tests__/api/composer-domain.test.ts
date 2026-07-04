@@ -8,7 +8,7 @@
  *
  * mock 策略：vi.mock('@/api/transport') 捕获 send + vi.mock('@/api/pending') 控制 create/register。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/api/composer-domain.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/api/composer-domain.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 

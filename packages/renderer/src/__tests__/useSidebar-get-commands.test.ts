@@ -5,7 +5,7 @@
  * 修复：useSidebar.selectSession 在 switchSession resolve 后主动调 sessionApi.getCommands，
  *       拿到命令后 events.dispatchSession 本地投递，让 CommandPopover 订阅收到。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/useSidebar-get-commands.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/useSidebar-get-commands.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

@@ -8,7 +8,7 @@
  *
  * mock 策略：vi.mock('@/api') composer.getFileCandidates + fake timers（debounce）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/useFileSearch.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useFileSearch.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

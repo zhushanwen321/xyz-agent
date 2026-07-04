@@ -7,7 +7,7 @@
  * - crashCounts per-plugin 递增
  * - 超过 3 次后放弃
  *
- * 运行命令: npx vitest run src-electron/runtime/test/plugin-worker-rebuild.test.ts
+ * 运行命令: pnpm --filter @xyz-agent/runtime run test -- test/plugin-worker-rebuild.test.ts
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'

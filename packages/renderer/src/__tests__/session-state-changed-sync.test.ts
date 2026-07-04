@@ -7,7 +7,7 @@
  *
  * 参照 session-renamed-sync.test.ts 同模式（streamSubscribe 捕获回调，手动触发）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/session-state-changed-sync.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/session-state-changed-sync.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

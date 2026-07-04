@@ -7,7 +7,7 @@
  * - running tool 在非 working 态仍强制展开（回归保护）
  * - 失败 tool 整块红框
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/block-working.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/block-working.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'

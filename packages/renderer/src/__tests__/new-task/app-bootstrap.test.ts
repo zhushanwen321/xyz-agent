@@ -13,7 +13,7 @@
  * 触发链路模拟：App.vue watch connectionState==='connected' → useSidebar.initApp()。
  * 测试直接调 initApp()（等价于 connected 后），绕过 ws-client 真实握手。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/app-bootstrap.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/app-bootstrap.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

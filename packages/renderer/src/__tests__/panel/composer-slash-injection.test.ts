@@ -17,7 +17,7 @@
  *    改用「mock './ComposerInput.vue' factory 返回带 defineExpose(insertSlashChip: vi.fn) 的组件」，
  *    这样 Composer 的 inputRef.value.insertSlashChip 即可控 spy。其余子组件用 global.stubs 空 div。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/composer-slash-injection.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/composer-slash-injection.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'

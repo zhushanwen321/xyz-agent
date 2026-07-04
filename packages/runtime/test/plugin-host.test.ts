@@ -4,7 +4,7 @@
  * 需要 mock-bootstrap.cjs 位于 PluginHost 期望的 plugin-bootstrap.js 路径。
  * 测试在 beforeAll() 中将 mock bootstrap 复制到该路径，afterAll() 中清理。
  *
- * 运行命令: cd src-electron && npx vitest run runtime/test/plugin-host.test.ts
+ * 运行命令: pnpm --filter @xyz-agent/runtime run test -- test/plugin-host.test.ts
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'

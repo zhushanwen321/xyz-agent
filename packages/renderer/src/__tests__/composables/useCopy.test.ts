@@ -8,7 +8,7 @@
  *
  * mock 策略：navigator.clipboard.writeText stub；vi.useFakeTimers 控制 1200ms 反馈。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/useCopy.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useCopy.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useCopy } from '@/composables/effects/useCopy'

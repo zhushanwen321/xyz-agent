@@ -10,7 +10,7 @@
  *
  * 参考 skill-scanner.test.ts 结构，但走 scanAgents（含 fs 读取）而非仅 parseAgentMd。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/agent-scanner.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/agent-scanner.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'

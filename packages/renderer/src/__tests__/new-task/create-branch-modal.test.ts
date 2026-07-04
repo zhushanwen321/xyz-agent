@@ -15,7 +15,7 @@
  * 注意：CreateBranchModal 用 reka-ui Dialog（DialogContent teleport 到 document.body），
  * 故 DOM 查询走 document.body（@vue/test-utils 的 wrapper.find 不穿透 teleport）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/create-branch-modal.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/create-branch-modal.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'

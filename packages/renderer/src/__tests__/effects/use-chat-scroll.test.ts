@@ -12,7 +12,7 @@
  * - U16：onScroll 回贴底清零 unreadBelow + stickToBottom=true
  * - U17：贴底态 scrollToBottom('auto') 执行 el.scrollTo + stickToBottom=true
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/effects/use-chat-scroll.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/effects/use-chat-scroll.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useChatScroll } from '@/composables/effects/useChatScroll'

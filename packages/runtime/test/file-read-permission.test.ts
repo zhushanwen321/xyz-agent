@@ -9,7 +9,7 @@
  *
  * mock 策略：IFileExecutor + sessionService 注入，不起真实 fs。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/file-read-permission.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/file-read-permission.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { FileService, type FileServiceOptions } from '../src/services/file-service.js'

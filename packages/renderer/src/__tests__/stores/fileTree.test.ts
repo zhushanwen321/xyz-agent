@@ -14,7 +14,7 @@
  * - T2.9 非 git 仓库（isRepo=false 不设 overlay）
  * - T4.6 invalidated 态过滤 graceful（invalidate 不报错）
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/fileTree.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/fileTree.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

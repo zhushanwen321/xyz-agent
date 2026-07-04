@@ -7,7 +7,7 @@
  * - U11：非 working 态 elapsed 静态，advance 不变（无 setInterval 驱动）
  * - U12：working 态 unmount 不抛错、无 timer 泄漏
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/turn-working.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/turn-working.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'

@@ -8,7 +8,7 @@
  * 修复：isGenerating 改为 per-session（chat.streamingSessionId === props.sessionId）。
  * 本测试 mount 真实 Panel.vue，覆盖两个关键场景的 DOM 渲染（使用者视角，非纯 store 断言）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/panel-per-session-generating.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/panel-per-session-generating.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'

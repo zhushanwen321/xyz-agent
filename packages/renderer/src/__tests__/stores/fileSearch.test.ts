@@ -7,7 +7,7 @@
  * - U22 多 session 隔离
  * - U23 invalidate 后重拉
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/fileSearch.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/fileSearch.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

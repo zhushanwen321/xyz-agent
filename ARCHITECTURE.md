@@ -8,11 +8,11 @@
 
 | 进程/包 | 运行时 | 目录 | 职责 |
 |---------|--------|------|------|
-| Renderer | Electron renderer (Chromium, Vue 3) | `src-electron/renderer/` | UI + 状态管理 + 业务编排 |
-| Main | Electron main (Node) | `src-electron/main/` | 原生生命周期 + 跨进程编排（窗口/runtime supervisor/OS gateway） |
-| Runtime | Node 子进程 (`ELECTRON_RUN_AS_NODE=1`) | `src-electron/runtime/` | **pi 协议唯一适配点** + session 管理 + 配置持久化 |
-| Preload | 注入脚本 | `src-electron/preload/` | 安全桥接，暴露 `window.electronAPI` |
-| shared | npm package `@xyz-agent/shared` | `src-electron/shared/` | 三上下文共享的协议/类型/常量 |
+| Renderer | Electron renderer (Chromium, Vue 3) | `packages/renderer/` | UI + 状态管理 + 业务编排 |
+| Main | Electron main (Node) | `apps/electron/main/` | 原生生命周期 + 跨进程编排（窗口/runtime supervisor/OS gateway） |
+| Runtime | Node 子进程 (`ELECTRON_RUN_AS_NODE=1`) | `packages/runtime/` | **pi 协议唯一适配点** + session 管理 + 配置持久化 |
+| Preload | 注入脚本 | `apps/electron/preload/` | 安全桥接，暴露 `window.electronAPI` |
+| shared | npm package `@xyz-agent/shared` | `packages/shared/` | 三上下文共享的协议/类型/常量 |
 
 > 依赖方向铁律：`main/runtime/renderer → shared → 外部`，禁止反向。
 

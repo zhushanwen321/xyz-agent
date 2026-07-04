@@ -6,7 +6,7 @@
  * - countThinking/countToolCalls/hasFailedTool：badge 统计 + 失败检测
  * - chat store：thinking/tool_call 流式块追加、hydrate 历史注入、error 块
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/fg5-message-stream.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/fg5-message-stream.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

@@ -12,7 +12,7 @@
  * - 字号一致性（D-007）：dir/file 行 name span 均含 text-[12px]
  * - chevron 槽（D-022）：dir 行含 ChevronRight，file 行含空占位
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/components/FileTreeRow.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/FileTreeRow.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'

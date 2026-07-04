@@ -7,7 +7,7 @@
  *
  * extension-service.test.ts 把整个模块 vi.mock，真实校验从未执行——本测试直接覆盖。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/npm-installer-ssrf.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/npm-installer-ssrf.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { isPrivateIp, validateUrlHost, NpmInstallError } from '../src/infra/installers/npm-installer.js'

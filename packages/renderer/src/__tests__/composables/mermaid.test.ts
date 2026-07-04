@@ -11,7 +11,7 @@
  * mock 策略：vi.mock('@/composables/logic/mermaid') stub renderMermaid/getCurrentTheme；
  *   happy-dom 无真实 SVG getBBox，useMermaidZoom 的 readSvgNaturalSize 走 getBoundingClientRect 回退。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/mermaid.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/mermaid.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'

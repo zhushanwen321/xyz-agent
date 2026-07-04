@@ -11,7 +11,7 @@
  * - M7 大小写不敏感
  * - M8 回归：#agents 时 AGENTS.md（basename 前缀）排在 subagents 目录（basename 子串）前
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/lib/file-match.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/file-match.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { filterAndSortFileCandidates } from '@/lib/file-match'

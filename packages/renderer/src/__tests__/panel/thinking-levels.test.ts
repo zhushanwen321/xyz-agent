@@ -11,7 +11,7 @@
  * - on-off: { off:'off', high:'high' } → off + high
  * - high-max: { off:'off', high:'high', max:'xhigh' } → off + high + max（max 档发 xhigh）
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/thinking-levels.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/thinking-levels.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import {

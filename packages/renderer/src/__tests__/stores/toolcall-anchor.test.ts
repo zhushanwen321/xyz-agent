@@ -9,7 +9,7 @@
  * 修复：tool_call_end/update 用 findToolCallOwner（按 toolCallId 全局查找）锚定；
  * message.complete 把残留 running 收口为 end_not_received（正常 stop）/ error（error stop）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/toolcall-anchor.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/toolcall-anchor.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

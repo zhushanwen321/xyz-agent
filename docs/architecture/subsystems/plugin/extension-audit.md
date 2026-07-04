@@ -8,7 +8,7 @@
 
 ## 1. Runtime (Sidecar) 侧
 
-### 1.1 ExtensionService (`src-electron/runtime/src/extension-service.ts`)
+### 1.1 ExtensionService (`packages/runtime/src/extension-service.ts`)
 
 **完成度: 完整**
 
@@ -24,7 +24,7 @@
 - `package.json` 无效 JSON → 跳过（非错误）
 - `extension-state.json` 不存在 → 全部启用（非错误）
 
-### 1.2 IExtensionService 接口 (`src-electron/runtime/src/interfaces.ts`)
+### 1.2 IExtensionService 接口 (`packages/runtime/src/interfaces.ts`)
 
 **完成度: 完整**
 
@@ -39,7 +39,7 @@ export interface IExtensionService {
 
 已集成到 DI 系统，在 `index.ts` 中实例化并注入 `server.setServices()`。
 
-### 1.3 Server — Extension 消息路由 (`src-electron/runtime/src/server.ts`)
+### 1.3 Server — Extension 消息路由 (`packages/runtime/src/server.ts`)
 
 **完成度: 完整**
 
@@ -65,7 +65,7 @@ export interface IExtensionService {
 - `extension.error` — 错误通知
 - `config.extensions` — extension 列表
 
-### 1.4 EventAdapter — Extension 事件翻译 (`src-electron/runtime/src/event-adapter.ts`)
+### 1.4 EventAdapter — Extension 事件翻译 (`packages/runtime/src/event-adapter.ts`)
 
 **完成度: 完整**
 
@@ -82,18 +82,18 @@ pi RPC 事件 → WS ServerMessage 映射:
 
 `onExtensionUIRequest` 回调在 `EventAdapterOptions` 中定义，`index.ts` 注入 `server.registerExtensionTimeout()`。
 
-### 1.5 ProcessManager — Extension 路径传递 (`src-electron/runtime/src/process-manager.ts`)
+### 1.5 ProcessManager — Extension 路径传递 (`packages/runtime/src/process-manager.ts`)
 
 **完成度: 完整**
 
 `createSession()` 的 `RpcClientOptions` 支持 `extensionPaths` 字段。启动 pi 子进程时，通过 `--extension <path>` 参数附加所有 extension 路径。同时 `--no-extensions` 禁用 pi 默认加载。
 
-### 1.6 SessionService — Extension 路径收集 (`src-electron/runtime/src/services/session-service.ts`)
+### 1.6 SessionService — Extension 路径收集 (`packages/runtime/src/services/session-service.ts`)
 
 **完成度: 完整 (但有 todo)**
 
 **内置 extension:**
-- 开发模式: `xyz-agent-extension.js`（repo root，`../xyz-agent-extension.js` 相对于 `src-electron/`）
+- 开发模式: `xyz-agent-extension.js`（repo root，`../xyz-agent-extension.js` 相对于 `apps/electron/`）
 - 打包模式: `process.cwd()/xyz-agent-extension.js`（Resources 目录）
 - 文件不存在时跳过并 warn
 - **当前内置 extension 只有 xyz-navigate 命令**（session tree 导航）
@@ -115,7 +115,7 @@ pi RPC 事件 → WS ServerMessage 映射:
 
 当前只有一个 `/xyz-navigate` 命令的 extension。没有 `/xyz-reload`、`/xyz-session-info` 或其他 xyz-agent 专用命令。
 
-### 1.8 NavigateInterceptor (`src-electron/runtime/src/navigate-interceptor.ts`)
+### 1.8 NavigateInterceptor (`packages/runtime/src/navigate-interceptor.ts`)
 
 **完成度: 完整**
 
@@ -127,7 +127,7 @@ pi RPC 事件 → WS ServerMessage 映射:
 
 未发现任何 `Worker Thread` 或 `MessagePort` 相关代码。所有 extension 通信通过 pi 的 `sendCommand('extension_ui_response')` 和 RPC 事件进行。没有独立的 extension 进程模型。
 
-### 1.10 RpcClient — Pi 命令接口 (`src-electron/runtime/src/rpc-client.ts`)
+### 1.10 RpcClient — Pi 命令接口 (`packages/runtime/src/rpc-client.ts`)
 
 **完成度: 完整 (支持的 extension 相关命令)**
 
@@ -138,9 +138,9 @@ pi RPC 命令中与 extension 相关的:
 
 ---
 
-## 2. 共享类型 (`src-electron/shared/src/`)
+## 2. 共享类型 (`packages/shared/src/`)
 
-### 2.1 Protocol 类型 (`src-electron/shared/src/protocol.ts`)
+### 2.1 Protocol 类型 (`packages/shared/src/protocol.ts`)
 
 **完成度: 完整**
 
@@ -162,7 +162,7 @@ pi RPC 命令中与 extension 相关的:
 - `ToolCallUpdatePayload` — toolCallId + progress/detail
 - `ExtensionInfo` — name/version/description/path/enabled
 
-### 2.2 ExtensionInfo 定义 (`src-electron/shared/src/protocol.ts`)
+### 2.2 ExtensionInfo 定义 (`packages/shared/src/protocol.ts`)
 
 ```typescript
 export interface ExtensionInfo {
@@ -176,7 +176,7 @@ export interface ExtensionInfo {
 
 **缺 `plugin` 术语** — 整个代码库中未使用 `plugin` 作为类型名称或消息类型前缀。所有扩展都称为 `extension`。
 
-### 2.3 索引导出 (`src-electron/shared/src/index.ts`)
+### 2.3 索引导出 (`packages/shared/src/index.ts`)
 
 **完成度: 完整**
 
@@ -186,7 +186,7 @@ export interface ExtensionInfo {
 
 ## 3. 前端 (Renderer) 侧
 
-### 3.1 ExtensionUIDialog (`src-electron/renderer/src/components/extension/ExtensionUIDialog.vue`)
+### 3.1 ExtensionUIDialog (`packages/renderer/src/components/extension/ExtensionUIDialog.vue`)
 
 **完成度: 完整**
 
@@ -198,7 +198,7 @@ export interface ExtensionInfo {
 - `notify` 不打开 Dialog
 - 使用 `useExtensionUI` composable
 
-### 3.2 useExtensionUI composable (`src-electron/renderer/src/composables/useExtensionUI.ts`)
+### 3.2 useExtensionUI composable (`packages/renderer/src/composables/useExtensionUI.ts`)
 
 **完成度: 完整**
 
@@ -207,7 +207,7 @@ export interface ExtensionInfo {
 - `sendResponse()` → 发送 `extension.ui_response` WS 消息
 - `dismiss()` — 清空当前请求
 
-### 3.3 ExtensionsPane (`src-electron/renderer/src/components/settings/ExtensionsPane.vue`)
+### 3.3 ExtensionsPane (`packages/renderer/src/components/settings/ExtensionsPane.vue`)
 
 **完成度: 完整**
 
@@ -217,7 +217,7 @@ export interface ExtensionInfo {
 - 立即更新 UI（乐观更新，不等 server 回传）
 - **空状态**和**列表状态**均已实现
 
-### 3.4 ExtensionSection (`src-electron/renderer/src/components/settings/ExtensionSection.vue`)
+### 3.4 ExtensionSection (`packages/renderer/src/components/settings/ExtensionSection.vue`)
 
 **完成度: 完整**
 
@@ -225,7 +225,7 @@ export interface ExtensionInfo {
 - 展开后显示 MetaGrid（名称/版本/路径）
 - 禁用状态的 extension 半透明显示
 
-### 3.5 Settings 集成 (`src-electron/renderer/src/components/layout/SettingsView.vue`)
+### 3.5 Settings 集成 (`packages/renderer/src/components/layout/SettingsView.vue`)
 
 **完成度: 完整**
 
@@ -233,14 +233,14 @@ SettingsView 的 tab 列表包含 `extensions` tab，与 providers/skills/agents
 
 Tabs 顺序: providers → skills → agents → system → **extensions**
 
-### 3.6 ChatStore — Extension 错误处理 (`src-electron/renderer/src/stores/chat.ts`)
+### 3.6 ChatStore — Extension 错误处理 (`packages/renderer/src/stores/chat.ts`)
 
 **完成度: 完整**
 
 - `useChat.ts` 中全局处理器监听 `extension.error` → 调用 `store.addMessage()` 插入系统通知
 - `extension.ui_timeout` → 通过 event-bus 触发 toast 通知 (`App.vue` L295-303)
 
-### 3.7 SlashMenu — Extension 命令 (`src-electron/renderer/src/components/chat/SlashMenu.vue`)
+### 3.7 SlashMenu — Extension 命令 (`packages/renderer/src/components/chat/SlashMenu.vue`)
 
 **完成度: 完整**
 
@@ -249,7 +249,7 @@ SlashMenu 支持 5 种命令源: `builtin`, `skill`, `agent`, `extension`, `nati
 - `useSlashCommands.ts` 中复合 `mergeSkillCommands()` 将所有源合并、去重后排序
 - 全局 `session.commands` 事件监听: pi 返回的 `getCommands` 结果自动转为 extension commands
 
-### 3.8 useSlashCommands composable (`src-electron/renderer/src/composables/useSlashCommands.ts`)
+### 3.8 useSlashCommands composable (`packages/renderer/src/composables/useSlashCommands.ts`)
 
 **完成度: 完整**
 
@@ -264,7 +264,7 @@ SlashMenu 支持 5 种命令源: `builtin`, `skill`, `agent`, `extension`, `nati
 
 `AppStatusbar.vue` 中未发现任何 extension 扩展点。没有状态栏 extension 注册机制。
 
-### 3.10 i18n (`src-electron/renderer/src/i18n/locales/en-US.ts`)
+### 3.10 i18n (`packages/renderer/src/i18n/locales/en-US.ts`)
 
 **完成度: 完整**
 
@@ -280,7 +280,7 @@ extensionMetaName/Version/Path
 
 ## 4. 数据目录 (`~/.xyz-agent/`)
 
-### 4.1 目录结构 (`src-electron/runtime/src/pi-config-bridge.ts`)
+### 4.1 目录结构 (`packages/runtime/src/pi-config-bridge.ts`)
 
 ```
 ~/.xyz-agent/
@@ -303,7 +303,7 @@ extensionMetaName/Version/Path
 - 两套 extension 体系并行，且都通过 `--extension` 参数注入 pi
 - 数据目录与 `~/.pi/agent/` **完全隔离**
 
-### 4.2 Extension 扫描机制 (`src-electron/runtime/src/extension-service.ts`)
+### 4.2 Extension 扫描机制 (`packages/runtime/src/extension-service.ts`)
 
 - 扫描 `~/.xyz-agent/extensions/` 下所有子目录
 - 读取每个子目录的 `package.json`
@@ -317,7 +317,7 @@ extensionMetaName/Version/Path
 - 不存在时: 所有 extension 默认启用
 - 原子写入: temp → rename
 
-### 4.4 Bundled pi extension 同步 (`src-electron/runtime/src/pi-config-bridge.ts`)
+### 4.4 Bundled pi extension 同步 (`packages/runtime/src/pi-config-bridge.ts`)
 
 - `migrateToPiSubdir()` 中，打包模式下从 `process.cwd()/pi/agent/` 同步 extensions 和 skills 到 `~/.xyz-agent/pi/agent/`
 - 仅在目标目录不存在时执行（首次启动）
@@ -374,10 +374,10 @@ sesion-service.ts 中的 `getExtensionPaths()`（私有方法）扫描 `~/.xyz-a
 
 | 测试文件 | 覆盖内容 | 行数 |
 |---|---|---|
-| `src-electron/runtime/test/protocol-extension.test.ts` | 协议类型（ClientMessage/ServerMessage/Payload 接口） | ~150 |
-| `src-electron/runtime/test/event-adapter-extension.test.ts` | EventAdapter extension 事件翻译 | ~260 |
-| `src-electron/runtime/test/server-extension.test.ts` | Server extension 消息路由（ui_response/list/toggle/timeout） | ~380 |
-| `src-electron/runtime/test/extension-service.test.ts` | ExtensionService（scan/toggle/getEnabled/getExtensionPaths） | ~380 |
+| `packages/runtime/test/protocol-extension.test.ts` | 协议类型（ClientMessage/ServerMessage/Payload 接口） | ~150 |
+| `packages/runtime/test/event-adapter-extension.test.ts` | EventAdapter extension 事件翻译 | ~260 |
+| `packages/runtime/test/server-extension.test.ts` | Server extension 消息路由（ui_response/list/toggle/timeout） | ~380 |
+| `packages/runtime/test/extension-service.test.ts` | ExtensionService（scan/toggle/getEnabled/getExtensionPaths） | ~380 |
 
 **测试覆盖完整性: 高**
 

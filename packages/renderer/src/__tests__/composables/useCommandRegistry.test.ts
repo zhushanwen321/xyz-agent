@@ -7,7 +7,7 @@
  * - AC-2.3 同名不撞（slash 带 / 前缀，D-009）
  * - AC-4.8 activeSessionId=null → list() 只含 appCommands（slash 空）
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/useCommandRegistry.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useCommandRegistry.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

@@ -9,7 +9,7 @@ import { isPackaged } from '../../utils/runtime-env.js'
 
 // Find pi executable path (cross-platform). Search order:
 // Packaged: Resources/pi/pi-<plat>-<arch>
-// Dev: src-electron/resources/pi/pi-<plat>-<arch> (prepare-pi-resources.sh 产物)
+// Dev: apps/electron/resources/pi/pi-<plat>-<arch> (prepare-pi-resources.sh 产物)
 //   fallback: PATH (which/where pi) → nvm → common locations
 function findPiExecutable(projectRoot: string): string {
   const platform = process.platform  // 'darwin' | 'win32' | 'linux'
@@ -36,7 +36,7 @@ function findPiExecutable(projectRoot: string): string {
   }
 
   // Development mode: 优先用 resources/pi 里 prepare 的二进制（与打包版本统一）。
-  // projectRoot = src-electron/（dev 模式 app.getAppPath()，runtime 的 cwd），resources/pi 在其下。
+  // projectRoot = apps/electron/（dev 模式 app.getAppPath()，runtime 的 cwd），resources/pi 在其下。
   const devPi = join(projectRoot, 'resources', 'pi', binaryName)
   if (existsSync(devPi)) {
     console.log(`[process-manager] using dev resources pi: ${devPi}`)

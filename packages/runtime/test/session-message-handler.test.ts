@@ -4,7 +4,7 @@
  * 重点（report #4）：message.send blocked / steer·follow_up 失败 / session.compact 三路 / session.switch ENOENT。
  * 这些路径专为修 pendingMap 永挂泄漏，无测试下次重构极易回退。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/session-message-handler.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/session-message-handler.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
 import { SessionMessageHandler } from '../src/transport/session-message-handler.js'

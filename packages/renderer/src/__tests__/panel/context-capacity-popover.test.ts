@@ -7,7 +7,7 @@
  * mock 策略：mount 组件（HoverCard 子组件默认渲染），events.dispatchSession 模拟推送，
  * 断言按钮文案（「万·%」格式）反映最新用量。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/context-capacity-popover.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/context-capacity-popover.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'

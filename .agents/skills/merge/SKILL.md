@@ -39,10 +39,10 @@ bash ~/.agents/skills/merge-worktree/stages/1-local-check.sh
 
 阶段 1 会自动执行 pre-merge-check.sh（依赖安装、类型检查、lint、测试、构建）。
 
-⚠️ **src-electron/ 独立 npm install**：`src-electron/` 是独立 npm project（不在根 workspaces 里）。如果 stage 1 脚本未自动处理，需手动执行：
+ℹ️ **pnpm workspace 单步安装**：项目使用 pnpm workspace（`packages/* + apps/*`），`pnpm install` 一次装完所有依赖，无需手动 cd 子目录。如果 stage 1 脚本未自动处理，需手动执行：
 
 ```bash
-cd src-electron && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install
+ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
 ```
 
 ### 阶段 2: PR CI + 合并
@@ -91,17 +91,17 @@ bash scripts/check-version-bump.sh
 ```bash
 cd $WS_ROOT/main
 
-# ⚠️ 必须使用 --no-git-tag-version：两个 package.json 的变更必须在同一个
-#    commit 中，否则第二次 npm version 因 tag 已存在而失败，导致 src-electron
-#    的版本号未提交，CI 从 src-electron/package.json 读取到旧版本号。
+# ⚠️ 必须使用 --no-git-tag-version：所有 package.json 的变更必须在同一个
+#    commit 中，否则第二次 version 因 tag 已存在而失败，导致 apps/electron
+#    的版本号未提交，CI 从 apps/electron/package.json 读取到旧版本号。
 
-# 1. 纯修改文件，不创建 commit 和 tag
+# 1. 纯修改文件，不创建 commit 和 tag（pnpm workspace 递归 bump 所有包）
 npm version patch --no-git-tag-version
-cd src-electron && npm version patch --no-git-tag-version && cd ..
+cd apps/electron && npm version patch --no-git-tag-version && cd ../..
 
 # 2. 原子提交：两个 package.json 在同一个 commit
 VERSION=$(node -p "require('./package.json').version")
-git add package.json src-electron/package.json
+git add package.json apps/electron/package.json
 git commit -m "chore: bump version to ${VERSION}"
 
 # 3. 手动打 tag，确保指向包含两个文件变更的 commit
@@ -198,7 +198,7 @@ bash ~/.agents/skills/merge-worktree/stages/7-cleanup.sh
 ## 项目特化
 
 - **交付方式**：GitHub Release + Electron 产物（DMG/EXE/AppImage）
-- **版本管理**：根 `package.json` + `src-electron/package.json`（全局脚本自动同步）
+- **版本管理**：根 `package.json` + `apps/electron/package.json`（全局脚本自动同步）
 - **构建验证**：本地 `npm run build` + CI 全量构建
 
 ---

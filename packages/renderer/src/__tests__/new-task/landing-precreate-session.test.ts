@@ -14,7 +14,7 @@
  * - 重选目录只更新 pendingCwd（不删旧建新，因无旧 session）
  * - 选目录后首发提交才 create（pendingCwd 作为 create 的 cwd）
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/landing-precreate-session.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/landing-precreate-session.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

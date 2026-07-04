@@ -13,7 +13,7 @@
  * - CommandPopover：vi.mock useFileSearch 返回可控 nodes（绕过 file.search）
  * - AddMenuPopover：纯组件 mount + body DOM 断言（reka-ui teleport）
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/composer-file-popover.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/composer-file-popover.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'

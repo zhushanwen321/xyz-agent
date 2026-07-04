@@ -71,20 +71,20 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 
 ### Task 1.1: PluginService 模块骨架 + 类型定义
 
-侧产出：`src-electron/runtime/src/services/plugin-service/` 目录 + 类型文件
+侧产出：`packages/runtime/src/services/plugin-service/` 目录 + 类型文件
 
 **产出文件**：
-- `src-electron/runtime/src/services/plugin-service/plugin-types.ts` — 全部核心类型（XyzAgentManifest、PluginContributes、ActivationEvent 等，按 Part 2 的定义）
-- `src-electron/runtime/src/services/plugin-service/index.ts` — PluginService 类骨架
+- `packages/runtime/src/services/plugin-service/plugin-types.ts` — 全部核心类型（XyzAgentManifest、PluginContributes、ActivationEvent 等，按 Part 2 的定义）
+- `packages/runtime/src/services/plugin-service/index.ts` — PluginService 类骨架
 - `interfaces.ts` 中新增 `IPluginService` 接口
-- `src-electron/shared/src/` 中新增前端共享类型（PluginDescriptor、PluginStatus 等）
+- `packages/shared/src/` 中新增前端共享类型（PluginDescriptor、PluginStatus 等）
 
 **验证**：TypeScript 编译通过，类型无 any
 
 ### Task 1.2: PluginRegistry — 发现 + Manifest 解析
 
 **产出文件**：
-- `src-electron/runtime/src/services/plugin-service/plugin-registry.ts`
+- `packages/runtime/src/services/plugin-service/plugin-registry.ts`
 
 **功能范围**：
 - 三层发现路径扫描（用户级 + 项目级 + Settings 配置）
@@ -102,8 +102,8 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 1.3: PluginHost — Worker Thread 池
 
 **产出文件**：
-- `src-electron/runtime/src/services/plugin-service/plugin-host.ts`
-- `src-electron/runtime/src/services/plugin-service/plugin-bootstrap.ts`（Worker 侧入口文件）
+- `packages/runtime/src/services/plugin-service/plugin-host.ts`
+- `packages/runtime/src/services/plugin-service/plugin-bootstrap.ts`（Worker 侧入口文件）
 
 **功能范围**：
 - Worker Thread 创建：`new Worker(pluginBootstrapPath, { workerData })`
@@ -122,7 +122,7 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 1.4: PluginRPC — JSON-RPC 2.0 over MessagePort
 
 **产出文件**：
-- `src-electron/runtime/src/services/plugin-service/plugin-rpc.ts`（主线程侧 RPC server + 客户端侧 RPC client）
+- `packages/runtime/src/services/plugin-service/plugin-rpc.ts`（主线程侧 RPC server + 客户端侧 RPC client）
 
 **功能范围**：
 - 请求-响应模式：自增 requestId + pending Map
@@ -141,7 +141,7 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 1.5: PluginActivator — 懒激活 + 生命周期管理
 
 **产出文件**：
-- `src-electron/runtime/src/services/plugin-service/plugin-activator.ts`
+- `packages/runtime/src/services/plugin-service/plugin-activator.ts`
 
 **功能范围**：
 - `activatePlugin(pluginId, event)` — 触发激活
@@ -165,7 +165,7 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 1.6: PluginStorage — KV 持久化
 
 **产出文件**：
-- `src-electron/runtime/src/services/plugin-service/plugin-storage.ts`
+- `packages/runtime/src/services/plugin-service/plugin-storage.ts`
 
 **功能范围**：
 - globalState.json / workspaceState.json 的读写
@@ -229,7 +229,7 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 2.3: 安全层 — 权限检查
 
 **产出文件**：
-- `src-electron/runtime/src/services/plugin-service/plugin-security.ts`
+- `packages/runtime/src/services/plugin-service/plugin-security.ts`
 - `~/.xyz-agent/plugins/permissions.json` 的读写逻辑
 
 **功能范围**：
@@ -270,8 +270,8 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 3.1: Plugin Store + WS 消息扩展
 
 **产出文件**：
-- `src-electron/renderer/src/stores/plugin.ts` — Pinia store
-- `src-electron/shared/src/` — 补充 plugin 相关消息类型
+- `packages/renderer/src/stores/plugin.ts` — Pinia store
+- `packages/shared/src/` — 补充 plugin 相关消息类型
 
 **功能范围**：
 - Plugin store：installedPlugins、disabledPlugins、pluginStatuses
@@ -291,7 +291,7 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 3.2: 插件管理 UI
 
 **产出文件**：
-- `src-electron/renderer/src/components/settings/PluginsPane.vue`（修改已有）
+- `packages/renderer/src/components/settings/PluginsPane.vue`（修改已有）
 
 **功能范围**：
 - 已安装插件列表（名称、版本、状态、信任等级）
@@ -398,7 +398,7 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 ### Task 4.4: 样例插件 + 集成测试
 
 **产出文件**：
-- `src-electron/tests/plugins/hello-world/`（测试用插件）
+- `apps/electron/tests/plugins/hello-world/`（测试用插件）
 - 集成测试脚本
 
 **功能范围**：

@@ -9,7 +9,7 @@
  *
  * mock 策略（test-strategy §2.2/§5）：构造注入 mock gitService + ctx.reply/sendError 捕获。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/new-task/git-message-handler.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/new-task/git-message-handler.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
 import { GitMessageHandler } from '../../src/transport/git-message-handler.js'

@@ -6,7 +6,7 @@
  * - extension 命令（非 skill）→ 退化信息卡（description + source 标签）
  * - 未选择命令 → 空态
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/command-doc-panel.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/command-doc-panel.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'

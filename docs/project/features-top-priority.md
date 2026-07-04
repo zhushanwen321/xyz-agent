@@ -72,11 +72,11 @@ mac:
 - 添加 `.env.production` 配置区分开发/生产环境
 
 **涉及文件**：
-- 修改：`src-electron/package.json` — 添加 sidecar build 步骤
-- 修改：`src-electron/electron-builder.yml` — 完善打包配置
-- 修改：`src-electron/sidecar/package.json` — 添加 build 脚本
-- 修改：`src-electron/main/sidecar-manager.ts` — 生产模式 spawn 编译后的 JS
-- 新增：`src-electron/build/entitlements.mac.plist` — macOS 权限声明
+- 修改：`apps/electron/package.json` — 添加 sidecar build 步骤
+- 修改：`apps/electron/electron-builder.yml` — 完善打包配置
+- 修改：`apps/electron/sidecar/package.json` — 添加 build 脚本
+- 修改：`apps/electron/main/sidecar-manager.ts` — 生产模式 spawn 编译后的 JS
+- 新增：`apps/electron/build/entitlements.mac.plist` — macOS 权限声明
 
 ---
 

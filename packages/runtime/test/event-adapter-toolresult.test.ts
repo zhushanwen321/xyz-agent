@@ -10,7 +10,7 @@
  * 修正：role==='toolResult' 不转发（return null）——前端已通过 tool_execution_end
  * 拿到 output，toolResult message_start 是 pi 内部记账，对前端是噪声。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/event-adapter-toolresult.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/event-adapter-toolresult.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createEventAdapter, type WsSender } from './helpers/event-adapter-test-fixture.js'

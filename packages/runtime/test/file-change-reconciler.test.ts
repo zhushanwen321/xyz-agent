@@ -5,7 +5,7 @@
  * numstat 解析已统一到 shared parseNumstatEntries（lossless SSOT），单测见 git-status-parser.test.ts。
  * snapshotGitStatus / computeLineCounts 依赖外部 git（execSync），集成测试覆盖。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/file-change-reconciler.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/file-change-reconciler.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import type { FileChangeStatus } from '@xyz-agent/shared'

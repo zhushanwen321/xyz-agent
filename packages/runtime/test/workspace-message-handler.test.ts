@@ -9,7 +9,7 @@
  * - T2.4: hook blocked → record 未被调
  * - T2.5: ensureActive 失败 → record 未被调
  *
- * 运行：cd src-electron/runtime && npx vitest run test/workspace-message-handler.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/workspace-message-handler.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { tmpdir } from 'node:os'

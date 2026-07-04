@@ -7,7 +7,7 @@
  * - U3 连续 requestSlashInjection 幂等覆盖（非累加）
  * - U4 pendingSlash 初值 null
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/stores/command-store.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/stores/command-store.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

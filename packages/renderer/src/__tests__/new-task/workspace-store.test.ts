@@ -7,7 +7,7 @@
  * - T3.4: RPC reject 降级（records 置 [] 不抛）
  *
  * mock 策略：mock workspaceApi.listRecent 返回值。
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/workspace-store.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/workspace-store.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

@@ -9,7 +9,7 @@
  * mock 策略：mock transport（捕获 send payload）+ pending（返回可控 id/Promise），
  * 验证 session.create 消息 payload 形状。不 mock @/api（直接测 domains/session 真实实现）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/session-api.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/session-api.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { SessionSummary } from '@xyz-agent/shared'

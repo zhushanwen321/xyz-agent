@@ -10,7 +10,7 @@
  *
  * mock 策略：vi.mock('@/api/domains/file') + vi.mock('@/api/domains/git')。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/useFileTree.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useFileTree.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

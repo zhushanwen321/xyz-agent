@@ -7,7 +7,7 @@
  * - 审批拒绝 → 状态 UNLOADED
  * - 超时 30s → 自动拒绝
  *
- * 运行命令: npx vitest run src-electron/runtime/test/plugin-permission-push.test.ts
+ * 运行命令: pnpm --filter @xyz-agent/runtime run test -- test/plugin-permission-push.test.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'

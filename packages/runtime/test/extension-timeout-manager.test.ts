@@ -11,7 +11,7 @@
  *
  * 用 vi.useFakeTimers() 控制 setTimeout（manager 内部用真实 setTimeout + 300s 超时）。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/extension-timeout-manager.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/extension-timeout-manager.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ExtensionTimeoutManager } from '../src/services/extension-timeout-manager.js'

@@ -9,7 +9,7 @@
  * mock 策略：vi.mock('@/api') → git.status 返回可控 GitStatusResult / reject。
  * 组件 onMounted 真调 gitApi.status，动作（select/confirm-dirty/open-branch-modal）走 emit。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/branch-select-popover.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/branch-select-popover.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'

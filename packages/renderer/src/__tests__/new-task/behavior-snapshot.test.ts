@@ -4,7 +4,7 @@
  * W3 改接后比对基线：recentWorkspaces/resolveDefaultCwd 已迁移至 workspaceStore。
  * 本测试保留 DirSelectPopover 渲染形态比对（改接 workspaceStore 后行为等价）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/behavior-snapshot.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/behavior-snapshot.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'

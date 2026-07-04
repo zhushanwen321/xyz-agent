@@ -42,7 +42,7 @@ task prompt 中必须包含：
    - Extension 数据目录 `~/.xyz-agent/extensions/`（pi extension 存储）vs Plugin 数据目录 `~/.xyz-agent/plugins/`（xyz-agent 插件存储）——两者均不得与 `~/.pi/` 混淆
    - 路径白名单（`allowedPrefixes`）是否硬编码 `~/.xyz-agent` 或 `~/.pi`——必须用 `getConfigDir()` / `getPiAgentDir()` 动态推导（dev 模式目录会变）
 7. **ENV_WHITELIST SSOT（#3）**：
-   - `ENV_WHITELIST_PREFIXES` 是否只在 `src-electron/shared/src/constants.ts` 定义
+   - `ENV_WHITELIST_PREFIXES` 是否只在 `packages/shared/src/constants.ts` 定义
    - main/ 和 runtime/ 层是否本地重新定义（禁止，只能 import 扩展）
 8. **Extension vs Plugin 概念区分（context.md 核心术语）**——两者是不同概念，禁止混用：
    - **Extension**（pi extension）：运行在 **pi 子进程内**，用 `ExtensionAPI`，数据存 `~/.xyz-agent/extensions/`，由 `extension-service.ts` 管理

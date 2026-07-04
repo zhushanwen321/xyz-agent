@@ -11,7 +11,7 @@
  *
  * mock 策略：mock workspaceStore 直接控制 records 数据。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/dir-select-popover.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/dir-select-popover.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'

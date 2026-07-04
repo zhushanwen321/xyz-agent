@@ -110,10 +110,10 @@ close 触发 query='' → watch(query) debounce → loadResults，但 open flag 
 
 **运行命令**（cwd 敏感，`@` alias 只在 renderer 配）：
 ```bash
-cd src-electron/renderer && npx vitest run src/__tests__/components/search-modal.test.ts
-cd src-electron/renderer && npx vitest run src/__tests__/composables/   # useSearch/useSearchJump/useRecents/useCommandRegistry
-cd src-electron/renderer && npx vitest run src/__tests__/lib/match-engine.test.ts
-cd src-electron/renderer && npx vitest run src/__tests__/stores/command-app.test.ts
+cd packages/renderer && npx vitest run src/__tests__/components/search-modal.test.ts
+cd packages/renderer && npx vitest run src/__tests__/composables/   # useSearch/useSearchJump/useRecents/useCommandRegistry
+cd packages/renderer && npx vitest run src/__tests__/lib/match-engine.test.ts
+cd packages/renderer && npx vitest run src/__tests__/stores/command-app.test.ts
 ```
 
 ### 测试矩阵（47 条，对应 execution-plan 验收清单）
@@ -160,7 +160,7 @@ cd src-electron/renderer && npx vitest run src/__tests__/stores/command-app.test
 > **铁律**：MOCK 轨测试全绿 ≠ 功能可用。search 改了 SearchModal + 新增 5 个 composable/lib/store，必须手工 `npm run dev` 确认模块加载健康（[00 §1.3](./00-test-strategy-overview.md) dev 冒烟闸门）。
 
 ```bash
-cd src-electron && npm run dev    # 非 MOCK 轨，起 runtime + pi
+pnpm dev    # 非 MOCK 轨，起 runtime + pi
 ```
 
 手工冒烟清单（dev 启动后）：

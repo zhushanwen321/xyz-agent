@@ -15,7 +15,7 @@
 Session 的视口。每个 Panel 最多绑定一个 Session；每个 Session 同一时刻全局只能绑定到一个 Panel（跨窗口唯一）。
 
 ### Agent Runtime
-xyz-agent 的后端 Node.js 服务进程。托管 pi 子进程生命周期、协议翻译（pi JSON RPC ↔ WebSocket）、session CRUD、配置持久化。前端不直接与 pi 通信。对应目录 `src-electron/runtime/`。
+xyz-agent 的后端 Node.js 服务进程。托管 pi 子进程生命周期、协议翻译（pi JSON RPC ↔ WebSocket）、session CRUD、配置持久化。前端不直接与 pi 通信。对应目录 `packages/runtime/`。
 
 ### TaskNode / ToolCall
 树形任务引擎节点 / pi 单次工具调用记录（底层概念，详见完整版）。

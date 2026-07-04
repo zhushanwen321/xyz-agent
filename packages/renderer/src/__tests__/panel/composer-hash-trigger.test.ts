@@ -13,7 +13,7 @@
  * happy-dom 光标支持：el.focus() + Range.setStart/setEnd + Selection.addRange 可定位光标。
  * 若 happy-dom 不支持，降级用真实 Range + trigger('input')（detectHashTrigger 读 selection）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/composer-hash-trigger.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/composer-hash-trigger.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'

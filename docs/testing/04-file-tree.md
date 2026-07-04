@@ -108,7 +108,7 @@ file-filter-input input → store.setFilter(query)
 
 ## 5. mock 数据
 
-[`api/mock/file.ts`](../../src-electron/renderer/src/api/mock/file.ts) + [`api/mock/git.ts`](../../src-electron/renderer/src/api/mock/git.ts)：
+[`api/mock/file.ts`](../../packages/renderer/src/api/mock/file.ts) + [`api/mock/git.ts`](../../packages/renderer/src/api/mock/git.ts)：
 
 | 数据 | 内容 |
 |------|------|
@@ -125,16 +125,16 @@ file-filter-input input → store.setFilter(query)
 
 ### 6.1 集成测试（vitest）
 
-文件树相关单测在 [`__tests__/stores/`](../../src-electron/renderer/src/__tests__/stores/)（fileTreeStore 分区/过滤/展开）。运行：
+文件树相关单测在 [`__tests__/stores/`](../../packages/renderer/src/__tests__/stores/)（fileTreeStore 分区/过滤/展开）。运行：
 
 ```bash
-cd src-electron/renderer && npx vitest run src/__tests__/stores/
+cd packages/renderer && npx vitest run src/__tests__/stores/
 ```
 
 ### 6.2 MOCK dev 手工测试
 
 ```bash
-cd src-electron && npm run dev:mock
+pnpm --filter @xyz-agent/electron run dev:mock
 ```
 
 启动后切到「文件」tab，激活 e2e-files session，可手工测试过滤/展开/角标。
@@ -142,7 +142,7 @@ cd src-electron && npm run dev:mock
 ## 7. 非 MOCK 模式测试
 
 ```bash
-cd src-electron && npm run dev
+pnpm dev
 ```
 
 **手工冒烟清单**：
@@ -303,8 +303,8 @@ test.describe('文件树 E2E', () => {
 
 ## 10. 相关文档
 
-- 组件源码：[`components/sidebar/FileView.vue`](../../src-electron/renderer/src/components/sidebar/FileView.vue) / [`FileTreeRow.vue`](../../src-electron/renderer/src/components/sidebar/FileTreeRow.vue)
-- composable：[`composables/features/useFileTree.ts`](../../src-electron/renderer/src/composables/features/useFileTree.ts)
+- 组件源码：[`components/sidebar/FileView.vue`](../../packages/renderer/src/components/sidebar/FileView.vue) / [`FileTreeRow.vue`](../../packages/renderer/src/components/sidebar/FileTreeRow.vue)
+- composable：[`composables/features/useFileTree.ts`](../../packages/renderer/src/composables/features/useFileTree.ts)
 - E2E spec：[`e2e/file-tree.spec.ts`](../../e2e/file-tree.spec.ts)（11 用例）
 - ADR：[ADR-0025 文件视图完整项目树](../architecture/adr/0025-file-view-full-project-tree.md) / [ADR-0026 懒加载](../architecture/adr/0026-file-tree-lazy-loading.md) / [ADR-0027 FileService 三层](../architecture/adr/0027-fileservice-three-layer.md)
 - SideDrawer detail：[05-side-drawer.md](./05-side-drawer.md)（点文件 → drawer 预览）

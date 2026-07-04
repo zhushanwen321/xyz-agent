@@ -27,7 +27,7 @@
  * 新设计下 landing 态 gitInfo 恒 null（无 session）→ branch 链路不可达，
  * 原 selectBranch/confirmDirtySwitch/submitCreateBranch 集成测试已删（组件层单测见 create-branch-modal.test.ts）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/flow-integration.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/flow-integration.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

@@ -12,7 +12,7 @@
  * mock 策略：vi.hoisted 捕获 streamSubscribe 的 handler，测试向其注入 ServerMessage。
  * 每个测试用唯一 sid 避免 useChat 模块级 streamSubscriptions Map 跨测试干扰。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/useChat.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/useChat.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

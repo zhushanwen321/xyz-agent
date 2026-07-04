@@ -10,7 +10,7 @@
  * - 'No newline at end of file' meta 行
  * - 空行作 context 处理
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/lib/parseDiff.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/parseDiff.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { parseDiff } from '@/composables/logic/parseDiff'

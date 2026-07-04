@@ -10,7 +10,7 @@
  * - prompt 级 message.error（无 streaming assistant）：新建独立 error 消息，不改写历史
  * - 已 complete 的历史 assistant 遇 message.error：不回写，新建独立 error 消息
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/chat-streaming-reset.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/chat-streaming-reset.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

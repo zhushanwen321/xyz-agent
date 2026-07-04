@@ -11,7 +11,7 @@
  * mock 策略（test-strategy §2.2）：IGitExecutor 构造注入，sessionService.getSummary 提供 cwd。
  * 不起真实 git 进程。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/new-task/git-service.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/new-task/git-service.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { GitService, GitError, type GitServiceOptions } from '../../src/services/git-service.js'

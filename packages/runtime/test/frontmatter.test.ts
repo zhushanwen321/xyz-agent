@@ -5,7 +5,7 @@
  * 边界来自 frontmatter.ts 顶部注释：无 frontmatter、无闭合 `---`、多行 `>-`/`|`、
  * chomping indicator（`-`/`+`）、单行 `description: > 文本`。
  *
- * 运行：cd src-electron/runtime && npx vitest run test/frontmatter.test.ts
+ * 运行：pnpm --filter @xyz-agent/runtime run test -- test/frontmatter.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { extractFrontmatter, extractDescription } from '../src/utils/frontmatter.js'

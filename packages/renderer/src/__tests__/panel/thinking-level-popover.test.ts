@@ -6,7 +6,7 @@
  * - popover 只渲染可用档位（不可用档位不出现在 DOM）
  * - prop level（runtime 返回的 value）经 resolveThinkingKey 反向映射为 UI key 高亮
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/thinking-level-popover.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/thinking-level-popover.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'

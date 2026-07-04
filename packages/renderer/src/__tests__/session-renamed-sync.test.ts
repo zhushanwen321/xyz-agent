@@ -16,7 +16,7 @@
  * mock 策略：vi.hoisted + vi.mock('@/api')（chat.streamSubscribe 捕获回调，手动触发），
  * 真用 useSessionStore（验证 updateLabel 落点）+ useChat（被测入口）。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/session-renamed-sync.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/session-renamed-sync.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

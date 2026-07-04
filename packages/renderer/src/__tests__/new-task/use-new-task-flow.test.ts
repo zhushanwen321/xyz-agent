@@ -18,7 +18,7 @@
  * mock 策略：vi.hoisted + vi.mock('@/api')（session.create/remove），真用 useSessionStore + resolveDefaultCwd。
  * beforeEach 重建 pinia + clearAllMocks；每测唯一 sid。
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/use-new-task-flow.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/use-new-task-flow.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'

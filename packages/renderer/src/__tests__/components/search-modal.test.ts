@@ -20,7 +20,7 @@
  *  - vi.mock useSearch/useSearchJump/useRecents（vi.hoisted holder 容器，import 后注入）
  *  - SearchModal 用 reka-ui Dialog，portal 到 document.body：mount 后查 document.body
  *
- * 运行：cd src-electron/renderer && npx vitest run src/__tests__/components/search-modal.test.ts
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/search-modal.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'

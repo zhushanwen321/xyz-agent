@@ -2,7 +2,7 @@
 
 **版本**: 1.0 · **日期**: 2026-06-18 · **分支**: refactor-architecture-design
 **取代**: [design.md §D4](design.md) 的「transport/services/adapters/infra 四层」中 runtime 部分
-**适用范围**: `src-electron/runtime/`（Main 进程不在本次范围）
+**适用范围**: `packages/runtime/`（Main 进程不在本次范围）
 **plugin-service**: 暂不动（已自洽，作为黑盒保留在 services/）
 
 ---
