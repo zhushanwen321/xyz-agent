@@ -103,6 +103,9 @@ function compileRule(rawLine: string): IgnoreRule {
  * - 其余正则元字符转义
  */
 function globToRegex(pattern: string, anchored: boolean): RegExp {
+  // glob 多字符 token 的字符长度（用于游标偏移与推进）
+  const DOUBLE_STAR_LEN = 2 // '**' 双星通配占 2 字符
+  const DOUBLE_STAR_SLASH_LEN = 3 // '**/' 双星加斜杠占 3 字符
   // 逐字符构建正则源（避免 replace 链顺序问题：** 必须在 * 之前处理）
   let regexSrc = ''
   let i = 0
@@ -111,14 +114,14 @@ function globToRegex(pattern: string, anchored: boolean): RegExp {
     // ** 匹配（跨目录）
     if (ch === '*' && pattern[i + 1] === '*') {
       // **/ → 匹配零或多个目录前缀（含末尾 /）
-      if (pattern[i + 2] === '/') {
+      if (pattern[i + DOUBLE_STAR_LEN] === '/') {
         regexSrc += '(?:.*/)?'
-        i += 3
+        i += DOUBLE_STAR_SLASH_LEN
         continue
       }
       // /** 末尾 → 整段剩余
       regexSrc += '.*'
-      i += 2
+      i += DOUBLE_STAR_LEN
       continue
     }
     switch (ch) {

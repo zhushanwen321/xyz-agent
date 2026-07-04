@@ -25,7 +25,10 @@ import { toErrorMessage } from '../utils/errors.js'
 export function sendHandlerError<E extends Error & { code: string }>(
   ctx: MessageHandlerContext,
   ws: WsType,
-  errorClass: new (...args: any[]) => E,
+  // eslint 的 no-explicit-any 对构造器签名是 false positive：Error 子类构造器参数各异，
+  // 无法用单一具体类型表达。用 `never[]`（bottom type，逆变位置）替代 any[]：
+  // 任何 `new (具体参数) => E` 都可赋给 `new (...args: never[]) => E`，类型安全且不触发 lint。
+  errorClass: new (...args: never[]) => E,
   fallbackCode: string,
   error: unknown,
   id: string | undefined,

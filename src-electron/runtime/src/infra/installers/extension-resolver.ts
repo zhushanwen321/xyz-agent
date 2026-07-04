@@ -25,7 +25,7 @@ export type { ExtensionPaths }
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
   warn: (...args: unknown[]) => console.warn('[extension-resolver]', ...args),
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   debug: (..._args: unknown[]) => {},
 }
 

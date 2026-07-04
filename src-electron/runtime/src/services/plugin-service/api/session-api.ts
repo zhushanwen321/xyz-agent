@@ -78,7 +78,7 @@ export function registerSessionRpcHandlers(
   rpcServer: PluginRpcServer,
   deps: SessionHandlers,
 ): void {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   rpcServer.registerMethod('plugin.sessions.list', async (_params) => {
     return deps.listSessions()
   })
@@ -88,7 +88,7 @@ export function registerSessionRpcHandlers(
     return deps.getSession(sessionId)
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   rpcServer.registerMethod('plugin.sessions.getActive', async (_params) => {
     return deps.getActiveSession()
   })

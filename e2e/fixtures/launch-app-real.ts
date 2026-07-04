@@ -23,6 +23,11 @@ const SRC_ELECTRON = path.join(REPO_ROOT, 'src-electron')
 const requireFromSrcElectron = createRequire(path.join(SRC_ELECTRON, 'noop.js'))
 const ELECTRON_EXECUTABLE = requireFromSrcElectron('electron') as string
 
+/** waitForRuntime 默认超时：pi 子进程 spawn 较慢，给 30s */
+const RUNTIME_START_TIMEOUT_MS = 30_000
+/** waitForRuntime 轮询 runtime.port 文件的间隔 */
+const RUNTIME_PORT_POLL_INTERVAL_MS = 300
+
 export interface RealLaunchOptions {
   /** 覆盖数据目录（默认每次临时目录）；用于「重启」场景复用同一目录 */
   dataDir?: string
@@ -77,7 +82,7 @@ export async function launchRealApp(opts: RealLaunchOptions = {}): Promise<{
  * @param dataDir 数据目录（runtime.port 所在）
  * @param timeoutMs 默认 30s（pi 子进程 spawn 较慢）
  */
-export async function waitForRuntime(dataDir: string, timeoutMs = 30_000): Promise<number> {
+export async function waitForRuntime(dataDir: string, timeoutMs = RUNTIME_START_TIMEOUT_MS): Promise<number> {
   const portFile = path.join(dataDir, 'runtime.port')
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -85,7 +90,7 @@ export async function waitForRuntime(dataDir: string, timeoutMs = 30_000): Promi
       const port = parseInt(fs.readFileSync(portFile, 'utf-8').trim(), 10)
       if (port > 0) return port
     }
-    await new Promise((r) => setTimeout(r, 300))
+    await new Promise((r) => setTimeout(r, RUNTIME_PORT_POLL_INTERVAL_MS))
   }
   throw new Error(`runtime.port not found in ${dataDir} within ${timeoutMs}ms — runtime failed to start`)
 }

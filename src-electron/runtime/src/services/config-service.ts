@@ -203,7 +203,7 @@ export class ConfigService implements IConfigService {
    * 按 ADR §1.1 优先级合并去重，填 effective（最高优先那条）+ sources（多来源 badge 链）。
    * 强制目录靠桥接层重定向注入 pi 原生扫描；可选目录靠 discovery→settings 投影 + argv 注入。
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires projectRoot param
+   
   loadSkills(_projectRoot: string): SkillInfo[] {
     // 优先级从高到低的目录列表（pi 实际路径 > 强制项目 > 强制全局 > discovery 可选，靠前覆盖靠后）
     // pi 实际路径 <piAgentDir>/skills 是 pi 重定向后的真实 skill 落点（与 loadAgents 对称）。
@@ -296,7 +296,7 @@ export class ConfigService implements IConfigService {
   }
 
   /** No-op: skills are discovered from discovery.json + forced dirs, not independently persisted. */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   saveSkills(_projectRoot: string, _skills: SkillInfo[]): void {
     // no-op — skill persistence is managed by discovery.json SSOT (ADR-0020 §1)
   }
@@ -353,7 +353,7 @@ export class ConfigService implements IConfigService {
    * 强制目录含 pi 实际路径 <piAgentDir>/agents（pi 重定向后的真实扫描位置，
    * 旧 listAgentFiles() 默认扫此）+ ADR 项目/全局逻辑路径（存在则扫）。
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires projectRoot param
+   
   loadAgents(_projectRoot: string): AgentInfo[] {
     const orderedDirs = [
       join(this.configStore.getPiAgentDir(), 'agents'), // pi 实际路径（最高优先，真实 agent 落点）
@@ -382,7 +382,7 @@ export class ConfigService implements IConfigService {
   }
 
   /** No-op: agents are discovered from discovery.json + forced dirs, not independently persisted. */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   saveAgents(_projectRoot: string, _agents: AgentInfo[]): void {
     // no-op — agent persistence is managed as .md files + discovery.json SSOT (ADR-0020 §1)
   }

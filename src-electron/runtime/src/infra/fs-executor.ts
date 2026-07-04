@@ -43,8 +43,11 @@ export class FsExecutor implements IFileExecutor {
         try {
           const s = await this.withTimeout(() => stat(join(path, d.name)), 'listDir.stat')
           entries.push({ name: d.name, type: 'file', size: s.size })
-        } catch {
-          // 符号链接成环（ELOOP）/无权限（EACCES）/文件刚被删 → 跳过该 entry（不阻断整次 listDir）
+        } catch (e: unknown) {
+          // 隔离单条 entry 的失败（符号链接成环 ELOOP / 无权限 EACCES / 文件刚被删 ENOENT），
+          // 不阻断整次 listDir——其余 entry 仍要返回。记日志便于诊断为何某文件「消失」。
+          console.warn(`[fs-executor] listDir.stat skipped entry "${d.name}":`, e)
+          continue
         }
       }
     }

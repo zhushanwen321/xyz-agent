@@ -30,7 +30,7 @@ const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
   warn: (...args: unknown[]) => console.warn('[extension-service]', ...args),
   error: (...args: unknown[]) => console.error('[extension-service]', ...args),
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   debug: (..._args: unknown[]) => { /* no-op in production */ },
 }
 

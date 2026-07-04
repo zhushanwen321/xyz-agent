@@ -356,7 +356,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       adapter, unsubUsageListener: unsubUsage, sessionFilePath,
     }
     this.sessions.set(id, session)
-    await this.fetchAndBroadcastCommands(id, client)
+    await this.fetchAndBroadcastCommands(id)
     return session
   }
 
@@ -462,7 +462,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /** Query pi extension commands 并广播。失败不阻塞 session。 */
-  private async fetchAndBroadcastCommands(id: string, client: IPiEngine): Promise<void> {
+  private async fetchAndBroadcastCommands(id: string): Promise<void> {
     try {
       const commands = await this.getCommands(id)
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))

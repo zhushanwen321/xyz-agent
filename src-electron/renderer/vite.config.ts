@@ -19,30 +19,30 @@ export default defineConfig(({ mode }) => {
       // 但 data.ts 用可选链兜底，vitest 下为 undefined → 空串，不影响测试）。
       'globalThis.__E2E_SAMPLE_PROJECT_CWD__': JSON.stringify(env.VITE_E2E === 'true' ? e2eSampleCwd : ''),
     },
-  // 打包后通过 file:// 协议加载，必须用相对路径，否则 /assets/ 解析到文件系统根目录
-  base: './',
-  plugins: [vue()],
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-    },
-  },
-  server: {
-    port: 1420,
-    strictPort: true,
-  },
-  build: {
-    target: 'esnext',
-    rollupOptions: {
-      input: {
-        main: resolve(__dirname, 'index.html'),
+    // 打包后通过 file:// 协议加载，必须用相对路径，否则 /assets/ 解析到文件系统根目录
+    base: './',
+    plugins: [vue()],
+    resolve: {
+      alias: {
+        '@': resolve(__dirname, 'src'),
       },
     },
-  },
-  // mermaid ~3MB，显式预构建避免 dev 首次冷启动 esbuild 重新打包时慢 + warning。
-  // (shiki 同为大体积库已验证该路径无需额外 build 配置)
-  optimizeDeps: {
-    include: ['mermaid'],
-  },
+    server: {
+      port: 1420,
+      strictPort: true,
+    },
+    build: {
+      target: 'esnext',
+      rollupOptions: {
+        input: {
+          main: resolve(__dirname, 'index.html'),
+        },
+      },
+    },
+    // mermaid ~3MB，显式预构建避免 dev 首次冷启动 esbuild 重新打包时慢 + warning。
+    // (shiki 同为大体积库已验证该路径无需额外 build 配置)
+    optimizeDeps: {
+      include: ['mermaid'],
+    },
   }
 })
