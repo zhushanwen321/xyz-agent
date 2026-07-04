@@ -85,22 +85,30 @@
 
     <!-- assistant 区：背景融为一体，透明无边框 -->
     <div class="flex flex-col gap-0 self-stretch">
-      <!-- turn-meta：有可折叠块才显示按钮；working 态用脉冲点 -->
+      <!--
+        turn-meta：有 assistant 回复即显示（回合级耗时 + working 指示），左对齐收缩（self-start，
+        对齐设计稿 align-self:flex-start —— 按钮宽度=内容宽度，hover 背景不撑满整行）。
+        - chevron 折叠入口仅在 hasFoldable 且完成态显示（无可折叠内容时不渲染展开按钮）
+        - working 态：脉冲点 + 禁用点击（trace 由 isWorking 强制展开）
+        - 完成态 + 无 foldable：纯展示耗时，不可点击
+      -->
       <Button
-        v-if="turn.hasFoldable"
+        v-if="turn.assistants.length > 0"
         variant="ghost"
         size="sm"
-        class="turn-meta h-auto justify-start gap-2.5 rounded-none px-1 py-1 font-sans text-[12.5px] font-medium text-muted transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:text-fg"
-        :class="turn.isWorking ? 'cursor-default hover:text-muted' : 'cursor-pointer'"
-        :disabled="turn.isWorking"
+        class="turn-meta h-auto w-fit justify-start gap-2.5 self-start rounded-none px-1 py-1 font-sans text-[12.5px] font-medium text-muted transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:text-fg"
+        :class="turn.isWorking || !turn.hasFoldable ? 'cursor-default hover:text-muted' : 'cursor-pointer'"
+        :disabled="turn.isWorking || !turn.hasFoldable"
         @click="expanded = !expanded"
       >
         <ChevronRight
-          v-if="!turn.isWorking"
+          v-if="turn.hasFoldable && !turn.isWorking"
           class="chev size-[9px] text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
           :class="expanded ? 'rotate-90 text-accent' : ''"
         />
-        <span v-else class="working-dot size-[7px] flex-shrink-0 rounded-full bg-accent animate-working-pulse" />
+        <span v-else-if="turn.isWorking" class="working-dot size-[7px] flex-shrink-0 rounded-full bg-accent animate-working-pulse" />
+        <!-- 无 foldable 且非 working：chevron 位占位，保持 elapsed 文本左对齐基线一致 -->
+        <span v-else class="size-[9px] flex-shrink-0" />
         <span class="text-[12.5px] font-medium">
           <span class="lbl text-muted">{{ turn.isWorking ? '工作中' : '已工作' }}</span>
           <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>

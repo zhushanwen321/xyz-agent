@@ -381,17 +381,20 @@
 
 <!-- ============ §2 状态画廊 ============ -->
 <div class="sec-title"><span class="num">§2</span>状态画廊：边界态<span class="hint">横向滚动 · 每卡一个决策</span></div>
-<p class="lede">主区常见态之外的边界场景：纯文字回合（无工具无思考，无已工作按钮）、工具失败（挂 tool 块整块红框 + streaming）。复用同一套背景融合样式。</p>
+<p class="lede">主区常见态之外的边界场景：纯文字回合（无工具无思考，仍显「已工作」耗时但无展开按钮）、工具失败（挂 tool 块整块红框 + streaming）。复用同一套背景融合样式。</p>
 
 <div class="gallery">
 
-  <!-- A: 纯文字回合（无已工作按钮） -->
+  <!-- A: 纯文字回合（显已工作耗时，无展开按钮）—— 2026-07-04 更新：所有回合都显示已工作，原「无按钮」设计被推翻 -->
   <div class="gcard">
-    <div class="gcard-cap"><span class="tag tag-a">A</span>纯文字回合 —— 无工具无思考，无「已工作」按钮，总结直接接气泡</div>
+    <div class="gcard-cap"><span class="tag tag-a">A</span>纯文字回合 —— 无工具无思考，仍显「已工作」耗时（无 chevron 展开按钮，无计数 badge），总结接气泡</div>
     <div class="mini-stream">
       <div class="turn">
         <div class="bubble-user">zod 和 yup 选哪个？</div>
         <div class="assistant-turn">
+          <div class="turn-meta">
+            <span><span class="lbl">已工作</span> <span class="elapsed">0m 04s</span></span>
+          </div>
           <hr class="turn-divider" />
           <div class="turn-summary">
             <p>zod 更适合：TS-first、与 vee-validate 官方集成（<code>@vee-validate/zod</code>）。yup 生态更老但类型推导弱。</p>

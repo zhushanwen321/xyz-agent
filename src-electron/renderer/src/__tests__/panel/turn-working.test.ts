@@ -117,4 +117,41 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     // unmount 后推进时间不应有副作用（无泄漏的 interval 触发 DOM 更新）
     expect(() => vi.advanceTimersByTime(60000)).not.toThrow()
   })
+
+  // U13:回归防护 — pi 0.80.3 对短消息不发 thinking，纯文本回合 hasFoldable=false，
+  // 仍须显示「已工作」+ elapsed（回合级耗时，不应依赖可折叠块存在）。设计稿 §2 case A
+  // 原写「纯文字回合无按钮」，用户决策：所有回合都显示，设计稿更新。
+  it('U13: 纯文本回合（hasFoldable=false）完成态仍显示「已工作」+ elapsed，无 chevron', () => {
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isWorking: false,
+        hasFoldable: false,
+        assistants: [msg({ status: 'complete', content: 'Hi!' })],
+      }),
+    })
+    // turn-meta 按钮存在（v-if 改为 assistants.length>0，不再 gate 在 hasFoldable）
+    expect(wrapper.find('.turn-meta').exists()).toBe(true)
+    expect(wrapper.find('.lbl').text()).toBe('已工作')
+    expect(elapsedText(wrapper)).not.toBe('')
+    // 无 chevron（无可折叠内容 → 不渲染展开按钮，用户说的「展开按钮没渲染」即此场景）
+    expect(wrapper.find('.chev').exists()).toBe(false)
+    // 无 trace（无内容可折）
+    expect(wrapper.find('.trace').exists()).toBe(false)
+  })
+
+  // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）也须显示「工作中」+ 脉冲点
+  it('U14: 纯文本回合 working 态显示「工作中」+ 脉冲点 + 无 chevron + trace 强制展开', () => {
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isWorking: true,
+        hasFoldable: false,
+        assistants: [msg({ status: 'streaming', content: 'Hi' })],
+      }),
+    })
+    expect(wrapper.find('.turn-meta').exists()).toBe(true)
+    expect(wrapper.find('.lbl').text()).toBe('工作中')
+    expect(wrapper.find('.working-dot').exists()).toBe(true)
+    expect(wrapper.find('.chev').exists()).toBe(false)
+    expect(wrapper.find('.trace').exists()).toBe(true)
+  })
 })
