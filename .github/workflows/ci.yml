@@ -37,6 +37,13 @@ jobs:
           node-version: 20
           cache: npm
 
+      # 统一 npm 版本到 11（与本地开发环境一致）。
+      # 根因：npm 10（node 20 自带）和 npm 11 对 optional native dependency 的 lock
+      # 解析行为不同。src-electron 的 lock 在 npm 11 下生成，npm 10 的 npm ci 在
+      # linux 上会报 optional dep 传递依赖版本缺失（@emnapi/core@1.11.2 等）。
+      - name: Pin npm version
+        run: npm install -g npm@11
+
       - run: npm ci
 
       # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖（electron/@lucide/vue 等）。
@@ -62,6 +69,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Pin npm version
+        run: npm install -g npm@11
 
       - run: npm ci
 
@@ -95,6 +105,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Pin npm version
+        run: npm install -g npm@11
 
       - run: npm ci
 
