@@ -216,6 +216,31 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
     })
   })
 
+  // [HISTORICAL] pi 0.80.3 agent-loop 在每个 turn 末尾 emit message_start{role:'user'}
+  // （agent-loop.ts:112）。若不过滤，前端为 user prompt 再建空气泡（渲染撕裂 +
+  // findLastAssistantIndex 错位）。切 upstream 0.80.3（ac83b578）后出现。与 toolResult 同语义。
+  describe('FR-2: message_start — user/toolResult roles ignored (pi 0.80.3)', () => {
+    it('ignores role=user message_start (no message_start WS sent)', async () => {
+      dispatchOne(adapter, {
+        type: 'message_start',
+        message: { role: 'user', content: 'hi' },
+      })
+      await flushAsync()
+
+      expect(sent).toHaveLength(0)
+    })
+
+    it('ignores role=toolResult message_start (no message_start WS sent)', async () => {
+      dispatchOne(adapter, {
+        type: 'message_start',
+        message: { role: 'toolResult', content: 'result' },
+      })
+      await flushAsync()
+
+      expect(sent).toHaveLength(0)
+    })
+  })
+
   // ════════════════════════════════════════════════════════════════════
   // FR-3: new event types
   // ════════════════════════════════════════════════════════════════════

@@ -297,6 +297,12 @@ function handleMessageStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
 
   const role = msg.role as string | undefined
 
+  // [HISTORICAL] user role 的 message_start 必须忽略：pi 0.80.3 agent-loop 在每个 turn
+  // 末尾 emit message_start{role:'user'} + message_end（见 agent-loop.ts:112-113）。
+  // 若不过滤，前端会为 user prompt 再建一个空气泡（渲染撕裂、findLastAssistantIndex 错位）。
+  // fork 0.75.5 不发此事件；切 upstream 0.80.3（ac83b578）后出现。与 toolResult 同属「内部记账」语义。
+  if (role === 'user') return [{ kind: 'noop' }]
+
   // toolResult 是 pi agent-core 工具执行完毕的内部记账（agent-loop.js emitToolResultMessage：
   // executeToolCalls 后 emit message_start/end{role:'toolResult'}）。
   // 前端已通过 tool_execution_end 拿到 output，toolResult message_start 对前端是噪声——
