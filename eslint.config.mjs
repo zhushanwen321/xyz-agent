@@ -6,15 +6,16 @@ export default [
     ignores: [
       'src/dist/**',
       'src-tauri/**',
-      'runtime/dist/**',
       'taste-lint/**',
-      'src-electron/dist/**',
-      'src-electron/**/dist/**',
       'tools/*.cjs',
-      'src-electron/preload/preload.js',
       'vendor/**',
-      'src-electron/resources/pi/**',
       '.pi/**',
+      // 构建产物（目录重构后：apps/electron + packages/*）
+      'apps/electron/dist/**',
+      'apps/electron/renderer/dist/**',
+      'packages/*/dist/**',
+      'apps/electron/preload/preload.js',
+      'apps/electron/resources/pi/**',
       // .xyz-harness 是设计文档/骨架代码（spec/plan/code-skeleton），非项目源码，不参与 lint
       '.xyz-harness/**',
       // playwright 测试产物（trace/报告是工具生成的压缩 JS，非项目源码，已被 .gitignore）

@@ -3,7 +3,8 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
 
-const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8')) as { version: string }
+// __APP_VERSION__ 展示应用版本（与 electron 包一致），读 apps/electron/package.json（单一版本源）。
+const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../apps/electron/package.json'), 'utf-8')) as { version: string }
 
 export default defineConfig(({ mode }) => {
   // loadEnv 读取 renderer 目录下的 .env + 按前缀过滤；同时并入 process.env 中已存在的 VITE_ 变量
@@ -33,6 +34,10 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: 'esnext',
+      // 产物输出到 apps/electron/renderer/dist（与 main 进程 loadFile 路径一致，
+      // electron-builder files 直接包含 renderer/dist/**/*）。dev 模式不读 outDir。
+      outDir: resolve(__dirname, '../../apps/electron/renderer/dist'),
+      emptyOutDir: true,
       rollupOptions: {
         input: {
           main: resolve(__dirname, 'index.html'),

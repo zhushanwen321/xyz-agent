@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 需要检查的文件列表（扩展方便）
 TARGETS = [
-    PROJECT_ROOT / "src-electron/runtime/src/server.ts",
+    PROJECT_ROOT / "packages/runtime/src/server.ts",
 ]
 
 # 白名单变量名模式

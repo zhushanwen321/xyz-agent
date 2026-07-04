@@ -48,7 +48,10 @@ MAX_TEMPLATE_LINES = 400
 MAX_SCRIPT_LINES = 300
 
 # 允许保留 <style scoped> 的文件（子串匹配）
-STYLE_SCOPED_WHITELIST: list[str] = []
+# [HISTORICAL] MainPanel.vue 的 .main-panel { box-shadow: var(--shadow-1), var(--shadow-2) }
+# 是 float-panel 双 shadow 叠加（spec §一），Tailwind 单 box-shadow 工具类无法表达多值叠加。
+# 属于 AGENTS.md §3 明确允许的 escape hatch（Tailwind 无法表达的场景），加白名单避免误报。
+STYLE_SCOPED_WHITELIST: list[str] = ['shell/MainPanel.vue']
 
 # CSS 选择器检测正则
 RE_STYLE_SELECTOR = re.compile(r'^[.\w\-]+[\s,]*\{')

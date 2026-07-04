@@ -19,5 +19,5 @@
     }
   },
   "exclude": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.test.tsx"],
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "../preload/index.d.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "../../apps/electron/preload/index.d.ts"]
 }

@@ -51,7 +51,7 @@ jobs:
       - name: Read version
         id: changelog
         run: |
-          VERSION=$(node -p "require('./src-electron/package.json').version")
+          VERSION=$(node -p "require('./apps/electron/package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")

@@ -9,8 +9,8 @@
  *     .bare/
  *     main/                            ← worktree
  *     feat-xxx/                        ← worktree
- *       src-electron/node_modules/electron/
- *         dist  → ../../../../.electron-dist   (symlink)
+ *       apps/electron/node_modules/electron/
+ *         dist  → ../../../../../.electron-dist   (symlink)
  *         path.txt                              (写死平台路径)
  *
  * 此脚本会在 `npm run dev` 之前运行：
@@ -33,7 +33,7 @@ const WORKTREE_ROOT = path.resolve(__dirname, '../..');
 const WORKSPACE_ROOT = path.resolve(WORKTREE_ROOT, '..');
 
 const SHARED_DIST = path.join(WORKSPACE_ROOT, '.electron-dist');
-const ELECTRON_MODULE = path.join(WORKTREE_ROOT, 'src-electron/node_modules/electron');
+const ELECTRON_MODULE = path.join(WORKTREE_ROOT, 'apps/electron/node_modules/electron');
 const DIST_LINK = path.join(ELECTRON_MODULE, 'dist');
 const PATH_TXT = path.join(ELECTRON_MODULE, 'path.txt');
 

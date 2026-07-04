@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const SRC_ELECTRON = path.join(REPO_ROOT, 'src-electron')
+const SRC_ELECTRON = path.join(REPO_ROOT, 'apps/electron')
 
 const requireFromSrcElectron = createRequire(path.join(SRC_ELECTRON, 'noop.js'))
 const ELECTRON_EXECUTABLE = requireFromSrcElectron('electron') as string

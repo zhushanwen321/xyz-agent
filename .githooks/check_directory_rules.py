@@ -64,8 +64,11 @@ def check_symlinks(staged_files):
     project_root = os.getcwd()
 
     for root, dirs, files in os.walk(project_root):
-        # 跳过 node_modules、.git、dist
-        dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "dist", ".bare")]
+        # 跳过 node_modules、.git、dist、.bare
+        # .agents/.claude：全局 skill/agent 安装目录，symlink 指向 ~/.agents/skills/ 等外部路径
+        # 是 AGENTS.md「Skill 安装规范」明确要求的（ln -s /path/to/<name> ~/.agents/skills/<name>），
+        # 不属于「打包资源缺失」风险范畴（不进 electron-builder files/extraResources）
+        dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "dist", ".bare", ".agents", ".claude")]
 
         for name in dirs + files:
             full_path = os.path.join(root, name)

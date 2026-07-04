@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE="$SCRIPT_DIR/../../../src-electron/runtime/src/services/plugin-service/plugin-types.ts"
+SOURCE="$SCRIPT_DIR/../../runtime/src/services/plugin-service/plugin-types.ts"
 TARGET="$SCRIPT_DIR/../src/types.ts"
 
 if [ ! -f "$SOURCE" ]; then

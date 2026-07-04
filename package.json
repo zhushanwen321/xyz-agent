@@ -3,22 +3,13 @@
   "version": "0.5.0",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "src-electron/renderer",
-    "src-electron/runtime",
-    "src-electron/shared",
-    "packages/plugin-sdk"
-  ],
   "scripts": {
-    "dev": "cd src-electron && npm run dev",
-    "build": "cd src-electron && npm run build",
+    "dev": "pnpm --filter @xyz-agent/electron dev",
+    "build": "pnpm --filter @xyz-agent/electron build",
     "lint": "eslint .",
     "prepare": "bash .githooks/install-hooks.sh",
-    "build:e2e": "cd src-electron && npm run build:main && npm run build:preload && npm run build:vite",
+    "build:e2e": "pnpm --filter @xyz-agent/electron build:e2e",
     "test:e2e": "playwright test"
-  },
-  "dependencies": {
-    "tar": "^7.5.16"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -27,5 +18,15 @@
     "eslint-plugin-vue": "^10.9.1",
     "typescript": "^5.8",
     "typescript-eslint": "^8.59.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "^0.28.1"
+    },
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "electron",
+      "vue-demi"
+    ]
   }
 }

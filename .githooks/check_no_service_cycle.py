@@ -6,7 +6,7 @@
 接口解耦（runtime/src/interfaces.ts）。本脚本把「services 之间不得出现具体类循环 import」
 固化为 pre-commit 检查，防止未来回退引入循环（D6c 误诊再现）。
 
-检测范围：src-electron/runtime/src/services/**/*.ts（含 plugin-service 子系统）。
+检测范围：packages/runtime/src/services/**/*.ts（含 plugin-service 子系统）。
 检测对象：value import（排除 `import type`）的具体类标识符（首字母大写）。
 建图后用三色 DFS 找环；有环 → exit 2 + 打印环路径。
 
@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SERVICES_ROOT = PROJECT_ROOT / "src-electron" / "runtime" / "src" / "services"
+SERVICES_ROOT = PROJECT_ROOT / "packages" / "runtime" / "src" / "services"
 
 IMPORT_RE = re.compile(r"^\s*import\s+\{([^}]*)\}\s+from\s+['\"]([^'\"]+)['\"]")
 TYPE_SUFFIXES = (".ts", ".js")

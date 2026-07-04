@@ -22,7 +22,7 @@ case "$ARCH" in
   *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
 esac
 
-RESOURCES_DIR="src-electron/resources/pi"
+RESOURCES_DIR="apps/electron/resources/pi"
 
 echo "=== prepare-pi-resources ==="
 echo "Platform: ${PLATFORM}  Arch: ${PI_ARCH}  Version: ${PI_VERSION}"

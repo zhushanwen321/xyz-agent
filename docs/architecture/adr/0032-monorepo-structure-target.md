@@ -1,7 +1,7 @@
-# ADR-0032: Monorepo 结构终态（packages/* + apps/electron）
+# ADR-0032: Monorepo 结构终态（packages/* + apps/electron + pnpm）
 
-- **状态**: Proposed（待实施）
-- **日期**: 2026-07-04
+- **状态**: Accepted（实施中，worktree `refactor-package-structure-pnpm`）
+- **日期**: 2026-07-04（Proposed） · 2026-07-04（Accepted，决策修订：改用 pnpm）
 - **决策者**: @zhushanwen321
 - **关联**: ADR-0018（v3 冷蓝暗色设计系统）、AGENTS.md §10/§12
 
@@ -86,9 +86,19 @@ xyz-agent/
 |---|---|
 | **合并成单体**（去 workspace，一个 src/ 目录） | 放弃已有的多端解耦架构。未来做多端时要拆代码，白绕一圈回到 monorepo |
 | **src-electron 纳入根 workspace**（不改目录） | npm 不支持嵌套 workspace（沙盒验证：child workspace 被静默忽略，`npm -w` 失效） |
-| **换 pnpm/yarn** | 能解决嵌套问题，但引入新工具链成本，且 npm workspace 本身没错，错在目录结构 |
 
-## 迁移计划（待实施，独立 PR）
+### 决策修订（2026-07-04 Accepted）：构建工具从 npm 改为 pnpm
+
+原 Proposed 版本曾把「换 pnpm/yarn」列为被排除方案，理由是「npm workspace 本身没错，错在目录结构」。实施评估阶段推翻此结论，改用 **pnpm workspace**，原因：
+
+1. **嵌套 workspace 根因在 npm**：npm 对 child workspace 的支持本质上有缺陷（静默忽略嵌套），即便目录改成 `packages/* + apps/electron` 平级，npm 在处理 `apps/electron` 内对 `@xyz-agent/*` 的 workspace symlink 时仍有边角问题。pnpm 的 workspace 协议（`workspace:*`）更成熟
+2. **跨平台 lock**：npm 的 `package-lock.json` 对 optional native dependency（`@rolldown/binding-wasm32-wasi`）的跨平台解析一直不稳。pnpm 的 `pnpm-lock.yaml` + content-addressable store 对跨平台支持更好
+3. **磁盘效率**：pnpm 的硬链接 store 避免重复下载，多 worktree 场景下尤其显著（当前 bare repo + worktree 模式每个 worktree 一份 node_modules）
+4. **严格性**：pnpm 默认不 hoist，强制包边界显式声明依赖，避免 renderer 意外引用 runtime 的依赖这类隐患
+
+**Electron 兼容性**：Electron 对 node_modules 结构敏感（其 `install.js` + `path.txt` 假设扁平结构）。pnpm 默认软链结构可能让 `electron/dist` 找不到。兜底方案：`.npmrc` 配置 `node-linker=hoisted`（损失 pnpm 严格性换取兼容）。此为已知风险点，迁移时重点验证。
+
+## 迁移计划（实施中，worktree `refactor-package-structure-pnpm`）
 
 ### 改动范围
 
@@ -96,30 +106,33 @@ xyz-agent/
 |---|---|---|
 | 1. 移动 packages | `git mv src-electron/shared packages/shared` 等 3 个 | 低（git mv 保留历史） |
 | 2. 移动 apps/electron | `src-electron/` 剩余内容 → `apps/electron/` | 中（build 配置路径变） |
-| 3. 改根 package.json | workspaces 改为 `["packages/*", "apps/*"]` | 低 |
-| 4. 改 apps/electron/package.json | 加 `"@xyz-agent/renderer": "workspace:*"` 等 | 低 |
-| 5. 删 apps/electron/package-lock.json | 不再需要独立 lock | 低 |
-| 6. 改 build 配置 | vite/tsup 的 `__dirname` 入口路径、electron-builder.yml 的 `from` 路径 | 中（需逐个验证） |
-| 7. 改 CI workflow | 路径从 `src-electron/` 改为 `apps/electron/` | 低 |
-| 8. 改 setup-worktree.sh | `.bare/custom-hooks/`，路径适配 | 中（workspace 级共享） |
-| 9. 改 AGENTS.md / README | 文档同步 | 低 |
+| 3. 创建 pnpm-workspace.yaml | `packages: ['packages/*', 'apps/*']` | 低 |
+| 4. 改根 package.json | 删 workspaces 字段（pnpm 用 yaml）、scripts 改 pnpm filter | 低 |
+| 5. 改 apps/electron/package.json | 加 `"@xyz-agent/*": "workspace:*"`、scripts 改 pnpm filter | 低 |
+| 6. 删 apps/electron/package-lock.json | 不再需要独立 lock | 低 |
+| 7. 改 build 配置 | tsup outDir、tsconfig paths、vite root、electron-builder from 路径 | 中（需逐个验证） |
+| 8. 改 CI workflow | setup pnpm + `pnpm install --frozen-lockfile`，删除 src-electron 二次安装 | 低 |
+| 9. 改 setup-worktree.sh | `.bare/custom-hooks/`，npm → pnpm，清理死代码（vendor submodule 引用） | 中 |
+| 10. .npmrc | Electron 兼容配置（node-linker=hoisted 兜底） | 中（需实测） |
+| 11. 改 AGENTS.md / README | 文档同步 | 低 |
 
 ### import 路径基本不变
 
-`@xyz-agent/shared` 等包名不变（workspace 正确工作后 symlink 正常）。renderer 内部的 `@/` alias 不变（vite.config 的 `resolve.alias` 仍指向 `src/`）。迁移主要是**移动物理目录 + 改 build 配置路径**，不是改代码逻辑。
+`@xyz-agent/shared` 等包名不变（workspace 正确工作后 symlink 正常）。renderer 内部的 `@/` alias 不变（vite.config 的 `resolve.alias` 仍指向 `src/`）。迁移主要是**移动物理目录 + 改 build 配置路径 + 换包管理器**，不改代码逻辑。
 
 ### 验证标准
 
-- [ ] `npm install` 一次装完（根目录，无 `cd apps/electron && npm install`）
-- [ ] `npm run dev` 从根目录正常启动
-- [ ] `npm run build` 完整打包通过
+- [ ] `pnpm install` 一次装完（根目录，无 `cd apps/electron && pnpm install`）
+- [ ] `pnpm dev` 从根目录正常启动 Electron
+- [ ] `pnpm build` 完整打包通过（preflight + build + postbuild）
 - [ ] CI 全绿（lint/typecheck/test/build mac+linux）
-- [ ] `npm -w @xyz-agent/frontend run typecheck` 等 `-w` 命令正常
-- [ ] 外部 clone 后照 README 操作能跑起来
+- [ ] `pnpm --filter @xyz-agent/frontend run typecheck` 等 filter 命令正常
+- [ ] git-cwt 新建 worktree 验证 setup-worktree.sh 正常
+- [ ] Electron 启动后 pi 能正常加载 extensions（验证 node_modules 结构兼容）
 
 ## 状态
 
-**Proposed** — 本 ADR 记录决策方向。实施在当前 v0.5.0 发布后，另开 worktree（`refactor-monorepo-structure`）执行。实施完成后状态改为 Accepted，并附实际改动 commit hash。
+**Accepted** — 实施于 worktree `refactor-package-structure-pnpm`。原 Proposed 版本（npm + 纯目录迁移）经评估后修订为 pnpm workspace 方案（见「决策修订」段落）。
 
 ## 参考
 

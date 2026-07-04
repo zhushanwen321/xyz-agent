@@ -44,10 +44,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: pnpm
 
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
@@ -55,25 +59,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libarchive-tools rpm
 
-      - name: Install root npm dependencies
-        run: npm ci
-
-      # src-electron/ 是独立 npm project（有自己的 package-lock，不在根 workspaces 里）。
-      # 根 npm ci 装不到 electron / electron-builder / @vitejs/plugin-vue / @lucide/vue，
-      # 它们都 hoist 到 src-electron/node_modules。这步缺失 = TypeCheck/Test/Build 全 fail。
-      # 用 npm install：src-electron lock 跨平台 optional dep 解析不完整，npm ci 会拒绝。
-      - name: Install src-electron dependencies
-        working-directory: src-electron
-        run: npm install --no-audit --no-fund
+      # pnpm workspace 单步安装：根 + packages/* + apps/* 一次装完
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
 
       - name: Bump version
         if: inputs.version != ''
         shell: bash
         run: |
-          npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron
-          npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron/renderer
-          npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron/runtime
-          npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron/shared
+          # pnpm 递归 version：更新所有 workspace 包的版本（apps/electron + packages/*）
+          # ELECTRON_SKIP_BINARY_DOWNLOAD 避免触发 electron 二进制下载
+          pnpm --filter @xyz-agent/electron version ${{ inputs.version }} --no-git-tag-version
+          pnpm --filter @xyz-agent/frontend version ${{ inputs.version }} --no-git-tag-version
+          pnpm --filter @xyz-agent/runtime version ${{ inputs.version }} --no-git-tag-version
+          pnpm --filter @xyz-agent/shared version ${{ inputs.version }} --no-git-tag-version
 
       - name: Preflight check
         shell: bash
@@ -89,11 +90,10 @@ jobs:
           ./scripts/prepare-pi-resources.sh "$PI_VERSION"
 
       - name: Build
-        working-directory: src-electron
         env:
           # 跳过 macOS 代码签名（未配置 Apple Developer 证书）
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm run build
+        run: pnpm --filter @xyz-agent/electron run build
 
       - name: Postbuild validation
         shell: bash
@@ -103,7 +103,7 @@ jobs:
         if: matrix.platform == 'mac'
         shell: bash
         run: |
-          APP_PATH="src-electron/dist/builder-output/mac-arm64/xyz-agent.app"
+          APP_PATH="apps/electron/dist/builder-output/mac-arm64/xyz-agent.app"
           RUNTIME="$APP_PATH/Contents/Resources/app.asar.unpacked/dist/runtime/index.cjs"
           ELECTRON="$APP_PATH/Contents/MacOS/xyz-agent"
           if [ ! -f "$RUNTIME" ]; then
@@ -132,7 +132,7 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         run: |
-          RUNTIME="src-electron/dist/builder-output/linux-unpacked/resources/app.asar.unpacked/dist/runtime/index.cjs"
+          RUNTIME="apps/electron/dist/builder-output/linux-unpacked/resources/app.asar.unpacked/dist/runtime/index.cjs"
           if [ ! -f "$RUNTIME" ]; then
             echo '::error::Runtime bundle not found in app.asar.unpacked'
             exit 1
@@ -141,7 +141,7 @@ jobs:
 
       - name: List build output
         shell: bash
-        working-directory: src-electron
+        working-directory: apps/electron
         run: find dist/builder-output -type f 2>/dev/null || echo 'No output directory'
 
       - name: Upload artifacts
@@ -150,10 +150,10 @@ jobs:
         with:
           name: xyz-agent-${{ matrix.platform }}
           path: |
-            src-electron/dist/builder-output/*.dmg
-            src-electron/dist/builder-output/*.zip
-            src-electron/dist/builder-output/*.exe
-            src-electron/dist/builder-output/*.AppImage
-            src-electron/dist/builder-output/*.deb
+            apps/electron/dist/builder-output/*.dmg
+            apps/electron/dist/builder-output/*.zip
+            apps/electron/dist/builder-output/*.exe
+            apps/electron/dist/builder-output/*.AppImage
+            apps/electron/dist/builder-output/*.deb
           retention-days: 7
           if-no-files-found: error

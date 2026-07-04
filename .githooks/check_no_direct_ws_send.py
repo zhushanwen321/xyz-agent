@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SCAN_ROOT = PROJECT_ROOT / "src-electron" / "renderer" / "src"
+SCAN_ROOT = PROJECT_ROOT / "packages" / "renderer" / "src"
 
 WS_WHITELIST = {
     "api/transport.ts",

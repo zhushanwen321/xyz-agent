@@ -7,6 +7,8 @@ files:
   - dist/main/**/*
   - dist/preload/**/*
   - dist/runtime/**/*   # asarUnpack 的前提：files 必须先包含，才能 unpack
+  # renderer 产物：packages/renderer build 输出到 apps/electron/renderer/dist
+  #（vite.config.ts build.outDir），main 进程 loadFile('renderer/dist/index.html') 依赖此路径
   - renderer/dist/**/*
   - package.json
   # ══════════════════════════════════════════════════════════════
@@ -43,7 +45,7 @@ asarUnpack:
   - "dist/runtime/**/*"
 
 # pi Bun binary + bundled agent (extensions + skills)
-# from 路径相对于 src-electron/（electron-builder 的工作目录）
+# from 路径相对于 apps/electron/（electron-builder 的工作目录）
 extraResources:
   - from: resources/pi
     to: pi

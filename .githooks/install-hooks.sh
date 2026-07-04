@@ -81,7 +81,7 @@ fi
 
 # 获取变更文件
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^src-electron/renderer/src/" || true)
+FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^packages/renderer/src/" || true)
 
 # ============================================================================
 # 1. 前端 ESLint 检查
@@ -113,7 +113,7 @@ if [ -n "$FRONTEND_FILES" ]; then
             fi
 
             # 自动添加修复后的文件
-            FIXED_FILES=$(git diff --cached --name-only --diff-filter=M | grep "^src-electron/renderer/src/" || true)
+            FIXED_FILES=$(git diff --cached --name-only --diff-filter=M | grep "^packages/renderer/src/" || true)
             if [ -n "$FIXED_FILES" ]; then
                 echo -e "${BLUE}[INFO] ESLint 自动修复了以下文件:${NC}"
                 echo "$FIXED_FILES" | sed 's/^/  - /'
@@ -142,7 +142,7 @@ if [ -n "$FRONTEND_FILES" ]; then
         if [ -n "$CHANGED_VUE_TS" ]; then
             echo -e "${BLUE}[INFO] 执行全量类型检查...${NC}"
 
-            if ! (cd src-electron/renderer && npx vue-tsc --noEmit 2>&1); then
+            if ! (cd packages/renderer && npx vue-tsc --noEmit 2>&1); then
                 echo ""
                 echo -e "${RED}[ERROR] vue-tsc 类型检查失败${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -167,7 +167,7 @@ print_section "[代码规范检查]"
 RULES_CHECKER=".githooks/vue_rules_checker.py"
 
 if [ "$SKIP_CODE_RULES_CHECK" != "1" ]; then
-    STAGED_FRONTEND_FILES=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/src/.*\.(vue|ts)$" || true)
+    STAGED_FRONTEND_FILES=$(echo "$STAGED_FILES" | grep -E "^packages/renderer/src/.*\.(vue|ts)$" || true)
 
     if [ -n "$STAGED_FRONTEND_FILES" ]; then
         echo -e "${BLUE}[INFO] 运行代码规范检查...${NC}"
@@ -203,7 +203,7 @@ fi
 # ============================================================================
 
 SIDECAR_CHECKER=".githooks/check_sidecar_session.py"
-SIDECAR_SERVER="src-electron/sidecar/src/server.ts"
+SIDECAR_SERVER="apps/electron/sidecar/src/server.ts"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_SIDECAR_SESSION_CHECK" != "1" ]; then
     if [ -f "$SIDECAR_SERVER" ]; then
@@ -234,7 +234,7 @@ fi
 # ============================================================================
 
 CSS_CHECKER=".githooks/check_css_tokens.py"
-CSS_FILE="src-electron/renderer/src/style.css"
+CSS_FILE="packages/renderer/src/style.css"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKENS_CHECK" != "1" ]; then
     if [ -f "$CSS_FILE" ]; then
@@ -263,11 +263,11 @@ fi
 # ============================================================================
 
 CSS_SSOT_CHECKER=".githooks/check_css_token_ssot.py"
-CSS_SSOT_FILES="src-electron/renderer/src/style.css docs/page-design/design-tokens.md"
+CSS_SSOT_FILES="packages/renderer/src/style.css docs/page-design/design-tokens.md"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKEN_SSOT_CHECK" != "1" ]; then
     # 仅当 style.css 或 design-tokens.md 变更时才检查
-    SSOT_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/src/style\.css$|^docs/page-design/design-tokens\.md$" || true)
+    SSOT_CHANGED=$(echo "$STAGED_FILES" | grep -E "^packages/renderer/src/style\.css$|^docs/page-design/design-tokens\.md$" || true)
     if [ -n "$SSOT_CHANGED" ]; then
         echo -e "${BLUE}[INFO] 运行 CSS token SSOT 一致性检查...${NC}"
 
@@ -297,7 +297,7 @@ RENDERER_DEPS_CHECKER=".githooks/check_renderer_deps.py"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RENDERER_DEPS_CHECK" != "1" ]; then
     # 仅当 renderer src 或 package.json 变更时才检查
-    DEPS_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/(src/.*\.(ts|vue|tsx)|package\.json)$" || true)
+    DEPS_CHANGED=$(echo "$STAGED_FILES" | grep -E "^packages/renderer/(src/.*\.(ts|vue|tsx)|package\.json)$" || true)
     if [ -n "$DEPS_CHANGED" ]; then
         echo -e "${BLUE}[INFO] 运行 Renderer 依赖完整性检查...${NC}"
 
@@ -432,7 +432,7 @@ fi
 # ============================================================================
 
 RUNTIME_BUNDLE_CHECKER="scripts/validate-runtime-bundle.sh"
-RUNTIME_SRC="src-electron/runtime/src"
+RUNTIME_SRC="packages/runtime/src"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RUNTIME_BUNDLE_CHECK" != "1" ]; then
     if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
@@ -468,7 +468,7 @@ fi
 PREFLIGHT_CHECKER="scripts/preflight-check.sh"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
-    if echo "$STAGED_FILES" | grep -qE "^src-electron/electron-builder\.yml$|^src-electron/runtime/tsup\.config\.ts$|^resources/pi/"; then
+    if echo "$STAGED_FILES" | grep -qE "^apps/electron/electron-builder\.yml$|^packages/runtime/tsup\.config\.ts$|^resources/pi/"; then
         print_section "[打包配置预检查]"
         echo -e "${BLUE}[INFO] 打包配置有变更，运行 preflight 检查...${NC}"
 
@@ -490,12 +490,12 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
 
         # electron-builder.yml 或 tsup.config.ts 变更时，额外运行 runtime bundle 验证
         # 包含 CJS smoke test（第 6 步），能拦截 files/asarUnpack 不一致等打包配置错误
-        if echo "$STAGED_FILES" | grep -qE '^src-electron/electron-builder\.yml$|^src-electron/runtime/tsup\.config\.ts$'; then
+        if echo "$STAGED_FILES" | grep -qE '^apps/electron/electron-builder\.yml$|^packages/runtime/tsup\.config\.ts$'; then
             echo -e "${BLUE}[INFO] 打包配置变更，额外运行 runtime bundle 验证（含 smoke test）...${NC}"
             bash "$RUNTIME_BUNDLE_CHECKER"
             if [ $? -ne 0 ]; then
                 echo -e "${RED}[ERROR] Runtime bundle 验证失败（可能需要重新 build）${NC}"
-                echo -e "${YELLOW}[FIX] cd src-electron/runtime && npm run build，然后重新 commit${NC}"
+                echo -e "${YELLOW}[FIX] cd packages/runtime && npm run build，然后重新 commit${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi

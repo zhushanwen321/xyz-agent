@@ -7,7 +7,7 @@ Sidecar session 隔离检查
 
 运行方式:
   python3 .githooks/check_sidecar_session.py [files...]
-  不传参数时检查默认路径 src-electron/sidecar/src/server.ts
+  不传参数时检查默认路径 apps/electron/sidecar/src/server.ts
 
 退出码:
   0 — 通过
@@ -137,7 +137,7 @@ def check_file(filepath: str) -> list[str]:
 
 def main():
     files = sys.argv[1:] if len(sys.argv) > 1 else [
-        'src-electron/sidecar/src/server.ts',
+        'apps/electron/sidecar/src/server.ts',
     ]
 
     all_violations = []

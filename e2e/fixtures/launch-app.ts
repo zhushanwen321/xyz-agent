@@ -2,7 +2,7 @@
  * Playwright _electron launch fixture —— E2E harness 核心。
  *
  * 设计依据（见 execution-plan W0）：
- * - main entry = src-electron/dist/main/main.cjs（vite 打包后），Electron 读 src-electron/package.json 的 `main` 字段
+ * - main entry = apps/electron/dist/main/main.cjs（vite 打包后），Electron 读 apps/electron/package.json 的 `main` 字段
  * - E2E 走构建产物 + mock 注入，env：
  *   - VITE_E2E=true → renderer 构建期注入 sample-project cwd + mock 层注入 e2eTestSession（见 renderer/vite.config.ts define）
  *   - VITE_MOCK=true → renderer mock API（不走 transport/ws-client）
@@ -21,11 +21,11 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const SRC_ELECTRON = path.join(REPO_ROOT, 'src-electron')
+const SRC_ELECTRON = path.join(REPO_ROOT, 'apps/electron')
 
-// electron 二进制装在 src-electron/node_modules（workspace 隔离），不在 root node_modules。
+// electron 二进制装在 apps/electron/node_modules（workspace 隔离），不在 root node_modules。
 // Playwright _electron.launch() 默认从 root require.resolve('electron') 找，找不到。
-// 用 createRequire 在 src-electron 上下文解析 electron 包导出的可执行文件路径（跨平台，electron/index.js 负责计算）。
+// 用 createRequire 在 apps/electron 上下文解析 electron 包导出的可执行文件路径（跨平台，electron/index.js 负责计算）。
 const requireFromSrcElectron = createRequire(path.join(SRC_ELECTRON, 'noop.js'))
 const ELECTRON_EXECUTABLE = requireFromSrcElectron('electron') as string
 
@@ -45,9 +45,9 @@ export async function launchApp(): Promise<{
   const tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xyz-e2e-'))
 
   const app = await electron.launch({
-    // 显式指定 electron 可执行文件（装在 src-electron/node_modules，非 root）
+    // 显式指定 electron 可执行文件（装在 apps/electron/node_modules，非 root）
     executablePath: ELECTRON_EXECUTABLE,
-    // Electron 进程的 cwd 指向 src-electron（含 package.json 的 main 字段），
+    // Electron 进程的 cwd 指向 apps/electron（含 package.json 的 main 字段），
     // app.getAppPath() 会解析到此处，dist/main/main.cjs + dist/preload/preload.cjs + renderer/dist 都在此树下
     cwd: SRC_ELECTRON,
     env: {

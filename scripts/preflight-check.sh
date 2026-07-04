@@ -39,14 +39,14 @@ echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BLUE}[Preflight Checks]${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-ELECTRON_DIR="$PROJECT_ROOT/src-electron"
+ELECTRON_DIR="$PROJECT_ROOT/apps/electron"
 FAILED=0
 
 # ── 1. package.json 完整性 ─────────────────────────────────────────
 echo ""
 echo -e "${BLUE}[1/7] package.json fields...${NC}"
 
-# 检查 src-electron/package.json（electron-builder 的工作目录）
+# 检查 apps/electron/package.json（electron-builder 的工作目录）
 ELECTRON_PKG="$ELECTRON_DIR/package.json"
 node -e "
 const pkg = require('$ELECTRON_PKG');
@@ -97,8 +97,8 @@ check_dir() {
 echo ""
 echo -e "${BLUE}[3/7] tsup noExternal vs runtime dependencies...${NC}"
 
-RUNTIME_PKG="$ELECTRON_DIR/runtime/package.json"
-RUNTIME_TSUP="$ELECTRON_DIR/runtime/tsup.config.ts"
+RUNTIME_PKG="$PROJECT_ROOT/packages/runtime/package.json"
+RUNTIME_TSUP="$PROJECT_ROOT/packages/runtime/tsup.config.ts"
 
 if [ -f "$RUNTIME_PKG" ] && [ -f "$RUNTIME_TSUP" ]; then
     DEPS=$(node -e "const p=require('$RUNTIME_PKG');console.log(Object.keys(p.dependencies||{}).join('\n'))")

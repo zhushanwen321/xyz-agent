@@ -38,8 +38,8 @@ echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BLUE}[Runtime Bundle 验证]${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-RUNTIME_DIR="$PROJECT_ROOT/src-electron/runtime"
-DIST_RUNTIME="$PROJECT_ROOT/src-electron/dist/runtime"
+RUNTIME_DIR="$PROJECT_ROOT/packages/runtime"
+DIST_RUNTIME="$PROJECT_ROOT/apps/electron/dist/runtime"
 BUNDLE_PATH="$DIST_RUNTIME/index.cjs"
 BOOTSTRAP_PATH="$DIST_RUNTIME/plugin-bootstrap.cjs"
 
@@ -67,9 +67,14 @@ echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs${NC}"
 echo ""
 echo -e "${BLUE}[2/6] 检查依赖是否打包（noExternal）...${NC}"
 
-# 从 package.json 读取 dependencies
+# 从 package.json 读取 dependencies（过滤 workspace:* 协议依赖——它们被 tsup inline，
+# 包名在 bundle 中消失是预期行为，第 4 步 grep 包名检查不适用）
 RUNTIME_PKG="$RUNTIME_DIR/package.json"
-DEPS=$(node -e "const p=require('$RUNTIME_PKG');console.log(Object.keys(p.dependencies||{}).join('\n'))")
+DEPS=$(node -e "
+const p=require('$RUNTIME_PKG');
+const deps=p.dependencies||{};
+console.log(Object.keys(deps).filter(k=>!deps[k].startsWith('workspace:')).join('\n'));
+")
 
 # 从 tsup.config.ts 读取 noExternal 配置
 TSUP_CONFIG="$RUNTIME_DIR/tsup.config.ts"

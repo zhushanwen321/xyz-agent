@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@xyz-agent/shared": "workspace:*",
     "fast-glob": "^3.3.3",
     "semver": "^6.3.1",
     "tar": "^7.5.16",

@@ -97,11 +97,11 @@ log "=== 阶段 3/6: Bump 版本并推送 ==="
 
 cd "$WS_ROOT"
 npm version "$BETA_VERSION" --no-git-tag-version 1>/dev/null
-cd src-electron
+cd apps/electron
 npm version "$BETA_VERSION" --no-git-tag-version 1>/dev/null
 cd "$WS_ROOT"
 
-git add package.json src-electron/package.json
+git add package.json apps/electron/package.json
 git commit -m "chore: prerelease ${BETA_TAG}"
 git tag "$BETA_TAG"
 git push "$GITHUB_REMOTE" HEAD
