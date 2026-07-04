@@ -57,43 +57,12 @@ export function extractSessionName(filePath: string): string | null {
 
 // ── 文件操作 ─────────────────────────────────────────────────
 
-/**
- * 确保 session 文件存在。如果 pi 延迟写入导致文件不存在，
- * 创建一个包含 session header 的最小 jsonl 文件。
- * 这样 scanPiSessions() 总能找到该 session，避免空对话 session 重启后消失。
- */
-export function ensureSessionFile(filePath: string, id: string, cwd: string, label?: string): void {
-  if (!filePath) return
-  if (existsSync(filePath)) return
-
-  const dir = dirname(filePath)
-  // G3: mkdirSync({recursive:true}) 本就幂等，无需 existsSync 守卫。
-  mkdirSync(dir, { recursive: true })
-
-  const header = JSON.stringify({
-    type: 'session',
-    version: 3,
-    id,
-    timestamp: new Date().toISOString(),
-    cwd,
-  }) + '\n'
-  const entries = [header]
-  if (label) {
-    entries.push(JSON.stringify({ type: 'session_info', name: label, timestamp: new Date().toISOString() }) + '\n')
-  }
-  try {
-    const fd = openSync(filePath, 'wx')
-    writeSync(fd, entries.join(''))
-    closeSync(fd)
-    console.log(`[config-bridge] ensured session file: ${filePath}`)
-  } catch (e) {
-    // 文件可能已被 pi 进程创建（竞态），忽略 EEXIST
-    const code = (e as NodeJS.ErrnoException).code
-    if (code !== 'EEXIST') {
-      console.error(`[config-bridge] failed to ensure session file: ${filePath}`, e)
-    }
-  }
-}
+// [HISTORICAL] ensureSessionFile 已删除（2026-07-04）。
+// 原实现用 openSync(wx) 提前创建 session 文件（含 session+session_info 两行），
+// 理由是「pi 延迟写入期间 scanPiSessions 找不到该 session」。但这与 pi 0.80.3
+// SessionManager._persist 的 openSync("wx") 冲突 → EEXIST → pi 抛 error → session 卡死。
+// 现在依赖 SessionScanner.listAll 合并内存 active session（this.sessions Map），
+// 即使磁盘无文件也显示；重启后内存清空，未 flush 的空 session 丢失是合理行为。
 
 /**
  * 将 session 名称持久化到 .jsonl 文件。

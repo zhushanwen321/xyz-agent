@@ -54,7 +54,6 @@ const mocks = vi.hoisted(() => ({
   },
   refreshAllMock: vi.fn(),
   persistSessionNameMock: vi.fn(),
-  ensureSessionFileMock: vi.fn(),
   patchSessionCwdMock: vi.fn(() => true),
   trashMock: vi.fn(),
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
@@ -72,7 +71,6 @@ vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
     ...actual,
     scanPiSessions: () => mockScannedSessions,
     persistSessionName: mocks.persistSessionNameMock,
-    ensureSessionFile: mocks.ensureSessionFileMock,
     patchSessionCwd: mocks.patchSessionCwdMock,
   }
 })
@@ -551,11 +549,6 @@ describe('SessionService · lifecycle', () => {
     it('calls refreshAll after create', async () => {
       await setup.service.create(tmpdir())
       expect(mocks.refreshAllMock).toHaveBeenCalledTimes(1)
-    })
-
-    it('calls ensureSessionFile when pi provides sessionFile', async () => {
-      await setup.service.create(tmpdir())
-      expect(mocks.ensureSessionFileMock).toHaveBeenCalledTimes(1)
     })
 
     // INV-7: create 收到不存在的 cwd → 降级 homedir（与 restoreSession fallback 对称）

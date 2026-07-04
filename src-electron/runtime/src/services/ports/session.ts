@@ -25,8 +25,6 @@ export interface ISessionStore {
   scanSessions(): ScannedSessionMeta[]
   /** 刷新 pi 配置缓存（models + settings 全量重读）。 */
   refreshAll(): void
-  /** 确保 session 文件存在（创建最小文件）。 */
-  ensureSessionFile(filePath: string, id: string, cwd: string, label?: string): void
   /** 持久化 session 名称。 */
   persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void
   /** 修正 session 文件的 cwd 字段。 */

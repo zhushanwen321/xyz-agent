@@ -86,12 +86,13 @@ export class SessionLifecycle {
       id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath,
     )
 
-    // pi 延迟写入:session 文件在首次 assistant 消息前可能不存在。
-    // 主动创建最小文件确保 scanPiSessions 能找到该 session。
-    if (sessionFilePath) {
-      this.sessionStore.ensureSessionFile(sessionFilePath, id, sessionCwd, label)
-    }
-
+    // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
+    // 之前的实现在此处用 openSync(wx) 创建含 session+session_info 两行的最小文件，理由是
+    // 「pi 延迟写入期间 scanPiSessions 找不到该 session」。但这与 pi 0.80.3 SessionManager._persist
+    // 的写入策略冲突：_persist 首次 flush（收到 assistant 消息时）也用 openSync("wx")，撞上已存在文件
+    // → EEXIST → pi 抛 message_start{stopReason:"error"} → 整个 session 永久卡死。
+    // 现在依赖 SessionScanner.listAll 的合并机制：active session 从内存 Map（this.sessions）读，
+    // 即使磁盘无文件也显示（restart 后内存清空，但此时未 flush 的 session 本就无内容，丢失合理）。
     this.sessionStore.refreshAll()
     this.workspaceService.record(sessionCwd)
     return this.svc.toSummary(session)

@@ -3,7 +3,7 @@
  *
  * 🔒 归属（R3e1，三层架构）：infra/pi/，实现 services/ports.ts 的 ISessionStore。
  * 聚合 session-file-utils 的 session 函数（scanPiSessions/persistSessionName/
- * ensureSessionFile/patchSessionCwd）+ pi-provider-store 的 refreshAll +
+ * patchSessionCwd）+ pi-provider-store 的 refreshAll +
  * message-converter 的 convertPiHistory + system/trash。
  * service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
  */
@@ -12,7 +12,6 @@ import type { Message } from '@xyz-agent/shared'
 import {
   scanPiSessions,
   persistSessionName,
-  ensureSessionFile,
   patchSessionCwd,
 } from './session-file-utils.js'
 import { refreshAll } from './pi-provider-store.js'
@@ -26,10 +25,6 @@ export class PiSessionStore implements ISessionStore {
 
   refreshAll(): void {
     refreshAll()
-  }
-
-  ensureSessionFile(filePath: string, id: string, cwd: string, label?: string): void {
-    ensureSessionFile(filePath, id, cwd, label)
   }
 
   persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void {

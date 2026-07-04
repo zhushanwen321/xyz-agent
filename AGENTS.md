@@ -91,6 +91,8 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 - `getHistoryFromFile()` → 文件不存在时返回空消息列表
 - **禁止**假设 `get_state` 返回 `sessionFile` 后文件就已存在
 
+**[HISTORICAL] 禁止提前创建 session 文件**：曾经有 `ensureSessionFile()` 在 session 创建后立即用 `openSync(filePath, 'wx')` 创建含 session+session_info 两行的最小文件，理由是「确保 scanPiSessions 能找到该 session」。但这与 pi 0.80.3 `SessionManager._persist` 首次 flush 的 `openSync(sessionFile, "wx")` 冲突 → **EEXIST** → pi 抛 `message_start{stopReason:"error"}` → 整个 session 永久卡死（坏 session 文件只有 2 行，pi 自己的内容从未写入）。正确做法是依赖 `SessionScanner.listAll()` 合并内存 active session（`this.sessions` Map）：活跃 session 即使磁盘无文件也显示在列表里。**禁止任何代码在 pi 首次 flush 前创建/触碰 session 文件**。
+
 ### 7. Session 隔离：所有消息必须带 sessionId
 
 所有 runtime → 前端的消息，如果涉及特定 session，`payload` 必须包含 `sessionId`。前端靠 `payload.sessionId` 路由到正确的 panel/store 分区。**缺失 `sessionId` 的消息应被忽略**，否则会广播到所有 panel。
@@ -412,6 +414,20 @@ xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/ag
 [历史] 旧规则曾要求 runtime-manager.ts 和 rpc-client.ts 「各有一份常量并 diff 同步」。commit 863f0704 收敛到 shared SSOT 后，「两处不同步」物理不可能，检查改为 SSOT 单一性防护。
 
 **Pre-commit 自动检查**：`check_env_whitelist_sync.py` 验证 `const ENV_WHITELIST_PREFIXES` 定义只出现在 shared/constants.ts，检测 SSOT 退化（未来有人在 main/runtime 本地重新定义）。
+
+### 4. Runtime/pi 日志必须落盘 + 轮转 + 动态数据目录
+
+runtime 子进程（`src-electron/runtime/src/`）与 pi 子进程的所有日志输出，**禁止只走 `console.*` → 终端**（关终端即丢，无法事后诊断 pi 静默卡死类问题）。必须持久化到文件。
+
+**强制要求**：
+
+- **数据目录动态推导**：日志目录必须 `<getDataDir()/logs/`（dev=`~/.xyz-agent-dev/logs/`，prod=`~/.xyz-agent/logs/`），由 `getDataDir()`（`shared/src/paths.ts`）推导。**禁止硬编码 `~/.xyz-agent`**（违反架构约定 #2，`check_path_whitelist.py` 会拦，且实例隔离后 dev/prod 路径不同会导致串台）
+- **必须轮转**：单文件无限增长会撑爆磁盘。采用 date（按天文件 `runtime-YYYY-MM-DD.log`）+ size（单文件上限 ~50MB 触发 `.1` 滚动）双策略，保留期默认 7 天（`XYZ_LOG_KEEP_DAYS` 可调）。优先用 `node:fs` 自实现（当前实现：`runtime/src/infra/logger.ts`），**新增第三方日志库（pino/winston/rfs）必须同步追加到 `runtime/tsup.config.ts` 的 `noExternal`**（规则 #12），否则打包后 `Cannot find module`
+- **dev vs prod 级别差异**：dev 默认 debug（含 `XYZ_DEBUG_PI_EVENTS=1` 的 pi 原始事件流），prod 默认 info（屏蔽 pi 原始事件，避免 PII/性能/磁盘问题）。级别由 `XYZ_LOG_LEVEL` 控制（`XYZ_` 前缀自动过 `ENV_WHITELIST_PREFIXES`，无需改白名单，符合架构约定 #3）
+- **pi 子进程输出落盘**：pi 卡死时其 stdout JSONL 事件流是**唯一决定性证据**。pi stdout（`rpc-client.ts` 的 `createInterface` 消费点，`rl.on('line')`）必须 tee 一份原始行到 `<dataDir>/logs/pi-<date>-<sessionId>.jsonl`；pi stderr 进主 runtime 日志（经 `[rpc:stderr]` 前缀随 console 落盘）
+- **实现位置**：logger 模块在 `runtime/src/infra/logger.ts`，在 `index.ts` 组合根最早期初始化（`initLogger(getDataDir())`），console 作为 logger 语法糖（monkey-patch 全局 console 覆盖 runtime 内既有的裸 console，tee 到终端 + 文件）。supervisor 层（`main/supervisor/process-control.ts`）仍捕获 runtime stdout 打终端，日志落盘责任在 runtime 自身
+
+**[HISTORICAL] 背景**：handoff 2026-07-04 P1「pi 静默卡死」——坏 session 的 JSONL 只有 2 行、零 message，pi 子进程 0% CPU 不退出。runtime 发了 prompt 后 pi 发了什么事件（或什么都没发）无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。此条目把「日志必须落盘」固化为规范，避免再次因证据丢失而无法定位。实现见 commit（logger.ts + index.ts initLogger + rpc-client.ts pi stdout tee）。
 
 ## 跳过检查
 

@@ -97,7 +97,7 @@ describe('SessionLifecycle — 写入时机 record', () => {
       rekey: vi.fn(),
     }
     const configStore = { getDefaultModel: vi.fn().mockReturnValue({ provider: 'p', modelId: 'm' }) }
-    const sessionStore = { ensureSessionFile: vi.fn(), refreshAll: vi.fn() }
+    const sessionStore = { refreshAll: vi.fn() }
 
     // 当前 SessionLifecycle 只有 4 个构造参数，workspaceService 是本次 W2 新增的第 5 个。
     // 如果测试因"too many arguments"编译失败，说明实现尚未加参数——这是预期的 TDD 失败。
@@ -132,7 +132,7 @@ describe('SessionLifecycle — 写入时机 record', () => {
       rekey: vi.fn(),
     }
     const configStore = { getDefaultModel: vi.fn().mockReturnValue({ provider: 'p', modelId: 'm' }) }
-    const sessionStore = { ensureSessionFile: vi.fn(), refreshAll: vi.fn() }
+    const sessionStore = { refreshAll: vi.fn() }
 
     const lifecycle = new SessionLifecycle(
       svc as unknown as ConstructorParameters<typeof SessionLifecycle>[0],
