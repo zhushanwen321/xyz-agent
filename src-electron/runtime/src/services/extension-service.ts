@@ -20,6 +20,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
+import { recommendedExtensions } from '@xyz-agent/shared'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
@@ -174,6 +175,22 @@ export class ExtensionService {
     }
 
     return extensions
+  }
+
+  /**
+   * 返回推荐扩展列表，附带当前已安装状态。
+   *
+   * 匹配逻辑：scanExtensions() 拿到已装列表，按 npm 包名精确匹配。
+   * ExtensionInfo.name 存的是原始 npm 包名（如 @zhushanwen/pi-goal，见 readPackageJson
+   * 的 NOTE 注释——name 故意保留原始值不做 normalize），与 recommended-extensions.json
+   * 的 name 字段一致，无需 normalizeExtName 转换。
+   *
+   * SSOT：recommended-extensions.json（shared 包导出，runtime import）。
+   */
+  async getRecommendedExtensions(): Promise<Array<{ name: string; description: string; installed: boolean }>> {
+    const installed = await this.scanExtensions()
+    const installedNames = new Set(installed.map(e => e.name))
+    return recommendedExtensions.map(r => ({ ...r, installed: installedNames.has(r.name) }))
   }
 
   /**

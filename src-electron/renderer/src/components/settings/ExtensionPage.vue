@@ -5,6 +5,38 @@
     → extensions prop 流入本页，无需本页自建订阅。
   -->
   <div class="flex flex-col gap-4">
+    <!-- 推荐扩展区：快捷一键安装 builtin pi-extensions（SSOT = recommended-extensions.json）。
+         onMounted 拉取 installed 状态；install 后 watch(extensions) 刷新。-->
+    <section v-if="recommended.length" class="rounded-md border border-border bg-bg">
+      <div class="border-b border-border px-3 py-2">
+        <h3 class="text-[12px] font-medium text-fg">推荐扩展</h3>
+      </div>
+      <div class="flex flex-col gap-0.5 p-2">
+        <div
+          v-for="r in recommended"
+          :key="r.name"
+          class="flex items-center gap-3 rounded-sm px-2 py-2 hover:bg-surface"
+        >
+          <div class="min-w-0 flex-1 flex flex-col gap-0.5">
+            <span class="truncate text-[12px] font-medium text-fg">{{ r.name }}</span>
+            <span class="truncate text-[11px] text-muted">{{ r.description }}</span>
+          </div>
+          <!-- 已安装：disabled + Check 图标；未安装：点击调 install(npm:pkgName) -->
+          <Button
+            variant="ghost"
+            size="dense"
+            class="shrink-0 rounded-sm text-[11px]"
+            :disabled="r.installed || installingRecommended.has(r.name)"
+            @click="onInstallRecommended(r.name)"
+          >
+            <Loader2 v-if="installingRecommended.has(r.name)" class="animate-spin" />
+            <Check v-else-if="r.installed" />
+            {{ r.installed ? '已安装' : '安装' }}
+          </Button>
+        </div>
+      </div>
+    </section>
+
     <!-- 安装区 -->
     <section class="rounded-md border border-border bg-bg">
       <div class="flex items-center gap-1 border-b border-border px-3 py-2">
@@ -132,9 +164,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { Trash2, Loader2, AlertCircle } from '@lucide/vue'
-import type { ExtensionDiscoveredPayload } from '@xyz-agent/shared'
+import { computed, ref, watch, onMounted } from 'vue'
+import { Trash2, Loader2, AlertCircle, Check } from '@lucide/vue'
+import type { ExtensionDiscoveredPayload, RecommendedExtension } from '@xyz-agent/shared'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -151,13 +183,53 @@ interface ExtensionItem {
   tools: string[]
 }
 
-defineProps<{ extensions: ExtensionItem[] }>()
+const props = defineProps<{ extensions: ExtensionItem[] }>()
 
 const tabs = [
   { id: 'npm', label: 'npm' },
   { id: 'dir', label: 'Local Dir' },
   { id: 'git', label: 'Git URL' },
 ] as const
+
+/**
+ * 推荐扩展列表（含已安装状态）。
+ * onMounted 拉取；extensions prop 变化（install/uninstall 后 runtime 推 config.extensions）
+ * 时重新拉取，确保 installed 状态及时更新。
+ */
+const recommended = ref<Array<RecommendedExtension & { installed: boolean }>>([])
+/** 推荐扩展安装中（按包名 key，支持并发不同包；同包重复点击 disabled 防抖） */
+const installingRecommended = ref<Set<string>>(new Set())
+
+async function refreshRecommended() {
+  try {
+    recommended.value = await extensionApi.fetchRecommended()
+  } catch (e) {
+    // 拉取失败仅记录到 actionError，不阻塞页面其余功能
+    actionError.value = e instanceof Error ? `加载推荐扩展失败: ${e.message}` : `加载推荐扩展失败: ${String(e)}`
+  }
+}
+
+onMounted(refreshRecommended)
+// extensions prop 变化后刷新推荐列表的 installed 状态（install/uninstall/toggle 都会触发）
+watch(() => props.extensions, refreshRecommended)
+
+/** 推荐扩展一键安装：自动补 npm: 前缀 */
+async function onInstallRecommended(pkgName: string) {
+  if (installingRecommended.value.has(pkgName)) return
+  actionError.value = ''
+  const next = new Set(installingRecommended.value)
+  next.add(pkgName)
+  installingRecommended.value = next
+  try {
+    await extensionApi.install(`npm:${pkgName}`)
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    const after = new Set(installingRecommended.value)
+    after.delete(pkgName)
+    installingRecommended.value = after
+  }
+}
 
 const activeTab = ref<'npm' | 'dir' | 'git'>('npm')
 const installInput = ref('')
@@ -214,7 +286,9 @@ async function onInstall() {
   installing.value = true
   try {
     if (activeTab.value === 'npm') {
-      await extensionApi.install(input)
+      // 自动补 npm: 前缀（runtime installExtension 强制要求，placeholder 仅提示不强制）
+      const source = input.startsWith('npm:') ? input : `npm:${input}`
+      await extensionApi.install(source)
       installInput.value = ''
     } else if (activeTab.value === 'dir') {
       const result = await extensionApi.installDir(input)

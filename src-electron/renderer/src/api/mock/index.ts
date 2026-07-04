@@ -12,8 +12,9 @@
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData, ExtensionWidgetPayload, ExtensionStatusPayload,
-  SkillDirConfig, FileNode,
+  SkillDirConfig, FileNode, RecommendedExtension,
 } from '@xyz-agent/shared'
+import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
 import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
@@ -493,6 +494,12 @@ export const extension = {
   },
   async cancelInstall(_tempDir: string) {
     await sleep(TIMING.ack)
+  },
+  /** 拉取推荐扩展（含已安装状态）。mock 用 fixtureExtensions 判断 installed。 */
+  async fetchRecommended(): Promise<Array<RecommendedExtension & { installed: boolean }>> {
+    await sleep(TIMING.ack)
+    const installedNames = new Set(fixtureExtensions.map((e) => e.name))
+    return recommendedExtensions.map((r) => ({ ...r, installed: installedNames.has(r.name) }))
   },
 }
 

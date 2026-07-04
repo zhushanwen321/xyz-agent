@@ -175,6 +175,8 @@ export interface IConfigService {
 /** Extension lifecycle: discovery, enable/disable, install/uninstall, path resolution. */
 export interface IExtensionService {
   scanExtensions(): Promise<import('@xyz-agent/shared').ExtensionInfo[]>
+  /** 推荐扩展列表（含已安装状态，前端 Settings 快捷安装按钮数据源） */
+  getRecommendedExtensions(): Promise<Array<{ name: string; description: string; installed: boolean }>>
   toggleExtension(name: string, enabled: boolean): Promise<void>
   getExtensionPaths(): Promise<string[]>
   installExtension(source: string): Promise<void>

@@ -6,7 +6,7 @@ import type { FileChange, ChangeSetStatus } from './message'
 import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
-import type { ExtensionInfo } from './extension'
+import type { ExtensionInfo, RecommendedExtension } from './extension'
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
@@ -27,6 +27,7 @@ export type ClientMessageType =
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
   | 'extension.install' | 'extension.uninstall'
   | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
+  | 'extension.recommended'
   | 'ping'
   | 'plugin.list' | 'plugin.toggle'
   | 'plugin.install' | 'plugin.uninstall'
@@ -99,6 +100,7 @@ export interface ClientMessageMap {
   'extension.installGit': { url: string }
   'extension.finishInstall': { tempDir: string; selected: string[] }
   'extension.cancelInstall': { tempDir: string }
+  'extension.recommended': Record<string, never>
   'plugin.list': Record<string, never>
   'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
   'plugin.install': { packageSpec: string }
@@ -157,6 +159,7 @@ export type ServerMessageType =
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
   | 'extension.discovered' | 'extension.installCancelled'
+  | 'extension.recommended'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'app.info'
@@ -203,6 +206,8 @@ export interface ServerMessageMapBase {
   'config.agentDirs': { dirs: SkillDirConfig[] }
   'config.defaults': { defaultModel: string }
   'config.extensions': { extensions: ExtensionInfo[] }
+  /** extension.recommended reply：推荐扩展列表（含已安装状态） */
+  'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
   'config.plugins': { plugins: PluginInfo[] }
   'model.list': { models: ModelInfo[] }
   'session.list': { groups: SessionGroup[] }

@@ -51,20 +51,10 @@ extraResources:
       - "**/*"
       - "!**/*.tar.gz"
       - "!**/*.zip"
-  # ══════════════════════════════════════════════════════════════
-  # Builtin pi extensions（@zhushanwen/pi-*）— 打包时通过 extraResources 拷贝到
-  # Resources/node_modules/@zhushanwen/，运行时由 extension-resolver 的 npm 源发现。
-  # 【禁止删除】这些依赖，它们是 builtin extension，用户安装 dmg/exe 后自带。
-  # 详见根 package.json dependencies 中的 @zhushanwen/pi-* 条目。
-  # ══════════════════════════════════════════════════════════════
-  - from: ../node_modules/@zhushanwen
-    to: node_modules/@zhushanwen
-  - from: node_modules/js-yaml
-    to: node_modules/js-yaml
-  - from: node_modules/argparse
-    to: node_modules/argparse
   # xyz-agent pi extension (xyz-navigate command)
-  # 源文件在 repo root，打包到 Resources 根目录
+  # 源文件在 repo root，打包到 Resources 根目录。
+  # 注：builtin pi-extensions（@zhushanwen/pi-*）已改为 Settings 推荐安装，
+  # 不再打包进产物。详见 recommended-extensions.json + extension.recommended WS 协议。
   - from: ../xyz-agent-extension.js
     to: xyz-agent-extension.js
 

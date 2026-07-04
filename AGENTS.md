@@ -175,7 +175,13 @@ lsof -i :1420 -P | grep node
 - **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
 - **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
 - **数据目录隔离**: `~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离（已有规则 #10）
-- **[HISTORICAL] Builtin Extension 依赖禁止删除**: 根 `package.json` 的 `dependencies` 中 `@zhushanwen/pi-*` 开头的包是 builtin pi extension（当前 5 个：`@zhushanwen/pi-goal`、`@zhushanwen/pi-todo`、`@zhushanwen/pi-subagents`、`@zhushanwen/pi-workflow`、`@zhushanwen/pi-structured-output`）。这些包通过 `electron-builder.yml` 的 `extraResources` 拷贝到打包产物的 `Resources/node_modules/@zhushanwen/` 目录下，运行时由 `extension-resolver.ts` 的 npm 源扫描发现（`scanNpmExtensions`）。用户安装 dmg/exe 后自动自带这些 extension，无需手动安装。**禁止删除或移出这些依赖**——曾经发生过误删导致打包产物缺失 builtin extension 的事故。extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
+- **[HISTORICAL] Builtin pi-extensions 改为 Settings 推荐安装**（2026-07-04 推翻旧规则）：5 个 `@zhushanwen/pi-*` 包（`pi-goal`/`pi-todo`/`pi-subagents`/`pi-workflow`/`pi-structured-output`）**不再作为根 `package.json` dependencies 集成进打包产物**。改为 Settings → Extensions 页面的「推荐扩展」快捷按钮，用户点击从 npm 安装到 `~/.xyz-agent/pi/agent/npm/node_modules/`。
+  - 推荐列表 SSOT：`src-electron/shared/src/recommended-extensions.json`（runtime import，前端经 `extension.recommended` WS 拉取）
+  - runtime `ExtensionService.getRecommendedExtensions()` 计算已安装状态（按 npm 包名精确匹配 `ExtensionInfo.name`，不经 normalizeExtName 转换）
+  - electron-builder.yml 不再 `extraResources` 拷贝 `@zhushanwen/`，preflight-check.sh 移除了原 npm packages / 传递依赖检查（步骤 7、8）
+  - **代价**：新用户首次启动无这些 extension，需到 Settings 手动安装；离线环境无法安装（npm-installer 需联网）
+  - 旧规则背景：曾经发生过误删 builtin 依赖导致打包产物缺失的事故，故设禁止删除规则。现改为推荐安装机制后该约束不再适用，但「删除打包所需依赖」的事故教训仍适用于其他 builtin 资源（如 pi binary、xyz-agent-extension.js）
+  - extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
 
 ### 12. Electron 打包约束（违反必出 bug）
 

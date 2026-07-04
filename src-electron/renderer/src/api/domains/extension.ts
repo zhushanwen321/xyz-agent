@@ -23,6 +23,7 @@ import type {
   ExtensionDiscoveredPayload,
   ExtensionWidgetPayload,
   ExtensionStatusPayload,
+  RecommendedExtension,
 } from '@xyz-agent/shared'
 import * as transport from '../transport'
 import * as pending from '../pending'
@@ -132,5 +133,17 @@ export function cancelInstall(tempDir: string): Promise<void> {
   const id = pending.create()
   const result = pending.register<void>(id)
   transport.send({ type: 'extension.cancelInstall', id, payload: { tempDir } })
+  return result
+}
+
+/**
+ * 拉取推荐扩展列表（含已安装状态）。
+ * 数据源：runtime getRecommendedExtensions()（SSOT = recommended-extensions.json）。
+ * 前端 Settings · ExtensionPage 的「推荐扩展」快捷按钮区据此渲染。
+ */
+export function fetchRecommended(): Promise<Array<RecommendedExtension & { installed: boolean }>> {
+  const id = pending.create()
+  const result = pending.register<Array<RecommendedExtension & { installed: boolean }>>(id)
+  transport.send({ type: 'extension.recommended', id, payload: {} })
   return result
 }

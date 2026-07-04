@@ -110,6 +110,45 @@ describe('ExtensionService', () => {
     })
   })
 
+  describe('getRecommendedExtensions', () => {
+    it('returns all recommended entries with installed=false when none installed', async () => {
+      const recommended = await service.getRecommendedExtensions()
+      // recommended-extensions.json SSOT 的 5 个条目全部返回
+      expect(recommended.length).toBe(5)
+      // fixture 只装了 pi-ask-user，recommended 列表里的包均未装
+      expect(recommended.every(r => r.installed === false)).toBe(true)
+      // 每条都有 name 和 description
+      expect(recommended.every(r => typeof r.name === 'string' && r.name.startsWith('@zhushanwen/pi-'))).toBe(true)
+      expect(recommended.every(r => typeof r.description === 'string' && r.description.length > 0)).toBe(true)
+    })
+
+    it('marks matching package as installed (raw npm name match, no normalize)', async () => {
+      // 在 npm/node_modules 下造一个与 recommended 列表同名的包
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+        name: '@zhushanwen/pi-goal',
+        version: '0.4.0',
+        description: 'goal ext',
+        keywords: ['pi-package'],
+        peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
+      }), 'utf-8')
+      // settings.json packages[] 加入该包，使 scanExtensions 的 settings 源能扫到
+      const settingsPath = join(testSettingsDir, 'settings.json')
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
+      writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
+
+      const recommended = await service.getRecommendedExtensions()
+      const goal = recommended.find(r => r.name === '@zhushanwen/pi-goal')
+      expect(goal).toBeDefined()
+      expect(goal!.installed).toBe(true)
+      // 其余 4 个仍未装
+      const others = recommended.filter(r => r.name !== '@zhushanwen/pi-goal')
+      expect(others.every(r => r.installed === false)).toBe(true)
+    })
+  })
+
   describe('getExtensionPaths', () => {
     it('returns paths of enabled extensions', async () => {
       const paths = await service.getExtensionPaths()

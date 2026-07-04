@@ -29,6 +29,7 @@ export class ExtensionMessageHandler {
   readonly handles: ClientMessageType[] = [
     'extension.ui_response', 'extension.list', 'extension.toggle', 'extension.install', 'extension.uninstall',
     'extension.installDir', 'extension.installGit', 'extension.finishInstall', 'extension.cancelInstall',
+    'extension.recommended',
   ]
 
   /**
@@ -93,6 +94,13 @@ export class ExtensionMessageHandler {
         }
         const extensions = await this.ctx.extensionService.scanExtensions()
         return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions })
+      }
+      case 'extension.recommended': {
+        if (!this.ctx.extensionService) {
+          return this.ctx.reply(ws, msg.id, 'extension.recommended', { recommended: [] })
+        }
+        const recommended = await this.ctx.extensionService.getRecommendedExtensions()
+        return this.ctx.reply(ws, msg.id, 'extension.recommended', { recommended })
       }
       case 'extension.toggle': {
         const ext = this.requireExt(ws, msg.id)

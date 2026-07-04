@@ -48,3 +48,14 @@ export interface ExtensionDiscoveredPayload {
 
 // 注：ExtensionInstallErrorPayload 已删除（D10/P0-B）——install 失败现在走统一 error envelope，
 // hint 进 details.hint。见 protocol.ts「错误契约」文档注释。
+
+// ── Recommended extensions（SSOT: recommended-extensions.json）─────────
+
+/**
+ * 推荐扩展条目。数据源 recommended-extensions.json（runtime 读取，前端经 WS 拉取）。
+ * 不含 version —— 版本动态从 npm registry 拉，JSON 只存稳定的 name + 描述。
+ */
+export interface RecommendedExtension {
+  name: string
+  description: string
+}

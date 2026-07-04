@@ -1,0 +1,22 @@
+[
+  {
+    "name": "@zhushanwen/pi-goal",
+    "description": "Codex-style /goal command — persistent goal-driven autonomous loop with evidence-based completion, token/time budgets, blocked detection, and steering templates."
+  },
+  {
+    "name": "@zhushanwen/pi-todo",
+    "description": "AI-driven todo list — stateful task management with session persistence and /todos command."
+  },
+  {
+    "name": "@zhushanwen/pi-subagents",
+    "description": "Spawned-process agent execution runtime — unified execute entry, isolated state, sync/background modes."
+  },
+  {
+    "name": "@zhushanwen/pi-workflow",
+    "description": "Multi-agent workflow orchestration — stateful workflow management with persistence, state machine, and execution tracing."
+  },
+  {
+    "name": "@zhushanwen/pi-structured-output",
+    "description": "Structured output tool — enforces JSON Schema via tool call mechanism with Ajv validation."
+  }
+]
