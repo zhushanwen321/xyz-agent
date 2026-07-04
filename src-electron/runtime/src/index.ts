@@ -4,6 +4,8 @@ import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
 
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
+import { getDataDir } from '@xyz-agent/shared/paths'
+import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { migrateToPiSubdir } from './infra/pi/pi-provider-store.js'
@@ -62,6 +64,13 @@ function parseArgs(): { port: number; projectRoot?: string } {
 async function main(): Promise<void> {
   const { port, projectRoot } = parseArgs()
   const effectiveRoot = projectRoot ?? process.cwd()
+
+  // 日志持久化（架构约定 #4）：组合根最早期初始化 + monkey-patch console。
+  // 必须在所有 service 创建前（runtime 内 ~140 处裸 console.log 经 patch 自动落盘）。
+  // [HISTORICAL] handoff 2026-07-04 P1「pi 静默卡死」——之前日志只在终端，关掉即丢，
+  // 无法事后诊断 pi 发了什么事件。initLogger 后所有 console.* 自动 tee 到
+  // <dataDir>/logs/runtime-YYYY-MM-DD.log。
+  initLogger(getDataDir())
 
   // Infrastructure
   const pm = new ProcessManager(effectiveRoot)
@@ -236,6 +245,7 @@ async function main(): Promise<void> {
     } catch (e) {
       console.error('[runtime] error during shutdown:', e)
     }
+    closeLogger()
     process.exit(0)
   }
 

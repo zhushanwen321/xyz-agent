@@ -5,6 +5,7 @@ import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
 import type { IPiEngine, PiRpcResponse } from '../../services/ports/pi-engine.js'
 import { readRpcData } from '../../services/ports/pi-engine.js'
+import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
 const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
@@ -50,6 +51,8 @@ export interface RpcClientOptions {
   piCommand?: string
   /** pi 扩展路径列表，每个路径通过 --extension 参数传递 */
   extensionPaths?: string[]
+  /** session id（用于命名 pi stdout 日志文件，架构约定 #4） */
+  sessionId?: string
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -73,6 +76,8 @@ export class RpcClient implements IPiEngine {
   private exitCallback: ((code: number | null) => void) | null = null
   /** 收集 pi 进程的 stderr 输出，用于在启动失败时提供具体错误信息 */
   private stderrChunks: string[] = []
+  /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
+  private piSessionLog: PiSessionLog | null = null
 
   constructor(private options: RpcClientOptions = {}) {}
 
@@ -121,6 +126,13 @@ export class RpcClient implements IPiEngine {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
+    // pi stdout JSONL 原始流落盘（架构约定 #4）。pi 卡死时（prompt 后零事件），
+    // 这个文件是判断「pi 没发事件」vs「runtime 没转发」的决定性证据。
+    // logger 未初始化时（如单元测试）返回 no-op 写入器，无副作用。
+    if (this.options.sessionId) {
+      this.piSessionLog = createPiSessionLog(this.options.sessionId)
+    }
+
     const proc = this.proc
 
     proc.on('error', (err) => {
@@ -131,6 +143,8 @@ export class RpcClient implements IPiEngine {
     proc.on('exit', (code) => {
       this._exited = true
       console.log(`[rpc] process exited with code ${code}`)
+      this.piSessionLog?.end()
+      this.piSessionLog = null
       // Only reject pending requests on unexpected exits.
       // For normal kill flow (_killing=true), rejectAll is called in kill()
       // via a separate safety net to avoid leaving callers hanging until CMD_TIMEOUT_MS.
@@ -146,6 +160,8 @@ export class RpcClient implements IPiEngine {
     const rl = createInterface({ input: proc.stdout! })
     rl.on('line', (line) => {
       if (!line.trim()) return
+      // tee 原始 JSONL 到 pi session 日志（架构约定 #4，卡死诊断证据）
+      this.piSessionLog?.write(line)
       try {
         const msg: PiMessage = JSON.parse(line)
         this.handleMessage(msg)
