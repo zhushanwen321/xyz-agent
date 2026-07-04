@@ -39,6 +39,14 @@ jobs:
 
       - run: npm ci
 
+      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖（electron/@lucide/vue 等）。
+      # 跳过 electron 二进制下载（lint 不需要运行时）。
+      - name: Install src-electron dependencies
+        working-directory: src-electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
+
       - name: ESLint
         run: npm run lint
 
@@ -56,6 +64,15 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖。
+      # TypeCheck 报错（Cannot find module 'electron' / '@lucide/vue'）根因即此处缺失。
+      # 跳过 electron 二进制下载（typecheck 只需要类型声明，不需要运行时）。
+      - name: Install src-electron dependencies
+        working-directory: src-electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
 
       - name: TypeCheck - renderer
         run: npm -w @xyz-agent/frontend run typecheck
@@ -81,6 +98,15 @@ jobs:
 
       - run: npm ci
 
+      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖。
+      # Test 报错（Cannot find package '@vitejs/plugin-vue' in vitest.config.ts）根因即此处缺失。
+      # 跳过 electron 二进制下载（vitest 只需要 @vitejs/plugin-vue 等 dev 依赖）。
+      - name: Install src-electron dependencies
+        working-directory: src-electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
+
       - name: Test - runtime
         run: npm -w @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
 
@@ -100,5 +126,11 @@ jobs:
             src-electron/renderer/test-results.xml
           retention-days: 7
 
-  # Build 需要完整的 Electron 环境（macOS 签名、electron-builder 依赖）
-  # 建议在 release workflow 中单独配置，CI 阶段以 lint + typecheck + test 为核心
+  # PR 构建检查：完整 electron-builder 打包流程（与 release 一致），不在 PR 上传产物。
+  # needs gate：lint/typecheck/test 已知失败时不浪费 mac runner（mac 构建 5-8min）。
+  build:
+    name: Build
+    needs: [lint, typecheck, test]
+    uses: ./.github/workflows/build.yml
+    with:
+      upload-artifacts: false
