@@ -282,7 +282,10 @@ function linkifyFilePathsHtml(content: string): string {
  */
 export async function renderMarkdown(content: string): Promise<string> {
   const md = await getMarkdown()
-  return md.render(content)
+  // trimEnd：markdown-it 输出末尾带格式化 \n（如 "<p>hi</p>\n"），在 whitespace-pre-wrap
+  // 容器里会被渲染成可见空行（用户气泡比实际内容多一行）。HTML 结构不受影响（块级元素
+  // 末尾的空白文本节点是无意义的）。
+  return md.render(content).trimEnd()
 }
 
 /** markdown 渲染段（供 MarkdownRenderer 按 segment 分别渲染，mermaid 段走 MermaidRenderer 组件） */
