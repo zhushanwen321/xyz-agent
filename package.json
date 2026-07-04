@@ -18,8 +18,11 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@zhushanwen/pi-goal": "^0.1.4",
-    "@zhushanwen/pi-todo": "^0.1.4",
+    "@zhushanwen/pi-goal": "^0.4.0",
+    "@zhushanwen/pi-structured-output": "^0.3.2",
+    "@zhushanwen/pi-subagents": "^0.1.1",
+    "@zhushanwen/pi-todo": "^0.3.0",
+    "@zhushanwen/pi-workflow": "^1.1.3",
     "tar": "^7.5.16"
   },
   "devDependencies": {

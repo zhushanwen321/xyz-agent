@@ -38,8 +38,7 @@
     "@types/markdown-it-footnote": "^3.0.4",
     "electron-store": "^10",
     "is-glob": "^4.0.3",
-    "markdown-it-footnote": "^4.0.0",
-    "pi-subagents": "^0.27.0"
+    "markdown-it-footnote": "^4.0.0"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",

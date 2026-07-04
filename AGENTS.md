@@ -175,7 +175,7 @@ lsof -i :1420 -P | grep node
 - **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
 - **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
 - **数据目录隔离**: `~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离（已有规则 #10）
-- **[HISTORICAL] Builtin Extension 依赖禁止删除**: 根 `package.json` 的 `dependencies` 中 `@zhushanwen/pi-*` 开头的包是 builtin pi extension（如 `@zhushanwen/pi-goal`、`@zhushanwen/pi-todo`）。这些包通过 `electron-builder.yml` 的 `extraResources` 拷贝到打包产物的 `Resources/node_modules/@zhushanwen/` 目录下，运行时由 `extension-resolver.ts` 的 npm 源扫描发现。用户安装 dmg/exe 后自动自带这些 extension，无需手动安装。**禁止删除或移出这些依赖**——曾经发生过误删导致打包产物缺失 builtin extension 的事故
+- **[HISTORICAL] Builtin Extension 依赖禁止删除**: 根 `package.json` 的 `dependencies` 中 `@zhushanwen/pi-*` 开头的包是 builtin pi extension（当前 5 个：`@zhushanwen/pi-goal`、`@zhushanwen/pi-todo`、`@zhushanwen/pi-subagents`、`@zhushanwen/pi-workflow`、`@zhushanwen/pi-structured-output`）。这些包通过 `electron-builder.yml` 的 `extraResources` 拷贝到打包产物的 `Resources/node_modules/@zhushanwen/` 目录下，运行时由 `extension-resolver.ts` 的 npm 源扫描发现（`scanNpmExtensions`）。用户安装 dmg/exe 后自动自带这些 extension，无需手动安装。**禁止删除或移出这些依赖**——曾经发生过误删导致打包产物缺失 builtin extension 的事故。extension 统一走 npm 源（2026-07-04 移除了 `vendor/xyz-pi-extensions` submodule，旧 vendor 拷贝逻辑已从 `prepare-pi-resources.sh` 删除）
 
 ### 12. Electron 打包约束（违反必出 bug）
 

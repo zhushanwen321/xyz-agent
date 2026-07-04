@@ -82,17 +82,11 @@ else
   popd > /dev/null
 fi
 
-# --- Copy extensions from vendor submodule ---
-echo "Copying extensions from vendor/xyz-pi-extensions/..."
-mkdir -p "$EXTENSIONS_DIR"
-for ext in subagent goal todo; do
-  if [ -d "vendor/xyz-pi-extensions/${ext}" ]; then
-    cp -RL "vendor/xyz-pi-extensions/${ext}" "$EXTENSIONS_DIR/"
-    echo "  copied: ${ext}"
-  else
-    echo "  missing: ${ext} (submodule not initialized? run: git submodule update --init)"
-  fi
-done
+# --- Extensions：不再从 vendor 拷贝，统一走 npm @zhushanwen/pi-* ---
+# builtin extensions（goal/todo/subagents/workflow）由根 package.json dependencies 声明，
+# 开发模式 extension-resolver.scanNpmExtensions 从 node_modules/@zhushanwen/ 解析；
+# 打包模式 electron-builder extraResources 拷贝 node_modules/@zhushanwen/ 到 Resources/。
+# 原 vendor/xyz-pi-extensions submodule 已移除（停在 v0.0.3 旧命名，与 npm 包名不一致）。
 
 # --- Copy skills from vendor submodule ---
 echo "Copying skills from vendor/xyz-harness/skills/..."
