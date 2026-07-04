@@ -79,13 +79,13 @@ export class ExtensionResolver implements IExtensionResolver {
   /**
    * 扫描 npm extension：从 package.json dependencies 提取白名单。
    *
-   * 打包模式下 projectRoot = Resources/，该目录没有 package.json，
-   * 但 extraResources 已将 node_modules/@zhushanwen/ 拷贝到 Resources/ 下。
-   * 此时用 projectRoot 本身作为 resolvePaths，require.resolve 即可找到
-   * Resources/node_modules/@zhushanwen/pi-xxx/package.json。
+   * 注意（2026-07-04 任务一后）：builtin @zhushanwen/pi-* 已改为 Settings 推荐安装，
+   * 不再打包进产物（electron-builder.yml 移除了 @zhushanwen extraResources 拷贝）。
+   * 打包模式下此方法扫描 Resources/node_modules/@zhushanwen/，目录不存在时
+   * existsSync 兜底返回空 Map（用户通过 Settings 安装的扩展走 settings 源，不经过此方法）。
    *
-   * 开发模式下 projectRoot = 项目根目录，npmResolvePaths 默认也是项目根，
-   * 正常 resolve node_modules/@zhushanwen/。
+   * 开发模式下 projectRoot = apps/electron（runtime cwd），读 apps/electron/package.json
+   * 的 dependencies。@zhushanwen/pi-* 不再是根依赖，此处返回空。
    */
   scanNpmExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
     const result: ExtensionMap = new Map()
@@ -192,12 +192,16 @@ export class ExtensionResolver implements IExtensionResolver {
 
   /**
    * 扫描 bundled extensions
+   *
+   * dev 模式：projectRoot = apps/electron（runtime 子进程 cwd），bundled extensions
+   * 在 repo root 的 resources/pi/agent/extensions/（与 apps/electron 平级的 resources/ 目录）。
+   * repo root 相对 apps/electron 是 ../..
    */
   scanBundledExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
     if (packaged) return new Map()
 
     const result: ExtensionMap = new Map()
-    const bundledDir = join(projectRoot, 'resources', 'pi', 'agent', 'extensions')
+    const bundledDir = join(projectRoot, '..', '..', 'resources', 'pi', 'agent', 'extensions')
 
     if (!existsSync(bundledDir)) return result
 

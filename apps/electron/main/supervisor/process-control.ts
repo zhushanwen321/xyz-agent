@@ -96,11 +96,16 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
     console.log(`[runtime] ${cmd} ${runtimeDist} --port=${port}`)
   } else {
     // 开发环境：tsx 运行 TS 源码
-    const tsxPath = path.join(projectRoot, 'node_modules', '.bin', 'tsx')
-    const runtimeEntry = path.join(projectRoot, 'runtime', 'src', 'index.ts')
+    // projectRoot = app.getAppPath() = apps/electron。
+    // pnpm workspace + node-linker=hoisted 下，tsx 提升到 repo root 的 node_modules/.bin；
+    // runtime 源码在 packages/runtime/src/（与 apps/electron 平级）。
+    // repo root 相对 apps/electron 是 ../..
+    const repoRoot = path.join(projectRoot, '..', '..')
+    const tsxPath = path.join(repoRoot, 'node_modules', '.bin', 'tsx')
+    const runtimeEntry = path.join(repoRoot, 'packages', 'runtime', 'src', 'index.ts')
 
     if (!existsSync(tsxPath)) {
-      throw new Error(`tsx not found at ${tsxPath}. Run: npm install`)
+      throw new Error(`tsx not found at ${tsxPath}. Run: pnpm install`)
     }
     if (!existsSync(runtimeEntry)) {
       throw new Error(`Runtime entry not found at ${runtimeEntry}`)

@@ -234,8 +234,12 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanBundledExtensions', () => {
+    // dev 模式 projectRoot = apps/electron，bundled 在 repo root 的 resources/pi/agent/extensions/。
+    // join 被 mock 为字符串拼接（不解析 ..），路径为 {projectRoot}/../../resources/pi/agent/extensions
+    const bundledMockPath = '/project/../../resources/pi/agent/extensions'
+
     it('scans bundled directory in dev mode', () => {
-      mockDir('/project/resources/pi/agent/extensions')
+      mockDir(bundledMockPath)
 
       const result = resolver.scanBundledExtensions('/project', false)
       expect(result.size).toBe(2)
@@ -250,7 +254,7 @@ describe('ExtensionResolver', () => {
     })
 
     it('skips shared directory', () => {
-      mockDir('/project/resources/pi/agent/extensions')
+      mockDir(bundledMockPath)
 
       const result = resolver.scanBundledExtensions('/project', false)
       expect(result.has('shared')).toBe(false)
@@ -396,7 +400,8 @@ describe('ExtensionResolver', () => {
 
   describe('resolve', () => {
     it('integrates all 5 sources and deduplicates', () => {
-      const bundledDir = '/project/resources/pi/agent/extensions'
+      // dev 模式 bundled 在 repo root（projectRoot/../../resources/...），join mock 不解析 ..
+      const bundledDir = '/project/../../resources/pi/agent/extensions'
       const home = process.env.HOME ?? '/home/user'
       const settingsDir = `${home}/.xyz-agent/pi/agent`
       const settingsPath = `${settingsDir}/settings.json`

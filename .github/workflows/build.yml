@@ -65,6 +65,12 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: pnpm install --frozen-lockfile
 
+      # install 步骤跳过了 electron 二进制下载（节省时间），打包需要二进制，显式补回。
+      # electron 的 install.js 从 ELECTRON_BINARY_HOST/GitHub releases 下载平台对应 dist。
+      - name: Download Electron binary
+        working-directory: apps/electron
+        run: node node_modules/electron/install.js
+
       - name: Bump version
         if: inputs.version != ''
         shell: bash
