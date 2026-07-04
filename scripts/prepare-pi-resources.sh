@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# prepare-pi-resources.sh — Download pi binary and copy extensions/skills for local build testing.
+# prepare-pi-resources.sh — Download pi binary for local build / CI.
+#
+# pi binary comes from upstream badlogic/pi-mono releases (not a fork).
+# Builtin extensions (goal/todo/subagents/workflow/structured-output) are
+# declared in root package.json dependencies and resolved via npm — this
+# script does NOT handle them (dev: scanNpmExtensions, packaged: extraResources).
+# Skills are user/project-level (~/.agents/skills, <cwd>/.pi/agent/skills) —
+# not bundled with the app.
+#
 # Usage: ./scripts/prepare-pi-resources.sh [PI_VERSION]
-# CI 和本地开发共用此脚本，减少维护成本。
 set -euo pipefail
 
 PI_VERSION="${1:-0.80.3}"
@@ -16,9 +23,6 @@ case "$ARCH" in
 esac
 
 RESOURCES_DIR="src-electron/resources/pi"
-AGENT_DIR="${RESOURCES_DIR}/agent"
-EXTENSIONS_DIR="${AGENT_DIR}/extensions"
-SKILLS_DIR="${AGENT_DIR}/skills"
 
 echo "=== prepare-pi-resources ==="
 echo "Platform: ${PLATFORM}  Arch: ${PI_ARCH}  Version: ${PI_VERSION}"
@@ -80,23 +84,6 @@ else
   rm -f "$ASSET"
   chmod +x "${BINARY_NAME}" 2>/dev/null || true
   popd > /dev/null
-fi
-
-# --- Extensions：不再从 vendor 拷贝，统一走 npm @zhushanwen/pi-* ---
-# builtin extensions（goal/todo/subagents/workflow）由根 package.json dependencies 声明，
-# 开发模式 extension-resolver.scanNpmExtensions 从 node_modules/@zhushanwen/ 解析；
-# 打包模式 electron-builder extraResources 拷贝 node_modules/@zhushanwen/ 到 Resources/。
-# 原 vendor/xyz-pi-extensions submodule 已移除（停在 v0.0.3 旧命名，与 npm 包名不一致）。
-
-# --- Copy skills from vendor submodule ---
-echo "Copying skills from vendor/xyz-harness/skills/..."
-mkdir -p "$SKILLS_DIR"
-if [ -d "vendor/xyz-harness/skills" ]; then
-  cp -RL vendor/xyz-harness/skills/* "$SKILLS_DIR/"
-  SKILL_COUNT=$(ls -1 "$SKILLS_DIR" | wc -l | tr -d ' ')
-  echo "  copied: ${SKILL_COUNT} skills"
-else
-  echo "  missing: vendor/xyz-harness/skills/ (submodule not initialized?)"
 fi
 
 echo "=== Done ==="
