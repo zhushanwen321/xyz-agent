@@ -49,9 +49,6 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Pin npm version
-        run: npm install -g npm@11
-
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -64,9 +61,10 @@ jobs:
       # src-electron/ 是独立 npm project（有自己的 package-lock，不在根 workspaces 里）。
       # 根 npm ci 装不到 electron / electron-builder / @vitejs/plugin-vue / @lucide/vue，
       # 它们都 hoist 到 src-electron/node_modules。这步缺失 = TypeCheck/Test/Build 全 fail。
+      # 用 npm install：src-electron lock 跨平台 optional dep 解析不完整，npm ci 会拒绝。
       - name: Install src-electron dependencies
         working-directory: src-electron
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Bump version
         if: inputs.version != ''
