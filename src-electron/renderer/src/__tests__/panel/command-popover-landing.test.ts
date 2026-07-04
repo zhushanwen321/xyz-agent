@@ -143,4 +143,21 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
       description: '审查代码变更',
     })
   })
+
+  // L8:回归防护 — 浮层宽度严格对齐 composer-box（w=anchor-width），不溢出。
+  // [HISTORICAL] 事故：原 min-w + max-w-[820px] 让浮层可扩展到 >composer 宽度（slash 命令
+  // 提示词列撑宽），landing 720px composer 时浮层右边缘溢出 ~70px。改 w-[anchor-width] 固定。
+  // happy-dom 无布局，仅断言 class 含 w-[var(--reka-popper-anchor-width)]（宽度对齐 SSOT）。
+  // 真实布局验证靠 CDP 实测（width/left/right 三项 match）。
+  it('L8 PopoverContent class 含 w-[anchor-width]（固定宽度对齐 composer-box，不溢出）', async () => {
+    await mountLanding('')
+    const content = document.body.querySelector('[data-side]')
+    expect(content).toBeTruthy()
+    // 关键：w-[var(--reka-popper-anchor-width)] 让浮层宽度=composer-box 宽度
+    expect(content!.className).toContain('w-[var(--reka-popper-anchor-width)]')
+    // 不应再含旧的 min-w（min-w 允许内容撑宽导致溢出）
+    expect(content!.className).not.toContain('min-w-[var(--reka-popper-anchor-width)]')
+    // max-w 兜底防视口溢出（非旧的 820px 固定值）
+    expect(content!.className).toContain('max-w-[calc(100vw-16px)]')
+  })
 })

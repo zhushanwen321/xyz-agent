@@ -18,8 +18,10 @@
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { session as sessionApi } from '@/api'
+import * as events from '@/api/events'
 import { deriveSessionLabel } from '@/lib/utils'
 import { useSessionStore } from '@/stores/session'
+import { useCommandStore } from '@/stores/command'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
@@ -43,6 +45,7 @@ export { resetNewTaskFlow } from '@/composables/new-task/useNewTaskFlowState'
 
 export function useNewTaskFlow() {
   const session = useSessionStore()
+  const commandStore = useCommandStore()
   const workspaceStore = useWorkspaceStore()
   const panel = usePanelStore()
   const navigation = useNavigationStore()
@@ -184,6 +187,21 @@ export function useNewTaskFlow() {
       session.activeId = currentSession.value!.id
       panel.loadSession(panel.activePanelId, currentSession.value!.id)
       navigation.push({ view: 'chat', sessionId: currentSession.value!.id })
+      // 命令拉取：修复 broadcast 与订阅时序竞争——session.create 的 RPC 在 runtime 内部
+      // 已 broadcast session.commands（fetchAndBroadcastCommands），但此时 renderer 的
+      // CommandPopover 尚未订阅新 sessionId 通道（panel.loadSession 后才挂 Composer），
+      // broadcast 被丢弃 → 对话流态 slash 浮层空（landing 态用 settingsStore.skills 不受影响）。
+      // 与 useSidebar.selectSession 同策略：activeId 更新 + panel 挂载后主动拉取并本地 dispatch，
+      // 保证命令到达订阅者。失败不阻断发送（命令缺失仅致 slash 浮层空，可后补）。
+      const newSid = currentSession.value!.id
+      try {
+        const { commands } = await sessionApi.getCommands(newSid)
+        commandStore.applyCommands(newSid, commands)
+        events.dispatchSession(newSid, { type: 'session.commands', payload: { sessionId: newSid, commands } })
+        // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断首发提交（命令缺失仅致 slash 浮层空，可后补）；与 useSidebar.selectSession 同策略
+      } catch (e) {
+        console.warn('[useNewTaskFlow] getCommands failed, slash popover will be empty:', e)
+      }
       // activeId 已设 → useChat.send 能取到 sid
       await chat.send(trimmed)
       transition('completed') // landing→completed（首发成功，终态）

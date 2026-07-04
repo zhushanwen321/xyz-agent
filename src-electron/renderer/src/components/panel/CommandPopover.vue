@@ -10,7 +10,8 @@
     否则浮层打开会把焦点抢到首个命令按钮，contenteditable 不再收键，导致
     「敲 / 后无法继续输入做实时筛选」（query 实时过滤依赖焦点留在输入区）。
     键盘导航走 window capture 监听，与焦点位置无关，故禁自动聚焦不影响 ↑↓⏎Esc。
-    **宽度**：min-w 取 --reka-popper-anchor-width（= composer-box 宽），覆盖 composer；
+    **宽度**：w 取 --reka-popper-anchor-width（= composer-box 宽），严格对齐 composer 宽度；
+    max-w calc(100vw-16px) 兜底防极窄视口溢出。提示词列 truncate 在固定宽度内截断。
     右侧提示词列透传 slash 命令 description（skill 描述等），无则退显 kind 标签。
     无 header 行（去掉「命令 / · xx 项」），列表直接展示，提示列更宽（max-w-[520px]）。
   -->
@@ -26,7 +27,7 @@
       align="start"
       :side-offset="6"
       :collision-padding="8"
-      class="min-w-[var(--reka-popper-anchor-width)] max-w-[820px] overflow-hidden p-0"
+      class="w-[var(--reka-popper-anchor-width)] max-w-[calc(100vw-16px)] overflow-hidden p-0"
       @open-auto-focus.prevent
     >
       <!-- list -->
