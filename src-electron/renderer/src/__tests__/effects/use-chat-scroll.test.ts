@@ -204,3 +204,103 @@ describe('useChatScroll · showJumpButton', () => {
     expect(showJumpButton.value).toBe(false)
   })
 })
+
+/**
+ * programmaticScrolling guard —— smooth 滚动动画期间 onScroll 不翻转 stickToBottom。
+ *
+ * [HISTORICAL] 事故：用户点「回到底部」→ scrollToBottom('smooth', true) 启动动画 →
+ * 动画中途每帧触发 onScroll，读到非终态位置（distance > 阈值）→ stickToBottom 被翻 false →
+ * 后续 streaming 的 scrollToBottom('auto')（force=false）全被 guard 拦截 → streaming 不跟随。
+ * 修复：smooth 期间置 programmaticScrolling=true，onScroll 检测到此标志直接 return，
+ * scrollend / 超时清除。
+ */
+describe('useChatScroll · programmaticScrolling guard（smooth 动画锚定保护）', () => {
+  beforeEach(() => {
+    HTMLElement.prototype.scrollTo = vi.fn()
+  })
+
+  // U26:核心回归 —— smooth 滚动后，动画中途 onScroll（非贴底位置）不翻转 stickToBottom
+  it('U26: scrollToBottom("smooth", true) 后 onScroll 读到中途位置（差 200px）→ stickToBottom 保持 true', async () => {
+    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    // 起始非贴底（用户点了「回到底部」按钮）
+    setScroll(el, 1000, 800, 100)
+    await scrollToBottom('smooth', true)
+    expect(stickToBottom.value).toBe(true)
+    // smooth 动画第 N 帧到达中途位置（差 200px，非终态）
+    setScroll(el, 1000, 800, 0) // 1000-800-0 = 200px，仍非贴底
+    onScroll()
+    // 关键断言：保护期内 stickToBottom 不被翻转（否则 streaming scrollToBottom 被 guard 拦）
+    expect(stickToBottom.value).toBe(true)
+  })
+
+  // U27:scrollend 触发后保护期结束，onScroll 恢复正常判定
+  it('U27: smooth 滚动后派发 scrollend → onScroll 恢复正常（用户上滑能翻 false）', async () => {
+    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 100)
+    await scrollToBottom('smooth', true)
+    // 模拟 scrollend（浏览器动画结束派发）
+    el.dispatchEvent(new Event('scrollend'))
+    // 保护期结束后，用户上滑到非贴底 → onScroll 正常翻 false
+    setScroll(el, 1000, 800, 0) // 差 200px
+    onScroll()
+    expect(stickToBottom.value).toBe(false)
+  })
+
+  // U28:'auto' 瞬间滚动不进入保护期（onScroll 正常判定，强化贴底）
+  it('U28: scrollToBottom("auto") 不触发保护期——后续 onScroll 正常判定', async () => {
+    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200) // 贴底
+    await scrollToBottom('auto')
+    // auto 不进保护期：若随后用户上滑，onScroll 应立即翻 false（无保护期延迟）
+    setScroll(el, 1000, 800, 100) // 差 100px
+    onScroll()
+    expect(stickToBottom.value).toBe(false)
+  })
+
+  // U29:超时兜底清除保护期（scrollend 不触发的浏览器/场景）
+  it('U29: smooth 后 scrollend 未触发 → 超时后保护期清除，onScroll 恢复正常', async () => {
+    vi.useFakeTimers()
+    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 100)
+    await scrollToBottom('smooth', true)
+    // 保护期内 onScroll 不翻转
+    setScroll(el, 1000, 800, 0)
+    onScroll()
+    expect(stickToBottom.value).toBe(true)
+    // 超时兜底触发（SMOOTH_SCROLL_GUARD_MS=600ms）
+    vi.advanceTimersByTime(700)
+    // 超时后 onScroll 恢复正常判定
+    setScroll(el, 1000, 800, 0) // 差 200px
+    onScroll()
+    expect(stickToBottom.value).toBe(false)
+    vi.useRealTimers()
+  })
+
+  // U30:streaming 连续 scrollToBottom('auto') 在 smooth 保护期内不被 guard 拦截
+  // （这是事故的精确复现：smooth 后 streaming 跟随失效）
+  it('U30: smooth 保护期内 scrollToBottom("auto")（streaming 跟随）不被 guard 拦截', async () => {
+    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 100)
+    // 用户点「回到底部」→ smooth 动画启动
+    await scrollToBottom('smooth', true)
+    // 动画中途触发 onScroll（旧实现会翻 false）
+    setScroll(el, 1000, 800, 50) // 差 150px
+    onScroll()
+    // streaming 内容追加 → scrollToBottom('auto')（force=false）必须通过 guard
+    setScroll(el, 1100, 800, 50) // 新内容让 scrollHeight 增长
+    await scrollToBottom('auto')
+    // 关键：auto 滚动执行了（未被 guard 拦），stickToBottom 保持 true
+    expect(el.scrollTo).toHaveBeenCalledWith({ top: 1100, behavior: 'auto' })
+    expect(stickToBottom.value).toBe(true)
+  })
+})
