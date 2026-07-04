@@ -1,0 +1,140 @@
+/**
+ * ModelSelectPopover 单测（数据源 store 化 + 竞态回归）。
+ *
+ * 锁定两条主轴：
+ * 1. 纯受控：去掉本地 selected ref + watch（旧实现 onSelect 后本地态被旧 props 拉回，UI 闪退）
+ *    - currentName 解析复合串 "provider/modelId" → 裸 modelId → 查 ModelInfo.name
+ *    - props.selected 变化时触发器文案跟随更新，不依赖本地副本
+ * 2. 数据源 store 化（2026-07-01 竞态修复）：模型列表不再组件内 onMounted 订阅 onModels，
+ *    改从 settingsStore.models 常驻订阅读取。旧实现随 Composer v-if 重新挂载会错过
+ *    sendInitialState 一次性推送 → 列表空；新实现读 store，store 已有数据则立即可见。
+ *
+ * 数据注入：setActivePinia(createPinia()) 后直接赋 useSettingsStore().models（不 mock store，
+ * 与 command-popover-landing.test.ts 同模式——验证组件真实读 store）。
+ *
+ * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/model-select-popover.test.ts
+ */
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import type { ModelInfo } from '@xyz-agent/shared'
+import { useSettingsStore } from '@/stores/settings'
+import ModelSelectPopover from '@/components/panel/ModelSelectPopover.vue'
+
+const MODELS: ModelInfo[] = [
+  { id: 'claude-4', name: 'Claude 4', providerId: 'anthropic', providerName: 'Anthropic' },
+  { id: 'gpt-4', name: 'GPT-4', providerId: 'openai', providerName: 'OpenAI' },
+] as unknown as ModelInfo[]
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
+describe('ModelSelectPopover 纯受控 + store 数据源', () => {
+  it('U18: props.selected 为复合串时，触发器显示对应模型名', async () => {
+    useSettingsStore().models = MODELS
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: 'anthropic/claude-4' },
+    })
+    await wrapper.vm.$nextTick()
+    // 触发器文案含模型名（title="切换模型" 的 Button 内 span）
+    expect(wrapper.text()).toContain('Claude 4')
+  })
+
+  it('U18b: props.selected 变化时，触发器文案跟随更新（纯受控，不依赖本地副本）', async () => {
+    useSettingsStore().models = MODELS
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: 'anthropic/claude-4' },
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Claude 4')
+
+    // 父组件更新 selected（模拟 Composer 乐观更新后的 props 回传）
+    await wrapper.setProps({ selected: 'openai/gpt-4' })
+    expect(wrapper.text()).toContain('GPT-4')
+    expect(wrapper.text()).not.toContain('Claude 4')
+  })
+
+  it('U19: onSelect 后 emit modelId+provider，不依赖本地态回写', async () => {
+    useSettingsStore().models = MODELS
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: 'anthropic/claude-4' },
+    })
+    await wrapper.vm.$nextTick()
+
+    // 直接调组件实例方法（绕过 Popover 交互）
+    ;(wrapper.vm as unknown as { onSelect: (id: string, p: string) => void }).onSelect('gpt-4', 'openai')
+    const emitted = wrapper.emitted('select')
+    expect(emitted).toBeTruthy()
+    // emitted('select')[0] = 第一次 emit 的参数数组，[0] = payload 对象
+    expect(emitted![0][0]).toEqual({ modelId: 'gpt-4', provider: 'openai' })
+  })
+
+  it('U15: props.selected 为空串时，触发器显示空串对应的裸 id（空串场景由 Composer || 兜底处理）', async () => {
+    // ModelSelectPopover 本身不兜底空串——它纯受控显示 selected。
+    // 空串的裸 id 仍是空串，currentName fallback 到空串。
+    useSettingsStore().models = MODELS
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: '' },
+    })
+    await wrapper.vm.$nextTick()
+    // currentName = models.find(id==='')?.name ?? '' → ''
+    expect(wrapper.find('[title="切换模型"]').exists()).toBe(true)
+  })
+
+  it('U9: store 已有数据时 mount，触发器立即显示模型名（竞态回归——模拟 v-if 翻转后重新 mount，无任何推送）', async () => {
+    // 旧实现：组件内 onMounted 订阅 onModels，重新挂载会错过 sendInitialState 一次性推送 → 列表空。
+    // 新实现：读 settingsStore.models，store 已有数据则立即可见。此处不触发任何推送。
+    useSettingsStore().models = MODELS
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: 'anthropic/claude-4' },
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Claude 4')
+  })
+
+  it('U10: 分组渲染——2 个 provider 各 1 model，groups 有 2 组', async () => {
+    useSettingsStore().models = MODELS
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: 'anthropic/claude-4' },
+    })
+    await wrapper.vm.$nextTick()
+    const groups = (wrapper.vm as unknown as { groups: { provider: string; providerId: string; models: ModelInfo[] }[] }).groups
+    expect(groups).toHaveLength(MODELS.length)
+    // 两个 provider 名都出现
+    const providers = groups.map((g) => g.provider)
+    expect(providers).toContain('Anthropic')
+    expect(providers).toContain('OpenAI')
+  })
+
+  it('U11: 搜索过滤——query="cla" 时仅渲染 Claude 相关', async () => {
+    useSettingsStore().models = MODELS
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: 'anthropic/claude-4' },
+    })
+    await wrapper.vm.$nextTick()
+    // 设 query（script setup ref 在实例 proxy 上已解包为字符串）触发 groups 重算
+    ;(wrapper.vm as unknown as { query: string }).query = 'cla'
+    await wrapper.vm.$nextTick()
+    const groups = (wrapper.vm as unknown as { groups: { provider: string; models: ModelInfo[] }[] }).groups
+    expect(groups).toHaveLength(1)
+    expect(groups[0].provider).toBe('Anthropic')
+    expect(groups[0].models).toHaveLength(1)
+    expect(groups[0].models[0].name).toBe('Claude 4')
+  })
+
+  it('U12: store 空时渲染「无匹配模型」', async () => {
+    useSettingsStore().models = []
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: '' },
+    })
+    await wrapper.vm.$nextTick()
+    const groups = (wrapper.vm as unknown as { groups: unknown[] }).groups
+    expect(groups).toHaveLength(0)
+    // groups.length===0 时 PopoverContent 内渲染「无匹配模型」空态。
+    // reka-ui PopoverContent teleport 到 body：打开 popover 后查 body 文案。
+    ;(wrapper.vm as unknown as { open: boolean }).open = true
+    await wrapper.vm.$nextTick()
+    expect(document.body.textContent).toContain('无匹配模型')
+  })
+})

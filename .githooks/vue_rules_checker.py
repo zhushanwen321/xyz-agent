@@ -53,6 +53,13 @@ STYLE_SCOPED_WHITELIST: list[str] = []
 # CSS 选择器检测正则
 RE_STYLE_SELECTOR = re.compile(r'^[.\w\-]+[\s,]*\{')
 
+# [HISTORICAL] Vue <Transition> 类选择器（.xxx-enter-active / .xxx-leave-to 等）
+# 是项目明确的 escape hatch（CLAUDE.md design-system：Tailwind 无法表达
+# enter-from/leave-to 同时变换的状态类）。检测到这类选择器时不算自定义样式。
+# 覆盖 enter/leave/appear 三组 × from/active/to 三阶段。命名见 Vue 官方文档
+# https://vuejs.org/guide/built-ins/transition.html#css-based-transitions
+RE_VUE_TRANSITION_CLASS = re.compile(r'-?(?:enter|leave|appear)-(?:from|active|to)\b')
+
 # Emoji Unicode 范围
 EMOJI_RANGES = [
     (0x1F600, 0x1F64F),   # emoticons
@@ -241,6 +248,11 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
                 next_lines = '\n'.join(lines[i:min(i + 3, len(lines))])
                 if '@apply' in next_lines:
                     continue
+            # [HISTORICAL] Vue <Transition> 类（含逗号续行的选择器组）是合法
+            # escape hatch，不算自定义样式。回看 6 行（含当前）覆盖典型多行选择器组。
+            selector_group = '\n'.join(lines[max(0, i - 6):i])
+            if RE_VUE_TRANSITION_CLASS.search(selector_group):
+                continue
             issues.append(f"  [第{i}行] 禁止编写自定义 CSS（特殊动画除外）")
             issues.append("    请使用 Tailwind 工具类替代")
             exit_code = 2
@@ -270,7 +282,14 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
             if not stripped or stripped.startswith('<!--'):
                 continue
             if ':value=' in stripped and 'v-model' not in stripped:
-                if re.search(r'<[A-Z]\w+', stripped):
+                # 提取行内所有 PascalCase 开标签
+                tag_matches = re.findall(r'<([A-Z][A-Za-z0-9]*)', stripped)
+                # [HISTORICAL] 排除 Item/Option 后缀子组件：reka-ui 的 SelectItem /
+                # ComboboxItem / RadioGroupItem 等的 :value 是「该选项的值」语义，
+                # 由父级 Root 用 v-model 收集，子组件不支持 v-model，不应报警。
+                if tag_matches and all(re.search(r'(?:Item|Option)$', t) for t in tag_matches):
+                    continue
+                if tag_matches:
                     issues.append(f"  [第{i}行] 组件上使用 :value 绑定 — 请优先使用 v-model")
                     issues.append('    示例: <Input v-model="value" /> 而非 <Input :value="value" @input="handler" />')
                     exit_code = 2
@@ -415,6 +434,7 @@ def main():
         print()
         if exit_code == 2:
             print("检查失败：请修复上述问题后重试。", file=sys.stderr)
+            print("\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m", file=sys.stderr)
 
     sys.exit(exit_code)
 
@@ -432,6 +452,7 @@ if __name__ == '__main__':
             print()
             if exit_code == 2:
                 print("检查失败：请修复上述问题后重试。", file=sys.stderr)
+                print("\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m", file=sys.stderr)
         sys.exit(exit_code)
     else:
         main()

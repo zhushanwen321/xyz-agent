@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>消息流交互原型 · Panel message-stream（气泡/折叠/流式）</title>
+<style>
+  :root{
+    /* zcode 冷蓝 token —— 与 design-tokens.md 同源（原 message-types 规则稿已并入文末 §4 附录） */
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --ease:cubic-bezier(0.4,0,0.2,1); --dur-fast:120ms; --dur:200ms; --dur-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+    --anno-accent:rgba(79,142,247,0.9); --anno-bg:rgba(79,142,247,0.08);
+    --anno-warn:rgba(245,165,36,0.9); --anno-warn-bg:rgba(245,165,36,0.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--fg);font:13px/1.55 var(--font-sans);
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  body{padding:32px 40px 96px;max-width:1280px;margin:0 auto}
+
+  /* 页头 */
+  .page-head h1{font-size:22px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  .page-head .sub{color:var(--muted);font-size:13px;max-width:880px}
+  .page-head .sub b{color:var(--accent)}
+  .page-head .meta{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font:500 11px/1 var(--font-mono)}
+  .page-head .meta span{padding:5px 9px;border-radius:999px;border:1px solid var(--border-strong);color:var(--muted);background:var(--surface)}
+  .page-head .meta b{color:var(--fg)}
+
+  /* 章节标题 */
+  .sec-title{margin:40px 0 6px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px}
+  .sec-title .num{font:600 11px/1 var(--font-mono);background:var(--accent);color:#fff;padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.04em}
+  .sec-title .hint{margin-left:auto;font-weight:400;font-size:12px;color:var(--muted)}
+  .lede{color:var(--muted);font-size:13px;max-width:860px;margin-bottom:14px}
+  .lede b{color:var(--fg)}
+
+  /* callout */
+  .callout{margin:14px 0;padding:11px 14px;background:var(--anno-bg);border-left:3px solid var(--anno-accent);border-radius:0 var(--radius) var(--radius) 0;font-size:12.5px;color:var(--muted);line-height:1.6}
+  .callout.warn{background:var(--anno-warn-bg);border-left-color:var(--anno-warn)}
+  .callout b{color:var(--accent)}
+  .callout.warn b{color:var(--warning)}
+  .callout code{font-family:var(--font-mono);color:var(--accent);background:rgba(79,142,247,0.1);padding:1px 5px;border-radius:3px;font-size:11.5px}
+
+  /* ===== Panel window-mock ===== */
+  .panel-mock{position:relative;background:var(--bg);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05)}
+  .pm-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface))}
+  .pm-bar .lights{display:flex;gap:6px}
+  .pm-bar .lights i{width:11px;height:11px;border-radius:50%;display:block}
+  .pm-bar .lights i:nth-child(1){background:#fc6155}
+  .pm-bar .lights i:nth-child(2){background:#fdb40a}
+  .pm-bar .lights i:nth-child(3){background:#34c84a}
+  .pm-bar .pm-title{font-size:12px;color:var(--muted);margin-left:6px}
+  .pm-bar .pm-title b{color:var(--fg);font-weight:600}
+
+  .panel{display:flex;flex-direction:column;height:680px;background:var(--bg)}
+  .panel-header{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+  .ph-sess{display:flex;align-items:center;gap:8px;min-width:0}
+  .ph-sess .ph-dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex-shrink:0;box-shadow:0 0 0 3px rgba(34,197,94,0.15)}
+  .ph-sess .ph-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ph-sep{color:var(--subtle);font-size:12px}
+  .ph-branch{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface);border:1px solid var(--border);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+  .ph-branch svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.6}
+  .ph-spacer{flex:1}
+  .ph-btn{font-size:11px;color:var(--muted);background:transparent;border:1px solid var(--border-strong);padding:5px 10px;border-radius:var(--radius);display:inline-flex;align-items:center;gap:5px;cursor:pointer;transition:all var(--dur-fast) var(--ease)}
+  .ph-btn:hover{color:var(--fg);border-color:var(--accent);background:var(--accent-soft)}
+  .ph-btn svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.6}
+
+  /* message-stream zone —— 背景融为一体，无卡片 */
+  .message-stream{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:22px}
+  .message-stream::-webkit-scrollbar{width:8px}
+  .message-stream::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px}
+  .message-stream::-webkit-scrollbar-thumb:hover{background:var(--subtle)}
+
+  /* composer 顶缘 */
+  .composer-edge{flex-shrink:0;border-top:1px solid var(--border);padding:10px 16px;background:linear-gradient(180deg,var(--bg),var(--surface));display:flex;align-items:center;gap:10px}
+  .composer-edge .ce-input{flex:1;font-size:12px;color:var(--subtle);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px}
+  .composer-edge .ce-hint{font:500 10px/1 var(--font-mono);color:var(--subtle);letter-spacing:0.04em}
+
+  /* ===== 回合 turn ===== */
+  .turn{display:flex;flex-direction:column;gap:14px}
+
+  /* 用户消息气泡 —— 靠右，无标签行 */
+  .bubble-user{align-self:flex-end;max-width:76%;background:var(--surface-2);
+    border:1px solid var(--border-strong);border-radius:14px 14px 4px 14px;
+    padding:9px 13px;font-size:13.5px;line-height:1.55;color:var(--fg)}
+
+  /* 助手区 —— 背景融为一体，透明无边框 */
+  .assistant-turn{display:flex;flex-direction:column;gap:0;align-self:stretch}
+
+  /* 已工作 / 工作中 meta 按钮 —— 透明点击区 */
+  .turn-meta{display:inline-flex;align-items:center;gap:9px;align-self:flex-start;
+    background:transparent;border:0;padding:5px 2px;cursor:pointer;color:var(--muted);
+    font:500 12.5px/1 var(--font-sans);transition:color var(--dur-fast) var(--ease);user-select:none}
+  .turn-meta:hover{color:var(--fg)}
+  .turn-meta .chev{color:var(--subtle);transition:transform var(--dur) var(--ease);font-size:9px;line-height:1}
+  .turn.expanded .turn-meta .chev{transform:rotate(90deg);color:var(--accent)}
+  .turn.expanded .turn-meta{color:var(--fg)}
+  .turn-meta .lbl{color:var(--muted)}
+  .turn.expanded .turn-meta .lbl{color:var(--fg)}
+  .turn-meta .elapsed{font-family:var(--font-mono);font-weight:500;color:var(--fg);letter-spacing:0.01em}
+  .turn-meta .badge{font:600 10px/1 var(--font-mono);padding:4px 8px;border-radius:999px;letter-spacing:0.02em;display:inline-flex;align-items:center;gap:4px}
+  .turn-meta .badge svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .badge-think{color:var(--reasoning);background:rgba(167,139,250,0.12)}
+  .badge-tool{color:var(--info);background:rgba(56,189,248,0.12)}
+
+  /* 工作中态 meta（streaming，无按钮、脉冲） */
+  .turn-meta.working{cursor:default}
+  .turn-meta.working:hover{color:var(--muted)}
+  .turn-meta.working .working-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 1.4s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(79,142,247,0.4)}50%{opacity:0.55;box-shadow:0 0 0 5px rgba(79,142,247,0)}}
+
+  /* 下划线分割 */
+  .turn-divider{border:0;border-top:1px solid var(--border);margin:0}
+
+  /* 总结消息 —— 背景融合 */
+  .turn-summary{font-size:13.5px;line-height:1.7;color:var(--fg);padding-top:12px}
+  .turn-summary p+p{margin-top:7px}
+  .turn-summary code{font-family:var(--font-mono);font-size:12px;color:var(--accent);background:rgba(79,142,247,0.1);padding:1px 5px;border-radius:3px}
+
+  /* 修改文件列表 —— 背景融合，下划线行 */
+  .turn-files{margin-top:12px}
+  .turn-files .tf-head{font:500 11px/1 var(--font-mono);color:var(--subtle);margin-bottom:8px;letter-spacing:0.04em;display:flex;align-items:center;gap:6px}
+  .turn-files .tf-head svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.6}
+  .turn-files .frow{display:flex;align-items:center;gap:9px;padding:6px 0;font:12px/1.4 var(--font-mono);
+    border-bottom:1px dashed var(--border);cursor:pointer;transition:color var(--dur-fast) var(--ease)}
+  .turn-files .frow:last-child{border-bottom:0}
+  .turn-files .frow:hover .path{color:var(--accent)}
+  .turn-files .path{color:var(--fg);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color var(--dur-fast)}
+  .turn-files .stat{color:var(--muted);font-size:11px;flex-shrink:0}
+  .turn-files .stat .add{color:var(--success)}
+  .turn-files .stat .del{color:var(--danger)}
+  .turn-files .fb{font-size:9px;padding:2px 6px;border-radius:3px;letter-spacing:0.04em;font-weight:600;flex-shrink:0}
+  .fb-add{color:var(--success);background:rgba(34,197,94,0.12)}
+  .fb-mod{color:var(--warning);background:rgba(245,165,36,0.12)}
+  .fb-del{color:var(--danger);background:rgba(239,68,68,0.12)}
+
+  /* 执行流程 trace —— 折叠区，背景融合，向下展开 */
+  .turn-trace{display:none;flex-direction:column;gap:0;margin-bottom:4px}
+  .turn.expanded .turn-trace,.turn.streaming .turn-trace{display:flex;animation:fadein var(--dur-slow) var(--ease)}
+  @keyframes fadein{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+
+  .trace-blk{padding:9px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .trace-blk:last-child{border-bottom:0}
+  .trace-blk .ttag{font:600 10px/1 var(--font-mono);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px;display:inline-flex;align-items:center;gap:5px}
+  .trace-think .ttag{color:var(--reasoning)}
+  .trace-think .tbody{color:var(--muted);font-style:italic;line-height:1.6}
+  .trace-tool .ttag{color:var(--info)}
+  .trace-tool .tcall{font-family:var(--font-mono);font-size:12px;color:var(--fg)}
+  .trace-tool .tcall .fn{color:var(--info)}
+  .trace-tool .tcall .arg{color:var(--muted)}
+  .trace-tool .tresult{font:12px/1.55 var(--font-mono);color:var(--muted);margin-top:5px;padding-left:2px;white-space:pre-wrap}
+  .trace-tool .tresult .ok{color:var(--success)}
+  .trace-tool .tresult .err{color:var(--danger)}
+  .trace-fold-more{margin:8px 0 0;font:500 10.5px/1 var(--font-mono);color:var(--subtle);letter-spacing:0.04em;padding-left:2px}
+
+  /* 流式光标 */
+  .cursor{display:inline-block;width:7px;height:14px;background:var(--accent);margin-left:2px;vertical-align:text-bottom;border-radius:1px;animation:blink 1s step-end infinite}
+  @keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+
+  /* 工具失败态 —— 失败挂 tool 块上，整块红框 + streaming 内容（无 turn 级独立红框） */
+  .trace-tool.failed{background:rgba(239,68,68,0.06);border:1px solid var(--danger);border-radius:var(--radius);padding:9px 11px;margin:4px 0}
+  .trace-tool.failed .ttag{color:var(--danger)}
+  .trace-tool.failed .tcall .fn{color:var(--danger)}
+  .trace-tool.failed .tresult{color:var(--danger);border-left:2px solid var(--danger);padding-left:8px}
+
+  /* ===== 画廊 ===== */
+  .gallery{display:flex;gap:20px;overflow-x:auto;padding:8px 4px 16px;scroll-snap-type:x proximity}
+  .gallery::-webkit-scrollbar{height:9px}
+  .gallery::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:5px}
+  .gcard{flex-shrink:0;scroll-snap-align:start;width:460px}
+  .gcard-cap{margin-bottom:9px;display:flex;align-items:center;gap:8px;font:500 11px/1.4 var(--font-mono);color:var(--muted)}
+  .gcard-cap .tag{padding:3px 8px;border-radius:var(--radius-sm);font-weight:600;white-space:nowrap}
+  .tag-a{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)}
+  .tag-c{background:rgba(239,68,68,0.12);color:var(--danger);border:1px solid var(--danger)}
+  .mini-stream{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;display:flex;flex-direction:column;gap:14px;min-height:200px}
+
+  /* 决策卡 */
+  .decisions{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:8px}
+  @media(max-width:900px){.decisions{grid-template-columns:1fr}}
+  .dcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:13px 14px}
+  .dcard .dc-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .dcard .dc-q{font-size:12px;font-weight:600;color:var(--fg)}
+  .dcard .dc-status{margin-left:auto;font:600 9px/1 var(--font-mono);padding:3px 7px;border-radius:999px;letter-spacing:0.06em}
+  .dc-status.resolved{color:var(--success);background:rgba(34,197,94,0.12)}
+  .dc-status.deferred{color:var(--warning);background:rgba(245,165,36,0.12)}
+  .dcard .dc-verdict{font-size:12px;color:var(--muted);line-height:1.6}
+  .dcard .dc-verdict b{color:var(--accent)}
+  .dcard .dc-verdict code{font-family:var(--font-mono);font-size:11px;color:var(--accent);background:rgba(79,142,247,0.1);padding:1px 5px;border-radius:3px}
+
+  .footer-note{margin-top:48px;padding-top:16px;border-top:1px solid var(--border);font:500 11px/1.6 var(--font-mono);color:var(--subtle);letter-spacing:0.02em}
+
+  /* ===== §4 规则附录（原 message-types 规则稿，已合并） ===== */
+  .rule-appendix{margin-top:32px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+  .rule-appendix > summary{list-style:none;cursor:pointer;padding:14px 18px;display:flex;align-items:center;gap:10px;
+    font:600 13px/1.4 var(--font-sans);color:var(--fg);background:linear-gradient(180deg,var(--surface-2),var(--surface));
+    border-bottom:1px solid transparent;transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease);user-select:none}
+  .rule-appendix > summary::-webkit-details-marker{display:none}
+  .rule-appendix[open] > summary{border-bottom-color:var(--border)}
+  .rule-appendix > summary:hover{background:var(--surface-hover)}
+  .rule-appendix .ra-chev{color:var(--subtle);transition:transform var(--dur) var(--ease);font-size:10px;line-height:1}
+  .rule-appendix[open] .ra-chev{transform:rotate(90deg);color:var(--accent)}
+  .rule-appendix .ra-hint{margin-left:auto;font:500 11px/1.4 var(--font-mono);color:var(--muted);letter-spacing:0.02em;font-weight:400}
+  .ra-body{padding:18px 20px}
+  .ra-h{margin:18px 0 6px;font-size:13.5px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:8px}
+  .ra-h:first-child{margin-top:0}
+  .ra-h .ra-tag{font:600 10px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:3px 7px;border-radius:var(--radius-sm);letter-spacing:0.04em}
+  .ra-lede{color:var(--muted);font-size:12.5px;line-height:1.65;margin-bottom:12px;max-width:900px}
+  .ra-lede b{color:var(--fg)}
+  .ra-lede code{font-family:var(--font-mono);color:var(--accent);background:rgba(79,142,247,0.1);padding:1px 5px;border-radius:3px;font-size:11.5px}
+  .ra-tbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:8px}
+  .ra-tbl th{text-align:left;padding:8px 12px;font:600 10px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border-strong);background:var(--surface-2)}
+  .ra-tbl td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--fg);line-height:1.5}
+  .ra-tbl td code{font:500 11.5px/1 var(--font-mono);color:var(--accent);background:rgba(79,142,247,0.1);padding:2px 6px;border-radius:3px}
+  .ra-tbl tr:last-child td{border-bottom:0}
+  .ra-tbl .vis-show,.ra-tbl .vis-hide{font:500 10px/1 var(--font-mono);padding:3px 8px;border-radius:999px;display:inline-block}
+  .ra-tbl .vis-show{color:var(--success);background:rgba(34,197,94,0.12)}
+  .ra-tbl .vis-hide{color:var(--muted);background:var(--surface-2)}
+  .ra-note{margin-top:14px;padding:11px 14px;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 var(--radius) var(--radius) 0;font-size:12.5px;color:var(--muted);line-height:1.7}
+  .ra-note b{color:var(--fg)}
+  .ra-note code{font-family:var(--font-mono);color:var(--accent);background:rgba(79,142,247,0.1);padding:1px 5px;border-radius:3px;font-size:11.5px}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>消息流交互原型 · message-stream</h1>
+  <p class="sub">Panel <b>message-stream</b> zone 的交互稿：用户消息靠右气泡、助手消息与背景融为一体、「已工作 X分 + 思考/工具计数」按钮点开向下展开执行流程、工具失败挂 tool 块整块红框、streaming 无背景下划线展开。<b>规则定义（7 类块 + 折叠规则）已合并进文末 §4 附录</b>，本文件为唯一载体。</p>
+  <div class="meta">
+    <span>层 <b>L2 · Panel zone ②</b></span>
+    <span>单元 <b>panel/</b></span>
+    <span>状态 <b>draft · 交互细化</b></span>
+    <span>上游 <b>panel/spec.md</b></span>
+    <span>规则见文末 <b>§4 附录</b></span>
+    <span>原语 <b>design-system Card-Inline</b></span>
+  </div>
+</div>
+
+<!-- ============ §1 主交互区 ============ -->
+<div class="sec-title"><span class="num">§1</span>主交互区：真实 Panel message-stream<span class="hint">点「已工作」按钮展开执行流程 · 流式回合实时计数</span></div>
+<p class="lede">一个真实 Panel 的连续视图。<b>回合 #2</b> 默认展开（可见执行流程思考/工具细节），<b>回合 #3</b> 默认折叠（只显已工作按钮 + 总结 + 文件列表），<b>回合 #4 正在工作</b>——无背景下划线展开实时流程 + 光标。助手消息与背景融为一体，无标签行。</p>
+
+<div class="panel-mock">
+  <div class="pm-bar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="pm-title">xyz-agent · <b>登录表单校验重构</b></div>
+  </div>
+  <div class="panel">
+    <div class="panel-header">
+      <div class="ph-sess"><span class="ph-dot"></span><span class="ph-name">登录表单校验重构</span></div>
+      <span class="ph-sep">/</span>
+      <span class="ph-branch"><svg viewBox="0 0 16 16"><circle cx="4" cy="4" r="2"/><path d="M6 4h6a2 2 0 0 1 2 2v4M6 4v4a2 2 0 0 1-2 2"/></svg>feat/login-zod</span>
+      <div class="ph-spacer"></div>
+      <button class="ph-btn"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="12" rx="1"/><rect x="9" y="2" width="5" height="12" rx="1"/></svg>分屏</button>
+    </div>
+
+    <div class="message-stream">
+
+      <!-- 回合 #1 已完成·默认展开（展示执行流程） -->
+      <div class="turn expanded" id="turn-1">
+        <div class="bubble-user">把登录页的表单校验改成 zod + vee-validate，字段级错误走 FormMessage 内联</div>
+        <div class="assistant-turn">
+          <!-- 已工作按钮：点开/收起执行流程 -->
+          <button class="turn-meta" data-fold type="button">
+            <span class="chev">▶</span>
+            <span><span class="lbl">已工作</span> <span class="elapsed">3m 24s</span></span>
+            <span class="badge badge-think"><svg viewBox="0 0 16 16"><path d="M8 2a4 4 0 0 0-4 4c0 1.5.8 2.5 1.5 3.2.5.5.5 1 .5 1.8h4c0-.8 0-1.3.5-1.8C11.2 8.5 12 7.5 12 6a4 4 0 0 0-4-4zM6.5 13h3"/></svg>思考 ×5</span>
+            <span class="badge badge-tool"><svg viewBox="0 0 16 16"><path d="M4 3h6l3 3v7H4z"/><path d="M10 3v3h3M6.5 9h3M6.5 11h3"/></svg>工具 ×12</span>
+          </button>
+          <!-- 执行流程：向下展开，背景融合 -->
+          <div class="turn-trace">
+            <div class="trace-blk trace-think">
+              <div class="ttag">思考</div>
+              <div class="tbody">先确认字段范围（username / password），再建 schema 文件，最后改 Login.vue 接 toTypedSchema。手写校验在 onSubmit，需替换为 vee-validate 的 handleSubmit。</div>
+            </div>
+            <div class="trace-blk trace-tool">
+              <div class="ttag">工具</div>
+              <div class="tcall"><span class="fn">read</span><span class="arg">(src/views/Login.vue)</span></div>
+              <div class="tresult"><span class="ok">✓</span> 156 行 · 发现手写校验逻辑在 onSubmit 内</div>
+            </div>
+            <div class="trace-blk trace-tool">
+              <div class="ttag">工具</div>
+              <div class="tcall"><span class="fn">write</span><span class="arg">(src/schemas/login.ts)</span></div>
+              <div class="tresult"><span class="ok">✓</span> 已创建 · z.object(&#123; username, password &#125;)</div>
+            </div>
+            <div class="trace-fold-more">⋯ 另有 3 次思考 · 10 次工具调用</div>
+          </div>
+          <hr class="turn-divider" />
+          <!-- 总结 + 修改文件（恒显） -->
+          <div class="turn-summary">
+            <p>已将登录表单切换到 zod schema + vee-validate 运行时校验，字段级错误走 <code>FormMessage</code> 内联渲染，API 失败回退 toast。</p>
+            <p style="color:var(--muted);font-size:12.5px">下一步建议：补一个邮箱字段的格式校验用例。</p>
+          </div>
+          <div class="turn-files">
+            <div class="tf-head"><svg viewBox="0 0 16 16"><path d="M4 3h6l3 3v7H4z"/><path d="M10 3v3h3"/></svg>本次修改 3 个文件 · 点行查看 Diff</div>
+            <div class="frow"><span class="fb fb-mod">M</span><span class="path">src/views/Login.vue</span><span class="stat"><span class="add">+48</span> <span class="del">−12</span></span></div>
+            <div class="frow"><span class="fb fb-add">A</span><span class="path">src/schemas/login.ts</span><span class="stat"><span class="add">+34</span></span></div>
+            <div class="frow"><span class="fb fb-mod">M</span><span class="path">package.json</span><span class="stat"><span class="add">+2</span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 回合 #2 已完成·默认折叠 -->
+      <div class="turn" id="turn-2">
+        <div class="bubble-user">用户名最长 20 个字符是不是够了？加个长度上限</div>
+        <div class="assistant-turn">
+          <button class="turn-meta" data-fold type="button">
+            <span class="chev">▶</span>
+            <span><span class="lbl">已工作</span> <span class="elapsed">0m 48s</span></span>
+            <span class="badge badge-think"><svg viewBox="0 0 16 16"><path d="M8 2a4 4 0 0 0-4 4c0 1.5.8 2.5 1.5 3.2.5.5.5 1 .5 1.8h4c0-.8 0-1.3.5-1.8C11.2 8.5 12 7.5 12 6a4 4 0 0 0-4-4zM6.5 13h3"/></svg>思考 ×1</span>
+            <span class="badge badge-tool"><svg viewBox="0 0 16 16"><path d="M4 3h6l3 3v7H4z"/><path d="M10 3v3h3M6.5 9h3M6.5 11h3"/></svg>工具 ×2</span>
+          </button>
+          <div class="turn-trace">
+            <div class="trace-blk trace-think">
+              <div class="ttag">思考</div>
+              <div class="tbody">20 字符对用户名偏短（含中文时），建议放宽到 32。直接改 schema 的 .max()。</div>
+            </div>
+            <div class="trace-blk trace-tool">
+              <div class="ttag">工具</div>
+              <div class="tcall"><span class="fn">edit</span><span class="arg">(src/schemas/login.ts)</span></div>
+              <div class="tresult"><span class="ok">✓</span> username: .max(32, '用户名不超过 32 个字符')</div>
+            </div>
+          </div>
+          <hr class="turn-divider" />
+          <div class="turn-summary">
+            <p>用户名长度上限加到了 <code>32</code> 字符。20 对含中文的用户名偏短，32 更稳。</p>
+          </div>
+          <div class="turn-files">
+            <div class="tf-head"><svg viewBox="0 0 16 16"><path d="M4 3h6l3 3v7H4z"/><path d="M10 3v3h3"/></svg>本次修改 1 个文件</div>
+            <div class="frow"><span class="fb fb-mod">M</span><span class="path">src/schemas/login.ts</span><span class="stat"><span class="add">+1</span> <span class="del">−1</span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 回合 #3 streaming 进行中 —— 无背景下划线展开 -->
+      <div class="turn streaming" id="turn-3">
+        <div class="bubble-user">顺便把注册页的校验也统一一下</div>
+        <div class="assistant-turn">
+          <div class="turn-meta working">
+            <span class="working-dot"></span>
+            <span><span class="lbl">工作中</span> <span class="elapsed" id="live-clock">1m 07s</span></span>
+            <span class="badge badge-think"><svg viewBox="0 0 16 16"><path d="M8 2a4 4 0 0 0-4 4c0 1.5.8 2.5 1.5 3.2.5.5.5 1 .5 1.8h4c0-.8 0-1.3.5-1.8C11.2 8.5 12 7.5 12 6a4 4 0 0 0-4-4zM6.5 13h3"/></svg>思考 ×2</span>
+            <span class="badge badge-tool"><svg viewBox="0 0 16 16"><path d="M4 3h6l3 3v7H4z"/><path d="M10 3v3h3M6.5 9h3M6.5 11h3"/></svg>工具 ×3</span>
+          </div>
+          <hr class="turn-divider" />
+          <!-- 实时流程：背景融合，下划线分隔，末尾光标 -->
+          <div class="turn-trace">
+            <div class="trace-blk trace-think">
+              <div class="ttag">思考</div>
+              <div class="tbody">注册页字段更多（用户名/邮箱/密码/确认密码），要复用 login.ts 的 schema 并扩展邮箱格式校验<span class="cursor"></span></div>
+            </div>
+            <div class="trace-blk trace-tool">
+              <div class="ttag">工具</div>
+              <div class="tcall"><span class="fn">read</span><span class="arg">(src/views/Register.vue)</span></div>
+              <div class="tresult"><span class="ok">✓</span> 203 行 · 复用了登录页的手写校验模式</div>
+            </div>
+            <div class="trace-blk trace-tool">
+              <div class="ttag">工具 · 进行中</div>
+              <div class="tcall"><span class="fn">edit</span><span class="arg">(src/views/Register.vue)</span><span class="cursor"></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="composer-edge">
+      <div class="ce-input">输入消息，或 @ 引用上下文…</div>
+      <span class="ce-hint">⌘↵ 发送</span>
+    </div>
+  </div>
+</div>
+
+<div class="callout">
+  <b>交互点</b>：① 点回合 #1/#2 的「已工作」按钮 → 向下展开执行流程（思考/工具，背景融为一体、无框），chev 旋转 + 淡入；② 回合 #3 流式中——<b>无背景下划线展开</b>实时流程，末条带光标 + 实时计时在跑；③ 总结与修改文件列表在折叠/展开态<b>恒显</b>，是回合的稳定锚点；④ 修改文件行可点（跳转目标 → <code>draft-detail-pane</code> Side Drawer Diff）。完整 composer 另立 <code>draft-composer-states</code>。
+</div>
+
+<!-- ============ §2 状态画廊 ============ -->
+<div class="sec-title"><span class="num">§2</span>状态画廊：边界态<span class="hint">横向滚动 · 每卡一个决策</span></div>
+<p class="lede">主区常见态之外的边界场景：纯文字回合（无工具无思考，仍显「已工作」耗时但无展开按钮）、工具失败（挂 tool 块整块红框 + streaming）。复用同一套背景融合样式。</p>
+
+<div class="gallery">
+
+  <!-- A: 纯文字回合（显已工作耗时，无展开按钮）—— 2026-07-04 更新：所有回合都显示已工作，原「无按钮」设计被推翻 -->
+  <div class="gcard">
+    <div class="gcard-cap"><span class="tag tag-a">A</span>纯文字回合 —— 无工具无思考，仍显「已工作」耗时（无 chevron 展开按钮，无计数 badge），总结接气泡</div>
+    <div class="mini-stream">
+      <div class="turn">
+        <div class="bubble-user">zod 和 yup 选哪个？</div>
+        <div class="assistant-turn">
+          <div class="turn-meta">
+            <span><span class="lbl">已工作</span> <span class="elapsed">0m 04s</span></span>
+          </div>
+          <hr class="turn-divider" />
+          <div class="turn-summary">
+            <p>zod 更适合：TS-first、与 vee-validate 官方集成（<code>@vee-validate/zod</code>）。yup 生态更老但类型推导弱。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- B: 工具失败（挂 tool 块整块红框 + streaming） -->
+  <div class="gcard">
+    <div class="gcard-cap"><span class="tag tag-c">B</span>工具失败 —— 错误挂 tool 块上，整块红框 + 内容 streaming，不另起 turn 级红框</div>
+    <div class="mini-stream">
+      <div class="turn">
+        <div class="bubble-user">把改动提交一下</div>
+        <div class="assistant-turn">
+          <div class="turn-meta">
+            <span class="chev" style="transform:rotate(90deg);color:var(--danger)">▶</span>
+            <span><span class="lbl">已工作</span> <span class="elapsed">0m 12s</span></span>
+            <span class="badge badge-tool"><svg viewBox="0 0 16 16"><path d="M4 3h6l3 3v7H4z"/><path d="M10 3v3h3M6.5 9h3M6.5 11h3"/></svg>工具 ×1</span>
+          </div>
+          <div class="turn-trace" style="display:flex">
+            <div class="trace-blk trace-tool failed">
+              <div class="ttag">工具 · 失败</div>
+              <div class="tcall"><span class="fn">write</span><span class="arg">(src/schemas/login.ts)</span></div>
+              <div class="tresult"><span class="err">✗</span> EBUSY: 文件被外部进程占用，写入失败<span class="cursor"></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============ §3 未决落点 ============ -->
+<div class="sec-title"><span class="num">§3</span>未决落点：视觉裁决<span class="hint">resolved = 本稿已落 · deferred = 需上游</span></div>
+<p class="lede">规则稿 §4 列的未决项，本稿全部裁决落定（①–⑥ 均 resolved）。⑤⑥ 由产品契约在本轮关闭：summary 恒存在、steer/followup 时机归 runtime。</p>
+
+<div class="decisions">
+  <div class="dcard">
+    <div class="dc-head"><span class="dc-q">① 流式光标态（AI 未停止）</span><span class="dc-status resolved">resolved</span></div>
+    <div class="dc-verdict">回合进行中：<b>无已工作按钮</b>，改用 <code>working</code> 态（脉冲点 + 实时计时 + 思考/工具计数 badge），流程<b>无背景下划线展开</b>，末条带光标。停止后才切到「已工作」折叠态 + 总结。<b>见主区回合 #3</b>。</div>
+  </div>
+  <div class="dcard">
+    <div class="dc-head"><span class="dc-q">② 用户/助手消息形态</span><span class="dc-status resolved">resolved</span></div>
+    <div class="dc-verdict">用户 = <b>靠右气泡</b>（无标签行）；助手 = <b>背景融为一体</b>（透明无边框无 Assistant 标签）。视觉权重：气泡 > 总结文字，符合「问→答」直觉。</div>
+  </div>
+  <div class="dcard">
+    <div class="dc-head"><span class="dc-q">③ 执行流程折叠</span><span class="dc-status resolved">resolved</span></div>
+    <div class="dc-verdict">「已工作 X分 + 思考×N + 工具×N」<b>按钮</b>点开向下展开执行流程（背景融合、下划线行分隔）。<b>总结 + 文件列表恒显</b>，作为稳定锚点。localStorage 按 session+回合记忆。<b>见主区回合 #1/#2</b>。</div>
+  </div>
+  <div class="dcard">
+    <div class="dc-head"><span class="dc-q">④ 工具失败形态</span><span class="dc-status resolved">resolved</span></div>
+    <div class="dc-verdict">错误<b>挂在 tool 块上</b>：失败的 tool 块整块渲染红框（danger 边 + 淡红底 + 错误码），结果随 streaming 流式显示（末尾光标）。<b>不另起 turn 级红框、不自动重试</b>——错误是 tool 的属性，不是回合属性。agent 是否继续取决于 runtime。<b>见画廊 B</b>。</div>
+  </div>
+  <div class="dcard">
+    <div class="dc-head"><span class="dc-q">⑤ 收尾 Output Text 契约</span><span class="dc-status resolved">resolved</span></div>
+    <div class="dc-verdict">产品裁决：<b>turn 末尾的最终 text 块恒存在</b>（runtime 保证输出）——它就是普通的 Output Text，仅因位于收尾位而固定不折叠。视觉层<b>无需回退占位</b>——<code>.turn-summary</code> 恒为 turn 的收尾 output text。概念见规则稿 §2 Output Text 卡。</div>
+  </div>
+  <div class="dcard">
+    <div class="dc-head"><span class="dc-q">⑥ steer/followup 入流</span><span class="dc-status resolved">resolved</span></div>
+    <div class="dc-verdict">时机归 <b>runtime 接口层</b>（steer / followup 是不同 API 调用）。视觉层（message-stream + composer）<b>不追踪入流时机</b>，只保证气泡形态与普通用户消息一致——见靠右气泡。</div>
+  </div>
+</div>
+
+<div class="callout warn">
+  <b>本稿不碰</b>：① 完整 composer（→ <code>draft-composer-states</code>）；② Side Drawer Diff / ChangeSet Detail（→ <code>draft-detail-pane</code>，修改文件行的跳转目标）；③ 双 Panel 主从差异（→ <code>workspace/spec.md</code>）。这些是相邻叶子，此处只交付 message-stream zone 的交互态。
+</div>
+
+<!-- ============ §4 规则附录（原 message-types 规则稿，已合并） ============ -->
+<details class="rule-appendix">
+  <summary><span class="ra-chev">▶</span>§4 规则附录：消息块类型与折叠规则<span class="ra-hint">原 draft-message-types 规则稿已合并于此 · 点开查看完整规则定义</span></summary>
+  <div class="ra-body">
+
+    <h3 class="ra-h">7 类消息块 · 视觉规范<span class="ra-tag">SPEC</span></h3>
+    <p class="ra-lede">展开态下 message-stream 由这 7 类块按真实时序排列。<b>关键概念</b>：没有独立「Summary」类型——turn 中产出与收尾的都是同一种 <b>Output Text</b>，差别只在渲染规则（中间产出折进执行流程 / 收尾位固定不折叠）。配色遵循 design-system：状态走色相（reasoning 紫 / tool 青 / success 绿 / danger 红），<b>禁用「左色条+亮底卡片」slop</b>。</p>
+    <table class="ra-tbl">
+      <thead><tr><th style="width:18%">类型</th><th style="width:18%">何时出现</th><th>渲染规则</th></tr></thead>
+      <tbody>
+        <tr><td><code>User Message</code></td><td>用户提交</td><td>靠右气泡，始终可见，不参与折叠，无标签行</td></tr>
+        <tr><td><code>Output Text ★</code></td><td>AI 产出正文</td><td>一种类型·两种渲染：①中间产出→折进执行流程（下划线行）；②收尾位→固定不折叠，作回合焦点（accent 强调）。两者数据同构，仅呈现不同</td></tr>
+        <tr><td><code>Reasoning</code></td><td>模型推理</td><td>紫底斜体，归折叠条 <code>N reasoning</code> 计数；长块可单独再折叠</td></tr>
+        <tr><td><code>Tool Call</code></td><td>工具调用+结果</td><td>青色，结果嵌灰底 mono；归 <code>M tool</code> 计数。<b>失败整块红框</b>（danger 边+淡红底+错误码）+streaming，不自动重试——错误是 tool 属性</td></tr>
+        <tr><td><code>File Changes ★</code></td><td>回合改动</td><td>回合默认可见，A/M/D badge + 行数统计；点行→Side Drawer Diff</td></tr>
+        <tr><td><code>Steer / Followup</code></td><td>已提交未入流</td><td>靠右 pending 气泡，虚线 + 脉冲圆点；入流后与普通用户气泡同形态（时机归 runtime）</td></tr>
+        <tr><td><code>System</code></td><td>系统提示</td><td>配额/上下文/模型切换，灰底折叠。<b>Error 非独立类型</b>，挂 Tool Call 块渲染红框</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="ra-h">折叠规则汇总<span class="ra-tag">RULE</span></h3>
+    <p class="ra-lede">判定原则：用户默认只关心<b>结果</b>（收尾 Output Text + File Changes），过程按需钻取。</p>
+    <table class="ra-tbl">
+      <thead><tr><th style="width:24%">块类型</th><th style="width:10%">默认</th><th style="width:20%">归属</th><th>交互</th></tr></thead>
+      <tbody>
+        <tr><td><code>User</code></td><td><span class="vis-show">显</span></td><td>回合起点</td><td>—</td></tr>
+        <tr><td><code>Output Text · 收尾</code></td><td><span class="vis-show">显</span></td><td>回合末·焦点</td><td>固定不折叠 · 复制</td></tr>
+        <tr><td><code>File Changes</code></td><td><span class="vis-show">显</span></td><td>回合末</td><td>点行→Side Drawer Diff</td></tr>
+        <tr><td><code>Reasoning</code></td><td><span class="vis-hide">隐</span></td><td>折叠条内</td><td>展开回合·长块可单折</td></tr>
+        <tr><td><code>Tool Call</code></td><td><span class="vis-hide">隐</span></td><td>折叠条内</td><td>失败整块红框·streaming</td></tr>
+        <tr><td><code>Output Text · 中间</code></td><td><span class="vis-hide">隐</span></td><td>折叠条内</td><td>展开回合·正常列出</td></tr>
+        <tr><td><code>System</code></td><td><span class="vis-hide">隐</span></td><td>顶部或折叠</td><td>展开查看</td></tr>
+      </tbody>
+    </table>
+    <div class="ra-note"><b>折叠条出现条件</b>：回合内存在 ≥1 个 Reasoning / Tool / 中间 Output Text 块。纯文字回答（无工具、无推理）的回合无折叠条，唯一的 Output Text 即收尾位，直接接 User。<br><b>折叠条文案</b>：<code>已工作 Xm Xs</code>（恒显）+ <code>N reasoning</code>（有则显）+ <code>M tool</code>（有则显），三者皆为 mono Pill。</div>
+
+  </div>
+</details>
+
+<div class="footer-note">
+  panel/draft-message-stream.html · message-stream zone 交互稿（含 §4 规则附录）<br>
+  上游 panel/spec.md · 原语 design-system.md Card-Inline<br>
+  相邻：draft-composer-states（composer 6 态）/ draft-detail-pane（Side Drawer Diff）
+</div>
+
+<script>
+  // 「已工作」按钮展开/收起 —— 按 session+回合记 localStorage
+  var STORE = 'msgstream:expanded';
+  var mem = {};
+  try { mem = JSON.parse(localStorage.getItem(STORE) || '{}'); } catch (_) {}
+
+  document.querySelectorAll('[data-fold]').forEach(function (bar) {
+    var turn = bar.closest('.turn');
+    var tid = turn.id || 'turn';
+    if (mem[tid] === false && turn.classList.contains('expanded')) {
+      turn.classList.remove('expanded');
+    } else if (mem[tid] === true) {
+      turn.classList.add('expanded');
+    }
+    bar.addEventListener('click', function () {
+      turn.classList.toggle('expanded');
+      mem[tid] = turn.classList.contains('expanded');
+      try { localStorage.setItem(STORE, JSON.stringify(mem)); } catch (_) {}
+    });
+  });
+
+  // 流式态实时计时器（演示持续感）
+  var clock = document.getElementById('live-clock');
+  if (clock) {
+    var start = 67; // 1m 07s 起点
+    setInterval(function () {
+      start++;
+      var m = Math.floor(start / 60), s = start % 60;
+      clock.textContent = m + 'm ' + (s < 10 ? '0' + s : s) + 's';
+    }, 1000);
+  }
+</script>
+
+</body>
+</html>

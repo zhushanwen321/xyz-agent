@@ -21,17 +21,10 @@ target/
 .xyz-harness/workflow-state.json
 .claude/worktrees/
 
-# pi binary and resources (downloaded by prepare-pi-resources.sh in CI)
-src-electron/resources/pi/pi-*
-src-electron/resources/pi/assets
-src-electron/resources/pi/export-html
-src-electron/resources/pi/package.json
-src-electron/resources/pi/photon_rs_bg.wasm
-src-electron/resources/pi/theme
-# pi agent data (runtime data only — bundled extensions & skills are tracked)
-src-electron/resources/pi/agent/*
-!src-electron/resources/pi/agent/extensions/
-!src-electron/resources/pi/agent/skills/
+# pi resources — pi binary downloaded by prepare-pi-resources.sh from badlogic/pi-mono
+# gh releases. Nothing under here is tracked. Builtin extensions are npm deps (root
+# package.json), skills are user/project-level — neither is bundled here.
+src-electron/resources/
 .pi/
 .pi/infinite-context/
 
@@ -39,3 +32,10 @@ src-electron/resources/pi/agent/*
 .electron-dist/
 **/__pycache__/
 *.pyc
+
+# Playwright E2E artifacts (test results / reports / cache)
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/
+/playwright/.auth/

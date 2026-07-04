@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>新建任务 · 落地空态 · new-task landing</title>
+<style>
+  /* token 引自 design-tokens.md（冷蓝暗色 SSOT）；原语引自 design-system.md */
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --bg-input:#101013; --bg-elevated:#1c1c20;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --text-primary:#e8e8ea; --text-secondary:#8a8a95; --text-tertiary:#5a5a65;
+    --bg-hover:#232328;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.45);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-1:0 0 0 1px rgba(0,0,0,0.2);
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --duration-fast:120ms; --duration:200ms; --duration-slow:320ms;
+    --tl-safe-height:32px; --tl-safe-width:72px;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:820px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+
+  /* ===== window-mock（shell 拓扑：base 平铺 + sidebar 透明 + main 浮起） ===== */
+  .window-mock{position:relative;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);margin-top:14px}
+  /* traffic light + 应用按钮（mimic_mac · 方案 X） */
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:#fc6155} .dot-yellow{background:#fdb40a} .dot-green{background:#34c84a}
+  .app-nav{position:absolute;left:90px;top:16px;display:flex;gap:4px;z-index:10;
+    transition:left var(--duration-slow) var(--ease)}
+  .app-nav button{width:24px;height:24px;border:0;background:transparent;border-radius:var(--radius-sm);
+    color:var(--muted);display:grid;place-items:center;cursor:pointer}
+  .app-nav button:hover{background:var(--surface-hover);color:var(--fg)}
+  .app-nav button svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .window-mock[data-fullscreen="true"] .traffic-light .dot{opacity:0}
+  .window-mock[data-fullscreen="true"] .app-nav{left:20px}
+  /* shell 容器：base 平铺 */
+  .app-shell{display:flex;height:680px;padding:12px;gap:12px}
+
+  /* ===== Sidebar（透明融入 base，无 background） ===== */
+  .aside-region{width:200px;flex-shrink:0;display:flex;flex-direction:column;
+    padding-top:52px;padding-left:2px}
+  .a-logo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:0 8px 14px}
+  .a-logo .a-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0}
+  .a-nav{display:flex;flex-direction:column;gap:1px;padding:0 4px}
+  .a-item{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);
+    padding:6px 8px;border-radius:6px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .a-item:hover{background:var(--surface-hover);color:var(--fg)}
+  .a-item.active{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .a-item svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .a-item .a-kbd{margin-left:auto;font:10px/1 var(--font-mono);color:var(--subtle);
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px}
+
+  /* ===== Main Panel（唯一 float-panel 浮起） ===== */
+  .main-panel{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-1),0 8px 24px rgba(0,0,0,0.3);
+    display:flex;flex-direction:column;overflow:hidden;position:relative}
+  /* main-header（breadcrumb 位置） */
+  .main-header{display:flex;align-items:center;gap:10px;height:42px;padding:0 16px;
+    border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+  .crumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .crumb-sep{color:var(--subtle);font-size:10px}
+  .crumb b{color:var(--fg);font-weight:550}
+  .crumb .branch{color:var(--accent);background:var(--accent-soft);border:1px solid rgba(79,142,247,0.25);
+    padding:2px 7px;border-radius:var(--radius-sm);font:500 10.5px/1 var(--font-mono);letter-spacing:0.02em}
+  .header-tools{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .header-tools .t-btn{width:26px;height:26px;border:0;background:transparent;border-radius:var(--radius-sm);
+    color:var(--muted);display:grid;place-items:center;cursor:pointer}
+  .header-tools .t-btn:hover{background:var(--surface-hover);color:var(--fg)}
+  .header-tools .t-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+  /* ===== Landing 空态（核心 demo） ===== */
+  .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 24px 64px;position:relative;overflow:hidden;background:var(--bg);
+    background-image:radial-gradient(circle at 50% 0%, rgba(79,142,247,0.04) 0%, transparent 60%)}
+  /* zcode 浅水印（描边 + 极低 opacity，仅作背景装饰） */
+  .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
+    font:600 220px/1 var(--font-sans);color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;
+    user-select:none;pointer-events:none;white-space:nowrap}
+  .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
+    margin:0 0 28px;text-align:center;position:relative;z-index:1}
+
+  /* composer 容器（landing 居中卡片；composer-box 承载背景/边框，与 panel/draft-composer-states.html 同构） */
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;padding:10px 0 0}
+  .composer-box{
+    background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius-lg);position:relative;overflow:hidden;
+    transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease);
+  }
+  /* 普通聚焦：中性 ring，不染 accent——accent 蓝专属 steer 信号 */
+  .composer-box.focus{border-color:var(--border-strong);box-shadow:0 0 0 2px rgba(255,255,255,0.04)}
+
+  /* 顶部元信息行：directory chip + branch chip（landing 新增组件；点开走步骤 2/3） */
+  .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:1px solid transparent;border-radius:var(--radius);
+    color:var(--text-secondary);font:500 12px/1 var(--font-sans);cursor:pointer;
+    max-width:200px;transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .chip.open{background:var(--surface-2);color:var(--text-primary);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .chip svg{width:14px;height:14px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .chip .ch-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+  .chip .ch-chev{color:var(--text-tertiary);flex-shrink:0;width:11px;height:11px}
+  .chip.branch-chip .ch-ic{color:var(--accent)}
+  .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
+
+  /* 输入区（与 panel composer 同构：contenteditable + :empty 显 placeholder） */
+  .composer-area{
+    width:100%;min-height:40px;max-height:120px;overflow-y:auto;
+    border:0;outline:0;background:transparent;
+    color:var(--text-primary);font:13px/1.55 var(--font-sans);
+    padding:11px 13px 4px;white-space:pre-wrap;word-break:break-word;
+  }
+  .composer-area[contenteditable][data-placeholder]:empty:before{
+    content:attr(data-placeholder);color:var(--text-tertiary);pointer-events:none;
+  }
+
+  /* 工具条：无强分隔线，留白呼吸（同 panel composer §1） */
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px;flex-wrap:nowrap}
+  /* + 添加（左锚定） */
+  .c-insert{
+    width:28px;height:28px;border-radius:var(--radius-sm);border:0;background:transparent;
+    color:var(--text-tertiary);cursor:pointer;display:grid;place-items:center;
+    transition:all var(--duration) var(--ease);flex-shrink:0;
+  }
+  .c-insert:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-insert svg{width:16px;height:16px}
+  /* 右锚定区：上下文/模型/思考，无边框纯文字，与背景融合 */
+  .c-text{
+    font:500 11.5px/1 var(--font-sans);color:var(--text-tertiary);
+    background:transparent;border:0;padding:6px 8px;border-radius:var(--radius-sm);
+    cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    transition:all var(--duration) var(--ease);flex-shrink:0;letter-spacing:0.005em;
+  }
+  .c-text:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-text .chev{color:var(--text-tertiary);font-size:9px;margin-left:1px;transition:transform var(--duration) var(--ease)}
+  .c-text .num{font-variant-numeric:tabular-nums}
+  .c-text .dot{width:3px;height:3px;border-radius:50%;background:var(--text-tertiary);opacity:0.5}
+  /* 思考按钮：max 级实色紫块 + 外发光（同 panel composer） */
+  .c-text.think[data-lvl="max"]{color:#fff;background:rgba(167,139,250,0.85);box-shadow:0 0 12px rgba(167,139,250,0.4)}
+  /* 发送（最右，唯一实色） */
+  .c-send{
+    margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--accent);color:#fff;cursor:pointer;
+    display:grid;place-items:center;flex-shrink:0;
+    transition:background var(--duration) var(--ease);
+  }
+  .c-send:hover{background:var(--accent-hover)}
+  .c-send svg{width:15px;height:15px}
+  .c-send:disabled{background:transparent;color:var(--text-tertiary);cursor:default;opacity:0.5}
+  /* 快捷键提示行（panel composer 同源） */
+  .composer-hint{font:10px/1.3 var(--font-mono);color:var(--text-tertiary);padding:6px 4px 0}
+  .composer-hint .kbd{background:var(--surface-2);border:1px solid var(--border);padding:1px 4px;border-radius:3px}
+
+  /* 元信息行 tag（与 sidebar/overlays 一致） */
+  .label-pill{display:inline-flex;align-items:center;gap:5px;font:500 10px/1 var(--font-mono);
+    color:var(--subtle);text-transform:uppercase;letter-spacing:0.08em;padding:3px 8px;
+    border:1px solid var(--border);border-radius:999px;background:var(--surface)}
+
+  /* 注释（hover 浮现） */
+  .anno{position:absolute;font:500 10px/1.2 var(--font-mono);padding:3px 6px;border-radius:3px;
+    pointer-events:none;z-index:6;white-space:nowrap;letter-spacing:0.02em}
+  .anno.a{color:var(--accent);background:rgba(79,142,247,0.08);border:1px solid var(--accent)}
+  .anno.m{color:var(--muted);background:rgba(138,138,149,0.08);border:1px solid var(--muted)}
+
+  /* 表格 */
+  .flow-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px}
+  .flow-table th,.flow-table td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .flow-table th{font:500 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em;font-weight:500}
+  .flow-table td b{color:var(--fg)}
+  .flow-table .step{font:600 11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);
+    padding:3px 7px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+
+<!-- ===== 共享 SVG symbol（design-system §6：currentColor + stroke 1.5） ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="3.5" cy="3" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><path d="M3.5 4.5v7M3.5 8h4a3 3 0 0 0 3-3V3.5"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.5l5.5 2v5c0 3-2.5 5.5-5.5 6-3-0.5-5.5-3-5.5-6v-5z"/><path d="M5.5 8l1.7 1.7L10.5 6.5"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 16 16"><path d="M6 2.5a2 2 0 0 0-2 2 2 2 0 0 0-1 3.5A2 2 0 0 0 4 11a2 2 0 0 0 2 2 2 2 0 0 0 2-2M10 2.5a2 2 0 0 1 2 2 2 2 0 0 1 1 3.5A2 2 0 0 1 12 11a2 2 0 0 1-2 2 2 2 0 0 1-2-2M6 13V3.5M10 13V3.5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 16 16"><path d="M8 13V3M4.5 6.5L8 3l3.5 3.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-msg" viewBox="0 0 16 16"><path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 12H6.5L4 14v-2H4a1.5 1.5 0 0 1-1.5-1.5v-6z"/></symbol>
+    <symbol id="i-cmp" viewBox="0 0 16 16"><path d="M3 4h10v8H3z M6 7h4 M6 9h4"/></symbol>
+    <symbol id="i-ov" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></symbol>
+    <symbol id="i-back" viewBox="0 0 16 16"><path d="M10 12L6 8l4-4"/></symbol>
+    <symbol id="i-fwd" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></symbol>
+  </defs>
+</svg>
+
+<h1>新建任务 · 落地空态</h1>
+<p class="lede">
+  触发「新建任务」后 workspace 内的<b>空态</b>：问候语 + zcode 浅水印 + 居中 composer。
+  composer 顶部嵌 <b>directory chip</b> + <b>branch chip</b> 两个元信息触发器（点开分别对应
+  <code>draft-directory-select.html</code> / <code>draft-branch-select.html</code>），composer 本体与
+  <code>panel/draft-composer-states.html</code> <b>同构</b>（同 <code>composer-box</code> 容器、同工具条右对齐、同快捷键 hint），仅多顶部 chip 行。
+</p>
+<div class="meta">
+  <span>层级 <b>L1 流程 · 步骤 1 落地空态</b></span>
+  <span>触发 <b>sidebar「新建任务」按钮 · ⌘N</b></span>
+  <span>拓扑 <b>shell zcode-demo · base 平铺 + main 浮起</b></span>
+  <span>token <b>zcode 冷蓝</b></span>
+</div>
+
+<h2><span class="num">§1</span>落地空态 · 完整态</h2>
+<p class="lede">窗口进入「新建任务」后 workspace 显示的<b>主形态</b>。问候语定位仪式感，watermark 极低 opacity 仅作背景装饰，composer 居中偏下（<code>max-width:720px</code>，与 panel composer 同宽自适应窗口）。</p>
+
+<div class="window-mock" data-fullscreen="false">
+  <span class="anno m" style="left:14px; bottom:8px;">window-mock · bg-base 平铺</span>
+  <!-- traffic light + 应用按钮（mimic_mac · 方案 X） -->
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-nav">
+    <button title="收起侧栏"><svg viewBox="0 0 16 16"><path d="M3 5h10M3 8h10M3 11h7"/></svg></button>
+    <button title="后退"><svg viewBox="0 0 16 16"><use href="#i-back"/></svg></button>
+    <button title="前进"><svg viewBox="0 0 16 16"><use href="#i-fwd"/></svg></button>
+  </div>
+
+  <div class="app-shell">
+    <!-- Sidebar（透明融入 base） -->
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item active"><svg viewBox="0 0 16 16"><use href="#i-new"/></svg>新建任务<span class="a-kbd">⌘N</span></div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg>搜索<span class="a-kbd">⌘K</span></div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-msg"/></svg>会话</div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-cmp"/></svg>Composer</div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-ov"/></svg>概览</div>
+      </div>
+    </div>
+
+    <!-- Main Panel（浮起） -->
+    <div class="main-panel">
+      <div class="main-header">
+        <div class="crumb">
+          <b>新会话</b>
+          <span class="crumb-sep">▸</span>
+          <span class="branch">refactor-goal-extension</span>
+        </div>
+        <div class="header-tools">
+          <button class="t-btn" title="折叠"><svg viewBox="0 0 16 16"><path d="M4 6h8M4 10h5"/></svg></button>
+          <button class="t-btn" title="更多"><svg viewBox="0 0 16 16"><circle cx="3" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="13" cy="8" r="1"/></svg></button>
+        </div>
+      </div>
+
+      <!-- Landing 空态 -->
+      <div class="landing">
+        <span class="watermark">xyz</span>
+        <span class="anno a" style="left:50%; top:18%; transform:translateX(-50%);">watermark · opacity 0.045 · 仅装饰</span>
+        <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+
+        <!-- Composer 卡片（与 panel/draft-composer-states.html 同构，仅顶部多 directory/branch chip） -->
+        <div class="composer">
+          <span class="anno a" style="left:50%; top:-22px; transform:translateX(-50%);">composer · 与 panel composer 同构 · 顶部多 directory/branch chip</span>
+          <div class="composer-box focus">
+            <!-- 顶部元信息行：directory chip + branch chip（landing 新增组件） -->
+            <div class="meta-row">
+              <button class="chip open" title="切换目录">
+                <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+                <span class="ch-name">refactor-goal-extension</span>
+                <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+              </button>
+              <div class="meta-sep"></div>
+              <button class="chip branch-chip" title="切换分支">
+                <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <span class="ch-name">refactor-goal-…</span>
+                <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+              </button>
+              <span class="anno a" style="right:8px; top:8px;">点开 → 步骤 2 / 3（draft-directory-select / draft-branch-select）</span>
+            </div>
+
+            <!-- 输入区（空态显 placeholder；与 panel composer 同一 contenteditable 原语） -->
+            <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…"></div>
+
+            <!-- 工具条：左 + 添加，右对齐 上下文/模型/思考/发送（与 panel composer §1 一致） -->
+            <div class="composer-bar">
+              <button class="c-insert" title="添加内容（附件 / @ 引用 / 命令）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+              <span style="margin-left:auto"></span>
+              <button class="c-text ctx" title="上下文容量"><span class="num">0</span><span class="dot"></span><span>0%</span></button>
+              <button class="c-text model" title="模型">sonnet-4.5 <span class="chev">▾</span></button>
+              <button class="c-text think" data-lvl="max" title="思考等级">思考 最高 <span class="chev">▾</span></button>
+              <button class="c-send" disabled title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+            </div>
+          </div>
+          <div class="composer-hint"><span class="kbd">⏎</span> 发送 · <span class="kbd">⇧⏎</span> 换行 · <span class="kbd">@</span> 引用 · <span class="kbd">#</span> 文件 · <span class="kbd">/</span> 命令</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>关键约束</b>：
+  ① composer 是 workspace 内嵌，<b>不进 modal</b>——元信息在 chip 里改，主任务流不被打断；
+  ② greeting 与 zcode watermark 一起构成「仪式感」，但视觉权重低，<b>让位给 composer</b>；
+  ③ chip 选中走 <b>Card-Active inset ring</b>（与 sidebar session-item / search modal 选中态同源），chip 内不画 ✓（避免与 popover 内的 ✓ 双重高亮）；
+  ④ 路由：发送 → composer 进 streaming 态（panel/draft-composer-states.html §3 接管）；点 chip → 步骤 2 / 3。
+</div>
+
+<h2><span class="num">§2</span>五态 · 节奏</h2>
+<table class="flow-table">
+  <thead><tr><th>状态</th><th>触发</th><th>composer 行为</th><th>chip 行为</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="step">A</span> 刚进入</td>
+      <td>sidebar「新建」/ ⌘N</td>
+      <td>placeholder 多色提示，<b>不自动 focus</b>（让用户先看 greeting）</td>
+      <td>显示「上次的 directory / branch」（默认沿用）</td>
+    </tr>
+    <tr>
+      <td><span class="step">B</span> 聚焦</td>
+      <td>用户点 composer-area</td>
+      <td><code>--border-strong</code> + 2px 浅 ring，placeholder 消失</td>
+      <td>不变</td>
+    </tr>
+    <tr>
+      <td><span class="step">C</span> 输入中</td>
+      <td>键入字符</td>
+      <td>走 <code>contenteditable</code>，支持内联 slash-token / @ mention（参 panel composer §3.1）</td>
+      <td>不变</td>
+    </tr>
+    <tr>
+      <td><span class="step">D</span> 切 chip</td>
+      <td>点 directory / branch chip</td>
+      <td>focus 保留，<b>不打断主输入流</b></td>
+      <td>走 <b>Card-Active inset ring</b>，上方 popover 展开（步骤 2 / 3）</td>
+    </tr>
+    <tr>
+      <td><span class="step">E</span> 发送后</td>
+      <td>Enter / 点 send</td>
+      <td>composer 进 streaming 态，<b>脱离 landing</b>（panel composer-states §3 接管）</td>
+      <td>chip 折叠为 meta-header 一行（main-header 内已显式声明）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§3</span>路由与触发</h2>
+<p class="lede">「新建任务」流程的所有入口与跳转：</p>
+<table class="flow-table">
+  <thead><tr><th>入口</th><th>落点</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td>sidebar「<b>新建任务</b>」按钮（图中高亮）</td><td>步骤 1 · landing</td><td>主入口，⌘N 等价</td></tr>
+    <tr><td>快捷键 <code>⌘N</code>（mac） / <code>Ctrl+N</code>（win/linux）</td><td>步骤 1 · landing</td><td>全局快捷键，从任何状态唤起</td></tr>
+    <tr><td>composer 顶 directory chip</td><td>步骤 2 · directory select popover</td><td>→ <code>draft-directory-select.html</code></td></tr>
+    <tr><td>composer 顶 branch chip</td><td>步骤 3 · branch select popover</td><td>→ <code>draft-branch-select.html</code></td></tr>
+    <tr><td>目录 popover · 「打开文件夹」</td><td>步骤 4a · system directory picker modal</td><td>→ <code>draft-directory-picker.html §1</code></td></tr>
+    <tr><td>目录 popover · 「远程连接」</td><td>toast「v1 暂未支持」</td><td>stub，v2 接 SSH remote picker</td></tr>
+    <tr><td>分支 popover · 「创建并检出新分支...」</td><td>步骤 4b · create-branch modal</td><td>→ <code>draft-directory-picker.html §2</code></td></tr>
+    <tr><td>分支 popover · 「Git 图谱」</td><td>toast「v1 暂未支持」</td><td>stub，v2 接 lazygit 嵌入</td></tr>
+    <tr><td>composer 发送</td><td>panel composer streaming 态</td><td>脱离 landing 流程</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§4</span>键盘契约</h2>
+<table class="flow-table">
+  <thead><tr><th>键</th><th>行为</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td><code>⌘N</code> / <code>Ctrl+N</code></td><td>唤起「新建任务」landing</td><td>全局；任何状态可用</td></tr>
+    <tr><td><code>⌘K</code> / <code>Ctrl+K</code></td><td>切到搜索浮层</td><td>优先级 <code>overlays/spec.md</code> 键盘契约</td></tr>
+    <tr><td><code>Enter</code>（composer 聚焦时）</td><td>发送</td><td>同 panel composer §3.1</td></tr>
+    <tr><td><code>Shift+Enter</code></td><td>换行</td><td>同 panel composer §3.1</td></tr>
+    <tr><td><code>↑</code> / <code>↓</code>（chip 聚焦时）</td><td>暂未实现 → v2 触发「上 / 下一项」</td><td>v1 chip 仅响应 <code>Enter / Space</code> / 点击</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§5</span>实现要点</h2>
+<ul style="font-size:13px;color:var(--muted);line-height:1.85;padding-left:18px">
+  <li><b>watermark</b>：用 <code>-webkit-text-stroke</code> 描边 + <code>color:transparent</code>，低 opacity 0.045。比 SVG 轻、不影响 a11y（<code>pointer-events:none</code>）。</li>
+  <li><b>composer-area</b>：<code>contenteditable</code> + <code>min-height:40px</code> + <code>max-height:120px</code> 自动滚动，placeholder 用 <code>:empty:before</code> 注入纯文字（文案与 panel composer 一致：<code>描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…</code>）。</li>
+  <li><b>工具条</b>：<b>左</b> <code>c-insert</code>（+ 添加）；<b>右对齐</b> 上下文容量 <code>c-text.ctx</code> / 模型 <code>c-text.model</code> / 思考 <code>c-text.think</code> / 发送 <code>c-send</code>——三者<b>无边框、透明底、纯文字</b>，hover 才浮 <code>--bg-hover</code>；发送是唯一实色。与 panel composer §1 <b>共用同类名</b>，不另造。</li>
+  <li><b>slash-token</b>：与 <code>panel/draft-composer-states.html</code> §2e 同源，<b>共用</b> <code>.slash-token</code> 类，<b>不另造</b>。</li>
+  <li><b>chip 选中态</b>：用 <code>.open</code> 加 <code>inset 0 0 0 1px var(--accent-ring)</code>，与 sidebar / search modal 选中态同源，<b>不画左色条</b>（design-system §2 反模式）。</li>
+  <li><b>窗口 <code>data-fullscreen</code></b>：监听 Electron <code>enter/leave-full-screen</code> 切换属性，traffic-light opacity 与 app-nav left 同步 <b>320ms</b> 平移（<code>--duration-slow</code>），参 <code>shell/spec.md</code> §二。</li>
+  <li><b>traffic light 安全区</b>：<code>.aside-region padding-top:52px</code>，与 <code>shell/spec.md</code> §三 严格一致（mac 32 + 呼吸 20，三平台统一）。</li>
+</ul>
+
+<div class="note">
+  <b>截图中确认的设计点</b>：
+  ① 问候语位置（中央偏上）+ watermark 浮在 greeting 后方（z-index 关系） ✅
+  ② composer 顶部 directory + branch chip（chip 内不画 ✓，选中态走 inset ring） ✅
+  ③ composer 本体与 <code>panel/draft-composer-states.html</code> 同构（同一套 <code>composer-box</code> / 工具条 / hint） ✅
+  ④ 发送按钮空态 <code>disabled</code>（透明文字），输入后转 accent 实色 ✅
+  ⑤ <b>思考默认最高</b>（max 级实色紫块常驻），与 panel composer 一致 ✅
+</div>
+
+</body>
+</html>

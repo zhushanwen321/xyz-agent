@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
 import path from 'node:path'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { PiSessionStore } from '../src/infra/pi/session-store.js'
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+
+// IGitInfoReader 桩：本测试聚焦 skill 路径解析，不验证 git 摘要字段。
+const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -37,17 +43,31 @@ const mockScannedSessions: Array<{
   lastModified: number
   size: number
 }> = []
-vi.mock('../src/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => mockSkillPaths,
-  getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-  getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => mockScannedSessions,
-  refreshAll: () => {},
-  patchSessionCwd: () => true,
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => mockSkillPaths,
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => mockScannedSessions, patchSessionCwd: () => true }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return {
+    ...actual,
+    getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+  }
+})
 
 // Mock fs.existsSync to control path validation
 const existingPaths = new Set<string>([path.normalize('/project')])
@@ -63,13 +83,18 @@ vi.mock('node:fs', () => ({
 }))
 
 // Mock trash
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-// Mock @xyz-agent/shared — provide constants needed by rpc-client
+// Mock @xyz-agent/shared barrel — provide constants needed by rpc-client
 vi.mock('@xyz-agent/shared', () => ({
   ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP'],
+}))
+
+// Mock @xyz-agent/shared/paths — getDataDir 被 pi-paths 子路径 import（Node-only，隔离于 barrel）
+vi.mock('@xyz-agent/shared/paths', () => ({
+  getDataDir: () => '/mock/home/.xyz-agent',
 }))
 
 // Mock node:os — keep all real exports, override homedir
@@ -82,7 +107,7 @@ vi.mock('node:os', async (importOriginal) => {
 })
 
 // Mock event-adapter for SessionService
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
@@ -111,11 +136,11 @@ function resetMocks(): void {
 
 /** Create a SessionService with mocked deps */
 async function createSessionService() {
-  const { ProcessManager } = await import('../src/process-manager.js')
-  const { SessionService } = await import('../src/services/session-service.js')
-  const pm = new ProcessManager()
+  const { ProcessManager } = await import('../src/infra/pi/process-manager.js')
+  const { SessionService } = await import('../src/services/session/session-service.js')
+  const pm = new ProcessManager('/tmp')
   const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
-  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', {} as never, { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never)
+  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never, new PiConfigStore(), new PiSessionStore(), noopGitInfoReader, {} as never)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -137,7 +162,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('RpcClient passes --skill args for each skillPath', async () => {
-    const { RpcClient } = await import('../src/rpc-client.js')
+    const { RpcClient } = await import('../src/infra/pi/rpc-client.js')
 
     const client = new RpcClient({
       cwd: '/project',
@@ -152,7 +177,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('RpcClient omits --skill when skillPaths is empty', async () => {
-    const { RpcClient } = await import('../src/rpc-client.js')
+    const { RpcClient } = await import('../src/infra/pi/rpc-client.js')
 
     const client = new RpcClient({ cwd: '/project', skillPaths: [] })
 
@@ -164,7 +189,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('RpcClient omits --skill when skillPaths is undefined', async () => {
-    const { RpcClient } = await import('../src/rpc-client.js')
+    const { RpcClient } = await import('../src/infra/pi/rpc-client.js')
 
     const client = new RpcClient({ cwd: '/project' })
 

@@ -118,6 +118,8 @@ def main() -> int:
         print(e)
 
     if has_error:
+        print()
+        print("\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
         return 2
 
     if not all_errors:

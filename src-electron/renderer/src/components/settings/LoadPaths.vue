@@ -1,0 +1,164 @@
+<template>
+  <!--
+    加载路径配置（层 A）—— Skill/Agent 共享组件（ADR-0020 §5）。
+    强制目录只读置顶 + 可选目录可勾选可拖动排序（靠前覆盖靠后）。
+
+    拖拽设计（rethink 后）：纯本地状态驱动，脱离 store 广播回路。
+    - 拖拽期间只改 localDirs（即时生效，零网络往返）
+    - dragend 时把最终顺序 emit 给父组件持久化（发后即忘）
+    - 外部 props.dirs 变化同步进 localDirs，但拖拽进行中跳过（避免广播覆盖用户操作）
+    这把「交互即时性」与「状态持久化」彻底解耦。
+  -->
+  <section>
+    <h3 class="mb-2 text-[12px] font-medium text-fg">加载路径</h3>
+
+    <!-- 强制目录（ADR-0020 §1.1 层 1-2，桥接层硬编码注入，不可关不可拖）-->
+    <div class="mb-2 rounded-md border border-border bg-bg">
+      <div class="px-3 py-2 text-[11px] text-muted">强制目录（不可关闭）</div>
+      <div
+        v-for="dir in forcedDirs"
+        :key="dir"
+        class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px]"
+      >
+        <span class="size-4 shrink-0 rounded bg-surface-hover text-center text-[10px] leading-4 text-subtle">
+          &#10003;
+        </span>
+        <span class="font-mono text-fg opacity-60">{{ dir }}</span>
+        <span class="ml-auto text-[10px] text-subtle">强制</span>
+      </div>
+    </div>
+
+    <!-- 可选目录（ADR-0020 §1.1 层 3，可勾选可拖排序）-->
+    <div class="rounded-md border border-border bg-bg">
+      <div class="px-3 py-2 text-[11px] text-muted">可选目录（可勾选、可拖动排序，靠前覆盖靠后）</div>
+      <div
+        v-for="(dir, index) in localDirs"
+        :key="dir.path"
+        class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px] transition-colors"
+        :class="{
+          'bg-surface-hover/50': dragOverIndex === index,
+          'opacity-40': dragIndex === index,
+        }"
+        :draggable="!disabled"
+        @dragstart="onDragStart($event, index)"
+        @dragenter.prevent="onDragOver($event, index)"
+        @dragover.prevent="onDragOver($event, index)"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop(index)"
+        @dragend="onDragEnd"
+      >
+        <GripVertical
+          class="size-4 shrink-0 cursor-grab text-subtle hover:text-fg active:cursor-grabbing"
+          :class="{ 'cursor-not-allowed opacity-40': disabled }"
+          aria-label="拖动排序"
+        />
+        <Checkbox
+          :model-value="dir.enabled"
+          class="shrink-0"
+          :disabled="disabled"
+          :aria-label="`启用目录 ${dir.path}`"
+          @update:model-value="onToggle(index, $event)"
+        />
+        <span class="font-mono text-fg">{{ dir.path }}</span>
+      </div>
+    </div>
+
+    <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-subtle">改后需重开会话生效</p>
+  </section>
+</template>
+
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { GripVertical } from '@lucide/vue'
+import { Checkbox } from '@/components/ui/checkbox'
+import type { SkillDirConfig } from '@xyz-agent/shared'
+
+const props = defineProps<{
+  /** 强制目录路径（只读展示，ADR-0020 §1.1 层 1-2） */
+  forcedDirs: string[]
+  /** 可选目录配置（来自 store，可勾选可拖排序） */
+  dirs: SkillDirConfig[]
+  /** 资源类型：skill 即时生效，agent 需重开会话（ADR §理由） */
+  kind: 'skill' | 'agent'
+  /** 操作禁用（扫描中等场景） */
+  disabled?: boolean
+}>()
+
+const emit = defineEmits<{
+  /** 目录配置变更（勾选或排序），父组件写回 store */
+  'update-dirs': [dirs: SkillDirConfig[]]
+}>()
+
+// ── 本地状态（拖拽即时性的关键）──
+// localDirs 是 dirs 的可写副本：拖拽/勾选只改它（即时），props.dirs 变化时同步进来。
+const localDirs = ref<SkillDirConfig[]>([...props.dirs])
+
+// 同步外部变更（store 广播），但拖拽进行中跳过——避免广播覆盖用户正在拖拽的顺序。
+watch(() => props.dirs, (next) => {
+  if (dragIndex.value !== null) return // 拖拽中，不覆盖
+  localDirs.value = next.map((d) => ({ ...d }))
+}, { deep: true })
+
+// ── 原生 HTML5 拖拽（本地状态驱动，零回路）──
+const dragIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
+const DND_MIME = 'application/x-loadpaths-index'
+
+function onDragStart(e: DragEvent, index: number): void {
+  if (props.disabled || !e.dataTransfer) return
+  // 必须 dataTransfer 写数据，否则浏览器判定拖拽无效 → drop 事件永不触发。
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData(DND_MIME, String(index))
+  e.dataTransfer.setData('text/plain', String(index))
+  dragIndex.value = index
+}
+
+function onDragOver(e: DragEvent, index: number): void {
+  if (dragIndex.value === null || dragIndex.value === index) return
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  dragOverIndex.value = index
+}
+
+function onDragLeave(): void {
+  dragOverIndex.value = null
+}
+
+/**
+ * 放下：立即重排 localDirs（即时生效，零回路）。
+ * 不在此 emit——顺序的最终持久化留到 dragend（拖拽完全结束后一次性 emit）。
+ */
+function onDrop(targetIndex: number): void {
+  const from = dragIndex.value
+  if (from === null || from === targetIndex) {
+    dragOverIndex.value = null
+    return
+  }
+  // 重排 localDirs：把 from 移到 target 位置（靠前 = 高优先级，ADR §1.1）
+  const next = [...localDirs.value]
+  const [moved] = next.splice(from, 1)
+  next.splice(targetIndex, 0, moved)
+  localDirs.value = next
+  // 不清 dragIndex——留给 dragend 统一清理 + emit
+}
+
+/**
+ * 拖拽完全结束：清状态 + 把最终顺序一次性 emit 持久化（发后即忘）。
+ * 持久化是异步副作用，不阻塞 UI（localDirs 已是最终态）。
+ */
+function onDragEnd(): void {
+  const wasDragging = dragIndex.value !== null
+  dragIndex.value = null
+  dragOverIndex.value = null
+  if (wasDragging) {
+    emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
+  }
+}
+
+/** Checkbox 勾选 → 立即改 localDirs + emit 持久化。目录在 = 启用（ADR §5）。 */
+function onToggle(index: number, value: string | boolean): void {
+  const enabled = value === true
+  const next = localDirs.value.map((d, i) => (i === index ? { ...d, enabled } : d))
+  localDirs.value = next
+  emit('update-dirs', next.map((d) => ({ ...d })))
+}
+</script>

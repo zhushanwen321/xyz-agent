@@ -16,52 +16,28 @@ import type {
   AgentInfo,
   ScannedSkillInfo,
   ScannedAgentInfo,
+  PluginInfo,
+  GitStatusResult,
+  FileNode,
 } from '@xyz-agent/shared'
-import type { PiEventListener } from './rpc-client.js'
+import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
-// ── IRpcClient ────────────────────────────────────────────────────
-
-/** pi subprocess RPC client — high-level command API. */
-export interface IRpcClient {
-  prompt(content: string): Promise<unknown>
-  abort(): Promise<unknown>
-  setModel(provider: string, modelId: string): Promise<unknown>
-  getHistory(): Promise<unknown>
-  compact(): Promise<unknown>
-  clear(): Promise<unknown>
-  sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<unknown>
-  getCommands(): Promise<unknown>
-  onEvent(listener: PiEventListener): () => void
-  onExit(callback: (code: number | null) => void): void
-  readonly exited: boolean
-  kill(): Promise<void>
-  start(): Promise<void>
-  setThinkingLevel(level: string): Promise<unknown>
-  steer(content: string): Promise<unknown>
-  followUp(content: string): Promise<unknown>
-}
-
-// ── IProcessManager ───────────────────────────────────────────────
-
-/** pi subprocess lifecycle manager. */
-export interface IProcessManager {
-  createSession(sessionId: string, cwd: string, options?: {
-    cwd?: string
-    provider?: string
-    model?: string
-    env?: Record<string, string>
-    skillPaths?: string[]
-    extensionPaths?: string[]
-    piCommand?: string
-  }): Promise<IRpcClient>
-  destroySession(sessionId: string): Promise<void>
-  getClient(sessionId: string): IRpcClient | undefined
-  getSessionIdByClient(client: IRpcClient): string | undefined
-  hasClient(sessionId: string): boolean
-  rekey(oldId: string, newId: string): void
-  onSessionExit(callback: (sessionId: string, code: number | null) => void): void
-  destroyAll(): Promise<void>
-}
+/**
+ * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
+ *
+ * 历史上 IRpcClient（engine 的重复定义）与 IProcessManager 都在本文件，
+ * 现已迁移到 ports/。此处仅 re-export，保留 interfaces.ts 作为「跨服务 facade
+ * 契约」入口的同时，避免下游大量 import 改动一次性断裂。新代码请直接从
+ * services/ports/pi-engine.js 导入。
+ *
+ * @deprecated 从 services/ports/pi-engine.js 导入 IPiEngine / IProcessManager。
+ */
+export type { IPiEngine, IProcessManager } from './services/ports/pi-engine.js'
+/**
+ * IRpcClient 是 IPiEngine 的兼容别名（D24 合并遗留）。
+ * @deprecated 改用 IPiEngine（见 services/ports/pi-engine.js）。
+ */
+export type IRpcClient = IPiEngine
 
 // ── IMessageBroker ────────────────────────────────────────────────
 
@@ -74,7 +50,8 @@ export interface IProcessManager {
 export interface IMessageBroker {
   send(ws: unknown, msg: ServerMessage): void
   broadcast(msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  /** D10/P0-B: 第 5 参数从 sessionId(string) 改为 details(ErrorDetails)，sessionId 进 details.sessionId。 */
+  sendError(ws: unknown, code: string, message: string, id?: string, details?: { sessionId?: string; [key: string]: unknown }): void
 }
 
 // ── IEventAdapter ─────────────────────────────────────────────────
@@ -92,17 +69,30 @@ export interface ISessionService {
   create(cwd?: string, label?: string): Promise<SessionSummary>
   delete(sessionId: string): Promise<void>
   renameSession(sessionId: string, newName: string): Promise<void>
-  sendMessage(sessionId: string, content: string): Promise<void>
-  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<void>
+  sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }>
+  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }>
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string): Promise<void>
   getHistory(sessionId: string): Promise<Message[]>
+  /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
+  getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   restoreSession(sessionId: string): Promise<SessionSummary>
-  /** Fork 后重新绑定 session（更新 runtime 和 process manager 的 key） */
-  rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
+  /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/attachUsageListener） */
+  getInputTokens(sessionId: string): number
+  /** 回写 session 缓存的 inputTokens（onContextUpdate 拿到真实值后同步写入，打通 context.update 与 state_changed 数据源） */
+  setInputTokens(sessionId: string, tokens: number): void
+  /**
+   * 处理 context.update（pi agent_end 推 inputTokens）。session 级状态单一 owner：
+   * 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。index.ts onContextUpdate 仅调本方法。
+   */
+  applyContextUpdate(sessionId: string, inputTokens: number): void
+  /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId contextWindow 算）。 */
+  getUsagePercent(sessionId: string): number
+  /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
+  setThinkingLevelCache(sessionId: string, level: string | undefined): void
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
   getRpcClient(sessionId: string): IRpcClient | undefined
 
@@ -126,6 +116,11 @@ export interface ISessionService {
   followUpMessage(sessionId: string, content: string): Promise<void>
 }
 
+// ── ISessionServiceInternal ───────────────────────────────────────
+// R5：已迁移到 services/session/session-internal.ts（session 域内部契约收归 session 目录）。
+// 此处 re-export 保持向后兼容，新代码请从 services/session/session-internal.js 导入。
+export type { ISessionServiceInternal } from './services/session/session-internal.js'
+
 // ── IConfigService ────────────────────────────────────────────────
 
 /** Provider / Skill / Agent CRUD and tool permissions. */
@@ -138,22 +133,41 @@ export interface IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; contextWindow?: number }>
+    models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } }
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
+  // ── Skill/Agent 加载路径（ADR-0020 §1 discovery.json SSOT）──
+  /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 投影 settings.json。 */
+  setSkillDirs(dirs: string[]): void
+  /** 读取 skillDirs（有序数组）。 */
+  getSkillDirs(): string[]
+  /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
+  setAgentDirs(dirs: string[]): void
+  /** 读取 agentDirs（有序数组）。 */
+  getAgentDirs(): string[]
+  /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
+  migrateSettingsSkillsToDiscovery(): void
   loadSkills(projectRoot: string): SkillInfo[]
   saveSkills(projectRoot: string, skills: SkillInfo[]): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertSkill(skill: SkillInfo): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteSkill(skillId: string): void
   loadAgents(projectRoot: string): AgentInfo[]
   saveAgents(projectRoot: string, agents: AgentInfo[]): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertAgent(agent: AgentInfo): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
+  /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
+  getPiAgentDir(): string
+  /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
+  getConfigDir(): string
 }
 
 // ── IExtensionService ──────────────────────────────────────────────
@@ -194,12 +208,19 @@ export interface IModelService {
 /** Plugin lifecycle: discovery, activation, deactivation, shutdown. */
 export interface IPluginService {
   initialize(): Promise<void>
-  getDiscoveredPlugins(): import('./services/plugin-service/plugin-types.js').PluginDescriptor[]
-  togglePlugin(pluginId: string, enabled: boolean): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
+  /**
+   * 已发现插件列表，按 WS 协议契约返回 PluginInfo[]（config.plugins）。
+   *
+   * 内部 PluginDescriptor（含 main/activationEvents/contributes 等私有字段）由
+   * PluginRegistry.getDescriptor/getAllDescriptors 暴露给 service 内部协作；
+   * 对 transport 仅暴露协议类型，避免内部类型外泄。
+   */
+  getDiscoveredPlugins(): PluginInfo[]
+  togglePlugin(pluginId: string, enabled: boolean): Promise<PluginInfo[]>
   shutdown(): Promise<void>
 
   /** Uninstall a plugin: deactivate, remove files, rescan registry */
-  uninstallPlugin(pluginId: string): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
+  uninstallPlugin(pluginId: string): Promise<PluginInfo[]>
   /** Approve specific permissions for a plugin */
   approvePermissions(pluginId: string, permissions: string[]): Promise<void>
   /** Revoke all permissions for a plugin */
@@ -221,7 +242,44 @@ export interface IPluginService {
   /** Install a plugin from an npm package specifier */
   installPlugin(packageSpecifier: string): Promise<import('./services/plugin-service/plugin-installer.js').InstallResult>
   getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]
+  /** 构造 bridge:sync 同步负载（工具 schema 塑形下沉 service，transport 只 reply） */
+  getBridgeSyncPayload?(): import('./services/plugin-service/plugin-types.js').BridgeSyncPayload
   handleBridgeToolExecute?(request: import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest): Promise<import('./services/plugin-service/plugin-types.js').BridgeToolExecuteResponse>
   handleBridgeEvent?(eventName: string, data: unknown, sessionId: string): void
   handleBridgeIntercept?(eventName: string, data: Record<string, unknown>, sessionId: string): Promise<import('./services/plugin-service/plugin-types.js').BridgeInterceptResponse>
+}
+
+// ── IGitService ───────────────────────────────────────────────────
+
+/**
+ * Git 域 service port（与 ISessionService / IExtensionService 对称的 DI seam）。
+ * GitMessageHandler 经此接口依赖 git 能力，不直接 import 具体的 GitService 类。
+ * 方法签名与 GitService（services/git-service.ts）逐字对齐——行为保持不变。
+ */
+export interface IGitService {
+  getStatus(sessionId: string): Promise<GitStatusResult>
+  getFileDiff(sessionId: string, path: string): Promise<{ patch: string; binary: boolean }>
+  stage(sessionId: string, filePaths?: string[]): Promise<void>
+  unstage(sessionId: string, filePaths?: string[]): Promise<void>
+  commit(sessionId: string, message?: string): Promise<void>
+  checkout(sessionId: string, name: string): Promise<void>
+  createBranch(sessionId: string, name: string): Promise<void>
+}
+
+// ── IFileService ──────────────────────────────────────────────────
+
+/**
+ * 文件树编排 service port（与 ISessionService / IExtensionService 对称的 DI seam）。
+ * FileMessageHandler 经此接口依赖文件树能力，不直接 import 具体的 FileService 类。
+ * 方法签名与 FileService（services/file-service.ts）逐字对齐——行为保持不变。
+ */
+export interface IFileService {
+  listTree(sessionId: string): Promise<FileNode[]>
+  expandDir(sessionId: string, path: string): Promise<FileNode[]>
+  searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]>
+  readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }>
+  readFileFromWhitelist(path: string): Promise<{ content: string; truncated: boolean }>
+  createFile(sessionId: string, path: string, content: string): Promise<never>
+  renameFile(sessionId: string, oldPath: string, newPath: string): Promise<never>
+  deleteFile(sessionId: string, path: string): Promise<never>
 }

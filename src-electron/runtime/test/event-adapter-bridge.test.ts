@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type EventAdapterOptions } from '../src/event-adapter.js'
+import { createEventAdapter, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
+import type { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function createAdapter(options?: EventAdapterOptions): {
@@ -8,7 +9,7 @@ function createAdapter(options?: EventAdapterOptions): {
 } {
   const sent: ServerMessage[] = []
   const send = vi.fn((msg: ServerMessage) => { sent.push(msg) })
-  const adapter = new EventAdapter('test-session-id', send, options)
+  const adapter = createEventAdapter('test-session-id', send, options)
   return { adapter, sent }
 }
 
@@ -56,8 +57,9 @@ describe('EventAdapter extension bridge', () => {
 
       await vi.waitFor(() => sent.length > 0)
 
-      expect(sent[0].payload.widgetKey).toBe('')
-      expect(sent[0].payload.lines).toEqual([])
+      const payload = sent[0].payload as { widgetKey: string; lines: string[] }
+      expect(payload.widgetKey).toBe('')
+      expect(payload.lines).toEqual([])
     })
 
     it('converts non-string lines to strings', async () => {
@@ -76,7 +78,7 @@ describe('EventAdapter extension bridge', () => {
 
       await vi.waitFor(() => sent.length > 0)
 
-      expect(sent[0].payload.lines).toEqual(['42', 'null', 'text'])
+      expect((sent[0].payload as { lines: string[] }).lines).toEqual(['42', 'null', 'text'])
     })
   })
 
@@ -132,8 +134,9 @@ describe('EventAdapter extension bridge', () => {
       await vi.waitFor(() => sent.length > 0)
 
       expect(sent[0].type).toBe('extension:status')
-      expect(sent[0].payload.statusKey).toBe('status')
-      expect(sent[0].payload.text).toBe('Done')
+      const statusPayload = sent[0].payload as { statusKey: string; text: string }
+      expect(statusPayload.statusKey).toBe('status')
+      expect(statusPayload.text).toBe('Done')
     })
   })
 })

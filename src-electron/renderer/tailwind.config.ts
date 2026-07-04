@@ -1,102 +1,111 @@
 import type { Config } from 'tailwindcss'
 
+/**
+ * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0018）
+ * 色值映射到 style.css 的 CSS 变量（SSOT: docs/page-design/design-tokens.md）。
+ * shadcn-vue 装机会在此基础上扩展，此处只落 design-tokens 对齐项。
+ */
 export default {
   content: ['./src/**/*.{vue,ts,tsx}'],
   darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        bg: 'var(--bg)',
-        surface: 'var(--surface)',
+        bg: {
+          DEFAULT: 'var(--bg)',
+          elevated: 'var(--bg-elevated)',
+          input: 'var(--bg-input)',
+        },
+        surface: {
+          DEFAULT: 'var(--surface)',
+          hover: 'var(--surface-hover)',
+          2: 'var(--surface-2)',
+        },
         fg: 'var(--fg)',
         muted: 'var(--muted)',
+        subtle: 'var(--subtle)',
         border: 'var(--border)',
+        'border-strong': 'var(--border-strong)',
         accent: {
           DEFAULT: 'var(--accent)',
-          light: 'var(--accent-light)',
+          hover: 'var(--accent-hover)',
+          soft: 'var(--accent-soft)',
+          ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
+          foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
-        success: {
-          DEFAULT: 'var(--success)',
-          light: 'var(--success-light)',
-        },
-        warning: {
-          DEFAULT: 'var(--warning)',
-          light: 'var(--warning-light)',
-        },
-        danger: {
-          DEFAULT: 'var(--danger)',
-          light: 'var(--danger-light)',
-        },
-        agent: {
-          DEFAULT: 'var(--agent)',
-          light: 'var(--agent-light)',
-        },
-        // Keep shadcn aliases but update variable refs
-        primary: { DEFAULT: 'var(--accent)', foreground: '#fff' },
-        destructive: { DEFAULT: 'var(--danger)', foreground: '#fff' },
-        background: 'var(--bg)',
-        foreground: 'var(--fg)',
-        ring: 'var(--accent)',
-        input: 'var(--border)',
-        'level-safe': 'var(--level-safe-bg)',
-        'level-caution': 'var(--level-caution-bg)',
-        'level-danger': 'var(--level-danger-bg)',
+        success: 'var(--success)',
+        warning: 'var(--warning)',
+        danger: 'var(--danger)',
+        info: 'var(--info)',
+        // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
+        reasoning: 'var(--reasoning)',
+
+        // ── shadcn-vue 命名空间（别名映射到 v3 值，不引入新色）──────────
+        // 本地 components/ui（shadcn copy）依赖 shadcn 命名约定，补全 utility
+        // 映射。同名冲突项维持 v3 语义不覆盖：
+        //   • accent.DEFAULT = v3 主色蓝（shadcn hover 软底语义降级，ghost hover 蓝）
+        //   • muted = v3 次级文字色（shadcn 背景色语义降级，bg-muted 仅用于 1px 分隔线，视觉正确）
+        // 见 design-tokens.md「shadcn 命名映射」节。
+        primary: { DEFAULT: 'var(--primary)', foreground: 'var(--primary-foreground)' },
+        secondary: { DEFAULT: 'var(--secondary)', foreground: 'var(--secondary-foreground)' },
+        destructive: { DEFAULT: 'var(--destructive)', foreground: 'var(--destructive-foreground)' },
+        'muted-foreground': 'var(--muted-foreground)',
+        popover: { DEFAULT: 'var(--popover)', foreground: 'var(--popover-foreground)' },
+        background: 'var(--background)',
+        foreground: 'var(--foreground)',
+        input: 'var(--input)',
+        ring: 'var(--ring)',
       },
       fontFamily: {
-        display: ['Tiempos Headline', 'Newsreader', 'Iowan Old Style', 'Georgia', 'serif'],
-        body: ['-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'SF Pro Display', 'PingFang SC', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
       },
       borderRadius: {
-        DEFAULT: '1px',
-        sm: '1px',
-        xs: '1px',
-        md: '2px',
-        lg: '2px',
-        bubble: 'var(--radius-bubble)',
+        sm: '3px',
+        DEFAULT: '8px',
+        md: '8px',
+        lg: '12px',
       },
       boxShadow: {
-        xs: 'var(--shadow-xs)',
-        sm: 'var(--shadow-sm)',
-        md: 'var(--shadow-md)',
-        lg: 'var(--shadow-lg)',
-        xl: 'var(--shadow-xl)',
+        1: 'var(--shadow-1)',
+        2: 'var(--shadow-2)',
+        glow: 'var(--shadow-glow)',
       },
-      spacing: {
-        sidebar: '240px',
-        header: '48px',
-        statusbar: '32px',
-        drawer: '380px',
-      },
-      transitionTimingFunction: {
-        ease: 'var(--ease)',
-      },
+      // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warning）。
+      // 原两组件各自 scoped 定义同一份 keyframes，收敛到 SSOT 避免漂移。
       keyframes: {
-        'pulse-dot': {
-          '0%, 100%': { transform: 'scale(1)' },
-          '50%': { transform: 'scale(1.15)' },
+        'pulse-accent': {
+          '0%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0.5)' },
+          '70%': { 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
+          '100%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0)' },
         },
+        'pulse-warn': {
+          '0%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0.5)' },
+          '70%': { 'box-shadow': '0 0 0 5px rgba(245, 165, 36, 0)' },
+          '100%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0)' },
+        },
+        // Composer S6 流式态呼吸 ring（steer 提交引导）
+        'steer-breathe': {
+          '0%, 100%': { 'box-shadow': '0 0 0 3px rgba(79, 142, 247, 0.22)' },
+          '50%': { 'box-shadow': '0 0 0 4px rgba(79, 142, 247, 0.40)' },
+        },
+        // message-stream working-dot 脉冲（turn-meta working 态，draft .working-dot）
+        'working-pulse': {
+          '0%, 100%': { opacity: '1', 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0.4)' },
+          '50%': { opacity: '0.55', 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
+        },
+        // 流式光标闪烁（turn-summary / trace-tool streaming）
         blink: {
-          '50%': { opacity: '0' },
-        },
-        spin: {
-          to: { transform: 'rotate(360deg)' },
-        },
-        'thinking-pulse': {
-          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
-          '50%': { opacity: '0.3', transform: 'scale(0.85)' },
-        },
-        'pulse-bar': {
-          '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0.3' },
+          '0%, 50%': { opacity: '1' },
+          '51%, 100%': { opacity: '0' },
         },
       },
       animation: {
-        'pulse-dot': 'pulse-dot 2s infinite',
+        'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
+        'pulse-warn': 'pulse-warn 2s var(--ease) infinite',
+        'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
+        'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
-        spin: 'spin 0.6s linear infinite',
-        'thinking-pulse': 'thinking-pulse 1.4s ease-in-out infinite',
-        'pulse-bar': 'pulse-bar 1s ease-in-out infinite',
       },
     },
   },

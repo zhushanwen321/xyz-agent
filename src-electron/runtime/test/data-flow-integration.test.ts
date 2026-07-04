@@ -17,12 +17,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebSocket } from 'ws'
 
 import type { ServerMessage } from '@xyz-agent/shared'
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+
+// IGitInfoReader 桩：这些集成测试 mock 了整个 SessionService（构造参数不被使用），
+// 仅需满足构造签名（port 化后第 10 个参数）。
+const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
 // ── Mocks (最外层边界) ────────────────────────────────────────────
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -75,7 +80,7 @@ vi.mock('../src/services/model-service.js', () => ({
   },
 }))
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -90,34 +95,49 @@ vi.mock('../src/process-manager.js', () => ({
 
 // EventAdapter 使用真实实例 — 不 mock
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => [],
-  refreshAll: () => {},
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => [] }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return { ...actual, getSessionsDir: () => '/mock/sessions' }
+})
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
 // ── Imports (mock 之后) ───────────────────────────────────────────
 
-import { SidecarServer } from '../src/server.js'
-import { EventAdapter } from '../src/event-adapter.js'
-import { SessionService } from '../src/services/session-service.js'
+import { RuntimeServer } from '../src/transport/server.js'
+import { EventAdapter } from '../src/infra/pi/event-adapter.js'
+import { createEventAdapter } from './helpers/event-adapter-test-fixture.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -187,7 +207,7 @@ function createMockRpcClient() {
 
 /** 创建 WS 连接的完整 server fixture (真实 timers) */
 interface WSFixture {
-  server: SidecarServer
+  server: RuntimeServer
   sessionService: SessionService
   ws: WebSocket
   port: number
@@ -200,14 +220,13 @@ interface WSFixture {
 
 async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   const port = await getFreePort()
-  const server = new SidecarServer(port, '/tmp/test-project')
-  const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+  const server = new RuntimeServer(port, '/tmp/test-project')
+  const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
 
   server.setServices(
     sessionService,
-    new ConfigService('/tmp'),
-    new ModelService(),
-    {} as never,
+    new ConfigService('/tmp', new PiConfigStore()),
+    new ModelService(new ModelApiDiscoverer()),
     extensionService as never | undefined,
   )
 
@@ -217,9 +236,9 @@ async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   const rpcClient = createMockRpcClient()
   vi.mocked(sessionService.getRpcClient).mockReturnValue(rpcClient as never)
 
-  // 真实 EventAdapter，send 输出到收集数组
+  // 真实 EventAdapter + EventInterpreter，send 输出到收集数组
   const adapterSent: ServerMessage[] = []
-  const adapter = new EventAdapter('test-session-1', (msg) => adapterSent.push(msg), {
+  const adapter = createEventAdapter('test-session-1', (msg) => adapterSent.push(msg), {
     onExtensionUIRequest: (requestId, sid, method) => {
       server.registerExtensionTimeout(sid, requestId, method)
     },
@@ -427,19 +446,18 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
 // ── DF-1 超时路径 (fake timers, 不启动 server) ────────────────────
 
 describe('DF-1: Extension UI 超时路径', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let sessionService: SessionService
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(0, '/tmp/test-project')
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
-      {} as never,
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
     )
 
     vi.mocked(sessionService.getRpcClient).mockReturnValue({
@@ -505,19 +523,18 @@ describe('DF-1: Extension UI 超时路径', () => {
 // ── DF-1 session 删除清理超时 (fake timers) ───────────────────────
 
 describe('DF-1: session 删除清理超时', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let sessionService: SessionService
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(0, '/tmp/test-project')
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
-      {} as never,
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
     )
 
     vi.mocked(sessionService.getRpcClient).mockReturnValue({
@@ -658,7 +675,7 @@ describe('DF-3: 工具进度更新 (EventAdapter → server broadcast)', () => {
 // ══════════════════════════════════════════════════════════════════
 
 describe('DF-4: Extension 列表管理', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let ws: WebSocket
   let mockExtensionService: {
     scanExtensions: ReturnType<typeof vi.fn>
@@ -672,8 +689,8 @@ describe('DF-4: Extension 列表管理', () => {
     mockSendCommand.mockClear()
 
     const port = await getFreePort()
-    server = new SidecarServer(port, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(port, '/tmp/test-project')
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
 
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
@@ -687,9 +704,8 @@ describe('DF-4: Extension 列表管理', () => {
 
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
-      {} as never,
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
       mockExtensionService as never,
     )
 
@@ -731,9 +747,9 @@ describe('DF-4: Extension 列表管理', () => {
 
   it('ExtensionService 为 null → 返回空列表', async () => {
     const port2 = await getFreePort()
-    const server2 = new SidecarServer(port2, '/tmp/test-project')
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp'), new ModelService(), {} as never)
+    const server2 = new RuntimeServer(port2, '/tmp/test-project')
+    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
+    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()))
     await server2.start()
     const ws2 = await connectClient(port2)
 
@@ -758,7 +774,7 @@ describe('DF-4: Extension 列表管理', () => {
 // ══════════════════════════════════════════════════════════════════
 
 describe('DF-5: Extension 启用/禁用', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let ws: WebSocket
   let mockExtensionService: {
     scanExtensions: ReturnType<typeof vi.fn>
@@ -772,8 +788,8 @@ describe('DF-5: Extension 启用/禁用', () => {
     mockSendCommand.mockClear()
 
     const port = await getFreePort()
-    server = new SidecarServer(port, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(port, '/tmp/test-project')
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
 
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
@@ -786,9 +802,8 @@ describe('DF-5: Extension 启用/禁用', () => {
 
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
-      {} as never,
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
       mockExtensionService as never,
     )
 
@@ -826,9 +841,9 @@ describe('DF-5: Extension 启用/禁用', () => {
 
   it('ExtensionService 为 null → 返回 error', async () => {
     const port2 = await getFreePort()
-    const server2 = new SidecarServer(port2, '/tmp/test-project')
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp'), new ModelService(), {} as never)
+    const server2 = new RuntimeServer(port2, '/tmp/test-project')
+    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
+    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()))
     await server2.start()
     const ws2 = await connectClient(port2)
 

@@ -1,16 +1,23 @@
+/**
+ * Sidebar store —— tab 切换 + 折叠态（UC-3 / P2）。
+ *
+ * 依赖方向：无（stores 间禁止互相 import）。
+ * activeTab 不持久化：每次应用/页面加载默认锚定到「会话」（启动入口最常用）。
+ * 用户会话内切换 tab 不记忆——桌面应用冷启动少，换默认入口的稳定预期优先于个性化恢复。
+ */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
+export type SidebarTab = 'sessions' | 'files'
+
 export const useSidebarStore = defineStore('sidebar', () => {
+  const activeTab = ref<SidebarTab>('sessions')
   const collapsed = ref(false)
 
-  function toggle() {
+  /** 切换折叠态（app-nav-controls 收起按钮 + 未来 ⌘B 调用） */
+  function toggleCollapsed(): void {
     collapsed.value = !collapsed.value
   }
 
-  function setCollapsed(value: boolean) {
-    collapsed.value = value
-  }
-
-  return { collapsed, toggle, setCollapsed }
+  return { activeTab, collapsed, toggleCollapsed }
 })

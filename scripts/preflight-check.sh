@@ -17,6 +17,9 @@
 
 set -euo pipefail
 
+# 检查失败原则：任何非 0 退出都输出（不管从哪个 exit 点）
+trap '[ $? -ne 0 ] && echo "[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。" >&2' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -183,6 +186,9 @@ if [ -f "$EB_YML" ]; then
 fi
 
 # ── 6. resources/pi symlink 检查 ───────────────────────────────────
+# 仅检查 git 跟踪的 symlink（会进产物，危险）。
+# .gitignore 忽略的 symlink 是 setup-worktree.sh 创建的 workspace 共享缓存
+# （指向 .pi-binary-cache/），不进 git，CI 由 prepare-pi-resources.sh 重新准备。
 echo ""
 echo -e "${BLUE}[6/9] resources/pi symlink check...${NC}"
 
@@ -190,6 +196,10 @@ PI_RES_DIR="$ELECTRON_DIR/resources/pi"
 SYMLINK_FOUND=false
 if [ -d "$PI_RES_DIR" ]; then
     while IFS= read -r link; do
+        # 跳过 .gitignore 忽略的 dev 缓存 symlink（不进 git，非打包风险）
+        if git check-ignore -q "$link" 2>/dev/null; then
+            continue
+        fi
         target=$(readlink "$link")
         echo -e "  ${RED}✗${NC} 发现 symlink: $(basename "$link") -> $target"
         SYMLINK_FOUND=true
@@ -268,7 +278,8 @@ fi
 echo ""
 echo -e "${BLUE}[9/9] Disk space...${NC}"
 
-AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
+# df -g 是 BSD/macOS 特有，Linux 不支持。用 df -k（KB，跨平台）换算成 GB。
+AVAILABLE_GB=$(($(df -k . | tail -1 | awk '{print $4}') / 1024 / 1024))
 if [ "$AVAILABLE_GB" -lt 3 ]; then
     echo -e "  ${RED}✗ 磁盘空间不足: ${AVAILABLE_GB}GB（建议 ≥3GB）${NC}"
     FAILED=1

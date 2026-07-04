@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender, type EventAdapterOptions } from '../src/event-adapter.js'
+import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import type { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
 import type { HookResult, HookContext } from '../src/services/plugin-service/plugin-types.js'
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { PiMessage } from '../src/rpc-client.js'
+import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
 /**
  * FR-8 Hook Bridge tests.
@@ -35,7 +35,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     const hookFn = vi.fn().mockResolvedValue({ blocked: false }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
-    const adapter = new EventAdapter('sess-1', send, options)
+    const adapter = createEventAdapter('sess-1', send, options)
 
     adapter.attach({
       onEvent: (listener) => {
@@ -62,7 +62,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     const hookFn = vi.fn().mockResolvedValue({ blocked: false }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
-    const adapter = new EventAdapter('sess-2', send, options)
+    const adapter = createEventAdapter('sess-2', send, options)
 
     adapter.attach({
       onEvent: (listener) => {
@@ -91,7 +91,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
-    const adapter = new EventAdapter('sess-3', send, options)
+    const adapter = createEventAdapter('sess-3', send, options)
 
     adapter.attach({
       onEvent: (listener) => {
@@ -119,7 +119,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
-    const adapter = new EventAdapter('sess-4', send, options)
+    const adapter = createEventAdapter('sess-4', send, options)
 
     adapter.attach({
       onEvent: (listener) => {
@@ -147,7 +147,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
-    const adapter = new EventAdapter('sess-5', send, options)
+    const adapter = createEventAdapter('sess-5', send, options)
 
     adapter.attach({
       onEvent: (listener) => {
@@ -169,7 +169,7 @@ describe('EventAdapter: onHookExecute callback', () => {
   })
 
   it('forwards event normally when onHookExecute is undefined', async () => {
-    const adapter = new EventAdapter('sess-6', send) // no options
+    const adapter = createEventAdapter('sess-6', send) // no options
 
     adapter.attach({
       onEvent: (listener) => {
@@ -193,7 +193,7 @@ describe('EventAdapter: onHookExecute callback', () => {
     const hookFn = vi.fn().mockRejectedValue(new Error('hook crash')) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
-    const adapter = new EventAdapter('sess-7', send, options)
+    const adapter = createEventAdapter('sess-7', send, options)
 
     adapter.attach({
       onEvent: (listener) => {

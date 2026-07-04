@@ -18,9 +18,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender } from '../src/event-adapter.js'
+import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
+import type { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { PiMessage } from '../src/rpc-client.js'
+import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
 /** Pi extension events carry extra fields not in PiMessage, so we widen for tests */
 type PiTestEvent = PiMessage & Record<string, unknown>
@@ -30,10 +31,10 @@ function piEvent(fields: PiTestEvent): PiTestEvent {
   return fields
 }
 
-function createAdapter(): { adapter: EventAdapter; sent: ServerMessage[] } {
+function createAdapter(options?: EventAdapterOptions): { adapter: EventAdapter; sent: ServerMessage[] } {
   const sent: ServerMessage[] = []
   const send: WsSender = (msg) => { sent.push(msg) }
-  const adapter = new EventAdapter('test-session-1', send)
+  const adapter = createEventAdapter('test-session-1', send, options)
   return { adapter, sent }
 }
 
@@ -215,6 +216,31 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
     })
   })
 
+  // [HISTORICAL] pi 0.80.3 agent-loop 在每个 turn 末尾 emit message_start{role:'user'}
+  // （agent-loop.ts:112）。若不过滤，前端为 user prompt 再建空气泡（渲染撕裂 +
+  // findLastAssistantIndex 错位）。切 upstream 0.80.3（ac83b578）后出现。与 toolResult 同语义。
+  describe('FR-2: message_start — user/toolResult roles ignored (pi 0.80.3)', () => {
+    it('ignores role=user message_start (no message_start WS sent)', async () => {
+      dispatchOne(adapter, {
+        type: 'message_start',
+        message: { role: 'user', content: 'hi' },
+      })
+      await flushAsync()
+
+      expect(sent).toHaveLength(0)
+    })
+
+    it('ignores role=toolResult message_start (no message_start WS sent)', async () => {
+      dispatchOne(adapter, {
+        type: 'message_start',
+        message: { role: 'toolResult', content: 'result' },
+      })
+      await flushAsync()
+
+      expect(sent).toHaveLength(0)
+    })
+  })
+
   // ════════════════════════════════════════════════════════════════════
   // FR-3: new event types
   // ════════════════════════════════════════════════════════════════════
@@ -306,6 +332,21 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
       expect(sent[0].payload).toMatchObject({
         level: 'high',
       })
+    })
+
+    it('U-adapter-1：thinking_level_changed 触发 onThinkingLevelChanged 回调并广播 session.thinkingLevelSet', async () => {
+      const onThinkingLevelChanged = vi.fn()
+      const { adapter, sent } = createAdapter({ onThinkingLevelChanged })
+      dispatchOne(adapter, { type: 'thinking_level_changed', level: 'high' })
+      await flushAsync()
+
+      // 回调被调用，参数为 (sessionId, 'high')
+      expect(onThinkingLevelChanged).toHaveBeenCalledTimes(1)
+      expect(onThinkingLevelChanged).toHaveBeenCalledWith('test-session-1', 'high')
+      // 产出 session.thinkingLevelSet 消息
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('session.thinkingLevelSet')
+      expect(sent[0].payload).toMatchObject({ level: 'high' })
     })
   })
 

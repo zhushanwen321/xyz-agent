@@ -1,6 +1,0 @@
-[submodule "vendor/xyz-pi-extensions"]
-	path = vendor/xyz-pi-extensions
-	url = https://github.com/zhushanwen321/xyz-pi-extensions.git
-[submodule "vendor/xyz-harness"]
-	path = vendor/xyz-harness
-	url = https://github.com/zhushanwen321/xyz-harness.git

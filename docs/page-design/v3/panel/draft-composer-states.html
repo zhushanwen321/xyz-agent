@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Composer 状态 + 工具区浮层 · Panel composer zone</title>
+<style>
+  :root{
+    /* zcode 冷蓝 token —— 以 design-tokens.md 为准 */
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --bg-input:#101013; --bg-elevated:#1c1c20; --bg-hover:#232328;
+    --fg:#f0f0f5; --text-primary:#e8e8ea; --text-secondary:#8a8a95; --text-tertiary:#5a5a65;
+    --border:rgba(255,255,255,0.07); --border-strong:rgba(255,255,255,0.14);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.30); --accent-glow:rgba(79,142,247,0.25);
+    --success:#34d399; --warning:#fbbf24; --danger:#f87171; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-float:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --dur:220ms; --dur-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1180px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  h3{font-size:13px;font-weight:600;margin:0 0 8px;color:var(--fg);letter-spacing:0.01em}
+  .lede{color:var(--text-secondary);font-size:13px;margin-bottom:8px;max-width:780px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  code{font:500 12px/1 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:3px;color:var(--accent)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--text-secondary);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+
+  /* ============ composer 原语（与 dual-panel.html 同源，集成无缝） ============ */
+  .composer{padding:10px 0 0}
+  .composer-box{
+    background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius-lg);position:relative;
+    transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+  }
+  /* 普通聚焦（S2/S3/S4）：中性 ring，不染 accent——accent 蓝专属 steer 信号，避免被普通聚焦稀释 */
+  .composer-box.focus{border-color:var(--border-strong);box-shadow:0 0 0 2px rgba(255,255,255,0.04)}
+  /* S6 steer 态聚焦：染 accent 蓝 + 呼吸脉冲，typing 时即感知「Enter 会发 steer」 */
+  .composer-box.focus.steer{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow);animation:steer-breathe 2.6s ease-in-out infinite}
+  @keyframes steer-breathe{0%,100%{box-shadow:0 0 0 3px rgba(79,142,247,0.22)}50%{box-shadow:0 0 0 4px rgba(79,142,247,0.40)}}
+  .composer-box.disabled{opacity:0.55}
+  .composer-box.has-error{border-color:var(--danger)}
+
+  /* 输入区：contenteditable，支持内联 slash-token；纯文本时等同 textarea */
+  .composer-area{
+    width:100%;min-height:40px;max-height:120px;overflow-y:auto;
+    border:0;outline:0;background:transparent;
+    color:var(--text-primary);font:13px/1.55 var(--font-sans);
+    padding:11px 13px 4px;white-space:pre-wrap;word-break:break-word;
+    -webkit-user-select:text;user-select:text;
+  }
+  .composer-area[contenteditable][data-placeholder]:empty:before{
+    content:attr(data-placeholder);color:var(--text-tertiary);pointer-events:none;
+  }
+  .composer-area.disabled{color:var(--text-tertiary);cursor:not-allowed}
+
+  /* slash 内联 token —— 不像附件浮在上方，而是直接在输入流内，整体可 backspace 删除 */
+  .slash-token{
+    display:inline-block;vertical-align:baseline;
+    font:500 11.5px/1 var(--font-mono);color:var(--reasoning);
+    background:rgba(167,139,250,0.12);border:1px solid rgba(167,139,250,0.3);
+    padding:2px 6px;border-radius:var(--radius-sm);margin:0 1px;
+    cursor:default;user-select:none;
+  }
+  .slash-token .st-x{color:rgba(167,139,250,0.6);margin-left:3px;font-weight:400}
+  .slash-token .st-x:hover{color:var(--danger)}
+  .mention-inline{color:var(--accent);font-weight:500}
+
+  /* 附件行：composer-box 内，输入区上方（仍在同一容器内，视觉一体） */
+  .attach-row{display:flex;flex-wrap:wrap;gap:6px;padding:9px 10px 0}
+  .attach-chip{
+    display:inline-flex;align-items:center;gap:6px;
+    background:var(--surface);border:1px solid var(--border-strong);
+    border-radius:var(--radius-sm);padding:4px 8px;
+    font:11px/1 var(--font-mono);color:var(--text-secondary);
+  }
+  .attach-chip .ac-ic{width:13px;height:13px;color:var(--text-tertiary);flex-shrink:0}
+  .attach-chip.img{color:var(--reasoning)} .attach-chip.img .ac-ic{color:var(--reasoning)}
+  .attach-chip .ac-x{color:var(--text-tertiary);cursor:pointer;margin-left:2px;border-radius:3px;width:14px;height:14px;display:grid;place-items:center}
+  .attach-chip .ac-x:hover{color:var(--danger);background:rgba(248,113,113,0.12)}
+
+  /* error 提示条 —— composer-box 内顶部，失败回退态 */
+  .composer-error{
+    display:flex;align-items:center;gap:8px;
+    margin:8px 10px 0;padding:7px 10px;
+    background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);
+    border-radius:var(--radius);
+    font:12px/1.4 var(--font-sans);color:var(--danger);
+  }
+  .composer-error svg{width:14px;height:14px;flex-shrink:0}
+  .composer-error .ce-text{flex:1}
+  .composer-error .ce-retry{
+    font:600 11px/1 var(--font-mono);color:var(--danger);
+    background:rgba(248,113,113,0.12);border:0;padding:5px 9px;border-radius:var(--radius-sm);
+    cursor:pointer;text-transform:uppercase;letter-spacing:0.04em;
+  }
+  .composer-error .ce-retry:hover{background:rgba(248,113,113,0.2)}
+  .composer-error .ce-close{color:rgba(248,113,113,0.6);cursor:pointer;font-size:14px;line-height:1}
+
+  /* 工具条：无强分隔线，留白呼吸 */
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px;flex-wrap:nowrap}
+
+  /* + 添加（左锚定） */
+  .c-insert{
+    width:28px;height:28px;border-radius:var(--radius-sm);border:0;background:transparent;
+    color:var(--text-tertiary);cursor:pointer;display:grid;place-items:center;
+    transition:all var(--dur) var(--ease);flex-shrink:0;
+  }
+  .c-insert:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-insert svg{width:16px;height:16px}
+
+  /* —— 右锚定区：上下文 / 模型 / 思考，无边框纯文字，与背景融合 —— */
+  .c-text{
+    font:500 11.5px/1 var(--font-sans);color:var(--text-tertiary);
+    background:transparent;border:0;padding:6px 8px;border-radius:var(--radius-sm);
+    cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    transition:all var(--dur) var(--ease);flex-shrink:0;letter-spacing:0.005em;
+  }
+  .c-text:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-text .chev{color:var(--text-tertiary);font-size:9px;margin-left:1px;transition:transform var(--dur) var(--ease)}
+  .c-text.open .chev{transform:rotate(180deg)}
+  .c-text .num{font-variant-numeric:tabular-nums}
+  .c-text .dot{width:3px;height:3px;border-radius:50%;background:var(--text-tertiary);opacity:0.5}
+
+  /* 上下文容量按钮：值高时转 warning */
+  .c-text.ctx.warn{color:var(--warning)} .c-text.ctx.warn:hover{color:var(--warning)}
+  .c-text.ctx.warn .num{color:var(--warning)}
+
+  /* 思考按钮：级别越高越偏紫 + 发光 */
+  .c-text.think[data-lvl="medium"]{color:#b9a5e6}
+  .c-text.think[data-lvl="high"]{color:var(--reasoning)}
+  .c-text.think[data-lvl="xhigh"]{color:var(--reasoning);text-shadow:0 0 8px rgba(167,139,250,0.5)}
+  .c-text.think[data-lvl="max"]{color:#fff;background:rgba(167,139,250,0.85);
+    box-shadow:0 0 12px rgba(167,139,250,0.4)}
+  .c-text.think[data-lvl="max"]:hover{background:rgba(167,139,250,0.95)}
+
+  /* 发送（最右，唯一实色） */
+  .c-send{
+    margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--accent);color:#fff;cursor:pointer;
+    display:grid;place-items:center;flex-shrink:0;
+    transition:background var(--dur) var(--ease);
+  }
+  .c-send:hover{background:var(--accent-hover)}
+  .c-send svg{width:15px;height:15px}
+  .c-send:disabled{background:transparent;color:var(--text-tertiary);cursor:default;opacity:0.5}
+  .c-stop{
+    margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--surface-2);color:var(--text-secondary);
+    cursor:pointer;display:grid;place-items:center;flex-shrink:0;
+    transition:all var(--dur) var(--ease);
+  }
+  .c-stop:hover{background:rgba(248,113,113,0.15);color:var(--danger)}
+  .c-stop svg{width:13px;height:13px}
+  .c-spinner{
+    margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--accent-soft);color:var(--accent);
+    display:grid;place-items:center;flex-shrink:0;
+  }
+  .c-spinner svg{width:15px;height:15px;animation:spin 0.8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .composer-hint{font:10px/1.3 var(--font-mono);color:var(--text-tertiary);padding:6px 4px 0}
+  .composer-hint .kbd{background:var(--surface-2);border:1px solid var(--border);padding:1px 4px;border-radius:3px}
+
+  /* ============ popover 基类（详解卡里静态展示；解剖图里加 .float 绝对定位） ============ */
+  .pop{
+    background:var(--bg-elevated);border:1px solid var(--border-strong);
+    border-radius:var(--radius);box-shadow:var(--shadow-float);overflow:hidden;
+    min-width:240px;
+  }
+  .pop.float{position:absolute;z-index:6;left:10px;right:10px;bottom:calc(100% + 6px)}
+  .pop-head{padding:8px 11px;border-bottom:1px solid var(--border);
+    font:600 10px/1 var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em;
+    display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.015)}
+  .pop-foot{padding:7px 11px;border-top:1px solid var(--border);
+    font:10px/1.3 var(--font-mono);color:var(--text-tertiary);display:flex;justify-content:space-between;align-items:center}
+  .pop-foot .kbd{background:var(--surface);border:1px solid var(--border);padding:1px 4px;border-radius:3px;color:var(--text-secondary)}
+
+  /* 上下文容量 popover */
+  .pop-ctx .ctx-bar{height:6px;background:var(--surface-2);border-radius:999px;margin:11px 11px 0;overflow:hidden}
+  .pop-ctx .ctx-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-hover));border-radius:999px}
+  .pop-ctx .ctx-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;padding:11px}
+  .pop-ctx .ctx-stats .cell{display:flex;flex-direction:column;gap:2px}
+  .pop-ctx .ctx-stats .lbl{font:500 10px/1 var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.05em}
+  .pop-ctx .ctx-stats .val{font:600 14px/1.2 var(--font-sans);color:var(--fg);font-variant-numeric:tabular-nums}
+  .pop-ctx .ctx-stats .val.hit{color:var(--success)}
+  .pop-ctx .ctx-stats .val.warn{color:var(--warning)}
+
+  /* 模型 provider 分组 select（非级联） */
+  .pop-model .mp-search{padding:8px;border-bottom:1px solid var(--border)}
+  .pop-model .mp-search input{
+    width:100%;background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius-sm);padding:6px 9px;outline:0;
+    font:12px/1 var(--font-sans);color:var(--text-primary);
+  }
+  .pop-model .mp-search input::placeholder{color:var(--text-tertiary)}
+  .pop-model .mp-group{padding:4px 0}
+  .pop-model .mp-gtitle{
+    padding:7px 11px 3px;font:600 10px/1 var(--font-mono);color:var(--text-tertiary);
+    text-transform:uppercase;letter-spacing:0.08em;display:flex;align-items:center;gap:6px;
+  }
+  .pop-model .mp-gtitle .pg-dot{width:6px;height:6px;border-radius:50%}
+  .pop-model .mp-opt{
+    display:flex;align-items:center;gap:9px;padding:7px 11px;cursor:pointer;
+    font:13px/1.3 var(--font-sans);color:var(--text-secondary);transition:background var(--dur) var(--ease);
+  }
+  .pop-model .mp-opt:hover{background:var(--bg-hover)}
+  .pop-model .mp-opt.active{background:var(--accent-soft);color:var(--accent)}
+  .pop-model .mp-opt .mo-name{flex:1}
+  .pop-model .mp-opt .mo-tag{font:500 9px/1 var(--font-mono);color:var(--text-tertiary);
+    background:var(--surface-2);padding:3px 6px;border-radius:999px;letter-spacing:0.04em;text-transform:uppercase}
+  .pop-model .mp-opt.active .mo-tag{color:var(--accent);background:rgba(79,142,247,0.18)}
+  .pop-model .mp-opt .mo-check{color:var(--accent);opacity:0}
+  .pop-model .mp-opt.active .mo-check{opacity:1}
+
+  /* 思考 6 级 popover —— 点的大小/光晕递进表示强度 */
+  .pop-think .th-opt{
+    display:flex;align-items:center;gap:10px;padding:8px 11px;cursor:pointer;
+    font:13px/1.3 var(--font-sans);color:var(--text-secondary);transition:background var(--dur) var(--ease);
+  }
+  .pop-think .th-opt:hover{background:var(--bg-hover)}
+  .pop-think .th-opt.active{background:rgba(167,139,250,0.1)}
+  .pop-think .th-opt .th-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text-tertiary)}
+  .pop-think .th-opt[data-lvl="off"] .th-dot{background:var(--text-tertiary)}
+  .pop-think .th-opt[data-lvl="low"] .th-dot{background:var(--text-secondary)}
+  .pop-think .th-opt[data-lvl="medium"] .th-dot{background:rgba(167,139,250,0.55)}
+  .pop-think .th-opt[data-lvl="high"] .th-dot{background:var(--reasoning)}
+  .pop-think .th-opt[data-lvl="xhigh"] .th-dot{background:var(--reasoning);box-shadow:0 0 0 3px rgba(167,139,250,0.22)}
+  .pop-think .th-opt[data-lvl="max"] .th-dot{background:var(--reasoning);box-shadow:0 0 0 4px rgba(167,139,250,0.32)}
+  .pop-think .th-opt .th-name{flex:1}
+  .pop-think .th-opt[data-lvl="high"] .th-name,
+  .pop-think .th-opt[data-lvl="xhigh"] .th-name{color:var(--reasoning)}
+  .pop-think .th-opt[data-lvl="max"] .th-name{color:#c9b6f5;font-weight:600}
+  .pop-think .th-opt .th-desc{font:11px/1 var(--font-mono);color:var(--text-tertiary)}
+  .pop-think .th-opt.active .th-check{color:var(--reasoning)} .pop-think .th-opt .th-check{opacity:0}
+  .pop-think .th-opt.active .th-check{opacity:1}
+  .pop-think .th-note{padding:8px 11px;border-top:1px solid var(--border);
+    font:11px/1.4 var(--font-mono);color:var(--text-tertiary)}
+
+  /* 命令浮层（@ # /）—— 与 mention-pop 同源 */
+  .cmd-pop .cp-filter{padding:7px 11px;border-bottom:1px solid var(--border);
+    font:11px/1 var(--font-mono);color:var(--text-tertiary);display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.015)}
+  .cmd-pop .cp-filter .q{color:var(--accent)}
+  .cmd-pop .cp-filter .q.hash{color:var(--success)} .cmd-pop .cp-filter .q.slash{color:var(--reasoning)}
+  .cmd-pop .cp-list{max-height:132px;overflow-y:auto}
+  .cmd-pop .cp-item{display:flex;align-items:center;gap:9px;padding:7px 11px;
+    font:12px/1.4 var(--font-sans);color:var(--text-secondary);cursor:pointer;transition:background var(--dur) var(--ease)}
+  .cmd-pop .cp-item:hover{background:var(--bg-hover)}
+  .cmd-pop .cp-item.active{background:var(--accent-soft);color:var(--accent)}
+  .cmd-pop .cp-icon{width:15px;height:15px;flex-shrink:0;color:var(--text-tertiary)}
+  .cmd-pop .cp-item.active .cp-icon{color:var(--accent)}
+  .cmd-pop .cp-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cmd-pop .cp-path{font:10px/1 var(--font-mono);color:var(--text-tertiary)}
+  .cmd-pop .cp-kind{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--text-tertiary);letter-spacing:0.02em;flex-shrink:0}
+
+  /* 上下文徽标 hover 列表（已附条目）—— 复用浮层视觉 */
+  .ctxlist-pop .cl-head{padding:8px 11px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-between}
+  .ctxlist-pop .cl-head .cl-title{font:600 11px/1 var(--font-sans);color:var(--fg)}
+  .ctxlist-pop .cl-head .cl-count{font:500 10px/1 var(--font-mono);color:var(--text-tertiary)}
+  .ctxlist-pop .cl-item{display:flex;align-items:center;gap:9px;padding:7px 11px;
+    font:12px/1.3 var(--font-sans);color:var(--text-secondary)}
+  .ctxlist-pop .cl-item .cl-ic{width:14px;height:14px;flex-shrink:0;color:var(--text-tertiary)}
+  .ctxlist-pop .cl-item.img .cl-ic{color:var(--reasoning)}
+  .ctxlist-pop .cl-item .cl-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ctxlist-pop .cl-item .cl-meta{font:10px/1 var(--font-mono);color:var(--text-tertiary)}
+  .ctxlist-pop .cl-item .cl-x{color:var(--text-tertiary);cursor:pointer;width:15px;height:15px;display:grid;place-items:center;border-radius:3px}
+  .ctxlist-pop .cl-item .cl-x:hover{color:var(--danger);background:rgba(248,113,113,0.12)}
+  .ctxlist-pop .cl-foot{padding:7px 11px;border-top:1px solid var(--border);
+    font:10px/1.3 var(--font-mono);color:var(--text-tertiary);display:flex;justify-content:space-between}
+
+  /* pending 气泡：steer(accent蓝·追加) / followup(info青·新轮) 两色区分。
+     变量驱动：--pb-c 边框/点/WHO，--pb-rgb 控制背景透明度。steer 默认 accent，
+     followup 加 .followup 切 info。整体仍是虚线+脉冲同族气泡，保持「待发送」整体感。 */
+  .pending-bubble{
+    --pb-c:var(--accent); --pb-rgb:79,142,247;
+    border:1px dashed var(--pb-c);background:rgba(var(--pb-rgb),0.06);
+    border-radius:var(--radius);padding:8px 11px;
+    display:flex;align-items:center;gap:8px;margin-bottom:8px;
+  }
+  .pending-bubble.followup{--pb-c:var(--info); --pb-rgb:56,189,248}
+  .pending-bubble .pb-dot{width:7px;height:7px;border-radius:50%;background:var(--pb-c);animation:pb-pulse 1.6s ease-in-out infinite;flex-shrink:0}
+  @keyframes pb-pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+  .pending-bubble .pb-who{font:600 10px/1 var(--font-mono);color:var(--pb-c);letter-spacing:0.05em;flex-shrink:0;white-space:nowrap}
+  .pending-bubble .pb-sep{width:1px;height:11px;background:rgba(var(--pb-rgb),0.3);flex-shrink:0}
+  .pending-bubble .pb-text{flex:1;color:var(--text-primary);font-size:12px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pending-bubble .pb-sub{font:10px/1 var(--font-mono);color:var(--text-tertiary);flex-shrink:0;letter-spacing:0.02em;white-space:nowrap}
+
+  /* 队列气泡：双队列分组（steering/followUp）· 只读 */
+  .queue-bubble{border:1px solid var(--accent);background:rgba(79,142,247,0.08);
+    border-radius:var(--radius);margin-bottom:8px;overflow:hidden}
+  .queue-bubble .qb-head{display:flex;align-items:center;gap:8px;padding:8px 11px;cursor:pointer}
+  .queue-bubble .qb-head .qb-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pb-pulse 1.6s ease-in-out infinite;flex-shrink:0}
+  .queue-bubble .qb-head .qb-who{font:600 10px/1 var(--font-mono);color:var(--accent);letter-spacing:0.05em}
+  .queue-bubble .qb-head .qb-count{font:600 11px/1 var(--font-sans);color:var(--accent);font-variant-numeric:tabular-nums}
+  .queue-bubble .qb-head .qb-preview{flex:1;color:var(--text-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .queue-bubble .qb-head .qb-chev{color:var(--accent);font-size:10px;transition:transform var(--dur) var(--ease)}
+  .queue-bubble.open .qb-head .qb-chev{transform:rotate(180deg)}
+  .queue-bubble .qb-body{display:none;flex-direction:column;gap:1px;background:rgba(0,0,0,0.18)}
+  .queue-bubble.open .qb-body{display:flex}
+  .queue-bubble .qb-item{display:flex;align-items:center;gap:8px;padding:7px 11px;font:12px/1.4 var(--font-sans);color:var(--text-secondary)}
+  .queue-bubble .qb-item .qi-idx{font:600 10px/1 var(--font-mono);color:var(--text-tertiary);width:18px;flex-shrink:0}
+  .queue-bubble .qb-item .qi-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .queue-bubble .qi-btn{display:inline-flex;align-items:center;gap:4px;border:0;cursor:pointer;
+    font:600 10px/1 var(--font-mono);padding:4px 7px;border-radius:var(--radius-sm);letter-spacing:0.04em;text-transform:uppercase}
+  .queue-bubble .qi-btn svg{width:11px;height:11px}
+  .queue-bubble .qb-foot{padding:6px 11px;border-top:1px solid rgba(79,142,247,0.2);
+    font:10px/1.3 var(--font-mono);color:var(--text-tertiary)}
+  /* 队列 item 类型标：steer(accent)/followup(info青) 与单条气泡同色语义 */
+  .queue-bubble .qb-item .qi-tag{font:600 9px/1 var(--font-mono);color:var(--accent);
+    background:rgba(79,142,247,0.12);padding:3px 6px;border-radius:3px;letter-spacing:0.04em;flex-shrink:0}
+  .queue-bubble .qb-item.followup .qi-tag{color:var(--info);background:rgba(56,189,248,0.12)}
+  /* 双队列分组：steering(先生效) / followup(后生效) 分栏，反映底层双 FIFO + steer 插队 */
+  .queue-bubble .qb-group{padding:3px 0}
+  .queue-bubble .qb-group+.qb-group{border-top:1px dashed rgba(255,255,255,0.09)}
+  .queue-bubble .qb-group-head{display:flex;align-items:center;gap:7px;padding:6px 11px 4px}
+  .queue-bubble .qb-group-head .qb-gtag{font:700 9px/1 var(--font-mono);letter-spacing:0.08em;padding:3px 6px;border-radius:3px}
+  .queue-bubble .qb-group.steer .qb-gtag{color:var(--accent);background:rgba(79,142,247,0.14)}
+  .queue-bubble .qb-group.followup .qb-gtag{color:var(--info);background:rgba(56,189,248,0.14)}
+  .queue-bubble .qb-group-head .qb-gsub{font:10px/1 var(--font-mono);color:var(--text-tertiary);letter-spacing:0.02em}
+  /* 生效顺序只读标注 */
+  .queue-bubble .qb-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .queue-bubble .qb-order{font:10px/1.3 var(--font-mono);color:var(--text-tertiary);text-align:right}
+
+  /* ============ 状态卡画廊 ============ */
+  .grid9{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:18px}
+  @media(max-width:920px){.grid9{grid-template-columns:1fr}}
+  .state-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+    padding:14px;display:flex;flex-direction:column;gap:12px}
+  .sc-head{display:flex;align-items:center;gap:8px}
+  .sc-num{font:600 11px/1 var(--font-mono);color:var(--bg);background:var(--accent);
+    padding:4px 7px;border-radius:var(--radius-sm);letter-spacing:0.04em}
+  .sc-name{font-weight:600;font-size:13.5px;color:var(--fg)}
+  .sc-when{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--text-tertiary);
+    background:var(--bg-input);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.02em}
+  .sc-stage{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
+    padding:10px;display:flex;flex-direction:column;gap:8px;min-height:150px;position:relative}
+  .sc-stage .stream-hint{flex:1;font:11px/1.4 var(--font-mono);color:var(--text-tertiary);
+    display:flex;align-items:center;justify-content:center;text-align:center;
+    border:1px dashed var(--border);border-radius:var(--radius-sm);min-height:40px;padding:8px}
+  .sc-note{font:12px/1.5 var(--font-mono);color:var(--text-secondary);border-left:2px solid var(--accent);padding-left:9px}
+  .sc-note b{color:var(--fg)} .sc-note .k{color:var(--accent)}
+
+  /* 通用展示卡（工具浮层详解） */
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px}
+  .panel + .panel{margin-top:14px}
+
+  /* 解剖标注 */
+  .anatomy{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:22px;margin-top:16px}
+  .anatomy .an-stage{padding:18px 14px 4px}
+  .anatomy .an-callouts{display:flex;flex-direction:column;gap:10px;margin-top:18px}
+  .an-co{display:flex;gap:10px;align-items:flex-start;font-size:12px;line-height:1.55}
+  .an-co .n{font:600 10px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);
+    padding:5px 7px;border-radius:var(--radius-sm);flex-shrink:0;min-width:22px;text-align:center}
+  .an-co .t b{color:var(--fg)} .an-co .t{color:var(--text-secondary)}
+  .an-co .t code{font-size:11px}
+
+  /* table / note / openlist */
+  table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font:600 11px/1 var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.06em}
+  td code{font-size:12px}
+  .note{background:var(--surface);border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius);padding:12px 14px;font-size:13px;color:var(--text-secondary);margin-top:16px;line-height:1.6}
+  .note b{color:var(--fg)} .note code{font-size:12px}
+  .note.warn{border-left-color:var(--warning)}
+  .openlist{margin-top:12px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+  .openlist li{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:10px 12px;font-size:12.5px;color:var(--text-secondary);line-height:1.55}
+  .openlist li b{color:var(--fg)}
+  .openlist li.resolved{border-color:rgba(52,211,153,0.3);background:rgba(52,211,153,0.04)}
+  .openlist li.resolved::before{content:'已收口 · ';color:var(--success);font-weight:600}
+  .footer-note{margin-top:48px;padding-top:16px;border-top:1px solid var(--border);
+    font:500 11px/1.5 var(--font-mono);color:var(--text-tertiary);letter-spacing:0.02em}
+</style>
+</head>
+<body>
+
+<h1>Composer 状态 + 工具区浮层</h1>
+<p class="lede">Panel <b>composer</b> zone 的设计稿。本版细化：<b>工具条右对齐、无边框纯文字、与背景融合</b>；上下文/模型/思考三个 popover；命令浮层 <code>@</code> <code>#</code> <code>/</code> 三路 + <b>slash 内联 token</b>（输入框内 chip）；steer/followup <b>两色区分</b>（steer accent 蓝 / followup info 青）+ <b>双队列视图</b>（steering/followUp 分组，<b>只读镜像</b>，入队后不可改）；<b>队列只读 · 立刻打断暂不实现</b>（底层 RPC 能力缺口，见 §4 / §5 + research/pi-steer-followup-capability.md）；思考<b>默认最高</b>；输入内容<b>暂存</b>。</p>
+<div class="meta">
+  <span>层 <b>L2 · Panel zone ④</b></span>
+  <span>单元 <b>panel/</b></span>
+  <span>状态 <b>draft · 细化</b></span>
+  <span>上游 <b>panel/spec.md §composer</b></span>
+  <span>原语 <b>design-system.md Input / Popover / Button</b></span>
+</div>
+
+<!-- §1 结构与工具区一体 -->
+<h2><span class="num">§1</span>结构 · 工具区右对齐、无边框、文字融合</h2>
+<p class="lede">composer-box 是<b>单一容器</b>（同一 <code>--bg-input</code> 底 / <code>--border</code> / <code>--radius-lg</code>）。输入区上、工具条下，中间<b>无强分隔线</b>。<b>工具条新规</b>：左侧只留 <code>+</code> 添加；右侧依次是「上下文 · 模型 · 思考」，三者<b>无边框、纯文字、底色透明</b>，hover 才浮一层 <code>--bg-hover</code>——与 composer 底融为一体；发送按钮是<b>唯一实色</b>，最右锚定。</p>
+
+<div class="anatomy">
+  <div class="an-stage">
+    <div class="composer">
+      <div class="composer-box focus">
+        <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…">把 AuthService.login 改成异步，返回 Promise&lt;Token&gt;</div>
+        <div class="composer-bar">
+          <button class="c-insert" title="添加内容（附件 / @ 引用 / 命令）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx" title="hover 看上下文容量"><span class="num">6.9万</span><span class="dot"></span><span>6.9%</span></button>
+          <button class="c-text model open">sonnet-4.5 <span class="chev">▾</span></button>
+          <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+          <button class="c-send" title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div>
+      <div class="composer-hint"><span class="kbd">⏎</span> 发送 · <span class="kbd">⇧⏎</span> 换行 · <span class="kbd">@</span> 引用 · <span class="kbd">#</span> 文件 · <span class="kbd">/</span> 命令</div>
+    </div>
+  </div>
+  <div class="an-callouts">
+    <div class="an-co"><span class="n">①</span><span class="t"><b>+ 添加</b> —— 左锚定。点开浮层含「附件 / @ 引用 / # 文件 / / 命令」四路；也可直接在输入区敲对应符号触发。<b>/</b> 需在输入流<b>最左且左侧无内容</b>时触发，右侧内容作过滤 query，<span class="kbd">⏎</span>/<span class="kbd">Tab</span> 选中确认。</span></div>
+    <div class="an-co"><span class="n">②</span><span class="t"><b>上下文（token 容量）</b> —— 文字显当前用量 <code>6.9万 · 6.9%</code>，<b>hover</b> 出容量 popover（已用/总量/百分比/缓存命中率）。用量高自动转 warning 色。详见 §2a。</span></div>
+    <div class="an-co"><span class="n">③</span><span class="t"><b>模型</b> —— <b>click</b> 出 provider 分组 select（Anthropic / OpenAI / Google …，<b>非级联</b>，平铺单层选）。详见 §2b。</span></div>
+    <div class="an-co"><span class="n">④</span><span class="t"><b>思考等级</b> —— <b>click</b> 出 6 级（off/low/medium/high/xhigh/max），可用等级随模型变。<b>级别越高越偏紫 + 发光</b>，max 变实色块。详见 §2c。</span></div>
+    <div class="an-co"><span class="n">⑤</span><span class="t"><b>发送</b> —— 最右、唯一实色。空态禁用并退成透明文字；AI 工作中换「停止」；发送中换 spinner。</span></div>
+  </div>
+</div>
+
+<div class="note">
+  <b>「与背景融合」的 4 条规则</b>：① 上下文/模型/思考共享 <code>.c-text</code> 类——<code>border:0</code>、<code>background:transparent</code>、文字 <code>--text-tertiary</code>；② hover 才浮一层 <code>--bg-hover</code>，移开即隐；③ 三者间隙靠 <code>gap:2px</code> + 各自 padding，<b>不画分隔线</b>；④ 发送是唯一的实色锚点，把右侧三颗文字按钮「压」成一组。<br>
+  <b>舒适流畅</b>：所有态切换 <code>220ms cubic-bezier</code>；聚焦 ring 作用于整个 composer-box（不抖盒模型）；按钮无硬边框，视觉上输入区与工具区是同一张皮。<br>
+  <b>输入区与工具栏 4px 间隔</b>（composer-bar <code>mt-1</code>）：偏离原「同一张皮」无 gap，加 4px 呼吸，保留无分隔线的融合观感（用户拍板）。
+</div>
+
+<!-- §2 工具区浮层 -->
+<h2><span class="num">§2</span>工具区浮层 · 6 个</h2>
+<p class="lede">逐一设计 composer 工具条会弹出的 6 个浮层：上下文容量、模型分组、思考等级、<code>@</code> 引用、<code>#</code> 文件、<code>/</code> 命令。前三个由工具按钮触发；后三个由输入区符号触发。<b>所有浮层都向上开、归属 composer、生命周期绑 composer</b>（失焦 / esc 即销毁），不归全局 Overlay。</p>
+
+<div class="grid9">
+  <!-- §2a 上下文容量 -->
+  <div class="panel">
+    <h3>§2a 上下文容量 popover · hover 触发</h3>
+    <p class="lede" style="margin-bottom:10px">按钮文字始终显当前用量摘要（<code>6.9万 · 6.9%</code>）；hover 出完整容量。容量条按模型总量动态伸缩。</p>
+    <div class="pop pop-ctx" style="position:static;box-shadow:none;max-width:280px">
+      <div class="pop-head"><span>上下文容量</span><span>sonnet-4.5</span></div>
+      <div class="ctx-bar"><div class="ctx-fill" style="width:6.9%"></div></div>
+      <div class="ctx-stats">
+        <div class="cell"><span class="lbl">已用</span><span class="val">6.9万</span></div>
+        <div class="cell"><span class="lbl">总量</span><span class="val">100万</span></div>
+        <div class="cell"><span class="lbl">使用率</span><span class="val">6.9%</span></div>
+        <div class="cell"><span class="lbl">缓存命中</span><span class="val hit">98.7%</span></div>
+      </div>
+      <div class="pop-foot"><span>切换模型会改变总量</span><span class="kbd">hover</span></div>
+    </div>
+    <div class="note" style="margin-top:10px"><b>用量分档</b>：&lt;70% 默认 accent；70–90% 转 <code>warning</code>（按钮 + 条）；&gt;90% 条变 <code>danger</code> 并在按钮角标警示。<b>缓存命中率</b>用 success 绿，低（&lt;50%）转 warning 提示可优化。</div>
+  </div>
+
+  <!-- §2b 模型分组 select -->
+  <div class="panel">
+    <h3>§2b 模型 · provider 分组 select（非级联）· click 触发</h3>
+    <p class="lede" style="margin-bottom:10px">所有 provider 平铺在同一列表，用<b>分组标题</b>分隔；点选即切换，不先选 provider 再选模型。支持顶部搜索。</p>
+    <div class="pop pop-model" style="position:static;box-shadow:none;max-width:300px">
+      <div class="mp-search"><input placeholder="搜索模型…" /></div>
+      <div class="mp-group">
+        <div class="mp-gtitle"><span class="pg-dot" style="background:#d97757"></span>Anthropic</div>
+        <div class="mp-opt active"><span class="mo-name">claude-sonnet-4.5</span><span class="mo-tag">推荐</span><svg class="mo-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></div>
+        <div class="mp-opt"><span class="mo-name">claude-opus-4.1</span></div>
+        <div class="mp-opt"><span class="mo-name">claude-haiku-4.5</span></div>
+      </div>
+      <div class="mp-group">
+        <div class="mp-gtitle"><span class="pg-dot" style="background:#10a37f"></span>OpenAI</div>
+        <div class="mp-opt"><span class="mo-name">gpt-5</span></div>
+        <div class="mp-opt"><span class="mo-name">gpt-5-mini</span></div>
+      </div>
+      <div class="mp-group">
+        <div class="mp-gtitle"><span class="pg-dot" style="background:#4285f4"></span>Google</div>
+        <div class="mp-opt"><span class="mo-name">gemini-2.5-pro</span></div>
+      </div>
+      <div class="pop-foot"><span>选中即用于当前 session</span><span class="kbd">click</span></div>
+    </div>
+  </div>
+
+  <!-- §2c 思考 6 级 -->
+  <div class="panel" style="grid-column:1 / -1">
+    <h3>§2c 思考 · 6 级 + 高级别配色 · click 触发</h3>
+    <p class="lede" style="margin-bottom:10px">级别可用性随模型（例 haiku 无 xhigh/max）。点的<b>大小 + 光晕递进</b>表示强度；触发器（思考按钮）同步染色。</p>
+    <div class="pop pop-think" style="position:static;box-shadow:none;max-width:280px">
+      <div class="pop-head"><span>思考等级</span><span>sonnet-4.5</span></div>
+      <div class="th-opt" data-lvl="off"><span class="th-dot"></span><span class="th-name">关 off</span><span class="th-desc">不思考</span><svg class="th-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <div class="th-opt" data-lvl="low"><span class="th-dot"></span><span class="th-name">低 low</span><span class="th-desc">轻量</span><svg class="th-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <div class="th-opt" data-lvl="medium"><span class="th-dot"></span><span class="th-name">中 medium</span><span class="th-desc">柔紫</span><svg class="th-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <div class="th-opt" data-lvl="high"><span class="th-dot"></span><span class="th-name">高 high</span><span class="th-desc">实色紫</span><svg class="th-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <div class="th-opt" data-lvl="xhigh"><span class="th-dot"></span><span class="th-name">极高 xhigh</span><span class="th-desc">紫 + 光晕</span><svg class="th-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <div class="th-opt active" data-lvl="max"><span class="th-dot"></span><span class="th-name">最高 max</span><span class="th-desc">默认 · 实色块</span><svg class="th-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <div class="th-note">等级可用性取决于模型 · 更高级别更慢更贵</div>
+    </div>
+    <div class="note" style="margin-top:10px"><b>高级别配色（已定稿）</b>：medium 柔紫 <code>#b9a5e6</code> → high 纯紫 <code>var(--reasoning)</code> → xhigh 纯紫 + <code>text-shadow</code> 柔光 → max <b>整颗按钮填紫底白字 + 外发光</b>（最强视觉权重）。点的同源：medium 半透 → high 实色 → xhigh + 光环 → max + 更大光环。<b>默认即 max</b>——开 composer 即最高思考强度，紫底按钮常驻提示当前等级；用户可随时下调。</div>
+  </div>
+
+  <!-- §2d 命令浮层 @ # / -->
+  <div class="panel" style="grid-column:1 / -1">
+    <h3>§2d 命令浮层 · @ 引用 / # 文件 / / 命令</h3>
+    <p class="lede" style="margin-bottom:10px">三路共享 <code>.cmd-pop</code> 容器，差异在<b>触发符、候选源、选中后形态</b>。<code>/</code> 在输入流<b>最左且左侧无内容</b>时触发（<b>不是</b>“输入区为空”——右侧可有过滤 query），右侧内容作实时过滤 query；<span class="kbd">⏎</span> 或 <span class="kbd">Tab</span> 选中确认；选中后以 <b>slash 内联 token</b> 插入输入流（见 §2e），不像附件浮在上方。</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+      <div class="pop cmd-pop" style="box-shadow:none">
+        <div class="cp-filter">引用 <span class="q">@Auth</span> · 4 项</div>
+        <div class="cp-list">
+          <div class="cp-item active"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="cp-name">AuthService.ts</span><span class="cp-kind">文件</span></div>
+          <div class="cp-item"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg><span class="cp-name">TokenValidator</span><span class="cp-kind">符号</span></div>
+          <div class="cp-item"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 2 2.4 7.4H22l-6 4.6 2.3 7.4L12 17l-6.3 4.4L8 14 2 9.4h7.6z"/></svg><span class="cp-name">表单校验规范</span><span class="cp-kind">技能</span></div>
+        </div>
+        <div class="cp-filter" style="border-top:1px solid var(--border);border-bottom:0;justify-content:space-between"><span><span class="kbd">↑↓</span>选 · <span class="kbd">⏎</span>插</span><span style="color:var(--accent)">@</span></div>
+      </div>
+      <div class="pop cmd-pop" style="box-shadow:none">
+        <div class="cp-filter">文件 <span class="q hash">#auth</span> · 3 项</div>
+        <div class="cp-list">
+          <div class="cp-item active"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="cp-name">src/auth/</span><span class="cp-kind">目录</span></div>
+          <div class="cp-item"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="cp-name">AuthService.ts</span><span class="cp-kind">文件</span></div>
+          <div class="cp-item"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="cp-name">token.ts</span><span class="cp-kind">文件</span></div>
+        </div>
+        <div class="cp-filter" style="border-top:1px solid var(--border);border-bottom:0;justify-content:space-between"><span><span class="kbd">↑↓</span>选 · <span class="kbd">⏎</span>插</span><span style="color:var(--success)">#</span></div>
+      </div>
+      <div class="pop cmd-pop" style="box-shadow:none">
+        <div class="cp-filter">命令 <span class="q slash">/</span> · 仅空内容</div>
+        <div class="cp-list">
+          <div class="cp-item active"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 17l6-6-6-6M12 19h8"/></svg><span class="cp-name">/commit</span><span class="cp-kind">提交</span></div>
+          <div class="cp-item"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 2 2.4 7.4H22l-6 4.6 2.3 7.4L12 17l-6.3 4.4L8 14 2 9.4h7.6z"/></svg><span class="cp-name">/review</span><span class="cp-kind">审查</span></div>
+          <div class="cp-item"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6a2 2 0 0 0 2.8 2.8l6-6a4 4 0 0 0 5.4-5.4l-2.7 2.7-2.1-2.1z"/></svg><span class="cp-name">/fix</span><span class="cp-kind">修复</span></div>
+        </div>
+        <div class="cp-filter" style="border-top:1px solid var(--border);border-bottom:0;justify-content:space-between"><span><span class="kbd">⏎</span>插入 token</span><span style="color:var(--reasoning)">/</span></div>
+      </div>
+    </div>
+    <table style="margin-top:12px;font-size:12px">
+      <thead><tr><th>符</th><th>候选源</th><th>触发条件</th><th>选中后形态</th></tr></thead>
+      <tbody>
+        <tr><td><code>@</code></td><td>文件 / 符号 / 技能 / 命令别名</td><td>任意位置</td><td>内联蓝名（<code>.mention-inline</code>）</td></tr>
+        <tr><td><code>#</code></td><td>文件 / 目录（精准文件系统）</td><td>任意位置</td><td>内联绿名</td></tr>
+        <tr><td><code>/</code></td><td>斜杠命令</td><td><b>/ 在最左且左侧无内容</b>（右侧作 query）</td><td>紫 slash-token chip（§2e）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- §2e slash 内联 token -->
+  <div class="panel">
+    <h3>§2e slash 命令 · 内联 token（非附件 chip）</h3>
+    <p class="lede" style="margin-bottom:10px"><code>/</code> 命令选中后<b>直接插在输入流内</b>（不是浮在上方的附件 chip），是一个紫色整体 chip——<b>可 backspace 整体删除</b>，删除时光标停在 chip 后。输入区是 contenteditable 以支持内联富文本。</p>
+    <div class="anatomy" style="margin-top:0;padding:18px">
+      <div class="an-stage" style="padding:6px 0">
+        <div class="composer">
+          <div class="composer-box focus">
+            <div class="composer-area" contenteditable="true"><span class="slash-token">/fix<span class="st-x">×</span></span> 把 AuthService.login 改成异步，返回 Promise&lt;Token&gt;</div>
+            <div class="composer-bar">
+              <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+              <span style="margin-left:auto"></span>
+              <button class="c-text ctx"><span class="num">6.9万</span><span class="dot"></span><span>6.9%</span></button>
+              <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+              <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+              <button class="c-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:10px"><b>slash-token 行为</b>：① 整体一个 chip，<code>user-select:none</code>——backspace 一次删整块；② chip 内带 <code>×</code> 可点删；③ chip 必须在<b>输入流最前</b>（slash 命令是「操作模式」前缀），其后接普通文本作为该命令的参数；④ 同一输入只允许一个 slash-token，再敲 <code>/</code>（已有内容时）不触发命令浮层，作普通字符。</div>
+  </div>
+
+  <!-- §2f 上下文徽标 hover 列表 -->
+  <div class="panel">
+    <h3>§2f 上下文徽标 hover 列表 · 已附条目</h3>
+    <p class="lede" style="margin-bottom:10px">区别于 §2a 的 token 容量——这里列的是<b>当前已附加的上下文条目</b>（@ 引用 / # 文件 / 拖入图片）。触发位是输入区上方的附件 chip 行（或一条总徽标），hover 出列表。复用 <code>.cmd-pop</code> 同源视觉。</p>
+    <div class="pop ctxlist-pop" style="position:static;box-shadow:none;max-width:300px">
+      <div class="cl-head"><span class="cl-title">已附上下文</span><span class="cl-count">3 项 · 6.9万</span></div>
+      <div class="cl-item"><svg class="cl-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="cl-name">AuthService.ts</span><span class="cl-meta">@ · 1.2万</span><span class="cl-x">×</span></div>
+      <div class="cl-item"><svg class="cl-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="cl-name">src/auth/token.ts</span><span class="cl-meta"># · 0.8万</span><span class="cl-x">×</span></div>
+      <div class="cl-item img"><svg class="cl-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg><span class="cl-name">login-flow.png</span><span class="cl-meta">图 · 4.9万</span><span class="cl-x">×</span></div>
+      <div class="cl-foot"><span>点 × 从上下文移除</span><span class="kbd">hover</span></div>
+    </div>
+    <div class="note" style="margin-top:10px"><b>两条「上下文」的边界</b>：§2a 是<b>容量统计</b>（token 用量），回答「还剩多少」；§2f 是<b>条目清单</b>（已附了啥），回答「附了什么」。容量是只读概览，清单可逐条移除。两者数据同源（条目变更 → 容量即时重算）。</div>
+  </div>
+</div>
+
+<!-- §3 状态画廊 -->
+<h2><span class="num">§3</span>状态画廊 · 9 态</h2>
+<p class="lede">composer 按工作阶段呈现 9 种状态。S1–S6 是输入器自身态；S7 单条待发送；S8 双队列分组；S9 发送失败回退。<b>steer / followup 两色区分</b>（accent 蓝 / info 青）——同为虚线+脉冲的「待发送」气泡，靠颜色+WHO标+副文案区分语义（追加进当前回合 vs 回合后开新轮），详见 §4。</p>
+
+<div class="grid9">
+  <!-- S1 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S1</span><span class="sc-name">空</span><span class="sc-when">无输入 · 无上下文</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint">message-stream（末尾）</div>
+      <div class="composer"><div class="composer-box">
+        <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…"></div>
+        <div class="composer-bar">
+          <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx"><span class="num">0</span><span class="dot"></span><span>0%</span></button>
+          <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+          <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+          <button class="c-send" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div></div>
+    </div>
+    <div class="sc-note"><b>触发</b>：新建会话 / 上一条已入流。<span class="k">关键</span>：上下文显 <code>0 · 0%</code>（不隐藏，显用量也是信息）；发送<b>禁用并退成透明文字</b>；placeholder 引导 @ # /。</div>
+  </div>
+
+  <!-- S2 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S2</span><span class="sc-name">输入中</span><span class="sc-when">有文本 · 已聚焦</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint">message-stream（末尾）</div>
+      <div class="composer"><div class="composer-box focus">
+        <div class="composer-area" contenteditable="true">把 AuthService.login 改成异步，返回 Promise&lt;Token&gt;</div>
+        <div class="composer-bar">
+          <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx"><span class="num">0.2万</span><span class="dot"></span><span>0.2%</span></button>
+          <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+          <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+          <button class="c-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div></div>
+    </div>
+    <div class="sc-note"><b>触发</b>：输入区有内容。<span class="k">关键</span>：composer-box 出中性聚焦 ring（accent 蓝专属 steer，见 S6）；发送激活（accent 实色）；容量随输入增长。</div>
+  </div>
+
+  <!-- S3 命令浮层 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S3</span><span class="sc-name">命令浮层</span><span class="sc-when">敲 @ / # / 触发</span></div>
+    <div class="sc-stage" style="min-height:300px">
+      <div class="stream-hint" style="min-height:140px">@ / # / 浮层浮在 message-stream 区上方</div>
+      <div class="composer"><div class="composer-box focus">
+        <div class="pop cmd-pop float">
+          <div class="cp-filter">引用 <span class="q">@Auth</span> · 4 项</div>
+          <div class="cp-list">
+            <div class="cp-item active"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="cp-name">AuthService.ts</span><span class="cp-kind">文件</span></div>
+            <div class="cp-item"><svg class="cp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg><span class="cp-name">TokenValidator</span><span class="cp-kind">符号</span></div>
+          </div>
+        </div>
+        <div class="composer-area" contenteditable="true">重构 <span class="mention-inline">@Auth</span></div>
+        <div class="composer-bar">
+          <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx"><span class="num">0.2万</span><span class="dot"></span><span>0.2%</span></button>
+          <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+          <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+          <button class="c-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div></div>
+    </div>
+    <div class="sc-note"><b>触发</b>：敲 <code>@</code> / <code>#</code> / <code>/</code>。<span class="k">关键</span>：浮层向上开、归属 composer；选中后 @/# 进内联彩名，/ 进 slash-token。<b>非 Overlay</b>（⌘K Search Modal 才是 Overlay）。</div>
+  </div>
+
+  <!-- S4 附件 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S4</span><span class="sc-name">附件</span><span class="sc-when">已附文件 / 图片</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint">message-stream（末尾）</div>
+      <div class="composer"><div class="composer-box focus">
+        <div class="attach-row">
+          <span class="attach-chip"><svg class="ac-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>AuthService.ts <span class="ac-x">×</span></span>
+          <span class="attach-chip img"><svg class="ac-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>login-flow.png <span class="ac-x">×</span></span>
+        </div>
+        <div class="composer-area" contenteditable="true">对比这两个实现，指出 token 校验差异</div>
+        <div class="composer-bar">
+          <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx"><span class="num">6.9万</span><span class="dot"></span><span>6.9%</span></button>
+          <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+          <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+          <button class="c-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div></div>
+    </div>
+    <div class="sc-note"><b>触发</b>：拖拽 / 点 + 加附件。<span class="k">关键</span>：附件 chip 在 composer-box 内、输入区上方；容量随附件跳涨；徽标 hover 出条目清单（§2f）。</div>
+  </div>
+
+  <!-- S5 发送中 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S5</span><span class="sc-name">发送中</span><span class="sc-when">刚提交 · 未入流</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint">message-stream（末尾）</div>
+      <div class="composer"><div class="composer-box disabled">
+        <div class="composer-area disabled">正在发送 · 重构 AuthService.login…</div>
+        <div class="composer-bar">
+          <button class="c-insert" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx" disabled><span class="num">6.9万</span><span class="dot"></span><span>6.9%</span></button>
+          <button class="c-text model" disabled>sonnet-4.5</button>
+          <button class="c-text think" data-lvl="max" disabled>思考 最高</button>
+          <span class="c-spinner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.2-8.5" stroke-linecap="round"/></svg></span>
+        </div>
+      </div></div>
+    </div>
+    <div class="sc-note"><b>触发</b>：点发送到消息入流之间（&lt;1s）。<span class="k">关键</span>：整体退后（opacity 0.55）；发送位换 spinner；输入禁用。失败则进 S9。</div>
+  </div>
+
+  <!-- S6 停止 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S6</span><span class="sc-name">停止（AI 工作中）</span><span class="sc-when">回合进行 · 可追加</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint" style="color:var(--accent);border-color:rgba(79,142,247,0.3)">● AI 正在工作 · 重构 token 验证（60%）</div>
+      <div class="composer"><div class="composer-box focus steer">
+        <div class="composer-area" contenteditable="true" data-placeholder="想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…"></div>
+        <div class="composer-bar">
+          <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx"><span class="num">12万</span><span class="dot"></span><span>12%</span></button>
+          <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+          <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+          <button class="c-stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+        </div>
+        <div class="composer-hint"><span class="kbd">⏎</span> 追加 steer · <span class="kbd">Alt+⏎</span> 新轮 followup · <span class="kbd">⇧⏎</span> 换行</div>
+      </div></div>
+    </div>
+    <div class="sc-note"><b>触发</b>：AI 进入工作回合。<span class="k">关键</span>：发送位换「<b>停止</b>」（hover 转 danger）；输入区<b>可用</b>——聚焦时 ring 染 accent 蓝 + 呼吸（<b>steer 信号</b>），typing 即知 Enter 会发 steer；hint 明示 <code>⏎</code> steer / <code>Alt+⏎</code> followup；<b>placeholder 同步切换</b>为快捷键提示（空输入时显「⏎ 加入当前任务 · Alt+⏎ 排到下一轮」）。<b>steer/followup 仅键盘</b>提交。<b style="color:var(--danger)">立刻打断暂不实现</b>（abort 不清队列会静默复活 steer，见 §4）。</div>
+  </div>
+
+  <!-- S7 待发送 · steer/followup 两色 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S7</span><span class="sc-name">待发送 · steer / followup</span><span class="sc-when">两色区分 · 排队中</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint" style="color:var(--accent);border-color:rgba(79,142,247,0.3)">● AI 正在工作 · 重构 token 验证（60%）</div>
+      <div class="composer">
+        <div class="pending-bubble">
+          <span class="pb-dot"></span><span class="pb-who">STEER 追加</span><span class="pb-sep"></span>
+          <span class="pb-text">顺便把注册页的 token 校验也改了</span>
+          <span class="pb-sub">当前回合后拾取</span>
+        </div>
+        <div class="pending-bubble followup">
+          <span class="pb-dot"></span><span class="pb-who">FOLLOWUP 新轮</span><span class="pb-sep"></span>
+          <span class="pb-text">改完后再帮我加 refresh token 逻辑</span>
+          <span class="pb-sub">当前回合后开新轮</span>
+        </div>
+        <div class="composer-box focus steer">
+          <div class="composer-area" contenteditable="true" data-placeholder="已排 1 条 · ⏎ 继续追加 · Alt+⏎ 再排一轮…"></div>
+          <div class="composer-bar">
+            <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+            <span style="margin-left:auto"></span>
+            <button class="c-text ctx"><span class="num">12万</span><span class="dot"></span><span>12%</span></button>
+            <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+            <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+            <button class="c-stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+          </div>
+          <div class="composer-hint"><span class="kbd">⏎</span> 追加 steer · <span class="kbd">Alt+⏎</span> 新轮 followup · <span class="kbd">⇧⏎</span> 换行</div>
+        </div>
+      </div>
+    </div>
+    <div class="sc-note"><b>触发</b>：S6 下输入并发送（<code>⏎</code> steer / <code>Alt+⏎</code> followup）。<span class="k">关键</span>：消息不立刻入流，显 pending 气泡（虚线 + 脉冲，与 message-types blk-pending 同源）。<b>两色区分</b>——accent 蓝=追加当前回合；info 青=回合后开新轮。<b>输入区仍可用</b>（ring 染 accent steer 态），继续输入发第 2 条 → S8 双队列（见 §5）。</div>
+  </div>
+
+  <!-- S8 待发送队列（多条） -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S8</span><span class="sc-name">待发送队列（多条）</span><span class="sc-when">3 条 · 双队列分组 · 只读</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint" style="color:var(--accent);border-color:rgba(79,142,247,0.3)">● AI 正在工作 · 重构 token 验证（60%）</div>
+      <div class="composer">
+        <div class="queue-bubble open">
+          <div class="qb-head">
+            <span class="qb-dot"></span><span class="qb-who">待发送</span><span class="qb-count">3 条</span>
+            <span class="qb-preview">steering 2 · followup 1</span>
+            <span class="qb-chev">▾</span>
+          </div>
+          <div class="qb-body">
+            <div class="qb-group steer">
+              <div class="qb-group-head"><span class="qb-gtag">STEERING</span><span class="qb-gsub">先生效 · 追加当前回合</span></div>
+              <div class="qb-item"><span class="qi-idx">1</span><span class="qi-tag">追加</span><span class="qi-text">顺便把注册页的 token 校验也改了</span></div>
+              <div class="qb-item"><span class="qi-idx">2</span><span class="qi-tag">追加</span><span class="qi-text">记得补单测覆盖刷新分支</span></div>
+            </div>
+            <div class="qb-group followup">
+              <div class="qb-group-head"><span class="qb-gtag">FOLLOWUP</span><span class="qb-gsub">后生效 · 回合后开新轮</span></div>
+              <div class="qb-item"><span class="qi-idx">3</span><span class="qi-tag">新轮</span><span class="qi-text">改完后帮我加 refresh token 逻辑</span></div>
+            </div>
+          </div>
+          <div class="qb-foot"><span class="qb-order">生效顺序：steering → followUp · 只读（入队后不可改）</span></div>
+        </div>
+        <div class="composer-box disabled">
+          <div class="composer-bar">
+            <button class="c-insert" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+            <span style="margin-left:auto"></span>
+            <button class="c-stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="sc-note"><b>触发</b>：已排队 1 条时再发 1 条。<span class="k">关键</span>：<b>双队列分组</b>（steering 先生效 / followUp 后生效）+ 两队列计数「steering 2 · followup 1」+ 可展开；<b>只读展示</b>（入队后不可改/不可撤——底层无单条撤回 API，RPC 亦无 clear_queue）。队列混合 steer/followup 时按双 FIFO 真实生效顺序排列。详见 §5。</div>
+  </div>
+
+  <!-- S9 发送失败 -->
+  <div class="state-card">
+    <div class="sc-head"><span class="sc-num">S9</span><span class="sc-name">发送失败 · 回退</span><span class="sc-when">S5 失败 → 回 S2 + error 条</span></div>
+    <div class="sc-stage">
+      <div class="stream-hint">message-stream（末尾）</div>
+      <div class="composer"><div class="composer-box focus has-error">
+        <div class="composer-error">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          <span class="ce-text">发送失败 · 网络中断（输入已保留）</span>
+          <button class="ce-retry">重试</button>
+          <span class="ce-close">×</span>
+        </div>
+        <div class="composer-area" contenteditable="true">把 AuthService.login 改成异步，返回 Promise&lt;Token&gt;</div>
+        <div class="composer-bar">
+          <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span style="margin-left:auto"></span>
+          <button class="c-text ctx"><span class="num">0.2万</span><span class="dot"></span><span>0.2%</span></button>
+          <button class="c-text model">sonnet-4.5 <span class="chev">▾</span></button>
+          <button class="c-text think" data-lvl="max">思考 最高 <span class="chev">▾</span></button>
+          <button class="c-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div></div>
+    </div>
+    <div class="sc-note"><b>触发</b>：S5 发送失败。<span class="k">关键</span>：回退 <b>S2（输入全保留）</b>；composer-box 边框转 danger；顶部一条 error 提示（非 toast，保留上下文），含「重试 / ×」。点 × 或重发成功即消。</div>
+  </div>
+
+</div>
+
+<!-- §4 steer/followup 区分 -->
+<h2><span class="num">§4</span>steer / followup · 两色区分</h2>
+<p class="lede">两者底层调用不同 runtime 方法（steer 追加进<b>当前回合</b>；followup 在当前回合结束后<b>开新轮</b>），语义不同——用户应能感知「我这条是追加，还是开新的」。<b>同族虚线+脉冲气泡</b>保持「待发送」整体感，靠<b>颜色 + WHO 标 + 副文案</b>三维度区分，不靠形状/位置分叉（避免割裂输入区节奏）。<b>提交共三种操作</b>（steer / followup / 立刻打断，见下触发表）；已排队消息按底层<b>双 FIFO</b> 分组展示（steering 先于 followUp，见 §5）。</p>
+
+<div class="grid9" style="grid-template-columns:1fr 1fr">
+  <div class="panel">
+    <h3>steer · 追加进当前回合</h3>
+    <div class="pending-bubble" style="margin:0">
+      <span class="pb-dot"></span><span class="pb-who">STEER 追加</span><span class="pb-sep"></span>
+      <span class="pb-text">顺便把注册页的 token 校验也改了</span>
+      <span class="pb-sub">当前回合后拾取</span>
+    </div>
+    <div class="note" style="margin-top:12px"><b>语义</b>：补充指令，AI 在<b>当前回合</b>内顺带处理。<b>色</b>：accent 蓝（产品主色，暗示「属于正在进行的事」）。</div>
+  </div>
+  <div class="panel">
+    <h3>followup · 开新轮</h3>
+    <div class="pending-bubble followup" style="margin:0">
+      <span class="pb-dot"></span><span class="pb-who">FOLLOWUP 新轮</span><span class="pb-sep"></span>
+      <span class="pb-text">改完后帮我加 refresh token 逻辑</span>
+      <span class="pb-sub">当前回合后开新轮</span>
+    </div>
+    <div class="note" style="margin-top:12px"><b>语义</b>：新需求，等当前回合结束后<b>另起一轮</b>。<b>色</b>：info 青（与 accent 同族冷色、有明显色相差，暗示「新的分支」，不撞思考紫）。</div>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>维度</th><th>steer</th><th>followup</th></tr></thead>
+  <tbody>
+    <tr><td>颜色</td><td>accent 蓝 <code>#4f8ef7</code></td><td>info 青 <code>#38bdf8</code></td></tr>
+    <tr><td>WHO 标</td><td>STEER 追加</td><td>FOLLOWUP 新轮</td></tr>
+    <tr><td>副文案</td><td>当前回合后拾取</td><td>当前回合后开新轮</td></tr>
+    <tr><td>runtime</td><td><code>rt.steer()</code></td><td><code>rt.followup()</code></td></tr>
+  </tbody>
+</table>
+<div class="note"><b>共同点</b>：虚线 + 脉冲点、<b>只读</b>（入队后不可撤销/修改——底层无单条撤回 API，RPC 亦无 clear_queue）、何时入流由 runtime 决定——composer 只管「已提交、排队中」的<b>只读展示</b>。<b>不区分</b>形状/位置/动画节奏，避免割裂输入区。</div>
+
+<div class="note warn"><b>⚠️ 暂不实现（当前版本 · 2026-06）</b>：「立刻打断 = abort + 转普通 prompt + 队列全清」基于旧假设。新调研证伪：pi 的 <code>abort()</code> <b>不碰队列</b>（只 <code>abortController.abort()</code> + <code>waitForIdle()</code>），abort 后残留 steer 在下次 <code>prompt()</code> 时被 loop 开头 <code>getSteeringMessages()</code> drain，<b>与新输入一起静默复活进 LLM</b>——用户以为「停掉重发」，实际 LLM 收到「旧 steer + 新消息」。且 RPC <b>无 <code>clear_queue</code> 命令</b>清不掉残留。<b>当前版本：待生效队列只读（只入队，入队后不可改/不可撤），立刻打断 + 撤回均暂不实现</b>，需后端先扩展 RPC（<code>clear_queue</code> + <code>get_queued_messages</code>）。steer/followup 提交不受影响。详见 <code>research/pi-steer-followup-capability.md</code>。</div>
+
+<h3>提交操作 · steer/followup（仅键盘）</h3>
+<p class="lede" style="margin-bottom:10px">S6（AI 执行中）下用户有<b>两种提交意图</b>，靠修饰键区分，<b>温和追加、不打断当前回合</b>：steer（<code>⏎</code>·追加进当前回合）/ followup（<code>Alt+⏎</code>·回合后开新轮）。底层是<b>两个独立 FIFO 队列</b>，steering 整体优先于 followUp（详见 <code>research/pi-steer-followup-capability.md</code>）。<b style="color:var(--danger)">立刻打断（abort 喊停）暂不实现</b>——abort 不清队列会复活 steer，见下方警示。</p>
+<table>
+  <thead><tr><th>操作</th><th>键位 / 入口</th><th>语义</th><th>底层</th></tr></thead>
+  <tbody>
+    <tr><td><b style="color:var(--accent)">steer</b></td><td><code>⏎</code>（仅 S6）</td><td>追加进<b>当前回合</b>，等当前工具/回合完再拾取</td><td><code>rt.steer()</code></td></tr>
+    <tr><td><b style="color:var(--info)">followup</b></td><td><code>Alt+⏎</code>（仅 S6）</td><td>当前回合<b>结束后开新轮</b></td><td><code>rt.followup()</code></td></tr>
+  </tbody>
+</table>
+<table>
+  <thead><tr><th>态</th><th><code>⏎</code></th><th><code>Alt+⏎</code></th></tr></thead>
+  <tbody>
+    <tr><td>非执行中（S1/S2/S4）</td><td>普通发送 → S5</td><td>普通发送 → S5（避免死键）</td></tr>
+    <tr><td><b>执行中（S6）</b></td><td><b style="color:var(--accent)">steer</b></td><td><b style="color:var(--info)">followup</b></td></tr>
+    <tr><td>空输入</td><td colspan="2">steer/followup 均无操作</td></tr>
+  </tbody>
+</table>
+<div class="note"><b>为何暂不做立刻打断</b>：abort 是「喊停」不是「插话」——它会中断当前 run（LLM 流 + 工具），但 <b>不清队列</b>，残留 steer 会在下次 prompt 静默复活（见上方警示）。要可靠实现「停掉重发」，需后端扩展 RPC <code>clear_queue</code>；composer 当前不提供此入口，避免假操作。<b>steer 仍是长任务插话的唯一手段</b>——入队后等当前工具跑完即生效（<code>executeToolCalls</code> 是 await，工具不可中断）。</div>
+<div class="note"><b>ring_accent 信号</b>：S6 态输入框聚焦时，composer-box ring <b>染 accent 蓝 + 呼吸脉冲</b>——typing 时即感知「按 Enter 会发 steer」。普通态（S2/S4）聚焦是中性 ring，<b>accent 蓝专属 steer</b>，不被普通聚焦稀释。<b>连续排队</b>：S6 发完一条仍处 S6 → 继续 <code>⏎</code> 追加 steer / <code>Alt+⏎</code> 追加 followup → 进 §5 双队列（steering / followUp 分组）。</div>
+
+<h3>队列模式 · all（高级 toggle，默认隐藏）</h3>
+<p class="lede" style="margin-bottom:10px">底层 drain 有两种模式：<b>one-at-a-time</b>（默认·每条独立一轮 LLM·每条得独立响应·token 开销大）与 <b>all</b>（多条合并成一次 LLM 调用的连续 user message·省 token 但无逐条响应）。<b>普通用户无需理解此区别，默认隐藏</b>；作为<b>高级 toggle</b> 暴露（场景：用户明确想「一次性把几个补充都给 LLM 看」）。toggle 位在 composer 高级设置（<b>不在主工具条</b>），开启后队列气泡标注「合并模式」。</p>
+
+<!-- §5 队列行为 -->
+<h2><span class="num">§5</span>双队列视图 · steering / followUp 分组（只读）</h2>
+<p class="lede">底层是<b>两个独立 FIFO 队列</b>：<code>steeringQueue</code>（steer）与 <code>followUpQueue</code>（followup），drain 时 <b>steering 整体优先于 followUp</b>——只要 steering 还有货，followUp 永不被消费。用户交错发 steer(A)→followup(B)→steer(C)→followup(D)，实际生效顺序是 <b>A→C→B→D</b>（非输入顺序）。所以队列视图必须<b>双队列分栏</b>，不能用单 FIFO——否则会掩盖 steer 的插队语义，用户误判生效顺序。</p>
+<div class="panel">
+  <h3>双队列分栏 · 反映真实生效顺序</h3>
+  <div class="grid9" style="margin-top:12px">
+    <!-- 折叠 -->
+    <div>
+      <div class="lede" style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">① 折叠（默认）</div>
+      <div class="queue-bubble">
+        <div class="qb-head">
+          <span class="qb-dot"></span><span class="qb-who">待发送</span><span class="qb-count">3 条</span>
+          <span class="qb-preview">steering 2 · followup 1</span>
+          <span class="qb-chev">▾</span>
+        </div>
+      </div>
+      <div class="note" style="margin-top:8px;font-size:12px;padding:9px 11px">显总数 + <b>两队列计数</b>（steering N · followup M），点击展开。</div>
+    </div>
+    <!-- 展开·双分组 -->
+    <div>
+      <div class="lede" style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">② 展开 · 双队列分组</div>
+      <div class="queue-bubble open">
+        <div class="qb-head">
+          <span class="qb-dot"></span><span class="qb-who">待发送</span><span class="qb-count">3 条</span>
+          <span class="qb-preview">steering 2 · followup 1</span><span class="qb-chev">▾</span>
+        </div>
+        <div class="qb-body">
+          <div class="qb-group steer">
+            <div class="qb-group-head"><span class="qb-gtag">STEERING</span><span class="qb-gsub">先生效 · 追加当前回合</span></div>
+            <div class="qb-item"><span class="qi-idx">1</span><span class="qi-tag">追加</span><span class="qi-text">顺便把注册页的 token 校验也改了</span></div>
+            <div class="qb-item"><span class="qi-idx">2</span><span class="qi-tag">追加</span><span class="qi-text">记得补单测覆盖刷新分支</span></div>
+          </div>
+          <div class="qb-group followup">
+            <div class="qb-group-head"><span class="qb-gtag">FOLLOWUP</span><span class="qb-gsub">后生效 · 回合后开新轮</span></div>
+            <div class="qb-item"><span class="qi-idx">3</span><span class="qi-tag">新轮</span><span class="qi-text">改完后帮我加 refresh token 逻辑</span></div>
+          </div>
+        </div>
+        <div class="qb-foot"><span class="qb-order">生效顺序：steering FIFO → followUp FIFO · 只读（入队后不可改）</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="note" style="margin-top:12px">
+    <b>双队列分组</b>：steering 组在上（<b>先生效</b>），followUp 组在下（<b>后生效</b>），虚线分隔。每组内严格 FIFO。<b>为何分栏</b>：steer 整体插队是底层硬语义，单 FIFO 视图会掩盖「steer 永远排在所有 followUp 前」，导致用户误判生效顺序。<br>
+    <b>实时同步</b>：订阅 <code>queue_update</code> 事件维护本地镜像 <code>steering[]</code> / <code>followUp[]</code>；已 drain 的（被 <code>message_start</code> 消费）从镜像 splice，实时反映「还剩几条」。
+  </div>
+</div>
+<div class="panel">
+  <div class="note warn"><b>⚠️ 当前决定：只读展示（2026-06）</b>：待生效队列在 RPC 下<b>只能入队 + 可见，无法清除/撤回/改类型</b>——<code>session.clearQueue()</code> 是 <b>TUI 专属</b>（仅 <code>handleDequeue</code> 调用），<b>RPC 无 <code>clear_queue</code> 命令</b>（grep RpcCommand 全空），亦无单条删除 API（PendingMessageQueue 无 <code>removeAt</code>）。若提供 dequeue 按钮，点了服务端队列清不掉，下次发送旧 steer 会静默复活 + 新输入双重注入——是<b>假按钮</b>。所以 composer <b>不提供任何队列写操作入口</b>（无 dequeue / 编辑 / 删除），只靠 <code>queue_update</code> 事件镜像只读展示。详见 <code>research/pi-steer-followup-capability.md</code>。</div>
+
+  <h3>队列只读 · 入队后不可改</h3>
+  <p class="lede" style="margin-bottom:10px">pi 底层队列写能力是<b>全有或全无</b>且 <b>TUI 专属</b>——只有 <code>clearQueue()</code>（全清），<b>没有单条删除 API</b>。RPC 连全清都做不到。所以 composer 当前版本：<b>只入队、只读展示，入队后不可修改/撤回/改类型</b>。已 drain 进 LLM 的消息完全不可撤回。</p>
+  <div class="note">
+    <b>可见</b>：订阅 <code>queue_update</code> 事件，steering/followUp 数组全量覆盖本地镜像，入队/出队/清空都实时同步。<br>
+    <b>不可写</b>：无 dequeue / 编辑 / 删除按钮，待发送气泡（单条 pending / 多条 queue）均<b>只读</b>，入队即不可改。<br>
+    <b>已 drain 的不可撤回</b>：消息一旦进 LLM 上下文（<code>message_start</code> 后）就是历史。<br>
+    <b>长期 TODO（后端先行）</b>：扩展 RPC <code>clear_queue</code> + <code>get_queued_messages</code>，PendingMessageQueue 加 <code>removeAt(i)</code>、AgentSession 加 <code>removeLastSteering()</code> 等，才能做可靠的撤回/草稿管理。
+  </div>
+</div>
+
+<!-- §6 输入暂存 -->
+<h2><span class="num">§6</span>输入暂存 · 切换 session/panel 不丢失</h2>
+<p class="lede">composer 的<b>全部输入态</b>按当前 session（及 panel）维度暂存，切换走开再回来，原样恢复。这是「舒适流畅」的基础——用户不该因为切个 tab 就丢草稿。</p>
+<table>
+  <thead><tr><th>暂存项</th><th>粒度</th><th>恢复时机</th></tr></thead>
+  <tbody>
+    <tr><td>输入文本（含 slash-token / 内联 @ #）</td><td>per session</td><td>切回该 session 即恢复光标位</td></tr>
+    <tr><td>已附上下文（@ / # / 附件）</td><td>per session</td><td>同上，附件引用一并恢复</td></tr>
+    <tr><td>模型选择</td><td>per session</td><td>每 session 记各自模型</td></tr>
+    <tr><td>思考等级</td><td>per session</td><td>同上</td></tr>
+    <tr><td>slash-token（/fix 等）</td><td>per session</td><td>随文本恢复</td></tr>
+    <tr><td>待发送队列（steer/followup）</td><td>per session</td><td>队列本身在 runtime，composer 仅镜像显示</td></tr>
+  </tbody>
+</table>
+<div class="note"><b>实现</b>：composer 维护一个 <code>draftStore[sessionId]</code>，输入/附件/模型/思考每次变更即写（debounce 200ms）；panel 切换时卸载当前、载入目标 session 的草稿。<b>不跨 session 共享</b>——每个 session 是独立草稿。<b>清空时机</b>：消息成功入流后清该次草稿（队列态除外）；显式「清空」按钮可手动清。</div>
+
+<!-- §7 状态机 + 未决 -->
+<h2><span class="num">§7</span>状态迁移 + 未决</h2>
+<p class="lede">9 态迁移路径。accent(steer) / info(followup) 为待发送态；队列容器 accent；danger 为失败态。</p>
+<table>
+  <thead><tr><th>从</th><th>到</th><th>触发</th></tr></thead>
+  <tbody>
+    <tr><td><code>S1 空</code></td><td><code>S2 输入中</code></td><td>输入文字</td></tr>
+    <tr><td><code>S2</code></td><td><code>S3 命令浮层</code></td><td>敲 <code>@</code> / <code>#</code> / <code>/</code></td></tr>
+    <tr><td><code>S2/S4</code></td><td><code>S5 发送中</code></td><td>点发送 / <code>⏎</code></td></tr>
+    <tr><td><code>S5</code></td><td><code>S9 失败</code></td><td>网络断 / runtime 拒绝</td></tr>
+    <tr><td><code>S5</code></td><td><code>S6 停止</code></td><td>消息入流，AI 开始工作</td></tr>
+    <tr><td><code>S6</code></td><td><code>S7 待发送</code></td><td>输入并发送 · <code>⏎</code> steer / <code>Alt+⏎</code> followup</td></tr>
+    <tr><td><code>S7</code></td><td><code>S8 队列</code></td><td>再发第 2 条</td></tr>
+    <tr><td><code>S6/S7/S8</code></td><td><code>S1 空</code></td><td>AI 自然停 / 被停 → 入流</td></tr>
+    <tr><td><code>S9</code></td><td><code>S2</code> / <code>S5</code></td><td>重试 → 重发（成功进 S5→S6）</td></tr>
+  </tbody>
+</table>
+
+<ul class="openlist">
+  <li class="resolved"><b>双队列视图</b> — 底层是双 FIFO（steeringQueue / followUpQueue），steer 整体插队。队列按 <b>steering / followUp 分组</b>展示（先生效 / 后生效），反映真实生效顺序（A→C→B→D 而非输入顺序），非单 FIFO。已落地 §5。</li>
+  <li class="resolved"><b>steer 与当前回合冲突</b> — 不管，后端 runtime 处理，composer 不感知。</li>
+  <li class="resolved"><b>上下文徽标 hover 列表</b> — 单独设计为 §2f「已附条目清单」，与 §2a「容量统计」分开。</li>
+  <li class="resolved"><b>thinking-level 高级别配色 + 默认值</b> — medium 柔紫 → high 纯紫 → xhigh + 光晕 → max 实色块（紫底白字 + 外发光）。<b>默认即 max</b>（开 composer 即最高思考强度，紫底按钮常驻提示）。已定稿 §2c。</li>
+  <li class="resolved"><b>发送失败回退态</b> — 回退 S2（输入全保留）+ composer-box 顶部一条 error 提示条（非 toast），含重试 / ×。已落地 S9。</li>
+  <li class="resolved"><b>steer / followup 触发方式</b> — <b>仅键盘</b>，锁定 S6（执行中）：<code>⏎</code>=steer（追加）/ <code>Alt+⏎</code>=followup（新轮）；非 S6 普通发送；空输入无操作。S6 聚焦 ring 染 accent 蓝 + 呼吸（steer 信号）。已落地 §4 触发表 + S6/S7。</li>
+  <li class="resolved"><b>立刻打断提交</b> — <b>当前版本暂不实现</b>：abort + 转普通 prompt + 队列全清。底层 <code>abort()</code> <b>不清队列</b>，残留 steer 会在下次 <code>prompt()</code> 静默复活进 LLM；RPC 亦无 <code>clear_queue</code> 清不掉残留。需后端先扩展 RPC（<code>clear_queue</code> + <code>get_queued_messages</code>）才能可靠实现「停掉重发」。详见 §4 警示 + research/pi-steer-followup-capability.md。</li>
+  <li class="resolved"><b>队列撤回 / 写操作</b> — <b>当前版本：只读展示，不做写操作</b>。<code>clearQueue()</code> 是 TUI 专属，RPC 无 <code>clear_queue</code>，dequeue 按钮在 RPC 下是假按钮（点了清不掉）。待生效队列只入队、只读镜像（<code>queue_update</code>），入队后不可改/不可撤。长期 TODO：扩展 RPC <code>clear_queue</code> + SDK <code>removeAt</code>。详见 §5 + research/pi-steer-followup-capability.md。</li>
+  <li class="resolved"><b>all 模式</b> — one-at-a-time（默认·逐条独立响应）vs all（多条合并一次 LLM·省 token 无逐条响应）。<b>默认隐藏</b>，作为高级 toggle 暴露（不在主工具条）。已落地 §4。</li>
+</ul>
+
+<div class="footer-note">
+  panel/draft-composer-states.html · composer zone · 上游 panel/spec.md §composer · 原语 design-system.md Input/Popover/Button<br>
+  待发送视觉对齐 draft-message-stream §4 附录 Output Text/Steer 块 · composer 原语与 draft-dual-panel.html composer-box 同源
+</div>
+
+</body>
+</html>

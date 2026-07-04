@@ -1,17 +1,52 @@
 /**
- * Cross-platform path comparison utilities.
- * Use path.relative() to avoid OS-specific separator issues.
+ * Cross-platform path utilities: `~` expansion/normalization + comparison helpers.
+ *
+ * [修复] isUnderOrEqual 曾被误迁到 @xyz-agent/shared（W1a），但 shared 是浏览器/runtime 共享层，
+ * node:path 在浏览器被 vite externalize 成空对象 → dev 启动崩溃。isUnderOrEqual 所有调用点
+ * 都在 runtime（file-service / git-service / extension-service），属 runtime 专用，回归此文件。
+ *
+ * expandHome / normalizeToHome 是 R4 收敛的单一权威定义：此前 scanner-base /
+ * config-service / skill-dir-config / pi-provider-store 各自复制了同一份逻辑，
+ * 注释自承「与 scanner-base.expandHome 对齐」。现统一自此 import。
  */
-import { relative, resolve, isAbsolute } from 'node:path'
+import { relative, resolve, isAbsolute, join } from 'node:path'
+import { homedir } from 'node:os'
+
+/**
+ * 展开 `~` 前缀为用户家目录（`~/.pi` → `/Users/.../.pi`）。无 `~` 前缀则原样返回。
+ *
+ * 单一权威定义（R4）：scanner-base / config-service / skill-dir-config 不再各自复制。
+ */
+export function expandHome(p: string): string {
+  return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
+}
+
+/**
+ * 家目录下的绝对路径归一化为 `~` 前缀（`/Users/.../.pi` → `~/.pi`），便于与 UI 预设候选统一比较。
+ * 家目录本身归一为 `~`；非家目录路径原样返回。与 {@link expandHome} 互逆。
+ */
+export function normalizeToHome(p: string): string {
+  const home = homedir()
+  if (p === home) return '~'
+  if (p.startsWith(`${home}/`)) return `~${p.slice(home.length)}`
+  return p
+}
+
+/**
+ * 判断 child 是否在 parent 目录下或等于 parent（词法判定，不解析 symlink）。
+ *
+ * 算法：path.relative(parent, child) → 结果为空串/不以 '..' 开头/不以路径分隔符开头 → true。
+ * 使用 path.resolve 规范化后再比较，处理 '..' 和多余分隔符。
+ *
+ * 安全语义：用于文件树越界守门（listTree/expandDir/readFile 入口校验 path 不逃出 cwd）。
+ */
+export function isUnderOrEqual(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
 
 /** Is `child` strictly under `parent` (not equal)? */
 export function isStrictlyUnder(parent: string, child: string): boolean {
   const rel = relative(resolve(parent), resolve(child))
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
-}
-
-/** Is `child` under or equal to `parent`? */
-export function isUnderOrEqual(parent: string, child: string): boolean {
-  const rel = relative(resolve(parent), resolve(child))
-  return !rel.startsWith('..') && !isAbsolute(rel)
 }

@@ -1,11 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+
+/**
+ * 动态装配真实的 EventAdapter + EventInterpreter（绕过本文件顶部的 vi.mock(event-adapter.js)）。
+ * 返回的 adapter 与生产装配等价：translate 纯翻译 → interpreter 业务编排。
+ */
+async function buildRealAdapter(
+  sessionId: string,
+  send: (msg: unknown) => void,
+  options: Record<string, unknown>,
+): Promise<{ attach(c: unknown): void; detach(): void }> {
+  const [{ EventAdapter }, { EventInterpreter }] = await Promise.all([
+    vi.importActual<typeof import('../src/infra/pi/event-adapter.js')>('../src/infra/pi/event-adapter.js'),
+    vi.importActual<typeof import('../src/services/session/event-interpreter.js')>('../src/services/session/event-interpreter.js'),
+  ])
+  const interpreter = new EventInterpreter(sessionId, { send: send as never, ...options } as never)
+  return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
+}
+
+// IGitInfoReader 桩：SessionService 被 vi.mock 整体替换（构造参数不被使用），仅满足构造签名。
+const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
 /**
  * Bridge extension message format tests.
  *
  * Test strategy:
  * - EventAdapter bridge detection: unit test the translate method for bridge: methods
- * - Server bridge routing: test handleBridgeRequest directly with mock IRpcClient
+ * - Server bridge routing: test handleBridgeRequest directly with mock IPiEngine
  * - Extension timeout bridge tracking: test registerExtensionTimeout for bridge: methods
  */
 
@@ -13,7 +34,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -75,7 +96,7 @@ vi.mock('../src/services/plugin-service/plugin-service.js', () => ({
   },
 }))
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -88,32 +109,44 @@ vi.mock('../src/process-manager.js', () => ({
   },
 }))
 
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
   },
 }))
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => [],
-  refreshAll: () => {},
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => [] }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return { ...actual, getSessionsDir: () => '/mock/sessions' }
+})
 
-vi.mock('../src/extension-service.js', () => {
+vi.mock('../src/services/extension-service.js', () => {
   return {
     ExtensionService: class MockExtensionService {
       scanExtensions = vi.fn().mockResolvedValue([])
@@ -124,12 +157,12 @@ vi.mock('../src/extension-service.js', () => {
   }
 })
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-import { SidecarServer } from '../src/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { RuntimeServer } from '../src/transport/server.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 
 // ── EventAdapter unit tests (using vi.importActual to bypass mock) ──
@@ -154,11 +187,9 @@ function attachAndEmit(adapter: any, mockClient: { onEvent: ReturnType<typeof vi
 
 describe('EventAdapter: bridge method detection', () => {
   it('detects bridge: prefix in extension_ui_request and calls callback', async () => {
-    const { EventAdapter } = await vi.importActual<typeof import('../src/event-adapter.js')>('../src/event-adapter.js')
-
     const bridgeCallback = vi.fn()
     const wsSender = vi.fn()
-    const adapter = new EventAdapter('test-session', wsSender, {
+    const adapter = await buildRealAdapter('test-session', wsSender, {
       onBridgeUIRequest: bridgeCallback,
     })
 
@@ -185,12 +216,10 @@ describe('EventAdapter: bridge method detection', () => {
   })
 
   it('routes multiple bridge methods without frontend timeout registration', async () => {
-    const { EventAdapter } = await vi.importActual<typeof import('../src/event-adapter.js')>('../src/event-adapter.js')
-
     const bridgeCallback = vi.fn()
     const extensionCallback = vi.fn()
     const wsSender = vi.fn()
-    const adapter = new EventAdapter('test-session', wsSender, {
+    const adapter = await buildRealAdapter('test-session', wsSender, {
       onExtensionUIRequest: extensionCallback,
       onBridgeUIRequest: bridgeCallback,
     })
@@ -215,12 +244,10 @@ describe('EventAdapter: bridge method detection', () => {
   })
 
   it('does not interfere with non-bridge extension_ui_request methods', async () => {
-    const { EventAdapter } = await vi.importActual<typeof import('../src/event-adapter.js')>('../src/event-adapter.js')
-
     const extensionCallback = vi.fn()
     const bridgeCallback = vi.fn()
     const wsSender = vi.fn()
-    const adapter = new EventAdapter('test-session', wsSender, {
+    const adapter = await buildRealAdapter('test-session', wsSender, {
       onExtensionUIRequest: extensionCallback,
       onBridgeUIRequest: bridgeCallback,
     })
@@ -244,18 +271,17 @@ describe('EventAdapter: bridge method detection', () => {
 
 // ── Server bridge routing tests ──────────────────────────────────
 
-describe('SidecarServer: bridge request routing', () => {
-  let server: SidecarServer
+describe('RuntimeServer: bridge request routing', () => {
+  let server: RuntimeServer
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(0, '/tmp/test-project')
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     const pluginService = new PluginService({} as never, server)
     server.setServices(
       sessionService,
-      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -286,37 +312,23 @@ describe('SidecarServer: bridge request routing', () => {
 
     it('aggregates tools from plugin contributions', async () => {
       const pluginService = new PluginService({} as never, server)
-      // Override getDiscoveredPlugins to return a plugin with tools
+      // Override getDiscoveredPlugins to return a plugin (PluginInfo[]; tools
+      // are now surfaced via getBridgeSyncPayload, not descriptor contributes)
       vi.mocked(pluginService.getDiscoveredPlugins).mockReturnValue([
         {
           pluginId: 'test-plugin',
           version: '1.0.0',
           displayName: 'Test Plugin',
           description: 'A test plugin',
-          main: 'index.js',
-          activationEvents: ['onStartupFinished'],
+          status: 'active',
           trustLevel: 'sandbox',
-          status: 'ACTIVE' as const,
-          contributes: {
-            tools: [
-              { name: 'hello', description: 'Says hello', parameters: { type: 'object', properties: {} } },
-              { name: 'goodbye', description: 'Says goodbye', parameters: { type: 'object', properties: {} } },
-            ],
-            slashCommands: [
-              { name: '/test', description: 'Test command' },
-            ],
-          },
-          permissions: [],
-          engines: { 'xyz-agent': '>=0.1.0' },
-          pluginPath: '/tmp/plugins/test-plugin',
-          source: 'built-in' as const,
-          extensionDependencies: [],
+          enabled: true,
         },
       ])
 
       // Re-set services to use the overridden mock
-      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
-      server.setServices(sessionService, {} as never, {} as never, {} as never, {} as never, pluginService)
+      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
+      server.setServices(sessionService, {} as never, {} as never, {} as never, pluginService)
       mockSendCommand.mockClear()
 
       await server.handleBridgeRequest('sess-1', 'bridge-req-2', 'bridge:sync', {})
@@ -399,15 +411,15 @@ describe('SidecarServer: bridge request routing', () => {
 
 // ── Extension timeout: bridge message exclusion ──────────────────
 
-describe('SidecarServer: bridge timeout exclusion', () => {
-  let server: SidecarServer
+describe('RuntimeServer: bridge timeout exclusion', () => {
+  let server: RuntimeServer
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
+    server = new RuntimeServer(0, '/tmp/test-project')
     server.setServices(
-      new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never),
+      new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
       {} as never,
       {} as never,
       {} as never,

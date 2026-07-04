@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# prepare-pi-resources.sh — Download pi binary and copy extensions/skills for local build testing.
+# prepare-pi-resources.sh — Download pi binary for local build / CI.
+#
+# pi binary comes from upstream badlogic/pi-mono releases (not a fork).
+# Builtin extensions (goal/todo/subagents/workflow/structured-output) are
+# declared in root package.json dependencies and resolved via npm — this
+# script does NOT handle them (dev: scanNpmExtensions, packaged: extraResources).
+# Skills are user/project-level (~/.agents/skills, <cwd>/.pi/agent/skills) —
+# not bundled with the app.
+#
 # Usage: ./scripts/prepare-pi-resources.sh [PI_VERSION]
-# CI 和本地开发共用此脚本，减少维护成本。
 set -euo pipefail
 
-PI_VERSION="${1:-0.75.5-xyz-0.1}"
+PI_VERSION="${1:-0.80.3}"
 PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
@@ -16,9 +23,6 @@ case "$ARCH" in
 esac
 
 RESOURCES_DIR="src-electron/resources/pi"
-AGENT_DIR="${RESOURCES_DIR}/agent"
-EXTENSIONS_DIR="${AGENT_DIR}/extensions"
-SKILLS_DIR="${AGENT_DIR}/skills"
 
 echo "=== prepare-pi-resources ==="
 echo "Platform: ${PLATFORM}  Arch: ${PI_ARCH}  Version: ${PI_VERSION}"
@@ -47,7 +51,7 @@ if [ -f "$BINARY_PATH" ]; then
 else
   echo "Downloading pi v${PI_VERSION} (${ASSET})..."
   gh release download "v${PI_VERSION}" \
-    -R zhushanwen321/pi \
+    -R badlogic/pi-mono \
     -p "$ASSET" \
     -D "$RESOURCES_DIR" \
     --clobber
@@ -80,29 +84,6 @@ else
   rm -f "$ASSET"
   chmod +x "${BINARY_NAME}" 2>/dev/null || true
   popd > /dev/null
-fi
-
-# --- Copy extensions from vendor submodule ---
-echo "Copying extensions from vendor/xyz-pi-extensions/..."
-mkdir -p "$EXTENSIONS_DIR"
-for ext in subagent goal todo; do
-  if [ -d "vendor/xyz-pi-extensions/${ext}" ]; then
-    cp -RL "vendor/xyz-pi-extensions/${ext}" "$EXTENSIONS_DIR/"
-    echo "  copied: ${ext}"
-  else
-    echo "  missing: ${ext} (submodule not initialized? run: git submodule update --init)"
-  fi
-done
-
-# --- Copy skills from vendor submodule ---
-echo "Copying skills from vendor/xyz-harness/skills/..."
-mkdir -p "$SKILLS_DIR"
-if [ -d "vendor/xyz-harness/skills" ]; then
-  cp -RL vendor/xyz-harness/skills/* "$SKILLS_DIR/"
-  SKILL_COUNT=$(ls -1 "$SKILLS_DIR" | wc -l | tr -d ' ')
-  echo "  copied: ${SKILL_COUNT} skills"
-else
-  echo "  missing: vendor/xyz-harness/skills/ (submodule not initialized?)"
 fi
 
 echo "=== Done ==="

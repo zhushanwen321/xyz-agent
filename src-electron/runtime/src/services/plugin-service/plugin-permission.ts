@@ -12,19 +12,16 @@
 
 import type { PluginRegistry } from './plugin-registry.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
-import { join } from 'node:path'
-import { getConfigDir } from '../../pi-config-bridge.js'
 
 export class PluginPermissionChecker {
   private registry: PluginRegistry
   private granted = new Map<string, Set<string>>()
   private storage: PermissionStorage
 
-  constructor(registry: PluginRegistry, storage?: PermissionStorage) {
+  /** @param storage 权限持久化存储，由组合根注入（不再直连 infra 取默认目录）。 */
+  constructor(registry: PluginRegistry, storage: PermissionStorage) {
     this.registry = registry
-    this.storage = storage ?? new PermissionStorage(
-      join(getConfigDir(), 'plugins'),
-    )
+    this.storage = storage
   }
 
   /**

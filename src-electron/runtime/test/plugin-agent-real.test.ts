@@ -42,7 +42,6 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
     compact: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue([]),
     restoreSession: vi.fn().mockResolvedValue(undefined),
-    rebindAfterFork: vi.fn().mockResolvedValue(undefined),
     hasActiveSession: vi.fn().mockReturnValue(true),
     getRpcClient: vi.fn().mockReturnValue(undefined),
     destroyAll: vi.fn().mockResolvedValue(undefined),
@@ -51,7 +50,7 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
 
 function createService(sessionService?: ISessionService): PluginService {
   const broker = createMockBroker()
-  const registry = new PluginRegistry('/tmp/fake-project')
+  const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
   const deps: IPluginServiceDeps = {
     sessionService,
   }
@@ -188,7 +187,7 @@ describe('Agent RPC Handlers — real implementation', () => {
 
   it('falls back to stub when sessionService is undefined', async () => {
     const broker = createMockBroker()
-    const registry = new PluginRegistry('/tmp/fake-project')
+    const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
     const service = new PluginService(registry, broker)
 
     const model = await callMethod(service, 'plugin.agent.getModel', {})

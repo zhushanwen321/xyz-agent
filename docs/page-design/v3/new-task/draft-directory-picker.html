@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>系统目录选择器 + 创建并检出分支 · modal · new-task modals</title>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --bg-input:#101013; --bg-elevated:#1c1c20;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.45);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --shadow-modal:0 0 0 1px rgba(0,0,0,0.3),0 24px 70px rgba(0,0,0,0.55);
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --duration-fast:120ms; --duration:200ms; --duration-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  h3{font-size:14px;font-weight:600;margin:32px 0 8px;color:var(--fg);letter-spacing:0.01em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:820px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+  .note.warn{border-left-color:var(--warning)}
+  .note.warn b{color:var(--warning)}
+
+  /* ===== window-mock 拓扑（与 landing 同源） ===== */
+  .window-mock{position:relative;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);margin-top:14px}
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:#fc6155} .dot-yellow{background:#fdb40a} .dot-green{background:#34c84a}
+  .app-shell{display:flex;height:680px;padding:12px;gap:12px}
+  .aside-region{width:200px;flex-shrink:0;padding-top:52px;padding-left:2px;display:flex;flex-direction:column}
+  .a-logo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:0 8px 14px}
+  .a-logo .a-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0}
+  .a-nav{display:flex;flex-direction:column;gap:1px;padding:0 4px}
+  .a-item{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);
+    padding:6px 8px;border-radius:6px;cursor:pointer}
+  .a-item.active{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .a-item svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;flex-shrink:0}
+  .main-panel{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 24px 64px;position:relative;overflow:hidden;background:var(--bg)}
+  .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
+    font:600 220px/1 var(--font-sans);color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;user-select:none;pointer-events:none}
+  .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
+    margin:0 0 28px;text-align:center;position:relative;z-index:1}
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;
+    background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+  .composer.focus{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(255,255,255,0.04)}
+  .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:1px solid transparent;border-radius:var(--radius);
+    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer;max-width:200px}
+  .chip:hover{background:var(--surface-hover);color:var(--fg)}
+  .chip.open{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .chip .ch-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+  .chip .ch-chev{color:var(--subtle);width:11px;height:11px}
+  .chip.branch-chip .ch-ic{color:var(--accent)}
+  .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
+  .composer-area{min-height:80px;width:100%;border:0;outline:0;background:transparent;
+    color:var(--fg);font:14px/1.55 var(--font-sans);padding:14px 16px 8px}
+  .composer-area[data-placeholder]:empty:before{content:attr(data-placeholder);color:var(--subtle);pointer-events:none}
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px}
+  .c-insert{width:28px;height:28px;border:0;background:transparent;border-radius:var(--radius-sm);
+    color:var(--subtle);display:grid;place-items:center;cursor:pointer}
+  .c-insert:hover{background:var(--surface-hover)}
+  .c-insert svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5}
+  .perm{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;
+    background:transparent;border:0;border-radius:var(--radius-sm);
+    color:var(--warning);font:500 12px/1 var(--font-sans);cursor:pointer}
+  .perm:hover{background:var(--surface-hover)}
+  .perm svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5}
+  .perm .ch-chev{color:var(--warning);width:11px;height:11px;opacity:0.7}
+  .bar-spacer{flex:1}
+  .bar-sel{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:0;border-radius:var(--radius-sm);
+    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer}
+  .bar-sel:hover{background:var(--surface-hover);color:var(--fg)}
+  .bar-sel .dot-o{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+  .bar-sel .brain{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;color:var(--muted)}
+  .bar-sel .ch-chev{color:var(--subtle);width:11px;height:11px}
+  .send{width:32px;height:32px;border:0;background:var(--surface-2);
+    border-radius:var(--radius);color:var(--muted);display:grid;place-items:center;cursor:pointer}
+  .send:hover{background:var(--surface-hover);color:var(--fg)}
+  .send svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2}
+
+  /* ===== Modal 通用（settings-shell 同源 · 居中 + 模糊背景） ===== */
+  .stage.blurred .landing,.stage.blurred .meta-row,.stage.blurred .composer-area,
+  .stage.blurred .composer-bar{filter:blur(2px) brightness(0.7);transition:filter var(--duration-slow) var(--ease)}
+  .backdrop{position:absolute;inset:0;background:rgba(7,7,9,0.55);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:200}
+  .modal{position:absolute;background:var(--surface);border:1px solid var(--border-strong);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-modal);z-index:201;
+    display:flex;flex-direction:column;overflow:hidden}
+
+  /* ===== §1 系统原生目录选择器说明（不自绘，调用 OS dialog） ===== */
+  .native-flow{display:flex;align-items:stretch;gap:10px;margin:16px 0}
+  .native-step{flex:1;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:13px 14px;display:flex;flex-direction:column;gap:7px}
+  .native-step .ns-num{font:600 10px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 7px;border-radius:var(--radius-sm);align-self:flex-start;letter-spacing:0.04em}
+  .native-step .ns-title{font-size:13px;font-weight:600;color:var(--fg)}
+  .native-step .ns-desc{font:12px/1.5 var(--font-sans);color:var(--muted)}
+  .native-step .ns-desc code{font-size:11px}
+  .native-arrow{display:grid;place-items:center;color:var(--subtle);font-size:18px;flex-shrink:0}
+  /* OS 原生 UI 占位框（虚线，表示应用不渲染） */
+  .os-placeholder{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:420px;border:1.5px dashed var(--border-strong);border-radius:var(--radius);
+    background:rgba(28,28,32,0.7);padding:26px 24px;text-align:center;z-index:201}
+  .os-placeholder .op-ic{width:40px;height:40px;margin:0 auto 12px;color:var(--subtle);
+    fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+  .os-placeholder .op-title{font-size:14px;font-weight:600;color:var(--fg);margin-bottom:5px}
+  .os-placeholder .op-sub{font:12px/1.55 var(--font-sans);color:var(--muted)}
+  .os-placeholder .op-tag{display:inline-block;margin-top:12px;font:600 10px/1 var(--font-mono);
+    color:var(--warning);background:rgba(245,165,36,0.1);border:1px solid rgba(245,165,36,0.3);
+    padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.04em}
+  /* IPC 代码块（静态展示） */
+  .code-block{background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius);padding:14px 16px;margin:14px 0;
+    font:12px/1.7 var(--font-mono);color:var(--muted);overflow-x:auto;white-space:pre}
+  .code-block .ck{color:var(--reasoning)}
+  .code-block .cs{color:var(--success)}
+  .code-block .cc{color:var(--subtle)}
+  .code-block .cf{color:var(--accent)}
+  .picker-foot .pf-hint{margin-right:auto;font:500 11px/1.4 var(--font-mono);color:var(--subtle)}
+  .picker-foot .pf-hint b{color:var(--fg)}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;
+    background:transparent;border:1px solid var(--border-strong);color:var(--fg);
+    border-radius:var(--radius);font:600 12px/1 var(--font-sans);cursor:pointer;
+    transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .btn:hover{background:var(--surface-hover)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+  .btn:disabled{opacity:0.4;cursor:not-allowed}
+  .btn:disabled:hover{background:transparent;border-color:var(--border-strong)}
+
+  /* ===== §2 创建并检出新分支 · 560×auto ===== */
+  .branch-create{top:50%;left:50%;transform:translate(-50%,-50%);
+    width:560px;height:auto}
+  .bc-head{display:flex;align-items:center;padding:16px 20px 0;flex-shrink:0}
+  .bc-title{font-size:16px;font-weight:650;color:var(--fg);flex:1;letter-spacing:-0.01em}
+  .bc-close{display:grid;place-items:center;width:28px;height:28px;border:0;
+    border-radius:var(--radius-sm);background:transparent;color:var(--muted);cursor:pointer;flex-shrink:0}
+  .bc-close:hover{color:var(--fg);background:var(--surface-hover)}
+  .bc-close svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6}
+  .bc-body{padding:14px 20px 18px}
+  .bc-desc{font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:18px}
+  .bc-label{font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:500}
+  .bc-input-wrap{position:relative}
+  .bc-input{width:100%;background:var(--bg-input);border:1px solid var(--border);
+    color:var(--fg);padding:9px 12px;border-radius:var(--radius);
+    font:13px/1 var(--font-mono);outline:none;height:38px;
+    transition:border-color var(--duration-fast) var(--ease),box-shadow var(--duration-fast) var(--ease)}
+  .bc-input:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .bc-input::placeholder{color:var(--subtle);font-family:var(--font-sans);font-size:13px}
+  .bc-input.has-error{border-color:var(--danger);box-shadow:inset 0 0 0 1px rgba(239,68,68,0.3)}
+  .bc-error{display:flex;align-items:center;gap:5px;margin-top:6px;
+    font:500 11.5px/1.4 var(--font-sans);color:var(--danger)}
+  .bc-hint{font-size:12px;color:var(--subtle);margin-top:8px;line-height:1.55}
+  .bc-foot{display:flex;justify-content:flex-end;gap:8px;padding:0 20px 18px}
+
+  .anno{position:absolute;font:500 10px/1.2 var(--font-mono);padding:3px 6px;border-radius:3px;
+    pointer-events:none;z-index:60;white-space:nowrap;letter-spacing:0.02em}
+  .anno.a{color:var(--accent);background:rgba(79,142,247,0.08);border:1px solid var(--accent)}
+  .anno.m{color:var(--muted);background:rgba(138,138,149,0.08);border:1px solid var(--muted)}
+  .anno.w{color:var(--warning);background:rgba(245,165,36,0.08);border:1px solid var(--warning)}
+
+  .flow-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px}
+  .flow-table th,.flow-table td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .flow-table th{font:500 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em;font-weight:500}
+  .flow-table td b{color:var(--fg)}
+  .flow-table .step{font:600 11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);
+    padding:3px 7px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+
+<!-- ===== 共享 SVG symbol ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/><path d="M8 6.5v3M6.5 8h3"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="3.5" cy="3" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><path d="M3.5 4.5v7M3.5 8h4a3 3 0 0 0 3-3V3.5"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+    <symbol id="i-chev-r" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.5l5.5 2v5c0 3-2.5 5.5-5.5 6-3-0.5-5.5-3-5.5-6v-5z"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 16 16"><path d="M6 2.5a2 2 0 0 0-2 2 2 2 0 0 0-1 3.5A2 2 0 0 0 4 11a2 2 0 0 0 2 2 2 2 0 0 0 2-2M10 2.5a2 2 0 0 1 2 2 2 2 0 0 1 1 3.5A2 2 0 0 1 12 11a2 2 0 0 1-2 2 2 2 0 0 1-2-2M6 13V3.5M10 13V3.5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 16 16"><path d="M8 13V3M4.5 6.5L8 3l3.5 3.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-home" viewBox="0 0 16 16"><path d="M8 2.5L2.5 7v6.5h3V10h5v3.5h3V7z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 16 16"><path d="M3.5 2h5l3 3v9h-8z"/><path d="M8.5 2v3h3"/></symbol>
+    <symbol id="i-desktop" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="9" rx="1"/><path d="M5 14h6M8 11.5V14"/></symbol>
+    <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2.5v8M5 7.5L8 10.5l3-3M2.5 13.5h11"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 16 16"><path d="M5 12.5a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.6-0.5 2.5 2.5 0 0 1 0.4 5H5z"/></symbol>
+    <symbol id="i-disk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="2"/></symbol>
+    <symbol id="i-up" viewBox="0 0 16 16"><path d="M4 6l4-4 4 4M8 2.5v11"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 16 16"><path d="M4 5h8M5 8h6M6 11h4"/></symbol>
+    <symbol id="i-views" viewBox="0 0 16 16"><rect x="2" y="3" width="5" height="5"/><rect x="9" y="3" width="5" height="5"/><rect x="2" y="10" width="5" height="4"/><rect x="9" y="10" width="5" height="4"/></symbol>
+  </defs>
+</svg>
+
+<h1>创建并检出分支 · modal（目录选择走系统原生）</h1>
+<p class="lede">
+  「新建任务」流程的<b>第 4 步</b>。<b>打开文件夹</b> 走 <b>操作系统原生目录选择器</b>（Electron <code>dialog.showOpenDialog</code>，不自绘，§1）；<b>创建并检出新分支</b> 是居中表单 modal（§2）。
+</p>
+<div class="meta">
+  <span>层级 <b>L1 · §1 OS 原生 / §2 全局 modal</b></span>
+  <span>触发 <b>directory popover「打开文件夹」 / branch popover「创建分支」</b></span>
+  <span>形态 <b>§1 OS dialog · §2 居中模糊 modal</b></span>
+  <span>归属 <b>overlays 单元</b></span>
+  <span>token <b>zcode 冷蓝</b></span>
+</div>
+
+<h2><span class="num">§1</span>打开文件夹 · 系统原生目录选择器（不自绘）</h2>
+<p class="lede">
+  用户在 directory popover 点「打开文件夹」后，<b>直接调用操作系统原生目录选择器</b>（Electron <code>dialog.showOpenDialog</code>）。
+  理由：① 原生体验用户最熟悉（系统级收藏 / 搜索 / 快捷键开箱即用）；② 免维护 mac / win / linux 三套 picker UI，且自绘永远不如原生；
+  ③ 文件权限由 OS 托管，应用不重复造轮子。
+</p>
+
+<!-- 触发流程示意（三步横向） -->
+<div class="native-flow">
+  <div class="native-step">
+    <span class="ns-num">① 触发</span>
+    <span class="ns-title">点「打开文件夹」</span>
+    <span class="ns-desc">directory popover 动作项 → renderer 经 IPC 调 <code>dialog.showOpenDialog</code></span>
+  </div>
+  <div class="native-arrow">→</div>
+  <div class="native-step">
+    <span class="ns-num">② OS 原生</span>
+    <span class="ns-title">系统目录选择器</span>
+    <span class="ns-desc">mac NSOpenPanel / win IFileOpenDialog / linux GTK · <b>应用不渲染此 UI</b>，全权交 OS</span>
+  </div>
+  <div class="native-arrow">→</div>
+  <div class="native-step">
+    <span class="ns-num">③ 回灌</span>
+    <span class="ns-title">选中目录回 chip</span>
+    <span class="ns-desc">返回 <code>filePaths[0]</code> → 更新 directory chip + 重新载入工作区</span>
+  </div>
+</div>
+
+<div class="window-mock">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item active"><svg viewBox="0 0 16 16"><use href="#i-new"/></svg>新建任务</div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg>搜索</div>
+      </div>
+    </div>
+    <div class="main-panel">
+      <div class="stage blurred" style="position:absolute;inset:0">
+        <div class="landing">
+          <span class="watermark">xyz</span>
+          <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+          <div class="composer focus">
+            <div class="meta-row">
+              <button class="chip"><svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg><span class="ch-name">refactor-goal-extension</span><svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <div class="meta-sep"></div>
+              <button class="chip branch-chip"><svg viewBox="0 0 16 16"><use href="#i-branch"/></svg><span class="ch-name">refactor-goal-…</span><svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            </div>
+            <div class="composer-area" data-placeholder="向 ZCode 提问…" contenteditable="true"></div>
+            <div class="composer-bar">
+              <button class="c-insert"><svg viewBox="0 0 16 16"><use href="#i-plus"/></svg></button>
+              <button class="perm"><svg viewBox="0 0 16 16"><use href="#i-shield"/></svg>完全访问<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <div class="bar-spacer"></div>
+              <button class="bar-sel"><span class="dot-o"></span>GLM-5.2<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <button class="bar-sel"><svg class="brain" viewBox="0 0 16 16"><use href="#i-brain"/></svg>最高<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <button class="send"><svg viewBox="0 0 16 16"><use href="#i-send"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <!-- backdrop 模糊背景 -->
+        <div class="backdrop"></div>
+        <!-- OS 原生目录选择器占位（应用不渲染此 UI，全权交 OS） -->
+        <div class="os-placeholder">
+          <svg class="op-ic" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 13l5-3 4 3 3-2 6 4"/></svg>
+          <div class="op-title">系统目录选择器</div>
+          <div class="op-sub">此处为操作系统原生 UI<br/>mac NSOpenPanel · win IFileOpenDialog · linux GTK</div>
+          <span class="op-tag">应用不渲染 · OS 托管</span>
+          <span class="anno a" style="left:50%; bottom:-30px; transform:translateX(-50%);">z-index 由 OS 决定 · 浮于应用窗口之上</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>关键裁决</b>：
+  ① <b>不自绘 picker</b>——三平台原生 picker 已足够好，自绘只会增加维护成本且永远不如原生；
+  ② <b>应用零干预</b>——选中 / 取消 / 导航 / 权限全部由 OS 处理，renderer 只拿 <code>filePaths[0]</code> 结果；
+  ③ <b>无键盘契约章节</b>——键盘行为完全跟随 OS（本应用不定义）；
+  ④ <b>取消处理</b>：<code>result.canceled === true</code> 时落回 directory popover，chip 不变。
+</div>
+
+<h3>§1.1 IPC 调用（main 进程 · 经 preload 暴露）</h3>
+<div class="code-block"><span class="cc">// main：响应 renderer 的「打开文件夹」IPC</span>
+<span class="ck">const</span> result = <span class="ck">await</span> dialog.<span class="cf">showOpenDialog</span>({
+  <span class="cf">properties</span>: [<span class="cs">'openDirectory'</span>],
+  <span class="cf">defaultPath</span>: lastDirectory,  <span class="cc">// 默认起始位置（上次目录 / cwd）</span>
+})
+<span class="ck">if</span> (!result.canceled) {
+  <span class="ck">const</span> dir = result.filePaths[<span class="cs">0</span>]  <span class="cc">// → 回灌 directory chip + 载入工作区</span>
+}</div>
+
+<h3>§1.2 平台行为（OS 托管，应用不干预）</h3>
+<table class="flow-table">
+  <thead><tr><th>平台</th><th>原生组件</th><th>键盘 / 收藏 / 搜索</th><th>权限</th></tr></thead>
+  <tbody>
+    <tr><td>macOS</td><td>NSOpenPanel</td><td>系统标准（<code>⌘↑</code> 上级 / 侧栏收藏 / 搜索框）</td><td>沙盒需「文件和文件夹」授权</td></tr>
+    <tr><td>Windows</td><td>IFileOpenDialog</td><td>系统标准（<code>Alt+↑</code> / 快速访问 / 搜索）</td><td>UAC（受保护目录）</td></tr>
+    <tr><td>Linux</td><td>GTK FileChooserDialog</td><td>桌面环境决定（GNOME / KDE）</td><td>文件系统权限</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§2</span>创建并检出新分支 · modal（表单）</h2>
+<p class="lede">
+  用户在 branch popover 点「创建并检出新分支...」后唤起。<b>v1 限制：只支持基于当前 HEAD 创建</b>，不接 git ref picker、tag、commit SHA——避免 v1 范围爆炸。
+  提示文案「首版只支持基于当前 HEAD 创建并切换。」是 design-system §9「说原因 + 下一步」的显式能力声明。
+</p>
+
+<div class="window-mock">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item active"><svg viewBox="0 0 16 16"><use href="#i-new"/></svg>新建任务</div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg>搜索</div>
+      </div>
+    </div>
+    <div class="main-panel">
+      <div class="stage blurred" style="position:absolute;inset:0">
+        <div class="landing">
+          <span class="watermark">xyz</span>
+          <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+          <div class="composer focus">
+            <div class="meta-row">
+              <button class="chip"><svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg><span class="ch-name">refactor-goal-extension</span><svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <div class="meta-sep"></div>
+              <button class="chip branch-chip"><svg viewBox="0 0 16 16"><use href="#i-branch"/></svg><span class="ch-name">refactor-goal-…</span><svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            </div>
+            <div class="composer-area" data-placeholder="向 ZCode 提问…" contenteditable="true"></div>
+            <div class="composer-bar">
+              <button class="c-insert"><svg viewBox="0 0 16 16"><use href="#i-plus"/></svg></button>
+              <button class="perm"><svg viewBox="0 0 16 16"><use href="#i-shield"/></svg>完全访问<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <div class="bar-spacer"></div>
+              <button class="bar-sel"><span class="dot-o"></span>GLM-5.2<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <button class="bar-sel"><svg class="brain" viewBox="0 0 16 16"><use href="#i-brain"/></svg>最高<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+              <button class="send"><svg viewBox="0 0 16 16"><use href="#i-send"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <div class="backdrop"></div>
+        <!-- 创建并检出 modal -->
+        <div class="modal branch-create">
+          <span class="anno a" style="right:-12px; top:14px; transform:translateX(100%);">modal · 560×auto</span>
+          <span class="anno m" style="left:-12px; top:14px; transform:translateX(-100%);">v1 限制 · 仅基于 HEAD</span>
+
+          <div class="bc-head">
+            <div class="bc-title">创建并检出新分支</div>
+            <button class="bc-close" title="关闭（Esc）"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="bc-body">
+            <div class="bc-desc">基于当前 HEAD 创建一个新的本地分支，并在创建成功后立即切换过去。</div>
+            <div class="bc-label">分支名</div>
+            <div class="bc-input-wrap">
+              <input class="bc-input" value="feature/git-branch-switcher" placeholder="例如 feature/git-branch-switcher" autofocus />
+            </div>
+            <div class="bc-hint">首版只支持基于当前 HEAD 创建并切换。</div>
+          </div>
+          <div class="bc-foot">
+            <button class="btn">取消</button>
+            <button class="btn primary">创建并切换</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>关键约束</b>：
+  ① <b>input focus 蓝 ring</b>（<code>inset 0 0 0 1px rgba(79,142,247,0.4)</code>，design-system §4 原语），打字时实时校验；
+  ② <b>placeholder</b> 用 <code>例如</code> 引导而非 <code>请输入</code>，降低用户认知负担（design-system §9 文案语气）；
+  ③ <b>「创建并切换」</b>是 <b>动词开头</b>（design-system §9「发送 / 暂存 / 终止」范式），<b>不用</b>「确认」「好的」这种模糊措辞；
+  ④ <b>底部按钮组</b> 取消（左）+ 创建并切换（右），主操作右对齐，符合 modal 通用范式（settings-shell 同源）；
+  ⑤ <b>关闭 X</b> 走 ghost button，hover 显 surface-hover 底，<b>不画红底</b>（红底留 destructive 场景）。
+</div>
+
+<h3>§2.1 错误态 · 分支名已存在</h3>
+<p class="lede">用户填了已有分支名（如直接复制了当前分支名），input 边框转 <code>--danger</code> + 下方红字（design-system §4 错误态原语）。</p>
+
+<div class="window-mock" style="height:420px">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="aside-region"></div>
+    <div class="main-panel">
+      <div class="stage blurred" style="position:absolute;inset:0">
+        <div class="landing"></div>
+        <div class="backdrop"></div>
+        <div class="modal branch-create">
+          <div class="bc-head">
+            <div class="bc-title">创建并检出新分支</div>
+            <button class="bc-close"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="bc-body">
+            <div class="bc-desc">基于当前 HEAD 创建一个新的本地分支，并在创建成功后立即切换过去。</div>
+            <div class="bc-label">分支名</div>
+            <div class="bc-input-wrap">
+              <input class="bc-input has-error" value="refactor-goal-extension" />
+            </div>
+            <div class="bc-error">
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3M8 11h.01"/></svg>
+              该分支已存在，请换一个名字或切换到该分支
+            </div>
+            <div class="bc-hint">首版只支持基于当前 HEAD 创建并切换。</div>
+          </div>
+          <div class="bc-foot">
+            <button class="btn">取消</button>
+            <button class="btn primary" disabled>创建并切换</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>§2.2 提交中态 · spinner</h3>
+<p class="lede">点击「创建并切换」后，按钮内显行内 spinner（design-system §8），提交 <code>&lt;200ms</code> 不显（避免闪烁）。</p>
+
+<div class="window-mock" style="height:380px">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="aside-region"></div>
+    <div class="main-panel">
+      <div class="stage blurred" style="position:absolute;inset:0">
+        <div class="landing"></div>
+        <div class="backdrop"></div>
+        <div class="modal branch-create">
+          <div class="bc-head">
+            <div class="bc-title">创建并检出新分支</div>
+            <button class="bc-close"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="bc-body">
+            <div class="bc-desc">基于当前 HEAD 创建一个新的本地分支，并在创建成功后立即切换过去。</div>
+            <div class="bc-label">分支名</div>
+            <div class="bc-input-wrap">
+              <input class="bc-input" value="feature/git-branch-switcher" />
+            </div>
+            <div class="bc-hint">正在创建并切换到 <b style="color:var(--fg)">feature/git-branch-switcher</b>...</div>
+          </div>
+          <div class="bc-foot">
+            <button class="btn" disabled>取消</button>
+            <button class="btn primary" disabled style="gap:8px">
+              <span style="width:12px;height:12px;border:1.5px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite"></span>
+              创建中
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+<h3>§2.3 键盘契约（创建并检出新分支）</h3>
+<table class="flow-table">
+  <thead><tr><th>键</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>Enter</code>（input 非空时）</td><td>提交，触发 git checkout -b</td></tr>
+    <tr><td><code>Enter</code>（input 为空时）</td><td>无操作（主按钮 disabled）</td></tr>
+    <tr><td><code>Esc</code></td><td>关闭 modal，落回步骤 3（branch popover）</td></tr>
+    <tr><td>点击 backdrop</td><td>同 Esc（关闭）</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§3</span>modal 与 popover 的层级关系</h2>
+<table class="flow-table">
+  <thead><tr><th>层级</th><th>形态</th><th>z-index</th><th>backdrop</th><th>关闭时落点</th></tr></thead>
+  <tbody>
+    <tr><td>workspace / sidebar / composer</td><td>常态</td><td>auto</td><td>无</td><td>—</td></tr>
+    <tr><td>directory popover / branch popover</td><td>局部浮层</td><td>50</td><td>无（<b>不模糊</b>）</td><td>composer 保留 focus</td></tr>
+    <tr><td>系统原生目录选择器</td><td>OS 原生 dialog</td><td>OS 层（浮于应用之上）</td><td>无（OS 接管）</td><td>落回 directory popover</td></tr>
+    <tr><td>创建分支 modal</td><td>居中 modal</td><td>201（>popover）</td><td><b>有 · 模糊背景</b></td><td>落回 branch popover / landing</td></tr>
+    <tr><td>系统 toast</td><td>短暂反馈</td><td>300（>modal）</td><td>无</td><td>自动消失</td></tr>
+  </tbody>
+</table>
+
+<div class="note warn">
+  <b>层级规则</b>：modal 进栈时<b>不关闭</b> popover（popover 在 modal backdrop 之下，被遮罩盖住），关闭 modal 后 popover 自动可见。
+  popover <b>不模糊</b>（不打破主任务流），modal <b>必模糊</b>（强制聚焦到 modal）。
+</div>
+
+<h2><span class="num">§4</span>实现要点（合并 §1 + §2）</h2>
+<ul style="font-size:13px;color:var(--muted);line-height:1.85;padding-left:18px">
+  <li><b>backdrop</b>：<code>rgba(7,7,9,0.55)</code> + <code>backdrop-filter:blur(10px)</code>，与 <code>settings/draft-settings-shell.html</code> 同源；点击 backdrop 关闭 modal（与 Esc 等价）。</li>
+  <li><b>modal 阴影</b>：<code>box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 0 24px 70px rgba(0,0,0,0.55)</code>——描边 + 浮起阴影，与 Card-Elevated 手法一致。</li>
+  <li><b>系统目录选择器</b>：Electron <code>dialog.showOpenDialog({ properties: ['openDirectory'] })</code>，<b>不自绘</b>。返回 <code>{ canceled, filePaths }</code>，<code>canceled</code> 时落回 directory popover。</li>
+  <li><b>macOS 隐私权限</b>：选 <code>~/Library/Mobile Documents/</code> 等受保护位置，系统会弹授权提示（应用不预处理，交给 OS）。</li>
+  <li><b>创建分支 IPC</b>：renderer → runtime → <code>git checkout -b &lt;name&gt;</code>，runtime 回 success/fail，失败时 input 转 has-error + 错误文案（与已有错误态同源）。</li>
+  <li><b>提交 spinner</b>：用 <code>border-top-color:#fff</code> 配合父按钮的 accent 底，<b>无需</b>额外色 token；动画 <code>0.8s linear infinite</code>。</li>
+  <li><b>无障碍</b>：两个 modal 都 <code>role="dialog"</code> + <code>aria-modal="true"</code>；打开时 trap focus 在 modal 内，关闭后焦点还给触发元素（popover chip）。</li>
+  <li><b>v1 范围说明</b>：创建分支只支持基于 HEAD，<b>不接</b> git ref picker / tag / commit SHA。目录选择完全委托 OS 原生（含新建文件夹等系统自带能力）。</li>
+</ul>
+
+</body>
+</html>

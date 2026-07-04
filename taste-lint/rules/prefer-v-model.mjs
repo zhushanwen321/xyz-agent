@@ -43,19 +43,41 @@ export default {
     }
 
     // 逐行扫描：PascalCase 标签 + :value= 但无 v-model
+    // [HISTORICAL] 排除 Item/Option 后缀子组件：reka-ui 中 SelectItem / ComboboxItem /
+    // RadioGroupItem 等的 :value 是「该选项的值」语义（由父级 Root 用 v-model 收集），
+    // 不是表单双向绑定。曾因未排除导致 SelectItem :value 误报，无法用 v-model 改写
+    // （子组件 API 本就不支持 v-model）。
     const templateLines = templateContent.split('\n')
     const issues = []
+    let cumLineOffset = 0
 
     for (let i = 0; i < templateLines.length; i++) {
       const line = templateLines[i]
       // 检测是否包含 PascalCase 组件标签
-      if (!/<[A-Z][A-Za-z]*/.test(line)) continue
+      const tagMatches = [...line.matchAll(/<([A-Z][A-Za-z0-9]*)/g)]
+      if (tagMatches.length === 0) {
+        cumLineOffset += line.length + 1 // +1 for \n
+        continue
+      }
       // 检测 :value= 绑定
-      if (!/:value\s*=/.test(line)) continue
+      if (!/:value\s*=/.test(line)) {
+        cumLineOffset += line.length + 1
+        continue
+      }
       // 如果同时有 v-model 则没问题
-      if (/v-model/.test(line)) continue
+      if (/v-model/.test(line)) {
+        cumLineOffset += line.length + 1
+        continue
+      }
+      // 该行的 PascalCase 标签若全部是 Item/Option 子组件，:value 是选项值语义，跳过
+      const allOptionItems = tagMatches.every((m) => /(?:Item|Option)$/.test(m[1]))
+      if (allOptionItems) {
+        cumLineOffset += line.length + 1
+        continue
+      }
 
-      issues.push(templateOffset + templateContent.split('\n').slice(0, i).join('\n').length)
+      issues.push(templateOffset + cumLineOffset)
+      cumLineOffset += line.length + 1
     }
 
     return {

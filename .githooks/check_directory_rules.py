@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 检查目录规范：
-1. 禁止创建 demos/ 或 impeccable/ 目录（demo 统一放 docs/designs/）
+1. 禁止创建 demos/ 或 impeccable/ 目录（demo 统一放 docs/page-design/）
 2. 禁止 symlink 指向外部绝对路径（白名单：../ 相对路径 symlink 允许）
 """
 import os
@@ -38,7 +38,7 @@ def check_forbidden_dirs(staged_files):
     if forbidden_dirs_found:
         errors.append(
             f"禁止创建目录: {', '.join(sorted(forbidden_dirs_found))}\n"
-            f"  所有 demo/HTML 统一放 docs/designs/"
+            f"  所有 demo/HTML 统一放 docs/page-design/"
         )
 
     return errors
@@ -106,7 +106,7 @@ def main():
         for err in errors:
             print(f"  - {err}")
         print()
-        print("\033[0;33m[INFO] 设置 SKIP_DIRECTORY_RULES_CHECK=1 跳过检查\033[0m")
+        print("\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
         sys.exit(2)
 
     print("\033[0;32m[OK] 目录规范检查通过\033[0m")

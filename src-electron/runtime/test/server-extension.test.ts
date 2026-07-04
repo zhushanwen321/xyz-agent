@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebSocket } from 'ws'
+import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+
+// IGitInfoReader 桩：SessionService 被 vi.mock 整体替换（构造参数不被使用），仅满足构造签名。
+const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
 /**
  * Task 3 tests: Server extension UI response routing.
@@ -14,7 +18,7 @@ import { WebSocket } from 'ws'
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -67,7 +71,7 @@ vi.mock('../src/services/model-service.js', () => ({
   },
 }))
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -80,30 +84,47 @@ vi.mock('../src/process-manager.js', () => ({
   },
 }))
 
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
   },
 }))
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => [],
-  refreshAll: () => {},
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => [] }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return {
+    ...actual,
+    getSessionsDir: () => '/mock/sessions',
+    getConfigDir: () => '/mock/config',
+    getPiAgentDir: () => '/mock/agent',
+  }
+})
 
 const mockInstallLocalDirectory = vi.fn().mockResolvedValue({
   tempDir: '/tmp/ext-scan-test',
@@ -121,8 +142,8 @@ const mockFinishInstall = vi.fn().mockResolvedValue(undefined)
 const mockInstallExtension = vi.fn().mockResolvedValue(undefined)
 const mockCancelInstall = vi.fn().mockResolvedValue(undefined)
 
-vi.mock('../src/extension-service.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/extension-service.js')>()
+vi.mock('../src/services/extension-service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/extension-service.js')>()
   return {
     ...actual,
     ExtensionService: class MockExtensionService {
@@ -139,15 +160,20 @@ vi.mock('../src/extension-service.js', async (importOriginal) => {
   }
 })
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-import { SidecarServer } from '../src/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { RuntimeServer } from '../src/transport/server.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
-import { ExtensionService } from '../src/extension-service.js'
+import { ExtensionService } from '../src/services/extension-service.js'
+import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
+import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
+import { PiExtensionSettings } from '../src/infra/pi/pi-extension-settings.js'
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -186,8 +212,8 @@ function waitForMessage(ws: WebSocket, type: string, timeout = 2000): Promise<Re
 
 // ── Tests with real timers (basic routing) ────────────────────────
 
-describe('SidecarServer: extension message routing', () => {
-  let server: SidecarServer
+describe('RuntimeServer: extension message routing', () => {
+  let server: RuntimeServer
   let port: number
   let ws: WebSocket
   let sessionService: SessionService
@@ -198,14 +224,18 @@ describe('SidecarServer: extension message routing', () => {
     mockInstallGitRepository.mockClear()
     mockFinishInstall.mockClear()
     port = await getFreePort()
-    server = new SidecarServer(port, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(port, '/tmp/test-project')
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
-      {} as never,
-      new ExtensionService(),
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
+      new ExtensionService({
+        settingsDir: new PiConfigStore().getPiAgentDir(),
+        installer: new NpmGitInstaller(),
+        resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+        extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
+      }),
     )
     await server.start()
   })
@@ -409,7 +439,7 @@ describe('SidecarServer: extension message routing', () => {
       mockInstallLocalDirectory.mockRejectedValueOnce(new Error('Source path does not exist'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.installDir',
@@ -455,7 +485,7 @@ describe('SidecarServer: extension message routing', () => {
       mockInstallGitRepository.mockRejectedValueOnce(new Error('git clone failed: not found'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.installGit',
@@ -495,7 +525,7 @@ describe('SidecarServer: extension message routing', () => {
       mockInstallExtension.mockRejectedValueOnce(new Error('npm install failed: 404'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.install',
@@ -534,7 +564,7 @@ describe('SidecarServer: extension message routing', () => {
       mockCancelInstall.mockRejectedValueOnce(new Error('invalid temp directory'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.cancelInstall',
@@ -543,7 +573,7 @@ describe('SidecarServer: extension message routing', () => {
       }))
 
       const msg = await responsePromise
-      expect(msg.type).toBe('extension.installError')
+      expect(msg.type).toBe('error')
       expect((msg.payload as { message?: string }).message).toContain('invalid temp directory')
     })
   })
@@ -572,7 +602,7 @@ describe('SidecarServer: extension message routing', () => {
       mockFinishInstall.mockRejectedValueOnce(new Error('not found in temp directory'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.finishInstall',
@@ -591,21 +621,25 @@ describe('SidecarServer: extension message routing', () => {
 
 // ── Tests with fake timers (timeout mechanism) ────────────────────
 
-describe('SidecarServer: extension timeout mechanism', () => {
-  let server: SidecarServer
+describe('RuntimeServer: extension timeout mechanism', () => {
+  let server: RuntimeServer
   let sessionService: SessionService
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(0, '/tmp/test-project')
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
-      {} as never,
-      new ExtensionService(),
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
+      new ExtensionService({
+        settingsDir: new PiConfigStore().getPiAgentDir(),
+        installer: new NpmGitInstaller(),
+        resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+        extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
+      }),
     )
   })
 

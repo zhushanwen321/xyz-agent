@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender } from '../src/event-adapter.js'
+import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
+import type { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { PiMessage } from '../src/rpc-client.js'
+import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
 /**
  * Task 2 tests: EventAdapter extension event translation.
@@ -11,7 +12,8 @@ import type { PiMessage } from '../src/rpc-client.js'
  * 2. extension_ui_request with setStatus/setWidget → null (discarded)
  * 3. extension_error → extension.error ServerMessage
  * 4. tool_execution_update → message.tool_call_update ServerMessage
- * 5. Original mapping of confirm/select to message.tool_call_pending is REMOVED
+ * 5. Original mapping of confirm/select to a tool-call-pending message is REMOVED
+ *    (asserted positively: confirm/select produce ONLY extension.ui_request, no other types)
  * 6. All ServerMessages include sessionId
  */
 
@@ -26,7 +28,7 @@ function piEvent(fields: PiTestEvent): PiTestEvent {
 function createAdapter(): { adapter: EventAdapter; sent: ServerMessage[] } {
   const sent: ServerMessage[] = []
   const send: WsSender = (msg) => { sent.push(msg) }
-  const adapter = new EventAdapter('test-session-1', send)
+  const adapter = createEventAdapter('test-session-1', send)
   return { adapter, sent }
 }
 
@@ -150,7 +152,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('does NOT produce message.tool_call_pending for confirm', async () => {
+    it('produces ONLY extension.ui_request for confirm (no tool-call-pending mapping)', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -164,11 +166,11 @@ describe('EventAdapter: extension event translation', () => {
       })
       await flushAsync()
 
-      const toolCallPending = sent.find((m) => m.type === 'message.tool_call_pending')
-      expect(toolCallPending).toBeUndefined()
+      // 正向断言：confirm 只产出 extension.ui_request，不调染 tool-call 状态（旧 pending 映射已移除）
+      expect(sent.map((m) => m.type)).toEqual(['extension.ui_request'])
     })
 
-    it('does NOT produce message.tool_call_pending for select', async () => {
+    it('produces ONLY extension.ui_request for select (no tool-call-pending mapping)', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -182,8 +184,7 @@ describe('EventAdapter: extension event translation', () => {
       })
       await flushAsync()
 
-      const toolCallPending = sent.find((m) => m.type === 'message.tool_call_pending')
-      expect(toolCallPending).toBeUndefined()
+      expect(sent.map((m) => m.type)).toEqual(['extension.ui_request'])
     })
   })
 
@@ -207,8 +208,9 @@ describe('EventAdapter: extension event translation', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension:status')
-      expect(sent[0].payload.statusKey).toBe('status-key')
-      expect(sent[0].payload.text).toBe('some status')
+      const statusPayload = sent[0].payload as { statusKey: string; text: string }
+      expect(statusPayload.statusKey).toBe('status-key')
+      expect(statusPayload.text).toBe('some status')
     })
 
     it('bridges setWidget to extension.widget WS event', async () => {
@@ -228,8 +230,9 @@ describe('EventAdapter: extension event translation', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension:widget')
-      expect(sent[0].payload.widgetKey).toBe('widget-key')
-      expect(sent[0].payload.lines).toEqual(['line1', 'line2'])
+      const widgetPayload = sent[0].payload as { widgetKey: string; lines: string[] }
+      expect(widgetPayload.widgetKey).toBe('widget-key')
+      expect(widgetPayload.lines).toEqual(['line1', 'line2'])
     })
   })
 
@@ -333,7 +336,7 @@ describe('EventAdapter: extension event translation', () => {
     it('injects constructor sessionId into all extension messages', async () => {
       const localSent: ServerMessage[] = []
       const localSend: WsSender = (msg) => { localSent.push(msg) }
-      const localAdapter = new EventAdapter('custom-session-42', localSend)
+      const localAdapter = createEventAdapter('custom-session-42', localSend)
 
       localAdapter.attach({
         onEvent: (listener) => {

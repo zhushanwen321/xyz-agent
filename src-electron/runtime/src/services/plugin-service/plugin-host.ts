@@ -9,7 +9,6 @@ import { Worker } from 'node:worker_threads'
 import { resolve, dirname } from 'node:path'
 import { existsSync, readdirSync } from 'node:fs'
 import type { WorkerHandle, RpcRequest } from './plugin-types.js'
-import type { PluginHost as ActivatorHost } from './plugin-activator.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 
 /**
@@ -110,7 +109,22 @@ const REBUILD_COOLDOWN_MS = 5_000
 type CrashCallback = (workerId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
 
-export class PluginHost implements ActivatorHost {
+/**
+ * PluginHost 的最小接口契约（P8 收口）。
+ *
+ * 此前该接口定义在 plugin-activator.ts（消费方），由本类（供应商）实现，构成
+ * 「消费方拥有供应商契约」的坏味道 + 仅类型层的循环依赖。现收口到供应商本文件，
+ * 由实现者拥有自己的契约。plugin-activator.ts 通过 re-export 以 `PluginHost` 之名
+ * 继续对外暴露，保持所有现有导入（NON-BREAKING）。
+ */
+export interface PluginHostContract {
+  assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string>
+  loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
+  terminateWorker(workerId: string): Promise<void>
+  getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined
+}
+
+export class PluginHost implements PluginHostContract {
   private workers = new Map<string, WorkerHandle>()
   private workerInstances = new Map<string, Worker>()
   private rpcServer: PluginRpcServer
@@ -237,7 +251,7 @@ export class PluginHost implements ActivatorHost {
   }
 
   /**
-   * 满足 ActivatorHost 接口：按 pluginId 查找 Worker，返回带 postMessage 的句柄。
+   * 满足 PluginHostContract 接口：按 pluginId 查找 Worker，返回带 postMessage 的句柄。
    */
   getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined {
     for (const handle of this.workers.values()) {

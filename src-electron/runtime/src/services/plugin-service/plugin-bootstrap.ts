@@ -32,6 +32,9 @@ import { createSessionDataApi } from './api/session-data-api.js'
 import { createUiApi } from './api/ui-api.js'
 import { createAgentApi } from './api/agent-api.js'
 import { createWorkspaceApi } from './api/workspace-api.js'
+import { createStorageApi } from './api/storage-api.js'
+import { createNotifyApi } from './api/notify-api.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 const rpcClient = new PluginRpcClient()
 const loadedModules = new Map<string, PluginModule>()
@@ -148,7 +151,7 @@ async function handleIncomingRequest(request: RpcRequest): Promise<void> {
       })
       postRpcResponse(request.id, result, undefined)
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       postRpcResponse(request.id, undefined, {
         code: PluginRpcErrorCodes.INTERNAL_ERROR,
         message: `Tool execution error: ${msg}`,
@@ -199,17 +202,10 @@ function createPluginContext(pluginId: string, pluginDir: string): PluginContext
 function createAgentAPI(pluginId: string): Phase2AgentAPI {
   return {
     storage: {
-      global: createStateStorageProxy(pluginId, 'global'),
-      workspace: createStateStorageProxy(pluginId, 'workspace'),
+      global: createStorageApi(rpcClient, pluginId, 'global'),
+      workspace: createStorageApi(rpcClient, pluginId, 'workspace'),
     },
-    notify: {
-      info: (msg: string) =>
-        rpcClient.request('plugin.notify', { pluginId, level: 'info', message: msg }).then(() => {}),
-      warning: (msg: string) =>
-        rpcClient.request('plugin.notify', { pluginId, level: 'warning', message: msg }).then(() => {}),
-      error: (msg: string) =>
-        rpcClient.request('plugin.notify', { pluginId, level: 'error', message: msg }).then(() => {}),
-    },
+    notify: createNotifyApi(rpcClient, pluginId),
     sessions: createSessionApi(rpcClient, pluginId),
     events: {
       on: (event: string, handler: (data: unknown) => void): Disposable => {
@@ -231,36 +227,16 @@ function createAgentAPI(pluginId: string): Phase2AgentAPI {
 }
 
 /**
- * 创建 PluginStateStorage 的 RPC proxy。
+ * 创建 PluginStateStorage 的 RPC proxy（PluginContext.globalState/workspaceState 用）。
  *
- * 所有 storage 操作通过 RPC 转发到主线程的 PluginStorage 执行，
- * Worker 本身不直接读写文件系统。
- *
- * get 方法需要兼容 PluginStateStorage 的两个重载签名：
- *   get<T>(key: string): Promise<T | undefined>
- *   get<T>(key: string, defaultValue: T): Promise<T>
+ * P6 后委托给 api/storage-api.ts 的 createStorageApi——storage proxy 实现单一真相源。
+ * scope 仅可为 'global' | 'workspace'（调用方保证）。
  */
 function createStateStorageProxy(
   pluginId: string,
-  scope: string,
+  scope: 'global' | 'workspace',
 ): PluginStateStorage {
-  return {
-    get: <T,>(key: string, defaultValue?: T): Promise<T | undefined> =>
-      rpcClient
-        .request(`plugin.storage.${scope}.get`, { pluginId, key })
-        .then(v => (v as T | undefined) ?? defaultValue),
-
-    set: (key: string, value: unknown): Promise<void> =>
-      rpcClient.request(`plugin.storage.${scope}.set`, { pluginId, key, value }).then(() => {}),
-
-    delete: (key: string): Promise<void> =>
-      rpcClient.request(`plugin.storage.${scope}.delete`, { pluginId, key }).then(() => {}),
-
-    keys: (): Promise<string[]> =>
-      rpcClient
-        .request(`plugin.storage.${scope}.keys`, { pluginId })
-        .then(v => (v as string[]) ?? []),
-  }
+  return createStorageApi(rpcClient, pluginId, scope)
 }
 
 /**

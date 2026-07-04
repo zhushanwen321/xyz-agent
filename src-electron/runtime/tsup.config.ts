@@ -13,7 +13,7 @@ export default defineConfig({
   outDir: '../dist/runtime',
   format: ['cjs'],
   platform: 'node',  // 自动将所有 Node.js 内置模块标为 external
-  target: 'node20',   // 匹配 Electron 33 内置 Node 20.18.x
+  target: 'node24',   // 匹配 Electron 42.3.3 内置 Node 24.15.0（ELECTRON_RUN_AS_NODE 实测）
   bundle: true,
   clean: true,
   // ══════════════════════════════════════════════════════════════
@@ -32,7 +32,7 @@ export default defineConfig({
   define: {
     'process.env.XYZ_AGENT_VERSION': JSON.stringify(pkg.version),
   },
-  // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 sidecar）
+  // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 runtime）
   onSuccess: async () => {
     const { existsSync, statSync } = await import('node:fs')
     const path = await import('node:path')

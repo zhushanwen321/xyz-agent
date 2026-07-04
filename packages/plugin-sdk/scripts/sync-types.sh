@@ -13,10 +13,16 @@ if [ ! -f "$SOURCE" ]; then
   exit 1
 fi
 
-# Strip relative import lines, replace runtime-internal interfaces with unknown
+# Strip relative import lines, replace runtime-internal interfaces with unknown.
+# Also collapse inline dynamic-import type references like
+#   import('../../interfaces.js').IModelService
+# (the first rule only drops top-level `import type` lines; inline refs survive
+#  unless given their own rule, which would otherwise leave a broken import in
+#  the published .d.ts — TS2307).
 sed -e '/^import type .* from .*'\''\.\.\/.*$/d' \
     -e 's/ISessionService/unknown/g' \
     -e 's/IConfigService/unknown/g' \
+    -e 's/import('\''\.\.\/\.\.\/interfaces\.js'\'')\.IModelService/unknown/g' \
     "$SOURCE" > "$TARGET"
 
 echo "Synced types from plugin-types.ts to packages/plugin-sdk/src/types.ts"

@@ -2,13 +2,8 @@ import { describe, it, expect } from 'vitest'
 import type {
   ClientMessage,
   ServerMessage,
-  ExtensionUIRequestPayload,
-  ExtensionUIResponsePayload,
-  ExtensionErrorPayload,
-  ToolCallUpdatePayload,
   ExtensionInfo,
   ExtensionDiscoveredPayload,
-  ExtensionInstallErrorPayload,
 } from '@xyz-agent/shared'
 
 /**
@@ -124,91 +119,8 @@ describe('Protocol: extension types', () => {
     expect(msg.type).toBe('config.extensions')
   })
 
-  // ── Payload interfaces ──────────────────────────────────────────
-
-  it('ExtensionUIRequestPayload has correct shape for confirm', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'confirm',
-      title: 'Allow?',
-      message: 'Please confirm',
-    }
-    expect(payload.method).toBe('confirm')
-    expect(payload.options).toBeUndefined()
-    expect(payload.default).toBeUndefined()
-  })
-
-  it('ExtensionUIRequestPayload has correct shape for select with options', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'select',
-      title: 'Choose one',
-      options: ['opt-a', 'opt-b'],
-    }
-    expect(payload.method).toBe('select')
-    expect(payload.options).toEqual(['opt-a', 'opt-b'])
-  })
-
-  it('ExtensionUIRequestPayload has correct shape for input', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'input',
-      title: 'Enter value',
-      default: 'placeholder',
-    }
-    expect(payload.method).toBe('input')
-    expect(payload.default).toBe('placeholder')
-  })
-
-  it('ExtensionUIRequestPayload has correct shape for notify', () => {
-    const payload: ExtensionUIRequestPayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      method: 'notify',
-      message: 'Something happened',
-      level: 'warn',
-    }
-    expect(payload.method).toBe('notify')
-    expect(payload.level).toBe('warn')
-  })
-
-  it('ExtensionUIResponsePayload has correct shape', () => {
-    const payload: ExtensionUIResponsePayload = {
-      sessionId: 's1',
-      requestId: 'r1',
-      result: true,
-    }
-    expect(payload.result).toBe(true)
-  })
-
-  it('ExtensionErrorPayload has correct shape', () => {
-    const payload: ExtensionErrorPayload = {
-      sessionId: 's1',
-      extensionName: 'my-ext',
-      error: 'something went wrong',
-    }
-    expect(payload.extensionName).toBe('my-ext')
-  })
-
-  it('ToolCallUpdatePayload has required and optional fields', () => {
-    const minimal: ToolCallUpdatePayload = {
-      sessionId: 's1',
-      toolCallId: 'tc1',
-    }
-    expect(minimal.progress).toBeUndefined()
-    expect(minimal.detail).toBeUndefined()
-
-    const full: ToolCallUpdatePayload = {
-      sessionId: 's1',
-      toolCallId: 'tc1',
-      progress: 75,
-      detail: 'almost done',
-    }
-    expect(full.progress).toBe(75)
-  })
+  // 注：ExtensionUIRequestPayload / ExtensionUIResponsePayload / ExtensionErrorPayload /
+  // ToolCallUpdatePayload 的形状测试已随类型删除（reserved 占位契约，无生产消费方）。
 
   it('ClientMessage accepts extension.install type', () => {
     const msg: ClientMessage = {
@@ -299,12 +211,15 @@ describe('Protocol: extension types', () => {
       expect(msg.type).toBe('extension.discovered')
     })
 
-    it('ServerMessage accepts extension.installError type', () => {
+    // D10/P0-B: extension.installError type 已删除，install 失败现在走统一 error envelope。
+    it('ServerMessage rejects removed extension.installError type (now error envelope)', () => {
+      // error envelope 承载 install 失败，hint 进 details。
       const msg: ServerMessage = {
-        type: 'extension.installError',
-        payload: { code: 'not_found', message: 'Package not found' },
+        type: 'error',
+        payload: { code: 'not_found', message: 'Package not found', details: { hint: 'Check the package name' } },
       }
-      expect(msg.type).toBe('extension.installError')
+      expect(msg.type).toBe('error')
+      expect((msg.payload as { details?: Record<string, unknown> }).details).toEqual({ hint: 'Check the package name' })
     })
 
     it('ExtensionDiscoveredPayload has correct shape', () => {
@@ -316,21 +231,6 @@ describe('Protocol: extension types', () => {
       }
       expect(payload.tempDir).toBe('/tmp/ext-scan-123')
       expect(payload.candidates).toHaveLength(1)
-    })
-
-    it('ExtensionInstallErrorPayload has required and optional fields', () => {
-      const minimal: ExtensionInstallErrorPayload = {
-        code: 'network',
-        message: 'Connection timeout',
-      }
-      expect(minimal.hint).toBeUndefined()
-
-      const withHint: ExtensionInstallErrorPayload = {
-        code: 'not_found',
-        message: 'Package not found',
-        hint: 'Check the package name and registry',
-      }
-      expect(withHint.hint).toBe('Check the package name and registry')
     })
   })
 })

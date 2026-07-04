@@ -3,6 +3,9 @@
 # Usage: bash scripts/prerelease-test.sh
 set -euo pipefail
 
+# 检查失败原则：任何非 0 退出都输出（不管从哪个 exit 点）
+trap '[ $? -ne 0 ] && echo "[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。" >&2' EXIT
+
 REPO="zhushanwen321/xyz-agent"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WS_ROOT="${WS_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"

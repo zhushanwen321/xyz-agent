@@ -1,24 +1,33 @@
-// Client → Sidecar message types
+// Client → Runtime message types
 
-import type { SkillInfo, AgentInfo } from './provider'
+import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig } from './provider'
+import type { SessionGroup } from './session'
+import type { FileChange, ChangeSetStatus } from './message'
+import type { FileNode } from './file-tree'
+// 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
+// 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
+import type { ExtensionInfo } from './extension'
+import type { GitStatusResult } from './git'
+import type { PluginInfo } from './plugin'
+import type { RecentWorkspaceRecord } from './workspace'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history'
+  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands'
   | 'session.compact' | 'session.rename'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
+  | 'config.setSkillDirs' | 'config.setAgentDirs'
   | 'model.list' | 'model.switch' | 'session.setThinkingLevel'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
   | 'extension.install' | 'extension.uninstall'
   | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
   | 'ping'
-  | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
   | 'plugin.list' | 'plugin.toggle'
   | 'plugin.install' | 'plugin.uninstall'
   | 'plugin.approvePermissions' | 'plugin.revokePermissions'
@@ -26,6 +35,11 @@ export type ClientMessageType =
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
   | 'file.read'
+  | 'file.tree' | 'file.tree.expand' | 'file.search'
+  | 'git.diff'
+  | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
+  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
+  | 'workspace.listRecent'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -35,7 +49,7 @@ export interface SetProviderData {
   type?: string
   apiKey?: string
   baseUrl?: string
-  models?: Array<string | { id: string; name?: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }>
+  models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
   enabled?: boolean
 }
 
@@ -49,17 +63,13 @@ export interface ClientMessageMap {
   'session.list': Record<string, never>
   'session.switch': { sessionId: string }
   'session.history': { sessionId: string }
+  'session.getCommands': { sessionId: string }
   'session.compact': { sessionId: string }
   'session.rename': { sessionId: string; name: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
-  'session.tree-data': { sessionId: string }
-  'session.tree-navigate': { sessionId: string; targetEntryId: string }
-  'session.tree-fork': { sessionId: string; entryId: string }
-  'session.tree-clone': { sessionId: string }
-  'session.tree-capability': { sessionId: string }
   'config.getProviders': Record<string, never>
   'config.setProvider': { providerId: string } & SetProviderData
   'config.deleteProvider': { providerId: string }
@@ -71,6 +81,9 @@ export interface ClientMessageMap {
   'config.scanAgents': { sources: string[] }
   'config.setAgent': { agent: AgentInfo }
   'config.deleteAgent': { agentId: string }
+  /** 目录级管道写入（ADR-0020 §5）：dirs 为有序数组，靠前覆盖靠后。写 discovery.json。 */
+  'config.setSkillDirs': { dirs: string[] }
+  'config.setAgentDirs': { dirs: string[] }
   'model.list': Record<string, never>
   'model.switch': { sessionId: string; provider: string; modelId: string }
   'session.setThinkingLevel': { sessionId: string; level: string }
@@ -96,95 +109,57 @@ export interface ClientMessageMap {
   'plugin.config.get': { pluginId: string; key?: string }
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
-  'file.read': { path: string }
+  'file.read': { path: string; sessionId?: string }
+  'file.tree': { sessionId: string }
+  'file.tree.expand': { sessionId: string; path: string }
+  /** file.search：composer # 文件候选，全量递归当前 cwd（受 ignore 过滤 + 深度上限 8 + DoS 上限 5000）*/
+  'file.search': { sessionId: string; showIgnored?: boolean }
+  'git.diff': { sessionId: string; path: string }
+  'file.write.create': { sessionId: string; path: string; content: string }
+  'file.write.rename': { sessionId: string; oldPath: string; newPath: string }
+  'file.write.delete': { sessionId: string; path: string }
+  'git.status': { sessionId: string }
+  'git.stage': { sessionId: string; filePaths?: string[] }
+  'git.unstage': { sessionId: string; filePaths?: string[] }
+  'git.commit': { sessionId: string; message?: string }
+  'git.checkout': { sessionId: string; name: string }
+  'git.createBranch': { sessionId: string; name: string }
+  'workspace.listRecent': Record<string, never>
 }
 
-export type ClientMessage =
-  | { type: 'ping'; id?: string; payload: Record<string, never> }
-  | { type: 'session.create'; id?: string; payload: ClientMessageMap['session.create'] }
-  | { type: 'session.delete'; id?: string; payload: ClientMessageMap['session.delete'] }
-  | { type: 'session.list'; id?: string; payload: Record<string, never> }
-  | { type: 'session.switch'; id?: string; payload: ClientMessageMap['session.switch'] }
-  | { type: 'session.history'; id?: string; payload: ClientMessageMap['session.history'] }
-  | { type: 'session.compact'; id?: string; payload: ClientMessageMap['session.compact'] }
-  | { type: 'session.rename'; id?: string; payload: ClientMessageMap['session.rename'] }
-  | { type: 'message.send'; id?: string; payload: ClientMessageMap['message.send'] }
-  | { type: 'message.abort'; id?: string; payload: ClientMessageMap['message.abort'] }
-  | { type: 'message.steer'; id?: string; payload: ClientMessageMap['message.steer'] }
-  | { type: 'message.follow_up'; id?: string; payload: ClientMessageMap['message.follow_up'] }
-  | { type: 'session.tree-data'; id?: string; payload: ClientMessageMap['session.tree-data'] }
-  | { type: 'session.tree-navigate'; id?: string; payload: ClientMessageMap['session.tree-navigate'] }
-  | { type: 'session.tree-fork'; id?: string; payload: ClientMessageMap['session.tree-fork'] }
-  | { type: 'session.tree-clone'; id?: string; payload: ClientMessageMap['session.tree-clone'] }
-  | { type: 'session.tree-capability'; id?: string; payload: ClientMessageMap['session.tree-capability'] }
-  | { type: 'config.getProviders'; id?: string; payload: Record<string, never> }
-  | { type: 'config.setProvider'; id?: string; payload: ClientMessageMap['config.setProvider'] }
-  | { type: 'config.deleteProvider'; id?: string; payload: ClientMessageMap['config.deleteProvider'] }
-  | { type: 'config.setToolPermissions'; id?: string; payload: ClientMessageMap['config.setToolPermissions'] }
-  | { type: 'config.discoverModels'; id?: string; payload: ClientMessageMap['config.discoverModels'] }
-  | { type: 'config.scanSkills'; id?: string; payload: ClientMessageMap['config.scanSkills'] }
-  | { type: 'config.setSkill'; id?: string; payload: ClientMessageMap['config.setSkill'] }
-  | { type: 'config.deleteSkill'; id?: string; payload: ClientMessageMap['config.deleteSkill'] }
-  | { type: 'config.scanAgents'; id?: string; payload: ClientMessageMap['config.scanAgents'] }
-  | { type: 'config.setAgent'; id?: string; payload: ClientMessageMap['config.setAgent'] }
-  | { type: 'config.deleteAgent'; id?: string; payload: ClientMessageMap['config.deleteAgent'] }
-  | { type: 'model.list'; id?: string; payload: Record<string, never> }
-  | { type: 'model.switch'; id?: string; payload: ClientMessageMap['model.switch'] }
-  | { type: 'session.setThinkingLevel'; id?: string; payload: ClientMessageMap['session.setThinkingLevel'] }
-  | { type: 'tool.approve'; id?: string; payload: ClientMessageMap['tool.approve'] }
-  | { type: 'tool.deny'; id?: string; payload: ClientMessageMap['tool.deny'] }
-  | { type: 'tool.always_allow'; id?: string; payload: ClientMessageMap['tool.always_allow'] }
-  | { type: 'extension.ui_response'; id?: string; payload: ClientMessageMap['extension.ui_response'] }
-  | { type: 'extension.toggle'; id?: string; payload: ClientMessageMap['extension.toggle'] }
-  | { type: 'extension.list'; id?: string; payload: ClientMessageMap['extension.list'] }
-  | { type: 'extension.install'; id?: string; payload: ClientMessageMap['extension.install'] }
-  | { type: 'extension.uninstall'; id?: string; payload: ClientMessageMap['extension.uninstall'] }
-  | { type: 'extension.installDir'; id?: string; payload: ClientMessageMap['extension.installDir'] }
-  | { type: 'extension.installGit'; id?: string; payload: ClientMessageMap['extension.installGit'] }
-  | { type: 'extension.finishInstall'; id?: string; payload: ClientMessageMap['extension.finishInstall'] }
-  | { type: 'extension.cancelInstall'; id?: string; payload: ClientMessageMap['extension.cancelInstall'] }
-  | { type: 'plugin.list'; id?: string; payload: Record<string, never> }
-  | { type: 'plugin.toggle'; id?: string; payload: ClientMessageMap['plugin.toggle'] }
-  | { type: 'plugin.install'; id?: string; payload: ClientMessageMap['plugin.install'] }
-  | { type: 'plugin.uninstall'; id?: string; payload: ClientMessageMap['plugin.uninstall'] }
-  | { type: 'plugin.approvePermissions'; id?: string; payload: ClientMessageMap['plugin.approvePermissions'] }
-  | { type: 'plugin.revokePermissions'; id?: string; payload: ClientMessageMap['plugin.revokePermissions'] }
-  | { type: 'plugin.executeCommand'; id?: string; payload: ClientMessageMap['plugin.executeCommand'] }
-  | { type: 'plugin.config.get'; id?: string; payload: ClientMessageMap['plugin.config.get'] }
-  | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
-  | { type: 'plugin.uiResponse'; id?: string; payload: ClientMessageMap['plugin.uiResponse'] }
-  | { type: 'file.read'; id?: string; payload: ClientMessageMap['file.read'] }
+// ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
+// { type: K; id?: string; payload: ClientMessageMap[K] }。此前是一份 ~70 行手写
+// discriminated union，与 ClientMessageMap 逐条重复——加新 type 要改两处且易漂移。
+// 映射派生后 ClientMessageMap 成为唯一真值源；消费侧的 Extract<ClientMessage, { type: 'X' }>
+// 收窄与 switch narrowing 行为完全一致。
+export type ClientMessage = {
+  [K in keyof ClientMessageMap]: { type: K; id?: string; payload: ClientMessageMap[K] }
+}[keyof ClientMessageMap]
 
-// ── 辅助类型 ────────────────────────────────────────────────────
-
-/** 根据 type 提取对应的 payload 类型 */
-export type ExtractPayload<T extends ClientMessageType> = T extends keyof ClientMessageMap ? ClientMessageMap[T] : never
-
-/** 构造特定 type 的 ClientMessage */
-export type SpecificClientMessage<T extends ClientMessageType> = Extract<ClientMessage, { type: T }>
-
-// ── Sidecar → Client message types（保持不变）──────────────────
+// ── Runtime → Client message types ──────────────────────────────
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
-  | 'message.tool_call_start' | 'message.tool_call_end' | 'message.tool_call_pending'
+  | 'message.tool_call_start' | 'message.tool_call_end'
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
+  | 'config.skillDirs' | 'config.agentDirs'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
+  | 'session.state_changed'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
-  | 'extension.discovered' | 'extension.installError' | 'extension.installCancelled'
+  | 'extension.discovered' | 'extension.installCancelled'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
-  | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
+  | 'app.info'
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
@@ -195,165 +170,157 @@ export type ServerMessageType =
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
-  | 'file.read:result' | 'file.read:error'
+  | 'message.file_changes'
+  | 'message.changeSetInvalidated'
+  | 'file.read:result'
+  | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result'
+  | 'git.diff:result'
+  | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
+  | 'git.status:result'
+  | 'workspace.recentList'
 
-export interface ServerMessage {
-  type: ServerMessageType
+/**
+ * # ServerMessageMap —— Runtime → Client payload 类型映射
+ *
+ * 与 ClientMessageMap 对称：每个 ServerMessageType 对应的 payload 类型。
+ * 消费侧（renderer events.onGlobalType / events.on）handler 内 payload 自动收窄，
+ * 不再需要 `as ProviderInfo[]` 等断言。
+ *
+ * 收录原则：
+ * - **已消费 + 已契约化**的类型 → 精确 payload（domain 订阅 + sendInitialState 推送的 7 条）。
+ * - **未消费 / 协议待定**的类型 → `Record<string, unknown>`（占位，待对应 wave 实装时收紧：
+ *   message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave）。
+ *
+ * 收紧某条目时，runtime 构造点会同步得契约校验（若 payload 字段对不上，tsc 报错——这是 D5 的预期收益）。
+ */
+export interface ServerMessageMapBase {
+  // ── sendInitialState 推送 / domain 订阅（精确）──
+  'config.providers': { providers: ProviderInfo[] }
+  'config.skills': { skills: SkillInfo[] }
+  'config.agents': { agents: AgentInfo[] }
+  /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
+  'config.skillDirs': { dirs: SkillDirConfig[] }
+  'config.agentDirs': { dirs: SkillDirConfig[] }
+  'config.defaults': { defaultModel: string }
+  'config.extensions': { extensions: ExtensionInfo[] }
+  'config.plugins': { plugins: PluginInfo[] }
+  'model.list': { models: ModelInfo[] }
+  'session.list': { groups: SessionGroup[] }
+
+  // ── 协议级 reply / push（精确）──
+  'pong': Record<string, never>
+  'error': { code: string; message: string; sessionId?: string; details?: Record<string, unknown> }
+  // 流式异步推送失败（server-push 通道，区别于请求级 error envelope；见错误契约文档）
+  'message.error': { sessionId: string; message: string }
+  // 扩展 UI 推送通道（EventAdapter 翻译 pi setWidget/setStatus，runtime 固定形状生产）
+  'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
+  'extension:status': { sessionId: string; statusKey: string; text: string }
+  // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
+  'session.compacting': { sessionId: string }
+  'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
+  // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
+  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）
+  'app.info': { appVersion: string; piVersion: string }
+  // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
+  'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
+  // session.state_changed：session 级状态变更（model.switch 成功后推送，含新 modelId + 按新 contextWindow
+  // 重算的用量 + 当前 thinkingLevel）。前端据 modelId/thinkingLevel 同步 Composer 工具条，据 usage 三字段
+  // 刷新 ContextCapacityPopover。thinkingLevel optional（未设置时省略）。
+  'session.state_changed': {
+    sessionId: string
+    modelId: string
+    thinkingLevel?: string
+    usagePercent: number
+    inputTokens: number
+    contextLimit: number
+  }
+  // FileChanges 通道（ADR-0024 D5 重构：git 作为唯一真值源）。baseline diff 机制——
+  // message_start 采集 git status 快照，write/edit/bash 结束后 diff vs baseline 推 accumulating，
+  // agent_end 推 ready。isFullSet 恒 true（每次 diff 都是全量结果，前端全集替换不增量合并）。
+  // partially-reviewed/resolved/superseded 审查态由前端驱动，不经 runtime 推送。
+  'message.file_changes': {
+    sessionId: string
+    messageId: string
+    fileChanges: FileChange[]
+    changeSetStatus: ChangeSetStatus
+    isFullSet: boolean
+  }
+  // changeSet 失效广播（ADR-0024 D5 重构）：git.commit 成功后工作区 diff 已重置，
+  // 旧的 changeSet 卡片成为过期数据。runtime 广播此帧通知前端把该 session 的 changeSet 推 superseded。
+  'message.changeSetInvalidated': {
+    sessionId: string
+    /** 失效原因：'committed'（git commit 后工作区重置） */
+    reason: 'committed'
+  }
+  // git.status:result：git.status 请求的同步 reply（Wave 1a git domain 经 pending.resolve 消费）。
+  // git.stage/unstage/commit 的 ack 复用既有 'message.status'（payload {sessionId, status}），非新增。
+  'git.status:result': GitStatusResult
+  /** file.tree:result：文件树首加载 reply，顶层+一级子 FileNode[] */
+  'file.tree:result': { sessionId: string; tree: FileNode[] }
+  /** file.tree.expand:result：展开目录 reply，单层子 FileNode[] */
+  'file.tree.expand:result': { sessionId: string; children: FileNode[] }
+  /** file.search:result：composer # 文件候选 reply，全量递归 FileNode[]（受 ignore + 深度 8 + DoS 上限 5000）*/
+  'file.search:result': { sessionId: string; files: FileNode[] }
+  /** git.diff:result：文件 diff reply（patch + binary 标志） */
+  'git.diff:result': { sessionId: string; patch: string; binary: boolean }
+  /** file.write.*.result：文件操作骨架 reply（D-018 实现延后，AC-14.4 结构化「待实现」） */
+  'file.write.create:result': { sessionId: string; path: string; implemented: false }
+  'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
+  'file.write.delete:result': { sessionId: string; path: string; implemented: false }
+  'workspace.recentList': { records: RecentWorkspaceRecord[] }
+
+  // ── 消息流控制（W11+ 审查补充类型）──
+  'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
+  'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
+  'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
+}
+
+/**
+ * Runtime → Client payload 类型映射（与 ClientMessageMap 对称）。
+ *
+ * 精确条目见 ServerMessageMapBase（已消费 + 已契约化的 type）；其余未消费 / 协议待定的
+ * type 走 `Record<string, unknown>` 占位，待对应 wave 实装时收紧：
+ * message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave。
+ *
+ * 收紧某条目时，runtime 构造点会同步得契约校验（若 payload 字段对不上，tsc 报错——D5 的预期收益）。
+ */
+export type ServerMessageMap = ServerMessageMapBase & {
+  [K in Exclude<ServerMessageType, keyof ServerMessageMapBase>]: Record<string, unknown>
+}
+
+/**
+ * Runtime → Client 消息。泛型化后 payload 按 type 收窄（见 ServerMessageMap）。
+ *
+ * 构造侧（runtime server.ts 的 send/reply/broadcast）仍可传 `ServerMessage`（默认 T=ServerMessageType，
+ * payload 为联合）——存储/传输层不感知具体 type。消费侧 onGlobalType<T>/on<T> 收窄后才解构 payload。
+ */
+export interface ServerMessage<T extends ServerMessageType = ServerMessageType> {
+  type: T
   id?: string
-  payload: Record<string, unknown>
+  payload: ServerMessageMap[T]
 }
 
-// ── Extension payload interfaces ────────────────────────────────
-
-/** Interactive extension UI methods that produce extension.ui_request WS events */
-export type ExtensionUIMethod = 'confirm' | 'select' | 'input' | 'notify' | 'editor'
-
-export interface ExtensionUIRequestPayload {
-  sessionId: string
-  requestId: string
-  method: ExtensionUIMethod
-  title?: string
-  message?: string
-  options?: string[]
-  default?: string
-  level?: 'info' | 'warn' | 'error'
-  /** Origin of the request — determines which WS channel the response is sent to */
-  source?: 'extension' | 'plugin'
-}
-
-export interface ExtensionUIResponsePayload {
-  sessionId: string
-  requestId: string
-  result: boolean | string | null
-}
-
-export interface ExtensionErrorPayload {
-  sessionId: string
-  extensionName: string
-  error: string
-  errorEvent?: string
-}
-
-export interface ToolCallUpdatePayload {
-  sessionId: string
-  toolCallId: string
-  progress?: number
-  detail?: string | Record<string, unknown>
-}
-
-export interface ExtensionInfo {
-  name: string
-  /** Filesystem directory basename (may differ from npm package name for scoped packages) */
-  dirName: string
-  version: string
-  description: string
-  path: string
-  enabled: boolean
-  source: 'built-in' | 'user-installed'
-}
-
-// ── Extension install flow payload interfaces ──────────────────
-
-export interface ExtensionDiscoveredPayload {
-  tempDir: string
-  candidates: ExtensionInfo[]
-}
-
-export interface ExtensionInstallErrorPayload {
-  code: string
-  message: string
-  hint?: string
-}
-
-// ── Plugin payload interfaces ───────────────────────────────────
-
-export interface PluginInfo {
-  pluginId: string
-  version: string
-  displayName: string
-  description: string
-  status: 'discovered' | 'loaded' | 'active' | 'inactive' | 'crashed'
-  trustLevel: 'trusted' | 'sandbox'
-  enabled: boolean
-}
-
-export interface PluginCrashedPayload {
-  pluginId: string
-  workerId: string
-  error: string
-}
-
-export interface PluginNotificationPayload {
-  pluginId: string
-  level: 'info' | 'warning' | 'error'
-  message: string
-}
-
-// ── Plugin Server → Client payload interfaces ────────────────────
-
-export interface PluginStatusChangePayload {
-  pluginId: string
-  oldStatus: string
-  newStatus: string
-}
-
-export interface PluginPermissionRequestPayload {
-  pluginId: string
-  permissions: string[]
-}
-
-export interface StatusBarItem {
-  id: string
-  pluginId: string
-  text: string
-  tooltip?: string
-  commandId?: string
-  priority: number
-  scope: 'per-session' | 'global'
-  sessionId?: string
-}
-
-export interface PluginStatusBarUpdatePayload {
-  items: StatusBarItem[]
-}
-
-export interface StatusSetUpdatePayload {
-  sessionId: string
-  key: string
-  text: string
-}
-
-export interface MessageDecoration {
-  type: string
-  pluginId: string
-  label: string
-  color?: string
-  commandId?: string
-}
-
-export interface PluginMessageDecorationPayload {
-  sessionId: string
-  messageId: string
-  decorations: MessageDecoration[]
-}
-
-export interface PluginConfigPayload {
-  pluginId: string
-  config: Record<string, unknown>
-}
-
-// ── StopReason / SendMode helpers ─────────────────────────────
-
-/** Possible reasons a stream completed */
-export type StopReason = 'complete' | 'aborted' | 'error' | 'length' | 'tool_use'
-
-/** UI-facing send mode values */
-export type UISendMode = 'send' | 'steer' | 'queue'
-
-/** Protocol-level send mode values (queue → follow-up) */
-export type ProtocolSendMode = 'send' | 'steer' | 'follow-up'
-
-/** UI send mode → protocol send mode mapping */
-export function toProtocolSendMode(mode: UISendMode): ProtocolSendMode {
-  return mode === 'queue' ? 'follow-up' : mode
-}
+/**
+ * # 错误契约（D10/P0-B）
+ *
+ * 「告诉客户端操作失败」有三种语义通道，**不可混用**：
+ *
+ * 1. **请求级失败 → 统一 `error` envelope**（install / uninstall / toggle / file.read /
+ *    steer / followUp 等同步请求的失败回复）。客户端只需一处 catch：
+ *    `{ type:'error', id, payload:{ code, message, sessionId?, details? } }`。
+ *    扩展信息（hint / path 等）进 `details`，不再为每种失败造独立 *Error 子类型。
+ *
+ * 2. **流式异步推送失败 → `message.error`**（message-dispatcher 在 streaming 过程中广播，
+ *    非「请求回复」而是「server-push 通道」）。payload: `{ sessionId, message }`。
+ *
+ * 3. **部分成功的降级响应 → 内联 `success:false`**
+ *    （config.discoveredModels 成功/失败共用同 type 用 `success` 字段区分）。**不是错误**，
+ *    是带错误信息的成功响应——保留各自 type，不并入 error envelope。
+ *
+ * 此前 6 种碎片化形状（extension.installError / file.read:error / ...）已统一：
+ * `extension.installError` 和 `file.read:error` type 已删除（客户端 0 消费者时合并）。
+ *
+ * 领域 DTO（ExtensionInfo / GitStatusResult / PluginInfo / StatusBarItem …）已下沉到
+ * extension.ts / git.ts / plugin.ts，本文件顶部 import 引用，ServerMessageMapBase 照常引用。
+ */

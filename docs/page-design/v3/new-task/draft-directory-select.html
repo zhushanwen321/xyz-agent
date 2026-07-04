@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>选择目录 · popover · new-task directory select</title>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --bg-input:#101013; --bg-elevated:#1c1c20;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --text-primary:#e8e8ea; --text-secondary:#8a8a95; --text-tertiary:#5a5a65;
+    --bg-hover:#232328;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.45);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --duration-fast:120ms; --duration:200ms; --duration-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:820px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+  .note.warn{border-left-color:var(--warning)}
+  .note.warn b{color:var(--warning)}
+
+  /* ===== window-mock 拓扑（与 landing 同源） ===== */
+  .window-mock{position:relative;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);margin-top:14px}
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:#fc6155} .dot-yellow{background:#fdb40a} .dot-green{background:#34c84a}
+  .app-shell{display:flex;height:680px;padding:12px;gap:12px}
+  .aside-region{width:200px;flex-shrink:0;padding-top:52px;padding-left:2px;display:flex;flex-direction:column}
+  .a-logo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:0 8px 14px}
+  .a-logo .a-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0}
+  .a-nav{display:flex;flex-direction:column;gap:1px;padding:0 4px}
+  .a-item{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);
+    padding:6px 8px;border-radius:6px;cursor:pointer}
+  .a-item.active{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .a-item svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .a-item .a-kbd{margin-left:auto;font:10px/1 var(--font-mono);color:var(--subtle);
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px}
+  .main-panel{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;position:relative}
+
+  /* ===== Landing（与 draft-landing.html 一致，popover 锚定在 chip 上方） ===== */
+  .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 24px 64px;position:relative;overflow:visible;background:var(--bg)}
+  .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
+    font:600 220px/1 var(--font-sans);color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;user-select:none;pointer-events:none}
+  .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
+    margin:0 0 28px;text-align:center;position:relative;z-index:1}
+
+  /* composer 与 landing/panel 同构：composer 无背景无裁切，composer-box 承载背景。popover 作为 composer-box 兄弟，脱离裁切 */
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;padding:10px 0 0}
+  .composer-box{
+    background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius-lg);position:relative;overflow:hidden;
+    transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease);
+  }
+  .composer-box.focus{border-color:var(--border-strong);box-shadow:0 0 0 2px rgba(255,255,255,0.04)}
+  .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:1px solid transparent;border-radius:var(--radius);
+    color:var(--text-secondary);font:500 12px/1 var(--font-sans);cursor:pointer;
+    max-width:200px;transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .chip.open{background:var(--surface-2);color:var(--text-primary);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .chip .ch-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+  .chip .ch-chev{color:var(--text-tertiary);width:11px;height:11px}
+  .chip.branch-chip .ch-ic{color:var(--accent)}
+  .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
+  .composer-area{
+    width:100%;min-height:40px;max-height:120px;overflow-y:auto;
+    border:0;outline:0;background:transparent;
+    color:var(--text-primary);font:13px/1.55 var(--font-sans);
+    padding:11px 13px 4px;white-space:pre-wrap;word-break:break-word;
+  }
+  .composer-area[contenteditable][data-placeholder]:empty:before{
+    content:attr(data-placeholder);color:var(--text-tertiary);pointer-events:none;
+  }
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px;flex-wrap:nowrap}
+  .c-insert{width:28px;height:28px;border-radius:var(--radius-sm);border:0;background:transparent;
+    color:var(--text-tertiary);display:grid;place-items:center;cursor:pointer;
+    transition:all var(--duration) var(--ease);flex-shrink:0}
+  .c-insert:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-insert svg{width:16px;height:16px}
+  .c-text{font:500 11.5px/1 var(--font-sans);color:var(--text-tertiary);
+    background:transparent;border:0;padding:6px 8px;border-radius:var(--radius-sm);
+    cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    transition:all var(--duration) var(--ease);flex-shrink:0;letter-spacing:0.005em}
+  .c-text:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-text .chev{color:var(--text-tertiary);font-size:9px;margin-left:1px}
+  .c-text .num{font-variant-numeric:tabular-nums}
+  .c-text .dot{width:3px;height:3px;border-radius:50%;background:var(--text-tertiary);opacity:0.5}
+  .c-text.think[data-lvl="max"]{color:#fff;background:rgba(167,139,250,0.85);box-shadow:0 0 12px rgba(167,139,250,0.4)}
+  .c-send{margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--accent);color:#fff;cursor:pointer;
+    display:grid;place-items:center;flex-shrink:0;
+    transition:background var(--duration) var(--ease)}
+  .c-send:hover{background:var(--accent-hover)}
+  .c-send svg{width:15px;height:15px}
+  .c-send:disabled{background:transparent;color:var(--text-tertiary);cursor:default;opacity:0.5}
+  .composer-hint{font:10px/1.3 var(--font-mono);color:var(--text-tertiary);padding:6px 4px 0}
+  .composer-hint .kbd{background:var(--surface-2);border:1px solid var(--border);padding:1px 4px;border-radius:3px}
+
+  /* ===== Directory Popover（核心 demo）· 锚定在 .composer（composer-box 兄弟，脱离 overflow:hidden） ===== */
+  .ds-popover{position:absolute;width:380px;background:var(--surface-2);
+    border:1px solid var(--border-strong);border-radius:var(--radius);
+    box-shadow:0 0 0 1px rgba(0,0,0,0.3),0 16px 48px rgba(0,0,0,0.6);
+    overflow:visible;z-index:50}
+  /* popover 锚定：相对 .composer（positioned），底边贴 chip 上方 */
+  .ds-popover{left:50%; transform:translateX(-50%); bottom:calc(100% - 26px)}
+  /* 三角指 dis （简化为 border + 阴影） */
+  .ds-popover::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);
+    width:8px;height:8px;background:var(--surface-2);
+    border-right:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong)}
+
+  /* 搜索行 */
+  .ds-search{display:flex;align-items:center;gap:9px;padding:11px 13px;
+    border-bottom:1px solid var(--border)}
+  .ds-search svg{width:15px;height:15px;color:var(--muted);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5}
+  .ds-search input{flex:1;min-width:0;background:transparent;border:0;outline:0;
+    color:var(--fg);font:13px/1.4 var(--font-sans)}
+  .ds-search input::placeholder{color:var(--subtle)}
+  .ds-search .esc{font:10px/1 var(--font-mono);color:var(--subtle);
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px}
+
+  /* 列表区 */
+  .ds-list{max-height:280px;overflow-y:auto;padding:4px 0}
+  .ds-list::-webkit-scrollbar{width:6px}
+  .ds-list::-webkit-scrollbar-thumb{background:var(--surface);border-radius:3px}
+  .ds-group-label{padding:8px 13px 3px;font:500 10px/1 var(--font-mono);
+    color:var(--subtle);text-transform:uppercase;letter-spacing:0.08em}
+  .ds-row{display:flex;align-items:center;gap:9px;padding:7px 13px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease);position:relative}
+  .ds-row:hover{background:var(--surface-hover)}
+  /* 当前选中：Card-Active inset ring（design-system §2） */
+  .ds-row.sel{background:var(--surface-hover);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .ds-row .ds-ic{width:15px;height:15px;color:var(--muted);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .ds-row.sel .ds-ic{color:var(--accent)}
+  .ds-row .ds-name{flex:1;font-size:13px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ds-row .ds-sub{font:11px/1 var(--font-mono);color:var(--subtle);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ds-row .ds-check{width:14px;height:14px;color:var(--accent);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  /* 分隔线 */
+  .ds-sep{height:1px;background:var(--border);margin:4px 0}
+  /* 动作项与列表项视觉一致——避免「动作看起来像目录」 */
+  .ds-action{color:var(--muted)}
+  .ds-action .ds-ic{color:var(--subtle)}
+  .ds-action:hover .ds-ic{color:var(--fg)}
+
+  /* 标注 */
+  .anno{position:absolute;font:500 10px/1.2 var(--font-mono);padding:3px 6px;border-radius:3px;
+    pointer-events:none;z-index:60;white-space:nowrap;letter-spacing:0.02em}
+  .anno.a{color:var(--accent);background:rgba(79,142,247,0.08);border:1px solid var(--accent)}
+  .anno.w{color:var(--warning);background:rgba(245,165,36,0.08);border:1px solid var(--warning)}
+  .anno.m{color:var(--muted);background:rgba(138,138,149,0.08);border:1px solid var(--muted)}
+
+  .flow-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px}
+  .flow-table th,.flow-table td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .flow-table th{font:500 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em;font-weight:500}
+  .flow-table td b{color:var(--fg)}
+  .flow-table .step{font:600 11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);
+    padding:3px 7px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+
+<!-- ===== 共享 SVG symbol ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/><path d="M8 6.5v3M6.5 8h3"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 16 16"><path d="M5 12.5a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.6-0.5 2.5 2.5 0 0 1 0.4 5H5z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="3.5" cy="3" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><path d="M3.5 4.5v7M3.5 8h4a3 3 0 0 0 3-3V3.5"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.5l5.5 2v5c0 3-2.5 5.5-5.5 6-3-0.5-5.5-3-5.5-6v-5z"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 16 16"><path d="M6 2.5a2 2 0 0 0-2 2 2 2 0 0 0-1 3.5A2 2 0 0 0 4 11a2 2 0 0 0 2 2 2 2 0 0 0 2-2M10 2.5a2 2 0 0 1 2 2 2 2 0 0 1 1 3.5A2 2 0 0 1 12 11a2 2 0 0 1-2 2 2 2 0 0 1-2-2M6 13V3.5M10 13V3.5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 16 16"><path d="M8 13V3M4.5 6.5L8 3l3.5 3.5"/></symbol>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+  </defs>
+</svg>
+
+<h1>选择目录 · Directory Select popover</h1>
+<p class="lede">
+  composer 顶部 <b>directory chip</b> 被点开后，向上展开的 popover：搜索 + 最近 workspace 列表 + 「打开文件夹 / 远程连接」动作。
+  <b>锚定</b>在 chip 中心上方（向上展开避免出屏），<b>选中态</b>走 Card-Active（<code>--surface-hover</code> 底 + <code>inset 1px accent ring</code>）。
+</p>
+<div class="meta">
+  <span>层级 <b>L2 · composer 上方 popover</b></span>
+  <span>触发 <b>点 directory chip</b></span>
+  <span>形态 <b>向上锚定 · 380px 宽 · Card-Elevated</b></span>
+  <span>归属 <b>overlays 单元 · 局部 popover</b></span>
+  <span>数据源 <b>~/.xyz-agent/recent-workspaces.json</b></span>
+  <span>token <b>zcode 冷蓝</b></span>
+</div>
+
+<h2><span class="num">§1</span>Popover 默认态 · 搜索空 + 列表展开</h2>
+<p class="lede">用户点开 chip 后的<b>默认呈现</b>。焦点自动落到搜索框，列表显示最近 5 个 workspace + 2 个动作。当前选中项（refactor-goal-extension）走 Card-Active 选中态。</p>
+
+<div class="window-mock">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item active"><svg viewBox="0 0 16 16"><use href="#i-new"/></svg>新建任务</div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg>搜索</div>
+      </div>
+    </div>
+    <div class="main-panel">
+      <div class="landing">
+        <span class="watermark">xyz</span>
+        <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+
+        <div class="composer">
+          <!-- Popover 作为 composer-box 兄弟（锚定在 .composer，脱离 composer-box overflow:hidden） -->
+          <div class="ds-popover">
+            <span class="anno a" style="right:-12px; top:8px; transform:translateX(100%);">z-index 50 · Card-Elevated</span>
+            <span class="anno a" style="left:-12px; top:8px; transform:translateX(-100%);">向上展开 · 锚定 chip 中心</span>
+
+            <!-- 搜索行 -->
+            <div class="ds-search">
+              <svg viewBox="0 0 16 16"><use href="#i-search"/></svg>
+              <input value="搜索工作区" placeholder="搜索工作区" readonly />
+              <span class="esc">Esc</span>
+            </div>
+
+            <!-- 列表 -->
+            <div class="ds-list">
+              <div class="ds-group-label">最近工作区 · 5</div>
+              <div class="ds-row">
+                <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                <div style="flex:1;min-width:0"><div class="ds-name">feat-system-prompt-loader</div></div>
+              </div>
+              <div class="ds-row">
+                <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                <div style="flex:1;min-width:0"><div class="ds-name">refactor-arch-render-runtime</div></div>
+              </div>
+              <div class="ds-row">
+                <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                <div style="flex:1;min-width:0"><div class="ds-name">refactor-coding-workflow-design</div></div>
+              </div>
+              <!-- 当前选中：Card-Active inset ring + ✓ -->
+              <div class="ds-row sel">
+                <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="ds-name">refactor-goal-extension</div>
+                  <div class="ds-sub">~/Code/xyz-agent-workspace/refactor-goal-extension</div>
+                </div>
+                <svg class="ds-check" viewBox="0 0 16 16"><use href="#i-check"/></svg>
+              </div>
+              <div class="ds-row">
+                <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                <div style="flex:1;min-width:0"><div class="ds-name">ZCodeProject</div></div>
+              </div>
+
+              <div class="ds-sep"></div>
+
+              <!-- 动作项：与列表项视觉一致，区分在图标语义 -->
+              <div class="ds-row ds-action">
+                <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder-plus"/></svg>
+                <div style="flex:1;min-width:0"><div class="ds-name">打开文件夹</div></div>
+                <span class="anno w" style="right:8px;">→ draft-directory-picker §1</span>
+              </div>
+              <div class="ds-row ds-action">
+                <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-cloud"/></svg>
+                <div style="flex:1;min-width:0"><div class="ds-name">远程连接</div></div>
+                <span class="anno m" style="right:8px;">v1 stub</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer-box focus">
+          <!-- 顶部元信息行 -->
+          <div class="meta-row">
+            <button class="chip open">
+              <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+              <span class="ch-name">refactor-goal-extension</span>
+              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+            </button>
+            <div class="meta-sep"></div>
+            <button class="chip branch-chip">
+              <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+              <span class="ch-name">refactor-goal-…</span>
+              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+            </button>
+          </div>
+
+          <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…"></div>
+          <div class="composer-bar">
+            <button class="c-insert" title="添加内容"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+            <span style="margin-left:auto"></span>
+            <button class="c-text ctx" title="上下文容量"><span class="num">0</span><span class="dot"></span><span>0%</span></button>
+            <button class="c-text model" title="模型">sonnet-4.5 <span class="chev">▾</span></button>
+            <button class="c-text think" data-lvl="max" title="思考等级">思考 最高 <span class="chev">▾</span></button>
+            <button class="c-send" disabled title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+          </div>
+          </div>
+          <div class="composer-hint"><span class="kbd">⏎</span> 发送 · <span class="kbd">⇧⏎</span> 换行 · <span class="kbd">@</span> 引用 · <span class="kbd">#</span> 文件 · <span class="kbd">/</span> 命令</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>关键裁决</b>：① 选中态走 <b>Card-Active inset ring</b>（<code>--surface-hover</code> 底 + <code>inset 1px accent ring</code>），不画左色条（design-system §2 反模式）；② ✓ 用 <code>--accent</code> 描边对勾，位置在 row 末尾，与选中态 ring 双重提示「这条是当前」；③ 「打开文件夹」用 <b>folder-plus</b> 图标（folder + 加号）跟普通 folder 区分，避免误以为是「打开这个目录」；④ 动作项与列表项视觉一致（同 row 高 / 同图标位），只在图标语义上区分。
+</div>
+
+<h2><span class="num">§2</span>五态 · 节奏</h2>
+<table class="flow-table">
+  <thead><tr><th>状态</th><th>触发</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="step">A</span> 打开 · 搜索空</td>
+      <td>点 directory chip</td>
+      <td>focus 搜索框，显示最近 5 + 2 动作</td>
+    </tr>
+    <tr>
+      <td><span class="step">B</span> 输入 · 即时过滤</td>
+      <td>键入字符</td>
+      <td>无 debounce（即时），列表收缩到命中项；空结果走「空状态」（§3）</td>
+    </tr>
+    <tr>
+      <td><span class="step">C</span> 键盘导航</td>
+      <td><code>↑</code> <code>↓</code></td>
+      <td>扁平化跨组移动（列表 + 动作扁平化，不分两组）</td>
+    </tr>
+    <tr>
+      <td><span class="step">D</span> 选中切换</td>
+      <td>回车 / 点击</td>
+      <td>关闭 popover，chip 更新为新值，composer <b>保持 focus</b>（不打断主输入）</td>
+    </tr>
+    <tr>
+      <td><span class="step">E</span> 关闭</td>
+      <td>Esc / 点 chip 区域外 / 选中</td>
+      <td>popover 收起，chip 走 Card-Active → 默认态</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§3</span>边缘态 · 三个常被忽视的场景</h2>
+
+<h3>3.1 空列表（首次启动 · 无任何 workspace）</h3>
+<p class="lede">按 design-system §7「空状态」三要素：subtle 图标 + 一句说明 + Primary 入口。</p>
+
+<div class="window-mock" style="height:300px">
+  <div class="app-shell" style="height:100%">
+    <div class="aside-region"></div>
+    <div class="main-panel">
+      <div class="landing" style="padding:0">
+        <div class="ds-popover" style="position:relative;left:50%;top:50%;transform:translate(-50%,-50%);bottom:auto">
+          <div class="ds-search"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg><input placeholder="搜索工作区" readonly /><span class="esc">Esc</span></div>
+          <div style="padding:38px 24px;text-align:center;color:var(--muted)">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--subtle);margin-bottom:12px">
+              <path d="M4 9a2 2 0 0 1 2-2h5l2 2h13a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9z"/>
+              <path d="M16 14v8M12 18h8"/>
+            </svg>
+            <div style="font-size:14px;color:var(--fg);margin-bottom:4px">暂无最近工作区</div>
+            <div style="font-size:12px;color:var(--subtle)">选择一个本地目录开始你的第一个会话</div>
+            <button style="margin-top:14px;background:var(--accent);color:#fff;border:0;padding:8px 16px;border-radius:var(--radius);font:600 12.5px/1 var(--font-sans);cursor:pointer">
+              打开文件夹
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>3.2 输入无命中（搜索结果为空）</h3>
+<p class="lede">搜索过程即时反馈，命中为空时给「换个关键词 / 打开文件夹」两个动作建议。</p>
+
+<div class="window-mock" style="height:300px">
+  <div class="app-shell" style="height:100%">
+    <div class="aside-region"></div>
+    <div class="main-panel">
+      <div class="landing" style="padding:0">
+        <div class="ds-popover" style="position:relative;left:50%;top:50%;transform:translate(-50%,-50%);bottom:auto">
+          <div class="ds-search"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg><input value="zzzz" readonly /><span class="esc">Esc</span></div>
+          <div style="padding:32px 24px;text-align:center;color:var(--muted)">
+            <div style="font-size:14px;color:var(--fg);margin-bottom:4px">未找到「zzzz」的相关工作区</div>
+            <div style="font-size:12px;color:var(--subtle)">换个关键词，或打开新文件夹</div>
+            <div style="margin-top:12px;display:flex;gap:6px;justify-content:center">
+              <span style="font:11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);border:1px solid rgba(79,142,247,0.25);border-radius:999px;padding:5px 10px;cursor:pointer">auth</span>
+              <span style="font:11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);border:1px solid rgba(79,142,247,0.25);border-radius:999px;padding:5px 10px;cursor:pointer">goal</span>
+              <span style="font:11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);border:1px solid rgba(79,142,247,0.25);border-radius:999px;padding:5px 10px;cursor:pointer">打开文件夹</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>3.3 hover 态（鼠标移到非选中项）</h3>
+<p class="lede">hover 项走 <code>--surface-hover</code> 底（不画 ring，避免与选中态 ring 重复）。这是与 search modal 同源的 hover 手法。</p>
+
+<div class="window-mock" style="height:280px">
+  <div class="app-shell" style="height:100%">
+    <div class="aside-region"></div>
+    <div class="main-panel">
+      <div class="landing" style="padding:0">
+        <div class="ds-popover" style="position:relative;left:50%;top:50%;transform:translate(-50%,-50%);bottom:auto">
+          <div class="ds-search"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg><input value="" placeholder="搜索工作区" readonly /><span class="esc">Esc</span></div>
+          <div class="ds-list" style="max-height:none">
+            <div class="ds-row">
+              <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+              <div style="flex:1;min-width:0"><div class="ds-name">feat-system-prompt-loader</div></div>
+            </div>
+            <!-- hover 项：仅底色变化，无 ring -->
+            <div class="ds-row" style="background:var(--surface-hover)">
+              <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+              <div style="flex:1;min-width:0"><div class="ds-name">refactor-arch-render-runtime</div></div>
+              <span class="anno m" style="right:8px;">hover · 仅底色，无 ring</span>
+            </div>
+            <div class="ds-row sel">
+              <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+              <div style="flex:1;min-width:0"><div class="ds-name">refactor-goal-extension</div><div class="ds-sub">~/Code/xyz-agent-workspace/refactor-goal-extension</div></div>
+              <svg class="ds-check" viewBox="0 0 16 16"><use href="#i-check"/></svg>
+            </div>
+            <div class="ds-row">
+              <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+              <div style="flex:1;min-width:0"><div class="ds-name">ZCodeProject</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2><span class="num">§4</span>键盘契约</h2>
+<table class="flow-table">
+  <thead><tr><th>键</th><th>行为</th><th>边界 / 备注</th></tr></thead>
+  <tbody>
+    <tr><td><code>Esc</code></td><td>关闭 popover</td><td>直接关闭，不先清空查询（短路径）</td></tr>
+    <tr><td><code>↑</code> <code>↓</code></td><td>跨组扁平化移动（列表 + 动作扁平）</td><td>到顶 / 底循环</td></tr>
+    <tr><td><code>Enter</code></td><td>确认当前选中</td><td>列表项 → 切到该目录并关闭；动作项 → 触发该动作并关闭</td></tr>
+    <tr><td><code>Tab</code></td><td>v1 不切组（只有一组）</td><td>v2 接多类型过滤（跨项目）时启用</td></tr>
+    <tr><td>点 chip 区域外</td><td>关闭 popover</td><td>composer 保持 focus，不打断输入流</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§5</span>与 File View 树内搜索的严格区分（P0）</h2>
+<div class="note warn">
+  <b>两条搜索不可混用</b>：① 本 popover（directory select）= <b>全局 workspace 列表</b>，跨项目，弹层形态；② File View 树内搜索 = <b>当前 active session 改动文件</b>的树过滤，sidebar 内联，无浮层。
+  入口 / 范围 / 形态 / 结果全不同，详 <code>overlays/spec.md</code> §严格区分。
+</div>
+
+<h2><span class="num">§6</span>实现要点</h2>
+<ul style="font-size:13px;color:var(--muted);line-height:1.85;padding-left:18px">
+  <li><b>锚定算法</b>：<code>position:absolute; bottom: calc(100% - 10px); left:50%; transform:translateX(-50%)</code>。popover 水平居中对齐 chip 中心，垂直方向在 chip <b>上方</b>。<b>当 chip 距视口顶 &lt; 300px</b> 时改向下展开（fallback 待实现）。</li>
+  <li><b>三角指 dis</b>：用 <code>::after</code> 旋转 45° 方形 + 两条 border 模拟，避免额外 SVG 节点。位置 <code>bottom:-5px; left:50%</code>。</li>
+  <li><b>扁平化跨组导航</b>：搜索空时按 keyboard <code>↑↓</code> 在「列表 5 项 + 动作 2 项」间扁平化移动（不分组，<code>selIdx</code> 一个变量）。</li>
+  <li><b>chip ↔ popover 状态联动</b>：popover 打开时 chip 走 <code>.open</code>（<code>--surface-2</code> 底 + <code>inset 1px accent ring</code>），关闭后 chip 回默认。两者状态机由 popover 的 open 状态统一控制，<b>不重复判断</b>。</li>
+  <li><b>composer 焦点保持</b>：popover 打开/关闭不触发 composer blur，<b>用户可继续输入</b>，这是 v3 局部浮层的硬约束（区别于 search modal 这种全局浮层）。</li>
+  <li><b>数据源</b>：<code>~/.xyz-agent/recent-workspaces.json</code> 持久化最近 10 个（v1 限制）。v2 接 LSP 后端实现 workspace index 模糊搜索。</li>
+  <li><b>权限</b>：选目录后若该目录是 <code>~</code> 之外的位置，触发 macOS 隐私权限请求（<code>~/Library/Mobile Documents/com~apple~CloudDocs/</code> 之类），首次需要走系统的「Files and Folders」授权弹窗。</li>
+</ul>
+
+</body>
+</html>

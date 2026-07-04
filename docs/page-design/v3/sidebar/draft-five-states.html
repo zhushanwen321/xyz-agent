@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sidebar 容器 · 四态（搜索浮层已剥离至 Overlay）</title>
+<style>
+  :root {
+    /* zcode 冷蓝 token —— 以 docs/design-tokens.md 为单一源 */
+    --bg-base: #0d0d0f;
+    --bg-panel: #151519;
+    --bg-elevated: #1b1b20;
+    --bg-hover: #232328;
+    --accent: #4f8ef7;
+    --accent-hover: #6ba3ff;
+    --accent-soft: rgba(79,142,247,0.12);
+    --text-primary: #f0f0f5;
+    --text-secondary: #8a8a95;
+    --text-tertiary: #5a5a65;
+    --border: rgba(255,255,255,0.06);
+    --border-strong: rgba(255,255,255,0.12);
+    --success: #22c55e;
+    --warning: #f5a524;
+    --danger: #ef4444;
+    --info: #38bdf8;
+    --tl-red: #fc6155; --tl-yellow: #fdb40a; --tl-green: #34c84a;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --duration-fast: 120ms; --duration: 200ms; --duration-slow: 320ms;
+    --anno-accent: rgba(79,142,247,0.9);
+    --anno-bg: rgba(79,142,247,0.08);
+    --anno-warn: rgba(245,165,36,0.9);
+    --anno-warn-bg: rgba(245,165,36,0.08);
+    --anno-muted: rgba(138,138,149,0.9);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font: 13px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 32px 40px 96px; max-width: 1440px; margin: 0 auto; }
+
+  .page-head { margin-bottom: 24px; }
+  .page-head h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .page-head .sub { color: var(--text-secondary); font-size: 13px; max-width: 920px; }
+  .page-head .sub b { color: var(--accent); }
+  .page-head .meta { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; font: 11px/1 ui-monospace, Menlo, monospace; }
+  .page-head .meta span { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--text-secondary); }
+  .page-head .meta b { color: var(--accent); }
+
+  .callout { margin: 18px 0; padding: 11px 14px; background: var(--anno-warn-bg); border-left: 3px solid var(--anno-warn); border-radius: 0 6px 6px 0; font-size: 12.5px; color: var(--text-secondary); }
+  .callout b { color: var(--warning); }
+  .callout.accent { background: var(--anno-bg); border-left-color: var(--anno-accent); }
+  .callout.accent b { color: var(--accent); }
+  .callout code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); background: rgba(79,142,247,0.1); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+  .callout ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; }
+  .callout .map { display: grid; grid-template-columns: auto auto 1fr; gap: 4px 14px; margin-top: 8px; font: 11.5px/1.5 ui-monospace, Menlo, monospace; }
+  .callout .map .h { color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; }
+  .callout .map .k { color: var(--accent); }
+  .callout .map .v { color: var(--text-secondary); }
+  .callout .map .v s { color: var(--text-tertiary); text-decoration: line-through; text-decoration-color: rgba(239,68,68,0.5); }
+
+  .section-title { margin: 36px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .section-title .num { font: 11px/1 ui-monospace, Menlo, monospace; background: var(--accent); color: #fff; padding: 3px 7px; border-radius: 3px; }
+  .section-title .hint { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
+
+  .gallery { display: flex; gap: 24px; overflow-x: auto; padding: 8px 4px 20px; scroll-snap-type: x proximity; }
+  .gallery::-webkit-scrollbar { height: 10px; }
+  .gallery::-webkit-scrollbar-track { background: transparent; }
+  .gallery::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+  .gallery::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  .card { flex-shrink: 0; scroll-snap-align: start; }
+  .card-cap { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; font: 11px/1.3 ui-monospace, Menlo, monospace; color: var(--text-secondary); min-height: 30px; max-width: 560px; }
+  .card-cap .tag { padding: 3px 7px; border-radius: 3px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+  .tag-a { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+  .tag-b { background: rgba(56,189,248,0.12); color: var(--info); border: 1px solid var(--info); }
+  .tag-c { background: rgba(138,138,149,0.12); color: var(--text-secondary); border: 1px solid var(--text-tertiary); }
+  .tag-d { background: rgba(245,165,36,0.12); color: var(--warning); border: 1px solid var(--warning); }
+
+  .window-mock {
+    position: relative;
+    background: var(--bg-base);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+  }
+  .app-shell { display: flex; height: 620px; padding: 12px; gap: 12px; }
+
+  /* Sidebar 容器：透明融 base（无 background）。术语裁决：废弃 .aside-region / 左 aside → Sidebar */
+  .sb {
+    width: 200px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    padding-top: 52px;
+    padding-left: 2px;
+    transition: width var(--duration) var(--ease);
+  }
+  /* 收起态 = 容器整体隐藏（用户决策：收起即完全隐藏 Sidebar） */
+  .sb.hidden { display: none; }
+
+  .a-logo { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 0 8px 14px; }
+  .a-logo .a-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+
+  /* 主操作 nav —— 两项：新建 / 搜索（文件移至下方视图切换 tab） */
+  .a-nav { display: flex; flex-direction: column; gap: 1px; padding: 0 4px; }
+  .a-item { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--text-secondary); padding: 6px 8px; border-radius: 6px; cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
+  .a-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .a-item:hover .a-ico { color: var(--text-secondary); }
+  .a-item.active { background: var(--bg-hover); color: var(--text-primary); }
+  .a-item.active .a-ico { color: var(--accent); }
+  .a-item .a-ico { width: 15px; height: 15px; display: grid; place-items: center; color: var(--text-tertiary); flex-shrink: 0; transition: color var(--duration-fast) var(--ease); }
+  .a-item .a-ico svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .a-item .a-label { flex: 1; }
+  .a-item .a-kbd { margin-left: auto; font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 3px; padding: 2px 5px; }
+
+  .a-sep { height: 1px; background: var(--border); margin: 8px 10px; }
+
+  /* ===== 视图切换 segmented tab（容器化核心：Session List ↔ File View 互斥子视图） ===== */
+  .sb-tabs { display: flex; gap: 2px; padding: 0 4px 4px; }
+  .sb-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11.5px; color: var(--text-secondary); background: transparent; border: 1px solid transparent; padding: 5px 8px; border-radius: 5px; cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease); }
+  .sb-tab .t-ico { width: 13px; height: 13px; display: grid; place-items: center; color: var(--text-tertiary); }
+  .sb-tab .t-ico svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.4; stroke-linejoin: round; }
+  .sb-tab .t-count { font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); opacity: 0.7; }
+  .sb-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .sb-tab:hover .t-ico { color: var(--text-secondary); }
+  .sb-tab.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(79,142,247,0.28); }
+  .sb-tab.active .t-ico { color: var(--accent); }
+  .sb-tab.active .t-count { color: var(--accent); opacity: 0.8; }
+
+  /* ===== Session List（默认子视图） ===== */
+  .a-sessions { flex: 1; overflow-y: auto; padding: 0 4px; display: flex; flex-direction: column; gap: 2px; }
+  .a-sessions::-webkit-scrollbar { width: 6px; }
+  .a-sessions::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+  .a-group { display: flex; flex-direction: column; }
+  .a-group-head { display: flex; align-items: center; gap: 5px; font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; padding: 12px 8px 5px; }
+  .a-group-head .count { margin-left: auto; color: var(--text-tertiary); }
+  .a-group-head .chev { color: var(--text-tertiary); font-size: 9px; transition: transform var(--duration-fast) var(--ease); }
+  .a-group.collapsed .a-group-head .chev { transform: rotate(-90deg); }
+  .a-group.collapsed .a-group-body { display: none; }
+  .a-group.collapsed .a-group-head { cursor: pointer; padding: 7px 8px; border-radius: 6px; }
+  .a-group.collapsed .a-group-head:hover { background: var(--bg-hover); }
+
+  .a-group-body { display: flex; flex-direction: column; gap: 1px; }
+
+  /* 会话项：状态点 + 两行 + 右侧（time / hover→操作） */
+  .a-session { position: relative; display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: start; padding: 7px 8px; border-radius: 6px; cursor: pointer; transition: background var(--duration-fast) var(--ease); }
+  .a-session:hover { background: var(--bg-hover); }
+  .a-session.active { background: var(--accent-soft); }
+  .a-session.active::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px; background: var(--accent); border-radius: 2px; }
+
+  .a-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+  .a-dot.running { background: var(--accent); box-shadow: 0 0 0 0 rgba(79,142,247,0.5); animation: pulse-accent 2s var(--ease) infinite; }
+  .a-dot.waiting { background: var(--warning); box-shadow: 0 0 0 0 rgba(245,165,36,0.5); animation: pulse-warn 2s var(--ease) infinite; }
+  .a-dot.done { background: var(--success); }
+  .a-dot.stopped { background: var(--text-tertiary); opacity: 0.5; }
+  .a-dot.error { background: var(--danger); }
+  @keyframes pulse-accent { 0% { box-shadow: 0 0 0 0 rgba(79,142,247,0.5); } 70% { box-shadow: 0 0 0 5px rgba(79,142,247,0); } 100% { box-shadow: 0 0 0 0 rgba(79,142,247,0); } }
+  @keyframes pulse-warn { 0% { box-shadow: 0 0 0 0 rgba(245,165,36,0.5); } 70% { box-shadow: 0 0 0 5px rgba(245,165,36,0); } 100% { box-shadow: 0 0 0 0 rgba(245,165,36,0); } }
+
+  .a-session-main { min-width: 0; }
+  .a-session-title { font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
+  .a-session.active .a-session-title { color: var(--accent); }
+  .a-session-path { margin-top: 2px; font: 10.5px/1.3 ui-monospace, Menlo, monospace; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a-session-path .branch { color: var(--accent); }
+  .a-session-path .sep { color: var(--text-tertiary); opacity: 0.6; }
+
+  .a-session-time { font: 10px/1.35 ui-monospace, Menlo, monospace; color: var(--text-tertiary); flex-shrink: 0; padding-top: 2px; }
+
+  /* hover 操作：2 个正方形 icon 按钮（用户决策） */
+  .a-actions { display: none; gap: 4px; padding-top: 1px; }
+  .a-session:hover .a-actions, .a-session.show-actions .a-actions { display: flex; }
+  .a-session:hover .a-session-time, .a-session.show-actions .a-session-time { display: none; }
+  .a-action-btn { position: relative; width: 22px; height: 22px; border-radius: 5px; background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-secondary); display: grid; place-items: center; cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease); }
+  .a-action-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .a-action-btn.danger:hover { color: var(--danger); border-color: rgba(239,68,68,0.5); }
+  .a-action-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .a-action-btn .tip { position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-primary); font-size: 10.5px; line-height: 1; padding: 4px 7px; border-radius: 4px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity var(--duration-fast) var(--ease); z-index: 20; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .a-action-btn:hover .tip, .a-action-btn.show-tip .tip { opacity: 1; }
+
+  .hl { color: var(--accent); background: var(--accent-soft); border-radius: 2px; padding: 0 1px; }
+
+  /* ===== 空状态（保持空，用户决策） ===== */
+  .a-empty-simple { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); font-size: 11.5px; opacity: 0.55; }
+
+  /* ===== File View（子视图） ===== */
+  .a-files { flex: 1; overflow-y: auto; padding: 0 4px; }
+  .a-files::-webkit-scrollbar { width: 6px; }
+  .a-files::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  .a-files-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 0; }
+  .a-files-label { font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; }
+  .a-files-count { font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); background: var(--bg-elevated); border: 1px solid var(--border); padding: 2px 5px; border-radius: 3px; }
+  .a-files-sess { font: 10.5px/1.4 ui-monospace, Menlo, monospace; color: var(--text-secondary); padding: 4px 8px 2px; }
+  .a-files-sess .b { color: var(--accent); }
+  .a-file { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 5px; cursor: pointer; transition: background var(--duration-fast) var(--ease); }
+  .a-file:hover { background: var(--bg-hover); }
+  .a-file-ico { color: var(--text-tertiary); display: grid; place-items: center; }
+  .a-file-ico svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.3; stroke-linejoin: round; }
+  .a-file-name { font: 12px/1.3 ui-monospace, Menlo, monospace; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a-file-state { font: 10px/1 ui-monospace, Menlo, monospace; padding: 2px 5px; border-radius: 3px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .a-file-state.m { color: var(--warning); background: rgba(245,165,36,0.12); }
+  .a-file-state.a { color: var(--success); background: rgba(34,197,94,0.12); }
+  .a-file-state.d { color: var(--danger); background: rgba(239,68,68,0.12); }
+  /* 文件类型着色（按扩展名；刻意避开 M/A/D 状态色 橙/绿/红） */
+  .a-file-ico.t-html { color: oklch(76% 0.13 230); }
+  .a-file-ico.t-md   { color: oklch(72% 0.10 300); }
+  .a-file-ico.t-ts   { color: oklch(70% 0.13 255); }
+  .a-file-ico.t-css  { color: oklch(72% 0.12 285); }
+  .a-file-ico.t-json { color: oklch(76% 0.11 95); }
+
+  /* 树形目录：可折叠 + 层级缩进 */
+  .a-tree-dir { display: flex; align-items: center; gap: 5px; padding: 6px 8px 3px; cursor: pointer; border-radius: 5px; transition: background var(--duration-fast) var(--ease); }
+  .a-tree-dir:hover { background: var(--bg-hover); }
+  .a-tree-dir .chev { width: 9px; font-size: 12px; font-weight: 700; color: var(--text-tertiary); text-align: center; transform: rotate(90deg); transition: transform var(--duration-fast) var(--ease); }
+  .a-tree-dir .f-ico { display: grid; place-items: center; color: var(--text-secondary); }
+  .a-tree-dir .f-ico svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.4; stroke-linejoin: round; }
+  .a-tree-dir .f-name { font: 10.5px/1 ui-monospace, Menlo, monospace; color: var(--text-secondary); }
+  .a-tree-dir .f-count { margin-left: auto; font: 9.5px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); }
+  .a-tree-dir.collapsed .chev { transform: rotate(0deg); }
+  .a-tree-dir.collapsed + .a-tree-body { display: none; }
+  .a-tree-body .a-tree-dir { padding-left: 14px; }
+  .a-tree-body .a-file { padding-left: 24px; }
+  .a-tree-body .a-tree-body .a-file { padding-left: 34px; }
+
+  /* ===== 收起态：左缘唤回条 ===== */
+  .rail-restore { position: absolute; left: 0; top: 12px; bottom: 12px; width: 16px; z-index: 11; cursor: pointer; }
+  .rail-restore::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border-strong); transition: background var(--duration-fast) var(--ease), width var(--duration-fast) var(--ease); }
+  .rail-restore:hover::before { background: var(--accent); width: 4px; }
+  .rail-restore .rail-btn { position: absolute; left: 10px; top: 50%; transform: translateY(-50%) translateX(-4px); width: 24px; height: 24px; border-radius: 6px; background: var(--bg-elevated); border: 1px solid var(--border-strong); display: grid; place-items: center; color: var(--text-secondary); opacity: 0; transition: opacity var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .rail-restore:hover .rail-btn { opacity: 1; transform: translateY(-50%) translateX(0); }
+  .rail-restore .rail-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ===== 底部用户 ===== */
+  .a-footer { margin-top: auto; display: flex; flex-direction: column; gap: 1px; padding-top: 6px; }
+  .a-user { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer; transition: background var(--duration-fast) var(--ease); }
+  .a-user:hover { background: var(--bg-hover); }
+  .a-user .a-ava { width: 20px; height: 20px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--info)); flex-shrink: 0; }
+  .a-user .a-uname { flex: 1; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* traffic light + 应用按钮 */
+  .traffic-light { position: absolute; left: 20px; top: 20px; display: flex; gap: 8px; z-index: 10; }
+  .traffic-light .dot { width: 12px; height: 12px; border-radius: 50%; border: 0.5px solid rgba(0,0,0,0.25); }
+  .dot-red { background: var(--tl-red); } .dot-yellow { background: var(--tl-yellow); } .dot-green { background: var(--tl-green); }
+  .app-nav-controls { position: absolute; top: 16px; left: 90px; display: flex; gap: 2px; z-index: 10; }
+  .app-nav-controls .nav-btn { width: 26px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--text-tertiary); background: transparent; cursor: pointer; position: relative; }
+  .app-nav-controls .nav-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .app-nav-controls .nav-btn.back::before { content: '\2190'; font-size: 15px; line-height: 1; }
+  .app-nav-controls .nav-btn.fwd::before { content: '\2192'; font-size: 15px; line-height: 1; }
+  .ico-collapse { position: relative; display: inline-block; width: 13px; height: 11px; border: 1px solid currentColor; border-radius: 2px; }
+  .ico-collapse::before { content: ''; position: absolute; left: 1px; top: 1px; bottom: 1px; width: 4px; background: currentColor; border-radius: 1px; }
+
+  /* Workspace 占位（术语裁决：main-panel → Workspace；本稿为侧栏语境，占位保持轻量） */
+  .main-panel { flex: 1; min-width: 90px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden; }
+  .main-header { height: 42px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+  .breadcrumb { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; }
+  .breadcrumb .crumb.branch { font: 10px/1 ui-monospace, Menlo, monospace; color: var(--accent); background: var(--accent-soft); padding: 2px 6px; border-radius: 3px; }
+  .breadcrumb .sep { color: var(--text-tertiary); }
+  .main-body { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .main-body .line { height: 7px; border-radius: 2px; background: rgba(255,255,255,0.04); }
+  .main-body .line.w90 { width: 90%; } .main-body .line.w70 { width: 70%; } .main-body .line.w50 { width: 50%; }
+
+  /* 收起态：功能按钮移入 Workspace 顶栏 */
+  .h-tools { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin-right: 6px; }
+  .h-btn { position: relative; width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; color: var(--text-secondary); cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
+  .h-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .h-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .h-btn .tip { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-primary); font-size: 10.5px; line-height: 1; padding: 4px 7px; border-radius: 4px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity var(--duration-fast) var(--ease); z-index: 20; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .h-btn:hover .tip { opacity: 1; }
+
+  /* 顶部 chrome 按钮 hover 显示快捷键（⌘B 收起 / ⌘[ 后退 / ⌘] 前进） */
+  .app-nav-controls .nav-btn::after { position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-secondary); background: var(--bg-elevated); border: 1px solid var(--border-strong); padding: 3px 5px; border-radius: 3px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity var(--duration-fast) var(--ease); z-index: 30; box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
+  .app-nav-controls .nav-btn.collapse::after { content: '⌘B'; }
+  .app-nav-controls .nav-btn.back::after { content: '⌘['; }
+  .app-nav-controls .nav-btn.fwd::after { content: '⌘]'; }
+  .app-nav-controls .nav-btn:hover::after { opacity: 1; }
+
+  /* 说明区 */
+  .legend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .legend-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .legend-card h4 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
+  .legend-card .lc-sub { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); margin-bottom: 10px; }
+  .dot-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px; }
+  .dot-row .a-dot { margin-top: 0; }
+  .dot-row .label { color: var(--text-secondary); }
+  .dot-row .val { margin-left: auto; font: 11px/1 ui-monospace, Menlo, monospace; color: var(--accent); }
+  .struct-block { background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 6px; padding: 10px 12px; font: 11.5px/1.55 ui-monospace, Menlo, monospace; color: var(--text-secondary); }
+  .struct-block .k { color: var(--accent); }
+  .struct-block .v { color: var(--text-primary); }
+  .struct-block .c { color: var(--text-tertiary); }
+  .note-list { font-size: 12.5px; color: var(--text-secondary); line-height: 1.75; padding-left: 18px; }
+  .note-list li { margin-bottom: 3px; }
+  .note-list code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); background: rgba(79,142,247,0.08); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+  .note-list b { color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<!-- 复用 SVG 符号定义（不渲染，供 <use> 引用） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-sessions" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h7"/></symbol>
+    <symbol id="i-files" viewBox="0 0 16 16"><path d="M2.5 4.4a1 1 0 0 1 1-1h3.1l1.3 1.3h5.6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V4.4z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 16 16"><path d="M10.6 2.6l2.8 2.8L5.8 13l-2.8.7.7-2.8L10.6 2.6z"/><path d="M9.2 4l2.8 2.8"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M4 4.5l8 8M12 4.5l-8 8"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 16 16"><path d="M3.5 2h5l3 3v9h-8z"/><path d="M8.5 2v3h3"/></symbol>
+    <symbol id="i-rail" viewBox="0 0 16 16"><rect x="2" y="3.5" width="8" height="9" rx="1"/><path d="M11 8h3.2M12.8 6.2L15 8l-2.2 1.8"/></symbol>
+    <symbol id="i-back" viewBox="0 0 16 16"><path d="M10 3.5L5.5 8 10 12.5"/></symbol>
+    <symbol id="i-fwd" viewBox="0 0 16 16"><path d="M6 3.5L10.5 8 6 12.5"/></symbol>
+  </defs>
+</svg>
+
+<div class="page-head">
+  <h1>Sidebar 容器 · 四态（搜索浮层已剥离至 Overlay）</h1>
+  <div class="sub">
+    术语裁决后重排：Sidebar 是<b>多视图容器</b>，内部承载 <b>Session List ↔ File View</b> 两个互斥子视图，靠 segmented tab 切换。
+    原「搜索 modal」按 <code>architecture-and-terminology §1</code> 判为<b>独立 Overlay</b>（浮于 Sidebar 之上，非其子视图），已移出至 <code>overlays/draft-search-modal.html</code>。本稿聚焦容器自身四态。
+  </div>
+  <div class="meta">
+    <span>容器 <b>Session List ↔ File View</b></span>
+    <span>视图切换 <b>segmented tab</b></span>
+    <span>搜索浮层 <b>→ overlays/（已剥离）</b></span>
+    <span>收起 <b>完全隐藏 + ⌘B</b></span>
+  </div>
+</div>
+
+<div class="callout accent">
+  <b>本轮依据术语裁决（architecture-and-terminology §1/§3）的三处结构性修订：</b>
+  <ul>
+    <li>① <b>搜索浮层（原 D 卡）移出</b>：它是 <code>⌘K</code> 触发的全局 Overlay，模糊背景浮在 Sidebar <b>之上</b>，不归属 Sidebar 容器。视觉设计迁至 <code>overlays/draft-search-modal.html</code>。Sidebar 的「搜索」nav 项保留为<b>触发入口</b>（点按 / ⌘K → 弹出 Overlay）。</li>
+    <li>② <b>Sidebar 容器化</b>：nav「文件」项升级为 segmented <b>视图切换 tab</b>（会话 | 文件），与 Session List / File View 构成明确的「容器 + 互斥子视图」结构。主操作（新建 / 搜索）与视图切换分层。</li>
+    <li>③ <b>术语全文校正</b>：CSS <code>.aside-region</code> → <code>.sb</code>；正文「会话列表视图」→ <b>Session List</b>；标题由「会话列表 IA」改为<b>容器视角</b>。</li>
+  </ul>
+  <div class="map">
+    <span class="h">态映射</span><span class="h">本稿</span><span class="h">术语 §3</span>
+    <span></span><span class="k">A 会话列表</span><span class="v">A · DEFAULT（Session List）</span>
+    <span></span><span class="k">B 文件视图</span><span class="v">B · FILE VIEW</span>
+    <span></span><span class="k">C 收起态</span><span class="v">C · COLLAPSED</span>
+    <span></span><span class="k">D 空状态</span><span class="v">E · EMPTY</span>
+    <span></span><span class="v"><s>D · 搜索浮层</s></span><span class="v">→ overlays/（Overlay 层，剥离）</span>
+  </div>
+</div>
+
+<!-- ========== 画廊：容器四态 ========== -->
+<div class="gallery">
+
+  <!-- ===== 卡 A：会话列表（Session List 默认子视图） ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-a">A</span> 会话列表 · 默认子视图 · 时间分组 + hover 操作（含长列表折叠）</div>
+    <div class="window-mock">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="收起侧栏 ⌘B"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back"></div>
+        <div class="nav-btn fwd"></div>
+      </div>
+      <div class="app-shell">
+        <div class="sb">
+          <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          <div class="a-nav">
+            <div class="a-item active"><span class="a-ico"><svg><use href="#i-new"/></svg></span><span class="a-label">新建任务</span><span class="a-kbd">⌘N</span></div>
+            <div class="a-item"><span class="a-ico"><svg><use href="#i-search"/></svg></span><span class="a-label">搜索</span><span class="a-kbd">⌘K</span></div>
+          </div>
+          <div class="a-sep"></div>
+          <div class="sb-tabs">
+            <div class="sb-tab active"><span class="t-ico"><svg><use href="#i-sessions"/></svg></span>会话<span class="t-count">12</span></div>
+            <div class="sb-tab"><span class="t-ico"><svg><use href="#i-files"/></svg></span>文件<span class="t-count">5</span></div>
+          </div>
+          <div class="a-sessions">
+            <div class="a-group">
+              <div class="a-group-head"><span class="chev">▾</span>今天<span class="count">3</span></div>
+              <div class="a-group-body">
+                <div class="a-session active">
+                  <span class="a-dot running"></span>
+                  <div class="a-session-main">
+                    <div class="a-session-title">Shell 层次修正</div>
+                    <div class="a-session-path">refactor-arch<span class="sep"> · </span><span class="branch">main</span></div>
+                  </div>
+                  <span class="a-session-time">14:32</span>
+                  <div class="a-actions">
+                    <div class="a-action-btn"><svg><use href="#i-edit"/></svg><span class="tip">重命名</span></div>
+                    <div class="a-action-btn danger"><svg><use href="#i-trash"/></svg><span class="tip">删除</span></div>
+                  </div>
+                </div>
+                <div class="a-session show-actions">
+                  <span class="a-dot waiting"></span>
+                  <div class="a-session-main">
+                    <div class="a-session-title">Sidebar IA 重组</div>
+                    <div class="a-session-path">refactor-arch<span class="sep"> · </span><span class="branch">feat/sidebar</span></div>
+                  </div>
+                  <span class="a-session-time">13:50</span>
+                  <div class="a-actions">
+                    <div class="a-action-btn show-tip"><svg><use href="#i-edit"/></svg><span class="tip">重命名</span></div>
+                    <div class="a-action-btn danger"><svg><use href="#i-trash"/></svg><span class="tip">删除</span></div>
+                  </div>
+                </div>
+                <div class="a-session">
+                  <span class="a-dot done"></span>
+                  <div class="a-session-main">
+                    <div class="a-session-title">Token 校准</div>
+                    <div class="a-session-path">refactor-arch<span class="sep"> · </span><span class="branch">main</span></div>
+                  </div>
+                  <span class="a-session-time">11:08</span>
+                  <div class="a-actions">
+                    <div class="a-action-btn"><svg><use href="#i-edit"/></svg><span class="tip">重命名</span></div>
+                    <div class="a-action-btn danger"><svg><use href="#i-trash"/></svg><span class="tip">删除</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="a-group collapsed">
+              <div class="a-group-head"><span class="chev">▾</span>昨天<span class="count">2 个会话</span></div>
+              <div class="a-group-body"></div>
+            </div>
+            <div class="a-group collapsed">
+              <div class="a-group-head"><span class="chev">▾</span>过去 7 天<span class="count">4 个会话</span></div>
+              <div class="a-group-body"></div>
+            </div>
+            <div class="a-group collapsed">
+              <div class="a-group-head"><span class="chev">▾</span>更早<span class="count">3 个会话</span></div>
+              <div class="a-group-body"></div>
+            </div>
+          </div>
+          <div class="a-footer">
+            <div class="a-user"><div class="a-ava"></div><span class="a-uname">Zzzzswszz</span></div>
+          </div>
+        </div>
+        <div class="main-panel">
+          <div class="main-header">
+            <span class="breadcrumb"><span class="crumb">refactor-arch</span><span class="sep">▸</span><span class="crumb">Shell 层次修正</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div><div class="line w50"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 卡 B：文件视图（File View 子视图） ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-b">B</span> 文件视图 · 子视图 · 默认全折叠（<code>></code>）· 展开缩进 10px/层 · 类型着色 + M/A/D</div>
+    <div class="window-mock">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="收起侧栏 ⌘B"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back"></div>
+        <div class="nav-btn fwd"></div>
+      </div>
+      <div class="app-shell">
+        <div class="sb">
+          <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          <div class="a-nav">
+            <div class="a-item"><span class="a-ico"><svg><use href="#i-new"/></svg></span><span class="a-label">新建任务</span><span class="a-kbd">⌘N</span></div>
+            <div class="a-item"><span class="a-ico"><svg><use href="#i-search"/></svg></span><span class="a-label">搜索</span><span class="a-kbd">⌘K</span></div>
+          </div>
+          <div class="a-sep"></div>
+          <div class="sb-tabs">
+            <div class="sb-tab"><span class="t-ico"><svg><use href="#i-sessions"/></svg></span>会话<span class="t-count">12</span></div>
+            <div class="sb-tab active"><span class="t-ico"><svg><use href="#i-files"/></svg></span>文件<span class="t-count">5</span></div>
+          </div>
+          <div class="a-files">
+            <div class="a-files-head"><span class="a-files-label">改动文件</span><span class="a-files-count">5</span></div>
+            <div class="a-files-sess"><span class="b">Shell 层次修正</span> · main</div>
+            <div class="a-tree-dir">
+              <span class="chev">></span><span class="f-ico"><svg><use href="#i-files"/></svg></span><span class="f-name">docs</span><span class="f-count">5</span>
+            </div>
+            <div class="a-tree-body">
+              <div class="a-tree-dir">
+                <span class="chev">></span><span class="f-ico"><svg><use href="#i-files"/></svg></span><span class="f-name">designs</span><span class="f-count">3</span>
+              </div>
+              <div class="a-tree-body">
+                <div class="a-file">
+                  <span class="a-file-ico t-html"><svg><use href="#i-doc"/></svg></span>
+                  <span class="a-file-name">sidebar-deepening.html</span>
+                  <span class="a-file-state m">M</span>
+                </div>
+                <div class="a-file">
+                  <span class="a-file-ico t-html"><svg><use href="#i-doc"/></svg></span>
+                  <span class="a-file-name">shell-overlay-states.html</span>
+                  <span class="a-file-state m">M</span>
+                </div>
+                <div class="a-file">
+                  <span class="a-file-ico t-md"><svg><use href="#i-doc"/></svg></span>
+                  <span class="a-file-name">shell-design.md</span>
+                  <span class="a-file-state m">M</span>
+                </div>
+              </div>
+              <div class="a-tree-dir collapsed">
+                <span class="chev">></span><span class="f-ico"><svg><use href="#i-files"/></svg></span><span class="f-name">adr</span><span class="f-count">1</span>
+              </div>
+              <div class="a-tree-body">
+                <div class="a-file">
+                  <span class="a-file-ico t-md"><svg><use href="#i-doc"/></svg></span>
+                  <span class="a-file-name">0001-visual-direction.md</span>
+                  <span class="a-file-state a">A</span>
+                </div>
+              </div>
+              <div class="a-file">
+                <span class="a-file-ico t-md"><svg><use href="#i-doc"/></svg></span>
+                <span class="a-file-name">design-tokens.md</span>
+                <span class="a-file-state m">M</span>
+              </div>
+            </div>
+          </div>
+          <div class="a-footer">
+            <div class="a-user"><div class="a-ava"></div><span class="a-uname">Zzzzswszz</span></div>
+          </div>
+        </div>
+        <div class="main-panel">
+          <div class="main-header">
+            <span class="breadcrumb"><span class="crumb">refactor-arch</span><span class="sep">▸</span><span class="crumb">Shell 层次修正</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 卡 C：收起态（Collapsed · 容器整体隐藏） ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-c">C</span> 收起态 · 容器整体隐藏 · Workspace 顶栏 3 按钮（展开/后退/前进）· ⌘B / ⌘[⌘]</div>
+    <div class="window-mock">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="展开侧栏 ⌘B"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back"></div>
+        <div class="nav-btn fwd"></div>
+      </div>
+      <div class="app-shell">
+        <!-- Sidebar 容器完全隐藏，Workspace 占满；导航能力（展开/后退/前进）移入 Workspace 顶栏 -->
+        <div class="sb hidden"></div>
+        <div class="main-panel">
+          <div class="main-header">
+            <div class="h-tools">
+              <div class="h-btn"><svg><use href="#i-rail"/></svg><span class="tip">展开侧栏 ⌘B</span></div>
+              <div class="h-btn"><svg><use href="#i-back"/></svg><span class="tip">后退 ⌘[</span></div>
+              <div class="h-btn"><svg><use href="#i-fwd"/></svg><span class="tip">前进 ⌘]</span></div>
+            </div>
+            <span class="breadcrumb"><span class="crumb">refactor-arch</span><span class="sep">▸</span><span class="crumb">Shell 层次修正</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div><div class="line w50"></div></div>
+        </div>
+      </div>
+      <!-- 左缘唤回条：hover 浮出展开按钮 -->
+      <div class="rail-restore" title="展开侧栏 ⌘B">
+        <div class="rail-btn"><svg><use href="#i-rail"/></svg></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 卡 D：空状态（Empty · 数据空态，非视图切换） ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-d">D</span> 空状态 · 数据空态（非视图切换）· 保持空 · nav「新建任务」为入口</div>
+    <div class="window-mock">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="收起侧栏 ⌘B"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back"></div>
+        <div class="nav-btn fwd"></div>
+      </div>
+      <div class="app-shell">
+        <div class="sb">
+          <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          <div class="a-nav">
+            <div class="a-item active"><span class="a-ico"><svg><use href="#i-new"/></svg></span><span class="a-label">新建任务</span><span class="a-kbd">⌘N</span></div>
+            <div class="a-item"><span class="a-ico"><svg><use href="#i-search"/></svg></span><span class="a-label">搜索</span><span class="a-kbd">⌘K</span></div>
+          </div>
+          <div class="a-sep"></div>
+          <div class="sb-tabs">
+            <div class="sb-tab active"><span class="t-ico"><svg><use href="#i-sessions"/></svg></span>会话<span class="t-count">0</span></div>
+            <div class="sb-tab"><span class="t-ico"><svg><use href="#i-files"/></svg></span>文件<span class="t-count">0</span></div>
+          </div>
+          <div class="a-empty-simple">暂无会话</div>
+          <div class="a-footer"><div class="a-user"><div class="a-ava"></div><span class="a-uname">Zzzzswszz</span></div></div>
+        </div>
+        <div class="main-panel">
+          <div class="main-body"><div class="line w50"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ========== 说明区 ========== -->
+<div class="section-title"><span class="num">1</span> 会话项 · 四要素 + hover 操作<span class="hint">状态点 · 标题 · 目录·分支 · 时间 → hover 变操作</span></div>
+<div class="legend-grid">
+  <div class="legend-card">
+    <h4>会话项信息结构</h4>
+    <div class="lc-sub">.a-session grid: [dot] [main] [time / actions]</div>
+    <div class="struct-block">
+<span class="c">// 默认</span>
+<span class="k">●</span>  <span class="v">Shell 层次修正</span>      <span class="c">14:32</span>
+    <span class="c">refactor-arch · </span><span class="k">main</span>
+
+<span class="c">// hover → time 隐藏，右侧浮现 2 个方形按钮</span>
+<span class="k">●</span>  <span class="v">Sidebar IA 重组</span>    <span class="c">[改名] [删除]</span>
+    <span class="c">refactor-arch · </span><span class="k">feat/sidebar</span>
+              <span class="c">↑ 按钮 hover 显示名称 tooltip</span>
+    </div>
+  </div>
+  <div class="legend-card">
+    <h4>状态点色板</h4>
+    <div class="lc-sub">5 态 · running/waiting 带脉冲</div>
+    <div class="dot-row"><span class="a-dot running"></span><span class="label">运行中 running</span><span class="val">#4f8ef7 pulse</span></div>
+    <div class="dot-row"><span class="a-dot waiting"></span><span class="label">等待确认 waiting</span><span class="val">#f5a524 pulse</span></div>
+    <div class="dot-row"><span class="a-dot done"></span><span class="label">已完成 done</span><span class="val">#22c55e</span></div>
+    <div class="dot-row"><span class="a-dot stopped"></span><span class="label">已终止 stopped</span><span class="val">#5a5a65 0.5</span></div>
+    <div class="dot-row"><span class="a-dot error"></span><span class="label">错误 error</span><span class="val">#ef4444</span></div>
+  </div>
+</div>
+
+<div class="section-title"><span class="num">2</span> 容器四态设计要点<span class="hint">术语裁决后的结构性重排</span></div>
+<ul class="note-list">
+  <li><b>会话列表 A（Session List · 默认子视图）</b>：时间分组 + 会话项四要素。<code>今天</code> 展开并演示 hover 操作，其余分组折叠成「<code>N 个会话</code>」条。hover 会话项 → 右侧 time 隐藏、2 个方形按钮（重命名 / 删除）浮现，按钮再 hover 显示名称 tooltip。</li>
+  <li><b>文件视图 B（File View · 子视图）</b>：点 segmented tab「文件」切换。<b>目录默认全部折叠</b>，左侧 <code>></code> 为折叠标记（折叠 <code>></code>、展开旋转成 <code>v</code>）。展开每层缩进仅 <code>10px</code>，防嵌套目录横向溢出。文件 icon 按<b>扩展名着色</b>（<code>.html</code> 青 / <code>.md</code> 紫，刻意避开 M/A/D 状态色）。保留 <code>M/A/D</code>，<b>不显示行 diff</b>。文件范围限定在<b>当前 active session</b> 的改动（顶部小字标会话名 + 分支）。</li>
+  <li><b>收起态 C（Collapsed · 容器整体隐藏）</b>：<b>完全隐藏</b> Sidebar 容器，Workspace 占满全宽。工作区顶栏放 <b>3 按钮：展开侧栏 / 后退 / 前进</b>（方形 icon + hover 名称 tooltip + 快捷键），收起后导航能力不丢。唤回靠两路：① 顶栏「展开侧栏」按钮；② <code>⌘B</code> toggle；③ 左缘细条 hover 浮出按钮。<b>视图切换 tab 不进顶栏</b>——收起后无需切子视图，恢复后回到隐藏前的 tab 状态。</li>
+  <li><b>空状态 D（Empty · 数据空态）</b>：按用户要求<b>保持空</b>——无虚线 icon、无引导文案、无新建按钮。子视图区仅一行极淡「暂无会话」占位，nav「新建任务 ⌘N」即入口。<b>tab 计数归零</b>（会话 0 / 文件 0）让用户从计数即知空。这是数据空态，与 A/B 的视图切换正交。</li>
+</ul>
+
+<div class="section-title"><span class="num">3</span> 容器视图切换机制<span class="hint">Session List ↔ File View · segmented tab</span></div>
+<ul class="note-list">
+  <li><b>分层结构</b>：Sidebar 容器自上而下 = <code>Brand</code> → <code>主操作 nav</code>（新建 ⌘N / 搜索 ⌘K）→ <code>视图切换 tab</code>（会话 | 文件）→ <code>子视图区</code>（Session List 或 File View）→ <code>用户区</code>。主操作是<b>动作</b>（点即触发），视图切换是<b>状态</b>（点即停留）——二者性质不同，故分层而非混在 nav。</li>
+  <li><b>切换触发</b>：① 点 segmented tab；② 快捷键 <code>⌘1</code>（会话）/ <code>⌘2</code>（文件）（待定，见遗留）。两子视图<b>互斥</b>，同时只显一个。</li>
+  <li><b>状态保持</b>：tab 选择记入 Sidebar 容器状态，切换 session / 收起再展开 / 页面刷新<b>均恢复</b>到上次 tab。File View 的目录展开状态同理持久化。</li>
+  <li><b>tab 计数</b>：每个 tab 右侧带小字计数（会话 N / 文件 M），让用户<b>不切换即知规模</b>。File View 计数 = 当前 active session 的改动文件数（非全项目）。</li>
+  <li><b>active session 联动</b>：切换 session（点 Session Item）时，若当前在 File View，文件列表自动刷新为新 session 的改动；若在 Session List，则高亮迁移到新 session 项。</li>
+</ul>
+
+<div class="section-title"><span class="num">4</span> 主操作 nav + 窗口快捷键<span class="hint">新建 / 搜索 · ⌘B ⌘[ ⌘]</span></div>
+<ul class="note-list">
+  <li><b>主操作 nav</b>：两项——<code>新建任务 ⌘N</code> / <code>搜索 ⌘K</code>。原「文件」项已升级为视图切换 tab，不再占 nav 位。「搜索」是<b>触发入口</b>，点按或 ⌘K 弹出独立 Overlay（搜索浮层），浮层本体设计见 <code>overlays/draft-search-modal.html</code>，本稿不画。</li>
+  <li><b>窗口快捷键</b>：顶部 chrome 三按钮 hover 显示绑定——收起 <code>⌘B</code> / 后退 <code>⌘[</code> / 前进 <code>⌘]</code>。后退前进用于会话与历史导航（纯 CSS <code>::after</code> tooltip，无需 JS）。</li>
+</ul>
+
+<div class="callout">
+  <b>待验证 / 后续细化：</b>
+  <ul>
+    <li>收起唤回：<b>左缘细条</b>是否易误触？需实机判断是否改为纯 <code>⌘B</code> + 顶栏按钮。展开方向（从左滑入）动效曲线待校。</li>
+    <li>视图切换快捷键 <code>⌘1/⌘2</code> 与 OS / 其它面板快捷键冲突待核；不冲突则采纳。</li>
+    <li>File View：点击文件是否在 Right Drawer 预览 diff（当前仅跳转 Workspace）；嵌套目录超 3 层时的省略策略待定。</li>
+    <li>搜索浮层（已剥离）的键盘 <code>↑↓</code> 导航、最近搜索、无结果态、跨项目检索范围，在 <code>overlays/draft-search-modal.html</code> 细化。</li>
+    <li>收起态顶栏三按钮与展开态 nav 的 active 状态同步（如「文件」高亮在收起后是否延续）待实机验证。</li>
+    <li>会话项 hover 操作目前 2 个（重命名/删除）；是否补「置顶 / 归档」待观察实际使用。</li>
+  </ul>
+</div>
+
+</body>
+</html>

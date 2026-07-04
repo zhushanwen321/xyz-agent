@@ -24,14 +24,13 @@ function createMockBroker(): IMessageBroker {
   }
 }
 
-/** 获取 PluginService 内部注册表的便捷方法 */
+/** 获取 PluginService 内部注册表的便捷方法（hookRegistry 下沉到 HookPipeline） */
 function serviceRegistry(service: PluginService) {
-  return service as unknown as {
-    hookRegistry: Map<string, HookEntry[]>
-    toolRegistry: Map<string, ToolEntry>
-    rpcServer: { broadcast: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn> }
-    host: { getWorkerHandle: ReturnType<typeof vi.fn> }
-  }
+  const hookPipeline = (service as unknown as { hookPipeline: { registry: Map<string, HookEntry[]> } }).hookPipeline
+  const toolRegistry = (service as unknown as { toolRegistry: Map<string, ToolEntry> }).toolRegistry
+  const host = (service as unknown as { host: { getWorkerHandle: ReturnType<typeof vi.fn> } }).host
+  const rpcServer = (service as unknown as { rpcServer: { broadcast: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn> } }).rpcServer
+  return { hookRegistry: hookPipeline.registry, toolRegistry, rpcServer, host }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -182,6 +181,42 @@ describe('PluginService.syncToolsToBridge', () => {
 })
 
 // ══════════════════════════════════════════════════════════════════
+// getBridgeSyncPayload（schema 塑形下沉 service）
+// ══════════════════════════════════════════════════════════════════
+
+describe('PluginService.getBridgeSyncPayload', () => {
+  // ── 空 registry → 空 tools，commands 固定空，success:true ─────────
+  it('空 registry → { tools: [], commands: [], success: true }', () => {
+    const service = new PluginService({} as never, createMockBroker())
+    service.syncToolsToBridge()
+
+    expect(service.getBridgeSyncPayload()).toEqual({ tools: [], commands: [], success: true })
+  })
+
+  // ── 塑形 ToolRegistration → {name,description,parameters}（剔除 execute handler）──
+  it('把 toolRegistry schema 塑形成 {name,description,parameters}（transport 不再塑形）', () => {
+    const service = new PluginService({} as never, createMockBroker())
+    const reg = serviceRegistry(service)
+    reg.toolRegistry.set('p:t', {
+      pluginId: 'p', handlerId: 'p:t',
+      schema: {
+        name: 't', description: 'd',
+        parameters: { type: 'object', properties: {} },
+        execute: vi.fn(),
+      },
+    })
+    service.syncToolsToBridge()
+
+    const payload = service.getBridgeSyncPayload()
+    expect(payload.tools).toEqual([
+      { name: 't', description: 'd', parameters: { type: 'object', properties: {} } },
+    ])
+    // execute handler 不应泄漏到 sync payload
+    expect((payload.tools[0] as Record<string, unknown>).execute).toBeUndefined()
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
 // handleBridgeToolExecute
 // ══════════════════════════════════════════════════════════════════
 
@@ -322,34 +357,27 @@ describe('PluginService.sessionDataCache', () => {
   it('TC-HKP-15: can read and write session data', () => {
     const broker = createMockBroker()
     const service = new PluginService({} as never, broker)
+    const sds = (service as unknown as { sessionDataStore: { set(s: string, k: string, v: unknown): void; get(s: string, k: string): unknown } }).sessionDataStore
 
     // 创建 session 数据
-    const sessionData = new Map<string, unknown>()
-    sessionData.set('key1', 'value1')
-    sessionData.set('key2', 42);
-    (service as any).sessionDataStore.getCache().set('session-1', sessionData)
+    sds.set('session-1', 'key1', 'value1')
+    sds.set('session-1', 'key2', 42)
 
     // 读取
-    const retrieved = (service as any).sessionDataStore.getCache().get('session-1')
-    expect(retrieved).toBeDefined()
-    expect(retrieved!.get('key1')).toBe('value1')
-    expect(retrieved!.get('key2')).toBe(42)
+    expect(sds.get('session-1', 'key1')).toBe('value1')
+    expect(sds.get('session-1', 'key2')).toBe(42)
   })
 
   // ── TC-HKP-16: sessionDataCache 支持多 session 隔离 ────────────
   it('TC-HKP-16: multiple sessions are isolated', () => {
     const broker = createMockBroker()
     const service = new PluginService({} as never, broker)
+    const sds = (service as unknown as { sessionDataStore: { set(s: string, k: string, v: unknown): void; get(s: string, k: string): unknown } }).sessionDataStore
 
-    const data1 = new Map<string, unknown>()
-    data1.set('msg', 'hello');
-    (service as any).sessionDataStore.getCache().set('session-a', data1)
+    sds.set('session-a', 'msg', 'hello')
+    sds.set('session-b', 'msg', 'world')
 
-    const data2 = new Map<string, unknown>()
-    data2.set('msg', 'world');
-    (service as any).sessionDataStore.getCache().set('session-b', data2)
-
-    expect((service as any).sessionDataStore.getCache().get('session-a')!.get('msg')).toBe('hello')
-    expect((service as any).sessionDataStore.getCache().get('session-b')!.get('msg')).toBe('world')
+    expect(sds.get('session-a', 'msg')).toBe('hello')
+    expect(sds.get('session-b', 'msg')).toBe('world')
   })
 })

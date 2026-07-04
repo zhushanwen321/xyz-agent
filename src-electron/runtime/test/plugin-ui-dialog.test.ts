@@ -30,7 +30,7 @@ function createService(broker?: ReturnType<typeof createMockBroker>): {
   broker: ReturnType<typeof createMockBroker>
 } {
   const b = broker ?? createMockBroker()
-  const registry = new PluginRegistry('/tmp/fake-project')
+  const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
   const deps: IPluginServiceDeps = {
     broadcastFn: (type, payload) => b.broadcast({ type, payload } as never),
   }
@@ -49,14 +49,13 @@ function getUiHandlers(service: PluginService) {
   return svc.rpcServer.methods
 }
 
-// Access internal methods
+// Access internal UI 队列状态（重构后下沉到 UiRequestQueue 模块，直接暴露实例便于实时读取）
 function getInternals(service: PluginService) {
-  return service as unknown as {
-    handleUiResponse(requestId: string, result: unknown): void
+  return (service as unknown as { uiRequestQueue: {
     activeUiRequest: string | null
     uiRequestQueue: Array<{ params: Record<string, unknown>; resolve: (v: unknown) => void }>
     pendingUiRequests: Map<string, { resolve: (v: unknown) => void; timer: ReturnType<typeof setTimeout> }>
-  }
+  } }).uiRequestQueue
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -91,9 +90,8 @@ describe('UI Dialog RPC — showConfirm WS往返', () => {
     const requestId = payload.requestId as string
     expect(requestId).toBeTruthy()
 
-    // Simulate frontend response
-    const internals = getInternals(service)
-    internals.handleUiResponse(requestId, true)
+    // Simulate frontend response（走公共接口，行为不变）
+    service.handleUiResponse(requestId, true)
 
     const result = await confirmPromise
     expect(result).toBe(true)
@@ -115,7 +113,7 @@ describe('UI Dialog RPC — showConfirm WS往返', () => {
     expect(pendingEntries.length).toBe(1)
     const [reqId] = pendingEntries[0]
 
-    internals.handleUiResponse(reqId, 'A')
+    service.handleUiResponse(reqId, 'A')
 
     const result = await selectPromise
     expect(result).toBe('A')
@@ -133,7 +131,7 @@ describe('UI Dialog RPC — showConfirm WS往返', () => {
     const internals = getInternals(service)
     const pendingEntries = Array.from(internals.pendingUiRequests.entries())
     const [reqId] = pendingEntries[0]
-    internals.handleUiResponse(reqId, 'typed-value')
+    service.handleUiResponse(reqId, 'typed-value')
 
     const result = await inputPromise
     expect(result).toBe('typed-value')
@@ -169,7 +167,7 @@ describe('UI Dialog — serial queue', () => {
 
     // Resolve first
     const pending1 = Array.from(internals.pendingUiRequests.keys())[0]
-    internals.handleUiResponse(pending1, true)
+    service.handleUiResponse(pending1, true)
 
     const r1 = await promise1
     expect(r1).toBe(true)
@@ -179,7 +177,7 @@ describe('UI Dialog — serial queue', () => {
 
     // Resolve second
     const pending2 = Array.from(internals.pendingUiRequests.keys())[0]
-    internals.handleUiResponse(pending2, false)
+    service.handleUiResponse(pending2, false)
 
     const r2 = await promise2
     expect(r2).toBe(false)

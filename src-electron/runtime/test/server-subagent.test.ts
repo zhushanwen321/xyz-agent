@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebSocket } from 'ws'
 
 /**
- * Tests for T3: Sidecar manual trigger handling (subagent field in message.send).
+ * Tests for T3: Runtime manual trigger handling (subagent field in message.send).
  *
  * These tests verify that when `msg.payload.subagent` is present with
  * `{ agent: string; task: string }`, the runtime constructs an XML structured
@@ -24,7 +24,7 @@ const sendSubagentMessageMock = vi.fn().mockImplementation(
   },
 )
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
   SessionService: class MockSessionService {
     sendMessage = sendMessageMock
@@ -72,7 +72,7 @@ vi.mock('../src/services/model-service.js', () => ({
 }))
 
 // Mock process-manager (transitive dep of SessionService)
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -86,38 +86,52 @@ vi.mock('../src/process-manager.js', () => ({
 }))
 
 // Mock event-adapter
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
   },
 }))
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-  scanPiSessions: () => [],
-  refreshAll: () => {},
-}))
+// pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
+// 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
+  return {
+    ...actual,
+    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+    getSkillPaths: () => [],
+    readModels: () => ({ providers: {} }),
+    readSettings: () => ({}),
+    refreshAll: () => {},
+  }
+})
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
+  return { ...actual, scanPiSessions: () => [] }
+})
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return { ...actual, getSessionsDir: () => '/mock/sessions' }
+})
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-import { SidecarServer } from '../src/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { RuntimeServer } from '../src/transport/server.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
 
 /** Find a free port */
@@ -136,8 +150,8 @@ function getFreePort(): Promise<number> {
   })
 }
 
-describe('SidecarServer message.send with subagent field', () => {
-  let server: SidecarServer
+describe('RuntimeServer message.send with subagent field', () => {
+  let server: RuntimeServer
   let port: number
   let ws: WebSocket
 
@@ -145,12 +159,11 @@ describe('SidecarServer message.send with subagent field', () => {
   sendMessageMock.mockClear()
   sendSubagentMessageMock.mockClear()
   port = await getFreePort()
-  server = new SidecarServer(port, '/tmp/test-project')
+  server = new RuntimeServer(port, '/tmp/test-project')
   server.setServices(
-    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never),
-    new ConfigService('/tmp'),
-    new ModelService(),
-    {} as never,
+    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never),
+    new ConfigService('/tmp', new PiConfigStore()),
+    new ModelService(new ModelApiDiscoverer()),
     {} as never,
   )
   await server.start()

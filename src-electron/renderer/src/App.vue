@@ -1,393 +1,61 @@
 <template>
-  <div class="app-container" :class="{ 'app-container--sidebar-collapsed': sidebarStore.collapsed, 'is-fullscreen': layoutStore.isFullscreen }">
-    <!-- Sidebar: unified with controls -->
-    <AppSidebar
-      @create="createSession"
-      @toggle-panel-grid="settingsStore.togglePanelGrid()"
-      @toggle-settings="toggleSettings()"
-    />
-    <!-- Content area -->
-    <main class="content-area">
-      <SettingsView v-if="navStore.currentView === 'settings'" />
-      <PanelTreeRenderer v-else
-        :node="panelStore.tree"
-        :focused-panel-id="panelStore.focusedPanelId"
-      />
-      <!-- Drawers -->
-      <DrawerOverlay :visible="settingsStore.inspectorOpen" @close="settingsStore.closeInspector()" />
-      <InspectorRight
-        v-if="settingsStore.inspectorSide === 'right'"
-        :open="settingsStore.inspectorOpen"
-        :tree-nodes="[]"
-        :done-items="[]"
-        :alert-items="[]"
-        active-node-id=""
-        @close="settingsStore.closeInspector()"
-      />
-      <InspectorLeft
-        v-if="panelStore.panelCount > 1 && settingsStore.inspectorSide === 'left'"
-        :open="settingsStore.inspectorOpen"
-        :tree-nodes="[]"
-        :done-items="[]"
-        :alert-items="[]"
-        active-node-id=""
-        @close="settingsStore.closeInspector()"
-      />
-    </main>
-    <!-- Global Statusbar: spans entire width -->
-    <AppStatusbar />
-    <!-- PanelGrid -->
-    <PanelGrid
-      :visible="settingsStore.panelGridVisible"
-      @close="settingsStore.panelGridVisible = false"
-    />
-    <!-- Extension UI Dialog -->
-    <ExtensionUIDialog />
-    <!-- Custom Toast -->
-    <ToastContainer :toasts="toasts" @dismiss="dismissToast" />
+  <!-- 非连接态分三种展示：
+       - connecting/disconnected/reconnecting：logo + 「连接中…」（过渡屏）
+       - restarting：logo + 「runtime 重启中…」（崩溃自动恢复，主进程在拉起新实例）
+       - failed：logo + 错误提示 + 重试按钮（自动重启用尽，需用户手动触发）
+       连接后渲染 AppShell。 -->
+  <div v-if="connectionState !== 'connected'" class="connecting-screen grid h-screen w-screen place-items-center bg-bg">
+    <div class="flex flex-col items-center gap-4">
+      <span class="grid size-12 place-items-center rounded-xl bg-accent text-2xl font-bold text-white">x</span>
+      <!-- runtime 重启中 -->
+      <template v-if="connectionState === 'restarting'">
+        <Loader2 class="size-4 animate-spin text-subtle" />
+        <span class="text-[12.5px] text-subtle">runtime 重启中…</span>
+      </template>
+      <!-- runtime 重启用尽，需手动重试 -->
+      <template v-else-if="connectionState === 'failed'">
+        <AlertCircle class="size-5 text-danger" />
+        <span class="text-[12.5px] text-muted">runtime 不可用，重试多次仍失败</span>
+        <Button variant="default" size="sm" data-testid="runtime-retry-btn" @click="onRetry">
+          重试
+        </Button>
+      </template>
+      <!-- 默认连接中（connecting/disconnected/reconnecting） -->
+      <span v-else class="text-[12.5px] text-subtle">连接中…</span>
+    </div>
   </div>
+  <template v-else>
+    <!-- L0 Shell 挂载点。traffic light 安全区在 AsideRegion 内（padding-top:52px，spec §三）。 -->
+    <AppShell />
+  </template>
+  <ToastContainer />
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
-import { useSettingsStore } from './stores/settings'
-import { usePanelStore } from './stores/panel'
-import { useSessionStore } from './stores/session'
-import { useWindowStore } from './stores/window'
-import { useNavigationStore } from './stores/navigation'
-import { useSidebarStore } from './stores/sidebar'
-import { useLayoutStore } from './stores/layout'
-import { useConnection } from './composables/useConnection'
-import { getState as getWsState } from './lib/ws-client'
-import { on as onEventBus, off as offEventBus } from './lib/event-bus'
-import type { ServerMessage } from '@xyz-agent/shared'
-import { useProvider } from './composables/useProvider'
-import { useSession } from './composables/useSession'
-import type { ToastItem } from './components/toast/ToastContainer.vue'
-import AppSidebar from './components/layout/AppSidebar.vue'
-import AppStatusbar from './components/layout/AppStatusbar.vue'
-import SettingsView from './components/layout/SettingsView.vue'
-import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
-import DrawerOverlay from './components/panel/DrawerOverlay.vue'
-import InspectorRight from './components/side-inspector/InspectorRight.vue'
-import InspectorLeft from './components/side-inspector/InspectorLeft.vue'
-import PanelGrid from './components/panel-grid/PanelGrid.vue'
-import ToastContainer from './components/toast/ToastContainer.vue'
-import ExtensionUIDialog from './components/extension/ExtensionUIDialog.vue'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { Loader2, AlertCircle } from '@lucide/vue'
+import AppShell from '@/components/shell/AppShell.vue'
+import ToastContainer from '@/components/ui/ToastContainer.vue'
+import { Button } from '@/components/ui/button'
+import { useConnection } from '@/composables/useConnection'
+import { useSidebar } from '@/composables/features/useSidebar'
 
-const { init: initConnection, teardown: teardownConnection } = useConnection()
-useProvider()
-const { loadSessions, createSession: doCreateSession, switchSession } = useSession()
-
-const settingsStore = useSettingsStore()
-const panelStore = usePanelStore()
-const sessionStore = useSessionStore()
-const windowStore = useWindowStore()
-const navStore = useNavigationStore()
-const sidebarStore = useSidebarStore()
-const layoutStore = useLayoutStore()
-
-
-// Unified settings toggle — used by sidebar emit and IPC shortcut
-function toggleSettings() {
-  if (navStore.currentView === 'settings') {
-    if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
-  } else {
-    navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
-  }
-}
-
-// Sync panel focus when navigation changes to a different chat session
-watch(
-  () => navStore.currentEntry?.view === 'chat' ? navStore.currentEntry.sessionId : null,
-  (sessionId) => {
-    if (sessionId && panelStore.focusedPanel?.sessionId !== sessionId) {
-      panelStore.openSessionSmart(sessionId)
-    }
-  },
-)
-
-const toasts = ref<ToastItem[]>([])
-const TOAST_DURATION_MS = 4_000
-const TOAST_LONG_DURATION_MS = 8_000
-const WS_DISCONNECT_WARN_DELAY_MS = 10_000
-
-let wsDisconnectTimer: ReturnType<typeof setTimeout> | null = null
-const wsState = getWsState()
-const wsStateUnwatch = watch(wsState, (newState) => {
-  if (newState === 'disconnected' || newState === 'reconnecting') {
-    if (!wsDisconnectTimer) {
-      wsDisconnectTimer = setTimeout(() => {
-        const id = crypto.randomUUID()
-        toasts.value.push({
-          id,
-          type: 'warning',
-          title: '连接已断开',
-          description: 'Runtime 连接已断开，正在尝试重新连接…',
-        })
-        setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
-      }, WS_DISCONNECT_WARN_DELAY_MS)
-    }
-  } else if (newState === 'connected') {
-    if (wsDisconnectTimer) {
-      clearTimeout(wsDisconnectTimer)
-      wsDisconnectTimer = null
-    }
-  }
-})
-const ipcCleanupFns: Array<() => void> = []
-let extTimeoutUnregister: (() => void) | null = null
-let errorUnregister: (() => void) | null = null
-let toastUnregister: (() => void) | null = null
-
-let isCreatingFromSidebar = false
-let prevSessionCount = 0
-
-function handleKeydown(e: KeyboardEvent) {
-  const mod = e.metaKey || e.ctrlKey
-  if (!mod) return
-  switch (e.key) {
-    case 'w':
-      e.preventDefault()
-      panelStore.unbindSession(panelStore.focusedPanelId)
-      break
-    case 'd':
-      e.preventDefault()
-      const dir = e.shiftKey ? 'vertical' : 'horizontal'
-      if (!panelStore.splitPanel(panelStore.focusedPanelId, dir)) {
-        const id = crypto.randomUUID()
-        toasts.value.push({
-          id,
-          type: 'warning',
-          title: '已达面板数量上限',
-          description: '最多支持 4 个面板，请先关闭空闲面板后再拆分。',
-        })
-        setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
-      }
-      break
-  }
-}
-
-async function createSession() {
-  if (!window.electronAPI?.pickDirectory) {
-    console.warn('[createSession] pickDirectory API not available')
-    return
-  }
-  const result = await window.electronAPI.pickDirectory({ title: '选择项目目录' })
-  if (result.canceled || !result.path) return
-
-  const label = sessionStore.generateSessionLabel(result.path)
-  isCreatingFromSidebar = true
-  prevSessionCount = sessionStore.sessions.length
-  doCreateSession(result.path, label)
-}
-
-function handleGlobalError(msg: ServerMessage) {
-  if (!msg.payload.sessionId) {
-    const id = crypto.randomUUID()
-    toasts.value.push({
-      id,
-      type: 'danger',
-      title: '操作失败',
-      description: (msg.payload.message as string) ?? '未知错误',
-    })
-    setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
-  }
-}
-
-function dismissToast(id: string) {
-  toasts.value = toasts.value.filter(t => t.id !== id)
-}
-
-onMounted(async () => {
-  await initConnection()
-
-  const wsState = getWsState()
-  if (wsState.value === 'connected') {
-    loadSessions()
-  } else {
-    const stopWatch = watch(wsState, (val) => {
-      if (val === 'connected') {
-        stopWatch()
-        loadSessions()
-      }
-    })
-  }
-
-  settingsStore.applyTheme()
-
-  watch(
-    () => sessionStore.sessions.length,
-    (newLen) => {
-      if (isCreatingFromSidebar && newLen > prevSessionCount && sessionStore.sessions.length > 0) {
-        isCreatingFromSidebar = false
-        const newest = sessionStore.sessions[0]
-        if (newest) {
-          switchSession(newest.id)
-          panelStore.openSessionSmart(newest.id)
-        }
-      }
-    },
-  )
-
-  const params = new URLSearchParams(window.location.search)
-  const queryWindowId = params.get('windowId')
-  const querySessionId = params.get('sessionId')
-
-  if (queryWindowId) {
-    windowStore.currentWindowId = queryWindowId
-  }
-  if (querySessionId) {
-    panelStore.bindSession(panelStore.focusedPanelId, querySessionId)
-  }
-
-  watch(
-    () => [panelStore.tree, panelStore.focusedPanelId] as const,
-    ([tree, focusedPanelId]) => {
-      windowStore.syncPaneState(tree, focusedPanelId)
-    },
-    { deep: true },
-  )
-
-  if (window.electronAPI?.onWindowListUpdated) {
-    ipcCleanupFns.push(window.electronAPI.onWindowListUpdated(() => {
-      windowStore.refreshFromIPC()
-    }))
-  }
-
-  if (window.electronAPI) {
-    ipcCleanupFns.push(window.electronAPI.onShortcut((type) => {
-      switch (type) {
-        case 'standard':
-        case 'focus':
-          panelStore.mergeToSingle()
-          if (navStore.currentView !== 'chat') {
-            const sid = panelStore.focusedPanel?.sessionId ?? ''
-            if (sid) navStore.push({ view: 'chat', sessionId: sid })
-          }
-          break
-        case 'split':
-          panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
-          break
-        case 'overview':
-          settingsStore.togglePanelGrid()
-          break
-        case 'settings':
-          toggleSettings()
-          break
-      }
-    }))
-  }
-
-  document.addEventListener('keydown', handleKeydown)
-
-  if (window.electronAPI?.onRuntimeError) {
-    ipcCleanupFns.push(window.electronAPI.onRuntimeError((error) => {
-      const id = crypto.randomUUID()
-      toasts.value.push({
-        id,
-        type: 'danger',
-        title: 'Runtime 启动失败',
-        description: error.message,
-      })
-      setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
-    }))
-  }
-
-  let disconnectToastId: string | null = null
-  let disconnectTimer: ReturnType<typeof setTimeout> | null = null
-  const wsWatchState = getWsState()
-  watch(wsWatchState, (state) => {
-    if (state === 'disconnected' || state === 'reconnecting') {
-      if (!disconnectToastId && !disconnectTimer) {
-        disconnectTimer = setTimeout(() => {
-          disconnectTimer = null
-          if (wsWatchState.value !== 'connected' && !disconnectToastId) {
-            disconnectToastId = crypto.randomUUID()
-            toasts.value.push({
-              id: disconnectToastId,
-              type: 'warning',
-              title: '连接断开',
-              description: '正在尝试重新连接 Runtime 服务…',
-            })
-          }
-        }, WS_DISCONNECT_WARN_DELAY_MS)
-      }
-    } else if (state === 'connected') {
-      if (disconnectTimer) {
-        clearTimeout(disconnectTimer)
-        disconnectTimer = null
-      }
-      if (disconnectToastId) {
-        dismissToast(disconnectToastId)
-        disconnectToastId = null
-      }
-    }
-  })
-
-  // extension UI timeout → toast
-  extTimeoutUnregister = onEventBus('extension.ui_timed_out', (payload: { extensionName: string }) => {
-    const id = crypto.randomUUID()
-    toasts.value.push({
-      id,
-      type: 'warning',
-      title: 'Extension 请求超时',
-      description: `${payload.extensionName} 的 UI 请求已超时`,
-    })
-    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
-  })
-
-  // toast:show → generic toast (clipboard, MessageActionMenu errors, etc.)
-  toastUnregister = onEventBus('toast:show', (payload: { type: 'success' | 'warning' | 'danger' | 'info'; title: string; description?: string }) => {
-    const id = crypto.randomUUID()
-    toasts.value.push({
-      id,
-      type: payload.type,
-      title: payload.title,
-      description: payload.description,
-    })
-    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
-  })
-
-  errorUnregister = onEventBus('error', handleGlobalError)
-
-  // macOS fullscreen state → toggle .is-fullscreen class on root element AND sync to layout store
-  if (window.electronAPI?.onFullscreenChanged) {
-    ipcCleanupFns.push(window.electronAPI.onFullscreenChanged(({ isFullscreen }) => {
-      layoutStore.setFullscreen(isFullscreen)
-    }))
-  }
+// 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
+const { state: connectionState, init, teardown, retryRuntime } = useConnection()
+// 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
+// useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
+// 是「连接成功」唯一可靠信号——watch 它触发 initApp，appBootstrapped 守卫保证 HMR/重连幂等。
+const { initApp } = useSidebar()
+onMounted(() => { void init() })
+watch(connectionState, (s) => {
+  if (s === 'connected') void initApp()
 })
 
-onUnmounted(() => {
-  offEventBus('error', handleGlobalError)
-  extTimeoutUnregister?.()
-  errorUnregister?.()
-  toastUnregister?.()
-  document.removeEventListener('keydown', handleKeydown)
-  wsStateUnwatch()
-  if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)
-  for (const cleanup of ipcCleanupFns) cleanup()
-  ipcCleanupFns.length = 0
-  teardownConnection()
-})
+/** 用户点击「重试」：委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
+ *  重启成功后 supervisor 广播 runtime-port，onRuntimePort 监听自动重连 → 回到 connected。 */
+function onRetry(): void {
+  void retryRuntime()
+}
+
+onBeforeUnmount(() => teardown())
 </script>
-
-<style>
-.app-container {
-  display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr;
-  grid-template-rows: 1fr auto;
-  height: 100vh;
-  overflow: hidden;
-}
-.content-area {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-  position: relative;
-  background: var(--bg);
-  grid-column: 2;
-}
-</style>

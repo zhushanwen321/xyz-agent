@@ -14,26 +14,34 @@
     "runtime",
     "shared"
   ],
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "tsup": {
+      "esbuild": "^0.28.1"
+    }
+  },
   "main": "dist/main/main.cjs",
   "scripts": {
     "dev": "node scripts/electron-ensure.mjs && concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:mock": "node scripts/electron-ensure.mjs && VITE_MOCK=true XYZ_MOCK=1 concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:vite": "npm -w @xyz-agent/frontend run dev",
     "dev:electron": "npm run build:main && npm run build:preload && electron . --remote-debugging-port=9222",
     "build:runtime": "npm -w @xyz-agent/runtime run build",
     "build:main": "vite build --config vite.config.main.ts",
     "build:preload": "vite build --config vite.config.preload.ts",
     "build": "npm run build:runtime && npm run build:vite && npm run build:main && npm run build:preload && electron-builder --publish never",
-    "build:vite": "npm -w @xyz-agent/frontend run build"
+    "build:vite": "npm -w @xyz-agent/frontend run build",
+    "test:main": "cd main && vitest run",
+    "test:all": "npm -w @xyz-agent/frontend run test && npm -w @xyz-agent/runtime run test && cd main && vitest run"
   },
   "dependencies": {
     "@types/markdown-it-footnote": "^3.0.4",
     "electron-store": "^10",
     "is-glob": "^4.0.3",
-    "markdown-it-footnote": "^4.0.0",
-    "pi-subagents": "^0.27.0"
+    "markdown-it-footnote": "^4.0.0"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.3",
     "electron": "42.3.3",
     "electron-builder": "^26.8.1",
     "tsx": "^4",

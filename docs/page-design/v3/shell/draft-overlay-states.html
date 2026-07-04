@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shell 设计 · zcode-demo 拓扑 + traffic light 兼容</title>
+<style>
+  :root {
+    /* zcode 冷蓝 token —— 以 docs/design-tokens.md 为准 */
+    --bg-base: #0d0d0f;
+    --bg-panel: #151519;
+    --bg-elevated: #1b1b20;
+    --bg-hover: #232328;
+    --accent: #4f8ef7;
+    --accent-soft: rgba(79,142,247,0.12);
+    --text-primary: #f0f0f5;
+    --text-secondary: #8a8a95;
+    --text-tertiary: #5a5a65;
+    --border: rgba(255,255,255,0.06);
+    --border-strong: rgba(255,255,255,0.12);
+    --success: #22c55e;
+    --warning: #f5a524;
+    --danger: #ef4444;
+    --info: #38bdf8;
+    /* mac traffic light 原色（系统绘制，非 token） */
+    --tl-red: #fc6155;
+    --tl-yellow: #fdb40a;
+    --tl-green: #34c84a;
+    /* 骨架专用：标注色（非产品色，仅设计探索） */
+    --anno-accent: rgba(79,142,247,0.9);
+    --anno-bg: rgba(79,142,247,0.08);
+    --anno-warn: rgba(245,165,36,0.9);
+    --anno-warn-bg: rgba(245,165,36,0.08);
+    --anno-muted: rgba(138,138,149,0.9);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font: 13px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 32px 40px 80px; max-width: 1280px; margin: 0 auto; }
+
+  .page-head { margin-bottom: 28px; }
+  .page-head h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .page-head .sub { color: var(--text-secondary); font-size: 13px; max-width: 820px; }
+  .page-head .sub b { color: var(--accent); }
+  .page-head .meta { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; font: 11px/1 ui-monospace, Menlo, monospace; }
+  .page-head .meta span { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--text-secondary); }
+  .page-head .meta b { color: var(--accent); }
+
+  .callout {
+    margin: 20px 0; padding: 12px 14px;
+    background: var(--anno-warn-bg);
+    border-left: 3px solid var(--anno-warn);
+    border-radius: 0 6px 6px 0;
+    font-size: 12.5px; color: var(--text-secondary);
+  }
+  .callout b { color: var(--warning); }
+  .callout.accent { background: var(--anno-bg); border-left-color: var(--anno-accent); }
+  .callout.accent b { color: var(--accent); }
+
+  .section-title {
+    margin: 40px 0 14px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-strong);
+    font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .section-title .num { font: 11px/1 ui-monospace, Menlo, monospace; background: var(--accent); color: #fff; padding: 3px 7px; border-radius: 3px; }
+  .section-title .hint { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
+
+  /* ===== 窗口 mockup（回归 zcode-demo 拓扑）===== */
+  .window-mock {
+    position: relative;
+    width: 100%;
+    background: var(--bg-base);          /* 修正：base 平铺全屏，非 panel */
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05);
+  }
+  /* zcode-demo 真实容器：flex p-3 gap-3 */
+  .app-shell {
+    display: flex;
+    height: 280px;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  /* aside：透明，融在 base 上（关键修正：无 background） */
+  .aside-region {
+    width: 200px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    padding-top: 52px;                   /* mac traffic light 安全区 */
+    padding-left: 2px;
+    /* 无 background —— 继承 window-mock 的 base，视觉融合 */
+  }
+  .window-mock.platform-win .aside-region { padding-top: 52px; }  /* win/linux 也留安全区：mimic_mac 圆点浮左上，logo 下移到按钮排下方 */
+
+  /* sidebar 内容（透明列上的内容块） */
+  .a-logo { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 0 8px 14px; }
+  .a-logo .a-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; }
+  .a-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
+  .a-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); padding: 6px 8px; border-radius: 6px; }
+  .a-item.active { background: var(--bg-hover); color: var(--text-primary); }
+  .a-item .a-ico { width: 14px; color: var(--text-tertiary); text-align: center; font-size: 12px; }
+  .a-item .a-kbd { margin-left: auto; font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 3px; padding: 2px 5px; }
+  .a-sep { height: 1px; background: var(--border); margin: 8px 10px; }
+  .a-user { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); }
+  .a-user .a-ava { width: 18px; height: 18px; border-radius: 50%; background: var(--bg-elevated); border: 1px solid var(--border-strong); }
+
+  /* traffic light 浮在 sidebar 安全区（mac OS 绘制，CSS 仅模拟） */
+  .traffic-light {
+    position: absolute;
+    left: 20px; top: 20px;
+    display: flex; gap: 8px;
+    transition: opacity 320ms cubic-bezier(0.4,0,0.2,1);
+    z-index: 10;
+  }
+  .traffic-light .dot { width: 12px; height: 12px; border-radius: 50%; border: 0.5px solid rgba(0,0,0,0.25); }
+  .dot-red { background: var(--tl-red); }
+  .dot-yellow { background: var(--tl-yellow); }
+  .dot-green { background: var(--tl-green); }
+  .state-nonfullscreen .traffic-light { opacity: 1; }
+  .state-fullscreen-idle .traffic-light { opacity: 0; }
+  /* 全屏 hover：mac 系统从顶部下拉覆盖层提供 traffic light，应用不参与 —— 无需画第三态 */
+
+  /* 应用导航按钮（收起侧栏 / ← 后退 / → 前进）—— 应用自绘 DOM，三平台统一，浮在窗口左上 */
+  .app-nav-controls {
+    position: absolute; top: 16px; left: 90px;
+    display: flex; gap: 2px; z-index: 10;
+    transition: left 320ms cubic-bezier(0.4,0,0.2,1); /* = --duration-slow / --ease；与 .traffic-light opacity 同步——同一态变换，必须同时长同时曲线 */
+  }
+  .state-fullscreen-idle .app-nav-controls { left: 20px; }   /* 全屏：traffic light 隐藏，按钮左移占位（三平台一致） */
+  .app-nav-controls .nav-btn {
+    width: 26px; height: 22px; display: grid; place-items: center;
+    border-radius: 5px; color: var(--text-tertiary); background: transparent; cursor: pointer;
+  }
+  .app-nav-controls .nav-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .app-nav-controls .nav-btn.back::before { content: '\2190'; font-size: 15px; line-height: 1; }
+  .app-nav-controls .nav-btn.fwd::before { content: '\2192'; font-size: 15px; line-height: 1; }
+  /* 收起侧栏图标：CSS 绘制面板 glyph（避免 emoji） */
+  .ico-collapse {
+    position: relative; display: inline-block; width: 13px; height: 11px;
+    border: 1px solid currentColor; border-radius: 2px;
+  }
+  .ico-collapse::before {
+    content: ''; position: absolute; left: 1px; top: 1px; bottom: 1px; width: 4px;
+    background: currentColor; border-radius: 1px;
+  }
+
+  /* win/linux 自绘控制：复用 traffic-light 视觉（彩色圆点），hover 整组时圆点上显符号（mimic mac） */
+  .window-mock.platform-win .traffic-light .dot { position: relative; display: grid; place-items: center; }
+  .window-mock.platform-win .traffic-light .dot::before {
+    content: ''; opacity: 0; font-size: 9px; font-weight: 800;
+    color: rgba(0,0,0,0.55); transition: opacity 120ms;
+  }
+  .window-mock.platform-win .traffic-light:hover .dot::before { opacity: 1; }
+  .window-mock.platform-win .traffic-light .dot-red::before { content: '\00D7'; }    /* close */
+  .window-mock.platform-win .traffic-light .dot-yellow::before { content: '\2013'; } /* minimize */
+  .window-mock.platform-win .traffic-light .dot-green::before { content: '\25A1'; }  /* maximize */
+
+  /* main：float-panel 浮起（zcode-demo 核心语义） */
+  .main-panel {
+    flex: 1; min-width: 0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.3);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  /* main 顶栏：breadcrumb（项目▸会话▸分支）+ 工具按钮，在工作区内，不横跨窗口 */
+  .main-header {
+    height: 42px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .breadcrumb { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+  .breadcrumb .crumb { padding: 2px 5px; border-radius: 3px; color: var(--text-secondary); }
+  .breadcrumb .crumb.clickable { cursor: pointer; }
+  .breadcrumb .crumb.clickable:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .breadcrumb .crumb.branch { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--accent); background: var(--accent-soft); padding: 2px 7px; }
+  .breadcrumb .sep { color: var(--text-tertiary); font-size: 11px; }
+  .main-header .spacer { flex: 1; }
+  .main-header .tool-btn { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-secondary); background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 4px; padding: 4px 8px; }
+  .main-body { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .main-body .line { height: 8px; border-radius: 2px; background: rgba(255,255,255,0.04); }
+  .main-body .line.w90 { width: 90%; }
+  .main-body .line.w70 { width: 70%; }
+  .main-body .line.w50 { width: 50%; }
+  .main-body .bubble { align-self: flex-end; max-width: 60%; padding: 8px 12px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 12px; }
+
+  /* ===== 安全区标注（设计探索叠加层）===== */
+  .safe-zone {
+    position: absolute; left: 8px; top: 8px;
+    width: 72px; height: 32px;
+    border: 1px dashed var(--anno-accent);
+    border-radius: 4px;
+    pointer-events: none; z-index: 5;
+    display: none;
+  }
+  .safe-zone .sz-label { position: absolute; top: 100%; left: 0; font: 10px/1.2 ui-monospace, Menlo, monospace; color: var(--anno-accent); padding-top: 3px; white-space: nowrap; }
+  .window-mock.show-safe .safe-zone { display: block; }
+
+  /* 应用按钮落点标注（设计探索叠加层） */
+  .nav-zone {
+    position: absolute; left: 86px; top: 8px;
+    width: 92px; height: 32px;
+    border: 1px dashed var(--anno-warn);
+    border-radius: 4px;
+    pointer-events: none; z-index: 5;
+    display: none;
+  }
+  .nav-zone .nz-label { position: absolute; top: 100%; left: 0; font: 10px/1.2 ui-monospace, Menlo, monospace; color: var(--anno-warn); padding-top: 3px; white-space: nowrap; }
+  .window-mock.show-nav .nav-zone { display: block; }
+
+  /* 拓扑层标注（核心示意图用） */
+  .anno { position: absolute; font: 10px/1.2 ui-monospace, Menlo, monospace; padding: 3px 6px; border-radius: 3px; pointer-events: none; z-index: 6; white-space: nowrap; }
+  .anno.base { color: var(--anno-muted); background: rgba(138,138,149,0.08); border: 1px solid var(--anno-muted); }
+  .anno.fuse { color: var(--anno-accent); background: var(--anno-bg); border: 1px solid var(--anno-accent); }
+  .anno.float { color: var(--anno-warn); background: var(--anno-warn-bg); border: 1px solid var(--anno-warn); }
+
+  /* 状态对比卡 —— 两态（非全屏 / 全屏），hover 由系统提供不画 */
+  .states-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .state-block .state-cap { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-secondary); min-height: 32px; }
+  .state-block .state-cap .tag { padding: 3px 7px; border-radius: 3px; font-weight: 600; }
+  .tag-a { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+  .tag-b { background: rgba(138,138,149,0.12); color: var(--text-secondary); border: 1px solid var(--text-tertiary); }
+
+  /* ===== 拓扑示意图（大图）===== */
+  .topo-mock { height: 340px; }
+  .topo-mock .app-shell { height: 100%; }
+
+  /* ===== 跨平台对照卡 ===== */
+  .platform-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .platform-card .pc-cap { margin-bottom: 10px; font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--text-secondary); }
+  .platform-card .pc-cap b { color: var(--text-primary); }
+
+  /* ===== 尺寸表 ===== */
+  .dim-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .dim-table th, .dim-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  .dim-table th { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; }
+  .dim-table td.code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); }
+  .dim-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* z-index 分层表 */
+  .z-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .z-table th, .z-table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .z-table th { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); text-transform: uppercase; font-weight: 500; }
+  .z-table td.z { font-family: ui-monospace, Menlo, monospace; color: var(--accent); width: 70px; }
+  .z-table td.layer { font-weight: 600; }
+
+  .note-list { font-size: 12.5px; color: var(--text-secondary); line-height: 1.7; padding-left: 18px; }
+  .note-list li { margin-bottom: 4px; }
+  .note-list code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); background: rgba(79,142,247,0.08); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>Shell 设计 · zcode-demo 拓扑 + traffic light 兼容</h1>
+  <div class="sub">
+    回归 zcode-demo 的视觉层次：<b>base 平铺全屏</b>（左侧边栏透明融合其上）+ <b>工作区 float-panel 浮起</b>。
+    traffic light 浮在 sidebar 顶部安全区；其右侧紧跟 <b>应用导航按钮（收起 / ← 后退 / → 前进）</b>，三平台统一。
+    窗口控制（最小化/最大化/关闭）保持各平台原生位置——<b>应用按钮统一、窗口控制原生</b>（流派 A）。
+  </div>
+  <div class="meta">
+    <span>来源 <b>docs/page-design/zcode-demo/App.js</b></span>
+    <span>层次 <b>base 平铺 / sidebar 透明 / main 浮起</b></span>
+    <span>应用按钮 <b>收起 / ← / → · 三平台统一</b></span>
+    <span>快捷键 <b>⌘N 新建 · ⌘K 搜索</b></span>
+    <span>跨平台 <b>流派 A · 窗口控制原生</b></span>
+  </div>
+</div>
+
+<div class="callout">
+  <b>层次修正说明：</b> 上一版把 <code>bg-panel</code> 当成整窗背景，sidebar 又画一层 elevated——视觉层次和 zcode-demo 完全相反。
+  本版修正：<code>.window-mock</code> 用 base，<code>.aside-region</code> 无 background（透明），<code>.main-panel</code> 是唯一浮起面板。
+</div>
+
+<div class="callout accent">
+  <b>traffic light 两态（非 hover）说明：</b> 应用只画 <b>非全屏</b>（红黄绿常驻 + 应用按钮在其右）和 <b>全屏</b>（红黄绿隐藏 + 应用按钮左移占位）两个状态。
+  全屏 hover 时红黄绿由 <b>mac 系统从顶部下拉覆盖层提供</b>，应用不参与渲染——故无第三态，避免自绘半透明按钮与系统浮层打架。
+</div>
+
+<!-- ========== 一、核心拓扑示意图（标注三层语义）========== -->
+<div class="section-title">
+  <span class="num">1</span> 核心拓扑 · base 平铺 / sidebar 透明融合 / main 浮起
+  <span class="hint">zcode-demo 真实语义 + traffic light 与应用按钮落点</span>
+</div>
+
+<div class="window-mock topo-mock state-nonfullscreen show-safe show-nav">
+  <div class="safe-zone"><span class="sz-label">mac 安全区 72×32 · traffic light 落点</span></div>
+  <div class="nav-zone"><span class="nz-label">应用按钮落点 · 收起/←/→</span></div>
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-nav-controls">
+    <div class="nav-btn collapse" title="收起侧边栏"><span class="ico-collapse"></span></div>
+    <div class="nav-btn back" title="后退 · 导航历史（浏览器式 back，跨会话+会话内跳转）"></div>
+    <div class="nav-btn fwd" title="前进 · 导航历史（浏览器式 forward，跨会话+会话内跳转）"></div>
+  </div>
+  <div class="app-shell">
+    <!-- aside：透明，融在 base 上 -->
+    <div class="aside-region" style="position:relative;">
+      <span class="anno fuse" style="top:2px; right:6px;">sidebar 透明 · 融在 base</span>
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item active"><span class="a-ico">⊕</span>新建任务<span class="a-kbd">⌘N</span></div>
+        <div class="a-item"><span class="a-ico">⌕</span>搜索<span class="a-kbd">⌘K</span></div>
+        <div class="a-item"><span class="a-ico">◇</span>技能</div>
+        <div class="a-sep"></div>
+        <div class="a-item active"><span class="a-ico">◈</span>refactor-arch</div>
+        <div class="a-item"><span class="a-ico">◈</span>agent-skeleton</div>
+        <div class="a-item"><span class="a-ico">◈</span>feat-subagent</div>
+      </div>
+      <div class="a-user"><div class="a-ava"></div>Zzzzswszz</div>
+    </div>
+    <!-- main：float-panel 浮起 -->
+    <div class="main-panel" style="position:relative;">
+      <span class="anno float" style="top:6px; right:8px;">main · float-panel 浮起</span>
+      <div class="main-header">
+        <span class="breadcrumb">
+          <span class="crumb clickable">refactor-arch</span>
+          <span class="sep">▸</span>
+          <span class="crumb clickable">重构架构</span>
+          <span class="sep">▸</span>
+          <span class="crumb branch">main</span>
+        </span>
+        <span class="spacer"></span>
+        <span class="tool-btn">⌘K</span>
+      </div>
+      <div class="main-body">
+        <div class="line w90"></div>
+        <div class="line w70"></div>
+        <div class="line w50"></div>
+        <div class="bubble">帮我把 shell 层次修正一下</div>
+      </div>
+    </div>
+  </div>
+  <!-- 底层标注 -->
+  <span class="anno base" style="left:12px; bottom:10px;">window-mock · bg-base #0d0d0f 平铺全屏</span>
+</div>
+
+<!-- ========== 二、traffic light 两态 + 应用按钮位移 ========== -->
+<div class="section-title">
+  <span class="num">2</span> traffic light 两态 · 应用按钮随之平移
+  <span class="hint">hover 由 mac 系统提供，应用不画第三态</span>
+</div>
+
+<div class="states-row">
+  <!-- 状态 A：非全屏 -->
+  <div class="state-block">
+    <div class="state-cap"><span class="tag tag-a">A</span> 非全屏 · 红黄绿常驻 + 应用按钮在其右</div>
+    <div class="window-mock state-nonfullscreen">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="收起侧边栏"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back" title="后退"></div>
+        <div class="nav-btn fwd" title="前进"></div>
+      </div>
+      <div class="app-shell">
+        <div class="aside-region">
+          <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          <div class="a-nav">
+            <div class="a-item active"><span class="a-ico">⊕</span>新建任务<span class="a-kbd">⌘N</span></div>
+            <div class="a-item"><span class="a-ico">⌕</span>搜索<span class="a-kbd">⌘K</span></div>
+          </div>
+        </div>
+        <div class="main-panel">
+          <div class="main-header"><span class="breadcrumb"><span class="crumb clickable">refactor-arch</span><span class="sep">▸</span><span class="crumb clickable">重构</span><span class="sep">▸</span><span class="crumb branch">main</span></span></div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态 B：全屏 -->
+  <div class="state-block">
+    <div class="state-cap"><span class="tag tag-b">B</span> 全屏 · 红黄绿隐藏 + 应用按钮左移占位</div>
+    <div class="window-mock state-fullscreen-idle">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="收起侧边栏"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back" title="后退"></div>
+        <div class="nav-btn fwd" title="前进"></div>
+      </div>
+      <div class="app-shell">
+        <div class="aside-region">
+          <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          <div class="a-nav">
+            <div class="a-item active"><span class="a-ico">⊕</span>新建任务<span class="a-kbd">⌘N</span></div>
+            <div class="a-item"><span class="a-ico">⌕</span>搜索<span class="a-kbd">⌘K</span></div>
+          </div>
+        </div>
+        <div class="main-panel">
+          <div class="main-header"><span class="breadcrumb"><span class="crumb clickable">refactor-arch</span><span class="sep">▸</span><span class="crumb clickable">重构</span><span class="sep">▸</span><span class="crumb branch">main</span></span></div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="callout">
+  <b>流畅命门：</b> 两态间 sidebar 内容（logo/nav）位置<b>像素级不变</b>。
+  唯一位移是 <code>app-nav-controls</code> 的 <code>left</code> 从 90px 平移到 20px（<b>320ms</b> 过渡，= <code>--duration-slow</code>），与 <code>traffic-light</code> opacity（同为 320ms、同曲线）<b>同时长同步</b>——两者是同一态变换，视觉上是一个动作。<b>mac</b> 的 traffic-light 由 OS 绘制（时长不可控，应用只保证 app-nav-controls 用 320ms）；<b>win/linux</b> 两者皆应用自绘，严格同步。
+  全屏时红黄绿虽不可见，sidebar 顶部 52px 安全区始终留白——hover 时 mac 系统下拉覆盖层正好落进这块留白，不挡 nav。
+</div>
+
+<!-- ========== 三、尺寸表 ========== -->
+<div class="section-title">
+  <span class="num">3</span> 尺寸表 · 安全区 + 应用按钮落点
+  <span class="hint">mac traffic light + 8px 呼吸 + 应用按钮带</span>
+</div>
+
+<table class="dim-table">
+  <thead><tr><th>token / 选择器</th><th>值</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td class="code">--tl-safe-width</td><td class="code">72px</td><td>mac traffic light 三按钮宽（3×12 + 2×8 间距 + 余量）</td></tr>
+    <tr><td class="code">--tl-safe-height</td><td class="code">32px</td><td>traffic light 高度 + 上下边距</td></tr>
+    <tr><td class="code">aside padding-top</td><td class="code">52px</td><td>sidebar 内容起始 Y（安全区 32 + 呼吸 20）</td></tr>
+    <tr><td class="code">.traffic-light left/top</td><td class="code">20px / 20px</td><td>红黄绿绝对定位到 window-mock 左上</td></tr>
+    <tr><td class="code">.app-nav-controls left（非全屏）</td><td class="code">90px</td><td>应用按钮紧跟 traffic light 右侧（72 + 18 呼吸）</td></tr>
+    <tr><td class="code">.app-nav-controls left（全屏）</td><td class="code">20px</td><td>红黄绿隐藏，按钮左移占其位（<b>320ms</b> 平移 = <code>--duration-slow</code>，与 traffic-light 同步）</td></tr>
+    <tr><td class="code">win/linux aside padding-top</td><td class="code">52px</td><td>与 mac 一致留安全区；mimic_mac 圆点浮左上，app-nav-controls left:90px</td></tr>
+    <tr><td class="code">全屏 hover（mac）</td><td class="code">系统提供</td><td>mac 从顶部下拉覆盖层显示红黄绿，应用不渲染第三态</td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 四、跨平台对照（流派 A：应用按钮统一 · 窗口控制原生） ========== -->
+<div class="section-title">
+  <span class="num">4</span> 跨平台对照 · 三平台统一红黄绿（mac OS 绘制 / win·linux 自绘 mimic）
+  <span class="hint">方案 X：win/linux 自绘彩色圆点放左侧，完全模拟 mac</span>
+</div>
+
+<div class="platform-grid">
+  <div class="platform-card">
+    <div class="pc-cap"><b>macOS</b> · hiddenInset · 红黄绿浮 sidebar 左上 + 应用按钮紧随</div>
+    <div class="window-mock state-nonfullscreen">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="收起侧边栏"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back" title="后退"></div>
+        <div class="nav-btn fwd" title="前进"></div>
+      </div>
+      <div class="app-shell" style="height:200px;">
+        <div class="aside-region">
+          <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          <div class="a-nav"><div class="a-item active"><span class="a-ico">⊕</span>新建任务<span class="a-kbd">⌘N</span></div></div>
+        </div>
+        <div class="main-panel"><div class="main-header"><span class="breadcrumb"><span class="crumb clickable">refactor-arch</span><span class="sep">▸</span><span class="crumb clickable">重构</span><span class="sep">▸</span><span class="crumb branch">main</span></span></div><div class="main-body"><div class="line w90"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="platform-card">
+    <div class="pc-cap"><b>Windows / Linux</b> · 自绘彩色圆点（mimic mac）浮左上 · hover 显 close/min/max 符号</div>
+    <div class="window-mock platform-win state-nonfullscreen">
+      <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+      <div class="app-nav-controls">
+        <div class="nav-btn collapse" title="收起侧边栏"><span class="ico-collapse"></span></div>
+        <div class="nav-btn back" title="后退"></div>
+        <div class="nav-btn fwd" title="前进"></div>
+      </div>
+      <div class="app-shell" style="height:200px;">
+        <div class="aside-region">
+          <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          <div class="a-nav"><div class="a-item active"><span class="a-ico">⊕</span>新建任务<span class="a-kbd">⌘N</span></div></div>
+        </div>
+        <div class="main-panel">
+          <div class="main-header"><span class="breadcrumb"><span class="crumb clickable">refactor-arch</span><span class="sep">▸</span><span class="crumb clickable">重构</span><span class="sep">▸</span><span class="crumb branch">main</span></span></div>
+          <div class="main-body"><div class="line w90"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="callout accent">
+  <b>为何选择三平台统一左侧（方案 X）：</b> 消灭"左上角按钮撞 logo"与"右上角窗口控制侵入工作区"两个 bug，三平台左上视觉与交互完全一致。
+  代价是 win/linux 需 <code>frame:false</code> + 自绘 3 个彩色圆点（mimic mac 红黄绿，hover 显 close/min/max 符号）+ IPC 调 <code>win.minimize/maximize/close</code>，约 1 天一次性工作量。
+  对开发者受众而言，视觉统一的收益大于 Windows 肌肉记忆的代价（VS Code/Cursor 在 Linux 上均自绘控制）。
+</div>
+
+<!-- ========== 五、z-index 分层 ========== -->
+<div class="section-title">
+  <span class="num">5</span> z-index 分层 · 简化（无横跨 overlay 后更干净）
+  <span class="hint">系统层在最顶，内容层按 base/panel 自然叠放</span>
+</div>
+
+<table class="z-table">
+  <thead><tr><th>z-index</th><th>层</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="z">系统</td><td class="layer">traffic light</td><td>mac Electron 系统绘制（OS 保证最顶）；win/linux 自绘 DOM（z-index:10）</td></tr>
+    <tr><td class="z">10</td><td class="layer">traffic-light / app-nav-controls</td><td>绝对定位浮在 sidebar 安全区上方；win/linux 的 traffic-light 也是应用自绘 DOM（mimic mac）</td></tr>
+    <tr><td class="z">6</td><td class="layer">设计标注叠加层（anno / safe-zone / nav-zone）</td><td>仅设计探索稿，产品态移除</td></tr>
+    <tr><td class="z">auto</td><td class="layer">main-panel（float-panel 浮起）</td><td>靠 background/border/shadow 视觉浮起，不靠 z-index 抬高</td></tr>
+    <tr><td class="z">auto</td><td class="layer">aside-region（透明，base 融合）</td><td>无 background，继承 window-mock 的 base</td></tr>
+    <tr><td class="z">0</td><td class="layer">window-mock（bg-base 平铺）</td><td>全屏底色，所有区域的基础</td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 六、实现要点 ========== -->
+<div class="section-title"><span class="num">6</span> 实现要点 · 对接真实代码</div>
+<ul class="note-list">
+  <li><b>Electron 主进程</b>：保持 <code>titleBarStyle: 'hiddenInset'</code>（mac）—— traffic light 由系统绘制并自动浮在最顶，CSS 不画真实按钮，只在 sidebar 顶部留 <code>padding-top:52px</code>。</li>
+  <li><b>应用导航按钮</b>（收起 / ← / →）是<b>应用自绘 DOM</b>（非 OS），三平台统一渲染。收起 → toggle sidebar 宽度（200px ↔ 折叠态，折叠态细节属 sidebar L2，本稿不定）；<b>← / → → 导航历史栈</b> back/forward（浏览器式）：栈条目 = (会话, 视图节点)，会话切换与会话内跳转都 push，← pop 回退、→ 前进。<b>注：←/→ 是「导航」，与 Flow 4「回退分支」解耦</b>——分支回退是对话级动作，走 Session Tree + 分支 pill，不走 chrome ←/→。</li>
+  <li><b>按钮位移逻辑</b>：监听 <code>enter-full-screen</code> / <code>leave-full-screen</code>，给根加 <code>data-fullscreen</code>。CSS <code>[data-fullscreen] .app-nav-controls { left:20px }</code> 触发 <b>320ms（= --duration-slow）</b>平移；<code>traffic-light</code> opacity 同为 320ms 同曲线——<b>win/linux 两元素皆应用自绘，严格同步</b>；<b>mac</b> traffic-light 由 OS 绘制（时长不可控，应用只保证 app-nav-controls 用 320ms，OS 渐隐 ~250–300ms 视觉足够接近，不强行对齐）。<b>全屏 hover 红黄绿由 mac 系统提供，应用不画第三态。</b></li>
+  <li><b>跨平台判定</b>：renderer 根 <code>&lt;html data-platform="mac|win|linux"&gt;</code>。三平台 <code>.aside-region</code> 均 <code>padding-top:52px</code>。mac：<code>titleBarStyle:'hiddenInset'</code>，红黄绿 OS 绘制；win/linux：<code>frame:false</code> + 自绘 3 个彩色圆点（复用 <code>.traffic-light</code> DOM）浮左上，hover 显 close/min/max 符号，点击 IPC 调 <code>win.minimize/maximize/close</code>。<code>app-nav-controls</code> 三平台恒 <code>left:90px</code>（全屏左移 20px）。</li>
+  <li><b>全局快捷键</b>：注册 <code>⌘N</code>（新建任务）与 <code>⌘K</code>（搜索）—— sidebar nav item 的 <code>.a-kbd</code> 是其视觉提示。renderer 内监听 <code>keydown</code>（mac 用 ⌘、win/linux 用 Ctrl）。</li>
+  <li><b>breadcrumb 拖拽</b>：main-header 的空白区设 <code>-webkit-app-region: drag</code>，按钮/breadcrumb 设 <code>no-drag</code>。</li>
+  <li><b>修复已存在 bug</b>：真实 renderer 当前 <code>grep -webkit-app-region</code> 全空——sidebar logo 会被 traffic light 压住。本设计顺手把这个 bug 设计掉了（padding-top 安全区 + app-nav-controls 落点）。</li>
+</ul>
+
+</body>
+</html>

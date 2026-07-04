@@ -38,6 +38,14 @@ export const tasteRules = {
   // 类型即契约
   '@typescript-eslint/no-explicit-any': 'error',
 
+  // 未使用变量：`_` 前缀 = 显式标记「故意未使用」（参数/变量/catch 错误）
+  // 行业标准约定，避免为 mock/占位参数被迫加 disable 注释
+  '@typescript-eslint/no-unused-vars': ['error', {
+    argsIgnorePattern: '^_',
+    varsIgnorePattern: '^_',
+    caughtErrorsIgnorePattern: '^_',
+  }],
+
   // 缩进：仅允许 space
   'indent': ['warn', 2, { SwitchCase: 1 }],
 

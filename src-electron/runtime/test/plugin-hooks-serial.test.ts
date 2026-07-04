@@ -33,18 +33,15 @@ function createMockBroker(): IMessageBroker {
   }
 }
 
-/** Access PluginService internals for test setup */
+/** Access PluginService internals for test setup（hookRegistry 下沉到 HookPipeline） */
 function internals(service: PluginService) {
-  return service as unknown as {
-    hookRegistry: Map<string, HookEntry[]>
-    rpcServer: {
-      invoke: ReturnType<typeof vi.fn>
-      broadcast: ReturnType<typeof vi.fn>
-    }
-    host: {
-      getWorkerHandle: ReturnType<typeof vi.fn>
-    }
-  }
+  const hookPipeline = (service as unknown as { hookPipeline: { registry: Map<string, HookEntry[]> } }).hookPipeline
+  const host = (service as unknown as { host: { getWorkerHandle: ReturnType<typeof vi.fn> } }).host
+  const rpcServer = (service as unknown as { rpcServer: {
+    invoke: ReturnType<typeof vi.fn>
+    broadcast: ReturnType<typeof vi.fn>
+  } }).rpcServer
+  return { hookRegistry: hookPipeline.registry, rpcServer, host }
 }
 
 function makeContext(data: unknown = {}): HookContext {

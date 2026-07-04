@@ -39,6 +39,16 @@ jobs:
 
       - run: npm ci
 
+      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖（electron/@lucide/vue 等）。
+      # 用 npm install 而非 npm ci：src-electron 的 lock 在 mac 上生成，对 linux/wasm32 平台的
+      # optional native dep（@rolldown/binding-wasm32-wasi -> @emnapi/core）解析不完整，
+      # npm ci 会因 lock 与 registry 不一致而拒绝安装。npm install 容忍并自动补齐。
+      - name: Install src-electron dependencies
+        working-directory: src-electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm install --no-audit --no-fund
+
       - name: ESLint
         run: npm run lint
 
@@ -56,6 +66,15 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖。
+      # TypeCheck 报错（Cannot find module 'electron' / '@lucide/vue'）根因即此处缺失。
+      # 用 npm install：src-electron lock 跨平台 optional dep 解析不完整，npm ci 会拒绝。
+      - name: Install src-electron dependencies
+        working-directory: src-electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm install --no-audit --no-fund
 
       - name: TypeCheck - renderer
         run: npm -w @xyz-agent/frontend run typecheck
@@ -81,11 +100,23 @@ jobs:
 
       - run: npm ci
 
+      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖。
+      # Test 报错（Cannot find package '@vitejs/plugin-vue' in vitest.config.ts）根因即此处缺失。
+      # 用 npm install：src-electron lock 跨平台 optional dep 解析不完整，npm ci 会拒绝。
+      - name: Install src-electron dependencies
+        working-directory: src-electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm install --no-audit --no-fund
+
       - name: Test - runtime
         run: npm -w @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
 
       - name: Test - renderer
         run: npm -w @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
+
+      - name: Test - main
+        run: cd src-electron && npm run test:main
 
       - name: Upload test results
         if: always()
@@ -97,5 +128,11 @@ jobs:
             src-electron/renderer/test-results.xml
           retention-days: 7
 
-  # Build 需要完整的 Electron 环境（macOS 签名、electron-builder 依赖）
-  # 建议在 release workflow 中单独配置，CI 阶段以 lint + typecheck + test 为核心
+  # PR 构建检查：完整 electron-builder 打包流程（与 release 一致），不在 PR 上传产物。
+  # needs gate：lint/typecheck/test 已知失败时不浪费 mac runner（mac 构建 5-8min）。
+  build:
+    name: Build
+    needs: [lint, typecheck, test]
+    uses: ./.github/workflows/build.yml
+    with:
+      upload-artifacts: false
