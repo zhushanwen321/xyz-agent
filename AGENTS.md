@@ -147,7 +147,6 @@ lsof -i :1420 -P | grep node
 
 #### pnpm workspace 单步安装（2026-07-04 重构后）
 - 项目使用 pnpm workspace（`pnpm-workspace.yaml`），`pnpm install` 一次装完根 + `packages/*` + `apps/*`
-- 不再有「src-electron 独立 project 需要二次安装」的问题（旧 npm workspace 结构已废弃）
 - `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0032）
 - `git-cwt` 的 `setup-worktree.sh` 会自动跑 `pnpm install`，手动操作时跑一次即可
 

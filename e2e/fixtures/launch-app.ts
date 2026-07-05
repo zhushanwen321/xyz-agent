@@ -21,13 +21,14 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const SRC_ELECTRON = path.join(REPO_ROOT, 'apps/electron')
+const ELECTRON_DIR = path.join(REPO_ROOT, 'apps/electron')
 
-// electron 二进制装在 apps/electron/node_modules（workspace 隔离），不在 root node_modules。
-// Playwright _electron.launch() 默认从 root require.resolve('electron') 找，找不到。
-// 用 createRequire 在 apps/electron 上下文解析 electron 包导出的可执行文件路径（跨平台，electron/index.js 负责计算）。
-const requireFromSrcElectron = createRequire(path.join(SRC_ELECTRON, 'noop.js'))
-const ELECTRON_EXECUTABLE = requireFromSrcElectron('electron') as string
+// pnpm hoisted 模式（node-linker=hoisted）下 electron 包提升到 root node_modules/electron，
+// 但 createRequire 需要以 workspace 子包目录为起点才能正确解析 workspace 依赖。
+// 用 createRequire 在 apps/electron 上下文解析 electron 包导出的可执行文件路径
+// （Node 向上查找会命中 root node_modules/electron；跨平台路径计算由 electron/index.js 负责）。
+const requireFromElectronDir = createRequire(path.join(ELECTRON_DIR, 'noop.js'))
+const ELECTRON_EXECUTABLE = requireFromElectronDir('electron') as string
 
 /**
  * 启动 xyz-agent Electron app（构建产物 + mock 模式）。
@@ -45,11 +46,11 @@ export async function launchApp(): Promise<{
   const tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xyz-e2e-'))
 
   const app = await electron.launch({
-    // 显式指定 electron 可执行文件（装在 apps/electron/node_modules，非 root）
+    // 显式指定 electron 可执行文件（hoisted 模式下在 root node_modules/electron）
     executablePath: ELECTRON_EXECUTABLE,
     // Electron 进程的 cwd 指向 apps/electron（含 package.json 的 main 字段），
     // app.getAppPath() 会解析到此处，dist/main/main.cjs + dist/preload/preload.cjs + renderer/dist 都在此树下
-    cwd: SRC_ELECTRON,
+    cwd: ELECTRON_DIR,
     env: {
       ...process.env,
       // renderer 侧：mock API + E2E 注入（Vite 构建期 define 已把 sample-project cwd 打进 bundle）

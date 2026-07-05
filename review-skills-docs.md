@@ -96,7 +96,7 @@ def discover_all(self, project: str) -> list[EntryPoint]:
 
 `[SUGGESTION] .agents/skills/code-link/scripts/bridge.py:L54 — frontend_dirs 包含 project + "/src"`
 
-**问题**：许多项目的 `src/` 目录混合了前后端代码（如 xyz-agent 的 `src-electron/` 下有 `main/`、`runtime/`、`renderer/src/`）。将 `src` 作为前端目录可能导致扫描到非前端文件（如 `runtime/src/` 的 Node.js 代码），bridge 匹配时产生误报。
+**问题**：许多项目的 `src/` 目录混合了前后端代码（如 xyz-agent 有 `apps/electron/main/`、`packages/runtime/src/`、`packages/renderer/src/`）。将 `src` 作为前端目录可能导致扫描到非前端文件（如 `packages/runtime/src/` 的 Node.js 代码），bridge 匹配时产生误报。
 
 **建议**：优先匹配更具体的目录（`frontend/src`、`packages/renderer/src`），`src/` 作为最后 fallback。
 
@@ -128,7 +128,7 @@ def discover_all(self, project: str) -> list[EntryPoint]:
 
 `[SUGGESTION] apps/electron/scripts/dev-cleanup.mjs — 完整删除（47 行）`
 
-**验证**：在 `package.json`、`src-electron/` 内的 TS/JS 文件中搜索 `dev-cleanup` 无残留引用。仅在 `.xyz-harness/` 的历史文档中有一行目录列表引用（不影响运行时）。删除安全。
+**验证**：在 `package.json`、`apps/electron/` 及 `packages/` 内的 TS/JS 文件中搜索 `dev-cleanup` 无残留引用。仅在 `.xyz-harness/` 的历史文档中有一行目录列表引用（不影响运行时）。删除安全。
 
 **建议**：可合并。
 

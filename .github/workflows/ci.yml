@@ -42,7 +42,6 @@ jobs:
           cache: pnpm
 
       # pnpm workspace 单步安装：根 + packages/* + apps/* 一次装完
-      # （迁移自 npm 双步安装——旧结构 src-electron 是独立 npm project 需要二次 install）
       - name: Install dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'

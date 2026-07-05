@@ -15,12 +15,12 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const SRC_ELECTRON = path.join(REPO_ROOT, 'apps/electron')
+const ELECTRON_DIR = path.join(REPO_ROOT, 'apps/electron')
 
 const ARTIFACTS = [
-  path.join(SRC_ELECTRON, 'dist/main/main.cjs'),
-  path.join(SRC_ELECTRON, 'dist/preload/preload.cjs'),
-  path.join(SRC_ELECTRON, 'renderer/dist/index.html'),
+  path.join(ELECTRON_DIR, 'dist/main/main.cjs'),
+  path.join(ELECTRON_DIR, 'dist/preload/preload.cjs'),
+  path.join(ELECTRON_DIR, 'renderer/dist/index.html'),
 ]
 
 function artifactsMissing(): boolean {
