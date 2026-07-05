@@ -27,13 +27,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKTREE_ROOT = path.resolve(__dirname, '../..');
+// __dirname = <worktree>/apps/electron/scripts → 上三级到 worktree 根
+const WORKTREE_ROOT = path.resolve(__dirname, '../../..');
 
 // workspace root = worktree 的上一级（和 .bare 同级）
 const WORKSPACE_ROOT = path.resolve(WORKTREE_ROOT, '..');
 
 const SHARED_DIST = path.join(WORKSPACE_ROOT, '.electron-dist');
-const ELECTRON_MODULE = path.join(WORKTREE_ROOT, 'apps/electron/node_modules/electron');
+// pnpm hoisted 模式（node-linker=hoisted）：electron 包被提升到 worktree 根 node_modules，
+// 不在 apps/electron/node_modules/ 下。从根查找。
+const ELECTRON_MODULE = path.join(WORKTREE_ROOT, 'node_modules/electron');
 const DIST_LINK = path.join(ELECTRON_MODULE, 'dist');
 const PATH_TXT = path.join(ELECTRON_MODULE, 'path.txt');
 

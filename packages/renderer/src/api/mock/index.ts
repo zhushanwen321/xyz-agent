@@ -31,6 +31,9 @@ export { git, fixtureGitStatus } from './git'
 // mock/file.ts 的 file domain 透出（W3 file-tree real domain 落地后由 api/index 接线）
 export { file } from './file'
 
+/** "npm:" 前缀长度（install source 解析用，对齐 runtime NPM_PREFIX_LENGTH） */
+const NPM_PREFIX = 'npm:'
+
 /**
  * Mock 模拟 runtime session 通道推送（dispatchSession）。
  * 组件用 events.on(sessionId) 订阅 session.commands / context.update / extension:widget 等；
@@ -464,11 +467,17 @@ export const extension = {
     // 广播快照（模拟 runtime extension.toggle 后 onExtensions 推回）
     extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
   },
-  /** npm 直装（mock：把来源当作新扩展加入并广播刷新） */
+  /**
+   * npm 直装（mock：剥 npm: 前缀后以真实包名加入 fixture 并广播刷新）。
+   * 对齐 runtime installExtension 语义：source 形如 "npm:@scope/pkg"，runtime 用
+   * pkgName（剥前缀）install，scanExtensions 读出的 name 是 package.json 的真实包名。
+   * mock 直接用剥前缀后的 source 作为 name，让推荐区的 installed 匹配能命中。
+   */
   async install(source: string) {
     await sleep(TIMING.ack)
-    if (!fixtureExtensions.some((e) => e.name === source)) {
-      fixtureExtensions.push({ name: source, version: '0.0.0', description: `mock-installed: ${source}`, enabled: true, tools: [] })
+    const name = source.startsWith('npm:') ? source.slice(NPM_PREFIX.length) : source
+    if (!fixtureExtensions.some((e) => e.name === name)) {
+      fixtureExtensions.push({ name, version: '0.0.0', description: `mock-installed: ${name}`, enabled: true, tools: [] })
     }
     extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
   },
