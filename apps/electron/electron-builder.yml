@@ -54,10 +54,11 @@ extraResources:
       - "!**/*.tar.gz"
       - "!**/*.zip"
   # xyz-agent pi extension (xyz-navigate command)
-  # 源文件在 repo root，打包到 Resources 根目录。
+  # 源文件在 repo root。electron-builder projectDir=apps/electron/，
+  # from 相对 projectDir 解析，需上两级到仓库根。
   # 注：builtin pi-extensions（@zhushanwen/pi-*）已改为 Settings 推荐安装，
   # 不再打包进产物。详见 recommended-extensions.json + extension.recommended WS 协议。
-  - from: ../xyz-agent-extension.js
+  - from: ../../xyz-agent-extension.js
     to: xyz-agent-extension.js
 
 # NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。
