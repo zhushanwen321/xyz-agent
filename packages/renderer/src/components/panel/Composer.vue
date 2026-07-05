@@ -183,7 +183,7 @@ function restoreInput(text: string): void {
 
 const hasInput = computed(() => draft.value.trim().length > 0)
 /** 可发送：有输入且非 streaming 非 sending 非 compacting。
- *  landing 态（sessionId=null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
+ *  landing 态（sessionId 可能为公共 session id 或 null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
 const canSend = computed(() => hasInput.value && !isStreaming.value && !isSending.value && !isCompacting.value)
 
 /**
@@ -208,16 +208,22 @@ const placeholder = computed(() =>
 
 /**
  * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。
- * landing 态（sessionId=null）首发提交走 submitFirstMessage（延迟 create session 后再发）；
+ * landing 态首发提交走 submitFirstMessage（延迟 create session 后再发）；
  * 非 landing 走 useChat.send。/compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6）。
  * 检测：slash chip 的命令名（如 '/compact'）会被 ComposerInput.getText 读入 draft，
  * 故 draft 恰为 '/compact'（chip 单独存在，无附加文本）时判定为 compact 操作。
+ *
+ * landing 判定用 variant 而非 sessionId：landing 态 composer 的 sessionId 可能是
+ * 公共 session id（用于 CommandPopover 显示 pi extension 命令），但它不是真实工作
+ * session——首发提交仍需走 submitFirstMessage 延迟 create。variant='landing' 是
+ * 渲染层确定的 landing 语义，与 sessionId 解耦。
  */
 async function onSend(): Promise<void> {
   if (!canSend.value) return
   const text = draft.value
-  // landing 态首发提交：统一延迟 create（无 sid）→ submitFirstMessage 负责 create+载入+发送
-  if (!props.sessionId) {
+  // landing 态首发提交：统一延迟 create → submitFirstMessage 负责 create+载入+发送。
+  // 用 variant 判定（非 sessionId），因为 landing 态 sessionId 可能是公共 session id。
+  if (props.variant === 'landing') {
     clearInput()
     isSending.value = true
     try {
