@@ -68,6 +68,11 @@ async function init(): Promise<void> {
   unsubs.push(config.onSkillDirs((d) => { store.skillDirs = d }))
   unsubs.push(config.onAgentDirs((d) => { store.agentDirs = d }))
   unsubs.push(config.onDefaults((m) => { store.defaultModel = m }))
+  // onExtensions real 签名返 ExtensionInfo[]；mock 用 GlobalHandler<unknown>（数据是
+  // fixtureExtensions，缺 dirName/path/source 但 ExtensionPage 不消费这些字段）。
+  // 类型联合后 e 是 unknown，这里 cast 到 ExtensionItem（= ExtensionInfo alias）。
+  // TODO: mock onExtensions 签名应对齐 real 的 ExtensionInfo[]（补全 dirName/path/source），
+  // 消除此 cast。
   unsubs.push(extensionApi.onExtensions((e) => { store.extensions = e as ExtensionItem[] }))
 
   // system 是纯前端偏好（localStorage），初始化时读并同步到 DOM + i18n

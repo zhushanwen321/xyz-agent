@@ -126,7 +126,7 @@
             <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">v{{ ext.version }}</span>
           </div>
           <span class="truncate text-[11px] text-muted">{{ ext.description }}</span>
-          <div v-if="ext.tools.length" class="mt-1 flex flex-wrap gap-1">
+          <div v-if="ext.tools?.length" class="mt-1 flex flex-wrap gap-1">
             <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ t }}</span>
           </div>
         </div>
@@ -174,14 +174,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import { extension as extensionApi } from '@/api'
-
-interface ExtensionItem {
-  name: string
-  version: string
-  description: string
-  enabled: boolean
-  tools: string[]
-}
+import type { ExtensionItem } from '@/stores/settings'
 
 const props = defineProps<{ extensions: ExtensionItem[] }>()
 

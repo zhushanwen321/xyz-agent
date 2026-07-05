@@ -23,7 +23,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig, ModelInfo } from '@xyz-agent/shared'
+import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig, ModelInfo, ExtensionInfo } from '@xyz-agent/shared'
 import { config, settings as settingsApi } from '@/api'
 import type { SystemSettings } from '@/api'
 import { setLocale } from '@/i18n'
@@ -37,17 +37,12 @@ export type ColorTheme = string
 export type { SystemSettings }
 
 /**
- * Extension 本地桥接类型：shared ExtensionInfo 暂无 tools，
- * ExtensionPage 模板依赖 tools 字段；real 订阅实装时再与 shared 统一。
- * （与 SettingsModal 原本地 ExtensionItem 同构，上提到 store 作为单一类型。）
+ * Extension 类型：直接复用 shared ExtensionInfo（SSOT）。
+ * 此前本地重复定义 ExtensionItem（tools 必填），但 shared ExtensionInfo 的 tools
+ * 是可选（runtime 扫描到时才填），本地必填假设在真实 runtime 下导致 undefined.length 报错。
+ * 现在 import ExtensionInfo 并 alias 为 ExtensionItem 保持现有 import 路径兼容。
  */
-export interface ExtensionItem {
-  name: string
-  version: string
-  description: string
-  enabled: boolean
-  tools: string[]
-}
+export type ExtensionItem = ExtensionInfo
 
 const DEFAULT_SYSTEM: SystemSettings = {
   locale: 'zh-CN',
