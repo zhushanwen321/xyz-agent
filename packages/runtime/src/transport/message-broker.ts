@@ -13,7 +13,7 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ServerMessage, ServerMessageMap, ServerMessageType } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService } from '../interfaces.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS } from '../services/skill-dir-config.js'
 import type { ErrorDetails } from './message-context.js'
 import { WS_OPEN } from './connection-manager.js'
@@ -32,6 +32,8 @@ export interface BrokerServices {
   configService: IConfigService
   modelService: IModelService
   pluginService: IPluginService | undefined
+  /** extension service（sendInitialState 推 config.extensions 段需要；可选，未注入则跳过该段）。 */
+  extensionService: IExtensionService | undefined
   projectRoot: string
   /** 应用 + pi 版本号（sendInitialState 推 app.info）。 */
   appInfo: { appVersion: string; piVersion: string }
@@ -148,7 +150,7 @@ export class ServerMessageBroker implements IMessageBroker {
    * 仅 config.defaults / config.plugins 两段为 initial-state 独有（无对应 broadcast helper），保留 inline。
    */
   sendInitialState(ws: WsType): void {
-    const { configService, pluginService, appInfo } = this.services
+    const { configService, pluginService, extensionService, appInfo } = this.services
     const steps: Array<{ label: string; run: () => void }> = [
       {
         label: 'app.info',
@@ -193,6 +195,25 @@ export class ServerMessageBroker implements IMessageBroker {
           if (pluginService) {
             this.send(ws, { type: 'config.plugins', id: this.nextPushId(), payload: { plugins: pluginService.getDiscoveredPlugins() } })
           }
+        },
+      },
+      {
+        // extension 列表（已装的 pi extension）。前端 Settings · ExtensionPage 的
+        // 「已安装」区 + 推荐区的 installed 状态都依赖此初始推送。install/uninstall/toggle
+        // 后的 reply（config.extensions）会增量更新，但首次打开需要 initial state。
+        //
+        // scanExtensions 是 async（读文件系统），而 sendInitialState 的 for 循环是同步的
+        // （onConnect 签名 void）。这里 fire-and-forget + 自带 catch：扫描完成后异步 send，
+        // 失败仅记日志，不阻塞其他 step，也不影响外层同步 try-catch（Promise reject 自消费）。
+        label: 'config.extensions',
+        run: () => {
+          if (!extensionService) return
+          extensionService.scanExtensions()
+            .then((extensions) => {
+              this.send(ws, { type: 'config.extensions', id: this.nextPushId(), payload: { extensions } })
+            })
+            // eslint-disable-next-line taste/no-silent-catch -- init: best-effort，扫描失败仅记日志，不阻塞连接
+            .catch((e) => console.error(`[runtime] sendInitialState: config.extensions scan failed:`, e))
         },
       },
     ]

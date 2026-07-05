@@ -91,6 +91,7 @@ export class RuntimeServer implements IMessageBroker {
       configService: this.configService,
       modelService: this.modelService,
       pluginService: this.pluginService,
+      extensionService: this.extensionService,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
     })

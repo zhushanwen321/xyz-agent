@@ -370,6 +370,36 @@ describe('RuntimeServer: extension message routing', () => {
     })
   })
 
+  // ── sendInitialState → config.extensions ─────────────────────────
+
+  describe('sendInitialState pushes config.extensions', () => {
+    it('client receives config.extensions on connect (已安装列表初始数据源)', async () => {
+      // sendInitialState 在 ws.onConnect 时推，config.extensions 段是 fire-and-forget
+      // （scanExtensions async，.then 后 send）。必须在 ws 'open' 之前 attach 'message'
+      // handler，否则会漏掉 open 触发的 initial state 推送。
+      const collected: Record<string, unknown>[] = []
+      await new Promise<void>((resolve, reject) => {
+        ws = new WebSocket(`ws://localhost:${port}`)
+        ws.on('message', (data: Buffer) => {
+          try { collected.push(JSON.parse(data.toString())) } catch { /* skip */ }
+        })
+        ws.on('open', () => setTimeout(() => resolve(), 100))
+        ws.on('error', reject)
+      })
+
+      // scanExtensions 是 async fire-and-forget，config.extensions 可能晚于同步段到达。
+      // 用 vi.waitFor 轮询，等 collected 里出现 config.extensions。
+      await vi.waitFor(() => {
+        const hasExt = collected.some(m => m.type === 'config.extensions')
+        expect(hasExt).toBe(true)
+      }, { timeout: 2000, interval: 50 })
+
+      const extMsg = collected.find(m => m.type === 'config.extensions')!
+      expect(extMsg.payload).toHaveProperty('extensions')
+      expect(Array.isArray((extMsg.payload as { extensions: unknown[] }).extensions)).toBe(true)
+    })
+  })
+
   // ── extension.list ───────────────────────────────────────────────
 
   describe('extension.list', () => {
