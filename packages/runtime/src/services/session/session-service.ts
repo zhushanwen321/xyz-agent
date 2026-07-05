@@ -66,6 +66,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 查 ProviderInfo→ModelInfo 得到 contextWindow。未注入时 fallback 0（无法算百分比）。
    */
   private modelContextWindowResolver: ModelContextWindowResolver | null = null
+  /**
+   * 公共 session 创建成功回调（组合根注入，调 broker.broadcastAppInfo 重广播 app.info）。
+   *
+   * 时序：公共 session 在 server.start 之后才创建，首次 sendInitialState 推 app.info 时
+   * publicSessionId 多为 undefined。创建成功后触发本回调，重广播带 publicSessionId 的 app.info，
+   * 前端据此填 sessionStore.publicSessionId + 拉命令到 commandStore（landing slash 数据源）。
+   */
+  private onPublicSessionReady: (() => void) | null = null
 
   constructor(
     private readonly pm: IProcessManager,
@@ -138,6 +146,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       this.publicSessionId = pub.id
       this.publicSessionRebuildCount = 0
       console.log(`[session-service] public session created: ${pub.id}`)
+      // 通知前端：公共 session 就绪。首次 sendInitialState 推 app.info 时它尚未创建，
+      // 这里重广播带 publicSessionId 的 app.info，前端据此填 landing slash 命令源。
+      this.onPublicSessionReady?.()
     // eslint-disable-next-line taste/no-silent-catch -- 公共 session 是 best-effort：model 未配置/spawn 失败时 landing 降级到 skills fallback
     } catch (e) {
       console.warn(`[session-service] public session create failed (landing slash will use skills fallback):`, e)
@@ -166,6 +177,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   setModelContextWindowResolver(resolver: ModelContextWindowResolver): void {
     this.modelContextWindowResolver = resolver
+  }
+
+  /**
+   * 注入公共 session 创建成功回调（组合根调用）。
+   * ensurePublicSession 成功（含崩溃重建）后触发——重广播 app.info 补发 publicSessionId。
+   */
+  setOnPublicSessionReady(cb: () => void): void {
+    this.onPublicSessionReady = cb
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────

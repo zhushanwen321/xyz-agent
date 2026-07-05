@@ -197,6 +197,8 @@ export class RuntimeServer implements IMessageBroker {
 
   send(ws: WsType, msg: ServerMessage): void { this.broker.send(ws, msg) }
   broadcast(msg: ServerMessage): void { this.broker.broadcast(msg) }
+  /** 重广播 app.info（公共 session 创建成功后补发 publicSessionId）。 */
+  broadcastAppInfo(): void { this.broker.broadcastAppInfo() }
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     this.broker.sendError(ws, code, message, id, details)
   }

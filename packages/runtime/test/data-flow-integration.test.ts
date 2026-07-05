@@ -45,6 +45,11 @@ vi.mock('../src/services/session/session-service.js', () => {
       compact = vi.fn().mockResolvedValue(undefined)
       abort = vi.fn().mockResolvedValue(undefined)
       switchModel = vi.fn().mockResolvedValue(undefined)
+      // 公共 session 接口（ISessionService）：mock 返回 undefined（未创建），
+      // 避免 broker.buildAppInfoMsg 调用时 TypeError（被 sendInitialState catch 后噪音日志）
+      getPublicSessionId = vi.fn().mockReturnValue(undefined)
+      ensurePublicSession = vi.fn().mockResolvedValue(undefined)
+      setOnPublicSessionReady = vi.fn()
       getRpcClient = vi.fn().mockReturnValue({
         sendCommand: mockSendCommand,
         onEvent: vi.fn().mockReturnValue(() => {}),
@@ -721,6 +726,9 @@ describe('DF-4: Extension 列表管理', () => {
   it('ExtensionService 返回 2 个 extension → WS 收到 config.extensions 含完整列表', async () => {
     const responsePromise = waitForMessage(ws, 'config.extensions')
 
+    // 清掉 setup 期间 sendInitialState 触发的 scanExtensions 调用，只数本用例内 extension.list 触发的
+    mockExtensionService.scanExtensions.mockClear()
+
     ws.send(JSON.stringify({
       type: 'extension.list',
       id: 'ext-list-df4',
@@ -818,6 +826,9 @@ describe('DF-5: Extension 启用/禁用', () => {
 
   it('禁用 extension → toggleExtension(false) → scanExtensions → config.extensions', async () => {
     const responsePromise = waitForMessage(ws, 'config.extensions')
+
+    // 清掉 setup 期间 sendInitialState 触发的 scanExtensions 调用，只数本用例内 toggle 触发的
+    mockExtensionService.scanExtensions.mockClear()
 
     ws.send(JSON.stringify({
       type: 'extension.toggle',

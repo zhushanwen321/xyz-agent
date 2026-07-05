@@ -100,6 +100,21 @@ export class ServerMessageBroker implements IMessageBroker {
   private buildSessionListMsg(): ServerMessage {
     return { type: 'session.list', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } }
   }
+  /**
+   * app.info 消息构造（sendInitialState 首推 + broadcastAppInfo 重广播共用）。
+   * publicSessionId 动态读 getPublicSessionId()——公共 session 在 runtime 启动收尾才创建，
+   * 首次 sendInitialState 时可能 undefined，创建成功后需重广播（broadcastAppInfo）补发。
+   */
+  private buildAppInfoMsg(): ServerMessage {
+    return {
+      type: 'app.info',
+      id: this.nextPushId(),
+      payload: {
+        ...this.services.appInfo,
+        publicSessionId: this.services.getPublicSessionId?.(),
+      },
+    }
+  }
   private buildProviderListMsgs(): ServerMessage[] {
     const providers = this.services.configService.listProviders()
     return [
@@ -144,6 +159,17 @@ export class ServerMessageBroker implements IMessageBroker {
   broadcastAgentDirs(): void {
     this.broadcast(this.buildAgentDirsMsg())
   }
+  /**
+   * 重广播 app.info（带最新 publicSessionId）。
+   *
+   * 用途：公共 session 在 runtime 启动收尾才创建（server.start 之后 ensurePublicSession），
+   * 首次 sendInitialState 推 app.info 时 publicSessionId 多为 undefined。公共 session
+   * 创建成功后调此方法补发，前端据此填 sessionStore.publicSessionId + 拉命令到 commandStore，
+   * landing 态 slash popover 才能显示 pi extension 命令（/goal 等）。
+   */
+  broadcastAppInfo(): void {
+    this.broadcast(this.buildAppInfoMsg())
+  }
 
   /**
    * D7: sendInitialState 改 descriptor 驱动。
@@ -156,20 +182,11 @@ export class ServerMessageBroker implements IMessageBroker {
    * 仅 config.defaults / config.plugins 两段为 initial-state 独有（无对应 broadcast helper），保留 inline。
    */
   sendInitialState(ws: WsType): void {
-    const { configService, pluginService, extensionService, appInfo } = this.services
+    const { configService, pluginService, extensionService } = this.services
     const steps: Array<{ label: string; run: () => void }> = [
       {
         label: 'app.info',
-        run: () => this.send(ws, {
-          type: 'app.info',
-          id: this.nextPushId(),
-          payload: {
-            ...appInfo,
-            // 公共 session id（动态读取，启动期创建后才有值）。
-            // 前端 landing 态用此 id 从 commandStore 取 pi extension 命令（/goal 等）。
-            publicSessionId: this.services.getPublicSessionId?.(),
-          },
-        }),
+        run: () => this.send(ws, this.buildAppInfoMsg()),
       },
       {
         label: 'session.list',
@@ -227,7 +244,6 @@ export class ServerMessageBroker implements IMessageBroker {
             .then((extensions) => {
               this.send(ws, { type: 'config.extensions', id: this.nextPushId(), payload: { extensions } })
             })
-            // eslint-disable-next-line taste/no-silent-catch -- init: best-effort，扫描失败仅记日志，不阻塞连接
             .catch((e) => console.error(`[runtime] sendInitialState: config.extensions scan failed:`, e))
         },
       },
