@@ -140,10 +140,15 @@ export function cancelInstall(tempDir: string): Promise<void> {
  * 拉取推荐扩展列表（含已安装状态）。
  * 数据源：runtime getRecommendedExtensions()（SSOT = recommended-extensions.json）。
  * 前端 Settings · ExtensionPage 的「推荐扩展」快捷按钮区据此渲染。
+ *
+ * runtime reply payload 形如 { recommended: Array<...> }（protocol ServerMessageMapBase
+ * 定义，与 config.extensions 同形的包裹模式）。pending.resolve 回灌整个 payload，
+ * 故需在此解包 .recommended 字段返回数组。
  */
-export function fetchRecommended(): Promise<Array<RecommendedExtension & { installed: boolean }>> {
+export async function fetchRecommended(): Promise<Array<RecommendedExtension & { installed: boolean }>> {
   const id = pending.create()
-  const result = pending.register<Array<RecommendedExtension & { installed: boolean }>>(id)
+  const result = pending.register<{ recommended: Array<RecommendedExtension & { installed: boolean }> }>(id)
   transport.send({ type: 'extension.recommended', id, payload: {} })
-  return result
+  const payload = await result
+  return payload.recommended
 }
