@@ -105,12 +105,17 @@ describe('ComposerInput slash-trigger（U1-U5）', () => {
 
 // ─────────────────────── U6-U8 CommandPopover query 过滤 ───────────────────────
 
-/** 4 条 mock slash 命令（与 MOCK_COMMANDS 三 source 对齐） */
+/**
+ * 4 条 mock slash 命令（与 MOCK_COMMANDS 三 source 对齐）。
+ * pi getCommands 返回的 name 不带 / 前缀（真实行为，已由 runtime 日志确认：
+ * 'goal' / 'todos' / 'skill:xxx'），CommandPopover.items 会归一化补 / 前缀显示。
+ * mock 用无前缀形式覆盖归一化逻辑，避免像旧 fixture 全带 / 掩盖 bug。
+ */
 const MOCK_CMDS = [
-  { name: '/commit', source: 'extension' },
-  { name: '/review', source: 'extension' },
-  { name: '/fix', source: 'skill' },
-  { name: '/compact', source: 'builtin' },
+  { name: 'commit', source: 'extension' },
+  { name: 'review', source: 'extension' },
+  { name: 'fix', source: 'skill' },
+  { name: 'compact', source: 'builtin' },
 ]
 
 /** 推 session.commands 到 sessionId 订阅者（CommandPopover 用 events.on(sessionId) 订阅） */
@@ -268,5 +273,42 @@ describe('Composer slash-trigger wiring（U9-U10）', () => {
     //    → slashTriggerActive=false（+菜单路径）→ 不误关浮层
     await typeIntoComposerInput(wrapper, 'x')
     expect(wrapper.find('[data-testid="cp"]').attributes('data-open')).toBe('true')
+  })
+})
+
+// ─────────────────────── U11 insertSlashChip / 前缀归一化 ───────────────────────
+
+describe('insertSlashChip / 前缀归一化（U11）', () => {
+  let wrapper: ReturnType<typeof mount> | null = null
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+  })
+
+  /**
+   * pi getCommands 返回的命令名不带 / 前缀（如 'goal'），但发送给 pi 必须以 / 开头，
+   * 否则 pi 按普通文本处理而非 slash 命令。insertSlashChip 必须归一化补 /。
+   * 回归场景：用户选 /goal 命令 → chip 显示 'goal' → 发送 'goal' → pi 不识别。
+   */
+  it('U11a insertSlashChip("goal") → chip label 显示 "/goal"（补 / 前缀）', async () => {
+    wrapper = mount(ComposerInput, { attachTo: document.body })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    vm.insertSlashChip('goal', 'terminal')
+    await nextTick()
+    const chip = wrapper.find('.slash-chip .chip-label')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toBe('/goal')
+  })
+
+  it('U11b insertSlashChip("/commit") 已带 / 前缀 → 不重复补', async () => {
+    wrapper = mount(ComposerInput, { attachTo: document.body })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    vm.insertSlashChip('/commit', 'terminal')
+    await nextTick()
+    const chip = wrapper.find('.slash-chip .chip-label')
+    expect(chip.text()).toBe('/commit')
   })
 })

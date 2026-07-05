@@ -183,18 +183,28 @@ const items = computed(() => {
     })
   }
   const all = slashCommands.value
-  // slash 路径按 query 过滤（命令名子串匹配）
+  // slash 路径按 query 过滤（命令名子串匹配，比较时用归一化后的 name）
   const q = (props.query ?? '').trim().toLowerCase()
-  const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all
+  const filtered = q ? all.filter((c) => normalizedSlashName(c.name).toLowerCase().includes(q)) : all
   return filtered.map((c) => ({
     id: c.id,
-    name: c.name,
+    // 归一化补 / 前缀：pi getCommands 返回无前缀（如 'goal'），但 popover 显示、chip label、
+    // 发送给 pi 都需要 / 前缀（pi 按前缀路由命令）。统一在此补齐，兼容 skill fallback 已带 / 的情况。
+    name: normalizedSlashName(c.name),
     kind: c.kind,
     icon: c.icon,
     description: c.description,
     dirPath: undefined,
   }))
 })
+
+/**
+ * slash 命令名归一化：确保 / 前缀。
+ * pi getCommands 返回 'goal'，skill fallback 返回 '/skill:xxx'，此函数统一为 '/goal' '/skill:xxx'。
+ */
+function normalizedSlashName(name: string): string {
+  return name.startsWith('/') ? name : `/${name}`
+}
 
 /** icon 字段 → lucide 组件（slash chip 复用同一映射，保证选择框/内联 chip 图标一致） */
 const ICONS = SLASH_ICON_COMPONENTS

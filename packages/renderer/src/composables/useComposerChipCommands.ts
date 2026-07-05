@@ -82,7 +82,12 @@ export function useComposerChipCommands(
   }
 
   /** 插入 slash 命令 chip（§2e：必须在最前，只允许一个，整体可删，× 可点删）。
-   *  icon 按 source 透传（extension→terminal / skill→star / 默认 wrench），与选择框图标一致。 */
+   *  icon 按 source 透传（extension→terminal / skill→star / 默认 wrench），与选择框图标一致。
+   *
+   *  命令名归一化：pi getCommands 返回的 name 不带 / 前缀（如 'goal'），但 slash 命令
+   *  发送给 pi 时必须以 / 开头（pi 按前缀路由命令），且 chip label 显示也依赖 / 前缀
+   *  （与用户手打 /goal 的 draft 一致）。此处统一补 / 前缀，兼容已带前缀的调用方
+   *  （如无 session 时 skill fallback 已补 / 的 /skill:xxx）。 */
   function insertSlashChip(command: string, icon?: string): void {
     const el = getEl()
     if (!el) return
@@ -95,7 +100,8 @@ export function useComposerChipCommands(
     renderIconInto(chip, icon)
     const label = document.createElement('span')
     label.className = 'chip-label'
-    label.textContent = command
+    // 归一化：确保 / 前缀（pi getCommands 返回无前缀，发送和显示都依赖它）
+    label.textContent = command.startsWith('/') ? command : `/${command}`
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
     // chip 必须在输入流最前（slash 命令是操作模式前缀）
