@@ -188,6 +188,7 @@ interface Setup {
     cwd?: string
     sessionFile?: string
     commands?: Array<{ name: string; source: string }>
+    hidden?: boolean
   }) => Promise<{ id: string; client: MockClient }>
 }
 
@@ -287,7 +288,7 @@ function createSetup(): Setup {
     // 让 createSession mock 本次返回该 client
     vi.mocked(pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
     clientMap.set(piSid, client)
-    await service.create(opts.cwd ?? tmpdir(), opts.label ?? 'seed')
+    await service.create(opts.cwd ?? tmpdir(), opts.label ?? 'seed', { hidden: opts.hidden })
     return { id: piSid, client }
   }
 
@@ -1013,6 +1014,19 @@ describe('SessionService · Facade', () => {
       const allIds = groups.flatMap(g => g.sessions.map(s => s.id))
       // 活跃 session 出现一次，持久化副本被过滤
       expect(allIds.filter(x => x === id).length).toBe(1)
+    })
+
+    it('excludes hidden sessions (公共 session 不进 sidebar 列表)', async () => {
+      const cwd = tmpdir()
+      // 普通session：可见
+      const { id: visibleId } = await setup.seedSession({ cwd, label: 'visible' })
+      // 隐藏 session（公共 session）：应被过滤
+      const { id: hiddenId } = await setup.seedSession({ cwd, label: 'public', hidden: true })
+
+      const groups = setup.service.listPersistedSessions()
+      const allIds = groups.flatMap(g => g.sessions.map(s => s.id))
+      expect(allIds).toContain(visibleId)
+      expect(allIds).not.toContain(hiddenId)
     })
   })
 

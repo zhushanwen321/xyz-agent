@@ -59,7 +59,8 @@ export interface SetProviderData {
 /** 每个 type 对应的 payload 类型映射 */
 export interface ClientMessageMap {
   'ping': Record<string, never>
-  'session.create': { cwd?: string; label?: string }
+  // hidden:true 创建隐藏 session（公共 session），不进 sidebar 列表，仅供内部使用。
+  'session.create': { cwd?: string; label?: string; hidden?: boolean }
   'session.delete': { sessionId: string }
   'session.list': Record<string, never>
   'session.switch': { sessionId: string }
@@ -225,8 +226,10 @@ export interface ServerMessageMapBase {
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
-  // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）
-  'app.info': { appVersion: string; piVersion: string }
+  // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
+  // publicSessionId：公共 session 的真实 id（pi 生成 UUID，启动期创建后填）。
+  // 前端 landing 态用此 id 从 commandStore 取命令（pi extension slash 命令）。
+  'app.info': { appVersion: string; piVersion: string; publicSessionId?: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
   // session.state_changed：session 级状态变更（model.switch 成功后推送，含新 modelId + 按新 contextWindow

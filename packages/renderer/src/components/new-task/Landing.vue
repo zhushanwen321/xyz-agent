@@ -19,6 +19,7 @@ import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useSessionStore } from '@/stores/session'
 import { dirNameOf } from '@/composables/logic/path'
 
 const props = withDefaults(
@@ -42,9 +43,14 @@ const emit = defineEmits<{
 }>()
 
 const flow = useNewTaskFlow()
+const sessionStore = useSessionStore()
 // landing 态 session 真源是 NewTaskFlow（selectWorkspace/openDirDialog create 的 session 不经
 // useSidebar，panel leaf.sessionId 滞后）。优先 flow 真源，props 作 fallback（常态新建两者一致）。
-const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId)
+// 前两者都 null（真 landing 态，未发消息未选目录）时 fallback 到公共 session——它的 pi 命令
+// （/goal 等 extension 命令）已由 useSidebar 的 app.info 订阅拉到 commandStore，key=公共 sid。
+// CommandPopover 据此在 landing 态显示 pi extension 命令。公共 session 不可用时（model 未配置）
+// publicSessionId=null，CommandPopover 走 skills fallback（现状不变）。
+const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId ?? sessionStore.publicSessionId)
 const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
 const branch = computed(() => flow.gitInfo.value?.branch ?? props.gitBranch ?? null)
 

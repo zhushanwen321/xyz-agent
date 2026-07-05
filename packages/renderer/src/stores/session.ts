@@ -27,6 +27,13 @@ export const useSessionStore = defineStore('session', () => {
 
   const activeId = ref<string | null>(null)
 
+  /**
+   * 公共 session id（runtime 启动期创建的隐藏 session，经 app.info 推送）。
+   * landing 态 composer 用此 id 从 commandStore 取 pi extension 命令（/goal 等）。
+   * undefined 表示公共 session 不可用（model 未配置/runtime 未启动完成），landing 降级到 skills。
+   */
+  const publicSessionId = ref<string | null>(null)
+
   const active = computed<SessionSummary | null>(
     () => list.value.find((s) => s.id === activeId.value) ?? null,
   )
@@ -78,5 +85,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { groups, list, activeId, active, setGroups, appendSession, updateLabel, updateSessionState, removeFromList }
+  return { groups, list, activeId, active, publicSessionId, setGroups, appendSession, updateLabel, updateSessionState, removeFromList }
 })

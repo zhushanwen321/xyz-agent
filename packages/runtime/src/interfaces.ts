@@ -64,9 +64,22 @@ export interface IEventAdapter {
 
 // ── ISessionService ───────────────────────────────────────────────
 
+/** Session create 选项（SessionService.create / SessionLifecycle.create 共用）。 */
+export interface SessionCreateOptions {
+  /**
+   * 隐藏 session（公共 session）：scanner listAll 过滤，不进 sidebar 列表。
+   * 用于 landing 态命令源等内部场景。
+   */
+  hidden?: boolean
+}
+
 /** Session lifecycle: creation, deletion, messaging, history. */
 export interface ISessionService {
-  create(cwd?: string, label?: string): Promise<SessionSummary>
+  create(cwd?: string, label?: string, options?: SessionCreateOptions): Promise<SessionSummary>
+  /** 公共 session id（供 broker app.info 推送；undefined 表示未创建/不可用） */
+  getPublicSessionId(): string | undefined
+  /** 创建公共 session（runtime 启动期调用，model 未配置时不抛） */
+  ensurePublicSession(): Promise<void>
   delete(sessionId: string): Promise<void>
   renameSession(sessionId: string, newName: string): Promise<void>
   sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }>

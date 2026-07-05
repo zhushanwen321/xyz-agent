@@ -12,6 +12,9 @@
  */
 import { existsSync } from 'node:fs'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage } from '@xyz-agent/shared'
+// paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
+// Node 端从子路径 import
+import { getDataDir } from '@xyz-agent/shared/paths'
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService,
@@ -90,9 +93,71 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       session.adapter.detach()
       if (session.unsubUsageListener) session.unsubUsageListener()
       this.sessions.delete(sessionId)
+
+      // 公共 session 崩溃：自动重建（landing 态命令源依赖它），不广播 error（对用户透明）
+      const isPublic = sessionId === this.publicSessionId
+      if (isPublic) {
+        this.publicSessionId = undefined
+        this.schedulePublicSessionRebuild()
+        return
+      }
+
       this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` } })
     })
+  }
+
+  /**
+   * 公共 session：隐藏的常驻 session，cwd=数据目录，仅供 landing 态获取 pi 命令（/goal 等）。
+   * 随 runtime 启动创建，pi 进程常驻。landing 态 composer 用此 session 的 commands。
+   *
+   * model 未配置时创建会失败（pi 要求 model），catch 后仅 warn，landing 态 fallback 到 skills。
+   */
+  private publicSessionId: string | undefined
+  private publicSessionRebuildTimer: NodeJS.Timeout | undefined
+  private publicSessionRebuildCount = 0
+  // eslint-disable-next-line no-magic-numbers -- pi 持续 crash 时的重建上限，超过则放弃
+  private static readonly PUBLIC_REBUILD_MAX = 3
+  // eslint-disable-next-line no-magic-numbers -- 重建延迟（ms），避免立即重试撞同一错误
+  private static readonly PUBLIC_REBUILD_DELAY_MS = 2000
+  private static readonly PUBLIC_LABEL = '__public__'
+
+  /** 当前公共 session id（供 broker app.info 推送；undefined 表示未创建/不可用） */
+  getPublicSessionId(): string | undefined {
+    return this.publicSessionId
+  }
+
+  /**
+   * 创建公共 session。model 未配置 / spawn 失败时不抛（landing 降级到 skills）。
+   * 在 runtime 启动收尾（server.start 后）调用。
+   */
+  async ensurePublicSession(): Promise<void> {
+    if (this.publicSessionId) return
+    try {
+      const pub = await this.create(getDataDir(), SessionService.PUBLIC_LABEL, { hidden: true })
+      this.publicSessionId = pub.id
+      this.publicSessionRebuildCount = 0
+      console.log(`[session-service] public session created: ${pub.id}`)
+    // eslint-disable-next-line taste/no-silent-catch -- 公共 session 是 best-effort：model 未配置/spawn 失败时 landing 降级到 skills fallback
+    } catch (e) {
+      console.warn(`[session-service] public session create failed (landing slash will use skills fallback):`, e)
+    }
+  }
+
+  /**
+   * 崩溃后延迟重建公共 session。带重试上限避免死循环（pi 持续 crash 时不再重建）。
+   */
+  private schedulePublicSessionRebuild(): void {
+    if (this.publicSessionRebuildCount >= SessionService.PUBLIC_REBUILD_MAX) {
+      console.warn(`[session-service] public session rebuild gave up after ${SessionService.PUBLIC_REBUILD_MAX} attempts`)
+      return
+    }
+    this.publicSessionRebuildCount++
+    if (this.publicSessionRebuildTimer) clearTimeout(this.publicSessionRebuildTimer)
+    this.publicSessionRebuildTimer = setTimeout(() => {
+      this.publicSessionRebuildTimer = undefined
+      void this.ensurePublicSession()
+    }, SessionService.PUBLIC_REBUILD_DELAY_MS)
   }
 
   /**
@@ -105,7 +170,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
-  async create(cwd?: string, label?: string): Promise<SessionSummary> { return this.lifecycle.create(cwd, label) }
+  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
@@ -308,6 +373,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
       lastActiveAt: s.lastActiveAt, modelId: s.modelId,
       thinkingLevel: s.thinkingLevel, tokenCount: s.tokenCount,
+      hidden: s.hidden,
     }
   }
 
@@ -340,7 +406,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /** 初始化 ManagedSession:建 adapter、注册监听、入 Map、查 commands。 */
   async initializeManagedSession(
-    id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string,
+    id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
   ): Promise<IManagedSessionView> {
     const send = (msg: ServerMessage) => this.broker.broadcast(msg)
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
@@ -354,6 +420,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       createdAt: Date.now(), lastActiveAt: Date.now(),
       tokenCount: 0, inputTokens: 0, isGenerating: false,
       adapter, unsubUsageListener: unsubUsage, sessionFilePath,
+      hidden,
     }
     this.sessions.set(id, session)
     await this.fetchAndBroadcastCommands(id)

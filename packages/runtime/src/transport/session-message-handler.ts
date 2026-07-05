@@ -28,7 +28,7 @@ export class SessionMessageHandler {
   async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
-        const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label)
+        const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
         this.ctx.reply(ws, msg.id, 'session.created', { session })
         return this.ctx.broadcastSessionList()
       }

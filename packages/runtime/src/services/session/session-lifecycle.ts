@@ -38,7 +38,7 @@ export class SessionLifecycle {
     await this.pm.destroySession(id).catch(() => {})
   }
 
-  async create(cwd?: string, label?: string): Promise<SessionSummary> {
+  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const requestedCwd = cwd ?? process.cwd()
     // INV-7: cwd 可能已被删除（worktree 清理/手动删目录），降级 homedir（与 restoreSession 对称）。
@@ -83,7 +83,7 @@ export class SessionLifecycle {
     }
 
     const session = await this.svc.initializeManagedSession(
-      id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath,
+      id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
     )
 
     // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
@@ -94,7 +94,10 @@ export class SessionLifecycle {
     // 现在依赖 SessionScanner.listAll 的合并机制：active session 从内存 Map（this.sessions）读，
     // 即使磁盘无文件也显示（restart 后内存清空，但此时未 flush 的 session 本就无内容，丢失合理）。
     this.sessionStore.refreshAll()
-    this.workspaceService.record(sessionCwd)
+    // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表
+    if (!options?.hidden) {
+      this.workspaceService.record(sessionCwd)
+    }
     return this.svc.toSummary(session)
   }
 

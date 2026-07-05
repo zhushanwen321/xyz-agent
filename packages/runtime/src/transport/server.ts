@@ -94,6 +94,9 @@ export class RuntimeServer implements IMessageBroker {
       extensionService: this.extensionService,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
+      // 公共 session id 动态读取器：broker 推 app.info 时调用，把 publicSessionId 带给前端。
+      // sessionService.ensurePublicSession 在 server.start 后才创建，故用 getter 动态读。
+      getPublicSessionId: () => this.sessionService?.getPublicSessionId(),
     })
 
     // ── Assemble handlers with explicit context objects ──────────────

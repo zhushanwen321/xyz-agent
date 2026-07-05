@@ -45,7 +45,11 @@ export class SessionScanner {
       .filter(s => !activeFilePaths.has(s.filePath))
       .map(s => this.scannedToSummary(s))
 
-    const result = [...active, ...persisted].sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+    const result = [...active, ...persisted]
+      // 隐藏 session（公共 session）不进 sidebar 列表。active（内存 Map，hidden 标记在
+      // IManagedSessionView）和 persisted（磁盘扫描，hidden 标记经 toSummary 透传）都过滤。
+      .filter(s => !s.hidden)
+      .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
     this.pruneGitCache(result)
     return result
   }

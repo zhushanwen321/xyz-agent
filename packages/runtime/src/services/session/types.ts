@@ -36,6 +36,11 @@ export interface IManagedSessionView {
   isGenerating: boolean
   thinkingLevel?: string
   sessionFilePath?: string
+  /**
+   * 隐藏 session（公共 session）：不进 sidebar 列表（scanner listAll 过滤），
+   * 仅供内部使用（如 landing 态命令源）。toSummary 透传到 SessionSummary.hidden。
+   */
+  hidden?: boolean
 }
 
 // ── PiTranslatedEvent：infra(event-adapter) → service(interpreter) 中间事件 ──

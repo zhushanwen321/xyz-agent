@@ -37,6 +37,12 @@ export interface BrokerServices {
   projectRoot: string
   /** 应用 + pi 版本号（sendInitialState 推 app.info）。 */
   appInfo: { appVersion: string; piVersion: string }
+  /**
+   * 公共 session id 的动态读取器（runtime 启动期创建后才有值）。
+   * sendInitialState 推 app.info 时调用，把 publicSessionId 带给前端。
+   * undefined 表示公共 session 尚未创建/不可用，前端 landing 降级到 skills fallback。
+   */
+  getPublicSessionId?: () => string | undefined
 }
 
 export class ServerMessageBroker implements IMessageBroker {
@@ -154,7 +160,16 @@ export class ServerMessageBroker implements IMessageBroker {
     const steps: Array<{ label: string; run: () => void }> = [
       {
         label: 'app.info',
-        run: () => this.send(ws, { type: 'app.info', id: this.nextPushId(), payload: appInfo }),
+        run: () => this.send(ws, {
+          type: 'app.info',
+          id: this.nextPushId(),
+          payload: {
+            ...appInfo,
+            // 公共 session id（动态读取，启动期创建后才有值）。
+            // 前端 landing 态用此 id 从 commandStore 取 pi extension 命令（/goal 等）。
+            publicSessionId: this.services.getPublicSessionId?.(),
+          },
+        }),
       },
       {
         label: 'session.list',

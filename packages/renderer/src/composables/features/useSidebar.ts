@@ -57,6 +57,50 @@ function unbindSessionListBroadcast(): void {
   }
 }
 
+/**
+ * app.info 订阅（refCount 保护，同 sessionListBroadcast 模式）。
+ * 提取 publicSessionId（公共 session，runtime 启动期创建）：
+ * - 存入 sessionStore.publicSessionId（landing 态 composer fallback 用）
+ * - 拉取公共 session 的 pi 命令到 commandStore（key=公共 sid），landing slash popover 据此渲染
+ * /goal 等 extension 命令。publicSessionId 缺失（model 未配置）时跳过，landing 降级到 skills。
+ */
+let appInfoSubCount = 0
+let appInfoUnsub: (() => void) | null = null
+
+function bindAppInfoBroadcast(
+  session: ReturnType<typeof useSessionStore>,
+  commandStore: ReturnType<typeof useCommandStore>,
+): void {
+  appInfoSubCount += 1
+  if (appInfoSubCount === 1) {
+    appInfoUnsub = events.onGlobalType('app.info', async (msg) => {
+      const sid = msg.payload.publicSessionId
+      if (!sid || session.publicSessionId === sid) {
+        // 无公共 session（model 未配置）或 id 未变，只存 id（首次设值）
+        if (sid) session.publicSessionId = sid
+        return
+      }
+      session.publicSessionId = sid
+      // 拉取公共 session 命令到 commandStore（landing 态 slash popover 数据源）
+      try {
+        const { commands } = await sessionApi.getCommands(sid)
+        commandStore.applyCommands(sid, commands)
+      // eslint-disable-next-line taste/no-silent-catch -- 公共 session 命令拉取失败：landing slash 降级到 skills fallback，不阻塞
+      } catch (e) {
+        console.warn('[useSidebar] public session getCommands failed, landing slash will use skills fallback:', e)
+      }
+    })
+  }
+}
+
+function unbindAppInfoBroadcast(): void {
+  appInfoSubCount = Math.max(0, appInfoSubCount - 1)
+  if (appInfoSubCount === 0 && appInfoUnsub) {
+    appInfoUnsub()
+    appInfoUnsub = null
+  }
+}
+
 // ── App 启动编排幂等守卫（#1/#3：连接建立后只触发一次自动 startFlow / 恢复最近 session）──
 // 模块级跨 useSidebar 实例共享：App.vue watch connected → initApp()。HMR 重连 / 断线重连时
 // state 再次变 connected，appBootstrapped 已 true → 跳过，不重复 startFlow（newTaskInFlight 另有守卫）。
@@ -86,6 +130,9 @@ export function useSidebar() {
    */
   bindSessionListBroadcast(session.setGroups)
   onScopeDispose(unbindSessionListBroadcast)
+  // app.info 订阅：提取 publicSessionId + 拉取公共 session 命令（landing slash popover 数据源）
+  bindAppInfoBroadcast(session, commandStore)
+  onScopeDispose(unbindAppInfoBroadcast)
 
   /**
    * 同步 session 到 panel（sidebar 选 session 与 ⌘[/⌘] 导航共用）。

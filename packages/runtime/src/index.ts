@@ -263,6 +263,11 @@ async function main(): Promise<void> {
   await server.start()
   console.log('[runtime] ready')
 
+  // 公共 session 创建：隐藏 session（cwd=数据目录），pi 进程常驻，供 landing 态获取 pi 命令。
+  // model 未配置时失败不阻塞（landing 降级到 skills fallback）。server.start 后调用，
+  // 确保前端连接时能尽快收到 app.info.publicSessionId（经 broker 读 sessionService.getPublicSessionId）。
+  await sessionService.ensurePublicSession()
+
   // 插件系统初始化（扫描、激活 onStartupFinished 插件）
   try {
     await pluginService.initialize()
