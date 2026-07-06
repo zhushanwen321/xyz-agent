@@ -9,31 +9,35 @@
   <div class="relative flex min-h-0 flex-1 flex-col">
     <div
       ref="scrollEl"
-      class="message-stream flex flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-[18px]"
+      class="message-stream flex-1 overflow-y-auto"
       @scroll.passive="onScroll"
     >
-    <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
-      <Turn
-        v-if="item.kind === 'turn'"
-        :turn="item.turn"
-        :session-id="sessionId"
-        :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
-      />
-      <SystemNotice v-else :message="item.message" />
-    </template>
+    <!-- contentEl：承载消息内容的 wrapper，供 useChatScroll 的 ResizeObserver 观察高度变化。
+         scrollEl 是 overflow 容器，自身 border-box 固定不变，无法观察内容增高。 -->
+    <div ref="contentEl" class="flex flex-col gap-[22px] px-5 py-[18px]">
+      <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
+        <Turn
+          v-if="item.kind === 'turn'"
+          :turn="item.turn"
+          :session-id="sessionId"
+          :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
+        />
+        <SystemNotice v-else :message="item.message" />
+      </template>
 
-    <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代） -->
-    <div v-if="isCompacting" class="system-notice flex items-center gap-2 py-1">
-      <span class="h-px flex-1 bg-border" />
-      <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
-      <span class="shrink-0 text-[11.5px] leading-snug text-muted">压缩中</span>
-      <span class="h-px flex-1 bg-border" />
-    </div>
+      <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代） -->
+      <div v-if="isCompacting" class="system-notice flex items-center gap-2 py-1">
+        <span class="h-px flex-1 bg-border" />
+        <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
+        <span class="shrink-0 text-[11.5px] leading-snug text-muted">压缩中</span>
+        <span class="h-px flex-1 bg-border" />
+      </div>
 
-    <!-- 空态欢迎语（G2-004） -->
-    <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
-      <Sparkles class="size-6 text-accent opacity-70" />
-      <p class="text-[13px] text-muted">开始对话，或从左侧选择一个会话</p>
+      <!-- 空态欢迎语（G2-004） -->
+      <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
+        <Sparkles class="size-6 text-accent opacity-70" />
+        <p class="text-[13px] text-muted">开始对话，或从左侧选择一个会话</p>
+      </div>
     </div>
     </div>
 
@@ -54,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { ChevronDown, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
@@ -105,9 +109,20 @@ const lastRenderTurn = computed(() => {
 /**
  * auto-scroll：stickToBottom guard —— 非贴底时不强制拉回。
  * showJumpButton 驱动「回到底部」浮层显隐（= !stickToBottom，修复 W3：点击后上滑按钮重现）。
+ * contentEl 绑定内容 wrapper，供 useChatScroll 的 ResizeObserver 观察异步渲染抖动。
  * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
  */
-const { scrollEl, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
+const { scrollEl, contentEl, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
+
+/**
+ * 首次挂载强制滚到底（force=true 绕过 guard）。
+ * MessageStream 经 v-if 条件挂载，首次挂载时 sessionId 已是目标值，session watch 不触发
+ * （watch 监听变化，挂载不算变化）；不显式滚则停在 scrollTop=0（最上方）。
+ * 异步渲染导致的 scrollHeight 抖动由 ResizeObserver 兜底，此处只做首次定位 + 校准 showJumpButton。
+ */
+onMounted(() => {
+  scrollToBottom('auto', true)
+})
 
 watch(
   () => currentMessages.value.length,
