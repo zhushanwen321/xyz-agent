@@ -22,6 +22,14 @@
       <SystemNotice v-else :message="item.message" />
     </template>
 
+    <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代） -->
+    <div v-if="isCompacting" class="system-notice flex items-center gap-2 py-1">
+      <span class="h-px flex-1 bg-border" />
+      <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
+      <span class="shrink-0 text-[11.5px] leading-snug text-muted">压缩中</span>
+      <span class="h-px flex-1 bg-border" />
+    </div>
+
     <!-- 空态欢迎语（G2-004） -->
     <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
       <Sparkles class="size-6 text-accent opacity-70" />
@@ -47,7 +55,7 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { ChevronDown, Sparkles } from '@lucide/vue'
+import { ChevronDown, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
@@ -67,6 +75,11 @@ const chat = useChatStore()
  * appendUser/applyMessageEvent 的 Map.set 触发更新。
  */
 const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
+
+/** 当前 session 是否正在压缩（session.compacting → true，compacted → false）。
+ *  驱动消息流末尾的「--- 压缩中 ---」瞬时提示。完成后 dispatcher 广播 message.compactionSummary，
+ *  插入持久化 system 消息（SystemNotice 渲染「已压缩上下文」），isCompacting 同时复位为 false。 */
+const isCompacting = computed(() => chat.isCompacting(props.sessionId))
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数） */
 const renderItems = computed(() => toRenderItems(currentMessages.value))
