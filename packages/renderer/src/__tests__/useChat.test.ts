@@ -166,7 +166,8 @@ describe('useChat compact 状态机（#6）', () => {
     session.activeId = 'c-sub'
     const { compact } = useChat()
     await compact()
-    expect(apiMock.compact).toHaveBeenCalledWith('c-sub')
+    // compact(customInstructions?) → chatApi.compact(sid, undefined)（未传自定义指令）
+    expect(apiMock.compact).toHaveBeenCalledWith('c-sub', undefined)
     expect(apiMock.streamSubscribe).toHaveBeenCalledTimes(1)
   })
 

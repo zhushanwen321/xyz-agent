@@ -8,7 +8,7 @@
   <HoverCard>
     <HoverCardTrigger>
       <Button
-        v-show="hasData"
+        v-show="hasUsage"
         variant="ghost"
         :class="
           cn(
@@ -18,9 +18,11 @@
         "
         title="上下文容量"
       >
-        <span class="tabular-nums">{{ usedWan }}</span>
-        <span aria-hidden="true">·</span>
-        <span class="tabular-nums">{{ stats.percent }}%</span>
+        <span class="tabular-nums">{{ usedDisplay }}</span>
+        <template v-if="hasPercent">
+          <span aria-hidden="true">·</span>
+          <span class="tabular-nums">{{ stats.percent }}%</span>
+        </template>
       </Button>
     </HoverCardTrigger>
     <HoverCardContent side="top" class="w-[260px] p-0">
@@ -31,8 +33,8 @@
         <span>上下文容量</span>
         <span>{{ stats.modelId ?? '—' }}</span>
       </div>
-      <!-- bar -->
-      <div class="mx-2.5 mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
+      <!-- bar（仅 contextWindow 已知时显示） -->
+      <div v-if="hasPercent" class="mx-2.5 mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
         <div
           :class="cn('h-full rounded-full transition-all', barClass)"
           :style="{ width: `${stats.percent}%` }"
@@ -42,15 +44,15 @@
       <div class="grid grid-cols-2 gap-x-3.5 gap-y-2 px-2.5 py-2.5">
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">已用</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasData ? usedWan : '—' }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ usedDisplay }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">总量</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasData ? totalWan : '—' }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasPercent ? totalDisplay : '未知' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">使用率</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasData ? `${stats.percent}%` : '—' }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasPercent ? `${stats.percent}%` : '—' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">缓存命中</span>
@@ -98,6 +100,10 @@ const props = defineProps<{
  * 字段映射（D9）：used←inputTokens / total←contextLimit / percent←usagePercent。
  * cacheHit / modelId 无来源，保持占位。sessionId 变化时重订。
  *
+ * 显隐策略：hasUsage（used>0）控制按钮可见——agent 跑过即显示用量；
+ * hasPercent（total>0）控制百分比/进度条——provider 配了 contextWindow 才显示百分比，
+ * 否则只显「已用 X 万」不带百分比（contextLimit=0 不再隐藏整个组件）。
+ *
  * session.state_changed：模型切换后 runtime 推送（含按新 contextWindow 重算的用量），
  * 使用量随模型切换立即刷新，无需等下一次 agent_end。
  *
@@ -119,25 +125,33 @@ onMessage(['context.update', 'session.state_changed'], (msg) => {
 })
 
 // 阈值常量（避免 magic number）
-const WAN_UNIT = 10_000
 const HIGH_THRESHOLD = 70 // >70% warning（按钮 + 条）
 const DANGER_THRESHOLD = 90 // >90% 条转 danger
 const CACHE_LOW_THRESHOLD = 50 // <50% 缓存命中转 warning
 
 /**
- * token 数 → 「万」格式：除 10000 加「万」后缀，保留 1 位小数（整数去 .0）。
- * 69000 → 6.9万 · 1000000 → 100万
+ * token 数 → 「K/M」格式：<K_THRESHOLD 显原数；≥K_THRESHOLD 显 K（1 位小数，整数去 .0）；≥M_THRESHOLD 显 M。
+ * 820 → 820 · 69000 → 69K · 1630000 → 1.6M
  */
-function formatWan(n: number): string {
-  const wan = n / WAN_UNIT
-  return `${wan.toFixed(1).replace(/\.0$/, '')}万`
+const K_THRESHOLD = 1000
+const M_THRESHOLD = 1_000_000
+function formatTokens(n: number): string {
+  if (n < K_THRESHOLD) return String(n)
+  if (n < M_THRESHOLD) {
+    const k = n / K_THRESHOLD
+    return `${k.toFixed(1).replace(/\.0$/, '')}K`
+  }
+  const m = n / M_THRESHOLD
+  return `${m.toFixed(1).replace(/\.0$/, '')}M`
 }
 
-const usedWan = computed(() => formatWan(stats.value.used))
-const totalWan = computed(() => formatWan(stats.value.total))
+const usedDisplay = computed(() => formatTokens(stats.value.used))
+const totalDisplay = computed(() => formatTokens(stats.value.total))
 
-/** 是否已收到 context.update（total>0 判定）；推送前关键数字显「—」 */
-const hasData = computed(() => stats.value.total > 0)
+/** 是否已有 usage 数据（收到过 context.update，agent 跑过即 true）；推送前隐藏整个组件 */
+const hasUsage = computed(() => stats.value.used > 0)
+/** 是否能算百分比（provider 配了 contextWindow）；否则只显已用量不显百分比 */
+const hasPercent = computed(() => stats.value.total > 0)
 
 const isHigh = computed(() => stats.value.percent > HIGH_THRESHOLD)
 const isDanger = computed(() => stats.value.percent > DANGER_THRESHOLD)

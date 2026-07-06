@@ -558,4 +558,47 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       console.warn('[session-service] getCommands failed:', e)
     }
   }
+
+  /**
+   * 查询 pi 当前上下文占用（get_session_stats.contextUsage），返回 context.update payload。
+   * 用于 session 恢复后拉取用量——pi 从历史估算，重启后旧 session 也能显示当前占用。
+   * 复用 context.update 契约（inputTokens/contextLimit/usagePercent）。
+   * contextUsage.tokens=null（compaction 后未跑新 turn）或 session 未激活时返回 null。
+   * @throws session 未激活或 pi rpc 失败时抛（调用方 try-catch）
+   */
+  async fetchContext(sessionId: string): Promise<{
+    inputTokens: number; contextLimit: number; usagePercent: number
+  } | null> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`session ${sessionId} not active`)
+    const stats = await client.getSessionStats()
+    const cu = stats.contextUsage
+    if (!cu || cu.tokens == null) return null
+    return {
+      inputTokens: cu.tokens,
+      contextLimit: cu.contextWindow,
+      usagePercent: Math.round(cu.percent ?? 0),
+    }
+  }
+
+  /**
+   * 拉取上下文用量并广播 context.update（restoreSession 兜底用）。
+   * 注意：此广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
+   * 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
+   * fire-and-forget 语义：失败不阻塞 session 恢复。
+   */
+  async fetchAndBroadcastContext(sessionId: string): Promise<void> {
+    try {
+      const payload = await this.fetchContext(sessionId)
+      if (!payload) return
+      this.broker.broadcast({
+        type: 'context.update',
+        id: `ctx_restore_${Date.now()}`,
+        payload: { sessionId, ...payload },
+      })
+    // eslint-disable-next-line taste/no-silent-catch -- 兜底广播失败无影响（前端主动拉是主路径）
+    } catch (e) {
+      console.warn('[session-service] fetchAndBroadcastContext failed:', e)
+    }
+  }
 }

@@ -204,6 +204,18 @@ export function useSidebar() {
       console.warn('[useSidebar] getCommands failed, slash popover will be empty:', e)
     }
 
+    // 上下文用量拉取：修复 broadcast 与订阅时序竞争——restoreSession 内部的兜底 broadcast
+    // 早于前端订阅新 sessionId 通道被丢弃；这里在 activeId 更新后主动拉取并本地 dispatch，
+    // 保证 ContextCapacityPopover 拿到旧 session 恢复后的当前用量（pi 从历史估算 contextUsage）。
+    // 失败不阻断切 session（用量缺失仅致 popover 不显数字，下个 turn_end 自然刷新）。
+    try {
+      const ctx = await sessionApi.getContext(id)
+      events.dispatchSession(id, { type: 'context.update', payload: ctx })
+      // eslint-disable-next-line taste/no-silent-catch -- context 拉取失败不阻断 session 切换（用量缺失仅致 popover 暂空，等下个 turn_end 刷新）
+    } catch (e) {
+      console.warn('[useSidebar] getContext failed, context popover will be empty:', e)
+    }
+
     // 文件树预加载：切 session 即拉取，使侧栏「文件」tab 计数（fileCount 读 store.getTree）
     // 立即更新——不依赖用户切到文件 tab 才触发 FileView 的 loadTree。loadTree 内部缓存复用
     // （已加载则 rehydrate 直接返回），FileView 挂载时再调会命中缓存，无重复请求。

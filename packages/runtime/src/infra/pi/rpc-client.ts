@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine, PiRpcResponse } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiRpcResponse, PiSessionStats } from '../../services/ports/pi-engine.js'
 import { readRpcData } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
@@ -363,6 +363,11 @@ export class RpcClient implements IPiEngine {
   async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
     const data = readRpcData(await this.sendCommand('get_commands') as PiRpcResponse)
     return (data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
+  }
+
+  async getSessionStats(): Promise<PiSessionStats> {
+    const data = readRpcData(await this.sendCommand('get_session_stats') as PiRpcResponse)
+    return (data ?? {}) as PiSessionStats
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────

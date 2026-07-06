@@ -211,6 +211,26 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
   }]
 }
 
+/**
+ * turn_end — 单个 turn 结束时提取 usage，产出 turn-usage（只回写用量，不转发 message.complete）。
+ *
+ * pi 0.80.3 事件模型：1 个 agent 循环 = N 个 turn，每个 turn_end.message.usage 含本 turn 用量。
+ * 与 handleAgentEnd（整个循环结束）的区别：本 handler 不产 message/stopReason/file_changes，
+ * 避免每 turn 触发前端 message.complete → setStreaming(false) 闪烁。
+ * usage.input 缺失时返回空（纯工具结果 turn 可能无 usage）。
+ */
+function handleTurnEndPi(event: PiEvent, sid: string): PiTranslatedEvent[] {
+  const message = event.message as Record<string, unknown> | undefined
+  const usage = message?.usage as { input?: number; output?: number; totalTokens?: number } | undefined
+  if (!usage?.input) return []
+  return [{
+    kind: 'turn-usage',
+    sessionId: sid,
+    inputTokens: usage.input,
+    totalTokens: usage.totalTokens ?? 0,
+  }]
+}
+
 /** extension_ui_request — route by method (setStatus, setWidget, editor, etc.) */
 function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const method = event.method as string | undefined
@@ -474,8 +494,9 @@ function handleThinkingLevelChanged(event: PiEvent, sid: string): PiTranslatedEv
 }
 
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
+// 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
 const NULL_EVENTS = new Set([
-  'agent_start', 'turn_start', 'turn_end', 'message_end',
+  'agent_start', 'turn_start', 'message_end',
   'extension_config', 'extension_ui_response', 'response',
   'compaction_start', 'compaction_end',
 ])
@@ -487,6 +508,7 @@ const DISPATCHER = new Map<string, (event: PiEvent, sid: string) => PiTranslated
   DISPATCHER.set('tool_execution_start', handleToolExecutionStart)
   DISPATCHER.set('tool_execution_end', handleToolExecutionEnd)
   DISPATCHER.set('agent_end', handleAgentEnd)
+  DISPATCHER.set('turn_end', handleTurnEndPi)
   DISPATCHER.set('extension_ui_request', handleExtensionUIRequest)
   DISPATCHER.set('message_start', handleMessageStart)
   DISPATCHER.set('tool_execution_update', handleToolExecutionUpdate)

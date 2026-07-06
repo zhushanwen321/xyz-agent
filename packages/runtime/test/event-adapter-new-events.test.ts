@@ -430,6 +430,78 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
   })
 
   // ════════════════════════════════════════════════════════════════════
+  // FR-4b: turn_end — 每 turn 用量更新（不转发 message.complete）
+  // pi 0.80.3：1 agent 循环 = N 个 turn，每 turn_end 带 usage。
+  // turn_end 经 handleTurnEndPi 提取 usage → turn-usage → onContextUpdate，
+  // 不产 message.complete（避免每 turn 触发前端 setStreaming 闪烁）。
+  // ════════════════════════════════════════════════════════════════════
+
+  describe('FR-4b: turn_end — 每 turn 用量更新（不发 message.complete）', () => {
+    it('turn_end 带 usage → 调 onContextUpdate，不发 message.complete', async () => {
+      const onContextUpdate = vi.fn()
+      const { adapter, sent } = createAdapter({ onContextUpdate })
+      dispatchOne(adapter, {
+        type: 'turn_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'toolUse',
+          usage: { input: 163418, output: 82, totalTokens: 163628 },
+        },
+        toolResults: [],
+      })
+      await flushAsync()
+
+      // onContextUpdate 被调，带本 turn 的 inputTokens
+      expect(onContextUpdate).toHaveBeenCalledTimes(1)
+      expect(onContextUpdate).toHaveBeenCalledWith('test-session-1', {
+        inputTokens: 163418,
+        totalTokens: 163628,
+      })
+      // 不转发 message.complete（避免每 turn 触发 setStreaming 闪烁）
+      expect(sent.find(m => m.type === 'message.complete')).toBeUndefined()
+    })
+
+    it('turn_end 无 usage.input → 不触发 onContextUpdate（守卫）', async () => {
+      const onContextUpdate = vi.fn()
+      const { adapter } = createAdapter({ onContextUpdate })
+      dispatchOne(adapter, {
+        type: 'turn_end',
+        message: { role: 'assistant', stopReason: 'stop' }, // 无 usage
+        toolResults: [],
+      })
+      await flushAsync()
+
+      expect(onContextUpdate).not.toHaveBeenCalled()
+    })
+
+    it('多 turn 循环：每 turn_end 独立触发 onContextUpdate（用量逐 turn 更新）', async () => {
+      const onContextUpdate = vi.fn()
+      const { adapter } = createAdapter({ onContextUpdate })
+      // 模拟 3 个 turn 的循环
+      for (const input of [1000, 2000, 3000]) {
+        adapter.attach({
+          onEvent: (listener) => {
+            listener(piEvent({
+              type: 'turn_end',
+              message: { role: 'assistant', usage: { input, output: 10, totalTokens: input + 10 } },
+              toolResults: [],
+            }))
+            return () => {}
+          },
+        })
+      }
+      await flushAsync()
+
+      expect(onContextUpdate).toHaveBeenCalledTimes(3)
+      // 最后一次带最新用量
+      expect(onContextUpdate).toHaveBeenLastCalledWith('test-session-1', {
+        inputTokens: 3000,
+        totalTokens: 3010,
+      })
+    })
+  })
+
+  // ════════════════════════════════════════════════════════════════════
   // FR-5: message_update error
   // ════════════════════════════════════════════════════════════════════
 

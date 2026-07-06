@@ -21,7 +21,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands',
+    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
@@ -83,6 +83,14 @@ export class SessionMessageHandler {
         const { sessionId } = msg.payload
         const commands = await this.ctx.sessionService.getCommands(sessionId)
         return this.ctx.reply(ws, msg.id, 'session.commands', { sessionId, commands })
+      }
+      case 'session.getContext': {
+        // renderer 切 session 后主动拉取上下文用量（修复 broadcast 与订阅时序竞争）。
+        // reply context.update payload，renderer 收到后 events.dispatchSession 本地投递给 ContextCapacityPopover。
+        // fetchContext 返回 null（pi 算不出，如 compaction 后未跑新 turn）时 reply 空对象，前端按无数据处理。
+        const { sessionId } = msg.payload
+        const payload = await this.ctx.sessionService.fetchContext(sessionId)
+        return this.ctx.reply(ws, msg.id, 'context.update', { sessionId, ...(payload ?? { inputTokens: 0, contextLimit: 0, usagePercent: 0 }) })
       }
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)

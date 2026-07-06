@@ -177,6 +177,11 @@ export class SessionLifecycle {
     const session = await this.svc.initializeManagedSession(
       id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
     )
+    // 恢复后兜底广播一次上下文用量（pi 从历史估算 contextUsage）。
+    // 注意：此广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
+    // 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
+    // fire-and-forget：拉取失败不阻塞 session 恢复。
+    void this.svc.fetchAndBroadcastContext(id)
     return this.svc.toSummary(session)
   }
 }

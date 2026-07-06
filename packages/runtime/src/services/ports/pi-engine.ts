@@ -27,6 +27,22 @@ export interface PiCommandInfo {
   source: string
 }
 
+/**
+ * pi 当前上下文占用估算（get_session_stats.contextUsage）。
+ * pi 从 session 历史实时估算，处理了 compaction 边界。
+ * tokens=null 表示 compaction 后未跑新 turn，占用未知。
+ */
+export interface PiContextUsage {
+  tokens: number | null
+  contextWindow: number
+  percent: number | null
+}
+
+/** pi get_session_stats 响应（仅取 contextUsage，其余字段按需扩展）。 */
+export interface PiSessionStats {
+  contextUsage?: PiContextUsage
+}
+
 /** pi 进程退出回调。 */
 export type PiExitCallback = (sessionId: string, code: number | null) => void
 
@@ -63,6 +79,8 @@ export interface IPiEngine {
   setThinkingLevel(level: string): Promise<PiMessage>
   getHistory(): Promise<PiMessage>
   getCommands(): Promise<PiCommandInfo[]>
+  /** 查询 pi session 统计（含 contextUsage 上下文占用估算）。用于恢复 session 后拉取当前用量。 */
+  getSessionStats(): Promise<PiSessionStats>
   /** 逃生方法：发送任意 pi 命令，返回动态响应。调用方自行 as 具体结构。 */
   sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<PiMessage>
   /** 订阅 pi 事件流。返回 unsubscribe。事件由 EventAdapter 翻译，service 一般不直接处理。 */

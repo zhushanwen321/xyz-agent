@@ -14,7 +14,7 @@ import type { RecentWorkspaceRecord } from './workspace'
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands'
+  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
@@ -66,6 +66,7 @@ export interface ClientMessageMap {
   'session.switch': { sessionId: string }
   'session.history': { sessionId: string }
   'session.getCommands': { sessionId: string }
+  'session.getContext': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }

@@ -125,6 +125,7 @@ interface MockClient {
   getHistory: MockInstance<() => Promise<unknown>>
   sendCommand: MockInstance<SendCommandFn>
   getCommands: MockInstance<() => Promise<unknown>>
+  getSessionStats: MockInstance<() => Promise<unknown>>
   onEvent: MockInstance<(listener: PiEventListener) => () => void>
   onExit: MockInstance<(callback: (code: number | null) => void) => void>
   kill: MockInstance<() => Promise<void>>
@@ -148,6 +149,7 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     getHistory: vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: { messages: [] } }),
     sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
     getCommands: vi.fn<() => Promise<unknown>>().mockResolvedValue([]),
+    getSessionStats: vi.fn<() => Promise<unknown>>().mockResolvedValue({}),
     // 保存 listener 到 eventListeners，测试可取出触发 agent_end 事件
     onEvent: vi.fn<(listener: PiEventListener) => () => void>((listener) => {
       eventListeners.push(listener)
@@ -879,6 +881,88 @@ describe('SessionService · Facade', () => {
 
     it('getInputTokens 对未知 session 返回 0', () => {
       expect(setup.service.getInputTokens('ghost')).toBe(0)
+    })
+  })
+
+  describe('fetchAndBroadcastContext（session 恢复后推送用量）', () => {
+    it('contextUsage.tokens 有值 → 广播 context.update（含 inputTokens/contextLimit/usagePercent）', async () => {
+      const client = setup.mountClient('sid-ctx')
+      client.getSessionStats.mockResolvedValueOnce({
+        contextUsage: { tokens: 69000, contextWindow: 512000, percent: 13.5 },
+      })
+
+      await setup.service.fetchAndBroadcastContext('sid-ctx')
+
+      const msg = findBroadcast(setup, 'context.update')
+      expect(msg).toBeDefined()
+      expect(msg!.payload).toMatchObject({
+        sessionId: 'sid-ctx',
+        inputTokens: 69000,
+        contextLimit: 512000,
+        usagePercent: 14, // Math.round(13.5)
+      })
+    })
+
+    it('contextUsage.tokens=null（compaction 后未跑新 turn）→ 不广播', async () => {
+      const client = setup.mountClient('sid-null')
+      client.getSessionStats.mockResolvedValueOnce({
+        contextUsage: { tokens: null, contextWindow: 512000, percent: null },
+      })
+
+      await setup.service.fetchAndBroadcastContext('sid-null')
+
+      expect(findBroadcast(setup, 'context.update')).toBeUndefined()
+    })
+
+    it('contextUsage 缺失 → 不广播', async () => {
+      const client = setup.mountClient('sid-no-ctx')
+      client.getSessionStats.mockResolvedValueOnce({})
+
+      await setup.service.fetchAndBroadcastContext('sid-no-ctx')
+
+      expect(findBroadcast(setup, 'context.update')).toBeUndefined()
+    })
+
+    it('session 不存在（client 未挂载）→ no-op 不抛错', async () => {
+      await expect(setup.service.fetchAndBroadcastContext('ghost-session')).resolves.toBeUndefined()
+      expect(findBroadcast(setup, 'context.update')).toBeUndefined()
+    })
+
+    it('getSessionStats 抛错 → 不广播，不抛错（fire-and-forget）', async () => {
+      const client = setup.mountClient('sid-err')
+      client.getSessionStats.mockRejectedValueOnce(new Error('pi rpc timeout'))
+
+      await expect(setup.service.fetchAndBroadcastContext('sid-err')).resolves.toBeUndefined()
+      expect(findBroadcast(setup, 'context.update')).toBeUndefined()
+    })
+  })
+
+  describe('fetchContext（RPC handler session.getContext 调用，返回 payload）', () => {
+    it('contextUsage.tokens 有值 → 返回 {inputTokens, contextLimit, usagePercent}', async () => {
+      const client = setup.mountClient('sid-fc')
+      client.getSessionStats.mockResolvedValueOnce({
+        contextUsage: { tokens: 1630000, contextWindow: 2000000, percent: 81.5 },
+      })
+
+      const payload = await setup.service.fetchContext('sid-fc')
+      expect(payload).toEqual({
+        inputTokens: 1630000,
+        contextLimit: 2000000,
+        usagePercent: 82, // Math.round(81.5)
+      })
+    })
+
+    it('contextUsage.tokens=null → 返回 null（不广播、handler reply 空对象）', async () => {
+      const client = setup.mountClient('sid-fc-null')
+      client.getSessionStats.mockResolvedValueOnce({
+        contextUsage: { tokens: null, contextWindow: 512000, percent: null },
+      })
+
+      expect(await setup.service.fetchContext('sid-fc-null')).toBeNull()
+    })
+
+    it('session 未激活（client 未挂载）→ 抛错（handler 调方 catch）', async () => {
+      await expect(setup.service.fetchContext('ghost')).rejects.toThrow('not active')
     })
   })
 

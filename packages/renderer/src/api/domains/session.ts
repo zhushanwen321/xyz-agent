@@ -66,6 +66,18 @@ export function getCommands(sessionId: string): Promise<{ sessionId: string; com
   return result
 }
 
+/**
+ * 拉取 session 的当前上下文用量（pi get_session_stats.contextUsage）。
+ * 修复 broadcast 与订阅时序竞争：restoreSession 内部的兜底 broadcast 早于前端订阅新 sessionId 通道，
+ * renderer 切 session 后主动调本方法拉取，reply context.update payload，调用方本地 dispatch 投递。
+ */
+export function getContext(sessionId: string): Promise<{ sessionId: string; inputTokens: number; contextLimit: number; usagePercent: number }> {
+  const id = pending.create()
+  const result = pending.register<{ sessionId: string; inputTokens: number; contextLimit: number; usagePercent: number }>(id)
+  transport.send({ type: 'session.getContext', id, payload: { sessionId } })
+  return result
+}
+
 /** 重命名 session（label 更新） */
 export function rename(sessionId: string, label: string): Promise<void> {
   const id = pending.create()

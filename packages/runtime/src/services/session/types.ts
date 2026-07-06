@@ -99,6 +99,13 @@ export type PiTranslatedEvent =
       stopReason?: string
       usage?: { input?: number; output?: number; totalTokens?: number; cacheRead?: number; cacheWrite?: number }
     }
+  /**
+   * 单 turn 用量更新（pi turn_end）—— 只回写 context.update，不转发 message.complete。
+   * 与 turn-end（agent_end）的区别：pi 0.80.3 一个 agent 循环含 N 个 turn，每个 turn_end 带 usage；
+   * 若每 turn 都走 turn-end 路径会触发 message.complete → 前端 setStreaming(false) 闪烁。
+   * 故 turn_end 走本 kind，仅刷新用量数字；message.complete 仍由 agent_end（turn-end）独占。
+   */
+  | { kind: 'turn-usage'; sessionId: string; inputTokens: number; totalTokens: number }
   /** extension setStatus —— interpreter 路由到 server.handleStatusSetUpdate + 转发 WS。 */
   | { kind: 'status-set'; sessionId: string; key: string; text: string }
   /** extension setStatus 对应的 WS 帧（interpreter 转发）。 */

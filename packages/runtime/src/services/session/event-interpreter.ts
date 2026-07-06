@@ -113,6 +113,11 @@ export class EventInterpreter {
       case 'turn-end':
         this.handleTurnEnd(ev)
         return
+      case 'turn-usage':
+        // pi turn_end 的单 turn 用量：只回写 context.update，不转发 message.complete
+        // （避免每 turn 触发 setStreaming 闪烁；message.complete 仍由 turn-end/agent_end 独占）
+        this.opts.onContextUpdate?.(ev.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens })
+        return
       case 'status-set':
         this.opts.onStatusSetUpdate?.({ sessionId: this.sessionId, key: ev.key, text: ev.text })
         return
