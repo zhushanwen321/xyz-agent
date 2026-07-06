@@ -96,12 +96,15 @@
 
       <!-- ── preview 模式：按 kind 分发 ── -->
       <template v-else>
-        <!-- markdown：复用 MarkdownRenderer（shiki + markdown-it） -->
+        <!-- markdown：复用 MarkdownRenderer（shiki + markdown-it）。
+             text-[12px] 约束基础字号——MarkdownRenderer 的 .md-render 无基础 font-size，
+             在对话流里靠气泡 text-[13.5px] 拉低；此处不约束会继承浏览器默认 16px 整体偏大。
+             统一到 12px 与 DetailPane 其他渲染路径（code/text/diff）一致。 -->
         <MarkdownRenderer
           v-if="state.kind === 'markdown'"
           :content="state.content"
           :session-id="sessionId ?? undefined"
-          class="detail-md p-2"
+          class="detail-md p-2 text-[12px] leading-[1.5]"
           data-testid="detail-markdown"
         />
         <!-- image：local-file:// 协议直载（main.ts:142 注册，绕过 file.read 的 utf8 损坏） -->
@@ -135,7 +138,7 @@
         <!-- text（兜底）：纯文本插值 -->
         <pre
           v-else
-          class="whitespace-pre-wrap break-all p-2 font-mono text-[11px] leading-[1.5] text-fg/90"
+          class="whitespace-pre-wrap break-all p-2 font-mono text-[12px] leading-[1.5] text-fg/90"
           data-testid="detail-text"
         >{{ state.content }}</pre>
       </template>

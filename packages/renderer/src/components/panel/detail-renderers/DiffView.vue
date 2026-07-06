@@ -12,7 +12,7 @@
   首次 shiki 加载异步：未就绪时降级为纯文本行（无语法高亮，仍有 +/- 语义色）。
 -->
 <template>
-  <div v-if="parsed.hunks.length" class="diff-view font-mono text-[11px] leading-[1.5]">
+  <div v-if="parsed.hunks.length" class="diff-view font-mono text-[12px] leading-[1.5]">
     <div v-for="(hunk, hi) in parsed.hunks" :key="hi" class="diff-hunk">
       <!-- hunk 头：@@ -a,b +c,d @@ -->
       <div class="diff-hunk-header bg-surface-2 px-2 py-0.5 text-subtle">
