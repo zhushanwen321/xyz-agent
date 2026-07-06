@@ -15,7 +15,9 @@
  *  避免与 highlight 回调的 `<pre` 跳过机制双重逻辑）。
  *
  * XSS 安全：markdown-it 关 html:false（不透传用户原始 HTML），shiki codeToHtml 转义所有
- * 非 token 文本（只发 scoped <span>），linkify 自动补全的 <a> 加 rel/target 安全属性。
+ * 非 token 文本（只发 scoped <span>），linkify 识别的 <a> 加 rel/target 安全属性。
+ * linkify fuzzyLink:false：只识别带 scheme（http(s)://、ftp://、//）的 URL，不识别裸域名，
+ * 避免 .md/.io 等 ccTLD 把文件名误判成 URL（见 getMarkdown 内注释）。
  * 代码块/mermaid 源码进 data 属性前用 base64 编码（UTF-8 安全），杜绝引号/HTML 注入。
  */
 import MarkdownIt from 'markdown-it'
@@ -107,11 +109,18 @@ async function getMarkdown(): Promise<MarkdownIt> {
   const hl = await getHighlighter()
   const md = new MarkdownIt({
     html: false, // 不透传用户原始 HTML（XSS 防线）
-    linkify: true, // 自动识别裸 URL
+    linkify: true, // 自动识别 URL（识别范围由下方 fuzzyLink:false 收紧）
     typographer: true, // 排版引号/省略号
     breaks: false, // 不把单 \n 转 <br>（保留 markdown 语义，软换行由 CSS white-space 处理）
     // 不配 highlight 回调：fence 走下方自定义规则，完全自控（避免双重逻辑）
   })
+
+  // 关掉 fuzzyLink（无 scheme 的裸域名匹配）：linkify-it 把 ccTLD（如 .md=马其顿、.io=英属印度洋
+  // 领地）当 TLD，导致 design.md / foo.io 这类**裸文件名**被误识别成 http://design.md 链接，
+  // 点击走 openExternal 打开浏览器。AI 输出里真正的 URL 几乎都带 http(s):// scheme，
+  // 关掉 fuzzyLink 只损失 www.xxx.com 这类裸域名识别（少见且歧义大），换取文件名不被误判。
+  // 显式 scheme（http://、https://、ftp://、//）的 URL 仍正常识别。
+  md.linkify.set({ fuzzyLink: false })
 
   // ── fence 规则覆盖：代码块增强（语言标签 + 复制按钮）+ mermaid 占位 ──
   md.renderer.rules.fence = (tokens, idx): string => {

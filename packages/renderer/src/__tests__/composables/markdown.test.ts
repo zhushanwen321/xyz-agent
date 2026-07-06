@@ -146,6 +146,23 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(html).toContain('>arch/a.7z<')
   })
 
+  it('U10d: 裸文件名（.md/.io 等 ccTLD）不识别成 http 链接（linkify fuzzyLink:false）', async () => {
+    // linkify-it 把 ccTLD（.md=马其顿、.io=英属印度洋领地）当 TLD，导致裸文件名
+    // 被误识别成 http://design.md 链接，点击打开浏览器。fuzzyLink:false 关掉裸域名匹配。
+    for (const text of ['更新了 design.md', '见 README.md。', '部署到 foo.io 上', '修改 app.vue']) {
+      const html = await freshRender(text + '\n')
+      expect(html).not.toContain('href="http://')
+      expect(html).not.toContain('href="https://')
+    }
+  })
+
+  it('U10e: 带 scheme 的 URL 仍识别成链接（fuzzyLink:false 不影响显式 scheme）', async () => {
+    for (const url of ['https://example.com', 'http://github.com/x/y', 'https://a.com/path?q=1']) {
+      const html = await freshRender(`见 ${url} 链接\n`)
+      expect(html).toContain(`href="${url}"`)
+    }
+  })
+
   it('U11: 文件路径 base64 编码（防 XSS 注入）', async () => {
     const html = await freshRender('见 a/b.ts\n')
     const m = html.match(/data-path="([^"]+)"/)
