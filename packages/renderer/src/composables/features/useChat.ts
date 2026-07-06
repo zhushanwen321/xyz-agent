@@ -164,12 +164,12 @@ export function useChat() {
    * 在此 catch，以 toast 提示用户，不卡 UI（toast 非顶部 banner，不违反规则 #3）。compacting 态
    * 由 session.compacted 广播复位（broadcast 必达：compacting 后无论成败都广播 compacted）。
    */
-  async function compact(): Promise<void> {
+  async function compact(customInstructions?: string): Promise<void> {
     const sid = session.activeId
     if (!sid) return
     ensureStreamSubscription(sid, chat, session)
     try {
-      await chatApi.compact(sid)
+      await chatApi.compact(sid, customInstructions)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()

@@ -210,8 +210,9 @@ const placeholder = computed(() =>
  * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。
  * landing 态首发提交走 submitFirstMessage（延迟 create session 后再发）；
  * 非 landing 走 useChat.send。/compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6）。
- * 检测：slash chip 的命令名（如 '/compact'）会被 ComposerInput.getText 读入 draft，
- * 故 draft 恰为 '/compact'（chip 单独存在，无附加文本）时判定为 compact 操作。
+ * 检测：slash chip 的命令名 '/compact' 会被 ComposerInput.getText 读入 draft，
+ * '/compact'（纯 chip）或 '/compact <指令>'（chip + 附加文本）均判定为 compact 操作，
+ * 后者提取附加文本作为 customInstructions 透传给 pi 压缩 prompt。
  *
  * landing 判定用 variant 而非 sessionId：landing 态 composer 的 sessionId 可能是
  * 公共 session id（用于 CommandPopover 显示 pi extension 命令），但它不是真实工作
@@ -236,9 +237,20 @@ async function onSend(): Promise<void> {
     }
     return
   }
-  if (text.trim() === '/compact') {
+  // /compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6），不发 prompt 给 pi。
+  // 检测：slash chip 的命令名 '/compact' 会被 ComposerInput.getText 读入 draft。
+  // 支持两种形态：
+  //   - 纯 '/compact'（chip 单独存在，无附加文本）→ 无 customInstructions
+  //   - '/compact <指令>'（chip + 后续文本）→ 提取为 customInstructions 透传给 pi 压缩 prompt
+  // 与 pi TUI interactive-mode.ts:2656 的解析对齐（text === '/compact' || startsWith('/compact ')）。
+  // 必须在此拦截：pi RPC prompt 路径不解析 builtin slash，/compact 当 prompt 发过去会被当普通消息发给 LLM。
+  const trimmed = text.trim()
+  if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
+    const customInstructions = trimmed.startsWith('/compact ')
+      ? trimmed.slice('/compact '.length).trim() || undefined
+      : undefined
     clearInput()
-    await compact()
+    await compact(customInstructions)
     return
   }
   clearInput()

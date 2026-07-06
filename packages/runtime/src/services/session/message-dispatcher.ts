@@ -188,7 +188,7 @@ export class MessageDispatcher {
     return client
   }
 
-  async compact(sessionId: string): Promise<void> {
+  async compact(sessionId: string, customInstructions?: string): Promise<void> {
     const startTime = Date.now()
     const client = this.pm.getClient(sessionId)
     if (!client) {
@@ -196,13 +196,13 @@ export class MessageDispatcher {
       throw new Error(`Session ${sessionId} not found`)
     }
 
-    console.log('[message-dispatcher] compact: start, sessionId=' + sessionId)
+    console.log('[message-dispatcher] compact: start, sessionId=' + sessionId + ', customInstructions=' + (customInstructions ? `"${customInstructions}"` : '(none)'))
     this.broker.broadcast({
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
     })
     try {
-      await client.compact()
+      await client.compact(customInstructions)
       console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     } catch (e) {
       const errMsg = toErrorMessage(e)

@@ -86,7 +86,7 @@ export interface ISessionService {
   sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }>
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
-  compact(sessionId: string): Promise<void>
+  compact(sessionId: string, customInstructions?: string): Promise<void>
   getHistory(sessionId: string): Promise<Message[]>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>

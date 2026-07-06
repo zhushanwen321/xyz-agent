@@ -37,12 +37,13 @@ const LANDING_SKILLS: SkillInfo[] = [
   { id: 'sk-pi-goal', name: 'pi-goal', description: '目标驱动的任务管理', enabled: true, source: 'piinstall', triggers: ['goal'], effective: true },
 ]
 
-// session 源 fixture：对照 command-store.test.ts RAW（4 条，name 带 /）
+// session 源 fixture：对照 command-store.test.ts RAW（3 条 pi 动态命令，name 带 /）。
+// compact 不在此列——pi get_commands 不返回 builtin（仅服务 pi TUI autocomplete），
+// 由 CommandPopover slashCommands computed 在前端注入。此处若再加 compact 会与前端注入重复。
 const SESSION_CMDS = [
   { name: '/commit', description: '提交改动', source: 'extension' },
   { name: '/review', description: '代码审查', source: 'extension' },
   { name: '/fix', description: '修复问题', source: 'skill' },
-  { name: '/compact', source: 'builtin' },
 ]
 
 /** reka-ui PopoverContent teleport 到 body：在 body 内找命令项按钮（v-for Button 渲染为 native <button>，文本含 /） */
@@ -100,14 +101,14 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     expect(bodyItemButtons()).toHaveLength(0)
   })
 
-  it('L5 session 态（sessionId=s1）→ 用 commandStore（4 项含 /compact），不被 skills(7) 污染', async () => {
+  it('L5 session 态（sessionId=s1）→ 用 commandStore（3 项 pi 命令）+ 前端注入 compact = 4 项，不被 skills(7) 污染', async () => {
     useSettingsStore().skills = LANDING_SKILLS
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: true, type: 'slash', sessionId: 's1', query: '' },
     })
     await flushPromises()
-    // 推 session 源命令（4 条）
+    // 推 session 源命令（3 条 pi 动态命令）
     const msg = {
       type: 'session.commands',
       payload: { sessionId: 's1', commands: SESSION_CMDS },
@@ -117,8 +118,8 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     await nextTick()
 
     const btns = bodyItemButtons()
-    expect(btns).toHaveLength(4) // 来自 commandStore，非 7 条 skills
-    expect(btns.some((b) => b.textContent?.includes('/compact'))).toBe(true) // builtin，skills 里没有
+    expect(btns).toHaveLength(4) // 3 pi 命令 + 1 前端注入 compact，非 7 条 skills
+    expect(btns.some((b) => b.textContent?.includes('/compact'))).toBe(true) // 前端注入的 builtin，skills 里没有
   })
 
   it('L6 每个命令项含 svg（icon=star 渲染）', async () => {

@@ -348,8 +348,8 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('get_messages')
   }
 
-  compact(): Promise<PiMessage> {
-    return this.sendCommand('compact', {}, COMPACT_TIMEOUT_MS)
+  compact(customInstructions?: string): Promise<PiMessage> {
+    return this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
   }
 
   /**

@@ -148,7 +148,7 @@ export class SessionMessageHandler {
       return this.ctx.sendError(ws, 'compact_failed', 'Failed to restore session for compact: ' + (toErrorMessage(e)), msg.id, { sessionId: compactId })
     }
     try {
-      await this.ctx.sessionService.compact(compactId)
+      await this.ctx.sessionService.compact(compactId, msg.payload.customInstructions)
     } catch (e) {
       // compact 失败：dispatcher.compact 已广播 session.compacted(error)（流式通知），此处补请求级 error envelope。
       return this.ctx.sendError(ws, 'compact_failed', toErrorMessage(e), msg.id, { sessionId: compactId })

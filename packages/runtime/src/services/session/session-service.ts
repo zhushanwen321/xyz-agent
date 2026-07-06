@@ -200,7 +200,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
   async steerMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.steerMessage(sessionId, content) }
   async followUpMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.followUpMessage(sessionId, content) }
-  async compact(sessionId: string): Promise<void> { return this.dispatcher.compact(sessionId) }
+  async compact(sessionId: string, customInstructions?: string): Promise<void> { return this.dispatcher.compact(sessionId, customInstructions) }
   setSendMessageHook(hook: SendMessageHook): void { this.dispatcher.setSendMessageHook(hook) }
   listPersistedSessions(): SessionGroup[] { return this.scanner.listPersistedSessions() }
 

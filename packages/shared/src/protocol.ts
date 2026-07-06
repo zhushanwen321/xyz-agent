@@ -66,7 +66,7 @@ export interface ClientMessageMap {
   'session.switch': { sessionId: string }
   'session.history': { sessionId: string }
   'session.getCommands': { sessionId: string }
-  'session.compact': { sessionId: string }
+  'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }

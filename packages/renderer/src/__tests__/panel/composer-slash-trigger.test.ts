@@ -106,16 +106,19 @@ describe('ComposerInput slash-trigger（U1-U5）', () => {
 // ─────────────────────── U6-U8 CommandPopover query 过滤 ───────────────────────
 
 /**
- * 4 条 mock slash 命令（与 MOCK_COMMANDS 三 source 对齐）。
+ * 3 条 mock slash 命令（pi get_commands 真实返回的 extension/skill 动态命令）。
  * pi getCommands 返回的 name 不带 / 前缀（真实行为，已由 runtime 日志确认：
  * 'goal' / 'todos' / 'skill:xxx'），CommandPopover.items 会归一化补 / 前缀显示。
  * mock 用无前缀形式覆盖归一化逻辑，避免像旧 fixture 全带 / 掩盖 bug。
+ *
+ * compact 不在此列——pi get_commands 不返回 builtin（builtin 仅服务 pi TUI
+ * autocomplete，不通过 RPC 暴露），由 CommandPopover slashCommands computed 在
+ * 前端注入。U7 断言 4 项 = 3 pi 命令 + 1 前端注入 compact。
  */
 const MOCK_CMDS = [
   { name: 'commit', source: 'extension' },
   { name: 'review', source: 'extension' },
   { name: 'fix', source: 'skill' },
-  { name: 'compact', source: 'builtin' },
 ]
 
 /** 推 session.commands 到 sessionId 订阅者（CommandPopover 用 events.on(sessionId) 订阅） */
@@ -161,9 +164,11 @@ describe('CommandPopover slash query 过滤（U6-U8）', () => {
     expect(btns[0].textContent).toContain('/commit')
   })
 
-  it('U7 query="" → 渲染全部 4 项', async () => {
+  it('U7 query="" → 渲染全部 4 项（3 pi 命令 + 1 前端注入 compact）', async () => {
     await mountPopover('')
     expect(bodyItemButtons()).toHaveLength(4)
+    // 确认 compact 确实由前端注入（不在 MOCK_CMDS 里）
+    expect(bodyItemButtons().some((b) => b.textContent?.includes('/compact'))).toBe(true)
   })
 
   it('U8 query="zzz" → 0 项，PopoverContent 不渲染（v-if items.length>0）', async () => {

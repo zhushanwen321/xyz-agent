@@ -69,8 +69,8 @@ export interface IPiEngine {
   onEvent(listener: PiEventListener): () => void
 
   // ── session 级命令 ──
-  /** 压缩当前会话上下文（pi compact 命令）。 */
-  compact(): Promise<PiMessage>
+  /** 压缩当前会话上下文（pi compact 命令）。customInstructions 透传给 pi 压缩 prompt。 */
+  compact(customInstructions?: string): Promise<PiMessage>
   /** 清空当前会话上下文（pi clear 命令）。 */
   clear(): Promise<PiMessage>
 

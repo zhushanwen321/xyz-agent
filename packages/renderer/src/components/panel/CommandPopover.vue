@@ -122,7 +122,11 @@ watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 
 /**
  * slash 命令源（双源，按 session 有无切换）：
- * - session 态：commandStore（pi get_commands 真实命令，含 builtin/extension）。
+ * - session 态：commandStore（pi get_commands 返回的 extension/prompt/skill 三类动态命令）
+ *   + 前端 builtin 命令（compact）。pi 的 get_commands 不返回 builtin（builtin 仅服务
+ *   pi 自己的 TUI autocomplete，不通过 RPC 暴露），故需前端注入。compact 执行本就在
+ *   前端拦截（Composer.vue submit 检测 '/compact' → 专用 compact RPC），与 pi prompt
+ *   路径无关，作为前端 builtin 入口最合理。
  * - landing 态（无 session）：settingsStore.skills（config.skills 全局扫描结果）。
  *   landing 无 pi 子进程，get_commands 不可达；skills 扫描目录集（discovery.json +
  *   强制目录）与 pi 实际加载目录集同源，create session 后 fetchAndBroadcastCommands
@@ -134,7 +138,12 @@ watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
  *   都依赖 / 前缀。icon 统一 'star'（与 iconKeyForSource('skill')='star' 一致）。
  */
 const slashCommands = computed(() => {
-  if (props.sessionId) return commandStore.getCommands(props.sessionId)
+  if (props.sessionId) {
+    // compact 只在有 session 时注入（landing 态无上下文可压缩）
+    const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: '压缩会话上下文' }
+    const piCmds = commandStore.getCommands(props.sessionId)
+    return [compactCmd, ...piCmds]
+  }
   return settingsStore.skills.map((s) => ({
     id: s.name,
     name: `/${s.name}`,
