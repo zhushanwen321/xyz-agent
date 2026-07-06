@@ -6,13 +6,15 @@
     active panel 的 sessionId 跟随 session store.activeId（sidebar 选 session → 载入 active panel）。
     v1：双 panel 的第二 session 来源 G-023 DEFERRED，standby panel 暂显空态占位。
 
-    SideDrawer 协调（panel/spec.md §未决项#1 v2 形态裁决）：drawer 是 workspace-body 级 absolute
-    浮层、width:50%，固定挂本容器（单实例，跟随 active panel）。drawer 不参与 panel 的 flex 布局——
-    panel 始终 flex-1 均分（单 panel 撑满、双 panel 各半），drawer 直接覆盖 workspace 的另一半空间。
+    SideDrawer 协调（panel/spec.md §未决项#1 v2 形态裁决）：drawer 固定挂本容器（单实例，跟随 active panel），
+    按 panel 数量切两种定位模式（drawerMode computed 派生自 panel.isDual）：
+    · 单 panel（isDual=false）→ mode='split'：drawer 作 flex 子项与 Panel 各占一半，并排不覆盖；
+    · 双 panel（isDual=true） → mode='overlay'：drawer 作 absolute 浮层（w-1/2、z-30）覆盖对侧 standby panel。
     方向：host=P1 → drawer 贴右（direction='right'）；host=P2 → drawer 贴左（direction='left'）。
-    overflow-hidden：drawer 是 absolute 子元素，溢出本容器时必须被裁，否则关闭按钮等右缘内容会
-    飘出窗口不可见（sidebar 加宽后 workspace 变窄放大了该问题）。drawer 的滑入/滑出改用 opacity
-    淡入（SideDrawer.vue transition），避免 translateX 位移被裁导致看不到动画。
+    overflow-hidden：overlay 模式下 drawer 是 absolute 子元素，溢出本容器时必须被裁，否则关闭按钮等右缘
+    内容会飘出窗口不可见（sidebar 加宽后 workspace 变窄放大了该问题）；split 模式下 drawer 是 flex 子项
+    不受此约束。drawer 的开/关动画用 opacity 淡入（SideDrawer.vue transition），避免 overlay 模式下
+    translateX 位移被裁导致看不到动画。
     git 状态唯一数据源在此层 provide（按 active panel 的 session），GitPanel 注入共享。
   -->
   <div
@@ -39,14 +41,15 @@
       @open-git="openDrawer('git')"
     />
 
-    <!-- SideDrawer：workspace-body 级 absolute 浮层，width:50%，覆盖 workspace 的另一半（panel/spec.md v2）。
-         不参与 panel flex 布局——panel 始终 flex-1 均分。跟随 active panel 方向：host=P1→贴右，host=P2→贴左。
+    <!-- SideDrawer：workspace-body 级辅助视图容器（panel/spec.md v2）。单实例，跟随 active panel。
+         mode 由 panel 数量决定：单 panel → split（flex 分栏各占一半）；双 panel → overlay（覆盖对侧 standby）。
          git 数据由本容器 provide，GitPanel inject。 -->
     <SideDrawer
       :is-open="drawerOpen"
       :active-tab="drawerTab"
       :docked="drawerDocked"
       :direction="drawerDirection"
+      :mode="drawerMode"
       :session-id="activePanelSessionId"
       @close="closeDrawer"
       @set-tab="setDrawerTab"
@@ -121,6 +124,9 @@ const drawerDirection = computed<'right' | 'left'>(() => {
   // host 是首个（左）panel → 贴右；否则贴左
   return hostIndex === 0 ? 'right' : 'left'
 })
+
+/** drawer 布局模式：单 panel → split（flex 分栏各占一半，不覆盖）；双 panel → overlay（absolute 覆盖对侧 standby） */
+const drawerMode = computed<'split' | 'overlay'>(() => (panel.isDual ? 'overlay' : 'split'))
 
 /**
  * 各 Panel 透传给 PanelHeader 的 git 脏状态指示（仅 active panel 显示真实 git 状态；
