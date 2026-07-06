@@ -50,9 +50,12 @@ export interface PiContextUsage {
   percent: number | null
 }
 
-/** pi get_session_stats 响应（仅取 contextUsage，其余字段按需扩展）。 */
+/** pi get_session_stats 响应。contextUsage.tokens=null（compact 后无新 turn）时，
+ *  fetchContext 退化用 tokens.total（保留消息的 usage 累加）做近似占用估算。 */
 export interface PiSessionStats {
   contextUsage?: PiContextUsage
+  /** 所有 assistant 消息 usage 累加（input+output+cacheRead+cacheWrite）。compact 后保留消息少时近似当前占用。 */
+  tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
 }
 
 /** pi 进程退出回调。 */
