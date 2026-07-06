@@ -90,17 +90,27 @@ export function useContenteditableInput(
   function getText(): string {
     const el = getEl()
     if (!el) return ''
-    // TreeWalker 遍历：跳过 chip 的 × 按钮文本，避免发送内容混入 '×'
+    // TreeWalker 遍历 TEXT + ELEMENT：
+    // - TEXT：收集文本（跳过 chip × 按钮文本，避免发送内容混入 '×'）
+    // - ELEMENT：<br> 补 \n（Shift+Enter 产生的换行元素，SHOW_TEXT 会跳过它，
+    //   导致发送文本丢失软换行，用户气泡无法保留换行）
     let text = ''
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-      acceptNode(node: Text): number {
-        return node.parentElement?.closest('.chip-x')
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode(node: Node): number {
+        // chip × 按钮内的一切（含其子 <span>× 文本与自身）跳过
+        if (node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x')) {
+          return NodeFilter.FILTER_REJECT
+        }
+        return NodeFilter.FILTER_ACCEPT
       },
     })
     while (walker.nextNode()) {
-      text += (walker.currentNode as Text).textContent ?? ''
+      const node = walker.currentNode
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += node.textContent ?? ''
+      } else if (node.nodeName === 'BR') {
+        text += '\n'
+      }
     }
     // nbsp 转普通空格；零宽空格（chip 后的可定位锚点）过滤掉
     return text.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
