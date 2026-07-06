@@ -22,6 +22,15 @@
       <div v-if="seg.type === 'text'" v-html="seg.content" />
       <MermaidRenderer v-else :source="seg.content" />
     </template>
+    <!-- 歧义文件选择浮层：裸 basename 多匹配时弹出（锚定到点击的 <a>，portal 到 body） -->
+    <AmbiguousFilePopover
+      :open="!!ambiguousState"
+      :basename="ambiguousState?.basename ?? ''"
+      :candidates="ambiguousCandidates"
+      :anchor-el="ambiguousState?.anchorEl ?? null"
+      @update:open="(v) => { if (!v) ambiguousState = null }"
+      @select="onAmbiguousSelect"
+    />
   </div>
 </template>
 
@@ -33,9 +42,15 @@
  * - 渲染为 segments 数组：text 段走 v-html，mermaid 段走 <MermaidRenderer> 组件（template v-for）。
  * - 代码块复制按钮/链接点击用事件委托（v-html 内不能绑 Vue 事件）→ useMarkdownInteractions。
  */
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { renderMarkdownSegments, type MarkdownSegment } from '@/composables/logic/markdown'
 import { useMarkdownInteractions } from '@/composables/panel/useMarkdownInteractions'
+import { useFileSearch } from '@/composables/features/useFileSearch'
+import { useFileSearchStore } from '@/stores/fileSearch'
+import { useFileTree } from '@/composables/features/useFileTree'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { collectBasenames, findByBasename } from '@/lib/file-basename'
+import AmbiguousFilePopover from './AmbiguousFilePopover.vue'
 import MermaidRenderer from './MermaidRenderer.vue'
 
 const props = defineProps<{
@@ -48,22 +63,88 @@ const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
 
 /**
+ * 当前 session 的本地文件 basename 集合（供 markdown 裸 basename 识别）。
+ *
+ * 数据源：useFileSearch.load（fileSearchStore per-session 全量递归缓存优先，否则 file.search RPC）。
+ * 响应式 ref（非 store 直接派生——fileSearchStore.set 用 Map mutation 不触发 Vue 响应式，
+ * 这里在 load 完成后手动赋值触发重渲染）。
+ *
+ * 首渲染时可能为空集（fileSearch 未加载）→ markdown 裸 basename 降级纯文本（与无 env 一致，无回归）。
+ * load 完成后赋值 → watch 触发重渲染 → basename 变可点击链接。
+ * sessionId 变化（切 session）→ 重新 load + 重渲染。
+ */
+const localFiles = ref<Set<string>>(new Set())
+const { load: loadFileCandidates } = useFileSearch()
+let loadedSessionId: string | null | undefined
+async function refreshLocalFiles(sid: string | null | undefined): Promise<void> {
+  if (!sid) {
+    localFiles.value = new Set()
+    return
+  }
+  // 缓存命中（fileSearchStore.get）走同步路径，否则 fire-and-forget RPC，完成后赋值触发重渲染
+  const nodes = await loadFileCandidates(sid)
+  localFiles.value = collectBasenames(nodes)
+}
+
+/** 歧义选择浮层状态（多匹配 basename 点击时弹出，见 AmbiguousFilePopover） */
+const ambiguousState = ref<{ basename: string; anchorEl: HTMLElement } | null>(null)
+
+/** 歧义浮层候选：从 fileSearchStore 缓存按 basename 反查（响应 ambiguousState + localFiles 变化） */
+const ambiguousCandidates = computed(() => {
+  if (!ambiguousState.value) return []
+  // localFiles 是 basename Set，不含 path；需从原始 FileNode[] 反查 path
+  // 复用 useFileSearch 缓存（refreshLocalFiles 已 load 过，get 命中同步返回）
+  const sid = props.sessionId
+  if (!sid) return []
+  const { get } = useFileSearchStore()
+  const nodes = get(sid)
+  if (!nodes) return []
+  return findByBasename(nodes, ambiguousState.value.basename)
+})
+
+const { selectFile } = useFileTree()
+const drawer = useSideDrawer()
+
+/** 歧义浮层选中 → selectFile + 打开 DetailPane + 清状态 */
+function onAmbiguousSelect(path: string): void {
+  selectFile(path)
+  drawer.open('detail')
+  ambiguousState.value = null
+}
+
+/**
  * v-html 内点击事件委托路由（代码块复制 / 文件路径 / 外链）。
+ * 透传 sessionId + onAmbiguous：裸 basename 点击时，多匹配走歧义选择浮层（见 AmbiguousFilePopover）。
  * 复制反馈态由 useMarkdownInteractions 内的 useCodeblockCopy 管理（DOM-imperative，
  * 因 v-html 节点无 Vue 响应式——不复用 effects/useCopy 的 ref-based 版本）。
  */
-const { onClick } = useMarkdownInteractions()
+const { onClick } = useMarkdownInteractions({
+  get sessionId() { return props.sessionId },
+  onAmbiguous: (basename, anchorEl) => {
+    ambiguousState.value = { basename, anchorEl }
+  },
+})
 
 watch(
-  () => props.content,
-  async (text) => {
-    if (!text.trim()) {
+  () => props.sessionId,
+  (sid) => {
+    if (sid === loadedSessionId) return
+    loadedSessionId = sid
+    void refreshLocalFiles(sid)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [props.content, localFiles.value],
+  async ([text]) => {
+    if (!(text as string).trim()) {
       segments.value = []
       return
     }
     // 流式增量会高频触发：用序号守卫，只采纳最新一次的渲染结果（防旧渲染覆盖新内容）
     const seq = ++renderSeq
-    const segs = await renderMarkdownSegments(text)
+    const segs = await renderMarkdownSegments(text as string, { localFiles: localFiles.value })
     if (seq === renderSeq) {
       segments.value = segs
     }

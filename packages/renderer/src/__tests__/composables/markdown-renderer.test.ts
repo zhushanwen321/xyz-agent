@@ -54,6 +54,22 @@ vi.mock('@/lib/ipc', () => ({
   openExternal: (url: string) => mockOpenExternal(url),
 }))
 
+// useFileSearch + fileSearchStore stub（裸 basename 识别 + 歧义反查数据源，测 segment 分发时不参与）
+const mockLoadFileCandidates = vi.fn().mockResolvedValue([])
+vi.mock('@/composables/features/useFileSearch', () => ({
+  useFileSearch: () => ({ load: (sid: string) => mockLoadFileCandidates(sid) }),
+}))
+const mockFileSearchGet = vi.fn().mockReturnValue(undefined)
+vi.mock('@/stores/fileSearch', () => ({
+  useFileSearchStore: () => ({ get: (sid: string) => mockFileSearchGet(sid) }),
+}))
+
+// AmbiguousFilePopover stub（歧义浮层，测 segment 分发时不渲染真实浮层）。
+// 返回注释 vnode（不占 .md-render 直接子节点，避免影响 U11 的子节点计数断言）
+vi.mock('@/components/panel/message-stream/AmbiguousFilePopover.vue', () => ({
+  default: { name: 'AmbiguousFilePopover', render: () => null },
+}))
+
 function encodeB64(text: string): string {
   const bytes = new TextEncoder().encode(text)
   let binary = ''

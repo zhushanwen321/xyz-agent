@@ -33,6 +33,8 @@ interface InlineState {
   pos: number
   posMax: number
   pending: string
+  /** md.render(content, env) 的第二参 env，markdown-it 运行时注入（见 StateInline 构造） */
+  env?: MarkdownEnv
   push(type: string, tag: string, nesting: number): InlineStateToken
 }
 interface InlineStateToken {
@@ -43,6 +45,19 @@ interface InlineStateToken {
 /** markdown-it 实例上 inline ruler 的最小结构类型（@types 未暴露 md.inline.ruler） */
 interface InlineRulerHost {
   inline: { ruler: { before(beforeName: string, ruleName: string, fn: (s: InlineState, silent: boolean) => boolean): void } }
+}
+
+/**
+ * renderMarkdown 的 env 参数：贯穿 inline rule（state.env）+ renderer rule（第 4 参）。
+ *
+ * - localFiles：当前 session 项目里的文件 basename 集合（如 {'design.md', 'README.md', ...}）。
+ *   裸 basename（无 / 前缀，如 design.md）若在此集合里 → 识别为本地文件链接（.md-filepath），
+ *   否则维持纯文本（linkify fuzzyLink:false 已让裸域名不当 URL）。
+ *   数据源：fileSearchStore 的全量递归 file.search 结果，扁平化为 basename Set。
+ *   首渲染时可能为空集（fileSearch 未加载）→ basename 降级纯文本，加载完成后响应式重渲染。
+ */
+export interface MarkdownEnv {
+  localFiles?: Set<string>
 }
 
 /** 代码块高亮覆盖的语言（按 wave review 要点：ts/vue/json/bash/md + 常见派生） */
@@ -182,8 +197,8 @@ async function getMarkdown(): Promise<MarkdownIt> {
   // 反引号内路径链接化：覆盖 code_inline renderer，内容跑 linkifyFilePathsHtml，
   // 产出 <code>...<a class="md-filepath" data-path="...">path</a>...</code>——
   // 保留等宽 code 视觉，路径可点击（点击处理统一走 useMarkdownInteractions）。
-  md.renderer.rules.code_inline = (tokens, idx) => {
-    return `<code>${linkifyFilePathsHtml(tokens[idx].content)}</code>`
+  md.renderer.rules.code_inline = (tokens, idx, _options, env) => {
+    return `<code>${linkifyFilePathsHtml(tokens[idx].content, (env as MarkdownEnv | undefined)?.localFiles)}</code>`
   }
 
   cachedMarkdown = md
@@ -203,13 +218,37 @@ async function getMarkdown(): Promise<MarkdownIt> {
 // g 标志 + 捕获组 1 = 路径（去掉前导边界符）。前导边界符：行首或空白/括号/引号/标点。
 const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+(?:\/[a-zA-Z0-9._\-]+)+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
 
+/**
+ * 裸 basename 识别正则（无 / 前缀的文件名，如 design.md / README.md）。
+ *
+ * 与 FILEPATH_RE 的差异：去掉 `(?:\/[a-zA-Z0-9._\-]+)+` 段（不要求含 /）。
+ * 扩展名前瞻与 FILEPATH_RE 一致（要求数字之后必有字母，挡掉版本号/小数）。
+ *
+ * 用途：filepathRule 内 FILEPATH_RE 匹配失败后，用此正则扫 basename 候选，
+ * 再过滤 state.env.localFiles 集合——只在「项目里真有该文件」时识别为本地文件链接，
+ * 避免误把 design.md 这类裸文件名当 URL（linkify fuzzyLink:false 已让裸域名不当 URL，
+ * 但也导致裸 basename 默认是纯文本不可点击，此正则 + localFiles 集合打开识别通道）。
+ */
+const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
+
 function filepathRule(state: InlineState, silent: boolean): boolean {
   const pos = state.pos
-  // 从当前 pos 起搜索第一个含/路径。text rule 会一次吃掉整段非 terminator 文本
+  // 从当前 pos 起搜索第一个含/路径或裸 basename。text rule 会一次吃掉整段非 terminator 文本
   // （空格不是 terminator），故本规则必须在 text 之前主动扫描并拦截路径。
   const rest = state.src.slice(pos)
   FILEPATH_RE.lastIndex = 0
-  const match = FILEPATH_RE.exec(rest)
+  let match = FILEPATH_RE.exec(rest)
+  // 含/路径未命中时，尝试裸 basename（仅在 env.localFiles 非空时，避免无谓扫描）
+  if (!match && state.env?.localFiles && state.env.localFiles.size > 0) {
+    BASENAME_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = BASENAME_RE.exec(rest)) !== null) {
+      if (state.env.localFiles.has(m[1])) {
+        match = m
+        break
+      }
+    }
+  }
   if (!match) return false
 
   // match.index = 边界符位置（或 0）；路径起点 = match.index + 前导边界符长度
@@ -226,6 +265,7 @@ function filepathRule(state: InlineState, silent: boolean): boolean {
   }
 
   // push filepath_open + text + filepath_close（push 前会自动 flush pending 为 text token）
+  // data-path 存 path（含/路径场景）或 basename（裸 basename 场景），base64 编码
   const openToken = state.push('filepath_open', 'a', 1)
   openToken.attrSet('data-path', encodeBase64(path))
   const textToken = state.push('text', '', 0)
@@ -256,25 +296,43 @@ function escapeHtml(s: string): string {
  * 会直接进 HTML，所以这里对非路径片段先 escape 再拼接）。匹配到的路径同样 escapeHtml，
  * data-path 用 base64 编码（与 filepath rule 一致的 XSS 防线）。
  */
-function linkifyFilePathsHtml(content: string): string {
+function linkifyFilePathsHtml(content: string, localFiles?: Set<string>): string {
   // FILEPATH_RE 前导边界符含 [;: 等，但 code_inline 内容是孤立片段——
   // 为让行首即路径（如 `src/foo.ts`，反引号内就一个路径，前面无边界符）也能识别，
   // 用「相同正则」对原文跑一次：FILEPATH_RE 已含 ^ 行首分支，能覆盖这种情况。
+  // localFiles 非空时，额外用 BASENAME_RE 扫裸 basename（与 filepathRule 对称）。
   FILEPATH_RE.lastIndex = 0
   let result = ''
   let lastIndex = 0
   let match: RegExpExecArray | null
+  // 收集所有命中（含/路径 + localFiles 里的裸 basename），按 index 排序后顺序拼接
+  const hits: Array<{ index: number; leadLen: number; path: string }> = []
   while ((match = FILEPATH_RE.exec(content)) !== null) {
     const leadLen = match[0].length - match[1].length
-    const pathStart = match.index + leadLen
-    const path = match[1]
-    const pathEnd = pathStart + path.length
+    hits.push({ index: match.index, leadLen, path: match[1] })
+  }
+  if (localFiles && localFiles.size > 0) {
+    BASENAME_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = BASENAME_RE.exec(content)) !== null) {
+      if (localFiles.has(m[1])) {
+        const leadLen = m[0].length - m[1].length
+        hits.push({ index: m.index, leadLen, path: m[1] })
+      }
+    }
+  }
+  hits.sort((a, b) => a.index - b.index)
+  for (const hit of hits) {
+    const pathStart = hit.index + hit.leadLen
+    const pathEnd = pathStart + hit.path.length
+    // 跳过与上一命中重叠的（含/路径与 basename 同位时，含/优先已在前，basename 在后被 pathStart<lastIndex 过滤）
+    if (pathStart < lastIndex) continue
     // 前置文本（含边界符）转义后追加
     if (pathStart > lastIndex) {
       result += escapeHtml(content.slice(lastIndex, pathStart))
     }
     // 路径片段包成 .md-filepath 链接（data-path base64，路径文本 escapeHtml）
-    result += `<a class="md-filepath" data-path="${encodeBase64(path)}">${escapeHtml(path)}</a>`
+    result += `<a class="md-filepath" data-path="${encodeBase64(hit.path)}">${escapeHtml(hit.path)}</a>`
     lastIndex = pathEnd
   }
   // 剩余文本转义后追加
@@ -288,13 +346,14 @@ function linkifyFilePathsHtml(content: string): string {
 /**
  * 把 markdown 文本渲染成 HTML 字符串。
  * 首次调用 await shiki 加载（异步）；之后 markdown-it 实例缓存，后续渲染同步。
+ * @param env 透传给 markdown-it inline rule + renderer rule（见 MarkdownEnv）
  */
-export async function renderMarkdown(content: string): Promise<string> {
+export async function renderMarkdown(content: string, env?: MarkdownEnv): Promise<string> {
   const md = await getMarkdown()
   // trimEnd：markdown-it 输出末尾带格式化 \n（如 "<p>hi</p>\n"），在 whitespace-pre-wrap
   // 容器里会被渲染成可见空行（用户气泡比实际内容多一行）。HTML 结构不受影响（块级元素
   // 末尾的空白文本节点是无意义的）。
-  return md.render(content).trimEnd()
+  return md.render(content, env ?? {}).trimEnd()
 }
 
 /** markdown 渲染段（供 MarkdownRenderer 按 segment 分别渲染，mermaid 段走 MermaidRenderer 组件） */
@@ -314,8 +373,8 @@ const MERMAID_PLACEHOLDER_RE = /<div class="md-mermaid" data-source="([^"]*)"><\
  * 替代 v-html 占位 + Vue render 函数动态挂载的脆弱模式——segments 让 mermaid 成为
  * template 里的正常组件，响应式可靠。
  */
-export async function renderMarkdownSegments(content: string): Promise<MarkdownSegment[]> {
-  const html = await renderMarkdown(content)
+export async function renderMarkdownSegments(content: string, env?: MarkdownEnv): Promise<MarkdownSegment[]> {
+  const html = await renderMarkdown(content, env)
   const segments: MarkdownSegment[] = []
   let lastIndex = 0
   MERMAID_PLACEHOLDER_RE.lastIndex = 0

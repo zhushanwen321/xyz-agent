@@ -37,6 +37,20 @@ async function freshRender(content: string): Promise<string> {
   return renderMarkdown(content)
 }
 
+/** 同 freshRender 但带 env（localFiles 等），用于裸 basename 识别测试 */
+async function freshRenderWithEnv(content: string, localFiles: Set<string>): Promise<string> {
+  vi.resetModules()
+  vi.doMock('shiki', () => ({
+    createHighlighter: () =>
+      Promise.resolve({
+        codeToHtml: fakeCodeToHtml,
+        getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
+      }),
+  }))
+  const { renderMarkdown } = await import('@/composables/logic/markdown')
+  return renderMarkdown(content, { localFiles })
+}
+
 /** 同 freshRender 但返回 segments（text/mermaid 拆分） */
 async function freshRenderSegments(content: string): Promise<{ type: string; content: string }[]> {
   vi.resetModules()
@@ -161,6 +175,77 @@ describe('markdown fence 规则覆盖（W3）', () => {
       const html = await freshRender(`见 ${url} 链接\n`)
       expect(html).toContain(`href="${url}"`)
     }
+  })
+
+  // ── 裸 basename 识别（env.localFiles：项目里真有该文件才识别为本地文件链接）──
+
+  it('U10f: 裸 basename 在 localFiles 里 → 识别为 .md-filepath 链接', async () => {
+    const localFiles = new Set(['design.md', 'README.md'])
+    const html = await freshRenderWithEnv('更新了 design.md 文档\n', localFiles)
+    expect(html).toContain('class="md-filepath"')
+    expect(html).toContain('>design.md<')
+    // 不生成 http 链接（本地文件优先，不当 URL）
+    expect(html).not.toContain('href="http://')
+  })
+
+  it('U10g: 裸 basename 不在 localFiles 里 → 维持纯文本（无 env.localFiles 命中）', async () => {
+    const localFiles = new Set(['README.md'])
+    const html = await freshRenderWithEnv('更新了 design.md 文档\n', localFiles)
+    // design.md 不在集合 → 不识别（纯文本），避免误判
+    expect(html).not.toContain('md-filepath')
+    expect(html).toContain('design.md') // 纯文本仍渲染
+  })
+
+  it('U10h: 无 env（localFiles 未传）→ 降级纯文本（与现状一致，无回归）', async () => {
+    // 不传 env（fileSearch 未加载场景）
+    vi.resetModules()
+    vi.doMock('shiki', () => ({
+      createHighlighter: () => Promise.resolve({ codeToHtml: fakeCodeToHtml, getLoadedLanguages: () => ['typescript'] }),
+    }))
+    const { renderMarkdown } = await import('@/composables/logic/markdown')
+    const html = await renderMarkdown('更新了 design.md 文档\n')
+    expect(html).not.toContain('md-filepath')
+    expect(html).toContain('design.md')
+  })
+
+  it('U10i: 含/路径识别不受 localFiles 影响（原 FILEPATH_RE 逻辑不变）', async () => {
+    const localFiles = new Set(['foo.ts']) // 故意不含 foo.ts 在集合，但 src/foo.ts 含/应识别
+    const html = await freshRenderWithEnv('修改了 src/foo.ts\n', localFiles)
+    expect(html).toContain('md-filepath')
+    expect(html).toContain('>src/foo.ts<')
+  })
+
+  it('U10j: 段首/多 basename 边界场景', async () => {
+    const localFiles = new Set(['design.md', 'config.json'])
+    // 段首
+    let html = await freshRenderWithEnv('design.md 是入口\n', localFiles)
+    expect(html).toContain('>design.md<')
+    // 半角括号内
+    html = await freshRenderWithEnv('见 (design.md) 文档\n', localFiles)
+    expect(html).toContain('>design.md<')
+    // 多 basename 同段
+    html = await freshRenderWithEnv('design.md 和 config.json 都改了\n', localFiles)
+    expect(html).toContain('>design.md<')
+    expect(html).toContain('>config.json<')
+  })
+
+  it('U10k: 反引号内裸 basename 也识别（code_inline renderer 拿 env）', async () => {
+    const localFiles = new Set(['design.md'])
+    const html = await freshRenderWithEnv('见 `design.md` 文档\n', localFiles)
+    // 反引号内 basename 包成 .md-filepath，外层保留 <code>
+    expect(html).toContain('md-filepath')
+    expect(html).toContain('<code>')
+    expect(html).toContain('>design.md<')
+  })
+
+  it('U10l: data-path 存 basename（裸 basename 场景，非完整 path）', async () => {
+    // 裸 basename 场景下 data-path 存 basename 本身（base64），由前端反查完整 path
+    const localFiles = new Set(['design.md'])
+    const html = await freshRenderWithEnv('design.md\n', localFiles)
+    const m = html.match(/data-path="([^"]+)"/)
+    expect(m).not.toBeNull()
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(m![1]), (c) => c.charCodeAt(0)))
+    expect(decoded).toBe('design.md')
   })
 
   it('U11: 文件路径 base64 编码（防 XSS 注入）', async () => {
