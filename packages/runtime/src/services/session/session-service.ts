@@ -574,24 +574,16 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const stats = await client.getSessionStats()
     const cu = stats.contextUsage
     // pi 的 contextUsage 在 compact 后无新 turn 时返回 tokens=null（保守设计：
-    // compact 前 last assistant usage 反映压缩前 context size，不可信）。
-    // fallback：用 tokens.total（保留消息 usage 累加）近似当前占用——compact 后保留
-    // 消息少，累加值接近当前 context 占用。短期方案，准确度不如 pi 的 estimateContextTokens，
-    // 但避免了重开 session 时 context 用量完全空白（用户发一条消息后 turn_end 会刷成精确值）。
+    // compact 前 last assistant usage 反映压缩前 context size，不可信；只有 compact 后
+    // 产生新 assistant usage 才能算出真实 context 占用）。
+    // 此时不应 fallback 到 tokens.total——那是 session 全生命周期的 token 累加
+    // （含 cacheRead），远大于当前 context 占用，会显示荒谬的百分比（如 compact 后 978%）。
+    // 正确行为：返回 null，前端不显示 ctx 用量，等用户发消息后 turn_end 刷成精确值。
     if (cu && cu.tokens != null) {
       return {
         inputTokens: cu.tokens,
         contextLimit: cu.contextWindow,
         usagePercent: Math.round(cu.percent ?? 0),
-      }
-    }
-    const fallbackTokens = stats.tokens?.total
-    const contextWindow = cu?.contextWindow ?? 0
-    if (fallbackTokens && fallbackTokens > 0 && contextWindow > 0) {
-      return {
-        inputTokens: fallbackTokens,
-        contextLimit: contextWindow,
-        usagePercent: Math.round((fallbackTokens / contextWindow) * MAX_PERCENT),
       }
     }
     return null
