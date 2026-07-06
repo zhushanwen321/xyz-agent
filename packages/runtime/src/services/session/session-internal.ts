@@ -37,6 +37,8 @@ export interface ISessionServiceInternal {
   ensureActive(sessionId: string): Promise<IPiEngine>
   /** 按 RPC client 反查 managed session（更新 lastActiveAt / isGenerating 用）。 */
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined
+  /** 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。compact 后用 estimatedTokensAfter 刷新用量。 */
+  applyContextUpdate(sessionId: string, inputTokens: number): void
 
   // ── lifecycle 使用（Map 单写者：查/删经 Facade）──
   /** 只读查 Map，返回 managed session 视图（active 判定 + 字段读改）。 */

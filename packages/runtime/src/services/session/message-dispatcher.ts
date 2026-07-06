@@ -201,8 +201,9 @@ export class MessageDispatcher {
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
     })
+    let result
     try {
-      await client.compact(customInstructions)
+      result = await client.compact(customInstructions)
       console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     } catch (e) {
       const errMsg = toErrorMessage(e)
@@ -212,6 +213,25 @@ export class MessageDispatcher {
         payload: { sessionId, status: 'compacted', error: errMsg },
       })
       throw e
+    }
+    // 压缩成功：广播 summary 进对话流（SystemNotice）+ 刷新 context 用量。
+    // 两件事都在 dispatcher 编排——compact 是主动命令，副作用归位命令编排层（非 event-adapter）。
+    // AGENTS.md 规则 7.5：对话流状态必须实时可见 + 可重开恢复（持久化由 pi 写入 JSONL，重开经 converter 还原）。
+    if (result?.summary) {
+      this.broker.broadcast({
+        type: 'message.compactionSummary',
+        payload: {
+          sessionId,
+          summary: result.summary,
+          tokensBefore: result.tokensBefore,
+          timestamp: Date.now(),
+        },
+      })
+    }
+    if (result?.estimatedTokensAfter != null && result.estimatedTokensAfter > 0) {
+      // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
+      // 注意 estimatedTokensAfter 可能很小（压缩后），applyContextUpdate 对 0 会跳过，故判 > 0。
+      this.svc.applyContextUpdate(sessionId, result.estimatedTokensAfter)
     }
     this.broker.broadcast({
       type: 'session.compacted',

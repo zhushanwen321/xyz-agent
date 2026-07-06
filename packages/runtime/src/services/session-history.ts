@@ -31,10 +31,25 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
     throw e
   }
   // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架，消费方只做领域过滤。
+  // 保留 message entry（常规消息）+ compaction entry（压缩记录顶层 entry，无 message 字段）。
+  // compaction 转成 compactionSummary role 的伪消息，与 RPC 路径（pi get_messages 返回的 compactionSummary）
+  // 在 convertPiHistory 汇合，统一还原成 system 消息（AGENTS.md 规则 7.5：可重开恢复）。
   const piMessages = parseJsonl(content)
-    .filter((e): e is { type: string; message: unknown } =>
-      typeof e === 'object' && e !== null && (e as { type?: string }).type === 'message' && 'message' in e)
-    .map(e => e.message)
+    .filter((e): e is Record<string, unknown> =>
+      typeof e === 'object' && e !== null &&
+      ((e as { type?: string }).type === 'message' && 'message' in e ||
+       (e as { type?: string }).type === 'compaction'))
+    .map((e) => {
+      if (e.type === 'compaction') {
+        return {
+          role: 'compactionSummary',
+          summary: e.summary,
+          tokensBefore: e.tokensBefore,
+          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
+        }
+      }
+      return e.message
+    })
 
   return sessionStore.convertHistory(piMessages)
 }

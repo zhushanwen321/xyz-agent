@@ -107,6 +107,28 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 
 Runtime 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
 
+### 7.5 对话流状态必须可重开恢复 [HISTORICAL]
+
+**所有进入对话流的状态（消息、系统通知、压缩记录、工具结果等），必须同时满足两条：实时可见 + 重开 session 后仍可见。** 只做到实时可见、重开后消失的，视为未完成。
+
+事故背景：compact 执行后实时反馈缺失 + 重开 session 看不到压缩记录。根因是「实时链路」和「持久化链路」是两条独立的通路，只打通一条会导致：关掉 session 重开后，对话流回到压缩前的状态，用户以为压缩没发生或丢失了数据。
+
+两条通路必须同时维护：
+
+| 通路 | 职责 | 关键检查点 |
+|---|---|---|
+| **实时链路**（事件/RPC 响应 → 前端消息流） | 操作发生时立即在对话流显示反馈 | runtime 广播 `message.*` 事件携带完整 payload；前端 `chat-message-effects.ts` 有对应 effect 处理 |
+| **持久化链路**（session JSONL → 重开加载） | 重开 session 后历史完整呈现 | pi 写入 JSONL 的 entry 类型，runtime 读取时（`session-history.ts` 文件路径 / `message-converter.ts` RPC 路径）**都不能过滤掉**；前端 hydrate 能还原 |
+
+持久化链路的两条读取路径都要覆盖（缺一会导致「在线重开能看到、离线重开看不到」或反之）：
+
+1. **RPC 路径**（session 在线，有 pi 子进程）：`session-service.getHistory` → `client.getHistory()` → pi `get_messages` → `message-converter.ts` 的 `convertPiHistory`。converter 必须处理所有 pi 返回的 message role（`user`/`assistant`/`toolResult`/`compactionSummary`/`branchSummary` 等），不能静默丢弃未知 role。
+2. **文件路径**（session 离线，无 pi 子进程）：`session-history.ts` 的 `getHistoryFromFile` → 解析 JSONL。filter 不能只留 `type === 'message'`，pi 的顶层 entry 类型（`compaction`/`branch`/`bashExecution` 等）需按需放开并转换。
+
+**新增任何进入对话流的状态时，必须同时实现两条通路**。只补实时广播、不改 converter/文件读取的，会在重开时丢失。检测方法：操作后关闭 session 再重开，对话流应与关闭前一致。
+
+命令编排层（`message-dispatcher.ts`）是实时链路的归位点——主动发起的命令（如 compact）的副作用（生命周期广播 + summary 消息 + 关联状态刷新如 context 用量）都在 dispatcher 编排，不要分散到 event-adapter（event-adapter 只翻译 pi 推送的事件流，不编排命令副作用）。
+
 ### 8. Worktree 创建必须走 `git-cwt`
 
 创建新 worktree **必须使用 `git-cwt`**（`~/.shell/07-git-ws.sh`），不要手动 `git worktree add`。

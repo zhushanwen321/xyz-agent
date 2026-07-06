@@ -68,7 +68,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
   let lastAssistantWithToolCalls = -1
 
   for (const item of raw) {
-    const m = item as PiHistoryMessage | PiHistoryToolResult
+    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
@@ -90,6 +90,26 @@ export function convertPiHistory(raw: unknown[]): Message[] {
       } else {
         console.warn('[message-converter] toolResult with no preceding assistant message:', toolResult.toolCallId)
       }
+      continue
+    }
+
+    // compactionSummary：pi 压缩记录（role !== user/assistant/toolResult，结构不同：无 content，有 summary/tokensBefore）。
+    // 转成 system 消息 + compactionSummary 字段，前端 SystemNotice 渲染「上下文已压缩」。
+    // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时历史压缩记录经此分支还原。
+    if (m.role === 'compactionSummary') {
+      const cm = m as { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number }
+      result.push({
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: cm.summary ?? '上下文已压缩',
+        status: 'complete',
+        compactionSummary: {
+          summary: cm.summary,
+          tokensBefore: cm.tokensBefore,
+          timestamp: cm.timestamp ?? Date.now(),
+        },
+        timestamp: cm.timestamp ?? Date.now(),
+      })
       continue
     }
 

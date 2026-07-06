@@ -171,6 +171,7 @@ export type ServerMessageType =
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
   | 'extension:widget' | 'extension:status'
+  | 'message.compactionSummary'
   | 'extension:setEditorText'
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
@@ -233,6 +234,10 @@ export interface ServerMessageMapBase {
   'app.info': { appVersion: string; piVersion: string; publicSessionId?: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
+  // message.compactionSummary：上下文压缩摘要（compact 执行后推送，进对话流作 SystemNotice）。
+  // runtime message-dispatcher.compact() 从 pi CompactionResult 提取 summary/tokensBefore 广播。
+  // 前端 chat-message-effects 把它渲染成 system 消息（SystemNotice.vue「上下文已压缩」）。
+  'message.compactionSummary': { sessionId: string; summary?: string; tokensBefore?: number; timestamp?: number }
   // session.state_changed：session 级状态变更（model.switch 成功后推送，含新 modelId + 按新 contextWindow
   // 重算的用量 + 当前 thinkingLevel）。前端据 modelId/thinkingLevel 同步 Composer 工具条，据 usage 三字段
   // 刷新 ContextCapacityPopover。thinkingLevel optional（未设置时省略）。

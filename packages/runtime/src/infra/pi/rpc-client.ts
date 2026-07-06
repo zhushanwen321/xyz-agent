@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine, PiRpcResponse, PiSessionStats } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiRpcResponse, PiSessionStats, PiCompactionResult } from '../../services/ports/pi-engine.js'
 import { readRpcData } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
@@ -348,8 +348,9 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('get_messages')
   }
 
-  compact(customInstructions?: string): Promise<PiMessage> {
-    return this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
+  async compact(customInstructions?: string): Promise<PiCompactionResult> {
+    const data = readRpcData(await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS) as PiRpcResponse)
+    return data as unknown as PiCompactionResult
   }
 
   /**

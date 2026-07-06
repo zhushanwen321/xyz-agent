@@ -28,6 +28,18 @@ export interface PiCommandInfo {
 }
 
 /**
+ * pi compact RPC 返回的压缩结果（agent-session.ts CompactionResult）。
+ * dispatcher 用 summary/tokensBefore 广播 message.compactionSummary，
+ * 用 estimatedTokensAfter 触发 context.update 刷新用量。
+ */
+export interface PiCompactionResult {
+  summary: string
+  firstKeptEntryId: string
+  tokensBefore: number
+  estimatedTokensAfter?: number
+}
+
+/**
  * pi 当前上下文占用估算（get_session_stats.contextUsage）。
  * pi 从 session 历史实时估算，处理了 compaction 边界。
  * tokens=null 表示 compaction 后未跑新 turn，占用未知。
@@ -87,8 +99,8 @@ export interface IPiEngine {
   onEvent(listener: PiEventListener): () => void
 
   // ── session 级命令 ──
-  /** 压缩当前会话上下文（pi compact 命令）。customInstructions 透传给 pi 压缩 prompt。 */
-  compact(customInstructions?: string): Promise<PiMessage>
+  /** 压缩当前会话上下文（pi compact 命令）。customInstructions 透传给 pi 压缩 prompt。返回 CompactionResult 供 dispatcher 广播 summary + 刷新 context 用量。 */
+  compact(customInstructions?: string): Promise<PiCompactionResult>
   /** 清空当前会话上下文（pi clear 命令）。 */
   clear(): Promise<PiMessage>
 
