@@ -72,12 +72,13 @@ describe('ContextCapacityPopover 订阅 session.state_changed', () => {
     })
     await flushPromises()
 
-    // 未收到目标 session 的推送，hasUsage=false → 按钮隐藏（v-show 设 display:none）
+    // 未收到目标 session 的推送，hasUsage=false → 按钮始终显示，用量显「—」
     const btn = wrapper.find('[title="上下文容量"]')
-    expect(btn.element.style.display).toBe('none')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('—')
   })
 
-  it('U31: contextLimit=0 且 inputTokens=0（未跑过 agent）→ 按钮隐藏', async () => {
+  it('U31: contextLimit=0 且 inputTokens=0（未跑过 agent）→ 按钮显示「—」占位', async () => {
     const wrapper = mount(ContextCapacityPopover, {
       props: { sessionId: 's2' },
     })
@@ -96,9 +97,10 @@ describe('ContextCapacityPopover 订阅 session.state_changed', () => {
     })
     await flushPromises()
 
-    // 未跑过 agent（used=0）→ hasUsage=false → 按钮隐藏
+    // 未跑过 agent（used=0）→ 按钮始终显示，用量显「—」
     const btn = wrapper.find('[title="上下文容量"]')
-    expect(btn.element.style.display).toBe('none')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('—')
   })
 
   it('contextLimit=0 但 inputTokens>0（provider 未配 contextWindow）→ 按钮显示已用量，不显百分比', async () => {

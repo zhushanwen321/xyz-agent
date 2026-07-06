@@ -8,7 +8,6 @@
   <HoverCard>
     <HoverCardTrigger>
       <Button
-        v-show="hasUsage"
         variant="ghost"
         :class="
           cn(
@@ -18,7 +17,7 @@
         "
         title="上下文容量"
       >
-        <span class="tabular-nums">{{ usedDisplay }}</span>
+        <span class="tabular-nums">{{ hasUsage ? usedDisplay : '—' }}</span>
         <template v-if="hasPercent">
           <span aria-hidden="true">·</span>
           <span class="tabular-nums">{{ stats.percent }}%</span>
