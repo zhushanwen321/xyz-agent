@@ -122,39 +122,32 @@
         </span>
       </Button>
 
-      <!-- 折叠 trace：working 或 expanded 时展开 -->
+      <!-- 折叠 trace：working 或 expanded 时展开。
+           块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
+           - streaming 态：所有块按时序展开，末位 text 块带 streaming 光标
+           - complete 态：末位 assistant 的 text 块跳过（已在底部 summary），其余按时序 -->
       <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
         <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
           <Block
-            v-if="isMidAssistant(aIdx) && assistant.content.trim()"
-            type="text"
-            :content="assistant.content"
+            v-for="(blk, bIdx) in traceBlocks(assistant, aIdx)"
+            :key="`${assistant.id}-${blk.kind}-${bIdx}`"
+            :type="blk.kind"
+            :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
+            :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
+            :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
+            :working="turn.isWorking"
+            :streaming="isStreamingBlock(aIdx, blk)"
             :session-id="sessionId"
-          />
-          <Block
-            v-for="th in assistant.thinking ?? []"
-            :key="`th-${th.id}`"
-            type="thinking"
-            :content="th.content"
-            :collapsed="th.collapsed"
-            :working="turn.isWorking"
-          />
-          <Block
-            v-for="tc in assistant.toolCalls ?? []"
-            :key="`tc-${tc.id}`"
-            type="tool"
-            :tool="tc"
-            :working="turn.isWorking"
           />
         </template>
       </div>
 
       <hr v-if="turn.hasFoldable || turn.assistants.length > 0" class="border-0 border-t border-border" />
 
-      <!-- 收尾 summary：仅最后一条 assistant.content，含 hover 复制/复制MD/fork（markdown 渲染） -->
-      <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
+      <!-- 收尾 summary：仅 complete 态渲染（draft §4 收尾位固定不折叠，作回合焦点）。
+           streaming 态 text 在 trace 内按真实时序展示（末位 text 块带光标），不在此重复。 -->
+      <div v-if="summaryText && !turn.isWorking" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
-        <span v-if="isStreamingText" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
         <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
         <div
           v-if="!isStreaming && lastAssistant"
@@ -213,8 +206,9 @@ import { storeToRefs } from 'pinia'
 import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { MessageTurn } from '@/composables/logic/messageTurns'
-import { countThinking, countToolCalls } from '@/composables/logic/messageTurns'
+import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
+import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
+import type { ThinkingBlock, ToolCall, Message } from '@xyz-agent/shared'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useCopy } from '@/composables/effects/useCopy'
@@ -356,6 +350,8 @@ async function onForkConfirm(): Promise<void> {
 
 /**
  * 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠，作回合焦点）。
+ * streaming 态 text 不在此显示（在 trace 内按真实时序展示，见 traceBlocks），
+ * 模板已用 `v-if="summaryText && !turn.isWorking"` 守卫；此处仅提供文本。
  */
 const summaryText = computed(() => {
   const as = props.turn.assistants
@@ -363,14 +359,31 @@ const summaryText = computed(() => {
   return last?.content?.trim() ? last.content : ''
 })
 
-/** 该 assistant 是否为「中间产出」（非最后一条）→ content 折进 trace 而非收尾 */
-function isMidAssistant(idx: number): boolean {
-  return idx < props.turn.assistants.length - 1
+/** 最后一条 assistant 的索引（streaming 光标 / complete 跳过末位 text 用） */
+const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
+
+/**
+ * 取某条 assistant 在 trace 内应渲染的有序块（draft §4：按真实时序）。
+ * - complete 态末位 assistant：跳过 text 块（已在底部 summary），仅显 thinking/tool 过程
+ * - 其余（streaming 任意位 / complete 非末位）：全部块按时序
+ */
+function traceBlocks(msg: Message, idx: number): OrderedBlock[] {
+  const blocks = expandAssistantBlocks(msg)
+  if (!props.turn.isWorking && idx === lastAssistantIdx.value) {
+    return blocks.filter((b) => b.kind !== 'text')
+  }
+  return blocks
 }
 
-/** 最后一条 assistant 是否仍 streaming（光标） */
-const isStreamingText = computed(() => {
-  const last = props.turn.assistants[props.turn.assistants.length - 1]
-  return props.turn.isWorking && last?.status === 'streaming'
-})
+/**
+ * 某个块是否应显示 streaming 光标（draft §1 末尾光标）。
+ * 仅 streaming 态的末位 assistant 的 text 块显示（text 正在流式增长）。
+ */
+function isStreamingBlock(aIdx: number, blk: OrderedBlock): boolean {
+  return (
+    props.turn.isWorking &&
+    aIdx === lastAssistantIdx.value &&
+    blk.kind === 'text'
+  )
+}
 </script>

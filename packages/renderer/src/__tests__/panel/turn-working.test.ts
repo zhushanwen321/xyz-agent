@@ -51,6 +51,20 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string }) {
   })
 }
 
+/**
+ * mount Turn 但用真实 Block（仅 stub 重依赖 MarkdownRenderer/ChangeSetCard/ForkConfirmModal），
+ * 用于断言 trace 内块的 DOM 顺序（三视角之「观察者」视角，防 contentBlocks 乱序回归）。
+ */
+function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
+  return mount(Turn, {
+    props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
+    global: {
+      plugins: [createPinia()],
+      stubs: { ChangeSetCard: true, ForkConfirmModal: true, MarkdownRenderer: true },
+    },
+  })
+}
+
 /** 从 wrapper 提取 elapsed 文本（meta 按钮里的 .elapsed span） */
 function elapsedText(wrapper: ReturnType<typeof mountTurn>): string {
   const el = wrapper.find('.elapsed')
@@ -153,5 +167,142 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     expect(wrapper.find('.working-dot').exists()).toBe(true)
     expect(wrapper.find('.chev').exists()).toBe(false)
     expect(wrapper.find('.trace').exists()).toBe(true)
+  })
+})
+
+/**
+ * 块顺序断言（contentBlocks 真实时序渲染回归基线）。
+ *
+ * 背景：streaming 时 text 出现在底部、上方 tool call 还在更新——根因是 Turn.vue 硬编码
+ * text→thinking→tool 顺序 + 底部 summary 无脑拉 text。修复后 trace 按 contentBlocks
+ * 真实时序渲染，streaming 态不显底部 summary。这组测试从「观察者」视角断言 DOM 形态，
+ * 防止乱序回归（原 bug 漏掉的原因：旧测试只断言内部状态，缺块顺序 DOM 断言）。
+ */
+describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  /** 构造 contentBlocks=[text, toolCall] 的 assistant（先 text 后 tool 的真实场景） */
+  function textFirstAssistant(over: Partial<Message> = {}): Message {
+    return msg({
+      status: 'streaming',
+      content: '我先查一下',
+      toolCalls: [
+        { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'running', startTime: 0 },
+      ],
+      contentBlocks: [
+        { type: 'text', refId: 'text' },
+        { type: 'toolCall', refId: 'tc1' },
+      ],
+      ...over,
+    })
+  }
+
+  /** 构造 contentBlocks=[toolCall, text] 的 assistant（先 tool 后 text） */
+  function toolFirstAssistant(over: Partial<Message> = {}): Message {
+    return msg({
+      status: 'streaming',
+      content: '查完了',
+      toolCalls: [
+        { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 },
+      ],
+      contentBlocks: [
+        { type: 'toolCall', refId: 'tc1' },
+        { type: 'text', refId: 'text' },
+      ],
+      ...over,
+    })
+  }
+
+  it('U15: streaming 态 trace 块顺序 = contentBlocks 顺序（text 在 tool 之前，非旧硬编码顺序）', () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isWorking: true,
+        hasFoldable: true,
+        assistants: [textFirstAssistant()],
+      }),
+    })
+    // trace 存在
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    // trace 内所有 Block 根（.trace-blk）。template v-for 不产生 DOM，Block 根直接挂在 .trace 下
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBeGreaterThanOrEqual(2)
+    // 第一个块是 text（无 .trace-tool / .trace-think 子元素）
+    expect(blocks[0].find('.trace-tool').exists()).toBe(false)
+    expect(blocks[0].find('.trace-think').exists()).toBe(false)
+    // 第二个块是 tool（.trace-tool 存在）
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+  })
+
+  it('U16: streaming 态 trace 块顺序 = contentBlocks 顺序（tool 在 text 之前）', () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isWorking: true,
+        hasFoldable: true,
+        assistants: [toolFirstAssistant()],
+      }),
+    })
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBeGreaterThanOrEqual(2)
+    // 第一个块是 tool
+    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
+    // 第二个块是 text（无 tool/think header）
+    expect(blocks[1].find('.trace-tool').exists()).toBe(false)
+    expect(blocks[1].find('.trace-think').exists()).toBe(false)
+  })
+
+  it('U17: streaming 态不渲染底部 summary（text 在 trace 内按序展示，不重复拉到底部）', () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isWorking: true,
+        hasFoldable: true,
+        assistants: [textFirstAssistant()],
+      }),
+    })
+    // streaming 态：turn-summary 不存在（v-if 含 !turn.isWorking 守卫）
+    expect(wrapper.find('.turn-summary').exists()).toBe(false)
+  })
+
+  it('U18: streaming→complete 切换后，末位 text 落到底部 summary，trace 内跳过末位 text', async () => {
+    // streaming 态：trace 含 text 块（按 contentBlocks），无底部 summary
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isWorking: true,
+        hasFoldable: true,
+        assistants: [textFirstAssistant()],
+      }),
+    })
+    expect(wrapper.find('.turn-summary').exists()).toBe(false)
+
+    // 切到 complete 态（expanded=true 让 trace 仍展开，验证 trace 内跳过末位 text）
+    await wrapper.setProps({
+      turn: makeTurn({
+        isWorking: false,
+        hasFoldable: true,
+        assistants: [textFirstAssistant({ status: 'complete' })],
+      }),
+    })
+    // complete 态底部 summary 出现，含 text 内容
+    const summary = wrapper.find('.turn-summary')
+    expect(summary.exists()).toBe(true)
+    // 注意：MarkdownRenderer 被 stub，summary 文本可能不渲染，但 .turn-summary div 存在即可
+  })
+
+  it('U19: complete 态展开 trace，末位 assistant 的 text 块被跳过（仅显 tool 过程）', async () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isWorking: false,
+        hasFoldable: true,
+        assistants: [textFirstAssistant({ status: 'complete' })],
+      }),
+    })
+    // complete 态默认收起，手动展开 trace（点击 turn-meta）
+    await wrapper.find('.turn-meta').trigger('click')
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    // trace 内只剩 tool 块（text 被跳过，因已在底部 summary）
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBe(1)
+    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
   })
 })

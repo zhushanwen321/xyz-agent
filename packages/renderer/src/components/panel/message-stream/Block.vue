@@ -24,9 +24,11 @@
       <p v-if="thinkingExpanded" class="mt-1 text-[12px] italic leading-relaxed text-muted">{{ content }}</p>
     </div>
 
-    <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染） -->
+    <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
+         streaming 光标（draft §1 末尾光标）：streaming 态末位 text 块显示，从 Turn.vue 传入 -->
     <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12.5px] leading-relaxed text-muted">
       <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
+      <span v-if="streaming" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
     </div>
 
     <!-- tool_call 块：默认收起，header 点击 toggle；running 强制展开 -->
@@ -78,6 +80,8 @@ const props = defineProps<{
   collapsed?: boolean
   /** working 态（turn 进行中）：thinking/tool 强制全展开且不可手动收（draft §1 无背景下划线展开） */
   working?: boolean
+  /** streaming 光标（draft §1 末尾光标）：仅末位 text 块在 working 态显示，Turn.vue 传入 */
+  streaming?: boolean
   /** 所属 session（透传给 MarkdownRenderer 供文件路径打开 DetailPane 用） */
   sessionId?: string | null
 }>()

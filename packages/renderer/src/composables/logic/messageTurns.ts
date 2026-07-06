@@ -13,7 +13,7 @@
  * - 遇到 system 消息 → 产出独立 SystemNotice 项（不并入 turn）
  * - streaming 中的 turn（最后一条 assistant status==='streaming'）→ working 态，默认展开 trace
  */
-import type { Message } from '@xyz-agent/shared'
+import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /** 一个渲染回合：起点 user + 其后的 assistant 消息序列 */
 export interface MessageTurn {
@@ -120,4 +120,54 @@ export function hasFailedTool(turn: MessageTurn): boolean {
   return turn.assistants.some((m) =>
     m.toolCalls?.some((t) => t.status === 'error'),
   )
+}
+
+/**
+ * 有序渲染块 —— 单条 assistant Message 内部块按真实时序解出后的渲染单元。
+ * Turn.vue trace 区按此数组顺序 v-for 渲染 Block.vue。
+ * - text: ref 是 content 字符串（整条 assistant 的纯文本，因 pi agent-loop 每 turn
+ *   只 emit 一次 assistant message_start，text_delta 全部 append 到同一 content 字段）
+ * - thinking/tool: ref 指向对应数组的元素对象
+ */
+export interface OrderedBlock {
+  kind: 'thinking' | 'tool' | 'text'
+  ref: ThinkingBlock | ToolCall | string
+}
+
+/**
+ * 把单条 assistant Message 的内部块按 contentBlocks 真实时序解成有序列表（draft §4：
+ * 「展开态下 message-stream 由 7 类块按真实时序排列」）。
+ *
+ * - 有 contentBlocks：严格按其顺序解出，引用不到（异常 id）的块跳过
+ * - 无 contentBlocks（降级）：旧顺序 text→thinking→tool，兼容边界
+ *   （实时流和历史消息路径都会填 contentBlocks，降级仅防御异常/手工构造数据）
+ *
+ * 纯函数：相同输入相同输出，无副作用。
+ */
+export function expandAssistantBlocks(msg: Message): OrderedBlock[] {
+  const blocks = msg.contentBlocks
+  // 有 contentBlocks：按真实时序解
+  if (blocks && blocks.length > 0) {
+    const result: OrderedBlock[] = []
+    for (const b of blocks) {
+      if (b.type === 'text') {
+        // text 块的 refId 恒为 'text'（chat-message-effects / message-converter 约定），
+        // 实际内容取 msg.content（text_delta 累积的完整字符串）
+        if (msg.content) result.push({ kind: 'text', ref: msg.content })
+      } else if (b.type === 'thinking') {
+        const th = msg.thinking?.find((t) => t.id === b.refId)
+        if (th) result.push({ kind: 'thinking', ref: th })
+      } else if (b.type === 'toolCall') {
+        const tc = msg.toolCalls?.find((t) => t.id === b.refId)
+        if (tc) result.push({ kind: 'tool', ref: tc })
+      }
+    }
+    return result
+  }
+  // 降级：无 contentBlocks，旧顺序 text→thinking→tool
+  const fallback: OrderedBlock[] = []
+  if (msg.content.trim()) fallback.push({ kind: 'text', ref: msg.content })
+  for (const th of msg.thinking ?? []) fallback.push({ kind: 'thinking', ref: th })
+  for (const tc of msg.toolCalls ?? []) fallback.push({ kind: 'tool', ref: tc })
+  return fallback
 }
