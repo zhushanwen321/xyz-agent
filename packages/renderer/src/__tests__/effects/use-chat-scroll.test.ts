@@ -1,20 +1,30 @@
 /**
- * useChatScroll 单测 —— stickToBottom 真实检测 + unreadBelow + guard（plan.md U13–U17）。
+ * useChatScroll 单测 —— 锚定判定机制（用户输入信号驱动）。
  *
- * 设计：scrollToBottom(behavior, force=false)。
- * - force=false（默认，程序自动滚动）：受 stickToBottom guard，非贴底时不滚只置 unreadBelow
- * - force=true（用户「回到底部」浮层）：强制滚动
- * onScroll 维护 stickToBottom，回贴底时清零 unreadBelow。
+ * 核心不变量：**stickToBottom = false 只由确定的用户输入信号驱动，onScroll 永远不翻 false。**
+ *
+ * - 用户上滑 → false：onWheel（deltaY<0）或 onScroll 检测 scrollTop 明显减小
+ * - 回到底部 → true：onScroll 检测 distance ≤ BOTTOM_THRESHOLD
+ * - showJumpButton === !stickToBottom（computed 不变量）
  *
  * 覆盖：
- * - U13/U14：onScroll 贴底阈值（BOTTOM_THRESHOLD=40px）
+ * - U13/U14：onScroll 贴底阈值（BOTTOM_THRESHOLD=40px）→ 回到底部翻 true
  * - U15：非贴底 + scrollToBottom('auto') guard 拦截 + unreadBelow=true
  * - U16：onScroll 回贴底清零 unreadBelow + stickToBottom=true
  * - U17：贴底态 scrollToBottom('auto') 执行 el.scrollTo + stickToBottom=true
+ * - U15b：非贴底 + scrollToBottom('smooth', force=true) 强制滚动
+ * - U20-U25b：showJumpButton（computed 不变量）
+ * - U33：onWheel deltaY<0 → stickToBottom=false（用户上滑主路径）
+ * - U34：onWheel deltaY>0（下滚）→ 不改变 stickToBottom
+ * - U35：onScroll scrollTop 明显减小 → stickToBottom=false（scrollbar/键盘兜底）
+ * - U36：程序性 scrollToBottom 后 onScroll（异步增长 distance>阈值）→ 保持 true（核心回归）
+ * - U37：showJumpButton === !stickToBottom 任意翻转后校验（computed 不变量）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/effects/use-chat-scroll.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { nextTick } from 'vue'
+import type { Ref } from 'vue'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 
 /**
@@ -25,6 +35,21 @@ function setScroll(el: HTMLElement, scrollHeight: number, clientHeight: number, 
   Object.defineProperty(el, 'scrollHeight', { configurable: true, value: scrollHeight })
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight })
   Object.defineProperty(el, 'scrollTop', { configurable: true, value: scrollTop })
+}
+
+/** 构造 wheel 事件（happy-dom 的 WheelEvent 支持 deltaY） */
+function wheelEvent(deltaY: number): WheelEvent {
+  return new WheelEvent('wheel', { deltaY })
+}
+
+/**
+ * 绑定 scrollEl 并等待 watch 回调执行（wheel listener 在 watch(scrollEl) 的
+ * pre-flush 回调里注册，需 await nextTick 后才绑上）。生产环境无影响（用户不可能
+ * 挂载后 0ms 内滚动），仅测试时序需要。
+ */
+async function bindScroll(scrollEl: Ref<HTMLElement | null>, el: HTMLElement): Promise<void> {
+  scrollEl.value = el
+  await nextTick()
 }
 
 /**
@@ -45,16 +70,17 @@ describe('useChatScroll · stickToBottom + unreadBelow + guard', () => {
     HTMLElement.prototype.scrollTo = vi.fn()
   })
 
-  it('U13: onScroll 差 41px（>阈值 40）→ stickToBottom=false', () => {
+  it('U13: onScroll 差 41px（>阈值 40）但 scrollTop 未减小 → stickToBottom 保持 true（onScroll 不翻 false）', () => {
     const { scrollEl, onScroll, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
     scrollEl.value = el
-    setScroll(el, 1000, 800, 159) // 1000-800-159 = 41px
+    setScroll(el, 1000, 800, 159) // 1000-800-159 = 41px，scrollTop=159 > lastScrollTop=0（未减小）
     onScroll()
-    expect(stickToBottom.value).toBe(false)
+    // 核心不变量：onScroll 永不翻 false。程序性滚动后 scrollTop 增大但 distance>阈值不应误判脱离
+    expect(stickToBottom.value).toBe(true)
   })
 
-  it('U14: onScroll 差 40px（≤阈值）→ stickToBottom=true', () => {
+  it('U14: onScroll 差 40px（≤阈值）→ stickToBottom=true（回到底部）', () => {
     const { scrollEl, onScroll, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
     scrollEl.value = el
@@ -64,25 +90,29 @@ describe('useChatScroll · stickToBottom + unreadBelow + guard', () => {
   })
 
   it('U15: 非贴底 + scrollToBottom("auto") 被 guard 拦截 + unreadBelow=true', async () => {
-    const { scrollEl, onScroll, scrollToBottom, unreadBelow } = useChatScroll()
+    const { scrollEl, scrollToBottom, unreadBelow, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
-    setScroll(el, 1000, 800, 100) // 差 120px，非贴底
-    onScroll()
+    await bindScroll(scrollEl, el)
+    setScroll(el, 1000, 800, 100) // 差 120px
+    // 用户先上滑脱离锚定
+    el.dispatchEvent(wheelEvent(-100))
+    expect(stickToBottom.value).toBe(false)
     expect(unreadBelow.value).toBe(false)
     await scrollToBottom('auto') // 程序自动滚动，受 guard
     expect(el.scrollTo).not.toHaveBeenCalled()
     expect(unreadBelow.value).toBe(true)
   })
 
-  it('U16: unreadBelow=true → onScroll 回贴底清零', () => {
+  it('U16: unreadBelow=true → onScroll 回贴底清零', async () => {
     const { scrollEl, onScroll, unreadBelow, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
+    await bindScroll(scrollEl, el)
     setScroll(el, 1000, 800, 100)
-    onScroll() // 非贴底
+    // 用户上滑脱离 + 程序滚动被 guard 拦置 unreadBelow
+    el.dispatchEvent(wheelEvent(-100))
+    onScroll()
     unreadBelow.value = true // 模拟新消息到达置位
-    // 用户拉到底
+    // 用户拉到底（scrollTop 增大到贴底）
     setScroll(el, 1000, 800, 200)
     onScroll()
     expect(unreadBelow.value).toBe(false)
@@ -100,11 +130,12 @@ describe('useChatScroll · stickToBottom + unreadBelow + guard', () => {
   })
 
   it('U15b: 非贴底 + scrollToBottom("smooth", force=true) 强制滚动 + 清 unreadBelow', async () => {
-    const { scrollEl, onScroll, scrollToBottom, unreadBelow, stickToBottom } = useChatScroll()
+    const { scrollEl, scrollToBottom, unreadBelow, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
+    await bindScroll(scrollEl, el)
     setScroll(el, 1000, 800, 100)
-    onScroll() // 非贴底
+    el.dispatchEvent(wheelEvent(-100)) // 用户上滑脱离
+    expect(stickToBottom.value).toBe(false)
     unreadBelow.value = true
     // 用户点「回到底部」：强制滚动
     await scrollToBottom('smooth', true)
@@ -115,102 +146,94 @@ describe('useChatScroll · stickToBottom + unreadBelow + guard', () => {
 })
 
 /**
- * showJumpButton —— 「用户当前不在底部」语义，独立于 unreadBelow。
- * 与 stickToBottom 互斥不变量：showJumpButton === !stickToBottom。
- * 驱动 MessageStream 的「回到底部」浮层 v-if，修复 W3 bug（点击后上滑按钮不重现）。
+ * showJumpButton —— computed(() => !stickToBottom.value)，与 stickToBottom 互斥。
+ * 驱动 MessageStream 的「回到底部」浮层 v-if。computed 保证不变量，无需手动同步。
  */
-describe('useChatScroll · showJumpButton', () => {
+describe('useChatScroll · showJumpButton（computed 不变量）', () => {
   beforeEach(() => {
     HTMLElement.prototype.scrollTo = vi.fn()
   })
 
-  it('U20: 非贴底（差 120px）onScroll → showJumpButton=true', () => {
-    const { scrollEl, onScroll, showJumpButton } = useChatScroll()
+  it('U20: 用户上滑（wheel deltaY<0）→ showJumpButton=true', async () => {
+    const { scrollEl, showJumpButton } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
-    setScroll(el, 1000, 800, 100) // 1000-800-100 = 120px
-    onScroll()
+    await bindScroll(scrollEl, el)
+    setScroll(el, 1000, 800, 100)
+    expect(showJumpButton.value).toBe(false) // 初始贴底
+    el.dispatchEvent(wheelEvent(-100))
     expect(showJumpButton.value).toBe(true)
   })
 
-  it('U21: 贴底（差 0px）onScroll → showJumpButton=false', () => {
-    const { scrollEl, onScroll, showJumpButton } = useChatScroll()
+  it('U21: 贴底（初始）→ showJumpButton=false', () => {
+    const { scrollEl, showJumpButton } = useChatScroll()
     const el = document.createElement('div')
     scrollEl.value = el
-    setScroll(el, 1000, 800, 200) // 1000-800-200 = 0px
-    onScroll()
+    setScroll(el, 1000, 800, 200) // 差 0，贴底
     expect(showJumpButton.value).toBe(false)
   })
 
-  it('U22: 上滑(showJumpButton=true) → setScroll 回贴底 → onScroll → showJumpButton=false', () => {
+  it('U22: 上滑→onScroll 回贴底→showJumpButton=false', async () => {
     const { scrollEl, onScroll, showJumpButton } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
-    // 上滑：非贴底
+    await bindScroll(scrollEl, el)
     setScroll(el, 1000, 800, 100)
-    onScroll()
+    el.dispatchEvent(wheelEvent(-100)) // 上滑脱离
     expect(showJumpButton.value).toBe(true)
-    // 用户手动滚回底部（滚轮回底也清，不只点按钮才清）
+    // 用户滚回底部
     setScroll(el, 1000, 800, 200)
     onScroll()
     expect(showJumpButton.value).toBe(false)
   })
 
-  it('U23: showJumpButton=true → scrollToBottom("smooth", true) → scrollTo 调用 + showJumpButton=false + stickToBottom=true', async () => {
-    const { scrollEl, onScroll, scrollToBottom, showJumpButton, stickToBottom } = useChatScroll()
+  it('U23: showJumpButton=true → scrollToBottom("smooth", true) → showJumpButton=false + stickToBottom=true', async () => {
+    const { scrollEl, scrollToBottom, showJumpButton, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
+    await bindScroll(scrollEl, el)
     setScroll(el, 1000, 800, 100) // 非贴底
-    onScroll()
+    el.dispatchEvent(wheelEvent(-100)) // 上滑脱离
     expect(showJumpButton.value).toBe(true)
     await scrollToBottom('smooth', true)
-    expect(el.scrollTo).toHaveBeenCalled()
     expect(showJumpButton.value).toBe(false)
     expect(stickToBottom.value).toBe(true)
   })
 
-  it('U24: 贴底→上滑→点按钮回底→再上滑 → 按钮每次上滑都出现（核心 bug 回归）', () => {
-    const { scrollEl, onScroll, showJumpButton } = useChatScroll()
+  it('U24: 贴底→上滑→回底→再上滑 → 按钮每次上滑都出现（computed 重新跟随）', async () => {
+    const { scrollEl, onScroll, scrollToBottom, showJumpButton } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
-    // 贴底
-    setScroll(el, 1000, 800, 200)
-    onScroll()
+    await bindScroll(scrollEl, el)
+    setScroll(el, 1000, 800, 200) // 贴底
     expect(showJumpButton.value).toBe(false)
     // 上滑
-    setScroll(el, 1000, 800, 100)
-    onScroll()
+    el.dispatchEvent(wheelEvent(-100))
     expect(showJumpButton.value).toBe(true)
-    // 点按钮回底（这里用 onScroll 模拟滚回底清按钮，等价 W3 修复后行为）
-    setScroll(el, 1000, 800, 200)
-    onScroll()
+    // 点按钮回底（force=true 设 stickToBottom=true，computed 自动同步）
+    await scrollToBottom('smooth', true)
     expect(showJumpButton.value).toBe(false)
-    // 再上滑 → 按钮必须再次出现（原 bug 在此：unreadBelow 不会再被置 true）
-    setScroll(el, 1000, 800, 100)
-    onScroll()
+    // 再上滑 → 按钮必须再次出现
+    el.dispatchEvent(wheelEvent(-100))
     expect(showJumpButton.value).toBe(true)
   })
 
-  it('U25: 阈值边界——差 41px→showJumpButton=true，差 40px→showJumpButton=false', () => {
-    const { scrollEl, onScroll, showJumpButton } = useChatScroll()
+  it('U25: 阈值边界——onScroll 差 40px→stickToBottom=true，差 41px（scrollTop 未减）→保持 true', () => {
+    const { scrollEl, onScroll, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
     scrollEl.value = el
-    // 差 41px（>阈值）
-    setScroll(el, 1000, 800, 159) // 1000-800-159 = 41px
+    // 差 41px，scrollTop 增大（程序性滚动后），不翻 false
+    setScroll(el, 1000, 800, 159)
     onScroll()
-    expect(showJumpButton.value).toBe(true)
-    // 差 40px（≤阈值）
-    setScroll(el, 1000, 800, 160) // 1000-800-160 = 40px
+    expect(stickToBottom.value).toBe(true)
+    // 差 40px（≤阈值）→ 回底翻 true
+    setScroll(el, 1000, 800, 160)
     onScroll()
-    expect(showJumpButton.value).toBe(false)
+    expect(stickToBottom.value).toBe(true)
   })
 
   it('U25b: showJumpButton=true → scrollToBottom("auto", true)（切 session）→ showJumpButton=false', async () => {
-    const { scrollEl, onScroll, scrollToBottom, showJumpButton } = useChatScroll()
+    const { scrollEl, scrollToBottom, showJumpButton } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
+    await bindScroll(scrollEl, el)
     setScroll(el, 1000, 800, 100) // 非贴底
-    onScroll()
+    el.dispatchEvent(wheelEvent(-100)) // 上滑脱离
     expect(showJumpButton.value).toBe(true)
     // 切会话强制滚到底
     await scrollToBottom('auto', true)
@@ -219,152 +242,114 @@ describe('useChatScroll · showJumpButton', () => {
 })
 
 /**
- * programmaticScrolling guard —— smooth 滚动动画期间 onScroll 不翻转 stickToBottom。
+ * 锚定判定机制 —— wheel + scrollTop 方向 + 程序性滚动不误判。
  *
- * [HISTORICAL] 事故：用户点「回到底部」→ scrollToBottom('smooth', true) 启动动画 →
- * 动画中途每帧触发 onScroll，读到非终态位置（distance > 阈值）→ stickToBottom 被翻 false →
- * 后续 streaming 的 scrollToBottom('auto')（force=false）全被 guard 拦截 → streaming 不跟随。
- * 修复：smooth 期间置 programmaticScrolling=true，onScroll 检测到此标志直接 return，
- * scrollend / 超时清除。
+ * 核心不变量：onScroll 永不把 stickToBottom 翻 false。翻 false 只由：
+ * - onWheel deltaY<0（用户滚轮/触控板上滑）
+ * - onScroll 检测 scrollTop 明显减小（拖滚动条/键盘，兜底非 wheel 上滑）
  */
-describe('useChatScroll · programmaticScrolling guard（smooth 动画锚定保护）', () => {
+describe('useChatScroll · 锚定判定（wheel + scrollTop 方向）', () => {
   beforeEach(() => {
     HTMLElement.prototype.scrollTo = vi.fn()
   })
 
-  // U26:核心回归 —— smooth 滚动后，动画中途 onScroll（非贴底位置）不翻转 stickToBottom
-  it('U26: scrollToBottom("smooth", true) 后 onScroll 读到中途位置（差 200px）→ stickToBottom 保持 true', async () => {
-    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+  // U33:用户滚轮上滑 → stickToBottom=false（主路径）
+  it('U33: onWheel deltaY<0（上滑）→ stickToBottom=false', async () => {
+    const { scrollEl, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
-    // 起始非贴底（用户点了「回到底部」按钮）
-    setScroll(el, 1000, 800, 100)
-    await scrollToBottom('smooth', true)
+    await bindScroll(scrollEl, el)
     expect(stickToBottom.value).toBe(true)
-    // smooth 动画第 N 帧到达中途位置（差 200px，非终态）
-    setScroll(el, 1000, 800, 0) // 1000-800-0 = 200px，仍非贴底
-    onScroll()
-    // 关键断言：保护期内 stickToBottom 不被翻转（否则 streaming scrollToBottom 被 guard 拦）
-    expect(stickToBottom.value).toBe(true)
+    el.dispatchEvent(wheelEvent(-100))
+    expect(stickToBottom.value).toBe(false)
   })
 
-  // U27:scrollend 触发后保护期结束，onScroll 恢复正常判定
-  it('U27: smooth 滚动后派发 scrollend → onScroll 恢复正常（用户上滑能翻 false）', async () => {
-    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+  // U34:用户下滚不改变 stickToBottom（回到底部由 onScroll 的 distance 判定）
+  it('U34: onWheel deltaY>0（下滚）→ 不改变 stickToBottom', async () => {
+    const { scrollEl, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    await bindScroll(scrollEl, el)
+    setScroll(el, 1000, 800, 100)
+    // 先上滑脱离
+    el.dispatchEvent(wheelEvent(-100))
+    expect(stickToBottom.value).toBe(false)
+    // 下滚：不应自动恢复贴底（需 onScroll distance 判定）
+    el.dispatchEvent(wheelEvent(100))
+    expect(stickToBottom.value).toBe(false)
+  })
+
+  // U35:onScroll 检测 scrollTop 明显减小 → false（拖滚动条/键盘兜底）
+  it('U35: onScroll scrollTop 明显减小（>SCROLL_UP_DELTA=10）→ stickToBottom=false', () => {
+    const { scrollEl, onScroll, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
     scrollEl.value = el
+    // 先模拟程序滚到底（scrollTop=200，lastScrollTop 更新为 200）
+    setScroll(el, 1000, 800, 200)
+    onScroll()
+    expect(stickToBottom.value).toBe(true)
+    // 用户拖滚动条上滑（scrollTop 减小到 100，减小 100px > 10）
     setScroll(el, 1000, 800, 100)
-    await scrollToBottom('smooth', true)
-    // 模拟 scrollend（浏览器动画结束派发）
-    el.dispatchEvent(new Event('scrollend'))
-    // 保护期结束后，用户上滑到非贴底 → onScroll 正常翻 false
-    setScroll(el, 1000, 800, 0) // 差 200px
     onScroll()
     expect(stickToBottom.value).toBe(false)
   })
 
-  // U28:'auto' 瞬间滚动不进入保护期（onScroll 正常判定，强化贴底）
-  it('U28: scrollToBottom("auto") 不触发保护期——后续 onScroll 正常判定', async () => {
+  // U35b:scrollTop 减小但不超过 SCROLL_UP_DELTA → 不误判（防抖动）
+  it('U35b: onScroll scrollTop 减小 ≤SCROLL_UP_DELTA（≤10px）→ stickToBottom 不变（防抖动）', () => {
+    const { scrollEl, onScroll, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200)
+    onScroll()
+    // scrollTop 仅减小 5px（< 10）——可能是浏览器抖动或亚像素，不视为用户上滑
+    setScroll(el, 1000, 800, 195)
+    onScroll()
+    expect(stickToBottom.value).toBe(true)
+  })
+
+  // U36 [核心回归]：程序性 scrollToBottom 后内容异步增长 → onScroll 读 distance>阈值但 scrollTop 未减 → 保持 true
+  // （精确复现本次 bug：streaming 中点「回到底部」后 AI 返回 text，锚定失效）
+  it('U36: 程序性 scrollToBottom 后 onScroll（异步增长 distance>阈值）→ stickToBottom 保持 true', async () => {
     const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
     const el = document.createElement('div')
     scrollEl.value = el
-    setScroll(el, 1000, 800, 200) // 贴底
+    // 场景：内容高 1000，视口 800，用户已滚到底（scrollTop=200，贴底）
+    setScroll(el, 1000, 800, 200)
+    onScroll() // lastScrollTop=200
+    expect(stickToBottom.value).toBe(true)
+    // 用户点「回到底部」（force=true），scrollToBottom 写 scrollTop=scrollHeight-... = 200
+    await scrollToBottom('smooth', true)
+    expect(stickToBottom.value).toBe(true)
+    // 模拟 streaming 异步增长：scrollHeight 从 1000 涨到 1500，scrollTop 仍是 200（程序写的旧值）
+    // 此时 distance = 1500-200-800 = 500 > 阈值，但 scrollTop 未减小（200 == lastScrollTop）
+    setScroll(el, 1500, 800, 200)
+    onScroll()
+    // 核心断言：不能误判脱离（这正是旧实现 bug 的精确复现）
+    expect(stickToBottom.value).toBe(true)
+    // 随后 ResizeObserver/scrollToBottom('auto') 跟随滚动应继续生效
     await scrollToBottom('auto')
-    // auto 不进保护期：若随后用户上滑，onScroll 应立即翻 false（无保护期延迟）
-    setScroll(el, 1000, 800, 100) // 差 100px
-    onScroll()
-    expect(stickToBottom.value).toBe(false)
+    expect(el.scrollTo).toHaveBeenCalledWith({ top: 1500, behavior: 'auto' })
   })
 
-  // U29:超时兜底清除保护期（scrollend 不触发的浏览器/场景）
-  it('U29: smooth 后 scrollend 未触发 → 超时后保护期清除，onScroll 恢复正常', async () => {
-    vi.useFakeTimers()
-    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
+  // U37:computed 不变量——任意翻转后 showJumpButton === !stickToBottom
+  it('U37: showJumpButton === !stickToBottom（computed 不变量，多轮翻转校验）', async () => {
+    const { scrollEl, onScroll, scrollToBottom, stickToBottom, showJumpButton } = useChatScroll()
     const el = document.createElement('div')
-    scrollEl.value = el
-    setScroll(el, 1000, 800, 100)
+    await bindScroll(scrollEl, el)
+
+    // 初始贴底
+    setScroll(el, 1000, 800, 200)
+    onScroll()
+    expect(showJumpButton.value).toBe(!stickToBottom.value)
+
+    // 上滑脱离
+    el.dispatchEvent(wheelEvent(-100))
+    expect(showJumpButton.value).toBe(!stickToBottom.value)
+
+    // 强制回底
     await scrollToBottom('smooth', true)
-    // 保护期内 onScroll 不翻转
-    setScroll(el, 1000, 800, 0)
-    onScroll()
-    expect(stickToBottom.value).toBe(true)
-    // 超时兜底触发（SMOOTH_SCROLL_GUARD_MS=600ms）
-    vi.advanceTimersByTime(700)
-    // 超时后 onScroll 恢复正常判定
-    setScroll(el, 1000, 800, 0) // 差 200px
-    onScroll()
-    expect(stickToBottom.value).toBe(false)
-    vi.useRealTimers()
-  })
+    expect(showJumpButton.value).toBe(!stickToBottom.value)
 
-  // U30:streaming 连续 scrollToBottom('auto') 在 smooth 保护期内不被 guard 拦截
-  // （这是事故的精确复现：smooth 后 streaming 跟随失效）
-  it('U30: smooth 保护期内 scrollToBottom("auto")（streaming 跟随）不被 guard 拦截', async () => {
-    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
-    const el = document.createElement('div')
-    scrollEl.value = el
-    setScroll(el, 1000, 800, 100)
-    // 用户点「回到底部」→ smooth 动画启动
-    await scrollToBottom('smooth', true)
-    // 动画中途触发 onScroll（旧实现会翻 false）
-    setScroll(el, 1000, 800, 50) // 差 150px
-    onScroll()
-    // streaming 内容追加 → scrollToBottom('auto')（force=false）必须通过 guard
-    setScroll(el, 1100, 800, 50) // 新内容让 scrollHeight 增长
-    await scrollToBottom('auto')
-    // 关键：auto 滚动执行了（未被 guard 拦），stickToBottom 保持 true
-    expect(el.scrollTo).toHaveBeenCalledWith({ top: 1100, behavior: 'auto' })
-    expect(stickToBottom.value).toBe(true)
-  })
-})
-
-/**
- * 首次挂载滚动 + auto 清除 smooth 保护期。
- *
- * 覆盖：
- * - U31：MessageStream 首次挂载场景——scrollToBottom('auto', true) 强制滚到底 + 校准 showJumpButton
- *   （修复问题：重启 app 进 session 停在顶部、按钮不显示直到手动滚动）
- * - U32：smooth 保护期内 scrollToBottom('auto') 清除保护期——后续 onScroll 立即正常判定
- *   （修复问题：streaming 中点「回到底部」后保护期靠超时清除，期间 onScroll 被拦截，
- *    超时清除时内容已增长导致 stickToBottom 翻 false，streaming 跟随中断）
- */
-describe('useChatScroll · 首次挂载 + auto 清除 smooth 保护期', () => {
-  beforeEach(() => {
-    HTMLElement.prototype.scrollTo = vi.fn()
-  })
-
-  // U31:首次挂载强制滚到底 + 校准 showJumpButton（MessageStream onMounted 调用）
-  it('U31: scrollToBottom("auto", true) 强制滚到底 + showJumpButton=false（首次挂载场景）', async () => {
-    const { scrollEl, onScroll, scrollToBottom, showJumpButton, stickToBottom } = useChatScroll()
-    const el = document.createElement('div')
-    scrollEl.value = el
-    // 模拟挂载后停在顶部的初始态（scrollTop=0，距底 1000px）
-    setScroll(el, 1800, 800, 0)
-    onScroll() // 挂载后首次 onScroll 应已判 showJumpButton=true（但旧实现无 onMounted 触发）
-    expect(showJumpButton.value).toBe(true)
-    // onMounted 强制滚到底（force=true 绕过 guard）
-    await scrollToBottom('auto', true)
-    expect(el.scrollTo).toHaveBeenCalledWith({ top: 1800, behavior: 'auto' })
-    expect(stickToBottom.value).toBe(true)
-    expect(showJumpButton.value).toBe(false)
-  })
-
-  // U32:smooth 保护期内 scrollToBottom('auto') 清除保护期——后续 onScroll 立即正常判定
-  // （区别于 U30：U30 不断言保护期状态，U32 明确验证 auto 后保护期已清除）
-  it('U32: smooth 保护期内 scrollToBottom("auto") 清除保护期 → 后续 onScroll 正常判定', async () => {
-    const { scrollEl, onScroll, scrollToBottom, stickToBottom } = useChatScroll()
-    const el = document.createElement('div')
-    scrollEl.value = el
-    setScroll(el, 1000, 800, 100)
-    // 用户点「回到底部」→ smooth 启动保护期
-    await scrollToBottom('smooth', true)
-    // streaming 的 auto 打断 smooth 并清除保护期
-    setScroll(el, 1100, 800, 100)
-    await scrollToBottom('auto')
-    // 关键：auto 后保护期已清除，立即 onScroll 能正常判定（不需等 600ms 超时）
-    // 模拟用户随后上滑到非贴底位置
-    setScroll(el, 1100, 800, 50) // 差 250px
-    onScroll()
-    expect(stickToBottom.value).toBe(false)
+    // 再次上滑
+    el.dispatchEvent(wheelEvent(-100))
+    expect(showJumpButton.value).toBe(!stickToBottom.value)
   })
 })
