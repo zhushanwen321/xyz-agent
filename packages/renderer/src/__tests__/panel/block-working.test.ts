@@ -1,11 +1,12 @@
 /**
  * Block working 态单测 —— message-stream trace 块折叠行为（对齐 draft-message-stream §1/§3）。
  *
- * 覆盖（plan.md U1–U8）：
- * - working 态：thinking/tool 强制全展开且不可手动收（设计稿「无背景下划线展开」）
- * - 非 working 态：默认收起，点击 header 可 toggle
- * - running tool 在非 working 态仍强制展开（回归保护）
- * - 失败 tool 整块红框
+ * 覆盖（plan.md U1–U8 + U12/U13）：
+ * - thinking：working 态强制展开且不可手动收（设计稿「无背景下划线展开」）
+ * - tool：默认 1 行收起（streaming/running 也收起，header 含 toolName+argPath+状态指示），
+ *         点击展开详情。仅 failed 强制展开（错误须直视）。
+ * - 失败 tool 整块红框 + 强制展开
+ * - end_not_received：默认收起，点击可 toggle
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/block-working.test.ts
  */
@@ -75,15 +76,20 @@ describe('Block working 态 · thinking 块', () => {
 })
 
 describe('Block working 态 · tool 块', () => {
-  it('U5: working=true 即使 completed 也展开详情', () => {
+  it('U5: working=true completed 默认 1 行收起（header 含 toolName+argPath，详情点击展开）', () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'completed' }), working: true },
     })
-    // 详情区含 result（output 内容）= 展开
-    expect(wrapper.text()).toContain('done')
-    // 工具名 + 参数路径可见
+    // header 行含工具名 + 参数路径（1 行摘要可见）
     expect(wrapper.text()).toContain('edit')
     expect(wrapper.text()).toContain('src/App.vue')
+    // 详情区 output 默认收起（不在 DOM）
+    expect(wrapper.text()).not.toContain('done')
+    // 点击展开
+    const header = wrapper.find('.cursor-pointer')
+    return header.trigger('click').then(() => {
+      expect(wrapper.text()).toContain('done')
+    })
   })
 
   it('U6: working=false completed 默认收起，点击展开', async () => {
@@ -98,42 +104,48 @@ describe('Block working 态 · tool 块', () => {
     expect(wrapper.text()).toContain('done')
   })
 
-  it('U7: working=false running 仍强制展开（回归保护）', () => {
+  it('U7: working=false running 默认 1 行收起，header 含「进行中」脉冲指示', () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'running', output: undefined }), working: false },
     })
-    // running 即使非 working 也展开：工具名 + 参数可见
+    // header 行含工具名 + 参数 + 进行中指示（1 行即可观察进度）
     expect(wrapper.text()).toContain('edit')
     expect(wrapper.text()).toContain('src/App.vue')
-    // header 显示「进行中」
     expect(wrapper.text()).toContain('进行中')
+    // 详情区默认收起（running 不再强制展开）
+    // output undefined 不会渲染 result 区，验证 argPath 详情行不在 DOM（mt-1.font-mono 是展开体）
+    const detailLines = wrapper.findAll('.mt-1.font-mono')
+    expect(detailLines.length).toBe(0)
   })
 
-  it('U8: 失败 tool 整块红框 + header 显「失败」', () => {
+  it('U8: 失败 tool 整块红框 + 强制展开（header XCircle 图标 + error output 直显）', () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'error', output: 'command failed' }), working: false },
     })
-    // 红框容器（danger 边框 class）
+    // 红框容器（danger 边框 class，blockClass 给整块加红框）
     const failedBlock = wrapper.find('.border-danger')
     expect(failedBlock.exists()).toBe(true)
-    // header 显失败文案
-    expect(wrapper.text()).toContain('失败')
-    // error output 默认展开（失败态强制可见）
+    // header 含 XCircle 图标（失败指示，lucide 渲染为 svg）
+    const xcircleIcon = wrapper.find('[data-lucide="x-circle"], svg')
+    expect(xcircleIcon.exists()).toBe(true)
+    // error output 强制展开（失败态强制可见，不可收起）
     expect(wrapper.text()).toContain('command failed')
   })
 })
 
 describe('Block working 态 · end_not_received（未收到结果）', () => {
-  it('U12: end_not_received header 显「未收到结果」，不走红框，不强制展开', () => {
+  it('U12: end_not_received header 显工具名（subtle 色），不走红框，不强制展开', () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'end_not_received', output: undefined }), working: false },
     })
-    // header 含「未收到结果」文案
-    expect(wrapper.text()).toContain('未收到结果')
+    // header 含工具名 + 参数路径（1 行摘要）
+    expect(wrapper.text()).toContain('edit')
+    expect(wrapper.text()).toContain('src/App.vue')
     // 不走红框（border-danger 不存在）
     expect(wrapper.find('.border-danger').exists()).toBe(false)
-    // 工具名仍可见
-    expect(wrapper.text()).toContain('edit')
+    // 详情区默认收起（mt-1.font-mono 是展开体，end_not_received 不强制展开）
+    const detailLines = wrapper.findAll('.mt-1.font-mono')
+    expect(detailLines.length).toBe(0)
   })
 
   it('U13: end_not_received 初始收起，点击 header 可 toggle（不像 running 锁死）', async () => {

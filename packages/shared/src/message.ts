@@ -15,13 +15,23 @@ export interface ToolCall {
   details?: Record<string, unknown>
   /** Extension tool_call_update 进度百分比 (0-100) */
   progress?: number
-  /** Extension tool_call_update 详细信息 */
+  /** Extension tool_call_update 详细信息。
+   *  subagent sync 模式下存 pi-subagents 推送的 AgentProgress 快照（聚合摘要：
+   *  currentTool/turnCount/tokens/recentTools 等），前端据此滚动更新 subagent 行。 */
   detail?: string | Record<string, unknown>
   /** 实时流式失败（tool_execution_end isError）时的错误文本，与 status:'error' 同源 */
   error?: string
   status: ToolCallStatus
   startTime: number
   endTime?: number
+  /** subagent async 模式的后台 run id（asyncId ↔ toolCallId 关联用）。
+   *  async 模式 tool_call_end 时从 details.asyncId 提取；sync 模式缺省。
+   *  后续 subagent:async-complete 事件带 asyncId 到达时，据此定位并更新对应 ToolCall。 */
+  asyncId?: string
+  /** subagent async 后台 run 的状态（仅 async 模式有值）。
+   *  - 'dispatched':async 已派发，等待后台 run 完成（tool_call_end 时设置）
+   *  - 'completed'/'failed'/'paused':收到 subagent:async-complete 后更新 */
+  asyncState?: 'dispatched' | 'completed' | 'failed' | 'paused'
 }
 
 export interface ThinkingBlock {

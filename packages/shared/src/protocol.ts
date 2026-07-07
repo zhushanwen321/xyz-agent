@@ -178,6 +178,7 @@ export type ServerMessageType =
   | 'message.stream_error'
   | 'message.file_changes'
   | 'message.changeSetInvalidated'
+  | 'message.subagentAsyncComplete'
   | 'file.read:result'
   | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result'
   | 'git.diff:result'
@@ -288,6 +289,20 @@ export interface ServerMessageMapBase {
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
   'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
   'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
+  // subagent async（background）模式后台 run 完成通知（event-adapter 翻译 pi-subagents 的
+  // subagent:async-complete 事件）。async 模式 tool_call_end 立即返回（仅表「已派发」），
+  // 后台 run 真正完成时 pi-subagents emit 此事件。payload 用 asyncId 标识，前端据此
+  // 匹配 asyncState==='dispatched' 的 ToolCall 并更新为最终态。成败判定见 pi-subagents notify.ts：
+  // success===true→completed；!success && (exitCode===0 || state==='paused')→paused；其余→failed。
+  'message.subagentAsyncComplete': {
+    sessionId: string
+    asyncId: string
+    success: boolean
+    state: 'complete' | 'failed' | 'paused'
+    summary?: string
+    exitCode?: number
+    timestamp?: number
+  }
 }
 
 /**

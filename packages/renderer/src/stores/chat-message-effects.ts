@@ -31,6 +31,7 @@ import type {
   ServerMessageType,
   ToolCall,
 } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
 import type { RetryState, QueueState } from './chat-store-types'
 import {
   readString,
@@ -47,6 +48,30 @@ import {
   readChangeSetStatus,
 } from './chat-readers'
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
+
+/**
+ * 计数差集：返回 prev 比 next 多出的元素（按出现次数，非子串匹配）。
+ *
+ * [B1] queue_update drain 驱动 pending→complete 用。pi drain 一条 steer 时 splice 移除一项，
+ * prev=['A','A'] → next=['A'] → 差集 ['A']（drain 了一条）。用 includes 会因 'A' 仍在 next 里
+ * 漏判，导致第二条 pending 永久卡住。计数差集精确匹配出现次数差。
+ *
+ * 与 markPendingDelivered 的 findIndex FIFO 配合：countDrained 返回 N 条相同文本 →
+ * 调 N 次 markPendingDelivered，每次转最早的 pending（FIFO，与 pi splice 顺序一致）。
+ */
+function countDrained(prev: string[], next: string[]): string[] {
+  const remaining = [...next]
+  const drained: string[] = []
+  for (const text of prev) {
+    const idx = remaining.indexOf(text)
+    if (idx !== -1) {
+      remaining.splice(idx, 1) // 仍在队列，消掉一个名额
+    } else {
+      drained.push(text) // prev 有但 next 没有/少了 → 被 drain
+    }
+  }
+  return drained
+}
 
 /**
  * message.* 事件副作用上下文（store refs + 跨方法回调，模块级函数据此更新）。
@@ -72,8 +97,9 @@ export interface MessageEffectContext {
   /** lifecycle flag 翻转（原 useChat.setStreaming，message_start→true / 终态→false）。
    *  sessionId 仅 message_start 传入（记录哪个 session 在流式），终态不传（清空）。 */
   setStreaming: (value: boolean, sessionId?: string | null) => void
-  /** queue_update 投递信号：pi drain 某条 steer/followUp 时，转对应 pending user 消息为 complete */
-  markPendingDelivered: (sessionId: string, text: string) => void
+  /** queue_update 投递信号：pi drain 某条 steer/followUp 时，转对应 pending user 消息为 complete。
+   *  sendMode 可选（区分 steer/followUp，避免跨类型同文本误转；未传时退化为 content 匹配）。 */
+  markPendingDelivered: (sessionId: string, text: string, sendMode?: 'steer' | 'follow-up') => void
 }
 
 /**
@@ -101,10 +127,21 @@ type MessageEffectHandler = (
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
   // ── 主流式生命周期（chunk 创建/收口 + isStreaming flag 翻转）──
   'message.message_start': (ctx, sid, payload) => {
-    const { messages, queueStates, setStreaming } = ctx
-    const prev = messages.value.get(sid) ?? []
-    // G-023: message_start 到达清除 QueueBubble（新回合已启动，排队消息已投递或过期）
+    const { messages, queueStates, setStreaming, markPendingDelivered } = ctx
+    // G-023: message_start 到达清除 QueueBubble（新回合已启动，排队消息已投递或过期）。
+    // [W2 兜底] 若 queue_update 与 message_start 跨批乱序（queue_update 后到），
+    // queueStates 里的残留 pending 可能未被 markPendingDelivered 转换。delete 前先 flush：
+    // 把 queueStates 里的 steering/followUp 全部当作「已 drain」调 markPendingDelivered，
+    // 避免 pending 气泡永久卡住。幂等——markPendingDelivered 对已 complete 的消息 no-op。
+    const prevQ = queueStates.value.get(sid)
+    if (prevQ) {
+      for (const text of prevQ.steering ?? []) markPendingDelivered(sid, text, 'steer')
+      for (const text of prevQ.followUp ?? []) markPendingDelivered(sid, text, 'follow-up')
+    }
     queueStates.value.delete(sid)
+    // flush 后重新读 messages（markPendingDelivered 可能已写新数组：pending→complete），
+    // 避免 append assistant 时用 flush 前的旧快照覆盖 flush 结果。
+    const prev = messages.value.get(sid) ?? []
     const messageId = readString(payload, 'messageId') ?? `a-${crypto.randomUUID()}`
     messages.value.set(sid, [
       ...prev,
@@ -314,6 +351,17 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // callId 缺失或未命中时降级为最后一条 assistant（防御：兼容异常事件）。
     const idx = callId ? findToolCallOwner(prev, callId) : findLastAssistantIndex(prev)
     if (idx < 0) return
+    // details：pi tool_execution_end result.details（结构化扩展数据）。subagent 的 mode/asyncId/
+    // results/progress 都在这里。此前 effect 丢了 details，导致 subagent async 模式无法取 asyncId
+    // 关联后台完成事件、sync 模式无法读 progress 快照——现补回。
+    const details = readRecord(payload, 'details')
+    // subagent async 模式：details.asyncId 存在 → 这是 background 派发（tool 立即返回，run 后台跑）。
+    // 提取 asyncId 并设 dispatched 态，后续 subagentAsyncComplete 事件据此 asyncId 定位更新。
+    // 仅对 subagent tool 提取（其他 tool 的 details 不会有 asyncId，防御性收窄避免误标）。
+    const asyncId = details && typeof details.asyncId === 'string' ? details.asyncId : undefined
+    // toolName 在 tool_call_end 不会变，从 prev 读即可（next 尚未构造）
+    const ownerToolName = (prev[idx].toolCalls ?? []).find((c) => c.id === callId)?.toolName
+    const isSubagentAsync = Boolean(asyncId && ownerToolName && SUBAGENT_TOOL_NAMES.has(ownerToolName))
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
       c.id === callId
@@ -323,6 +371,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
           status: (readString(payload, 'status') as ToolCall['status']) ?? 'completed',
           error: readString(payload, 'error') ?? c.error,
           endTime: Date.now(),
+          details,
+          ...(isSubagentAsync ? { asyncId: asyncId as string, asyncState: 'dispatched' as const } : {}),
         }
         : c,
     )
@@ -347,6 +397,33 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     )
     next[idx] = { ...next[idx], toolCalls }
     messages.value.set(sid, next)
+  },
+
+  // ── subagent async（background）后台 run 完成 ──
+  'message.subagentAsyncComplete': (ctx, sid, payload) => {
+    const { messages } = ctx
+    const asyncId = readString(payload, 'asyncId')
+    if (!asyncId) return
+    const prev = messages.value.get(sid) ?? []
+    // asyncId → toolCallId 关联：tool_call_end(async 模式)时已把 asyncId 写入 ToolCall。
+    // 扫描该 session 所有 message 的 toolCalls，匹配 asyncId 更新终态。
+    // （async run 完成可能跨越多次 turn，但 ToolCall 挂在原 turn 的 assistant 上，不会迁移。）
+    let changed = false
+    const next = prev.map((m) => {
+      if (!m.toolCalls?.some((c) => c.asyncId === asyncId)) return m
+      const toolCalls = m.toolCalls.map((c) => {
+        if (c.asyncId !== asyncId) return c
+        changed = true
+        return {
+          ...c,
+          asyncState: (readString(payload, 'state') as ToolCall['asyncState']) ?? 'completed',
+          // 后台 run 的最终输出（summary）覆盖 tool_call_end 时的「已派发」占位文本
+          output: readString(payload, 'summary') ?? c.output,
+        }
+      })
+      return { ...m, toolCalls }
+    })
+    if (changed) messages.value.set(sid, next)
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──
@@ -448,18 +525,17 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const followUp = readStringArray(payload, 'followUp')
     if (followUp?.length) state.followUp = followUp
 
-    // pending→complete 驱动：对比新旧队列，找出「消失的」steer/followUp 文本（pi drain 投递了它），
-    // 转对应 pending user 消息为 complete。按 indexOf 匹配（与 pi 的 splice 语义一致）。
+    // pending→complete 驱动：计数差集找出「被 drain 投递的」项（prev 比 new 多出的元素）。
+    // [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
+    // includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
+    // [W5] 带 sendMode 调 markPendingDelivered，避免跨类型同文本误转（steer「补」与 followUp「补」）。
     const prev = queueStates.value.get(sid)
     if (prev) {
-      const prevSteering = prev.steering ?? []
-      const prevFollowUp = prev.followUp ?? []
-      // 找 prev 有但新队列没有/减少的项（被 drain 投递）
-      for (const text of prevSteering) {
-        if (!steering?.includes(text)) markPendingDelivered(sid, text)
+      for (const text of countDrained(prev.steering ?? [], steering ?? [])) {
+        markPendingDelivered(sid, text, 'steer')
       }
-      for (const text of prevFollowUp) {
-        if (!followUp?.includes(text)) markPendingDelivered(sid, text)
+      for (const text of countDrained(prev.followUp ?? [], followUp ?? [])) {
+        markPendingDelivered(sid, text, 'follow-up')
       }
     }
 

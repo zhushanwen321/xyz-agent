@@ -137,9 +137,15 @@ export function useChat() {
     const trimmed = text.trim()
     if (!trimmed || !chat.isActive(sid)) return
 
-    // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete
+    // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete。
+    // [W1] API 失败（WS 断连/steer_failed envelope/hook 拦截）回滚 pending，避免孤儿气泡。
     chat.appendPending(sid, trimmed, 'steer')
-    await chatApi.steer(sid, trimmed)
+    try {
+      await chatApi.steer(sid, trimmed)
+    } catch (e) {
+      chat.removePending(sid, trimmed, 'steer')
+      throw e
+    }
   }
 
   /**
@@ -158,16 +164,37 @@ export function useChat() {
       return
     }
 
-    // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete
+    // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete。
+    // [W1] API 失败回滚 pending（同 steer）。
     chat.appendPending(sid, trimmed, 'follow-up')
-    await chatApi.followUp(sid, trimmed)
+    try {
+      await chatApi.followUp(sid, trimmed)
+    } catch (e) {
+      chat.removePending(sid, trimmed, 'follow-up')
+      throw e
+    }
   }
 
-  /** 中断当前回合（G-025 流转 DEFERRED：方法存在，实际中断留联调） */
+  /**
+   * 中断当前回合（G-025 流转 DEFERRED：方法存在，实际中断留联调）。
+   * [W3/W4] abort 乐观清 dispatching——abort 语义就是「结束当前活跃态」，即便 pi 没真正停也无害。
+   * 正常成功路径由 MessageDispatcher.abort 广播的 message.complete 驱动 setStreaming(false) 收口；
+   * 失败路径（pi 死/getClientOrThrow 抛 handler_error → abort reject）若无此 catch，dispatching 永挂。
+   */
   async function abort(): Promise<void> {
     const sid = session.activeId
     if (!sid) return
-    await chatApi.abort(sid)
+    chat.setDispatching(null)
+    try {
+      await chatApi.abort(sid)
+    } catch (e) {
+      // abort 失败不重抛——用户已表达「停止」意图，UI 不应因 abort RPC 失败而卡住。
+      // dispatching 已清（乐观），streaming 态若残留由后续 message.complete 兜底。
+      // 给用户 toast 反馈（而非静默吞掉），满足 taste/no-silent-catch 的"反馈"要求。
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(`停止失败：${msg}`)
+    }
   }
 
   /**

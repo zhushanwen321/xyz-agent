@@ -495,6 +495,46 @@ function handleThinkingLevelChanged(event: PiEvent, sid: string): PiTranslatedEv
   ]
 }
 
+/**
+ * subagent:async-complete — pi-subagents 扩展的 async（background）模式后台 run 完成通知。
+ *
+ * 背景：async 模式 tool_call_end 立即返回（details 含 asyncId，前端据此设 dispatched 态），
+ * 后台 run 真正结束时 pi-subagents 通过扩展事件总线 emit 本事件。payload 来自磁盘 result 文件
+ * （subagent-runner.ts writeAtomicJson 写入 → result-watcher.ts 读取后 emit），含 success/state/summary。
+ *
+ * 成败判定（与 pi-subagents notify.ts 一致）：
+ * - success===true → state='complete'
+ * - !success && state==='paused' → 'paused'（中断后等待显式续作）
+ * - 其余 !success → 'failed'
+ *
+ * 关联：payload.id === asyncId === tool_call_end 时 details.asyncId。前端据此匹配 ToolCall 更新终态。
+ */
+function handleSubagentAsyncComplete(event: PiEvent, sid: string): PiTranslatedEvent[] {
+  const success = Boolean(event.success)
+  const rawState = event.state as string | undefined
+  // 防御：state 缺省时按 success 推导（与 notify.ts 兜底一致）
+  let state: 'complete' | 'failed' | 'paused'
+  if (rawState === 'paused') state = 'paused'
+  else if (rawState === 'failed') state = 'failed'
+  else if (rawState === 'complete') state = 'complete'
+  else state = success ? 'complete' : 'failed'
+  return [{
+    kind: 'message',
+    message: {
+      type: 'message.subagentAsyncComplete',
+      payload: {
+        sessionId: sid,
+        asyncId: String(event.id ?? ''),
+        success,
+        state,
+        summary: typeof event.summary === 'string' ? event.summary : undefined,
+        exitCode: typeof event.exitCode === 'number' ? event.exitCode : undefined,
+        timestamp: typeof event.timestamp === 'number' ? event.timestamp : Date.now(),
+      },
+    },
+  }]
+}
+
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
 const NULL_EVENTS = new Set([
@@ -520,6 +560,7 @@ const DISPATCHER = new Map<string, (event: PiEvent, sid: string) => PiTranslated
   DISPATCHER.set('queue_update', handleQueueUpdate)
   DISPATCHER.set('session_info_changed', handleSessionInfoChanged)
   DISPATCHER.set('thinking_level_changed', handleThinkingLevelChanged)
+  DISPATCHER.set('subagent:async-complete', handleSubagentAsyncComplete)
   // Simple passthrough handlers
   DISPATCHER.set('status', (event, sid) => [{
     kind: 'message',

@@ -15,6 +15,10 @@ export const DEV_PORT_OFFSET = 100 as const
 // eslint-disable-next-line no-magic-numbers
 export const MAX_PORT = 65535 as const
 
+/** pi-subagents 扩展的 subagent tool 名集合（识别 subagent 调用用，SSOT）。
+ *  pi-subagents 通过名为 "subagent" 的 tool 执行子 agent，前端据此判定特殊渲染。 */
+export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
+
 /** Environment variable prefixes allowed to pass to child processes */
 export const ENV_WHITELIST_PREFIXES: readonly string[] = [
   'PATH', 'HOME', 'USER', 'LANG', 'TERM',
