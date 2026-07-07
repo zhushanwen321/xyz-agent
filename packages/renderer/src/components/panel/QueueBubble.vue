@@ -1,43 +1,98 @@
 <!--
-  展示组件 · queue_update pending 气泡（spec C10 / FR-4，issues.md #13，code-architecture §4.7b）。
-  Composer 上方独立行：按 draft-composer-states queue-bubble 风格，accent 边框 + 蓝点脉冲 +
-  分组列表。两队列分色（draft §pending-bubble 同族）：
-    - STEERING（accent 蓝）：追加引导当前回合，不打断
-    - FOLLOWUP（info 青）：回合结束后开新轮排队
+  展示组件 · queue_update 待发送队列（draft-composer-states S8）。
+  Composer 上方独立行：accent 边框 + 蓝点脉冲 + 双队列分栏。
+  两队列分色（draft §pending-bubble 同族）：
+    - STEERING（accent 蓝）：追加引导当前回合，先生效（FIFO）
+    - FOLLOWUP（info 青）：回合结束后开新轮排队，后生效（FIFO）
 
-  纯展示型：props.state 由 Composer 从 chatStore.getQueueState(sessionId) 计算传入。
-  生命周期绑定 store：message_start 到达 → store queueStates.delete → state=undefined
-  → 本组件 v-if 失效自动消失（spec §4.7b 时序图）。
+  形态：单条时直接展开（head + 1 条 item）；多条时默认折叠显 head（摘要 + 计数），
+  点 head 切换展开/折叠。展开时双组分栏逐条列表，每组带序号（FIFO 顺序）。
 
-  QueueState 两字段皆可选 string[]；任一非空才渲染（hasAny）。同组多条用「·」连写以保持单行
-  紧凑（draft queue-bubble 展开列表是未来增强，#13 验收只要「显示 steering/followUp」）。
+  纯展示 + 只读：props.state 由 Composer 从 chatStore.getQueueState(sessionId) 计算传入。
+  入队后不可改/不可撤（pi 无 clear_queue RPC，dequeue 按钮会是假按钮——draft S8 裁决）。
+  生命周期绑定 store：message_start 到达 → store queueStates.delete → state=undefined → 本组件 v-if 消失。
 -->
 <template>
   <div
     v-if="state && hasAny"
     class="mb-1.5 overflow-hidden rounded-md border border-[rgba(79,142,247,0.45)] bg-[rgba(79,142,247,0.06)] text-[12px]"
   >
+    <!-- head：脉冲点 + 标签 + 计数摘要 + chevron（多条可折叠） -->
+    <Button
+      variant="ghost"
+      class="flex h-auto w-full items-center gap-2 rounded-none px-3 py-1.5 text-left font-normal hover:bg-[rgba(79,142,247,0.08)]"
+      :class="!canToggle ? 'cursor-default hover:bg-transparent' : ''"
+      :disabled="!canToggle"
+      :aria-expanded="canToggle ? expanded : undefined"
+      :title="canToggle ? (expanded ? '收起队列' : '展开队列') : undefined"
+      @click="toggle"
+    >
+      <span class="size-[7px] shrink-0 animate-pulse-accent rounded-full bg-accent" />
+      <span class="shrink-0 font-mono text-[10px] font-semibold tracking-wider text-accent">待发送</span>
+      <span class="min-w-0 flex-1 truncate text-muted">
+        <template v-if="totalCount > 1">{{ totalCount }} 条 · </template>{{ summary }}
+      </span>
+      <ChevronRight
+        v-if="canToggle"
+        class="size-[11px] shrink-0 text-subtle transition-transform duration-[var(--duration-fast)] ease-[var(--ease)]"
+        :class="expanded ? 'rotate-90' : ''"
+      />
+    </Button>
+
+    <!-- 单条且未展开：直接在 head 下方显示该条（紧凑，无需折叠） -->
     <div
-      v-for="(group, idx) in groups"
-      :key="group.key"
-      class="flex items-center gap-2 px-3 py-1.5"
-      :class="idx > 0 ? 'border-t border-[rgba(79,142,247,0.18)]' : ''"
+      v-if="!expanded && totalCount === 1"
+      class="border-t border-[rgba(79,142,247,0.18)] px-3 py-1.5"
     >
       <span
-        class="size-[7px] shrink-0 animate-pulse-accent rounded-full"
-        :class="group.key === 'followUp' ? 'bg-info' : 'bg-accent'"
-      />
-      <span
-        class="shrink-0 font-mono text-[10px] font-semibold tracking-wider"
-        :class="group.key === 'followUp' ? 'text-info' : 'text-accent'"
-      >{{ group.key === 'followUp' ? 'FOLLOWUP' : 'STEERING' }}</span>
-      <span class="min-w-0 flex-1 truncate text-fg">{{ group.items.join(' · ') }}</span>
+        class="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-wider"
+        :class="singleGroup!.key === 'followUp' ? 'text-info' : 'text-accent'"
+      >
+        <span
+          class="size-[6px] animate-pulse-accent rounded-full"
+          :class="singleGroup!.key === 'followUp' ? 'bg-info' : 'bg-accent'"
+        />
+        {{ singleGroup!.key === 'followUp' ? 'FOLLOWUP 新轮' : 'STEER 追加' }}
+      </span>
+      <p class="mt-0.5 text-fg">{{ singleGroup!.items[0] }}</p>
     </div>
+
+    <!-- 展开态：双组分栏逐条列表（多条折叠态点 head 展开后显示） -->
+    <template v-if="expanded && totalCount > 1">
+      <div
+        v-for="(group, idx) in groups"
+        :key="group.key"
+        :class="idx > 0 ? 'border-t border-[rgba(79,142,247,0.18)]' : 'border-t border-[rgba(79,142,247,0.18)]'"
+      >
+        <div class="flex items-center gap-2 px-3 pt-1.5">
+          <span
+            class="font-mono text-[10px] font-semibold tracking-wider"
+            :class="group.key === 'followUp' ? 'text-info' : 'text-accent'"
+          >{{ group.key === 'followUp' ? 'FOLLOWUP' : 'STEERING' }}</span>
+          <span class="text-[10px] text-subtle">
+            {{ group.key === 'followUp' ? '后生效 · 回合后开新轮' : '先生效 · 追加当前回合' }}
+          </span>
+        </div>
+        <div
+          v-for="(item, i) in group.items"
+          :key="`${group.key}-${i}`"
+          class="flex items-start gap-2 px-3 py-1 text-fg"
+        >
+          <span class="shrink-0 font-mono text-[10px] text-subtle">{{ i + 1 }}</span>
+          <span class="min-w-0 flex-1 break-words">{{ item }}</span>
+        </div>
+      </div>
+      <div class="border-t border-[rgba(79,142,247,0.18)] px-3 py-1 text-[10px] text-subtle">
+        生效顺序：steering FIFO → followUp FIFO
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { ChevronRight } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import type { QueueState } from '@/stores/chat'
 
 const props = defineProps<{
@@ -60,4 +115,35 @@ const groups = computed<QueueGroup[]>(() => {
 })
 
 const hasAny = computed(() => groups.value.length > 0)
+const totalCount = computed(() =>
+  groups.value.reduce((sum, g) => sum + g.items.length, 0),
+)
+
+/** 单条时对应的分组（单条直接展开用） */
+const singleGroup = computed(() => (totalCount.value === 1 ? groups.value[0] : null))
+
+/** 多条才可折叠切换；单条恒展开（head + 该条） */
+const canToggle = computed(() => totalCount.value > 1)
+const expanded = ref(false)
+
+/** state 变化（新队列/队列清空重建）时重置折叠态 */
+watch(
+  () => props.state,
+  () => {
+    expanded.value = false
+  },
+)
+
+function toggle(): void {
+  if (canToggle.value) expanded.value = !expanded.value
+}
+
+/** head 摘要：steering N · followUp M（对齐 draft S8 head 计数格式） */
+const summary = computed(() => {
+  const parts: string[] = []
+  const s = props.state
+  if (s?.steering?.length) parts.push(`steering ${s.steering.length}`)
+  if (s?.followUp?.length) parts.push(`followUp ${s.followUp.length}`)
+  return parts.join(' · ')
+})
 </script>
