@@ -134,6 +134,42 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 追加 pending user 消息（steer/followup 已入队 pi，待投递）。
+   * draft-composer-states S7：steer/followup 提交后立即在对话流显示 pending 气泡（虚线+脉冲），
+   * 投递时（queue_update 移除该项 → markPendingDelivered）转 complete。
+   * sendMode 区分 steer（追加当前回合）/ follow-up（回合后新轮），驱动气泡配色。
+   */
+  function appendPending(sessionId: string, text: string, sendMode: 'steer' | 'follow-up'): void {
+    const prev = messages.value.get(sessionId) ?? []
+    messages.value.set(sessionId, [
+      ...prev,
+      {
+        id: `u-${crypto.randomUUID()}`,
+        role: 'user',
+        content: text,
+        status: 'pending',
+        sendMode,
+        timestamp: Date.now(),
+      },
+    ])
+  }
+
+  /**
+   * 将指定 session 里匹配文本的 pending user 消息标记为已投递（status → complete）。
+   * 触发：queue_update 里某条 steer/followUp 文本消失（pi drain 投递了它）。
+   * 按 indexOf 匹配（与 pi 的 splice 语义一致），仅转第一条匹配的 pending 消息。
+   */
+  function markPendingDelivered(sessionId: string, text: string): void {
+    const prev = messages.value.get(sessionId)
+    if (!prev) return
+    const idx = prev.findIndex((m) => m.role === 'user' && m.status === 'pending' && m.content === text)
+    if (idx === -1) return
+    const next = [...prev]
+    next[idx] = { ...next[idx], status: 'complete' }
+    messages.value.set(sessionId, next)
+  }
+
+  /**
    * message.* 事件的单一入口（F2 重构：消除 double-dispatch）。
    *
    * useChat.ensureStreamSubscription 收到 message.* 后调本方法，不再自己 switch。
@@ -154,6 +190,7 @@ export const useChatStore = defineStore('chat', () => {
         applyFileChanges,
         markChangeSetsSuperseded,
         setStreaming,
+        markPendingDelivered,
       },
       sessionId,
       msg,
@@ -250,6 +287,8 @@ export const useChatStore = defineStore('chat', () => {
     clearHistoryError,
     hydrate,
     appendUser,
+    appendPending,
+    markPendingDelivered,
     applyMessageEvent,
     setStreaming,
     setDispatching,

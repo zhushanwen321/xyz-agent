@@ -137,6 +137,8 @@ export function useChat() {
     const trimmed = text.trim()
     if (!trimmed || !chat.isActive(sid)) return
 
+    // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete
+    chat.appendPending(sid, trimmed, 'steer')
     await chatApi.steer(sid, trimmed)
   }
 
@@ -156,6 +158,8 @@ export function useChat() {
       return
     }
 
+    // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete
+    chat.appendPending(sid, trimmed, 'follow-up')
     await chatApi.followUp(sid, trimmed)
   }
 

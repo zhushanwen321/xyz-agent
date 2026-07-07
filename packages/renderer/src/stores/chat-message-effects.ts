@@ -72,6 +72,8 @@ export interface MessageEffectContext {
   /** lifecycle flag 翻转（原 useChat.setStreaming，message_start→true / 终态→false）。
    *  sessionId 仅 message_start 传入（记录哪个 session 在流式），终态不传（清空）。 */
   setStreaming: (value: boolean, sessionId?: string | null) => void
+  /** queue_update 投递信号：pi drain 某条 steer/followUp 时，转对应 pending user 消息为 complete */
+  markPendingDelivered: (sessionId: string, text: string) => void
 }
 
 /**
@@ -437,13 +439,29 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.queue_update': (ctx, sid, payload) => {
-    const { queueStates } = ctx
+    const { queueStates, markPendingDelivered } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
     const state: QueueState = {}
     const steering = readStringArray(payload, 'steering')
     if (steering) state.steering = steering
     const followUp = readStringArray(payload, 'followUp')
     if (followUp) state.followUp = followUp
+
+    // pending→complete 驱动：对比新旧队列，找出「消失的」steer/followUp 文本（pi drain 投递了它），
+    // 转对应 pending user 消息为 complete。按 indexOf 匹配（与 pi 的 splice 语义一致）。
+    const prev = queueStates.value.get(sid)
+    if (prev) {
+      const prevSteering = prev.steering ?? []
+      const prevFollowUp = prev.followUp ?? []
+      // 找 prev 有但新队列没有/减少的项（被 drain 投递）
+      for (const text of prevSteering) {
+        if (!steering?.includes(text)) markPendingDelivered(sid, text)
+      }
+      for (const text of prevFollowUp) {
+        if (!followUp?.includes(text)) markPendingDelivered(sid, text)
+      }
+    }
+
     if (!state.steering && !state.followUp) {
       if (queueStates.value.has(sid)) {
         const nextMap = new Map(queueStates.value)

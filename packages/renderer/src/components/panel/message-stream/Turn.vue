@@ -32,6 +32,21 @@
       <!-- whitespace-pre-wrap：markdown.ts breaks:false 不把单 \n 转 <br>，
            此处用 CSS 保留软换行，兑现"用户输入的换行在气泡里可见"。
            代码块 <pre> 自带 white-space:pre，不受影响。仅用户气泡加，不影响 assistant。 -->
+      <!-- pending 气泡（draft-composer-states S7）：steer/followup 已入队未投递，
+           虚线边框 + 脉冲圆点 + WHO 标 + 配色（steer 蓝 / followUp 青），投递后转普通气泡。 -->
+      <div
+        v-else-if="isPendingUser"
+        class="max-w-[76%] rounded-[14px_14px_4px_14px] border-2 border-dashed px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
+        :class="pendingBubbleClass"
+      >
+        <span class="mb-1 flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-wider"
+          :class="pendingLabelClass"
+        >
+          <span class="size-[6px] animate-pulse-accent rounded-full" :class="pendingDotClass" />
+          {{ pendingLabel }}
+        </span>
+        <span>{{ turn.user.content }}</span>
+      </div>
       <div
         v-else
         class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
@@ -55,9 +70,10 @@
         </Button>
         <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" :session-id="sessionId" />
       </div>
-      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示 -->
+      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示。
+           pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
       <div
-        v-if="!isEditingThisUser"
+        v-if="!isEditingThisUser && !isPendingUser"
         class="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100"
       >
         <Button
@@ -266,6 +282,24 @@ const slashChip = computed(() => {
 
 /** 全局流式态（当前活跃 session）：streaming 时禁编辑/fork */
 // isStreaming 来自 storeToRefs（上）
+
+/**
+ * pending user 气泡（draft-composer-states S7）：steer/followup 已入队 pi 但未投递。
+ * isPendingUser 判定 status==='pending'；pending 配色/文案按 sendMode 区分（steer 蓝/followUp 青）。
+ */
+const isPendingUser = computed(
+  () => !!props.turn.user && props.turn.user.status === 'pending',
+)
+/** steer → accent 蓝（追加当前回合）；follow-up → info 青（回合后新轮）。draft §pending-bubble 同族 */
+const isSteerMode = computed(() => props.turn.user?.sendMode === 'steer')
+const pendingBubbleClass = computed(() =>
+  isSteerMode.value
+    ? 'border-[var(--accent)] bg-[rgba(79,142,247,0.06)]'
+    : 'border-info bg-[rgba(56,189,248,0.06)]',
+)
+const pendingLabelClass = computed(() => (isSteerMode.value ? 'text-accent' : 'text-info'))
+const pendingDotClass = computed(() => (isSteerMode.value ? 'bg-accent' : 'bg-info'))
+const pendingLabel = computed(() => (isSteerMode.value ? 'STEER 追加' : 'FOLLOWUP 新轮'))
 
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
