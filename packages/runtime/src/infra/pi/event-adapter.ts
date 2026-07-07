@@ -503,32 +503,42 @@ function handleThinkingLevelChanged(event: PiEvent, sid: string): PiTranslatedEv
  * （subagent-runner.ts writeAtomicJson 写入 → result-watcher.ts 读取后 emit），含 success/state/summary。
  *
  * 成败判定（与 pi-subagents notify.ts 一致）：
- * - success===true → state='complete'
- * - !success && state==='paused' → 'paused'（中断后等待显式续作）
+ * - success===true → 'completed'
+ * - !success && (state==='paused' || exitCode===0) → 'paused'（中断后等待显式续作）
  * - 其余 !success → 'failed'
+ *
+ * state 命名映射：pi-subagents 用 'complete'，ToolCall.asyncState 用 'completed'（对齐
+ * ToolCallStatus 的既有 'completed' 命名）。此处转译时映射，避免前端 Block.vue 匹配 miss。
  *
  * 关联：payload.id === asyncId === tool_call_end 时 details.asyncId。前端据此匹配 ToolCall 更新终态。
  */
 function handleSubagentAsyncComplete(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const success = Boolean(event.success)
+  const success = event.success === true
   const rawState = event.state as string | undefined
-  // 防御：state 缺省时按 success 推导（与 notify.ts 兜底一致）
-  let state: 'complete' | 'failed' | 'paused'
-  if (rawState === 'paused') state = 'paused'
-  else if (rawState === 'failed') state = 'failed'
-  else if (rawState === 'complete') state = 'complete'
-  else state = success ? 'complete' : 'failed'
+  const exitCode = typeof event.exitCode === 'number' ? event.exitCode : undefined
+  // 成败判定（success 优先，与注释/notify.ts 一致）：
+  // success → completed；!success && (显式 paused 或 exitCode===0) → paused；其余 → failed
+  const state: 'completed' | 'failed' | 'paused' =
+    success ? 'completed'
+    : rawState === 'paused' || exitCode === 0 ? 'paused'
+    : 'failed'
+  // asyncId 双读：pi-subagents payload.id 为权威字段，asyncId 防御性 fallback
+  const asyncId = String(event.id ?? event.asyncId ?? '')
+  if (!asyncId) {
+    console.warn('[EventAdapter] subagent:async-complete missing id (asyncId), event dropped')
+    return []
+  }
   return [{
     kind: 'message',
     message: {
       type: 'message.subagentAsyncComplete',
       payload: {
         sessionId: sid,
-        asyncId: String(event.id ?? ''),
+        asyncId,
         success,
         state,
         summary: typeof event.summary === 'string' ? event.summary : undefined,
-        exitCode: typeof event.exitCode === 'number' ? event.exitCode : undefined,
+        exitCode,
         timestamp: typeof event.timestamp === 'number' ? event.timestamp : Date.now(),
       },
     },

@@ -65,6 +65,7 @@
           </span>
           <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 text-danger" />
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
         </div>
         <template v-if="toolExpanded">
           <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
@@ -104,6 +105,7 @@
           </span>
           <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 text-danger" />
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
         </div>
         <template v-if="toolExpanded">
           <div class="mt-1 font-mono text-[12px] text-fg">
@@ -256,29 +258,28 @@ const subagentHeaderLabel = computed(() => {
   return ''
 })
 
+/** progress 快照（单一 computed，liveInfo 与展开体详情共用，避免重复提取）。
+ *  数据源：ToolCall.detail（chat-message-effects tool_call_update 写入的 AgentProgress 快照）。
+ *  pi-subagents 推送的 partialResult 是 { details: { progress: AgentProgress[] } }，
+ *  event-adapter 提取后存入 detail。取 progress[0]（single 模式首项）。 */
+const subagentProgressDetail = computed(() => extractProgressSnapshot(props.tool?.detail))
+
 /**
- * sync 模式运行中的实时进度文本（滚动更新）。
- * 数据源：ToolCall.detail（chat-message-effects tool_call_update 写入的 AgentProgress 快照）。
- * pi-subagents 推送的 partialResult 是 { details: { progress: AgentProgress[] } }，
- * event-adapter 提取后存入 detail。取 progress[0]（single 模式首项）。
+ * sync 模式运行中的实时进度文本（滚动更新，header 单行展示）。
+ * 从 subagentProgressDetail 提取当前工具/turn/tokens 拼接，每次 update 快照刷新滚动。
  */
 const subagentLiveInfo = computed(() => {
   if (!isRunning.value) return ''
-  const detail = props.tool?.detail
-  const progress = extractProgressSnapshot(detail)
+  const progress = subagentProgressDetail.value
   if (!progress) return ''
   const parts: string[] = []
   if (progress.currentTool) {
-    const tool = progress.currentTool
-    parts.push(`${tool}`)
+    parts.push(`${progress.currentTool}`)
   }
   if (progress.turnCount != null) parts.push(`turn ${progress.turnCount}`)
   if (progress.tokens != null) parts.push(formatTokens(progress.tokens))
   return parts.join(' · ')
 })
-
-/** 展开体的 progress 详情（已完成工具数/turn/tokens/duration/当前工具） */
-const subagentProgressDetail = computed(() => extractProgressSnapshot(props.tool?.detail))
 
 /** 从 detail 提取 AgentProgress 快照。
  *  detail 可能形态：{ progress: AgentProgress[] }（pi-subagents partialResult.details）
@@ -329,8 +330,11 @@ const subagentHeaderColor = computed(() => {
 })
 
 const blockClass = computed(() => {
-  if (props.type !== 'tool' || !isFailed.value) return ''
-  // 失败 tool：整块红框（draft trace-tool.failed）
-  return 'my-1 rounded-lg border border-danger bg-[rgba(239,68,68,0.06)] px-3'
+  if (props.type !== 'tool') return ''
+  // 失败 tool / 失败 subagent：整块红框（draft trace-tool.failed）。
+  // subagent async 失败（asyncState==='failed'）同样须直视，与普通 tool 失败视觉一致。
+  const showFailFrame = isFailed.value || (isSubagent.value && asyncState.value === 'failed')
+  if (!showFailFrame) return ''
+  return 'my-1 rounded-lg border border-danger bg-[color-mix(in_oklch,var(--danger)_6%,transparent)] px-3'
 })
 </script>

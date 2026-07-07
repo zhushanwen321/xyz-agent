@@ -294,11 +294,13 @@ export interface ServerMessageMapBase {
   // 后台 run 真正完成时 pi-subagents emit 此事件。payload 用 asyncId 标识，前端据此
   // 匹配 asyncState==='dispatched' 的 ToolCall 并更新为最终态。成败判定见 pi-subagents notify.ts：
   // success===true→completed；!success && (exitCode===0 || state==='paused')→paused；其余→failed。
+  // state 字段对齐 ToolCall.asyncState 命名（'completed' 非 pi 原始的 'complete'——
+  // event-adapter 转译时映射，避免前端 Block.vue 匹配 miss）。
   'message.subagentAsyncComplete': {
     sessionId: string
     asyncId: string
     success: boolean
-    state: 'complete' | 'failed' | 'paused'
+    state: 'completed' | 'failed' | 'paused'
     summary?: string
     exitCode?: number
     timestamp?: number
