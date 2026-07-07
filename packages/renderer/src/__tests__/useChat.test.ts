@@ -33,6 +33,8 @@ const apiMock = vi.hoisted(() => {
     getHistory: vi.fn(() => Promise.resolve([])),
     abort: vi.fn(() => Promise.resolve()),
     compact: vi.fn(() => Promise.resolve()),
+    steer: vi.fn(() => Promise.resolve()),
+    followUp: vi.fn(() => Promise.resolve()),
   }
 })
 
@@ -43,6 +45,8 @@ vi.mock('@/api', () => ({
     getHistory: apiMock.getHistory,
     abort: apiMock.abort,
     compact: apiMock.compact,
+    steer: apiMock.steer,
+    followUp: apiMock.followUp,
   },
   session: {},
 }))
@@ -161,6 +165,94 @@ describe('useChat 流式状态机', () => {
     expect(chat.isStreaming).toBe(true)
     await send('second')
     expect(apiMock.send).toHaveBeenCalledTimes(1) // 仅首次发送
+  })
+})
+
+describe('useChat dispatching 合并态（空窗期）', () => {
+  it('send 置 dispatchingSessionId → isActive 立即为 true（不等 message_start）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-dispatch'
+    const chat = useChatStore()
+    const { send } = useChat()
+    // send 的 api.send 是异步的，但我们用 await 等它 resolve
+    await send('hello')
+    // send resolve 后到 message_start 之前，dispatching 应保持（空窗期 isActive=true）
+    expect(chat.dispatchingSessionId).toBe('s-dispatch')
+    expect(chat.isActive('s-dispatch')).toBe(true)
+    expect(chat.isStreaming).toBe(false) // message_start 未到，isStreaming 仍 false
+  })
+
+  it('message_start 到达 → 清 dispatching + 设 isStreaming（空窗期无缝切换）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-switch'
+    const chat = useChatStore()
+    const { send } = useChat()
+    await send('hi')
+    expect(chat.dispatchingSessionId).toBe('s-switch')
+    emit({ type: 'message.message_start', payload: { sessionId: 's-switch', messageId: 'a1' } })
+    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.isStreaming).toBe(true)
+    expect(chat.isActive('s-switch')).toBe(true) // 合并态仍 true
+  })
+
+  it('终态（complete）清 dispatching（兜底，message_start 未到的异常路径）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-terminal'
+    const chat = useChatStore()
+    const { send } = useChat()
+    await send('hi')
+    expect(chat.dispatchingSessionId).toBe('s-terminal')
+    // 模拟 pi 未发 message_start 直接 complete（异常但需兜底）
+    emit({ type: 'message.complete', payload: { sessionId: 's-terminal' } })
+    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.isActive('s-terminal')).toBe(false)
+  })
+
+  it('send 失败清 dispatching（catch 路径）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-fail'
+    const chat = useChatStore()
+    apiMock.send.mockRejectedValueOnce(new Error('network'))
+    const { send } = useChat()
+    await expect(send('hi')).rejects.toThrow('network')
+    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.isActive('s-fail')).toBe(false)
+  })
+
+  it('steer 在空窗期可用（isActive guard 而非 isStreaming）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-steer'
+    const chat = useChatStore()
+    const { send, steer } = useChat()
+    await send('first') // 置 dispatching，isActive=true 但 isStreaming=false
+    expect(chat.isStreaming).toBe(false)
+    await steer('补充')
+    expect(apiMock.steer).toHaveBeenCalledTimes(1)
+  })
+
+  it('steer 非活跃时早退（不发送）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-idle'
+    const { steer } = useChat()
+    await steer('补充')
+    expect(apiMock.steer).not.toHaveBeenCalled()
+  })
+
+  it('steer/followUp 调 appendPending 入流（pending 气泡可见）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-pending'
+    const chat = useChatStore()
+    const { send, steer, followUp } = useChat()
+    await send('first')
+    await steer('steer 内容')
+    await followUp('followup 内容')
+    const msgs = chat.getMessages('s-pending')
+    // send 的 user + steer pending + followUp pending
+    const pendings = msgs.filter((m) => m.status === 'pending')
+    expect(pendings).toHaveLength(2)
+    expect(pendings[0].sendMode).toBe('steer')
+    expect(pendings[0].content).toBe('steer 内容')
+    expect(pendings[1].sendMode).toBe('follow-up')
   })
 })
 

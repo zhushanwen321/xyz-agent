@@ -316,6 +316,58 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(store.getQueueState('sx')).toBeUndefined()
   })
 
+  it('queue_update 空数组 [] 视为无内容（pi 发 []，需清 queueState）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['x'] },
+    })
+    expect(store.getQueueState('sx')?.steering).toEqual(['x'])
+    // pi 发空数组（drain 完成后 _emitQueueUpdate 展开为 []）
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [], followUp: [] },
+    })
+    expect(store.getQueueState('sx')).toBeUndefined()
+  })
+
+  it('queue_update drain 驱动 pending→complete（steer 投递）', () => {
+    const store = useChatStore()
+    // 模拟 steer 入队：appendPending + queue_update 入队
+    store.appendPending('sx', '补充注册页', 'steer')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['补充注册页'] },
+    })
+    let msgs = store.getMessages('sx')
+    expect(msgs.some((m) => m.status === 'pending' && m.content === '补充注册页')).toBe(true)
+    // pi drain 投递：queue_update 移除该项
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [] },
+    })
+    msgs = store.getMessages('sx')
+    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
+    expect(msgs.some((m) => m.status === 'complete' && m.content === '补充注册页')).toBe(true)
+  })
+
+  it('queue_update drain 驱动 pending→complete（followUp 投递）', () => {
+    const store = useChatStore()
+    store.appendPending('sx', '下轮任务', 'follow-up')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', followUp: ['下轮任务'] },
+    })
+    // drain
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', followUp: [] },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs.every((m) => m.status !== 'pending')).toBe(true)
+    expect(msgs.some((m) => m.content === '下轮任务' && m.status === 'complete')).toBe(true)
+  })
+
   it('retry/queue 状态按 session 隔离（互不串扰）', () => {
     const store = useChatStore()
     store.applyMessageEvent('sa', { type: 'message.auto_retry_start', payload: { sessionId: 'sa', attempt: 1 } })
