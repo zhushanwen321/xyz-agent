@@ -58,6 +58,10 @@ export const useChatStore = defineStore('chat', () => {
    * 使点发送到流式开始之间也能停止/追加。单值，与 streamingSessionId 对称（双 panel 并发 DEFERRED）。
    */
   const dispatchingSessionId = ref<string | null>(null)
+  /** dispatching 超时兜底 timer（W3：pi 崩溃/WS 断连时 message_start 永不到，防 dispatching 永挂） */
+  let dispatchingTimer: ReturnType<typeof setTimeout> | null = null
+  /** dispatching 超时阈值（覆盖正常 ack→message_start 秒级延迟 + 慢网络余量） */
+  const DISPATCHING_TIMEOUT_MS = 30_000
   /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离） */
   const compactingSessions = ref<Set<string>>(new Set())
   /** 按 sessionId 分区的自动重试态（W06-B，auto_retry_start/end） */
@@ -155,18 +159,54 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 将指定 session 里匹配文本的 pending user 消息标记为已投递（status → complete）。
+   * 将指定 session 里匹配文本 + sendMode 的 pending user 消息标记为已投递（status → complete）。
    * 触发：queue_update 里某条 steer/followUp 文本消失（pi drain 投递了它）。
-   * 按 indexOf 匹配（与 pi 的 splice 语义一致），仅转第一条匹配的 pending 消息。
+   * [W5] 按 content + sendMode 精确匹配，避免跨类型同文本误转（steer「补」与 followUp「补」）。
+   * 仅转第一条匹配的 pending（FIFO，与 pi splice 顺序一致）；重复文本 drain 时由调用方按计数多次调用。
+   * sendMode 可选——未传时退化为仅 content 匹配（兼容 message_start flush 的宽松场景）。
+   * 幂等：对已 complete 的消息 no-op。
    */
-  function markPendingDelivered(sessionId: string, text: string): void {
+  function markPendingDelivered(
+    sessionId: string,
+    text: string,
+    sendMode?: 'steer' | 'follow-up',
+  ): void {
     const prev = messages.value.get(sessionId)
     if (!prev) return
-    const idx = prev.findIndex((m) => m.role === 'user' && m.status === 'pending' && m.content === text)
+    const idx = prev.findIndex(
+      (m) =>
+        m.role === 'user'
+        && m.status === 'pending'
+        && m.content === text
+        && (sendMode === undefined || m.sendMode === sendMode),
+    )
     if (idx === -1) return
     const next = [...prev]
     next[idx] = { ...next[idx], status: 'complete' }
     messages.value.set(sessionId, next)
+  }
+
+  /**
+   * 移除指定 session 里匹配文本 + sendMode 的 pending user 消息（W1：steer/followUp API 失败回滚）。
+   * 与 markPendingDelivered 的区别：转 complete 是「投递成功」，removePending 是「发送失败，消息作废」。
+   * 仅移除第一条匹配的 pending（FIFO）。失败时调用——pending 气泡从对话流删除，不留孤儿。
+   */
+  function removePending(
+    sessionId: string,
+    text: string,
+    sendMode: 'steer' | 'follow-up',
+  ): void {
+    const prev = messages.value.get(sessionId)
+    if (!prev) return
+    const idx = prev.findIndex(
+      (m) =>
+        m.role === 'user'
+        && m.status === 'pending'
+        && m.content === text
+        && m.sendMode === sendMode,
+    )
+    if (idx === -1) return
+    messages.value.set(sessionId, prev.filter((_, i) => i !== idx))
   }
 
   /**
@@ -201,14 +241,39 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = value
     // true 时记录哪个 session 在流式；false 时清空（终态事件不携带 sid 语义，直接清）
     streamingSessionId.value = value ? (sessionId ?? null) : null
-    // message_start 到达（流式正式开始）或终态时，空窗期结束，清 dispatching。
+    // message_start 到达（流式正式开始）或终态时，空窗期结束，清 dispatching + 取消超时兜底。
     // 兜底：正常情况 message_start 已清，此处防御性清理终态路径（complete/error）。
+    clearDispatchingTimer()
     if (dispatchingSessionId.value !== null) dispatchingSessionId.value = null
   }
 
-  /** 置位/清除派发态（sendPrompt 前置位 → message_start/终态/失败清空） */
+  /**
+   * 置位/清除派发态（sendPrompt 前置位 → message_start/终态/失败清空）。
+   * [W3] 置位时挂 30s 超时兜底——若 pi 崩溃/WS 断连导致 message_start 永不到达，
+   * dispatching 会永久挂着（停止按钮/steer guard 死锁）。超时后自动清，让 UI 恢复可操作。
+   * 30s 足够覆盖正常 ack→message_start（秒级）+ 慢网络/模型冷启动余量。
+   * 清除（null）时取消 timer。setStreaming 也会清 timer（正常流转）。
+   */
   function setDispatching(sessionId: string | null): void {
+    clearDispatchingTimer()
     dispatchingSessionId.value = sessionId
+    if (sessionId !== null) {
+      dispatchingTimer = setTimeout(() => {
+        // 超时兜底：dispatching 仍未被 message_start/终态清除 → 强制清
+        if (dispatchingSessionId.value === sessionId) {
+          dispatchingSessionId.value = null
+          console.warn(`[chat] dispatching timeout for session ${sessionId}, force-clearing (message_start never arrived)`)
+        }
+      }, DISPATCHING_TIMEOUT_MS)
+    }
+  }
+
+  /** 取消 dispatching 超时 timer（正常流转或手动清除时调） */
+  function clearDispatchingTimer(): void {
+    if (dispatchingTimer !== null) {
+      clearTimeout(dispatchingTimer)
+      dispatchingTimer = null
+    }
   }
 
   /**
@@ -289,6 +354,7 @@ export const useChatStore = defineStore('chat', () => {
     appendUser,
     appendPending,
     markPendingDelivered,
+    removePending,
     applyMessageEvent,
     setStreaming,
     setDispatching,

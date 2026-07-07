@@ -254,6 +254,45 @@ describe('useChat dispatching 合并态（空窗期）', () => {
     expect(pendings[0].content).toBe('steer 内容')
     expect(pendings[1].sendMode).toBe('follow-up')
   })
+
+  it('abort 乐观清 dispatching（W4：失败路径不残留）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-abort'
+    const chat = useChatStore()
+    const { send, abort } = useChat()
+    await send('first')
+    expect(chat.dispatchingSessionId).toBe('s-abort')
+    // abort 即使 RPC 失败也清 dispatching（乐观清理 + catch 兜底）
+    apiMock.abort.mockRejectedValueOnce(new Error('session not found'))
+    await abort() // 不抛（catch 吞掉）
+    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.isActive('s-abort')).toBe(false)
+  })
+
+  it('steer API 失败回滚 pending（W1：不留孤儿气泡）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-rollback'
+    const chat = useChatStore()
+    const { send, steer } = useChat()
+    await send('first')
+    apiMock.steer.mockRejectedValueOnce(new Error('ws disconnected'))
+    await expect(steer('补充')).rejects.toThrow('ws disconnected')
+    const msgs = chat.getMessages('s-rollback')
+    // pending 已被回滚移除，无孤儿
+    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
+  })
+
+  it('followUp API 失败回滚 pending（W1）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-fu-rollback'
+    const chat = useChatStore()
+    const { send, followUp } = useChat()
+    await send('first')
+    apiMock.followUp.mockRejectedValueOnce(new Error('ws disconnected'))
+    await expect(followUp('下轮')).rejects.toThrow('ws disconnected')
+    const msgs = chat.getMessages('s-fu-rollback')
+    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
+  })
 })
 
 describe('useChat compact 状态机（#6）', () => {

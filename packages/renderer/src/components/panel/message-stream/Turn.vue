@@ -33,10 +33,10 @@
            此处用 CSS 保留软换行，兑现"用户输入的换行在气泡里可见"。
            代码块 <pre> 自带 white-space:pre，不受影响。仅用户气泡加，不影响 assistant。 -->
       <!-- pending 气泡（draft-composer-states S7）：steer/followup 已入队未投递，
-           虚线边框 + 脉冲圆点 + WHO 标 + 配色（steer 蓝 / followUp 青），投递后转普通气泡。 -->
+           虚线边框（1px，对齐设计稿）+ 脉冲圆点 + WHO 标 + 配色（steer 蓝 / followUp 青），投递后转普通气泡。 -->
       <div
         v-else-if="isPendingUser"
-        class="max-w-[76%] rounded-[14px_14px_4px_14px] border-2 border-dashed px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
+        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-dashed px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
         :class="pendingBubbleClass"
       >
         <span class="mb-1 flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-wider"
@@ -87,7 +87,7 @@
           <Copy v-else class="size-3" />
         </Button>
         <Button
-          v-if="canEdit && !isStreaming"
+          v-if="canEdit && !isSessionActive"
           variant="ghost"
           size="icon"
           class="size-6 text-subtle hover:text-fg"
@@ -166,7 +166,7 @@
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
         <div
-          v-if="!isStreaming && lastAssistant"
+          v-if="!isSessionActive && lastAssistant"
           class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100"
         >
           <Button
@@ -218,7 +218,6 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { storeToRefs } from 'pinia'
 import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -248,7 +247,6 @@ const props = defineProps<{
 }>()
 
 const chat = useChatStore()
-const { isStreaming } = storeToRefs(chat)
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
@@ -280,8 +278,11 @@ const slashChip = computed(() => {
   return { name: matched.name, rest, iconComp }
 })
 
-/** 全局流式态（当前活跃 session）：streaming 时禁编辑/fork */
-// isStreaming 来自 storeToRefs（上）
+/**
+ * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isStreaming。
+ * standby panel 的 Turn 不会被 active panel 的流式态误伤；编辑/fork 仅在本 session 活跃时禁用。
+ */
+const isSessionActive = computed(() => chat.isActive(props.sessionId))
 
 /**
  * pending user 气泡（draft-composer-states S7）：steer/followup 已入队 pi 但未投递。
@@ -294,8 +295,8 @@ const isPendingUser = computed(
 const isSteerMode = computed(() => props.turn.user?.sendMode === 'steer')
 const pendingBubbleClass = computed(() =>
   isSteerMode.value
-    ? 'border-[var(--accent)] bg-[rgba(79,142,247,0.06)]'
-    : 'border-info bg-[rgba(56,189,248,0.06)]',
+    ? 'border-[var(--accent)] bg-[color-mix(in_oklch,var(--accent)_6%,transparent)]'
+    : 'border-info bg-[color-mix(in_oklch,var(--info)_6%,transparent)]',
 )
 const pendingLabelClass = computed(() => (isSteerMode.value ? 'text-accent' : 'text-info'))
 const pendingDotClass = computed(() => (isSteerMode.value ? 'bg-accent' : 'bg-info'))

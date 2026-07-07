@@ -92,4 +92,20 @@ describe('Turn pending 气泡（S7）', () => {
     const wrapper = mountTurn(makeTurn({ status: 'complete' }))
     expect(wrapper.find('button[title="复制"]').exists()).toBe(true)
   })
+
+  it('pending→complete 响应式转换：虚线消失 + STEER 标签消失 + hover actions 出现', async () => {
+    const wrapper = mountTurn(makeTurn({ status: 'pending', sendMode: 'steer' }))
+    // 初始 pending 态
+    expect(wrapper.find('.border-dashed').exists()).toBe(true)
+    expect(wrapper.text()).toContain('STEER 追加')
+    expect(wrapper.find('button[title="复制"]').exists()).toBe(false)
+    // 模拟投递：status pending→complete
+    await wrapper.setProps({
+      turn: makeTurn({ status: 'complete', sendMode: 'steer' }),
+    })
+    // 转换后：虚线消失、标签消失、hover actions 出现
+    expect(wrapper.find('.border-dashed').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('STEER 追加')
+    expect(wrapper.find('button[title="复制"]').exists()).toBe(true)
+  })
 })

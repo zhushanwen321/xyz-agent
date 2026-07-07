@@ -94,11 +94,30 @@ describe('QueueBubble S8', () => {
     expect(wrapper.text()).not.toContain('STEERING')
   })
 
-  it('只读：不渲染任何删除/dequeue/编辑按钮', () => {
+  it('只读：不渲染删除/dequeue/编辑/撤回等破坏性按钮', () => {
     const state: QueueState = { steering: ['x', 'y'], followUp: ['z'] }
     const wrapper = mount(QueueBubble, { props: { state } })
-    // 只有 1 个 button（head toggle），无其他操作按钮
-    expect(wrapper.findAll('button')).toHaveLength(1)
+    // 语义断言：不存在任何带删除/移除/撤回 title 的按钮（而非脆弱的计数）
+    for (const keyword of ['删除', '移除', '撤回', 'dequeue', 'remove', 'cancel', '编辑']) {
+      expect(wrapper.find(`button[title*="${keyword}"]`).exists()).toBe(false)
+    }
+  })
+
+  it('展开后点击 item 文本无副作用（只读契约）', async () => {
+    const state: QueueState = { steering: ['a', 'b'] }
+    const wrapper = mount(QueueBubble, { props: { state } })
+    await wrapper.find('button').trigger('click')
+    await nextTick()
+    // item 是 span（非按钮）。QueueBubble 无 defineEmits，不 emit 任何自定义事件。
+    // 点击 item 文本不应触发移除/状态变化——队列内容不变即只读契约。
+    const itemTextsBefore = wrapper.findAll('span.break-words').map((w) => w.text())
+    const item = wrapper.findAll('span.break-words')[0]
+    if (item?.exists()) {
+      await item.trigger('click')
+    }
+    await nextTick()
+    const itemTextsAfter = wrapper.findAll('span.break-words').map((w) => w.text())
+    expect(itemTextsAfter).toEqual(itemTextsBefore) // 内容不变 = 无副作用
   })
 
   it('state 变化重置折叠态', async () => {

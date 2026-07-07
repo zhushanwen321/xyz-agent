@@ -368,6 +368,79 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(msgs.some((m) => m.content === '下轮任务' && m.status === 'complete')).toBe(true)
   })
 
+  it('queue_update 重复文本 drain（B1 回归：计数 diff 精确匹配）', () => {
+    const store = useChatStore()
+    // 连发两条相同文本的 steer（appendPending 两条）
+    store.appendPending('sx', '继续', 'steer')
+    store.appendPending('sx', '继续', 'steer')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['继续', '继续'] },
+    })
+    // pi drain 一条 → 队列剩一条
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['继续'] },
+    })
+    let msgs = store.getMessages('sx')
+    const completed = msgs.filter((m) => m.content === '继续' && m.status === 'complete')
+    const pending = msgs.filter((m) => m.status === 'pending')
+    expect(completed).toHaveLength(1) // 恰好转一条
+    expect(pending).toHaveLength(1) // 还剩一条 pending
+    // 再 drain 最后一条
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [] },
+    })
+    msgs = store.getMessages('sx')
+    expect(msgs.filter((m) => m.status === 'pending')).toHaveLength(0)
+    expect(msgs.filter((m) => m.content === '继续' && m.status === 'complete')).toHaveLength(2)
+  })
+
+  it('message_start flush 残留 pending（W2 兜底：乱序竞态）', () => {
+    const store = useChatStore()
+    // steer 入队
+    store.appendPending('sx', '补充', 'steer')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['补充'] },
+    })
+    // 模拟竞态：assistant turn 的 message_start 先到，queue_update（drain）后到。
+    // message_start 应先 flush 残留 pending 为 complete，再清 queueStates。
+    store.applyMessageEvent('sx', {
+      type: 'message.message_start',
+      payload: { sessionId: 'sx', messageId: 'a1' },
+    })
+    const msgs = store.getMessages('sx')
+    // pending 已被 flush 转 complete（message_start 兜底）
+    expect(msgs.some((m) => m.content === '补充' && m.status === 'complete')).toBe(true)
+    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
+    // queueStates 已清
+    expect(store.getQueueState('sx')).toBeUndefined()
+  })
+
+  it('跨类型同文本 drain（W5：sendMode 精确匹配，steer 与 followUp 不互误）', () => {
+    const store = useChatStore()
+    // steer「补」和 followUp「补」文本相同
+    store.appendPending('sx', '补', 'steer')
+    store.appendPending('sx', '补', 'follow-up')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['补'], followUp: ['补'] },
+    })
+    // 只 drain steer 那条（followUp 队列不动）
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [], followUp: ['补'] },
+    })
+    const msgs = store.getMessages('sx')
+    // steer 那条转 complete，followUp 那条仍 pending（sendMode 精确匹配，不误转）
+    const steerMsg = msgs.find((m) => m.sendMode === 'steer')
+    const followUpMsg = msgs.find((m) => m.sendMode === 'follow-up')
+    expect(steerMsg?.status).toBe('complete')
+    expect(followUpMsg?.status).toBe('pending')
+  })
+
   it('retry/queue 状态按 session 隔离（互不串扰）', () => {
     const store = useChatStore()
     store.applyMessageEvent('sa', { type: 'message.auto_retry_start', payload: { sessionId: 'sa', attempt: 1 } })

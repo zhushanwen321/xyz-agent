@@ -15,13 +15,13 @@
 <template>
   <div
     v-if="state && hasAny"
-    class="mb-1.5 overflow-hidden rounded-md border border-[rgba(79,142,247,0.45)] bg-[rgba(79,142,247,0.06)] text-[12px]"
+    class="mb-1.5 overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-[color-mix(in_oklch,var(--accent)_6%,transparent)] text-[12px]"
   >
     <!-- head：脉冲点 + 标签 + 计数摘要 + chevron（多条可折叠） -->
     <Button
       variant="ghost"
-      class="flex h-auto w-full items-center gap-2 rounded-none px-3 py-1.5 text-left font-normal hover:bg-[rgba(79,142,247,0.08)]"
-      :class="!canToggle ? 'cursor-default hover:bg-transparent' : ''"
+      class="flex h-auto w-full items-center gap-2 rounded-none px-3 py-1.5 text-left font-normal hover:bg-[color-mix(in_oklch,var(--accent)_8%,transparent)] disabled:opacity-100"
+      :class="!canToggle ? 'cursor-default' : ''"
       :disabled="!canToggle"
       :aria-expanded="canToggle ? expanded : undefined"
       :title="canToggle ? (expanded ? '收起队列' : '展开队列') : undefined"
@@ -41,28 +41,28 @@
 
     <!-- 单条且未展开：直接在 head 下方显示该条（紧凑，无需折叠） -->
     <div
-      v-if="!expanded && totalCount === 1"
-      class="border-t border-[rgba(79,142,247,0.18)] px-3 py-1.5"
+      v-if="!expanded && singleGroup"
+      class="border-t border-[color-mix(in_oklch,var(--accent)_18%,transparent)] px-3 py-1.5"
     >
       <span
         class="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-wider"
-        :class="singleGroup!.key === 'followUp' ? 'text-info' : 'text-accent'"
+        :class="singleGroup.key === 'followUp' ? 'text-info' : 'text-accent'"
       >
         <span
           class="size-[6px] animate-pulse-accent rounded-full"
-          :class="singleGroup!.key === 'followUp' ? 'bg-info' : 'bg-accent'"
+          :class="singleGroup.key === 'followUp' ? 'bg-info' : 'bg-accent'"
         />
-        {{ singleGroup!.key === 'followUp' ? 'FOLLOWUP 新轮' : 'STEER 追加' }}
+        {{ singleGroup.key === 'followUp' ? 'FOLLOWUP 新轮' : 'STEER 追加' }}
       </span>
-      <p class="mt-0.5 text-fg">{{ singleGroup!.items[0] }}</p>
+      <p class="mt-0.5 text-fg">{{ singleGroup.items[0] }}</p>
     </div>
 
     <!-- 展开态：双组分栏逐条列表（多条折叠态点 head 展开后显示） -->
     <template v-if="expanded && totalCount > 1">
       <div
-        v-for="(group, idx) in groups"
+        v-for="group in groups"
         :key="group.key"
-        :class="idx > 0 ? 'border-t border-[rgba(79,142,247,0.18)]' : 'border-t border-[rgba(79,142,247,0.18)]'"
+        class="border-t border-[color-mix(in_oklch,var(--accent)_18%,transparent)]"
       >
         <div class="flex items-center gap-2 px-3 pt-1.5">
           <span
@@ -82,7 +82,7 @@
           <span class="min-w-0 flex-1 break-words">{{ item }}</span>
         </div>
       </div>
-      <div class="border-t border-[rgba(79,142,247,0.18)] px-3 py-1 text-[10px] text-subtle">
+      <div class="border-t border-[color-mix(in_oklch,var(--accent)_18%,transparent)] px-3 py-1 text-[10px] text-subtle">
         生效顺序：steering FIFO → followUp FIFO
       </div>
     </template>
