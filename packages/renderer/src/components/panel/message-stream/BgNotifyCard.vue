@@ -33,15 +33,15 @@
     <div v-else class="flex flex-col gap-1">
       <div
         class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[11.5px] transition-opacity hover:opacity-80"
-        :class="recordTextClass(single)"
+        :class="single ? recordTextClass(single) : ''"
         :title="expanded ? '收起' : '展开'"
         @click="expanded = !expanded"
       >
         <ChevronRight class="size-2.5 transition-transform" :class="expanded ? 'rotate-90' : ''" />
-        <component :is="recordIcon(single)" class="size-3 shrink-0" />
-        <span class="font-semibold">{{ single.agent }}</span>
-        <span v-if="single.model" class="text-subtle">· {{ single.model }}</span>
-        <span v-if="elapsedLabel(single)" class="text-subtle">— {{ elapsedLabel(single) }}</span>
+        <component v-if="single" :is="recordIcon(single)" class="size-3 shrink-0" />
+        <span v-if="single" class="font-semibold">{{ single.agent }}</span>
+        <span v-if="single?.model" class="text-subtle">· {{ single.model }}</span>
+        <span v-if="single && elapsedLabel(single)" class="text-subtle">— {{ elapsedLabel(single) }}</span>
       </div>
 
       <!-- 摘要首行（result/error，收起态可见一行） -->
@@ -52,7 +52,7 @@
         <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info/5 px-2 py-1 font-mono text-[11px] text-info">
           {{ patchHint }}
         </div>
-        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto whitespace-pre-wrap rounded-sm bg-bg-base/50 px-2 py-1 text-[11.5px] leading-relaxed text-muted">
+        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto whitespace-pre-wrap rounded-sm bg-surface-2/50 px-2 py-1 text-[11.5px] leading-relaxed text-muted">
           {{ fullContent }}
         </div>
       </template>
@@ -70,16 +70,17 @@ const props = defineProps<{
   message: Message
 }>()
 
-/** 是否批量形态（{batch, items}） */
+/** 是否批量形态（{batch:true, items:[]}）。'batch' in d 是 TS 类型守卫（narrow 到批量分支），
+ *  Array.isArray(d.items) 是运行时防御（展示组件不依赖上游 parseBgNotifyDetails 不变量）。 */
 const isBatch = computed(() => {
   const d = props.message.bgNotify
-  return !!d && 'batch' in d
+  return !!d && 'batch' in d && Array.isArray(d.items)
 })
 
-/** 单条 record（非 batch 时取） */
-const single = computed<BgNotifyRecord>(() => {
+/** 单条 record（非 batch 时取，batch 或缺失时返回 null） */
+const single = computed<BgNotifyRecord | null>(() => {
   const d = props.message.bgNotify
-  if (!d || 'batch' in d) return null as unknown as BgNotifyRecord
+  if (!d || 'batch' in d) return null
   return d
 })
 
@@ -87,7 +88,7 @@ const single = computed<BgNotifyRecord>(() => {
 const records = computed<BgNotifyRecord[]>(() => {
   const d = props.message.bgNotify
   if (!d) return []
-  if ('batch' in d) return d.items
+  if ('batch' in d) return Array.isArray(d.items) ? d.items : []
   return [d]
 })
 

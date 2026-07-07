@@ -56,6 +56,10 @@ describe('parseBgNotifyDetails', () => {
     expect(d).toBeNull()
   })
 
+  it('批量 items 为空数组 → null（滑动窗口 flush 无完成的合法中间态）', () => {
+    expect(parseBgNotifyDetails({ batch: true, items: [] })).toBeNull()
+  })
+
   it('null / undefined / 非 object → null', () => {
     expect(parseBgNotifyDetails(null)).toBeNull()
     expect(parseBgNotifyDetails(undefined)).toBeNull()
