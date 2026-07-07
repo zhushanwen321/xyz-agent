@@ -581,6 +581,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // （含 cacheRead），远大于当前 context 占用，会显示荒谬的百分比（如 compact 后 978%）。
     // 正确行为：返回 null，前端不显示 ctx 用量，等用户发消息后 turn_end 刷成精确值。
     if (cu && cu.tokens != null) {
+      // 回写 session.inputTokens 缓存：fetchContext 是 restoreSession / session.getContext RPC
+      // 的共同落点。initializeManagedSession 把 inputTokens 初始化为 0，若不在此回写，
+      // switchModel → broadcastSessionState 读缓存拿到 0 → 推 inputTokens=0 → 前端 ctx 按钮变「—」。
+      // 与 applyContextUpdate（turn-end 路径）对称，两者是 inputTokens 缓存的全部写入点。
+      this.setInputTokens(sessionId, cu.tokens)
       return {
         inputTokens: cu.tokens,
         contextLimit: cu.contextWindow,
