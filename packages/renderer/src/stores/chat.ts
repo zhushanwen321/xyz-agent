@@ -45,6 +45,19 @@ export const useChatStore = defineStore('chat', () => {
    * 单值足够：双 panel 并发流式目前不可达（G-023 DEFERRED），未来并发可扩展为 Set。
    */
   const streamingSessionId = ref<string | null>(null)
+  /**
+   * 正在派发 prompt 的 session id（填补 isStreaming 空窗期）。
+   *
+   * 空窗期根因：pi 的 prompt RPC 在「preflight 成功 / 已接收」即回 success（非「已开始生成」），
+   * 前端收到 ack 后 isSending 复位，但 isStreaming 要等 pi 异步 emit message_start 才置位。
+   * ack → message_start 之间的空窗里，停止按钮不出现、steer guard 静默丢弃追加消息。
+   *
+   * dispatchingSessionId 在 sendPrompt 前（useChat.send / submitFirstMessage）置位，
+   * message_start 到达（setStreaming(true)）或终态/失败时清空。
+   * Composer 的停止按钮和 steer guard 看「合并态」isStreaming || dispatchingSessionId===sid，
+   * 使点发送到流式开始之间也能停止/追加。单值，与 streamingSessionId 对称（双 panel 并发 DEFERRED）。
+   */
+  const dispatchingSessionId = ref<string | null>(null)
   /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离） */
   const compactingSessions = ref<Set<string>>(new Set())
   /** 按 sessionId 分区的自动重试态（W06-B，auto_retry_start/end） */
@@ -151,6 +164,24 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = value
     // true 时记录哪个 session 在流式；false 时清空（终态事件不携带 sid 语义，直接清）
     streamingSessionId.value = value ? (sessionId ?? null) : null
+    // message_start 到达（流式正式开始）或终态时，空窗期结束，清 dispatching。
+    // 兜底：正常情况 message_start 已清，此处防御性清理终态路径（complete/error）。
+    if (dispatchingSessionId.value !== null) dispatchingSessionId.value = null
+  }
+
+  /** 置位/清除派发态（sendPrompt 前置位 → message_start/终态/失败清空） */
+  function setDispatching(sessionId: string | null): void {
+    dispatchingSessionId.value = sessionId
+  }
+
+  /**
+   * 指定 session 是否「活跃」——合并 isStreaming 和 dispatching 空窗态。
+   * Composer 停止按钮 / steer guard 用此判断，而非单一 isStreaming，
+   * 消除「ack 已到但 message_start 未到」的空窗期。
+   */
+  function isActive(sessionId: string): boolean {
+    return (isStreaming.value && streamingSessionId.value === sessionId)
+      || dispatchingSessionId.value === sessionId
   }
 
   /** 指定 session 是否正在压缩上下文（#6） */
@@ -202,6 +233,7 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     isStreaming,
     streamingSessionId,
+    dispatchingSessionId,
     compactingSessions,
     retryStates,
     queueStates,
@@ -220,6 +252,8 @@ export const useChatStore = defineStore('chat', () => {
     appendUser,
     applyMessageEvent,
     setStreaming,
+    setDispatching,
+    isActive,
     isCompacting,
     setCompacting,
     appendSystemNotice,

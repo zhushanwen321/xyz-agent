@@ -51,9 +51,9 @@
         <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
         <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" @select="onThinkingSelect" />
 
-        <!-- 发送位三态：S6 streaming→stop / S5 sending→spinner / S1·S2 idle→send -->
+        <!-- 发送位三态：S6 streaming/dispatching→stop / S5 sending→spinner / S1·S2 idle→send -->
         <Button
-          v-if="isStreaming"
+          v-if="isActive"
           variant="ghost"
           size="icon"
           class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-[rgba(239,68,68,0.15)] hover:text-danger"
@@ -97,7 +97,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ArrowUp, Loader2, Square } from '@lucide/vue'
-import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
 import AddMenuPopover from './AddMenuPopover.vue'
@@ -123,9 +122,18 @@ const props = withDefaults(
 )
 
 const chatStore = useChatStore()
-const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
+
+/**
+ * 合并活跃态：流式中（isStreaming）或派发空窗期（dispatchingSessionId 命中当前 session）。
+ * 替代单一 isStreaming 驱动停止按钮/steer guard/键盘路由，消除「ack 到达但 message_start 未到」
+ * 的空窗期——点发送后立刻显示停止按钮、steer 可用，message_start 到达无缝切交流式态。
+ */
+const isActive = computed(() => {
+  if (!props.sessionId) return false
+  return chatStore.isActive(props.sessionId)
+})
 
 // 模型 + 思考等级状态（含 landing 态延迟 apply）—— 见 useComposerModelThinking
 const {
@@ -182,17 +190,17 @@ function restoreInput(text: string): void {
 }
 
 const hasInput = computed(() => draft.value.trim().length > 0)
-/** 可发送：有输入且非 streaming 非 sending 非 compacting。
+/** 可发送：有输入且非活跃（流式/派发）非 sending 非 compacting。
  *  landing 态（sessionId 可能为公共 session id 或 null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
-const canSend = computed(() => hasInput.value && !isStreaming.value && !isSending.value && !isCompacting.value)
+const canSend = computed(() => hasInput.value && !isActive.value && !isSending.value && !isCompacting.value)
 
 /**
  * composer-box class（draft）：
- * - S6 流式中：accent 蓝 steer 呼吸 ring
+ * - S6 流式中/派发空窗期：accent 蓝 steer 呼吸 ring
  * - S2 普通输入中：中性聚焦 ring
  */
 const boxClass = computed(() => [
-  isStreaming.value
+  isActive.value
     ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
     : hasInput.value
       ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
@@ -201,7 +209,7 @@ const boxClass = computed(() => [
 ])
 
 const placeholder = computed(() =>
-  isStreaming.value
+  isActive.value
     ? '想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…'
     : '描述你想让 AI 做什么，或 # 文件、/ 命令…',
 )
@@ -266,9 +274,9 @@ async function onSend(): Promise<void> {
   }
 }
 
-/** 追加 steer：S6 有输入时 ⏎ 触发 */
+/** 追加 steer：活跃态（流式/派发）有输入时 ⏎ 触发 */
 async function onSteer(): Promise<void> {
-  if (!hasInput.value || !isStreaming.value) return
+  if (!hasInput.value || !isActive.value) return
   await submit(draft.value, steer)
 }
 
@@ -303,7 +311,7 @@ function onKeydown(e: KeyboardEvent): void {
   e.preventDefault()
   if (e.altKey) {
     onFollowUp()
-  } else if (isStreaming.value) {
+  } else if (isActive.value) {
     onSteer()
   } else {
     onSend()

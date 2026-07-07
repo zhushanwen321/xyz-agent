@@ -106,17 +106,25 @@ export function useChat() {
    *
    * 流式状态由会话级订阅的事件驱动（message_start→true，complete/error→false），
    * 不依赖 send() 的 resolve 时机——避免 ack 早于首个 chunk 导致订阅被提前拆除。
+   *
+   * dispatching 态在 send 前置位（填 isStreaming 空窗期，让 Composer 停止按钮/steer 立即可用），
+   * message_start 到达时 setStreaming 自动清；失败也清（catch）。
    */
   async function send(text: string): Promise<void> {
     const sid = session.activeId
     if (!sid) return
     const trimmed = text.trim()
-    if (!trimmed || chat.isStreaming) return
+    if (!trimmed || chat.isActive(sid)) return
 
     chat.appendUser(sid, trimmed)
     ensureStreamSubscription(sid, chat, session)
-
-    await chatApi.send(sid, trimmed)
+    chat.setDispatching(sid)
+    try {
+      await chatApi.send(sid, trimmed)
+    } catch (e) {
+      chat.setDispatching(null)
+      throw e
+    }
   }
 
   /**
@@ -127,7 +135,7 @@ export function useChat() {
     const sid = session.activeId
     if (!sid) return
     const trimmed = text.trim()
-    if (!trimmed || !chat.isStreaming) return
+    if (!trimmed || !chat.isActive(sid)) return
 
     await chatApi.steer(sid, trimmed)
   }
@@ -142,7 +150,8 @@ export function useChat() {
     const trimmed = text.trim()
     if (!trimmed) return
 
-    if (!chat.isStreaming) {
+    // 非活跃（含空窗期）退化为普通发送，避免 Alt+⏎ 死键
+    if (!chat.isActive(sid)) {
       await send(trimmed)
       return
     }
@@ -189,11 +198,17 @@ export function useChat() {
    */
   async function editAndResend(sessionId: string, userMessageId: string, text: string): Promise<void> {
     const trimmed = text.trim()
-    if (!trimmed || chat.isStreaming) return
+    if (!trimmed || chat.isActive(sessionId)) return
     chat.truncateFrom(sessionId, userMessageId, true)
     chat.appendUser(sessionId, trimmed)
     ensureStreamSubscription(sessionId, chat, session)
-    await chatApi.send(sessionId, trimmed)
+    chat.setDispatching(sessionId)
+    try {
+      await chatApi.send(sessionId, trimmed)
+    } catch (e) {
+      chat.setDispatching(null)
+      throw e
+    }
   }
 
   /**

@@ -51,10 +51,11 @@ vi.mock('@/api', () => ({
 
 // ── mock chat/session/settings store：最小 stub（Composer 构造期读取 active/isStreaming 等不报错）──
 // command store 保持真实（ setActivePinia 后 useCommandStore() ），便于观察 pendingSlash。
-// 注意：isStreaming 经 storeToRefs(chatStore) 解构，须为 ref 才能被 boxClass computed 读 .value。
+// 注意：isActive（合并态）驱动 Composer 停止按钮/steer guard，mock 返回 false（非活跃）。
 vi.mock('@/stores/chat', () => ({
   useChatStore: () => ({
     isStreaming: ref(false),
+    isActive: () => false,
     getRetryState: () => undefined,
     getQueueState: () => undefined,
     isCompacting: () => false,

@@ -77,6 +77,10 @@ describe('useChat 流式状态机', () => {
     session.activeId = 's-idempotent'
     const { send } = useChat()
     await send('one')
+    // 第一轮流式周期结束（message_start 清 dispatching + 设 isStreaming，complete 清 isStreaming），
+    // 否则 isActive guard 会拦截第二次 send（dispatching 残留）
+    emit({ type: 'message.message_start', payload: { sessionId: 's-idempotent', messageId: 'a1' } })
+    emit({ type: 'message.complete', payload: { sessionId: 's-idempotent' } })
     await send('two')
     expect(apiMock.streamSubscribe).toHaveBeenCalledTimes(1)
     expect(apiMock.send).toHaveBeenCalledTimes(2)
