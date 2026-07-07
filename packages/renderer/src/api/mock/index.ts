@@ -116,6 +116,7 @@ const TIMING: Timing = {
   toolGap: 90, // tool_call 各阶段间隔（进度感）
   fileChangesGap: 120, // accumulating → ready 间隔
   retryGap: 800, // auto_retry_start → end 间隔（让指示位可见）
+  steerDrain: 1500, // steer/followUp 入队 → 模拟 drain（pi 投递）间隔，让 pending 气泡可见
 }
 
 const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
@@ -123,6 +124,12 @@ const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
 const cancelled = new Set<string>()
 /** 运行中的 setTimeout 句柄，resolve 后自动移除，避免 Set 无限增长 */
 const timers = new Set<ReturnType<typeof setTimeout>>()
+/**
+ * mock 队列状态镜像（steer/followUp pending）。
+ * steer/followUp 入队时 push + emit 全量 queue_update（QueueBubble 渲染 + pending 气泡），
+ * 延迟后 splice 模拟 drain（pi 投递）+ emit 全量（移除该项）→ 前端 pending 气泡转 complete。
+ */
+const mockQueues = new Map<string, { steering: string[]; followUp: string[] }>()
 
 /** 清理所有未触发的 timer（测试 teardown / 模块卸载时调用） */
 export function __clearTimers(): void {
@@ -139,6 +146,18 @@ function nextId(prefix: string): string {
 
 function emit(sessionId: string, msg: ServerMessage): void {
   streamHandlers.get(sessionId)?.forEach((h) => h(msg))
+}
+
+/** emit 全量 queue_update（steering + followUp 镜像），驱动 QueueBubble + pending 气泡 */
+function emitQueueUpdate(sessionId: string): void {
+  const q = mockQueues.get(sessionId)
+  const steering = q?.steering.length ? q.steering : undefined
+  const followUp = q?.followUp.length ? q.followUp : undefined
+  // 两者皆空时仍 emit（空 payload），让 store 侧 queue_update handler delete queueState
+  emit(sessionId, {
+    type: 'message.queue_update',
+    payload: { sessionId, steering, followUp },
+  })
 }
 
 function sleep(ms: number): Promise<void> {
@@ -268,23 +287,43 @@ export const chat = {
     await sleep(TIMING.ack)
   },
 
-  /** steer：mock 下 ack 后推 queue_update（steering 排队），让 QueueBubble 渲染可验证（#13/W06-B）。
-   *  下次 message_start 到达时 store 侧清 queue（G-023，chat-chunk-processor 消费侧职责）。 */
+  /**
+   * steer：ack 后推 queue_update（steering 入队），延迟后模拟 drain（pi 投递：splice 移除 + emit）。
+   * 入队 → QueueBubble 渲染 + pending 气泡；drain → 前端 pending→complete。
+   * drain 时机简化为固定延迟（真实 pi 在「当前回合工具调用结束后、下次 LLM 调用前」）。
+   */
   async steer(sessionId: string, text: string): Promise<void> {
     await sleep(TIMING.ack)
-    emit(sessionId, {
-      type: 'message.queue_update',
-      payload: { sessionId, steering: [text] },
-    })
+    const q = mockQueues.get(sessionId) ?? { steering: [], followUp: [] }
+    q.steering.push(text)
+    mockQueues.set(sessionId, q)
+    emitQueueUpdate(sessionId)
+    // 延迟模拟 drain（投递后移除该项）
+    const t = setTimeout(() => {
+      const cur = mockQueues.get(sessionId)
+      if (!cur || cancelled.has(sessionId)) return
+      const idx = cur.steering.indexOf(text)
+      if (idx !== -1) cur.steering.splice(idx, 1)
+      emitQueueUpdate(sessionId)
+    }, TIMING.steerDrain)
+    timers.add(t)
   },
 
-  /** followUp：mock 下 ack 后推 queue_update（followUp 排队），让 QueueBubble 渲染可验证。 */
+  /** followUp：ack 后推 queue_update（followUp 入队），延迟后模拟 drain。语义同 steer。 */
   async followUp(sessionId: string, text: string): Promise<void> {
     await sleep(TIMING.ack)
-    emit(sessionId, {
-      type: 'message.queue_update',
-      payload: { sessionId, followUp: [text] },
-    })
+    const q = mockQueues.get(sessionId) ?? { steering: [], followUp: [] }
+    q.followUp.push(text)
+    mockQueues.set(sessionId, q)
+    emitQueueUpdate(sessionId)
+    const t = setTimeout(() => {
+      const cur = mockQueues.get(sessionId)
+      if (!cur || cancelled.has(sessionId)) return
+      const idx = cur.followUp.indexOf(text)
+      if (idx !== -1) cur.followUp.splice(idx, 1)
+      emitQueueUpdate(sessionId)
+    }, TIMING.steerDrain)
+    timers.add(t)
   },
 
   streamSubscribe(sessionId: string, handler: (msg: ServerMessage) => void): () => void {

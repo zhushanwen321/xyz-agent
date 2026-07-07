@@ -441,11 +441,12 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   'message.queue_update': (ctx, sid, payload) => {
     const { queueStates, markPendingDelivered } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
+    // pi 发空数组 []（_emitQueueUpdate 总展开为数组），空数组视为无内容（length 判断）。
     const state: QueueState = {}
     const steering = readStringArray(payload, 'steering')
-    if (steering) state.steering = steering
+    if (steering?.length) state.steering = steering
     const followUp = readStringArray(payload, 'followUp')
-    if (followUp) state.followUp = followUp
+    if (followUp?.length) state.followUp = followUp
 
     // pending→complete 驱动：对比新旧队列，找出「消失的」steer/followUp 文本（pi drain 投递了它），
     // 转对应 pending user 消息为 complete。按 indexOf 匹配（与 pi 的 splice 语义一致）。
@@ -462,7 +463,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       }
     }
 
-    if (!state.steering && !state.followUp) {
+    const hasContent = !!state.steering?.length || !!state.followUp?.length
+    if (!hasContent) {
       if (queueStates.value.has(sid)) {
         const nextMap = new Map(queueStates.value)
         nextMap.delete(sid)

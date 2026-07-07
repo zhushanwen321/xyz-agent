@@ -23,6 +23,7 @@ export interface Timing {
   toolGap: number
   fileChangesGap: number
   retryGap: number
+  steerDrain: number
 }
 
 /** index.ts 注入的模块私有依赖（行为与抽离前完全一致） */
