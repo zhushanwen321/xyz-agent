@@ -315,30 +315,38 @@ export function useSidebar() {
   }
 
   /**
-   * Fork 会话：从指定源 session 截取历史到 fork 点，新建 session 并载入截断历史（纯 clone，不发送）。
+   * Fork 会话：从指定源 session 截断历史到 fork 点，新建 session（独立 pi 进程）。
    *
    * 语义（问题 6 AI 收尾 fork）：includeFrom=true → 保留到该 assistant（含），
    * openInStandby 打开另一 panel。原 session 不变。
    *
-   * 注意：这是「复制到新 session」，与编辑（editAndResend，原地替换）不同。
+   * 实现：runtime 读源 session JSONL 按 piEntryId 截断 → 新进程 switch_session 加载。
+   * 不再前端 hydrate（runtime 通过 switch_session 让 pi 加载截断历史，selectSession 的
+   * getHistory 拉真实历史）。fork 需要 Message.piEntryId（文件路径读取时填充），
+   * RPC 路径读取的 session 无 piEntryId 时报错提示。
    *
    * srcSessionId 显式传入：Turn 可能在非 active 的 standby panel，fork 源必须是其所在 session。
-   * mock 可行：create() 返回新 session，hydrate 直接填 chat store。
    */
   async function forkSession(
     srcSessionId: string,
     fromMessageId: string,
     opts?: { includeFrom?: boolean; openInStandby?: boolean },
   ): Promise<string> {
+    // 从前端 Message.id 查到 piEntryId（runtime fork 截断定位用）
     const msgs = chat.getMessages(srcSessionId)
-    const idx = msgs.findIndex((m) => m.id === fromMessageId)
-    const end = idx === -1 ? msgs.length : opts?.includeFrom ? idx + 1 : idx
-    // 深拷贝截断历史，避免与新 session 共享引用
-    const truncated = msgs.slice(0, end).map((m) => ({ ...m }))
+    const forkMsg = msgs.find((m) => m.id === fromMessageId)
+    if (!forkMsg) {
+      throw new Error(`fork: message ${fromMessageId} not found in session ${srcSessionId}`)
+    }
+    if (!forkMsg.piEntryId) {
+      throw new Error('fork: 该 session 缺少 piEntryId（历史未从文件加载），无法定位 fork 点')
+    }
 
-    const created = await sessionApi.create()
+    // runtime 截断 JSONL + 新进程 switch_session，返回新 session summary
+    const created = await sessionApi.fork(srcSessionId, forkMsg.piEntryId, {
+      includeFrom: opts?.includeFrom,
+    })
     session.appendSession(created)
-    chat.hydrate(created.id, truncated)
 
     // 打开在另一 panel（单 panel 先 split 出 standby）
     if (opts?.openInStandby && !panel.isDual) panel.split()

@@ -66,7 +66,10 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
           timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
         }
       }
-      return e.message
+      // message entry：透传 message 体，附加 __entryId（pi JSONL entry id）供 fork 定位。
+      // RPC 路径（pi get_messages）不返回 entryId，此通道仅文件路径读取时填充。
+      const msg = (e.message && typeof e.message === 'object' ? e.message : {}) as Record<string, unknown>
+      return { ...msg, __entryId: typeof e.id === 'string' ? e.id : undefined }
     })
 
   return sessionStore.convertHistory(piMessages)

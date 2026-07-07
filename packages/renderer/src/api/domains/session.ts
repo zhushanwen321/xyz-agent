@@ -54,6 +54,22 @@ export function switchSession(sessionId: string): Promise<void> {
 }
 
 /**
+ * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
+ * runtime 读源 JSONL 按树回溯截断 → 新进程 switch_session。源 session 不受影响。
+ * reply 复用 session.created（runtime session-message-handler），解包 `.session`。
+ */
+export async function fork(
+  srcSessionId: string,
+  fromPiEntryId: string,
+  opts?: { includeFrom?: boolean; label?: string },
+): Promise<SessionSummary> {
+  const id = pending.create()
+  const result = pending.register<{ session: SessionSummary }>(id)
+  transport.send({ type: 'session.fork', id, payload: { srcSessionId, fromPiEntryId, ...opts } })
+  return (await result).session
+}
+
+/**
  * 拉取 session 的扩展命令（pi getCommands）。
  * 修复 broadcast 与订阅时序竞争：session.switch 的 ensureActive 内部 broadcast commands
  * 发生在 renderer 订阅建立之前会被丢弃；renderer 切 session 后主动调本方法拉取。

@@ -185,6 +185,10 @@ export function convertPiHistory(raw: unknown[]): Message[] {
       role: m.role === 'user' ? 'user' : 'assistant',
       content: textContent,
       status: 'complete',
+      // 文件路径读取时 session-history 注入的 pi entry id（fork 定位截断点用）。
+      // RPC 路径无此字段，fork 时 fallback 读 JSONL 按 timestamp 匹配。
+      ...('__entryId' in m && typeof (m as { __entryId?: unknown }).__entryId === 'string'
+        && { piEntryId: (m as { __entryId: string }).__entryId }),
       ...(thinking.length > 0 && { thinking }),
       ...(toolCalls.length > 0 && { toolCalls }),
       ...(contentBlocks.length > 0 && { contentBlocks }),

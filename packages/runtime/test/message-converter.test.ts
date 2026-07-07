@@ -286,4 +286,44 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       expect(messages[0].content).toBe('partial')
     })
   })
+
+  describe('piEntryId（文件路径读取时注入的 entry id）', () => {
+    it('__entryId 存在时填充到 Message.piEntryId', () => {
+      const raw = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'hi' }],
+          timestamp: 1000,
+          __entryId: 'abc123',
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].piEntryId).toBe('abc123')
+    })
+
+    it('无 __entryId 时 piEntryId 为 undefined（RPC 路径）', () => {
+      const raw = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'hi' }],
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].piEntryId).toBeUndefined()
+    })
+
+    it('__entryId 非字符串时不填充', () => {
+      const raw = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'hi' }],
+          timestamp: 1000,
+          __entryId: 123,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].piEntryId).toBeUndefined()
+    })
+  })
 })

@@ -192,6 +192,21 @@ export const session = {
     return { ...s }
   },
 
+  /**
+   * Mock fork：模拟 runtime 截断 + 新进程，返回新 session。
+   * mock 模式无真实 JSONL 截断，仅创建空 session（历史由前端 selectSession 拉）。
+   * 与 real domain 同接口，签名一致。
+   */
+  async fork(srcSessionId: string, _fromPiEntryId: string, opts?: { includeFrom?: boolean; label?: string }): Promise<SessionSummary> {
+    await sleep(TIMING.ack)
+    const src = fixtureSessions.find((s) => s.id === srcSessionId)
+    const cwd = src?.cwd
+    const s = createSession(cwd, opts?.label)
+    fixtureSessions.push(s)
+    pushSessionList()
+    return { ...s }
+  },
+
   async switchSession(id: string): Promise<void> {
     await sleep(TIMING.switchCmd)
     // E2E 注入的 session 不在 fixtureSessions 数组中，单独放行

@@ -21,7 +21,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext',
+    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
@@ -29,6 +29,13 @@ export class SessionMessageHandler {
     switch (msg.type) {
       case 'session.create': {
         const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
+        this.ctx.reply(ws, msg.id, 'session.created', { session })
+        return this.ctx.broadcastSessionList()
+      }
+      case 'session.fork': {
+        // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
+        const { srcSessionId, fromPiEntryId, includeFrom, label } = msg.payload
+        const session = await this.ctx.sessionService.forkSession(srcSessionId, fromPiEntryId, includeFrom ?? true, label)
         this.ctx.reply(ws, msg.id, 'session.created', { session })
         return this.ctx.broadcastSessionList()
       }

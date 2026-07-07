@@ -241,4 +241,11 @@ export interface Message {
   customType?: string
   /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
   bgNotify?: BgNotifyDetails
+  /**
+   * pi session JSONL 中对应 entry 的 id（entry 树节点标识）。
+   * 仅文件路径读取（session-history）时填充——RPC 路径（pi get_messages）不返回 entryId。
+   * fork session 时用于在 pi 端定位截断点（runtime 按 piEntryId 在 JSONL 树回溯截断）。
+   * 缺失时（在线重开的 session 走 RPC）fork 需 fallback 读 JSONL 按 timestamp 匹配。
+   */
+  piEntryId?: string
 }

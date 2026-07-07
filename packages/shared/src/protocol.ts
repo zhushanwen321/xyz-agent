@@ -15,7 +15,7 @@ import type { RecentWorkspaceRecord } from './workspace'
 
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands' | 'session.getContext'
-  | 'session.compact' | 'session.rename'
+  | 'session.compact' | 'session.rename' | 'session.fork'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
@@ -69,6 +69,11 @@ export interface ClientMessageMap {
   'session.getContext': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
+  // fork：从 srcSessionId 截断到 fromPiEntryId（pi JSONL entry id，前端 Message.piEntryId），
+  // includeFrom=true 保留到该 entry（含），false 保留到该 entry 前（不含）。
+  // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
+  // fromPiEntryId 缺失（RPC 路径读取的 session 无 piEntryId）时报错——fork 需文件路径加载的历史。
+  'session.fork': { srcSessionId: string; fromPiEntryId: string; includeFrom?: boolean; label?: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }

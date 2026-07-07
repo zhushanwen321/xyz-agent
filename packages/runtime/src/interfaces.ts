@@ -97,6 +97,11 @@ export interface ISessionService {
    */
   fetchContext(sessionId: string): Promise<{ inputTokens: number; contextLimit: number; usagePercent: number } | null>
   restoreSession(sessionId: string): Promise<SessionSummary>
+  /**
+   * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
+   * runtime 读源 JSONL 按树回溯截断，写新文件后 switch_session 加载。源 session 不受影响。
+   */
+  forkSession(srcSessionId: string, fromPiEntryId: string, includeFrom: boolean, label?: string): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
   /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/attachUsageListener） */

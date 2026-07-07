@@ -20,6 +20,8 @@ import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage } from '../../utils/errors.js'
+import { createForkedSessionFile } from './session-fork.js'
+import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 
 export class SessionLifecycle {
   constructor(
@@ -182,6 +184,69 @@ export class SessionLifecycle {
     // 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
     // fire-and-forget：拉取失败不阻塞 session 恢复。
     void this.svc.fetchAndBroadcastContext(id)
+    return this.svc.toSummary(session)
+  }
+
+  /**
+   * Fork session（路径 A：runtime 读 JSONL 截断 + 新进程 switch_session）。
+   *
+   * 与 restoreSession 的差异：restore 切到已存在的完整文件；fork 先按 fromPiEntryId 截断
+   * 源 JSONL 写新文件，再 switch_session 到截断后的文件。源 session 的 pi 进程不动。
+   *
+   * fork 后的新 session 独立运行（独立 pi 进程），原 session 保持不变。
+   * 这符合 UI 语义（fork 到另一 panel，原 panel 继续）。
+   *
+   * @param srcSessionId   源 session id
+   * @param fromPiEntryId  fork 点的 pi entryId（前端 Message.piEntryId）
+   * @param includeFrom    true: 保留到该 entry（含）；false: 保留到该 entry 前（不含）
+   * @param label          可选 session 名
+   */
+  async forkSession(
+    srcSessionId: string,
+    fromPiEntryId: string,
+    includeFrom: boolean,
+    label?: string,
+  ): Promise<SessionSummary> {
+    if (!this.configStore.getDefaultModel()) {
+      throw new Error('No model configured. Please configure a provider and model in Settings before forking a session.')
+    }
+
+    // 1. 查源 session 文件路径（scanSessions 合并磁盘 + 内存 active）
+    const source = this.svc.findScannedSession(srcSessionId)
+    if (!source) {
+      throw new Error(`fork: source session not found: ${srcSessionId}`)
+    }
+
+    // 2. 截断源 JSONL → 写新文件（parentSession 指回源文件，形成父子链）
+    const { filePath: forkedFilePath, sessionId: forkedId } = await createForkedSessionFile(
+      source.filePath,
+      fromPiEntryId,
+      includeFrom,
+      getSessionsDir(),
+    )
+
+    // 3. spawn 新 pi 进程（与 restore 同模式）
+    const sessionCwd = existsSync(source.cwd) ? source.cwd : homedir()
+    const allExtPaths = await this.svc.getExtensionPaths()
+    const client = await this.pm.createSession(forkedId, sessionCwd, {
+      skillPaths: this.svc.getSkillPaths(sessionCwd),
+      extensionPaths: allExtPaths,
+    })
+
+    try {
+      // 4. switch_session 让 pi 加载截断后的历史
+      await client.sendCommand('switch_session', { sessionPath: forkedFilePath })
+    } catch (e) {
+      await this.safeDestroy(forkedId)
+      throw e
+    }
+
+    // 5. 初始化 managed session（adapter、入 sessions Map）
+    const session = await this.svc.initializeManagedSession(
+      forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
+    )
+
+    void this.svc.fetchAndBroadcastContext(forkedId)
     return this.svc.toSummary(session)
   }
 }
