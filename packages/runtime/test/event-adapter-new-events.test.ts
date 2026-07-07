@@ -451,17 +451,17 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
       })
       await flushAsync()
 
-      // onContextUpdate 被调，带本 turn 的 inputTokens
+      // onContextUpdate 被调，带本 turn 的 context 占用（totalTokens，非单 turn 增量 input）
       expect(onContextUpdate).toHaveBeenCalledTimes(1)
       expect(onContextUpdate).toHaveBeenCalledWith('test-session-1', {
-        inputTokens: 163418,
+        inputTokens: 163628,
         totalTokens: 163628,
       })
       // 不转发 message.complete（避免每 turn 触发 setStreaming 闪烁）
       expect(sent.find(m => m.type === 'message.complete')).toBeUndefined()
     })
 
-    it('turn_end 无 usage.input → 不触发 onContextUpdate（守卫）', async () => {
+    it('turn_end 无 usage.totalTokens → 不触发 onContextUpdate（守卫）', async () => {
       const onContextUpdate = vi.fn()
       const { adapter } = createAdapter({ onContextUpdate })
       dispatchOne(adapter, {
@@ -493,9 +493,9 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
       await flushAsync()
 
       expect(onContextUpdate).toHaveBeenCalledTimes(3)
-      // 最后一次带最新用量
+      // 最后一次带最新用量（inputTokens = totalTokens，context 占用非增量 input）
       expect(onContextUpdate).toHaveBeenLastCalledWith('test-session-1', {
-        inputTokens: 3000,
+        inputTokens: 3010,
         totalTokens: 3010,
       })
     })

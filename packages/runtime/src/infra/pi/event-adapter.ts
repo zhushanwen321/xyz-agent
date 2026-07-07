@@ -204,7 +204,9 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
   return [{
     kind: 'turn-end',
     message,
-    inputTokens: usage?.input,
+    // context 占用 = totalTokens（input+output+cacheRead+cacheWrite），与 pi calculateContextTokens 同源。
+    // 不能用 usage.input——那是单 turn 增量 input（不含 cacheRead 的 context 大头），值很小。
+    inputTokens: usage?.totalTokens,
     totalTokens: usage?.totalTokens ?? 0,
     stopReason: STOP_REASON_MAP[rawReason] ?? rawReason,
     usage,
@@ -217,17 +219,17 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
  * pi 0.80.3 事件模型：1 个 agent 循环 = N 个 turn，每个 turn_end.message.usage 含本 turn 用量。
  * 与 handleAgentEnd（整个循环结束）的区别：本 handler 不产 message/stopReason/file_changes，
  * 避免每 turn 触发前端 message.complete → setStreaming(false) 闪烁。
- * usage.input 缺失时返回空（纯工具结果 turn 可能无 usage）。
+ * totalTokens 缺失时返回空（纯工具结果 turn 可能无 usage）。
  */
 function handleTurnEndPi(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const message = event.message as Record<string, unknown> | undefined
   const usage = message?.usage as { input?: number; output?: number; totalTokens?: number } | undefined
-  if (!usage?.input) return []
+  if (!usage?.totalTokens) return []
   return [{
     kind: 'turn-usage',
     sessionId: sid,
-    inputTokens: usage.input,
-    totalTokens: usage.totalTokens ?? 0,
+    inputTokens: usage.totalTokens,
+    totalTokens: usage.totalTokens,
   }]
 }
 
