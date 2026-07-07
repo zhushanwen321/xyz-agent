@@ -1,0 +1,678 @@
+/**
+ * FG5 单测 —— message-stream 回合分组纯逻辑 + chat store 块类型扩展。
+ *
+ * 覆盖：
+ * - groupTurns：扁平 messages → 回合（user 开启 + assistant 归入，纯文字无折叠条）
+ * - countThinking/countToolCalls/hasFailedTool：badge 统计 + 失败检测
+ * - chat store：thinking/tool_call 流式块追加、hydrate 历史注入、error 块
+ *
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/fg5-message-stream.test.ts
+ */
+import { describe, it, expect, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import {
+  groupTurns,
+  toRenderItems,
+  countThinking,
+  countToolCalls,
+  hasFailedTool,
+} from '@/composables/logic/messageTurns'
+import { useChatStore } from '@/stores/chat'
+import * as mockApi from '@/api/mock'
+import type { Message } from '@xyz-agent/shared'
+
+const NOW = Date.now()
+
+function userMsg(id: string, content: string): Message {
+  return { id, role: 'user', content, status: 'complete', timestamp: NOW }
+}
+function assistantMsg(id: string, content: string, extra: Partial<Message> = {}): Message {
+  return { id, role: 'assistant', content, status: 'complete', timestamp: NOW, ...extra }
+}
+function systemMsg(id: string, content: string, extra: Partial<Message> = {}): Message {
+  return { id, role: 'system', content, status: 'complete', timestamp: NOW, ...extra }
+}
+
+describe('FG5 groupTurns 回合分组', () => {
+  it('user + assistant → 单回合（含 user 起点与 assistant 收尾）', () => {
+    const turns = groupTurns([userMsg('u1', 'hi'), assistantMsg('a1', 'hello')])
+    expect(turns).toHaveLength(1)
+    expect(turns[0].user?.id).toBe('u1')
+    expect(turns[0].assistants).toHaveLength(1)
+    expect(turns[0].assistants[0].content).toBe('hello')
+  })
+
+  it('多 user 消息 → 每个 user 开启新回合', () => {
+    const turns = groupTurns([
+      userMsg('u1', 'q1'),
+      assistantMsg('a1', 'r1'),
+      userMsg('u2', 'q2'),
+      assistantMsg('a2', 'r2'),
+    ])
+    expect(turns).toHaveLength(2)
+    expect(turns[0].user?.id).toBe('u1')
+    expect(turns[1].user?.id).toBe('u2')
+  })
+
+  it('纯文字回合（无 thinking/tool）→ hasFoldable=false（无折叠条）', () => {
+    const turns = groupTurns([userMsg('u1', 'q'), assistantMsg('a1', '纯文字回答')])
+    expect(turns[0].hasFoldable).toBe(false)
+  })
+
+  it('含 toolCalls 的回合 → hasFoldable=true', () => {
+    const turns = groupTurns([
+      userMsg('u1', '读文件'),
+      assistantMsg('a1', '已读', {
+        toolCalls: [
+          {
+            id: 'tc1',
+            toolName: 'read',
+            input: {},
+            status: 'completed',
+            startTime: NOW,
+          },
+        ],
+      }),
+    ])
+    expect(turns[0].hasFoldable).toBe(true)
+    expect(countToolCalls(turns[0])).toBe(1)
+  })
+
+  it('含 thinking 块 → countThinking 统计', () => {
+    const turns = groupTurns([
+      userMsg('u1', '思考'),
+      assistantMsg('a1', '结论', {
+        thinking: [{ id: 'th1', content: '推理过程', collapsed: true }],
+      }),
+    ])
+    expect(turns[0].hasFoldable).toBe(true)
+    expect(countThinking(turns[0])).toBe(1)
+  })
+
+  it('失败的 tool → hasFailedTool=true', () => {
+    const turns = groupTurns([
+      userMsg('u1', '提交'),
+      assistantMsg('a1', '失败', {
+        toolCalls: [
+          {
+            id: 'tc1',
+            toolName: 'bash',
+            input: {},
+            output: 'EBUSY',
+            status: 'error',
+            startTime: NOW,
+          },
+        ],
+      }),
+    ])
+    expect(hasFailedTool(turns[0])).toBe(true)
+  })
+
+  it('最后一条 assistant streaming → isWorking=true（其余 false）', () => {
+    const turns = groupTurns([
+      userMsg('u1', 'q1'),
+      assistantMsg('a1', 'r1'),
+      userMsg('u2', 'q2'),
+      assistantMsg('a2', '正在', { status: 'streaming' }),
+    ])
+    expect(turns[0].isWorking).toBe(false)
+    expect(turns[1].isWorking).toBe(true)
+  })
+
+  it('首条 assistant 无前置 user → 自启回合（边缘情况）', () => {
+    const turns = groupTurns([assistantMsg('a1', '无前置')])
+    expect(turns).toHaveLength(1)
+    expect(turns[0].user).toBeNull()
+    expect(turns[0].assistants[0].id).toBe('a1')
+  })
+
+  // P2-1（WP-L3-08）：steer 续轮产生多 assistant 同回合，
+  // Turn.vue 仅最后一条作收尾 summary，前序 content 折进 trace（isMidAssistant）。
+  it('多 assistant 同回合（steer 续轮）→ 前序归入，末条作收尾', () => {
+    const turns = groupTurns([
+      userMsg('u1', '改一下登录'),
+      assistantMsg('a1', '正在处理 schema…'), // steer 前的中间产出
+      assistantMsg('a2', '已将 AuthService.login 改为 async。'), // 收尾
+    ])
+    expect(turns).toHaveLength(1)
+    expect(turns[0].assistants).toHaveLength(2)
+    // Turn.vue 的 isMidAssistant(idx) = idx < length-1 → a1 是中间，a2 是收尾
+    const last = turns[0].assistants[turns[0].assistants.length - 1]
+    expect(last.id).toBe('a2')
+    expect(last.content).toBe('已将 AuthService.login 改为 async。')
+    // 收尾 summary 恒显（draft §4：收尾位固定不折叠）
+    expect(turns[0].assistants[0].content).toBe('正在处理 schema…')
+  })
+
+  // W07-C：system 消息（bashExecution/compaction/branch）作独立项穿插，不归入 turn
+  it('toRenderItems：system 消息穿插在 turn 之间，groupTurns 过滤掉 system', () => {
+    const items = toRenderItems([
+      userMsg('u1', 'q'),
+      assistantMsg('a1', 'r'),
+      systemMsg('s1', 'bash', { bashExecution: { command: 'ls', exitCode: 0 } }),
+      userMsg('u2', 'q2'),
+      assistantMsg('a2', 'r2'),
+    ])
+    // 顺序：turn(u1+a1) → system(s1) → turn(u2+a2)
+    expect(items.map((i) => i.kind)).toEqual(['turn', 'system', 'turn'])
+    const sysItem = items[1]
+    if (sysItem.kind !== 'system') throw new Error('expected system item')
+    expect(sysItem.message.bashExecution?.command).toBe('ls')
+    // groupTurns 过滤掉 system，只剩 2 个 turn
+    const turns = groupTurns([
+      userMsg('u1', 'q'),
+      assistantMsg('a1', 'r'),
+      systemMsg('s1', 'bash'),
+      userMsg('u2', 'q2'),
+      assistantMsg('a2', 'r2'),
+    ])
+    expect(turns).toHaveLength(2)
+  })
+})
+
+describe('FG5 chat store 块类型扩展', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('hydrate 注入历史且标记（重复调用幂等）', () => {
+    const store = useChatStore()
+    const history = [userMsg('u1', '历史'), assistantMsg('a1', '历史回答')]
+    store.hydrate('s1', history)
+    store.hydrate('s1', history) // 重复不覆盖
+    expect(store.isHydrated('s1')).toBe(true)
+    expect(store.getMessages('s1')).toHaveLength(2)
+  })
+
+  it('hydrate 深拷贝：外部突变不污染 store', () => {
+    const store = useChatStore()
+    const history = [userMsg('u1', '原内容')]
+    store.hydrate('s1', history)
+    history[0].content = '改了'
+    expect(store.getMessages('s1')[0].content).toBe('原内容')
+  })
+
+  it('applyMessageEvent 处理 thinking 块（start + delta）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.message_start',
+      payload: { sessionId: 'sx', messageId: 'a1' },
+    })
+    store.applyMessageEvent('sx', {
+      type: 'message.thinking_start',
+      payload: { sessionId: 'sx', thinkingId: 'th1' },
+    })
+    store.applyMessageEvent('sx', {
+      type: 'message.thinking_delta',
+      payload: { sessionId: 'sx', delta: '推理' },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs[0].thinking).toHaveLength(1)
+    expect(msgs[0].thinking?.[0].content).toBe('推理')
+  })
+
+  it('applyMessageEvent 处理 tool_call 块（start + end）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.message_start',
+      payload: { sessionId: 'sx', messageId: 'a1' },
+    })
+    store.applyMessageEvent('sx', {
+      type: 'message.tool_call_start',
+      payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'read' },
+    })
+    store.applyMessageEvent('sx', {
+      type: 'message.tool_call_end',
+      payload: { sessionId: 'sx', toolCallId: 'tc1', output: 'done', status: 'completed' },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs[0].toolCalls).toHaveLength(1)
+    expect(msgs[0].toolCalls?.[0].status).toBe('completed')
+  })
+
+  it('complete with stopReason:error → status:error（错误块）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.message_start',
+      payload: { sessionId: 'sx', messageId: 'a1' },
+    })
+    store.applyMessageEvent('sx', {
+      type: 'message.complete',
+      payload: { sessionId: 'sx', stopReason: 'error' },
+    })
+    expect(store.getMessages('sx')[0].status).toBe('error')
+  })
+
+  // ── W05-A: 4 个新 case（纯字段）─────────────────────────────────
+
+  it('thinking_end 给最后 ThinkingBlock 设 endTime', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.thinking_start', payload: { sessionId: 'sx', thinkingId: 'th1' } })
+    store.applyMessageEvent('sx', { type: 'message.thinking_delta', payload: { sessionId: 'sx', delta: '推理' } })
+    expect(store.getMessages('sx')[0].thinking?.[0].endTime).toBeUndefined()
+    store.applyMessageEvent('sx', { type: 'message.thinking_end', payload: { sessionId: 'sx' } })
+    expect(store.getMessages('sx')[0].thinking?.[0].endTime).toBeTypeOf('number')
+  })
+
+  it('tool_call_update 更新 ToolCall.detail（对齐生产端，只读 detail）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.tool_call_start', payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'bash' } })
+    // string detail
+    store.applyMessageEvent('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: '执行中…' } })
+    expect(store.getMessages('sx')[0].toolCalls?.[0].detail).toBe('执行中…')
+    // object detail
+    store.applyMessageEvent('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: { progress: 50 } } })
+    expect(store.getMessages('sx')[0].toolCalls?.[0].detail).toEqual({ progress: 50 })
+  })
+
+  it('complete.usage 回填 Message.usage（inputTokens/outputTokens）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', {
+      type: 'message.complete',
+      payload: { sessionId: 'sx', stopReason: 'complete', usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 } },
+    })
+    expect(store.getMessages('sx')[0].usage).toEqual({ inputTokens: 120, outputTokens: 80 })
+  })
+
+  it('message.status 接收不崩（运行态，不改 Message.status）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', { type: 'message.status', payload: { sessionId: 'sx', status: 'steered', detail: '已转向' } })
+    // status 仍是 streaming（message.status 是运行过程态，与 Message.status 正交）
+    expect(store.getMessages('sx')[0].status).toBe('streaming')
+  })
+
+  // ── W06-B: store 级状态（retry/queue）───────────────────────────
+
+  it('auto_retry_start 设置 retryState，auto_retry_end 清空', () => {
+    const store = useChatStore()
+    expect(store.getRetryState('sx')).toBeUndefined()
+    store.applyMessageEvent('sx', {
+      type: 'message.auto_retry_start',
+      payload: { sessionId: 'sx', attempt: 2, maxAttempts: 3, delayMs: 500, errorMessage: 'timeout' },
+    })
+    expect(store.getRetryState('sx')).toEqual({ attempt: 2, maxAttempts: 3, delayMs: 500, errorMessage: 'timeout' })
+    store.applyMessageEvent('sx', {
+      type: 'message.auto_retry_end',
+      payload: { sessionId: 'sx', success: true, attempt: 2 },
+    })
+    expect(store.getRetryState('sx')).toBeUndefined()
+  })
+
+  it('queue_update 设置 queueState（steering/followUp）', () => {
+    const store = useChatStore()
+    expect(store.getQueueState('sx')).toBeUndefined()
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['再快一点'], followUp: ['下一步'] },
+    })
+    expect(store.getQueueState('sx')).toEqual({ steering: ['再快一点'], followUp: ['下一步'] })
+    // 两字段都缺 → 清空
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx' },
+    })
+    expect(store.getQueueState('sx')).toBeUndefined()
+  })
+
+  it('queue_update 空数组 [] 视为无内容（pi 发 []，需清 queueState）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['x'] },
+    })
+    expect(store.getQueueState('sx')?.steering).toEqual(['x'])
+    // pi 发空数组（drain 完成后 _emitQueueUpdate 展开为 []）
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [], followUp: [] },
+    })
+    expect(store.getQueueState('sx')).toBeUndefined()
+  })
+
+  it('queue_update drain 驱动 pending→complete（steer 投递）', () => {
+    const store = useChatStore()
+    // 模拟 steer 入队：appendPending + queue_update 入队
+    store.appendPending('sx', '补充注册页', 'steer')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['补充注册页'] },
+    })
+    let msgs = store.getMessages('sx')
+    expect(msgs.some((m) => m.status === 'pending' && m.content === '补充注册页')).toBe(true)
+    // pi drain 投递：queue_update 移除该项
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [] },
+    })
+    msgs = store.getMessages('sx')
+    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
+    expect(msgs.some((m) => m.status === 'complete' && m.content === '补充注册页')).toBe(true)
+  })
+
+  it('queue_update drain 驱动 pending→complete（followUp 投递）', () => {
+    const store = useChatStore()
+    store.appendPending('sx', '下轮任务', 'follow-up')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', followUp: ['下轮任务'] },
+    })
+    // drain
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', followUp: [] },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs.every((m) => m.status !== 'pending')).toBe(true)
+    expect(msgs.some((m) => m.content === '下轮任务' && m.status === 'complete')).toBe(true)
+  })
+
+  it('queue_update 重复文本 drain（B1 回归：计数 diff 精确匹配）', () => {
+    const store = useChatStore()
+    // 连发两条相同文本的 steer（appendPending 两条）
+    store.appendPending('sx', '继续', 'steer')
+    store.appendPending('sx', '继续', 'steer')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['继续', '继续'] },
+    })
+    // pi drain 一条 → 队列剩一条
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['继续'] },
+    })
+    let msgs = store.getMessages('sx')
+    const completed = msgs.filter((m) => m.content === '继续' && m.status === 'complete')
+    const pending = msgs.filter((m) => m.status === 'pending')
+    expect(completed).toHaveLength(1) // 恰好转一条
+    expect(pending).toHaveLength(1) // 还剩一条 pending
+    // 再 drain 最后一条
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [] },
+    })
+    msgs = store.getMessages('sx')
+    expect(msgs.filter((m) => m.status === 'pending')).toHaveLength(0)
+    expect(msgs.filter((m) => m.content === '继续' && m.status === 'complete')).toHaveLength(2)
+  })
+
+  it('message_start 不转 pending（pi 保证 queue_update(drain) 先到，无需推测投递）', () => {
+    const store = useChatStore()
+    // steer 入队
+    store.appendPending('sx', '补充', 'steer')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['补充'] },
+    })
+    // pi 保证的真实时序：queue_update(drain) 先到 → countDrained 精确转 pending→complete
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [] },
+    })
+    let msgs = store.getMessages('sx')
+    expect(msgs.some((m) => m.content === '补充' && m.status === 'complete')).toBe(true)
+    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
+    // message_start 随后到达：只清 queueStates 显示态，不干预消息状态（drain 已由 queue_update 完成）。
+    // 此前有 W2 flush（把残留 pending 强转 complete），基于错误前提「drain 可能晚于 message_start」——
+    // pi 源码（agent-session.ts:515-536 注释 "remove it BEFORE emitting"）同步保证不会乱序，故 W2 已删。
+    store.applyMessageEvent('sx', {
+      type: 'message.message_start',
+      payload: { sessionId: 'sx', messageId: 'a1' },
+    })
+    msgs = store.getMessages('sx')
+    // 消息状态不受 message_start 影响（仍 complete，未被误改）
+    expect(msgs.some((m) => m.content === '补充' && m.status === 'complete')).toBe(true)
+    // queueStates 已清（message_start 清 QueueBubble 显示）
+    expect(store.getQueueState('sx')).toBeUndefined()
+  })
+
+  it('跨类型同文本 drain（W5：sendMode 精确匹配，steer 与 followUp 不互误）', () => {
+    const store = useChatStore()
+    // steer「补」和 followUp「补」文本相同
+    store.appendPending('sx', '补', 'steer')
+    store.appendPending('sx', '补', 'follow-up')
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['补'], followUp: ['补'] },
+    })
+    // 只 drain steer 那条（followUp 队列不动）
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [], followUp: ['补'] },
+    })
+    const msgs = store.getMessages('sx')
+    // steer 那条转 complete，followUp 那条仍 pending（sendMode 精确匹配，不误转）
+    const steerMsg = msgs.find((m) => m.sendMode === 'steer')
+    const followUpMsg = msgs.find((m) => m.sendMode === 'follow-up')
+    expect(steerMsg?.status).toBe('complete')
+    expect(followUpMsg?.status).toBe('pending')
+  })
+
+  it('retry/queue 状态按 session 隔离（互不串扰）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sa', { type: 'message.auto_retry_start', payload: { sessionId: 'sa', attempt: 1 } })
+    store.applyMessageEvent('sb', { type: 'message.queue_update', payload: { sessionId: 'sb', steering: ['x'] } })
+    expect(store.getRetryState('sa')?.attempt).toBe(1)
+    expect(store.getRetryState('sb')).toBeUndefined()
+    expect(store.getQueueState('sb')?.steering).toEqual(['x'])
+    expect(store.getQueueState('sa')).toBeUndefined()
+  })
+
+  // ── W07-C: shared 类型扩展（bash/compaction/branch 作 system 提示行）──
+
+  it('bashExecution 作 system 消息追加（含 exitCode/truncated）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.bashExecution',
+      payload: { sessionId: 'sx', command: 'npm test', exitCode: 1, truncated: true, fullOutputPath: '/tmp/out' },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].bashExecution).toEqual({ command: 'npm test', exitCode: 1, truncated: true, fullOutputPath: '/tmp/out' })
+  })
+
+  it('compactionSummary 作 system 消息追加', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.compactionSummary',
+      payload: { sessionId: 'sx', summary: '压缩完成', tokensBefore: 50000 },
+    })
+    const msg = store.getMessages('sx')[0]
+    expect(msg.role).toBe('system')
+    expect(msg.compactionSummary).toEqual({ summary: '压缩完成', tokensBefore: 50000 })
+  })
+
+  it('branchSummary 作 system 消息追加', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.branchSummary',
+      payload: { sessionId: 'sx', summary: '新分支', fromId: 'msg-9' },
+    })
+    const msg = store.getMessages('sx')[0]
+    expect(msg.role).toBe('system')
+    expect(msg.branchSummary).toEqual({ summary: '新分支', fromId: 'msg-9' })
+  })
+
+  it('mock getHistory 返回 fixture 全字段（G2-006 契约）', async () => {
+    const s1 = await mockApi.chat.getHistory('s1')
+    expect(s1.length).toBeGreaterThanOrEqual(2)
+    // 含 user / assistant text / tool_call / 失败 tool
+    const roles = s1.map((m) => m.role)
+    expect(roles).toContain('user')
+    expect(roles).toContain('assistant')
+    const withTools = s1.find((m) => (m.toolCalls?.length ?? 0) > 0)
+    expect(withTools).toBeTruthy()
+  })
+
+  it('mock getHistory 空会话返回空数组', async () => {
+    const s3 = await mockApi.chat.getHistory('s3')
+    expect(s3).toEqual([])
+  })
+
+  // ── W10: FileChanges 通道（applyFileChanges + message.file_changes case）──
+  // ADR-0024 D5 重构：baseline diff，isFullSet 恒 true（每次 diff 都是全量结果，全集替换不增量合并）。
+
+  it('message.file_changes accumulating 全集替换（baseline diff 每次 diff 是全量结果）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    // 第一次 diff：写了一个文件
+    store.applyMessageEvent('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'src/a.ts', status: 'added', addLines: 10 }],
+        changeSetStatus: 'accumulating', isFullSet: true,
+      },
+    })
+    // 第二次 diff：写了两个文件（包含第一次的）—— isFullSet=true 全集替换
+    store.applyMessageEvent('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [
+          { filePath: 'src/a.ts', status: 'added', addLines: 10 },
+          { filePath: 'src/b.ts', status: 'modified', addLines: 3, delLines: 1 },
+        ],
+        changeSetStatus: 'accumulating', isFullSet: true,
+      },
+    })
+    const msg = store.getMessages('sx')[0]
+    // 全集替换：最终结果是第二次的两条，不是增量合并
+    expect(msg.fileChanges).toHaveLength(2)
+    expect(msg.fileChanges?.map((c) => c.filePath).sort()).toEqual(['src/a.ts', 'src/b.ts'])
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('accumulating')
+  })
+
+  it('message.file_changes ready 全集替换（agent_end 最终对账）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    // accumulating（agent 还在跑）
+    store.applyMessageEvent('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'old.ts', status: 'modified' }],
+        changeSetStatus: 'accumulating', isFullSet: true,
+      },
+    })
+    // ready 全集替换（agent_end 最终 diff 发现完全不同的文件集）
+    store.applyMessageEvent('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'new1.ts', status: 'added' }, { filePath: 'new2.ts', status: 'deleted' }],
+        changeSetStatus: 'ready', isFullSet: true,
+      },
+    })
+    const msg = store.getMessages('sx')[0]
+    expect(msg.fileChanges).toHaveLength(2)
+    expect(msg.fileChanges?.map((c) => c.filePath).sort()).toEqual(['new1.ts', 'new2.ts'])
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('ready')
+  })
+
+  it('message.changeSetInvalidated 把该 session 的 changeSet 推 superseded（commit 后过期）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    // 先有一条 ready changeSet
+    store.applyMessageEvent('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'src/a.ts', status: 'added', addLines: 10 }],
+        changeSetStatus: 'ready', isFullSet: true,
+      },
+    })
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('ready')
+    // git commit 成功 → runtime 广播 changeSetInvalidated
+    store.applyMessageEvent('sx', {
+      type: 'message.changeSetInvalidated',
+      payload: { sessionId: 'sx', reason: 'committed' },
+    })
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('superseded')
+  })
+
+  it('message.changeSetInvalidated 不覆盖已 resolved 的 changeSet（保留审查记录）', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.applyMessageEvent('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'src/a.ts', status: 'added', addLines: 10 }],
+        changeSetStatus: 'ready', isFullSet: true,
+      },
+    })
+    // 用户已 accept（标 resolved）
+    store.setChangeSetStatus('sx', 'a1', 'resolved')
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
+    // commit 后广播失效 —— resolved 不应被覆盖
+    store.applyMessageEvent('sx', {
+      type: 'message.changeSetInvalidated',
+      payload: { sessionId: 'sx', reason: 'committed' },
+    })
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
+  })
+
+  it('setChangeSetStatus 驱动审查态（partially-reviewed/resolved）', () => {
+    const store = useChatStore()
+    store.setChangeSetStatus('sx', 'a1', 'partially-reviewed')
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('partially-reviewed')
+    store.setChangeSetStatus('sx', 'a1', 'resolved')
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
+  })
+
+  // ── customStart（pi CustomMessage 注入，如 subagent-bg-notify）──
+  it('customStart: subagent-bg-notify 单条 → system 消息 + customType + bgNotify', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.customStart',
+      payload: {
+        sessionId: 'sx',
+        customType: 'subagent-bg-notify',
+        content: 'Subagent "coder" (job-1) completed.',
+        details: {
+          id: 'job-1',
+          status: 'done',
+          agent: 'coder',
+          model: 'claude-4.5',
+          result: 'Done.',
+          startedAt: 1000,
+          endedAt: 13000,
+        },
+      },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].customType).toBe('subagent-bg-notify')
+    expect(msgs[0].bgNotify).toBeDefined()
+    expect(!('batch' in (msgs[0].bgNotify as object))).toBe(true)
+  })
+
+  it('customStart: 其他 customType → system 消息 + customType，无 bgNotify', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.customStart',
+      payload: {
+        sessionId: 'sx',
+        customType: 'other-extension',
+        content: 'hello',
+        details: { foo: 'bar' },
+      },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].customType).toBe('other-extension')
+    expect(msgs[0].bgNotify).toBeUndefined()
+  })
+
+  it('customStart 产出的 system 消息经 toRenderItems 穿插为独立项（不并入 turn）', () => {
+    const store = useChatStore()
+    // 先建一个 user turn
+    store.applyMessageEvent('sx', { type: 'message.customStart', payload: { sessionId: 'sx', customType: 'x', content: '' } })
+    const items = toRenderItems(store.getMessages('sx'))
+    expect(items.map((i) => i.kind)).toEqual(['system'])
+  })
+})

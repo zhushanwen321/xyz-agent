@@ -1,6 +1,6 @@
 # Runtime Services 代码审查报告
 
-**审查范围**: `src-electron/runtime/src/services/` 目录下 11 个文件
+**审查范围**: `packages/runtime/src/services/` 目录下 11 个文件
 **分支**: fix-046-problems (对比 origin/main)
 **审查时间**: 2026-06-12
 
@@ -20,7 +20,7 @@
 
 ### 1. plugin-rpc-setup.ts — `findActiveSession` 缓存命中时未返回缓存值
 
-**文件**: `src-electron/runtime/src/services/plugin-service/plugin-rpc-setup.ts`
+**文件**: `packages/runtime/src/services/plugin-service/plugin-rpc-setup.ts`
 **行号**: L37-L42
 
 **描述**: `findActiveSession()` 的缓存命中分支（TTL 未过期时）只有一个注释，**没有任何 return 语句**。缓存命中时代码会 fallthrough 到下面的「Cache miss」路径，重新执行完整的 `listPersistedSessions()` 扫描——缓存完全无效。
@@ -63,7 +63,7 @@ function findActiveSession(deps: IPluginServiceDeps): { id: string; thinkingLeve
 
 ### 2. session-data-store.ts — `getCache()`/`getDirty()`/`getSizeTracker()` 暴露可变内部状态
 
-**文件**: `src-electron/runtime/src/services/plugin-service/session-data-store.ts`
+**文件**: `packages/runtime/src/services/plugin-service/session-data-store.ts`
 **行号**: L41-L51
 
 **描述**: `SessionDataStore` 封装了三张 Map，但通过 getter 直接返回可变引用。`session-data-api` RPC handler 可以绕过 `SessionDataStore` 直接对 Map 做 set/delete 操作，这和「封装散落 Map」的重构目标矛盾。如果未来要在 `SessionDataStore` 里加 size 上限校验或 dirty 标记拦截，所有直接操作 Map 的外部代码都不会经过拦截。
@@ -74,7 +74,7 @@ function findActiveSession(deps: IPluginServiceDeps): { id: string; thinkingLeve
 
 ### 3. config-service.ts — `loadAppConfig` 只保留 `toolPermissions`，丢弃其他字段
 
-**文件**: `src-electron/runtime/src/services/config-service.ts`
+**文件**: `packages/runtime/src/services/config-service.ts`
 **行号**: L185-L193
 
 **描述**: `loadAppConfig()` 从 `config.json` 读取后，只提取 `toolPermissions` 字段，其他字段被丢弃。`saveAppConfig()` 写回时也只写 `{ toolPermissions }` 对象。这意味着如果未来 `config.json` 新增其他配置字段（如 `theme`、`language`），`updateToolPermissions` 会静默丢失这些字段。
@@ -95,7 +95,7 @@ private static saveAppConfig(config: Record<string, unknown>): void {
 
 ### 4. session-service.ts — `sendSubagentMessage` 和 `sendMessage` 大量重复代码
 
-**文件**: `src-electron/runtime/src/services/session-service.ts`
+**文件**: `packages/runtime/src/services/session-service.ts`
 **行号**: L250-L297 (sendSubagentMessage) vs L217-L248 (sendMessage)
 
 **描述**: `sendSubagentMessage` 几乎完全复制了 `sendMessage` 的逻辑：ensureActive → hook → 更新 session 状态 → prompt → 错误处理。唯一的差异是 prompt 内容多了 marker 前缀。文件顶部的 TODO 已标注计划提取 MessageService，但当前两个方法的重复代码如果需要修改（比如错误处理逻辑变更），容易只改一处漏改另一处。
@@ -104,7 +104,7 @@ private static saveAppConfig(config: Record<string, unknown>): void {
 
 ### 5. git-info.ts — `pruneGitInfoCache` 在遍历 Map 时调用 delete
 
-**文件**: `src-electron/runtime/src/services/git-info.ts`
+**文件**: `packages/runtime/src/services/git-info.ts`
 **行号**: L29-L33
 
 **描述**: `pruneGitInfoCache()` 在 `for (const key of gitInfoCache.keys())` 循环中直接调用 `gitInfoCache.delete(key)`。JavaScript 的 Map 规范允许在 `keys()` 迭代器遍历中删除当前元素（不会跳过或重复），所以这不是 bug，但有些代码审查工具/lint 会标记这种行为。
@@ -119,7 +119,7 @@ private static saveAppConfig(config: Record<string, unknown>): void {
 
 ### 6. model-service.ts — `nextPushId` 用 `Date.now()` 在高频场景下可能碰撞
 
-**文件**: `src-electron/runtime/src/services/model-service.ts`
+**文件**: `packages/runtime/src/services/model-service.ts`
 **行号**: L24
 
 **描述**: `push_${Date.now()}` 在同一毫秒内多次调用会生成相同 ID。虽然 `switchModel` 不太可能被高频调用（用户操作驱动），但作为 push message ID 应该保证唯一性。
@@ -128,7 +128,7 @@ private static saveAppConfig(config: Record<string, unknown>): void {
 
 ### 7. tree-service.ts — `cloneSession`/`forkFromEntry` 返回 `sessionFile` 但调用方可能未使用
 
-**文件**: `src-electron/runtime/src/services/tree-service.ts`
+**文件**: `packages/runtime/src/services/tree-service.ts`
 **行号**: L178-L182, L202-L206
 
 **描述**: clone 和 fork 现在返回 `sessionFile` 字段（新增），用于上层 `rebindAfterFork` 时避免活跃 session 被重复扫描。这是正确的改进。但如果调用方不使用这个字段（如旧的 fork 调用路径），`sessionFile` 会被忽略。
@@ -137,7 +137,7 @@ private static saveAppConfig(config: Record<string, unknown>): void {
 
 ### 8. config-service.ts — `updateToolPermissions` 每次都先读再写整个文件
 
-**文件**: `src-electron/runtime/src/services/config-service.ts`
+**文件**: `packages/runtime/src/services/config-service.ts`
 **行号**: L203-L206
 
 **描述**: `updateToolPermissions(permissions)` 每次调用都：读 config.json → 替换 toolPermissions → 写回 config.json。如果短时间内多次调用（如批量更新权限），会产生冗余 I/O。

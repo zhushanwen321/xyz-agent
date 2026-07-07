@@ -32,7 +32,7 @@ echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BLUE}[Postbuild Validation]${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-OUTPUT_DIR="$PROJECT_ROOT/src-electron/dist/builder-output"
+OUTPUT_DIR="$PROJECT_ROOT/apps/electron/dist/builder-output"
 FAILED=0
 
 # ── 1. 产物存在性 ──────────────────────────────────────────────────
@@ -131,6 +131,17 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             else
                 echo -e "  ${GREEN}✓${NC} Resources/pi 无 symlink"
             fi
+        fi
+
+        # extraResources: xyz-agent-extension.js（/xyz-navigate 命令的 pi extension）
+        # electron-builder from 路径写错时会静默丢弃（只警告不失败），故在此显式校验。
+        # 历史：pnpm workspace 迁移后 projectDir=apps/electron/，from: ../ 解析到 apps/
+        # 而非仓库根，导致文件未进产物。
+        if [ -f "$APP_PATH/Contents/Resources/xyz-agent-extension.js" ]; then
+            echo -e "  ${GREEN}✓${NC} xyz-agent-extension.js in Resources"
+        else
+            echo -e "  ${RED}✗${NC} xyz-agent-extension.js 缺失（检查 electron-builder.yml from 路径）"
+            FAILED=1
         fi
     else
         echo -e "  ${YELLOW}⚠ 未找到 .app 目录${NC}"

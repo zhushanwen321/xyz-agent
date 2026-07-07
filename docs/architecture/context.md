@@ -15,7 +15,7 @@ Session 的视口。每个 Panel 最多绑定一个 Session，每个 Session 同
 ### Agent Runtime
 xyz-agent 的后端服务进程（Node.js）。职责：托管 pi 子进程的生命周期、协议翻译（pi stdin/stdout JSON RPC ↔ WebSocket）、session CRUD、配置持久化（provider/skill/agent）、model 查询。是 xyz-agent 唯一的后端，所有业务逻辑和数据持久化都在这里。前端不直接和 pi 通信，前端不做业务决策。
 
-**对应目录**: `src-electron/runtime/`（2026-06 完成 sidecar→runtime 重命名，见 terminology R1）
+**对应目录**: `packages/runtime/`（2026-06 完成 sidecar→runtime 重命名，见 terminology R1）
 
 **内部分层**（单进程，模块隔离）:
 

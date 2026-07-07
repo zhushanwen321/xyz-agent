@@ -26,7 +26,7 @@ description: >-
 npm run lint
 
 # 单元测试（根 package.json 没有 test script，需要分别跑）
-cd src-electron/runtime && npx vitest run
+cd packages/runtime && npx vitest run
 cd ../renderer && npx vitest run
 
 # 构建验证(确认 build 不报错)
@@ -80,7 +80,7 @@ gh pr create \
 ## 项目特化约束
 
 - **Electron 打包验证**:本地 build 通过即可,全量 DMG/EXE 产物由 CI 生成
-- **构建产物路径**:`src-electron/dist/`,`.agents/skills/` 不参与构建
+- **构建产物路径**:`apps/electron/dist/`,`.agents/skills/` 不参与构建
 - **预发布检查脚本**（项目 `scripts/` 目录下）:
   - `scripts/preflight-check.sh` - 综合预检
   - `scripts/postbuild-validate.sh` - 构建后验证

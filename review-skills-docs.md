@@ -30,11 +30,11 @@ def discover_all(self, project: str) -> list[EntryPoint]:
 
 ### 3. `walk_frontend_files` 硬编码目录不覆盖 xyz-agent 的前端
 
-`[BLOCKER] .agents/skills/code-link/scripts/bridge.py:L53-56 — walk_frontend_files 的 frontend_dirs 硬编码为 ["frontend/src", "src", "src-renderer"]，不包含 "src-electron/renderer/src"`
+`[BLOCKER] .agents/skills/code-link/scripts/bridge.py:L53-56 — walk_frontend_files 的 frontend_dirs 硬编码为 ["frontend/src", "src", "src-renderer"]，不包含 "packages/renderer/src"`
 
-**问题**：xyz-agent 项目的前端代码在 `src-electron/renderer/src/`，不在 `bridge.py` 硬编码的三个目录中。这意味着 code-link 的 bridge 功能（后端→前端串联）在 xyz-agent 上完全不工作——`walk_frontend_files` 永远找不到前端文件，`frontend_files` 始终为空。
+**问题**：xyz-agent 项目的前端代码在 `packages/renderer/src/`，不在 `bridge.py` 硬编码的三个目录中。这意味着 code-link 的 bridge 功能（后端→前端串联）在 xyz-agent 上完全不工作——`walk_frontend_files` 永远找不到前端文件，`frontend_files` 始终为空。
 
-**建议**：增加 `src-electron/renderer/src` 到 `frontend_dirs` 列表。更长期地，应支持通过项目配置文件或自动探测来确定前端目录。
+**建议**：增加 `packages/renderer/src` 到 `frontend_dirs` 列表。更长期地，应支持通过项目配置文件或自动探测来确定前端目录。
 
 ---
 
@@ -66,7 +66,7 @@ def discover_all(self, project: str) -> list[EntryPoint]:
 
 ### 7. `execSync('sleep 0.2')` 在 Windows 上不工作（已有 TODO 但未解决）
 
-`[WARNING] src-electron/main/runtime-manager.ts:L346 — execSync(\`sleep ${...}\`) 使用 Unix sleep 命令`
+`[WARNING] apps/electron/main/runtime-manager.ts:L346 — execSync(\`sleep ${...}\`) 使用 Unix sleep 命令`
 
 **问题**：runtime-manager.ts 的 graceful shutdown 使用 `execSync('sleep 0.2')` 等待 SIGTERM 生效。Windows 没有 `sleep` 命令（只有 `timeout`），会直接抛异常被 catch 静默吞掉，导致跳过等待直接发 SIGKILL。虽然 catch 处理了异常，但意味着 Windows 上 graceful shutdown 退化为立即 SIGKILL。
 
@@ -96,15 +96,15 @@ def discover_all(self, project: str) -> list[EntryPoint]:
 
 `[SUGGESTION] .agents/skills/code-link/scripts/bridge.py:L54 — frontend_dirs 包含 project + "/src"`
 
-**问题**：许多项目的 `src/` 目录混合了前后端代码（如 xyz-agent 的 `src-electron/` 下有 `main/`、`runtime/`、`renderer/src/`）。将 `src` 作为前端目录可能导致扫描到非前端文件（如 `runtime/src/` 的 Node.js 代码），bridge 匹配时产生误报。
+**问题**：许多项目的 `src/` 目录混合了前后端代码（如 xyz-agent 有 `apps/electron/main/`、`packages/runtime/src/`、`packages/renderer/src/`）。将 `src` 作为前端目录可能导致扫描到非前端文件（如 `packages/runtime/src/` 的 Node.js 代码），bridge 匹配时产生误报。
 
-**建议**：优先匹配更具体的目录（`frontend/src`、`src-electron/renderer/src`），`src/` 作为最后 fallback。
+**建议**：优先匹配更具体的目录（`frontend/src`、`packages/renderer/src`），`src/` 作为最后 fallback。
 
 ### 11. CLAUDE.md 测试规范新增内容
 
 `[SUGGESTION] CLAUDE.md:L246-257 — 新增"测试规范 [HISTORICAL]"章节`
 
-**评价**：内容准确，覆盖了 vitest vs node:test 的混淆问题、正确的运行命令、超时处理、subagent prompt 规范。标记为 `[HISTORICAL]` 合理。与项目实际配置一致（`vitest.config.ts` 存在于 `src-electron/runtime/`）。
+**评价**：内容准确，覆盖了 vitest vs node:test 的混淆问题、正确的运行命令、超时处理、subagent prompt 规范。标记为 `[HISTORICAL]` 合理。与项目实际配置一致（`vitest.config.ts` 存在于 `packages/runtime/`）。
 
 **建议**：无问题，内容可合并。
 
@@ -126,9 +126,9 @@ def discover_all(self, project: str) -> list[EntryPoint]:
 
 ### 14. `dev-cleanup.mjs` 删除
 
-`[SUGGESTION] src-electron/scripts/dev-cleanup.mjs — 完整删除（47 行）`
+`[SUGGESTION] apps/electron/scripts/dev-cleanup.mjs — 完整删除（47 行）`
 
-**验证**：在 `package.json`、`src-electron/` 内的 TS/JS 文件中搜索 `dev-cleanup` 无残留引用。仅在 `.xyz-harness/` 的历史文档中有一行目录列表引用（不影响运行时）。删除安全。
+**验证**：在 `package.json`、`apps/electron/` 及 `packages/` 内的 TS/JS 文件中搜索 `dev-cleanup` 无残留引用。仅在 `.xyz-harness/` 的历史文档中有一行目录列表引用（不影响运行时）。删除安全。
 
 **建议**：可合并。
 

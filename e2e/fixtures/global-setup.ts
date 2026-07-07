@@ -5,9 +5,9 @@
  * 产物已存在则跳过（增量开发时避免每次重建，节省时间）。
  *
  * 产物路径：
- * - src-electron/dist/main/main.cjs（main entry）
- * - src-electron/dist/preload/preload.cjs（preload）
- * - src-electron/renderer/dist/index.html（renderer，E2E 构建时带 VITE_E2E=true）
+ * - apps/electron/dist/main/main.cjs（main entry）
+ * - apps/electron/dist/preload/preload.cjs（preload）
+ * - apps/electron/renderer/dist/index.html（renderer，E2E 构建时带 VITE_E2E=true）
  */
 import { execSync } from 'node:child_process'
 import path from 'node:path'
@@ -15,12 +15,12 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const SRC_ELECTRON = path.join(REPO_ROOT, 'src-electron')
+const ELECTRON_DIR = path.join(REPO_ROOT, 'apps/electron')
 
 const ARTIFACTS = [
-  path.join(SRC_ELECTRON, 'dist/main/main.cjs'),
-  path.join(SRC_ELECTRON, 'dist/preload/preload.cjs'),
-  path.join(SRC_ELECTRON, 'renderer/dist/index.html'),
+  path.join(ELECTRON_DIR, 'dist/main/main.cjs'),
+  path.join(ELECTRON_DIR, 'dist/preload/preload.cjs'),
+  path.join(ELECTRON_DIR, 'renderer/dist/index.html'),
 ]
 
 function artifactsMissing(): boolean {

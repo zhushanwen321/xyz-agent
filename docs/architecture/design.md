@@ -751,7 +751,7 @@ main/
     └── shortcut-registry.ts  Facade（registerGlobal / unregisterAll）
 ```
 
-> 命名变更：`runtime/` 子目录 → `supervisor/`（避免和顶层 `src-electron/runtime/` 撞名）；类名 `RuntimeManager` → `RuntimeSupervisor`。
+> 命名变更：`runtime/` 子目录 → `supervisor/`（避免和顶层 `packages/runtime/` 撞名）；类名 `RuntimeManager` → `RuntimeSupervisor`。
 >
 > 填充进度：M2（window 全部）+ M5（shortcut）+ M1（main 编排）+ 最小可运行 handler 已完成，`npm run dev:mock` 可启动 mock 模式。M3 supervisor 子模块 + M4 特权/桥接 handler 保留 `throw` 骨架，待 B 类填充。
 

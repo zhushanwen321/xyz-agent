@@ -2,7 +2,7 @@
 
 > 配套文档：[`runtime-similar-code-review.md`](./runtime-similar-code-review.md)（分级与修复方案）
 > 本文件是四片并行扫描的原始证据，每个相似点带 file:line，供上方 review 文档的字母编号（A1/A2/.../H2）回溯。
-> 审查日期：2026-06-20。范围：`src-electron/runtime/src/`（排除 test/、node_modules/）。
+> 审查日期：2026-06-20。范围：`packages/runtime/src/`（排除 test/、node_modules/）。
 > 性质：**仅记录形式/逻辑相似，不预判真假重复**。
 
 ---

@@ -98,7 +98,7 @@ Composer.onSend(text)
 
 ## 5. ServerMessage 类型表（流式 chunk）
 
-定义在 [`shared/src/protocol.ts`](../../src-electron/shared/src/protocol.ts) line 207-347。`applyChunk`（[`chat-chunk-processor.ts`](../../src-electron/renderer/src/stores/chat-chunk-processor.ts)）消费的核心类型：
+定义在 [`shared/src/protocol.ts`](../../packages/shared/src/protocol.ts) line 207-347。`applyChunk`（[`chat-chunk-processor.ts`](../../packages/renderer/src/stores/chat-chunk-processor.ts)）消费的核心类型：
 
 | type | payload 关键字段 | 前端处理 |
 |------|----------------|---------|
@@ -126,7 +126,7 @@ Composer.onSend(text)
 
 ## 6. chatStore API（session 隔离）
 
-[`stores/chat.ts`](../../src-electron/renderer/src/stores/chat.ts)。核心是 `messages: Map<sessionId, Message[]>` 按 sessionId 分区。
+[`stores/chat.ts`](../../packages/renderer/src/stores/chat.ts)。核心是 `messages: Map<sessionId, Message[]>` 按 sessionId 分区。
 
 | 方法 | 作用 |
 |------|------|
@@ -144,7 +144,7 @@ Composer.onSend(text)
 
 ## 7. mock 流式数据（`run-send-stream.ts`）
 
-[`api/mock/run-send-stream.ts`](../../src-electron/renderer/src/api/mock/run-send-stream.ts) 模拟完整流式序列。`chat.send` 后 fire-and-forget，全程序检查 `isCancelled(sessionId)`：
+[`api/mock/run-send-stream.ts`](../../packages/renderer/src/api/mock/run-send-stream.ts) 模拟完整流式序列。`chat.send` 后 fire-and-forget，全程序检查 `isCancelled(sessionId)`：
 
 ```
 message.message_start {sessionId, messageId}
@@ -196,16 +196,16 @@ message.complete {messageId, stopReason:'complete', usage:{inputTokens:1280, out
 
 | 测试文件 | 覆盖 |
 |---------|------|
-| [`__tests__/useChat.test.ts`](../../src-electron/renderer/src/__tests__/useChat.test.ts) | ensureStreamSubscription 幂等；send 三守卫；事件驱动 setStreaming；compact 状态机 |
-| [`__tests__/chat-streaming-reset.test.ts`](../../src-electron/renderer/src/__tests__/chat-streaming-reset.test.ts) | **规则#3 复位**：error 路径重置 streaming/streamingMessage（否则 UI 卡死） |
-| [`__tests__/fg5-message-stream.test.ts`](../../src-electron/renderer/src/__tests__/fg5-message-stream.test.ts)（18KB 最全） | applyChunk 全分支：thinking/tool/error/retry/queue/fileChanges；session 隔离；system 消息；历史 fixture |
-| [`__tests__/panel/block-working.test.ts`](../../src-electron/renderer/src/__tests__/panel/block-working.test.ts) | Block working 态折叠（thinking/tool/end_not_received） |
-| [`__tests__/panel/turn-working.test.ts`](../../src-electron/renderer/src/__tests__/panel/turn-working.test.ts) | Turn working 态（完成复位/elapsed 计时/非 working 静态） |
-| [`__tests__/stores/toolcall-anchor.test.ts`](../../src-electron/renderer/src/__tests__/stores/toolcall-anchor.test.ts) | toolCallId 锚定（findToolCallOwner 乱序无害化） |
+| [`__tests__/useChat.test.ts`](../../packages/renderer/src/__tests__/useChat.test.ts) | ensureStreamSubscription 幂等；send 三守卫；事件驱动 setStreaming；compact 状态机 |
+| [`__tests__/chat-streaming-reset.test.ts`](../../packages/renderer/src/__tests__/chat-streaming-reset.test.ts) | **规则#3 复位**：error 路径重置 streaming/streamingMessage（否则 UI 卡死） |
+| [`__tests__/fg5-message-stream.test.ts`](../../packages/renderer/src/__tests__/fg5-message-stream.test.ts)（18KB 最全） | applyChunk 全分支：thinking/tool/error/retry/queue/fileChanges；session 隔离；system 消息；历史 fixture |
+| [`__tests__/panel/block-working.test.ts`](../../packages/renderer/src/__tests__/panel/block-working.test.ts) | Block working 态折叠（thinking/tool/end_not_received） |
+| [`__tests__/panel/turn-working.test.ts`](../../packages/renderer/src/__tests__/panel/turn-working.test.ts) | Turn working 态（完成复位/elapsed 计时/非 working 静态） |
+| [`__tests__/stores/toolcall-anchor.test.ts`](../../packages/renderer/src/__tests__/stores/toolcall-anchor.test.ts) | toolCallId 锚定（findToolCallOwner 乱序无害化） |
 
 **运行**：
 ```bash
-cd src-electron/renderer && npx vitest run src/__tests__/fg5-message-stream.test.ts src/__tests__/useChat.test.ts src/__tests__/chat-streaming-reset.test.ts
+cd packages/renderer && npx vitest run src/__tests__/fg5-message-stream.test.ts src/__tests__/useChat.test.ts src/__tests__/chat-streaming-reset.test.ts
 ```
 
 ### 8.2 历史 fixture（`mock/data.ts` fixtureMessages）
@@ -223,7 +223,7 @@ cd src-electron/renderer && npx vitest run src/__tests__/fg5-message-stream.test
 ## 9. 非 MOCK 模式测试
 
 ```bash
-cd src-electron && npm run dev
+pnpm dev
 ```
 
 **手工冒烟清单**：
@@ -414,10 +414,10 @@ test.describe('对话流 E2E', () => {
 
 ## 13. 相关文档
 
-- 组件源码：[`components/panel/MessageStream.vue`](../../src-electron/renderer/src/components/panel/MessageStream.vue) / [`message-stream/`](../../src-electron/renderer/src/components/panel/message-stream/)
-- 流式处理：[`stores/chat-chunk-processor.ts`](../../src-electron/renderer/src/stores/chat-chunk-processor.ts)
-- useChat：[`composables/features/useChat.ts`](../../src-electron/renderer/src/composables/features/useChat.ts)
-- 集成测试：[`__tests__/fg5-message-stream.test.ts`](../../src-electron/renderer/src/__tests__/fg5-message-stream.test.ts)
-- mock 流式：[`api/mock/run-send-stream.ts`](../../src-electron/renderer/src/api/mock/run-send-stream.ts)
+- 组件源码：[`components/panel/MessageStream.vue`](../../packages/renderer/src/components/panel/MessageStream.vue) / [`message-stream/`](../../packages/renderer/src/components/panel/message-stream/)
+- 流式处理：[`stores/chat-chunk-processor.ts`](../../packages/renderer/src/stores/chat-chunk-processor.ts)
+- useChat：[`composables/features/useChat.ts`](../../packages/renderer/src/composables/features/useChat.ts)
+- 集成测试：[`__tests__/fg5-message-stream.test.ts`](../../packages/renderer/src/__tests__/fg5-message-stream.test.ts)
+- mock 流式：[`api/mock/run-send-stream.ts`](../../packages/renderer/src/api/mock/run-send-stream.ts)
 - 发送入口：[02-composer.md](./02-composer.md)（Composer.onSend → chat.send）
 - FileChanges 通道：[ADR-0024](../architecture/adr/0024-filechanges-channel.md)

@@ -127,7 +127,7 @@ function onCmdSelect(payload: { type, name, icon?, description? }) {
 
 ## 5. mock 数据
 
-[`api/mock/composer-data.ts`](../../src-electron/renderer/src/api/mock/composer-data.ts) + [`api/mock/index.ts`](../../src-electron/renderer/src/api/mock/index.ts)：
+[`api/mock/composer-data.ts`](../../packages/renderer/src/api/mock/composer-data.ts) + [`api/mock/index.ts`](../../packages/renderer/src/api/mock/index.ts)：
 
 | 数据 | 内容 |
 |------|------|
@@ -149,7 +149,7 @@ pushSession(sessionId, {
 
 ### 6.1 集成测试（vitest，已有）
 
-[`__tests__/panel/composer-slash-trigger.test.ts`](../../src-electron/renderer/src/__tests__/panel/composer-slash-trigger.test.ts) 覆盖：
+[`__tests__/panel/composer-slash-trigger.test.ts`](../../packages/renderer/src/__tests__/panel/composer-slash-trigger.test.ts) 覆盖：
 
 | 用例组 | 覆盖 |
 |--------|------|
@@ -159,7 +159,7 @@ pushSession(sessionId, {
 
 **运行**：
 ```bash
-cd src-electron/renderer && npx vitest run src/__tests__/panel/composer-slash-trigger.test.ts
+cd packages/renderer && npx vitest run src/__tests__/panel/composer-slash-trigger.test.ts
 ```
 
 ### 6.2 集成测试如何 mock
@@ -186,7 +186,7 @@ vi.mock('@/composables/features/useChat', () => ({
 ## 7. 非 MOCK 模式测试
 
 ```bash
-cd src-electron && npm run dev
+pnpm dev
 ```
 
 **手工冒烟清单**：
@@ -351,7 +351,7 @@ test.describe('Composer E2E', () => {
 
 ## 11. 相关文档
 
-- 组件源码：[`components/panel/Composer.vue`](../../src-electron/renderer/src/components/panel/Composer.vue) / [`CommandPopover.vue`](../../src-electron/renderer/src/components/panel/CommandPopover.vue)
-- 集成测试：[`__tests__/panel/composer-slash-trigger.test.ts`](../../src-electron/renderer/src/__tests__/panel/composer-slash-trigger.test.ts)
-- 命令 store：[`stores/command.ts`](../../src-electron/renderer/src/stores/command.ts)
+- 组件源码：[`components/panel/Composer.vue`](../../packages/renderer/src/components/panel/Composer.vue) / [`CommandPopover.vue`](../../packages/renderer/src/components/panel/CommandPopover.vue)
+- 集成测试：[`__tests__/panel/composer-slash-trigger.test.ts`](../../packages/renderer/src/__tests__/panel/composer-slash-trigger.test.ts)
+- 命令 store：[`stores/command.ts`](../../packages/renderer/src/stores/command.ts)
 - 发送链路：[03-chat-flow.md](./03-chat-flow.md)（Composer.onSend → chat.send 的完整流式链路）

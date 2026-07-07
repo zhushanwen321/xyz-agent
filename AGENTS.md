@@ -4,11 +4,11 @@
 
 xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构：
 
-- **Electron 主进程** (`src-electron/main/`): 窗口管理、runtime 子进程生命周期、快捷键
-- **Preload** (`src-electron/preload/`): 安全桥接，暴露 `electronAPI` 给渲染进程
-- **前端渲染进程** (`src-electron/renderer/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库（v3 冷蓝暗色设计系统）
-- **Runtime** (`src-electron/runtime/src/`): Node.js WebSocket 服务（三层架构 transport/services/infra），通过子进程 RPC 与 pi 通信
-- **共享类型** (`src-electron/shared/src/`): 前端与 runtime 之间的 TypeScript 类型定义
+- **Electron 主进程** (`apps/electron/main/`): 窗口管理、runtime 子进程生命周期、快捷键
+- **Preload** (`apps/electron/preload/`): 安全桥接，暴露 `electronAPI` 给渲染进程
+- **前端渲染进程** (`packages/renderer/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库（v3 冷蓝暗色设计系统）
+- **Runtime** (`packages/runtime/src/`): Node.js WebSocket 服务（三层架构 transport/services/infra），通过子进程 RPC 与 pi 通信
+- **共享类型** (`packages/shared/src/`): 前端与 runtime 之间的 TypeScript 类型定义
 
 **完整编码规范**: [docs/standards.md](docs/standards.md)
 
@@ -52,13 +52,13 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 ```bash
 npm run dev          # 开发模式 (Electron + Vite HMR)
 npm run build        # 生产构建 (electron-builder)
-npm run lint         # ESLint 检查
+npm run lint         # ESLint 检查（或 pnpm run lint）
 npm run prepare      # 安装 git hooks
 
-# 打包流程
-cd src-electron && npm install    # 安装依赖（ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过二进制下载）
-cd .. && bash scripts/preflight-check.sh   # 打包前检查
-npm run build                             # 构建 DMG/ZIP/EXE
+# 打包流程（pnpm workspace 单步安装，无需 cd 子目录）
+pnpm install          # 安装所有依赖（根 + packages/* + apps/*，ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过二进制下载）
+bash scripts/preflight-check.sh   # 打包前检查
+pnpm build                             # 构建 DMG/ZIP/EXE
 bash scripts/postbuild-validate.sh         # 打包后验证
 
 # 单独验证 runtime bundle
@@ -107,12 +107,34 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 
 Runtime 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
 
+### 7.5 对话流状态必须可重开恢复 [HISTORICAL]
+
+**所有进入对话流的状态（消息、系统通知、压缩记录、工具结果等），必须同时满足两条：实时可见 + 重开 session 后仍可见。** 只做到实时可见、重开后消失的，视为未完成。
+
+事故背景：compact 执行后实时反馈缺失 + 重开 session 看不到压缩记录。根因是「实时链路」和「持久化链路」是两条独立的通路，只打通一条会导致：关掉 session 重开后，对话流回到压缩前的状态，用户以为压缩没发生或丢失了数据。
+
+两条通路必须同时维护：
+
+| 通路 | 职责 | 关键检查点 |
+|---|---|---|
+| **实时链路**（事件/RPC 响应 → 前端消息流） | 操作发生时立即在对话流显示反馈 | runtime 广播 `message.*` 事件携带完整 payload；前端 `chat-message-effects.ts` 有对应 effect 处理 |
+| **持久化链路**（session JSONL → 重开加载） | 重开 session 后历史完整呈现 | pi 写入 JSONL 的 entry 类型，runtime 读取时（`session-history.ts` 文件路径 / `message-converter.ts` RPC 路径）**都不能过滤掉**；前端 hydrate 能还原 |
+
+持久化链路的两条读取路径都要覆盖（缺一会导致「在线重开能看到、离线重开看不到」或反之）：
+
+1. **RPC 路径**（session 在线，有 pi 子进程）：`session-service.getHistory` → `client.getHistory()` → pi `get_messages` → `message-converter.ts` 的 `convertPiHistory`。converter 必须处理所有 pi 返回的 message role（`user`/`assistant`/`toolResult`/`compactionSummary`/`branchSummary` 等），不能静默丢弃未知 role。
+2. **文件路径**（session 离线，无 pi 子进程）：`session-history.ts` 的 `getHistoryFromFile` → 解析 JSONL。filter 不能只留 `type === 'message'`，pi 的顶层 entry 类型（`compaction`/`branch`/`bashExecution` 等）需按需放开并转换。
+
+**新增任何进入对话流的状态时，必须同时实现两条通路**。只补实时广播、不改 converter/文件读取的，会在重开时丢失。检测方法：操作后关闭 session 再重开，对话流应与关闭前一致。
+
+命令编排层（`message-dispatcher.ts`）是实时链路的归位点——主动发起的命令（如 compact）的副作用（生命周期广播 + summary 消息 + 关联状态刷新如 context 用量）都在 dispatcher 编排，不要分散到 event-adapter（event-adapter 只翻译 pi 推送的事件流，不编排命令副作用）。
+
 ### 8. Worktree 创建必须走 `git-cwt`
 
 创建新 worktree **必须使用 `git-cwt`**（`~/.shell/07-git-ws.sh`），不要手动 `git worktree add`。
 
-- `git-cwt` 调用 `.bare/custom-hooks/setup-worktree.sh`，该脚本执行：根目录 `npm install` + `src-electron/` 的 `npm install`（`ELECTRON_SKIP_BINARY_DOWNLOAD=1`）+ Electron dist 缓存复用
-- `src-electron/` 是独立 npm project（不在根 workspaces 里），手动创建的 worktree 缺少 `concurrently`、`electron` 等依赖
+- `git-cwt` 调用 `.bare/custom-hooks/setup-worktree.sh`，该脚本执行：`pnpm install`（workspace 单步装完根 + packages/* + apps/*，`ELECTRON_SKIP_BINARY_DOWNLOAD=1`）+ Electron dist 缓存复用
+- 项目使用 pnpm workspace（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`），手动创建的 worktree 缺少依赖时必须跑 `pnpm install`
 - Electron dist 缓存在 `<workspace>/.electron-dist-cache/`，新 worktree 通过 symlink 复用
 - 删除 worktree 不影响缓存，后续 `git-cwt` 新建时自动从缓存链接
 
@@ -145,11 +167,10 @@ lsof -i :1420 -P | grep node
 - 默认 `@{upstream}` 可能指向 `origin/main`，导致 `git log @{upstream}..HEAD` 显示所有 feature commits
 - 修复：`git branch --set-upstream-to=origin/<branch-name>`
 
-#### `src-electron/` 依赖需要单独安装
-- `src-electron/` 是独立 npm project（不在根 workspaces 里）
-- `pre-merge-check.sh` 和 `npm ci` 只装根目录依赖
-- 需要 `cd src-electron && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install`
-- `git-cwt` 的 `setup-worktree.sh` 会自动处理，但手动操作时容易遗漏
+#### pnpm workspace 单步安装（2026-07-04 重构后）
+- 项目使用 pnpm workspace（`pnpm-workspace.yaml`），`pnpm install` 一次装完根 + `packages/*` + `apps/*`
+- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0032）
+- `git-cwt` 的 `setup-worktree.sh` 会自动跑 `pnpm install`，手动操作时跑一次即可
 
 #### merge-worktree 脚本的 bare repo 兼容
 - 脚本已修复：自动检测 `GH_REPO` 并给所有 `gh` 调用加 `--repo`
@@ -175,17 +196,23 @@ lsof -i :1420 -P | grep node
 - **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
 - **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
 - **数据目录隔离**: `~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离（已有规则 #10）
-- **[HISTORICAL] Builtin Extension 依赖禁止删除**: 根 `package.json` 的 `dependencies` 中 `@zhushanwen/pi-*` 开头的包是 builtin pi extension（当前 5 个：`@zhushanwen/pi-goal`、`@zhushanwen/pi-todo`、`@zhushanwen/pi-subagents`、`@zhushanwen/pi-workflow`、`@zhushanwen/pi-structured-output`）。这些包通过 `electron-builder.yml` 的 `extraResources` 拷贝到打包产物的 `Resources/node_modules/@zhushanwen/` 目录下，运行时由 `extension-resolver.ts` 的 npm 源扫描发现（`scanNpmExtensions`）。用户安装 dmg/exe 后自动自带这些 extension，无需手动安装。**禁止删除或移出这些依赖**——曾经发生过误删导致打包产物缺失 builtin extension 的事故。extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
+- **[HISTORICAL] Builtin pi-extensions 改为 Settings 推荐安装**（2026-07-04 推翻旧规则）：5 个 `@zhushanwen/pi-*` 包（`pi-goal`/`pi-todo`/`pi-subagents`/`pi-workflow`/`pi-structured-output`）**不再作为根 `package.json` dependencies 集成进打包产物**。改为 Settings → Extensions 页面的「推荐扩展」快捷按钮，用户点击从 npm 安装到 `~/.xyz-agent/pi/agent/npm/node_modules/`。
+  - 推荐列表 SSOT：`packages/shared/src/recommended-extensions.json`（runtime import，前端经 `extension.recommended` WS 拉取）
+  - runtime `ExtensionService.getRecommendedExtensions()` 计算已安装状态（按 npm 包名精确匹配 `ExtensionInfo.name`，不经 normalizeExtName 转换）
+  - electron-builder.yml 不再 `extraResources` 拷贝 `@zhushanwen/`，preflight-check.sh 移除了原 npm packages / 传递依赖检查（步骤 7、8）
+  - **代价**：新用户首次启动无这些 extension，需到 Settings 手动安装；离线环境无法安装（npm-installer 需联网）
+  - 旧规则背景：曾经发生过误删 builtin 依赖导致打包产物缺失的事故，故设禁止删除规则。现改为推荐安装机制后该约束不再适用，但「删除打包所需依赖」的事故教训仍适用于其他 builtin 资源（如 pi binary、xyz-agent-extension.js）
+  - extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
 
 ### 12. Electron 打包约束（违反必出 bug）
 
-#### tsup 配置 (`src-electron/runtime/tsup.config.ts`)
-- `platform: 'node'` + `target` 匹配当前 Electron 内置 Node 版本（见 `src-electron/runtime/tsup.config.ts`，Electron 42 → Node 24）— 自动处理所有 Node 内置模块 external
+#### tsup 配置 (`packages/runtime/tsup.config.ts`)
+- `platform: 'node'` + `target` 匹配当前 Electron 内置 Node 版本（见 `packages/runtime/tsup.config.ts`，Electron 42 → Node 24）— 自动处理所有 Node 内置模块 external
 - `noExternal` 必须覆盖 **所有** runtime `dependencies` — 新增 npm 依赖时必须同步追加，否则 `asar.unpacked` 运行时 `Cannot find module`
 - **Worker 入口必须独立打包**：`plugin-bootstrap.ts` 是 Worker Thread 入口，tsup `entry` 必须包含它，输出为 `plugin-bootstrap.cjs`，与 `index.cjs` 同目录。禁止只打包 `index.ts` 一个 entry
 - 禁止在 runtime 源码中使用 `import.meta.url` 或 `fileURLToPath(import.meta.url)` — tsup CJS bundle 将 `import.meta` 替换为 `var import_meta = {}`，`import_meta.url` 始终为 `undefined`。禁止用 `globalThis.__dirname` — CJS 中 `__dirname` 是模块局部变量，不在 `globalThis` 上。正确做法：用 `typeof __dirname !== 'undefined' ? __dirname : undefined` 直接检查 CJS 模块变量，tsup/esbuild 会原样保留到 CJS 输出
 
-#### electron-builder 配置 (`src-electron/electron-builder.yml`)
+#### electron-builder 配置 (`apps/electron/electron-builder.yml`)
 - `asarUnpack: dist/runtime/**/*` — runtime 必须在 unpacked 目录，子进程无法读取 asar 内的 JS 文件
 - **`files` 与 `asarUnpack` 的致命交互**：`asarUnpack` 只作用于**已被 `files` 包含的文件**。如果 `files` 中用了 `!dist/runtime/**/*` 排除 runtime，asarUnpack 将无文件可解压，导致打包产物中**缺失整个 runtime**。必须确保 `files` 包含 `dist/runtime/**/*`
 - `files` 只包含主进程直接 `require` 的 `node_modules`（其余已被 tsup 打包进 runtime bundle）
@@ -194,7 +221,7 @@ lsof -i :1420 -P | grep node
 - `resources/pi/` 中**禁止存在指向外部绝对路径的 symlink**。electron-builder 的 `extraResources` 复制时保留 symlink，用户机器上目标路径不存在会导致 pi 运行时资源缺失
 - 构建前必须 dereference：`cp -RL` 替代 `cp -R`，或脚本中显式将 symlink 替换为真实目录拷贝
 
-#### 子进程启动 (`src-electron/main/supervisor/runtime-supervisor.ts`)
+#### 子进程启动 (`apps/electron/main/supervisor/runtime-supervisor.ts`)
 - 必须用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 启动 runtime，不能用 `node` 路径
 - 打包后路径必须用 `process.resourcesPath/app.asar.unpacked/...`，不能用 `app.getAppPath()`（返回 asar 虚拟路径）
 
@@ -230,7 +257,7 @@ lsof -i :1420 -P | grep node
 - `scripts/preflight-check.sh` — 打包前检查
 - `scripts/postbuild-validate.sh` — 打包后验证 + CI 自动拦截
 - `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、Worker bootstrap 存在性、健康检查、plugin 初始化成功）
-- pre-commit hook 自动触发 `validate-runtime-bundle.sh`（当 `src-electron/runtime/src/` 有变更时）
+- pre-commit hook 自动触发 `validate-runtime-bundle.sh`（当 `packages/runtime/src/` 有变更时）
 
 **跳过检查**:
 ```bash
@@ -251,14 +278,14 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 - **根因**：默认 git 把整个 untracked 目录折叠成一行 `?? dir/`（**带尾斜杠**）。文件树 `FileNode.path` 无尾斜杠，两者失配 → overlay key 查不到 → 目录徽章误显（前缀匹配命中自身那条带斜杠记录）、展开后子文件无角标无行数（git 根本没报告这些文件）。
 - **修复**：`--untracked-files=all`（`-uall`）强制展开每个 untracked 文件到文件级（`dir/file.py`，无尾斜杠），与 `FileNode.path` 格式一致。`.gitignore` 仍生效，只展开未忽略的 untracked 文件，不会因 node_modules 等爆量。
-- **修改位置**：`src-electron/runtime/src/services/git-service.ts` getStatus 的 status 命令。commit 用 `git diff --numstat HEAD`（不受此约束，numstat 只管 tracked 改动）。
+- **修改位置**：`packages/runtime/src/services/git-service.ts` getStatus 的 status 命令。commit 用 `git diff --numstat HEAD`（不受此约束，numstat 只管 tracked 改动）。
 - **测试基线**：`git-service.test.ts` 的 `status 命令带 --untracked-files=all 展开未跟踪目录到单文件` 用例断言了命令参数。
 
 ## 测试规范 [HISTORICAL]
 
 > **执行测试或设计测试计划前，先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层策略/mock 策略/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**（各页面组件的 MOCK/非MOCK 测试步骤 + Playwright E2E 调用链 + 每步期望输入输出 + 已知坑）。docs/testing/ 00 总览是入口篇。复用已有 testid 清单/调用链/fixture 数据/历史踩坑经验，不从零重新探索——这些文档记录了 mock 回显双匹配、thinking 收起态 v-if 时序、initApp 预填 cwd 等仅靠读组件代码无法发现的运行时行为。
 
-1. **测试框架用 vitest，禁止 `node:test`**：`src-electron/runtime/` 子项目使用 vitest（配置在 `src-electron/runtime/vitest.config.ts`，依赖 `vitest@^4.1.6`，test script 为 `vitest run`）。所有测试文件必须从 `vitest` 导入 `describe/it/expect/vi/beforeEach` 等，禁止从 `node:test` 导入。vitest 不识别 `node:test` 格式的测试，会导致 "No test suite found" 错误。
+1. **测试框架用 vitest，禁止 `node:test`**：`packages/runtime/` 子项目使用 vitest（配置在 `packages/runtime/vitest.config.ts`，依赖 `vitest@^4.1.6`，test script 为 `vitest run`）。所有测试文件必须从 `vitest` 导入 `describe/it/expect/vi/beforeEach` 等，禁止从 `node:test` 导入。vitest 不识别 `node:test` 格式的测试，会导致 "No test suite found" 错误。
 
 2. **运行测试命令**: `npx vitest run <test-file>`，不是 `tsx --test`。虽然 `tsx --test` 能正常运行（不会卡住），但它跑的是 node:test 原生 runner，不支持 vitest 的 mock（`vi.fn()`/`vi.useFakeTimers()`）和配置（vitest.config.ts）。项目 CI 和开发流程都用 vitest。
 
@@ -344,7 +371,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 - **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router
 - **Mock 模式**: `VITE_MOCK=true` 环境变量控制，在 ws-client 层拦截
-- **共享类型**: `src-electron/shared/src/` 通过 npm workspace 在前端和 runtime 间共享
+- **共享类型**: `packages/shared/src/` 通过 npm workspace 在前端和 runtime 间共享
 - **Runtime 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
 - **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
 - **Runtime broadcast 时序竞争 [HISTORICAL]**: session 级 broadcast（如 `session.commands`）若在 session 激活/创建流程内部发出（`ensureActive`/`lifecycle.create` 内的 `fetchAndBroadcastCommands`），会**早于** renderer 订阅该 sessionId 通道——订阅依赖 `switchSession`/`create` 的 RPC resolve → `activeId`/`currentSessionId` 更新 → `CommandPopover` 的 `watch(sessionId)` 重订，而 broadcast 已在此之前发出 → 消息丢失，renderer transport 只收到同流程的 `reply`（RPC 响应，走 pending map，不依赖订阅）。**约束：renderer 切换/创建 session 后需立即消费的 session 级状态，必须主动拉取**（新增 `session.getCommands` RPC，`useSidebar.selectSession` / `useNewTaskFlow.precreateSessionAndLoadCommands` 在 session 建立后调它 + `events.dispatchSession` 本地投递），不可依赖 broadcast 到达。新增任何 session 级 broadcast 必须对照本条评估。
@@ -407,7 +434,7 @@ xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/ag
 
 ### 3. ENV_WHITELIST_PREFIXES SSOT 单一性
 
-`ENV_WHITELIST_PREFIXES` 的定义只允许在 `src-electron/shared/src/constants.ts`（单一权威源）。main/ 和 runtime/ 层禁止本地定义，只能 `import` 自 shared：
+`ENV_WHITELIST_PREFIXES` 的定义只允许在 `packages/shared/src/constants.ts`（单一权威源）。main/ 和 runtime/ 层禁止本地定义，只能 `import` 自 shared：
 - `main/supervisor/safe-env.ts`：`[...ENV_WHITELIST_PREFIXES, 'ELECTRON_']`（主进程特权，可扩展）
 - `runtime/src/infra/pi/rpc-client.ts`：`= ENV_WHITELIST_PREFIXES`（子进程用全集，不加额外）
 
@@ -417,7 +444,7 @@ xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/ag
 
 ### 4. Runtime/pi 日志必须落盘 + 轮转 + 动态数据目录
 
-runtime 子进程（`src-electron/runtime/src/`）与 pi 子进程的所有日志输出，**禁止只走 `console.*` → 终端**（关终端即丢，无法事后诊断 pi 静默卡死类问题）。必须持久化到文件。
+runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输出，**禁止只走 `console.*` → 终端**（关终端即丢，无法事后诊断 pi 静默卡死类问题）。必须持久化到文件。
 
 **强制要求**：
 

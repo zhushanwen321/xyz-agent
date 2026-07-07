@@ -1,4 +1,4 @@
-import type { PluginContext } from '../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
+import type { PluginContext } from '../../../packages/runtime/src/services/plugin-service/plugin-types.js'
 
 // ── key → metadata mapping ────────────────────────────────────────
 

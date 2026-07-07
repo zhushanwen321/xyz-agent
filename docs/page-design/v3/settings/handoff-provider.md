@@ -2,7 +2,7 @@
 
 > Provider 菜单 · 左导航第 1 项 · settings modal **落地页**（默认进）。
 > 配置 AI 模型供应商、API 凭据、模型清单、每模型的 thinking 策略。
-> 字段与交互源自 `~/Code/xyz-agent-workspace/main/src-electron/renderer/src/components/settings/ProviderPane.vue` + `ProviderModal.vue` + `ProviderSection.vue` + `ModelRow.vue`。
+> 字段与交互源自 `~/Code/xyz-agent-workspace/main/packages/renderer/src/components/settings/ProviderPane.vue` + `ProviderModal.vue` + `ProviderSection.vue` + `ModelRow.vue`。
 
 ## 1. 定位
 

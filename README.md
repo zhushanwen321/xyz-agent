@@ -32,13 +32,13 @@ AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
-| **主进程** | `src-electron/main/` | BrowserWindow 生命周期、runtime spawn/stop、全局快捷键注册 |
-| **Preload** | `src-electron/preload/` | `contextIsolation` 安全桥接，暴露 `window.electronAPI` |
-| **前端** | `src-electron/renderer/` | Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui（v3 冷蓝暗色设计系统）|
-| **Runtime** | `src-electron/runtime/` | WebSocket 服务，三层架构（transport/services/infra），通过 pi RPC 协议与 Agent 通信 |
-| **共享类型** | `src-electron/shared/` | 前端与 runtime 间的 TypeScript 类型定义（npm workspace）|
+| **主进程** | `apps/electron/main/` | BrowserWindow 生命周期、runtime spawn/stop、全局快捷键注册 |
+| **Preload** | `apps/electron/preload/` | `contextIsolation` 安全桥接，暴露 `window.electronAPI` |
+| **前端** | `packages/renderer/` | Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui（v3 冷蓝暗色设计系统）|
+| **Runtime** | `packages/runtime/` | WebSocket 服务，三层架构（transport/services/infra），通过 pi RPC 协议与 Agent 通信 |
+| **共享类型** | `packages/shared/` | 前端与 runtime 间的 TypeScript 类型定义（pnpm workspace）|
 
-渲染进程有两条出口通道：**WS**（→ Runtime，业务/数据）与 **IPC**（→ Main，窗口/进程/OS 特权）。渲染进程不直接调 `window.electronAPI`，统一走 [`lib/ipc.ts`](src-electron/renderer/src/lib/ipc.ts) 门面。
+渲染进程有两条出口通道：**WS**（→ Runtime，业务/数据）与 **IPC**（→ Main，窗口/进程/OS 特权）。渲染进程不直接调 `window.electronAPI`，统一走 [`lib/ipc.ts`](packages/renderer/src/lib/ipc.ts) 门面。
 
 ### 为什么是 Electron
 
@@ -51,23 +51,23 @@ AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
 
 ## 快速开始
 
-**前置条件**: Node.js >= 20, npm >= 10
+**前置条件**: Node.js >= 20, pnpm >= 10
 
 ```bash
-# 安装依赖（根目录 + npm workspaces）
-npm install
+# 安装依赖（pnpm workspace 单步装完 packages/* + apps/*）
+pnpm install
 
 # 开发模式（Vite HMR + Electron 主进程）
-npm run dev
+pnpm dev
 
 # 生产构建
-npm run build
+pnpm build
 
 # 类型检查
-npm -w @xyz-agent/frontend run typecheck
+pnpm --filter @xyz-agent/frontend run typecheck
 
 # ESLint
-npm run lint
+pnpm run lint
 ```
 
 ### 环境变量
@@ -155,24 +155,26 @@ Phase 6  树形 GUI          →  SubAgent Tab 栏 · 子 Agent 对话面板 · 
 
 ```
 xyz-agent/
-├── src-electron/
-│   ├── main/                  # Electron 主进程（三编排子系统 M1/M2/M3）
-│   │   ├── main.ts            # 应用入口、窗口创建、生命周期
-│   │   ├── supervisor/        # M1 Process Supervisor（runtime-supervisor + 端口发现/健康检查）
-│   │   ├── window/            # M2 Window Manager（window-factory + traffic-light 安全区）
-│   │   ├── gateway/           # M3 OS Gateway + IPC handlers（privileged/bridge/input-validators）
-│   │   └── shortcuts/         # 全局快捷键注册（shortcut-registry）
-│   ├── preload/               # 安全桥接，暴露 electronAPI
-│   ├── renderer/              # Vue 前端 (npm workspace: @xyz-agent/frontend)
+├── packages/                      # 可复用层（pnpm workspace）
+│   ├── shared/                    # @xyz-agent/shared — 共享类型（protocol/message/session/...）
+│   ├── renderer/                  # @xyz-agent/frontend — Vue 前端
 │   │   └── src/
-│   │       ├── components/    # v3 组件分组：shell/sidebar/workspace/panel/overview/settings/overlays/ui
-│   │       ├── composables/   # 分层：effects/ features/ logic/ + useConnection.ts
-│   │       ├── stores/        # Pinia stores (chat/navigation/panel/session/sidebar)
-│   │       └── lib/           # ws-client/event-bus/markdown/ipc 门面
-│   ├── runtime/               # Node.js Runtime (npm workspace: @xyz-agent/runtime)
-│   │   └── src/               # 三层架构：transport/ services/ infra/ + plugins/
-│   └── shared/                # 共享类型 (npm workspace: @xyz-agent/shared)
-│       └── src/               # protocol/message/session/settings/panel 类型
+│   │       ├── components/        # v3 组件分组：shell/sidebar/workspace/panel/overview/settings/overlays/ui
+│   │       ├── composables/       # 分层：effects/ features/ logic/ + useConnection.ts
+│   │       ├── stores/            # Pinia stores (chat/navigation/panel/session/sidebar)
+│   │       └── lib/               # ws-client/event-bus/markdown/ipc 门面
+│   ├── runtime/                   # @xyz-agent/runtime — Node.js Runtime
+│   │   └── src/                   # 三层架构：transport/ services/ infra/ + plugins/
+│   └── plugin-sdk/                # 插件 SDK
+├── apps/
+│   └── electron/                  # @xyz-agent/electron — Electron 壳
+│       ├── main/                  # 主进程（三编排子系统 M1/M2/M3）
+│       │   ├── main.ts            # 应用入口、窗口创建、生命周期
+│       │   ├── supervisor/        # M1 Process Supervisor（runtime-supervisor + 端口发现/健康检查）
+│       │   ├── window/            # M2 Window Manager（window-factory + traffic-light 安全区）
+│       │   ├── gateway/           # M3 OS Gateway + IPC handlers（privileged/bridge/input-validators）
+│       │   └── shortcuts/         # 全局快捷键注册（shortcut-registry）
+│       └── preload/               # 安全桥接，暴露 electronAPI
 ├── docs/
 │   ├── architecture/          # 架构文档（design.md/ADR/context/术语表）
 │   ├── designs/               # v3 设计 SSOT：design-tokens.md + design-system.md + v3-demo/

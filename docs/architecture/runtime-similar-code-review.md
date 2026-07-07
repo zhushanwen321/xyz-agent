@@ -1,6 +1,6 @@
 # runtime 相似代码第二轮审查（分级 + 修复方案）
 
-> 审查范围：`src-electron/runtime/src/`（排除 test/、node_modules/）
+> 审查范围：`packages/runtime/src/`（排除 test/、node_modules/）
 > 审查日期：2026-06-20
 >
 > **进度（2026-06-20 更新）**：

@@ -62,7 +62,7 @@ PanelContainer.vue
 
 ## 4. detail tab 数据流（useDetailPane）
 
-[`composables/features/useDetailPane.ts`](../../src-electron/renderer/src/composables/features/useDetailPane.ts)：
+[`composables/features/useDetailPane.ts`](../../packages/renderer/src/composables/features/useDetailPane.ts)：
 
 ```
 fileTreeStore.selectedPath 变化（点文件触发）
@@ -94,7 +94,7 @@ fileTreeStore.selectedPath 变化（点文件触发）
 ### 6.1 MOCK dev 手工测试
 
 ```bash
-cd src-electron && npm run dev:mock
+pnpm --filter @xyz-agent/electron run dev:mock
 ```
 
 | 步骤 | 操作 | 期望 |
@@ -108,12 +108,12 @@ cd src-electron && npm run dev:mock
 
 ### 6.2 集成测试
 
-DetailPane / useDetailPane 的单测在 [`__tests__/`](../../src-electron/renderer/src/__tests__)（搜索 detail/useDetailPane）。
+DetailPane / useDetailPane 的单测在 [`__tests__/`](../../packages/renderer/src/__tests__)（搜索 detail/useDetailPane）。
 
 ## 7. 非 MOCK 模式测试
 
 ```bash
-cd src-electron && npm run dev
+pnpm dev
 ```
 
 **手工冒烟清单**：
@@ -287,8 +287,8 @@ test.describe('SideDrawer E2E', () => {
 
 ## 11. 相关文档
 
-- 组件源码：[`components/panel/SideDrawer.vue`](../../src-electron/renderer/src/components/panel/SideDrawer.vue) / [`DetailPane.vue`](../../src-electron/renderer/src/components/panel/DetailPane.vue)
-- composable：[`composables/features/useDetailPane.ts`](../../src-electron/renderer/src/composables/features/useDetailPane.ts) / [`useSideDrawer.ts`](../../src-electron/renderer/src/composables/features/useSideDrawer.ts)
+- 组件源码：[`components/panel/SideDrawer.vue`](../../packages/renderer/src/components/panel/SideDrawer.vue) / [`DetailPane.vue`](../../packages/renderer/src/components/panel/DetailPane.vue)
+- composable：[`composables/features/useDetailPane.ts`](../../packages/renderer/src/composables/features/useDetailPane.ts) / [`useSideDrawer.ts`](../../packages/renderer/src/composables/features/useSideDrawer.ts)
 - E2E（detail tab）：[`e2e/file-tree.spec.ts`](../../e2e/file-tree.spec.ts) E2E-3a/3b/3c
 - 文件树入口：[04-file-tree.md](./04-file-tree.md)（点文件 → drawer detail）
 - NFR no-v-html：[NFR.md](../../NFR.md)（XSS 安全约束）

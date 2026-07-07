@@ -24,7 +24,7 @@ target/
 # pi resources — pi binary downloaded by prepare-pi-resources.sh from badlogic/pi-mono
 # gh releases. Nothing under here is tracked. Builtin extensions are npm deps (root
 # package.json), skills are user/project-level — neither is bundled here.
-src-electron/resources/
+apps/electron/resources/
 .pi/
 .pi/infinite-context/
 

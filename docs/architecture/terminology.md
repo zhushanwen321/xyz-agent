@@ -12,7 +12,7 @@
 
 ### R1: sidecar → runtime  ✅ 已完成（2026-06）
 
-**验证**：`src-electron/runtime/`、workspace 名 `@xyz-agent/runtime`、runtime 进程生命周期由 `src-electron/main/supervisor/runtime-supervisor.ts` 管理（+ port-discoverer / health-checker / process-control，拆分为 supervisor 子系统）。
+**验证**：`packages/runtime/`、workspace 名 `@xyz-agent/runtime`、runtime 进程生命周期由 `apps/electron/main/supervisor/runtime-supervisor.ts` 管理（+ port-discoverer / health-checker / process-control，拆分为 supervisor 子系统）。
 
 **范围**: 目录、workspace、import 路径、变量名
 
@@ -20,20 +20,20 @@
 
 | 类别 | 变更 |
 |------|------|
-| 目录 | `src-electron/sidecar/` → `src-electron/runtime/` |
+| 目录 | `apps/electron/sidecar/` → `packages/runtime/` |
 | workspace 名 | `@xyz-agent/sidecar` → `@xyz-agent/runtime` |
-| `src-electron/package.json` | `"@xyz-agent/sidecar"` → `"@xyz-agent/runtime"` |
+| `apps/electron/package.json` | `"@xyz-agent/sidecar"` → `"@xyz-agent/runtime"` |
 | `package.json`（根） | workspace 路径引用 |
-| `src-electron/main/sidecar-manager.ts` | → 拆分为 `main/supervisor/` 子系统（runtime-supervisor + port-discoverer + health-checker + process-control） |
-| `src-electron/main/main.ts` | import sidecar-manager → 从 `supervisor/runtime-supervisor` 导入 |
-| `src-electron/main/ipc-handlers.ts` | → `gateway/ipc-handlers.ts`（随 M3 拆分） |
-| `src-electron/tsconfig.json` | paths/reference 更新 |
-| `src-electron/vite.config.main.ts` | 如有 sidecar 引用 |
+| `apps/electron/main/sidecar-manager.ts` | → 拆分为 `main/supervisor/` 子系统（runtime-supervisor + port-discoverer + health-checker + process-control） |
+| `apps/electron/main/main.ts` | import sidecar-manager → 从 `supervisor/runtime-supervisor` 导入 |
+| `apps/electron/main/ipc-handlers.ts` | → `gateway/ipc-handlers.ts`（随 M3 拆分） |
+| `apps/electron/tsconfig.json` | paths/reference 更新 |
+| `apps/electron/vite.config.main.ts` | 如有 sidecar 引用 |
 | 所有 import `sidecar/` | → `runtime/` |
 | 所有注释中的 "sidecar" | → "Agent Runtime" 或 "runtime" |
 
 **执行步骤**:
-1. `git mv src-electron/sidecar src-electron/runtime`
+1. `git mv apps/electron/sidecar packages/runtime`
 2. `sidecar-manager.ts` 拆分为 `main/supervisor/` 子系统（runtime-supervisor + port-discoverer + health-checker + process-control + safe-env）
 3. 批量替换 workspace 名和 import 路径
 4. `npm run build` + `npm run dev` 验证

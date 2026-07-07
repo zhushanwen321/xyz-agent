@@ -18,10 +18,10 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const SRC_ELECTRON = path.join(REPO_ROOT, 'src-electron')
+const ELECTRON_DIR = path.join(REPO_ROOT, 'apps/electron')
 
-const requireFromSrcElectron = createRequire(path.join(SRC_ELECTRON, 'noop.js'))
-const ELECTRON_EXECUTABLE = requireFromSrcElectron('electron') as string
+const requireFromElectronDir = createRequire(path.join(ELECTRON_DIR, 'noop.js'))
+const ELECTRON_EXECUTABLE = requireFromElectronDir('electron') as string
 
 /** waitForRuntime 默认超时：pi 子进程 spawn 较慢，给 30s */
 const RUNTIME_START_TIMEOUT_MS = 30_000
@@ -50,7 +50,7 @@ export async function launchRealApp(opts: RealLaunchOptions = {}): Promise<{
 
   const app = await electron.launch({
     executablePath: ELECTRON_EXECUTABLE,
-    cwd: SRC_ELECTRON,
+    cwd: ELECTRON_DIR,
     env: {
       ...process.env,
       // 不设 VITE_MOCK（renderer 已 real bundle）+ 不设 XYZ_MOCK（启动 runtime）

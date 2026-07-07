@@ -13,7 +13,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  渲染进程（Electron renderer · Chromium · Vue 3）                 │
-│  src-electron/renderer/                                          │
+│  packages/renderer/                                          │
 │  Pinia stores · xyz-ui 组件 · event-bus · ws-client              │
 └────────────┬────────────────────────────────┬───────────────────┘
              │ ① preload 桥接                │ ② WebSocket
@@ -21,7 +21,7 @@
              ▼                                ▼
 ┌──────────────────────────────┐  ┌──────────────────────────────┐
 │  主进程（Electron main · Node）│  │  Runtime 子进程（Node · spawn）│
-│  src-electron/main/           │  │  src-electron/runtime/        │
+│  apps/electron/main/           │  │  packages/runtime/        │
 │  窗口管理 · runtime 生命周期   │──→│  transport → services → infra │
 │  快捷键 · IPC/bridge gateway  │  │  → pi 子进程 RPC              │
 └──────────────────────────────┘  └──────────────────────────────┘
@@ -55,7 +55,7 @@ Electron 主进程，Node 环境。负责原生生命周期与跨进程编排。
 |------|------|------|
 | 窗口管理 | `window/window-manager.ts` + `window-factory.ts` | 多 panel 窗口树、traffic light 安全区（[ADR-0016](architecture/adr/0016-macos-traffic-light-safe-zone.md)） |
 | Runtime 监管 | `supervisor/runtime-supervisor.ts` | spawn/重启 Runtime 子进程、健康检查、端口发现 |
-| 安全环境 | `supervisor/safe-env.ts` | 环境变量白名单过滤（[shared/constants.ts](../src-electron/shared/src/constants.ts) SSOT） |
+| 安全环境 | `supervisor/safe-env.ts` | 环境变量白名单过滤（[shared/constants.ts](../packages/shared/src/constants.ts) SSOT） |
 | 快捷键 | `shortcuts/shortcut-registry.ts` | 全局/窗口快捷键 |
 | IPC gateway | `gateway/ipc-handlers.ts` + `bridge-handlers.ts` + `privileged-handlers.ts` | 渲染进程请求的统一入口 |
 
@@ -80,7 +80,7 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 ## 共享类型（shared）
 
-`src-electron/shared/` 是独立 npm package，三上下文共享。
+`packages/shared/` 是独立 npm package，三上下文共享。
 
 `message.ts`（ClientMessage/ServerMessage 协议）、`protocol.ts`、`session.ts`、`panel.ts`、`settings.ts`、`provider.ts`、`extension.ts`、`constants.ts`（`ENV_WHITELIST_PREFIXES` 等 SSOT）、`errors.ts`。依赖方向：`main/runtime/renderer → shared → 外部`，禁止反向。
 

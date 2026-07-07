@@ -36,12 +36,10 @@ Resources/
 │   ├── pi-darwin-arm64                # pi 可执行文件
 │   ├── agent/                         # agent skills/extensions
 │   └── assets/                        # agent 资源文件
-├── node_modules/@zhushanwen/          # builtin pi extensions
-│   ├── pi-goal/
-│   ├── pi-todo/
-│   └── ...
 └── xyz-agent-extension.js            # xyz-agent 定制 pi extension
 ```
+
+> **注**：builtin pi extensions（`@zhushanwen/pi-*`）不再打包进产物。用户首次使用时在 Settings → Extensions 页面的「推荐扩展」区一键安装，安装到 `~/.xyz-agent/pi/agent/npm/node_modules/`。
 
 **数据目录** (`~/.xyz-agent/`)：
 
@@ -114,15 +112,22 @@ lsof -i :3210 -P | grep LISTEN
 lsof -i :3210-3220 -P | grep LISTEN | awk '{print $2}' | sort -u
 ```
 
-### 4. Builtin Extension 缺失
+### 4. Extension 推荐安装失败
+
+builtin pi extensions（`@zhushanwen/pi-goal` / `pi-todo` / `pi-subagents` / `pi-workflow` / `pi-structured-output`）不再打包进产物，用户在 Settings → Extensions 页面的「推荐扩展」区一键安装（走 `npm install` 到数据目录）。
 
 ```bash
-# 检查打包产物中的 builtin extensions
-ls /Applications/xyz-agent.app/Contents/Resources/node_modules/@zhushanwen/
+# 检查用户级 npm extension 安装目录
+ls ~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/
 
-# 检查根 package.json 中 @zhushanwen/pi-* 依赖是否完整
-grep '@zhushanwen/pi' package.json
+# 检查 settings.json 的 packages[] 是否记录了该 extension
+cat ~/.xyz-agent/pi/agent/settings.json | grep '@zhushanwen/pi'
+
+# 检查 npm registry 可达性（安装失败最常见原因是网络）
+npm view @zhushanwen/pi-goal version
 ```
+
+若安装失败，在 Settings · Extensions 页面会有错误提示（红色横幅），含错误码：`not_found`（包名错误）、`network`（npm registry 不可达）、`not_extension`（包不是有效 pi extension）。
 
 ### 5. Dev 模式 Vite 不更新
 

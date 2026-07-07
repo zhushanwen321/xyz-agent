@@ -3,7 +3,7 @@
 ENV_WHITELIST_PREFIXES SSOT 单一性检查
 
 规则：`ENV_WHITELIST_PREFIXES` 的 `const ... = [...]` 定义只允许出现在
-src-electron/shared/src/constants.ts（单一权威源）。main/ 和 runtime/ 层
+packages/shared/src/constants.ts（单一权威源）。main/ 和 runtime/ 层
 禁止本地定义该常量，只能 `import` 自 shared。
 
 [历史] 旧版（check_env_whitelist_sync.py）检查"两份独立常量同步"——基于
@@ -30,11 +30,11 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-SSOT_FILE = PROJECT_ROOT / 'src-electron/shared/src/constants.ts'
+SSOT_FILE = PROJECT_ROOT / 'packages/shared/src/constants.ts'
 # 禁止本地定义 ENV_WHITELIST_PREFIXES 的目录（只能 import 自 shared）
 FORBIDDEN_DIRS = [
-    PROJECT_ROOT / 'src-electron/main',
-    PROJECT_ROOT / 'src-electron/runtime',
+    PROJECT_ROOT / 'apps/electron/main',
+    PROJECT_ROOT / 'packages/runtime',
 ]
 CONST_NAME = 'ENV_WHITELIST_PREFIXES'
 

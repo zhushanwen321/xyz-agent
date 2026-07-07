@@ -1,6 +1,6 @@
 # runtime 目录重复/近似代码清单
 
-> 审查范围：`src-electron/runtime/src/`（排除 test/、node_modules/）
+> 审查范围：`packages/runtime/src/`（排除 test/、node_modules/）
 > 审查日期：2026-06-19
 > 性质标注：🔴 真重复（应合并） / 🟡 结构相似（需判断） / 🟢 局部重复（低优先级） / ⚪ 形式相似但非重复
 

@@ -32,25 +32,23 @@ jobs:
         with:
           fetch-depth: 1
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
-
-      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖（electron/@lucide/vue 等）。
-      # 用 npm install 而非 npm ci：src-electron 的 lock 在 mac 上生成，对 linux/wasm32 平台的
-      # optional native dep（@rolldown/binding-wasm32-wasi -> @emnapi/core）解析不完整，
-      # npm ci 会因 lock 与 registry 不一致而拒绝安装。npm install 容忍并自动补齐。
-      - name: Install src-electron dependencies
-        working-directory: src-electron
+      # pnpm workspace 单步安装：根 + packages/* + apps/* 一次装完
+      - name: Install dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: npm install --no-audit --no-fund
+        run: pnpm install --frozen-lockfile
 
       - name: ESLint
-        run: npm run lint
+        run: pnpm run lint
 
   typecheck:
     name: TypeCheck
@@ -60,30 +58,28 @@ jobs:
         with:
           fetch-depth: 1
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
-
-      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖。
-      # TypeCheck 报错（Cannot find module 'electron' / '@lucide/vue'）根因即此处缺失。
-      # 用 npm install：src-electron lock 跨平台 optional dep 解析不完整，npm ci 会拒绝。
-      - name: Install src-electron dependencies
-        working-directory: src-electron
+      - name: Install dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: npm install --no-audit --no-fund
+        run: pnpm install --frozen-lockfile
 
       - name: TypeCheck - renderer
-        run: npm -w @xyz-agent/frontend run typecheck
+        run: pnpm --filter @xyz-agent/frontend run typecheck
 
       - name: TypeCheck - runtime
-        run: npm -w @xyz-agent/runtime run typecheck
+        run: pnpm --filter @xyz-agent/runtime run typecheck
 
       - name: TypeCheck - shared
-        run: npm -w @xyz-agent/shared run typecheck
+        run: pnpm --filter @xyz-agent/shared run typecheck
 
   test:
     name: Test
@@ -93,30 +89,28 @@ jobs:
         with:
           fetch-depth: 1
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
-
-      # src-electron/ 是独立 npm project，根 npm ci 装不到它的依赖。
-      # Test 报错（Cannot find package '@vitejs/plugin-vue' in vitest.config.ts）根因即此处缺失。
-      # 用 npm install：src-electron lock 跨平台 optional dep 解析不完整，npm ci 会拒绝。
-      - name: Install src-electron dependencies
-        working-directory: src-electron
+      - name: Install dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: npm install --no-audit --no-fund
+        run: pnpm install --frozen-lockfile
 
       - name: Test - runtime
-        run: npm -w @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
+        run: pnpm --filter @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
 
       - name: Test - renderer
-        run: npm -w @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
+        run: pnpm --filter @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
 
       - name: Test - main
-        run: cd src-electron && npm run test:main
+        run: pnpm --filter @xyz-agent/electron run test:main
 
       - name: Upload test results
         if: always()
@@ -124,8 +118,8 @@ jobs:
         with:
           name: test-results
           path: |
-            src-electron/runtime/test-results.xml
-            src-electron/renderer/test-results.xml
+            packages/runtime/test-results.xml
+            packages/renderer/test-results.xml
           retention-days: 7
 
   # PR 构建检查：完整 electron-builder 打包流程（与 release 一致），不在 PR 上传产物。

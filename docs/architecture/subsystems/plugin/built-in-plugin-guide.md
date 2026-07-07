@@ -118,7 +118,7 @@ resources/plugins/
 ### 2.3 最小 index.ts 模板
 
 ```typescript
-import type { PluginContext } from '../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
+import type { PluginContext } from '../../../packages/runtime/src/services/plugin-service/plugin-types.js'
 
 export async function activate(context: PluginContext): Promise<void> {
   const { api } = context

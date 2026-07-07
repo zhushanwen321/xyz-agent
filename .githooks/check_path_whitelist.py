@@ -19,9 +19,12 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# 需要检查的文件列表（扩展方便）
+# 需要检查的文件列表（含 allowedPrefixes 等路径白名单的核心文件）
+# 注：runtime 旧 server.ts（含 allowedPrefixes）已在 sidecar→runtime 重命名中拆分，
+# 当前 runtime 无路径白名单变量。TARGETS 保留入口文件供未来扩展（文件存在则检查，
+# 不存在则软跳过，见 check_file 的空列表返回）。
 TARGETS = [
-    PROJECT_ROOT / "src-electron/runtime/src/server.ts",
+    PROJECT_ROOT / "packages/runtime/src/index.ts",
 ]
 
 # 白名单变量名模式

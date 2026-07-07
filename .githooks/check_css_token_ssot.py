@@ -2,7 +2,7 @@
 """
 CSS token SSOT 一致性检查
 
-规则：src-electron/renderer/src/style.css 的 :root 中定义的 CSS 变量，
+规则：packages/renderer/src/style.css 的 :root 中定义的 CSS 变量，
 必须全部能在 docs/page-design/design-tokens.md 中找到（token 名称出现）。
 
 目的：防止开发者在 style.css 自行追加 token（如 --reasoning），而 SSOT
@@ -28,7 +28,7 @@ GREEN = '\033[0;32m'
 YELLOW = '\033[1;33m'
 NC = '\033[0m'
 
-STYLE_CSS = 'src-electron/renderer/src/style.css'
+STYLE_CSS = 'packages/renderer/src/style.css'
 DESIGN_TOKENS = 'docs/page-design/design-tokens.md'
 
 # 豁免：非设计 token 的 CSS 变量（布局辅助、第三方 shim 等）

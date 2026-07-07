@@ -2,8 +2,8 @@
 """
 Renderer 依赖完整性检查
 
-规则：src-electron/renderer/src/ 下所有 .ts/.vue 源码 import 的 npm 包，
-必须在 src-electron/renderer/package.json 的 dependencies/devDependencies 中声明。
+规则：packages/renderer/src/ 下所有 .ts/.vue 源码 import 的 npm 包，
+必须在 packages/renderer/package.json 的 dependencies/devDependencies 中声明。
 
 目的：防止 shadcn-vue 等 codegen 工具生成代码后 import 了未声明的包
 （v3 重建 FG0 曾发生：components/ui/button/index.ts import cva，但
@@ -35,7 +35,7 @@ GREEN = '\033[0;32m'
 YELLOW = '\033[1;33m'
 NC = '\033[0m'
 
-RENDERER_ROOT = Path('src-electron/renderer')
+RENDERER_ROOT = Path('packages/renderer')
 RENDERER_SRC = RENDERER_ROOT / 'src'
 PACKAGE_JSON = RENDERER_ROOT / 'package.json'
 
@@ -134,7 +134,7 @@ def main() -> int:
             print(f"    {RED}{spec}{NC}")
     print()
     print(f"{YELLOW}修复方式：{NC}")
-    print(f"  cd src-electron/renderer && npm install <缺失的包>")
+    print(f"  cd packages/renderer && npm install <缺失的包>")
     print(f"  （shadcn-vue add 生成的组件常漏 class-variance-authority / reka-ui 等）")
     print()
     print(f"\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
