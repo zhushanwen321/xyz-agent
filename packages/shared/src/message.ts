@@ -1,4 +1,8 @@
 export type MessageRole = 'user' | 'assistant' | 'system'
+
+/** steer / follow-up 发送模式（appendPending / removePending / markPendingDelivered 共用）。
+ *  从 Message.sendMode 的子集抽出，避免 'steer' | 'follow-up' 字面量在三处手写漂移。 */
+export type SteerFollowUpMode = 'steer' | 'follow-up'
 /**
  * 'pending'：steer/followup 已入队 pi 但尚未投递（draft-composer-states S7）。
  * 投递（pi drain + queue_update 移除该项）时转 'complete'，与普通 user 气泡同形态。

@@ -138,13 +138,16 @@ export function useChat() {
     if (!trimmed || !chat.isActive(sid)) return
 
     // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete。
-    // [W1] API 失败（WS 断连/steer_failed envelope/hook 拦截）回滚 pending，避免孤儿气泡。
+    // [W1] API 失败（WS 断连/steer_failed envelope/hook 拦截）回滚 pending + toast 提示，
+    // 不 throw（错误已消化：pending 已回滚 + 用户已得反馈；throw 只会变 unhandled rejection）。
     chat.appendPending(sid, trimmed, 'steer')
     try {
       await chatApi.steer(sid, trimmed)
     } catch (e) {
       chat.removePending(sid, trimmed, 'steer')
-      throw e
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(`补充消息发送失败：${msg}`)
     }
   }
 
@@ -165,13 +168,15 @@ export function useChat() {
     }
 
     // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete。
-    // [W1] API 失败回滚 pending（同 steer）。
+    // [W1] API 失败回滚 pending + toast 提示（同 steer，不 throw）。
     chat.appendPending(sid, trimmed, 'follow-up')
     try {
       await chatApi.followUp(sid, trimmed)
     } catch (e) {
       chat.removePending(sid, trimmed, 'follow-up')
-      throw e
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(`下轮消息发送失败：${msg}`)
     }
   }
 

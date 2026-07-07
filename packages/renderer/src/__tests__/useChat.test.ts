@@ -269,27 +269,85 @@ describe('useChat dispatching 合并态（空窗期）', () => {
     expect(chat.isActive('s-abort')).toBe(false)
   })
 
-  it('steer API 失败回滚 pending（W1：不留孤儿气泡）', async () => {
+  it('dispatching 30s 超时兜底：message_start 永不到 → 强制清（W3）', () => {
+    vi.useFakeTimers()
+    const chat = useChatStore()
+    chat.setDispatching('s-timeout')
+    expect(chat.dispatchingSessionId).toBe('s-timeout')
+    // 29s 未超时，仍挂着
+    vi.advanceTimersByTime(29_000)
+    expect(chat.dispatchingSessionId).toBe('s-timeout')
+    // 30s 触发超时回调，强制清
+    vi.advanceTimersByTime(1_000)
+    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.isActive('s-timeout')).toBe(false)
+    vi.useRealTimers()
+  })
+
+  it('streaming 5min 超时兜底：message.complete 永不到 → 强制清 isStreaming（W3 扩展）', () => {
+    vi.useFakeTimers()
+    const chat = useChatStore()
+    chat.setStreaming(true, 's-stream-timeout')
+    expect(chat.isStreaming).toBe(true)
+    // 4min59s 未超时
+    vi.advanceTimersByTime(299_000)
+    expect(chat.isStreaming).toBe(true)
+    // 5min 触发超时回调
+    vi.advanceTimersByTime(1_000)
+    expect(chat.isStreaming).toBe(false)
+    expect(chat.streamingSessionId).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('resetActive 强制清所有活跃态（runtime 崩溃时 useConnection 调）', () => {
+    const chat = useChatStore()
+    chat.setDispatching('s-crash')
+    chat.setStreaming(true, 's-crash')
+    expect(chat.isActive('s-crash')).toBe(true)
+    chat.resetActive()
+    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.isStreaming).toBe(false)
+    expect(chat.streamingSessionId).toBeNull()
+    expect(chat.isActive('s-crash')).toBe(false)
+  })
+
+  it('正常流转清除超时 timer（message_start 到达 → dispatching 超时不再触发）', () => {
+    vi.useFakeTimers()
+    const chat = useChatStore()
+    chat.setDispatching('s-normal')
+    // message_start 到达 → setStreaming(true) 清 dispatching + 其 timer
+    chat.setStreaming(true, 's-normal')
+    expect(chat.dispatchingSessionId).toBeNull()
+    // 推进超过 30s，超时回调不应再触发（不会把 streamingSessionId 清掉——那是另一个 timer）
+    vi.advanceTimersByTime(31_000)
+    // dispatching 保持 null（未被超时回调误触），streaming 仍 active（5min 未到）
+    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.isStreaming).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it('steer API 失败回滚 pending + toast 提示（W1：不留孤儿气泡，不 unhandled reject）', async () => {
     const session = useSessionStore()
     session.activeId = 's-rollback'
     const chat = useChatStore()
     const { send, steer } = useChat()
     await send('first')
     apiMock.steer.mockRejectedValueOnce(new Error('ws disconnected'))
-    await expect(steer('补充')).rejects.toThrow('ws disconnected')
+    // 不抛（错误已消化：pending 回滚 + toast 提示），避免 unhandled rejection
+    await expect(steer('补充')).resolves.toBeUndefined()
     const msgs = chat.getMessages('s-rollback')
     // pending 已被回滚移除，无孤儿
     expect(msgs.some((m) => m.status === 'pending')).toBe(false)
   })
 
-  it('followUp API 失败回滚 pending（W1）', async () => {
+  it('followUp API 失败回滚 pending + toast 提示（W1）', async () => {
     const session = useSessionStore()
     session.activeId = 's-fu-rollback'
     const chat = useChatStore()
     const { send, followUp } = useChat()
     await send('first')
     apiMock.followUp.mockRejectedValueOnce(new Error('ws disconnected'))
-    await expect(followUp('下轮')).rejects.toThrow('ws disconnected')
+    await expect(followUp('下轮')).resolves.toBeUndefined()
     const msgs = chat.getMessages('s-fu-rollback')
     expect(msgs.some((m) => m.status === 'pending')).toBe(false)
   })

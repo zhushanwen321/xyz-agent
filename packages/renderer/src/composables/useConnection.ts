@@ -27,6 +27,7 @@ import type { ServerMessage } from '@xyz-agent/shared'
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
+import { useChatStore } from '../stores/chat'
 
 export type ConnectionStatus =
   | 'disconnected'
@@ -128,13 +129,16 @@ export function useConnection() {
     })
 
     // 监听 runtime 崩溃重启中（主进程正在拉起新实例 → 进 restarting 态，停自动重连）
+    // runtime 崩溃 = pi 子进程没了 = 流不可能继续。重置 chat 活跃态，避免 UI 卡「思考中」。
     removeRuntimeRestartingListener = onRuntimeRestarting(() => {
       setRestarting()
+      useChatStore().resetActive()
     })
 
     // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
     removeRuntimeFailedListener = onRuntimeFailed(() => {
       setFailed()
+      useChatStore().resetActive()
     })
 
     // 尝试从主进程获取已知端口

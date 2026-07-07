@@ -29,6 +29,7 @@ import type {
   Message,
   ServerMessage,
   ServerMessageType,
+  SteerFollowUpMode,
   ToolCall,
 } from '@xyz-agent/shared'
 import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
@@ -99,7 +100,7 @@ export interface MessageEffectContext {
   setStreaming: (value: boolean, sessionId?: string | null) => void
   /** queue_update 投递信号：pi drain 某条 steer/followUp 时，转对应 pending user 消息为 complete。
    *  sendMode 可选（区分 steer/followUp，避免跨类型同文本误转；未传时退化为 content 匹配）。 */
-  markPendingDelivered: (sessionId: string, text: string, sendMode?: 'steer' | 'follow-up') => void
+  markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
 }
 
 /**
@@ -127,20 +128,14 @@ type MessageEffectHandler = (
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
   // ── 主流式生命周期（chunk 创建/收口 + isStreaming flag 翻转）──
   'message.message_start': (ctx, sid, payload) => {
-    const { messages, queueStates, setStreaming, markPendingDelivered } = ctx
-    // G-023: message_start 到达清除 QueueBubble（新回合已启动，排队消息已投递或过期）。
-    // [W2 兜底] 若 queue_update 与 message_start 跨批乱序（queue_update 后到），
-    // queueStates 里的残留 pending 可能未被 markPendingDelivered 转换。delete 前先 flush：
-    // 把 queueStates 里的 steering/followUp 全部当作「已 drain」调 markPendingDelivered，
-    // 避免 pending 气泡永久卡住。幂等——markPendingDelivered 对已 complete 的消息 no-op。
-    const prevQ = queueStates.value.get(sid)
-    if (prevQ) {
-      for (const text of prevQ.steering ?? []) markPendingDelivered(sid, text, 'steer')
-      for (const text of prevQ.followUp ?? []) markPendingDelivered(sid, text, 'follow-up')
-    }
+    const { messages, queueStates, setStreaming } = ctx
+    // G-023: message_start 到达清除 QueueBubble（新回合已启动，QueueBubble 不再需要显示）。
+    // 只清 queueStates 显示态——pending→complete 的转换完全由 queue_update 的 countDrained
+    // 精确驱动（pi 保证 queue_update(drain) 先于 message_start 到达，见 agent-session.ts:515-536
+    // 注释 "remove it BEFORE emitting"）。此前有个 W2 flush（把残留 pending 强转 complete），
+    // 基于错误前提「queue_update 可能晚于 message_start 乱序」——pi 同步保证不会乱序，
+    // 且 abort 清空队列时强转会把「被丢弃」误标成「已投递」。已删除。
     queueStates.value.delete(sid)
-    // flush 后重新读 messages（markPendingDelivered 可能已写新数组：pending→complete），
-    // 避免 append assistant 时用 flush 前的旧快照覆盖 flush 结果。
     const prev = messages.value.get(sid) ?? []
     const messageId = readString(payload, 'messageId') ?? `a-${crypto.randomUUID()}`
     messages.value.set(sid, [
@@ -423,7 +418,13 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       })
       return { ...m, toolCalls }
     })
-    if (changed) messages.value.set(sid, next)
+    if (changed) {
+      messages.value.set(sid, next)
+    } else {
+      // 未匹配到 asyncId：subagentAsyncComplete 早于 tool_call_end 到达（WS 乱序），
+      // 或 asyncId 不属于本 session。打 warn 便于诊断（async 完成事件丢失是静默 bug）。
+      console.warn(`[chat] subagentAsyncComplete: no ToolCall with asyncId=${asyncId} in session ${sid} (event dropped)`)
+    }
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──

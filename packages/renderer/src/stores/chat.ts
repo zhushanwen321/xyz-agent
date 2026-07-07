@@ -20,10 +20,11 @@
  * 数据流处理骨架见 applyFileChanges()，类型契约已就绪（F2-1），逻辑 DEFERRED。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { onScopeDispose, ref } from 'vue'
 import type {
   Message,
   ServerMessage,
+  SteerFollowUpMode,
 } from '@xyz-agent/shared'
 import { dispatchMessageEvent } from './chat-message-effects'
 import { createChangeSetController } from './chat-changeset'
@@ -62,6 +63,12 @@ export const useChatStore = defineStore('chat', () => {
   let dispatchingTimer: ReturnType<typeof setTimeout> | null = null
   /** dispatching 超时阈值（覆盖正常 ack→message_start 秒级延迟 + 慢网络余量） */
   const DISPATCHING_TIMEOUT_MS = 30_000
+  /** streaming 超时兜底 timer（W3 扩展：message_start 已到但 message.complete 永不到）。
+   *  比 dispatching 超时宽松（流式可能持续数分钟），仅作最后兜底——runtime 崩溃时
+   *  useConnection 的 onRuntimeRestarting/onRuntimeFailed 会调 resetActive 立即清，此 timer 是补充。 */
+  let streamingTimer: ReturnType<typeof setTimeout> | null = null
+  /** streaming 超时阈值（5 分钟，覆盖长任务；runtime 崩溃由 resetActive 立即清，不必靠超时） */
+  const STREAMING_TIMEOUT_MS = 300_000
   /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离） */
   const compactingSessions = ref<Set<string>>(new Set())
   /** 按 sessionId 分区的自动重试态（W06-B，auto_retry_start/end） */
@@ -143,7 +150,7 @@ export const useChatStore = defineStore('chat', () => {
    * 投递时（queue_update 移除该项 → markPendingDelivered）转 complete。
    * sendMode 区分 steer（追加当前回合）/ follow-up（回合后新轮），驱动气泡配色。
    */
-  function appendPending(sessionId: string, text: string, sendMode: 'steer' | 'follow-up'): void {
+  function appendPending(sessionId: string, text: string, sendMode: SteerFollowUpMode): void {
     const prev = messages.value.get(sessionId) ?? []
     messages.value.set(sessionId, [
       ...prev,
@@ -159,28 +166,41 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 将指定 session 里匹配文本 + sendMode 的 pending user 消息标记为已投递（status → complete）。
-   * 触发：queue_update 里某条 steer/followUp 文本消失（pi drain 投递了它）。
-   * [W5] 按 content + sendMode 精确匹配，避免跨类型同文本误转（steer「补」与 followUp「补」）。
-   * 仅转第一条匹配的 pending（FIFO，与 pi splice 顺序一致）；重复文本 drain 时由调用方按计数多次调用。
-   * sendMode 可选——未传时退化为仅 content 匹配（兼容 message_start flush 的宽松场景）。
-   * 幂等：对已 complete 的消息 no-op。
+   * 定位 session 里第一条匹配 text + sendMode 的 pending user 消息（FIFO）。
+   * markPendingDelivered / removePending 共用的匹配逻辑，抽此 helper 避免谓词重复漂移。
+   * sendMode 可选——未传时退化为仅 content 匹配（兼容宽松场景）。
    */
-  function markPendingDelivered(
+  function findPendingIndex(
     sessionId: string,
     text: string,
-    sendMode?: 'steer' | 'follow-up',
-  ): void {
+    sendMode?: SteerFollowUpMode,
+  ): number {
     const prev = messages.value.get(sessionId)
-    if (!prev) return
-    const idx = prev.findIndex(
+    if (!prev) return -1
+    return prev.findIndex(
       (m) =>
         m.role === 'user'
         && m.status === 'pending'
         && m.content === text
         && (sendMode === undefined || m.sendMode === sendMode),
     )
+  }
+
+  /**
+   * 将指定 session 里匹配文本 + sendMode 的 pending user 消息标记为已投递（status → complete）。
+   * 触发：queue_update 里某条 steer/followUp 文本消失（pi drain 投递了它）。
+   * [W5] 按 content + sendMode 精确匹配，避免跨类型同文本误转（steer「补」与 followUp「补」）。
+   * 仅转第一条匹配的 pending（FIFO，与 pi splice 顺序一致）；重复文本 drain 时由调用方按计数多次调用。
+   * 幂等：对已 complete 的消息 no-op。
+   */
+  function markPendingDelivered(
+    sessionId: string,
+    text: string,
+    sendMode?: SteerFollowUpMode,
+  ): void {
+    const idx = findPendingIndex(sessionId, text, sendMode)
     if (idx === -1) return
+    const prev = messages.value.get(sessionId)!
     const next = [...prev]
     next[idx] = { ...next[idx], status: 'complete' }
     messages.value.set(sessionId, next)
@@ -194,18 +214,11 @@ export const useChatStore = defineStore('chat', () => {
   function removePending(
     sessionId: string,
     text: string,
-    sendMode: 'steer' | 'follow-up',
+    sendMode: SteerFollowUpMode,
   ): void {
-    const prev = messages.value.get(sessionId)
-    if (!prev) return
-    const idx = prev.findIndex(
-      (m) =>
-        m.role === 'user'
-        && m.status === 'pending'
-        && m.content === text
-        && m.sendMode === sendMode,
-    )
+    const idx = findPendingIndex(sessionId, text, sendMode)
     if (idx === -1) return
+    const prev = messages.value.get(sessionId)!
     messages.value.set(sessionId, prev.filter((_, i) => i !== idx))
   }
 
@@ -245,6 +258,17 @@ export const useChatStore = defineStore('chat', () => {
     // 兜底：正常情况 message_start 已清，此处防御性清理终态路径（complete/error）。
     clearDispatchingTimer()
     if (dispatchingSessionId.value !== null) dispatchingSessionId.value = null
+    // streaming 超时兜底：true 挂载（防 message.complete 永不到），false 清除（正常收口）
+    clearStreamingTimer()
+    if (value) {
+      streamingTimer = setTimeout(() => {
+        if (isStreaming.value) {
+          isStreaming.value = false
+          streamingSessionId.value = null
+          console.warn('[chat] streaming timeout, force-reset (message.complete never arrived)')
+        }
+      }, STREAMING_TIMEOUT_MS)
+    }
   }
 
   /**
@@ -275,6 +299,35 @@ export const useChatStore = defineStore('chat', () => {
       dispatchingTimer = null
     }
   }
+
+  /** 取消 streaming 超时 timer（message.complete 正常收口或 resetActive 时调） */
+  function clearStreamingTimer(): void {
+    if (streamingTimer !== null) {
+      clearTimeout(streamingTimer)
+      streamingTimer = null
+    }
+  }
+
+  /**
+   * 强制重置所有活跃态（streaming + dispatching）——runtime 崩溃/重启/WS 断连时调。
+   * runtime 崩溃 = pi 子进程没了 = 流不可能继续。此时 isStreaming/dispatching 残留会让
+   * UI 永久卡在「思考中」，停止按钮/steer guard 死锁。useConnection 监听 runtime 崩溃事件
+   * 后调此方法立即清，比等待 streaming/dispatching 超时更准确（不误杀长任务）。
+   */
+  function resetActive(): void {
+    clearDispatchingTimer()
+    clearStreamingTimer()
+    isStreaming.value = false
+    streamingSessionId.value = null
+    dispatchingSessionId.value = null
+  }
+
+  // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
+  // 避免回调操作已废弃的 store 实例 ref + warn 噪音。
+  onScopeDispose(() => {
+    clearDispatchingTimer()
+    clearStreamingTimer()
+  })
 
   /**
    * 指定 session 是否「活跃」——合并 isStreaming 和 dispatching 空窗态。
@@ -358,6 +411,7 @@ export const useChatStore = defineStore('chat', () => {
     applyMessageEvent,
     setStreaming,
     setDispatching,
+    resetActive,
     isActive,
     isCompacting,
     setCompacting,

@@ -397,7 +397,7 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(msgs.filter((m) => m.content === '继续' && m.status === 'complete')).toHaveLength(2)
   })
 
-  it('message_start flush 残留 pending（W2 兜底：乱序竞态）', () => {
+  it('message_start 不转 pending（pi 保证 queue_update(drain) 先到，无需推测投递）', () => {
     const store = useChatStore()
     // steer 入队
     store.appendPending('sx', '补充', 'steer')
@@ -405,17 +405,25 @@ describe('FG5 chat store 块类型扩展', () => {
       type: 'message.queue_update',
       payload: { sessionId: 'sx', steering: ['补充'] },
     })
-    // 模拟竞态：assistant turn 的 message_start 先到，queue_update（drain）后到。
-    // message_start 应先 flush 残留 pending 为 complete，再清 queueStates。
+    // pi 保证的真实时序：queue_update(drain) 先到 → countDrained 精确转 pending→complete
+    store.applyMessageEvent('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: [] },
+    })
+    let msgs = store.getMessages('sx')
+    expect(msgs.some((m) => m.content === '补充' && m.status === 'complete')).toBe(true)
+    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
+    // message_start 随后到达：只清 queueStates 显示态，不干预消息状态（drain 已由 queue_update 完成）。
+    // 此前有 W2 flush（把残留 pending 强转 complete），基于错误前提「drain 可能晚于 message_start」——
+    // pi 源码（agent-session.ts:515-536 注释 "remove it BEFORE emitting"）同步保证不会乱序，故 W2 已删。
     store.applyMessageEvent('sx', {
       type: 'message.message_start',
       payload: { sessionId: 'sx', messageId: 'a1' },
     })
-    const msgs = store.getMessages('sx')
-    // pending 已被 flush 转 complete（message_start 兜底）
+    msgs = store.getMessages('sx')
+    // 消息状态不受 message_start 影响（仍 complete，未被误改）
     expect(msgs.some((m) => m.content === '补充' && m.status === 'complete')).toBe(true)
-    expect(msgs.some((m) => m.status === 'pending')).toBe(false)
-    // queueStates 已清
+    // queueStates 已清（message_start 清 QueueBubble 显示）
     expect(store.getQueueState('sx')).toBeUndefined()
   })
 
