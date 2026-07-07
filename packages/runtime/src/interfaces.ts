@@ -90,6 +90,12 @@ export interface ISessionService {
   getHistory(sessionId: string): Promise<Message[]>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
+  /**
+   * 拉取 session 上下文用量（pi getSessionStats → contextUsage）。
+   * contextUsage.tokens=null（compaction 后未跑新 turn）或 session 未激活时返回 null。
+   * 用于 renderer 切 session 后主动拉取（修复 broadcast 与订阅时序竞争）。
+   */
+  fetchContext(sessionId: string): Promise<{ inputTokens: number; contextLimit: number; usagePercent: number } | null>
   restoreSession(sessionId: string): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined

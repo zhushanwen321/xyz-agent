@@ -39,6 +39,11 @@ export interface ISessionServiceInternal {
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined
   /** 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。compact 后用 estimatedTokensAfter 刷新用量。 */
   applyContextUpdate(sessionId: string, inputTokens: number): void
+  /**
+   * 拉取上下文用量并广播 context.update（restoreSession 兜底用）。
+   * fire-and-forget 语义：失败不阻塞 session 恢复（前端主动拉是主路径）。
+   */
+  fetchAndBroadcastContext(sessionId: string): Promise<void>
 
   // ── lifecycle 使用（Map 单写者：查/删经 Facade）──
   /** 只读查 Map，返回 managed session 视图（active 判定 + 字段读改）。 */
