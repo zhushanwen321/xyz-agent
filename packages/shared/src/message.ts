@@ -28,14 +28,6 @@ export interface ToolCall {
   status: ToolCallStatus
   startTime: number
   endTime?: number
-  /** subagent async 模式的后台 run id（asyncId ↔ toolCallId 关联用）。
-   *  async 模式 tool_call_end 时从 details.asyncId 提取；sync 模式缺省。
-   *  后续 subagent:async-complete 事件带 asyncId 到达时，据此定位并更新对应 ToolCall。 */
-  asyncId?: string
-  /** subagent async 后台 run 的状态（仅 async 模式有值）。
-   *  - 'dispatched':async 已派发，等待后台 run 完成（tool_call_end 时设置）
-   *  - 'completed'/'failed'/'paused':收到 subagent:async-complete 后更新 */
-  asyncState?: 'dispatched' | 'completed' | 'failed' | 'paused'
 }
 
 export interface ThinkingBlock {
@@ -90,6 +82,79 @@ export interface BranchSummary {
   summary?: string
   fromId?: string
   timestamp?: number
+}
+
+/**
+ * Background subagent 完成通知的单条记录。
+ *
+ * 对应 pi-subagents 扩展 notifier.ts 的 BgNotifyRecord，经 customType:"subagent-bg-notify"
+ * 的 CustomMessage details 传递。pi-subagents 在主对话流注入此通知，triggerTurn:true 唤醒
+ * 父 agent 接力处理结果。
+ *
+ * 来源：~/.xyz-agent/pi/agent/extensions/subagents/src/runtime/execution/notifier.ts
+ */
+export interface BgNotifyRecord {
+  id: string
+  /** 'done' | 'failed' | 'cancelled'（pi-subagents 的状态枚举） */
+  status: 'done' | 'failed' | 'cancelled'
+  agent: string
+  /** 执行所用 model（用于通知展示） */
+  model?: string
+  /** done 状态的完成结果文本（进 LLM context，不截断） */
+  result?: string
+  /** failed 状态的错误文本 */
+  error?: string
+  startedAt: number
+  endedAt?: number
+  /** fork+worktree 模式下子 agent 改动的 patch 路径（worktree cleanup 后留存）。
+   *  done 时通知显式提示 git apply，否则改动会静默丢失。 */
+  patchFile?: string
+}
+
+/**
+ * Background subagent 完成通知（单条或批量合并）。
+ *
+ * pi-subagents notifier 的滑动窗口在 60s 内合并多个完成，批量时 details 为 {batch, items}。
+ * 单条时 details 直接是 BgNotifyRecord。
+ */
+export type BgNotifyDetails = BgNotifyRecord | { batch: true; items: BgNotifyRecord[] }
+
+/**
+ * 防御性解析 customType:"subagent-bg-notify" 的 details 字段。
+ *
+ * details 两种形态（notifier.ts flushPendingNotifications）：
+ *   - 单条：BgNotifyRecord
+ *   - 批量：{ batch: true, items: BgNotifyRecord[] }
+ *
+ * runtime（convertPiHistory）与 renderer（customStart effect）共用此纯函数，
+ * 避免两处重复实现 + 字段读取不一致。任何字段缺失/类型异常返回 null（渲染层降级为纯文本）。
+ */
+export function parseBgNotifyDetails(details: unknown): BgNotifyDetails | null {
+  if (!details || typeof details !== 'object') return null
+  const d = details as Record<string, unknown>
+  // 批量形态
+  if (d.batch === true && Array.isArray(d.items)) {
+    const items = d.items.map(parseSingleRecord).filter((r): r is BgNotifyRecord => r !== null)
+    return items.length > 0 ? { batch: true, items } : null
+  }
+  // 单条形态
+  return parseSingleRecord(d)
+}
+
+/** 防御性解析单条 BgNotifyRecord（必需字段 id/status/agent/startedAt 缺失返回 null） */
+function parseSingleRecord(d: Record<string, unknown>): BgNotifyRecord | null {
+  const id = typeof d.id === 'string' ? d.id : null
+  const status = d.status === 'done' || d.status === 'failed' || d.status === 'cancelled' ? d.status : null
+  const agent = typeof d.agent === 'string' ? d.agent : null
+  const startedAt = typeof d.startedAt === 'number' ? d.startedAt : null
+  if (!id || !status || !agent || startedAt === null) return null
+  const record: BgNotifyRecord = { id, status, agent, startedAt }
+  if (typeof d.model === 'string') record.model = d.model
+  if (typeof d.result === 'string') record.result = d.result
+  if (typeof d.error === 'string') record.error = d.error
+  if (typeof d.endedAt === 'number') record.endedAt = d.endedAt
+  if (typeof d.patchFile === 'string') record.patchFile = d.patchFile
+  return record
 }
 
 // ── Flow-2 代码变更审查数据契约（FileChanges 通道）──────────────────
@@ -171,4 +236,9 @@ export interface Message {
   compactionSummary?: CompactionSummary
   /** 分支摘要（W07-C，message.branchSummary） */
   branchSummary?: BranchSummary
+  /** pi CustomMessage 的 customType（识别来源扩展，如 "subagent-bg-notify"）。
+   *  来自 pi sendMessage 注入的 custom message，role 还原为 system。 */
+  customType?: string
+  /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
+  bgNotify?: BgNotifyDetails
 }

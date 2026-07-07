@@ -3,6 +3,7 @@ import type {
   PiHistoryToolResult,
 } from './pi-protocol.js'
 import type { Message, ThinkingBlock, ToolCall, FileChange } from '@xyz-agent/shared'
+import { parseBgNotifyDetails } from '@xyz-agent/shared'
 
 /**
  * Parse `<skill name="xxx" location="...">...</skill>` blocks from
@@ -68,7 +69,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
   let lastAssistantWithToolCalls = -1
 
   for (const item of raw) {
-    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number }
+    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
@@ -110,6 +111,35 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         },
         timestamp: cm.timestamp ?? Date.now(),
       })
+      continue
+    }
+
+    // custom message（pi CustomMessage，扩展经 sendMessage 注入的结构化通知）。
+    // pi get_messages 返回 role:'custom'，带 customType/content/details。
+    // 转成 system 消息（messageTurns 产出独立 RenderItem 穿插在 turn 间），
+    // customType:"subagent-bg-notify" 时解析 details 为 BgNotifyDetails（单条或批量）。
+    // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 background 完成通知经此分支还原。
+    if (m.role === 'custom') {
+      const cm = m as {
+        role: 'custom'
+        customType: string
+        content?: string
+        details?: Record<string, unknown>
+        timestamp?: number
+      }
+      const msg: Message = {
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: cm.content ?? '',
+        status: 'complete',
+        customType: cm.customType,
+        timestamp: cm.timestamp ?? Date.now(),
+      }
+      if (cm.customType === 'subagent-bg-notify' && cm.details) {
+        const bgNotify = parseBgNotifyDetails(cm.details)
+        if (bgNotify) msg.bgNotify = bgNotify
+      }
+      result.push(msg)
       continue
     }
 

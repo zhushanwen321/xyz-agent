@@ -370,12 +370,14 @@ function handleMessageStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
       },
     }]
   }
-  // custom message from pi.sendMessage
+  // custom message from pi.sendMessage（扩展注入的结构化通知，如 subagent-bg-notify）。
+  // 用独立 type 'message.customStart'，与 assistant turn 的 message_start 区分——
+  // 前端 message_start handler 默认建 role:'assistant' 气泡，custom 不应走那条路径。
   if (msg.customType) {
     return [{
       kind: 'message',
       message: {
-        type: 'message.message_start',
+        type: 'message.customStart',
         payload: {
           sessionId: sid,
           customType: msg.customType as string,
@@ -495,56 +497,6 @@ function handleThinkingLevelChanged(event: PiEvent, sid: string): PiTranslatedEv
   ]
 }
 
-/**
- * subagent:async-complete — pi-subagents 扩展的 async（background）模式后台 run 完成通知。
- *
- * 背景：async 模式 tool_call_end 立即返回（details 含 asyncId，前端据此设 dispatched 态），
- * 后台 run 真正结束时 pi-subagents 通过扩展事件总线 emit 本事件。payload 来自磁盘 result 文件
- * （subagent-runner.ts writeAtomicJson 写入 → result-watcher.ts 读取后 emit），含 success/state/summary。
- *
- * 成败判定（与 pi-subagents notify.ts 一致）：
- * - success===true → 'completed'
- * - !success && (state==='paused' || exitCode===0) → 'paused'（中断后等待显式续作）
- * - 其余 !success → 'failed'
- *
- * state 命名映射：pi-subagents 用 'complete'，ToolCall.asyncState 用 'completed'（对齐
- * ToolCallStatus 的既有 'completed' 命名）。此处转译时映射，避免前端 Block.vue 匹配 miss。
- *
- * 关联：payload.id === asyncId === tool_call_end 时 details.asyncId。前端据此匹配 ToolCall 更新终态。
- */
-function handleSubagentAsyncComplete(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const success = event.success === true
-  const rawState = event.state as string | undefined
-  const exitCode = typeof event.exitCode === 'number' ? event.exitCode : undefined
-  // 成败判定（success 优先，与注释/notify.ts 一致）：
-  // success → completed；!success && (显式 paused 或 exitCode===0) → paused；其余 → failed
-  const state: 'completed' | 'failed' | 'paused' =
-    success ? 'completed'
-    : rawState === 'paused' || exitCode === 0 ? 'paused'
-    : 'failed'
-  // asyncId 双读：pi-subagents payload.id 为权威字段，asyncId 防御性 fallback
-  const asyncId = String(event.id ?? event.asyncId ?? '')
-  if (!asyncId) {
-    console.warn('[EventAdapter] subagent:async-complete missing id (asyncId), event dropped')
-    return []
-  }
-  return [{
-    kind: 'message',
-    message: {
-      type: 'message.subagentAsyncComplete',
-      payload: {
-        sessionId: sid,
-        asyncId,
-        success,
-        state,
-        summary: typeof event.summary === 'string' ? event.summary : undefined,
-        exitCode,
-        timestamp: typeof event.timestamp === 'number' ? event.timestamp : Date.now(),
-      },
-    },
-  }]
-}
-
 // ── Null-event types (lifecycle events not forwarded to frontend) ──
 // 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
 const NULL_EVENTS = new Set([
@@ -570,7 +522,6 @@ const DISPATCHER = new Map<string, (event: PiEvent, sid: string) => PiTranslated
   DISPATCHER.set('queue_update', handleQueueUpdate)
   DISPATCHER.set('session_info_changed', handleSessionInfoChanged)
   DISPATCHER.set('thinking_level_changed', handleThinkingLevelChanged)
-  DISPATCHER.set('subagent:async-complete', handleSubagentAsyncComplete)
   // Simple passthrough handlers
   DISPATCHER.set('status', (event, sid) => [{
     kind: 'message',

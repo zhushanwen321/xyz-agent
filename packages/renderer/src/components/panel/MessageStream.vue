@@ -22,6 +22,7 @@
           :session-id="sessionId"
           :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
         />
+        <BgNotifyCard v-else-if="item.message.bgNotify" :message="item.message" />
         <SystemNotice v-else :message="item.message" />
       </template>
 
@@ -66,6 +67,7 @@ import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
+import BgNotifyCard from './message-stream/BgNotifyCard.vue'
 
 const props = defineProps<{
   sessionId: string

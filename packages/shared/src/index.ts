@@ -8,7 +8,9 @@ export type {
   ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,
   FileChangeStatus, FileChange, ChangeSetStatus, ReviewDecision,
   BashExecution, CompactionSummary, BranchSummary, SteerFollowUpMode,
+  BgNotifyRecord, BgNotifyDetails,
 } from './message'
+export { parseBgNotifyDetails } from './message'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
 } from './session'

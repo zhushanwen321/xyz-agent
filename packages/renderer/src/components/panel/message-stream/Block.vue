@@ -35,7 +35,7 @@
     </div>
 
     <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
-         subagent（pi-subagents 扩展的 "subagent" tool）用独立样式：紫色 Subagent 行，sync 模式滚动进度。 -->
+         subagent（pi-subagents 的 "subagent" tool）用独立样式：紫色 Subagent 行，sync 模式滚动进度。 -->
     <div v-else class="trace-tool">
       <!-- ── subagent 块：独立样式（紫色，Bot 图标，与思考块同语义族）── -->
       <div v-if="isSubagent" class="trace-subagent">
@@ -50,16 +50,8 @@
           <span class="whitespace-nowrap">Subagent</span>
           <span class="normal-case tracking-normal text-muted">{{ subagentAgent || subagentHeaderLabel }}</span>
           <span v-if="subagentTask" class="normal-case tracking-normal text-subtle truncate">· {{ subagentTaskPreview }}</span>
-          <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens；async 显派发/完成/失败 -->
-          <span v-if="isAsyncSubagent" class="ml-0.5 inline-flex items-center gap-1 normal-case tracking-normal whitespace-nowrap">
-            <span v-if="asyncState === 'dispatched'" class="flex items-center gap-0.5 text-subtle">
-              <span class="size-[6px] rounded-full bg-subtle animate-working-pulse" />后台运行
-            </span>
-            <Check v-else-if="asyncState === 'completed'" class="size-3 text-success" />
-            <XCircle v-else-if="asyncState === 'failed'" class="size-3 text-danger" />
-            <span v-else-if="asyncState === 'paused'" class="text-subtle">已暂停</span>
-          </span>
-          <span v-else-if="isRunning" class="ml-0.5 inline-flex items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
+          <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
+          <span v-if="isRunning" class="ml-0.5 inline-flex items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
             <span class="size-[6px] rounded-full bg-reasoning animate-working-pulse" />
             <span class="truncate">{{ subagentLiveInfo || '运行中' }}</span>
           </span>
@@ -69,14 +61,14 @@
         </div>
         <template v-if="toolExpanded">
           <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
-          <div v-if="!isAsyncSubagent && subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted">
+          <div v-if="subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted">
             <span v-if="subagentProgressDetail.toolCount != null" class="text-info">工具 ×{{ subagentProgressDetail.toolCount }}</span>
             <span v-if="subagentProgressDetail.turnCount != null">turn {{ subagentProgressDetail.turnCount }}</span>
             <span v-if="subagentProgressDetail.tokens != null">{{ formatTokens(subagentProgressDetail.tokens) }}</span>
             <span v-if="subagentProgressDetail.durationMs != null">{{ formatDuration(subagentProgressDetail.durationMs) }}</span>
             <span v-if="subagentProgressDetail.currentTool" class="truncate text-reasoning">→ {{ subagentProgressDetail.currentTool }}</span>
           </div>
-          <!-- 最终输出（sync 的 finalOutput / async 的派发文本或完成 summary） -->
+          <!-- 最终输出 -->
           <div
             v-if="result"
             class="mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap"
@@ -208,11 +200,6 @@ const argPath = computed(() => {
 /* ── subagent（pi-subagents 扩展的 "subagent" tool）特殊渲染 ── */
 const isSubagent = computed(() => SUBAGENT_TOOL_NAMES.has(toolName.value))
 
-/** async（background）模式判定：asyncState 有值表示走过后台派发路径。
- *  sync 模式 asyncState 缺省。判定优先看 asyncState（tool_call_end 时据 details.asyncId 设置）。 */
-const isAsyncSubagent = computed(() => !!props.tool?.asyncState)
-const asyncState = computed(() => props.tool?.asyncState)
-
 /** subagent input 的 agent / task（single 模式）。
  *  parallel(chain 模式 input 有 tasks/chain 数组，P1 取首项摘要，P2 再完善。 */
 const subagentAgent = computed(() => {
@@ -320,21 +307,16 @@ function formatDuration(ms: unknown): string {
   return `${ms}ms`
 }
 
-/** subagent header 颜色：failed→danger，running→reasoning(紫)，async dispatched→subtle，完成→reasoning */
+/** subagent header 颜色：failed→danger，其余→reasoning(紫) */
 const subagentHeaderColor = computed(() => {
   if (isFailed.value) return 'text-danger'
-  if (isAsyncSubagent.value) {
-    return asyncState.value === 'failed' ? 'text-danger' : 'text-reasoning'
-  }
   return 'text-reasoning'
 })
 
 const blockClass = computed(() => {
   if (props.type !== 'tool') return ''
   // 失败 tool / 失败 subagent：整块红框（draft trace-tool.failed）。
-  // subagent async 失败（asyncState==='failed'）同样须直视，与普通 tool 失败视觉一致。
-  const showFailFrame = isFailed.value || (isSubagent.value && asyncState.value === 'failed')
-  if (!showFailFrame) return ''
+  if (!isFailed.value) return ''
   return 'my-1 rounded-lg border border-danger bg-[color-mix(in_oklch,var(--danger)_6%,transparent)] px-3'
 })
 </script>

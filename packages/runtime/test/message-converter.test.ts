@@ -190,4 +190,100 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
     const cb = messages[0].contentBlocks
     expect(cb?.map((b) => b.type)).toEqual(['text', 'thinking'])
   })
+
+  // ── custom message（pi CustomMessage，扩展经 sendMessage 注入）──
+  describe('custom message（role:"custom"）', () => {
+    it('subagent-bg-notify 单条 → system + customType + bgNotify(单条 record)', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'subagent-bg-notify',
+          content: 'Subagent "coder" (job-1) completed. Result:\nDone.',
+          details: {
+            id: 'job-1',
+            status: 'done',
+            agent: 'coder',
+            model: 'claude-4.5',
+            result: 'Done.',
+            startedAt: 1000,
+            endedAt: 13000,
+          },
+          timestamp: 13000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      const m = messages[0]
+      expect(m.role).toBe('system')
+      expect(m.customType).toBe('subagent-bg-notify')
+      expect(m.content).toContain('coder')
+      // bgNotify 解析为单条 record（非 batch）
+      expect(m.bgNotify).toBeDefined()
+      expect(!('batch' in (m.bgNotify as object))).toBe(true)
+      const rec = m.bgNotify as { id: string; status: string; agent: string; model: string }
+      expect(rec.id).toBe('job-1')
+      expect(rec.status).toBe('done')
+      expect(rec.agent).toBe('coder')
+      expect(rec.model).toBe('claude-4.5')
+    })
+
+    it('subagent-bg-notify 批量 → bgNotify = {batch, items}', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'subagent-bg-notify',
+          content: 'batch content',
+          details: {
+            batch: true,
+            items: [
+              { id: 'j1', status: 'done', agent: 'a1', startedAt: 1000 },
+              { id: 'j2', status: 'failed', agent: 'a2', startedAt: 2000, error: 'boom' },
+            ],
+          },
+          timestamp: 5000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      const m = messages[0]
+      expect(m.bgNotify).toBeDefined()
+      expect('batch' in (m.bgNotify as object)).toBe(true)
+      const batch = m.bgNotify as { batch: boolean; items: Array<{ id: string; status: string }> }
+      expect(batch.items).toHaveLength(2)
+      expect(batch.items[0].id).toBe('j1')
+      expect(batch.items[1].status).toBe('failed')
+    })
+
+    it('其他 customType → system + customType，无 bgNotify', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'some-other-extension',
+          content: 'hello',
+          details: { foo: 'bar' },
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      expect(messages[0].role).toBe('system')
+      expect(messages[0].customType).toBe('some-other-extension')
+      expect(messages[0].bgNotify).toBeUndefined()
+    })
+
+    it('subagent-bg-notify details 缺必需字段 → bgNotify 为 undefined（降级纯文本）', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'subagent-bg-notify',
+          content: 'partial',
+          // 缺 id / agent / startedAt
+          details: { status: 'done' },
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].bgNotify).toBeUndefined()
+      expect(messages[0].content).toBe('partial')
+    })
+  })
 })

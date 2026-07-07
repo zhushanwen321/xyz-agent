@@ -622,4 +622,57 @@ describe('FG5 chat store 块类型扩展', () => {
     store.setChangeSetStatus('sx', 'a1', 'resolved')
     expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
   })
+
+  // ── customStart（pi CustomMessage 注入，如 subagent-bg-notify）──
+  it('customStart: subagent-bg-notify 单条 → system 消息 + customType + bgNotify', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.customStart',
+      payload: {
+        sessionId: 'sx',
+        customType: 'subagent-bg-notify',
+        content: 'Subagent "coder" (job-1) completed.',
+        details: {
+          id: 'job-1',
+          status: 'done',
+          agent: 'coder',
+          model: 'claude-4.5',
+          result: 'Done.',
+          startedAt: 1000,
+          endedAt: 13000,
+        },
+      },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].customType).toBe('subagent-bg-notify')
+    expect(msgs[0].bgNotify).toBeDefined()
+    expect(!('batch' in (msgs[0].bgNotify as object))).toBe(true)
+  })
+
+  it('customStart: 其他 customType → system 消息 + customType，无 bgNotify', () => {
+    const store = useChatStore()
+    store.applyMessageEvent('sx', {
+      type: 'message.customStart',
+      payload: {
+        sessionId: 'sx',
+        customType: 'other-extension',
+        content: 'hello',
+        details: { foo: 'bar' },
+      },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].customType).toBe('other-extension')
+    expect(msgs[0].bgNotify).toBeUndefined()
+  })
+
+  it('customStart 产出的 system 消息经 toRenderItems 穿插为独立项（不并入 turn）', () => {
+    const store = useChatStore()
+    // 先建一个 user turn
+    store.applyMessageEvent('sx', { type: 'message.customStart', payload: { sessionId: 'sx', customType: 'x', content: '' } })
+    const items = toRenderItems(store.getMessages('sx'))
+    expect(items.map((i) => i.kind)).toEqual(['system'])
+  })
 })

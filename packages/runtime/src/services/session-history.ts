@@ -31,20 +31,38 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
     throw e
   }
   // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架，消费方只做领域过滤。
-  // 保留 message entry（常规消息）+ compaction entry（压缩记录顶层 entry，无 message 字段）。
-  // compaction 转成 compactionSummary role 的伪消息，与 RPC 路径（pi get_messages 返回的 compactionSummary）
-  // 在 convertPiHistory 汇合，统一还原成 system 消息（AGENTS.md 规则 7.5：可重开恢复）。
+  // 保留三类 entry：
+  // - message：常规消息（取 e.message）
+  // - compaction：压缩记录顶层 entry（无 message 字段），转 compactionSummary 伪消息
+  // - custom_message：扩展经 pi.sendMessage 注入的 CustomMessage（如 subagent-bg-notify），
+  //   转 role:'custom' 伪消息，与 RPC 路径（pi get_messages 返回的 role:'custom'）
+  //   在 convertPiHistory 汇合，统一还原成 system 消息（AGENTS.md 规则 7.5：可重开恢复）。
   const piMessages = parseJsonl(content)
     .filter((e): e is Record<string, unknown> =>
-      typeof e === 'object' && e !== null &&
-      ((e as { type?: string }).type === 'message' && 'message' in e ||
-       (e as { type?: string }).type === 'compaction'))
+      typeof e === 'object' && e !== null && (
+        ((e as { type?: string }).type === 'message' && 'message' in e) ||
+        (e as { type?: string }).type === 'compaction' ||
+        (e as { type?: string }).type === 'custom_message'
+      ))
     .map((e) => {
       if (e.type === 'compaction') {
         return {
           role: 'compactionSummary',
           summary: e.summary,
           tokensBefore: e.tokensBefore,
+          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
+        }
+      }
+      if (e.type === 'custom_message') {
+        // custom_message entry → role:'custom' 伪消息（convertPiHistory 的 role:'custom' 分支消费）
+        const content = e.content
+        // content 可能是 string 或 content array（pi CustomMessage.content 类型），
+        // convertPiHistory 的 custom 分支只取 cm.content ?? ''，string 直传，array 会被 String() 兜底
+        return {
+          role: 'custom',
+          customType: e.customType,
+          content: typeof content === 'string' ? content : '',
+          details: e.details,
           timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
         }
       }

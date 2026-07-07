@@ -32,7 +32,7 @@ import type {
   SteerFollowUpMode,
   ToolCall,
 } from '@xyz-agent/shared'
-import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
+import { parseBgNotifyDetails } from '@xyz-agent/shared'
 import type { RetryState, QueueState } from './chat-store-types'
 import {
   readString,
@@ -346,17 +346,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // callId 缺失或未命中时降级为最后一条 assistant（防御：兼容异常事件）。
     const idx = callId ? findToolCallOwner(prev, callId) : findLastAssistantIndex(prev)
     if (idx < 0) return
-    // details：pi tool_execution_end result.details（结构化扩展数据）。subagent 的 mode/asyncId/
-    // results/progress 都在这里。此前 effect 丢了 details，导致 subagent async 模式无法取 asyncId
-    // 关联后台完成事件、sync 模式无法读 progress 快照——现补回。
+    // details：pi tool_execution_end result.details（结构化扩展数据）。
+    // subagent sync 模式的 progress 快照（currentTool/turn/tokens）在这里，前端 Block.vue 据此滚动更新。
     const details = readRecord(payload, 'details')
-    // subagent async 模式：details.asyncId 存在 → 这是 background 派发（tool 立即返回，run 后台跑）。
-    // 提取 asyncId 并设 dispatched 态，后续 subagentAsyncComplete 事件据此 asyncId 定位更新。
-    // 仅对 subagent tool 提取（其他 tool 的 details 不会有 asyncId，防御性收窄避免误标）。
-    const asyncId = details && typeof details.asyncId === 'string' ? details.asyncId : undefined
-    // toolName 在 tool_call_end 不会变，从 prev 读即可（next 尚未构造）
-    const ownerToolName = (prev[idx].toolCalls ?? []).find((c) => c.id === callId)?.toolName
-    const isSubagentAsync = Boolean(asyncId && ownerToolName && SUBAGENT_TOOL_NAMES.has(ownerToolName))
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
       c.id === callId
@@ -367,7 +359,6 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
           error: readString(payload, 'error') ?? c.error,
           endTime: Date.now(),
           details,
-          ...(isSubagentAsync ? { asyncId: asyncId as string, asyncState: 'dispatched' as const } : {}),
         }
         : c,
     )
@@ -394,37 +385,28 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     messages.value.set(sid, next)
   },
 
-  // ── subagent async（background）后台 run 完成 ──
-  'message.subagentAsyncComplete': (ctx, sid, payload) => {
+  // ── pi CustomMessage 注入（扩展向对话流注入结构化通知）──
+  'message.customStart': (ctx, sid, payload) => {
     const { messages } = ctx
-    const asyncId = readString(payload, 'asyncId')
-    if (!asyncId) return
+    const customType = readString(payload, 'customType') ?? ''
+    const content = readString(payload, 'content') ?? ''
+    const details = readRecord(payload, 'details')
     const prev = messages.value.get(sid) ?? []
-    // asyncId → toolCallId 关联：tool_call_end(async 模式)时已把 asyncId 写入 ToolCall。
-    // 扫描该 session 所有 message 的 toolCalls，匹配 asyncId 更新终态。
-    // （async run 完成可能跨越多次 turn，但 ToolCall 挂在原 turn 的 assistant 上，不会迁移。）
-    let changed = false
-    const next = prev.map((m) => {
-      if (!m.toolCalls?.some((c) => c.asyncId === asyncId)) return m
-      const toolCalls = m.toolCalls.map((c) => {
-        if (c.asyncId !== asyncId) return c
-        changed = true
-        return {
-          ...c,
-          asyncState: (readString(payload, 'state') as ToolCall['asyncState']) ?? 'completed',
-          // 后台 run 的最终输出（summary）覆盖 tool_call_end 时的「已派发」占位文本
-          output: readString(payload, 'summary') ?? c.output,
-        }
-      })
-      return { ...m, toolCalls }
-    })
-    if (changed) {
-      messages.value.set(sid, next)
-    } else {
-      // 未匹配到 asyncId：subagentAsyncComplete 早于 tool_call_end 到达（WS 乱序），
-      // 或 asyncId 不属于本 session。打 warn 便于诊断（async 完成事件丢失是静默 bug）。
-      console.warn(`[chat] subagentAsyncComplete: no ToolCall with asyncId=${asyncId} in session ${sid} (event dropped)`)
+    // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
+    const msg: Message = {
+      id: `cm-${crypto.randomUUID()}`,
+      role: 'system',
+      content,
+      status: 'complete',
+      customType,
+      timestamp: Date.now(),
     }
+    // subagent-bg-notify：解析 details 为 BgNotifyDetails（单条或批量），渲染层据此出卡片
+    if (customType === 'subagent-bg-notify' && details) {
+      const bgNotify = parseBgNotifyDetails(details)
+      if (bgNotify) msg.bgNotify = bgNotify
+    }
+    messages.value.set(sid, [...prev, msg])
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──

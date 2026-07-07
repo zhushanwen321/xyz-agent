@@ -178,7 +178,7 @@ export type ServerMessageType =
   | 'message.stream_error'
   | 'message.file_changes'
   | 'message.changeSetInvalidated'
-  | 'message.subagentAsyncComplete'
+  | 'message.customStart'
   | 'file.read:result'
   | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result'
   | 'git.diff:result'
@@ -289,21 +289,15 @@ export interface ServerMessageMapBase {
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
   'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
   'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
-  // subagent async（background）模式后台 run 完成通知（event-adapter 翻译 pi-subagents 的
-  // subagent:async-complete 事件）。async 模式 tool_call_end 立即返回（仅表「已派发」），
-  // 后台 run 真正完成时 pi-subagents emit 此事件。payload 用 asyncId 标识，前端据此
-  // 匹配 asyncState==='dispatched' 的 ToolCall 并更新为最终态。成败判定见 pi-subagents notify.ts：
-  // success===true→completed；!success && (exitCode===0 || state==='paused')→paused；其余→failed。
-  // state 字段对齐 ToolCall.asyncState 命名（'completed' 非 pi 原始的 'complete'——
-  // event-adapter 转译时映射，避免前端 Block.vue 匹配 miss）。
-  'message.subagentAsyncComplete': {
+  // pi CustomMessage 注入（扩展经 pi.sendMessage 向对话流注入结构化通知，如 subagent-bg-notify）。
+  // event-adapter 把 pi message_start{role:'custom', customType, content, details} 翻译为此帧。
+  // 前端 customStart effect 建 role:'system' 消息（保留 customType/details），按 customType 渲染。
+  'message.customStart': {
     sessionId: string
-    asyncId: string
-    success: boolean
-    state: 'completed' | 'failed' | 'paused'
-    summary?: string
-    exitCode?: number
-    timestamp?: number
+    customType: string
+    content?: string
+    details?: Record<string, unknown>
+    display?: boolean
   }
 }
 

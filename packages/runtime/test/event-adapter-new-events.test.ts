@@ -206,7 +206,8 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
       await flushAsync()
 
       expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('message.message_start')
+      // customType 消息用独立 type 'message.customStart'（区别于 assistant turn 的 message_start）
+      expect(sent[0].type).toBe('message.customStart')
       expect(sent[0].payload).toMatchObject({
         customType: 'info',
         content: 'hi',
