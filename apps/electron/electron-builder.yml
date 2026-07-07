@@ -1,5 +1,9 @@
 appId: com.xyz-agent.app
 productName: xyz-agent
+# electron-builder 在 linux AppImage 上 fallback 用 package.json name（@xyz-agent/electron）
+# 去斜杠后变成 @xyz-agentelectron，AppImage 拒绝 @ 字符。显式指定与 productName 一致，
+# mac/linux/win 三平台统一。mac 产物验证：Contents/MacOS/xyz-agent（改动前已是此值，无行为变化）。
+executableName: xyz-agent
 directories:
   output: dist/builder-output
 asar: true
