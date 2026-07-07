@@ -65,10 +65,23 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: pnpm install --frozen-lockfile
 
+      # 缓存 Electron 二进制（~100MB），避免每次 CI 都从 GitHub releases 重新下载。
+      # pnpm store 缓存（上方 setup-node 的 cache: pnpm）只覆盖包的 JS 文件，不含 electron
+      # postinstall 下载到 node_modules/electron/dist 的二进制，需独立缓存。
+      # install.js 会校验缓存内容的 sha256，版本升级不会用到错的旧二进制。
+      # key 基于 apps/electron/package.json，electron 版本号变动时自动失效重建。
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/.cache/electron
+          key: ${{ runner.os }}-electron-${{ hashFiles('apps/electron/package.json') }}
+
       # install 步骤跳过了 electron 二进制下载（节省时间），打包需要二进制，显式补回。
-      # electron 的 install.js 从 ELECTRON_BINARY_HOST/GitHub releases 下载平台对应 dist。
+      # node-linker=hoisted（见 .npmrc）：electron 被提升到根 node_modules，
+      # 不在 apps/electron/node_modules 下，所以必须从仓库根执行 install.js。
       - name: Download Electron binary
-        working-directory: apps/electron
         run: node node_modules/electron/install.js
 
       - name: Bump version
