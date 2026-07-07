@@ -86,12 +86,12 @@ win:
     - target: zip
       arch:
         - x64
-  artifactName: ${name}-${version}-setup-${arch}.${ext}
+  artifactName: ${productName}-${version}-setup-${arch}.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: ${name}-${version}-setup-${arch}.${ext}
+  artifactName: ${productName}-${version}-setup-${arch}.${ext}
 
 linux:
   target:
@@ -102,7 +102,7 @@ linux:
       arch:
         - x64
   category: Development
-  artifactName: ${name}-${version}-${os}-${arch}.${ext}
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 
 # 本地构建时 electron-builder 需要至少一个 publish provider
 # 否则 updateInfoBuilder 会因 channel === null 崩溃
