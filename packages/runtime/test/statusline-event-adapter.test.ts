@@ -158,9 +158,11 @@ describe('context.update: onContextUpdate from agent_end', () => {
     expect(sent[0].type).toBe('message.complete')
 
     // callback is called
+    // [HISTORICAL] context 占用字段 inputTokens 现取 totalTokens（input+output+cacheRead+cacheWrite），
+    // 与 pi calculateContextTokens 同源（commit 31caf7b5）。usage.input 只是单 turn 增量，值很小。
     expect(onContextUpdate).toHaveBeenCalledTimes(1)
     expect(onContextUpdate).toHaveBeenCalledWith('test-session-1', {
-      inputTokens: 5000,
+      inputTokens: 8000,
       totalTokens: 8000,
     })
   })
