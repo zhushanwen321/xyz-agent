@@ -36,7 +36,23 @@
          - isGenerating 优先不渲染 Landing（AC-2.8）。
          旧逻辑仅凭 messageCount===0 渲染 Landing，恢复空 session 时 flow.state=idle → chip transition
          非法（idle→dir-popover）抛错。对齐 flow 后 Landing 只在 landing 态渲染，空 session 走空对话态。 -->
-    <MessageStream v-if="sessionId && messageCount > 0" :session-id="sessionId" />
+    <!-- dead session 占位：进程已退出，不渲染对话流/composer，提供重开入口 -->
+    <div
+      v-if="isSessionDead"
+      class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center"
+    >
+      <AlertCircle class="size-8 text-danger opacity-60" />
+      <div class="space-y-1">
+        <p class="text-sm text-text">会话进程已退出</p>
+        <p class="text-xs text-subtle">进程异常终止，对话不可继续。可尝试重新打开。</p>
+      </div>
+      <Button variant="default" size="sm" @click="onReviveSession">
+        <RotateCcw class="mr-1.5 size-3.5" />
+        重新打开
+      </Button>
+    </div>
+
+    <MessageStream v-else-if="sessionId && messageCount > 0" :session-id="sessionId" />
     <Landing
       v-else-if="!isGenerating && isLandingView"
       :session-id="sessionId"
@@ -73,7 +89,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { MessageSquare } from '@lucide/vue'
+import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
 import PanelHeader from './PanelHeader.vue'
@@ -83,7 +99,9 @@ import Composer from './Composer.vue'
 import Landing from '@/components/new-task/Landing.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
+import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{
   panelId: string
@@ -118,8 +136,17 @@ function onPanelMouseDown(e: MouseEvent): void {
 }
 
 const chat = useChatStore()
+const sessionStore = useSessionStore()
+const { error: toastError } = useToast()
 
 const flow = useNewTaskFlow()
+
+/** 当前 session 是否已 dead（进程退出）。dead 态显示占位 UI + 重开入口，不渲染对话流/composer */
+const isSessionDead = computed(() => {
+  if (!props.sessionId) return false
+  const s = sessionStore.list.find((item) => item.id === props.sessionId)
+  return s?.status === 'dead'
+})
 
 /** 当前 session 消息数（未 hydrate / 无 session → 0） */
 const messageCount = computed(() =>
@@ -142,7 +169,7 @@ const isLandingView = computed(
 /** band 内 Composer 渲染：new-task landing 态由 Landing 内嵌 composer 卡片承接，band 不重复渲染；
  *  已绑 session（含恢复的空 session，非 landing 态）→ band 渲染 composer 供直输；生成态始终挂。 */
 const showPanelComposer = computed(
-  () => (!!props.sessionId && !isLandingView.value) || isGenerating.value,
+  () => (!!props.sessionId && !isLandingView.value && !isSessionDead.value) || isGenerating.value,
 )
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>
@@ -152,6 +179,18 @@ const historyError = computed(() =>
 /** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */
 function onRetryHistory(): void {
   if (props.sessionId) void useSidebar().retryHistory(props.sessionId)
+}
+
+/** dead session「重新打开」：调 selectSession 触发 restore（重新 spawn pi），成功后 revive 重置 idle */
+async function onReviveSession(): Promise<void> {
+  if (!props.sessionId) return
+  try {
+    await useSidebar().selectSession(props.sessionId)
+    sessionStore.revive(props.sessionId)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`重新打开失败：${msg}`)
+  }
 }
 
 /** 激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + ring-1 accent + opacity 1；双 standby = opacity 0.5 hover 回升 0.78。

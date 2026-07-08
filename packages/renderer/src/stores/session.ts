@@ -70,6 +70,21 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /**
+   * 标记 session 为 dead 态（进程已退出）。
+   * dead session 在侧栏置灰，panel 显示「进程已退出」占位，点击不触发 restore。
+   */
+  function markDead(id: string): void {
+    const target = list.value.find((s) => s.id === id)
+    if (target) target.status = 'dead'
+  }
+
+  /** 重置 session 为 idle（重开进程后调） */
+  function revive(id: string): void {
+    const target = list.value.find((s) => s.id === id)
+    if (target && target.status === 'dead') target.status = 'idle'
+  }
+
   /** 载入分组列表（useSidebar.loadSessions 调用，单一写入入口） */
   function setGroups(next: SessionGroup[]): void {
     groups.value = next
@@ -85,5 +100,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { groups, list, activeId, active, publicSessionId, setGroups, appendSession, updateLabel, updateSessionState, removeFromList }
+  return { groups, list, activeId, active, publicSessionId, setGroups, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive }
 })

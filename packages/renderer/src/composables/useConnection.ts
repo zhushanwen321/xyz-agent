@@ -13,6 +13,7 @@
  *
  * 依赖方向：useConnection → ws-client + ipc + shared（BASE_PORT/DEV_PORT_OFFSET）
  */
+import { watch } from 'vue'
 import { connect, disconnect, getState, setRestarting, setFailed } from '../lib/ws-client'
 import {
   getRuntimePort,
@@ -28,6 +29,24 @@ import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
 import { useChatStore } from '../stores/chat'
+import { useSessionStore } from '../stores/session'
+import { useToast } from './useToast'
+
+/**
+ * 处理 session.exited 事件（pi 进程异常退出）。
+ *
+ * 不能只依赖 session 通道的惰性订阅（ensureStreamSubscription 在首次 send 时建立）：
+ * 进程可能在用户首次发消息前就死（如 extension 加载失败 exit(1)），此时无订阅者，
+ * dispatchSession 会静默丢弃。因此 routeInbound 对 session.exited 做兜底处理，
+ * 保证 markDead + markSessionError + toast 一定执行。
+ */
+function handleSessionExited(sessionId: string, payload: { code: number | null; reason: string }): void {
+  useChatStore().markSessionError(sessionId, payload.reason)
+  useSessionStore().markDead(sessionId)
+  // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
+  const shortReason = payload.reason.split('\n')[0]
+  useToast().error(`会话进程已退出：${shortReason}`)
+}
 
 export type ConnectionStatus =
   | 'disconnected'
@@ -69,8 +88,20 @@ function routeInbound(msg: ServerMessage): void {
   const sid = (msg.payload as { sessionId?: string }).sessionId
   if (typeof sid === 'string' && sid) {
     events.dispatchSession(sid, msg)
+    // session.exited 兜底：进程退出必须标记 dead + toast，不能只依赖惰性的 session
+    // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
+    if (msg.type === 'session.exited') {
+      handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
+    }
   } else {
     events.dispatchGlobal(msg)
+    // 全局 error 兜底：无 sessionId、无 id 的 server-push error 此前静默丢弃。
+    // 现 toast 提示（如 config 加载失败等全局错误）。
+    if (msg.type === 'error' && !msg.id) {
+      const payload = msg.payload as { message?: string }
+      const message = typeof payload.message === 'string' ? payload.message : '未知错误'
+      useToast().error(message)
+    }
   }
 }
 
@@ -97,6 +128,7 @@ let initialised = false
 let removeRuntimePortListener: (() => void) | null = null
 let removeRuntimeRestartingListener: (() => void) | null = null
 let removeRuntimeFailedListener: (() => void) | null = null
+let removeStateWatch: (() => void) | null = null
 
 export function useConnection() {
   const state = getState()
@@ -129,17 +161,29 @@ export function useConnection() {
     })
 
     // 监听 runtime 崩溃重启中（主进程正在拉起新实例 → 进 restarting 态，停自动重连）
-    // runtime 崩溃 = pi 子进程没了 = 流不可能继续。重置 chat 活跃态，避免 UI 卡「思考中」。
+    // runtime 崩溃 = pi 子进程没了 = 流不可能继续。重置 chat 活跃态 + 清理 pending，
+    // 避免 UI 卡「思考中」+ in-flight Promise 永挂（runtime 重启后是全新实例，旧 pending 永远收不到响应）。
     removeRuntimeRestartingListener = onRuntimeRestarting(() => {
       setRestarting()
+      pending.rejectAll(new Error('Runtime 正在重启'))
       useChatStore().resetActive()
     })
 
     // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
     removeRuntimeFailedListener = onRuntimeFailed(() => {
       setFailed()
+      pending.rejectAll(new Error('Runtime 不可用'))
       useChatStore().resetActive()
     })
+
+    // 监听 WS 连接状态变化：connected → 断开时清理 pending（覆盖 runtime 未崩溃但 WS 断连的场景，
+    // 如网络抖动。ws-client.onclose 不通知业务层，通过 watch state 变化间接感知）。
+    const stopStateWatch = watch(getState(), (newState, oldState) => {
+      if (oldState === 'connected' && newState !== 'connected') {
+        pending.rejectAll(new Error('连接已断开'))
+      }
+    })
+    removeStateWatch = stopStateWatch
 
     // 尝试从主进程获取已知端口
     const knownPort = await getRuntimePort()
@@ -173,6 +217,10 @@ export function useConnection() {
     if (removeRuntimeFailedListener) {
       removeRuntimeFailedListener()
       removeRuntimeFailedListener = null
+    }
+    if (removeStateWatch) {
+      removeStateWatch()
+      removeStateWatch = null
     }
     if (removeTransportListener) {
       removeTransportListener()

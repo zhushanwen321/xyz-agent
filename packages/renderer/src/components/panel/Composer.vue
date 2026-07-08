@@ -110,6 +110,7 @@ import QueueBubble from './QueueBubble.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
+import { useToast } from '@/composables/useToast'
 import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
 
@@ -124,6 +125,7 @@ const props = withDefaults(
 const chatStore = useChatStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
+const { error: toastError } = useToast()
 
 /**
  * 合并活跃态：流式中（isStreaming）或派发空窗期（dispatchingSessionId 命中当前 session）。
@@ -239,7 +241,9 @@ async function onSend(): Promise<void> {
       await flow.submitFirstMessage(text, localThinkingLevel.value)
     } catch (e) {
       restoreInput(text)
-      throw e
+      // 错误已消化（toast + 草稿恢复），不 throw（throw 只会变 unhandled rejection，用户不可见）。
+      const msg = e instanceof Error ? e.message : String(e)
+      toastError(`任务创建失败：${msg}`)
     } finally {
       isSending.value = false
     }
@@ -268,7 +272,9 @@ async function onSend(): Promise<void> {
   } catch (e) {
     // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
     restoreInput(text)
-    throw e
+    // 错误已消化（toast + 草稿恢复），不 throw。
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`消息发送失败：${msg}`)
   } finally {
     isSending.value = false
   }

@@ -75,7 +75,13 @@ export class MessageDispatcher {
     } catch (e) {
       const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
       console.error(`[message-dispatcher] ${errMsg}`)
-      // 不在这里广播 message.error,让 server.ts 的外层 catch 统一发送 handler_error
+      // 补广播 message.error：让已订阅 session 通道的前端能在聊天流看到错误气泡。
+      // 之前只靠 server.ts 外层 handler_error envelope（走 pending.reject，不进聊天流），
+      // 导致 ensureActive 失败（如 pi 进程已死、restore 再 spawn 再 exit）时用户在对话流看不到错误。
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: errMsg },
+      })
       throw e
     }
 

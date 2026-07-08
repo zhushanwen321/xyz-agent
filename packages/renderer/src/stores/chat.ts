@@ -27,6 +27,7 @@ import type {
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
 import { dispatchMessageEvent } from './chat-message-effects'
+import { findLastAssistantIndex } from './chat-chunk-processor'
 import { createChangeSetController } from './chat-changeset'
 export type { RetryState, QueueState } from './chat-store-types'
 import type { RetryState, QueueState } from './chat-store-types'
@@ -322,6 +323,36 @@ export const useChatStore = defineStore('chat', () => {
     dispatchingSessionId.value = null
   }
 
+  /**
+   * session 级错误统一入口：追加 error assistant 消息 + 重置所有活跃态。
+   * 用于 session.exited（进程退出）/ error envelope（有 sessionId 时）/ restore 失败等场景。
+   * 消除各错误路径分散重置导致的状态遗漏（规则 #3：错误必须重置 isGenerating + streaming）。
+   */
+  function markSessionError(sessionId: string, errorText: string): void {
+    const prev = messages.value.get(sessionId) ?? []
+    const idx = findLastAssistantIndex(prev)
+    if (idx >= 0 && prev[idx].status === 'streaming') {
+      const next = [...prev]
+      const last = next[idx]
+      next[idx] = {
+        ...last,
+        content: last.content ? `${last.content}\n\n${errorText}` : errorText,
+        status: 'error',
+      }
+      messages.value.set(sessionId, next)
+    } else {
+      messages.value.set(sessionId, [
+        ...prev,
+        { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
+      ])
+    }
+    clearDispatchingTimer()
+    clearStreamingTimer()
+    isStreaming.value = false
+    streamingSessionId.value = null
+    dispatchingSessionId.value = null
+  }
+
   // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
   // 避免回调操作已废弃的 store 实例 ref + warn 噪音。
   onScopeDispose(() => {
@@ -412,6 +443,7 @@ export const useChatStore = defineStore('chat', () => {
     setStreaming,
     setDispatching,
     resetActive,
+    markSessionError,
     isActive,
     isCompacting,
     setCompacting,

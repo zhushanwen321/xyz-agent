@@ -58,7 +58,7 @@ export interface RpcClientOptions {
 const CMD_TIMEOUT_MS = 60_000
 const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
-const STARTUP_DELAY_MS = 100
+const STARTUP_DELAY_MS = 500
 const STDERR_BUFFER_MAX_LINES = 50
 const STDERR_TAIL_LINES = 10
 
@@ -73,7 +73,7 @@ export class RpcClient implements IPiEngine {
   private msgCounter = 0
   private _exited = false
   private _killing = false
-  private exitCallback: ((code: number | null) => void) | null = null
+  private exitCallback: ((code: number | null, stderr: string) => void) | null = null
   /** 收集 pi 进程的 stderr 输出，用于在启动失败时提供具体错误信息 */
   private stderrChunks: string[] = []
   /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
@@ -156,7 +156,7 @@ export class RpcClient implements IPiEngine {
       if (!this._killing) {
         this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
         if (this.exitCallback) {
-          this.exitCallback(code)
+          this.exitCallback(code, this.getStderrTail())
         }
       }
     })
@@ -295,8 +295,8 @@ export class RpcClient implements IPiEngine {
    * Register an event listener for non-response messages from pi.
    * Returns an unsubscribe function.
    */
-  /** Register a callback for when the pi process exits unexpectedly. */
-  onExit(callback: (code: number | null) => void): void {
+  /** Register a callback for when the pi process exits unexpectedly. stderr 为 pi 进程尾部输出。 */
+  onExit(callback: (code: number | null, stderr: string) => void): void {
     this.exitCallback = callback
   }
 
@@ -310,6 +310,12 @@ export class RpcClient implements IPiEngine {
     if (this.stderrChunks.length === 0) return ''
     const last = this.stderrChunks.slice(-STDERR_TAIL_LINES)
     return `\n\npi stderr (last ${last.length} lines):\n${last.join('\n')}`
+  }
+
+  /** 返回 pi stderr 尾部内容（不含前缀），供 exitCallback 透传到上层展示给用户 */
+  private getStderrTail(): string {
+    if (this.stderrChunks.length === 0) return ''
+    return this.stderrChunks.slice(-STDERR_TAIL_LINES).join('\n')
   }
 
   get exited(): boolean {

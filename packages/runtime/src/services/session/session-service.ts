@@ -94,8 +94,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
-    // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / error 广播
-    this.pm.onSessionExit((sessionId, code) => {
+    // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播
+    this.pm.onSessionExit((sessionId, code, stderr) => {
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
@@ -110,8 +110,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         return
       }
 
+      // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
+      const reason = stderr
+        ? `Session process exited (code: ${code})\n\n${stderr}`
+        : `Session process exited (code: ${code})`
+
       this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
-      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` } })
+      // session.exited（独立事件，区别于 message.error 的「单次消息失败」语义）：
+      // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
+      this.broker.broadcast({ type: 'session.exited', payload: { sessionId, code, reason } })
     })
   }
 

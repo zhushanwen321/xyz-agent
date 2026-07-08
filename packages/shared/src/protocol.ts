@@ -169,6 +169,7 @@ export type ServerMessageType =
   | 'extension.recommended'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
+  | 'session.exited'
   | 'app.info'
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
@@ -226,6 +227,11 @@ export interface ServerMessageMapBase {
   'error': { code: string; message: string; sessionId?: string; details?: Record<string, unknown> }
   // 流式异步推送失败（server-push 通道，区别于请求级 error envelope；见错误契约文档）
   'message.error': { sessionId: string; message: string }
+  // session.exited：pi 进程异常退出（区别于 message.error 的「单次消息失败」）。
+  // 前端 routeInbound 收到后标记 session 为 dead 态 + 插入 error 消息 + toast。
+  // reason: 人类可读的错误原因（含 stderr 尾部截断），供诊断面板展开显示。
+  // code: pi 进程退出码（null 表示进程被信号杀死无退出码）。
+  'session.exited': { sessionId: string; code: number | null; reason: string }
   // 扩展 UI 推送通道（EventAdapter 翻译 pi setWidget/setStatus，runtime 固定形状生产）
   'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
   'extension:status': { sessionId: string; statusKey: string; text: string }
