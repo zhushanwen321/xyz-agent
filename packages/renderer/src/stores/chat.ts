@@ -67,6 +67,17 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── 超时兜底 timer（D-003 阈值可配置 + D-007 真收口）──
 
+  /** streaming 超时默认值：24h（放弃主动检测，靠 runtime 重启/WS 断连兑底） */
+  const DEFAULT_STREAMING_TIMEOUT_MS = 86_400_000 // 24h
+
+  function readStreamingTimeoutMs(): number {
+    // [D-016] 经 IPC 读主进程 env（非 import.meta.env，Vite 不暴露 XYZ_ 前缀）
+    // TODO: 接 IPC — window.electronAPI?.getStreamingTimeout?.()
+    const env = undefined
+    const parsed = env ? Number(env) : Number.NaN
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STREAMING_TIMEOUT_MS
+  }
+
   /**
    * streaming 超时阈值。默认 24h（86_400_000ms）。
    * 24h = 放弃主动时间检测，靠 runtime 重启/WS 断连 + 用户手动停止；timer 是 pi 静默卡死最后兑底。
@@ -81,17 +92,6 @@ export const useChatStore = defineStore('chat', () => {
   /** pendingSend 空窗期 timer */
   let pendingSendTimer: ReturnType<typeof setTimeout> | null = null
   let pendingSendTimerSid: string | null = null
-
-  /** streaming 超时默认值：24h（放弃主动检测，靠 runtime 重启/WS 断连兑底） */
-  const DEFAULT_STREAMING_TIMEOUT_MS = 86_400_000 // 24h
-
-  function readStreamingTimeoutMs(): number {
-    // [D-016] 经 IPC 读主进程 env（非 import.meta.env，Vite 不暴露 XYZ_ 前缀）
-    // TODO: 接 IPC — window.electronAPI?.getStreamingTimeout?.()
-    const env = undefined
-    const parsed = env ? Number(env) : Number.NaN
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STREAMING_TIMEOUT_MS
-  }
 
   // ── 派生态（computed scan，D-005，零手动维护）──
 
