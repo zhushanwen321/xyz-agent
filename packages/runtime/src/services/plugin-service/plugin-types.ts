@@ -107,7 +107,7 @@ export interface SessionInfo {
   id: string
   label: string
   cwd: string
-  status: 'active' | 'idle' | 'error'
+  status: 'active' | 'idle' | 'error' | 'dead'
   createdAt: number
   lastActiveAt: number
 }

@@ -38,7 +38,7 @@ export class MessageDispatcher {
    * 调用方（session-message-handler）必须据此走 error envelope（带请求 id）让 renderer
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }> {
+  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.sendPrompt(sessionId, content, () => content)
   }
 
