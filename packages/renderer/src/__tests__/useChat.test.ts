@@ -216,7 +216,8 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
     const chat = useChatStore()
     apiMock.send.mockRejectedValueOnce(new Error('network'))
     const { send } = useChat()
-    await expect(send('hi')).rejects.toThrow('network')
+    // [W2] send 失败不再 throw（与 steer/followUp/abort 对齐：clearPendingSend + toast，不 throw）
+    await expect(send('hi')).resolves.toBeUndefined()
     expect(chat.pendingSend.has('s-fail')).toBe(false)
     expect(chat.isActive('s-fail')).toBe(false)
   })

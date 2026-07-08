@@ -82,6 +82,47 @@ describe('isGenerating 派生 scan（D-005）', () => {
   })
 })
 
+describe('错误事件派生复位 isGenerating（项目规则 #3 核心路径）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('message.error 事件 → isGenerating 派生回 false（无需手动 finalize）', () => {
+    const store = useChatStore()
+    const sid = 's-err'
+    // 先进入 streaming 态
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a1' },
+    })
+    expect(store.isGenerating(sid)).toBe(true)
+    // message.error 触发 finalizeSession('error') → 派生复位
+    store.applyMessageEvent(sid, {
+      type: 'message.error',
+      payload: { sessionId: sid, message: 'test error' },
+    })
+    // 关键断言：派生回 false（不依赖手动 setStreaming(false)）
+    expect(store.isGenerating(sid)).toBe(false)
+  })
+
+  it('message.stream_error 事件 → isGenerating 派生回 false', () => {
+    const store = useChatStore()
+    const sid = 's-streamerr'
+    // 先进入 streaming 态
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a1' },
+    })
+    expect(store.isGenerating(sid)).toBe(true)
+    // message.stream_error 触发 finalizeSession('stream_error') → 派生复位
+    // payload content 字段（chat-message-effects.ts handler 读 readString(payload,'content')）
+    store.applyMessageEvent(sid, {
+      type: 'message.stream_error',
+      payload: { sessionId: sid, content: 'stream broken' },
+    })
+    // 关键断言：派生回 false
+    expect(store.isGenerating(sid)).toBe(false)
+  })
+})
+
 describe('isActive（isGenerating ∨ pendingSend）', () => {
   beforeEach(() => setActivePinia(createPinia()))
 

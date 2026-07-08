@@ -29,6 +29,8 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     markChangeSetsSuperseded: vi.fn(),
     finalizeSession: vi.fn(),
     clearPendingSend: vi.fn(),
+    armStreamingTimer: vi.fn(),
+    markPendingDelivered: vi.fn(),
   }
 }
 

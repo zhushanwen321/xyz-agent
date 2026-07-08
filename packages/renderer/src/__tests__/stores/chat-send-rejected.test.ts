@@ -10,12 +10,15 @@
  * - send.rejected → 不产出消息气泡（getMessages 不变）
  * - send.rejected → isGenerating 不变（send.rejected 不翻流式态）
  * - send.rejected 带 message 字段 → toast 反馈
+ * - [MANDATORY] mount(Composer) DOM 断言：send.rejected 后 Composer 回可重试态（用户可见）
  *
  * mock 策略：vi.hoisted 捕获 streamSubscribe handler，测试注入 send.rejected。
  *
  * 运行：npx vitest run src/__tests__/stores/chat-send-rejected.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
 
@@ -49,9 +52,59 @@ vi.mock('@/api', () => ({
   session: {},
 }))
 
+// mount(Composer) 用例：mock 较深依赖（useChat 保留真实，验证 send.rejected 回滚链路）
+vi.mock('@/composables/features/useNewTaskFlow', () => ({
+  useNewTaskFlow: () => ({
+    submitFirstMessage: vi.fn(),
+    currentModel: { value: null },
+    setPendingModel: vi.fn(),
+  }),
+  resetNewTaskFlow: vi.fn(),
+}))
+vi.mock('@/stores/settings', () => ({
+  useSettingsStore: () => ({ defaultModel: '' }),
+}))
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ toasts: { value: [] }, error: vi.fn(), remove: vi.fn() }),
+}))
+vi.mock('@/composables/panel/useComposerModelThinking', () => ({
+  useComposerModelThinking: () => ({
+    currentModelId: { value: '' },
+    currentThinkingLevel: { value: undefined },
+    currentThinkingLevelMap: { value: undefined },
+    localThinkingLevel: { value: undefined },
+    onModelSelect: vi.fn(),
+    onThinkingSelect: vi.fn(),
+  }),
+}))
+
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useChat } from '@/composables/features/useChat'
+import Composer from '@/components/panel/Composer.vue'
+
+// ── Composer 子组件 stub（参照 composer-three-states.test.ts，最小化 mount 开销）──
+const ComposerInputMock = defineComponent({
+  name: 'ComposerInput',
+  emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
+  setup(_, { expose }) {
+    expose({ clear: vi.fn(), setText: vi.fn(), insertSlashChip: vi.fn() })
+    return {}
+  },
+  template: '<div data-testid="composer-input" />',
+})
+const SIMPLE = defineComponent({ name: 'SimpleStub', template: '<div />' })
+const otherStubs = {
+  ComposerInput: ComposerInputMock,
+  CommandPopover: defineComponent({ name: 'CommandPopover', template: '<div><slot /></div>' }),
+  AddMenuPopover: SIMPLE,
+  ContextChipsBar: SIMPLE,
+  ContextCapacityPopover: SIMPLE,
+  ModelSelectPopover: SIMPLE,
+  ThinkingLevelPopover: SIMPLE,
+  RetryIndicator: SIMPLE,
+  QueueBubble: SIMPLE,
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -131,5 +184,44 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
     })
     // session B 的 pendingSend 不受影响（session 隔离）
     expect(chat.isActive('s-other')).toBe(true)
+  })
+})
+
+/**
+ * [MANDATORY] 集成用例 DOM 断言：mount(Composer) 验证 send.rejected 后用户可见行为。
+ *
+ * 走真实 useChat().send → 注入 send.rejected（runtime 预检拒绝）→ clearPendingSend
+ * → isActive 驱动 Composer 三态 DOM 翻转（停止按钮态 → 可重试态）。
+ */
+describe('send.rejected Composer DOM 断言（用户可见行为）', () => {
+  it('send.rejected 后 Composer 停止按钮消失，回到可重试态（DOM 可见）', async () => {
+    const session = useSessionStore()
+    session.activeId = 's-dom-reject'
+    const chat = useChatStore()
+    const wrapper = mount(Composer, {
+      props: { sessionId: 's-dom-reject' },
+      global: { stubs: otherStubs },
+    })
+    // 用户输入 → Enter 触发真实 useChat.send（mock api.send resolve → addPendingSend）
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'hello')
+    await wrapper.vm.$nextTick()
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', new KeyboardEvent('keydown', { key: 'Enter' }))
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick() // flush async send
+    // send 后 pendingSend 置位 → isActive=true（空窗期，停止按钮可见）
+    expect(chat.isActive('s-dom-reject')).toBe(true)
+    expect(wrapper.find('.stop-btn').exists()).toBe(true)
+    // runtime 预检拒绝：注入 send.rejected
+    emit({
+      type: 'send.rejected',
+      payload: { sessionId: 's-dom-reject', reason: 'busy', message: 'Agent 正在处理' },
+    })
+    await wrapper.vm.$nextTick()
+    // store 侧：clearPendingSend → isActive=false
+    expect(chat.isActive('s-dom-reject')).toBe(false)
+    // DOM 断言 1：停止按钮消失（用户可重新发送）
+    expect(wrapper.find('.stop-btn').exists()).toBe(false)
+    // DOM 断言 2：composer-box 仍渲染（输入区可见，用户可重试）
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
   })
 })
