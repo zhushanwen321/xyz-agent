@@ -93,7 +93,12 @@ export class RpcClient implements IPiEngine {
     // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/
     env.PI_CODING_AGENT_DIR = getPiAgentDir()
 
-    const args = ['--mode', 'rpc', '--no-extensions']
+    // --approve: 强制信任 cwd（trustOverride=true），让 pi 加载项目级 .pi/skills 和 .pi/extensions。
+    // 短期方案：xyz-agent 的 RPC 模式无交互 UI，pi 原生信任流程在 hasUI=false 时默认拒绝，
+    // 导致 <cwd>/.pi/ 下的 skill/extension 被跳过。--approve 绕过信任确认，代价是所有
+    // 项目自动信任（失去 pi 信任机制对恶意 .pi/extensions 的安全防护）。
+    // TODO(long-term): 实现前端 Project Trust UI，用户确认后写 trust.json 并重启 pi，移除此处的 --approve。
+    const args = ['--mode', 'rpc', '--no-extensions', '--approve']
     if (model) args.push('--model', model)
     if (this.options.skillPaths?.length) {
       for (const skillPath of this.options.skillPaths) {
