@@ -232,23 +232,24 @@ describe('chat store markSessionError —— session 级错误统一入口', () 
     expect(msgs[0].content).toContain('进程崩溃') // 并入 errorText
   })
 
-  it('重置所有活跃态：isStreaming / streamingSessionId / dispatchingSessionId', () => {
+  it('finalizeSession 收口所有活跃态：streaming entity + pendingSend', () => {
     const store = useChatStore()
     const sid = 'me-3'
 
-    // 先设为 streaming + dispatching 态（模拟流式中进程崩溃）
-    store.setStreaming(true, sid)
-    store.setDispatching(sid)
-    expect(store.isStreaming).toBe(true)
-    expect(store.streamingSessionId).toBe(sid)
-    expect(store.dispatchingSessionId).toBe(sid)
+    // 先设为 streaming + pendingSend 态（模拟流式中进程崩溃）
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a-me3' },
+    })
+    store.addPendingSend(sid)
+    expect(store.isGenerating(sid)).toBe(true)
+    expect(store.isActive(sid)).toBe(true)
 
     store.markSessionError(sid, '崩溃')
 
     // 关键：所有活跃态复位（规则 #3），避免 UI 卡「思考中」
-    expect(store.isStreaming).toBe(false)
-    expect(store.streamingSessionId).toBe(null)
-    expect(store.dispatchingSessionId).toBe(null)
+    expect(store.isGenerating(sid)).toBe(false)
+    expect(store.isActive(sid)).toBe(false)
   })
 
   it('空 messages 的 session：新建首条 error 消息', () => {

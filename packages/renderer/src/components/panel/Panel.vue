@@ -158,7 +158,7 @@ const messageCount = computed(() =>
  *  new-task 渲染撕裂。改为 per-session：只有本 Panel 绑定的 session 在流式才算 generating。
  *  landing 态 sessionId=null → streamingSessionId 恒不等 → isGenerating=false → Landing 正常渲染。 */
 const isGenerating = computed(
-  () => chat.isStreaming && chat.streamingSessionId === props.sessionId,
+  () => !!props.sessionId && chat.isGenerating(props.sessionId),
 )
 /** new-task landing 视图判据：完全无 session（首次启动/点新建）或 NewTaskFlow 处于 landing 态。
  *  Landing 的 directory/branch chip 仅在 flow.state==='landing' 时点击合法，故 Landing 只在此态渲染；

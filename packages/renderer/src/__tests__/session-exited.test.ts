@@ -153,18 +153,17 @@ describe('session.exited 事件端到端反馈链路', () => {
     await initAndConnect()
 
     const chatStore = useChatStore()
-    // 模拟流式中：先设 streaming
-    chatStore.setStreaming(true, 's-exit')
-    expect(chatStore.isStreaming).toBe(true)
+    // 模拟流式中：创建 streaming entity（取代 setStreaming(true)，isGenerating 从实体派生）
+    chatStore.applyMessageEvent('s-exit', { type: 'message.message_start', payload: { sessionId: 's-exit', messageId: 'a-exit' } })
+    expect(chatStore.isGenerating('s-exit')).toBe(true)
 
     mockHolder.routeHandler!({
       type: 'session.exited',
       payload: { sessionId: 's-exit', code: 1, reason: 'crashed' },
     })
 
-    // 关键：isStreaming 复位（规则 #3）
-    expect(chatStore.isStreaming).toBe(false)
-    expect(chatStore.streamingSessionId).toBe(null)
+    // 关键：isGenerating 复位（规则 #3，markSessionError → finalizeSession 收口 streaming entity）
+    expect(chatStore.isGenerating('s-exit')).toBe(false)
   })
 
   it('session.exited 对未知 sessionId 仍 toast（兜底，防静默丢弃）', async () => {

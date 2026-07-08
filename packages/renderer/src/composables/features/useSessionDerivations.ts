@@ -43,7 +43,7 @@ export function useSessionDerivations() {
    */
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
     return computed(() => {
-      const isActiveStreaming = chat.isStreaming && session.activeId === id
+      const isActiveStreaming = chat.isGenerating(id) && session.activeId === id
       return deriveStatus(id, chat, isActiveStreaming)
     })
   }

@@ -8,7 +8,7 @@
  *
  * mock 策略：
  * - Landing 直挂载（presentational，props/emits），无 store 依赖。
- * - Panel v-if 条件：mount Panel（子组件 stub）+ 真 pinia chat store，操控 messages/isStreaming。
+ * - Panel v-if 条件：mount Panel（子组件 stub）+ 真 pinia chat store，操控 messages/派生 isGenerating。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/landing.test.ts
  */
@@ -85,7 +85,6 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
 describe('Landing 渲染条件（Panel v-if 分支）', () => {
   it('T1.6 new-task landing 态（flow=landing 且无消息）→ 渲染 landing', () => {
     const chat = useChatStore()
-    chat.isStreaming = false // !isGenerating
     flowMock.state.value = 'landing' // new-task flow 激活 landing 态（Landing chip 合法前提）
     // session 's1' 未 hydrate → getMessages 返回 [] → messageCount=0
     const wrapper = mountPanel({ sessionId: 's1' })
@@ -94,7 +93,6 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
 
   it('恢复空 session（有 sid 无消息，flow=idle）→ 不渲染 Landing（无 chip 死锁），渲染空对话态 + band composer', () => {
     const chat = useChatStore()
-    chat.isStreaming = false
     flowMock.state.value = 'idle' // 恢复 session 不激活 new-task flow（selectSession 不 startFlow）
     // 僵尸空 session：有 sid 无消息，flow 停 idle
     const wrapper = mountPanel({ sessionId: 'empty-session' })
@@ -108,7 +106,6 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
 
   it('首次启动 new-task（sid=null, flow=landing）→ 渲染 Landing（正向不回归）', () => {
     const chat = useChatStore()
-    chat.isStreaming = false
     flowMock.state.value = 'landing'
     const wrapper = mountPanel({ sessionId: null })
     expect(wrapper.findComponent(Landing).exists()).toBe(true)
@@ -120,9 +117,11 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
   it('T1.7 messages 空但 isGenerating=true → 不渲染 landing（生成态优先）', () => {
     const chat = useChatStore()
     // per-session 生成态：本 Panel 绑定的 session 在流式才算 generating
-    // （原用全局 isStreaming 会跨 session 误伤，见 panel-per-session-generating.test.ts）
-    chat.isStreaming = true
-    chat.streamingSessionId = 's1'
+    // （派生自 message 实体，不再用全局 flag）
+    chat.applyMessageEvent('s1', {
+      type: 'message.message_start',
+      payload: { sessionId: 's1', messageId: 'a1' },
+    })
     const wrapper = mountPanel({ sessionId: 's1' })
     expect(wrapper.findComponent(Landing).exists()).toBe(false)
   })
@@ -130,8 +129,10 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
   it('T1.7b 另一 session 流式中，本 Panel（空/landing）→ 仍渲染 landing（不跨 session 误伤）', () => {
     const chat = useChatStore()
     // A 会话在流式，但本 Panel 是 landing 态（sessionId=null）
-    chat.isStreaming = true
-    chat.streamingSessionId = 'session-A'
+    chat.applyMessageEvent('session-A', {
+      type: 'message.message_start',
+      payload: { sessionId: 'session-A', messageId: 'aA' },
+    })
     flowMock.state.value = 'landing'
     const wrapper = mountPanel({ sessionId: null })
     expect(wrapper.findComponent(Landing).exists()).toBe(true)
@@ -139,7 +140,6 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
 
   it('T1.6 有消息（messageCount>0）→ 不渲染 landing（走对话流）', () => {
     const chat = useChatStore()
-    chat.isStreaming = false
     chat.hydrate('s1', [
       { id: 'm1', role: 'user', content: 'hi', status: 'complete', timestamp: 1 },
     ])

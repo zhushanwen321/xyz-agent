@@ -5,7 +5,8 @@
  * A 会话流式期间点「新建任务」切到空 session（sessionId=null），空 session 的 Landing
  * 被 !isGenerating 守卫挡住，落到分支兜底空态（「选择左侧会话开始」），new-task 渲染撕裂。
  *
- * 修复：isGenerating 改为 per-session（chat.streamingSessionId === props.sessionId）。
+ * 修复：isGenerating 改为 per-session computed scan（chat.isGenerating(sessionId)），
+ * 从 message 实体派生，不再用全局 flag。
  * 本测试 mount 真实 Panel.vue，覆盖两个关键场景的 DOM 渲染（使用者视角，非纯 store 断言）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/panel-per-session-generating.test.ts
@@ -45,13 +46,12 @@ beforeEach(() => setActivePinia(createPinia()))
 describe('Panel per-session 生成态守卫（isGenerating 不跨 session 误伤）', () => {
   it('另一 session 流式中（sessionId=null）→ 渲染 Landing，不落兜底空态', () => {
     const chat = useChatStore()
-    // 模拟 A 会话正在流式（message_start 记录 streamingSessionId）
+    // 模拟 A 会话正在流式（message_start 创建 streaming entity）
     chat.applyMessageEvent('session-A', {
       type: 'message.message_start',
       payload: { sessionId: 'session-A', messageId: 'a1' },
     })
-    expect(chat.isStreaming).toBe(true)
-    expect(chat.streamingSessionId).toBe('session-A')
+    expect(chat.isGenerating('session-A')).toBe(true)
 
     // 点新建后切到空 session（sessionId=null）→ 应渲染 Landing
     const wrapper = mountPanel(null)
@@ -73,19 +73,18 @@ describe('Panel per-session 生成态守卫（isGenerating 不跨 session 误伤
     expect(wrapper.find('[data-testid="landing"]').exists()).toBe(false)
   })
 
-  it('终态事件清空 streamingSessionId → isStreaming 恢复 false', () => {
+  it('终态事件收口 streaming entity → isGenerating 恢复 false', () => {
     const chat = useChatStore()
     chat.applyMessageEvent('session-C', {
       type: 'message.message_start',
       payload: { sessionId: 'session-C', messageId: 'c1' },
     })
-    expect(chat.streamingSessionId).toBe('session-C')
+    expect(chat.isGenerating('session-C')).toBe(true)
 
     chat.applyMessageEvent('session-C', {
       type: 'message.complete',
       payload: { sessionId: 'session-C' },
     })
-    expect(chat.isStreaming).toBe(false)
-    expect(chat.streamingSessionId).toBeNull()
+    expect(chat.isGenerating('session-C')).toBe(false)
   })
 })

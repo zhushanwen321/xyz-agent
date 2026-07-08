@@ -52,6 +52,7 @@ export class MessageDispatcher {
   }
 
   /**
+  /**
    * sendMessage / sendSubagentMessage 共享骨架。
    * @param sessionId   会话 id
    * @param hookContent hook 审核的文本(用户原文,不含 marker)
@@ -61,7 +62,7 @@ export class MessageDispatcher {
     sessionId: string,
     hookContent: string,
     buildPrompt: () => string,
-  ): Promise<{ blocked: boolean }> {
+  ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
     if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) {
@@ -88,6 +89,15 @@ export class MessageDispatcher {
     // ── 标记活跃 + 生成中 ──
     const activeSession = this.svc.getSessionByClient(client)
     if (activeSession) {
+      // [D-009 预检] busy 时拒绝（send.rejected 广播，不调 pi.prompt）
+      if (activeSession.isGenerating) {
+        console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
+        this.broker.broadcast({
+          type: 'send.rejected',
+          payload: { sessionId, reason: 'busy', message: 'Agent 正在处理' },
+        })
+        return { blocked: true, rejected: true }
+      }
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
       this.workspaceService.record(activeSession.cwd)

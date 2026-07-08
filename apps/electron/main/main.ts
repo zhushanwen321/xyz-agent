@@ -65,6 +65,14 @@ import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
+import { fixPathEnv } from './supervisor/shell-env.js'
+
+// ── PATH 修复（GUI 启动时补全用户级 bin 目录）──────────────────────
+// macOS LaunchServices 给 GUI 进程的 PATH 是最小值（/usr/bin:/bin:...），
+// 缺 ~/.local/bin、~/.cargo/bin、/opt/homebrew/bin 等。此处从登录 shell 读取
+// 完整 PATH 补全，后续 buildSafeEnv 自然传递到 pi，pi 的 bash 工具才能找到 uv 等用户 CLI。
+// 必须在 buildSafeEnv / spawn 之前执行。
+fixPathEnv()
 
 // ── EPIPE 兜底 ───────────────────────────────────────────────────
 // concurrently/终端关闭后 pipe 断开，console 写入触发 uncaught exception

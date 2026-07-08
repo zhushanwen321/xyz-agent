@@ -201,8 +201,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
   async forkSession(srcSessionId: string, fromPiEntryId: string, includeFrom: boolean, label?: string): Promise<SessionSummary> { return this.lifecycle.forkSession(srcSessionId, fromPiEntryId, includeFrom, label) }
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }> {
+  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
+  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }

@@ -20,6 +20,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useSessionStore } from '@/stores/session'
 import { file as fileApi, git as gitApi } from '@/api'
 import { detectFileKind, type FileKind } from '@/composables/logic/file-type'
+import { parseDiff } from '@/composables/logic/parseDiff'
 
 /** 预览加载态 */
 export type PreviewStatus = 'idle' | 'loading' | 'content' | 'error'
@@ -86,13 +87,29 @@ export function useDetailPane(sessionId: Ref<string | null>) {
    * - 失败 → status='error'（AC-6.4/T6.4）
    *
    * 调用方负责定 viewMode 并设 status='loading'，再委托 loadContent 取数据。
+   * @param autoFallback diff 空 patch 时是否自动降级 preview：openPreview 传 true（自动加载
+   *   时空 diff 无信息量，改显文件内容）；toggleView 传 false（用户主动选 Diff，尊重选择显空态）。
    */
-  async function loadContent(sid: string, path: string, mode: DetailViewMode): Promise<void> {
+  async function loadContent(
+    sid: string,
+    path: string,
+    mode: DetailViewMode,
+    autoFallback = false,
+  ): Promise<void> {
     try {
       if (mode === 'diff') {
         const result = await gitApi.getDiff(sid, path)
         state.value.binary = result.binary
         state.value.content = result.patch
+        // diff 无 hunk 且非二进制 → 自动降级 preview：untracked 文件 git diff 必空，
+        // 此时展示「无差异内容」空态无信息量，改显文件内容更实用。
+        // 仅 openPreview（autoFallback=true）降级；toggleView 传 false，尊重用户主动选择 Diff。
+        if (autoFallback && !result.binary && parseDiff(result.patch).hunks.length === 0) {
+          state.value.viewMode = 'preview'
+          const fileResult = await fileApi.read(path, sid)
+          state.value.content = fileResult.content
+          state.value.truncated = fileResult.truncated
+        }
       } else {
         const result = await fileApi.read(path, sid)
         state.value.content = result.content
@@ -116,7 +133,7 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     // 文件渲染类别（preview 模式渲染器选择依据；diff 模式统一走 DiffView）
     state.value.kind = detectFileKind(path)
 
-    await loadContent(sid, path, mode)
+    await loadContent(sid, path, mode, true)
   }
 
   /**

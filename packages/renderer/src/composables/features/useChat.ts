@@ -38,9 +38,17 @@ function ensureStreamSubscription(
 ): void {
   if (streamSubscriptions.has(sid)) return
   const unsub = chatApi.streamSubscribe(sid, (msg) => {
+    // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
+    if (msg.type === 'send.rejected') {
+      const payload = msg.payload as { sessionId: string; reason: string; message: string }
+      chat.clearPendingSend(sid)
+      const { error } = useToast()
+      error(payload.message ?? 'Agent 正在处理')
+      return
+    }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。
     // applyMessageEvent 内部经 effect 注册表执行该 type 的全部副作用（chunk 状态更新
-    // + setStreaming flag），useChat 不再自己 switch message.*。message.* 处理完即 return，
+    // + finalizeSession 收口），useChat 不再自己 switch message.*。message.* 处理完即 return，
     // 下方 session.* 分支仅处理跨 store 事件（compacting/renamed 等）。
     if (msg.type.startsWith('message.')) {
       chat.applyMessageEvent(sid, msg)
@@ -114,15 +122,21 @@ export function useChat() {
     const sid = session.activeId
     if (!sid) return
     const trimmed = text.trim()
-    if (!trimmed || chat.isActive(sid)) return
+    if (!trimmed) return
+
+    // [B 策略 D-001] busy 时自动转 steer（追加上下文，不打断当前回合）
+    if (chat.isActive(sid)) {
+      await steer(trimmed)
+      return
+    }
 
     chat.appendUser(sid, trimmed)
     ensureStreamSubscription(sid, chat, session)
-    chat.setDispatching(sid)
+    chat.addPendingSend(sid)
     try {
       await chatApi.send(sid, trimmed)
     } catch (e) {
-      chat.setDispatching(null)
+      chat.clearPendingSend(sid)
       throw e
     }
   }
@@ -189,13 +203,13 @@ export function useChat() {
   async function abort(): Promise<void> {
     const sid = session.activeId
     if (!sid) return
-    chat.setDispatching(null)
+    // [D-008] 乐观清 pendingSend（即便 pi 没真正停也无害）
+    chat.clearPendingSend(sid)
     try {
       await chatApi.abort(sid)
     } catch (e) {
       // abort 失败不重抛——用户已表达「停止」意图，UI 不应因 abort RPC 失败而卡住。
-      // dispatching 已清（乐观），streaming 态若残留由后续 message.complete 兜底。
-      // 给用户 toast 反馈（而非静默吞掉），满足 taste/no-silent-catch 的"反馈"要求。
+      // pendingSend 已清（乐观），实体收口靠 runtime 广播 message.complete{aborted} 兑底。
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
       error(`停止失败：${msg}`)
@@ -238,11 +252,11 @@ export function useChat() {
     chat.truncateFrom(sessionId, userMessageId, true)
     chat.appendUser(sessionId, trimmed)
     ensureStreamSubscription(sessionId, chat, session)
-    chat.setDispatching(sessionId)
+    chat.addPendingSend(sessionId)
     try {
       await chatApi.send(sessionId, trimmed)
     } catch (e) {
-      chat.setDispatching(null)
+      chat.clearPendingSend(sessionId)
       throw e
     }
   }

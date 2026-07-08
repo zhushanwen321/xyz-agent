@@ -166,14 +166,14 @@ export function useConnection() {
     removeRuntimeRestartingListener = onRuntimeRestarting(() => {
       setRestarting()
       pending.rejectAll(new Error('Runtime 正在重启'))
-      useChatStore().resetActive()
+      useChatStore().finalizeAllStreaming('restart')
     })
 
     // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
     removeRuntimeFailedListener = onRuntimeFailed(() => {
       setFailed()
       pending.rejectAll(new Error('Runtime 不可用'))
-      useChatStore().resetActive()
+      useChatStore().finalizeAllStreaming('disconnect')
     })
 
     // 监听 WS 连接状态变化：connected → 断开时清理 pending（覆盖 runtime 未崩溃但 WS 断连的场景，

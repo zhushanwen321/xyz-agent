@@ -296,6 +296,47 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(html).not.toContain('md-filepath')
     expect(html).toContain('<code>')
   })
+
+  // ── 绝对路径 / 家目录路径识别（FILEPATH_RE 前缀 (?:~\/|\/)? 支持）──
+  // 回归防护：修复前以 / 开头的绝对路径，markdown-it 逐 pos 遍历时 filepath rule
+  // 在路径起点匹配失败，等 pos 推进到路径中间的 _ 等 punctuation 时后半段才被误识别。
+
+  it('U13: 绝对路径整段识别为链接（不截断到后半段）', async () => {
+    const html = await freshRender('/var/folders/3p/d4mx1j_j5s7bn3_03x48kpkw0000gn/T/handoff-portfolio-service-dev.md\n')
+    expect(html).toContain('class="md-filepath"')
+    // 关键断言：整段（含 /var 前缀）在链接内，前缀不以纯文本泄漏
+    expect(html).toContain('>/var/folders/3p/d4mx1j_j5s7bn3_03x48kpkw0000gn/T/handoff-portfolio-service-dev.md<')
+    // data-path 解码后含完整绝对路径
+    const m = html.match(/data-path="([^"]+)"/)
+    expect(m).not.toBeNull()
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(m![1]), (c) => c.charCodeAt(0)))
+    expect(decoded).toBe('/var/folders/3p/d4mx1j_j5s7bn3_03x48kpkw0000gn/T/handoff-portfolio-service-dev.md')
+  })
+
+  it('U13b: 句中绝对路径整段识别（前导空格边界）', async () => {
+    const html = await freshRender('文件在 /absolute/path/to/file.ts 这里\n')
+    expect(html).toContain('class="md-filepath"')
+    expect(html).toContain('>/absolute/path/to/file.ts<')
+  })
+
+  it('U13c: 家目录路径（~/...）整段识别，~ 不被截断', async () => {
+    const html = await freshRender('编辑 ~/Code/project/src/main.ts 现在\n')
+    expect(html).toContain('class="md-filepath"')
+    expect(html).toContain('>~/Code/project/src/main.ts<')
+  })
+
+  it('U13d: 无扩展名的绝对路径不识别（避免 /usr/bin、/var/log 误报）', async () => {
+    for (const text of ['命令在 /usr/bin 下', '日志在 /var/log', '日期 2026/07/08']) {
+      const html = await freshRender(text + '\n')
+      expect(html).not.toContain('md-filepath')
+    }
+  })
+
+  it('U13e: 反引号内绝对路径也链接化（code_inline 二次识别覆盖）', async () => {
+    const html = await freshRender('见 `/abs/path/config.json`\n')
+    expect(html).toContain('md-filepath')
+    expect(html).toContain('>/abs/path/config.json<')
+  })
 })
 
 describe('renderMarkdownSegments（text/mermaid 拆分）', () => {
