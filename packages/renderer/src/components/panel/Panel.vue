@@ -153,7 +153,7 @@ const messageCount = computed(() =>
   props.sessionId ? chat.getMessages(props.sessionId).length : 0,
 )
 /** 生成态优先：本 Panel 的 session 正在流式时不渲染 landing（AC-2.8）。
- *  [HISTORICAL] 原用全局 chat.isStreaming，A 会话流式时点新建切到空 session（sessionId=null），
+ *  [HISTORICAL] 原用全局 chat.isGenerating，A 会话流式时点新建切到空 session（sessionId=null），
  *  空 session 的 Landing 被 !isGenerating 守卫误伤 → 落到分支兜底空态（「选择左侧会话开始」），
  *  new-task 渲染撕裂。改为 per-session：只有本 Panel 绑定的 session 在流式才算 generating。
  *  landing 态 sessionId=null → streamingSessionId 恒不等 → isGenerating=false → Landing 正常渲染。 */

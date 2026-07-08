@@ -5,7 +5,7 @@
       S1 空 → S2 输入中 → S5 发送中（spinner）→ S6 流式中（stop + steer/followUp）
     DEFERRED：
       S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
-    steer/followUp：isStreaming 时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
+    steer/followUp：活跃态（isGenerating/派发空窗期）时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
   -->
   <div class="composer" :class="props.variant === 'landing' ? 'mx-auto w-full max-w-[720px]' : 'mx-3.5 mb-3.5'">
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
@@ -128,8 +128,8 @@ const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
 
 /**
- * 合并活跃态：流式中（isStreaming）或派发空窗期（dispatchingSessionId 命中当前 session）。
- * 替代单一 isStreaming 驱动停止按钮/steer guard/键盘路由，消除「ack 到达但 message_start 未到」
+ * 合并活跃态：流式中（isGenerating）或派发空窗期（dispatchingSessionId 命中当前 session）。
+ * 替代单一 isGenerating 驱动停止按钮/steer guard/键盘路由，消除「ack 到达但 message_start 未到」
  * 的空窗期——点发送后立刻显示停止按钮、steer 可用，message_start 到达无缝切交流式态。
  */
 const isActive = computed(() => {

@@ -115,8 +115,8 @@ export function useChat() {
    * 流式状态由会话级订阅的事件驱动（message_start→true，complete/error→false），
    * 不依赖 send() 的 resolve 时机——避免 ack 早于首个 chunk 导致订阅被提前拆除。
    *
-   * dispatching 态在 send 前置位（填 isStreaming 空窗期，让 Composer 停止按钮/steer 立即可用），
-   * message_start 到达时 setStreaming 自动清；失败也清（catch）。
+   * dispatching 态在 send 前置位（填 isGenerating 空窗期，让 Composer 停止按钮/steer 立即可用），
+   * message_start 到达时 clearPendingSend 自动清；失败也清（catch）。
    */
   async function send(text: string): Promise<void> {
     const sid = session.activeId
@@ -136,13 +136,19 @@ export function useChat() {
     try {
       await chatApi.send(sid, trimmed)
     } catch (e) {
+      // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
+      // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
+      // Turn.vue submitEdit（调 editAndResend，无 try/catch）也不再产生 unhandled rejection。
+      // throw 只会变 unhandled rejection，错误已通过 toast 消化。
       chat.clearPendingSend(sid)
-      throw e
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(`消息发送失败：${msg}`)
     }
   }
 
   /**
-   * 追加 steer：AI 执行中（isStreaming）时，把补充消息排入 steering 队列，
+   * 追加 steer：AI 执行中（isGenerating）时，把补充消息排入 steering 队列，
    * 当前回合工具调用结束后、下次 LLM 调用前投递，不打断当前回合。
    */
   async function steer(text: string): Promise<void> {
@@ -197,7 +203,7 @@ export function useChat() {
   /**
    * 中断当前回合（G-025 流转 DEFERRED：方法存在，实际中断留联调）。
    * [W3/W4] abort 乐观清 dispatching——abort 语义就是「结束当前活跃态」，即便 pi 没真正停也无害。
-   * 正常成功路径由 MessageDispatcher.abort 广播的 message.complete 驱动 setStreaming(false) 收口；
+   * 正常成功路径由 MessageDispatcher.abort 广播的 message.complete 驱动 finalizeSession 收口；
    * 失败路径（pi 死/getClientOrThrow 抛 handler_error → abort reject）若无此 catch，dispatching 永挂。
    */
   async function abort(): Promise<void> {
@@ -256,8 +262,12 @@ export function useChat() {
     try {
       await chatApi.send(sessionId, trimmed)
     } catch (e) {
+      // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
+      // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。
       chat.clearPendingSend(sessionId)
-      throw e
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(`消息发送失败：${msg}`)
     }
   }
 

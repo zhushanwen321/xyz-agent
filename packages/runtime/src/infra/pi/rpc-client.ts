@@ -97,7 +97,18 @@ export class RpcClient implements IPiEngine {
     // 短期方案：xyz-agent 的 RPC 模式无交互 UI，pi 原生信任流程在 hasUI=false 时默认拒绝，
     // 导致 <cwd>/.pi/ 下的 skill/extension 被跳过。--approve 绕过信任确认，代价是所有
     // 项目自动信任（失去 pi 信任机制对恶意 .pi/extensions 的安全防护）。
-    // TODO(long-term): 实现前端 Project Trust UI，用户确认后写 trust.json 并重启 pi，移除此处的 --approve。
+    //
+    // 三个 flag 的交互（见下方 args 拼接，架构约定 #11：extension 通过 --extension CLI 参数
+    // 在 pi 启动时注入路径，pi 原生 loader 加载）：
+    // - --no-extensions：抑制 pi 自动发现/加载的全局扩展（内置/全局扩展目录），不影响显式注入的扩展。
+    // - --extension <path>：显式注入 xyz-agent 管理的扩展路径（本文件下方 extensionPaths 循环），
+    //   走独立参数，不受 --no-extensions 影响；扩展数据隔离在 ~/.xyz-agent/ 数据目录。
+    // - --approve：绕过项目级 .pi/skills 和 .pi/extensions 的信任确认。
+    // 因此 xyz-agent 的 extension 走 --extension 显式注入 + ~/.xyz-agent/ 数据目录隔离，
+    // 不依赖 --approve 加载项目级 .pi/extensions；--approve 实际主要为信任项目级 .pi/skills
+    // （skills 加载见 pi 的 skills.ts）。
+    // TODO(follow-up): 实现 Project Trust UI，让用户逐项目确认信任，移除全局 --approve。
+    // 当前为产品决策（local-first 工具，所有项目可信），非临时 hack。
     const args = ['--mode', 'rpc', '--no-extensions', '--approve']
     if (model) args.push('--model', model)
     if (this.options.skillPaths?.length) {
@@ -291,15 +302,15 @@ export class RpcClient implements IPiEngine {
     })
   }
 
-  /**
-   * Register an event listener for non-response messages from pi.
-   * Returns an unsubscribe function.
-   */
   /** Register a callback for when the pi process exits unexpectedly. stderr 为 pi 进程尾部输出。 */
   onExit(callback: (code: number | null, stderr: string) => void): void {
     this.exitCallback = callback
   }
 
+  /**
+   * Register an event listener for non-response messages from pi.
+   * Returns an unsubscribe function.
+   */
   onEvent(listener: PiEventListener): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }

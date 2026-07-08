@@ -70,7 +70,7 @@
         </Button>
         <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" :session-id="sessionId" />
       </div>
-      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示。
+      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。
            pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
       <div
         v-if="!isEditingThisUser && !isPendingUser"
@@ -289,7 +289,7 @@ const slashChip = computed(() => {
 })
 
 /**
- * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isStreaming。
+ * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isGenerating。
  * standby panel 的 Turn 不会被 active panel 的流式态误伤；编辑/fork 仅在本 session 活跃时禁用。
  */
 const isSessionActive = computed(() => chat.isActive(props.sessionId))

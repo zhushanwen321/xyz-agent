@@ -6,21 +6,22 @@
  * ServerMessage 流 switch 两次。新增 message.* type 必须两处同步改，易漏。
  *
  * 归一：本文件把「每个 message.* type 触发的全部副作用」集中到单一 handler：
- * (a) chunk 状态更新（原 applyChunk 逻辑）+ (b) lifecycle flag 翻转（原 useChat
- * setStreaming）。useChat 收到 message.* 只调 store.applyMessageEvent（单一入口），
+ * (a) chunk 状态更新（原 applyChunk 逻辑）+ (b) 终态收口（finalizeSession，替代原 useChat
+ * setStreaming 的 lifecycle flag 翻转）。useChat 收到 message.* 只调 store.applyMessageEvent（单一入口），
  * 不再自己 switch message.*。session.*（compacting/compacted/renamed/state_changed/
  * thinkingLevelSet）涉及跨 store（sessionStore.updateLabel/updateSessionState），
  * 保留在 useChat。
  *
  * 行为等价性：
- * - 状态更新顺序与原 applyChunk 逐 case 一致（handler 内先更新 chunk 状态，后翻 flag，
+ * - 状态更新顺序与原 applyChunk 逐 case 一致（handler 内先更新 chunk 状态，后收口，
  *   对应原 useChat 先 appendAssistantChunk 再 switch 翻 flag 的顺序）。
- * - flag 翻转时机：message_start→true、complete/error/stream_error→false，与原 useChat
- *   switch 完全一致。
+ * - 收口时机：message_start 挂载超时兜底 timer、complete/error/stream_error 调
+ *   finalizeSession 收口（status 由 streaming 派生 isGenerating，非手动 flag）。
  *
  * 设计：dispatchMessageEvent(ctx, sessionId, msg) 查 messageEffects 表执行 handler；
  * 非 message.* 或未注册 type 直接 no-op。MessageEffectContext 含 store refs
- * 上下文 + setStreaming 回调（由 store 注入，翻转 isStreaming）。
+ * 上下文 + finalizeSession/clearPendingSend/armStreamingTimer 回调（由 store 注入，
+ * 完成收口与超时兜底）。
  */
 import type {
   ChangeSetStatus,
@@ -101,6 +102,8 @@ export interface MessageEffectContext {
   finalizeSession: (sessionId: string, reason: FinalizeReason, errorText?: string) => void
   /** message_start 清空窗（替代 setStreaming 隐式清 dispatching）。 */
   clearPendingSend: (sessionId: string) => void
+  /** message_start 挂载 streaming 超时兜底 timer（防 complete 永不到的 pi 静默卡死）。 */
+  armStreamingTimer: (sessionId: string) => void
   /** queue_update 投递信号 */
   markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
 }
@@ -144,9 +147,9 @@ function isLastAssistantStreaming(
 }
 
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
-  // ── 主流式生命周期（chunk 创建/收口 + isStreaming flag 翻转）──
+  // ── 主流式生命周期（chunk 创建/收口 + isGenerating 派生）──
   'message.message_start': (ctx, sid, payload) => {
-    const { messages, queueStates, clearPendingSend } = ctx
+    const { messages, queueStates, clearPendingSend, armStreamingTimer } = ctx
     // G-023: message_start 到达清除 QueueBubble（新回合已启动，QueueBubble 不再需要显示）。
     // 只清 queueStates 显示态——pending→complete 的转换完全由 queue_update 的 countDrained
     // 精确驱动（pi 保证 queue_update(drain) 先于 message_start 到达，见 agent-session.ts:515-536
@@ -169,6 +172,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     ])
     // 空窗结束：clearPendingSend（接管 dispatching 语义）
     clearPendingSend(sid)
+    // 挂载 streaming 超时兜底 timer：防 message.complete 永不到的 pi 静默卡死。
+    armStreamingTimer(sid)
   },
 
   'message.complete': (ctx, sid, payload) => {
@@ -176,44 +181,30 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const prev = messages.value.get(sid) ?? []
     const stopReason = readString(payload, 'stopReason')
     const isErrorStop = stopReason === 'error'
-    // 收口兜底：流结束时仍 status:'running' 的 toolCall 说明未收到 tool_call_end
-    // （进程崩溃/WS 断连/abort/event-adapter 乱序丢消息）。强收口避免 Block.vue
-    // 永久锁定展开（isRunning → toolExpanded 恒 true）。
-    // - error stopReason → 收口为 error（保留失败语义）
-    // - 其它 → 收口为 end_not_received（诚实态，区别于假装成功的 completed）
-    // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
-    const finalizeToolCalls = (toolCalls: ToolCall[] | undefined): ToolCall[] =>
-      (toolCalls ?? []).map((c) =>
-        c.status === 'running'
-          ? {
-            ...c,
-            status: (isErrorStop ? 'error' : 'end_not_received') as ToolCall['status'],
-            endTime: c.endTime ?? Date.now(),
-          }
-          : c,
-      )
     // [HISTORICAL] 收口**所有** status==='streaming' 的 assistant 气泡，不只用
     // findLastAssistantIndex 收最后一条。一个 turn 可能产生多个 assistant 气泡
     // （工具调用气泡 + 文字总结气泡）：只转最后一条会让前面的 toolCall 气泡永远 streaming，
     // 内部 status 虽视觉无感（turn 整体收口），但状态机不一致且影响后续定位逻辑。
     // usage（W05-A turn 级聚合）只回填最后一条 assistant——回填到非末 assistant 语义错位。
+    // [W4] toolCall 终态收口收敛到 finalizeSession 统一处（原局部 finalizeToolCalls 已删除，
+    // 避免两套映射漂移）。此处只改 message status + 回填 usage，toolCalls 保持原样传入；
+    // 紧接着的 finalizeSession(sid, reason) 会把 running toolCall 按 reason 统一收口。
     const lastAssistantIdx = findLastAssistantIndex(prev)
     let changed = false
     const next = prev.map((m, i) => {
       if (m.role !== 'assistant' || m.status !== 'streaming') return m
       changed = true
-      const finalizedToolCalls = finalizeToolCalls(m.toolCalls)
       // 仅最后一条 assistant 回填 usage（turn 级聚合，回填非末会语义错位）
       const usage = i === lastAssistantIdx ? readUsage(payload) : undefined
       return {
         ...m,
         status: isErrorStop ? 'error' : 'complete',
-        toolCalls: finalizedToolCalls,
         ...(usage ? { usage } : {}),
       } satisfies Message
     })
     if (changed) messages.value.set(sid, next)
     // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
+    // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
     const reason: FinalizeReason = isErrorStop ? 'error' : (stopReason === 'aborted' ? 'aborted' : 'normal')
     finalizeSession(sid, reason)
   },

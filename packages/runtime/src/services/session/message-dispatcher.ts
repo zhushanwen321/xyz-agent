@@ -52,7 +52,6 @@ export class MessageDispatcher {
   }
 
   /**
-  /**
    * sendMessage / sendSubagentMessage 共享骨架。
    * @param sessionId   会话 id
    * @param hookContent hook 审核的文本(用户原文,不含 marker)

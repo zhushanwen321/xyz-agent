@@ -86,12 +86,10 @@ export const useChatStore = defineStore('chat', () => {
   const STREAMING_TIMEOUT_MS = readStreamingTimeoutMs()
   /** pendingSend 空窗期 timer 阈值（D-015/F4，接管 dispatchingTimer 30s 语义） */
   const PENDING_SEND_TIMEOUT_MS = 30_000
-  /** streaming 超时 timer（per-session 跟踪） */
-  let streamingTimer: ReturnType<typeof setTimeout> | null = null
-  let streamingTimerSid: string | null = null
-  /** pendingSend 空窗期 timer */
-  let pendingSendTimer: ReturnType<typeof setTimeout> | null = null
-  let pendingSendTimerSid: string | null = null
+  /** streaming 超时 timer（per-session 跟踪，按 sessionId 隔离） */
+  const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** pendingSend 空窗期 timer（按 sessionId 隔离） */
+  const pendingSendTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   // ── 派生态（computed scan，D-005，零手动维护）──
 
@@ -274,6 +272,7 @@ export const useChatStore = defineStore('chat', () => {
         markChangeSetsSuperseded,
         finalizeSession,
         clearPendingSend,
+        armStreamingTimer,
         markPendingDelivered,
       },
       sessionId,
@@ -295,14 +294,12 @@ export const useChatStore = defineStore('chat', () => {
     const prev = messages.value.get(sessionId)
     if (prev) {
       const next = prev.map((m) => {
-        if (m.status !== 'streaming') return m
-        // reason → message 终态映射
-        const isErrorReason = reason === 'error' || reason === 'stream_error' || reason === 'timeout' || reason === 'disconnect' || reason === 'restart'
-        const finalStatus = isErrorReason ? 'error' : 'complete'
-        const finalContent = errorText && m.role === 'assistant'
-          ? (m.content ? `${m.content}\n\n${errorText}` : errorText)
-          : m.content
-        // toolCall 级联终态（D-011 诚实态）
+        const isStreaming = m.status === 'streaming'
+        // toolCall 统一收口（无论 message 是否还 streaming；[W4] 收敛到此处单一路径，
+        // 避免 message.complete 局部 finalizeToolCalls 与此两套映射漂移）。
+        // - error/stream_error → toolCall 'error'；其它非 normal/aborted → 'end_not_received'（设 endTime）；
+        //   normal/aborted 不设 endTime（与原逻辑一致）。
+        // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
         const toolCalls = m.toolCalls?.map((tc): typeof tc => {
           if (tc.status !== 'running') return tc
           const tcIsError = reason === 'error' || reason === 'stream_error'
@@ -312,13 +309,24 @@ export const useChatStore = defineStore('chat', () => {
             ...(reason !== 'normal' && reason !== 'aborted' ? { endTime: Date.now() } : {}),
           }
         })
+        if (!isStreaming) {
+          // message 已终态（如 message.complete handler 已改 status），只补 toolCall 收口。
+          // 无 running toolCall 则原样返回（保持引用稳定，避免无谓 re-render）。
+          return m.toolCalls?.some((tc) => tc.status === 'running') ? { ...m, toolCalls } : m
+        }
+        // message 仍 streaming → 转终态 + 收口 toolCall
+        const isErrorReason = reason === 'error' || reason === 'stream_error' || reason === 'timeout' || reason === 'disconnect' || reason === 'restart'
+        const finalStatus = isErrorReason ? 'error' : 'complete'
+        const finalContent = errorText && m.role === 'assistant'
+          ? (m.content ? `${m.content}\n\n${errorText}` : errorText)
+          : m.content
         return { ...m, status: finalStatus, content: finalContent, toolCalls } satisfies Message
       })
       messages.value.set(sessionId, next)
     }
     // 清 pendingSend + timer
     clearPendingSend(sessionId)
-    clearStreamingTimer()
+    clearStreamingTimer(sessionId)
     console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
   }
 
@@ -337,11 +345,11 @@ export const useChatStore = defineStore('chat', () => {
   /** send 前置位（填空窗）。不可变 Set add（保证响应式）。同时挂 pendingSendTimer（D-015）。 */
   function addPendingSend(sessionId: string): void {
     pendingSend.value = new Set(pendingSend.value).add(sessionId)
-    clearPendingSendTimer()
-    pendingSendTimerSid = sessionId
-    pendingSendTimer = setTimeout(() => {
-      if (pendingSendTimerSid) finalizeSession(pendingSendTimerSid, 'timeout')
-    }, PENDING_SEND_TIMEOUT_MS)
+    clearPendingSendTimer(sessionId)
+    pendingSendTimers.set(sessionId, setTimeout(() => {
+      finalizeSession(sessionId, 'timeout')
+      pendingSendTimers.delete(sessionId)
+    }, PENDING_SEND_TIMEOUT_MS))
   }
 
   /** message_start（正常）/ finalizeSession（异常）/ abort（乐观）/ send.rejected（回滚）调。幂等。 */
@@ -351,35 +359,35 @@ export const useChatStore = defineStore('chat', () => {
       next.delete(sessionId)
       pendingSend.value = next
     }
-    clearPendingSendTimer()
+    clearPendingSendTimer(sessionId)
   }
 
-  function clearPendingSendTimer(): void {
-    if (pendingSendTimer !== null) {
-      clearTimeout(pendingSendTimer)
-      pendingSendTimer = null
+  function clearPendingSendTimer(sessionId: string): void {
+    const timer = pendingSendTimers.get(sessionId)
+    if (timer) {
+      clearTimeout(timer)
+      pendingSendTimers.delete(sessionId)
     }
-    pendingSendTimerSid = null
   }
 
   // ── streaming timer（超时兜底）──
 
   /** message_start 挂载超时兜底（防 message.complete 永不到）。callback 调 finalizeSession('timeout')。 */
   function armStreamingTimer(sessionId: string): void {
-    clearStreamingTimer()
-    streamingTimerSid = sessionId
-    streamingTimer = setTimeout(() => {
-      if (streamingTimerSid) finalizeSession(streamingTimerSid, 'timeout')
-    }, STREAMING_TIMEOUT_MS)
+    clearStreamingTimer(sessionId)
+    streamingTimers.set(sessionId, setTimeout(() => {
+      finalizeSession(sessionId, 'timeout')
+      streamingTimers.delete(sessionId)
+    }, STREAMING_TIMEOUT_MS))
   }
 
   /** 取消超时 timer（finalizeSession / store dispose 调） */
-  function clearStreamingTimer(): void {
-    if (streamingTimer !== null) {
-      clearTimeout(streamingTimer)
-      streamingTimer = null
+  function clearStreamingTimer(sessionId: string): void {
+    const timer = streamingTimers.get(sessionId)
+    if (timer) {
+      clearTimeout(timer)
+      streamingTimers.delete(sessionId)
     }
-    streamingTimerSid = null
   }
 
   /**
@@ -399,15 +407,17 @@ export const useChatStore = defineStore('chat', () => {
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
       ])
       clearPendingSend(sessionId)
-      clearStreamingTimer()
+      clearStreamingTimer(sessionId)
     }
   }
 
   // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
   // 避免回调操作已废弃的 store 实例 ref + warn 噪音。
   onScopeDispose(() => {
-    clearPendingSendTimer()
-    clearStreamingTimer()
+    for (const timer of pendingSendTimers.values()) clearTimeout(timer)
+    pendingSendTimers.clear()
+    for (const timer of streamingTimers.values()) clearTimeout(timer)
+    streamingTimers.clear()
   })
 
   /**
