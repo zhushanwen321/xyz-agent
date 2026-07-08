@@ -65,7 +65,7 @@ design-system.md   ← 原语：值如何拼成可复用部件（本文件）
 
 ## 8. 加载（Loading）
 
-首屏内容区用骨架屏（shimmer）；按钮/异步动作用行内 spinner（14px accent）；流式内容用光标脉冲，不用 spinner。
+首屏内容区用骨架屏（shimmer）；按钮/异步动作用行内 spinner（14px accent）；流式态用 spinner（turn-meta sticky header，显眼的状态指示）+ trace 末尾光标脉冲（内容增长位置指示），两者配合。
 
 ## 9. 文案语气
 
