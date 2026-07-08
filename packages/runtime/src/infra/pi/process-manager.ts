@@ -120,7 +120,7 @@ interface ManagedProcess {
 export class ProcessManager implements IProcessManager {
   private processes = new Map<string, ManagedProcess>()
   private clientToId = new Map<RpcClient, string>()
-  private exitCallbacks = new Set<(sessionId: string, code: number | null) => void>()
+  private exitCallbacks = new Set<(sessionId: string, code: number | null, stderr: string) => void>()
   private piPath: string | null = null
   private piPathPromise: Promise<string> | null = null
   private piVersionCache: string | null = null
@@ -204,14 +204,14 @@ export class ProcessManager implements IProcessManager {
     }
 
     // Listen for unexpected exits to notify upper layer
-    client.onExit((code) => {
+    client.onExit((code, stderr) => {
       // If processes no longer has this sessionId, it was destroyed intentionally
       if (!this.processes.has(sessionId)) return
       console.warn(`[process-manager] session ${sessionId} process exited unexpectedly (code: ${code})`)
       this.processes.delete(sessionId)
       this.clientToId.delete(client)
       for (const cb of this.exitCallbacks) {
-        cb(sessionId, code)
+        cb(sessionId, code, stderr)
       }
     })
 
@@ -284,7 +284,7 @@ export class ProcessManager implements IProcessManager {
   }
 
   /** Register a callback for when a session's process exits unexpectedly. Returns unsubscribe function. */
-  onSessionExit(callback: (sessionId: string, code: number | null) => void): () => void {
+  onSessionExit(callback: (sessionId: string, code: number | null, stderr: string) => void): () => void {
     this.exitCallbacks.add(callback)
     return () => { this.exitCallbacks.delete(callback) }
   }

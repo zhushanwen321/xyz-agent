@@ -191,3 +191,77 @@ describe('chat store message.complete 多 assistant 气泡收口', () => {
     expect(after[1].status).toBe('error')
   })
 })
+
+describe('chat store markSessionError —— session 级错误统一入口', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('无 streaming assistant 时：新建独立 error 消息', () => {
+    const store = useChatStore()
+    const sid = 'me-1'
+    store.appendUser(sid, 'hi')
+    store.markSessionError(sid, '进程退出')
+
+    const msgs = store.getMessages(sid)
+    expect(msgs).toHaveLength(2) // user + 新建 error
+    expect(msgs[1].role).toBe('assistant')
+    expect(msgs[1].status).toBe('error')
+    expect(msgs[1].content).toBe('进程退出')
+  })
+
+  it('有 streaming assistant 时：并入该消息并转 error 态（不新建气泡）', () => {
+    const store = useChatStore()
+    const sid = 'me-2'
+    // 建一条 streaming assistant
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a-me' },
+    })
+    store.applyMessageEvent(sid, {
+      type: 'message.text_delta',
+      payload: { sessionId: sid, delta: '流中内容' },
+    })
+    expect(store.getMessages(sid)[0].status).toBe('streaming')
+
+    store.markSessionError(sid, '进程崩溃')
+
+    const msgs = store.getMessages(sid)
+    expect(msgs).toHaveLength(1) // 不新建气泡，原消息转态
+    expect(msgs[0].id).toBe('a-me')
+    expect(msgs[0].status).toBe('error')
+    expect(msgs[0].content).toContain('流中内容') // 保留已生成内容
+    expect(msgs[0].content).toContain('进程崩溃') // 并入 errorText
+  })
+
+  it('finalizeSession 收口所有活跃态：streaming entity + pendingSend', () => {
+    const store = useChatStore()
+    const sid = 'me-3'
+
+    // 先设为 streaming + pendingSend 态（模拟流式中进程崩溃）
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a-me3' },
+    })
+    store.addPendingSend(sid)
+    expect(store.isGenerating(sid)).toBe(true)
+    expect(store.isActive(sid)).toBe(true)
+
+    store.markSessionError(sid, '崩溃')
+
+    // 关键：所有活跃态复位（规则 #3），避免 UI 卡「思考中」
+    expect(store.isGenerating(sid)).toBe(false)
+    expect(store.isActive(sid)).toBe(false)
+  })
+
+  it('空 messages 的 session：新建首条 error 消息', () => {
+    const store = useChatStore()
+    const sid = 'me-4'
+    // 进程在首条消息前就退出（如 extension 加载失败）
+    store.markSessionError(sid, 'extension 加载失败')
+
+    const msgs = store.getMessages(sid)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('assistant')
+    expect(msgs[0].status).toBe('error')
+    expect(msgs[0].content).toBe('extension 加载失败')
+  })
+})

@@ -3,10 +3,10 @@
  *
  * 覆盖：
  * - ensureStreamSubscription 幂等：首次 send 订阅一次，二次不重复订阅
- * - send 三守卫：无 active session / 空文本 / 已 streaming 时早退
- * - 事件驱动 setStreaming：
- *   message.message_start → isStreaming=true
- *   message.complete / message.error / message.stream_error → isStreaming=false
+ * - send 守卫：无 active session / 空文本早退；busy 时自动转 steer（B 策略）
+ * - 事件驱动派生态 isGenerating：
+ *   message.message_start → isGenerating=true（+ clearPendingSend）
+ *   message.complete / message.error / message.stream_error → isGenerating=false（finalizeSession）
  *   （stream_error 终态复位是规则 #3 关键分支）
  *
  * mock 策略：vi.hoisted 捕获 streamSubscribe 的 handler，测试向其注入 ServerMessage。
@@ -90,52 +90,52 @@ describe('useChat 流式状态机', () => {
     expect(apiMock.send).toHaveBeenCalledTimes(2)
   })
 
-  it('message.message_start → isStreaming=true', async () => {
+  it('message.message_start → isGenerating=true', async () => {
     const session = useSessionStore()
     session.activeId = 's-start'
     const chat = useChatStore()
     const { send } = useChat()
     await send('hi')
-    expect(chat.isStreaming).toBe(false)
+    expect(chat.isGenerating('s-start')).toBe(false)
     emit({ type: 'message.message_start', payload: { sessionId: 's-start', messageId: 'a1' } })
-    expect(chat.isStreaming).toBe(true)
+    expect(chat.isGenerating('s-start')).toBe(true)
   })
 
-  it('message.complete → isStreaming=false', async () => {
+  it('message.complete → isGenerating=false', async () => {
     const session = useSessionStore()
     session.activeId = 's-complete'
     const chat = useChatStore()
     const { send } = useChat()
     await send('hi')
-    emit({ type: 'message.message_start', payload: { sessionId: 's-complete' } })
-    expect(chat.isStreaming).toBe(true)
+    emit({ type: 'message.message_start', payload: { sessionId: 's-complete', messageId: 'a1' } })
+    expect(chat.isGenerating('s-complete')).toBe(true)
     emit({ type: 'message.complete', payload: { sessionId: 's-complete' } })
-    expect(chat.isStreaming).toBe(false)
+    expect(chat.isGenerating('s-complete')).toBe(false)
   })
 
-  it('message.error → isStreaming=false（规则 #3 终态复位）', async () => {
+  it('message.error → isGenerating=false（规则 #3 终态复位）', async () => {
     const session = useSessionStore()
     session.activeId = 's-error'
     const chat = useChatStore()
     const { send } = useChat()
     await send('hi')
-    emit({ type: 'message.message_start', payload: { sessionId: 's-error' } })
-    expect(chat.isStreaming).toBe(true)
+    emit({ type: 'message.message_start', payload: { sessionId: 's-error', messageId: 'a1' } })
+    expect(chat.isGenerating('s-error')).toBe(true)
     emit({ type: 'message.error', payload: { sessionId: 's-error', message: 'boom' } })
-    expect(chat.isStreaming).toBe(false)
+    expect(chat.isGenerating('s-error')).toBe(false)
   })
 
-  it('message.stream_error → isStreaming=false（stream_error 终态复位关键分支）', async () => {
+  it('message.stream_error → isGenerating=false（stream_error 终态复位关键分支）', async () => {
     const session = useSessionStore()
     session.activeId = 's-stream-err'
     const chat = useChatStore()
     const { send } = useChat()
     await send('hi')
-    emit({ type: 'message.message_start', payload: { sessionId: 's-stream-err' } })
-    expect(chat.isStreaming).toBe(true)
+    emit({ type: 'message.message_start', payload: { sessionId: 's-stream-err', messageId: 'a1' } })
+    expect(chat.isGenerating('s-stream-err')).toBe(true)
     // 若 pi 发了 message_update{error} 后不再发 agent_end，必须在此复位
     emit({ type: 'message.stream_error', payload: { sessionId: 's-stream-err', content: 'err' } })
-    expect(chat.isStreaming).toBe(false)
+    expect(chat.isGenerating('s-stream-err')).toBe(false)
   })
 
   it('send 守卫：无 active session 时早退（不订阅/不发送）', async () => {
@@ -155,77 +155,80 @@ describe('useChat 流式状态机', () => {
     expect(apiMock.send).not.toHaveBeenCalled()
   })
 
-  it('send 守卫：已 streaming 时早退（不重复发送）', async () => {
+  it('send busy 时转 steer（B 策略：不打断当前回合，不重复 send）', async () => {
     const session = useSessionStore()
     session.activeId = 's-busy'
     const chat = useChatStore()
     const { send } = useChat()
     await send('first')
-    emit({ type: 'message.message_start', payload: { sessionId: 's-busy' } })
-    expect(chat.isStreaming).toBe(true)
+    emit({ type: 'message.message_start', payload: { sessionId: 's-busy', messageId: 'a1' } })
+    expect(chat.isGenerating('s-busy')).toBe(true)
     await send('second')
-    expect(apiMock.send).toHaveBeenCalledTimes(1) // 仅首次发送
+    // B 策略：busy 时 send 自动转 steer（不重复 send）
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+    expect(apiMock.steer).toHaveBeenCalledTimes(1)
   })
 })
 
-describe('useChat dispatching 合并态（空窗期）', () => {
-  it('send 置 dispatchingSessionId → isActive 立即为 true（不等 message_start）', async () => {
+describe('useChat pendingSend 合并态（空窗期）', () => {
+  it('send 置 pendingSend → isActive 立即为 true（不等 message_start）', async () => {
     const session = useSessionStore()
     session.activeId = 's-dispatch'
     const chat = useChatStore()
     const { send } = useChat()
     // send 的 api.send 是异步的，但我们用 await 等它 resolve
     await send('hello')
-    // send resolve 后到 message_start 之前，dispatching 应保持（空窗期 isActive=true）
-    expect(chat.dispatchingSessionId).toBe('s-dispatch')
+    // send resolve 后到 message_start 之前，pendingSend 应保持（空窗期 isActive=true）
+    expect(chat.pendingSend.has('s-dispatch')).toBe(true)
     expect(chat.isActive('s-dispatch')).toBe(true)
-    expect(chat.isStreaming).toBe(false) // message_start 未到，isStreaming 仍 false
+    expect(chat.isGenerating('s-dispatch')).toBe(false) // message_start 未到
   })
 
-  it('message_start 到达 → 清 dispatching + 设 isStreaming（空窗期无缝切换）', async () => {
+  it('message_start 到达 → 清 pendingSend + 设 isGenerating（空窗期无缝切换）', async () => {
     const session = useSessionStore()
     session.activeId = 's-switch'
     const chat = useChatStore()
     const { send } = useChat()
     await send('hi')
-    expect(chat.dispatchingSessionId).toBe('s-switch')
+    expect(chat.pendingSend.has('s-switch')).toBe(true)
     emit({ type: 'message.message_start', payload: { sessionId: 's-switch', messageId: 'a1' } })
-    expect(chat.dispatchingSessionId).toBeNull()
-    expect(chat.isStreaming).toBe(true)
+    expect(chat.pendingSend.has('s-switch')).toBe(false)
+    expect(chat.isGenerating('s-switch')).toBe(true)
     expect(chat.isActive('s-switch')).toBe(true) // 合并态仍 true
   })
 
-  it('终态（complete）清 dispatching（兜底，message_start 未到的异常路径）', async () => {
+  it('终态（complete）清 pendingSend（兜底，message_start 未到的异常路径）', async () => {
     const session = useSessionStore()
     session.activeId = 's-terminal'
     const chat = useChatStore()
     const { send } = useChat()
     await send('hi')
-    expect(chat.dispatchingSessionId).toBe('s-terminal')
+    expect(chat.pendingSend.has('s-terminal')).toBe(true)
     // 模拟 pi 未发 message_start 直接 complete（异常但需兜底）
     emit({ type: 'message.complete', payload: { sessionId: 's-terminal' } })
-    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.pendingSend.has('s-terminal')).toBe(false)
     expect(chat.isActive('s-terminal')).toBe(false)
   })
 
-  it('send 失败清 dispatching（catch 路径）', async () => {
+  it('send 失败清 pendingSend（catch 路径）', async () => {
     const session = useSessionStore()
     session.activeId = 's-fail'
     const chat = useChatStore()
     apiMock.send.mockRejectedValueOnce(new Error('network'))
     const { send } = useChat()
-    await expect(send('hi')).rejects.toThrow('network')
-    expect(chat.dispatchingSessionId).toBeNull()
+    // [W2] send 失败不再 throw（与 steer/followUp/abort 对齐：clearPendingSend + toast，不 throw）
+    await expect(send('hi')).resolves.toBeUndefined()
+    expect(chat.pendingSend.has('s-fail')).toBe(false)
     expect(chat.isActive('s-fail')).toBe(false)
   })
 
-  it('steer 在空窗期可用（isActive guard 而非 isStreaming）', async () => {
+  it('steer 在空窗期可用（isActive guard 而非 isGenerating）', async () => {
     const session = useSessionStore()
     session.activeId = 's-steer'
     const chat = useChatStore()
     const { send, steer } = useChat()
-    await send('first') // 置 dispatching，isActive=true 但 isStreaming=false
-    expect(chat.isStreaming).toBe(false)
+    await send('first') // 置 pendingSend，isActive=true 但 isGenerating=false
+    expect(chat.isGenerating('s-steer')).toBe(false)
     await steer('补充')
     expect(apiMock.steer).toHaveBeenCalledTimes(1)
   })
@@ -255,74 +258,76 @@ describe('useChat dispatching 合并态（空窗期）', () => {
     expect(pendings[1].sendMode).toBe('follow-up')
   })
 
-  it('abort 乐观清 dispatching（W4：失败路径不残留）', async () => {
+  it('abort 乐观清 pendingSend（W4：失败路径不残留）', async () => {
     const session = useSessionStore()
     session.activeId = 's-abort'
     const chat = useChatStore()
     const { send, abort } = useChat()
     await send('first')
-    expect(chat.dispatchingSessionId).toBe('s-abort')
-    // abort 即使 RPC 失败也清 dispatching（乐观清理 + catch 兜底）
+    expect(chat.pendingSend.has('s-abort')).toBe(true)
+    // abort 即使 RPC 失败也清 pendingSend（乐观清理 + catch 兜底）
     apiMock.abort.mockRejectedValueOnce(new Error('session not found'))
     await abort() // 不抛（catch 吞掉）
-    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.pendingSend.has('s-abort')).toBe(false)
     expect(chat.isActive('s-abort')).toBe(false)
   })
 
-  it('dispatching 30s 超时兜底：message_start 永不到 → 强制清（W3）', () => {
+  it('pendingSend 30s 超时兜底：message_start 永不到 → 强制清（W3）', () => {
     vi.useFakeTimers()
     const chat = useChatStore()
-    chat.setDispatching('s-timeout')
-    expect(chat.dispatchingSessionId).toBe('s-timeout')
+    chat.addPendingSend('s-timeout')
+    expect(chat.pendingSend.has('s-timeout')).toBe(true)
     // 29s 未超时，仍挂着
     vi.advanceTimersByTime(29_000)
-    expect(chat.dispatchingSessionId).toBe('s-timeout')
-    // 30s 触发超时回调，强制清
+    expect(chat.pendingSend.has('s-timeout')).toBe(true)
+    // 30s 触发超时回调，finalizeSession('timeout') 强制清
     vi.advanceTimersByTime(1_000)
-    expect(chat.dispatchingSessionId).toBeNull()
+    expect(chat.pendingSend.has('s-timeout')).toBe(false)
     expect(chat.isActive('s-timeout')).toBe(false)
     vi.useRealTimers()
   })
 
-  it('streaming 5min 超时兜底：message.complete 永不到 → 强制清 isStreaming（W3 扩展）', () => {
+  it('streaming 超时兜底：message.complete 永不到 → armStreamingTimer 强制收口（W3 扩展）', () => {
     vi.useFakeTimers()
     const chat = useChatStore()
-    chat.setStreaming(true, 's-stream-timeout')
-    expect(chat.isStreaming).toBe(true)
-    // 4min59s 未超时
-    vi.advanceTimersByTime(299_000)
-    expect(chat.isStreaming).toBe(true)
-    // 5min 触发超时回调
+    // 创建 streaming entity + arm 超时 timer（取代 setStreaming 二合一）
+    chat.applyMessageEvent('s-stream-timeout', { type: 'message.message_start', payload: { sessionId: 's-stream-timeout', messageId: 'a1' } })
+    chat.armStreamingTimer('s-stream-timeout')
+    expect(chat.isGenerating('s-stream-timeout')).toBe(true)
+    // 阈值已从 5min 调整为 24h（chat.ts STREAMING_TIMEOUT_MS：放弃主动检测，靠 runtime 重启兜底）
+    vi.advanceTimersByTime(86_399_000)
+    expect(chat.isGenerating('s-stream-timeout')).toBe(true)
+    // 满 24h 触发超时回调，finalizeSession('timeout') 强制收口
     vi.advanceTimersByTime(1_000)
-    expect(chat.isStreaming).toBe(false)
-    expect(chat.streamingSessionId).toBeNull()
+    expect(chat.isGenerating('s-stream-timeout')).toBe(false)
     vi.useRealTimers()
   })
 
-  it('resetActive 强制清所有活跃态（runtime 崩溃时 useConnection 调）', () => {
+  it('finalizeAllStreaming 强制收口所有 streaming session（runtime 崩溃时 useConnection 调）', () => {
     const chat = useChatStore()
-    chat.setDispatching('s-crash')
-    chat.setStreaming(true, 's-crash')
+    // 创建 streaming entity（isActive=true via isGenerating）
+    chat.applyMessageEvent('s-crash', { type: 'message.message_start', payload: { sessionId: 's-crash', messageId: 'a1' } })
     expect(chat.isActive('s-crash')).toBe(true)
-    chat.resetActive()
-    expect(chat.dispatchingSessionId).toBeNull()
-    expect(chat.isStreaming).toBe(false)
-    expect(chat.streamingSessionId).toBeNull()
+    expect(chat.isGenerating('s-crash')).toBe(true)
+    // runtime 崩溃：finalizeAllStreaming 收口（useConnection restart/disconnect 时调）
+    chat.finalizeAllStreaming('restart')
+    expect(chat.isGenerating('s-crash')).toBe(false)
     expect(chat.isActive('s-crash')).toBe(false)
   })
 
-  it('正常流转清除超时 timer（message_start 到达 → dispatching 超时不再触发）', () => {
+  it('正常流转清除 pendingSend 超时 timer（message_start 到达 → pendingSend timer 不再触发）', () => {
     vi.useFakeTimers()
     const chat = useChatStore()
-    chat.setDispatching('s-normal')
-    // message_start 到达 → setStreaming(true) 清 dispatching + 其 timer
-    chat.setStreaming(true, 's-normal')
-    expect(chat.dispatchingSessionId).toBeNull()
-    // 推进超过 30s，超时回调不应再触发（不会把 streamingSessionId 清掉——那是另一个 timer）
+    chat.addPendingSend('s-normal')
+    expect(chat.pendingSend.has('s-normal')).toBe(true)
+    // message_start 到达 → 创建 streaming entity + clearPendingSend（清 pendingSend + 其 timer）
+    chat.applyMessageEvent('s-normal', { type: 'message.message_start', payload: { sessionId: 's-normal', messageId: 'a1' } })
+    expect(chat.pendingSend.has('s-normal')).toBe(false)
+    // 推进超过 30s，pendingSend 超时回调不应再触发（timer 已被 clearPendingSend 清除）
     vi.advanceTimersByTime(31_000)
-    // dispatching 保持 null（未被超时回调误触），streaming 仍 active（5min 未到）
-    expect(chat.dispatchingSessionId).toBeNull()
-    expect(chat.isStreaming).toBe(true)
+    expect(chat.pendingSend.has('s-normal')).toBe(false)
+    // streaming entity 仍存在（未被 pendingSend timer 误清）
+    expect(chat.isGenerating('s-normal')).toBe(true)
     vi.useRealTimers()
   })
 

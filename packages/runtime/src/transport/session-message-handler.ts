@@ -112,6 +112,10 @@ export class SessionMessageHandler {
         // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
         // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
         // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。
+        // [D-009] rejected（预检拒绝）：send.rejected 已广播，reply success 让 pending 干净 resolve（不双 toast）
+        if (result.rejected) {
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'rejected' })
+        }
         if (result.blocked) {
           return this.ctx.sendError(ws, 'message_blocked', 'Message blocked by plugin hook', msg.id, { sessionId })
         }

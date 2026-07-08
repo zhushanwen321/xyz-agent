@@ -153,8 +153,8 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     expect(wrapper.find('.trace').exists()).toBe(false)
   })
 
-  // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）也须显示「工作中」+ 脉冲点
-  it('U14: 纯文本回合 working 态显示「工作中」+ 脉冲点 + 无 chevron + trace 强制展开', () => {
+  // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）也须显示「思考中」+ spinner
+  it('U14: 纯文本回合 working 态显示「思考中」+ spinner + 无 chevron + trace 强制展开', () => {
     const wrapper = mountTurn({
       turn: makeTurn({
         isWorking: true,
@@ -163,8 +163,9 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
       }),
     })
     expect(wrapper.find('.turn-meta').exists()).toBe(true)
-    expect(wrapper.find('.lbl').text()).toBe('工作中')
-    expect(wrapper.find('.working-dot').exists()).toBe(true)
+    expect(wrapper.find('.lbl').text()).toBe('思考中')
+    // working 态用 spinner（Loader2 animate-spin），不再用 working-dot 脉冲点
+    expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(true)
     expect(wrapper.find('.chev').exists()).toBe(false)
     expect(wrapper.find('.trace').exists()).toBe(true)
   })

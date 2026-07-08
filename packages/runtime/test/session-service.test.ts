@@ -181,7 +181,7 @@ interface Setup {
   clientMap: Map<string, MockClient>
   /** mock 的 IGitInfoReader（readGitInfo 恒 undefined → 摘要 git 字段留空）。供 localSession 复用。 */
   gitInfoReader: IGitInfoReader
-  triggerExit: (sessionId: string, code: number | null) => void
+  triggerExit: (sessionId: string, code: number | null, stderr?: string) => void
   /** 直接挂载一个 client 到 clientMap（不走 create），用于 dispatcher 类测试。 */
   mountClient: (sessionId: string, client?: MockClient) => MockClient
   /** 走真实 create 建立一个 session，返回其 id + client。 */
@@ -198,7 +198,7 @@ let autoId = 0
 
 function createSetup(): Setup {
   const clientMap = new Map<string, MockClient>()
-  let exitCb: ((sessionId: string, code: number | null) => void) | null = null
+  let exitCb: ((sessionId: string, code: number | null, stderr: string) => void) | null = null
 
   const pm: IProcessManager = {
     // createSession：默认返回一个带唯一 pi sessionId 的 client（模拟 pi get_state）。
@@ -296,7 +296,7 @@ function createSetup(): Setup {
 
   return {
     service, pm, broker, extensionService, clientMap, gitInfoReader,
-    triggerExit: (sid, code) => exitCb?.(sid, code),
+    triggerExit: (sid, code, stderr = '') => exitCb?.(sid, code, stderr),
     mountClient, seedSession,
   }
 }
@@ -1157,7 +1157,7 @@ describe('SessionService · Facade', () => {
         setup.triggerExit(sidBefore!, 1)
         // publicSessionId 已清空
         expect(setup.service.getPublicSessionId()).toBeUndefined()
-        // 崩溃时不广播 message.error（公共 session 对用户透明）—— broadcast 在崩溃路径不被调用
+        // 崩溃时不广播 session.exited（公共 session 对用户透明）—— broadcast 在崩溃路径不被调用
         // （重建后才会通过 onPublicSessionReady 间接触发 app.info 重广播）
 
         // 推进 fake timer 触发 schedulePublicSessionRebuild 的 setTimeout
@@ -1227,7 +1227,7 @@ describe('SessionService · onSessionExit callback', () => {
     expect(typeof vi.mocked(setup.pm.onSessionExit).mock.calls[0][0]).toBe('function')
   })
 
-  it('on exit: removes session, broadcasts list + error', async () => {
+  it('on exit: removes session, broadcasts list + session.exited', async () => {
     const { id } = await setup.seedSession()
     setup.triggerExit(id, 1)
     // session 已移除
@@ -1235,10 +1235,30 @@ describe('SessionService · onSessionExit callback', () => {
     // 广播 session.list（刷新列表）
     const listMsg = findBroadcast(setup, 'session.list')
     expect(listMsg).toBeDefined()
-    // 广播 message.error（含 exit code）
+    // 广播 session.exited（含 exit code），不再用 message.error（消除双广播 + 语义分离）
+    const exitedMsg = findBroadcast(setup, 'session.exited')
+    expect(exitedMsg?.payload).toMatchObject({ sessionId: id, code: 1 })
+    expect(String(exitedMsg?.payload.reason)).toContain('code: 1')
+    // 不应再广播 message.error（session.exited 取代了它）
     const errMsg = findBroadcast(setup, 'message.error')
-    expect(errMsg?.payload).toMatchObject({ sessionId: id })
-    expect(String(errMsg?.payload.message)).toContain('code: 1')
+    expect(errMsg).toBeUndefined()
+  })
+
+  it('on exit: session.exited reason includes stderr when provided', async () => {
+    const { id } = await setup.seedSession()
+    setup.triggerExit(id, 1, 'Error: Failed to load extension "bad-ext"')
+    const exitedMsg = findBroadcast(setup, 'session.exited')
+    expect(exitedMsg?.payload).toMatchObject({ sessionId: id, code: 1 })
+    // reason 含 stderr 内容（诊断价值）
+    expect(String(exitedMsg?.payload.reason)).toContain('Failed to load extension')
+  })
+
+  it('on exit: session.exited reason is concise when stderr is empty', async () => {
+    const { id } = await setup.seedSession()
+    setup.triggerExit(id, 0, '')
+    const exitedMsg = findBroadcast(setup, 'session.exited')
+    expect(exitedMsg?.payload).toMatchObject({ sessionId: id, code: 0 })
+    expect(String(exitedMsg?.payload.reason)).toBe('Session process exited (code: 0)')
   })
 
   it('on exit: adapter.detach and usage listener unsub are invoked', async () => {
@@ -1272,8 +1292,8 @@ describe('SessionService · onSessionExit callback', () => {
 
   it('is a no-op when the exited session is unknown', async () => {
     setup.triggerExit('ghost', 0)
-    // 不应该广播 message.error（只有已知 session 才广播）
-    const errMsg = findBroadcast(setup, 'message.error')
-    expect(errMsg).toBeUndefined()
+    // 不应该广播 session.exited（只有已知 session 才广播）
+    const exitedMsg = findBroadcast(setup, 'session.exited')
+    expect(exitedMsg).toBeUndefined()
   })
 })

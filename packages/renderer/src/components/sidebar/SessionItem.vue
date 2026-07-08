@@ -6,7 +6,10 @@
   -->
   <div
     class="session-item group relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
-    :class="active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover'"
+    :class="[
+      active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover',
+      isDead ? 'opacity-50' : '',
+    ]"
     @click="emit('select', session.id)"
   >
     <span class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
@@ -61,6 +64,7 @@ const props = defineProps<{
     label: string
     cwd: string
     lastActiveAt: number
+    status?: string
   }
   active: boolean
   status: DerivedStatus
@@ -71,6 +75,9 @@ const emit = defineEmits<{
   rename: [sessionId: string]
   delete: [sessionId: string]
 }>()
+
+/** dead session（进程已退出）置灰，仍可点击（点击触发 restore 重开） */
+const isDead = computed(() => props.session.status === 'dead')
 
 /** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
 const dotClass = computed(() => DOT_CLASS[props.status])

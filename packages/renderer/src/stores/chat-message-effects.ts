@@ -6,21 +6,22 @@
  * ServerMessage 流 switch 两次。新增 message.* type 必须两处同步改，易漏。
  *
  * 归一：本文件把「每个 message.* type 触发的全部副作用」集中到单一 handler：
- * (a) chunk 状态更新（原 applyChunk 逻辑）+ (b) lifecycle flag 翻转（原 useChat
- * setStreaming）。useChat 收到 message.* 只调 store.applyMessageEvent（单一入口），
+ * (a) chunk 状态更新（原 applyChunk 逻辑）+ (b) 终态收口（finalizeSession，替代原 useChat
+ * setStreaming 的 lifecycle flag 翻转）。useChat 收到 message.* 只调 store.applyMessageEvent（单一入口），
  * 不再自己 switch message.*。session.*（compacting/compacted/renamed/state_changed/
  * thinkingLevelSet）涉及跨 store（sessionStore.updateLabel/updateSessionState），
  * 保留在 useChat。
  *
  * 行为等价性：
- * - 状态更新顺序与原 applyChunk 逐 case 一致（handler 内先更新 chunk 状态，后翻 flag，
+ * - 状态更新顺序与原 applyChunk 逐 case 一致（handler 内先更新 chunk 状态，后收口，
  *   对应原 useChat 先 appendAssistantChunk 再 switch 翻 flag 的顺序）。
- * - flag 翻转时机：message_start→true、complete/error/stream_error→false，与原 useChat
- *   switch 完全一致。
+ * - 收口时机：message_start 挂载超时兜底 timer、complete/error/stream_error 调
+ *   finalizeSession 收口（status 由 streaming 派生 isGenerating，非手动 flag）。
  *
  * 设计：dispatchMessageEvent(ctx, sessionId, msg) 查 messageEffects 表执行 handler；
  * 非 message.* 或未注册 type 直接 no-op。MessageEffectContext 含 store refs
- * 上下文 + setStreaming 回调（由 store 注入，翻转 isStreaming）。
+ * 上下文 + finalizeSession/clearPendingSend/armStreamingTimer 回调（由 store 注入，
+ * 完成收口与超时兜底）。
  */
 import type {
   ChangeSetStatus,
@@ -33,7 +34,7 @@ import type {
   ToolCall,
 } from '@xyz-agent/shared'
 import { parseBgNotifyDetails } from '@xyz-agent/shared'
-import type { RetryState, QueueState } from './chat-store-types'
+import type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
 import {
   readString,
   readRecord,
@@ -79,7 +80,7 @@ function countDrained(prev: string[], next: string[]): string[] {
  *
  * - messages/retryStates/queueStates：原 ChunkContext，chunk 状态写入目标。
  * - applyFileChanges/markChangeSetsSuperseded：原 ChunkContext 回调（store 内合并逻辑）。
- * - setStreaming：lifecycle flag 翻转（原 useChat.switch 的副作用，归一进 handler）。
+ * - finalizeSession + clearPendingSend：统一收口出口（替代 setStreaming flag 翻转）。
  */
 export interface MessageEffectContext {
   messages: { value: Map<string, Message[]> }
@@ -95,11 +96,15 @@ export interface MessageEffectContext {
   ) => void
   /** changeSetInvalidated case 调 store.markChangeSetsSuperseded（commit 后旧卡片过期） */
   markChangeSetsSuperseded: (sessionId: string) => void
-  /** lifecycle flag 翻转（原 useChat.setStreaming，message_start→true / 终态→false）。
-   *  sessionId 仅 message_start 传入（记录哪个 session 在流式），终态不传（清空）。 */
-  setStreaming: (value: boolean, sessionId?: string | null) => void
-  /** queue_update 投递信号：pi drain 某条 steer/followUp 时，转对应 pending user 消息为 complete。
-   *  sendMode 可选（区分 steer/followUp，避免跨类型同文本误转；未传时退化为 content 匹配）。 */
+  /** 统一收口出口（替代 setStreaming）。终态 handler 调。
+   *  reason 决定终态映射；handler 自己改 entity status 后调此方法（幂等：entity 已终态则 no-op，
+   *  只清 pendingSend + timer）。errorText 可选：error/stream_error 时写入。 */
+  finalizeSession: (sessionId: string, reason: FinalizeReason, errorText?: string) => void
+  /** message_start 清空窗（替代 setStreaming 隐式清 dispatching）。 */
+  clearPendingSend: (sessionId: string) => void
+  /** message_start 挂载 streaming 超时兜底 timer（防 complete 永不到的 pi 静默卡死）。 */
+  armStreamingTimer: (sessionId: string) => void
+  /** queue_update 投递信号 */
   markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
 }
 
@@ -125,10 +130,26 @@ type MessageEffectHandler = (
  * 新增 message.* type 只在此表加一行，无需在两个 switch 同步改（消除 double-dispatch）。
  * 表内顺序仅作可读性，与执行顺序无关（每次 dispatch 单 case）。
  */
+/**
+ * 最后一条 assistant 是否仍 streaming（sealed guard helper，D-010）。
+ * finalizeSession 后实体已终态 → 此函数返回 false → delta handler 早 return。
+ */
+function isLastAssistantStreaming(
+  messages: { value: Map<string, Message[]> },
+  sid: string,
+): boolean {
+  const list = messages.value.get(sid)
+  if (!list || list.length === 0) return false
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role === 'assistant') return list[i].status === 'streaming'
+  }
+  return false
+}
+
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
-  // ── 主流式生命周期（chunk 创建/收口 + isStreaming flag 翻转）──
+  // ── 主流式生命周期（chunk 创建/收口 + isGenerating 派生）──
   'message.message_start': (ctx, sid, payload) => {
-    const { messages, queueStates, setStreaming } = ctx
+    const { messages, queueStates, clearPendingSend, armStreamingTimer } = ctx
     // G-023: message_start 到达清除 QueueBubble（新回合已启动，QueueBubble 不再需要显示）。
     // 只清 queueStates 显示态——pending→complete 的转换完全由 queue_update 的 countDrained
     // 精确驱动（pi 保证 queue_update(drain) 先于 message_start 到达，见 agent-session.ts:515-536
@@ -149,111 +170,85 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         contentBlocks: [],
       },
     ])
-    // lifecycle flag 翻转（原 useChat：message_start → setStreaming(true)）。
-    // 传 sid 记录正在流式的 session（Panel per-session 生成态守卫用，防跨 session 误伤）
-    setStreaming(true, sid)
+    // 空窗结束：clearPendingSend（接管 dispatching 语义）
+    clearPendingSend(sid)
+    // 挂载 streaming 超时兜底 timer：防 message.complete 永不到的 pi 静默卡死。
+    armStreamingTimer(sid)
   },
 
   'message.complete': (ctx, sid, payload) => {
-    const { messages, setStreaming } = ctx
+    const { messages, finalizeSession } = ctx
     const prev = messages.value.get(sid) ?? []
     const stopReason = readString(payload, 'stopReason')
     const isErrorStop = stopReason === 'error'
-    // 收口兜底：流结束时仍 status:'running' 的 toolCall 说明未收到 tool_call_end
-    // （进程崩溃/WS 断连/abort/event-adapter 乱序丢消息）。强收口避免 Block.vue
-    // 永久锁定展开（isRunning → toolExpanded 恒 true）。
-    // - error stopReason → 收口为 error（保留失败语义）
-    // - 其它 → 收口为 end_not_received（诚实态，区别于假装成功的 completed）
-    // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
-    const finalizeToolCalls = (toolCalls: ToolCall[] | undefined): ToolCall[] =>
-      (toolCalls ?? []).map((c) =>
-        c.status === 'running'
-          ? {
-            ...c,
-            status: (isErrorStop ? 'error' : 'end_not_received') as ToolCall['status'],
-            endTime: c.endTime ?? Date.now(),
-          }
-          : c,
-      )
     // [HISTORICAL] 收口**所有** status==='streaming' 的 assistant 气泡，不只用
     // findLastAssistantIndex 收最后一条。一个 turn 可能产生多个 assistant 气泡
     // （工具调用气泡 + 文字总结气泡）：只转最后一条会让前面的 toolCall 气泡永远 streaming，
     // 内部 status 虽视觉无感（turn 整体收口），但状态机不一致且影响后续定位逻辑。
     // usage（W05-A turn 级聚合）只回填最后一条 assistant——回填到非末 assistant 语义错位。
+    // [W4] toolCall 终态收口收敛到 finalizeSession 统一处（原局部 finalizeToolCalls 已删除，
+    // 避免两套映射漂移）。此处只改 message status + 回填 usage，toolCalls 保持原样传入；
+    // 紧接着的 finalizeSession(sid, reason) 会把 running toolCall 按 reason 统一收口。
     const lastAssistantIdx = findLastAssistantIndex(prev)
     let changed = false
     const next = prev.map((m, i) => {
       if (m.role !== 'assistant' || m.status !== 'streaming') return m
       changed = true
-      const finalizedToolCalls = finalizeToolCalls(m.toolCalls)
       // 仅最后一条 assistant 回填 usage（turn 级聚合，回填非末会语义错位）
       const usage = i === lastAssistantIdx ? readUsage(payload) : undefined
       return {
         ...m,
         status: isErrorStop ? 'error' : 'complete',
-        toolCalls: finalizedToolCalls,
         ...(usage ? { usage } : {}),
       } satisfies Message
     })
     if (changed) messages.value.set(sid, next)
-    // lifecycle flag 翻转（原 useChat：complete → setStreaming(false)）
-    setStreaming(false)
+    // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
+    // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
+    const reason: FinalizeReason = isErrorStop ? 'error' : (stopReason === 'aborted' ? 'aborted' : 'normal')
+    finalizeSession(sid, reason)
   },
 
   'message.error': (ctx, sid, payload) => {
-    const { messages, setStreaming } = ctx
-    const prev = messages.value.get(sid) ?? []
-    // 规则 #3：错误必须重置 streaming 状态，避免单条气泡卡「生成中」。
+    const { messages, finalizeSession } = ctx
     const errorText = readString(payload, 'message') ?? 'Unknown error'
+    // 检查是否有前置 streaming assistant（finalizeSession 会收口它）
+    const prev = messages.value.get(sid) ?? []
     const idx = findLastAssistantIndex(prev)
-    if (idx >= 0 && prev[idx].status === 'streaming') {
-      const last = prev[idx]
-      const next = [...prev]
-      next[idx] = {
-        ...last,
-        content: last.content ? `${last.content}\n\n${errorText}` : errorText,
-        status: 'error',
-      }
-      messages.value.set(sid, next)
-    } else {
+    const hasStreaming = idx >= 0 && prev[idx].status === 'streaming'
+    // 统一收口：finalizeSession 做 streaming entity error 化 + 清 pendingSend + 清 timer
+    finalizeSession(sid, 'error', errorText)
+    // 无前置 streaming entity 时 finalizeSession 不追加消息——需手动追加
+    if (!hasStreaming) {
       messages.value.set(sid, [
         ...prev,
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
       ])
     }
-    // lifecycle flag 翻转（原 useChat：error → setStreaming(false)）
-    setStreaming(false)
   },
 
   'message.stream_error': (ctx, sid, payload) => {
-    const { messages, setStreaming } = ctx
+    const { messages, finalizeSession } = ctx
+    const streamErrContent = readString(payload, 'content') ?? 'Stream error'
     const prev = messages.value.get(sid) ?? []
-    // FR-5: streaming 错误（pi message_update{error}）。若无前置 assistant 流（prompt
-    // 级失败/流启动前即报错），合成 error 消息，避免错误内容丢失（违反规则 #3）。
-    const streamErrContent = readString(payload, 'content') ?? ''
-    const sIdx = findLastAssistantIndex(prev)
-    if (sIdx < 0) {
+    const idx = findLastAssistantIndex(prev)
+    const hasStreaming = idx >= 0 && prev[idx].status === 'streaming'
+    // 统一收口
+    finalizeSession(sid, 'stream_error', streamErrContent)
+    // 无前置 streaming entity 时需手动追加
+    if (!hasStreaming) {
       messages.value.set(sid, [
         ...prev,
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: streamErrContent, status: 'error', timestamp: Date.now() },
       ])
-    } else {
-      const sNext = [...prev]
-      sNext[sIdx] = {
-        ...sNext[sIdx],
-        content: streamErrContent ? `${sNext[sIdx].content}${streamErrContent}` : sNext[sIdx].content,
-        status: 'error',
-      }
-      messages.value.set(sid, sNext)
     }
-    // lifecycle flag 翻转（原 useChat：stream_error 也属终态 → setStreaming(false)）。
-    // 若 pi 发了 message_update{error} 后不再发 agent_end，必须在此复位，否则 UI 卡「思考中」。
-    setStreaming(false)
   },
 
   // ── 文本流（纯 chunk 更新，不翻 lifecycle flag）──
   'message.text_delta': (ctx, sid, payload) => {
     const { messages } = ctx
+    // [D-010 sealed] finalizeSession 后晚到 delta 幂等丢弃
+    if (!isLastAssistantStreaming(messages, sid)) return
     const prev = messages.value.get(sid) ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
@@ -271,6 +266,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   // ── thinking 流（折进 trace，W05 endTime）──
   'message.thinking_start': (ctx, sid, payload) => {
     const { messages } = ctx
+    // [D-010 sealed]
+    if (!isLastAssistantStreaming(messages, sid)) return
     const prev = messages.value.get(sid) ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
@@ -285,6 +282,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.thinking_end': (ctx, sid) => {
     const { messages } = ctx
+    // [D-010 sealed]
+    if (!isLastAssistantStreaming(messages, sid)) return
     const prev = messages.value.get(sid) ?? []
     // W05-A：给最后 ThinkingBlock 设 endTime（字段已存在 message.ts:30）。
     // payload 仅 {sessionId}（event-adapter thinking_end 不带额外字段）。
@@ -302,6 +301,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.thinking_delta': (ctx, sid, payload) => {
     const { messages } = ctx
+    // [D-010 sealed]
+    if (!isLastAssistantStreaming(messages, sid)) return
     const prev = messages.value.get(sid) ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
@@ -317,6 +318,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   // ── tool_call 流（ID 锚定，W05 detail）──
   'message.tool_call_start': (ctx, sid, payload) => {
     const { messages } = ctx
+    // [D-010 sealed]
+    if (!isLastAssistantStreaming(messages, sid)) return
     const prev = messages.value.get(sid) ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx < 0) return
@@ -368,6 +371,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   'message.tool_call_update': (ctx, sid, payload) => {
     const { messages } = ctx
+    // [D-010 sealed]
+    if (!isLastAssistantStreaming(messages, sid)) return
     const prev = messages.value.get(sid) ?? []
     // W05-A：Extension 工具调用进度更新。event-adapter tool_execution_update
     // 生产端只发 detail（string | object），消费对齐生产端（不臆造 progress）。

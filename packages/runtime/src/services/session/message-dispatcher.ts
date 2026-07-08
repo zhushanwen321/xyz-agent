@@ -38,7 +38,7 @@ export class MessageDispatcher {
    * 调用方（session-message-handler）必须据此走 error envelope（带请求 id）让 renderer
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }> {
+  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.sendPrompt(sessionId, content, () => content)
   }
 
@@ -61,7 +61,7 @@ export class MessageDispatcher {
     sessionId: string,
     hookContent: string,
     buildPrompt: () => string,
-  ): Promise<{ blocked: boolean }> {
+  ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
     if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) {
@@ -75,13 +75,28 @@ export class MessageDispatcher {
     } catch (e) {
       const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
       console.error(`[message-dispatcher] ${errMsg}`)
-      // 不在这里广播 message.error,让 server.ts 的外层 catch 统一发送 handler_error
+      // 补广播 message.error：让已订阅 session 通道的前端能在聊天流看到错误气泡。
+      // 之前只靠 server.ts 外层 handler_error envelope（走 pending.reject，不进聊天流），
+      // 导致 ensureActive 失败（如 pi 进程已死、restore 再 spawn 再 exit）时用户在对话流看不到错误。
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: errMsg },
+      })
       throw e
     }
 
     // ── 标记活跃 + 生成中 ──
     const activeSession = this.svc.getSessionByClient(client)
     if (activeSession) {
+      // [D-009 预检] busy 时拒绝（send.rejected 广播，不调 pi.prompt）
+      if (activeSession.isGenerating) {
+        console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
+        this.broker.broadcast({
+          type: 'send.rejected',
+          payload: { sessionId, reason: 'busy', message: 'Agent 正在处理' },
+        })
+        return { blocked: true, rejected: true }
+      }
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
       this.workspaceService.record(activeSession.cwd)

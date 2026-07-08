@@ -28,10 +28,9 @@
     </div>
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
-         streaming 光标（draft §1 末尾光标）：streaming 态末位 text 块显示，从 Turn.vue 传入 -->
+         streaming 光标已移到 Turn.vue trace 末尾（保证永远在最后一行，不受 contentBlocks 时序影响）。 -->
     <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12.5px] leading-relaxed text-muted">
       <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
-      <span v-if="streaming" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
     </div>
 
     <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
@@ -112,7 +111,6 @@
             <Check v-if="!isFailed" class="mt-0.5 size-3 shrink-0 text-success" />
             <XCircle v-else class="mt-0.5 size-3 shrink-0 text-danger" />
             <span>{{ result }}</span>
-            <span v-if="isRunning" class="ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
           </div>
         </template>
       </div>
@@ -138,7 +136,8 @@ const props = defineProps<{
   /** working 态（turn 进行中）：thinking 强制全展开且不可手动收（draft §1 无背景下划线展开）。
    *  tool 块不再因 working 强制展开（改后 streaming 态也 1 行收起，header 自带状态指示）。 */
   working?: boolean
-  /** streaming 光标（draft §1 末尾光标）：仅末位 text 块在 working 态显示，Turn.vue 传入 */
+  /** @deprecated streaming 光标已移到 Turn.vue trace 末尾独立元素（streaming-tail），
+   *  保证永远在最后一行。此 prop 保留向后兼容，不再被驱动（Turn.vue 不再传入 true）。 */
   streaming?: boolean
   /** 所属 session（透传给 MarkdownRenderer 供文件路径打开 DetailPane 用） */
   sessionId?: string | null

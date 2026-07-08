@@ -21,3 +21,24 @@ export interface QueueState {
   steering?: string[]
   followUp?: string[]
 }
+
+/**
+ * finalizeSession 收口原因（与 system-arch §5 reason 字段对齐）。
+ *
+ * reason → 终态映射（finalizeSession 内部不变式）：
+ *   normal       → message:complete, toolCall:end_not_received（诚实态，迟到 tool_call_end 覆盖到 completed）
+ *   aborted      → message:complete, toolCall:end_not_received（同上，D-008 message 保持 complete）
+ *   stream_error → message:error,     toolCall:error
+ *   error        → message:error,     toolCall:error
+ *   timeout      → message:error,     toolCall:end_not_received
+ *   disconnect   → message:error,     toolCall:end_not_received
+ *   restart      → message:error,     toolCall:end_not_received
+ */
+export type FinalizeReason =
+  | 'normal'
+  | 'aborted'
+  | 'stream_error'
+  | 'error'
+  | 'timeout'
+  | 'disconnect'
+  | 'restart'

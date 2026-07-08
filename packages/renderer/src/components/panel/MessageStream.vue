@@ -34,6 +34,14 @@
         <span class="h-px flex-1 bg-border" />
       </div>
 
+      <!-- dispatching 空窗期占位：已发送（pendingSend 命中）但 message_start 未到。
+           message_start 到达后 hasWorkingTurn 变 true，占位消失，由 working turn 的 sticky header 接管。
+           纯 UI 瞬时反馈，不插入 assistant message 污染消息历史。 -->
+      <div v-if="isDispatching && !hasWorkingTurn" class="flex items-center gap-2 py-2 pl-1 text-[12.5px] text-muted">
+        <Loader2 class="size-3 animate-spin text-accent" />
+        <span>思考中…</span>
+      </div>
+
       <!-- 空态欢迎语（G2-004） -->
       <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
         <Sparkles class="size-6 text-accent opacity-70" />
@@ -86,6 +94,15 @@ const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
  *  驱动消息流末尾的「--- 压缩中 ---」瞬时提示。完成后 dispatcher 广播 message.compactionSummary，
  *  插入持久化 system 消息（SystemNotice 渲染「已压缩上下文」），isCompacting 同时复位为 false。 */
 const isCompacting = computed(() => chat.isCompacting(props.sessionId))
+
+/**
+ * dispatching 空窗期：已发送 prompt（pendingSend 命中本 session）但 message_start 未到。
+ * 此时 MessageStream 内无 streaming assistant，用户看不到任何反馈。
+ * 占位行给出即时「思考中…」提示，message_start 到达后 hasWorkingTurn 变 true 接管。
+ */
+const isDispatching = computed(() => chat.isActive(props.sessionId) && !chat.isGenerating(props.sessionId))
+/** 最后一个 turn 是否正在 working（message_start 已到，有 streaming assistant） */
+const hasWorkingTurn = computed(() => lastRenderTurn.value?.isWorking ?? false)
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数） */
 const renderItems = computed(() => toRenderItems(currentMessages.value))

@@ -75,7 +75,10 @@ export const git = {
   /**
    * 单文件 diff patch（#5，UC-6 点文件预览）。与 real api/domains/git.getDiff 同接口。
    * mock：按 path 返回固定 patch（fixtureGitStatus 中标 modified/added/deleted 的文件），
-   * 含 <script> 的 path 用于 T6.10 XSS 断言。非改动文件 → 空 patch。
+   * 含 <script> 的 path 用于 T6.10 XSS 断言。非改动文件 / untracked → 空 patch。
+   *
+   * 注意 untracked 必须返回空 patch——与真实 runtime 行为一致（`git diff -- <untracked>`
+   * 无输出）。否则会掩盖 useDetailPane 的「diff 空 → 降级 preview」逻辑。
    */
   async getDiff(_sessionId: string, path: string): Promise<{ patch: string; binary: boolean }> {
     await sleep(TIMING.ack)
@@ -83,15 +86,15 @@ export const git = {
     if (path.includes('xss') || path.includes('script')) {
       return { patch: `diff --git a/${path} b/${path}\n+<script>alert(1)</script>`, binary: false }
     }
-    // fixtureGitStatus 中的改动文件 → 返回模拟 patch
+    // fixtureGitStatus 中的改动文件 → 返回模拟 patch（untracked 除外：git diff 对 untracked 无输出）
     const changed = fixtureGitStatus.files.find((f) => f.path === path)
-    if (changed) {
+    if (changed && changed.status !== 'untracked') {
       return {
         patch: `diff --git a/${path} b/${path}\nindex 111..222 100644\n--- a/${path}\n+++ b/${path}\n@@ -1,3 +1,5 @@\n line1\n+new line\n line2\n+added line`,
         binary: false,
       }
     }
-    // 非改动文件 / binary 模拟
+    // 非改动文件 / untracked / binary 模拟
     if (path.endsWith('.png') || path.endsWith('.jpg')) {
       return { patch: '', binary: true }
     }

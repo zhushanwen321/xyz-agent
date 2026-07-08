@@ -45,3 +45,11 @@ export function reject(id: string, error: unknown): void {
   pendingMap.delete(id)
   req.reject(error)
 }
+
+/** 批量 reject 所有 pending 请求（WS 断连 / runtime 崩溃时调）。 */
+export function rejectAll(error: unknown): void {
+  for (const [, req] of pendingMap) {
+    req.reject(error)
+  }
+  pendingMap.clear()
+}

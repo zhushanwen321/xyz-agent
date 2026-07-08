@@ -38,12 +38,12 @@ export function useSessionDerivations() {
 
   /**
    * 响应式派生指定 session 的状态点（D6）。
-   * 读 chat store 分区末尾消息 + 全局 isStreaming（当前活跃 session 的流式态）。
+   * 读 chat store 分区末尾消息 + 全局 isGenerating（当前活跃 session 的流式态）。
    * 计算逻辑与重构前完全一致（deriveStatus 纯函数未改）。
    */
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
     return computed(() => {
-      const isActiveStreaming = chat.isStreaming && session.activeId === id
+      const isActiveStreaming = chat.isGenerating(id) && session.activeId === id
       return deriveStatus(id, chat, isActiveStreaming)
     })
   }

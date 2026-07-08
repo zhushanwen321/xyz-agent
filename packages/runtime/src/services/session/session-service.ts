@@ -94,8 +94,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
-    // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / error 广播
-    this.pm.onSessionExit((sessionId, code) => {
+    // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播
+    this.pm.onSessionExit((sessionId, code, stderr) => {
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
@@ -110,8 +110,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         return
       }
 
+      // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
+      const reason = stderr
+        ? `Session process exited (code: ${code})\n\n${stderr}`
+        : `Session process exited (code: ${code})`
+
       this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
-      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` } })
+      // session.exited（独立事件，区别于 message.error 的「单次消息失败」语义）：
+      // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
+      this.broker.broadcast({ type: 'session.exited', payload: { sessionId, code, reason } })
     })
   }
 
@@ -194,8 +201,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
   async forkSession(srcSessionId: string, fromPiEntryId: string, includeFrom: boolean, label?: string): Promise<SessionSummary> { return this.lifecycle.forkSession(srcSessionId, fromPiEntryId, includeFrom, label) }
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }> {
+  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
+  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }

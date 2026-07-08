@@ -58,11 +58,11 @@ export interface PiSessionStats {
   tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
 }
 
-/** pi 进程退出回调。 */
-export type PiExitCallback = (sessionId: string, code: number | null) => void
+/** pi 进程退出回调。stderr 为 pi 进程尾部输出（诊断信息）。 */
+export type PiExitCallback = (sessionId: string, code: number | null, stderr: string) => void
 
-/** 单个 pi 进程退出回调（IPiEngine.onExit 用）。 */
-export type PiProcessExitCallback = (code: number | null) => void
+/** 单个 pi 进程退出回调（IPiEngine.onExit 用）。stderr 为 pi 进程尾部输出（诊断信息）。 */
+export type PiProcessExitCallback = (code: number | null, stderr: string) => void
 
 /** createSession 的进程启动选项。 */
 export interface PiSessionOptions {

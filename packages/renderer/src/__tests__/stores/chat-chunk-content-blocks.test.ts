@@ -27,7 +27,10 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     queueStates: ref(new Map()),
     applyFileChanges: vi.fn(),
     markChangeSetsSuperseded: vi.fn(),
-    setStreaming: vi.fn(),
+    finalizeSession: vi.fn(),
+    clearPendingSend: vi.fn(),
+    armStreamingTimer: vi.fn(),
+    markPendingDelivered: vi.fn(),
   }
 }
 

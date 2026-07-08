@@ -70,7 +70,7 @@
         </Button>
         <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" :session-id="sessionId" />
       </div>
-      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示。
+      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。
            pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
       <div
         v-if="!isEditingThisUser && !isPendingUser"
@@ -113,15 +113,21 @@
         v-if="turn.assistants.length > 0"
         variant="ghost"
         size="sm"
-        class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start rounded-none px-1 py-1 font-sans text-[12.5px] font-medium text-muted transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:text-fg"
-        :class="turn.isWorking || !turn.hasFoldable ? 'cursor-default hover:text-muted' : 'cursor-pointer'"
+        class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12.5px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
+        :class="[
+          turn.isWorking
+            ? 'sticky top-0 z-[1] -mx-1 rounded-md bg-surface/95 px-2 backdrop-blur-sm cursor-default hover:text-muted'
+            : !turn.hasFoldable
+              ? 'cursor-default hover:text-muted'
+              : 'cursor-pointer hover:text-fg',
+        ]"
         :disabled="turn.isWorking || !turn.hasFoldable"
         @click="expanded = !expanded"
       >
-        <!-- working 态行首脉冲点（设计稿：动画点在「工作中」文字之前） -->
-        <span v-if="turn.isWorking" class="working-dot size-[7px] flex-shrink-0 rounded-full bg-accent animate-working-pulse" />
+        <!-- working 态：spinner（更显眼的 streaming 指示），替代原脉冲点 -->
+        <Loader2 v-if="turn.isWorking" class="size-3 shrink-0 animate-spin text-accent" />
         <span class="text-[12.5px] font-medium">
-          <span class="lbl text-muted">{{ turn.isWorking ? '工作中' : '已工作' }}</span>
+          <span class="lbl" :class="turn.isWorking ? 'text-accent' : 'text-muted'">{{ turn.isWorking ? '思考中' : '已工作' }}</span>
           <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
         </span>
         <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
@@ -140,7 +146,7 @@
 
       <!-- 折叠 trace：working 或 expanded 时展开。
            块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
-           - streaming 态：所有块按时序展开，末位 text 块带 streaming 光标
+           - streaming 态：所有块按时序展开，trace 末尾追加独立光标行（永远在最后一行）
            - complete 态：末位 assistant 的 text 块跳过（已在底部 summary），其余按时序 -->
       <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
         <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
@@ -152,10 +158,14 @@
             :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
             :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
             :working="turn.isWorking"
-            :streaming="isStreamingBlock(aIdx, blk)"
             :session-id="sessionId"
           />
         </template>
+        <!-- streaming 光标：独立于内容块，固定在 trace 末尾，保证永远在最后一行。
+             此前光标附在 text 块尾部，当 contentBlocks 顺序为 [text, toolCall] 时光标在 toolCall 上方。 -->
+        <div v-if="turn.isWorking" class="streaming-tail flex items-center gap-1.5 py-2 pl-1">
+          <span class="streaming-cursor inline-block h-3.5 w-[7px] rounded-[1px] bg-accent animate-blink" />
+        </div>
       </div>
 
       <hr v-if="turn.hasFoldable || turn.assistants.length > 0" class="border-0 border-t border-border" />
@@ -218,7 +228,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Pencil, Wrench } from '@lucide/vue'
+import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
@@ -279,7 +289,7 @@ const slashChip = computed(() => {
 })
 
 /**
- * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isStreaming。
+ * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isGenerating。
  * standby panel 的 Turn 不会被 active panel 的流式态误伤；编辑/fork 仅在本 session 活跃时禁用。
  */
 const isSessionActive = computed(() => chat.isActive(props.sessionId))
@@ -411,14 +421,7 @@ function traceBlocks(msg: Message, idx: number): OrderedBlock[] {
 }
 
 /**
- * 某个块是否应显示 streaming 光标（draft §1 末尾光标）。
- * 仅 streaming 态的末位 assistant 的 text 块显示（text 正在流式增长）。
+ * streaming 光标已移到 trace 末尾独立元素（见模板 streaming-tail），
+ * 不再按块判定。保留 lastAssistantIdx 供 traceBlocks 的 complete 态跳过末位 text 使用。
  */
-function isStreamingBlock(aIdx: number, blk: OrderedBlock): boolean {
-  return (
-    props.turn.isWorking &&
-    aIdx === lastAssistantIdx.value &&
-    blk.kind === 'text'
-  )
-}
 </script>

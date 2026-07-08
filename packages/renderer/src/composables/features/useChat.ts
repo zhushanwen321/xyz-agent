@@ -38,9 +38,17 @@ function ensureStreamSubscription(
 ): void {
   if (streamSubscriptions.has(sid)) return
   const unsub = chatApi.streamSubscribe(sid, (msg) => {
+    // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
+    if (msg.type === 'send.rejected') {
+      const payload = msg.payload as { sessionId: string; reason: string; message: string }
+      chat.clearPendingSend(sid)
+      const { error } = useToast()
+      error(payload.message ?? 'Agent 正在处理')
+      return
+    }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。
     // applyMessageEvent 内部经 effect 注册表执行该 type 的全部副作用（chunk 状态更新
-    // + setStreaming flag），useChat 不再自己 switch message.*。message.* 处理完即 return，
+    // + finalizeSession 收口），useChat 不再自己 switch message.*。message.* 处理完即 return，
     // 下方 session.* 分支仅处理跨 store 事件（compacting/renamed 等）。
     if (msg.type.startsWith('message.')) {
       chat.applyMessageEvent(sid, msg)
@@ -107,28 +115,40 @@ export function useChat() {
    * 流式状态由会话级订阅的事件驱动（message_start→true，complete/error→false），
    * 不依赖 send() 的 resolve 时机——避免 ack 早于首个 chunk 导致订阅被提前拆除。
    *
-   * dispatching 态在 send 前置位（填 isStreaming 空窗期，让 Composer 停止按钮/steer 立即可用），
-   * message_start 到达时 setStreaming 自动清；失败也清（catch）。
+   * dispatching 态在 send 前置位（填 isGenerating 空窗期，让 Composer 停止按钮/steer 立即可用），
+   * message_start 到达时 clearPendingSend 自动清；失败也清（catch）。
    */
   async function send(text: string): Promise<void> {
     const sid = session.activeId
     if (!sid) return
     const trimmed = text.trim()
-    if (!trimmed || chat.isActive(sid)) return
+    if (!trimmed) return
+
+    // [B 策略 D-001] busy 时自动转 steer（追加上下文，不打断当前回合）
+    if (chat.isActive(sid)) {
+      await steer(trimmed)
+      return
+    }
 
     chat.appendUser(sid, trimmed)
     ensureStreamSubscription(sid, chat, session)
-    chat.setDispatching(sid)
+    chat.addPendingSend(sid)
     try {
       await chatApi.send(sid, trimmed)
     } catch (e) {
-      chat.setDispatching(null)
-      throw e
+      // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
+      // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
+      // Turn.vue submitEdit（调 editAndResend，无 try/catch）也不再产生 unhandled rejection。
+      // throw 只会变 unhandled rejection，错误已通过 toast 消化。
+      chat.clearPendingSend(sid)
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(`消息发送失败：${msg}`)
     }
   }
 
   /**
-   * 追加 steer：AI 执行中（isStreaming）时，把补充消息排入 steering 队列，
+   * 追加 steer：AI 执行中（isGenerating）时，把补充消息排入 steering 队列，
    * 当前回合工具调用结束后、下次 LLM 调用前投递，不打断当前回合。
    */
   async function steer(text: string): Promise<void> {
@@ -183,19 +203,19 @@ export function useChat() {
   /**
    * 中断当前回合（G-025 流转 DEFERRED：方法存在，实际中断留联调）。
    * [W3/W4] abort 乐观清 dispatching——abort 语义就是「结束当前活跃态」，即便 pi 没真正停也无害。
-   * 正常成功路径由 MessageDispatcher.abort 广播的 message.complete 驱动 setStreaming(false) 收口；
+   * 正常成功路径由 MessageDispatcher.abort 广播的 message.complete 驱动 finalizeSession 收口；
    * 失败路径（pi 死/getClientOrThrow 抛 handler_error → abort reject）若无此 catch，dispatching 永挂。
    */
   async function abort(): Promise<void> {
     const sid = session.activeId
     if (!sid) return
-    chat.setDispatching(null)
+    // [D-008] 乐观清 pendingSend（即便 pi 没真正停也无害）
+    chat.clearPendingSend(sid)
     try {
       await chatApi.abort(sid)
     } catch (e) {
       // abort 失败不重抛——用户已表达「停止」意图，UI 不应因 abort RPC 失败而卡住。
-      // dispatching 已清（乐观），streaming 态若残留由后续 message.complete 兜底。
-      // 给用户 toast 反馈（而非静默吞掉），满足 taste/no-silent-catch 的"反馈"要求。
+      // pendingSend 已清（乐观），实体收口靠 runtime 广播 message.complete{aborted} 兑底。
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
       error(`停止失败：${msg}`)
@@ -238,12 +258,16 @@ export function useChat() {
     chat.truncateFrom(sessionId, userMessageId, true)
     chat.appendUser(sessionId, trimmed)
     ensureStreamSubscription(sessionId, chat, session)
-    chat.setDispatching(sessionId)
+    chat.addPendingSend(sessionId)
     try {
       await chatApi.send(sessionId, trimmed)
     } catch (e) {
-      chat.setDispatching(null)
-      throw e
+      // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
+      // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。
+      chat.clearPendingSend(sessionId)
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(`消息发送失败：${msg}`)
     }
   }
 
