@@ -75,7 +75,7 @@ const {
   clear,
   setText,
   insertTextAtCursor,
-  isCaretOnFirstLine,
+  moveCaretUpVisualLine,
 } = useContenteditableInput(elRef, {
   onInput: (text) => emit('input', text),
   onSlashTrigger: (payload) => emit('slash-trigger', payload),
@@ -123,7 +123,7 @@ defineExpose({
   clearHashQueryText,
   saveSelection,
   restoreSelection,
-  isCaretOnFirstLine,
+  moveCaretUpVisualLine,
 })
 
 onMounted(() => {
@@ -153,7 +153,8 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-right: 1px;
+  /* 与后续文字空开约一字符宽（4px），避免 chip 边框贴紧正文 */
+  margin-right: 4px;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   background: rgba(167, 139, 250, 0.18);
@@ -184,6 +185,8 @@ onMounted(() => {
 /* @ 引用 / # 文件 mention 内联 chip（§2d：蓝名 / 绿名） */
 .composer-input :deep(.mention-chip) {
   display: inline;
+  /* 与后续文字空开约一字符宽（4px），与 slash-chip 对齐 */
+  margin-right: 4px;
   padding: 1px 4px;
   border-radius: var(--radius-sm);
   font: 500 12px / 1.4 var(--font-sans);

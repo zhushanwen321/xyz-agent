@@ -2,7 +2,9 @@
  * Composer 输入历史导航（shell 风格 ↑/↓ 翻阅已发送消息）。
  *
  * 行为规格（bash 风格，用户确认）：
- * - ↑（仅光标在第一行时触发）：
+ * - ↑（edit 态先尝试上移视觉行，到第一行才翻历史）：
+ *   - edit 态：调 moveCaretUpVisualLine —— 'moved' 上移一行（消费事件），'noop' 交给浏览器，
+ *     'first-line' 才进入翻历史逻辑
  *   - edit 态 + history 非空：保存当前草稿 → browsing → 回填 H[0]（最近一条）
  *   - edit 态 + history 空：清空 composer（无历史可翻）
  *   - browsing + 未到最老：index++ → 回填 H[index]
@@ -31,8 +33,17 @@ interface HistoryDeps {
   setText: (text: string) => void
   /** 清空 composer（↑ 无历史时） */
   clear: () => void
-  /** 光标是否在第一行（决定 ↑ 是否触发翻历史；多行编辑时 ↑ 应是正常光标移动） */
-  isCaretOnFirstLine: () => boolean
+  /**
+   * 上移光标一个视觉行。返回值语义：
+   * - 'first-line'：光标已在第一行（调用方据此翻历史）
+   * - 'moved'：已上移一个视觉行（调用方消费事件，不翻历史）
+   * - 'noop'：探测失败（调用方让浏览器默认处理）
+   *
+   * edit 态按 ↑ 时先调它：多行编辑（视觉换行 / Shift+Enter 换行）时光标不在首行应先上移，
+   * 到达首行后再翻历史（bash 语义）。contenteditable 浏览器默认 ↑ 在视觉换行下不可靠，
+   * 需主动用 caretRangeFromPoint 探测目标行。
+   */
+  moveCaretUpVisualLine: () => 'first-line' | 'moved' | 'noop'
 }
 
 /**
@@ -92,9 +103,13 @@ export function useComposerHistory(
    * 否则返回 false，让浏览器做正常光标上移。
    */
   function handleArrowUp(): boolean {
-    // browsing 态光标已在历史末尾（setText 放末尾），允许继续翻；
-    // edit 态要求光标在第一行，避免多行编辑时 ↑ 替换内容
-    if (!browsing && !deps.isCaretOnFirstLine()) return false
+    // edit 态：先尝试上移光标一个视觉行（处理视觉换行 / 多行编辑）。
+    // 返回 'first-line' 才翻历史；'moved' 消费事件但不翻历史；'noop' 让浏览器默认处理。
+    // browsing 态光标已在历史末尾（setText 放末尾），直接翻历史。
+    if (!browsing) {
+      const up = deps.moveCaretUpVisualLine()
+      if (up !== 'first-line') return up === 'moved'
+    }
 
     const h = history.value
     if (!browsing) {

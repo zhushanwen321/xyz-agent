@@ -43,6 +43,91 @@ interface ContenteditableCallbacks {
   handleBackspaceOnChip: () => boolean
 }
 
+/** 首末行判定的亚像素容差（px）：浮点 rect 比较避免渲染舍入误判 */
+const CARET_LINE_TOLERANCE_PX = 2
+/** 行高回退值（px）：caretRect.height 和 computed lineHeight 都失效时的兜底 */
+const FALLBACK_LINE_HEIGHT_PX = 16
+/** 取光标水平中点的除数（caretRect.width / 2 取中点，更稳定的命中点） */
+const CARET_CENTER_DIVISOR = 2
+
+/**
+ * 光标是否在第一行（模块级纯函数，由闭包 wrapper 和 moveCaretUpVisualLine 共用）。
+ *
+ * 判定：折叠选区的视觉 top 约等于容器内容区 top（elRect.top + paddingTop）。
+ * contenteditable 无 textarea 的 selectionStart 行号，靠 Range 视觉矩形与容器 rect
+ * 比较是唯一可靠方式。容差 2px 避免亚像素抖动。
+ */
+function isCaretOnFirstLineOf(el: HTMLElement | null): boolean {
+  if (!el) return false
+  const sel = window.getSelection()
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
+  const range = sel.getRangeAt(0)
+  if (!el.contains(range.startContainer)) return false
+  const caretRect = range.getBoundingClientRect()
+  // 空内容时 caretRect 可能全 0，视作首行
+  if (caretRect.top === 0 && caretRect.height === 0) return true
+  const cs = getComputedStyle(el)
+  const paddingTop = parseFloat(cs.paddingTop) || 0
+  const elTop = el.getBoundingClientRect().top + paddingTop
+  return Math.abs(caretRect.top - elTop) < CARET_LINE_TOLERANCE_PX
+}
+
+/**
+ * 上移光标一个视觉行（模块级纯函数）。
+ *
+ * 背景：文本超过容器宽度会视觉换行（soft wrap），但不产生新 DOM 节点。此时浏览器的
+ * 默认 ↑ 行为在 contenteditable 里不可靠（ProseMirror issue #1189 也追踪此 bug）。
+ * 本方法用 caretRangeFromPoint 手动探测上一行的目标位置并移动光标。
+ *
+ * @returns 'first-line'（已到首行，调用方翻历史）/ 'moved'（已移动）/ 'noop'（探测失败）
+ */
+function moveCaretUpVisualLineOf(el: HTMLElement | null): 'first-line' | 'moved' | 'noop' {
+  if (!el) return 'noop'
+  if (isCaretOnFirstLineOf(el)) return 'first-line'
+  const sel = window.getSelection()
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return 'noop'
+  const range = sel.getRangeAt(0)
+  if (!el.contains(range.startContainer)) return 'noop'
+
+  const caretRect = range.getBoundingClientRect()
+  // 行高估算：光标高度优先（折叠选区的 rect.height 即行高），回退到 computed lineHeight
+  const cs = getComputedStyle(el)
+  const lineHeight = caretRect.height || parseFloat(cs.lineHeight) || FALLBACK_LINE_HEIGHT_PX
+  const targetY = caretRect.top - lineHeight
+  // targetX 取光标水平中点（更稳定的命中点，避免行首/行末边界抖动）
+  const targetX = caretRect.left + caretRect.width / CARET_CENTER_DIVISOR
+
+  // caretPositionFromPoint（标准）优先；caretRangeFromPoint（WebKit/Blink）回退
+  const caretPos = (document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => CaretPosition | null
+  }).caretPositionFromPoint?.(targetX, targetY)
+  const caretRange = (document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
+  }).caretRangeFromPoint?.(targetX, targetY)
+
+  // 取目标节点和 offset（两种 API 归一）
+  let targetNode: Node | null = null
+  let targetOffset = 0
+  if (caretPos) {
+    targetNode = caretPos.offsetNode
+    targetOffset = caretPos.offset
+  } else if (caretRange) {
+    targetNode = caretRange.startContainer
+    targetOffset = caretRange.startOffset
+  }
+  // 目标必须在容器内，且确实在上一行（防回环）
+  if (!targetNode || !el.contains(targetNode)) return 'noop'
+  const targetRect = (caretRange ?? range).getBoundingClientRect()
+  if (targetRect.top >= caretRect.top) return 'noop'
+
+  const newRange = document.createRange()
+  newRange.setStart(targetNode, targetOffset)
+  newRange.collapse(true)
+  sel.removeAllRanges()
+  sel.addRange(newRange)
+  return 'moved'
+}
+
 /**
  * @param elRef contenteditable 根元素 ref
  * @param callbacks 触发事件 + Backspace-chip 删除委派
@@ -66,8 +151,8 @@ export function useContenteditableInput(
   clear: () => void
   setText: (text: string) => void
   insertTextAtCursor: (text: string) => void
-  /** 光标是否在第一行（composer history ↑ 触发判定：多行编辑时 ↑ 应是正常光标移动） */
-  isCaretOnFirstLine: () => boolean
+  /** 上移光标一个视觉行；返回 'first-line'（已到首行，调用方翻历史）/ 'moved'（已移动）/ 'noop'（探测失败） */
+  moveCaretUpVisualLine: () => 'first-line' | 'moved' | 'noop'
 } {
   const {
     onInput: emitInput,
@@ -84,8 +169,6 @@ export function useContenteditableInput(
   const isEmpty = ref(true)
   /** 保存的光标 Range：命令浮层打开会夺走焦点，选中后需恢复光标再插 chip */
   let savedRange: Range | null = null
-  /** 首末行判定的亚像素容差（px）：浮点 rect 比较避免渲染舍入误判 */
-  const CARET_LINE_TOLERANCE_PX = 2
 
   function getEl(): HTMLDivElement | null {
     return elRef.value
@@ -172,31 +255,11 @@ export function useContenteditableInput(
   }
 
   /**
-   * 光标是否在第一行。
-   *
-   * 判定：折叠选区的视觉 top（getBoundingClientRect().top）约等于容器内容区 top
-   * （elRect.top + paddingTop）。contenteditable 无 textarea 的 selectionStart 行号，
-   * 靠 Range 视觉矩形与容器 rect 比较是唯一可靠方式。
-   *
-   * 容差 2px：浮点 rect 比较避免亚像素抖动误判（首行 caret top 理论 == 内容区 top，
-   * 实际可能有 1px 内的渲染舍入）。
-   *
-   * 无选区 / 非折叠选区 / 光标不在容器内 → 返回 false（保守，不触发 history）。
+   * 上移光标一个视觉行（thin wrapper，实现在模块级 moveCaretUpVisualLineOf）。
+   * 详见模块级函数文档。contenteditable 视觉换行时浏览器默认 ↑ 不可靠，需主动探测。
    */
-  function isCaretOnFirstLine(): boolean {
-    const el = getEl()
-    if (!el) return false
-    const sel = window.getSelection()
-    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
-    const range = sel.getRangeAt(0)
-    if (!el.contains(range.startContainer)) return false
-    const caretRect = range.getBoundingClientRect()
-    // 空内容时 caretRect 可能全 0，视作首行
-    if (caretRect.top === 0 && caretRect.height === 0) return true
-    const cs = getComputedStyle(el)
-    const paddingTop = parseFloat(cs.paddingTop) || 0
-    const elTop = el.getBoundingClientRect().top + paddingTop
-    return Math.abs(caretRect.top - elTop) < CARET_LINE_TOLERANCE_PX
+  function moveCaretUpVisualLine(): 'first-line' | 'moved' | 'noop' {
+    return moveCaretUpVisualLineOf(getEl())
   }
 
   /**
@@ -443,6 +506,6 @@ export function useContenteditableInput(
     clear,
     setText,
     insertTextAtCursor,
-    isCaretOnFirstLine,
+    moveCaretUpVisualLine,
   }
 }

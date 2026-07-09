@@ -7,7 +7,7 @@
  * - 连续相同文本去重；session 切换重置；pending 消息不进历史
  *
  * mock 策略：deps 全 mock（记录 setText/clear 调用），history 从真实 chatStore.appendUser
- * 注入的 user 消息派生（验证方案 A：消息流是历史 SSOT）。isCaretOnFirstLine/Last 默认 true
+ * 注入的 user 消息派生（验证方案 A：消息流是历史 SSOT）。moveCaretUpVisualLine 默认 'first-line'
  * （测试状态机本身；光标行判定逻辑在 useContenteditableInput 单测覆盖）。
  *
  * 运行：npx vitest run src/__tests__/panel/use-composer-history.test.ts
@@ -25,7 +25,7 @@ beforeEach(() => {
 /** mock deps 工厂：记录所有 DOM 操作调用，便于断言回填/清空内容 */
 function makeDeps(overrides: Partial<{
   getText: () => string
-  isCaretOnFirstLine: () => boolean
+  moveCaretUpVisualLine: () => 'first-line' | 'moved' | 'noop'
 }> = {}) {
   const setTextCalls: string[] = []
   const clearCalls: number[] = []
@@ -43,7 +43,8 @@ function makeDeps(overrides: Partial<{
         clearCalls.push(clearCalls.length)
         currentText = ''
       }),
-      isCaretOnFirstLine: overrides.isCaretOnFirstLine ?? (() => true),
+      // 默认 'first-line'：模拟光标已在首行，↑ 直接翻历史（多数单行场景）
+      moveCaretUpVisualLine: overrides.moveCaretUpVisualLine ?? (() => 'first-line' as const),
     },
   }
 }
@@ -96,11 +97,20 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       expect(clearCalls.length).toBe(1)
     })
 
-    it('光标不在第一行时按 ↑：不翻历史（多行编辑时 ↑ 是正常光标移动）', () => {
+    it('edit 态 moveCaretUpVisualLine 返回 moved（上移一行）：消费事件但不翻历史', () => {
       const { setTextCalls, clearCalls, deps, handleArrowUp } = setup(['历史'])
-      deps.isCaretOnFirstLine = () => false
+      deps.moveCaretUpVisualLine = () => 'moved'
       const consumed = handleArrowUp()
-      expect(consumed).toBe(false)
+      expect(consumed).toBe(true) // 消费事件（防止浏览器再默认上移一次）
+      expect(setTextCalls.length).toBe(0) // 未翻历史
+      expect(clearCalls.length).toBe(0)
+    })
+
+    it('edit 态 moveCaretUpVisualLine 返回 noop（探测失败）：不消费，交给浏览器默认处理', () => {
+      const { setTextCalls, clearCalls, deps, handleArrowUp } = setup(['历史'])
+      deps.moveCaretUpVisualLine = () => 'noop'
+      const consumed = handleArrowUp()
+      expect(consumed).toBe(false) // 不消费，浏览器默认 ↑ 生效
       expect(setTextCalls.length).toBe(0)
       expect(clearCalls.length).toBe(0)
     })
