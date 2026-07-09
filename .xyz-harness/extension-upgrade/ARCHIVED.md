@@ -8,10 +8,10 @@
 
 | 目标文档 | 内容 | 溯源 |
 |---------|------|------|
-| DESIGN-LOG.md | 追加 extension-upgrade 行（2026-07-09） | closeout |
-| .xyz-harness/extension-upgrade/plan.md | 功能设计文档（22 单测 + 6 E2E 设计） | plan |
-| .xyz-harness/extension-upgrade/changes/retrospect.md | 复盘报告（5 个问题 + 教训） | retrospect |
-| .xyz-harness/extension-upgrade/closeout-report.md | 收尾报告（实现总结 + 文件清单） | closeout |
+| `DESIGN-LOG.md` | 追加 extension-upgrade 行（2026-07-09） | closeout |
+| `.xyz-harness/extension-upgrade/plan.md` | 功能设计文档（25 单测 + 6 E2E 设计） | plan |
+| `.xyz-harness/extension-upgrade/changes/retrospect.md` | 复盘报告（5 个问题 + 教训） | retrospect |
+| `.xyz-harness/extension-upgrade/closeout-report.md` | 收尾报告（实现总结 + 文件清单） | closeout |
 
 ## 功能摘要
 

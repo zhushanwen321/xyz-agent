@@ -3,7 +3,7 @@
 ## 实现完成
 
 - **功能**：已安装 user-installed 扩展的升级按钮 + per-extension 自动升级 switch
-- **测试**：57 个 runtime 测试 + 5 个 renderer 测试全部通过
+- **测试**：25 个 runtime extension-upgrade 测试 + 38 个 existing 测试 + 5 个 renderer 测试全部通过
 - **代码质量**：ESLint / vue-tsc / Runtime Bundle 验证全部通过
 
 ## 沉淀去向
