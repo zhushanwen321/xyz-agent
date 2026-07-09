@@ -109,17 +109,22 @@
         - working 态：行首脉冲点 + 禁用点击（trace 由 isWorking 强制展开）
         - 完成态 + 无 foldable：无 chevron，纯展示耗时
       -->
-      <Button
+      <!-- turn-meta + hr 包在同一 sticky wrapper：working 态贴顶时两者一起固定，
+           与完成态共用同一条 hr（完成态 wrapper 无 sticky 无底色，纯结构占位）。
+           底色在 wrapper 上（block 撑满全宽）而非 Button（w-fit 太窄遮不住整行），
+           用 --panel-bg（Panel 注入，随 panel 状态变化）不透明遮挡滚动文字。 -->
+      <div
         v-if="turn.assistants.length > 0"
+        :class="turn.isWorking ? 'sticky top-0 z-[1] bg-[var(--panel-bg)]' : ''"
+      >
+      <Button
         variant="ghost"
         size="sm"
         class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12.5px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
         :class="[
-          turn.isWorking
-            ? 'sticky top-0 z-[1] -mx-1 rounded-none border-b border-border bg-[var(--panel-bg)] px-2 cursor-default hover:text-muted'
-            : !turn.hasFoldable
-              ? 'cursor-default hover:text-muted'
-              : 'cursor-pointer hover:text-fg',
+          !turn.hasFoldable
+            ? 'cursor-default hover:text-muted'
+            : 'cursor-pointer hover:text-fg',
         ]"
         :disabled="turn.isWorking || !turn.hasFoldable"
         @click="expanded = !expanded"
@@ -143,6 +148,8 @@
           <Wrench class="size-2.5" />工具 ×{{ toolCount }}
         </span>
       </Button>
+      <hr class="border-0 border-t border-border" />
+      </div>
 
       <!-- 折叠 trace：working 或 expanded 时展开。
            块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
@@ -168,7 +175,7 @@
         </div>
       </div>
 
-      <hr v-if="turn.hasFoldable || turn.assistants.length > 0" class="border-0 border-t border-border" />
+      <!-- hr 已移入上方 turn-meta sticky wrapper（working/完成态共用，避免 streaming 时双线） -->
 
       <!-- 收尾 summary：仅 complete 态渲染（draft §4 收尾位固定不折叠，作回合焦点）。
            streaming 态 text 在 trace 内按真实时序展示（末位 text 块带光标），不在此重复。 -->
