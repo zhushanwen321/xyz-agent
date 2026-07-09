@@ -76,6 +76,8 @@ const {
   setText,
   insertTextAtCursor,
   moveCaretUpVisualLine,
+  isCaretOnFirstLine,
+  moveCaretToFirstLineEnd,
 } = useContenteditableInput(elRef, {
   onInput: (text) => emit('input', text),
   onSlashTrigger: (payload) => emit('slash-trigger', payload),
@@ -124,6 +126,8 @@ defineExpose({
   saveSelection,
   restoreSelection,
   moveCaretUpVisualLine,
+  isCaretOnFirstLine,
+  moveCaretToFirstLineEnd,
 })
 
 onMounted(() => {

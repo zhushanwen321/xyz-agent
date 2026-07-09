@@ -43,12 +43,12 @@ interface ContenteditableCallbacks {
   handleBackspaceOnChip: () => boolean
 }
 
-/** 首末行判定的亚像素容差（px）：浮点 rect 比较避免渲染舍入误判 */
-const CARET_LINE_TOLERANCE_PX = 2
-/** 行高回退值（px）：caretRect.height 和 computed lineHeight 都失效时的兜底 */
-const FALLBACK_LINE_HEIGHT_PX = 16
 /** 临时标记用的零宽字符（取折叠光标真实坐标，详见 getCaretClientRect） */
 const CARET_PROBE_ZWSP = '\u200B'
+/** 第一行判定的容差：半行高（比绝对像素更鲁棒） */
+const CARET_FIRST_LINE_TOLERANCE_RATIO = 0.5
+/** 行高回退值（px）：caretRect.height 和 computed lineHeight 都失效时的兜底 */
+const FALLBACK_LINE_HEIGHT_PX = 16
 
 /**
  * 获取折叠选区（光标）的真实视觉坐标。
@@ -88,19 +88,49 @@ function getCaretClientRect(el: HTMLElement, range: Range): DOMRect | null {
 /**
  * 光标是否在第一行（模块级纯函数）。
  *
- * 判定：光标视觉 top 约等于容器内容区 top（elRect.top + paddingTop）。
- * 用 getCaretClientRect 取真实坐标（处理全 0 rect 陷阱）。容差 2px 避免亚像素抖动。
+ * 算法：在光标位置插入临时零宽字符，取 getClientRects()，比较光标 top 和元素 top。
+ * 容差为半行高（比固定像素更鲁棒）。
  */
 function isCaretOnFirstLineOf(el: HTMLElement | null): boolean {
   if (!el) return false
   const sel = window.getSelection()
-  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
-  const caretRect = getCaretClientRect(el, sel.getRangeAt(0))
-  if (!caretRect) return false
+  if (!sel || sel.rangeCount === 0) return false
+  const range = sel.getRangeAt(0)
+  if (!el.contains(range.startContainer)) return false
+
+  // 插入临时文本节点获取光标位置
+  const tempNode = document.createTextNode('\0')
+  range.insertNode(tempNode)
+  const rects = range.getClientRects()
+  tempNode.parentNode?.removeChild(tempNode)
+  el.normalize()
+
+  if (rects.length === 0) return false
+  const caretRect = rects[0]
   const cs = getComputedStyle(el)
   const paddingTop = parseFloat(cs.paddingTop) || 0
+  const lineHeight = parseFloat(cs.lineHeight) || caretRect.height
   const elTop = el.getBoundingClientRect().top + paddingTop
-  return Math.abs(caretRect.top - elTop) < CARET_LINE_TOLERANCE_PX
+  const tolerance = lineHeight * CARET_FIRST_LINE_TOLERANCE_RATIO
+
+  return caretRect.top <= elTop + tolerance
+}
+
+/**
+ * 光标移动到第一行末尾（模块级纯函数）。
+ */
+function moveCaretToFirstLineEnd(el: HTMLElement | null): boolean {
+  if (!el) return false
+  const sel = window.getSelection()
+  if (!sel) return false
+
+  // 创建一个 range，从元素开始到第一行结束
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(true) // 移到开头
+  sel.removeAllRanges()
+  sel.addRange(range)
+  return true
 }
 
 /**
@@ -200,6 +230,10 @@ export function useContenteditableInput(
   insertTextAtCursor: (text: string) => void
   /** 上移光标一个视觉行；返回 'first-line'（已到首行，调用方翻历史）/ 'moved'（已移动）/ 'noop'（探测失败） */
   moveCaretUpVisualLine: () => 'first-line' | 'moved' | 'noop'
+  /** 光标是否在第一行（视觉行） */
+  isCaretOnFirstLine: () => boolean
+  /** 移动光标到第一行末尾 */
+  moveCaretToFirstLineEnd: () => boolean
 } {
   const {
     onInput: emitInput,
@@ -554,5 +588,7 @@ export function useContenteditableInput(
     setText,
     insertTextAtCursor,
     moveCaretUpVisualLine,
+    isCaretOnFirstLine: () => isCaretOnFirstLineOf(getEl()),
+    moveCaretToFirstLineEnd: () => moveCaretToFirstLineEnd(getEl()),
   }
 }

@@ -325,13 +325,22 @@ async function onAbort(): Promise<void> {
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
- *  ↑/↓ 翻阅输入历史（shell 风格，光标在首/末行才触发，详见 useComposerHistory） */
+ *  ↑/↓ 翻阅输入历史（shell 风格，光标在首/末行才触发） */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
   if (e.isComposing) return
-  if (e.key === 'ArrowUp' && handleArrowUp()) {
-    e.preventDefault()
+  if (e.key === 'ArrowUp') {
+    // 光标不在第一行时，先移动到第一行（不翻历史）
+    if (!inputRef.value?.isCaretOnFirstLine()) {
+      inputRef.value?.moveCaretToFirstLineEnd()
+      e.preventDefault()
+      return
+    }
+    // 光标在第一行，触发历史导航
+    if (handleArrowUp()) {
+      e.preventDefault()
+    }
     return
   }
   if (e.key === 'ArrowDown' && handleArrowDown()) {
