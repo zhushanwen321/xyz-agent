@@ -61,11 +61,13 @@ const TOOL_RUNNING = 'running'
  * @param sessionId 目标 session
  * @param chat chat store 实例（读 getMessages 分区）
  * @param isActive 该 session 是否活跃（pendingSend ∨ isGenerating）
+ * @param isCompacting 该 session 是否处于 compact 互斥态（独立于 isActive，视觉态属 running）
  */
 export function deriveStatus(
   sessionId: string,
   chat: ReturnType<typeof useChatStore>,
   isActive: boolean,
+  isCompacting = false,
 ): DerivedStatus {
   const msgs = chat.getMessages(sessionId)
   const last = msgs[msgs.length - 1]
@@ -75,7 +77,7 @@ export function deriveStatus(
       return 'waiting'
     }
   }
-  if (isActive || last?.status === STREAMING_STATUS) return 'running'
+  if (isActive || isCompacting || last?.status === STREAMING_STATUS) return 'running'
   if (!last) return 'done'
   if (last.status === ERROR_STATUS) return 'error'
   if (last.role === 'assistant' && last.isInterrupted) return 'stopped'

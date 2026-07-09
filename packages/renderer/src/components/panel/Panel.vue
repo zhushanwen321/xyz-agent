@@ -168,10 +168,20 @@ const isGenerating = computed(
 const isLandingView = computed(
   () => !props.sessionId || flow.state.value === 'landing',
 )
+/** 当前 session 是否处于 compact 互斥态（#6：session.compacting 驱动，按 session 隔离）。
+ *  compact 是独立互斥态：不并入 isActive（用户不可干预压缩流程），但视觉态属 running
+ *  （圆点呼吸），且 compact 期需继续渲染 Composer 显示压缩进度，故 showPanelComposer 单列分支。 */
+const isCompacting = computed(
+  () => !!props.sessionId && chat.isCompacting(props.sessionId),
+)
 /** band 内 Composer 渲染：new-task landing 态由 Landing 内嵌 composer 卡片承接，band 不重复渲染；
- *  已绑 session（含恢复的空 session，非 landing 态）→ band 渲染 composer 供直输；生成态始终挂。 */
+ *  已绑 session（含恢复的空 session，非 landing 态）→ band 渲染 composer 供直输；生成态始终挂；
+ *  compact 期也挂（显示压缩态，composer 内部按 isCompacting 切禁用/进度）。 */
 const showPanelComposer = computed(
-  () => (!!props.sessionId && !isLandingView.value && !isSessionDead.value) || isGenerating.value,
+  () =>
+    (!!props.sessionId && !isLandingView.value && !isSessionDead.value) ||
+    isGenerating.value ||
+    isCompacting.value,
 )
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>

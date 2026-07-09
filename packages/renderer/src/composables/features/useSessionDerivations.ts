@@ -42,7 +42,7 @@ export function useSessionDerivations() {
    */
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
     return computed(() => {
-      return deriveStatus(id, chat, chat.isActive(id))
+      return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id))
     })
   }
 
