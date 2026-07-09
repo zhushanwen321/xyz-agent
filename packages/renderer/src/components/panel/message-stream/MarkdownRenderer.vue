@@ -182,6 +182,14 @@ watch(
   margin: 0.5em 0;
   padding-left: 1.5em;
 }
+/* 恢复 Tailwind preflight 清掉的 list-style-type（preflight 对 ol/ul 设 list-style:none）。
+   不恢复则 <ol> 数字编号不可见——用户气泡里的编号列表会丢编号只剩换行。 */
+.md-render :deep(ul) {
+  list-style-type: disc;
+}
+.md-render :deep(ol) {
+  list-style-type: decimal;
+}
 .md-render :deep(li) { margin: 0.2em 0; line-height: 1.6; }
 .md-render :deep(li)::marker { color: var(--subtle); }
 

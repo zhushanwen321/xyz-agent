@@ -29,9 +29,9 @@
         </div>
       </div>
       <!-- 展示态气泡：右下尖角（user content 走 markdown 渲染；slash 命令前缀渲染为 chip） -->
-      <!-- whitespace-pre-wrap：markdown.ts breaks:false 不把单 \n 转 <br>，
-           此处用 CSS 保留软换行，兑现"用户输入的换行在气泡里可见"。
-           代码块 <pre> 自带 white-space:pre，不受影响。仅用户气泡加，不影响 assistant。 -->
+      <!-- 软换行由 markdown.ts breaks:true 转 <br> 实现（不再用 whitespace-pre-wrap）。
+           [HISTORICAL] 曾用 pre-wrap 兑现换行，但会把块级元素间 \n 渲染成空行（见 markdown.ts）。
+           例外：pending 气泡用 <span> 纯文本预览（未投递不走 markdown），仍需 pre-wrap 保留换行。 -->
       <!-- pending 气泡（draft-composer-states S7）：steer/followup 已入队未投递，
            虚线边框（1px，对齐设计稿）+ 脉冲圆点 + WHO 标 + 配色（steer 蓝 / followUp 青），投递后转普通气泡。 -->
       <div
@@ -49,7 +49,7 @@
       </div>
       <div
         v-else
-        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
+        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
       >
         <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），后接剩余文本 -->
         <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），可点击在 drawer 查看文档。

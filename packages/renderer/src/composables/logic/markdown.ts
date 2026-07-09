@@ -126,7 +126,12 @@ async function getMarkdown(): Promise<MarkdownIt> {
     html: false, // 不透传用户原始 HTML（XSS 防线）
     linkify: true, // 自动识别 URL（识别范围由下方 fuzzyLink:false 收紧）
     typographer: true, // 排版引号/省略号
-    breaks: false, // 不把单 \n 转 <br>（保留 markdown 语义，软换行由 CSS white-space 处理）
+    // breaks:true：单 \n 转 <br>，让用户气泡里软换行可见（不靠 CSS whitespace-pre-wrap）。
+    // [HISTORICAL] 曾用 breaks:false + 气泡外层 whitespace-pre-wrap 兜底软换行，但 pre-wrap
+    // 会把 markdown-it 产出的块级元素间 \n（如 <ol>\n<li>）也渲染成可见空行，导致编号列表
+    // 项之间多出空行。改 breaks:true 后软换行显式变 <br>，HTML 结构 \n 走默认 normal 折叠，
+    // 块级结构不再被 pre-wrap 污染。breaks 只影响段落内单 \n，代码块/表格等块级规则不受影响。
+    breaks: true,
     // 不配 highlight 回调：fence 走下方自定义规则，完全自控（避免双重逻辑）
   })
 
