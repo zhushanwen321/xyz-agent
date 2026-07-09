@@ -47,8 +47,6 @@ interface ContenteditableCallbacks {
 const CARET_LINE_TOLERANCE_PX = 2
 /** 行高回退值（px）：caretRect.height 和 computed lineHeight 都失效时的兜底 */
 const FALLBACK_LINE_HEIGHT_PX = 16
-/** 取光标水平中点的除数（caretRect.width / 2 取中点，更稳定的命中点） */
-const CARET_CENTER_DIVISOR = 2
 /** 临时标记用的零宽字符（取折叠光标真实坐标，详见 getCaretClientRect） */
 const CARET_PROBE_ZWSP = '\u200B'
 
@@ -64,14 +62,11 @@ const CARET_PROBE_ZWSP = '\u200B'
  * 同一陷阱 scrollCursorIntoView 也踩过（见其注释）。解法：在光标处插入一个零宽字符
  * span，取 span 的真实 rect，再删 span（insertNode/remove 不触发 input 事件，安全）。
  *
- * @returns 真实坐标的 DOMRect；无选区/非折叠/不在容器内 → null
+ * @param range 折叠选区的 range（调用方传入，避免内部读 selection 扰动 DOM）
+ * @returns 真实坐标的 DOMRect；range 非折叠/不在容器内/探测失败 → null
  */
-function getCaretClientRect(el: HTMLElement | null): DOMRect | null {
-  if (!el) return null
-  const sel = window.getSelection()
-  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return null
-  const range = sel.getRangeAt(0)
-  if (!el.contains(range.startContainer)) return null
+function getCaretClientRect(el: HTMLElement, range: Range): DOMRect | null {
+  if (!range.collapsed || !el.contains(range.startContainer)) return null
 
   // 先试直接取 rect（多数光标位置有效，避免无谓的 DOM 修改）
   const direct = range.getBoundingClientRect()
@@ -97,11 +92,14 @@ function getCaretClientRect(el: HTMLElement | null): DOMRect | null {
  * 用 getCaretClientRect 取真实坐标（处理全 0 rect 陷阱）。容差 2px 避免亚像素抖动。
  */
 function isCaretOnFirstLineOf(el: HTMLElement | null): boolean {
-  const caretRect = getCaretClientRect(el)
+  if (!el) return false
+  const sel = window.getSelection()
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
+  const caretRect = getCaretClientRect(el, sel.getRangeAt(0))
   if (!caretRect) return false
-  const cs = getComputedStyle(el!)
+  const cs = getComputedStyle(el)
   const paddingTop = parseFloat(cs.paddingTop) || 0
-  const elTop = el!.getBoundingClientRect().top + paddingTop
+  const elTop = el.getBoundingClientRect().top + paddingTop
   return Math.abs(caretRect.top - elTop) < CARET_LINE_TOLERANCE_PX
 }
 
@@ -118,17 +116,20 @@ function moveCaretUpVisualLineOf(el: HTMLElement | null): 'first-line' | 'moved'
   if (!el) return 'noop'
   if (isCaretOnFirstLineOf(el)) return 'first-line'
 
-  const caretRect = getCaretClientRect(el)
-  if (!caretRect) return 'noop'
   const sel = window.getSelection()
   if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return 'noop'
+  const originalRange = sel.getRangeAt(0).cloneRange()
+  if (!el.contains(originalRange.startContainer)) return 'noop'
+
+  const caretRect = getCaretClientRect(el, originalRange)
+  if (!caretRect) return 'noop'
 
   // 行高估算：光标高度优先（折叠选区的 rect.height 即行高），回退到 computed lineHeight
   const cs = getComputedStyle(el)
   const lineHeight = caretRect.height || parseFloat(cs.lineHeight) || FALLBACK_LINE_HEIGHT_PX
   const targetY = caretRect.top - lineHeight
-  // targetX 取光标水平中点（更稳定的命中点，避免行首/行末边界抖动）
-  const targetX = caretRect.left + caretRect.width / CARET_CENTER_DIVISOR
+  // targetX 取光标水平位置（折叠选区 width 为 0，left 即光标 x）
+  const targetX = caretRect.left
 
   // caretPositionFromPoint（标准）优先；caretRangeFromPoint（WebKit/Blink）回退
   const caretPos = (document as Document & {
@@ -138,7 +139,6 @@ function moveCaretUpVisualLineOf(el: HTMLElement | null): 'first-line' | 'moved'
     caretRangeFromPoint?: (x: number, y: number) => Range | null
   }).caretRangeFromPoint?.(targetX, targetY)
 
-  // 取目标节点和 offset（两种 API 归一）
   let targetNode: Node | null = null
   let targetOffset = 0
   if (caretPos) {
@@ -150,28 +150,28 @@ function moveCaretUpVisualLineOf(el: HTMLElement | null): 'first-line' | 'moved'
   }
   if (!targetNode || !el.contains(targetNode)) return 'noop'
 
-  // 目标位置的真实坐标也要用临时 span 取（caretRangeFromPoint 返回的 range 的
-  // getBoundingClientRect 同样可能全 0）。复用 getCaretClientRect 思路：先把光标移到
-  // 目标，再 probe。但更简单：直接在目标 offset 处插 span 测 top。
-  const probe = document.createElement('span')
-  probe.textContent = CARET_PROBE_ZWSP
-  const targetRange = document.createRange()
-  targetRange.setStart(targetNode, targetOffset)
-  targetRange.collapse(true)
-  targetRange.insertNode(probe)
-  const targetProbeRect = probe.getBoundingClientRect()
-  probe.remove()
-  el.normalize()
-  // 全 0 或不比当前光标高（防回环）→ 探测失败
-  if ((targetProbeRect.top === 0 && targetProbeRect.height === 0) ||
-      targetProbeRect.top >= caretRect.top) return 'noop'
-
-  // 把光标移到目标位置
+  // 移动光标到探测位置（clamp offset 防越界）
+  const maxOffset = targetNode.nodeType === Node.TEXT_NODE
+    ? (targetNode.textContent?.length ?? 0)
+    : targetNode.childNodes.length
   const newRange = document.createRange()
-  newRange.setStart(targetNode, Math.min(targetOffset, (targetNode.textContent?.length ?? 0)))
+  newRange.setStart(targetNode, Math.min(targetOffset, maxOffset))
   newRange.collapse(true)
   sel.removeAllRanges()
   sel.addRange(newRange)
+
+  // 移动后验证：取新光标真实坐标，确认确实上移了（防探测回环）。
+  // 用 getCaretClientRect 的轻量路径——移动后光标通常不在行末，直接 rect 多数有效。
+  const verifySel = window.getSelection()
+  const movedRect = verifySel && verifySel.rangeCount > 0
+    ? getCaretClientRect(el, verifySel.getRangeAt(0))
+    : null
+  if (!movedRect || movedRect.top >= caretRect.top) {
+    // 探测失效（目标不比原位置高）→ 恢复原光标，返回 noop 交给浏览器
+    sel.removeAllRanges()
+    sel.addRange(originalRange)
+    return 'noop'
+  }
   return 'moved'
 }
 
