@@ -221,7 +221,7 @@ describe('Extension Upgrade', () => {
       })
 
       await expect(service.upgradeExtension('pi-builtin-ext'))
-        .rejects.toThrow('Cannot upgrade built-in extension')
+        .rejects.toThrow('Built-in extensions cannot be upgraded')
     })
 
     it('throws for non-existent extension', async () => {
@@ -236,7 +236,69 @@ describe('Extension Upgrade', () => {
       })
 
       await expect(service.upgradeExtension('nonexistent-ext'))
-        .rejects.toThrow('Extension not found')
+        .rejects.toThrow('Extension not installed')
+    })
+
+    it('rolls back and throws not_extension when upgraded package is invalid (U6)', async () => {
+      const { installPackage, uninstallPackage } = await import('../src/infra/installers/npm-installer.js')
+      const mockedInstall = vi.mocked(installPackage)
+      const mockedUninstall = vi.mocked(uninstallPackage)
+
+      // Mock installPackage to write an INVALID extension (no pi manifest fields)
+      mockedInstall.mockImplementation(async (_spec, nodeModulesDir) => {
+        const pkgDir = join(nodeModulesDir, 'pi-test-ext')
+        mkdirSync(pkgDir, { recursive: true })
+        writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+          name: 'pi-test-ext',
+          version: '2.0.0',
+          // Missing keywords/peerDependencies — not a valid pi extension
+        }), 'utf-8')
+      })
+
+      const installer = new NpmGitInstaller()
+      vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
+
+      const service = new ExtensionService({
+        settingsDir: testSettingsDir,
+        projectRoot: process.cwd(),
+        installer,
+        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+        extensionSettings: new PiExtensionSettings(testSettingsDir),
+      })
+
+      await expect(service.upgradeExtension('pi-test-ext'))
+        .rejects.toSatisfy((err: unknown) => {
+          return err instanceof ExtensionInstallError && err.code === 'not_extension'
+        })
+      // Rollback uninstall should have been called
+      expect(mockedUninstall).toHaveBeenCalledWith('pi-test-ext', expect.any(String))
+    })
+
+    it('classifies installNpm network error and does not rollback (U7)', async () => {
+      const { NpmInstallError } = await import('../src/infra/installers/npm-installer.js')
+      const { installPackage, uninstallPackage } = await import('../src/infra/installers/npm-installer.js')
+      const mockedInstall = vi.mocked(installPackage)
+      const mockedUninstall = vi.mocked(uninstallPackage)
+
+      mockedInstall.mockRejectedValue(new NpmInstallError('network', 'ETIMEDOUT'))
+
+      const installer = new NpmGitInstaller()
+      vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
+
+      const service = new ExtensionService({
+        settingsDir: testSettingsDir,
+        projectRoot: process.cwd(),
+        installer,
+        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+        extensionSettings: new PiExtensionSettings(testSettingsDir),
+      })
+
+      await expect(service.upgradeExtension('pi-test-ext'))
+        .rejects.toSatisfy((err: unknown) => {
+          return err instanceof ExtensionInstallError && err.code === 'network'
+        })
+      // Network failure before install completes — no rollback
+      expect(mockedUninstall).not.toHaveBeenCalled()
     })
   })
 
@@ -400,6 +462,95 @@ describe('Extension Upgrade', () => {
     it('handleExtensionMessage handles extension.setAutoUpgrade', async () => {
       const { ExtensionMessageHandler } = await import('../src/transport/extension-message-handler.js')
       expect(typeof ExtensionMessageHandler).toBe('function')
+    })
+  })
+
+  // ── 7. uninstallExtension 清理 autoUpgrade ───────────────────
+
+  describe('ExtensionService.uninstallExtension: autoUpgrade cleanup', () => {
+    it('removes extension from autoUpgrade list on uninstall (U15)', async () => {
+      const { uninstallPackage } = await import('../src/infra/installers/npm-installer.js')
+      const mockedUninstall = vi.mocked(uninstallPackage)
+
+      // Enable auto-upgrade for pi-test-ext first
+      const settings = new PiExtensionSettings(testSettingsDir)
+      await settings.setAutoUpgrade('npm:pi-test-ext', true)
+      expect(settings.getAutoUpgrade()).toContain('npm:pi-test-ext')
+
+      mockedUninstall.mockResolvedValue(undefined)
+
+      const installer = new NpmGitInstaller()
+      const service = new ExtensionService({
+        settingsDir: testSettingsDir,
+        projectRoot: process.cwd(),
+        installer,
+        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+        extensionSettings: settings,
+      })
+
+      await service.uninstallExtension('pi-test-ext')
+      // autoUpgrade list should now be empty after uninstall
+      expect(settings.getAutoUpgrade()).not.toContain('npm:pi-test-ext')
+    })
+
+    it('uninstall extension not in autoUpgrade list is a no-op (U15b)', async () => {
+      const { uninstallPackage } = await import('../src/infra/installers/npm-installer.js')
+      vi.mocked(uninstallPackage).mockResolvedValue(undefined)
+
+      const settings = new PiExtensionSettings(testSettingsDir)
+      // pi-test-ext not in autoUpgrade list (we never added it)
+      expect(settings.getAutoUpgrade()).toEqual([])
+
+      const installer = new NpmGitInstaller()
+      const service = new ExtensionService({
+        settingsDir: testSettingsDir,
+        projectRoot: process.cwd(),
+        installer,
+        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+        extensionSettings: settings,
+      })
+
+      // Should not throw even though extension not in autoUpgrade list
+      await expect(service.uninstallExtension('pi-test-ext')).resolves.toBeUndefined()
+    })
+  })
+
+  // ── 8. scanExtensions autoUpgrade 字段 ────────────────────────
+
+  describe('ExtensionService.scanExtensions: autoUpgrade field', () => {
+    it('sets autoUpgrade=true for extensions in autoUpgrade list (U16)', async () => {
+      const settings = new PiExtensionSettings(testSettingsDir)
+      await settings.setAutoUpgrade('npm:pi-test-ext', true)
+
+      const installer = new NpmGitInstaller()
+      const service = new ExtensionService({
+        settingsDir: testSettingsDir,
+        projectRoot: process.cwd(),
+        installer,
+        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+        extensionSettings: settings,
+      })
+
+      const extensions = await service.scanExtensions()
+      const ext = extensions.find(e => e.name === 'pi-test-ext')
+      expect(ext).toBeDefined()
+      expect(ext!.autoUpgrade).toBe(true)
+    })
+
+    it('sets autoUpgrade=false for extensions not in autoUpgrade list (U16)', async () => {
+      const installer = new NpmGitInstaller()
+      const service = new ExtensionService({
+        settingsDir: testSettingsDir,
+        projectRoot: process.cwd(),
+        installer,
+        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+        extensionSettings: new PiExtensionSettings(testSettingsDir),
+      })
+
+      const extensions = await service.scanExtensions()
+      const ext = extensions.find(e => e.name === 'pi-test-ext')
+      expect(ext).toBeDefined()
+      expect(ext!.autoUpgrade).toBe(false)
     })
   })
 })

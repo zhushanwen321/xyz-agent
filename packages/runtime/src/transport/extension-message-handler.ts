@@ -218,6 +218,9 @@ export class ExtensionMessageHandler {
           if (typeof name !== 'string' || name.length === 0) {
             return this.ctx.sendError(ws, 'invalid_payload', 'extension.setAutoUpgrade requires a non-empty "name" string', msg.id)
           }
+          if (typeof autoUpgrade !== 'boolean') {
+            return this.ctx.sendError(ws, 'invalid_payload', 'extension.setAutoUpgrade requires "autoUpgrade" to be a boolean', msg.id)
+          }
           await ext.setAutoUpgrade(name, autoUpgrade)
           const extensions = await ext.scanExtensions()
           return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions })

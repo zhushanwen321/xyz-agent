@@ -154,4 +154,9 @@ export class PiExtensionSettings implements IExtensionSettings {
     }
     this.autoUpgradeStore.write({ autoUpgrade: next })
   }
+
+  async removeAutoUpgrade(source: string): Promise<void> {
+    const next = readAutoUpgradePackages(this.settingsDir).filter(d => d !== source)
+    this.autoUpgradeStore.write({ autoUpgrade: next })
+  }
 }

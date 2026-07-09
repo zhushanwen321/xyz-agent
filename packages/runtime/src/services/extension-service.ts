@@ -307,6 +307,9 @@ export class ExtensionService {
     // 从 disabled-packages.json 清理（经 port）
     await this.extSettings.removeDisabled(source)
 
+    // 从 auto-upgrade-packages 清理（经 port，与 removeDisabled 对称）
+    await this.extSettings.removeAutoUpgrade(source)
+
     // Remove from node_modules (经 IInstaller port)
     const nodeModulesDir = join(npmDir, 'node_modules')
     if (existsSync(npmDir)) {
@@ -346,28 +349,60 @@ export class ExtensionService {
   async upgradeExtension(
     name: string,
   ): Promise<{ upgraded: boolean; from: string; to: string }> {
-    // 查找扩展
+    // 校验包存在且是 user-installed
     const extensions = await this.scanExtensions()
     const ext = extensions.find(e => e.name === name)
     if (!ext) {
-      throw new ExtensionInstallError('not_found', `Extension not found: ${name}`)
+      throw new ExtensionInstallError('not_installed', `Extension not installed: ${name}`)
     }
     if (ext.source !== 'user-installed') {
-      throw new ExtensionInstallError('not_extension', `Cannot upgrade built-in extension: ${name}`)
+      throw new ExtensionInstallError(
+        'not_user_installed',
+        `Built-in extensions cannot be upgraded: ${name}`,
+        'Built-in extensions are managed by the application and do not support upgrade.',
+      )
     }
 
     const currentVersion = ext.version
     const latestVersion = await this.installer.getLatestVersion(name)
 
-    // semver.lt 判定：当前版本 >= latest 则无需升级
-    if (!currentVersion || !semver.lt(currentVersion, latestVersion)) {
+    // semver.lt 判定：currentVersion 为空（semver.valid=null）或 >= latest 则无需升级
+    if (!currentVersion || !semver.valid(currentVersion) || !semver.lt(currentVersion, latestVersion)) {
       return { upgraded: false, from: currentVersion, to: latestVersion }
     }
 
-    // 执行升级：npm install 最新版
+    // 执行升级：npm install 最新版（复用 installExtension 的错误分类 + isValidPiExtension 验证）
     const npmDir = join(this.settingsDir, 'npm')
     const nodeModulesDir = join(npmDir, 'node_modules')
-    await this.installer.installNpm(name, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
+    try {
+      await this.installer.installNpm(name, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
+    } catch (e) {
+      const msg = toErrorMessage(e)
+      const errCode = (e as { code?: string }).code
+      const code = errCode === 'extract' || errCode === 'integrity'
+        ? 'network' as const
+        : errCode ?? this.classifyNpmError(msg)
+      throw new ExtensionInstallError(
+        code,
+        `npm install failed: ${msg}`,
+        code === 'not_found' ? 'Check the package name, scope, and registry URL.' : undefined,
+      )
+    }
+
+    // 验证升级后仍是有效的 pi extension（包损坏/被篡改）→ 回滚
+    const pkgInstallDir = join(npmDir, 'node_modules', name)
+    if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
+      try {
+        await this.installer.uninstallNpm(name, nodeModulesDir)
+      } catch (e) {
+        log.warn(`[extension-service] rollback uninstall failed for ${name}: ${toErrorMessage(e)}`)
+      }
+      throw new ExtensionInstallError(
+        'not_extension',
+        `"${name}" is not a valid pi extension after upgrade.`,
+        'Check that the package has pi manifest fields (keywords: ["pi-package"], peerDependencies with pi-coding-agent, or a "pi" field in package.json).',
+      )
+    }
 
     return { upgraded: true, from: currentVersion, to: latestVersion }
   }
