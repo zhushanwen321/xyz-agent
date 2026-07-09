@@ -11,6 +11,7 @@
       isDead ? 'opacity-50' : '',
     ]"
     @click="emit('select', session.id)"
+    @mouseleave="confirming = false"
   >
     <span class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
     <div class="min-w-0 flex-1">
@@ -28,9 +29,14 @@
       {{ timeLabel }}
     </span>
     <!-- hover 操作按钮（重命名/删除）放卡片右下角，不再遮盖右上角的时间展示。
-         按钮浮于 dirName/gitBranch 之上，底色保证可读。 -->
-    <div class="absolute bottom-1 right-1.5 hidden gap-1 group-hover:flex">
+         按钮浮于 dirName/gitBranch 之上，底色保证可读。
+         删除采用原地两段式确认：首次点击→变红确认态，再次点击才真正 emit delete。 -->
+    <div
+      class="absolute bottom-1 right-1.5 gap-1"
+      :class="confirming ? 'flex' : 'hidden group-hover:flex'"
+    >
       <Button
+        v-if="!confirming"
         variant="ghost"
         size="icon"
         class="size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
@@ -42,11 +48,14 @@
       <Button
         variant="ghost"
         size="icon"
-        class="size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger"
-        title="删除"
-        @click.stop="emit('delete', session.id)"
+        :class="confirming
+          ? 'size-[22px] rounded-[5px] border border-danger bg-danger text-white hover:bg-danger hover:text-white'
+          : 'size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
+        :title="confirming ? '确认删除？' : '删除'"
+        @click.stop="onRemoveClick"
       >
-        <Trash2 class="size-[13px]" />
+        <Check v-if="confirming" class="size-[13px]" />
+        <Trash2 v-else class="size-[13px]" />
       </Button>
     </div>
   </div>
@@ -79,6 +88,20 @@ const emit = defineEmits<{
 /** dead session（进程已退出）置灰，仍可点击（点击触发 restore 重开） */
 const isDead = computed(() => props.session.status === 'dead')
 
+/**
+ * 删除两段式确认态。首次点击进入红底确认态（不 emit），再次点击才 emit delete。
+ * mouseleave / 切换到重命名 时 reset，避免红按钮长期停留。
+ */
+const confirming = ref(false)
+function onRemoveClick(): void {
+  if (!confirming.value) {
+    confirming.value = true
+    return
+  }
+  confirming.value = false
+  emit('delete', props.session.id)
+}
+
 /** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
 const dotClass = computed(() => DOT_CLASS[props.status])
 
@@ -88,8 +111,8 @@ const dirName = computed(() => dirNameOf(props.session.cwd))
 /** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 
-import { computed } from 'vue'
-import { Pencil, Trash2 } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { Check, Pencil, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
