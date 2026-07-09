@@ -18,7 +18,7 @@
 ## 一、核心拓扑
 
 ```
-窗口 (bg-base #0d0d0f 平铺全屏, border-radius:10px, 浮于桌面)
+窗口 (bg-base #1a1b1f 平铺全屏, border-radius:10px, 浮于桌面)
   .app-shell  flex  p-3(12px)  gap-3(12px)
     .aside-region (width 340px, 无 background —— 透明，融在 base 上)
       ├── padding-top: 52px        ← traffic light 安全区（三平台统一）

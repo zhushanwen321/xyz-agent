@@ -34,8 +34,8 @@ zcode-demo/
 
 ### 1. Layered float 布局
 
-- 背景层 (`base #0d0d0f`) 是统一画布。
-- 主内容区是一个带 margin 的浮动圆角面板 (`panel #151519`)，与背景形成层级。
+- 背景层 (`base #1a1b1f`，2026-07-09 提亮校准，原 `#0d0d0f`) 是统一画布。
+- 主内容区是一个带 margin 的浮动圆角面板 (`panel #222329`)，与背景形成层级。
 - 侧边栏直接坐在背景层上，没有独立面板背景，靠 hover/selected 状态区分。
 
 ### 2. 聊天区域三栏结构
@@ -72,15 +72,16 @@ zcode-demo/
 ## 颜色 token
 
 ```css
---base: #0d0d0f
---panel: #151519
---panel-hover: #1b1b20
+/* 2026-07-09 提亮校准后色值，对标 VS Code Dark+。原值见 design-tokens.md 暗色章节 */
+--base: #1a1b1f
+--panel: #222329
+--panel-hover: #282930
 --accent: #4f8ef7
 --success: #22c55e
---border: rgba(255,255,255,0.06)
---text-primary: #f0f0f5
---text-secondary: #8a8a95
---text-tertiary: #5a5a65
+--border: rgba(255,255,255,0.08)
+--text-primary: #f7f8fc
+--text-secondary: #a8a8b5
+--text-tertiary: #82828f
 ```
 
 ## 后续迁移方向

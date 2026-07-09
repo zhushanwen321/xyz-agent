@@ -109,7 +109,7 @@
 ## 已知裂缝（需对齐）
 
 - **impl 变量归一**（✅ 已裁决 ADR-0021-B / 选项②，2026-06-20）：真实代码自造的 `--section-bg` / `--divider` / `--accent-light` **迁移到本文件 SSOT 已有名**，不补进 tokens（避免同语义双名）：`--section-bg`→`--surface`、`--divider`→`--border`、`--accent-light`→`--accent-soft`。draft 已用 SSOT 名（无需改）；真身 CSS 待迁移。见 `settings/handoff-system.md §13`。
-- **默认主题方向**（✅ 已落地，2026-06-27）：**暗色冷蓝为真默认**（`--bg #0d0d0f` / accent `#4f8ef7`）。`stores/settings.ts` 重构为单一真相源，DEFAULT_SYSTEM = `{ theme:'dark', themePreset:'cold-blue', locale:'zh-CN' }`，`setSystem()` 同步 `<html data-theme>` 到 DOM —— 主题切换已从「死设置」变为实际生效。
+- **默认主题方向**（✅ 已落地，2026-06-27）：**暗色冷蓝为真默认**（`--bg #1a1b1f` / accent `#4f8ef7`，2026-07-09 提亮校准）。`stores/settings.ts` 重构为单一真相源，DEFAULT_SYSTEM = `{ theme:'dark', themePreset:'cold-blue', locale:'zh-CN' }`，`setSystem()` 同步 `<html data-theme>` 到 DOM —— 主题切换已从「死设置」变为实际生效。
 
 ## 待办
 
@@ -142,6 +142,6 @@
 
 **已知命名冲突（维持 v3，不覆盖）**：
 - `--accent`：v3=主色蓝（强调/品牌，19 处业务代码 + tailwind config 锁定）；shadcn=hover 软底（中性）。语义相反，维持 v3 主色蓝（W01 零回归）。副作用：ghost/outline Button 的 `hover:bg-accent` hover 成主色蓝（既有状态，非本修复引入）。
-- `--muted`：v3=次级文字色（#8a8a95）；shadcn=背景色。维持 v3。副作用：`bg-muted`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
+- `--muted`：v3=次级文字色（#a8a8b5，2026-07-09 提亮后）；shadcn=背景色。维持 v3。副作用：`bg-muted`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
 
 两项冲突是 shadcn 命名与 v3 命名的根本不兼容，纯 token 别名无法消除；维持 v3 语义保证 W01 零回归，副作用可接受。若未来要 ghost hover 中性化，需在 button variant 改用 `hover:bg-surface-hover`（改组件，非 token 层）。
