@@ -113,6 +113,7 @@ import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
+import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 
 const props = withDefaults(
   defineProps<{
@@ -168,6 +169,20 @@ const {
   onAddSelect,
   onCmdSelect,
 } = useCommandPopoverTrigger(inputRef, computed(() => props.sessionId))
+
+// 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
+// deps 经 inputRef 透传到 ComposerInput 的 contenteditable 操作（getText/setText/clear/
+// isCaretOnFirstLine/isCaretOnLastLine）。sessionId null（landing 态无真实 session）时 history 为空。
+const { handleArrowUp, handleArrowDown } = useComposerHistory(
+  computed(() => props.sessionId),
+  {
+    getText: () => inputRef.value?.getText() ?? '',
+    setText: (text) => inputRef.value?.setText(text),
+    clear: () => inputRef.value?.clear(),
+    isCaretOnFirstLine: () => inputRef.value?.isCaretOnFirstLine() ?? false,
+    isCaretOnLastLine: () => inputRef.value?.isCaretOnLastLine() ?? false,
+  },
+)
 
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
@@ -310,10 +325,21 @@ async function onAbort(): Promise<void> {
   await abort()
 }
 
-/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层 */
+/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
+ *  ↑/↓ 翻阅输入历史（shell 风格，光标在首/末行才触发，详见 useComposerHistory） */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
-  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+  // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
+  if (e.isComposing) return
+  if (e.key === 'ArrowUp' && handleArrowUp()) {
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'ArrowDown' && handleArrowDown()) {
+    e.preventDefault()
+    return
+  }
+  if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
   if (e.altKey) {
     onFollowUp()

@@ -66,6 +66,10 @@ export function useContenteditableInput(
   clear: () => void
   setText: (text: string) => void
   insertTextAtCursor: (text: string) => void
+  /** 光标是否在第一行（composer history ↑ 触发判定：多行编辑时 ↑ 应是正常光标移动） */
+  isCaretOnFirstLine: () => boolean
+  /** 光标是否在最后一行（composer history ↓ 触发判定，与 ↑ 对称） */
+  isCaretOnLastLine: () => boolean
 } {
   const {
     onInput: emitInput,
@@ -82,6 +86,8 @@ export function useContenteditableInput(
   const isEmpty = ref(true)
   /** 保存的光标 Range：命令浮层打开会夺走焦点，选中后需恢复光标再插 chip */
   let savedRange: Range | null = null
+  /** 首末行判定的亚像素容差（px）：浮点 rect 比较避免渲染舍入误判 */
+  const CARET_LINE_TOLERANCE_PX = 2
 
   function getEl(): HTMLDivElement | null {
     return elRef.value
@@ -165,6 +171,53 @@ export function useContenteditableInput(
   function onCompositionEnd(): void {
     composing.value = false
     onInput()
+  }
+
+  /**
+   * 光标是否在第一行。
+   *
+   * 判定：折叠选区的视觉 top（getBoundingClientRect().top）约等于容器内容区 top
+   * （elRect.top + paddingTop）。contenteditable 无 textarea 的 selectionStart 行号，
+   * 靠 Range 视觉矩形与容器 rect 比较是唯一可靠方式。
+   *
+   * 容差 2px：浮点 rect 比较避免亚像素抖动误判（首行 caret top 理论 == 内容区 top，
+   * 实际可能有 1px 内的渲染舍入）。
+   *
+   * 无选区 / 非折叠选区 / 光标不在容器内 → 返回 false（保守，不触发 history）。
+   */
+  function isCaretOnFirstLine(): boolean {
+    const el = getEl()
+    if (!el) return false
+    const sel = window.getSelection()
+    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.startContainer)) return false
+    const caretRect = range.getBoundingClientRect()
+    // 空内容时 caretRect 可能全 0，视作首行
+    if (caretRect.top === 0 && caretRect.height === 0) return true
+    const cs = getComputedStyle(el)
+    const paddingTop = parseFloat(cs.paddingTop) || 0
+    const elTop = el.getBoundingClientRect().top + paddingTop
+    return Math.abs(caretRect.top - elTop) < CARET_LINE_TOLERANCE_PX
+  }
+
+  /**
+   * 光标是否在最后一行。判定逻辑与 isCaretOnFirstLine 对称：比较 caret bottom 与
+   * 容器内容区 bottom（elRect.bottom - paddingBottom）。
+   */
+  function isCaretOnLastLine(): boolean {
+    const el = getEl()
+    if (!el) return false
+    const sel = window.getSelection()
+    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.startContainer)) return false
+    const caretRect = range.getBoundingClientRect()
+    if (caretRect.top === 0 && caretRect.height === 0) return true
+    const cs = getComputedStyle(el)
+    const paddingBottom = parseFloat(cs.paddingBottom) || 0
+    const elBottom = el.getBoundingClientRect().bottom - paddingBottom
+    return Math.abs(caretRect.bottom - elBottom) < CARET_LINE_TOLERANCE_PX
   }
 
   /**
@@ -370,5 +423,7 @@ export function useContenteditableInput(
     clear,
     setText,
     insertTextAtCursor,
+    isCaretOnFirstLine,
+    isCaretOnLastLine,
   }
 }
