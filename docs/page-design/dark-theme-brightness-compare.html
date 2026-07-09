@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-tier="current">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>暗色提亮对比 · xyz-agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   四档配色 token —— data-tier 切换
+   现状 / A微提 / B中提(推荐) / C更亮
+   仅背景层 + 文字层变化，accent/border 语义不变
+   ============================================================ */
+:root,
+[data-tier="current"] {
+  --bg: #0d0d0f; --surface: #151519; --surface-hover: #1f1f26;
+  --surface-2: #1b1b20; --bg-elevated: #1c1c20; --bg-input: #101013;
+  --fg: #f0f0f5; --muted: #8a8a95; --subtle: #5a5a65;
+  --border: rgba(255,255,255,0.06); --border-strong: rgba(255,255,255,0.12);
+  --label: "现状 #0d0d0f"; --lum: "L=0.0041 极暗";
+}
+[data-tier="A"] {
+  --bg: #131419; --surface: #1a1b21; --surface-hover: #24262e;
+  --surface-2: #1f2026; --bg-elevated: #20222a; --bg-input: #16171c;
+  --fg: #f3f4f8; --muted: #9a9aa8; --subtle: #747480;
+  --border: rgba(255,255,255,0.07); --border-strong: rgba(255,255,255,0.13);
+  --label: "A 微提 #131419"; --lum: "L=0.0071 ≈GitHub Dark";
+}
+[data-tier="B"] {
+  --bg: #16171b; --surface: #1d1e24; --surface-hover: #282a32;
+  --surface-2: #23252b; --bg-elevated: #252630; --bg-input: #191a1f;
+  --fg: #f5f6fa; --muted: #a2a2af; --subtle: #838390;
+  --border: rgba(255,255,255,0.08); --border-strong: rgba(255,255,255,0.14);
+  --label: "B 中提 #16171b"; --lum: "L=0.0086 ≈Linear ★推荐";
+}
+[data-tier="C"] {
+  --bg: #1a1b1f; --surface: #222329; --surface-hover: #2d2e36;
+  --surface-2: #282930; --bg-elevated: #2a2b32; --bg-input: #1e1f24;
+  --fg: #f7f8fc; --muted: #a8a8b5; --subtle: #82828f;
+  --border: rgba(255,255,255,0.08); --border-strong: rgba(255,255,255,0.15);
+  --label: "C 更亮 #1a1b1f"; --lum: "L=0.0110 ≈VS Code";
+}
+
+/* accent / 状态色 / 圆角 / 阴影：四档共用 */
+:root {
+  --accent: #4f8ef7; --accent-hover: #6ba3ff;
+  --accent-soft: rgba(79,142,247,0.12); --accent-ring: rgba(79,142,247,0.30);
+  --success: #22c55e; --warning: #f5a524; --danger: #ef4444;
+  --info: #38bdf8; --reasoning: #a78bfa; --reasoning-soft: rgba(167,139,250,0.15);
+  --radius-sm: 3px; --radius: 8px; --radius-lg: 12px;
+  --shadow-1: 0 0 0 1px rgba(0,0,0,0.2); --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(0.4,0,0.2,1); --duration: 200ms;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-sans); font-size:14px; line-height:1.6;
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+
+/* ── 顶部切换栏 ── */
+.toolbar {
+  position:fixed; top:0; left:0; right:0; z-index:100;
+  display:flex; align-items:center; gap:8px; padding:8px 12px;
+  background: var(--bg-elevated); border-bottom:1px solid var(--border-strong);
+  backdrop-filter: blur(12px);
+}
+.toolbar__title { font-size:12px; font-weight:600; color:var(--muted); margin-right:auto; letter-spacing:0.02em; }
+.toolbar__title span { color:var(--accent); }
+.tier-btn {
+  font-family:var(--font-sans); font-size:12px; font-weight:500;
+  padding:6px 12px; border-radius:var(--radius); cursor:pointer;
+  background:transparent; color:var(--muted); border:1px solid var(--border-strong);
+  transition: all var(--duration) var(--ease);
+}
+.tier-btn:hover { background:var(--surface-hover); color:var(--fg); }
+.tier-btn.active { background:var(--accent-soft); color:var(--accent); border-color:var(--accent-ring); }
+.tier-info { font-family:var(--font-mono); font-size:10px; color:var(--subtle); margin-left:4px; }
+.tier-info b { display:block; color:var(--fg); font-size:12px; font-family:var(--font-sans); }
+
+/* ── 主布局（贴近 xyz-agent shell）── */
+.app {
+  display:flex; height:100vh; padding-top:48px;
+}
+/* sidebar 透明融合：直接用 bg，不额外加底 */
+.sidebar {
+  width:240px; flex-shrink:0; border-right:1px solid var(--border);
+  display:flex; flex-direction:column; overflow-y:auto;
+}
+.sidebar__header { padding:12px 16px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--subtle); }
+.session-group { padding:0 8px; }
+.session-group__title { display:flex; align-items:center; gap:6px; padding:6px 8px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); }
+.session-group__title svg { transition:transform var(--duration) var(--ease); }
+.session-item {
+  display:flex; align-items:center; gap:8px; padding:6px 12px; margin:1px 0;
+  border-radius:var(--radius); cursor:pointer; font-size:13px; color:var(--fg);
+  transition: background var(--duration) var(--ease);
+}
+.session-item:hover { background:var(--surface-hover); }
+.session-item.active { background:var(--surface); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.session-item.active .session-item__title { color:var(--accent); }
+.session-item__dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.session-item__dot.running { background:var(--success); box-shadow:0 0 0 3px rgba(34,197,94,0.15); animation:pulse 2s var(--ease) infinite; }
+.session-item__dot.idle { background:var(--subtle); }
+.session-item__dot.done { background:var(--success); }
+.session-item__title { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.session-item__time { font-size:10px; color:var(--subtle); font-family:var(--font-mono); }
+@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.45;} }
+
+/* ── 主区域 float-panel 浮起 ── */
+.main {
+  flex:1; display:flex; flex-direction:column; overflow:hidden;
+  background:var(--surface); margin:8px; border-radius:var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.panel-header {
+  display:flex; align-items:center; gap:12px; padding:12px 20px;
+  border-bottom:1px solid var(--border); flex-shrink:0;
+}
+.panel-header__title { font-size:14px; font-weight:600; color:var(--fg); }
+.panel-header__path { font-family:var(--font-mono); font-size:11px; color:var(--subtle); }
+.panel-header__spacer { flex:1; }
+.icon-btn {
+  width:28px; height:28px; display:flex; align-items:center; justify-content:center;
+  border-radius:var(--radius); cursor:pointer; color:var(--muted);
+  transition: all var(--duration) var(--ease); border:none; background:transparent;
+}
+.icon-btn:hover { background:var(--surface-hover); color:var(--fg); }
+
+/* ── 消息流 ── */
+.stream { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:20px; }
+
+/* user 消息气泡 */
+.msg-user {
+  align-self:flex-end; max-width:75%; padding:10px 14px;
+  background:var(--accent-soft); color:var(--fg);
+  border-radius:var(--radius-lg); border-bottom-right-radius:var(--radius-sm);
+}
+.msg-user p { margin:0; }
+
+/* assistant 消息 */
+.msg-assistant { max-width:85%; }
+.msg-role { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.msg-role__avatar { width:22px; height:22px; border-radius:var(--radius-sm); background:var(--accent); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#fff; }
+.msg-role__name { font-size:13px; font-weight:600; color:var(--fg); }
+.msg-role__time { font-size:10px; color:var(--subtle); font-family:var(--font-mono); }
+.msg-body { color:var(--fg); font-size:14px; line-height:1.7; }
+.msg-body p { margin:0 0 10px; }
+.msg-body p:last-child { margin-bottom:0; }
+.msg-body strong { font-weight:600; }
+.msg-body code.inline {
+  font-family:var(--font-mono); font-size:12px; padding:2px 6px;
+  background:var(--surface-2); border-radius:var(--radius-sm); color:var(--info);
+}
+.msg-body ul { margin:8px 0; padding-left:20px; }
+.msg-body li { margin:4px 0; }
+.msg-body a { color:var(--accent); text-decoration:none; }
+
+/* 代码块 */
+.code-block {
+  margin:10px 0; border-radius:var(--radius); overflow:hidden;
+  background:#0b0c0e; border:1px solid var(--border);
+}
+.code-block__header { display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--surface-2); border-bottom:1px solid var(--border); }
+.code-block__lang { font-family:var(--font-mono); font-size:11px; color:var(--muted); }
+.code-block__copy { margin-left:auto; font-size:11px; color:var(--subtle); cursor:pointer; background:none; border:none; font-family:var(--font-sans); }
+.code-block__copy:hover { color:var(--accent); }
+.code-block pre { padding:12px; overflow-x:auto; }
+.code-block code { font-family:var(--font-mono); font-size:12px; line-height:1.6; color:#d4d4d8; }
+.tk-kw { color:#c084fc; } .tk-str { color:#86efac; } .tk-fn { color:#93c5fd; }
+.tk-com { color:#6b7280; } .tk-num { color:#fbbf24; }
+
+/* thinking 块（reasoning 紫） */
+.thinking {
+  margin:8px 0; padding:10px 14px; border-radius:var(--radius);
+  background:var(--reasoning-soft); border-left:2px solid var(--reasoning);
+}
+.thinking__label { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:600; color:var(--reasoning); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px; }
+.thinking__body { font-size:13px; color:var(--muted); font-style:italic; line-height:1.6; }
+
+/* tool call 卡片 */
+.tool-card {
+  margin:8px 0; padding:10px 14px; border-radius:var(--radius);
+  background:var(--surface); border:1px solid var(--border);
+}
+.tool-card__head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.tool-card__icon { width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:var(--radius-sm); background:var(--surface-2); }
+.tool-card__name { font-family:var(--font-mono); font-size:12px; font-weight:500; color:var(--fg); }
+.tool-card__status { margin-left:auto; font-size:11px; color:var(--success); display:flex; align-items:center; gap:4px; }
+.tool-card__path { font-family:var(--font-mono); font-size:11px; color:var(--muted); }
+
+/* ── composer ── */
+.composer { padding:12px 16px; border-top:1px solid var(--border); flex-shrink:0; }
+.composer__wrap {
+  background:var(--bg-input); border:1px solid var(--border-strong);
+  border-radius:var(--radius-lg); padding:12px 14px;
+  transition: border-color var(--duration) var(--ease);
+}
+.composer__wrap:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,142,247,0.15); }
+.composer__input { width:100%; background:transparent; border:none; outline:none; color:var(--fg); font-family:var(--font-sans); font-size:14px; line-height:1.5; resize:none; }
+.composer__input::placeholder { color:var(--subtle); }
+.composer__footer { display:flex; align-items:center; gap:8px; margin-top:10px; }
+.chip {
+  display:inline-flex; align-items:center; gap:4px; padding:3px 8px;
+  border-radius:999px; font-size:11px; font-family:var(--font-mono);
+  background:var(--surface-2); color:var(--muted);
+}
+.send-btn {
+  margin-left:auto; width:28px; height:28px; display:flex; align-items:center; justify-content:center;
+  border-radius:var(--radius); background:var(--accent); color:#fff; border:none; cursor:pointer;
+  transition: background var(--duration) var(--ease);
+}
+.send-btn:hover { background:var(--accent-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation:none !important; transition:none !important; }
+}
+</style>
+</head>
+<body>
+
+<!-- 切换栏 -->
+<div class="toolbar">
+  <div class="toolbar__title">暗色提亮对比 · <span>xyz-agent</span></div>
+  <button class="tier-btn active" data-tier="current">现状</button>
+  <button class="tier-btn" data-tier="A">A 微提</button>
+  <button class="tier-btn" data-tier="B">B 中提 ★</button>
+  <button class="tier-btn" data-tier="C">C 更亮</button>
+  <div class="tier-info"><b id="lbl">现状 #0d0d0f</b><span id="lum">L=0.0041 极暗</span></div>
+</div>
+
+<div class="app">
+  <!-- sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar__header">Sessions</div>
+    <div class="session-group">
+      <div class="session-group__title">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M3 1L7 5L3 9" stroke="currentColor" stroke-width="1.5"/></svg>
+        feat-update-pi-extension
+      </div>
+      <div class="session-item active">
+        <span class="session-item__dot running"></span>
+        <span class="session-item__title">重构 extension-service</span>
+        <span class="session-item__time">14:32</span>
+      </div>
+      <div class="session-item">
+        <span class="session-item__dot idle"></span>
+        <span class="session-item__title">修复打包路径问题</span>
+        <span class="session-item__time">13:08</span>
+      </div>
+      <div class="session-item">
+        <span class="session-item__dot done"></span>
+        <span class="session-item__title">添加 session tree 导航</span>
+        <span class="session-item__time">11:45</span>
+      </div>
+    </div>
+    <div class="session-group">
+      <div class="session-group__title">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M3 1L7 5L3 9" stroke="currentColor" stroke-width="1.5"/></svg>
+        dag-executor
+      </div>
+      <div class="session-item">
+        <span class="session-item__dot idle"></span>
+        <span class="session-item__title">插件注册机制设计</span>
+        <span class="session-item__time">昨天</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- main panel -->
+  <main class="main">
+    <div class="panel-header">
+      <div>
+        <div class="panel-header__title">重构 extension-service</div>
+        <div class="panel-header__path">~/Code/xyz-agent/packages/runtime/src/services</div>
+      </div>
+      <div class="panel-header__spacer"></div>
+      <button class="icon-btn" title="分屏">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="5" height="10" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="3" width="5" height="10" rx="1" stroke="currentColor" stroke-width="1.3"/></svg>
+      </button>
+      <button class="icon-btn" title="更多">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12" cy="8" r="1.3" fill="currentColor"/></svg>
+      </button>
+    </div>
+
+    <div class="stream">
+      <!-- user -->
+      <div class="msg-user">
+        <p>帮我把 extension-service 的自动升级逻辑重构一下，现在 setAutoUpgrade 这个命名不太对，应该是 autoUpgrade 字段。</p>
+      </div>
+
+      <!-- assistant -->
+      <div class="msg-assistant">
+        <div class="msg-role">
+          <div class="msg-role__avatar">A</div>
+          <span class="msg-role__name">Agent</span>
+          <span class="msg-role__time">14:32</span>
+        </div>
+        <div class="msg-body">
+          <p>重构 <code class="inline">extension-service</code> 的自动升级逻辑。先看现状：字段名 <code class="inline">setAutoUpgrade</code> 实际对应配置里的 <code class="inline">autoUpgrade</code>，命名不一致。计划如下：</p>
+          <ul>
+            <li>把方法重命名为 <code class="inline">setAutoUpgradeFlag</code>，与字段语义对齐</li>
+            <li>同步更新测试用例，用 <code class="inline">autoUpgrade</code> 字段断言</li>
+            <li>检查所有调用方，确认无遗漏</li>
+          </ul>
+        </div>
+
+        <!-- thinking 块 -->
+        <div class="thinking">
+          <div class="thinking__label">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1V3M6 9V11M1 6H3M9 6H11M2.5 2.5L4 4M8 8L9.5 9.5M2.5 9.5L4 8M8 4L9.5 2.5" stroke="currentColor" stroke-width="1.2"/></svg>
+            Thinking
+          </div>
+          <div class="thinking__body">需要确认这个字段是 ExtensionConfig 还是 ExtensionInfo 上的。先读类型定义，避免改错地方。autoUpgrade 应该是运行时配置，不是元信息。</div>
+        </div>
+
+        <!-- tool call -->
+        <div class="tool-card">
+          <div class="tool-card__head">
+            <div class="tool-card__icon">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4L6 1L10 4V10H2V4Z" stroke="currentColor" stroke-width="1.2"/></svg>
+            </div>
+            <span class="tool-card__name">read_file</span>
+            <span class="tool-card__status">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5L4 7L8 3" stroke="currentColor" stroke-width="1.5"/></svg>
+              done
+            </span>
+          </div>
+          <div class="tool-card__path">packages/runtime/src/services/extension-service.ts</div>
+        </div>
+
+        <div class="msg-body">
+          <p>找到定义了。<code class="inline">autoUpgrade: boolean</code> 在 <code class="inline">ExtensionConfig</code> 接口上。重命名方法：</p>
+        </div>
+
+        <!-- 代码块 -->
+        <div class="code-block">
+          <div class="code-block__header">
+            <span class="code-block__lang">typescript</span>
+            <button class="code-block__copy">复制</button>
+          </div>
+          <pre><code><span class="tk-com">// extension-service.ts</span>
+<span class="tk-kw">async</span> <span class="tk-fn">setAutoUpgradeFlag</span>(name: <span class="tk-str">string</span>, enabled: <span class="tk-str">boolean</span>): <span class="tk-fn">Promise</span>&lt;<span class="tk-kw">void</span>&gt; {
+  <span class="tk-kw">const</span> ext = <span class="tk-kw">await</span> <span class="tk-kw">this</span>.get(name);
+  <span class="tk-kw">if</span> (!ext) <span class="tk-kw">throw new</span> <span class="tk-fn">Error</span>(<span class="tk-str">`Extension ${name} not found`</span>);
+  ext.config.autoUpgrade = enabled;
+  <span class="tk-kw">await</span> <span class="tk-kw">this</span>.saveConfig();
+}</code></pre>
+        </div>
+
+        <div class="msg-body">
+          <p>方法已重命名，字段对齐 <code class="inline">autoUpgrade</code>。测试用例 <a href="#">extension-upgrade.test.ts</a> 已同步更新，3 个用例全部通过。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- composer -->
+    <div class="composer">
+      <div class="composer__wrap">
+        <textarea class="composer__input" rows="1" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+        <div class="composer__footer">
+          <span class="chip">/ command</span>
+          <span class="chip">@ mention</span>
+          <button class="send-btn">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 12V2M7 2L3 6M7 2L11 6" stroke="currentColor" stroke-width="1.5"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const btns = document.querySelectorAll('.tier-btn');
+const html = document.documentElement;
+const labels = {
+  current: { l:'现状 #0d0d0f', d:'L=0.0041 极暗' },
+  A: { l:'A 微提 #131419', d:'L=0.0071 ≈GitHub Dark' },
+  B: { l:'B 中提 #16171b', d:'L=0.0086 ≈Linear ★推荐' },
+  C: { l:'C 更亮 #1a1b1f', d:'L=0.0110 ≈VS Code' },
+};
+btns.forEach(btn => btn.addEventListener('click', () => {
+  const tier = btn.dataset.tier;
+  html.setAttribute('data-tier', tier);
+  btns.forEach(b => b.classList.toggle('active', b === btn));
+  document.getElementById('lbl').textContent = labels[tier].l;
+  document.getElementById('lum').textContent = labels[tier].d;
+}));
+// 快捷键 1-4 切换
+document.addEventListener('keydown', e => {
+  const map = {'1':'current','2':'A','3':'B','4':'C'};
+  if (map[e.key]) document.querySelector(`.tier-btn[data-tier="${map[e.key]}"]`).click();
+});
+</script>
+</body>
+</html>

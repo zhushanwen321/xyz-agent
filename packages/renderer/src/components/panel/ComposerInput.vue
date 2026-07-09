@@ -139,8 +139,6 @@ onMounted(() => {
 /* placeholder：伪元素 Tailwind 表达不了，走 scoped style。
    用 --subtle（三级文字/占位，design-tokens SSOT + design-system §4 明确）。
    设计意图：占位是三级最暗层，与输入正文 --fg 拉开梯度，弱化提示语。
-   原 var(--text-tertiary) 未定义会回退到 inherit → --fg（与正文同亮，丧失占位语义），
-   style.css 已加 --text-tertiary: var(--subtle) 兜底别名；此处显式用 --subtle 对齐 SSOT。
    —— absolute 脱文档流：不占行内位，光标始终在内容区最左（开头）而非 placeholder 末尾。
    —— 仅未聚焦且空时显（is-empty && !is-focused）：聚焦即隐，光标停在开头闪烁。 */
 .composer-input.is-empty:not(.is-focused)::before {

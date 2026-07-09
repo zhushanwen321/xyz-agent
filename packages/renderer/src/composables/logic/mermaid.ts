@@ -10,7 +10,7 @@
  * 供 MermaidRenderer.vue 在主题变化时重新调用。
  *
  * 主题色映射（从 style.css CSS 变量语义 → mermaid themeVariables）：
- *  暗色（:root）  : primaryColor=#151519(--surface) border=#ffffff1f(--border-strong) line=#4f8ef7(--accent)
+ *  暗色（:root）  : primaryColor=#222329(--surface) border=#ffffff26(--border-strong) line=#4f8ef7(--accent)
  *  亮色（[light]）: primaryColor=#ffffff(--surface) border=#00000024(--border-strong) line=#2563eb(--accent)
  */
 import type { default as MermaidInstance } from 'mermaid'
@@ -74,19 +74,19 @@ export function resolveMermaidThemeVariables(theme: 'dark' | 'light'): Record<st
   return {
     fontFamily: "'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace",
     fontSize: '14px',
-    // 暗色：深底节点 + 亮色边框/文字（style.css :root）
-    primaryColor: '#151519', // --surface
-    primaryBorderColor: '#ffffff1f', // --border-strong
-    primaryTextColor: '#f0f0f5', // --fg
-    secondaryColor: '#1b1b20', // --surface-2
+    // 暗色：深底节点 + 亮色边框/文字（style.css :root，2026-07-09 提亮后色值）
+    primaryColor: '#222329', // --surface
+    primaryBorderColor: '#ffffff26', // --border-strong
+    primaryTextColor: '#f7f8fc', // --fg
+    secondaryColor: '#282930', // --surface-2
     secondaryBorderColor: '#4f8ef7', // --accent
-    secondaryTextColor: '#8a8a95', // --muted
-    tertiaryColor: '#0d0d0f', // --bg
-    tertiaryBorderColor: '#ffffff0f', // --border
-    tertiaryTextColor: '#8a8a95',
+    secondaryTextColor: '#a8a8b5', // --muted
+    tertiaryColor: '#1a1b1f', // --bg
+    tertiaryBorderColor: '#ffffff14', // --border
+    tertiaryTextColor: '#a8a8b5',
     lineColor: '#4f8ef7', // --accent
-    noteBkgColor: '#1b1b20',
-    noteTextColor: '#f0f0f5',
+    noteBkgColor: '#282930',
+    noteTextColor: '#f7f8fc',
     noteBorderColor: '#4f8ef7',
   }
 }
