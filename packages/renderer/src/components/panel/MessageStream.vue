@@ -27,10 +27,10 @@
       </template>
 
       <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代） -->
-      <div v-if="isCompacting" class="system-notice flex items-center gap-2 py-1">
+      <div v-if="isCompacting" class="system-notice flex min-w-0 items-center gap-2 py-1">
         <span class="h-px flex-1 bg-border" />
         <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
-        <span class="shrink-0 text-[11.5px] leading-snug text-muted">压缩中</span>
+        <span class="min-w-0 truncate text-[11.5px] leading-snug text-muted">压缩中</span>
         <span class="h-px flex-1 bg-border" />
       </div>
 
