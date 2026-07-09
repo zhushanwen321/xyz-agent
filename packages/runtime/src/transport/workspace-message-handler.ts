@@ -18,7 +18,7 @@ export class WorkspaceMessageHandler {
   constructor(private ctx: WorkspaceHandlerContext) {}
 
   /** D1: 本 handler 认领的 ClientMessageType 清单。 */
-  readonly handles: ClientMessageType[] = ['workspace.listRecent']
+  readonly handles: ClientMessageType[] = ['workspace.listRecent', 'workspace.record']
 
   async handleWorkspaceMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
@@ -26,6 +26,15 @@ export class WorkspaceMessageHandler {
         return this.ctx.reply(ws, msg.id, 'workspace.recentList', {
           records: this.ctx.workspaceService.list(),
         })
+      case 'workspace.record': {
+        // 选目录后热更新：record 写入最新工作区，随即返回刷新后的列表，
+        // 前端据 reply 直接更新 store（一次往返完成写入+刷新，无 reload 时序竞争）。
+        const { cwd } = msg.payload
+        this.ctx.workspaceService.record(cwd)
+        return this.ctx.reply(ws, msg.id, 'workspace.recentList', {
+          records: this.ctx.workspaceService.list(),
+        })
+      }
     }
   }
 }

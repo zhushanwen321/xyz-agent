@@ -29,5 +29,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  return { records, defaultCwd, load }
+  /**
+   * 记录一次工作区使用并刷新列表（选目录后热更新）。
+   *
+   * selectWorkspace/openDirDialog 选中目录后调用：runtime 写入记录后回传最新 records，
+   * 前端据此直接更新 records（一次往返，无需二次 load，无时序竞争）。
+   * RPC reject → 静默降级（不阻断选目录流程，记录仅用于下次列表展示）。
+   */
+  async function record(cwd: string): Promise<void> {
+    if (!cwd) return
+    try {
+      records.value = await workspace.record(cwd)
+    } catch {
+      // 降级：record 失败时保留旧 records（stale 但有用，不清空——与 load() 清空语义不同：
+      // load 是首次加载失败则无数据可显；record 是增量更新失败，旧列表仍有效）。不阻断选目录流程。
+      records.value = [...records.value]
+    }
+  }
+
+  return { records, defaultCwd, load, record }
 })

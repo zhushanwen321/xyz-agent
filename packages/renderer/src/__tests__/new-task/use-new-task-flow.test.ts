@@ -54,6 +54,7 @@ const workspaceStoreMock = vi.hoisted(() => ({
   records: [] as Array<{ cwd: string; lastUsedAt: number; label: string }>,
   defaultCwd: undefined as string | undefined,
   load: vi.fn(),
+  record: vi.fn(),
 }))
 
 // INV-7: mock useToast 捕获 toastError 调用（cwd fallback 通知）

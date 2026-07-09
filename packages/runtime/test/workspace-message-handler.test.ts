@@ -66,6 +66,43 @@ describe('WorkspaceMessageHandler — T1.9 RPC 贯穿', () => {
 
     expect(cap.replies[0].payload).toMatchObject({ records: [] })
   })
+
+  it('workspace.record → record(cwd) 被调并 reply 最新 records（热更新）', async () => {
+    const { WorkspaceMessageHandler } = await import('../src/transport/workspace-message-handler.js')
+    const mockRecords = [
+      { cwd: '/new', lastUsedAt: 3000, label: 'new' },
+      { cwd: '/a', lastUsedAt: 1000, label: 'a' },
+    ]
+    const cap = { replies: [] as Array<{ id: string | undefined; type: string; payload: Record<string, unknown> }> }
+    const workspaceService = {
+      record: vi.fn(),
+      list: vi.fn().mockReturnValue(mockRecords),
+    }
+    const ctx = {
+      send: vi.fn(),
+      sendError: vi.fn(),
+      reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
+        cap.replies.push({ id, type, payload })
+      }),
+      workspaceService,
+    }
+    const handler = new WorkspaceMessageHandler(ctx as unknown as ConstructorParameters<typeof WorkspaceMessageHandler>[0])
+    const msg = { type: 'workspace.record', id: 'req3', payload: { cwd: '/new' } } as unknown as ClientMessage
+    const WS = {} as never
+
+    await handler.handleWorkspaceMessage(msg, WS)
+
+    // record 被调传入 cwd
+    expect(workspaceService.record).toHaveBeenCalledWith('/new')
+    expect(workspaceService.record).toHaveBeenCalledTimes(1)
+    // reply 返回刷新后的列表（一次往返完成写入+刷新）
+    expect(cap.replies).toHaveLength(1)
+    expect(cap.replies[0]).toMatchObject({
+      id: 'req3',
+      type: 'workspace.recentList',
+      payload: { records: mockRecords },
+    })
+  })
 })
 
 // ── T2.1-T2.5: 写入时机接入 ────────────────────────────────────

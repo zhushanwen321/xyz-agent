@@ -659,4 +659,15 @@ export const workspace = {
       { cwd: '/Users/demo/another-foo', lastUsedAt: now - oldestOffset, label: 'another-foo' },
     ]
   },
+  // Mock record：模拟 runtime 记录后返回列表（把传入 cwd 置顶，供热更新链路 E2E 验证）。
+  async record(cwd: string): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
+    // 与 runtime RecentWorkspacesStore 的 MAX_RECORDS 上限一致
+    const MAX_RECORDS = 10
+    if (!cwd) return this.listRecent()
+    const basename = cwd.split('/').pop() || cwd
+    const records = await this.listRecent()
+    // 去重后置顶（同 cwd 覆盖），保狩上限与 runtime INV-2/INV-3 一致
+    const filtered = records.filter((r) => r.cwd !== cwd)
+    return [{ cwd, lastUsedAt: Date.now(), label: basename }, ...filtered].slice(0, MAX_RECORDS)
+  },
 }

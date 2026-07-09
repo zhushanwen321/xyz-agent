@@ -12,6 +12,7 @@
  * 依赖方向：lib/ipc(pickDirectory) + useNewTaskFlowState（transition + refs）。
  */
 import { pickDirectory } from '@/lib/ipc'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { transition, useNewTaskFlowState } from './useNewTaskFlowState'
 
 /**
@@ -25,6 +26,7 @@ export function useNewTaskDirSelect(
   openDirDialog: () => Promise<void>
 } {
   const { state, pendingCwd } = useNewTaskFlowState()
+  const workspaceStore = useWorkspaceStore()
 
   /** landing→dir-popover（点 directory chip）。overlay 互斥：已开 branch-popover 时先归 landing 再开。 */
   function openDirPopover(): void {
@@ -50,6 +52,9 @@ export function useNewTaskDirSelect(
     }
     pendingCwd.value = cwd
     transition('landing') // dir-popover→landing（关 popover，chip 回灌新 cwd）
+    // 热更新最近工作区列表：选中后 record 写入 runtime，刷新后的 records 回补 store，
+    // 下次打开 popover 即可见（无需重启）。失败静默降级（不阻断选目录流程）。
+    void workspaceStore.record(cwd)
   }
 
   /**
@@ -69,6 +74,8 @@ export function useNewTaskDirSelect(
       }
       pendingCwd.value = result.path
       transition('landing') // dir-dialog→landing（chip 回灌新 cwd）
+      // 热更新（同 selectWorkspace）：选中后 record 刷新列表，下次打开即可见
+      void workspaceStore.record(result.path)
     } catch (e) {
       // E5：IPC 招错 → 落回 dir-popover + 重抛（调用方显错 toast），不卡 dir-dialog
       transition('dir-popover')

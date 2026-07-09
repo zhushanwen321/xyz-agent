@@ -70,6 +70,7 @@ const workspaceStoreMock = vi.hoisted(() => ({
   records: [] as Array<{ cwd: string; lastUsedAt: number; label: string }>,
   defaultCwd: undefined as string | undefined,
   load: vi.fn(),
+  record: vi.fn(),
 }))
 
 vi.mock('@/stores/workspace', () => ({
@@ -90,6 +91,7 @@ beforeEach(() => {
   // 重置 workspaceStore mock
   workspaceStoreMock.records = []
   workspaceStoreMock.defaultCwd = undefined
+  workspaceStoreMock.record.mockResolvedValue(undefined)
 })
 
 function setGroups(sessions: SessionSummary[]): void {

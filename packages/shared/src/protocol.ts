@@ -40,7 +40,7 @@ export type ClientMessageType =
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
-  | 'workspace.listRecent'
+  | 'workspace.listRecent' | 'workspace.record'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -134,6 +134,8 @@ export interface ClientMessageMap {
   'git.checkout': { sessionId: string; name: string }
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
+  /** 记录一次工作区使用（选目录后热更新）。runtime record 后返回最新列表，前端据此刷新 store */
+  'workspace.record': { cwd: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到

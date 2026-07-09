@@ -22,3 +22,16 @@ export async function listRecent(): Promise<RecentWorkspaceRecord[]> {
   transport.send({ type: 'workspace.listRecent', id, payload: {} })
   return (await result).records
 }
+
+/**
+ * 记录一次工作区使用并返回最新列表（runtime workspace.record → workspace.recentList reply）。
+ *
+ * 用于选目录后热更新：selectWorkspace/openDirDialog 选中目录后调用，runtime 写入记录后
+ * 回传刷新后的 records，前端据此直接更新 store（一次往返完成写入+刷新，无需二次 listRecent）。
+ */
+export async function record(cwd: string): Promise<RecentWorkspaceRecord[]> {
+  const id = pending.create()
+  const result = pending.register<{ records: RecentWorkspaceRecord[] }>(id)
+  transport.send({ type: 'workspace.record', id, payload: { cwd } })
+  return (await result).records
+}

@@ -242,7 +242,8 @@ export function useSidebar() {
    * 返回新 session id；首次启动延迟 create 时返回 null（Panel 渲染 landing 空态）。
    *
    * presetCwd：可选，预设落地页 chip 的 cwd（initApp 用最近 session 目录预填，G1.1「沿用目录做新任务」）。
-   * 未传→空 chip 态；用户点侧栏「新建任务」/⌘N 时不传（空 chip 从头选）。
+   * 未传→用 workspaceStore.defaultCwd 兑底（最近活跃工作区），避免每次都要重新选目录；
+   * store 未加载（initApp 首次启动，load 在 newSession 之后）则空 chip 态，由 initApp 后续 presetCwd 回熍。
    */
   let newTaskInFlight = false
   async function newSession(presetCwd?: string): Promise<string | null> {
@@ -250,7 +251,11 @@ export function useSidebar() {
     newTaskInFlight = true
     try {
       const flow = useNewTaskFlow()
-      await flow.startFlow(presetCwd)
+      // 不传 presetCwd 时用最近活跃工作区兑底（用户手动点「新建任务」/⌘N 场景），
+      // 避免每次都要重新点目录选择。initApp 首次启动时 store 尚未 load，defaultCwd 为 undefined，
+      // startFlow 收到 undefined 走空 chip 态，随后 initApp 自己 presetCwd 回熍。
+      const fallback = presetCwd ?? workspaceStore.defaultCwd
+      await flow.startFlow(fallback)
       const created = flow.currentSession.value
       if (!created) {
         // 首次启动延迟 create（AC-1.7）：无 session 可选，进 chat view 让 Panel 渲染 landing 空态
