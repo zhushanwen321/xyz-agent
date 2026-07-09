@@ -14,7 +14,7 @@
  * 历史来源（方案 A，session 消息流派生）：chatStore.messages[sessionId] 中
  * role==='user' && status==='complete' 的 content，按时间倒序，连续相同文本去重。
  */
-import { computed, watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 
 /** DOM 操作回调 */
@@ -36,6 +36,8 @@ export function useComposerHistory(
   handleArrowUp: () => boolean
   handleArrowDown: () => boolean
   resetBrowsing: () => void
+  /** 是否正在浏览历史（browsing 态 ↑/↓ 直接翻历史，跳过视觉行移动） */
+  isBrowsing: Ref<boolean>
 } {
   const chatStore = useChatStore()
 
@@ -66,12 +68,12 @@ export function useComposerHistory(
   let index = 0
   /** 进 browsing 前保存的草稿 */
   let savedDraft = ''
-  /** 是否正在浏览历史 */
-  let browsing = false
+  /** 是否正在浏览历史（响应式，暴露给 Composer 跳过视觉行移动） */
+  const browsing = ref(false)
 
   // session 切换重置
   watch(sessionIdRef, () => {
-    browsing = false
+    browsing.value = false
     index = 0
     savedDraft = ''
   }, { flush: 'sync' })
@@ -83,7 +85,7 @@ export function useComposerHistory(
    */
   function resetBrowsing(): void {
     if (isSettingText) return  // 跳过程序化触发
-    browsing = false
+    browsing.value = false
     index = 0
   }
 
@@ -93,14 +95,14 @@ export function useComposerHistory(
   function handleArrowUp(): boolean {
     const h = history.value
 
-    if (!browsing) {
+    if (!browsing.value) {
       // edit 态：保存草稿，翻历史（或清空）
       savedDraft = deps.getText()
       if (h.length === 0) {
         deps.clear()
         return true
       }
-      browsing = true
+      browsing.value = true
       index = 0
       isSettingText = true
       deps.setText(h[0], 'start')  // 光标置首，便于连续↑回溯
@@ -123,7 +125,7 @@ export function useComposerHistory(
    * ↓ 处理。返回 true 表示已消费。
    */
   function handleArrowDown(): boolean {
-    if (!browsing) return false
+    if (!browsing.value) return false
 
     const h = history.value
     if (index > 0) {
@@ -136,10 +138,10 @@ export function useComposerHistory(
       isSettingText = true
       deps.setText(savedDraft, 'end')
       isSettingText = false
-      browsing = false
+      browsing.value = false
     }
     return true
   }
 
-  return { handleArrowUp, handleArrowDown, resetBrowsing }
+  return { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing: browsing }
 }

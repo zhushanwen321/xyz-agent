@@ -476,9 +476,31 @@ export function useContenteditableInput(
     el.textContent = text
     savedRange = null
     el.focus()
+    // 光标需定位到文本节点内部（而非元素节点边界），否则 Selection.modify 会先把光标
+    // 「下沉」到文本节点并返回 moved，导致边缘判定多按一次键。用 TreeWalker 找首/末文本节点。
     const range = document.createRange()
-    range.selectNodeContents(el)
-    range.collapse(caretPosition === 'start')
+    if (caretPosition === 'start') {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      const firstText = walker.nextNode()
+      if (firstText) {
+        range.setStart(firstText, 0)
+        range.collapse(true)
+      } else {
+        range.selectNodeContents(el)
+        range.collapse(true)
+      }
+    } else {
+      let lastText: Text | null = null
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      while (walker.nextNode()) lastText = walker.currentNode as Text
+      if (lastText) {
+        range.setStart(lastText, lastText.length)
+        range.collapse(true)
+      } else {
+        range.selectNodeContents(el)
+        range.collapse(false)
+      }
+    }
     const sel = window.getSelection()
     sel?.removeAllRanges()
     sel?.addRange(range)

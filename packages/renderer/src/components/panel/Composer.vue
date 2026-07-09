@@ -172,7 +172,7 @@ const {
 
 // 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
 // sessionId null（landing 态无真实 session）时 history 为空。
-const { handleArrowUp, handleArrowDown, resetBrowsing } = useComposerHistory(
+const { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing } = useComposerHistory(
   computed(() => props.sessionId),
   {
     getText: () => inputRef.value?.getText() ?? '',
@@ -325,27 +325,25 @@ async function onAbort(): Promise<void> {
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
- *  ↑/↓ 翻阅输入历史（shell 风格，三段式「边缘行优先」）：
- *    ↑：非首行→上移视觉行；首行非行首→归位行首；首行行首→历史上一条
- *    ↓：非末行→下移视觉行；末行非行末→归位行末；末行行末→历史下一条 */
+ *  ↑/↓ 翻阅输入历史（shell 风格 + 三段式「边缘行优先」）：
+ *    edit 态 ↑：非首行→上移视觉行；首行非行首→归位行首；首行行首→进 browsing 翻历史
+ *    browsing 态 ↑/↓：直接翻历史（跳过视觉行移动）
+ *    ↓：对称（browsing 态到最近一条后恢复草稿回 edit 态） */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
   if (e.isComposing) return
   // shift+方向键是选区扩展，放行原生行为（不拦截）
+  // browsing 态（正在浏览历史）跳过视觉行移动，↑/↓ 直接翻历史——shell 行为
   if (e.key === 'ArrowUp' && !e.shiftKey) {
     e.preventDefault()
-    // 阶段 1+2：非首行上移视觉行，或首行非行首归位行首（modify 自动处理两者）
-    if (inputRef.value?.moveCaretVertical('up') === 'moved') return
-    // 阶段 3：已在首行行首，翻历史
+    if (!isBrowsing.value && inputRef.value?.moveCaretVertical('up') === 'moved') return
     handleArrowUp()
     return
   }
   if (e.key === 'ArrowDown' && !e.shiftKey) {
     e.preventDefault()
-    // 阶段 1+2：非末行下移视觉行，或末行非行末归位行末
-    if (inputRef.value?.moveCaretVertical('down') === 'moved') return
-    // 阶段 3：已在末行行末，翻历史（browsing 态才有效；edit 态返回 false，光标已在末行，无害）
+    if (!isBrowsing.value && inputRef.value?.moveCaretVertical('down') === 'moved') return
     handleArrowDown()
     return
   }
