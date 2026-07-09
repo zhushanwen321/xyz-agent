@@ -325,26 +325,28 @@ async function onAbort(): Promise<void> {
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
- *  ↑/↓ 翻阅输入历史（shell 风格，光标在首/末行才触发） */
+ *  ↑/↓ 翻阅输入历史（shell 风格，三段式「边缘行优先」）：
+ *    ↑：非首行→上移视觉行；首行非行首→归位行首；首行行首→历史上一条
+ *    ↓：非末行→下移视觉行；末行非行末→归位行末；末行行末→历史下一条 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
   if (e.isComposing) return
-  if (e.key === 'ArrowUp') {
-    // 光标不在第一行时，先移动到第一行（不翻历史）
-    if (!inputRef.value?.isCaretOnFirstLine()) {
-      inputRef.value?.moveCaretToFirstLineEnd()
-      e.preventDefault()
-      return
-    }
-    // 光标在第一行，触发历史导航
-    if (handleArrowUp()) {
-      e.preventDefault()
-    }
+  // shift+方向键是选区扩展，放行原生行为（不拦截）
+  if (e.key === 'ArrowUp' && !e.shiftKey) {
+    e.preventDefault()
+    // 阶段 1+2：非首行上移视觉行，或首行非行首归位行首（modify 自动处理两者）
+    if (inputRef.value?.moveCaretVertical('up') === 'moved') return
+    // 阶段 3：已在首行行首，翻历史
+    handleArrowUp()
     return
   }
-  if (e.key === 'ArrowDown' && handleArrowDown()) {
+  if (e.key === 'ArrowDown' && !e.shiftKey) {
     e.preventDefault()
+    // 阶段 1+2：非末行下移视觉行，或末行非行末归位行末
+    if (inputRef.value?.moveCaretVertical('down') === 'moved') return
+    // 阶段 3：已在末行行末，翻历史（browsing 态才有效；edit 态返回 false，光标已在末行，无害）
+    handleArrowDown()
     return
   }
   if (e.key !== 'Enter' || e.shiftKey) return

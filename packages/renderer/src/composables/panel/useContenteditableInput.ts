@@ -43,166 +43,81 @@ interface ContenteditableCallbacks {
   handleBackspaceOnChip: () => boolean
 }
 
-/** 临时标记用的零宽字符（取折叠光标真实坐标，详见 getCaretClientRect） */
-const CARET_PROBE_ZWSP = '\u200B'
-/** 第一行判定的容差：半行高（比绝对像素更鲁棒） */
-const CARET_FIRST_LINE_TOLERANCE_RATIO = 0.5
-/** 行高回退值（px）：caretRect.height 和 computed lineHeight 都失效时的兜底 */
-const FALLBACK_LINE_HEIGHT_PX = 16
-
 /**
- * 获取折叠选区（光标）的真实视觉坐标。
+ * 视觉行上/下移动（模块级纯函数）。
  *
- * [HISTORICAL] 0 rect 陷阱：折叠选区的 Range.getBoundingClientRect() 在光标处于行末/
- * 某些布局位置时返回全 0 rect（{top:0,left:0,width:0,height:0}）。这会导致：
- * - isCaretOnFirstLine 把全 0 rect（top:0）误判为首行 → moveCaretUpVisualLine 直接
- *   返回 'first-line' → 视觉换行时按 ↑ 不上移光标而是直接翻历史
- * - moveCaretUpVisualLine 用全 0 坐标探测上一行 → targetY 为负 → 探测返回 null → 'noop'
+ * 利用浏览器原生 `Selection.modify('move', dir, 'line')` 实现视觉行跨行移动。
+ * 该 API 由浏览器基于 layout 计算，自动遵守 soft-wrap（中文/长连续文本换行），
+ * 在 Chromium 的 contenteditable 里对单 `<div>` + `<br>` + soft-wrap 混合场景可靠
+ *（CDP 实测验证：中文 soft-wrap 3 行 + `<br>` 硬换行均正确）。
  *
- * 同一陷阱 scrollCursorIntoView 也踩过（见其注释）。解法：在光标处插入一个零宽字符
- * span，取 span 的真实 rect，再删 span（insertNode/remove 不触发 input 事件，安全）。
+ * [HISTORICAL] 为何不用 caretPositionFromPoint 手动探测：
+ * 旧实现（已删除）用 getClientRects + caretPositionFromPoint 逐行探测目标坐标，
+ * 存在多个问题：(1) 折叠选区的 getBoundingClientRect 在行末返回全 0 rect（0 rect 陷阱），
+ * 需要插入零宽字符 span 兜底；(2) caretPositionFromPoint 在行尾标点、emoji 宽度等
+ * 边界 case 不稳定；(3) 探测后需 verify-after-move 防回环，逻辑复杂。
+ * Selection.modify 把视觉行计算完全交给浏览器引擎，无以上问题。
  *
- * @param range 折叠选区的 range（调用方传入，避免内部读 selection 扰动 DOM）
- * @returns 真实坐标的 DOMRect；range 非折叠/不在容器内/探测失败 → null
+ * 关键行为（CDP 实测确认）：
+ * - 光标在非边缘视觉行 → modify 跨行移动（top 变化），返回 'moved'
+ * - 光标在第一行非行首 → modify('backward','line') 移到行首（offset=0），返回 'moved'
+ * - 光标在最后一行非行末 → modify('forward','line') 移到行末，返回 'moved'
+ * - 光标已在第一行行首 / 最后一行行末 → modify 不动（moved=false），返回 'at-edge'
+ *
+ * 「移到行首/行末」的副作用正好满足三段式需求的阶段 2（边缘行内归位），
+ * 所以调用方只需区分 'moved'（阶段 1+2，消费事件）和 'at-edge'（阶段 3，翻历史）。
  */
-function getCaretClientRect(el: HTMLElement, range: Range): DOMRect | null {
-  if (!range.collapsed || !el.contains(range.startContainer)) return null
+function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved' | 'at-edge' {
+  if (!el) return 'at-edge'
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return 'at-edge'
+  const before = sel.getRangeAt(0)
+  if (!el.contains(before.startContainer)) return 'at-edge'
 
-  // 先试直接取 rect（多数光标位置有效，避免无谓的 DOM 修改）
-  const direct = range.getBoundingClientRect()
-  if (direct.top !== 0 || direct.height !== 0) return direct
+  const beforeContainer = before.startContainer
+  const beforeOffset = before.startOffset
 
-  // 全 0 rect 降级：插入临时零宽字符 span 取真实坐标
-  const probe = document.createElement('span')
-  probe.textContent = CARET_PROBE_ZWSP
-  range.insertNode(probe)
-  const rect = probe.getBoundingClientRect()
-  probe.remove()
-  // el.normalize() 合并被 span 拆分的文本节点（可选，保持 DOM 整洁）
-  el.normalize()
-  // 若 span 仍是全 0（极端布局），返回 null 让调用方降级
-  if (rect.top === 0 && rect.height === 0) return null
-  return rect
+  // 'backward'/'forward' 比 'up'/'down' 兼容性更好（MDN 推荐），Chrome 两者都支持
+  sel.modify('move', dir === 'up' ? 'backward' : 'forward', 'line')
+
+  const after = sel.getRangeAt(0)
+  const moved = !(after.startContainer === beforeContainer && after.startOffset === beforeOffset)
+  return moved ? 'moved' : 'at-edge'
 }
 
 /**
- * 光标是否在第一行（模块级纯函数）。
+ * 光标是否在文档首字符前（模块级纯函数）。
  *
- * 算法：在光标位置插入临时零宽字符，取 getClientRects()，比较光标 top 和元素 top。
- * 容差为半行高（比固定像素更鲁棒）。
+ * 用 Range.toString().length === 0 判断：创建从文档首到光标的 range，
+ * 若其间无可编辑文本则为文档首。`toString()` 会跳过 contenteditable=false 的 chip，
+ * 所以 chip 开头时光标在 chip 后第一个文本位置即判为「文档首」——这正是期望行为
+ *（chip 不可编辑，光标无法进入，「移到首字符前」=「移到 chip 后第一个可编辑位置」）。
  */
-function isCaretOnFirstLineOf(el: HTMLElement | null): boolean {
+function isAtDocStartOf(el: HTMLElement | null): boolean {
   if (!el) return false
   const sel = window.getSelection()
   if (!sel || sel.rangeCount === 0) return false
-  const range = sel.getRangeAt(0)
-  if (!el.contains(range.startContainer)) return false
-
-  // 插入临时文本节点获取光标位置
-  const tempNode = document.createTextNode('\0')
-  range.insertNode(tempNode)
-  const rects = range.getClientRects()
-  tempNode.parentNode?.removeChild(tempNode)
-  el.normalize()
-
-  if (rects.length === 0) return false
-  const caretRect = rects[0]
-  const cs = getComputedStyle(el)
-  const paddingTop = parseFloat(cs.paddingTop) || 0
-  const lineHeight = parseFloat(cs.lineHeight) || caretRect.height
-  const elTop = el.getBoundingClientRect().top + paddingTop
-  const tolerance = lineHeight * CARET_FIRST_LINE_TOLERANCE_RATIO
-
-  return caretRect.top <= elTop + tolerance
+  const caret = sel.getRangeAt(0)
+  if (!el.contains(caret.startContainer)) return false
+  const probe = document.createRange()
+  probe.selectNodeContents(el)
+  probe.setEnd(caret.startContainer, caret.startOffset)
+  return probe.toString().length === 0
 }
 
 /**
- * 光标移动到第一行末尾（模块级纯函数）。
+ * 光标是否在文档末字符后（模块级纯函数，与 isAtDocStartOf 对称）。
  */
-function moveCaretToFirstLineEnd(el: HTMLElement | null): boolean {
+function isAtDocEndOf(el: HTMLElement | null): boolean {
   if (!el) return false
   const sel = window.getSelection()
-  if (!sel) return false
-
-  // 创建一个 range，从元素开始到第一行结束
-  const range = document.createRange()
-  range.selectNodeContents(el)
-  range.collapse(true) // 移到开头
-  sel.removeAllRanges()
-  sel.addRange(range)
-  return true
-}
-
-/**
- * 上移光标一个视觉行（模块级纯函数）。
- *
- * 背景：文本超过容器宽度会视觉换行（soft wrap），但不产生新 DOM 节点。此时浏览器的
- * 默认 ↑ 行为在 contenteditable 里不可靠（ProseMirror issue #1189 也追踪此 bug）。
- * 本方法用 caretRangeFromPoint 手动探测上一行的目标位置并移动光标。
- *
- * @returns 'first-line'（已到首行，调用方翻历史）/ 'moved'（已移动）/ 'noop'（探测失败）
- */
-function moveCaretUpVisualLineOf(el: HTMLElement | null): 'first-line' | 'moved' | 'noop' {
-  if (!el) return 'noop'
-  if (isCaretOnFirstLineOf(el)) return 'first-line'
-
-  const sel = window.getSelection()
-  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return 'noop'
-  const originalRange = sel.getRangeAt(0).cloneRange()
-  if (!el.contains(originalRange.startContainer)) return 'noop'
-
-  const caretRect = getCaretClientRect(el, originalRange)
-  if (!caretRect) return 'noop'
-
-  // 行高估算：光标高度优先（折叠选区的 rect.height 即行高），回退到 computed lineHeight
-  const cs = getComputedStyle(el)
-  const lineHeight = caretRect.height || parseFloat(cs.lineHeight) || FALLBACK_LINE_HEIGHT_PX
-  const targetY = caretRect.top - lineHeight
-  // targetX 取光标水平位置（折叠选区 width 为 0，left 即光标 x）
-  const targetX = caretRect.left
-
-  // caretPositionFromPoint（标准）优先；caretRangeFromPoint（WebKit/Blink）回退
-  const caretPos = (document as Document & {
-    caretPositionFromPoint?: (x: number, y: number) => CaretPosition | null
-  }).caretPositionFromPoint?.(targetX, targetY)
-  const caretRange = (document as Document & {
-    caretRangeFromPoint?: (x: number, y: number) => Range | null
-  }).caretRangeFromPoint?.(targetX, targetY)
-
-  let targetNode: Node | null = null
-  let targetOffset = 0
-  if (caretPos) {
-    targetNode = caretPos.offsetNode
-    targetOffset = caretPos.offset
-  } else if (caretRange) {
-    targetNode = caretRange.startContainer
-    targetOffset = caretRange.startOffset
-  }
-  if (!targetNode || !el.contains(targetNode)) return 'noop'
-
-  // 移动光标到探测位置（clamp offset 防越界）
-  const maxOffset = targetNode.nodeType === Node.TEXT_NODE
-    ? (targetNode.textContent?.length ?? 0)
-    : targetNode.childNodes.length
-  const newRange = document.createRange()
-  newRange.setStart(targetNode, Math.min(targetOffset, maxOffset))
-  newRange.collapse(true)
-  sel.removeAllRanges()
-  sel.addRange(newRange)
-
-  // 移动后验证：取新光标真实坐标，确认确实上移了（防探测回环）。
-  // 用 getCaretClientRect 的轻量路径——移动后光标通常不在行末，直接 rect 多数有效。
-  const verifySel = window.getSelection()
-  const movedRect = verifySel && verifySel.rangeCount > 0
-    ? getCaretClientRect(el, verifySel.getRangeAt(0))
-    : null
-  if (!movedRect || movedRect.top >= caretRect.top) {
-    // 探测失效（目标不比原位置高）→ 恢复原光标，返回 noop 交给浏览器
-    sel.removeAllRanges()
-    sel.addRange(originalRange)
-    return 'noop'
-  }
-  return 'moved'
+  if (!sel || sel.rangeCount === 0) return false
+  const caret = sel.getRangeAt(0)
+  if (!el.contains(caret.startContainer)) return false
+  const probe = document.createRange()
+  probe.selectNodeContents(el)
+  probe.setStart(caret.startContainer, caret.startOffset)
+  return probe.toString().length === 0
 }
 
 /**
@@ -226,14 +141,22 @@ export function useContenteditableInput(
   clearSlashQueryText: () => void
   clearHashQueryText: () => void
   clear: () => void
+  /** 写入纯文本并把光标移到末尾（发送失败恢复草稿）。
+   * CRITICAL：textContent= 替换整框内容，savedRange 指向的旧节点失效，必须置 null
+   * （同 clear 理由），随后手动建立新光标 Range。
+   */
   setText: (text: string) => void
+  /** 在当前光标处插入纯文本（菜单插 @/# 符号用） */
   insertTextAtCursor: (text: string) => void
-  /** 上移光标一个视觉行；返回 'first-line'（已到首行，调用方翻历史）/ 'moved'（已移动）/ 'noop'（探测失败） */
-  moveCaretUpVisualLine: () => 'first-line' | 'moved' | 'noop'
-  /** 光标是否在第一行（视觉行） */
-  isCaretOnFirstLine: () => boolean
-  /** 移动光标到第一行末尾 */
-  moveCaretToFirstLineEnd: () => boolean
+  /**
+   * 视觉行上/下移动。返回 'moved'（已跨行或行内归位，消费事件）/ 'at-edge'（已在边缘行行首/行末，调用方翻历史）。
+   * 利用浏览器原生 Selection.modify，自动处理 soft-wrap + `<br>` 混合场景。
+   */
+  moveCaretVertical: (dir: 'up' | 'down') => 'moved' | 'at-edge'
+  /** 光标是否在文档首字符前（chip 被跳过） */
+  isAtDocStart: () => boolean
+  /** 光标是否在文档末字符后（chip 被跳过） */
+  isAtDocEnd: () => boolean
 } {
   const {
     onInput: emitInput,
@@ -336,15 +259,6 @@ export function useContenteditableInput(
   }
 
   /**
-   * 上移光标一个视觉行（thin wrapper，实现在模块级 moveCaretUpVisualLineOf）。
-   * 详见模块级函数文档。contenteditable 视觉换行时浏览器默认 ↑ 不可靠，需主动探测。
-   */
-  function moveCaretUpVisualLine(): 'first-line' | 'moved' | 'noop' {
-    return moveCaretUpVisualLineOf(getEl())
-  }
-
-  /**
-   * Shift+Enter 后把光标滚动进可见区。
    * contenteditable insertLineBreak 后浏览器不自动滚动（与 textarea 不同）：
    * 当 max-h-[120px] 触发 overflow 时，连续换行会把光标推出可视区，视觉上"停在当前行"。
    * 实现：取折叠选区所在行的视觉矩形，与容器 rect 比较，超出下沿则补偿 scrollTop。
@@ -587,8 +501,8 @@ export function useContenteditableInput(
     clear,
     setText,
     insertTextAtCursor,
-    moveCaretUpVisualLine,
-    isCaretOnFirstLine: () => isCaretOnFirstLineOf(getEl()),
-    moveCaretToFirstLineEnd: () => moveCaretToFirstLineEnd(getEl()),
+    moveCaretVertical: (dir) => moveCaretVerticalOf(getEl(), dir),
+    isAtDocStart: () => isAtDocStartOf(getEl()),
+    isAtDocEnd: () => isAtDocEndOf(getEl()),
   }
 }
