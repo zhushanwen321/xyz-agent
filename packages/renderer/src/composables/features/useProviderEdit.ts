@@ -97,6 +97,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     providerRef,
     (p) => {
       if (p) {
+        // 编辑模式：用现有 provider 数据填充表单
         form.name = p.name
         form.api = p.api ?? 'anthropic-messages'
         form.baseUrl = p.baseUrl ?? ''
@@ -107,6 +108,18 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         showAddModel.value = false
         actionError.value = ''
         localModels.value = p.models.map((m) => ({ ...m }))
+      } else {
+        // 新增模式：重置为初始空状态（providerRef 变 null 时触发，避免残留上次编辑数据）
+        form.name = ''
+        form.api = 'anthropic-messages'
+        form.baseUrl = ''
+        form.apiKey = ''
+        showKey.value = false
+        testResult.value = null
+        discoverResult.value = ''
+        showAddModel.value = false
+        actionError.value = ''
+        localModels.value = []
       }
     },
   )
