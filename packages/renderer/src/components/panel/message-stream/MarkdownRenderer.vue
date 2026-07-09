@@ -177,10 +177,14 @@ watch(
   line-height: 1.7;
 }
 
+/* 列表样式：让编号/符号列表在视觉上接近普通正文行（用户气泡里手打的编号列表
+   不该被当成大间距结构化块）。紧凑节奏：无项间 margin、行高对齐 <p>、左缩进仅留编号位。
+   [HISTORICAL] 旧值 margin:0.5em 0 + li margin:0.2em 0 + padding-left:1.5em + marker --subtle，
+   导致编号行上下多空行、左缩进过深、编号是三级灰与正文不一致——被用户判定为「像多一个空行」。 */
 .md-render :deep(ul),
 .md-render :deep(ol) {
-  margin: 0.5em 0;
-  padding-left: 1.5em;
+  margin: 0;
+  padding-left: 1.2em;
 }
 /* 恢复 Tailwind preflight 清掉的 list-style-type（preflight 对 ol/ul 设 list-style:none）。
    不恢复则 <ol> 数字编号不可见——用户气泡里的编号列表会丢编号只剩换行。 */
@@ -190,8 +194,14 @@ watch(
 .md-render :deep(ol) {
   list-style-type: decimal;
 }
-.md-render :deep(li) { margin: 0.2em 0; line-height: 1.6; }
-.md-render :deep(li)::marker { color: var(--subtle); }
+.md-render :deep(li) {
+  margin: 0;
+  line-height: 1.7;
+}
+/* 编号颜色与正文一致（旧 --subtle 让编号变灰，与正文 fg 脱节） */
+.md-render :deep(li)::marker {
+  color: var(--fg);
+}
 
 .md-render :deep(blockquote) {
   border-left: 2px solid var(--border-strong);
