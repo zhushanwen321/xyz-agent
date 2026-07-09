@@ -58,6 +58,9 @@ export function useComposerHistory(
     return result
   })
 
+  /** 是否正在程序化设置文本（防止 setText 触发的 input 事件导致 resetBrowsing） */
+  let isSettingText = false
+
   /** browsing 态指针：指向 history[index] */
   let index = 0
   /** 进 browsing 前保存的草稿 */
@@ -75,8 +78,10 @@ export function useComposerHistory(
   /**
    * 重置浏览状态（用户修改了 composer 内容时调用）。
    * 下次按 ↑ 会重新从最后一条历史开始。
+   * 程序化设置文本（如历史导航时调用 setText）会跳过此重置。
    */
   function resetBrowsing(): void {
+    if (isSettingText) return  // 跳过程序化触发
     browsing = false
     index = 0
   }
@@ -96,14 +101,18 @@ export function useComposerHistory(
       }
       browsing = true
       index = 0
+      isSettingText = true
       deps.setText(h[0])
+      isSettingText = false
       return true
     }
 
     // browsing 态：更老一条
     if (index + 1 < h.length) {
       index++
+      isSettingText = true
       deps.setText(h[index])
+      isSettingText = false
     }
     // 已在最老一条：保持不动
     return true
@@ -118,10 +127,14 @@ export function useComposerHistory(
     const h = history.value
     if (index > 0) {
       index--
+      isSettingText = true
       deps.setText(h[index])
+      isSettingText = false
     } else {
       // 已在最近一条：恢复草稿，回到 edit 态
+      isSettingText = true
       deps.setText(savedDraft)
+      isSettingText = false
       browsing = false
     }
     return true
