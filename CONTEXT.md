@@ -8,8 +8,8 @@
 ### Session（会话）
 与 pi 引擎的一个对话实例。每个 session 绑定一个工作目录（`cwd`）和（若该目录是 git 仓库）一个分支。持久化在 `~/.xyz-agent/sessions/` 下扁平 `.jsonl` 文件。生命周期：create → active/idle → compact → restore → delete。
 
-### isActive（执行态 SSOT）[from: unify-session-active-state]
-用户视角的「session 在忙」信号。定义：`isGenerating ∨ pendingSend`。UI 层（圆点/状态点/Composer/Panel 守卫）统一消费此信号，不直接用 isGenerating。isCompacting 是独立互斥态（compact 期间不可 steer/abort），不并入 isActive。
+### isActive（执行态 SSOT）[from: unify-session-active-state] [from: session-active-state-completion]
+用户视角的「session 在忙」信号。定义：`isGenerating ∨ pendingSend`。UI 层（圆点/状态点/Composer/Panel 守卫）统一消费此信号，不直接用 isGenerating。isCompacting 是独立互斥态（compact 期间不可 steer/abort），不并入 isActive，但 deriveStatus 第 4 参数 isCompacting=true 时也返回 running（视觉态属 running）。
 
 ### Task（任务）
 **「任务」是「会话」的产品化措辞，1:1 同义。** 对用户暴露的概念叫"任务"（更贴近工作意图），系统/代码层统一叫"session"。不存在"一个任务跨多 session"的聚合实体。
