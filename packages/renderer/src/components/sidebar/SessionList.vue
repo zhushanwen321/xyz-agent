@@ -12,8 +12,9 @@
         :key="g.cwd"
         class="group-section flex flex-col gap-0.5"
       >
-        <!-- 组标题：cwd 末段（长路径只显末段防溢出，与 SessionItem.dirName 同一信息原子） -->
-        <div class="sticky top-0 z-[1] flex items-center gap-1.5 bg-surface/95 px-2 pb-0.5 pt-2 backdrop-blur-sm">
+        <!-- 组标题：cwd 末段（长路径只显末段防溢出，与 SessionItem.dirName 同一信息原子）。
+             sticky 贴顶用 bg-bg 不透明（侧边栏底色透明融合 bg，header 同色遮住滚过的 item 文字） -->
+        <div class="sticky top-0 z-[1] flex items-center gap-1.5 bg-bg px-2 pb-0.5 pt-2">
           <Folder class="size-[11px] shrink-0 text-subtle" />
           <span class="truncate text-[10.5px] font-medium uppercase tracking-wide text-subtle">
             {{ dirNameOf(g.cwd) }}

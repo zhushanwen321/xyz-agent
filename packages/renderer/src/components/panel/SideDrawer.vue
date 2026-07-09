@@ -158,19 +158,20 @@ const emit = defineEmits<{
  * direction 在 split 下决定边框方向 + order（单 panel 恒 right，order-first 仅防御性）。
  */
 const asideClass = computed<string[]>(() => {
-  const base = 'flex h-full flex-col bg-bg-elevated'
   const borderLeft = 'border-l border-border-strong'
   const borderRight = 'border-r border-border-strong'
   if (props.mode === 'overlay') {
+    // overlay（双 panel）：absolute 浮层覆盖对侧 standby panel，用 bg-elevated 表达浮起感
     return [
-      base,
+      'flex h-full flex-col bg-bg-elevated',
       'absolute top-0 z-30 w-1/2 shadow-2xl',
       props.direction === 'left' ? `left-0 ${borderRight}` : `right-0 ${borderLeft}`,
     ]
   }
-  // split：flex 子项，与 Panel 各占一半
+  // split（单 panel）：flex 子项，与 Panel 各占一半。底色用 bg-surface（与 Panel 内容区一致，
+  // 不浮起——此时 Panel section 透明继承 MainPanel 的 surface，drawer 同色与之并列为 main 内容区）
   return [
-    base,
+    'flex h-full flex-col bg-surface',
     'relative min-w-0 flex-1',
     props.direction === 'left' ? `order-first ${borderRight}` : borderLeft,
   ]

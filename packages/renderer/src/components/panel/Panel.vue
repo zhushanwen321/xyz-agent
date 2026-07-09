@@ -12,6 +12,7 @@
   <section
     class="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
     :class="panelStateClass"
+    :style="panelStyle"
     @mousedown="onPanelMouseDown"
   >
     <PanelHeader
@@ -193,19 +194,41 @@ async function onReviveSession(): Promise<void> {
   }
 }
 
-/** 激活标识（workspace/spec.md）：三种状态共享 bg-bg-elevated 底色（统一面板表面，
- *  保证 message-stream 内 sticky header 等浮层用 bg-bg-elevated 时与底色无缝融合），
- *  差异用 opacity / ring 表达——
- *  单 panel：满 opacity 无 ring；双 active：满 opacity + ring-1 accent；双 standby：opacity 0.5 hover 回升 0.78。
+/** 激活标识（对齐 draft-dual-panel.html SSOT）。
+ *  层级语义：MainPanel(main) 是唯一 float-panel（bg-surface + border + shadow + radius）。
+ *  Panel section 是它的内容区，底色按 panel 数量切两种语义——
+ *  · 单 panel：section 透明，直接继承 MainPanel 的 surface（section 即 main 内容区，不再独立浮起）。
+ *  · 双 panel：section 各自浮起（draft-dual-panel .panel 模型）——
+ *    active → bg-elevated 微亮 + ring-1 accent-ring + opacity 1（焦点浮起）；
+ *    standby → bg-surface + opacity 0.5 hover 回升 0.78（退后，设计稿明确写 opacity 表达主从）。
  *  SideDrawer 是 workspace-body 级 absolute 浮层（w-1/2，覆盖对侧），不参与 panel 的 flex 布局——
  *  panel 始终 flex-1 均分（单 panel 撑满、双 panel 各半），与 drawer 完全解耦，避免收窄态引发宽度异常。 */
 const panelStateClass = computed(() => {
   if (props.active && props.isDual) {
-    return 'bg-bg-elevated opacity-100 ring-1 ring-[var(--accent-ring)]'
+    // active：ring 表达焦点（底色走 panelStyle 的 --panel-bg）
+    return 'opacity-100 ring-1 ring-[var(--accent-ring)]'
   }
   if (!props.active && props.isDual) {
-    return 'bg-bg-elevated opacity-50 hover:opacity-[0.78]'
+    return 'opacity-50 hover:opacity-[0.78]'
   }
-  return 'bg-bg-elevated'
+  // 单 panel：无 ring、满 opacity（底色透明继承 MainPanel）
+  return ''
+})
+
+/**
+ * Panel 底色 + --panel-bg CSS 变量（供子组件如 sticky turn-meta 消费，保证浮层底色与所在 panel 一致）。
+ * 单 panel：不设 background（透明继承 MainPanel 的 bg-surface），--panel-bg=surface 供子组件浮层对齐。
+ * 双 active：background=bg-elevated，--panel-bg=bg-elevated。
+ * 双 standby：background=bg-surface，--panel-bg=surface。
+ */
+const panelStyle = computed(() => {
+  if (props.active && props.isDual) {
+    return { background: 'var(--bg-elevated)', '--panel-bg': 'var(--bg-elevated)' }
+  }
+  if (!props.active && props.isDual) {
+    return { background: 'var(--surface)', '--panel-bg': 'var(--surface)' }
+  }
+  // 单 panel：透明继承，--panel-bg 指向 surface（与 MainPanel 一致）
+  return { '--panel-bg': 'var(--surface)' }
 })
 </script>
