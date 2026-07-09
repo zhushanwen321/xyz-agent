@@ -2,10 +2,14 @@
  * Composer 工具条的模型 + 思考等级状态管理。
  *
  * 从 Composer.vue 拆出（script setup 行数合规）。职责：
- * - currentModelId：当前选中模型（session 已建读 active.modelId，landing 态读 flow 选定 → 全局默认）
- * - currentThinkingLevel：当前思考等级（session 已建读 active，landing 态用 localThinkingLevel）
+ * - currentModelId：当前选中模型（session 已建读自身 sessionId 对应真值，landing 态读 flow 选定 → 全局默认）
+ * - currentThinkingLevel：当前思考等级（session 已建读自身 sessionId 对应真值，landing 态用 localThinkingLevel）
  * - currentThinkingLevelMap：当前模型的思考档位映射 + 切模型自动重置（委托 useThinkingLevelSync）
  * - onModelSelect / onThinkingSelect：切换处理，session 已建走 RPC，landing 态延迟到首发提交后 apply
+ *
+ * per-session 隔离：session 已建态按 sessionId 从 sessionStore.list 查真值（非读全局 active），
+ * split panel 下两个 Composer 各读各的 session 状态，不串读。底层数据已 per-session
+ * （SessionSummary.modelId/thinkingLevel + updateSessionState(id,...)），此处只接对数据源。
  *
  * landing 态（sessionId=null）session 尚未 create，无法调 model.switch / setThinkingLevel RPC。
  * 选定值记入 flow.pendingModel + localThinkingLevel，submitFirstMessage create session 后 apply。
@@ -35,20 +39,31 @@ export function useComposerModelThinking(
   const { switchModel, setThinkingLevel: applyThinkingLevel } = useModel()
 
   /**
-   * landing 态本地思考等级（session 尚未 create，无 sessionStore.active.thinkingLevel）。
+   * landing 态本地思考等级（session 尚未 create，无 session 真值）。
    * 切模型时由 useThinkingLevelSync 自动设为新模型最高可用档（value）；
    * submitFirstMessage create session 后 apply（setThinkingLevel）。
    */
   const localThinkingLevel = ref<string | undefined>(undefined)
 
-  /** 当前思考等级：session 已建读 active.thinkingLevel，landing 态用 localThinkingLevel */
+  /**
+   * 按 sessionId 查 session 真值（per-session 隔离的核心）。
+   * session 已建态从 sessionStore.list 按 id 查（非读全局 active——active 是单焦点，
+   * split 下非聚焦 panel 会串读）；landing 态（sessionId=null）返回 null，走 landing 分支。
+   */
+  const sessionState = computed(() =>
+    sessionId.value
+      ? sessionStore.list?.find((s) => s.id === sessionId.value) ?? null
+      : null,
+  )
+
+  /** 当前思考等级：session 已建读自身 sessionId 对应真值，landing 态用 localThinkingLevel */
   const currentThinkingLevel = computed(
-    () => sessionStore.active?.thinkingLevel ?? localThinkingLevel.value,
+    () => sessionState.value?.thinkingLevel ?? localThinkingLevel.value,
   )
 
   /**
    * 当前选中模型 id —— "provider/modelId" 复合串（与 SessionSummary.modelId / config.defaults 同格式）。
-   * 优先取 active session 的 modelId（per-session 真值）；landing 态（无 active session）
+   * 优先取自身 sessionId 对应 session 的 modelId（per-session 真值）；landing 态（无 session）
    * 优先用 flow.currentModel（用户在 landing 选定的 pendingModel），再回退到全局默认模型
    * （settingsStore.defaultModel，经 config.defaults 订阅）。
    *
@@ -56,7 +71,7 @@ export function useComposerModelThinking(
    * ?? 不兜底空串（'' ?? fallback === ''），导致模型显示消失。|| 兜底空串到 defaultModel。
    */
   const currentModelId = computed(
-    () => sessionStore.active?.modelId || flow.currentModel.value || settingsStore.defaultModel || '',
+    () => sessionState.value?.modelId || flow.currentModel.value || settingsStore.defaultModel || '',
   )
 
   /** 当前模型的思考档位映射 + 切换模型后重置不可用等级（逻辑见 useThinkingLevelSync） */

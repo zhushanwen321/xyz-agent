@@ -3,7 +3,7 @@
  *
  * 从 Composer 拆出，保持 script setup 行数合规。职责：
  * - 按 currentModelId 解析当前模型的 thinkingLevelMap
- * - 模型切换后若当前思考等级不在新模型可用档位，重置到最高可用档
+ * - 模型切换后按体系判定对齐思考等级：同体系直接映射，跨体系重置到最高可用档
  *
  * thinkingLevelMap 语义：
  * key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime/pi 的实际 level。
@@ -16,6 +16,7 @@ import {
   resolveThinkingValue,
   resolveThinkingKey,
   highestAvailableLevel,
+  isSameThinkingScheme,
 } from '@/components/panel/thinking-levels'
 
 export function useThinkingLevelSync(
@@ -39,18 +40,21 @@ export function useThinkingLevelSync(
   /**
    * 模型切换后对齐思考等级（session 已建 + landing 态均触发）。
    *
-   * immediate：Composer 挂载时 currentThinkingLevelMap 首次求值即触发——landing 态
-   * 初始 localThinkingLevel=undefined，需立即设为当前模型最高可用档；session 已建时
-   * currentThinkingLevel 有值，若可用则不重置，不可用则重置（首次也对齐）。
+   * 映射规则（用户确认的语义）：
+   * 1. currentThinkingLevel 无值（landing 态初始）→ 设为新模型最高可用档
+   * 2. 首次触发（oldMap===undefined，Composer 挂载/session 载入）→ 可用性检查：
+   *    当前档位在新模型可用则保留，不可用则重置到最高档（与原逻辑一致，避免无 oldMap
+   *    无法判定体系时误触发冗余 RPC）
+   * 3. 真正的模型切换（oldMap 有值）→ 体系判定：
+   *    - 同体系（可用 key 集合相同）→ 直接映射当前档位到新模型 value
+   *    - 跨体系 → 重置到新模型最高可用档
    *
-   * - currentThinkingLevel 有值（session 已建 或 landing 态已设 localThinkingLevel）：
-   *   反查为 UI key，若不在新模型可用档位 → 重置到最高可用档
-   * - currentThinkingLevel 无值（landing 态初始）：
-   *   直接设为最高可用档（新模型的默认思考强度）
+   * 「体系」定义见 isSameThinkingScheme。同体系时用旧 map 反查当前 value 的 UI key，
+   * 再用新 map 转成新 value；value 未变则不触发冗余 RPC。
    *
    * onReset 传的是 map 映射后的 value（发给 runtime/pi 的字符串）。
    */
-  watch(currentThinkingLevelMap, (map) => {
+  watch(currentThinkingLevelMap, (map, oldMap) => {
     const current = currentThinkingLevel.value
     if (!current) {
       // landing 态初始无思考等级 → 设为新模型最高可用档
@@ -58,13 +62,28 @@ export function useThinkingLevelSync(
       onReset(resolveThinkingValue(highest, map))
       return
     }
-    // current 是 runtime 返回的 value，反查为 UI key 再判可用性
-    const currentKey = resolveThinkingKey(current, map)
-    const available = resolveAvailableLevels(map)
-    if (!available.includes(currentKey)) {
-      const highest = highestAvailableLevel(map)
-      onReset(resolveThinkingValue(highest, map))
+    // 首次触发（无 oldMap 可比）→ 可用性检查，与原逻辑一致
+    if (oldMap === undefined) {
+      const currentKey = resolveThinkingKey(current, map)
+      const available = resolveAvailableLevels(map)
+      if (!available.includes(currentKey)) {
+        const highest = highestAvailableLevel(map)
+        onReset(resolveThinkingValue(highest, map))
+      }
+      return
     }
+    // 模型切换：同体系 → 直接映射当前档位 key 到新模型 value
+    if (isSameThinkingScheme(oldMap, map)) {
+      const currentKey = resolveThinkingKey(current, oldMap)
+      const newValue = resolveThinkingValue(currentKey, map)
+      // value 变了才重置（同体系同 value 时不触发冗余 RPC）
+      if (newValue !== current) onReset(newValue)
+      return
+    }
+    // 跨体系 → 重置到新模型最高可用档（value 未变则不触发冗余 RPC）
+    const highest = highestAvailableLevel(map)
+    const newValue = resolveThinkingValue(highest, map)
+    if (newValue !== current) onReset(newValue)
   }, { immediate: true })
 
   return currentThinkingLevelMap

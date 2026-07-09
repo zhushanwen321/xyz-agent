@@ -145,3 +145,24 @@ export function highestAvailableLevel(
   const levels = resolveAvailableLevels(map)
   return levels[levels.length - 1] ?? 'max'
 }
+
+/**
+ * 判断两个 thinkingLevelMap 是否属于同一思考体系（可用档位 key 集合相同）。
+ *
+ * 用于模型切换时判定思考等级是否可直接映射：同体系直接映射当前档位，
+ * 跨体系重置到目标模型最高档。
+ *
+ * 用可用 key 集合而非 ThinkingStrategy 预设枚举判定——thinkingLevelMap 是自由格式
+ * Record<string,string|null>，用户可在 config 写任意 map；预设枚举只识别三种固定配置，
+ * 对自定义 map 会误判。key 集合判定对所有 map 都准确。
+ *
+ * undefined/空 map（all-levels）视为全档可用，两个全档视为同体系。
+ */
+export function isSameThinkingScheme(
+  a?: Record<string, string | null>,
+  b?: Record<string, string | null>,
+): boolean {
+  const keysA = resolveAvailableLevels(a)
+  const keysB = resolveAvailableLevels(b)
+  return keysA.length === keysB.length && keysA.every((k) => keysB.includes(k))
+}

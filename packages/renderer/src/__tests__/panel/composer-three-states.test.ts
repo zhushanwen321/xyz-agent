@@ -43,7 +43,7 @@ vi.mock('@/api', () => ({
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
 vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ active: undefined, updateSessionState: vi.fn() }),
+  useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
 vi.mock('@/stores/settings', () => ({
   useSettingsStore: () => ({ defaultModel: '' }),

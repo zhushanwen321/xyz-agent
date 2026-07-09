@@ -19,6 +19,7 @@ import {
   resolveThinkingValue,
   resolveThinkingKey,
   highestAvailableLevel,
+  isSameThinkingScheme,
   getDisplayLabel,
   THINKING_LEVELS,
 } from '@/components/panel/thinking-levels'
@@ -126,5 +127,50 @@ describe('highestAvailableLevel', () => {
     expect(validLevels).toContain(highestAvailableLevel(HIGH_MAX_MAP))
     expect(validLevels).toContain(highestAvailableLevel(ON_OFF_MAP))
     expect(validLevels).toContain(highestAvailableLevel(undefined))
+  })
+})
+
+describe('isSameThinkingScheme（体系判定：可用 key 集合相同即同体系）', () => {
+  it('on-off vs on-off → 同体系', () => {
+    expect(isSameThinkingScheme(ON_OFF_MAP, ON_OFF_MAP)).toBe(true)
+  })
+
+  it('high-max vs high-max → 同体系', () => {
+    expect(isSameThinkingScheme(HIGH_MAX_MAP, HIGH_MAX_MAP)).toBe(true)
+  })
+
+  it('on-off vs high-max → 跨体系（key 集合不同：{off,high} ≠ {off,high,max}）', () => {
+    expect(isSameThinkingScheme(ON_OFF_MAP, HIGH_MAX_MAP)).toBe(false)
+  })
+
+  it('high-max vs on-off → 跨体系（不对称也成立）', () => {
+    expect(isSameThinkingScheme(HIGH_MAX_MAP, ON_OFF_MAP)).toBe(false)
+  })
+
+  it('all-levels(undefined) vs all-levels(undefined) → 同体系（两个全档）', () => {
+    expect(isSameThinkingScheme(undefined, undefined)).toBe(true)
+  })
+
+  it('all-levels(undefined) vs on-off → 跨体系（全 6 档 ≠ 2 档）', () => {
+    expect(isSameThinkingScheme(undefined, ON_OFF_MAP)).toBe(false)
+  })
+
+  it('all-levels(undefined) vs high-max → 跨体系', () => {
+    expect(isSameThinkingScheme(undefined, HIGH_MAX_MAP)).toBe(false)
+  })
+
+  it('空对象 {} vs undefined → 同体系（两者都 fallback 全 6 档）', () => {
+    expect(isSameThinkingScheme({}, undefined)).toBe(true)
+  })
+
+  it('自定义 map {off,high,xhigh} vs on-off → 跨体系（key 集合不同）', () => {
+    const customMap = { off: 'off', high: 'high', xhigh: 'xhigh' }
+    expect(isSameThinkingScheme(customMap, ON_OFF_MAP)).toBe(false)
+  })
+
+  it('同 key 集合但 value 不同 → 同体系（体系只看 key，不看 value）', () => {
+    const mapA = { off: 'off', high: 'high', max: 'xhigh' }
+    const mapB = { off: 'off', high: 'high', max: 'ultrathink' }
+    expect(isSameThinkingScheme(mapA, mapB)).toBe(true)
   })
 })
