@@ -116,7 +116,7 @@
         class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12.5px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
         :class="[
           turn.isWorking
-            ? 'sticky top-0 z-[1] -mx-1 rounded-md bg-surface/95 px-2 backdrop-blur-sm cursor-default hover:text-muted'
+            ? 'sticky top-0 z-[1] -mx-1 rounded-none border-b border-border bg-bg-elevated px-2 cursor-default hover:text-muted'
             : !turn.hasFoldable
               ? 'cursor-default hover:text-muted'
               : 'cursor-pointer hover:text-fg',

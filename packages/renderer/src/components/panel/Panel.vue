@@ -193,7 +193,10 @@ async function onReviveSession(): Promise<void> {
   }
 }
 
-/** 激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + ring-1 accent + opacity 1；双 standby = opacity 0.5 hover 回升 0.78。
+/** 激活标识（workspace/spec.md）：三种状态共享 bg-bg-elevated 底色（统一面板表面，
+ *  保证 message-stream 内 sticky header 等浮层用 bg-bg-elevated 时与底色无缝融合），
+ *  差异用 opacity / ring 表达——
+ *  单 panel：满 opacity 无 ring；双 active：满 opacity + ring-1 accent；双 standby：opacity 0.5 hover 回升 0.78。
  *  SideDrawer 是 workspace-body 级 absolute 浮层（w-1/2，覆盖对侧），不参与 panel 的 flex 布局——
  *  panel 始终 flex-1 均分（单 panel 撑满、双 panel 各半），与 drawer 完全解耦，避免收窄态引发宽度异常。 */
 const panelStateClass = computed(() => {
@@ -201,8 +204,8 @@ const panelStateClass = computed(() => {
     return 'bg-bg-elevated opacity-100 ring-1 ring-[var(--accent-ring)]'
   }
   if (!props.active && props.isDual) {
-    return 'opacity-50 hover:opacity-[0.78]'
+    return 'bg-bg-elevated opacity-50 hover:opacity-[0.78]'
   }
-  return ''
+  return 'bg-bg-elevated'
 })
 </script>
