@@ -172,8 +172,11 @@ watch(
 .md-render :deep(h3),
 .md-render :deep(h4) { font-size: 1.06em; }
 
+/* p margin 归零：用户气泡里列表与相邻段落紧贴（旧 0.5em 0 让列表上下多 7px 空行）。
+   块级 <p> 天然换行，margin:0 后多段落仍可区分（换行在，只是无额外间距）。
+   assistant summary 同此样式，多段落紧贴也是合理节奏。 */
 .md-render :deep(p) {
-  margin: 0.5em 0;
+  margin: 0;
   line-height: 1.7;
 }
 
