@@ -21,6 +21,7 @@ import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
+import semver from 'semver'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
@@ -139,6 +140,8 @@ export class ExtensionService {
     // 读取 settings.json packages[] 用于判断 source 和 enabled
     const { packages, disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
+    // 读取 auto-upgrade 配置
+    const autoUpgradeSet = new Set(this.extSettings.getAutoUpgrade())
 
     const extensions: ExtensionInfo[] = []
 
@@ -162,6 +165,7 @@ export class ExtensionService {
       const sourceKey = `npm:${name}`
       const isUserInstalled = packages.includes(sourceKey)
       const isDisabled = disabledSet.has(sourceKey)
+      const isAutoUpgrade = autoUpgradeSet.has(sourceKey)
 
       extensions.push({
         name,
@@ -171,6 +175,7 @@ export class ExtensionService {
         path: dir,
         enabled: !isDisabled,
         source: isUserInstalled ? 'user-installed' : 'built-in',
+        autoUpgrade: isAutoUpgrade,
       })
     }
 
@@ -320,6 +325,86 @@ export class ExtensionService {
   async toggleExtension(name: string, enabled: boolean): Promise<void> {
     const source = `npm:${name}`
     await this.extSettings.setEnabled(source, enabled)
+  }
+
+  /**
+   * 设置某个包的自动升级状态。
+   * 经 IExtensionSettings port 操作 auto-upgrade-packages.json。
+   */
+  async setAutoUpgrade(name: string, autoUpgrade: boolean): Promise<void> {
+    const source = `npm:${name}`
+    await this.extSettings.setAutoUpgrade(source, autoUpgrade)
+  }
+
+  /**
+   * 升级单个用户安装的扩展。
+   * 检查 npm latest 版本 → semver.lt 判定 → npm install 最新版。
+   * 仅 user-installed 扩展可升级，built-in 扩展抛出错误。
+   *
+   * @returns { upgraded, from, to } 或 { upgraded: false, from, to } 如果已是最新
+   */
+  async upgradeExtension(
+    name: string,
+  ): Promise<{ upgraded: boolean; from: string; to: string }> {
+    // 查找扩展
+    const extensions = await this.scanExtensions()
+    const ext = extensions.find(e => e.name === name)
+    if (!ext) {
+      throw new ExtensionInstallError('not_found', `Extension not found: ${name}`)
+    }
+    if (ext.source !== 'user-installed') {
+      throw new ExtensionInstallError('not_extension', `Cannot upgrade built-in extension: ${name}`)
+    }
+
+    const currentVersion = ext.version
+    const latestVersion = await this.installer.getLatestVersion(name)
+
+    // semver.lt 判定：当前版本 >= latest 则无需升级
+    if (!currentVersion || !semver.lt(currentVersion, latestVersion)) {
+      return { upgraded: false, from: currentVersion, to: latestVersion }
+    }
+
+    // 执行升级：npm install 最新版
+    const npmDir = join(this.settingsDir, 'npm')
+    const nodeModulesDir = join(npmDir, 'node_modules')
+    await this.installer.installNpm(name, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
+
+    return { upgraded: true, from: currentVersion, to: latestVersion }
+  }
+
+  /**
+   * 启动时批量检查并自动升级开启了 autoUpgrade 的扩展。
+   * 失败不阻塞启动——每个扩展的升级错误被捕获并记录，不影响其他扩展。
+   *
+   * @returns 每个扩展的升级结果（含成功/失败信息）
+   */
+  async checkAndAutoUpgrade(): Promise<Array<{ name: string; upgraded: boolean; from?: string; to?: string; error?: string }>> {
+    const autoUpgradeSources = this.extSettings.getAutoUpgrade()
+    if (autoUpgradeSources.length === 0) return []
+
+    const extensions = await this.scanExtensions()
+    const results: Array<{ name: string; upgraded: boolean; from?: string; to?: string; error?: string }> = []
+
+    for (const source of autoUpgradeSources) {
+      // 只处理 npm: 前缀的 user-installed 扩展
+      if (!source.startsWith('npm:')) continue
+      const pkgName = source.slice(NPM_PREFIX_LENGTH)
+
+      // 查找扩展——不存在或 built-in 则跳过
+      const ext = extensions.find(e => e.name === pkgName)
+      if (!ext || ext.source !== 'user-installed') continue
+
+      try {
+        const result = await this.upgradeExtension(pkgName)
+        results.push({ name: pkgName, ...result })
+      } catch (e) {
+        // 失败不阻塞启动——记录错误继续处理其他扩展
+        log.warn(`[extension-service] auto-upgrade failed for ${pkgName}: ${toErrorMessage(e)}`)
+        results.push({ name: pkgName, upgraded: false, error: toErrorMessage(e) })
+      }
+    }
+
+    return results
   }
 
   // ── Local / Git install methods ────────────────────────────────

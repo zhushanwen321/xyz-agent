@@ -570,6 +570,14 @@ export const extension = {
     const installedNames = new Set(fixtureExtensions.map((e) => e.name))
     return recommendedExtensions.map((r) => ({ ...r, installed: installedNames.has(r.name) }))
   },
+  /** 升级扩展（mock：仅等待 ack，不实际升级） */
+  async upgrade(_name: string) {
+    await sleep(TIMING.ack)
+  },
+  /** 设置自动升级开关（mock：仅等待 ack） */
+  async setAutoUpgrade(_name: string, _enabled: boolean) {
+    await sleep(TIMING.ack)
+  },
 }
 
 /* ── Plugin mock（订阅骨架，无 fixture；第3项真实集成补数据）── */
@@ -659,15 +667,8 @@ export const workspace = {
       { cwd: '/Users/demo/another-foo', lastUsedAt: now - oldestOffset, label: 'another-foo' },
     ]
   },
-  // Mock record：模拟 runtime 记录后返回列表（把传入 cwd 置顶，供热更新链路 E2E 验证）。
-  async record(cwd: string): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
-    // 与 runtime RecentWorkspacesStore 的 MAX_RECORDS 上限一致
-    const MAX_RECORDS = 10
-    if (!cwd) return this.listRecent()
-    const basename = cwd.split('/').pop() || cwd
-    const records = await this.listRecent()
-    // 去重后置顶（同 cwd 覆盖），保狩上限与 runtime INV-2/INV-3 一致
-    const filtered = records.filter((r) => r.cwd !== cwd)
-    return [{ cwd, lastUsedAt: Date.now(), label: basename }, ...filtered].slice(0, MAX_RECORDS)
+  async record(_cwd: string): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
+    // Mock record：模拟写入后返回最新列表（与 listRecent 一致，简化实现）
+    return this.listRecent()
   },
 }

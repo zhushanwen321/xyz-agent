@@ -268,6 +268,21 @@ async function main(): Promise<void> {
   await server.start()
   console.log('[runtime] ready')
 
+  // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，
+  // semver.lt 判定后静默升级。失败不阻塞启动（每个扩展独立 try-catch）。
+  // [HISTORICAL] 在 ensurePublicSession 之前执行，确保公共 session 启动时扩展已最新。
+  try {
+    const upgradeResults = await extensionService.checkAndAutoUpgrade()
+    const upgraded = upgradeResults.filter(r => r.upgraded)
+    if (upgraded.length > 0) {
+      console.log(`[runtime] auto-upgraded ${upgraded.length} extension(s):`,
+        upgraded.map(r => `${r.name} ${r.from}→${r.to}`).join(', '))
+    }
+  } catch (e) {
+    // autoUpgradeExtensions 内部已 catch 每个扩展，此处是意外错误兜底
+    console.warn('[runtime] extension auto-upgrade encountered an error:', e)
+  }
+
   // 公共 session 创建：隐藏 session（cwd=数据目录），pi 进程常驻，供 landing 态获取 pi 命令。
   // model 未配置时失败不阻塞（landing 降级到 skills fallback）。server.start 后调用，
   // 确保前端连接时能尽快收到 app.info.publicSessionId（经 broker 读 sessionService.getPublicSessionId）。

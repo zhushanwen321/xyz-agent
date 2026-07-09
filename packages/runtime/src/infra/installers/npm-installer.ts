@@ -411,6 +411,22 @@ async function installPackageRecursive(
   }
 }
 
+/**
+ * 从 npm registry 获取包的 latest 版本号。
+ * 用于扩展升级检查：比较当前版本与 latest 决定是否需要升级。
+ */
+export async function fetchLatestVersion(
+  pkgName: string,
+  timeout?: number,
+): Promise<string> {
+  const metadata = await fetchMetadata(pkgName, timeout)
+  const latest = metadata['dist-tags'].latest
+  if (!latest) {
+    throw new NpmInstallError('not_found', `No latest version found for ${pkgName}`)
+  }
+  return latest
+}
+
 // ── 公开 API ──────────────────────────────────────────────────
 
 /**

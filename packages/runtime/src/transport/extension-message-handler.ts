@@ -30,6 +30,7 @@ export class ExtensionMessageHandler {
     'extension.ui_response', 'extension.list', 'extension.toggle', 'extension.install', 'extension.uninstall',
     'extension.installDir', 'extension.installGit', 'extension.finishInstall', 'extension.cancelInstall',
     'extension.recommended',
+    'extension.upgrade', 'extension.setAutoUpgrade',
   ]
 
   /**
@@ -192,6 +193,36 @@ export class ExtensionMessageHandler {
           return this.ctx.reply(ws, msg.id, 'extension.installCancelled', {})
         } catch (e) {
           return this.sendInstallError(ws, msg.id, e)
+        }
+      }
+      case 'extension.upgrade': {
+        const ext = this.requireExt(ws, msg.id)
+        if (!ext) return
+        try {
+          const { name } = msg.payload as { name: string }
+          if (typeof name !== 'string' || name.length === 0) {
+            return this.ctx.sendError(ws, 'invalid_payload', 'extension.upgrade requires a non-empty "name" string', msg.id)
+          }
+          const result = await ext.upgradeExtension(name)
+          const extensions = await ext.scanExtensions()
+          return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions, upgradeResult: result })
+        } catch (e) {
+          return this.sendInstallError(ws, msg.id, e)
+        }
+      }
+      case 'extension.setAutoUpgrade': {
+        const ext = this.requireExt(ws, msg.id)
+        if (!ext) return
+        try {
+          const { name, autoUpgrade } = msg.payload as { name: string; autoUpgrade: boolean }
+          if (typeof name !== 'string' || name.length === 0) {
+            return this.ctx.sendError(ws, 'invalid_payload', 'extension.setAutoUpgrade requires a non-empty "name" string', msg.id)
+          }
+          await ext.setAutoUpgrade(name, autoUpgrade)
+          const extensions = await ext.scanExtensions()
+          return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions })
+        } catch (e) {
+          return this.ctx.sendError(ws, 'set_auto_upgrade_failed', toErrorMessage(e), msg.id)
         }
       }
     }

@@ -152,3 +152,26 @@ export async function fetchRecommended(): Promise<Array<RecommendedExtension & {
   const payload = await result
   return payload.recommended
 }
+
+/**
+ * 升级指定扩展：从 npm 拉取最新版本并重装。
+ * 仅对 user-installed（npm 来源）扩展有效。
+ * runtime 执行 npm install <pkg>@latest → 替换旧版 → 推 config.extensions 刷新。
+ */
+export function upgrade(name: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'extension.upgrade', id, payload: { name } })
+  return result
+}
+
+/**
+ * 设置扩展的自动升级开关。
+ * runtime 将 autoUpgrade 状态持久化到 extension-settings，启动时批量检查并升级。
+ */
+export function setAutoUpgrade(name: string, enabled: boolean): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'extension.setAutoUpgrade', id, payload: { name, autoUpgrade: enabled } })
+  return result
+}

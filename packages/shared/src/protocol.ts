@@ -28,6 +28,7 @@ export type ClientMessageType =
   | 'extension.install' | 'extension.uninstall'
   | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
   | 'extension.recommended'
+  | 'extension.upgrade' | 'extension.setAutoUpgrade'
   | 'ping'
   | 'plugin.list' | 'plugin.toggle'
   | 'plugin.install' | 'plugin.uninstall'
@@ -108,6 +109,8 @@ export interface ClientMessageMap {
   'extension.finishInstall': { tempDir: string; selected: string[] }
   'extension.cancelInstall': { tempDir: string }
   'extension.recommended': Record<string, never>
+  'extension.upgrade': { name: string }
+  'extension.setAutoUpgrade': { name: string; autoUpgrade: boolean }
   'plugin.list': Record<string, never>
   'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
   'plugin.install': { packageSpec: string }
@@ -134,7 +137,6 @@ export interface ClientMessageMap {
   'git.checkout': { sessionId: string; name: string }
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
-  /** 记录一次工作区使用（选目录后热更新）。runtime record 后返回最新列表，前端据此刷新 store */
   'workspace.record': { cwd: string }
 }
 

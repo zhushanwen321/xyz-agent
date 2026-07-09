@@ -14,6 +14,7 @@ import {
   installPackage,
   uninstallPackage,
   installDependencies,
+  fetchLatestVersion,
 } from './npm-installer.js'
 
 const GIT_CLONE_DEFAULT_TIMEOUT = 120_000
@@ -39,5 +40,9 @@ export class NpmGitInstaller implements IInstaller {
       stdio: 'pipe',
       timeout: timeout ?? GIT_CLONE_DEFAULT_TIMEOUT,
     })
+  }
+
+  async getLatestVersion(pkgName: string): Promise<string> {
+    return fetchLatestVersion(pkgName)
   }
 }

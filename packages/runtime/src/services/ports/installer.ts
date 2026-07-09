@@ -29,6 +29,8 @@ export interface IInstaller {
   installDeps(dir: string): Promise<void>
   /** git clone --depth 1 一个仓库到目标目录。失败抛 Error。 */
   installGit(url: string, destDir: string, timeout?: number): Promise<void>
+  /** 从 npm registry 获取包的 latest 版本号。失败抛 InstallerError 形状的错误。 */
+  getLatestVersion(pkgName: string): Promise<string>
 }
 
 /**
