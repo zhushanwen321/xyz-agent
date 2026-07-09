@@ -176,7 +176,7 @@ const { handleArrowUp, handleArrowDown, resetBrowsing } = useComposerHistory(
   computed(() => props.sessionId),
   {
     getText: () => inputRef.value?.getText() ?? '',
-    setText: (text) => inputRef.value?.setText(text),
+    setText: (text, caretPosition) => inputRef.value?.setText(text, caretPosition),
     clear: () => inputRef.value?.clear(),
   },
 )

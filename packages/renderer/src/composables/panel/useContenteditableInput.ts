@@ -145,7 +145,8 @@ export function useContenteditableInput(
    * CRITICAL：textContent= 替换整框内容，savedRange 指向的旧节点失效，必须置 null
    * （同 clear 理由），随后手动建立新光标 Range。
    */
-  setText: (text: string) => void
+  /** 写入纯文本并定位光标（'end'=末尾默认，'start'=首字符前，用于历史导航连续回溯） */
+  setText: (text: string, caretPosition?: 'start' | 'end') => void
   /** 在当前光标处插入纯文本（菜单插 @/# 符号用） */
   insertTextAtCursor: (text: string) => void
   /**
@@ -469,7 +470,7 @@ export function useContenteditableInput(
    * CRITICAL：textContent= 替换整框内容，savedRange 指向的旧节点失效，必须置 null
    * （同 clear 理由），随后手动建立新光标 Range。
    */
-  function setText(text: string): void {
+  function setText(text: string, caretPosition: 'start' | 'end' = 'end'): void {
     const el = getEl()
     if (!el) return
     el.textContent = text
@@ -477,7 +478,7 @@ export function useContenteditableInput(
     el.focus()
     const range = document.createRange()
     range.selectNodeContents(el)
-    range.collapse(false)
+    range.collapse(caretPosition === 'start')
     const sel = window.getSelection()
     sel?.removeAllRanges()
     sel?.addRange(range)

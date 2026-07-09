@@ -9,7 +9,7 @@
  * - ↓（browsing 态 + 未到最近）：index-- → 回填 H[index]
  * - ↓（browsing 态 + 已在最近）：恢复草稿 → edit 态
  * - 重置逻辑：用户在 browsing 态修改了内容 → 退出 browsing，下次按上重新从最后一条开始
- * - 回填后光标定位在内容末尾（由 setText 的 collapse(false) 保证）。
+ * - 回填后光标定位：↑ 翻历史→首字符前（连续回溯），↓ 翻历史/恢复草稿→末尾。
  *
  * 历史来源（方案 A，session 消息流派生）：chatStore.messages[sessionId] 中
  * role==='user' && status==='complete' 的 content，按时间倒序，连续相同文本去重。
@@ -20,7 +20,8 @@ import { useChatStore } from '@/stores/chat'
 /** DOM 操作回调 */
 interface HistoryDeps {
   getText: () => string
-  setText: (text: string) => void
+  /** 写入纯文本；caretPosition='start' 光标定位首字符前（用于↑连续回溯），默认 'end' */
+  setText: (text: string, caretPosition?: 'start' | 'end') => void
   clear: () => void
 }
 
@@ -102,7 +103,7 @@ export function useComposerHistory(
       browsing = true
       index = 0
       isSettingText = true
-      deps.setText(h[0])
+      deps.setText(h[0], 'start')  // 光标置首，便于连续↑回溯
       isSettingText = false
       return true
     }
@@ -111,7 +112,7 @@ export function useComposerHistory(
     if (index + 1 < h.length) {
       index++
       isSettingText = true
-      deps.setText(h[index])
+      deps.setText(h[index], 'start')  // 光标置首，便于连续↑回溯
       isSettingText = false
     }
     // 已在最老一条：保持不动
@@ -128,12 +129,12 @@ export function useComposerHistory(
     if (index > 0) {
       index--
       isSettingText = true
-      deps.setText(h[index])
+      deps.setText(h[index], 'end')  // 光标置末，便于连续↓回溯
       isSettingText = false
     } else {
       // 已在最近一条：恢复草稿，回到 edit 态
       isSettingText = true
-      deps.setText(savedDraft)
+      deps.setText(savedDraft, 'end')
       isSettingText = false
       browsing = false
     }
