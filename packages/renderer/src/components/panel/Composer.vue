@@ -276,13 +276,13 @@ async function onSend(): Promise<void> {
       ? trimmed.slice('/compact '.length).trim() || undefined
       : undefined
     clearInput()
-    await compact(customInstructions)
+    await compact(props.sessionId!, customInstructions)
     return
   }
   clearInput()
   isSending.value = true
   try {
-    await send(text)
+    await send(props.sessionId!, text)
   } catch (e) {
     // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
     restoreInput(text)
@@ -297,13 +297,13 @@ async function onSend(): Promise<void> {
 /** 追加 steer：活跃态（流式/派发）有输入时 ⏎ 触发 */
 async function onSteer(): Promise<void> {
   if (!hasInput.value || !isActive.value) return
-  await submit(draft.value, steer)
+  await submit(draft.value, (t) => steer(props.sessionId!, t))
 }
 
 /** 追加 follow-up：S6 有输入时 Alt+⏎ 触发；非流式则退化为普通发送 */
 async function onFollowUp(): Promise<void> {
   if (!hasInput.value) return
-  await submit(draft.value, followUp)
+  await submit(draft.value, (t) => followUp(props.sessionId!, t))
 }
 
 /** 公共提交：清空输入 → 调用 sender → 失败时恢复草稿 */
@@ -321,7 +321,7 @@ async function submit(text: string, sender: (t: string) => Promise<void>): Promi
 
 /** 停止（S6）：调 abort（G-025 流转 DEFERRED，方法存在） */
 async function onAbort(): Promise<void> {
-  await abort()
+  await abort(props.sessionId!)
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。

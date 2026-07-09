@@ -18,7 +18,7 @@
  *
  * deriveStatus 仍从此处 re-export（向后兼容：历史上有调用方直接从 useSidebar import 该纯函数）。
  */
-import { onScopeDispose } from 'vue'
+import { computed, onScopeDispose } from 'vue'
 import type { SessionGroup } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -119,6 +119,21 @@ export function useSidebar() {
   const panel = usePanelStore()
   const commandStore = useCommandStore()
   const workspaceStore = useWorkspaceStore()
+
+  /**
+   * 当前焦点 panel 绑定的 session（UI 高亮 SSOT）。
+   * 从 panel.activePanelId 派生——切 panel focus 时自动跟随，驱动 sidebar 高亮 / 文件树 / overview。
+   * 与 session.activeId 解耦：activeId 收敛为导航/启动语义，不再驱动 UI 高亮。
+   * 双 panel standby 空态（leaf.sessionId=null）→ 返回 null（文件树显空态占位）。
+   */
+  const focusedSessionId = computed<string | null>(
+    () => panel.panels.find((p) => p.id === panel.activePanelId)?.sessionId ?? null,
+  )
+
+  /** 焦点 session 的 summary（FileView label/branch 用）；找不到则 null */
+  const focusedSession = computed(
+    () => session.list.find((s) => s.id === focusedSessionId.value) ?? null,
+  )
 
   /**
    * session.list server-push 订阅（#7 方案 A）。
@@ -447,6 +462,8 @@ export function useSidebar() {
   }
 
   return {
+    focusedSessionId,
+    focusedSession,
     selectSession,
     newSession,
     newSessionToStandby,

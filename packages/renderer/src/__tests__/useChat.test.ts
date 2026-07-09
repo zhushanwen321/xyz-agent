@@ -52,7 +52,6 @@ vi.mock('@/api', () => ({
 }))
 
 import { useChatStore } from '@/stores/chat'
-import { useSessionStore } from '@/stores/session'
 import { useChat } from '@/composables/features/useChat'
 
 beforeEach(() => {
@@ -68,45 +67,37 @@ function emit(msg: ServerMessage): void {
 
 describe('useChat 流式状态机', () => {
   it('首次 send 订阅流式事件恰好一次', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-subscribe'
     const { send } = useChat()
-    await send('hello')
+    await send('s-subscribe', 'hello')
     expect(apiMock.streamSubscribe).toHaveBeenCalledTimes(1)
     expect(apiMock.send).toHaveBeenCalledTimes(1)
   })
 
   it('同 session 二次 send 不重复订阅（ensureStreamSubscription 幂等）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-idempotent'
     const { send } = useChat()
-    await send('one')
+    await send('s-idempotent', 'one')
     // 第一轮流式周期结束（message_start 清 dispatching + 设 isStreaming，complete 清 isStreaming），
     // 否则 isActive guard 会拦截第二次 send（dispatching 残留）
     emit({ type: 'message.message_start', payload: { sessionId: 's-idempotent', messageId: 'a1' } })
     emit({ type: 'message.complete', payload: { sessionId: 's-idempotent' } })
-    await send('two')
+    await send('s-idempotent', 'two')
     expect(apiMock.streamSubscribe).toHaveBeenCalledTimes(1)
     expect(apiMock.send).toHaveBeenCalledTimes(2)
   })
 
   it('message.message_start → isGenerating=true', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-start'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hi')
+    await send('s-start', 'hi')
     expect(chat.isGenerating('s-start')).toBe(false)
     emit({ type: 'message.message_start', payload: { sessionId: 's-start', messageId: 'a1' } })
     expect(chat.isGenerating('s-start')).toBe(true)
   })
 
   it('message.complete → isGenerating=false', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-complete'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hi')
+    await send('s-complete', 'hi')
     emit({ type: 'message.message_start', payload: { sessionId: 's-complete', messageId: 'a1' } })
     expect(chat.isGenerating('s-complete')).toBe(true)
     emit({ type: 'message.complete', payload: { sessionId: 's-complete' } })
@@ -114,11 +105,9 @@ describe('useChat 流式状态机', () => {
   })
 
   it('message.error → isGenerating=false（规则 #3 终态复位）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-error'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hi')
+    await send('s-error', 'hi')
     emit({ type: 'message.message_start', payload: { sessionId: 's-error', messageId: 'a1' } })
     expect(chat.isGenerating('s-error')).toBe(true)
     emit({ type: 'message.error', payload: { sessionId: 's-error', message: 'boom' } })
@@ -126,11 +115,9 @@ describe('useChat 流式状态机', () => {
   })
 
   it('message.stream_error → isGenerating=false（stream_error 终态复位关键分支）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-stream-err'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hi')
+    await send('s-stream-err', 'hi')
     emit({ type: 'message.message_start', payload: { sessionId: 's-stream-err', messageId: 'a1' } })
     expect(chat.isGenerating('s-stream-err')).toBe(true)
     // 若 pi 发了 message_update{error} 后不再发 agent_end，必须在此复位
@@ -138,32 +125,21 @@ describe('useChat 流式状态机', () => {
     expect(chat.isGenerating('s-stream-err')).toBe(false)
   })
 
-  it('send 守卫：无 active session 时早退（不订阅/不发送）', async () => {
-    const { send } = useChat()
-    await send('hello')
-    expect(apiMock.streamSubscribe).not.toHaveBeenCalled()
-    expect(apiMock.send).not.toHaveBeenCalled()
-  })
-
   it('send 守卫：空文本/纯空白时早退', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-empty'
     const { send } = useChat()
-    await send('   ')
-    await send('')
+    await send('s-empty', '   ')
+    await send('s-empty', '')
     expect(apiMock.streamSubscribe).not.toHaveBeenCalled()
     expect(apiMock.send).not.toHaveBeenCalled()
   })
 
   it('send busy 时转 steer（B 策略：不打断当前回合，不重复 send）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-busy'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('first')
+    await send('s-busy', 'first')
     emit({ type: 'message.message_start', payload: { sessionId: 's-busy', messageId: 'a1' } })
     expect(chat.isGenerating('s-busy')).toBe(true)
-    await send('second')
+    await send('s-busy', 'second')
     // B 策略：busy 时 send 自动转 steer（不重复 send）
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     expect(apiMock.steer).toHaveBeenCalledTimes(1)
@@ -172,12 +148,10 @@ describe('useChat 流式状态机', () => {
 
 describe('useChat pendingSend 合并态（空窗期）', () => {
   it('send 置 pendingSend → isActive 立即为 true（不等 message_start）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-dispatch'
     const chat = useChatStore()
     const { send } = useChat()
     // send 的 api.send 是异步的，但我们用 await 等它 resolve
-    await send('hello')
+    await send('s-dispatch', 'hello')
     // send resolve 后到 message_start 之前，pendingSend 应保持（空窗期 isActive=true）
     expect(chat.pendingSend.has('s-dispatch')).toBe(true)
     expect(chat.isActive('s-dispatch')).toBe(true)
@@ -185,11 +159,9 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
   })
 
   it('message_start 到达 → 清 pendingSend + 设 isGenerating（空窗期无缝切换）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-switch'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hi')
+    await send('s-switch', 'hi')
     expect(chat.pendingSend.has('s-switch')).toBe(true)
     emit({ type: 'message.message_start', payload: { sessionId: 's-switch', messageId: 'a1' } })
     expect(chat.pendingSend.has('s-switch')).toBe(false)
@@ -198,11 +170,9 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
   })
 
   it('终态（complete）清 pendingSend（兜底，message_start 未到的异常路径）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-terminal'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hi')
+    await send('s-terminal', 'hi')
     expect(chat.pendingSend.has('s-terminal')).toBe(true)
     // 模拟 pi 未发 message_start 直接 complete（异常但需兜底）
     emit({ type: 'message.complete', payload: { sessionId: 's-terminal' } })
@@ -211,44 +181,36 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
   })
 
   it('send 失败清 pendingSend（catch 路径）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-fail'
     const chat = useChatStore()
     apiMock.send.mockRejectedValueOnce(new Error('network'))
     const { send } = useChat()
     // [W2] send 失败不再 throw（与 steer/followUp/abort 对齐：clearPendingSend + toast，不 throw）
-    await expect(send('hi')).resolves.toBeUndefined()
+    await expect(send('s-fail', 'hi')).resolves.toBeUndefined()
     expect(chat.pendingSend.has('s-fail')).toBe(false)
     expect(chat.isActive('s-fail')).toBe(false)
   })
 
   it('steer 在空窗期可用（isActive guard 而非 isGenerating）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-steer'
     const chat = useChatStore()
     const { send, steer } = useChat()
-    await send('first') // 置 pendingSend，isActive=true 但 isGenerating=false
+    await send('s-steer', 'first') // 置 pendingSend，isActive=true 但 isGenerating=false
     expect(chat.isGenerating('s-steer')).toBe(false)
-    await steer('补充')
+    await steer('s-steer', '补充')
     expect(apiMock.steer).toHaveBeenCalledTimes(1)
   })
 
   it('steer 非活跃时早退（不发送）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-idle'
     const { steer } = useChat()
-    await steer('补充')
+    await steer('s-idle', '补充')
     expect(apiMock.steer).not.toHaveBeenCalled()
   })
 
   it('steer/followUp 调 appendPending 入流（pending 气泡可见）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-pending'
     const chat = useChatStore()
     const { send, steer, followUp } = useChat()
-    await send('first')
-    await steer('steer 内容')
-    await followUp('followup 内容')
+    await send('s-pending', 'first')
+    await steer('s-pending', 'steer 内容')
+    await followUp('s-pending', 'followup 内容')
     const msgs = chat.getMessages('s-pending')
     // send 的 user + steer pending + followUp pending
     const pendings = msgs.filter((m) => m.status === 'pending')
@@ -259,15 +221,13 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
   })
 
   it('abort 乐观清 pendingSend（W4：失败路径不残留）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-abort'
     const chat = useChatStore()
     const { send, abort } = useChat()
-    await send('first')
+    await send('s-abort', 'first')
     expect(chat.pendingSend.has('s-abort')).toBe(true)
     // abort 即使 RPC 失败也清 pendingSend（乐观清理 + catch 兜底）
     apiMock.abort.mockRejectedValueOnce(new Error('session not found'))
-    await abort() // 不抛（catch 吞掉）
+    await abort('s-abort') // 不抛（catch 吞掉）
     expect(chat.pendingSend.has('s-abort')).toBe(false)
     expect(chat.isActive('s-abort')).toBe(false)
   })
@@ -332,27 +292,23 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
   })
 
   it('steer API 失败回滚 pending + toast 提示（W1：不留孤儿气泡，不 unhandled reject）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-rollback'
     const chat = useChatStore()
     const { send, steer } = useChat()
-    await send('first')
+    await send('s-rollback', 'first')
     apiMock.steer.mockRejectedValueOnce(new Error('ws disconnected'))
     // 不抛（错误已消化：pending 回滚 + toast 提示），避免 unhandled rejection
-    await expect(steer('补充')).resolves.toBeUndefined()
+    await expect(steer('s-rollback', '补充')).resolves.toBeUndefined()
     const msgs = chat.getMessages('s-rollback')
     // pending 已被回滚移除，无孤儿
     expect(msgs.some((m) => m.status === 'pending')).toBe(false)
   })
 
   it('followUp API 失败回滚 pending + toast 提示（W1）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-fu-rollback'
     const chat = useChatStore()
     const { send, followUp } = useChat()
-    await send('first')
+    await send('s-fu-rollback', 'first')
     apiMock.followUp.mockRejectedValueOnce(new Error('ws disconnected'))
-    await expect(followUp('下轮')).resolves.toBeUndefined()
+    await expect(followUp('s-fu-rollback', '下轮')).resolves.toBeUndefined()
     const msgs = chat.getMessages('s-fu-rollback')
     expect(msgs.some((m) => m.status === 'pending')).toBe(false)
   })
@@ -360,21 +316,17 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
 
 describe('useChat compact 状态机（#6）', () => {
   it('compact 调 chatApi.compact 且建立会话级订阅（消费 compacting/compacted）', async () => {
-    const session = useSessionStore()
-    session.activeId = 'c-sub'
     const { compact } = useChat()
-    await compact()
-    // compact(customInstructions?) → chatApi.compact(sid, undefined)（未传自定义指令）
+    await compact('c-sub')
+    // compact(sessionId, customInstructions?) → chatApi.compact(sid, undefined)（未传自定义指令）
     expect(apiMock.compact).toHaveBeenCalledWith('c-sub', undefined)
     expect(apiMock.streamSubscribe).toHaveBeenCalledTimes(1)
   })
 
   it('session.compacting → isCompacting=true；session.compacted → isCompacting=false', async () => {
-    const session = useSessionStore()
-    session.activeId = 'c-flow'
     const chat = useChatStore()
     const { compact } = useChat()
-    await compact()
+    await compact('c-flow')
     emit({ type: 'session.compacting', payload: { sessionId: 'c-flow', status: 'compacting' } })
     expect(chat.isCompacting('c-flow')).toBe(true)
     emit({ type: 'session.compacted', payload: { sessionId: 'c-flow', status: 'compacted' } })
@@ -382,20 +334,12 @@ describe('useChat compact 状态机（#6）', () => {
   })
 
   it('compact 失败（pending reject）→ toast 错误提示，不抛出（不卡 UI，M8 toast 方案）', async () => {
-    const session = useSessionStore()
-    session.activeId = 'c-err'
     const chat = useChatStore()
     apiMock.compact.mockRejectedValueOnce(new Error('Session not found'))
     const { compact } = useChat()
-    await expect(compact()).resolves.toBeUndefined()
+    await expect(compact('c-err')).resolves.toBeUndefined()
     // M8: compact 错误走 toast 而非 appendSystemNotice，不再插入 system 消息
     const msgs = chat.getMessages('c-err')
     expect(msgs).toEqual([])
-  })
-
-  it('compact 守卫：无 active session 时早退', async () => {
-    const { compact } = useChat()
-    await compact()
-    expect(apiMock.compact).not.toHaveBeenCalled()
   })
 })

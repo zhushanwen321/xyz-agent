@@ -36,17 +36,15 @@
 import { computed } from 'vue'
 import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import PanelContainer from './PanelContainer.vue'
 
-const session = useSessionStore()
-const { newSession } = useSidebar()
+const { newSession, focusedSessionId } = useSidebar()
 const flow = useNewTaskFlow()
 
-/** 是否有激活 session（决定渲染 panel 还是空态） */
-const hasSession = computed(() => session.activeId !== null)
+/** 是否有焦点 session（决定渲染 panel 还是空态，跟随 panel focus） */
+const hasSession = computed(() => focusedSessionId.value !== null)
 
 async function onNewSession(): Promise<void> {
   await newSession()

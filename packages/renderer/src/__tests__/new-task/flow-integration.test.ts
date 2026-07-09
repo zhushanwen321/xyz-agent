@@ -246,8 +246,8 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     // navigation push chat view
     expect(navigation.current.view).toBe('chat')
     expect(navigation.current.sessionId).toBe('new-1')
-    // chat.send 被调用（trimmed）
-    expect(chatMock.send).toHaveBeenCalledWith('hello world')
+    // chat.send 被调用（显式 sid + trimmed）
+    expect(chatMock.send).toHaveBeenCalledWith('new-1', 'hello world')
     expect(flow.state.value).toBe('completed')
   })
 
