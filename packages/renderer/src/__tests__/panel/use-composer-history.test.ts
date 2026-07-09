@@ -1,14 +1,17 @@
 /**
  * useComposerHistory 单测 —— shell 风格 ↑/↓ 输入历史导航状态机。
  *
- * 行为规格（bash 风格，用户确认）：
- * - ↑（光标在第一行）：edit→browsing 回填 H[0]；browsing 内继续翻更老；越最老清空回 edit
- * - ↓（光标在最后一行）：browsing 内翻更新；越最近恢复草稿回 edit；edit 态不响应
- * - 连续相同文本去重；session 切换重置；pending 消息不进历史
+ * 行为规格（用户确认）：
+ * - ↑（edit 态 + history 非空）：保存草稿 → 回填 H[0]（最后一条）→ browsing
+ * - ↑（edit 态 + history 空）：清空 composer
+ * - ↑（browsing 态 + 未到最老）：index++ → 回填 H[index]
+ * - ↑（browsing 态 + 已在最老）：保持不动
+ * - ↓（browsing 态 + 未到最近）：index-- → 回填 H[index]
+ * - ↓（browsing 态 + 已在最近）：恢复草稿 → edit 态
+ * - 重置逻辑：用户在 browsing 态修改了内容 → 退出 browsing，下次按上重新从最后一条开始
  *
  * mock 策略：deps 全 mock（记录 setText/clear 调用），history 从真实 chatStore.appendUser
- * 注入的 user 消息派生（验证方案 A：消息流是历史 SSOT）。moveCaretUpVisualLine 默认 'first-line'
- * （测试状态机本身；光标行判定逻辑在 useContenteditableInput 单测覆盖）。
+ * 注入的 user 消息派生（验证方案 A：消息流是历史 SSOT）。
  *
  * 运行：npx vitest run src/__tests__/panel/use-composer-history.test.ts
  */
@@ -22,10 +25,9 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-/** mock deps 工厂：记录所有 DOM 操作调用，便于断言回填/清空内容 */
+/** mock deps 工厂：记录所有 DOM 操作调用 */
 function makeDeps(overrides: Partial<{
   getText: () => string
-  moveCaretUpVisualLine: () => 'first-line' | 'moved' | 'noop'
 }> = {}) {
   const setTextCalls: string[] = []
   const clearCalls: number[] = []
@@ -43,8 +45,6 @@ function makeDeps(overrides: Partial<{
         clearCalls.push(clearCalls.length)
         currentText = ''
       }),
-      // 默认 'first-line'：模拟光标已在首行，↑ 直接翻历史（多数单行场景）
-      moveCaretUpVisualLine: overrides.moveCaretUpVisualLine ?? (() => 'first-line' as const),
     },
   }
 }
@@ -55,8 +55,8 @@ function setup(historyTexts: string[], sessionId = 's1') {
   historyTexts.forEach((t) => store.appendUser(sessionId, t))
   const sidRef = ref(sessionId)
   const { setTextCalls, clearCalls, deps } = makeDeps()
-  const { handleArrowUp, handleArrowDown } = useComposerHistory(sidRef, deps)
-  return { store, sidRef, setTextCalls, clearCalls, deps, handleArrowUp, handleArrowDown }
+  const { handleArrowUp, handleArrowDown, resetBrowsing } = useComposerHistory(sidRef, deps)
+  return { store, sidRef, setTextCalls, clearCalls, deps, handleArrowUp, handleArrowDown, resetBrowsing }
 }
 
 describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
@@ -95,24 +95,6 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       const { clearCalls, handleArrowUp } = setup([])
       handleArrowUp()
       expect(clearCalls.length).toBe(1)
-    })
-
-    it('edit 态 moveCaretUpVisualLine 返回 moved（上移一行）：消费事件但不翻历史', () => {
-      const { setTextCalls, clearCalls, deps, handleArrowUp } = setup(['历史'])
-      deps.moveCaretUpVisualLine = () => 'moved'
-      const consumed = handleArrowUp()
-      expect(consumed).toBe(true) // 消费事件（防止浏览器再默认上移一次）
-      expect(setTextCalls.length).toBe(0) // 未翻历史
-      expect(clearCalls.length).toBe(0)
-    })
-
-    it('edit 态 moveCaretUpVisualLine 返回 noop（探测失败）：不消费，交给浏览器默认处理', () => {
-      const { setTextCalls, clearCalls, deps, handleArrowUp } = setup(['历史'])
-      deps.moveCaretUpVisualLine = () => 'noop'
-      const consumed = handleArrowUp()
-      expect(consumed).toBe(false) // 不消费，浏览器默认 ↑ 生效
-      expect(setTextCalls.length).toBe(0)
-      expect(clearCalls.length).toBe(0)
     })
   })
 
@@ -163,8 +145,8 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
     it('连续相同文本只留一条历史', () => {
       const { setTextCalls, handleArrowUp } = setup(['重复', '重复', '重复'])
       handleArrowUp() // → '重复'
-      handleArrowUp() // 越界 → 清空（去重后只有 1 条）
-      // 证明只有 1 条历史：第一次 ↑ 回填 '重复'，第二次 ↑ 越界清空
+      handleArrowUp() // 越界 → 保持不动（去重后只有 1 条）
+      // 证明只有 1 条历史：第一次 ↑ 回填 '重复'，第二次 ↑ 保持不动
       expect(setTextCalls).toEqual(['重复'])
     })
 
@@ -221,6 +203,29 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       // 按 ↑ 应翻 session2 的历史
       handleArrowUp()
       expect(setTextCalls.at(-1)).toBe('session2 的历史')
+    })
+  })
+
+  describe('用户输入内容后重置', () => {
+    it('browsing 态用户修改内容后，按 ↑ 重新从最后一条开始', () => {
+      const { setTextCalls, handleArrowUp, handleArrowDown, resetBrowsing } = setup(['最老', '中间', '最近'])
+      handleArrowUp() // → '最近'
+      handleArrowUp() // → '中间'
+      // 用户修改了内容
+      resetBrowsing()
+      // 按 ↑ 应重新从最后一条开始
+      handleArrowUp()
+      expect(setTextCalls.at(-1)).toBe('最近')
+    })
+
+    it('browsing 态用户修改内容后，按 ↓ 不响应（已回到 edit 态）', () => {
+      const { setTextCalls, handleArrowUp, handleArrowDown, resetBrowsing } = setup(['历史'])
+      handleArrowUp() // → '历史'
+      resetBrowsing()
+      const before = setTextCalls.length
+      const consumed = handleArrowDown()
+      expect(consumed).toBe(false)
+      expect(setTextCalls.length).toBe(before)
     })
   })
 })

@@ -171,15 +171,13 @@ const {
 } = useCommandPopoverTrigger(inputRef, computed(() => props.sessionId))
 
 // 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
-// deps 经 inputRef 透传到 ComposerInput 的 contenteditable 操作（getText/setText/clear/
-// moveCaretUpVisualLine）。sessionId null（landing 态无真实 session）时 history 为空。
-const { handleArrowUp, handleArrowDown } = useComposerHistory(
+// sessionId null（landing 态无真实 session）时 history 为空。
+const { handleArrowUp, handleArrowDown, resetBrowsing } = useComposerHistory(
   computed(() => props.sessionId),
   {
     getText: () => inputRef.value?.getText() ?? '',
     setText: (text) => inputRef.value?.setText(text),
     clear: () => inputRef.value?.clear(),
-    moveCaretUpVisualLine: () => inputRef.value?.moveCaretUpVisualLine() ?? 'noop',
   },
 )
 
@@ -191,6 +189,8 @@ const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(pr
 /** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断） */
 function onInputChange(text: string): void {
   draft.value = text
+  // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
+  resetBrowsing()
 }
 
 /** 发送成功后清空输入区（DOM + draft） */
