@@ -48,21 +48,21 @@ describe('extension domain setAutoUpgrade', () => {
     vi.mocked(pending.register).mockReturnValue(Promise.resolve())
   })
 
-  it('setAutoUpgrade 发送 extension.setAutoUpgrade 消息，payload 含 name 和 enabled', () => {
+  it('setAutoUpgrade 发送 extension.setAutoUpgrade 消息，payload 含 name 和 autoUpgrade', () => {
     extension.setAutoUpgrade('my-extension', true)
     expect(transport.send).toHaveBeenCalledWith({
       type: 'extension.setAutoUpgrade',
       id: 'test-id',
-      payload: { name: 'my-extension', enabled: true },
+      payload: { name: 'my-extension', autoUpgrade: true },
     })
   })
 
-  it('setAutoUpgrade 禁用时发送 enabled=false', () => {
+  it('setAutoUpgrade 禁用时发送 autoUpgrade=false', () => {
     extension.setAutoUpgrade('my-extension', false)
     expect(transport.send).toHaveBeenCalledWith({
       type: 'extension.setAutoUpgrade',
       id: 'test-id',
-      payload: { name: 'my-extension', enabled: false },
+      payload: { name: 'my-extension', autoUpgrade: false },
     })
   })
 
