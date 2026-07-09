@@ -18,7 +18,6 @@
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { useChatStore } from '@/stores/chat'
-import { useSessionStore } from '@/stores/session'
 import { deriveStatus } from '@/composables/logic/sessionStatus'
 import type { DerivedStatus } from '@/types'
 
@@ -34,17 +33,16 @@ export interface SessionDigest {
 
 export function useSessionDerivations() {
   const chat = useChatStore()
-  const session = useSessionStore()
+  // [W1] 移除 session store 依赖：isActive 作为 UI 层 SSOT，不再受 activeId 限定
 
   /**
    * 响应式派生指定 session 的状态点（D6）。
-   * 读 chat store 分区末尾消息 + 全局 isGenerating（当前活跃 session 的流式态）。
-   * 计算逻辑与重构前完全一致（deriveStatus 纯函数未改）。
+   * 读 chat store 分区末尾消息 + isActive（pendingSend ∨ isGenerating）。
+   * [W1] isActive 作为 UI 层 SSOT，消除提交后到 message_start 之间空窗期的状态不一致。
    */
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
     return computed(() => {
-      const isActiveStreaming = chat.isGenerating(id) && session.activeId === id
-      return deriveStatus(id, chat, isActiveStreaming)
+      return deriveStatus(id, chat, chat.isActive(id))
     })
   }
 
