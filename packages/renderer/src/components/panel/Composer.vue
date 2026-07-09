@@ -172,7 +172,7 @@ const {
 
 // 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
 // deps 经 inputRef 透传到 ComposerInput 的 contenteditable 操作（getText/setText/clear/
-// isCaretOnFirstLine/isCaretOnLastLine）。sessionId null（landing 态无真实 session）时 history 为空。
+// isCaretOnFirstLine）。sessionId null（landing 态无真实 session）时 history 为空。
 const { handleArrowUp, handleArrowDown } = useComposerHistory(
   computed(() => props.sessionId),
   {
@@ -180,7 +180,6 @@ const { handleArrowUp, handleArrowDown } = useComposerHistory(
     setText: (text) => inputRef.value?.setText(text),
     clear: () => inputRef.value?.clear(),
     isCaretOnFirstLine: () => inputRef.value?.isCaretOnFirstLine() ?? false,
-    isCaretOnLastLine: () => inputRef.value?.isCaretOnLastLine() ?? false,
   },
 )
 

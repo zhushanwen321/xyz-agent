@@ -26,7 +26,6 @@ beforeEach(() => {
 function makeDeps(overrides: Partial<{
   getText: () => string
   isCaretOnFirstLine: () => boolean
-  isCaretOnLastLine: () => boolean
 }> = {}) {
   const setTextCalls: string[] = []
   const clearCalls: number[] = []
@@ -45,7 +44,6 @@ function makeDeps(overrides: Partial<{
         currentText = ''
       }),
       isCaretOnFirstLine: overrides.isCaretOnFirstLine ?? (() => true),
-      isCaretOnLastLine: overrides.isCaretOnLastLine ?? (() => true),
     },
   }
 }
@@ -77,15 +75,19 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       expect(setTextCalls).toEqual(['最近', '中间', '最老'])
     })
 
-    it('越过最老一条后按 ↑：清空 composer，回到 edit 态', () => {
-      const { setTextCalls, clearCalls, handleArrowUp, handleArrowDown } = setup(['唯一'])
-      handleArrowUp() // → '唯一'
-      handleArrowUp() // 越界 → 清空
-      expect(clearCalls.length).toBe(1)
-      // 回到 edit 态后按 ↓ 不应再翻历史
-      const before = setTextCalls.length
+    it('越过最老一条后按 ↑：保持不动（不循环、不清空、不退回 edit）', () => {
+      const { setTextCalls, clearCalls, handleArrowUp, handleArrowDown } = setup(['最老', '最近'])
+      handleArrowUp() // → '最近'
+      handleArrowUp() // → '最老'
+      const beforeText = setTextCalls.at(-1)
+      const beforeClear = clearCalls.length
+      handleArrowUp() // 已在最老，保持不动
+      expect(setTextCalls.length).toBe(2) // 未新增回填
+      expect(setTextCalls.at(-1)).toBe(beforeText) // 仍是最老一条
+      expect(clearCalls.length).toBe(beforeClear) // 未清空
+      // ↓ 仍能往回走
       handleArrowDown()
-      expect(setTextCalls.length).toBe(before)
+      expect(setTextCalls.at(-1)).toBe('最近')
     })
 
     it('edit 态无历史时按 ↑：清空 composer（无历史可翻语义）', () => {
@@ -138,12 +140,12 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       expect(setTextCalls.length).toBe(0)
     })
 
-    it('browsing 态光标不在最后一行时按 ↓：不响应（多行历史内容应先下移光标）', () => {
-      const { setTextCalls, deps, handleArrowUp, handleArrowDown } = setup(['多行\n历史'])
-      handleArrowUp() // 进入 browsing
-      deps.isCaretOnLastLine = () => false
-      const consumed = handleArrowDown()
-      expect(consumed).toBe(false)
+    it('browsing 态按 ↓ 总是响应翻历史（不再要求光标在末行，避免行判定失效导致 ↓ 不可用）', () => {
+      const { setTextCalls, handleArrowUp, handleArrowDown } = setup(['最老', '最近'])
+      handleArrowUp() // 进入 browsing，回填 '最近'
+      handleArrowUp() // '最老'
+      handleArrowDown() // → '最近'
+      expect(setTextCalls.at(-1)).toBe('最近')
     })
   })
 
@@ -178,9 +180,10 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       // 历史只有 1 条（'已确认投递'），pending 的 '待投递' 被过滤
       handleArrowUp()
       expect(setTextCalls).toEqual(['已确认投递'])
-      // 再次 ↑ 越界 → 清空
+      // 再次 ↑ 已在最老，保持不动（证明只有 1 条历史，未翻到 pending 那条）
       handleArrowUp()
-      expect(clearCalls.length).toBe(1)
+      expect(setTextCalls).toEqual(['已确认投递'])
+      expect(clearCalls.length).toBe(0)
     })
   })
 

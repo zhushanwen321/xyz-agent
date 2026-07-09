@@ -68,8 +68,6 @@ export function useContenteditableInput(
   insertTextAtCursor: (text: string) => void
   /** 光标是否在第一行（composer history ↑ 触发判定：多行编辑时 ↑ 应是正常光标移动） */
   isCaretOnFirstLine: () => boolean
-  /** 光标是否在最后一行（composer history ↓ 触发判定，与 ↑ 对称） */
-  isCaretOnLastLine: () => boolean
 } {
   const {
     onInput: emitInput,
@@ -202,45 +200,67 @@ export function useContenteditableInput(
   }
 
   /**
-   * 光标是否在最后一行。判定逻辑与 isCaretOnFirstLine 对称：比较 caret bottom 与
-   * 容器内容区 bottom（elRect.bottom - paddingBottom）。
-   */
-  function isCaretOnLastLine(): boolean {
-    const el = getEl()
-    if (!el) return false
-    const sel = window.getSelection()
-    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
-    const range = sel.getRangeAt(0)
-    if (!el.contains(range.startContainer)) return false
-    const caretRect = range.getBoundingClientRect()
-    if (caretRect.top === 0 && caretRect.height === 0) return true
-    const cs = getComputedStyle(el)
-    const paddingBottom = parseFloat(cs.paddingBottom) || 0
-    const elBottom = el.getBoundingClientRect().bottom - paddingBottom
-    return Math.abs(caretRect.bottom - elBottom) < CARET_LINE_TOLERANCE_PX
-  }
-
-  /**
    * Shift+Enter 后把光标滚动进可见区。
    * contenteditable insertLineBreak 后浏览器不自动滚动（与 textarea 不同）：
    * 当 max-h-[120px] 触发 overflow 时，连续换行会把光标推出可视区，视觉上"停在当前行"。
-   * 实现：用折叠选区的 getBoundingClientRect 与容器 rect 比较，超出下沿则补偿 scrollTop。
-   * 用 getBoundingClientRect 而非 offsetTop：前者是视口坐标，与 scrollTop 调整方向一致。
+   * 实现：取折叠选区所在行的视觉矩形，与容器 rect 比较，超出下沿则补偿 scrollTop。
+   * 用视口坐标（getBoundingClientRect）而非 offsetTop：与 scrollTop 调整方向一致。
+   *
+   * [HISTORICAL] 0 rect 误判事故：insertLineBreak 后光标落在新建的空行（<br> 之后、空行内），
+   * 折叠选区的 getBoundingClientRect() 在多数浏览器返回全 0 rect（{top:0,bottom:0,height:0}）。
+   * 旧实现直接拿这个 0 rect 做比较：caretRect.top(0) < elRect.top(正值，如 800) 命中向上补偿分支
+   * → el.scrollTop -= 800 → scrollTop 被钳为 0 → composer 跳回顶部（光标实际在底部视口外）。
+   * 现象：composer 行数多滚动后按换行，内容区跳回顶部，光标在底部不可见。
+   *
+   * 修复：0 rect 时改用零宽字符探测真实行位置（插入不可见 ZWSP 取其 rect 再删掉），
+   * 仍取不到则放弃修正（不误操作 scrollTop），交回浏览器默认行为。
    */
+  function getCaretLineRect(range: Range): DOMRect | null {
+    // 正常情况：折叠选区所在行有内容，getBoundingClientRect 返回有效行矩形
+    const rect = range.getBoundingClientRect()
+    if (rect.top !== 0 || rect.bottom !== 0 || rect.height !== 0) return rect
+    // 0 rect 兜底：空行内折叠选区，插入零宽字符取其视觉位置再移除
+    // ZWSP 不可见但占位，getBoundingClientRect 能返回该行真实坐标
+    const probe = document.createTextNode('\u200B')
+    // 记录插入点父节点，移除 probe 后用它 normalize 合并被 insertNode 拆分的文本节点，
+    // 避免文本节点碎片化影响后续光标定位
+    const parent = range.startContainer
+    range.insertNode(probe)
+    const probeRange = document.createRange()
+    probeRange.selectNode(probe)
+    const probeRect = probeRange.getBoundingClientRect()
+    // 移除探测节点，光标设到 probe 原位置（probe 之后）
+    const afterProbe = document.createRange()
+    afterProbe.setStartAfter(probe)
+    afterProbe.collapse(true)
+    probe.remove()
+    if (parent && parent.nodeType === Node.ELEMENT_NODE) {
+      ;(parent as Element).normalize()
+    }
+    const sel = window.getSelection()
+    if (sel) {
+      sel.removeAllRanges()
+      sel.addRange(afterProbe)
+    }
+    if (probeRect.top === 0 && probeRect.bottom === 0) return null
+    return probeRect
+  }
+
   function scrollCursorIntoView(): void {
     const el = getEl()
     if (!el) return
     const sel = window.getSelection()
     if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return
     const range = sel.getRangeAt(0).cloneRange()
-    // 取光标所在行的视觉矩形（光标是折叠选区，rect 高度即行高，top 即该行上沿）
-    const caretRect = range.getBoundingClientRect()
+    const caretRect = getCaretLineRect(range)
+    // 取不到有效 caret 矩形（空行 + ZWSP 探测也失败）→ 不修正 scrollTop，避免误操作
+    if (!caretRect) return
     const elRect = el.getBoundingClientRect()
     // caret 在容器下沿之下 → 向下滚动补偿（caretRect.bottom - elRect.bottom 即溢出像素）
     if (caretRect.bottom > elRect.bottom) {
       el.scrollTop += caretRect.bottom - elRect.bottom
     } else if (caretRect.top < elRect.top) {
-      // caret 在容器上沿之上（理论上插 <br> 不会发生，向上翻历史时可能）→ 向上补偿
+      // caret 在容器上沿之上（向上翻历史时可能）→ 向上补偿
       el.scrollTop -= elRect.top - caretRect.top
     }
   }
@@ -424,6 +444,5 @@ export function useContenteditableInput(
     setText,
     insertTextAtCursor,
     isCaretOnFirstLine,
-    isCaretOnLastLine,
   }
 }

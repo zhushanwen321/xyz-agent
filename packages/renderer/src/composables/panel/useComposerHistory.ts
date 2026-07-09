@@ -6,10 +6,12 @@
  *   - edit 态 + history 非空：保存当前草稿 → browsing → 回填 H[0]（最近一条）
  *   - edit 态 + history 空：清空 composer（无历史可翻）
  *   - browsing + 未到最老：index++ → 回填 H[index]
- *   - browsing + 已在最老：清空 composer → 回到 edit 态
- * - ↓（仅光标在最后一行时触发；edit 态按 ↓ 是正常光标移动，不处理）：
+ *   - browsing + 已在最老：保持不动（不循环、不清空，用户要往回走只能按 ↓）
+ * - ↓（仅 browsing 态触发；edit 态按 ↓ 是正常光标移动）：
  *   - browsing + 未到最近：index-- → 回填 H[index]
  *   - browsing + 已在最近（index=0）：恢复进 browsing 前的草稿 → 回到 edit 态
+ *   - browsing 态不要求光标在末行：一旦在翻历史，↓ 就是翻历史（与大多数 shell 一致），
+ *     避免 contenteditable 行判定在真实 DOM 下不准导致 ↓ 完全失效
  * - 回填后光标定位在内容末尾（由 setText 的 collapse(false) 保证）。
  *
  * 历史来源（方案 A，session 消息流派生）：chatStore.messages[sessionId] 中
@@ -27,12 +29,10 @@ interface HistoryDeps {
   getText: () => string
   /** 写入文本并把光标移到末尾（回填历史） */
   setText: (text: string) => void
-  /** 清空 composer（↑ 越界 / 无历史时） */
+  /** 清空 composer（↑ 无历史时） */
   clear: () => void
   /** 光标是否在第一行（决定 ↑ 是否触发翻历史；多行编辑时 ↑ 应是正常光标移动） */
   isCaretOnFirstLine: () => boolean
-  /** 光标是否在最后一行（决定 ↓ 是否触发；与 ↑ 对称） */
-  isCaretOnLastLine: () => boolean
 }
 
 /**
@@ -101,7 +101,8 @@ export function useComposerHistory(
       // edit → browsing
       savedDraft = deps.getText()
       if (h.length === 0) {
-        // 无历史可翻：清空 composer（用户确认的语义）
+        // 无历史可翻：清空 composer（用户确认的语义）。
+        // 保持 browsing=false：再按 ↑ 仍走此分支，幂等清空，不会循环回填历史。
         deps.clear()
         return true
       }
@@ -114,22 +115,20 @@ export function useComposerHistory(
     if (index + 1 < h.length) {
       index++
       deps.setText(h[index])
-    } else {
-      // 已在最老一条：清空 composer，回到 edit 态
-      deps.clear()
-      browsing = false
     }
+    // 已在最老一条：保持不动（不循环、不清空、不退回 edit）。
+    // 用户要往回走只能按 ↓。这避免“越过最老→清空→再按↑又回最近一条”的循环。
     return true
   }
 
   /**
    * ↓ 处理。返回 true 表示已消费。
-   * 仅 browsing 态响应（edit 态按 ↓ 是正常光标下移）；
-   * browsing 态还要求光标在最后一行（多行历史内容时，光标不在末行应先下移）。
+   * 仅 browsing 态响应（edit 态按 ↓ 是正常光标下移）。
+   * browsing 态不要求光标在最后一行——一旦在翻历史，↓ 就是翻历史（与大多数 shell 一致），
+   * 避免行判定在真实 DOM 下不准导致 ↓ 完全失效。光标行判定只用于首次 ↑（保护多行编辑）。
    */
   function handleArrowDown(): boolean {
     if (!browsing) return false
-    if (!deps.isCaretOnLastLine()) return false
 
     const h = history.value
     if (index > 0) {
