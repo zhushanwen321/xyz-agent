@@ -420,6 +420,9 @@ export class ExtensionService {
     const extensions = await this.scanExtensions()
     const results: Array<{ name: string; upgraded: boolean; from?: string; to?: string; error?: string }> = []
 
+    // 串行执行是有意为之：多个 extension 的 npm install 共享同一个 --prefix 目录
+    // （~/.xyz-agent/pi/agent/npm/），npm 不支持对同一 prefix 的并发安装，
+    // 并发会导致 node_modules 损坏。故不能改成 Promise.allSettled 并发。
     for (const source of autoUpgradeSources) {
       // 只处理 npm: 前缀的 user-installed 扩展
       if (!source.startsWith('npm:')) continue

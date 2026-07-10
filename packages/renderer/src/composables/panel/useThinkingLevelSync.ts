@@ -75,6 +75,17 @@ export function useThinkingLevelSync(
     // 模型切换：同体系 → 直接映射当前档位 key 到新模型 value
     if (isSameThinkingScheme(oldMap, map)) {
       const currentKey = resolveThinkingKey(current, oldMap)
+      // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
+      // resolveThinkingKey 会 fallback 到 'max'；若新 map 不含 max 档，
+      // resolveThinkingValue('max', map) 会走 v ?? key 回退返回字符串 'max'，
+      // 静默发给 runtime 一个该模型不可用的档位。此时走跨体系重置（重置到最高可用档）。
+      const available = resolveAvailableLevels(map)
+      if (!available.includes(currentKey)) {
+        const highest = highestAvailableLevel(map)
+        const resetValue = resolveThinkingValue(highest, map)
+        if (resetValue !== current) onReset(resetValue)
+        return
+      }
       const newValue = resolveThinkingValue(currentKey, map)
       // value 变了才重置（同体系同 value 时不触发冗余 RPC）
       if (newValue !== current) onReset(newValue)

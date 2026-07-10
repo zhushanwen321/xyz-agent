@@ -153,7 +153,7 @@
         <Button
           v-if="ext.source === 'user-installed'"
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(59,130,246,0.12)] hover:text-accent [&_svg]:size-3.5"
+          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-accent-soft hover:text-accent [&_svg]:size-3.5"
           title="升级"
           :disabled="upgrading.has(ext.name)"
           @click="onUpgrade(ext.name)"

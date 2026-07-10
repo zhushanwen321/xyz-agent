@@ -423,45 +423,137 @@ describe('Extension Upgrade', () => {
   })
 
   // ── 5. Protocol messages ─────────────────────────────────────
+  // 此前三个用 `typeof T extends {...}` 的编译期恒真断言（删掉 shared 字段仍全绿），
+  // 替换为运行时行为校验：handler 的 handles 清单实际认领了这两个消息类型。
 
-  describe('Protocol: extension.upgrade / extension.setAutoUpgrade', () => {
-    it('extension.upgrade message type exists in ClientMessageType', async () => {
-      const { ClientMessageMap } = await import('@xyz-agent/shared')
-      // Type-level check — if this compiles, the type exists
-      type UpgradeMsg = typeof ClientMessageMap extends { 'extension.upgrade': infer P } ? P : never
-      const msg: UpgradeMsg = { name: 'pi-test-ext' }
-      expect(msg.name).toBe('pi-test-ext')
+  describe('Protocol: extension.upgrade / extension.setAutoUpgrade routing', () => {
+    it('ExtensionMessageHandler.handles 认领 extension.upgrade', async () => {
+      const { ExtensionMessageHandler } = await import('../src/transport/extension-message-handler.js')
+      const handler = new ExtensionMessageHandler({} as unknown as ConstructorParameters<typeof ExtensionMessageHandler>[0])
+      expect(handler.handles).toContain('extension.upgrade')
     })
 
-    it('extension.setAutoUpgrade message type exists in ClientMessageType', async () => {
-      const { ClientMessageMap } = await import('@xyz-agent/shared')
-      type SetAutoMsg = typeof ClientMessageMap extends { 'extension.setAutoUpgrade': infer P } ? P : never
-      const msg: SetAutoMsg = { name: 'pi-test-ext', autoUpgrade: true }
-      expect(msg.autoUpgrade).toBe(true)
-    })
-
-    it('ExtensionInfo includes autoUpgrade field', async () => {
-      const { ExtensionInfo } = await import('@xyz-agent/shared')
-      // Type-level check
-      type HasAutoUpgrade = typeof ExtensionInfo extends { autoUpgrade?: boolean } ? true : false
-      const check: HasAutoUpgrade = true
-      expect(check).toBe(true)
+    it('ExtensionMessageHandler.handles 认领 extension.setAutoUpgrade', async () => {
+      const { ExtensionMessageHandler } = await import('../src/transport/extension-message-handler.js')
+      const handler = new ExtensionMessageHandler({} as unknown as ConstructorParameters<typeof ExtensionMessageHandler>[0])
+      expect(handler.handles).toContain('extension.setAutoUpgrade')
     })
   })
 
   // ── 6. ExtensionMessageHandler ────────────────────────────────
+  // 此前两个测试只断言 `typeof ExtensionMessageHandler === 'function'`，无 handler 逻辑覆盖。
+  // 替换为真正的 handler 调用测试（参考 workspace-message-handler.test.ts 的 mock ctx 写法）。
 
   describe('ExtensionMessageHandler: upgrade messages', () => {
-    it('handleExtensionMessage handles extension.upgrade', async () => {
-      // Will be tested after implementation
-      // Expected: calls extensionService.upgradeExtension and returns result
+    /**
+     * 构造 mock ctx + 捕获 reply/sendError。
+     * 与 workspace-message-handler.test.ts 同构：reply 走 cap.replies，sendError 走 cap.errors。
+     */
+    function createMockCtx(overrides?: {
+      extensionService?: Partial<Record<string, unknown>> | null
+    }) {
+      const cap = {
+        replies: [] as Array<{ id: string | undefined; type: string; payload: Record<string, unknown> }>,
+        errors: [] as Array<{ id: string | undefined; code: string; message: string; details?: unknown }>,
+        broadcasts: [] as Array<{ type: string; payload: Record<string, unknown> }>,
+      }
+      const extensionService = overrides?.extensionService === null
+        ? undefined
+        : {
+            scanExtensions: vi.fn().mockResolvedValue([{ name: 'pi-test-ext', version: '2.0.0' }]),
+            upgradeExtension: vi.fn(),
+            setAutoUpgrade: vi.fn().mockResolvedValue(undefined),
+            ...overrides?.extensionService,
+          }
+      const ctx = {
+        send: vi.fn(),
+        sendError: vi.fn((_ws: unknown, code: string, message: string, id?: string, details?: unknown) => {
+          cap.errors.push({ id, code, message, details })
+        }),
+        reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
+          cap.replies.push({ id, type, payload })
+        }),
+        broadcast: vi.fn((msg: { type: string; payload: Record<string, unknown> }) => {
+          cap.broadcasts.push({ type: msg.type, payload: msg.payload })
+        }),
+        nextPushId: vi.fn().mockReturnValue('push_1'),
+        sessionService: { getRpcClient: vi.fn().mockReturnValue(undefined) },
+        extensionService,
+        extensionTimeoutMgr: { isBridgeRequest: vi.fn().mockReturnValue(false), clearTimeout: vi.fn() },
+      }
+      return { ctx, cap }
+    }
+
+    const WS = {} as never
+
+    it('extension.upgrade → upgradeExtension 成功后 reply config.extensions 含 upgradeResult', async () => {
       const { ExtensionMessageHandler } = await import('../src/transport/extension-message-handler.js')
-      expect(typeof ExtensionMessageHandler).toBe('function')
+      const { ctx, cap } = createMockCtx({
+        extensionService: {
+          upgradeExtension: vi.fn().mockResolvedValue({ upgraded: true, from: '1.0.0', to: '2.0.0' }),
+        },
+      })
+      const handler = new ExtensionMessageHandler(ctx as unknown as ConstructorParameters<typeof ExtensionMessageHandler>[0])
+      const msg = { type: 'extension.upgrade', id: 'req1', payload: { name: 'pi-test-ext' } } as unknown as import('@xyz-agent/shared').ClientMessage
+
+      await handler.handleExtensionMessage(msg, WS)
+
+      expect(ctx.extensionService!.upgradeExtension).toHaveBeenCalledWith('pi-test-ext')
+      expect(cap.replies).toHaveLength(1)
+      expect(cap.replies[0]).toMatchObject({ id: 'req1', type: 'config.extensions' })
+      expect(cap.replies[0].payload.upgradeResult).toEqual({ upgraded: true, from: '1.0.0', to: '2.0.0' })
     })
 
-    it('handleExtensionMessage handles extension.setAutoUpgrade', async () => {
+    it('extension.upgrade 空 name → reply invalid_payload 错误，不调 upgradeExtension', async () => {
       const { ExtensionMessageHandler } = await import('../src/transport/extension-message-handler.js')
-      expect(typeof ExtensionMessageHandler).toBe('function')
+      const { ctx, cap } = createMockCtx()
+      const handler = new ExtensionMessageHandler(ctx as unknown as ConstructorParameters<typeof ExtensionMessageHandler>[0])
+      const msg = { type: 'extension.upgrade', id: 'req2', payload: { name: '' } } as unknown as import('@xyz-agent/shared').ClientMessage
+
+      await handler.handleExtensionMessage(msg, WS)
+
+      expect(ctx.extensionService!.upgradeExtension).not.toHaveBeenCalled()
+      expect(cap.replies).toHaveLength(0)
+      expect(cap.errors).toHaveLength(1)
+      expect(cap.errors[0]).toMatchObject({ id: 'req2', code: 'invalid_payload' })
+    })
+
+    it('extension.upgrade 底层抛 ExtensionInstallError → 走 sendInstallError 透传 code/hint', async () => {
+      const { ExtensionInstallError } = await import('../src/services/extension-service.js')
+      const { ExtensionMessageHandler } = await import('../src/transport/extension-message-handler.js')
+      const { ctx, cap } = createMockCtx({
+        extensionService: {
+          upgradeExtension: vi.fn().mockRejectedValue(
+            new ExtensionInstallError('network', 'npm install failed: ETIMEDOUT', 'check network'),
+          ),
+        },
+      })
+      const handler = new ExtensionMessageHandler(ctx as unknown as ConstructorParameters<typeof ExtensionMessageHandler>[0])
+      const msg = { type: 'extension.upgrade', id: 'req3', payload: { name: 'pi-test-ext' } } as unknown as import('@xyz-agent/shared').ClientMessage
+
+      await handler.handleExtensionMessage(msg, WS)
+
+      // 匹配 ExtensionInstallError 分支：code/message 透传，hint 进 details
+      expect(cap.errors).toHaveLength(1)
+      expect(cap.errors[0]).toMatchObject({ id: 'req3', code: 'network', message: 'npm install failed: ETIMEDOUT' })
+      expect(cap.errors[0].details).toMatchObject({ hint: 'check network' })
+      // 失败路径不 reply config.extensions
+      expect(cap.replies).toHaveLength(0)
+    })
+
+    it('extension.setAutoUpgrade → setAutoUpgrade 成功后 reply config.extensions', async () => {
+      const { ExtensionMessageHandler } = await import('../src/transport/extension-message-handler.js')
+      const { ctx, cap } = createMockCtx()
+      const handler = new ExtensionMessageHandler(ctx as unknown as ConstructorParameters<typeof ExtensionMessageHandler>[0])
+      const msg = { type: 'extension.setAutoUpgrade', id: 'req4', payload: { name: 'pi-test-ext', autoUpgrade: true } } as unknown as import('@xyz-agent/shared').ClientMessage
+
+      await handler.handleExtensionMessage(msg, WS)
+
+      expect(ctx.extensionService!.setAutoUpgrade).toHaveBeenCalledWith('pi-test-ext', true)
+      expect(cap.replies).toHaveLength(1)
+      expect(cap.replies[0]).toMatchObject({ id: 'req4', type: 'config.extensions' })
+      // setAutoUpgrade 不带 upgradeResult
+      expect(cap.replies[0].payload.upgradeResult).toBeUndefined()
     })
   })
 

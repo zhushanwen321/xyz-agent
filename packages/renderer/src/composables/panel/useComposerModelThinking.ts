@@ -52,7 +52,7 @@ export function useComposerModelThinking(
    */
   const sessionState = computed(() =>
     sessionId.value
-      ? sessionStore.list?.find((s) => s.id === sessionId.value) ?? null
+      ? sessionStore.list.find((s) => s.id === sessionId.value) ?? null
       : null,
   )
 

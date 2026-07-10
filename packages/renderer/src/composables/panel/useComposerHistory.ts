@@ -3,7 +3,7 @@
  *
  * 行为规格（用户确认）：
  * - ↑（edit 态 + history 非空）：保存草稿 → 回填 H[0]（最后一条）→ browsing
- * - ↑（edit 态 + history 空）：清空 composer
+ * - ↑（edit 态 + history 空）：不响应（保持草稿，让光标正常移动）
  * - ↑（browsing 态 + 未到最老）：index++ → 回填 H[index]
  * - ↑（browsing 态 + 已在最老）：保持不动
  * - ↓（browsing 态 + 未到最近）：index-- → 回填 H[index]
@@ -96,11 +96,11 @@ export function useComposerHistory(
     const h = history.value
 
     if (!browsing.value) {
-      // edit 态：保存草稿，翻历史（或清空）
+      // edit 态：保存草稿，翻历史（空历史则不响应，保持草稿）
       savedDraft = deps.getText()
       if (h.length === 0) {
-        deps.clear()
-        return true
+        // 空历史：保持草稿，不响应（让 contenteditable 层正常处理 ↑ 键移动光标）
+        return false
       }
       browsing.value = true
       index = 0

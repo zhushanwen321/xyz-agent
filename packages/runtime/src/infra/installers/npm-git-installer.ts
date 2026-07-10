@@ -19,6 +19,9 @@ import {
 
 const GIT_CLONE_DEFAULT_TIMEOUT = 120_000
 
+/** 版本检查默认超时 15s——比 install 的 60s 更快失败（轻量 metadata 查询不应长时间挂起）。 */
+const VERSION_CHECK_DEFAULT_TIMEOUT = 15_000
+
 export class NpmGitInstaller implements IInstaller {
   async installNpm(pkgName: string, nodeModulesDir: string, opts?: { timeout?: number }): Promise<void> {
     // npm-installer 抛 NpmInstallError（含 code 字段）。service 经结构化类型读取 err.code，
@@ -42,7 +45,7 @@ export class NpmGitInstaller implements IInstaller {
     })
   }
 
-  async getLatestVersion(pkgName: string): Promise<string> {
-    return fetchLatestVersion(pkgName)
+  async getLatestVersion(pkgName: string, timeout?: number): Promise<string> {
+    return fetchLatestVersion(pkgName, timeout ?? VERSION_CHECK_DEFAULT_TIMEOUT)
   }
 }

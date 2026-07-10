@@ -86,41 +86,6 @@ function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved
 }
 
 /**
- * 光标是否在文档首字符前（模块级纯函数）。
- *
- * 用 Range.toString().length === 0 判断：创建从文档首到光标的 range，
- * 若其间无可编辑文本则为文档首。`toString()` 会跳过 contenteditable=false 的 chip，
- * 所以 chip 开头时光标在 chip 后第一个文本位置即判为「文档首」——这正是期望行为
- *（chip 不可编辑，光标无法进入，「移到首字符前」=「移到 chip 后第一个可编辑位置」）。
- */
-function isAtDocStartOf(el: HTMLElement | null): boolean {
-  if (!el) return false
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return false
-  const caret = sel.getRangeAt(0)
-  if (!el.contains(caret.startContainer)) return false
-  const probe = document.createRange()
-  probe.selectNodeContents(el)
-  probe.setEnd(caret.startContainer, caret.startOffset)
-  return probe.toString().length === 0
-}
-
-/**
- * 光标是否在文档末字符后（模块级纯函数，与 isAtDocStartOf 对称）。
- */
-function isAtDocEndOf(el: HTMLElement | null): boolean {
-  if (!el) return false
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return false
-  const caret = sel.getRangeAt(0)
-  if (!el.contains(caret.startContainer)) return false
-  const probe = document.createRange()
-  probe.selectNodeContents(el)
-  probe.setStart(caret.startContainer, caret.startOffset)
-  return probe.toString().length === 0
-}
-
-/**
  * @param elRef contenteditable 根元素 ref
  * @param callbacks 触发事件 + Backspace-chip 删除委派
  */
@@ -154,10 +119,6 @@ export function useContenteditableInput(
    * 利用浏览器原生 Selection.modify，自动处理 soft-wrap + `<br>` 混合场景。
    */
   moveCaretVertical: (dir: 'up' | 'down') => 'moved' | 'at-edge'
-  /** 光标是否在文档首字符前（chip 被跳过） */
-  isAtDocStart: () => boolean
-  /** 光标是否在文档末字符后（chip 被跳过） */
-  isAtDocEnd: () => boolean
 } {
   const {
     onInput: emitInput,
@@ -281,25 +242,54 @@ export function useContenteditableInput(
     // 0 rect 兜底：空行内折叠选区，插入零宽字符取其视觉位置再移除
     // ZWSP 不可见但占位，getBoundingClientRect 能返回该行真实坐标
     const probe = document.createTextNode('\u200B')
-    // 记录插入点父节点，移除 probe 后用它 normalize 合并被 insertNode 拆分的文本节点，
-    // 避免文本节点碎片化影响后续光标定位
-    const parent = range.startContainer
     range.insertNode(probe)
     const probeRange = document.createRange()
     probeRange.selectNode(probe)
     const probeRect = probeRange.getBoundingClientRect()
-    // 移除探测节点，光标设到 probe 原位置（probe 之后）
-    const afterProbe = document.createRange()
-    afterProbe.setStartAfter(probe)
-    afterProbe.collapse(true)
-    probe.remove()
-    if (parent && parent.nodeType === Node.ELEMENT_NODE) {
-      ;(parent as Element).normalize()
+    // [CRITICAL] 不再用指向游离 probe 节点的 Range（setStartAfter(probe)）恢复光标——
+    // probe.remove() 后该 Range 边界仍指向脱离 DOM 的节点，addRange 能否正确恢复依赖
+    // 浏览器对失效 Range 的容错（Chromium 可用但脆弱）。改为先记录 probe 在父节点中的
+    // 文本偏移，移除 probe + normalize 合并相邻文本节点后，在合并后的文本节点上重建 Range。
+    // probe 插在原光标位置，故 probe 之前所有文本长度 = 原光标在文本中的偏移量；移除 probe
+    // 后该偏移量即新合并文本节点上的正确光标位置（等价于旧的 setStartAfter(probe) + collapse）。
+    const probeParent = probe.parentNode
+    let textOffset = 0
+    if (probeParent) {
+      for (const child of Array.from(probeParent.childNodes)) {
+        if (child === probe) break
+        textOffset += child.nodeType === Node.TEXT_NODE ? (child.textContent ?? '').length : 0
+      }
     }
+    // 移除探针并合并被 insertNode 拆分的相邻文本节点，避免碎片化影响后续光标定位
+    probe.remove()
+    if (probeParent && probeParent.nodeType === Node.ELEMENT_NODE) {
+      ;(probeParent as Element).normalize()
+    }
+    // 在 normalize 后的文本节点上，用记录的偏移量重建折叠 Range 恢复光标
     const sel = window.getSelection()
-    if (sel) {
+    if (sel && probeParent) {
+      const newRange = document.createRange()
+      let remaining = textOffset
+      let placed = false
+      for (const child of Array.from(probeParent.childNodes)) {
+        if (child.nodeType !== Node.TEXT_NODE) continue
+        const len = (child.textContent ?? '').length
+        if (remaining <= len) {
+          newRange.setStart(child, remaining)
+          newRange.collapse(true)
+          placed = true
+          break
+        }
+        remaining -= len
+      }
+      if (!placed) {
+        // 降级：文本偏移落在非文本边界或 probeParent 无文本节点（happy-dom / 空行仅 <br>），
+        // 放到 probeParent 末尾——与旧 setStartAfter(probe)（probe 在末尾）行为一致
+        newRange.selectNodeContents(probeParent)
+        newRange.collapse(false)
+      }
       sel.removeAllRanges()
-      sel.addRange(afterProbe)
+      sel.addRange(newRange)
     }
     if (probeRect.top === 0 && probeRect.bottom === 0) return null
     return probeRect
@@ -525,7 +515,5 @@ export function useContenteditableInput(
     setText,
     insertTextAtCursor,
     moveCaretVertical: (dir) => moveCaretVerticalOf(getEl(), dir),
-    isAtDocStart: () => isAtDocStartOf(getEl()),
-    isAtDocEnd: () => isAtDocEndOf(getEl()),
   }
 }

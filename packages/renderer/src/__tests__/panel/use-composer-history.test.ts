@@ -3,7 +3,7 @@
  *
  * 行为规格（用户确认）：
  * - ↑（edit 态 + history 非空）：保存草稿 → 回填 H[0]（最后一条）→ browsing
- * - ↑（edit 态 + history 空）：清空 composer
+ * - ↑（edit 态 + history 空）：不响应（保持草稿）
  * - ↑（browsing 态 + 未到最老）：index++ → 回填 H[index]
  * - ↑（browsing 态 + 已在最老）：保持不动
  * - ↓（browsing 态 + 未到最近）：index-- → 回填 H[index]
@@ -91,10 +91,17 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       expect(setTextCalls.at(-1)).toBe('最近')
     })
 
-    it('edit 态无历史时按 ↑：清空 composer（无历史可翻语义）', () => {
-      const { clearCalls, handleArrowUp } = setup([])
-      handleArrowUp()
-      expect(clearCalls.length).toBe(1)
+    it('空历史时 ArrowUp 不清空 composer（保持草稿）', () => {
+      const { clearCalls, deps, handleArrowUp } = setup([])
+      // 模拟 composer 有草稿
+      deps.getText = () => '我的草稿'
+      const consumed = handleArrowUp()
+      // 空历史：不触发历史导航（返回 false），让 contenteditable 层正常处理 ↑ 键移动光标
+      expect(consumed).toBe(false)
+      // composer 内容不变（未调用 clear / setText）
+      expect(clearCalls.length).toBe(0)
+      // 草稿仍在
+      expect(deps.getText()).toBe('我的草稿')
     })
   })
 
@@ -228,4 +235,9 @@ describe('useComposerHistory（↑/↓ 输入历史导航）', () => {
       expect(setTextCalls.length).toBe(before)
     })
   })
+
+  // [测试缺口] edge-line-first 三阶段光标策略（moveCaretVertical / getCaretLineRect）
+  // 依赖 Selection.modify API，jsdom/happy-dom 不支持，无法在单测环境验证。
+  // 该逻辑通过 CDP 实测（开发时手动验证）覆盖，不在单测范围内。
+  // 相关函数：useContenteditableInput.ts 的 handleArrowUp 内 moveCaretVertical 调用链。
 })

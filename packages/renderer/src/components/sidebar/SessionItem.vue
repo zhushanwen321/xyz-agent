@@ -5,6 +5,7 @@
     状态点 5 态（D6）：running/waiting 脉冲，done/stopped/error 静态。
   -->
   <div
+    ref="rootEl"
     class="session-item group relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
     :class="[
       active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover',
@@ -90,7 +91,8 @@ const isDead = computed(() => props.session.status === 'dead')
 
 /**
  * 删除两段式确认态。首次点击进入红底确认态（不 emit），再次点击才 emit delete。
- * mouseleave / 切换到重命名 时 reset，避免红按钮长期停留。
+ * 多路 reset 防红按钮长期停留：mouseleave（模板兜底）、失焦（watch active）、
+ * Esc 键、点击外部（onClickOutside）。
  */
 const confirming = ref(false)
 function onRemoveClick(): void {
@@ -102,6 +104,27 @@ function onRemoveClick(): void {
   emit('delete', props.session.id)
 }
 
+/** 根元素引用（onClickOutside 目标） */
+const rootEl = ref<HTMLElement | null>(null)
+
+/** 失焦自动重置：切到其它 session（active → false）时清掉残留确认态 */
+watch(
+  () => props.active,
+  (active) => {
+    if (!active) confirming.value = false
+  },
+)
+
+/** Esc 取消：仅在 confirming 时响应，不影响全局快捷键 */
+useEventListener(window, 'keydown', (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && confirming.value) confirming.value = false
+})
+
+/** 点击外部取消：点该 item 外部时清掉确认态 */
+onClickOutside(rootEl, () => {
+  confirming.value = false
+})
+
 /** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
 const dotClass = computed(() => DOT_CLASS[props.status])
 
@@ -111,7 +134,8 @@ const dirName = computed(() => dirNameOf(props.session.cwd))
 /** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useEventListener, onClickOutside } from '@vueuse/core'
 import { Check, Pencil, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'

@@ -202,6 +202,10 @@ export interface IExtensionService {
   /** 推荐扩展列表（含已安装状态，前端 Settings 快捷安装按钮数据源） */
   getRecommendedExtensions(): Promise<Array<{ name: string; description: string; installed: boolean }>>
   toggleExtension(name: string, enabled: boolean): Promise<void>
+  /** 升级单个 user-installed 扩展到 npm latest 版本（已是最新则 upgraded=false）。 */
+  upgradeExtension(name: string): Promise<{ upgraded: boolean; from: string; to: string }>
+  /** 开关某扩展的启动期自动升级。 */
+  setAutoUpgrade(name: string, autoUpgrade: boolean): Promise<void>
   getExtensionPaths(): Promise<string[]>
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>

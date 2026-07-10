@@ -76,8 +76,6 @@ const {
   setText,
   insertTextAtCursor,
   moveCaretVertical,
-  isAtDocStart,
-  isAtDocEnd,
 } = useContenteditableInput(elRef, {
   onInput: (text) => emit('input', text),
   onSlashTrigger: (payload) => emit('slash-trigger', payload),
@@ -126,8 +124,6 @@ defineExpose({
   saveSelection,
   restoreSelection,
   moveCaretVertical,
-  isAtDocStart,
-  isAtDocEnd,
 })
 
 onMounted(() => {

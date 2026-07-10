@@ -276,10 +276,10 @@ async function main(): Promise<void> {
     const upgraded = upgradeResults.filter(r => r.upgraded)
     if (upgraded.length > 0) {
       console.log(`[runtime] auto-upgraded ${upgraded.length} extension(s):`,
-        upgraded.map(r => `${r.name} ${r.from}→${r.to}`).join(', '))
+        upgraded.map(r => `${r.name} ${r.from ?? '?'}→${r.to ?? '?'}`).join(', '))
     }
   } catch (e) {
-    // autoUpgradeExtensions 内部已 catch 每个扩展，此处是意外错误兜底
+    // checkAndAutoUpgrade 内部已 catch 每个扩展，此处是意外错误兜底
     console.warn('[runtime] extension auto-upgrade encountered an error:', e)
   }
 

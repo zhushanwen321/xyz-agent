@@ -286,6 +286,8 @@ borderRadius: {
 .msg__body li ul, .msg__body li ol { margin-top: 0.25em; margin-bottom: 0.25em; }
 ```
 
+> **设计裁决（`.md-render` 用户气泡）**：上面 `1.5em` 是 `.msg__body`（assistant 消息体）的默认缩进。用户气泡（`.md-render`，见 `MarkdownRenderer.vue`）使用更紧凑的 `padding-left: 1.2em`——仅留编号/符号位，让列表在视觉上接近普通正文行。这是对默认 `1.5em` 的有意裁决：用户气泡里手打的编号列表不该被当成大间距结构化块，紧凑缩进避免了「像多一个空行」的视觉割裂。两者共存，按容器语义取值，勿全局统一。
+
 #### 7.2.3 为什么不用 `list-style-position: inside`
 
 | 模式 | 多行换行后表现 | 主流选择 |

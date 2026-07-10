@@ -220,7 +220,7 @@ export interface ServerMessageMapBase {
   'config.skillDirs': { dirs: SkillDirConfig[] }
   'config.agentDirs': { dirs: SkillDirConfig[] }
   'config.defaults': { defaultModel: string }
-  'config.extensions': { extensions: ExtensionInfo[] }
+  'config.extensions': { extensions: ExtensionInfo[]; upgradeResult?: { upgraded: boolean; from: string; to: string } }
   /** extension.recommended reply：推荐扩展列表（含已安装状态） */
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
   'config.plugins': { plugins: PluginInfo[] }
