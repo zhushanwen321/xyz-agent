@@ -67,6 +67,22 @@ design-system.md   ← 原语：值如何拼成可复用部件（本文件）
 
 首屏内容区用骨架屏（shimmer）；按钮/异步动作用行内 spinner（14px accent）；流式态用 spinner（turn-meta sticky header，显眼的状态指示）+ trace 末尾光标脉冲（内容增长位置指示），两者配合。
 
+## 8.5. 浮层底色自适应（--panel-bg 契约）
+
+**问题**：消息流内的 sticky 浮层（turn-meta「思考中/已工作」贴顶 header、SessionList 组标题）在滚动时必须完全遮住下方滚过的文字。但所在面板的底色随 panel 数量变化（单 panel=透明继承 surface / 双 active=bg-elevated / 双 standby=surface），浮层无法预知。
+
+**契约**：Panel section 在运行时注入 `--panel-bg` CSS 变量，指向当前面板实际底色（不是新原子色，是现有 token 的运行时引用）：
+
+| panel 状态 | section background | `--panel-bg` |
+|---|---|---|
+| 单 panel | 透明（继承 MainPanel 的 surface） | `var(--surface)` |
+| 双 active | `var(--bg-elevated)` | `var(--bg-elevated)` |
+| 双 standby | `var(--surface)` | `var(--surface)` |
+
+**消费规则**：所有在面板内做 sticky 贴顶的浮层，底色用 `bg-[var(--panel-bg)]`（不透明），禁止用 `bg-surface/95 + backdrop-blur` 这类半透明 + 模糊（滚动时文字透出成灰雾，视觉脏）。配 `border-b border-border` 保持贴顶时底部分割线常驻。
+
+**侧边栏例外**：SessionList 组标题不在 panel 内，侧边栏底色透明融合 `--bg`，故用 `bg-bg`（非 `--panel-bg`）。
+
 ## 9. 文案语气
 
 - 操作按钮：动词开头（"发送"/"暂存"/"终止"），不用"确认"/"好的"。
@@ -75,7 +91,7 @@ design-system.md   ← 原语：值如何拼成可复用部件（本文件）
 
 ## 10. 暗色为主，亮色为辅
 
-暗色（`--bg #0d0d0f`）是默认与优先打磨对象。亮色为备选，token 已备但**视觉未校准**（见 design-tokens 待办）。新 draft 一律暗色优先；亮色稿在暗色全部定稿后再做。
+暗色（`--bg #1a1b1f`，2026-07-09 提亮校准，对标 VS Code Dark+）是默认与优先打磨对象。亮色为备选，token 已备但**视觉未校准**（见 design-tokens 待办）。新 draft 一律暗色优先；亮色稿在暗色全部定稿后再做。
 
 ---
 

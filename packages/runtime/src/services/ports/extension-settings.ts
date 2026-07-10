@@ -35,4 +35,12 @@ export interface IExtensionSettings {
   setEnabled(source: string, enabled: boolean): Promise<void>
   /** 从禁用清单移除指定 source（卸载时清理用）。 */
   removeDisabled(source: string): Promise<void>
+
+  // ── auto-upgrade-packages.json（自动升级配置，xyz-agent 自己的文件）──
+  /** 读取启用自动升级的 source 集合。 */
+  getAutoUpgrade(): string[]
+  /** 设置某个 source 的自动升级状态（autoUpgrade=true 加入，false 移除）。 */
+  setAutoUpgrade(source: string, autoUpgrade: boolean): Promise<void>
+  /** 从自动升级清单移除指定 source（卸载时清理用，与 removeDisabled 对称）。 */
+  removeAutoUpgrade(source: string): Promise<void>
 }

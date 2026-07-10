@@ -1,13 +1,14 @@
 :root {
-  --base: #0d0d0f;
-  --panel: #151519;
-  --panel-hover: #1b1b20;
+  /* 2026-07-09 提亮校准，对标 VS Code Dark+ */
+  --base: #1a1b1f;
+  --panel: #222329;
+  --panel-hover: #282930;
   --accent: #4f8ef7;
   --success: #22c55e;
-  --border: rgba(255,255,255,0.06);
-  --text-primary: #f0f0f5;
-  --text-secondary: #8a8a95;
-  --text-tertiary: #5a5a65;
+  --border: rgba(255,255,255,0.08);
+  --text-primary: #f7f8fc;
+  --text-secondary: #a8a8b5;
+  --text-tertiary: #82828f;
 }
 
 html, body, #app { height: 100%; margin: 0; }

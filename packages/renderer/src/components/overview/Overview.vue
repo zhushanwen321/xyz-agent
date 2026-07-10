@@ -37,7 +37,7 @@
           v-for="s in session.list"
           :key="s.id"
           :session="s"
-          :active="s.id === session.activeId"
+          :active="s.id === focusedSessionId"
           :status="statusOf(s.id)"
           :summary="digestOf(s.id).summary"
           :turn-count="digestOf(s.id).turnCount"
@@ -74,7 +74,7 @@ import SessionCard from './SessionCard.vue'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
-const { selectSession, newSession } = useSidebar()
+const { selectSession, newSession, focusedSessionId } = useSidebar()
 const { derivedStatus, sessionDigest } = useSessionDerivations()
 
 /** 状态点派生（D6）：features 层读 chat+session store 派生 5 态 */

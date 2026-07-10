@@ -95,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ArrowUp, Loader2, Square } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
@@ -113,6 +113,7 @@ import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
+import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 
 const props = withDefaults(
   defineProps<{
@@ -169,6 +170,41 @@ const {
   onCmdSelect,
 } = useCommandPopoverTrigger(inputRef, computed(() => props.sessionId))
 
+// 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
+// sessionId null（landing 态无真实 session）时 history 为空。
+const { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing } = useComposerHistory(
+  computed(() => props.sessionId),
+  {
+    getText: () => inputRef.value?.getText() ?? '',
+    setText: (text, caretPosition) => inputRef.value?.setText(text, caretPosition),
+    clear: () => inputRef.value?.clear(),
+  },
+)
+
+// FR4: per-session 草稿存储（内存，不持久化到磁盘）
+const drafts = new Map<string, string>()
+// FR4: session 切换时保存旧 session 草稿，恢复新 session 草稿
+watch(
+  () => props.sessionId,
+  (newId, oldId) => {
+    if (oldId) {
+      // browsing 态下 getText() 返回历史条目，应保存用户实际输入的 savedDraft
+      drafts.set(oldId, isBrowsing.value ? (draft.value || '') : (inputRef.value?.getText() ?? ''))
+    }
+    resetBrowsing()
+    if (newId) {
+      const saved = drafts.get(newId)
+      if (saved) {
+        draft.value = saved
+        inputRef.value?.setText(saved, 'end')
+      } else {
+        draft.value = ''
+        inputRef.value?.clear()
+      }
+    }
+  },
+)
+
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
@@ -177,11 +213,14 @@ const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(pr
 /** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断） */
 function onInputChange(text: string): void {
   draft.value = text
+  // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
+  resetBrowsing()
 }
 
-/** 发送成功后清空输入区（DOM + draft） */
+/** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
 function clearInput(): void {
   draft.value = ''
+  if (props.sessionId) drafts.delete(props.sessionId)
   inputRef.value?.clear()
 }
 
@@ -262,13 +301,13 @@ async function onSend(): Promise<void> {
       ? trimmed.slice('/compact '.length).trim() || undefined
       : undefined
     clearInput()
-    await compact(customInstructions)
+    await compact(props.sessionId!, customInstructions)
     return
   }
   clearInput()
   isSending.value = true
   try {
-    await send(text)
+    await send(props.sessionId!, text)
   } catch (e) {
     // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
     restoreInput(text)
@@ -283,13 +322,13 @@ async function onSend(): Promise<void> {
 /** 追加 steer：活跃态（流式/派发）有输入时 ⏎ 触发 */
 async function onSteer(): Promise<void> {
   if (!hasInput.value || !isActive.value) return
-  await submit(draft.value, steer)
+  await submit(draft.value, (t) => steer(props.sessionId!, t))
 }
 
 /** 追加 follow-up：S6 有输入时 Alt+⏎ 触发；非流式则退化为普通发送 */
 async function onFollowUp(): Promise<void> {
   if (!hasInput.value) return
-  await submit(draft.value, followUp)
+  await submit(draft.value, (t) => followUp(props.sessionId!, t))
 }
 
 /** 公共提交：清空输入 → 调用 sender → 失败时恢复草稿 */
@@ -307,13 +346,32 @@ async function submit(text: string, sender: (t: string) => Promise<void>): Promi
 
 /** 停止（S6）：调 abort（G-025 流转 DEFERRED，方法存在） */
 async function onAbort(): Promise<void> {
-  await abort()
+  await abort(props.sessionId!)
 }
 
-/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层 */
+/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
+ *  ↑/↓ 翻阅输入历史——权威规则见
+ *  `.xyz-harness/2026-07-10-composer-history-navigation/spec.md` FR1（三阶段模型）。
+ *  摘要：edit/browsing 态统一三阶段——先视觉行移动（caretRangeFromPoint），到边缘才翻历史。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
-  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+  // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
+  if (e.isComposing) return
+  // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
+  // edit/browsing 态统一三阶段模型：先视觉行移动，到边缘才翻历史（spec FR1）
+  if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault()
+    if (inputRef.value?.moveCaretVertical('up') === 'moved') return
+    handleArrowUp()
+    return
+  }
+  if (e.key === 'ArrowDown' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault()
+    if (inputRef.value?.moveCaretVertical('down') === 'moved') return
+    handleArrowDown()
+    return
+  }
+  if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
   if (e.altKey) {
     onFollowUp()

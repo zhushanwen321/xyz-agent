@@ -43,7 +43,7 @@ vi.mock('@/api', () => ({
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
 vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ active: undefined, updateSessionState: vi.fn() }),
+  useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
 vi.mock('@/stores/settings', () => ({
   useSettingsStore: () => ({ defaultModel: '' }),
@@ -160,7 +160,7 @@ describe('T2.2 B 策略：busy 时 Enter → steer（不调 send）', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick() // steer 是 async，需 flush
 
-    expect(chatApiMock.steer).toHaveBeenCalledWith('补充内容')
+    expect(chatApiMock.steer).toHaveBeenCalledWith('s-steer-enter', '补充内容')
     expect(chatApiMock.send).not.toHaveBeenCalled()
   })
 })
@@ -175,7 +175,7 @@ describe('T2.3 B 策略：idle 时 Enter → send', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    expect(chatApiMock.send).toHaveBeenCalledWith('第一条消息')
+    expect(chatApiMock.send).toHaveBeenCalledWith('s-send-enter', '第一条消息')
     expect(chatApiMock.steer).not.toHaveBeenCalled()
   })
 })

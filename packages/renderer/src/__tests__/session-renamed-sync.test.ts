@@ -48,12 +48,11 @@ beforeEach(() => {
   streamSubscribeMock.mockClear()
 })
 
-/** 往 session store 填一个 session（按 cwd 归组）并设为 active（useChat.send 依赖 activeId） */
+/** 往 session store 填一个 session（按 cwd 归组） */
 function seedSession(s: SessionSummary): void {
   const store = useSessionStore()
   const group: SessionGroup = { cwd: s.cwd, sessions: [s] }
   store.setGroups([group])
-  store.activeId = s.id
 }
 
 describe('session.renamed 事件 → store label 同步', () => {
@@ -69,7 +68,7 @@ describe('session.renamed 事件 → store label 同步', () => {
     })
     const chat = useChat()
     // send 触发 ensureStreamSubscription，注册回调（mock 捕获）
-    await chat.send('触发订阅')
+    await chat.send('s1', '触发订阅')
     expect(streamCbHolder.current).not.toBeNull()
 
     // 模拟 runtime 推送 session.renamed
@@ -90,7 +89,7 @@ describe('session.renamed 事件 → store label 同步', () => {
       tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send('触发订阅')
+    await chat.send('s2', '触发订阅')
 
     streamCbHolder.current!({ type: 'session.renamed', payload: { sessionId: 's2', name: '' } })
 
@@ -109,7 +108,7 @@ describe('session.renamed 事件 → store label 同步', () => {
       tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send('触发订阅')
+    await chat.send('s3', '触发订阅')
 
     // event-adapter 对 event.name 为 undefined 时 payload.name 也为 undefined
     streamCbHolder.current!({ type: 'session.renamed', payload: { sessionId: 's3' } })

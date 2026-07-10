@@ -117,16 +117,18 @@ export function useChat() {
    *
    * dispatching 态在 send 前置位（填 isGenerating 空窗期，让 Composer 停止按钮/steer 立即可用），
    * message_start 到达时 clearPendingSend 自动清；失败也清（catch）。
+   *
+   * 显式接收 sessionId：双 panel 下 Composer 各自有独立 sessionId（panel leaf 绑定），
+   * send 目标由调用方传入，不读全局 session.activeId（否则 standby panel 发消息会串到 active panel）。
    */
-  async function send(text: string): Promise<void> {
-    const sid = session.activeId
-    if (!sid) return
+  async function send(sessionId: string, text: string): Promise<void> {
+    const sid = sessionId
     const trimmed = text.trim()
     if (!trimmed) return
 
     // [B 策略 D-001] busy 时自动转 steer（追加上下文，不打断当前回合）
     if (chat.isActive(sid)) {
-      await steer(trimmed)
+      await steer(sid, trimmed)
       return
     }
 
@@ -150,10 +152,11 @@ export function useChat() {
   /**
    * 追加 steer：AI 执行中（isGenerating）时，把补充消息排入 steering 队列，
    * 当前回合工具调用结束后、下次 LLM 调用前投递，不打断当前回合。
+   *
+   * 显式接收 sessionId：与 send 同理，per-panel 隔离，不读全局 activeId。
    */
-  async function steer(text: string): Promise<void> {
-    const sid = session.activeId
-    if (!sid) return
+  async function steer(sessionId: string, text: string): Promise<void> {
+    const sid = sessionId
     const trimmed = text.trim()
     if (!trimmed || !chat.isActive(sid)) return
 
@@ -174,16 +177,17 @@ export function useChat() {
   /**
    * 追加 follow-up：把消息排入 followUp 队列，当前回合结束后另起一轮处理。
    * 非执行中按普通发送处理（避免 Alt+⏎ 死键）。
+   *
+   * 显式接收 sessionId：与 send 同理，per-panel 隔离。
    */
-  async function followUp(text: string): Promise<void> {
-    const sid = session.activeId
-    if (!sid) return
+  async function followUp(sessionId: string, text: string): Promise<void> {
+    const sid = sessionId
     const trimmed = text.trim()
     if (!trimmed) return
 
     // 非活跃（含空窗期）退化为普通发送，避免 Alt+⏎ 死键
     if (!chat.isActive(sid)) {
-      await send(trimmed)
+      await send(sid, trimmed)
       return
     }
 
@@ -205,10 +209,11 @@ export function useChat() {
    * [W3/W4] abort 乐观清 dispatching——abort 语义就是「结束当前活跃态」，即便 pi 没真正停也无害。
    * 正常成功路径由 MessageDispatcher.abort 广播的 message.complete 驱动 finalizeSession 收口；
    * 失败路径（pi 死/getClientOrThrow 抛 handler_error → abort reject）若无此 catch，dispatching 永挂。
+   *
+   * 显式接收 sessionId：per-panel 隔离，不读全局 activeId。
    */
-  async function abort(): Promise<void> {
-    const sid = session.activeId
-    if (!sid) return
+  async function abort(sessionId: string): Promise<void> {
+    const sid = sessionId
     // [D-008] 乐观清 pendingSend（即便 pi 没真正停也无害）
     chat.clearPendingSend(sid)
     try {
@@ -228,10 +233,11 @@ export function useChat() {
    * 错误反馈（§4.4 异常路径）：session 不存在 / pi 错误 → sendError（pending reject）→
    * 在此 catch，以 toast 提示用户，不卡 UI（toast 非顶部 banner，不违反规则 #3）。compacting 态
    * 由 session.compacted 广播复位（broadcast 必达：compacting 后无论成败都广播 compacted）。
+   *
+   * 显式接收 sessionId：per-panel 隔离，不读全局 activeId。
    */
-  async function compact(customInstructions?: string): Promise<void> {
-    const sid = session.activeId
-    if (!sid) return
+  async function compact(sessionId: string, customInstructions?: string): Promise<void> {
+    const sid = sessionId
     ensureStreamSubscription(sid, chat, session)
     try {
       await chatApi.compact(sid, customInstructions)

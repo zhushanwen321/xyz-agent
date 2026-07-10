@@ -44,6 +44,140 @@ interface ContenteditableCallbacks {
 }
 
 /**
+ * 视觉行上/下移动（模块级纯函数）。
+ *
+ * ⚠️ 权威规则见 `.xyz-harness/2026-07-10-composer-history-navigation/spec.md` FR1。
+ *
+ * 当前实现利用浏览器原生 `Selection.modify('move', dir, 'line')` 做跨行移动 + 边缘探测。
+ *
+ * [HISTORICAL] Selection.modify 对软换行失效（spec 缺陷 1，已修复）：
+ * Selection.modify('move', dir, 'line') 在软换行 contenteditable 中：
+ * 'forward'/'backward' 只在当前视觉行内水平 snap，'up'/'down' 完全不移动。
+ * 已改用 getClientRects + caretRangeFromPoint 方案（见下方实现）。详见 spec FR1 + 缺陷 1。
+ *
+ * 实现方案（getClientRects + caretRangeFromPoint）：
+ * 1. Range.getClientRects() 获取每视觉行的权威 rect（布局引擎直接提供，无坐标猜测）
+ * 2. 用 caretRect.top 匹配 lineRects 确定当前在第几视觉行
+ * 3. 计算目标行 index（current ± 1），越界 → 'at-edge'
+ * 4. caretRangeFromPoint(targetX, targetLine.top + 3px) 定位目标行内部
+ *    - Y: lineRect.top + 3px（行内部，避开行顶边界 quirks）
+ *    - X: paddingLeft + 20px（避开左边缘 quirks，caretRangeFromPoint 在行边界
+ *      会 snap 到上一行末尾）
+ * 5. 0-rect 陷阱回退 Selection.modify
+ *
+ * 调用方区分 'moved'（消费事件）和 'at-edge'（翻历史）。
+ */
+function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved' | 'at-edge' {
+  if (!el) return 'at-edge'
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return 'at-edge'
+  const before = sel.getRangeAt(0)
+  if (!el.contains(before.startContainer)) return 'at-edge'
+
+  // 1. Build visual line map via getClientRects — the layout engine's
+  //    authoritative per-line bounding rects, no coordinate guessing needed.
+  const fullRange = document.createRange()
+  fullRange.selectNodeContents(el)
+  const lineRects = fullRange.getClientRects()
+  if (lineRects.length <= 1) return 'at-edge'  // single line, nowhere to move
+
+  // 2. Find current caret's visual line by matching caretRect.top against line rects
+  const caretRect = before.getBoundingClientRect()
+  if (caretRect.top === 0 && caretRect.bottom === 0) {
+    // 0-rect trap: fall back to Selection.modify
+    const bc = before.startContainer, bo = before.startOffset
+    sel.modify('move', dir, 'line')
+    const after = sel.getRangeAt(0)
+    return (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved'
+  }
+
+  // Find which visual line the caret is on.
+  // Strategy: exact top match first (caret at line start), then closest center.
+  // At line boundaries (e.g. line 0 bottom=664, line 1 top=666, caret=666)
+  // both lines match any tolerance — top match resolves this correctly.
+  let currentLine = -1
+  for (let i = 0; i < lineRects.length; i++) {
+    if (Math.abs(caretRect.top - lineRects[i].top) <= 1) { currentLine = i; break }
+  }
+  if (currentLine === -1) {
+    let minDist = Infinity
+    for (let i = 0; i < lineRects.length; i++) {
+      const MIDPOINT_DIVISOR = 2
+      const center = (lineRects[i].top + lineRects[i].bottom) / MIDPOINT_DIVISOR
+      const dist = Math.abs(caretRect.top - center)
+      if (dist < minDist) { minDist = dist; currentLine = i }
+    }
+  }
+  if (currentLine === -1) return 'at-edge'  // can't determine current line
+
+  // 3. Calculate target line
+  const targetLine = dir === 'up' ? currentLine - 1 : currentLine + 1
+  if (targetLine >= lineRects.length) return 'at-edge'  // ↓ beyond last line
+  if (targetLine < 0) {
+    // ↑ beyond first line: snap to text start if not already there,
+    // otherwise signal at-edge for history flip.
+    const firstText = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()
+    const isAtTextStart = firstText != null && before.startContainer === firstText && before.startOffset === 0
+    if (isAtTextStart) return 'at-edge'
+    const range = document.createRange()
+    range.setStart(firstText!, 0)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    return 'moved'
+  }
+
+  // 4. Scroll target line into view if needed.
+  //    getClientRects returns viewport-relative rects; caretRangeFromPoint also
+  //    uses viewport coords. When the target line is scrolled out of view
+  //    (rect.top < elRect.top or rect.bottom > elRect.bottom), the caret
+  //    lookup would fail. Scroll first, then re-read rects (scroll changes them).
+  const elRect = el.getBoundingClientRect()
+  const cs = getComputedStyle(el)
+  const LINE_INTERIOR_OFFSET = 3
+  let targetLineTop = lineRects[targetLine].top
+  const NEEDS_SCROLL_MARGIN = 5
+  if (targetLineTop < elRect.top + NEEDS_SCROLL_MARGIN || targetLineTop > elRect.bottom - NEEDS_SCROLL_MARGIN) {
+    el.scrollTop += targetLineTop - elRect.top - parseFloat(cs.paddingTop) - NEEDS_SCROLL_MARGIN
+    // Re-read line rects after scroll (viewport positions changed)
+    const freshRange = document.createRange()
+    freshRange.selectNodeContents(el)
+    const freshRects = freshRange.getClientRects()
+    if (targetLine < freshRects.length) targetLineTop = freshRects[targetLine].top
+  }
+  const targetY = targetLineTop + LINE_INTERIOR_OFFSET
+  // X: text area left edge + offset to avoid left-edge quirks
+  const BOUNDARY_QUIRK_OFFSET = 20
+  const targetX = elRect.left + parseFloat(cs.paddingLeft) + BOUNDARY_QUIRK_OFFSET
+
+  const target = document.caretRangeFromPoint(targetX, targetY)
+  if (!target || !el.contains(target.startContainer)) return 'at-edge'
+
+  // 5. Verify the target is a genuinely different position
+  if (target.startContainer === before.startContainer && target.startOffset === before.startOffset) {
+    return 'at-edge'
+  }
+
+  // 5.5. Verify the target actually landed on the target line.
+  //      caretRangeFromPoint at left-edge has quirks: it can return a position
+  //      on the wrong line (e.g. targeting line 1 start but landing on line 0 end,
+  //      or targeting line 0 end but landing at offset 2 instead of true line start).
+  //      If the result is still on the current line, treat as 'at-edge' — the
+  //      caret didn't actually cross a line boundary.
+  const targetRect = target.getBoundingClientRect()
+  if (targetRect.top !== 0 || targetRect.bottom !== 0) {
+    const onTargetLine = Math.abs(targetRect.top - lineRects[targetLine].top) <= 1
+    const onCurrentLine = Math.abs(targetRect.top - lineRects[currentLine].top) <= 1
+    if (!onTargetLine && onCurrentLine) return 'at-edge'
+  }
+
+  // 6. Commit the move
+  sel.removeAllRanges()
+  sel.addRange(target)
+  return 'moved'
+}
+
+/**
  * @param elRef contenteditable 根元素 ref
  * @param callbacks 触发事件 + Backspace-chip 删除委派
  */
@@ -64,8 +198,19 @@ export function useContenteditableInput(
   clearSlashQueryText: () => void
   clearHashQueryText: () => void
   clear: () => void
-  setText: (text: string) => void
+  /** 写入纯文本并把光标移到末尾（发送失败恢复草稿）。
+   * CRITICAL：textContent= 替换整框内容，savedRange 指向的旧节点失效，必须置 null
+   * （同 clear 理由），随后手动建立新光标 Range。
+   */
+  /** 写入纯文本并定位光标（'end'=末尾默认，'start'=首字符前，用于历史导航连续回溯） */
+  setText: (text: string, caretPosition?: 'start' | 'end') => void
+  /** 在当前光标处插入纯文本（菜单插 @/# 符号用） */
   insertTextAtCursor: (text: string) => void
+  /**
+   * 视觉行上/下移动。返回 'moved'（已跨行或行内归位，消费事件）/ 'at-edge'（已在边缘行行首/行末，调用方翻历史）。
+   * 利用浏览器原生 Selection.modify，自动处理 soft-wrap + `<br>` 混合场景。
+   */
+  moveCaretVertical: (dir: 'up' | 'down') => 'moved' | 'at-edge'
 } {
   const {
     onInput: emitInput,
@@ -168,26 +313,59 @@ export function useContenteditableInput(
   }
 
   /**
-   * Shift+Enter 后把光标滚动进可见区。
    * contenteditable insertLineBreak 后浏览器不自动滚动（与 textarea 不同）：
    * 当 max-h-[120px] 触发 overflow 时，连续换行会把光标推出可视区，视觉上"停在当前行"。
-   * 实现：用折叠选区的 getBoundingClientRect 与容器 rect 比较，超出下沿则补偿 scrollTop。
-   * 用 getBoundingClientRect 而非 offsetTop：前者是视口坐标，与 scrollTop 调整方向一致。
+   * 实现：取折叠选区所在行的视觉矩形，与容器 rect 比较，超出下沿则补偿 scrollTop。
+   * 用视口坐标（getBoundingClientRect）而非 offsetTop：与 scrollTop 调整方向一致。
+   *
+   * [HISTORICAL] 0 rect 误判事故：insertLineBreak 后光标落在新建的空行（<br> 之后、空行内），
+   * 折叠选区的 getBoundingClientRect() 在多数浏览器返回全 0 rect（{top:0,bottom:0,height:0}）。
+   * 旧实现直接拿这个 0 rect 做比较：caretRect.top(0) < elRect.top(正值，如 800) 命中向上补偿分支
+   * → el.scrollTop -= 800 → scrollTop 被钳为 0 → composer 跳回顶部（光标实际在底部视口外）。
+   * 现象：composer 行数多滚动后按换行，内容区跳回顶部，光标在底部不可见。
+   *
+   * 修复：0 rect 时改用零宽字符探测真实行位置（插入不可见 ZWSP 取其 rect 再删掉），
+   * 仍取不到则放弃修正（不误操作 scrollTop），交回浏览器默认行为。
    */
+  function getCaretLineRect(range: Range): DOMRect | null {
+    // 正常情况：折叠选区所在行有内容，getBoundingClientRect 返回有效行矩形
+    const rect = range.getBoundingClientRect()
+    if (rect.top !== 0 || rect.bottom !== 0 || rect.height !== 0) return rect
+    // 0 rect 兜底：空行内折叠选区，插入零宽字符取其视觉位置再移除。
+    // range 是调用方传入的 clone，probe 操作不影响实际 selection——无需重建光标。
+    const probe = document.createTextNode('\u200B')
+    try {
+      range.insertNode(probe)
+      const probeRange = document.createRange()
+      probeRange.selectNode(probe)
+      const probeRect = probeRange.getBoundingClientRect()
+      if (probeRect.top === 0 && probeRect.bottom === 0) return null
+      return probeRect
+    } finally {
+      // try/finally 确保中途异常也不泄漏 ZWSP 到 DOM
+      const parent = probe.parentNode
+      probe.remove()
+      if (parent?.nodeType === Node.ELEMENT_NODE) {
+        ;(parent as Element).normalize()
+      }
+    }
+  }
+
   function scrollCursorIntoView(): void {
     const el = getEl()
     if (!el) return
     const sel = window.getSelection()
     if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return
     const range = sel.getRangeAt(0).cloneRange()
-    // 取光标所在行的视觉矩形（光标是折叠选区，rect 高度即行高，top 即该行上沿）
-    const caretRect = range.getBoundingClientRect()
+    const caretRect = getCaretLineRect(range)
+    // 取不到有效 caret 矩形（空行 + ZWSP 探测也失败）→ 不修正 scrollTop，避免误操作
+    if (!caretRect) return
     const elRect = el.getBoundingClientRect()
     // caret 在容器下沿之下 → 向下滚动补偿（caretRect.bottom - elRect.bottom 即溢出像素）
     if (caretRect.bottom > elRect.bottom) {
       el.scrollTop += caretRect.bottom - elRect.bottom
     } else if (caretRect.top < elRect.top) {
-      // caret 在容器上沿之上（理论上插 <br> 不会发生，向上翻历史时可能）→ 向上补偿
+      // caret 在容器上沿之上（向上翻历史时可能）→ 向上补偿
       el.scrollTop -= elRect.top - caretRect.top
     }
   }
@@ -338,15 +516,44 @@ export function useContenteditableInput(
    * CRITICAL：textContent= 替换整框内容，savedRange 指向的旧节点失效，必须置 null
    * （同 clear 理由），随后手动建立新光标 Range。
    */
-  function setText(text: string): void {
+  function setText(text: string, caretPosition: 'start' | 'end' = 'end'): void {
     const el = getEl()
     if (!el) return
-    el.textContent = text
+    // \n → <br>：contenteditable 中 \n 是字面字符不渲染为换行，
+    // 需用 <br> 元素分隔文本节点。纯文本 split/join，无 innerHTML/XSS 风险。
+    el.replaceChildren()
+    const parts = text.split('\n')
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) el.appendChild(document.createElement('br'))
+      if (parts[i]) el.appendChild(document.createTextNode(parts[i]))
+    }
     savedRange = null
     el.focus()
+    // 光标需定位到文本节点内部（而非元素节点边界），否则 Selection.modify 会先把光标
+    // 「下沉」到文本节点并返回 moved，导致边缘判定多按一次键。用 TreeWalker 找首/末文本节点。
     const range = document.createRange()
-    range.selectNodeContents(el)
-    range.collapse(false)
+    if (caretPosition === 'start') {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      const firstText = walker.nextNode()
+      if (firstText) {
+        range.setStart(firstText, 0)
+        range.collapse(true)
+      } else {
+        range.selectNodeContents(el)
+        range.collapse(true)
+      }
+    } else {
+      let lastText: Text | null = null
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      while (walker.nextNode()) lastText = walker.currentNode as Text
+      if (lastText) {
+        range.setStart(lastText, lastText.length)
+        range.collapse(true)
+      } else {
+        range.selectNodeContents(el)
+        range.collapse(false)
+      }
+    }
     const sel = window.getSelection()
     sel?.removeAllRanges()
     sel?.addRange(range)
@@ -370,5 +577,6 @@ export function useContenteditableInput(
     clear,
     setText,
     insertTextAtCursor,
+    moveCaretVertical: (dir) => moveCaretVerticalOf(getEl(), dir),
   }
 }

@@ -28,6 +28,7 @@ export type ClientMessageType =
   | 'extension.install' | 'extension.uninstall'
   | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
   | 'extension.recommended'
+  | 'extension.upgrade' | 'extension.setAutoUpgrade'
   | 'ping'
   | 'plugin.list' | 'plugin.toggle'
   | 'plugin.install' | 'plugin.uninstall'
@@ -40,7 +41,7 @@ export type ClientMessageType =
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
-  | 'workspace.listRecent'
+  | 'workspace.listRecent' | 'workspace.record'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -108,6 +109,8 @@ export interface ClientMessageMap {
   'extension.finishInstall': { tempDir: string; selected: string[] }
   'extension.cancelInstall': { tempDir: string }
   'extension.recommended': Record<string, never>
+  'extension.upgrade': { name: string }
+  'extension.setAutoUpgrade': { name: string; autoUpgrade: boolean }
   'plugin.list': Record<string, never>
   'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
   'plugin.install': { packageSpec: string }
@@ -134,6 +137,7 @@ export interface ClientMessageMap {
   'git.checkout': { sessionId: string; name: string }
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
+  'workspace.record': { cwd: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -216,7 +220,7 @@ export interface ServerMessageMapBase {
   'config.skillDirs': { dirs: SkillDirConfig[] }
   'config.agentDirs': { dirs: SkillDirConfig[] }
   'config.defaults': { defaultModel: string }
-  'config.extensions': { extensions: ExtensionInfo[] }
+  'config.extensions': { extensions: ExtensionInfo[]; upgradeResult?: { upgraded: boolean; from: string; to: string } }
   /** extension.recommended reply：推荐扩展列表（含已安装状态） */
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
   'config.plugins': { plugins: PluginInfo[] }

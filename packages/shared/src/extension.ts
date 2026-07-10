@@ -37,6 +37,8 @@ export interface ExtensionInfo {
   /** Extension 暴露的工具名列表（MCP tools / pi extension tools）。可选：runtime 扫描到时填，
    *  前端 ExtensionPage 据此渲染工具清单。可选而非必填——避免强制 runtime 生产侧同步改造。 */
   tools?: string[]
+  /** 是否启用自动升级（仅 user-installed 扩展有效）。前端读写此字段控制 auto-upgrade 开关。 */
+  autoUpgrade?: boolean
 }
 
 // ── Extension install flow payload interfaces ──────────────────

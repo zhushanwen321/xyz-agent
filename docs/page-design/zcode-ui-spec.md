@@ -8,9 +8,9 @@
 
 | 层级 | 元素 | 视觉处理 |
 |------|------|----------|
-| 底层 | 应用背景 | 统一深色画布 `base #0d0d0f`，无边框、无分割线 |
+| 底层 | 应用背景 | 统一深色画布 `base #1a1b1f`（2026-07-09 提亮校准，原 `#0d0d0f`），无边框、无分割线 |
 | 中层 | 侧边栏 | 直接坐在底层背景上，无独立面板背景，靠 hover/selected 状态区分 |
-| 顶层 | 主内容区 | 浮动圆角面板 `panel #151519`，四周带 margin，有细微外边框 |
+| 顶层 | 主内容区 | 浮动圆角面板 `panel #222329`，四周带 margin，有细微外边框 |
 
 ### 1.2 主面板
 
@@ -132,15 +132,16 @@ Chat Area 内部采用**固定两栏布局**，总宽度等于主面板内容区
 ## 6. 颜色与间距 Token
 
 ```css
---base: #0d0d0f;
---panel: #151519;
---panel-hover: #1b1b20;
+/* 2026-07-09 提亮校准后色值，对标 VS Code Dark+ */
+--base: #1a1b1f;
+--panel: #222329;
+--panel-hover: #282930;
 --accent: #4f8ef7;
 --success: #22c55e;
---border: rgba(255,255,255,0.06);
---text-primary: #f0f0f5;
---text-secondary: #8a8a95;
---text-tertiary: #5a5a65;
+--border: rgba(255,255,255,0.08);
+--text-primary: #f7f8fc;
+--text-secondary: #a8a8b5;
+--text-tertiary: #82828f;
 ```
 
 - 主面板外边框 `1px solid var(--border)`。

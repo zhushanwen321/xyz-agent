@@ -7,7 +7,7 @@
     受控表单：业务编排（test/discover/save + 模型 CRUD）下沉 useProviderEdit，
     本组件只做展示 + 事件绑定（F1 拆分）。
   -->
-  <Dialog :open="!!provider" @update:open="emit('close')">
+  <Dialog :open="open" @update:open="emit('close')">
     <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
     <DialogContent hide-close class="flex max-w-[780px] flex-col overflow-hidden p-0">
       <!-- 标题栏。DialogTitle/DialogDescription 给 reka-ui a11y context（视觉用自绘 span） -->
@@ -24,7 +24,7 @@
         </Button>
       </div>
 
-      <div v-if="provider" class="flex min-h-0 flex-1 overflow-hidden">
+      <div class="flex min-h-0 flex-1 overflow-hidden">
         <!-- 左：凭据配置 -->
         <div class="flex w-[340px] shrink-0 flex-col gap-4 border-r border-border p-5">
           <!-- 名称 -->
@@ -65,7 +65,7 @@
               <Input
                 v-model="form.apiKey"
                 :type="showKey ? 'text' : 'password'"
-                :placeholder="provider.apiKeySet ? '••••••••（已设置）' : 'sk-...'"
+                :placeholder="provider?.apiKeySet ? '••••••••（已设置）' : 'sk-...'"
                 class="flex-1"
               />
               <Button
@@ -292,7 +292,7 @@ import {
   type ThinkingStrategy,
 } from '@/composables/features/useProviderEdit'
 
-const props = defineProps<{ provider: ProviderInfo | null }>()
+const props = defineProps<{ open: boolean; provider: ProviderInfo | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 // 模板用的常量（composable 导出的纯数据）

@@ -18,7 +18,7 @@
 ## 一、核心拓扑
 
 ```
-窗口 (bg-base #0d0d0f 平铺全屏, border-radius:10px, 浮于桌面)
+窗口 (bg-base #1a1b1f 平铺全屏, border-radius:10px, 浮于桌面)
   .app-shell  flex  p-3(12px)  gap-3(12px)
     .aside-region (width 340px, 无 background —— 透明，融在 base 上)
       ├── padding-top: 52px        ← traffic light 安全区（三平台统一）
@@ -32,6 +32,18 @@
 - **base 平铺** — window-mock 的 `background: var(--bg-base)`，所有区域的基础底色
 - **sidebar 透明** — aside-region **不设 background**，继承 base，视觉上与窗口底色融为一体
 - **main 浮起** — main-panel 是**唯一**带 background/border/radius/shadow 的面板，靠这些属性视觉浮起，不靠 z-index 抬高
+
+### main-panel 内 section 的底色语义（单/双 panel 切换）
+
+main-panel(main) 始终是 float-panel（`bg-surface` + border + radius + shadow）。其内的 Panel section 底色随 panel 数量切两种语义（对齐 `workspace/draft-dual-panel.html` 的 `.panel` 模型）：
+
+| panel 数 | section 底色 | 语义 |
+|---|---|---|
+| **单 panel** | 透明（继承 main-panel 的 surface） | section 即 main 内容区，不独立浮起。float-panel 语义归 main-panel 独占 |
+| **双 active** | `bg-bg-elevated` + `ring-1 accent-ring` + opacity 1 | panel 间相对浮起（焦点），对齐 draft-dual-panel `.panel.active` |
+| **双 standby** | `bg-surface` + opacity 0.5 hover 回升 0.78 | 退后，opacity 表达主从（draft-dual-panel L121 明确） |
+
+section 在运行时注入 `--panel-bg` 变量（指向当前底色），供消息流内 sticky 浮层自适应——详见 `design-system.md §8.5`。
 
 ## 二、应用两态 + 应用导航按钮（收起 / ← / →）
 

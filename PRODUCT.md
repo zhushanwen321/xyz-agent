@@ -36,7 +36,7 @@ xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类
 
 三个关键词：冷静、精准、可靠。
 
-- **冷静**：纯黑画布（`#0d0d0f`）+ 冷蓝 accent（`#4f8ef7`），贴近 Cursor / VS Code / Linear 的开发者工具直觉。Inter 字体、无衬线、tech-utility 取向。暗色为真默认（[ADR-0021](docs/architecture/adr/0021-default-theme-direction.md)）。
+- **冷静**：冷暗画布（`#1a1b1f`，2026-07-09 提亮校准以减轻长时间用眼疲劳）+ 冷蓝 accent（`#4f8ef7`），贴近 Cursor / VS Code / Linear 的开发者工具直觉。Inter 字体、无衬线、tech-utility 取向。暗色为真默认（[ADR-0021](docs/architecture/adr/0021-default-theme-direction.md)）。
 - **精准**：信息密度高但层次分明。三层视觉语义——base 平铺 / sidebar 透明融合 / main float 浮起——靠 background/border/radius/shadow 表达，不靠装饰堆砌。强调走 Card-Active 的 inset ring，禁止左色条。
 - **可靠**：状态反馈即时且准确。运行中的 SubAgent 有实时圆点脉冲，完成的任务有清晰的完成标记，需要确认的告警有明显的视觉层级。SubAgent 并行可视化是核心差异化。
 

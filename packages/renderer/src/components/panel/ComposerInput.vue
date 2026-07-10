@@ -75,6 +75,7 @@ const {
   clear,
   setText,
   insertTextAtCursor,
+  moveCaretVertical,
 } = useContenteditableInput(elRef, {
   onInput: (text) => emit('input', text),
   onSlashTrigger: (payload) => emit('slash-trigger', payload),
@@ -122,6 +123,7 @@ defineExpose({
   clearHashQueryText,
   saveSelection,
   restoreSelection,
+  moveCaretVertical,
 })
 
 onMounted(() => {
@@ -133,8 +135,6 @@ onMounted(() => {
 /* placeholder：伪元素 Tailwind 表达不了，走 scoped style。
    用 --subtle（三级文字/占位，design-tokens SSOT + design-system §4 明确）。
    设计意图：占位是三级最暗层，与输入正文 --fg 拉开梯度，弱化提示语。
-   原 var(--text-tertiary) 未定义会回退到 inherit → --fg（与正文同亮，丧失占位语义），
-   style.css 已加 --text-tertiary: var(--subtle) 兜底别名；此处显式用 --subtle 对齐 SSOT。
    —— absolute 脱文档流：不占行内位，光标始终在内容区最左（开头）而非 placeholder 末尾。
    —— 仅未聚焦且空时显（is-empty && !is-focused）：聚焦即隐，光标停在开头闪烁。 */
 .composer-input.is-empty:not(.is-focused)::before {
@@ -151,7 +151,8 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-right: 1px;
+  /* 与后续文字空开约一字符宽（4px），避免 chip 边框贴紧正文 */
+  margin-right: 4px;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   background: rgba(167, 139, 250, 0.18);
@@ -182,6 +183,8 @@ onMounted(() => {
 /* @ 引用 / # 文件 mention 内联 chip（§2d：蓝名 / 绿名） */
 .composer-input :deep(.mention-chip) {
   display: inline;
+  /* 与后续文字空开约一字符宽（4px），与 slash-chip 对齐 */
+  margin-right: 4px;
   padding: 1px 4px;
   border-radius: var(--radius-sm);
   font: 500 12px / 1.4 var(--font-sans);

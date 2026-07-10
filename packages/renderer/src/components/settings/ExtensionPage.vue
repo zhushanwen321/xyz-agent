@@ -124,10 +124,22 @@
           <div class="flex items-center gap-2">
             <span class="truncate text-[12px] font-medium text-fg">{{ ext.name }}</span>
             <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">v{{ ext.version }}</span>
+            <!-- 来源标签 -->
+            <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">user</span>
           </div>
           <span class="truncate text-[11px] text-muted">{{ ext.description }}</span>
           <div v-if="ext.tools?.length" class="mt-1 flex flex-wrap gap-1">
             <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ t }}</span>
+          </div>
+          <!-- 自动升级开关（仅 user-installed 扩展显示） -->
+          <div v-if="ext.source === 'user-installed'" class="mt-1.5 flex items-center gap-2">
+            <Switch
+              :model-value="ext.autoUpgrade ?? false"
+              class="shrink-0"
+              aria-label="自动升级"
+              @update:model-value="onSetAutoUpgrade(ext, $event)"
+            />
+            <span class="text-[11px] text-muted">自动升级</span>
           </div>
         </div>
         <!-- 启用开关：Switch 原语（状态经 onExtensions 订阅推回） -->
@@ -137,6 +149,18 @@
           :aria-label="ext.enabled ? '禁用扩展' : '启用扩展'"
           @update:model-value="onToggle(ext, $event)"
         />
+        <!-- 升级按钮（仅 user-installed 扩展显示） -->
+        <Button
+          v-if="ext.source === 'user-installed'"
+          variant="ghost"
+          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-accent-soft hover:text-accent [&_svg]:size-3.5"
+          title="升级"
+          :disabled="upgrading.has(ext.name)"
+          @click="onUpgrade(ext.name)"
+        >
+          <Loader2 v-if="upgrading.has(ext.name)" class="animate-spin" />
+          <ArrowUpCircle v-else />
+        </Button>
         <!-- 卸载按钮 -->
         <Button
           variant="ghost"
@@ -165,7 +189,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
-import { Trash2, Loader2, AlertCircle, Check } from '@lucide/vue'
+import { Trash2, Loader2, AlertCircle, Check, ArrowUpCircle } from '@lucide/vue'
 import type { ExtensionDiscoveredPayload, RecommendedExtension } from '@xyz-agent/shared'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -240,6 +264,8 @@ const actionError = ref('')
 const installing = ref(false)
 /** 卸载中 */
 const uninstalling = ref(false)
+/** 升级中的扩展名集合（支持并发不同扩展） */
+const upgrading = ref<Set<string>>(new Set())
 /** dir/git 安装发现的候选（多步第一步产物）；null 表示未进入候选选择阶段 */
 const discovered = ref<ExtensionDiscoveredPayload | null>(null)
 /** 候选多选（key = dirName，finishInstall 的 selected 语义） */
@@ -359,6 +385,34 @@ async function onConfirmUninstall() {
     actionError.value = e instanceof Error ? e.message : String(e)
   } finally {
     uninstalling.value = false
+  }
+}
+
+/** 升级扩展：从 npm 拉最新版重装（仅 user-installed） */
+async function onUpgrade(name: string) {
+  if (upgrading.value.has(name)) return
+  actionError.value = ''
+  const next = new Set(upgrading.value)
+  next.add(name)
+  upgrading.value = next
+  try {
+    await extensionApi.upgrade(name)
+  } catch (e) {
+    actionError.value = e instanceof Error ? `升级失败: ${e.message}` : `升级失败: ${String(e)}`
+  } finally {
+    const after = new Set(upgrading.value)
+    after.delete(name)
+    upgrading.value = after
+  }
+}
+
+/** 设置扩展自动升级开关（仅 user-installed） */
+async function onSetAutoUpgrade(ext: ExtensionItem, enabled: boolean) {
+  actionError.value = ''
+  try {
+    await extensionApi.setAutoUpgrade(ext.name, enabled)
+  } catch (e) {
+    actionError.value = e instanceof Error ? `设置自动升级失败: ${e.message}` : `设置自动升级失败: ${String(e)}`
   }
 }
 </script>

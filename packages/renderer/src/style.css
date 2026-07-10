@@ -13,28 +13,22 @@
    ============================================================ */
 
 :root {
-  /* ── 背景层级 ───────────────────────────────────────────── */
-  --bg: #0d0d0f;                /* 画布底层 */
-  --surface: #151519;           /* 面板/卡片 */
-  --surface-hover: #1f1f26;     /* 面板悬停（draft-session-item/composer-states :root，原误取 surface-2 值，P1-1 修正） */
-  --surface-2: #1b1b20;         /* 二级表面（Card-Elevated / draft-composer-states） */
-  --bg-elevated: #1c1c20;       /* 浮起面板/激活面板底色（draft-dual-panel .panel.active） */
-  --bg-input: #101013;          /* 输入区底色（draft-companion-zones / composer） */
+  /* ── 背景层级（2026-07-09 提亮校准，对标 VS Code Dark）──── */
+  --bg: #1a1b1f;                /* 画布底层 */
+  --surface: #222329;           /* 面板/卡片 */
+  --surface-hover: #2d2e36;     /* 面板悬停 */
+  --surface-2: #282930;         /* 二级表面（Card-Elevated） */
+  --bg-elevated: #2a2b32;       /* 浮起面板/激活面板底色 */
+  --bg-input: #1e1f24;          /* 输入区底色 */
 
   /* ── 文字 ───────────────────────────────────────────────── */
-  --fg: #f0f0f5;                /* 主文字 */
-  --muted: #8a8a95;             /* 次级文字 */
-  --subtle: #5a5a65;            /* 三级文字/占位 */
-
-  /* ── 兼容别名（v3 改名前旧 token，ADR-0018 归一后的安全网）──────────
-     旧 --text-tertiary 仍被个别组件引用；未定义时会回退到 inherit → --fg，
-     使占位/三级文字错误地变成满亮正文（P1 回归）。此处别名到 v3 等价语义，
-     防止漏网引用再次静默塌成前景色。源引用清理见各组件（ComposerInput/SearchModal）。 */
-  --text-tertiary: var(--subtle);
+  --fg: #f7f8fc;                /* 主文字 */
+  --muted: #a8a8b5;             /* 次级文字 */
+  --subtle: #82828f;            /* 三级文字/占位 */
 
   /* ── 边框/分隔 ─────────────────────────────────────────── */
-  --border: rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
 
   /* ── 主色（冷蓝）───────────────────────────────────────── */
   --accent: #4f8ef7;

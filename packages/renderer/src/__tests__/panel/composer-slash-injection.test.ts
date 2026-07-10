@@ -64,7 +64,7 @@ vi.mock('@/stores/chat', () => ({
 vi.mock('@/stores/session', () => ({
   // updateSessionState：features/useModel 乐观更新调用（切模型/思考等级后立即同步）。
   // 本测试关注 slash 注入，store 更新为 no-op 即可。
-  useSessionStore: () => ({ active: undefined, updateSessionState: vi.fn() }),
+  useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
 vi.mock('@/stores/settings', () => ({
   useSettingsStore: () => ({ defaultModel: '' }),

@@ -30,8 +30,8 @@
      其中 --accent-light 用 color-mix 派生 → 10 palette 各只覆盖 --accent 即可。
      ============================================================ */
   :root, html[data-theme="dark"]{
-    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
-    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --bg:#1a1b1f; --surface:#222329; --surface-2:#282930; --surface-hover:#2d2e36;
+    --fg:#f7f8fc; --muted:#a8a8b5; --subtle:#82828f;
     --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
     --accent:#4f8ef7; --accent-hover:#6ba3ff;
     --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
@@ -48,7 +48,7 @@
   }
   html[data-theme="light"]{
     --bg:#f8f9fb; --surface:#ffffff; --surface-2:#f1f3f6; --surface-hover:#e9ecef;
-    --fg:#0d0d0f; --muted:#5a5a65; --subtle:#8a8a95;
+    --fg:#0d0d0f; --muted:#82828f; --subtle:#a8a8b5;
     --border:rgba(0,0,0,0.08); --border-strong:rgba(0,0,0,0.14);
     /* --accent 由 data-palette 决定，不在此覆盖；亮色对比度校准见 design-tokens「待办」 */
   }

@@ -118,11 +118,9 @@ function emit(msg: ServerMessage): void {
 
 describe('send.rejected 回滚（D-006 独立通道）', () => {
   it('send.rejected → clearPendingSend（isActive 恢复 false）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-reject-1'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hello')
+    await send('s-reject-1', 'hello')
     // send 后 pendingSend 置位 → isActive=true（空窗期）
     expect(chat.isActive('s-reject-1')).toBe(true)
     // 必须先订阅才能 emit
@@ -137,11 +135,9 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
   })
 
   it('send.rejected → 不产出消息气泡（getMessages 不变）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-reject-2'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hello')
+    await send('s-reject-2', 'hello')
     const msgsBefore = chat.getMessages('s-reject-2')
     emit({
       type: 'send.rejected',
@@ -152,11 +148,9 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
   })
 
   it('send.rejected → isGenerating 不变（不翻流式态）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-reject-3'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hello')
+    await send('s-reject-3', 'hello')
     // send.rejected 时无 streaming entity → isGenerating=false
     expect(chat.isGenerating('s-reject-3')).toBe(false)
     emit({
@@ -168,12 +162,10 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
   })
 
   it('send.rejected 不影响其他 session 的 pendingSend', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-reject-4'
     const chat = useChatStore()
     const { send } = useChat()
     // session A send → pendingSend
-    await send('hello')
+    await send('s-reject-4', 'hello')
     // 手动给 session B 加 pendingSend（模拟另一个 panel 正在发送）
     chat.addPendingSend('s-other')
     expect(chat.isActive('s-other')).toBe(true)

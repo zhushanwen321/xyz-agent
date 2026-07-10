@@ -79,7 +79,7 @@
         <template v-if="sidebar.activeTab === 'sessions'">
           <SessionList
             :groups="session.groups"
-            :active-id="session.activeId"
+            :active-id="focusedSessionId"
             :status-of="statusOf"
             @select="onSelectSession"
             @new-session="onNewSession"
@@ -89,8 +89,8 @@
         </template>
         <template v-else>
           <FileView
-            v-if="session.activeId"
-            :session-id="session.activeId"
+            v-if="focusedSessionId"
+            :session-id="focusedSessionId"
             :session-label="currentSession?.label"
             :branch="currentSession?.gitBranch"
           />
@@ -121,18 +121,12 @@
     </div>
 
     <!-- 搜索浮层（⌘K 触发的全局 Overlay，spec §搜索浮层剥离） -->
-    <SearchModal v-model:open="searchOpen" :active-session-id="session.activeId" />
+    <SearchModal v-model:open="searchOpen" :active-session-id="focusedSessionId" />
 
     <RenameSessionDialog
       v-model:open="renameOpen"
       :session-id="targetSessionId"
       @confirm="onConfirmRename"
-    />
-    <DeleteSessionDialog
-      v-model:open="deleteOpen"
-      :session-id="targetSessionId"
-      :session-label="targetSessionLabel"
-      @confirm="onConfirmDelete"
     />
   </div>
 </template>
@@ -153,7 +147,6 @@ import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
-import DeleteSessionDialog from './DeleteSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import * as events from '@/api/events'
 
@@ -161,7 +154,7 @@ const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
 
@@ -175,18 +168,13 @@ const searchOpen = ref(false)
 
 /** Dialog 状态 */
 const renameOpen = ref(false)
-const deleteOpen = ref(false)
 const targetSessionId = ref('')
-
-const targetSessionLabel = computed(() =>
-  session.list.find((s) => s.id === targetSessionId.value)?.label ?? '',
-)
 
 /** 当前是否处于 Overview view（按钮转 accent 态，spec §Overview 入口） */
 const isOverviewActive = computed(() => navigation.current.view === 'overview')
 
-/** 当前 active session（文件视图头部展示） */
-const currentSession = computed(() => session.active)
+/** 当前焦点 session（文件视图头部展示，跟随 panel focus） */
+const currentSession = focusedSession
 
 /**
  * 文件 tab 计数（当前 session 文件树顶层节点数）。
@@ -194,7 +182,7 @@ const currentSession = computed(() => session.active)
  * 计数改为读 fileTreeStore 该 session 的顶层节点数（W4 UC-1 浏览完整结构）。
  */
 const fileCount = computed(() => {
-  const sid = session.activeId
+  const sid = focusedSessionId.value
   if (!sid) return 0
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
@@ -218,16 +206,11 @@ async function onRenameSession(id: string): Promise<void> {
 }
 
 async function onDeleteSession(id: string): Promise<void> {
-  targetSessionId.value = id
-  deleteOpen.value = true
+  await deleteSession(id)
 }
 
 async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {
   await renameSession(payload.sessionId, payload.label)
-}
-
-async function onConfirmDelete(id: string): Promise<void> {
-  await deleteSession(id)
 }
 
 /** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本 */

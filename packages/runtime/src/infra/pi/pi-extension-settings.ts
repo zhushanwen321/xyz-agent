@@ -17,8 +17,10 @@ import { updateSettingsSync, readSettings, invalidateSettingsCache, setSettingsP
 import { getPiAgentDir } from './pi-paths.js'
 
 const DISABLED_FILE = 'disabled-packages.json'
+const AUTO_UPGRADE_FILE = 'auto-upgrade-packages.json'
 
 type DisabledRecord = { disabled: string[] }
+type AutoUpgradeRecord = { autoUpgrade: string[] }
 
 /**
  * disabled-packages.json 存储：read-through（ENOENT 容错）+ atomicWrite。
@@ -29,6 +31,13 @@ function createDisabledStore(path: string): JsonStore<DisabledRecord> {
   return new JsonStore<DisabledRecord>(path, { disabled: [] }, {
     ttlMs: 0,
     shouldDeleteWhen: (v) => v.disabled.length === 0,
+  })
+}
+
+function createAutoUpgradeStore(path: string): JsonStore<AutoUpgradeRecord> {
+  return new JsonStore<AutoUpgradeRecord>(path, { autoUpgrade: [] }, {
+    ttlMs: 0,
+    shouldDeleteWhen: (v) => v.autoUpgrade.length === 0,
   })
 }
 
@@ -48,6 +57,16 @@ export function readDisabledPackages(settingsDir: string): string[] {
 }
 
 /**
+ * auto-upgrade-packages.json 的单一读取入口。
+ *
+ * @param settingsDir pi agent 配置目录
+ * @returns 启用自动升级的 source 字符串数组（文件缺失/解析失败时返回 []）
+ */
+export function readAutoUpgradePackages(settingsDir: string): string[] {
+  return createAutoUpgradeStore(join(settingsDir, AUTO_UPGRADE_FILE)).read().autoUpgrade
+}
+
+/**
  * IExtensionSettings 实现。
  * @param settingsDir pi agent 配置目录（~/.xyz-agent/pi/agent），settings.json + disabled-packages.json 所在地。
  *                    测试可注入临时目录；生产默认 getPiAgentDir()。
@@ -56,9 +75,12 @@ export class PiExtensionSettings implements IExtensionSettings {
   private readonly settingsDir: string
   private readonly disabledStore: JsonStore<DisabledRecord>
 
+  private readonly autoUpgradeStore: JsonStore<AutoUpgradeRecord>
+
   constructor(settingsDir: string = getPiAgentDir()) {
     this.settingsDir = settingsDir
     this.disabledStore = createDisabledStore(join(settingsDir, DISABLED_FILE))
+    this.autoUpgradeStore = createAutoUpgradeStore(join(settingsDir, AUTO_UPGRADE_FILE))
     // 让 pi-settings-store 指向同一 settingsDir 的 settings.json，保证 model 域与
     // extension 域在测试（注入临时目录）和生产（getPiAgentDir）都读写同一文件（D17 单一所有者）。
     setSettingsPath(join(settingsDir, 'settings.json'))
@@ -114,5 +136,27 @@ export class PiExtensionSettings implements IExtensionSettings {
   async removeDisabled(source: string): Promise<void> {
     const next = readDisabledPackages(this.settingsDir).filter(d => d !== source)
     this.disabledStore.write({ disabled: next })
+  }
+
+  // ── auto-upgrade-packages.json ──
+
+  getAutoUpgrade(): string[] {
+    return readAutoUpgradePackages(this.settingsDir)
+  }
+
+  async setAutoUpgrade(source: string, autoUpgrade: boolean): Promise<void> {
+    const current = readAutoUpgradePackages(this.settingsDir)
+    let next: string[]
+    if (autoUpgrade) {
+      next = current.includes(source) ? current : [...current, source]
+    } else {
+      next = current.filter(d => d !== source)
+    }
+    this.autoUpgradeStore.write({ autoUpgrade: next })
+  }
+
+  async removeAutoUpgrade(source: string): Promise<void> {
+    const next = readAutoUpgradePackages(this.settingsDir).filter(d => d !== source)
+    this.autoUpgradeStore.write({ autoUpgrade: next })
   }
 }

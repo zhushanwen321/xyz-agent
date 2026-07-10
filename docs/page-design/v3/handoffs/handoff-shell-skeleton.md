@@ -7,7 +7,7 @@
 - 上游 spec：`shell/spec.md`（第一节核心拓扑 + 三层语义）
 
 ## 2. 产物现状
-- standalone，内联 CSS，冷蓝 token（`bg-base #0d0d0f` / `bg-panel` / accent-ring）
+- standalone，内联 CSS，冷蓝 token（`bg-base #1a1b1f` / `bg-panel` / accent-ring）
 - **三层语义已落地**：base 平铺全屏 → sidebar 透明融合（无 background，继承 base）→ main 是唯一 float-panel（bg-panel + border + radius:12px + shadow）
 - app-shell `flex p-3 gap-3`；aside-region `width 200px` + `padding-top:52px`（traffic light 安全区）
 - 定位：静态拓扑骨架稿，不含动态两态（那是 draft-overlay-states 的职责）

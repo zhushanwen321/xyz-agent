@@ -5,10 +5,10 @@
     不冒充 user/assistant：弱化样式（居中、小字、图标 + 一行摘要），
     作流转过程的元信息提示（执行记录 / 压缩 / 分支）。
   -->
-  <div class="system-notice flex items-center gap-2 py-1">
+  <div class="system-notice flex min-w-0 items-center gap-2 py-1">
     <span class="h-px flex-1 bg-border" />
     <component :is="icon" class="size-3 shrink-0 text-muted" />
-    <span class="shrink-0 text-[11.5px] leading-snug text-muted">{{ text }}</span>
+    <span class="min-w-0 truncate text-[11.5px] leading-snug text-muted">{{ text }}</span>
     <span class="h-px flex-1 bg-border" />
   </div>
 </template>

@@ -54,17 +54,20 @@ const TOOL_RUNNING = 'running'
  * waiting 优先于 running：turn 活跃期 tool 执行属 waiting（无文本流），spec 区分二者。
  * 空消息（无回合）→ done。
  *
- * TODO 联调：waiting 真实信号待 pi tool_call_start/end 事件细化（待审 vs 执行中）；
- *       stopped 真实信号待 abort/exit 事件。当前从 message 字段派生，mock 已可验收。
+ * [W1] isActive 作为 UI 层 SSOT：消除提交后到 message_start 之间空窗期的状态不一致。
+ * isActive 包含 pendingSend（用户已提交但 pi 未确认）+ isGenerating（streaming 实体存在）。
+ * 取代原 isStreaming 参数，不再受 activeId 限定。
  *
  * @param sessionId 目标 session
  * @param chat chat store 实例（读 getMessages 分区）
- * @param isStreaming 该 session 是否正在流式（当前活跃 session 的全局流式态）
+ * @param isActive 该 session 是否活跃（pendingSend ∨ isGenerating）
+ * @param isCompacting 该 session 是否处于 compact 互斥态（独立于 isActive，视觉态属 running）
  */
 export function deriveStatus(
   sessionId: string,
   chat: ReturnType<typeof useChatStore>,
-  isStreaming: boolean,
+  isActive: boolean,
+  isCompacting = false,
 ): DerivedStatus {
   const msgs = chat.getMessages(sessionId)
   const last = msgs[msgs.length - 1]
@@ -74,7 +77,7 @@ export function deriveStatus(
       return 'waiting'
     }
   }
-  if (isStreaming || last?.status === STREAMING_STATUS) return 'running'
+  if (isActive || isCompacting || last?.status === STREAMING_STATUS) return 'running'
   if (!last) return 'done'
   if (last.status === ERROR_STATUS) return 'error'
   if (last.role === 'assistant' && last.isInterrupted) return 'stopped'

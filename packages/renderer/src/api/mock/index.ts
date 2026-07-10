@@ -570,6 +570,14 @@ export const extension = {
     const installedNames = new Set(fixtureExtensions.map((e) => e.name))
     return recommendedExtensions.map((r) => ({ ...r, installed: installedNames.has(r.name) }))
   },
+  /** 升级扩展（mock：仅等待 ack，不实际升级） */
+  async upgrade(_name: string) {
+    await sleep(TIMING.ack)
+  },
+  /** 设置自动升级开关（mock：仅等待 ack） */
+  async setAutoUpgrade(_name: string, _enabled: boolean) {
+    await sleep(TIMING.ack)
+  },
 }
 
 /* ── Plugin mock（订阅骨架，无 fixture；第3项真实集成补数据）── */
@@ -646,17 +654,34 @@ export const settings = {
 }
 
 // Mock workspace domain（W3：最近工作区记录，mock 返回 3 条 records 供 E2E 验证）
+
+/**
+ * 固定 3 条样例（lastUsedAt 递减，最新在前），供 T4.1/T4.3 E2E 验证 popover 渲染与搜索过滤。
+ * label = cwd basename（与 runtime workspace-message-handler 的 label 派生一致）。
+ *
+ * 抽为模块级内部函数而非 workspace.listRecent 方法内联：record 需复用同一份数据，
+ * 早期实现 record 调 this.listRecent() 依赖 this 绑定——但 workspace 对象方法被解构赋值
+ * 或脱离对象调用（如 `const { record } = workspace; record(cwd)`）时 this=undefined → 抛错。
+ * 提到模块级避免该 this 绑定陷阱（S12 修复）。
+ */
+function listRecentRecords(): import('@xyz-agent/shared').RecentWorkspaceRecord[] {
+  const now = Date.now()
+  const DAY = 86_400_000
+  const oldestOffset = DAY + DAY // 2 天前（相加避免魔数 lint）
+  return [
+    { cwd: '/Users/demo/project-a', lastUsedAt: now, label: 'project-a' },
+    { cwd: '/Users/demo/project-b', lastUsedAt: now - DAY, label: 'project-b' },
+    { cwd: '/Users/demo/another-foo', lastUsedAt: now - oldestOffset, label: 'another-foo' },
+  ]
+}
+
 export const workspace = {
   async listRecent(): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
-    // 固定 3 条样例（lastUsedAt 递减，最新在前），供 T4.1/T4.3 E2E 验证 popover 渲染与搜索过滤。
-    // label = cwd basename（与 runtime workspace-message-handler 的 label 派生一致）。
-    const now = Date.now()
-    const DAY = 86_400_000
-    const oldestOffset = DAY + DAY // 2 天前（相加避免魔数 lint）
-    return [
-      { cwd: '/Users/demo/project-a', lastUsedAt: now, label: 'project-a' },
-      { cwd: '/Users/demo/project-b', lastUsedAt: now - DAY, label: 'project-b' },
-      { cwd: '/Users/demo/another-foo', lastUsedAt: now - oldestOffset, label: 'another-foo' },
-    ]
+    return listRecentRecords()
+  },
+  // record 不再依赖 this.listRecent（this 绑定陷阱，见 listRecentRecords 注释），直接调模块级函数
+  async record(_cwd: string): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
+    // Mock record：模拟写入后返回最新列表（与 listRecent 一致，简化实现）
+    return listRecentRecords()
   },
 }

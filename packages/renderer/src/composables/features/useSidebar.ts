@@ -18,7 +18,7 @@
  *
  * deriveStatus 仍从此处 re-export（向后兼容：历史上有调用方直接从 useSidebar import 该纯函数）。
  */
-import { onScopeDispose } from 'vue'
+import { computed, onScopeDispose } from 'vue'
 import type { SessionGroup } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -119,6 +119,21 @@ export function useSidebar() {
   const panel = usePanelStore()
   const commandStore = useCommandStore()
   const workspaceStore = useWorkspaceStore()
+
+  /**
+   * 当前焦点 panel 绑定的 session（UI 高亮 SSOT）。
+   * 从 panel.activePanelId 派生——切 panel focus 时自动跟随，驱动 sidebar 高亮 / 文件树 / overview。
+   * 与 session.activeId 解耦：activeId 收敛为导航/启动语义，不再驱动 UI 高亮。
+   * 双 panel standby 空态（leaf.sessionId=null）→ 返回 null（文件树显空态占位）。
+   */
+  const focusedSessionId = computed<string | null>(
+    () => panel.panels.find((p) => p.id === panel.activePanelId)?.sessionId ?? null,
+  )
+
+  /** 焦点 session 的 summary（FileView label/branch 用）；找不到则 null */
+  const focusedSession = computed(
+    () => session.list.find((s) => s.id === focusedSessionId.value) ?? null,
+  )
 
   /**
    * session.list server-push 订阅（#7 方案 A）。
@@ -242,7 +257,8 @@ export function useSidebar() {
    * 返回新 session id；首次启动延迟 create 时返回 null（Panel 渲染 landing 空态）。
    *
    * presetCwd：可选，预设落地页 chip 的 cwd（initApp 用最近 session 目录预填，G1.1「沿用目录做新任务」）。
-   * 未传→空 chip 态；用户点侧栏「新建任务」/⌘N 时不传（空 chip 从头选）。
+   * 未传→用 workspaceStore.defaultCwd 兑底（最近活跃工作区），避免每次都要重新选目录；
+   * store 未加载（initApp 首次启动，load 在 newSession 之后）则空 chip 态，由 initApp 后续 presetCwd 回熍。
    */
   let newTaskInFlight = false
   async function newSession(presetCwd?: string): Promise<string | null> {
@@ -250,7 +266,11 @@ export function useSidebar() {
     newTaskInFlight = true
     try {
       const flow = useNewTaskFlow()
-      await flow.startFlow(presetCwd)
+      // 不传 presetCwd 时用最近活跃工作区兑底（用户手动点「新建任务」/⌘N 场景），
+      // 避免每次都要重新点目录选择。initApp 首次启动时 store 尚未 load，defaultCwd 为 undefined，
+      // startFlow 收到 undefined 走空 chip 态，随后 initApp 自己 presetCwd 回熍。
+      const fallback = presetCwd ?? workspaceStore.defaultCwd
+      await flow.startFlow(fallback)
       const created = flow.currentSession.value
       if (!created) {
         // 首次启动延迟 create（AC-1.7）：无 session 可选，进 chat view 让 Panel 渲染 landing 空态
@@ -303,6 +323,10 @@ export function useSidebar() {
   async function deleteSession(id: string): Promise<void> {
     await sessionApi.remove(id)
     const wasActive = session.activeId === id
+    // 删除的 session 若承载在某 panel（split 模式下 standby panel 可能 focused 非 activeId），
+    // 清空该 panel 绑定，避免 panel 残留指向已删 session 的悬空引用。
+    const boundPanel = panel.findPanelBySession(id)
+    if (boundPanel) panel.loadSession(boundPanel.id, null)
     session.removeFromList(id)
     if (wasActive) {
       const next = session.list[0]
@@ -442,6 +466,8 @@ export function useSidebar() {
   }
 
   return {
+    focusedSessionId,
+    focusedSession,
     selectSession,
     newSession,
     newSessionToStandby,

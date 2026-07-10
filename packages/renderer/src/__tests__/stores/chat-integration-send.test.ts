@@ -111,11 +111,9 @@ function emit(msg: ServerMessage): void {
 
 describe('T1.4 useChat.send 全链', () => {
   it('send(text) → appendUser + addPendingSend + api.send → message_start → clearPendingSend', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-fullchain'
     const chat = useChatStore()
     const { send } = useChat()
-    await send('hello')
+    await send('s-fullchain', 'hello')
     // 1. appendUser：消息列表有 user 气泡
     const msgs = chat.getMessages('s-fullchain')
     expect(msgs.some((m) => m.role === 'user' && m.content === 'hello')).toBe(true)
@@ -133,13 +131,11 @@ describe('T1.4 useChat.send 全链', () => {
 
 describe('T1.5 send api.send 失败回滚', () => {
   it('api.send reject → clearPendingSend（[W2] 不 throw，toast 消化错误）', async () => {
-    const session = useSessionStore()
-    session.activeId = 's-fail'
     const chat = useChatStore()
     const { send } = useChat()
     apiMock.send.mockRejectedValueOnce(new Error('ws disconnected'))
     // [W2] send 失败不再 throw（与 steer/followUp/abort 对齐：clearPendingSend + toast，不 throw）
-    await expect(send('hello')).resolves.toBeUndefined()
+    await expect(send('s-fail', 'hello')).resolves.toBeUndefined()
     // clearPendingSend：isActive 恢复 false（无 streaming entity + 无 pendingSend）
     expect(chat.isActive('s-fail')).toBe(false)
   })

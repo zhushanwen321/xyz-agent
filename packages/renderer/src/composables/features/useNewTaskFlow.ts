@@ -202,8 +202,8 @@ export function useNewTaskFlow() {
       } catch (e) {
         console.warn('[useNewTaskFlow] getCommands failed, slash popover will be empty:', e)
       }
-      // activeId 已设 → useChat.send 能取到 sid
-      await chat.send(trimmed)
+      // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
+      await chat.send(newSid, trimmed)
       transition('completed') // landing→completed（首发成功，终态）
     } finally {
       controller.setCreateInFlight(false)

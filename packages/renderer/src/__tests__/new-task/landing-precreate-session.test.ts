@@ -36,6 +36,7 @@ const apiMock = vi.hoisted(() => ({
 vi.mock('@/api', () => ({
   session: { create: apiMock.create, remove: apiMock.remove },
   git: {},
+  workspace: { record: vi.fn().mockResolvedValue([]), listRecent: vi.fn().mockResolvedValue([]) },
 }))
 
 // mock useChat.send（submitFirstMessage 会调）

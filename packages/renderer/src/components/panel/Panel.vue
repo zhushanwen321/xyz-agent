@@ -12,6 +12,7 @@
   <section
     class="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
     :class="panelStateClass"
+    :style="panelStyle"
     @mousedown="onPanelMouseDown"
   >
     <PanelHeader
@@ -33,7 +34,7 @@
          - messageCount>0 → 对话流
          - new-task landing（无 session 或 flow.state==='landing'）→ Landing（chip 合法）
          - 已有空 session（有 sid 非 landing 态）→ 空对话态 + band composer（用户直输发该 session，不走 chip）
-         - isGenerating 优先不渲染 Landing（AC-2.8）。
+         - isSessionActive 优先不渲染 Landing（AC-2.8）。
          旧逻辑仅凭 messageCount===0 渲染 Landing，恢复空 session 时 flow.state=idle → chip transition
          非法（idle→dir-popover）抛错。对齐 flow 后 Landing 只在 landing 态渲染，空 session 走空对话态。 -->
     <!-- dead session 占位：进程已退出，不渲染对话流/composer，提供重开入口 -->
@@ -54,7 +55,7 @@
 
     <MessageStream v-else-if="sessionId && messageCount > 0" :session-id="sessionId" />
     <Landing
-      v-else-if="!isGenerating && isLandingView"
+      v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"
       :current-cwd="sessionDir || undefined"
       :git-branch="gitBranch"
@@ -62,7 +63,7 @@
       @retry="onRetryHistory"
     />
     <div
-      v-else-if="!isGenerating && sessionId"
+      v-else-if="!isSessionActive && sessionId"
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
       <MessageSquare class="size-6 text-subtle opacity-40" />
@@ -155,10 +156,11 @@ const messageCount = computed(() =>
 /** 生成态优先：本 Panel 的 session 正在流式时不渲染 landing（AC-2.8）。
  *  [HISTORICAL] 原用全局 chat.isGenerating，A 会话流式时点新建切到空 session（sessionId=null），
  *  空 session 的 Landing 被 !isGenerating 守卫误伤 → 落到分支兜底空态（「选择左侧会话开始」），
- *  new-task 渲染撕裂。改为 per-session：只有本 Panel 绑定的 session 在流式才算 generating。
- *  landing 态 sessionId=null → streamingSessionId 恒不等 → isGenerating=false → Landing 正常渲染。 */
-const isGenerating = computed(
-  () => !!props.sessionId && chat.isGenerating(props.sessionId),
+ *  new-task 渲染撕裂。改为 per-session：只有本 Panel 绑定的 session 在流式才算 active。
+ *  landing 态 sessionId=null → streamingSessionId 恒不等 → isSessionActive=false → Landing 正常渲染。
+ *  [W1] isActive 作为 UI 层 SSOT：消除提交后到 message_start 之间空窗期的状态不一致。 */
+const isSessionActive = computed(
+  () => !!props.sessionId && chat.isActive(props.sessionId),
 )
 /** new-task landing 视图判据：完全无 session（首次启动/点新建）或 NewTaskFlow 处于 landing 态。
  *  Landing 的 directory/branch chip 仅在 flow.state==='landing' 时点击合法，故 Landing 只在此态渲染；
@@ -166,10 +168,20 @@ const isGenerating = computed(
 const isLandingView = computed(
   () => !props.sessionId || flow.state.value === 'landing',
 )
+/** 当前 session 是否处于 compact 互斥态（#6：session.compacting 驱动，按 session 隔离）。
+ *  compact 是独立互斥态：不并入 isActive（用户不可干预压缩流程），但视觉态属 running
+ *  （圆点呼吸），且 compact 期需继续渲染 Composer 显示压缩进度，故 showPanelComposer 单列分支。 */
+const isCompacting = computed(
+  () => !!props.sessionId && chat.isCompacting(props.sessionId),
+)
 /** band 内 Composer 渲染：new-task landing 态由 Landing 内嵌 composer 卡片承接，band 不重复渲染；
- *  已绑 session（含恢复的空 session，非 landing 态）→ band 渲染 composer 供直输；生成态始终挂。 */
+ *  已绑 session（含恢复的空 session，非 landing 态）→ band 渲染 composer 供直输；生成态始终挂；
+ *  compact 期也挂（显示压缩态，composer 内部按 isCompacting 切禁用/进度）。 */
 const showPanelComposer = computed(
-  () => (!!props.sessionId && !isLandingView.value && !isSessionDead.value) || isGenerating.value,
+  () =>
+    (!!props.sessionId && !isLandingView.value && !isSessionDead.value) ||
+    isSessionActive.value ||
+    isCompacting.value,
 )
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>
@@ -193,16 +205,41 @@ async function onReviveSession(): Promise<void> {
   }
 }
 
-/** 激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + ring-1 accent + opacity 1；双 standby = opacity 0.5 hover 回升 0.78。
+/** 激活标识（对齐 draft-dual-panel.html SSOT）。
+ *  层级语义：MainPanel(main) 是唯一 float-panel（bg-surface + border + shadow + radius）。
+ *  Panel section 是它的内容区，底色按 panel 数量切两种语义——
+ *  · 单 panel：section 透明，直接继承 MainPanel 的 surface（section 即 main 内容区，不再独立浮起）。
+ *  · 双 panel：section 各自浮起（draft-dual-panel .panel 模型）——
+ *    active → bg-elevated 微亮 + ring-1 accent-ring + opacity 1（焦点浮起）；
+ *    standby → bg-surface + opacity 0.5 hover 回升 0.78（退后，设计稿明确写 opacity 表达主从）。
  *  SideDrawer 是 workspace-body 级 absolute 浮层（w-1/2，覆盖对侧），不参与 panel 的 flex 布局——
  *  panel 始终 flex-1 均分（单 panel 撑满、双 panel 各半），与 drawer 完全解耦，避免收窄态引发宽度异常。 */
 const panelStateClass = computed(() => {
   if (props.active && props.isDual) {
-    return 'bg-bg-elevated opacity-100 ring-1 ring-[var(--accent-ring)]'
+    // active：ring 表达焦点（底色走 panelStyle 的 --panel-bg）
+    return 'opacity-100 ring-1 ring-[var(--accent-ring)]'
   }
   if (!props.active && props.isDual) {
     return 'opacity-50 hover:opacity-[0.78]'
   }
+  // 单 panel：无 ring、满 opacity（底色透明继承 MainPanel）
   return ''
+})
+
+/**
+ * Panel 底色 + --panel-bg CSS 变量（供子组件如 sticky turn-meta 消费，保证浮层底色与所在 panel 一致）。
+ * 单 panel：不设 background（透明继承 MainPanel 的 bg-surface），--panel-bg=surface 供子组件浮层对齐。
+ * 双 active：background=bg-elevated，--panel-bg=bg-elevated。
+ * 双 standby：background=bg-surface，--panel-bg=surface。
+ */
+const panelStyle = computed(() => {
+  if (props.active && props.isDual) {
+    return { background: 'var(--bg-elevated)', '--panel-bg': 'var(--bg-elevated)' }
+  }
+  if (!props.active && props.isDual) {
+    return { background: 'var(--surface)', '--panel-bg': 'var(--surface)' }
+  }
+  // 单 panel：透明继承，--panel-bg 指向 surface（与 MainPanel 一致）
+  return { '--panel-bg': 'var(--surface)' }
 })
 </script>

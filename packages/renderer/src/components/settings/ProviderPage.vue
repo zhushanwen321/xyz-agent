@@ -10,7 +10,7 @@
       <span />
       <Button
         class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
-        @click="editingProvider = null"
+        @click="openAdd"
       >
         <Plus />
         添加供应商
@@ -67,7 +67,7 @@
           variant="ghost"
           class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-[13px]"
           title="编辑供应商"
-          @click.stop="editingProvider = p"
+          @click.stop="openEdit(p)"
         >
           <Pencil />
         </Button>
@@ -147,8 +147,12 @@
       </div>
     </div>
 
-    <!-- 编辑弹窗 -->
-    <ProviderEditModal :provider="editingProvider" @close="editingProvider = null" />
+    <!-- 编辑/添加弹窗。open 与 provider 解耦：open 控制开关，provider 区分新增(null)/编辑(对象) -->
+    <ProviderEditModal
+      :open="dialogOpen"
+      :provider="editingProvider"
+      @close="closeDialog"
+    />
 
     <!-- 删除确认弹窗（ConfirmDialog 原语：标题+描述+取消/危险确认；actionError 经默认 slot 注入） -->
     <ConfirmDialog
@@ -184,7 +188,9 @@ const CONTEXT_K = 1000
 const CONTEXT_M = 1_000_000
 
 const expanded = ref(new Set<string>())
+// editingProvider 与 dialogOpen 解耦：null 既表示新增，也曾被当作关闭信号，导致新增按钮无效
 const editingProvider = ref<ProviderInfo | null>(null)
+const dialogOpen = ref(false)
 const deleteTarget = ref<ProviderInfo | null>(null)
 const deleting = ref(false)
 /** 删除弹窗开关：派生自 deleteTarget（有目标即开），关闭时清空目标 */
@@ -194,6 +200,24 @@ const deleteDialogOpen = computed({
     if (!open) deleteTarget.value = null
   },
 })
+
+/** 打开新增弹窗 */
+function openAdd(): void {
+  editingProvider.value = null
+  dialogOpen.value = true
+}
+
+/** 打开编辑弹窗 */
+function openEdit(p: ProviderInfo): void {
+  editingProvider.value = p
+  dialogOpen.value = true
+}
+
+/** 关闭弹窗并清空编辑目标 */
+function closeDialog(): void {
+  dialogOpen.value = false
+  editingProvider.value = null
+}
 /** 动作错误（删除/启用失败时显示，非静默吞） */
 const actionError = ref('')
 // 默认供应商/模型：本轮无 setDefault 协议（config.setProvider 不含默认位），

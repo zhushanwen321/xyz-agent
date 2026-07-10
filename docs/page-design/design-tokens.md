@@ -6,19 +6,24 @@
 
 ## 色彩 — 暗色（默认 / 优先）
 
+> 2026-07-09 提亮校准（对标 VS Code Dark+）：原值画布过暗（bg L=0.0041），
+> 长时间使用体感"太暗"；提亮后 bg L=0.0110，与 VS Code Dark 持平。
+> subtle 一并修复到 ≥4.5:1（原 2.85:1 不达 WCAG AA）。
+> fg 提到更白的 #f7f8fc。
+
 | Token | 值 | 用途 | 来源 |
 |-------|-----|------|------|
-| `--bg` | `#0d0d0f` | 画布底层 | C 原始 |
-| `--surface` | `#151519` | 面板/卡片 | C (`--panel`) |
-| `--surface-hover` | `#1f1f26` | 面板悬停 | draft-session-item/composer-states.html `:root`（P1-1 修正：原误取 surface-2 值 #1b1b20） |
-| `--surface-2` | `#1b1b20` | 二级表面（Card-Elevated） | draft-composer-states.html `:root` |
-| `--bg-elevated` | `#1c1c20` | 浮起面板/激活面板底色 | draft-dual-panel.html `.panel.active` |
-| `--bg-input` | `#101013` | 输入区底色（Input/Textarea/Composer zone） | draft-companion-zones.html + draft-composer-states.html |
-| `--fg` | `#f0f0f5` | 主文字 | C (`--text-primary`) |
-| `--muted` | `#8a8a95` | 次级文字 | C (`--text-secondary`) |
-| `--subtle` | `#5a5a65` | 三级文字/占位 | C (`--text-tertiary`) |
-| `--border` | `rgba(255,255,255,0.06)` | 分隔线 | C 原始 |
-| `--border-strong` | `rgba(255,255,255,0.12)` | 强调分隔 | 补全 |
+| `--bg` | `#1a1b1f` | 画布底层 | 2026-07-09 提亮（原 C 原始 `#0d0d0f`） |
+| `--surface` | `#222329` | 面板/卡片 | 2026-07-09 提亮（原 C `#151519`） |
+| `--surface-hover` | `#2d2e36` | 面板悬停 | 2026-07-09 提亮（原 `#1f1f26`） |
+| `--surface-2` | `#282930` | 二级表面（Card-Elevated） | 2026-07-09 提亮（原 `#1b1b20`） |
+| `--bg-elevated` | `#2a2b32` | 浮起面板/激活面板底色 | 2026-07-09 提亮（原 `#1c1c20`） |
+| `--bg-input` | `#1e1f24` | 输入区底色（Input/Textarea/Composer zone） | 2026-07-09 提亮（原 `#101013`） |
+| `--fg` | `#f7f8fc` | 主文字 | 2026-07-09 提亮（原 `#f0f0f5`） |
+| `--muted` | `#a8a8b5` | 次级文字 | 2026-07-09 提亮（原 `#8a8a95`） |
+| `--subtle` | `#82828f` | 三级文字/占位 | 2026-07-09 修复 a11y（原 `#5a5a65`，对比度 2.85→4.5:1） |
+| `--border` | `rgba(255,255,255,0.08)` | 分隔线 | 2026-07-09 提亮（原 0.06，提亮 bg 后可见度不足） |
+| `--border-strong` | `rgba(255,255,255,0.15)` | 强调分隔 | 2026-07-09 提亮（原 0.12） |
 | `--accent` | `#4f8ef7` | 主色/链接/聚焦 | C 原始 |
 | `--accent-hover` | `#6ba3ff` | 主色悬停 | 补全 |
 | `--accent-soft` | `rgba(79,142,247,0.12)` | 主色背景填充 | 补全 |
@@ -104,7 +109,7 @@
 ## 已知裂缝（需对齐）
 
 - **impl 变量归一**（✅ 已裁决 ADR-0021-B / 选项②，2026-06-20）：真实代码自造的 `--section-bg` / `--divider` / `--accent-light` **迁移到本文件 SSOT 已有名**，不补进 tokens（避免同语义双名）：`--section-bg`→`--surface`、`--divider`→`--border`、`--accent-light`→`--accent-soft`。draft 已用 SSOT 名（无需改）；真身 CSS 待迁移。见 `settings/handoff-system.md §13`。
-- **默认主题方向**（✅ 已落地，2026-06-27）：**暗色冷蓝为真默认**（`--bg #0d0d0f` / accent `#4f8ef7`）。`stores/settings.ts` 重构为单一真相源，DEFAULT_SYSTEM = `{ theme:'dark', themePreset:'cold-blue', locale:'zh-CN' }`，`setSystem()` 同步 `<html data-theme>` 到 DOM —— 主题切换已从「死设置」变为实际生效。
+- **默认主题方向**（✅ 已落地，2026-06-27）：**暗色冷蓝为真默认**（`--bg #1a1b1f` / accent `#4f8ef7`，2026-07-09 提亮校准）。`stores/settings.ts` 重构为单一真相源，DEFAULT_SYSTEM = `{ theme:'dark', themePreset:'cold-blue', locale:'zh-CN' }`，`setSystem()` 同步 `<html data-theme>` 到 DOM —— 主题切换已从「死设置」变为实际生效。
 
 ## 待办
 
@@ -137,6 +142,6 @@
 
 **已知命名冲突（维持 v3，不覆盖）**：
 - `--accent`：v3=主色蓝（强调/品牌，19 处业务代码 + tailwind config 锁定）；shadcn=hover 软底（中性）。语义相反，维持 v3 主色蓝（W01 零回归）。副作用：ghost/outline Button 的 `hover:bg-accent` hover 成主色蓝（既有状态，非本修复引入）。
-- `--muted`：v3=次级文字色（#8a8a95）；shadcn=背景色。维持 v3。副作用：`bg-muted`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
+- `--muted`：v3=次级文字色（#a8a8b5，2026-07-09 提亮后）；shadcn=背景色。维持 v3。副作用：`bg-muted`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
 
 两项冲突是 shadcn 命名与 v3 命名的根本不兼容，纯 token 别名无法消除；维持 v3 语义保证 W01 零回归，副作用可接受。若未来要 ghost hover 中性化，需在 button variant 改用 `hover:bg-surface-hover`（改组件，非 token 层）。

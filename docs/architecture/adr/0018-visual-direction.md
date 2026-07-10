@@ -4,7 +4,9 @@
 
 ## 决策
 
-以 `docs/page-design/zcode-demo/`（冷蓝 `#4f8ef7`、纯黑 `#0d0d0f`、Inter、暗色）作为产品**唯一视觉标准 (single source of truth)**，默认主题基调为**暗色优先，亮色为备选**。
+以 `docs/page-design/zcode-demo/`（冷蓝 `#4f8ef7`、暗色画布、Inter）作为产品**唯一视觉标准 (single source of truth)**，默认主题基调为**暗色优先，亮色为备选**。
+
+> **注**：原始画布色值为 `#0d0d0f`，2026-07-09 提亮校准为 `#1a1b1f`（对标 VS Code Dark+，减轻长时间用眼疲劳，详见 `design-tokens.md` 暗色章节）。本 ADR 的视觉方向裁决（冷蓝暗色优先）不变。
 
 完整 token 见 `docs/design-tokens.md`（本 ADR 的规范附件，唯一可引用的色值/字体/圆角源）。
 
