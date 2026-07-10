@@ -1,17 +1,20 @@
 /**
  * Composer 输入历史导航（shell 风格 ↑/↓ 翻阅已发送消息）。
  *
- * 行为规格（用户确认）：
- * - ↑（edit 态 + history 非空）：保存草稿 → 回填 H[0]（最后一条）→ browsing
- * - ↑（edit 态 + history 空）：不响应（保持草稿，让光标正常移动）
+ * ⚠️ 权威行为规格见 `.xyz-harness/2026-07-10-composer-history-navigation/spec.md`
+ * （FR1 视觉行导航 + FR2 光标定位 + FR3 换行往返 + FR4 跨 session 草稿持久化）。
+ * 本文件头注释仅为快速索引，规则变更先改 spec 再同步此处。
+ *
+ * 状态机摘要（详见 spec FR1 三阶段模型）：
+ * - ↑（edit 态）：三阶段——非首行移光标 → 首行非行首归位 → 首行行首进 browsing
  * - ↑（browsing 态 + 未到最老）：index++ → 回填 H[index]
  * - ↑（browsing 态 + 已在最老）：保持不动
  * - ↓（browsing 态 + 未到最近）：index-- → 回填 H[index]
  * - ↓（browsing 态 + 已在最近）：恢复草稿 → edit 态
- * - 重置逻辑：用户在 browsing 态修改了内容 → 退出 browsing，下次按上重新从最后一条开始
- * - 回填后光标定位：↑ 翻历史→首字符前（连续回溯），↓ 翻历史/恢复草稿→末尾。
+ * - 回填后光标定位（spec FR2）：↑→首位（连续回溯），↓→末位
+ * - 重置：用户在 browsing 态修改内容 → 退出 browsing，下次 ↑ 重新从最后一条开始
  *
- * 历史来源（方案 A，session 消息流派生）：chatStore.messages[sessionId] 中
+ * 历史来源（spec Glossary H[index]）：chatStore.messages[sessionId] 中
  * role==='user' && status==='complete' 的 content，按时间倒序，连续相同文本去重。
  */
 import { computed, ref, watch, type Ref } from 'vue'

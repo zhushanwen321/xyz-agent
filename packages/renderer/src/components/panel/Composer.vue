@@ -95,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ArrowUp, Loader2, Square } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
@@ -181,6 +181,30 @@ const { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing } = useCompose
   },
 )
 
+// FR4: per-session 草稿存储（内存，不持久化到磁盘）
+const drafts = new Map<string, string>()
+// FR4: session 切换时保存旧 session 草稿，恢复新 session 草稿
+watch(
+  () => props.sessionId,
+  (newId, oldId) => {
+    if (oldId) {
+      // browsing 态下 getText() 返回历史条目，应保存用户实际输入的 savedDraft
+      drafts.set(oldId, isBrowsing.value ? (draft.value || '') : (inputRef.value?.getText() ?? ''))
+    }
+    resetBrowsing()
+    if (newId) {
+      const saved = drafts.get(newId)
+      if (saved) {
+        draft.value = saved
+        inputRef.value?.setText(saved, 'end')
+      } else {
+        draft.value = ''
+        inputRef.value?.clear()
+      }
+    }
+  },
+)
+
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
@@ -193,9 +217,10 @@ function onInputChange(text: string): void {
   resetBrowsing()
 }
 
-/** 发送成功后清空输入区（DOM + draft） */
+/** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
 function clearInput(): void {
   draft.value = ''
+  if (props.sessionId) drafts.delete(props.sessionId)
   inputRef.value?.clear()
 }
 
@@ -325,25 +350,24 @@ async function onAbort(): Promise<void> {
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
- *  ↑/↓ 翻阅输入历史（shell 风格 + 三段式「边缘行优先」）：
- *    edit 态 ↑：非首行→上移视觉行；首行非行首→归位行首；首行行首→进 browsing 翻历史
- *    browsing 态 ↑/↓：直接翻历史（跳过视觉行移动）
- *    ↓：对称（browsing 态到最近一条后恢复草稿回 edit 态） */
+ *  ↑/↓ 翻阅输入历史——权威规则见
+ *  `.xyz-harness/2026-07-10-composer-history-navigation/spec.md` FR1（三阶段模型）。
+ *  摘要：edit/browsing 态统一三阶段——先视觉行移动（caretRangeFromPoint），到边缘才翻历史。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
   if (e.isComposing) return
   // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
-  // browsing 态（正在浏览历史）跳过视觉行移动，↑/↓ 直接翻历史——shell 行为
+  // edit/browsing 态统一三阶段模型：先视觉行移动，到边缘才翻历史（spec FR1）
   if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
-    if (!isBrowsing.value && inputRef.value?.moveCaretVertical('up') === 'moved') return
+    if (inputRef.value?.moveCaretVertical('up') === 'moved') return
     handleArrowUp()
     return
   }
   if (e.key === 'ArrowDown' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
-    if (!isBrowsing.value && inputRef.value?.moveCaretVertical('down') === 'moved') return
+    if (inputRef.value?.moveCaretVertical('down') === 'moved') return
     handleArrowDown()
     return
   }

@@ -46,26 +46,26 @@ interface ContenteditableCallbacks {
 /**
  * 视觉行上/下移动（模块级纯函数）。
  *
- * 利用浏览器原生 `Selection.modify('move', dir, 'line')` 实现视觉行跨行移动。
- * 该 API 由浏览器基于 layout 计算，自动遵守 soft-wrap（中文/长连续文本换行），
- * 在 Chromium 的 contenteditable 里对单 `<div>` + `<br>` + soft-wrap 混合场景可靠
- *（CDP 实测验证：中文 soft-wrap 3 行 + `<br>` 硬换行均正确）。
+ * ⚠️ 权威规则见 `.xyz-harness/2026-07-10-composer-history-navigation/spec.md` FR1。
  *
- * [HISTORICAL] 为何不用 caretPositionFromPoint 手动探测：
- * 旧实现（已删除）用 getClientRects + caretPositionFromPoint 逐行探测目标坐标，
- * 存在多个问题：(1) 折叠选区的 getBoundingClientRect 在行末返回全 0 rect（0 rect 陷阱），
- * 需要插入零宽字符 span 兜底；(2) caretPositionFromPoint 在行尾标点、emoji 宽度等
- * 边界 case 不稳定；(3) 探测后需 verify-after-move 防回环，逻辑复杂。
- * Selection.modify 把视觉行计算完全交给浏览器引擎，无以上问题。
+ * 当前实现利用浏览器原生 `Selection.modify('move', dir, 'line')` 做跨行移动 + 边缘探测。
  *
- * 关键行为（CDP 实测确认）：
- * - 光标在非边缘视觉行 → modify 跨行移动（top 变化），返回 'moved'
- * - 光标在第一行非行首 → modify('backward','line') 移到行首（offset=0），返回 'moved'
- * - 光标在最后一行非行末 → modify('forward','line') 移到行末，返回 'moved'
- * - 光标已在第一行行首 / 最后一行行末 → modify 不动（moved=false），返回 'at-edge'
+ * [HISTORICAL] Selection.modify 对软换行失效（spec 缺陷 1，已修复）：
+ * Selection.modify('move', dir, 'line') 在软换行 contenteditable 中：
+ * 'forward'/'backward' 只在当前视觉行内水平 snap，'up'/'down' 完全不移动。
+ * 已改用 getClientRects + caretRangeFromPoint 方案（见下方实现）。详见 spec FR1 + 缺陷 1。
  *
- * 「移到行首/行末」的副作用正好满足三段式需求的阶段 2（边缘行内归位），
- * 所以调用方只需区分 'moved'（阶段 1+2，消费事件）和 'at-edge'（阶段 3，翻历史）。
+ * 实现方案（getClientRects + caretRangeFromPoint）：
+ * 1. Range.getClientRects() 获取每视觉行的权威 rect（布局引擎直接提供，无坐标猜测）
+ * 2. 用 caretRect.top 匹配 lineRects 确定当前在第几视觉行
+ * 3. 计算目标行 index（current ± 1），越界 → 'at-edge'
+ * 4. caretRangeFromPoint(targetX, targetLine.top + 3px) 定位目标行内部
+ *    - Y: lineRect.top + 3px（行内部，避开行顶边界 quirks）
+ *    - X: paddingLeft + 20px（避开左边缘 quirks，caretRangeFromPoint 在行边界
+ *      会 snap 到上一行末尾）
+ * 5. 0-rect 陷阱回退 Selection.modify
+ *
+ * 调用方区分 'moved'（消费事件）和 'at-edge'（翻历史）。
  */
 function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved' | 'at-edge' {
   if (!el) return 'at-edge'
@@ -74,15 +74,107 @@ function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved
   const before = sel.getRangeAt(0)
   if (!el.contains(before.startContainer)) return 'at-edge'
 
-  const beforeContainer = before.startContainer
-  const beforeOffset = before.startOffset
+  // 1. Build visual line map via getClientRects — the layout engine's
+  //    authoritative per-line bounding rects, no coordinate guessing needed.
+  const fullRange = document.createRange()
+  fullRange.selectNodeContents(el)
+  const lineRects = fullRange.getClientRects()
+  if (lineRects.length <= 1) return 'at-edge'  // single line, nowhere to move
 
-  // 'backward'/'forward' 比 'up'/'down' 兼容性更好（MDN 推荐），Chrome 两者都支持
-  sel.modify('move', dir === 'up' ? 'backward' : 'forward', 'line')
+  // 2. Find current caret's visual line by matching caretRect.top against line rects
+  const caretRect = before.getBoundingClientRect()
+  if (caretRect.top === 0 && caretRect.bottom === 0) {
+    // 0-rect trap: fall back to Selection.modify
+    const bc = before.startContainer, bo = before.startOffset
+    sel.modify('move', dir, 'line')
+    const after = sel.getRangeAt(0)
+    return (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved'
+  }
 
-  const after = sel.getRangeAt(0)
-  const moved = !(after.startContainer === beforeContainer && after.startOffset === beforeOffset)
-  return moved ? 'moved' : 'at-edge'
+  // Find which visual line the caret is on.
+  // Strategy: exact top match first (caret at line start), then closest center.
+  // At line boundaries (e.g. line 0 bottom=664, line 1 top=666, caret=666)
+  // both lines match any tolerance — top match resolves this correctly.
+  let currentLine = -1
+  for (let i = 0; i < lineRects.length; i++) {
+    if (Math.abs(caretRect.top - lineRects[i].top) <= 1) { currentLine = i; break }
+  }
+  if (currentLine === -1) {
+    let minDist = Infinity
+    for (let i = 0; i < lineRects.length; i++) {
+      const MIDPOINT_DIVISOR = 2
+      const center = (lineRects[i].top + lineRects[i].bottom) / MIDPOINT_DIVISOR
+      const dist = Math.abs(caretRect.top - center)
+      if (dist < minDist) { minDist = dist; currentLine = i }
+    }
+  }
+  if (currentLine === -1) return 'at-edge'  // can't determine current line
+
+  // 3. Calculate target line
+  const targetLine = dir === 'up' ? currentLine - 1 : currentLine + 1
+  if (targetLine >= lineRects.length) return 'at-edge'  // ↓ beyond last line
+  if (targetLine < 0) {
+    // ↑ beyond first line: snap to text start if not already there,
+    // otherwise signal at-edge for history flip.
+    const firstText = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()
+    const isAtTextStart = firstText != null && before.startContainer === firstText && before.startOffset === 0
+    if (isAtTextStart) return 'at-edge'
+    const range = document.createRange()
+    range.setStart(firstText!, 0)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    return 'moved'
+  }
+
+  // 4. Scroll target line into view if needed.
+  //    getClientRects returns viewport-relative rects; caretRangeFromPoint also
+  //    uses viewport coords. When the target line is scrolled out of view
+  //    (rect.top < elRect.top or rect.bottom > elRect.bottom), the caret
+  //    lookup would fail. Scroll first, then re-read rects (scroll changes them).
+  const elRect = el.getBoundingClientRect()
+  const cs = getComputedStyle(el)
+  const LINE_INTERIOR_OFFSET = 3
+  let targetLineTop = lineRects[targetLine].top
+  const NEEDS_SCROLL_MARGIN = 5
+  if (targetLineTop < elRect.top + NEEDS_SCROLL_MARGIN || targetLineTop > elRect.bottom - NEEDS_SCROLL_MARGIN) {
+    el.scrollTop += targetLineTop - elRect.top - parseFloat(cs.paddingTop) - NEEDS_SCROLL_MARGIN
+    // Re-read line rects after scroll (viewport positions changed)
+    const freshRange = document.createRange()
+    freshRange.selectNodeContents(el)
+    const freshRects = freshRange.getClientRects()
+    if (targetLine < freshRects.length) targetLineTop = freshRects[targetLine].top
+  }
+  const targetY = targetLineTop + LINE_INTERIOR_OFFSET
+  // X: text area left edge + offset to avoid left-edge quirks
+  const BOUNDARY_QUIRK_OFFSET = 20
+  const targetX = elRect.left + parseFloat(cs.paddingLeft) + BOUNDARY_QUIRK_OFFSET
+
+  const target = document.caretRangeFromPoint(targetX, targetY)
+  if (!target || !el.contains(target.startContainer)) return 'at-edge'
+
+  // 5. Verify the target is a genuinely different position
+  if (target.startContainer === before.startContainer && target.startOffset === before.startOffset) {
+    return 'at-edge'
+  }
+
+  // 5.5. Verify the target actually landed on the target line.
+  //      caretRangeFromPoint at left-edge has quirks: it can return a position
+  //      on the wrong line (e.g. targeting line 1 start but landing on line 0 end,
+  //      or targeting line 0 end but landing at offset 2 instead of true line start).
+  //      If the result is still on the current line, treat as 'at-edge' — the
+  //      caret didn't actually cross a line boundary.
+  const targetRect = target.getBoundingClientRect()
+  if (targetRect.top !== 0 || targetRect.bottom !== 0) {
+    const onTargetLine = Math.abs(targetRect.top - lineRects[targetLine].top) <= 1
+    const onCurrentLine = Math.abs(targetRect.top - lineRects[currentLine].top) <= 1
+    if (!onTargetLine && onCurrentLine) return 'at-edge'
+  }
+
+  // 6. Commit the move
+  sel.removeAllRanges()
+  sel.addRange(target)
+  return 'moved'
 }
 
 /**
@@ -427,7 +519,14 @@ export function useContenteditableInput(
   function setText(text: string, caretPosition: 'start' | 'end' = 'end'): void {
     const el = getEl()
     if (!el) return
-    el.textContent = text
+    // \n → <br>：contenteditable 中 \n 是字面字符不渲染为换行，
+    // 需用 <br> 元素分隔文本节点。纯文本 split/join，无 innerHTML/XSS 风险。
+    el.replaceChildren()
+    const parts = text.split('\n')
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) el.appendChild(document.createElement('br'))
+      if (parts[i]) el.appendChild(document.createTextNode(parts[i]))
+    }
     savedRange = null
     el.focus()
     // 光标需定位到文本节点内部（而非元素节点边界），否则 Selection.modify 会先把光标
