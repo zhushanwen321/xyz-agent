@@ -34,7 +34,7 @@
          - messageCount>0 → 对话流
          - new-task landing（无 session 或 flow.state==='landing'）→ Landing（chip 合法）
          - 已有空 session（有 sid 非 landing 态）→ 空对话态 + band composer（用户直输发该 session，不走 chip）
-         - isGenerating 优先不渲染 Landing（AC-2.8）。
+         - isSessionActive 优先不渲染 Landing（AC-2.8）。
          旧逻辑仅凭 messageCount===0 渲染 Landing，恢复空 session 时 flow.state=idle → chip transition
          非法（idle→dir-popover）抛错。对齐 flow 后 Landing 只在 landing 态渲染，空 session 走空对话态。 -->
     <!-- dead session 占位：进程已退出，不渲染对话流/composer，提供重开入口 -->
@@ -55,7 +55,7 @@
 
     <MessageStream v-else-if="sessionId && messageCount > 0" :session-id="sessionId" />
     <Landing
-      v-else-if="!isGenerating && isLandingView"
+      v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"
       :current-cwd="sessionDir || undefined"
       :git-branch="gitBranch"
@@ -63,7 +63,7 @@
       @retry="onRetryHistory"
     />
     <div
-      v-else-if="!isGenerating && sessionId"
+      v-else-if="!isSessionActive && sessionId"
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
       <MessageSquare class="size-6 text-subtle opacity-40" />
@@ -156,10 +156,10 @@ const messageCount = computed(() =>
 /** 生成态优先：本 Panel 的 session 正在流式时不渲染 landing（AC-2.8）。
  *  [HISTORICAL] 原用全局 chat.isGenerating，A 会话流式时点新建切到空 session（sessionId=null），
  *  空 session 的 Landing 被 !isGenerating 守卫误伤 → 落到分支兜底空态（「选择左侧会话开始」），
- *  new-task 渲染撕裂。改为 per-session：只有本 Panel 绑定的 session 在流式才算 generating。
- *  landing 态 sessionId=null → streamingSessionId 恒不等 → isGenerating=false → Landing 正常渲染。
+ *  new-task 渲染撕裂。改为 per-session：只有本 Panel 绑定的 session 在流式才算 active。
+ *  landing 态 sessionId=null → streamingSessionId 恒不等 → isSessionActive=false → Landing 正常渲染。
  *  [W1] isActive 作为 UI 层 SSOT：消除提交后到 message_start 之间空窗期的状态不一致。 */
-const isGenerating = computed(
+const isSessionActive = computed(
   () => !!props.sessionId && chat.isActive(props.sessionId),
 )
 /** new-task landing 视图判据：完全无 session（首次启动/点新建）或 NewTaskFlow 处于 landing 态。
@@ -180,7 +180,7 @@ const isCompacting = computed(
 const showPanelComposer = computed(
   () =>
     (!!props.sessionId && !isLandingView.value && !isSessionDead.value) ||
-    isGenerating.value ||
+    isSessionActive.value ||
     isCompacting.value,
 )
 /** getHistory 失败态（landing 重试出口，AC-2.6） */

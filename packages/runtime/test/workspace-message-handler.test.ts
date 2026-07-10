@@ -103,6 +103,39 @@ describe('WorkspaceMessageHandler — T1.9 RPC 贯穿', () => {
       payload: { records: mockRecords },
     })
   })
+
+  it('workspace.record 空 cwd → 仍 reply workspace.recentList（W6：校验失败不破坏 RPC 契约）', async () => {
+    const { WorkspaceMessageHandler } = await import('../src/transport/workspace-message-handler.js')
+    const mockRecords = [{ cwd: '/a', lastUsedAt: 1000, label: 'a' }]
+    const cap = { replies: [] as Array<{ id: string | undefined; type: string; payload: Record<string, unknown> }> }
+    const workspaceService = {
+      record: vi.fn(),
+      list: vi.fn().mockReturnValue(mockRecords),
+    }
+    const ctx = {
+      send: vi.fn(),
+      sendError: vi.fn(),
+      reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
+        cap.replies.push({ id, type, payload })
+      }),
+      workspaceService,
+    }
+    const handler = new WorkspaceMessageHandler(ctx as unknown as ConstructorParameters<typeof WorkspaceMessageHandler>[0])
+    const msg = { type: 'workspace.record', id: 'req4', payload: { cwd: '   ' } } as unknown as ClientMessage
+    const WS = {} as never
+
+    await handler.handleWorkspaceMessage(msg, WS)
+
+    // 空 cwd 不应 record（不污染最近工作区列表）
+    expect(workspaceService.record).not.toHaveBeenCalled()
+    // 但仍必须 reply，否则前端 pending Promise 永不 resolve（破坏 RPC 契约）
+    expect(cap.replies).toHaveLength(1)
+    expect(cap.replies[0]).toMatchObject({
+      id: 'req4',
+      type: 'workspace.recentList',
+      payload: { records: mockRecords },
+    })
+  })
 })
 
 // ── T2.1-T2.5: 写入时机接入 ────────────────────────────────────

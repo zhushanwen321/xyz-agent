@@ -115,7 +115,7 @@
            用 --panel-bg（Panel 注入，随 panel 状态变化）不透明遮挡滚动文字。 -->
       <div
         v-if="turn.assistants.length > 0"
-        :class="turn.isWorking ? 'sticky top-0 z-[1] bg-[var(--panel-bg)]' : ''"
+        :class="turn.isWorking ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))]' : ''"
       >
       <Button
         variant="ghost"

@@ -359,9 +359,8 @@ function linkifyFilePathsHtml(content: string, localFiles?: Set<string>): string
  */
 export async function renderMarkdown(content: string, env?: MarkdownEnv): Promise<string> {
   const md = await getMarkdown()
-  // trimEnd：markdown-it 输出末尾带格式化 \n（如 "<p>hi</p>\n"），在 whitespace-pre-wrap
-  // 容器里会被渲染成可见空行（用户气泡比实际内容多一行）。HTML 结构不受影响（块级元素
-  // 末尾的空白文本节点是无意义的）。
+  // trimEnd：markdown-it 输出末尾带格式化 \n（如 "<p>hi</p>\n"），防御性清理。
+  // breaks:true 后软换行走 <br>，不再依赖 pre-wrap 容器，但末尾空白文本节点无意义，保留清理。
   return md.render(content, env ?? {}).trimEnd()
 }
 

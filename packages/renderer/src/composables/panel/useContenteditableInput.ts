@@ -239,60 +239,24 @@ export function useContenteditableInput(
     // 正常情况：折叠选区所在行有内容，getBoundingClientRect 返回有效行矩形
     const rect = range.getBoundingClientRect()
     if (rect.top !== 0 || rect.bottom !== 0 || rect.height !== 0) return rect
-    // 0 rect 兜底：空行内折叠选区，插入零宽字符取其视觉位置再移除
-    // ZWSP 不可见但占位，getBoundingClientRect 能返回该行真实坐标
+    // 0 rect 兜底：空行内折叠选区，插入零宽字符取其视觉位置再移除。
+    // range 是调用方传入的 clone，probe 操作不影响实际 selection——无需重建光标。
     const probe = document.createTextNode('\u200B')
-    range.insertNode(probe)
-    const probeRange = document.createRange()
-    probeRange.selectNode(probe)
-    const probeRect = probeRange.getBoundingClientRect()
-    // [CRITICAL] 不再用指向游离 probe 节点的 Range（setStartAfter(probe)）恢复光标——
-    // probe.remove() 后该 Range 边界仍指向脱离 DOM 的节点，addRange 能否正确恢复依赖
-    // 浏览器对失效 Range 的容错（Chromium 可用但脆弱）。改为先记录 probe 在父节点中的
-    // 文本偏移，移除 probe + normalize 合并相邻文本节点后，在合并后的文本节点上重建 Range。
-    // probe 插在原光标位置，故 probe 之前所有文本长度 = 原光标在文本中的偏移量；移除 probe
-    // 后该偏移量即新合并文本节点上的正确光标位置（等价于旧的 setStartAfter(probe) + collapse）。
-    const probeParent = probe.parentNode
-    let textOffset = 0
-    if (probeParent) {
-      for (const child of Array.from(probeParent.childNodes)) {
-        if (child === probe) break
-        textOffset += child.nodeType === Node.TEXT_NODE ? (child.textContent ?? '').length : 0
+    try {
+      range.insertNode(probe)
+      const probeRange = document.createRange()
+      probeRange.selectNode(probe)
+      const probeRect = probeRange.getBoundingClientRect()
+      if (probeRect.top === 0 && probeRect.bottom === 0) return null
+      return probeRect
+    } finally {
+      // try/finally 确保中途异常也不泄漏 ZWSP 到 DOM
+      const parent = probe.parentNode
+      probe.remove()
+      if (parent?.nodeType === Node.ELEMENT_NODE) {
+        ;(parent as Element).normalize()
       }
     }
-    // 移除探针并合并被 insertNode 拆分的相邻文本节点，避免碎片化影响后续光标定位
-    probe.remove()
-    if (probeParent && probeParent.nodeType === Node.ELEMENT_NODE) {
-      ;(probeParent as Element).normalize()
-    }
-    // 在 normalize 后的文本节点上，用记录的偏移量重建折叠 Range 恢复光标
-    const sel = window.getSelection()
-    if (sel && probeParent) {
-      const newRange = document.createRange()
-      let remaining = textOffset
-      let placed = false
-      for (const child of Array.from(probeParent.childNodes)) {
-        if (child.nodeType !== Node.TEXT_NODE) continue
-        const len = (child.textContent ?? '').length
-        if (remaining <= len) {
-          newRange.setStart(child, remaining)
-          newRange.collapse(true)
-          placed = true
-          break
-        }
-        remaining -= len
-      }
-      if (!placed) {
-        // 降级：文本偏移落在非文本边界或 probeParent 无文本节点（happy-dom / 空行仅 <br>），
-        // 放到 probeParent 末尾——与旧 setStartAfter(probe)（probe 在末尾）行为一致
-        newRange.selectNodeContents(probeParent)
-        newRange.collapse(false)
-      }
-      sel.removeAllRanges()
-      sel.addRange(newRange)
-    }
-    if (probeRect.top === 0 && probeRect.bottom === 0) return null
-    return probeRect
   }
 
   function scrollCursorIntoView(): void {

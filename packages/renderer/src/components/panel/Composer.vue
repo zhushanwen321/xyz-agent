@@ -333,15 +333,15 @@ function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
   if (e.isComposing) return
-  // shift+方向键是选区扩展，放行原生行为（不拦截）
+  // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
   // browsing 态（正在浏览历史）跳过视觉行移动，↑/↓ 直接翻历史——shell 行为
-  if (e.key === 'ArrowUp' && !e.shiftKey) {
+  if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     if (!isBrowsing.value && inputRef.value?.moveCaretVertical('up') === 'moved') return
     handleArrowUp()
     return
   }
-  if (e.key === 'ArrowDown' && !e.shiftKey) {
+  if (e.key === 'ArrowDown' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     if (!isBrowsing.value && inputRef.value?.moveCaretVertical('down') === 'moved') return
     handleArrowDown()

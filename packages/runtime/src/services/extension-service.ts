@@ -95,6 +95,17 @@ export class ExtensionService {
   /** 文件型 extension 路径（如 xyz-agent-extension.js），打包/开发模式不同 */
   private extensionFilePath: string
 
+  /** npm install 串行锁——多个扩展共享同一 --prefix 目录（~/.xyz-agent/pi/agent/npm/），
+   * npm 不支持对同一 prefix 的并发安装，并发会损坏 node_modules。
+   * 所有写操作（install/uninstall/upgrade/autoUpgrade）走此锁串行化。 */
+  private installChain: Promise<void> = Promise.resolve()
+  private withInstallLock<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.installChain.then(fn)
+    // 吞掉错误使链不断裂（错误由调用方处理）
+    this.installChain = result.then(() => undefined, () => undefined)
+    return result
+  }
+
   constructor(options: ExtensionServiceOptions) {
     this.settingsDir = options.settingsDir
     this.installer = options.installer
@@ -238,59 +249,32 @@ export class ExtensionService {
    * 杜绝并发安装的 read-modify-write 竞态（D17 收口）。
    */
   async installExtension(source: string): Promise<void> {
-    if (!source.startsWith('npm:')) {
-      throw new Error(`Unsupported source: ${source}. Only npm:xxx format is supported.`)
-    }
-
-    const pkgName = source.slice(NPM_PREFIX_LENGTH)
-    const npmDir = join(this.settingsDir, 'npm')
-
-    // 确保 npm 目录有 package.json
-    if (!existsSync(npmDir)) {
-      mkdirSync(npmDir, { recursive: true })
-    }
-    const pkgJsonPath = join(npmDir, 'package.json')
-    if (!existsSync(pkgJsonPath)) {
-      writeFileSync(pkgJsonPath, JSON.stringify({ private: true }), 'utf-8')
-    }
-
-    const nodeModulesDir = join(npmDir, 'node_modules')
-
-    // 执行 npm install（经 IInstaller port，infra 实现）
-    try {
-      await this.installer.installNpm(pkgName, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
-    } catch (e) {
-      const msg = toErrorMessage(e)
-      // NpmInstallError 带 code 字段；结构化读取，不 instanceof 具体类（依赖倒置）
-      const errCode = (e as { code?: string }).code
-      const code = errCode === 'extract' || errCode === 'integrity'
-        ? 'network' as const
-        : errCode ?? this.classifyNpmError(msg)
-      throw new ExtensionInstallError(
-        code,
-        `npm install failed: ${msg}`,
-        code === 'not_found' ? 'Check the package name, scope, and registry URL.' : undefined,
-      )
-    }
-
-    // 验证是否为有效的 pi extension
-    const pkgInstallDir = join(npmDir, 'node_modules', pkgName)
-    if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
-      // 回滚
-      try {
-        await this.installer.uninstallNpm(pkgName, nodeModulesDir)
-      } catch (e) {
-        log.warn(`[extension-service] rollback uninstall failed for ${pkgName}: ${toErrorMessage(e)}`)
+    return this.withInstallLock(async () => {
+      if (!source.startsWith('npm:')) {
+        throw new Error(`Unsupported source: ${source}. Only npm:xxx format is supported.`)
       }
-      throw new ExtensionInstallError(
-        'not_extension',
-        `"${pkgName}" is not a valid pi extension.`,
-        'Check that the package has pi manifest fields (keywords: ["pi-package"], peerDependencies with pi-coding-agent, or a "pi" field in package.json).',
-      )
-    }
 
-    // 写入 settings.json packages[]（经 IExtensionSettings port → pi-settings-store 互斥 RMW）
-    await this.extSettings.addPackage(source)
+      const pkgName = source.slice(NPM_PREFIX_LENGTH)
+      if (!isValidNpmPackageName(pkgName)) {
+        throw new ExtensionInstallError('not_found', `Invalid npm package name: ${pkgName}`)
+      }
+      const npmDir = join(this.settingsDir, 'npm')
+
+      // 确保 npm 目录有 package.json
+      if (!existsSync(npmDir)) {
+        mkdirSync(npmDir, { recursive: true })
+      }
+      const pkgJsonPath = join(npmDir, 'package.json')
+      if (!existsSync(pkgJsonPath)) {
+        writeFileSync(pkgJsonPath, JSON.stringify({ private: true }), 'utf-8')
+      }
+
+      // npm install + 错误分类 + isValidPiExtension 验证 + 失败回滚
+      await this.installAndValidate(pkgName, npmDir)
+
+      // 写入 settings.json packages[]（经 IExtensionSettings port → pi-settings-store 互斥 RMW）
+      await this.extSettings.addPackage(source)
+    })
   }
 
   /**
@@ -298,27 +282,29 @@ export class ExtensionService {
    * settings 写经 IExtensionSettings port（pi-settings-store 互斥 RMW），disabled 同 port 管理。
    */
   async uninstallExtension(name: string): Promise<void> {
-    const npmDir = join(this.settingsDir, 'npm')
-    const source = `npm:${name}`
+    return this.withInstallLock(async () => {
+      const npmDir = join(this.settingsDir, 'npm')
+      const source = `npm:${name}`
 
-    // 从 settings packages[] 移除（经 port → pi-settings-store 互斥 RMW）
-    await this.extSettings.removePackage(source)
+      // 从 settings packages[] 移除（经 port → pi-settings-store 互斥 RMW）
+      await this.extSettings.removePackage(source)
 
-    // 从 disabled-packages.json 清理（经 port）
-    await this.extSettings.removeDisabled(source)
+      // 从 disabled-packages.json 清理（经 port）
+      await this.extSettings.removeDisabled(source)
 
-    // 从 auto-upgrade-packages 清理（经 port，与 removeDisabled 对称）
-    await this.extSettings.removeAutoUpgrade(source)
+      // 从 auto-upgrade-packages 清理（经 port，与 removeDisabled 对称）
+      await this.extSettings.removeAutoUpgrade(source)
 
-    // Remove from node_modules (经 IInstaller port)
-    const nodeModulesDir = join(npmDir, 'node_modules')
-    if (existsSync(npmDir)) {
-      try {
-        await this.installer.uninstallNpm(name, nodeModulesDir)
-      } catch (e) {
-        log.warn(`[extension-service] npm uninstall warning for ${name}: ${toErrorMessage(e)}`)
+      // Remove from node_modules (经 IInstaller port)
+      const nodeModulesDir = join(npmDir, 'node_modules')
+      if (existsSync(npmDir)) {
+        try {
+          await this.installer.uninstallNpm(name, nodeModulesDir)
+        } catch (e) {
+          log.warn(`[extension-service] npm uninstall warning for ${name}: ${toErrorMessage(e)}`)
+        }
       }
-    }
+    })
   }
 
   /**
@@ -349,62 +335,41 @@ export class ExtensionService {
   async upgradeExtension(
     name: string,
   ): Promise<{ upgraded: boolean; from: string; to: string }> {
-    // 校验包存在且是 user-installed
-    const extensions = await this.scanExtensions()
-    const ext = extensions.find(e => e.name === name)
-    if (!ext) {
-      throw new ExtensionInstallError('not_installed', `Extension not installed: ${name}`)
-    }
-    if (ext.source !== 'user-installed') {
-      throw new ExtensionInstallError(
-        'not_user_installed',
-        `Built-in extensions cannot be upgraded: ${name}`,
-        'Built-in extensions are managed by the application and do not support upgrade.',
-      )
-    }
-
-    const currentVersion = ext.version
-    const latestVersion = await this.installer.getLatestVersion(name)
-
-    // semver.lt 判定：currentVersion 为空（semver.valid=null）或 >= latest 则无需升级
-    if (!currentVersion || !semver.valid(currentVersion) || !semver.lt(currentVersion, latestVersion)) {
-      return { upgraded: false, from: currentVersion, to: latestVersion }
-    }
-
-    // 执行升级：npm install 最新版（复用 installExtension 的错误分类 + isValidPiExtension 验证）
-    const npmDir = join(this.settingsDir, 'npm')
-    const nodeModulesDir = join(npmDir, 'node_modules')
-    try {
-      await this.installer.installNpm(name, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
-    } catch (e) {
-      const msg = toErrorMessage(e)
-      const errCode = (e as { code?: string }).code
-      const code = errCode === 'extract' || errCode === 'integrity'
-        ? 'network' as const
-        : errCode ?? this.classifyNpmError(msg)
-      throw new ExtensionInstallError(
-        code,
-        `npm install failed: ${msg}`,
-        code === 'not_found' ? 'Check the package name, scope, and registry URL.' : undefined,
-      )
-    }
-
-    // 验证升级后仍是有效的 pi extension（包损坏/被篡改）→ 回滚
-    const pkgInstallDir = join(npmDir, 'node_modules', name)
-    if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
-      try {
-        await this.installer.uninstallNpm(name, nodeModulesDir)
-      } catch (e) {
-        log.warn(`[extension-service] rollback uninstall failed for ${name}: ${toErrorMessage(e)}`)
+    return this.withInstallLock(async () => {
+      if (!isValidNpmPackageName(name)) {
+        throw new ExtensionInstallError('not_found', `Invalid npm package name: ${name}`)
       }
-      throw new ExtensionInstallError(
-        'not_extension',
-        `"${name}" is not a valid pi extension after upgrade.`,
-        'Check that the package has pi manifest fields (keywords: ["pi-package"], peerDependencies with pi-coding-agent, or a "pi" field in package.json).',
-      )
-    }
+      // 校验包存在且是 user-installed
+      const extensions = await this.scanExtensions()
+      const ext = extensions.find(e => e.name === name)
+      if (!ext) {
+        throw new ExtensionInstallError('not_installed', `Extension not installed: ${name}`)
+      }
+      if (ext.source !== 'user-installed') {
+        throw new ExtensionInstallError(
+          'not_user_installed',
+          `Built-in extensions cannot be upgraded: ${name}`,
+          'Built-in extensions are managed by the application and do not support upgrade.',
+        )
+      }
 
-    return { upgraded: true, from: currentVersion, to: latestVersion }
+      const currentVersion = ext.version
+      const latestVersion = await this.installer.getLatestVersion(name)
+
+      // semver.lt 判定：currentVersion 为空（semver.valid=null）或 >= latest 则无需升级
+      if (!currentVersion || !semver.valid(currentVersion) || !semver.lt(currentVersion, latestVersion)) {
+        return { upgraded: false, from: currentVersion, to: latestVersion }
+      }
+
+      // 执行升级：npm install 最新版（复用 installExtension 的错误分类 + isValidPiExtension 验证）
+      const npmDir = join(this.settingsDir, 'npm')
+      await this.installAndValidate(name, npmDir, 'upgrade')
+
+      // 从 node_modules/<name>/package.json 读取实际安装版本，
+      // 避免因 TOCTOU 与 registry dist-tags.latest 不一致
+      const actualVersion = this.readInstalledVersion(name, npmDir)
+      return { upgraded: true, from: currentVersion, to: actualVersion || latestVersion }
+    })
   }
 
   /**
@@ -423,6 +388,8 @@ export class ExtensionService {
     // 串行执行是有意为之：多个 extension 的 npm install 共享同一个 --prefix 目录
     // （~/.xyz-agent/pi/agent/npm/），npm 不支持对同一 prefix 的并发安装，
     // 并发会导致 node_modules 损坏。故不能改成 Promise.allSettled 并发。
+    // 注：此处不自行加锁——每次 upgradeExtension 自身走 withInstallLock，
+    // 既序列化了本次 auto-upgrade 内部的多次升级，也与外部并发调用（install/uninstall/upgrade）互斥。
     for (const source of autoUpgradeSources) {
       // 只处理 npm: 前缀的 user-installed 扩展
       if (!source.startsWith('npm:')) continue
@@ -637,6 +604,52 @@ export class ExtensionService {
     }
   }
 
+  /** npm install + 错误分类 + isValidPiExtension 验证 + 失败回滚。
+   * installExtension 和 upgradeExtension 共用此流程，避免逻辑漂移。 */
+  private async installAndValidate(pkgName: string, npmDir: string, contextLabel = 'install'): Promise<void> {
+    const nodeModulesDir = join(npmDir, 'node_modules')
+    try {
+      await this.installer.installNpm(pkgName, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
+    } catch (e) {
+      const msg = toErrorMessage(e)
+      const errCode = (e as { code?: string }).code
+      const code = errCode === 'extract' || errCode === 'integrity'
+        ? 'network' as const
+        : errCode ?? this.classifyNpmError(msg)
+      throw new ExtensionInstallError(
+        code,
+        `npm install failed: ${msg}`,
+        code === 'not_found' ? 'Check the package name, scope, and registry URL.' : undefined,
+      )
+    }
+    const pkgInstallDir = join(nodeModulesDir, pkgName)
+    if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
+      try {
+        await this.installer.uninstallNpm(pkgName, nodeModulesDir)
+      } catch (e) {
+        log.warn(`[extension-service] rollback uninstall failed for ${pkgName}: ${toErrorMessage(e)}`)
+      }
+      throw new ExtensionInstallError(
+        'not_extension',
+        `"${pkgName}" is not a valid pi extension${contextLabel === 'upgrade' ? ' after upgrade' : ''}.`,
+        'Check that the package has pi manifest fields (keywords: ["pi-package"], peerDependencies with pi-coding-agent, or a "pi" field in package.json).',
+      )
+    }
+  }
+
+  /** 从 node_modules/<name>/package.json 读取实际安装版本。
+   * getLatestVersion 返回的是 registry dist-tags.latest，与实际安装版本可能因 TOCTOU 不一致。 */
+  private readInstalledVersion(pkgName: string, npmDir: string): string {
+    try {
+      const pkgPath = join(npmDir, 'node_modules', pkgName, 'package.json')
+      if (!existsSync(pkgPath)) return ''
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string }
+      return pkg.version ?? ''
+    } catch {
+      return ''
+    }
+  }
+
   /** Classify npm error message into error code */
   private classifyNpmError(msg: string): 'not_found' | 'network' {
     if (/404|E404/i.test(msg)) {
@@ -742,4 +755,10 @@ export class ExtensionService {
       }
     }
   }
+}
+
+/** npm 包名合法性校验（npm naming spec）。
+ * scoped：@scope/name；unscoped：name。只允许小写字母、数字、-_.~ */
+function isValidNpmPackageName(name: string): boolean {
+  return /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name)
 }

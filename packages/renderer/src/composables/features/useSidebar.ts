@@ -323,6 +323,10 @@ export function useSidebar() {
   async function deleteSession(id: string): Promise<void> {
     await sessionApi.remove(id)
     const wasActive = session.activeId === id
+    // 删除的 session 若承载在某 panel（split 模式下 standby panel 可能 focused 非 activeId），
+    // 清空该 panel 绑定，避免 panel 残留指向已删 session 的悬空引用。
+    const boundPanel = panel.findPanelBySession(id)
+    if (boundPanel) panel.loadSession(boundPanel.id, null)
     session.removeFromList(id)
     if (wasActive) {
       const next = session.list[0]

@@ -50,7 +50,7 @@
         variant="ghost"
         size="icon"
         :class="confirming
-          ? 'size-[22px] rounded-[5px] border border-danger bg-danger text-white hover:bg-danger hover:text-white'
+          ? 'size-[22px] rounded-[5px] border border-danger bg-danger text-white'
           : 'size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
         :title="confirming ? '确认删除？' : '删除'"
         @click.stop="onRemoveClick"
@@ -115,9 +115,11 @@ watch(
   },
 )
 
-/** Esc 取消：仅在 confirming 时响应，不影响全局快捷键 */
-useEventListener(window, 'keydown', (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && confirming.value) confirming.value = false
+/** Esc 取消：从 SessionList 接收单一 Esc 监听（避免每实例注册 window listener）。
+ *  watch escCount 变化 → 清 confirming 态（不影响全局快捷键）。 */
+const escCount = inject<Ref<number>>('sessionItemEsc', ref(0))
+watch(escCount, () => {
+  if (confirming.value) confirming.value = false
 })
 
 /** 点击外部取消：点该 item 外部时清掉确认态 */
@@ -134,8 +136,8 @@ const dirName = computed(() => dirNameOf(props.session.cwd))
 /** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 
-import { computed, ref, watch } from 'vue'
-import { useEventListener, onClickOutside } from '@vueuse/core'
+import { computed, inject, ref, watch, type Ref } from 'vue'
+import { onClickOutside } from '@vueuse/core'
 import { Check, Pencil, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'

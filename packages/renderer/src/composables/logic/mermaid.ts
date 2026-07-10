@@ -9,9 +9,8 @@
  * 故本模块导出 resolveMermaidTheme（按主题取 themeVariables）+ renderMermaid（initialize + render），
  * 供 MermaidRenderer.vue 在主题变化时重新调用。
  *
- * 主题色映射（从 style.css CSS 变量语义 → mermaid themeVariables）：
- *  暗色（:root）  : primaryColor=#222329(--surface) border=#ffffff26(--border-strong) line=#4f8ef7(--accent)
- *  亮色（[light]）: primaryColor=#ffffff(--surface) border=#00000024(--border-strong) line=#2563eb(--accent)
+ * 主题色映射：色值取自 style.css :root CSS 变量，
+ * 详见 resolveMermaidThemeVariables() 内逐项注释（primary/secondary/tertiary/noteBkg/text 等全覆盖）。
  */
 import type { default as MermaidInstance } from 'mermaid'
 

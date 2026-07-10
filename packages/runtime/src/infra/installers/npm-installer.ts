@@ -176,12 +176,20 @@ async function fetchJson<T>(url: string, timeout?: number): Promise<T> {
 
   return new Promise<T>((resolve, reject) => {
     let data = ''
+    // body 读取阶段也需超时——服务器发了 header 后 stall 不发 body 会永久 pending
+    const bodyTimer = setTimeout(() => {
+      final.destroy(new Error(`Body read timeout after ${timeout ?? DEFAULT_TIMEOUT}ms`))
+    }, timeout ?? DEFAULT_TIMEOUT)
     final.on('data', (chunk: Buffer) => { data += chunk.toString() })
     final.on('end', () => {
+      clearTimeout(bodyTimer)
       try { resolve(JSON.parse(data)) }
       catch { reject(new NpmInstallError('network', 'Invalid JSON from registry')) }
     })
-    final.on('error', reject)
+    final.on('error', (err) => {
+      clearTimeout(bodyTimer)
+      reject(err)
+    })
   })
 }
 

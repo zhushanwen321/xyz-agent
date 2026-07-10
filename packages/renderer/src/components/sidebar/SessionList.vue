@@ -54,7 +54,8 @@
 <script setup lang="ts">
 import type { SessionGroup } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
-import { computed } from 'vue'
+import { computed, provide, ref } from 'vue'
+import { useEventListener } from '@vueuse/core'
 import { Plus, Folder } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -80,6 +81,14 @@ const emit = defineEmits<{
 const totalCount = computed(() =>
   props.groups.reduce((sum, g) => sum + g.sessions.length, 0),
 )
+
+/** 单一 Esc 监听器——避免每个 SessionItem 各自注册 window keydown listener（N 项 N 个监听器）。
+ *  SessionItem inject 后 watch escCount 变化清自身确认态。 */
+const escCount = ref(0)
+useEventListener(window, 'keydown', (e: KeyboardEvent) => {
+  if (e.key === 'Escape') escCount.value++
+})
+provide('sessionItemEsc', escCount)
 
 // 显式声明 props 已读（避免某些 lint 规则误报未使用）。
 void props

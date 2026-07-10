@@ -40,10 +40,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!cwd) return
     try {
       records.value = await workspace.record(cwd)
-    } catch {
+    // eslint-disable-next-line taste/no-silent-catch -- 增量更新失败：旧列表仍有效，不需传播给用户
+    } catch (e) {
       // 降级：record 失败时保留旧 records（stale 但有用，不清空——与 load() 清空语义不同：
       // load 是首次加载失败则无数据可显；record 是增量更新失败，旧列表仍有效）。不阻断选目录流程。
-      records.value = [...records.value]
+      console.warn('[workspace] record failed, keeping stale records', e)
     }
   }
 

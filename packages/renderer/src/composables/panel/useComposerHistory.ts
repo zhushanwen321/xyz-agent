@@ -131,7 +131,7 @@ export function useComposerHistory(
     if (index > 0) {
       index--
       isSettingText = true
-      deps.setText(h[index], 'end')  // 光标置末，便于连续↓回溯
+      deps.setText(h[index] ?? savedDraft, 'end')  // 光标置末，便于连续↓回溯
       isSettingText = false
     } else {
       // 已在最近一条：恢复草稿，回到 edit 态

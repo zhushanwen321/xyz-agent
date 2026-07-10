@@ -139,7 +139,7 @@ describe('Extension Upgrade', () => {
 
       const installer = new NpmGitInstaller()
       await expect(installer.getLatestVersion('nonexistent-pkg-xyz-12345'))
-        .rejects.toThrow()
+        .rejects.toMatchObject({ code: 'not_found' })
     })
   })
 
@@ -405,8 +405,7 @@ describe('Extension Upgrade', () => {
       }), 'utf-8')
 
       const installer = new NpmGitInstaller()
-      vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
-      const spy = vi.spyOn(installer, 'getLatestVersion')
+      const spy = vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
       const service = new ExtensionService({
         settingsDir: testSettingsDir,

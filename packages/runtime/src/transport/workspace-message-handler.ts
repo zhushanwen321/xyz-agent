@@ -30,9 +30,11 @@ export class WorkspaceMessageHandler {
         // 选目录后热更新：record 写入最新工作区，随即返回刷新后的列表，
         // 前端据 reply 直接更新 store（一次往返完成写入+刷新，无 reload 时序竞争）。
         const { cwd } = msg.payload
-        // 无效 payload 静默忽略（与 extension.* handler 的 typeof name !== 'string' 校验对齐）：
-        // cwd 非字符串或空白时既不写入也不 reply，避免空记录污染最近工作区列表。
-        if (typeof cwd !== 'string' || cwd.trim() === '') return
+        // 校验失败仍必须 reply，否则前端 pending Promise 永不 resolve（破坏 RPC 契约）
+        if (typeof cwd !== 'string' || cwd.trim() === '') {
+          this.ctx.reply(ws, msg.id, 'workspace.recentList', { records: this.ctx.workspaceService.list() })
+          return
+        }
         this.ctx.workspaceService.record(cwd)
         return this.ctx.reply(ws, msg.id, 'workspace.recentList', {
           records: this.ctx.workspaceService.list(),
