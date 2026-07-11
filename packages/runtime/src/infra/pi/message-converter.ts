@@ -84,6 +84,11 @@ export function convertPiHistory(raw: unknown[]): Message[] {
               .join('\n')
             tc.output = textParts
             if (toolResult.isError) tc.status = 'error'
+            // F1 修复：透传 details（含 __gui__），与实时路径（event-interpreter tool_call_end）对齐。
+            // 规则 7.5：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
+            if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
+              tc.details = toolResult.details
+            }
           } else {
             console.warn('[message-converter] toolResult has no matching toolCall:', toolResult.toolCallId)
           }

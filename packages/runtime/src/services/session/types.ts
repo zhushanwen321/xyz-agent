@@ -83,6 +83,8 @@ export type PiTranslatedEvent =
       kind: 'tool-call-end'
       toolCallId: string
       output: string
+      /** 原始文本（含 ANSI 转义），output 已 stripAnsi。有 ANSI 时 outputRaw !== output。 */
+      outputRaw?: string
       details: Record<string, unknown> | undefined
       images: Array<{ data: string; mimeType: string }> | undefined
       toolName: string

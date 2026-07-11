@@ -21,6 +21,7 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
+import { GUI_WIDGET_MARKER } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -120,19 +121,23 @@ function handleToolExecutionStart(event: PiEvent, _sid: string): PiTranslatedEve
  */
 function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent[] {
   let output: string
+  let outputRaw: string | undefined
   let images: Array<{ data: string; mimeType: string }> | undefined
   // pi-protocol.PiToolExecutionEndEvent 声明 result: PiToolExecutionResult（固定 content 数组），
   // 但 pi 实际 result 可能是 string | object-with-content | 其他——双读 + 多形态判定覆盖协议漂移
   // （见 pi-protocol.ts 的 TODO(pi-协议漂移) 注释）
   const raw = event.result ?? event.output
   if (typeof raw === 'string') {
-    output = raw
+    output = stripAnsi(raw)
+    if (output !== raw) outputRaw = raw
   } else if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).content)) {
     const contentArr = (raw as Record<string, unknown>).content as Array<Record<string, unknown>>
-    output = contentArr
+    const rawText = contentArr
       .filter((c) => c.type === 'text')
       .map((c) => (c.text as string) ?? '')
       .join('\n')
+    output = stripAnsi(rawText)
+    if (output !== rawText) outputRaw = rawText
     const imageBlocks = contentArr
       .filter((c) => c.type === 'image')
       .map((c) => ({ data: String(c.data ?? ''), mimeType: String(c.mimeType ?? '') }))
@@ -173,6 +178,7 @@ function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent
     toolName,
     isError,
     writeContent,
+    outputRaw,
   }]
 }
 
@@ -253,12 +259,33 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     ]
   }
 
-  // setWidget → WS event
+  // setWidget → WS event（检测 GUI 协议 marker）
   if (method === 'setWidget') {
+    const widgetKey = String(event.widgetKey ?? '')
+    const rawLines = Array.isArray(event.widgetLines) ? event.widgetLines as unknown[] : []
+
+    // 检测 GUI 协议 marker：单行以 NUL marker 开头 → 结构化 widget
+    if (rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER)) {
+      try {
+        const json = (rawLines[0] as string).slice(GUI_WIDGET_MARKER.length)
+        const gui = JSON.parse(json)
+        return [{
+          kind: 'message',
+          message: {
+            type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+            payload: { sessionId: sid, widgetKey, gui },
+          },
+        }]
+      } catch {
+        // JSON 解析失败，降级为纯文本 widget（不崩溃）
+      }
+    }
+
+    // 原有行为：stripAnsi + string[]
     const widgetPayload = {
       sessionId: sid,
-      widgetKey: String(event.widgetKey ?? ''),
-      lines: Array.isArray(event.widgetLines) ? (event.widgetLines as unknown[]).map(l => stripAnsi(String(l))) : [],
+      widgetKey,
+      lines: rawLines.map(l => stripAnsi(String(l))),
     }
     console.log('[EventAdapter] setWidget:', widgetPayload.widgetKey, 'lines:', widgetPayload.lines.length, 'sessionId:', sid)
     return [{ kind: 'message', message: { type: EXTENSION_EVENTS.WIDGET as ServerMessageType, payload: widgetPayload } }]
@@ -377,12 +404,15 @@ function handleMessageStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
   ]
 }
 
-/** tool_execution_update — forward detail (string or object) */
+/** tool_execution_update — forward detail (string or object, extract details if present) */
 function handleToolExecutionUpdate(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const partialResult = event.partialResult
+  // 提取 partialResult.details（含 __gui__），与 tool_execution_end 路径对齐。
+  // fallback：无 details 时用整个对象（兼容 subagent 的扁平 progress 形态）。
   const detail: string | Record<string, unknown> | undefined =
     partialResult != null && typeof partialResult === 'object'
-      ? (partialResult as Record<string, unknown>)
+      ? ((partialResult as Record<string, unknown>).details as Record<string, unknown> | undefined)
+        ?? (partialResult as Record<string, unknown>)
       : (partialResult as string | undefined)
   return [{
     kind: 'message',

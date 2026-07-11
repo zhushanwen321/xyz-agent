@@ -363,6 +363,9 @@ export interface PiHistoryToolResult extends PiHistoryMessage {
   toolCallId: string
   toolName: string
   isError?: boolean
+  /** pi 持久化了 details（ToolResultMessage.details），含 __gui__ 结构化渲染数据。
+   *  类型声明补齐——pi JSONL 和 get_messages 都返回此字段。 */
+  details?: Record<string, unknown>
 }
 
 // ── Shared types ───────────────────────────────────────────────────

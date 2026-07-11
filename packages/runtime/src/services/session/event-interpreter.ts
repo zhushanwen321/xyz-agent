@@ -206,6 +206,7 @@ export class EventInterpreter {
         sessionId: this.sessionId,
         toolCallId,
         output,
+        outputRaw: ev.outputRaw,
         details,
         images,
         // 与历史路径 convertPiHistory（tc.status='error'）保持一致：实时失败的 tool call
