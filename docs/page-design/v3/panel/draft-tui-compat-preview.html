@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TUI 兼容渲染对比 · extension 全渠道</title>
+<!--
+  对比 demo：当前（纯文本降级/缺失） vs 修复后（结构化渲染 + ANSI 渲染兜底）
+  —— 用 v3 冷蓝 tokens，还原 SideDrawer / message-stream / overlay 真实视觉。
+
+  六个对比维度（覆盖 extension 的全部 TUI 输出渠道）：
+    §1 对话流 tool result — ANSI 兜底（路线 A）+ 结构化渲染器（路线 B）
+    §2 Widget（setWidget）—— SideDrawer 纯文本 → 结构化 widget 面板
+    §3 Status Bar / Footer（setStatus）—— 抽屉底部 → 全局底栏
+    §4 交互 Overlay（confirm/select/input/notify/editor）—— 完全缺失 → 对话框
+    §5 Custom Message（customType）—— SystemNotice 纯文本 → 专属卡片
+    §6 Widget Before/After（goal-tracker / budget / workflow widget 实例）
+
+  数据形态参考 ~/Code/xyz-pi-extensions-workspace/main 各 extension 的 details 类型定义。
+-->
+<style>
+  :root{
+    /* zcode 冷蓝 token —— 与 design-tokens.md / style.css 同源 */
+    --bg:#1a1b1f; --surface:#222329; --surface-2:#282930; --surface-hover:#2d2e36;
+    --bg-elevated:#2a2b32; --bg-input:#1e1f24;
+    --fg:#f7f8fc; --muted:#a8a8b5; --subtle:#82828f;
+    --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.15);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.30);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --ease:cubic-bezier(0.4,0,0.2,1); --dur:200ms; --dur-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+    /* ANSI 16 色映射 */
+    --ansi-red:#f87171; --ansi-green:#4ade80; --ansi-yellow:#facc15;
+    --ansi-blue:#60a5fa; --ansi-magenta:#c084fc; --ansi-cyan:#22d3ee;
+    --ansi-dim:#71717a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--fg);font:13px/1.55 var(--font-sans);
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  body{padding:28px 36px 120px;max-width:1380px;margin:0 auto}
+
+  /* ── 页头 ── */
+  .page-head h1{font-size:21px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  .page-head .sub{color:var(--muted);font-size:13px;max-width:960px;line-height:1.65}
+  .page-head .sub b{color:var(--accent)}
+  .page-head .sub code{font-family:var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:1px 5px;border-radius:3px;font-size:11.5px}
+  .page-head .legend{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;font:500 11px/1 var(--font-mono)}
+  .page-head .legend span{padding:5px 10px;border-radius:999px;border:1px solid var(--border-strong);color:var(--muted);background:var(--surface)}
+  .page-head .legend b{color:var(--fg)}
+
+  /* 渠道导航 */
+  .nav-toc{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px;padding:10px;border-radius:var(--radius);background:var(--surface);border:1px solid var(--border)}
+  .nav-toc a{font:500 11px/1 var(--font-mono);padding:5px 10px;border-radius:var(--radius-sm);color:var(--muted);text-decoration:none;border:1px solid transparent;transition:all var(--dur)}
+  .nav-toc a:hover{color:var(--accent);background:var(--accent-soft)}
+  .nav-toc a .n{color:var(--subtle);margin-right:4px}
+
+  /* ── 对比区块 ── */
+  .cmp-section{margin-top:44px;scroll-margin-top:20px}
+  .cmp-section > h2{font-size:15px;font-weight:600;display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .cmp-section > h2 .tag{font:600 10px/1 var(--font-mono);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.04em;color:#fff;white-space:nowrap}
+  .tag-a{background:var(--info)}
+  .tag-b{background:var(--reasoning)}
+  .tag-mix{background:var(--accent)}
+  .tag-missing{background:var(--danger)}
+  .tag-done{background:var(--success)}
+  .cmp-section > h2 .channel{font:600 11px/1 var(--font-mono);color:var(--subtle);padding:3px 8px;border-radius:var(--radius-sm);background:var(--surface-2)}
+  .cmp-section > .desc{color:var(--muted);font-size:12.5px;margin-bottom:16px;max-width:920px;line-height:1.65}
+  .cmp-section > .desc b{color:var(--fg)}
+  .cmp-section > .desc code{font-family:var(--font-mono);color:var(--info);background:rgba(56,189,248,0.1);padding:1px 5px;border-radius:3px;font-size:11.5px}
+  .cmp-section > .desc .gap{color:var(--danger);font-weight:600}
+
+  /* ── Before/After 并排 ── */
+  .cmp-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:1000px){.cmp-grid{grid-template-columns:1fr}}
+  .cmp-col h3{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .cmp-col h3 .pill{font:600 10px/1 var(--font-mono);padding:3px 7px;border-radius:var(--radius-sm)}
+  .pill-before{background:rgba(239,68,68,0.15);color:var(--danger)}
+  .pill-after{background:rgba(34,197,94,0.15);color:var(--success)}
+  .cmp-col h3 .note{margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--subtle)}
+
+  /* ── 窗口 mock ── */
+  .win-mock{background:var(--bg);border-radius:var(--radius);border:1px solid var(--border);overflow:hidden}
+  .win-mock__bar{padding:7px 12px;border-bottom:1px solid var(--border);background:var(--surface-2);font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .win-mock__bar b{color:var(--fg)}
+  .win-mock__bar .src{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--subtle);padding:2px 6px;border-radius:var(--radius-sm);background:var(--surface)}
+  .win-mock__body{padding:10px 14px;min-height:60px}
+
+  /* ════════════════════════════════════════════════════════════════
+     §1 trace-blk（复刻 Block.vue 的视觉规范）
+     ════════════════════════════════════════════════════════════════ */
+  .trace-blk{padding:8px 0}
+  .trace-tool__header{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;
+    font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;
+    transition:opacity var(--dur);line-height:1.4}
+  .trace-tool__header:hover{opacity:0.8}
+  .trace-tool__header .icn{width:12px;height:12px;flex-shrink:0}
+  .trace-tool__header .tname{text-transform:none;letter-spacing:normal}
+  .trace-tool__header .targ{text-transform:none;letter-spacing:normal;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .trace-tool__detail{margin-top:4px}
+  .trace-tool__fn{font-family:var(--font-mono);font-size:12px}
+  .trace-tool__result{margin-top:4px;display:inline-flex;align-items:flex-start;gap:4px;padding-left:2px;
+    font-family:var(--font-mono);font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .trace-tool__result .icn{width:12px;height:12px;flex-shrink:0;margin-top:2px}
+  .col-info{color:var(--info)} .col-accent{color:var(--accent)} .col-success{color:var(--success)}
+  .col-danger{color:var(--danger)} .col-reasoning{color:var(--reasoning)} .col-muted{color:var(--muted)} .col-subtle{color:var(--subtle)}
+
+  /* ANSI 渲染容器 */
+  .ansi-out{margin-top:6px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--bg-input);
+    border:1px solid var(--border);font-family:var(--font-mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  .ansi-red{color:var(--ansi-red)} .ansi-green{color:var(--ansi-green)} .ansi-yellow{color:var(--ansi-yellow)}
+  .ansi-blue{color:var(--ansi-blue)} .ansi-cyan{color:var(--ansi-cyan)} .ansi-dim{color:var(--ansi-dim)} .ansi-bold{font-weight:600}
+
+  /* Todo 渲染器 */
+  .r-todo{margin-top:6px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--surface)}
+  .r-todo__summary{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface-2);font-size:11px}
+  .r-todo__summary .checks{font-family:var(--font-mono);font-weight:600;color:var(--accent)}
+  .r-todo__summary .bar{flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
+  .r-todo__summary .fill{height:100%;border-radius:2px;background:var(--success);transition:width var(--dur)}
+  .r-todo__summary .pct{font-family:var(--font-mono);color:var(--muted);font-size:11px}
+  .r-todo__list{padding:4px 0}
+  .r-todo__item{display:flex;align-items:flex-start;gap:8px;padding:3px 10px;font-size:12px;line-height:1.5}
+  .r-todo__item .mark{font-family:var(--font-mono);flex-shrink:0;width:14px;text-align:center;font-size:13px}
+  .r-todo__item .id{font-family:var(--font-mono);color:var(--subtle);font-size:11px;flex-shrink:0}
+  .r-todo__item .txt{flex:1}
+  .r-todo__item.done .txt{color:var(--subtle);text-decoration:line-through}
+  .r-todo__item.active .txt{color:var(--fg)}
+  .r-todo__item.pending .txt{color:var(--muted)}
+
+  /* Goal 渲染器 */
+  .r-goal{margin-top:6px;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;background:var(--surface)}
+  .r-goal__head{display:flex;align-items:center;gap:8px;padding:8px 12px}
+  .r-goal__head .diamond{font-size:14px}
+  .r-goal__head .title{font-weight:600;font-size:12px}
+  .r-goal__head .slug{font-family:var(--font-mono);color:var(--subtle);font-size:11px}
+  .r-goal__badge{margin-left:auto;font:600 10px/1 var(--font-mono);padding:3px 8px;border-radius:999px}
+  .r-goal__badge.active{background:var(--accent-soft);color:var(--accent)}
+  .r-goal__metrics{padding:2px 12px 10px;display:flex;gap:18px;flex-wrap:wrap}
+  .r-goal__metric{display:flex;flex-direction:column;gap:3px}
+  .r-goal__metric .label{font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--subtle)}
+  .r-goal__metric .val{font-family:var(--font-mono);font-size:12px;color:var(--fg)}
+  .r-goal__metric .track{width:100px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin-top:2px}
+  .r-goal__metric .track-fill{height:100%;border-radius:2px}
+  .track-fill.ok{background:var(--success)} .track-fill.warn{background:var(--warning)} .track-fill.danger{background:var(--danger)}
+
+  /* Subagent 渲染器 */
+  .r-sub__stats{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:4px;padding:2px 0;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+  .r-sub__stats .sep{color:var(--border-strong)}
+  .r-sub__eventlog{margin-top:6px;border-left:2px solid var(--border);padding-left:10px;display:flex;flex-direction:column;gap:2px}
+  .r-sub__event{font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--muted);display:flex;align-items:flex-start;gap:6px}
+  .r-sub__event .glyph{flex-shrink:0;width:14px;text-align:center}
+  .r-sub__delivery{margin-top:6px;padding:6px 10px;border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:11.5px;line-height:1.5}
+  .r-sub__delivery.done{background:rgba(34,197,94,0.08);border-left:2px solid var(--success);color:var(--success)}
+
+  /* Workflow 渲染器 */
+  .r-wf{margin-top:6px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--surface)}
+  .r-wf__run{padding:7px 10px;border-bottom:1px solid var(--border)}
+  .r-wf__run:last-child{border-bottom:none}
+  .r-wf__run-head{display:flex;align-items:center;gap:8px;font-size:12px}
+  .r-wf__run-head .name{font-weight:600;color:var(--accent)}
+  .r-wf__run-head .rid{font-family:var(--font-mono);color:var(--subtle);font-size:11px}
+  .r-wf__run-head .dur{margin-left:auto;font-family:var(--font-mono);color:var(--subtle);font-size:11px}
+  .r-wf__badge{font:600 10px/1 var(--font-mono);padding:3px 7px;border-radius:var(--radius-sm);display:inline-flex;align-items:center;gap:4px}
+  .r-wf__badge.running{background:rgba(245,165,36,0.15);color:var(--warning)}
+  .r-wf__badge.completed{background:rgba(34,197,94,0.15);color:var(--success)}
+  .r-wf__badge.failed{background:rgba(239,68,68,0.15);color:var(--danger)}
+  .r-wf__error{margin-top:4px;font-family:var(--font-mono);font-size:11px;color:var(--danger);padding-left:20px}
+
+  /* ════════════════════════════════════════════════════════════════
+     §2 SideDrawer widget mock
+     ════════════════════════════════════════════════════════════════ */
+  .drawer-mock{display:flex;flex-direction:column;height:340px;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;background:var(--bg)}
+  .drawer-tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  .drawer-tab{padding:6px 12px;font-size:11px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
+  .drawer-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .drawer-body{flex:1;overflow:auto;padding:8px}
+  .drawer-footer{border-top:1px solid var(--border);padding:4px 8px;background:var(--surface)}
+
+  /* widget 纯文本行（当前）*/
+  .wt-line{font-family:var(--font-mono);font-size:11px;line-height:1.45;color:var(--fg);opacity:0.9;white-space:pre-wrap;word-break:break-all}
+
+  /* widget 结构化面板（修复后）*/
+  .wg-panel{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:8px;background:var(--surface)}
+  .wg-panel__head{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-2);font-size:11px;font-weight:600}
+  .wg-panel__head .icn{width:12px;height:12px}
+  .wg-panel__head .key{color:var(--muted)}
+  .wg-panel__body{padding:4px 10px}
+
+  /* ════════════════════════════════════════════════════════════════
+     §3 全局 Status Bar
+     ════════════════════════════════════════════════════════════════ */
+  .statusbar{display:flex;align-items:center;gap:0;background:var(--surface);border-top:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:0 8px;height:28px;overflow:hidden}
+  .sb-item{display:flex;align-items:center;gap:5px;padding:0 10px;height:100%;font-size:11px;color:var(--muted);border-right:1px solid var(--border);white-space:nowrap}
+  .sb-item:last-child{border-right:none}
+  .sb-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+  .sb-dot--green{background:var(--success)} .sb-dot--yellow{background:var(--warning)} .sb-dot--blue{background:var(--info)}
+  .sb-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--subtle)}
+  .sb-val{color:var(--muted)}
+
+  /* ════════════════════════════════════════════════════════════════
+     §4 Overlay 对话框
+     ════════════════════════════════════════════════════════════════ */
+  .overlay-area{position:relative;height:280px;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;background:var(--bg)}
+  .overlay-bg{position:absolute;inset:0;background:var(--bg);opacity:0.4}
+  .overlay-bg::after{content:"对话流内容被遮罩…";position:absolute;top:40%;left:30%;color:var(--subtle);font-size:12px}
+  .overlay-missing{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px}
+  .overlay-missing .big{font-size:20px;color:var(--danger);font-weight:600}
+  .overlay-missing .desc{font-size:12px;color:var(--muted);max-width:280px;text-align:center;line-height:1.5}
+
+  .dialog{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:360px;background:var(--bg-elevated);
+    border:1px solid var(--border-strong);border-radius:var(--radius-lg);box-shadow:0 16px 48px rgba(0,0,0,0.5);overflow:hidden}
+  .dialog__head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .dialog__head .icn{width:16px;height:16px;flex-shrink:0}
+  .dialog__head .title{font-size:13px;font-weight:600}
+  .dialog__body{padding:12px 16px;font-size:12.5px;color:var(--muted);line-height:1.6}
+  .dialog__body b{color:var(--fg)}
+  .dialog__body code{font-family:var(--font-mono);background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:11.5px;color:var(--info)}
+  .dialog__select{margin:8px 0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .dialog__opt{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background var(--dur)}
+  .dialog__opt:last-child{border-bottom:none}
+  .dialog__opt:hover{background:var(--surface-hover)}
+  .dialog__opt.selected{background:var(--accent-soft);color:var(--accent)}
+  .dialog__opt .radio{width:14px;height:14px;border-radius:50%;border:2px solid var(--border-strong);flex-shrink:0}
+  .dialog__opt.selected .radio{border-color:var(--accent);background:radial-gradient(var(--accent) 45%,transparent 50%)}
+  .dialog__input{margin:8px 0;padding:7px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);
+    font-family:var(--font-mono);font-size:12px;color:var(--fg)}
+  .dialog__input .cursor{display:inline-block;width:2px;height:13px;background:var(--accent);vertical-align:middle;animation:blink 1s step-end infinite}
+  @keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+  .dialog__actions{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--border)}
+  .btn{padding:5px 14px;font-size:12px;font-weight:500;border-radius:var(--radius);cursor:pointer;border:1px solid transparent;transition:all var(--dur);font-family:var(--font-sans)}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:var(--accent-hover)}
+  .btn-ghost{background:transparent;color:var(--muted);border-color:var(--border)}
+  .btn-ghost:hover{background:var(--surface-hover);color:var(--fg)}
+  .btn-danger{background:var(--danger);color:#fff}
+
+  /* notify toast */
+  .toast{position:absolute;bottom:16px;right:16px;display:flex;align-items:flex-start;gap:10px;padding:10px 14px;
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-left:3px solid;border-radius:var(--radius);
+    box-shadow:0 8px 24px rgba(0,0,0,0.4);max-width:320px;font-size:12px;line-height:1.5}
+  .toast.info{border-left-color:var(--info)}
+  .toast.warn{border-left-color:var(--warning)}
+  .toast.success{border-left-color:var(--success)}
+  .toast .icn{width:16px;height:16px;flex-shrink:0;margin-top:1px}
+  .toast .body b{display:block;color:var(--fg);font-weight:600;margin-bottom:2px}
+  .toast .body span{color:var(--muted)}
+
+  /* ════════════════════════════════════════════════════════════════
+     §5 customType 消息
+     ════════════════════════════════════════════════════════════════ */
+  .sys-notice{display:flex;align-items:center;gap:6px;padding:4px 0;font-size:11px;color:var(--subtle)}
+  .sys-notice .icn{width:12px;height:12px}
+  .bg-notify-card{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--surface);margin:4px 0}
+  .bg-notify-card__head{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--surface-2)}
+  .bg-notify-card__head .icn{width:14px;height:14px}
+  .bg-notify-card__head .agent{font-weight:600;font-size:12px}
+  .bg-notify-card__head .badge{margin-left:auto;font:600 10px/1 var(--font-mono);padding:3px 7px;border-radius:var(--radius-sm);background:rgba(34,197,94,0.15);color:var(--success)}
+  .bg-notify-card__body{padding:6px 12px;font-size:11.5px;color:var(--muted);line-height:1.5}
+  .bg-notify-card__meta{display:flex;gap:14px;font-family:var(--font-mono);font-size:10.5px;color:var(--subtle);margin-top:4px}
+
+  /* ════════════════════════════════════════════════════════════════
+     §6 ask-user composer overlay
+     ════════════════════════════════════════════════════════════════ */
+  /* composer 区域 mock */
+  .composer-area{position:relative;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;background:var(--bg)}
+  .composer-stream{padding:12px 14px;min-height:80px;font-size:12px}
+  .composer-stream .msg-line{padding:3px 0;color:var(--muted)}
+  .composer-stream .msg-line.user{color:var(--fg)}
+  .composer-zone{position:relative;border-top:1px solid var(--border);background:var(--bg-input);padding:10px 14px}
+  .composer-input{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--subtle)}
+  .composer-input .prompt{color:var(--subtle);font-family:var(--font-mono)}
+  .composer-input .txt{color:var(--muted)}
+
+  /* ask-user overlay 浮在 composer 上方 */
+  .ask-overlay{position:absolute;left:12px;right:12px;bottom:100%;margin-bottom:6px;
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:var(--radius);
+    box-shadow:0 8px 24px rgba(0,0,0,0.45);overflow:hidden}
+  .ask-overlay__head{display:flex;align-items:center;gap:6px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  .ask-overlay__head .icn{width:14px;height:14px;color:var(--reasoning)}
+  .ask-overlay__head .title{font-size:12px;font-weight:600}
+  .ask-overlay__head .tabs{margin-left:auto;display:flex;gap:2px}
+  .ask-overlay__head .tab{font:600 10px/1 var(--font-mono);padding:4px 8px;border-radius:var(--radius-sm);color:var(--subtle);cursor:pointer}
+  .ask-overlay__head .tab.active{background:var(--accent-soft);color:var(--accent)}
+  .ask-overlay__body{padding:8px 12px}
+  .ask-overlay__q{font-size:12px;color:var(--fg);margin-bottom:6px;font-weight:500}
+  .ask-overlay__ctx{font-size:11px;color:var(--subtle);margin-bottom:8px;line-height:1.5;padding-left:8px;border-left:2px solid var(--border)}
+  .ask-overlay__opts{display:flex;flex-direction:column;gap:2px}
+  .ask-opt{display:flex;align-items:flex-start;gap:8px;padding:4px 8px;font-size:12px;border-radius:var(--radius-sm);cursor:pointer;line-height:1.4}
+  .ask-opt:hover{background:var(--surface-hover)}
+  .ask-opt.selected{background:var(--accent-soft);color:var(--accent)}
+  .ask-opt .num{font-family:var(--font-mono);color:var(--subtle);font-size:11px;flex-shrink:0;min-width:18px}
+  .ask-opt.selected .num{color:var(--accent)}
+  .ask-opt .check{width:14px;height:14px;flex-shrink:0;margin-top:1px}
+  .ask-opt .other-input{display:inline-flex;align-items:center;gap:2px;background:var(--bg-input);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:2px 6px;font-family:var(--font-mono);font-size:11px;color:var(--fg)}
+  .ask-overlay__actions{display:flex;justify-content:flex-end;gap:8px;padding:8px 12px;border-top:1px solid var(--border)}
+
+  /* ask-user 在对话流 inline 渲染（TUI 原版形态） */
+  .ask-inline{border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden;margin:6px 0;background:var(--surface)}
+  .ask-inline__box{padding:0}
+  .ask-inline__tabbar{display:flex;border-bottom:1px solid var(--border);background:var(--surface-2);font-family:var(--font-mono);font-size:11px}
+  .ask-inline__tabbar .tb{padding:5px 12px;border-right:1px solid var(--border);color:var(--subtle)}
+  .ask-inline__tabbar .tb.active{color:var(--accent);background:var(--surface)}
+  .ask-inline__tabbar .tb.submit{margin-left:auto;color:var(--subtle)}
+  .ask-inline__content{padding:8px 12px;font-family:var(--font-mono);font-size:11.5px;line-height:1.6}
+  .ask-inline__q{color:var(--fg);font-family:var(--font-sans);font-size:12px;margin-bottom:6px}
+  .ask-inline__opt{display:flex;align-items:center;gap:8px;padding:2px 0}
+  .ask-inline__opt .arr{color:var(--accent)}
+  .ask-inline__opt .arr-dim{color:var(--subtle)}
+  .ask-inline__opt .num{color:var(--subtle)}
+  .ask-inline__opt .lbl{color:var(--muted)}
+  .ask-inline__opt.sel .lbl{color:var(--fg)}
+  .ask-inline__divider{text-align:center;color:var(--subtle);font-size:10px;letter-spacing:0.1em;padding:2px 0}
+
+  /* ── 注释 ── */
+  .annot{margin-top:10px;padding:8px 12px;border-radius:0 var(--radius) var(--radius) 0;border-left:3px solid;font-size:11.5px;line-height:1.6}
+  .annot.problem{border-left-color:var(--danger);background:rgba(239,68,68,0.06);color:var(--muted)}
+  .annot.fix{border-left-color:var(--success);background:rgba(34,197,94,0.06);color:var(--muted)}
+  .annot.info{border-left-color:var(--info);background:rgba(56,189,248,0.06);color:var(--muted)}
+  .annot b{color:var(--fg)}
+  .annot code{font-family:var(--font-mono);font-size:11px;padding:1px 4px;border-radius:3px}
+  .annot.problem code{color:var(--danger);background:rgba(239,68,68,0.1)}
+  .annot.fix code{color:var(--success);background:rgba(34,197,94,0.1)}
+
+  /* 状态徽标 */
+  .status-flag{display:inline-flex;align-items:center;gap:4px;font:600 10px/1 var(--font-mono);padding:2px 6px;border-radius:var(--radius-sm)}
+  .status-flag.missing{background:rgba(239,68,68,0.15);color:var(--danger)}
+  .status-flag.partial{background:rgba(245,165,36,0.15);color:var(--warning)}
+  .status-flag.done{background:rgba(34,197,94,0.15);color:var(--success)}
+  @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.35}}
+</style>
+</head>
+<body>
+
+<!-- ════════════ 页头 ════════════ -->
+<div class="page-head">
+  <h1>Extension TUI 输出兼容渲染 · 全渠道 Before / After</h1>
+  <p class="sub">
+    pi extension 的 TUI 输出分 <b>5 个渠道</b>：<code>tool result</code>（对话流）、<code>setWidget</code>（侧栏面板）、<code>setStatus</code>（状态栏）、交互 UI（<code>confirm/select/input/notify/editor</code>）、<code>customType</code>（自定义消息）。
+    RPC 模式下 <code>renderResult</code>/<code>renderCall</code> 从不被调用（<code>rpc-mode.js</code> 零引用），xyz-agent 需自行从 <code>result.details</code> 重建渲染。下表是各渠道当前状态和修复后的效果对比。
+  </p>
+  <div class="legend">
+    <span><b>路线 A</b> = ANSI 渲染兜底（通用）</span>
+    <span><b>路线 B</b> = 结构化渲染器（逐 extension）</span>
+    <span class="status-flag missing">缺失</span>
+    <span class="status-flag partial">部分实现</span>
+    <span class="status-flag done">已实现</span>
+  </div>
+  <nav class="nav-toc">
+    <a href="#s1"><span class="n">§1</span>对话流 tool result</a>
+    <a href="#s2"><span class="n">§2</span>Widget (setWidget)</a>
+    <a href="#s3"><span class="n">§3</span>Status Bar (setStatus)</a>
+    <a href="#s4"><span class="n">§4</span>交互 Overlay</a>
+    <a href="#s5"><span class="n">§5</span>Custom Message</a>
+    <a href="#s6"><span class="n">§6</span>ask-user (composer overlay)</a>
+    <a href="#s7"><span class="n">§7</span>Widget 实例对比</a>
+  </nav>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- §1 对话流 tool result -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section" id="s1">
+  <h2><span class="tag tag-a">路线 A+B</span>对话流 tool result <span class="channel">tool_execution_end → Block.vue</span></h2>
+  <p class="desc">
+    tool output 当前用纯文本 <code>&lbrace;&lbrace; result &rbrace;&rbrace;</code> 渲染（Block.vue:113），既不解析 ANSI（bash 带色输出乱码）、也不消费 <code>details</code> 结构化数据（extension 输出降级）。
+    <b>修复</b>：路线 A 引入 <code>ansi_up</code> 兜底所有 ANSI；路线 B 为 todo/goal/workflow 注册结构化渲染器。
+  </p>
+
+  <!-- §1a bash ANSI -->
+  <div class="cmp-grid" style="margin-bottom:24px">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>bash ANSI 乱码 <span class="note">Block.vue:113</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>bash</b> · npm test <span class="src">Block.vue</span></div>
+        <div class="win-mock__body">
+          <div class="trace-blk">
+            <div class="trace-tool__header col-info"><span class="icn">›</span><span class="tname">bash</span><span class="targ">· npm test</span></div>
+            <div class="trace-tool__detail">
+              <div class="trace-tool__result col-muted">
+                <span>[0m<span class="col-success">✓</span> extension-resolver.test.ts[0m
+[32m✓ event-adapter.test.ts[0m
+[31m✗ pi-protocol.test.ts[0m [36m(timeout)[0m
+
+[2mTests[0m [32m12 passed[0m, [31m1 failed[0m</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot problem"><b>问题</b>：原始 <code>\x1b[32m</code> 等 ANSI 转义码原样显示为 <code>[32m</code> 残渣（ESC 字符被浏览器吞掉）。影响 <b>所有</b>带色命令输出。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>ANSI → HTML 着色 <span class="note">ansi_up ~20KB</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>bash</b> · npm test <span class="src">AnsiRenderer</span></div>
+        <div class="win-mock__body">
+          <div class="trace-blk">
+            <div class="trace-tool__header col-info"><span class="icn">›</span><span class="tname">bash</span><span class="targ">· npm test</span></div>
+            <div class="trace-tool__detail">
+              <div class="ansi-out"><span class="ansi-green">✓ extension-resolver.test.ts</span>
+<span class="ansi-green">✓ event-adapter.test.ts</span>
+<span class="ansi-red">✗ pi-protocol.test.ts</span> <span class="ansi-cyan">(timeout)</span>
+
+<span class="ansi-dim">Tests</span> <span class="ansi-green">12 passed</span>, <span class="ansi-red">1 failed</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot fix"><b>路线 A</b>：output 保留原始 ANSI，前端 <code>&lt;AnsiRenderer&gt;</code> 转成着色 span。颜色映射到 v3 tokens。<b>零开发成本覆盖所有 tool</b>。</div>
+    </div>
+  </div>
+
+  <!-- §1b todo -->
+  <div class="cmp-grid" style="margin-bottom:24px">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>pi-todo 纯文本 <span class="note">result.content</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>todo_write</b> · list <span class="src">Block.vue</span></div>
+        <div class="win-mock__body">
+          <div class="trace-blk">
+            <div class="trace-tool__header col-info"><span class="tname">todo_write</span><span class="targ">· 5 todos</span></div>
+            <div class="trace-tool__detail">
+              <div class="trace-tool__result col-muted"><span>5 todos:
+[x] #1: 分析当前 extension TUI 渲染缺口
+[~] #2: 设计 ANSI 渲染兜底层
+[ ] #3: 实现 pi-todo 结构化渲染器
+[ ] #4: 实现 pi-goal 结构化渲染器
+[ ] #5: 实现 pi-workflow 结构化渲染器</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot problem"><b>问题</b>：<code>[x]</code>/<code>[~]</code>/<code>[ ]</code> 纯文本标记无视觉区分，<code>_render</code> 结构化数据未被消费。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>TodoRenderer <span class="note">TodoDetails</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>todo_write</b> · list <span class="src">TodoRenderer.vue</span></div>
+        <div class="win-mock__body">
+          <div class="trace-blk">
+            <div class="trace-tool__header col-info"><span class="tname">todo_write</span><span class="targ">· 5 todos</span></div>
+            <div class="trace-tool__detail">
+              <div class="r-todo">
+                <div class="r-todo__summary"><span class="checks">☑ 1/5</span><span class="bar"><span class="fill" style="width:20%"></span></span><span class="pct">20%</span></div>
+                <div class="r-todo__list">
+                  <div class="r-todo__item done"><span class="mark col-success">✓</span><span class="id">#1</span><span class="txt">分析当前 extension TUI 渲染缺口</span></div>
+                  <div class="r-todo__item active"><span class="mark col-warning">●</span><span class="id">#2</span><span class="txt">设计 ANSI 渲染兜底层</span></div>
+                  <div class="r-todo__item pending"><span class="mark col-subtle">○</span><span class="id">#3</span><span class="txt">实现 pi-todo 结构化渲染器</span></div>
+                  <div class="r-todo__item pending"><span class="mark col-subtle">○</span><span class="id">#4</span><span class="txt">实现 pi-goal 结构化渲染器</span></div>
+                  <div class="r-todo__item pending"><span class="mark col-subtle">○</span><span class="id">#5</span><span class="txt">实现 pi-workflow 结构化渲染器</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot fix"><b>路线 B</b>：<code>TodoDetails.todos</code>（4 态：pending/in_progress/completed/cancelled）足够完整重建。状态色 ✓ 绿/● 黄/○ 灰 + 进度条。</div>
+    </div>
+  </div>
+
+  <!-- §1c goal + workflow 合并行 -->
+  <div class="cmp-grid">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>pi-goal 纯文本 <span class="note">result.content</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>goal_control</b> · create <span class="src">Block.vue</span></div>
+        <div class="win-mock__body">
+          <div class="trace-blk">
+            <div class="trace-tool__header col-info"><span class="tname">goal_control</span><span class="targ">· create</span></div>
+            <div class="trace-tool__detail">
+              <div class="trace-tool__result col-muted"><span>Goal created.
+Goal ID: goal_abc123
+Slug: migrate-pi-ext
+Objective: 把 pi-ext 全部迁移到 npm 包</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot problem"><b>问题</b>：goal ID/slug/objective 全挤在纯文本里。budget/进度在 widget 渠道，tool result 看不到。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>GoalRenderer <span class="note">details + widget</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>goal_control</b> · create <span class="src">GoalRenderer.vue</span></div>
+        <div class="win-mock__body">
+          <div class="trace-blk">
+            <div class="trace-tool__header col-info"><span class="tname">goal_control</span><span class="targ">· create</span></div>
+            <div class="trace-tool__detail">
+              <div class="r-goal">
+                <div class="r-goal__head"><span class="diamond col-accent">◆</span><span class="title">Goal Created</span><span class="slug">migrate-pi-ext</span><span class="r-goal__badge active">ACTIVE · Turn 8</span></div>
+                <div class="r-goal__metrics">
+                  <div class="r-goal__metric"><span class="label">Token 预算</span><span class="val">24.5k / 80k</span><span class="track"><span class="track-fill ok" style="width:31%"></span></span></div>
+                  <div class="r-goal__metric"><span class="label">时间预算</span><span class="val">6m / 30m</span><span class="track"><span class="track-fill ok" style="width:20%"></span></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot fix"><b>路线 B</b>：<code>GoalControlDetails</code>（轻）+ widget 渠道 <code>GoalRuntimeState</code>（budget/turns）。两数据源合并。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- §2 Widget (setWidget) -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section" id="s2">
+  <h2><span class="tag tag-done">已实现</span>Widget <span class="channel">setWidget → SideDrawer</span> <span class="status-flag partial">ANSI 剥离</span></h2>
+  <p class="desc">
+    <code>setWidget(key, lines)</code> 渲染在 SideDrawer（右侧抽屉）的 terminal/browser tab 里。<b>已实现</b>，但两个问题：
+    (1) runtime <code>stripAnsi</code> 剥离了所有颜色（event-adapter.ts:261），widget 永远单色纯文本；
+    (2) 每行一个 <code>&lt;code&gt; {{ line }} &lt;/code&gt;</code> 纯文本（SideDrawer.vue:73），无结构化布局。
+    <span class="gap">抽屉关闭时 widget 完全不可见</span>。
+  </p>
+  <div class="cmp-grid">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>纯文本每行 <span class="note">SideDrawer.vue:73</span></h3>
+      <div class="drawer-mock">
+        <div class="drawer-tabs"><div class="drawer-tab active">terminal</div><div class="drawer-tab">browser</div></div>
+        <div class="drawer-body">
+          <div class="wt-line">☑ 3/6</div>
+          <div class="wt-line">✓ TC-1: ExtensionResolver 四源扫描</div>
+          <div class="wt-line">✓ TC-3a: setWidget/setStatus 事件桥接</div>
+          <div class="wt-line">✓ TC-4: 删除 bundled goal/todo</div>
+          <div class="wt-line">○ TC-5: 打包适配 (in progress)</div>
+          <div class="wt-line">○ TC-6: 前端 composable 集成</div>
+          <div style="height:8px"></div>
+          <div class="wt-line" style="color:var(--subtle)">── Token: 24,512 / 80,000 (30.6%) ──</div>
+          <div class="wt-line" style="color:var(--subtle)">── Cost: $0.42 (est. $1.37) ──</div>
+        </div>
+        <div class="drawer-footer">
+          <div style="font-family:var(--font-mono);font-size:10.5px;display:flex;gap:8px"><span style="color:var(--subtle)">goal</span><span style="color:var(--muted);truncate">3/6 tasks done</span></div>
+        </div>
+      </div>
+      <div class="annot problem"><b>问题</b>：ANSI 已被 runtime 剥离 → 全单色灰白。<code>✓</code>/<code>○</code> 状态标记和进度条全部退化成无区分的文本行。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>结构化 widget 面板 <span class="note">保留 ANSI / 消费结构</span></h3>
+      <div class="drawer-mock">
+        <div class="drawer-tabs"><div class="drawer-tab active">terminal</div><div class="drawer-tab">browser</div></div>
+        <div class="drawer-body">
+          <!-- goal-tracker widget -->
+          <div class="wg-panel">
+            <div class="wg-panel__head"><svg class="icn" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg><span class="key">goal-tracker</span><span style="margin-left:auto;font:600 10px/1 var(--font-mono);color:var(--accent)">☑ 3/6</span></div>
+            <div class="wg-panel__body">
+              <div style="font-family:var(--font-mono);font-size:11px;line-height:1.6">
+                <div style="color:var(--success)">✓ TC-1: ExtensionResolver 四源扫描</div>
+                <div style="color:var(--success)">✓ TC-3a: setWidget/setStatus 事件桥接</div>
+                <div style="color:var(--success)">✓ TC-4: 删除 bundled goal/todo</div>
+                <div style="color:var(--warning)">● TC-5: 打包适配 <span style="color:var(--subtle)">(in progress)</span></div>
+                <div style="color:var(--subtle)">○ TC-6: 前端 composable 集成</div>
+              </div>
+            </div>
+          </div>
+          <!-- budget widget -->
+          <div class="wg-panel">
+            <div class="wg-panel__head"><svg class="icn" viewBox="0 0 16 16" fill="none" stroke="var(--warning)" stroke-width="1.5"><path d="M2 4h12M4 6v6a2 2 0 002 2h4a2 2 0 002-2V6"/></svg><span class="key">budget</span></div>
+            <div class="wg-panel__body">
+              <div style="display:flex;gap:12px;font-family:var(--font-mono);font-size:11px;flex-wrap:wrap">
+                <span><span style="color:var(--subtle)">Token</span> <span style="color:var(--fg)">24.5k</span><span style="color:var(--subtle)">/80k</span></span>
+                <span style="width:60px;height:4px;border-radius:2px;background:var(--border);display:inline-block;margin-top:5px;overflow:hidden"><span style="display:block;height:100%;width:31%;background:var(--success);border-radius:2px"></span></span>
+                <span><span style="color:var(--subtle)">Cost</span> <span style="color:var(--warning)">$0.42</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-footer">
+          <div style="font-family:var(--font-mono);font-size:10.5px;display:flex;gap:8px"><span class="sb-dot sb-dot--green" style="width:5px;height:5px;border-radius:50%;background:var(--success);display:inline-block"></span><span style="color:var(--subtle);font-weight:600;text-transform:uppercase;letter-spacing:0.04em">goal</span><span style="color:var(--muted)">3/6 tasks done</span></div>
+        </div>
+      </div>
+      <div class="annot fix"><b>修复</b>：runtime 不再 <code>stripAnsi</code>（保留颜色），前端 widget 渲染引入 ANSI 支持。状态标记按语义着色（✓ 绿/● 黄/○ 灰），budget 有进度条。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- §3 Status Bar (setStatus) -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section" id="s3">
+  <h2><span class="tag tag-done">已实现</span>Status Bar / Footer <span class="channel">setStatus → SideDrawer footer</span> <span class="status-flag partial">绑死抽屉</span></h2>
+  <p class="desc">
+    <code>setStatus(key, text)</code> 当前渲染在 SideDrawer 底部 footer（SideDrawer.vue:104），每条一行 <code>statusKey + text</code> 纯文本。
+    <span class="gap">问题：绑死在抽屉里，抽屉关闭时 status 完全不可见</span>。应是全局底栏，无论抽屉开关都常驻可见。
+  </p>
+  <div class="cmp-grid">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>抽屉 footer <span class="note">SideDrawer.vue:104</span></h3>
+      <div class="drawer-mock" style="height:200px">
+        <div class="drawer-tabs"><div class="drawer-tab active">terminal</div></div>
+        <div class="drawer-body"><div class="wt-line" style="color:var(--subtle)">（抽屉内容…）</div></div>
+        <div class="drawer-footer">
+          <div style="font-family:var(--font-mono);font-size:10.5px;display:flex;flex-direction:column;gap:2px">
+            <div style="display:flex;gap:8px"><span style="color:var(--subtle)">goal</span><span style="color:var(--muted)">3/6 tasks done</span></div>
+            <div style="display:flex;gap:8px"><span style="color:var(--subtle)">budget</span><span style="color:var(--muted)">$0.42 / ~$1.37</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="annot problem"><b>问题</b>：(1) status 在抽屉 footer 内，<b>抽屉关闭时不可见</b>。(2) <code>stripAnsi</code> 剥离颜色。(3) 无状态色点（绿/黄/红），全是灰色 <code>statusKey</code> + <code>text</code>。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>全局底栏常驻 <span class="note">AppFooter 独立组件</span></h3>
+      <div style="border-radius:var(--radius);border:1px solid var(--border);overflow:hidden">
+        <div style="padding:20px;background:var(--bg);font-size:12px;color:var(--subtle);text-align:center;border-bottom:1px solid var(--border)">（主对话区 — 抽屉关闭状态）</div>
+        <div class="statusbar">
+          <div class="sb-item"><span class="sb-dot sb-dot--green" style="animation:pulse-dot 1.5s ease-in-out infinite"></span><span class="sb-label">pi</span><span class="sb-val">connected</span></div>
+          <div class="sb-item"><span class="sb-dot sb-dot--green"></span><span class="sb-label">goal</span><span class="sb-val">3/6 tasks</span></div>
+          <div class="sb-item"><span class="sb-dot sb-dot--yellow"></span><span class="sb-label">budget</span><span class="sb-val">$0.42 / ~$1.37</span></div>
+          <div class="sb-item"><span class="sb-dot sb-dot--blue"></span><span class="sb-label">workflow</span><span class="sb-val">Task 5 · Step 3/3</span></div>
+          <div class="sb-item" style="margin-left:auto;border-left:1px solid var(--border)"><span style="font-size:10px;color:var(--subtle)">11 exts</span></div>
+        </div>
+      </div>
+      <div class="annot fix"><b>修复</b>：status 提升为全局底栏（<code>&lt;AppFooter&gt;</code> 或 Panel 底部），不依赖抽屉开关。每条带语义色点（绿=正常/黄=警告/蓝=运行中）。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- §4 交互 Overlay -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section" id="s4">
+  <h2><span class="tag tag-missing">缺失</span>交互 Overlay <span class="channel">confirm/select/input/notify/editor</span> <span class="status-flag missing">前端零处理</span></h2>
+  <p class="desc">
+    runtime 已翻译 <code>extension.ui_request</code> WS 帧（event-adapter.ts:279），含完整 <code>{requestId, method, title, message, options}</code>。
+    <span class="gap">但 renderer 完全没有 handler</b>——<code>chat-message-effects.ts</code> 的 22 个 handler 无一处理 <code>extension.ui_request</code>。
+    extension 调 <code>ctx.ui.confirm()</code>/<code>select()</code> 会一直挂起直到 runtime 超时。
+  </p>
+
+  <!-- confirm -->
+  <div class="cmp-grid" style="margin-bottom:20px">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>静默丢弃 <span class="note">无 handler</span></h3>
+      <div class="overlay-area">
+        <div class="overlay-bg"></div>
+        <div class="overlay-missing">
+          <div class="big">无任何 UI</div>
+          <div class="desc">extension 调 <code style="font-family:var(--font-mono);color:var(--danger)">ctx.ui.confirm()</code> 后，前端收到 <code style="font-family:var(--font-mono);color:var(--danger)">extension.ui_request</code> WS 帧但无 handler 处理 → 静默丢弃 → pi 子进程一直等待回复 → 60s 后 runtime 超时</div>
+        </div>
+      </div>
+      <div class="annot problem"><b>问题</b>：extension 的所有交互调用（confirm/select/input/notify/editor）在前端完全无渲染。pi 进程挂起 → 用户无感知 → 超时报错。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>confirm 对话框 <span class="note">ExtensionUIDialog.vue</span></h3>
+      <div class="overlay-area">
+        <div class="overlay-bg"></div>
+        <div class="dialog">
+          <div class="dialog__head">
+            <svg class="icn col-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            <span class="title">确认执行</span>
+          </div>
+          <div class="dialog__body">即将删除 <code>dist/runtime/</code> 目录（23 个文件），此操作不可逆。是否继续？</div>
+          <div class="dialog__actions">
+            <button class="btn btn-ghost">取消</button>
+            <button class="btn btn-danger">确认删除</button>
+          </div>
+        </div>
+      </div>
+      <div class="annot fix"><b>修复</b>：新增 <code>&lt;ExtensionUIDialog&gt;</code> 组件，监听 <code>extension.ui_request</code>，按 <code>method</code> 渲染不同对话框。用户操作后发 <code>extension.ui_response</code> 回复 runtime。</div>
+    </div>
+  </div>
+
+  <!-- select + input + notify -->
+  <div class="cmp-grid">
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>select 选择器 <span class="note">method: select</span></h3>
+      <div class="overlay-area" style="height:240px">
+        <div class="overlay-bg"></div>
+        <div class="dialog" style="width:340px">
+          <div class="dialog__head"><svg class="icn col-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h12"/></svg><span class="title">选择部署目标</span></div>
+          <div class="dialog__body" style="padding-bottom:4px">选择 workflow 的部署节点：</div>
+          <div class="dialog__select" style="margin:0 16px 8px">
+            <div class="dialog__opt selected"><span class="radio"></span>staging（推荐）</div>
+            <div class="dialog__opt"><span class="radio"></span>production</div>
+            <div class="dialog__opt"><span class="radio"></span>preview</div>
+          </div>
+          <div class="dialog__actions"><button class="btn btn-ghost">取消</button><button class="btn btn-primary">确定</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>input + notify <span class="note">method: input / notify</span></h3>
+      <div class="overlay-area" style="height:240px">
+        <div class="overlay-bg"></div>
+        <!-- input dialog -->
+        <div class="dialog" style="width:340px;top:40%;transform:translate(-50%,-50%)">
+          <div class="dialog__head"><svg class="icn col-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span class="title">输入 commit message</span></div>
+          <div class="dialog__body" style="padding-bottom:4px">为本次 goal 完成提供提交信息：</div>
+          <div class="dialog__input" style="margin:0 16px 8px">feat: migrate pi-ext to npm<span class="cursor"></span></div>
+          <div class="dialog__actions"><button class="btn btn-ghost">取消</button><button class="btn btn-primary">提交</button></div>
+        </div>
+        <!-- notify toast -->
+        <div class="toast success">
+          <svg class="icn col-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
+          <div class="body"><b>Workflow 完成</b><span>ci-pipeline 已成功执行 8 个步骤</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- §5 Custom Message -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section" id="s5">
+  <h2><span class="tag tag-done">部分</span>Custom Message <span class="channel">customType → SystemNotice / 专属卡片</span></h2>
+  <p class="desc">
+    pi 的 <code>sendMessage(&lbrace;customType, details&rbrace;)</code> 经 <code>message.customStart</code> 到前端。
+    当前 <b>只有 <code>subagent-bg-notify</code> 一个 customType</b> 有专属卡片（BgNotifyCard），其余全部退化成 SystemNotice 一行纯文本。
+    无通用 <code>customType → 组件</code> 注册机制，新 extension 必须前端硬编码。
+  </p>
+  <div class="cmp-grid">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>未知 customType 降级 <span class="note">SystemNotice.vue:47</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>workflow</b> · node-completed <span class="src">SystemNotice</span></div>
+        <div class="win-mock__body">
+          <div class="sys-notice">
+            <svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+            <span>{"customType":"workflow-node-completed","node":"deploy","status":"done","duration":"45s"}</span>
+          </div>
+        </div>
+      </div>
+      <div class="annot problem"><b>问题</b>：未注册的 customType 全部走 SystemNotice 兜底——一行图标 + 原始 JSON 文本。<code>details</code> 结构化数据完全未被消费。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>customType 注册表 <span class="note">按 type 路由</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>workflow</b> · node-completed <span class="src">WorkflowNodeCard</span></div>
+        <div class="win-mock__body">
+          <!-- 参照已有的 BgNotifyCard 风格 -->
+          <div class="bg-notify-card">
+            <div class="bg-notify-card__head">
+              <svg class="icn col-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
+              <span class="agent">deploy</span><span class="badge">COMPLETED</span>
+            </div>
+            <div class="bg-notify-card__body">部署到 staging 环境完成</div>
+            <div class="bg-notify-card__meta"><span>⏱ 45s</span><span>· 3.2k tokens</span><span>· session: abc123</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="annot fix"><b>修复</b>：建立 <code>customType → 组件</code> 注册表（类似 tool renderer registry），extension 可注册专属卡片。未注册的仍走 SystemNotice 兜底。<code>BgNotifyCard</code> 是已有范例。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- §6 ask-user — composer overlay -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section" id="s6">
+  <h2><span class="tag tag-missing">缺失</span>ask-user — 自定义交互组件 <span class="channel">ctx.ui.custom() → composer overlay</span> <span class="status-flag missing">RPC no-op</span></h2>
+  <p class="desc">
+    ask-user extension 用 <code>ctx.ui.custom()</code>（<code>src/index.ts:132</code>）传入自定义 TUI 组件 <code>AskUserComponent</code>，inline 渲染在对话流中——多问题 tab、选项导航、freeform 编辑、Submit 确认。
+    <span class="gap"><code>ctx.ui.custom()</code> 在 RPC 模式下返回 <code>undefined</code>（no-op），整个交互无法触达前端</span>。
+    ask-user 的 <code>execute</code> 拿到 undefined 后 <code>result.questions</code> 抛 TypeError → 被 try/catch 吞掉 → 返回 isError。用户看不到任何 UI，LLM 收到错误以为工具不可用。
+    <br><br>
+    <b>实现路线</b>：xyz-agent 前端在 composer 上方渲染 ask-user 富组件（overlay），用户回答后通过 dialog 协议（<code>extension_ui_response</code>）回传给 pi 的 <code>execute</code>。
+    前提是 ask-user 改用 <code>ctx.ui.select()</code> 序列而非 <code>ctx.ui.custom()</code>，或 xyz-agent 前端拦截 <code>ask_user</code> tool 调用后自行编排。
+  </p>
+
+  <!-- §6a: 当前状态（RPC 不可用） -->
+  <div class="cmp-grid" style="margin-bottom:24px">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">当前</span>RPC 下完全不可用 <span class="note">ctx.ui.custom → undefined</span></h3>
+      <div class="overlay-area" style="height:300px">
+        <div class="overlay-bg"></div>
+        <div class="overlay-missing">
+          <div class="big">无 UI + TypeError</div>
+          <div class="desc">
+            <code style="font-family:var(--font-mono);color:var(--danger)">ctx.ui.custom()</code> 返回 <code style="font-family:var(--font-mono);color:var(--danger)">undefined</code><br>
+            <code style="font-family:var(--font-mono);color:var(--danger);font-size:10px">→ result.questions 抛 TypeError</code><br>
+            <code style="font-family:var(--font-mono);color:var(--danger);font-size:10px">→ try/catch 吞掉 → isError: true</code><br>
+            <code style="font-family:var(--font-mono);color:var(--danger);font-size:10px">→ LLM 收到错误，以为工具坏了</code>
+          </div>
+        </div>
+      </div>
+      <div class="annot problem">
+        <b>根因</b>：<code>ctx.ui.custom()</code> 在 RPC 模式下是 no-op（<code>rpc-mode.js:151-154</code> 返回 undefined）。
+        ask-user 的全部富交互（<code>AskUserComponent</code> 的 render/handleInput）没有任何 RPC 通道能触达前端。
+        <code>ctx.hasUI</code> 在 RPC 下为 <code>true</code>，所以 headless 检查不触发，代码走到 <code>ctx.ui.custom()</code> 就废了。
+      </div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">修复后</span>composer 上方 overlay <span class="note">前端自渲染</span></h3>
+      <div class="composer-area" style="height:300px;display:flex;flex-direction:column">
+        <div class="composer-stream" style="flex:1;overflow:auto">
+          <div class="msg-line user">用 ask-user 问我要部署到哪个环境</div>
+          <div class="msg-line"><span style="color:var(--info);font-family:var(--font-mono);font-size:10px">ask_user</span> <span style="color:var(--subtle)">· 等待用户回复…</span></div>
+        </div>
+        <div class="composer-zone">
+          <!-- ask-user overlay 浮在 composer 上方 -->
+          <div class="ask-overlay">
+            <div class="ask-overlay__head">
+              <svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 3-3 3M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+              <span class="title">需要你的输入</span>
+              <div class="tabs"><span class="tab active">1/2 部署目标</span><span class="tab">2/2 版本号</span></div>
+            </div>
+            <div class="ask-overlay__body">
+              <div class="ask-overlay__q">选择部署目标环境</div>
+              <div class="ask-overlay__ctx">当前分支 fix-composer-move，已通过 CI 检查</div>
+              <div class="ask-overlay__opts">
+                <div class="ask-opt selected">
+                  <span class="num">1.</span>
+                  <svg class="check" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
+                  <span>staging（推荐）</span>
+                </div>
+                <div class="ask-opt"><span class="num">2.</span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="var(--border-strong)" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg><span>production</span></div>
+                <div class="ask-opt"><span class="num">3.</span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="var(--border-strong)" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg><span>preview</span></div>
+                <div class="ask-opt"><span class="num">4.</span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="var(--border-strong)" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg><span>Other…</span></div>
+              </div>
+            </div>
+            <div class="ask-overlay__actions">
+              <button class="btn btn-ghost">Cancel</button>
+              <button class="btn btn-primary">Submit</button>
+            </div>
+          </div>
+          <div class="composer-input"><span class="prompt">›</span><span class="txt">（ask-user 交互中，输入区暂停）</span></div>
+        </div>
+      </div>
+      <div class="annot fix">
+        <b>方案</b>：前端拦截 <code>ask_user</code> tool 调用（或识别 <code>ctx.ui.custom</code> 的 no-op 后降级），在 composer 上方渲染 overlay。
+        用户操作后答案通过 <code>extension_ui_response</code> 回传 pi。<b>不依赖 <code>ctx.ui.custom</code></b>——前端用 Web 组件重写 TUI 组件的等价交互。
+        tab 切换 / 选项导航 / freeform 编辑全部用 Vue 重实现。
+      </div>
+    </div>
+  </div>
+
+  <!-- §6b: TUI 原版 inline vs composer overlay 形态对比 -->
+  <h3 style="font-size:13px;font-weight:600;margin:20px 0 10px;color:var(--muted)">形态对比：TUI inline（原版）vs GUI composer overlay</h3>
+  <div class="cmp-grid">
+    <div class="cmp-col">
+      <h3><span class="pill" style="background:rgba(167,139,250,0.15);color:var(--reasoning);font:600 10px/1 var(--font-mono);padding:3px 7px;border-radius:var(--radius-sm)">TUI 原版</span>inline box in stream <span class="note">AskUserComponent.render()</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>ask_user</b> · inline render <span class="src">component.ts:80</span></div>
+        <div class="win-mock__body">
+          <div class="ask-inline">
+            <div class="ask-inline__box">
+              <div class="ask-inline__tabbar">
+                <div class="tb active">1. 部署目标</div>
+                <div class="tb">2. 版本号</div>
+                <div class="tb submit">Submit</div>
+              </div>
+              <div class="ask-inline__content">
+                <div class="ask-inline__q">选择部署目标环境</div>
+                <div style="color:var(--subtle);font-size:11px;margin-bottom:4px">当前分支 fix-composer-move</div>
+                <div class="ask-inline__opt sel"><span class="arr">›</span><span style="color:var(--accent)">✓</span><span class="num">1.</span><span class="lbl">staging（推荐）</span></div>
+                <div class="ask-inline__opt"><span class="arr-dim"> </span><span style="color:var(--subtle)">○</span><span class="num">2.</span><span class="lbl">production</span></div>
+                <div class="ask-inline__opt"><span class="arr-dim"> </span><span style="color:var(--subtle)">○</span><span class="num">3.</span><span class="lbl">preview</span></div>
+                <div class="ask-inline__opt"><span class="arr-dim"> </span><span style="color:var(--subtle)">○</span><span class="num">4.</span><span class="lbl">Other…</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot info"><b>TUI 形态</b>：box 边框包裹（<code>┌─┐││└─┘</code>），inline 嵌在对话流中（非 modal）。tab bar + 选项列表 + 光标导航。用 <code>ctx.ui.custom()</code> 直渲。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">GUI 版</span>composer overlay <span class="note">前端 Vue 重写</span></h3>
+      <div class="win-mock">
+        <div class="win-mock__bar"><b>ask_user</b> · composer overlay <span class="src">AskUserOverlay.vue</span></div>
+        <div class="win-mock__body">
+          <!-- 简化的 composer overlay -->
+          <div style="position:relative">
+            <div style="min-height:40px;padding:6px 0;font-size:12px;color:var(--subtle)">
+              <span style="color:var(--info);font-family:var(--font-mono);font-size:10px">ask_user</span> 等待回复…
+            </div>
+            <!-- overlay -->
+            <div style="background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface-2)">
+                <svg style="width:14px;height:14px;color:var(--reasoning)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 3-3 3M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+                <span style="font-size:11px;font-weight:600">需要你的输入</span>
+                <div style="margin-left:auto;display:flex;gap:4px">
+                  <span style="font:600 9px/1 var(--font-mono);padding:4px 7px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent)">1/2 部署目标</span>
+                  <span style="font:600 9px/1 var(--font-mono);padding:4px 7px;border-radius:var(--radius-sm);color:var(--subtle)">2/2 版本号</span>
+                </div>
+              </div>
+              <div style="padding:6px 10px">
+                <div style="font-size:12px;color:var(--fg);margin-bottom:4px">选择部署目标环境</div>
+                <div style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:var(--radius-sm);background:var(--accent-soft);font-size:11.5px"><span style="color:var(--accent)">✓</span><span style="font-family:var(--font-mono);color:var(--subtle)">1.</span><span style="color:var(--accent)">staging（推荐）</span></div>
+                <div style="display:flex;align-items:center;gap:6px;padding:3px 6px;font-size:11.5px"><span style="color:var(--border-strong)">○</span><span style="font-family:var(--font-mono);color:var(--subtle)">2.</span><span style="color:var(--muted)">production</span></div>
+                <div style="display:flex;align-items:center;gap:6px;padding:3px 6px;font-size:11.5px"><span style="color:var(--border-strong)">○</span><span style="font-family:var(--font-mono);color:var(--subtle)">3.</span><span style="color:var(--muted)">preview</span></div>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:6px;padding:6px 10px;border-top:1px solid var(--border)">
+                <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px">Cancel</button>
+                <button class="btn btn-primary" style="font-size:11px;padding:3px 10px">Submit</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annot fix"><b>GUI 形态</b>：overlay 浮在 composer 上方（不遮对话流），tab 切换用 chip，选项用 radio 卡片。用户 Submit 后答案经 <code>extension_ui_response</code> 回传。TUI 的 box 边框/tab bar/光标导航全部用 Vue 组件等价重写。</div>
+    </div>
+  </div>
+
+  <!-- §6c: 实现路线对比 -->
+  <h3 style="font-size:13px;font-weight:600;margin:20px 0 10px;color:var(--muted)">实现路线对比</h3>
+  <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:var(--surface-2);border-bottom:1px solid var(--border-strong)">
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em;width:120px">路线</th>
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">机制</th>
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">优点</th>
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">代价</th>
+      </tr></thead>
+      <tbody style="font-size:11.5px">
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:8px 12px"><span style="color:var(--success);font-weight:600">A. 前端拦截</span><br><span style="font-size:10px;color:var(--subtle)">推荐</span></td>
+          <td style="padding:8px 12px;color:var(--muted)">前端识别 <code>ask_user</code> tool 调用，自行渲染 composer overlay，答案通过 tool result 注入</td>
+          <td style="padding:8px 12px;color:var(--muted)">不改 pi 端；完整保留富交互（tab/freeform/comment）</td>
+          <td style="padding:8px 12px;color:var(--muted)">需绕过 pi 的 execute 阻塞模型；答案注入机制需设计</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:8px 12px"><span style="color:var(--warning);font-weight:600">B. 降级 dialog</span></td>
+          <td style="padding:8px 12px;color:var(--muted)">ask-user 改用 <code>ctx.ui.select()</code> 序列替代 <code>ctx.ui.custom()</code></td>
+          <td style="padding:8px 12px;color:var(--muted)">走标准 dialog 协议，前端只需实现 <code>ExtensionUIDialog</code></td>
+          <td style="padding:8px 12px;color:var(--muted)">需改 extension 源码；丢失 tabbed 多问题、分屏、inline 编辑器体验</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 12px"><span style="color:var(--subtle);font-weight:600">C. 协议扩展</span></td>
+          <td style="padding:8px 12px;color:var(--muted)">Pi RPC 加自定义 method 透传 <code>ctx.ui.custom</code> 的渲染数据</td>
+          <td style="padding:8px 12px;color:var(--muted)">通用，所有 <code>ctx.ui.custom</code> 的 extension 都受益</td>
+          <td style="padding:8px 12px;color:var(--muted)">需改 pi runtime；Component 的 render 输出是 ANSI string[]，前端仍需解析</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="annot fix" style="border-left-color:var(--reasoning);background:rgba(167,139,250,0.06)">
+    <b style="color:var(--reasoning)">推荐路线 A（前端拦截）</b>：不依赖 pi 端改动，在 xyz-agent 前端拦截 <code>ask_user</code> tool 调用。
+    ask-user 的 input schema（<code>Question[]</code>：header/options/multiSelect/allowComment/allowOther）是结构化 JSON，前端可直接消费渲染富组件。
+    核心问题是答案回传——pi 的 <code>execute</code> 在 <code>await ctx.ui.custom()</code> 处阻塞，前端需通过某种通道把答案注入。
+    最干净的做法是让 xyz-agent 的 runtime 层在检测到 <code>ask_user</code> tool 时，替它构造 tool result 返回给 pi（截断 execute 的阻塞）。
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- §7 Widget 实例对比（before/after 全景） -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section" id="s7">
+  <h2><span class="tag tag-mix">全景</span>Widget Before/After 实例 <span class="channel">goal-tracker / budget / workflow</span></h2>
+  <p class="desc">
+    完整场景模拟：goal 驱动的工作流执行中，三个 widget 同时活跃。<b>左侧</b>是当前渲染（ANSI 剥离 + 纯文本），<b>右侧</b>是修复后（结构化面板 + 状态色 + 进度条 + 全局 status bar）。
+  </p>
+  <div class="cmp-grid">
+    <div class="cmp-col">
+      <h3><span class="pill pill-before">Before</span>当前全貌 <span class="note">ANSI 剥离 + 纯文本</span></h3>
+      <div class="drawer-mock" style="height:380px">
+        <div class="drawer-tabs"><div class="drawer-tab active">terminal</div><div class="drawer-tab">browser</div><div class="drawer-tab">git</div></div>
+        <div class="drawer-body">
+          <div class="wt-line">migrate-pi-ext · Turn 8</div>
+          <div class="wt-line" style="color:var(--subtle)">Token: ████████░░░░░░░░░░░░ 24.5k/80k</div>
+          <div class="wt-line" style="color:var(--subtle)">Time:  ███░░░░░░░░░░░░░░░░ 6min/30min</div>
+          <div style="height:6px"></div>
+          <div class="wt-line">3/6 completed</div>
+          <div class="wt-line">✓ TC-1: ExtensionResolver 四源扫描</div>
+          <div class="wt-line">✓ TC-3a: setWidget/setStatus 事件桥接</div>
+          <div class="wt-line">✓ TC-4: 删除 bundled goal/todo/workflow</div>
+          <div class="wt-line">● TC-5: 打包适配</div>
+          <div class="wt-line">○ TC-6: 前端 composable 集成</div>
+          <div style="height:6px"></div>
+          <div class="wt-line">workflow: ci-pipeline</div>
+          <div class="wt-line">├─ Step 1: install ✓</div>
+          <div class="wt-line">├─ Step 2: lint ✓</div>
+          <div class="wt-line">├─ Step 3: test ⟳</div>
+          <div class="wt-line">└─ Step 4: build ○</div>
+        </div>
+        <div class="drawer-footer">
+          <div style="font-family:var(--font-mono);font-size:10.5px;display:flex;flex-direction:column;gap:2px">
+            <div style="display:flex;gap:8px"><span style="color:var(--subtle)">goal</span><span style="color:var(--muted)">3/6 tasks</span></div>
+            <div style="display:flex;gap:8px"><span style="color:var(--subtle)">budget</span><span style="color:var(--muted)">$0.42 / ~$1.37</span></div>
+            <div style="display:flex;gap:8px"><span style="color:var(--subtle)">workflow</span><span style="color:var(--muted)">Step 3/4</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="annot problem"><b>全单色</b>：ANSI 剥离后 <code>████████░░░░</code> 进度条的 <code>█/░</code> 本该有颜色区分（满/空），现在全是灰白。✓/●/○/⟳ 状态符号无颜色。status 在 footer 里，抽屉关闭即消失。</div>
+    </div>
+    <div class="cmp-col">
+      <h3><span class="pill pill-after">After</span>修复全貌 <span class="note">结构化 + 语义色</span></h3>
+      <div class="drawer-mock" style="height:380px">
+        <div class="drawer-tabs"><div class="drawer-tab active">terminal</div><div class="drawer-tab">browser</div><div class="drawer-tab">git</div></div>
+        <div class="drawer-body">
+          <!-- goal widget -->
+          <div class="wg-panel">
+            <div class="wg-panel__head"><svg class="icn" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg><span class="key">migrate-pi-ext</span><span style="margin-left:auto;font:600 10px/1 var(--font-mono);color:var(--accent)">◆ Turn 8</span></div>
+            <div class="wg-panel__body">
+              <div style="display:flex;gap:14px;margin-bottom:6px">
+                <div><div style="font-size:9px;color:var(--subtle);text-transform:uppercase">Token</div><div style="font-family:var(--font-mono);font-size:11px">24.5k<span style="color:var(--subtle)">/80k</span></div><div style="width:70px;height:3px;border-radius:2px;background:var(--border);margin-top:2px;overflow:hidden"><div style="height:100%;width:31%;background:var(--success);border-radius:2px"></div></div></div>
+                <div><div style="font-size:9px;color:var(--subtle);text-transform:uppercase">Time</div><div style="font-family:var(--font-mono);font-size:11px">6m<span style="color:var(--subtle)">/30m</span></div><div style="width:70px;height:3px;border-radius:2px;background:var(--border);margin-top:2px;overflow:hidden"><div style="height:100%;width:20%;background:var(--success);border-radius:2px"></div></div></div>
+              </div>
+              <div style="font-family:var(--font-mono);font-size:11px;line-height:1.6">
+                <div style="color:var(--success)">✓ TC-1: ExtensionResolver 四源扫描</div>
+                <div style="color:var(--success)">✓ TC-3a: setWidget/setStatus 事件桥接</div>
+                <div style="color:var(--success)">✓ TC-4: 删除 bundled goal/todo/workflow</div>
+                <div style="color:var(--warning)">● TC-5: 打包适配</div>
+                <div style="color:var(--subtle)">○ TC-6: 前端 composable 集成</div>
+              </div>
+            </div>
+          </div>
+          <!-- workflow widget -->
+          <div class="wg-panel">
+            <div class="wg-panel__head"><svg class="icn" viewBox="0 0 16 16" fill="none" stroke="var(--info)" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg><span class="key">ci-pipeline</span><span style="margin-left:auto;font:600 10px/1 var(--font-mono);color:var(--warning)">● Step 3/4</span></div>
+            <div class="wg-panel__body">
+              <div style="font-family:var(--font-mono);font-size:11px;line-height:1.6;padding-left:4px">
+                <div><span style="color:var(--success)">├─ install ✓</span></div>
+                <div><span style="color:var(--success)">├─ lint ✓</span></div>
+                <div><span style="color:var(--warning)">├─ test ⟳</span> <span style="color:var(--subtle);animation:pulse-dot 1.5s ease-in-out infinite;display:inline-block">running…</span></div>
+                <div style="color:var(--subtle)">└─ build ○</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-footer">
+          <div style="display:flex;align-items:center;gap:0;padding:0;height:24px">
+            <div style="display:flex;align-items:center;gap:5px;padding:0 8px;height:100%;font-size:10px;border-right:1px solid var(--border)"><span class="sb-dot sb-dot--green" style="width:5px;height:5px;border-radius:50%;display:inline-block"></span><span style="color:var(--subtle);font-weight:600;text-transform:uppercase">goal</span><span style="color:var(--muted)">3/6</span></div>
+            <div style="display:flex;align-items:center;gap:5px;padding:0 8px;height:100%;font-size:10px"><span class="sb-dot sb-dot--yellow" style="width:5px;height:5px;border-radius:50%;display:inline-block"></span><span style="color:var(--subtle);font-weight:600;text-transform:uppercase">budget</span><span style="color:var(--muted)">$0.42</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="annot fix"><b>语义色恢复</b>：✓ 绿/● 黄/○ 灰状态区分，进度条有颜色（绿=安全/黄=警告/红=危险），workflow step 有 running 动画。widget 按来源分面板（goal/workflow 独立卡片）。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- 总结 -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div class="cmp-section">
+  <h2><span class="tag tag-mix">总结</span>渠道状态矩阵 + 工作量评估</h2>
+  <p class="desc">下表按优先级排列各渠道的修复方案和工作量。</p>
+  <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:var(--surface-2);border-bottom:1px solid var(--border-strong)">
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">渠道</th>
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">当前状态</th>
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">修复方案</th>
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">工作量</th>
+        <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:0.06em">优先级</th>
+      </tr></thead>
+      <tbody style="font-family:var(--font-mono);font-size:11.5px">
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 12px;color:var(--fg)">tool result ANSI</td><td style="padding:8px 12px"><span class="status-flag missing">缺失</span></td><td style="padding:8px 12px;color:var(--muted)">ansi_up + Block.vue</td><td style="padding:8px 12px;color:var(--muted)">~1 天</td><td style="padding:8px 12px"><span style="color:var(--danger);font-weight:600">P0</span></td></tr>
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 12px;color:var(--fg)">交互 Overlay</td><td style="padding:8px 12px"><span class="status-flag missing">缺失</span></td><td style="padding:8px 12px;color:var(--muted)">ExtensionUIDialog 组件</td><td style="padding:8px 12px;color:var(--muted)">~2 天</td><td style="padding:8px 12px"><span style="color:var(--danger);font-weight:600">P0</span></td></tr>
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 12px;color:var(--fg)">ask-user composer</td><td style="padding:8px 12px"><span class="status-flag missing">RPC no-op</span></td><td style="padding:8px 12px;color:var(--muted)">前端拦截 + overlay 组件</td><td style="padding:8px 12px;color:var(--muted)">~3 天</td><td style="padding:8px 12px"><span style="color:var(--danger);font-weight:600">P0</span></td></tr>
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 12px;color:var(--fg)">Widget ANSI</td><td style="padding:8px 12px"><span class="status-flag partial">ANSI 剥离</span></td><td style="padding:8px 12px;color:var(--muted)">runtime 不 strip + 前端渲染</td><td style="padding:8px 12px;color:var(--muted)">~1 天</td><td style="padding:8px 12px"><span style="color:var(--warning);font-weight:600">P1</span></td></tr>
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 12px;color:var(--fg)">Status Bar 位置</td><td style="padding:8px 12px"><span class="status-flag partial">绑死抽屉</span></td><td style="padding:8px 12px;color:var(--muted)">提升为全局底栏</td><td style="padding:8px 12px;color:var(--muted)">~半天</td><td style="padding:8px 12px"><span style="color:var(--warning);font-weight:600">P1</span></td></tr>
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 12px;color:var(--fg)">tool 结构化渲染器</td><td style="padding:8px 12px"><span class="status-flag partial">仅 subagent</span></td><td style="padding:8px 12px;color:var(--muted)">todo/goal/workflow renderer</td><td style="padding:8px 12px;color:var(--muted)">~1.5 天</td><td style="padding:8px 12px"><span style="color:var(--accent);font-weight:600">P2</span></td></tr>
+        <tr><td style="padding:8px 12px;color:var(--fg)">customType 注册表</td><td style="padding:8px 12px"><span class="status-flag partial">仅 bg-notify</span></td><td style="padding:8px 12px;color:var(--muted)">customType → 组件注册</td><td style="padding:8px 12px;color:var(--muted)">~半天</td><td style="padding:8px 12px"><span style="color:var(--accent);font-weight:600">P2</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cmp-grid" style="grid-template-columns:1fr 1fr;gap:16px">
+    <div class="annot fix" style="border-left-color:var(--danger);background:rgba(239,68,68,0.06)">
+      <b style="color:var(--danger)">P0 — 阻塞使用</b><br>
+      <b>tool result ANSI</b>：所有带色命令输出乱码（bash/git/pytest/eslint）<br>
+      <b>交互 Overlay</b>：extension 的 confirm/select/input 调用挂起无响应 → pi 进程卡死<br>
+      <b>ask-user</b>：<code>ctx.ui.custom()</code> RPC no-op → TypeError → LLM 以为工具坏了<br>
+      <b>合计 ~6 天，解决后 extension 基本可用</b>
+    </div>
+    <div class="annot fix" style="border-left-color:var(--accent);background:var(--accent-soft)">
+      <b style="color:var(--accent)">P1/P2 — 体验提升</b><br>
+      <b>Widget ANSI + Status 位置</b>：widget 恢复颜色，status 全局可见<br>
+      <b>结构化渲染器</b>：todo/goal/workflow 从纯文本升级为专属卡片<br>
+      <b>customType 注册表</b>：extension 自定义消息有专属 UI<br>
+      <b>合计 ~3.5 天，从「可用」到「好用」</b>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
