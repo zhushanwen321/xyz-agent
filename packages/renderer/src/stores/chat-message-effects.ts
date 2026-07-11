@@ -403,6 +403,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       content,
       status: 'complete',
       customType,
+      // 保留原始 details（含 __gui__），前端检测 details.__gui__ 路由到 GuiComponentRenderer
+      details,
       timestamp: Date.now(),
     }
     // subagent-bg-notify：解析 details 为 BgNotifyDetails（单条或批量），渲染层据此出卡片
