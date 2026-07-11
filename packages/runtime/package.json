@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/shared": "workspace:*",
     "fast-glob": "^3.3.3",
     "semver": "^6.3.1",
