@@ -99,7 +99,7 @@ export interface ClientMessageMap {
   'tool.approve': { sessionId: string; toolCallId?: string }
   'tool.deny': { sessionId: string; toolCallId?: string; reason?: string }
   'tool.always_allow': { sessionId: string; toolName?: string }
-  'extension.ui_response': { sessionId: string; requestId: string; result: boolean | string | null }
+  'extension.ui_response': { sessionId: string; requestId: string; method: string; result: boolean | string | null }
   'extension.toggle': { name: string; enabled: boolean }
   'extension.list': Record<string, never>
   'extension.install': { source: string }
@@ -180,7 +180,7 @@ export type ServerMessageType =
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
-  | 'extension:widget' | 'extension:widgetGui' | 'extension:status'
+  | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
   | 'message.compactionSummary'
   | 'extension:setEditorText'
   | 'message.compactionSummary' | 'message.branchSummary'
@@ -246,6 +246,8 @@ export interface ServerMessageMapBase {
   // 结构化 widget（GuiComponent 经 NUL marker 编码透传，event-adapter 检测 marker 解码）
   'extension:widgetGui': { sessionId: string; widgetKey: string; gui: unknown }
   'extension:status': { sessionId: string; statusKey: string; text: string; textRaw?: string }
+  // extension notify（pi fire-and-forget 通知，前端渲染为 toast）
+  'extension:notify': { sessionId: string; message: string; level: 'info' | 'warn' | 'error' }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
   'session.compacting': { sessionId: string }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }

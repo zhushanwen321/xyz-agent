@@ -326,10 +326,20 @@ onMessage('extension:widget', (msg) => {
   else unknownWidget.value = { key: payload.widgetKey, lines }
 })
 // extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
+// gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），
+// 删 guiWidgetsByTab 条目 + 清对应 tab 的纯文本 lines。
 // 未匹配 tab 的 widgetKey 归 terminal（与 extension:widget fallback 语义一致：unknownWidget 默认显 terminal）
 onMessage('extension:widgetGui', (msg) => {
   const payload = msg.payload
   const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
+  if (payload.gui === null) {
+    // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
+    guiWidgetsByTab.value.delete(tab)
+    guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
+    if (tab === 'terminal') terminalLines.value = []
+    else if (tab === 'browser') browserLines.value = []
+    return
+  }
   guiWidgetsByTab.value.set(tab, payload.gui as GuiComponent)
   guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
 })

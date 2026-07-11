@@ -1,17 +1,19 @@
 <script setup lang="ts">
 /**
- * ExtensionUIDialog——渲染 pi extension 的交互请求（confirm/select/input/notify）。
+ * ExtensionUIDialog——渲染 pi extension 的交互请求（confirm/select/input/editor）。
  *
  * pi extension 调 ctx.ui.select/confirm/input → runtime 推 extension.ui_request
  * → useExtensionUI 维护队列 → 此组件渲染队首请求的对话框
- * → 用户操作 → respond() 回传 → pi Promise resolve。
+ * → 用户操作 → respond() 回传（带 method）→ pi Promise resolve。
  *
  * 按 method 路由：
  * - confirm → ConfirmDialog（是/否）
  * - select → Select 下拉选择
  * - input → Input 文本输入
- * - notify → 纯展示（自动 dismiss 或手动关闭）
  * - editor → Textarea 多行编辑
+ *
+ * notify 不走此组件——它是 fire-and-forget（pi 不等回复），经 extension.notify WS 帧
+ * → useExtensionNotify → useToast 渲染为非阻塞 toast。
  */
 import { ref, computed, watch } from 'vue'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -106,11 +108,6 @@ function onConfirm(): void {
           <Button variant="ghost" @click="cancel">取消</Button>
           <Button variant="default" @click="onConfirm">确认</Button>
         </div>
-      </div>
-
-      <!-- notify -->
-      <div v-else-if="req?.method === 'notify'" class="flex justify-end gap-2 pt-2">
-        <Button variant="ghost" @click="cancel">知道了</Button>
       </div>
     </DialogContent>
   </Dialog>

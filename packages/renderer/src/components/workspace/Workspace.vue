@@ -40,11 +40,14 @@ import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useExtensionNotify } from '@/composables/useExtensionUI'
 import PanelContainer from './PanelContainer.vue'
 import ExtensionUIDialog from '@/components/extension/ExtensionUIDialog.vue'
 
 const { newSession, focusedSessionId } = useSidebar()
 const flow = useNewTaskFlow()
+// Extension notify → toast（fire-and-forget，非阻塞通知）
+useExtensionNotify(focusedSessionId)
 
 /** 是否有焦点 session（决定渲染 panel 还是空态，跟随 panel focus） */
 const hasSession = computed(() => focusedSessionId.value !== null)

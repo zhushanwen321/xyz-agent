@@ -49,19 +49,23 @@ export class ExtensionMessageHandler {
 
   /**
    * 扩展 UI 请求超时后的响应编排：向 pi 进程发默认 extension_ui_response（confirm→false，
-   * 其余→null），并广播 extension.ui_timeout 通知前端。
+   * 其余→cancelled），并广播 extension.ui_timeout 通知前端。
    *
-   * 此前这段逻辑内联在 server.registerExtensionTimeout 的 onTimeout 回调里——属于扩展响应
-   * 编排，不该留在 transport 层。server 现在只负责注册 timer，超时后委托本方法。
-   * 行为与原内联实现逐字一致（默认值计算、RPC 取值判空、sendCommand + 广播顺序）。
+   * pi 的 extension_ui_response 期望按 method 分的 3 种格式（rpc-types.ts:255-258）：
+   * - {id, value} 用于 select/input/editor
+   * - {id, confirmed} 用于 confirm
+   * - {id, cancelled:true} 用于取消
+   * pi 用鸭子类型字段检测解析（rpc-mode.ts:136-149），发错字段静默返回默认值。
+   *
+   * 超时后标记 requestId 为已超时（extensionTimeoutMgr.markTimedOut），
+   * 防止前端 race window 内迟到的 extension.ui_response 再发一次（双响应）。
    */
   handleExtensionTimeout(sessionId: string, requestId: string, method: string): void {
-    const defaultResponse = method === 'confirm' ? false : null
+    this.ctx.extensionTimeoutMgr.markTimedOut(requestId)
     const client = this.ctx.sessionService.getRpcClient(sessionId)
     if (client) {
-      client.sendCommand('extension_ui_response', { id: requestId, response: defaultResponse }).catch((e: unknown) => {
-        console.error('[runtime] extension timeout response failed:', e)
-      })
+      const raw = buildExtensionUiResponse(method, requestId, method === 'confirm' ? false : null)
+      client.sendRaw(raw)
     }
     this.ctx.broadcast({
       type: 'extension.ui_timeout',
@@ -73,10 +77,19 @@ export class ExtensionMessageHandler {
   async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'extension.ui_response': {
-        const { sessionId: extSid, requestId, result: extResult } = msg.payload
+        const { sessionId: extSid, requestId, method, result: extResult } = msg.payload
 
         if (this.ctx.extensionTimeoutMgr.isBridgeRequest(requestId)) {
           this.ctx.extensionTimeoutMgr.removeBridgeRequest(requestId)
+          return
+        }
+
+        // P2-6：超时后的迟到响应直接丢弃。runtime 超时已向 pi 发默认响应，
+        // 此处再发会导致 pi 双响应（pi 按 id 匹配第一个响应，第二个会被忽略——
+        // 但 runtime 不应依赖 pi 的容错，在自身层拦截）。
+        if (this.ctx.extensionTimeoutMgr.isTimedOut(requestId)) {
+          this.ctx.extensionTimeoutMgr.clearTimedOut(requestId)
+          this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
           return
         }
 
@@ -85,7 +98,7 @@ export class ExtensionMessageHandler {
           this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
           return this.ctx.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, { sessionId: extSid })
         }
-        await client.sendCommand('extension_ui_response', { id: requestId, response: extResult ?? null })
+        client.sendRaw(buildExtensionUiResponse(method, requestId, extResult ?? null))
         this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
         return
       }
@@ -241,4 +254,36 @@ export class ExtensionMessageHandler {
     // matched 分支透传 e.hint；fallback 分支不带 details（保持既有行为）。
     sendHandlerError(this.ctx, ws, ExtensionInstallError, 'install_failed', e, id, (matched) => matched.hint ? { hint: matched.hint } : undefined)
   }
+}
+
+/**
+ * 构建 pi extension_ui_response 的 JSON 行（pi 鸭子类型字段检测协议）。
+ *
+ * pi rpc-mode.ts:136-149 按 method 绑定的 parseResponse 解析 response：
+ * - confirm → `confirmed` in r ? r.confirmed : false
+ * - select/input/editor → `value` in r ? r.value : undefined
+ * - 任何 method → `cancelled` in r && r.cancelled ? <default> : <按字段>
+ *
+ * 故 runtime（pi 协议唯一适配点，规则 5）必须按 method 发正确字段名：
+ * - result === null → {id, cancelled:true}（取消/超时）
+ * - method === 'confirm' → {id, confirmed:boolean}
+ * - method === select/input/editor → {id, value:string}
+ *
+ * 不含 RPC 关联 id（pi 不回复 extension_ui_response 的 RPC 确认，sendRaw 直接写 stdin）。
+ */
+function buildExtensionUiResponse(
+  method: string,
+  requestId: string,
+  result: boolean | string | null,
+): string {
+  let payload: Record<string, unknown>
+  if (result === null) {
+    payload = { type: 'extension_ui_response', id: requestId, cancelled: true }
+  } else if (method === 'confirm') {
+    payload = { type: 'extension_ui_response', id: requestId, confirmed: result as boolean }
+  } else {
+    // select / input / editor → value
+    payload = { type: 'extension_ui_response', id: requestId, value: String(result) }
+  }
+  return JSON.stringify(payload)
 }

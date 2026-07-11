@@ -12,7 +12,7 @@ import { ref } from 'vue'
 export interface Toast {
   id: number
   message: string
-  type: 'error' | 'info'
+  type: 'error' | 'info' | 'warning'
 }
 
 const toasts = ref<Toast[]>([])
@@ -34,9 +34,21 @@ export function useToast() {
     scheduleRemove(id)
   }
 
+  function info(message: string): void {
+    const id = nextId++
+    toasts.value = [...toasts.value, { id, message, type: 'info' }]
+    scheduleRemove(id)
+  }
+
+  function warning(message: string): void {
+    const id = nextId++
+    toasts.value = [...toasts.value, { id, message, type: 'warning' }]
+    scheduleRemove(id)
+  }
+
   function remove(id: number): void {
     toasts.value = toasts.value.filter((t) => t.id !== id)
   }
 
-  return { toasts, error, remove }
+  return { toasts, error, info, warning, remove }
 }

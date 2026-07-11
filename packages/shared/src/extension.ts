@@ -17,20 +17,34 @@ export interface ExtensionStatusPayload {
   textRaw?: string
 }
 
+/**
+ * Extension notify 推送 payload（pi fire-and-forget，pi rpc-mode.ts notify 发后不等回复）。
+ * 前端渲染为 toast 通知（非阻塞），不走 ExtensionUIDialog 模态对话框。
+ */
+export interface ExtensionNotifyPayload {
+  sessionId: string
+  message: string
+  /** pi notifyType 映射到 toast 级别（info/warning → info toast，error → error toast） */
+  level: 'info' | 'warn' | 'error'
+}
+
 export const EXTENSION_EVENTS = {
   WIDGET: 'extension:widget',
   WIDGET_GUI: 'extension:widgetGui',
   STATUS: 'extension:status',
+  NOTIFY: 'extension:notify',
 } as const
 
 // ── Extension UI 交互 / 安装流 payload ────────────────────────────
 
 /**
- * pi 扩展交互式 UI 方法（产生 extension.ui_request WS 帧）。
+ * pi 扩展交互式 dialog 方法（产生 extension.ui_request WS 帧，需要前端回复 extension.ui_response）。
  * 与 event-adapter.ts INTERACTIVE_UI_METHODS + ExtensionUIDialog 渲染分支保持同步。
- * setStatus/setWidget/set_editor_text/bridge:* 不在此列——它们走独立分支，不产 ui_request 帧。
+ *
+ * notify 不在此列——它是 fire-and-forget（pi 不等回复），走独立 extension.notify WS 帧 + toast 渲染。
+ * setStatus/setWidget/set_editor_text/bridge:* 也不在此列——它们走独立分支，不产 ui_request 帧。
  */
-export type ExtensionInteractMethod = 'confirm' | 'select' | 'input' | 'notify' | 'editor'
+export type ExtensionInteractMethod = 'confirm' | 'select' | 'input' | 'editor'
 
 export interface ExtensionInfo {
   name: string

@@ -19,7 +19,7 @@
  * Each session gets its own adapter instance. translate() is stateless（一个 pi 事件
  * 产出一组中间事件），可变态由 EventInterpreter 持有。
  */
-import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType, ExtensionInteractMethod } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
 import { GUI_WIDGET_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
@@ -55,11 +55,18 @@ const STOP_REASON_MAP: Record<string, string> = {
 }
 
 /**
- * Interactive extension UI methods that produce extension.ui_request WS events.
- * Must stay in sync with PiExtensionUiRequestEvent['method'] in pi-protocol.ts
- * (仅交互式子集——setStatus/setWidget/set_editor_text/bridge:* 走独立分支)。
+ * Interactive extension UI dialog methods that produce extension.ui_request WS events.
+ * Must stay in sync with ExtensionInteractMethod SSOT (shared/extension.ts).
+ *
+ * notify 不在此列——它是 fire-and-forget（pi rpc-mode.ts notify 发后不等回复），
+ * 走独立 extension.notify WS 帧 + 前端 toast 渲染（非阻塞）。
+ * setStatus/setWidget/set_editor_text/bridge:* 也不在此列——它们走独立分支，不产 ui_request 帧。
+ *
+ * satisfies 编译期断言：SSOT 扩展新方法时若忘记同步此 Set，tsc 报错（而非静默 noop 丢弃）。
  */
-const INTERACTIVE_UI_METHODS = new Set(['confirm', 'select', 'input', 'notify', 'editor'])
+const INTERACTIVE_UI_METHODS = new Set<ExtensionInteractMethod>([
+  'confirm', 'select', 'input', 'editor',
+])
 
 /** Extension method constant for the editor UI */
 const METHOD_EDITOR = 'editor' as const
@@ -266,10 +273,24 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     ]
   }
 
-  // setWidget → WS event（检测 GUI 协议 marker）
+  // setWidget → WS event（检测 GUI 协议 marker / 清除语义）
   if (method === 'setWidget') {
     const widgetKey = String(event.widgetKey ?? '')
     const rawLines = Array.isArray(event.widgetLines) ? event.widgetLines as unknown[] : []
+
+    // 清除语义：widgetLines 缺失或空数组 → extension 清除此 widget（guiSetWidget(key, undefined)）。
+    // 发 extension:widgetGui 带 gui:null，前端据此删 guiWidgetsByTab 条目 + 清 lines。
+    // 不能只发 extension:widget（lines:[]）——前端 widget handler 不触碰 guiWidgetsByTab，
+    // 会导致结构化 widget 永驻。
+    if (rawLines.length === 0) {
+      return [{
+        kind: 'message',
+        message: {
+          type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+          payload: { sessionId: sid, widgetKey, gui: null },
+        },
+      }]
+    }
 
     // 检测 GUI 协议 marker：单行以 NUL marker 开头 → 结构化 widget
     if (rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER)) {
@@ -295,18 +316,44 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     }
 
     // 原有行为：stripAnsi + string[]
+    // marker 命中但校验/解析失败的行包含 NUL + marker 前缀（\x00XYZ_GUI_WIDGET:...），
+    // 直接展示会给用户看乱码——剥离 marker 前缀后显示剩余 JSON 文本（或空行）。
     const widgetPayload = {
       sessionId: sid,
       widgetKey,
-      lines: rawLines.map(l => stripAnsi(String(l))),
+      lines: rawLines.map(l => {
+        const s = String(l)
+        const stripped = s.startsWith(GUI_WIDGET_MARKER) ? s.slice(GUI_WIDGET_MARKER.length) : s
+        return stripAnsi(stripped)
+      }),
     }
-    console.log('[EventAdapter] setWidget:', widgetPayload.widgetKey, 'lines:', widgetPayload.lines.length, 'sessionId:', sid)
     return [{ kind: 'message', message: { type: EXTENSION_EVENTS.WIDGET as ServerMessageType, payload: widgetPayload } }]
   }
 
   // setEditorText → extension:setEditorText
   if (method === 'set_editor_text') {
     return [{ kind: 'message', message: { type: 'extension:setEditorText', payload: { sessionId: sid, text: String(event.text ?? '') } } }]
+  }
+
+  // notify → extension.notify（fire-and-forget，pi 不等回复）
+  // pi rpc-mode.ts notify 发出 extension_ui_request{method:'notify'} 后不注册 pending、不等 response。
+  // 不走 INTERACTIVE_UI_METHODS（不产 extension-ui kind → 不注册 timeout → 不弹模态对话框）。
+  // 前端用 toast 渲染（非阻塞）。
+  if (method === 'notify') {
+    const rawType = String(event.notifyType ?? 'info')
+    const level: 'info' | 'warn' | 'error' =
+      rawType === 'error' ? 'error' : rawType === 'warning' ? 'warn' : 'info'
+    return [{
+      kind: 'message',
+      message: {
+        type: EXTENSION_EVENTS.NOTIFY as ServerMessageType,
+        payload: {
+          sessionId: sid,
+          message: String(event.message ?? ''),
+          level,
+        },
+      },
+    }]
   }
 
   // bridge:* → bridge-ui（interpreter 路由 server）
@@ -316,12 +363,13 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     return [{ kind: 'bridge-ui', requestId, sessionId: sid, method, data }]
   }
 
-  // Interactive methods: confirm, select, input, notify, editor
-  if (method && INTERACTIVE_UI_METHODS.has(method)) {
+  // Interactive dialog methods: confirm, select, input, editor (notify 已在上方独立分支处理)
+  if (method && INTERACTIVE_UI_METHODS.has(method as ExtensionInteractMethod)) {
+    const dialogMethod = method as ExtensionInteractMethod
     const rawOptions = event.options as Array<{ label: string; value: string }> | undefined
     const requestId = String(event.id ?? '')
     return [
-      { kind: 'extension-ui', requestId, sessionId: sid, method },
+      { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod },
       {
         kind: 'message',
         message: {

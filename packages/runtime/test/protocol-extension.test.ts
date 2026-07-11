@@ -22,10 +22,10 @@ describe('Protocol: extension types', () => {
     const msg: ClientMessage = {
       type: 'extension.ui_response',
       id: 'test-1',
-      payload: { sessionId: 's1', requestId: 'r1', result: true },
+      payload: { sessionId: 's1', requestId: 'r1', method: 'confirm', result: true },
     }
     expect(msg.type).toBe('extension.ui_response')
-    expect(msg.payload).toEqual({ sessionId: 's1', requestId: 'r1', result: true })
+    expect(msg.payload).toEqual({ sessionId: 's1', requestId: 'r1', method: 'confirm', result: true })
   })
 
   it('ClientMessage accepts extension.toggle type', () => {
@@ -50,7 +50,7 @@ describe('Protocol: extension types', () => {
   it('extension.ui_response accepts boolean result', () => {
     const msg: ClientMessage = {
       type: 'extension.ui_response',
-      payload: { sessionId: 's1', requestId: 'r1', result: false },
+      payload: { sessionId: 's1', requestId: 'r1', method: 'confirm', result: false },
     }
     expect((msg.payload as { result: boolean }).result).toBe(false)
   })
@@ -58,7 +58,7 @@ describe('Protocol: extension types', () => {
   it('extension.ui_response accepts string result', () => {
     const msg: ClientMessage = {
       type: 'extension.ui_response',
-      payload: { sessionId: 's1', requestId: 'r1', result: 'selected-option' },
+      payload: { sessionId: 's1', requestId: 'r1', method: 'select', result: 'selected-option' },
     }
     expect((msg.payload as { result: string }).result).toBe('selected-option')
   })
@@ -66,7 +66,7 @@ describe('Protocol: extension types', () => {
   it('extension.ui_response accepts null result', () => {
     const msg: ClientMessage = {
       type: 'extension.ui_response',
-      payload: { sessionId: 's1', requestId: 'r1', result: null },
+      payload: { sessionId: 's1', requestId: 'r1', method: 'confirm', result: null },
     }
     expect((msg.payload as { result: null }).result).toBeNull()
   })

@@ -43,7 +43,7 @@ describe('EventAdapter extension bridge', () => {
       })
     })
 
-    it('handles missing key and lines gracefully', async () => {
+    it('handles missing key and lines as widget clear (gui:null)', async () => {
       const { adapter, sent } = createAdapter()
       const client = { onEvent: vi.fn() }
       adapter.attach(client)
@@ -57,9 +57,11 @@ describe('EventAdapter extension bridge', () => {
 
       await vi.waitFor(() => sent.length > 0)
 
-      const payload = sent[0].payload as { widgetKey: string; lines: string[] }
+      // 缺失 widgetLines → 清除语义 → extension:widgetGui with gui:null
+      expect(sent[0].type).toBe('extension:widgetGui')
+      const payload = sent[0].payload as { widgetKey: string; gui: null }
       expect(payload.widgetKey).toBe('')
-      expect(payload.lines).toEqual([])
+      expect(payload.gui).toBeNull()
     })
 
     it('converts non-string lines to strings', async () => {

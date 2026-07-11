@@ -181,15 +181,22 @@ const outputRaw = computed(() => props.tool?.outputRaw)
  * extension RPC 模式把 GuiComponent 放进 details.__gui__.component，前端用 extractGui
  * 统一校验版本后路由到 GuiComponentRenderer。无 __gui__ 时 undefined（走 AnsiText/纯文本兜底）。
  * 注：ToolCall 的结构化扩展数据存在 details 字段（pi tool_execution_end result.details）。
+ *
+ * streaming __gui__ 仅在 running 态有效——tool_call_end 后若 details 无 __gui__，
+ * 不应回退到过期的 streaming detail（如 extension streaming 推了进度组件但最终返回纯文本）。
+ * 否则已完成工具会错误显示 streaming 过程中的临时 GUI 组件。
  */
 const guiComponent = computed<GuiComponent | undefined>(() => {
   // tool_call_end 的 details（复数，最终态）优先
   const fromEnd = extractGui(props.tool?.details)?.component
   if (fromEnd) return fromEnd
-  // streaming 态 fallback：tool_call_update 的 detail（单数）
-  const streamingDetail = props.tool?.detail
-  if (typeof streamingDetail === 'object' && streamingDetail !== null) {
-    return extractGui(streamingDetail)?.component
+  // streaming 态 fallback：仅在 tool 仍在 running 时用 detail（单数）。
+  // tool_call_end 后 detail 残留不应被当作渲染源（最终态无 __gui__ → 不渲染 GUI 组件）。
+  if (isRunning.value) {
+    const streamingDetail = props.tool?.detail
+    if (typeof streamingDetail === 'object' && streamingDetail !== null) {
+      return extractGui(streamingDetail)?.component
+    }
   }
   return undefined
 })

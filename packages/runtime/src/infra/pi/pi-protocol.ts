@@ -289,9 +289,10 @@ export interface PiExtensionUiRequestEvent extends PiBaseMessage {
   /**
    * Request method — determines the UI interaction type.
    *
-   * 交互式方法（产生 extension.ui_request WS 帧）：confirm / select / input / notify / editor
-   * 独立分支方法（不进 INTERACTIVE_UI_METHODS）：setStatus / setWidget / set_editor_text / bridge:*
-   * event-adapter.ts INTERACTIVE_UI_METHODS 必须与此类型保持同步。
+   * 交互式 dialog 方法（产生 extension.ui_request WS 帧，需前端回复）：confirm / select / input / editor
+   * Fire-and-forget 方法（独立 WS 帧，不等回复）：notify / setStatus / setWidget / set_editor_text / bridge:*
+   * notify 走 extension.notify WS 帧 + toast 渲染（非模态）；setStatus/setWidget 走各自独立帧。
+   * event-adapter.ts INTERACTIVE_UI_METHODS 只含 dialog 子集，与此类型保持同步。
    */
   method: 'confirm' | 'select' | 'input' | 'notify' | 'editor' | 'setStatus' | 'setWidget'
   /** Unique id for correlating the response back. */

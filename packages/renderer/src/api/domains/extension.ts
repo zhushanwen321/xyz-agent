@@ -168,12 +168,32 @@ export function onUITimeout(sessionId: string, handler: (requestId: string) => v
 }
 
 /**
- * 发送用户对 extension.ui_request 的回复。
- * runtime extension-message-handler 收到此消息 → 注入回 pi stdin → pi 的 select/confirm/input Promise resolve。
+ * 订阅指定 session 的 extension.notify 推送，返回取消函数。
+ *
+ * pi notify 是 fire-and-forget（不等回复），runtime 翻译为 extension.notify WS 帧。
+ * 前端渲染为 toast 通知（非阻塞），不走 ExtensionUIDialog 模态对话框。
  */
-export function sendExtensionUIResponse(sessionId: string, requestId: string, result: boolean | string | null): void {
+export function onNotify(sessionId: string, handler: (payload: { message: string; level: 'info' | 'warn' | 'error' }) => void): () => void {
+  return events.on(sessionId, (msg) => {
+    if (msg.type !== 'extension:notify') return
+    const payload = msg.payload as { sessionId: string; message: string; level: 'info' | 'warn' | 'error' }
+    if (payload.sessionId !== sessionId) return
+    handler({ message: payload.message, level: payload.level })
+  })
+}
+
+/**
+ * 发送用户对 extension.ui_request 的回复。
+ * runtime extension-message-handler 收到此消息 → 按 method 转换为 pi 协议格式
+ * （confirm→{confirmed}, select/input/editor→{value}, 取消→{cancelled:true}）
+ * → 注入回 pi stdin → pi 的 select/confirm/input Promise resolve。
+ *
+ * method 必须透传：runtime 按 method 构建正确的 pi response 格式（pi 鸭子类型字段检测，
+ * 发错字段静默返回默认值）。
+ */
+export function sendExtensionUIResponse(sessionId: string, requestId: string, method: ExtensionInteractMethod, result: boolean | string | null): void {
   transport.send({
     type: 'extension.ui_response',
-    payload: { sessionId, requestId, result },
+    payload: { sessionId, requestId, method, result },
   })
 }

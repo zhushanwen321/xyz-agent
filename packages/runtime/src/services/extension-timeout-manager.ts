@@ -9,6 +9,8 @@ export class ExtensionTimeoutManager {
   private extensionTimeouts = new Map<string, NodeJS.Timeout>()
   private extensionSessionRequests = new Map<string, Set<string>>()
   private bridgeRequestIds = new Set<string>()
+  /** 已超时的 requestId 集合——防止前端 race window 内迟到的 ui_response 再发一次（双响应） */
+  private timedOutIds = new Set<string>()
 
   readonly TIMEOUT_MS = EXTENSION_UI_REQUEST_TIMEOUT_MS
 
@@ -65,6 +67,21 @@ export class ExtensionTimeoutManager {
         break
       }
     }
+  }
+
+  /** 标记 requestId 已超时（handleExtensionTimeout 调用，防止后续迟到的 ui_response 双响应） */
+  markTimedOut(requestId: string): void {
+    this.timedOutIds.add(requestId)
+  }
+
+  /** 检查 requestId 是否已超时（extension.ui_response handler 调用，丢弃迟到响应） */
+  isTimedOut(requestId: string): boolean {
+    return this.timedOutIds.has(requestId)
+  }
+
+  /** 清除已超时标记（丢弃迟到响应后调用，防止集合无限增长） */
+  clearTimedOut(requestId: string): void {
+    this.timedOutIds.delete(requestId)
   }
 
   /** Clear all pending timeouts for a session */
