@@ -10,29 +10,38 @@
  * 按 focusedSessionId 订阅：ExtensionUIDialog 是全局单例，监听当前活跃 session 的 ui_request。
  */
 import { ref, watch, onUnmounted, type Ref } from 'vue'
-import { onUIRequest, sendExtensionUIResponse, type ExtensionUIRequest } from '@/api/domains/extension'
+import { onUIRequest, onUITimeout, sendExtensionUIResponse, type ExtensionUIRequest } from '@/api/domains/extension'
 
 /** 活跃 UI 请求队列（FIFO，pi 串行请求，实际同时只有 1 个） */
 const queue = ref<ExtensionUIRequest[]>([])
 
 export function useExtensionUI(focusedSessionId: Ref<string | null>) {
-  let unsubFn: (() => void) | null = null
+  let unsubFns: Array<() => void> = []
 
   function subscribe(sid: string | null) {
-    if (unsubFn) {
-      unsubFn()
-      unsubFn = null
-    }
+    unsubFns.forEach((fn) => fn())
+    unsubFns = []
     if (!sid) return
-    unsubFn = onUIRequest(sid, (req) => {
-      queue.value.push(req)
-    })
+    // UI 请求入队
+    unsubFns.push(
+      onUIRequest(sid, (req) => {
+        queue.value.push(req)
+      }),
+    )
+    // 超时出队：runtime ExtensionTimeoutManager 5 分钟无响应后广播 extension.ui_timeout，
+    // 同时已向 pi 发默认响应（confirm→false，其余→null）。前端必须出队当前请求，
+    // 否则对话框残留，用户点击会发送过期的 ui_response。
+    unsubFns.push(
+      onUITimeout(sid, (_requestId) => {
+        queue.value.shift()
+      }),
+    )
   }
 
   watch(focusedSessionId, (sid) => subscribe(sid), { immediate: true })
 
   onUnmounted(() => {
-    if (unsubFn) unsubFn()
+    unsubFns.forEach((fn) => fn())
   })
 
   /** 用户回复当前请求（队首） */
