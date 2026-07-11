@@ -43,7 +43,6 @@ import {
   readStringArray,
   readDetail,
   readUsage,
-  readBashExecution,
   readCompactionSummary,
   readBranchSummary,
   readFileChanges,
@@ -421,24 +420,6 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // 不经 streamSubscribe）——此处是 pi status 事件经 event-adapter 直推。
     // 当前最小化：仅接收记录，不改 Message.status（streaming/complete/error 是
     // 消息生命周期，message.status 是运行过程态，两者正交）。
-  },
-
-  'message.bashExecution': (ctx, sid, payload) => {
-    const { messages } = ctx
-    const prev = messages.value.get(sid) ?? []
-    // W07-C：bash 执行记录。作 system 提示行渲染（非 user/assistant）。
-    const exec = readBashExecution(payload)
-    messages.value.set(sid, [
-      ...prev,
-      {
-        id: `b-${crypto.randomUUID()}`,
-        role: 'system',
-        content: exec.command ?? 'bash',
-        status: 'complete',
-        timestamp: exec.timestamp ?? Date.now(),
-        bashExecution: exec,
-      },
-    ])
   },
 
   'message.compactionSummary': (ctx, sid, payload) => {

@@ -79,21 +79,6 @@ describe('EventAdapter: toolResult message_start 语义修正', () => {
     expect(sent[0].payload).toHaveProperty('messageId')
   })
 
-  it('U3: 已知 role（bashExecution）仍正常路由（回归保护）', async () => {
-    dispatchOne(adapter, {
-      type: 'message_start',
-      message: {
-        role: 'bashExecution',
-        command: 'ls',
-        exitCode: 0,
-      },
-    })
-    await flushAsync()
-
-    expect(sent).toHaveLength(1)
-    expect(sent[0].type).toBe('message.bashExecution')
-  })
-
   it('U4: tool_execution_end → message_start(toolResult) → message_start(assistant) 序列', async () => {
     // 模拟 agent-loop.js:261-266 的真实事件序列：
     // tool_execution_end（带 output）→ message_start(toolResult) → message_start(assistant turn)

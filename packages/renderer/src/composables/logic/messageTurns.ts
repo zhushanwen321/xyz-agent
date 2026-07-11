@@ -4,7 +4,7 @@
  * 数据模型：chat store 的 messages 是扁平 Message[]（user/assistant/system 交替）。
  * 渲染模型（draft-message-stream §4）：一个「turn」= user 气泡 + 其后所有 assistant 块。
  * assistant 的 thinking/toolCalls 折进 trace，content 作收尾 summary。
- * system 消息（bashExecution/compactionSummary/branchSummary，W07-C）作独立系统提示行，
+ * system 消息（compactionSummary/branchSummary，W07-C）作独立系统提示行，
  * 按到达顺序穿插在 turns 之间，不归入任何 turn（不冒充 user/assistant）。
  *
  * 分组规则：

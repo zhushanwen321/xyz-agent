@@ -183,7 +183,7 @@ export type ServerMessageType =
   | 'extension:widget' | 'extension:status'
   | 'message.compactionSummary'
   | 'extension:setEditorText'
-  | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
+  | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
   | 'send.rejected'

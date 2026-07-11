@@ -333,25 +333,6 @@ function handleMessageStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
   // 与历史路径 message-converter.ts:36（toolResult 合并进父 assistant，非独立消息）语义一致。
   if (role === 'toolResult') return [{ kind: 'noop' }]
 
-  if (role === 'bashExecution') {
-    return [{
-      kind: 'message',
-      message: {
-        type: 'message.bashExecution',
-        payload: {
-          sessionId: sid,
-          command: msg.command as string | undefined,
-          output: msg.output as string | undefined,
-          exitCode: msg.exitCode as number | undefined,
-          cancelled: msg.cancelled as boolean | undefined,
-          truncated: msg.truncated as boolean | undefined,
-          fullOutputPath: msg.fullOutputPath as string | undefined,
-          timestamp: msg.timestamp as number | undefined,
-          excludeFromContext: msg.excludeFromContext as boolean | undefined,
-        },
-      },
-    }]
-  }
   if (role === 'compactionSummary') {
     return [{
       kind: 'message',
