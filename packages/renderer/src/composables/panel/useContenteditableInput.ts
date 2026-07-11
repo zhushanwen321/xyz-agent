@@ -44,42 +44,67 @@ interface ContenteditableCallbacks {
 }
 
 /**
- * 视觉行上/下移动（模块级纯函数）。
+ * 视觉行 rect 过滤器：`<br>` 硬换行会产生零宽 line box（left === right），
+ * 这些零宽 rect 会污染 lineRects 导致 currentLine/targetLine 偏移（spec 缺陷 5）。
+ * 过滤后只保留真实视觉行（right > left）。
  *
- * ⚠️ 权威规则见 `.xyz-harness/2026-07-10-composer-history-navigation/spec.md` FR1。
+ * [HISTORICAL] 缺陷 5：`<br>` 零宽 line box 的 top 与相邻真实行相同，被当作独立
+ * 视觉行计入 lineRects 后，光标在 br 相邻行按 ↓ 会定位到零宽 rect（Y 不变），
+ * 返回 moved 但光标实际没跨行（CDP 实测确认）。过滤零宽 rect 是根因修复。
+ */
+function getVisualLineRects(range: Range): DOMRect[] {
+  return Array.from(range.getClientRects()).filter((r) => r.right > r.left)
+}
+
+/**
+ * 视觉行上/下移动结果。
+ * - result: 'moved'（已跨行或行内归位，消费事件）/ 'at-edge'（已在边缘行，调用方翻历史）
+ * - preferredX: 更新后的 preferred X（首次垂直移动时记录 caretRect.left，后续保持）
+ */
+interface VerticalMoveResult {
+  result: 'moved' | 'at-edge'
+  preferredX: number | null
+}
+
+/**
+ * 视觉行上/下移动（模块级纯函数，preferred X 由调用方传入/写回）。
  *
- * 当前实现利用浏览器原生 `Selection.modify('move', dir, 'line')` 做跨行移动 + 边缘探测。
+ * ⚠️ 权威规则见 `.xyz-harness/2026-07-10-composer-history-navigation/spec.md` FR1 + FR5。
  *
- * [HISTORICAL] Selection.modify 对软换行失效（spec 缺陷 1，已修复）：
- * Selection.modify('move', dir, 'line') 在软换行 contenteditable 中：
- * 'forward'/'backward' 只在当前视觉行内水平 snap，'up'/'down' 完全不移动。
- * 已改用 getClientRects + caretRangeFromPoint 方案（见下方实现）。详见 spec FR1 + 缺陷 1。
+ * [HISTORICAL] spec 缺陷 1：Selection.modify('move', dir, 'line') 在软换行 contenteditable
+ * 中完全失效，已改用 getClientRects + caretRangeFromPoint 坐标方案。
+ * [HISTORICAL] spec 缺陷 5：`<br>` 零宽 line box 污染 lineRects 导致 ↓ 不跨行，
+ * 已用 getVisualLineRects 过滤零宽 rect 修复。
  *
  * 实现方案（getClientRects + caretRangeFromPoint）：
- * 1. Range.getClientRects() 获取每视觉行的权威 rect（布局引擎直接提供，无坐标猜测）
- * 2. 用 caretRect.top 匹配 lineRects 确定当前在第几视觉行
- * 3. 计算目标行 index（current ± 1），越界 → 'at-edge'
- * 4. caretRangeFromPoint(targetX, targetLine.top + 3px) 定位目标行内部
+ * 1. getVisualLineRects 获取每视觉行权威 rect（过滤 `<br>` 零宽 line box）
+ * 2. caretRect.top 匹配 lineRects 确定当前视觉行
+ * 3. 目标行 index（current ± 1），越界 → 'at-edge'
+ * 4. caretRangeFromPoint(preferredX, targetLine.top + 3px) 定位目标行内部
  *    - Y: lineRect.top + 3px（行内部，避开行顶边界 quirks）
- *    - X: paddingLeft + 20px（避开左边缘 quirks，caretRangeFromPoint 在行边界
- *      会 snap 到上一行末尾）
+ *    - X: preferredX（记住的水平位置），null 时兜底为文本区左边缘 + 20px
  * 5. 0-rect 陷阱回退 Selection.modify
  *
- * 调用方区分 'moved'（消费事件）和 'at-edge'（翻历史）。
+ * preferred X 由调用方管理（composable 闭包内 preferredCaretX），水平移动/输入/点击
+ * 后调用方置 null（详见 spec FR5）。
  */
-function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved' | 'at-edge' {
-  if (!el) return 'at-edge'
+function moveCaretVerticalOf(
+  el: HTMLElement,
+  dir: 'up' | 'down',
+  preferredX: number | null,
+): VerticalMoveResult {
+  const noop: VerticalMoveResult = { result: 'at-edge', preferredX }
   const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return 'at-edge'
+  if (!sel || sel.rangeCount === 0) return noop
   const before = sel.getRangeAt(0)
-  if (!el.contains(before.startContainer)) return 'at-edge'
+  if (!el.contains(before.startContainer)) return noop
 
-  // 1. Build visual line map via getClientRects — the layout engine's
-  //    authoritative per-line bounding rects, no coordinate guessing needed.
+  // 1. Build visual line map via getClientRects — filter out zero-width
+  //    <br> line boxes that would corrupt line indexing (defect 5).
   const fullRange = document.createRange()
   fullRange.selectNodeContents(el)
-  const lineRects = fullRange.getClientRects()
-  if (lineRects.length <= 1) return 'at-edge'  // single line, nowhere to move
+  const lineRects = getVisualLineRects(fullRange)
+  if (lineRects.length <= 1) return noop  // single line, nowhere to move
 
   // 2. Find current caret's visual line by matching caretRect.top against line rects
   const caretRect = before.getBoundingClientRect()
@@ -88,8 +113,11 @@ function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved
     const bc = before.startContainer, bo = before.startOffset
     sel.modify('move', dir, 'line')
     const after = sel.getRangeAt(0)
-    return (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved'
+    return { result: (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved', preferredX }
   }
+
+  // Record preferred X on first vertical move (null = no prior ↑/↓ since last reset)
+  const activePreferredX = preferredX ?? caretRect.left
 
   // Find which visual line the caret is on.
   // Strategy: exact top match first (caret at line start), then closest center.
@@ -108,23 +136,23 @@ function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved
       if (dist < minDist) { minDist = dist; currentLine = i }
     }
   }
-  if (currentLine === -1) return 'at-edge'  // can't determine current line
+  if (currentLine === -1) return noop  // can't determine current line
 
   // 3. Calculate target line
   const targetLine = dir === 'up' ? currentLine - 1 : currentLine + 1
-  if (targetLine >= lineRects.length) return 'at-edge'  // ↓ beyond last line
+  if (targetLine >= lineRects.length) return noop  // ↓ beyond last line
   if (targetLine < 0) {
     // ↑ beyond first line: snap to text start if not already there,
     // otherwise signal at-edge for history flip.
     const firstText = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()
     const isAtTextStart = firstText != null && before.startContainer === firstText && before.startOffset === 0
-    if (isAtTextStart) return 'at-edge'
+    if (isAtTextStart) return noop
     const range = document.createRange()
     range.setStart(firstText!, 0)
     range.collapse(true)
     sel.removeAllRanges()
     sel.addRange(range)
-    return 'moved'
+    return { result: 'moved', preferredX: activePreferredX }
   }
 
   // 4. Scroll target line into view if needed.
@@ -142,20 +170,21 @@ function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved
     // Re-read line rects after scroll (viewport positions changed)
     const freshRange = document.createRange()
     freshRange.selectNodeContents(el)
-    const freshRects = freshRange.getClientRects()
+    const freshRects = getVisualLineRects(freshRange)
     if (targetLine < freshRects.length) targetLineTop = freshRects[targetLine].top
   }
   const targetY = targetLineTop + LINE_INTERIOR_OFFSET
-  // X: text area left edge + offset to avoid left-edge quirks
+  // X: preferred caret X if available (preserves horizontal position across lines),
+  // fallback to text area left edge + offset to avoid left-edge quirks
   const BOUNDARY_QUIRK_OFFSET = 20
-  const targetX = elRect.left + parseFloat(cs.paddingLeft) + BOUNDARY_QUIRK_OFFSET
+  const targetX = activePreferredX ?? (elRect.left + parseFloat(cs.paddingLeft) + BOUNDARY_QUIRK_OFFSET)
 
   const target = document.caretRangeFromPoint(targetX, targetY)
-  if (!target || !el.contains(target.startContainer)) return 'at-edge'
+  if (!target || !el.contains(target.startContainer)) return noop
 
   // 5. Verify the target is a genuinely different position
   if (target.startContainer === before.startContainer && target.startOffset === before.startOffset) {
-    return 'at-edge'
+    return noop
   }
 
   // 5.5. Verify the target actually landed on the target line.
@@ -168,13 +197,13 @@ function moveCaretVerticalOf(el: HTMLElement | null, dir: 'up' | 'down'): 'moved
   if (targetRect.top !== 0 || targetRect.bottom !== 0) {
     const onTargetLine = Math.abs(targetRect.top - lineRects[targetLine].top) <= 1
     const onCurrentLine = Math.abs(targetRect.top - lineRects[currentLine].top) <= 1
-    if (!onTargetLine && onCurrentLine) return 'at-edge'
+    if (!onTargetLine && onCurrentLine) return noop
   }
 
   // 6. Commit the move
   sel.removeAllRanges()
   sel.addRange(target)
-  return 'moved'
+  return { result: 'moved', preferredX: activePreferredX }
 }
 
 /**
@@ -208,7 +237,8 @@ export function useContenteditableInput(
   insertTextAtCursor: (text: string) => void
   /**
    * 视觉行上/下移动。返回 'moved'（已跨行或行内归位，消费事件）/ 'at-edge'（已在边缘行行首/行末，调用方翻历史）。
-   * 利用浏览器原生 Selection.modify，自动处理 soft-wrap + `<br>` 混合场景。
+   * 用 getClientRects + caretRangeFromPoint 实现跨视觉行移动，保持光标水平位置（preferred X）。
+   * 自动处理 soft-wrap + `<br>` 混合场景。
    */
   moveCaretVertical: (dir: 'up' | 'down') => 'moved' | 'at-edge'
 } {
@@ -227,6 +257,12 @@ export function useContenteditableInput(
   const isEmpty = ref(true)
   /** 保存的光标 Range：命令浮层打开会夺走焦点，选中后需恢复光标再插 chip */
   let savedRange: Range | null = null
+  /**
+   * ↑/↓ 垂直移动时的 preferred X（视口坐标）。
+   * 浏览器/VSCode 原生行为：连续按 ↑/↓ 保持光标水平位置；水平移动（←/→/Home/End）或
+   * 输入/点击后重置为 null（下次 ↑/↓ 重新记录）。null 时用文本区左边缘作兜底。
+   */
+  let preferredCaretX: number | null = null
 
   function getEl(): HTMLDivElement | null {
     return elRef.value
@@ -298,6 +334,8 @@ export function useContenteditableInput(
     syncEmpty()
     const text = getText()
     emitInput(text)
+    // 用户输入/删除改变了光标水平位置，重置 preferred X（下次 ↑/↓ 重新锚定）
+    preferredCaretX = null
     // slash 触发检测：必须用 DOM 查询判 chip——getText 的 TreeWalker 跳过的是 .chip-x（×按钮），
     // 不跳 chip 本体，故 chip 文本（如 '/commit'）会被读入 text。若靠 text 判 chip 会误触发。
     // startsWith('/') 已隐含「/ 在最左且左侧无内容」，无需额外判断。
@@ -370,6 +408,18 @@ export function useContenteditableInput(
     }
   }
 
+  /**
+   * 视觉行上/下移动（薄封装：管理 preferredCaretX 实例状态，委托模块级 moveCaretVerticalOf）。
+   * preferred X 重置由 onKeydown（水平键）/ onInput / saveSelection / setText / clear 触发。
+   */
+  function moveCaretVertical(dir: 'up' | 'down'): 'moved' | 'at-edge' {
+    const el = getEl()
+    if (!el) return 'at-edge'
+    const { result, preferredX } = moveCaretVerticalOf(el, dir, preferredCaretX)
+    preferredCaretX = preferredX
+    return result
+  }
+
   function onKeydown(e: KeyboardEvent): void {
     // IME 组合中（中文输入）不拦截，交给浏览器
     if (composing.value || e.isComposing) return
@@ -395,6 +445,10 @@ export function useContenteditableInput(
       e.preventDefault()
       return
     }
+    // 水平移动键重置 preferred X（与浏览器/VSCode 行为一致：←/→/Home/End 后 ↑/↓ 重新锚定水平位置）
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+      preferredCaretX = null
+    }
     forwardKeydown(e)
   }
 
@@ -407,12 +461,13 @@ export function useContenteditableInput(
     onInput()
   }
 
-  /** 保存当前选区（focus 前调用） */
+  /** 保存当前选区（focus 前调用）。鼠标点击也会触发（ComposerInput @mouseup），重置 preferred X */
   function saveSelection(): void {
     const sel = window.getSelection()
     if (sel && sel.rangeCount > 0 && elRef.value?.contains(sel.anchorNode)) {
       savedRange = sel.getRangeAt(0).cloneRange()
     }
+    preferredCaretX = null
   }
 
   /** 恢复选区（插 chip 前调用） */
@@ -496,6 +551,7 @@ export function useContenteditableInput(
     if (!el) return
     el.textContent = ''
     savedRange = null
+    preferredCaretX = null
     syncEmpty()
     emitInput('')
   }
@@ -519,6 +575,8 @@ export function useContenteditableInput(
   function setText(text: string, caretPosition: 'start' | 'end' = 'end'): void {
     const el = getEl()
     if (!el) return
+    // 程序化写入重置 preferred X（历史回填/草稿恢复后光标在首/末，水平位置已无意义）
+    preferredCaretX = null
     // \n → <br>：contenteditable 中 \n 是字面字符不渲染为换行，
     // 需用 <br> 元素分隔文本节点。纯文本 split/join，无 innerHTML/XSS 风险。
     el.replaceChildren()
@@ -577,6 +635,6 @@ export function useContenteditableInput(
     clear,
     setText,
     insertTextAtCursor,
-    moveCaretVertical: (dir) => moveCaretVerticalOf(getEl(), dir),
+    moveCaretVertical,
   }
 }
