@@ -25,6 +25,7 @@ import type {
   ExtensionStatusPayload,
   RecommendedExtension,
 } from '@xyz-agent/shared'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import * as transport from '../transport'
 import * as pending from '../pending'
 import * as events from '../events'
@@ -55,6 +56,30 @@ export function onWidget(sessionId: string, handler: OnWidgetHandler): () => voi
   })
 }
 
+/**
+ * 订阅指定 session 的 extension:widgetGui 推送（结构化 GUI widget）。
+ *
+ * runtime event-adapter 检测 GuiComponent NUL marker 解码为 extension:widgetGui
+ * （payload {sessionId, widgetKey, gui}），此处窄断言 gui 为 GuiComponent 后透传。
+ * 与 onWidget 对称：同一 widgetKey 既可能推纯文本 lines（onWidget）也可能推结构化
+ * GuiComponent（onWidgetGui），消费方按需择优渲染。
+ */
+export function onWidgetGui(
+  sessionId: string,
+  handler: (payload: { sessionId: string; widgetKey: string; gui: GuiComponent }) => void,
+): () => void {
+  return events.on(sessionId, (msg) => {
+    if (msg.type !== 'extension:widgetGui') return
+    const payload = msg.payload as { sessionId: string; widgetKey: string; gui: unknown }
+    if (payload.sessionId !== sessionId) return
+    handler({
+      sessionId: payload.sessionId,
+      widgetKey: payload.widgetKey,
+      gui: payload.gui as GuiComponent,
+    })
+  })
+}
+
 /** 订阅指定 session 的 extension:status 推送（状态栏文本），返回取消函数 */
 export function onStatus(sessionId: string, handler: OnStatusHandler): () => void {
   return events.on(sessionId, (msg) => {
@@ -66,6 +91,7 @@ export function onStatus(sessionId: string, handler: OnStatusHandler): () => voi
       sessionId: payload.sessionId,
       statusKey: payload.statusKey,
       text: payload.text,
+      textRaw: payload.textRaw,
     })
   })
 }
