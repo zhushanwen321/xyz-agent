@@ -110,7 +110,8 @@
           >
             <Check v-if="!isFailed" class="mt-0.5 size-3 shrink-0 text-success" />
             <XCircle v-else class="mt-0.5 size-3 shrink-0 text-danger" />
-            <span>{{ result }}</span>
+            <AnsiText v-if="outputRaw" :content="outputRaw" />
+            <span v-else>{{ result }}</span>
           </div>
         </template>
       </div>
@@ -123,6 +124,7 @@ import { computed, ref } from 'vue'
 import { Bot, Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
+import AnsiText from './gui/AnsiText.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const props = defineProps<{
@@ -167,6 +169,8 @@ const isRunning = computed(() => props.tool?.status === 'running')
 const isUnfinished = computed(() => props.tool?.status === 'end_not_received')
 const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
+/** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
+const outputRaw = computed(() => props.tool?.outputRaw)
 
 /**
  * tool 折叠：默认 1 行收起（含 streaming/running 态——改前 working/running 强制展开，
