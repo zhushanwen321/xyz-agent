@@ -14,14 +14,14 @@
     <!-- thinking 块：header 可点击 toggle，长 reasoning 独立再折叠（本地折叠态，由 collapsed prop 初始化） -->
     <div v-if="type === 'thinking'" class="trace-think">
       <div
-        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning transition-colors hover:text-[var(--reasoning)]"
+        class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning transition-colors hover:text-[var(--reasoning)]"
         :title="thinkingExpanded ? '收起推理' : '展开推理'"
         @click="toggleThinking"
       >
-        <ChevronRight class="size-2.5 transition-transform" :class="thinkingExpanded ? 'rotate-90' : ''" />
-        <Brain class="size-3" />
-        <span class="whitespace-nowrap">思考</span>
-        <span v-if="!thinkingExpanded" class="ml-0.5 truncate text-muted">· {{ previewText }}</span>
+        <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="thinkingExpanded ? 'rotate-90' : ''" />
+        <Brain class="size-3 shrink-0" />
+        <span class="shrink-0 whitespace-nowrap">思考</span>
+        <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-muted">· {{ previewText }}</span>
       </div>
       <!-- text-[12px] 对齐 tool 详情字号（曾用继承字号偏大） -->
       <p v-if="thinkingExpanded" class="mt-1 text-[12px] italic leading-relaxed text-muted">{{ content }}</p>
@@ -39,23 +39,23 @@
       <!-- ── subagent 块：独立样式（紫色，Bot 图标，与思考块同语义族）── -->
       <div v-if="isSubagent" class="trace-subagent">
         <div
-          class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
+          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
           :class="subagentHeaderColor"
           :title="toolExpanded ? '收起' : '展开'"
           @click="toggleTool"
         >
-          <ChevronRight class="size-2.5 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
-          <Bot class="size-3" />
-          <span class="whitespace-nowrap">Subagent</span>
-          <span class="normal-case tracking-normal text-muted">{{ subagentAgent || subagentHeaderLabel }}</span>
-          <span v-if="subagentTask" class="normal-case tracking-normal text-subtle truncate">· {{ subagentTaskPreview }}</span>
+          <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
+          <Bot class="size-3 shrink-0" />
+          <span class="shrink-0 whitespace-nowrap">Subagent</span>
+          <span class="shrink-0 normal-case tracking-normal text-muted">{{ subagentAgent || subagentHeaderLabel }}</span>
+          <span v-if="subagentTask" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ subagentTaskPreview }}</span>
           <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
-          <span v-if="isRunning" class="ml-0.5 inline-flex items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
-            <span class="size-[6px] rounded-full bg-reasoning animate-working-pulse" />
+          <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
+            <span class="size-[6px] shrink-0 rounded-full bg-reasoning animate-working-pulse" />
             <span class="truncate">{{ subagentLiveInfo || '运行中' }}</span>
           </span>
-          <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 text-success" />
-          <XCircle v-else-if="isFailed" class="ml-0.5 size-3 text-danger" />
+          <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-success" />
+          <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
           <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
         </div>
         <template v-if="toolExpanded">
@@ -81,21 +81,21 @@
       <!-- ── 普通 tool 块：1 行收起（header 含 toolName+argPath 摘要+状态），点击展开详情 ── -->
       <div v-else>
         <div
-          class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
+          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
           :class="isFailed ? 'text-danger' : isUnfinished ? 'text-subtle' : 'text-info'"
           :title="toolExpanded ? '收起' : '展开'"
           @click="toggleTool"
         >
-          <ChevronRight class="size-2.5 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
-          <Wrench class="size-3" />
-          <span class="normal-case tracking-normal">{{ toolName }}</span>
-          <span v-if="argPath" class="normal-case tracking-normal text-subtle truncate">· {{ argPath }}</span>
+          <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
+          <Wrench class="size-3 shrink-0" />
+          <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
+          <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ argPath }}</span>
           <!-- 状态指示：running 脉冲点 / completed Check 图标 / failed XCircle 图标 -->
-          <span v-if="isRunning" class="ml-0.5 inline-flex items-center gap-0.5 normal-case tracking-normal whitespace-nowrap text-accent">
-            <span class="size-[6px] rounded-full bg-accent animate-working-pulse" />进行中
+          <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-0.5 normal-case tracking-normal whitespace-nowrap text-accent">
+            <span class="size-[6px] shrink-0 rounded-full bg-accent animate-working-pulse" />进行中
           </span>
-          <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 text-success" />
-          <XCircle v-else-if="isFailed" class="ml-0.5 size-3 text-danger" />
+          <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-success" />
+          <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
           <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
         </div>
         <template v-if="toolExpanded">
