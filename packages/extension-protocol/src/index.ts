@@ -18,8 +18,6 @@ export type {
   WorkflowRunItem,
   SubagentStatusValue,
   EventLogEntry,
-  InteractionQuestion,
-  InteractionOption,
   StatItem,
   TreeItem,
   TreeItemIcon,
@@ -36,7 +34,6 @@ export {
   guiResult,
   guiComponent,
   guiSetWidget,
-  guiInteract,
   extractGui,
 } from './helpers'
 

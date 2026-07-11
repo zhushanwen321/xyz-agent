@@ -12,7 +12,6 @@ import {
   type GuiComponentType,
   type GuiComponentProps,
   type GuiRenderResult,
-  type InteractionQuestion,
   PROTOCOL_VERSION,
 } from './types'
 
@@ -95,66 +94,6 @@ export function guiSetWidget(
 }
 
 /**
- * 交互式组件——TUI/GUI 双模路由。
- *
- * TUI 模式：调 ctx.ui.custom()（富交互：tab/分屏/freeform）。
- *           传入的 factory 应返回 extension 自定义的 TUI Component。
- * RPC 模式：降级为 ctx.ui.select()/input()/confirm() 序列。
- *           功能完整但无 tab/分屏（前端 ExtensionUIDialog 渲染标准对话框）。
- *
- * json/print 模式或无 UI 能力：返回 null。
- *
- * @returns answers 映射（header → value），用户取消返回 null
- */
-export async function guiInteract(
-  ctx: GuiContext,
-  questions: InteractionQuestion[],
-  options?: { signal?: AbortSignal }
-): Promise<Record<string, string | string[]> | null> {
-  if (!ctx.hasUI) return null
-
-  if (ctx.mode === 'tui') {
-    // TUI 模式：调 ctx.ui.custom()，由 extension 提供自己的 TUI Component
-    if (!ctx.ui?.custom) return null
-    const result = await ctx.ui.custom(undefined, { signal: options?.signal })
-    return result ?? null
-  }
-
-  // RPC 模式：降级为 dialog 序列
-  const answers: Record<string, string | string[]> = {}
-
-  for (const q of questions) {
-    if (q.options && q.options.length > 0) {
-      if (q.multiSelect) {
-        // 多选降级：逐选项 confirm（体验有限，P3 会扩展为结构化 response）
-        const selected: string[] = []
-        for (const opt of q.options) {
-          const yes = await ctx.ui?.confirm?.(q.header, `选择 ${opt.label}?`, { signal: options?.signal })
-          if (yes) selected.push(opt.value)
-        }
-        answers[q.header] = selected
-      } else {
-        // 单选：ctx.ui.select（RPC 原生支持）
-        const choice = await ctx.ui?.select?.(
-          q.header,
-          q.options.map(o => o.label),
-          { signal: options?.signal }
-        )
-        if (choice === undefined) return null
-        answers[q.header] = q.options.find(o => o.label === choice)?.value ?? choice
-      }
-    } else {
-      // 自由输入
-      const text = await ctx.ui?.input?.(q.header, q.question, { signal: options?.signal })
-      if (text === undefined) return null
-      answers[q.header] = text
-    }
-  }
-
-  return answers
-}
-
-/**
  * 从 details 中提取 GuiRenderResult。前端统一用此函数读取 __gui__，
  * 集中校验版本号，避免散落的 as 断言。
  */
@@ -180,7 +119,11 @@ export function extractGui(details: Record<string, unknown> | undefined): GuiRen
 export function isGuiComponent(value: unknown): value is GuiComponent {
   if (value === null || typeof value !== 'object') return false
   const obj = value as Record<string, unknown>
-  return typeof obj.type === 'string' && obj.props !== undefined && typeof obj.props === 'object'
+  // typeof null === 'object' 是 JS 陷阱，必须显式排除 props: null（否则下游渲染层访问 props 字段崩溃）
+  return typeof obj.type === 'string'
+    && obj.props !== null
+    && obj.props !== undefined
+    && typeof obj.props === 'object'
 }
 
 // ── 内部工具 ──

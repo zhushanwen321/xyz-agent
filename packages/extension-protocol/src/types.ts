@@ -66,12 +66,6 @@ export interface GuiComponentProps {
     error?: string
   }
 
-  /** 交互式组件——ask-user 等 */
-  'interaction': {
-    questions: InteractionQuestion[]
-    allowCancel: boolean
-  }
-
   // ── 布局原语（替代 TUI ASCII 布局）──
 
   /** 卡片容器——替代 TUI 的 ┌─┐││└─┘ box 边框 */
@@ -168,25 +162,6 @@ export interface EventLogEntry {
   type: 'tool_start' | 'tool_end' | 'turn_end' | 'error'
   label: string
   status?: 'running' | 'done' | 'failed'
-}
-
-// ── interaction 子类型 ──
-
-export interface InteractionQuestion {
-  header: string
-  question: string
-  context?: string
-  options?: InteractionOption[]
-  multiSelect?: boolean
-  allowOther?: boolean
-  allowComment?: boolean
-  default?: string | string[]
-}
-
-export interface InteractionOption {
-  label: string
-  value: string
-  description?: string
 }
 
 // ── 布局原语子类型 ──

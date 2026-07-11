@@ -10,43 +10,66 @@
  * 超时和取消按 requestId 精确移除（不假设队首）。
  *
  * 按 focusedSessionId 订阅：ExtensionUIDialog 是全局单例，监听当前活跃 session 的 ui_request。
+ *
+ * refCount 保护（AGENTS.md 规则 2）：queue 是模块级单例（多实例共享同一队列语义正确），
+ * 但 WS 订阅必须 refCount——只有首次调用才真正订阅，后续调用只递增计数；unmount 时递减，
+ * 降到 0 才退订。防止 HMR/测试/split 模式下重复订阅导致同一 ui_request 被 push 多次。
  */
 import { ref, watch, onUnmounted, type Ref } from 'vue'
 import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, type ExtensionUIRequest } from '@/api/domains/extension'
 import { useToast } from '@/composables/useToast'
 
-/** 活跃 UI 请求队列（FIFO，队首优先渲染为对话框） */
+/** 活跃 UI 请求队列（FIFO，队首优先渲染为对话框）。模块级单例——所有 composable 实例共享。 */
 const queue = ref<ExtensionUIRequest[]>([])
 
-export function useExtensionUI(focusedSessionId: Ref<string | null>) {
-  let unsubFns: Array<() => void> = []
+// ── 模块级 refCount 订阅管理 ──
+// 多实例共享 queue，但 WS 订阅只需一份。refCount 保证首个实例订阅、末个实例退订。
+let uiRefCount = 0
+let uiUnsubFns: Array<() => void> = []
 
-  function subscribe(sid: string | null) {
-    unsubFns.forEach((fn) => fn())
-    unsubFns = []
-    if (!sid) return
-    // UI 请求入队
-    unsubFns.push(
-      onUIRequest(sid, (req) => {
-        queue.value.push(req)
-      }),
-    )
-    // 超时出队：runtime ExtensionTimeoutManager 5 分钟无响应后广播 extension.ui_timeout，
-    // 同时已向 pi 发默认响应（confirm→false，其余→null）。前端必须出队超时的请求，
-    // 否则对话框残留，用户点击会发送过期的 ui_response。
-    // 按 requestId 精确移除：pi 无串行保证，队列可能同时有多个 pending，超时的不一定在队首。
-    unsubFns.push(
-      onUITimeout(sid, (requestId) => {
-        const idx = queue.value.findIndex((r) => r.requestId === requestId)
-        if (idx !== -1) queue.value.splice(idx, 1)
-      }),
-    )
+/** 订阅指定 session 的 ui_request / ui_timeout（refCount 保护，只订阅一次） */
+function subscribeUI(sid: string | null) {
+  // 已有订阅先退订（session 切换时）
+  if (uiUnsubFns.length > 0) {
+    uiUnsubFns.forEach(fn => fn())
+    uiUnsubFns = []
   }
+  if (!sid) return
+  // UI 请求入队
+  uiUnsubFns.push(
+    onUIRequest(sid, (req) => {
+      queue.value.push(req)
+    }),
+  )
+  // 超时出队：runtime ExtensionTimeoutManager 5 分钟无响应后广播 extension.ui_timeout，
+  // 同时已向 pi 发默认响应（confirm→false，其余→null）。前端必须出队超时的请求，
+  // 否则对话框残留，用户点击会发送过期的 ui_response。
+  // 按 requestId 精确移除：pi 无串行保证，队列可能同时有多个 pending，超时的不一定在队首。
+  uiUnsubFns.push(
+    onUITimeout(sid, (requestId) => {
+      const idx = queue.value.findIndex(r => r.requestId === requestId)
+      if (idx !== -1) queue.value.splice(idx, 1)
+    }),
+  )
+}
 
-  watch(focusedSessionId, (sid) => subscribe(sid), { immediate: true })
+export function useExtensionUI(focusedSessionId: Ref<string | null>) {
+  // refCount：首个实例真正订阅，后续只递增
+  if (uiRefCount === 0) {
+    subscribeUI(focusedSessionId.value)
+  }
+  uiRefCount++
+
+  // session 切换时重订（refCount 下始终只有一份订阅）
+  watch(focusedSessionId, (sid) => subscribeUI(sid))
 
   onUnmounted(() => {
-    unsubFns.forEach((fn) => fn())
+    uiRefCount--
+    if (uiRefCount <= 0) {
+      uiRefCount = 0
+      uiUnsubFns.forEach(fn => fn())
+      uiUnsubFns = []
+    }
   })
 
   /** 用户回复当前请求（队首） */

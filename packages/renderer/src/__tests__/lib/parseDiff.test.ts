@@ -206,6 +206,16 @@ describe('diffCharsLCS', () => {
       { text: 'b', kind: 'normal' },
     ])
   })
+
+  it('超长行（合计 > 1000 字符）退化为整行级，不跑 O(m×n) DP', () => {
+    // 两段 600 字符的行（合计 1200 > 1000），应退化为 del + add 整行
+    const longA = 'a'.repeat(600)
+    const longB = 'b'.repeat(600)
+    const segs = diffCharsLCS(longA, longB)
+    expect(segs).toHaveLength(2)
+    expect(segs[0]).toEqual({ text: longA, kind: 'del' })
+    expect(segs[1]).toEqual({ text: longB, kind: 'add' })
+  })
 })
 
 describe('computeInlineDiff', () => {

@@ -62,11 +62,12 @@ const STOP_REASON_MAP: Record<string, string> = {
  * 走独立 extension.notify WS 帧 + 前端 toast 渲染（非阻塞）。
  * setStatus/setWidget/set_editor_text/bridge:* 也不在此列——它们走独立分支，不产 ui_request 帧。
  *
- * satisfies 编译期断言：SSOT 扩展新方法时若忘记同步此 Set，tsc 报错（而非静默 noop 丢弃）。
+ * 用 `as const satisfies readonly ExtensionInteractMethod[]` 实现编译期穷举检查：
+ * ExtensionInteractMethod 扩展新方法时，若此数组遗漏，tsc 报错（而非静默 noop 丢弃）。
  */
-const INTERACTIVE_UI_METHODS = new Set<ExtensionInteractMethod>([
-  'confirm', 'select', 'input', 'editor',
-])
+const INTERACTIVE_UI_METHODS = new Set(
+  ['confirm', 'select', 'input', 'editor'] as const satisfies readonly ExtensionInteractMethod[]
+)
 
 /** Extension method constant for the editor UI */
 const METHOD_EDITOR = 'editor' as const

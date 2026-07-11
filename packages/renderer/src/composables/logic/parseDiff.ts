@@ -131,11 +131,24 @@ export function parseDiff(patch: string): ParsedDiff {
  *
  * 为何不用单词级（whitespace 分词）：字符级对单字符改动更精确（用户需求是"单字符变更也能高亮"），
  * 且 LCS 实现不因粒度变细而显著变慢（典型 diff 行 < 200 字符）。
+ *
+ * 性能保护：LCS DP 表是 O(m×n)。minified JS 或打包产物的长行（几千字符）会导致
+ * DP 表达百万级 cell，主线程同步计算卡顿。设 MAX_DIFF_CHARS 阈值，超出时退化为
+ * 整行级 segment（a 全 del + b 全 add），放弃字符级高亮但不阻塞渲染。
  */
+const MAX_DIFF_CHARS = 1000
+
 export function diffCharsLCS(a: string, b: string): DiffSegment[] {
   if (a === b) return [{ text: a, kind: 'normal' }]
   if (!a) return [{ text: b, kind: 'add' }]
   if (!b) return [{ text: a, kind: 'del' }]
+  // 长行保护：合计超阈值退化为整行级，避免 O(m×n) DP 表卡顿
+  if (a.length + b.length > MAX_DIFF_CHARS) {
+    return [
+      { text: a, kind: 'del' },
+      { text: b, kind: 'add' },
+    ]
+  }
 
   const aa = Array.from(a)
   const bb = Array.from(b)

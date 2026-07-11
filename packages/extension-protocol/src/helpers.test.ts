@@ -166,6 +166,10 @@ describe('isGuiComponent', () => {
     expect(isGuiComponent({ type: 'task-list', props: 'not-object' })).toBe(false)
   })
 
+  it('props 为 null → false（typeof null === object 陷阱）', () => {
+    expect(isGuiComponent({ type: 'task-list', props: null })).toBe(false)
+  })
+
   it('null/非对象 → false', () => {
     expect(isGuiComponent(null)).toBe(false)
     expect(isGuiComponent('string')).toBe(false)

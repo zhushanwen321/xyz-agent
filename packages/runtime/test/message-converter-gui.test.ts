@@ -109,3 +109,54 @@ describe('message-converter: F1 toolResult details 透传', () => {
     expect(tc.details).toBeUndefined()
   })
 })
+
+describe('message-converter: outputRaw 历史恢复（对称实时路径）', () => {
+  it('toolResult content 含 ANSI → output 存 stripAnsi 版本，outputRaw 存原始', () => {
+    const ansiText = '\x1b[32mgreen\x1b[0m text'
+    const history = [
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'tc-raw-1', name: 'bash', arguments: {} }],
+        timestamp: 1000,
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'tc-raw-1',
+        toolName: 'bash',
+        isError: false,
+        content: [{ type: 'text', text: ansiText }],
+        timestamp: 2000,
+      },
+    ]
+
+    const messages = convertPiHistory(history)
+    const tc = messages.find(m => m.role === 'assistant')!.toolCalls![0]
+    // output 是 stripAnsi 后的纯文本
+    expect(tc.output).toBe('green text')
+    // outputRaw 保留原始 ANSI（对称实时路径，规则 7.5）
+    expect(tc.outputRaw).toBe(ansiText)
+  })
+
+  it('toolResult content 不含 ANSI → outputRaw 不设置', () => {
+    const history = [
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'tc-raw-2', name: 'bash', arguments: {} }],
+        timestamp: 1000,
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'tc-raw-2',
+        toolName: 'bash',
+        isError: false,
+        content: [{ type: 'text', text: 'plain text' }],
+        timestamp: 2000,
+      },
+    ]
+
+    const messages = convertPiHistory(history)
+    const tc = messages.find(m => m.role === 'assistant')!.toolCalls![0]
+    expect(tc.output).toBe('plain text')
+    expect(tc.outputRaw).toBeUndefined()
+  })
+})

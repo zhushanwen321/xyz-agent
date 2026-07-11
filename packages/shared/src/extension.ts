@@ -1,32 +1,8 @@
 // ── Extension 领域 DTO（runtime ↔ renderer 之间流转的扩展相关 payload）──
 // 迁移自 protocol.ts 第 3 块：ExtensionInfo / UI 交互 / 安装流 / 状态推送。
 // protocol.ts 仅保留 type→payload 映射（SSOT），领域形状归此处便于读者一查到底。
-
-export interface ExtensionWidgetPayload {
-  sessionId: string
-  widgetKey: string
-  lines: string[]
-}
-
-export interface ExtensionStatusPayload {
-  sessionId: string
-  statusKey: string
-  /** stripAnsi 后的纯文本（向后兼容）。 */
-  text: string
-  /** 原始 ANSI 文本（保留颜色信息，协议 spec §8.1）。前端可用此做 ANSI 着色渲染，text 作纯文本兜底。 */
-  textRaw?: string
-}
-
-/**
- * Extension notify 推送 payload（pi fire-and-forget，pi rpc-mode.ts notify 发后不等回复）。
- * 前端渲染为 toast 通知（非阻塞），不走 ExtensionUIDialog 模态对话框。
- */
-export interface ExtensionNotifyPayload {
-  sessionId: string
-  message: string
-  /** pi notifyType 映射到 toast 级别（info/warning → info toast，error → error toast） */
-  level: 'info' | 'warn' | 'error'
-}
+// 注：widget/status/notify 的 payload 形状定义在 protocol.ts 的 ServerMessageMapBase（SSOT），
+// 此处不再重复定义（此前有三个死 Payload interface 零消费，已删除）。
 
 export const EXTENSION_EVENTS = {
   WIDGET: 'extension:widget',
