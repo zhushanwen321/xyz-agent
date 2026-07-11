@@ -2,12 +2,16 @@
   DiffView —— git diff patch 结构化着色渲染（detail-renderers 系列）。
 
   把 git.getDiff 返回的 unified diff patch 文本（裸 string）解析为 hunks/lines，
-  行级着色：+ 行 success 背景、− 行 danger 背景、hunk 头 surface 背景 + 行号槽。
+  行级着色：+ 行 success 背景（/12）、− 行 danger 背景（/12）、hunk 头 surface 背景 + 行号槽。
+  字符级 diff：配对的 del+add 行经 LCS 计算出 segments，差异片段用 /30 背景叠加，
+  与行级 /12 形成"双重颜色"层次，单字符变更也能精确定位。
+
   代码内容经 shiki 整体高亮（每 hunk 拼接代码体一次性 codeToHtml，再按行拆回 +/- 行），
-  兼得语法高亮与 diff 语义着色。
+  兼得语法高亮与 diff 语义着色。有 segments 的行跳过 shiki，改用纯文本 segment 渲染
+  （牺牲语法高亮换取字符级 diff 精度，与 GitHub PR 内联 diff 行为一致）。
 
   v-html 受控点：仅 shiki 高亮片段（codeLines）经 v-html 注入，shiki 转义所有非 token 文本，
-  XSS 安全（与 MarkdownRenderer/CodeBlock 同论证）。行号、+/- 符号、meta 行均用文本插值。
+  XSS 安全（与 MarkdownRenderer/CodeBlock 同论证）。行号、+/- 符号、meta 行、segments 均用文本插值。
 
   首次 shiki 加载异步：未就绪时降级为纯文本行（无语法高亮，仍有 +/- 语义色）。
 -->
@@ -36,6 +40,18 @@
           v-html="line.html"
         />
         <!-- eslint-enable vue/no-v-html -->
+        <!-- 字符级 diff：配对的 del/add 行有 segments，按 segment 渲染纯文本 + 字符级背景 -->
+        <span
+          v-else-if="line.segments"
+          class="diff-code min-w-0 flex-1 whitespace-pre-wrap break-all"
+          :class="textContentClass(line)"
+        >
+          <span
+            v-for="(seg, si) in line.segments"
+            :key="si"
+            :class="segmentClass(seg.kind, line.type)"
+          >{{ seg.text }}</span>
+        </span>
         <span v-else class="min-w-0 flex-1 whitespace-pre-wrap break-all" :class="textContentClass(line)">{{ line.content }}</span>
       </div>
     </div>
@@ -57,7 +73,7 @@
  */
 import { ref, watch } from 'vue'
 import { GitCompare } from '@lucide/vue'
-import { parseDiff, type ParsedDiff, type DiffHunk, type DiffLine } from '@/composables/logic/parseDiff'
+import { parseDiff, type ParsedDiff, type DiffHunk, type DiffLine, type DiffSegment } from '@/composables/logic/parseDiff'
 import { highlightCode } from '@/composables/logic/markdown'
 import { extToLang } from '@/composables/logic/file-type'
 
@@ -98,8 +114,8 @@ function signClass(line: RenderedLine): string {
   return 'text-subtle/40'
 }
 function lineRowClass(line: RenderedLine): string {
-  if (line.type === 'add') return 'bg-success/8'
-  if (line.type === 'del') return 'bg-danger/8'
+  if (line.type === 'add') return 'bg-success/12'
+  if (line.type === 'del') return 'bg-danger/12'
   if (line.type === 'hunk') return 'bg-surface-2'
   return ''
 }
@@ -107,6 +123,17 @@ function textContentClass(line: RenderedLine): string {
   if (line.type === 'add') return 'text-success/90'
   if (line.type === 'del') return 'text-danger/90'
   return 'text-fg/80'
+}
+/**
+ * 字符级 diff segment 着色：
+ * - add 行的 add 片段：bg-success/30（比行级 /12 更深，叠加后双重颜色显眼）
+ * - del 行的 del 片段：bg-danger/30
+ * - normal 片段：无额外背景（继承行级背景）
+ */
+function segmentClass(kind: DiffSegment['kind'], lineType: DiffLine['type']): string {
+  if (kind === 'add' && lineType === 'add') return 'bg-success/30'
+  if (kind === 'del' && lineType === 'del') return 'bg-danger/30'
+  return ''
 }
 
 /**
@@ -127,7 +154,12 @@ async function highlightHunk(hunk: DiffHunk, lang: string): Promise<RenderedLine
       out.push({ ...line, html: '' })
       continue
     }
-    // context/add/del 行：对 content 单行高亮
+    // 配对的 del/add 行有 segments：跳过 shiki 高亮，模板走字符级 diff 渲染分支
+    if (line.segments) {
+      out.push({ ...line, html: '' })
+      continue
+    }
+    // context/未配对的 add/del 行：对 content 单行高亮
     const html = line.content ? await highlightCode(line.content, lang) : ''
     out.push({ ...line, html })
   }

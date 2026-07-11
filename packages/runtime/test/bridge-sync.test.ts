@@ -33,6 +33,7 @@ const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneS
 // ── Mocks ────────────────────────────────────────────────────────
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
+const mockSendRaw = vi.fn()
 
 vi.mock('../src/services/session/session-service.js', () => {
   return {
@@ -54,6 +55,7 @@ vi.mock('../src/services/session/session-service.js', () => {
       switchModel = vi.fn().mockResolvedValue(undefined)
       getRpcClient = vi.fn().mockReturnValue({
         sendCommand: mockSendCommand,
+        sendRaw: mockSendRaw,
         onEvent: vi.fn().mockReturnValue(() => {}),
         onExit: vi.fn(),
         exited: false,
@@ -277,6 +279,7 @@ describe('RuntimeServer: bridge request routing', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
+    mockSendRaw.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     const pluginService = new PluginService({} as never, server)
@@ -458,13 +461,12 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    // Normal confirm should timeout after 5 minutes
-    expect(mockSendCommand).toHaveBeenCalledWith(
-      'extension_ui_response',
-      expect.objectContaining({
-        id: 'req-confirm',
-        response: false,
-      }),
+    // Normal confirm should timeout after 5 minutes → sendRaw with confirmed:false
+    expect(mockSendRaw).toHaveBeenCalledWith(
+      expect.stringContaining('"confirmed":false'),
+    )
+    expect(mockSendRaw).toHaveBeenCalledWith(
+      expect.stringContaining('"id":"req-confirm"'),
     )
   })
 })

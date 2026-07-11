@@ -52,6 +52,7 @@ describe('TC-1-01: setStatus → onStatusSetUpdate callback', () => {
       sessionId: 'test-session-1',
       key: 'goal',
       text: '◆ Goal 1/20',
+      textRaw: '◆ Goal 1/20',
     })
   })
 
@@ -73,6 +74,7 @@ describe('TC-1-01: setStatus → onStatusSetUpdate callback', () => {
       sessionId: 'test-session-1',
       key: '',
       text: '',
+      textRaw: '',
     })
   })
 
@@ -96,6 +98,7 @@ describe('TC-1-01: setStatus → onStatusSetUpdate callback', () => {
       sessionId: 'test-session-1',
       key: 'todo',
       text: '',
+      textRaw: '',
     })
   })
 })
@@ -249,6 +252,7 @@ describe('TC-8-01: full setStatus data flow (event-adapter → callback)', () =>
       sessionId: 'test-session-1',
       key: 'goal',
       text: '◆ Goal 3/20',
+      textRaw: '◆ Goal 3/20',
     })
   })
 

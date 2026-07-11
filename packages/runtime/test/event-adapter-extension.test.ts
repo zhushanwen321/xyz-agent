@@ -126,7 +126,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('translates notify method to extension.ui_request', async () => {
+    it('translates notify method to extension:notify (fire-and-forget, no ui_request)', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -134,21 +134,20 @@ describe('EventAdapter: extension event translation', () => {
             method: 'notify',
             id: 'req-4',
             message: 'Operation completed',
-            level: 'info',
+            notifyType: 'warning',
           }))
           return () => {}
         },
       })
       await flushAsync()
 
+      // notify 是 fire-and-forget（pi 不等回复），走独立 extension:notify WS 帧
       expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('extension.ui_request')
+      expect(sent[0].type).toBe('extension:notify')
       expect(sent[0].payload).toMatchObject({
         sessionId: 'test-session-1',
-        requestId: 'req-4',
-        method: 'notify',
         message: 'Operation completed',
-        level: 'info',
+        level: 'warn',
       })
     })
 

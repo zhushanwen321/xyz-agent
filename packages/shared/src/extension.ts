@@ -1,29 +1,26 @@
 // ── Extension 领域 DTO（runtime ↔ renderer 之间流转的扩展相关 payload）──
 // 迁移自 protocol.ts 第 3 块：ExtensionInfo / UI 交互 / 安装流 / 状态推送。
 // protocol.ts 仅保留 type→payload 映射（SSOT），领域形状归此处便于读者一查到底。
-
-export interface ExtensionWidgetPayload {
-  sessionId: string
-  widgetKey: string
-  lines: string[]
-}
-
-export interface ExtensionStatusPayload {
-  sessionId: string
-  statusKey: string
-  text: string
-}
+// 注：widget/status/notify 的 payload 形状定义在 protocol.ts 的 ServerMessageMapBase（SSOT），
+// 此处不再重复定义（此前有三个死 Payload interface 零消费，已删除）。
 
 export const EXTENSION_EVENTS = {
   WIDGET: 'extension:widget',
+  WIDGET_GUI: 'extension:widgetGui',
   STATUS: 'extension:status',
+  NOTIFY: 'extension:notify',
 } as const
 
 // ── Extension UI 交互 / 安装流 payload ────────────────────────────
-// 注：ExtensionUIRequestPayload / ExtensionUIResponsePayload / ExtensionErrorPayload /
-// ToolCallUpdatePayload 已删除（reserved 占位契约，无生产消费方）。对应消息
-// extension.ui_request / extension.ui_response / extension.error / message.tool_call_update
-// 的 payload 形状在 protocol.ts 的 ClientMessageMap / ServerMessageMap 内联定义。
+
+/**
+ * pi 扩展交互式 dialog 方法（产生 extension.ui_request WS 帧，需要前端回复 extension.ui_response）。
+ * 与 event-adapter.ts INTERACTIVE_UI_METHODS + ExtensionUIDialog 渲染分支保持同步。
+ *
+ * notify 不在此列——它是 fire-and-forget（pi 不等回复），走独立 extension.notify WS 帧 + toast 渲染。
+ * setStatus/setWidget/set_editor_text/bridge:* 也不在此列——它们走独立分支，不产 ui_request 帧。
+ */
+export type ExtensionInteractMethod = 'confirm' | 'select' | 'input' | 'editor'
 
 export interface ExtensionInfo {
   name: string

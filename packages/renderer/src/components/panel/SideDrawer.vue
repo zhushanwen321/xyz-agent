@@ -11,7 +11,7 @@
 
   状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked/direction/mode
   props + emit close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
-  接入 extension.onWidget，按 widgetKey 路由到 terminal/browser tab。
+  接入 useSessionEvents.onMessage，按 widgetKey 路由到 terminal/browser tab。
   Git tab 不走 widget——数据由 PanelContainer 经 GIT_STATUS_KEY provide，GitPanel 自行 inject，
   本通用容器不持有 git props（保持容器纯净，不污染通用 tab 范式）。
 -->
@@ -69,6 +69,13 @@
         <CommandDocPanel v-else-if="activeTab === 'doc'" :session-id="sessionId" />
         <!-- Detail tab：文件预览（#6，useDetailPane watch selectedPath 自动加载，禁 v-html） -->
         <DetailPane v-else-if="activeTab === 'detail'" :session-id="sessionId" />
+        <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
+        <div
+          v-else-if="activeGuiComponent"
+          class="flex h-full flex-col gap-0 overflow-auto p-2"
+        >
+          <GuiComponentRenderer :component="activeGuiComponent" />
+        </div>
         <!-- active tab 有 widget 内容 → 渲染等宽文本输出（每行一个 div，font-mono + pre-wrap） -->
         <div
           v-else-if="activeLines.length"
@@ -110,8 +117,13 @@
           :key="entry.statusKey"
           class="flex items-center gap-1.5 font-mono text-[10.5px]"
         >
-          <span class="text-subtle">{{ entry.statusKey }}</span>
-          <span class="truncate text-muted">{{ entry.text }}</span>
+          <span class="shrink-0 text-subtle">{{ entry.statusKey }}</span>
+          <!-- textRaw 有 ANSI 着色 → AnsiText 渲染保留颜色；否则纯文本兜底。
+               容器承载 truncate（min-w-0 + overflow-hidden + ellipsis），避免与 AnsiText 内部 whitespace-pre-wrap 冲突。 -->
+          <div v-if="entry.textRaw" class="min-w-0 flex-1 overflow-hidden">
+            <AnsiText :content="entry.textRaw" class="block truncate text-muted" />
+          </div>
+          <span v-else class="min-w-0 flex-1 truncate text-muted">{{ entry.text }}</span>
         </div>
       </footer>
     </aside>
@@ -122,10 +134,13 @@
 import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import type { Component } from 'vue'
 import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X } from '@lucide/vue'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { Button } from '@/components/ui/button'
 import GitPanel from './GitPanel.vue'
 import CommandDocPanel from './CommandDocPanel.vue'
 import DetailPane from './DetailPane.vue'
+import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
+import AnsiText from './message-stream/gui/AnsiText.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
 
@@ -226,11 +241,24 @@ const tabs: TabMeta[] = [
 
 const activeTabMeta = computed(() => tabs.find((t) => t.key === props.activeTab) ?? tabs[0])
 
-/** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量，见 extension.onWidget）。 */
+/** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量）。 */
 const terminalLines = ref<string[]>([])
 const browserLines = ref<string[]>([])
 /** 未匹配 tab 的 widgetKey fallback：存最后一个未知 widget 的 {key, lines}，默认路由到 terminal 显示 */
 const unknownWidget = ref<{ key: string; lines: string[] } | null>(null)
+
+/**
+ * 结构化 GUI widget 缓冲（extension:widgetGui，spec §9.1）。
+ * 按 tab 路由聚合：widgetKey 经 mapWidgetKeyToTab 归一化到 terminal/browser，未匹配归 terminal。
+ * 同 tab 的结构化组件覆盖纯文本 lines：activeGuiComponent 命中时优先用 GuiComponentRenderer 渲染，
+ * 保留交互/着色能力；纯文本 lines 作兜底。
+ */
+const guiWidgetsByTab = ref<Map<SideDrawerTab, GuiComponent>>(new Map())
+
+/** 当前 active tab 的结构化组件（命中时优先于纯文本 lines 渲染） */
+const activeGuiComponent = computed<GuiComponent | undefined>(() =>
+  guiWidgetsByTab.value.get(props.activeTab),
+)
 
 const activeLines = computed<string[]>(() => {
   if (props.activeTab === 'browser') return browserLines.value
@@ -261,16 +289,20 @@ function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
   return null
 }
 
-/** extension status 缓冲：statusKey → 最新 text（runtime 推送全量替换，与 widget 同语义） */
-const statusMap = ref<Map<string, string>>(new Map())
+/** extension status 缓冲：statusKey → 最新 {text, textRaw}（runtime 推送全量替换，与 widget 同语义） */
+const statusMap = ref<Map<string, { text: string; textRaw?: string }>>(new Map())
 const statusEntries = computed(() =>
-  Array.from(statusMap.value.entries()).map(([statusKey, text]) => ({ statusKey, text })),
+  Array.from(statusMap.value.entries()).map(([statusKey, v]) => ({
+    statusKey,
+    text: v.text,
+    textRaw: v.textRaw,
+  })),
 )
 
 /** widget 缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
 const WIDGET_MAX_LINES = 1000
 
-/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，对齐原 extension.onWidget 截断语义） */
+/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，截断保留尾部最新） */
 function truncateLines(lines: string[]): string[] {
   if (lines.length <= WIDGET_MAX_LINES) return lines
   return lines.slice(lines.length - WIDGET_MAX_LINES)
@@ -293,10 +325,28 @@ onMessage('extension:widget', (msg) => {
   else if (tab === 'browser') browserLines.value = lines
   else unknownWidget.value = { key: payload.widgetKey, lines }
 })
-// extension:status：statusKey 维度聚合，同 key 覆盖（与原 extension.onStatus 对称语义）
+// extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
+// gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），
+// 删 guiWidgetsByTab 条目 + 清对应 tab 的纯文本 lines。
+// 未匹配 tab 的 widgetKey 归 terminal（与 extension:widget fallback 语义一致：unknownWidget 默认显 terminal）
+onMessage('extension:widgetGui', (msg) => {
+  const payload = msg.payload
+  const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
+  if (payload.gui === null) {
+    // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
+    guiWidgetsByTab.value.delete(tab)
+    guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
+    if (tab === 'terminal') terminalLines.value = []
+    else if (tab === 'browser') browserLines.value = []
+    return
+  }
+  guiWidgetsByTab.value.set(tab, payload.gui as GuiComponent)
+  guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
+})
+// extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
 onMessage('extension:status', (msg) => {
   const payload = msg.payload
-  statusMap.value.set(payload.statusKey, payload.text)
+  statusMap.value.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
   statusMap.value = new Map(statusMap.value)
 })
 
@@ -307,6 +357,7 @@ watch(
     terminalLines.value = []
     browserLines.value = []
     unknownWidget.value = null
+    guiWidgetsByTab.value = new Map()
     statusMap.value = new Map()
   },
   { immediate: true },

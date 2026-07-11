@@ -98,6 +98,12 @@ export interface IPiEngine {
   getSessionStats(): Promise<PiSessionStats>
   /** 逃生方法：发送任意 pi 命令，返回动态响应。调用方自行 as 具体结构。 */
   sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<PiMessage>
+  /**
+   * 向 pi stdin 写入一行原始 JSON，不等 RPC reply。
+   * 用于 pi 不回复 `{type:'response'}` 的命令（extension_ui_response）。
+   * 调用方保证格式正确 + 换行符结尾。
+   */
+  sendRaw(data: string): void
   /** 订阅 pi 事件流。返回 unsubscribe。事件由 EventAdapter 翻译，service 一般不直接处理。 */
   onEvent(listener: PiEventListener): () => void
 

@@ -8,7 +8,7 @@
       v-for="t in toasts"
       :key="t.id"
       class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg"
-      :class="t.type === 'error' ? 'border-border bg-surface text-danger' : 'border-border bg-surface text-fg'"
+      :class="toastClass(t.type)"
     >
       <!-- error icon: lucide alert-circle -->
       <svg
@@ -21,6 +21,28 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       ><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+      <!-- warning icon: lucide alert-triangle -->
+      <svg
+        v-else-if="t.type === 'warning'"
+        class="mt-px h-4 w-4 shrink-0 text-warning"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      ><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+      <!-- info icon: lucide info -->
+      <svg
+        v-else
+        class="mt-px h-4 w-4 shrink-0 text-info"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      ><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>
       <span>{{ t.message }}</span>
       <Button
         variant="ghost"
@@ -38,6 +60,13 @@ import { Button } from '@/components/ui/button'
 import { useToast } from '@/composables/useToast'
 
 const { toasts, remove } = useToast()
+
+/** toast 类型 → 颜色 class */
+function toastClass(type: 'error' | 'info' | 'warning'): string {
+  if (type === 'error') return 'border-border bg-surface text-danger'
+  if (type === 'warning') return 'border-border bg-surface text-warning'
+  return 'border-border bg-surface text-fg'
+}
 </script>
 
 <style scoped>

@@ -5,6 +5,12 @@ import type {
 import type { Message, ThinkingBlock, ToolCall, FileChange } from '@xyz-agent/shared'
 import { parseBgNotifyDetails } from '@xyz-agent/shared'
 
+/** Strip ANSI escape sequences — 与 event-adapter.ts stripAnsi 保持一致（对称恢复 outputRaw） */
+const ANSI_REGEX = /\x1b\[[0-9;]*m/g
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_REGEX, '')
+}
+
 /**
  * Parse `<skill name="xxx" location="...">...</skill>` blocks from
  * a user message's text content. Returns the extracted skill name and the
@@ -78,12 +84,22 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         if (lastAssistant?.toolCalls) {
           const tc = lastAssistant.toolCalls.find(t => t.id === toolResult.toolCallId)
           if (tc) {
-            const textParts = (Array.isArray(toolResult.content) ? toolResult.content : [])
+            const rawText = (Array.isArray(toolResult.content) ? toolResult.content : [])
               .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
               .map(p => p.text ?? '')
               .join('\n')
-            tc.output = textParts
+            // 对称恢复 outputRaw（规则 7.5：对话流状态必须可重开恢复）。
+            // 实时路径（event-adapter handleToolExecutionEnd）：output = stripAnsi(raw)，raw 含 ANSI 时 outputRaw = raw。
+            // 此处历史路径必须对称：output 存 stripAnsi 版本，outputRaw 存原始 ANSI 文本（仅当含 ANSI 时）。
+            const stripped = stripAnsi(rawText)
+            tc.output = stripped
+            if (stripped !== rawText) tc.outputRaw = rawText
             if (toolResult.isError) tc.status = 'error'
+            // F1 修复：透传 details（含 __gui__），与实时路径（event-interpreter tool_call_end）对齐。
+            // 规则 7.5：对话流状态必须可重开恢复——重开 session 后 __gui__ 不丢。
+            if (toolResult.details && typeof toolResult.details === 'object' && !Array.isArray(toolResult.details)) {
+              tc.details = toolResult.details
+            }
           } else {
             console.warn('[message-converter] toolResult has no matching toolCall:', toolResult.toolCallId)
           }
@@ -133,6 +149,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         content: cm.content ?? '',
         status: 'complete',
         customType: cm.customType,
+        details: cm.details as Record<string, unknown> | undefined,
         timestamp: cm.timestamp ?? Date.now(),
       }
       if (cm.customType === 'subagent-bg-notify' && cm.details) {

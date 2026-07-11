@@ -175,15 +175,21 @@
       <!-- 收尾 summary：streaming 和 complete 态都渲染（draft §4 收尾位固定不折叠，作回合焦点）。
            streaming 态末位 text 在此实时展示 + 末尾光标；complete 态光标消失仅文本。
            traceBlocks 对末位 assistant 始终跳过 text 块——text 从头到尾只在此位渲染，
-           消除停止时从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。 -->
-      <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
+           消除停止时从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
+           字号/行高/字体 streaming 与 complete 一致；streaming 时颜色用 muted（偏淡），complete 用 fg。 -->
+      <div
+        v-if="summaryText"
+        class="turn-summary group/ai pt-3 text-[13.5px] leading-7 transition-colors duration-200"
+        :class="turn.isWorking ? 'text-muted' : 'text-fg'"
+      >
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
              原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。 -->
         <span v-if="turn.isWorking" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
-        <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
+        <!-- hover actions：复制 / 复制为 MD（常驻）+ fork（仅 AI 停止时）。
+           与 user 区一致（Turn.vue:76,90）：容器不守 isSessionActive，fork 单独守卫。 -->
         <div
-          v-if="!isSessionActive && lastAssistant"
+          v-if="lastAssistant"
           class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100"
         >
           <Button
@@ -208,6 +214,7 @@
             <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[8px] font-bold leading-[10px] text-white">MD</span>
           </Button>
           <Button
+            v-if="!isSessionActive"
             variant="ghost"
             size="icon"
             class="size-6 text-subtle hover:text-fg"

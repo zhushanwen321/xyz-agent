@@ -15,6 +15,9 @@ export interface ToolCall {
   toolName: string
   input: unknown
   output?: string
+  /** tool result 原始文本（含 ANSI 转义，未经 stripAnsi）。前端用 ansi_up 渲染着色。
+   *  无此字段时回退到 output（已 stripAnsi 的纯文本）。 */
+  outputRaw?: string
   /** pi tool_execution_end result.details — 结构化扩展数据 */
   details?: Record<string, unknown>
   /** Extension tool_call_update 进度百分比 (0-100) */
@@ -220,6 +223,9 @@ export interface Message {
   customType?: string
   /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
   bgNotify?: BgNotifyDetails
+  /** pi CustomMessage details 原始字段（含 __gui__ 结构化渲染数据）。
+   *  前端检测 details.__gui__ 路由到 GuiComponentRenderer。 */
+  details?: Record<string, unknown>
   /**
    * pi session JSONL 中对应 entry 的 id（entry 树节点标识）。
    * 仅文件路径读取（session-history）时填充——RPC 路径（pi get_messages）不返回 entryId。

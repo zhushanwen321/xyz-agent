@@ -6,6 +6,8 @@
     无 session 时空态引导（spec §8.5 基础空态：欢迎语）。
   -->
   <div class="flex h-full w-full flex-col overflow-hidden">
+    <!-- Extension UI 交互对话框（全局单例，监听 focusedSession 的 extension.ui_request） -->
+    <ExtensionUIDialog />
     <!-- hasSession 守卫放行整个 new-task flow 活跃态（landing + 各 overlay）：
          统一延迟 create 下 flow 活跃期间 activeId 恒 null，但 UI 须保持 Landing 挂载，
          否则用户点 chip 进 overlay 态会瞬间卸载 Landing 跳兜底页、系统目录选择器视觉丢失。
@@ -38,10 +40,14 @@ import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useExtensionNotify } from '@/composables/useExtensionUI'
 import PanelContainer from './PanelContainer.vue'
+import ExtensionUIDialog from '@/components/extension/ExtensionUIDialog.vue'
 
 const { newSession, focusedSessionId } = useSidebar()
 const flow = useNewTaskFlow()
+// Extension notify → toast（fire-and-forget，非阻塞通知）
+useExtensionNotify(focusedSessionId)
 
 /** 是否有焦点 session（决定渲染 panel 还是空态，跟随 panel focus） */
 const hasSession = computed(() => focusedSessionId.value !== null)

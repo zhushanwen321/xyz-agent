@@ -358,7 +358,7 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
   })
 
   describe('FR-4: tool_execution_update — structured partialResult', () => {
-    it('passes object partialResult through as detail object', async () => {
+    it('extracts partialResult.details as detail (S5 fix: aligned with tool_execution_end)', async () => {
       dispatchOne(adapter, {
         type: 'tool_execution_update',
         toolCallId: 'tc1',
@@ -371,12 +371,30 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.tool_call_update')
+      // S5 修复：detail 提取 partialResult.details（与 tool_execution_end 路径对齐），
+      // 不再透传整个 partialResult。无 details 时 fallback 用整个对象。
       expect(sent[0].payload).toMatchObject({
         toolCallId: 'tc1',
-        detail: {
-          content: 'running',
-          details: { truncated: true },
+        detail: { truncated: true },
+      })
+    })
+
+    it('falls back to whole object when partialResult has no details (subagent progress shape)', async () => {
+      dispatchOne(adapter, {
+        type: 'tool_execution_update',
+        toolCallId: 'tc2',
+        partialResult: {
+          currentTool: 'bash',
+          turnCount: 3,
         },
+      })
+      await flushAsync()
+
+      expect(sent).toHaveLength(1)
+      // 无 details 字段时，detail fallback 到整个 partialResult（兼容 subagent 扁平 progress 形态）
+      expect(sent[0].payload).toMatchObject({
+        toolCallId: 'tc2',
+        detail: { currentTool: 'bash', turnCount: 3 },
       })
     })
   })

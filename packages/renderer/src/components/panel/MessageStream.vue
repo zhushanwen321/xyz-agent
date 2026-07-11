@@ -23,6 +23,16 @@
           :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
         />
         <BgNotifyCard v-else-if="item.message.bgNotify" :message="item.message" />
+        <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。
+             customStart 把 details（含 __gui__）存进 system 消息，此处检测并路由到
+             GuiComponentRenderer；无 __gui__ 则落到下面的 SystemNotice 纯文本兜底。
+             容器样式与 SystemNotice 视觉一致（左内边距、等宽字体），用通用 Tailwind 类。 -->
+        <div
+          v-else-if="getGuiComponent(item.message)"
+          class="py-1 pl-1 font-mono text-[12px] leading-snug text-fg"
+        >
+          <GuiComponentRenderer :component="getGuiComponent(item.message)!" />
+        </div>
         <SystemNotice v-else :message="item.message" />
       </template>
 
@@ -76,6 +86,10 @@ import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
+import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import { extractGui } from '@xyz-agent/extension-protocol'
+import type { Message } from '@xyz-agent/shared'
 
 const props = defineProps<{
   sessionId: string
@@ -106,6 +120,15 @@ const hasWorkingTurn = computed(() => lastRenderTurn.value?.isWorking ?? false)
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数） */
 const renderItems = computed(() => toRenderItems(currentMessages.value))
+
+/**
+ * 从 system 消息的 details.__gui__ 提取结构化渲染组件（extension GUI 协议 E5）。
+ * customStart 把含 __gui__ 的 details 存进 system 消息；无 __gui__ 返回 undefined，
+ * 由模板落回 SystemNotice 纯文本兜底。封装为函数避免模板里重复调用 extractGui。
+ */
+function getGuiComponent(message: Message): GuiComponent | undefined {
+  return extractGui(message.details)?.component
+}
 
 /** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话） */
 const lastUserTurnIdx = computed(() => {

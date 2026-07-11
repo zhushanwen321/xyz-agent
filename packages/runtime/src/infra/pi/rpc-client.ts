@@ -261,6 +261,29 @@ export class RpcClient implements IPiEngine {
    * Send a raw command and wait for a response with matching id.
    * If the response indicates failure (success: false), the promise is rejected.
    */
+  /**
+   * 向 pi stdin 写入一行原始 JSON，不注册 pending、不等 RPC reply。
+   *
+   * 用于 pi 不回复 `{type:'response'}` 的命令（目前仅 `extension_ui_response`——
+   * pi rpc-mode.ts 处理后直接 return，不回 RPC 确认）。用 sendCommand 会导致 pending
+   * 永不 resolve → 60s CMD_TIMEOUT_MS 后才超时（timer 泄漏 + 无用等待）。
+   *
+   * 注意：调用方自行保证 JSON 格式正确 + 换行符结尾。
+   */
+  sendRaw(data: string): void {
+    if (!this.proc || this._exited) {
+      console.error('[rpc] sendRaw failed: pi process is not running')
+      return
+    }
+    const line = data.endsWith('\n') ? data : data + '\n'
+    try {
+      this.proc.stdin!.write(line)
+    // eslint-disable-next-line taste/no-silent-catch -- sendRaw 是 void fire-and-forget（pi 不回复 extension_ui_response），无调用方可传播错误；console.error 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4）
+    } catch (e) {
+      console.error('[rpc] sendRaw write failed:', e)
+    }
+  }
+
   sendCommand(type: string, params: Record<string, unknown> = {}, timeout = CMD_TIMEOUT_MS): Promise<PiMessage> {
     return new Promise((resolve, reject) => {
       if (!this.proc || this._exited) {

@@ -1,18 +1,14 @@
 /**
- * Extension 域 —— 订阅（onExtensions/onWidget/onStatus）+ 动作（toggle）+ 安装多步流。
+ * Extension 域 —— 订阅（onExtensions）+ 动作（toggle）+ 安装多步流 + UI 交互。
+ *
+ * widget/status 订阅不在本域——SideDrawer 直接经 useSessionEvents.onMessage 消费
+ * extension:widget / extension:widgetGui / extension:status（features 层 session 通道）。
  *
  * 安装多步流（D-4 内联候选选择，issues.md #5 方案 A）：
  * - npm：install(source) → runtime 直接装，config.extensions 推回 → onExtensions 刷新（单步）
  * - dir/git：installDir/installGit → runtime 发现候选回 extension.discovered → UI 内联展开
  *   → finishInstall(selected) → config.extensions 推回 → onExtensions 刷新（多步）
  * - cancelInstall(tempDir) → 清理临时目录（放弃安装）
- *
- * widget 订阅（issues.md #11 方案 A / code-architecture §4.9 / NFR §性能）：
- * - 走 session 通道（D-7），按 sessionId 路由
- * - onWidget：pi extension setWidget → runtime 推 extension:widget（payload {sessionId, widgetKey, lines}）
- *   runtime **每次推送全量 lines**（非增量、非分片，已 grep 确认 event-adapter.ts:383 setWidget），
- *   故无需分片重组；前端只做 1000 行截断（NFR「前端最多保留 1000 行」），保留最新尾部。
- *   runtime 保证 widget 输出不会超过 1MB（全量推送，非分片）。
  *
  * 契约见 contract.md §2.5 / code-architecture.md §3.2/§4.3/§4.9。
  *
@@ -21,60 +17,12 @@
 import type {
   ExtensionInfo,
   ExtensionDiscoveredPayload,
-  ExtensionWidgetPayload,
-  ExtensionStatusPayload,
+  ExtensionInteractMethod,
   RecommendedExtension,
 } from '@xyz-agent/shared'
 import * as transport from '../transport'
 import * as pending from '../pending'
 import * as events from '../events'
-
-/** widget 显示缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
-export const WIDGET_MAX_LINES = 1000
-
-export type OnWidgetHandler = (payload: ExtensionWidgetPayload) => void
-export type OnStatusHandler = (payload: ExtensionStatusPayload) => void
-
-/**
- * 订阅指定 session 的 extension:widget 推送，返回取消函数。
- *
- * runtime 每次 setWidget 推送全量 lines（已确认无分片协议），handler 收到截断后的尾部最新 lines。
- */
-export function onWidget(sessionId: string, handler: OnWidgetHandler): () => void {
-  return events.on(sessionId, (msg) => {
-    if (msg.type !== 'extension:widget') return
-    // events.on 无 per-type 泛型收窄（非 onGlobalType），payload 为联合宽类型，按契约窄断言取字段。
-    const payload = msg.payload as ExtensionWidgetPayload
-    // 防御性校验：events.on 按 sessionId 路由，但 payload.sessionId 可能因 bug 不一致
-    if (payload.sessionId !== sessionId) return
-    handler({
-      sessionId: payload.sessionId,
-      widgetKey: payload.widgetKey,
-      lines: truncateLines(payload.lines),
-    })
-  })
-}
-
-/** 订阅指定 session 的 extension:status 推送（状态栏文本），返回取消函数 */
-export function onStatus(sessionId: string, handler: OnStatusHandler): () => void {
-  return events.on(sessionId, (msg) => {
-    if (msg.type !== 'extension:status') return
-    const payload = msg.payload as ExtensionStatusPayload
-    // 防御性校验：events.on 按 sessionId 路由，但 payload.sessionId 可能因 bug 不一致
-    if (payload.sessionId !== sessionId) return
-    handler({
-      sessionId: payload.sessionId,
-      statusKey: payload.statusKey,
-      text: payload.text,
-    })
-  })
-}
-
-/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，NFR Issue #11） */
-function truncateLines(lines: string[]): string[] {
-  if (lines.length <= WIDGET_MAX_LINES) return lines
-  return lines.slice(lines.length - WIDGET_MAX_LINES)
-}
 
 export function onExtensions(handler: (extensions: ExtensionInfo[]) => void): () => void {
   return events.onGlobalType('config.extensions', (msg) => {
@@ -174,4 +122,78 @@ export function setAutoUpgrade(name: string, enabled: boolean): Promise<void> {
   const result = pending.register<void>(id)
   transport.send({ type: 'extension.setAutoUpgrade', id, payload: { name, autoUpgrade: enabled } })
   return result
+}
+
+// ── Extension UI 交互（confirm/select/input/notify/editor）──────────
+
+/** extension.ui_request 的 payload 结构（event-adapter 翻译 pi extension_ui_request） */
+export interface ExtensionUIRequest {
+  sessionId: string
+  requestId: string
+  method: ExtensionInteractMethod
+  title?: string
+  message?: string
+  options?: string[]
+  default?: string
+  level?: 'info' | 'warn' | 'error'
+  prefill?: string
+}
+
+/**
+ * 订阅指定 session 的 extension.ui_request 推送，返回取消函数。
+ * pi extension 调 ctx.ui.select/confirm/input 时，runtime 推 extension.ui_request。
+ */
+export function onUIRequest(sessionId: string, handler: (req: ExtensionUIRequest) => void): () => void {
+  return events.on(sessionId, (msg) => {
+    if (msg.type !== 'extension.ui_request') return
+    const payload = msg.payload as ExtensionUIRequest
+    if (payload.sessionId !== sessionId) return
+    handler(payload)
+  })
+}
+
+/**
+ * 订阅指定 session 的 extension.ui_timeout 推送，返回取消函数。
+ *
+ * runtime ExtensionTimeoutManager 在 UI 请求 5 分钟无响应后广播此事件（同时向 pi 发默认响应）。
+ * 前端收到后必须出队当前请求——否则对话框残留，用户点击会发送过期的 ui_response。
+ */
+export function onUITimeout(sessionId: string, handler: (requestId: string) => void): () => void {
+  return events.on(sessionId, (msg) => {
+    if (msg.type !== 'extension.ui_timeout') return
+    const payload = msg.payload as { sessionId: string; requestId: string }
+    if (payload.sessionId !== sessionId) return
+    handler(payload.requestId)
+  })
+}
+
+/**
+ * 订阅指定 session 的 extension.notify 推送，返回取消函数。
+ *
+ * pi notify 是 fire-and-forget（不等回复），runtime 翻译为 extension.notify WS 帧。
+ * 前端渲染为 toast 通知（非阻塞），不走 ExtensionUIDialog 模态对话框。
+ */
+export function onNotify(sessionId: string, handler: (payload: { message: string; level: 'info' | 'warn' | 'error' }) => void): () => void {
+  return events.on(sessionId, (msg) => {
+    if (msg.type !== 'extension:notify') return
+    const payload = msg.payload as { sessionId: string; message: string; level: 'info' | 'warn' | 'error' }
+    if (payload.sessionId !== sessionId) return
+    handler({ message: payload.message, level: payload.level })
+  })
+}
+
+/**
+ * 发送用户对 extension.ui_request 的回复。
+ * runtime extension-message-handler 收到此消息 → 按 method 转换为 pi 协议格式
+ * （confirm→{confirmed}, select/input/editor→{value}, 取消→{cancelled:true}）
+ * → 注入回 pi stdin → pi 的 select/confirm/input Promise resolve。
+ *
+ * method 必须透传：runtime 按 method 构建正确的 pi response 格式（pi 鸭子类型字段检测，
+ * 发错字段静默返回默认值）。
+ */
+export function sendExtensionUIResponse(sessionId: string, requestId: string, method: ExtensionInteractMethod, result: boolean | string | null): void {
+  transport.send({
+    type: 'extension.ui_response',
+    payload: { sessionId, requestId, method, result },
+  })
 }

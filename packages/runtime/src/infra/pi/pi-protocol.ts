@@ -286,8 +286,15 @@ export interface PiToolExecutionResult {
  */
 export interface PiExtensionUiRequestEvent extends PiBaseMessage {
   type: 'extension_ui_request'
-  /** Request method — determines the UI interaction type. */
-  method: 'confirm' | 'select' | 'input' | 'notify' | 'setStatus' | 'setWidget'
+  /**
+   * Request method — determines the UI interaction type.
+   *
+   * 交互式 dialog 方法（产生 extension.ui_request WS 帧，需前端回复）：confirm / select / input / editor
+   * Fire-and-forget 方法（独立 WS 帧，不等回复）：notify / setStatus / setWidget / set_editor_text / bridge:*
+   * notify 走 extension.notify WS 帧 + toast 渲染（非模态）；setStatus/setWidget 走各自独立帧。
+   * event-adapter.ts INTERACTIVE_UI_METHODS 只含 dialog 子集，与此类型保持同步。
+   */
+  method: 'confirm' | 'select' | 'input' | 'notify' | 'editor' | 'setStatus' | 'setWidget'
   /** Unique id for correlating the response back. */
   id?: string
   /** Display title (often used as tool name). */
@@ -363,6 +370,9 @@ export interface PiHistoryToolResult extends PiHistoryMessage {
   toolCallId: string
   toolName: string
   isError?: boolean
+  /** pi 持久化了 details（ToolResultMessage.details），含 __gui__ 结构化渲染数据。
+   *  类型声明补齐——pi JSONL 和 get_messages 都返回此字段。 */
+  details?: Record<string, unknown>
 }
 
 // ── Shared types ───────────────────────────────────────────────────

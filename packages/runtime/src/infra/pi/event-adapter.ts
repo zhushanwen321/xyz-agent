@@ -19,8 +19,9 @@
  * Each session gets its own adapter instance. translate() is stateless（一个 pi 事件
  * 产出一组中间事件），可变态由 EventInterpreter 持有。
  */
-import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType, ExtensionInteractMethod } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
+import { GUI_WIDGET_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -53,8 +54,20 @@ const STOP_REASON_MAP: Record<string, string> = {
   content_filter: 'content_filter',
 }
 
-/** Interactive extension UI methods that produce extension.ui_request WS events */
-const INTERACTIVE_UI_METHODS = new Set(['confirm', 'select', 'input', 'notify', 'editor'])
+/**
+ * Interactive extension UI dialog methods that produce extension.ui_request WS events.
+ * Must stay in sync with ExtensionInteractMethod SSOT (shared/extension.ts).
+ *
+ * notify 不在此列——它是 fire-and-forget（pi rpc-mode.ts notify 发后不等回复），
+ * 走独立 extension.notify WS 帧 + 前端 toast 渲染（非阻塞）。
+ * setStatus/setWidget/set_editor_text/bridge:* 也不在此列——它们走独立分支，不产 ui_request 帧。
+ *
+ * 用 `as const satisfies readonly ExtensionInteractMethod[]` 实现编译期穷举检查：
+ * ExtensionInteractMethod 扩展新方法时，若此数组遗漏，tsc 报错（而非静默 noop 丢弃）。
+ */
+const INTERACTIVE_UI_METHODS = new Set(
+  ['confirm', 'select', 'input', 'editor'] as const satisfies readonly ExtensionInteractMethod[]
+)
 
 /** Extension method constant for the editor UI */
 const METHOD_EDITOR = 'editor' as const
@@ -120,19 +133,23 @@ function handleToolExecutionStart(event: PiEvent, _sid: string): PiTranslatedEve
  */
 function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent[] {
   let output: string
+  let outputRaw: string | undefined
   let images: Array<{ data: string; mimeType: string }> | undefined
   // pi-protocol.PiToolExecutionEndEvent 声明 result: PiToolExecutionResult（固定 content 数组），
   // 但 pi 实际 result 可能是 string | object-with-content | 其他——双读 + 多形态判定覆盖协议漂移
   // （见 pi-protocol.ts 的 TODO(pi-协议漂移) 注释）
   const raw = event.result ?? event.output
   if (typeof raw === 'string') {
-    output = raw
+    output = stripAnsi(raw)
+    if (output !== raw) outputRaw = raw
   } else if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).content)) {
     const contentArr = (raw as Record<string, unknown>).content as Array<Record<string, unknown>>
-    output = contentArr
+    const rawText = contentArr
       .filter((c) => c.type === 'text')
       .map((c) => (c.text as string) ?? '')
       .join('\n')
+    output = stripAnsi(rawText)
+    if (output !== rawText) outputRaw = rawText
     const imageBlocks = contentArr
       .filter((c) => c.type === 'image')
       .map((c) => ({ data: String(c.data ?? ''), mimeType: String(c.mimeType ?? '') }))
@@ -173,10 +190,11 @@ function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent
     toolName,
     isError,
     writeContent,
+    outputRaw,
   }]
 }
 
-/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage */
+/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
 function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const messages = event.messages as Array<Record<string, unknown>> | undefined
   const lastMsg = messages?.[messages.length - 1]
@@ -186,7 +204,9 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const responseModel = lastMsg?.responseModel as string | undefined
   const diagnostics = lastMsg?.diagnostics as Record<string, unknown> | undefined
   const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsg?.errorMessage as string | undefined : undefined
-
+  // 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
+  // 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
+  const finalContent = ((Array.isArray(lastMsg?.content) ? lastMsg!.content : []) as Array<Record<string, unknown>>).filter((c) => c.type === 'text').map((c) => (c.text as string) ?? '').join('')
   const message: ServerMessage = {
     type: 'message.complete',
     payload: {
@@ -198,6 +218,7 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
       responseModel,
       diagnostics,
       errorMessage,
+      ...(finalContent ? { content: finalContent } : {}),
     },
   }
 
@@ -238,35 +259,105 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
   const method = event.method as string | undefined
 
   // setStatus → status-set（interpreter 路由 server）+ status-broadcast（WS 帧）
+  // 审计项 B（协议 spec §8.1）：保留 text（stripAnsi 后纯文本，向后兼容）+ textRaw（原始 ANSI 文本），
+  // 前端可选 textRaw 做 ANSI 着色渲染，text 作纯文本兜底。
   if (method === 'setStatus') {
     const key = String(event.statusKey ?? '')
-    const text = stripAnsi(String(event.statusText ?? ''))
+    const raw = String(event.statusText ?? '')
+    const text = stripAnsi(raw)
     return [
-      { kind: 'status-set', sessionId: sid, key, text },
+      { kind: 'status-set', sessionId: sid, key, text, textRaw: raw },
       {
         kind: 'status-broadcast',
         message: {
           type: EXTENSION_EVENTS.STATUS as ServerMessageType,
-          payload: { sessionId: sid, statusKey: key, text },
+          payload: { sessionId: sid, statusKey: key, text, textRaw: raw },
         },
       },
     ]
   }
 
-  // setWidget → WS event
+  // setWidget → WS event（检测 GUI 协议 marker / 清除语义）
   if (method === 'setWidget') {
+    const widgetKey = String(event.widgetKey ?? '')
+    const rawLines = Array.isArray(event.widgetLines) ? event.widgetLines as unknown[] : []
+
+    // 清除语义：widgetLines 缺失或空数组 → extension 清除此 widget（guiSetWidget(key, undefined)）。
+    // 发 extension:widgetGui 带 gui:null，前端据此删 guiWidgetsByTab 条目 + 清 lines。
+    // 不能只发 extension:widget（lines:[]）——前端 widget handler 不触碰 guiWidgetsByTab，
+    // 会导致结构化 widget 永驻。
+    if (rawLines.length === 0) {
+      return [{
+        kind: 'message',
+        message: {
+          type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+          payload: { sessionId: sid, widgetKey, gui: null },
+        },
+      }]
+    }
+
+    // 检测 GUI 协议 marker：单行以 NUL marker 开头 → 结构化 widget
+    if (rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER)) {
+      try {
+        const json = (rawLines[0] as string).slice(GUI_WIDGET_MARKER.length)
+        const gui: unknown = JSON.parse(json)
+        // 形状校验：防止异常结构进入渲染层（非合法 GuiComponent → 降级纯文本 widget）
+        if (isGuiComponent(gui)) {
+          return [{
+            kind: 'message',
+            message: {
+              type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+              payload: { sessionId: sid, widgetKey, gui },
+            },
+          }]
+        }
+        console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', gui)
+      // eslint-disable-next-line taste/no-silent-catch -- console.warn 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4），与 logger.ts 内部 catch 容错模式一致
+      } catch (e) {
+        // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget
+        console.warn('[EventAdapter] widgetGui marker JSON parse failed, falling back to text widget', e)
+      }
+    }
+
+    // 原有行为：stripAnsi + string[]
+    // marker 命中但校验/解析失败的行包含 NUL + marker 前缀（\x00XYZ_GUI_WIDGET:...），
+    // 直接展示会给用户看乱码——剥离 marker 前缀后显示剩余 JSON 文本（或空行）。
     const widgetPayload = {
       sessionId: sid,
-      widgetKey: String(event.widgetKey ?? ''),
-      lines: Array.isArray(event.widgetLines) ? (event.widgetLines as unknown[]).map(l => stripAnsi(String(l))) : [],
+      widgetKey,
+      lines: rawLines.map(l => {
+        const s = String(l)
+        const stripped = s.startsWith(GUI_WIDGET_MARKER) ? s.slice(GUI_WIDGET_MARKER.length) : s
+        return stripAnsi(stripped)
+      }),
     }
-    console.log('[EventAdapter] setWidget:', widgetPayload.widgetKey, 'lines:', widgetPayload.lines.length, 'sessionId:', sid)
     return [{ kind: 'message', message: { type: EXTENSION_EVENTS.WIDGET as ServerMessageType, payload: widgetPayload } }]
   }
 
   // setEditorText → extension:setEditorText
   if (method === 'set_editor_text') {
     return [{ kind: 'message', message: { type: 'extension:setEditorText', payload: { sessionId: sid, text: String(event.text ?? '') } } }]
+  }
+
+  // notify → extension.notify（fire-and-forget，pi 不等回复）
+  // pi rpc-mode.ts notify 发出 extension_ui_request{method:'notify'} 后不注册 pending、不等 response。
+  // 不走 INTERACTIVE_UI_METHODS（不产 extension-ui kind → 不注册 timeout → 不弹模态对话框）。
+  // 前端用 toast 渲染（非阻塞）。
+  if (method === 'notify') {
+    const rawType = String(event.notifyType ?? 'info')
+    const level: 'info' | 'warn' | 'error' =
+      rawType === 'error' ? 'error' : rawType === 'warning' ? 'warn' : 'info'
+    return [{
+      kind: 'message',
+      message: {
+        type: EXTENSION_EVENTS.NOTIFY as ServerMessageType,
+        payload: {
+          sessionId: sid,
+          message: String(event.message ?? ''),
+          level,
+        },
+      },
+    }]
   }
 
   // bridge:* → bridge-ui（interpreter 路由 server）
@@ -276,12 +367,13 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     return [{ kind: 'bridge-ui', requestId, sessionId: sid, method, data }]
   }
 
-  // Interactive methods: confirm, select, input, notify, editor
-  if (method && INTERACTIVE_UI_METHODS.has(method)) {
+  // Interactive dialog methods: confirm, select, input, editor (notify 已在上方独立分支处理)
+  if (method && INTERACTIVE_UI_METHODS.has(method as ExtensionInteractMethod)) {
+    const dialogMethod = method as ExtensionInteractMethod
     const rawOptions = event.options as Array<{ label: string; value: string }> | undefined
     const requestId = String(event.id ?? '')
     return [
-      { kind: 'extension-ui', requestId, sessionId: sid, method },
+      { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod },
       {
         kind: 'message',
         message: {
@@ -377,12 +469,15 @@ function handleMessageStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
   ]
 }
 
-/** tool_execution_update — forward detail (string or object) */
+/** tool_execution_update — forward detail (string or object, extract details if present) */
 function handleToolExecutionUpdate(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const partialResult = event.partialResult
+  // 提取 partialResult.details（含 __gui__），与 tool_execution_end 路径对齐。
+  // fallback：无 details 时用整个对象（兼容 subagent 的扁平 progress 形态）。
   const detail: string | Record<string, unknown> | undefined =
     partialResult != null && typeof partialResult === 'object'
-      ? (partialResult as Record<string, unknown>)
+      ? ((partialResult as Record<string, unknown>).details as Record<string, unknown> | undefined)
+        ?? (partialResult as Record<string, unknown>)
       : (partialResult as string | undefined)
   return [{
     kind: 'message',

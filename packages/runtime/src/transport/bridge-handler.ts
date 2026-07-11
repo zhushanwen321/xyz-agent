@@ -91,7 +91,7 @@ export class BridgeHandler {
   }
 
   /** Handle statusSetUpdate events from event-adapter */
-  handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
+  handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string; textRaw?: string }): void {
     this.pluginService?.handleBridgeEvent?.('plugin:statusSetUpdate', payload, payload.sessionId)
   }
 }
