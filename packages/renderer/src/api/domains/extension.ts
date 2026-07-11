@@ -175,3 +175,42 @@ export function setAutoUpgrade(name: string, enabled: boolean): Promise<void> {
   transport.send({ type: 'extension.setAutoUpgrade', id, payload: { name, autoUpgrade: enabled } })
   return result
 }
+
+// ── Extension UI 交互（confirm/select/input/notify/editor）──────────
+
+/** extension.ui_request 的 payload 结构（event-adapter 翻译 pi extension_ui_request） */
+export interface ExtensionUIRequest {
+  sessionId: string
+  requestId: string
+  method: 'confirm' | 'select' | 'input' | 'notify' | 'editor'
+  title?: string
+  message?: string
+  options?: string[]
+  default?: string
+  level?: 'info' | 'warn' | 'error'
+  prefill?: string
+}
+
+/**
+ * 订阅指定 session 的 extension.ui_request 推送，返回取消函数。
+ * pi extension 调 ctx.ui.select/confirm/input 时，runtime 推 extension.ui_request。
+ */
+export function onUIRequest(sessionId: string, handler: (req: ExtensionUIRequest) => void): () => void {
+  return events.on(sessionId, (msg) => {
+    if (msg.type !== 'extension.ui_request') return
+    const payload = msg.payload as ExtensionUIRequest
+    if (payload.sessionId !== sessionId) return
+    handler(payload)
+  })
+}
+
+/**
+ * 发送用户对 extension.ui_request 的回复。
+ * runtime extension-message-handler 收到此消息 → 注入回 pi stdin → pi 的 select/confirm/input Promise resolve。
+ */
+export function sendExtensionUIResponse(sessionId: string, requestId: string, result: boolean | string | null): void {
+  transport.send({
+    type: 'extension.ui_response',
+    payload: { sessionId, requestId, result },
+  })
+}
