@@ -11,7 +11,7 @@
 
   状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked/direction/mode
   props + emit close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
-  接入 extension.onWidget，按 widgetKey 路由到 terminal/browser tab。
+  接入 useSessionEvents.onMessage，按 widgetKey 路由到 terminal/browser tab。
   Git tab 不走 widget——数据由 PanelContainer 经 GIT_STATUS_KEY provide，GitPanel 自行 inject，
   本通用容器不持有 git props（保持容器纯净，不污染通用 tab 范式）。
 -->
@@ -241,7 +241,7 @@ const tabs: TabMeta[] = [
 
 const activeTabMeta = computed(() => tabs.find((t) => t.key === props.activeTab) ?? tabs[0])
 
-/** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量，见 extension.onWidget）。 */
+/** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量）。 */
 const terminalLines = ref<string[]>([])
 const browserLines = ref<string[]>([])
 /** 未匹配 tab 的 widgetKey fallback：存最后一个未知 widget 的 {key, lines}，默认路由到 terminal 显示 */
@@ -302,7 +302,7 @@ const statusEntries = computed(() =>
 /** widget 缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
 const WIDGET_MAX_LINES = 1000
 
-/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，对齐原 extension.onWidget 截断语义） */
+/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，截断保留尾部最新） */
 function truncateLines(lines: string[]): string[] {
   if (lines.length <= WIDGET_MAX_LINES) return lines
   return lines.slice(lines.length - WIDGET_MAX_LINES)
@@ -333,7 +333,7 @@ onMessage('extension:widgetGui', (msg) => {
   guiWidgetsByTab.value.set(tab, payload.gui as GuiComponent)
   guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
 })
-// extension:status：statusKey 维度聚合，同 key 覆盖（与原 extension.onStatus 对称语义，透传 textRaw）
+// extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
 onMessage('extension:status', (msg) => {
   const payload = msg.payload
   statusMap.value.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })

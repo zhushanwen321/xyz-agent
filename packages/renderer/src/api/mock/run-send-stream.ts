@@ -8,7 +8,7 @@
  * 生命周期：message_start → [auto_retry] → thinking → tool_call → extension widget/status
  *           → text → file_changes → complete。
  * 全程检查 cancelled，abort 后提前返回。extension:widget/status 走 session 通道（pushSession），
- * 与 chat streamSubscribe（streamHandlers）独立，对称于 real extension.onWidget/onStatus。
+ * 与 chat streamSubscribe（streamHandlers）独立，对称于 SideDrawer useSessionEvents.onMessage。
  */
 import type { ServerMessage } from '@xyz-agent/shared'
 
@@ -117,7 +117,7 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
     },
   })
 
-  // 任务3：extension widget + status 推送（走 session 通道，对齐 real extension.onWidget/onStatus）。
+  // 任务3：extension widget + status 推送（走 session 通道，对齐 SideDrawer useSessionEvents.onMessage）。
   // 在 tool_call 后推，模拟扩展输出（terminal widget 行 + 状态栏文本），让 SideDrawer 在 mock 下可验。
   if (isCancelled(sessionId)) return
   await sleep(TIMING.toolGap)

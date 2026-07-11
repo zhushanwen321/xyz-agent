@@ -11,7 +11,7 @@
  */
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
-  SkillInfo, AgentInfo, PluginInfo, SetProviderData, ExtensionWidgetPayload, ExtensionStatusPayload,
+  SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
@@ -499,27 +499,6 @@ const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({
 
 export const extension = {
   onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
-  /**
-   * 订阅指定 session 的 extension:widget 推送（与 real extension.onWidget 同构）。
-   * 走 events.on(sessionId) session 通道；runSendStream 经 pushSession(dispatchSession) 推送。
-   */
-  onWidget(sessionId: string, handler: (payload: ExtensionWidgetPayload) => void): () => void {
-    return events.on(sessionId, (msg) => {
-      if (msg.type !== 'extension:widget') return
-      const payload = msg.payload as ExtensionWidgetPayload
-      if (payload.sessionId !== sessionId) return
-      handler(payload)
-    })
-  },
-  /** 订阅指定 session 的 extension:status 推送（与 real extension.onStatus 同构）。 */
-  onStatus(sessionId: string, handler: (payload: ExtensionStatusPayload) => void): () => void {
-    return events.on(sessionId, (msg) => {
-      if (msg.type !== 'extension:status') return
-      const payload = msg.payload as ExtensionStatusPayload
-      if (payload.sessionId !== sessionId) return
-      handler(payload)
-    })
-  },
   async toggle(name: string, enabled: boolean) {
     await sleep(TIMING.ack)
     const target = fixtureExtensions.find((e) => e.name === name)
