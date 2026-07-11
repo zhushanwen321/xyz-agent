@@ -20,26 +20,27 @@ description: >-
 
 ⚠️ **关键**：第一个参数是 **feature worktree 目录名**（如 `feat-new-feature`），不是 `main`。脚本会自动检测 `$WS_ROOT/main` 用于 bump/tag/push。传 `main` 会导致阶段 7 删除 main worktree。
 
-⚠️ **cwd 隔离**：Pi bash 工具的 cwd 不跨调用保持。所有 stage 脚本必须在 **workspace root** 或 **main worktree** 内执行，不能在 feature worktree 内（阶段 7 会删除它）。
+⚠️ **cwd 隔离**：Pi bash 工具的 cwd 不跨调用保持。所有阶段脚本必须在 **workspace root** 或 **main worktree** 内执行，不能在 feature worktree 内（阶段 7 会删除它）。
 
 ```bash
 cd /Users/zhushanwen/Code/xyz-agent-workspace
-bash ~/.agents/skills/merge-worktree/stages/0-init.sh <worktree-dir> patch
+bash .agents/skills/merge/scripts/init.sh <worktree-dir>
 ```
 
 参数说明：
 - `<worktree-dir>` — feature worktree 目录名（basename），如 `feat-extensions-widget`
-- `patch` — 版本级别（patch/minor/major），默认 `patch`
+
+脚本输出 `WS_ROOT`、`BRANCH_NAME`、`PR_NUMBER`，后续阶段需要这些值。
 
 ### 阶段 1: 本地验证
 
 ```bash
-bash ~/.agents/skills/merge-worktree/stages/1-local-check.sh
+bash ~/.agents/skills/merge-worktree/pre-merge-check.sh <worktree-dir>
 ```
 
-阶段 1 会自动执行 pre-merge-check.sh（依赖安装、类型检查、lint、测试、构建）。
+阶段 1 调用全局 pre-merge-check.sh（依赖安装、类型检查、lint、测试、构建）。该脚本是通用工具，逻辑复杂（16KB），本项目复用而非重新实现。
 
-ℹ️ **pnpm workspace 单步安装**：项目使用 pnpm workspace（`packages/* + apps/*`），`pnpm install` 一次装完所有依赖，无需手动 cd 子目录。如果 stage 1 脚本未自动处理，需手动执行：
+ℹ️ **pnpm workspace 单步安装**：项目使用 pnpm workspace（`packages/* + apps/*`），`pnpm install` 一次装完所有依赖，无需手动 cd 子目录。如果 pre-merge-check.sh 未自动处理依赖安装，需手动执行：
 
 ```bash
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
@@ -48,25 +49,23 @@ ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
 ### 阶段 2: PR CI + 合并
 
 ```bash
-bash ~/.agents/skills/merge-worktree/stages/2-pr-merge.sh
+bash .agents/skills/merge/scripts/pr-merge.sh <branch-name> <pr-number>
 ```
 
-检查 PR CI 状态并通过 PR 合并（使用 `--no-ff`）。
+检查 PR CI 状态并通过 PR 合并（`gh pr merge --merge --delete-branch`，使用 merge commit 绝不 squash）。
 
-⚠️ **stage 2 后必须 sync 本地 main**：`gh pr merge` 直接合到 github/main，不更新本地 main。后续 bump 需要先 sync：
-
-```bash
-git -C $WS_ROOT/main fetch github
-git -C $WS_ROOT/main reset --hard github/main
-```
+脚本内部自动 sync 本地 main（`git fetch github && git reset --hard github/main`），无需手动执行。
 
 ### 阶段 3: Post-merge CI
 
 ```bash
-bash ~/.agents/skills/merge-worktree/stages/3-post-merge-ci.sh
+cd $WS_ROOT/main
+git fetch github
+MAIN_SHA=$(git rev-parse github/main)
+bash ~/.agents/skills/merge-worktree/wait-for-ci.sh "$MAIN_SHA"
 ```
 
-等待 main 分支 CI 通过。
+等待 main 分支 CI 通过。wait-for-ci.sh 是全局通用工具（CI 轮询），需传入 commit SHA。
 
 ### [MANDATORY] 阶段 3.5: 版本校验
 
@@ -125,10 +124,10 @@ bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version
 ### 阶段 5: Release Notes + Release
 
 ```bash
-bash ~/.agents/skills/merge-worktree/stages/5-release.sh
+bash .agents/skills/merge/scripts/release.sh
 ```
 
-生成 Release Notes 并创建/更新 GitHub Release。
+从 conventional commits 自动生成 Release Notes（feat/fix/perf/breaking 分组）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
 
 ### 阶段 6: 交付物验证（Electron 特化）
 
@@ -156,10 +155,14 @@ bash scripts/validate-runtime-bundle.sh
 ### 阶段 7: 清理
 
 ```bash
-bash ~/.agents/skills/merge-worktree/stages/7-cleanup.sh
+bash ~/.agents/skills/remove-worktree/remove-worktree.sh <branch-name> --force --skip-sync
 ```
 
-门禁：阶段 7 启动时检查 `deliverables-verified` checkpoint，不存在则拒绝执行。
+调用全局 remove-worktree.sh 清理 feature worktree 和本地分支。`--force` 因为分支已删除（远程 delete-branch），本地 `git branch --merged` 检查会误判。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
+
+门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
+
+⚠️ **cwd 隔离**：bash 工具的 cwd 在调用间持久。脚本内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但只在子 shell 生效，脚本退出后调用方 cwd 不变。若 cwd 在待删 worktree 内，脚本删除目录后后续 bash 命令将报 ENOENT。**执行前先 `cd $WS_ROOT`**。
 
 ## AI 操作步骤
 
@@ -198,7 +201,7 @@ bash ~/.agents/skills/merge-worktree/stages/7-cleanup.sh
 ## 项目特化
 
 - **交付方式**：GitHub Release + Electron 产物（DMG/EXE/AppImage）
-- **版本管理**：根 `package.json` + `apps/electron/package.json`（全局脚本自动同步）
+- **版本管理**：根 `package.json` + `apps/electron/package.json`（阶段 4 内联命令原子 bump 两个文件）
 - **构建验证**：本地 `npm run build` + CI 全量构建
 
 ---
