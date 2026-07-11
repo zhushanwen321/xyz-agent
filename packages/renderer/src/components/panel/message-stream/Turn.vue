@@ -225,6 +225,7 @@
         class="mt-2"
         :file-changes="changeSetFileChanges"
         :status="changeSetStatus"
+        :session-id="sessionId"
       />
     </div>
 

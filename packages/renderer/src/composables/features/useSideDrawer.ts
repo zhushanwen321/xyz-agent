@@ -20,10 +20,12 @@ import { ref } from 'vue'
 
 export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail'
 
-/** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab 用） */
+/** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab）/ 文件路径（Detail tab） */
 export interface OpenDrawerOptions {
   /** Doc tab 当前展示的命令名（如 '/commit'），CommandDocPanel 据此 + commandStore/skills 解析文档 */
   commandName?: string
+  /** Detail tab 打开后立即展示的文件路径（变更集卡点击文件行时传入，强制 diff 模式） */
+  filePath?: string
 }
 
 // ── 模块级单实例状态（Q2=A：composable 模块单例，跨 useSideDrawer() 调用共享）──
@@ -35,6 +37,12 @@ const activeTab = ref<SideDrawerTab>('terminal')
 const docked = ref(false)
 /** Doc tab 当前展示的命令名（点击用户气泡 slash chip 时设置） */
 const selectedCommandName = ref<string | null>(null)
+/**
+ * Detail tab 打开时立即展示的文件路径（点击即看 diff，无需先点文件树）。
+ * 由变更集卡等非文件树入口设置；useDetailPane watch 它并强制 diff 模式。
+ * 用完即清空（消费后置 null），避免残留导致下次打开 detail tab 被旧值劫持。
+ */
+const detailFilePath = ref<string | null>(null)
 
 /**
  * 重置 SideDrawer 单实例状态（测试隔离用）。
@@ -45,13 +53,15 @@ export function resetSideDrawer(): void {
   activeTab.value = 'terminal'
   docked.value = false
   selectedCommandName.value = null
+  detailFilePath.value = null
 }
 
 export function useSideDrawer() {
-  /** 打开抽屉，可指定初始 tab + Doc tab 的选中命令 */
+  /** 打开抽屉，可指定初始 tab + Doc tab 的选中命令 / Detail tab 的文件路径 */
   function open(tab?: SideDrawerTab, opts?: OpenDrawerOptions): void {
     if (tab) activeTab.value = tab
     if (opts?.commandName !== undefined) selectedCommandName.value = opts.commandName
+    if (opts?.filePath !== undefined) detailFilePath.value = opts.filePath
     isOpen.value = true
   }
 
@@ -81,6 +91,7 @@ export function useSideDrawer() {
     activeTab,
     docked,
     selectedCommandName,
+    detailFilePath,
     open,
     close,
     toggle,
