@@ -193,7 +193,7 @@ function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent
   }]
 }
 
-/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage */
+/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
 function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const messages = event.messages as Array<Record<string, unknown>> | undefined
   const lastMsg = messages?.[messages.length - 1]
@@ -203,7 +203,9 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
   const responseModel = lastMsg?.responseModel as string | undefined
   const diagnostics = lastMsg?.diagnostics as Record<string, unknown> | undefined
   const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsg?.errorMessage as string | undefined : undefined
-
+  // 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
+  // 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
+  const finalContent = ((Array.isArray(lastMsg?.content) ? lastMsg!.content : []) as Array<Record<string, unknown>>).filter((c) => c.type === 'text').map((c) => (c.text as string) ?? '').join('')
   const message: ServerMessage = {
     type: 'message.complete',
     payload: {
@@ -215,6 +217,7 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
       responseModel,
       diagnostics,
       errorMessage,
+      ...(finalContent ? { content: finalContent } : {}),
     },
   }
 

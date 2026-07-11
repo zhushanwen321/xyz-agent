@@ -188,17 +188,26 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // [W4] toolCall 终态收口收敛到 finalizeSession 统一处（原局部 finalizeToolCalls 已删除，
     // 避免两套映射漂移）。此处只改 message status + 回填 usage，toolCalls 保持原样传入；
     // 紧接着的 finalizeSession(sid, reason) 会把 running toolCall 按 reason 统一收口。
+    //
+    // 权威 content 覆盖：runtime 从 pi agent_end 提取的完整文本 content（见
+    // event-adapter handleAgentEnd）。streaming 期间通过 text_delta 逐块累积，但末尾
+    // delta 的 async 渲染竞态可能导致 markdown 未正确渲染（如 ** 未闭合）。用权威源
+    // 覆盖最后一条 assistant 的 content，强制 MarkdownRenderer watch 重新触发渲染。
+    // 仅非空时覆盖（abort 路径 payload 无 content，保留客户端累积值）。
+    const finalContent = readString(payload, 'content')
     const lastAssistantIdx = findLastAssistantIndex(prev)
     let changed = false
     const next = prev.map((m, i) => {
       if (m.role !== 'assistant' || m.status !== 'streaming') return m
       changed = true
-      // 仅最后一条 assistant 回填 usage（turn 级聚合，回填非末会语义错位）
+      // 仅最后一条 assistant 回填 usage + content（turn 级聚合，回填到非末 assistant 语义错位）
       const usage = i === lastAssistantIdx ? readUsage(payload) : undefined
+      const shouldOverrideContent = i === lastAssistantIdx && finalContent && finalContent.length > 0
       return {
         ...m,
         status: isErrorStop ? 'error' : 'complete',
         ...(usage ? { usage } : {}),
+        ...(shouldOverrideContent ? { content: finalContent } : {}),
       } satisfies Message
     })
     if (changed) messages.value.set(sid, next)
