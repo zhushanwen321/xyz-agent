@@ -13,7 +13,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/parseDiff.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { parseDiff } from '@/composables/logic/parseDiff'
+import { parseDiff, diffCharsLCS, computeInlineDiff, type DiffHunk } from '@/composables/logic/parseDiff'
 
 /** 标准 unified diff 样例（含文件头 + 单 hunk + context/add/del） */
 const STANDARD_PATCH = `diff --git a/src/existing.ts b/src/existing.ts
@@ -136,5 +136,176 @@ index 111..222 100644
     const allTypes = hunks.flatMap((h) => h.lines.map((l) => l.type))
     expect(allTypes).not.toContain('meta')
     expect(hunks[0].lines[0].type).toBe('hunk')
+  })
+})
+
+describe('diffCharsLCS', () => {
+  it('完全相同 → 单个 normal segment', () => {
+    expect(diffCharsLCS('hello', 'hello')).toEqual([{ text: 'hello', kind: 'normal' }])
+  })
+
+  it('a 空 → 单个 add segment', () => {
+    expect(diffCharsLCS('', 'abc')).toEqual([{ text: 'abc', kind: 'add' }])
+  })
+
+  it('b 空 → 单个 del segment', () => {
+    expect(diffCharsLCS('abc', '')).toEqual([{ text: 'abc', kind: 'del' }])
+  })
+
+  it('完全不同 → del 段 + add 段', () => {
+    const segs = diffCharsLCS('abc', 'xyz')
+    expect(segs).toHaveLength(2)
+    expect(segs[0]).toEqual({ text: 'abc', kind: 'del' })
+    expect(segs[1]).toEqual({ text: 'xyz', kind: 'add' })
+  })
+
+  it('单字符差异：前缀相同 + 中间单字符改动 + 后缀相同', () => {
+    // "const x = 1" → "const y = 1"，仅中间 x→y 不同
+    const segs = diffCharsLCS('const x = 1', 'const y = 1')
+    // 期望：normal("const ") + del("x") + add("y") + normal(" = 1")
+    expect(segs.map((s) => ({ text: s.text, kind: s.kind }))).toEqual([
+      { text: 'const ', kind: 'normal' },
+      { text: 'x', kind: 'del' },
+      { text: 'y', kind: 'add' },
+      { text: ' = 1', kind: 'normal' },
+    ])
+  })
+
+  it('前缀变化：开头不同 + 后缀相同', () => {
+    const segs = diffCharsLCS('fooBar', 'bazBar')
+    expect(segs).toEqual([
+      { text: 'foo', kind: 'del' },
+      { text: 'baz', kind: 'add' },
+      { text: 'Bar', kind: 'normal' },
+    ])
+  })
+
+  it('后缀变化：前缀相同 + 结尾不同', () => {
+    const segs = diffCharsLCS('getValue', 'getValues')
+    expect(segs).toEqual([
+      { text: 'getValue', kind: 'normal' },
+      { text: 's', kind: 'add' },
+    ])
+  })
+
+  it('纯新增行（a 是 b 的前缀）', () => {
+    const segs = diffCharsLCS('const x', 'const x = 1')
+    expect(segs).toEqual([
+      { text: 'const x', kind: 'normal' },
+      { text: ' = 1', kind: 'add' },
+    ])
+  })
+
+  it('Unicode 字符按 code point 拆分（emoji 不被拆成代理对）', () => {
+    const segs = diffCharsLCS('a🎉b', 'a🎊b')
+    // emoji 各占一个 segment 字符，不被拆成两个 UTF-16 code unit
+    expect(segs).toEqual([
+      { text: 'a', kind: 'normal' },
+      { text: '🎉', kind: 'del' },
+      { text: '🎊', kind: 'add' },
+      { text: 'b', kind: 'normal' },
+    ])
+  })
+})
+
+describe('computeInlineDiff', () => {
+  /** 构造 hunk 的辅助函数 */
+  function makeHunk(lines: { type: 'context' | 'add' | 'del' | 'hunk'; content: string; oldNo?: number; newNo?: number }[]): DiffHunk {
+    return { oldStart: 1, newStart: 1, lines: lines.map((l) => ({ ...l })) }
+  }
+
+  it('del+add 配对：双方都写回 segments', () => {
+    const hunk = makeHunk([
+      { type: 'del', content: 'const x = 1', oldNo: 1 },
+      { type: 'add', content: 'const y = 1', newNo: 1 },
+    ])
+    computeInlineDiff(hunk)
+    const [delLine, addLine] = hunk.lines
+
+    // del 行 segments：normal + del + normal（无 add 片段）
+    expect(delLine.segments).toBeDefined()
+    expect(delLine.segments!.map((s) => s.kind)).not.toContain('add')
+    expect(delLine.segments).toEqual([
+      { text: 'const ', kind: 'normal' },
+      { text: 'x', kind: 'del' },
+      { text: ' = 1', kind: 'normal' },
+    ])
+
+    // add 行 segments：normal + add + normal（无 del 片段）
+    expect(addLine.segments).toBeDefined()
+    expect(addLine.segments!.map((s) => s.kind)).not.toContain('del')
+    expect(addLine.segments).toEqual([
+      { text: 'const ', kind: 'normal' },
+      { text: 'y', kind: 'add' },
+      { text: ' = 1', kind: 'normal' },
+    ])
+  })
+
+  it('未配对的行（del 块后无 add 块）无 segments', () => {
+    const hunk = makeHunk([
+      { type: 'del', content: 'removed line', oldNo: 1 },
+      { type: 'context', content: 'unchanged', oldNo: 2, newNo: 1 },
+    ])
+    computeInlineDiff(hunk)
+    // del 行后是 context 不是 add，不配对
+    expect(hunk.lines[0].segments).toBeUndefined()
+  })
+
+  it('多行配对取较小行数：2 del + 1 add → 仅第一对配对', () => {
+    const hunk = makeHunk([
+      { type: 'del', content: 'line1 old', oldNo: 1 },
+      { type: 'del', content: 'line2 old', oldNo: 2 },
+      { type: 'add', content: 'line1 new', newNo: 1 },
+    ])
+    computeInlineDiff(hunk)
+    expect(hunk.lines[0].segments).toBeDefined() // del[0] 配对 add[0]
+    expect(hunk.lines[1].segments).toBeUndefined() // del[1] 无配对
+    expect(hunk.lines[2].segments).toBeDefined() // add[0] 配对 del[0]
+  })
+
+  it('context 行不产生 segments', () => {
+    const hunk = makeHunk([
+      { type: 'context', content: 'same', oldNo: 1, newNo: 1 },
+      { type: 'del', content: 'old', oldNo: 2 },
+      { type: 'add', content: 'new', newNo: 2 },
+      { type: 'context', content: 'same2', oldNo: 3, newNo: 3 },
+    ])
+    computeInlineDiff(hunk)
+    expect(hunk.lines[0].segments).toBeUndefined() // context
+    expect(hunk.lines[3].segments).toBeUndefined() // context
+    expect(hunk.lines[1].segments).toBeDefined() // del 配对
+    expect(hunk.lines[2].segments).toBeDefined() // add 配对
+  })
+
+  it('完全相同的 del+add 行 → segments 全 normal', () => {
+    const hunk = makeHunk([
+      { type: 'del', content: 'same content', oldNo: 1 },
+      { type: 'add', content: 'same content', newNo: 1 },
+    ])
+    computeInlineDiff(hunk)
+    expect(hunk.lines[0].segments).toEqual([{ text: 'same content', kind: 'normal' }])
+    expect(hunk.lines[1].segments).toEqual([{ text: 'same content', kind: 'normal' }])
+  })
+})
+
+describe('parseDiff 集成：字符级 diff', () => {
+  it('parseDiff 返回的 hunks 中 del+add 行有 segments', () => {
+    const patch = `--- a/f.txt
++++ b/f.txt
+@@ -1,2 +1,2 @@
+-const x = 1
++const y = 1
+ keep`
+    const { hunks } = parseDiff(patch)
+    const lines = hunks[0].lines
+    // hunk头 + del + add + context
+    expect(lines[1].type).toBe('del')
+    expect(lines[2].type).toBe('add')
+    expect(lines[1].segments).toBeDefined()
+    expect(lines[2].segments).toBeDefined()
+    // del 行含 del 片段
+    expect(lines[1].segments!.some((s) => s.kind === 'del')).toBe(true)
+    // add 行含 add 片段
+    expect(lines[2].segments!.some((s) => s.kind === 'add')).toBe(true)
   })
 })

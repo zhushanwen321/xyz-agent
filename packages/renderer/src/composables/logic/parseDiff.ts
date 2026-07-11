@@ -19,6 +19,12 @@
 /** diff 行类型 */
 export type DiffLineType = 'context' | 'add' | 'del' | 'hunk' | 'meta'
 
+/** 字符级 diff 片段：配对的 del/add 行拆分出的连续文本段 */
+export interface DiffSegment {
+  text: string
+  kind: 'normal' | 'add' | 'del'
+}
+
 export interface DiffLine {
   type: DiffLineType
   /** 旧文件行号（context/del 有，add 无，meta/hunk 无） */
@@ -27,6 +33,8 @@ export interface DiffLine {
   newNo?: number
   /** 行内容（不含行首 +/-/空 分类字符，meta 行保留原始文本） */
   content: string
+  /** 字符级 diff 片段（仅 del+add 配对成功的行有，其余为 undefined） */
+  segments?: DiffSegment[]
 }
 
 export interface DiffHunk {
@@ -107,5 +115,108 @@ export function parseDiff(patch: string): ParsedDiff {
     }
   }
 
+  // 对每个 hunk 计算字符级 diff（配对 del+add 行写回 segments）
+  for (const hunk of hunks) {
+    computeInlineDiff(hunk)
+  }
+
   return { hunks }
+}
+
+/**
+ * 字符级 diff：基于 LCS 比较两段文本，产出连续 segment。
+ *
+ * 算法：标准 LCS DP 表 + 回溯。把 a/b 按 Unicode code point 拆成字符数组，
+ * 求 LCS 后回溯出 equal/del/add 三类片段，合并相邻同类为单个 segment。
+ *
+ * 为何不用单词级（whitespace 分词）：字符级对单字符改动更精确（用户需求是"单字符变更也能高亮"），
+ * 且 LCS 实现不因粒度变细而显著变慢（典型 diff 行 < 200 字符）。
+ */
+export function diffCharsLCS(a: string, b: string): DiffSegment[] {
+  if (a === b) return [{ text: a, kind: 'normal' }]
+  if (!a) return [{ text: b, kind: 'add' }]
+  if (!b) return [{ text: a, kind: 'del' }]
+
+  const aa = Array.from(a)
+  const bb = Array.from(b)
+  const m = aa.length
+  const n = bb.length
+
+  // DP 表：dp[i][j] = aa[i:] 与 bb[j:] 的 LCS 长度
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0))
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = aa[i] === bb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+
+  // 回溯：i/j 指针推进，匹配 → normal，a 有 b 无 → del，b 有 a 无 → add
+  const segments: DiffSegment[] = []
+  let i = 0
+  let j = 0
+  while (i < m && j < n) {
+    if (aa[i] === bb[j]) {
+      pushSegment(segments, aa[i], 'normal')
+      i++
+      j++
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      pushSegment(segments, aa[i], 'del')
+      i++
+    } else {
+      pushSegment(segments, bb[j], 'add')
+      j++
+    }
+  }
+  while (i < m) pushSegment(segments, aa[i++], 'del')
+  while (j < n) pushSegment(segments, bb[j++], 'add')
+
+  return segments
+}
+
+/** 合并相邻同类 segment，避免碎片化 */
+function pushSegment(segments: DiffSegment[], text: string, kind: DiffSegment['kind']): void {
+  const last = segments[segments.length - 1]
+  if (last && last.kind === kind) last.text += text
+  else segments.push({ text, kind })
+}
+
+/**
+ * 对 hunk 内 del+add 行配对，计算字符级 diff 写回 segments。
+ *
+ * 配对规则（git diff 标准行为）：扫描连续的 del 块后紧跟 add 块，1:1 逐行配对，
+ * 取两者行数的较小值，多余的行不配对（无 segments）。
+ *
+ * - del 行的 segments：normal + del 片段（显示「删了什么」）
+ * - add 行的 segments：normal + add 片段（显示「加了什么」）
+ */
+export function computeInlineDiff(hunk: DiffHunk): void {
+  const lines = hunk.lines
+  let i = 0
+  while (i < lines.length) {
+    // 收集连续 del 块
+    const delStart = i
+    while (i < lines.length && lines[i].type === 'del') i++
+    const delCount = i - delStart
+    if (delCount === 0) {
+      i++
+      continue
+    }
+    // 收集紧随的 add 块
+    const addStart = i
+    while (i < lines.length && lines[i].type === 'add') i++
+    const addCount = i - addStart
+    if (addCount === 0) continue // del 块后无 add 块，纯删除，不配对
+
+    // 1:1 配对，取较小行数
+    const pairCount = Math.min(delCount, addCount)
+    for (let k = 0; k < pairCount; k++) {
+      const delLine = lines[delStart + k]
+      const addLine = lines[addStart + k]
+      const segments = diffCharsLCS(delLine.content, addLine.content)
+      // del 行视角：add 片段不可见，只保留 normal + del
+      delLine.segments = segments.filter((s) => s.kind !== 'add')
+      // add 行视角：del 片段不可见，只保留 normal + add
+      addLine.segments = segments.filter((s) => s.kind !== 'del')
+    }
+  }
 }
