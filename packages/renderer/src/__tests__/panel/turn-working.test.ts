@@ -200,60 +200,64 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     })
   }
 
-  /** 构造 contentBlocks=[toolCall, text] 的 assistant（先 tool 后 text） */
-  function toolFirstAssistant(over: Partial<Message> = {}): Message {
+  /** 构造 contentBlocks=[thinking, toolCall] 的 assistant（先 think 后 tool 的时序对比）。
+   *  用 thinking+tool 而非 text+tool：末位 text 始终在 summary 位渲染（不在 trace），
+   *  thinking/tool 不受末位跳过影响，能稳定验证 contentBlocks 时序。 */
+  function thinkToolAssistant(thinkFirst: boolean, over: Partial<Message> = {}): Message {
+    const thinking = { id: 'th1', content: '让我想想', collapsed: true }
+    const toolCall = { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 }
     return msg({
       status: 'streaming',
       content: '查完了',
-      toolCalls: [
-        { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 },
-      ],
-      contentBlocks: [
-        { type: 'toolCall', refId: 'tc1' },
-        { type: 'text', refId: 'text' },
-      ],
+      thinking: [thinking],
+      toolCalls: [toolCall],
+      contentBlocks: thinkFirst
+        ? [{ type: 'thinking', refId: 'th1' }, { type: 'toolCall', refId: 'tc1' }]
+        : [{ type: 'toolCall', refId: 'tc1' }, { type: 'thinking', refId: 'th1' }],
       ...over,
     })
   }
 
-  it('U15: streaming 态 trace 块顺序 = contentBlocks 顺序（text 在 tool 之前，非旧硬编码顺序）', () => {
+  it('U15: streaming 态 trace 块顺序 = contentBlocks 顺序（think 在 tool 之前），末位 text 在 summary 位', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isWorking: true,
         hasFoldable: true,
-        assistants: [textFirstAssistant()],
+        assistants: [thinkToolAssistant(true)],
       }),
     })
     // trace 存在
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // trace 内所有 Block 根（.trace-blk）。template v-for 不产生 DOM，Block 根直接挂在 .trace 下
+    // trace 内所有 Block 根（.trace-blk）。末位 text 始终跳过，trace 只剩 thinking + tool
     const blocks = wrapper.findAll('.trace .trace-blk')
-    expect(blocks.length).toBeGreaterThanOrEqual(2)
-    // 第一个块是 text（无 .trace-tool / .trace-think 子元素）
-    expect(blocks[0].find('.trace-tool').exists()).toBe(false)
-    expect(blocks[0].find('.trace-think').exists()).toBe(false)
+    expect(blocks.length).toBe(2)
+    // 第一个块是 thinking（.trace-think 存在）
+    expect(blocks[0].find('.trace-think').exists()).toBe(true)
     // 第二个块是 tool（.trace-tool 存在）
     expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+    // summary 也存在（末位 text 在 summary 位，streaming 态也渲染）
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
   })
 
-  it('U16: streaming 态 trace 块顺序 = contentBlocks 顺序（tool 在 text 之前）', () => {
+  it('U16: streaming 态 trace 块顺序 = contentBlocks 顺序（tool 在 think 之前）', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isWorking: true,
         hasFoldable: true,
-        assistants: [toolFirstAssistant()],
+        assistants: [thinkToolAssistant(false)],
       }),
     })
     const blocks = wrapper.findAll('.trace .trace-blk')
-    expect(blocks.length).toBeGreaterThanOrEqual(2)
+    expect(blocks.length).toBe(2)
     // 第一个块是 tool
     expect(blocks[0].find('.trace-tool').exists()).toBe(true)
-    // 第二个块是 text（无 tool/think header）
-    expect(blocks[1].find('.trace-tool').exists()).toBe(false)
-    expect(blocks[1].find('.trace-think').exists()).toBe(false)
+    // 第二个块是 thinking
+    expect(blocks[1].find('.trace-think').exists()).toBe(true)
+    // summary 也存在（末位 text 在 summary 位）
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
   })
 
-  it('U17: streaming 态不渲染底部 summary（text 在 trace 内按序展示，不重复拉到底部）', () => {
+  it('U17: streaming 态末位 text 在 summary 位渲染（不在 trace 内重复），summary 带 streaming 光标', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isWorking: true,
@@ -261,12 +265,18 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
         assistants: [textFirstAssistant()],
       }),
     })
-    // streaming 态：turn-summary 不存在（v-if 含 !turn.isWorking 守卫）
-    expect(wrapper.find('.turn-summary').exists()).toBe(false)
+    // streaming 态：turn-summary 存在（末位 text 在 summary 位渲染，消除停止时样式跳变）
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    // streaming 光标在 summary 内（streaming-cursor span）
+    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(true)
+    // trace 内无 text 块（末位 text 跳过，只剩 tool）
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBe(1)
+    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
   })
 
-  it('U18: streaming→complete 切换后，末位 text 落到底部 summary，trace 内跳过末位 text', async () => {
-    // streaming 态：trace 含 text 块（按 contentBlocks），无底部 summary
+  it('U18: streaming→complete 切换后，summary 仍在（text 位置不变），光标消失', async () => {
+    // streaming 态：summary 已存在（text 在 summary 位），带光标
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isWorking: true,
@@ -274,9 +284,10 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
         assistants: [textFirstAssistant()],
       }),
     })
-    expect(wrapper.find('.turn-summary').exists()).toBe(false)
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(true)
 
-    // 切到 complete 态（expanded=true 让 trace 仍展开，验证 trace 内跳过末位 text）
+    // 切到 complete 态
     await wrapper.setProps({
       turn: makeTurn({
         isWorking: false,
@@ -284,9 +295,10 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
         assistants: [textFirstAssistant({ status: 'complete' })],
       }),
     })
-    // complete 态底部 summary 出现，含 text 内容
-    const summary = wrapper.find('.turn-summary')
-    expect(summary.exists()).toBe(true)
+    // summary 仍存在（text 位置未变，这正是消除跳变的核心）
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    // 光标消失（isWorking=false）
+    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(false)
     // 注意：MarkdownRenderer 被 stub，summary 文本可能不渲染，但 .turn-summary div 存在即可
   })
 
