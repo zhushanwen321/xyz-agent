@@ -286,8 +286,14 @@ export interface PiToolExecutionResult {
  */
 export interface PiExtensionUiRequestEvent extends PiBaseMessage {
   type: 'extension_ui_request'
-  /** Request method — determines the UI interaction type. */
-  method: 'confirm' | 'select' | 'input' | 'notify' | 'setStatus' | 'setWidget'
+  /**
+   * Request method — determines the UI interaction type.
+   *
+   * 交互式方法（产生 extension.ui_request WS 帧）：confirm / select / input / notify / editor
+   * 独立分支方法（不进 INTERACTIVE_UI_METHODS）：setStatus / setWidget / set_editor_text / bridge:*
+   * event-adapter.ts INTERACTIVE_UI_METHODS 必须与此类型保持同步。
+   */
+  method: 'confirm' | 'select' | 'input' | 'notify' | 'editor' | 'setStatus' | 'setWidget'
   /** Unique id for correlating the response back. */
   id?: string
   /** Display title (often used as tool name). */

@@ -4,6 +4,7 @@ import {
   guiComponent,
   guiSetWidget,
   isGuiCapable,
+  isGuiComponent,
   extractGui,
   GUI_WIDGET_MARKER,
   PROTOCOL_VERSION,
@@ -146,5 +147,28 @@ describe('extractGui', () => {
   it('__gui__ 缺少 v 或 component 返回 undefined', () => {
     expect(extractGui({ __gui__: { v: 1 } })).toBeUndefined()
     expect(extractGui({ __gui__: { component: {} } })).toBeUndefined()
+  })
+})
+
+describe('isGuiComponent', () => {
+  it('合法 GuiComponent（type 字符串 + props 对象）→ true', () => {
+    expect(isGuiComponent({ type: 'task-list', props: { items: [] } })).toBe(true)
+    expect(isGuiComponent({ type: 'ansi-text', props: { lines: ['a'] } })).toBe(true)
+  })
+
+  it('缺 type 或 type 非字符串 → false', () => {
+    expect(isGuiComponent({ props: {} })).toBe(false)
+    expect(isGuiComponent({ type: 42, props: {} })).toBe(false)
+  })
+
+  it('缺 props 或 props 非对象 → false', () => {
+    expect(isGuiComponent({ type: 'task-list' })).toBe(false)
+    expect(isGuiComponent({ type: 'task-list', props: 'not-object' })).toBe(false)
+  })
+
+  it('null/非对象 → false', () => {
+    expect(isGuiComponent(null)).toBe(false)
+    expect(isGuiComponent('string')).toBe(false)
+    expect(isGuiComponent(undefined)).toBe(false)
   })
 })

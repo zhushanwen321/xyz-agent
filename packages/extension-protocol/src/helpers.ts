@@ -172,6 +172,17 @@ export function extractGui(details: Record<string, unknown> | undefined): GuiRen
   return undefined
 }
 
+/**
+ * 最小形状校验：判断 unknown 值是否为合法 GuiComponent（有 type 字符串 + props 对象）。
+ * 用于 widgetGui marker 解码后防止异常结构进入渲染层。
+ * 不校验 type 是否为已知值（GuiComponentRenderer 对未知 type 有 AnsiText 降级）。
+ */
+export function isGuiComponent(value: unknown): value is GuiComponent {
+  if (value === null || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
+  return typeof obj.type === 'string' && obj.props !== undefined && typeof obj.props === 'object'
+}
+
 // ── 内部工具 ──
 
 /** 递归 strip undefined 字段，确保 JSON.stringify 产出干净的对象 */

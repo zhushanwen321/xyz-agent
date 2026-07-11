@@ -21,7 +21,7 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -54,7 +54,11 @@ const STOP_REASON_MAP: Record<string, string> = {
   content_filter: 'content_filter',
 }
 
-/** Interactive extension UI methods that produce extension.ui_request WS events */
+/**
+ * Interactive extension UI methods that produce extension.ui_request WS events.
+ * Must stay in sync with PiExtensionUiRequestEvent['method'] in pi-protocol.ts
+ * (仅交互式子集——setStatus/setWidget/set_editor_text/bridge:* 走独立分支)。
+ */
 const INTERACTIVE_UI_METHODS = new Set(['confirm', 'select', 'input', 'notify', 'editor'])
 
 /** Extension method constant for the editor UI */
@@ -271,14 +275,18 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     if (rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER)) {
       try {
         const json = (rawLines[0] as string).slice(GUI_WIDGET_MARKER.length)
-        const gui = JSON.parse(json)
-        return [{
-          kind: 'message',
-          message: {
-            type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
-            payload: { sessionId: sid, widgetKey, gui },
-          },
-        }]
+        const gui: unknown = JSON.parse(json)
+        // 形状校验：防止异常结构进入渲染层（非合法 GuiComponent → 降级纯文本 widget）
+        if (isGuiComponent(gui)) {
+          return [{
+            kind: 'message',
+            message: {
+              type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+              payload: { sessionId: sid, widgetKey, gui },
+            },
+          }]
+        }
+        console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', gui)
       // eslint-disable-next-line taste/no-silent-catch -- console.warn 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4），与 logger.ts 内部 catch 容错模式一致
       } catch (e) {
         // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget

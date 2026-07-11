@@ -89,6 +89,20 @@ describe('event-adapter: setWidget GUI marker 检测', () => {
     // 降级到普通 widget（不崩溃）
     expect(msg!.message.type).toBe('extension:widget')
   })
+
+  it('marker JSON 合法但非 GuiComponent 形状（缺 type/props）→ 降级 stripAnsi 路径', () => {
+    // 合法 JSON 但不是 GuiComponent（无 type 字符串 + props 对象）
+    const badShape = [GUI_WIDGET_MARKER + JSON.stringify({ foo: 'bar', type: 42 })]
+    const event = makeSetWidgetEvent('todo', badShape)
+
+    const results = translate(event, 'sess-1')
+
+    const msg = results.find(r => r.kind === 'message') as
+      { kind: 'message'; message: { type: string; payload: Record<string, unknown> } } | undefined
+
+    expect(msg).toBeDefined()
+    expect(msg!.message.type).toBe('extension:widget')
+  })
 })
 
 describe('event-adapter: handleToolExecutionUpdate details 提取', () => {

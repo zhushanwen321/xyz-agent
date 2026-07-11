@@ -24,10 +24,13 @@ export const EXTENSION_EVENTS = {
 } as const
 
 // ── Extension UI 交互 / 安装流 payload ────────────────────────────
-// 注：ExtensionUIRequestPayload / ExtensionUIResponsePayload / ExtensionErrorPayload /
-// ToolCallUpdatePayload 已删除（reserved 占位契约，无生产消费方）。对应消息
-// extension.ui_request / extension.ui_response / extension.error / message.tool_call_update
-// 的 payload 形状在 protocol.ts 的 ClientMessageMap / ServerMessageMap 内联定义。
+
+/**
+ * pi 扩展交互式 UI 方法（产生 extension.ui_request WS 帧）。
+ * 与 event-adapter.ts INTERACTIVE_UI_METHODS + ExtensionUIDialog 渲染分支保持同步。
+ * setStatus/setWidget/set_editor_text/bridge:* 不在此列——它们走独立分支，不产 ui_request 帧。
+ */
+export type ExtensionInteractMethod = 'confirm' | 'select' | 'input' | 'notify' | 'editor'
 
 export interface ExtensionInfo {
   name: string

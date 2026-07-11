@@ -32,6 +32,7 @@ export { GUI_WIDGET_MARKER } from './helpers'
 // ── helper 函数 ──
 export {
   isGuiCapable,
+  isGuiComponent,
   guiResult,
   guiComponent,
   guiSetWidget,
