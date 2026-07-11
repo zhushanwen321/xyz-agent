@@ -109,7 +109,7 @@ export type PiTranslatedEvent =
    */
   | { kind: 'turn-usage'; sessionId: string; inputTokens: number; totalTokens: number }
   /** extension setStatus —— interpreter 路由到 server.handleStatusSetUpdate + 转发 WS。 */
-  | { kind: 'status-set'; sessionId: string; key: string; text: string }
+  | { kind: 'status-set'; sessionId: string; key: string; text: string; textRaw?: string }
   /** extension setStatus 对应的 WS 帧（interpreter 转发）。 */
   | { kind: 'status-broadcast'; message: ServerMessage }
   /** bridge:* 前缀请求 —— interpreter 路由到 server.handleBridgeRequest。 */

@@ -55,7 +55,7 @@ export interface EventInterpreterOptions {
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
-  onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string }) => void
+  onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string; textRaw?: string }) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
@@ -119,7 +119,7 @@ export class EventInterpreter {
         this.opts.onContextUpdate?.(ev.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens })
         return
       case 'status-set':
-        this.opts.onStatusSetUpdate?.({ sessionId: this.sessionId, key: ev.key, text: ev.text })
+        this.opts.onStatusSetUpdate?.({ sessionId: this.sessionId, key: ev.key, text: ev.text, textRaw: ev.textRaw })
         return
       case 'status-broadcast':
         this.opts.send(ev.message)

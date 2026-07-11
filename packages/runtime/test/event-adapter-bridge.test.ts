@@ -100,20 +100,22 @@ describe('EventAdapter extension bridge', () => {
 
       await vi.waitFor(() => sent.length > 0)
 
-      // Callback should be called
+      // Callback should be called（status-set 中间事件携带 textRaw 原始文本）
       expect(onStatusSetUpdate).toHaveBeenCalledWith({
         sessionId: 'test-session-id',
         key: 'my-status',
         text: 'Loading...',
+        textRaw: 'Loading...',
       })
 
-      // WS event should be sent
+      // WS event should be sent（payload 含 text + textRaw，协议 spec §8.1）
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension:status')
       expect(sent[0].payload).toEqual({
         sessionId: 'test-session-id',
         statusKey: 'my-status',
         text: 'Loading...',
+        textRaw: 'Loading...',
       })
     })
 

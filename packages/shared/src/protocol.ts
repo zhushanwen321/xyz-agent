@@ -245,7 +245,7 @@ export interface ServerMessageMapBase {
   'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
   // 结构化 widget（GuiComponent 经 NUL marker 编码透传，event-adapter 检测 marker 解码）
   'extension:widgetGui': { sessionId: string; widgetKey: string; gui: unknown }
-  'extension:status': { sessionId: string; statusKey: string; text: string }
+  'extension:status': { sessionId: string; statusKey: string; text: string; textRaw?: string }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
   'session.compacting': { sessionId: string }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }

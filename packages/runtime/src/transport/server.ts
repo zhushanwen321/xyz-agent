@@ -251,7 +251,7 @@ export class RuntimeServer implements IMessageBroker {
     await this.bridgeHandler.handleBridgeRequest(sessionId, requestId, method, data, client)
   }
 
-  handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
+  handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string; textRaw?: string }): void {
     this.bridgeHandler.handleStatusSetUpdate(payload)
   }
 

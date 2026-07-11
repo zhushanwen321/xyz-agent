@@ -11,7 +11,10 @@ export interface ExtensionWidgetPayload {
 export interface ExtensionStatusPayload {
   sessionId: string
   statusKey: string
+  /** stripAnsi 后的纯文本（向后兼容）。 */
   text: string
+  /** 原始 ANSI 文本（保留颜色信息，协议 spec §8.1）。前端可用此做 ANSI 着色渲染，text 作纯文本兜底。 */
+  textRaw?: string
 }
 
 export const EXTENSION_EVENTS = {

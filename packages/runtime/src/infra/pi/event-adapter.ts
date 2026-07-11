@@ -244,16 +244,19 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
   const method = event.method as string | undefined
 
   // setStatus → status-set（interpreter 路由 server）+ status-broadcast（WS 帧）
+  // 审计项 B（协议 spec §8.1）：保留 text（stripAnsi 后纯文本，向后兼容）+ textRaw（原始 ANSI 文本），
+  // 前端可选 textRaw 做 ANSI 着色渲染，text 作纯文本兜底。
   if (method === 'setStatus') {
     const key = String(event.statusKey ?? '')
-    const text = stripAnsi(String(event.statusText ?? ''))
+    const raw = String(event.statusText ?? '')
+    const text = stripAnsi(raw)
     return [
-      { kind: 'status-set', sessionId: sid, key, text },
+      { kind: 'status-set', sessionId: sid, key, text, textRaw: raw },
       {
         kind: 'status-broadcast',
         message: {
           type: EXTENSION_EVENTS.STATUS as ServerMessageType,
-          payload: { sessionId: sid, statusKey: key, text },
+          payload: { sessionId: sid, statusKey: key, text, textRaw: raw },
         },
       },
     ]
