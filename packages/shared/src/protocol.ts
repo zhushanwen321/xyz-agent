@@ -180,7 +180,7 @@ export type ServerMessageType =
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
-  | 'extension:widget' | 'extension:status'
+  | 'extension:widget' | 'extension:widgetGui' | 'extension:status'
   | 'message.compactionSummary'
   | 'extension:setEditorText'
   | 'message.compactionSummary' | 'message.branchSummary'
@@ -243,6 +243,8 @@ export interface ServerMessageMapBase {
   'session.exited': { sessionId: string; code: number | null; reason: string }
   // 扩展 UI 推送通道（EventAdapter 翻译 pi setWidget/setStatus，runtime 固定形状生产）
   'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
+  // 结构化 widget（GuiComponent 经 NUL marker 编码透传，event-adapter 检测 marker 解码）
+  'extension:widgetGui': { sessionId: string; widgetKey: string; gui: unknown }
   'extension:status': { sessionId: string; statusKey: string; text: string }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
   'session.compacting': { sessionId: string }

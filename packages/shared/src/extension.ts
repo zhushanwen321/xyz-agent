@@ -16,6 +16,7 @@ export interface ExtensionStatusPayload {
 
 export const EXTENSION_EVENTS = {
   WIDGET: 'extension:widget',
+  WIDGET_GUI: 'extension:widgetGui',
   STATUS: 'extension:status',
 } as const
 
