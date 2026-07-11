@@ -108,7 +108,13 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
   if (isCancelled(sessionId)) return
   emit(sessionId, {
     type: 'message.tool_call_end',
-    payload: { sessionId, toolCallId, output: '…文件内容（mock）…', status: 'completed' },
+    payload: {
+      sessionId,
+      toolCallId,
+      output: '…文件内容（mock）…',
+      outputRaw: '\x1b[32mSuccess\x1b[0m: operation completed',
+      status: 'completed',
+    },
   })
 
   // 任务3：extension widget + status 推送（走 session 通道，对齐 real extension.onWidget/onStatus）。
@@ -124,10 +130,37 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
       lines: ['$ npm run build', '✓ built in 1.42s', '（mock widget 输出）'],
     },
   })
+  // 结构化 GUI widget（extension:widgetGui）：解包后的 GuiComponent 形状（{ type, props }），
+  // 对齐 event-adapter 解码 NUL marker 后发出的 gui（非 GuiRenderResult 的 { v, component } 包装）。
+  // 让 SideDrawer / GuiComponentRenderer 在 mock 下可验证 GUI widget 渲染。
+  pushSession(sessionId, {
+    type: 'extension:widgetGui',
+    id: nextId('wg'),
+    payload: {
+      sessionId,
+      widgetKey: 'gui-demo',
+      gui: {
+        type: 'task-list',
+        props: {
+          items: [
+            { id: 1, text: 'Mock: 读取配置', status: 'completed' },
+            { id: 2, text: 'Mock: 执行迁移', status: 'in_progress' },
+            { id: 3, text: 'Mock: 验证结果', status: 'pending' },
+          ],
+          summary: '1/3 done',
+        },
+      },
+    },
+  })
   pushSession(sessionId, {
     type: 'extension:status',
     id: nextId('ws'),
-    payload: { sessionId, statusKey: 'build', text: '构建完成（mock）' },
+    payload: {
+      sessionId,
+      statusKey: 'mock-status',
+      text: 'Mock: Running',
+      textRaw: '\x1b[32m● Mock: Running\x1b[0m',
+    },
   })
 
   // 文本流式
@@ -172,6 +205,24 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
       ],
       changeSetStatus: 'ready',
       isFullSet: true,
+    },
+  })
+
+  // Extension UI 交互请求（extension.ui_request）：pi extension 调 ctx.ui.select/confirm/input 时，
+  // runtime 经 event-adapter 翻译后推此帧。useExtensionUI composable 经 events.on(sessionId) 订阅，
+  // mock 走 pushSession(dispatchSession) 同构透传，让 ExtensionUIDialog 在 mock 下可验证。
+  if (isCancelled(sessionId)) return
+  await sleep(TIMING.done)
+  pushSession(sessionId, {
+    type: 'extension.ui_request',
+    id: nextId('uir'),
+    payload: {
+      sessionId,
+      requestId: `mock-ui-${Date.now()}`,
+      method: 'select',
+      title: 'Mock: 选择部署目标',
+      message: '选择部署环境',
+      options: ['生产环境', '预发环境', '测试环境'],
     },
   })
 
