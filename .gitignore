@@ -39,3 +39,6 @@ apps/electron/resources/
 /playwright/.cache/
 /blob-report/
 /playwright/.auth/
+
+# ZCode plan mode artifacts (session-local planning docs)
+.zcode/plans/
