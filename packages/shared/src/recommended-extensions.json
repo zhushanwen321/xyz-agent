@@ -1,5 +1,9 @@
 [
   {
+    "name": "@zhushanwen/pi-ask-user",
+    "description": "Inline adaptive ask_user tool — single/multi-question structured input with split-pane preview, inline editor, and optional comments."
+  },
+  {
     "name": "@zhushanwen/pi-goal",
     "description": "Codex-style /goal command — persistent goal-driven autonomous loop with evidence-based completion, token/time budgets, blocked detection, and steering templates."
   },

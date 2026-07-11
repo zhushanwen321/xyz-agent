@@ -113,8 +113,8 @@ describe('ExtensionService', () => {
   describe('getRecommendedExtensions', () => {
     it('returns all recommended entries with installed=false when none installed', async () => {
       const recommended = await service.getRecommendedExtensions()
-      // recommended-extensions.json SSOT 的 5 个条目全部返回
-      expect(recommended.length).toBe(5)
+      // recommended-extensions.json SSOT 的 6 个条目全部返回
+      expect(recommended.length).toBe(6)
       // fixture 只装了 pi-ask-user，recommended 列表里的包均未装
       expect(recommended.every(r => r.installed === false)).toBe(true)
       // 每条都有 name 和 description
@@ -143,7 +143,7 @@ describe('ExtensionService', () => {
       const goal = recommended.find(r => r.name === '@zhushanwen/pi-goal')
       expect(goal).toBeDefined()
       expect(goal!.installed).toBe(true)
-      // 其余 4 个仍未装
+      // 其余 5 个仍未装
       const others = recommended.filter(r => r.name !== '@zhushanwen/pi-goal')
       expect(others.every(r => r.installed === false)).toBe(true)
     })
