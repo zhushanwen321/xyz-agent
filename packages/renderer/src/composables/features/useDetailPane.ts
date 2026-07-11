@@ -18,6 +18,7 @@
 import { ref, watch, type Ref } from 'vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSessionStore } from '@/stores/session'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { file as fileApi, git as gitApi } from '@/api'
 import { detectFileKind, type FileKind } from '@/composables/logic/file-type'
 import { parseDiff } from '@/composables/logic/parseDiff'
@@ -122,13 +123,13 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     }
   }
 
-  async function openPreview(sid: string, path: string): Promise<void> {
+  async function openPreview(sid: string, path: string, forceDiff = false): Promise<void> {
     state.value = { ...initialState(), status: 'loading', path, viewMode: state.value.viewMode }
     // 判断 git 改动：gitOverlay per-session 查（含 untracked，T2.8b untracked 也算改动可 diff）
     const gitStatus = store.getGitStatus(sid, path)?.status
     state.value.hasGitChange = !!gitStatus
-    // 默认 viewMode：有 git 改动 → diff；无 → preview（首次加载时定，不覆盖用户手动切换）
-    const mode: DetailViewMode = gitStatus ? 'diff' : 'preview'
+    // 默认 viewMode：forceDiff（变更集卡等已知有改动的入口）优先；否则按 gitOverlay 判定
+    const mode: DetailViewMode = forceDiff ? 'diff' : gitStatus ? 'diff' : 'preview'
     state.value.viewMode = mode
     // 文件渲染类别（preview 模式渲染器选择依据；diff 模式统一走 DiffView）
     state.value.kind = detectFileKind(path)
@@ -171,6 +172,20 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     },
     { immediate: true },
   )
+
+  /**
+   * watch drawer.detailFilePath：变更集卡等非文件树入口点击文件行时，
+   * useSideDrawer.open('detail', { filePath }) 设置 detailFilePath。
+   * 变化时用 forceDiff 打开该文件（绕过 gitOverlay 判定——变更集文件来源即 git diff，
+   * 一定有改动，overlay 可能未刷新会导致误判 preview 模式）。消费后清空避免残留。
+   */
+  const { detailFilePath } = useSideDrawer()
+  watch(detailFilePath, (path) => {
+    const sid = sessionId.value
+    if (!sid || !path) return
+    void openPreview(sid, path, true)
+    detailFilePath.value = null
+  })
 
   return {
     state,

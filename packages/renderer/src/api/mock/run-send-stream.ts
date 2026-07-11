@@ -6,7 +6,7 @@
  * 仅本函数使用，留在此文件作 local。
  *
  * 生命周期：message_start → [auto_retry] → thinking → tool_call → extension widget/status
- *           → text → file_changes → system 提示行（bashExecution）→ complete。
+ *           → text → file_changes → complete。
  * 全程检查 cancelled，abort 后提前返回。extension:widget/status 走 session 通道（pushSession），
  * 与 chat streamSubscribe（streamHandlers）独立，对称于 real extension.onWidget/onStatus。
  */
@@ -175,24 +175,9 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
     },
   })
 
-  // 任务2：SystemNotice 推送（bashExecution system 提示行）。
-  // 不推 compactionSummary（刻意设计，见 compact 注释）。bashExecution 代表流转中的元信息提示，
-  // 让 SystemNotice.vue 在 mock 下可验。走 stream 通道（streamHandlers），由 chat-chunk-processor 消费。
-  if (isCancelled(sessionId)) return
-  await sleep(TIMING.done)
-  emit(sessionId, {
-    type: 'message.bashExecution',
-    id: nextId('b'),
-    payload: {
-      sessionId,
-      command: 'npm run build',
-      exitCode: 0,
-      timestamp: Date.now(),
-    },
-  })
-
   // complete（含 usage，证明 W05-A usage 回填）
   if (isCancelled(sessionId)) return
+  await sleep(TIMING.done)
   emit(sessionId, {
     type: 'message.complete',
     id: messageId,

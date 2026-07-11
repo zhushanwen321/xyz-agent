@@ -7,7 +7,7 @@ export type {
   MessageRole, MessageStatus, ToolCallStatus,
   ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,
   FileChangeStatus, FileChange, ChangeSetStatus, ReviewDecision,
-  BashExecution, CompactionSummary, BranchSummary, SteerFollowUpMode,
+  CompactionSummary, BranchSummary, SteerFollowUpMode,
   BgNotifyRecord, BgNotifyDetails,
 } from './message'
 export { parseBgNotifyDetails } from './message'

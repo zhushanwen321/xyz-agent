@@ -179,6 +179,31 @@ session 切换（`sessionId` prop 变化）时：
 | browsing 态切换 session | 保存 savedDraft（非历史条目）作为草稿；切回时在 edit 态恢复草稿 |
 | split 模式双 panel | 每个 panel 的 Composer 独立绑定各自 sessionId，草稿按 session 隔离，不串台 |
 
+## FR5: ↑/↓ 光标水平位置保持（preferred X）
+
+### 需求
+
+连续按 ↑/↓ 跨视觉行移动时，光标保持水平位置（与浏览器 textarea / VSCode 原生行为一致）。用户在某行中间位置按 ↓，到下一行应停在大致相同的水平 X 坐标，而非总是跳到行首附近。
+
+### 规则
+
+| 操作 | preferred X 行为 |
+|------|----------------|
+| 首次 ↑/↓（preferred X 为 null） | 记录当前 `caretRect.left` 为 preferred X |
+| 连续 ↑/↓ | 用 preferred X 作为 `caretRangeFromPoint` 的 targetX |
+| ←/→/Home/End（水平移动键） | 重置为 null（下次 ↑/↓ 重新锚定） |
+| 输入/删除文本（onInput） | 重置为 null |
+| 程序化写入（setText/clear） | 重置为 null |
+| 鼠标点击（saveSelection） | 重置为 null |
+
+### 兜底
+
+preferred X 为 null 且非首次垂直移动时（理论不会发生，因首次会记录），兜底为文本区左边缘 + 20px（`elRect.left + paddingLeft + 20`，避开 `caretRangeFromPoint` 行首左边缘 quirks）。
+
+### 实现位置
+
+preferred X 状态在 `useContenteditableInput` composable 闭包内（`let preferredCaretX: number | null`），**不是模块级变量**——split 模式下多个 Composer 实例各有独立的 preferred X，模块级变量会串台。`moveCaretVerticalOf` 因此从模块级纯函数改为 composable 内部闭包函数。
+
 ## 已知实现缺陷
 
 ### 缺陷 1: browsing 态跳过视觉行移动 + Selection.modify 跨行失效（FR1）[已修复]
@@ -215,6 +240,30 @@ session 切换（`sessionId` prop 变化）时：
 ### 缺陷 4（非本次 bug，记录备忘）：useComposerHistory 的 savedDraft 与 FR4 草稿的关系
 
 `useComposerHistory.ts:70` 的 `savedDraft` 是历史导航内部状态（进 browsing 前保存，回 edit 时恢复），与 FR4 的跨 session 草稿是不同概念。FR4 实现时需协调两者：browsing 态下 session 切换应保存 savedDraft（用户实际输入）而非 getText()（历史条目）。
+
+### 缺陷 5: `<br>` 零宽 line box 污染 lineRects（FR1）[已修复]
+
+**位置**：`useContenteditableInput.ts` moveCaretVerticalOf 的 `getClientRects()` 调用
+
+**现象**：含硬换行（`<br>`）的多行文本中，光标在 `<br>` 相邻行按 ↓ 不跨行（停留在当前视觉行），需按两次 ↓ 才移动到下一行。纯软换行（无 `<br>`）场景不受影响。
+
+**根因**：`<br>` 元素在 contenteditable 中产生**零宽度 line box**（`getClientRects()` 返回的 rect `left === right`）。这些零宽 rect 被当作独立视觉行计入 `lineRects`，且其 `top` 与相邻真实行相同。CDP 实测数据（3 行文本含 2 个 `<br>`，实际 4 视觉行）：
+
+```
+lineRects（6 个，含 2 个零宽 br rect）：
+  [0] top=412.6 left=431 right=509   ← 第一行文本
+  [1] top=412.6 left=509 right=509   ← <br> 零宽 line box（top 同 [0]）
+  [2] top=432.7 left=431 right=1055  ← 第二行第一视觉行
+  [3] top=452.9 left=431 right=604   ← 第二行第二视觉行（光标在这）
+  [4] top=452.9 left=604 right=604   ← <br> 零宽 line box（top 同 [3]）
+  [5] top=473.0 left=431 right=509   ← 第三行
+```
+
+光标在 rect[3]（top=452.9）按 ↓ → `targetLine=4`（零宽 br rect，top 也是 452.9）→ `caretRangeFromPoint(451, 455.9)` 命中同一视觉行 → 返回 `moved` 但光标 Y 没变（452.9→452.9）。Composer.vue 消费了 `moved` 不翻历史，但光标实际没跨行 → 用户看到"按 ↓ 没反应"。
+
+**修复**：新增 `getVisualLineRects(range)` 工具函数，过滤掉零宽 rect（`r.right > r.left`）。`moveCaretVerticalOf` 中两处 `getClientRects()` 调用（初始 lineRects + scroll 后 freshRects）都改用 `getVisualLineRects`。过滤后 lineRects 只含真实视觉行，currentLine/targetLine 计算正确。
+
+**为什么 dev 测试没发现**：dev 测试时用纯软换行长文本（无 `<br>`），lineRects 只有真实行、零宽 rect 数 = 0，算法正常。bug 只在硬换行（Shift+Enter 或多行历史消息）场景出现。打包后用真实多行历史消息测试才暴露。
 
 ## 涉及文件
 

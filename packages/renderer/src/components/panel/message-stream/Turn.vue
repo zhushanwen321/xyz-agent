@@ -168,19 +168,19 @@
             :session-id="sessionId"
           />
         </template>
-        <!-- streaming 光标：独立于内容块，固定在 trace 末尾，保证永远在最后一行。
-             此前光标附在 text 块尾部，当 contentBlocks 顺序为 [text, toolCall] 时光标在 toolCall 上方。 -->
-        <div v-if="turn.isWorking" class="streaming-tail flex items-center gap-1.5 py-2 pl-1">
-          <span class="streaming-cursor inline-block h-3.5 w-[7px] rounded-[1px] bg-accent animate-blink" />
-        </div>
       </div>
 
       <!-- hr 已移入上方 turn-meta sticky wrapper（working/完成态共用，避免 streaming 时双线） -->
 
-      <!-- 收尾 summary：仅 complete 态渲染（draft §4 收尾位固定不折叠，作回合焦点）。
-           streaming 态 text 在 trace 内按真实时序展示（末位 text 块带光标），不在此重复。 -->
-      <div v-if="summaryText && !turn.isWorking" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
+      <!-- 收尾 summary：streaming 和 complete 态都渲染（draft §4 收尾位固定不折叠，作回合焦点）。
+           streaming 态末位 text 在此实时展示 + 末尾光标；complete 态光标消失仅文本。
+           traceBlocks 对末位 assistant 始终跳过 text 块——text 从头到尾只在此位渲染，
+           消除停止时从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。 -->
+      <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
+        <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
+             原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。 -->
+        <span v-if="turn.isWorking" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
         <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
         <div
           v-if="!isSessionActive && lastAssistant"
@@ -225,6 +225,7 @@
         class="mt-2"
         :file-changes="changeSetFileChanges"
         :status="changeSetStatus"
+        :session-id="sessionId"
       />
     </div>
 
@@ -416,12 +417,14 @@ const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
 
 /**
  * 取某条 assistant 在 trace 内应渲染的有序块（draft §4：按真实时序）。
- * - complete 态末位 assistant：跳过 text 块（已在底部 summary），仅显 thinking/tool 过程
- * - 其余（streaming 任意位 / complete 非末位）：全部块按时序
+ * - 末位 assistant：始终跳过 text 块（text 在底部 summary 位渲染，streaming 带 cursor / complete 终态），
+ *   trace 只保留 thinking/tool 过程。
+ * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留）。
+ * 消除停止时 text 从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
  */
 function traceBlocks(msg: Message, idx: number): OrderedBlock[] {
   const blocks = expandAssistantBlocks(msg)
-  if (!props.turn.isWorking && idx === lastAssistantIdx.value) {
+  if (idx === lastAssistantIdx.value) {
     return blocks.filter((b) => b.kind !== 'text')
   }
   return blocks

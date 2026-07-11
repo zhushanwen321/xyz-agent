@@ -144,12 +144,12 @@ describe('FG5 groupTurns 回合分组', () => {
     expect(turns[0].assistants[0].content).toBe('正在处理 schema…')
   })
 
-  // W07-C：system 消息（bashExecution/compaction/branch）作独立项穿插，不归入 turn
+  // W07-C：system 消息（compaction/branch）作独立项穿插，不归入 turn
   it('toRenderItems：system 消息穿插在 turn 之间，groupTurns 过滤掉 system', () => {
     const items = toRenderItems([
       userMsg('u1', 'q'),
       assistantMsg('a1', 'r'),
-      systemMsg('s1', 'bash', { bashExecution: { command: 'ls', exitCode: 0 } }),
+      systemMsg('s1', 'system notice'),
       userMsg('u2', 'q2'),
       assistantMsg('a2', 'r2'),
     ])
@@ -157,7 +157,7 @@ describe('FG5 groupTurns 回合分组', () => {
     expect(items.map((i) => i.kind)).toEqual(['turn', 'system', 'turn'])
     const sysItem = items[1]
     if (sysItem.kind !== 'system') throw new Error('expected system item')
-    expect(sysItem.message.bashExecution?.command).toBe('ls')
+    expect(sysItem.message.content).toBe('system notice')
     // groupTurns 过滤掉 system，只剩 2 个 turn
     const turns = groupTurns([
       userMsg('u1', 'q'),
@@ -459,19 +459,7 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(store.getQueueState('sa')).toBeUndefined()
   })
 
-  // ── W07-C: shared 类型扩展（bash/compaction/branch 作 system 提示行）──
-
-  it('bashExecution 作 system 消息追加（含 exitCode/truncated）', () => {
-    const store = useChatStore()
-    store.applyMessageEvent('sx', {
-      type: 'message.bashExecution',
-      payload: { sessionId: 'sx', command: 'npm test', exitCode: 1, truncated: true, fullOutputPath: '/tmp/out' },
-    })
-    const msgs = store.getMessages('sx')
-    expect(msgs).toHaveLength(1)
-    expect(msgs[0].role).toBe('system')
-    expect(msgs[0].bashExecution).toEqual({ command: 'npm test', exitCode: 1, truncated: true, fullOutputPath: '/tmp/out' })
-  })
+  // ── W07-C: shared 类型扩展（compaction/branch 作 system 提示行）──
 
   it('compactionSummary 作 system 消息追加', () => {
     const store = useChatStore()

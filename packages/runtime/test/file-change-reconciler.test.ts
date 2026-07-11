@@ -68,12 +68,16 @@ describe('file-change-reconciler', () => {
     /** 辅助：构造快照（filePath → status） */
     const snap = (entries: Record<string, FileChangeStatus>) => new Map(Object.entries(entries))
 
-    it('current 有 baseline 无 → 新增文件（added）', () => {
+    it('current 有 baseline 无 → 新增文件（added）+ baseline 有也报告', () => {
+      // src/a.ts 在 baseline 已存在（modified），current 仍是 modified → 也报告
+      // src/new.ts 仅在 current → 报告
       const baseline = snap({ 'src/a.ts': 'modified' })
       const current = snap({ 'src/a.ts': 'modified', 'src/new.ts': 'added' })
       const changes = diffSnapshots(baseline, current)
-      expect(changes).toHaveLength(1)
-      expect(changes[0]).toEqual({ filePath: 'src/new.ts', status: 'added' })
+      expect(changes).toHaveLength(2)
+      const byPath = new Map(changes.map((c) => [c.filePath, c.status]))
+      expect(byPath.get('src/new.ts')).toBe('added')
+      expect(byPath.get('src/a.ts')).toBe('modified')
     })
 
     it('两者都有但 status 变化 → 报告新 status', () => {
@@ -84,10 +88,16 @@ describe('file-change-reconciler', () => {
       expect(changes[0]).toEqual({ filePath: 'src/a.ts', status: 'deleted' })
     })
 
-    it('status 相同 → 不报告（无变化）', () => {
+    it('status 相同也报告（baseline 有 + current 有即报告）', () => {
+      // [HISTORICAL] 原逻辑 status 相同不报告，导致 turn 开始前已 dirty 的文件被再次修改时
+      // 漏报（git status 仍 modified）→ 变更集卡不显示。现改为 current 中存在即报告。
       const baseline = snap({ 'src/a.ts': 'modified', 'src/b.ts': 'added' })
       const current = snap({ 'src/a.ts': 'modified', 'src/b.ts': 'added' })
-      expect(diffSnapshots(baseline, current)).toHaveLength(0)
+      const changes = diffSnapshots(baseline, current)
+      expect(changes).toHaveLength(2)
+      const byPath = new Map(changes.map((c) => [c.filePath, c.status]))
+      expect(byPath.get('src/a.ts')).toBe('modified')
+      expect(byPath.get('src/b.ts')).toBe('added')
     })
 
     it('baseline 有 current 无 → 不报告（已 commit/revert）', () => {
@@ -108,25 +118,26 @@ describe('file-change-reconciler', () => {
       expect(diffSnapshots(baseline, null)).toEqual([])
     })
 
-    it('多文件混合：新增 + 变化 + 消失 + 不变', () => {
+    it('多文件混合：current 全集即变更清单（baseline 仅排除已消失文件）', () => {
       const baseline = snap({
-        'keep.ts': 'modified',    // 不变
-        'gone.ts': 'modified',    // 消失（已 commit）
-        'changing.ts': 'added',   // 变化 → modified
+        'keep.ts': 'modified',    // current 仍有 → 报告
+        'gone.ts': 'modified',    // current 无 → 不报告
+        'changing.ts': 'added',   // current 改为 modified → 报告
       })
       const current = snap({
         'keep.ts': 'modified',
         'changing.ts': 'modified',
-        'brandnew.ts': 'added',   // 新增
+        'brandnew.ts': 'added',   // 新增 → 报告
       })
       const changes = diffSnapshots(baseline, current)
-      expect(changes).toHaveLength(2)
+      // keep.ts + changing.ts + brandnew.ts = 3（gone.ts 不报告）
+      expect(changes).toHaveLength(3)
       const byPath = new Map(changes.map((c) => [c.filePath, c.status]))
       expect(byPath.get('changing.ts')).toBe('modified')
       expect(byPath.get('brandnew.ts')).toBe('added')
-      // gone.ts 不报告，keep.ts 不报告
+      expect(byPath.get('keep.ts')).toBe('modified')
+      // gone.ts 不报告
       expect(byPath.has('gone.ts')).toBe(false)
-      expect(byPath.has('keep.ts')).toBe(false)
     })
   })
 })

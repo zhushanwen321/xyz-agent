@@ -7,7 +7,6 @@
  * 注：FileChange 合并逻辑 mergeFileChanges 已移至 chat-changeset.ts（FileChanges 子域）。
  */
 import type {
-  BashExecution,
   BranchSummary,
   ChangeSetStatus,
   CompactionSummary,
@@ -69,25 +68,6 @@ export function readUsage(payload: Record<string, unknown>): { inputTokens: numb
   const outputTokens = readNumber(u, 'outputTokens')
   if (inputTokens === undefined || outputTokens === undefined) return undefined
   return { inputTokens, outputTokens }
-}
-
-/** 读 message.bashExecution payload（event-adapter handleMessageStart bashExecution 分支） */
-export function readBashExecution(payload: Record<string, unknown>): BashExecution {
-  const exec: BashExecution = {}
-  const command = readString(payload, 'command')
-  if (command) exec.command = command
-  const output = readString(payload, 'output')
-  if (output) exec.output = output
-  const exitCode = readNumber(payload, 'exitCode')
-  if (exitCode !== undefined) exec.exitCode = exitCode
-  if (readBool(payload, 'cancelled')) exec.cancelled = true
-  if (readBool(payload, 'truncated')) exec.truncated = true
-  const fullOutputPath = readString(payload, 'fullOutputPath')
-  if (fullOutputPath) exec.fullOutputPath = fullOutputPath
-  const timestamp = readNumber(payload, 'timestamp')
-  if (timestamp !== undefined) exec.timestamp = timestamp
-  if (readBool(payload, 'excludeFromContext')) exec.excludeFromContext = true
-  return exec
 }
 
 /** 读 message.compactionSummary payload */

@@ -112,8 +112,13 @@ export function snapshotGitStatus(cwd: string): StatusSnapshot {
  *
  * 规则：
  * - current 有 baseline 无 → 新变更文件（用 current 的 status）
- * - 两者都有但 status 变化 → status 更新（取 current 的 status）
- * - 两者都有且 status 相同 → 不报告（无变化）
+ * - 两者都有 → 报告（取 current 的 status）。不区分 status 是否变化——
+ *   [HISTORICAL] 原实现要求 status 不同才报告，但 turn 开始前工作区已有 dirty 文件时
+ *   （开发场景极常见：worktree 普遍有未提交改动），pi 改了这些文件后 git status 仍是 modified，
+ *   status 相同 → 漏报 → fileChanges 为空 → 变更集卡不显示（"全程几乎看不到"事故）。
+ *   改为只要 current 中存在就报告，代价是 turn 开始前已 dirty 但 turn 内未碰的文件会误报，
+ *   但误报（多列几个文件）的危害远低于漏报（整个变更集卡消失）。误报文件在 ready 帧一致报告，
+ *   不会产生状态跳变。
  * - baseline 有 current 无 → 已 commit/revert，不报告
  * - baseline 为 null（非仓库）→ 返回 current 全集（首次进入仓库等场景）
  *
@@ -127,17 +132,10 @@ export function diffSnapshots(baseline: StatusSnapshot, current: StatusSnapshot)
     return Array.from(current.entries()).map(([filePath, status]) => ({ filePath, status }))
   }
 
+  // current 全集即变更清单（baseline 仅用于排除「baseline 有 current 无」的已 commit/revert 文件）。
   const changes: FileChange[] = []
   for (const [filePath, currentStatus] of current) {
-    const baselineStatus = baseline.get(filePath)
-    if (baselineStatus === undefined) {
-      // baseline 无 → 新增文件
-      changes.push({ filePath, status: currentStatus })
-    } else if (baselineStatus !== currentStatus) {
-      // status 变化（如 modified → deleted）
-      changes.push({ filePath, status: currentStatus })
-    }
-    // status 相同 → 无变化，不报告
+    changes.push({ filePath, status: currentStatus })
   }
   return changes
 }

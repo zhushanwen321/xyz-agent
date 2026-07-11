@@ -54,22 +54,6 @@ export interface Usage {
   outputTokens: number
 }
 
-/**
- * Bash 执行记录（W07-C，对应 message.bashExecution）。
- * 来自 pi message_start{role:'bashExecution'}，经 event-adapter 翻译。
- * 作 system 提示行渲染（非 user/assistant）；exitCode/truncated/fullOutputPath 体现执行结果。
- */
-export interface BashExecution {
-  command?: string
-  output?: string
-  exitCode?: number
-  cancelled?: boolean
-  truncated?: boolean
-  fullOutputPath?: string
-  timestamp?: number
-  excludeFromContext?: boolean
-}
-
 /** 上下文压缩摘要（W07-C，对应 message.compactionSummary） */
 export interface CompactionSummary {
   summary?: string
@@ -227,11 +211,6 @@ export interface Message {
   sendMode?: 'send' | 'steer' | 'follow-up'
   /** 是否被 abort 中断，仅 assistant 消息有值 */
   isInterrupted?: boolean
-  /**
-   * Bash 执行记录（W07-C，message.bashExecution）。
-   * 来自 pi message_start{role:'bashExecution'}；作 system 提示行渲染。
-   */
-  bashExecution?: BashExecution
   /** 上下文压缩摘要（W07-C，message.compactionSummary） */
   compactionSummary?: CompactionSummary
   /** 分支摘要（W07-C，message.branchSummary） */

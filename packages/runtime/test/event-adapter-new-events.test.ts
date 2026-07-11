@@ -127,29 +127,6 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
   // FR-2: message_start role-based routing
   // ════════════════════════════════════════════════════════════════════
 
-  describe('FR-2: message_start — bashExecution role', () => {
-    it('translates role=bashExecution to message.bashExecution', async () => {
-      dispatchOne(adapter, {
-        type: 'message_start',
-        message: {
-          role: 'bashExecution',
-          command: 'ls',
-          output: 'file.txt',
-          exitCode: 0,
-        },
-      })
-      await flushAsync()
-
-      expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('message.bashExecution')
-      expect(sent[0].payload).toMatchObject({
-        command: 'ls',
-        output: 'file.txt',
-        exitCode: 0,
-      })
-    })
-  })
-
   describe('FR-2: message_start — compactionSummary role', () => {
     it('translates role=compactionSummary to message.compactionSummary', async () => {
       dispatchOne(adapter, {

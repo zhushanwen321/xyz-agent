@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { Terminal, GitBranch, Archive } from '@lucide/vue'
+import { GitBranch, Archive } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 
@@ -26,13 +26,6 @@ const props = defineProps<{
 const { icon, text } = resolveNotice(props.message)
 
 function resolveNotice(message: Message): { icon: Component; text: string } {
-  if (message.bashExecution) {
-    const exec = message.bashExecution
-    const cmdLabel = exec.command ? `$ ${exec.command}` : 'bash 执行'
-    const exitLabel = formatExit(exec.exitCode, exec.cancelled)
-    const truncLabel = exec.truncated ? ' · 输出已截断' : ''
-    return { icon: Terminal, text: `${cmdLabel}${exitLabel}${truncLabel}` }
-  }
   if (message.compactionSummary) {
     const tokens = message.compactionSummary.tokensBefore
     const tokLabel = tokens !== undefined ? `（${formatTokens(tokens)} tokens）` : ''
@@ -45,13 +38,6 @@ function resolveNotice(message: Message): { icon: Component; text: string } {
   }
   // 兜底：纯 system 文本
   return { icon: Archive, text: message.content }
-}
-
-/** exitCode 摘要：0→成功，非 0→失败码，cancelled→已取消 */
-function formatExit(exitCode?: number, cancelled?: boolean): string {
-  if (cancelled) return ' · 已取消'
-  if (exitCode === undefined) return ''
-  return exitCode === 0 ? ' · exit 0' : ` · exit ${exitCode}`
 }
 
 /** K 格式阈值（>= 此值显示 K，如 237186 → 237.2K，< 此值显原数） */
