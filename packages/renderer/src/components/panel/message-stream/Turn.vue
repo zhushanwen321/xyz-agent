@@ -175,8 +175,13 @@
       <!-- 收尾 summary：streaming 和 complete 态都渲染（draft §4 收尾位固定不折叠，作回合焦点）。
            streaming 态末位 text 在此实时展示 + 末尾光标；complete 态光标消失仅文本。
            traceBlocks 对末位 assistant 始终跳过 text 块——text 从头到尾只在此位渲染，
-           消除停止时从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。 -->
-      <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
+           消除停止时从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
+           字号/行高/字体 streaming 与 complete 一致；streaming 时颜色用 muted（偏淡），complete 用 fg。 -->
+      <div
+        v-if="summaryText"
+        class="turn-summary group/ai pt-3 text-[13.5px] leading-7 transition-colors duration-200"
+        :class="turn.isWorking ? 'text-muted' : 'text-fg'"
+      >
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
              原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。 -->
