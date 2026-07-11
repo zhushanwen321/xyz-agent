@@ -110,7 +110,8 @@
           >
             <Check v-if="!isFailed" class="mt-0.5 size-3 shrink-0 text-success" />
             <XCircle v-else class="mt-0.5 size-3 shrink-0 text-danger" />
-            <AnsiText v-if="outputRaw" :content="outputRaw" />
+            <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
+            <AnsiText v-else-if="outputRaw" :content="outputRaw" />
             <span v-else>{{ result }}</span>
           </div>
         </template>
@@ -122,9 +123,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Bot, Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
 import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
 import AnsiText from './gui/AnsiText.vue'
+import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const props = defineProps<{
@@ -171,6 +175,16 @@ const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
+
+/**
+ * 从 tool.details.__gui__ 提取结构化渲染组件（extension GUI 协议，spec §9.1）。
+ * extension RPC 模式把 GuiComponent 放进 details.__gui__.component，前端用 extractGui
+ * 统一校验版本后路由到 GuiComponentRenderer。无 __gui__ 时 undefined（走 AnsiText/纯文本兜底）。
+ * 注：ToolCall 的结构化扩展数据存在 details 字段（pi tool_execution_end result.details）。
+ */
+const guiComponent = computed<GuiComponent | undefined>(() =>
+  extractGui(props.tool?.details)?.component
+)
 
 /**
  * tool 折叠：默认 1 行收起（含 streaming/running 态——改前 working/running 强制展开，

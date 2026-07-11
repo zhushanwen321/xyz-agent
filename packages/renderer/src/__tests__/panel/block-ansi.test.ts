@@ -4,6 +4,7 @@
  * 验证：
  * - outputRaw 存在时用 AnsiText 渲染（含 ansi_up 着色 span）
  * - outputRaw 不存在时回退纯文本 result
+ * - details.__gui__ 存在时优先用 GuiComponentRenderer 渲染（审计项 C）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/block-ansi.test.ts
  */
@@ -58,5 +59,26 @@ describe('Block ANSI 兜底渲染', () => {
     expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
     // 有纯文本 result
     expect(wrapper.text()).toContain('plain result')
+  })
+
+  it('details.__gui__ 存在 → 优先用 GuiComponentRenderer 渲染（data-testid="gui-component-renderer" 存在）', async () => {
+    const tool = makeTool({
+      output: 'done',
+      details: {
+        __gui__: {
+          v: 1,
+          component: {
+            type: 'task-list',
+            props: { items: [], summary: '0/0' },
+          },
+        },
+      },
+    })
+    const wrapper = await mountExpanded(tool)
+
+    // GuiComponentRenderer 渲染（容器 testid 存在）
+    expect(wrapper.find('[data-testid="gui-component-renderer"]').exists()).toBe(true)
+    // task-list 是 P2 未实现类型，降级到 AnsiText（ansi-text testid 也存在）
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
   })
 })
