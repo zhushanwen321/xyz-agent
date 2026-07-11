@@ -182,9 +182,17 @@ const outputRaw = computed(() => props.tool?.outputRaw)
  * 统一校验版本后路由到 GuiComponentRenderer。无 __gui__ 时 undefined（走 AnsiText/纯文本兜底）。
  * 注：ToolCall 的结构化扩展数据存在 details 字段（pi tool_execution_end result.details）。
  */
-const guiComponent = computed<GuiComponent | undefined>(() =>
-  extractGui(props.tool?.details)?.component
-)
+const guiComponent = computed<GuiComponent | undefined>(() => {
+  // tool_call_end 的 details（复数，最终态）优先
+  const fromEnd = extractGui(props.tool?.details)?.component
+  if (fromEnd) return fromEnd
+  // streaming 态 fallback：tool_call_update 的 detail（单数）
+  const streamingDetail = props.tool?.detail
+  if (typeof streamingDetail === 'object' && streamingDetail !== null) {
+    return extractGui(streamingDetail)?.component
+  }
+  return undefined
+})
 
 /**
  * tool 折叠：默认 1 行收起（含 streaming/running 态——改前 working/running 强制展开，

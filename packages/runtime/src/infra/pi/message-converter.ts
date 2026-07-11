@@ -138,6 +138,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         content: cm.content ?? '',
         status: 'complete',
         customType: cm.customType,
+        details: cm.details as Record<string, unknown> | undefined,
         timestamp: cm.timestamp ?? Date.now(),
       }
       if (cm.customType === 'subagent-bg-notify' && cm.details) {

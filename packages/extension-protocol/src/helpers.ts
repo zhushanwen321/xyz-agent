@@ -160,7 +160,13 @@ export async function guiInteract(
  */
 export function extractGui(details: Record<string, unknown> | undefined): GuiRenderResult | undefined {
   const g = details?.__gui__
-  if (g && typeof g === 'object' && 'v' in g && 'component' in g) {
+  if (
+    g &&
+    typeof g === 'object' &&
+    'v' in g &&
+    'component' in g &&
+    (g as { v: unknown }).v === PROTOCOL_VERSION
+  ) {
     return g as GuiRenderResult
   }
   return undefined

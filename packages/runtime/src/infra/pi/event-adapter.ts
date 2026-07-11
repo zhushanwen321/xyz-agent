@@ -279,8 +279,10 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
             payload: { sessionId: sid, widgetKey, gui },
           },
         }]
-      } catch {
-        // JSON 解析失败，降级为纯文本 widget（不崩溃）
+      // eslint-disable-next-line taste/no-silent-catch -- console.warn 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4），与 logger.ts 内部 catch 容错模式一致
+      } catch (e) {
+        // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget
+        console.warn('[EventAdapter] widgetGui marker JSON parse failed, falling back to text widget', e)
       }
     }
 

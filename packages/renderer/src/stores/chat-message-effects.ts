@@ -357,6 +357,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ? {
           ...c,
           output: readString(payload, 'output') ?? c.output,
+          outputRaw: readString(payload, 'outputRaw') ?? c.outputRaw,
           status: (readString(payload, 'status') as ToolCall['status']) ?? 'completed',
           error: readString(payload, 'error') ?? c.error,
           endTime: Date.now(),
