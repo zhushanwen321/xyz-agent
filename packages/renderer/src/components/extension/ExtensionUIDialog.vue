@@ -27,9 +27,11 @@ import { useExtensionUI } from '@/composables/useExtensionUI'
 import { useSidebar } from '@/composables/features/useSidebar'
 
 const { focusedSessionId } = useSidebar()
-const { currentRequest, respond, cancel } = useExtensionUI(focusedSessionId)
+const { currentAskUserRequest, currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId)
 
-const req = computed(() => currentRequest.value[0])
+// W1 过渡期：ask-user 走 currentAskUserRequest，普通原语走 currentDialogRequest。
+// W2 会把 ask-user 分支搬到 Panel inline，W3 再从此处移除。
+const req = computed(() => currentAskUserRequest.value ?? currentDialogRequest.value)
 const isOpen = computed(() => req.value !== undefined)
 
 // ── select/input 状态 ──
@@ -53,22 +55,24 @@ function onConfirm(): void {
   const r = req.value
   if (!r) return
   if (r.method === 'input' || r.method === 'editor') {
-    respond(inputValue.value)
+    respond(r.requestId, inputValue.value)
   } else if (r.method === 'select') {
-    respond(selectValue.value)
+    respond(r.requestId, selectValue.value)
   } else {
-    respond(true)
+    respond(r.requestId, true)
   }
 }
 
 // ask-user Submit：answers JSON string 通过 select value 回传
 function onAskUserSubmit(answers: string): void {
-  respond(answers)
+  const r = req.value
+  if (!r) return
+  respond(r.requestId, answers)
 }
 </script>
 
 <template>
-  <Dialog :open="isOpen" @update:open="(v: boolean) => { if (!v) cancel() }">
+  <Dialog :open="isOpen" @update:open="(v: boolean) => { if (!v && req) cancel(req.requestId) }">
     <DialogContent hide-close :class="req?.askUser ? 'max-w-2xl' : 'max-w-[420px]'" data-testid="extension-ui-dialog">
       <DialogHeader>
         <DialogTitle>{{ req?.title || 'Extension 请求' }}</DialogTitle>
@@ -81,12 +85,12 @@ function onAskUserSubmit(answers: string): void {
         :questions="askUserQuestions"
         :allow-cancel="req.allowCancel"
         @submit="onAskUserSubmit"
-        @cancel="cancel"
+        @cancel="req && cancel(req.requestId)"
       />
 
       <!-- confirm -->
       <div v-else-if="req?.method === 'confirm'" class="flex justify-end gap-2 pt-2">
-        <Button variant="ghost" @click="cancel">取消</Button>
+        <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
         <Button variant="default" @click="onConfirm">确认</Button>
       </div>
 
@@ -107,7 +111,7 @@ function onAskUserSubmit(answers: string): void {
           </SelectContent>
         </Select>
         <div class="flex justify-end gap-2">
-          <Button variant="ghost" @click="cancel">取消</Button>
+          <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
           <Button variant="default" :disabled="!selectValue" @click="onConfirm">确认</Button>
         </div>
       </div>
@@ -127,7 +131,7 @@ function onAskUserSubmit(answers: string): void {
           data-testid="extension-ui-input"
         />
         <div class="flex justify-end gap-2">
-          <Button variant="ghost" @click="cancel">取消</Button>
+          <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
           <Button variant="default" @click="onConfirm">确认</Button>
         </div>
       </div>
