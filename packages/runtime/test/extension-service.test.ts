@@ -165,6 +165,47 @@ describe('ExtensionService', () => {
     })
   })
 
+  describe('XYZ_EXTENSION_PATHS', () => {
+    let userExtDir: string
+
+    beforeEach(() => {
+      // 造一个临时 extension 目录，满足 isValidPiExtension（keywords 含 pi-package）
+      userExtDir = mkdtempSync(join(tmpdir(), 'ext-user-path-'))
+      writeFileSync(join(userExtDir, 'package.json'), JSON.stringify({
+        name: 'my-dev-extension',
+        version: '0.0.1',
+        description: 'local dev extension',
+        keywords: ['pi-package'],
+      }), 'utf-8')
+      writeFileSync(join(userExtDir, 'index.ts'), '', 'utf-8')
+      process.env.XYZ_EXTENSION_PATHS = userExtDir
+    })
+
+    afterEach(() => {
+      delete process.env.XYZ_EXTENSION_PATHS
+      try { rmSync(userExtDir, { recursive: true, force: true }) } catch { /* ignore */ }
+    })
+
+    it('scanExtensions 能扫到 XYZ_EXTENSION_PATHS 指向的 extension', async () => {
+      const extensions = await service.scanExtensions()
+      const found = extensions.find(e => e.name === 'my-dev-extension')
+      expect(found).toBeDefined()
+      expect(found!.path).toBe(userExtDir)
+    })
+
+    it('getExtensionPaths 返回的路径包含 user extension 目录', async () => {
+      const paths = await service.getExtensionPaths()
+      expect(paths).toContain(userExtDir)
+    })
+
+    it('无效路径静默跳过，不抛错', async () => {
+      process.env.XYZ_EXTENSION_PATHS = '/nonexistent/path:' + userExtDir
+      const extensions = await service.scanExtensions()
+      // 无效路径被跳过，有效的仍在
+      expect(extensions.find(e => e.name === 'my-dev-extension')).toBeDefined()
+    })
+  })
+
   describe('installExtension', () => {
     it('throws for non-npm sources', async () => {
       await expect(service.installExtension('git:foo/bar')).rejects.toThrow('Unsupported source')

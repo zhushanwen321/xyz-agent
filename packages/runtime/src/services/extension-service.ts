@@ -143,11 +143,27 @@ export class ExtensionService {
   }
 
   /**
+   * 读取 XYZ_EXTENSION_PATHS 环境变量，解析为绝对路径数组。
+   * 用于本地开发：指向 extension 源码目录，无需 cp 副本或 npm install。
+   * 冒号分隔（与 PATH 约定一致），空值自动过滤。
+   * 路径有效性（存在/是目录/是有效 pi extension）由 resolver.scanUserExtensions 校验。
+   */
+  private getUserExtensionPaths(): string[] {
+    const raw = process.env.XYZ_EXTENSION_PATHS
+    if (!raw) return []
+    return raw
+      .split(':')
+      .map(p => p.trim())
+      .filter(p => p.length > 0)
+      .map(p => resolve(p))
+  }
+
+  /**
    * 扫描所有 extension，返回 ExtensionInfo[]。
    * 用 ExtensionResolver 扫描所有源，对 settings 源的扩展读 packages[] 判断启用状态。
    */
   async scanExtensions(): Promise<ExtensionInfo[]> {
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, [])
+    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths())
     // 读取 settings.json packages[] 用于判断 source 和 enabled
     const { packages, disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
@@ -214,7 +230,7 @@ export class ExtensionService {
    * 封装 ExtensionResolver.resolve() + 过滤禁用项 + 追加文件型 extension。
    */
   async getExtensionPaths(): Promise<string[]> {
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, [])
+    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths())
     const { disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
 
