@@ -67,14 +67,15 @@
         >{{ session.list.length }}</span>
       </Button>
 
-      <!-- segmented tab（会话 | 文件） -->
+      <!-- segmented tab（会话 | 文件 | Agents） -->
       <SegmentedTab
         v-model="sidebar.activeTab"
         :session-count="session.list.length"
         :file-count="fileCount"
+        :subagent-count="subagentCount"
       />
 
-      <!-- 子视图区：会话列表（A）/ 文件视图（B，聚合 chat store fileChanges） -->
+      <!-- 子视图区：会话列表 / 文件视图 / subagent 列表 -->
       <div class="mt-1 min-h-0 flex-1">
         <template v-if="sidebar.activeTab === 'sessions'">
           <SessionList
@@ -85,6 +86,12 @@
             @new-session="onNewSession"
             @rename="onRenameSession"
             @delete="onDeleteSession"
+          />
+        </template>
+        <template v-else-if="sidebar.activeTab === 'subagents'">
+          <SubagentList
+            :subagents="subagentView.subagentRecords.value"
+            @select="onSelectSubagent"
           />
         </template>
         <template v-else>
@@ -132,7 +139,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { Plus, LayoutGrid, Search, Settings, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -146,14 +153,17 @@ import { useSessionDerivations } from '@/composables/features/useSessionDerivati
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
+import SubagentList from './SubagentList.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
+import { useSubagentView } from '@/composables/features/useSubagentView'
 import * as events from '@/api/events'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
+const subagentView = useSubagentView()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -187,6 +197,9 @@ const fileCount = computed(() => {
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
 
+/** subagent tab 计数（当前 session 的 subagent 数量） */
+const subagentCount = computed(() => subagentView.subagentRecords.value.length)
+
 /** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
   return derivedStatus(id).value
@@ -194,6 +207,11 @@ function statusOf(id: string) {
 
 async function onSelectSession(id: string): Promise<void> {
   await selectSession(id)
+}
+
+/** 切到 subagents tab 时加载列表；选中 subagent 时切换 Panel */
+async function onSelectSubagent(subagentId: string): Promise<void> {
+  await subagentView.selectSubagent(subagentId)
 }
 
 async function onNewSession(): Promise<void> {
@@ -218,6 +236,23 @@ onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
 })
+
+/**
+ * subagents tab 激活或 session 切换时加载 subagent 列表。
+ * - tab 切到 subagents → 拉当前 session 的 subagent 列表
+ * - session 切换 → 清空旧列表（新 session 的 subagent 需重新拉取）
+ */
+watch(
+  () => [sidebar.activeTab, focusedSessionId.value] as const,
+  ([tab, sid], [prevTab]) => {
+    if (tab === 'subagents' && sid) {
+      void subagentView.loadSubagents(sid)
+    }
+    if (prevTab === 'subagents' && tab !== 'subagents') {
+      // 离开 subagents tab 时不清空列表（保留缓存，切回时不需要重新加载）
+    }
+  },
+)
 
 /**
  * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。

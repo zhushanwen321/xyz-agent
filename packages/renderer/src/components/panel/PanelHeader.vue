@@ -58,21 +58,38 @@
         <ArrowRight class="size-[14px]" />
       </Button>
     </div>
+    <!-- subagent 视图返回按钮：viewingSubagent 态显示，替代正常态的 spinner+breadcrumb+按钮区 -->
+    <Button
+      v-if="viewingSubagent"
+      variant="ghost"
+      size="icon"
+      class="shrink-0 gap-1 rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+      title="返回主会话"
+      data-testid="subagent-back-btn"
+      @click="emit('back')"
+    >
+      <ArrowLeft class="size-[14px]" />
+    </Button>
+    <span
+      v-if="viewingSubagent"
+      class="min-w-0 shrink truncate text-[12.5px] font-medium text-fg"
+      :title="subagentLabel"
+    >{{ subagentLabel }}</span>
     <Loader2
-      v-if="showSpinner"
-      data-testid="session-spinner"
+      v-if="!viewingSubagent && showSpinner"
+      data-testid="panel-session-spinner"
       class="size-[13px] shrink-0 animate-spin"
-      :class="spinnerTextClass"
+      :class="spinnerColor"
     />
     <span
-      v-else
+      v-else-if="!viewingSubagent"
       class="size-[7px] shrink-0 rounded-full"
       :class="statusDotClass"
     />
     <!-- breadcrumb（shell/spec §四：项目 ▸ 分支，落点在 main-header 内）。
          不显会话名（仅目录 + 分支两段），避免与目录视觉重复。
          shrink + min-w-0：长目录+分支时截断优先发生于此，绝不盖右侧 3 按钮（按钮组 ml-auto + shrink-0）。 -->
-    <nav class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
+    <nav v-if="!viewingSubagent" class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
       <ol class="flex min-w-0 items-center gap-1 text-[12.5px]">
         <li class="flex min-w-0 items-center gap-1.5">
           <Folder class="size-3 shrink-0 opacity-70 text-subtle" />
@@ -96,7 +113,7 @@
       </ol>
     </nav>
 
-    <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+    <div v-if="!viewingSubagent" class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
       <!-- SideDrawer toggle（always-visible，不依赖 git 仓库）。
            非折叠态显此按钮；折叠态 chrome 按钮组已含侧栏切换。 -->
       <Button
@@ -179,7 +196,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
-import { DOT_CLASS, shouldShowSpinner, SPINNER_TEXT_CLASS } from '@/composables/logic/sessionStatus'
+import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
 
 const props = defineProps<{
   sessionLabel: string
@@ -192,6 +209,10 @@ const props = defineProps<{
   isDual: boolean
   /** 是否为 P1（panel.panels[0]）—— 折叠态 chrome 仅落 P1 header */
   isFirstPanel: boolean
+  /** 是否在查看 subagent 对话流（显示返回按钮，隐藏正常态内容） */
+  viewingSubagent?: boolean
+  /** subagent 视图标题（agent 名称 + subagentId 摘要） */
+  subagentLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -202,6 +223,8 @@ const emit = defineEmits<{
   openGit: []
   /** 切换 SideDrawer 开关（always-visible 按钮，不依赖 git 仓库） */
   toggleDrawer: []
+  /** 返回主会话（subagent 视图退出） */
+  back: []
 }>()
 
 const navigation = useNavigationStore()
@@ -229,6 +252,6 @@ const statusDotClass = computed(() => DOT_CLASS[props.status])
 /** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
 const showSpinner = computed(() => shouldShowSpinner(props.status))
 
-/** spinner 图标色：running→accent 蓝，waiting→warning 橙 */
-const spinnerTextClass = computed(() => SPINNER_TEXT_CLASS[props.status as 'running' | 'waiting'])
+/** spinner 图标色：running→accent 蓝，waiting→warning 橙（类型安全封装，无需 as 断言） */
+const spinnerColor = computed(() => spinnerTextClass(props.status) ?? '')
 </script>

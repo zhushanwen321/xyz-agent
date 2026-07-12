@@ -12,7 +12,7 @@
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
-  SkillDirConfig, FileNode, RecommendedExtension,
+  SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -254,6 +254,18 @@ export const session = {
     await sleep(TIMING.ack)
     const target = fixtureSessions.find((s) => s.id === sessionId)
     if (target) target.thinkingLevel = level
+  },
+
+  /** Mock subagent 列表（返回空数组，mock 模式无真实 subagent 数据） */
+  async getSubagents(_sessionId: string): Promise<SubagentRecord[]> {
+    await sleep(TIMING.ack)
+    return []
+  },
+
+  /** Mock subagent 对话流历史（返回空数组） */
+  async getSubagentHistory(_sessionId: string, _subagentId: string): Promise<Message[]> {
+    await sleep(TIMING.ack)
+    return []
   },
 }
 

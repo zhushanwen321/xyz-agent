@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, Message } from '@xyz-agent/shared'
 import * as transport from '../transport'
 import * as pending from '../pending'
 
@@ -119,4 +119,26 @@ export function setThinkingLevel(sessionId: string, level: string): Promise<void
   const result = pending.register<void>(id)
   transport.send({ type: 'session.setThinkingLevel', id, payload: { sessionId, level } })
   return result
+}
+
+/**
+ * 获取 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）。
+ * reply type 为 session.subagents，payload 是 { sessionId, subagents }。
+ */
+export async function getSubagents(sessionId: string): Promise<SubagentRecord[]> {
+  const id = pending.create()
+  const result = pending.register<{ sessionId: string; subagents: SubagentRecord[] }>(id)
+  transport.send({ type: 'session.getSubagents', id, payload: { sessionId } })
+  return (await result).subagents
+}
+
+/**
+ * 获取 subagent 的对话流历史（runtime 直读 subagent JSONL）。
+ * reply type 为 session.subagentHistory，payload 是 { sessionId, subagentId, messages }。
+ */
+export async function getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]> {
+  const id = pending.create()
+  const result = pending.register<{ sessionId: string; subagentId: string; messages: Message[] }>(id)
+  transport.send({ type: 'session.getSubagentHistory', id, payload: { sessionId, subagentId } })
+  return (await result).messages
 }

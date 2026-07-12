@@ -24,11 +24,14 @@
       :active="active"
       :is-dual="isDual"
       :is-first-panel="isFirstPanel"
+      :viewing-subagent="subagentView.isViewingSubagent.value"
+      :subagent-label="subagentLabel"
       @split="emit('split')"
       @new-session="emit('new-session')"
       @close="emit('close')"
       @open-git="emit('openGit')"
       @toggle-drawer="emit('toggleDrawer')"
+      @back="onSubagentBack"
     />
 
     <!-- 渲染分支对齐 NewTaskFlow 状态机（修恢复空 session 的 chip 死锁）：
@@ -115,6 +118,7 @@ import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useSubagentView } from '@/composables/features/useSubagentView'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -158,8 +162,22 @@ function onPanelMouseDown(e: MouseEvent): void {
 const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
+const subagentView = useSubagentView()
 
 const flow = useNewTaskFlow()
+
+/** subagent 视图标题：agent 名称 + subagentId 摘要 */
+const SUBAGENT_ID_DISPLAY_LENGTH = 12
+const subagentLabel = computed(() => {
+  const record = subagentView.currentSubagent.value
+  if (!record) return 'Subagent'
+  return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
+})
+
+/** 返回主会话 */
+function onSubagentBack(): void {
+  subagentView.backToMainSession()
+}
 
 // W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。
 // B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 ExtensionUIDialog modal 处理）
