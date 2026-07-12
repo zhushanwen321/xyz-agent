@@ -19,6 +19,7 @@ import type {
   PluginInfo,
   GitStatusResult,
   FileNode,
+  SubagentRecord,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -88,6 +89,16 @@ export interface ISessionService {
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string, customInstructions?: string): Promise<void>
   getHistory(sessionId: string): Promise<Message[]>
+  /**
+   * 获取 session 派生的 subagent 列表（从主 session JSONL 的 subagent toolCall/toolResult 提取）。
+   * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 subagent 调用时返回空数组。
+   */
+  getSubagents(sessionId: string): Promise<SubagentRecord[]>
+  /**
+   * 获取 subagent 的对话流历史（直读 subagent JSONL，复用 convertPiHistory 转换）。
+   * subagentId 对应 SubagentRecord.subagentId，从 getSubagents 结果中查找 sessionFile 路径。
+   */
+  getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   /**

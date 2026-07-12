@@ -11,7 +11,8 @@
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
 import { existsSync } from 'node:fs'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage } from '@xyz-agent/shared'
+import { readFile } from 'node:fs/promises'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getDataDir } from '@xyz-agent/shared/paths'
@@ -22,7 +23,8 @@ import type {
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { readPiState } from '../ports/pi-engine.js'
-import { getHistoryFromFile } from '../session-history.js'
+import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
+import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -313,6 +315,24 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       }
     }
     return await getHistoryFromFile(sessionId, this.sessionStore)
+  }
+
+  async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
+    // 找主 session 文件路径（scanSessions 扫 pi/sessions/，含 cwd-encoded 子目录）
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) return []
+    return extractSubagentsFromSessionFile(target.filePath)
+  }
+
+  async getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]> {
+    // 先从主 session 提取 subagent 列表，找到 sessionFile 路径
+    const subagents = await this.getSubagents(sessionId)
+    const record = subagents.find((s) => s.subagentId === subagentId)
+    if (!record?.sessionFile) return []
+
+    // 直读 subagent JSONL，复用 getHistoryFromFilePath 转换链路（parseJsonl + filter + convertHistory）。
+    // subagent JSONL 格式与主 session 一致（pi SessionManager._persist 写入）。
+    return getHistoryFromFilePath(record.sessionFile, this.sessionStore)
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {
