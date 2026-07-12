@@ -19,8 +19,10 @@
  * - background 模式：从 bgResponse（初始 running）+ 后续 listResponse（更新状态/sessionFile）+ bg-notify（终态）合并
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { join, basename } from 'node:path'
 import { parseJsonl } from '../../utils/jsonl.js'
+import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
 import type { SubagentRecord, SubagentStatus, SubagentMode } from '@xyz-agent/shared'
 
 /** subagent toolCall 的 arguments 结构（start action） */
@@ -118,6 +120,13 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
 
   const entries = parseJsonl(content)
 
+  // 提取主 session 的 cwd（首行 session entry），用于推导 subagent session 目录
+  const sessionEntry = entries.find(
+    (e): e is Record<string, unknown> =>
+      typeof e === 'object' && e !== null && (e as { type?: string }).type === 'session',
+  )
+  const mainCwd = typeof sessionEntry?.cwd === 'string' ? sessionEntry.cwd : null
+
   // 收集 subagent toolCall（按 toolCallId 索引）
   const toolCalls = new Map<string, { agent: string; task: string; wait: boolean }>()
   // 收集 subagent toolResult（按 toolCallId 索引）
@@ -163,8 +172,9 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
             try {
               const parsed = JSON.parse(firstBlock.text) as SubagentToolResultData
               toolResults.set(msg.toolCallId, parsed)
+            // eslint-disable-next-line taste/no-silent-catch -- toolResult text 不是合法 JSON（如错误消息 "startParam is required"），跳过该条
             } catch {
-              // toolResult text 不是合法 JSON，跳过
+              // skip malformed toolResult
             }
           }
         }
@@ -244,9 +254,17 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
       const status: SubagentStatus = notify?.status ?? normalizeStatus(listItem?.status) ?? normalizeStatus(tr.bgResponse.status)
       const mode: SubagentMode = 'background'
 
+      // sessionFile 回退查找：listResponse/bg-notify 都不带 sessionFile 时，
+      // 扫描 subagent session 目录用 startedAt 时间戳匹配最近的 JSONL 文件。
+      let resolvedSessionFile = listItem?.sessionFile ?? tr.sessionFile ?? null
+      if (!resolvedSessionFile && mainCwd) {
+        const startedAt = notify?.startedAt
+        resolvedSessionFile = findSubagentSessionFile(mainCwd, startedAt)
+      }
+
       records.push({
         subagentId,
-        sessionFile: listItem?.sessionFile ?? tr.sessionFile ?? null,
+        sessionFile: resolvedSessionFile,
         agent: listItem?.agent ?? tc.agent,
         task: tc.task,
         mode,
@@ -263,6 +281,85 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
   }
 
   return records
+}
+
+/**
+ * 时间戳匹配窗口（ms）。subagent JSONL 文件名含 ISO 时间戳，
+ * 与 bg-notify.startedAt 的差值在此窗口内视为匹配。
+ */
+const TIMESTAMP_WINDOW_MS = 60_000
+
+/**
+ * 在 subagent session 目录中查找最匹配的 JSONL 文件。
+ *
+ * 当 background subagent 的 sessionFile 丢失（bg-notify 不带、无 listResponse）时，
+ * 用 startedAt 时间戳匹配文件名中 ISO 时间戳最近的 .jsonl 文件。
+ *
+ * @param mainCwd 主 session 的 cwd（用于推导 subagent session 目录）
+ * @param startedAt bg-notify 的 startedAt 时间戳（ms）。缺失时返回最近的文件。
+ */
+function findSubagentSessionFile(mainCwd: string, startedAt: number | undefined): string | null {
+  let dir: string
+  try {
+    dir = getSubagentSessionDir(mainCwd)
+  } catch {
+    return null
+  }
+  if (!existsSync(dir)) return null
+
+  let files: string[]
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.jsonl') && !f.endsWith('.finalized'))
+  } catch {
+    return null
+  }
+  if (files.length === 0) return null
+
+  // 无 startedAt → 返回最近修改的文件
+  if (startedAt === undefined) {
+    let latest: { file: string; mtime: number } | null = null
+    for (const f of files) {
+      try {
+        const mtime = statSync(join(dir, f)).mtimeMs
+        if (!latest || mtime > latest.mtime) latest = { file: f, mtime }
+      // eslint-disable-next-line taste/no-silent-catch -- stat 失败（文件被并发删除等），跳过该文件
+      } catch { /* skip unreadable file */ }
+    }
+    return latest ? join(dir, latest.file) : null
+  }
+
+  // 有 startedAt → 匹配文件名 ISO 时间戳最近的文件
+  const targetTime = startedAt
+  let best: { file: string; diff: number } | null = null
+  for (const f of files) {
+    const fileTime = parseIsoFromFilename(f)
+    if (fileTime === null) continue
+    const diff = Math.abs(fileTime - targetTime)
+    if (!best || diff < best.diff) best = { file: f, diff }
+  }
+
+  // 在窗口内才算匹配
+  if (best && best.diff <= TIMESTAMP_WINDOW_MS) {
+    return join(dir, best.file)
+  }
+  return null
+}
+
+/**
+ * 从 subagent JSONL 文件名解析 ISO 时间戳为 ms。
+ * 文件名格式：2026-07-12T17-09-01-293Z_<uuid>.jsonl
+ */
+function parseIsoFromFilename(filename: string): number | null {
+  // 取 .jsonl 前的部分，按 _ 分割取第一段（ISO 时间戳部分）
+  const tsPart = basename(filename, '.jsonl').split('_')[0]
+  // 文件名的 ISO 时间戳用 - 替代了 :（文件系统安全），还原
+  // 2026-07-12T17-09-01-293Z → 2026-07-12T17:09:01.293Z
+  const match = tsPart.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/)
+  if (!match) return null
+  const [, y, mo, d, h, mi, s, ms] = match
+  const iso = `${y}-${mo}-${d}T${h}:${mi}:${s}.${ms}Z`
+  const time = Date.parse(iso)
+  return Number.isNaN(time) ? null : time
 }
 
 /** 将 pi-subagent-workflow 的状态字符串归一化为 SubagentStatus */

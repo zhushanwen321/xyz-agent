@@ -73,6 +73,7 @@
         :session-count="session.list.length"
         :file-count="fileCount"
         :subagent-count="subagentCount"
+        :workflow-count="0"
       />
 
       <!-- 子视图区：会话列表 / 文件视图 / subagent 列表 -->
@@ -90,9 +91,19 @@
         </template>
         <template v-else-if="sidebar.activeTab === 'subagents'">
           <SubagentList
-            :subagents="subagentView.subagentRecords.value"
+            :subagents="subagentList"
             @select="onSelectSubagent"
           />
+        </template>
+        <template v-else-if="sidebar.activeTab === 'workflows'">
+          <div
+            class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+            data-testid="workflow-list-empty"
+          >
+            <Workflow class="size-7 text-subtle opacity-40" />
+            <p class="text-[11.5px] text-subtle opacity-55">暂无工作流</p>
+            <p class="text-[10.5px] text-subtle opacity-40">发起 workflow 后在此查看进度</p>
+          </div>
         </template>
         <template v-else>
           <FileView
@@ -141,7 +152,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings, FolderOpen } from '@lucide/vue'
+import { Plus, LayoutGrid, Search, Settings, FolderOpen, Workflow } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SearchModal from '@/components/overlays/SearchModal.vue'
@@ -200,6 +211,9 @@ const fileCount = computed(() => {
 /** subagent tab 计数（当前 session 的 subagent 数量） */
 const subagentCount = computed(() => subagentView.subagentRecords.value.length)
 
+/** subagent 列表（computed 解包，避免 template 中直接 .value） */
+const subagentList = computed(() => subagentView.subagentRecords.value)
+
 /** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
   return derivedStatus(id).value
@@ -240,16 +254,15 @@ onMounted(() => {
 /**
  * subagents tab 激活或 session 切换时加载 subagent 列表。
  * - tab 切到 subagents → 拉当前 session 的 subagent 列表
- * - session 切换 → 清空旧列表（新 session 的 subagent 需重新拉取）
+ * - session 切换 → 用新 session id 重新加载
+ * 用 session.activeId（session store 的活跃 session）而非 focusedSessionId（panel 焦点），
+ * 因为 Overview 态 focusedSessionId 可能为 null，但 activeId 仍指向活跃 session。
  */
 watch(
-  () => [sidebar.activeTab, focusedSessionId.value] as const,
-  ([tab, sid], [prevTab]) => {
+  () => [sidebar.activeTab, session.activeId] as const,
+  ([tab, sid]) => {
     if (tab === 'subagents' && sid) {
       void subagentView.loadSubagents(sid)
-    }
-    if (prevTab === 'subagents' && tab !== 'subagents') {
-      // 离开 subagents tab 时不清空列表（保留缓存，切回时不需要重新加载）
     }
   },
 )

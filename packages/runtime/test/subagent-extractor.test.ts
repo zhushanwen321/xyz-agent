@@ -1,8 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { encodeCwd } from '../src/infra/pi/pi-paths.js'
+
+// mock getSubagentSessionDir 让回退查找测试用临时目录
+const mockSubagentDir = { dir: '' }
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
+  return {
+    ...actual,
+    getSubagentSessionDir: () => mockSubagentDir.dir,
+  }
+})
+
 import { extractSubagentsFromSessionFile } from '../src/services/session/subagent-extractor.js'
 
 describe('encodeCwd', () => {
@@ -425,5 +436,111 @@ describe('extractSubagentsFromSessionFile', () => {
     expect(records[0].agent).toBe('reviewer')
     expect(records[1].subagentId).toBe('run-b-2')
     expect(records[1].agent).toBe('general-purpose')
+  })
+})
+
+describe('extractSubagentsFromSessionFile — background sessionFile 回退查找', () => {
+  let tempDir: string
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'subagent-fallback-'))
+    mockSubagentDir.dir = join(tempDir, 'subagents-sessions')
+    mkdirSync(mockSubagentDir.dir, { recursive: true })
+  })
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true })
+    mockSubagentDir.dir = ''
+  })
+
+  it('sessionFile=null 时用 startedAt 时间戳匹配 subagent JSONL 文件', () => {
+    const sessionFile = join(tempDir, 'bg-no-sessionfile.jsonl')
+    const subagentJsonl = join(mockSubagentDir.dir, '2026-07-12T17-09-01-293Z_019f574d-c0ed.jsonl')
+    writeFileSync(subagentJsonl, JSON.stringify({ type: 'session', id: 'sub-1', cwd: '/proj', timestamp: '2026-07-12T17:09:01Z' }) + '\n')
+
+    const bgSubagentId = 'bg-fallback-1-1783876141075'
+    const toolCallId = 'call_fb1'
+    const entries = [
+      { type: 'session', id: 'main-fb', cwd: '/proj', timestamp: '2026-07-12T17:08:53Z' },
+      {
+        type: 'message',
+        id: 'msg-1',
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'toolCall', id: toolCallId, name: 'subagent',
+            arguments: { action: 'start', startParam: { agent: 'general-purpose', task: 'Scan directory', wait: false } },
+          }],
+        },
+      },
+      {
+        type: 'message',
+        id: 'msg-2',
+        message: {
+          role: 'toolResult', toolCallId, toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({
+            action: 'start', subagentId: bgSubagentId, sessionFile: null,
+            bgResponse: { status: 'running', mode: 'background', message: 'detached' },
+          }) }],
+        },
+      },
+      {
+        type: 'custom_message',
+        customType: 'subagent-bg-notify',
+        content: 'Subagent completed.',
+        details: {
+          id: bgSubagentId, status: 'done', agent: 'general-purpose',
+          model: 'test/model', startedAt: 1783876141075, endedAt: 1783876149814,
+        },
+        timestamp: '2026-07-12T17:09:09Z',
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+
+    const records = extractSubagentsFromSessionFile(sessionFile)
+    expect(records).toHaveLength(1)
+    expect(records[0].sessionFile).not.toBeNull()
+    expect(records[0].sessionFile).toBe(subagentJsonl)
+    expect(records[0].status).toBe('done')
+  })
+
+  it('目录不存在时 sessionFile 保持 null', () => {
+    const sessionFile = join(tempDir, 'no-dir.jsonl')
+    mockSubagentDir.dir = join(tempDir, 'nonexistent-dir')
+
+    const bgSubagentId = 'bg-nodir-1'
+    const toolCallId = 'call_nd1'
+    const entries = [
+      { type: 'session', id: 'main-nd', cwd: '/proj', timestamp: '2026-07-12T17:08:53Z' },
+      {
+        type: 'message',
+        id: 'msg-1',
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'toolCall', id: toolCallId, name: 'subagent',
+            arguments: { action: 'start', startParam: { agent: 'worker', task: 'Do stuff', wait: false } },
+          }],
+        },
+      },
+      {
+        type: 'message',
+        id: 'msg-2',
+        message: {
+          role: 'toolResult', toolCallId, toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({
+            action: 'start', subagentId: bgSubagentId, sessionFile: null,
+            bgResponse: { status: 'running', mode: 'background', message: 'detached' },
+          }) }],
+        },
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+
+    const records = extractSubagentsFromSessionFile(sessionFile)
+    expect(records).toHaveLength(1)
+    expect(records[0].sessionFile).toBeNull()
   })
 })

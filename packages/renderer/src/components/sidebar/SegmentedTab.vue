@@ -35,7 +35,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Component } from 'vue'
-import { MessageSquare, File, Bot } from '@lucide/vue'
+import { MessageSquare, File, Bot, Workflow } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { SidebarTab } from '@/stores/sidebar'
@@ -45,6 +45,7 @@ const props = defineProps<{
   sessionCount: number
   fileCount: number
   subagentCount: number
+  workflowCount: number
 }>()
 
 const emit = defineEmits<{
@@ -68,5 +69,6 @@ const tabs = computed<TabDef[]>(() => [
   { value: 'sessions', label: '会话', icon: MessageSquare, count: props.sessionCount, badge: false },
   { value: 'files', label: '文件', icon: File, count: props.fileCount, badge: false },
   { value: 'subagents', label: 'Agents', icon: Bot, count: props.subagentCount, badge: props.subagentCount > 0 },
+  { value: 'workflows', label: 'Flows', icon: Workflow, count: props.workflowCount, badge: props.workflowCount > 0 },
 ])
 </script>

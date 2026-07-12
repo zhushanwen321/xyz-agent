@@ -15,23 +15,25 @@ import SegmentedTab from '@/components/sidebar/SegmentedTab.vue'
 import type { SidebarTab } from '@/stores/sidebar'
 
 describe('SegmentedTab', () => {
-  it('渲染 3 个 tab（sessions/files/subagents）', () => {
+  it('渲染 4 个 tab（sessions/files/subagents/workflows）', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
         sessionCount: 6,
         fileCount: 4,
         subagentCount: 2,
+        workflowCount: 0,
       },
     })
 
     const buttons = wrapper.findAll('button')
-    expect(buttons).toHaveLength(3)
+    expect(buttons).toHaveLength(4)
 
     // tab title 含 label
     expect(buttons[0].attributes('title')).toBe('会话')
     expect(buttons[1].attributes('title')).toBe('文件')
     expect(buttons[2].attributes('title')).toBe('Agents')
+    expect(buttons[3].attributes('title')).toBe('Flows')
   })
 
   it('subagents tab 含 count 数字', () => {
@@ -41,6 +43,7 @@ describe('SegmentedTab', () => {
         sessionCount: 6,
         fileCount: 4,
         subagentCount: 2,
+        workflowCount: 0,
       },
     })
 
@@ -57,6 +60,7 @@ describe('SegmentedTab', () => {
         sessionCount: 6,
         fileCount: 4,
         subagentCount: 3,
+        workflowCount: 0,
       },
     })
 
@@ -74,6 +78,7 @@ describe('SegmentedTab', () => {
         sessionCount: 6,
         fileCount: 4,
         subagentCount: 0,
+        workflowCount: 0,
       },
     })
 
@@ -90,6 +95,7 @@ describe('SegmentedTab', () => {
         sessionCount: 6,
         fileCount: 4,
         subagentCount: 2,
+        workflowCount: 0,
       },
     })
 
