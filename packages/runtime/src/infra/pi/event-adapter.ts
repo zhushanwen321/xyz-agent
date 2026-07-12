@@ -21,7 +21,7 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -370,8 +370,50 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
   // Interactive dialog methods: confirm, select, input, editor (notify 已在上方独立分支处理)
   if (method && INTERACTIVE_UI_METHODS.has(method as ExtensionInteractMethod)) {
     const dialogMethod = method as ExtensionInteractMethod
-    const rawOptions = event.options as Array<{ label: string; value: string }> | undefined
     const requestId = String(event.id ?? '')
+
+    // ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload
+    // （askUserInteract helper 序列化的 { questions, allowCancel }）。
+    // 检测成功后透传 questions 等字段，前端路由到 AskUserOverlay；检测失败（非合法 JSON）
+    // 降级为普通 select（下方分支）。
+    if (method === 'select' && event.title === ASK_USER_MARKER) {
+      const rawOptions = Array.isArray(event.options) ? event.options as unknown[] : []
+      let askUserData: { questions?: unknown; allowCancel?: boolean } | undefined
+      try {
+        askUserData = rawOptions.length > 0 ? JSON.parse(String(rawOptions[0])) : undefined
+      // eslint-disable-next-line taste/no-silent-catch -- console.warn 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4），降级为普通 select 不中断
+      } catch {
+        // options[0] 不是合法 JSON → 降级为普通 select（下方统一 return）
+      }
+
+      if (Array.isArray(askUserData?.questions) && askUserData.questions.length > 0) {
+        return [
+          // ★ extension-ui kind 事件：timeout-manager 据此注册 5min 超时。
+          // 漏掉这个会导致用户不响应时 pi select Promise 永挂（与普通 select 分支一致）。
+          { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod },
+          {
+            kind: 'message',
+            message: {
+              type: 'extension.ui_request' as ServerMessageType,
+              payload: {
+                sessionId: sid,
+                requestId,
+                method: 'select',              // 仍是 select（复用回传通道）
+                askUser: true,                 // 标记 ask-user 富交互，前端据此路由到 AskUserOverlay
+                askUserQuestions: askUserData.questions,
+                allowCancel: askUserData.allowCancel ?? true,
+              },
+            },
+          },
+        ]
+      }
+    }
+
+    // 普通 select / confirm / input / editor
+    // [HISTORICAL] options 透传修复：pi select 严格传 string[]（types.ts select 签名 +
+    // rpc-mode.js 原样透传），旧代码把 rawOptions 断言为 Array<{label,value}> 后 .map(o=>o.label)
+    // 对 string 元素调 .label 产出 undefined[]——普通 select 在前端是坏的。改为 .map(String) 透传。
+    const rawOptions = Array.isArray(event.options) ? event.options as unknown[] : undefined
     return [
       { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod },
       {
@@ -384,7 +426,7 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
             method,
             title: event.title,
             message: event.message,
-            options: rawOptions ? rawOptions.map((o) => o.label) : undefined,
+            options: rawOptions ? rawOptions.map(String) : undefined,
             default: event.default as string | undefined,
             level: event.level as 'info' | 'warn' | 'error' | undefined,
             prefill: method === METHOD_EDITOR ? (event.prefill as string | undefined) : undefined,

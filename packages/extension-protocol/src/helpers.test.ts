@@ -27,35 +27,33 @@ describe('isGuiCapable', () => {
 
 describe('guiResult', () => {
   it('构造带版本号的 GuiRenderResult', () => {
-    const component = guiComponent('task-list', {
-      items: [{ id: 1, text: 'test', status: 'pending' }],
+    const component = guiComponent('stats-line', {
+      items: [{ value: '3 turns' }],
     })
     const result = guiResult(component)
     expect(result.v).toBe(PROTOCOL_VERSION)
-    expect(result.component.type).toBe('task-list')
+    expect(result.component.type).toBe('stats-line')
   })
 
   it('strip undefined 字段（序列化干净）', () => {
-    const component = guiComponent('task-list', {
-      items: [],
-      summary: undefined,
+    const component = guiComponent('stats-line', {
+      items: [{ value: 'x', label: undefined }],
     })
     const result = guiResult(component)
     const serialized = JSON.parse(JSON.stringify(result))
-    // summary 为 undefined，不应出现在序列化结果中
-    expect('summary' in serialized.component.props).toBe(false)
+    // label 为 undefined，不应出现在序列化结果中
+    expect('label' in serialized.component.props.items[0]).toBe(false)
   })
 })
 
 describe('guiComponent', () => {
-  it('正确构造 task-list 组件', () => {
-    const c = guiComponent('task-list', {
-      items: [{ id: 'a', text: 'task', status: 'in_progress' }],
-      summary: '1/1 completed',
+  it('正确构造 stats-line 组件', () => {
+    const c = guiComponent('stats-line', {
+      items: [{ value: '3 turns', label: 'turns' }],
     })
-    expect(c.type).toBe('task-list')
+    expect(c.type).toBe('stats-line')
     expect(c.props.items).toHaveLength(1)
-    expect(c.props.summary).toBe('1/1 completed')
+    expect(c.props.items[0].label).toBe('turns')
   })
 
   it('正确构造 ansi-text 组件', () => {
@@ -87,7 +85,7 @@ describe('guiSetWidget', () => {
         },
       },
     }
-    const component = guiComponent('task-list', { items: [] })
+    const component = guiComponent('stats-line', { items: [{ value: 'x' }] })
     guiSetWidget(ctx, 'todo', component)
 
     expect(captured).toBeDefined()
@@ -96,7 +94,7 @@ describe('guiSetWidget', () => {
 
     const json = captured![0].slice(GUI_WIDGET_MARKER.length)
     const parsed = JSON.parse(json)
-    expect(parsed.type).toBe('task-list')
+    expect(parsed.type).toBe('stats-line')
   })
 
   it('传 undefined 清除 widget', () => {
@@ -126,14 +124,14 @@ describe('extractGui', () => {
     const details = {
       __gui__: {
         v: 1,
-        component: { type: 'task-list', props: { items: [] } },
+        component: { type: 'stats-line', props: { items: [] } },
       },
       otherField: 'value',
     }
     const result = extractGui(details)
     expect(result).toBeDefined()
     expect(result!.v).toBe(1)
-    expect(result!.component.type).toBe('task-list')
+    expect(result!.component.type).toBe('stats-line')
   })
 
   it('无 __gui__ 返回 undefined', () => {
@@ -152,7 +150,7 @@ describe('extractGui', () => {
 
 describe('isGuiComponent', () => {
   it('合法 GuiComponent（type 字符串 + props 对象）→ true', () => {
-    expect(isGuiComponent({ type: 'task-list', props: { items: [] } })).toBe(true)
+    expect(isGuiComponent({ type: 'stats-line', props: { items: [] } })).toBe(true)
     expect(isGuiComponent({ type: 'ansi-text', props: { lines: ['a'] } })).toBe(true)
   })
 
@@ -162,12 +160,12 @@ describe('isGuiComponent', () => {
   })
 
   it('缺 props 或 props 非对象 → false', () => {
-    expect(isGuiComponent({ type: 'task-list' })).toBe(false)
-    expect(isGuiComponent({ type: 'task-list', props: 'not-object' })).toBe(false)
+    expect(isGuiComponent({ type: 'stats-line' })).toBe(false)
+    expect(isGuiComponent({ type: 'stats-line', props: 'not-object' })).toBe(false)
   })
 
   it('props 为 null → false（typeof null === object 陷阱）', () => {
-    expect(isGuiComponent({ type: 'task-list', props: null })).toBe(false)
+    expect(isGuiComponent({ type: 'stats-line', props: null })).toBe(false)
   })
 
   it('null/非对象 → false', () => {

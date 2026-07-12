@@ -3,7 +3,7 @@
  *
  * 验证：
  * - ansi-text 类型 → 渲染 AnsiText（lines join 成 content，ansi_up 着色）
- * - 未识别类型（如 task-list，P2 前未实现）→ 降级 AnsiText，content 为 props 的 JSON 文本
+ * - 协议内但 P2 前未实现的通用原语（如 card）→ 降级 AnsiText，content 为 props 的 JSON 文本
  * - custom 类型未注册 → 降级 AnsiText，content 为 props 的 JSON 文本
  * - custom 类型已注册（provide 'gui-custom-registry'）→ 路由到注册组件
  *
@@ -31,10 +31,10 @@ describe('GuiComponentRenderer 路由', () => {
     expect(wrapper.html()).toContain('color')
   })
 
-  it('未识别类型（task-list，P2 前未实现）→ 降级 AnsiText，content 为 JSON 文本', () => {
+  it('协议内但 P2 前未实现的通用原语（card）→ 降级 AnsiText，content 为 JSON 文本', () => {
     const component: GuiComponent = {
-      type: 'task-list',
-      props: { items: [{ id: 1, text: 'do something', status: 'completed' }], summary: '1/1' },
+      type: 'card',
+      props: { variant: 'elevated', body: [] },
     }
     const wrapper = mount(GuiComponentRenderer, { props: { component } })
 
@@ -42,9 +42,8 @@ describe('GuiComponentRenderer 路由', () => {
     expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
     // content 是 props 的 JSON 文本（缩进 2 空格，关键字段可见）
     const text = wrapper.text()
-    expect(text).toContain('"items"')
-    expect(text).toContain('do something')
-    expect(text).toContain('"summary": "1/1"')
+    expect(text).toContain('"variant": "elevated"')
+    expect(text).toContain('"body"')
   })
 
   it('custom 类型未注册 → 降级 AnsiText，content 为 JSON 文本', () => {

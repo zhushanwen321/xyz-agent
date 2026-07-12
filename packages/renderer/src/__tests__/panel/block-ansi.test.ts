@@ -68,8 +68,8 @@ describe('Block ANSI 兜底渲染', () => {
         __gui__: {
           v: 1,
           component: {
-            type: 'task-list',
-            props: { items: [], summary: '0/0' },
+            type: 'card',
+            props: { variant: 'default', body: [] },
           },
         },
       },
@@ -78,7 +78,7 @@ describe('Block ANSI 兜底渲染', () => {
 
     // GuiComponentRenderer 渲染（容器 testid 存在）
     expect(wrapper.find('[data-testid="gui-component-renderer"]').exists()).toBe(true)
-    // task-list 是 P2 未实现类型，降级到 AnsiText（ansi-text testid 也存在）
+    // card 是 P2 未实现类型，降级到 AnsiText（ansi-text testid 也存在）
     expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
   })
 })

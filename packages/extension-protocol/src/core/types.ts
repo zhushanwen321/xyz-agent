@@ -1,8 +1,11 @@
 /**
- * Extension GUI 渲染协议类型定义。
+ * GUI 渲染协议核心类型定义。
  *
  * GuiComponent 是 pi Component { render(width): string[] } 的可序列化镜像。
  * extension 按 ctx.mode 分支：TUI 走原生 Component，RPC 走 GuiComponent（放进 details.__gui__）。
+ *
+ * GuiComponentProps 是类型路由的聚合点：通用布局原语 + extension 专属组件
+ * 全部在此声明键值，子类型直接内联本文件（纯类型，无运行时逻辑）。
  *
  * @see docs/architecture/extension-gui-protocol.md
  */
@@ -28,42 +31,12 @@ export interface GuiComponent<T extends GuiComponentType = GuiComponentType> {
 
 export type GuiComponentType = keyof GuiComponentProps
 
-// ── 内置组件 props 映射 ──
+// ── 组件 props 映射（聚合点：通用原语 + extension 专属）──
 
 export interface GuiComponentProps {
   /** ANSI 文本兜底——保留原始 ANSI 序列，前端用 ansi_up 渲染 */
   'ansi-text': {
     lines: string[]
-  }
-
-  /** 任务列表——pi-todo 等 */
-  'task-list': {
-    items: TaskItem[]
-    summary?: string
-  }
-
-  /** Goal 状态卡片——pi-goal */
-  'goal-status': {
-    status: GoalStatusValue
-    title: string
-    slug?: string
-    turn?: number
-    metrics?: MetricBar[]
-  }
-
-  /** 工作流 run 列表——pi-workflow */
-  'workflow-runs': {
-    runs: WorkflowRunItem[]
-  }
-
-  /** Subagent 执行轨迹——pi-subagents */
-  'subagent-trace': {
-    agent: string
-    status: SubagentStatusValue
-    stats?: { turns?: number; tokens?: number; durationMs?: number; toolCount?: number }
-    eventLog?: EventLogEntry[]
-    result?: string
-    error?: string
   }
 
   // ── 布局原语（替代 TUI ASCII 布局）──
@@ -118,50 +91,6 @@ export interface GuiRenderResult {
   /** 版本协商，前端检测，不认识降级 ansi-text */
   v: typeof PROTOCOL_VERSION
   component: GuiComponent
-}
-
-// ── task-list 子类型 ──
-
-export interface TaskItem {
-  id: string | number
-  text: string
-  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-}
-export type TaskStatus = TaskItem['status']
-
-// ── goal-status 子类型 ──
-
-export type GoalStatusValue =
-  | 'active' | 'paused' | 'blocked'
-  | 'complete' | 'budget_limited' | 'time_limited' | 'cancelled'
-
-export interface MetricBar {
-  label: string
-  current: number
-  total?: number
-  unit?: string
-  severity?: 'ok' | 'warn' | 'danger'
-}
-
-// ── workflow-runs 子类型 ──
-
-export interface WorkflowRunItem {
-  runId: string
-  name: string
-  status: 'running' | 'paused' | 'done'
-  reason?: 'completed' | 'failed' | 'aborted' | 'budget_limited' | 'time_limited'
-  durationMs?: number
-  error?: string
-}
-
-// ── subagent-trace 子类型 ──
-
-export type SubagentStatusValue = 'running' | 'done' | 'failed' | 'cancelled' | 'crashed'
-
-export interface EventLogEntry {
-  type: 'tool_start' | 'tool_end' | 'turn_end' | 'error'
-  label: string
-  status?: 'running' | 'done' | 'failed'
 }
 
 // ── 布局原语子类型 ──

@@ -215,7 +215,7 @@
 2. 按 `type` 字段路由渲染：
    - `"text"` → 当前纯文本模式（默认）
    - `"progress"` → 进度条
-   - `"task-list"` → 可交互任务列表
+   - `"list-tree"` → 结构化列表（任务列表等通用原语）
    - `"custom"` → 扩展点，允许注册自定义渲染器
 3. 支持 `placement: "belowEditor"` 渲染位置
 

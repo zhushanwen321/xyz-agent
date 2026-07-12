@@ -1,5 +1,5 @@
 /**
- * Extension GUI 渲染协议 helper 函数。
+ * Extension GUI 渲染协议 helper 函数（通用层）。
  *
  * 设计原则：
  * - 零运行时依赖（不依赖 pi SDK）
@@ -14,30 +14,8 @@ import {
   type GuiRenderResult,
   PROTOCOL_VERSION,
 } from './types'
-
-// ── 最小化 ctx 接口（pi ExtensionContext 的结构化子集）──
-
-/**
- * helpers 需要的 ctx 最小接口。
- * pi 的 ExtensionContext 天然满足此结构（有 mode/hasUI/ui 字段）。
- * 用结构化类型而非 import pi SDK，保持协议包零依赖。
- */
-export interface GuiContext {
-  mode: 'tui' | 'rpc' | 'json' | 'print'
-  hasUI: boolean
-  ui?: {
-    setWidget?: (key: string, lines: string[] | undefined) => void
-    select?: (header: string, options: string[], opts?: { signal?: AbortSignal }) => Promise<string | undefined>
-    input?: (header: string, prompt: string, opts?: { signal?: AbortSignal }) => Promise<string | undefined>
-    confirm?: (header: string, prompt: string, opts?: { signal?: AbortSignal }) => Promise<boolean | undefined>
-    custom?: (factory: unknown, opts?: unknown) => Promise<Record<string, string | string[]> | undefined>
-  }
-}
-
-// ── 常量 ──
-
-/** NUL 字符开头的 marker，不会出现在正常文本中。extension 用 guiSetWidget 编码进 string[]。 */
-export const GUI_WIDGET_MARKER = '\x00XYZ_GUI_WIDGET:'
+import { GUI_WIDGET_MARKER } from './markers'
+import type { GuiContext } from './gui-context'
 
 // ── helper 函数 ──
 
@@ -129,7 +107,7 @@ export function isGuiComponent(value: unknown): value is GuiComponent {
 // ── 内部工具 ──
 
 /** 递归 strip undefined 字段，确保 JSON.stringify 产出干净的对象 */
-function stripUndefined<T>(obj: T): T {
+export function stripUndefined<T>(obj: T): T {
   if (obj === null || obj === undefined) return obj
   if (typeof obj !== 'object') return obj
   if (Array.isArray(obj)) return obj.map(stripUndefined) as T

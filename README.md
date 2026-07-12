@@ -118,6 +118,13 @@ xyz-agent 内置插件系统，支持扩展功能（tools、hooks、slash comman
 | Message Decorations | 在消息气泡上显示标签 |
 | Settings | 插件配置项（自动渲染表单） |
 
+## Extension 开发
+
+xyz-agent 通过 pi 的 extension 机制扩展能力（注册工具、命令、事件钩子等）。Extension 与上文的 Plugin System 是两套独立机制——Extension 走 pi 子进程的 `--extension` 参数加载，Plugin 走 xyz-agent 自有的 Worker Thread。
+
+- [本地开发调试指南](docs/extensions/local-dev-guide.md) — 环境搭建、`XYZ_EXTENSION_PATHS` live link、日志查看、生效机制
+- [GUI 协议接入指南](docs/extensions/gui-protocol-guide.md) — TUI extension 改造为 TUI/GUI 双模
+
 ## 功能开发地图
 
 项目长期规划按 7 个 Phase 推进，详见 [docs/feature-map/](docs/feature-map/)。

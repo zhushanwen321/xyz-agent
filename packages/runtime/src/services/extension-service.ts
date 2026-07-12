@@ -17,7 +17,7 @@
  * 5. 清理临时目录
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename } from 'node:path'
+import { join, resolve, basename, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
@@ -143,11 +143,27 @@ export class ExtensionService {
   }
 
   /**
+   * 读取 XYZ_EXTENSION_PATHS 环境变量，解析为绝对路径数组。
+   * 用于本地开发：指向 extension 源码目录，无需 cp 副本或 npm install。
+   * 用 path.delimiter 分隔（POSIX ':' / Windows ';'，与 PATH 约定一致），空值自动过滤。
+   * 相对路径基于 projectRoot 解析。路径有效性由 resolver.scanUserExtensions 校验。
+   */
+  private getUserExtensionPaths(): string[] {
+    const raw = process.env.XYZ_EXTENSION_PATHS
+    if (!raw) return []
+    return raw
+      .split(delimiter)
+      .map(p => p.trim())
+      .filter(p => p.length > 0)
+      .map(p => resolve(this.projectRoot, p))
+  }
+
+  /**
    * 扫描所有 extension，返回 ExtensionInfo[]。
    * 用 ExtensionResolver 扫描所有源，对 settings 源的扩展读 packages[] 判断启用状态。
    */
   async scanExtensions(): Promise<ExtensionInfo[]> {
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, [])
+    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths())
     // 读取 settings.json packages[] 用于判断 source 和 enabled
     const { packages, disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
@@ -214,7 +230,7 @@ export class ExtensionService {
    * 封装 ExtensionResolver.resolve() + 过滤禁用项 + 追加文件型 extension。
    */
   async getExtensionPaths(): Promise<string[]> {
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, [])
+    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths())
     const { disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
 

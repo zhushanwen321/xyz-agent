@@ -27,7 +27,7 @@ describe('message-converter: F1 toolResult details 透传', () => {
         details: {
           __gui__: {
             v: 1,
-            component: { type: 'task-list', props: { items: [{ id: 1, text: 'test', status: 'completed' }] } },
+            component: { type: 'stats-line', props: { items: [{ value: '3 turns' }] } },
           },
           action: 'list',
           todos: [{ id: 1, text: 'test', status: 'completed' }],
@@ -52,7 +52,7 @@ describe('message-converter: F1 toolResult details 透传', () => {
     expect(tc.details?.__gui__).toBeDefined()
     const gui = tc.details?.__gui__ as { v: number; component: { type: string } }
     expect(gui.v).toBe(1)
-    expect(gui.component.type).toBe('task-list')
+    expect(gui.component.type).toBe('stats-line')
     // extension 自身的 details 字段也保留
     expect(tc.details?.action).toBe('list')
   })

@@ -140,14 +140,13 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
       sessionId,
       widgetKey: 'gui-demo',
       gui: {
-        type: 'task-list',
+        type: 'stats-line',
         props: {
           items: [
-            { id: 1, text: 'Mock: 读取配置', status: 'completed' },
-            { id: 2, text: 'Mock: 执行迁移', status: 'in_progress' },
-            { id: 3, text: 'Mock: 验证结果', status: 'pending' },
+            { value: '3 turns', label: 'turns' },
+            { value: '2.1k', label: 'tokens' },
+            { value: '4.5s', label: 'duration' },
           ],
-          summary: '1/3 done',
         },
       },
     },

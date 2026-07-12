@@ -343,19 +343,17 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
 
   it('select 端到端: pi event → adapter translate → 前端 response (string)', async () => {
     // 1. pi 发出 extension_ui_request (select)
+    // pi select 真实格式：options 是 string[]（不是 {label,value} 对象数组）
     fixture.emitPiEvent({
       type: 'extension_ui_request',
       method: 'select',
       id: 'req-select-1',
       title: 'Pick an option',
-      options: [
-        { label: 'Option A', value: 'a', description: 'Desc A' },
-        { label: 'Option B', value: 'b' },
-      ],
+      options: ['Option A', 'Option B'],
     })
     await flushAsync()
 
-    // 2. 验证 adapter 翻译 (options 变为 string[])
+    // 2. 验证 adapter 翻译 (options 经 .map(String) 透传 string[])
     expect(fixture.adapterSent).toHaveLength(1)
     const payload = fixture.adapterSent[0].payload as Record<string, unknown>
     expect(payload.method).toBe('select')

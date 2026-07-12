@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * ExtensionUIDialog——渲染 pi extension 的交互请求（confirm/select/input/editor）。
+ * ExtensionUIDialog——渲染 pi extension 的简单交互原语（confirm/select/input/editor）。
  *
  * pi extension 调 ctx.ui.select/confirm/input → runtime 推 extension.ui_request
- * → useExtensionUI 维护队列 → 此组件渲染队首请求的对话框
+ * → useExtensionUI 维护队列 → 此组件渲染队首的非 ask-user 请求
  * → 用户操作 → respond() 回传（带 method）→ pi Promise resolve。
  *
  * 按 method 路由：
@@ -11,6 +11,9 @@
  * - select → Select 下拉选择
  * - input → Input 文本输入
  * - editor → Textarea 多行编辑
+ *
+ * ask-user 富交互（askUser===true）不走此组件——由 Panel.vue inline 渲染
+ * （覆盖 composer 位置，per-panel 隔离）。useExtensionUI.currentAskUserRequest 路由到 Panel。
  *
  * notify 不走此组件——它是 fire-and-forget（pi 不等回复），经 extension.notify WS 帧
  * → useExtensionNotify → useToast 渲染为非阻塞 toast。
@@ -21,13 +24,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useExtensionUI } from '@/composables/useExtensionUI'
+import { useExtensionUI, dialogFilter } from '@/composables/useExtensionUI'
 import { useSidebar } from '@/composables/features/useSidebar'
 
 const { focusedSessionId } = useSidebar()
-const { currentRequest, respond, cancel } = useExtensionUI(focusedSessionId)
+// B1 防重复入队：ExtensionUIDialog 只收非 askUser 请求（askUser 由 Panel inline 处理）
+const { currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId, dialogFilter)
 
-const req = computed(() => currentRequest.value[0])
+const req = computed(() => currentDialogRequest.value)
 const isOpen = computed(() => req.value !== undefined)
 
 // ── select/input 状态 ──
@@ -45,17 +49,17 @@ function onConfirm(): void {
   const r = req.value
   if (!r) return
   if (r.method === 'input' || r.method === 'editor') {
-    respond(inputValue.value)
+    respond(r.requestId, inputValue.value)
   } else if (r.method === 'select') {
-    respond(selectValue.value)
+    respond(r.requestId, selectValue.value)
   } else {
-    respond(true)
+    respond(r.requestId, true)
   }
 }
 </script>
 
 <template>
-  <Dialog :open="isOpen" @update:open="(v: boolean) => { if (!v) cancel() }">
+  <Dialog :open="isOpen" @update:open="(v: boolean) => { if (!v && req) cancel(req.requestId) }">
     <DialogContent hide-close class="max-w-[420px]" data-testid="extension-ui-dialog">
       <DialogHeader>
         <DialogTitle>{{ req?.title || 'Extension 请求' }}</DialogTitle>
@@ -64,7 +68,7 @@ function onConfirm(): void {
 
       <!-- confirm -->
       <div v-if="req?.method === 'confirm'" class="flex justify-end gap-2 pt-2">
-        <Button variant="ghost" @click="cancel">取消</Button>
+        <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
         <Button variant="default" @click="onConfirm">确认</Button>
       </div>
 
@@ -85,7 +89,7 @@ function onConfirm(): void {
           </SelectContent>
         </Select>
         <div class="flex justify-end gap-2">
-          <Button variant="ghost" @click="cancel">取消</Button>
+          <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
           <Button variant="default" :disabled="!selectValue" @click="onConfirm">确认</Button>
         </div>
       </div>
@@ -105,7 +109,7 @@ function onConfirm(): void {
           data-testid="extension-ui-input"
         />
         <div class="flex justify-end gap-2">
-          <Button variant="ghost" @click="cancel">取消</Button>
+          <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
           <Button variant="default" @click="onConfirm">确认</Button>
         </div>
       </div>

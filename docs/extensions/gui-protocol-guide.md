@@ -80,13 +80,12 @@ export const myTool: ToolDefinition = {
     // ★ RPC 模式：构造结构化 GUI 组件放进 details.__gui__
     if (isGuiCapable(ctx as GuiContext)) {
       details.__gui__ = guiResult(
-        guiComponent('task-list', {
-          items: result.tasks.map(t => ({
-            id: t.id,
-            text: t.label,
-            status: t.done ? 'completed' : 'pending',
-          })),
-          summary: `${result.tasks.filter(t => t.done).length}/${result.tasks.length} done`,
+        guiComponent('stats-line', {
+          items: [
+            { label: '总数', value: String(result.total) },
+            { label: '成功', value: String(result.success), severity: 'ok' },
+            { label: '失败', value: String(result.failed), severity: result.failed > 0 ? 'danger' : 'ok' },
+          ],
         })
       )
     }
@@ -120,7 +119,7 @@ export const myTool: ToolDefinition = {
 | renderResult（tool 结果） | `details.__gui__` | tool_execution_end → WS | 否 |
 | setWidget（持久面板） | `guiSetWidget(ctx, key, component)` | NUL marker 编码 → `extension:widgetGui` | 否 |
 | setStatus（状态栏） | pi 原生，无需改造 | `extension:status`（含 textRaw） | 否 |
-| ctx.ui.custom（交互式） | `guiInteract(ctx, questions)` | 降级为 dialog 序列 | 是 |
+| ctx.ui.custom（交互式） | `askUserInteract(ctx, questions)` | select 通道 + ASK_USER_MARKER | 是 |
 | registerMessageRenderer（消息卡片） | `message.details.__gui__` | customMessage → WS | 否 |
 
 ### 3.1 renderResult：tool 结果结构化渲染
@@ -172,10 +171,13 @@ import { guiSetWidget, guiComponent, type GuiContext } from '@xyz-agent/extensio
 async execute(toolCallId, params, signal, onUpdate, ctx) {
   const tasks = await getTasks()
 
-  // ★ RPC 模式：编码 GuiComponent 进 string[]
-  guiSetWidget(ctx as GuiContext, 'my-widget', guiComponent('task-list', {
-    items: tasks.map(t => ({ id: t.id, text: t.text, status: t.status })),
-    summary: `${tasks.length} tasks`,
+  // ★ RPC 模式：编码 GuiComponent 进 string[]（用通用原语组合表达任务列表）
+  guiSetWidget(ctx as GuiContext, 'my-widget', guiComponent('list-tree', {
+    items: tasks.map(t => ({
+      label: t.text,
+      icon: t.done ? 'check' : 'circle',
+      status: t.done ? 'done' : 'running',
+    })),
   }))
 
   // TUI 模式：guiSetWidget 无操作，需自行调原生 ctx.ui.setWidget
@@ -210,15 +212,15 @@ ctx.ui.setStatus('my-ext:status', '\x1b[32m● Running\x1b[0m')
 // 前端收到 { text: '● Running', textRaw: '\x1b[32m● Running\x1b[0m' }
 ```
 
-### 3.4 ctx.ui.custom：交互式组件
+### 3.4 ctx.ui.custom：富交互组件
 
-`ctx.ui.custom()` 在 RPC 模式下返回 undefined（崩溃）。`guiInteract()` helper 在 RPC 模式降级为 `ctx.ui.select()` / `input()` / `confirm()` 序列，前端通过 ExtensionUIDialog 渲染标准对话框。
+`ctx.ui.custom()` 在 RPC 模式下返回 undefined（崩溃）。`askUserInteract()` helper 复用 select 双向通道 + marker 检测，前端在 Panel.vue inline 渲染富交互对话框（AskUserOverlay），覆盖 composer 位置。
 
 ```typescript
-import { guiInteract, type InteractionQuestion, type GuiContext } from '@xyz-agent/extension-protocol'
+import { askUserInteract, getAskUserAnswer, type AskUserQuestion, type GuiContext } from '@xyz-agent/extension-protocol'
 
 async execute(toolCallId, params, signal, onUpdate, ctx) {
-  const questions: InteractionQuestion[] = [
+  const questions: AskUserQuestion[] = [
     {
       header: '部署目标',
       question: '选择部署环境',
@@ -234,7 +236,7 @@ async execute(toolCallId, params, signal, onUpdate, ctx) {
     },
   ]
 
-  const answers = await guiInteract(ctx as GuiContext, questions, { signal })
+  const answers = await askUserInteract(ctx as GuiContext, questions, { signal })
 
   if (answers === null) {
     return {
@@ -244,26 +246,25 @@ async execute(toolCallId, params, signal, onUpdate, ctx) {
   }
 
   // answers = { '部署目标': 'prod', '确认信息': '修复登录bug' }
+  const target = getAskUserAnswer(answers, questions[0])  // 'prod'
   return {
-    content: [{ type: 'text', text: `部署到 ${answers['部署目标']}` }],
+    content: [{ type: 'text', text: `部署到 ${target}` }],
     details: { answers },
   }
 }
 ```
 
-**RPC 模式降级行为**：
+**RPC 模式行为**：
 
-| 问题类型 | RPC 降级方式 | 前端渲染 |
+| 问题类型 | 前端渲染 | 答案格式 |
 |---|---|---|
-| 单选（有 options，无 multiSelect） | `ctx.ui.select()` | Select 下拉 |
-| 多选（有 options + multiSelect） | 逐项 `ctx.ui.confirm()` | 多个确认对话框（体验有限） |
-| 自由输入（无 options） | `ctx.ui.input()` | Input 文本框 |
+| 单选（有 options，无 multiSelect） | Radio 圆圈选择 | value string |
+| 多选（有 options + multiSelect） | Checkbox 复选框 | `JSON.stringify(string[])` |
+| 自由输入（无 options） | Text input | string |
+| Other（allowOther） | 额外文本输入 | `${header}__other` key |
+| 评论（allowComment） | 额外评论输入 | `${header}__comment` key |
 
-**TUI 模式**：`guiInteract` 调 `ctx.ui.custom()`，extension 需自行提供 TUI Component（与改造前一致）。
-
-**当前限制**（P3 会扩展）：
-- 多选降级为逐项 confirm，无 checkbox UI
-- 无 tab/分屏/freeform 等富交互（前端 ExtensionUIDialog 只支持 confirm/select/input/editor/notify）
+**TUI 模式**：`askUserInteract` 抛错（RPC-only）。extension 必须自行调 `ctx.ui.custom()` 传 TUI Component。
 
 ### 3.5 registerMessageRenderer：自定义消息卡片
 
@@ -308,11 +309,11 @@ async onMessage(msg, ctx) {
 
 ## 4. GuiComponent 类型参考
 
-13 个内置类型，按用途分组。当前前端渲染状态见每类型标注。
+8 个内置类型，全部是结构性通用原语。当前前端渲染状态见每类型标注。
 
-### 4.1 数据展示类
+### 4.1 文本兜底
 
-#### ansi-text — ANSI 文本兜底
+#### ansi-text — ANSI 文本
 
 ```typescript
 guiComponent('ansi-text', {
@@ -322,75 +323,9 @@ guiComponent('ansi-text', {
 
 **渲染状态**：已实现。使用 ansi_up 库渲染，escape_html=true（XSS 安全）。
 
-适用于不改造的第三方 extension——runtime 保留 tool 结果的原始 ANSI 文本（`outputRaw` 字段），前端自动用 AnsiText 渲染。
+### 4.2 布局原语
 
-#### task-list — 任务列表
-
-```typescript
-guiComponent('task-list', {
-  items: [
-    { id: 1, text: '读取配置', status: 'completed' },
-    { id: 2, text: '执行迁移', status: 'in_progress' },
-    { id: 3, text: '验证结果', status: 'pending' },
-  ],
-  summary: '1/3 done',
-})
-```
-
-**渲染状态**：P2 待实现。当前降级为 JSON 文本展示。
-
-#### goal-status — Goal 状态卡片
-
-```typescript
-guiComponent('goal-status', {
-  status: 'active',           // 'active' | 'paused' | 'blocked' | 'complete' | 'budget_limited' | 'time_limited' | 'cancelled'
-  title: '重构认证模块',
-  slug: 'auth-refactor',
-  turn: 5,
-  metrics: [
-    { label: '预算', current: 45000, total: 100000, unit: 'tokens', severity: 'ok' },
-    { label: '用时', current: 12, total: 30, unit: 'min', severity: 'warn' },
-  ],
-})
-```
-
-**渲染状态**：P2 待实现。
-
-#### workflow-runs — 工作流 run 列表
-
-```typescript
-guiComponent('workflow-runs', {
-  runs: [
-    { runId: 'r1', name: 'CI Build', status: 'done', reason: 'completed', durationMs: 45000 },
-    { runId: 'r2', name: 'Deploy', status: 'running' },
-    { runId: 'r3', name: 'Rollback', status: 'done', reason: 'failed', error: 'Connection refused' },
-  ],
-})
-```
-
-**渲染状态**：P2 待实现。
-
-#### subagent-trace — Subagent 执行轨迹
-
-```typescript
-guiComponent('subagent-trace', {
-  agent: 'code-reviewer',
-  status: 'done',             // 'running' | 'done' | 'failed' | 'cancelled' | 'crashed'
-  stats: { turns: 8, tokens: 12300, durationMs: 32000, toolCount: 5 },
-  eventLog: [
-    { type: 'tool_start', label: 'Read file.ts', status: 'done' },
-    { type: 'tool_end', label: 'Read file.ts', status: 'done' },
-    { type: 'error', label: 'File not found', status: 'failed' },
-  ],
-  result: 'Review complete: 3 issues found',
-})
-```
-
-**渲染状态**：P2 待实现。
-
-### 4.2 布局原语类
-
-用于组合其他组件，替代 TUI 的 ASCII 布局（`┌─┐││└─┘` box 边框、`│` 列分隔等）。
+用于组合其他组件，替代 TUI 的 ASCII 布局。
 
 #### card — 卡片容器
 
@@ -405,6 +340,8 @@ guiComponent('card', {
 })
 ```
 
+**渲染状态**：P2 待实现。
+
 #### stats-line — 统计行
 
 ```typescript
@@ -418,6 +355,8 @@ guiComponent('stats-line', {
 })
 ```
 
+**渲染状态**：P2 待实现。
+
 #### progress-bar — 进度条
 
 ```typescript
@@ -429,6 +368,8 @@ guiComponent('progress-bar', {
   severity: 'ok',             // 'ok' | 'warn' | 'danger'（可选）
 })
 ```
+
+**渲染状态**：P2 待实现。
 
 #### list-tree — 列表树
 
@@ -448,17 +389,21 @@ guiComponent('list-tree', {
 // status: 'running' | 'done' | 'failed'
 ```
 
+**渲染状态**：P2 待实现。
+
 #### columns — 双列网格
 
 ```typescript
 guiComponent('columns', {
   children: [
-    guiComponent('task-list', { items: [...] }),
+    guiComponent('list-tree', { items: [...] }),
     guiComponent('stats-line', { items: [...] }),
   ],
   ratios: [3, 2],   // 可选，默认等宽
 })
 ```
+
+**渲染状态**：P2 待实现。
 
 #### tab-bar — 标签栏
 
@@ -472,42 +417,20 @@ guiComponent('tab-bar', {
 })
 ```
 
-### 4.3 交互类
+**渲染状态**：P2 待实现。
 
-#### interaction — 交互式组件
-
-```typescript
-guiComponent('interaction', {
-  questions: [
-    {
-      header: '确认操作',
-      question: '确定要删除这 10 个文件吗？',
-      context: '此操作不可撤销',
-      options: [
-        { label: '确认删除', value: 'delete', description: '永久删除' },
-        { label: '移到回收站', value: 'trash' },
-      ],
-      multiSelect: false,
-      allowOther: false,
-      allowComment: true,
-    },
-  ],
-  allowCancel: true,
-})
-```
-
-通常不直接构造此组件，而是用 `guiInteract()` helper（§3.4）。
-
-### 4.4 custom — 自定义组件逃生口
+### 4.3 custom — 自定义组件逃生口
 
 ```typescript
 guiComponent('custom', {
-  component: 'pi-todo:board',   // 注册名（仅 xyz-agent 内置 extension 可注册）
+  component: 'my-ext:board',   // 注册名（仅 xyz-agent 内置 extension 可注册）
   props: { boardId: 'sprint-1' },
 })
 ```
 
 **限制**：custom 组件的 Vue 组件定义无法通过 WS 传输。仅 xyz-agent 内置 extension 可在编译期注册（通过 `provide('gui-custom-registry', { ... })`）。外部 extension 的 custom 组件会降级为 JSON 文本展示。
+
+**设计原则**：协议层不定义 extension 专属组件类型。各 extension 的领域数据用上述通用原语组合表达。例如任务列表用 `list-tree`（icon/status 表达任务状态），目标卡片用 `card` + `stats-line` + `progress-bar`。只有通用原语组合无法覆盖的特殊形状才走 `custom`。
 
 ---
 
@@ -555,16 +478,27 @@ function guiSetWidget(
 ): void
 ```
 
-### guiInteract(ctx, questions, options?): Promise\<answers | null\>
+### askUserInteract(ctx, questions, options?): Promise\<answers | null\>
 
-交互式组件，TUI/GUI 双模路由。用户取消返回 null。
+富交互组件，RPC 模式借用 select 通道 + marker 检测。用户取消返回 null。TUI 模式抛错（需自行调 `ctx.ui.custom()`）。
 
 ```typescript
-function guiInteract(
+function askUserInteract(
   ctx: GuiContext,
-  questions: InteractionQuestion[],
-  options?: { signal?: AbortSignal }
-): Promise<Record<string, string | string[]> | null>
+  questions: AskUserQuestion[],
+  options?: { signal?: AbortSignal; allowCancel?: boolean }
+): Promise<AskUserAnswers | null>
+```
+
+答案解析 helper：
+
+```typescript
+// 多选自动 JSON.parse
+function getAskUserAnswer(answers: AskUserAnswers, question: AskUserQuestion): string | string[] | undefined
+// 读 ${header}__other key
+function getAskUserOther(answers: AskUserAnswers, question: AskUserQuestion): string | undefined
+// 读 ${header}__comment key
+function getAskUserComment(answers: AskUserAnswers, question: AskUserQuestion): string | undefined
 ```
 
 ### extractGui(details): GuiRenderResult | undefined
@@ -579,7 +513,7 @@ function extractGui(details: Record<string, unknown> | undefined): GuiRenderResu
 
 ## 6. 完整迁移示例：pi-todo 改造
 
-以下是一个任务管理 extension 从 TUI-only 改造为双模的完整示例。
+以下是一个任务管理 extension 从 TUI-only 改造为双模的完整示例。用通用原语 `list-tree` + `card` 组合表达任务列表，不依赖专属组件类型。
 
 ### 改造前（TUI-only）
 
@@ -614,14 +548,18 @@ import {
   guiComponent,
   guiSetWidget,
   type GuiContext,
-  type TaskItem,
 } from '@xyz-agent/extension-protocol'
 
-function toGuiItems(tasks: Task[]): TaskItem[] {
+// 任务状态 → 通用原语的 icon/status 映射
+function toTreeItems(tasks: Task[]) {
   return tasks.map(t => ({
-    id: t.id,
-    text: t.title,
-    status: t.status,  // 'pending' | 'in_progress' | 'completed' | 'cancelled'
+    label: t.title,
+    icon: t.status === 'completed' ? 'check'
+      : t.status === 'in_progress' ? 'circle'
+      : 'dot',
+    status: t.status === 'completed' ? 'done'
+      : t.status === 'in_progress' ? 'running'
+      : undefined,
   }))
 }
 
@@ -631,13 +569,16 @@ export const todoTool: ToolDefinition = {
   async execute(toolCallId, params, signal, onUpdate, ctx) {
     const tasks = await loadTasks()
     const guiCtx = ctx as GuiContext
+    const doneCount = tasks.filter(t => t.status === 'completed').length
 
     // ── Widget（持久面板）──
     if (isGuiCapable(guiCtx)) {
-      // RPC 模式：guiSetWidget 编码 GuiComponent
-      guiSetWidget(guiCtx, 'todo', guiComponent('task-list', {
-        items: toGuiItems(tasks),
-        summary: `${tasks.filter(t => t.status === 'completed').length}/${tasks.length}`,
+      // RPC 模式：用 list-tree + card 组合表达任务列表
+      guiSetWidget(guiCtx, 'todo', guiComponent('card', {
+        header: `任务 (${doneCount}/${tasks.length})`,
+        body: [
+          guiComponent('list-tree', { items: toTreeItems(tasks) }),
+        ],
       }))
     } else if (ctx.ui?.setWidget) {
       // TUI 模式：原生 Component
@@ -649,9 +590,17 @@ export const todoTool: ToolDefinition = {
 
     if (isGuiCapable(guiCtx)) {
       details.__gui__ = guiResult(
-        guiComponent('task-list', {
-          items: toGuiItems(tasks),
-          summary: `${tasks.filter(t => t.status === 'completed').length}/${tasks.length} completed`,
+        guiComponent('card', {
+          variant: 'default',
+          body: [
+            guiComponent('stats-line', {
+              items: [
+                { label: '完成', value: String(doneCount), severity: 'ok' },
+                { label: '待办', value: String(tasks.length - doneCount) },
+              ],
+            }),
+            guiComponent('list-tree', { items: toTreeItems(tasks) }),
+          ],
         })
       )
     }
@@ -680,8 +629,9 @@ export const todoTool: ToolDefinition = {
 | tool 结果 `__gui__` 透传 | 已完成 | 实时链路 + 历史链路（重开 session 不丢） |
 | widget NUL 标记编解码 | 已完成 | `guiSetWidget()` → event-adapter 解码 → `extension:widgetGui` |
 | status `textRaw` 保留 | 已完成 | ANSI 着色信息不再丢失 |
-| ExtensionUIDialog（交互） | 已完成 | confirm/select/input/editor/notify |
-| `guiInteract()` RPC 降级 | 已完成 | select/input/confirm 序列 |
+| ExtensionUIDialog（标准交互） | 已完成 | confirm/select/input/editor/notify |
+| AskUserOverlay（富交互） | 已完成 | Panel.vue inline，标签页/单选/多选/Other/评论 |
+| `askUserInteract()` | 已完成 | select 通道 + ASK_USER_MARKER |
 | AnsiText 组件渲染 | 已完成 | ansi_up + XSS 安全 |
 | 前端 `__gui__` 检测 + 路由骨架 | 已完成 | GuiComponentRenderer，未知类型降级 AnsiText |
 
@@ -689,11 +639,9 @@ export const todoTool: ToolDefinition = {
 
 | 能力 | 阶段 | 说明 |
 |---|---|---|
-| 11 个内置 Vue 组件 | P2 | task-list/goal-status/workflow-runs/subagent-trace/card/stats-line/progress-bar/list-tree/columns/tab-bar/interaction |
+| 6 个通用原语 Vue 组件 | P2 | card/stats-line/progress-bar/list-tree/columns/tab-bar |
 | custom 组件注册表 | P2 | `provide('gui-custom-registry')` |
-| widgetGui 前端路由 | P2 | widgetKey → 面板组件 |
-| 富交互组件 | P3 | tab/分屏/freeform（替代 dialog 降级） |
-| 推荐扩展迁移 | P4 | pi-todo/goal/workflow/subagents/ask-user |
+| extension 迁移 | P3 | 各 extension 接入协议 |
 
 **当前降级行为**：P2 组件未实现前，非 `ansi-text` 类型的 GuiComponent 会在前端降级为 JSON 序列化文本展示（不会崩溃）。extension 现在就可以接入协议，待 P2 组件实现后自动获得完整 GUI 渲染。
 
@@ -735,7 +683,7 @@ if (isGuiCapable(ctx)) {
 }
 ```
 
-同理 `guiInteract()` —— TUI 模式下它调 `ctx.ui.custom()`，extension 需提供自己的 TUI Component factory。
+同理 `askUserInteract()` —— TUI 模式下它抛错。extension 需按 ctx.mode 分支，TUI 调 `ctx.ui.custom()`，RPC 调 `askUserInteract()`。
 
 ### 8.3 content 与 details 的分工
 
@@ -763,7 +711,7 @@ if (isGuiCapable(ctx)) {
 ```
 extension execute()
   │
-  ├─ details.__gui__ = guiResult(guiComponent('task-list', {...}))
+  ├─ details.__gui__ = guiResult(guiComponent('stats-line', {...}))
   │
   ▼
 pi agent-core (agent-session.js)
@@ -784,7 +732,7 @@ xyz-agent runtime
   ├─ Block.vue: extractGui(tool.details) → GuiComponent
   ├─ GuiComponentRenderer.vue: 按 component.type 路由
   │   ├─ 'ansi-text' → AnsiText.vue（已实现）
-  │   ├─ 'task-list' → TaskList.vue（P2）
+  ├─ 'card' / 'stats-line' / ... → P2 待实现（降级 AnsiText JSON 展示）
   │   └─ 未知类型 → AnsiText（JSON 序列化降级）
   │
   └─ 重开 session: message-converter 历史路径同样提取 details.__gui__
@@ -810,23 +758,30 @@ xyz-agent runtime event-adapter.ts
 前端: extension:widgetGui handler（P2 路由到面板）
 ```
 
-交互链路（guiInteract）：
+ask-user 交互链路：
 
 ```
-extension: await guiInteract(ctx, questions)
+extension: await askUserInteract(ctx, questions)
   │
-  ├─ RPC 模式: ctx.ui.select() / input() / confirm()
+  ├─ RPC 模式: ctx.ui.select(ASK_USER_MARKER, [JSON_payload])
   │   │
   │   ▼
-  │   pi extension_ui_request → runtime → 前端 ExtensionUIDialog
+  │   pi extension_ui_request{title:ASK_USER_MARKER} → runtime event-adapter
+  │   │
+  │   ├─ 检测 title === ASK_USER_MARKER → JSON.parse(options[0])
+  │   ├─ 发 extension.ui_request WS 帧 { askUser:true, askUserQuestions }
   │   │
   │   ▼
-  │   用户操作 → extension.ui_response → runtime → pi stdin
+  │   前端 useExtensionUI → currentAskUserRequest → Panel.vue
+  │   ├─ AskUserOverlay inline 渲染（覆盖 composer 位置）
   │   │
   │   ▼
-  │   ctx.ui.select() Promise resolve
+  │   用户操作 → extension.ui_response { result: JSON_answers }
+  │   │
+  │   ▼
+  │   runtime → pi stdin → ctx.ui.select() Promise resolve
   │
-  └─ 返回 answers / null
+  └─ 返回 parsed answers / null
 ```
 
 ---
@@ -840,7 +795,7 @@ extension: await guiInteract(ctx, questions)
 - [ ] RPC 分支构造 `guiComponent(type, props)` + `guiResult()` 放进 `details.__gui__`
 - [ ] TUI 分支保留原有 `renderResult` / `ctx.ui.setWidget` / `ctx.ui.custom` 逻辑
 - [ ] widget 用 `guiSetWidget()`（RPC）+ 原生 `ctx.ui.setWidget`（TUI）双覆盖
-- [ ] 交互用 `guiInteract()`（内部自动 TUI/RPC 路由）
+- [ ] 交互用 `askUserInteract()`（RPC 模式）/ `ctx.ui.custom()`（TUI 模式）按 ctx.mode 分支
 - [ ] `content` 只放 LLM 可见的摘要文本，结构化数据放 `details`
 - [ ] `details.__gui__` 放在 `result.details` 下，不在 `content` 内
 - [ ] 确认重开 session 后 `__gui__` 仍可见（依赖 runtime F1 修复，已落地）
