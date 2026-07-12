@@ -3,7 +3,7 @@
  *
  * 验证：
  * - ansi-text 类型 → 渲染 AnsiText（lines join 成 content，ansi_up 着色）
- * - 协议内但 P2 前未实现的通用原语（如 card）→ 降级 AnsiText，content 为 props 的 JSON 文本
+ * - card 类型 → 路由到真实 Card 组件（不再降级 AnsiText JSON）
  * - custom 类型未注册 → 降级 AnsiText，content 为 props 的 JSON 文本
  * - custom 类型已注册（provide 'gui-custom-registry'）→ 路由到注册组件
  *
@@ -31,19 +31,16 @@ describe('GuiComponentRenderer 路由', () => {
     expect(wrapper.html()).toContain('color')
   })
 
-  it('协议内但 P2 前未实现的通用原语（card）→ 降级 AnsiText，content 为 JSON 文本', () => {
+  it('card 类型 → 路由到真实 Card 组件（不再降级 AnsiText JSON）', () => {
     const component: GuiComponent = {
       type: 'card',
       props: { variant: 'elevated', body: [] },
     }
     const wrapper = mount(GuiComponentRenderer, { props: { component } })
 
-    // 降级到 AnsiText
-    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
-    // content 是 props 的 JSON 文本（缩进 2 空格，关键字段可见）
-    const text = wrapper.text()
-    expect(text).toContain('"variant": "elevated"')
-    expect(text).toContain('"body"')
+    // 路由到 Card 组件而非 AnsiText
+    expect(wrapper.find('[data-testid="gui-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
   })
 
   it('custom 类型未注册 → 降级 AnsiText，content 为 JSON 文本', () => {
