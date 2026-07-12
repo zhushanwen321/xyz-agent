@@ -26,6 +26,7 @@ import StatsLine from './gui/StatsLine.vue'
 import TabBar from './gui/TabBar.vue'
 import Card from './gui/Card.vue'
 import Columns from './gui/Columns.vue'
+import ListTree from './gui/ListTree.vue'
 
 const props = defineProps<{ component: GuiComponent }>()
 
@@ -37,6 +38,7 @@ const BUILTIN_MAP: Record<string, Component> = {
   'tab-bar': TabBar,
   'card': Card,
   'columns': Columns,
+  'list-tree': ListTree,
 }
 
 /** custom 组件注册表（内置 extension 编译期注册，P2 实现）。默认空表。 */

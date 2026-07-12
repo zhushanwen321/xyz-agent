@@ -99,4 +99,54 @@ describe('GuiComponentRenderer 路由', () => {
     expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('"wrong": "shape"')
   })
+
+  it('progress-bar → 路由到真实 ProgressBar 组件', () => {
+    const component: GuiComponent = {
+      type: 'progress-bar',
+      props: { current: 3, total: 4 },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-progress-bar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('stats-line → 路由到真实 StatsLine 组件', () => {
+    const component: GuiComponent = {
+      type: 'stats-line',
+      props: { items: [{ value: '42' }] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-stats-line"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('tab-bar → 路由到真实 TabBar 组件', () => {
+    const component: GuiComponent = {
+      type: 'tab-bar',
+      props: { tabs: [{ label: 'tab1' }] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-tab-bar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('columns → 路由到真实 Columns 组件', () => {
+    const component: GuiComponent = {
+      type: 'columns',
+      props: { children: [] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-columns"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('list-tree → 路由到真实 ListTree 组件', () => {
+    const component: GuiComponent = {
+      type: 'list-tree',
+      props: { items: [{ label: 'item1' }] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-list-tree"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
 })
