@@ -4,16 +4,11 @@
  * GuiComponent 是 pi Component { render(width): string[] } 的可序列化镜像。
  * extension 按 ctx.mode 分支：TUI 走原生 Component，RPC 走 GuiComponent（放进 details.__gui__）。
  *
- * GuiComponentProps 是类型路由的聚合点：通用布局原语 + 各 extension 专属组件
- * 全部在此声明键值，子类型从 extensions/ 子目录 import。
+ * GuiComponentProps 是类型路由的聚合点：通用布局原语 + extension 专属组件
+ * 全部在此声明键值，子类型直接内联本文件（纯类型，无运行时逻辑）。
  *
  * @see docs/architecture/extension-gui-protocol.md
  */
-
-import type { TaskItem } from '../extensions/pi-todo/types'
-import type { GoalStatusValue, MetricBar } from '../extensions/pi-goal/types'
-import type { WorkflowRunItem } from '../extensions/pi-workflow/types'
-import type { SubagentStatusValue, EventLogEntry } from '../extensions/pi-subagents/types'
 
 // ── 协议版本 ──
 
@@ -128,7 +123,49 @@ export interface GuiRenderResult {
   component: GuiComponent
 }
 
-// ── 布局原语子类型（通用）──
+// ── 组件 props 子类型（通用布局原语 + extension 专属组件共用）──
+
+/** pi-todo task-list 组件子类型 */
+export interface TaskItem {
+  id: string | number
+  text: string
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+}
+export type TaskStatus = TaskItem['status']
+
+/** pi-goal goal-status 组件子类型 */
+export type GoalStatusValue =
+  | 'active' | 'paused' | 'blocked'
+  | 'complete' | 'budget_limited' | 'time_limited' | 'cancelled'
+
+export interface MetricBar {
+  label: string
+  current: number
+  total?: number
+  unit?: string
+  severity?: 'ok' | 'warn' | 'danger'
+}
+
+/** pi-workflow workflow-runs 组件子类型 */
+export interface WorkflowRunItem {
+  runId: string
+  name: string
+  status: 'running' | 'paused' | 'done'
+  reason?: 'completed' | 'failed' | 'aborted' | 'budget_limited' | 'time_limited'
+  durationMs?: number
+  error?: string
+}
+
+/** pi-subagents subagent-trace 组件子类型 */
+export type SubagentStatusValue = 'running' | 'done' | 'failed' | 'cancelled' | 'crashed'
+
+export interface EventLogEntry {
+  type: 'tool_start' | 'tool_end' | 'turn_end' | 'error'
+  label: string
+  status?: 'running' | 'done' | 'failed'
+}
+
+// ── 布局原语子类型 ──
 
 export interface StatItem {
   label?: string
