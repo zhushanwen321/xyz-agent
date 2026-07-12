@@ -9,9 +9,13 @@
     "lint": "eslint .",
     "prepare": "bash .githooks/install-hooks.sh",
     "build:e2e": "pnpm --filter @xyz-agent/electron build:e2e",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "release:npm": "pnpm --filter @xyz-agent/extension-protocol build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.29.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
     "eslint": "^10.3.0",

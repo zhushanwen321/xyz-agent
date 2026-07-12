@@ -1,0 +1,60 @@
+name: Release NPM Dev
+
+# npm 预发布（beta/dev tag）
+#
+# 触发：push 到 `dev-npm-*` 分支
+# 产出：版本号 `-dev.*` 后缀，发布到 npm `dev` dist-tag
+# 消费者：npm install @xyz-agent/extension-protocol@dev
+
+on:
+  push:
+    branches:
+      - 'dev-npm-*'
+
+concurrency:
+  group: release-npm-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  prerelease:
+    name: Publish prerelease to npm
+    runs-on: ubuntu-latest
+    # 只在分支 push 时触发，PR 中的 push不触发
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build extension-protocol
+        run: pnpm --filter @xyz-agent/extension-protocol build
+
+      - name: Publish prerelease to npm
+        run: pnpm changeset publish --tag dev
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "## NPM Prerelease Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: \`$BRANCH\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published to npm \`dev\` dist-tag." >> "$GITHUB_STEP_SUMMARY"
+          echo "Install: \`npm install @xyz-agent/extension-protocol@dev\`" >> "$GITHUB_STEP_SUMMARY"

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Extension GUI rendering protocol: types and helpers for pi extension dual-mode (TUI/GUI) rendering",
   "main": "src/index.ts",
+  "module": "src/index.ts",
   "types": "src/index.ts",
   "exports": {
     ".": {
@@ -10,12 +11,29 @@
       "import": "./src/index.ts"
     }
   },
+  "publishConfig": {
+    "main": "dist/index.mjs",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.mts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "license": "MIT",
   "scripts": {
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {
+    "tsup": "^8.5.1",
     "typescript": "^5.7.0",
     "vitest": "^4.1.6"
   }
