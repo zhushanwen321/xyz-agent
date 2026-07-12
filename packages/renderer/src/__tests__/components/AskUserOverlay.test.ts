@@ -11,6 +11,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/AskUserOverlay.test.ts
  */
 import { describe, it, expect } from 'vitest'
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
@@ -55,6 +56,7 @@ const freeTextQ: AskUserQuestion = {
 function mountOverlay(questions: AskUserQuestion[], allowCancel = true) {
   return mount(AskUserOverlay, {
     props: { questions, allowCancel },
+    attachTo: document.body,
   })
 }
 
@@ -227,6 +229,34 @@ describe('AskUserOverlay', () => {
     // 选 Postgres（单选互斥）→ Other 取消选中，input 消失
     await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
     expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(false)
+  })
+
+  it('U21: Other 选中后自动聚焦 input', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 点选 Other 卡片
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    await nextTick()
+
+    // input 应存在
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    expect(otherInput.exists()).toBe(true)
+    // ref focus 生效：input 获得焦点
+    expect(otherInput.element).toBe(document.activeElement)
+  })
+
+  it('U22: Other input 内 enter/space 不冒泡取消选中', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 点选 Other + 输入文本
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义答案')
+    // input 内按 enter
+    await otherInput.trigger('keydown', { key: 'Enter' })
+    // Other 仍选中、input 仍存在、文本不丢
+    expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
+    expect(otherInput.element.value).toBe('自定义答案')
   })
 })
 

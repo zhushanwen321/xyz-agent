@@ -25,7 +25,7 @@
  * - 选项 inline：indicator + label + description 同行流式，无边框 hover/selected 用 bg
  * - Other 卡片化：最后一个选项(label="其他")，选中后 label 下方展开输入框
  */
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Clock } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -116,7 +116,7 @@ function isOtherSelected(q: AskUserQuestion): boolean {
 
 // ── 单选 / 多选 toggle ──
 // 单选选中后自动前进到下一题（对齐 pi TUI advanceAfterAnswer），多选不前进。
-// Other 是特殊选项（OTHER_VALUE）：选中不 auto-advance（需输入文本），取消 Other 清 otherText。
+// Other 是特殊选项（OTHER_VALUE）：选中不 auto-advance，展开 input 并自动聚焦。
 function toggleOption(q: AskUserQuestion, value: string): void {
   const st = states.value[qKey(q)]
   if (!st) return
@@ -127,15 +127,29 @@ function toggleOption(q: AskUserQuestion, value: string): void {
       if (value === OTHER_VALUE) st.otherText = '' // 取消 Other 清文本
     } else {
       st.selectedValues.push(value)
+      if (value === OTHER_VALUE) focusOtherInput() // 选中 Other 聚焦 input
     }
   } else {
     st.selectedValues = st.selectedValues[0] === value ? [] : [value]
     if (st.selectedValues.length > 0 && value !== OTHER_VALUE) {
       st.otherText = '' // 选普通选项清 Other（互斥）
       advanceToNext()
+    } else if (value === OTHER_VALUE && st.selectedValues.length > 0) {
+      focusOtherInput() // 选中 Other 聚焦 input
     }
     // 选 Other 时不 auto-advance（用户要输入文本），不前进
   }
+}
+
+/** Other input 组件实例引用（选中展开后自动聚焦）*/
+const otherInputComp = ref<{ $el: HTMLInputElement } | null>(null)
+
+/** Other 选中后聚焦 input（等 v-if 渲染完成）*/
+function focusOtherInput(): void {
+  nextTick(() => {
+    // shadcn Input 根元素就是 <input>，$el 直接是原生 input
+    otherInputComp.value?.$el?.focus()
+  })
 }
 
 function isSelected(q: AskUserQuestion, value: string): boolean {
@@ -382,14 +396,17 @@ function onSubmit(): void {
           />
           <div class="flex min-w-0 flex-1 flex-col">
             <span class="text-[13px] font-normal leading-1.5 text-fg">其他</span>
-            <!-- 选中时展开输入框（独立成行） -->
+            <!-- 选中时展开输入框（独立成行，自动聚焦）。
+                 @keydown.stop 阻止 enter/space 冒泡到卡片容器触发 toggle 取消选中 -->
             <Input
               v-if="isOtherSelected(activeQuestion)"
+              ref="otherInputComp"
               v-model="states[qKey(activeQuestion)].otherText"
               placeholder="输入自定义答案…"
               :data-testid="`ask-user-other-${qKey(activeQuestion)}`"
               class="mt-1.5"
               @click.stop
+              @keydown.stop
             />
           </div>
         </div>
