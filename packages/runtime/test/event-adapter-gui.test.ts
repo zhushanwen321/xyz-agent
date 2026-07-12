@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { translate } from '../src/infra/pi/event-adapter.js'
-import { GUI_WIDGET_MARKER } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, GUI_INTERACT_MARKER } from '@xyz-agent/extension-protocol'
 import type { PiTranslatedEvent } from '../src/services/session/types.js'
 
 // ── 辅助：构造 pi setWidget 事件 ──
@@ -231,5 +231,115 @@ describe('event-adapter: handleToolExecutionEnd outputRaw', () => {
     expect(tcEnd.outputRaw).toBe('\x1b[32msuccess\x1b[0m')
     // details 透传
     expect(tcEnd.details?.__gui__).toBeDefined()
+  })
+})
+
+// ── 富交互：guiInteract marker 检测 + 普通 select options 透传（U6-U8）──
+
+/** 辅助：构造 pi extension_ui_request{method:'select'} 事件 */
+function makeSelectEvent(title: string, options: unknown[], id = 'req-x'): Record<string, unknown> {
+  return {
+    type: 'extension_ui_request',
+    method: 'select',
+    id,
+    title,
+    options,
+  }
+}
+
+/** 辅助：从 translate 结果中提取 message 事件 */
+function findMessage(results: PiTranslatedEvent[]):
+  { kind: 'message'; message: { type: string; payload: Record<string, unknown> } } | undefined {
+  return results.find(r => r.kind === 'message') as
+    { kind: 'message'; message: { type: string; payload: Record<string, unknown> } } | undefined
+}
+
+/** 辅助：从 translate 结果中提取 extension-ui kind 事件 */
+function findExtensionUi(results: PiTranslatedEvent[]): PiTranslatedEvent | undefined {
+  return results.find(r => r.kind === 'extension-ui')
+}
+
+describe('event-adapter: 富交互 GUI_INTERACT_MARKER 检测 (U6-U8)', () => {
+  it('U6: title=marker + options[0] 合法 JSON → 透传 questions + extension-ui kind 事件', () => {
+    const questions = [{ header: 'db', question: '选哪个?', options: [{ label: 'PG' }] }]
+    const payload = JSON.stringify({ questions, allowCancel: false })
+    const event = makeSelectEvent(GUI_INTERACT_MARKER, [payload], 'req-interact')
+
+    const results = translate(event, 'sess-1')
+
+    // extension-ui kind 事件必须存在（timeout-manager 据此注册 5min 超时）
+    const extUi = findExtensionUi(results)
+    expect(extUi).toBeDefined()
+
+    // message 帧：extension.ui_request + interaction=true + questions 透传
+    const msg = findMessage(results)
+    expect(msg).toBeDefined()
+    expect(msg!.message.type).toBe('extension.ui_request')
+    expect(msg!.message.payload.interaction).toBe(true)
+    expect(msg!.message.payload.method).toBe('select')
+    expect(msg!.message.payload.requestId).toBe('req-interact')
+    expect(msg!.message.payload.questions).toEqual(questions)
+    expect(msg!.message.payload.allowCancel).toBe(false)
+    // 富交互分支不传 options（避免前端把 JSON payload 当下拉选项）
+    expect(msg!.message.payload.options).toBeUndefined()
+  })
+
+  it('U7: 普通 select（title≠marker）→ options 透传 string[]（.map(String)，不拍扁）', () => {
+    // pi select 真实格式：string[]，不是 {label,value} 对象数组
+    const event = makeSelectEvent('Pick a color', ['red', 'green', 'blue'], 'req-normal')
+
+    const results = translate(event, 'sess-1')
+
+    const msg = findMessage(results)
+    expect(msg).toBeDefined()
+    expect(msg!.message.type).toBe('extension.ui_request')
+    expect(msg!.message.payload.method).toBe('select')
+    expect(msg!.message.payload.title).toBe('Pick a color')
+    // options 透传 string[]，不是 undefined[]（旧 .map(o=>o.label) bug）
+    expect(msg!.message.payload.options).toEqual(['red', 'green', 'blue'])
+    // 非 marker → 无 interaction 字段
+    expect(msg!.message.payload.interaction).toBeUndefined()
+  })
+
+  it('U8: title=marker 但 options[0] 非法 JSON → 降级普通 select', () => {
+    const event = makeSelectEvent(GUI_INTERACT_MARKER, ['not-valid-json{'], 'req-bad')
+
+    const results = translate(event, 'sess-1')
+
+    const msg = findMessage(results)
+    expect(msg).toBeDefined()
+    expect(msg!.message.type).toBe('extension.ui_request')
+    expect(msg!.message.payload.method).toBe('select')
+    // 降级为普通 select（无 interaction/questions 字段）
+    expect(msg!.message.payload.interaction).toBeUndefined()
+    // options 经 .map(String) 透传
+    expect(msg!.message.payload.options).toEqual(['not-valid-json{'])
+  })
+
+  it('U8: title=marker 但 options 为空数组 → 降级普通 select', () => {
+    const event = makeSelectEvent(GUI_INTERACT_MARKER, [], 'req-empty')
+
+    const results = translate(event, 'sess-1')
+
+    const msg = findMessage(results)
+    expect(msg).toBeDefined()
+    expect(msg!.message.payload.interaction).toBeUndefined()
+  })
+
+  it('U6: confirm/input/editor 不受 marker 检测影响（method≠select 不进 marker 分支）', () => {
+    const event = {
+      type: 'extension_ui_request',
+      method: 'confirm',
+      id: 'req-confirm',
+      title: GUI_INTERACT_MARKER,  // title 碰巧是 marker，但 method 不是 select
+      message: 'sure?',
+    }
+
+    const results = translate(event, 'sess-1')
+
+    const msg = findMessage(results)
+    expect(msg).toBeDefined()
+    expect(msg!.message.payload.method).toBe('confirm')
+    expect(msg!.message.payload.interaction).toBeUndefined()
   })
 })

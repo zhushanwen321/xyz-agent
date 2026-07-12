@@ -82,10 +82,8 @@ describe('EventAdapter: extension event translation', () => {
             method: 'select',
             id: 'req-2',
             title: 'Pick an option',
-            options: [
-              { label: 'A', value: 'a', description: 'Option A' },
-              { label: 'B', value: 'b' },
-            ],
+            // pi select 严格传 string[]（types.ts select 签名 + rpc-mode.js 原样透传）
+            options: ['A', 'B'],
           }))
           return () => {}
         },
@@ -96,7 +94,7 @@ describe('EventAdapter: extension event translation', () => {
       expect(sent[0].type).toBe('extension.ui_request')
       const payload = sent[0].payload as Record<string, unknown>
       expect(payload.method).toBe('select')
-      // options should be string[] (labels extracted)
+      // options 透传 string[]（.map(String)，不再 .map(o=>o.label) 拍扁）
       expect(payload.options).toEqual(['A', 'B'])
     })
 
