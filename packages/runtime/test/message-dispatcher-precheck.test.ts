@@ -34,6 +34,7 @@ function makeMockSession(isGenerating: boolean): IManagedSessionView {
     tokenCount: 0,
     inputTokens: 0,
     isGenerating,
+    labelPersisted: false,
   }
 }
 

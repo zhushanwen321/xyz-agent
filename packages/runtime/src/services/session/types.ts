@@ -41,6 +41,18 @@ export interface IManagedSessionView {
    * 仅供内部使用（如 landing 态命令源）。toSummary 透传到 SessionSummary.hidden。
    */
   hidden?: boolean
+  /**
+   * label 是否已持久化到 session JSONL 的 session_info 行。
+   *
+   * pi 0.80.3 的 SessionManager._persist 首次 flush（首条 assistant 消息后）才用
+   * openSync("wx") 创建文件，且 flush 时**不写 session_info**（已验证：真实 session
+   * 文件 0 个 session_info 行）。若在 flush 前用 persistSessionName 创建文件会撞
+   * EEXIST 导致 session 卡死（[HISTORICAL] 规则 #6）。故 label 写盘推迟到首次
+   * turn_end（第一个 LLM 回合结束，pi 已完成该轮 flush，文件存在 → append 安全）。
+   *
+   * 纯运行时标记，不进 toSummary，不暴露给前端。
+   */
+  labelPersisted: boolean
 }
 
 // ── PiTranslatedEvent：infra(event-adapter) → service(interpreter) 中间事件 ──
