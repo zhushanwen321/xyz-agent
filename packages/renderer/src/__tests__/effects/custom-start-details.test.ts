@@ -21,7 +21,7 @@ describe('customStart details 保留（审计项 A）', () => {
     const guiDetails = {
       __gui__: {
         v: 1,
-        component: { type: 'task-list', props: {} },
+        component: { type: 'stats-line', props: { items: [] } },
       },
     }
     store.applyMessageEvent('sx', {

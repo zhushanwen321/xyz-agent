@@ -43,7 +43,7 @@ function makeToolEndEvent(toolCallId: string, result: unknown): Record<string, u
 
 describe('event-adapter: setWidget GUI marker 检测', () => {
   it('NUL marker 编码的 GuiComponent → extension:widgetGui 帧', () => {
-    const guiComponent = { type: 'task-list', props: { items: [{ id: 1, text: 'task', status: 'pending' }] } }
+    const guiComponent = { type: 'stats-line', props: { items: [{ value: '3 turns' }] } }
     const encoded = [GUI_WIDGET_MARKER + JSON.stringify(guiComponent)]
     const event = makeSetWidgetEvent('todo', encoded)
 
@@ -57,7 +57,7 @@ describe('event-adapter: setWidget GUI marker 检测', () => {
     expect(msg!.message.payload.widgetKey).toBe('todo')
     // gui 字段应是解析后的 GuiComponent 对象
     const gui = msg!.message.payload.gui as { type: string; props: { items: unknown[] } }
-    expect(gui.type).toBe('task-list')
+    expect(gui.type).toBe('stats-line')
     expect(gui.props.items).toHaveLength(1)
   })
 
@@ -109,7 +109,7 @@ describe('event-adapter: handleToolExecutionUpdate details 提取', () => {
   it('partialResult 含 details.__gui__ → detail 提取 details 内容', () => {
     const partialResult = {
       details: {
-        __gui__: { v: 1, component: { type: 'subagent-trace', props: {} } },
+        __gui__: { v: 1, component: { type: 'card', props: { body: [] } } },
         progress: 50,
       },
       content: 'working...',
@@ -215,7 +215,7 @@ describe('event-adapter: handleToolExecutionEnd outputRaw', () => {
   it('result.content 含 ANSI → outputRaw 保留原始 ANSI', () => {
     const result = {
       content: [{ type: 'text', text: '\x1b[32msuccess\x1b[0m' }],
-      details: { __gui__: { v: 1, component: { type: 'task-list', props: { items: [] } } } },
+      details: { __gui__: { v: 1, component: { type: 'stats-line', props: { items: [] } } } },
     }
     const event = makeToolEndEvent('tc-1', result)
 

@@ -2,17 +2,15 @@
 // Extension GUI 渲染协议：类型 + helper 函数，零运行时依赖。
 //
 // 包结构：
-// - core/          通用协议层（所有 extension 共用：GuiComponent + 布局原语 +
-//                  extension 专属组件的纯类型契约 + 传输编码）
+// - core/          通用协议层（所有 extension 共用：GuiComponent + 布局原语 + 传输编码）
 // - extensions/    有运行时定制逻辑的 extension（marker + helper）
 //   - ask-user/    富交互（select 通道 + marker）
 //
-// 纯类型的渲染契约（TaskItem/GoalStatusValue/WorkflowRunItem/...）归 core，
-// 因为它们只是 GuiComponentProps 的内联子类型，无运行时代码、无需隔离。
-// 只有需要 marker + 运行时 helper 的 extension（如 ask-user 的双向交互）
-// 才在 extensions/ 下建子目录。
+// core 只保留结构性、中性的通用原语（card/stats-line/progress-bar/list-tree/
+// columns/tab-bar/ansi-text）。特定 extension 的领域数据结构不进协议层——
+// extension 用通用原语组合表达，形状太特殊时走 custom 通道。
 
-// ── core：通用类型 + extension 专属组件子类型 ──
+// ── core：通用类型 ──
 export type {
   GuiComponent,
   GuiComponentType,
@@ -21,13 +19,6 @@ export type {
   StatItem,
   TreeItem,
   TreeItemIcon,
-  TaskItem,
-  TaskStatus,
-  GoalStatusValue,
-  MetricBar,
-  WorkflowRunItem,
-  SubagentStatusValue,
-  EventLogEntry,
 } from './core/types'
 
 // ── core：通用常量 ──

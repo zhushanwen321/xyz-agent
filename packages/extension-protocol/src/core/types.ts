@@ -39,36 +39,6 @@ export interface GuiComponentProps {
     lines: string[]
   }
 
-  /** 任务列表——pi-todo */
-  'task-list': {
-    items: TaskItem[]
-    summary?: string
-  }
-
-  /** Goal 状态卡片——pi-goal */
-  'goal-status': {
-    status: GoalStatusValue
-    title: string
-    slug?: string
-    turn?: number
-    metrics?: MetricBar[]
-  }
-
-  /** 工作流 run 列表——pi-workflow */
-  'workflow-runs': {
-    runs: WorkflowRunItem[]
-  }
-
-  /** Subagent 执行轨迹——pi-subagents */
-  'subagent-trace': {
-    agent: string
-    status: SubagentStatusValue
-    stats?: { turns?: number; tokens?: number; durationMs?: number; toolCount?: number }
-    eventLog?: EventLogEntry[]
-    result?: string
-    error?: string
-  }
-
   // ── 布局原语（替代 TUI ASCII 布局）──
 
   /** 卡片容器——替代 TUI 的 ┌─┐││└─┘ box 边框 */
@@ -121,48 +91,6 @@ export interface GuiRenderResult {
   /** 版本协商，前端检测，不认识降级 ansi-text */
   v: typeof PROTOCOL_VERSION
   component: GuiComponent
-}
-
-// ── 组件 props 子类型（通用布局原语 + extension 专属组件共用）──
-
-/** pi-todo task-list 组件子类型 */
-export interface TaskItem {
-  id: string | number
-  text: string
-  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-}
-export type TaskStatus = TaskItem['status']
-
-/** pi-goal goal-status 组件子类型 */
-export type GoalStatusValue =
-  | 'active' | 'paused' | 'blocked'
-  | 'complete' | 'budget_limited' | 'time_limited' | 'cancelled'
-
-export interface MetricBar {
-  label: string
-  current: number
-  total?: number
-  unit?: string
-  severity?: 'ok' | 'warn' | 'danger'
-}
-
-/** pi-workflow workflow-runs 组件子类型 */
-export interface WorkflowRunItem {
-  runId: string
-  name: string
-  status: 'running' | 'paused' | 'done'
-  reason?: 'completed' | 'failed' | 'aborted' | 'budget_limited' | 'time_limited'
-  durationMs?: number
-  error?: string
-}
-
-/** pi-subagents subagent-trace 组件子类型 */
-export type SubagentStatusValue = 'running' | 'done' | 'failed' | 'cancelled' | 'crashed'
-
-export interface EventLogEntry {
-  type: 'tool_start' | 'tool_end' | 'turn_end' | 'error'
-  label: string
-  status?: 'running' | 'done' | 'failed'
 }
 
 // ── 布局原语子类型 ──

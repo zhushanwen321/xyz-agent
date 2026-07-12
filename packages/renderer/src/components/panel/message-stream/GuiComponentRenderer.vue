@@ -2,8 +2,8 @@
 /**
  * GUI 组件路由器——按 GuiComponent.type 路由到对应 Vue 组件（spec §9.1）。
  *
- * P0+P1 阶段只实现路由骨架：仅 ansi-text 内置组件已落地，其余类型（task-list /
- * goal-status / card 等）属 P2 范围。未识别类型与未注册的 custom 均降级到 AnsiText，
+ * P0+P1 阶段只实现路由骨架：仅 ansi-text 内置组件已落地，其余通用原语（card /
+ * stats-line / progress-bar 等）属 P2 范围。未识别类型与未注册的 custom 均降级到 AnsiText，
  * 把结构化数据 JSON 序列化为文本展示（保证不丢信息，且不崩渲染）。
  *
  * 降级时的 prop 适配（关键点）：
@@ -25,7 +25,7 @@ import AnsiText from './gui/AnsiText.vue'
 
 const props = defineProps<{ component: GuiComponent }>()
 
-/** 已实现的内置组件映射。P2 阶段逐步补充 task-list / goal-status / card 等。 */
+/** 已实现的内置组件映射。P2 阶段逐步补充 card / stats-line / progress-bar 等。 */
 const BUILTIN_MAP: Record<string, Component> = {
   'ansi-text': AnsiText,
 }
