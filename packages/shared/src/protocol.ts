@@ -10,12 +10,14 @@ import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod } fro
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
+import type { SubagentRecord } from './subagent'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
+  | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
@@ -75,6 +77,9 @@ export interface ClientMessageMap {
   // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
   // fromPiEntryId 缺失（RPC 路径读取的 session 无 piEntryId）时报错——fork 需文件路径加载的历史。
   'session.fork': { srcSessionId: string; fromPiEntryId: string; includeFrom?: boolean; label?: string }
+  // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
+  'session.getSubagents': { sessionId: string }
+  'session.getSubagentHistory': { sessionId: string; subagentId: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
@@ -154,6 +159,7 @@ export type ClientMessage = {
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
+  | 'session.subagents' | 'session.subagentHistory'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end'
@@ -272,6 +278,10 @@ export interface ServerMessageMapBase {
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // session.subagents：当前 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）
+  'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
+  // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
+  'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
   // publicSessionId：公共 session 的真实 id（pi 生成 UUID，启动期创建后填）。
   // 前端 landing 态用此 id 从 commandStore 取命令（pi extension slash 命令）。
