@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * ExtensionUIDialog——渲染 pi extension 的交互请求（confirm/select/input/editor）。
+ * ExtensionUIDialog——渲染 pi extension 的简单交互原语（confirm/select/input/editor）。
  *
  * pi extension 调 ctx.ui.select/confirm/input → runtime 推 extension.ui_request
- * → useExtensionUI 维护队列 → 此组件渲染队首请求的对话框
+ * → useExtensionUI 维护队列 → 此组件渲染队首的非 ask-user 请求
  * → 用户操作 → respond() 回传（带 method）→ pi Promise resolve。
  *
  * 按 method 路由：
@@ -11,6 +11,9 @@
  * - select → Select 下拉选择
  * - input → Input 文本输入
  * - editor → Textarea 多行编辑
+ *
+ * ask-user 富交互（askUser===true）不走此组件——由 Panel.vue inline 渲染
+ * （覆盖 composer 位置，per-panel 隔离）。useExtensionUI.currentAskUserRequest 路由到 Panel。
  *
  * notify 不走此组件——它是 fire-and-forget（pi 不等回复），经 extension.notify WS 帧
  * → useExtensionNotify → useToast 渲染为非阻塞 toast。
@@ -21,28 +24,18 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import AskUserOverlay from './ask-user/AskUserOverlay.vue'
-import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
 import { useExtensionUI } from '@/composables/useExtensionUI'
 import { useSidebar } from '@/composables/features/useSidebar'
 
 const { focusedSessionId } = useSidebar()
-const { currentAskUserRequest, currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId)
+const { currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId)
 
-// W1 过渡期：ask-user 走 currentAskUserRequest，普通原语走 currentDialogRequest。
-// W2 会把 ask-user 分支搬到 Panel inline，W3 再从此处移除。
-const req = computed(() => currentAskUserRequest.value ?? currentDialogRequest.value)
+const req = computed(() => currentDialogRequest.value)
 const isOpen = computed(() => req.value !== undefined)
 
 // ── select/input 状态 ──
 const inputValue = ref('')
 const selectValue = ref('')
-
-// ask-user questions（类型守卫收窄 unknown[] → AskUserQuestion[]）
-const askUserQuestions = computed<AskUserQuestion[]>(() => {
-  if (!req.value?.askUser || !req.value.askUserQuestions) return []
-  return req.value.askUserQuestions as AskUserQuestion[]
-})
 
 // 新请求到来时，重置输入状态
 watch(req, (r) => {
@@ -62,34 +55,18 @@ function onConfirm(): void {
     respond(r.requestId, true)
   }
 }
-
-// ask-user Submit：answers JSON string 通过 select value 回传
-function onAskUserSubmit(answers: string): void {
-  const r = req.value
-  if (!r) return
-  respond(r.requestId, answers)
-}
 </script>
 
 <template>
   <Dialog :open="isOpen" @update:open="(v: boolean) => { if (!v && req) cancel(req.requestId) }">
-    <DialogContent hide-close :class="req?.askUser ? 'max-w-2xl' : 'max-w-[420px]'" data-testid="extension-ui-dialog">
+    <DialogContent hide-close class="max-w-[420px]" data-testid="extension-ui-dialog">
       <DialogHeader>
         <DialogTitle>{{ req?.title || 'Extension 请求' }}</DialogTitle>
         <DialogDescription v-if="req?.message">{{ req.message }}</DialogDescription>
       </DialogHeader>
 
-      <!-- ask-user 富交互（askUserInteract via select+marker） -->
-      <AskUserOverlay
-        v-if="req?.askUser"
-        :questions="askUserQuestions"
-        :allow-cancel="req.allowCancel"
-        @submit="onAskUserSubmit"
-        @cancel="req && cancel(req.requestId)"
-      />
-
       <!-- confirm -->
-      <div v-else-if="req?.method === 'confirm'" class="flex justify-end gap-2 pt-2">
+      <div v-if="req?.method === 'confirm'" class="flex justify-end gap-2 pt-2">
         <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
         <Button variant="default" @click="onConfirm">确认</Button>
       </div>
