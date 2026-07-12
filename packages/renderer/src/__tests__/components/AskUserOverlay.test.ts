@@ -164,17 +164,25 @@ describe('AskUserOverlay', () => {
     expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
   })
 
-  it('U16: allAnswered 守卫——未全答时 Submit disabled', () => {
+  it('U16: 非最后一题显示"下一题"按钮，最后一题显示"提交"', async () => {
     const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
 
-    // 两题都未答 → Submit disabled
+    // 初始在第一题（非最后）→ 显示"下一题"，当前题未答 → disabled
+    const nextBtn = wrapper.find('[data-testid="ask-user-next"]')
+    expect(nextBtn.exists()).toBe(true)
+    expect(nextBtn.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="ask-user-submit"]').exists()).toBe(false)
+
+    // 答第一题后 auto-advance 到第二题（最后一题）→ 显示"提交"
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
     const submit = wrapper.find('[data-testid="ask-user-submit"]')
+    expect(submit.exists()).toBe(true)
+    // 第二题还没答 → 提交 disabled
     expect(submit.attributes('disabled')).toBeDefined()
-    // tooltip 提示未答数
-    expect(submit.attributes('title')).toContain('2 题未答')
+    expect(submit.attributes('title')).toContain('1 题未答')
   })
 
-  it('U17: allAnswered 守卫——全答后 Submit enabled', async () => {
+  it('U17: 全答后提交 enabled', async () => {
     const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
 
     // 答第一题（单选，auto-advance 到第二题）
@@ -257,6 +265,35 @@ describe('AskUserOverlay', () => {
     // Other 仍选中、input 仍存在、文本不丢
     expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
     expect(otherInput.element.value).toBe('自定义答案')
+  })
+
+  it('U23: Other input Enter 前进到下一题（多问题场景）', async () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    // 选第一题的 Other
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义数据库')
+    // Enter 前进到第二题
+    await otherInput.trigger('keydown', { key: 'Enter' })
+    // 切到了第二题
+    expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪些语言?')
+  })
+
+  it('U24: "下一题"按钮点击前进到下一题', async () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    // 答第一题（单选 auto-advance 到第二题），但手动测"下一题"按钮——先回到第一题
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // auto-advance 到第二题了，手动切回第一题
+    await wrapper.find('[data-testid="ask-user-tab-0"]').trigger('click')
+    // 此时在第一题（已答），显示"下一题"按钮
+    const nextBtn = wrapper.find('[data-testid="ask-user-next"]')
+    expect(nextBtn.exists()).toBe(true)
+    expect(nextBtn.attributes('disabled')).toBeUndefined() // 第一题已答 → enabled
+    // 点击前进
+    await nextBtn.trigger('click')
+    expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪些语言?')
   })
 })
 

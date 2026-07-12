@@ -163,6 +163,22 @@ function advanceToNext(): void {
   }
 }
 
+/** 当前问题是否为最后一题（决定按钮显示"下一题"还是"提交"）*/
+const isLastQuestion = computed(() => activeIdx.value >= props.questions.length - 1)
+
+/** Other input 的 Enter 处理：非最后一题前进到下一题，最后一题不拦截（让按钮提交）*/
+function onOtherEnter(): void {
+  if (!isLastQuestion.value) {
+    advanceToNext()
+  }
+  // 最后一题：Enter 不前进，用户点"提交"按钮提交
+}
+
+/** 点击"下一题"按钮：前进到下一题 */
+function onNextQuestion(): void {
+  advanceToNext()
+}
+
 /** 问题是否已作答（普通选项选中 ≥1，或 Other 选中且有文本，或无选项问题 otherText 有值）
  *  —— tab 绿点 + allAnswered 共用 */
 function isQuestionAnswered(q: AskUserQuestion): boolean {
@@ -397,7 +413,7 @@ function onSubmit(): void {
           <div class="flex min-w-0 flex-1 flex-col">
             <span class="text-[13px] font-normal leading-1.5 text-fg">其他</span>
             <!-- 选中时展开输入框（独立成行，自动聚焦）。
-                 @keydown.stop 阻止 enter/space 冒泡到卡片容器触发 toggle 取消选中 -->
+                 @keydown.stop 阻止冒泡到卡片容器；Enter 单独处理前进到下一题 -->
             <Input
               v-if="isOtherSelected(activeQuestion)"
               ref="otherInputComp"
@@ -406,7 +422,8 @@ function onSubmit(): void {
               :data-testid="`ask-user-other-${qKey(activeQuestion)}`"
               class="mt-1.5"
               @click.stop
-              @keydown.stop
+              @keydown.enter.stop="onOtherEnter"
+              @keydown.space.stop
             />
           </div>
         </div>
@@ -432,7 +449,7 @@ function onSubmit(): void {
       </template>
     </div>
 
-    <!-- actions：无边框，透明继承根，仅靠间距分隔。Submit 守卫 allAnswered -->
+    <!-- actions：无边框，透明继承根。非最后一题显示"下一题"，最后一题显示"提交"(守卫 allAnswered) -->
     <div class="flex items-center justify-end gap-2 px-3.5 pb-2.5 pt-1">
       <Button
         v-if="allowCancel !== false"
@@ -443,6 +460,16 @@ function onSubmit(): void {
         取消
       </Button>
       <Button
+        v-if="!isLastQuestion"
+        variant="default"
+        data-testid="ask-user-next"
+        :disabled="!isQuestionAnswered(activeQuestion!)"
+        @click="onNextQuestion"
+      >
+        下一题
+      </Button>
+      <Button
+        v-else
         variant="default"
         data-testid="ask-user-submit"
         :disabled="!allAnswered"
