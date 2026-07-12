@@ -38,6 +38,24 @@ export function statusDotClass(status: DerivedStatus): string {
 }
 
 /**
+ * 活跃态用转菊花（Loader2 + animate-spin）替代脉冲圆点。
+ * running（文本流式/pendingSend/compact）+ waiting（tool 执行中/待审批）
+ * 都是 turn 活跃期，转菊花比 box-shadow 脉冲在密集列表里更醒目。
+ * done/stopped/error 保持静态圆点。
+ */
+export const SPINNER_STATUSES: ReadonlySet<DerivedStatus> = new Set(['running', 'waiting'])
+
+export function shouldShowSpinner(status: DerivedStatus): boolean {
+  return SPINNER_STATUSES.has(status)
+}
+
+/** spinner 图标色（running→accent 蓝，waiting→warning 橙） */
+export const SPINNER_TEXT_CLASS: Record<'running' | 'waiting', string> = {
+  running: 'text-accent',
+  waiting: 'text-warning',
+}
+
+/**
  * 派生信号 → DerivedStatus 映射依据（D6，spec §5 D6 + §会话项）。
  * - toolCall.status 'running' → waiting（tool 执行中/待审批，agent 暂停）
  * - isStreaming 或 Message.status 'streaming' → running（文本流式）

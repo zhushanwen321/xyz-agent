@@ -14,7 +14,14 @@
     @click="emit('select', session.id)"
     @mouseleave="confirming = false"
   >
-    <span class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
+    <!-- 状态指示：running/waiting 转菊花（比脉冲圆点在密集列表更醒目），done/stopped/error 静态圆点 -->
+    <Loader2
+      v-if="showSpinner"
+      data-testid="session-spinner"
+      class="mt-[2px] size-[14px] shrink-0 animate-spin"
+      :class="spinnerTextClass"
+    />
+    <span v-else class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
     <div class="min-w-0 flex-1">
       <div
         class="truncate text-[12.5px] leading-[1.35]"
@@ -130,6 +137,12 @@ onClickOutside(rootEl, () => {
 /** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
 const dotClass = computed(() => DOT_CLASS[props.status])
 
+/** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
+const showSpinner = computed(() => shouldShowSpinner(props.status))
+
+/** spinner 图标色：running→accent 蓝，waiting→warning 橙 */
+const spinnerTextClass = computed(() => SPINNER_TEXT_CLASS[props.status as 'running' | 'waiting'])
+
 /** 工作目录名（cwd 末段），长路径只显末段防溢出（dirNameOf 收敛到 logic/path SSOT） */
 const dirName = computed(() => dirNameOf(props.session.cwd))
 
@@ -138,11 +151,11 @@ const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2 } from '@lucide/vue'
+import { Check, Pencil, Trash2, Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
-import { DOT_CLASS } from '@/composables/logic/sessionStatus'
+import { DOT_CLASS, shouldShowSpinner, SPINNER_TEXT_CLASS } from '@/composables/logic/sessionStatus'
 import { dirNameOf } from '@/composables/logic/path'
 </script>
 
