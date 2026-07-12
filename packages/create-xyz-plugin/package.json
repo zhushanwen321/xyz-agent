@@ -1,6 +1,6 @@
 {
   "name": "create-xyz-plugin",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "description": "Scaffold a new xyz-agent plugin project",
   "private": true,
   "bin": {
