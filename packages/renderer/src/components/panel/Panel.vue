@@ -75,15 +75,27 @@
     </div>
 
     <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
-         git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。 -->
+         git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。
+         ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
+         对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
       <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
       <ProgressZone />
 
-      <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）。new-task landing 态由 Landing 内部渲染 composer
-           卡片，此处 band 不重复渲染（showPanelComposer：非 landing 才挂）。已绑空 session
-           （恢复的僵尸空 session）走空对话态，band 渲染 composer 供用户直输发该 session。 -->
-      <Composer v-if="showPanelComposer" :session-id="sessionId" />
+      <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）/ ask-user overlay（互斥）。
+           new-task landing 态由 Landing 内部渲染 composer 卡片，此处 band 不重复渲染
+           （showPanelComposer：非 landing 才挂）。已绑空 session（恢复的僵尸空 session）
+           走空对话态，band 渲染 composer 供用户直输发该 session。
+           ask-user 请求到达时 AskUserOverlay 接管 band，composer 隐藏（互斥，W2）。 -->
+      <AskUserOverlay
+        v-if="hasAskUserRequest"
+        :questions="askUserQuestions"
+        :allow-cancel="currentAskUserRequest?.allowCancel"
+        :started-at="askUserStartedAt"
+        @submit="onAskUserSubmit"
+        @cancel="onAskUserCancel"
+      />
+      <Composer v-else-if="showPanelComposer" :session-id="sessionId" />
     </div>
   </section>
 </template>
@@ -93,16 +105,19 @@ import { computed } from 'vue'
 import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
+import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
 import PanelHeader from './PanelHeader.vue'
 import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
 import Landing from '@/components/new-task/Landing.vue'
+import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useToast } from '@/composables/useToast'
+import { useExtensionUI } from '@/composables/useExtensionUI'
 
 const props = defineProps<{
   panelId: string
@@ -141,6 +156,11 @@ const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
 
 const flow = useNewTaskFlow()
+
+// W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。
+// landing 态 sessionId=null 时内部 null 守卫已处理，不订阅。
+const { currentAskUserRequest, respond: respondExtensionUI, cancel: cancelExtensionUI } =
+  useExtensionUI(computed(() => props.sessionId))
 
 /** 当前 session 是否已 dead（进程退出）。dead 态显示占位 UI + 重开入口，不渲染对话流/composer */
 const isSessionDead = computed(() => {
@@ -183,6 +203,35 @@ const showPanelComposer = computed(
     isSessionActive.value ||
     isCompacting.value,
 )
+/** W2 ask-user inline：有 ask-user 请求时 AskUserOverlay 接管 band（与 Composer 互斥）。
+ *  hasAskUserRequest 优先级高于 showPanelComposer——ask-user 是阻塞输入请求，必须承接。 */
+const hasAskUserRequest = computed(() => currentAskUserRequest.value !== undefined)
+/** ask-user questions（类型守卫收窄 unknown[] → AskUserQuestion[]）。
+ *  askUserQuestions 字段由 runtime event-adapter 从 select 通道透传，前端按 askUser 标记收窄。 */
+const askUserQuestions = computed<AskUserQuestion[]>(() => {
+  const req = currentAskUserRequest.value
+  if (!req?.askUser || !req.askUserQuestions) return []
+  return req.askUserQuestions as AskUserQuestion[]
+})
+/** 倒计时起点：取当前请求到达时刻。computed 依赖 requestId——新请求到达（requestId 变）时
+ *  重算一次，缓存的 Date.now() 作为该请求的固定 startedAt（5min 超时倒计时基准）。 */
+const askUserStartedAt = computed(() => {
+  // 依赖 requestId 触发重算（新请求 → 新时间戳）；同一请求内只算一次
+  void currentAskUserRequest.value?.requestId
+  return Date.now()
+})
+/** ask-user Submit：answers JSON string 回传给 pi（select method）。 */
+function onAskUserSubmit(answers: string): void {
+  const req = currentAskUserRequest.value
+  if (!req) return
+  respondExtensionUI(req.requestId, answers)
+}
+/** ask-user Cancel：等价 respond(requestId, null)。 */
+function onAskUserCancel(): void {
+  const req = currentAskUserRequest.value
+  if (!req) return
+  cancelExtensionUI(req.requestId)
+}
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,

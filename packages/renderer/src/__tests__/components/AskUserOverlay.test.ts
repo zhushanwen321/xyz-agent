@@ -15,6 +15,16 @@ import { mount } from '@vue/test-utils'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
 
+// 带描述的选项（验证 opt-desc 字号）
+const optWithDescQ: AskUserQuestion = {
+  header: 'db',
+  question: '使用哪种数据库?',
+  options: [
+    { label: 'PostgreSQL', value: 'pg', description: '生产环境主流' },
+    { label: 'MySQL', value: 'mysql', description: '兼容性广' },
+  ],
+}
+
 // ── 测试数据 ──
 const singleSelectQ: AskUserQuestion = {
   header: 'db',
@@ -130,5 +140,71 @@ describe('AskUserOverlay', () => {
     // 切换到第二个
     await wrapper.find('[data-testid="ask-user-tab-1"]').trigger('click')
     expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪些语言?')
+  })
+})
+
+describe('AskUserOverlay · W2 样式对齐 demo v2', () => {
+  it('U6: 倒计时显示——[data-testid="ask-user-countdown"] 文本匹配 mm:ss，初值 04:59-05:00', () => {
+    // startedAt = 当前时间，倒计时 300s，刚 mount 剩余接近 300s（05:00）
+    const wrapper = mount(AskUserOverlay, {
+      props: { questions: [singleSelectQ], allowCancel: true, startedAt: Date.now() },
+    })
+
+    const timer = wrapper.find('[data-testid="ask-user-countdown"]')
+    expect(timer.exists()).toBe(true)
+    const text = timer.text()
+    // mm:ss 格式
+    expect(text).toMatch(/^\d{2}:\d{2}$/)
+    const [mm, ss] = text.split(':').map(Number)
+    const totalSec = mm * 60 + ss
+    // 初值在 04:59-05:00 区间（刚 mount，剩余 299-300s）
+    expect(totalSec).toBeGreaterThanOrEqual(299)
+    expect(totalSec).toBeLessThanOrEqual(300)
+  })
+
+  it('U6 补充: startedAt 可选——缺省也能渲染倒计时', () => {
+    const wrapper = mountOverlay([singleSelectQ])
+    const timer = wrapper.find('[data-testid="ask-user-countdown"]')
+    expect(timer.exists()).toBe(true)
+    expect(timer.text()).toMatch(/^\d{2}:\d{2}$/)
+  })
+
+  it('U7: 字体统一——非 active tab / q-text / opt-label 的 class 含 text-[13px]', () => {
+    // 多问题 + 带选项（含 description）
+    const wrapper = mountOverlay([optWithDescQ, singleSelectQ])
+
+    // 非 active tab（第二个 tab，index=1，非选中）含 text-[13px]
+    const tab1 = wrapper.find('[data-testid="ask-user-tab-1"]')
+    expect(tab1.exists()).toBe(true)
+    expect(tab1.attributes('class')).toContain('text-[13px]')
+
+    // 问题文本（q-text）含 text-[13px]
+    const qText = wrapper.find('[data-testid="ask-user-question-text"]')
+    expect(qText.attributes('class')).toContain('text-[13px]')
+
+    // 选项 label（opt-label）含 text-[13px]——通过选项 data-testid 定位其内部 label
+    const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
+    expect(optPg.exists()).toBe(true)
+    const optLabel = optPg.find('[data-testid="ask-user-option-label"]')
+    expect(optLabel.exists()).toBe(true)
+    expect(optLabel.attributes('class')).toContain('text-[13px]')
+  })
+
+  it('U7 补充: opt-desc 与 label 同字号 text-[13px]（muted 色弱化）', () => {
+    const wrapper = mountOverlay([optWithDescQ])
+    const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
+    const optDesc = optPg.find('[data-testid="ask-user-option-desc"]')
+    expect(optDesc.exists()).toBe(true)
+    expect(optDesc.attributes('class')).toContain('text-[13px]')
+    // 弱化：muted 色
+    expect(optDesc.attributes('class')).toContain('text-text-muted')
+  })
+
+  it('U7 补充: 请求头存在——ask-user-head 含脉冲圆点 + 标识文本', () => {
+    const wrapper = mountOverlay([singleSelectQ])
+    const head = wrapper.find('[data-testid="ask-user-head"]')
+    expect(head.exists()).toBe(true)
+    expect(head.text()).toContain('ask-user')
+    expect(head.text()).toContain('需要你的输入才能继续')
   })
 })
