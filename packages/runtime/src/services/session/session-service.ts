@@ -448,6 +448,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       tokenCount: 0, inputTokens: 0, isGenerating: false,
       adapter, unsubUsageListener: unsubUsage, sessionFilePath,
       hidden,
+      labelPersisted: false,
     }
     this.sessions.set(id, session)
     await this.fetchAndBroadcastCommands(id)
@@ -524,13 +525,25 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     })
   }
 
-  /** Attach agent_end listener:track token usage + isGenerating。 */
+  /** Attach turn_end/agent_end listener:track token usage + isGenerating + 持久化 label。 */
   private attachUsageListener(id: string, client: IPiEngine): () => void {
     return client.onEvent((event) => {
       const e = event as Record<string, unknown>
-      if (e.type === 'agent_end') {
-        const s = this.sessions.get(id)
-        if (!s) return
+      const s = this.sessions.get(id)
+      if (!s) return
+      if (e.type === 'turn_end') {
+        // turn_end：单 turn 结束，pi 已完成该轮 flush。第一个 turn_end 即可持久化 label，
+        // 无需等整个 agent 循环结束（agent_end）——后者要等所有工具调用轮次跑完，中途关 app 仍会丢 label。
+        // usage 回写与 agent_end 对称（turn_end.message.usage 含本 turn 用量）。
+        const message = (e.message ?? e.payload) as Record<string, unknown> | undefined
+        const usage = message?.usage as
+          { input?: number; output?: number; totalTokens?: number } | undefined
+        if (usage?.totalTokens != null) {
+          s.tokenCount = usage.totalTokens
+          if (typeof usage.input === 'number') s.inputTokens = usage.input
+        }
+        this.tryPersistLabel(s)
+      } else if (e.type === 'agent_end') {
         s.isGenerating = false
         const payload = e.payload as Record<string, unknown> | undefined
         const usage = payload?.usage as
@@ -540,8 +553,26 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
           // 缓存 inputTokens 供 switchModel 重算 usagePercent（无需等下一次 agent_end）
           if (typeof usage.inputTokens === 'number') s.inputTokens = usage.inputTokens
         }
+        // agent_end 兜底：若 turn_end 时 pi flush 尚未完成（文件不存在），在此补写。
+        this.tryPersistLabel(s)
       }
     })
+  }
+
+  /**
+   * 首次将 label 持久化到 session JSONL 的 session_info 行。
+   *
+   * pi 自身 flush 不写 session_info（已验证：真实 session 文件 0 个 session_info 行），
+   * 不持久化会导致重启后 label 丢失（extractSessionName 返回 null → fallback basename(cwd)）。
+   *
+   * [HISTORICAL] 禁止在 pi 首次 flush 前创建文件（openSync wx → EEXIST → session 卡死，规则 #6），
+   * 故必须先 existsSync 确认文件已由 pi 创建，只走 persistSessionName 的 append 分支。
+   * 文件尚不存在时跳过，不重置 labelPersisted，下次 turn_end/agent_end 会补写。
+   */
+  private tryPersistLabel(s: IManagedSessionView): void {
+    if (s.labelPersisted || !s.sessionFilePath || !existsSync(s.sessionFilePath)) return
+    this.sessionStore.persistSessionName(s.sessionFilePath, s.label, s.id, s.cwd)
+    s.labelPersisted = true
   }
 
   /**
