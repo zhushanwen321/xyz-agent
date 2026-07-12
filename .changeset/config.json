@@ -9,10 +9,10 @@
   "updateInternalDependencies": "patch",
   "ignore": [
     "@xyz-agent/electron",
-    "@xyz-agent/renderer",
+    "@xyz-agent/frontend",
     "@xyz-agent/runtime",
     "@xyz-agent/shared",
-    "@xyz-agent/create-xyz-plugin",
+    "create-xyz-plugin",
     "xyz-agent-plugin-sdk"
   ]
 }

@@ -78,7 +78,7 @@ git checkout -b "$DEV_BRANCH"
 CHANGESET_FILE=".changeset/prerelease-${TIMESTAMP}.md"
 cat > "$CHANGESET_FILE" << EOF
 ---
-"@xyz-agent/extension-protocol": prerelease
+"@xyz-agent/extension-protocol": patch
 ---
 
 Prerelease build for testing.
@@ -152,22 +152,27 @@ fi
 # ── 阶段 5/6: 验证 npm 版本 ──
 log "=== 阶段 5/6: 验证 npm 版本 ==="
 
-# npm publish 后 CDN 同步可能有延迟，轮询确认
+# [HISTORICAL] 用 curl 查官方 registry 而非 npm view：
+# npm view 受本地 registry 配置影响（如 npmmirror 镜像），镜像同步新包有延迟，
+# 导致脚本误报「验证失败」。curl 直接查 registry.npmjs.org 是 publish 的真实目标。
+NPM_REGISTRY="https://registry.npmjs.org"
+PKG_URL="${NPM_REGISTRY}/$(echo "$PKG_NAME" | sed 's|/|%2f|')/${NEW_VERSION}"
+
 NPM_VERIFIED=0
 for i in $(seq 1 10); do
-  DEV_VERSION=$(npm view "$PKG_NAME@dev" version 2>/dev/null || echo "")
-  if [ "$DEV_VERSION" = "$NEW_VERSION" ]; then
-    log "npm 验证通过: ${PKG_NAME}@dev = ${DEV_VERSION}"
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PKG_URL" 2>/dev/null || echo "000")
+  if [ "$HTTP_CODE" = "200" ]; then
+    log "npm 验证通过: ${PKG_NAME}@${NEW_VERSION} 已在官方 registry 上线"
     NPM_VERIFIED=1
     break
   fi
-  info "等待 npm CDN 同步... ($i/10, 当前 dev tag=${DEV_VERSION:-未发布})"
+  info "等待 npm registry 同步... ($i/10, HTTP $HTTP_CODE)"
   sleep 10
 done
 
 if [ "$NPM_VERIFIED" -ne 1 ]; then
-  warn "npm 版本未同步到 ${DEV_VERSION}（预期 ${NEW_VERSION}）"
-  warn "可能是 CDN 延迟，稍后手动验证: npm view ${PKG_NAME}@dev version"
+  warn "npm 版本未确认上线（预期 ${NEW_VERSION}）"
+  warn "可能是 registry 延迟，手动验证: curl -s ${PKG_URL}"
 fi
 
 echo ""

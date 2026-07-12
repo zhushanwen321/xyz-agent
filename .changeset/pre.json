@@ -1,0 +1,16 @@
+{
+  "mode": "pre",
+  "tag": "dev",
+  "initialVersions": {
+    "@xyz-agent/electron": "0.7.0",
+    "create-xyz-plugin": "0.3.14",
+    "@xyz-agent/extension-protocol": "0.1.0",
+    "xyz-agent-plugin-sdk": "0.3.14",
+    "@xyz-agent/frontend": "0.6.0",
+    "@xyz-agent/runtime": "0.6.0",
+    "@xyz-agent/shared": "0.6.0"
+  },
+  "changesets": [
+    "prerelease-20260712-165032"
+  ]
+}
