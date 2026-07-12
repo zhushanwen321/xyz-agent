@@ -133,24 +133,24 @@ describe('AskUserOverlay', () => {
   it('U9 补充: 多问题 tab 切换', async () => {
     const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
 
-    // 初始显示第一个问题
-    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
+    // 初始显示第一个问题（多问题用 question-text-multi）
+    expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪个数据库?')
     // tab 存在
     expect(wrapper.find('[data-testid="ask-user-tab-1"]').exists()).toBe(true)
     // 切换到第二个
     await wrapper.find('[data-testid="ask-user-tab-1"]').trigger('click')
-    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪些语言?')
+    expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪些语言?')
   })
 
   it('U14: 单选自动前进——选完第一题后 activeIdx 前进到第二题', async () => {
     const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
 
     // 初始显示第一题
-    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
+    expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪个数据库?')
     // 选中第一题的 Postgres（单选）
     await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
     // 应自动前进到第二题
-    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪些语言?')
+    expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪些语言?')
   })
 
   it('U15: 单选最后一题不自动前进（Submit 常驻 action bar）', async () => {
@@ -196,33 +196,41 @@ describe('AskUserOverlay', () => {
     expect(tab0.find('[data-testid="ask-user-tab-answered"]').exists()).toBe(true)
   })
 
-  it('U19: Other/选项互斥——选选项清空 Other 文本', async () => {
+  it('U19: Other 卡片化——点选 Other 展开输入框，输入文本', async () => {
     const wrapper = mountOverlay([singleSelectQ])
 
-    // 先在 Other 输入框填文本
+    // 初始 Other input 不显示（未选中）
+    expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(false)
+    // 点选 Other 卡片
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    // Other input 展开
     const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
-    await otherInput.setValue('自定义答案')
-    // 再选 Postgres 选项
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
-    // Other 文本应被清空（互斥）
-    expect(otherInput.element.value).toBe('')
+    expect(otherInput.exists()).toBe(true)
+    // 输入文本
+    await otherInput.setValue('自定义数据库')
+    // 提交
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+    const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
+    // Other 文本作为主答案值
+    expect(answers.db).toBe('自定义数据库')
   })
 
-  it('U20: Other/选项互斥——输入 Other 清空选项选中', async () => {
+  it('U20: Other/选项互斥——选普通选项取消 Other 选中', async () => {
     const wrapper = mountOverlay([singleSelectQ])
 
-    // 先选 Postgres
+    // 先选 Other 卡片
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    // 输入文本
+    await wrapper.find('[data-testid="ask-user-other-db"]').setValue('自定义')
+    // Other input 存在
+    expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
+    // 选 Postgres（单选互斥）→ Other 取消选中，input 消失
     await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
-    // 再在 Other 输入文本
-    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
-    await otherInput.setValue('自定义答案')
-    // 选项应不再选中（互斥）——选项卡片不带选中态 class
-    const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
-    expect(optPg.classes()).not.toContain('border-accent')
+    expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(false)
   })
 })
 
-describe('AskUserOverlay · W2 样式对齐 demo v2', () => {
+describe('AskUserOverlay · v3 样式对齐 demo v3', () => {
   it('U6: 倒计时显示——[data-testid="ask-user-countdown"] 文本匹配 mm:ss，初值 04:59-05:00', () => {
     // startedAt = 当前时间，倒计时 300s，刚 mount 剩余接近 300s（05:00）
     const wrapper = mount(AskUserOverlay, {
@@ -248,20 +256,20 @@ describe('AskUserOverlay · W2 样式对齐 demo v2', () => {
     expect(timer.text()).toMatch(/^\d{2}:\d{2}$/)
   })
 
-  it('U7: 字体统一——非 active tab / q-text / opt-label 的 class 含 text-[13px]', () => {
+  it('U7: 字体——tab 12px / 单问题标题 13px / opt-label 13px', () => {
     // 多问题 + 带选项（含 description）
     const wrapper = mountOverlay([optWithDescQ, singleSelectQ])
 
-    // 非 active tab（第二个 tab，index=1，非选中）含 text-[13px]
+    // tab 含 text-[12px]
     const tab1 = wrapper.find('[data-testid="ask-user-tab-1"]')
     expect(tab1.exists()).toBe(true)
-    expect(tab1.attributes('class')).toContain('text-[13px]')
+    expect(tab1.attributes('class')).toContain('text-[12px]')
 
-    // 问题文本（q-text）含 text-[13px]
-    const qText = wrapper.find('[data-testid="ask-user-question-text"]')
+    // 多问题文本含 text-[13px]
+    const qText = wrapper.find('[data-testid="ask-user-question-text-multi"]')
     expect(qText.attributes('class')).toContain('text-[13px]')
 
-    // 选项 label（opt-label）含 text-[13px]——通过选项 data-testid 定位其内部 label
+    // 选项 label 含 text-[13px]
     const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
     expect(optPg.exists()).toBe(true)
     const optLabel = optPg.find('[data-testid="ask-user-option-label"]')
@@ -269,21 +277,25 @@ describe('AskUserOverlay · W2 样式对齐 demo v2', () => {
     expect(optLabel.attributes('class')).toContain('text-[13px]')
   })
 
-  it('U7 补充: opt-desc 与 label 同字号 text-[13px]（muted 色弱化）', () => {
+  it('U7 补充: opt-desc 字号 12px（subtle 色弱化）', () => {
     const wrapper = mountOverlay([optWithDescQ])
     const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
     const optDesc = optPg.find('[data-testid="ask-user-option-desc"]')
     expect(optDesc.exists()).toBe(true)
-    expect(optDesc.attributes('class')).toContain('text-[13px]')
-    // 弱化：muted 色
-    expect(optDesc.attributes('class')).toContain('text-text-muted')
+    expect(optDesc.attributes('class')).toContain('text-[12px]')
+    // 弱化：subtle 色
+    expect(optDesc.attributes('class')).toContain('text-subtle')
   })
 
-  it('U7 补充: 请求头存在——ask-user-head 含脉冲圆点 + 标识文本', () => {
+  it('U7 补充: 请求头存在——单问题标题提到 head 行', () => {
     const wrapper = mountOverlay([singleSelectQ])
     const head = wrapper.find('[data-testid="ask-user-head"]')
     expect(head.exists()).toBe(true)
-    expect(head.text()).toContain('ask-user')
-    expect(head.text()).toContain('需要你的输入才能继续')
+    // 单问题：标题在 head 行
+    const headTitle = head.find('[data-testid="ask-user-question-text"]')
+    expect(headTitle.exists()).toBe(true)
+    expect(headTitle.text()).toContain('选哪个数据库?')
+    // head 含倒计时
+    expect(head.find('[data-testid="ask-user-countdown"]').exists()).toBe(true)
   })
 })
