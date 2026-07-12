@@ -424,6 +424,36 @@ describe('ExtensionService', () => {
       }
     })
 
+    it('根即 extension：dirName 是源目录名（非 tempDir basename），finishInstall 回路完整', async () => {
+      // 回归测试：源目录本身就是单个 pi extension 时，dirName 必须是源目录 basename，
+      // 而非 tempDir 的 basename（"ext-scan-xxxx"）。否则 finishInstall 找不到子目录。
+      const sourceDir = join(testSettingsDir, 'ask-user')
+      mkdirSync(sourceDir, { recursive: true })
+      writeFileSync(join(sourceDir, 'package.json'), JSON.stringify({
+        name: 'pi-ask-user',
+        version: '0.1.0',
+        description: 'single ext at root',
+        keywords: ['pi-package'],
+      }), 'utf-8')
+      writeFileSync(join(sourceDir, 'index.ts'), '', 'utf-8')
+
+      const result = await service.installLocalDirectory(sourceDir)
+
+      try {
+        expect(result.candidates).toHaveLength(1)
+        // dirName 是源目录名，不是 tempDir basename（"ext-scan-xxxx"）
+        expect(result.candidates[0].dirName).toBe('ask-user')
+        expect(result.tempDir).toContain('ext-scan-') // tempDir 名仍带前缀，但 dirName 不等于它
+
+        // finishInstall 回路：用返回的 tempDir + dirName 完成安装
+        await service.finishInstall(result.tempDir, [result.candidates[0].dirName])
+        const extensionsDir = join(testSettingsDir, 'extensions')
+        expect(existsSync(join(extensionsDir, 'ask-user', 'package.json'))).toBe(true)
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
     it('returns empty candidates when no valid extensions found', async () => {
       const sourceDir = join(testSettingsDir, 'source-empty')
       mkdirSync(sourceDir, { recursive: true })
@@ -477,6 +507,44 @@ describe('ExtensionService', () => {
 
       // Cleanup
       try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+    })
+
+    it('clone 到 tempDir/<repoName>/ 子目录，dirName 是仓库名非 tempDir basename', async () => {
+      // 回归：仓库根本身是单个 extension 时，clone 目标是 tempDir/repoName/，
+      // discoverExtensions 走子目录扫描，dirName = repoName，finishInstall 回路完整。
+      mockedExecFileSync.mockImplementation((_cmd: string, args?: readonly string[]) => {
+        if (args?.[0] === 'clone') {
+          const targetDir = args[4] ?? ''
+          if (targetDir) {
+            mkdirSync(targetDir, { recursive: true })
+            // 仓库根本身就是 extension（package.json 直接在 targetDir 下）
+            writeFileSync(join(targetDir, 'package.json'), JSON.stringify({
+              name: 'pi-single-repo',
+              version: '1.0.0',
+              description: 'repo root IS the extension',
+              keywords: ['pi-package'],
+            }), 'utf-8')
+            writeFileSync(join(targetDir, 'index.ts'), '', 'utf-8')
+          }
+        }
+        return ''
+      })
+
+      const result = await service.installGitRepository('https://github.com/user/pi-single-repo.git')
+
+      try {
+        expect(result.candidates).toHaveLength(1)
+        // repoName = pi-single-repo（URL 末段去 .git）
+        expect(result.candidates[0].dirName).toBe('pi-single-repo')
+        expect(result.tempDir).toContain('ext-scan-')
+
+        // finishInstall 回路
+        await service.finishInstall(result.tempDir, [result.candidates[0].dirName])
+        const extensionsDir = join(testSettingsDir, 'extensions')
+        expect(existsSync(join(extensionsDir, 'pi-single-repo', 'package.json'))).toBe(true)
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
     })
   })
 

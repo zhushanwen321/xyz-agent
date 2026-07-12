@@ -62,7 +62,7 @@
           @click="onInstall"
         >
           <Loader2 v-if="installing" class="animate-spin" />
-          安装
+          {{ installButtonText }}
         </Button>
       </div>
       <!-- 错误反馈（非静默吞，CLAUDE.md 规则 #3） -->
@@ -102,7 +102,12 @@
         </Label>
       </div>
       <div v-if="discovered.candidates.length" class="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
-        <span class="text-[11px] text-subtle">已选 {{ selected.size }} / {{ discovered.candidates.length }}</span>
+        <div class="flex items-center gap-2">
+          <span class="text-[11px] text-subtle">已选 {{ selected.size }} / {{ discovered.candidates.length }}</span>
+          <Button variant="ghost" size="dense" class="h-auto px-1.5 py-0.5 text-[11px] text-subtle hover:text-fg" @click="toggleSelectAll">
+            {{ isAllSelected ? '取消全选' : '全选' }}
+          </Button>
+        </div>
         <Button size="dense" :disabled="selected.size === 0 || installing" @click="onFinishInstall">
           <Loader2 v-if="installing" class="animate-spin" />
           安装选中
@@ -280,6 +285,9 @@ const tabPlaceholder = computed(() => {
   return map[activeTab.value] ?? ''
 })
 
+/** 第一层按钮文案：npm 单步直装→"安装"；dir/git 多步流先发现候选→"发现" */
+const installButtonText = computed(() => activeTab.value === 'npm' ? '安装' : '发现')
+
 // 切换 tab 清空已发现候选（不同来源的候选不再适用）
 watch(activeTab, () => {
   discovered.value = null
@@ -336,6 +344,21 @@ function toggleCandidate(dirName: string) {
   if (next.has(dirName)) next.delete(dirName)
   else next.add(dirName)
   selected.value = next
+}
+
+/** 是否全选（用于全选/取消全选按钮文案切换） */
+const isAllSelected = computed(() =>
+  !!discovered.value
+  && discovered.value.candidates.length > 0
+  && selected.value.size === discovered.value.candidates.length,
+)
+
+/** 全选/取消全选候选 */
+function toggleSelectAll() {
+  if (!discovered.value) return
+  selected.value = isAllSelected.value
+    ? new Set()
+    : new Set(discovered.value.candidates.map((c) => c.dirName))
 }
 
 /** 完成安装：把选中候选从 tempDir 装入 extensions/，runtime 推 config.extensions 刷新列表 */

@@ -24,7 +24,7 @@ import { recommendedExtensions } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
-import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
+import { isStrictlyUnder, isUnderOrEqual, extractRepoName } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../utils/runtime-env.js'
 
@@ -469,9 +469,16 @@ export class ExtensionService {
     // Create temp directory
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
-    // Copy source to temp, clean up on failure
+    // Copy into tempDir/<sourceBaseName>/ — not tempDir root. When the source IS itself
+    // a pi extension, discoverExtensions returns dirName = basename(scanned dir). Copying
+    // to a named subdir keeps dirName = sourceBaseName, matching finishInstall's contract
+    // (selected names must be tempDir subdirectories). Otherwise dirName becomes the
+    // tempDir basename ("ext-scan-xxxx") and finishInstall fails.
+    const sourceBaseName = basename(checkPath)
+    const destInTemp = join(tempDir, sourceBaseName)
+
     try {
-      cpSync(checkPath, tempDir, { recursive: true })
+      cpSync(checkPath, destInTemp, { recursive: true })
       const candidates = this.discoverExtensions(tempDir)
       return { tempDir, candidates }
     } catch (err) {
@@ -497,9 +504,14 @@ export class ExtensionService {
       throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
     }
 
+    // Clone into tempDir/<repoName>/ — same rationale as installLocalDirectory: avoids
+    // the "root IS the extension" case where dirName would become the tempDir basename.
+    const repoName = extractRepoName(url)
+    const destInTemp = join(tempDir, repoName)
+
     // Git clone — 经 IInstaller port（infra spawn git，execFileSync 防 command injection）
     try {
-      await this.installer.installGit(url, tempDir, GIT_CLONE_TIMEOUT)
+      await this.installer.installGit(url, destInTemp, GIT_CLONE_TIMEOUT)
     } catch (e) {
       const msg = toErrorMessage(e)
       // Cleanup temp dir on failure
@@ -510,9 +522,9 @@ export class ExtensionService {
     }
 
     // If package.json exists, install dependencies (经 IInstaller port)
-    if (existsSync(join(tempDir, 'package.json'))) {
+    if (existsSync(join(destInTemp, 'package.json'))) {
       try {
-        await this.installer.installDeps(tempDir)
+        await this.installer.installDeps(destInTemp)
       } catch (e) {
         log.warn(`[extension-service] npm install in git repo failed: ${toErrorMessage(e)}`)
         // Non-fatal — some repos don't need deps to discover extensions
