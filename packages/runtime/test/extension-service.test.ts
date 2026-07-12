@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, symlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, delimiter } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { ExtensionService, ExtensionInstallError } from '../src/services/extension-service.js'
 import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
@@ -199,10 +199,28 @@ describe('ExtensionService', () => {
     })
 
     it('无效路径静默跳过，不抛错', async () => {
-      process.env.XYZ_EXTENSION_PATHS = '/nonexistent/path:' + userExtDir
+      process.env.XYZ_EXTENSION_PATHS = `/nonexistent/path${delimiter}${userExtDir}`
       const extensions = await service.scanExtensions()
       // 无效路径被跳过，有效的仍在
       expect(extensions.find(e => e.name === 'my-dev-extension')).toBeDefined()
+    })
+
+    it('多个路径用分隔符隔开都能扫到', async () => {
+      const userExtDir2 = mkdtempSync(join(tmpdir(), 'ext-user-path2-'))
+      writeFileSync(join(userExtDir2, 'package.json'), JSON.stringify({
+        name: 'second-dev-extension',
+        version: '0.0.1',
+        keywords: ['pi-package'],
+      }), 'utf-8')
+      writeFileSync(join(userExtDir2, 'index.ts'), '', 'utf-8')
+      try {
+        process.env.XYZ_EXTENSION_PATHS = `${userExtDir}${delimiter}${userExtDir2}`
+        const extensions = await service.scanExtensions()
+        expect(extensions.find(e => e.path === userExtDir)).toBeDefined()
+        expect(extensions.find(e => e.path === userExtDir2)).toBeDefined()
+      } finally {
+        rmSync(userExtDir2, { recursive: true, force: true })
+      }
     })
   })
 

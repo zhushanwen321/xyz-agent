@@ -133,6 +133,8 @@ npm install -g @earendil-works/pi-coding-agent
 
 ```jsonc
 // tsconfig.json
+// 将 <NPM_GLOBAL> 替换为 `npm root -g` 的返回值
+// 例如 ~/.nvm/versions/node/v24.11.1/lib/node_modules
 {
   "compilerOptions": {
     "target": "ES2022",
@@ -146,17 +148,16 @@ npm install -g @earendil-works/pi-coding-agent
     "types": ["node"],
     "paths": {
       "@earendil-works/pi-coding-agent": [
-        // 指向你全局安装的 pi 的类型声明文件
-        "<全局 pi 路径>/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+        "<NPM_GLOBAL>/@earendil-works/pi-coding-agent/dist/index.d.ts"
       ],
       "@mariozechner/pi-coding-agent": [
-        "<全局 pi 路径>/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+        "<NPM_GLOBAL>/@earendil-works/pi-coding-agent/dist/index.d.ts"
       ],
       "typebox": [
-        "<全局 pi 路径>/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"
+        "<NPM_GLOBAL>/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"
       ],
       "@sinclair/typebox": [
-        "<全局 pi 路径>/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"
+        "<NPM_GLOBAL>/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"
       ]
     }
   },
@@ -165,9 +166,9 @@ npm install -g @earendil-works/pi-coding-agent
 }
 ```
 
-> `<全局 pi 路径>` 通过 `npm root -g` 获取（如 `~/.nvm/versions/node/v24.11.1/lib/node_modules`）。
+> `<NPM_GLOBAL>` 是 `npm root -g` 的返回值（如 `~/.nvm/versions/node/v24.11.1/lib/node_modules`）。全局安装 pi 后，类型声明文件就在 `<NPM_GLOBAL>/@earendil-works/pi-coding-agent/dist/index.d.ts`。
 >
-> `@mariozechner/pi-coding-agent` 是旧包名，pi loader 同时支持两个前缀作为 alias。import 时写任一个都能在运行时 resolve。
+> `@mariozechner/pi-coding-agent` 是旧包名，pi loader 内置 alias 同时支持两个前缀（`loader.ts` 的 `VIRTUAL_MODULES` / `getAliases()` 把两者映射到同一组内部模块）。import 时写任一个都能在运行时 resolve。
 
 **方案 B：`pnpm install` 把 peer 装为 devDependencies**
 
@@ -217,9 +218,10 @@ pnpm add ~/Code/xyz-agent-workspace/feat-ask-user-gui/packages/extension-protoco
 XYZ_EXTENSION_PATHS=~/Code/my-extension pnpm dev
 ```
 
-多个 extension 用冒号 `:` 分隔：
+多个 extension 用平台路径分隔符（macOS/Linux `:`，Windows `;`）分隔：
 
 ```bash
+# macOS / Linux
 XYZ_EXTENSION_PATHS=~/Code/ext-a:~/Code/ext-b pnpm dev
 ```
 
@@ -256,7 +258,7 @@ extension 扫描日志示例：
 [extension-resolver] resolved 3 extensions from 5 sources
 ```
 
-如果 `sources` 数为 5 但 resolved 数不含你的 extension，检查 `isValidPiExtension`（package.json 三条件）。
+`sources` 数取决于是否设了 `XYZ_EXTENSION_PATHS`（设了才有 user 源，共 5 个源；否则 4 个）。如果 resolved 数不含你的 extension，检查 `isValidPiExtension`（package.json 三条件）。
 
 ### 3.2 console 输出
 

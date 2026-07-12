@@ -17,7 +17,7 @@
  * 5. 清理临时目录
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename } from 'node:path'
+import { join, resolve, basename, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
@@ -145,17 +145,17 @@ export class ExtensionService {
   /**
    * 读取 XYZ_EXTENSION_PATHS 环境变量，解析为绝对路径数组。
    * 用于本地开发：指向 extension 源码目录，无需 cp 副本或 npm install。
-   * 冒号分隔（与 PATH 约定一致），空值自动过滤。
-   * 路径有效性（存在/是目录/是有效 pi extension）由 resolver.scanUserExtensions 校验。
+   * 用 path.delimiter 分隔（POSIX ':' / Windows ';'，与 PATH 约定一致），空值自动过滤。
+   * 相对路径基于 projectRoot 解析。路径有效性由 resolver.scanUserExtensions 校验。
    */
   private getUserExtensionPaths(): string[] {
     const raw = process.env.XYZ_EXTENSION_PATHS
     if (!raw) return []
     return raw
-      .split(':')
+      .split(delimiter)
       .map(p => p.trim())
       .filter(p => p.length > 0)
-      .map(p => resolve(p))
+      .map(p => resolve(this.projectRoot, p))
   }
 
   /**
