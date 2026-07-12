@@ -61,7 +61,7 @@ describe('Block ANSI 兜底渲染', () => {
     expect(wrapper.text()).toContain('plain result')
   })
 
-  it('details.__gui__ 存在 → 优先用 GuiComponentRenderer 渲染（data-testid="gui-component-renderer" 存在）', async () => {
+  it('details.__gui__ 存在 → 优先用 GuiComponentRenderer 渲染 card（data-testid="gui-card" 存在）', async () => {
     const tool = makeTool({
       output: 'done',
       details: {
@@ -78,7 +78,7 @@ describe('Block ANSI 兜底渲染', () => {
 
     // GuiComponentRenderer 渲染（容器 testid 存在）
     expect(wrapper.find('[data-testid="gui-component-renderer"]').exists()).toBe(true)
-    // card 是 P2 未实现类型，降级到 AnsiText（ansi-text testid 也存在）
-    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
+    // card 已实现，GuiComponentRenderer 路由到 Card 组件（gui-card testid 存在）
+    expect(wrapper.find('[data-testid="gui-card"]').exists()).toBe(true)
   })
 })
