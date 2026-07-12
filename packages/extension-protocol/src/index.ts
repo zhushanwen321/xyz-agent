@@ -21,10 +21,13 @@ export type {
   StatItem,
   TreeItem,
   TreeItemIcon,
+  InteractionQuestion,
+  InteractionOption,
+  InteractionAnswers,
 } from './types'
 
 // ── 常量 ──
-export { PROTOCOL_VERSION } from './types'
+export { PROTOCOL_VERSION, GUI_INTERACT_MARKER } from './types'
 export { GUI_WIDGET_MARKER } from './helpers'
 
 // ── helper 函数 ──
@@ -35,6 +38,10 @@ export {
   guiComponent,
   guiSetWidget,
   extractGui,
+  guiInteract,
+  getInteractionAnswer,
+  getInteractionOther,
+  getInteractionComment,
 } from './helpers'
 
 // ── ctx 接口 ──

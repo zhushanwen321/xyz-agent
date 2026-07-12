@@ -181,3 +181,73 @@ export interface TreeItem {
   children?: TreeItem[]
 }
 export type TreeItemIcon = 'arrow' | 'check' | 'cross' | 'circle' | 'dot' | 'pause' | 'branch'
+
+// ── 富交互（InteractionOverlay）──
+//
+// custom() 在 RPC 模式不可用（Component 是代码不是数据），但 custom 的「表单类」
+// 常见用法可以用结构化数据描述。InteractionQuestion 声明交互需求，
+// 前端 InteractionOverlay 按此渲染表单 UI，用户提交后回传 InteractionAnswers。
+//
+// @see spec.md §3 types 定义；helpers.ts guiInteract() 为入口
+
+/**
+ * 富交互问题声明。
+ *
+ * 设计参考 ask-user 的 Question 结构，但不依赖 ask-user。
+ * 任何 extension 都可以用 InteractionQuestion 声明富交互。
+ */
+export interface InteractionQuestion {
+  /** Tab 标签 / 简短标题。多问题时用于 tab 切换，≤12 字符。
+   *  可选——未提供时前端用 question 文本截断（前 12 字符）作为 tab 标签和 answers key。
+   *  answers 的 key 优先用 header，header 缺失时用截断后的 question 文本。 */
+  header?: string
+  /** 完整问题文本。也作为 answers 的 fallback key（header 缺失时） */
+  question: string
+  /** 上下文摘要（可选）。显示在问题上方，帮用户理解背景 */
+  context?: string
+  /** 互斥选项列表（可选）。无 options = 纯自由文本输入 */
+  options?: InteractionOption[]
+  /** 是否允许多选。仅 options 存在时有效 */
+  multiSelect?: boolean
+  /** 是否允许自由文本输入（Other）。
+   *  - 有 options 时：默认 true，前端在选项末尾追加 Other 输入框；设 false 则不追加
+   *  - 无 options 时：整个问题就是自由输入，此字段被忽略 */
+  allowOther?: boolean
+  /** 是否允许附加评论。选中后可追加短文本 */
+  allowComment?: boolean
+}
+
+export interface InteractionOption {
+  /** 显示标签 */
+  label: string
+  /** 回传值。未提供时用 label */
+  value?: string
+  /** 描述（可选）。显示在 label 下方，解释 tradeoff */
+  description?: string
+}
+
+/**
+ * 富交互回传结果。key = question.header（header 缺失时用 question 文本）。
+ *
+ * 答案编码规则（避免逗号歧义）：
+ * - 单选：value = 选中项的 value string（或 label）
+ * - 多选：value = JSON.stringify(选中项 value 数组)，如 '["pg","mysql"]'
+ *   （不用逗号 join——option value 可能含逗号导致 split 歧义）
+ * - Other 文本：单独 key `${header}__other`，value = 自由文本（不混进选中项数组）
+ * - comment：单独 key `${header}__comment`，value = 评论文本
+ *
+ * extension 解析示例：
+ *   const selected = JSON.parse(answers[header])  // 多选 → string[]
+ *   const other = answers[`${header}__other`]     // Other 自由文本
+ *   const comment = answers[`${header}__comment`] // 评论
+ */
+export type InteractionAnswers = Record<string, string>
+
+/**
+ * 富交互请求的 title marker。runtime event-adapter 和前端 useExtensionUI
+ * 检测此 marker 区分富交互请求与普通 select。
+ *
+ * NUL 前缀确保不会与 extension 正常的 select title 冲突。
+ * 与 GUI_WIDGET_MARKER 同理（见 helpers.ts GUI_WIDGET_MARKER）。
+ */
+export const GUI_INTERACT_MARKER = '\x00XYZ_GUI_INTERACT'

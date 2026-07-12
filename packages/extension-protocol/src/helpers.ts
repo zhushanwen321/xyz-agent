@@ -12,6 +12,9 @@ import {
   type GuiComponentType,
   type GuiComponentProps,
   type GuiRenderResult,
+  type InteractionQuestion,
+  type InteractionAnswers,
+  GUI_INTERACT_MARKER,
   PROTOCOL_VERSION,
 } from './types'
 
@@ -124,6 +127,109 @@ export function isGuiComponent(value: unknown): value is GuiComponent {
     && obj.props !== null
     && obj.props !== undefined
     && typeof obj.props === 'object'
+}
+
+// ── 富交互（guiInteract）──
+//
+// custom() 在 RPC 模式不可用（Component 是代码），「表单类」交互改走 select 通道：
+// helper 把 InteractionQuestion[] 序列化进 select 的 options[0]，runtime event-adapter
+// 检测 title marker 透传 questions，前端 InteractionOverlay 渲染富交互 UI。
+// 回传仍走 select 的 value 字段（JSON.stringify(answers)），复用 select 全部管道逻辑。
+//
+// @see spec.md §4 协议包 API + §5 时序分析（为什么走 options[0]）
+
+/**
+ * 富交互入口（RPC 模式专用）。
+ *
+ * RPC 模式：用 select 通道携带 questions 数据，前端渲染富交互 UI。
+ * TUI 模式：抛错。extension 必须自行调 ctx.ui.custom()。
+ *
+ * @param ctx        ExtensionContext（pi 提供）
+ * @param questions  交互问题声明
+ * @param options    可选：signal（abort）、allowCancel（前端是否显示取消按钮）
+ * @returns          answers（key=header/question, value=JSON编码的答案），用户取消返回 null
+ */
+export async function guiInteract(
+  ctx: GuiContext,
+  questions: InteractionQuestion[],
+  options?: { signal?: AbortSignal; allowCancel?: boolean },
+): Promise<InteractionAnswers | null> {
+  // 空 questions 防御（与「用户 Submit 空表单」语义一致，返回 {}）
+  if (questions.length === 0) return {}
+
+  // RPC 模式：select 通道携带 questions 数据
+  if (isGuiCapable(ctx) && ctx.ui?.select) {
+    // questions 数据序列化进 options[0]。
+    // pi select 的 request 硬编码 {method, title, options, timeout}（rpc-mode.ts:136-137），
+    // helper 无法通过 ctx.ui.select 的标准参数注入自定义字段，只能借用 options 数组。
+    // options 是 string[]，JSON.stringify 产出合法 string 元素，pi 原样透传。
+    const payload = JSON.stringify(stripUndefined({
+      questions,
+      allowCancel: options?.allowCancel ?? true,
+    }))
+    const value = await ctx.ui.select(
+      GUI_INTERACT_MARKER,           // title = marker，runtime/前端据此识别
+      [payload],                      // options[0] = JSON payload（runtime 解析）
+      { signal: options?.signal },
+    )
+    // select 返回 undefined = 用户取消 / 超时 / abort
+    if (value === undefined) return null
+    // value 是前端 JSON.stringify 的 answers
+    try {
+      return JSON.parse(value) as InteractionAnswers
+    } catch {
+      // parse 失败（中间环节篡改）视为取消
+      return null
+    }
+  }
+
+  // 非 RPC 模式：guiInteract 不支持 TUI 渲染。
+  // TUI Component 是 extension 特定的（AskUserComponent 不能通用），helper 不代劳。
+  // 抛错而非返回 null——返回 null 会与「用户取消」混淆，让 extension 误以为用户取消了。
+  throw new Error(
+    'guiInteract() is only available in RPC mode. ' +
+    'In TUI mode, use ctx.ui.custom() with your own Component directly.',
+  )
+}
+
+/** answers 的 key：header 缺失时用 question 文本 */
+function interactionKey(question: InteractionQuestion): string {
+  return question.header ?? question.question
+}
+
+/**
+ * 从 answers 中提取某个问题的选中值（单选返回 string，多选返回 string[]）。
+ *
+ * 多选 answers 的 value 是 JSON.stringify(string[])，此 helper 自动 parse。
+ * parse 失败时降级返回 [raw]（兼容非标准格式的回传）。
+ */
+export function getInteractionAnswer(
+  answers: InteractionAnswers,
+  question: InteractionQuestion,
+): string | string[] | undefined {
+  const key = interactionKey(question)
+  const raw = answers[key]
+  if (raw === undefined) return undefined
+  if (question.multiSelect) {
+    try { return JSON.parse(raw) as string[] } catch { return [raw] }
+  }
+  return raw
+}
+
+/** 从 answers 中提取 Other 自由文本 */
+export function getInteractionOther(
+  answers: InteractionAnswers,
+  question: InteractionQuestion,
+): string | undefined {
+  return answers[`${interactionKey(question)}__other`]
+}
+
+/** 从 answers 中提取评论 */
+export function getInteractionComment(
+  answers: InteractionAnswers,
+  question: InteractionQuestion,
+): string | undefined {
+  return answers[`${interactionKey(question)}__comment`]
 }
 
 // ── 内部工具 ──
