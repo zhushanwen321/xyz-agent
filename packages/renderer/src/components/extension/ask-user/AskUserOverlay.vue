@@ -170,8 +170,9 @@ const isLastQuestion = computed(() => activeIdx.value >= props.questions.length 
 function onOtherEnter(): void {
   if (!isLastQuestion.value) {
     advanceToNext()
+  } else if (allAnswered.value) {
+    onSubmit()
   }
-  // 最后一题：Enter 不前进，用户点"提交"按钮提交
 }
 
 /** 点击"下一题"按钮：前进到下一题 */

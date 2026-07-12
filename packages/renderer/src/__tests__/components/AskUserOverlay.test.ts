@@ -295,6 +295,19 @@ describe('AskUserOverlay', () => {
     await nextBtn.trigger('click')
     expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪些语言?')
   })
+
+  it('U25: 最后一题 Other Enter 直接提交', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 选 Other + 输入文本
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义数据库')
+    // Enter 直接提交（最后一题 + allAnswered）
+    await otherInput.trigger('keydown', { key: 'Enter' })
+    const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
+    expect(answers.db).toBe('自定义数据库')
+  })
 })
 
 describe('AskUserOverlay · v3 样式对齐 demo v3', () => {
