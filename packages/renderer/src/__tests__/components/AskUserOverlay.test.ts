@@ -141,6 +141,85 @@ describe('AskUserOverlay', () => {
     await wrapper.find('[data-testid="ask-user-tab-1"]').trigger('click')
     expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪些语言?')
   })
+
+  it('U14: 单选自动前进——选完第一题后 activeIdx 前进到第二题', async () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    // 初始显示第一题
+    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
+    // 选中第一题的 Postgres（单选）
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // 应自动前进到第二题
+    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪些语言?')
+  })
+
+  it('U15: 单选最后一题不自动前进（Submit 常驻 action bar）', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 只有一题，选中后不应前进（无处可去）
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // 仍然显示同一题
+    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
+  })
+
+  it('U16: allAnswered 守卫——未全答时 Submit disabled', () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    // 两题都未答 → Submit disabled
+    const submit = wrapper.find('[data-testid="ask-user-submit"]')
+    expect(submit.attributes('disabled')).toBeDefined()
+    // tooltip 提示未答数
+    expect(submit.attributes('title')).toContain('2 题未答')
+  })
+
+  it('U17: allAnswered 守卫——全答后 Submit enabled', async () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    // 答第一题（单选，auto-advance 到第二题）
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // 答第二题（多选）
+    await wrapper.find('[data-testid="ask-user-option-ts"]').trigger('click')
+
+    const submit = wrapper.find('[data-testid="ask-user-submit"]')
+    expect(submit.attributes('disabled')).toBeUndefined()
+  })
+
+  it('U18: 已答 tab 绿点——作答后 tab 显示 answered 标记', async () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    // 初始无绿点
+    expect(wrapper.find('[data-testid="ask-user-tab-answered"]').exists()).toBe(false)
+    // 答第一题（单选 auto-advance）
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // tab-0 应有已答绿点
+    const tab0 = wrapper.find('[data-testid="ask-user-tab-0"]')
+    expect(tab0.find('[data-testid="ask-user-tab-answered"]').exists()).toBe(true)
+  })
+
+  it('U19: Other/选项互斥——选选项清空 Other 文本', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 先在 Other 输入框填文本
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义答案')
+    // 再选 Postgres 选项
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // Other 文本应被清空（互斥）
+    expect(otherInput.element.value).toBe('')
+  })
+
+  it('U20: Other/选项互斥——输入 Other 清空选项选中', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 先选 Postgres
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // 再在 Other 输入文本
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义答案')
+    // 选项应不再选中（互斥）——选项卡片不带选中态 class
+    const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
+    expect(optPg.classes()).not.toContain('border-accent')
+  })
 })
 
 describe('AskUserOverlay · W2 样式对齐 demo v2', () => {

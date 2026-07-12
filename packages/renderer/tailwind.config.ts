@@ -99,6 +99,11 @@ export default {
           '0%, 50%': { opacity: '1' },
           '51%, 100%': { opacity: '0' },
         },
+        // ask-user inline overlay 入场（覆盖 composer 位置时滑入，对齐 demo v2 slideUp）
+        'ask-user-slide-up': {
+          from: { opacity: '0', transform: 'translateY(8px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
@@ -106,6 +111,7 @@ export default {
         'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
         'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
+        'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
       },
     },
   },

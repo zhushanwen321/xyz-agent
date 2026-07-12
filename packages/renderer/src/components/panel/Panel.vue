@@ -79,7 +79,7 @@
          git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。
          ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
-    <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
+    <div class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-3.5">
       <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
       <ProgressZone />
 

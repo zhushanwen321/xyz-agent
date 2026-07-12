@@ -69,6 +69,8 @@ const countdownText = computed(() => {
   const ss = String(s % SEC_PER_MIN).padStart(TIME_FIELD_PAD, '0')
   return `${mm}:${ss}`
 })
+/** 紧迫态：剩余 < 1min 才转 warning 色（对齐 pi TUI 仅尾部高亮，避免全程橙黄制造焦虑） */
+const isUrgent = computed(() => remainingSec.value < SEC_PER_MIN)
 
 // ── 问题 key（header 缺失时用 question 文本）──
 function qKey(q: AskUserQuestion): string {
@@ -104,6 +106,8 @@ function optValue(o: AskUserOption): string {
 }
 
 // ── 单选 / 多选 toggle ──
+// 单选选中后自动前进到下一题（对齐 pi TUI advanceAfterAnswer），多选不前进。
+// 选中选项清空 Other 文本（Other/选项语义互斥——同一问题主答案唯一）。
 function toggleOption(q: AskUserQuestion, value: string): void {
   const st = states.value[qKey(q)]
   if (!st) return
@@ -113,11 +117,52 @@ function toggleOption(q: AskUserQuestion, value: string): void {
     else st.selectedValues.push(value)
   } else {
     st.selectedValues = st.selectedValues[0] === value ? [] : [value]
+    // 单选选中后清 Other（互斥），然后自动前进
+    if (st.selectedValues.length > 0) {
+      st.otherText = ''
+      advanceToNext()
+    }
   }
 }
 
 function isSelected(q: AskUserQuestion, value: string): boolean {
   return states.value[qKey(q)]?.selectedValues.includes(value) ?? false
+}
+
+/** 单选选中后自动前进到下一题；已是最后一题则停（Submit 常驻底部 action bar） */
+function advanceToNext(): void {
+  if (activeIdx.value < props.questions.length - 1) {
+    activeIdx.value++
+  }
+}
+
+/** Other 输入时清空当前问题的选项选中（Other/选项语义互斥） */
+function onOtherInput(q: AskUserQuestion): void {
+  const st = states.value[qKey(q)]
+  if (st && st.selectedValues.length > 0) st.selectedValues = []
+}
+
+/** 问题是否已作答（选项选中 ≥1 或 Other 有文本）—— tab 绿点 + allAnswered 共用 */
+function isQuestionAnswered(q: AskUserQuestion): boolean {
+  const st = states.value[qKey(q)]
+  return !!st && (st.selectedValues.length > 0 || st.otherText.trim().length > 0)
+}
+
+/** 全部问题已作答（Submit 启用守卫，对齐 pi TUI allAnswered） */
+const allAnswered = computed(() => props.questions.every(isQuestionAnswered))
+/** 未答题数（disabled tooltip 文案） */
+const unansweredCount = computed(() => props.questions.filter((q) => !isQuestionAnswered(q)).length)
+
+/** Tab / Shift+Tab 在问题间循环导航（多问题时生效） */
+function onTabKey(e: KeyboardEvent): void {
+  if (props.questions.length <= 1) return
+  e.preventDefault()
+  const total = props.questions.length
+  if (e.shiftKey) {
+    activeIdx.value = (activeIdx.value - 1 + total) % total
+  } else {
+    activeIdx.value = (activeIdx.value + 1) % total
+  }
 }
 
 // 是否在选项末尾追加 Other 输入框（有 options 且 allowOther !== false）
@@ -164,7 +209,8 @@ function onSubmit(): void {
        结构对齐 demo v2：ask-user-head（来源 + 倒计时）/ ask-user-body（tab + 问题 + 选项）/ actions。 -->
   <div
     data-testid="ask-user-overlay"
-    class="flex flex-col overflow-hidden rounded-lg border border-border-strong bg-surface-2 shadow-lg"
+    class="flex flex-col animate-ask-user-slide-up overflow-hidden rounded-lg border border-border-strong bg-bg-input motion-reduce:animate-none"
+    @keydown.tab="onTabKey"
   >
     <!-- 请求头：脉冲圆点 + 来源标识 + 右上倒计时（5min 超时，warning 色） -->
     <div
@@ -177,7 +223,8 @@ function onSubmit(): void {
       <span class="flex-1" />
       <span
         data-testid="ask-user-countdown"
-        class="flex items-center gap-0.5 font-mono text-[11px] text-warning"
+        class="flex items-center gap-0.5 font-mono text-[11px]"
+        :class="isUrgent ? 'text-warning' : 'text-subtle'"
       >
         <Clock class="size-3" />
         {{ countdownText }}
@@ -202,6 +249,11 @@ function onSubmit(): void {
           @click="activeIdx = i"
         >
           {{ q.header ?? q.question.slice(0, 12) }}
+          <span
+            v-if="isQuestionAnswered(q)"
+            data-testid="ask-user-tab-answered"
+            class="size-1.5 rounded-full bg-success"
+          />
         </Button>
       </div>
 
@@ -210,7 +262,8 @@ function onSubmit(): void {
         <!-- 上下文摘要（弱化背景 + 左侧 reasoning 色竖条，对齐 demo v2 .q-context） -->
         <p
           v-if="activeQuestion.context"
-          class="rounded-sm border-l-2 border-[var(--reasoning)] bg-input px-3 py-2 text-[13px] text-text-muted"
+          data-testid="ask-user-context"
+          class="rounded bg-[var(--reasoning-soft)] px-3 py-2 text-[13px] text-text-muted"
         >
           {{ activeQuestion.context }}
         </p>
@@ -233,7 +286,7 @@ function onSubmit(): void {
             :tabindex="0"
             :aria-checked="isSelected(activeQuestion, optValue(opt))"
             :class="[
-              'flex cursor-pointer items-start gap-2.5 rounded-sm border bg-input px-3 py-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent',
+              'flex cursor-pointer items-start gap-2.5 rounded border px-3 py-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent',
               isSelected(activeQuestion, optValue(opt))
                 ? 'border-accent bg-accent-soft'
                 : 'border-border hover:border-border-strong hover:bg-surface-hover',
@@ -271,12 +324,13 @@ function onSubmit(): void {
           </div>
         </div>
 
-        <!-- Other 自由文本（有 options 时追加） -->
+        <!-- Other 自由文本（有 options 时追加）。输入时清空选项选中（互斥） -->
         <div v-if="showOther(activeQuestion)" class="flex flex-col gap-1">
           <Input
             v-model="states[qKey(activeQuestion)].otherText"
             placeholder="Other（自由输入）"
             :data-testid="`ask-user-other-${qKey(activeQuestion)}`"
+            @input="onOtherInput(activeQuestion)"
           />
         </div>
 
@@ -300,8 +354,8 @@ function onSubmit(): void {
       </div>
     </div>
 
-    <!-- 操作区 -->
-    <div class="flex items-center justify-end gap-2 border-t border-border bg-surface px-4 py-2.5">
+    <!-- 操作区：透明继承根 bg-input（去掉原三段背景三明治）。Submit 守卫 allAnswered -->
+    <div class="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">
       <Button
         v-if="allowCancel !== false"
         variant="ghost"
@@ -310,7 +364,13 @@ function onSubmit(): void {
       >
         取消
       </Button>
-      <Button variant="default" data-testid="ask-user-submit" @click="onSubmit">
+      <Button
+        variant="default"
+        data-testid="ask-user-submit"
+        :disabled="!allAnswered"
+        :title="allAnswered ? '提交' : `还有 ${unansweredCount} 题未答`"
+        @click="onSubmit"
+      >
         提交
       </Button>
     </div>
