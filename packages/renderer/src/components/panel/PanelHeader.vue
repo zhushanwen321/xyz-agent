@@ -58,7 +58,14 @@
         <ArrowRight class="size-[14px]" />
       </Button>
     </div>
+    <Loader2
+      v-if="showSpinner"
+      data-testid="session-spinner"
+      class="size-[13px] shrink-0 animate-spin"
+      :class="spinnerTextClass"
+    />
     <span
+      v-else
       class="size-[7px] shrink-0 rounded-full"
       :class="statusDotClass"
     />
@@ -90,6 +97,19 @@
     </nav>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+      <!-- SideDrawer toggle（always-visible，不依赖 git 仓库）。
+           非折叠态显此按钮；折叠态 chrome 按钮组已含侧栏切换。 -->
+      <Button
+        v-if="!showChrome"
+        variant="ghost"
+        size="icon"
+        class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        data-testid="drawer-toggle"
+        title="侧边抽屉"
+        @click="emit('toggleDrawer')"
+      >
+        <PanelRight class="size-[15px]" />
+      </Button>
       <!-- git 入口（panel/spec.md：git 移入 SideDrawer git tab）。
            非 git 仓库不渲染（gitIndicator.hasRepo=false）。脏状态点：
            conflict → danger；有改动（staged/dirty）→ warning；clean → 无点。
@@ -152,13 +172,14 @@
 <script setup lang="ts">
  
 import { computed } from 'vue'
-import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, ArrowLeft, ArrowRight } from '@lucide/vue'
+import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, PanelRight, ArrowLeft, ArrowRight, Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
+import { DOT_CLASS, shouldShowSpinner, SPINNER_TEXT_CLASS } from '@/composables/logic/sessionStatus'
 
 const props = defineProps<{
   sessionLabel: string
@@ -177,8 +198,10 @@ const emit = defineEmits<{
   split: []
   newSession: []
   close: []
-  /** 打开 SideDrawer git tab（panel/spec.md：git 入口落 per-session header） */
+  /** 打开 SideDrawer git tab（PanelContainer 统一渲染抽屉，事件上抛） */
   openGit: []
+  /** 切换 SideDrawer 开关（always-visible 按钮，不依赖 git 仓库） */
+  toggleDrawer: []
 }>()
 
 const navigation = useNavigationStore()
@@ -200,15 +223,12 @@ const dirName = computed(() => {
   return segs.length ? segs[segs.length - 1] : props.sessionDir
 })
 
-/** 状态点 5 态色（design-tokens SSOT，与 sidebar 一致）。running 用 animate-pulse 呼吸。 */
-const statusDotClass = computed(() => {
-  const map: Record<DerivedStatus, string> = {
-    running: 'bg-accent animate-pulse',
-    waiting: 'bg-warning',
-    done: 'bg-success',
-    stopped: 'bg-subtle opacity-50',
-    error: 'bg-danger',
-  }
-  return map[props.status]
-})
+/** 状态点 5 态色（DOT_CLASS SSOT，与 sidebar / overview 一致，消除原本地 map 漂移） */
+const statusDotClass = computed(() => DOT_CLASS[props.status])
+
+/** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
+const showSpinner = computed(() => shouldShowSpinner(props.status))
+
+/** spinner 图标色：running→accent 蓝，waiting→warning 橙 */
+const spinnerTextClass = computed(() => SPINNER_TEXT_CLASS[props.status as 'running' | 'waiting'])
 </script>

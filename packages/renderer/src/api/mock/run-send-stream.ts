@@ -11,6 +11,7 @@
  * 与 chat streamSubscribe（streamHandlers）独立，对称于 SideDrawer useSessionEvents.onMessage。
  */
 import type { ServerMessage } from '@xyz-agent/shared'
+import { guiResult, guiComponent } from '@xyz-agent/extension-protocol'
 
 /** 流式时序（ms）—— 仅用于视觉演示节奏，不影响契约。index.ts 的 TIMING 实现此接口 */
 export interface Timing {
@@ -114,6 +115,21 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
       output: '…文件内容（mock）…',
       outputRaw: '\x1b[32mSuccess\x1b[0m: operation completed',
       status: 'completed',
+      // 路径 B：details.__gui__ 让 Block.vue extractGui 提取并路由到 GuiComponentRenderer。
+      // 用 card 嵌套 progress-bar + stats-line，一次覆盖递归嵌套 + 3 种 type 的 E2E 验证。
+      details: {
+        __gui__: guiResult(guiComponent('card', {
+          variant: 'elevated',
+          header: 'CI Pipeline',
+          body: [
+            guiComponent('progress-bar', { label: 'build', current: 7, total: 8, severity: 'ok' }),
+            guiComponent('stats-line', { items: [
+              { label: 'turns', value: '15' },
+              { label: 'tokens', value: '2.1k' },
+            ] }),
+          ],
+        })),
+      },
     },
   })
 
@@ -146,6 +162,28 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
             { value: '3 turns', label: 'turns' },
             { value: '2.1k', label: 'tokens' },
             { value: '4.5s', label: 'duration' },
+          ],
+        },
+      },
+    },
+  })
+  // 第二个 GUI widget：list-tree，widgetKey 含 'browser' → 落到 SideDrawer browser tab，
+  // 与 terminal tab 的 stats-line 互不覆盖。让 E2E 可切 tab 验证不同 type 渲染。
+  pushSession(sessionId, {
+    type: 'extension:widgetGui',
+    id: nextId('wg2'),
+    payload: {
+      sessionId,
+      widgetKey: 'gui-browser-demo',
+      gui: {
+        type: 'list-tree',
+        props: {
+          items: [
+            { label: 'Deploy', icon: 'arrow', children: [
+              { label: 'VPC', status: 'done' },
+              { label: 'RDS', status: 'running' },
+              { label: 'Redis', status: 'failed' },
+            ] },
           ],
         },
       },
@@ -210,20 +248,23 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
   // Extension UI 交互请求（extension.ui_request）：pi extension 调 ctx.ui.select/confirm/input 时，
   // runtime 经 event-adapter 翻译后推此帧。useExtensionUI composable 经 events.on(sessionId) 订阅，
   // mock 走 pushSession(dispatchSession) 同构透传，让 ExtensionUIDialog 在 mock 下可验证。
-  if (isCancelled(sessionId)) return
-  await sleep(TIMING.done)
-  pushSession(sessionId, {
-    type: 'extension.ui_request',
-    id: nextId('uir'),
-    payload: {
-      sessionId,
-      requestId: `mock-ui-${Date.now()}`,
-      method: 'select',
-      title: 'Mock: 选择部署目标',
-      message: '选择部署环境',
-      options: ['生产环境', '预发环境', '测试环境'],
-    },
-  })
+  // 仅关键词触发（不污染所有消息，避免 modal 弹窗挡住后续 E2E 交互——如 ST-1 的 complete 后输入）。
+  if (/select|部署/i.test(text)) {
+    if (isCancelled(sessionId)) return
+    await sleep(TIMING.done)
+    pushSession(sessionId, {
+      type: 'extension.ui_request',
+      id: nextId('uir'),
+      payload: {
+        sessionId,
+        requestId: `mock-ui-${Date.now()}`,
+        method: 'select',
+        title: 'Mock: 选择部署目标',
+        message: '选择部署环境',
+        options: ['生产环境', '预发环境', '测试环境'],
+      },
+    })
+  }
 
   // complete（含 usage，证明 W05-A usage 回填）
   if (isCancelled(sessionId)) return

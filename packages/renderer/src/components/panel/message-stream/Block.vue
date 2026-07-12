@@ -81,6 +81,7 @@
       <!-- ── 普通 tool 块：1 行收起（header 含 toolName+argPath 摘要+状态），点击展开详情 ── -->
       <div v-else>
         <div
+          data-testid="tool-block-header"
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
           :class="isFailed ? 'text-danger' : isUnfinished ? 'text-subtle' : 'text-info'"
           :title="toolExpanded ? '收起' : '展开'"

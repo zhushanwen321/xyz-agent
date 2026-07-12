@@ -15,6 +15,8 @@
 | [04-file-tree.md](./04-file-tree.md) | 文件树（懒加载 + 过滤 + git 角标） | ✅ | ✅ | ✅ **已落地**（11 用例） |
 | [05-side-drawer.md](./05-side-drawer.md) | SideDrawer（文件预览 / diff / git tab） | ✅ | ✅ | ✅ 范例（detail + git tab 有可跑断言） |
 | [06-search-modal.md](./06-search-modal.md) | 搜索浮层（⌘K 四类分组 + 跳转 + loading·error） | ✅ | ✅ | ⚠️ 待落地（vitest 集成测已覆盖渲染+交互） |
+| [07-gui-components.md](./07-gui-components.md) | GUI 组件渲染（7 种 block type + 两条渲染路径） | ✅ | — | ✅ **已落地**（4 用例） |
+| [08-real-track-manual.md](./08-real-track-manual.md) | real 轨手工测试（给 ai-agent 照着执行） | — | ✅ | — |
 
 > 图例：✅ = 可测且稳定 / ⚠️ = 有约束或待补 / ❌ = 不可测（需手工）。
 > **已落地** = spec 文件存在于 `e2e/` 且能跑通；**范例** = 文档内有完整可跑代码但尚未落地为 spec 文件。

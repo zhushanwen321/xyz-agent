@@ -32,6 +32,7 @@
             class="size-7 shrink-0 justify-center rounded-sm p-0"
             :class="activeTab === t.key ? 'bg-accent-soft text-accent' : 'text-muted'"
             :title="t.label"
+            :data-testid="`drawer-tab-${t.key}`"
             @click="emit('set-tab', t.key)"
           >
             <component :is="t.icon" class="size-3.5" />

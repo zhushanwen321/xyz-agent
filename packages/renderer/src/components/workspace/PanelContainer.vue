@@ -39,6 +39,7 @@
       @new-session="onNewSession"
       @close="onClose(leaf.id)"
       @open-git="openDrawer('git')"
+      @toggle-drawer="toggleDrawer()"
     />
 
     <!-- SideDrawer：workspace-body 级辅助视图容器（panel/spec.md v2）。单实例，跟随 active panel。
@@ -100,6 +101,7 @@ const {
   docked: drawerDocked,
   open: openDrawer,
   close: closeDrawer,
+  toggle: toggleDrawer,
   setTab: setDrawerTab,
   toggleDock: toggleDrawerDock,
 } = useSideDrawer()

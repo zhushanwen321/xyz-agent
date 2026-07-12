@@ -28,6 +28,7 @@
       @new-session="emit('new-session')"
       @close="emit('close')"
       @open-git="emit('openGit')"
+      @toggle-drawer="emit('toggleDrawer')"
     />
 
     <!-- 渲染分支对齐 NewTaskFlow 状态机（修恢复空 session 的 chip 死锁）：
@@ -141,6 +142,8 @@ const emit = defineEmits<{
   close: []
   /** 打开 SideDrawer git tab（PanelContainer 统一渲染抽屉，事件上抛） */
   openGit: []
+  /** 切换 SideDrawer 开关（PanelContainer 统一渲染抽屉，事件上抛） */
+  toggleDrawer: []
 }>()
 
 /** 点击 panel body 切 active（双 panel 主从焦点）；点 header 按钮不误切（按钮自身 stopPropagation） */
