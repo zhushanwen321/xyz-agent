@@ -21,7 +21,7 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, GUI_INTERACT_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -372,21 +372,21 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     const dialogMethod = method as ExtensionInteractMethod
     const requestId = String(event.id ?? '')
 
-    // 富交互请求检测：select title 为 GUI_INTERACT_MARKER → options[0] 是 JSON payload
-    // （guiInteract helper 序列化的 { questions, allowCancel }）。
-    // 检测成功后透传 questions 等字段，前端路由到 InteractionOverlay；检测失败（非合法 JSON）
+    // ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload
+    // （askUserInteract helper 序列化的 { questions, allowCancel }）。
+    // 检测成功后透传 questions 等字段，前端路由到 AskUserOverlay；检测失败（非合法 JSON）
     // 降级为普通 select（下方分支）。
-    if (method === 'select' && event.title === GUI_INTERACT_MARKER) {
+    if (method === 'select' && event.title === ASK_USER_MARKER) {
       const rawOptions = Array.isArray(event.options) ? event.options as unknown[] : []
-      let interactionData: { questions?: unknown; allowCancel?: boolean } | undefined
+      let askUserData: { questions?: unknown; allowCancel?: boolean } | undefined
       try {
-        interactionData = rawOptions.length > 0 ? JSON.parse(String(rawOptions[0])) : undefined
+        askUserData = rawOptions.length > 0 ? JSON.parse(String(rawOptions[0])) : undefined
       // eslint-disable-next-line taste/no-silent-catch -- console.warn 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4），降级为普通 select 不中断
       } catch {
         // options[0] 不是合法 JSON → 降级为普通 select（下方统一 return）
       }
 
-      if (interactionData?.questions) {
+      if (askUserData?.questions) {
         return [
           // ★ extension-ui kind 事件：timeout-manager 据此注册 5min 超时。
           // 漏掉这个会导致用户不响应时 pi select Promise 永挂（与普通 select 分支一致）。
@@ -399,9 +399,9 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
                 sessionId: sid,
                 requestId,
                 method: 'select',              // 仍是 select（复用回传通道）
-                interaction: true,             // 标记富交互，前端据此路由到 InteractionOverlay
-                questions: interactionData.questions,
-                allowCancel: interactionData.allowCancel ?? true,
+                askUser: true,                 // 标记 ask-user 富交互，前端据此路由到 AskUserOverlay
+                askUserQuestions: askUserData.questions,
+                allowCancel: askUserData.allowCancel ?? true,
               },
             },
           },

@@ -137,6 +137,10 @@ export interface ExtensionUIRequest {
   default?: string
   level?: 'info' | 'warn' | 'error'
   prefill?: string
+  // ask-user 富交互扩展（仅 method='select' + askUser=true 时存在）
+  askUser?: boolean
+  askUserQuestions?: unknown[]  // AskUserQuestion[]，前端用类型守卫收窄
+  allowCancel?: boolean
 }
 
 /**

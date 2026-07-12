@@ -248,10 +248,10 @@ export interface ServerMessageMapBase {
   'extension:status': { sessionId: string; statusKey: string; text: string; textRaw?: string }
   // extension notify（pi fire-and-forget 通知，前端渲染为 toast）
   'extension:notify': { sessionId: string; message: string; level: 'info' | 'warn' | 'error' }
-  // extension.ui_request：交互对话框请求（select/confirm/input/editor + 富交互）。
-  // 富交互扩展字段（interaction/questions/allowCancel）仅在 method='select' + interaction=true 时存在。
-  // questions 用 unknown[] 保持 shared 包依赖最小化（与 extension:widgetGui 的 gui:unknown 先例一致），
-  // 前端消费时用类型守卫收窄为 InteractionQuestion[]。
+  // extension.ui_request：交互对话框请求（select/confirm/input/editor + ask-user 富交互）。
+  // ask-user 扩展字段（askUser/askUserQuestions/allowCancel）仅在 method='select' + askUser=true 时存在。
+  // askUserQuestions 用 unknown[] 保持 shared 包依赖最小化（与 extension:widgetGui 的 gui:unknown 先例一致），
+  // 前端消费时用类型守卫收窄为 AskUserQuestion[]。
   'extension.ui_request': {
     sessionId: string
     requestId: string
@@ -262,9 +262,9 @@ export interface ServerMessageMapBase {
     default?: string
     level?: 'info' | 'warn' | 'error'
     prefill?: string
-    // 富交互扩展（仅 method='select' + interaction=true 时存在）
-    interaction?: boolean
-    questions?: unknown[]
+    // ask-user 富交互扩展（仅 method='select' + askUser=true 时存在）
+    askUser?: boolean
+    askUserQuestions?: unknown[]
     allowCancel?: boolean
   }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）

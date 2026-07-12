@@ -1,0 +1,134 @@
+/**
+ * AskUserOverlay 测试（W3: U9-U13）。
+ *
+ * 验证 ask-user 富交互组件的渲染和交互：
+ * - U9: 首屏渲染（问题文本 + 选项列表存在于 DOM）
+ * - U10: 单选交互（点击 → Submit → answers 包含 value）
+ * - U11: 多选交互（点击多个 → Submit → answers 含 JSON 数组）
+ * - U12: Other 输入 + comment
+ * - U13: Cancel 取消
+ *
+ * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/AskUserOverlay.test.ts
+ */
+import { describe, it, expect } from 'vitest'
+import { mount } from '@vue/test-utils'
+import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
+import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
+
+// ── 测试数据 ──
+const singleSelectQ: AskUserQuestion = {
+  header: 'db',
+  question: '选哪个数据库?',
+  options: [
+    { label: 'Postgres', value: 'pg' },
+    { label: 'MySQL', value: 'mysql' },
+  ],
+}
+
+const multiSelectQ: AskUserQuestion = {
+  header: 'lang',
+  question: '选哪些语言?',
+  multiSelect: true,
+  options: [
+    { label: 'TypeScript', value: 'ts' },
+    { label: 'Python', value: 'py' },
+    { label: 'Rust', value: 'rs' },
+  ],
+}
+
+const freeTextQ: AskUserQuestion = {
+  header: 'note',
+  question: '补充说明',
+  allowComment: true,
+}
+
+function mountOverlay(questions: AskUserQuestion[], allowCancel = true) {
+  return mount(AskUserOverlay, {
+    props: { questions, allowCancel },
+  })
+}
+
+describe('AskUserOverlay', () => {
+  it('U9: 首屏渲染——DOM 含问题文本 + 选项列表', () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 问题文本存在
+    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
+    // 选项存在
+    expect(wrapper.find('[data-testid="ask-user-option-pg"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ask-user-option-mysql"]').exists()).toBe(true)
+    // Submit 按钮存在
+    expect(wrapper.find('[data-testid="ask-user-submit"]').exists()).toBe(true)
+  })
+
+  it('U10: 单选——点击选项 → Submit → answers 包含 value', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    // 点击 Postgres 选项
+    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    // Submit
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    // emit submit 事件，payload 是 JSON string
+    const submitEvents = wrapper.emitted('submit')
+    expect(submitEvents).toHaveLength(1)
+    const answers = JSON.parse(submitEvents![0][0] as string)
+    expect(answers.db).toBe('pg')
+  })
+
+  it('U11: 多选——点击多个 → Submit → answers 含 JSON 数组', async () => {
+    const wrapper = mountOverlay([multiSelectQ])
+
+    // 点击 TS 和 Python
+    await wrapper.find('[data-testid="ask-user-option-ts"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-py"]').trigger('click')
+    // Submit
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    const submitEvents = wrapper.emitted('submit')
+    expect(submitEvents).toHaveLength(1)
+    const answers = JSON.parse(submitEvents![0][0] as string)
+    // 多选 → JSON.stringify(value[])
+    expect(JSON.parse(answers.lang)).toEqual(['ts', 'py'])
+  })
+
+  it('U12: Other 自由文本 + comment', async () => {
+    const wrapper = mountOverlay([freeTextQ])
+
+    // 无 options → 渲染自由文本 Textarea
+    expect(wrapper.find('[data-testid="ask-user-free-text"]').exists()).toBe(true)
+    // 填入自由文本
+    await wrapper.find('[data-testid="ask-user-free-text"]').setValue('需要加索引')
+    // 填入评论
+    await wrapper.find('[data-testid="ask-user-comment-note"]').setValue('prod 环境注意')
+    // Submit
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    const submitEvents = wrapper.emitted('submit')
+    expect(submitEvents).toHaveLength(1)
+    const answers = JSON.parse(submitEvents![0][0] as string)
+    // 无 options 的纯自由文本问题：输入文本作为主答案（key=header）
+    expect(answers.note).toBe('需要加索引')
+    // 评论存到独立 key
+    expect(answers['note__comment']).toBe('prod 环境注意')
+  })
+
+  it('U13: Cancel → emit cancel 事件', async () => {
+    const wrapper = mountOverlay([singleSelectQ], true)
+
+    await wrapper.find('[data-testid="ask-user-cancel"]').trigger('click')
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+
+  it('U9 补充: 多问题 tab 切换', async () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    // 初始显示第一个问题
+    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
+    // tab 存在
+    expect(wrapper.find('[data-testid="ask-user-tab-1"]').exists()).toBe(true)
+    // 切换到第二个
+    await wrapper.find('[data-testid="ask-user-tab-1"]').trigger('click')
+    expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪些语言?')
+  })
+})

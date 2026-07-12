@@ -21,6 +21,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import AskUserOverlay from './ask-user/AskUserOverlay.vue'
+import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
 import { useExtensionUI } from '@/composables/useExtensionUI'
 import { useSidebar } from '@/composables/features/useSidebar'
 
@@ -33,6 +35,12 @@ const isOpen = computed(() => req.value !== undefined)
 // ── select/input 状态 ──
 const inputValue = ref('')
 const selectValue = ref('')
+
+// ask-user questions（类型守卫收窄 unknown[] → AskUserQuestion[]）
+const askUserQuestions = computed<AskUserQuestion[]>(() => {
+  if (!req.value?.askUser || !req.value.askUserQuestions) return []
+  return req.value.askUserQuestions as AskUserQuestion[]
+})
 
 // 新请求到来时，重置输入状态
 watch(req, (r) => {
@@ -52,18 +60,32 @@ function onConfirm(): void {
     respond(true)
   }
 }
+
+// ask-user Submit：answers JSON string 通过 select value 回传
+function onAskUserSubmit(answers: string): void {
+  respond(answers)
+}
 </script>
 
 <template>
   <Dialog :open="isOpen" @update:open="(v: boolean) => { if (!v) cancel() }">
-    <DialogContent hide-close class="max-w-[420px]" data-testid="extension-ui-dialog">
+    <DialogContent hide-close :class="req?.askUser ? 'max-w-2xl' : 'max-w-[420px]'" data-testid="extension-ui-dialog">
       <DialogHeader>
         <DialogTitle>{{ req?.title || 'Extension 请求' }}</DialogTitle>
         <DialogDescription v-if="req?.message">{{ req.message }}</DialogDescription>
       </DialogHeader>
 
+      <!-- ask-user 富交互（askUserInteract via select+marker） -->
+      <AskUserOverlay
+        v-if="req?.askUser"
+        :questions="askUserQuestions"
+        :allow-cancel="req.allowCancel"
+        @submit="onAskUserSubmit"
+        @cancel="cancel"
+      />
+
       <!-- confirm -->
-      <div v-if="req?.method === 'confirm'" class="flex justify-end gap-2 pt-2">
+      <div v-else-if="req?.method === 'confirm'" class="flex justify-end gap-2 pt-2">
         <Button variant="ghost" @click="cancel">取消</Button>
         <Button variant="default" @click="onConfirm">确认</Button>
       </div>
