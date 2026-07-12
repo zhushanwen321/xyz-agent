@@ -46,7 +46,7 @@ jobs:
         run: pnpm --filter @xyz-agent/extension-protocol build
 
       - name: Publish prerelease to npm
-        run: pnpm changeset publish --tag dev
+        run: pnpm changeset publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
