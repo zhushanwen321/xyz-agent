@@ -43,7 +43,8 @@ const stubs = {
   PanelHeader: { template: '<div />' },
   ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div data-testid="msg-stream" />' },
-  Composer: { template: '<div data-testid="composer" />' },
+  // Composer stub testid 对齐真实 Composer.vue（data-testid="composer-box"，见 Composer.vue L25）
+  Composer: { template: '<div data-testid="composer-box" />' },
   Landing: { template: '<div data-testid="landing">landing</div>' },
 }
 
@@ -85,8 +86,8 @@ describe('Panel inline ask-user 渲染（W2）', () => {
 
     // ask-user overlay 渲染
     expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(true)
-    // Composer 互斥隐藏
-    expect(wrapper.find('[data-testid="composer"]').exists()).toBe(false)
+    // Composer 互斥隐藏（Composer 组件 v-else-if 不挂载，其 testid 不存在于 DOM）
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(false)
   })
 
   it('U5: 无 ask-user 请求 → 渲染 Composer，不渲染 AskUserOverlay', () => {
@@ -95,7 +96,7 @@ describe('Panel inline ask-user 渲染（W2）', () => {
     const wrapper = mountPanel('session-A')
 
     // Composer 渲染
-    expect(wrapper.find('[data-testid="composer"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
     // ask-user overlay 不渲染
     expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(false)
   })
