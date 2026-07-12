@@ -28,6 +28,8 @@ vi.mock('@/composables/useExtensionUI', () => ({
     respond: mockRespond,
     cancel: mockCancel,
   }),
+  dialogFilter: (req: ExtensionUIRequest) => req.askUser !== true,
+  askUserFilter: (req: ExtensionUIRequest) => req.askUser === true,
 }))
 
 // Mock useSidebar（避免依赖真实 session 状态）

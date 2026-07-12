@@ -141,6 +141,8 @@ export interface ExtensionUIRequest {
   askUser?: boolean
   askUserQuestions?: unknown[]  // AskUserQuestion[]，前端用类型守卫收窄
   allowCancel?: boolean
+  /** 请求入队时刻（ms，由 useExtensionUI 在 push 时打戳）。用于倒计时基准 */
+  receivedAt?: number
 }
 
 /**

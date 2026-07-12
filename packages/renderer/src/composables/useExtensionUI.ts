@@ -11,17 +11,27 @@
  *
  * per-sessionId 分区：每个 Panel 各调 useExtensionUI(Ref(sessionId))，各自维护自己 session
  * 的请求队列与 WS 订阅生命周期。split 模式下两个 Panel 可同时各有一个 ask-user。
- * events.on(sessionId) 天然支持多订阅者，无冲突。
  *
- * 请求分两类（同一队列，按 askUser 标记分流渲染）：
- * - ask-user 富交互（askUser===true）→ Panel inline 渲染（currentAskUserRequest）
- * - confirm/select/input/editor 简单原语 → ExtensionUIDialog modal（currentDialogRequest）
+ * 防重复入队（B1 修复）：ExtensionUIDialog（全局，跟 focusedSessionId）和 Panel（per-panel）
+ * 可能在 split 模式下订阅同一 sessionId。filter 参数让两个消费者从源头分流——
+ * ExtensionUIDialog 只入非 askUser 请求，Panel 只入 askUser 请求——避免同一请求入两份队列。
  */
 import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
 import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, type ExtensionUIRequest } from '@/api/domains/extension'
 import { useToast } from '@/composables/useToast'
 
-export function useExtensionUI(sessionId: Ref<string | null>) {
+/** 入队过滤谓词：返回 true 的请求才入队 */
+export type UIRequestFilter = (req: ExtensionUIRequest) => boolean
+
+/** ask-user 富交互请求过滤器（Panel 用） */
+export const askUserFilter: UIRequestFilter = (req) => req.askUser === true
+/** 非 ask-user 的简单原语请求过滤器（ExtensionUIDialog 用） */
+export const dialogFilter: UIRequestFilter = (req) => req.askUser !== true
+
+export function useExtensionUI(
+  sessionId: Ref<string | null>,
+  filter?: UIRequestFilter,
+) {
   // 本 session 专属队列（per-sessionId 分区，不再模块级单例）
   const queue = ref<ExtensionUIRequest[]>([])
 
@@ -34,10 +44,11 @@ export function useExtensionUI(sessionId: Ref<string | null>) {
       unsubFns = []
     }
     if (!sid) return
-    // UI 请求入队
+    // UI 请求入队（经 filter 过滤，避免双消费者重复入队）
     unsubFns.push(
       onUIRequest(sid, (req) => {
-        queue.value.push(req)
+        if (filter && !filter(req)) return
+        queue.value.push({ ...req, receivedAt: Date.now() })
       }),
     )
     // 超时出队：runtime ExtensionTimeoutManager 5 分钟无响应后广播 extension.ui_timeout，

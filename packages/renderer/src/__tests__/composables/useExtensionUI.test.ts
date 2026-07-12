@@ -112,6 +112,19 @@ describe('useExtensionUI U2 按 requestId 精确 respond', () => {
     cancel('r-x')
     expect(sendExtensionUIResponse).toHaveBeenCalledWith('sessionA', 'r-x', 'select', null)
   })
+
+  it('W5: 队列两个 confirm，respond 首个后第二个晋升为 currentDialogRequest', () => {
+    const { respond, currentDialogRequest } = useExtensionUI(ref('sessionA'))
+    emitUIRequest('sessionA', mkDialogReq('sessionA', 'r-confirm-a', 'confirm'))
+    emitUIRequest('sessionA', mkDialogReq('sessionA', 'r-confirm-b', 'confirm'))
+
+    // respond 第一个
+    expect(currentDialogRequest.value?.requestId).toBe('r-confirm-a')
+    respond('r-confirm-a', true)
+
+    // 第二个晋升为 currentDialogRequest
+    expect(currentDialogRequest.value?.requestId).toBe('r-confirm-b')
+  })
 })
 
 describe('useExtensionUI U3 ui_timeout 按 requestId 精确出队', () => {

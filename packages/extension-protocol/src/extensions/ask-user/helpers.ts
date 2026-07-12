@@ -9,8 +9,7 @@
  */
 
 import type { GuiContext } from '../../core/gui-context'
-import { isGuiCapable } from '../../core/helpers'
-import { stripUndefined } from '../../core/helpers'
+import { isGuiCapable, stripUndefined } from '../../core/helpers'
 import type { AskUserQuestion, AskUserAnswers } from './types'
 import { ASK_USER_MARKER } from './marker'
 
@@ -87,7 +86,10 @@ export function getAskUserAnswer(
   const raw = answers[key]
   if (raw === undefined) return undefined
   if (question.multiSelect) {
-    try { return JSON.parse(raw) as string[] } catch { return [raw] }
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : [raw]
+    } catch { return [raw] }
   }
   return raw
 }
@@ -106,4 +108,19 @@ export function getAskUserComment(
   question: AskUserQuestion,
 ): string | undefined {
   return answers[`${askUserKey(question)}__comment`]
+}
+
+/**
+ * 类型守卫：验证 unknown 是否为合法的 AskUserQuestion。
+ * 用于前端从 runtime 透传的 askUserQuestions（unknown[]）中安全收窄。
+ */
+export function isAskUserQuestion(value: unknown): value is AskUserQuestion {
+  if (typeof value !== 'object' || value === null) return false
+  const q = value as Record<string, unknown>
+  return typeof q.question === 'string'
+    && (q.header === undefined || typeof q.header === 'string')
+    && (q.options === undefined || Array.isArray(q.options))
+    && (q.multiSelect === undefined || typeof q.multiSelect === 'boolean')
+    && (q.allowOther === undefined || typeof q.allowOther === 'boolean')
+    && (q.allowComment === undefined || typeof q.allowComment === 'boolean')
 }

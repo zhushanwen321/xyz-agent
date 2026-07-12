@@ -4,6 +4,7 @@ import {
   getAskUserAnswer,
   getAskUserOther,
   getAskUserComment,
+  isAskUserQuestion,
   ASK_USER_MARKER,
   type GuiContext,
   type AskUserQuestion,
@@ -133,5 +134,40 @@ describe('getAskUserAnswer / getAskUserOther / getAskUserComment', () => {
     const q: AskUserQuestion = { header: 'db', question: 'q' }
     expect(getAskUserOther({ db: 'pg' }, q)).toBeUndefined()
     expect(getAskUserComment({ db: 'pg' }, q)).toBeUndefined()
+  })
+
+  it('U5: 多选 JSON.parse 成功但非数组 → 降级返回 [raw]', () => {
+    const q: AskUserQuestion = { header: 'x', question: 'q', multiSelect: true }
+    // 合法 JSON 但不是数组（如纯字符串）
+    const answers = { x: '"just-a-string"' }
+    expect(getAskUserAnswer(answers, q)).toEqual(['"just-a-string"'])
+  })
+})
+
+describe('isAskUserQuestion 类型守卫', () => {
+  it('合法 AskUserQuestion → true', () => {
+    expect(isAskUserQuestion({ question: 'q?' })).toBe(true)
+    expect(isAskUserQuestion({ header: 'h', question: 'q?', options: [] })).toBe(true)
+    expect(isAskUserQuestion({ question: 'q?', multiSelect: true, allowOther: false })).toBe(true)
+  })
+
+  it('缺 question 必填字段 → false', () => {
+    expect(isAskUserQuestion({ header: 'h' })).toBe(false)
+    expect(isAskUserQuestion({ options: [] })).toBe(false)
+  })
+
+  it('question 非 string → false', () => {
+    expect(isAskUserQuestion({ question: 123 })).toBe(false)
+  })
+
+  it('null / 非对象 → false', () => {
+    expect(isAskUserQuestion(null)).toBe(false)
+    expect(isAskUserQuestion(undefined)).toBe(false)
+    expect(isAskUserQuestion('string')).toBe(false)
+    expect(isAskUserQuestion([])).toBe(false)
+  })
+
+  it('options 非数组 → false', () => {
+    expect(isAskUserQuestion({ question: 'q?', options: 'not-array' })).toBe(false)
   })
 })

@@ -190,7 +190,7 @@ function onSubmit(): void {
       <div v-if="questions.length > 1" class="flex gap-0.5 border-b border-border">
         <Button
           v-for="(q, i) in questions"
-          :key="i"
+          :key="qKey(q)"
           variant="ghost"
           :class="[
             'rounded-none -mb-px border-b-2 px-3 py-2 text-[13px] font-normal transition-colors',
@@ -229,13 +229,18 @@ function onSubmit(): void {
             v-for="opt in activeQuestion.options"
             :key="optValue(opt)"
             :data-testid="`ask-user-option-${optValue(opt)}`"
+            :role="activeQuestion.multiSelect ? 'checkbox' : 'radio'"
+            :tabindex="0"
+            :aria-checked="isSelected(activeQuestion, optValue(opt))"
             :class="[
-              'flex cursor-pointer items-start gap-2.5 rounded-sm border bg-input px-3 py-2 transition-colors',
+              'flex cursor-pointer items-start gap-2.5 rounded-sm border bg-input px-3 py-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent',
               isSelected(activeQuestion, optValue(opt))
                 ? 'border-accent bg-accent-soft'
                 : 'border-border hover:border-border-strong hover:bg-surface-hover',
             ]"
             @click="toggleOption(activeQuestion, optValue(opt))"
+            @keydown.enter="toggleOption(activeQuestion, optValue(opt))"
+            @keydown.space.prevent="toggleOption(activeQuestion, optValue(opt))"
           >
             <Checkbox
               v-if="activeQuestion.multiSelect"

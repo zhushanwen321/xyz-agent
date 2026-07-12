@@ -326,6 +326,19 @@ describe('event-adapter: ask-user ASK_USER_MARKER 检测 (U6-U8)', () => {
     expect(msg!.message.payload.askUser).toBeUndefined()
   })
 
+  it('U8: title=marker 且 JSON 合法但 questions 为空数组 → 降级普通 select', () => {
+    // S1 加固：空数组 [] 是 truthy，旧代码 if(questions) 会透传空 questions。
+    // 修复后要求 .length > 0，否则降级。
+    const payload = JSON.stringify({ questions: [], allowCancel: true })
+    const event = makeSelectEvent(ASK_USER_MARKER, [payload], 'req-empty-q')
+
+    const results = translate(event, 'sess-1')
+
+    const msg = findMessage(results)
+    expect(msg).toBeDefined()
+    expect(msg!.message.payload.askUser).toBeUndefined()
+  })
+
   it('U6: confirm/input/editor 不受 marker 检测影响（method≠select 不进 marker 分支）', () => {
     const event = {
       type: 'extension_ui_request',

@@ -24,11 +24,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useExtensionUI } from '@/composables/useExtensionUI'
+import { useExtensionUI, dialogFilter } from '@/composables/useExtensionUI'
 import { useSidebar } from '@/composables/features/useSidebar'
 
 const { focusedSessionId } = useSidebar()
-const { currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId)
+// B1 防重复入队：ExtensionUIDialog 只收非 askUser 请求（askUser 由 Panel inline 处理）
+const { currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId, dialogFilter)
 
 const req = computed(() => currentDialogRequest.value)
 const isOpen = computed(() => req.value !== undefined)

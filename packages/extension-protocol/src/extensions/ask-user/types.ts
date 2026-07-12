@@ -15,8 +15,8 @@
  */
 export interface AskUserQuestion {
   /** Tab 标签 / 简短标题。多问题时用于 tab 切换，≤12 字符。
-   *  可选——未提供时前端用 question 文本截断（前 12 字符）作为 tab 标签和 answers key。
-   *  answers 的 key 优先用 header，header 缺失时用截断后的 question 文本。 */
+   *  可选——未提供时前端用 question 文本作为 tab 标签（前 12 字符截断显示）
+   *  和 answers key（完整 question 文本，不截断）。 */
   header?: string
   /** 完整问题文本。也作为 answers 的 fallback key（header 缺失时） */
   question: string

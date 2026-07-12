@@ -36,6 +36,8 @@ vi.mock('@/composables/useExtensionUI', () => ({
     respond: mockState.respond,
     cancel: mockState.cancel,
   }),
+  askUserFilter: (req: { askUser?: boolean }) => req.askUser === true,
+  dialogFilter: (req: { askUser?: boolean }) => req.askUser !== true,
 }))
 
 // stub 子组件（除 AskUserOverlay，断言其挂载）

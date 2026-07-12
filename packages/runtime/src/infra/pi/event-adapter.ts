@@ -386,7 +386,7 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
         // options[0] 不是合法 JSON → 降级为普通 select（下方统一 return）
       }
 
-      if (askUserData?.questions) {
+      if (Array.isArray(askUserData?.questions) && askUserData.questions.length > 0) {
         return [
           // ★ extension-ui kind 事件：timeout-manager 据此注册 5min 超时。
           // 漏掉这个会导致用户不响应时 pi select Promise 永挂（与普通 select 分支一致）。

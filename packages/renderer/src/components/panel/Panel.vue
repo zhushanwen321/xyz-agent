@@ -105,7 +105,7 @@ import { computed } from 'vue'
 import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
-import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
+import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
 import PanelHeader from './PanelHeader.vue'
 import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
@@ -117,7 +117,7 @@ import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useToast } from '@/composables/useToast'
-import { useExtensionUI } from '@/composables/useExtensionUI'
+import { useExtensionUI, askUserFilter } from '@/composables/useExtensionUI'
 
 const props = defineProps<{
   panelId: string
@@ -158,9 +158,10 @@ const { error: toastError } = useToast()
 const flow = useNewTaskFlow()
 
 // W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。
+// B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 ExtensionUIDialog modal 处理）
 // landing 态 sessionId=null 时内部 null 守卫已处理，不订阅。
 const { currentAskUserRequest, respond: respondExtensionUI, cancel: cancelExtensionUI } =
-  useExtensionUI(computed(() => props.sessionId))
+  useExtensionUI(computed(() => props.sessionId), askUserFilter)
 
 /** 当前 session 是否已 dead（进程退出）。dead 态显示占位 UI + 重开入口，不渲染对话流/composer */
 const isSessionDead = computed(() => {
@@ -204,22 +205,25 @@ const showPanelComposer = computed(
     isCompacting.value,
 )
 /** W2 ask-user inline：有 ask-user 请求时 AskUserOverlay 接管 band（与 Composer 互斥）。
- *  hasAskUserRequest 优先级高于 showPanelComposer——ask-user 是阻塞输入请求，必须承接。 */
-const hasAskUserRequest = computed(() => currentAskUserRequest.value !== undefined)
+ *  hasAskUserRequest 优先级高于 showPanelComposer——ask-user 是阻塞输入请求，必须承接。
+ *  W6: dead session 态不渲染——进程已退出，用户点击 Submit 会发给已死的 session。 */
+const hasAskUserRequest = computed(() =>
+  currentAskUserRequest.value !== undefined && !isSessionDead.value,
+)
 /** ask-user questions（类型守卫收窄 unknown[] → AskUserQuestion[]）。
- *  askUserQuestions 字段由 runtime event-adapter 从 select 通道透传，前端按 askUser 标记收窄。 */
+ *  askUserQuestions 字段由 runtime event-adapter 从 select 通道透传，
+ *  用 isAskUserQuestion 守卫过滤掉结构异常的元素，避免渲染 undefined。 */
 const askUserQuestions = computed<AskUserQuestion[]>(() => {
   const req = currentAskUserRequest.value
   if (!req?.askUser || !req.askUserQuestions) return []
-  return req.askUserQuestions as AskUserQuestion[]
+  return req.askUserQuestions.filter(isAskUserQuestion)
 })
-/** 倒计时起点：取当前请求到达时刻。computed 依赖 requestId——新请求到达（requestId 变）时
- *  重算一次，缓存的 Date.now() 作为该请求的固定 startedAt（5min 超时倒计时基准）。 */
-const askUserStartedAt = computed(() => {
-  // 依赖 requestId 触发重算（新请求 → 新时间戳）；同一请求内只算一次
-  void currentAskUserRequest.value?.requestId
-  return Date.now()
-})
+/** 倒计时起点：请求入队时刻（useExtensionUI push 时打 receivedAt 戳）。
+ *  用入队时刻而非渲染时刻——Panel 可能在请求已挂起后才 mount（切 panel/视图切回），
+ *  此时渲染时刻 ≠ 请求到达时刻，用 Date.now() 会导致倒计时重置、与 runtime 5min 超时不同步。 */
+const askUserStartedAt = computed(() =>
+  currentAskUserRequest.value?.receivedAt ?? Date.now(),
+)
 /** ask-user Submit：answers JSON string 回传给 pi（select method）。 */
 function onAskUserSubmit(answers: string): void {
   const req = currentAskUserRequest.value
