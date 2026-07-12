@@ -78,7 +78,7 @@ git checkout -b "$DEV_BRANCH"
 CHANGESET_FILE=".changeset/prerelease-${TIMESTAMP}.md"
 cat > "$CHANGESET_FILE" << EOF
 ---
-"@xyz-agent/extension-protocol": prerelease
+"@xyz-agent/extension-protocol": patch
 ---
 
 Prerelease build for testing.
