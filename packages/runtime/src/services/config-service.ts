@@ -82,6 +82,8 @@ export class ConfigService implements IConfigService {
     return Object.entries(models.providers).map(([id, config]) => ({
       id,
       name: config.name || id,
+      // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
+      api: config.api,
       baseUrl: config.baseUrl,
       apiKeySet: !!config.apiKey,
       status: config.apiKey ? 'connected' as const : 'not_configured' as const,
@@ -92,9 +94,12 @@ export class ConfigService implements IConfigService {
         baseUrl: m.baseUrl,
         input: m.input,
         compat: m.compat,
+        // W2：model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）
+        enabled: m.enabled !== false,
         ...pickModelCapabilityFields(m),
       })),
-      enabled: true,
+      // W2：从 config.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 provider）
+      enabled: config.enabled !== false,
     }))
   }
 
@@ -112,6 +117,8 @@ export class ConfigService implements IConfigService {
     if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
     if (data.type !== undefined) merged.api = this.configStore.applyTypeTranslation(data.type as string)
     if (data.name !== undefined) merged.name = data.name as string
+    // W2：provider 级 enabled 透传到合并结果（data 类型已声明 enabled，原合并逻辑漏处理）
+    if (data.enabled !== undefined) merged.enabled = data.enabled
     if (data.models !== undefined) {
       const rawModels = data.models as Array<Record<string, unknown>>
       const existingModels = (existing.models ?? []) as ConfigModelDefinition[]

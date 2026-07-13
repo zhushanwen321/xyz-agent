@@ -47,7 +47,7 @@ export function pickModelCapabilityFields<T extends ModelCapabilityFields>(m: T)
  * @param providerApi   所属 provider 的 api 标识（model 缺省 api 时回落）
  * @param m             源 model 定义（ConfigModelDefinition 或 ProviderInfo.models 元素）
  */
-export function toModelInfo<T extends { id: string; name?: string; api?: string } & ModelCapabilityFields>(
+export function toModelInfo<T extends { id: string; name?: string; api?: string; enabled?: boolean } & ModelCapabilityFields>(
   providerId: string,
   providerName: string,
   providerApi: string | undefined,
@@ -59,7 +59,8 @@ export function toModelInfo<T extends { id: string; name?: string; api?: string 
     providerId,
     providerName,
     api: m.api ?? providerApi,
-    enabled: true,
+    // W2：从 model.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 model）
+    enabled: m.enabled !== false,
     ...pickModelCapabilityFields(m),
   }
 }

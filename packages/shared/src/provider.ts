@@ -21,6 +21,8 @@ export interface ProviderInfo {
     thinkingLevelMap?: Record<string, string | null>
     cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
     compat?: Record<string, unknown>
+    /** model 级启停（W2）。省略时默认 true，供 aggregateModels 过滤判断。 */
+    enabled?: boolean
   }>
   enabled?: boolean
 }
