@@ -3,8 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine, PiRpcResponse, PiSessionStats, PiCompactionResult } from '../../services/ports/pi-engine.js'
-import { readRpcData } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiSessionStats, PiCompactionResult } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
@@ -304,6 +303,11 @@ export class RpcClient implements IPiEngine {
           if (msg.success === false) {
             reject(new Error(msg.error ?? `RPC command "${type}" failed`))
           } else {
+            // 归一：pi 响应兼容 data/payload 两位置（historically readRpcData 在调用方做
+            // data ?? payload），现下沉到 sendCommand，统一后调用方直接读 msg.data。
+            if (msg.data === undefined && msg.payload !== undefined) {
+              msg.data = msg.payload
+            }
             resolve(msg)
           }
         },
@@ -394,8 +398,8 @@ export class RpcClient implements IPiEngine {
   }
 
   async compact(customInstructions?: string): Promise<PiCompactionResult> {
-    const data = readRpcData(await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS) as PiRpcResponse)
-    return data as unknown as PiCompactionResult
+    const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
+    return msg.data as unknown as PiCompactionResult
   }
 
   /**
@@ -407,13 +411,59 @@ export class RpcClient implements IPiEngine {
   }
 
   async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
-    const data = readRpcData(await this.sendCommand('get_commands') as PiRpcResponse)
-    return (data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
+    const msg = await this.sendCommand('get_commands')
+    return (msg.data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
   }
 
   async getSessionStats(): Promise<PiSessionStats> {
-    const data = readRpcData(await this.sendCommand('get_session_stats') as PiRpcResponse)
-    return (data ?? {}) as PiSessionStats
+    const msg = await this.sendCommand('get_session_stats')
+    return (msg.data ?? {}) as PiSessionStats
+  }
+
+  /** 切换 pi 进程到指定 session 文件（restore / fork 用）。 */
+  switchSession(sessionPath: string): Promise<void> {
+    return this.sendCommand('switch_session', { sessionPath }).then(() => undefined)
+  }
+
+  /** 查询 pi session 状态（get_state），返回归一后的 state 对象（sendCommand 已归一 data ?? payload）。 */
+  async getState(): Promise<Record<string, unknown> | undefined> {
+    return (await this.sendCommand('get_state')).data
+  }
+
+  /**
+   * 向 pi 发送 extension_ui_response（extension UI 请求 / bridge 请求的响应）。
+   *
+   * pi 对 extension_ui_response 不回 RPC reply（rpc-mode.ts 直接 resolve pending 后 return），
+   * 故用 sendRaw 写入（不等 reply，不注册 pending，避免 60s timer 泄漏）。
+   *
+   * 两种 payload 格式（吸收 extension-message-handler 的 buildExtensionUiResponse 映射）：
+   *
+   * 1. extension UI 场景（带 method）——pi 鸭子类型字段检测（rpc-mode.ts:136-149）：
+   *    - response === null → {id, cancelled:true}（取消 / 超时）
+   *    - method === 'confirm' → {id, confirmed:boolean}
+   *    - 其余（select/input/editor）→ {id, value:string}
+   *
+   * 2. bridge 场景（无 method）——pi bridge extension 的 pendingExtensionRequests 期望
+   *    `{response: <payload>}` 包裹结构（见 transport/bridge-handler.ts:32）：
+   *    - response 是对象 → {id, response}（原样发）
+   *
+   * 判定优先级：null（取消）> bridge（无 method 且对象）> confirm > value。
+   */
+  sendExtensionUiResponse(id: string, response: unknown, method?: string): void {
+    let payload: Record<string, unknown>
+    if (response === null) {
+      // 取消 / 超时（无论 method）
+      payload = { type: 'extension_ui_response', id, cancelled: true }
+    } else if (method === undefined && typeof response === 'object') {
+      // bridge 场景：response 是完整对象 + 无 method → {id, response}
+      payload = { type: 'extension_ui_response', id, response }
+    } else if (method === 'confirm') {
+      payload = { type: 'extension_ui_response', id, confirmed: response as boolean }
+    } else {
+      // select / input / editor → value
+      payload = { type: 'extension_ui_response', id, value: String(response) }
+    }
+    this.sendRaw(JSON.stringify(payload))
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────
