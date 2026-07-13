@@ -127,6 +127,50 @@ describe('NpmPluginInstaller', () => {
     })
   })
 
+  describe('install - package.json missing after extract (cleanup leak guard)', () => {
+    it('should clean up targetDir when package.json is missing after extract', async () => {
+      const pluginsDir = join(tmpDir, 'plugins')
+      const installer = new NpmPluginInstaller(pluginsDir)
+
+      const pluginName = 'no-pkg-json'
+
+      // downloadPackageTarball 成功（建了 targetDir）但没写 package.json。
+      mockDownload.mockImplementation(async (_spec: string, targetDir: string) => {
+        await mkdir(targetDir, { recursive: true })
+        // 故意不写 package.json —— readFile 将抛 ENOENT
+        return { name: pluginName, version: '1.0.0' }
+      })
+
+      const result = await installer.install(pluginName)
+
+      expect(result.success).toBe(false)
+
+      // targetDir 必须被清理，不能残留僵尸目录（registry.scan 会扫到并 warn）
+      const targetDir = join(pluginsDir, pluginName)
+      await expect(access(targetDir)).rejects.toThrow()
+    })
+
+    it('should clean up targetDir when package.json is corrupt JSON', async () => {
+      const pluginsDir = join(tmpDir, 'plugins')
+      const installer = new NpmPluginInstaller(pluginsDir)
+
+      const pluginName = 'corrupt-pkg'
+
+      mockDownload.mockImplementation(async (_spec: string, targetDir: string) => {
+        await mkdir(targetDir, { recursive: true })
+        await writeFile(join(targetDir, 'package.json'), '{ not valid json', 'utf-8')
+        return { name: pluginName, version: '1.0.0' }
+      })
+
+      const result = await installer.install(pluginName)
+
+      expect(result.success).toBe(false)
+
+      const targetDir = join(pluginsDir, pluginName)
+      await expect(access(targetDir)).rejects.toThrow()
+    })
+  })
+
   describe('install - download failure', () => {
     it('should return error when downloadPackageTarball throws', async () => {
       const pluginsDir = join(tmpDir, 'plugins')

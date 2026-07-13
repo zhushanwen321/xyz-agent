@@ -28,10 +28,11 @@ export class NpmPluginInstaller implements IPluginInstaller {
     // 先用 registry metadata 的 name 推导 targetDir（registry name 通常与 tarball 内
     // package.json 一致；解压后再读 package.json 确认 + 取真实 name 作 pluginId）。
     // 采用方案 (b)：简洁，且解压后 pkg.name 覆盖 pluginId 保证最终一致性。
+    let targetDir: string | undefined
     try {
       // downloadPackageTarball 内部 parseSpec 拿 name；此处复刻一次仅为先建 targetDir。
       // 真实下载由 downloadPackageTarball 在内部完成（它也会 mkdir targetDir）。
-      const targetDir = await this.resolveTargetDir(packageSpecifier)
+      targetDir = await this.resolveTargetDir(packageSpecifier)
 
       await downloadPackageTarball(packageSpecifier, targetDir)
 
@@ -49,6 +50,12 @@ export class NpmPluginInstaller implements IPluginInstaller {
       const pluginName = typeof pkg.name === 'string' ? pkg.name : String(pkg.name ?? 'unknown-plugin')
       return { success: true, pluginId: pluginName, path: targetDir }
     } catch (err) {
+      // downloadPackageTarball 成功落盘后，readFile/JSON.parse 失败会落此处——
+      // targetDir 已存在内容但 manifest 不可读，必须清理，否则 registry.scan 扫到僵尸目录。
+      // downloadPackageTarball 自身失败时 targetDir 可能不存在，force: true 兜底。
+      if (targetDir) {
+        await rm(targetDir, { recursive: true, force: true }).catch(() => {})
+      }
       const message = toErrorMessage(err)
       return { success: false, error: message }
     }
