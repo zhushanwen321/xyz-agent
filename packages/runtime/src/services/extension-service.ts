@@ -300,6 +300,19 @@ export class ExtensionService {
    */
   async uninstallExtension(name: string): Promise<void> {
     return this.withInstallLock(async () => {
+      // 先扫描已安装列表，按 name 查找 extension 的路径
+      const installed = await this.scanExtensions()
+      const target = installed.find((e) => e.name === name)
+      const thirdPartyDir = join(this.settingsDir, 'extensions')
+
+      // local-dir / git 安装的 extension 在 ~/.xyz-agent/pi/agent/extensions/ 下。
+      // finishInstall 时只 cpSync 到此目录，未记录到 settings.json packages[]——
+      // 卸载必须 rmSync 目录，否则 resolver 会重新发现它。
+      if (target?.path && isUnderOrEqual(thirdPartyDir, target.path)) {
+        rmSync(target.path, { recursive: true, force: true })
+      }
+
+      // npm 安装的 extension：从 settings packages[] 移除 + 删 node_modules
       const npmDir = join(this.settingsDir, 'npm')
       const source = `npm:${name}`
 
