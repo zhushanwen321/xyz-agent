@@ -167,13 +167,16 @@ import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
+import { useChatStore } from '@/stores/chat'
 import { useSubagentView } from '@/composables/features/useSubagentView'
+import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
+const chatStore = useChatStore()
 const subagentView = useSubagentView()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
@@ -213,6 +216,44 @@ const subagentCount = computed(() => subagentView.subagentRecords.value.length)
 
 /** subagent 列表（computed 解包，避免 template 中直接 .value） */
 const subagentList = computed(() => subagentView.subagentRecords.value)
+
+/**
+ * 当前活跃 session 的 subagent 活动签名。
+ * 追踪两类实时事件的产物：subagent tool_call 的出现（主 agent 发起 subagent）和
+ * subagent-bg-notify 消息的到达（后台 subagent 完成/状态变更）。
+ * 签名格式：`<subagentToolCallCount>:<bgNotifyCount>`，任一变化 → watch 触发列表刷新。
+ */
+const subagentActivityKey = computed(() => {
+  const sid = session.activeId
+  if (!sid) return ''
+  const msgs = chatStore.getMessages(sid)
+  let toolCallCount = 0
+  let bgNotifyCount = 0
+  for (const m of msgs) {
+    if (m.toolCalls) {
+      for (const tc of m.toolCalls) {
+        if (SUBAGENT_TOOL_NAMES.has(tc.toolName)) toolCallCount++
+      }
+    }
+    if (m.customType === 'subagent-bg-notify') bgNotifyCount++
+  }
+  return `${toolCallCount}:${bgNotifyCount}`
+})
+
+/**
+ * 实时刷新：subagents tab 激活时，主 agent 发起 subagent 或后台 subagent 完成都
+ * 会改变 subagentActivityKey → 触发 loadSubagents 刷新侧边栏列表。
+ * 与 tab 切换 watch（line 263）互补：那个处理「用户主动切到 subagents tab」，
+ * 这个处理「用户已在 subagents tab 时 subagent 状态实时变化」。
+ */
+watch(
+  [() => sidebar.activeTab, subagentActivityKey] as const,
+  ([tab]) => {
+    if (tab === 'subagents' && session.activeId) {
+      void subagentView.loadSubagents(session.activeId)
+    }
+  },
+)
 
 /** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
