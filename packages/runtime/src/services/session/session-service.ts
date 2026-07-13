@@ -295,9 +295,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
-        const result = await client.getHistory() as { data?: { messages?: unknown[] }; payload?: { messages?: unknown[] } }
-        const data = result.data
-        const raw = data?.messages ?? (result.payload?.messages) ?? []
+        const result = await client.getHistory() as { data?: { messages?: unknown[] } }
+        const raw = result.data?.messages ?? []
         if (raw.length > 0) return this.sessionStore.convertHistory(raw)
         // RPC 返回空时,仅闲置 session fallback 到磁盘(生成中磁盘可能未持久化最新消息)
         const session = this.sessions.get(sessionId)

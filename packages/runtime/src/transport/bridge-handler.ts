@@ -58,6 +58,8 @@ export class BridgeHandler {
             (data.data as Record<string, unknown>) ?? {},
             sessionId,
           )
+          // response=null → sendExtensionUiResponse 发 {cancelled:true}（非旧 {response:null}）。
+          // 无功能影响：bridge 扩展对 bridge:event 的响应 void 丢弃（见 pi bridge/index.ts:58）。
           client.sendExtensionUiResponse(requestId, null)
           return
         }
