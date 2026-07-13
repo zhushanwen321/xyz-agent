@@ -23,7 +23,7 @@ export type ClientMessageType =
   | 'session.workflowAction'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
-  | 'config.discoverModels'
+  | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'config.setSkillDirs' | 'config.setAgentDirs'
@@ -96,6 +96,8 @@ export interface ClientMessageMap {
   'config.deleteProvider': { providerId: string }
   'config.setToolPermissions': { permissions: Record<string, string> }
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
+  // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
+  'config.setDefaultModel': { provider: string; modelId: string }
   'config.scanSkills': { sources: string[] }
   'config.setSkill': { skill: SkillInfo }
   'config.deleteSkill': { skillId: string }

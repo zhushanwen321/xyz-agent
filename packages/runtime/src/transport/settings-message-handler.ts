@@ -134,6 +134,25 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'model.switched', { sessionId, provider, modelId })
         return true
       }
+      case 'config.setDefaultModel': {
+        // W3 默认模型持久化：configService.setDefaultModel 已存在（写 settings.json）。
+        // reply 回发起端 + 广播给所有 panel，与 setProvider/deleteProvider 的 newDefault 广播同构，
+        // 让其它打开的设置面板同步默认模型下拉。
+        // 注意：reply<T> 的 payload 严格校验为 ServerMessageMap['config.defaults'] = { defaultModel: string }
+        // （W3 不改此类型声明，留给 W4/后续 topic 收紧 source 字段）；broadcast 接受宽 ServerMessage，
+        // 沿用 W1 setProvider 广播惯例带 source 标签，故 source 仅出现在 broadcast。
+        const { provider, modelId } = msg.payload
+        this.ctx.configService.setDefaultModel(provider, modelId)
+        this.ctx.reply(ws, msg.id, 'config.defaults', {
+          defaultModel: `${provider}/${modelId}`,
+        })
+        this.ctx.broadcast({
+          type: 'config.defaults',
+          id: this.ctx.nextPushId(),
+          payload: { defaultModel: `${provider}/${modelId}`, source: 'default-set' as const },
+        })
+        return true
+      }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
         await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
