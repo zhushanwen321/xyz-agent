@@ -16,14 +16,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ── Mocks ────────────────────────────────────────────────────────
 
-const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
+const mockSendExtensionUiResponse = vi.fn()
 
 /** Mock RPC client that can be set to null to simulate disconnect */
 let mockRpcClient: ReturnType<typeof createMockRpcClient> | null = createMockRpcClient()
 
 function createMockRpcClient() {
   return {
-    sendCommand: mockSendCommand,
+    sendExtensionUiResponse: mockSendExtensionUiResponse,
     onEvent: vi.fn().mockReturnValue(() => {}),
     onExit: vi.fn(),
     exited: false,
@@ -190,7 +190,7 @@ describe('Bridge reconnect lifecycle', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
-    mockSendCommand.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     mockGetToolSchemas.mockClear()
     mockGetBridgeSyncPayload.mockClear()
     mockHandleBridgeToolExecute.mockClear()
@@ -221,25 +221,22 @@ describe('Bridge reconnect lifecycle', () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-1', 'bridge:sync', {})
 
       // No sendCommand should be called since there's no RPC client
-      expect(mockSendCommand).not.toHaveBeenCalled()
+      expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
     })
 
     it('succeeds when RPC client becomes available (reconnected)', async () => {
       mockRpcClient = createMockRpcClient()
       mockGetBridgeSyncPayload.mockReturnValue(syncPayload(RUNTIME_RESTART_TOOLS))
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-2', 'bridge:sync', {})
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      const callArgs = mockSendCommand.mock.calls[0]
-      expect(callArgs[0]).toBe('extension_ui_response')
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const callArgs = mockSendExtensionUiResponse.mock.calls[0]
+      expect(callArgs[0]).toBe('req-2')
       expect(callArgs[1]).toMatchObject({
-        id: 'req-2',
-        response: expect.objectContaining({
-          success: true,
-          tools: RUNTIME_RESTART_TOOLS,
-        }),
+        success: true,
+        tools: RUNTIME_RESTART_TOOLS,
       })
     })
 
@@ -247,19 +244,19 @@ describe('Bridge reconnect lifecycle', () => {
       // Phase 1: Disconnected — bridge sync fails silently
       mockRpcClient = null
       await server.handleBridgeRequest(SESSION_ID, 'req-p1', 'bridge:sync', {})
-      expect(mockSendCommand).not.toHaveBeenCalled()
+      expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
 
       // Phase 2: RPC client appears, bridge sync starts
       mockRpcClient = createMockRpcClient()
       mockGetBridgeSyncPayload.mockReturnValue(syncPayload([
         { name: 'goal_manager', description: 'Manages goals', parameters: { type: 'object', properties: {} } },
       ]))
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-p2', 'bridge:sync', {})
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
 
-      const response = mockSendCommand.mock.calls[0][1].response
+      const response = mockSendExtensionUiResponse.mock.calls[0][1]
       expect(response.success).toBe(true)
       expect(response.tools).toHaveLength(1)
       expect(response.tools[0].name).toBe('goal_manager')
@@ -273,16 +270,16 @@ describe('Bridge reconnect lifecycle', () => {
       // Initial registration
       mockGetBridgeSyncPayload.mockReturnValue(syncPayload(RUNTIME_RESTART_TOOLS))
       await server.handleBridgeRequest(SESSION_ID, 'req-init', 'bridge:sync', {})
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
 
       // Simulate runtime restart: clear tool schemas, then re-register
       mockGetBridgeSyncPayload.mockReturnValue(syncPayload(NEW_TOOLS_AFTER_RESTART))
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-restart', 'bridge:sync', {})
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      const response = mockSendCommand.mock.calls[0][1].response
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = mockSendExtensionUiResponse.mock.calls[0][1]
       expect(response.tools).toHaveLength(2)
       expect(response.tools[0].name).toBe('hello')
       expect(response.tools[1].name).toBe('goodbye')
@@ -293,8 +290,8 @@ describe('Bridge reconnect lifecycle', () => {
 
       await server.handleBridgeRequest(SESSION_ID, 'req-empty', 'bridge:sync', {})
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      const response = mockSendCommand.mock.calls[0][1].response
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = mockSendExtensionUiResponse.mock.calls[0][1]
       expect(response.tools).toHaveLength(0)
       expect(response.commands).toHaveLength(0)
       expect(response.success).toBe(true)
@@ -310,7 +307,7 @@ describe('Bridge reconnect lifecycle', () => {
       vi.advanceTimersByTime(300_000)
 
       // No timeout response for bridge methods
-      expect(mockSendCommand).not.toHaveBeenCalled()
+      expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
     })
 
     it('tracks bridge request IDs for session cleanup', () => {
@@ -339,8 +336,8 @@ describe('Bridge reconnect lifecycle', () => {
         toolCallId: 'tc-1',
       })
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      const response = mockSendCommand.mock.calls[0][1].response
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = mockSendExtensionUiResponse.mock.calls[0][1]
       expect(response.isError).toBe(true)
       expect(response.content).toContain('Tool not found')
     })
@@ -357,8 +354,8 @@ describe('Bridge reconnect lifecycle', () => {
         toolCallId: 'tc-2',
       })
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      const response = mockSendCommand.mock.calls[0][1].response
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = mockSendExtensionUiResponse.mock.calls[0][1]
       expect(response.isError).toBeFalsy()
       expect(response.content).toBe(JSON.stringify({ result: 'hello world' }))
     })
@@ -374,12 +371,9 @@ describe('Bridge reconnect lifecycle', () => {
         params: {},
       })
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
-        expect.objectContaining({
-          id: 'req-exec3',
-          response: { content: 'Plugin system not available', isError: true },
-        }),
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
+        'req-exec3',
+        { content: 'Plugin system not available', isError: true },
       )
     })
   })
@@ -394,14 +388,8 @@ describe('Bridge reconnect lifecycle', () => {
         eventData: { sessionId: SESSION_ID },
       })
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
-        expect.objectContaining({
-          id: 'req-ev',
-          response: null,
-        }),
-      )
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-ev', null)
     })
 
     it('handles multiple events in sequence during reconnect', async () => {
@@ -413,13 +401,9 @@ describe('Bridge reconnect lifecycle', () => {
         })
       }
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(3)
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(3)
       for (let i = 0; i < 3; i++) {
-        expect(mockSendCommand).toHaveBeenNthCalledWith(
-          i + 1,
-          'extension_ui_response',
-          expect.objectContaining({ id: `req-ev-${i}`, response: null }),
-        )
+        expect(mockSendExtensionUiResponse).toHaveBeenNthCalledWith(i + 1, `req-ev-${i}`, null)
       }
     })
   })
@@ -432,18 +416,18 @@ describe('Bridge reconnect lifecycle', () => {
 
       await server.handleBridgeRequest(SESSION_ID, 'req-crash', 'bridge:sync', {})
 
-      expect(mockSendCommand).not.toHaveBeenCalled()
+      expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
     })
 
     it('pi restart: new RPC client re-syncs tools', async () => {
       mockRpcClient = createMockRpcClient()
       mockGetBridgeSyncPayload.mockReturnValue(syncPayload(RUNTIME_RESTART_TOOLS))
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-restore', 'bridge:sync', {})
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      const response = mockSendCommand.mock.calls[0][1].response
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = mockSendExtensionUiResponse.mock.calls[0][1]
       expect(response.success).toBe(true)
       expect(response.tools).toHaveLength(1)
     })
@@ -452,45 +436,45 @@ describe('Bridge reconnect lifecycle', () => {
       // 1. pi is running, tools synced
       mockGetBridgeSyncPayload.mockReturnValue(syncPayload(RUNTIME_RESTART_TOOLS))
       await server.handleBridgeRequest(SESSION_ID, 'req-s1', 'bridge:sync', {})
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
 
       // 2. pi crashes — RPC client disappears
       mockRpcClient = null
 
       // 3. Bridge request during crash — silent failure
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
       await server.handleBridgeRequest(SESSION_ID, 'req-s2', 'bridge:sync', {})
-      expect(mockSendCommand).not.toHaveBeenCalled()
+      expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
 
       // 4. Tool execute during crash — silent failure
       await server.handleBridgeRequest(SESSION_ID, 'req-s3', 'bridge:tool_execute', {
         toolName: 'hello',
         params: {},
       })
-      expect(mockSendCommand).not.toHaveBeenCalled()
+      expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
 
       // 5. pi restarts — new RPC client
       mockRpcClient = createMockRpcClient()
 
       // 6. Tools re-synced
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
       await server.handleBridgeRequest(SESSION_ID, 'req-s4', 'bridge:sync', {})
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      expect(mockSendCommand.mock.calls[0][1].response.success).toBe(true)
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse.mock.calls[0][1].success).toBe(true)
 
       // 7. Tool execute works again
       mockHandleBridgeToolExecute.mockResolvedValue({
         content: JSON.stringify({ result: 'post-restart' }),
         isError: false,
       })
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
       await server.handleBridgeRequest(SESSION_ID, 'req-s5', 'bridge:tool_execute', {
         toolName: 'hello',
         params: {},
         toolCallId: 'tc-restart',
       })
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      expect(mockSendCommand.mock.calls[0][1].response.content).toContain('post-restart')
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse.mock.calls[0][1].content).toContain('post-restart')
     })
   })
 
@@ -505,14 +489,8 @@ describe('Bridge reconnect lifecycle', () => {
         data: { sessionId: SESSION_ID, query: 'hello' },
       })
 
-      expect(mockSendCommand).toHaveBeenCalledTimes(1)
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
-        expect.objectContaining({
-          id: 'req-int',
-          response: { injectedMessages: [] },
-        }),
-      )
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-int', { injectedMessages: [] })
     })
 
     it('returns empty intercept when plugin service is not available', async () => {
@@ -520,19 +498,13 @@ describe('Bridge reconnect lifecycle', () => {
       const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
       serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
 
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
       await serverWithoutPlugin.handleBridgeRequest(SESSION_ID, 'req-int2', 'bridge:intercept', {
         eventName: 'before_agent_start',
         data: { sessionId: SESSION_ID },
       })
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
-        expect.objectContaining({
-          id: 'req-int2',
-          response: {},
-        }),
-      )
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-int2', {})
     })
   })
 
@@ -542,13 +514,10 @@ describe('Bridge reconnect lifecycle', () => {
     it('returns error for unknown bridge method', async () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-unk', 'bridge:unknown', {})
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
+        'req-unk',
         expect.objectContaining({
-          id: 'req-unk',
-          response: expect.objectContaining({
-            error: expect.stringContaining('Unknown bridge method'),
-          }),
+          error: expect.stringContaining('Unknown bridge method'),
         }),
       )
     })

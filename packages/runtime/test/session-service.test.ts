@@ -124,6 +124,10 @@ interface MockClient {
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
   sendCommand: MockInstance<SendCommandFn>
+  /** 切换 pi session 文件（W2 收口：替代 sendCommand('switch_session')）。 */
+  switchSession: MockInstance<(sessionPath: string) => Promise<void>>
+  /** 查询 pi get_state（W2 收口：替代 readPiState/sendCommand('get_state')），返回归一后的 state 对象。 */
+  getState: MockInstance<() => Promise<Record<string, unknown> | undefined>>
   getCommands: MockInstance<() => Promise<unknown>>
   getSessionStats: MockInstance<() => Promise<unknown>>
   onEvent: MockInstance<(listener: PiEventListener) => () => void>
@@ -148,6 +152,8 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     clear: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     getHistory: vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: { messages: [] } }),
     sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
+    switchSession: vi.fn<(sessionPath: string) => Promise<void>>().mockResolvedValue(undefined),
+    getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({}),
     getCommands: vi.fn<() => Promise<unknown>>().mockResolvedValue([]),
     getSessionStats: vi.fn<() => Promise<unknown>>().mockResolvedValue({}),
     // 保存 listener 到 eventListeners，测试可取出触发 agent_end 事件
@@ -205,11 +211,9 @@ function createSetup(): Setup {
     createSession: vi.fn(async (_id: string, _cwd: string) => {
       const piSid = `pi-auto-${++autoId}`
       const client = makeMockClient({
-        sendCommand: vi.fn<SendCommandFn>(async (type) => {
-          if (type === 'get_state') {
-            return { data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }
-          }
-          return { data: {} }
+        // W2 收口后 create 用 client.getState()（返回归一后的 state 对象）
+        getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+          sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
         }),
       })
       clientMap.set(piSid, client)
@@ -279,11 +283,9 @@ function createSetup(): Setup {
   const seedSession: Setup['seedSession'] = async (opts = {}) => {
     const piSid = `pi-seed-${++autoId}`
     const client = makeMockClient({
-      sendCommand: vi.fn<SendCommandFn>(async (type) => {
-        if (type === 'get_state') {
-          return { data: { sessionId: piSid, sessionFile: opts.sessionFile ?? `/fake/${piSid}.jsonl` } }
-        }
-        return { data: {} }
+      // W2 收口后 create 用 client.getState()（返回归一后的 state 对象）
+      getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+        sessionId: piSid, sessionFile: opts.sessionFile ?? `/fake/${piSid}.jsonl`,
       }),
       getCommands: vi.fn<() => Promise<unknown>>().mockResolvedValue(opts.commands ?? []),
     })
@@ -541,8 +543,9 @@ describe('SessionService · lifecycle', () => {
     })
 
     it('throws and destroys session when pi returns no sessionId', async () => {
+      // W2 收口后 create 用 client.getState()，返回空对象 → 无 sessionId → 抛错
       const stateless = makeMockClient({
-        sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
+        getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({}),
       })
       vi.mocked(setup.pm.createSession).mockResolvedValueOnce(stateless as unknown as IPiEngine)
       await expect(setup.service.create(tmpdir())).rejects.toThrow('did not return a session ID')
@@ -631,7 +634,8 @@ describe('SessionService · lifecycle', () => {
       vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       const summary = await setup.service.restoreSession('persist-1')
       expect(summary.id).toBe('persist-1')
-      expect(client.sendCommand).toHaveBeenCalledWith('switch_session', { sessionPath: '/fake/persist-1.jsonl' })
+      // W2 收口后 restoreSession 用 client.switchSession(path)
+      expect(client.switchSession).toHaveBeenCalledWith('/fake/persist-1.jsonl')
     })
 
     it('throws when persisted session not found', async () => {
@@ -653,7 +657,8 @@ describe('SessionService · lifecycle', () => {
         lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0,
       })
       const client = makeMockClient({
-        sendCommand: vi.fn<SendCommandFn>().mockRejectedValue(new Error('switch failed')),
+        // W2 收口后 restoreSession 用 client.switchSession，失败时抛错触发清理
+        switchSession: vi.fn<(sessionPath: string) => Promise<void>>().mockRejectedValue(new Error('switch failed')),
       })
       vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       await expect(setup.service.restoreSession('persist-3')).rejects.toThrow('switch failed')
@@ -699,7 +704,8 @@ describe('SessionService · Facade', () => {
       vi.mocked(client.setModel).mockClear()
       vi.mocked(setup.broker.broadcast).mockClear()
       // get_state 返回 thinkingLevel（broadcastSessionState 查 pi get_state）
-      vi.mocked(client.sendCommand).mockResolvedValueOnce({ data: { thinkingLevel: 'high' } })
+      // W2 收口后用 client.getState()，返回归一后的 state 对象
+      vi.mocked(client.getState).mockResolvedValueOnce({ thinkingLevel: 'high' })
 
       await setup.service.switchModel(id, 'anthropic', 'claude-x')
 
@@ -735,7 +741,8 @@ describe('SessionService · Facade', () => {
       const { id, client } = await setup.seedSession()
       setup.service.setModelContextWindowResolver(() => 100000)
       setup.service.setThinkingLevelCache(id, 'medium')
-      vi.mocked(client.sendCommand).mockRejectedValueOnce(new Error('get_state boom'))
+      // W2 收口后 broadcastSessionState 用 client.getState()，失败时 thinkingLevel 回退缓存值
+      vi.mocked(client.getState).mockRejectedValueOnce(new Error('get_state boom'))
 
       await setup.service.switchModel(id, 'anthropic', 'claude-x')
 
@@ -1291,7 +1298,10 @@ describe('SessionService · onSessionExit callback', () => {
     )
     const piSid = 'pi-detach-1'
     const client = makeMockClient({
-      sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }),
+      // W2 收口后 create 用 client.getState()，返回归一后的 state 对象
+      getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+        sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
+      }),
     })
     vi.mocked(localSetup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
     localSetup.clientMap.set(piSid, client)

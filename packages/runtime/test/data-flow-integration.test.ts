@@ -26,6 +26,7 @@ const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneS
 // ── Mocks (最外层边界) ────────────────────────────────────────────
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
+const mockSendExtensionUiResponse = vi.fn()
 const mockSendRaw = vi.fn()
 
 vi.mock('../src/services/session/session-service.js', () => {
@@ -53,6 +54,7 @@ vi.mock('../src/services/session/session-service.js', () => {
       setOnPublicSessionReady = vi.fn()
       getRpcClient = vi.fn().mockReturnValue({
         sendCommand: mockSendCommand,
+        sendExtensionUiResponse: mockSendExtensionUiResponse,
         sendRaw: mockSendRaw,
         onEvent: vi.fn().mockReturnValue(() => {}),
         onExit: vi.fn(),
@@ -200,6 +202,7 @@ function createMockRpcClient() {
   let eventListener: ((event: Record<string, unknown>) => void) | null = null
   return {
     sendCommand: mockSendCommand,
+    sendExtensionUiResponse: mockSendExtensionUiResponse,
     sendRaw: mockSendRaw,
     onEvent: vi.fn().mockImplementation((listener: (event: Record<string, unknown>) => void) => {
       eventListener = listener
@@ -289,6 +292,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
     vi.useRealTimers()
     mockSendCommand.mockClear()
     mockSendRaw.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     fixture = await createWSFixture()
   })
 
@@ -330,15 +334,10 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
       },
     }))
 
-    // 4. 验证 server 通过 sendRaw 转发到 pi（confirm+true → {confirmed:true}）
+    // 4. 验证 server 通过 sendExtensionUiResponse 转发到 pi（confirm+true → {id, confirmed:true}）
     await new Promise((r) => setTimeout(r, 200))
     expect(fixture.sessionService.getRpcClient).toHaveBeenCalledWith('test-session-1')
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"confirmed":true'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-confirm-1"'),
-    )
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-confirm-1', true, 'confirm')
   })
 
   it('select 端到端: pi event → adapter translate → 前端 response (string)', async () => {
@@ -371,14 +370,9 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
       },
     }))
 
-    // 4. 验证 server 通过 sendRaw 转发到 pi（select+string → {value:'option1'}）
+    // 4. 验证 server 通过 sendExtensionUiResponse 转发到 pi（select+string → {id, value:'option1'}）
     await new Promise((r) => setTimeout(r, 200))
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"value":"option1"'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-select-1"'),
-    )
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-select-1', 'option1', 'select')
   })
 
   it('cancel 路径: extension.ui_response (result=false) → server 转发 false', async () => {
@@ -405,14 +399,9 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
       },
     }))
 
-    // 3. 验证 server 通过 sendRaw 转发到 pi（confirm+false → {confirmed:false}）
+    // 3. 验证 server 通过 sendExtensionUiResponse 转发到 pi（confirm+false → {id, confirmed:false}）
     await new Promise((r) => setTimeout(r, 200))
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"confirmed":false'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-cancel-1"'),
-    )
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-cancel-1', false, 'confirm')
   })
 
   it('cancel 路径: extension.ui_response (result=null) → server 转发 null', async () => {
@@ -439,14 +428,9 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
       },
     }))
 
-    // 3. 验证 server 通过 sendRaw 转发到 pi（null → {cancelled:true}）
+    // 3. 验证 server 通过 sendExtensionUiResponse 转发到 pi（null → {id, cancelled:true}）
     await new Promise((r) => setTimeout(r, 200))
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"cancelled":true'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-null-1"'),
-    )
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-null-1', null, 'input')
   })
 })
 
@@ -460,6 +444,7 @@ describe('DF-1: Extension UI 超时路径', () => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
     mockSendRaw.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
@@ -470,6 +455,7 @@ describe('DF-1: Extension UI 超时路径', () => {
 
     vi.mocked(sessionService.getRpcClient).mockReturnValue({
       sendCommand: mockSendCommand,
+      sendExtensionUiResponse: mockSendExtensionUiResponse,
       sendRaw: mockSendRaw,
       onEvent: vi.fn().mockReturnValue(() => {}),
       onExit: vi.fn(),
@@ -483,30 +469,21 @@ describe('DF-1: Extension UI 超时路径', () => {
     vi.useRealTimers()
   })
 
-  it('confirm 超时 → server 通过 sendRaw 发送 confirmed:false', () => {
+  it('confirm 超时 → server 通过 sendExtensionUiResponse 发送 confirmed:false', () => {
     server.registerExtensionTimeout('sess-1', 'req-timeout-confirm', 'confirm')
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"confirmed":false'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-timeout-confirm"'),
-    )
+    // W2 收口后超时走 sendExtensionUiResponse(id, false, 'confirm')（pi 鸭子类型 {id, confirmed:false}）
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-confirm', false, 'confirm')
   })
 
-  it('select 超时 → server 通过 sendRaw 发送 cancelled:true', () => {
+  it('select 超时 → server 通过 sendExtensionUiResponse 发送 cancelled:true', () => {
     server.registerExtensionTimeout('sess-1', 'req-timeout-select', 'select')
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"cancelled":true'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-timeout-select"'),
-    )
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-select', null, 'select')
   })
 
   it('超时后 clearExtensionTimeout → 不再触发', () => {
@@ -515,7 +492,7 @@ describe('DF-1: Extension UI 超时路径', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).not.toHaveBeenCalled()
+    expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
   })
 
   it('notify 不注册超时 (fire-and-forget)', () => {
@@ -523,7 +500,7 @@ describe('DF-1: Extension UI 超时路径', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).not.toHaveBeenCalled()
+    expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
   })
 })
 
@@ -537,6 +514,7 @@ describe('DF-1: session 删除清理超时', () => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
     mockSendRaw.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
     server.setServices(
@@ -547,6 +525,7 @@ describe('DF-1: session 删除清理超时', () => {
 
     vi.mocked(sessionService.getRpcClient).mockReturnValue({
       sendCommand: mockSendCommand,
+      sendExtensionUiResponse: mockSendExtensionUiResponse,
       sendRaw: mockSendRaw,
       onEvent: vi.fn().mockReturnValue(() => {}),
       onExit: vi.fn(),
@@ -570,10 +549,8 @@ describe('DF-1: session 删除清理超时', () => {
     vi.advanceTimersByTime(300_000)
 
     // sess-del-1 的超时不触发，sess-other 的仍然触发
-    expect(mockSendRaw).toHaveBeenCalledTimes(1)
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-del-c"'),
-    )
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-del-c', false, 'confirm')
   })
 })
 
@@ -696,6 +673,7 @@ describe('DF-4: Extension 列表管理', () => {
     vi.useRealTimers()
     mockSendCommand.mockClear()
     mockSendRaw.mockClear()
+    mockSendExtensionUiResponse.mockClear()
 
     const port = await getFreePort()
     server = new RuntimeServer(port, '/tmp/test-project')
@@ -799,6 +777,7 @@ describe('DF-5: Extension 启用/禁用', () => {
     vi.useRealTimers()
     mockSendCommand.mockClear()
     mockSendRaw.mockClear()
+    mockSendExtensionUiResponse.mockClear()
 
     const port = await getFreePort()
     server = new RuntimeServer(port, '/tmp/test-project')

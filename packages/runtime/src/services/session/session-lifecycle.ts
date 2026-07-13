@@ -15,7 +15,6 @@ import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
-import { readPiState } from '../ports/pi-engine.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
@@ -65,7 +64,7 @@ export class SessionLifecycle {
     let piSessionId: string
     let sessionFilePath: string | undefined
     try {
-      const stateData = await readPiState(client)
+      const stateData = await client.getState()
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {
@@ -169,7 +168,7 @@ export class SessionLifecycle {
     })
 
     try {
-      await client.sendCommand('switch_session', { sessionPath: target.filePath })
+      await client.switchSession(target.filePath)
     } catch (e) {
       // switch_session 失败时清理已创建的资源,避免子进程/监听器泄漏
       await this.safeDestroy(id)
@@ -235,7 +234,7 @@ export class SessionLifecycle {
 
     try {
       // 4. switch_session 让 pi 加载截断后的历史
-      await client.sendCommand('switch_session', { sessionPath: forkedFilePath })
+      await client.switchSession(forkedFilePath)
     } catch (e) {
       await this.safeDestroy(forkedId)
       throw e

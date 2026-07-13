@@ -87,6 +87,10 @@ interface MockClient {
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
   sendCommand: MockInstance<SendCommandFn>
+  /** 切换 pi session 文件（W2 收口：替代 sendCommand('switch_session')）。 */
+  switchSession: MockInstance<(sessionPath: string) => Promise<void>>
+  /** 查询 pi get_state（W2 收口：替代 readPiState/sendCommand('get_state')）。 */
+  getState: MockInstance<() => Promise<Record<string, unknown> | undefined>>
   getCommands: MockInstance<() => Promise<unknown>>
   getSessionStats: MockInstance<() => Promise<unknown>>
   onEvent: MockInstance<(listener: PiEventListener) => () => void>
@@ -109,6 +113,8 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     clear: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue({ data: { messages: [] } }),
     sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
+    switchSession: vi.fn<(sessionPath: string) => Promise<void>>().mockResolvedValue(undefined),
+    getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({}),
     getCommands: vi.fn().mockResolvedValue([]),
     getSessionStats: vi.fn().mockResolvedValue({}),
     onEvent: vi.fn<(listener: PiEventListener) => () => void>((listener) => {
@@ -133,9 +139,9 @@ function createSetup() {
     createSession: vi.fn(async () => {
       const piSid = `pi-auto-${++autoId}`
       const client = makeMockClient({
-        sendCommand: vi.fn<SendCommandFn>(async (type) => {
-          if (type === 'get_state') return { data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }
-          return { data: {} }
+        // W2 收口后 create 用 client.getState()（返回归一后的 state 对象）
+        getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+          sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
         }),
       })
       clientMap.set(piSid, client)
@@ -184,9 +190,9 @@ function createSetup() {
   const seedSession = async (opts: { label?: string; sessionFile?: string } = {}) => {
     const piSid = `pi-seed-${++autoId}`
     const client = makeMockClient({
-      sendCommand: vi.fn<SendCommandFn>(async (type) => {
-        if (type === 'get_state') return { data: { sessionId: piSid, sessionFile: opts.sessionFile ?? `/fake/${piSid}.jsonl` } }
-        return { data: {} }
+      // W2 收口后 create 用 client.getState()（返回归一后的 state 对象）
+      getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+        sessionId: piSid, sessionFile: opts.sessionFile ?? `/fake/${piSid}.jsonl`,
       }),
     })
     vi.mocked(pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
@@ -370,9 +376,9 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
       createSession: vi.fn(async () => {
         const piSid = `pi-e2-${++autoId}`
         const client = makeMockClient({
-          sendCommand: vi.fn<SendCommandFn>(async (type) => {
-            if (type === 'get_state') return { data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }
-            return { data: {} }
+          // W2 收口后 create 用 client.getState()
+          getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+            sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
           }),
         })
         clientMap.set(piSid, client)
@@ -420,9 +426,9 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
     const piSid = `pi-e2-final-${++autoId}`
     const eventListeners: PiEventListener[] = []
     const client = makeMockClient({
-      sendCommand: vi.fn<SendCommandFn>(async (type) => {
-        if (type === 'get_state') return { data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }
-        return { data: {} }
+      // W2 收口后 create 用 client.getState()
+      getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+        sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
       }),
       onEvent: vi.fn<(listener: PiEventListener) => () => void>((listener) => {
         eventListeners.push(listener)

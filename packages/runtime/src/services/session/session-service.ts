@@ -22,7 +22,6 @@ import type {
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import { readPiState } from '../ports/pi-engine.js'
 import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -559,7 +558,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     let thinkingLevel = session.thinkingLevel
     if (client) {
       try {
-        const state = await readPiState(client)
+        const state = await client.getState()
         const level = state?.thinkingLevel as string | undefined
         if (level) {
           this.setThinkingLevelCache(sessionId, level)
