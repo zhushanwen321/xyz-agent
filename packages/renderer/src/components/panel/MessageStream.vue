@@ -83,6 +83,7 @@ import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
+import { isSubagentVirtualId, useSubagentView } from '@/composables/features/useSubagentView'
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
@@ -96,6 +97,7 @@ const props = defineProps<{
 }>()
 
 const chat = useChatStore()
+const subagentView = useSubagentView()
 
 /**
  * 当前 session 的消息（响应式）。
@@ -118,8 +120,17 @@ const isDispatching = computed(() => chat.isActive(props.sessionId) && !chat.isG
 /** 最后一个 turn 是否正在 working（message_start 已到，有 streaming assistant） */
 const hasWorkingTurn = computed(() => lastRenderTurn.value?.isWorking ?? false)
 
+/**
+ * subagent 虚拟 session 且 subagent 仍在 running 时，强制最后一个 turn working。
+ * subagent 消息读自 JSONL（status 恒 complete），但 subagent 可能仍在执行中——
+ * forceWorking 让 trace 展开，视觉与主 agent streaming 态一致。
+ */
+const forceWorking = computed(() =>
+  isSubagentVirtualId(props.sessionId) && subagentView.isCurrentSubagentRunning.value,
+)
+
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数） */
-const renderItems = computed(() => toRenderItems(currentMessages.value))
+const renderItems = computed(() => toRenderItems(currentMessages.value, forceWorking.value))
 
 /**
  * 从 system 消息的 details.__gui__ 提取结构化渲染组件（extension GUI 协议 E5）。

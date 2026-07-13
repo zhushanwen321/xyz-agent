@@ -55,6 +55,10 @@ export function useSubagentView() {
       : null,
   )
 
+  /** 当前查看的 subagent 是否仍在执行中（status='running'）。
+   *  用于驱动对话流 trace 展开（与主 agent streaming 态视觉一致）。 */
+  const isCurrentSubagentRunning = computed(() => currentSubagent.value?.status === 'running')
+
   /**
    * 加载 session 的 subagent 列表。
    * 在 Sidebar 切到 Agents tab 时调用。
@@ -77,6 +81,11 @@ export function useSubagentView() {
    * 1. 保存当前 panel 的原始 sessionId
    * 2. 拉取 subagent 历史 → 注入 chatStore（虚拟 session key）
    * 3. 切换 panel sessionId 为虚拟 session
+   *
+   * 注意：subagent 的 sessionFile 由 extractor 从主 session JSONL 推导，
+   * 后台模式可能存在延迟（bg-notify 未到达前 sessionFile=null，回退查找可能
+   * 命中未 flush 完成的文件）。因此每次进入都重新拉取——subagent JSONL 可能
+   * 在首次拉取后才有内容（pi 延迟写入策略）。
    */
   async function selectSubagent(subagentId: string): Promise<void> {
     const activePanelId = panel.activePanelId
@@ -91,14 +100,16 @@ export function useSubagentView() {
     currentSubagentId.value = subagentId
     const virtualId = subagentVirtualId(subagentId)
 
-    // 拉取 subagent 历史 → 注入 chatStore（未 hydrate 时才拉）
-    if (!chat.isHydrated(virtualId) && originalSessionId.value) {
+    // 每次进入都重新拉取 subagent 历史（不缓存）。
+    // subagent JSONL 可能延迟写入（pi 延迟 flush），首次拉取时可能为空，
+    // 后续重入时文件已有内容。chat.setMessages 直接覆盖（不受 hydrated 不可变约束）。
+    if (originalSessionId.value) {
       try {
         const history = await sessionApi.getSubagentHistory(originalSessionId.value, subagentId)
-        chat.hydrate(virtualId, history)
+        chat.setMessages(virtualId, history)
       } catch (e) {
         console.error('[useSubagentView] getSubagentHistory failed:', e)
-        chat.hydrate(virtualId, [])
+        chat.setMessages(virtualId, [])
       }
     }
 
@@ -131,6 +142,7 @@ export function useSubagentView() {
 
   return {
     isViewingSubagent,
+    isCurrentSubagentRunning,
     currentSubagent,
     subagentRecords,
     loadSubagents,

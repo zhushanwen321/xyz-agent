@@ -157,6 +157,16 @@ export const useChatStore = defineStore('chat', () => {
     hydrated.value = new Set(hydrated.value).add(sessionId)
   }
 
+  /**
+   * 直接覆盖某 session 的消息（不受 hydrated 不可变约束）。
+   * 用于 subagent 虚拟 session：subagent JSONL 可能延迟写入（pi 延迟 flush），
+   * 首次拉取为空后需要重新拉取覆盖。不标记 hydrated（允许后续 hydrate 再覆盖）。
+   */
+  function setMessages(sessionId: string, history: Message[]): void {
+    const cloned = history.map((m) => ({ ...m }))
+    messages.value.set(sessionId, cloned)
+  }
+
   /** 追加 user 消息（构造完整 Message，立即 complete） */
   function appendUser(sessionId: string, text: string): void {
     const prev = messages.value.get(sessionId) ?? []
@@ -485,6 +495,7 @@ export const useChatStore = defineStore('chat', () => {
     markHistoryFailed,
     clearHistoryError,
     hydrate,
+    setMessages,
     appendUser,
     appendPending,
     markPendingDelivered,
