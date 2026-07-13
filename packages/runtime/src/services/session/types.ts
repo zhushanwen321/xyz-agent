@@ -132,4 +132,10 @@ export type PiTranslatedEvent =
   | { kind: 'thinking-level'; level: string | undefined }
   /** 触发 plugin hook（agent_start / tool_execution_* / agent_end 等观测事件）—— interpreter 调 pluginService.executeHooks。 */
   | { kind: 'hook'; eventType: string; data: Record<string, unknown> }
+  /**
+   * subagent 逐字 streaming（路径 A-1）—— 扩展层合并 text_delta 后经 setWidget("subagent-stream-<id>") 转发。
+   * interpreter 转成 subagent.stream_delta WS 帧 → 前端 applyStreamDelta 增量更新虚拟 session。
+   * lines 是累积全文（split('\n')），undefined = subagent 终态清除（setWidget(key, undefined)）。
+   */
+  | { kind: 'subagent-stream'; sessionId: string; recordId: string; lines: string[] | undefined }
 

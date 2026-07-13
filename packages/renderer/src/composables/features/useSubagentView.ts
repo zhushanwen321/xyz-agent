@@ -22,7 +22,8 @@ import { ref, computed } from 'vue'
 import { usePanelStore } from '@/stores/panel'
 import { useChatStore } from '@/stores/chat'
 import * as sessionApi from '@/api/domains/session'
-import type { SubagentRecord } from '@xyz-agent/shared'
+import * as events from '@/api/events'
+import type { SubagentRecord, Message } from '@xyz-agent/shared'
 
 /** 虚拟 session ID 前缀 */
 const SUBAGENT_PREFIX = 'subagent:'
@@ -61,15 +62,21 @@ const subagentRecords = ref<SubagentRecord[]>([])
 const panelViewingMap = ref<Map<string, string | null>>(new Map())
 
 /**
- * [短期方案] per-panel 轮询定时器。
- *
- * 根因：subagent JSONL 无 push 通道（runtime 无 file-watch，protocol 无 subagent
- * streaming broadcast）。pi 延迟 flush JSONL，选中后只拉一次 → 对话流静态不更新。
- *
- * TODO(长期方案)：pi extension 改造后，subagent 流式事件走 RPC 推送（与主 session
- * 一致），届时移除本轮询，改为事件驱动 setMessages。
+ * per-panel streaming 订阅取消函数（路径 A-1）。
+ * subagent.stream_delta 经 events.on(mainSessionId) 路由到达，handler 增量更新虚拟 session。
  */
-const POLL_INTERVAL_MS = 1500
+const panelStreamUnsub = new Map<string, () => void>()
+
+/**
+ * per-panel 轮询定时器（兜底，路径 A-1 streaming 断流时恢复 + 检测 status 变更）。
+ *
+ * 主通道是 streaming（subagent.stream_delta WS 帧，~100ms 延迟）。轮询作为兜底：
+ * - streaming 不到达时（扩展未推送 / 网络抖动），轮询仍能刷新对话流
+ * - 检测 status 变更（running → done/failed），status 变更后停止轮询 + streaming
+ *
+ * TODO(长期方案)：pi extension streaming 稳定后，移除轮询（降级为纯事件驱动）。
+ */
+const POLL_INTERVAL_MS = 3000
 const panelPollTimers = new Map<string, ReturnType<typeof setInterval>>()
 
 /** per-panel：读取当前查看的 subagentId */
@@ -160,6 +167,94 @@ export function useSubagentView(panelId?: string) {
     }
   }
 
+  /**
+   * 路径 A-1：将 streaming delta（累积全文）替换到虚拟 session 的最后一条 assistant 消息。
+   *
+   * 与主对话流的 text_delta（增量拼接）不同——扩展层 setWidget 传的是 buffer 的 split('\n')，
+   * 每次都是截至当前的完整文本。所以用「替换 content」而非「追加 delta」。
+   *
+   * 逻辑：找最后一条 assistant 消息（或新建一条 streaming 消息），替换 content 为 lines.join('\n')。
+   * 确保 contentBlocks 有 text 块（MessageStream 渲染需要）。
+   */
+  function applyStreamDelta(virtualId: string, lines: string[]): void {
+    const fullText = lines.join('\n')
+    const prev = chat.messages.get(virtualId) ?? []
+    // 找最后一条 assistant 消息
+    let lastAssistantIdx = -1
+    for (let i = prev.length - 1; i >= 0; i--) {
+      if (prev[i].role === 'assistant') {
+        lastAssistantIdx = i
+        break
+      }
+    }
+    const next = [...prev]
+    if (lastAssistantIdx >= 0 && next[lastAssistantIdx].status === 'streaming') {
+      // 复用正在 streaming 的 assistant 消息
+      const msg = { ...next[lastAssistantIdx] }
+      msg.content = fullText
+      if (!msg.contentBlocks?.some((b: { type: string }) => b.type === 'text')) {
+        msg.contentBlocks = [...(msg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
+      }
+      next[lastAssistantIdx] = msg
+    } else {
+      // 新建一条 streaming assistant 消息
+      const msg: Message = {
+        id: `sa-${crypto.randomUUID()}`,
+        role: 'assistant',
+        content: fullText,
+        status: 'streaming',
+        contentBlocks: [{ type: 'text', refId: 'text' }],
+        timestamp: Date.now(),
+      }
+      next.push(msg)
+    }
+    chat.setMessages(virtualId, next)
+  }
+
+  /** 路径 A-1：停止指定 panel 的 streaming 订阅 */
+  function stopStream(targetPanelId?: string): void {
+    const id = targetPanelId ?? panelId
+    if (!id) return
+    const unsub = panelStreamUnsub.get(id)
+    if (unsub) {
+      unsub()
+      panelStreamUnsub.delete(id)
+    }
+  }
+
+  /**
+   * 路径 A-1：订阅 subagent.stream_delta WS 帧。
+   *
+   * subagent.stream_delta payload 含 sessionId（主 session ID），routeInbound 走 dispatchSession，
+   * 所以用 events.on(mainSessionId, handler) 订阅。handler 内按 recordId 过滤。
+   *
+   * lines 非空 → applyStreamDelta 增量更新。
+   * lines === undefined → 终态：停 streaming + 停轮询 + 最后一次 fetchAndInject 拉完整终态。
+   */
+  function subscribeStream(
+    pid: string,
+    mainSessionId: string,
+    recordId: string,
+    virtualId: string,
+  ): void {
+    stopStream(pid)
+    const unsub = events.on(mainSessionId, (msg) => {
+      if (msg.type !== 'subagent.stream_delta') return
+      const payload = msg.payload as { recordId?: string; lines?: string[] | undefined }
+      if (payload.recordId !== recordId) return
+
+      if (payload.lines === undefined) {
+        // 终态：停 streaming + 轮询，拉完整终态历史
+        stopStream(pid)
+        stopPolling(pid)
+        void fetchAndInject(mainSessionId, recordId)
+        return
+      }
+      applyStreamDelta(virtualId, payload.lines)
+    })
+    panelStreamUnsub.set(pid, unsub)
+  }
+
   /** [短期方案] 停止指定 panel 的轮询定时器 */
   function stopPolling(targetPanelId?: string): void {
     const id = targetPanelId ?? panelId
@@ -207,6 +302,8 @@ export function useSubagentView(panelId?: string) {
    * overlay 模式：不修改 panel store 的 sessionId（主 session 保持绑定）。
    * 仅设 per-panel viewing 状态 + 拉取历史注入 chatStore。
    *
+   * running 态同时启动 streaming 订阅（路径 A-1，逐字增量）+ 轮询兜底（3s，检测 status 变更）。
+   *
    * @param subagentId 要查看的 subagent ID
    * @param targetPanelId 目标 panel ID（默认用 composable 实例化的 panelId；
    *   Sidebar 调用时传 active panel ID）
@@ -218,13 +315,15 @@ export function useSubagentView(panelId?: string) {
     if (!targetPanel?.sessionId) return
 
     const mainSessionId = targetPanel.sessionId
+    const virtualId = subagentVirtualId(subagentId)
     setViewingSubagentId(pid, subagentId)
 
     await fetchAndInject(mainSessionId, subagentId)
 
-    // running 态启动轮询，直到 status 变更
+    // running 态启动 streaming（主通道）+ 轮询（兜底）
     const record = subagentRecords.value.find((s) => s.subagentId === subagentId)
     if (record?.status === 'running') {
+      subscribeStream(pid, mainSessionId, subagentId, virtualId)
       startPolling(pid, mainSessionId, subagentId)
     }
   }
@@ -232,18 +331,22 @@ export function useSubagentView(panelId?: string) {
   /**
    * 返回主会话（per-panel）。
    * overlay 模式：只需 reset per-panel viewing 状态，panel sessionId 从未被修改。
-   * 停止轮询（离开 subagent 视图后不再刷新）。
+   * 停止 streaming 订阅 + 轮询（离开 subagent 视图后不再刷新）。
    */
   function backToMainSession(): void {
     if (!panelId) return
+    stopStream()
     stopPolling()
     setViewingSubagentId(panelId, null)
   }
 
   /** 清空 subagent 列表（session 切换时，Sidebar 调用）。
-   *  同时退出所有 panel 的 subagent 视图 + 停止所有轮询。 */
+   *  同时退出所有 panel 的 subagent 视图 + 停止所有 streaming + 轮询。 */
   function clearSubagents(): void {
-    // 停止所有 panel 的轮询
+    // 停止所有 panel 的 streaming + 轮询
+    for (const pid of panelStreamUnsub.keys()) {
+      stopStream(pid)
+    }
     for (const pid of panelPollTimers.keys()) {
       stopPolling(pid)
     }
@@ -262,5 +365,6 @@ export function useSubagentView(panelId?: string) {
     backToMainSession,
     clearSubagents,
     stopPolling,
+    stopStream,
   }
 }

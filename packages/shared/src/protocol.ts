@@ -160,6 +160,7 @@ export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'session.subagents' | 'session.subagentHistory'
+  | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end'
@@ -282,6 +283,10 @@ export interface ServerMessageMapBase {
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
   // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
   'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
+  // subagent.stream_delta：running subagent 的逐字 streaming（路径 A-1）。
+  // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
+  // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
+  'subagent.stream_delta': { sessionId: string; recordId: string; lines: string[] | undefined }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
   // publicSessionId：公共 session 的真实 id（pi 生成 UUID，启动期创建后填）。
   // 前端 landing 态用此 id 从 commandStore 取命令（pi extension slash 命令）。

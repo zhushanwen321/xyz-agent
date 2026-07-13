@@ -19,7 +19,7 @@
  * 依赖经构造注入：send（WS 帧）、fileChangeDiff（port，git 纯函数经组合根注入）、
  * 各业务回调（executeHooks / contextUpdate / thinkingLevel / status/bridge/extension-ui 路由）。
  */
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
@@ -136,6 +136,13 @@ export class EventInterpreter {
       case 'hook':
         // agent_start 等纯观测事件（无 WS 帧产出）
         this.opts.executeHooks?.('onPiEvent', { event: ev.eventType, ...ev.data }).catch(() => {})
+        return
+      case 'subagent-stream':
+        // 路径 A-1：subagent 逐字 streaming → subagent.stream_delta WS 帧
+        this.opts.send({
+          type: 'subagent.stream_delta' as ServerMessageType,
+          payload: { sessionId: ev.sessionId, recordId: ev.recordId, lines: ev.lines },
+        })
         return
     }
   }

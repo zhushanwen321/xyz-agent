@@ -277,10 +277,19 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     ]
   }
 
-  // setWidget → WS event（检测 GUI 协议 marker / 清除语义）
+  // setWidget → WS event（检测 subagent streaming / GUI 协议 marker / 清除语义）
   if (method === 'setWidget') {
     const widgetKey = String(event.widgetKey ?? '')
     const rawLines = Array.isArray(event.widgetLines) ? event.widgetLines as unknown[] : []
+
+    // subagent streaming（路径 A-1）：widgetKey 匹配 subagent-stream-<recordId> 前缀。
+    // pi 扩展层合并 text_delta 后用此 key 转发累积全文。短路——不走后续 widget 逻辑。
+    const streamMatch = widgetKey.match(/^subagent-stream-(.+)$/)
+    if (streamMatch) {
+      const recordId = streamMatch[1]
+      const lines = rawLines.length > 0 ? rawLines.map((l) => String(l)) : undefined
+      return [{ kind: 'subagent-stream', sessionId: sid, recordId, lines }]
+    }
 
     // 清除语义：widgetLines 缺失或空数组 → extension 清除此 widget（guiSetWidget(key, undefined)）。
     // 发 extension:widgetGui 带 gui:null，前端据此删 guiWidgetsByTab 条目 + 清 lines。

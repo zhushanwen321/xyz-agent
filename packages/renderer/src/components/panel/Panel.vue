@@ -179,8 +179,9 @@ function onSubagentBack(): void {
   subagentView.backToMainSession()
 }
 
-/** Panel 卸载时停止 subagent 轮询（防止定时器泄漏） */
+/** Panel 卸载时停止 subagent streaming 订阅 + 轮询（防止泄漏） */
 onUnmounted(() => {
+  subagentView.stopStream()
   subagentView.stopPolling()
 })
 
