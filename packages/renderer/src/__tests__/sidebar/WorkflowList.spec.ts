@@ -78,4 +78,26 @@ describe('WorkflowList', () => {
     expect(wrapper.emitted('select')).toBeTruthy()
     expect(wrapper.emitted('select')![0]).toEqual(['wf-click'])
   })
+
+  it('running 态渲染 Pause + Abort 按钮，点击触发 action 事件', () => {
+    const records = [makeRecord({ runId: 'wf-run', status: 'running' })]
+    const wrapper = mount(WorkflowList, { props: { workflows: records } })
+
+    // running 态有 pause + abort 按钮
+    expect(wrapper.find('[data-testid="workflow-action-pause"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workflow-action-abort"]').exists()).toBe(true)
+
+    // 点击 abort 按钮
+    wrapper.find('[data-testid="workflow-action-abort"]').trigger('click')
+
+    expect(wrapper.emitted('action')).toBeTruthy()
+    expect(wrapper.emitted('action')![0]).toEqual([{ action: 'abort', runId: 'wf-run' }])
+  })
+
+  it('done 态不渲染操作按钮', () => {
+    const records = [makeRecord({ runId: 'wf-done', status: 'done' })]
+    const wrapper = mount(WorkflowList, { props: { workflows: records } })
+
+    expect(wrapper.find('[data-testid="workflow-action-abort"]').exists()).toBe(false)
+  })
 })

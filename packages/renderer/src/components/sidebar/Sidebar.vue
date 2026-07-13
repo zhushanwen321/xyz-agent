@@ -101,11 +101,13 @@
             :workflow="currentWorkflow"
             @back="onWorkflowBack"
             @select-agent-call="onSelectAgentCall"
+            @action="onWorkflowAction"
           />
           <WorkflowList
             v-else
             :workflows="workflowList"
             @select="onSelectWorkflow"
+            @action="onWorkflowAction"
           />
         </template>
         <template v-else>
@@ -178,10 +180,13 @@ import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
+import { useToast } from '@/composables/useToast'
 import * as events from '@/api/events'
+import * as sessionApi from '@/api/domains/session'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
+const { error: toastError } = useToast()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
@@ -290,6 +295,20 @@ async function onSelectAgentCall(agentCallSessionId: string): Promise<void> {
     agentCallSessionId,
     (virtualId, msgs) => chat.setMessages(virtualId, msgs),
   )
+}
+
+/** workflow 操作按钮（pause/resume/abort），调 runtime RPC 触发扩展 slash command */
+async function onWorkflowAction(payload: { action: 'pause' | 'resume' | 'abort'; runId: string }): Promise<void> {
+  const sid = focusedSessionId.value
+  if (!sid) return
+  try {
+    await sessionApi.workflowAction(sid, payload.action, payload.runId)
+    // 操作后刷新列表（扩展执行后 state 文件已更新）
+    void workflowStore.loadWorkflows(sid)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`工作流操作失败：${msg}`)
+  }
 }
 
 async function onNewSession(): Promise<void> {

@@ -33,6 +33,30 @@
           <span v-if="record.slug" class="shrink-0 font-mono text-[10px] text-muted">
             {{ record.slug }}
           </span>
+          <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort（hover 显示） -->
+          <div v-if="record.status === 'running' || record.status === 'paused'" class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-5 text-subtle hover:text-fg"
+              :title="record.status === 'running' ? '暂停' : '恢复'"
+              :data-testid="`workflow-action-${record.status === 'running' ? 'pause' : 'resume'}`"
+              @click.stop="emit('action', { action: record.status === 'running' ? 'pause' : 'resume', runId: record.runId })"
+            >
+              <Pause v-if="record.status === 'running'" class="size-3" />
+              <Play v-else class="size-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-5 text-subtle hover:text-danger"
+              title="终止"
+              data-testid="workflow-action-abort"
+              @click.stop="emit('action', { action: 'abort', runId: record.runId })"
+            >
+              <Square class="size-3" />
+            </Button>
+          </div>
         </div>
 
         <!-- 第二行：进度条 + agent 完成比例 -->
@@ -71,7 +95,8 @@
 </template>
 
 <script setup lang="ts">
-import { Loader2, Workflow } from '@lucide/vue'
+import { Loader2, Workflow, Pause, Play, Square } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import type { WorkflowRunRecord, WorkflowRunStatus, WorkflowDoneReason } from '@xyz-agent/shared'
 
 /** token 数超过此阈值显示 k 单位 */
@@ -91,6 +116,7 @@ defineProps<{
 
 const emit = defineEmits<{
   select: [runId: string]
+  action: [payload: { action: 'pause' | 'resume' | 'abort'; runId: string }]
 }>()
 
 /** 状态点颜色映射（design-tokens 语义色） */

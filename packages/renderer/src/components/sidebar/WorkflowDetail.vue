@@ -24,6 +24,28 @@
       <span v-if="workflow.slug" class="shrink-0 font-mono text-[10px] text-muted">
         {{ workflow.slug }}
       </span>
+      <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort -->
+      <div v-if="workflow.status === 'running' || workflow.status === 'paused'" class="flex shrink-0 items-center gap-0.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-5 text-subtle hover:text-fg"
+          :title="workflow.status === 'running' ? '暂停' : '恢复'"
+          @click="emit('action', { action: workflow.status === 'running' ? 'pause' : 'resume', runId: workflow.runId })"
+        >
+          <Pause v-if="workflow.status === 'running'" class="size-3" />
+          <Play v-else class="size-3" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-5 text-subtle hover:text-danger"
+          title="终止"
+          @click="emit('action', { action: 'abort', runId: workflow.runId })"
+        >
+          <Square class="size-3" />
+        </Button>
+      </div>
     </div>
 
     <div class="mx-2 mb-1 h-px bg-border" />
@@ -91,7 +113,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronLeft, Loader2 } from '@lucide/vue'
+import { ChevronLeft, Loader2, Pause, Play, Square } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { WorkflowRunRecord, WorkflowAgentCall } from '@xyz-agent/shared'
 
@@ -109,6 +131,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   back: []
   'select-agent-call': [sessionId: string]
+  action: [payload: { action: 'pause' | 'resume' | 'abort'; runId: string }]
 }>()
 
 /** phase 分组 + 组内状态聚合 */

@@ -355,6 +355,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return getHistoryFromFile(agentCallSessionId, this.sessionStore)
   }
 
+  /**
+   * 触发 workflow 生命周期操作（pause/resume/abort）。
+   * 经 client.prompt("/workflows <action> <runId>") 调扩展 slash command，
+   * pi 检测 / 开头直接执行 command handler（不经 LLM）。
+   * 扩展侧 RPC 分支已实现（commands.ts ctx.mode==='rpc'）。
+   */
+  async workflowAction(sessionId: string, action: 'pause' | 'resume' | 'abort', runId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not active`)
+    await client.prompt(`/workflows ${action} ${runId}`)
+  }
+
   getSummary(sessionId: string): SessionSummary | undefined {
     const session = this.sessions.get(sessionId)
     return session ? this.toSummary(session) : undefined

@@ -134,3 +134,15 @@ export async function getAgentCallHistory(sessionId: string, agentCallSessionId:
   const reply = await request<{ messages: Message[] }>('session.getAgentCallHistory', { sessionId, agentCallSessionId })
   return reply.messages
 }
+
+/**
+ * 触发 workflow 生命周期操作（pause/resume/abort）。
+ * runtime 经 client.prompt("/workflows <action> <runId>") 调扩展 slash command（不经 LLM）。
+ */
+export function workflowAction(
+  sessionId: string,
+  action: 'pause' | 'resume' | 'abort',
+  runId: string,
+): Promise<void> {
+  return request<void>('session.workflowAction', { sessionId, action, runId })
+}

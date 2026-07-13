@@ -20,6 +20,7 @@ export type ClientMessageType =
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory'
+  | 'session.workflowAction'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
@@ -85,6 +86,7 @@ export interface ClientMessageMap {
   // workflow 列表/agent call 对话流读取（runtime 直读主 session JSONL + workflow-state JSONL，不依赖扩展）
   'session.getWorkflows': { sessionId: string }
   'session.getAgentCallHistory': { sessionId: string; agentCallSessionId: string }
+  'session.workflowAction': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
@@ -166,7 +168,7 @@ export type ServerMessageType =
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory'
-  | 'session.workflowUpdate'
+  | 'session.workflowUpdate' | 'session.workflowActionDone'
   | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
@@ -297,6 +299,8 @@ export interface ServerMessageMapBase {
   // session.workflowUpdate：workflow 状态变化增量信号（event-interpreter 推送，发起/结束时刻）。
   // 前端收到后调 loadWorkflows RPC 拉取完整列表。与 session.workflows（RPC reply 全量列表）区分。
   'session.workflowUpdate': { sessionId: string; update: { runId: string; status: string; reason?: string } }
+  // session.workflowActionDone：workflow 操作完成确认（session.workflowAction RPC reply）
+  'session.workflowActionDone': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
   // subagent.stream_delta：running subagent 的逐字 streaming（路径 A-1）。
   // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
