@@ -21,6 +21,8 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
+import type { SubagentRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
@@ -84,6 +86,14 @@ export class EventInterpreter {
   private statusBaseline: FileChangeSnapshot = null
   /** 本 turn write 工具写入的 content（untracked 行数回退用，message_start 清空） */
   private writeContents: Map<string, string> = new Map()
+  /**
+   * subagent 内存态：subagentId → SubagentRecord。
+   * tool-call-end 建 running 记录，bg-notify 更新终态。每次变更广播 session.subagents。
+   * per-session（interpreter 实例级），session 销毁时随实例释放。
+   */
+  private subagentRecords: Map<string, SubagentRecord> = new Map()
+  /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
+  private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
 
   constructor(
     private readonly sessionId: string,
@@ -110,6 +120,8 @@ export class EventInterpreter {
         return
       case 'message':
         this.opts.send(ev.message)
+        // subagent bg-notify：更新内存态终态 → 广播 session.subagents
+        this.handleSubagentBgNotify(ev.message)
         return
       case 'turn-start':
         // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
@@ -195,6 +207,11 @@ export class EventInterpreter {
       type: 'message.tool_call_start',
       payload: { sessionId: this.sessionId, toolCallId, toolName, input },
     })
+
+    // subagent tool-call-start：缓存 startParam（agent/slug/task），end 时取出合并 details 建记录
+    if (SUBAGENT_TOOL_NAMES.has(toolName)) {
+      this.cacheSubagentStartParam(toolCallId, input)
+    }
   }
 
   /** tool-call-end：跑 onAfterToolResult hook（改写 output）+ 触发 file_changes diff + 产出 tool_call_end WS 帧 + onPiEvent hook。 */
@@ -241,6 +258,11 @@ export class EventInterpreter {
         error: isError ? output : undefined,
       },
     })
+
+    // subagent tool-call-end：合并缓存 startParam + details 建记录 → 广播 session.subagents
+    if (SUBAGENT_TOOL_NAMES.has(toolName)) {
+      this.handleSubagentEnd(toolCallId, details)
+    }
   }
 
   /** turn-end（agent_end）：转发 message.complete + context.update 回写 + onTurnFinalize（副作用）+ 观测 hook + file_changes ready diff + 清空态。 */
@@ -292,6 +314,98 @@ export class EventInterpreter {
         fileChanges: changes,
         changeSetStatus,
         isFullSet: true,
+      },
+    })
+  }
+
+  // ── subagent 内存态 + session.subagents 广播 ──
+
+  /**
+   * 缓存 subagent tool-call-start 的 startParam（agent/slug/task）。
+   * tool-call-end 时按 toolCallId 取出，合并 details 的 subagentId/sessionFile/bgResponse 建记录。
+   */
+  private cacheSubagentStartParam(toolCallId: string, input: unknown): void {
+    const args = input as { action?: string; startParam?: Record<string, unknown> } | undefined
+    if (!args || args.action !== 'start' || !args.startParam) return
+    const sp = args.startParam
+    this.pendingStartParams.set(toolCallId, {
+      agent: typeof sp.agent === 'string' ? sp.agent : 'general-purpose',
+      slug: typeof sp.slug === 'string' ? sp.slug : '',
+      task: typeof sp.task === 'string' ? sp.task : '',
+    })
+  }
+
+  /**
+   * subagent tool-call-end：合并缓存 startParam + details(SubagentToolResult) 建 running 记录。
+   * details 结构（pi-subagent-workflow）：{action:'start', subagentId, sessionFile, bgResponse:{status:'running',...}}
+   */
+  private handleSubagentEnd(toolCallId: string, details: Record<string, unknown> | undefined): void {
+    const startParam = this.pendingStartParams.get(toolCallId)
+    this.pendingStartParams.delete(toolCallId)
+    // start 事件丢失或不匹配 → 无法建记录（agent/slug/task 缺失），跳过
+    if (!startParam) return
+    if (!details) return
+
+    const subagentId = typeof details.subagentId === 'string' ? details.subagentId : null
+    if (!subagentId) return
+
+    const bgResponse = details.bgResponse as { status?: string } | undefined
+    const status = bgResponse?.status === 'running' ? 'running' : 'running'
+
+    const record: SubagentRecord = {
+      subagentId,
+      sessionFile: typeof details.sessionFile === 'string' ? details.sessionFile : null,
+      agent: startParam.agent,
+      slug: startParam.slug,
+      task: startParam.task,
+      status,
+    }
+
+    this.subagentRecords.set(subagentId, record)
+    this.broadcastSubagents()
+  }
+
+  /**
+   * subagent bg-notify（custom_message）：更新已有记录的终态。
+   * details 结构（BgNotifyDetails）：{id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
+   */
+  private handleSubagentBgNotify(msg: ServerMessage): void {
+    const payload = msg.payload as { customType?: string; details?: Record<string, unknown> } | undefined
+    if (payload?.customType !== 'subagent-bg-notify') return
+    const details = payload.details
+    if (!details) return
+
+    const subagentId = typeof details.id === 'string' ? details.id : null
+    if (!subagentId) return
+
+    const existing = this.subagentRecords.get(subagentId)
+    if (!existing) return
+
+    const status = details.status === 'done' ? 'done'
+      : details.status === 'failed' ? 'failed'
+      : details.status === 'cancelled' ? 'cancelled'
+      : existing.status
+
+    const updated: SubagentRecord = {
+      ...existing,
+      status,
+      model: typeof details.model === 'string' ? details.model : existing.model,
+      error: typeof details.error === 'string' ? details.error : existing.error,
+      startedAt: typeof details.startedAt === 'number' ? details.startedAt : existing.startedAt,
+      endedAt: typeof details.endedAt === 'number' ? details.endedAt : existing.endedAt,
+    }
+
+    this.subagentRecords.set(subagentId, updated)
+    this.broadcastSubagents()
+  }
+
+  /** 广播当前内存态的全量 subagent 列表（session.subagents server push） */
+  private broadcastSubagents(): void {
+    this.opts.send({
+      type: 'session.subagents' as ServerMessageType,
+      payload: {
+        sessionId: this.sessionId,
+        subagents: Array.from(this.subagentRecords.values()),
       },
     })
   }
