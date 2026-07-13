@@ -1,9 +1,9 @@
 /**
- * useSubagentView —— subagent 对话流视图管理。
+ * useSubagentView —— subagent 对话流视图管理（per-panel）。
  *
  * 职责：
  * - 管理 subagent 对话流的 overlay 显示（不替换 panel 的主 session 绑定）
- * - 拉取 subagent 列表（session.getSubagents RPC）
+ * - 拉取 subagent 列表（session.getSubagents RPC）— 共享状态，Sidebar 管理
  * - 拉取 subagent 对话流历史（session.getSubagentHistory RPC）→ 注入 chatStore
  *
  * 虚拟 session ID 格式：`subagent:<subagentId>`
@@ -12,6 +12,10 @@
  * overlay 模式：选中 subagent 时不修改 panel store 的 sessionId（主 session 保持高亮、
  * 文件视图仍可见）。Panel.vue 通过 activeSubagentVirtualId 决定渲染主 session 还是
  * subagent 对话流——它是 panel 的子状态，不是替换。
+ *
+ * per-panel 隔离：viewing 状态（正在看哪个 subagent）按 panelId 分区。split 后
+ * A panel 进入 subagent 视图不影响 B panel。subagentRecords（列表数据）是共享的
+ * （Sidebar 统一管理，所有 panel 只读消费）。
  */
 
 import { ref, computed } from 'vue'
@@ -38,13 +42,26 @@ export function extractSubagentId(virtualId: string): string {
   return virtualId.slice(SUBAGENT_PREFIX.length)
 }
 
-// 模块级状态（单实例，跟随 active panel）
-const viewingSubagent = ref(false)
-const currentSubagentId = ref<string | null>(null)
+/**
+ * 查询指定 subagentId 是否仍在 running（读共享 subagentRecords）。
+ * 供 MessageStream 等不持有 panelId 的组件判断 forceWorking——无需实例化 per-panel composable。
+ */
+export function isSubagentRunning(subagentId: string): boolean {
+  return subagentRecords.value.find((s) => s.subagentId === subagentId)?.status === 'running'
+}
+
+// 模块级共享状态：subagent 列表（Sidebar 管理，所有 panel 共享）。
 const subagentRecords = ref<SubagentRecord[]>([])
 
 /**
- * [短期方案] 轮询定时器——选中 running 的 subagent 时启动，定期 re-fetch 历史 + 列表。
+ * per-panel viewing 状态。split 后每个 panel 独立管理自己的 subagent overlay——
+ * A panel 进入 subagent 视图不影响 B panel。
+ * key = panelId, value = 该 panel 当前正在查看的 subagentId（null = 未查看）。
+ */
+const panelViewingMap = ref<Map<string, string | null>>(new Map())
+
+/**
+ * [短期方案] per-panel 轮询定时器。
  *
  * 根因：subagent JSONL 无 push 通道（runtime 无 file-watch，protocol 无 subagent
  * streaming broadcast）。pi 延迟 flush JSONL，选中后只拉一次 → 对话流静态不更新。
@@ -53,36 +70,66 @@ const subagentRecords = ref<SubagentRecord[]>([])
  * 一致），届时移除本轮询，改为事件驱动 setMessages。
  */
 const POLL_INTERVAL_MS = 1500
-let pollTimer: ReturnType<typeof setInterval> | null = null
+const panelPollTimers = new Map<string, ReturnType<typeof setInterval>>()
 
-export function useSubagentView() {
+/** per-panel：读取当前查看的 subagentId */
+function getViewingSubagentId(panelId: string): string | null {
+  return panelViewingMap.value.get(panelId) ?? null
+}
+
+/** per-panel：设置当前查看的 subagentId（null = 退出 subagent 视图） */
+function setViewingSubagentId(panelId: string, subagentId: string | null): void {
+  const next = new Map(panelViewingMap.value)
+  if (subagentId === null) {
+    next.delete(panelId)
+  } else {
+    next.set(panelId, subagentId)
+  }
+  panelViewingMap.value = next
+}
+
+/**
+ * useSubagentView —— subagent 对话流视图管理（per-panel 实例化）。
+ *
+ * @param panelId 当前 Panel 的 ID。Panel.vue / MessageStream.vue 传自己的 panelId，
+ *   split 后各 panel 独立。Sidebar.vue 传 undefined（只用列表管理 + selectSubagent
+ *   委托给 active panel）。
+ */
+export function useSubagentView(panelId?: string) {
   const panel = usePanelStore()
   const chat = useChatStore()
 
-  /** 当前是否在查看 subagent 对话流 */
-  const isViewingSubagent = computed(() => viewingSubagent.value)
+  /** 本 panel 当前是否在查看 subagent 对话流 */
+  const isViewingSubagent = computed(() =>
+    panelId ? getViewingSubagentId(panelId) !== null : false,
+  )
 
-  /** 当前查看的 subagent 的虚拟 session ID（viewing 时有值，否则 null）。
+  /** 本 panel 当前查看的 subagentId */
+  const currentSubagentId = computed(() =>
+    panelId ? getViewingSubagentId(panelId) : null,
+  )
+
+  /** 本 panel 当前查看的 subagent 的虚拟 session ID（viewing 时有值，否则 null）。
    *  Panel.vue 用它决定渲染 subagent 对话流还是主 session。 */
-  const activeSubagentVirtualId = computed(() =>
-    viewingSubagent.value && currentSubagentId.value
-      ? subagentVirtualId(currentSubagentId.value)
-      : null,
-  )
+  const activeSubagentVirtualId = computed(() => {
+    const sid = currentSubagentId.value
+    return sid ? subagentVirtualId(sid) : null
+  })
 
-  /** 当前查看的 subagent 记录 */
-  const currentSubagent = computed(() =>
-    currentSubagentId.value
-      ? subagentRecords.value.find((s) => s.subagentId === currentSubagentId.value) ?? null
-      : null,
-  )
+  /** 当前查看的 subagent 记录（从共享列表中查找） */
+  const currentSubagent = computed(() => {
+    const sid = currentSubagentId.value
+    return sid
+      ? subagentRecords.value.find((s) => s.subagentId === sid) ?? null
+      : null
+  })
 
   /** 当前查看的 subagent 是否仍在执行中（status='running'）。
    *  用于驱动对话流 trace 展开（与主 agent streaming 态视觉一致）。 */
   const isCurrentSubagentRunning = computed(() => currentSubagent.value?.status === 'running')
 
   /**
-   * 加载 session 的 subagent 列表。
+   * 加载 session 的 subagent 列表（共享状态，Sidebar 管理）。
    * 在 Sidebar 切到 Agents tab 时调用。
    */
   async function loadSubagents(sessionId: string): Promise<void> {
@@ -113,14 +160,25 @@ export function useSubagentView() {
     }
   }
 
+  /** [短期方案] 停止指定 panel 的轮询定时器 */
+  function stopPolling(targetPanelId?: string): void {
+    const id = targetPanelId ?? panelId
+    if (!id) return
+    const timer = panelPollTimers.get(id)
+    if (timer !== undefined) {
+      clearInterval(timer)
+      panelPollTimers.delete(id)
+    }
+  }
+
   /**
    * [短期方案] 启动轮询：仅当 subagent 仍在 running 时才轮询。
    * 每个周期同时刷新历史（对话流可见）和列表（检测 status 变更）。
    * status 变为非 running 后自动停止轮询。
    */
-  function startPolling(mainSessionId: string, subagentId: string): void {
-    stopPolling()
-    pollTimer = setInterval(async () => {
+  function startPolling(targetPanelId: string, mainSessionId: string, subagentId: string): void {
+    stopPolling(targetPanelId)
+    const timer = setInterval(async () => {
       // 列表（检测 status 变更）和历史（对话流更新）是独立数据源，并行请求。
       // 任一失败时保持上一次值不变——下一个周期重试，无需用户感知。
       const [listRes, histRes] = await Promise.allSettled([
@@ -137,65 +195,60 @@ export function useSubagentView() {
         subagentRecords.value.find((s) => s.subagentId === subagentId)?.status === 'running'
       if (!stillRunning) {
         // status 已变更，停止轮询（历史已在本周期刷新）
-        stopPolling()
+        stopPolling(targetPanelId)
       }
     }, POLL_INTERVAL_MS)
-  }
-
-  /** [短期方案] 停止轮询定时器 */
-  function stopPolling(): void {
-    if (pollTimer !== null) {
-      clearInterval(pollTimer)
-      pollTimer = null
-    }
+    panelPollTimers.set(targetPanelId, timer)
   }
 
   /**
    * 选中 subagent → 进入 subagent 对话流 overlay。
    *
    * overlay 模式：不修改 panel store 的 sessionId（主 session 保持绑定）。
-   * 仅设 viewingSubagent=true + 拉取历史注入 chatStore，Panel.vue 据此渲染 subagent 对话流。
+   * 仅设 per-panel viewing 状态 + 拉取历史注入 chatStore。
    *
-   * 主 session ID 从 panel 的 activeLeaf 读取（overlay 不替换，每次进入都能拿到当前 session）。
-   *
-   * 若 subagent 仍在 running，启动轮询定期刷新历史（subagent JSONL 无 push 通道，
-   * 需主动 re-fetch 才能看到新增内容）。status 变为非 running 后自动停止轮询。
+   * @param subagentId 要查看的 subagent ID
+   * @param targetPanelId 目标 panel ID（默认用 composable 实例化的 panelId；
+   *   Sidebar 调用时传 active panel ID）
    */
-  async function selectSubagent(subagentId: string): Promise<void> {
-    const activeLeaf = panel.panels.find((p) => p.id === panel.activePanelId)
-    if (!activeLeaf?.sessionId) return
+  async function selectSubagent(subagentId: string, targetPanelId?: string): Promise<void> {
+    const pid = targetPanelId ?? panelId
+    if (!pid) return
+    const targetPanel = panel.panels.find((p) => p.id === pid)
+    if (!targetPanel?.sessionId) return
 
-    const mainSessionId = activeLeaf.sessionId
-    currentSubagentId.value = subagentId
+    const mainSessionId = targetPanel.sessionId
+    setViewingSubagentId(pid, subagentId)
 
     await fetchAndInject(mainSessionId, subagentId)
 
-    viewingSubagent.value = true
-
     // running 态启动轮询，直到 status 变更
-    if (currentSubagent.value?.status === 'running') {
-      startPolling(mainSessionId, subagentId)
+    const record = subagentRecords.value.find((s) => s.subagentId === subagentId)
+    if (record?.status === 'running') {
+      startPolling(pid, mainSessionId, subagentId)
     }
   }
 
   /**
-   * 返回主会话。
-   * overlay 模式：只需 reset viewingSubagent，panel sessionId 从未被修改。
+   * 返回主会话（per-panel）。
+   * overlay 模式：只需 reset per-panel viewing 状态，panel sessionId 从未被修改。
    * 停止轮询（离开 subagent 视图后不再刷新）。
    */
   function backToMainSession(): void {
+    if (!panelId) return
     stopPolling()
-    viewingSubagent.value = false
-    currentSubagentId.value = null
+    setViewingSubagentId(panelId, null)
   }
 
-  /** 清空 subagent 列表（session 切换时） */
+  /** 清空 subagent 列表（session 切换时，Sidebar 调用）。
+   *  同时退出所有 panel 的 subagent 视图 + 停止所有轮询。 */
   function clearSubagents(): void {
-    stopPolling()
-    subagentRecords.value = []
-    if (viewingSubagent.value) {
-      backToMainSession()
+    // 停止所有 panel 的轮询
+    for (const pid of panelPollTimers.keys()) {
+      stopPolling(pid)
     }
+    subagentRecords.value = []
+    panelViewingMap.value = new Map()
   }
 
   return {

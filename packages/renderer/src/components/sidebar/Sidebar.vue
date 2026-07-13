@@ -168,6 +168,7 @@ import SubagentList from './SubagentList.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useChatStore } from '@/stores/chat'
+import { usePanelStore } from '@/stores/panel'
 import { useSubagentView } from '@/composables/features/useSubagentView'
 import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
 import * as events from '@/api/events'
@@ -177,6 +178,7 @@ const session = useSessionStore()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
 const chatStore = useChatStore()
+const panelStore = usePanelStore()
 const subagentView = useSubagentView()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
@@ -264,9 +266,9 @@ async function onSelectSession(id: string): Promise<void> {
   await selectSession(id)
 }
 
-/** 切到 subagents tab 时加载列表；选中 subagent 时切换 Panel */
+/** 切到 subagents tab 时加载列表；选中 subagent 时在 active panel 进入 overlay 视图 */
 async function onSelectSubagent(subagentId: string): Promise<void> {
-  await subagentView.selectSubagent(subagentId)
+  await subagentView.selectSubagent(subagentId, panelStore.activePanelId)
 }
 
 async function onNewSession(): Promise<void> {

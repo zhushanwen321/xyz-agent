@@ -58,7 +58,8 @@
         <ArrowRight class="size-[14px]" />
       </Button>
     </div>
-    <!-- subagent 视图返回按钮：viewingSubagent 态显示，替代正常态的 spinner+breadcrumb+按钮区 -->
+    <!-- subagent 视图返回按钮：viewingSubagent 态显示，替代正常态的 spinner+breadcrumb。
+         右侧按钮组（drawer/git/split/close）不受影响，继续保留。 -->
     <Button
       v-if="viewingSubagent"
       variant="ghost"
@@ -113,7 +114,7 @@
       </ol>
     </nav>
 
-    <div v-if="!viewingSubagent" class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+    <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
       <!-- SideDrawer toggle（always-visible，不依赖 git 仓库）。
            非折叠态显此按钮；折叠态 chrome 按钮组已含侧栏切换。 -->
       <Button

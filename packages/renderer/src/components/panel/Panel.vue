@@ -162,7 +162,7 @@ function onPanelMouseDown(e: MouseEvent): void {
 const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
-const subagentView = useSubagentView()
+const subagentView = useSubagentView(props.panelId)
 
 const flow = useNewTaskFlow()
 
