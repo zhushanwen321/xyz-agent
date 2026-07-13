@@ -150,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { Plus, LayoutGrid, Search, Settings, FolderOpen, Workflow } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -169,17 +169,16 @@ import RenameSessionDialog from './RenameSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore } from '@/stores/panel'
-import { useSubagentView } from '@/composables/features/useSubagentView'
-import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
+import { useSubagentStore } from '@/stores/subagent'
+import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import * as events from '@/api/events'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
-const chatStore = useChatStore()
 const panelStore = usePanelStore()
-const subagentView = useSubagentView()
+const subagentStore = useSubagentStore()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -213,49 +212,11 @@ const fileCount = computed(() => {
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
 
-/** subagent tab 计数（当前 session 的 subagent 数量） */
-const subagentCount = computed(() => subagentView.subagentRecords.value.length)
+/** subagent tab 计数（当前 session 的 subagent 数量，读 store 共享列表） */
+const subagentCount = computed(() => subagentStore.records.length)
 
-/** subagent 列表（computed 解包，避免 template 中直接 .value） */
-const subagentList = computed(() => subagentView.subagentRecords.value)
-
-/**
- * 当前活跃 session 的 subagent 活动签名。
- * 追踪两类实时事件的产物：subagent tool_call 的出现（主 agent 发起 subagent）和
- * subagent-bg-notify 消息的到达（后台 subagent 完成/状态变更）。
- * 签名格式：`<subagentToolCallCount>:<bgNotifyCount>`，任一变化 → watch 触发列表刷新。
- */
-const subagentActivityKey = computed(() => {
-  const sid = session.activeId
-  if (!sid) return ''
-  const msgs = chatStore.getMessages(sid)
-  let toolCallCount = 0
-  let bgNotifyCount = 0
-  for (const m of msgs) {
-    if (m.toolCalls) {
-      for (const tc of m.toolCalls) {
-        if (SUBAGENT_TOOL_NAMES.has(tc.toolName)) toolCallCount++
-      }
-    }
-    if (m.customType === 'subagent-bg-notify') bgNotifyCount++
-  }
-  return `${toolCallCount}:${bgNotifyCount}`
-})
-
-/**
- * 实时刷新：subagents tab 激活时，主 agent 发起 subagent 或后台 subagent 完成都
- * 会改变 subagentActivityKey → 触发 loadSubagents 刷新侧边栏列表。
- * 与 tab 切换 watch（line 263）互补：那个处理「用户主动切到 subagents tab」，
- * 这个处理「用户已在 subagents tab 时 subagent 状态实时变化」。
- */
-watch(
-  [() => sidebar.activeTab, subagentActivityKey] as const,
-  ([tab]) => {
-    if (tab === 'subagents' && session.activeId) {
-      void subagentView.loadSubagents(session.activeId)
-    }
-  },
-)
+/** subagent 列表（store records 的 computed 解包，供 template 直接用） */
+const subagentList = computed(() => subagentStore.records)
 
 /** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
@@ -266,9 +227,23 @@ async function onSelectSession(id: string): Promise<void> {
   await selectSession(id)
 }
 
-/** 切到 subagents tab 时加载列表；选中 subagent 时在 active panel 进入 overlay 视图 */
+/**
+ * 选中 subagent 时在 active panel 进入 overlay 视图。
+ * store.selectSubagent 需要 mainSessionId + chatStore getMessages/setMessages（铁律：store 不 import chatStore）。
+ * 从 active panel 的 sessionId 取 mainSessionId，chatStore 注入由 useChatStore() 实例提供。
+ */
 async function onSelectSubagent(subagentId: string): Promise<void> {
-  await subagentView.selectSubagent(subagentId, panelStore.activePanelId)
+  const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
+  if (!activePanel?.sessionId) return
+  // chatStore 在此 import（features 层跨 store 编排），注入 store action
+  const chat = useChatStore()
+  await subagentStore.selectSubagent(
+    panelStore.activePanelId,
+    activePanel.sessionId,
+    subagentId,
+    (virtualId) => chat.messages.get(virtualId) ?? [],
+    (virtualId, msgs) => chat.setMessages(virtualId, msgs),
+  )
 }
 
 async function onNewSession(): Promise<void> {
@@ -288,27 +263,13 @@ async function onConfirmRename(payload: { sessionId: string; label: string }): P
   await renameSession(payload.sessionId, payload.label)
 }
 
-/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本 */
+/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本
+ *  + 启动 subagent 列表同步（watch 生命周期跟随 Sidebar 组件） */
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
+  useSubagentListSync()
 })
-
-/**
- * subagents tab 激活或 session 切换时加载 subagent 列表。
- * - tab 切到 subagents → 拉当前 session 的 subagent 列表
- * - session 切换 → 用新 session id 重新加载
- * 用 session.activeId（session store 的活跃 session）而非 focusedSessionId（panel 焦点），
- * 因为 Overview 态 focusedSessionId 可能为 null，但 activeId 仍指向活跃 session。
- */
-watch(
-  () => [sidebar.activeTab, session.activeId] as const,
-  ([tab, sid]) => {
-    if (tab === 'subagents' && sid) {
-      void subagentView.loadSubagents(sid)
-    }
-  },
-)
 
 /**
  * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。

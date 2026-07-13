@@ -83,7 +83,8 @@ import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
-import { isSubagentVirtualId, extractSubagentId, isSubagentRunning } from '@/composables/features/useSubagentView'
+import { isSubagentVirtualId, extractSubagentId } from '@/stores/subagent'
+import { useSubagentStore } from '@/stores/subagent'
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
@@ -97,6 +98,7 @@ const props = defineProps<{
 }>()
 
 const chat = useChatStore()
+const subagentStore = useSubagentStore()
 
 /**
  * 当前 session 的消息（响应式）。
@@ -123,12 +125,12 @@ const hasWorkingTurn = computed(() => lastRenderTurn.value?.isWorking ?? false)
  * subagent 虚拟 session 且 subagent 仍在 running 时，强制最后一个 turn working。
  * subagent 消息读自 JSONL（status 恒 complete），但 subagent 可能仍在执行中——
  * forceWorking 让 trace 展开，视觉与主 agent streaming 态一致。
- * 直接读共享 subagentRecords（无需 panelId），isSubagentRunning 是模块级 helper。
+ * 读 subagentStore.records（共享列表），store getter isRunning 判断状态。
  */
 const forceWorking = computed(() => {
   if (!isSubagentVirtualId(props.sessionId)) return false
   const subagentId = extractSubagentId(props.sessionId)
-  return isSubagentRunning(subagentId)
+  return subagentStore.isRunning(subagentId)
 })
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数） */

@@ -24,7 +24,7 @@
       :active="active"
       :is-dual="isDual"
       :is-first-panel="isFirstPanel"
-      :viewing-subagent="subagentView.isViewingSubagent.value"
+      :viewing-subagent="isViewingSubagent"
       :subagent-label="subagentLabel"
       @split="emit('split')"
       @new-session="emit('new-session')"
@@ -82,7 +82,7 @@
          git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。
          ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
-    <div v-if="!subagentView.isViewingSubagent.value" class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-3.5">
+    <div v-if="!isViewingSubagent" class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-3.5">
       <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
       <ProgressZone />
 
@@ -118,7 +118,7 @@ import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
-import { useSubagentView } from '@/composables/features/useSubagentView'
+import { useSubagentStore } from '@/stores/subagent'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -162,27 +162,27 @@ function onPanelMouseDown(e: MouseEvent): void {
 const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
-const subagentView = useSubagentView(props.panelId)
+const subagentStore = useSubagentStore()
 
 const flow = useNewTaskFlow()
 
 /** subagent 视图标题：agent 名称 + subagentId 摘要 */
 const SUBAGENT_ID_DISPLAY_LENGTH = 12
 const subagentLabel = computed(() => {
-  const record = subagentView.currentSubagent.value
+  const record = subagentStore.getCurrentSubagent(props.panelId)
   if (!record) return 'Subagent'
   return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
 })
 
 /** 返回主会话 */
 function onSubagentBack(): void {
-  subagentView.backToMainSession()
+  subagentStore.backToMain(props.panelId)
 }
 
 /** Panel 卸载时停止 subagent streaming 订阅 + 轮询（防止泄漏） */
 onUnmounted(() => {
-  subagentView.stopStream()
-  subagentView.stopPolling()
+  subagentStore.stopStream(props.panelId)
+  subagentStore.stopPolling(props.panelId)
 })
 
 /**
@@ -190,8 +190,11 @@ onUnmounted(() => {
  * 否则用主 session ID。panel store 的 sessionId 从不被替换（主 session 保持高亮、文件视图不变）。
  */
 const effectiveSessionId = computed(
-  () => subagentView.activeSubagentVirtualId.value ?? props.sessionId,
+  () => subagentStore.getActiveSubagentVirtualId(props.panelId) ?? props.sessionId,
 )
+
+/** 本 panel 是否正在查看 subagent overlay（computed 跟踪 panelViewingMap 响应式变化） */
+const isViewingSubagent = computed(() => subagentStore.isViewing(props.panelId))
 
 /** subagent overlay 时的消息数（虚拟 session 的消息数） */
 const effectiveMessageCount = computed(() =>
