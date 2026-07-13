@@ -335,7 +335,8 @@ async function onInstall() {
 /** 记录发现结果，默认全选（常见 UX：一次性装全部候选，用户可逐项取消） */
 function setDiscovered(result: ExtensionDiscoveredPayload) {
   discovered.value = result
-  selected.value = new Set(result.candidates.map((c) => c.dirName))
+  // 默认不勾选——用户手动选择要安装的 extension，避免误装
+  selected.value = new Set()
 }
 
 /** 切换候选选中态（dirName 为 key） */

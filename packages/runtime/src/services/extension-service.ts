@@ -17,7 +17,7 @@
  * 5. 清理临时目录
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename, delimiter } from 'node:path'
+import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
@@ -498,6 +498,15 @@ export class ExtensionService {
     try {
       cpSync(checkPath, destInTemp, { recursive: true })
       const candidates = this.discoverExtensions(tempDir)
+      // dirName 改为相对于 tempDir 的路径，使 finishInstall 能正确定位嵌套 extension。
+      // discoverExtensions 返回的 dirName 是 basename（如 "pi-subagent-workflow"），
+      // 但当源目录是包含多个 extension 的父目录时，实际路径是 tempDir/<source>/pi-subagent-workflow。
+      // 用 path 字段（绝对路径）计算相对路径，finishInstall 的 join(tempDir, relPath) 就能命中。
+      for (const c of candidates) {
+        if (c.path) {
+          c.dirName = relative(tempDir, c.path)
+        }
+      }
       return { tempDir, candidates }
     } catch (err) {
       rmSync(tempDir, { recursive: true, force: true })
@@ -552,6 +561,12 @@ export class ExtensionService {
     // Discover extensions — wrap in try-catch to clean up tempDir on unexpected errors
     try {
       const candidates = this.discoverExtensions(tempDir)
+      // dirName 改为相对于 tempDir 的路径（同 installLocalDirectory）
+      for (const c of candidates) {
+        if (c.path) {
+          c.dirName = relative(tempDir, c.path)
+        }
+      }
       return { tempDir, candidates }
     } catch (err) {
       try { rmSync(tempDir, { recursive: true, force: true }) } catch (e) { log.debug('cleanup failed:', toErrorMessage(e)) }
@@ -575,13 +590,13 @@ export class ExtensionService {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 
-    // Validate selected are simple dirNames: no path traversal
-    // NOTE: `selected` contains dirName values (filesystem basenames), not npm package names.
-    // scoped packages like @scope/pkg have dirName = 'pkg' (or whatever basename returns).
+    // Validate selected: relative paths allowed (nested extension collections),
+    // but no path traversal (..) or absolute paths.
+    // dirName is relative to tempDir — discoverExtensions computes it via relative(tempDir, path).
     for (const dirName of selected) {
-      if (dirName !== basename(dirName) || dirName.includes('..') || dirName.includes('/') || dirName.includes('\\')) {
+      if (dirName.includes('..') || isAbsolute(dirName) || dirName.includes('\\')) {
         throw new Error(`Invalid extension dirName: "${dirName}"`
-          + ' — must be a simple directory name without path separators or traversal')
+          + ' — must be a relative path without traversal')
       }
     }
 
@@ -609,7 +624,9 @@ export class ExtensionService {
 
     for (const dirName of selected) {
       const srcDir = join(tempDir, dirName)
-      const destDir = join(extensionsDir, dirName)
+      // destDir 用 basename —— dirName 可能是嵌套相对路径（如 "extensions/pi-subagent-workflow"），
+      // 但安装目标应平铺在 extensions/ 下，不保留源目录层级。
+      const destDir = join(extensionsDir, basename(dirName))
       // Remove old version first to prevent residual files from previous installs
       rmSync(destDir, { recursive: true, force: true })
       cpSync(srcDir, destDir, { recursive: true })
