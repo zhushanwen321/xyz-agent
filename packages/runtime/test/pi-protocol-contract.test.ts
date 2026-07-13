@@ -1,7 +1,7 @@
 /**
- * W1 contract tests: pi-protocol.ts deepened into a real contract.
+ * pi-protocol contract tests.
  *
- * Covers plan.json U1/U2/U3:
+ * W1 (U1/U2/U3): pi-protocol.ts deepened into a real contract.
  *  - U1: PiEvent union includes all 10 newly-added event types
  *        (compaction_start/end, auto_retry_start/end, thinking_level_changed,
  *         queue_update, entry_appended, session_info_changed, agent_settled,
@@ -10,12 +10,22 @@
  *        (content with image blocks + details + addedToolNames + terminate)
  *  - U3: PiTurnEndEvent carries message + toolResults
  *
+ * W2 (U4/U5/U6): event-adapter.ts consumes pi-protocol narrow types.
+ *  - U4: event-adapter.ts imports PiEvent from pi-protocol.js (no local shadow)
+ *  - U5: event-adapter.ts has no defensive double-read fallbacks
+ *        (no `?? event.output` / `?? event.input` / `?? event.payload`)
+ *  - U6: 3 representative handler params are narrow Pi*Event interfaces
+ *
  * Method: assignment compile checks (assigning a literal to a typed variable
  * proves membership in the union / shape conformance) + `@ts-expect-error`
  * negative cases + runtime shape assertions on the same fixtures.
+ * W2 structural assertions read event-adapter.ts source text (grep/regex).
  */
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 import type {
   PiEvent,
   PiToolExecutionResult,
@@ -246,5 +256,59 @@ describe('U3: PiTurnEndEvent — message + toolResults', () => {
       toolResults: [],
     }
     expect(e.toolResults).toEqual([])
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════
+// W2 (U4/U5/U6): event-adapter.ts consumes pi-protocol narrow types.
+// Structural assertions read event-adapter.ts source text.
+// ════════════════════════════════════════════════════════════════════════
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const EVENT_ADAPTER_SRC = readFileSync(
+  resolve(__dirname, '../src/infra/pi/event-adapter.ts'),
+  'utf8',
+)
+
+describe('U4: event-adapter.ts imports PiEvent from pi-protocol (no local shadow)', () => {
+  it('imports PiEvent as a type from ./pi-protocol.js', () => {
+    // Must have `import type { ... PiEvent ... } from './pi-protocol.js'`
+    expect(EVENT_ADAPTER_SRC).toMatch(/import\s+type\s+\{[^}]*\bPiEvent\b[^}]*\}\s+from\s+['"]\.\/pi-protocol\.js['"]/)
+  })
+
+  it('has no local `type PiEvent = Record<...>` shadow definition', () => {
+    // The old shadow was: `type PiEvent = Record<string, unknown>`
+    expect(EVENT_ADAPTER_SRC).not.toMatch(/^\s*type\s+PiEvent\s*=\s*Record</m)
+  })
+})
+
+describe('U5: event-adapter.ts has no defensive double-read fallbacks', () => {
+  it('has no `?? event.output` (result??output defense)', () => {
+    expect(EVENT_ADAPTER_SRC).not.toContain('?? event.output')
+  })
+
+  it('has no `?? event.input` (args??input defense)', () => {
+    expect(EVENT_ADAPTER_SRC).not.toContain('?? event.input')
+  })
+
+  it('has no `?? event.payload` (message??payload defense)', () => {
+    expect(EVENT_ADAPTER_SRC).not.toContain('?? event.payload')
+  })
+})
+
+describe('U6: 3 representative handlers use narrow Pi*Event param types', () => {
+  // These three handlers previously took the wide `PiEvent` (= Record) shadow.
+  // After W2 they must take the specific narrow interfaces from pi-protocol.
+
+  it('handleToolExecutionEnd takes PiToolExecutionEndEvent', () => {
+    expect(EVENT_ADAPTER_SRC).toMatch(/function\s+handleToolExecutionEnd\s*\(\s*event:\s*PiToolExecutionEndEvent\b/)
+  })
+
+  it('handleTurnEndPi takes PiTurnEndEvent', () => {
+    expect(EVENT_ADAPTER_SRC).toMatch(/function\s+handleTurnEndPi\s*\(\s*event:\s*PiTurnEndEvent\b/)
+  })
+
+  it('handleToolExecutionStart takes PiToolExecutionStartEvent', () => {
+    expect(EVENT_ADAPTER_SRC).toMatch(/function\s+handleToolExecutionStart\s*\(\s*event:\s*PiToolExecutionStartEvent\b/)
   })
 })

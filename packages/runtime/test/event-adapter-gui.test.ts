@@ -11,34 +11,36 @@ import { describe, it, expect } from 'vitest'
 import { translate } from '../src/infra/pi/event-adapter.js'
 import { GUI_WIDGET_MARKER, ASK_USER_MARKER } from '@xyz-agent/extension-protocol'
 import type { PiTranslatedEvent } from '../src/services/session/types.js'
+import type { PiEvent } from '../src/infra/pi/pi-protocol.js'
 
 // ── 辅助：构造 pi setWidget 事件 ──
-function makeSetWidgetEvent(widgetKey: string, widgetLines: unknown[]): Record<string, unknown> {
+function makeSetWidgetEvent(widgetKey: string, widgetLines: unknown[]): PiEvent {
   return {
     type: 'extension_ui_request',
     method: 'setWidget',
     widgetKey,
     widgetLines,
-  }
+  } as PiEvent
 }
 
 // ── 辅助：构造 pi tool_execution_update 事件 ──
-function makeToolUpdateEvent(toolCallId: string, partialResult: unknown): Record<string, unknown> {
+function makeToolUpdateEvent(toolCallId: string, partialResult: unknown): PiEvent {
   return {
     type: 'tool_execution_update',
     toolCallId,
+    toolName: 'test_tool',
     partialResult,
-  }
+  } as PiEvent
 }
 
 // ── 辅助：构造 pi tool_execution_end 事件 ──
-function makeToolEndEvent(toolCallId: string, result: unknown): Record<string, unknown> {
+function makeToolEndEvent(toolCallId: string, result: unknown): PiEvent {
   return {
     type: 'tool_execution_end',
     toolCallId,
     toolName: 'test_tool',
     result,
-  }
+  } as PiEvent
 }
 
 describe('event-adapter: setWidget GUI marker 检测', () => {
@@ -169,7 +171,7 @@ describe('event-adapter: setStatus textRaw (保留 ANSI 颜色信息)', () => {
       method: 'setStatus',
       statusKey: 'task-progress',
       statusText: '\x1b[32mRunning\x1b[0m 3/5',
-    }
+    } as PiEvent
 
     const results = translate(event, 'sess-1')
 
@@ -198,7 +200,7 @@ describe('event-adapter: setStatus textRaw (保留 ANSI 颜色信息)', () => {
       method: 'setStatus',
       statusKey: 'plain',
       statusText: 'plain text status',
-    }
+    } as PiEvent
 
     const results = translate(event, 'sess-1')
 
@@ -237,14 +239,14 @@ describe('event-adapter: handleToolExecutionEnd outputRaw', () => {
 // ── 富交互：guiInteract marker 检测 + 普通 select options 透传（U6-U8）──
 
 /** 辅助：构造 pi extension_ui_request{method:'select'} 事件 */
-function makeSelectEvent(title: string, options: unknown[], id = 'req-x'): Record<string, unknown> {
+function makeSelectEvent(title: string, options: unknown[], id = 'req-x'): PiEvent {
   return {
     type: 'extension_ui_request',
     method: 'select',
     id,
     title,
     options,
-  }
+  } as PiEvent
 }
 
 /** 辅助：从 translate 结果中提取 message 事件 */
@@ -346,7 +348,7 @@ describe('event-adapter: ask-user ASK_USER_MARKER 检测 (U6-U8)', () => {
       id: 'req-confirm',
       title: ASK_USER_MARKER,  // title 碰巧是 marker，但 method 不是 select
       message: 'sure?',
-    }
+    } as PiEvent
 
     const results = translate(event, 'sess-1')
 
