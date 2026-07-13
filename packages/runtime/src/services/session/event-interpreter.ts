@@ -22,7 +22,7 @@
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
 import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
-import type { SubagentRecord } from '@xyz-agent/shared'
+import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
@@ -349,8 +349,8 @@ export class EventInterpreter {
     const subagentId = typeof details.subagentId === 'string' ? details.subagentId : null
     if (!subagentId) return
 
-    const bgResponse = details.bgResponse as { status?: string } | undefined
-    const status = bgResponse?.status === 'running' ? 'running' : 'running'
+    // 新发起的 subagent 恒为 running（pi-subagent-workflow 的 start action 返回 bgResponse.status='running'）
+    const status: SubagentStatus = 'running'
 
     const record: SubagentRecord = {
       subagentId,
