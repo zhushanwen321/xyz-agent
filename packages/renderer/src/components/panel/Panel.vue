@@ -105,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted } from 'vue'
 import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
@@ -178,6 +178,11 @@ const subagentLabel = computed(() => {
 function onSubagentBack(): void {
   subagentView.backToMainSession()
 }
+
+/** Panel 卸载时停止 subagent 轮询（防止定时器泄漏） */
+onUnmounted(() => {
+  subagentView.stopPolling()
+})
 
 /**
  * subagent overlay 模式：viewing subagent 时用虚拟 session ID 渲染 MessageStream，
