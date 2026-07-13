@@ -27,7 +27,8 @@ export type {
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES } from './constants'
+export type { ProviderApiType } from './constants'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
 import recommendedExtensions from './recommended-extensions.json'
 export { recommendedExtensions }

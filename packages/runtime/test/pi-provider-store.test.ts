@@ -259,4 +259,74 @@ describe('pi-provider-store — models.json', () => {
       expect(existsSync(deepPath)).toBe(true)
     })
   })
+
+  // W1：provider/model 级 enabled 字段序列化。
+  // enabled 字段用于 provider 级 / model 级启停（默认 true 向上兼容存量）。
+  // 需保证写 models.json → 读回时 enabled 值正确保留。
+  describe('enabled 字段序列化（W1）', () => {
+    it('provider 级 enabled=false 经写盘读回后保留', () => {
+      writeModels({
+        providers: {
+          anthropic: {
+            apiKey: 'sk-test',
+            enabled: false,
+            models: [
+              { id: 'claude-sonnet', name: 'Sonnet' },
+            ],
+          },
+        },
+      })
+      refreshModels()
+      const cfg = getProviderConfig('anthropic')
+      expect(cfg?.enabled).toBe(false)
+    })
+
+    it('provider 级 enabled=true 经写盘读回后保留', () => {
+      writeModels({
+        providers: {
+          openai: {
+            apiKey: 'sk-openai',
+            enabled: true,
+            models: [{ id: 'gpt-4' }],
+          },
+        },
+      })
+      refreshModels()
+      const cfg = getProviderConfig('openai')
+      expect(cfg?.enabled).toBe(true)
+    })
+
+    it('model 级 enabled 经写盘读回后保留', () => {
+      writeModels({
+        providers: {
+          anthropic: {
+            apiKey: 'sk-test',
+            models: [
+              { id: 'claude-sonnet', name: 'Sonnet', enabled: false },
+              { id: 'claude-opus', name: 'Opus', enabled: true },
+            ],
+          },
+        },
+      })
+      refreshModels()
+      const cfg = getProviderConfig('anthropic')
+      expect(cfg?.models?.[0]?.enabled).toBe(false)
+      expect(cfg?.models?.[1]?.enabled).toBe(true)
+    })
+
+    it('盘上 JSON 文件含 enabled 字段（端到端序列化）', () => {
+      writeModels({
+        providers: {
+          anthropic: {
+            enabled: false,
+            models: [{ id: 'sonnet', enabled: true }],
+          },
+        },
+      })
+      const raw = readFileSync(join(tmpDir, 'pi', 'agent', 'models.json'), 'utf-8')
+      const parsed = JSON.parse(raw) as PiModelsConfig
+      expect(parsed.providers.anthropic?.enabled).toBe(false)
+      expect(parsed.providers.anthropic?.models?.[0]?.enabled).toBe(true)
+    })
+  })
 })

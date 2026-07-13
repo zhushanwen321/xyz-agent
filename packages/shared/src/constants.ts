@@ -24,6 +24,12 @@ export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
  *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */
 export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['workflow'])
 
+/** pi 支持的 provider api 标识（前后端共享 SSOT）。
+ *  runtime 的 applyTypeTranslation 改为透传后，前端 Select 必须直接发送此集合内的终值。
+ *  注意：pi 不支持 ollama；ollama 的前端适配在 W4 处理，runtime 不做别名翻译。 */
+export const PROVIDER_API_TYPES = ['anthropic-messages', 'openai-completions'] as const
+export type ProviderApiType = (typeof PROVIDER_API_TYPES)[number]
+
 /** Environment variable prefixes allowed to pass to child processes */
 export const ENV_WHITELIST_PREFIXES: readonly string[] = [
   'PATH', 'HOME', 'USER', 'LANG', 'TERM',

@@ -37,6 +37,8 @@ export interface PiModelDefinition {
   api?: string
   baseUrl?: string
   reasoning?: boolean
+  /** model 级启停（W1）。省略时默认 true，向上兼容存量数据。 */
+  enabled?: boolean
   input?: Array<'text' | 'image'>
   contextWindow?: number
   maxTokens?: number
@@ -51,6 +53,8 @@ export interface PiProviderConfig {
   baseUrl?: string
   apiKey?: string
   api?: string
+  /** provider 级启停（W1）。省略时默认 true，向上兼容存量数据。 */
+  enabled?: boolean
   headers?: Record<string, string>
   authHeader?: boolean
   models?: PiModelDefinition[]

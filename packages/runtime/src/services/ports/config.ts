@@ -11,8 +11,10 @@ export interface ConfigProviderConfig {
   name?: string
   apiKey?: string
   baseUrl?: string
-  /** pi 的 api 标识（由 service 传的 type 经 mapTypeToApi 翻译而来）。 */
+  /** pi 的 api 标识（前端直接发送 pi 终值，runtime 透传，见 applyTypeTranslation）。 */
   api?: string
+  /** provider 级启停（W1）。省略时默认 true，与 infra PiProviderConfig 同构。 */
+  enabled?: boolean
   models?: ConfigModelDefinition[]
 }
 
@@ -23,6 +25,8 @@ export interface ConfigModelDefinition {
   api?: string
   baseUrl?: string
   reasoning?: boolean
+  /** model 级启停（W1）。省略时默认 true，与 infra PiModelDefinition 同构。 */
+  enabled?: boolean
   input?: Array<'text' | 'image'>
   contextWindow?: number
   maxTokens?: number
@@ -62,7 +66,7 @@ export interface AgentFileEntry {
 
 /**
  * 配置存储 port —— Provider/Skill/Agent 的 CRUD + 默认模型 + 配置目录。
- * 实现位于 infra/pi/pi-config-store.ts（封装 pi-provider-store/agent-crud/pi-paths + mapTypeToApi）。
+ * 实现位于 infra/pi/pi-config-store.ts（封装 pi-provider-store/agent-crud/pi-paths + type 透传）。
  */
 export interface IConfigStore {
   // ── 默认模型 ──
@@ -74,7 +78,7 @@ export interface IConfigStore {
   getProviderConfig(providerId: string): ConfigProviderConfig | undefined
   upsertProvider(providerId: string, merged: ConfigProviderConfig): UpsertProviderResult
   removeProvider(providerId: string): RemoveProviderResult
-  /** 翻译 xyz provider type → pi api 标识（pi 协议翻译，归属 infra）。 */
+  /** 透传 provider type → pi api 标识（前端直接发 pi 终值，runtime 不再翻译别名）。 */
   applyTypeTranslation(type: string): string
 
   // ── Skill paths（discovery.json SSOT，ADR-0020 §1）──
