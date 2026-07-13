@@ -43,9 +43,10 @@
                 <SelectValue placeholder="选择类型" />
               </SelectTrigger>
               <SelectContent>
+                <!-- value 严格对齐 PROVIDER_API_TYPES（pi 终值，runtime 不再翻译别名）。
+                     pi 不支持 ollama 作为 api 标识：本地 ollama 用 OpenAI Compatible + baseUrl=http://localhost:11434 即可。 -->
                 <SelectItem value="anthropic-messages">Anthropic Messages</SelectItem>
                 <SelectItem value="openai-completions">OpenAI Compatible</SelectItem>
-                <SelectItem value="ollama">Ollama · 本地（无需 Key）</SelectItem>
               </SelectContent>
             </Select>
           </div>

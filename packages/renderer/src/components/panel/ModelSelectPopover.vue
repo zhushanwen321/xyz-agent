@@ -95,10 +95,14 @@ interface ModelGroup {
 }
 
 // 按 provider 分组 + 按 query 过滤（name 包含，大小写不敏感）。空分组不渲染。
+// 同时过滤 enabled===false 的 model：runtime aggregateModels 已过滤一遍，
+// 但 settingsStore.models 与 providers 同源广播，若某次广播未过滤则会泄漏禁用模型到切换器，
+// 故前端兜底再过滤一次（双保险）。
 const groups = computed<ModelGroup[]>(() => {
   const q = query.value.trim().toLowerCase()
   const map = new Map<string, ModelGroup>()
   for (const m of settingsStore.models) {
+    if (m.enabled === false) continue
     if (q && !m.name.toLowerCase().includes(q)) continue
     const key = m.providerId
     let g = map.get(key)

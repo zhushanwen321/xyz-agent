@@ -47,18 +47,14 @@
           @click="toggleExpand(p.id)"
         >{{ p.name }}</span>
 
-        <!-- 默认供应商 pill / 设为默认按钮 -->
+        <!-- 默认供应商 pill：仅当某 model 是默认时，其所属 provider 标记「默认供应商」。
+             provider 级默认派生自 model 级默认（defaultModel 复合串的 provider 段），无独立语义，
+             故去掉 provider 级「设为默认」按钮——设默认只在 model 行操作。 -->
         <Button
           v-if="p.id === defaultProviderId"
           variant="ghost"
           class="h-auto shrink-0 rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent hover:bg-accent-soft"
         >默认供应商</Button>
-        <Button
-          v-else
-          variant="secondary"
-          class="h-auto shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] text-subtle hover:border-accent hover:text-accent"
-          @click.stop="setDefaultProvider(p.id)"
-        >设为默认</Button>
 
         <span class="shrink-0 text-[11px] text-subtle">{{ p.models.length }} 模型</span>
 
@@ -133,10 +129,10 @@
                 </TableCell>
                 <TableCell class="py-2 text-right">
                   <Button
-                    v-if="m.id !== defaultModelId"
+                    v-if="!(p.id + '/' + m.id === defaultModel)"
                     variant="secondary"
                     class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-subtle hover:border-info hover:text-info"
-                    @click.stop="setDefaultModel(m.id)"
+                    @click.stop="setDefaultModel(p.id, m.id)"
                   >设为默认</Button>
                   <span v-else class="rounded-sm bg-info/10 px-1.5 py-0.5 text-[10px] text-info">默认模型</span>
                 </TableCell>
@@ -179,6 +175,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Switch } from '@/components/ui/switch'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
+import { useSettingsStore } from '@/stores/settings'
 import ProviderEditModal from './ProviderEditModal.vue'
 
 defineProps<{ providers: ProviderInfo[] }>()
@@ -186,6 +183,18 @@ defineProps<{ providers: ProviderInfo[] }>()
 // 上下文窗口格式化用的单位换算常量
 const CONTEXT_K = 1000
 const CONTEXT_M = 1_000_000
+
+// 默认模型从 settingsStore.defaultModel 派生（"provider/modelId" 复合串）。
+// store.defaultModel 由 config.onDefaults 订阅推回（runtime setDefaultModel 后广播），
+// 故设默认后状态自动回流，组件无需本地乐观更新。
+const settingsStore = useSettingsStore()
+/** 当前默认模型复合串（"provider/modelId"），与 defaultModel 同源便于模板直接比对 */
+const defaultModel = computed(() => settingsStore.defaultModel)
+/** 默认模型所属 provider id（取复合串的 provider 段），用于行头「默认供应商」pill 高亮 */
+const defaultProviderId = computed(() => {
+  const dm = settingsStore.defaultModel
+  return dm ? dm.split('/')[0] : ''
+})
 
 const expanded = ref(new Set<string>())
 // editingProvider 与 dialogOpen 解耦：null 既表示新增，也曾被当作关闭信号，导致新增按钮无效
@@ -220,10 +229,6 @@ function closeDialog(): void {
 }
 /** 动作错误（删除/启用失败时显示，非静默吞） */
 const actionError = ref('')
-// 默认供应商/模型：本轮无 setDefault 协议（config.setProvider 不含默认位），
-// 保留本地态（real 模式下 default 由 config.defaults 订阅驱动，待后续 wave 接入）。
-const defaultProviderId = ref('anthropic')
-const defaultModelId = ref('claude-sonnet-4')
 
 function toggleExpand(id: string) {
   const next = new Set(expanded.value)
@@ -260,8 +265,16 @@ async function confirmDelete() {
   }
 }
 
-function setDefaultProvider(id: string) { defaultProviderId.value = id }
-function setDefaultModel(id: string) { defaultModelId.value = id }
+/** 设为默认模型（model 行触发）：调 config.setDefaultModel 持久化，
+ *  状态经 onDefaults 订阅推回 settingsStore.defaultModel，无需本地乐观更新。 */
+async function setDefaultModel(providerId: string, modelId: string) {
+  actionError.value = ''
+  try {
+    await config.setDefaultModel(providerId, modelId)
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
 function cycleThinking(_pid: string, _mid: string) { /* mock */ }
 
 function formatCtx(v?: number): string {

@@ -437,6 +437,15 @@ export const config = {
     if (idx >= 0) fixtureProviders.splice(idx, 1)
     broadcastProviders()
   },
+  /**
+   * 设默认模型（W3 协议 config.setDefaultModel 的 mock 对齐）。
+   * 改 defaultsSub 内部值并广播 "provider/modelId" 复合串，与 runtime 广播 config.defaults 同构。
+   * 状态经 onDefaults 订阅推回 settingsStore.defaultModel，前端无需本地乐观更新。
+   */
+  async setDefaultModel(provider: string, modelId: string) {
+    await sleep(TIMING.ack)
+    defaultsSub.broadcast(`${provider}/${modelId}`)
+  },
   async scanSkills(_sources: string[]) {
     await sleep(TIMING.ack)
     // 扫描后广播当前 skills 快照（runtime scan 后会刷新 config.skills）

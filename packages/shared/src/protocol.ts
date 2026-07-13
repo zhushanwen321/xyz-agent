@@ -50,13 +50,27 @@ export type ClientMessageType =
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
-/** config.setProvider 除 providerId 外的透传字段，与 IConfigService.setProvider 参数对齐 */
+/** config.setProvider 除 providerId 外的透传字段，与 IConfigService.setProvider 参数对齐。
+ *  models 元素字段与 runtime ConfigModelDefinition 对齐（含 api/baseUrl/enabled 透传位，
+ *  W2/W4 model 级配置不丢字段）。 */
 export interface SetProviderData {
   name?: string
   type?: string
   apiKey?: string
   baseUrl?: string
-  models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
+  models?: Array<string | {
+    id: string
+    name?: string
+    api?: string
+    baseUrl?: string
+    reasoning?: boolean
+    input?: Array<'text' | 'image'>
+    contextWindow?: number
+    maxTokens?: number
+    thinkingLevelMap?: Record<string, string | null>
+    /** model 级启停（W2）。省略时默认 true，与 PiModelDefinition 同构。 */
+    enabled?: boolean
+  }>
   enabled?: boolean
 }
 

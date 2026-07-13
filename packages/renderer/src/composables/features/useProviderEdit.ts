@@ -13,14 +13,20 @@ import type { ProviderInfo } from '@xyz-agent/shared'
 
 // ── 类型 ──
 
-/** 本地编辑态模型（ProviderInfo.models 的可编辑副本） */
+/** 本地编辑态模型（ProviderInfo.models 的可编辑副本）。
+ *  含 api/baseUrl/enabled 透传位（与 ProviderInfo.models 元素同构，W4）：
+ *  编辑保存时这些字段必须回传，否则 model 级配置会在 setProvider 合并时被丢弃。 */
 export interface LocalModel {
   id: string
   name?: string
+  api?: string
+  baseUrl?: string
   reasoning?: boolean
   contextWindow?: number
   input?: Array<'text' | 'image'>
   thinkingLevelMap?: Record<string, string | null>
+  /** model 级启停透传（省略时 runtime 默认 true） */
+  enabled?: boolean
 }
 
 /** 思考策略预设 key（UI Select 值） */
@@ -217,12 +223,17 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         type: form.api,
         baseUrl: form.baseUrl,
         apiKey: form.apiKey || undefined,
+        // 透传 model 级 api/baseUrl/enabled：runtime setProvider 用 spread 合并 base，
+        // 缺字段会被 base 兜底，但显式回传避免「编辑保存丢字段」（P1 bug #4/#5）。
         models: localModels.value.map((m) => ({
           id: m.id,
           name: m.name,
+          api: m.api,
+          baseUrl: m.baseUrl,
           contextWindow: m.contextWindow,
           input: m.input,
           thinkingLevelMap: m.thinkingLevelMap,
+          enabled: m.enabled,
         })),
       })
       return true

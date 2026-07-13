@@ -48,10 +48,12 @@ export const fixtureProviders: ProviderInfo[] = [
     ],
   },
   {
+    // 本地推理示例（Ollama 等）。pi 不支持 'ollama' 作为 api 标识，
+    // 本地模型走 openai-completions + baseUrl 指向本地端点（11434 是 ollama 的 OpenAI 兼容端口）。
     id: 'ollama-local',
     name: 'Ollama (Local)',
-    api: 'ollama',
-    baseUrl: 'http://localhost:11434',
+    api: 'openai-completions',
+    baseUrl: 'http://localhost:11434/v1',
     apiKeySet: false,
     status: 'not_configured',
     enabled: false,
