@@ -44,11 +44,30 @@ function makeRecord(overrides: Partial<SubagentRecord> = {}): SubagentRecord {
   }
 }
 
-/** chatStore mock：getMessages/setMessages 收集调用 */
+/** chatStore mock：W4 新签名 —— applySubagentStreamDelta / finalizeSubagentStream / setMessages（fetchAndInject 用） */
 function makeChatMock() {
   const messages = new Map<string, Message[]>()
   return {
-    getMessages: vi.fn((sid: string) => messages.get(sid) ?? []),
+    applySubagentStreamDelta: vi.fn((sid: string, lines: string[]) => {
+      // 镜像 chat store 真实行为：全量替换 content + push 新 streaming（测试只需记录调用）
+      const prev = messages.get(sid) ?? []
+      messages.set(sid, [
+        ...prev,
+        {
+          id: `sa-${Math.random()}`,
+          role: 'assistant',
+          content: lines.join('\n'),
+          status: 'streaming',
+          contentBlocks: [{ type: 'text', refId: 'text' }],
+          timestamp: Date.now(),
+        } as Message,
+      ])
+    }),
+    finalizeSubagentStream: vi.fn((sid: string) => {
+      const prev = messages.get(sid)
+      if (!prev) return
+      messages.set(sid, prev.map((m) => (m.status === 'streaming' ? { ...m, status: 'complete' } : m)))
+    }),
     setMessages: vi.fn((sid: string, msgs: Message[]) => { messages.set(sid, msgs) }),
     _map: messages,
   }
@@ -101,7 +120,7 @@ describe('subagent store — clearSubagents', () => {
 
     // 预置：panel-A 正在看一个 subagent
     store.records = [makeRecord({ status: 'done' })]
-    await store.selectSubagent('panel-A', 'session-1', 'bg-test-1-111', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-test-1-111', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
     expect(store.isViewing('panel-A')).toBe(true)
 
     store.clearSubagents()
@@ -117,7 +136,7 @@ describe('subagent store — per-panel getters', () => {
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
     expect(store.isViewing('panel-A')).toBe(true)
     expect(store.isViewing('panel-B')).toBe(false)
@@ -128,7 +147,7 @@ describe('subagent store — per-panel getters', () => {
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
     expect(store.getViewingSubagentId('panel-A')).toBe('bg-1')
     expect(store.getViewingSubagentId('panel-B')).toBeNull()
@@ -139,7 +158,7 @@ describe('subagent store — per-panel getters', () => {
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
     expect(store.getActiveSubagentVirtualId('panel-A')).toBe('subagent:bg-1')
   })
@@ -150,7 +169,7 @@ describe('subagent store — per-panel getters', () => {
     const chat = makeChatMock()
     store.records = [makeRecord({ subagentId: 'bg-target', agent: 'worker' })]
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-target', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-target', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
     const record = store.getCurrentSubagent('panel-A')
     expect(record?.agent).toBe('worker')
@@ -188,7 +207,7 @@ describe('subagent store — selectSubagent', () => {
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
     expect(sessionApi.getSubagentHistory).toHaveBeenCalledWith('session-1', 'bg-1')
     expect(chat.setMessages).toHaveBeenCalledWith('subagent:bg-1', fakeHistory)
@@ -199,7 +218,7 @@ describe('subagent store — selectSubagent', () => {
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
     expect(chat.setMessages).toHaveBeenCalledWith('subagent:bg-1', [])
   })
@@ -211,7 +230,7 @@ describe('subagent store — backToMain', () => {
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.getMessages, chat.setMessages)
+    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
     expect(store.isViewing('panel-A')).toBe(true)
 
     store.backToMain('panel-A')

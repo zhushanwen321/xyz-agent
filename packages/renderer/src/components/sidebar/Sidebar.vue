@@ -229,7 +229,9 @@ async function onSelectSession(id: string): Promise<void> {
 
 /**
  * 选中 subagent 时在 active panel 进入 overlay 视图。
- * store.selectSubagent 需要 mainSessionId + chatStore getMessages/setMessages（铁律：store 不 import chatStore）。
+ * store.selectSubagent 需要 mainSessionId + chatStore streaming 收口回调（W4：chat store 成为
+ * assistant content mutation 的唯一入口）+ setMessages（fetchAndInject 用）。
+ * 铁律：store 不 import chatStore，由 features 层（本组件）注入。
  * 从 active panel 的 sessionId 取 mainSessionId，chatStore 注入由 useChatStore() 实例提供。
  */
 async function onSelectSubagent(subagentId: string): Promise<void> {
@@ -241,7 +243,8 @@ async function onSelectSubagent(subagentId: string): Promise<void> {
     panelStore.activePanelId,
     activePanel.sessionId,
     subagentId,
-    (virtualId) => chat.messages.get(virtualId) ?? [],
+    (virtualId, lines) => chat.applySubagentStreamDelta(virtualId, lines),
+    (virtualId) => chat.finalizeSubagentStream(virtualId),
     (virtualId, msgs) => chat.setMessages(virtualId, msgs),
   )
 }

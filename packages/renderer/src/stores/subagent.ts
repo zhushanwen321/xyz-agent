@@ -41,9 +41,17 @@ const POLL_INTERVAL_MS = 3000
 
 /**
  * selectSubagent 的 chat 注入回调类型。
- * store 不 import chatStore（铁律），由调用方注入 setMessages。
+ * store 不 import chatStore（铁律），由调用方（features 层 Sidebar.vue）注入。
+ *
+ * W4：assistant content mutation 收口进 chat store（applySubagentStreamDelta /
+ * finalizeSubagentStream），本 store 经回调委托，不再自己 applyStreamDelta。
+ * fetchAndInject 仍用 setMessages（含 IO 的历史拉取留在本 store，chat store 保持纯状态机）。
  */
 export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
+/** chat.applySubagentStreamDelta 注入回调（W4：streaming delta 收口进 chat store） */
+export type ApplyDeltaFn = (virtualId: string, lines: string[]) => void
+/** chat.finalizeSubagentStream 注入回调（W4：streaming → complete 收口进 chat store） */
+export type FinalizeStreamFn = (virtualId: string) => void
 
 export const useSubagentStore = defineStore('subagent', () => {
   // ── state ──
@@ -146,47 +154,6 @@ export const useSubagentStore = defineStore('subagent', () => {
     }
   }
 
-  /**
-   * streaming delta（累积全文）替换到虚拟 session 的最后一条 assistant 消息。
-   * 扩展层 setWidget 传的是 buffer 的 split('\n')，每次都是完整文本，用替换而非追加。
-   */
-  function applyStreamDelta(
-    virtualId: string,
-    lines: string[],
-    getMessages: (virtualId: string) => Message[],
-    setMessages: SetMessagesFn,
-  ): void {
-    const fullText = lines.join('\n')
-    const prev = getMessages(virtualId) ?? []
-    let lastAssistantIdx = -1
-    for (let i = prev.length - 1; i >= 0; i--) {
-      if (prev[i].role === 'assistant') {
-        lastAssistantIdx = i
-        break
-      }
-    }
-    const next = [...prev]
-    if (lastAssistantIdx >= 0 && next[lastAssistantIdx].status === 'streaming') {
-      const msg = { ...next[lastAssistantIdx] }
-      msg.content = fullText
-      if (!msg.contentBlocks?.some((b: { type: string }) => b.type === 'text')) {
-        msg.contentBlocks = [...(msg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
-      }
-      next[lastAssistantIdx] = msg
-    } else {
-      const msg: Message = {
-        id: `sa-${crypto.randomUUID()}`,
-        role: 'assistant',
-        content: fullText,
-        status: 'streaming',
-        contentBlocks: [{ type: 'text', refId: 'text' }],
-        timestamp: Date.now(),
-      }
-      next.push(msg)
-    }
-    setMessages(virtualId, next)
-  }
-
   /** 停止指定 panel 的 streaming 订阅 */
   function stopStream(targetPanelId?: string): void {
     if (!targetPanelId) return
@@ -209,14 +176,19 @@ export const useSubagentStore = defineStore('subagent', () => {
 
   /**
    * 订阅 subagent.stream_delta WS 帧（路径 A-1，逐字增量 streaming）。
-   * lines 非空 → applyStreamDelta；lines === undefined → 终态：停 streaming + 轮询 + 拉完整历史。
+   *
+   * W4：delta / 终态收口均经注入的 chat store 回调（chatApplyDelta / chatFinalizeStream），
+   * chat store 成为所有 assistant content mutation 的唯一入口。
+   * - lines 非空 → chatApplyDelta（chat.applySubagentStreamDelta）
+   * - lines === undefined → 终态：停 streaming + 轮询 + 收口 + 拉完整历史覆盖（fetchAndInject，含 IO）
    */
   function subscribeStream(
     pid: string,
     mainSessionId: string,
     recordId: string,
     virtualId: string,
-    getMessages: (virtualId: string) => Message[],
+    chatApplyDelta: ApplyDeltaFn,
+    chatFinalizeStream: FinalizeStreamFn,
     setMessages: SetMessagesFn,
   ): void {
     stopStream(pid)
@@ -228,10 +200,12 @@ export const useSubagentStore = defineStore('subagent', () => {
       if (payload.lines === undefined) {
         stopStream(pid)
         stopPolling(pid)
+        // 收口 streaming 实体（chat store sealed 收口），再用权威历史覆盖
+        chatFinalizeStream(virtualId)
         void fetchAndInject(mainSessionId, recordId, setMessages)
         return
       }
-      applyStreamDelta(virtualId, payload.lines, getMessages, setMessages)
+      chatApplyDelta(virtualId, payload.lines)
     })
     panelStreamUnsub.set(pid, unsub)
   }
@@ -274,14 +248,16 @@ export const useSubagentStore = defineStore('subagent', () => {
    * @param panelId 目标 panel ID
    * @param mainSessionId 主 session ID（panel 绑定的 session）
    * @param subagentId 要查看的 subagent ID
-   * @param getMessages chatStore.getMessages（注入，不 import chatStore）
-   * @param setMessages chatStore.setMessages（注入，不 import chatStore）
+   * @param chatApplyDelta chatStore.applySubagentStreamDelta（注入，W4 streaming delta 收口入口）
+   * @param chatFinalizeStream chatStore.finalizeSubagentStream（注入，W4 终态收口入口）
+   * @param setMessages chatStore.setMessages（注入，fetchAndInject 用，不 import chatStore）
    */
   async function selectSubagent(
     panelId: string,
     mainSessionId: string,
     subagentId: string,
-    getMessages: (virtualId: string) => Message[],
+    chatApplyDelta: ApplyDeltaFn,
+    chatFinalizeStream: FinalizeStreamFn,
     setMessages: SetMessagesFn,
   ): Promise<void> {
     const virtualId = subagentVirtualId(subagentId)
@@ -292,7 +268,7 @@ export const useSubagentStore = defineStore('subagent', () => {
     // running 态启动 streaming（主通道）+ 轮询（兜底）
     const record = records.value.find((s) => s.subagentId === subagentId)
     if (record?.status === 'running') {
-      subscribeStream(panelId, mainSessionId, subagentId, virtualId, getMessages, setMessages)
+      subscribeStream(panelId, mainSessionId, subagentId, virtualId, chatApplyDelta, chatFinalizeStream, setMessages)
       startPolling(panelId, mainSessionId, subagentId, setMessages)
     }
   }

@@ -37,6 +37,83 @@ import { createChangeSetController } from './chat-changeset'
 export type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
 import type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
 
+/** streaming 超时默认值：24h（放弃主动检测，靠 runtime 重启/WS 断连兑底） */
+const DEFAULT_STREAMING_TIMEOUT_MS = 86_400_000 // 24h
+
+/**
+ * 读 streaming 超时阈值（D-003 阈值可配置 + D-016 IPC）。
+ * [D-016] 经 IPC 读主进程 env（非 import.meta.env，Vite 不暴露 XYZ_ 前缀）。
+ * 留在模块作用域以控制 setup 函数行数（max-lines-per-function）。
+ */
+function readStreamingTimeoutMs(): number {
+  // TODO: 接 IPC — window.electronAPI?.getStreamingTimeout?.()
+  const env = undefined
+  const parsed = env ? Number(env) : Number.NaN
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STREAMING_TIMEOUT_MS
+}
+
+/**
+ * subagent streaming delta 纯逻辑（W4，模块作用域）。
+ *
+ * 全量替换虚拟 session 最后一条 streaming assistant 的 content + 幂等补 text contentBlock；
+ * 无 streaming assistant 时 push 新的。吸收自原 subagent store applyStreamDelta（去
+ * getMessages/setMessages 回调参数，直接操作传入的 messages ref），让 chat store 成为所有
+ * assistant content mutation 的唯一入口。
+ *
+ * 扩展层传的 lines 是 buffer 的 split('\n')，每次都是完整文本 → 用替换而非追加。
+ * contentBlock 幂等：已有 text 块则不重复 push（与主流式 text_delta handler 对齐）。
+ * 留在模块作用域以控制 setup 函数行数（max-lines-per-function），store action 仅做 ref 委托。
+ */
+function applySubagentStreamDeltaImpl(
+  messages: { value: Map<string, Message[]> },
+  virtualId: string,
+  lines: string[],
+): void {
+  const fullText = lines.join('\n')
+  const prev = messages.value.get(virtualId) ?? []
+  const lastAssistantIdx = findLastAssistantIndex(prev)
+  const next = [...prev]
+  if (lastAssistantIdx >= 0 && next[lastAssistantIdx].status === 'streaming') {
+    const msg = { ...next[lastAssistantIdx] }
+    msg.content = fullText
+    if (!msg.contentBlocks?.some((b) => b.type === 'text')) {
+      msg.contentBlocks = [...(msg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
+    }
+    next[lastAssistantIdx] = msg
+  } else {
+    next.push({
+      id: `sa-${crypto.randomUUID()}`,
+      role: 'assistant',
+      content: fullText,
+      status: 'streaming',
+      contentBlocks: [{ type: 'text', refId: 'text' }],
+      timestamp: Date.now(),
+    })
+  }
+  messages.value.set(virtualId, next)
+}
+
+/**
+ * subagent streaming 收口纯逻辑（W4，模块作用域）：把虚拟 session 最后一条 streaming
+ * assistant 翻成 complete。
+ *
+ * sealed 守卫对齐（D-010 parity）：实体一旦 complete 不再被后续 delta 污染。无 streaming
+ * 实体时幂等 no-op。不走 finalizeSession：subagent 虚拟 session 无 pendingSend / streaming
+ * timer 生命周期（由 subagent store 的 panelStreamUnsub/panelPollTimers 管理），只翻 status。
+ */
+function finalizeSubagentStreamImpl(
+  messages: { value: Map<string, Message[]> },
+  virtualId: string,
+): void {
+  const prev = messages.value.get(virtualId)
+  if (!prev || prev.length === 0) return
+  const lastAssistantIdx = findLastAssistantIndex(prev)
+  if (lastAssistantIdx < 0 || prev[lastAssistantIdx].status !== 'streaming') return
+  const next = [...prev]
+  next[lastAssistantIdx] = { ...next[lastAssistantIdx], status: 'complete' }
+  messages.value.set(virtualId, next)
+}
+
 export const useChatStore = defineStore('chat', () => {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
   const messages = ref<Map<string, Message[]>>(new Map())
@@ -66,17 +143,6 @@ export const useChatStore = defineStore('chat', () => {
   const failedHistory = ref<Set<string>>(new Set())
 
   // ── 超时兜底 timer（D-003 阈值可配置 + D-007 真收口）──
-
-  /** streaming 超时默认值：24h（放弃主动检测，靠 runtime 重启/WS 断连兑底） */
-  const DEFAULT_STREAMING_TIMEOUT_MS = 86_400_000 // 24h
-
-  function readStreamingTimeoutMs(): number {
-    // [D-016] 经 IPC 读主进程 env（非 import.meta.env，Vite 不暴露 XYZ_ 前缀）
-    // TODO: 接 IPC — window.electronAPI?.getStreamingTimeout?.()
-    const env = undefined
-    const parsed = env ? Number(env) : Number.NaN
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STREAMING_TIMEOUT_MS
-  }
 
   /**
    * streaming 超时阈值。默认 24h（86_400_000ms）。
@@ -496,6 +562,8 @@ export const useChatStore = defineStore('chat', () => {
     clearHistoryError,
     hydrate,
     setMessages,
+    applySubagentStreamDelta: (virtualId: string, lines: string[]) => applySubagentStreamDeltaImpl(messages, virtualId, lines),
+    finalizeSubagentStream: (virtualId: string) => finalizeSubagentStreamImpl(messages, virtualId),
     appendUser,
     appendPending,
     markPendingDelivered,
