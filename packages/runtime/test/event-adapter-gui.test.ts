@@ -40,6 +40,7 @@ function makeToolEndEvent(toolCallId: string, result: unknown): PiEvent {
     toolCallId,
     toolName: 'test_tool',
     result,
+    isError: false,
   } as PiEvent
 }
 

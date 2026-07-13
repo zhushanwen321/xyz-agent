@@ -103,6 +103,8 @@ export interface PiAgentEndEvent extends PiBaseMessage {
   type: 'agent_end'
   /** All messages accumulated during this agent run. */
   messages: PiAgentEndMessage[]
+  /** pi 始终发送：本次 agent 循环结束是否将自动重试（pi agent-session.ts AgentSessionEvent.agent_end）。 */
+  willRetry: boolean
 }
 
 /** A message object within agent_end — mirrors the shape from message_end. */
@@ -277,12 +279,21 @@ export interface PiToolExecutionUpdateEvent extends PiBaseMessage {
   type: 'tool_execution_update'
   toolCallId: string
   toolName: string
-  partialResult: string
+  /**
+   * pi 声明为 any（types.ts），运行时形态不定：可能是 string，也可能是 AgentToolResult 对象。
+   * event-adapter handleToolExecutionUpdate 按 typeof 判定两种形态。用 unknown 镜像 any 语义，
+   * 不强制具体类型（pi 不保证形态）。
+   */
+  partialResult: unknown
 }
 
 /**
  * Tool execution end — provides the canonical tool result.
  * pi 用 `result` 是规范字段名（非漂移，ADR-0033）。pi 从不发 output。
+ *
+ * 注意：pi tool_execution_end **从不发 args**（pi types.ts:430 定义无此字段）。
+ * write 工具的 content 在 tool_execution_start 事件里（types.ts:428 args: any）。
+ * event-adapter handleToolExecutionEnd 的 writeContent 提取已标注为已知限制（见该处 TODO）。
  */
 export interface PiToolExecutionEndEvent extends PiBaseMessage {
   type: 'tool_execution_end'
@@ -292,11 +303,6 @@ export interface PiToolExecutionEndEvent extends PiBaseMessage {
   result: PiToolExecutionResult
   /** pi 必填字段（agent-session.ts 始终发送）。 */
   isError: boolean
-  /**
-   * 触发本次 tool_execution_end 的入参副本。pi 不保证发送此字段（仅 tool_execution_start
-   * 必发 args），但 event-adapter:144 读 event.args 提取 write content——此处声明为可选容错。
-   */
-  args?: Record<string, unknown>
 }
 
 /**
@@ -511,10 +517,18 @@ export interface PiHistoryToolResult extends PiHistoryMessage {
 
 // ── Shared types ───────────────────────────────────────────────────
 
+/**
+ * pi Usage type — mirrors pi 源码字段名（input/output/cacheRead/cacheWrite/totalTokens）。
+ *
+ * pi-protocol 作为 pi 协议的真契约（ADR-0033），字段名镜像 pi 实际发出的，
+ * 不用 xyz-agent 的 inputTokens/outputTokens（那是 event-adapter 翻译时的职责）。
+ */
 export interface PiUsage {
-  inputTokens?: number
-  outputTokens?: number
+  input?: number
+  output?: number
   totalTokens?: number
+  cacheRead?: number
+  cacheWrite?: number
 }
 
 // ── Union types for the adapter layer ──────────────────────────────

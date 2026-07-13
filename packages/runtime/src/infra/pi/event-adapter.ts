@@ -154,9 +154,14 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
   const isError = event.isError
 
   // write 工具写入的 content（供 EventInterpreter 累积，untracked 行数回退用）。
+  // [已知限制] pi tool_execution_end 从不发 args（pi types.ts:430 无此字段）——write 工具的
+  // content 在 tool_execution_start 事件里（types.ts:428 args: any）。当前 writeContent 恒为
+  // undefined（args 来源缺失）。提取逻辑应迁移到 handleToolExecutionStart 路径（tool_execution_start
+  // 发 args），但那涉及 PiTranslatedEvent tool-call-start 中间事件结构变更 + EventInterpreter
+  // 改造，属另一个改动范围，此处保留逻辑块 + 显式逃生，待后续优化迁移。
   let writeContent: { filePath: string; content: string } | undefined
   if (!isError && toolName === 'write') {
-    const args = event.args
+    const args = (event as unknown as { args?: Record<string, unknown> }).args
     const filePath = extractPath(args)
     if (filePath && typeof args?.content === 'string') {
       writeContent = { filePath, content: args.content }
@@ -178,20 +183,30 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
 
 /** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
 function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[] {
-  // pi agent_end.messages[].message 形态比 W1 PiAgentEndMessage 声明更丰富
-  // （含 responseModel/diagnostics/errorMessage/usage.input 而非 inputTokens），
-  // 此处局部放宽为 Record 读取 pi 实际字段（ADR-0033：pi 是动态协议，宽窄混合）。
-  const messages = event.messages as unknown as Array<Record<string, unknown>> | undefined
-  const lastMsg = messages?.[messages.length - 1]
-  const rawReason = (lastMsg?.stopReason as string) ?? 'stop'
-  const usage = lastMsg?.usage as
-    { input: number; output: number; totalTokens?: number; cacheRead?: number; cacheWrite?: number } | undefined
-  const responseModel = lastMsg?.responseModel as string | undefined
-  const diagnostics = lastMsg?.diagnostics as Record<string, unknown> | undefined
-  const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsg?.errorMessage as string | undefined : undefined
+  // pi 事件是强类型契约（ADR-0033）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
+  // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。但 pi 在此还附带
+  // responseModel / diagnostics / errorMessage 等运行时字段（超出 PiAgentEndMessage 声明范围，
+  // pi AgentMessage 实际形态比声明的 union 更宽）——这些用 as 提取。
+  const messages = event.messages
+  const lastMsg = messages[messages.length - 1]
+  const rawReason = lastMsg.stopReason ?? 'stop'
+  const usage = lastMsg.usage
+  const lastMsgExtra = lastMsg as unknown as {
+    responseModel?: string
+    diagnostics?: Record<string, unknown>
+    errorMessage?: string
+    content?: unknown
+  }
+  const responseModel = lastMsgExtra.responseModel
+  const diagnostics = lastMsgExtra.diagnostics
+  const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsgExtra.errorMessage : undefined
   // 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
   // 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
-  const finalContent = ((Array.isArray(lastMsg?.content) ? lastMsg!.content : []) as Array<Record<string, unknown>>).filter((c) => c.type === 'text').map((c) => (c.text as string) ?? '').join('')
+  // content 在 PiAgentEndMessage 中是 unknown，此处按 pi 运行时形态（content block 数组）提取。
+  const finalContent = (Array.isArray(lastMsgExtra.content) ? lastMsgExtra.content : [] as unknown[])
+    .filter((c): c is { type: string; text?: string } => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'text')
+    .map((c) => c.text ?? '')
+    .join('')
   const message: ServerMessage = {
     type: 'message.complete',
     payload: {
@@ -436,9 +451,9 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
 
 /** message_start — role-based routing for non-assistant messages */
 function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslatedEvent[] {
-  // pi message_start.message 形态比 W1 PiMessageStartEvent.message 声明更丰富
-  // （含 summary/tokensBefore/fromId/customType/details/display，且 assistant turn 开始时 message 缺省）。
-  // 此处局部放宽为 Record 读取 pi 实际字段（ADR-0033）。
+  // pi 事件是强类型契约（ADR-0033），但 message_start.message 含 pi 声明之外的运行时字段
+  // （summary / tokensBefore / fromId / customType / details / display），且 assistant turn 开始时
+  // message 缺省。此处局部放宽为 Record 提取这些超范围字段。
   const msg = event.message as unknown as Record<string, unknown> | undefined
   if (!msg) {
     // assistant turn 开始（无 role）。生成 messageId 供 file_changes 挂载，并跟踪到 interpreter 态。
@@ -509,11 +524,12 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
   ]
 }
 
-/** tool_execution_update — forward detail (string or object, extract details if present) */
+/** tool_execution_update — forward detail (partialResult is unknown: string or object, extract details if present) */
 function handleToolExecutionUpdate(event: PiToolExecutionUpdateEvent, sid: string): PiTranslatedEvent[] {
+  // partialResult 是 unknown（pi 声明 any，运行时形态不定）。按 typeof 分流：
+  //   object → 提取 .details（含 __gui__），无 details 时 fallback 用整个对象（兼容 subagent 扁平 progress）。
+  //   string → 原样作 detail。
   const partialResult = event.partialResult
-  // 提取 partialResult.details（含 __gui__），与 tool_execution_end 路径对齐。
-  // fallback：无 details 时用整个对象（兼容 subagent 的扁平 progress 形态）。
   const detail: string | Record<string, unknown> | undefined =
     partialResult != null && typeof partialResult === 'object'
       ? ((partialResult as Record<string, unknown>).details as Record<string, unknown> | undefined)

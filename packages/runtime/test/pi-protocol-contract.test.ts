@@ -40,6 +40,10 @@ import type {
   PiSessionInfoChangedEvent,
   PiAgentSettledEvent,
   PiExtensionErrorEvent,
+  PiUsage,
+  PiAgentEndEvent,
+  PiToolExecutionUpdateEvent,
+  PiToolExecutionEndEvent,
 } from '../src/infra/pi/pi-protocol.js'
 
 // ════════════════════════════════════════════════════════════════════════
@@ -231,7 +235,7 @@ describe('U3: PiTurnEndEvent — message + toolResults', () => {
       message: {
         role: 'assistant',
         content: 'done',
-        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        usage: { input: 10, output: 5, totalTokens: 15 },
         stopReason: 'end_turn',
       },
       toolResults: [
@@ -310,5 +314,102 @@ describe('U6: 3 representative handlers use narrow Pi*Event param types', () => 
 
   it('handleToolExecutionStart takes PiToolExecutionStartEvent', () => {
     expect(EVENT_ADAPTER_SRC).toMatch(/function\s+handleToolExecutionStart\s*\(\s*event:\s*PiToolExecutionStartEvent\b/)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════
+// W2 contract deepening — 4 should_fix field alignments (mirror pi source)
+// ════════════════════════════════════════════════════════════════════════
+//
+// pi-protocol.ts claims to be pi's real contract (ADR-0033), but 4 fields
+// drifted from pi's canonical names/shapes. These tests pin the alignment:
+//   C1: PiUsage mirrors pi Usage field names (input/output/cacheRead/cacheWrite/totalTokens)
+//   C2: PiAgentEndEvent carries willRetry: boolean (pi AgentSessionEvent.agent_end)
+//   C3: PiToolExecutionUpdateEvent.partialResult is unknown (pi sends `any`)
+//   C4: PiToolExecutionEndEvent has NO args field (pi never sends args on end)
+
+describe('C1: PiUsage mirrors pi Usage field names (input/output/cacheRead/cacheWrite)', () => {
+  it('accepts pi canonical field names { input, output, totalTokens, cacheRead, cacheWrite }', () => {
+    const u: PiUsage = {
+      input: 100,
+      output: 50,
+      totalTokens: 150,
+      cacheRead: 10,
+      cacheWrite: 5,
+    }
+    expect(u.input).toBe(100)
+    expect(u.cacheRead).toBe(10)
+  })
+
+  it('rejects xyz-agent field name inputTokens (translation belongs in event-adapter, not the contract)', () => {
+    // @ts-expect-error — PiUsage mirrors pi: field is `input`, NOT `inputTokens`
+    const _u: PiUsage = { inputTokens: 100 }
+    expect(_u).toBeDefined()
+  })
+
+  it('rejects xyz-agent field name outputTokens', () => {
+    // @ts-expect-error — PiUsage mirrors pi: field is `output`, NOT `outputTokens`
+    const _u: PiUsage = { outputTokens: 50 }
+    expect(_u).toBeDefined()
+  })
+})
+
+describe('C2: PiAgentEndEvent carries willRetry (pi AgentSessionEvent.agent_end)', () => {
+  it('accepts { type, messages, willRetry }', () => {
+    const e: PiAgentEndEvent = {
+      type: 'agent_end',
+      messages: [],
+      willRetry: false,
+    }
+    expect(e.willRetry).toBe(false)
+  })
+
+  it('willRetry is required (omitting it must fail to compile)', () => {
+    // @ts-expect-error — pi always sends willRetry; it is a required field
+    const _e: PiAgentEndEvent = { type: 'agent_end', messages: [] }
+    expect(_e).toBeDefined()
+  })
+})
+
+describe('C3: PiToolExecutionUpdateEvent.partialResult is unknown (pi sends any)', () => {
+  it('accepts a string partialResult', () => {
+    const e: PiToolExecutionUpdateEvent = {
+      type: 'tool_execution_update',
+      toolCallId: 'x',
+      toolName: 'y',
+      partialResult: 'working...',
+    }
+    expect(e.partialResult).toBe('working...')
+  })
+
+  it('accepts an object partialResult (pi may send AgentToolResult-shaped objects)', () => {
+    const e: PiToolExecutionUpdateEvent = {
+      type: 'tool_execution_update',
+      toolCallId: 'x',
+      toolName: 'y',
+      partialResult: { details: { progress: 50 }, content: 'half' },
+    }
+    expect(e.partialResult).toEqual({ details: { progress: 50 }, content: 'half' })
+  })
+})
+
+describe('C4: PiToolExecutionEndEvent has NO args field (pi never sends args on end)', () => {
+  it('accepts the canonical shape without args', () => {
+    const e: PiToolExecutionEndEvent = {
+      type: 'tool_execution_end',
+      toolCallId: 'tc1',
+      toolName: 'write',
+      result: { content: [{ type: 'text', text: 'ok' }], details: {} },
+      isError: false,
+    }
+    expect(e.toolCallId).toBe('tc1')
+  })
+
+  it('rejects args field (pi types.ts:430 defines tool_execution_end WITHOUT args)', () => {
+    // args is a ghost field; pi only sends args on tool_execution_start.
+    // Assigning to a PiToolExecutionEndEvent-typed variable must fail type-check.
+    // @ts-expect-error — 'args' does not exist on PiToolExecutionEndEvent
+    const _e: PiToolExecutionEndEvent = { type: 'tool_execution_end', toolCallId: 'tc1', toolName: 'write', result: { content: [], details: {} }, isError: false, args: { path: '/x' } }
+    expect(_e).toBeDefined()
   })
 })
