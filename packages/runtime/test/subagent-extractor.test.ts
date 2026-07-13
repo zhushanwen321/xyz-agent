@@ -42,85 +42,6 @@ describe('extractSubagentsFromSessionFile', () => {
     rmSync(tempDir, { recursive: true, force: true })
   })
 
-  it('extracts sync subagent record from session JSONL', () => {
-    const sessionFile = join(tempDir, 'main-session.jsonl')
-    const subagentSessionFile = '/data/subagents/sessions/sub1.jsonl'
-
-    const toolCallId = 'call_abc123'
-    const entries = [
-      { type: 'session', id: 'main-1', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
-      {
-        type: 'message',
-        id: 'msg-1',
-        timestamp: '2026-07-10T10:01:00Z',
-        message: {
-          role: 'assistant',
-          content: [
-            {
-              type: 'toolCall',
-              id: toolCallId,
-              name: 'subagent',
-              arguments: {
-                action: 'start',
-                startParam: {
-                  agent: 'reviewer',
-                  task: 'Review the plan document',
-                  wait: true,
-                },
-              },
-            },
-          ],
-        },
-      },
-      {
-        type: 'message',
-        id: 'msg-2',
-        timestamp: '2026-07-10T10:04:00Z',
-        message: {
-          role: 'toolResult',
-          toolCallId: toolCallId,
-          toolName: 'subagent',
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                action: 'start',
-                subagentId: 'run-xxx-1',
-                sessionFile: subagentSessionFile,
-                syncResponse: {
-                  status: 'done',
-                  mode: 'sync',
-                  agent: 'reviewer',
-                  model: 'zai-router/glm-5.2',
-                  turns: 15,
-                  totalTokens: 667979,
-                  elapsedSeconds: 194,
-                  result: 'Review complete',
-                },
-              }),
-            },
-          ],
-        },
-      },
-    ]
-
-    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
-
-    const records = extractSubagentsFromSessionFile(sessionFile)
-
-    expect(records).toHaveLength(1)
-    const r = records[0]
-    expect(r.subagentId).toBe('run-xxx-1')
-    expect(r.agent).toBe('reviewer')
-    expect(r.status).toBe('done')
-    expect(r.mode).toBe('sync')
-    expect(r.turns).toBe(15)
-    expect(r.totalTokens).toBe(667979)
-    expect(r.elapsedSeconds).toBe(194)
-    expect(r.sessionFile).toBe(subagentSessionFile)
-    expect(r.task).toBe('Review the plan document')
-  })
-
   it('extracts background subagent with bg-notify status update', () => {
     const sessionFile = join(tempDir, 'bg-session.jsonl')
     const subagentSessionFile = '/data/subagents/sessions/bg1.jsonl'
@@ -144,8 +65,8 @@ describe('extractSubagentsFromSessionFile', () => {
                 action: 'start',
                 startParam: {
                   agent: 'worker',
+                  slug: 'modify-gate',
                   task: 'Modify gate.ts',
-                  wait: false,
                 },
               },
             },
@@ -169,7 +90,6 @@ describe('extractSubagentsFromSessionFile', () => {
                 sessionFile: null,
                 bgResponse: {
                   status: 'running',
-                  mode: 'background',
                   message: 'detached, will notify on completion',
                 },
               }),
@@ -200,7 +120,6 @@ describe('extractSubagentsFromSessionFile', () => {
                       subagentId: bgSubagentId,
                       agent: 'worker',
                       status: 'running',
-                      mode: 'background',
                       sessionFile: subagentSessionFile,
                       model: 'mimo-router/mimo-v2.5-pro',
                       totalTokens: 567852,
@@ -237,14 +156,68 @@ describe('extractSubagentsFromSessionFile', () => {
     expect(records).toHaveLength(1)
     const r = records[0]
     expect(r.subagentId).toBe(bgSubagentId)
-    expect(r.mode).toBe('background')
     expect(r.status).toBe('done')
     expect(r.sessionFile).toBe(subagentSessionFile)
     expect(r.agent).toBe('worker')
+    expect(r.slug).toBe('modify-gate')
+    expect(r.task).toBe('Modify gate.ts')
     expect(r.totalTokens).toBe(567852)
     expect(r.elapsedSeconds).toBe(86)
     expect(r.startedAt).toBe(1783751909029)
     expect(r.endedAt).toBe(1783752218705)
+  })
+
+  it('slug 缺失时兜底空串（旧 session JSONL 兼容）', () => {
+    const sessionFile = join(tempDir, 'no-slug.jsonl')
+    const bgSubagentId = 'bg-noslug-1'
+    const toolCallId = 'call_ns1'
+
+    const entries = [
+      { type: 'session', id: 'main-ns', cwd: '/proj', timestamp: '2026-07-11T06:00:00Z' },
+      {
+        type: 'message',
+        id: 'msg-1',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: toolCallId,
+              name: 'subagent',
+              // 旧格式：startParam 无 slug
+              arguments: { action: 'start', startParam: { agent: 'worker', task: 'Old task' } },
+            },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        id: 'msg-2',
+        message: {
+          role: 'toolResult',
+          toolCallId,
+          toolName: 'subagent',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                action: 'start',
+                subagentId: bgSubagentId,
+                sessionFile: null,
+                bgResponse: { status: 'running', message: 'detached' },
+              }),
+            },
+          ],
+        },
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+
+    const records = extractSubagentsFromSessionFile(sessionFile)
+    expect(records).toHaveLength(1)
+    expect(records[0].slug).toBe('')
+    expect(records[0].task).toBe('Old task')
   })
 
   it('returns empty array for file with no subagent calls', () => {
@@ -280,8 +253,9 @@ describe('extractSubagentsFromSessionFile', () => {
     expect(records).toHaveLength(0)
   })
 
-  it('handles failed sync subagent', () => {
-    const sessionFile = join(tempDir, 'failed-sync.jsonl')
+  it('handles failed background subagent (bg-notify status=failed)', () => {
+    const sessionFile = join(tempDir, 'failed-bg.jsonl')
+    const bgSubagentId = 'bg-fail-1-9999999999'
     const toolCallId = 'call_fail1'
 
     const entries = [
@@ -298,7 +272,7 @@ describe('extractSubagentsFromSessionFile', () => {
               name: 'subagent',
               arguments: {
                 action: 'start',
-                startParam: { agent: 'reviewer', task: 'Review code', wait: true },
+                startParam: { agent: 'reviewer', slug: 'review-code', task: 'Review code' },
               },
             },
           ],
@@ -309,28 +283,35 @@ describe('extractSubagentsFromSessionFile', () => {
         id: 'msg-2',
         message: {
           role: 'toolResult',
-          toolCallId: toolCallId,
+          toolCallId,
           toolName: 'subagent',
           content: [
             {
               type: 'text',
               text: JSON.stringify({
                 action: 'start',
-                subagentId: 'run-fail-1',
-                sessionFile: '/data/sub/sf.jsonl',
-                syncResponse: {
-                  status: 'failed',
-                  mode: 'sync',
-                  agent: 'reviewer',
-                  error: 'Model timeout',
-                  turns: 3,
-                  totalTokens: 5000,
-                  elapsedSeconds: 30,
-                },
+                subagentId: bgSubagentId,
+                sessionFile: null,
+                bgResponse: { status: 'running', message: 'detached' },
               }),
             },
           ],
         },
+      },
+      // bg-notify marks as failed
+      {
+        type: 'custom_message',
+        customType: 'subagent-bg-notify',
+        content: 'Subagent failed.',
+        details: {
+          id: bgSubagentId,
+          status: 'failed',
+          agent: 'reviewer',
+          error: 'Model timeout',
+          startedAt: 1783751909029,
+          endedAt: 1783752218705,
+        },
+        timestamp: '2026-07-11T07:03:38Z',
       },
     ]
 
@@ -340,11 +321,11 @@ describe('extractSubagentsFromSessionFile', () => {
     expect(records).toHaveLength(1)
     expect(records[0].status).toBe('failed')
     expect(records[0].error).toBe('Model timeout')
-    expect(records[0].turns).toBe(3)
+    expect(records[0].slug).toBe('review-code')
   })
 
-  it('extracts multiple sync subagents', () => {
-    const sessionFile = join(tempDir, 'multi-sync.jsonl')
+  it('extracts multiple background subagents', () => {
+    const sessionFile = join(tempDir, 'multi-bg.jsonl')
 
     const entries = [
       { type: 'session', id: 'main-5', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
@@ -361,7 +342,7 @@ describe('extractSubagentsFromSessionFile', () => {
               name: 'subagent',
               arguments: {
                 action: 'start',
-                startParam: { agent: 'reviewer', task: 'Task A', wait: true },
+                startParam: { agent: 'reviewer', slug: 'task-a', task: 'Task A' },
               },
             },
           ],
@@ -379,9 +360,9 @@ describe('extractSubagentsFromSessionFile', () => {
               type: 'text',
               text: JSON.stringify({
                 action: 'start',
-                subagentId: 'run-a-1',
+                subagentId: 'bg-a-1-111',
                 sessionFile: '/data/a.jsonl',
-                syncResponse: { status: 'done', mode: 'sync', agent: 'reviewer', turns: 5, totalTokens: 10000, elapsedSeconds: 60 },
+                bgResponse: { status: 'running', message: 'detached' },
               }),
             },
           ],
@@ -400,7 +381,7 @@ describe('extractSubagentsFromSessionFile', () => {
               name: 'subagent',
               arguments: {
                 action: 'start',
-                startParam: { agent: 'general-purpose', task: 'Task B', wait: true },
+                startParam: { agent: 'general-purpose', slug: 'task-b', task: 'Task B' },
               },
             },
           ],
@@ -418,13 +399,26 @@ describe('extractSubagentsFromSessionFile', () => {
               type: 'text',
               text: JSON.stringify({
                 action: 'start',
-                subagentId: 'run-b-2',
+                subagentId: 'bg-b-2-222',
                 sessionFile: '/data/b.jsonl',
-                syncResponse: { status: 'done', mode: 'sync', agent: 'general-purpose', turns: 10, totalTokens: 20000, elapsedSeconds: 120 },
+                bgResponse: { status: 'running', message: 'detached' },
               }),
             },
           ],
         },
+      },
+      // bg-notify for both
+      {
+        type: 'custom_message',
+        customType: 'subagent-bg-notify',
+        details: { id: 'bg-a-1-111', status: 'done', agent: 'reviewer', startedAt: 1783751000000, endedAt: 1783751060000 },
+        timestamp: '2026-07-10T10:10:00Z',
+      },
+      {
+        type: 'custom_message',
+        customType: 'subagent-bg-notify',
+        details: { id: 'bg-b-2-222', status: 'done', agent: 'general-purpose', startedAt: 1783751100000, endedAt: 1783751220000 },
+        timestamp: '2026-07-10T10:20:00Z',
       },
     ]
 
@@ -432,10 +426,12 @@ describe('extractSubagentsFromSessionFile', () => {
 
     const records = extractSubagentsFromSessionFile(sessionFile)
     expect(records).toHaveLength(2)
-    expect(records[0].subagentId).toBe('run-a-1')
+    expect(records[0].subagentId).toBe('bg-a-1-111')
     expect(records[0].agent).toBe('reviewer')
-    expect(records[1].subagentId).toBe('run-b-2')
+    expect(records[0].slug).toBe('task-a')
+    expect(records[1].subagentId).toBe('bg-b-2-222')
     expect(records[1].agent).toBe('general-purpose')
+    expect(records[1].slug).toBe('task-b')
   })
 })
 
@@ -469,7 +465,7 @@ describe('extractSubagentsFromSessionFile — background sessionFile 回退查�
           role: 'assistant',
           content: [{
             type: 'toolCall', id: toolCallId, name: 'subagent',
-            arguments: { action: 'start', startParam: { agent: 'general-purpose', task: 'Scan directory', wait: false } },
+            arguments: { action: 'start', startParam: { agent: 'general-purpose', slug: 'scan-dir', task: 'Scan directory' } },
           }],
         },
       },
@@ -480,7 +476,7 @@ describe('extractSubagentsFromSessionFile — background sessionFile 回退查�
           role: 'toolResult', toolCallId, toolName: 'subagent',
           content: [{ type: 'text', text: JSON.stringify({
             action: 'start', subagentId: bgSubagentId, sessionFile: null,
-            bgResponse: { status: 'running', mode: 'background', message: 'detached' },
+            bgResponse: { status: 'running', message: 'detached' },
           }) }],
         },
       },
@@ -503,6 +499,7 @@ describe('extractSubagentsFromSessionFile — background sessionFile 回退查�
     expect(records[0].sessionFile).not.toBeNull()
     expect(records[0].sessionFile).toBe(subagentJsonl)
     expect(records[0].status).toBe('done')
+    expect(records[0].slug).toBe('scan-dir')
   })
 
   it('目录不存在时 sessionFile 保持 null', () => {
@@ -520,7 +517,7 @@ describe('extractSubagentsFromSessionFile — background sessionFile 回退查�
           role: 'assistant',
           content: [{
             type: 'toolCall', id: toolCallId, name: 'subagent',
-            arguments: { action: 'start', startParam: { agent: 'worker', task: 'Do stuff', wait: false } },
+            arguments: { action: 'start', startParam: { agent: 'worker', slug: 'do-stuff', task: 'Do stuff' } },
           }],
         },
       },
@@ -531,7 +528,7 @@ describe('extractSubagentsFromSessionFile — background sessionFile 回退查�
           role: 'toolResult', toolCallId, toolName: 'subagent',
           content: [{ type: 'text', text: JSON.stringify({
             action: 'start', subagentId: bgSubagentId, sessionFile: null,
-            bgResponse: { status: 'running', mode: 'background', message: 'detached' },
+            bgResponse: { status: 'running', message: 'detached' },
           }) }],
         },
       },

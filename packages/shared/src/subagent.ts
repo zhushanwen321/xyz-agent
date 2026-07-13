@@ -5,26 +5,32 @@
  * 时，扩展 spawn 一个子 agent（独立 pi session，JSONL 落在
  * `~/.xyz-agent/pi/agent/subagents/<encodeCwd(mainCwd)>/sessions/*.jsonl`）。
  *
- * toolCall 携带 action=start + startParam{agent, task, wait}；
- * toolResult 携带 subagentId + sessionFile + syncResponse|bgResponse|listResponse。
+ * toolCall 携带 action=start + startParam{task, slug, agent?, model?, thinkingLevel?, fork?, worktree?, ...}；
+ * toolResult 携带 subagentId + sessionFile + bgResponse|listResponse。
  * runtime 的 subagent-extractor 从主 session JSONL 配对解析出 SubagentRecord[]。
+ *
+ * 2026-07-13 对齐 pi-subagent-workflow feat-ask-user-gui 分支：
+ * - 新增 slug（短标签 ≤20 字符，必填，区分并发 subagent）
+ * - 移除 mode 字段（新版只有 background，无 sync 模式）
+ * - 旧 session JSONL（startParam 无 slug）反序列化时 slug 兜底空串
  */
 
-/** subagent 执行模式 */
-export type SubagentMode = 'sync' | 'background'
-
-/** subagent 状态（统一 sync/background） */
-export type SubagentStatus = 'running' | 'done' | 'failed' | 'cancelled'
+/**
+ * subagent 状态。
+ * crashed 为子进程崩溃终态（进程退出码非 0 且非正常 cancel）。
+ * 对齐 pi-subagent-workflow ExecutionStatus。
+ */
+export type SubagentStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'crashed'
 
 /**
  * 单条 subagent 记录（列表项数据）。
  *
  * 字段来源对应关系：
- * - subagentId：toolResult.subagentId（如 "run-xxx-1" 或 "bg-xxx-timestamp"）
- * - sessionFile：toolResult.sessionFile（subagent JSONL 绝对路径，background 模式可能为 null → listResponse 补全）
- * - agent/task：toolCall.startParam
- * - status/mode/turns/tokens/elapsed：syncResponse（sync 模式）或 listResponse.items[0]（background 模式）
- * - startedAt/endedAt：bg-notify details（background 模式完成时），或 syncResponse 的时间戳推导
+ * - subagentId：toolResult.subagentId（如 "bg-xxx-1-1234567890"）
+ * - sessionFile：toolResult.sessionFile（subagent JSONL 绝对路径，可能为 null → listResponse 补全）
+ * - slug/task/agent：toolCall.startParam（slug 短标签、task 完整提示词、agent 类型名）
+ * - status/turns/tokens/elapsed：listResponse.items[0] 或 bg-notify details
+ * - startedAt/endedAt：bg-notify details（完成时）
  */
 export interface SubagentRecord {
   /** subagent 唯一标识（toolResult.subagentId） */
@@ -33,14 +39,16 @@ export interface SubagentRecord {
   sessionFile: string | null
   /** agent 名称（如 "reviewer" / "general-purpose" / "worker"） */
   agent: string
-  /** 分配给 subagent 的任务描述 */
+  /** 短标签（≤20 字符），区分并发 subagent。旧 session 无此字段时兜底空串 */
+  slug: string
+  /** 分配给 subagent 的完整任务提示词（可多行） */
   task: string
-  /** 执行模式：sync（阻塞等待）/ background（后台执行） */
-  mode: SubagentMode
   /** 当前状态 */
   status: SubagentStatus
   /** 执行所用 model（展示用） */
   model?: string
+  /** 思考等级（off/minimal/low/medium/high/xhigh） */
+  thinkingLevel?: string
   /** 完成的对话轮数 */
   turns?: number
   /** 总 token 消耗 */

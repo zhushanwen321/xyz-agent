@@ -63,7 +63,7 @@ describe('SessionService.getSubagents', () => {
     const subagentFile = join(tempDir, 'sub1.jsonl')
     const toolCallId = 'call_test1'
 
-    // 主 session JSONL（含一个 sync subagent）
+    // 主 session JSONL（含一个 background subagent）
     const mainEntries = [
       { type: 'session', id: 'main-sess-id', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
       {
@@ -78,7 +78,7 @@ describe('SessionService.getSubagents', () => {
               name: 'subagent',
               arguments: {
                 action: 'start',
-                startParam: { agent: 'reviewer', task: 'Review code', wait: true },
+                startParam: { agent: 'reviewer', slug: 'review-code', task: 'Review code' },
               },
             },
           ],
@@ -96,16 +96,11 @@ describe('SessionService.getSubagents', () => {
               type: 'text',
               text: JSON.stringify({
                 action: 'start',
-                subagentId: 'run-test-1',
+                subagentId: 'bg-test-1-111',
                 sessionFile: subagentFile,
-                syncResponse: {
-                  status: 'done',
-                  mode: 'sync',
-                  agent: 'reviewer',
-                  model: 'test/model',
-                  turns: 5,
-                  totalTokens: 10000,
-                  elapsedSeconds: 60,
+                bgResponse: {
+                  status: 'running',
+                  message: 'detached, will notify on completion',
                 },
               }),
             },
@@ -154,9 +149,10 @@ describe('SessionService.getSubagents', () => {
 
     const subagents = await svc.getSubagents('main-sess-id')
     expect(subagents).toHaveLength(1)
-    expect(subagents[0].subagentId).toBe('run-test-1')
+    expect(subagents[0].subagentId).toBe('bg-test-1-111')
     expect(subagents[0].agent).toBe('reviewer')
-    expect(subagents[0].status).toBe('done')
+    expect(subagents[0].slug).toBe('review-code')
+    expect(subagents[0].status).toBe('running')
     expect(subagents[0].sessionFile).toBe(subagentFile)
   })
 
@@ -203,7 +199,7 @@ describe('SessionService.getSubagentHistory', () => {
               name: 'subagent',
               arguments: {
                 action: 'start',
-                startParam: { agent: 'reviewer', task: 'Review', wait: true },
+                startParam: { agent: 'reviewer', slug: 'review-hist', task: 'Review' },
               },
             },
           ],
@@ -221,9 +217,9 @@ describe('SessionService.getSubagentHistory', () => {
               type: 'text',
               text: JSON.stringify({
                 action: 'start',
-                subagentId: 'run-hist-1',
+                subagentId: 'bg-hist-1-222',
                 sessionFile: subagentFile,
-                syncResponse: { status: 'done', mode: 'sync', agent: 'reviewer', turns: 2, totalTokens: 5000, elapsedSeconds: 30 },
+                bgResponse: { status: 'running', message: 'detached, will notify on completion' },
               }),
             },
           ],
@@ -262,7 +258,7 @@ describe('SessionService.getSubagentHistory', () => {
       sessionStore, {} as never, {} as never,
     )
 
-    const messages = await svc.getSubagentHistory('main-sess-id', 'run-hist-1')
+    const messages = await svc.getSubagentHistory('main-sess-id', 'bg-hist-1-222')
 
     expect(messages.length).toBeGreaterThanOrEqual(2)
     expect(messages.some((m) => m.role === 'user')).toBe(true)

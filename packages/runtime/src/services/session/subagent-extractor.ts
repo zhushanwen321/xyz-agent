@@ -4,34 +4,46 @@
  * 数据来源：主 session JSONL 中的 `subagent` tool 调用。
  * pi-subagent-workflow 扩展注册了 `subagent` tool，主 agent 调用时会 spawn 子 agent。
  *
- * JSONL 中的 entry 模式：
- * 1. assistant message 含 toolCall{name:'subagent', arguments:{action:'start', startParam:{agent, task, wait}}}
+ * JSONL 中的 entry 模式（pi-subagent-workflow，仅 background 模式）：
+ * 1. assistant message 含 toolCall{name:'subagent', arguments:{action:'start', startParam:{task, slug, agent?, model?, thinkingLevel?, fork?, worktree?, ...}}}
  * 2. toolResult message 含 content[0].text = JSON 字符串，解析后含：
- *    - sync 模式：{action:'start', subagentId, sessionFile, syncResponse:{status:'done'|'failed', mode:'sync', agent, model, turns, totalTokens, elapsedSeconds, result, error}}
- *    - background 模式：{action:'start', subagentId, sessionFile:null, bgResponse:{status:'running', mode:'background', message:'detached...'}}
- *    - list 模式：{action:'list', subagentId:null, sessionFile:null, listResponse:{running, items:[{subagentId, agent, status, mode, sessionFile, model, totalTokens, duration}]}}
+ *    - background 模式：{action:'start', subagentId, sessionFile:null, bgResponse:{status:'running', message:'detached...'}}
+ *    - list 模式：{action:'list', subagentId:null, sessionFile:null, listResponse:{running, items:[{subagentId, agent, status, sessionFile, model, totalTokens, duration}]}}
  * 3. custom_message customType:'subagent-bg-notify' 含 details:{id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
  *    （background 模式完成时注入，可用来更新状态）
  *
  * 提取策略：
  * - 遍历所有 message entry，收集 subagent toolCall（按 toolCallId 索引）和对应 toolResult
- * - sync 模式：直接从 syncResponse 构造记录
  * - background 模式：从 bgResponse（初始 running）+ 后续 listResponse（更新状态/sessionFile）+ bg-notify（终态）合并
+ *
+ * 2026-07-13 对齐 pi-subagent-workflow feat-ask-user-gui 分支：
+ * - startParam 新增 slug（短标签），extractor 提取到 SubagentRecord.slug
+ * - 移除 sync 模式分支（新版只有 background）
+ * - 旧 session JSONL（startParam 无 slug）slug 兜底空串
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
-import type { SubagentRecord, SubagentStatus, SubagentMode } from '@xyz-agent/shared'
+import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
 
 /** subagent toolCall 的 arguments 结构（start action） */
 interface SubagentStartArgs {
   action: 'start'
   startParam: {
     agent?: string
+    slug?: string
     task?: string
-    wait?: boolean
+    model?: string
+    thinkingLevel?: string
+    fork?: boolean
+    worktree?: boolean
+    maxTurns?: number
+    graceTurns?: number
+    skillPath?: string
+    appendSystemPrompt?: string[]
+    cwd?: string
   }
 }
 
@@ -40,21 +52,8 @@ interface SubagentToolResultData {
   action: string
   subagentId: string | null
   sessionFile: string | null
-  syncResponse?: {
-    status: string
-    mode: string
-    agent?: string
-    model?: string
-    turns?: number
-    totalTokens?: number
-    elapsedSeconds?: number
-    result?: string
-    error?: string
-    sessionFile?: string
-  }
   bgResponse?: {
     status: string
-    mode: string
     message?: string
   }
   listResponse?: {
@@ -63,7 +62,6 @@ interface SubagentToolResultData {
       subagentId: string
       agent?: string
       status?: string
-      mode?: string
       sessionFile?: string
       model?: string
       totalTokens?: number
@@ -128,7 +126,7 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
   const mainCwd = typeof sessionEntry?.cwd === 'string' ? sessionEntry.cwd : null
 
   // 收集 subagent toolCall（按 toolCallId 索引）
-  const toolCalls = new Map<string, { agent: string; task: string; wait: boolean }>()
+  const toolCalls = new Map<string, { agent: string; slug: string; task: string }>()
   // 收集 subagent toolResult（按 toolCallId 索引）
   const toolResults = new Map<string, SubagentToolResultData>()
   // 收集 bg-notify（按 subagentId 索引）
@@ -156,8 +154,8 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
             if (args.action === 'start') {
               toolCalls.set(b.id, {
                 agent: args.startParam?.agent ?? 'unknown',
+                slug: args.startParam?.slug ?? '',
                 task: args.startParam?.task ?? '',
-                wait: args.startParam?.wait ?? false,
               })
             }
           }
@@ -218,30 +216,7 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
     const tr = toolResults.get(toolCallId)
     if (!tr) continue
 
-    // sync 模式
-    if (tr.syncResponse) {
-      const subagentId = tr.subagentId ?? 'unknown'
-      if (seenIds.has(subagentId)) continue
-      seenIds.add(subagentId)
-
-      const sr = tr.syncResponse
-      records.push({
-        subagentId,
-        sessionFile: tr.sessionFile ?? sr.sessionFile ?? null,
-        agent: sr.agent ?? tc.agent,
-        task: tc.task,
-        mode: 'sync',
-        status: normalizeStatus(sr.status),
-        model: sr.model,
-        turns: sr.turns,
-        totalTokens: sr.totalTokens,
-        elapsedSeconds: sr.elapsedSeconds,
-        error: sr.error,
-      })
-      continue
-    }
-
-    // background 模式
+    // background 模式（pi-subagent-workflow 只有 background）
     if (tr.bgResponse) {
       const subagentId = tr.subagentId ?? 'unknown'
       if (seenIds.has(subagentId)) continue
@@ -252,7 +227,6 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
       const notify = bgNotifies.get(subagentId)
 
       const status: SubagentStatus = notify?.status ?? normalizeStatus(listItem?.status) ?? normalizeStatus(tr.bgResponse.status)
-      const mode: SubagentMode = 'background'
 
       // sessionFile 回退查找：listResponse/bg-notify 都不带 sessionFile 时，
       // 扫描 subagent session 目录用 startedAt 时间戳匹配最近的 JSONL 文件。
@@ -266,8 +240,8 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
         subagentId,
         sessionFile: resolvedSessionFile,
         agent: listItem?.agent ?? tc.agent,
+        slug: tc.slug,
         task: tc.task,
-        mode,
         status,
         model: notify?.model ?? listItem?.model,
         totalTokens: listItem?.totalTokens,
@@ -376,6 +350,8 @@ function normalizeStatus(status: string | undefined): SubagentStatus {
     case 'cancelled':
     case 'canceled':
       return 'cancelled'
+    case 'crashed':
+      return 'crashed'
     case 'running':
     case 'pending':
     case 'active':

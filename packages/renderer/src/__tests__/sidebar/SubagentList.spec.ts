@@ -15,11 +15,11 @@ import type { SubagentRecord } from '@xyz-agent/shared'
 
 function makeRecord(overrides: Partial<SubagentRecord> = {}): SubagentRecord {
   return {
-    subagentId: 'run-test-1',
+    subagentId: 'bg-test-1-111',
     sessionFile: '/data/sub.jsonl',
     agent: 'reviewer',
+    slug: 'review-changes',
     task: 'Review the code changes',
-    mode: 'sync',
     status: 'done',
     turns: 5,
     totalTokens: 10000,
