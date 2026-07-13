@@ -1,23 +1,53 @@
+/**
+ * plugin-installer.test.ts — W2 wave: NpmPluginInstaller (infra adapter) tests.
+ *
+ * 严格 TDD：先写失败测试（红）→ 写实现（绿）。
+ *
+ * 覆盖点（来自 plan.json U4/U5）：
+ * - U4: NpmPluginInstaller.install 成功路径——mock downloadPackageTarball 返回成功
+ *   并在 targetDir 写入含 xyzAgent:{manifestVersion:1} 的 package.json，
+ *   调 install(spec)，断言 {success:true, pluginId 非空, path===join(pluginsDir,pluginId)}
+ * - U5: manifest 校验失败——mock downloadPackageTarball 成功但 package.json 含
+ *   xyzAgent:{manifestVersion:2}，调 install，断言 {success:false} 且 targetDir 已删
+ *
+ * mock 层：downloadPackageTarball 被 vi.mock 替换，不触发真实 npm registry 网络。
+ * E1（真实 npm 包安装）需手工验证。
+ */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, readFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { execFile } from 'node:child_process'
-import { createRequire } from 'node:module'
 
-import { PluginInstaller } from '../src/services/plugin-service/plugin-installer.js'
-
-// Mock child_process.execFile
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
+// Mock downloadPackageTarball（infra 的纯 Node 下载函数），由测试控制成功/失败 +
+// 在 targetDir 写入自定义 package.json。installPackage 等其他导出保留 no-op 占位
+// 以防 NpmPluginInstaller 误调。
+vi.mock('../src/infra/installers/npm-installer.js', () => ({
+  downloadPackageTarball: vi.fn(),
+  installPackage: vi.fn(),
+  uninstallPackage: vi.fn(),
+  installDependencies: vi.fn(),
+  fetchLatestVersion: vi.fn(),
+  NpmInstallError: class extends Error {
+    code: 'not_found' | 'network' | 'extract' | 'integrity'
+    constructor(code: 'not_found' | 'network' | 'extract' | 'integrity', message: string) {
+      super(message)
+      this.code = code
+      this.name = 'NpmInstallError'
+    }
+  },
 }))
 
-const mockExecFile = vi.mocked(execFile)
+// 延迟 import：vi.mock 会被提升到 import 之前，故此处能拿到 mocked 版本。
+const { downloadPackageTarball } = await import('../src/infra/installers/npm-installer.js')
+const { NpmPluginInstaller } = await import('../src/infra/installers/plugin-installer-adapter.js')
+
+const mockDownload = vi.mocked(downloadPackageTarball)
 
 let tmpDir: string
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'plugin-installer-test-'))
+  vi.clearAllMocks()
+  tmpDir = await mkdtemp(join(tmpdir(), 'npm-plugin-installer-test-'))
 })
 
 afterEach(async () => {
@@ -25,167 +55,89 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-/** Helper: create a valid tgz-like structure in tmpDir that "tar" would extract */
-async function createFakeTarball(outDir: string, packageJson: Record<string, unknown>): Promise<string> {
-  const pkgDir = join(outDir, 'package')
-  await mkdir(pkgDir, { recursive: true })
-  await writeFile(join(pkgDir, 'package.json'), JSON.stringify(packageJson, null, 2), 'utf-8')
-  await writeFile(join(pkgDir, 'index.js'), 'module.exports = {}', 'utf-8')
-  return pkgDir
-}
-
-describe('PluginInstaller', () => {
-  describe('install - success', () => {
+describe('NpmPluginInstaller', () => {
+  describe('install - success (U4)', () => {
     it('should install a valid xyz-agent plugin', async () => {
       const pluginsDir = join(tmpDir, 'plugins')
-      const installer = new PluginInstaller(pluginsDir)
+      const installer = new NpmPluginInstaller(pluginsDir)
 
-      // npm pack mock: creates a .tgz file
-      mockExecFile.mockImplementation((cmd, args, opts, cb) => {
-        if (cmd === 'npm') {
-          // Create a fake tgz file
-          const packDest = args![3] as string // --pack-destination value
-          const tgzPath = join(packDest, 'my-test-plugin-1.0.0.tgz')
-          writeFile(tgzPath, 'fake tarball', 'utf-8').then(() => {
-            // tar mock: extract by copying from our pre-made structure
-            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
-          })
-          return {} as any
-        }
-        if (cmd === 'tar') {
-          // Extract: copy our fake package dir into the extract target
-          const extractDir = args![3] as string // -C target
-          const fakePkg = {
-            name: 'my-test-plugin',
-            version: '1.0.0',
+      const pluginName = 'my-test-plugin'
+      const pluginVersion = '1.0.0'
+
+      // downloadPackageTarball mock：在 targetDir 写入合法 package.json（strip=1 解压
+      // 后包内容落在 targetDir 根，故 package.json 直接在 targetDir 下）。
+      mockDownload.mockImplementation(async (_spec: string, targetDir: string) => {
+        await mkdir(targetDir, { recursive: true })
+        await writeFile(
+          join(targetDir, 'package.json'),
+          JSON.stringify({
+            name: pluginName,
+            version: pluginVersion,
             xyzAgent: { manifestVersion: 1, main: 'index.js' },
-          }
-          void createFakeTarball(extractDir, fakePkg).then(() => {
-            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
-          })
-          return {} as any
-        }
-        return {} as any
+          }),
+          'utf-8',
+        )
+        return { name: pluginName, version: pluginVersion }
       })
 
-      const result = await installer.install('my-test-plugin@1.0.0')
+      const result = await installer.install(`${pluginName}@${pluginVersion}`)
 
       expect(result.success).toBe(true)
-      expect(result.pluginId).toBe('my-test-plugin')
-      expect(result.path).toBe(join(pluginsDir, 'my-test-plugin'))
+      expect(result.pluginId).toBe(pluginName)
+      expect(result.path).toBe(join(pluginsDir, pluginName))
 
-      // Verify package.json was copied correctly
-      const installedPkg = JSON.parse(await readFile(join(result.path!, 'package.json'), 'utf-8'))
-      expect(installedPkg.name).toBe('my-test-plugin')
+      // package.json 应已落在 pluginsDir/<name>/package.json
+      const installedPkg = JSON.parse(
+        await readFile(join(result.path!, 'package.json'), 'utf-8'),
+      )
+      expect(installedPkg.name).toBe(pluginName)
       expect(installedPkg.xyzAgent.manifestVersion).toBe(1)
     })
   })
 
-  describe('install - npm pack failure', () => {
-    it('should return error when npm pack fails', async () => {
-      const installer = new PluginInstaller(join(tmpDir, 'plugins'))
+  describe('install - wrong manifestVersion (U5)', () => {
+    it('should fail and clean up targetDir when manifestVersion is not 1', async () => {
+      const pluginsDir = join(tmpDir, 'plugins')
+      const installer = new NpmPluginInstaller(pluginsDir)
 
-      mockExecFile.mockImplementation((cmd, _args, _opts, cb) => {
-        if (cmd === 'npm') {
-          const err = new Error('npm pack failed: package not found')
-          ;(cb as unknown as (err: Error) => void)(err)
-        }
-        return {} as any
-      })
+      const pluginName = 'wrong-version'
 
-      const result = await installer.install('nonexistent-package@99.99.99')
-
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('npm pack failed')
-    })
-  })
-
-  describe('install - no xyzAgent manifest', () => {
-    it('should return error when package has no xyzAgent manifest', async () => {
-      const installer = new PluginInstaller(join(tmpDir, 'plugins'))
-
-      mockExecFile.mockImplementation((cmd, args, _opts, cb) => {
-        if (cmd === 'npm') {
-          const packDest = args![3] as string
-          const tgzPath = join(packDest, 'no-manifest-1.0.0.tgz')
-          void writeFile(tgzPath, 'fake', 'utf-8').then(() => {
-            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
-          })
-          return {} as any
-        }
-        if (cmd === 'tar') {
-          const extractDir = args![3] as string
-          const fakePkg = {
-            name: 'no-manifest-plugin',
-            version: '1.0.0',
-            // no xyzAgent field
-          }
-          void createFakeTarball(extractDir, fakePkg).then(() => {
-            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
-          })
-          return {} as any
-        }
-        return {} as any
-      })
-
-      const result = await installer.install('no-manifest-plugin')
-
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('Not a valid xyz-agent plugin')
-    })
-  })
-
-  describe('install - wrong manifestVersion', () => {
-    it('should return error when manifestVersion is not 1', async () => {
-      const installer = new PluginInstaller(join(tmpDir, 'plugins'))
-
-      mockExecFile.mockImplementation((cmd, args, _opts, cb) => {
-        if (cmd === 'npm') {
-          const packDest = args![3] as string
-          const tgzPath = join(packDest, 'wrong-version-1.0.0.tgz')
-          void writeFile(tgzPath, 'fake', 'utf-8').then(() => {
-            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
-          })
-          return {} as any
-        }
-        if (cmd === 'tar') {
-          const extractDir = args![3] as string
-          const fakePkg = {
-            name: 'wrong-version',
+      mockDownload.mockImplementation(async (_spec: string, targetDir: string) => {
+        await mkdir(targetDir, { recursive: true })
+        await writeFile(
+          join(targetDir, 'package.json'),
+          JSON.stringify({
+            name: pluginName,
             version: '1.0.0',
             xyzAgent: { manifestVersion: 2 },
-          }
-          void createFakeTarball(extractDir, fakePkg).then(() => {
-            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
-          })
-          return {} as any
-        }
-        return {} as any
+          }),
+          'utf-8',
+        )
+        return { name: pluginName, version: '1.0.0' }
       })
 
-      const result = await installer.install('wrong-version')
+      const result = await installer.install(pluginName)
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('Not a valid xyz-agent plugin')
+
+      // targetDir 应已被清理
+      const targetDir = join(pluginsDir, pluginName)
+      await expect(access(targetDir)).rejects.toThrow()
     })
   })
 
-  describe('install - no tarball found', () => {
-    it('should return error when npm pack produces no .tgz', async () => {
-      const installer = new PluginInstaller(join(tmpDir, 'plugins'))
+  describe('install - download failure', () => {
+    it('should return error when downloadPackageTarball throws', async () => {
+      const pluginsDir = join(tmpDir, 'plugins')
+      const installer = new NpmPluginInstaller(pluginsDir)
 
-      mockExecFile.mockImplementation((cmd, _args, _opts, cb) => {
-        if (cmd === 'npm') {
-          // npm pack "succeeds" but no .tgz file is created
-          ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
-        }
-        return {} as any
-      })
+      mockDownload.mockRejectedValue(new Error('registry network error'))
 
       const result = await installer.install('some-package')
 
       expect(result.success).toBe(false)
-      expect(result.error).toContain('No tarball found')
+      expect(result.error).toContain('registry network error')
     })
   })
 
@@ -196,7 +148,7 @@ describe('PluginInstaller', () => {
       await mkdir(pluginPath, { recursive: true })
       await writeFile(join(pluginPath, 'package.json'), '{}', 'utf-8')
 
-      const installer = new PluginInstaller(pluginsDir)
+      const installer = new NpmPluginInstaller(pluginsDir)
       await installer.uninstall('test-plugin', pluginPath)
 
       // Directory should be gone

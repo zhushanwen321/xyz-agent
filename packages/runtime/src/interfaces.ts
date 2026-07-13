@@ -282,7 +282,7 @@ export interface IPluginService {
   handleBridgeRequest?(method: string, payload: Record<string, unknown>, sessionId: string): Promise<unknown>
 
   /** Install a plugin from an npm package specifier */
-  installPlugin(packageSpecifier: string): Promise<import('./services/plugin-service/plugin-installer.js').InstallResult>
+  installPlugin(packageSpecifier: string): Promise<import('./services/ports/plugin-installer.js').InstallResult>
   getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]
   /** 构造 bridge:sync 同步负载（工具 schema 塑形下沉 service，transport 只 reply） */
   getBridgeSyncPayload?(): import('./services/plugin-service/plugin-types.js').BridgeSyncPayload

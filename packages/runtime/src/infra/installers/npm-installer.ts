@@ -460,6 +460,37 @@ export async function uninstallPackage(name: string, nodeModulesDir: string): Pr
 }
 
 /**
+ * 下载单个 npm 包 tarball 并解压到 targetDir（strip=1，包内容落根）。
+ *
+ * 与 installPackage 的区别：**不递归装依赖**。用于 plugin 安装场景——plugin
+ * 只需单包内容 + manifest 校验，无需 flat node_modules 布局。
+ *
+ * 复用私有 parseSpec → fetchMetadata → resolveVersion → downloadAndExtract 管线，
+ * 全程纯 Node（registry HTTPS + tar 解压），不 spawn child_process。
+ *
+ * 返回包名 + 版本（name 取自 registry metadata，通常与 tarball 内 package.json
+ * 一致；调用方可选择在解压后用 package.json 的 name 覆盖）。
+ */
+export async function downloadPackageTarball(
+  spec: string,
+  targetDir: string,
+  options?: NpmInstallOptions,
+): Promise<{ name: string; version: string }> {
+  const { name, range } = parseSpec(spec)
+  const metadata = await fetchMetadata(name, options?.timeout)
+  const version = resolveVersion(metadata, range)
+  const manifest = metadata.versions[version]
+
+  if (!manifest) {
+    throw new NpmInstallError('not_found', `Version ${version} not found for ${name}`)
+  }
+
+  await downloadAndExtract(manifest.dist.tarball, targetDir, manifest.dist, name, options?.timeout)
+
+  return { name, version }
+}
+
+/**
  * 安装 projectDir 中 package.json 的所有 dependencies。
  * 用于 git clone 后安装依赖的场景。
  */

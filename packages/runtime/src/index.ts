@@ -13,6 +13,7 @@ import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
 import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
+import { NpmPluginInstaller } from './infra/installers/plugin-installer-adapter.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
@@ -121,10 +122,12 @@ async function main(): Promise<void> {
   // 启动定期 flush 计时器（全量周期，补充 per-write debounce 500ms）
   recentWorkspacesStore.startFlushTimer()
   const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
+  const pluginInstaller = new NpmPluginInstaller(join(configDir, 'plugins'))
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,
     modelService,
     configDir,
+    pluginInstaller,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 

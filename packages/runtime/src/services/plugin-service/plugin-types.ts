@@ -366,6 +366,11 @@ export interface IPluginServiceDeps {
   broadcastFn?: (type: string, payload: unknown) => void
   /** xyz-agent 配置根目录（~/.xyz-agent/）。注入后 plugin 切片不再直连 infra 取路径。 */
   configDir?: string
+  /**
+   * 插件安装器（IPluginInstaller port）。组合根注入 infra adapter
+   * （NpmPluginInstaller）。installPlugin 在缺省时返回 { success:false } 而非 spawn。
+   */
+  pluginInstaller?: import('../ports/plugin-installer.js').IPluginInstaller
 }
 
 /** 插件向后端请求前端 UI 弹窗 */
