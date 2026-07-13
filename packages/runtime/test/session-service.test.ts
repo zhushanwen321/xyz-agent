@@ -863,20 +863,31 @@ describe('SessionService · Facade', () => {
     })
   })
 
-  describe('inputTokens 缓存（attachUsageListener）', () => {
-    it('agent_end 的 usage.inputTokens 被缓存到 session，getInputTokens 可读', async () => {
-      const { id, client } = await setup.seedSession()
-      // initializeManagedSession 注册了 onEvent listener，取出触发 agent_end
-      expect(client.eventListeners.length).toBeGreaterThan(0)
-      client.eventListeners.forEach((fn) => fn({ type: 'agent_end', payload: { usage: { inputTokens: 15000, totalTokens: 20000 } } }))
+  describe('inputTokens 缓存（W3：经 applyContextUpdate + handleTurnEndSideEffects 迁移）', () => {
+    // W3：attachUsageListener 已删除，inputTokens/tokenCount 回写经中间事件链路：
+    //   - applyContextUpdate(sid, inputTokens, totalTokens)：写 inputTokens + tokenCount
+    //   - handleTurnEndSideEffects(sid)：复位 isGenerating（agent_end 副作用）
+    it('agent_end usage 经 applyContextUpdate 回写 inputTokens + tokenCount', async () => {
+      const { id } = await setup.seedSession()
+      // 模拟 EventInterpreter onContextUpdate 回调（agent_end usage）
+      setup.service.applyContextUpdate(id, 15000, 20000)
       expect(setup.service.getInputTokens(id)).toBe(15000)
       expect(setup.service.getSummary(id)?.tokenCount).toBe(20000)
     })
 
-    it('agent_end payload 无 usage 字段时不抛错，inputTokens 保持原值', async () => {
-      const { id, client } = await setup.seedSession()
-      client.eventListeners.forEach((fn) => fn({ type: 'agent_end', payload: {} }))
-      expect(setup.service.getInputTokens(id)).toBe(0) // 未收到 usage，保持初始 0
+    it('agent_end 无 usage（inputTokens=0）时 applyContextUpdate 早退，保持原值', async () => {
+      const { id } = await setup.seedSession()
+      // inputTokens=0 守卫，整个方法早退（不回写不广播）
+      setup.service.applyContextUpdate(id, 0, 0)
+      expect(setup.service.getInputTokens(id)).toBe(0)
+    })
+
+    it('handleTurnEndSideEffects 复位 isGenerating（agent_end 迁移）', async () => {
+      const { id } = await setup.seedSession()
+      await setup.service.sendMessage(id, 'hi') // 标记 generating
+      expect(setup.service.getSummary(id)?.status).toBe('active')
+      setup.service.handleTurnEndSideEffects(id)
+      expect(setup.service.getSummary(id)?.status).toBe('idle')
     })
 
     it('getInputTokens 对未知 session 返回 0', () => {
@@ -1261,7 +1272,7 @@ describe('SessionService · onSessionExit callback', () => {
     expect(String(exitedMsg?.payload.reason)).toBe('Session process exited (code: 0)')
   })
 
-  it('on exit: adapter.detach and usage listener unsub are invoked', async () => {
+  it('on exit: adapter.detach is invoked (W3: usage listener removed, EventAdapter sole listener)', async () => {
     // 用可观测的 adapter 工厂捕获 detach
     const detachSpy = vi.fn()
     const attachSpy = vi.fn()

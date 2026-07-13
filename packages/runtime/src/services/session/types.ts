@@ -6,7 +6,7 @@
  * (types.ts ← interfaces.ts 单向)。
  *
  * Facade 内部用完整 ManagedSession(extends IManagedSessionView,
- * 额外持有 adapter / interceptor / unsubUsageListener 等运行时句柄)。
+ * 额外持有 adapter 等运行时句柄)。
  * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */

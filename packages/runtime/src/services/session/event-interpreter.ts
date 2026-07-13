@@ -48,6 +48,22 @@ export interface EventInterpreterOptions {
   executeHooks?: ExecuteHookFn
   /** agent_end usage 回写 session 缓存（组合根注入 sessionService.applyContextUpdate）。 */
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
+  /**
+   * pi turn_end 单 turn 用量到达后触发（组合根注入 sessionService.handleTurnUsageSideEffects）。
+   *
+   * 承载 tryPersistLabel 主路径——「首 turn 即持久化」时序保证：第一个 turn_end 时 pi 已完成
+   * 该轮 flush（session 文件存在），此时 append session_info 行安全。不等 agent_end（后者要等
+   * 所有工具调用轮次跑完，中途关 app 仍会丢 label）。
+   */
+  onTurnUsage?: (sessionId: string) => void
+  /**
+   * pi agent_end 整循环结束时触发（组合根注入 sessionService.handleTurnEndSideEffects）。
+   *
+   * 承载两个副作用：
+   *   1. 复位 isGenerating=false（不迁移则正常生成完成后 session 永远 busy，下条消息被拒）
+   *   2. tryPersistLabel 兜底（turn_end 时 pi flush 尚未完成、文件不存在，在此补写）
+   */
+  onTurnFinalize?: (sessionId: string) => void
   /** thinking_level_changed 回写 session 缓存（组合根注入 sessionService.setThinkingLevelCache）。 */
   onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
   /** extension 交互式 UI 请求（注册前端超时）。组合根注入 server.registerExtensionTimeout。 */
@@ -114,9 +130,12 @@ export class EventInterpreter {
         this.handleTurnEnd(ev)
         return
       case 'turn-usage':
-        // pi turn_end 的单 turn 用量：只回写 context.update，不转发 message.complete
-        // （避免每 turn 触发 setStreaming 闪烁；message.complete 仍由 turn-end/agent_end 独占）
+        // pi turn_end 的单 turn 用量：回写 context.update（用量在前），再触发 onTurnUsage
+        // （tryPersistLabel 主路径——首 turn 即持久化，文件已由 pi flush 创建）。
+        // 不转发 message.complete（避免每 turn 触发 setStreaming 闪烁；
+        // message.complete 仍由 turn-end/agent_end 独占）。
         this.opts.onContextUpdate?.(ev.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens })
+        this.opts.onTurnUsage?.(ev.sessionId)
         return
       case 'status-set':
         this.opts.onStatusSetUpdate?.({ sessionId: this.sessionId, key: ev.key, text: ev.text, textRaw: ev.textRaw })
@@ -224,7 +243,7 @@ export class EventInterpreter {
     })
   }
 
-  /** turn-end（agent_end）：转发 message.complete + context.update 回写 + 观测 hook + file_changes ready diff + 清空态。 */
+  /** turn-end（agent_end）：转发 message.complete + context.update 回写 + onTurnFinalize（副作用）+ 观测 hook + file_changes ready diff + 清空态。 */
   private handleTurnEnd(ev: PiTranslatedEvent & { kind: 'turn-end' }): Promise<void> {
     // 转发 message.complete WS 帧
     this.opts.send(ev.message)
@@ -233,6 +252,9 @@ export class EventInterpreter {
     if (ev.inputTokens) {
       this.opts.onContextUpdate?.(this.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens ?? 0 })
     }
+
+    // 副作用：复位 isGenerating=false + tryPersistLabel 兜底（原 attachUsageListener agent_end 分支）
+    this.opts.onTurnFinalize?.(this.sessionId)
 
     // 观测 hook（agent_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'agent_end', stopReason: ev.stopReason, usage: ev.usage }).catch(() => {})

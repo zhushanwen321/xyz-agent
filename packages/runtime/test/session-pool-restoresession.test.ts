@@ -7,7 +7,8 @@ import type { WebSocket } from 'ws'
  *
  * The fix changed two things:
  * 1. Reuse original sessionId instead of crypto.randomUUID()
- * 2. Call adapter.detach() + unsubUsageListener() on existing session before overwrite
+ * 2. Call adapter.detach() on existing session before overwrite (W3: usage listener removed,
+ *    EventAdapter is sole pi-event listener owner)
  *
  * We mock ProcessManager, EventAdapter, scanSessions, and config-store
  * so the tests run without spawning real pi processes or touching the filesystem.

@@ -36,10 +36,9 @@ import { SessionScanner } from './session-scanner.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 
-/** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter/listener)。 */
+/** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
   adapter: IEventAdapter
-  unsubUsageListener: (() => void) | null
 }
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
@@ -101,7 +100,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
-      if (session.unsubUsageListener) session.unsubUsageListener()
       this.sessions.delete(sessionId)
 
       // 公共 session 崩溃：自动重建（landing 态命令源依赖它），不广播 error（对用户透明）
@@ -358,12 +356,27 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）。
    * 顺序保证：onContextUpdate 回写在先、switchModel 读取在后（缓存写入先于 switchModel 读）。
    */
-  applyContextUpdate(sessionId: string, inputTokens: number): void {
+  /**
+   * 处理 context.update（pi agent_end/turn_end 推送 inputTokens + totalTokens）。session 级状态单一 owner：
+   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
+   * index.ts onContextUpdate 仅调本方法，不再自己算 usagePercent。
+   *
+   * totalTokens（W3 迁移自 attachUsageListener）：写入 session.tokenCount。turn_end 与 agent_end
+   * 双路径对称回写——SessionSummary.tokenCount 是 UI token 用量显示的数据源，不写则恒 0。
+   *
+   * context.update 与 switchModel 竞态（已踩过坑，原 index.ts onContextUpdate 注释保留）：
+   * 此处回写 inputTokens 缓存是打通 context.update 与 switchModel 数据源的关键——
+   * 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）。
+   * 顺序保证：onContextUpdate 回写在先、switchModel 读取在后（缓存写入先于 switchModel 读）。
+   */
+  applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void {
     if (!inputTokens || inputTokens === 0) return
     const session = this.sessions.get(sessionId)
     if (!session) return
     // 回写缓存（打通数据源）
     session.inputTokens = inputTokens
+    // W3：tokenCount 写入（原 attachUsageListener 的 s.tokenCount = usage.totalTokens）
+    if (typeof totalTokens === 'number') session.tokenCount = totalTokens
     // 算 usagePercent + 广播
     const { usagePercent, contextLimit } = this.computeUsage(sessionId, session.modelId)
     this.broker.broadcast({
@@ -371,6 +384,37 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id: `ctx_${Date.now()}`,
       payload: { sessionId, usagePercent, inputTokens, contextLimit },
     })
+  }
+
+  /**
+   * turn_end 单 turn 副作用（W3 迁移自 attachUsageListener turn_end 分支）。
+   *
+   * 承载 tryPersistLabel 主路径——「首 turn 即持久化」时序保证：
+   * 第一个 turn_end 时 pi 已完成该轮 flush（session 文件已存在），此时 append session_info 安全。
+   * 不等 agent_end（后者要等所有工具调用轮次跑完，中途关 app 仍会丢 label）。
+   *
+   * tryPersistLabel 经此方法间接暴露（不直接 public）：封装 existsSync guard（规则 #6，
+   * 禁止在 pi flush 前创建文件 → EEXIST → session 卡死）。
+   */
+  handleTurnUsageSideEffects(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    this.tryPersistLabel(session)
+  }
+
+  /**
+   * agent_end 副作用（W3 迁移自 attachUsageListener agent_end 分支）。
+   *
+   * 承载两个副作用：
+   *   1. 复位 isGenerating=false —— 不迁移则正常生成完成后 session 永远 isGenerating=true，
+   *      下一条消息被 busy 拒绝（message-dispatcher preemptive reject），用户无法继续对话。
+   *   2. tryPersistLabel 兜底 —— turn_end 时 pi flush 尚未完成（文件不存在）则在此补写。
+   */
+  handleTurnEndSideEffects(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    session.isGenerating = false
+    this.tryPersistLabel(session)
   }
 
   /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId 的 contextWindow 算）。 */
@@ -383,7 +427,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
       session.adapter.detach()
-      if (session.unsubUsageListener) session.unsubUsageListener()
     }
     await this.pm.destroyAll()
     this.sessions.clear()
@@ -436,7 +479,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.adapter.detach()
-    if (session.unsubUsageListener) session.unsubUsageListener()
   }
 
   getActiveSummaries(): SessionSummary[] {
@@ -459,14 +501,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
     const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
-    const unsubUsage = this.attachUsageListener(id, client)
     const modelRef = this.configStore.getDefaultModel()
     const session: ManagedSession = {
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
       tokenCount: 0, inputTokens: 0, isGenerating: false,
-      adapter, unsubUsageListener: unsubUsage, sessionFilePath,
+      adapter, sessionFilePath,
       hidden,
       labelPersisted: false,
     }
@@ -542,40 +583,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         inputTokens,
         contextLimit,
       },
-    })
-  }
-
-  /** Attach turn_end/agent_end listener:track token usage + isGenerating + 持久化 label。 */
-  private attachUsageListener(id: string, client: IPiEngine): () => void {
-    return client.onEvent((event) => {
-      const e = event as Record<string, unknown>
-      const s = this.sessions.get(id)
-      if (!s) return
-      if (e.type === 'turn_end') {
-        // turn_end：单 turn 结束，pi 已完成该轮 flush。第一个 turn_end 即可持久化 label，
-        // 无需等整个 agent 循环结束（agent_end）——后者要等所有工具调用轮次跑完，中途关 app 仍会丢 label。
-        // usage 回写与 agent_end 对称（turn_end.message.usage 含本 turn 用量）。
-        const message = (e.message ?? e.payload) as Record<string, unknown> | undefined
-        const usage = message?.usage as
-          { input?: number; output?: number; totalTokens?: number } | undefined
-        if (usage?.totalTokens != null) {
-          s.tokenCount = usage.totalTokens
-          if (typeof usage.input === 'number') s.inputTokens = usage.input
-        }
-        this.tryPersistLabel(s)
-      } else if (e.type === 'agent_end') {
-        s.isGenerating = false
-        const payload = e.payload as Record<string, unknown> | undefined
-        const usage = payload?.usage as
-          { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
-        if (usage) {
-          s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
-          // 缓存 inputTokens 供 switchModel 重算 usagePercent（无需等下一次 agent_end）
-          if (typeof usage.inputTokens === 'number') s.inputTokens = usage.inputTokens
-        }
-        // agent_end 兜底：若 turn_end 时 pi flush 尚未完成（文件不存在），在此补写。
-        this.tryPersistLabel(s)
-      }
     })
   }
 

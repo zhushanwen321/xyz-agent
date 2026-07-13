@@ -210,7 +210,9 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
  * totalTokens 缺失时返回空（纯工具结果 turn 可能无 usage）。
  */
 function handleTurnEndPi(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const message = event.message as Record<string, unknown> | undefined
+  // pi turn_end 事件可能把 message 放在顶层 message 或 payload 字段（协议漂移）——
+  // 双读覆盖与 attachUsageListener（原 session-service 第二订阅）对齐，避免漏读 usage。
+  const message = (event.message ?? event.payload) as Record<string, unknown> | undefined
   const usage = message?.usage as { input?: number; output?: number; totalTokens?: number } | undefined
   if (!usage?.totalTokens) return []
   return [{

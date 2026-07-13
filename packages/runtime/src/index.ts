@@ -156,11 +156,18 @@ async function main(): Promise<void> {
         server.handleStatusSetUpdate(payload)
       },
       onContextUpdate: (sid, ctxData) => {
-        // session 级状态单一 owner：inputTokens 回写 + usagePercent 计算 + context.update 广播
+        // session 级状态单一 owner：inputTokens 回写 + tokenCount 写入 + usagePercent 计算 + context.update 广播
         // 全部由 SessionService.applyContextUpdate 负责（contextWindow 经注入的 resolver 解析）。
         // context.update 与 switchModel 的竞态保护（inputTokens 回写打通数据源）也收敛在该方法内。
-        sessionService.applyContextUpdate(sid, ctxData.inputTokens)
+        // W3：totalTokens 写入 session.tokenCount（原 attachUsageListener 的 tokenCount 回写迁移至此）。
+        sessionService.applyContextUpdate(sid, ctxData.inputTokens, ctxData.totalTokens)
       },
+      // W3：turn_end 单 turn 副作用——tryPersistLabel 主路径（首 turn 即持久化）。
+      // 原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发。
+      onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
+      // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
+      // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
+      onTurnFinalize: (sid) => sessionService.handleTurnEndSideEffects(sid),
       onThinkingLevelChanged: (sid, level) => {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
