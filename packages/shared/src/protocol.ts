@@ -11,6 +11,7 @@ import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
+import type { WorkflowRunRecord } from './workflow'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
@@ -18,6 +19,7 @@ export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.getSubagents' | 'session.getSubagentHistory'
+  | 'session.getWorkflows' | 'session.getAgentCallHistory'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
@@ -80,6 +82,9 @@ export interface ClientMessageMap {
   // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
   'session.getSubagents': { sessionId: string }
   'session.getSubagentHistory': { sessionId: string; subagentId: string }
+  // workflow 列表/agent call 对话流读取（runtime 直读主 session JSONL + workflow-state JSONL，不依赖扩展）
+  'session.getWorkflows': { sessionId: string }
+  'session.getAgentCallHistory': { sessionId: string; agentCallSessionId: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
@@ -160,6 +165,7 @@ export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'session.subagents' | 'session.subagentHistory'
+  | 'session.workflows' | 'session.agentCallHistory'
   | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
@@ -283,6 +289,10 @@ export interface ServerMessageMapBase {
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
   // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
   'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
+  // session.workflows：当前 session 派生的 workflow 列表（runtime 从主 session JSONL 的 workflow-state-link 提取）
+  'session.workflows': { sessionId: string; workflows: WorkflowRunRecord[] }
+  // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）
+  'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[] }
   // subagent.stream_delta：running subagent 的逐字 streaming（路径 A-1）。
   // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。

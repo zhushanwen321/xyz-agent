@@ -12,7 +12,7 @@
  */
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getDataDir } from '@xyz-agent/shared/paths'
@@ -24,6 +24,7 @@ import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
+import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -329,6 +330,29 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 直读 subagent JSONL，复用 getHistoryFromFilePath 转换链路（parseJsonl + filter + convertHistory）。
     // subagent JSONL 格式与主 session 一致（pi SessionManager._persist 写入）。
     return getHistoryFromFilePath(record.sessionFile, this.sessionStore)
+  }
+
+  /**
+   * 获取 session 派生的 workflow 列表（从主 session JSONL 的 workflow-state-link 提取）。
+   * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 workflow 调用时返回空数组。
+   */
+  async getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]> {
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) return []
+    return extractWorkflowsFromSessionFile(target.filePath)
+  }
+
+  /**
+   * 获取 workflow 内 agent call 的对话流历史。
+   * agentCallSessionId 是 trace[].sessionId（pi session ID，uuidv7），
+   * agent call 的 JSONL 落在 ~/.pi/agent/sessions/<encodedAgentCallCwd>/ 下（cwd 是 worktree 路径），
+   * 与主 session 的 cwd 不同。scanPiSessions 扫所有 encodedCwd 子目录，按 sessionId 能找到。
+   * 复用 getHistoryFromFile（与主 session 历史读取同链路）。
+   */
+  async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
+    // sessionId 参数保留接口一致性（未来可能用于 session-scoped 查找优化），当前全局 scan
+    void sessionId
+    return getHistoryFromFile(agentCallSessionId, this.sessionStore)
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {

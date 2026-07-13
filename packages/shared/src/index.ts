@@ -39,3 +39,9 @@ export * from './ignore-parser'
 export * from './git-status-parser'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { SubagentRecord, SubagentStatus } from './subagent'
+export type {
+  WorkflowRunStatus,
+  WorkflowDoneReason,
+  WorkflowAgentCall,
+  WorkflowRunRecord,
+} from './workflow'

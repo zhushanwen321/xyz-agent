@@ -23,6 +23,7 @@ export class SessionMessageHandler {
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'session.getSubagents', 'session.getSubagentHistory',
+    'session.getWorkflows', 'session.getAgentCallHistory',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
@@ -92,6 +93,14 @@ export class SessionMessageHandler {
       case 'session.getSubagentHistory': {
         const messages = await this.ctx.sessionService.getSubagentHistory(msg.payload.sessionId, msg.payload.subagentId)
         return this.ctx.reply(ws, msg.id, 'session.subagentHistory', { sessionId: msg.payload.sessionId, subagentId: msg.payload.subagentId, messages })
+      }
+      case 'session.getWorkflows': {
+        const workflows = await this.ctx.sessionService.getWorkflows(msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.workflows', { sessionId: msg.payload.sessionId, workflows })
+      }
+      case 'session.getAgentCallHistory': {
+        const messages = await this.ctx.sessionService.getAgentCallHistory(msg.payload.sessionId, msg.payload.agentCallSessionId)
+        return this.ctx.reply(ws, msg.id, 'session.agentCallHistory', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, messages })
       }
       case 'session.getCommands': {
         // renderer 切 session 后主动拉取命令（修复 broadcast 与订阅时序竞争）。

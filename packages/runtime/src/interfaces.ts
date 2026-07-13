@@ -20,6 +20,7 @@ import type {
   GitStatusResult,
   FileNode,
   SubagentRecord,
+  WorkflowRunRecord,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -99,6 +100,16 @@ export interface ISessionService {
    * subagentId 对应 SubagentRecord.subagentId，从 getSubagents 结果中查找 sessionFile 路径。
    */
   getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]>
+  /**
+   * 获取 session 派生的 workflow 列表（从主 session JSONL 的 workflow-state-link 提取）。
+   * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 workflow 调用时返回空数组。
+   */
+  getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]>
+  /**
+   * 获取 workflow 内 agent call 的对话流历史。
+   * agentCallSessionId 是 trace[].sessionId（pi session ID），按 sessionId 全局查找 JSONL。
+   */
+  getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   /**
