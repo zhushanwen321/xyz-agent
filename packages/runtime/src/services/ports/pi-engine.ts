@@ -11,9 +11,13 @@
 /**
  * pi 任意 JSON 响应的逃生类型。
  *
- * pi 的 sendCommand 响应结构是动态的（get_state/fork/getHistory 各不相同），
- * 无法用单一精确类型描述。services 用 `as PiMessage` 后再 `as` 具体结构——
- * 这是「类型系统对 pi 动态响应认输」的诚实标注，不是协议泄露。
+ * pi 的命令响应结构是动态的（get_state/fork/getHistory 各不相同），无法用单一精确类型
+ * 描述。services 用 `as PiMessage` 后再 `as` 具体结构——这是「类型系统对 pi 动态响应认输」
+ * 的诚实标注，不是协议泄露。
+ *
+ * 注意：sendCommand/sendRaw 逃生口已从 IPiEngine 删除（W2 收口）。响应归一下沉到
+ * RpcClient 内部，services 只消费语义方法（switchSession/getState/sendExtensionUiResponse 等），
+ * 不再有「发任意 pi 命令」的能力。
  */
 export type PiMessage = unknown
 
@@ -81,8 +85,8 @@ export interface PiSessionOptions {
  * 涵盖「单个 pi 进程的全部能力」：与 pi 的命令通信 + 该进程自身的生命周期
  * （start / kill / onExit / exited）+ session 级命令（compact / clear）。
  *
- * sendCommand 是逃生方法：返回 PiMessage(unknown)，调用方自行 as 具体结构。
- * 这是刻意的——pi 的命令响应结构动态，精确化收益低且要跟 pi 改。
+ * 逃生口已关闭（W2 收口）：sendCommand/sendRaw 不再暴露，响应归一下沉到 RpcClient 内部。
+ * 调用方消费语义方法（switchSession/getState/sendExtensionUiResponse 等），不再有「发任意 pi 命令」的能力。
  */
 export interface IPiEngine {
   // ── 命令通信 ──
@@ -96,14 +100,12 @@ export interface IPiEngine {
   getCommands(): Promise<PiCommandInfo[]>
   /** 查询 pi session 统计（含 contextUsage 上下文占用估算）。用于恢复 session 后拉取当前用量。 */
   getSessionStats(): Promise<PiSessionStats>
-  /** 逃生方法：发送任意 pi 命令，返回动态响应。调用方自行 as 具体结构。 */
-  sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<PiMessage>
-  /**
-   * 向 pi stdin 写入一行原始 JSON，不等 RPC reply。
-   * 用于 pi 不回复 `{type:'response'}` 的命令（extension_ui_response）。
-   * 调用方保证格式正确 + 换行符结尾。
-   */
-  sendRaw(data: string): void
+  /** 切换 pi 进程到指定 session 文件（restore / fork 用）。 */
+  switchSession(sessionPath: string): Promise<void>
+  /** 查询 pi session 状态（get_state），返回归一后的 state 对象。 */
+  getState(): Promise<Record<string, unknown> | undefined>
+  /** 向 pi 发送 extension_ui_response（extension UI / bridge 请求的响应，pi 不回 RPC reply）。 */
+  sendExtensionUiResponse(id: string, response: unknown, method?: string): void
   /** 订阅 pi 事件流。返回 unsubscribe。事件由 EventAdapter 翻译，service 一般不直接处理。 */
   onEvent(listener: PiEventListener): () => void
 
@@ -149,37 +151,6 @@ export interface IProcessManager {
   destroyAll(): Promise<void>
   /** 探测 pi 二进制版本（首次 execSync，后续读缓存）。失败返回 'unknown'。 */
   getPiVersion(): Promise<string>
-}
-
-// ── pi RPC 响应解析 helpers（D16 收口）──────────────────────────
-//
-// pi 的 RPC 响应兼容两种字段位置（`data` 或 `payload`），历史上每处调用都重复
-// `resp.data ?? resp.payload` + `as PiStateResponse`。以下 helper 收敛该样板。
-
-/** pi RPC 响应的通用形状（data 或 payload 二选一承载结果）。 */
-export interface PiRpcResponse {
-  data?: Record<string, unknown>
-  payload?: Record<string, unknown>
-}
-
-/** pi get_state 响应结构（动态 JSON，逃生断言）。 */
-export type PiStateResponse = PiRpcResponse
-
-/**
- * 从 pi RPC 响应取归一化的结果对象（兼容 data/payload 两位置）。
- * 用于 get_state/get_commands 等返回单层对象的命令。
- */
-export function readRpcData(resp: PiRpcResponse): Record<string, unknown> | undefined {
-  return resp.data ?? resp.payload
-}
-
-/**
- * 发 get_state 并返回归一化后的 state 对象（兼容 data/payload）。
- * 消除 session-lifecycle 等处重复的
- * `await client.sendCommand('get_state') as PiStateResponse; resp.data ?? resp.payload`。
- */
-export async function readPiState(client: IPiEngine): Promise<Record<string, unknown> | undefined> {
-  return readRpcData(await client.sendCommand('get_state') as PiStateResponse)
 }
 
 /**
