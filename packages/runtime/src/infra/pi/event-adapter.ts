@@ -25,6 +25,7 @@ import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent } from '@xyz-agent/e
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
+import { stripAnsi, normalizePiToolResult } from './normalize-tool-result.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
 //
@@ -34,12 +35,6 @@ import { randomUUID } from 'node:crypto'
 // 下面的防御式 `?? ''` / `as` fallback 不是冗余——它们处理 pi 实际行为的非规范面。
 // 升级 pi 后若字段稳定，可逐 handler 引入 pi-protocol 类型做窄化（保留 default 容错）。
 type PiEvent = Record<string, unknown>
-
-/** Strip ANSI escape sequences from text (pi RPC mode sends raw escape codes for themed output) */
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g
-function stripAnsi(text: string): string {
-  return text.replace(ANSI_REGEX, '')
-}
 
 const STOP_REASON_MAP: Record<string, string> = {
   stop: 'end_turn',
@@ -132,40 +127,12 @@ function handleToolExecutionStart(event: PiEvent, _sid: string): PiTranslatedEve
  * EventInterpreter 据此跑 onAfterToolResult hook（改写 output）+ 触发 file_changes baseline diff。
  */
 function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent[] {
-  let output: string
-  let outputRaw: string | undefined
-  let images: Array<{ data: string; mimeType: string }> | undefined
   // pi-protocol.PiToolExecutionEndEvent 声明 result: PiToolExecutionResult（固定 content 数组），
-  // 但 pi 实际 result 可能是 string | object-with-content | 其他——双读 + 多形态判定覆盖协议漂移
-  // （见 pi-protocol.ts 的 TODO(pi-协议漂移) 注释）
+  // 但 pi 实际 result 可能是 string | object-with-content | 其他——双读覆盖协议漂移
+  // （见 pi-protocol.ts 的 TODO(pi-协议漂移) 注释）。
+  // 三态判定 + stripAnsi + images/details 提取统一委托 normalizePiToolResult（W1）。
   const raw = event.result ?? event.output
-  if (typeof raw === 'string') {
-    output = stripAnsi(raw)
-    if (output !== raw) outputRaw = raw
-  } else if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).content)) {
-    const contentArr = (raw as Record<string, unknown>).content as Array<Record<string, unknown>>
-    const rawText = contentArr
-      .filter((c) => c.type === 'text')
-      .map((c) => (c.text as string) ?? '')
-      .join('\n')
-    output = stripAnsi(rawText)
-    if (output !== rawText) outputRaw = rawText
-    const imageBlocks = contentArr
-      .filter((c) => c.type === 'image')
-      .map((c) => ({ data: String(c.data ?? ''), mimeType: String(c.mimeType ?? '') }))
-      .filter((img) => img.data !== '' || img.mimeType !== '')
-    if (imageBlocks.length > 0) images = imageBlocks
-  } else if (raw != null) {
-    output = JSON.stringify(raw)
-  } else {
-    output = ''
-  }
-
-  let details: Record<string, unknown> | undefined
-  if (raw && typeof raw === 'object') {
-    const d = (raw as Record<string, unknown>).details
-    if (d && typeof d === 'object' && !Array.isArray(d)) details = d as Record<string, unknown>
-  }
+  const { output, outputRaw, details, images } = normalizePiToolResult(raw)
 
   const toolCallId = String(event.toolCallId ?? '')
   const toolName = String(event.toolName ?? '')
