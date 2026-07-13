@@ -179,10 +179,9 @@ function onSubagentBack(): void {
   subagentStore.backToMain(props.panelId)
 }
 
-/** Panel 卸载时停止 subagent streaming 订阅 + 轮询（防止泄漏） */
+/** Panel 卸载时停止 subagent streaming 订阅（防止泄漏） */
 onUnmounted(() => {
   subagentStore.stopStream(props.panelId)
-  subagentStore.stopPolling(props.panelId)
 })
 
 /**

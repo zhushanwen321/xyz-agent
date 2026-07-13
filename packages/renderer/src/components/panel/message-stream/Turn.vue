@@ -214,7 +214,7 @@
             <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[8px] font-bold leading-[10px] text-white">MD</span>
           </Button>
           <Button
-            v-if="!isSessionActive"
+            v-if="!isSessionActive && !isSubagentVirtualId(sessionId)"
             variant="ghost"
             size="icon"
             class="size-6 text-subtle hover:text-fg"
@@ -257,6 +257,7 @@ import { useChatStore } from '@/stores/chat'
 import { useCommandStore } from '@/stores/command'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'

@@ -99,7 +99,7 @@ function applySubagentStreamDeltaImpl(
  *
  * sealed 守卫对齐（D-010 parity）：实体一旦 complete 不再被后续 delta 污染。无 streaming
  * 实体时幂等 no-op。不走 finalizeSession：subagent 虚拟 session 无 pendingSend / streaming
- * timer 生命周期（由 subagent store 的 panelStreamUnsub/panelPollTimers 管理），只翻 status。
+ * timer 生命周期（由 subagent store 的 panelStreamUnsub 管理），只翻 status。
  */
 function finalizeSubagentStreamImpl(
   messages: { value: Map<string, Message[]> },

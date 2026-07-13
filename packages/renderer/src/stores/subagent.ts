@@ -1,5 +1,5 @@
 /**
- * Subagent store —— subagent 列表 + per-panel overlay 视图 + streaming/轮询生命周期。
+ * Subagent store —— subagent 列表 + per-panel overlay 视图 + streaming 生命周期。
  *
  * 依赖方向：无（stores 间禁止互相 import）。跨 store 编排（chatStore.setMessages 等）
  * 由调用方通过回调注入，store 内不 import 其他 store。
@@ -7,7 +7,7 @@
  * 职责：
  * - 共享 subagent 列表（records）—— Sidebar 管理，所有 panel 只读消费
  * - per-panel viewing 状态（panelViewingMap）—— split 后各 panel 独立
- * - streaming 订阅 + 轮询兜底（panelStreamUnsub / panelPollTimers）—— 非响应式资源表
+ * - streaming 订阅（panelStreamUnsub）—— 非响应式资源表
  *
  * 虚拟 session ID 格式：`subagent:<subagentId>`
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
@@ -35,9 +35,6 @@ export function isSubagentVirtualId(sessionId: string): boolean {
 export function extractSubagentId(virtualId: string): string {
   return virtualId.slice(SUBAGENT_PREFIX.length)
 }
-
-/** 轮询间隔（ms）—— streaming 断流兜底 + 检测 status 变更 */
-const POLL_INTERVAL_MS = 3000
 
 /**
  * selectSubagent 的 chat 注入回调类型。
@@ -67,8 +64,6 @@ export const useSubagentStore = defineStore('subagent', () => {
   // ── 非响应式资源表（参照 chat.ts streamingTimers 模式）──
   /** per-panel streaming 订阅取消函数 */
   const panelStreamUnsub = new Map<string, () => void>()
-  /** per-panel 轮询定时器（streaming 兜底） */
-  const panelPollTimers = new Map<string, ReturnType<typeof setInterval>>()
 
   // ── getters ──
   /** 本 panel 当前是否在查看 subagent 对话流 */
@@ -127,17 +122,25 @@ export const useSubagentStore = defineStore('subagent', () => {
     }
   }
 
-  /** 清空 subagent 列表 + 退出所有 panel overlay + 停止所有 streaming/轮询 */
+  /** 清空 subagent 列表 + 退出所有 panel overlay + 停止所有 streaming */
   function clearSubagents(): void {
     for (const pid of panelStreamUnsub.keys()) stopStream(pid)
-    for (const pid of panelPollTimers.keys()) stopPolling(pid)
     records.value = []
     panelViewingMap.value = new Map()
   }
 
+  /** 停止指定 panel 的 streaming 订阅 */
+  function stopStream(targetPanelId?: string): void {
+    if (!targetPanelId) return
+    const unsub = panelStreamUnsub.get(targetPanelId)
+    if (unsub) {
+      unsub()
+      panelStreamUnsub.delete(targetPanelId)
+    }
+  }
+
   /**
    * 拉取单个 subagent 的历史并注入 chatStore（经 setMessages 回调）。
-   * 静默失败只记日志——首次拉取为空时轮询会自动补上。
    */
   async function fetchAndInject(
     mainSessionId: string,
@@ -154,33 +157,13 @@ export const useSubagentStore = defineStore('subagent', () => {
     }
   }
 
-  /** 停止指定 panel 的 streaming 订阅 */
-  function stopStream(targetPanelId?: string): void {
-    if (!targetPanelId) return
-    const unsub = panelStreamUnsub.get(targetPanelId)
-    if (unsub) {
-      unsub()
-      panelStreamUnsub.delete(targetPanelId)
-    }
-  }
-
-  /** 停止指定 panel 的轮询定时器 */
-  function stopPolling(targetPanelId?: string): void {
-    if (!targetPanelId) return
-    const timer = panelPollTimers.get(targetPanelId)
-    if (timer !== undefined) {
-      clearInterval(timer)
-      panelPollTimers.delete(targetPanelId)
-    }
-  }
-
   /**
    * 订阅 subagent.stream_delta WS 帧（路径 A-1，逐字增量 streaming）。
    *
    * W4：delta / 终态收口均经注入的 chat store 回调（chatApplyDelta / chatFinalizeStream），
    * chat store 成为所有 assistant content mutation 的唯一入口。
    * - lines 非空 → chatApplyDelta（chat.applySubagentStreamDelta）
-   * - lines === undefined → 终态：停 streaming + 轮询 + 收口 + 拉完整历史覆盖（fetchAndInject，含 IO）
+   * - lines === undefined → 终态：停 streaming + 收口 + 拉完整历史覆盖（fetchAndInject，含 IO）
    */
   function subscribeStream(
     pid: string,
@@ -199,7 +182,6 @@ export const useSubagentStore = defineStore('subagent', () => {
 
       if (payload.lines === undefined) {
         stopStream(pid)
-        stopPolling(pid)
         // 收口 streaming 实体（chat store sealed 收口），再用权威历史覆盖
         chatFinalizeStream(virtualId)
         void fetchAndInject(mainSessionId, recordId, setMessages)
@@ -208,38 +190,6 @@ export const useSubagentStore = defineStore('subagent', () => {
       chatApplyDelta(virtualId, payload.lines)
     })
     panelStreamUnsub.set(pid, unsub)
-  }
-
-  /**
-   * 启动轮询：仅当 subagent 仍在 running 时才轮询。
-   * 每个周期同时刷新历史（对话流可见）和列表（检测 status 变更）。
-   * status 变为非 running 后自动停止轮询。
-   */
-  function startPolling(
-    targetPanelId: string,
-    mainSessionId: string,
-    subagentId: string,
-    setMessages: SetMessagesFn,
-  ): void {
-    stopPolling(targetPanelId)
-    const timer = setInterval(async () => {
-      const [listRes, histRes] = await Promise.allSettled([
-        sessionApi.getSubagents(mainSessionId),
-        sessionApi.getSubagentHistory(mainSessionId, subagentId),
-      ])
-      if (listRes.status === 'fulfilled') {
-        records.value = listRes.value
-      }
-      if (histRes.status === 'fulfilled') {
-        setMessages(subagentVirtualId(subagentId), histRes.value)
-      }
-      const stillRunning =
-        records.value.find((s) => s.subagentId === subagentId)?.status === 'running'
-      if (!stillRunning) {
-        stopPolling(targetPanelId)
-      }
-    }, POLL_INTERVAL_MS)
-    panelPollTimers.set(targetPanelId, timer)
   }
 
   /**
@@ -265,20 +215,18 @@ export const useSubagentStore = defineStore('subagent', () => {
 
     await fetchAndInject(mainSessionId, subagentId, setMessages)
 
-    // running 态启动 streaming（主通道）+ 轮询（兜底）
+    // running 态启动 streaming（逐字增量，终态自动收口 + 拉完整历史）
     const record = records.value.find((s) => s.subagentId === subagentId)
     if (record?.status === 'running') {
       subscribeStream(panelId, mainSessionId, subagentId, virtualId, chatApplyDelta, chatFinalizeStream, setMessages)
-      startPolling(panelId, mainSessionId, subagentId, setMessages)
     }
   }
 
   /**
-   * 返回主会话（per-panel）。停止 streaming + 轮询 + 重置 viewing 状态。
+   * 返回主会话（per-panel）。停止 streaming + 重置 viewing 状态。
    */
   function backToMain(panelId: string): void {
     stopStream(panelId)
-    stopPolling(panelId)
     setViewingSubagentId(panelId, null)
   }
 
@@ -297,6 +245,5 @@ export const useSubagentStore = defineStore('subagent', () => {
     selectSubagent,
     backToMain,
     stopStream,
-    stopPolling,
   }
 })
