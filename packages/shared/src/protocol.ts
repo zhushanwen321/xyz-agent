@@ -166,6 +166,7 @@ export type ServerMessageType =
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory'
+  | 'session.workflowUpdate'
   | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
@@ -293,6 +294,9 @@ export interface ServerMessageMapBase {
   'session.workflows': { sessionId: string; workflows: WorkflowRunRecord[] }
   // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）
   'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[] }
+  // session.workflowUpdate：workflow 状态变化增量信号（event-interpreter 推送，发起/结束时刻）。
+  // 前端收到后调 loadWorkflows RPC 拉取完整列表。与 session.workflows（RPC reply 全量列表）区分。
+  'session.workflowUpdate': { sessionId: string; update: { runId: string; status: string; reason?: string } }
   // subagent.stream_delta：running subagent 的逐字 streaming（路径 A-1）。
   // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。

@@ -19,6 +19,11 @@ export const MAX_PORT = 65535 as const
  *  pi-subagents 通过名为 "subagent" 的 tool 执行子 agent，前端据此判定特殊渲染。 */
 export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
 
+/** pi-subagent-workflow 扩展的 workflow tool 名集合（识别 workflow 调用用，SSOT）。
+ *  workflow 扩展通过名为 "workflow" 的 tool 执行 workflow run，event-interpreter 据此
+ *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */
+export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['workflow'])
+
 /** Environment variable prefixes allowed to pass to child processes */
 export const ENV_WHITELIST_PREFIXES: readonly string[] = [
   'PATH', 'HOME', 'USER', 'LANG', 'TERM',

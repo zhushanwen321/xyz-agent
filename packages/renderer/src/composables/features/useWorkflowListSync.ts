@@ -28,16 +28,25 @@ export function useWorkflowListSync(): void {
     () => panel.panels.find((p) => p.id === panel.activePanelId)?.sessionId ?? null,
   )
 
+  /** 当前 session 的推送订阅取消函数（切会话时取消旧订阅） */
+  let unsubPush: (() => void) | null = null
+
   /**
    * 切会话时：
    * 1. clearWorkflows 清空旧数据（消除残留窗口）
-   * 2. 首拉 RPC（新 session 的 workflow 列表）
+   * 2. 取消旧 session 的推送订阅，订阅新 session 的 session.workflowUpdate 推送
+   * 3. 首拉 RPC 兜底（推送可能晚到，RPC 立即拿到当前列表）
    */
   watch(
     () => focusedSessionId.value,
     (sid) => {
       workflowStore.clearWorkflows()
+      if (unsubPush) {
+        unsubPush()
+        unsubPush = null
+      }
       if (sid) {
+        unsubPush = workflowStore.subscribeWorkflowPush(sid)
         void workflowStore.loadWorkflows(sid)
       }
     },

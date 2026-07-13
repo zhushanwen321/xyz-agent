@@ -15,6 +15,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { WorkflowRunRecord, Message } from '@xyz-agent/shared'
 import * as sessionApi from '@/api/domains/session'
+import * as events from '@/api/events'
 
 /** 虚拟 session ID 前缀（agent call 对话流） */
 const AGENTCALL_PREFIX = 'agentcall:'
@@ -120,6 +121,27 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
+  /** 当前焦点 session ID（subscribeWorkflowPush 回调内重新拉取用） */
+  let focusedSessionId = ''
+
+  /**
+   * 订阅 runtime 推送的 session.workflowUpdate 广播。
+   * runtime 在 workflow 发起/结束时刻推送增量信号，前端收到后触发 loadWorkflows RPC 拉取完整列表。
+   *
+   * @param sessionId 当前焦点 session ID
+   * @returns 取消订阅函数（切会话时调用，取消旧 session 的订阅）
+   */
+  function subscribeWorkflowPush(sessionId: string): () => void {
+    focusedSessionId = sessionId
+    return events.on(sessionId, (msg) => {
+      if (msg.type !== 'session.workflowUpdate') return
+      // 增量信号 → 重新拉取完整列表
+      if (focusedSessionId) {
+        void loadWorkflows(focusedSessionId)
+      }
+    })
+  }
+
   /** 清空 workflow 列表 + 退出所有 panel viewing 状态 */
   function clearWorkflows(): void {
     records.value = []
@@ -176,6 +198,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     getCurrentWorkflow,
     // actions
     loadWorkflows,
+    subscribeWorkflowPush,
     clearWorkflows,
     selectWorkflow,
     selectAgentCall,

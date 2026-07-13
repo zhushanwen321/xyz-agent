@@ -21,7 +21,7 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
-import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
@@ -122,6 +122,8 @@ export class EventInterpreter {
         this.opts.send(ev.message)
         // subagent bg-notify：更新内存态终态 → 广播 session.subagents
         this.handleSubagentBgNotify(ev.message)
+        // workflow-result（run 完成）：广播 session.workflows 增量信号
+        this.handleWorkflowResult(ev.message)
         return
       case 'turn-start':
         // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
@@ -262,6 +264,10 @@ export class EventInterpreter {
     // subagent tool-call-end：合并缓存 startParam + details 建记录 → 广播 session.subagents
     if (SUBAGENT_TOOL_NAMES.has(toolName)) {
       this.handleSubagentEnd(toolCallId, details)
+    }
+    // workflow tool-call-end：action=run 发起 → 广播 session.workflows running 信号
+    if (WORKFLOW_TOOL_NAMES.has(toolName)) {
+      this.handleWorkflowToolEnd(details)
     }
   }
 
@@ -406,6 +412,56 @@ export class EventInterpreter {
       payload: {
         sessionId: this.sessionId,
         subagents: Array.from(this.subagentRecords.values()),
+      },
+    })
+  }
+
+  // ── workflow 实时推送 ──
+
+  /**
+   * workflow-result customStart（run 完成通知）：广播 session.workflows 增量信号。
+   * details 结构（pi-subagent-workflow notifyDone）：{runId, name, status:'done', reason, traceLength, __gui__?}
+   * 前端收到推送后调 loadWorkflows RPC 拉取完整列表（含 agentCalls）。
+   */
+  private handleWorkflowResult(msg: ServerMessage): void {
+    const payload = msg.payload as { customType?: string; details?: Record<string, unknown> } | undefined
+    if (payload?.customType !== 'workflow-result') return
+    const details = payload.details
+    if (!details) return
+
+    const runId = typeof details.runId === 'string' ? details.runId : null
+    if (!runId) return
+
+    const reason = typeof details.reason === 'string' ? details.reason : undefined
+    this.broadcastWorkflowUpdate({ runId, status: 'done', reason })
+  }
+
+  /**
+   * workflow tool-call-end（action=run 发起）：广播 session.workflows running 信号。
+   * details 结构（pi-subagent-workflow tool-workflow.ts）：{action:'run', runId, status:'running', name, slug?}
+   * 前端收到推送后调 loadWorkflows RPC 拉取完整列表。
+   */
+  private handleWorkflowToolEnd(details: Record<string, unknown> | undefined): void {
+    if (!details) return
+    if (details.action !== 'run' || details.status !== 'running') return
+    const runId = typeof details.runId === 'string' ? details.runId : null
+    if (!runId) return
+
+    this.broadcastWorkflowUpdate({ runId, status: 'running' })
+  }
+
+  /**
+   * 广播 workflow 增量信号（session.workflows server push）。
+   * 推送 {runId, status, reason?} 增量，非全量列表——前端收到后触发 loadWorkflows RPC 拉取完整数据。
+   * 设计理由：发起时刻 runtime 无 agentCalls（workflow 刚启动），全量需读 state 文件增加复杂度；
+   * 增量信号 + RPC 拉取复用现有 loadWorkflows 链路，零新增 IO 逻辑。
+   */
+  private broadcastWorkflowUpdate(update: { runId: string; status: string; reason?: string }): void {
+    this.opts.send({
+      type: 'session.workflowUpdate' as ServerMessageType,
+      payload: {
+        sessionId: this.sessionId,
+        update,
       },
     })
   }
