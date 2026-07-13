@@ -122,6 +122,22 @@ export const useSubagentStore = defineStore('subagent', () => {
     }
   }
 
+  /**
+   * 订阅 runtime 推送的 session.subagents 广播。
+   * runtime 在 subagent 状态变化（发起/终态）时主动推送全量列表，
+   * 前端被动消费更新 records（驱动 sidebar badge 计数实时变化）。
+   *
+   * @param sessionId 当前焦点 session ID
+   * @returns 取消订阅函数（切会话时调用，取消旧 session 的订阅）
+   */
+  function subscribeSubagentPush(sessionId: string): () => void {
+    return events.on(sessionId, (msg) => {
+      if (msg.type !== 'session.subagents') return
+      const payload = msg.payload as { subagents: SubagentRecord[] }
+      records.value = payload.subagents
+    })
+  }
+
   /** 清空 subagent 列表 + 退出所有 panel overlay + 停止所有 streaming */
   function clearSubagents(): void {
     for (const pid of panelStreamUnsub.keys()) stopStream(pid)
@@ -241,6 +257,7 @@ export const useSubagentStore = defineStore('subagent', () => {
     isRunning,
     // actions
     loadSubagents,
+    subscribeSubagentPush,
     clearSubagents,
     selectSubagent,
     backToMain,
