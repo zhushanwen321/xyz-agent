@@ -9,12 +9,15 @@
  * `infra/` 层内部使用。services/transport 不得 import 此文件——它们只见
  * 翻译后的内部类型。从根级 `types.ts` 迁入（原 444 行拆分）。
  *
- * GOTCHAS (field naming inconsistencies with common conventions):
+ * GOTCHAS (field naming — these are pi's canonical field names, not drift):
  * - prompt command uses `message` field, NOT `content`
  * - get_messages response puts history in `data` field, NOT `payload`
- * - tool_execution_start uses `args` field, NOT `input`
- * - tool_execution_end uses `result` field, NOT `output`
+ * - tool_execution_start uses `args` (pi 的规范字段名，非漂移——pi 从不发 input)
+ * - tool_execution_end uses `result` (pi 的规范字段名，非漂移——pi 从不发 output)
  * - message_update.toolcall_* events are incomplete; prefer tool_execution_* instead
+ *
+ * 本文件是 pi 协议的真契约（ADR-0033）。PiEvent 联合覆盖 AgentSessionEvent 全部事件类型，
+ * pi 升级时需同步维护（编译器 exhaustive check 会提示）。
  */
 
 // ── Base types ─────────────────────────────────────────────────────
@@ -114,8 +117,37 @@ export interface PiTurnStartEvent extends PiBaseMessage {
   type: 'turn_start'
 }
 
+/**
+ * turn_end — 单个 turn 结束。pi 0.80.3 事件模型：1 agent 循环 = N 个 turn，
+ * 每 turn_end 带 message.usage（本 turn 用量）+ toolResults（本 turn 的工具产出）。
+ */
 export interface PiTurnEndEvent extends PiBaseMessage {
   type: 'turn_end'
+  /** 本 turn 的 assistant 消息（含 usage）。形状与 PiAgentEndMessage 一致。 */
+  message: PiTurnEndMessage
+  /** 本 turn 内执行完成的工具结果列表。 */
+  toolResults: PiToolResultMessage[]
+}
+
+/** Assistant message carried by turn_end — mirrors PiAgentEndMessage shape. */
+export interface PiTurnEndMessage {
+  role: string
+  content: unknown
+  usage?: PiUsage
+  stopReason?: string
+}
+
+/**
+ * Tool result message carried by turn_end.toolResults — lightweight declaration.
+ * content 用 unknown[] 逃生（xyz-agent 不消费 turn_end 的 toolResults 内容字段）。
+ */
+export interface PiToolResultMessage {
+  role: 'toolResult'
+  toolCallId: string
+  toolName: string
+  content: unknown[]
+  isError?: boolean
+  details?: Record<string, unknown>
 }
 
 // ── Event messages: message lifecycle ──────────────────────────────
@@ -231,16 +263,13 @@ export interface PiToolcallEndSubEvent {
 
 /**
  * Tool execution start — provides the canonical tool call info.
- * pi uses `args` field, NOT `input`.
+ * pi 用 `args` 是规范字段名（非漂移，ADR-0033）。
  */
 export interface PiToolExecutionStartEvent extends PiBaseMessage {
   type: 'tool_execution_start'
   toolCallId: string
   toolName: string
-  // TODO(pi-协议漂移): event-adapter 同时读 `args ?? input`——pi 历史版本用 input，
-  // 现版本用 args。ADR-0003 决定 translate() 入参保持 Record<string,unknown> 容错，
-  // 此处类型声明的是规范（args），但实际 pi 可能仍发 input。窄化时勿删 input fallback。
-  /** pi uses "args", NOT "input". */
+  /** pi 的规范字段名（pi 从不发 input）。 */
   args: Record<string, unknown>
 }
 
@@ -253,29 +282,134 @@ export interface PiToolExecutionUpdateEvent extends PiBaseMessage {
 
 /**
  * Tool execution end — provides the canonical tool result.
- * pi uses `result` field, NOT `output`.
- *
- * TODO(pi-协议漂移): event-adapter 的 handleToolExecutionEnd 同时读 `result ?? output`
- * 且 result 可能是 string | object-with-content-array | 其他——比此处的
- * `PiToolExecutionResult`（固定 {content: Array<{type,text}>}）声明更宽。
- * ADR-0003 决定 translate() 入参保持 Record<string,unknown> 容错以覆盖实际数据形状。
- * 升级 pi 后若确认 result 已稳定为 PiToolExecutionResult 形状，可收紧此类型并移除 fallback。
+ * pi 用 `result` 是规范字段名（非漂移，ADR-0033）。pi 从不发 output。
  */
 export interface PiToolExecutionEndEvent extends PiBaseMessage {
   type: 'tool_execution_end'
   toolCallId: string
   toolName: string
-  /** pi uses "result", NOT "output". */
+  /** pi 的规范字段名（pi 从不发 output）。 */
   result: PiToolExecutionResult
-  isError?: boolean
+  /** pi 必填字段（agent-session.ts 始终发送）。 */
+  isError: boolean
+  /**
+   * 触发本次 tool_execution_end 的入参副本。pi 不保证发送此字段（仅 tool_execution_start
+   * 必发 args），但 event-adapter:144 读 event.args 提取 write content——此处声明为可选容错。
+   */
+  args?: Record<string, unknown>
 }
 
-/** pi's tool result shape: an array of content blocks. */
+/**
+ * pi's tool result shape — mirrors pi AgentToolResult<T>（types.ts:350-362）。
+ * content 是 TextContent|ImageContent 块数组；details 是工具自定义结构（泛型 T 的实参，
+ * xyz-agent 不消费其字段，故用 unknown）；addedToolNames/terminate 为可选控制字段。
+ */
 export interface PiToolExecutionResult {
-  content: Array<{
-    type: string
-    text: string
-  }>
+  content: Array<PiTextContentBlock | PiImageContentBlock>
+  /** 工具自定义结构化数据（对应 AgentToolResult.details: T）。 */
+  details: unknown
+  /** 工具动态注册的新工具名（对应 AgentToolResult.addedToolNames）。 */
+  addedToolNames?: string[]
+  /** 是否终止 agent 循环（对应 AgentToolResult.terminate）。 */
+  terminate?: boolean
+}
+
+/** Text content block in a tool result. */
+export interface PiTextContentBlock {
+  type: 'text'
+  text: string
+}
+
+/** Image content block in a tool result. */
+export interface PiImageContentBlock {
+  type: 'image'
+  data: string
+  mimeType: string
+}
+
+// ── Event messages: session / agent lifecycle (pi 0.80.3+) ─────────
+
+/** Compaction 触发原因。 */
+export type PiCompactionReason = 'manual' | 'threshold' | 'overflow'
+
+/** Compaction 开始事件。 */
+export interface PiCompactionStartEvent extends PiBaseMessage {
+  type: 'compaction_start'
+  reason: PiCompactionReason
+}
+
+/**
+ * Compaction 结束事件。result 用 unknown——pi 内部用 CompactionResult 类型，
+ * xyz-agent 不消费其字段，故不引入该类型的镜像。
+ */
+export interface PiCompactionEndEvent extends PiBaseMessage {
+  type: 'compaction_end'
+  reason: PiCompactionReason
+  result?: unknown
+  aborted: boolean
+  willRetry: boolean
+  errorMessage?: string
+}
+
+/** 自动重试开始事件。 */
+export interface PiAutoRetryStartEvent extends PiBaseMessage {
+  type: 'auto_retry_start'
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  errorMessage: string
+}
+
+/** 自动重试结束事件。 */
+export interface PiAutoRetryEndEvent extends PiBaseMessage {
+  type: 'auto_retry_end'
+  success: boolean
+  attempt: number
+  finalError?: string
+}
+
+/** Thinking level 取值（pi thinking 配置）。 */
+export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** Thinking level 变更事件。 */
+export interface PiThinkingLevelChangedEvent extends PiBaseMessage {
+  type: 'thinking_level_changed'
+  level: PiThinkingLevel
+}
+
+/** Steering/follow-up 队列变更事件。 */
+export interface PiQueueUpdateEvent extends PiBaseMessage {
+  type: 'queue_update'
+  steering: readonly string[]
+  followUp: readonly string[]
+}
+
+/** 会话条目追加事件（pi 内部 entry 结构，xyz-agent 不消费字段，故 Record）。 */
+export interface PiEntryAppendedEvent extends PiBaseMessage {
+  type: 'entry_appended'
+  entry: Record<string, unknown>
+}
+
+/** 会话元信息变更事件（主要是 session name）。 */
+export interface PiSessionInfoChangedEvent extends PiBaseMessage {
+  type: 'session_info_changed'
+  name: string | undefined
+}
+
+/** Agent 进入稳态（无待处理工具/消息）事件。 */
+export interface PiAgentSettledEvent extends PiBaseMessage {
+  type: 'agent_settled'
+}
+
+/**
+ * Extension 报错事件。由 rpc-mode 发送，event-adapter:512 已处理但类型此前未声明。
+ * 注意：event-adapter 转发时把 extensionPath 重命名为 extensionName（字段名映射，非 pi 协议字段）。
+ */
+export interface PiExtensionErrorEvent extends PiBaseMessage {
+  type: 'extension_error'
+  extensionPath: string
+  event: string
+  error: string
 }
 
 // ── Event messages: extension UI ───────────────────────────────────
@@ -385,7 +519,7 @@ export interface PiUsage {
 
 // ── Union types for the adapter layer ──────────────────────────────
 
-/** Union of all unsolicited event types from pi. */
+/** Union of all unsolicited event types from pi (mirrors AgentSessionEvent, ADR-0033). */
 export type PiEvent =
   | PiAgentStartEvent
   | PiAgentEndEvent
@@ -400,6 +534,16 @@ export type PiEvent =
   | PiExtensionUiRequestEvent
   | PiStatusEvent
   | PiErrorEvent
+  | PiCompactionStartEvent
+  | PiCompactionEndEvent
+  | PiAutoRetryStartEvent
+  | PiAutoRetryEndEvent
+  | PiThinkingLevelChangedEvent
+  | PiQueueUpdateEvent
+  | PiEntryAppendedEvent
+  | PiSessionInfoChangedEvent
+  | PiAgentSettledEvent
+  | PiExtensionErrorEvent
 
 /** Any message that can arrive from pi (response or event). */
 export type PiAnyIncomingMessage =
