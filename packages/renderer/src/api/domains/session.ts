@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, Message } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message } from '@xyz-agent/shared'
 import { request } from '../request'
 
 /**
@@ -114,5 +114,23 @@ export async function getSubagents(sessionId: string): Promise<SubagentRecord[]>
  */
 export async function getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]> {
   const reply = await request<{ messages: Message[] }>('session.getSubagentHistory', { sessionId, subagentId })
+  return reply.messages
+}
+
+/**
+ * 获取 session 派生的 workflow 列表（runtime 从主 session JSONL 的 workflow-state-link 提取）。
+ * reply payload 是 { sessionId, workflows }，解包 .workflows。
+ */
+export async function getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]> {
+  const reply = await request<{ workflows: WorkflowRunRecord[] }>('session.getWorkflows', { sessionId })
+  return reply.workflows
+}
+
+/**
+ * 获取 workflow 内 agent call 的对话流历史（runtime 按 trace[].sessionId 查找 JSONL）。
+ * reply payload 是 { sessionId, agentCallSessionId, messages }，解包 .messages。
+ */
+export async function getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
+  const reply = await request<{ messages: Message[] }>('session.getAgentCallHistory', { sessionId, agentCallSessionId })
   return reply.messages
 }

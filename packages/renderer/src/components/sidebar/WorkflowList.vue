@@ -1,0 +1,147 @@
+<template>
+  <!--
+    展示组件 · workflow 列表（Flows tab 视图 1）。
+    渲染 WorkflowRunRecord[] 卡片：状态点 + scriptName + slug + 进度条 + 摘要。
+    点击卡片 → emit('select', runId)，由父组件进入视图 2（WorkflowDetail）。
+    空态展示提示文案。
+  -->
+  <div class="flex min-h-0 flex-col" data-testid="workflow-list">
+    <!-- 列表 -->
+    <div v-if="workflows.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
+      <div
+        v-for="record in workflows"
+        :key="record.runId"
+        class="group relative cursor-pointer rounded-md px-2 py-[7px] transition-colors hover:bg-surface-hover"
+        data-testid="workflow-card"
+        @click="emit('select', record.runId)"
+      >
+        <!-- 第一行：状态指示 + scriptName + slug -->
+        <div class="flex items-center gap-2">
+          <Loader2
+            v-if="record.status === 'running'"
+            class="size-[13px] shrink-0 animate-spin text-accent"
+            data-testid="workflow-card-spinner"
+          />
+          <span
+            v-else
+            class="size-2 shrink-0 rounded-full"
+            :class="statusDotClass(record.status, record.reason)"
+          />
+          <span class="min-w-0 flex-1 truncate text-[12.5px] font-medium leading-[1.35] text-fg">
+            {{ record.scriptName }}
+          </span>
+          <span v-if="record.slug" class="shrink-0 font-mono text-[10px] text-muted">
+            {{ record.slug }}
+          </span>
+        </div>
+
+        <!-- 第二行：进度条 + agent 完成比例 -->
+        <div class="mt-1.5 flex items-center gap-2 pl-[21px]">
+          <div class="h-[3px] min-w-[40px] flex-1 overflow-hidden rounded-full bg-border">
+            <div
+              class="h-full rounded-full transition-all"
+              :class="progressBarClass(record)"
+              :style="{ width: `${progressPercent(record)}%` }"
+            />
+          </div>
+          <span class="shrink-0 font-mono text-[10px] text-subtle">
+            {{ completedAgentCount(record) }}/{{ record.agentCalls.length }} agents
+          </span>
+        </div>
+
+        <!-- 第三行：摘要（耗时 · token） -->
+        <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-subtle">
+          <span v-if="record.startedAt">{{ formatElapsedFromIso(record.startedAt, record.completedAt) }}</span>
+          <span v-if="record.usedTokens !== undefined">· {{ formatTokens(record.usedTokens) }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 空态 -->
+    <div
+      v-else
+      class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+      data-testid="workflow-list-empty"
+    >
+      <Workflow class="size-7 text-subtle opacity-40" />
+      <p class="text-[11.5px] text-subtle opacity-55">暂无工作流</p>
+      <p class="text-[10.5px] text-subtle opacity-40">发起 workflow 后在此查看进度</p>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { Loader2, Workflow } from '@lucide/vue'
+import type { WorkflowRunRecord, WorkflowRunStatus, WorkflowDoneReason } from '@xyz-agent/shared'
+
+/** token 数超过此阈值显示 k 单位 */
+const TOKEN_K_THRESHOLD = 1000
+/** 百分比基数 */
+const PERCENT_BASE = 100
+/** 毫秒 → 秒 */
+const MS_PER_SECOND = 1000
+/** 秒 → 分 */
+const SECONDS_PER_MINUTE = 60
+/** 秒 → 时 */
+const SECONDS_PER_HOUR = 3600
+
+defineProps<{
+  workflows: WorkflowRunRecord[]
+}>()
+
+const emit = defineEmits<{
+  select: [runId: string]
+}>()
+
+/** 状态点颜色映射（design-tokens 语义色） */
+function statusDotClass(status: WorkflowRunStatus, reason?: WorkflowDoneReason): string {
+  switch (status) {
+    case 'done':
+      return reason === 'completed' ? 'bg-success' : 'bg-danger'
+    case 'paused':
+      return 'bg-warning'
+    default:
+      return 'bg-accent'
+  }
+}
+
+/** 进度条颜色（done=success，failed/aborted=danger，running=accent） */
+function progressBarClass(record: WorkflowRunRecord): string {
+  if (record.status === 'done') {
+    return record.reason === 'completed' ? 'bg-success' : 'bg-danger'
+  }
+  if (record.status === 'paused') return 'bg-warning'
+  return 'bg-accent'
+}
+
+/** 已完成 agent call 数量 */
+function completedAgentCount(record: WorkflowRunRecord): number {
+  return record.agentCalls.filter((c) => c.status === 'completed' || c.status === 'failed').length
+}
+
+/** 进度百分比 */
+function progressPercent(record: WorkflowRunRecord): number {
+  if (record.agentCalls.length === 0) return 0
+  return Math.round((completedAgentCount(record) / record.agentCalls.length) * PERCENT_BASE)
+}
+
+/** 格式化 token 数（超过阈值显示 k） */
+function formatTokens(tokens: number): string {
+  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k tok`
+  return `${tokens} tok`
+}
+
+/** 格式化耗时（从 ISO 时间戳算秒数） */
+function formatElapsedFromIso(startedAt: string, completedAt?: string): string {
+  const start = new Date(startedAt).getTime()
+  const end = completedAt ? new Date(completedAt).getTime() : Date.now()
+  const seconds = Math.floor((end - start) / MS_PER_SECOND)
+  if (seconds >= SECONDS_PER_HOUR) {
+    return `${Math.floor(seconds / SECONDS_PER_HOUR)}h${Math.floor((seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE)}m`
+  }
+  if (seconds >= SECONDS_PER_MINUTE) {
+    return `${Math.floor(seconds / SECONDS_PER_MINUTE)}m${seconds % SECONDS_PER_MINUTE}s`
+  }
+  return `${seconds}s`
+}
+</script>

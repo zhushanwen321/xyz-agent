@@ -67,13 +67,13 @@
         >{{ session.list.length }}</span>
       </Button>
 
-      <!-- segmented tab（会话 | 文件 | Agents） -->
+      <!-- segmented tab（会话 | 文件 | Agents | Flows） -->
       <SegmentedTab
         v-model="sidebar.activeTab"
         :session-count="session.list.length"
         :file-count="fileCount"
         :subagent-count="subagentCount"
-        :workflow-count="0"
+        :workflow-count="workflowCount"
       />
 
       <!-- 子视图区：会话列表 / 文件视图 / subagent 列表 -->
@@ -96,14 +96,17 @@
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'workflows'">
-          <div
-            class="flex flex-col items-center justify-center gap-2 py-10 text-center"
-            data-testid="workflow-list-empty"
-          >
-            <Workflow class="size-7 text-subtle opacity-40" />
-            <p class="text-[11.5px] text-subtle opacity-55">暂无工作流</p>
-            <p class="text-[10.5px] text-subtle opacity-40">发起 workflow 后在此查看进度</p>
-          </div>
+          <WorkflowDetail
+            v-if="currentWorkflow"
+            :workflow="currentWorkflow"
+            @back="onWorkflowBack"
+            @select-agent-call="onSelectAgentCall"
+          />
+          <WorkflowList
+            v-else
+            :workflows="workflowList"
+            @select="onSelectWorkflow"
+          />
         </template>
         <template v-else>
           <FileView
@@ -152,7 +155,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings, FolderOpen, Workflow } from '@lucide/vue'
+import { Plus, LayoutGrid, Search, Settings, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SearchModal from '@/components/overlays/SearchModal.vue'
@@ -165,12 +168,16 @@ import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
+import WorkflowList from './WorkflowList.vue'
+import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
+import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
 import * as events from '@/api/events'
 
 const navigation = useNavigationStore()
@@ -179,6 +186,7 @@ const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
+const workflowStore = useWorkflowStore()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -218,6 +226,15 @@ const subagentCount = computed(() => subagentStore.records.length)
 /** subagent 列表（store records 的 computed 解包，供 template 直接用） */
 const subagentList = computed(() => subagentStore.records)
 
+/** workflow tab 计数（当前 session 的 workflow 数量，读 store 共享列表） */
+const workflowCount = computed(() => workflowStore.workflowCount())
+
+/** workflow 列表（store records 的 computed 解包，供 template 直接用） */
+const workflowList = computed(() => workflowStore.records)
+
+/** 当前查看的 workflow record（视图 2 详情态，null 时显示视图 1 列表） */
+const currentWorkflow = computed(() => workflowStore.getCurrentWorkflow(panelStore.activePanelId))
+
 /** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
   return derivedStatus(id).value
@@ -249,6 +266,32 @@ async function onSelectSubagent(subagentId: string): Promise<void> {
   )
 }
 
+/** 选中 workflow → 进入视图 2 详情（sidebar 内，不切 Panel） */
+function onSelectWorkflow(runId: string): void {
+  workflowStore.selectWorkflow(panelStore.activePanelId, runId)
+}
+
+/** 视图 2 → 视图 1（返回 workflow 列表） */
+function onWorkflowBack(): void {
+  workflowStore.backToWorkflowList(panelStore.activePanelId)
+}
+
+/**
+ * 选中 agent call → Panel overlay（切 Panel 显示 agent call 对话流）。
+ * store.selectAgentCall 需要 mainSessionId + chatStore.setMessages（铁律：store 不 import chatStore）。
+ */
+async function onSelectAgentCall(agentCallSessionId: string): Promise<void> {
+  const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
+  if (!activePanel?.sessionId) return
+  const chat = useChatStore()
+  await workflowStore.selectAgentCall(
+    panelStore.activePanelId,
+    activePanel.sessionId,
+    agentCallSessionId,
+    (virtualId, msgs) => chat.setMessages(virtualId, msgs),
+  )
+}
+
 async function onNewSession(): Promise<void> {
   await newSession()
 }
@@ -272,6 +315,7 @@ onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
   useSubagentListSync()
+  useWorkflowListSync()
 })
 
 /**

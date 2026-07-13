@@ -119,6 +119,7 @@ import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -163,20 +164,29 @@ const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
 const subagentStore = useSubagentStore()
+const workflowStore = useWorkflowStore()
 
 const flow = useNewTaskFlow()
 
-/** subagent 视图标题：agent 名称 + subagentId 摘要 */
+/** overlay 视图标题：subagent 或 agent call 的摘要 */
 const SUBAGENT_ID_DISPLAY_LENGTH = 12
 const subagentLabel = computed(() => {
+  // agent call overlay
+  const agentCallId = workflowStore.getViewingAgentCallId(props.panelId)
+  if (agentCallId) return `Agent call · ${agentCallId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
+  // subagent overlay
   const record = subagentStore.getCurrentSubagent(props.panelId)
   if (!record) return 'Subagent'
   return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
 })
 
-/** 返回主会话 */
+/** 返回主会话（subagent overlay 或 agent call overlay 均回退） */
 function onSubagentBack(): void {
-  subagentStore.backToMain(props.panelId)
+  if (workflowStore.isViewing(props.panelId)) {
+    workflowStore.backFromAgentCall(props.panelId)
+  } else {
+    subagentStore.backToMain(props.panelId)
+  }
 }
 
 /** Panel 卸载时停止 subagent streaming 订阅（防止泄漏） */
@@ -185,15 +195,20 @@ onUnmounted(() => {
 })
 
 /**
- * subagent overlay 模式：viewing subagent 时用虚拟 session ID 渲染 MessageStream，
+ * overlay 模式：viewing subagent 或 agent call 时用虚拟 session ID 渲染 MessageStream，
  * 否则用主 session ID。panel store 的 sessionId 从不被替换（主 session 保持高亮、文件视图不变）。
+ * subagent overlay 优先于 agent call overlay（两者互斥，不会同时 active）。
  */
 const effectiveSessionId = computed(
-  () => subagentStore.getActiveSubagentVirtualId(props.panelId) ?? props.sessionId,
+  () => subagentStore.getActiveSubagentVirtualId(props.panelId)
+    ?? workflowStore.getActiveAgentCallVirtualId(props.panelId)
+    ?? props.sessionId,
 )
 
-/** 本 panel 是否正在查看 subagent overlay（computed 跟踪 panelViewingMap 响应式变化） */
-const isViewingSubagent = computed(() => subagentStore.isViewing(props.panelId))
+/** 本 panel 是否正在查看 overlay（subagent 或 agent call） */
+const isViewingSubagent = computed(
+  () => subagentStore.isViewing(props.panelId) || workflowStore.isViewing(props.panelId),
+)
 
 /** subagent overlay 时的消息数（虚拟 session 的消息数） */
 const effectiveMessageCount = computed(() =>
