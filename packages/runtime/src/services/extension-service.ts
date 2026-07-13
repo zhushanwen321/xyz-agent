@@ -155,6 +155,7 @@ export class ExtensionService {
       .split(delimiter)
       .map(p => p.trim())
       .filter(p => p.length > 0)
+      .map(p => p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
       .map(p => resolve(this.projectRoot, p))
   }
 
@@ -435,7 +436,11 @@ export class ExtensionService {
    * Copies to temp dir, discovers extensions, returns candidates.
    */
   async installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: ExtensionInfo[] }> {
-    const absPath = resolve(sourcePath)
+    // 展开 ~ / ~user 为 home 目录（Node.js path.resolve 不认 ~，会当字面量拼到 cwd 上）
+    const expanded = sourcePath.startsWith('~')
+      ? join(homedir(), sourcePath.slice(1))
+      : sourcePath
+    const absPath = resolve(expanded)
 
     if (!existsSync(absPath)) {
       throw new Error(`Source path does not exist: ${absPath}`)
