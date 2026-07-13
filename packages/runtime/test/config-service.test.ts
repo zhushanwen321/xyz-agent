@@ -205,3 +205,61 @@ describe('ConfigService.listProviders · model 级 enabled 透传', () => {
     expect(models.find(m => m.id === 'm2')?.enabled).toBe(true)
   })
 })
+
+// ── U3b: setProvider 的 model 合并写路径必须保留传入的 enabled/api/baseUrl ──
+// review 发现：setProvider 的 model 合并循环只写 name/contextWindow/input/thinkingLevelMap，
+// 前端回传的 api/baseUrl/enabled 被丢弃。新模型（base={}）和编辑现有模型场景都会丢字段。
+// 此 describe 走 setProvider 写路径（而非 writeModels 直写），断言字段真落盘。
+describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 review must_fix #1）', () => {
+  it('新模型经 setProvider 保存后 enabled 字段落盘', () => {
+    // 先建空 provider
+    writeModels({
+      providers: {
+        p1: {
+          apiKey: 'sk-x',
+          models: [],
+        },
+      },
+    })
+    refreshModels()
+
+    // setProvider 传入含 enabled 的 model（新模型，base={}）
+    configService.setProvider('p1', {
+      models: [
+        { id: 'm1', enabled: false },
+        { id: 'm2', enabled: true },
+      ],
+    })
+
+    const providers = configService.listProviders()
+    const models = providers[0]!.models
+    expect(models.find(m => m.id === 'm1')?.enabled).toBe(false)
+    expect(models.find(m => m.id === 'm2')?.enabled).toBe(true)
+  })
+
+  it('model 级 api/baseUrl 经 setProvider 保存后落盘（编辑场景）', () => {
+    // 先建含 m1 的 provider（m1 无 api/baseUrl）
+    writeModels({
+      providers: {
+        p1: {
+          apiKey: 'sk-x',
+          api: 'anthropic-messages',
+          models: [{ id: 'm1', name: 'M1' }],
+        },
+      },
+    })
+    refreshModels()
+
+    // 编辑 m1，补 model 级 api/baseUrl（覆盖 provider 默认）
+    configService.setProvider('p1', {
+      models: [
+        { id: 'm1', name: 'M1', api: 'openai-completions', baseUrl: 'https://m1.example.com' },
+      ],
+    })
+
+    const providers = configService.listProviders()
+    const m1 = providers[0]!.models.find(m => m.id === 'm1')
+    expect(m1?.api).toBe('openai-completions')
+    expect(m1?.baseUrl).toBe('https://m1.example.com')
+  })
+})

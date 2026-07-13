@@ -108,7 +108,7 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
+    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean }>
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } } {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
@@ -139,6 +139,12 @@ export class ConfigService implements IConfigService {
           // buildMap() returned undefined (all passthrough) → remove from model
           delete model.thinkingLevelMap
         }
+        // review must_fix #1：前端回传的 model 级 api/baseUrl/enabled 必须写回，
+        // 否则编辑保存即丢失（新模型 base={} 全丢，编辑现有模型被 base 旧值覆盖）。
+        // 对齐 provider 级的「if (m.X !== undefined) model.X = ...」模式。
+        if (typeof m.api === 'string') model.api = m.api
+        if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
+        if (typeof m.enabled === 'boolean') model.enabled = m.enabled
         return model as unknown as ConfigModelDefinition
       })
     }

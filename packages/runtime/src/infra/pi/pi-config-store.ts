@@ -18,6 +18,7 @@ import type {
   ConfigProviderConfig,
   ConfigModelsConfig,
 } from '../../services/ports/config.js'
+import { KNOWN_PI_API_TYPES } from '@xyz-agent/shared'
 import {
   getDefaultModel,
   setDefaultModel,
@@ -70,9 +71,9 @@ export class PiConfigStore implements IConfigStore {
    * 未知值（非 pi 支持的 api）warn 但不阻断，便于排查前端误传，避免静默吞错。
    */
   applyTypeTranslation(type: string): string {
-    // pi 支持的 api 终值白名单；非白名单值仅 warn 不阻断（前端可能在迭代中）。
-    const KNOWN_API_TYPES = new Set(['anthropic-messages', 'openai-completions', 'openai-responses'])
-    if (!KNOWN_API_TYPES.has(type)) {
+    // pi 支持的 api 终值白名单（SSOT：@xyz-agent/shared 的 KNOWN_PI_API_TYPES）；
+    // 非白名单值仅 warn 不阻断（前端可能在迭代中）。
+    if (!KNOWN_PI_API_TYPES.has(type)) {
       console.warn(`[pi-config-store] 未知 provider api type "${type}"，原样透传（pi 可能不支持）`)
     }
     return type
