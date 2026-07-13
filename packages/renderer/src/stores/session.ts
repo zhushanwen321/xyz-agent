@@ -25,6 +25,12 @@ export const useSessionStore = defineStore('session', () => {
     groups.value.flatMap((g) => g.sessions),
   )
 
+  /**
+   * 当前导航/启动语义的 session ID。不驱动 UI 高亮——UI 高亮由
+   * useSidebar.focusedSessionId（panel store activePanelId → sessionId 派生）负责。
+   * activeId 仅用于：removeFromList 删 active 回退判断、deleteSession 回退、
+   * useNewTaskFlow landing/预建写入、AppShell 导航栈回溯。
+   */
   const activeId = ref<string | null>(null)
 
   /**
