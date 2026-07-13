@@ -57,7 +57,7 @@
       </Button>
     </div>
 
-    <MessageStream v-else-if="sessionId && messageCount > 0" :session-id="sessionId" />
+    <MessageStream v-else-if="effectiveSessionId && effectiveMessageCount > 0" :session-id="effectiveSessionId" />
     <Landing
       v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"
@@ -82,7 +82,7 @@
          git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。
          ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
-    <div class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-3.5">
+    <div v-if="!subagentView.isViewingSubagent.value" class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-3.5">
       <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
       <ProgressZone />
 
@@ -179,6 +179,19 @@ function onSubagentBack(): void {
   subagentView.backToMainSession()
 }
 
+/**
+ * subagent overlay 模式：viewing subagent 时用虚拟 session ID 渲染 MessageStream，
+ * 否则用主 session ID。panel store 的 sessionId 从不被替换（主 session 保持高亮、文件视图不变）。
+ */
+const effectiveSessionId = computed(
+  () => subagentView.activeSubagentVirtualId.value ?? props.sessionId,
+)
+
+/** subagent overlay 时的消息数（虚拟 session 的消息数） */
+const effectiveMessageCount = computed(() =>
+  effectiveSessionId.value ? chat.getMessages(effectiveSessionId.value).length : 0,
+)
+
 // W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。
 // B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 ExtensionUIDialog modal 处理）
 // landing 态 sessionId=null 时内部 null 守卫已处理，不订阅。
@@ -192,10 +205,6 @@ const isSessionDead = computed(() => {
   return s?.status === 'dead'
 })
 
-/** 当前 session 消息数（未 hydrate / 无 session → 0） */
-const messageCount = computed(() =>
-  props.sessionId ? chat.getMessages(props.sessionId).length : 0,
-)
 /** 生成态优先：本 Panel 的 session 正在流式时不渲染 landing（AC-2.8）。
  *  [HISTORICAL] 原用全局 chat.isGenerating，A 会话流式时点新建切到空 session（sessionId=null），
  *  空 session 的 Landing 被 !isGenerating 守卫误伤 → 落到分支兜底空态（「选择左侧会话开始」），
