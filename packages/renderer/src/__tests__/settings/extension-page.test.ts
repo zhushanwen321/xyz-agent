@@ -39,6 +39,7 @@ vi.mock('@/api', () => ({
 }))
 
 import ExtensionPage from '@/components/settings/ExtensionPage.vue'
+import { useToast } from '@/composables/useToast'
 
 /** user-installed 扩展 fixture（source='user-installed'，应渲染升级按钮 + 自动升级开关） */
 function userExt(): ExtensionItem {
@@ -75,6 +76,9 @@ beforeEach(() => {
   setActivePinia(createPinia())
   extensionMock.upgrade.mockClear()
   extensionMock.setAutoUpgrade.mockClear()
+  // 清空全局 toasts（useToast 是模块级单例，跨用例共享）
+  const { toasts } = useToast()
+  toasts.value = []
 })
 
 afterEach(() => {
@@ -201,5 +205,60 @@ describe('ExtensionPage 候选项点击不双触发（W2 D3）', () => {
     // 修复后：div 无 @click，路径2 不翻转 → 最终选中态 = checked
     // bug 模式：div 有 @click，路径2 二次翻转 → 最终 = unchecked（测试会失败，锁定 bug）
     expect(checkboxBtn.attributes('data-state')).toBe('checked')
+  })
+})
+
+// ── W4 · D11: 操作成功 toast 反馈（U7）──────────────────────────────
+//
+// 背景：install/uninstall/upgrade 成功后只清状态不弹 toast，对比 SystemPage 有 toastInfo('已应用')，
+// ExtensionPage 缺反馈。修复后这些操作成功应经 useToast info 反馈。
+//
+// 验证策略：mock extension API resolve → 触发操作 → flushPromises → 断言全局 toasts 含对应文案。
+describe('ExtensionPage 操作成功 toast 反馈（W4 D11）', () => {
+  it('install（npm 单步）成功 → toastInfo("扩展已安装")', async () => {
+    const { toasts } = useToast()
+    wrapper = mount(ExtensionPage, { props: { extensions: [] } })
+    await flushPromises()
+    // npm tab 默认选中；输入包名点安装
+    await wrapper.find('input').setValue('foo-pkg')
+    const installBtn = wrapper.findAll('button').find((b) => b.text().includes('安装'))
+    expect(installBtn).toBeTruthy()
+    await installBtn!.trigger('click')
+    await flushPromises()
+    expect(extensionMock.install).toHaveBeenCalledWith('npm:foo-pkg')
+    expect(toasts.value.some((t) => t.message === '扩展已安装' && t.type === 'info')).toBe(true)
+  })
+
+  it('uninstall 确认成功 → toastInfo("扩展已卸载")', async () => {
+    const { toasts } = useToast()
+    wrapper = mount(ExtensionPage, {
+      props: { extensions: [userExt()] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    // 点击卸载按钮打开确认弹窗（confirmTarget=ext.name → ConfirmDialog open）
+    const uninstallBtn = wrapper.find('button[title="卸载"]')
+    await uninstallBtn.trigger('click')
+    await flushPromises()
+    // ConfirmDialog teleport 到 body，点「卸载」确认按钮（confirm-text="卸载"）。
+    // 用 includes 匹配（按钮内可能含 spinner svg 影响精确匹配）
+    const confirm = Array.from(document.body.querySelectorAll('button'))
+      .find((b) => (b.textContent ?? '').includes('卸载') && (b.textContent ?? '').length <= 4)
+    expect(confirm).toBeTruthy()
+    confirm!.click()
+    await flushPromises()
+    expect(extensionMock.uninstall).toHaveBeenCalledWith('my-tools')
+    expect(toasts.value.some((t) => t.message === '扩展已卸载' && t.type === 'info')).toBe(true)
+  })
+
+  it('upgrade 成功 → toastInfo("扩展已升级")', async () => {
+    const { toasts } = useToast()
+    wrapper = mount(ExtensionPage, { props: { extensions: [userExt()] } })
+    await flushPromises()
+    const upgradeBtn = wrapper.find('button[title="升级"]')
+    await upgradeBtn.trigger('click')
+    await flushPromises()
+    expect(extensionMock.upgrade).toHaveBeenCalledWith('my-tools')
+    expect(toasts.value.some((t) => t.message === '扩展已升级' && t.type === 'info')).toBe(true)
   })
 })

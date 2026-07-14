@@ -212,9 +212,11 @@ import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import { extension as extensionApi } from '@/api'
 import { useSettingsStore, type ExtensionItem } from '@/stores/settings'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ extensions: ExtensionItem[] }>()
 const settingsStore = useSettingsStore()
+const { info: toastInfo } = useToast()
 
 /** toggle 中的扩展名集合（防双击：API 期间 disable Switch） */
 const toggling = ref<Set<string>>(new Set())
@@ -256,6 +258,7 @@ async function onInstallRecommended(pkgName: string) {
   installingRecommended.value = next
   try {
     await extensionApi.install(`npm:${pkgName}`)
+    toastInfo('扩展已安装')
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -343,6 +346,7 @@ async function onInstall() {
       const source = input.startsWith('npm:') ? input : `npm:${input}`
       await extensionApi.install(source)
       installInput.value = ''
+      toastInfo('扩展已安装')
     } else if (activeTab.value === 'dir') {
       const result = await extensionApi.installDir(input)
       setDiscovered(result)
@@ -400,6 +404,7 @@ async function onFinishInstall() {
     discovered.value = null
     selected.value = new Set()
     installInput.value = ''
+    toastInfo('扩展已安装')
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -431,6 +436,7 @@ async function onConfirmUninstall() {
   try {
     await extensionApi.uninstall(name)
     confirmTarget.value = ''
+    toastInfo('扩展已卸载')
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -447,6 +453,7 @@ async function onUpgrade(name: string) {
   upgrading.value = next
   try {
     await extensionApi.upgrade(name)
+    toastInfo('扩展已升级')
   } catch (e) {
     actionError.value = e instanceof Error ? `升级失败: ${e.message}` : `升级失败: ${String(e)}`
   } finally {
