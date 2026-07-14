@@ -190,6 +190,47 @@ describe('RecentWorkspacesStore', () => {
     )
   })
 
+  // ── W1: persistToFile 用 dirname 推导目录（非手写 substring），修复 Windows 路径 bug ──
+
+  it('W1: persistToFile 用 dirname 推导目录，mkdirSync 收到 configDir 而非空串', () => {
+    // existsSync 返 false → persistToFile 走 mkdirSync 分支
+    mockedExistsSync.mockReturnValue(false)
+    store.record('/project/test')
+    vi.advanceTimersByTime(500)
+
+    // dirname(join(configDir, 'recent-workspaces.json')) === configDir
+    // 修复前用 substring(0, lastIndexOf('/')) 在 Windows 下得空串
+    expect(mockedMkdirSync).toHaveBeenCalledWith(TEST_CONFIG_DIR, { recursive: true })
+  })
+
+  // ── W1: loadFromFile 文件损坏（非 ENOENT）记 console.warn（fail-soft 非 fail-silent）──
+
+  it('W1: loadFromFile 文件损坏时记 console.warn（非静默）', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockedReadFileSync.mockReturnValue('not-valid-json{{{')
+    mockedExistsSync.mockReturnValue(true)
+
+    const corruptStore = new RecentWorkspacesStore(TEST_CONFIG_DIR)
+    corruptStore.list()
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    const msg = String(warnSpy.mock.calls[0]!.join(' '))
+    expect(msg).toContain('starting fresh')
+
+    warnSpy.mockRestore()
+  })
+
+  it('W1: loadFromFile ENOENT（首启）静默不 warn', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 默认 beforeEach 已是 ENOENT 场景
+    const freshStore = new RecentWorkspacesStore(TEST_CONFIG_DIR)
+    freshStore.list()
+
+    expect(warnSpy).not.toHaveBeenCalled()
+
+    warnSpy.mockRestore()
+  })
+
   // 注：以下两条为 flushAll / startFlushTimer 的「行为测试」，不占用 NFR 用例 ID。
   // T1.10（数据目录与 pi 隔离）与 T1.11（atomicWrite 原子性）属于 integration(real)
   // NFR 测试，见 recent-workspaces-real.test.ts（用真实文件系统验证）。

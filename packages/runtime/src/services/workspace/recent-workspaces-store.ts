@@ -12,12 +12,13 @@
  * - INV-5: 路径从 configDir 动态推导，无硬编码
  */
 
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { basename } from 'node:path'
 import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 import { WriteBackCache } from '../../utils/json-store.js'
 import { atomicWrite } from '../../utils/fs-utils.js'
+import { isEnoent } from '../../utils/errors.js'
 
 const MAX_RECORDS = 10
 const FLUSH_INTERVAL_MS = 5_000
@@ -111,6 +112,9 @@ export class RecentWorkspacesStore {
 
   /**
    * 从文件加载分区数据。INV-4：文件损坏返空 Map，不抛。
+   *
+   * [W1] ENOENT（首启无文件）静默返空；其它错误（损坏/权限）console.warn 记录原因，
+   * 避免 fail-silent（用户无法诊断「最近列表消失」）。两者都返空不抛。
    */
   private loadFromFile(): Map<string, RecentWorkspaceRecord> {
     try {
@@ -125,17 +129,24 @@ export class RecentWorkspacesStore {
         }
       }
       return map
-    } catch {
-      // INV-4：文件损坏 / ENOENT 返空
+    } catch (e) {
+      // INV-4：文件损坏 / ENOENT 返空（不抛）。ENOENT 是首启正常态静默；
+      // 其它错误（损坏/权限）记 warn 便于诊断，避免 fail-silent。
+      if (isEnoent(e)) return new Map()
+      console.warn('[recent-workspaces] load failed, starting fresh:',
+        e instanceof Error ? e.message : e)
       return new Map()
     }
   }
 
   /**
    * 持久化分区数据到文件。sync atomicWrite（KB 级，event loop 无感）。
+   *
+   * [W1] 目录推导用 dirname()（与 JsonStore 一致），修复 Windows 路径分隔符 bug：
+   * 旧 substring(0, lastIndexOf('/')) 在 Windows（\ 分隔）下得空串 → mkdirSync('') EINVAL。
    */
   private persistToFile(data: Map<string, RecentWorkspaceRecord>): void {
-    const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'))
+    const dir = dirname(this.filePath)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     const records = Array.from(data.values())
     atomicWrite(this.filePath, JSON.stringify(records, null, JSON_INDENT))

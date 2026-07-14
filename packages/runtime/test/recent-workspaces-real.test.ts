@@ -79,6 +79,59 @@ describe('T1.10 (integration real): 数据目录与 pi 隔离 + 真实落盘', (
   })
 })
 
+describe('E1/E2 (W0/W1 integration real): persist 失败不 crash + dirname 落盘', () => {
+  let tmpDir: string
+
+  afterEach(() => {
+    if (tmpDir) {
+      // 只读目录无法 rmSync，先恢复权限
+      try { fs.chmodSync(tmpDir, 0o755) } catch { /* 已删或权限已恢复 */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  // E1: W0 端到端 — 只读目录（模拟盘满/权限）下 flushAll 不 crash + console.error
+  it('E1: 只读目录下 record + flushAll 不抛异常且记 console.error（W0 真实集成）', () => {
+    tmpDir = fs.mkdtempSync(join(os.tmpdir(), 'rws-real-e1-'))
+    const cwd = join(tmpDir, 'project')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const store = new RecentWorkspacesStore(tmpDir)
+    store.record(cwd)
+
+    // 先正常 flush 一次创建文件（否则 chmod 只读后首写就走 mkdirSync 失败路径）
+    store.flushAll()
+    errorSpy.mockClear()
+
+    // 设为只读，模拟盘满/权限不足
+    fs.chmodSync(tmpDir, 0o444)
+
+    // 再 record 新 cwd + flushAll → atomicWrite 失败
+    store.record(join(tmpDir, 'project-2'))
+    expect(() => store.flushAll()).not.toThrow()
+    // W0：console.error 记录了 flush 失败
+    expect(errorSpy).toHaveBeenCalled()
+
+    errorSpy.mockRestore()
+  })
+
+  // E2: W1 端到端 — dirname 路径推导在真实文件系统正常落盘（回归保护）
+  it('E2: record + flushAll 落盘到 configDir/recent-workspaces.json（dirname 路径推导验证）', () => {
+    tmpDir = fs.mkdtempSync(join(os.tmpdir(), 'rws-real-e2-'))
+    const cwd = join(tmpDir, 'project-dn')
+
+    const store = new RecentWorkspacesStore(tmpDir)
+    store.record(cwd)
+    store.flushAll()
+
+    const filePath = join(tmpDir, 'recent-workspaces.json')
+    expect(fs.existsSync(filePath)).toBe(true)
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const records = JSON.parse(raw) as Array<{ cwd: string }>
+    expect(records.some(r => r.cwd === cwd)).toBe(true)
+  })
+})
+
 describe('T1.11 (integration real): atomicWrite temp+rename 原子性', () => {
   let tmpDir: string
 
