@@ -28,7 +28,7 @@
           @click="onScan"
         >
           <RefreshCw v-if="scanning" class="animate-spin" />
-          {{ scanning ? '扫描中…' : '重新扫描' }}
+          {{ scanning ? '刷新中…' : '刷新' }}
         </Button>
         <div class="ml-auto flex gap-0.5">
           <Button
@@ -143,7 +143,7 @@ function onUpdateDirs(dirs: SkillDirConfig[]): void {
   emit('update-dirs', dirs)
 }
 
-/** 重新扫描（请求-响应，结果经 onSkills/onAgents 订阅推回持久态，裂缝①已修）。 */
+/** 刷新已加载列表（ADR-0020 §5 只读模型：扫描只刷新 discovery 目录扫描结果，不做文件级导入）。 */
 async function onScan(): Promise<void> {
   scanning.value = true
   actionError.value = ''
