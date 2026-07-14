@@ -29,7 +29,7 @@ export default {
     low: 'low',
     medium: 'medium',
     high: 'high',
-    xhigh: 'very_high',
+    xhigh: 'Very High',
     max: 'max',
     on: 'On',
     default: 'thinking',
