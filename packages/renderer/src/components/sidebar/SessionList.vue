@@ -57,10 +57,13 @@ import type { DerivedStatus } from '@/types'
 import { computed, provide, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { Plus, Folder } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { dirNameOf } from '@/composables/logic/path'
 import SessionItem from './SessionItem.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 按 cwd 分组的会话（D7，对齐后端 SessionGroup[]） */

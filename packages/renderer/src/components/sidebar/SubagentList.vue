@@ -83,6 +83,7 @@
 
 <script setup lang="ts">
 import { Loader2, Bot, AlertCircle } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
 
@@ -92,6 +93,8 @@ const TOKEN_K_THRESHOLD = 1000
 const SECONDS_PER_MINUTE = 60
 /** subagentId 显示截断长度 */
 const SUBAGENT_ID_DISPLAY_LENGTH = 12
+
+const { t } = useI18n()
 
 withDefaults(defineProps<{
   subagents: SubagentRecord[]

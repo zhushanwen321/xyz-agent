@@ -37,6 +37,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useForm } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
 import * as z from 'zod'
@@ -57,6 +58,8 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { useSessionStore } from '@/stores/session'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean

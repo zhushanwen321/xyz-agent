@@ -115,6 +115,7 @@
 
 <script setup lang="ts">
 import { Loader2, Workflow, Pause, Play, Square, AlertCircle } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import type { WorkflowRunRecord, WorkflowRunStatus, WorkflowDoneReason } from '@xyz-agent/shared'
 
@@ -128,6 +129,8 @@ const MS_PER_SECOND = 1000
 const SECONDS_PER_MINUTE = 60
 /** 秒 → 时 */
 const SECONDS_PER_HOUR = 3600
+
+const { t } = useI18n()
 
 withDefaults(defineProps<{
   workflows: WorkflowRunRecord[]

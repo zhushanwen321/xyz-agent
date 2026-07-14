@@ -70,11 +70,23 @@
 </template>
 
 <script setup lang="ts">
+import { computed, inject, ref, watch, type Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { onClickOutside } from '@vueuse/core'
+import { Check, Pencil, Trash2, Loader2 } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import type { DerivedStatus } from '@/types'
+import { formatRelativeTime } from '@/composables/logic/formatTime'
+import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
+import { dirNameOf } from '@/composables/logic/path'
+
 /**
  * 状态点 class 映射（D6 五态，design-tokens SSOT 语义色）。
  * running/waiting 用同心环 pulse 动画（与 SessionCard 对齐）；
  * done/stopped/error 静态色。
  */
+const { t } = useI18n()
+
 const props = defineProps<{
   session: {
     id: string
@@ -148,14 +160,5 @@ const dirName = computed(() => dirNameOf(props.session.cwd))
 
 /** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
-
-import { computed, inject, ref, watch, type Ref } from 'vue'
-import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, Loader2 } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import type { DerivedStatus } from '@/types'
-import { formatRelativeTime } from '@/composables/logic/formatTime'
-import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
-import { dirNameOf } from '@/composables/logic/path'
 </script>
 

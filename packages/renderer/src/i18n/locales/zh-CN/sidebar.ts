@@ -14,8 +14,10 @@ export default {
   newTaskFailed: '新建任务失败：{msg}',
   deleteSessionFailed: '删除会话失败：{msg}',
   renameFailed: '重命名失败：{msg}',
+  retry: '重试',
   sessionItem: {
     rename: '重命名',
+    delete: '删除',
     deleteConfirm: '确认删除？',
   },
   sessionList: {
@@ -47,6 +49,8 @@ export default {
     desc: '修改会话的显示名称',
     nameLabel: '名称',
     namePlaceholder: '输入会话名称',
+    cancel: '取消',
+    confirm: '确认',
     validationRequired: '请输入名称',
     validationMaxLength: '名称不能超过 {max} 个字符',
     validationPattern: '仅允许中文、英文、数字、空格、横杠和下划线',

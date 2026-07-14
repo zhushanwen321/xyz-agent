@@ -36,9 +36,12 @@
 import { computed } from 'vue'
 import type { Component } from 'vue'
 import { MessageSquare, File, Bot, Workflow } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { SidebarTab } from '@/stores/sidebar'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: SidebarTab

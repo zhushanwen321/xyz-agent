@@ -114,6 +114,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ChevronLeft, Loader2, Pause, Play, Square } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import type { WorkflowRunRecord, WorkflowAgentCall } from '@xyz-agent/shared'
 
@@ -123,6 +124,8 @@ const TOKEN_K_THRESHOLD = 1000
 const MS_PER_SECOND = 1000
 /** 秒 → 分 */
 const SECONDS_PER_MINUTE = 60
+
+const { t } = useI18n()
 
 const props = defineProps<{
   workflow: WorkflowRunRecord

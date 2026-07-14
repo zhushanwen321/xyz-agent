@@ -96,6 +96,7 @@
 <script setup lang="ts">
 import { computed, watch, onMounted, onBeforeUnmount, toRef } from 'vue'
 import { FolderOpen, Search, SearchX, Loader2, AlertCircle, Eye, EyeOff } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -103,6 +104,8 @@ import FileTreeRow from './FileTreeRow.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useFileTree } from '@/composables/features/useFileTree'
 import type { FileNode } from '@xyz-agent/shared'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 当前 active session id（Sidebar 注入，切 session 触发 loadTree） */

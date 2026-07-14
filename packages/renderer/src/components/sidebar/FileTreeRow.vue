@@ -123,10 +123,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ChevronRight, Folder, FileText, FileCode, FileJson, Loader2, AlertCircle } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import type { FileNode } from '@xyz-agent/shared'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 节点（shared FileNode，GAP-S6 统一） */
