@@ -15,6 +15,7 @@
 import { join, dirname } from 'node:path'
 import { basename } from 'node:path'
 import { readFileSync, existsSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 import { WriteBackCache } from '../../utils/json-store.js'
 import { atomicWrite } from '../../utils/fs-utils.js'
@@ -123,8 +124,11 @@ export class RecentWorkspacesStore {
       const parsed = JSON.parse(raw) as RecentWorkspaceRecord[]
       if (!Array.isArray(parsed)) return new Map()
       const map = new Map<string, RecentWorkspaceRecord>()
+      const home = homedir()
       for (const record of parsed) {
         if (record && typeof record.cwd === 'string' && record.cwd) {
+          // [方案A自愈] 跳过 homedir 条目：守卫挡新 record，此处清理存量
+          if (record.cwd === home) continue
           map.set(record.cwd, record)
         }
       }
