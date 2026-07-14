@@ -36,18 +36,30 @@ const SHORTCUTS: Record<string, ShortcutType> = {
 export class ShortcutRegistry implements IShortcutRegistry {
   /**
    * 注册全局快捷键。通过 win.webContents.send('shortcut', type) 转发到渲染进程。
-   * 注册前判断 globalShortcut.isRegistrable，避免静默失败。
+   *
+   * W7 窗口重建语义：已注册的 accelerator 先 unregister（解绑旧窗口回调）再 register（绑当前 win）；
+   * 同时检查 register 返回值，被其他 app 占用（返回 false）时 console.warn。
    */
   registerGlobal(win: BrowserWindow): void {
     for (const [accelerator, type] of Object.entries(SHORTCUTS)) {
-      // [HISTORICAL] spec M5：globalShortcut.register 对已占用的组合静默失败。
-      // isRegistered 判断本 app 是否已注册过（去重）；被其他 app 占用的情况 register 会静默失败，无法探测。
-      if (globalShortcut.isRegistered(accelerator)) continue
-      globalShortcut.register(accelerator, () => {
+      // W7 窗口重建（reload / 崩溃恢复）时，globalShortcut 注册表可能残留「已注册」状态。
+      // 若像旧实现那样 `if (isRegistered) continue` 跳过，会保留绑定到旧（已销毁）窗口的回调，
+      // 导致新窗口收不到 'shortcut' 事件。这里先 unregister 解绑旧回调，再 register 绑定到当前 win。
+      if (globalShortcut.isRegistered(accelerator)) {
+        globalShortcut.unregister(accelerator)
+      }
+      // [HISTORICAL] spec M5：globalShortcut.register 对被其他 app 占用的组合返回 false（静默失败），
+      // 必须检查返回值，失败时 warn 提示（被占用仅在 register 时才能发现）。
+      const ok = globalShortcut.register(accelerator, () => {
         if (!win.isDestroyed()) {
           win.webContents.send('shortcut', type)
         }
       })
+      if (!ok) {
+        console.warn(
+          `[shortcut] 全局快捷键注册失败：${accelerator}（可能被其他应用占用）`,
+        )
+      }
     }
   }
 
