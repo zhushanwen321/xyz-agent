@@ -28,6 +28,9 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
 import { useModel } from '@/composables/features/useModel'
 import { useToast } from '@/composables/useToast'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 import {
   useNewTaskFlowState,
   useNewTaskFlowController,
@@ -162,7 +165,7 @@ export function useNewTaskFlow() {
         // INV-7: runtime create 内部可能因 cwd 失效降级 homedir，比对 session.cwd
         // 与请求 cwd 不一致则 toast 通知用户（D-008 选中失效 cwd 降级）。
         if (cwd && created.cwd !== cwd) {
-          toastError(`目录 ${cwd} 已不存在，已切换到主目录`)
+          toastError(t('composable.dirNotExist', { dir: cwd }))
         }
         controller.bindCurrentSession(created)
         session.appendSession(created)

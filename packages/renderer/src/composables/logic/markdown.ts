@@ -23,6 +23,9 @@
 import MarkdownIt from 'markdown-it'
 import { createHighlighter } from 'shiki'
 import type { Highlighter } from 'shiki'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /**
  * markdown-it StateInline 的最小结构类型（@types/markdown-it 极简，未导出 StateInline）。
@@ -166,7 +169,7 @@ async function getMarkdown(): Promise<MarkdownIt> {
       `<div class="md-codeblock">` +
       `<div class="md-codeblock__header">` +
       `<span class="md-codeblock__lang">${escapeHtml(langLabel)}</span>` +
-      `<button class="md-codeblock__copy" data-code="${dataCode}" type="button" title="复制"></button>` +
+      `<button class="md-codeblock__copy" data-code="${dataCode}" type="button" title="${t('composable.copyLabel')}"></button>` +
       `</div>` +
       codeHtml +
       `</div>\n`

@@ -55,6 +55,25 @@ export const SPINNER_TEXT_CLASS: Record<'running' | 'waiting', string> = {
   waiting: 'text-warning',
 }
 
+/** spinner 适用状态联合（用于类型收窄） */
+export type SpinnerStatus = 'running' | 'waiting'
+
+/**
+ * 类型守卫：status 是否为 spinner 适用状态（running / waiting）。
+ * 收窄后可安全索引 SPINNER_TEXT_CLASS。
+ */
+export function isSpinnerStatus(status: DerivedStatus): status is SpinnerStatus {
+  return SPINNER_STATUSES.has(status)
+}
+
+/**
+ * 取 spinner 图标色 class（类型安全封装）。
+ * isSpinnerStatus 收窄后安全索引 SPINNER_TEXT_CLASS，消除组件侧 `as` 断言。
+ */
+export function spinnerTextClass(status: DerivedStatus): string | null {
+  return isSpinnerStatus(status) ? SPINNER_TEXT_CLASS[status] : null
+}
+
 /**
  * 派生信号 → DerivedStatus 映射依据（D6，spec §5 D6 + §会话项）。
  * - toolCall.status 'running' → waiting（tool 执行中/待审批，agent 暂停）

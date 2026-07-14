@@ -55,6 +55,8 @@ export function useWorkflowListSync(): void {
 
   /**
    * workflows tab 激活时加载 workflow 列表（tab 切换的首拉）。
+   * immediate:true 保证 Sidebar 挂载时如果当前 tab 已是 workflows，立即拉取——
+   * 首个 watch 的 immediate 已处理切会话首拉，这里补 tab 已激活的边界。
    */
   watch(
     () => [sidebar.activeTab, focusedSessionId.value] as const,
@@ -63,5 +65,6 @@ export function useWorkflowListSync(): void {
         void workflowStore.loadWorkflows(sid)
       }
     },
+    { immediate: true },
   )
 }

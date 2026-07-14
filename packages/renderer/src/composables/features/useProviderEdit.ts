@@ -11,6 +11,9 @@ import { ref, reactive, watch, computed, type Ref } from 'vue'
 import { config } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
 import type { ProviderInfo } from '@xyz-agent/shared'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 // ── 类型 ──
 
@@ -312,9 +315,9 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         localModels.value.push(
           ...merged.map((m) => ({ id: m.id, name: m.name, contextWindow: m.contextWindow })),
         )
-        discoverResult.value = `已发现 ${res.models.length} 个模型，${merged.length > 0 ? `新增 ${merged.length} 个已合并` : '均已存在'}`
+        discoverResult.value = t('composable.discoveredModels', { count: res.models.length, merged: merged.length > 0 ? t('composable.newMerged', { count: merged.length }) : t('composable.allExisted') })
       } else {
-        actionError.value = res.error ?? '发现失败'
+        actionError.value = res.error ?? t('composable.discoverFailed')
       }
     } catch (e) {
       if (action === 'test') testResult.value = 'error'
@@ -341,7 +344,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   async function save(): Promise<boolean> {
     // 前端校验（D15b）：供应商名称必填
     if (!form.name.trim()) {
-      actionError.value = '供应商名称不能为空'
+      actionError.value = t('composable.providerNameRequired')
       return false
     }
     saving.value = true
@@ -391,8 +394,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     const { headers, hasDuplicate } = buildHeadersFromRows(headerRows.value)
     form.headers = headers
     if (hasDuplicate) {
-      actionError.value = '存在重复的 header key，将以最后出现的值为准'
-    } else if (actionError.value === '存在重复的 header key，将以最后出现的值为准') {
+      actionError.value = t('composable.duplicateHeaderKey')
+    } else if (actionError.value === t('composable.duplicateHeaderKey')) {
       actionError.value = ''
     }
   }
@@ -442,10 +445,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
    */
   function addModel(): void {
     const name = newModel.name.trim()
-    if (!name) throw new Error('模型名称不能为空')
+    if (!name) throw new Error(t('composable.modelNameRequired'))
     // 重复 id 校验：localModels 已含同 id → 抛错
     if (localModels.value.some((m) => m.id === name)) {
-      throw new Error(`模型「${name}」已存在`)
+      throw new Error(t('composable.modelAlreadyExists', { name }))
     }
     localModels.value.push({
       id: name,

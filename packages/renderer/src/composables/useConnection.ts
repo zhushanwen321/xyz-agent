@@ -15,6 +15,9 @@
  */
 import { watch } from 'vue'
 import { connect, disconnect, getState, setRestarting, setFailed } from '../lib/ws-client'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 import {
   getRuntimePort,
   getRuntimePortOffset,
@@ -45,7 +48,7 @@ function handleSessionExited(sessionId: string, payload: { code: number | null; 
   useSessionStore().markDead(sessionId)
   // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
   const shortReason = payload.reason.split('\n')[0]
-  useToast().error(`会话进程已退出：${shortReason}`)
+  useToast().error(t('connection.runtimeExited', { reason: shortReason }))
 }
 
 export type ConnectionStatus =
@@ -104,7 +107,7 @@ function routeInbound(msg: ServerMessage): void {
     // 现 toast 提示（如 config 加载失败等全局错误）。
     if (msg.type === 'error' && !msg.id) {
       const payload = msg.payload as { message?: string }
-      const message = typeof payload.message === 'string' ? payload.message : '未知错误'
+      const message = typeof payload.message === 'string' ? payload.message : t('connection.unknownError')
       useToast().error(message)
     }
   }
@@ -155,7 +158,7 @@ export function useConnection() {
     // 此前在 mock 分支之后，mock 模式跳过安装 → mock 断连时 pending 永不 reject。
     const stopStateWatch = watch(getState(), (newState, oldState) => {
       if (oldState === 'connected' && newState !== 'connected') {
-        pending.rejectAll(new Error('连接已断开'))
+        pending.rejectAll(new Error(t('connection.disconnectedError')))
       }
     })
     removeStateWatch = stopStateWatch
@@ -179,14 +182,14 @@ export function useConnection() {
     // 避免 UI 卡「思考中」+ in-flight Promise 永挂（runtime 重启后是全新实例，旧 pending 永远收不到响应）。
     removeRuntimeRestartingListener = onRuntimeRestarting(() => {
       setRestarting()
-      pending.rejectAll(new Error('Runtime 正在重启'))
+      pending.rejectAll(new Error(t('connection.runtimeRestarting')))
       useChatStore().finalizeAllStreaming('restart')
     })
 
     // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
     removeRuntimeFailedListener = onRuntimeFailed(() => {
       setFailed()
-      pending.rejectAll(new Error('Runtime 不可用'))
+      pending.rejectAll(new Error(t('connection.runtimeUnavailable')))
       useChatStore().finalizeAllStreaming('disconnect')
     })
 

@@ -1,6 +1,9 @@
 import { type Ref } from 'vue'
 import { createVNode, render } from 'vue'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /**
  * Composer 富文本 chip 的 DOM 操作（slash 命令 chip / @·# mention chip）。
@@ -56,7 +59,7 @@ export function useComposerChipCommands(
     const x = document.createElement('span')
     x.className = 'chip-x'
     x.setAttribute('role', 'button')
-    x.setAttribute('aria-label', '移除')
+    x.setAttribute('aria-label', t('composable.removeLabel'))
     x.textContent = '×'
     x.addEventListener('click', (e: MouseEvent) => {
       e.preventDefault()

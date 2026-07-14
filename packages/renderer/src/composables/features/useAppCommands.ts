@@ -19,6 +19,9 @@
 import type { AppCommand } from '@/lib/search-types'
 import { useCommandStore } from '@/stores/command'
 import { useSidebarStore } from '@/stores/sidebar'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /** 应用命令依赖的 actions（由调用方注入，打破与 useSidebar 的循环 import） */
 export interface AppCommandActions {
@@ -60,9 +63,9 @@ export function registerAppCommands(actions: AppCommandActions): void {
   }
 
   const appCommands: AppCommand[] = [
-    { id: 'new-session', name: '新建任务', shortcut: resolveShortcut('new-session', 'n'), action: actions.newSession },
-    { id: 'toggle-sidebar', name: '收起侧栏', shortcut: resolveShortcut('toggle-sidebar', 'b'), action: () => sidebarStore.toggleCollapsed() },
-    { id: 'go-overview', name: '概览', action: actions.goOverview },
+    { id: 'new-session', name: t('settings.command.new-session'), shortcut: resolveShortcut('new-session', 'n'), action: actions.newSession },
+    { id: 'toggle-sidebar', name: t('settings.command.toggle-sidebar'), shortcut: resolveShortcut('toggle-sidebar', 'b'), action: () => sidebarStore.toggleCollapsed() },
+    { id: 'go-overview', name: t('settings.command.go-overview'), action: actions.goOverview },
   ]
 
   commandStore.registerApp(appCommands)

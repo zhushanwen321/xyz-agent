@@ -22,6 +22,9 @@ import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { file as fileApi, git as gitApi } from '@/api'
 import { detectFileKind, type FileKind } from '@/composables/logic/file-type'
 import { parseDiff } from '@/composables/logic/parseDiff'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /** 预览加载态 */
 export type PreviewStatus = 'idle' | 'loading' | 'content' | 'error'
@@ -132,7 +135,7 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     } catch (e) {
       if (token !== loadToken) return
       state.value.status = 'error'
-      state.value.error = (e as Error)?.message ?? '加载失败'
+      state.value.error = (e as Error)?.message ?? t('composable.loadFailed')
     }
   }
 

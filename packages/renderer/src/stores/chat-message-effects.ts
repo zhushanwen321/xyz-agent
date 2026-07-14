@@ -49,6 +49,9 @@ import {
   readChangeSetStatus,
 } from './chat-readers'
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /**
  * 计数差集：返回 prev 比 next 多出的元素（按出现次数，非子串匹配）。
@@ -444,7 +447,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       {
         id: `c-${crypto.randomUUID()}`,
         role: 'system',
-        content: summary.summary ?? '上下文已压缩',
+        content: summary.summary ?? t('composable.contextCompacted'),
         status: 'complete',
         timestamp: summary.timestamp ?? Date.now(),
         compactionSummary: summary,
@@ -462,7 +465,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       {
         id: `br-${crypto.randomUUID()}`,
         role: 'system',
-        content: summary.summary ?? '已分支',
+        content: summary.summary ?? t('composable.branched'),
         status: 'complete',
         timestamp: summary.timestamp ?? Date.now(),
         branchSummary: summary,
