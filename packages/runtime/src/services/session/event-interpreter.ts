@@ -110,7 +110,21 @@ export class EventInterpreter {
    */
   interpret(events: PiTranslatedEvent[]): void {
     for (const ev of events) {
-      this.handle(ev)
+      // W1：per-event try-catch —— 对每个事件的编排（hook/diff/WS 转发）单独隔离。
+      // 若第 N 个事件触发 handler 抛错（如 send 回调抛、某 details 形状异常），
+      // 裸 for 循环会被中断，后续事件（含关键的 turn-end / agent_end）被吞掉，导致：
+      //   - isGenerating 永不复位（onTurnFinalize 未触发）
+      //   - message.complete 不送达前端（streaming 永远不停）
+      // 故单事件失败仅记日志不中断批次（复用 event-adapter.logInterpretFailure 的隔离思路）。
+      try {
+        this.handle(ev)
+      // eslint-disable-next-line taste/no-silent-catch -- 仅隔离日志：不 re-throw 会让后续事件（含 agent_end）无法投递，单条坏事件炸掉整条事件流
+      } catch (err: unknown) {
+        console.error(
+          `[event-interpreter] handle event error (isolated; batch continues) sid=${this.sessionId} kind=${ev.kind}:`,
+          err,
+        )
+      }
     }
   }
 

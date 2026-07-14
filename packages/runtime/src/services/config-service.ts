@@ -24,6 +24,7 @@ import { expandHome } from '../utils/path-utils.js'
 import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
 import { scanAgents } from './scanners/agent-scanner.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
+import { getConfigDir } from '../infra/pi/pi-paths.js'
 
 // ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
@@ -33,10 +34,18 @@ import { pickModelCapabilityFields } from './model-mapper.js'
 // 故强制目录用 pi 实际路径（getPiAgentDir 拼出），而非 ADR 文档的逻辑路径——后者不存在，
 // 会导致强制目录扫描落空（agent 页扫不到任何 agent）。
 // 项目级强制目录（.xyz-agent/skills 等）保留 ADR 逻辑路径（项目相对路径，存在则扫）。
+//
+// W1：全局强制目录从硬编码 '~/.xyz-agent/skills' 改为动态 getConfigDir()。
+// 必须用函数在 loadSkills/loadAgents 调用时求值——不能是模块加载时的常量：
+// 测试在 beforeEach 设 XYZ_AGENT_DATA_DIR，模块导入早于 beforeEach，模块加载时求值
+// 会捕获到缺省 ~/.xyz-agent（env 未设）。getConfigDir 委托 getDataDir 读 env，调用时求值
+// 才能跟随实例隔离 / 自定义数据目录切换。
 const FORCED_PROJECT_SKILL_DIR = '.xyz-agent/skills'
-const FORCED_GLOBAL_SKILL_DIR = '~/.xyz-agent/skills'
 const FORCED_PROJECT_AGENT_DIR = '.xyz-agent/agents'
-const FORCED_GLOBAL_AGENT_DIR = '~/.xyz-agent/agents'
+/** 全局强制 skill 目录：<configDir>/skills（configDir = getConfigDir()，读 env）。 */
+const forcedGlobalSkillDir = (): string => join(getConfigDir(), 'skills')
+/** 全局强制 agent 目录：<configDir>/agents（configDir = getConfigDir()，读 env）。 */
+const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -223,7 +232,7 @@ export class ConfigService implements IConfigService {
     const orderedDirs = [
       join(this.configStore.getPiAgentDir(), 'skills'),
       FORCED_PROJECT_SKILL_DIR,
-      FORCED_GLOBAL_SKILL_DIR,
+      forcedGlobalSkillDir(),
       ...this.configStore.getSkillPaths(),
     ]
 
@@ -371,7 +380,7 @@ export class ConfigService implements IConfigService {
     const orderedDirs = [
       join(this.configStore.getPiAgentDir(), 'agents'), // pi 实际路径（最高优先，真实 agent 落点）
       FORCED_PROJECT_AGENT_DIR,
-      FORCED_GLOBAL_AGENT_DIR,
+      forcedGlobalAgentDir(),
       ...this.configStore.getAgentDirs(),
     ].map(expandHome).filter(d => existsSync(d))
 

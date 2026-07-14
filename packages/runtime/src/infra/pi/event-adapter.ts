@@ -183,11 +183,23 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
 
 /** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
 function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[] {
+  // W1：messages 为空数组 / undefined 时降级为 turn-end{stopReason:'error'}，不抛 TypeError。
+  // 异常会从 translate() 抛出 → 经 EventAdapter.attach 的整批 try-catch 被吞 →
+  // agent_end 整批事件丢失 → isGenerating 永不复位 + message.complete 不送达。
+  // messages 可能在 pi 内部异常 / 会话尚未产出任何 assistant 消息时为空。
+  const messages = event.messages
+  if (!messages || messages.length === 0) {
+    console.warn(`[EventAdapter] agent_end with empty messages (degraded to turn-end{error}) sid=${sid}`)
+    return [{
+      kind: 'turn-end',
+      message: { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } },
+      stopReason: 'error',
+    }]
+  }
   // pi 事件是强类型契约（ADR-0033）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
   // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。但 pi 在此还附带
   // responseModel / diagnostics / errorMessage 等运行时字段（超出 PiAgentEndMessage 声明范围，
   // pi AgentMessage 实际形态比声明的 union 更宽）——这些用 as 提取。
-  const messages = event.messages
   const lastMsg = messages[messages.length - 1]
   const rawReason = lastMsg.stopReason ?? 'stop'
   const usage = lastMsg.usage

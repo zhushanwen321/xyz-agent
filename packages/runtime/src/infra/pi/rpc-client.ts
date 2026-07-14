@@ -201,6 +201,17 @@ export class RpcClient implements IPiEngine {
       }
     })
 
+    // W2：监听 stdout stream 的 'error' 事件。
+    // proc.on('error') 只覆盖 spawn 失败；stdout 是独立的 Readable stream，pi 崩溃 /
+    // 管道断裂（EPIPE / ECONNRESET）时 stdout 会 emit 'error'，若无 listener 则升级为
+    // uncaughtException → runtime 主进程崩溃。此处捕获后 rejectAll pending 并标记 _exited，
+    // 把 stream error 纳入与进程退出相同的清理路径。
+    proc.stdout?.on('error', (err: NodeJS.ErrnoException) => {
+      console.error('[rpc] stdout stream error:', err)
+      this._exited = true
+      this.rejectAll(new Error(`pi stdout stream error: ${err.message}`))
+    })
+
     // 收集 stderr 用于错误诊断，同时转发到日志
     this.stderrChunks = []
     if (proc.stderr) {
@@ -212,6 +223,13 @@ export class RpcClient implements IPiEngine {
         if (this.stderrChunks.length > STDERR_BUFFER_MAX_LINES) {
           this.stderrChunks.shift()
         }
+      })
+      // W2：同 stdout，stderr stream 的 'error' 独立于 proc.on('error')。
+      // pi 崩溃时 stderr 管道可能先断，未捕获会变 uncaughtException。捕获后 rejectAll + 标记 _exited。
+      proc.stderr.on('error', (err: NodeJS.ErrnoException) => {
+        console.error('[rpc] stderr stream error:', err)
+        this._exited = true
+        this.rejectAll(new Error(`pi stderr stream error: ${err.message}`))
       })
     }
 
