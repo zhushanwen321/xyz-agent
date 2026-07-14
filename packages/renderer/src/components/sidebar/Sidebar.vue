@@ -246,7 +246,12 @@ function statusOf(id: string) {
 }
 
 async function onSelectSession(id: string): Promise<void> {
-  await selectSession(id)
+  try {
+    await selectSession(id)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`切换会话失败：${msg}`)
+  }
 }
 
 /**
@@ -284,17 +289,30 @@ function onWorkflowBack(): void {
 /**
  * 选中 agent call → Panel overlay（切 Panel 显示 agent call 对话流）。
  * store.selectAgentCall 需要 mainSessionId + chatStore.setMessages（铁律：store 不 import chatStore）。
+ *
+ * Fail-fast：getAgentCallHistory 失败时 toast 报错 + 回滚 viewing（不进入 overlay 空态）。
  */
-async function onSelectAgentCall(agentCallSessionId: string): Promise<void> {
+async function onSelectAgentCall(agentCallSessionId: string | undefined): Promise<void> {
+  if (!agentCallSessionId) {
+    toastError('该 agent call 执行失败，未创建 session，无对话记录可查看')
+    return
+  }
   const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
   if (!activePanel?.sessionId) return
   const chat = useChatStore()
-  await workflowStore.selectAgentCall(
-    panelStore.activePanelId,
-    activePanel.sessionId,
-    agentCallSessionId,
-    (virtualId, msgs) => chat.setMessages(virtualId, msgs),
-  )
+  try {
+    await workflowStore.selectAgentCall(
+      panelStore.activePanelId,
+      activePanel.sessionId,
+      agentCallSessionId,
+      (virtualId, msgs) => chat.setMessages(virtualId, msgs),
+    )
+  } catch (e) {
+    // 回滚 viewing（selectAgentCall 内 setViewing 已执行，fetchAndInject 失败需撤销）
+    workflowStore.backFromAgentCall(panelStore.activePanelId)
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`无法加载 agent call 对话流：${msg}`)
+  }
 }
 
 /** workflow 操作按钮（pause/resume/abort），调 runtime RPC 触发扩展 slash command */
@@ -312,7 +330,12 @@ async function onWorkflowAction(payload: { action: 'pause' | 'resume' | 'abort';
 }
 
 async function onNewSession(): Promise<void> {
-  await newSession()
+  try {
+    await newSession()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`新建任务失败：${msg}`)
+  }
 }
 
 async function onRenameSession(id: string): Promise<void> {
@@ -321,11 +344,21 @@ async function onRenameSession(id: string): Promise<void> {
 }
 
 async function onDeleteSession(id: string): Promise<void> {
-  await deleteSession(id)
+  try {
+    await deleteSession(id)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`删除会话失败：${msg}`)
+  }
 }
 
 async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {
-  await renameSession(payload.sessionId, payload.label)
+  try {
+    await renameSession(payload.sessionId, payload.label)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`重命名失败：${msg}`)
+  }
 }
 
 /** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本
@@ -356,7 +389,7 @@ interface KeymapEntry {
 }
 const keymap: KeymapEntry[] = [
   { key: 'k', action: () => { searchOpen.value = !searchOpen.value } },
-  { key: 'n', action: () => { void newSession() } },
+  { key: 'n', action: () => { void onNewSession() } },
   { key: 'b', action: () => { sidebar.toggleCollapsed() } },
 ]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
