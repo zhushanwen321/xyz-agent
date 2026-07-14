@@ -34,7 +34,7 @@
         <p v-else class="text-[12px] text-subtle">{{ t('panel.command.noDescription') }}</p>
         <p class="mt-1 text-[11px] text-subtle">
           {{ command.kind === 'extension' ? t('panel.command.commandType') : command.kind === 'builtin' ? t('panel.command.builtinCommand') : t('panel.command.title') }}，
-          无完整文档（仅 description）。
+          {{ t('panel.command.noFullDoc') }}。
         </p>
       </div>
     </div>

@@ -83,20 +83,20 @@
           :disabled="pending || result.unstagedCount === 0"
           :title="t('panel.git.stageAll')"
           @click="stageAll"
-        >Stage</Button>
+        >{{ t('panel.git.stage') }}</Button>
         <Button
           variant="ghost"
           class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
           :disabled="pending || result.stagedCount === 0"
           :title="t('panel.git.unstageAll')"
           @click="unstageAll"
-        >Unstage</Button>
+        >{{ t('panel.git.unstage') }}</Button>
         <Button
           class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
           :disabled="!canCommit"
           :title="result.hasConflict ? t('panel.git.conflictBlock') : t('panel.git.commitStaged')"
           @click="onCommit"
-        >Commit</Button>
+        >{{ t('panel.git.commit') }}</Button>
       </div>
     </div>
   </section>
@@ -148,7 +148,15 @@ function onFileClick(path: string): void {
 }
 
 const pillLabel = computed(
-  () => ({ clean: 'Clean', staged: 'Staged', dirty: 'Dirty', conflict: 'Conflict' })[state.value],
+  () => {
+    const map: Record<GitState, string> = {
+      clean: t('panel.git.pillClean'),
+      staged: t('panel.git.pillStaged'),
+      dirty: t('panel.git.pillDirty'),
+      conflict: t('panel.git.pillConflict'),
+    }
+    return map[state.value as GitState]
+  },
 )
 const pillClass = computed(
   () =>

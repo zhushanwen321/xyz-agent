@@ -46,7 +46,7 @@
         >
           <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
           <Bot class="size-3 shrink-0" />
-          <span class="shrink-0 whitespace-nowrap">Subagent</span>
+          <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.subagent') }}</span>
           <span class="shrink-0 normal-case tracking-normal text-muted">{{ subagentAgent || subagentHeaderLabel }}</span>
           <span v-if="subagentTask" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ subagentTaskPreview }}</span>
           <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
@@ -61,7 +61,7 @@
         <template v-if="toolExpanded">
           <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
           <div v-if="subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted">
-            <span v-if="subagentProgressDetail.toolCount != null" class="text-info">工具 ×{{ subagentProgressDetail.toolCount }}</span>
+            <span v-if="subagentProgressDetail.toolCount != null" class="text-info">{{ t('panel.subagent.toolCount', { count: subagentProgressDetail.toolCount }) }}</span>
             <span v-if="subagentProgressDetail.turnCount != null">turn {{ subagentProgressDetail.turnCount }}</span>
             <span v-if="subagentProgressDetail.tokens != null">{{ formatTokens(subagentProgressDetail.tokens) }}</span>
             <span v-if="subagentProgressDetail.durationMs != null">{{ formatDuration(subagentProgressDetail.durationMs) }}</span>
@@ -247,7 +247,9 @@ const subagentAgent = computed(() => {
   if (arr && arr.length > 0) {
     const first = arr[0] as Record<string, unknown> | undefined
     const firstName = first && typeof first.agent === 'string' ? first.agent : ''
-    return arr.length > 1 ? `${firstName} 等 ${arr.length} 个` : firstName
+    return arr.length > 1
+      ? t('panel.subagent.multiSummary', { first: firstName, count: arr.length })
+      : firstName
   }
   return ''
 })

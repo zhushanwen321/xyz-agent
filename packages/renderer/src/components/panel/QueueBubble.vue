@@ -30,7 +30,7 @@
       <span class="size-[7px] shrink-0 animate-pulse-accent rounded-full bg-accent" />
       <span class="shrink-0 font-mono text-[10px] font-semibold tracking-wider text-accent">{{ t('panel.queue.pending') }}</span>
       <span class="min-w-0 flex-1 truncate text-muted">
-        <template v-if="totalCount > 1">{{ totalCount }} 条 · </template>{{ summary }}
+        <template v-if="totalCount > 1">{{ t('panel.queue.itemCount', { count: totalCount }) }} · </template>{{ summary }}
       </span>
       <ChevronRight
         v-if="canToggle"

@@ -21,7 +21,7 @@
           :class="state.viewMode === 'diff' ? 'bg-accent-soft text-accent' : 'text-muted'"
           :title="t('panel.detail.showDiff')"
           @click="onToggleView('diff')"
-        >Diff</Button>
+        >{{ t('panel.detail.tabDiff') }}</Button>
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10.5px]"

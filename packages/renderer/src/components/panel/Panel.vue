@@ -183,10 +183,12 @@ const SUBAGENT_ID_DISPLAY_LENGTH = 12
 const subagentLabel = computed(() => {
   // agent call overlay
   const agentCallId = workflowStore.getViewingAgentCallId(props.panelId)
-  if (agentCallId) return `Agent call · ${agentCallId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
+  if (agentCallId) {
+    return t('panel.overlay.agentCallId', { id: agentCallId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH) })
+  }
   // subagent overlay
   const record = subagentStore.getCurrentSubagent(props.panelId)
-  if (!record) return 'Subagent'
+  if (!record) return t('panel.overlay.subagent')
   return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
 })
 

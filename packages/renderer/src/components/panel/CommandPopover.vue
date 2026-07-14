@@ -187,6 +187,8 @@ const items = computed(() => {
         id: f.id,
         name: f.name,
         kind: f.kind,
+        // f.kind 是 FileCandidate 的数据契约字面量（@/lib/file-candidates.ts line 45 映射自 FileNode.type='dir'）
+        // 是数据值非 UI 文案，不参与 i18n 化
         icon: f.kind === '目录' ? 'folder' : 'file',
         description: undefined,
         dirPath,

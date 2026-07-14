@@ -59,6 +59,13 @@ export default {
     startConversation: '开始对话，或从左侧选择一个会话',
     scrollToBottom: '回到底部',
     noAgentCall: '该 agent call 暂无对话记录',
+    subagent: '子代理',
+    compacted: '已压缩上下文{tokens}',
+    compactedTokens: '（{tokens} tokens）',
+    branchCreated: '已创建分支（自 {from}）',
+    branchCreatedNoFrom: '已创建分支',
+    thinkCount: '思考 ×{count}',
+    toolCount: '工具 ×{count}',
   },
   git: {
     title: 'Git',
@@ -74,6 +81,12 @@ export default {
     commitStaged: '提交暂存区',
     conflictBlock: '存在冲突，解决后才能提交',
     viewDiff: '查看 {path} 的差异',
+    stage: '暂存',
+    unstage: '取消暂存',
+    pillClean: '干净',
+    pillStaged: '已暂存',
+    pillDirty: '有改动',
+    pillConflict: '冲突',
   },
   context: {
     capacity: '上下文容量',
@@ -102,6 +115,11 @@ export default {
     fileContent: '文件内容',
     diff: 'Diff',
     unknownWidget: '未识别 widget',
+    tabTerminal: '终端',
+    tabBrowser: '浏览器',
+    tabGit: 'Git',
+    tabDoc: '文档',
+    tabDetail: '详情',
   },
   mermaid: {
     rendering: '图表渲染中…',
@@ -145,6 +163,7 @@ export default {
     commandType: '扩展命令',
     builtinCommand: '内置命令',
     compactDesc: '压缩会话上下文',
+    noFullDoc: '无完整文档（仅 description）',
   },
   progress: {
     running: '运行中',
@@ -170,6 +189,7 @@ export default {
     effectOrder: '生效顺序：steering FIFO → followUp FIFO',
     steerLabel: 'STEER 追加',
     followupLabel: 'FOLLOWUP 新轮',
+    itemCount: '{count} 条',
   },
   contextChips: {
     directory: '目录',
@@ -191,6 +211,7 @@ export default {
   bgNotify: {
     title: '后台通知',
     cancelled: '已取消',
+    patchHint: '改动以 patch 形式保存：{file}（用 git apply 应用到当前仓库）',
   },
   forkConfirm: {
     title: '克隆并分叉会话',
@@ -219,6 +240,7 @@ export default {
     preview: '预览',
     loadFailed: '无法加载图片',
     noDiff: '无差异内容',
+    tabDiff: '差异',
   },
   panel: {
     sessionDead: '会话进程已退出',
@@ -229,6 +251,18 @@ export default {
     selectSession: '选择左侧会话开始',
     taskFailed: '任务创建失败：{error}',
     sendFailed: '消息发送失败：{error}',
+  },
+  overlay: {
+    subagent: '子代理',
+    agentCall: '代理调用',
+    agentCallId: '代理调用 · {id}',
+  },
+  ambiguous: {
+    title: '「{basename}」有 {count} 个匹配，选择要打开的文件',
+  },
+  subagent: {
+    toolCount: '工具 ×{count}',
+    multiSummary: '{first} 等 {count} 个',
   },
   listTree: {
     running: '进行中',

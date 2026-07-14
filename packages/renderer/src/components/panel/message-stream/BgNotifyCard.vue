@@ -128,7 +128,7 @@ const fullContent = computed(() => props.message.content || '')
 const patchHint = computed(() => {
   const s = single.value
   if (!s?.patchFile) return ''
-  return `改动以 patch 形式保存：${s.patchFile}（用 git apply 应用到当前仓库）`
+  return t('panel.bgNotify.patchHint', { file: s.patchFile })
 })
 
 /** record → 状态图标 */

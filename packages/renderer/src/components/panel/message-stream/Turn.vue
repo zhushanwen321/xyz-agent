@@ -142,10 +142,10 @@
           :class="expanded ? 'rotate-90 text-accent' : ''"
         />
         <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-[rgba(167,139,250,0.12)] px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-reasoning">
-          <Brain class="size-2.5" />思考 ×{{ thinkCount }}
+          <Brain class="size-2.5" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
         </span>
         <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-[rgba(56,189,248,0.12)] px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-info">
-          <Wrench class="size-2.5" />工具 ×{{ toolCount }}
+          <Wrench class="size-2.5" />{{ t('panel.message.toolCount', { count: toolCount }) }}
         </span>
       </Button>
       <hr class="border-0 border-t border-border" />

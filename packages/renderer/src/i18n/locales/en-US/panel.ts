@@ -59,6 +59,13 @@ export default {
     startConversation: 'Start a conversation, or select a session from the left',
     scrollToBottom: 'Scroll to bottom',
     noAgentCall: 'No conversation records for this agent call',
+    subagent: 'Subagent',
+    compacted: 'Context compacted{tokens}',
+    compactedTokens: ' ({tokens} tokens)',
+    branchCreated: 'Branch created (from {from})',
+    branchCreatedNoFrom: 'Branch created',
+    thinkCount: 'Think ×{count}',
+    toolCount: 'Tool ×{count}',
   },
   git: {
     title: 'Git',
@@ -74,6 +81,12 @@ export default {
     commitStaged: 'Commit staged',
     conflictBlock: 'Conflicts exist, resolve before committing',
     viewDiff: 'View diff for {path}',
+    stage: 'Stage',
+    unstage: 'Unstage',
+    pillClean: 'Clean',
+    pillStaged: 'Staged',
+    pillDirty: 'Dirty',
+    pillConflict: 'Conflict',
   },
   context: {
     capacity: 'Context capacity',
@@ -102,6 +115,11 @@ export default {
     fileContent: 'File content',
     diff: 'Diff',
     unknownWidget: 'Unknown widget',
+    tabTerminal: 'Terminal',
+    tabBrowser: 'Browser',
+    tabGit: 'Git',
+    tabDoc: 'Doc',
+    tabDetail: 'Detail',
   },
   mermaid: {
     rendering: 'Rendering diagram…',
@@ -145,6 +163,7 @@ export default {
     commandType: 'Extension command',
     builtinCommand: 'Built-in command',
     compactDesc: 'Compact session context',
+    noFullDoc: 'No full documentation (description only)',
   },
   progress: {
     running: 'Running',
@@ -170,6 +189,7 @@ export default {
     effectOrder: 'Effect order: steering FIFO → followUp FIFO',
     steerLabel: 'STEER append',
     followupLabel: 'FOLLOWUP new turn',
+    itemCount: '{count} items',
   },
   contextChips: {
     directory: 'Directory',
@@ -191,6 +211,7 @@ export default {
   bgNotify: {
     title: 'Background notification',
     cancelled: 'Cancelled',
+    patchHint: 'Changes saved as patch: {file} (apply with git apply)',
   },
   forkConfirm: {
     title: 'Clone and fork session',
@@ -219,6 +240,7 @@ export default {
     preview: 'Preview',
     loadFailed: 'Failed to load image',
     noDiff: 'No diff content',
+    tabDiff: 'Diff',
   },
   panel: {
     sessionDead: 'Session process exited',
@@ -229,6 +251,18 @@ export default {
     selectSession: 'Select a session from the left',
     taskFailed: 'Task creation failed: {error}',
     sendFailed: 'Failed to send message: {error}',
+  },
+  overlay: {
+    subagent: 'Subagent',
+    agentCall: 'Agent call',
+    agentCallId: 'Agent call · {id}',
+  },
+  ambiguous: {
+    title: '「{basename}」 has {count} matches, choose a file to open',
+  },
+  subagent: {
+    toolCount: 'Tools ×{count}',
+    multiSummary: '{first} and {count} more',
   },
   listTree: {
     running: 'Running',

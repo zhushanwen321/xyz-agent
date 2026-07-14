@@ -15,8 +15,11 @@
 
 <script setup lang="ts">
 import { GitBranch, Archive } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import type { Message } from '@xyz-agent/shared'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   message: Message
@@ -28,13 +31,12 @@ const { icon, text } = resolveNotice(props.message)
 function resolveNotice(message: Message): { icon: Component; text: string } {
   if (message.compactionSummary) {
     const tokens = message.compactionSummary.tokensBefore
-    const tokLabel = tokens !== undefined ? `（${formatTokens(tokens)} tokens）` : ''
-    return { icon: Archive, text: `已压缩上下文${tokLabel}` }
+    const tokLabel = tokens !== undefined ? t('panel.message.compactedTokens', { tokens: formatTokens(tokens) }) : ''
+    return { icon: Archive, text: t('panel.message.compacted', { tokens: tokLabel }) }
   }
   if (message.branchSummary) {
     const from = message.branchSummary.fromId
-    const fromLabel = from ? `（自 ${from}）` : ''
-    return { icon: GitBranch, text: `已创建分支${fromLabel}` }
+    return { icon: GitBranch, text: from ? t('panel.message.branchCreated', { from }) : t('panel.message.branchCreatedNoFrom') }
   }
   // 兜底：纯 system 文本
   return { icon: Archive, text: message.content }
