@@ -83,6 +83,23 @@ process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.stderr.destroy()
 })
 
+// ── 进程级兜底（unhandledRejection / uncaughtException）────────
+// [HISTORICAL] E1/W2：main 进程绝不能因一个未捕获异常退出。
+// 选择「log + 不 exit」而非 process.exit：
+//   - exit 会让 supervisor 启动的 runtime 子进程成孤儿（PPID 变 1），
+//     runtime 失去监管继续运行但无人能 stop，资源泄漏更危险
+//   - 仅记录日志，状态可能不一致，但靠后续 supervisor/liveness 兜底；
+//     日志已落盘供事后诊断。
+// 注意：uncaughtException 后 Node 默认行为已改为不退出（Node 15+），
+//       此处显式注册仅为统一日志格式、避免 stderr 被默认 handler 抢占。
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] Unhandled rejection:', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[main] Uncaught exception:', err)
+  // 不 exit，避免 runtime 孤儿进程；日志已落盘供诊断
+})
+
 // ── 路径 & 模式 ──────────────────────────────────────────────────
 const isDev = !app.isPackaged
 
