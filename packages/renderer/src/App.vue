@@ -32,13 +32,14 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Loader2, AlertCircle } from '@lucide/vue'
 import AppShell from '@/components/shell/AppShell.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
 const { state: connectionState, init, teardown, retryRuntime } = useConnection()
@@ -46,9 +47,21 @@ const { state: connectionState, init, teardown, retryRuntime } = useConnection()
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
 // 是「连接成功」唯一可靠信号——watch 它触发 initApp，appBootstrapped 守卫保证 HMR/重连幂等。
 const { initApp } = useSidebar()
+const workspaceStore = useWorkspaceStore()
 onMounted(() => { void init() })
+// [W8] 首次 connected → initApp（内部含 load）。断连后重连 connected → initApp 因 appBootstrapped
+// 守卫直接 return，workspace records 停留在断连前的 stale 数据（runtime 可能重启后从磁盘重载了新记录，
+// 如另一窗口写入）。hasConnectedBefore 区分首次 vs 重连：重连时额外 fire-and-forget load() 刷新。
+const hasConnectedBefore = ref(false)
 watch(connectionState, (s) => {
-  if (s === 'connected') void initApp()
+  if (s !== 'connected') return
+  if (!hasConnectedBefore.value) {
+    hasConnectedBefore.value = true
+    void initApp()
+    return
+  }
+  // 重连：initApp 守卫内会 return，单独刷新 workspace records（非阻塞，失败 store 内 catch 降级）
+  void workspaceStore.load()
 })
 
 /** 用户点击「重试」：委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
