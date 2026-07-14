@@ -151,6 +151,15 @@ export function useConnection() {
     }
     initialised = true
 
+    // L10：WS 连接状态监听在任何模式都安装（含 mock），确保 mock 断连时也 rejectAll pending。
+    // 此前在 mock 分支之后，mock 模式跳过安装 → mock 断连时 pending 永不 reject。
+    const stopStateWatch = watch(getState(), (newState, oldState) => {
+      if (oldState === 'connected' && newState !== 'connected') {
+        pending.rejectAll(new Error('连接已断开'))
+      }
+    })
+    removeStateWatch = stopStateWatch
+
     // mock 模式：走 mock，不需要端口发现，也不监听 runtime 崩溃事件（mock 无 runtime 进程）
     if (import.meta.env.VITE_MOCK === 'true') {
       connect('mock://localhost')
@@ -180,15 +189,6 @@ export function useConnection() {
       pending.rejectAll(new Error('Runtime 不可用'))
       useChatStore().finalizeAllStreaming('disconnect')
     })
-
-    // 监听 WS 连接状态变化：connected → 断开时清理 pending（覆盖 runtime 未崩溃但 WS 断连的场景，
-    // 如网络抖动。ws-client.onclose 不通知业务层，通过 watch state 变化间接感知）。
-    const stopStateWatch = watch(getState(), (newState, oldState) => {
-      if (oldState === 'connected' && newState !== 'connected') {
-        pending.rejectAll(new Error('连接已断开'))
-      }
-    })
-    removeStateWatch = stopStateWatch
 
     // 尝试从主进程获取已知端口
     const knownPort = await getRuntimePort()
