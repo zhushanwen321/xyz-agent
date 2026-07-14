@@ -13,6 +13,9 @@ export interface PendingRequest<T = unknown> {
   reject: (error: unknown) => void
 }
 
+/** per-request 超时（ms）。runtime handler 卡住或 send 静默丢弃时防永久挂死。 */
+const DEFAULT_TIMEOUT_MS = 30_000
+
 const pendingMap = new Map<string, PendingRequest>()
 
 /** 生成新命令 id（crypto.randomUUID） */
@@ -20,13 +23,36 @@ export function create(): string {
   return crypto.randomUUID()
 }
 
-/** 注册 pending 请求，返回与之关联的 Promise */
-export function register<T>(id: string): Promise<T> {
+/**
+ * 注册 pending 请求，返回与之关联的 Promise。
+ *
+ * @param id 命令 id（create() 生成）
+ * @param timeoutMs 超时毫秒数，默认 30s。超时后自动 reject（error.code='timeout'）+ 清理。
+ *                 传 0 禁用超时（向后兼容极少数长操作场景，如 compact 300s）。
+ */
+export function register<T>(id: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    pendingMap.set(id, {
-      resolve: resolve as (value: unknown) => void,
-      reject,
-    })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const entry: PendingRequest = {
+      resolve: (value: unknown) => {
+        if (timer) clearTimeout(timer)
+        resolve(value as T)
+      },
+      reject: (error: unknown) => {
+        if (timer) clearTimeout(timer)
+        reject(error)
+      },
+    }
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (pendingMap.has(id)) {
+          pendingMap.delete(id)
+          const err = Object.assign(new Error(`request timeout after ${timeoutMs}ms`), { code: 'timeout' })
+          reject(err)
+        }
+      }, timeoutMs)
+    }
+    pendingMap.set(id, entry)
   })
 }
 
