@@ -88,14 +88,14 @@
             />
           </div>
           <span class="shrink-0 font-mono text-[10px] text-subtle">
-            {{ completedAgentCount(record) }}/{{ record.agentCalls.length }} agents
+            {{ t('sidebar.workflowList.agentsLabel', { done: completedAgentCount(record), total: record.agentCalls.length }) }}
           </span>
         </div>
 
         <!-- 第三行：摘要（耗时 · token） -->
         <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-subtle">
           <span v-if="record.startedAt">{{ formatElapsedFromIso(record.startedAt, record.completedAt) }}</span>
-          <span v-if="record.usedTokens !== undefined">· {{ formatTokens(record.usedTokens) }}</span>
+          <span v-if="record.usedTokens !== undefined">· {{ formatTokens(record.usedTokens, t('sidebar.workflowList.tokUnit')) }}</span>
         </div>
       </div>
     </div>
@@ -180,9 +180,9 @@ function progressPercent(record: WorkflowRunRecord): number {
 }
 
 /** 格式化 token 数（超过阈值显示 k） */
-function formatTokens(tokens: number): string {
-  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k tok`
-  return `${tokens} tok`
+function formatTokens(tokens: number, unit: string): string {
+  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k ${unit}`
+  return `${tokens} ${unit}`
 }
 
 /** 格式化耗时（从 ISO 时间戳算秒数） */

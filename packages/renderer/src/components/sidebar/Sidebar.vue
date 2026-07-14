@@ -87,7 +87,7 @@
           >
             <AlertCircle class="size-5 text-danger opacity-60" />
             <p class="text-[11.5px] text-muted">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
-            <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">重试</Button>
+            <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">{{ t('sidebar.retry') }}</Button>
           </div>
           <SessionList
             v-else

@@ -56,8 +56,8 @@
 
         <!-- 摘要 -->
         <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-subtle">
-          <span v-if="record.turns !== undefined">{{ record.turns }} turns</span>
-          <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens) }}</span>
+          <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
+          <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
           <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
         </div>
 
@@ -125,9 +125,9 @@ function statusDotClass(status: SubagentStatus): string {
 }
 
 /** 格式化 token 数（超过阈值显示 k） */
-function formatTokens(tokens: number): string {
-  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k tok`
-  return `${tokens} tok`
+function formatTokens(tokens: number, unit: string): string {
+  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k ${unit}`
+  return `${tokens} ${unit}`
 }
 
 /** 格式化耗时（秒 → 可读） */

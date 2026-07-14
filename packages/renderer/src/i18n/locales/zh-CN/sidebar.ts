@@ -27,6 +27,8 @@ export default {
   segmentedTab: {
     session: '会话',
     file: '文件',
+    subagent: '子代理',
+    workflow: '工作流',
   },
   fileTree: {
     loading: '加载…',
@@ -61,12 +63,19 @@ export default {
     retry: '重试',
     empty: '暂无后台任务',
     emptyHint: '发起 subagent 后在此查看进度',
+    turnsUnit: 'turns',
+    tokUnit: 'tok',
   },
   workflowDetail: {
     backToList: '返回工作流列表',
     pause: '暂停',
     resume: '恢复',
     terminate: '终止',
+    agentsLabel: '{count} 个代理',
+    modelDefault: '默认',
+    tokenInUnit: 'in',
+    tokenOutUnit: 'out',
+    turnsUnit: 'turns',
   },
   workflowList: {
     loading: '加载工作流…',
@@ -77,5 +86,7 @@ export default {
     terminate: '终止',
     empty: '暂无工作流',
     emptyHint: '发起 workflow 后在此查看进度',
+    agentsLabel: '{done}/{total}',
+    tokUnit: 'tok',
   },
 }

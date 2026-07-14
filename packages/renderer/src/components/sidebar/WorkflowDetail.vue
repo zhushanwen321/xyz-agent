@@ -67,7 +67,7 @@
             {{ group.phase }}
           </span>
           <span class="text-[10px] text-subtle opacity-60">
-            {{ group.calls.length }} agent{{ group.calls.length > 1 ? 's' : '' }}
+            {{ t('sidebar.workflowDetail.agentsLabel', { count: group.calls.length }) }}
           </span>
         </div>
 
@@ -94,15 +94,15 @@
               {{ call.agent }}
             </span>
             <span class="shrink-0 font-mono text-[9.5px] text-subtle">
-              {{ call.model === 'default' ? 'default' : call.model }}
+              {{ call.model === 'default' ? t('sidebar.workflowDetail.modelDefault') : call.model }}
             </span>
           </div>
 
           <!-- 摘要 -->
           <div class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[9.5px] text-subtle">
-            <span v-if="call.inputTokens !== undefined">{{ formatTokens(call.inputTokens) }} in</span>
-            <span v-if="call.outputTokens !== undefined">· {{ formatTokens(call.outputTokens) }} out</span>
-            <span v-if="call.turns !== undefined">· {{ call.turns }} turns</span>
+            <span v-if="call.inputTokens !== undefined">{{ formatTokens(call.inputTokens, t('sidebar.workflowDetail.tokenInUnit')) }}</span>
+            <span v-if="call.outputTokens !== undefined">· {{ formatTokens(call.outputTokens, t('sidebar.workflowDetail.tokenOutUnit')) }}</span>
+            <span v-if="call.turns !== undefined">· {{ call.turns }} {{ t('sidebar.workflowDetail.turnsUnit') }}</span>
             <span v-if="call.durationMs !== undefined">· {{ formatDuration(call.durationMs) }}</span>
           </div>
         </div>
@@ -184,9 +184,9 @@ function callDotClass(status: WorkflowAgentCall['status']): string {
   }
 }
 
-function formatTokens(tokens: number): string {
-  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k`
-  return `${tokens}`
+function formatTokens(tokens: number, unit: string): string {
+  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k ${unit}`
+  return `${tokens} ${unit}`
 }
 
 function formatDuration(ms: number): string {

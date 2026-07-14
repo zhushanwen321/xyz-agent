@@ -71,7 +71,7 @@ interface TabDef {
 const tabs = computed<TabDef[]>(() => [
   { value: 'sessions', label: t('sidebar.segmentedTab.session'), icon: MessageSquare, count: props.sessionCount, badge: false },
   { value: 'files', label: t('sidebar.segmentedTab.file'), icon: File, count: props.fileCount, badge: false },
-  { value: 'subagents', label: 'Agents', icon: Bot, count: props.subagentCount, badge: props.subagentCount > 0 },
-  { value: 'workflows', label: 'Flows', icon: Workflow, count: props.workflowCount, badge: props.workflowCount > 0 },
+  { value: 'subagents', label: t('sidebar.segmentedTab.subagent'), icon: Bot, count: props.subagentCount, badge: props.subagentCount > 0 },
+  { value: 'workflows', label: t('sidebar.segmentedTab.workflow'), icon: Workflow, count: props.workflowCount, badge: props.workflowCount > 0 },
 ])
 </script>

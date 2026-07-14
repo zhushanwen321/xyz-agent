@@ -27,6 +27,8 @@ export default {
   segmentedTab: {
     session: 'Session',
     file: 'File',
+    subagent: 'Subagents',
+    workflow: 'Workflows',
   },
   fileTree: {
     loading: 'Loading…',
@@ -61,12 +63,19 @@ export default {
     retry: 'Retry',
     empty: 'No background tasks',
     emptyHint: 'Start a subagent to see progress here',
+    turnsUnit: 'turns',
+    tokUnit: 'tok',
   },
   workflowDetail: {
     backToList: 'Back to workflow list',
     pause: 'Pause',
     resume: 'Resume',
     terminate: 'Terminate',
+    agentsLabel: '{count} agents',
+    modelDefault: 'default',
+    tokenInUnit: 'in',
+    tokenOutUnit: 'out',
+    turnsUnit: 'turns',
   },
   workflowList: {
     loading: 'Loading workflows…',
@@ -77,5 +86,7 @@ export default {
     terminate: 'Terminate',
     empty: 'No workflows',
     emptyHint: 'Start a workflow to see progress here',
+    agentsLabel: '{done}/{total}',
+    tokUnit: 'tok',
   },
 }
