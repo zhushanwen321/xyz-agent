@@ -13,8 +13,8 @@ export interface PendingRequest<T = unknown> {
   reject: (error: unknown) => void
 }
 
-/** per-request 超时（ms）。runtime handler 卡住或 send 静默丢弃时防永久挂死。 */
-const DEFAULT_TIMEOUT_MS = 30_000
+/** per-request 超时（ms）。需 ≥ runtime rpc-client CMD_TIMEOUT_MS（60s）+ 余量，防误超时。 */
+const DEFAULT_TIMEOUT_MS = 65_000
 
 const pendingMap = new Map<string, PendingRequest>()
 

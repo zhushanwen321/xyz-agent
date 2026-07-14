@@ -31,9 +31,10 @@ import * as pending from './pending'
 export async function request<TReply = void>(
   type: ClientMessageType,
   payload: Record<string, unknown> = {},
+  timeoutMs?: number,
 ): Promise<TReply> {
   const id = pending.create()
-  const result = pending.register<TReply>(id)
+  const result = pending.register<TReply>(id, timeoutMs)
   // ClientMessage 是 discriminated union（type ↔ payload 对应），helper 的泛型 payload
   // 无法满足精确联合约束，用断言绕过——type 字面量已由 ClientMessageType 约束，安全。
   transport.send({ type, id, payload } as ClientMessage)
