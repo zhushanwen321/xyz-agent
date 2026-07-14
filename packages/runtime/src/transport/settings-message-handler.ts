@@ -41,7 +41,7 @@ export class SettingsMessageHandler {
           this.ctx.broadcast({
             type: 'config.defaults',
             id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' as const },
+            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' },
           })
         }
         return true
@@ -55,7 +55,7 @@ export class SettingsMessageHandler {
           this.ctx.broadcast({
             type: 'config.defaults',
             id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' as const },
+            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' },
           })
         }
         return true
@@ -136,11 +136,9 @@ export class SettingsMessageHandler {
       }
       case 'config.setDefaultModel': {
         // W3 默认模型持久化：configService.setDefaultModel 已存在（写 settings.json）。
-        // reply 回发起端 + 广播给所有 panel，与 setProvider/deleteProvider 的 newDefault 广播同构，
-        // 让其它打开的设置面板同步默认模型下拉。
-        // 注意：reply<T> 的 payload 严格校验为 ServerMessageMap['config.defaults'] = { defaultModel: string }
-        // （W3 不改此类型声明，留给 W4/后续 topic 收紧 source 字段）；broadcast 接受宽 ServerMessage，
-        // 沿用 W1 setProvider 广播惯例带 source 标签，故 source 仅出现在 broadcast。
+        // reply 回发起端（不带 source） + 广播给所有 panel（带 source='default-set'），与
+        // setProvider/deleteProvider 的 newDefault 广播同构，让其它打开的设置面板同步默认模型下拉。
+        // reply 与 broadcast 共用 ServerMessageMap['config.defaults'] 类型，source 为 optional。
         const { provider, modelId } = msg.payload
         this.ctx.configService.setDefaultModel(provider, modelId)
         this.ctx.reply(ws, msg.id, 'config.defaults', {
@@ -149,7 +147,7 @@ export class SettingsMessageHandler {
         this.ctx.broadcast({
           type: 'config.defaults',
           id: this.ctx.nextPushId(),
-          payload: { defaultModel: `${provider}/${modelId}`, source: 'default-set' as const },
+          payload: { defaultModel: `${provider}/${modelId}`, source: 'default-set' },
         })
         return true
       }

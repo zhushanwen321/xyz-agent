@@ -99,7 +99,7 @@ export class ModelService implements IModelService {
     this.broker.broadcast({
       type: 'config.defaults',
       id: this.nextPushId(),
-      payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' as const },
+      payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' },
     })
   }
 

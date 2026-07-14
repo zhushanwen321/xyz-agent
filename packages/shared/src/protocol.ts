@@ -179,6 +179,16 @@ export type ClientMessage = {
 
 // ── Runtime → Client message types ──────────────────────────────
 
+/**
+ * config.defaults 广播的来源标签（仅 broadcast 携带，reply 不带）。
+ * 收紧为联合类型：新增来源时编译器强制在此登记，避免 runtime 散落未约束的字面量。
+ */
+export type DefaultModelSource =
+  | 'provider-updated' // setProvider 后 fallback 修正了默认模型
+  | 'provider-deleted' // deleteProvider 后 fallback 修正了默认模型
+  | 'default-set'      // config.setDefaultModel 主动设置
+  | 'model-switch'     // model.switch 时持久化全局默认模型
+
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
@@ -251,7 +261,11 @@ export interface ServerMessageMapBase {
   /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
   'config.skillDirs': { dirs: SkillDirConfig[] }
   'config.agentDirs': { dirs: SkillDirConfig[] }
-  'config.defaults': { defaultModel: string }
+  'config.defaults': {
+    defaultModel: string
+    /** 默认模型变更来源，仅 broadcast 携带（reply 不带）。reply/broadcast 共用此类型，故 source 为 optional。 */
+    source?: DefaultModelSource
+  }
   'config.extensions': { extensions: ExtensionInfo[]; upgradeResult?: { upgraded: boolean; from: string; to: string } }
   /** extension.recommended reply：推荐扩展列表（含已安装状态） */
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
