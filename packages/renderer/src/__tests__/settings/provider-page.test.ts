@@ -191,3 +191,81 @@ describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）
     expect(configMock.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-sonnet-4')
   })
 })
+
+/**
+ * W1 robustness pass：
+ *  - U1（D4）：toggle enabled 失败时 actionError 经常驻 inline error 区域可见（不再被困在关闭的删除弹窗内）。
+ *  - U2（D5）：cycleThinking 死按钮已删除，thinking pill 改为 disabled 展示态。
+ *  - D14：删除 / 禁用 defaultModel 归属 provider 时前端兜底清空 defaultModel（幂等，runtime 广播到达时覆盖）。
+ */
+describe('ProviderPage W1 robustness', () => {
+  beforeEach(() => {
+    configMock.setProvider.mockClear()
+    configMock.deleteProvider.mockClear()
+  })
+
+  it('U1: toggle enabled 失败 → 常驻 inline error 区域可见并含错误文案', async () => {
+    configMock.setProvider.mockRejectedValueOnce(new Error('网络错误'))
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // 初始无错误
+    expect(wrapper.find('[data-testid="provider-action-error"]').exists()).toBe(false)
+
+    // 点 anthropic 的 enabled Switch（role=switch）
+    const sw = wrapper.findAll('[role="switch"]')[0]
+    await sw.trigger('click')
+    await flushPromises()
+
+    // 错误可见
+    const err = wrapper.find('[data-testid="provider-action-error"]')
+    expect(err.exists()).toBe(true)
+    expect(err.text()).toContain('网络错误')
+  })
+
+  it('U2: thinking pill 为 disabled 展示态（cycleThinking 死按钮已删除）', async () => {
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    // 展开 anthropic 让模型表格可见
+    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
+    await name.trigger('click')
+    await flushPromises()
+
+    const pill = wrapper.find('[data-testid="thinking-pill"]')
+    expect(pill.exists()).toBe(true)
+    // disabled 属性存在（值 '' 或空串，关键是 attributes('disabled') 非 undefined）
+    expect(pill.attributes('disabled')).toBeDefined()
+  })
+
+  it('D14: 删除 defaultModel 归属 provider → 前端清空 defaultModel', async () => {
+    const store = useSettingsStore()
+    store.defaultModel = 'anthropic/claude-sonnet-4'
+    configMock.deleteProvider.mockResolvedValueOnce(undefined)
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // 点 anthropic 的删除按钮（trash）打开确认弹窗
+    const trashBtns = wrapper.findAll('button[title="删除供应商"]')
+    await trashBtns[0]!.trigger('click')
+    await flushPromises()
+
+    // 点「确认删除」（teleport 到 body）
+    const confirmBtn = Array.from(document.body.querySelectorAll('button'))
+      .find((b) => b.textContent?.includes('确认删除')) as HTMLButtonElement | undefined
+    expect(confirmBtn).toBeTruthy()
+    confirmBtn!.click()
+    await flushPromises()
+
+    expect(configMock.deleteProvider).toHaveBeenCalledWith('anthropic')
+    expect(store.defaultModel).toBe('')
+  })
+})

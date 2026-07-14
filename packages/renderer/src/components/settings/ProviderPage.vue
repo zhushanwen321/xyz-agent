@@ -17,6 +17,17 @@
       </Button>
     </div>
 
+    <!-- 常驻 inline error：toggle enabled / 设默认 / 删除 等动作失败时报错可见。
+         不再只在删除弹窗 slot 内渲染（弹窗关闭时用户看不到）。 -->
+    <div
+      v-if="actionError"
+      data-testid="provider-action-error"
+      class="flex items-center gap-1.5 rounded-md border border-danger/30 bg-danger/5 px-3 py-1.5 text-[11px] text-danger"
+    >
+      <AlertCircle class="size-3.5 shrink-0" />
+      <span class="truncate">{{ actionError }}</span>
+    </div>
+
     <!-- 空状态 -->
     <div v-if="!providers.length" class="flex flex-col items-center gap-2 py-16 text-center">
       <div class="grid size-16 place-items-center rounded-full border-2 border-dashed border-border-strong">
@@ -121,11 +132,15 @@
                 </TableCell>
                 <TableCell class="py-2 text-right tabular-nums text-subtle">{{ formatCtx(m.contextWindow) }}</TableCell>
                 <TableCell class="py-2 text-right">
+                  <!-- thinking 仅展示，编辑入口在 ProviderEditModal 行内 Select（pickStrategy）。
+                       列表页此 pill 不可点击（删除原空函数 cycleThinking）。 -->
                   <Button
                     variant="ghost"
-                    class="h-auto rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:bg-transparent"
+                    data-testid="thinking-pill"
+                    disabled
+                    title="在编辑弹窗内修改思考策略"
+                    class="h-auto cursor-default rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:bg-transparent"
                     :class="thinkingPillClass(m)"
-                    @click.stop="cycleThinking(p.id, m.id)"
                   >{{ thinkingLabel(m) }}</Button>
                 </TableCell>
                 <TableCell class="py-2 text-right">
@@ -169,7 +184,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Settings, Plus, Pencil, Trash2, FileText, ImageIcon } from '@lucide/vue'
+import { Settings, Plus, Pencil, Trash2, FileText, ImageIcon, AlertCircle } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
@@ -253,6 +268,10 @@ async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
   const old = settingsStore.setProviderEnabled(p.id, enabled)
   try {
     await config.setProvider(p.id, { enabled })
+    // 兜底：禁用 defaultModel 归属 provider 时清空前端 defaultModel（runtime 也会广播修正，幂等覆盖）。
+    if (!enabled && settingsStore.defaultModel.startsWith(`${p.id}/`)) {
+      settingsStore.defaultModel = ''
+    }
   } catch (e) {
     settingsStore.setProviderEnabled(p.id, old)
     actionError.value = e instanceof Error ? e.message : String(e)
@@ -272,6 +291,10 @@ async function confirmDelete() {
   actionError.value = ''
   try {
     await config.deleteProvider(target.id)
+    // 兜底：删除 defaultModel 归属 provider 时清空前端 defaultModel（runtime 也会广播修正，幂等覆盖）。
+    if (settingsStore.defaultModel.startsWith(`${target.id}/`)) {
+      settingsStore.defaultModel = ''
+    }
     deleteTarget.value = null
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
@@ -290,7 +313,6 @@ async function setDefaultModel(providerId: string, modelId: string) {
     actionError.value = e instanceof Error ? e.message : String(e)
   }
 }
-function cycleThinking(_pid: string, _mid: string) { /* mock */ }
 
 function formatCtx(v?: number): string {
   if (!v) return '--'
