@@ -99,7 +99,15 @@ export class MessageDispatcher {
       }
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
-      this.workspaceService.record(activeSession.cwd)
+      // [W6] record 是非用户阻塞的副作用（记最近工作区），不应阻断发消息主流程。
+      // cache.set + scheduleFlush 抛错概率极低（OOM 级），但一旦发生 session 会卡在「生成中」。
+      // 包 try/catch：失败仅 warn，isGenerating 已置 true 不回退，pi.prompt 照常执行。
+      try {
+        this.workspaceService.record(activeSession.cwd)
+      } catch (e) {
+        console.warn('[message-dispatcher] workspace.record failed (non-blocking), sid=',
+          sessionId, e instanceof Error ? e.message : e)
+      }
     }
     // ── 发送 prompt + 错误广播 ──
     const promptText = buildPrompt()
