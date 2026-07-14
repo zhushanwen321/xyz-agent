@@ -32,10 +32,11 @@
       <div class="flex items-center gap-3 px-4 py-3">
         <span class="size-[7px] shrink-0 rounded-full" :class="statusDot(p.status)" />
 
-        <!-- 启用开关（名称左侧）：Switch 原语，调 config.setProvider 持久化 enabled -->
+        <!-- 启用开关（名称左侧）：Switch 原语。乐观更新——点击立即改 store，API 失败回滚。 -->
         <Switch
           :model-value="p.enabled"
           class="shrink-0"
+          :disabled="toggling.has(p.id)"
           :aria-label="`${p.name} 启用开关`"
           @click.stop
           @update:model-value="onToggleEnabled(p, $event)"
@@ -180,6 +181,9 @@ import ProviderEditModal from './ProviderEditModal.vue'
 
 defineProps<{ providers: ProviderInfo[] }>()
 
+/** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */
+const toggling = ref<Set<string>>(new Set())
+
 // 上下文窗口格式化用的单位换算常量
 const CONTEXT_K = 1000
 const CONTEXT_M = 1_000_000
@@ -237,14 +241,25 @@ function toggleExpand(id: string) {
   expanded.value = next
 }
 
-/** 启用开关 → 持久化 enabled（config.setProvider 动作，状态经 onProviders 订阅推回）。
- * 失败时记录错误供 UI 反馈；onProviders 订阅未变 → 开关视觉态自动恢复。 */
+/** 启用开关 → 乐观更新 store（开关即时滑动）+ config.setProvider 持久化 enabled。
+ * 乐观：先改 store，UI 立即反应；失败回滚 store + 报错。
+ * 广播回来时权威值覆盖 store（幂等：若值一致无副作用）。 */
 async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
+  if (toggling.value.has(p.id)) return
   actionError.value = ''
+  const next = new Set(toggling.value)
+  next.add(p.id)
+  toggling.value = next
+  const old = settingsStore.setProviderEnabled(p.id, enabled)
   try {
     await config.setProvider(p.id, { enabled })
   } catch (e) {
+    settingsStore.setProviderEnabled(p.id, old)
     actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    const after = new Set(toggling.value)
+    after.delete(p.id)
+    toggling.value = after
   }
 }
 

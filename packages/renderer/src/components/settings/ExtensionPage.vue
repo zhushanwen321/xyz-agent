@@ -141,16 +141,18 @@
             <Switch
               :model-value="ext.autoUpgrade ?? false"
               class="shrink-0"
+              :disabled="toggling.has(ext.name)"
               aria-label="自动升级"
               @update:model-value="onSetAutoUpgrade(ext, $event)"
             />
             <span class="text-[11px] text-muted">自动升级</span>
           </div>
         </div>
-        <!-- 启用开关：Switch 原语（状态经 onExtensions 订阅推回） -->
+        <!-- 启用开关：Switch 原语。乐观更新——点击立即改 store（开关即时滑动），API 失败回滚。 -->
         <Switch
           :model-value="ext.enabled"
           class="shrink-0"
+          :disabled="toggling.has(ext.name)"
           :aria-label="ext.enabled ? '禁用扩展' : '启用扩展'"
           @update:model-value="onToggle(ext, $event)"
         />
@@ -203,9 +205,13 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import { extension as extensionApi } from '@/api'
-import type { ExtensionItem } from '@/stores/settings'
+import { useSettingsStore, type ExtensionItem } from '@/stores/settings'
 
 const props = defineProps<{ extensions: ExtensionItem[] }>()
+const settingsStore = useSettingsStore()
+
+/** toggle 中的扩展名集合（防双击：API 期间 disable Switch） */
+const toggling = ref<Set<string>>(new Set())
 
 const tabs = [
   { id: 'npm', label: 'npm' },
@@ -294,14 +300,28 @@ watch(activeTab, () => {
   selected.value = new Set()
 })
 
-/** 启用开关 → extension.toggle（状态经 onExtensions 订阅推回）。
- * 失败记录错误供 UI 反馈；onExtensions 订阅未变 → 开关视觉态自动恢复。 */
+/** 启用开关 → 乐观更新 store（开关即时滑动）+ extension.toggle 持久化。
+ * 乐观：先改 store，UI 立即反应；失败回滚 store + 报错。
+ * 广播回来时权威值覆盖 store（幂等：若值一致无副作用）。 */
 async function onToggle(ext: ExtensionItem, enabled: boolean) {
+  if (toggling.value.has(ext.name)) return
   actionError.value = ''
+  // 防双击
+  const next = new Set(toggling.value)
+  next.add(ext.name)
+  toggling.value = next
+  // 乐观：立即改 store
+  const old = settingsStore.setExtensionEnabled(ext.name, enabled)
   try {
     await extensionApi.toggle(ext.name, enabled)
   } catch (e) {
+    // 回滚
+    settingsStore.setExtensionEnabled(ext.name, old)
     actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    const after = new Set(toggling.value)
+    after.delete(ext.name)
+    toggling.value = after
   }
 }
 
@@ -430,13 +450,23 @@ async function onUpgrade(name: string) {
   }
 }
 
-/** 设置扩展自动升级开关（仅 user-installed） */
+/** 设置扩展自动升级开关（仅 user-installed）→ 乐观更新 + 持久化。 */
 async function onSetAutoUpgrade(ext: ExtensionItem, enabled: boolean) {
+  if (toggling.value.has(ext.name)) return
   actionError.value = ''
+  const next = new Set(toggling.value)
+  next.add(ext.name)
+  toggling.value = next
+  const old = settingsStore.setExtensionAutoUpgrade(ext.name, enabled)
   try {
     await extensionApi.setAutoUpgrade(ext.name, enabled)
   } catch (e) {
+    settingsStore.setExtensionAutoUpgrade(ext.name, old)
     actionError.value = e instanceof Error ? `设置自动升级失败: ${e.message}` : `设置自动升级失败: ${String(e)}`
+  } finally {
+    const after = new Set(toggling.value)
+    after.delete(ext.name)
+    toggling.value = after
   }
 }
 </script>

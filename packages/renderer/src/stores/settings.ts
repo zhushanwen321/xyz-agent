@@ -101,6 +101,48 @@ export const useSettingsStore = defineStore('settings', () => {
     await config.setAgentDirs(dirs)
   }
 
+  // ── 乐观更新（toggle 级，区别于 setSkillDirs 的「靠广播推回」）──
+  // Switch 受控于 store state，点 toggle 到 UI 动效需经历一次 WS 往返（几十~数百 ms），
+  // 纯广播模式期间开关卡在原位 → 用户以为没反应。这些 action 立即改本地 state，
+  // 组件「先调 action 再调 API、失败回滚」，广播回来时权威值自然覆盖（幂等调和）。
+
+  /**
+   * 乐观切换 provider enabled。
+   * 立即改本地 providers 对应项的 enabled，组件负责随后调 API 持久化、失败时回滚。
+   * @returns 旧值（供回滚用）
+   */
+  function setProviderEnabled(id: string, enabled: boolean): boolean {
+    const idx = providers.value.findIndex((p) => p.id === id)
+    if (idx === -1) return false
+    const old = providers.value[idx].enabled ?? true
+    providers.value[idx] = { ...providers.value[idx], enabled }
+    return old
+  }
+
+  /**
+   * 乐观切换 extension enabled。
+   * @returns 旧值（供回滚用）
+   */
+  function setExtensionEnabled(name: string, enabled: boolean): boolean {
+    const idx = extensions.value.findIndex((e) => e.name === name)
+    if (idx === -1) return false
+    const old = extensions.value[idx].enabled ?? true
+    extensions.value[idx] = { ...extensions.value[idx], enabled }
+    return old
+  }
+
+  /**
+   * 乐观切换 extension autoUpgrade。
+   * @returns 旧值（供回滚用）
+   */
+  function setExtensionAutoUpgrade(name: string, autoUpgrade: boolean): boolean {
+    const idx = extensions.value.findIndex((e) => e.name === name)
+    if (idx === -1) return false
+    const old = extensions.value[idx].autoUpgrade ?? false
+    extensions.value[idx] = { ...extensions.value[idx], autoUpgrade }
+    return old
+  }
+
   return {
     // state
     providers,
@@ -116,6 +158,9 @@ export const useSettingsStore = defineStore('settings', () => {
     setSystem,
     setSkillDirs,
     setAgentDirs,
+    setProviderEnabled,
+    setExtensionEnabled,
+    setExtensionAutoUpgrade,
   }
 })
 
