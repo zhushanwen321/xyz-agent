@@ -690,9 +690,8 @@ describe('SessionService · Facade', () => {
       expect(setup.service.getSummary(id)?.modelId).toBe('anthropic/claude-x')
     })
 
-    it('returns sessionId unchanged when session not in map', async () => {
-      const returned = await setup.service.switchModel('ghost', 'p', 'm')
-      expect(returned).toBe('ghost')
+    it('throws when session not in map (W1/L7: fail-fast，不再静默成功)', async () => {
+      await expect(setup.service.switchModel('ghost', 'p', 'm')).rejects.toThrow('session not active')
     })
 
     it('切换后广播 session.state_changed（含按新 contextWindow 重算用量）', async () => {

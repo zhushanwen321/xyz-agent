@@ -165,7 +165,15 @@ export function scanPiSessions(): ScannedSessionMeta[] {
   const results: ScannedSessionMeta[] = []
 
   const sessionsDir = getSessionsDir()
-  const entries = readdirSync(sessionsDir)
+  let entries: string[]
+  try {
+    entries = readdirSync(sessionsDir)
+  } catch (e) {
+    // L8: sessions 目录存在但不可读（权限/IO 故障）时，readdirSync 抛 EACCES 等异常。
+    // 原实现未保护会冒泡为进程级未捕获异常，此处降级为返回空数组（scan 容忍失败）。
+    console.error(`[session-file-utils] scanPiSessions: failed to read sessions dir: ${sessionsDir}`, e)
+    return []
+  }
 
   for (const entry of entries) {
     const entryPath = join(sessionsDir, entry)

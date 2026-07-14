@@ -239,16 +239,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<string> {
     const session = this.sessions.get(sessionId)
-    if (!session) return sessionId
+    if (!session) throw new Error('session not active')
     const newModelId = `${provider}/${modelId}`
     const client = this.pm.getClient(sessionId)
-    if (client) {
-      try {
-        await client.setModel(provider, modelId)
-      } catch (e) {
-        console.error(`[session-service] switchModel RPC failed: sessionId=${sessionId}, model=${newModelId}`, e)
-        throw e
-      }
+    if (!client) return sessionId // 无活跃 pi 进程：跳过缓存写和广播，不假装成功
+    try {
+      await client.setModel(provider, modelId)
+    } catch (e) {
+      console.error(`[session-service] switchModel RPC failed: sessionId=${sessionId}, model=${newModelId}`, e)
+      throw e
     }
     session.modelId = newModelId
 

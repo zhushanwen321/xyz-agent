@@ -11,6 +11,7 @@
  */
 import { basename } from 'node:path'
 import { existsSync } from 'node:fs'
+import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
@@ -19,7 +20,7 @@ import type { IManagedSessionView } from './types.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
-import { toErrorMessage } from '../../utils/errors.js'
+import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 
@@ -52,7 +53,7 @@ export class SessionLifecycle {
 
     // 启动 pi 前检查 model 配置,避免 pi 因无 model 直接 exit(1)
     if (!this.configStore.getDefaultModel()) {
-      throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before starting a session.', MODEL_NOT_CONFIGURED)
     }
 
     const allExtPaths = await this.svc.getExtensionPaths()
@@ -160,7 +161,7 @@ export class SessionLifecycle {
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
     if (!this.configStore.getDefaultModel()) {
-      throw new Error('No model configured. Please configure a provider and model in Settings before restoring a session.')
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before restoring a session.', MODEL_NOT_CONFIGURED)
     }
     const existing = this.svc.getSession(sessionId)
     if (existing) {
@@ -230,7 +231,7 @@ export class SessionLifecycle {
     label?: string,
   ): Promise<SessionSummary> {
     if (!this.configStore.getDefaultModel()) {
-      throw new Error('No model configured. Please configure a provider and model in Settings before forking a session.')
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
     }
 
     // 1. 查源 session 文件路径（scanSessions 合并磁盘 + 内存 active）
@@ -259,7 +260,9 @@ export class SessionLifecycle {
       // 4. switch_session 让 pi 加载截断后的历史
       await client.switchSession(forkedFilePath)
     } catch (e) {
+      // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
+      await unlink(forkedFilePath).catch(() => {})
       throw e
     }
 
@@ -271,7 +274,9 @@ export class SessionLifecycle {
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
       )
     } catch (initErr) {
+      // L5: initializeManagedSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）
       await this.safeDestroy(forkedId)
+      await unlink(forkedFilePath).catch(() => {})
       throw initErr
     }
 

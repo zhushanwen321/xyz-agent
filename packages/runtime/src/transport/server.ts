@@ -220,7 +220,9 @@ export class RuntimeServer implements IMessageBroker {
     } catch (e) {
       const message = toErrorMessage(e)
       const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
-      this.broker.sendError(ws, 'handler_error', message, msg.id, sessionId ? { sessionId } : undefined)
+      // L4 增强：error 自带 code（如 MODEL_NOT_CONFIGURED）时透传，前端据此差异化引导；否则回退 handler_error。
+      const code = (e as Error & { code?: string }).code ?? 'handler_error'
+      this.broker.sendError(ws, code, message, msg.id, sessionId ? { sessionId } : undefined)
     }
   }
 

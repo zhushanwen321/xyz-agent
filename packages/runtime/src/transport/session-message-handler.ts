@@ -5,7 +5,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
-import { toErrorMessage, isEnoent } from '../utils/errors.js'
+import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
@@ -31,16 +31,36 @@ export class SessionMessageHandler {
   async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
-        const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
-        this.ctx.reply(ws, msg.id, 'session.created', { session })
-        return this.ctx.broadcastSessionList()
+        try {
+          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
+          this.ctx.reply(ws, msg.id, 'session.created', { session })
+          return this.ctx.broadcastSessionList()
+        } catch (e) {
+          // L4: model 未配置时返回差异化 error code，前端据此引导去 Settings 配置。
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          throw e
+        }
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
         const { srcSessionId, fromPiEntryId, includeFrom, label } = msg.payload
-        const session = await this.ctx.sessionService.forkSession(srcSessionId, fromPiEntryId, includeFrom ?? true, label)
-        this.ctx.reply(ws, msg.id, 'session.created', { session })
-        return this.ctx.broadcastSessionList()
+        try {
+          const session = await this.ctx.sessionService.forkSession(srcSessionId, fromPiEntryId, includeFrom ?? true, label)
+          this.ctx.reply(ws, msg.id, 'session.created', { session })
+          return this.ctx.broadcastSessionList()
+        } catch (e) {
+          // L4: model 未配置时返回差异化 error code（与 session.create 同模式）。
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          throw e
+        }
       }
       case 'session.delete': {
         const delSid = msg.payload.sessionId
