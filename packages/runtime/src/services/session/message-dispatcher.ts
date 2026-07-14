@@ -89,7 +89,8 @@ export class MessageDispatcher {
     const activeSession = this.svc.getSessionByClient(client)
     if (activeSession) {
       // [D-009 预检] busy 时拒绝（send.rejected 广播，不调 pi.prompt）
-      if (activeSession.isGenerating) {
+      // [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
+      if (activeSession.isGenerating || activeSession.isCompacting) {
         console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
         this.broker.broadcast({
           type: 'send.rejected',
@@ -225,41 +226,51 @@ export class MessageDispatcher {
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
     })
-    let result
+    // [W3, U6] compact 期间用 isCompacting 互斥 sendPrompt（pi 在压缩上下文，
+    // 此时 prompt 会与压缩竞态导致卡死）。与 isGenerating 不同：compact 不开 isGenerating，
+    // 否则前端会把 session 误显示为 active（实际在压缩）。finally 兜底确保异常/成功都复位。
+    const active = this.svc.getSessionByClient(client)
+    if (active) active.isCompacting = true
     try {
-      result = await client.compact(customInstructions)
-      console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
-    } catch (e) {
-      const errMsg = toErrorMessage(e)
-      console.error('[message-dispatcher] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
+      let result
+      try {
+        result = await client.compact(customInstructions)
+        console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+      } catch (e) {
+        const errMsg = toErrorMessage(e)
+        console.error('[message-dispatcher] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
+        this.broker.broadcast({
+          type: 'session.compacted',
+          payload: { sessionId, status: 'compacted', error: errMsg },
+        })
+        throw e
+      }
+      // 压缩成功：广播 summary 进对话流（SystemNotice）+ 刷新 context 用量。
+      // 两件事都在 dispatcher 编排——compact 是主动命令，副作用归位命令编排层（非 event-adapter）。
+      // AGENTS.md 规则 7.5：对话流状态必须实时可见 + 可重开恢复（持久化由 pi 写入 JSONL，重开经 converter 还原）。
+      if (result?.summary) {
+        this.broker.broadcast({
+          type: 'message.compactionSummary',
+          payload: {
+            sessionId,
+            summary: result.summary,
+            tokensBefore: result.tokensBefore,
+            timestamp: Date.now(),
+          },
+        })
+      }
+      if (result?.estimatedTokensAfter != null && result.estimatedTokensAfter > 0) {
+        // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
+        // 注意 estimatedTokensAfter 可能很小（压缩后），applyContextUpdate 对 0 会跳过，故判 > 0。
+        this.svc.applyContextUpdate(sessionId, result.estimatedTokensAfter)
+      }
       this.broker.broadcast({
         type: 'session.compacted',
-        payload: { sessionId, status: 'compacted', error: errMsg },
+        payload: { sessionId, status: 'compacted' },
       })
-      throw e
+    } finally {
+      // [W3, U6] 无论成功/失败/抛错都复位，避免 session 永远卡在 isCompacting（之后所有消息被拒）
+      if (active) active.isCompacting = false
     }
-    // 压缩成功：广播 summary 进对话流（SystemNotice）+ 刷新 context 用量。
-    // 两件事都在 dispatcher 编排——compact 是主动命令，副作用归位命令编排层（非 event-adapter）。
-    // AGENTS.md 规则 7.5：对话流状态必须实时可见 + 可重开恢复（持久化由 pi 写入 JSONL，重开经 converter 还原）。
-    if (result?.summary) {
-      this.broker.broadcast({
-        type: 'message.compactionSummary',
-        payload: {
-          sessionId,
-          summary: result.summary,
-          tokensBefore: result.tokensBefore,
-          timestamp: Date.now(),
-        },
-      })
-    }
-    if (result?.estimatedTokensAfter != null && result.estimatedTokensAfter > 0) {
-      // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
-      // 注意 estimatedTokensAfter 可能很小（压缩后），applyContextUpdate 对 0 会跳过，故判 > 0。
-      this.svc.applyContextUpdate(sessionId, result.estimatedTokensAfter)
-    }
-    this.broker.broadcast({
-      type: 'session.compacted',
-      payload: { sessionId, status: 'compacted' },
-    })
   }
 }

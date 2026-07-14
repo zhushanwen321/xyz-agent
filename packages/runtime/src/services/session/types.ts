@@ -34,6 +34,15 @@ export interface IManagedSessionView {
   /** 最近一次 agent_end / context.update 的 inputTokens 缓存，供 switchModel 重算用量 */
   inputTokens: number
   isGenerating: boolean
+  /**
+   * compact 进行中标记（W3, U6）。
+   *
+   * compact 期间 pi 正在做上下文压缩（不开 isGenerating），sendPrompt 的 busy 预检
+   * 只看 isGenerating 会让 compact 中途的消息进入 pi.prompt 触发竞态/卡死。
+   * 故 compact 用 try/finally 置此标记，sendPrompt 预检同时拒 isGenerating/isCompacting。
+   * 与 isGenerating 对称：不进 toSummary（前端状态摘要只看 isGenerating 推 active/idle）。
+   */
+  isCompacting: boolean
   thinkingLevel?: string
   sessionFilePath?: string
   /**

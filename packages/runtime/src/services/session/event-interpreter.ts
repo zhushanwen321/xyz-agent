@@ -74,10 +74,26 @@ export interface EventInterpreterOptions {
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string; textRaw?: string }) => void
+  /**
+   * pi 静默卡死 abort 回调（W6, U12，设计文档 A2）。
+   *
+   * 当 turn 内连续 SILENT_ABORT_MS（300s）无任何活动事件时，watchdog 判定 pi 卡死，
+   * 触发本回调由组合根调 message-dispatcher.abort（复用现有 abort 兜底广播路径）。
+   * payload 携带 sessionId，供上层定位要 abort 的 session。
+   */
+  onSilentAbort?: (payload: { sessionId: string }) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
 const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
+
+// ── W6 pi watchdog 阈值（设计文档 A2）──
+// pi 子进程偶发静默卡死（0% CPU、不退出、不发事件），导致 isGenerating 永久 true。
+// watchdog 在 turn 维度维护两级定时器：WARN 提示用户 + ABORT 自动中断。
+/** WARN 阈值：连续 120s 无活动事件 → 广播 message.stream_error{kind:'silent'}（不中断）。 */
+const SILENT_WARN_MS = 120_000
+/** ABORT 阈值：连续 300s 无活动事件 → 判定卡死，触发 onSilentAbort（上层 abort pi + 复位 isGenerating）。 */
+const SILENT_ABORT_MS = 300_000
 
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
@@ -94,6 +110,13 @@ export class EventInterpreter {
   private subagentRecords: Map<string, SubagentRecord> = new Map()
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
+  // ── W6 pi watchdog 状态（per-session，turn 维度）──
+  /** ABORT 定时器句柄（300s 无活动事件触发 onSilentAbort），turn-start/活动事件启动/重置，agent_end 销毁清除 */
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null
+  /** WARN 定时器句柄（120s 无活动事件广播 stream_error），与 watchdogTimer 同生命周期 */
+  private watchdogWarnTimer: ReturnType<typeof setTimeout> | null = null
+  /** 本轮 WARN 是否已广播（避免 reset 前重复广播；活动事件到达时复位） */
+  private watchdogWarned = false
 
   constructor(
     private readonly sessionId: string,
@@ -138,6 +161,8 @@ export class EventInterpreter {
         this.handleSubagentBgNotify(ev.message)
         // workflow-result（run 完成）：广播 session.workflows 增量信号
         this.handleWorkflowResult(ev.message)
+        // [W6] message（含 text_delta/thinking_*）是活动事件 → 重置 watchdog 计时
+        this.resetWatchdog()
         return
       case 'turn-start':
         // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
@@ -146,12 +171,18 @@ export class EventInterpreter {
           ? this.opts.fileChangeDiff.snapshotGitStatus(this.opts.cwd)
           : null
         this.writeContents.clear()
+        // [W6] turn 开始 → 启动 watchdog（等待后续活动事件；无事件到达时按阈值 WARN/ABORT）
+        this.startWatchdog()
         return
       case 'tool-call-start':
+        // [W6] 工具执行开始是活动事件 → 重置 watchdog（长任务期间避免误判卡死）
+        this.resetWatchdog()
         // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
         void this.handleToolCallStart(ev)
         return
       case 'tool-call-end':
+        // [W6] 工具执行结束是活动事件 → 重置 watchdog
+        this.resetWatchdog()
         void this.handleToolCallEnd(ev)
         return
       case 'turn-end':
@@ -306,7 +337,77 @@ export class EventInterpreter {
     this.statusBaseline = null
     this.writeContents.clear()
 
+    // [W6] agent_end 正常到达 → turn 已结束，清除 watchdog（避免 turn 后误触发 abort）
+    this.clearWatchdog()
+
     return Promise.resolve()
+  }
+
+  // ── W6 pi watchdog：turn 级静默卡死检测（设计文档 A2）──
+
+  /**
+   * 启动 watchdog（turn-start 触发）。
+   *
+   * 清掉上一轮残留定时器后，启动 WARN（120s）和 ABORT（300s）两级定时器。
+   * WARN 触发时广播 message.stream_error{kind:'silent'} 提醒用户但不中断；
+   * ABORT 触发时调 onSilentAbort（上层 abort pi + 复位 isGenerating）并清自身。
+   */
+  private startWatchdog(): void {
+    this.scheduleWatchdog()
+  }
+
+  /**
+   * 重置 watchdog（活动事件到达时触发）。
+   *
+   * 与 startWatchdog 共用 schedule 逻辑：清掉 WARN/ABORT 定时器 + 复位 watchdogWarned 后重排。
+   * 活动事件定义（设计文档 §3.2）：message（text_delta/thinking_*）/ tool-call-start / tool-call-end。
+   * 这些事件表明 pi 仍在产出，故重置计时，避免长任务/长思考误判。
+   */
+  private resetWatchdog(): void {
+    this.scheduleWatchdog()
+  }
+
+  /** 共享的定时器重排逻辑：清旧 + 复位 warned + 排 WARN/ABORT 两级。 */
+  private scheduleWatchdog(): void {
+    this.clearWatchdogTimers()
+    this.watchdogWarned = false
+    // WARN 先到：广播提示，不清 ABORT 计时（继续等卡死判定）
+    this.watchdogWarnTimer = setTimeout(() => {
+      if (this.watchdogWarned) return
+      this.watchdogWarned = true
+      console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
+      this.opts.send({
+        type: 'message.stream_error' as ServerMessageType,
+        payload: { sessionId: this.sessionId, kind: 'silent' },
+      })
+    }, SILENT_WARN_MS)
+    // ABORT 到：判定卡死，触发回调并清自身（abort 路径会广播终态）
+    this.watchdogTimer = setTimeout(() => {
+      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
+      this.clearWatchdogTimers()
+      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
+    }, SILENT_ABORT_MS)
+  }
+
+  /**
+   * 清除 watchdog（agent_end / ABORT 触发 / session 销毁时调用）。
+   * 清掉两级定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
+   */
+  private clearWatchdog(): void {
+    this.clearWatchdogTimers()
+    this.watchdogWarned = false
+  }
+
+  /** 仅清定时器句柄（不触碰 warned，供 scheduleWatchdog 重排前调用）。 */
+  private clearWatchdogTimers(): void {
+    if (this.watchdogWarnTimer) {
+      clearTimeout(this.watchdogWarnTimer)
+      this.watchdogWarnTimer = null
+    }
+    if (this.watchdogTimer) {
+      clearTimeout(this.watchdogTimer)
+      this.watchdogTimer = null
+    }
   }
 
   /**

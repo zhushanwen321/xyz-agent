@@ -182,6 +182,13 @@ async function main(): Promise<void> {
         data: { ...context, sessionId },
         timestamp: Date.now(),
       }),
+      // W6 pi watchdog：turn 内连续 300s 无活动事件判定 pi 卡死，触发 abort。
+      // 复用 sessionService.abort → message-dispatcher.abort 完整路径（client.abort 成功/失败
+      // 均有兜底广播 + 复位 isGenerating，设计文档 A2 §3.4）。.catch 兜底防 unhandledRejection
+      // （abort 内部已 try/catch 广播终态，此处只防极端异常逃逸）。
+      onSilentAbort: ({ sessionId: sid }) => {
+        sessionService.abort(sid).catch(() => {})
+      },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
     return new EventAdapter(sessionId, (events) => interpreter.interpret(events))

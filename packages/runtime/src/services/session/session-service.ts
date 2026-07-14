@@ -10,8 +10,9 @@
  *
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
@@ -25,6 +26,8 @@ import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
+import { parseSessionHeader } from '../../infra/pi/session-file-utils.js'
+import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -343,15 +346,37 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /**
    * 获取 workflow 内 agent call 的对话流历史。
-   * agentCallSessionId 是 trace[].sessionId（pi session ID，uuidv7），
-   * agent call 的 JSONL 落在 ~/.pi/agent/sessions/<encodedAgentCallCwd>/ 下（cwd 是 worktree 路径），
-   * 与主 session 的 cwd 不同。scanPiSessions 扫所有 encodedCwd 子目录，按 sessionId 能找到。
-   * 复用 getHistoryFromFile（与主 session 历史读取同链路）。
+   *
+   * agentCallSessionId 是 trace[].sessionId（pi session ID，uuidv7）。
+   * agent call 的 JSONL 落在 getSubagentSessionDir(mainCwd) 下
+   * （~/.xyz-agent/pi/agent/subagents/<encodedCwd>/sessions/<ISO>_<sessionId>.jsonl），
+   * **不在**主 session 的 sessions 目录。scanPiSessions 只扫主 sessions 目录，
+   * 所以不能用 getHistoryFromFile（它经 scanSessions 查找），需在此直接按 sessionId 在
+   * subagents 目录下查找文件。
+   *
+   * Fail-fast：agent call 有 trace 记录说明执行过，历史文件理应存在。
+   * 找不到文件时 throw（而非静默返回空数组），让前端报错给用户而非显示空白。
+   * 文件存在但解析为空（如 pi 延迟写入只有 session header）返回空数组（正常边界）。
+   *
+   * @throws 找不到主 session / 主 session 无 cwd / subagents 目录不存在 / 无匹配 sessionId 的文件
    */
   async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
-    // sessionId 参数保留接口一致性（未来可能用于 session-scoped 查找优化），当前全局 scan
-    void sessionId
-    return getHistoryFromFile(agentCallSessionId, this.sessionStore)
+    const mainSession = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!mainSession) {
+      throw new Error(`主 session ${sessionId} 不存在，无法查找 agent call 历史`)
+    }
+    if (!mainSession.cwd) {
+      throw new Error(`主 session ${sessionId} 无 cwd，无法推导 subagent session 目录`)
+    }
+
+    const filePath = findAgentCallFile(mainSession.cwd, agentCallSessionId)
+    if (!filePath) {
+      throw new Error(
+        `未找到 agent call 的 session 文件（sessionId=${agentCallSessionId}）。` +
+        `可能原因：agent call 执行失败未创建 session，或 session 文件尚未落盘。`,
+      )
+    }
+    return getHistoryFromFilePath(filePath, this.sessionStore)
   }
 
   /**
@@ -539,7 +564,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
-      tokenCount: 0, inputTokens: 0, isGenerating: false,
+      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false,
       adapter, sessionFilePath,
       hidden,
       labelPersisted: false,
@@ -713,4 +738,38 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       console.warn('[session-service] fetchAndBroadcastContext failed:', e)
     }
   }
+}
+
+/**
+ * 在 subagent session 目录下按 sessionId 查找 agent call 的 JSONL 文件。
+ *
+ * agent call（workflow 内的子 agent 执行）JSONL 落在
+ * getSubagentSessionDir(mainCwd) = <piAgentDir>/subagents/<encodedCwd>/sessions/ 下，
+ * 文件名 <ISO>_<sessionId>.jsonl，首行是 {type:"session", id:"<sessionId>"}。
+ * 按 sessionId 匹配首行 header.id（不从文件名解析——文件名 ISO 格式不稳定）。
+ *
+ * 目录不存在或无匹配文件返回 null。
+ */
+function findAgentCallFile(mainCwd: string, agentCallSessionId: string): string | null {
+  let dir: string
+  try {
+    dir = getSubagentSessionDir(mainCwd)
+  } catch {
+    return null
+  }
+  if (!existsSync(dir)) return null
+
+  let files: string[]
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.jsonl') && !f.endsWith('.finalized'))
+  } catch {
+    return null
+  }
+
+  for (const file of files) {
+    const filePath = join(dir, file)
+    const header = parseSessionHeader(filePath)
+    if (header?.id === agentCallSessionId) return filePath
+  }
+  return null
 }
