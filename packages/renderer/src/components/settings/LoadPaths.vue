@@ -96,12 +96,33 @@ const localDirs = ref<SkillDirConfig[]>([...props.dirs])
 // 同步外部变更（store 广播），但拖拽进行中跳过——避免广播覆盖用户正在拖拽的顺序。
 watch(() => props.dirs, (next) => {
   if (dragIndex.value !== null) return // 拖拽中，不覆盖
+  // 广播回显抑制（竞态修复 W2）：onDragEnd emit 后 dragIndex 已清成 null，
+  // 此时若广播回来（props.dirs 因 store→WS→runtime 回路而变），原守卫失效会覆盖 localDirs。
+  // awaitingBroadcast 在 onDragEnd emit 前置位：广播回来时若 enabled 路径顺序与 localDirs
+  // 一致 → 这是自己刚 emit 的回显，跳过覆盖（保留 localDirs 对象，避免回弹/对象重建）；
+  // 顺序不一致 → 外部真实变更，落到下面正常同步。标志无论走哪条分支都复位。
+  if (awaitingBroadcast.value) {
+    const nextEnabled = next.filter((d) => d.enabled).map((d) => d.path)
+    const localEnabled = localDirs.value.filter((d) => d.enabled).map((d) => d.path)
+    const sameOrder =
+      nextEnabled.length === localEnabled.length &&
+      nextEnabled.every((p, i) => p === localEnabled[i])
+    awaitingBroadcast.value = false
+    if (sameOrder) return // 广播顺序与用户拖拽一致 → 跳过覆盖
+    // 顺序不一致 = 外部真实变更 → 落到下面覆盖
+  }
   localDirs.value = next.map((d) => ({ ...d }))
 }, { deep: true })
 
 // ── 原生 HTML5 拖拽（本地状态驱动，零回路）──
 const dragIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
+/**
+ * 拖拽 emit 后等待广播回显的标志（竞态修复 W2）。
+ * onDragEnd emit 前置位 true；watch(props.dirs) 据此判断：广播值的 enabled 顺序与 localDirs
+ * 一致 → 跳过覆盖（防 onDragEnd 清 dragIndex 后广播把刚拖的顺序覆盖回去）。任何分支都复位。
+ */
+const awaitingBroadcast = ref(false)
 const DND_MIME = 'application/x-loadpaths-index'
 
 function onDragStart(e: DragEvent, index: number): void {
@@ -150,6 +171,9 @@ function onDragEnd(): void {
   dragIndex.value = null
   dragOverIndex.value = null
   if (wasDragging) {
+    // 先置位 awaitingBroadcast 再 emit：emit 触发 store→WS→runtime→props.dirs 广播回路，
+    // 回来时 watch 检查 awaitingBroadcast，若 enabled 顺序一致则跳过覆盖（防竞态回弹）。
+    awaitingBroadcast.value = true
     emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
   }
 }
