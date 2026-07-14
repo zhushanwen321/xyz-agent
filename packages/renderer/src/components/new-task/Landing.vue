@@ -20,6 +20,7 @@ import CreateBranchModal from './CreateBranchModal.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
+import { useToast } from '@/composables/useToast'
 import { dirNameOf } from '@/composables/logic/path'
 
 const props = withDefaults(
@@ -43,6 +44,20 @@ const emit = defineEmits<{
 }>()
 
 const flow = useNewTaskFlow()
+const { error: toastError } = useToast()
+
+/**
+ * onOpenDirDialog — 打开 OS 目录选择器（AC-5.6 异常反馈）。
+ *
+ * flow.openDirDialog 的 IPC 招错时 toast 提示用户（不再变 unhandled rejection）。
+ * 模板不能内联 flow.openDirDialog()：那样返回的 Promise 无人 catch，reject 变 unhandled rejection。
+ */
+function onOpenDirDialog(): void {
+  flow.openDirDialog().catch((e: unknown) => {
+    const reason = e instanceof Error ? e.message : String(e)
+    toastError(`无法打开目录选择器：${reason}`)
+  })
+}
 const sessionStore = useSessionStore()
 // landing 态 session 真源是 NewTaskFlow（selectWorkspace/openDirDialog create 的 session 不经
 // useSidebar，panel leaf.sessionId 滞后）。优先 flow 真源，props 作 fallback（常态新建两者一致）。
@@ -154,7 +169,7 @@ function onRetry(): void {
               <DirSelectPopover
                 :current-cwd="currentCwd ?? null"
                 @select="onSelectWorkspace"
-                @open-dir-dialog="flow.openDirDialog()"
+                @open-dir-dialog="onOpenDirDialog"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>
