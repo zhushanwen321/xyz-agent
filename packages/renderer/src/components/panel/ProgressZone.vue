@@ -12,7 +12,7 @@
     <!-- head：状态点 + 标题 + 步骤 + 折叠 chevron（点击 head toggle） -->
     <div
       class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[12px] transition-colors hover:bg-surface-hover"
-      :title="collapsed ? '展开' : '收起'"
+      :title="collapsed ? t('panel.progress.expand') : t('panel.progress.collapse')"
       @click="collapsed = !collapsed"
     >
       <span
@@ -33,7 +33,7 @@
 
     <!-- 完成态：自动收起为单行 inline（状态驱动，非用户折叠） -->
     <div v-if="phase === 'done' && !collapsed" class="flex items-center gap-2.5 px-3 pb-2">
-      <span class="text-[11px] text-muted">全部完成</span>
+      <span class="text-[11px] text-muted">{{ t('panel.progress.allDone') }}</span>
       <div class="h-1 flex-1 overflow-hidden rounded bg-white/[0.06]">
         <div class="h-full rounded bg-success" style="width: 100%" />
       </div>
@@ -85,6 +85,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Check, ChevronRight } from '@lucide/vue'
 
 type TodoStatus = 'pending' | 'active' | 'done'
@@ -104,6 +105,8 @@ interface ProgressState {
   todos: ProgressTodo[]
 }
 
+const { t } = useI18n()
+
 defineProps<{
   /** runtime Flow3 任务态：idle / running / done。真实数据源未接入前 state 恒 null，组件自隐藏 */
   phase?: 'idle' | 'running' | 'done'
@@ -116,6 +119,6 @@ const collapsed = ref(false)
 const state = computed<ProgressState | null>(() => null)
 
 function statusLabel(s: TodoStatus): string {
-  return s === 'done' ? '完成' : s === 'active' ? '进行中' : '待开始'
+  return s === 'done' ? t('panel.progress.done') : s === 'active' ? t('panel.progress.active') : t('panel.progress.pending')
 }
 </script>

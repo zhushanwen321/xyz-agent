@@ -65,6 +65,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
@@ -99,6 +100,7 @@ const controlledOpen = computed({
 
 const activeIndex = ref(0)
 
+const { t } = useI18n()
 const commandStore = useCommandStore()
 const settingsStore = useSettingsStore()
 const { load: loadFileCandidates } = useFileSearch()
@@ -140,7 +142,7 @@ watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 const slashCommands = computed(() => {
   if (props.sessionId) {
     // compact 只在有 session 时注入（landing 态无上下文可压缩）
-    const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: '压缩会话上下文' }
+    const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }
     const piCmds = commandStore.getCommands(props.sessionId)
     return [compactCmd, ...piCmds]
   }

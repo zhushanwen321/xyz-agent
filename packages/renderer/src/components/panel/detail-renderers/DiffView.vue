@@ -59,7 +59,7 @@
   <!-- 空 patch（无 hunk） -->
   <div v-else class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
     <GitCompare class="size-6 text-subtle opacity-40" />
-    <p class="text-[11.5px] text-subtle opacity-55">无差异内容</p>
+    <p class="text-[11.5px] text-subtle opacity-55">{{ t('panel.detail.noDiff') }}</p>
   </div>
 </template>
 
@@ -72,10 +72,13 @@
  * - 高亮未就绪时降级纯文本（仍有 +/- 语义色背景）
  */
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GitCompare } from '@lucide/vue'
 import { parseDiff, type ParsedDiff, type DiffHunk, type DiffLine, type DiffSegment } from '@/composables/logic/parseDiff'
 import { highlightCode } from '@/composables/logic/markdown'
 import { extToLang } from '@/composables/logic/file-type'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** unified diff patch 文本（git.getDiff 返回） */

@@ -16,7 +16,7 @@
       <Button
         variant="ghost"
         class="ml-0.5 grid size-4 shrink-0 place-items-center rounded-sm p-0 text-subtle transition-colors hover:bg-[rgba(239,68,68,0.12)] hover:text-danger"
-        title="从上下文移除"
+        :title="t('panel.contextChips.removeFromContext')"
         @click.stop="onRemove(item.id)"
       >
         <X class="size-3" />
@@ -27,6 +27,7 @@
 
 <script setup lang="ts">
 import { markRaw, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { FileText, Image as ImageIcon, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 
@@ -41,6 +42,7 @@ interface AttachedContextItem {
  * 已附上下文列表。runtime 未提供数据源前为空数组 → 整行 v-if="items.length" 自隐藏。
  * 接入点：runtime 下发已附上下文后，改为由 store/props 填充。
  */
+const { t } = useI18n()
 const items = ref<AttachedContextItem[]>([])
 
 function iconFor(item: AttachedContextItem) {

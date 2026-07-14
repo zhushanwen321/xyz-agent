@@ -60,7 +60,7 @@
       data-testid="detail-empty"
     >
       <FileText class="size-6 text-subtle opacity-40" />
-      <p class="text-[11.5px] text-subtle opacity-55">点击文件树中的文件预览内容</p>
+      <p class="text-[11.5px] text-subtle opacity-55">{{ t('panel.detail.clickFilePreview') }}</p>
     </div>
 
     <!-- 二进制文件占位（AC-6.5/T6.6：binary=true） -->
@@ -70,8 +70,8 @@
       data-testid="detail-binary"
     >
       <ImageIcon class="size-6 text-subtle opacity-50" />
-      <p class="text-[11.5px] text-muted">二进制文件</p>
-      <p class="font-mono text-[10px] text-subtle opacity-60">无法显示差异</p>
+      <p class="text-[11.5px] text-muted">{{ t('panel.detail.binaryFile') }}</p>
+      <p class="font-mono text-[10px] text-subtle opacity-60">{{ t('panel.detail.cannotShowDiff') }}</p>
     </div>
 
     <!-- 内容区：按 viewMode + kind 分发渲染（禁 v-html，<pre> + 文本插值，XSS 安全；
@@ -83,7 +83,7 @@
         class="border-b border-warning/30 bg-warning/8 px-2 py-1 text-[10px] text-warning"
         data-testid="detail-truncated"
       >
-        文件超过 1MB，已截断显示
+        {{ t('panel.detail.truncated') }}
       </div>
 
       <!-- ── diff 模式：所有文件类型统一走 DiffView（parseDiff 着色）── -->
@@ -123,7 +123,7 @@
           <!-- 图片加载失败（403 白名单/文件损坏）降级占位 -->
           <div v-else class="flex flex-col items-center gap-1 text-center">
             <ImageIcon class="size-6 text-subtle opacity-50" />
-            <p class="text-[11px] text-muted">无法加载图片</p>
+            <p class="text-[11px] text-muted">{{ t('panel.detail.loadFailed') }}</p>
             <p class="font-mono text-[10px] text-subtle opacity-60">{{ state.path }}</p>
           </div>
         </div>
@@ -170,7 +170,7 @@ const { state, toggleView, sessionCwd } = useDetailPane(
 
 /** 文件名（basename，从 state.path 取） */
 const fileName = computed(() => {
-  if (!state.value.path) return '未选择文件'
+  if (!state.value.path) return t('panel.sideDrawer.noFileSelected')
   const parts = state.value.path.split('/')
   return parts[parts.length - 1] ?? state.value.path
 })

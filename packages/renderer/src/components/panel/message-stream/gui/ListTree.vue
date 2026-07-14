@@ -4,11 +4,14 @@
  * 递归渲染 TreeItem：每项含 icon + label + status + 可选 children。
  * 缩进通过 depth * 20px padding-left。children 递归渲染时自动 depth+1。
  */
+import { useI18n } from 'vue-i18n'
 import type { TreeItem, TreeItemIcon } from '@xyz-agent/extension-protocol'
 import {
   ChevronRight, Check, X, Circle, Dot, Pause, GitBranch,
 } from '@lucide/vue'
 import type { Component } from 'vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   items: TreeItem[]
@@ -34,9 +37,9 @@ const statusClass = (status?: TreeItem['status']) => {
 
 /** status 枚举 → 中文标签（避免直接展示英文 running/done/failed） */
 const STATUS_LABEL: Record<NonNullable<TreeItem['status']>, string> = {
-  running: '进行中',
-  done: '完成',
-  failed: '失败',
+  running: t('panel.listTree.running'),
+  done: t('panel.listTree.done'),
+  failed: t('panel.listTree.failed'),
 }
 
 const INDENT_PX = 20

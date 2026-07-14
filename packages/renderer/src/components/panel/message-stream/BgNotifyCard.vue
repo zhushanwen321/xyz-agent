@@ -34,7 +34,7 @@
       <div
         class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[11.5px] transition-opacity hover:opacity-80"
         :class="single ? recordTextClass(single) : ''"
-        :title="expanded ? '收起' : '展开'"
+        :title="expanded ? t('panel.message.collapse') : t('panel.message.expand')"
         @click="expanded = !expanded"
       >
         <ChevronRight class="size-2.5 transition-transform" :class="expanded ? 'rotate-90' : ''" />
@@ -62,9 +62,12 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { CheckCircle2, XCircle, Pause, ChevronRight } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { BgNotifyRecord, Message } from '@xyz-agent/shared'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   message: Message
@@ -114,7 +117,7 @@ const summaryLine = computed(() => {
   const s = single.value
   if (!s) return ''
   if (s.status === 'failed') return s.error ?? ''
-  if (s.status === 'cancelled') return '已取消'
+  if (s.status === 'cancelled') return t('panel.bgNotify.cancelled')
   return s.result ?? ''
 })
 

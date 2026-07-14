@@ -12,10 +12,10 @@
   <div
     v-if="state"
     class="mb-1.5 flex items-center gap-2 rounded-md border border-[rgba(245,165,36,0.35)] bg-[rgba(245,165,36,0.08)] px-3 py-1.5 text-[12px] text-fg"
-    :title="state.errorMessage ? `上一次失败：${state.errorMessage}` : '正在自动重试'"
+    :title="state.errorMessage ? t('panel.retryIndicator.lastFailed', { error: state.errorMessage }) : t('panel.retryIndicator.autoRetrying')"
   >
     <RefreshCw class="size-3 shrink-0 animate-spin text-warning" />
-    <span class="font-semibold">重试中</span>
+    <span class="font-semibold">{{ t('panel.retryIndicator.retrying') }}</span>
     <span v-if="state.attempt !== undefined" class="font-mono text-[11px] tabular-nums text-muted">
       {{ state.attempt }}<template v-if="state.maxAttempts">/{{ state.maxAttempts }}</template>
     </span>
@@ -26,8 +26,11 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { RefreshCw } from '@lucide/vue'
 import type { RetryState } from '@/stores/chat'
+
+const { t } = useI18n()
 
 defineProps<{
   state: RetryState | undefined

@@ -48,12 +48,12 @@
     >
       <AlertCircle class="size-8 text-danger opacity-60" />
       <div class="space-y-1">
-        <p class="text-sm text-text">会话进程已退出</p>
-        <p class="text-xs text-subtle">进程异常终止，对话不可继续。可尝试重新打开。</p>
+        <p class="text-sm text-text">{{ t('panel.panel.sessionDead') }}</p>
+        <p class="text-xs text-subtle">{{ t('panel.panel.sessionDeadHint') }}</p>
       </div>
       <Button variant="default" size="sm" @click="onReviveSession">
         <RotateCcw class="mr-1.5 size-3.5" />
-        重新打开
+        {{ t('panel.panel.reopen') }}
       </Button>
     </div>
 
@@ -64,7 +64,7 @@
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
       <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">该 agent call 暂无对话记录</p>
+      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.message.noAgentCall') }}</p>
     </div>
     <Landing
       v-else-if="!isSessionActive && isLandingView"
@@ -79,11 +79,11 @@
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
       <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">输入消息开始对话</p>
+      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.panel.startConversation') }}</p>
     </div>
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
       <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">选择左侧会话开始</p>
+      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.panel.selectSession') }}</p>
     </div>
 
     <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
@@ -114,6 +114,7 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
@@ -168,6 +169,7 @@ function onPanelMouseDown(e: MouseEvent): void {
   emit('activate', props.panelId)
 }
 
+const { t } = useI18n()
 const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
@@ -316,7 +318,7 @@ async function onReviveSession(): Promise<void> {
     sessionStore.revive(props.sessionId)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`重新打开失败：${msg}`)
+    toastError(t('panel.panel.reopenFailed', { error: msg }))
   }
 }
 

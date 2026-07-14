@@ -40,7 +40,7 @@
       <div v-if="isCompacting" class="system-notice flex min-w-0 items-center gap-2 py-1">
         <span class="h-px flex-1 bg-border" />
         <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
-        <span class="min-w-0 truncate text-[11.5px] leading-snug text-muted">压缩中</span>
+        <span class="min-w-0 truncate text-[11.5px] leading-snug text-muted">{{ t('panel.message.compressing') }}</span>
         <span class="h-px flex-1 bg-border" />
       </div>
 
@@ -49,13 +49,13 @@
            纯 UI 瞬时反馈，不插入 assistant message 污染消息历史。 -->
       <div v-if="isDispatching && !hasWorkingTurn" class="flex items-center gap-2 py-2 pl-1 text-[12.5px] text-muted">
         <Loader2 class="size-3 animate-spin text-accent" />
-        <span>思考中…</span>
+        <span>{{ t('panel.message.dispatching') }}</span>
       </div>
 
       <!-- 空态欢迎语（G2-004） -->
       <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
         <Sparkles class="size-6 text-accent opacity-70" />
-        <p class="text-[13px] text-muted">开始对话，或从左侧选择一个会话</p>
+        <p class="text-[13px] text-muted">{{ t('panel.message.startConversation') }}</p>
       </div>
     </div>
     </div>
@@ -67,7 +67,7 @@
         variant="default"
         size="icon"
         class="absolute bottom-4 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg"
-        title="回到底部"
+        :title="t('panel.message.scrollToBottom')"
         @click="scrollToBottom('smooth', true)"
       >
         <ChevronDown class="size-4" />
@@ -78,6 +78,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ChevronDown, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
@@ -97,6 +98,7 @@ const props = defineProps<{
   sessionId: string
 }>()
 
+const { t } = useI18n()
 const chat = useChatStore()
 const subagentStore = useSubagentStore()
 

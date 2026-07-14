@@ -16,7 +16,7 @@
     >
       <ChevronRight class="size-3 shrink-0 text-muted transition-transform" :class="collapsed ? '' : 'rotate-90'" />
       <FileEdit class="size-3.5 shrink-0 text-info" />
-      <span class="text-[12px] font-medium text-fg">变更集</span>
+      <span class="text-[12px] font-medium text-fg">{{ t('panel.changeset.title') }}</span>
       <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ fileChanges.length }}</span>
       <!-- 状态 badge -->
       <span class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="statusClass">{{ statusLabel }}</span>
@@ -34,7 +34,7 @@
         :key="c.filePath"
         class="group/cs-file flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[12px] transition-colors hover:bg-surface-hover"
         data-testid="change-set-file"
-        :title="`查看 ${c.filePath} 的 diff`"
+        :title="t('panel.changeset.viewDiff', { path: c.filePath })"
         @click="onClickFile(c.filePath)"
       >
         <span class="shrink-0 rounded-sm px-1 py-0.5 font-mono text-[10px] font-semibold" :class="changeBadgeClass(c.status)">{{ changeLabel(c.status) }}</span>
@@ -51,9 +51,12 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ChevronRight, ExternalLink, FileEdit } from '@lucide/vue'
 import type { FileChange, ChangeSetStatus } from '@xyz-agent/shared'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   fileChanges: FileChange[]
@@ -80,12 +83,12 @@ const statusClass = computed(() => resolveStatusClass(props.status))
 
 function resolveStatusLabel(status: ChangeSetStatus | undefined): string {
   switch (status) {
-    case 'accumulating': return '生成中'
-    case 'ready': return '待审查'
-    case 'partially-reviewed': return '部分已审'
-    case 'resolved': return '已完成'
-    case 'superseded': return '已过期'
-    default: return '待审查'
+    case 'accumulating': return t('panel.changeset.generating')
+    case 'ready': return t('panel.changeset.pendingReview')
+    case 'partially-reviewed': return t('panel.changeset.partiallyReviewed')
+    case 'resolved': return t('panel.changeset.resolved')
+    case 'superseded': return t('panel.changeset.superseded')
+    default: return t('panel.changeset.pendingReview')
   }
 }
 function resolveStatusClass(status: ChangeSetStatus | undefined): string {

@@ -6,23 +6,26 @@
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent class="sm:max-w-[380px]">
       <DialogHeader>
-        <DialogTitle>克隆并分叉会话</DialogTitle>
+        <DialogTitle>{{ t('panel.forkConfirm.title') }}</DialogTitle>
         <DialogDescription>
-          将创建一个新会话，复制到该回复为止的对话历史，并在另一个面板打开。当前会话不受影响。
+          {{ t('panel.forkConfirm.desc') }}
         </DialogDescription>
       </DialogHeader>
 
       <div class="mt-3 flex justify-end gap-2">
-        <Button variant="ghost" size="sm" @click="emit('update:open', false)">取消</Button>
-        <Button variant="default" size="sm" @click="onConfirm">克隆并分叉</Button>
+        <Button variant="ghost" size="sm" @click="emit('update:open', false)">{{ t('panel.forkConfirm.cancel') }}</Button>
+        <Button variant="default" size="sm" @click="onConfirm">{{ t('panel.forkConfirm.confirm') }}</Button>
       </div>
     </DialogContent>
   </Dialog>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+
+const { t } = useI18n()
 
 defineProps<{
   open: boolean

@@ -10,7 +10,7 @@
       :open="open"
       variant="icon"
       :show-chevron="false"
-      title="添加内容（附件 / 命令）"
+      :title="t('panel.composer.addContent')"
     >
       <Plus class="size-4" />
     </PopoverTriggerButton>
@@ -32,6 +32,7 @@
 
 <script setup lang="ts">
 import { markRaw, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import { Paperclip, Plus, Slash } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -50,11 +51,12 @@ const emit = defineEmits<{
   select: [type: AddType]
 }>()
 
+const { t } = useI18n()
 const open = ref(false)
 
 const ITEMS: AddItem[] = [
-  { type: 'attach', label: '附件', icon: markRaw(Paperclip) },
-  { type: 'slash', label: '命令', hint: '/', icon: markRaw(Slash) },
+  { type: 'attach', label: t('panel.composer.attach'), icon: markRaw(Paperclip) },
+  { type: 'slash', label: t('panel.composer.command'), hint: '/', icon: markRaw(Slash) },
 ]
 
 // file 入口移除后无 session 守门需求（attach/slash 均与 cwd 无关），items 退化为常量
