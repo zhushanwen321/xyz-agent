@@ -49,6 +49,11 @@ export const useWorkflowStore = defineStore('workflow', () => {
   /** 共享 workflow 列表（Sidebar 管理，所有 panel 共享） */
   const records = ref<WorkflowRunRecord[]>([])
 
+  /** 加载态（M1：loadWorkflows 在途时 true，组件据此显示 spinner） */
+  const isLoading = ref(false)
+  /** 加载错误（M1：loadWorkflows 失败时设错误消息，null = 无错误；records 保留旧数据不清空） */
+  const loadError = ref<string | null>(null)
+
   /**
    * per-panel viewing 状态。
    * - workflow-detail：sidebar 内视图 2（workflow 详情，phase/agent call 列表）
@@ -111,22 +116,35 @@ export const useWorkflowStore = defineStore('workflow', () => {
   async function loadWorkflows(sessionId: string): Promise<void> {
     if (!sessionId) {
       records.value = []
+      loadError.value = null
       return
     }
+    isLoading.value = true
+    loadError.value = null
     try {
       records.value = await sessionApi.getWorkflows(sessionId)
     } catch (e) {
+      // M1：失败不清空 records（保留旧数据），设 loadError 让组件显示重试态
+      const msg = e instanceof Error ? e.message : String(e)
       console.error('[workflow-store] loadWorkflows failed:', e)
-      records.value = []
+      loadError.value = msg
+    } finally {
+      isLoading.value = false
     }
   }
 
   /** 当前焦点 session ID（subscribeWorkflowPush 回调内重新拉取用） */
   let focusedSessionId = ''
 
+  /** running 信号延迟重试间隔（ms）。workflow-state-link 可能刚写入，首次 RPC 拉取为空。 */
+  const RUNNING_RETRY_MS = 500
+
   /**
    * 订阅 runtime 推送的 session.workflowUpdate 广播。
    * runtime 在 workflow 发起/结束时刻推送增量信号，前端收到后触发 loadWorkflows RPC 拉取完整列表。
+   *
+   * running 信号特殊处理：workflow tool-call-end 触发 running 信号时，主 session JSONL 的
+   * workflow-state-link 可能刚 append 还未 flush（pi 延迟写入时序）。延迟 RUNNING_RETRY_MS 再拉一次兜底。
    *
    * @param sessionId 当前焦点 session ID
    * @returns 取消订阅函数（切会话时调用，取消旧 session 的订阅）
@@ -135,9 +153,16 @@ export const useWorkflowStore = defineStore('workflow', () => {
     focusedSessionId = sessionId
     return events.on(sessionId, (msg) => {
       if (msg.type !== 'session.workflowUpdate') return
+      if (!focusedSessionId) return
       // 增量信号 → 重新拉取完整列表
-      if (focusedSessionId) {
-        void loadWorkflows(focusedSessionId)
+      void loadWorkflows(focusedSessionId)
+      // running 信号延迟重试：workflow-state-link 可能刚写入，首次拉取为空
+      const payload = msg.payload as { update?: { status?: string } }
+      if (payload.update?.status === 'running') {
+        const sid = focusedSessionId
+        setTimeout(() => {
+          if (focusedSessionId === sid) void loadWorkflows(sid)
+        }, RUNNING_RETRY_MS)
       }
     })
   }
@@ -158,6 +183,10 @@ export const useWorkflowStore = defineStore('workflow', () => {
   /**
    * 进入 agent call Panel overlay（切 Panel 显示 agent call 对话流）。
    * store 不 import chatStore（铁律），setMessages 由调用方注入。
+   *
+   * Fail-fast：getAgentCallHistory 失败时 throw（不静默 setMessages([])）。
+   * 调用方负责 catch + toast + 回滚 viewing（调 backFromAgentCall）。
+   * setViewing 在 fetchAndInject 之前调用——失败时调用方需回滚。
    */
   async function selectAgentCall(
     panelId: string,
@@ -167,13 +196,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
   ): Promise<void> {
     const virtualId = agentCallVirtualId(agentCallSessionId)
     setViewing(panelId, { kind: 'agent-call', agentCallSessionId })
-    try {
-      const history = await sessionApi.getAgentCallHistory(mainSessionId, agentCallSessionId)
-      setMessages(virtualId, history)
-    } catch (e) {
-      console.error('[workflow-store] getAgentCallHistory failed:', e)
-      setMessages(virtualId, [])
-    }
+    const history = await sessionApi.getAgentCallHistory(mainSessionId, agentCallSessionId)
+    setMessages(virtualId, history)
   }
 
   /** 视图 2 → 视图 1（从 workflow 详情返回列表） */
@@ -189,6 +213,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
   return {
     // state
     records,
+    isLoading,
+    loadError,
     // getters
     workflowCount,
     isViewing,

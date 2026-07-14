@@ -6,8 +6,27 @@
     空态展示提示文案。
   -->
   <div class="flex min-h-0 flex-col" data-testid="workflow-list">
+    <!-- 加载态（M1：loadWorkflows 在途） -->
+    <div
+      v-if="isLoading"
+      class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+      data-testid="workflow-list-loading"
+    >
+      <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
+      <p class="text-[11.5px] text-subtle opacity-60">加载工作流...</p>
+    </div>
+    <!-- 错误态（M1：loadWorkflows 失败，可重试） -->
+    <div
+      v-else-if="loadError"
+      class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+      data-testid="workflow-list-error"
+    >
+      <AlertCircle class="size-5 text-danger opacity-60" />
+      <p class="text-[11.5px] text-muted">加载失败（{{ loadError }}）</p>
+      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="workflow-list-retry" @click="emit('retry')">重试</Button>
+    </div>
     <!-- 列表 -->
-    <div v-if="workflows.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
+    <div v-else-if="workflows.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
       <div
         v-for="record in workflows"
         :key="record.runId"
@@ -95,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { Loader2, Workflow, Pause, Play, Square } from '@lucide/vue'
+import { Loader2, Workflow, Pause, Play, Square, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { WorkflowRunRecord, WorkflowRunStatus, WorkflowDoneReason } from '@xyz-agent/shared'
 
@@ -110,13 +129,19 @@ const SECONDS_PER_MINUTE = 60
 /** 秒 → 时 */
 const SECONDS_PER_HOUR = 3600
 
-defineProps<{
+withDefaults(defineProps<{
   workflows: WorkflowRunRecord[]
-}>()
+  isLoading?: boolean
+  loadError?: string | null
+}>(), {
+  isLoading: false,
+  loadError: null,
+})
 
 const emit = defineEmits<{
   select: [runId: string]
   action: [payload: { action: 'pause' | 'resume' | 'abort'; runId: string }]
+  retry: []
 }>()
 
 /** 状态点颜色映射（design-tokens 语义色） */

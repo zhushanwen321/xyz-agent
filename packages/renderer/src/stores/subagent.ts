@@ -55,6 +55,11 @@ export const useSubagentStore = defineStore('subagent', () => {
   /** 共享 subagent 列表（Sidebar 管理，所有 panel 共享） */
   const records = ref<SubagentRecord[]>([])
 
+  /** 加载态（M1：loadSubagents 在途时 true） */
+  const isLoading = ref(false)
+  /** 加载错误（M1：loadSubagents 失败时设错误消息，null = 无错误） */
+  const loadError = ref<string | null>(null)
+
   /**
    * per-panel viewing 状态。split 后每个 panel 独立管理自己的 subagent overlay。
    * key = panelId, value = 该 panel 当前正在查看的 subagentId（null = 未查看）。
@@ -112,13 +117,20 @@ export const useSubagentStore = defineStore('subagent', () => {
   async function loadSubagents(sessionId: string): Promise<void> {
     if (!sessionId) {
       records.value = []
+      loadError.value = null
       return
     }
+    isLoading.value = true
+    loadError.value = null
     try {
       records.value = await sessionApi.getSubagents(sessionId)
     } catch (e) {
+      // M1：失败不清空 records，设 loadError
+      const msg = e instanceof Error ? e.message : String(e)
       console.error('[subagent-store] loadSubagents failed:', e)
-      records.value = []
+      loadError.value = msg
+    } finally {
+      isLoading.value = false
     }
   }
 
@@ -157,6 +169,10 @@ export const useSubagentStore = defineStore('subagent', () => {
 
   /**
    * 拉取单个 subagent 的历史并注入 chatStore（经 setMessages 回调）。
+   *
+   * [W2 / M5] fail-fast：失败时 throw（不静默 setMessages([])）。对齐 selectAgentCall 的
+   * fail-fast 契约——调用方（onSelectSubagent）负责 catch + toast + backToMain 回滚。
+   * 此前静默注入空数组会让用户看到空对话流，无错误态/重试入口。
    */
   async function fetchAndInject(
     mainSessionId: string,
@@ -164,13 +180,8 @@ export const useSubagentStore = defineStore('subagent', () => {
     setMessages: SetMessagesFn,
   ): Promise<void> {
     const virtualId = subagentVirtualId(subagentId)
-    try {
-      const history = await sessionApi.getSubagentHistory(mainSessionId, subagentId)
-      setMessages(virtualId, history)
-    } catch (e) {
-      console.error('[subagent-store] getSubagentHistory failed:', e)
-      setMessages(virtualId, [])
-    }
+    const history = await sessionApi.getSubagentHistory(mainSessionId, subagentId)
+    setMessages(virtualId, history)
   }
 
   /**
@@ -249,6 +260,8 @@ export const useSubagentStore = defineStore('subagent', () => {
   return {
     // state
     records,
+    isLoading,
+    loadError,
     // getters
     isViewing,
     getViewingSubagentId,
@@ -262,5 +275,6 @@ export const useSubagentStore = defineStore('subagent', () => {
     selectSubagent,
     backToMain,
     stopStream,
+    fetchAndInject,
   }
 })

@@ -31,6 +31,8 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
+import { useFileTreeStore } from '@/stores/fileTree'
+import { useChat } from '@/composables/features/useChat'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
@@ -318,7 +320,14 @@ export function useSidebar() {
   /**
    * 删除 session（API + 从列表移除）。
    * 删除当前 active 时回退到列表首项（若无则停留空态）。
-   * chat store 中残留的消息分区不清理（无害，session 不可再选）。。
+   *
+   * [W1 / S3] 跨 store 清理：删除时同步清 fileTree（4 个 per-session Map）+ chat
+   * （messages/hydrated/pendingSend 等 8+ ref + timer）+ WS 流式订阅（streamSubscriptions）。
+   * 此前注释称「chat store 残留无害」，但频繁建删 session 后内存单调增长且 WS 订阅泄漏。
+   *
+   * [W1 / S4] 删 active 后 selectSession(next) 失败兜底：removeFromList 已把 activeId
+   * 回退到 list[0]，若随后的 selectSession(next) 因网络抖动 reject，activeId=next 但 panel
+   * 空载 → 跨 store 撕裂。失败时 fallback 到 navigation.push({ view: 'chat' }) 空态。
    */
   async function deleteSession(id: string): Promise<void> {
     await sessionApi.remove(id)
@@ -328,10 +337,18 @@ export function useSidebar() {
     const boundPanel = panel.findPanelBySession(id)
     if (boundPanel) panel.loadSession(boundPanel.id, null)
     session.removeFromList(id)
+    // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅
+    useFileTreeStore().clearSession(id)
+    useChat().disposeSession(id)
     if (wasActive) {
       const next = session.list[0]
       if (next) {
-        await selectSession(next.id)
+        try {
+          await selectSession(next.id)
+        } catch {
+          // selectSession 失败（网络抖动）→ fallback 到 chat 空态，避免 activeId=next 但 panel 空载撕裂（S4）
+          navigation.push({ view: 'chat' })
+        }
       } else {
         navigation.push({ view: 'chat' })
       }
@@ -398,16 +415,30 @@ export function useSidebar() {
    * TODO 联调：真实 runtime 下全量预载历史有成本，应改为 WS 推送 status 或默认 done/idle + 按需 hydrate。
    */
   async function loadSessions(): Promise<void> {
-    const groups = await sessionApi.list()
-    session.setGroups(groups)
-    const flat = groups.flatMap((g) => g.sessions)
-    await Promise.allSettled(
-      flat.map(async (s) => {
-        if (!chat.isHydrated(s.id)) {
-          chat.hydrate(s.id, await chatApi.getHistory(s.id))
+    try {
+      const groups = await sessionApi.list()
+      session.setGroups(groups)
+      session.setListLoadError(null)
+      const flat = groups.flatMap((g) => g.sessions)
+      // L2：allSettled 吸收所有 rejection，对 rejected 的 session 调 markHistoryFailed
+      // 让 landing 显重试出口（对齐 selectSession 内 getHistory 的 catch → markHistoryFailed 策略）
+      const results = await Promise.allSettled(
+        flat.map(async (s) => {
+          if (!chat.isHydrated(s.id)) {
+            chat.hydrate(s.id, await chatApi.getHistory(s.id))
+          }
+        }),
+      )
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          chat.markHistoryFailed(flat[i].id)
         }
-      }),
-    )
+      })
+    } catch (e) {
+      // S5：list 失败设 listLoadError，SessionList 据此显示「加载失败，点击重试」
+      const msg = e instanceof Error ? e.message : String(e)
+      session.setListLoadError(msg)
+    }
   }
 
   /**
@@ -454,8 +485,10 @@ export function useSidebar() {
       //    W3: 改接 workspaceStore.defaultCwd（取代从 session.list 派生 resolveDefaultCwd）。
       const recentCwd = workspaceStore.defaultCwd
       if (recentCwd) flow.presetCwd(recentCwd)
-    } catch {
-      // 启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试
+    } catch (e) {
+      // L1：启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试
+      // 加 console.error 提供最小诊断线索（此前 catch 零可观测性）
+      console.error('[initApp] bootstrap failed:', e)
       appBootstrapped = false
     }
   }

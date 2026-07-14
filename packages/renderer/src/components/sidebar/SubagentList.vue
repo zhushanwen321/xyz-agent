@@ -6,8 +6,27 @@
     空态展示提示文案。
   -->
   <div class="flex min-h-0 flex-col" data-testid="subagent-list">
+    <!-- 加载态（M1：loadSubagents 在途） -->
+    <div
+      v-if="isLoading"
+      class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+      data-testid="subagent-list-loading"
+    >
+      <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
+      <p class="text-[11.5px] text-subtle opacity-60">加载后台任务...</p>
+    </div>
+    <!-- 错误态（M1：loadSubagents 失败，可重试） -->
+    <div
+      v-else-if="loadError"
+      class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+      data-testid="subagent-list-error"
+    >
+      <AlertCircle class="size-5 text-danger opacity-60" />
+      <p class="text-[11.5px] text-muted">加载失败（{{ loadError }}）</p>
+      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">重试</Button>
+    </div>
     <!-- 列表 -->
-    <div v-if="subagents.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
+    <div v-else-if="subagents.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
       <div
         v-for="record in subagents"
         :key="record.subagentId"
@@ -63,7 +82,8 @@
 </template>
 
 <script setup lang="ts">
-import { Loader2, Bot } from '@lucide/vue'
+import { Loader2, Bot, AlertCircle } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
 
 /** token 数超过此阈值显示 k 单位 */
@@ -73,12 +93,18 @@ const SECONDS_PER_MINUTE = 60
 /** subagentId 显示截断长度 */
 const SUBAGENT_ID_DISPLAY_LENGTH = 12
 
-defineProps<{
+withDefaults(defineProps<{
   subagents: SubagentRecord[]
-}>()
+  isLoading?: boolean
+  loadError?: string | null
+}>(), {
+  isLoading: false,
+  loadError: null,
+})
 
 const emit = defineEmits<{
   select: [subagentId: string]
+  retry: []
 }>()
 
 /** 状态点颜色映射（design-tokens 语义色） */

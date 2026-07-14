@@ -79,7 +79,18 @@
       <!-- 子视图区：会话列表 / 文件视图 / subagent 列表 -->
       <div class="mt-1 min-h-0 flex-1">
         <template v-if="sidebar.activeTab === 'sessions'">
+          <!-- S5：加载失败态 + 重试（session.listLoadError 非空时） -->
+          <div
+            v-if="session.listLoadError"
+            class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+            data-testid="session-list-error"
+          >
+            <AlertCircle class="size-5 text-danger opacity-60" />
+            <p class="text-[11.5px] text-muted">会话列表加载失败（{{ session.listLoadError }}）</p>
+            <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">重试</Button>
+          </div>
           <SessionList
+            v-else
             :groups="session.groups"
             :active-id="focusedSessionId"
             :status-of="statusOf"
@@ -92,7 +103,10 @@
         <template v-else-if="sidebar.activeTab === 'subagents'">
           <SubagentList
             :subagents="subagentList"
+            :is-loading="subagentStore.isLoading"
+            :load-error="subagentStore.loadError"
             @select="onSelectSubagent"
+            @retry="onRetrySubagents"
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'workflows'">
@@ -106,8 +120,11 @@
           <WorkflowList
             v-else
             :workflows="workflowList"
+            :is-loading="workflowStore.isLoading"
+            :load-error="workflowStore.loadError"
             @select="onSelectWorkflow"
             @action="onWorkflowAction"
+            @retry="onRetryWorkflows"
           />
         </template>
         <template v-else>
@@ -157,7 +174,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings, FolderOpen } from '@lucide/vue'
+import { Plus, LayoutGrid, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SearchModal from '@/components/overlays/SearchModal.vue'
@@ -266,14 +283,21 @@ async function onSelectSubagent(subagentId: string): Promise<void> {
   if (!activePanel?.sessionId) return
   // chatStore 在此 import（features 层跨 store 编排），注入 store action
   const chat = useChatStore()
-  await subagentStore.selectSubagent(
-    panelStore.activePanelId,
-    activePanel.sessionId,
-    subagentId,
-    (virtualId, lines) => chat.applySubagentStreamDelta(virtualId, lines),
-    (virtualId) => chat.finalizeSubagentStream(virtualId),
-    (virtualId, msgs) => chat.setMessages(virtualId, msgs),
-  )
+  try {
+    await subagentStore.selectSubagent(
+      panelStore.activePanelId,
+      activePanel.sessionId,
+      subagentId,
+      (virtualId, lines) => chat.applySubagentStreamDelta(virtualId, lines),
+      (virtualId) => chat.finalizeSubagentStream(virtualId),
+      (virtualId, msgs) => chat.setMessages(virtualId, msgs),
+    )
+  } catch (e) {
+    // M5：fetchAndInject fail-fast 后回滚 viewing 态 + toast（对齐 selectAgentCall 模式）
+    subagentStore.backToMain(panelStore.activePanelId)
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(`加载子代理历史失败：${msg}`)
+  }
 }
 
 /** 选中 workflow → 进入视图 2 详情（sidebar 内，不切 Panel） */
@@ -327,6 +351,23 @@ async function onWorkflowAction(payload: { action: 'pause' | 'resume' | 'abort';
     const msg = e instanceof Error ? e.message : String(e)
     toastError(`工作流操作失败：${msg}`)
   }
+}
+
+/** S5：重试加载会话列表（loadSessions 失败后用户点击重试） */
+function onRetryLoadSessions(): void {
+  void loadSessions()
+}
+
+/** M1：重试加载 workflow 列表 */
+function onRetryWorkflows(): void {
+  const sid = focusedSessionId.value
+  if (sid) void workflowStore.loadWorkflows(sid)
+}
+
+/** M1：重试加载 subagent 列表 */
+function onRetrySubagents(): void {
+  const sid = focusedSessionId.value
+  if (sid) void subagentStore.loadSubagents(sid)
 }
 
 async function onNewSession(): Promise<void> {
