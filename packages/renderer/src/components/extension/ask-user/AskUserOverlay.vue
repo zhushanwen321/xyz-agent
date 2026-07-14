@@ -27,6 +27,7 @@
  */
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Clock } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -45,6 +46,8 @@ const emit = defineEmits<{
   submit: [answers: string]   // JSON.stringify(AskUserAnswers)
   cancel: []
 }>()
+
+const { t } = useI18n()
 
 // ── 倒计时（5min 超时，每秒刷新剩余）──
 const MS_PER_SEC = 1000
@@ -412,14 +415,14 @@ function onSubmit(): void {
             ]"
           />
           <div class="flex min-w-0 flex-1 flex-col">
-            <span class="text-[13px] font-normal leading-1.5 text-fg">其他</span>
+            <span class="text-[13px] font-normal leading-1.5 text-fg">{{ t('extensionUI.other') }}</span>
             <!-- 选中时展开输入框（独立成行，自动聚焦）。
                  @keydown.stop 阻止冒泡到卡片容器；Enter 单独处理前进到下一题 -->
             <Input
               v-if="isOtherSelected(activeQuestion)"
               ref="otherInputComp"
               v-model="states[qKey(activeQuestion)].otherText"
-              placeholder="输入自定义答案…"
+              :placeholder="t('extensionUI.customAnswerPlaceholder')"
               :data-testid="`ask-user-other-${qKey(activeQuestion)}`"
               class="mt-1.5"
               @click.stop
@@ -434,16 +437,16 @@ function onSubmit(): void {
           v-if="!activeQuestion.options?.length"
           v-model="states[qKey(activeQuestion)].otherText"
           rows="3"
-          placeholder="请输入..."
+          :placeholder="t('extensionUI.inputPlaceholder')"
           data-testid="ask-user-free-text"
         />
 
         <!-- 附加评论 -->
         <div v-if="activeQuestion.allowComment" class="flex flex-col gap-0.5">
-          <span class="pl-0.5 text-[11px] text-subtle">附加评论（可选）</span>
+          <span class="pl-0.5 text-[11px] text-subtle">{{ t('extensionUI.additionalComment') }}</span>
           <Input
             v-model="states[qKey(activeQuestion)].comment"
-            placeholder="补充说明…"
+            :placeholder="t('extensionUI.commentPlaceholder')"
             :data-testid="`ask-user-comment-${qKey(activeQuestion)}`"
           />
         </div>
@@ -458,7 +461,7 @@ function onSubmit(): void {
         data-testid="ask-user-cancel"
         @click="emit('cancel')"
       >
-        取消
+        {{ t('common.cancel') }}
       </Button>
       <Button
         v-if="!isLastQuestion"
@@ -467,17 +470,17 @@ function onSubmit(): void {
         :disabled="!isQuestionAnswered(activeQuestion!)"
         @click="onNextQuestion"
       >
-        下一题
+        {{ t('common.next') }}
       </Button>
       <Button
         v-else
         variant="default"
         data-testid="ask-user-submit"
         :disabled="!allAnswered"
-        :title="allAnswered ? '提交' : `还有 ${unansweredCount} 题未答`"
+        :title="allAnswered ? t('common.submit') : t('extensionUI.unansweredHint', { count: unansweredCount })"
         @click="onSubmit"
       >
-        提交
+        {{ t('common.submit') }}
       </Button>
     </div>
   </div>

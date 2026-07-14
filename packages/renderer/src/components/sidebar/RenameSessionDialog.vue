@@ -2,19 +2,19 @@
   <Dialog :open="open" @update:open="onOpenChange">
     <DialogContent class="sm:max-w-[360px]">
       <DialogHeader>
-        <DialogTitle>重命名会话</DialogTitle>
-        <DialogDescription>修改会话的显示名称</DialogDescription>
+        <DialogTitle>{{ t('sidebar.renameDialog.title') }}</DialogTitle>
+        <DialogDescription>{{ t('sidebar.renameDialog.desc') }}</DialogDescription>
       </DialogHeader>
 
       <form class="mt-2 space-y-4" @submit="onSubmit">
         <FormField v-slot="{ componentField }" name="label">
           <FormItem>
-            <FormLabel>名称</FormLabel>
+            <FormLabel>{{ t('sidebar.renameDialog.nameLabel') }}</FormLabel>
             <FormControl>
               <Input
                 v-bind="componentField"
                 ref="inputRef"
-                placeholder="输入会话名称"
+                :placeholder="t('sidebar.renameDialog.namePlaceholder')"
                 autocomplete="off"
               />
             </FormControl>
@@ -24,10 +24,10 @@
 
         <div class="flex justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" @click="onCancel">
-            取消
+            {{ t('sidebar.renameDialog.cancel') }}
           </Button>
           <Button type="submit" size="sm">
-            确认
+            {{ t('sidebar.renameDialog.confirm') }}
           </Button>
         </div>
       </form>
@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useForm } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
 import * as z from 'zod'
@@ -73,14 +73,14 @@ const inputRef = ref<InstanceType<typeof Input> | null>(null)
 
 const MAX_LABEL_LENGTH = 60
 
-const schema = toTypedSchema(
+const schema = computed(() => toTypedSchema(
   z.object({
     label: z.string()
-      .min(1, '请输入名称')
-      .max(MAX_LABEL_LENGTH, `名称不能超过 ${MAX_LABEL_LENGTH} 个字符`)
-      .regex(/^[a-zA-Z0-9\u4e00-\u9fa5_\- ]+$/, '仅允许中文、英文、数字、空格、横线和下划线'),
+      .min(1, t('sidebar.renameDialog.validationRequired'))
+      .max(MAX_LABEL_LENGTH, t('sidebar.renameDialog.validationMaxLength', { max: MAX_LABEL_LENGTH }))
+      .regex(/^[a-zA-Z0-9\u4e00-\u9fa5_\- ]+$/, t('sidebar.renameDialog.validationPattern')),
   }),
-)
+))
 
 const { handleSubmit, resetForm } = useForm({
   validationSchema: schema,

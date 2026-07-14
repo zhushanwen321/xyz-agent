@@ -12,7 +12,7 @@
         variant="ghost"
         size="icon"
         class="size-5 shrink-0 text-subtle hover:text-fg"
-        title="返回工作流列表"
+        :title="t('sidebar.workflowDetail.backToList')"
         data-testid="workflow-detail-back"
         @click="emit('back')"
       >
@@ -30,7 +30,7 @@
           variant="ghost"
           size="icon"
           class="size-5 text-subtle hover:text-fg"
-          :title="workflow.status === 'running' ? '暂停' : '恢复'"
+          :title="workflow.status === 'running' ? t('sidebar.workflowDetail.pause') : t('sidebar.workflowDetail.resume')"
           @click="emit('action', { action: workflow.status === 'running' ? 'pause' : 'resume', runId: workflow.runId })"
         >
           <Pause v-if="workflow.status === 'running'" class="size-3" />
@@ -40,7 +40,7 @@
           variant="ghost"
           size="icon"
           class="size-5 text-subtle hover:text-danger"
-          title="终止"
+          :title="t('sidebar.workflowDetail.terminate')"
           @click="emit('action', { action: 'abort', runId: workflow.runId })"
         >
           <Square class="size-3" />
@@ -78,7 +78,7 @@
           class="group relative cursor-pointer rounded-md px-2 py-[6px] transition-colors hover:bg-surface-hover"
           :class="{ 'opacity-40': call.status === 'pending' }"
           data-testid="workflow-agent-call"
-          @click="call.status !== 'pending' && call.sessionId && emit('select-agent-call', call.sessionId)"
+          @click="call.status !== 'pending' && emit('select-agent-call', call.sessionId)"
         >
           <div class="flex items-center gap-2">
             <Loader2
@@ -130,7 +130,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: []
-  'select-agent-call': [sessionId: string]
+  'select-agent-call': [sessionId: string | undefined]
   action: [payload: { action: 'pause' | 'resume' | 'abort'; runId: string }]
 }>()
 

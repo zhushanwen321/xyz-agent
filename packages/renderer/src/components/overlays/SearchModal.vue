@@ -14,8 +14,8 @@
     >
       <div data-testid="search-modal-root">
       <DialogHeader class="sr-only">
-        <DialogTitle>搜索</DialogTitle>
-        <DialogDescription>搜索命令、文件、符号与会话</DialogDescription>
+        <DialogTitle>{{ t('search.title') }}</DialogTitle>
+        <DialogDescription>{{ t('search.description') }}</DialogDescription>
       </DialogHeader>
 
       <!-- 输入区：唤起即 focus（Dialog 默认聚焦首个可聚焦元素） -->
@@ -25,7 +25,7 @@
           v-model="query"
           data-testid="search-input"
           class="h-8 border-0 bg-transparent px-0 text-[14px] shadow-none focus-visible:ring-0"
-          placeholder="搜索命令、文件、符号、会话…"
+          :placeholder="t('search.placeholder')"
           @keydown="onKeydown"
         />
       </div>
@@ -39,7 +39,7 @@
           class="flex items-center justify-center gap-2 px-6 py-6 text-[12px] text-subtle"
         >
           <Loader2 class="size-3.5 animate-spin" />
-          <span>搜索中…</span>
+          <span>{{ t('search.searching') }}</span>
         </div>
 
         <!-- 有结果：分组渲染（空查询=最近+建议命令；有查询=按命中类型分组） -->
@@ -103,13 +103,13 @@
         >
           <Search class="size-7 text-subtle" />
           <!-- recents 库空（空查询 + 无最近/建议）：首用引导 -->
-          <p v-if="!query.trim()" class="text-[14px] text-fg">输入关键词开始搜索</p>
+          <p v-if="!query.trim()" class="text-[14px] text-fg">{{ t('search.startHint') }}</p>
           <!-- 查询无结果（非空 query 无命中）：带引号提示 -->
           <template v-else>
             <p class="text-[14px] text-fg">
-              未找到「{{ query.trim() }}」的相关结果
+              {{ t('search.noResult', { query: query.trim() }) }}
             </p>
-            <p class="text-[12px] text-subtle">换个关键词试试</p>
+            <p class="text-[12px] text-subtle">{{ t('search.tryOther') }}</p>
           </template>
         </div>
       </div>
@@ -121,6 +121,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted, type Component } from 'vue'
 import { Search, Terminal, FileText, Code, MessageSquare, Clock, Loader2 } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import {
   Dialog,
   DialogContent,
@@ -150,6 +151,8 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
 }>()
 
+const { t } = useI18n()
+
 const ICON: Record<SearchType, Component> = { command: Terminal, file: FileText, symbol: Code, session: MessageSquare }
 
 /**
@@ -160,10 +163,10 @@ const activeType = ref<SearchType | null>(null)
 
 /** section label → SearchType 映射（#9 activeType 过滤用）；非四类 label（'最近'/'建议命令'）无对应→undefined */
 const labelToType: Record<string, SearchType | undefined> = {
-  命令: 'command',
-  文件: 'file',
-  符号: 'symbol',
-  会话: 'session',
+  [t('search.sectionCommand')]: 'command',
+  [t('search.sectionFile')]: 'file',
+  [t('search.sectionSymbol')]: 'symbol',
+  [t('search.sectionSession')]: 'session',
 }
 
 // Wave1/2 编排接线：useSearch 编排聚合 / useSearchJump 跳转分发 / useRecents 持久化
@@ -205,7 +208,7 @@ async function loadResults(): Promise<void> {
     // T5.4：编排层意外异常不崩（useSearch 内部 allSettled 已兜底单源错误，此处仅防未预期抛出）
     // 分组维持原值供用户换词重试，设 error 态让用户感知（AH-S2：意外异常才进全局 error）
     console.error('[SearchModal] loadResults 意外异常', e)
-    errorMsg.value = '搜索异常，请重试'
+    errorMsg.value = t('search.errorHint')
   } finally {
     clearTimeout(loadingTimer)
     loading.value = false

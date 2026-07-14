@@ -18,6 +18,7 @@
  * - Esc → emit('close')
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GitBranch, Plus, GitGraph, TriangleAlert } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -32,7 +33,7 @@ const MAX_RENDER_BRANCHES = 50
 /** 扁平化键盘导航的尾部动作项数（创建并检出新分支 + Git 图谱） */
 const ACTION_ITEM_COUNT = 2
 /** spec §6：Git 图谱 v1 stub（issues #12 P3） */
-const GIT_GRAPH_UNSUPPORTED_MSG = 'v1 暂未支持 Git 图谱'
+// v1 暂未支持 Git 图谱（i18n key: newTask.branchSelect.gitNotSupported）
 
 const props = defineProps<{
   /** 当前 session id（拉取 git status 用） */
@@ -46,6 +47,7 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
+const { t } = useI18n()
 const { error: toastError } = useToast()
 
 const status = ref<GitStatusResult | null>(null)
@@ -117,7 +119,7 @@ function openBranchModal(): void {
 }
 
 function gitGraphStub(): void {
-  toastError(GIT_GRAPH_UNSUPPORTED_MSG)
+  toastError(t('newTask.branchSelect.gitNotSupported'))
 }
 
 /** 扁平化激活：列表项区间 → selectBranch，尾部动作项 → openBranchModal / gitGraphStub */
@@ -147,7 +149,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     <div class="border-b border-border p-2">
       <Input
         v-model="search"
-        placeholder="搜索分支"
+        :placeholder="t('newTask.branchSelect.searchPlaceholder')"
         class="h-8 bg-surface-2 text-[13px]"
       />
     </div>
@@ -159,7 +161,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       class="flex items-center gap-2 px-3 py-4 text-[12.5px] text-danger"
     >
       <TriangleAlert class="size-4 shrink-0" />
-      <span>加载分支失败，请重试</span>
+      <span>{{ t('newTask.branchSelect.loadFailed') }}</span>
     </div>
 
     <!-- unborn HEAD 空态（T4.3） -->
@@ -169,13 +171,13 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       class="flex flex-col items-center gap-2 px-4 py-6 text-center"
     >
       <GitBranch class="size-5 text-subtle" />
-      <p class="text-[12.5px] text-muted">无分支 · 引导首次 commit</p>
+      <p class="text-[12.5px] text-muted">{{ t('newTask.branchSelect.noBranch') }}</p>
     </div>
 
     <!-- 分支列表 -->
     <div v-else class="py-1">
       <div class="flex items-center justify-between px-3 py-1 text-[11px] text-subtle">
-        <span>分支</span>
+        <span>{{ t('newTask.branchSelect.branchLabel') }}</span>
         <span>{{ allBranches.length }}</span>
       </div>
 
@@ -199,7 +201,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
             class="flex items-center gap-1 text-[11px] text-warning"
           >
             <span class="size-1.5 shrink-0 rounded-full bg-warning" />
-            未提交的更改：{{ dirtyCount }} 个文件
+            {{ t('newTask.branchSelect.dirtyChanges', { count: dirtyCount }) }}
           </span>
         </span>
       </PopoverListItem>
@@ -216,7 +218,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <template #icon>
           <Plus class="shrink-0 text-subtle" />
         </template>
-        创建并检出新分支...
+        {{ t('newTask.branchSelect.createAndCheckout') }}
       </PopoverActionItem>
 
       <!-- 动作项：Git 图谱（v1 stub） -->
@@ -229,7 +231,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <template #icon>
           <GitGraph class="shrink-0 text-subtle" />
         </template>
-        Git 图谱
+        {{ t('newTask.branchSelect.gitGraph') }}
       </PopoverActionItem>
     </div>
 
@@ -240,7 +242,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       class="flex flex-col gap-2 border-t border-warning/40 bg-warning/10 px-3 py-2.5 text-[12px] text-fg"
     >
       <p>
-        「{{ pendingDirtyBranch }}」当前工作区有 {{ dirtyCount }} 个未提交更改，切走将保留在工作区。
+        {{ t('newTask.branchSelect.dirtyWarning', { branch: pendingDirtyBranch, count: dirtyCount }) }}
       </p>
       <div class="flex justify-end gap-2">
         <Button
@@ -249,14 +251,14 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           class="h-7 px-2.5 text-[12px]"
           @click="cancelDirty"
         >
-          取消
+          {{ t('common.cancel') }}
         </Button>
         <Button
           data-testid="dirty-confirm-ok"
           class="h-7 px-2.5 text-[12px]"
           @click="confirmDirtySwitch"
         >
-          切走
+          {{ t('newTask.branchSelect.switchAway') }}
         </Button>
       </div>
     </div>

@@ -13,6 +13,7 @@
  * 渲染绑定：父级（Landing）按 state==='branch-modal' 挂载本组件（与 popover 同模式）。
  */
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 /** 合法分支名规则（与 runtime GitService 一致，AC-7.8）：字母/数字开头，禁 .. 与空格等 */
 const VALID_BRANCH_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/
 
+const { t } = useI18n()
 const flow = useNewTaskFlow()
 const branchName = ref('')
 const errorMsg = ref('')
@@ -69,8 +71,8 @@ onMounted(() => {
 function branchErrMsg(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e)
   // runtime 超时 → GitError('git_unavailable')，envelope 透传 code/message
-  if (/git_unavailable|timeout|超时/i.test(msg)) return 'git 操作超时，请稍后重试'
-  return msg || '创建分支失败'
+  if (/git_unavailable|timeout|超时/i.test(msg)) return t('newTask.createBranch.gitTimeout')
+  return msg || t('newTask.createBranch.createFailed')
 }
 
 async function onSubmit(): Promise<void> {
@@ -93,20 +95,20 @@ function onCancel(): void {
   <Dialog :open="isOpen" @update:open="onOpenChange">
     <DialogContent class="sm:max-w-[560px]">
       <DialogHeader>
-        <DialogTitle>创建并检出新分支</DialogTitle>
+        <DialogTitle>{{ t('newTask.createBranch.title') }}</DialogTitle>
         <DialogDescription>
-          基于当前 HEAD 创建一个新的本地分支，并在创建成功后立即切换过去。
+          {{ t('newTask.createBranch.desc') }}
         </DialogDescription>
       </DialogHeader>
 
       <form class="mt-2 space-y-3" @submit.prevent="onSubmit">
         <div class="space-y-1.5">
-          <Label for="branch-name-input">分支名</Label>
+          <Label for="branch-name-input">{{ t('newTask.createBranch.nameLabel') }}</Label>
           <Input
             id="branch-name-input"
             ref="inputRef"
             v-model="branchName"
-            placeholder="例如 feature/git-branch-switcher"
+            :placeholder="t('newTask.createBranch.namePlaceholder')"
             autocomplete="off"
             :class="showFormatError || !!errorMsg ? '!border-danger' : ''"
           />
@@ -115,11 +117,11 @@ function onCancel(): void {
             data-testid="branch-name-error"
             class="text-[12px] text-danger"
           >
-            分支名只能含字母、数字、点、下划线、斜杠、连字符，不能含空格 / ..
+            {{ t('newTask.createBranch.nameValidation') }}
           </p>
         </div>
 
-        <p class="text-[12px] text-subtle">首版只支持基于当前 HEAD 创建并切换。</p>
+        <p class="text-[12px] text-subtle">{{ t('newTask.createBranch.onlyHeadHint') }}</p>
 
         <!-- 提交失败错误（D-7 留 modal 显错） -->
         <p v-if="errorMsg" data-testid="error-msg" class="text-[12px] text-danger">
@@ -127,9 +129,9 @@ function onCancel(): void {
         </p>
 
         <div class="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="secondary" @click="onCancel">取消</Button>
+          <Button type="button" variant="secondary" @click="onCancel">{{ t('common.cancel') }}</Button>
           <Button data-testid="submit-btn" type="submit" :disabled="!canSubmit">
-            创建并切换
+            {{ t('newTask.createBranch.createBtn') }}
           </Button>
         </div>
       </form>

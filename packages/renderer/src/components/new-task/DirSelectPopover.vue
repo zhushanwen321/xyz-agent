@@ -14,6 +14,7 @@
  * 空态（T3.2 / AC-5.4）：records=[] → 「暂无最近工作区 · 选择一个本地目录开始」。
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Folder, FolderPlus, Cloud } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
@@ -34,11 +35,12 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
+const { t } = useI18n()
 const workspaceStore = useWorkspaceStore()
 const { error: toastError } = useToast()
 
 /** spec §6：远程连接 v1 stub（issues #11 P3），点开 toast 提示 */
-const REMOTE_UNSUPPORTED_MSG = 'v1 暂未支持远程连接'
+// v1 暂未支持远程连接（i18n key: newTask.dirSelect.remoteNotSupported）
 /** 扁平化键盘导航的尾部动作项数（打开文件夹 + 远程连接） */
 const ACTION_ITEM_COUNT = 2
 
@@ -98,7 +100,7 @@ function openFolder(): void {
 }
 
 function remoteStub(): void {
-  toastError(REMOTE_UNSUPPORTED_MSG)
+  toastError(t('newTask.dirSelect.remoteNotSupported'))
 }
 
 /** 扁平化激活：列表项区间 → selectWorkspace，尾部动作项 → openFolder / remoteStub */
@@ -128,7 +130,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     <div class="border-b border-border p-2">
       <Input
         v-model="search"
-        placeholder="搜索工作区"
+        :placeholder="t('newTask.dirSelect.searchPlaceholder')"
         class="h-8 bg-surface-2 text-[13px]"
       />
     </div>
@@ -141,7 +143,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         class="flex flex-col items-center gap-2 px-4 py-6 text-center"
       >
         <Folder class="size-5 text-subtle" />
-        <p class="text-[12.5px] text-muted">暂无最近工作区 · 选择一个本地目录开始</p>
+        <p class="text-[12.5px] text-muted">{{ t('newTask.dirSelect.noRecent') }}</p>
       </div>
 
       <!-- 列表项（非空态）：默认只显目录名，同名时追加 (parent) 消歧 -->
@@ -175,7 +177,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <template #icon>
           <FolderPlus class="shrink-0 text-subtle" />
         </template>
-        打开文件夹
+        {{ t('newTask.dirSelect.openFolder') }}
       </PopoverActionItem>
 
       <!-- 动作项：远程连接（v1 stub） -->
@@ -188,7 +190,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <template #icon>
           <Cloud class="shrink-0 text-subtle" />
         </template>
-        远程连接
+        {{ t('newTask.dirSelect.remoteConnect') }}
       </PopoverActionItem>
     </div>
   </div>

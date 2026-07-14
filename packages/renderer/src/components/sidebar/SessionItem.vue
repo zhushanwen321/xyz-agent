@@ -17,9 +17,9 @@
     <!-- 状态指示：running/waiting 转菊花（比脉冲圆点在密集列表更醒目），done/stopped/error 静态圆点 -->
     <Loader2
       v-if="showSpinner"
-      data-testid="session-spinner"
+      data-testid="sidebar-session-spinner"
       class="mt-[2px] size-[14px] shrink-0 animate-spin"
-      :class="spinnerTextClass"
+      :class="spinnerColor"
     />
     <span v-else class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
     <div class="min-w-0 flex-1">
@@ -48,7 +48,7 @@
         variant="ghost"
         size="icon"
         class="size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
-        title="重命名"
+        :title="t('sidebar.sessionItem.rename')"
         @click.stop="emit('rename', session.id)"
       >
         <Pencil class="size-[13px]" />
@@ -59,7 +59,7 @@
         :class="confirming
           ? 'size-[22px] rounded-[5px] border border-danger bg-danger text-white'
           : 'size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
-        :title="confirming ? '确认删除？' : '删除'"
+        :title="confirming ? t('sidebar.sessionItem.deleteConfirm') : t('sidebar.sessionItem.delete')"
         @click.stop="onRemoveClick"
       >
         <Check v-if="confirming" class="size-[13px]" />
@@ -140,8 +140,8 @@ const dotClass = computed(() => DOT_CLASS[props.status])
 /** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
 const showSpinner = computed(() => shouldShowSpinner(props.status))
 
-/** spinner 图标色：running→accent 蓝，waiting→warning 橙 */
-const spinnerTextClass = computed(() => SPINNER_TEXT_CLASS[props.status as 'running' | 'waiting'])
+/** spinner 图标色：running→accent 蓝，waiting→warning 橙（类型安全封装，无需 as 断言） */
+const spinnerColor = computed(() => spinnerTextClass(props.status) ?? '')
 
 /** 工作目录名（cwd 末段），长路径只显末段防溢出（dirNameOf 收敛到 logic/path SSOT） */
 const dirName = computed(() => dirNameOf(props.session.cwd))
@@ -155,7 +155,7 @@ import { Check, Pencil, Trash2, Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
-import { DOT_CLASS, shouldShowSpinner, SPINNER_TEXT_CLASS } from '@/composables/logic/sessionStatus'
+import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
 import { dirNameOf } from '@/composables/logic/path'
 </script>
 

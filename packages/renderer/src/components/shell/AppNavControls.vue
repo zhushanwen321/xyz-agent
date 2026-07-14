@@ -24,8 +24,8 @@
       variant="ghost"
       size="icon"
       class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-      :title="sidebar.collapsed ? '展开侧栏' : '收起侧栏'"
-      aria-label="切换侧栏"
+      :title="sidebar.collapsed ? t('shell.expandSidebar') : t('shell.collapseSidebar')"
+      :aria-label="t('shell.toggleSidebar')"
       @click="sidebar.toggleCollapsed()"
     >
       <PanelLeftOpen v-if="sidebar.collapsed" class="size-[14px]" />
@@ -36,8 +36,8 @@
       size="icon"
       class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle [-webkit-app-region:no-drag]"
       :disabled="!navigation.canBack"
-      title="后退"
-      aria-label="后退"
+      :title="t('shell.goBack')"
+      :aria-label="t('shell.goBack')"
       @click="navigation.back()"
     >
       <ArrowLeft class="size-[14px]" />
@@ -47,8 +47,8 @@
       size="icon"
       class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle [-webkit-app-region:no-drag]"
       :disabled="!navigation.canForward"
-      title="前进"
-      aria-label="前进"
+      :title="t('shell.goForward')"
+      :aria-label="t('shell.goForward')"
       @click="navigation.forward()"
     >
       <ArrowRight class="size-[14px]" />
@@ -64,11 +64,13 @@
  * 按钮尺寸 26×22 = draft-overlay-states.html nav-btn 精确值（非 token 化，设计稿像素级要求）。
  */
 import { ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarStore } from '@/stores/sidebar'
 
+const { t } = useI18n()
 const navigation = useNavigationStore()
 const sidebar = useSidebarStore()
 const { isFullscreen } = usePlatformChrome()

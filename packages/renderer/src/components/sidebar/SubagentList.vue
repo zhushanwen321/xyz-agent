@@ -13,7 +13,7 @@
       data-testid="subagent-list-loading"
     >
       <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-      <p class="text-[11.5px] text-subtle opacity-60">加载后台任务...</p>
+      <p class="text-[11.5px] text-subtle opacity-60">{{ t('sidebar.subagentList.loading') }}</p>
     </div>
     <!-- 错误态（M1：loadSubagents 失败，可重试） -->
     <div
@@ -22,8 +22,8 @@
       data-testid="subagent-list-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11.5px] text-muted">加载失败（{{ loadError }}）</p>
-      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">重试</Button>
+      <p class="text-[11.5px] text-muted">{{ t('sidebar.subagentList.loadFailed', { error: loadError }) }}</p>
+      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">{{ t('sidebar.subagentList.retry') }}</Button>
     </div>
     <!-- 列表 -->
     <div v-else-if="subagents.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
@@ -75,8 +75,8 @@
       data-testid="subagent-list-empty"
     >
       <Bot class="size-7 text-subtle opacity-40" />
-      <p class="text-[11.5px] text-subtle opacity-55">暂无后台任务</p>
-      <p class="text-[10.5px] text-subtle opacity-40">发起 subagent 后在此查看进度</p>
+      <p class="text-[11.5px] text-subtle opacity-55">{{ t('sidebar.subagentList.empty') }}</p>
+      <p class="text-[10.5px] text-subtle opacity-40">{{ t('sidebar.subagentList.emptyHint') }}</p>
     </div>
   </div>
 </template>

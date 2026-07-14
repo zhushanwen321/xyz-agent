@@ -21,9 +21,9 @@
     <div class="flex items-center gap-2">
       <Loader2
         v-if="showSpinner"
-        data-testid="session-spinner"
+        data-testid="overview-session-spinner"
         class="mt-[2px] size-[15px] shrink-0 animate-spin"
-        :class="spinnerTextClass"
+        :class="spinnerColor"
       />
       <span v-else class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
       <span class="min-w-0 flex-1 truncate text-[14px] font-semibold text-fg">
@@ -52,7 +52,7 @@
         <span class="text-success">{{ addCount }}</span>
         <span v-if="delCount" class="text-danger">−{{ delCount }}</span>
       </span>
-      <span v-if="turnCount" class="flex items-center gap-1">{{ turnCount }} 回合</span>
+      <span v-if="turnCount" class="flex items-center gap-1">{{ t('overview.round', { count: turnCount }) }}</span>
       <span class="ml-auto">{{ timeLabel }}</span>
     </div>
   </div>
@@ -65,11 +65,14 @@
  * done/stopped/error 静态语义色（design-tokens SSOT 色，走 CSS 变量不硬编码）。
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { FilePen, Loader2 } from '@lucide/vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
-import { DOT_CLASS, shouldShowSpinner, SPINNER_TEXT_CLASS } from '@/composables/logic/sessionStatus'
+import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   session: SessionSummary
@@ -97,8 +100,8 @@ const dotClass = computed(() => DOT_CLASS[props.status])
 /** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
 const showSpinner = computed(() => shouldShowSpinner(props.status))
 
-/** spinner 图标色：running→accent 蓝，waiting→warning 橙 */
-const spinnerTextClass = computed(() => SPINNER_TEXT_CLASS[props.status as 'running' | 'waiting'])
+/** spinner 图标色：running→accent 蓝，waiting→warning 橙（类型安全封装，无需 as 断言） */
+const spinnerColor = computed(() => spinnerTextClass(props.status) ?? '')
 
 /** 是否渲染改动指标（任一计数 > 0） */
 const hasMetrics = computed(() => (props.addCount ?? 0) > 0 || (props.delCount ?? 0) > 0)

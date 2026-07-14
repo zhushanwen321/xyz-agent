@@ -37,7 +37,7 @@
       v-if="totalCount === 0"
       class="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center"
     >
-      <p class="text-[11.5px] text-subtle opacity-55">暂无会话</p>
+      <p class="text-[11.5px] text-subtle opacity-55">{{ t('sidebar.sessionList.empty') }}</p>
       <Button
         variant="ghost"
         size="sm"
@@ -45,7 +45,7 @@
         @click="emit('newSession')"
       >
         <Plus class="size-[14px]" />
-        新建会话
+        {{ t('sidebar.sessionList.newSession') }}
       </Button>
     </div>
   </ScrollArea>

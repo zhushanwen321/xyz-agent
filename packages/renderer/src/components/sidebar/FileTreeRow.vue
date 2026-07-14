@@ -48,7 +48,7 @@
         >
           <span :class="chevronSlotClass" data-testid="chevron-slot" />
           <Loader2 class="size-3 animate-spin opacity-60" />
-          <span>加载...</span>
+          <span>{{ t('sidebar.fileTree.loading') }}</span>
         </div>
         <div
           v-else-if="dirState === 'error'"
@@ -59,7 +59,7 @@
         >
           <span :class="chevronSlotClass" data-testid="chevron-slot" />
           <AlertCircle class="size-3" />
-          <span>加载失败（点击重试）</span>
+          <span>{{ t('sidebar.fileTree.loadFailed') }}</span>
         </div>
         <template v-else>
           <FileTreeRow
@@ -75,7 +75,7 @@
             class="py-1 pr-2 font-mono text-[10.5px] text-subtle italic"
             :style="childHintPaddingStyle"
           >
-            （空目录）
+            {{ t('sidebar.fileTree.emptyDir') }}
           </div>
         </template>
       </template>

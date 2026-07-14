@@ -66,8 +66,8 @@ interface TabDef {
  * subagentCount > 0 且有 running 态时 badge 亮（当前简化为 count > 0 即亮，后续可按 status 精确判断）。
  */
 const tabs = computed<TabDef[]>(() => [
-  { value: 'sessions', label: '会话', icon: MessageSquare, count: props.sessionCount, badge: false },
-  { value: 'files', label: '文件', icon: File, count: props.fileCount, badge: false },
+  { value: 'sessions', label: t('sidebar.segmentedTab.session'), icon: MessageSquare, count: props.sessionCount, badge: false },
+  { value: 'files', label: t('sidebar.segmentedTab.file'), icon: File, count: props.fileCount, badge: false },
   { value: 'subagents', label: 'Agents', icon: Bot, count: props.subagentCount, badge: props.subagentCount > 0 },
   { value: 'workflows', label: 'Flows', icon: Workflow, count: props.workflowCount, badge: props.workflowCount > 0 },
 ])

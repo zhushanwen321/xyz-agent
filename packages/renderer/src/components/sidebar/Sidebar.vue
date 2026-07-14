@@ -28,7 +28,7 @@
           @click="onNewSession"
         >
           <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
-          <span class="flex-1 text-left">新建任务</span>
+          <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
           <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
         </Button>
         <Button
@@ -37,7 +37,7 @@
           @click="searchOpen = true"
         >
           <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
-          <span class="flex-1 text-left">搜索</span>
+          <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
           <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ K</kbd>
         </Button>
       </nav>
@@ -59,7 +59,7 @@
           class="size-[15px] transition-colors"
           :class="isOverviewActive ? 'text-accent' : 'text-subtle group-hover:text-muted'"
         />
-        <span class="flex-1 text-left">概览</span>
+        <span class="flex-1 text-left">{{ t('sidebar.overview') }}</span>
         <span
           v-if="session.list.length"
           class="font-mono text-[10px]"
@@ -86,7 +86,7 @@
             data-testid="session-list-error"
           >
             <AlertCircle class="size-5 text-danger opacity-60" />
-            <p class="text-[11.5px] text-muted">会话列表加载失败（{{ session.listLoadError }}）</p>
+            <p class="text-[11.5px] text-muted">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
             <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">重试</Button>
           </div>
           <SessionList
@@ -141,7 +141,7 @@
             data-testid="file-view-no-session"
           >
             <FolderOpen class="size-5 text-subtle opacity-40" />
-            <p class="text-[11.5px] text-subtle opacity-55">选择会话查看文件</p>
+            <p class="text-[11.5px] text-subtle opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
           </div>
         </template>
       </div>
@@ -149,10 +149,10 @@
       <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
       <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted">
         <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
-        <span class="flex-1 truncate text-fg">开发者</span>
+        <span class="flex-1 truncate text-fg">{{ t('sidebar.developer') }}</span>
         <button
           class="grid size-6 shrink-0 place-items-center rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-fg"
-          title="设置"
+          :title="t('sidebar.settingsTitle')"
           @click="openSettings()"
         >
           <Settings class="size-[14px]" />
@@ -198,10 +198,12 @@ import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
+import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import * as events from '@/api/events'
 import * as sessionApi from '@/api/domains/session'
 
+const { t } = useI18n()
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const { error: toastError } = useToast()
@@ -268,7 +270,7 @@ async function onSelectSession(id: string): Promise<void> {
     await selectSession(id)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`切换会话失败：${msg}`)
+    toastError(t('sidebar.switchSessionFailed', { msg }))
   }
 }
 
@@ -297,7 +299,7 @@ async function onSelectSubagent(subagentId: string): Promise<void> {
     // M5：fetchAndInject fail-fast 后回滚 viewing 态 + toast（对齐 selectAgentCall 模式）
     subagentStore.backToMain(panelStore.activePanelId)
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`加载子代理历史失败：${msg}`)
+    toastError(t('sidebar.loadSubagentFailed', { msg }))
   }
 }
 
@@ -319,7 +321,7 @@ function onWorkflowBack(): void {
  */
 async function onSelectAgentCall(agentCallSessionId: string | undefined): Promise<void> {
   if (!agentCallSessionId) {
-    toastError('该 agent call 执行失败，未创建 session，无对话记录可查看')
+    toastError(t('sidebar.agentCallFailed'))
     return
   }
   const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
@@ -336,7 +338,7 @@ async function onSelectAgentCall(agentCallSessionId: string | undefined): Promis
     // 回滚 viewing（selectAgentCall 内 setViewing 已执行，fetchAndInject 失败需撤销）
     workflowStore.backFromAgentCall(panelStore.activePanelId)
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`无法加载 agent call 对话流：${msg}`)
+    toastError(t('sidebar.agentCallLoadFailed', { msg }))
   }
 }
 
@@ -350,7 +352,7 @@ async function onWorkflowAction(payload: { action: 'pause' | 'resume' | 'abort';
     void workflowStore.loadWorkflows(sid)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`工作流操作失败：${msg}`)
+    toastError(t('sidebar.workflowOpFailed', { msg }))
   }
 }
 
@@ -376,7 +378,7 @@ async function onNewSession(): Promise<void> {
     await newSession()
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`新建任务失败：${msg}`)
+    toastError(t('sidebar.newTaskFailed', { msg }))
   }
 }
 
@@ -390,7 +392,7 @@ async function onDeleteSession(id: string): Promise<void> {
     await deleteSession(id)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`删除会话失败：${msg}`)
+    toastError(t('sidebar.deleteSessionFailed', { msg }))
   }
 }
 
@@ -399,7 +401,7 @@ async function onConfirmRename(payload: { sessionId: string; label: string }): P
     await renameSession(payload.sessionId, payload.label)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`重命名失败：${msg}`)
+    toastError(t('sidebar.renameFailed', { msg }))
   }
 }
 

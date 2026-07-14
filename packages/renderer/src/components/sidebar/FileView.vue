@@ -23,13 +23,13 @@
           variant="ghost"
           class="h-5 shrink-0 gap-1 rounded-sm px-1.5 text-[10px]"
           :class="store.showIgnored ? 'text-accent' : 'text-subtle'"
-          :title="store.showIgnored ? '隐藏忽略文件' : '显示忽略文件'"
+          :title="store.showIgnored ? t('sidebar.fileView.hideIgnored') : t('sidebar.fileView.showIgnored')"
           data-testid="file-show-ignored-toggle"
           @click="onToggleShowIgnored"
         >
           <EyeOff v-if="store.showIgnored" class="size-3" />
           <Eye v-else class="size-3" />
-          <span>忽略项</span>
+          <span>{{ t('sidebar.fileView.ignoredItem') }}</span>
         </Button>
       </div>
 
@@ -42,7 +42,7 @@
         <Input
           :model-value="store.filterText"
           class="h-6 pl-6 pr-2 text-[11px]"
-          placeholder="过滤文件..."
+          :placeholder="t('sidebar.fileView.filterPlaceholder')"
           data-testid="file-filter-input"
           @update:model-value="onFilter"
         />
@@ -55,7 +55,7 @@
         data-testid="file-loading"
       >
         <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-        <p class="text-[11.5px] text-subtle opacity-60">加载文件树...</p>
+        <p class="text-[11.5px] text-subtle opacity-60">{{ t('sidebar.fileView.loadingTree') }}</p>
       </div>
 
       <!-- 错误态（loadTree 失败，可重试） -->
@@ -65,8 +65,8 @@
         data-testid="file-error"
       >
         <AlertCircle class="size-5 text-danger opacity-60" />
-        <p class="text-[11.5px] text-muted">加载失败（{{ rootState.reason ?? 'unknown' }}）</p>
-        <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="file-retry" @click="retry">重试</Button>
+        <p class="text-[11.5px] text-muted">{{ t('sidebar.fileView.loadFailed', { reason: rootState.reason ?? 'unknown' }) }}</p>
+        <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="file-retry" @click="retry">{{ t('sidebar.fileView.retry') }}</Button>
       </div>
 
       <!-- 空态：loaded 但无节点（空目录 cwd）或过滤无匹配 -->
@@ -76,7 +76,7 @@
         data-testid="file-empty"
       >
         <component :is="hasFilter ? SearchX : FolderOpen" class="size-5 text-subtle opacity-50" />
-        <p class="text-[11.5px] text-subtle opacity-55">{{ hasFilter ? '无匹配文件' : '暂无文件' }}</p>
+        <p class="text-[11.5px] text-subtle opacity-55">{{ hasFilter ? t('sidebar.fileView.noMatch') : t('sidebar.fileView.noFile') }}</p>
       </div>
 
       <!-- 文件树（visibleNodes = 过滤后的顶层节点） -->

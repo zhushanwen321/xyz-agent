@@ -11,6 +11,7 @@
  * 首次启动延迟 create（AC-1.7）：currentCwd 为空 → directory chip 显「选择目录」空态。
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Folder, GitBranch, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -43,6 +44,7 @@ const emit = defineEmits<{
   (e: 'retry'): void
 }>()
 
+const { t } = useI18n()
 const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
 
@@ -55,7 +57,7 @@ const { error: toastError } = useToast()
 function onOpenDirDialog(): void {
   flow.openDirDialog().catch((e: unknown) => {
     const reason = e instanceof Error ? e.message : String(e)
-    toastError(`无法打开目录选择器：${reason}`)
+    toastError(t('newTask.landing.dirSelectorFailed', { reason }))
   })
 }
 const sessionStore = useSessionStore()
@@ -72,7 +74,7 @@ const branch = computed(() => flow.gitInfo.value?.branch ?? props.gitBranch ?? n
 /** directory chip 文案：有 cwd 显示目录名，否则首次启动空态（AC-1.7） */
 const dirLabel = computed(() => {
   const c = cwd.value
-  if (!c) return '选择目录'
+  if (!c) return t('newTask.landing.selectDir')
   // 取末段目录名（dirNameOf 收敛到 logic/path SSOT，与 PanelHeader mono cwd 风格一致）
   return dirNameOf(c)
 })
@@ -83,9 +85,9 @@ const HOUR_NOON = 12
 const HOUR_EVENING = 18
 const greetingPrefix = computed(() => {
   const h = new Date().getHours()
-  if (h < HOUR_NOON) return '上午好呀'
-  if (h < HOUR_EVENING) return '下午好呀'
-  return '晚上好呀'
+  if (h < HOUR_NOON) return t('app.greetingMorning')
+  if (h < HOUR_EVENING) return t('app.greetingAfternoon')
+  return t('app.greetingEvening')
 })
 const isDirOpen = computed({
   get: () => flow.state.value === 'dir-popover',
@@ -132,7 +134,7 @@ function onRetry(): void {
 
     <!-- 问候语（22px / weight 650 / --fg，spec §3.1） -->
     <h1 class="z-10 text-center text-[22px] font-[650] text-fg">
-      {{ greetingPrefix }}，有什么想让我帮忙的吗
+      {{ greetingPrefix }}，{{ t('app.greetingPrompt') }}
     </h1>
 
     <!-- getHistory 失败重试出口（AC-2.6，不永久卡住） -->
@@ -144,7 +146,7 @@ function onRetry(): void {
       @click="onRetry"
     >
       <RefreshCw class="shrink-0" />
-      重试加载历史
+      {{ t('newTask.landing.retryHistory') }}
     </Button>
 
     <!-- composer 卡片（variant=landing：720px 居中，--bg-input + --border + --radius-lg）。

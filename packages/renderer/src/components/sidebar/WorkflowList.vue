@@ -13,7 +13,7 @@
       data-testid="workflow-list-loading"
     >
       <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-      <p class="text-[11.5px] text-subtle opacity-60">加载工作流...</p>
+      <p class="text-[11.5px] text-subtle opacity-60">{{ t('sidebar.workflowList.loading') }}</p>
     </div>
     <!-- 错误态（M1：loadWorkflows 失败，可重试） -->
     <div
@@ -22,8 +22,8 @@
       data-testid="workflow-list-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11.5px] text-muted">加载失败（{{ loadError }}）</p>
-      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="workflow-list-retry" @click="emit('retry')">重试</Button>
+      <p class="text-[11.5px] text-muted">{{ t('sidebar.workflowList.loadFailed', { error: loadError }) }}</p>
+      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="workflow-list-retry" @click="emit('retry')">{{ t('sidebar.workflowList.retry') }}</Button>
     </div>
     <!-- 列表 -->
     <div v-else-if="workflows.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
@@ -58,7 +58,7 @@
               variant="ghost"
               size="icon"
               class="size-5 text-subtle hover:text-fg"
-              :title="record.status === 'running' ? '暂停' : '恢复'"
+              :title="record.status === 'running' ? t('sidebar.workflowList.pause') : t('sidebar.workflowList.resume')"
               :data-testid="`workflow-action-${record.status === 'running' ? 'pause' : 'resume'}`"
               @click.stop="emit('action', { action: record.status === 'running' ? 'pause' : 'resume', runId: record.runId })"
             >
@@ -69,7 +69,7 @@
               variant="ghost"
               size="icon"
               class="size-5 text-subtle hover:text-danger"
-              title="终止"
+              :title="t('sidebar.workflowList.terminate')"
               data-testid="workflow-action-abort"
               @click.stop="emit('action', { action: 'abort', runId: record.runId })"
             >
@@ -107,8 +107,8 @@
       data-testid="workflow-list-empty"
     >
       <Workflow class="size-7 text-subtle opacity-40" />
-      <p class="text-[11.5px] text-subtle opacity-55">暂无工作流</p>
-      <p class="text-[10.5px] text-subtle opacity-40">发起 workflow 后在此查看进度</p>
+      <p class="text-[11.5px] text-subtle opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
+      <p class="text-[10.5px] text-subtle opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
     </div>
   </div>
 </template>
