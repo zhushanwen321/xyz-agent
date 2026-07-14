@@ -106,7 +106,11 @@ export class SessionLifecycle {
     const session = this.svc.getSession(sessionId)
     if (session) {
       session.label = newName
-      // 活跃 session:写入 sessionFilePath 使重启后保留
+      // 重置 labelPersisted：rename 后新名需要重新写盘。
+      // 若文件已存在（pi 已 flush），persistSessionName 的 append 分支立即写 session_info；
+      // 若文件不存在（pi 延迟写入窗口），persistSessionName no-op，labelPersisted=false 让
+      // tryPersistLabel 在下次 turn_end/agent_end 兜底写新名（规则 #6：绝不提前建文件）。
+      session.labelPersisted = false
       if (session.sessionFilePath) {
         this.sessionStore.persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
       }
