@@ -171,3 +171,98 @@ describe('LoadPaths 拖拽排序 watch 守卫竞态（W2）', () => {
     expect(optionalDirOrder(wrapper)).toEqual(['/path/a', '/path/b', '/path/c', '/path/d'])
   })
 })
+
+describe('LoadPaths 添加自定义路径入口 + 删除按钮（W5/D1）', () => {
+  it('U9: 输入路径 + 点击添加 → emit update-dirs 含新增 { path, enabled: true } 且清空输入框', async () => {
+    wrapper = mount(LoadPaths, {
+      props: { forcedDirs: [], dirs: DIRS, kind: 'skill' },
+    })
+
+    const input = wrapper.find('[data-testid="new-path-input"]')
+    await input.setValue('/custom/skill-dir')
+    await wrapper.find('[data-testid="add-path-btn"]').trigger('click')
+
+    const events = wrapper.emitted('update-dirs')
+    expect(events).toBeTruthy()
+    const last = (events![events!.length - 1] as [SkillDirConfig[]])[0]
+    expect(last).toContainEqual({ path: '/custom/skill-dir', enabled: true })
+    // DOM 末尾出现新路径
+    expect(optionalDirOrder(wrapper)).toEqual([
+      '/path/a',
+      '/path/b',
+      '/path/c',
+      '/custom/skill-dir',
+    ])
+    // 输入框被清空
+    expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('U9: 回车键也能添加路径', async () => {
+    wrapper = mount(LoadPaths, {
+      props: { forcedDirs: [], dirs: DIRS, kind: 'skill' },
+    })
+
+    const input = wrapper.find('[data-testid="new-path-input"]')
+    await input.setValue('/custom/enter-dir')
+    await input.trigger('keydown', { key: 'Enter' })
+
+    const events = wrapper.emitted('update-dirs')
+    expect(events).toBeTruthy()
+    const last = (events![events!.length - 1] as [SkillDirConfig[]])[0]
+    expect(last).toContainEqual({ path: '/custom/enter-dir', enabled: true })
+  })
+
+  it('U9: 重复路径不新增，显示错误提示且不 emit', async () => {
+    wrapper = mount(LoadPaths, {
+      props: { forcedDirs: [], dirs: DIRS, kind: 'skill' },
+    })
+
+    const input = wrapper.find('[data-testid="new-path-input"]')
+    await input.setValue('/path/a') // 已存在
+    const emitCountBefore = wrapper.emitted('update-dirs')?.length ?? 0
+
+    await wrapper.find('[data-testid="add-path-btn"]').trigger('click')
+
+    // 不新增 → 没有 new emit
+    const events = wrapper.emitted('update-dirs')
+    expect(events?.length ?? 0).toBe(emitCountBefore)
+    // 显示 inline 错误
+    expect(wrapper.find('[data-testid="path-error"]').text()).toContain('路径已存在')
+    // DOM 顺序不变
+    expect(optionalDirOrder(wrapper)).toEqual(['/path/a', '/path/b', '/path/c'])
+  })
+
+  it('U9: 空路径不新增、不 emit', async () => {
+    wrapper = mount(LoadPaths, {
+      props: { forcedDirs: [], dirs: DIRS, kind: 'skill' },
+    })
+
+    const emitCountBefore = wrapper.emitted('update-dirs')?.length ?? 0
+    await wrapper.find('[data-testid="add-path-btn"]').trigger('click')
+
+    const events = wrapper.emitted('update-dirs')
+    expect(events?.length ?? 0).toBe(emitCountBefore)
+    // 空路径不弹错误（非重复，只是无操作）
+    expect(wrapper.find('[data-testid="path-error"]').exists()).toBe(false)
+  })
+
+  it('U9: 点击删除按钮 → emit update-dirs 不含被删路径，DOM 同步移除', async () => {
+    wrapper = mount(LoadPaths, {
+      props: { forcedDirs: [], dirs: DIRS, kind: 'skill' },
+    })
+
+    const removeBtns = wrapper.findAll('[data-testid="remove-path-btn"]')
+    expect(removeBtns.length).toBe(3)
+
+    // 删除第 1 条（/path/b）
+    await removeBtns[1].trigger('click')
+
+    const events = wrapper.emitted('update-dirs')
+    expect(events).toBeTruthy()
+    const last = (events![events!.length - 1] as [SkillDirConfig[]])[0]
+    expect(last.map((d) => d.path)).toEqual(['/path/a', '/path/c'])
+    expect(optionalDirOrder(wrapper)).toEqual(['/path/a', '/path/c'])
+    // 删除按钮数量同步减少
+    expect(wrapper.findAll('[data-testid="remove-path-btn"]').length).toBe(2)
+  })
+})

@@ -60,6 +60,47 @@
           @update:model-value="onToggle(index, $event)"
         />
         <span class="font-mono text-fg">{{ dir.path }}</span>
+        <Button
+          variant="ghost"
+          data-testid="remove-path-btn"
+          class="ml-auto size-6 shrink-0 p-0 text-subtle hover:bg-surface-hover hover:text-danger"
+          :class="{ 'cursor-not-allowed opacity-40': disabled }"
+          :disabled="disabled"
+          :aria-label="`删除目录 ${dir.path}`"
+          @click="onRemove(index)"
+        >
+          <Trash2 class="size-3.5" />
+        </Button>
+      </div>
+
+      <!-- 添加自定义路径入口（ADR-0020 §5 自定义 discovery 目录）-->
+      <div class="border-t border-border px-3 py-2">
+        <div class="flex items-center gap-2">
+          <Input
+            v-model="newPath"
+            data-testid="new-path-input"
+            placeholder="/absolute/path/to/dir"
+            class="h-8 font-mono text-[12px]"
+            :disabled="disabled"
+            @keydown.enter="onAddPath"
+          />
+          <Button
+            variant="secondary"
+            size="dense"
+            data-testid="add-path-btn"
+            :disabled="disabled"
+            @click="onAddPath"
+          >
+            添加
+          </Button>
+        </div>
+        <p
+          v-if="pathError"
+          data-testid="path-error"
+          class="mt-1 text-[11px] text-danger"
+        >
+          {{ pathError }}
+        </p>
       </div>
     </div>
 
@@ -69,8 +110,10 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { GripVertical } from '@lucide/vue'
+import { GripVertical, Trash2 } from '@lucide/vue'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -184,5 +227,34 @@ function onToggle(index: number, value: string | boolean): void {
   const next = localDirs.value.map((d, i) => (i === index ? { ...d, enabled } : d))
   localDirs.value = next
   emit('update-dirs', next.map((d) => ({ ...d })))
+}
+
+// ── 自定义路径入口（W5/D1）──
+const newPath = ref('')
+const pathError = ref('')
+
+/**
+ * 添加自定义路径（ADR-0020 §5 自定义 discovery 目录）。
+ * 仅做非空 + 重复校验；存在性提示按 D1 决策不做（无现成 RPC，避免新增通道）。
+ * 新路径默认 enabled=true，append 到 localDirs 末尾（最低优先级，可再拖排序）。
+ */
+function onAddPath(): void {
+  const path = newPath.value.trim()
+  if (!path) return // 空路径：无操作、不报错
+  if (localDirs.value.some((d) => d.path === path)) {
+    pathError.value = '路径已存在'
+    return
+  }
+  pathError.value = ''
+  localDirs.value = [...localDirs.value, { path, enabled: true }]
+  newPath.value = ''
+  emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
+}
+
+/** 彻底移除条目（区别于取消勾选：删后条目不再出现在列表） */
+function onRemove(index: number): void {
+  if (props.disabled) return
+  localDirs.value = localDirs.value.filter((_, i) => i !== index)
+  emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
 }
 </script>
