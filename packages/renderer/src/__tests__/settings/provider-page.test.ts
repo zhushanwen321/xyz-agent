@@ -269,3 +269,58 @@ describe('ProviderPage W1 robustness', () => {
     expect(store.defaultModel).toBe('')
   })
 })
+
+/**
+ * W3 U5（D6）：model 级 enabled Switch。
+ * 模型表格每行有 enabled Switch（data-testid="model-enabled-switch"），点击后乐观改 store +
+ * 调 config.setProvider 持久化。setProvider 传完整 models 数组（runtime setProvider 整体替换 models）。
+ */
+describe('ProviderPage W3 model 级 enabled Switch（D6）', () => {
+  beforeEach(() => {
+    configMock.setProvider.mockClear()
+  })
+
+  it('U5: 展开 provider → 每个 model 行有 enabled Switch（data-testid="model-enabled-switch"）', async () => {
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    // 展开 anthropic
+    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
+    await name.trigger('click')
+    await flushPromises()
+
+    // anthropic 含 2 model → 2 个 model 级 Switch（与 provider 级 Switch 区分用 data-testid）
+    const modelSwitches = wrapper.findAll('[data-testid="model-enabled-switch"]')
+    expect(modelSwitches.length).toBe(2)
+  })
+
+  it('U5b: 点击某 model 的 enabled Switch → config.setProvider 被调用，payload 含完整 models 数组且目标 model enabled=false', async () => {
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    // 展开 anthropic
+    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
+    await name.trigger('click')
+    await flushPromises()
+
+    // 点第一个 model 的 enabled Switch
+    const modelSwitches = wrapper.findAll('[data-testid="model-enabled-switch"]')
+    await modelSwitches[0]!.trigger('click')
+    await flushPromises()
+
+    expect(configMock.setProvider).toHaveBeenCalledTimes(1)
+    const [providerId, data] = configMock.setProvider.mock.calls[0]
+    expect(providerId).toBe('anthropic')
+    // models 数组完整（runtime 整体替换，不是单 model merge）
+    expect(data.models).toHaveLength(2)
+    // 被点的 model（第一个，claude-sonnet-4）enabled=false，另一个保持原值
+    const sonnet = data.models.find((m: { id: string }) => m.id === 'claude-sonnet-4')
+    const opus = data.models.find((m: { id: string }) => m.id === 'claude-opus-4')
+    expect(sonnet.enabled).toBe(false)
+    expect(opus.enabled).not.toBe(false)
+  })
+})

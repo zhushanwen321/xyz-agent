@@ -111,6 +111,7 @@
                 <TableHead class="pb-1.5 text-center">输入</TableHead>
                 <TableHead class="pb-1.5 text-right">上下文</TableHead>
                 <TableHead class="pb-1.5 text-right">思考</TableHead>
+                <TableHead class="pb-1.5 text-center">启用</TableHead>
                 <TableHead class="pb-1.5 text-right">默认</TableHead>
               </TableRow>
             </TableHeader>
@@ -142,6 +143,19 @@
                     class="h-auto cursor-default rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:bg-transparent"
                     :class="thinkingPillClass(m)"
                   >{{ thinkingLabel(m) }}</Button>
+                </TableCell>
+                <!-- model 级 enabled 开关（D6）：乐观改 store + config.setProvider 持久化。
+                     runtime setProvider 整体替换 models 数组（每个 model 与 base merge），
+                     故必须传完整 models 数组，目标 model 翻转 enabled，其余保持当前 enabled。 -->
+                <TableCell class="py-2 text-center">
+                  <Switch
+                    :model-value="m.enabled !== false"
+                    data-testid="model-enabled-switch"
+                    class="shrink-0"
+                    :aria-label="`${m.id} 启用开关`"
+                    @click.stop
+                    @update:model-value="onToggleModelEnabled(p, m.id, $event)"
+                  />
                 </TableCell>
                 <TableCell class="py-2 text-right">
                   <Button
@@ -310,6 +324,35 @@ async function setDefaultModel(providerId: string, modelId: string) {
   try {
     await config.setDefaultModel(providerId, modelId)
   } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** model 级 enabled 开关（D6）：乐观改 store model.enabled + config.setProvider 持久化。
+ *  runtime setProvider 整体替换 models 数组（每个 model 与 base merge），故传完整 models 数组，
+ *  目标 model 翻转 enabled，其余保持当前 enabled 透传（避免丢字段）。失败回滚 store + 报错。 */
+async function onToggleModelEnabled(
+  p: ProviderInfo,
+  modelId: string,
+  enabled: boolean,
+) {
+  actionError.value = ''
+  const old = settingsStore.setModelEnabled(p.id, modelId, enabled)
+  try {
+    await config.setProvider(p.id, {
+      models: p.models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        api: m.api,
+        baseUrl: m.baseUrl,
+        contextWindow: m.contextWindow,
+        input: m.input,
+        thinkingLevelMap: m.thinkingLevelMap,
+        enabled: m.id === modelId ? enabled : (m.enabled ?? true),
+      })),
+    })
+  } catch (e) {
+    settingsStore.setModelEnabled(p.id, modelId, old)
     actionError.value = e instanceof Error ? e.message : String(e)
   }
 }

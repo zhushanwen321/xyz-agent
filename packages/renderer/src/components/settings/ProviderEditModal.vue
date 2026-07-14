@@ -7,7 +7,7 @@
     受控表单：业务编排（test/discover/save + 模型 CRUD）下沉 useProviderEdit，
     本组件只做展示 + 事件绑定（F1 拆分）。
   -->
-  <Dialog :open="open" @update:open="emit('close')">
+  <Dialog :open="open" @update:open="requestClose">
     <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
     <DialogContent hide-close class="flex max-w-[780px] flex-col overflow-hidden p-0">
       <!-- 标题栏。DialogTitle/DialogDescription 给 reka-ui a11y context（视觉用自绘 span） -->
@@ -18,7 +18,7 @@
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0 text-muted hover:bg-surface-hover hover:text-fg"
           aria-label="关闭"
-          @click="emit('close')"
+          @click="requestClose"
         >
           <X class="size-4" />
         </Button>
@@ -78,7 +78,77 @@
                 <EyeOff v-if="showKey" class="size-4" />
                 <Eye v-else class="size-4" />
               </Button>
+              <!-- 清除已配置的 key（D18）：置哨兵，save 时发空串清空 -->
+              <Button
+                v-if="provider?.apiKeySet && form.apiKey !== '__CLEAR__'"
+                variant="ghost"
+                class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(239,68,68,0.12)] hover:text-danger"
+                aria-label="清除密钥"
+                title="清除密钥"
+                @click="clearApiKey"
+              >
+                <Trash2 class="size-4" />
+              </Button>
             </div>
+            <!-- apiKey 编辑语义说明（D18）：留空保存=不改；已配置时提示清除按钮的作用 -->
+            <p class="mt-1 text-[10px] text-subtle">
+              留空保存则保持不变{{ provider?.apiKeySet ? '；点垃圾桶清除已配置的 key' : '' }}
+            </p>
+          </div>
+
+          <!-- authHeader 开关（W3 D7）：是否把 apiKey 写入 Authorization header -->
+          <div class="flex items-center justify-between">
+            <Label class="text-[11px] font-semibold uppercase tracking-wider text-muted">
+              Auth Header <span class="normal-case tracking-normal">把 API Key 写入 Authorization</span>
+            </Label>
+            <Switch
+              :model-value="form.authHeader"
+              data-testid="auth-header-switch"
+              :aria-label="`authHeader 开关`"
+              @update:model-value="toggleAuthHeader($event as boolean)"
+            />
+          </div>
+
+          <!-- headers 编辑区（W3 D7）：key-value 行编辑 + 添加/删除 -->
+          <div data-testid="headers-editor">
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+              自定义 Headers <span class="normal-case tracking-normal">附加请求头</span>
+            </Label>
+            <div class="flex flex-col gap-1.5">
+              <div
+                v-for="(row, i) in headerRows"
+                :key="i"
+                class="flex items-center gap-1.5"
+              >
+                <Input
+                  v-model="row.key"
+                  placeholder="X-Custom-Header"
+                  class="h-8 flex-1 text-[12px]"
+                  @update:model-value="syncHeadersFromRows"
+                />
+                <Input
+                  v-model="row.value"
+                  placeholder="value"
+                  class="h-8 flex-1 text-[12px]"
+                  @update:model-value="syncHeadersFromRows"
+                />
+                <Button
+                  variant="ghost"
+                  class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-danger [&_svg]:size-3.5"
+                  aria-label="移除 header"
+                  @click="removeHeader(i)"
+                >
+                  <X />
+                </Button>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              class="mt-1.5 h-auto p-0 text-[11px] text-accent hover:bg-transparent hover:underline"
+              @click="addHeader"
+            >
+              + 添加 header
+            </Button>
           </div>
 
           <!-- 操作按钮 -->
@@ -174,7 +244,7 @@
                   </SelectContent>
                 </Select>
               </div>
-              <Button class="h-8 shrink-0 px-3 text-[12px]" @click="addModel">添加</Button>
+              <Button class="h-8 shrink-0 px-3 text-[12px]" @click="onAddModel">添加</Button>
             </div>
           </div>
 
@@ -265,25 +335,37 @@
       <div class="flex items-center gap-2 border-t border-border px-5 py-3.5">
         <span v-if="actionError" class="flex-1 text-[12px] text-danger">{{ actionError }}</span>
         <span v-else class="flex-1" />
-        <Button variant="ghost" @click="emit('close')">取消</Button>
+        <Button variant="ghost" @click="requestClose">取消</Button>
         <Button :disabled="saving" @click="onSave">
           {{ saving ? '保存中…' : '保存' }}
         </Button>
       </div>
     </DialogContent>
+
+    <!-- 取消确认弹窗（D13）：有未保存改动时点取消/X/Esc → 二次确认 -->
+    <ConfirmDialog
+      v-model:open="confirmCloseOpen"
+      variant="default"
+      title="有未保存的修改"
+      description="确定关闭？未保存的改动将丢失。"
+      confirm-text="确认关闭"
+      cancel-text="继续编辑"
+      @confirm="emit('close')"
+    />
   </Dialog>
 </template>
 
 <script setup lang="ts">
-import { toRef } from 'vue'
+import { ref, toRef } from 'vue'
 import {
   Eye, EyeOff, Loader2, Wifi, RefreshCw, CheckCircle2, AlertCircle,
-  X, FileText, ImageIcon,
+  X, FileText, ImageIcon, Trash2,
 } from '@lucide/vue'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTitle, DialogDescription, ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import {
@@ -292,6 +374,7 @@ import {
   THINKING_STRATEGIES,
   type ThinkingStrategy,
 } from '@/composables/features/useProviderEdit'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ open: boolean; provider: ProviderInfo | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -300,11 +383,14 @@ const emit = defineEmits<{ close: [] }>()
 const ctxOptions = CONTEXT_OPTIONS
 const thinkingStrategies = THINKING_STRATEGIES
 
+const { info: toastInfo } = useToast()
+
 // 业务编排全在 composable：本组件只做 props/emit + 调用（受控表单，F1 拆分）
 const {
   form,
   newModel,
   localModels,
+  headerRows,
   showKey,
   testing,
   discovering,
@@ -313,21 +399,68 @@ const {
   showAddModel,
   saving,
   actionError,
+  isDirty,
   getStrategyFromMap,
   testConnection,
   autoDiscover,
   save,
+  clearApiKey,
   toggleInput,
   toggleNewInput,
   updateCtx,
   pickStrategy,
   addModel,
   removeModel,
+  // W3 D7：headers CRUD
+  addHeader,
+  removeHeader,
+  syncHeadersFromRows,
+  toggleAuthHeader,
 } = useProviderEdit(toRef(props, 'provider'))
 
-/** 保存成功则关闭弹窗（状态经 onProviders 订阅推回，避免竞态） */
+// ── D13：取消/关闭统一入口，有未保存改动时二次确认 ──
+
+/** 取消确认弹窗开关（true=显示「未保存」确认） */
+const confirmCloseOpen = ref(false)
+
+/**
+ * 关闭请求入口（X / 取消 / Dialog @update:open=false 统一走这里）。
+ * - 保存进行中（saving=true）→ 直接关（save 自己处理反馈，不应被确认弹窗阻塞）
+ * - 有未保存改动（isDirty=true）→ 弹确认，确认后才 close
+ * - 无改动 → 直接 close
+ * 注意：Dialog 的 @update:open 在 open=true 时也会触发（reka-ui 行为），
+ * 此时 value=true 不是关闭请求，忽略。
+ */
+function requestClose(value?: boolean): void {
+  // @update:open 传 boolean：仅 false 是关闭请求；true 忽略
+  if (value === true) return
+  if (saving.value) {
+    emit('close')
+    return
+  }
+  if (isDirty.value) {
+    confirmCloseOpen.value = true
+    return
+  }
+  emit('close')
+}
+
+/** 添加模型（D15a）：捕获 addModel 抛的校验错，填到 actionError（底栏显示） */
+function onAddModel(): void {
+  actionError.value = ''
+  try {
+    addModel()
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** 保存成功则 toastInfo 反馈 + 关闭弹窗（状态经 onProviders 订阅推回，避免竞态） */
 async function onSave(): Promise<void> {
   const ok = await save()
-  if (ok) emit('close')
+  if (ok) {
+    toastInfo('已保存')
+    emit('close')
+  }
 }
 </script>

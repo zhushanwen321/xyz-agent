@@ -134,6 +134,23 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /**
+   * 乐观切换 model 级 enabled（D6）。
+   * 立即改本地 providers 中目标 provider 下目标 model 的 enabled，组件随后调 API 持久化、失败回滚。
+   * @returns 旧值（供回滚用），找不到时返回 true（默认启用）
+   */
+  function setModelEnabled(providerId: string, modelId: string, enabled: boolean): boolean {
+    const pIdx = providers.value.findIndex((p) => p.id === providerId)
+    if (pIdx === -1) return true
+    const provider = providers.value[pIdx]
+    const mIdx = provider.models.findIndex((m) => m.id === modelId)
+    if (mIdx === -1) return true
+    const old = provider.models[mIdx].enabled ?? true
+    const nextModels = provider.models.map((m, i) => i === mIdx ? { ...m, enabled } : m)
+    providers.value[pIdx] = { ...provider, models: nextModels }
+    return old
+  }
+
+  /**
    * 乐观切换 extension enabled。
    * @returns 旧值（供回滚用）
    */
@@ -173,6 +190,7 @@ export const useSettingsStore = defineStore('settings', () => {
     setSkillDirs,
     setAgentDirs,
     setProviderEnabled,
+    setModelEnabled,
     setExtensionEnabled,
     setExtensionAutoUpgrade,
   }

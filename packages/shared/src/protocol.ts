@@ -58,6 +58,10 @@ export interface SetProviderData {
   type?: string
   apiKey?: string
   baseUrl?: string
+  /** 自定义请求头（provider 级，与 ProviderInfo.headers 对齐）。 */
+  headers?: Record<string, string>
+  /** 是否把 apiKey 写入 Authorization header（与 ProviderInfo.authHeader 对齐）。 */
+  authHeader?: boolean
   models?: Array<string | {
     id: string
     name?: string

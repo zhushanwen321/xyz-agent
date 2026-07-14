@@ -5,10 +5,11 @@
  * ③ 模型清单 CRUD ④ save 持久化。凭据 form 也在此持有（组件模板 v-model 绑定）。
  * provider ref 变化时重置全部编辑态（原 watch(props.provider)）。
  *
- * 依赖方向：@xyz-agent/shared 类型 + @/api(config)，不依赖 store，与 useSettings 同层。
+ * 依赖方向：@xyz-agent/shared 类型 + @/api(config) + @/stores/settings（D8 过期快照 watch）。
  */
-import { ref, reactive, watch, type Ref } from 'vue'
+import { ref, reactive, watch, computed, type Ref } from 'vue'
 import { config } from '@/api'
+import { useSettingsStore } from '@/stores/settings'
 import type { ProviderInfo } from '@xyz-agent/shared'
 
 // ── 类型 ──
@@ -66,6 +67,25 @@ export const THINKING_STRATEGIES: Array<{ key: ThinkingStrategy; fullLabel: stri
 /** discover 动作：test（探活，结果显示连接成败）/ discover（合并发现的模型） */
 type DiscoverAction = 'test' | 'discover'
 
+/**
+ * apiKey「清除」哨兵值（D18）。
+ * 表单内 form.apiKey 默认 ''=不变（save 时 `apiKey || undefined` 跳过）。
+ * 用户点「清除」时把 form.apiKey 置为此哨兵，save 识别后发送空串给 runtime
+ * （config-service `if (data.apiKey !== undefined) merged.apiKey = data.apiKey`，空串=清空 key）。
+ */
+export const API_KEY_CLEAR_SENTINEL = '__CLEAR__'
+
+/**
+ * 计算 save 时实际发送的 apiKey（D18）。
+ * - 哨兵 → ''（清空已配置的 key）
+ * - 空 → undefined（保持不变）
+ * - 非空 → 原值
+ */
+function resolveApiKeyForSave(apiKey: string): string | undefined {
+  if (apiKey === API_KEY_CLEAR_SENTINEL) return ''
+  return apiKey || undefined
+}
+
 // ── composable ──
 
 /**
@@ -74,7 +94,16 @@ type DiscoverAction = 'test' | 'discover'
 export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   // ── 表单 / 列表状态 ──
 
-  const form = reactive({ name: '', api: 'anthropic-messages', baseUrl: '', apiKey: '' })
+  /** form.headers/authHeader（D7）：provider 级自定义请求头 + 是否把 apiKey 写入 Authorization。
+   *  headers 用 Record 形态（save 时回写 setProvider），UI 通过 headerRows 行编辑驱动。 */
+  const form = reactive({
+    name: '',
+    api: 'anthropic-messages',
+    baseUrl: '',
+    apiKey: '',
+    headers: {} as Record<string, string>,
+    authHeader: false,
+  })
   const newModel = reactive({
     name: '',
     contextWindow: 200_000,
@@ -82,6 +111,81 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     thinking: 'on-off' as ThinkingStrategy,
   })
   const localModels = ref<LocalModel[]>([])
+
+  /**
+   * headers 行编辑态（D7）：每行一对 key/value，UI 双向绑定。
+   * 与 form.headers 双向同步：headerRows 改 → 同步回 form.headers（save 用）；
+   * provider 加载时从 p.headers 初始化 headerRows。
+   */
+  const headerRows = ref<Array<{ key: string; value: string }>>([])
+
+  /**
+   * 把 headers Record 转成行数组（W3 D7）。
+   * headers 是已知 schema 的 Record<string,string>（非任意用户输入），故直接 entries。
+   */
+  function rowsFromHeaders(headers: Record<string, string>): Array<{ key: string; value: string }> {
+    // eslint-disable-next-line taste/no-unsafe-object-entries -- headers is a known schema Record<string,string>
+    return Object.entries(headers).map(([k, v]) => ({ key: k, value: v }))
+  }
+
+  /**
+   * 打开时的初始快照（用于 isDirty 对比，D13 取消确认）。
+   * 每次 provider 变化重置编辑态后记录；手动改 form/localModels 后 isDirty=true。
+   * 快照基础字段（name/api/baseUrl/authHeader）+ apiKey 状态（是否清空）+ models 的 id 列表
+   * + headers（W3 D7：headers 改也算 dirty）。
+   */
+  interface FormSnapshot {
+    name: string
+    api: string
+    baseUrl: string
+    /** apiKey 是否被「清除」（哨兵态或用户输入了值都算 dirty） */
+    apiKeyChanged: boolean
+    /** models 的 id 列表（顺序无关，按集合对比增删） */
+    modelIds: string[]
+    /** provider 级 authHeader（W3 D7） */
+    authHeader: boolean
+    /** provider 级 headers 序列化（W3 D7：JSON 串对比，键值任一变更即 dirty） */
+    headersJson: string
+  }
+  const snapshot = ref<FormSnapshot | null>(null)
+
+  /** 记录当前 form/localModels 为初始快照（provider 切换/打开后调） */
+  function captureSnapshot(): void {
+    snapshot.value = {
+      name: form.name,
+      api: form.api,
+      baseUrl: form.baseUrl,
+      apiKeyChanged: form.apiKey !== '',
+      modelIds: localModels.value.map((m) => m.id),
+      authHeader: form.authHeader,
+      headersJson: JSON.stringify(form.headers),
+    }
+  }
+
+  /**
+   * form 相对初始快照是否有变更（D13 取消确认 + W3 过期快照刷新用）。
+   * 对比 name/api/baseUrl/apiKey 状态/models 的 id 集合/authHeader/headers。snapshot=null（未初始化）→ false。
+   */
+  const isDirty = computed<boolean>(() => {
+    const s = snapshot.value
+    if (!s) return false
+    if (form.name !== s.name) return true
+    if (form.api !== s.api) return true
+    if (form.baseUrl !== s.baseUrl) return true
+    // apiKey：用户输入了值 或 点了清除（哨兵）都算变更
+    const apiKeyChangedNow = form.apiKey !== ''
+    if (apiKeyChangedNow !== s.apiKeyChanged) return true
+    // models id 集合对比（增删即 dirty；内部字段改不算——按 id 对比足够覆盖取消确认场景）
+    const currentIds = new Set(localModels.value.map((m) => m.id))
+    if (currentIds.size !== s.modelIds.length) return true
+    for (const id of s.modelIds) {
+      if (!currentIds.has(id)) return true
+    }
+    // W3 D7：authHeader / headers 变更即 dirty
+    if (form.authHeader !== s.authHeader) return true
+    if (JSON.stringify(form.headers) !== s.headersJson) return true
+    return false
+  })
 
   // ── UI 状态（pending / 结果显示）──
 
@@ -108,6 +212,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         form.api = p.api ?? 'anthropic-messages'
         form.baseUrl = p.baseUrl ?? ''
         form.apiKey = ''
+        // W3 D7：回填 headers / authHeader
+        form.headers = p.headers ? { ...p.headers } : {}
+        form.authHeader = p.authHeader ?? false
+        headerRows.value = rowsFromHeaders(form.headers)
         showKey.value = false
         testResult.value = null
         discoverResult.value = ''
@@ -120,6 +228,9 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         form.api = 'anthropic-messages'
         form.baseUrl = ''
         form.apiKey = ''
+        form.headers = {}
+        form.authHeader = false
+        headerRows.value = []
         showKey.value = false
         testResult.value = null
         discoverResult.value = ''
@@ -127,7 +238,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         actionError.value = ''
         localModels.value = []
       }
+      // 记录初始快照（isDirty 对比基线）。重置后立即捕获，确保用户首次输入才变 dirty。
+      captureSnapshot()
     },
+    { immediate: true },
   )
 
   // ── 纯函数 helpers（template 也直接调）──
@@ -210,10 +324,16 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   // ── ④ save 持久化 ──
 
   /**
-   * 保存：调 config.setProvider（新建用 providerId=form.name，编辑用原 id）。
+   * 保存：校验 → 调 config.setProvider（新建用 providerId=form.name，编辑用原 id）。
    * 状态经 onProviders 订阅推回（单一数据源，避免竞态）。成功返回 true，调用方据此 emit close。
+   * D15b：name 空时返回 false 并填 actionError（不调 setProvider）。
    */
   async function save(): Promise<boolean> {
+    // 前端校验（D15b）：供应商名称必填
+    if (!form.name.trim()) {
+      actionError.value = '供应商名称不能为空'
+      return false
+    }
     saving.value = true
     actionError.value = ''
     const providerId = providerRef.value?.id ?? form.name
@@ -222,7 +342,11 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         name: form.name,
         type: form.api,
         baseUrl: form.baseUrl,
-        apiKey: form.apiKey || undefined,
+        // D18：apiKey 空=不变（undefined）；哨兵=清空（''）；非空=原值
+        apiKey: resolveApiKeyForSave(form.apiKey),
+        // W3 D7：headers（空对象时不传，避免覆盖 runtime 既有值）+ authHeader 回写。
+        headers: Object.keys(form.headers).length > 0 ? form.headers : undefined,
+        authHeader: form.authHeader,
         // 透传 model 级 api/baseUrl/enabled：runtime setProvider 用 spread 合并 base，
         // 缺字段会被 base 兜底，但显式回传避免「编辑保存丢字段」（P1 bug #4/#5）。
         models: localModels.value.map((m) => ({
@@ -243,6 +367,44 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     } finally {
       saving.value = false
     }
+  }
+
+  /**
+   * 清除 apiKey（D18）：把 form.apiKey 置为哨兵，save 时识别为「清空」。
+   * 仅在已配置 key 时有意义（provider.apiKeySet=true）。
+   */
+  function clearApiKey(): void {
+    form.apiKey = API_KEY_CLEAR_SENTINEL
+  }
+
+  // ── headers 行编辑 CRUD（W3 D7）──
+  // headerRows 是 UI 行态（每行 {key,value}），form.headers 是 save 用的 Record。
+  // 行变更后同步回 form.headers（filter 掉空 key，避免把空键发给 runtime）。
+
+  /** 把 headerRows 同步回 form.headers（filter 掉空 key 的行） */
+  function syncHeadersFromRows(): void {
+    const next: Record<string, string> = {}
+    for (const r of headerRows.value) {
+      const k = r.key.trim()
+      if (k) next[k] = r.value
+    }
+    form.headers = next
+  }
+
+  /** 新增一个空 header 行 */
+  function addHeader(): void {
+    headerRows.value.push({ key: '', value: '' })
+  }
+
+  /** 移除指定下标的 header 行，并同步回 form.headers */
+  function removeHeader(index: number): void {
+    headerRows.value.splice(index, 1)
+    syncHeadersFromRows()
+  }
+
+  /** authHeader Switch toggle（W3 D7） */
+  function toggleAuthHeader(v: boolean): void {
+    form.authHeader = v
   }
 
   // ── ③ 模型清单 CRUD ──
@@ -274,10 +436,18 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
       : undefined
   }
 
-  /** 新增模型到清单（来自底部新增表单） */
+  /**
+   * 新增模型到清单（来自底部新增表单）。
+   * D15a：空名/重名 id 抛错（调用方 catch 后填 actionError），替代原静默 return。
+   * 抛错而非静默：CLAUDE.md 规则 #3——用户操作无反馈是 bug。
+   */
   function addModel(): void {
     const name = newModel.name.trim()
-    if (!name) return
+    if (!name) throw new Error('模型名称不能为空')
+    // 重复 id 校验：localModels 已含同 id → 抛错
+    if (localModels.value.some((m) => m.id === name)) {
+      throw new Error(`模型「${name}」已存在`)
+    }
     localModels.value.push({
       id: name,
       name,
@@ -295,11 +465,41 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     localModels.value.splice(index, 1)
   }
 
+  // ── D8：编辑弹窗过期快照刷新 ──
+  // 弹窗打开期间若外部广播更新了同 provider（onProviders 整体替换 store.providers），
+  // 弹窗表单不刷新会覆盖并发变更。watch store.providers，仅在「用户未手动改」（!isDirty）时
+  // 重新快照 form（name/api/baseUrl/headers/authHeader/models），用户改动优先（isDirty=true 不刷新）。
+  const settingsStore = useSettingsStore()
+  watch(
+    () => settingsStore.providers,
+    (list) => {
+      // 仅编辑态（providerRef 非 null）刷新；新增态无 provider 可对齐。
+      const editingId = providerRef.value?.id
+      if (!editingId) return
+      // 用户已手动改 → 不刷新（改动优先）
+      if (isDirty.value) return
+      const fresh = list.find((p) => p.id === editingId)
+      if (!fresh) return
+      // 同步基础字段 + headers/authHeader + models
+      form.name = fresh.name
+      form.api = fresh.api ?? 'anthropic-messages'
+      form.baseUrl = fresh.baseUrl ?? ''
+      form.headers = fresh.headers ? { ...fresh.headers } : {}
+      form.authHeader = fresh.authHeader ?? false
+      headerRows.value = rowsFromHeaders(form.headers)
+      localModels.value = fresh.models.map((m) => ({ ...m }))
+      // 刷新后重新捕获快照（新基线，避免下次广播触发不必要的「dirty」）
+      captureSnapshot()
+    },
+    { deep: true },
+  )
+
   return {
     // 状态（template 绑定）
     form,
     newModel,
     localModels,
+    headerRows,
     showKey,
     testing,
     discovering,
@@ -308,12 +508,16 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     showAddModel,
     saving,
     actionError,
+    /** form 相对打开时快照是否有变更（D13 取消确认 + W3 过期快照刷新用） */
+    isDirty,
     // 纯函数 helper
     getStrategyFromMap,
     // 编排
     testConnection,
     autoDiscover,
     save,
+    /** 清除 apiKey（D18）：置哨兵，save 时识别为清空 */
+    clearApiKey,
     // 模型 CRUD
     toggleInput,
     toggleNewInput,
@@ -321,5 +525,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     pickStrategy,
     addModel,
     removeModel,
+    // headers CRUD（W3 D7）
+    addHeader,
+    removeHeader,
+    syncHeadersFromRows,
+    toggleAuthHeader,
   }
 }
