@@ -287,5 +287,20 @@ export function useChat() {
     chat.hydrate(sessionId, history)
   }
 
-  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory }
+  /**
+   * 清理指定 session 的全部资源（W1 / S3：deleteSession 调用）。
+   *
+   * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态。
+   * session 删除后若不取消订阅，WS 事件仍会推给已删 session 的 handler，且 Map 永久增长。
+   */
+  function disposeSession(sessionId: string): void {
+    const unsub = streamSubscriptions.get(sessionId)
+    if (unsub) {
+      unsub()
+      streamSubscriptions.delete(sessionId)
+    }
+    chat.disposeSession(sessionId)
+  }
+
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, disposeSession }
 }

@@ -53,6 +53,82 @@ function readStreamingTimeoutMs(): number {
 }
 
 /**
+ * disposeSession 所需清理的 per-session ref 集合。
+ * 留在模块作用域以控制 setup 函数行数（max-lines-per-function，对齐 readStreamingTimeoutMs 模式）。
+ */
+interface DisposableRefs<T> {
+  value: T
+}
+
+/**
+ * 清理指定 session 的全部 per-session 状态（deleteSession 调用，S3）。
+ *
+ * deleteSession 此前只清 session 列表 + panel 绑定，chat store 的 per-session 状态
+ * （messages / hydrated / pendingSend / compactingSessions / retryStates / queueStates /
+ * failedHistory / changeSetStatuses）永久残留。频繁建删 session 后内存单调增长。
+ * 此函数一次性清理该 session 的所有分区数据 + 取消 timer。
+ */
+function disposeSessionImpl(
+  sessionId: string,
+  mapRefs: DisposableRefs<Map<string, unknown>>[],
+  setRefs: DisposableRefs<Set<string>>[],
+  changeSetStatuses: DisposableRefs<Map<string, unknown>>,
+  clearTimers: (() => void)[],
+): void {
+  // Map ref：不可变写保证响应式
+  for (const ref of mapRefs) {
+    if (ref.value.has(sessionId)) {
+      ref.value = new Map(ref.value)
+      ref.value.delete(sessionId)
+    }
+  }
+  // Set ref：不可变写保证响应式
+  for (const ref of setRefs) {
+    if (ref.value.has(sessionId)) {
+      ref.value = new Set(ref.value)
+      ref.value.delete(sessionId)
+    }
+  }
+  // changeSetStatuses：key 格式 `${sessionId}:${messageId}`，前缀过滤删除
+  if (changeSetStatuses.value.size > 0) {
+    const prefix = `${sessionId}:`
+    let changed = false
+    const next = new Map(changeSetStatuses.value)
+    for (const key of next.keys()) {
+      if (key.startsWith(prefix)) {
+        next.delete(key)
+        changed = true
+      }
+    }
+    if (changed) changeSetStatuses.value = next
+  }
+  // timer 清理（模块级 Map，非响应式）
+  for (const clear of clearTimers) clear()
+}
+
+/**
+ * 追加 system 提示行纯逻辑（模块级，控制 setup 行数）。
+ * runtime 主动推送的元信息反馈（如 compactionSummary），作 SystemNotice 渲染。
+ */
+function appendSystemNoticeImpl(
+  messages: DisposableRefs<Map<string, Message[]>>,
+  sessionId: string,
+  text: string,
+): void {
+  const prev = messages.value.get(sessionId) ?? []
+  messages.value.set(sessionId, [
+    ...prev,
+    {
+      id: `sys-${crypto.randomUUID()}`,
+      role: 'system',
+      content: text,
+      status: 'complete',
+      timestamp: Date.now(),
+    },
+  ])
+}
+
+/**
  * subagent streaming delta 纯逻辑（W4，模块作用域）。
  *
  * 全量替换虚拟 session 最后一条 streaming assistant 的 content + 幂等补 text contentBlock；
@@ -511,22 +587,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 追加 system 提示行（runtime 主动推送的元信息反馈，如 compactionSummary，作 SystemNotice 渲染）。
-   * 与规则 #3 「错误作为消息插入聊天流」一致：不用顶部 banner。
-   * 注：compact 失败的错误反馈走 useChat.compact 的 toast（§4.4 异常路径），不走此方法。
+   * 追加 system 提示行。委托 appendSystemNoticeImpl（模块级，控制 setup 行数）。
+   * 与规则 #3「错误作为消息插入聊天流」一致：不用顶部 banner。
    */
   function appendSystemNotice(sessionId: string, text: string): void {
-    const prev = messages.value.get(sessionId) ?? []
-    messages.value.set(sessionId, [
-      ...prev,
-      {
-        id: `sys-${crypto.randomUUID()}`,
-        role: 'system',
-        content: text,
-        status: 'complete',
-        timestamp: Date.now(),
-      },
-    ])
+    appendSystemNoticeImpl(messages, sessionId, text)
   }
 
   /**
@@ -540,6 +605,20 @@ export const useChatStore = defineStore('chat', () => {
     if (idx === -1) return
     const end = inclusive ? idx : idx + 1
     messages.value.set(sessionId, prev.slice(0, end))
+  }
+
+  /**
+   * 清理指定 session 的全部 per-session 状态（deleteSession 调用，S3）。
+   * 委托 disposeSessionImpl（模块级，控制 setup 函数行数）。
+   */
+  function disposeSession(sessionId: string): void {
+    disposeSessionImpl(
+      sessionId,
+      [messages, retryStates, queueStates],
+      [hydrated, pendingSend, compactingSessions, failedHistory],
+      changeSetStatuses,
+      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId)],
+    )
   }
 
   return {
@@ -582,5 +661,6 @@ export const useChatStore = defineStore('chat', () => {
     appendSystemNotice,
     truncateFrom,
     applyFileChanges,
+    disposeSession,
   }
 })
