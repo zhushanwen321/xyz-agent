@@ -57,6 +57,10 @@ export interface RpcClientOptions {
 const CMD_TIMEOUT_MS = 60_000
 const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
+/** 快速操作超时（L6：getState/getCommands 等毫秒级 RPC，10s 足够，60s 等太久才报错） */
+const FAST_TIMEOUT_MS = 10_000
+/** 慢操作超时（L6：switchSession 加载大 session 文件可能耗时，120s 避免误超时） */
+const SLOW_TIMEOUT_MS = 120_000
 const STARTUP_DELAY_MS = 500
 /** timedOutIds 条目存活时间（S6：超时后迟到响应的防御窗口，5s 后清理避免 Set 无界增长） */
 const TIMED_OUT_ID_TTL_MS = 5_000
@@ -430,7 +434,8 @@ export class RpcClient implements IPiEngine {
   }
 
   async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
-    const msg = await this.sendCommand('get_commands')
+    // L6：getCommands 是毫秒级操作，用 FAST_TIMEOUT_MS（10s）替代默认 60s，失败更快报错
+    const msg = await this.sendCommand('get_commands', {}, FAST_TIMEOUT_MS)
     return (msg.data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
   }
 
@@ -441,12 +446,14 @@ export class RpcClient implements IPiEngine {
 
   /** 切换 pi 进程到指定 session 文件（restore / fork 用）。 */
   switchSession(sessionPath: string): Promise<void> {
-    return this.sendCommand('switch_session', { sessionPath }).then(() => undefined)
+    // L6：switchSession 加载大 session 文件可能耗时，用 SLOW_TIMEOUT_MS（120s）避免误超时
+    return this.sendCommand('switch_session', { sessionPath }, SLOW_TIMEOUT_MS).then(() => undefined)
   }
 
   /** 查询 pi session 状态（get_state），返回归一后的 state 对象（sendCommand 已归一 data ?? payload）。 */
   async getState(): Promise<Record<string, unknown> | undefined> {
-    return (await this.sendCommand('get_state')).data
+    // L6：getState 是毫秒级操作，用 FAST_TIMEOUT_MS（10s）替代默认 60s
+    return (await this.sendCommand('get_state', {}, FAST_TIMEOUT_MS)).data
   }
 
   /**
