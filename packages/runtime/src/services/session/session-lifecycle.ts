@@ -105,8 +105,10 @@ export class SessionLifecycle {
     // 现在依赖 SessionScanner.listAll 的合并机制：active session 从内存 Map（this.sessions）读，
     // 即使磁盘无文件也显示（restart 后内存清空，但此时未 flush 的 session 本就无内容，丢失合理）。
     this.sessionStore.refreshAll()
-    // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表
-    if (!options?.hidden) {
+    // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
+    // [W5] cwd 降级到 homedir 时同样跳过 record：homedir 是兜底目标，不是用户真实选择的工作区，
+    // 写入会让「最近工作区」列表被 homedir 污染。
+    if (!options?.hidden && sessionCwd === requestedCwd) {
       this.workspaceService.record(sessionCwd)
     }
     return this.svc.toSummary(session)
