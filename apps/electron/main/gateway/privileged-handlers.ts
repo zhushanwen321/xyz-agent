@@ -36,17 +36,24 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
   })
 
   // pick-directory：用聚焦窗口打开目录选择器（无聚焦窗口返回 canceled）
+  // [W7] 风格对齐 open-external：dialog 抛异常时 console.error + 返回 {canceled:true, path:null}，
+  // 而非依赖 ipcMain.handle 的 invoke rejection 兜底。降级目标对称：无聚焦窗口 / dialog 崩溃都返回 canceled。
   ipcMain.handle('pick-directory', async (_event, options?: { title?: string }) => {
     const focusedWin = BrowserWindow.getFocusedWindow()
     if (!focusedWin) return { canceled: true, path: null }
-    const result = await dialog.showOpenDialog(focusedWin, {
-      properties: ['openDirectory'],
-      title: options?.title ?? '选择项目目录',
-    })
-    if (result.canceled || result.filePaths.length === 0) {
+    try {
+      const result = await dialog.showOpenDialog(focusedWin, {
+        properties: ['openDirectory'],
+        title: options?.title ?? '选择项目目录',
+      })
+      if (result.canceled || result.filePaths.length === 0) {
+        return { canceled: true, path: null }
+      }
+      return { canceled: false, path: result.filePaths[0] }
+    } catch (err) {
+      console.error('[ipc] pick-directory failed:', err)
       return { canceled: true, path: null }
     }
-    return { canceled: false, path: result.filePaths[0] }
   })
 
   // ── 窗口控制（win/linux 自绘 traffic-light 圆点点击，shell spec §五方案 X）─────
