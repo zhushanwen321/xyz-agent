@@ -15,6 +15,7 @@ import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
+import type { IManagedSessionView } from './types.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
@@ -83,9 +84,18 @@ export class SessionLifecycle {
       this.pm.rekey(tempId, id)
     }
 
-    const session = await this.svc.initializeManagedSession(
-      id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
-    )
+    // M3: initializeManagedSession 失败时（adapterFactory/attach 可能抛错），
+    // pi 进程已 spawn 但未进 sessions Map → 不可见不可销毁的僵尸进程。
+    // try-catch + safeDestroy 保证异常时清理 pi 进程。
+    let session: IManagedSessionView
+    try {
+      session = await this.svc.initializeManagedSession(
+        id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
+      )
+    } catch (initErr) {
+      await this.safeDestroy(id)
+      throw initErr
+    }
 
     // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
     // 之前的实现在此处用 openSync(wx) 创建含 session+session_info 两行的最小文件，理由是
@@ -179,9 +189,16 @@ export class SessionLifecycle {
       throw e
     }
 
-    const session = await this.svc.initializeManagedSession(
-      id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
-    )
+    // M3: initializeManagedSession 失败时清理 pi 进程（与 create 同模式）
+    let session: IManagedSessionView
+    try {
+      session = await this.svc.initializeManagedSession(
+        id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
+      )
+    } catch (initErr) {
+      await this.safeDestroy(id)
+      throw initErr
+    }
     // 恢复后兜底广播一次上下文用量（pi 从历史估算 contextUsage）。
     // 注意：此广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
     // 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
@@ -245,9 +262,16 @@ export class SessionLifecycle {
     }
 
     // 5. 初始化 managed session（adapter、入 sessions Map）
-    const session = await this.svc.initializeManagedSession(
-      forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
-    )
+    // M3: initializeManagedSession 失败时清理 pi 进程（与 create/restore 同模式）
+    let session: IManagedSessionView
+    try {
+      session = await this.svc.initializeManagedSession(
+        forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
+      )
+    } catch (initErr) {
+      await this.safeDestroy(forkedId)
+      throw initErr
+    }
 
     void this.svc.fetchAndBroadcastContext(forkedId)
     return this.svc.toSummary(session)

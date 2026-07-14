@@ -63,7 +63,17 @@ export class ServerMessageBroker implements IMessageBroker {
   }
 
   broadcast(msg: ServerMessage): void {
-    for (const ws of this.pool.clients) this.send(ws, msg)
+    for (const ws of this.pool.clients) {
+      // M6: 单 client send 失败不中断其余 client 广播。
+      // TOCTOU：readyState 检查（send 内）与 ws.send 间连接可能已关闭，ws.send 抛错，
+      // 无 try-catch 会中断整个 for 循环，导致其余 client 收不到消息。
+      try {
+        this.send(ws, msg)
+      // eslint-disable-next-line taste/no-silent-catch -- broadcast 是 fire-and-forget 推送，单 client 失败不能影响其余 client
+      } catch {
+        // 单 client 已断连/异常，跳过继续广播给其余 client
+      }
+    }
   }
 
   /**

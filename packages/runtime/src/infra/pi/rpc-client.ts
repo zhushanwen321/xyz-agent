@@ -58,6 +58,8 @@ const CMD_TIMEOUT_MS = 60_000
 const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
 const STARTUP_DELAY_MS = 500
+/** timedOutIds 条目存活时间（S6：超时后迟到响应的防御窗口，5s 后清理避免 Set 无界增长） */
+const TIMED_OUT_ID_TTL_MS = 5_000
 const STDERR_BUFFER_MAX_LINES = 50
 const STDERR_TAIL_LINES = 10
 
@@ -68,6 +70,15 @@ export class RpcClient implements IPiEngine {
     reject: (err: Error) => void
     timer: ReturnType<typeof setTimeout>
   }>()
+  /**
+   * 已超时的 RPC id（S6 防御迟到响应被误当 event 广播）。
+   *
+   * sendCommand 超时后 id 从 pending 删除但记入此 Set（5s TTL）。
+   * handleMessage 收到带这些 id 的迟到响应时丢弃（不当 event 广播给 listeners），
+   * 避免幽灵 UI 副作用（如迟到 get_state 响应触发 sidebar 状态错乱）。
+   * TTL 到后自动从 Set 删除，避免无界增长。
+   */
+  private timedOutIds = new Set<string>()
   private listeners = new Set<PiEventListener>()
   private msgCounter = 0
   private _exited = false
@@ -237,6 +248,10 @@ export class RpcClient implements IPiEngine {
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)
       entry.resolve(msg)
+    } else if (msg.id && this.timedOutIds.has(msg.id)) {
+      // S6: 该 id 的请求已超时 reject，pi 迟到的响应丢弃（不当 event 广播给 listeners，
+      // 避免幽灵 UI 副作用）。timedOutIds 由 sendCommand 超时回调写入，5s TTL 后自动清理。
+      return
     } else {
       for (const listener of this.listeners) {
         listener(msg)
@@ -294,6 +309,10 @@ export class RpcClient implements IPiEngine {
 
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        // S6: 标记此 id 已超时，handleMessage 收到带此 id 的迟到响应时丢弃而非广播为 event。
+        // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
+        this.timedOutIds.add(id)
+        setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
         reject(new Error(`RPC command "${type}" timed out after ${timeout}ms`))
       }, timeout)
 
