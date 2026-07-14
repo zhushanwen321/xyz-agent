@@ -104,13 +104,17 @@ function unbindAppInfoBroadcast(): void {
 }
 
 // ── App 启动编排幂等守卫（#1/#3：连接建立后只触发一次自动 startFlow / 恢复最近 session）──
-// 模块级跨 useSidebar 实例共享：App.vue watch connected → initApp()。HMR 重连 / 断线重连时
+// 模块级跨 useSidebar 实例共享：App.vue watch connected → onConnected() → initApp()。HMR 重连 / 断线重连时
 // state 再次变 connected，appBootstrapped 已 true → 跳过，不重复 startFlow（newTaskInFlight 另有守卫）。
 let appBootstrapped = false
+// [W8] hasConnectedBefore 区分首次 vs 重连 connected。与 appBootstrapped 同模块级——
+// 组件卸载重挂（非模块重载）时保留值，避免新实例误判「首次」导致重连 load 刷新失效。
+let hasConnectedBefore = false
 
 /** 测试隔离：重置启动编排守卫（与 resetNewTaskFlow 配合，beforeEach 调）。 */
 export function resetAppBootstrap(): void {
   appBootstrapped = false
+  hasConnectedBefore = false
 }
 
 export function useSidebar() {
@@ -493,6 +497,26 @@ export function useSidebar() {
     }
   }
 
+  /**
+   * [W8] WS 连接建立（含重连）时的统一入口，由 App.vue watch(connectionState) 调用。
+   *
+   * - 首次 connected（hasConnectedBefore=false）→ initApp（内部含 workspaceStore.load + presetCwd）
+   * - 重连 connected（hasConnectedBefore=true）→ initApp 因 appBootstrapped 守卫直接 return，
+   *   workspace records 停留在断连前 stale 数据，额外 fire-and-forget workspaceStore.load() 刷新。
+   *
+   * hasConnectedBefore 与 appBootstrapped 同为模块级，跨 useSidebar 实例共享。
+   */
+  async function onConnected(): Promise<void> {
+    if (!hasConnectedBefore) {
+      hasConnectedBefore = true
+      await initApp()
+      return
+    }
+    // 重连刷新：runtime 可能重启后从磁盘重载了新记录（如另一窗口写入），stale records 需重拉。
+    // fire-and-forget：load 内部 catch 降级（records 置 []），不阻塞、不向上抛。
+    void workspaceStore.load()
+  }
+
   /** 切换折叠态（C）。展开/折叠 toggle，spec §收起态。 */
   function toggleCollapse(): void {
     sidebar.collapsed = !sidebar.collapsed
@@ -508,6 +532,7 @@ export function useSidebar() {
     goOverview,
     loadSessions,
     initApp,
+    onConnected,
     toggleCollapse,
     syncSessionToPanel,
     renameSession,

@@ -100,8 +100,9 @@ export class MessageDispatcher {
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
       // [W6] record 是非用户阻塞的副作用（记最近工作区），不应阻断发消息主流程。
-      // cache.set + scheduleFlush 抛错概率极低（OOM 级），但一旦发生 session 会卡在「生成中」。
-      // 包 try/catch：失败仅 warn，isGenerating 已置 true 不回退，pi.prompt 照常执行。
+      // 当前 record 同步链路（WorkspaceService.record → store.record → cache.set/trim）几乎不抛，
+      // 但作为防御：未来 store 实现变更（如引入 sync flush）或 lazy partition 加载异常都不该让
+      // session 卡在「生成中」。包 try/catch：失败仅 warn，isGenerating 已置 true 不回退，pi.prompt 照常执行。
       try {
         this.workspaceService.record(activeSession.cwd)
       } catch (e) {
