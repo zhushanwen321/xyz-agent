@@ -14,8 +14,10 @@ export default {
   newTaskFailed: 'Failed to create task: {msg}',
   deleteSessionFailed: 'Failed to delete session: {msg}',
   renameFailed: 'Rename failed: {msg}',
+  retry: 'Retry',
   sessionItem: {
     rename: 'Rename',
+    delete: 'Delete',
     deleteConfirm: 'Confirm delete?',
   },
   sessionList: {
@@ -47,6 +49,8 @@ export default {
     desc: 'Change the display name of the session',
     nameLabel: 'Name',
     namePlaceholder: 'Enter session name',
+    cancel: 'Cancel',
+    confirm: 'Confirm',
     validationRequired: 'Name is required',
     validationMaxLength: 'Name cannot exceed {max} characters',
     validationPattern: 'Only Chinese, English, numbers, spaces, hyphens and underscores are allowed',
