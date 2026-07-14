@@ -263,3 +263,132 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     expect(m1?.baseUrl).toBe('https://m1.example.com')
   })
 })
+
+// ── W1: loadAgents sourceType 必须随来源目录推断（不再恒 'pi'）──────
+// 背景：config-service.loadAgents 旧版把每个 agent 硬编码 source/sourceType = 'pi'，
+// 导致 Settings Agent 页按 Claude/Agents tab 过滤时永远空（即便文件来自 ~/.claude/agents）。
+// W1 修复：agent-crud.listAgentFiles 扫描时按 discovered 目录 inferSourceType 填 sourceType，
+// config-service.loadAgents 透传该字段。
+// 这里 mock configStore.listAgentFiles 返回带不同 sourceType 的 entry，
+// 验证 loadAgents 不再恒 pi，而是如实透传。
+describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 tab 过滤失效）', () => {
+  /**
+   * 构造一个最小 fake configStore：只实现 loadAgents 用到的方法。
+   * listAgentFiles 按 mockFiles 返回（含 sourceType），其余方法返回安全空值。
+   * 跳过真实 PiConfigStore 是为了隔离：本测只验证「f.sourceType → AgentInfo.sourceType 透传」，
+   * 不关心目录扫描/去重逻辑（那部分在 agent-crud 层，由真实文件验证更合适）。
+   */
+  function makeFakeStore(
+    mockFiles: Array<{ name: string; path: string; content: string; sourceType: string }>,
+  ) {
+    return {
+      getPiAgentDir: () => '/fake/pi/agent',
+      getAgentDirs: () => [] as string[],
+      listAgentFiles: () => mockFiles,
+      // 以下方法 loadAgents 不会触达，给空实现满足 ConfigService 构造签名
+      getDefaultModel: () => null,
+      setDefaultModel: () => undefined,
+      readModels: () => ({ providers: {} }),
+      getProviderConfig: () => undefined,
+      upsertProvider: () => ({}),
+      removeProvider: () => ({ removed: false }),
+      applyTypeTranslation: (t: string) => t,
+      getSkillPaths: () => [] as string[],
+      setSkillPaths: () => undefined,
+      addSkillPath: () => undefined,
+      removeSkillPath: () => undefined,
+      migrateSettingsSkillsToDiscovery: () => undefined,
+      setAgentDirs: () => undefined,
+      writeAgentFile: () => undefined,
+      deleteAgentFile: () => false,
+      getConfigDir: () => '/fake/config',
+    }
+  }
+
+  it('claude 目录来源的 agent sourceType === "claude"（非 pi）', () => {
+    const store = makeFakeStore([
+      {
+        name: 'code-review',
+        path: '/home/u/.claude/agents/code-review.md',
+        content: '---\nname: Code Review\n---\nreview code',
+        sourceType: 'claude',
+      },
+    ])
+    const svc = new ConfigService('/fake/project', store as unknown as InstanceType<typeof PiConfigStore>)
+
+    const agents = svc.loadAgents('/fake/project')
+    expect(agents).toHaveLength(1)
+    // 关键断言：sourceType 必须如实透传，不能恒 pi（否则 Claude tab 过滤失效）
+    expect(agents[0]!.sourceType).toBe('claude')
+    expect(agents[0]!.source).toBe('claude')
+  })
+
+  it('agents 目录来源的 agent sourceType === "agents"', () => {
+    const store = makeFakeStore([
+      {
+        name: 'builder',
+        path: '/home/u/.agents/agents/builder.md',
+        content: '---\nname: Builder\n---\nbuild things',
+        sourceType: 'agents',
+      },
+    ])
+    const svc = new ConfigService('/fake/project', store as unknown as InstanceType<typeof PiConfigStore>)
+
+    const agents = svc.loadAgents('/fake/project')
+    expect(agents[0]!.sourceType).toBe('agents')
+    expect(agents[0]!.source).toBe('agents')
+  })
+
+  it('混合来源各自透传（claude / agents / pi 共存）', () => {
+    const store = makeFakeStore([
+      {
+        name: 'reviewer',
+        path: '/h/.claude/agents/reviewer.md',
+        content: '---\nname: Reviewer\n---',
+        sourceType: 'claude',
+      },
+      {
+        name: 'planner',
+        path: '/h/.agents/agents/planner.md',
+        content: '---\nname: Planner\n---',
+        sourceType: 'agents',
+      },
+      {
+        name: 'default',
+        path: '/h/.xyz-agent/pi/agent/agents/default.md',
+        content: '---\nname: Default\n---',
+        sourceType: 'pi',
+      },
+    ])
+    const svc = new ConfigService('/fake/project', store as unknown as InstanceType<typeof PiConfigStore>)
+
+    const agents = svc.loadAgents('/fake/project')
+    const byId = new Map(agents.map(a => [a.id, a]))
+    expect(byId.get('reviewer')?.sourceType).toBe('claude')
+    expect(byId.get('planner')?.sourceType).toBe('agents')
+    expect(byId.get('default')?.sourceType).toBe('pi')
+  })
+
+  it('sourceType 缺失时兜底为 pi（向后兼容旧 entry 无此字段）', () => {
+    // 旧版 agent-crud 不填 sourceType（字段缺失 = undefined，非空串）；
+    // config-service 用 ?? 'pi' 兜底，避免 undefined 污染前端。
+    // 注意：?? 只兜底 null/undefined，不兜底空串——而 inferSourceType 运行时
+    // 至少返回 'custom'，不会产出空串，故这里只测 undefined 这条兜底路径。
+    const store = makeFakeStore([
+      {
+        name: 'legacy',
+        path: '/h/somewhere/legacy.md',
+        content: '---\nname: Legacy\n---',
+        sourceType: '',
+      },
+    ])
+    // 模拟「字段缺失」：删除 sourceType（等价于旧 entry 无此字段）
+    delete (store.listAgentFiles()[0] as { sourceType?: string }).sourceType
+    const svc = new ConfigService('/fake/project', store as unknown as InstanceType<typeof PiConfigStore>)
+
+    const agents = svc.loadAgents('/fake/project')
+    // undefined → 兜底 pi
+    expect(agents[0]!.sourceType).toBe('pi')
+    expect(agents[0]!.source).toBe('pi')
+  })
+})

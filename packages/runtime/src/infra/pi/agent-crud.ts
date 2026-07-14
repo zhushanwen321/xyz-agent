@@ -9,13 +9,18 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, unlinkSync } from 'no
 import { join } from 'node:path'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { getAgentsDir } from './pi-paths.js'
+// W1：按 discovered 目录推断 sourceType（claude/agents/pi/custom），
+// 让 loadAgents 不再恒 pi——否则 Settings Agent 页按 tab 过滤失效。
+import { inferSourceType } from '../../services/scanners/scanner-base.js'
+import type { ScanSourceType } from '@xyz-agent/shared'
 
 /** Agent 文件扫描结果（单目录版，保持向后兼容）。 */
 export interface AgentFileEntry {
   name: string
   path: string
   content: string
-  sourceType?: string
+  /** 来源目录推断结果（W1），由 inferSourceType(rawDir) 填充。 */
+  sourceType?: ScanSourceType
 }
 
 /**
@@ -43,7 +48,9 @@ export function listAgentFiles(dirs?: string[]): AgentFileEntry[] {
       if (seen.has(name)) continue // 同名去重，靠前目录胜出
       try {
         const content = readFileSync(filePath, 'utf-8')
-        seen.set(name, { name, path: filePath, content })
+        // W1：用 discovered 目录推断 sourceType（如 ~/.claude/agents → 'claude'），
+        // 透传到 loadAgents → AgentInfo.sourceType，供 Settings 按 tab 过滤。
+        seen.set(name, { name, path: filePath, content, sourceType: inferSourceType(rawDir) })
       // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable agent files
       } catch {
         // skip unreadable files

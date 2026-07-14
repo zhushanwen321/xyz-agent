@@ -5,6 +5,7 @@
  * pi 的协议类型（PiProviderConfig/PiModelDefinition）只存在于 infra 实现内部，
  * service 只见本文件定义的 ConfigProviderConfig / ConfigModelDefinition。
  */
+import type { ScanSourceType } from '@xyz-agent/shared'
 
 /** service 侧的 provider 配置形状（pi-provider-store 的 PiProviderConfig 的 service 视图）。 */
 export interface ConfigProviderConfig {
@@ -62,6 +63,13 @@ export interface AgentFileEntry {
   name: string
   path: string
   content: string
+  /**
+   * 来源目录推断出的 source 类型（W1）：claude / agents / pi / custom。
+   * infra 层（agent-crud）扫描时按 discovered 目录 inferSourceType 填充；
+   * service 层 loadAgents 透传到 AgentInfo.sourceType，供 Settings 按 tab 过滤。
+   * 可选 + 兜底 pi：向上兼容旧 entry 无此字段（inferSourceType 落空时）。
+   */
+  sourceType?: ScanSourceType
 }
 
 /**

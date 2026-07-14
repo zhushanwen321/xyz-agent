@@ -379,14 +379,18 @@ export class ConfigService implements IConfigService {
     const files = this.configStore.listAgentFiles(orderedDirs)
     return files.map(f => {
       const { name, description } = parseAgentMd(f.content)
+      // W1：sourceType 从 agent-crud 推断结果读（按 discovered 目录推断，如 ~/.claude/agents → 'claude'），
+      // 不再恒 'pi'——否则 Settings Agent 页按 Claude/Agents tab 过滤永远空。
+      // ?? 'pi' 兜底：向上兼容旧 entry 无 sourceType 字段。
+      const sourceType = f.sourceType ?? 'pi'
       return {
         id: f.name,
         name: name || f.name,
         description: description || '',
         enabled: true, // ADR §5：目录在 = 启用，恒 true
         modelStrategy: 'auto',
-        source: 'pi',
-        sourceType: 'pi',
+        source: sourceType,
+        sourceType,
         content: f.content,
         tools: [],
         effective: true,
