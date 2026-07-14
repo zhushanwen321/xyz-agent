@@ -36,7 +36,7 @@
         :key="dir.path"
         class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px] transition-colors"
         :class="{
-          'bg-surface-hover/50': dragOverIndex === index,
+          'border-t-2 border-t-accent bg-surface-hover/50': dragOverIndex === index,
           'opacity-40': dragIndex === index,
         }"
         :draggable="!disabled"

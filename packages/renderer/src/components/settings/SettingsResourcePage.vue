@@ -44,7 +44,7 @@
 
       <p v-if="actionError" class="mb-2 text-[11px] text-danger">{{ actionError }}</p>
 
-      <div v-if="!filteredItems.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.resource.notFound', { label }) }}</div>
+      <div v-if="!filteredItems.length" class="py-8 text-center text-[12px] text-muted">{{ t(activeSource === 'all' ? 'settings.resource.notFound' : 'settings.resource.notFoundInSource', { label }) }}</div>
 
       <!-- ADR §5：只读预览，无开关无 CRUD。来源 badge 链 + effective 标生效。 -->
       <div v-for="item in filteredItems" :key="item.id" class="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
@@ -123,9 +123,11 @@ const filteredItems = computed(() =>
     : props.items.filter((i) => sourceOf(i) === activeSource.value),
 )
 
-/** 归一化取 source（SkillInfo 必填 / AgentInfo 可选）。 */
+/** 归一化取 source（SkillInfo 必填 / AgentInfo 可选）。
+ *  'piinstall' 归一化到 'pi'（来源 tab 过滤时 pi-install 来源归入 pi tab，避免空结果）。 */
 function sourceOf(item: SkillInfo | AgentInfo): string {
-  return item.source ?? ''
+  const s = item.source ?? ''
+  return s === 'piinstall' ? 'pi' : s
 }
 
 // 模板辅助：保持 item.source / item.sources 的可空兼容

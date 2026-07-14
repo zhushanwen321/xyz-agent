@@ -156,7 +156,7 @@
             <Button
               variant="secondary"
               class="gap-1.5 px-2.5 py-1.5 text-[12px] text-muted [&_svg]:size-3.5"
-              :disabled="testing"
+              :disabled="testing || discovering"
               @click="testConnection"
             >
               <Loader2 v-if="testing" class="animate-spin" />
@@ -166,7 +166,7 @@
             <Button
               variant="secondary"
               class="gap-1.5 px-2.5 py-1.5 text-[12px] text-muted [&_svg]:size-3.5"
-              :disabled="discovering"
+              :disabled="discovering || testing"
               @click="autoDiscover"
             >
               <Loader2 v-if="discovering" class="animate-spin" />
