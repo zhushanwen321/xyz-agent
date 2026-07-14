@@ -123,6 +123,15 @@ function ensureDispatcher(): void {
   removeTransportListener = transport.on(routeInbound)
 }
 
+/**
+ * 连接 WS 并记录 url（W4 visibility 重连复用）。
+ * 包装 ws-client connect：调前把 url 存入 lastConnectedUrl，供用户切回前台时主动重连。
+ */
+function connectWs(url: string): void {
+  lastConnectedUrl = url
+  connect(url)
+}
+
 /** 获取 fallback 端口（考虑 dev 偏移） */
 async function resolveFallbackPort(): Promise<number> {
   const offset = await getRuntimePortOffset()
@@ -137,6 +146,14 @@ let removeRuntimePortListener: (() => void) | null = null
 let removeRuntimeRestartingListener: (() => void) | null = null
 let removeRuntimeFailedListener: (() => void) | null = null
 let removeStateWatch: (() => void) | null = null
+/**
+ * 最近一次 connect 使用的 url（W4 visibility 重连复用）。
+ * 用户从后台切回前台且未连接时，用此 url 主动重连，不干等 ws-client 指数退避（最长 30s）。
+ * null 表示从未连过（此时也无 url 可复用，visibility 不触发重连）。
+ */
+let lastConnectedUrl: string | null = null
+/** visibilitychange handler 引用（teardown 时 removeEventListener 用） */
+let visibilityHandler: (() => void) | null = null
 
 export function useConnection() {
   const state = getState()
@@ -145,10 +162,26 @@ export function useConnection() {
     // 入站消息分发器在任何模式下都安装（mock 模式仅收到 pong，无副作用）
     ensureDispatcher()
 
+    // W4：安装 visibilitychange 监听（幂等——visibilityHandler 守卫防重复注册）。
+    // 用户从其它标签页 / 系统切回应用（visibilityState 变 visible）且当前未连接时，
+    // 用最近一次 url 主动重连，不干等 ws-client 指数退避（最长 30s）。
+    if (!visibilityHandler) {
+      visibilityHandler = () => {
+        // 守卫 1：只有切回可见（visible）才重连，切到后台（hidden）不触发
+        if (document.visibilityState !== 'visible') return
+        // 守卫 2：已连接就不重连（避免无谓连接触发）
+        if (getState().value === 'connected') return
+        // 守卫 3：从未连过（无 url 复用）则不触发
+        if (!lastConnectedUrl) return
+        connectWs(lastConnectedUrl)
+      }
+      document.addEventListener('visibilitychange', visibilityHandler)
+    }
+
     if (initialised) {
       // HMR 后重连
       if (import.meta.env.VITE_MOCK !== 'true') {
-        connect('ws://localhost:' + await resolveFallbackPort())
+        connectWs('ws://localhost:' + await resolveFallbackPort())
       }
       return
     }
@@ -165,7 +198,7 @@ export function useConnection() {
 
     // mock 模式：走 mock，不需要端口发现，也不监听 runtime 崩溃事件（mock 无 runtime 进程）
     if (import.meta.env.VITE_MOCK === 'true') {
-      connect('mock://localhost')
+      connectWs('mock://localhost')
       return
     }
 
@@ -173,7 +206,7 @@ export function useConnection() {
     removeRuntimePortListener = onRuntimePort((newPort) => {
       if (newPort && state.value !== 'disconnected') {
         disconnect()
-        connect('ws://localhost:' + newPort)
+        connectWs('ws://localhost:' + newPort)
       }
     })
 
@@ -196,12 +229,12 @@ export function useConnection() {
     // 尝试从主进程获取已知端口
     const knownPort = await getRuntimePort()
     if (knownPort) {
-      connect('ws://localhost:' + knownPort)
+      connectWs('ws://localhost:' + knownPort)
       return
     }
 
     // Runtime 尚未启动：用 fallback 端口（ws-client 会自动重连，runtime 起来后连上）
-    connect('ws://localhost:' + await resolveFallbackPort())
+    connectWs('ws://localhost:' + await resolveFallbackPort())
   }
 
   /**
@@ -230,6 +263,11 @@ export function useConnection() {
       removeStateWatch()
       removeStateWatch = null
     }
+    // W4：卸载 visibilitychange 监听（与 init 的 addEventListener 配对，防内存泄漏 + 重复触发）
+    if (visibilityHandler) {
+      document.removeEventListener('visibilitychange', visibilityHandler)
+      visibilityHandler = null
+    }
     if (removeTransportListener) {
       removeTransportListener()
       removeTransportListener = null
@@ -237,6 +275,7 @@ export function useConnection() {
     dispatcherInstalled = false
     disconnect()
     initialised = false
+    lastConnectedUrl = null
   }
 
   return { state, init, teardown, retryRuntime }

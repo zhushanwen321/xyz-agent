@@ -63,6 +63,21 @@ const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
 
 /**
+ * HTML 特殊字符转义（W1 降级路径用）。
+ *
+ * renderMarkdownSegments 抛错（shiki 加载失败 / markdown-it 解析异常 / mermaid 占位解码失败等）
+ * 时，把原始 content 转义后作为单个 text segment 回填——保证消息气泡可读（用户能看到原始文字，
+ * 而不是空气泡）。与 markdown.ts 的 escapeHtml 保持一致语义（& < > " 四字符转义，XSS 安全）。
+ */
+function escapeHtmlForFallback(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/**
  * 当前 session 的本地文件 basename 集合（供 markdown 裸 basename 识别）。
  *
  * 数据源：useFileSearch.load（fileSearchStore per-session 全量递归缓存优先，否则 file.search RPC）。
@@ -144,9 +159,18 @@ watch(
     }
     // 流式增量会高频触发：用序号守卫，只采纳最新一次的渲染结果（防旧渲染覆盖新内容）
     const seq = ++renderSeq
-    const segs = await renderMarkdownSegments(text as string, { localFiles: localFiles.value })
-    if (seq === renderSeq) {
-      segments.value = segs
+    try {
+      const segs = await renderMarkdownSegments(text as string, { localFiles: localFiles.value })
+      if (seq === renderSeq) {
+        segments.value = segs
+      }
+    } catch {
+      // W1 降级：renderMarkdownSegments 失败（shiki/markdown-it/mermaid 异常）时，
+      // 降级为纯文本 segment（转义后走 v-html），保证消息内容可读——绝不能把气泡渲染成空白。
+      // 序号守卫同样适用：只接受最新一次的降级结果（防旧失败覆盖新成功渲染）。
+      if (seq === renderSeq) {
+        segments.value = [{ type: 'text', content: escapeHtmlForFallback(text as string) }]
+      }
     }
   },
   { immediate: true },

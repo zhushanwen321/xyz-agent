@@ -37,8 +37,14 @@ import { createChangeSetController } from './chat-changeset'
 export type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
 import type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
 
-/** streaming 超时默认值：24h（放弃主动检测，靠 runtime 重启/WS 断连兑底） */
-const DEFAULT_STREAMING_TIMEOUT_MS = 86_400_000 // 24h
+/**
+ * streaming 超时默认值：10min。
+ *
+ * W6 调整：原 24h 形同虚设。降到 10min 作为 runtime pi watchdog（5min ABORT）之后的第二道 UI 兜底——
+ * runtime watchdog 先检测 pi 卡死并自动 abort（广播 message.error），前端 streaming 超时只处理
+ * runtime 自身也卡死的极端场景（runtime 主进程卡死时 watchdog 跑不了）。
+ */
+export const DEFAULT_STREAMING_TIMEOUT_MS = 600_000 // 10min
 
 /**
  * 读 streaming 超时阈值（D-003 阈值可配置 + D-016 IPC）。
@@ -483,12 +489,57 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 多 session 统一收口（F1 修正）：遍历所有 session，对每个 isGenerating(sid) 的调 finalizeSession。
-   * useConnection runtime 重启/失败时调此 helper，确保后台 streaming session 也收口。
+   * 多 session 统一收口（F1 修正 + W3 瞬态全收口）：遍历所有可能持有瞬态态的 session，
+   * 对每个有瞬态态的调 resetTransientStates（一次性清 streaming + compacting + retry + queue +
+   * pendingSend）。
+   *
+   * useConnection runtime 重启/失败/断连时调此 helper，确保后台 session 的全部瞬态指示位收口，
+   * 避免 UI 在断连后永久卡「生成中 / 压缩中 / 重试中 / 队列中」。
+   *
+   * 遍历范围：messages.keys() ∪ compactingSessions ∪ retryStates ∪ queueStates 的 key 并集。
+   * 不能只遍历 messages.keys()——compacting / retry / queue 可能独立于消息存在（如 setCompacting
+   * 直接置位、auto_retry_start 只写 retryStates 不写 messages），仅遍历 messages 会漏掉这些 session。
    */
   function finalizeAllStreaming(reason: FinalizeReason): void {
-    for (const sid of messages.value.keys()) {
-      if (isGenerating(sid)) finalizeSession(sid, reason)
+    const candidateSids = new Set<string>(messages.value.keys())
+    for (const sid of compactingSessions.value) candidateSids.add(sid)
+    for (const sid of retryStates.value.keys()) candidateSids.add(sid)
+    for (const sid of queueStates.value.keys()) candidateSids.add(sid)
+    for (const sid of candidateSids) {
+      if (isGenerating(sid) || isCompacting(sid) || retryStates.value.has(sid) || queueStates.value.has(sid)) {
+        resetTransientStates(sid, reason)
+      }
+    }
+  }
+
+  /**
+   * 统一瞬态状态收口 helper（W3）：一次性清理指定 session 的全部瞬态指示位。
+   *
+   * 背景：断连 / runtime 重启等异常路径下，compactingSessions / retryStates / queueStates
+   * 不再有事件驱动清理（断连意味着不会再有 session.compacted / auto_retry_end / queue_update
+   * 到达），若不主动清则永久残留（UI 卡「压缩中 / 重试中」）。
+   *
+   * 与 finalizeSession 的关系：finalizeSession 是消息流正常/异常收口（只清 streaming 实体 +
+   * pendingSend + timer，保留 session 级独立状态如 compacting——compaction 由 session.compacted
+   * 事件独立清，不能被消息收尾误清）。resetTransientStates 是更广的「断连兜底全清」，在
+   * finalizeSession 基础上额外清 compacting / retry / queue。
+   *
+   * @param reason 透传给 finalizeSession 决定 message.status 终态映射（见 FinalizeReason）
+   */
+  function resetTransientStates(sessionId: string, reason: FinalizeReason = 'disconnect'): void {
+    // 先走 finalizeSession 收口 streaming 实体 + 清 pendingSend + 清 timer（保留其幂等语义）
+    finalizeSession(sessionId, reason)
+    // 再清 session 级独立瞬态（断连兜底：这些态在断连后无事件驱动清理）
+    setCompacting(sessionId, false)
+    if (retryStates.value.has(sessionId)) {
+      const next = new Map(retryStates.value)
+      next.delete(sessionId)
+      retryStates.value = next
+    }
+    if (queueStates.value.has(sessionId)) {
+      const next = new Map(queueStates.value)
+      next.delete(sessionId)
+      queueStates.value = next
     }
   }
 
@@ -652,6 +703,7 @@ export const useChatStore = defineStore('chat', () => {
     isActive,
     finalizeSession,
     finalizeAllStreaming,
+    resetTransientStates,
     addPendingSend,
     clearPendingSend,
     armStreamingTimer,

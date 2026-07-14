@@ -29,9 +29,12 @@ export async function connect(): Promise<void> {
   await waitForConnected()
 }
 
-/** 发送 ClientMessage（未连接时由 ws-client 决定丢弃，见 ws-client.send） */
-export function send(msg: ClientMessage): void {
-  wsClient.send(msg)
+/**
+ * 发送 ClientMessage，返回 boolean 表示是否实际送出（W4 fast-fail 透传）。
+ * 未就绪时返回 false，调用方可据此立即 reject pending（而非让 Promise 永挂到超时）。
+ */
+export function send(msg: ClientMessage): boolean {
+  return wsClient.send(msg)
 }
 
 /** 订阅 ServerMessage（第 1 层：所有消息），返回取消函数 */

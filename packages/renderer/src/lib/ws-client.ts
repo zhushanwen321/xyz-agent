@@ -158,15 +158,27 @@ export function disconnect(): void {
   state.value = 'disconnected'
 }
 
-/** 发送消息（连接骨架阶段仅用于心跳 ping） */
-export function send(msg: ClientMessage): void {
+/**
+ * 发送消息（W4：返回 boolean，让调用方 fast-fail）。
+ *
+ * 返回契约：
+ * - readyState=OPEN → 实际发送，返回 true（已发送确认）
+ * - readyState≠OPEN（CONNECTING/CLOSED）→ 不发送，返回 false（调用方可立即 reject / 重试）
+ *
+ * mock 模式：mock 始终「可发送」，返回 true（mockSend 不抛即视为发送成功）。
+ * 透传 mockSend 返回值以支持测试桩精确控制（mockSend 返回 boolean 时以它为准）。
+ */
+export function send(msg: ClientMessage): boolean {
   if (isMock) {
-    mockSend(msg)
-    return
+    const ret = mockSend(msg)
+    // mockSend 桩默认返回 undefined（视为发送成功 → true）；测试桩可返回 boolean 精确控制
+    return typeof ret === 'boolean' ? ret : true
   }
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg))
+    return true
   }
+  return false
 }
 
 // ── 内部 ────────────────────────────────────────────────────
