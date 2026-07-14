@@ -19,6 +19,7 @@ import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from 
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
 import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
 import { SEARCH_MOCK, SEARCH_RECENTS, SEARCH_SUGGESTED_COUNT, type SearchItem } from './search-data'
+import type { Section } from '@/lib/search-types'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
@@ -611,20 +612,26 @@ export const composer = {
 /* ── Search mock（全局搜索浮层 ⌘K；后端 LSP/命令注册表就绪后接 real domain）── */
 
 export const search = {
-  /** 按查询过滤四类数据，空查询返回 recent + suggested */
-  async query(q: string): Promise<{ label: string; items: SearchItem[] }[]> {
+  /**
+   * 按查询过滤四类数据，空查询返回 recent + suggested。
+   * W1 i18n-frontend-p2：返回 Section[] 带 kind 字段（recent/suggested/command/file/symbol/session），
+   * 供 SearchModal kind-based 判定用（不再依赖中文字面量 s.label === '最近' 比较）。
+   * label 仍为本地化文案（mock 内联 zh-CN 默认值，real 轨 useSearch 统一走 i18n.t）。
+   */
+  async query(q: string): Promise<Section[]> {
     await sleep(TIMING.ack)
     const trimmed = q.trim().toLowerCase()
     if (!trimmed) {
       return [
-        { label: '最近', items: SEARCH_RECENTS.map((i) => ({ ...i })) },
-        { label: '建议命令', items: SEARCH_MOCK.command.slice(0, SEARCH_SUGGESTED_COUNT).map((i) => ({ ...i })) },
+        { kind: 'recent', label: '最近', items: SEARCH_RECENTS.map((i) => ({ ...i })) },
+        { kind: 'suggested', label: '建议命令', items: SEARCH_MOCK.command.slice(0, SEARCH_SUGGESTED_COUNT).map((i) => ({ ...i })) },
       ]
     }
     const TYPES: SearchItem['type'][] = ['command', 'file', 'symbol', 'session']
     const LABEL: Record<SearchItem['type'], string> = { command: '命令', file: '文件', symbol: '符号', session: '会话' }
     return TYPES
       .map((t) => ({
+        kind: t,
         label: LABEL[t],
         items: SEARCH_MOCK[t]
           .filter((it) => it.title.toLowerCase().includes(trimmed) || it.sub.toLowerCase().includes(trimmed))

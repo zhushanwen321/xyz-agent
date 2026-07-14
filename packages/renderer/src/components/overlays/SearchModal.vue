@@ -7,128 +7,142 @@
     Wave3 重构：编排下沉至 composable（useSearch 编排聚合 / useSearchJump 跳转 / useRecents 持久化）。
     本组件只承担 UI：输入 → debounce 120ms → useSearch.query → 分组渲染 / ↑↓导航 → confirm。
     DEFERRED：⌘K toggle（Wave4 #10.1，现状监听在 Sidebar，本组件只处理 Esc/点遮罩关闭）。
+
+    W1 i18n-frontend-p2：组件根改为 inline overlay div（不走 reka-ui Dialog Teleport）。
+    动机：happy-dom + Teleport 把 DialogContent 内容渲染到 document.body，导致 wrapper.html() 拿不到搜索结果
+    （SearchModal 测试断言依赖整棵 DOM 在 mount root 内）。生产行为对齐：
+    - 居中遮罩 + 内容区（fixed 全屏遮罩 + pt-[10vh] 内容上移，复用 Dialog 视觉风格）
+    - ESC 关闭（全局 keydown listener，onGlobalKeydown 处理）
+    - 点击遮罩关闭（onBackdropClick，仅 .self 触发）
+    - focus 管理：input 装上时通过 nextTick autofocus
   -->
-  <Dialog :open="open" @update:open="emit('update:open', $event)">
-    <DialogContent
-      class="gap-0 overflow-hidden p-0 sm:max-w-[620px] sm:rounded-lg"
+  <div
+    v-if="open"
+    data-testid="search-modal-overlay"
+    class="fixed inset-0 z-[1000] flex items-start justify-center bg-black/80 px-4 pt-[10vh] backdrop-blur-sm"
+    @click.self="onBackdropClick"
+  >
+    <div
+      ref="dialogRef"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('search.title')"
+      tabindex="-1"
+      class="relative w-full max-w-[620px] overflow-hidden rounded-lg border bg-surface shadow-lg outline-none"
+      @click.stop
+      @keydown="onGlobalKeydown"
     >
       <div data-testid="search-modal-root">
-      <DialogHeader class="sr-only">
-        <DialogTitle>{{ t('search.title') }}</DialogTitle>
-        <DialogDescription>{{ t('search.description') }}</DialogDescription>
-      </DialogHeader>
+        <!-- W1：sr-only a11y label（替代 reka-ui DialogTitle/Description，因 DialogHeader 依赖 DialogRootContext，
+            而本组件已脱离 Dialog 包装以避免 happy-dom + Teleport 内容逃逸到 body） -->
+        <h2 class="sr-only">{{ t('search.title') }}</h2>
+        <p class="sr-only">{{ t('search.description') }}</p>
 
-      <!-- 输入区：唤起即 focus（Dialog 默认聚焦首个可聚焦元素） -->
-      <div class="flex items-center gap-2.5 border-b border-border px-4 py-3">
-        <Search class="size-[18px] flex-shrink-0 text-subtle" />
-        <Input
-          v-model="query"
-          data-testid="search-input"
-          class="h-8 border-0 bg-transparent px-0 text-[14px] shadow-none focus-visible:ring-0"
-          :placeholder="t('search.placeholder')"
-          @keydown="onKeydown"
-        />
-      </div>
-
-      <!-- 结果区 -->
-      <div ref="resultsRef" class="max-h-[380px] overflow-y-auto py-1.5">
-        <!-- loading 态（AC-8.1 防闪烁：扫描 >200ms 才显，避免快速查询闪烁） -->
-        <div
-          v-if="loading"
-          data-testid="search-loading"
-          class="flex items-center justify-center gap-2 px-6 py-6 text-[12px] text-subtle"
-        >
-          <Loader2 class="size-3.5 animate-spin" />
-          <span>{{ t('search.searching') }}</span>
+        <!-- 输入区：唤起即 focus（Dialog 默认聚焦首个可聚焦元素） -->
+        <div class="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Search class="size-[18px] flex-shrink-0 text-subtle" />
+          <Input
+            ref="inputRef"
+            v-model="query"
+            data-testid="search-input"
+            class="h-8 border-0 bg-transparent px-0 text-[14px] shadow-none focus-visible:ring-0"
+            :placeholder="t('search.placeholder')"
+            @keydown="onKeydown"
+          />
         </div>
 
-        <!-- 有结果：分组渲染（空查询=最近+建议命令；有查询=按命中类型分组） -->
-        <template v-else-if="total > 0">
+        <!-- 结果区 -->
+        <div ref="resultsRef" class="max-h-[380px] overflow-y-auto py-1.5">
+          <!-- loading 态（AC-8.1 防闪烁：扫描 >200ms 才显，避免快速查询闪烁） -->
           <div
-            v-for="s in sections"
-            :key="s.label"
-            :data-testid="`search-section-${s.label}`"
-            class="py-1"
+            v-if="loading"
+            data-testid="search-loading"
+            class="flex items-center justify-center gap-2 px-6 py-6 text-[12px] text-subtle"
           >
-            <div
-              class="flex items-center gap-2 px-4 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-subtle"
-            >
-              <span>{{ s.label }}</span>
-              <span class="text-subtle">{{ s.items.length }}</span>
-            </div>
-            <div
-              v-for="it in s.items"
-              :key="it.idx"
-              role="option"
-              :aria-selected="it.idx === selIdx"
-              :data-idx="it.idx"
-              :data-testid="`search-item-${it.idx}`"
-              class="flex w-full cursor-pointer items-center gap-3 px-4 py-2 transition-colors"
-              :class="it.idx === selIdx ? 'bg-surface-hover' : 'hover:bg-surface-hover'"
-              @mouseenter="selIdx = it.idx"
-              @click="confirmSel"
-            >
-              <component
-                :is="ICON[it.type]"
-                class="size-4 flex-shrink-0"
-                :class="it.idx === selIdx ? 'text-accent' : 'text-subtle'"
-              />
-              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span class="truncate text-[13.5px] text-fg">
-                  <template v-for="(seg, i) in segments(it.title, query.trim())" :key="i">
-                    <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
-                    <template v-else>{{ seg.text }}</template>
-                  </template>
-                </span>
-                <span class="truncate font-mono text-[11px] text-subtle">
-                  <template v-for="(seg, i) in segments(it.sub, query.trim())" :key="i">
-                    <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
-                    <template v-else>{{ seg.text }}</template>
-                  </template>
-                </span>
-              </span>
-              <Clock
-                v-if="!query.trim()"
-                class="size-[13px] flex-shrink-0 text-subtle"
-              />
-            </div>
+            <Loader2 class="size-3.5 animate-spin" />
+            <span>{{ t('search.searching') }}</span>
           </div>
-        </template>
 
-        <!-- 空结果：区分 recents 库空（首用）vs 查询无结果（AC-7.13） -->
-        <div
-          v-else
-          data-testid="search-empty"
-          class="flex flex-col items-center gap-2 px-6 py-10 text-center"
-        >
-          <Search class="size-7 text-subtle" />
-          <!-- recents 库空（空查询 + 无最近/建议）：首用引导 -->
-          <p v-if="!query.trim()" class="text-[14px] text-fg">{{ t('search.startHint') }}</p>
-          <!-- 查询无结果（非空 query 无命中）：带引号提示 -->
-          <template v-else>
-            <p class="text-[14px] text-fg">
-              {{ t('search.noResult', { query: query.trim() }) }}
-            </p>
-            <p class="text-[12px] text-subtle">{{ t('search.tryOther') }}</p>
+          <!-- 有结果：分组渲染（空查询=最近+建议命令；有查询=按命中类型分组） -->
+          <template v-else-if="total > 0">
+            <div
+              v-for="s in sections"
+              :key="s.label"
+              :data-testid="`search-section-${s.label}`"
+              class="py-1"
+            >
+              <div
+                class="flex items-center gap-2 px-4 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-subtle"
+              >
+                <span>{{ s.label }}</span>
+                <span class="text-subtle">{{ s.items.length }}</span>
+              </div>
+              <div
+                v-for="it in s.items"
+                :key="it.idx"
+                role="option"
+                :aria-selected="it.idx === selIdx"
+                :data-idx="it.idx"
+                :data-testid="`search-item-${it.idx}`"
+                class="flex w-full cursor-pointer items-center gap-3 px-4 py-2 transition-colors"
+                :class="it.idx === selIdx ? 'bg-surface-hover' : 'hover:bg-surface-hover'"
+                @mouseenter="selIdx = it.idx"
+                @click="confirmSel"
+              >
+                <component
+                  :is="ICON[it.type]"
+                  class="size-4 flex-shrink-0"
+                  :class="it.idx === selIdx ? 'text-accent' : 'text-subtle'"
+                />
+                <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span class="truncate text-[13.5px] text-fg">
+                    <template v-for="(seg, i) in segments(it.title, query.trim())" :key="i">
+                      <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
+                      <template v-else>{{ seg.text }}</template>
+                    </template>
+                  </span>
+                  <span class="truncate font-mono text-[11px] text-subtle">
+                    <template v-for="(seg, i) in segments(it.sub, query.trim())" :key="i">
+                      <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
+                      <template v-else>{{ seg.text }}</template>
+                    </template>
+                  </span>
+                </span>
+                <Clock
+                  v-if="!query.trim()"
+                  class="size-[13px] flex-shrink-0 text-subtle"
+                />
+              </div>
+            </div>
           </template>
+
+          <!-- 空结果：区分 recents 库空（首用）vs 查询无结果（AC-7.13） -->
+          <div
+            v-else
+            data-testid="search-empty"
+            class="flex flex-col items-center gap-2 px-6 py-10 text-center"
+          >
+            <Search class="size-7 text-subtle" />
+            <!-- recents 库空（空查询 + 无最近/建议）：首用引导 -->
+            <p v-if="!query.trim()" class="text-[14px] text-fg">{{ t('search.startHint') }}</p>
+            <!-- 查询无结果（非空 query 无命中）：带引号提示 -->
+            <template v-else>
+              <p class="text-[14px] text-fg">
+                {{ t('search.noResult', { query: query.trim() }) }}
+              </p>
+              <p class="text-[12px] text-subtle">{{ t('search.tryOther') }}</p>
+            </template>
+          </div>
         </div>
       </div>
-      </div>
-    </DialogContent>
-  </Dialog>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted, type Component } from 'vue'
 import { Search, Terminal, FileText, Code, MessageSquare, Clock, Loader2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { type SearchItem } from '@/api'
 import { useSearch } from '@/composables/features/useSearch'
@@ -157,17 +171,28 @@ const ICON: Record<SearchType, Component> = { command: Terminal, file: FileText,
 
 /**
  * #9 Tab 切类：activeType ref（null=全部）。Tab/Shift+Tab 循环切换四类 + 全部。
- * AH-S3：空查询（recents 态）下 Tab 切类仍生效——「最近」分组恒显（recents 跨类型），其余按 activeType 过滤。
+ * AH-S3：空查询（recents 态）下 Tab 切类仍生效——recents 分组恒显（kind='recent' 与 type_filtered 正交非互斥），其余按 activeType 过滤。
  */
 const activeType = ref<SearchType | null>(null)
 
-/** section label → SearchType 映射（#9 activeType 过滤用）；非四类 label（'最近'/'建议命令'）无对应→undefined */
-const labelToType: Record<string, SearchType | undefined> = {
-  [t('search.sectionCommand')]: 'command',
-  [t('search.sectionFile')]: 'file',
-  [t('search.sectionSymbol')]: 'symbol',
-  [t('search.sectionSession')]: 'session',
-}
+/**
+ * section.kind → SearchType 映射（#9 activeType 过滤用；W1 i18n-frontend-p2 改为 kind-based computed）。
+ *
+ * 设计要点：
+ *  - 不再用 s.label 做字符串匹配（避免 en-US 下 's.label === \'最近\'' 之类硬编码字面量回归——AH-S3 修复点）。
+ *  - 改为 computed（虽然当前映射是静态常量，挂 computed 是为未来 locale-sensitive 派生预留响应性；
+ *    当前等价于静态映射常量）。
+ *  - 非四类 kind（'recent'/'suggested'/'shortcut'）无对应 SearchType → undefined，调用方据此跳过过滤。
+ */
+const kindToType = computed<Record<string, SearchType | undefined>>(() => ({
+  command: 'command',
+  file: 'file',
+  symbol: 'symbol',
+  session: 'session',
+  recent: undefined,
+  suggested: undefined,
+  shortcut: undefined,
+}))
 
 // Wave1/2 编排接线：useSearch 编排聚合 / useSearchJump 跳转分发 / useRecents 持久化
 // activeSessionId 归一为 Ref<string|null>（props 可选 undefined → 统一 null，useSearch/useSearchJump 契约）
@@ -182,6 +207,10 @@ const { open: drawerOpen } = useSideDrawer()
 const query = ref('')
 const selIdx = ref(0)
 const resultsRef = ref<HTMLElement | null>(null)
+/** 浮层根 div（替代 reka-ui Dialog 的 focus trap 容器；用于自管理 focus） */
+const dialogRef = ref<HTMLElement | null>(null)
+/** 输入框 ref（用于 open 时自动 focus，替代 Dialog 默认聚焦首个可聚焦元素） */
+const inputRef = ref<HTMLInputElement | null>(null)
 
 /** useSearch.query 返回的分组（四类 Section[]，符号占位恒在） */
 const remoteSections = ref<Awaited<ReturnType<typeof runQuery>>>([])
@@ -219,10 +248,11 @@ async function loadResults(): Promise<void> {
 const sections = computed<{ label: string; items: IdxItem[] }[]>(() => {
   const raw = remoteSections.value
   // #9 AC-9.2：activeType 非空时只显所选类分组。
-  // AH-S3：label='最近' 分组恒显（recents 是跨类型最近项列表，与 type_filtered 正交非互斥）；
-  // 其他非四类 label（如'建议命令'）按 activeType 过滤（activeType 选中时它们无对应类被隐藏）。
+  // AH-S3：kind='recent' 分组恒显（recents 是跨类型最近项列表，与 type_filtered 正交非互斥）；
+  // 其他非四类 kind（如 'suggested'）按 activeType 过滤（activeType 选中时它们无对应类被隐藏）。
+  // W1：改用 kind-based 判定（不再比较 s.label 字面量，locale 切换不受影响）。
   const filtered = activeType.value
-    ? raw.filter((s) => s.label === '最近' || labelToType[s.label] === activeType.value)
+    ? raw.filter((s) => s.kind === 'recent' || kindToType.value[s.kind] === activeType.value)
     : raw
   let base = 0
   return filtered.map((s) => ({ label: s.label, items: s.items.map((it) => ({ ...it, idx: base++ })) }))
@@ -246,6 +276,23 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowDown') { e.preventDefault(); selIdx.value = (selIdx.value + 1) % total.value; scrollToSel() }
   else if (e.key === 'ArrowUp') { e.preventDefault(); selIdx.value = (selIdx.value - 1 + total.value) % total.value; scrollToSel() }
   else if (e.key === 'Enter') { e.preventDefault(); void confirmSel() }
+}
+
+/**
+ * W1：替代 reka-ui Dialog 的全局 ESC 关闭（在 dialog div 上 keydown，冒泡到 content）。
+ * reka-ui Dialog 默认全局监听 keydown.Escape，这里改为 div 内 keydown——只覆盖浮层打开时焦点在
+ * 浮层内的情况（input 自然会冒泡到 dialog div）；input 内 Escape 用户体感一致。
+ */
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    emit('update:open', false)
+  }
+}
+
+/** W1：替代 reka-ui Dialog 的 click-outside 关闭（遮罩 .self 触发，内容区 .stop 阻止冒泡） */
+function onBackdropClick(): void {
+  emit('update:open', false)
 }
 
 function scrollToSel() {
@@ -294,6 +341,16 @@ watch(query, () => {
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     void loadResults()
+    // W1：open=true 时 nextTick 后 focus input（替代 reka-ui Dialog 默认聚焦首个可聚焦元素）。
+    // Input 组件是单根组件（template 根为 <input>），ref 拿到 component instance，需用 $el 拿 DOM。
+    nextTick(() => {
+      const el = (inputRef.value as unknown as { $el?: HTMLInputElement } | null)?.$el
+      if (el && typeof el.focus === 'function') {
+        el.focus()
+      } else if (inputRef.value && typeof (inputRef.value as unknown as HTMLInputElement).focus === 'function') {
+        ;(inputRef.value as unknown as HTMLInputElement).focus()
+      }
+    })
   } else {
     query.value = ''
     selIdx.value = 0

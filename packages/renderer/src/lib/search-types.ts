@@ -53,8 +53,25 @@ export interface RecentEntry {
   sub: string
 }
 
+/**
+ * Section 类型分类（W1 i18n-frontend-p2）：
+ * - recent：空查询态的最近项分组（跨类型，AH-S3 恒显）
+ * - suggested：空查询态的建议命令分组
+ * - command / file / symbol / session：非空查询态按命中类型分组（symbol 始终占位 D-001）
+ * - shortcut：预留（当前未使用，列入便于 SearchModal kind-based 判定穷举）
+ *
+ * 字段语义：kind 是非本地化稳定标识（机器读），label 是本地化展示文案（人读），
+ * 两者解耦后可避免 en-US 下 's.label === \'最近\'' 之类的硬编码字面量比较（AH-S3 回归点）。
+ */
+export type SectionKind = 'recent' | 'suggested' | 'command' | 'file' | 'symbol' | 'session' | 'shortcut'
+
 /** 分组（domain/composable 输出整形，GAP-E1） */
 export interface Section {
+  /**
+   * 分组类型（非本地化稳定标识；与 label 解耦，UI 判定用 kind 而非 label，
+   * 防止 locale 切换导致 AH-S3 recents 恒显回归）。
+   */
+  kind: SectionKind
   label: string
   items: SearchItem[]
 }
