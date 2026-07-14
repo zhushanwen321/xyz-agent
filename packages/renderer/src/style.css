@@ -141,6 +141,126 @@
 }
 
 /* ============================================================
+   配色主题槽位（data-theme-preset 切换）
+   settings store.setSystem({themePreset}) 同步 <html data-theme-preset>。
+   仅覆盖 --accent / --accent-hover；--accent-soft / --accent-ring 经
+   color-mix 自动跟随（L113-114），无需逐主题手写。
+   dark 态用 :root[data-theme-preset]（:root 即 dark 默认）；
+   light 态用 [data-theme=light][data-theme-preset] 加深派生。
+   cold-blue 与 :root 默认 accent 一致（ redundantly 覆盖确保显式）。
+   ============================================================ */
+
+:root[data-theme-preset="warm-teal"] {
+  --accent: oklch(60% 0.08 195);
+  --accent-hover: oklch(68% 0.08 195);
+}
+
+[data-theme="light"][data-theme-preset="warm-teal"] {
+  --accent: color-mix(in oklch, oklch(60% 0.08 195) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(68% 0.08 195) 82%, black 18%);
+}
+
+:root[data-theme-preset="cold-teal"] {
+  --accent: oklch(62% 0.10 190);
+  --accent-hover: oklch(70% 0.10 190);
+}
+
+[data-theme="light"][data-theme-preset="cold-teal"] {
+  --accent: color-mix(in oklch, oklch(62% 0.10 190) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(70% 0.10 190) 82%, black 18%);
+}
+
+:root[data-theme-preset="neutral"] {
+  --accent: oklch(55% 0.01 250);
+  --accent-hover: oklch(63% 0.01 250);
+}
+
+[data-theme="light"][data-theme-preset="neutral"] {
+  --accent: color-mix(in oklch, oklch(55% 0.01 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(63% 0.01 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="sharp"] {
+  --accent: oklch(45% 0.01 250);
+  --accent-hover: oklch(55% 0.01 250);
+}
+
+[data-theme="light"][data-theme-preset="sharp"] {
+  --accent: color-mix(in oklch, oklch(45% 0.01 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(55% 0.01 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="warm-neutral"] {
+  --accent: oklch(55% 0.04 80);
+  --accent-hover: oklch(63% 0.04 80);
+}
+
+[data-theme="light"][data-theme-preset="warm-neutral"] {
+  --accent: color-mix(in oklch, oklch(55% 0.04 80) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(63% 0.04 80) 82%, black 18%);
+}
+
+:root[data-theme-preset="cold-blue"] {
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+}
+
+[data-theme="light"][data-theme-preset="cold-blue"] {
+  --accent: color-mix(in oklch, #4f8ef7 82%, black 18%);
+  --accent-hover: color-mix(in oklch, #6ba3ff 82%, black 18%);
+}
+
+:root[data-theme-preset="terracotta"] {
+  --accent: oklch(60% 0.13 28);
+  --accent-hover: oklch(68% 0.13 28);
+}
+
+[data-theme="light"][data-theme-preset="terracotta"] {
+  --accent: color-mix(in oklch, oklch(60% 0.13 28) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(68% 0.13 28) 82%, black 18%);
+}
+
+:root[data-theme-preset="rose"] {
+  --accent: oklch(62% 0.14 350);
+  --accent-hover: oklch(70% 0.14 350);
+}
+
+[data-theme="light"][data-theme-preset="rose"] {
+  --accent: color-mix(in oklch, oklch(62% 0.14 350) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(70% 0.14 350) 82%, black 18%);
+}
+
+:root[data-theme-preset="amber"] {
+  --accent: oklch(64% 0.15 65);
+  --accent-hover: oklch(72% 0.15 65);
+}
+
+[data-theme="light"][data-theme-preset="amber"] {
+  --accent: color-mix(in oklch, oklch(64% 0.15 65) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(72% 0.15 65) 82%, black 18%);
+}
+
+:root[data-theme-preset="blue"] {
+  --accent: oklch(58% 0.15 250);
+  --accent-hover: oklch(66% 0.15 250);
+}
+
+[data-theme="light"][data-theme-preset="blue"] {
+  --accent: color-mix(in oklch, oklch(58% 0.15 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(66% 0.15 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="violet"] {
+  --accent: oklch(58% 0.15 280);
+  --accent-hover: oklch(66% 0.15 280);
+}
+
+[data-theme="light"][data-theme-preset="violet"] {
+  --accent: color-mix(in oklch, oklch(58% 0.15 280) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(66% 0.15 280) 82%, black 18%);
+}
+
+/* ============================================================
    基础重置（style.css 只放 token + base reset，组件样式走 Tailwind）
    ============================================================ */
 * {
