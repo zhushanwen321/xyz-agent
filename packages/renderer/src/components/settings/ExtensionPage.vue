@@ -85,13 +85,19 @@
           :key="c.dirName"
           class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-surface"
         >
-          <!-- 候选多选：Checkbox 受控（selected Set 管理，dirName 为 key）；点击 Label 文字区也触发切换 -->
+          <!--
+            候选多选（W2 D3 修复）：Checkbox 受控（selected Set 管理，dirName 为 key）。
+            原实现还在内层 div 上绑了 @click="toggleCandidate"，导致双触发——
+            点击文字区时浏览器把 Label 的 click 转发给 labelable 的 Checkbox（→ update:model-value
+            → toggleCandidate 加），同时 div @click 又触发 toggleCandidate（减），两次翻转抵消，
+            勾选框不变化。现去掉 div @click，仅靠 Label→Checkbox 转发 + update:model-value 单通道。
+          -->
           <Checkbox
             :model-value="selected.has(c.dirName)"
             class="shrink-0"
             @update:model-value="toggleCandidate(c.dirName)"
           />
-          <div class="min-w-0 flex-1" @click="toggleCandidate(c.dirName)">
+          <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="truncate text-[12px] text-fg">{{ c.name }}</span>
               <span class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ c.dirName }}</span>

@@ -163,3 +163,49 @@ describe('U6: toast 反馈机制', () => {
     expect(toasts.value.length).toBe(before + 1)
   })
 })
+
+// ── W2 · D9: setSystem 不回滚（U4）──────────────────────────────────
+//
+// bug 根因：setSystem 先乐观改 system.value，再 await settingsApi.updateSystem，
+// 失败时 system.value 已是新值不回滚，但 applySystemToDom 被跳过（原代码 await 失败后
+// 不执行 applySystemToDom）→ store 说新主题 DOM 是旧主题，状态脱节。
+//
+// 验证：updateSystem reject 时，
+//   - store.system.theme 回滚到原值
+//   - <html data-theme> 也回滚到原值（applySystemToDom 重 apply 快照）
+describe('U4: setSystem 失败回滚（W2 D9）', () => {
+  beforeEach(() => {
+    document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-theme-preset')
+    localStorage.clear()
+    vi.resetModules()
+    // mock i18n 避免 setLocale 拉起实例
+    vi.doMock('@/i18n', () => ({ setLocale: vi.fn() }))
+    // mock @/api：updateSystem reject，模拟持久化失败
+    vi.doMock('@/api', () => ({
+      settings: {
+        getSystem: vi.fn(async () => ({ locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue' })),
+        updateSystem: vi.fn(async () => { throw new Error('persist failed') }),
+      },
+      config: {},
+    }))
+  })
+
+  it('updateSystem reject 时 store.system.theme 回滚到 dark，<html data-theme> 也回滚到 dark', async () => {
+    const { useSettingsStore } = await import('@/stores/settings')
+    const { createPinia, setActivePinia } = await import('pinia')
+    setActivePinia(createPinia())
+    const store = useSettingsStore()
+
+    // 初始 theme=dark（DEFAULT_SYSTEM）
+    expect(store.system.theme).toBe('dark')
+
+    // 乐观改 light → await updateSystem reject → 应回滚
+    await expect(store.setSystem({ theme: 'light' })).rejects.toThrow('persist failed')
+
+    // store state 回滚
+    expect(store.system.theme).toBe('dark')
+    // DOM data-theme 也回滚（applySystemToDom 重 apply 快照）
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+  })
+})

@@ -79,11 +79,25 @@ export const useSettingsStore = defineStore('settings', () => {
    * 更新 system 偏好：合并本地态 → 写 localStorage → 同步 DOM + i18n。
    * 消灭「死设置」：theme/locale 切换现在真正生效。
    * useSettings.init 初始化 system 时也走此 action（确保 DOM/i18n 同步）。
+   *
+   * 乐观更新 + 失败回滚（W2 D9 修复）：
+   *   原实现先乐观改 system.value，再 await updateSystem，失败时 system.value 已是新值不回滚、
+   *   且 applySystemToDom 被跳过（await 抛错后不执行）→ store 说新主题 DOM 是旧主题，状态脱节。
+   *   现顺序：存快照 → 改 state → apply DOM（即时响应）→ await 持久化 → 失败 catch 还原 state
+   *   + 重 apply DOM（快照）→ throw（让调用方 toast 反馈）。
    */
   async function setSystem(patch: Partial<SystemSettings>): Promise<void> {
+    const snapshot = { ...system.value }
     system.value = { ...system.value, ...patch }
-    await settingsApi.updateSystem(patch)
     applySystemToDom(system.value)
+    try {
+      await settingsApi.updateSystem(patch)
+    } catch (e) {
+      // 持久化失败：回滚 state + 重 apply DOM 到快照，保持 state/DOM 一致
+      system.value = snapshot
+      applySystemToDom(snapshot)
+      throw e
+    }
   }
 
   /**

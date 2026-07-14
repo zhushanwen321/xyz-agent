@@ -157,14 +157,26 @@ async function onSystemUpdate(patch: Partial<SystemSettings>) {
   }
 }
 
-/** SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0020 §1）。 */
-function onUpdateSkillDirs(dirs: SkillDirConfig[]) {
+/**
+ * SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0020 §1）。
+ * W2 D10 修复：setSkillDirs 是 async（store 内 await config.setSkillDirs），原实现未 await 未 catch，
+ * reject 时 unhandled rejection + 静默失败。现 await + try/catch + toast error 反馈（CLAUDE.md 规则 #3）。
+ */
+async function onUpdateSkillDirs(dirs: SkillDirConfig[]) {
   // 只把 enabled 路径写进 discovery（目录在 = 启用，ADR §5）
-  settingsStore.setSkillDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+  try {
+    await settingsStore.setSkillDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
 }
 
-/** AgentPage 加载路径变更 → 走 store（写 discovery.json）。 */
-function onUpdateAgentDirs(dirs: SkillDirConfig[]) {
-  settingsStore.setAgentDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+/** AgentPage 加载路径变更 → 走 store（写 discovery.json），语义同 onUpdateSkillDirs。 */
+async function onUpdateAgentDirs(dirs: SkillDirConfig[]) {
+  try {
+    await settingsStore.setAgentDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
 }
 </script>
