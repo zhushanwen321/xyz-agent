@@ -261,6 +261,24 @@
 }
 
 /* ============================================================
+   字体大小槽位（data-font-size 切换，D17）
+   settings store.setSystem({fontSize}) 同步 <html data-font-size>。
+   默认 medium（:root 之外，依赖 data-font-size 属性，applySystemToDom 始终写入）。
+   仅调整根 font-size，组件内 rem/tailwind text-[px] 不受影响，避免大面积布局抖动。
+   ============================================================ */
+:root[data-font-size="small"] {
+  font-size: 14px;
+}
+
+:root[data-font-size="medium"] {
+  font-size: 15px;
+}
+
+:root[data-font-size="large"] {
+  font-size: 16px;
+}
+
+/* ============================================================
    基础重置（style.css 只放 token + base reset，组件样式走 Tailwind）
    ============================================================ */
 * {

@@ -5,6 +5,7 @@ import { resolve } from 'path'
 export default defineConfig({
   test: {
     environment: 'happy-dom',
+    setupFiles: ['./src/__tests__/vitest-i18n-setup.ts'],
   },
   plugins: [vue()],
   resolve: {

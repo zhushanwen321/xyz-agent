@@ -48,6 +48,7 @@ const DEFAULT_SYSTEM: SystemSettings = {
   locale: 'zh-CN',
   theme: 'dark',
   themePreset: 'cold-blue',
+  fontSize: 'medium',
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -218,6 +219,10 @@ function applySystemToDom(s: SystemSettings): void {
   // themePreset 写 data-theme-preset，触发 style.css 的 [data-theme-preset] 规则覆盖 --accent。
   // cold-blue 与 :root 默认一致；其他 preset 各自覆盖 accent/soft/ring。
   document.documentElement.setAttribute('data-theme-preset', s.themePreset ?? 'cold-blue')
+
+  // fontSize 写 data-font-size（D17），触发 style.css [data-font-size] 规则调整基础字号。
+  // 缺省 medium（与 DEFAULT_SYSTEM 一致），保证老数据无 fontSize 时回落中号。
+  document.documentElement.dataset.fontSize = s.fontSize ?? 'medium'
 
   if (s.locale) setLocale(s.locale)
 }

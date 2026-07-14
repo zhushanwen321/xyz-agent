@@ -19,7 +19,7 @@
     <section>
       <!-- 来源 tab 过滤 -->
       <div class="mb-2 flex items-center gap-2">
-        <h3 class="text-[12px] font-medium text-fg">已发现的 {{ label }}</h3>
+        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.resource.discovered', { label }) }}</h3>
         <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ filteredItems.length }}</span>
         <Button
           variant="secondary"
@@ -28,7 +28,7 @@
           @click="onScan"
         >
           <RefreshCw v-if="scanning" class="animate-spin" />
-          {{ scanning ? '刷新中…' : '刷新' }}
+          {{ scanning ? t('settings.resource.refreshing') : t('settings.resource.refresh') }}
         </Button>
         <div class="ml-auto flex gap-0.5">
           <Button
@@ -38,13 +38,13 @@
             class="h-auto rounded-sm px-2 py-0.5 text-[11px]"
             :class="activeSource === tab.id ? 'bg-surface-hover text-fg' : 'text-muted hover:text-fg'"
             @click="activeSource = tab.id"
-          >{{ tab.label }}</Button>
+          >{{ t(tab.labelKey) }}</Button>
         </div>
       </div>
 
       <p v-if="actionError" class="mb-2 text-[11px] text-danger">{{ actionError }}</p>
 
-      <div v-if="!filteredItems.length" class="py-8 text-center text-[12px] text-muted">未发现 {{ label }}</div>
+      <div v-if="!filteredItems.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.resource.notFound', { label }) }}</div>
 
       <!-- ADR §5：只读预览，无开关无 CRUD。来源 badge 链 + effective 标生效。 -->
       <div v-for="item in filteredItems" :key="item.id" class="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
@@ -55,11 +55,11 @@
           :key="src.source + src.sourcePath"
           class="rounded-sm px-1.5 py-0.5 text-[10px]"
           :class="[sourceBadgeClass(src.source), i === 0 ? 'ring-1 ring-inset ring-accent/40' : 'opacity-60']"
-          :title="i === 0 ? '生效' : src.sourcePath"
-        >{{ i === 0 ? `生效·${src.source}` : src.source }}</span>
+          :title="i === 0 ? t('settings.resource.effective') : src.sourcePath"
+        >{{ i === 0 ? `${t('settings.resource.effective')}·${src.source}` : src.source }}</span>
         <!-- 单来源无 badge 链时，直接标 source + 生效 -->
         <span v-if="!itemSources(item).length" class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="sourceBadgeClass(itemSource(item))">{{ itemSource(item) }}</span>
-        <span v-if="item.effective && !itemSources(item).length" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">生效</span>
+        <span v-if="item.effective && !itemSources(item).length" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.resource.effective') }}</span>
         <span class="max-w-[200px] truncate text-[11px] text-subtle" :title="item.description">{{ item.description }}</span>
       </div>
     </section>
@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import LoadPaths from './LoadPaths.vue'
@@ -102,12 +103,14 @@ const forcedDirs = computed(() =>
     : ['~/.xyz-agent/agents', '.xyz-agent/agents'],
 )
 
+const { t } = useI18n()
+
 // 来源 tab 过滤（skill/agent 共用 4 项；agent 实际无 pi-install 来源，tab 仍可点但结果为空）
 const sourceTabs = [
-  { id: 'all', label: '全部' },
-  { id: 'pi', label: 'Pi' },
-  { id: 'claude', label: 'Claude' },
-  { id: 'agents', label: 'Agents' },
+  { id: 'all', labelKey: 'settings.resource.sourceAll' },
+  { id: 'pi', labelKey: 'settings.resource.sourcePi' },
+  { id: 'claude', labelKey: 'settings.resource.sourceClaude' },
+  { id: 'agents', labelKey: 'settings.resource.sourceAgents' },
 ] as const
 
 const activeSource = ref<string>('all')

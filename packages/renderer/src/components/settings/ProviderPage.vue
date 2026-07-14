@@ -13,7 +13,7 @@
         @click="openAdd"
       >
         <Plus />
-        添加供应商
+        {{ t('settings.provider.add') }}
       </Button>
     </div>
 
@@ -33,8 +33,8 @@
       <div class="grid size-16 place-items-center rounded-full border-2 border-dashed border-border-strong">
         <Settings class="size-7 text-subtle" />
       </div>
-      <p class="text-[14px] font-medium text-fg">还没有供应商</p>
-      <p class="text-[12px] text-muted">添加第一个供应商，连接 AI 模型开始对话。</p>
+      <p class="text-[14px] font-medium text-fg">{{ t('settings.provider.emptyTitle') }}</p>
+      <p class="text-[12px] text-muted">{{ t('settings.provider.emptyDesc') }}</p>
     </div>
 
     <!-- 实体列表 -->
@@ -48,7 +48,7 @@
           :model-value="p.enabled"
           class="shrink-0"
           :disabled="toggling.has(p.id)"
-          :aria-label="`${p.name} 启用开关`"
+          :aria-label="`${p.name} ${t('settings.provider.colEnabled')}`"
           @click.stop
           @update:model-value="onToggleEnabled(p, $event)"
         />
@@ -66,15 +66,15 @@
           v-if="p.id === defaultProviderId"
           variant="ghost"
           class="h-auto shrink-0 rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent hover:bg-accent-soft"
-        >默认供应商</Button>
+        >{{ t('settings.provider.defaultPill') }}</Button>
 
-        <span class="shrink-0 text-[11px] text-subtle">{{ p.models.length }} 模型</span>
+        <span class="shrink-0 text-[11px] text-subtle">{{ t('settings.provider.modelsCount', { count: p.models.length }) }}</span>
 
         <!-- 编辑 + 删除按钮 -->
         <Button
           variant="ghost"
           class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-[13px]"
-          title="编辑供应商"
+          :title="t('settings.provider.editTitle')"
           @click.stop="openEdit(p)"
         >
           <Pencil />
@@ -82,7 +82,7 @@
         <Button
           variant="ghost"
           class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [&_svg]:size-[13px]"
-          title="删除供应商"
+          :title="t('settings.provider.deleteTitle')"
           @click.stop="deleteTarget = p"
         >
           <Trash2 />
@@ -93,26 +93,26 @@
       <div v-if="expanded.has(p.id)" class="border-t border-border">
         <!-- 凭据与连接 -->
         <div class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 px-4 py-3 text-[12px]">
-          <span class="text-muted">API 类型</span>
+          <span class="text-muted">{{ t('settings.provider.apiType') }}</span>
           <span class="font-mono text-fg">{{ p.api ?? '-' }}</span>
-          <span class="text-muted">Base URL</span>
+          <span class="text-muted">{{ t('settings.provider.baseUrl') }}</span>
           <span class="font-mono text-fg">{{ p.baseUrl ?? '-' }}</span>
-          <span class="text-muted">API Key</span>
-          <span class="text-fg">{{ p.apiKeySet ? '已配置' : '未配置' }}</span>
+          <span class="text-muted">{{ t('settings.provider.apiKey') }}</span>
+          <span class="text-fg">{{ p.apiKeySet ? t('settings.provider.apiKeyConfigured') : t('settings.provider.apiKeyNotConfigured') }}</span>
         </div>
 
         <!-- 模型清单表格 -->
         <div v-if="p.models.length" class="border-t border-border px-4 py-3">
-          <p class="mb-2 text-[11px] uppercase tracking-wider text-muted">模型清单</p>
+          <p class="mb-2 text-[11px] uppercase tracking-wider text-muted">{{ t('settings.provider.modelList') }}</p>
           <Table class="text-[12px]">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
-                <TableHead class="pb-1.5">模型</TableHead>
-                <TableHead class="pb-1.5 text-center">输入</TableHead>
-                <TableHead class="pb-1.5 text-right">上下文</TableHead>
-                <TableHead class="pb-1.5 text-right">思考</TableHead>
-                <TableHead class="pb-1.5 text-center">启用</TableHead>
-                <TableHead class="pb-1.5 text-right">默认</TableHead>
+                <TableHead class="pb-1.5">{{ t('settings.provider.colModel') }}</TableHead>
+                <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colInput') }}</TableHead>
+                <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colContext') }}</TableHead>
+                <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colThinking') }}</TableHead>
+                <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colEnabled') }}</TableHead>
+                <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colDefault') }}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -139,7 +139,7 @@
                     variant="ghost"
                     data-testid="thinking-pill"
                     disabled
-                    title="在编辑弹窗内修改思考策略"
+                    :title="t('settings.provider.thinkingEditHint')"
                     class="h-auto cursor-default rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:bg-transparent"
                     :class="thinkingPillClass(m)"
                   >{{ thinkingLabel(m) }}</Button>
@@ -152,7 +152,7 @@
                     :model-value="m.enabled !== false"
                     data-testid="model-enabled-switch"
                     class="shrink-0"
-                    :aria-label="`${m.id} 启用开关`"
+                    :aria-label="`${m.id} ${t('settings.provider.colEnabled')}`"
                     @click.stop
                     @update:model-value="onToggleModelEnabled(p, m.id, $event)"
                   />
@@ -163,8 +163,8 @@
                     variant="secondary"
                     class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-subtle hover:border-info hover:text-info"
                     @click.stop="setDefaultModel(p.id, m.id)"
-                  >设为默认</Button>
-                  <span v-else class="rounded-sm bg-info/10 px-1.5 py-0.5 text-[10px] text-info">默认模型</span>
+                  >{{ t('settings.provider.setDefault') }}</Button>
+                  <span v-else class="rounded-sm bg-info/10 px-1.5 py-0.5 text-[10px] text-info">{{ t('settings.provider.defaultModel') }}</span>
                 </TableCell>
               </TableRow>
             </TableBody>
@@ -184,10 +184,10 @@
     <ConfirmDialog
       v-model:open="deleteDialogOpen"
       variant="danger"
-      :title="`删除 ${deleteTarget?.name ?? ''}？`"
-      description="将移除其下所有模型配置。此操作不可撤销。"
-      confirm-text="确认删除"
-      cancel-text="取消"
+      :title="t('settings.provider.deleteConfirmTitle', { name: deleteTarget?.name ?? '' })"
+      :description="t('settings.provider.deleteConfirmDesc')"
+      :confirm-text="t('settings.provider.deleteConfirmBtn')"
+      :cancel-text="t('settings.providerEdit.cancel')"
       :loading="deleting"
       @confirm="confirmDelete"
     >
@@ -198,6 +198,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Settings, Plus, Pencil, Trash2, FileText, ImageIcon, AlertCircle } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -209,6 +210,8 @@ import { useSettingsStore } from '@/stores/settings'
 import ProviderEditModal from './ProviderEditModal.vue'
 
 defineProps<{ providers: ProviderInfo[] }>()
+
+const { t } = useI18n()
 
 /** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */
 const toggling = ref<Set<string>>(new Set())
@@ -363,18 +366,33 @@ function formatCtx(v?: number): string {
   return `${Math.round(v / CONTEXT_K)}K`
 }
 
-function thinkingLabel(m: { thinkingLevelMap?: Record<string, string | null> }): string {
-  if (!m.thinkingLevelMap) return '开关'
+/**
+ * 思考策略语义分类（locale 无关的稳定 key）。
+ * thinkingLevelMap 为空或首值 null → 'toggle'（仅开关）；
+ * 含 high/xhigh → 'hightop'；其余 → 'all'（全档）。
+ */
+type ThinkingKind = 'toggle' | 'hightop' | 'all'
+
+function thinkingKind(m: { thinkingLevelMap?: Record<string, string | null> }): ThinkingKind {
+  if (!m.thinkingLevelMap) return 'toggle'
   const v = Object.values(m.thinkingLevelMap)[0]
-  if (v === null || v === undefined) return '开关'
-  if (v.includes('xhigh') || v.includes('high')) return '高/顶'
-  return '全档'
+  if (v === null || v === undefined) return 'toggle'
+  if (v.includes('xhigh') || v.includes('high')) return 'hightop'
+  return 'all'
+}
+
+function thinkingLabel(m: { thinkingLevelMap?: Record<string, string | null> }): string {
+  const kind = thinkingKind(m)
+  const key = kind === 'all' ? 'settings.provider.thinkingAll'
+    : kind === 'hightop' ? 'settings.provider.thinkingHighTop'
+      : 'settings.provider.thinkingToggle'
+  return t(key)
 }
 
 function thinkingPillClass(m: { thinkingLevelMap?: Record<string, string | null> }): string {
-  const label = thinkingLabel(m)
-  if (label === '全档') return 'bg-info/10 text-info'
-  if (label === '高/顶') return 'bg-accent-soft text-accent'
+  const kind = thinkingKind(m)
+  if (kind === 'all') return 'bg-info/10 text-info'
+  if (kind === 'hightop') return 'bg-accent-soft text-accent'
   return 'bg-surface text-muted'
 }
 

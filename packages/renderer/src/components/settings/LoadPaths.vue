@@ -10,11 +10,11 @@
     这把「交互即时性」与「状态持久化」彻底解耦。
   -->
   <section>
-    <h3 class="mb-2 text-[12px] font-medium text-fg">加载路径</h3>
+    <h3 class="mb-2 text-[12px] font-medium text-fg">{{ t('settings.loadPaths.title') }}</h3>
 
     <!-- 强制目录（ADR-0020 §1.1 层 1-2，桥接层硬编码注入，不可关不可拖）-->
     <div class="mb-2 rounded-md border border-border bg-bg">
-      <div class="px-3 py-2 text-[11px] text-muted">强制目录（不可关闭）</div>
+      <div class="px-3 py-2 text-[11px] text-muted">{{ t('settings.loadPaths.forcedDirs') }}</div>
       <div
         v-for="dir in forcedDirs"
         :key="dir"
@@ -24,13 +24,13 @@
           &#10003;
         </span>
         <span class="font-mono text-fg opacity-60">{{ dir }}</span>
-        <span class="ml-auto text-[10px] text-subtle">强制</span>
+        <span class="ml-auto text-[10px] text-subtle">{{ t('settings.loadPaths.forced') }}</span>
       </div>
     </div>
 
     <!-- 可选目录（ADR-0020 §1.1 层 3，可勾选可拖排序）-->
     <div class="rounded-md border border-border bg-bg">
-      <div class="px-3 py-2 text-[11px] text-muted">可选目录（可勾选、可拖动排序，靠前覆盖靠后）</div>
+      <div class="px-3 py-2 text-[11px] text-muted">{{ t('settings.loadPaths.optionalDirs') }}</div>
       <div
         v-for="(dir, index) in localDirs"
         :key="dir.path"
@@ -50,13 +50,13 @@
         <GripVertical
           class="size-4 shrink-0 cursor-grab text-subtle hover:text-fg active:cursor-grabbing"
           :class="{ 'cursor-not-allowed opacity-40': disabled }"
-          aria-label="拖动排序"
+          :aria-label="t('settings.loadPaths.dragSort')"
         />
         <Checkbox
           :model-value="dir.enabled"
           class="shrink-0"
           :disabled="disabled"
-          :aria-label="`启用目录 ${dir.path}`"
+          :aria-label="t('settings.loadPaths.enableDir', { path: dir.path })"
           @update:model-value="onToggle(index, $event)"
         />
         <span class="font-mono text-fg">{{ dir.path }}</span>
@@ -66,7 +66,7 @@
           class="ml-auto size-6 shrink-0 p-0 text-subtle hover:bg-surface-hover hover:text-danger"
           :class="{ 'cursor-not-allowed opacity-40': disabled }"
           :disabled="disabled"
-          :aria-label="`删除目录 ${dir.path}`"
+          :aria-label="t('settings.loadPaths.removeDir', { path: dir.path })"
           @click="onRemove(index)"
         >
           <Trash2 class="size-3.5" />
@@ -91,7 +91,7 @@
             :disabled="disabled"
             @click="onAddPath"
           >
-            添加
+            {{ t('settings.loadPaths.addPath') }}
           </Button>
         </div>
         <p
@@ -104,12 +104,13 @@
       </div>
     </div>
 
-    <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-subtle">改后需重开会话生效</p>
+    <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-subtle">{{ t('settings.loadPaths.agentRestartHint') }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GripVertical, Trash2 } from '@lucide/vue'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -131,6 +132,8 @@ const emit = defineEmits<{
   /** 目录配置变更（勾选或排序），父组件写回 store */
   'update-dirs': [dirs: SkillDirConfig[]]
 }>()
+
+const { t } = useI18n()
 
 // ── 本地状态（拖拽即时性的关键）──
 // localDirs 是 dirs 的可写副本：拖拽/勾选只改它（即时），props.dirs 变化时同步进来。
