@@ -1,0 +1,37 @@
+export default {
+  branchSelect: {
+    gitNotSupported: 'Git graph not supported in v1',
+    searchPlaceholder: 'Search branches',
+    loadFailed: 'Failed to load branches, please retry',
+    noBranch: 'No branches · Guide first commit',
+    branchLabel: 'Branch',
+    dirtyChanges: 'Uncommitted changes: {count} files',
+    createAndCheckout: 'Create and checkout new branch…',
+    gitGraph: 'Git graph',
+    dirtyWarning: '"{branch}" has {count} uncommitted changes in the workspace. Switching away will leave them in the workspace.',
+    switchAway: 'Switch away',
+  },
+  createBranch: {
+    gitTimeout: 'Git operation timed out, please retry later',
+    createFailed: 'Failed to create branch',
+    title: 'Create and checkout new branch',
+    desc: 'Create a new local branch based on the current HEAD and switch to it immediately after creation.',
+    nameLabel: 'Branch name',
+    namePlaceholder: 'e.g. feature/git-branch-switcher',
+    nameValidation: 'Branch name can only contain letters, numbers, dots, underscores, slashes, hyphens, no spaces or ..',
+    onlyHeadHint: 'Only creating and switching based on current HEAD is supported in v1.',
+    createBtn: 'Create and switch',
+  },
+  dirSelect: {
+    remoteNotSupported: 'Remote connections not supported in v1',
+    searchPlaceholder: 'Search workspaces',
+    noRecent: 'No recent workspaces · Select a local directory to start',
+    openFolder: 'Open folder',
+    remoteConnect: 'Remote connect',
+  },
+  landing: {
+    dirSelectorFailed: 'Failed to open directory selector: {reason}',
+    selectDir: 'Select directory',
+    retryHistory: 'Retry loading history',
+  },
+}
