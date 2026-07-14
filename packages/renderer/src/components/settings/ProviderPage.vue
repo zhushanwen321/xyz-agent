@@ -154,7 +154,7 @@
                     class="shrink-0"
                     :aria-label="`${m.id} ${t('settings.provider.colEnabled')}`"
                     @click.stop
-                    @update:model-value="onToggleModelEnabled(p, m.id, $event)"
+                    @update:model-value="onToggleModelEnabled(p.id, m.id, $event)"
                   />
                 </TableCell>
                 <TableCell class="py-2 text-right">
@@ -209,7 +209,7 @@ import { config } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
 import ProviderEditModal from './ProviderEditModal.vue'
 
-defineProps<{ providers: ProviderInfo[] }>()
+const props = defineProps<{ providers: ProviderInfo[] }>()
 
 const { t } = useI18n()
 
@@ -332,18 +332,32 @@ async function setDefaultModel(providerId: string, modelId: string) {
 }
 
 /** model 级 enabled 开关（D6）：乐观改 store model.enabled + config.setProvider 持久化。
- *  runtime setProvider 整体替换 models 数组（每个 model 与 base merge），故传完整 models 数组，
- *  目标 model 翻转 enabled，其余保持当前 enabled 透传（避免丢字段）。失败回滚 store + 报错。 */
+ *  runtime setProvider 整体替换 models 数组（每个 model 与 base merge），故传完整 models 数组。
+ *  乐观更新后从 store 读取新鲜 models（闭包中的 p.models 在 setModelEnabled 后已过期），
+ *  确保 API 请求反映最新状态。失败回滚 store + 报错。 */
 async function onToggleModelEnabled(
-  p: ProviderInfo,
+  providerId: string,
   modelId: string,
   enabled: boolean,
 ) {
   actionError.value = ''
-  const old = settingsStore.setModelEnabled(p.id, modelId, enabled)
+  const old = settingsStore.setModelEnabled(providerId, modelId, enabled)
   try {
-    await config.setProvider(p.id, {
-      models: p.models.map((m) => ({
+    // 从 store 读取乐观更新后的新鲜 provider（闭包 p 已过期）。
+    // fallback：store 未含该 provider 时（如 props 传入但 store 未同步）用 props 传入的 models。
+    const fresh = settingsStore.providers.find((x) => x.id === providerId)
+    const modelsToSend = fresh
+      ? fresh.models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        api: m.api,
+        baseUrl: m.baseUrl,
+        contextWindow: m.contextWindow,
+        input: m.input,
+        thinkingLevelMap: m.thinkingLevelMap,
+        enabled: m.enabled,
+      }))
+      : props.providers.find((x) => x.id === providerId)?.models.map((m) => ({
         id: m.id,
         name: m.name,
         api: m.api,
@@ -352,10 +366,10 @@ async function onToggleModelEnabled(
         input: m.input,
         thinkingLevelMap: m.thinkingLevelMap,
         enabled: m.id === modelId ? enabled : (m.enabled ?? true),
-      })),
-    })
+      })) ?? []
+    await config.setProvider(providerId, { models: modelsToSend })
   } catch (e) {
-    settingsStore.setModelEnabled(p.id, modelId, old)
+    settingsStore.setModelEnabled(providerId, modelId, old)
     actionError.value = e instanceof Error ? e.message : String(e)
   }
 }

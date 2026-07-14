@@ -105,7 +105,7 @@
               :model-value="form.authHeader"
               data-testid="auth-header-switch"
               :aria-label="t('settings.providerEdit.fieldAuthHeader')"
-              @update:model-value="toggleAuthHeader($event as boolean)"
+              @update:model-value="form.authHeader = $event as boolean"
             />
           </div>
 
@@ -418,7 +418,6 @@ const {
   addHeader,
   removeHeader,
   syncHeadersFromRows,
-  toggleAuthHeader,
 } = useProviderEdit(toRef(props, 'provider'))
 
 // ── D13：取消/关闭统一入口，有未保存改动时二次确认 ──

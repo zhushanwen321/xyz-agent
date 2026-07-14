@@ -86,6 +86,25 @@ function resolveApiKeyForSave(apiKey: string): string | undefined {
   return apiKey || undefined
 }
 
+// ── 纯函数 helpers（模块级，不计入 composable 行数）──
+
+/** 从 headerRows 构建 headers Record + 重复 key 检测（syncHeadersFromRows 提取） */
+function buildHeadersFromRows(
+  rows: Array<{ key: string; value: string }>,
+): { headers: Record<string, string>; hasDuplicate: boolean } {
+  const headers: Record<string, string> = {}
+  const seen = new Set<string>()
+  let hasDuplicate = false
+  for (const r of rows) {
+    const k = r.key.trim()
+    if (!k) continue
+    if (seen.has(k)) hasDuplicate = true
+    seen.add(k)
+    headers[k] = r.value
+  }
+  return { headers, hasDuplicate }
+}
+
 // ── composable ──
 
 /**
@@ -204,7 +223,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   // ── provider 同步：打开/切换 provider 时重置编辑态 ──
 
   watch(
-    providerRef,
+    () => providerRef.value,
     (p) => {
       if (p) {
         // 编辑模式：用现有 provider 数据填充表单
@@ -259,14 +278,9 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     return 'all-levels'
   }
 
-  // ── ② test/discover 编排（统一 runDiscover）──
+  // ── ② test/discover 编排（统一 runDiscover：testConnection 与 autoDiscover 共用）──
 
-  /**
-   * 统一探活编排（testConnection 与 autoDiscover 共用，消除两套近似 try/catch）。
-   * 都调 config.discoverModels（domain 无独立 testConnection，W08 决策），仅结果消费不同：
-   * test 取 success→testResult(ok/error)；discover 成功则合并 res.models 到 localModels（去重）
-   * + 设 discoverResult 文案，失败填 actionError。
-   */
+  /** 统一探活（config.discoverModels）：test 取 success→testResult；discover 合并 models + discoverResult */
   async function runDiscover(action: DiscoverAction): Promise<void> {
     if (action === 'test') {
       testing.value = true
@@ -321,13 +335,9 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     await runDiscover('discover')
   }
 
-  // ── ④ save 持久化 ──
+  // ── ④ save 持久化（校验 → config.setProvider；D15b：name 空返回 false）──
 
-  /**
-   * 保存：校验 → 调 config.setProvider（新建用 providerId=form.name，编辑用原 id）。
-   * 状态经 onProviders 订阅推回（单一数据源，避免竞态）。成功返回 true，调用方据此 emit close。
-   * D15b：name 空时返回 false 并填 actionError（不调 setProvider）。
-   */
+  /** 保存：校验 → config.setProvider，成功返回 true，调用方据此 emit close。 */
   async function save(): Promise<boolean> {
     // 前端校验（D15b）：供应商名称必填
     if (!form.name.trim()) {
@@ -369,42 +379,31 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     }
   }
 
-  /**
-   * 清除 apiKey（D18）：把 form.apiKey 置为哨兵，save 时识别为「清空」。
-   * 仅在已配置 key 时有意义（provider.apiKeySet=true）。
-   */
+  /** 清除 apiKey（D18）：置哨兵，save 时识别为清空。仅已配置 key 时有意义 */
   function clearApiKey(): void {
     form.apiKey = API_KEY_CLEAR_SENTINEL
   }
 
-  // ── headers 行编辑 CRUD（W3 D7）──
-  // headerRows 是 UI 行态（每行 {key,value}），form.headers 是 save 用的 Record。
-  // 行变更后同步回 form.headers（filter 掉空 key，避免把空键发给 runtime）。
+  // ── headers 行编辑 CRUD（W3 D7）：headerRows UI 行态 ↔ form.headers Record ──
 
-  /** 把 headerRows 同步回 form.headers（filter 掉空 key 的行） */
+  /** 把 headerRows 同步回 form.headers（filter 掉空 key 的行 + 重复 key 校验） */
   function syncHeadersFromRows(): void {
-    const next: Record<string, string> = {}
-    for (const r of headerRows.value) {
-      const k = r.key.trim()
-      if (k) next[k] = r.value
+    const { headers, hasDuplicate } = buildHeadersFromRows(headerRows.value)
+    form.headers = headers
+    if (hasDuplicate) {
+      actionError.value = '存在重复的 header key，将以最后出现的值为准'
+    } else if (actionError.value === '存在重复的 header key，将以最后出现的值为准') {
+      actionError.value = ''
     }
-    form.headers = next
   }
-
   /** 新增一个空 header 行 */
   function addHeader(): void {
     headerRows.value.push({ key: '', value: '' })
   }
-
   /** 移除指定下标的 header 行，并同步回 form.headers */
   function removeHeader(index: number): void {
     headerRows.value.splice(index, 1)
     syncHeadersFromRows()
-  }
-
-  /** authHeader Switch toggle（W3 D7） */
-  function toggleAuthHeader(v: boolean): void {
-    form.authHeader = v
   }
 
   // ── ③ 模型清单 CRUD ──
@@ -529,6 +528,5 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     addHeader,
     removeHeader,
     syncHeadersFromRows,
-    toggleAuthHeader,
   }
 }

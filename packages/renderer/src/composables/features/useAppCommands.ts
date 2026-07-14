@@ -34,15 +34,36 @@ export interface AppCommandActions {
  */
 export function registerAppCommands(actions: AppCommandActions): void {
   const sidebarStore = useSidebarStore()
+  const commandStore = useCommandStore()
+
+  /** 将存储的 key（如 'n' / 'shift+n'）转为显示用的修饰键符号 */
+  function displayShortcut(key: string): string {
+    const isMac = navigator.platform.includes('Mac')
+    const parts = key.split('+')
+    const result: string[] = []
+    for (const p of parts) {
+      if (p === 'mod') result.push(isMac ? '⌘' : 'Ctrl')
+      else if (p === 'shift') result.push(isMac ? '⇧' : 'Shift')
+      else if (p === 'alt') result.push(isMac ? '⌥' : 'Alt')
+      else result.push(p.toUpperCase())
+    }
+    return result.join(isMac ? '' : '+')
+  }
+
+  /** 构建快捷键显示文本：有 override 用 override，否则用默认修饰键 */
+  function resolveShortcut(cmdId: string, defaultKey: string): string {
+    const override = commandStore.shortcutOverrides[cmdId]
+    if (override) return displayShortcut(override)
+    // 默认格式：⌘+Key
+    const isMac = navigator.platform.includes('Mac')
+    return `${isMac ? '⌘' : 'Ctrl+'}${defaultKey.toUpperCase()}`
+  }
 
   const appCommands: AppCommand[] = [
-    { id: 'new-session', name: '新建任务', shortcut: '⌘N', action: actions.newSession },
-    { id: 'toggle-sidebar', name: '收起侧栏', shortcut: '⌘B', action: () => sidebarStore.toggleCollapsed() },
+    { id: 'new-session', name: '新建任务', shortcut: resolveShortcut('new-session', 'n'), action: actions.newSession },
+    { id: 'toggle-sidebar', name: '收起侧栏', shortcut: resolveShortcut('toggle-sidebar', 'b'), action: () => sidebarStore.toggleCollapsed() },
     { id: 'go-overview', name: '概览', action: actions.goOverview },
   ]
 
-  // 直接写 commandStore.appCommands（registerApp 在 store 层，与 session 无关）。
-  // 不经 useCommandRegistry（其构造需 activeSessionId 参数，而注册应用命令不需要 session 上下文）。
-  const commandStore = useCommandStore()
   commandStore.registerApp(appCommands)
 }

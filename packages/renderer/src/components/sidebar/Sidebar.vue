@@ -181,6 +181,7 @@ import SearchModal from '@/components/overlays/SearchModal.vue'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useCommandStore } from '@/stores/command'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
@@ -417,29 +418,49 @@ onMounted(() => {
  * - ⌘N 新建 session（shell spec §五）
  * - ⌘B 折叠侧栏（shell spec §⌘B；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED）
  *
- * [DEVIATED] AC-10.1 原文「改读 useCommandRegistry」未完全达成。现状（2026-07 修正后）：
- * commandStore.appCommands 已由 useSidebar.initApp → registerAppCommands 注册（新建任务/收起侧栏/概览），
- * 搜索浮层（⌘K）命令源聚合正常工作，点击命令能执行对应 action。
- * 但本地 keymap 仍保留，未完全切换为「读 useCommandRegistry 派发」：⌘K 不注册为 appCommand
- * （搜索结果里出现「搜索」命令是逻辑自指），完全通用化需独立 keymap 注册表 + shortcut DSL
- * （'mod+n'）+ 匹配引擎，属 D-019 标注的额外基础设施，超 P2 scope，登记 P3 后续迭代。
+ * ⌘K 不注册为 appCommand（搜索结果里出现「搜索」命令是逻辑自指），始终硬编码。
+ * ⌘N/⌘B 支持用户自定义覆盖（commandStore.shortcutOverrides），SystemPage 设置页可重录。
  */
 interface KeymapEntry {
+  /** 默认 key（无 override 时用 ⌘+key 匹配） */
   key: string
+  /** commandStore.shortcutOverrides 中的 id（有 override 时走 matchOverrideKey） */
+  commandId?: string
   action: () => void
 }
+const commandStore = useCommandStore()
 const keymap: KeymapEntry[] = [
   { key: 'k', action: () => { searchOpen.value = !searchOpen.value } },
-  { key: 'n', action: () => { void onNewSession() } },
-  { key: 'b', action: () => { sidebar.toggleCollapsed() } },
+  { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
+  { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
 ]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
-  const mod = e.metaKey || e.ctrlKey
-  if (!mod) return
-  const hit = keymap.find((m) => m.key === e.key.toLowerCase())
+  const overrides = commandStore.shortcutOverrides
+  const hit = keymap.find((m) => {
+    // 有 override → 解析组合键格式（'mod+n' / 'shift+j' / 'j'）
+    if (m.commandId && overrides[m.commandId]) {
+      return matchOverrideKey(e, overrides[m.commandId])
+    }
+    // 默认：⌘/Ctrl + key
+    const mod = e.metaKey || e.ctrlKey
+    return mod && e.key.toLowerCase() === m.key
+  })
   if (hit) {
     e.preventDefault()
     hit.action()
   }
 })
+
+/** 匹配自定义快捷键格式（'mod+n' / 'shift+j' / 'j' / 'alt+x' 等） */
+function matchOverrideKey(e: KeyboardEvent, override: string): boolean {
+  const parts = override.toLowerCase().split('+')
+  const key = parts[parts.length - 1]
+  const needMod = parts.includes('mod')
+  const needShift = parts.includes('shift')
+  const needAlt = parts.includes('alt')
+  if (needMod && !(e.metaKey || e.ctrlKey)) return false
+  if (needShift && !e.shiftKey) return false
+  if (needAlt && !e.altKey) return false
+  return e.key.toLowerCase() === key
+}
 </script>
