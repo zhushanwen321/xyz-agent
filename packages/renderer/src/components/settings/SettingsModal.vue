@@ -103,6 +103,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSettingsStore, type SystemSettings } from '@/stores/settings'
 import { useSettings } from '@/composables/features/useSettings'
+import { useToast } from '@/composables/useToast'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import ProviderPage from './ProviderPage.vue'
 import SettingsResourcePage from './SettingsResourcePage.vue'
@@ -144,9 +145,16 @@ function getItemCount(id: string): number {
   }
 }
 
-/** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM data-theme + i18n）。 */
-function onSystemUpdate(patch: Partial<SystemSettings>) {
-  settingsStore.setSystem(patch)
+/** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM data-theme + i18n）+ toast 反馈。 */
+const { info: toastInfo, error: toastError } = useToast()
+async function onSystemUpdate(patch: Partial<SystemSettings>) {
+  try {
+    await settingsStore.setSystem(patch)
+    toastInfo('已应用')
+   
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
 }
 
 /** SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0020 §1）。 */

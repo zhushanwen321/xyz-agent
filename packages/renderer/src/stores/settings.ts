@@ -124,13 +124,11 @@ export const useSettingsStore = defineStore('settings', () => {
 /**
  * 把 system 偏好同步到运行时副作用：
  * - theme → <html data-theme>（style.css :root 暗默认 / [data-theme=light] 亮色槽位）
+ * - themePreset → <html data-theme-preset>（style.css 11 套 [data-theme-preset] 覆盖 --accent）
  * - locale → i18n.setLocale（切换实际语言）
  *
  * theme='system' 时按 prefers-color-scheme 解析为 light/dark 写入 data-theme
  * （避免 CSS 用 media query 又叠一层，统一走 data-theme 单一通道）。
- *
- * 注：themePreset（palette）暂未实装 CSS 切换（11 个配色 swatch 的 --accent 覆盖待做），
- * 故此处不写 data-theme-preset；store 仍持有 themePreset 状态供 SystemPage 选中态使用。
  */
 function applySystemToDom(s: SystemSettings): void {
   if (typeof document === 'undefined') return
@@ -139,6 +137,10 @@ function applySystemToDom(s: SystemSettings): void {
     ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
     : s.theme
   document.documentElement.setAttribute('data-theme', resolvedTheme)
+
+  // themePreset 写 data-theme-preset，触发 style.css 的 [data-theme-preset] 规则覆盖 --accent。
+  // cold-blue 与 :root 默认一致；其他 preset 各自覆盖 accent/soft/ring。
+  document.documentElement.setAttribute('data-theme-preset', s.themePreset ?? 'cold-blue')
 
   if (s.locale) setLocale(s.locale)
 }

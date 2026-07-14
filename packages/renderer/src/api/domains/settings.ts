@@ -48,10 +48,8 @@ export function getSystem(): Promise<SystemSettings> {
   return Promise.resolve({ ...DEFAULT_SYSTEM, ...parsed })
 }
 
-export function updateSystem(patch: Partial<SystemSettings>): Promise<void> {
-  // 同步读当前值再合并写回（getSystem 已做容错）
-  void getSystem().then((cur) => {
-    localStorage.setItem(SYSTEM_KEY, JSON.stringify({ ...cur, ...patch }))
-  })
-  return Promise.resolve()
+export async function updateSystem(patch: Partial<SystemSettings>): Promise<void> {
+  // 真 await：读当前值 → 合并 → 写回。写入失败 throw（调用方可据 toast 提示）。
+  const cur = await getSystem()
+  localStorage.setItem(SYSTEM_KEY, JSON.stringify({ ...cur, ...patch }))
 }
