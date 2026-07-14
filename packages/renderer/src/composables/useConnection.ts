@@ -95,6 +95,11 @@ function routeInbound(msg: ServerMessage): void {
     }
   } else {
     events.dispatchGlobal(msg)
+    // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
+    // 让 runtime bug 可见（违反规则 #7 隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
+    if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
+      console.warn('[useConnection] session-level message missing sessionId, routed to global:', msg.type)
+    }
     // 全局 error 兜底：无 sessionId、无 id 的 server-push error 此前静默丢弃。
     // 现 toast 提示（如 config 加载失败等全局错误）。
     if (msg.type === 'error' && !msg.id) {

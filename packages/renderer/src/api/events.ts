@@ -14,6 +14,23 @@ import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
 type MessageHandler = (msg: ServerMessage) => void
 
+/**
+ * 安全遍历 handler 集合（M4：单 handler 抛错不中断同通道剩余订阅者）。
+ *
+ * sidebar 有 6+ 组件实例化 useSidebar，一个坏 handler 会让整条 session.list 广播中断。
+ * 每个 handler 调用包 try-catch，抛错时 console.error 记录后继续遍历。
+ */
+function safeForEach(set: Set<MessageHandler>, msg: ServerMessage): void {
+  for (const h of set) {
+    try {
+      h(msg)
+    // eslint-disable-next-line taste/no-silent-catch -- 事件分发器隔离：单 handler 抛错不中断同通道其余订阅者（M4），console.error 记录后继续遍历
+    } catch (e) {
+      console.error('[events] handler threw, continuing dispatch:', e)
+    }
+  }
+}
+
 // ── session 通道（按 sessionId 路由）──
 const sessionHandlers = new Map<string, Set<MessageHandler>>()
 
@@ -39,7 +56,8 @@ export function dispatch(sessionId: string, msg: ServerMessage): void {
 }
 
 export function dispatchSession(sessionId: string, msg: ServerMessage): void {
-  sessionHandlers.get(sessionId)?.forEach((h) => h(msg))
+  const set = sessionHandlers.get(sessionId)
+  if (set) safeForEach(set, msg)
 }
 
 // ── global 通道（无 sessionId 的 server-push）──
@@ -80,6 +98,7 @@ export function onGlobalType<T extends ServerMessageType>(
 }
 
 export function dispatchGlobal(msg: ServerMessage): void {
-  globalAllHandlers.forEach((h) => h(msg))
-  globalTypeHandlers.get(msg.type)?.forEach((h) => h(msg))
+  safeForEach(globalAllHandlers, msg)
+  const typeSet = globalTypeHandlers.get(msg.type)
+  if (typeSet) safeForEach(typeSet, msg)
 }
