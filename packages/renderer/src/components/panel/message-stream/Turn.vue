@@ -19,11 +19,11 @@
       >
         <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
         <div class="mt-1.5 flex items-center justify-between px-1">
-          <span class="text-[11px] text-subtle">编辑后替换并重新发送</span>
+          <span class="text-[11px] text-subtle">{{ t('panel.message.editAfterReplace') }}</span>
           <div class="flex gap-1.5">
-            <Button variant="ghost" size="sm" class="h-7" @click="cancelEdit">取消</Button>
+            <Button variant="ghost" size="sm" class="h-7" @click="cancelEdit">{{ t('panel.message.cancel') }}</Button>
             <Button variant="default" size="sm" class="h-7 gap-1" :disabled="!draftText.trim()" @click="submitEdit">
-              <ArrowRight class="size-3.5" /> 发送
+              <ArrowRight class="size-3.5" /> {{ t('panel.composer.send') }}
             </Button>
           </div>
         </div>
@@ -58,7 +58,7 @@
           v-if="slashChip"
           as-child
           variant="ghost"
-          title="查看命令文档"
+          :title="t('panel.message.viewCommandDoc')"
           @click.stop="openCommandDoc(slashChip.name)"
         >
           <span
@@ -80,7 +80,7 @@
           variant="ghost"
           size="icon"
           class="size-6 text-subtle hover:text-fg"
-          title="复制"
+          :title="t('panel.message.copy')"
           @click="copy(turn.user.content, userCopyKey)"
         >
           <Check v-if="copied === userCopyKey" class="size-3 text-success" />
@@ -91,7 +91,7 @@
           variant="ghost"
           size="icon"
           class="size-6 text-subtle hover:text-fg"
-          title="编辑（替换并重新发送）"
+          :title="t('panel.message.editReplace')"
           @click="startEdit"
         >
           <Pencil class="size-3" />
@@ -132,7 +132,7 @@
         <!-- working 态：spinner（更显眼的 streaming 指示），替代原脉冲点 -->
         <Loader2 v-if="turn.isWorking" class="size-3 shrink-0 animate-spin text-accent" />
         <span class="text-[12.5px] font-medium">
-          <span class="lbl" :class="turn.isWorking ? 'text-accent' : 'text-muted'">{{ turn.isWorking ? '思考中' : '已工作' }}</span>
+          <span class="lbl" :class="turn.isWorking ? 'text-accent' : 'text-muted'">{{ turn.isWorking ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
           <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
         </span>
         <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
@@ -196,7 +196,7 @@
             variant="ghost"
             size="icon"
             class="size-6 text-subtle hover:text-fg"
-            title="复制"
+            :title="t('panel.message.copy')"
             @click="copy(summaryText, aiCopyKey)"
           >
             <Check v-if="copied === aiCopyKey" class="size-3 text-success" />
@@ -206,7 +206,7 @@
             variant="ghost"
             size="icon"
             class="relative size-6 text-subtle hover:text-fg"
-            title="复制为 Markdown"
+            :title="t('panel.message.copyMarkdown')"
             @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
           >
             <Check v-if="copied === aiMdKey" class="size-3 text-success" />
@@ -218,7 +218,7 @@
             variant="ghost"
             size="icon"
             class="size-6 text-subtle hover:text-fg"
-            title="克隆并分叉到另一面板"
+            :title="t('panel.message.forkToOther')"
             @click="openFork"
           >
             <GitFork class="size-3" />
@@ -243,6 +243,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -272,6 +273,7 @@ const props = defineProps<{
   canEdit?: boolean
 }>()
 
+const { t } = useI18n()
 const chat = useChatStore()
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
@@ -326,7 +328,7 @@ const pendingBubbleClass = computed(() =>
 )
 const pendingLabelClass = computed(() => (isSteerMode.value ? 'text-accent' : 'text-info'))
 const pendingDotClass = computed(() => (isSteerMode.value ? 'bg-accent' : 'bg-info'))
-const pendingLabel = computed(() => (isSteerMode.value ? 'STEER 追加' : 'FOLLOWUP 新轮'))
+const pendingLabel = computed(() => (isSteerMode.value ? t('panel.queue.steerLabel') : t('panel.queue.followupLabel')))
 
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))

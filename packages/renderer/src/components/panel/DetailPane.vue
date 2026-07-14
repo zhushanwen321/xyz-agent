@@ -19,16 +19,16 @@
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10.5px]"
           :class="state.viewMode === 'diff' ? 'bg-accent-soft text-accent' : 'text-muted'"
-          title="显示 git diff"
+          :title="t('panel.detail.showDiff')"
           @click="onToggleView('diff')"
         >Diff</Button>
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10.5px]"
           :class="state.viewMode === 'preview' ? 'bg-accent-soft text-accent' : 'text-muted'"
-          title="显示文件原始内容"
+          :title="t('panel.detail.showPreview')"
           @click="onToggleView('preview')"
-        >预览</Button>
+        >{{ t('panel.detail.preview') }}</Button>
       </div>
     </div>
 
@@ -39,7 +39,7 @@
       data-testid="detail-loading"
     >
       <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-      <p class="text-[11px] text-subtle opacity-60">加载中...</p>
+      <p class="text-[11px] text-subtle opacity-60">{{ t('panel.detail.loading') }}</p>
     </div>
 
     <!-- 错误态（AC-6.4/T6.4：权限/不存在 → 错误态） -->
@@ -49,7 +49,7 @@
       data-testid="detail-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11.5px] text-muted">无法预览此文件</p>
+      <p class="text-[11.5px] text-muted">{{ t('panel.detail.cannotPreview') }}</p>
       <p class="font-mono text-[10.5px] text-subtle opacity-70">{{ state.error }}</p>
     </div>
 
@@ -148,6 +148,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { FileText, Loader2, AlertCircle, Image as ImageIcon } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useDetailPane, type DetailViewMode } from '@/composables/features/useDetailPane'
@@ -155,6 +156,8 @@ import { extToLang } from '@/composables/logic/file-type'
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
 import CodeBlock from '@/components/panel/detail-renderers/CodeBlock.vue'
 import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** widget 订阅的 session 标识（与 SideDrawer sessionId 一致，useDetailPane watch 用） */

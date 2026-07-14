@@ -58,6 +58,14 @@
     </div>
 
     <MessageStream v-else-if="effectiveSessionId && effectiveMessageCount > 0" :session-id="effectiveSessionId" />
+    <!-- overlay 态（subagent/agent call）但消息为空：agent call 历史文件只有 header（pi 延迟写入）或执行失败无输出 -->
+    <div
+      v-else-if="isViewingSubagent"
+      class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
+    >
+      <MessageSquare class="size-6 text-subtle opacity-40" />
+      <p class="text-[12px] text-subtle opacity-70">该 agent call 暂无对话记录</p>
+    </div>
     <Landing
       v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"

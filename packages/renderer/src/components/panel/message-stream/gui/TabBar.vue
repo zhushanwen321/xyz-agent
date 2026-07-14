@@ -3,8 +3,10 @@
  * 标签栏组件——替代 TUI 的 tab │ 分隔。
  * active 用 accent-soft 背景高亮，status=done 显绿点，status=pending 显灰点半透明。
  */
+import type { GuiComponentProps } from '@xyz-agent/extension-protocol'
+
 defineProps<{
-  tabs: { label: string; active?: boolean; status?: 'done' | 'pending' }[]
+  tabs: GuiComponentProps['tab-bar']['tabs']
 }>()
 
 const dotClass = (status?: 'done' | 'pending') => {

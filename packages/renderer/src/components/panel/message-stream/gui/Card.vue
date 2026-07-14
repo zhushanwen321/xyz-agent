@@ -16,8 +16,13 @@ const props = defineProps<{
 
 const isStringHeader = computed(() => typeof props.header === 'string')
 
+/** header 为 GuiComponent 时收窄类型，避免模板内 as 断言 */
+const headerComponent = computed<GuiComponent | null>(() =>
+  isStringHeader.value || !props.header ? null : props.header as GuiComponent,
+)
+
 const cardClass = computed(() => {
-  const map: Record<string, string> = {
+  const map: Record<NonNullable<typeof props.variant>, string> = {
     default: 'border-border bg-surface',
     elevated: 'border-border-strong bg-surface-2',
     danger: 'border-danger',
@@ -40,7 +45,7 @@ const cardClass = computed(() => {
       <template v-if="isStringHeader">
         <span>{{ header }}</span>
       </template>
-      <GuiComponentRenderer v-else :component="header as GuiComponent" />
+      <GuiComponentRenderer v-else-if="headerComponent" :component="headerComponent" />
     </div>
     <div class="p-3">
       <GuiComponentRenderer

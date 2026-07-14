@@ -10,7 +10,7 @@ defineProps<{
   items: StatItem[]
 }>()
 
-const valueClass = (severity?: 'ok' | 'warn' | 'danger') => {
+const valueClass = (severity?: StatItem['severity']) => {
   if (!severity) return 'text-fg'
   const map = { ok: 'text-success', warn: 'text-warning', danger: 'text-danger' } as const
   return map[severity]

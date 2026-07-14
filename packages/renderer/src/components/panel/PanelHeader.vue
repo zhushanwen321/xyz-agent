@@ -28,8 +28,8 @@
         variant="ghost"
         size="icon"
         class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg"
-        :title="sidebar.collapsed ? '展开侧栏' : '收起侧栏'"
-        aria-label="切换侧栏"
+        :title="sidebar.collapsed ? t('panel.header.toggleSidebarExpand') : t('panel.header.toggleSidebarCollapse')"
+        :aria-label="t('panel.header.toggleSidebarAria')"
         @click="sidebar.toggleCollapsed()"
       >
         <PanelLeftOpen v-if="sidebar.collapsed" class="size-[14px]" />
@@ -40,8 +40,8 @@
         size="icon"
         class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
         :disabled="!navigation.canBack"
-        title="后退"
-        aria-label="后退"
+        :title="t('panel.header.back')"
+        :aria-label="t('panel.header.back')"
         @click="navigation.back()"
       >
         <ArrowLeft class="size-[14px]" />
@@ -51,8 +51,8 @@
         size="icon"
         class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
         :disabled="!navigation.canForward"
-        title="前进"
-        aria-label="前进"
+        :title="t('panel.header.forward')"
+        :aria-label="t('panel.header.forward')"
         @click="navigation.forward()"
       >
         <ArrowRight class="size-[14px]" />
@@ -65,7 +65,7 @@
       variant="ghost"
       size="icon"
       class="shrink-0 gap-1 rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-      title="返回主会话"
+      :title="t('panel.header.backToMain')"
       data-testid="subagent-back-btn"
       @click="emit('back')"
     >
@@ -97,7 +97,7 @@
           <span
             class="truncate font-mono text-[12px] font-semibold"
             :class="active ? 'text-fg' : 'text-muted'"
-            :title="`工作目录：${sessionDir}`"
+            :title="`${t('panel.header.workingDir')}：${sessionDir}`"
           >{{ dirName }}</span>
         </li>
         <template v-if="gitBranch">
@@ -107,7 +107,7 @@
           <li class="min-w-0">
             <span
               class="truncate font-mono text-[11px] text-accent"
-              :title="`分支：${gitBranch}`"
+              :title="`${t('panel.header.branch')}：${gitBranch}`"
             >{{ gitBranch }}</span>
           </li>
         </template>
@@ -123,7 +123,7 @@
         size="icon"
         class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
         data-testid="drawer-toggle"
-        title="侧边抽屉"
+        :title="t('panel.sideDrawer.title')"
         @click="emit('toggleDrawer')"
       >
         <PanelRight class="size-[15px]" />
@@ -137,7 +137,7 @@
         variant="ghost"
         size="icon"
         class="relative size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-        title="Git 状态 · 打开侧栏"
+        :title="t('panel.header.gitStatus')"
         @click="emit('openGit')"
       >
         <GitBranch class="size-[15px]" />
@@ -155,7 +155,7 @@
         variant="ghost"
         size="icon"
         class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-        title="分屏 · 开第二会话"
+        :title="t('panel.header.split')"
         @click="emit('split')"
       >
         <Columns2 class="size-[15px]" />
@@ -165,7 +165,7 @@
         variant="ghost"
         size="icon"
         class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-        title="新建会话 · 替换待机侧"
+        :title="t('panel.header.newSession')"
         @click="emit('newSession')"
       >
         <Plus class="size-[15px]" />
@@ -178,7 +178,7 @@
         variant="ghost"
         size="icon"
         class="size-[26px] rounded-md text-muted hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [-webkit-app-region:no-drag]"
-        title="关闭会话"
+        :title="t('panel.header.closeSession')"
         @click="emit('close')"
       >
         <X class="size-[15px]" />
@@ -190,6 +190,7 @@
 <script setup lang="ts">
  
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, PanelRight, ArrowLeft, ArrowRight, Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation'
@@ -228,6 +229,7 @@ const emit = defineEmits<{
   back: []
 }>()
 
+const { t } = useI18n()
 const navigation = useNavigationStore()
 const sidebar = useSidebarStore()
 const { isFullscreen } = usePlatformChrome()

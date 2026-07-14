@@ -19,7 +19,7 @@
  */
 import { computed, inject } from 'vue'
 import type { Component } from 'vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import type { GuiComponent, GuiComponentType } from '@xyz-agent/extension-protocol'
 import AnsiText from './gui/AnsiText.vue'
 import ProgressBar from './gui/ProgressBar.vue'
 import StatsLine from './gui/StatsLine.vue'
@@ -27,11 +27,12 @@ import TabBar from './gui/TabBar.vue'
 import Card from './gui/Card.vue'
 import Columns from './gui/Columns.vue'
 import ListTree from './gui/ListTree.vue'
+import { GUI_CUSTOM_REGISTRY_KEY } from './gui/gui-registry'
 
 const props = defineProps<{ component: GuiComponent }>()
 
-/** 已实现的内置组件映射。 */
-const BUILTIN_MAP: Record<string, Component> = {
+/** 已实现的内置组件映射。键钉到 GuiComponentType，新增 type 时编译期可见。 */
+const BUILTIN_MAP: Partial<Record<GuiComponentType, Component>> = {
   'ansi-text': AnsiText,
   'progress-bar': ProgressBar,
   'stats-line': StatsLine,
@@ -42,7 +43,7 @@ const BUILTIN_MAP: Record<string, Component> = {
 }
 
 /** custom 组件注册表（内置 extension 编译期注册，P2 实现）。默认空表。 */
-const CUSTOM_MAP = inject<Record<string, Component>>('gui-custom-registry', {})
+const CUSTOM_MAP = inject(GUI_CUSTOM_REGISTRY_KEY, {})
 
 /** JSON 序列化缩进（降级渲染用） */
 const JSON_INDENT = 2

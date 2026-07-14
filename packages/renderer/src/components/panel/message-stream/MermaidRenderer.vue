@@ -17,20 +17,20 @@
 <template>
   <div class="md-mermaid-wrap">
     <!-- 渲染中占位（mermaid 首次加载 ~3MB，极短） -->
-    <div v-if="status === 'loading'" class="md-mermaid__placeholder">图表渲染中…</div>
+    <div v-if="status === 'loading'" class="md-mermaid__placeholder">{{ t('panel.mermaid.rendering') }}</div>
     <!-- 渲染失败：提示 + 折叠源码（用 div toggle 替代原生 <details>，遵循禁原生交互元素规范） -->
     <div v-else-if="status === 'error'" class="md-mermaid__error">
       <div class="flex items-center gap-1.5 text-[12px] text-danger">
         <AlertTriangle class="size-3.5" />
-        <span>Mermaid 渲染失败</span>
+        <span>{{ t('panel.mermaid.renderFailed') }}</span>
       </div>
       <Button variant="ghost" size="sm" class="mt-0.5 h-6 px-1 text-[11px] text-subtle hover:text-muted" @click="showSource = !showSource">
         <ChevronRight class="size-3 transition-transform" :class="showSource ? 'rotate-90' : ''" />
-        <span>查看源码</span>
+        <span>{{ t('panel.mermaid.viewSource') }}</span>
       </Button>
       <div v-if="showSource" class="mt-1 flex items-start gap-1.5">
         <pre class="max-h-[200px] flex-1 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] leading-relaxed text-muted">{{ source }}</pre>
-        <Button variant="ghost" size="icon" class="size-6 shrink-0 text-subtle hover:text-fg" title="复制源码" @click="copySource">
+        <Button variant="ghost" size="icon" class="size-6 shrink-0 text-subtle hover:text-fg" :title="t('panel.mermaid.copySource')" @click="copySource">
           <Check v-if="copied" class="size-3 text-success" />
           <Copy v-else class="size-3" />
         </Button>
@@ -38,33 +38,33 @@
     </div>
     <!-- 渲染成功：气泡内静态 SVG（点击放大） -->
     <!-- eslint-disable-next-line vue/no-v-html -- renderMermaid 产出的 SVG 由 mermaid 库生成（非用户 HTML），与 shiki codeToHtml 同论证 XSS 安全。受控注入点。 -->
-    <div v-else v-html="svg" class="md-mermaid__inline cursor-pointer transition-opacity hover:opacity-90" title="点击放大" @click="openFullscreen" />
+    <div v-else v-html="svg" class="md-mermaid__inline cursor-pointer transition-opacity hover:opacity-90" :title="t('panel.mermaid.clickToZoom')" @click="openFullscreen" />
 
     <!-- 全屏 Dialog：SVG + zoom 控制 -->
     <Dialog v-model:open="fullscreenOpen">
       <DialogContent hide-close class="flex max-h-[92vh] max-w-[95vw] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg">
         <!-- a11y：reka-ui DialogContent 要求 DialogTitle/Description（屏幕阅读器），视觉隐藏 -->
-        <DialogTitle class="sr-only">Mermaid 图表全屏查看</DialogTitle>
-        <DialogDescription class="sr-only">使用缩放控件查看 Mermaid 图表详情。</DialogDescription>
+        <DialogTitle class="sr-only">{{ t('panel.mermaid.fullscreenTitle') }}</DialogTitle>
+        <DialogDescription class="sr-only">{{ t('panel.mermaid.fullscreenDesc') }}</DialogDescription>
         <!-- 标题栏：zoom 控件 + 关闭 -->
         <div class="flex items-center justify-between border-b border-border px-3 py-2">
           <div class="flex items-center gap-1">
-            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" title="放大" @click="zoomIn">
+            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" :title="t('panel.mermaid.zoomIn')" @click="zoomIn">
               <ZoomIn class="size-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" title="缩小" @click="zoomOut">
+            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" :title="t('panel.mermaid.zoomOut')" @click="zoomOut">
               <ZoomOut class="size-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" title="适应窗口" @click="fit">
+            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" :title="t('panel.mermaid.fitWindow')" @click="fit">
               <Maximize class="size-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" title="原始大小" @click="resetOneToOne">
+            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" :title="t('panel.mermaid.originalSize')" @click="resetOneToOne">
               <Minimize class="size-3.5" />
             </Button>
             <span class="ml-1.5 font-mono text-[11px] text-subtle">{{ zoomLabel }}</span>
           </div>
           <DialogClose as-child>
-            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" title="关闭">
+            <Button variant="ghost" size="icon" class="size-7 text-muted hover:text-fg" :title="t('panel.mermaid.close')">
               <X class="size-3.5" />
             </Button>
           </DialogClose>
@@ -91,12 +91,15 @@
  * - 全屏 Dialog 内 zoom 用 useMermaidZoom（Ctrl/Cmd+wheel 缩放，按钮 zoom-in/out/fit/1:1）。
  */
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Check, ChevronRight, Copy, Maximize, Minimize, X, ZoomIn, ZoomOut } from '@lucide/vue'
 import { Dialog, DialogContent, DialogClose, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { renderMermaid, getCurrentTheme } from '@/composables/logic/mermaid'
 import { useCopy } from '@/composables/effects/useCopy'
 import { useMermaidZoom } from '@/composables/effects/useMermaidZoom'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** mermaid 源码（已从 base64 解码） */

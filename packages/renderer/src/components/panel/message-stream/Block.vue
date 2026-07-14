@@ -15,12 +15,12 @@
     <div v-if="type === 'thinking'" class="trace-think">
       <div
         class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning transition-colors hover:text-[var(--reasoning)]"
-        :title="thinkingExpanded ? '收起推理' : '展开推理'"
+        :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
         @click="toggleThinking"
       >
         <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="thinkingExpanded ? 'rotate-90' : ''" />
         <Brain class="size-3 shrink-0" />
-        <span class="shrink-0 whitespace-nowrap">思考</span>
+        <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.thinkingBlock') }}</span>
         <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-muted">· {{ previewText }}</span>
       </div>
       <!-- text-[12px] 对齐 tool 详情字号（曾用继承字号偏大） -->
@@ -41,7 +41,7 @@
         <div
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
           :class="subagentHeaderColor"
-          :title="toolExpanded ? '收起' : '展开'"
+          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
           <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
@@ -52,11 +52,11 @@
           <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
           <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
             <span class="size-[6px] shrink-0 rounded-full bg-reasoning animate-working-pulse" />
-            <span class="truncate">{{ subagentLiveInfo || '运行中' }}</span>
+            <span class="truncate">{{ subagentLiveInfo || t('panel.message.running') }}</span>
           </span>
           <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
         </div>
         <template v-if="toolExpanded">
           <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
@@ -84,7 +84,7 @@
           data-testid="tool-block-header"
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
           :class="isFailed ? 'text-danger' : isUnfinished ? 'text-subtle' : 'text-info'"
-          :title="toolExpanded ? '收起' : '展开'"
+          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
           <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
@@ -93,11 +93,11 @@
           <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ argPath }}</span>
           <!-- 状态指示：running 脉冲点 / completed Check 图标 / failed XCircle 图标 -->
           <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-0.5 normal-case tracking-normal whitespace-nowrap text-accent">
-            <span class="size-[6px] shrink-0 rounded-full bg-accent animate-working-pulse" />进行中
+            <span class="size-[6px] shrink-0 rounded-full bg-accent animate-working-pulse" />{{ t('panel.message.inProgress') }}
           </span>
           <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
         </div>
         <template v-if="toolExpanded">
           <div class="mt-1 font-mono text-[12px] text-fg">
@@ -123,6 +123,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Bot, Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
@@ -131,6 +132,8 @@ import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
 import AnsiText from './gui/AnsiText.vue'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   type: 'thinking' | 'tool' | 'text'
@@ -274,7 +277,7 @@ const subagentTaskPreview = computed(() => {
 /** parallel/chain 无 agent 名时的兜底标签 */
 const subagentHeaderLabel = computed(() => {
   const input = props.tool?.input as Record<string, unknown> | undefined
-  if (Array.isArray(input?.tasks) || Array.isArray(input?.chain)) return '多 Subagent'
+  if (Array.isArray(input?.tasks) || Array.isArray(input?.chain)) return t('panel.message.multiSubagent')
   return ''
 })
 
