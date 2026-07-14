@@ -1,3 +1,5 @@
+import i18n from '@/i18n'
+
 /**
  * 思考等级（前端固定枚举，非后端推送数据）。
  *
@@ -12,18 +14,21 @@ export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface ThinkingLevelOption {
   level: ThinkingLevel
+  /** 中文 label（向后兼容 + fallback；新代码优先用 labelKey + t()） */
   label: string
+  /** i18n key（指向 composable.thinkingLevel.*） */
+  labelKey: string
   en: string
   available: boolean
 }
 
 export const THINKING_LEVELS: ThinkingLevelOption[] = [
-  { level: 'off', label: '关', en: 'off', available: true },
-  { level: 'low', label: '低', en: 'low', available: true },
-  { level: 'medium', label: '中', en: 'medium', available: true },
-  { level: 'high', label: '高', en: 'high', available: true },
-  { level: 'xhigh', label: '极高', en: 'xhigh', available: true },
-  { level: 'max', label: '最高', en: 'max', available: true },
+  { level: 'off', label: '关', labelKey: 'composable.thinkingLevel.off', en: 'off', available: true },
+  { level: 'low', label: '低', labelKey: 'composable.thinkingLevel.low', en: 'low', available: true },
+  { level: 'medium', label: '中', labelKey: 'composable.thinkingLevel.medium', en: 'medium', available: true },
+  { level: 'high', label: '高', labelKey: 'composable.thinkingLevel.high', en: 'high', available: true },
+  { level: 'xhigh', label: '极高', labelKey: 'composable.thinkingLevel.xhigh', en: 'xhigh', available: true },
+  { level: 'max', label: '最高', labelKey: 'composable.thinkingLevel.max', en: 'max', available: true },
 ]
 
 /** ThinkingLevel 强度序（数值越大强度越高，用于排序可用档位） */
@@ -79,11 +84,21 @@ function isOnOffMap(map?: Record<string, string | null>): boolean {
 }
 
 /**
- * 取某档位的显示 label。on/off 模式下 high → 「开」，其余用通用 label。
+ * 取某档位的显示 label。on/off 模式下 high → t('composable.thinkingLevel.on')，其余走 labelKey + t。
+ *
+ * @param t 可选 i18n 翻译函数（来自 useI18n）。不传时回退到全局 i18n.global.t，
+ *          兼容组件外（如 tests / 非 Vue 上下文）调用。
  */
-export function getDisplayLabel(level: ThinkingLevel, map?: Record<string, string | null>): string {
-  if (level === 'high' && isOnOffMap(map)) return '开'
-  return THINKING_LEVELS.find((o) => o.level === level)?.label ?? '思考'
+export function getDisplayLabel(
+  level: ThinkingLevel,
+  map?: Record<string, string | null>,
+  t?: (key: string) => string,
+): string {
+  const translate = t ?? i18n.global.t
+  if (level === 'high' && isOnOffMap(map)) return translate('composable.thinkingLevel.on')
+  const opt = THINKING_LEVELS.find((o) => o.level === level)
+  if (!opt) return translate('composable.thinkingLevel.default')
+  return translate(opt.labelKey)
 }
 
 /**

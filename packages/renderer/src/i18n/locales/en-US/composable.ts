@@ -23,4 +23,21 @@ export default {
   daysAgo: '{days} days ago',
   dateFormat: '{month}/{day}',
   searchUnavailable: 'Search service is temporarily unavailable',
+  // Thinking level labels (W2)
+  thinkingLevel: {
+    off: 'off',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'very_high',
+    max: 'max',
+    on: 'On',
+    default: 'thinking',
+  },
+  // Thinking strategy presets (W2)
+  thinkingStrategy: {
+    allLevels: 'All Levels',
+    onOff: 'On / Off',
+    highMax: 'High / Max',
+  },
 }

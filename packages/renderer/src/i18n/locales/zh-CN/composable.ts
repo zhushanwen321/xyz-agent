@@ -23,4 +23,21 @@ export default {
   daysAgo: '{days} 天前',
   dateFormat: '{month} 月 {day} 日',
   searchUnavailable: '搜索服务暂时不可用',
+  // 思考等级显示（W2）
+  thinkingLevel: {
+    off: '关',
+    low: '低',
+    medium: '中',
+    high: '高',
+    xhigh: '极高',
+    max: '最高',
+    on: '开',
+    default: '思考',
+  },
+  // 思考策略预设（W2）
+  thinkingStrategy: {
+    allLevels: '全部档位',
+    onOff: '开 / 关',
+    highMax: '高 / 最高',
+  },
 }

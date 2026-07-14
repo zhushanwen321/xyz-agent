@@ -60,11 +60,16 @@ const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> |
   'high-max': { off: 'off', high: 'high', max: 'xhigh' },
 }
 
-/** 思考策略 Select 选项（template thinkingStrategies 来源） */
-export const THINKING_STRATEGIES: Array<{ key: ThinkingStrategy; fullLabel: string }> = [
-  { key: 'all-levels', fullLabel: 'All Levels' },
-  { key: 'on-off', fullLabel: 'On / Off' },
-  { key: 'high-max', fullLabel: 'High / Max' },
+/** 思考策略 Select 选项（template thinkingStrategies 来源）。
+ *  fullLabel 保留为回退展示（向后兼容旧 import）；新代码优先用 labelKey + t()。 */
+export const THINKING_STRATEGIES: Array<{
+  key: ThinkingStrategy
+  fullLabel: string
+  labelKey: string
+}> = [
+  { key: 'all-levels', fullLabel: 'All Levels', labelKey: 'composable.thinkingStrategy.allLevels' },
+  { key: 'on-off', fullLabel: 'On / Off', labelKey: 'composable.thinkingStrategy.onOff' },
+  { key: 'high-max', fullLabel: 'High / Max', labelKey: 'composable.thinkingStrategy.highMax' },
 ]
 
 /** discover 动作：test（探活，结果显示连接成败）/ discover（合并发现的模型） */

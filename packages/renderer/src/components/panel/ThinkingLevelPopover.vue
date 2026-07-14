@@ -39,7 +39,7 @@
           class="size-[7px] shrink-0 rounded-full"
           :class="level === opt.level ? 'bg-accent' : 'bg-subtle'"
         />
-        <span class="flex-1 text-left">{{ getDisplayLabel(opt.level, props.levelMap) }}</span>
+        <span class="flex-1 text-left">{{ getDisplayLabel(opt.level, props.levelMap, t) }}</span>
         <Check
           class="size-[13px] text-accent transition-opacity"
           :class="level === opt.level ? 'opacity-100' : 'opacity-0'"
@@ -97,7 +97,7 @@ const availableOptions = computed<ThinkingLevelOption[]>(() => {
 })
 
 const currentLabel = computed(
-  () => getDisplayLabel(level.value, props.levelMap),
+  () => getDisplayLabel(level.value, props.levelMap, t),
 )
 
 function onSelect(opt: ThinkingLevelOption): void {

@@ -240,7 +240,7 @@
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ s.fullLabel }}</SelectItem>
+                    <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ t(s.labelKey) }}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -313,7 +313,7 @@
                     <SelectValue placeholder="—" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ s.fullLabel }}</SelectItem>
+                    <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ t(s.labelKey) }}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
