@@ -8,6 +8,7 @@
  * AC-2.5: 本文件无 session 域依赖（零耦合 session 子系统）
  */
 
+import { homedir } from 'node:os'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 import type { RecentWorkspacesStore } from './recent-workspaces-store.js'
 
@@ -16,10 +17,14 @@ export class WorkspaceService {
 
   /**
    * 记录一次工作区使用。INV-1 主守卫：空串/undefined/whitespace 静默跳过。
+   * homedir 守卫（方案A）：homedir 是失效 cwd 的兜底目标，作为「最近工作区」无记录价值
+   * （用户不需要从列表点回 homedir，它永远是已知的）。一处堵死全部调用路径：
+   * create 降级 / sendPrompt / 前端 RPC 直选 / 列表自繁殖。
    * 实际写入由 store.record 处理（含 INV-1 兜底 + INV-2 淘汰 + INV-3 去重）。
    */
   record(cwd: string): void {
     if (!cwd || cwd.trim() === '') return
+    if (cwd === homedir()) return
     this.store.record(cwd)
   }
 

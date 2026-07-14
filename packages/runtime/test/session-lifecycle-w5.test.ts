@@ -75,7 +75,7 @@ function makeMocks() {
   return { lifecycle, recordFn, pm, session }
 }
 
-describe('W5: session-lifecycle create cwd 降级跳过 record', () => {
+describe('W5: session-lifecycle create record 调用（homedir 过滤归位 service 层）', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('cwd 未降级（existsSync=true）→ workspaceService.record 被调用，参数为 cwd', async () => {
@@ -86,12 +86,13 @@ describe('W5: session-lifecycle create cwd 降级跳过 record', () => {
     expect(recordFn).toHaveBeenCalledWith('/my/repo')
   })
 
-  it('cwd 降级到 homedir（existsSync=false）→ workspaceService.record 不被调用', async () => {
+  it('cwd 降级到 homedir（existsSync=false）→ workspaceService.record 仍被调用，参数为 homedir（过滤由 service 层负责）', async () => {
     fsMock.existsSync.mockReturnValue(false)
     const { lifecycle, recordFn } = makeMocks()
     await lifecycle.create('/deleted/path', 'deleted')
-    // record 不该被调（homedir 不应污染最近工作区列表）
-    expect(recordFn).not.toHaveBeenCalled()
+    // [方案A] lifecycle 无条件 record（传降级后的 homedir），service 层的 homedir 守卫负责过滤
+    expect(recordFn).toHaveBeenCalledTimes(1)
+    expect(recordFn).toHaveBeenCalledWith(homedir())
   })
 
   it('cwd 降级到 homedir → session.cwd 仍是 homedir（降级逻辑本身不变）', async () => {
