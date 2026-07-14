@@ -20,7 +20,7 @@
  */
 import { computed, onScopeDispose } from 'vue'
 import type { SessionGroup } from '@xyz-agent/shared'
-import { chat as chatApi, session as sessionApi } from '@/api'
+import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
 import { useCommandStore } from '@/stores/command'
@@ -515,6 +515,9 @@ export function useSidebar() {
     // 重连刷新：runtime 可能重启后从磁盘重载了新记录（如另一窗口写入），stale records 需重拉。
     // fire-and-forget：load 内部 catch 降级（records 置 []），不阻塞、不向上抛。
     void workspaceStore.load()
+    // A4 §3.4：extensions 是 sendInitialState 的 async fire-and-forget 段，断连早于
+    // 扫描完成则丢失。重连后主动补拉，确保扩展列表新鲜。fire-and-forget 失败不阻断。
+    void extensionApi.scan().catch(() => {})
   }
 
   /** 切换折叠态（C）。展开/折叠 toggle，spec §收起态。 */

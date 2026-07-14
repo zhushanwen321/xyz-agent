@@ -102,6 +102,23 @@ export async function fetchRecommended(): Promise<Array<RecommendedExtension & {
 }
 
 /**
+ * 主动重拉扩展列表（重连补发，设计文档 A4 §3.4）。
+ *
+ * runtime extension.list → scanExtensions() → 回 config.extensions（带 id）。
+ * reply 因 msg.id 命中 pending 被 resolve（routeInbound），同时 dispatchGlobal
+ * 触发 onExtensions 订阅回调刷新 store。
+ *
+ * 场景：WS 重连后 sendInitialState 的 extensions 异步段可能早于订阅建立/断连完成
+ * 而丢失（broker.ts async fire-and-forget），此处主动补拉确保扩展列表新鲜。
+ */
+export async function scan(): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'extension.list', id, payload: {} })
+  await result
+}
+
+/**
  * 升级指定扩展：从 npm 拉取最新版本并重装。
  * 仅对 user-installed（npm 来源）扩展有效。
  * runtime 执行 npm install <pkg>@latest → 替换旧版 → 推 config.extensions 刷新。

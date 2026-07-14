@@ -23,9 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// --- 存活探针纯函数（W5 待创建：supervisor/liveness-probe.ts）---
-// 导入尚不存在的模块 → 整个测试文件红灯（import 阶段失败）
-// @ts-expect-error W5 待创建模块，当前不存在（红灯预期）
+// --- 存活探针纯函数（supervisor/liveness-probe.ts）---
 import { checkHealthEndpoint, LIVENESS_FAIL_THRESHOLD } from '../supervisor/liveness-probe.js'
 
 // --- runtime-supervisor：依赖 electron，需 mock 后才能实例化 ---

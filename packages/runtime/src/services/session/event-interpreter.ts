@@ -376,9 +376,15 @@ export class EventInterpreter {
       if (this.watchdogWarned) return
       this.watchdogWarned = true
       console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
+      // WARN payload 与前端 message.stream_error 契约对齐：带 content 字段（人类可读原因），
+      // 前端 chat-message-effects 读 readString(payload,'content') 显示。kind 保留作分类标记。
       this.opts.send({
         type: 'message.stream_error' as ServerMessageType,
-        payload: { sessionId: this.sessionId, kind: 'silent' },
+        payload: {
+          sessionId: this.sessionId,
+          content: `长时间无响应（${SILENT_WARN_MS / 1000}s 无活动）`,
+          kind: 'silent',
+        },
       })
     }, SILENT_WARN_MS)
     // ABORT 到：判定卡死，触发回调并清自身（abort 路径会广播终态）

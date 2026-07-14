@@ -108,6 +108,8 @@ export class LivenessMonitor {
     if (this.timer) return
     this.consecutiveFailures = 0
     this.timer = setInterval(() => { void this.tick() }, this.intervalMs)
+    // unref：探针定时器不应阻止进程退出（Electron 主进程正常退出时无需等它）
+    this.timer.unref()
   }
 
   /** 停止探针并清零计数（幂等：未启动则无操作） */

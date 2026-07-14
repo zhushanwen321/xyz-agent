@@ -282,6 +282,10 @@ export interface ServerMessageMapBase {
   'error': { code: string; message: string; sessionId?: string; details?: Record<string, unknown> }
   // 流式异步推送失败（server-push 通道，区别于请求级 error envelope；见错误契约文档）
   'message.error': { sessionId: string; message: string }
+  // message.stream_error：流式异常。WARN（pi 静默卡死）与真正错误共用本类型。
+  // content 为人类可读原因（前端 chat-message-effects 读 readString(payload,'content')），
+  // kind 仅作分类标记（'silent' 等），可选——前端不依赖它显示。
+  'message.stream_error': { sessionId: string; content: string; kind?: string }
   // send.rejected：runtime 预检拦截（busy 时发送），防御性反馈通道（D-006）。
   // 语义：操作拒绝，区别于 message.error（流终止）。不进对话流，不翻流式态。
   // useChat 收到后回滚 pendingSend + toast。

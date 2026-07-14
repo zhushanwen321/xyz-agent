@@ -17,9 +17,10 @@
 <template>
   <div class="md-mermaid-wrap">
     <!-- 渲染中占位（mermaid 首次加载 ~3MB，极短） -->
-    <div v-if="status === 'loading'" class="md-mermaid__placeholder">{{ t('panel.mermaid.rendering') }}</div>
+    <div v-if="status === 'loading' && !svg" class="md-mermaid__placeholder">{{ t('panel.mermaid.rendering') }}</div>
     <!-- 渲染失败：提示 + 折叠源码（用 div toggle 替代原生 <details>，遵循禁原生交互元素规范） -->
-    <div v-else-if="status === 'error'" class="md-mermaid__error">
+    <!-- 仅在无上次成功 SVG 时单独显示错误占位；有上次 SVG 则下方渲染区仍展示旧图（流式增量不全屏消失） -->
+    <div v-else-if="status === 'error' && !svg" class="md-mermaid__error">
       <div class="flex items-center gap-1.5 text-[12px] text-danger">
         <AlertTriangle class="size-3.5" />
         <span>{{ t('panel.mermaid.renderFailed') }}</span>
@@ -36,9 +37,9 @@
         </Button>
       </div>
     </div>
-    <!-- 渲染成功：气泡内静态 SVG（点击放大） -->
+    <!-- 渲染成功 / 失败但保留上次 SVG：气泡内静态 SVG（点击放大） -->
     <!-- eslint-disable-next-line vue/no-v-html -- renderMermaid 产出的 SVG 由 mermaid 库生成（非用户 HTML），与 shiki codeToHtml 同论证 XSS 安全。受控注入点。 -->
-    <div v-else v-html="svg" class="md-mermaid__inline cursor-pointer transition-opacity hover:opacity-90" :title="t('panel.mermaid.clickToZoom')" @click="openFullscreen" />
+    <div v-if="svg" v-html="svg" class="md-mermaid__inline cursor-pointer transition-opacity hover:opacity-90" :title="t('panel.mermaid.clickToZoom')" @click="openFullscreen" />
 
     <!-- 全屏 Dialog：SVG + zoom 控制 -->
     <Dialog v-model:open="fullscreenOpen">

@@ -115,8 +115,9 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
     case 'text_start': case 'text_end':
       return [{ kind: 'noop' }]
     // FR-5: streaming error — surface as message.stream_error
+    // payload 形状与 protocol 契约对齐：content（人类可读）+ kind（分类，可选）
     case 'error':
-      return [{ kind: 'message', message: { type: 'message.stream_error', payload: { sessionId: sid, reason: 'error', content: sub.content ?? '' } } }]
+      return [{ kind: 'message', message: { type: 'message.stream_error', payload: { sessionId: sid, content: sub.content ?? '', kind: 'error' } } }]
     default:
       console.warn('[EventAdapter] Unhandled message_update sub-type:', sub.type)
       return [{ kind: 'noop' }]

@@ -521,6 +521,11 @@ const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({
 
 export const extension = {
   onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
+  /** 主动重拉（对齐 runtime extension.list → 广播 config.extensions 刷新） */
+  async scan() {
+    await sleep(TIMING.ack)
+    extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+  },
   async toggle(name: string, enabled: boolean) {
     await sleep(TIMING.ack)
     const target = fixtureExtensions.find((e) => e.name === name)
