@@ -257,6 +257,25 @@ export const useSubagentStore = defineStore('subagent', () => {
     setViewingSubagentId(panelId, null)
   }
 
+  /**
+   * 取消 running subagent（调 RPC + 乐观更新）。
+   * 成功后立即将 records 中对应项 status 改为 cancelled（不等 WS 推送，避免 UI 延迟）。
+   * RPC 失败时不改 status（乐观更新回滚），error 向上抛由调用方 toast。
+   */
+  async function cancelSubagent(sessionId: string, subagentId: string): Promise<void> {
+    // 先乐观更新（假设成功）
+    const record = records.value.find((s) => s.subagentId === subagentId)
+    const prevStatus = record?.status
+    if (record) record.status = 'cancelled'
+    try {
+      await sessionApi.subagentAction(sessionId, 'cancel', subagentId)
+    } catch (e) {
+      // 回滚乐观更新
+      if (record && prevStatus) record.status = prevStatus
+      throw e
+    }
+  }
+
   return {
     // state
     records,
@@ -274,6 +293,7 @@ export const useSubagentStore = defineStore('subagent', () => {
     clearSubagents,
     selectSubagent,
     backToMain,
+    cancelSubagent,
     stopStream,
     fetchAndInject,
   }

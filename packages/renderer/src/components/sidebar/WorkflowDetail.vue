@@ -24,7 +24,8 @@
       <span v-if="workflow.slug" class="shrink-0 font-mono text-[10px] text-muted">
         {{ workflow.slug }}
       </span>
-      <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort -->
+      <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort。
+           pause/resume 单次点击；abort 两段式确认。 -->
       <div v-if="workflow.status === 'running' || workflow.status === 'paused'" class="flex shrink-0 items-center gap-0.5">
         <Button
           variant="ghost"
@@ -39,11 +40,15 @@
         <Button
           variant="ghost"
           size="icon"
-          class="size-5 text-subtle hover:text-danger"
-          :title="t('sidebar.workflowDetail.terminate')"
-          @click="emit('action', { action: 'abort', runId: workflow.runId })"
+          :data-testid="aborting ? 'workflow-detail-abort-confirm' : 'workflow-detail-abort'"
+          :class="aborting
+            ? 'size-5 border border-danger bg-danger text-white'
+            : 'size-5 text-subtle hover:text-danger'"
+          :title="aborting ? t('sidebar.workflowDetail.terminateConfirm') : t('sidebar.workflowDetail.terminate')"
+          @click="onAbortClick"
         >
-          <Square class="size-3" />
+          <Check v-if="aborting" class="size-3" />
+          <Square v-else class="size-3" />
         </Button>
       </div>
     </div>
@@ -51,35 +56,37 @@
     <div class="mx-2 mb-1 h-px bg-border" />
 
     <!-- agent call 列表（按 phase 分组） -->
-    <div class="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
-      <div
-        v-for="group in phaseGroups"
-        :key="group.phase"
-        class="mb-2"
-      >
-        <!-- phase header -->
-        <div class="flex items-center gap-1.5 px-1 py-1">
-          <span
-            class="size-1.5 shrink-0 rounded-full"
-            :class="phaseDotClass(group.phaseStatus)"
-          />
-          <span class="text-[10px] font-medium uppercase tracking-wide text-subtle">
-            {{ group.phase }}
-          </span>
-          <span class="text-[10px] text-subtle opacity-60">
-            {{ t('sidebar.workflowDetail.agentsLabel', { count: group.calls.length }) }}
-          </span>
-        </div>
-
-        <!-- agent call 卡片 -->
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="flex flex-col px-1.5 pb-2">
         <div
-          v-for="call in group.calls"
-          :key="call.id"
-          class="group relative cursor-pointer rounded-md px-2 py-[6px] transition-colors hover:bg-surface-hover"
-          :class="{ 'opacity-40': call.status === 'pending' }"
-          data-testid="workflow-agent-call"
-          @click="call.status !== 'pending' && emit('select-agent-call', call.sessionId)"
+          v-for="group in phaseGroups"
+          :key="group.phase"
+          class="mb-2"
         >
+          <!-- phase header -->
+          <div class="flex items-center gap-1.5 px-1 py-1">
+            <span
+              class="size-1.5 shrink-0 rounded-full"
+              :class="phaseDotClass(group.phaseStatus)"
+            />
+            <span class="text-[10px] font-medium uppercase tracking-wide text-subtle">
+              {{ group.phase }}
+            </span>
+            <span class="text-[10px] text-subtle opacity-60">
+              {{ t('sidebar.workflowDetail.agentsLabel', { count: group.calls.length }) }}
+            </span>
+          </div>
+
+          <!-- agent call 卡片 -->
+          <div
+            v-for="call in group.calls"
+            :key="call.id"
+            class="group relative cursor-pointer rounded-md px-2 py-[6px] transition-colors hover:bg-surface-hover"
+            :class="{ 'opacity-40': call.status === 'pending' }"
+            :title="call.status === 'pending' ? t('sidebar.workflowDetail.pendingHint') : undefined"
+            data-testid="workflow-agent-call"
+            @click="call.status !== 'pending' && emit('select-agent-call', call.sessionId)"
+          >
           <div class="flex items-center gap-2">
             <Loader2
               v-if="call.status === 'running'"
@@ -107,14 +114,16 @@
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </ScrollArea>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { ChevronLeft, Loader2, Pause, Play, Square } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { ChevronLeft, Loader2, Pause, Play, Square, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import type { WorkflowRunRecord, WorkflowAgentCall } from '@xyz-agent/shared'
 
@@ -136,6 +145,19 @@ const emit = defineEmits<{
   'select-agent-call': [sessionId: string | undefined]
   action: [payload: { action: 'pause' | 'resume' | 'abort'; runId: string }]
 }>()
+
+/** abort 两段式确认态（header 单卡片，单个 boolean 即可） */
+const aborting = ref(false)
+
+/** abort 两段式：首次点击进入确认态，二次点击 emit abort */
+function onAbortClick(): void {
+  if (aborting.value) {
+    emit('action', { action: 'abort', runId: props.workflow.runId })
+    aborting.value = false
+  } else {
+    aborting.value = true
+  }
+}
 
 /** phase 分组 + 组内状态聚合 */
 interface PhaseGroup {

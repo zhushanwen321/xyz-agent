@@ -26,47 +26,67 @@
       <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">{{ t('sidebar.subagentList.retry') }}</Button>
     </div>
     <!-- 列表 -->
-    <div v-else-if="subagents.length > 0" class="min-h-0 flex-1 overflow-y-auto px-1.5">
-      <div
-        v-for="record in subagents"
-        :key="record.subagentId"
-        class="group relative cursor-pointer rounded-md px-2 py-[7px] transition-colors hover:bg-surface-hover"
-        data-testid="subagent-card"
-        @click="emit('select', record.subagentId)"
-      >
-        <!-- 状态指示 -->
-        <div class="flex items-center gap-2">
-          <Loader2
-            v-if="record.status === 'running'"
-            class="size-[13px] shrink-0 animate-spin text-accent"
-            data-testid="subagent-card-spinner"
-          />
-          <span
-            v-else
-            class="size-2 shrink-0 rounded-full"
-            :class="statusDotClass(record.status)"
-          />
-          <span class="min-w-0 flex-1 truncate text-[12.5px] font-medium leading-[1.35] text-fg">
-            {{ record.agent }}
-          </span>
-          <span class="shrink-0 font-mono text-[10px] text-subtle">
-            {{ record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH) }}
-          </span>
-        </div>
+    <ScrollArea v-else-if="subagents.length > 0" class="min-h-0 flex-1">
+      <div class="flex flex-col px-1.5">
+        <div
+          v-for="record in subagents"
+          :key="record.subagentId"
+          class="group relative cursor-pointer rounded-md px-2 py-[7px] transition-colors hover:bg-surface-hover"
+          data-testid="subagent-card"
+          :title="record.subagentId"
+          @click="emit('select', record.subagentId)"
+          @mouseleave="cancellingId = null"
+        >
+          <!-- 状态指示 -->
+          <div class="flex items-center gap-2">
+            <Loader2
+              v-if="record.status === 'running'"
+              class="size-[13px] shrink-0 animate-spin text-accent"
+              data-testid="subagent-card-spinner"
+            />
+            <span
+              v-else
+              class="size-2 shrink-0 rounded-full"
+              :class="statusDotClass(record.status)"
+            />
+            <span class="min-w-0 flex-1 truncate text-[12.5px] font-medium leading-[1.35] text-fg">
+              {{ record.agent }}
+            </span>
+            <!-- slug（短标签，空串兜底 agent 名）替代原始 hash -->
+            <span class="shrink-0 font-mono text-[10px] text-muted">
+              {{ record.slug || record.agent }}
+            </span>
+            <!-- cancel 按钮（running 态显示，inline 两段式确认） -->
+            <Button
+              v-if="record.status === 'running'"
+              variant="ghost"
+              size="icon"
+              :data-testid="cancellingId === record.subagentId ? 'subagent-action-cancel-confirm' : 'subagent-action-cancel'"
+              :class="cancellingId === record.subagentId
+                ? 'size-5 rounded-[5px] border border-danger bg-danger text-white'
+                : 'size-5 text-subtle hover:text-danger'"
+              :title="cancellingId === record.subagentId ? t('sidebar.subagentList.cancelConfirm') : t('sidebar.subagentList.cancel')"
+              @click.stop="onCancelClick(record.subagentId)"
+            >
+              <Check v-if="cancellingId === record.subagentId" class="size-3" />
+              <X v-else class="size-3" />
+            </Button>
+          </div>
 
-        <!-- 摘要 -->
-        <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-subtle">
-          <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
-          <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
-          <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
-        </div>
+          <!-- 摘要 -->
+          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-subtle">
+            <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
+            <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
+            <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
+          </div>
 
-        <!-- 任务描述 -->
-        <div class="mt-0.5 truncate pl-[21px] text-[11px] leading-[1.3] text-muted">
-          {{ record.task }}
+          <!-- 任务描述 -->
+          <div class="mt-0.5 truncate pl-[21px] text-[11px] leading-[1.3] text-muted">
+            {{ record.task }}
+          </div>
         </div>
       </div>
-    </div>
+    </ScrollArea>
 
     <!-- 空态 -->
     <div
@@ -82,17 +102,17 @@
 </template>
 
 <script setup lang="ts">
-import { Loader2, Bot, AlertCircle } from '@lucide/vue'
+import { ref } from 'vue'
+import { Loader2, Bot, AlertCircle, X, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
 
 /** token 数超过此阈值显示 k 单位 */
 const TOKEN_K_THRESHOLD = 1000
 /** 秒数超过此阈值显示分秒组合 */
 const SECONDS_PER_MINUTE = 60
-/** subagentId 显示截断长度 */
-const SUBAGENT_ID_DISPLAY_LENGTH = 12
 
 const { t } = useI18n()
 
@@ -107,8 +127,22 @@ withDefaults(defineProps<{
 
 const emit = defineEmits<{
   select: [subagentId: string]
+  cancel: [subagentId: string]
   retry: []
 }>()
+
+/** 当前进入取消确认态的 subagentId（两段式：首次点击进入，再次点击执行） */
+const cancellingId = ref<string | null>(null)
+
+/** cancel 两段式：首次点击进入确认态，二次点击 emit cancel */
+function onCancelClick(subagentId: string): void {
+  if (cancellingId.value === subagentId) {
+    emit('cancel', subagentId)
+    cancellingId.value = null
+  } else {
+    cancellingId.value = subagentId
+  }
+}
 
 /** 状态点颜色映射（design-tokens 语义色） */
 function statusDotClass(status: SubagentStatus): string {

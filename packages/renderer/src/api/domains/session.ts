@@ -155,3 +155,15 @@ export function workflowAction(
 ): Promise<void> {
   return request<void>('session.workflowAction', { sessionId, action, runId })
 }
+
+/**
+ * 取消 running subagent（经扩展 /subagents cancel，不经 LLM）。
+ * 对称 workflowAction，reply session.subagentActionDone。
+ */
+export function subagentAction(
+  sessionId: string,
+  action: 'cancel',
+  subagentId: string,
+): Promise<void> {
+  return request<void>('session.subagentAction', { sessionId, action, subagentId })
+}

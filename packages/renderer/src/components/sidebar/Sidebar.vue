@@ -74,6 +74,8 @@
         :file-count="fileCount"
         :subagent-count="subagentCount"
         :workflow-count="workflowCount"
+        :subagent-running-count="subagentRunningCount"
+        :workflow-running-count="workflowRunningCount"
       />
 
       <!-- 子视图区：会话列表 / 文件视图 / subagent 列表 -->
@@ -106,6 +108,7 @@
             :is-loading="subagentStore.isLoading"
             :load-error="subagentStore.loadError"
             @select="onSelectSubagent"
+            @cancel="onCancelSubagent"
             @retry="onRetrySubagents"
           />
         </template>
@@ -192,16 +195,15 @@ import WorkflowList from './WorkflowList.vue'
 import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useChatStore } from '@/stores/chat'
 import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
+import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import * as events from '@/api/events'
-import * as sessionApi from '@/api/domains/session'
 
 const { t } = useI18n()
 const navigation = useNavigationStore()
@@ -248,11 +250,17 @@ const fileCount = computed(() => {
 /** subagent tab 计数（当前 session 的 subagent 数量，读 store 共享列表） */
 const subagentCount = computed(() => subagentStore.records.length)
 
+/** subagent running 态数量（badge 精确化：仅 running>0 亮蓝点） */
+const subagentRunningCount = computed(() => subagentStore.records.filter((r) => r.status === 'running').length)
+
 /** subagent 列表（store records 的 computed 解包，供 template 直接用） */
 const subagentList = computed(() => subagentStore.records)
 
 /** workflow tab 计数（当前 session 的 workflow 数量，读 store 共享列表） */
 const workflowCount = computed(() => workflowStore.workflowCount())
+
+/** workflow running/paused 态数量（badge 精确化：仅活跃态>0 亮蓝点） */
+const workflowRunningCount = computed(() => workflowStore.records.filter((r) => r.status === 'running' || r.status === 'paused').length)
 
 /** workflow 列表（store records 的 computed 解包，供 template 直接用） */
 const workflowList = computed(() => workflowStore.records)
@@ -274,87 +282,15 @@ async function onSelectSession(id: string): Promise<void> {
   }
 }
 
-/**
- * 选中 subagent 时在 active panel 进入 overlay 视图。
- * store.selectSubagent 需要 mainSessionId + chatStore streaming 收口回调（W4：chat store 成为
- * assistant content mutation 的唯一入口）+ setMessages（fetchAndInject 用）。
- * 铁律：store 不 import chatStore，由 features 层（本组件）注入。
- * 从 active panel 的 sessionId 取 mainSessionId，chatStore 注入由 useChatStore() 实例提供。
- */
-async function onSelectSubagent(subagentId: string): Promise<void> {
-  const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
-  if (!activePanel?.sessionId) return
-  // chatStore 在此 import（features 层跨 store 编排），注入 store action
-  const chat = useChatStore()
-  try {
-    await subagentStore.selectSubagent(
-      panelStore.activePanelId,
-      activePanel.sessionId,
-      subagentId,
-      (virtualId, lines) => chat.applySubagentStreamDelta(virtualId, lines),
-      (virtualId) => chat.finalizeSubagentStream(virtualId),
-      (virtualId, msgs) => chat.setMessages(virtualId, msgs),
-    )
-  } catch (e) {
-    // M5：fetchAndInject fail-fast 后回滚 viewing 态 + toast（对齐 selectAgentCall 模式）
-    subagentStore.backToMain(panelStore.activePanelId)
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.loadSubagentFailed', { msg }))
-  }
-}
-
-/** 选中 workflow → 进入视图 2 详情（sidebar 内，不切 Panel） */
-function onSelectWorkflow(runId: string): void {
-  workflowStore.selectWorkflow(panelStore.activePanelId, runId)
-}
-
-/** 视图 2 → 视图 1（返回 workflow 列表） */
-function onWorkflowBack(): void {
-  workflowStore.backToWorkflowList(panelStore.activePanelId)
-}
-
-/**
- * 选中 agent call → Panel overlay（切 Panel 显示 agent call 对话流）。
- * store.selectAgentCall 需要 mainSessionId + chatStore.setMessages（铁律：store 不 import chatStore）。
- *
- * Fail-fast：getAgentCallHistory 失败时 toast 报错 + 回滚 viewing（不进入 overlay 空态）。
- */
-async function onSelectAgentCall(agentCallSessionId: string | undefined): Promise<void> {
-  if (!agentCallSessionId) {
-    toastError(t('sidebar.agentCallFailed'))
-    return
-  }
-  const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
-  if (!activePanel?.sessionId) return
-  const chat = useChatStore()
-  try {
-    await workflowStore.selectAgentCall(
-      panelStore.activePanelId,
-      activePanel.sessionId,
-      agentCallSessionId,
-      (virtualId, msgs) => chat.setMessages(virtualId, msgs),
-    )
-  } catch (e) {
-    // 回滚 viewing（selectAgentCall 内 setViewing 已执行，fetchAndInject 失败需撤销）
-    workflowStore.backFromAgentCall(panelStore.activePanelId)
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.agentCallLoadFailed', { msg }))
-  }
-}
-
-/** workflow 操作按钮（pause/resume/abort），调 runtime RPC 触发扩展 slash command */
-async function onWorkflowAction(payload: { action: 'pause' | 'resume' | 'abort'; runId: string }): Promise<void> {
-  const sid = focusedSessionId.value
-  if (!sid) return
-  try {
-    await sessionApi.workflowAction(sid, payload.action, payload.runId)
-    // 操作后刷新列表（扩展执行后 state 文件已更新）
-    void workflowStore.loadWorkflows(sid)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('sidebar.workflowOpFailed', { msg }))
-  }
-}
+/** subagent/workflow 操作 handler（提取到 composable 减行） */
+const {
+  onSelectSubagent,
+  onCancelSubagent,
+  onSelectWorkflow,
+  onWorkflowBack,
+  onSelectAgentCall,
+  onWorkflowAction,
+} = useSidebarSubagentActions(focusedSessionId)
 
 /** S5：重试加载会话列表（loadSessions 失败后用户点击重试） */
 function onRetryLoadSessions(): void {

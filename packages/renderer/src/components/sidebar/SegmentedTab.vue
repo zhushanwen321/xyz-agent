@@ -49,6 +49,9 @@ const props = defineProps<{
   fileCount: number
   subagentCount: number
   workflowCount: number
+  /** running 态数量（badge 精确化：仅 running>0 亮蓝点，避免已完成任务也亮） */
+  subagentRunningCount: number
+  workflowRunningCount: number
 }>()
 
 const emit = defineEmits<{
@@ -66,12 +69,12 @@ interface TabDef {
 
 /**
  * tabs 响应式读 props 计数。
- * subagentCount > 0 且有 running 态时 badge 亮（当前简化为 count > 0 即亮，后续可按 status 精确判断）。
+ * badge 精确化：仅 running 态 > 0 亮蓝点（需关注的任务），已完成任务不亮。
  */
 const tabs = computed<TabDef[]>(() => [
   { value: 'sessions', label: t('sidebar.segmentedTab.session'), icon: MessageSquare, count: props.sessionCount, badge: false },
   { value: 'files', label: t('sidebar.segmentedTab.file'), icon: File, count: props.fileCount, badge: false },
-  { value: 'subagents', label: t('sidebar.segmentedTab.subagent'), icon: Bot, count: props.subagentCount, badge: props.subagentCount > 0 },
-  { value: 'workflows', label: t('sidebar.segmentedTab.workflow'), icon: Workflow, count: props.workflowCount, badge: props.workflowCount > 0 },
+  { value: 'subagents', label: t('sidebar.segmentedTab.subagent'), icon: Bot, count: props.subagentCount, badge: props.subagentRunningCount > 0 },
+  { value: 'workflows', label: t('sidebar.segmentedTab.workflow'), icon: Workflow, count: props.workflowCount, badge: props.workflowRunningCount > 0 },
 ])
 </script>

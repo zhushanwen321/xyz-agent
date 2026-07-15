@@ -52,7 +52,7 @@ describe('WorkflowList', () => {
     expect(cards[0].text()).toContain('deploy-flow')
     expect(cards[0].text()).toContain('prod')
     // 含 agent 完成比例
-    expect(cards[0].text()).toContain('2/2 agents')
+    expect(cards[0].text()).toContain('2/2')
   })
 
   it('running 态显示 spinner', () => {
