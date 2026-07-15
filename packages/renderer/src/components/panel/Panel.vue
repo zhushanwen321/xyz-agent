@@ -18,6 +18,7 @@
     <PanelHeader
       :session-label="sessionLabel"
       :session-dir="sessionDir"
+      :session-file="sessionFile"
       :git-branch="gitBranch"
       :git-indicator="gitIndicator"
       :status="status"
@@ -140,6 +141,8 @@ const props = defineProps<{
   sessionId: string | null
   sessionLabel: string
   sessionDir: string
+  /** session JSONL 绝对路径（pi 延迟写入窗口可能为空，PanelHeader 据此渲染短文件名） */
+  sessionFile?: string
   gitBranch?: string
   /** git 脏状态指示（PanelContainer 统一提供，透传给 PanelHeader；hasRepo=false 不渲染 git 按钮） */
   gitIndicator?: GitIndicator

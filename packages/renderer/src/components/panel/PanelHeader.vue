@@ -110,6 +110,20 @@
         </template>
       </ol>
     </nav>
+    <!-- session JSONL 文件名（session id 前 8 位 + .jsonl）：点击复制磁盘真实绝对路径。
+         sessionFile 为空（pi 延迟写入窗口，规则 #6）时不渲染。no-drag 避免被拖拽区拦截。 -->
+    <Button
+      v-if="!viewingSubagent && sessionFile"
+      variant="ghost"
+      data-testid="panel-session-file"
+      class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+      :title="t('panel.header.copySessionFile')"
+      @click="copy(sessionFile, 'file')"
+    >
+      <Check v-if="copied === 'file'" class="size-3 text-accent" />
+      <FileText v-else class="size-3 opacity-60" />
+      <span>{{ shortFileName }}</span>
+    </Button>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
       <!-- SideDrawer toggle（always-visible，不依赖 git 仓库）。
@@ -188,18 +202,22 @@
  
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, PanelRight, ArrowLeft, ArrowRight, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle } from '@lucide/vue'
+import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, PanelRight, ArrowLeft, ArrowRight, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle, FileText, Check } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
+import { useCopy } from '@/composables/effects/useCopy'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
 import { STATUS_ICON } from '@/composables/logic/sessionStatus'
+import { formatShortSessionFile } from '@/composables/logic/session-file-format'
 
 const props = defineProps<{
   sessionLabel: string
   sessionDir: string
+  /** session JSONL 绝对路径（pi 延迟写入窗口可能为空，不渲染文件名） */
+  sessionFile?: string
   gitBranch?: string
   /** git 脏状态指示（驱动右侧 git 图标按钮显隐 + 脏状态点色）。hasRepo=false 不渲染按钮 */
   gitIndicator?: GitIndicator
@@ -248,6 +266,12 @@ const dirName = computed(() => {
 
 /** 当前状态对应的语义图标配置（icon / color / animation） */
 const iconConfig = computed(() => STATUS_ICON[props.status])
+
+/** session JSONL 短文件名（前 8 位 + .jsonl）；sessionFile 为空时返回空串 */
+const shortFileName = computed(() => (props.sessionFile ? formatShortSessionFile(props.sessionFile) : ''))
+
+/** 复制反馈（点击文件名后 1.2s 显示 Check 图标） */
+const { copied, copy } = useCopy()
 
 /** lucide 图标名 → 组件映射 */
 const ICON_COMPONENTS: Record<string, unknown> = {

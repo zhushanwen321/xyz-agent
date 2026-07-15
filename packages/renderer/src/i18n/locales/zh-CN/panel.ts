@@ -12,6 +12,7 @@ export default {
     gitStatus: 'Git 状态 · 打开侧栏',
     split: '分屏 · 开第二会话',
     newSession: '新建会话 · 替换待机侧',
+    copySessionFile: '复制 session 文件路径',
   },
   composer: {
     placeholder: '输入消息…',

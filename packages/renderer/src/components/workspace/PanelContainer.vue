@@ -28,6 +28,7 @@
       :session-id="leaf.sessionId"
       :session-label="sessionLabelOf(leaf)"
       :session-dir="sessionDirOf(leaf)"
+      :session-file="sessionFileOf(leaf)"
       :git-branch="gitBranchOf(leaf)"
       :git-indicator="gitIndicatorOf(leaf)"
       :status="statusOf(leaf)"
@@ -86,6 +87,9 @@ function sessionLabelOf(leaf: PanelLeaf): string {
 }
 function sessionDirOf(leaf: PanelLeaf): string {
   return leaf.sessionId ? session.list.find((s) => s.id === leaf.sessionId)?.cwd ?? '' : ''
+}
+function sessionFileOf(leaf: PanelLeaf): string | undefined {
+  return leaf.sessionId ? session.list.find((s) => s.id === leaf.sessionId)?.sessionFile : undefined
 }
 function gitBranchOf(leaf: PanelLeaf): string | undefined {
   return leaf.sessionId ? session.list.find((s) => s.id === leaf.sessionId)?.gitBranch : undefined

@@ -12,6 +12,7 @@ export default {
     gitStatus: 'Git status · Open sidebar',
     split: 'Split · Open second session',
     newSession: 'New session · Replace standby',
+    copySessionFile: 'Copy session file path',
   },
   composer: {
     placeholder: 'Type a message…',
