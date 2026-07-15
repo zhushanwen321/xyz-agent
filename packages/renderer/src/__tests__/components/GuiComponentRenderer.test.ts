@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import GuiComponentRenderer from '@/components/panel/message-stream/GuiComponentRenderer.vue'
+import { GUI_CUSTOM_REGISTRY_KEY } from '@/components/panel/message-stream/gui/gui-registry'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 
 describe('GuiComponentRenderer 路由', () => {
@@ -76,7 +77,7 @@ describe('GuiComponentRenderer 路由', () => {
     const wrapper = mount(GuiComponentRenderer, {
       props: { component },
       global: {
-        provide: { 'gui-custom-registry': { 'my-widget': MyWidget } },
+        provide: { [GUI_CUSTOM_REGISTRY_KEY]: { 'my-widget': MyWidget } },
       },
     })
 

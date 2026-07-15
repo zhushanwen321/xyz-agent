@@ -42,11 +42,43 @@ describe('ListTree', () => {
 
   it('depth 缩进：depth=2 时 padding-left=40px', () => {
     const items: TreeItem[] = [
-      { label: 'deep', depth: 2 },
+      { label: 'deep' },
     ]
-    const wrapper = mount(ListTree, { props: { items } })
+    const wrapper = mount(ListTree, { props: { items, depth: 2 } })
     const item = wrapper.find('.list-tree__item')
     expect(item.attributes('style')).toContain('padding-left: 40px')
+  })
+
+  it('递归 children 自动 depth+1 缩进（children padding > parent padding）', () => {
+    const items: TreeItem[] = [
+      {
+        label: 'parent',
+        children: [
+          { label: 'child' },
+        ],
+      },
+    ]
+    const wrapper = mount(ListTree, { props: { items } })
+    const allItems = wrapper.findAll('.list-tree__item')
+    expect(allItems).toHaveLength(2)
+    // parent 在 depth=0 → padding-left: 0px
+    expect(allItems[0].attributes('style')).toContain('padding-left: 0px')
+    // child 在 depth=1 → padding-left: 20px（比 parent 缩进）
+    expect(allItems[1].attributes('style')).toContain('padding-left: 20px')
+  })
+
+  it('status 文本映射为中文（running→进行中, done→完成, failed→失败）', () => {
+    const items: TreeItem[] = [
+      { label: 'a', status: 'running' },
+      { label: 'b', status: 'done' },
+      { label: 'c', status: 'failed' },
+    ]
+    const wrapper = mount(ListTree, { props: { items } })
+    const statuses = wrapper.findAll('.list-tree__status')
+    expect(statuses).toHaveLength(3)
+    expect(statuses[0].text()).toBe('进行中')
+    expect(statuses[1].text()).toBe('完成')
+    expect(statuses[2].text()).toBe('失败')
   })
 
   it('icon=check 渲染对应图标', () => {

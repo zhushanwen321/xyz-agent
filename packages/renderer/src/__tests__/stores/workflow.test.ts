@@ -12,7 +12,7 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/stores/workflow.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
 import type { WorkflowRunRecord } from '@xyz-agent/shared'
@@ -23,9 +23,19 @@ vi.mock('@/api/domains/session', () => ({
   getAgentCallHistory: vi.fn(),
 }))
 
+// mock events（subscribeWorkflowPush 内部订阅）
+let eventHandlers: Array<(msg: { type: string; payload?: unknown }) => void> = []
+vi.mock('@/api/events', () => ({
+  on: vi.fn((_sessionId: string, handler: (msg: { type: string; payload?: unknown }) => void) => {
+    eventHandlers.push(handler)
+    return () => { eventHandlers = eventHandlers.filter((h) => h !== handler) }
+  }),
+}))
+
 import * as sessionApi from '@/api/domains/session'
 
 beforeEach(() => {
+  eventHandlers = []
   setActivePinia(createPinia())
   vi.clearAllMocks()
 })
@@ -140,5 +150,85 @@ describe('workflow store', () => {
 
     expect(store.isViewing('panel-1')).toBe(true)
     expect(store.isViewing('panel-2')).toBe(false)
+  })
+
+  it('Fail-fast：getAgentCallHistory 失败 → selectAgentCall throw（不静默 setMessages([])）', async () => {
+    vi.mocked(sessionApi.getAgentCallHistory).mockRejectedValue(new Error('文件不存在'))
+    const store = useWorkflowStore()
+    const setMessages = vi.fn()
+
+    // selectAgentCall 不 catch，错误传播给调用方
+    await expect(
+      store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', setMessages),
+    ).rejects.toThrow('文件不存在')
+
+    // setViewing 已执行（fetchAndInject 之前），调用方负责回滚
+    expect(store.isViewing('panel-1')).toBe(true)
+    // setMessages 不应被调用（fetchAndInject 失败）
+    expect(setMessages).not.toHaveBeenCalled()
+  })
+})
+
+describe('workflow store · subscribeWorkflowPush', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('running 信号：立即 loadWorkflows + 延迟 500ms 重试（workflow-state-link 延迟写入兜底）', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+    const store = useWorkflowStore()
+
+    store.subscribeWorkflowPush('sess-1')
+    // 模拟 runtime 推送 running 信号
+    for (const h of eventHandlers) {
+      h({ type: 'session.workflowUpdate', payload: { update: { runId: 'wf-1', status: 'running' } } })
+    }
+    // 立即拉取一次
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+
+    // 500ms 后重试一次
+    await vi.advanceTimersByTimeAsync(500)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(2)
+  })
+
+  it('done 信号：只拉取一次（不延迟重试）', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+    const store = useWorkflowStore()
+
+    store.subscribeWorkflowPush('sess-1')
+    for (const h of eventHandlers) {
+      h({ type: 'session.workflowUpdate', payload: { update: { runId: 'wf-1', status: 'done', reason: 'completed' } } })
+    }
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+
+    // 500ms 后不应再拉
+    await vi.advanceTimersByTimeAsync(500)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+  })
+
+  it('切会话后旧 session 的延迟重试不再触发（focusedSessionId 变更）', async () => {
+    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+    const store = useWorkflowStore()
+
+    store.subscribeWorkflowPush('sess-1')
+    // 推 running 信号
+    for (const h of eventHandlers) {
+      h({ type: 'session.workflowUpdate', payload: { update: { runId: 'wf-1', status: 'running' } } })
+    }
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+
+    // 切会话（subscribeWorkflowPush 再次调用，focusedSessionId 变为 'sess-2'）
+    store.subscribeWorkflowPush('sess-2')
+    eventHandlers = [] // 新 session 的订阅 handler
+
+    // 500ms 后旧的重试不应执行（focusedSessionId 已变）
+    await vi.advanceTimersByTimeAsync(500)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
   })
 })

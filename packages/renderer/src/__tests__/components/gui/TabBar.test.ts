@@ -37,4 +37,10 @@ describe('TabBar', () => {
     expect(wrapper.text()).toContain('plain')
     expect(wrapper.find('.tab-bar__dot').exists()).toBe(false)
   })
+
+  it('空 tabs 不崩', () => {
+    const wrapper = mount(TabBar, { props: { tabs: [] } })
+    expect(wrapper.find('[data-testid="gui-tab-bar"]').exists()).toBe(true)
+    expect(wrapper.findAll('.tab-bar__tab')).toHaveLength(0)
+  })
 })

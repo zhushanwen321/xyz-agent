@@ -61,16 +61,16 @@ Mock 模式跳过 runtime event-adapter：`run-send-stream.ts` 直接 `pushSessi
 
 ## 4. MOCK 测试（vitest 单测）
 
-**已有 32 个单测**，覆盖 7 种 type 的组件级渲染：
+**已有 37 个单测**，覆盖 7 种 type 的组件级渲染 + 边界条件：
 
 | 测试文件 | 组件 | 用例数 |
 |---|---|---|
-| `__tests__/components/gui/ProgressBar.test.ts` | ProgressBar | 4 |
-| `__tests__/components/gui/StatsLine.test.ts` | StatsLine | 3 |
-| `__tests__/components/gui/TabBar.test.ts` | TabBar | 2 |
+| `__tests__/components/gui/ProgressBar.test.ts` | ProgressBar | 5 |
+| `__tests__/components/gui/StatsLine.test.ts` | StatsLine | 4 |
+| `__tests__/components/gui/TabBar.test.ts` | TabBar | 3 |
 | `__tests__/components/gui/Card.test.ts` | Card（含嵌套） | 5 |
 | `__tests__/components/gui/Columns.test.ts` | Columns（含递归） | 3 |
-| `__tests__/components/gui/ListTree.test.ts` | ListTree（含递归） | 5 |
+| `__tests__/components/gui/ListTree.test.ts` | ListTree（含递归+depth+status映射） | 7 |
 | `__tests__/components/GuiComponentRenderer.test.ts` | 路由 + 降级 | 10 |
 
 运行：`cd packages/renderer && npx vitest run src/__tests__/components/gui/ src/__tests__/components/GuiComponentRenderer.test.ts`
@@ -89,7 +89,7 @@ Mock 模式跳过 runtime event-adapter：`run-send-stream.ts` 直接 `pushSessi
 
 | ID | 场景 | 关键断言 |
 |---|---|---|
-| E2E-GUI-1 | harness smoke | app 加载首窗口 |
+| E2E-GUI-1 | harness smoke | app 加载首窗口 + sidebar 会话按钮可见 |
 | E2E-GUI-2 | 路径 B: tool result `__gui__` → card 嵌套渲染 | `gui-card` + `gui-progress-bar` + `gui-stats-line` 可见，含 'CI Pipeline'/'build'/'7'/'8'/'turns'/'15' |
 | E2E-GUI-3 | 路径 A: widgetGui stats-line → terminal tab | `gui-stats-line` 在 SideDrawer 内可见，含 'turns'/'tokens'/'duration' |
 | E2E-GUI-4 | 路径 A: widgetGui list-tree → browser tab | `gui-list-tree` 在 SideDrawer 内可见，含 'Deploy'/'VPC'/'RDS'/'Redis' |
@@ -100,10 +100,10 @@ Mock 模式跳过 runtime event-adapter：`run-send-stream.ts` 直接 `pushSessi
 
 | 步骤 | 操作 | 期望 |
 |---|---|---|
-| 1 | 激活 e2e-files session | `composer-box` 可见 |
+| 1 | 激活 s3 session（'API 性能优化'） | `composer-box` 可见 |
 | 2 | 输入 'GUI 测试' + Enter | stop-btn 出现 → 消失（流式完成） |
-| 3 | 点击 `tool-block-header` | tool 块展开 |
-| 4 | 断言 `gui-component-renderer` | 可见 |
+| 3 | 点击 `.turn-meta` | 展开 turn trace（完成后默认收起） |
+| 4 | 点击 `tool-block-header` | tool 块展开 |
 | 5 | 断言 `gui-card` | 可见，含 'CI Pipeline' |
 | 6 | 断言 `gui-progress-bar` | 可见，含 'build' '7' '8' |
 | 7 | 断言 `gui-stats-line` | 可见，含 'turns' '15' |
@@ -113,16 +113,15 @@ Mock 模式跳过 runtime event-adapter：`run-send-stream.ts` 直接 `pushSessi
 | 步骤 | 操作 | 期望 |
 |---|---|---|
 | 1-2 | 同 E2E-GUI-2 | 流式完成 |
-| 3 | 点文件树 src/index.ts | SideDrawer 打开（detail tab） |
-| 4 | 点 `drawer-tab-terminal` | 切到 terminal tab |
-| 5 | 断言 SideDrawer 内 `gui-stats-line` | 可见，含 'turns' 'tokens' 'duration' |
+| 3 | 点 `drawer-toggle` | SideDrawer 打开（默认 terminal tab） |
+| 4 | 断言 SideDrawer 内 `gui-stats-line` | 可见，含 'turns' 'tokens' 'duration' |
 
 #### E2E-GUI-4: 路径 A（widgetGui list-tree）
 
 | 步骤 | 操作 | 期望 |
 |---|---|---|
 | 1-2 | 同 E2E-GUI-2 | 流式完成 |
-| 3 | 点文件树 src/index.ts | SideDrawer 打开 |
+| 3 | 点 `drawer-toggle` | SideDrawer 打开 |
 | 4 | 点 `drawer-tab-browser` | 切到 browser tab |
 | 5 | 断言 SideDrawer 内 `gui-list-tree` | 可见，含 'Deploy' 'VPC' 'RDS' 'Redis' |
 
@@ -136,7 +135,7 @@ npx playwright test                            # 跑全部 E2E
 
 ## 6. 已知约束
 
-- **SideDrawer 打开方式**：mock 环境下 sample-project 非 git 仓库，PanelHeader git 按钮不显示。通过点文件树文件打开 SideDrawer（detail tab），再切到 terminal/browser tab。
+- **SideDrawer 打开方式**：通过 PanelHeader 的 `drawer-toggle` 按钮打开（always-visible，不依赖 git 仓库）。默认显示 terminal tab。
 - **widgetGui 是瞬态的**：不持久化到 message store，session 切换 / 组件卸载后清除。只有 tool result `__gui__` 在历史重放后仍存在。
 - **Card/Columns 递归**：通过 `<GuiComponentRenderer v-for :component>` 中转递归，不自己处理 type 路由。
-- **ListTree 自递归**：`<ListTree :items="children">` Vue 组件自递归渲染子节点。
+- **ListTree 自递归**：`<ListTree :items="children" :depth="depth+1">` Vue 组件自递归渲染子节点，depth 自动 +1 传递缩进。

@@ -50,4 +50,10 @@ describe('StatsLine', () => {
     expect(wrapper.text()).toContain('42')
     expect(wrapper.find('.stats-line__label').exists()).toBe(false)
   })
+
+  it('空 items 不崩', () => {
+    const wrapper = mount(StatsLine, { props: { items: [] } })
+    expect(wrapper.find('[data-testid="gui-stats-line"]').exists()).toBe(true)
+    expect(wrapper.findAll('.stats-line__item')).toHaveLength(0)
+  })
 })

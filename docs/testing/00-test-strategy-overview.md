@@ -334,7 +334,7 @@ npm run build:e2e   # 或删除 dist/ 强制 globalSetup 重建
 | `composer.spec.ts` | 7 | composer # 文件候选 inline 触发 | ⚠️ E2E-CF-3 flaky |
 | `search-modal.spec.ts` | 11 | ⌘K 搜索浮层 四类分组/键盘导航/slash 注入 | ✅ 全绿 |
 | `workspace.spec.ts` | 3 | 最近工作区 popover | ✅ 全绿 |
-| **合计 mock 轨** | **42** | | **40 绿 / 2 flaky** |
+| **合计 mock 轨** | **43** | | **41 绿 / 2 flaky** |
 
 ### 7.2 real 轨（半自动化，需真实 runtime + pi）
 

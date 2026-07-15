@@ -45,7 +45,8 @@ async function sendMessageAndWaitComplete(page: import('@playwright/test').Page)
   await input.press('Enter')
   // 等 busy → idle（mock complete 后 isGenerating=false → stop-btn 消失）。
   // stop-btn 可能出现得很快又消失（mock 流式快），用 toHaveCount(0) + 长 timeout 兜底。
-  // 先等最多 3s 看是否出现 stop-btn（确认消息已发），不出现就直接等 complete。
+  // 注意：此处 .catch(() => {}) 非关键断言——stop-btn 可能闪现太快 3s 内没看到。
+  // 真实的「消息未发出」失败由下方 `已处理` 文案断言兜底（mock canned reply 才含该词）。
   const stopBtn = page.locator('.stop-btn')
   await expect(stopBtn).toBeVisible({ timeout: 3_000 }).catch(() => {})
   await expect(stopBtn).toHaveCount(0, { timeout: 30_000 })
@@ -54,8 +55,10 @@ async function sendMessageAndWaitComplete(page: import('@playwright/test').Page)
 }
 
 test.describe('GUI 组件渲染 E2E', () => {
-  test('harness smoke：Electron app 加载首窗口', async ({ page }) => {
+  test('harness smoke：Electron app 加载首窗口 + 关键交互元素', async ({ page }) => {
     await expect(page).toHaveTitle(/xyz-agent|xyz/i)
+    // 首屏关键交互元素：sidebar 会话按钮（后续用例都依赖它）
+    await expect(page.getByRole('button', { name: /^会话/ })).toBeVisible({ timeout: 10_000 })
   })
 
   test('路径 B: tool result __gui__ → Block.vue → card 嵌套渲染', async ({ page }) => {

@@ -47,4 +47,11 @@ describe('ProgressBar', () => {
     expect(wrapper.find('[data-testid="gui-progress-bar"]').exists()).toBe(true)
     expect(wrapper.find('.progress-bar__fill').attributes('style')).toContain('width: 0.0%')
   })
+
+  it('current > total 时不崩（溢出场景）', () => {
+    const wrapper = mount(ProgressBar, { props: { current: 10, total: 8 } })
+    expect(wrapper.find('[data-testid="gui-progress-bar"]').exists()).toBe(true)
+    // 10/8 = 125%，fill width 超过 100%（track overflow-hidden 裁剪视觉溢出，但不崩渲染）
+    expect(wrapper.find('.progress-bar__fill').attributes('style')).toContain('width: 125.0%')
+  })
 })

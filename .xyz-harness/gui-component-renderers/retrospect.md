@@ -22,7 +22,7 @@
 
 1. **Wave 拆分合理**：W1 独立原语 → W2 递归嵌套 → W3 树形+路由注册，依赖链清晰，每个 Wave 可独立验证
 2. **TDD 红绿循环严格执行**：每个 Wave 先写测试确认红（import 失败），再写实现确认绿，没有先代码后补测试
-3. **递归渲染方案干净**：Card/Columns 通过 `<GuiComponentRenderer v-for :component>` 中转递归，不自己处理 type 路由，职责单一。ListTree 用 Vue 组件自递归（`<ListTree :items="children"`）更简洁
+3. **递归渲染方案干净**：Card/Columns 通过 `<GuiComponentRenderer v-for :component>` 中转递归，不自己处理 type 路由，职责单一。ListTree 用 Vue 组件自递归（`<ListTree :items="children" :depth="depth+1">`），depth 自动传递缩进
 4. **SSOT 一致性维护**：所有组件用 design-tokens 语义色（text-success/text-warning/text-danger/text-accent），不硬编码十六进制色
 
 ## 遇到的问题
@@ -48,5 +48,5 @@ ProgressBar 的 `100`（百分比乘数）、`0.8`/`0.5`（severity 阈值）被
 ## 遗留 / 后续
 
 - **custom 类型**：仍依赖运行时 provide `gui-custom-registry`，默认空表 → fallback JSON。内置 extension 编译期注册自有组件是 P2+ 范围，本次未实现
-- **demo HTML**（`docs/page-design/gui-components-demo.html`）：展示了 8 种 type 的渲染效果，用纯 HTML/CSS 模拟，与实际 Vue 组件视觉一致。未提交（是探索阶段产物，不属于本次 cw 范围）
+- **demo HTML**（`docs/page-design/archive/gui-components-demo.html`）：展示了 7 种 type + JSON fallback 的渲染效果，用纯 HTML/CSS 模拟，与实际 Vue 组件视觉一致。已提交（作为视觉参考，放 archive/）
 - **pulse-accent keyframes 死代码**：`tailwind.config.ts` 的 `pulse-accent` / `pulse-warn` keyframes 不再被 DOT_CLASS.running 引用（上一次 session 改 spinner 的连带），后续可清理
