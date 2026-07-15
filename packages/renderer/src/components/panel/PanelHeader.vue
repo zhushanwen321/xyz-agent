@@ -84,12 +84,6 @@
       class="size-[13px] shrink-0"
       :class="[iconConfig.color, iconConfig.animation]"
     />
-    <span
-      v-if="false"
-      data-testid="panel-session-dot"
-      class="size-[7px] shrink-0 rounded-full"
-      :class="statusDotClass"
-    />
     <!-- breadcrumb（shell/spec §四：项目 ▸ 分支，落点在 main-header 内）。
          不显会话名（仅目录 + 分支两段），避免与目录视觉重复。
          shrink + min-w-0：长目录+分支时截断优先发生于此，绝不盖右侧 3 按钮（按钮组 ml-auto + shrink-0）。 -->
@@ -201,7 +195,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
-import { DOT_CLASS, STATUS_ICON } from '@/composables/logic/sessionStatus'
+import { STATUS_ICON } from '@/composables/logic/sessionStatus'
 
 const props = defineProps<{
   sessionLabel: string
@@ -251,9 +245,6 @@ const dirName = computed(() => {
   const segs = props.sessionDir.split('/').filter(Boolean)
   return segs.length ? segs[segs.length - 1] : props.sessionDir
 })
-
-/** 状态点 8 态色（DOT_CLASS SSOT，与 sidebar / overview 一致） */
-const statusDotClass = computed(() => DOT_CLASS[props.status])
 
 /** 当前状态对应的语义图标配置（icon / color / animation） */
 const iconConfig = computed(() => STATUS_ICON[props.status])
