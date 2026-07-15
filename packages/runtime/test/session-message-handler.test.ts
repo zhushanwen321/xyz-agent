@@ -147,10 +147,10 @@ describe('SessionMessageHandler — error envelope 回归', () => {
       expect(cap.errors).toHaveLength(0)
     })
 
-    it('subagentAction 失败 → sendError', async () => {
+    it('subagentAction 失败 → 抛出（由 server.ts 外层 catch 转 sendError，handler 内不包裹）', async () => {
       const { cap, handler } = makeHandler({ subagentAction: vi.fn().mockRejectedValue(new Error('session not active')) })
-      await handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS)
-      expect(cap.errors).toHaveLength(1)
+      await expect(handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS)).rejects.toThrow('session not active')
+      // handler 内不 sendError 也不 reply（由 server.ts 外层 catch 处理）
       expect(cap.replies).toHaveLength(0)
     })
   })
