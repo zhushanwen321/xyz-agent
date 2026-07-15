@@ -23,8 +23,8 @@ export class SessionMessageHandler {
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'session.getSubagents', 'session.getSubagentHistory',
-    'session.getWorkflows', 'session.getAgentCallHistory',
-    'session.workflowAction',
+    'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
+    'session.workflowAction', 'session.subagentAction',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
@@ -123,9 +123,17 @@ export class SessionMessageHandler {
         const messages = await this.ctx.sessionService.getAgentCallHistory(msg.payload.sessionId, msg.payload.agentCallSessionId)
         return this.ctx.reply(ws, msg.id, 'session.agentCallHistory', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, messages })
       }
+      case 'session.getAgentCallFilePath': {
+        const filePath = await this.ctx.sessionService.getAgentCallFilePath(msg.payload.sessionId, msg.payload.agentCallSessionId)
+        return this.ctx.reply(ws, msg.id, 'session.agentCallFilePath', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, filePath })
+      }
       case 'session.workflowAction': {
         await this.ctx.sessionService.workflowAction(msg.payload.sessionId, msg.payload.action, msg.payload.runId)
         return this.ctx.reply(ws, msg.id, 'session.workflowActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, runId: msg.payload.runId })
+      }
+      case 'session.subagentAction': {
+        await this.ctx.sessionService.subagentAction(msg.payload.sessionId, msg.payload.action, msg.payload.subagentId)
+        return this.ctx.reply(ws, msg.id, 'session.subagentActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, subagentId: msg.payload.subagentId })
       }
       case 'session.getCommands': {
         // renderer 切 session 后主动拉取命令（修复 broadcast 与订阅时序竞争）。

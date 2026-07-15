@@ -379,6 +379,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 findAgentCallFile）。
+   *
+   * 与 getAgentCallHistory 的区别：找不到时返回空串而非 throw——这是展示型功能
+   *（PanelHeader overlay 文件名），找不到路径不应阻断 UI，前端 v-if 据空串隐藏按钮。
+   */
+  async getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string> {
+    const mainSession = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!mainSession?.cwd) return ''
+    return findAgentCallFile(mainSession.cwd, agentCallSessionId) ?? ''
+  }
+
+  /**
    * 触发 workflow 生命周期操作（pause/resume/abort）。
    * 经 client.prompt("/workflows <action> <runId>") 调扩展 slash command，
    * pi 检测 / 开头直接执行 command handler（不经 LLM）。
@@ -388,6 +400,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not active`)
     await client.prompt(`/workflows ${action} ${runId}`)
+  }
+
+  /**
+   * 取消 running subagent（经扩展 slash command，不经 LLM）。
+   * 对称 workflowAction 的转发模式：client.prompt("/subagents cancel <subagentId>")。
+   * 扩展侧 RPC 分支已实现（subagents.ts ctx.mode==='rpc' → service.cancel → SIGTERM kill 子进程）。
+   */
+  async subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not active`)
+    await client.prompt(`/subagents ${action} ${subagentId}`)
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {

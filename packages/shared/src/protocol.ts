@@ -19,7 +19,7 @@ export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.getSubagents' | 'session.getSubagentHistory'
-  | 'session.getWorkflows' | 'session.getAgentCallHistory'
+  | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
@@ -104,6 +104,7 @@ export interface ClientMessageMap {
   // workflow 列表/agent call 对话流读取（runtime 直读主 session JSONL + workflow-state JSONL，不依赖扩展）
   'session.getWorkflows': { sessionId: string }
   'session.getAgentCallHistory': { sessionId: string; agentCallSessionId: string }
+  'session.getAgentCallFilePath': { sessionId: string; agentCallSessionId: string }
   'session.workflowAction': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
   // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
   // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
@@ -200,7 +201,7 @@ export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'session.subagents' | 'session.subagentHistory'
-  | 'session.workflows' | 'session.agentCallHistory'
+  | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
   | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
@@ -337,6 +338,8 @@ export interface ServerMessageMapBase {
   'session.workflows': { sessionId: string; workflows: WorkflowRunRecord[] }
   // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）
   'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[] }
+  // session.agentCallFilePath：agent call 对话流 JSONL 绝对路径（PanelHeader overlay 文件名展示用，找不到为空串）
+  'session.agentCallFilePath': { sessionId: string; agentCallSessionId: string; filePath: string }
   // session.workflowUpdate：workflow 状态变化增量信号（event-interpreter 推送，发起/结束时刻）。
   // 前端收到后调 loadWorkflows RPC 拉取完整列表。与 session.workflows（RPC reply 全量列表）区分。
   'session.workflowUpdate': { sessionId: string; update: { runId: string; status: string; reason?: string } }

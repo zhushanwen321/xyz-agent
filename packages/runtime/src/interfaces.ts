@@ -110,8 +110,15 @@ export interface ISessionService {
    * agentCallSessionId 是 trace[].sessionId（pi session ID），按 sessionId 全局查找 JSONL。
    */
   getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
+  /**
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 findAgentCallFile）。
+   * 找不到返回空串（展示型功能，不 throw）。
+   */
+  getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string>
   /** 触发 workflow 生命周期操作（pause/resume/abort，经扩展 slash command，不经 LLM） */
   workflowAction(sessionId: string, action: 'pause' | 'resume' | 'abort', runId: string): Promise<void>
+  /** 取消 running subagent（经扩展 /subagents cancel，不经 LLM；对称 workflowAction） */
+  subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   /**
