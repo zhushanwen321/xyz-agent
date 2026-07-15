@@ -40,7 +40,7 @@
          按钮浮于 dirName/gitBranch 之上，底色保证可读。
          删除采用原地两段式确认：首次点击→变红确认态，再次点击才真正 emit delete。 -->
     <div
-      class="absolute bottom-1 right-1.5 gap-1"
+      class="absolute top-0.5 right-1 gap-1"
       :class="confirming ? 'flex' : 'flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'"
     >
       <Button

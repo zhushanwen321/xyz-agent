@@ -26,7 +26,7 @@
       >{{ tab.count }}</span>
       <span
         v-if="tab.badge"
-        class="absolute right-1 top-1 size-[6px] rounded-full bg-accent"
+        class="absolute right-0 top-0 size-[6px] rounded-full bg-accent"
       />
     </Button>
   </div>
