@@ -16,7 +16,7 @@
     shiki codeToHtml 转义所有非 token 文本（只发 scoped <span>），markdown-it 不透传用户原始 HTML，
     代码源码经 base64 编码进 data 属性。故在此受控渲染点局部放开 taste-lint vue/no-v-html。仅此组件。
   -->
-  <div class="md-render select-text" @click="onClick">
+  <div class="md-render select-text" :class="{ 'md-render--thinking': variant === 'thinking' }" @click="onClick">
     <template v-for="(seg, i) in segments" :key="i">
       <!-- eslint-disable-next-line vue/no-v-html -- text 段是 shiki+markdown-it(html:false) 安全输出，仅此受控点放开。 -->
       <div v-if="seg.type === 'text'" v-html="seg.content" />
@@ -57,6 +57,10 @@ const props = defineProps<{
   content: string
   /** 所属 session（文件路径打开 DetailPane 走 cwd 守门用）；命令文档等无 session 场景传 undefined */
   sessionId?: string | null
+  /** 渲染变体：默认 undefined（正文级排版）；'thinking' 用于 thinking 块/次要过程信息，
+   *  降级 markdown 元素到 thinking 语义（标题用 reasoning 色而非 fg，marker/引用压到 subtle，
+   *  strong 回升到 fg 提供强调层级）。不影响默认行为（现有调用零影响）。 */
+  variant?: 'thinking'
 }>()
 
 const segments = ref<MarkdownSegment[]>([])
@@ -394,5 +398,33 @@ watch(
 }
 :global([data-theme="light"]) .md-render :deep(.shiki span) {
   color: var(--shiki-light);
+}
+
+/* ── thinking variant：次要过程信息的降级排版 ──
+   用于 thinking 块 / BgNotifyCard 详情等「过程性次要信息」语境。
+   设计取向（impeccable critique 确认）：
+   - 标题用 --reasoning（紫）而非 --fg（白），避免与正文 summary 白标题撞色，保持紫色语义族
+   - li::marker / blockquote 压到 --subtle（三级灰），结构存在但不抢戏
+   - strong 回升到 --fg，提供强调层级（muted 段落里 fg 粗体是唯一强调点）
+   - p 行高保持 1.7（继承默认），段落间距与正文一致 */
+.md-render--thinking :deep(h1),
+.md-render--thinking :deep(h2),
+.md-render--thinking :deep(h3),
+.md-render--thinking :deep(h4) {
+  color: var(--reasoning);
+}
+.md-render--thinking :deep(li)::marker {
+  color: var(--subtle);
+}
+.md-render--thinking :deep(blockquote) {
+  color: var(--subtle);
+  border-left-color: var(--border-strong);
+}
+.md-render--thinking :deep(blockquote) p {
+  color: var(--subtle);
+}
+.md-render--thinking :deep(strong) {
+  color: var(--fg);
+  font-weight: 600;
 }
 </style>
