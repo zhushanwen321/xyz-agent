@@ -167,20 +167,24 @@ describe('Block working 态 · end_not_received（未收到结果）', () => {
   })
 
   it('U13: end_not_received 初始收起，点击 header 可 toggle（不像 running 锁死）', async () => {
+    // 给 output + endTime 让展开体有内容可验证 toggle（W3 重构后展开体无重复 toolName 行，
+    // 改用 result 文本的可见性验证展开/收起，比依赖具体展开体结构更稳定）
     const wrapper = mount(Block, {
-      props: { type: 'tool', tool: makeTool({ status: 'end_not_received', output: undefined }), working: false },
+      props: {
+        type: 'tool',
+        tool: makeTool({ status: 'end_not_received', output: 'partial output', startTime: 1000, endTime: 2000 }),
+        working: false,
+      },
     })
     const header = wrapper.find('.cursor-pointer')
-    // 初始收起：工具名+参数路径在 header 行可见，但详情区（argPath 行 mt-1）不渲染
+    // 初始收起：output 不在 DOM
     expect(header.exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('partial output')
     await header.trigger('click')
-    // 展开后 argPath 区出现（mt-1 div 含 toolName）
-    const detailLines = wrapper.findAll('.mt-1.font-mono')
-    expect(detailLines.length).toBeGreaterThan(0)
+    // 展开后 output 出现
+    expect(wrapper.text()).toContain('partial output')
     await header.trigger('click')
-    // 收起后详情区消失
-    const afterCollapse = wrapper.findAll('.mt-1.font-mono')
-    // 注：result 区因 output undefined 不渲染，只剩 argPath 行，收起后应消失
-    expect(afterCollapse.length).toBeLessThan(detailLines.length)
+    // 收起后 output 消失
+    expect(wrapper.text()).not.toContain('partial output')
   })
 })

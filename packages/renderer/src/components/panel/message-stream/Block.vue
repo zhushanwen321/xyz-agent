@@ -102,17 +102,16 @@
           <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
         </div>
         <template v-if="toolExpanded">
-          <div class="mt-1 font-mono text-[12px] text-fg">
-            <span :class="isFailed ? 'text-danger' : 'text-info'">{{ toolName }}</span>
-            <span class="text-muted">({{ argPath }})</span>
+          <!-- 补充细节条：耗时（从 startTime+endTime 计算）。对齐 subagent 展开体信息架构（补充细节 + 结果） -->
+          <div v-if="durationLabel" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted">
+            <span :class="isFailed ? 'text-danger font-semibold' : 'text-info'">{{ durationLabel }}</span>
           </div>
+          <!-- 结果区：无 Check/XCircle 图标（header 状态指示已覆盖） -->
           <div
             v-if="result"
-            class="mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap"
+            class="mt-1 font-mono text-[12px] leading-snug whitespace-pre-wrap"
             :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-muted'"
           >
-            <Check v-if="!isFailed" class="mt-0.5 size-3 shrink-0 text-success" />
-            <XCircle v-else class="mt-0.5 size-3 shrink-0 text-danger" />
             <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
             <AnsiText v-else-if="outputRaw" :content="outputRaw" />
             <span v-else>{{ result }}</span>
@@ -181,6 +180,15 @@ const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
+/** 补充细节条：耗时（startTime→endTime）。running 态无 endTime 不显示，完成后显示总耗时。
+ *  失败态用 danger 色强调。数据源 ToolCall.startTime（chat-message-effects tool_call_start 赋值）+
+ *  endTime（tool_call_end 赋值），两者都已就绪。 */
+const durationLabel = computed(() => {
+  const start = props.tool?.startTime
+  const end = props.tool?.endTime
+  if (typeof start !== 'number' || typeof end !== 'number' || end <= start) return ''
+  return formatDuration(end - start)
+})
 
 /**
  * 从 tool.details.__gui__ 提取结构化渲染组件（extension GUI 协议，spec §9.1）。
