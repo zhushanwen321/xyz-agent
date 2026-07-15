@@ -23,7 +23,7 @@
           'bg-success': phase === 'done',
         }"
       />
-      <span class="text-[12.5px] font-semibold text-fg">{{ state.title }}</span>
+      <span class="text-[12px] font-semibold text-fg">{{ state.title }}</span>
       <span class="font-mono text-[11px] text-subtle">{{ state.step }}</span>
       <ChevronRight
         class="ml-auto size-3 shrink-0 text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"

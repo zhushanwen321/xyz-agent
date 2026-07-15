@@ -40,14 +40,14 @@
       <div v-if="isCompacting" class="system-notice flex min-w-0 items-center gap-2 py-1">
         <span class="h-px flex-1 bg-border" />
         <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
-        <span class="min-w-0 truncate text-[11.5px] leading-snug text-muted">{{ t('panel.message.compressing') }}</span>
+        <span class="min-w-0 truncate text-[11px] leading-snug text-muted">{{ t('panel.message.compressing') }}</span>
         <span class="h-px flex-1 bg-border" />
       </div>
 
       <!-- dispatching 空窗期占位：已发送（pendingSend 命中）但 message_start 未到。
            message_start 到达后 hasWorkingTurn 变 true，占位消失，由 working turn 的 sticky header 接管。
            纯 UI 瞬时反馈，不插入 assistant message 污染消息历史。 -->
-      <div v-if="isDispatching && !hasWorkingTurn" class="flex items-center gap-2 py-2 pl-1 text-[12.5px] text-muted">
+      <div v-if="isDispatching && !hasWorkingTurn" class="flex items-center gap-2 py-2 pl-1 text-[12px] text-muted">
         <Loader2 class="size-3 animate-spin text-accent" />
         <span>{{ t('panel.message.dispatching') }}</span>
       </div>

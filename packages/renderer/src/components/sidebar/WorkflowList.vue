@@ -13,7 +13,7 @@
       data-testid="workflow-list-loading"
     >
       <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-      <p class="text-[11.5px] text-subtle opacity-60">{{ t('sidebar.workflowList.loading') }}</p>
+      <p class="text-[11px] text-subtle opacity-60">{{ t('sidebar.workflowList.loading') }}</p>
     </div>
     <!-- 错误态（M1：loadWorkflows 失败，可重试） -->
     <div
@@ -22,7 +22,7 @@
       data-testid="workflow-list-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11.5px] text-muted">{{ t('sidebar.workflowList.loadFailed', { error: loadError }) }}</p>
+      <p class="text-[11px] text-muted">{{ t('sidebar.workflowList.loadFailed', { error: loadError }) }}</p>
       <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="workflow-list-retry" @click="emit('retry')">{{ t('sidebar.workflowList.retry') }}</Button>
     </div>
     <!-- 列表 -->
@@ -48,7 +48,7 @@
               class="size-2 shrink-0 rounded-full"
               :class="statusDotClass(record.status, record.reason)"
             />
-            <span class="min-w-0 flex-1 truncate text-[12.5px] font-medium leading-[1.35] text-fg">
+            <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-fg">
               {{ record.scriptName }}
             </span>
             <span v-if="record.slug" class="shrink-0 font-mono text-[10px] text-muted">
@@ -115,8 +115,8 @@
       data-testid="workflow-list-empty"
     >
       <Workflow class="size-7 text-subtle opacity-40" />
-      <p class="text-[11.5px] text-subtle opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
-      <p class="text-[10.5px] text-subtle opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
+      <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
+      <p class="text-[10px] text-subtle opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
     </div>
   </div>
 </template>

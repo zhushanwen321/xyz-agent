@@ -158,7 +158,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     <div
       v-if="statusError"
       data-testid="status-error"
-      class="flex items-center gap-2 px-3 py-4 text-[12.5px] text-danger"
+      class="flex items-center gap-2 px-3 py-4 text-[12px] text-danger"
     >
       <TriangleAlert class="size-4 shrink-0" />
       <span>{{ t('newTask.branchSelect.loadFailed') }}</span>
@@ -171,7 +171,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       class="flex flex-col items-center gap-2 px-4 py-6 text-center"
     >
       <GitBranch class="size-5 text-subtle" />
-      <p class="text-[12.5px] text-muted">{{ t('newTask.branchSelect.noBranch') }}</p>
+      <p class="text-[12px] text-muted">{{ t('newTask.branchSelect.noBranch') }}</p>
     </div>
 
     <!-- 分支列表 -->

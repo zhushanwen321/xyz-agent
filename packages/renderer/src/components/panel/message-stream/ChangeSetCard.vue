@@ -39,7 +39,7 @@
       >
         <span class="shrink-0 rounded-sm px-1 py-0.5 font-mono text-[10px] font-semibold" :class="changeBadgeClass(c.status)">{{ changeLabel(c.status) }}</span>
         <span class="flex-1 truncate font-mono text-fg">{{ c.filePath }}</span>
-        <ExternalLink class="size-3 shrink-0 text-subtle opacity-0 transition-opacity group-hover/cs-file:opacity-100" />
+        <ExternalLink class="size-3 shrink-0 text-subtle opacity-0 transition-opacity group-hover/cs-file:opacity-100 group-focus-within/cs-file:opacity-100" />
         <span v-if="c.addLines !== undefined || c.delLines !== undefined" class="shrink-0 flex items-center gap-1 text-[10px] tabular-nums">
           <span v-if="c.addLines !== undefined" class="text-success">+{{ c.addLines }}</span>
           <span v-if="c.delLines !== undefined" class="text-danger">-{{ c.delLines }}</span>

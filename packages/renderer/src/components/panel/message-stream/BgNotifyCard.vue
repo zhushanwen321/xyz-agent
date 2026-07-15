@@ -19,7 +19,7 @@
       <div
         v-for="record in records"
         :key="record.id"
-        class="flex items-center gap-1.5 font-mono text-[11.5px]"
+        class="flex items-center gap-1.5 font-mono text-[11px]"
         :class="recordTextClass(record)"
       >
         <component :is="recordIcon(record)" class="size-3 shrink-0" />
@@ -32,7 +32,7 @@
     <!-- 单条：状态行 + 摘要 + 可展开详情 -->
     <div v-else class="flex flex-col gap-1">
       <div
-        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[11.5px] transition-opacity hover:opacity-80"
+        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[11px] transition-opacity hover:opacity-80"
         :class="single ? recordTextClass(single) : ''"
         :title="expanded ? t('panel.message.collapse') : t('panel.message.expand')"
         @click="expanded = !expanded"
@@ -54,7 +54,7 @@
         </div>
         <!-- fullContent 走 MarkdownRenderer（thinking variant，同为次要过程信息语义）。
              subagent 返回的 LLM 生成文本含 md 语法（bold/列表/标题），纯文本不渲染。 -->
-        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto rounded-sm bg-surface-2/50 px-2 py-1 text-[11.5px] leading-relaxed text-muted">
+        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto rounded-sm bg-surface-2/50 px-2 py-1 text-[11px] leading-relaxed text-muted">
           <MarkdownRenderer :content="fullContent" variant="thinking" />
         </div>
       </template>

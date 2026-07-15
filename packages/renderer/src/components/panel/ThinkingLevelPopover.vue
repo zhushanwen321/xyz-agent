@@ -8,7 +8,7 @@
     <PopoverTrigger as-child>
       <Button
         variant="ghost"
-        class="h-7 gap-1 rounded-sm px-2 text-[11.5px] text-subtle transition-colors hover:text-muted"
+        class="h-7 gap-1 rounded-sm px-2 text-[11px] text-subtle transition-colors hover:text-muted"
         :title="t('panel.thinkingLevel.title')"
       >
         <Brain class="size-3 shrink-0" />

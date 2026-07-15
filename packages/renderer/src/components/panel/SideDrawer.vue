@@ -116,7 +116,7 @@
         <div
           v-for="entry in statusEntries"
           :key="entry.statusKey"
-          class="flex items-center gap-1.5 font-mono text-[10.5px]"
+          class="flex items-center gap-1.5 font-mono text-[10px]"
         >
           <span class="shrink-0 text-subtle">{{ entry.statusKey }}</span>
           <!-- textRaw 有 ANSI 着色 → AnsiText 渲染保留颜色；否则纯文本兜底。

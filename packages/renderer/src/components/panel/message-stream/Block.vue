@@ -31,7 +31,7 @@
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
          streaming 光标已移到 Turn.vue trace 末尾（保证永远在最后一行，不受 contentBlocks 时序影响）。 -->
-    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12.5px] leading-relaxed text-muted">
+    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12px] leading-relaxed text-muted">
       <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
     </div>
 

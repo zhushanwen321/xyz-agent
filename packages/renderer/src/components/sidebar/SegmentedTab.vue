@@ -21,7 +21,7 @@
       <component :is="tab.icon" class="size-[15px] shrink-0" />
       <span
         v-if="tab.count > 0"
-        class="font-mono text-[9.5px]"
+        class="font-mono text-[10px]"
         :class="modelValue === tab.value ? 'text-accent opacity-80' : 'text-subtle opacity-70'"
       >{{ tab.count }}</span>
       <span

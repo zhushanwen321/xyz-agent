@@ -24,12 +24,12 @@
     />
     <div class="min-w-0 flex-1">
       <div
-        class="truncate text-[12.5px] leading-[1.35]"
+        class="truncate text-[12px] leading-[1.35]"
         :class="active ? 'text-accent' : 'text-fg'"
       >
         {{ session.label }}
       </div>
-      <div class="mt-0.5 truncate font-mono text-[10.5px] leading-[1.3] text-subtle">
+      <div class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-subtle">
         {{ dirName }}
       </div>
     </div>
@@ -41,7 +41,7 @@
          删除采用原地两段式确认：首次点击→变红确认态，再次点击才真正 emit delete。 -->
     <div
       class="absolute bottom-1 right-1.5 gap-1"
-      :class="confirming ? 'flex' : 'hidden group-hover:flex'"
+      :class="confirming ? 'flex' : 'flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'"
     >
       <Button
         v-if="!confirming"

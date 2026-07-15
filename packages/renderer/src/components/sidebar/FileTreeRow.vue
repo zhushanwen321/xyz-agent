@@ -42,7 +42,7 @@
         <!-- 展开在途：loading 指示（nodeStates[path].status==='loading'） -->
         <div
           v-if="dirState === 'loading'"
-          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10.5px] text-subtle"
+          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-subtle"
           :style="childHintPaddingStyle"
           :data-testid="`file-tree-loading-${node.path}`"
         >
@@ -52,7 +52,7 @@
         </div>
         <div
           v-else-if="dirState === 'error'"
-          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10.5px] text-danger"
+          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-danger"
           :style="childHintPaddingStyle"
           :data-testid="`file-tree-error-${node.path}`"
           @click="toggle"
@@ -72,7 +72,7 @@
           <!-- 已加载但空目录（按过滤后判定：全部 ignored 被过滤后也视为空） -->
           <div
             v-if="node.children && visibleChildren.length === 0"
-            class="py-1 pr-2 font-mono text-[10.5px] text-subtle italic"
+            class="py-1 pr-2 font-mono text-[10px] text-subtle italic"
             :style="childHintPaddingStyle"
           >
             {{ t('sidebar.fileTree.emptyDir') }}

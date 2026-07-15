@@ -73,7 +73,7 @@
     </Button>
     <span
       v-if="viewingSubagent"
-      class="min-w-0 shrink truncate text-[12.5px] font-medium text-fg"
+      class="min-w-0 shrink truncate text-[12px] font-medium text-fg"
       :title="subagentLabel"
     >{{ subagentLabel }}</span>
     <component
@@ -88,7 +88,7 @@
          不显会话名（仅目录 + 分支两段），避免与目录视觉重复。
          shrink + min-w-0：长目录+分支时截断优先发生于此，绝不盖右侧 3 按钮（按钮组 ml-auto + shrink-0）。 -->
     <nav v-if="!viewingSubagent" class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
-      <ol class="flex min-w-0 items-center gap-1 text-[12.5px]">
+      <ol class="flex min-w-0 items-center gap-1 text-[12px]">
         <li class="flex min-w-0 items-center gap-1.5">
           <Folder class="size-3 shrink-0 opacity-70 text-subtle" />
           <span

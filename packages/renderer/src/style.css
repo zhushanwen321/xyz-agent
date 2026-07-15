@@ -47,8 +47,8 @@
   --info: #38bdf8;
   /* reasoning 紫：思考块色相（draft-message-stream §4 + composer 思考等级） */
   --reasoning: #a78bfa;
-  /* reasoning 软底：slash 命令 chip 背景（与 --accent-soft 同构，color-mix 派生跟随主题） */
-  --reasoning-soft: color-mix(in oklch, var(--reasoning) 18%, transparent);
+  /* reasoning 软底：think badge / slash chip 背景（统一 12% 基准，与状态色 soft 对齐） */
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
   /* 状态色软底（12% 基准，color-mix 派生：palette 切换 / 亮暗主题自动跟随） */
   --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);

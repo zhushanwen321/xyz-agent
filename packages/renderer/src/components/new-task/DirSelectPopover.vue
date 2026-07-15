@@ -143,7 +143,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         class="flex flex-col items-center gap-2 px-4 py-6 text-center"
       >
         <Folder class="size-5 text-subtle" />
-        <p class="text-[12.5px] text-muted">{{ t('newTask.dirSelect.noRecent') }}</p>
+        <p class="text-[12px] text-muted">{{ t('newTask.dirSelect.noRecent') }}</p>
       </div>
 
       <!-- 列表项（非空态）：默认只显目录名，同名时追加 (parent) 消歧 -->

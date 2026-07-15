@@ -74,7 +74,7 @@
            pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
       <div
         v-if="!isEditingThisUser && !isPendingUser"
-        class="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100"
+        class="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 group-focus-within/user:opacity-100"
       >
         <Button
           variant="ghost"
@@ -120,7 +120,7 @@
       <Button
         variant="ghost"
         size="sm"
-        class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12.5px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
+        class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
         :class="[
           !turn.hasFoldable
             ? 'cursor-default hover:text-muted'
@@ -131,7 +131,7 @@
       >
         <!-- working 态：spinner（更显眼的 streaming 指示），替代原脉冲点 -->
         <Loader2 v-if="turn.isWorking" class="size-3 shrink-0 animate-spin text-accent" />
-        <span class="text-[12.5px] font-medium">
+        <span class="text-[12px] font-medium">
           <span class="lbl" :class="turn.isWorking ? 'text-accent' : 'text-muted'">{{ turn.isWorking ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
           <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
         </span>
@@ -190,7 +190,7 @@
            与 user 区一致（Turn.vue:76,90）：容器不守 isSessionActive，fork 单独守卫。 -->
         <div
           v-if="lastAssistant"
-          class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100"
+          class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100"
         >
           <Button
             variant="ghost"
@@ -211,7 +211,7 @@
           >
             <Check v-if="copied === aiMdKey" class="size-3 text-success" />
             <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[8px] font-bold leading-[10px] text-white">MD</span>
+            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-white">MD</span>
           </Button>
           <Button
             v-if="!isSessionActive && !isSubagentVirtualId(sessionId)"

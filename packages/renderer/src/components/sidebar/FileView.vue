@@ -14,7 +14,7 @@
       <!-- 头部：当前 session 标签 + 分支（左）× showIgnored 开关（右），同一行。
            D-020/D-004：忽略项开关从过滤框下方上移至此（与会话名同行：会话名左、忽略项右）。 -->
       <div v-if="sessionLabel" class="flex items-center gap-2 px-2 py-1.5">
-        <div class="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted">
+        <div class="min-w-0 flex-1 truncate font-mono text-[10px] text-muted">
           <span class="text-fg">{{ sessionLabel }}</span>
           <span v-if="branch" class="opacity-60"> · </span>
           <span v-if="branch" class="text-accent">{{ branch }}</span>
@@ -55,7 +55,7 @@
         data-testid="file-loading"
       >
         <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-        <p class="text-[11.5px] text-subtle opacity-60">{{ t('sidebar.fileView.loadingTree') }}</p>
+        <p class="text-[11px] text-subtle opacity-60">{{ t('sidebar.fileView.loadingTree') }}</p>
       </div>
 
       <!-- 错误态（loadTree 失败，可重试） -->
@@ -65,7 +65,7 @@
         data-testid="file-error"
       >
         <AlertCircle class="size-5 text-danger opacity-60" />
-        <p class="text-[11.5px] text-muted">{{ t('sidebar.fileView.loadFailed', { reason: rootState.reason ?? 'unknown' }) }}</p>
+        <p class="text-[11px] text-muted">{{ t('sidebar.fileView.loadFailed', { reason: rootState.reason ?? 'unknown' }) }}</p>
         <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="file-retry" @click="retry">{{ t('sidebar.fileView.retry') }}</Button>
       </div>
 
@@ -76,7 +76,7 @@
         data-testid="file-empty"
       >
         <component :is="hasFilter ? SearchX : FolderOpen" class="size-5 text-subtle opacity-50" />
-        <p class="text-[11.5px] text-subtle opacity-55">{{ hasFilter ? t('sidebar.fileView.noMatch') : t('sidebar.fileView.noFile') }}</p>
+        <p class="text-[11px] text-subtle opacity-55">{{ hasFilter ? t('sidebar.fileView.noMatch') : t('sidebar.fileView.noFile') }}</p>
       </div>
 
       <!-- 文件树（visibleNodes = 过滤后的顶层节点） -->

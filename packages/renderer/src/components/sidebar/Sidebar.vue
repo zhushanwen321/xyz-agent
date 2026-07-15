@@ -88,7 +88,7 @@
             data-testid="session-list-error"
           >
             <AlertCircle class="size-5 text-danger opacity-60" />
-            <p class="text-[11.5px] text-muted">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
+            <p class="text-[11px] text-muted">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
             <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">{{ t('sidebar.retry') }}</Button>
           </div>
           <SessionList
@@ -144,7 +144,7 @@
             data-testid="file-view-no-session"
           >
             <FolderOpen class="size-5 text-subtle opacity-40" />
-            <p class="text-[11.5px] text-subtle opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
+            <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
           </div>
         </template>
       </div>

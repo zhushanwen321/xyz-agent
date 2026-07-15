@@ -68,7 +68,7 @@
   <!-- 空 patch（无 hunk） -->
   <div v-else class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
     <GitCompare class="size-6 text-subtle opacity-40" />
-    <p class="text-[11.5px] text-subtle opacity-55">{{ t('panel.detail.noDiff') }}</p>
+    <p class="text-[11px] text-subtle opacity-55">{{ t('panel.detail.noDiff') }}</p>
   </div>
 </template>
 

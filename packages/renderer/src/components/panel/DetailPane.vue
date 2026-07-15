@@ -67,14 +67,14 @@
       <div v-if="state.hasGitChange" class="flex gap-0.5" data-testid="detail-view-toggle">
         <Button
           variant="ghost"
-          class="h-6 rounded-sm px-1.5 text-[10.5px]"
+          class="h-6 rounded-sm px-1.5 text-[10px]"
           :class="state.viewMode === 'diff' ? 'bg-accent-soft text-accent' : 'text-muted'"
           :title="t('panel.detail.showDiff')"
           @click="onToggleView('diff')"
         >{{ t('panel.detail.tabDiff') }}</Button>
         <Button
           variant="ghost"
-          class="h-6 rounded-sm px-1.5 text-[10.5px]"
+          class="h-6 rounded-sm px-1.5 text-[10px]"
           :class="state.viewMode === 'preview' ? 'bg-accent-soft text-accent' : 'text-muted'"
           :title="t('panel.detail.showPreview')"
           @click="onToggleView('preview')"
@@ -99,8 +99,8 @@
       data-testid="detail-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11.5px] text-muted">{{ t('panel.detail.cannotPreview') }}</p>
-      <p class="font-mono text-[10.5px] text-subtle opacity-70">{{ state.error }}</p>
+      <p class="text-[11px] text-muted">{{ t('panel.detail.cannotPreview') }}</p>
+      <p class="font-mono text-[10px] text-subtle opacity-70">{{ state.error }}</p>
     </div>
 
     <!-- 空态（无选中文件） -->
@@ -110,7 +110,7 @@
       data-testid="detail-empty"
     >
       <FileText class="size-6 text-subtle opacity-40" />
-      <p class="text-[11.5px] text-subtle opacity-55">{{ t('panel.detail.clickFilePreview') }}</p>
+      <p class="text-[11px] text-subtle opacity-55">{{ t('panel.detail.clickFilePreview') }}</p>
     </div>
 
     <!-- 二进制文件占位（AC-6.5/T6.6：binary=true） -->
@@ -120,7 +120,7 @@
       data-testid="detail-binary"
     >
       <ImageIcon class="size-6 text-subtle opacity-50" />
-      <p class="text-[11.5px] text-muted">{{ t('panel.detail.binaryFile') }}</p>
+      <p class="text-[11px] text-muted">{{ t('panel.detail.binaryFile') }}</p>
       <p class="font-mono text-[10px] text-subtle opacity-60">{{ t('panel.detail.cannotShowDiff') }}</p>
     </div>
 

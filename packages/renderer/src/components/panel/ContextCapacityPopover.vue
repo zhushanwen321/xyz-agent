@@ -11,7 +11,7 @@
         variant="ghost"
         :class="
           cn(
-            'h-7 gap-1 rounded-sm px-2 text-[11.5px] transition-colors',
+            'h-7 gap-1 rounded-sm px-2 text-[11px] transition-colors',
             isHigh ? 'text-warning hover:text-warning' : 'text-subtle hover:text-muted',
           )
         "
