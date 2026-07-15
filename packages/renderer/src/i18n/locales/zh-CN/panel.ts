@@ -241,6 +241,8 @@ export default {
     loadFailed: '无法加载图片',
     noDiff: '无差异内容',
     tabDiff: '差异',
+    copyFileName: '复制文件名',
+    copyFilePath: '复制路径',
   },
   panel: {
     sessionDead: '会话进程已退出',

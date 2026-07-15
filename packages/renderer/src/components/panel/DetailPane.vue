@@ -9,10 +9,60 @@
     数据来源：useDetailPane（watch selectedPath → openPreview → git.getDiff / file.read）。
   -->
   <div class="flex h-full flex-col" data-testid="detail-pane">
-    <!-- header：文件名 + view toggle（Diff/预览，仅 hasGitChange 时显 toggle） -->
+    <!-- header：文件名（hover 显绝对路径 + 复制文件名）+ 复制绝对路径按钮 + view toggle -->
     <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
       <FileText class="size-3.5 shrink-0 text-subtle" />
-      <span class="flex-1 truncate font-mono text-[11px] text-fg">{{ fileName }}</span>
+      <HoverCard :open-delay="0">
+        <HoverCardTrigger as-child>
+          <span
+            data-testid="detail-filename"
+            class="flex-1 cursor-default truncate font-mono text-[11px] text-fg"
+          >{{ fileName }}</span>
+        </HoverCardTrigger>
+        <HoverCardContent class="w-auto max-w-md p-2" side="bottom">
+          <div data-testid="detail-path-tooltip" class="flex flex-col gap-1.5">
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-[11px] text-fg">{{ fileName }}</span>
+              <Button
+                variant="ghost"
+                data-testid="detail-copy-filename"
+                class="h-5 w-5 rounded-sm p-0"
+                :title="t('panel.detail.copyFileName')"
+                :disabled="!fileName || fileName === t('panel.sideDrawer.noFileSelected')"
+                @click="copy(fileName, 'filename')"
+              >
+                <Check v-if="copied === 'filename'" class="size-3 text-accent" />
+                <Copy v-else class="size-3 text-subtle" />
+              </Button>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="break-all font-mono text-[10px] text-muted">{{ absolutePath }}</span>
+              <Button
+                variant="ghost"
+                data-testid="detail-copy-path"
+                class="h-5 w-5 rounded-sm p-0"
+                :title="t('panel.detail.copyFilePath')"
+                :disabled="!absolutePath"
+                @click="copy(absolutePath, 'path')"
+              >
+                <Check v-if="copied === 'path'" class="size-3 text-accent" />
+                <Copy v-else class="size-3 text-subtle" />
+              </Button>
+            </div>
+          </div>
+        </HoverCardContent>
+      </HoverCard>
+      <Button
+        variant="ghost"
+        data-testid="detail-copy-path"
+        class="h-6 w-6 rounded-sm p-0"
+        :title="t('panel.detail.copyFilePath')"
+        :disabled="!absolutePath"
+        @click="copy(absolutePath, 'path')"
+      >
+        <Check v-if="copied === 'path'" class="size-3.5 text-accent" />
+        <Copy v-else class="size-3.5 text-subtle" />
+      </Button>
       <!-- view toggle：有 git 改动时可切换 diff/preview -->
       <div v-if="state.hasGitChange" class="flex gap-0.5" data-testid="detail-view-toggle">
         <Button
@@ -149,15 +199,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FileText, Loader2, AlertCircle, Image as ImageIcon } from '@lucide/vue'
+import { FileText, Loader2, AlertCircle, Image as ImageIcon, Copy, Check } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useDetailPane, type DetailViewMode } from '@/composables/features/useDetailPane'
+import { useCopy } from '@/composables/effects/useCopy'
 import { extToLang } from '@/composables/logic/file-type'
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
 import CodeBlock from '@/components/panel/detail-renderers/CodeBlock.vue'
 import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
 
 const { t } = useI18n()
+
+const { copied, copy } = useCopy()
 
 const props = defineProps<{
   /** widget 订阅的 session 标识（与 SideDrawer sessionId 一致，useDetailPane watch 用） */
@@ -173,6 +227,13 @@ const fileName = computed(() => {
   if (!state.value.path) return t('panel.sideDrawer.noFileSelected')
   const parts = state.value.path.split('/')
   return parts[parts.length - 1] ?? state.value.path
+})
+
+/** 绝对路径：session cwd + 相对路径 */
+const absolutePath = computed(() => {
+  const cwd = sessionCwd(props.sessionId)
+  if (!cwd || !state.value.path) return ''
+  return `${cwd.replace(/\/+$/, '')}/${state.value.path}`
 })
 
 /** shiki 语言名（code 类文件高亮用） */

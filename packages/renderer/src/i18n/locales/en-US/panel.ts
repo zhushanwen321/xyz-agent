@@ -241,6 +241,8 @@ export default {
     loadFailed: 'Failed to load image',
     noDiff: 'No diff content',
     tabDiff: 'Diff',
+    copyFileName: 'Copy file name',
+    copyFilePath: 'Copy path',
   },
   panel: {
     sessionDead: 'Session process exited',
