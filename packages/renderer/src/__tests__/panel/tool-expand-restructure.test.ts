@@ -98,3 +98,95 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
     expect(wrapper.text()).not.toMatch(/edit\s*\(src\/App\.vue\)/)
   })
 })
+
+describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', () => {
+  it('read 工具展开后细节条含行数 + 字符数 + 耗时', async () => {
+    const fileContent = 'line1\nline2\nline3' // 3 行 17 字符
+    const wrapper = mount(Block, {
+      props: {
+        type: 'tool',
+        tool: makeTool({ toolName: 'read', output: fileContent, startTime: 1000, endTime: 3000 }),
+        working: false,
+      },
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    const text = wrapper.text()
+    // 3 行（output.split('\n').length = 3）
+    expect(text).toContain('3 行')
+    // 字符数 17（< 1000，显示原值）
+    expect(text).toContain('17 chars')
+    // 耗时（diff 2000ms → formatDuration "2s"）
+    expect(text).toContain('2s')
+  })
+
+  it('bash 工具展开后细节条含输出行数 + 耗时（无字符数）', async () => {
+    const output = 'stdout line1\nstdout line2\nstdout line3\nstdout line4'
+    const wrapper = mount(Block, {
+      props: {
+        type: 'tool',
+        tool: makeTool({ toolName: 'bash', output, startTime: 1000, endTime: 5200 }),
+        working: false,
+      },
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    const text = wrapper.text()
+    // 4 行输出
+    expect(text).toContain('4 行')
+    // bash 不显示字符数（read/cat 才显示）
+    expect(text).not.toContain('chars')
+    // 耗时（diff=4200ms → formatDuration toFixed(0) → "4s"）
+    expect(text).toContain('4s')
+  })
+
+  it('read 大文件字符数格式化为 XK chars（>1000 字符）', async () => {
+    const bigContent = 'x'.repeat(2500) // 1 行 2500 字符
+    const wrapper = mount(Block, {
+      props: {
+        type: 'tool',
+        tool: makeTool({ toolName: 'read', output: bigContent, startTime: 1000, endTime: 2000 }),
+        working: false,
+      },
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    // 2500 字符 → 2.5K chars
+    expect(wrapper.text()).toContain('2.5K chars')
+  })
+
+  it('edit 工具细节条只有耗时（output 是简短确认，行数无意义）', async () => {
+    const wrapper = mount(Block, {
+      props: {
+        type: 'tool',
+        tool: makeTool({ toolName: 'edit', output: 'done', startTime: 1000, endTime: 1500 }),
+        working: false,
+      },
+    })
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    const text = wrapper.text()
+    // edit 不在 OUTPUT_META_TOOLS，无行数
+    expect(text).not.toContain('行')
+    // 只有耗时（500ms → formatDuration "500ms"）
+    expect(text).toContain('500ms')
+  })
+
+  it('read 失败时细节条首项是错误摘要（danger 色）', async () => {
+    const wrapper = mount(Block, {
+      props: {
+        type: 'tool',
+        tool: makeTool({
+          toolName: 'read',
+          status: 'error',
+          output: 'File not found: src/missing.ts',
+          startTime: 1000,
+          endTime: 1100,
+        }),
+        working: false,
+      },
+    })
+    // 失败强制展开
+    const text = wrapper.text()
+    // 错误摘要首行可见
+    expect(text).toContain('File not found: src/missing.ts')
+    // danger 色 span 存在
+    expect(wrapper.find('.text-danger.font-semibold').exists()).toBe(true)
+  })
+})

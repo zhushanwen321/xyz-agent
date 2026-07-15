@@ -102,9 +102,17 @@
           <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
         </div>
         <template v-if="toolExpanded">
-          <!-- 补充细节条：耗时（从 startTime+endTime 计算）。对齐 subagent 展开体信息架构（补充细节 + 结果） -->
-          <div v-if="durationLabel" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted">
-            <span :class="isFailed ? 'text-danger font-semibold' : 'text-info'">{{ durationLabel }}</span>
+          <!-- 补充细节条：失败错误摘要 + 行数/字符数 + 耗时。对齐 subagent 展开体信息架构 -->
+          <div v-if="metaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px]">
+            <span
+              v-for="(item, idx) in metaItems"
+              :key="idx"
+              :class="{
+                'text-danger font-semibold': item.tone === 'danger',
+                'text-info': item.tone === 'info',
+                'text-muted': item.tone === 'muted',
+              }"
+            >{{ item.text }}</span>
           </div>
           <!-- 结果区：无 Check/XCircle 图标（header 状态指示已覆盖） -->
           <div
@@ -180,15 +188,64 @@ const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
-/** 补充细节条：耗时（startTime→endTime）。running 态无 endTime 不显示，完成后显示总耗时。
- *  失败态用 danger 色强调。数据源 ToolCall.startTime（chat-message-effects tool_call_start 赋值）+
- *  endTime（tool_call_end 赋值），两者都已就绪。 */
-const durationLabel = computed(() => {
+/** 补充细节条 meta 项：耗时 + 工具特化信息（read/bash 的输出行数、read 字符数）。
+ *  - 耗时：startTime→endTime，数据源已就绪。
+ *  - 行数/字符数：pi 协议不返回文件元信息（exit code / fileSize 均无），前端从 output 文本自算。
+ *    read 工具的 output 是文件内容，行数/字符数有统计意义；bash 的 output 是命令输出，行数有参考价值；
+ *    edit/write 等 output 是简短确认（如 "done"），行数无意义不展示。
+ *  exit code / 测试数等无法从 output 可靠提取（pi 不返回数值 exit code），不做。
+ *  失败态首项（错误性质）用 danger 色强调。 */
+const OUTPUT_META_TOOLS = new Set(['read', 'bash', 'cat', 'glob', 'grep', 'list'])
+
+interface MetaItem {
+  /** 高亮态：failed 首项用 danger，普通信息用 info（蓝），其余默认 muted */
+  tone: 'danger' | 'info' | 'muted'
+  text: string
+}
+
+/** 错误摘要截断长度（细节条单行不撑爆） */
+const ERROR_SUMMARY_LIMIT = 40
+/** 字符数格式化阈值（>= 此值显示为 XK chars） */
+const CHAR_K_THRESHOLD = 1000
+
+const metaItems = computed<MetaItem[]>(() => {
+  const items: MetaItem[] = []
+  // 失败态首项：错误定性（从 error/output 首行提取一句话）
+  if (isFailed.value) {
+    const errText = (props.tool?.error ?? props.tool?.output ?? '').trim()
+    if (errText) {
+      const firstLine = errText.split('\n')[0].trim()
+      items.push({
+        tone: 'danger',
+        text: firstLine.length > ERROR_SUMMARY_LIMIT ? `${firstLine.slice(0, ERROR_SUMMARY_LIMIT)}…` : firstLine,
+      })
+    }
+  }
+  // 工具特化：行数/字符数（仅 read/bash 等输出有统计意义的工具）
+  const name = toolName.value
+  const output = props.tool?.output ?? ''
+  if (OUTPUT_META_TOOLS.has(name) && output.trim()) {
+    const lineCount = output.split('\n').length
+    items.push({ tone: 'muted', text: `${lineCount} 行` })
+    // read/cat 额外显示字符数（文件内容大小有参考价值）
+    if (name === 'read' || name === 'cat') {
+      items.push({ tone: 'muted', text: formatCharCount(output.length) })
+    }
+  }
+  // 耗时（末位）
   const start = props.tool?.startTime
   const end = props.tool?.endTime
-  if (typeof start !== 'number' || typeof end !== 'number' || end <= start) return ''
-  return formatDuration(end - start)
+  if (typeof start === 'number' && typeof end === 'number' && end > start) {
+    items.push({ tone: 'muted', text: formatDuration(end - start) })
+  }
+  return items
 })
+
+/** 字符数格式化：>= CHAR_K_THRESHOLD 显示为 XK chars，否则原值 + chars */
+function formatCharCount(n: number): string {
+  if (n >= CHAR_K_THRESHOLD) return `${(n / CHAR_K_THRESHOLD).toFixed(1)}K chars`
+  return `${n} chars`
+}
 
 /**
  * 从 tool.details.__gui__ 提取结构化渲染组件（extension GUI 协议，spec §9.1）。
