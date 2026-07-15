@@ -18,10 +18,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useSubagentStore } from '@/stores/subagent'
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
 
-// mock sessionApi（loadSubagents / selectSubagent 内部调用）
+// mock sessionApi（loadSubagents / selectSubagent / cancelSubagent 内部调用）
 vi.mock('@/api/domains/session', () => ({
   getSubagents: vi.fn(),
   getSubagentHistory: vi.fn(),
+  subagentAction: vi.fn(),
 }))
 
 // subagent store 经 @/api 门面导入 session，需把门面 session 指回上面 mock 的 domains 命名空间，
@@ -245,5 +246,32 @@ describe('subagent store — backToMain', () => {
 
     expect(store.isViewing('panel-A')).toBe(false)
     expect(store.getViewingSubagentId('panel-A')).toBeNull()
+  })
+})
+
+describe('subagent store — cancelSubagent', () => {
+  it('调 subagentAction RPC + 乐观更新 records status→cancelled', async () => {
+    vi.mocked(sessionApi.subagentAction).mockResolvedValue(undefined)
+    const store = useSubagentStore()
+    // 预置一条 running subagent
+    store.records.push(makeRecord({ subagentId: 'bg-cancel-target', status: 'running' }))
+    expect(store.records[0].status).toBe('running')
+
+    await store.cancelSubagent('session-1', 'bg-cancel-target')
+
+    // 调了 RPC
+    expect(sessionApi.subagentAction).toHaveBeenCalledWith('session-1', 'cancel', 'bg-cancel-target')
+    // 乐观更新：status 变 cancelled（不等 WS 推送）
+    expect(store.records.find(r => r.subagentId === 'bg-cancel-target')?.status).toBe('cancelled')
+  })
+
+  it('RPC 失败 → 不改 status（乐观更新回滚）', async () => {
+    vi.mocked(sessionApi.subagentAction).mockRejectedValue(new Error('session not active'))
+    const store = useSubagentStore()
+    store.records.push(makeRecord({ subagentId: 'bg-fail', status: 'running' }))
+
+    await expect(store.cancelSubagent('session-1', 'bg-fail')).rejects.toThrow('session not active')
+    // status 保持 running（回滚）
+    expect(store.records.find(r => r.subagentId === 'bg-fail')?.status).toBe('running')
   })
 })

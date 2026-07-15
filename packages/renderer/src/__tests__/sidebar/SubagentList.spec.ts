@@ -100,4 +100,46 @@ describe('SubagentList', () => {
     const dot = wrapper.find('.bg-success')
     expect(dot.exists()).toBe(true)
   })
+
+  // ── cancel 两段式确认（W3 新增）──
+
+  it('running 态渲染 cancel 按钮，done 态不渲染', () => {
+    const running = mount(SubagentList, { props: { subagents: [makeRecord({ status: 'running', subagentId: 'run-cancel-1' })] } })
+    expect(running.findAll('[data-testid="subagent-action-cancel"]')).toHaveLength(1)
+
+    const done = mount(SubagentList, { props: { subagents: [makeRecord({ status: 'done', subagentId: 'run-cancel-2' })] } })
+    expect(done.findAll('[data-testid="subagent-action-cancel"]')).toHaveLength(0)
+  })
+
+  it('cancel 两段式：首次点击进入确认态（不 emit），再次点击才 emit cancel', async () => {
+    const records = [makeRecord({ status: 'running', subagentId: 'bg-cancel-1' })]
+    const wrapper = mount(SubagentList, { props: { subagents: records } })
+
+    const btn = wrapper.find('[data-testid="subagent-action-cancel"]')
+    // 第一次点击：进入确认态，不 emit
+    await btn.trigger('click')
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+
+    // 确认态出现确认按钮
+    const confirmBtn = wrapper.find('[data-testid="subagent-action-cancel-confirm"]')
+    expect(confirmBtn.exists()).toBe(true)
+
+    // 第二次点击确认 → emit cancel
+    await confirmBtn.trigger('click')
+    const emitted = wrapper.emitted('cancel')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toBe('bg-cancel-1')
+  })
+
+  // ── slug 替换 hash（W3 新增）──
+
+  it('卡片右侧显示 slug 而非 subagentId hash', () => {
+    const records = [makeRecord({ subagentId: 'bg-abc-1-1234567890', slug: 'review-changes', agent: 'reviewer' })]
+    const wrapper = mount(SubagentList, { props: { subagents: records } })
+    const card = wrapper.find('[data-testid="subagent-card"]')
+    // slug 显示在卡片中
+    expect(card.text()).toContain('review-changes')
+    // 完整 hash 不显示在卡片可见区域（已截断或移到 title）
+    expect(card.text()).not.toContain('bg-abc-1-1234567890')
+  })
 })

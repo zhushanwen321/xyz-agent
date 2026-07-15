@@ -79,19 +79,42 @@ describe('WorkflowList', () => {
     expect(wrapper.emitted('select')![0]).toEqual(['wf-click'])
   })
 
-  it('running 态渲染 Pause + Abort 按钮，点击触发 action 事件', () => {
+  it('running 态渲染 Pause + Abort 按钮（常驻可见，非 hover-only）', () => {
     const records = [makeRecord({ runId: 'wf-run', status: 'running' })]
     const wrapper = mount(WorkflowList, { props: { workflows: records } })
 
     // running 态有 pause + abort 按钮
     expect(wrapper.find('[data-testid="workflow-action-pause"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="workflow-action-abort"]').exists()).toBe(true)
+  })
 
-    // 点击 abort 按钮
-    wrapper.find('[data-testid="workflow-action-abort"]').trigger('click')
+  it('abort 两段式：首次点击进入确认态（不 emit），再次点击确认按钮才 emit abort', async () => {
+    const records = [makeRecord({ runId: 'wf-abort', status: 'running' })]
+    const wrapper = mount(WorkflowList, { props: { workflows: records } })
 
+    const abortBtn = wrapper.find('[data-testid="workflow-action-abort"]')
+    // 第一次点击：进入确认态，不 emit action
+    await abortBtn.trigger('click')
+    expect(wrapper.emitted('action')).toBeFalsy()
+
+    // 确认态出现 abort-confirm 按钮
+    const confirmBtn = wrapper.find('[data-testid="workflow-action-abort-confirm"]')
+    expect(confirmBtn.exists()).toBe(true)
+
+    // 第二次点击确认 → emit abort
+    await confirmBtn.trigger('click')
+    const emitted = wrapper.emitted('action')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0]).toEqual([{ action: 'abort', runId: 'wf-abort' }])
+  })
+
+  it('pause 仍为单次点击直接 emit（非破坏性，不需两段确认）', async () => {
+    const records = [makeRecord({ runId: 'wf-pause', status: 'running' })]
+    const wrapper = mount(WorkflowList, { props: { workflows: records } })
+
+    await wrapper.find('[data-testid="workflow-action-pause"]').trigger('click')
     expect(wrapper.emitted('action')).toBeTruthy()
-    expect(wrapper.emitted('action')![0]).toEqual([{ action: 'abort', runId: 'wf-run' }])
+    expect(wrapper.emitted('action')![0]).toEqual([{ action: 'pause', runId: 'wf-pause' }])
   })
 
   it('done 态不渲染操作按钮', () => {

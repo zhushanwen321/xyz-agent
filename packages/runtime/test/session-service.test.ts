@@ -1135,6 +1135,30 @@ describe('SessionService · Facade', () => {
     })
   })
 
+  describe('workflowAction + subagentAction（扩展 slash command 转发）', () => {
+    it('workflowAction 转发 /workflows <action> <runId> 到 pi prompt', async () => {
+      const { id, client } = await setup.seedSession()
+      vi.mocked(client.prompt).mockClear()
+      await setup.service.workflowAction(id, 'abort', 'wf-run-1')
+      expect(client.prompt).toHaveBeenCalledWith('/workflows abort wf-run-1')
+    })
+
+    it('workflowAction session 不活跃 → throw', async () => {
+      await expect(setup.service.workflowAction('ghost', 'abort', 'wf-x')).rejects.toThrow('not active')
+    })
+
+    it('subagentAction 转发 /subagents <action> <subagentId> 到 pi prompt', async () => {
+      const { id, client } = await setup.seedSession()
+      vi.mocked(client.prompt).mockClear()
+      await setup.service.subagentAction(id, 'cancel', 'bg-abc-1-123')
+      expect(client.prompt).toHaveBeenCalledWith('/subagents cancel bg-abc-1-123')
+    })
+
+    it('subagentAction session 不活跃 → throw', async () => {
+      await expect(setup.service.subagentAction('ghost', 'cancel', 'bg-x')).rejects.toThrow('not active')
+    })
+  })
+
   describe('public session (ensurePublicSession / onPublicSessionReady)', () => {
     it('ensurePublicSession creates hidden session and fires onPublicSessionReady', async () => {
       // 先注入回调（组合根在 setServices 后调 setOnPublicSessionReady）

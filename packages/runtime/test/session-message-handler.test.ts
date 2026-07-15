@@ -131,4 +131,27 @@ describe('SessionMessageHandler — error envelope 回归', () => {
       expect(cap.errors[0].code).toBe('not_found')
     })
   })
+
+  describe('session.workflowAction + session.subagentAction（扩展 slash command 转发）', () => {
+    it('workflowAction 成功 → reply session.workflowActionDone', async () => {
+      const { cap, handler } = makeHandler({ workflowAction: vi.fn().mockResolvedValue(undefined) })
+      await handler.handleSessionMessage(msg('session.workflowAction', { sessionId: 's1', action: 'abort', runId: 'wf-1' }), WS)
+      expect(cap.replies[0]).toMatchObject({ id: 'm1', type: 'session.workflowActionDone', payload: { sessionId: 's1', action: 'abort', runId: 'wf-1' } })
+      expect(cap.errors).toHaveLength(0)
+    })
+
+    it('subagentAction 成功 → reply session.subagentActionDone', async () => {
+      const { cap, handler } = makeHandler({ subagentAction: vi.fn().mockResolvedValue(undefined) })
+      await handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS)
+      expect(cap.replies[0]).toMatchObject({ id: 'm1', type: 'session.subagentActionDone', payload: { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' } })
+      expect(cap.errors).toHaveLength(0)
+    })
+
+    it('subagentAction 失败 → sendError', async () => {
+      const { cap, handler } = makeHandler({ subagentAction: vi.fn().mockRejectedValue(new Error('session not active')) })
+      await handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS)
+      expect(cap.errors).toHaveLength(1)
+      expect(cap.replies).toHaveLength(0)
+    })
+  })
 })
