@@ -32,6 +32,8 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
+import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
 import { useChat } from '@/composables/features/useChat'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
@@ -242,6 +244,17 @@ export function useSidebar() {
     // （已加载则 rehydrate 直接返回），FileView 挂载时再调会命中缓存，无重复请求。
     // fire-and-forget：失败不阻断切 session（文件树缺失仅致 tab 数字为 0，切到文件 tab 仍可重试）。
     void useFileTree().loadTree(id)
+
+    // subagent/workflow 列表主动拉取兜底：修复切换 session 后侧栏列表不更新。
+    // useSubagentListSync/useWorkflowListSync 的 watch(focusedSessionId) 是异步触发，
+    // 与 runtime session.subagents/session.workflowUpdate 广播存在时序竞争（AGENTS.md #7
+    // broadcast 早于订阅的历史问题）。这里在 activeId 更新后主动 RPC 拉取，对齐
+    // commands/context 的兜底模式。fire-and-forget：失败不阻断切 session（列表缺失
+    // 仅致 tab 计数为 0，切到对应 tab 时 sync composable 会再拉一次）。
+    const subagentStore = useSubagentStore()
+    const workflowStore = useWorkflowStore()
+    void subagentStore.loadSubagents(id)
+    void workflowStore.loadWorkflows(id)
   }
 
   /**

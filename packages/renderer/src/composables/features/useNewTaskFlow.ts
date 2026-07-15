@@ -27,6 +27,9 @@ import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
 import { useModel } from '@/composables/features/useModel'
+import { useFileTree } from '@/composables/features/useFileTree'
+import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
 
@@ -205,6 +208,13 @@ export function useNewTaskFlow() {
       } catch (e) {
         console.warn('[useNewTaskFlow] getCommands failed, slash popover will be empty:', e)
       }
+      // 文件树/subagent/workflow 列表预加载：新建 session 后侧栏列表不更新的根因之一是
+      // submitFirstMessage 未调 loadTree/loadSubagents/loadWorkflows（newSession 延迟 create
+      // 路径不走 selectSession，兜底全缺）。对齐 useSidebar.selectSession 的兜底模式。
+      // fire-and-forget：失败不阻断首发发送（列表缺失仅致 tab 计数为 0）。
+      void useFileTree().loadTree(newSid)
+      void useSubagentStore().loadSubagents(newSid)
+      void useWorkflowStore().loadWorkflows(newSid)
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
       await chat.send(newSid, trimmed)
       transition('completed') // landing→completed（首发成功，终态）
