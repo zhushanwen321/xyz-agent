@@ -20,7 +20,7 @@ export type ClientMessageType =
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory'
-  | 'session.workflowAction'
+  | 'session.workflowAction' | 'session.subagentAction'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels' | 'config.setDefaultModel'
@@ -105,6 +105,9 @@ export interface ClientMessageMap {
   'session.getWorkflows': { sessionId: string }
   'session.getAgentCallHistory': { sessionId: string; agentCallSessionId: string }
   'session.workflowAction': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
+  // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
+  // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
+  'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
@@ -198,7 +201,7 @@ export type ServerMessageType =
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory'
-  | 'session.workflowUpdate' | 'session.workflowActionDone'
+  | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
   | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
@@ -339,6 +342,8 @@ export interface ServerMessageMapBase {
   'session.workflowUpdate': { sessionId: string; update: { runId: string; status: string; reason?: string } }
   // session.workflowActionDone：workflow 操作完成确认（session.workflowAction RPC reply）
   'session.workflowActionDone': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
+  // session.subagentActionDone：subagent 操作完成确认（session.subagentAction RPC reply）
+  'session.subagentActionDone': { sessionId: string; action: 'cancel'; subagentId: string }
   // subagent.stream_delta：running subagent 的逐字 streaming（路径 A-1）。
   // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。

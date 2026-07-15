@@ -295,6 +295,11 @@ export const session = {
   async workflowAction(_sessionId: string, _action: string, _runId: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+
+  /** Mock subagent cancel（对称 workflowAction，stub resolve 即可） */
+  async subagentAction(_sessionId: string, _action: string, _subagentId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
 }
 
 export const chat = {
