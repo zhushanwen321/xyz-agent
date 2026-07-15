@@ -90,12 +90,13 @@ describe('workflow store', () => {
   it('clearWorkflows 清空 records + 退出 viewing', () => {
     const store = useWorkflowStore()
     store.selectWorkflow('panel-1', 'wf-001')
-    expect(store.isViewing('panel-1')).toBe(true)
+    // selectWorkflow 只设侧边栏视图2，不触发 Panel overlay（isViewing 只认 agent-call）
+    expect(store.getViewingRunId('panel-1')).toBe('wf-001')
 
     store.clearWorkflows()
 
     expect(store.records).toEqual([])
-    expect(store.isViewing('panel-1')).toBe(false)
+    expect(store.getViewingRunId('panel-1')).toBeNull()
   })
 
   it('selectWorkflow + getViewingRunId + getCurrentWorkflow 视图 2', () => {
@@ -106,7 +107,8 @@ describe('workflow store', () => {
 
     expect(store.getViewingRunId('panel-1')).toBe('wf-001')
     expect(store.getCurrentWorkflow('panel-1')?.scriptName).toBe('my-flow')
-    expect(store.isViewing('panel-1')).toBe(true)
+    // selectWorkflow 是侧边栏视图2，不触发 Panel overlay
+    expect(store.isViewing('panel-1')).toBe(false)
   })
 
   it('selectAgentCall + getViewingAgentCallId Panel overlay', async () => {
@@ -124,10 +126,11 @@ describe('workflow store', () => {
   it('backToWorkflowList 退出视图 2', () => {
     const store = useWorkflowStore()
     store.selectWorkflow('panel-1', 'wf-001')
-    expect(store.isViewing('panel-1')).toBe(true)
+    expect(store.getViewingRunId('panel-1')).toBe('wf-001')
 
     store.backToWorkflowList('panel-1')
 
+    // isViewing 本就 false（侧边栏视图2 不触发 overlay）
     expect(store.isViewing('panel-1')).toBe(false)
     expect(store.getViewingRunId('panel-1')).toBeNull()
   })
@@ -144,9 +147,11 @@ describe('workflow store', () => {
     expect(store.getViewingAgentCallId('panel-1')).toBeNull()
   })
 
-  it('isViewing per-panel 隔离', () => {
+  it('isViewing per-panel 隔离（agent-call overlay 维度）', async () => {
+    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
     const store = useWorkflowStore()
-    store.selectWorkflow('panel-1', 'wf-001')
+    // isViewing 只认 agent-call overlay（不是侧边栏视图2）
+    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
 
     expect(store.isViewing('panel-1')).toBe(true)
     expect(store.isViewing('panel-2')).toBe(false)

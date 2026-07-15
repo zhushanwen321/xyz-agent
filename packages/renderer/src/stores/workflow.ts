@@ -6,7 +6,15 @@
  *
  * 职责：
  * - 共享 workflow 列表（records）—— Sidebar 管理，所有 panel 只读消费
- * - 视图层级：per-panel viewing 状态可为 runId（视图 2 详情）或 agentCallSessionId（Panel overlay）
+ * - 视图层级：per-panel 两个正交状态字段
+ *   - detailRunIdMap：侧边栏视图 2 选中的 workflow runId（仅影响 Sidebar 渲染）
+ *   - agentCallMap：Panel overlay 的 agent call sessionId（仅影响 Panel 渲染）
+ *
+ * [HISTORICAL] 两个状态字段拆分（2026-07-15）：
+ * 旧实现用单个 panelViewingMap: Map<panelId, PanelViewing> 联合类型同时承载两个正交 UI 维度，
+ * 导致 (1) selectWorkflow 设 workflow-detail → isViewing() 不区分 kind 返回 true → Panel 误进
+ * 子代理态（隐藏输入框+子代理标签）；(2) selectAgentCall 覆盖 workflow-detail → getViewingRunId
+ * 返回 null → 侧边栏跳回列表。拆分后两个维度独立，互不干扰。
  *
  * 虚拟 session ID 格式：`agentcall:<sessionId>`（agent call 对话流）
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
@@ -35,12 +43,6 @@ export function extractAgentCallSessionId(virtualId: string): string {
   return virtualId.slice(AGENTCALL_PREFIX.length)
 }
 
-/** per-panel viewing 状态联合类型 */
-type PanelViewing =
-  | { kind: 'workflow-detail'; runId: string }
-  | { kind: 'agent-call'; agentCallSessionId: string }
-  | null
-
 /** selectAgentCall 的 chat 注入回调类型（store 不 import chatStore，铁律） */
 export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 
@@ -55,12 +57,18 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const loadError = ref<string | null>(null)
 
   /**
-   * per-panel viewing 状态。
-   * - workflow-detail：sidebar 内视图 2（workflow 详情，phase/agent call 列表）
-   * - agent-call：Panel overlay（agent call 对话流切 Panel）
-   * - null：未查看（视图 1 列表态）
+   * per-panel 侧边栏视图 2 选中状态（workflow detail）。
+   * key = panelId, value = 该 panel 侧边栏正在查看的 workflow runId。
+   * 仅影响 Sidebar 渲染（列表 vs detail），不影响 Panel overlay。
    */
-  const panelViewingMap = ref<Map<string, PanelViewing>>(new Map())
+  const detailRunIdMap = ref<Map<string, string>>(new Map())
+
+  /**
+   * per-panel agent call overlay 状态（Panel overlay）。
+   * key = panelId, value = 该 panel Panel overlay 正在查看的 agent call sessionId。
+   * 仅影响 Panel 渲染（overlay 对话流），不影响侧边栏视图。
+   */
+  const agentCallMap = ref<Map<string, string>>(new Map())
 
   // ── getters ──
   /** workflow 列表计数 */
@@ -68,21 +76,22 @@ export const useWorkflowStore = defineStore('workflow', () => {
     return records.value.length
   }
 
-  /** 本 panel 当前是否在查看 workflow（详情或 agent call overlay） */
+  /**
+   * 本 panel 当前是否在 Panel overlay 态（查看 agent call 对话流）。
+   * 只读 agentCallMap——侧边栏视图 2（detailRunIdMap）不触发 Panel overlay。
+   */
   function isViewing(panelId: string): boolean {
-    return panelViewingMap.value.get(panelId) != null
+    return agentCallMap.value.has(panelId)
   }
 
-  /** 本 panel 当前查看的 runId（视图 2 详情态），非详情态返回 null */
+  /** 本 panel 当前查看的 runId（侧边栏视图 2 详情态），非详情态返回 null */
   function getViewingRunId(panelId: string): string | null {
-    const v = panelViewingMap.value.get(panelId)
-    return v?.kind === 'workflow-detail' ? v.runId : null
+    return detailRunIdMap.value.get(panelId) ?? null
   }
 
   /** 本 panel 当前查看的 agent call session ID（Panel overlay 态），非 overlay 态返回 null */
   function getViewingAgentCallId(panelId: string): string | null {
-    const v = panelViewingMap.value.get(panelId)
-    return v?.kind === 'agent-call' ? v.agentCallSessionId : null
+    return agentCallMap.value.get(panelId) ?? null
   }
 
   /** 本 panel 当前查看的 agent call 虚拟 session ID（Panel overlay 态） */
@@ -95,17 +104,6 @@ export const useWorkflowStore = defineStore('workflow', () => {
   function getCurrentWorkflow(panelId: string): WorkflowRunRecord | null {
     const rid = getViewingRunId(panelId)
     return rid ? records.value.find((w) => w.runId === rid) ?? null : null
-  }
-
-  // ── viewing 状态读写（内部）──
-  function setViewing(panelId: string, viewing: PanelViewing): void {
-    const next = new Map(panelViewingMap.value)
-    if (viewing === null) {
-      next.delete(panelId)
-    } else {
-      next.set(panelId, viewing)
-    }
-    panelViewingMap.value = next
   }
 
   // ── actions ──
@@ -167,26 +165,31 @@ export const useWorkflowStore = defineStore('workflow', () => {
     })
   }
 
-  /** 清空 workflow 列表 + 退出所有 panel viewing 状态 */
+  /** 清空 workflow 列表 + 退出所有 panel viewing 状态（两个 Map 都清） */
   function clearWorkflows(): void {
     records.value = []
-    panelViewingMap.value = new Map()
+    detailRunIdMap.value = new Map()
+    agentCallMap.value = new Map()
   }
 
   /**
-   * 进入视图 2（workflow 详情，sidebar 内展示 phase/agent call）。
+   * 进入侧边栏视图 2（workflow 详情，sidebar 内展示 phase/agent call）。
+   * 只写 detailRunIdMap，不影响 Panel overlay（agentCallMap）。
    */
   function selectWorkflow(panelId: string, runId: string): void {
-    setViewing(panelId, { kind: 'workflow-detail', runId })
+    const next = new Map(detailRunIdMap.value)
+    next.set(panelId, runId)
+    detailRunIdMap.value = next
   }
 
   /**
    * 进入 agent call Panel overlay（切 Panel 显示 agent call 对话流）。
+   * 只写 agentCallMap，不影响侧边栏视图 2（detailRunIdMap）——修复选中 agent call 后侧边栏跳回列表。
    * store 不 import chatStore（铁律），setMessages 由调用方注入。
    *
    * Fail-fast：getAgentCallHistory 失败时 throw（不静默 setMessages([])）。
    * 调用方负责 catch + toast + 回滚 viewing（调 backFromAgentCall）。
-   * setViewing 在 fetchAndInject 之前调用——失败时调用方需回滚。
+   * agentCallMap 在 getAgentCallHistory 之前写入——失败时调用方需回滚。
    */
   async function selectAgentCall(
     panelId: string,
@@ -195,19 +198,25 @@ export const useWorkflowStore = defineStore('workflow', () => {
     setMessages: SetMessagesFn,
   ): Promise<void> {
     const virtualId = agentCallVirtualId(agentCallSessionId)
-    setViewing(panelId, { kind: 'agent-call', agentCallSessionId })
+    const next = new Map(agentCallMap.value)
+    next.set(panelId, agentCallSessionId)
+    agentCallMap.value = next
     const history = await sessionApi.getAgentCallHistory(mainSessionId, agentCallSessionId)
     setMessages(virtualId, history)
   }
 
-  /** 视图 2 → 视图 1（从 workflow 详情返回列表） */
+  /** 视图 2 → 视图 1（从 workflow 详情返回列表）。只清 detailRunIdMap，不影响 Panel overlay。 */
   function backToWorkflowList(panelId: string): void {
-    setViewing(panelId, null)
+    const next = new Map(detailRunIdMap.value)
+    next.delete(panelId)
+    detailRunIdMap.value = next
   }
 
-  /** Panel overlay → 返回（从 agent call 对话流返回，回视图 2 或视图 1） */
+  /** Panel overlay → 返回（从 agent call 对话流返回）。只清 agentCallMap，保留 detailRunIdMap（侧边栏保持停在 workflow-detail）。 */
   function backFromAgentCall(panelId: string): void {
-    setViewing(panelId, null)
+    const next = new Map(agentCallMap.value)
+    next.delete(panelId)
+    agentCallMap.value = next
   }
 
   return {
