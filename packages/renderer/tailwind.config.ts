@@ -33,12 +33,21 @@ export default {
           ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
-        success: 'var(--success)',
-        warning: 'var(--warning)',
-        danger: 'var(--danger)',
-        info: 'var(--info)',
+        success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
+        warning: { DEFAULT: 'var(--warning)', soft: 'var(--warning-soft)' },
+        danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
+        info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
         // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
         reasoning: 'var(--reasoning)',
+        // ── diff 行/字符级背景（预混合色，color-mix 派生跟随 --success/--danger）──
+        // 行背景中饱和(18%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
+        // canvas 用 bg-bg-input（暗 #1e1f24 / 亮 #f1f3f6 自动跟随主题），色块叠加其上。
+        diff: {
+          'add-bg': 'color-mix(in oklch, var(--success) 18%, transparent)',
+          'add-strong': 'color-mix(in oklch, var(--success) 45%, transparent)',
+          'del-bg': 'color-mix(in oklch, var(--danger) 18%, transparent)',
+          'del-strong': 'color-mix(in oklch, var(--danger) 45%, transparent)',
+        },
 
         // ── shadcn-vue 命名空间（别名映射到 v3 值，不引入新色）──────────
         // 本地 components/ui（shadcn copy）依赖 shadcn 命名约定，补全 utility

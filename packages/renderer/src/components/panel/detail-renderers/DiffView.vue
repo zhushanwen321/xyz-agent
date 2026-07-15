@@ -2,9 +2,18 @@
   DiffView —— git diff patch 结构化着色渲染（detail-renderers 系列）。
 
   把 git.getDiff 返回的 unified diff patch 文本（裸 string）解析为 hunks/lines，
-  行级着色：+ 行 success 背景（/12）、− 行 danger 背景（/12）、hunk 头 surface 背景 + 行号槽。
-  字符级 diff：配对的 del+add 行经 LCS 计算出 segments，差异片段用 /30 背景叠加，
-  与行级 /12 形成"双重颜色"层次，单字符变更也能精确定位。
+  行级着色 + 字符级高亮。全部用 Tailwind 工具类，色值在 tailwind.config.ts 注册为
+  color-mix 派生（跟随 --success/--danger/--bg-input 自动适配主题），scoped style 仅保留
+  shiki :deep(span) 双主题切换（Tailwind 无法表达的 escape hatch）。
+
+  背景策略：diff-view 容器用 bg-bg-input 作独立 canvas 底色（暗 #1e1f24 / 亮 #f1f3f6），
+  让色块对比度不随外层面板底色（surface vs bg-elevated）漂移。canvas 选用语义契合的
+  已有 token（凹陷输入区），不新增设计 token。
+
+  三层着色：
+    - 行级：bg-diff-add-bg / bg-diff-del-bg（color-mix success/danger 18%，叠加 canvas，对比度 ~1.2-1.4:1）
+    - 字符级：bg-diff-add-strong / bg-diff-del-strong（color-mix 45%，叠加行背景，对比度 ~2.2:1）
+    - 文字：fg/shiki-dark，在所有背景上 >=4.5:1（WCAG AA）
 
   代码内容经 shiki 整体高亮（每 hunk 拼接代码体一次性 codeToHtml，再按行拆回 +/- 行），
   兼得语法高亮与 diff 语义着色。有 segments 的行跳过 shiki，改用纯文本 segment 渲染
@@ -16,10 +25,10 @@
   首次 shiki 加载异步：未就绪时降级为纯文本行（无语法高亮，仍有 +/- 语义色）。
 -->
 <template>
-  <div v-if="parsed.hunks.length" class="diff-view font-mono text-[12px] leading-[1.5]">
+  <div v-if="parsed.hunks.length" class="diff-view bg-bg-input font-mono text-[12px] leading-[1.5]">
     <div v-for="(hunk, hi) in parsed.hunks" :key="hi" class="diff-hunk">
       <!-- hunk 头：@@ -a,b +c,d @@ -->
-      <div class="diff-hunk-header bg-surface-2 px-2 py-0.5 text-subtle">
+      <div class="diff-hunk-header px-2 py-0.5 text-subtle">
         {{ hunk.lines[0]?.content }}
       </div>
       <!-- 行列表 -->
@@ -117,8 +126,8 @@ function signClass(line: RenderedLine): string {
   return 'text-subtle/40'
 }
 function lineRowClass(line: RenderedLine): string {
-  if (line.type === 'add') return 'bg-success/12'
-  if (line.type === 'del') return 'bg-danger/12'
+  if (line.type === 'add') return 'bg-diff-add-bg'
+  if (line.type === 'del') return 'bg-diff-del-bg'
   if (line.type === 'hunk') return 'bg-surface-2'
   return ''
 }
@@ -129,13 +138,13 @@ function textContentClass(line: RenderedLine): string {
 }
 /**
  * 字符级 diff segment 着色：
- * - add 行的 add 片段：bg-success/30（比行级 /12 更深，叠加后双重颜色显眼）
- * - del 行的 del 片段：bg-danger/30
+ * - add 行的 add 片段：bg-diff-add-strong（比行级 add-bg 更深，叠加后双重颜色显眼）
+ * - del 行的 del 片段：bg-diff-del-strong
  * - normal 片段：无额外背景（继承行级背景）
  */
 function segmentClass(kind: DiffSegment['kind'], lineType: DiffLine['type']): string {
-  if (kind === 'add' && lineType === 'add') return 'bg-success/30'
-  if (kind === 'del' && lineType === 'del') return 'bg-danger/30'
+  if (kind === 'add' && lineType === 'add') return 'bg-diff-add-strong'
+  if (kind === 'del' && lineType === 'del') return 'bg-diff-del-strong'
   return ''
 }
 
@@ -187,7 +196,9 @@ watch(
 
 <style scoped>
 /* shiki 高亮 span 双主题切换（与 CodeBlock/MarkdownRenderer 同机制）。
-   Tailwind 无法表达跨 :deep + [data-theme] 的 CSS 变量切换，属 escape hatch。 */
+   Tailwind 无法表达跨 :deep + [data-theme] 的 CSS 变量切换，属 escape hatch。
+   diff 行/字符级背景色（bg-bg-input / bg-diff-* / bg-surface-2）全部用 Tailwind 工具类，
+   色值在 tailwind.config.ts 注册为 color-mix 派生，跟随 --success/--danger/--bg-input 自动适配主题。 */
 .diff-code :deep(span) {
   color: var(--shiki-dark);
 }
