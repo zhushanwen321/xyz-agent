@@ -110,22 +110,23 @@
         </template>
       </ol>
     </nav>
-    <!-- session JSONL 文件名（session id 前 8 位 + .jsonl）：点击复制磁盘真实绝对路径。
-         sessionFile 为空（pi 延迟写入窗口，规则 #6）时不渲染。no-drag 避免被拖拽区拦截。 -->
-    <Button
-      v-if="!viewingSubagent && sessionFile"
-      variant="ghost"
-      data-testid="panel-session-file"
-      class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-      :title="t('panel.header.copySessionFile')"
-      @click="copy(sessionFile, 'file')"
-    >
-      <Check v-if="copied === 'file'" class="size-3 text-accent" />
-      <FileText v-else class="size-3 opacity-60" />
-      <span>{{ shortFileName }}</span>
-    </Button>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+      <!-- session JSONL 文件名（id 前 8 位 + .jsonl）：点击复制磁盘真实绝对路径。
+           正常态用主 sessionFile，overlay 态（subagent/agent call）用 overlaySessionFile。
+           路径为空（pi 延迟写入窗口，规则 #6）时不渲染。放右侧按钮组最前，正常态与 overlay 态复用同一位。 -->
+      <Button
+        v-if="displayFile"
+        variant="ghost"
+        data-testid="panel-session-file"
+        class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        :title="t('panel.header.copySessionFile')"
+        @click="copy(displayFile, 'file')"
+      >
+        <Check v-if="copied === 'file'" class="size-3 text-accent" />
+        <FileText v-else class="size-3 opacity-60" />
+        <span>{{ shortFileName }}</span>
+      </Button>
       <!-- SideDrawer toggle（always-visible，不依赖 git 仓库）。
            非折叠态显此按钮；折叠态 chrome 按钮组已含侧栏切换。 -->
       <Button
@@ -230,6 +231,8 @@ const props = defineProps<{
   viewingSubagent?: boolean
   /** subagent 视图标题（agent 名称 + subagentId 摘要） */
   subagentLabel?: string
+  /** overlay 态 JSONL 路径（subagent/agent call 对话流文件，正常态不用） */
+  overlaySessionFile?: string
 }>()
 
 const emit = defineEmits<{
@@ -267,8 +270,16 @@ const dirName = computed(() => {
 /** 当前状态对应的语义图标配置（icon / color / animation） */
 const iconConfig = computed(() => STATUS_ICON[props.status])
 
-/** session JSONL 短文件名（前 8 位 + .jsonl）；sessionFile 为空时返回空串 */
-const shortFileName = computed(() => (props.sessionFile ? formatShortSessionFile(props.sessionFile) : ''))
+/**
+ * 当前要展示/复制的 JSONL 路径：overlay 态用 overlaySessionFile（subagent/agent call 对话流），
+ * 正常态用 sessionFile（主 session）。overlay 态无 overlaySessionFile 时不 fallback 主 sessionFile。
+ */
+const displayFile = computed(() =>
+  props.viewingSubagent ? props.overlaySessionFile : props.sessionFile,
+)
+
+/** session JSONL 短文件名（前 8 位 + .jsonl）；displayFile 为空时返回空串 */
+const shortFileName = computed(() => (displayFile.value ? formatShortSessionFile(displayFile.value) : ''))
 
 /** 复制反馈（点击文件名后 1.2s 显示 Check 图标） */
 const { copied, copy } = useCopy()

@@ -27,6 +27,7 @@
       :is-first-panel="isFirstPanel"
       :viewing-subagent="isViewingSubagent"
       :subagent-label="subagentLabel"
+      :overlay-session-file="overlaySessionFile"
       @split="emit('split')"
       @new-session="emit('new-session')"
       @close="emit('close')"
@@ -114,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
@@ -135,6 +136,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useToast } from '@/composables/useToast'
 import { useExtensionUI, askUserFilter } from '@/composables/useExtensionUI'
+import { getAgentCallFilePath } from '@/api/domains/session'
 
 const props = defineProps<{
   panelId: string
@@ -224,6 +226,33 @@ const effectiveSessionId = computed(
 const isViewingSubagent = computed(
   () => subagentStore.isViewing(props.panelId) || workflowStore.isViewing(props.panelId),
 )
+
+/**
+ * overlay 态当前展示的 JSONL 文件路径（PanelHeader 文件名按钮用）。
+ * - subagent overlay：SubagentRecord.sessionFile（store 已持有，同步读）
+ * - agent call overlay：经 getAgentCallFilePath RPC 拉取（trace 只有 sessionId，路径需 runtime 解析）
+ * - 正常态（非 overlay）：undefined，PanelHeader 回落用主 sessionFile
+ */
+const agentCallOverlayFile = ref('')
+const viewingAgentCallId = computed(() => workflowStore.getViewingAgentCallId(props.panelId))
+watch(
+  viewingAgentCallId,
+  async (agentCallId) => {
+    agentCallOverlayFile.value = ''
+    if (!agentCallId || !props.sessionId) return
+    agentCallOverlayFile.value = await getAgentCallFilePath(props.sessionId, agentCallId)
+  },
+  { immediate: true },
+)
+const overlaySessionFile = computed(() => {
+  if (subagentStore.isViewing(props.panelId)) {
+    return subagentStore.getCurrentSubagent(props.panelId)?.sessionFile ?? undefined
+  }
+  if (viewingAgentCallId.value) {
+    return agentCallOverlayFile.value || undefined
+  }
+  return undefined
+})
 
 /** subagent overlay 时的消息数（虚拟 session 的消息数） */
 const effectiveMessageCount = computed(() =>

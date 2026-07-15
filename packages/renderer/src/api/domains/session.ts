@@ -136,6 +136,15 @@ export async function getAgentCallHistory(sessionId: string, agentCallSessionId:
 }
 
 /**
+ * 解析 agent call 对话流 JSONL 绝对路径（PanelHeader overlay 文件名展示用）。
+ * runtime 按 trace[].sessionId 在 subagents 目录查找，找不到返回空串（展示型功能不 throw）。
+ */
+export async function getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string> {
+  const reply = await request<{ filePath: string }>('session.getAgentCallFilePath', { sessionId, agentCallSessionId })
+  return reply.filePath
+}
+
+/**
  * 触发 workflow 生命周期操作（pause/resume/abort）。
  * runtime 经 client.prompt("/workflows <action> <runId>") 调扩展 slash command（不经 LLM）。
  */
