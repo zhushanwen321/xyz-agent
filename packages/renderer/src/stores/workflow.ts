@@ -22,7 +22,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { WorkflowRunRecord, Message } from '@xyz-agent/shared'
-import * as sessionApi from '@/api/domains/session'
+import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
 
 /** 虚拟 session ID 前缀（agent call 对话流） */

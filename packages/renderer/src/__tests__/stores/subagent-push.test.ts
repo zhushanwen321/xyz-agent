@@ -16,6 +16,14 @@ vi.mock('@/api/domains/session', () => ({
   getSubagentHistory: vi.fn().mockResolvedValue([]),
 }))
 
+// subagent store 经 @/api 门面导入 session，需把门面 session 指回上面 mock 的 domains 命名空间，
+// 保证 store 与断言用的是同一个 vi.fn()。
+vi.mock('@/api', async (importActual) => {
+  const actual = await importActual<typeof import('@/api')>()
+  const session = await import('@/api/domains/session')
+  return { ...actual, session }
+})
+
 beforeEach(() => {
   setActivePinia(createPinia())
   // events 模块的 sessionHandlers 是模块级 Map，每个测试前清空

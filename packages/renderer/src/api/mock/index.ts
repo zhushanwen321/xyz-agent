@@ -12,7 +12,7 @@
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
-  SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord,
+  SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -31,6 +31,9 @@ import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '..
 export { git, fixtureGitStatus } from './git'
 // mock/file.ts 的 file domain 透出（W3 file-tree real domain 落地后由 api/index 接线）
 export { file } from './file'
+
+// workflow/subagent fixture（E2E 验证 Flows/Agents tab，从 workflow-data.ts 拆出控文件行数）
+import { fixtureWorkflows, fixtureSubagents } from './workflow-data'
 
 /** "npm:" 前缀长度（install source 解析用，对齐 runtime NPM_PREFIX_LENGTH） */
 const NPM_PREFIX = 'npm:'
@@ -257,16 +260,33 @@ export const session = {
     if (target) target.thinkingLevel = level
   },
 
-  /** Mock subagent 列表（返回空数组，mock 模式无真实 subagent 数据） */
+  /** Mock subagent 列表（返回 fixture，E2E 验证 Agents tab 跟随 session 切换刷新） */
   async getSubagents(_sessionId: string): Promise<SubagentRecord[]> {
+    await sleep(TIMING.ack)
+    return fixtureSubagents.map((s) => ({ ...s }))
+  },
+
+  /** Mock subagent 对话流历史（返回空数组，agent call 对话流由 getAgentCallHistory 覆盖） */
+  async getSubagentHistory(_sessionId: string, _subagentId: string): Promise<Message[]> {
     await sleep(TIMING.ack)
     return []
   },
 
-  /** Mock subagent 对话流历史（返回空数组） */
-  async getSubagentHistory(_sessionId: string, _subagentId: string): Promise<Message[]> {
+  /** Mock workflow 列表（返回 fixture，E2E 验证 Flows tab 渲染 + 跟随 session 切换刷新） */
+  async getWorkflows(_sessionId: string): Promise<WorkflowRunRecord[]> {
+    await sleep(TIMING.ack)
+    return fixtureWorkflows.map((w) => ({ ...w }))
+  },
+
+  /** Mock agent call 对话流历史（返回空数组，selectAgentCall 不 throw 即可） */
+  async getAgentCallHistory(_sessionId: string, _agentCallSessionId: string): Promise<Message[]> {
     await sleep(TIMING.ack)
     return []
+  },
+
+  /** Mock workflow 操作（pause/resume/abort，E2E 不断言此路径，stub resolve 即可） */
+  async workflowAction(_sessionId: string, _action: string, _runId: string): Promise<void> {
+    await sleep(TIMING.ack)
   },
 }
 
