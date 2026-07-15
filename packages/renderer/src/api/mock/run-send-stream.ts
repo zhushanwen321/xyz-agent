@@ -159,7 +159,7 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
         type: 'stats-line',
         props: {
           items: [
-            { value: '3 turns', label: 'turns' },
+            { value: '3', label: 'turns' },
             { value: '2.1k', label: 'tokens' },
             { value: '4.5s', label: 'duration' },
           ],
@@ -249,7 +249,8 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
   // runtime 经 event-adapter 翻译后推此帧。useExtensionUI composable 经 events.on(sessionId) 订阅，
   // mock 走 pushSession(dispatchSession) 同构透传，让 ExtensionUIDialog 在 mock 下可验证。
   // 仅关键词触发（不污染所有消息，避免 modal 弹窗挡住后续 E2E 交互——如 ST-1 的 complete 后输入）。
-  if (/select|部署/i.test(text)) {
+  // 用 'ui-select' 哨兵词 + '部署' 中文，避免 /select/i 匹配自然语言中含 "select" 的普通输入。
+  if (/ui[-_ ]?select|部署/i.test(text)) {
     if (isCancelled(sessionId)) return
     await sleep(TIMING.done)
     pushSession(sessionId, {
