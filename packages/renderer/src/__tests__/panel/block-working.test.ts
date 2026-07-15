@@ -12,8 +12,22 @@
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { h } from 'vue'
 import Block from '@/components/panel/message-stream/Block.vue'
 import type { ToolCall } from '@xyz-agent/shared'
+
+/**
+ * thinking 块现在走 MarkdownRenderer（W2），测试环境 stub 掉它避免依赖
+ * shiki/markdown-it/useFileSearch 等。stub 渲染 content prop 文本即可验证展开/收起态。
+ * tool 块不依赖 MarkdownRenderer，但统一 stub 无副作用。
+ */
+const mdStub = {
+  name: 'MarkdownRenderer',
+  props: { content: { type: String, default: '' }, variant: { type: String, default: undefined } },
+  setup(props: { content: string }) {
+    return () => h('div', { class: 'stub-md-render' }, props.content)
+  },
+}
 
 const LONG_THINKING = '这是一段很长的推理内容需要展开才能完整阅读'.repeat(3)
 
@@ -33,9 +47,10 @@ describe('Block working 态 · thinking 块', () => {
   it('U1: working=true → 正文展开（非收起预览）', () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: LONG_THINKING, working: true },
+      global: { stubs: { MarkdownRenderer: mdStub } },
     })
-    // 正文 <p> 存在 = 展开
-    expect(wrapper.find('p').exists()).toBe(true)
+    // thinking 展开态容器（.trace-think-body）存在 = 展开
+    expect(wrapper.find('.trace-think-body').exists()).toBe(true)
     expect(wrapper.text()).toContain(LONG_THINKING)
     // 收起预览（含 …）不应出现
     expect(wrapper.text()).not.toContain('…')
@@ -44,9 +59,10 @@ describe('Block working 态 · thinking 块', () => {
   it('U2: working=false → 仅预览行（截断 60 字符）', () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: LONG_THINKING, working: false, collapsed: true },
+      global: { stubs: { MarkdownRenderer: mdStub } },
     })
-    // 正文不存在 = 收起
-    expect(wrapper.find('p').exists()).toBe(false)
+    // 展开态容器不存在 = 收起
+    expect(wrapper.find('.trace-think-body').exists()).toBe(false)
     // 预览截断标志出现
     expect(wrapper.text()).toContain('…')
   })
@@ -54,24 +70,26 @@ describe('Block working 态 · thinking 块', () => {
   it('U3: working=true 点击 header 不切换折叠态', async () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: LONG_THINKING, working: true },
+      global: { stubs: { MarkdownRenderer: mdStub } },
     })
     const header = wrapper.find('.cursor-pointer')
     expect(header.exists()).toBe(true)
     await header.trigger('click')
     // 正文仍展开（working 强制，点击无效）
-    expect(wrapper.find('p').exists()).toBe(true)
+    expect(wrapper.find('.trace-think-body').exists()).toBe(true)
   })
 
   it('U4: working=false 点击 header 可 toggle', async () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: '短推理', working: false, collapsed: true },
+      global: { stubs: { MarkdownRenderer: mdStub } },
     })
     const header = wrapper.find('.cursor-pointer')
-    expect(wrapper.find('p').exists()).toBe(false) // 初始收起
+    expect(wrapper.find('.trace-think-body').exists()).toBe(false) // 初始收起
     await header.trigger('click')
-    expect(wrapper.find('p').exists()).toBe(true) // 展开后正文出现
+    expect(wrapper.find('.trace-think-body').exists()).toBe(true) // 展开后正文出现
     await header.trigger('click')
-    expect(wrapper.find('p').exists()).toBe(false) // 再收起
+    expect(wrapper.find('.trace-think-body').exists()).toBe(false) // 再收起
   })
 })
 

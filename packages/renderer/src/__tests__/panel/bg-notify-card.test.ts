@@ -10,8 +10,19 @@
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { h } from 'vue'
 import BgNotifyCard from '@/components/panel/message-stream/BgNotifyCard.vue'
 import type { Message, BgNotifyRecord } from '@xyz-agent/shared'
+
+/** fullContent 现在走 MarkdownRenderer（W2），stub 掉避免依赖 shiki/useFileSearch 等。
+ *  stub 渲染 content prop 文本即可验证展开/收起态内容可见性。 */
+const mdStub = {
+  name: 'MarkdownRenderer',
+  props: { content: { type: String, default: '' }, variant: { type: String, default: undefined } },
+  setup(props: { content: string }) {
+    return () => h('div', { class: 'stub-md-render' }, props.content)
+  },
+}
 
 /** 构造单条 bgNotify 的 Message */
 function singleMessage(overrides: Partial<BgNotifyRecord> = {}): Message {
@@ -83,7 +94,7 @@ describe('BgNotifyCard', () => {
 
   it('点击 header → 展开/收起切换（fullContent + patchHint 可见性）', async () => {
     const message = singleMessage({ patchFile: '/tmp/changes.patch' })
-    const wrapper = mount(BgNotifyCard, { props: { message } })
+    const wrapper = mount(BgNotifyCard, { props: { message }, global: { stubs: { MarkdownRenderer: mdStub } } })
     // 收起态：patchHint 不可见
     expect(wrapper.text()).not.toContain('git apply')
     // 点击展开
@@ -93,7 +104,7 @@ describe('BgNotifyCard', () => {
   })
 
   it('展开后可见完整 content（LLM 看到的全文）', async () => {
-    const wrapper = mount(BgNotifyCard, { props: { message: singleMessage() } })
+    const wrapper = mount(BgNotifyCard, { props: { message: singleMessage() }, global: { stubs: { MarkdownRenderer: mdStub } } })
     await wrapper.find('.cursor-pointer').trigger('click')
     // content 含完整 result 文本
     expect(wrapper.text()).toContain('Subagent "coder" (job-1) completed')

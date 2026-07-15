@@ -52,8 +52,10 @@
         <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info/5 px-2 py-1 font-mono text-[11px] text-info">
           {{ patchHint }}
         </div>
-        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto whitespace-pre-wrap rounded-sm bg-surface-2/50 px-2 py-1 text-[11.5px] leading-relaxed text-muted">
-          {{ fullContent }}
+        <!-- fullContent 走 MarkdownRenderer（thinking variant，同为次要过程信息语义）。
+             subagent 返回的 LLM 生成文本含 md 语法（bold/列表/标题），纯文本不渲染。 -->
+        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto rounded-sm bg-surface-2/50 px-2 py-1 text-[11.5px] leading-relaxed text-muted">
+          <MarkdownRenderer :content="fullContent" variant="thinking" />
         </div>
       </template>
     </div>
@@ -66,6 +68,7 @@ import { useI18n } from 'vue-i18n'
 import { CheckCircle2, XCircle, Pause, ChevronRight } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { BgNotifyRecord, Message } from '@xyz-agent/shared'
+import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const { t } = useI18n()
 

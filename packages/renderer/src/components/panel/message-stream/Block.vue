@@ -23,8 +23,10 @@
         <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.thinkingBlock') }}</span>
         <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-muted">· {{ previewText }}</span>
       </div>
-      <!-- text-[12px] 对齐 tool 详情字号（曾用继承字号偏大） -->
-      <p v-if="thinkingExpanded" class="mt-1 text-[12px] italic leading-relaxed text-muted">{{ content }}</p>
+      <!-- text-[12px] 对齐 tool 详情字号；去 italic（md 结构+全局 italic 可读性差，由 thinking variant 降级样式表达次要语义） -->
+      <div v-if="thinkingExpanded" class="trace-think-body mt-1 text-[12px] leading-relaxed text-muted">
+        <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
+      </div>
     </div>
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
