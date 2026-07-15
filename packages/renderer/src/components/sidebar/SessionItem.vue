@@ -1,8 +1,8 @@
 <template>
   <!--
-    展示组件 · 单会话项（draft-five-states §1）。
-    flex [dot] [main] [time]；active = surface-2 背景（Card-Active，design-system §2）+ inset accent-ring。
-    状态点 5 态（D6）：running/waiting 脉冲，done/stopped/error 静态。
+    展示组件 · 单会话项（draft-eight-states §1）。
+    flex [icon] [main] [time]；active = surface-2 背景（Card-Active，design-system §2）+ inset accent-ring。
+    状态图标 8 态（方案 C 优化版 v3）：streaming/pending/compacting/waiting/retrying 动态图标，done/stopped/error 静态图标。
   -->
   <div
     ref="rootEl"
@@ -14,14 +14,14 @@
     @click="emit('select', session.id)"
     @mouseleave="confirming = false"
   >
-    <!-- 状态指示：running/waiting 转菊花（比脉冲圆点在密集列表更醒目），done/stopped/error 静态圆点 -->
-    <Loader2
-      v-if="showSpinner"
-      data-testid="sidebar-session-spinner"
-      class="mt-[2px] size-[14px] shrink-0 animate-spin"
-      :class="spinnerColor"
+    <!-- 状态指示：按 STATUS_ICON 渲染语义图标（方案 C 优化版 v3） -->
+    <component
+      :is="ICON_COMPONENTS[iconConfig.icon]"
+      data-testid="sidebar-session-icon"
+      :data-icon="iconConfig.icon"
+      class="mt-[2px] size-[14px] shrink-0"
+      :class="[iconConfig.color, iconConfig.animation]"
     />
-    <span v-else class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
     <div class="min-w-0 flex-1">
       <div
         class="truncate text-[12.5px] leading-[1.35]"
@@ -73,17 +73,29 @@
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, Loader2 } from '@lucide/vue'
+import { Check, Pencil, Trash2, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
-import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
+import { STATUS_ICON } from '@/composables/logic/sessionStatus'
 import { dirNameOf } from '@/composables/logic/path'
 
+/** lucide 图标名 → 组件映射（用于 STATUS_ICON 的动态组件渲染） */
+const ICON_COMPONENTS: Record<string, unknown> = {
+  RefreshCw,
+  ArrowUpCircle,
+  Hourglass,
+  Wrench,
+  Zap,
+  CheckCircle2,
+  Ban,
+  AlertCircle,
+}
+
 /**
- * 状态点 class 映射（D6 五态，design-tokens SSOT 语义色）。
- * running/waiting 用同心环 pulse 动画（与 SessionCard 对齐）；
- * done/stopped/error 静态色。
+ * 展示组件 · 单会话项（draft-eight-states §1）。
+ * flex [icon] [main] [time]；active = surface-2 背景（Card-Active，design-system §2）+ inset accent-ring。
+ * 状态图标 8 态（方案 C 优化版 v3），语义图标 + 动画。
  */
 const { t } = useI18n()
 
@@ -146,14 +158,8 @@ onClickOutside(rootEl, () => {
   confirming.value = false
 })
 
-/** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
-const dotClass = computed(() => DOT_CLASS[props.status])
-
-/** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
-const showSpinner = computed(() => shouldShowSpinner(props.status))
-
-/** spinner 图标色：running→accent 蓝，waiting→warning 橙（类型安全封装，无需 as 断言） */
-const spinnerColor = computed(() => spinnerTextClass(props.status) ?? '')
+/** 当前状态对应的语义图标配置（icon / color / animation） */
+const iconConfig = computed(() => STATUS_ICON[props.status])
 
 /** 工作目录名（cwd 末段），长路径只显末段防溢出（dirNameOf 收敛到 logic/path SSOT） */
 const dirName = computed(() => dirNameOf(props.session.cwd))
