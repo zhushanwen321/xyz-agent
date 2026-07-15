@@ -47,3 +47,6 @@ apps/electron/resources/
 # to packages/* + apps/electron). Leftover build artifacts + node_modules linger in
 # some worktrees; ignore to prevent accidental staging.
 src-electron/
+
+# Ad-hoc screenshots (debugging artifacts, not source)
+screenshot.png
