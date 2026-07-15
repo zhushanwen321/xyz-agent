@@ -17,15 +17,15 @@
     "
     @click="emit('open', session.id)"
   >
-    <!-- 头部：状态点 + 标题 + 分支 pill -->
+    <!-- 头部：状态图标 + 标题 + 分支 pill -->
     <div class="flex items-center gap-2">
-      <Loader2
-        v-if="showSpinner"
-        data-testid="overview-session-spinner"
-        class="mt-[2px] size-[15px] shrink-0 animate-spin"
-        :class="spinnerColor"
+      <component
+        :is="ICON_COMPONENTS[iconConfig.icon]"
+        data-testid="overview-session-icon"
+        :data-icon="iconConfig.icon"
+        class="mt-[2px] size-[15px] shrink-0"
+        :class="[iconConfig.color, iconConfig.animation]"
       />
-      <span v-else class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
       <span class="min-w-0 flex-1 truncate text-[14px] font-semibold text-fg">
         {{ session.label }}
       </span>
@@ -66,11 +66,11 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FilePen, Loader2 } from '@lucide/vue'
+import { FilePen, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle } from '@lucide/vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
-import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
+import { STATUS_ICON } from '@/composables/logic/sessionStatus'
 
 const { t } = useI18n()
 
@@ -78,7 +78,7 @@ const props = defineProps<{
   session: SessionSummary
   /** 当前激活 session（Card-Active inset ring） */
   active: boolean
-  /** 派生状态点（D6），由容器注入 useSessionDerivations.derivedStatus */
+  /** 派生状态点（8 态），由容器注入 useSessionDerivations.derivedStatus */
   status: DerivedStatus
   /** 末条 assistant 文本摘要（无则空，卡片不渲染摘要区） */
   summary?: string
@@ -94,14 +94,20 @@ const emit = defineEmits<{
   open: [sessionId: string]
 }>()
 
-/** 状态点语义类：背景色 + 脉冲动画（DOT_CLASS 收敛到 logic/sessionStatus SSOT） */
-const dotClass = computed(() => DOT_CLASS[props.status])
+/** 当前状态对应的语义图标配置（icon / color / animation） */
+const iconConfig = computed(() => STATUS_ICON[props.status])
 
-/** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
-const showSpinner = computed(() => shouldShowSpinner(props.status))
-
-/** spinner 图标色：running→accent 蓝，waiting→warning 橙（类型安全封装，无需 as 断言） */
-const spinnerColor = computed(() => spinnerTextClass(props.status) ?? '')
+/** lucide 图标名 → 组件映射 */
+const ICON_COMPONENTS: Record<string, unknown> = {
+  RefreshCw,
+  ArrowUpCircle,
+  Hourglass,
+  Wrench,
+  Zap,
+  CheckCircle2,
+  Ban,
+  AlertCircle,
+}
 
 /** 是否渲染改动指标（任一计数 > 0） */
 const hasMetrics = computed(() => (props.addCount ?? 0) > 0 || (props.delCount ?? 0) > 0)

@@ -76,14 +76,17 @@
       class="min-w-0 shrink truncate text-[12.5px] font-medium text-fg"
       :title="subagentLabel"
     >{{ subagentLabel }}</span>
-    <Loader2
-      v-if="!viewingSubagent && showSpinner"
-      data-testid="panel-session-spinner"
-      class="size-[13px] shrink-0 animate-spin"
-      :class="spinnerColor"
+    <component
+      :is="ICON_COMPONENTS[iconConfig.icon]"
+      v-if="!viewingSubagent"
+      data-testid="panel-session-icon"
+      :data-icon="iconConfig.icon"
+      class="size-[13px] shrink-0"
+      :class="[iconConfig.color, iconConfig.animation]"
     />
     <span
-      v-else-if="!viewingSubagent"
+      v-if="false"
+      data-testid="panel-session-dot"
       class="size-[7px] shrink-0 rounded-full"
       :class="statusDotClass"
     />
@@ -191,14 +194,14 @@
  
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, PanelRight, ArrowLeft, ArrowRight, Loader2 } from '@lucide/vue'
+import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, PanelRight, ArrowLeft, ArrowRight, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
-import { DOT_CLASS, shouldShowSpinner, spinnerTextClass } from '@/composables/logic/sessionStatus'
+import { DOT_CLASS, STATUS_ICON } from '@/composables/logic/sessionStatus'
 
 const props = defineProps<{
   sessionLabel: string
@@ -249,12 +252,21 @@ const dirName = computed(() => {
   return segs.length ? segs[segs.length - 1] : props.sessionDir
 })
 
-/** 状态点 5 态色（DOT_CLASS SSOT，与 sidebar / overview 一致，消除原本地 map 漂移） */
+/** 状态点 8 态色（DOT_CLASS SSOT，与 sidebar / overview 一致） */
 const statusDotClass = computed(() => DOT_CLASS[props.status])
 
-/** running/waiting 态用转菊花替代圆点（活跃态更醒目） */
-const showSpinner = computed(() => shouldShowSpinner(props.status))
+/** 当前状态对应的语义图标配置（icon / color / animation） */
+const iconConfig = computed(() => STATUS_ICON[props.status])
 
-/** spinner 图标色：running→accent 蓝，waiting→warning 橙（类型安全封装，无需 as 断言） */
-const spinnerColor = computed(() => spinnerTextClass(props.status) ?? '')
+/** lucide 图标名 → 组件映射 */
+const ICON_COMPONENTS: Record<string, unknown> = {
+  RefreshCw,
+  ArrowUpCircle,
+  Hourglass,
+  Wrench,
+  Zap,
+  CheckCircle2,
+  Ban,
+  AlertCircle,
+}
 </script>
