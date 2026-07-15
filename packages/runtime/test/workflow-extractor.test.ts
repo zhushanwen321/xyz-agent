@@ -114,7 +114,7 @@ describe('extractWorkflowsFromSessionFile', () => {
     const sessionEntries = [
       { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T10:27:00Z' },
       {
-        type: 'custom_message',
+        type: 'custom',
         customType: 'workflow-state-link',
         data: { runId: 'wf-test-001', path: stateFilePath, updatedAt: '2026-07-10T10:28:00Z' },
         timestamp: '2026-07-10T10:28:00Z',
@@ -163,19 +163,19 @@ describe('extractWorkflowsFromSessionFile', () => {
     const sessionEntries = [
       { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T10:00:00Z' },
       {
-        type: 'custom_message',
+        type: 'custom',
         customType: 'workflow-state-link',
         data: { runId: 'wf-A', path: stateA, updatedAt: '2026-07-10T10:01:00Z' },
         timestamp: '2026-07-10T10:01:00Z',
       },
       {
-        type: 'custom_message',
+        type: 'custom',
         customType: 'workflow-state-link',
         data: { runId: 'wf-A', path: stateA, updatedAt: '2026-07-10T10:02:00Z' },
         timestamp: '2026-07-10T10:02:00Z',
       },
       {
-        type: 'custom_message',
+        type: 'custom',
         customType: 'workflow-state-link',
         data: { runId: 'wf-B', path: stateB, updatedAt: '2026-07-10T10:03:00Z' },
         timestamp: '2026-07-10T10:03:00Z',
@@ -248,7 +248,7 @@ describe('extractWorkflowsFromSessionFile', () => {
     const sessionEntries = [
       { type: 'session', version: 3, id: 'main-sess', cwd: '/proj', timestamp: '2026-07-10T09:58:00Z' },
       {
-        type: 'custom_message',
+        type: 'custom',
         customType: 'workflow-state-link',
         data: { runId: 'wf-running', path: stateFilePath, updatedAt: '2026-07-10T10:10:00Z' },
         timestamp: '2026-07-10T10:10:00Z',

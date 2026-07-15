@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => ({
   trashMock: vi.fn(),
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
   getHistoryFromFileMock: vi.fn().mockResolvedValue([]),
+  getHistoryFromFilePathMock: vi.fn().mockResolvedValue([]),
 }))
 
 const { mockScannedSessions } = mocks
@@ -95,7 +96,10 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
 
 vi.mock('../src/infra/system/trash.js', () => ({ trash: mocks.trashMock }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: mocks.convertPiHistoryMock }))
-vi.mock('../src/services/session-history.js', () => ({ getHistoryFromFile: mocks.getHistoryFromFileMock }))
+vi.mock('../src/services/session-history.js', () => ({
+  getHistoryFromFile: mocks.getHistoryFromFileMock,
+  getHistoryFromFilePath: mocks.getHistoryFromFilePathMock,
+}))
 
 // ── Mock 之后再 import 被测对象 ─────────────────────────────────────
 

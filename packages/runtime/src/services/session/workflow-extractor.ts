@@ -143,7 +143,10 @@ export function extractWorkflowsFromSessionFile(filePath: string): WorkflowRunRe
   for (const entry of entries) {
     if (typeof entry !== 'object' || entry === null) continue
     const e = entry as JsonlCustomEntry
-    if (e.type !== 'custom_message' || e.customType !== 'workflow-state-link') continue
+    // 真实 JSONL entry type 是 'custom'（不是 'custom_message'）。
+    // custom_message 是 pi 推给前端的消息类型，JSONL 持久化层用 'custom' + customType 区分。
+    // 实测验证：~/.xyz-agent-dev/pi/sessions/*.jsonl 中 workflow-state-link 条目 type 均为 'custom'。
+    if (e.type !== 'custom' || e.customType !== 'workflow-state-link') continue
     const data = e.data as WorkflowStateLinkData | undefined
     if (!data?.runId || !data?.path) continue
     // 同 runId 后出现的覆盖前面的（JSONL 顺序 = 时间顺序，后者更新）
