@@ -33,7 +33,7 @@
           :key="record.subagentId"
           class="group relative cursor-pointer rounded-md px-2 py-[7px] transition-colors hover:bg-surface-hover"
           data-testid="subagent-card"
-          :title="record.subagentId"
+          :title="record.slug ? record.agent + ' · ' + record.slug : record.agent"
           @click="emit('select', record.subagentId)"
           @mouseleave="cancellingId = null"
         >
@@ -51,10 +51,6 @@
             />
             <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-fg">
               {{ record.agent }}
-            </span>
-            <!-- slug（短标签，空串兜底 agent 名）替代原始 hash -->
-            <span class="shrink-0 font-mono text-[10px] text-muted">
-              {{ record.slug || record.agent }}
             </span>
             <!-- cancel 按钮（running 态显示，inline 两段式确认） -->
             <Button

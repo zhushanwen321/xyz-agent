@@ -100,14 +100,12 @@
             <span class="min-w-0 flex-1 truncate text-[11px] font-medium leading-[1.3] text-fg">
               {{ call.agent }}
             </span>
-            <span class="shrink-0 font-mono text-[10px] text-subtle">
-              {{ call.model === 'default' ? t('sidebar.workflowDetail.modelDefault') : call.model }}
-            </span>
           </div>
 
           <!-- 摘要 -->
           <div class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[10px] text-subtle">
-            <span v-if="call.inputTokens !== undefined">{{ formatTokens(call.inputTokens, t('sidebar.workflowDetail.tokenInUnit')) }}</span>
+            <span v-if="call.model">{{ call.model === 'default' ? t('sidebar.workflowDetail.modelDefault') : call.model }}</span>
+            <span v-if="call.inputTokens !== undefined">· {{ formatTokens(call.inputTokens, t('sidebar.workflowDetail.tokenInUnit')) }}</span>
             <span v-if="call.outputTokens !== undefined">· {{ formatTokens(call.outputTokens, t('sidebar.workflowDetail.tokenOutUnit')) }}</span>
             <span v-if="call.turns !== undefined">· {{ call.turns }} {{ t('sidebar.workflowDetail.turnsUnit') }}</span>
             <span v-if="call.durationMs !== undefined">· {{ formatDuration(call.durationMs) }}</span>
