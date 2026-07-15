@@ -175,9 +175,9 @@ async function onScan(): Promise<void> {
 function sourceBadgeClass(source: string): string {
   const map: Record<string, string> = {
     pi: 'bg-accent-soft text-accent',
-    claude: 'bg-warning/12 text-warning',
-    agents: 'bg-success/12 text-success',
-    piinstall: 'bg-info/12 text-info',
+    claude: 'bg-warning-soft text-warning',
+    agents: 'bg-success-soft text-success',
+    piinstall: 'bg-info-soft text-info',
   }
   return map[source] ?? 'bg-surface text-muted'
 }

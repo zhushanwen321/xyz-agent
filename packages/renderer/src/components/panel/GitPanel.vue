@@ -17,7 +17,7 @@
   <section
     v-if="result?.isRepo"
     class="relative flex h-full flex-col gap-1.5 overflow-hidden p-2 text-[12px]"
-    :class="result.hasConflict ? 'bg-danger/8' : ''"
+    :class="result.hasConflict ? 'bg-danger-soft' : ''"
   >
     <div
       v-if="result.hasConflict"
@@ -48,7 +48,7 @@
     </div>
 
     <!-- 错误提示（操作失败 inline 回显） -->
-    <p v-if="error" class="rounded-sm bg-danger/12 px-2 py-1 text-[11px] text-danger">{{ error }}</p>
+    <p v-if="error" class="rounded-sm bg-danger-soft px-2 py-1 text-[11px] text-danger">{{ error }}</p>
 
     <!-- 文件列表（点击跳转 detail tab 查看 diff：selectFile 设 selectedPath + drawer 切 detail） -->
     <ul v-if="result.files.length" class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
@@ -162,10 +162,10 @@ const pillClass = computed(
   () =>
     (
       {
-        clean: 'bg-success/12 text-success',
-        staged: 'bg-success/12 text-success',
-        dirty: 'bg-warning/14 text-warning',
-        conflict: 'bg-danger/14 text-danger',
+        clean: 'bg-success-soft text-success',
+        staged: 'bg-success-soft text-success',
+        dirty: 'bg-warning-soft text-warning',
+        conflict: 'bg-danger-soft text-danger',
       } satisfies Record<GitState, string>
     )[state.value],
 )

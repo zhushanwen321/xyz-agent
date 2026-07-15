@@ -189,7 +189,7 @@
         v-if="isDual"
         variant="ghost"
         size="icon"
-        class="size-[26px] rounded-md text-muted hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [-webkit-app-region:no-drag]"
+        class="size-[26px] rounded-md text-muted hover:bg-danger-soft hover:text-danger [-webkit-app-region:no-drag]"
         :title="t('panel.header.closeSession')"
         @click="emit('close')"
       >

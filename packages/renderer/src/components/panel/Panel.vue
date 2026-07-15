@@ -377,7 +377,7 @@ const panelStateClass = computed(() => {
     return 'opacity-100 ring-1 ring-[var(--accent-ring)]'
   }
   if (!props.active && props.isDual) {
-    return 'opacity-50 hover:opacity-[0.78]'
+    return 'opacity-70 hover:opacity-90'
   }
   // 单 panel：无 ring、满 opacity（底色透明继承 MainPanel）
   return ''

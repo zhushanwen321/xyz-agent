@@ -49,7 +49,7 @@
 
       <!-- 展开详情：完整 content + patchFile 提示 -->
       <template v-if="expanded">
-        <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info/5 px-2 py-1 font-mono text-[11px] text-info">
+        <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info-soft px-2 py-1 font-mono text-[11px] text-info">
           {{ patchHint }}
         </div>
         <!-- fullContent 走 MarkdownRenderer（thinking variant，同为次要过程信息语义）。
@@ -107,7 +107,7 @@ const cardClass = computed(() => {
   const hasFailed = recs.some((r) => r.status === 'failed')
   const hasCancelled = recs.some((r) => r.status === 'cancelled')
   if (hasFailed) {
-    return 'border-danger/40 bg-[color-mix(in_oklch,var(--danger)_5%,transparent)]'
+    return 'border-danger/40 bg-danger-soft'
   }
   if (hasCancelled) {
     return 'border-muted/30 bg-muted/5'

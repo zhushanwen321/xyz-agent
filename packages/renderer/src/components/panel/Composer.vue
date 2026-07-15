@@ -56,7 +56,7 @@
           v-if="isActive"
           variant="ghost"
           size="icon"
-          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-[rgba(239,68,68,0.15)] hover:text-danger"
+          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
           :title="t('panel.composer.stop')"
           @click="onAbort"
         >

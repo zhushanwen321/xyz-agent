@@ -22,7 +22,7 @@
     <div
       v-if="actionError"
       data-testid="provider-action-error"
-      class="flex items-center gap-1.5 rounded-md border border-danger/30 bg-danger/5 px-3 py-1.5 text-[11px] text-danger"
+      class="flex items-center gap-1.5 rounded-md border border-danger/30 bg-danger-soft px-3 py-1.5 text-[11px] text-danger"
     >
       <AlertCircle class="size-3.5 shrink-0" />
       <span class="truncate">{{ actionError }}</span>
@@ -81,7 +81,7 @@
         </Button>
         <Button
           variant="ghost"
-          class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [&_svg]:size-[13px]"
+          class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger [&_svg]:size-[13px]"
           :title="t('settings.provider.deleteTitle')"
           @click.stop="deleteTarget = p"
         >
@@ -164,7 +164,7 @@
                     class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-subtle hover:border-info hover:text-info"
                     @click.stop="setDefaultModel(p.id, m.id)"
                   >{{ t('settings.provider.setDefault') }}</Button>
-                  <span v-else class="rounded-sm bg-info/10 px-1.5 py-0.5 text-[10px] text-info">{{ t('settings.provider.defaultModel') }}</span>
+                  <span v-else class="rounded-sm bg-info-soft px-1.5 py-0.5 text-[10px] text-info">{{ t('settings.provider.defaultModel') }}</span>
                 </TableCell>
               </TableRow>
             </TableBody>
@@ -405,7 +405,7 @@ function thinkingLabel(m: { thinkingLevelMap?: Record<string, string | null> }):
 
 function thinkingPillClass(m: { thinkingLevelMap?: Record<string, string | null> }): string {
   const kind = thinkingKind(m)
-  if (kind === 'all') return 'bg-info/10 text-info'
+  if (kind === 'all') return 'bg-info-soft text-info'
   if (kind === 'hightop') return 'bg-accent-soft text-accent'
   return 'bg-surface text-muted'
 }

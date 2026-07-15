@@ -82,7 +82,7 @@
               <Button
                 v-if="provider?.apiKeySet && form.apiKey !== '__CLEAR__'"
                 variant="ghost"
-                class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(239,68,68,0.12)] hover:text-danger"
+                class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger"
                 :aria-label="t('settings.providerEdit.clearKey')"
                 :title="t('settings.providerEdit.clearKey')"
                 @click="clearApiKey"

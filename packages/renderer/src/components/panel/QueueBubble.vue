@@ -15,12 +15,12 @@
 <template>
   <div
     v-if="state && hasAny"
-    class="mb-1.5 overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-[color-mix(in_oklch,var(--accent)_6%,transparent)] text-[12px]"
+    class="mb-1.5 overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-accent-soft text-[12px]"
   >
     <!-- head：脉冲点 + 标签 + 计数摘要 + chevron（多条可折叠） -->
     <Button
       variant="ghost"
-      class="flex h-auto w-full items-center gap-2 rounded-none px-3 py-1.5 text-left font-normal hover:bg-[color-mix(in_oklch,var(--accent)_8%,transparent)] disabled:opacity-100"
+      class="flex h-auto w-full items-center gap-2 rounded-none px-3 py-1.5 text-left font-normal hover:bg-accent-soft disabled:opacity-100"
       :class="!canToggle ? 'cursor-default' : ''"
       :disabled="!canToggle"
       :aria-expanded="canToggle ? expanded : undefined"

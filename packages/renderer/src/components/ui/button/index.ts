@@ -12,7 +12,7 @@ export const buttonVariants = cva(
         secondary:
           "bg-transparent border border-border text-fg hover:bg-surface-hover",
         ghost: "hover:bg-surface-hover",
-        danger: "text-danger hover:bg-[rgba(239,68,68,0.12)]",
+        danger: "text-danger hover:bg-danger-soft",
       },
       size: {
         "default": "h-9 px-4 py-2",

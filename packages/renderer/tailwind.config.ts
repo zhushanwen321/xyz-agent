@@ -38,7 +38,7 @@ export default {
         danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
         info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
         // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
-        reasoning: 'var(--reasoning)',
+        reasoning: { DEFAULT: 'var(--reasoning)', soft: 'var(--reasoning-soft)' },
         // ── diff 行/字符级背景（预混合色，color-mix 派生跟随 --success/--danger）──
         // 行背景中饱和(18%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
         // canvas 用 bg-bg-input（暗 #1e1f24 / 亮 #f1f3f6 自动跟随主题），色块叠加其上。

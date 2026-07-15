@@ -37,7 +37,7 @@
   /* ── 主色（冷蓝）───────────────────────────────────────── */
   --accent: #4f8ef7;
   --accent-hover: #6ba3ff;
-  --accent-soft: rgba(79, 142, 247, 0.12);
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
   --accent-ring: rgba(79, 142, 247, 0.30); /* 选中态内描边（Card-Active），见 design-system §2 */
 
   /* ── 状态色 ─────────────────────────────────────────────── */
@@ -49,6 +49,11 @@
   --reasoning: #a78bfa;
   /* reasoning 软底：slash 命令 chip 背景（与 --accent-soft 同构，color-mix 派生跟随主题） */
   --reasoning-soft: color-mix(in oklch, var(--reasoning) 18%, transparent);
+  /* 状态色软底（12% 基准，color-mix 派生：palette 切换 / 亮暗主题自动跟随） */
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --warning-soft: color-mix(in oklch, var(--warning) 12%, transparent);
 
   /* ── 字体 ───────────────────────────────────────────────── */
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
@@ -300,4 +305,18 @@ body {
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================
+   Reduced motion（PRODUCT.md Accessibility：prefers-reduced-motion 兜底）
+   用户系统开启「减少动态效果」时，所有动画/过渡降级为瞬时。
+   覆盖 5 个无限循环动画（blink / pulse-accent / working-pulse /
+   steer-breathe / spin）及所有 transition。
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

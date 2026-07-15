@@ -94,11 +94,11 @@ function resolveStatusLabel(status: ChangeSetStatus | undefined): string {
 function resolveStatusClass(status: ChangeSetStatus | undefined): string {
   switch (status) {
     case 'accumulating': return 'bg-accent-soft text-accent'
-    case 'ready': return 'bg-info/10 text-info'
-    case 'partially-reviewed': return 'bg-amber-500/10 text-amber-500'
-    case 'resolved': return 'bg-success/10 text-success'
+    case 'ready': return 'bg-info-soft text-info'
+    case 'partially-reviewed': return 'bg-warning-soft text-warning'
+    case 'resolved': return 'bg-success-soft text-success'
     case 'superseded': return 'bg-surface text-subtle'
-    default: return 'bg-info/10 text-info'
+    default: return 'bg-info-soft text-info'
   }
 }
 
@@ -116,9 +116,9 @@ function changeLabel(status: FileChange['status']): string {
 }
 function changeBadgeClass(status: FileChange['status']): string {
   return {
-    added: 'bg-success/10 text-success',
-    modified: 'bg-info/10 text-info',
-    deleted: 'bg-danger/10 text-danger',
+    added: 'bg-success-soft text-success',
+    modified: 'bg-info-soft text-info',
+    deleted: 'bg-danger-soft text-danger',
     unmerged: 'bg-danger/20 text-danger ring-1 ring-danger/40',
   }[status]
 }

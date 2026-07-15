@@ -130,7 +130,7 @@
       <!-- 截断提示（>1MB，AC-6.5/T6.5） -->
       <div
         v-if="state.truncated"
-        class="border-b border-warning/30 bg-warning/8 px-2 py-1 text-[10px] text-warning"
+        class="border-b border-warning/30 bg-warning-soft px-2 py-1 text-[10px] text-warning"
         data-testid="detail-truncated"
       >
         {{ t('panel.detail.truncated') }}

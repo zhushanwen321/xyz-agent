@@ -30,7 +30,7 @@
 | `--border-strong` | `rgba(255,255,255,0.15)` | 强调分隔 | 2026-07-09 提亮（原 0.12） |
 | `--accent` | `#4f8ef7` | 主色/链接/聚焦 | C 原始 |
 | `--accent-hover` | `#6ba3ff` | 主色悬停 | 补全 |
-| `--accent-soft` | `rgba(79,142,247,0.12)` | 主色背景填充 | 补全 |
+| `--accent-soft` | `color-mix(in oklch, var(--accent) 12%, transparent)` | 主色背景填充（color-mix 派生：palette 切换自动跟随 --accent） | 补全（暗色从 rgba 硬编码改为 color-mix，与亮色一致） |
 | `--accent-ring` | `rgba(79,142,247,0.30)` | 选中态内描边（Card-Active `inset 0 0 0 1px`）| workspace/spec.md（draft 间 0.30/0.45/0.50 不一，以 spec 为准）|
 
 ## 状态色（继承 D 的结构，色相对齐冷蓝体系）
@@ -43,6 +43,10 @@
 | `--info` | `#38bdf8` | 信息/提示 | 补全 |
 | `--reasoning` | `#a78bfa` | 思考块色相（draft-message-stream §4 + composer 思考等级） | 补全（v3 重建 Wave 1） |
 | `--reasoning-soft` | `color-mix(in oklch, var(--reasoning) 18%, transparent)` | slash 命令 chip 背景（与 `--accent-soft` 同构派生：跟随 --reasoning 自动适配明暗） | 补全 |
+| `--info-soft` | `color-mix(in oklch, var(--info) 12%, transparent)` | 信息/提示软底（badge/提示条背景，12% 基准） | 补全（状态色 soft 归一） |
+| `--success-soft` | `color-mix(in oklch, var(--success) 12%, transparent)` | 成功软底（badge/changeset resolved 背景，12% 基准） | 补全（状态色 soft 归一） |
+| `--danger-soft` | `color-mix(in oklch, var(--danger) 12%, transparent)` | 错误/危险软底（失败块/badge 背景，12% 基准） | 补全（状态色 soft 归一） |
+| `--warning-soft` | `color-mix(in oklch, var(--warning) 12%, transparent)` | 警告软底（badge/提示条背景，12% 基准） | 补全（状态色 soft 归一） |
 
 ## 字体
 

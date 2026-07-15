@@ -141,10 +141,10 @@
           class="chev size-[9px] text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
           :class="expanded ? 'rotate-90 text-accent' : ''"
         />
-        <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-[rgba(167,139,250,0.12)] px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-reasoning">
+        <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-reasoning-soft px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-reasoning">
           <Brain class="size-2.5" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
         </span>
-        <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-[rgba(56,189,248,0.12)] px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-info">
+        <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-info-soft px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-info">
           <Wrench class="size-2.5" />{{ t('panel.message.toolCount', { count: toolCount }) }}
         </span>
       </Button>
@@ -323,8 +323,8 @@ const isPendingUser = computed(
 const isSteerMode = computed(() => props.turn.user?.sendMode === 'steer')
 const pendingBubbleClass = computed(() =>
   isSteerMode.value
-    ? 'border-[var(--accent)] bg-[color-mix(in_oklch,var(--accent)_6%,transparent)]'
-    : 'border-info bg-[color-mix(in_oklch,var(--info)_6%,transparent)]',
+    ? 'border-[var(--accent)] bg-accent-soft'
+    : 'border-info bg-info-soft',
 )
 const pendingLabelClass = computed(() => (isSteerMode.value ? 'text-accent' : 'text-info'))
 const pendingDotClass = computed(() => (isSteerMode.value ? 'bg-accent' : 'bg-info'))

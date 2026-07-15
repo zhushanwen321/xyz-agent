@@ -136,7 +136,7 @@
             <span class="truncate text-[12px] font-medium text-fg">{{ ext.name }}</span>
             <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">v{{ ext.version }}</span>
             <!-- 来源标签 -->
-            <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceUser') }}</span>
+            <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceUser') }}</span>
           </div>
           <span class="truncate text-[11px] text-muted">{{ ext.description }}</span>
           <div v-if="ext.tools?.length" class="mt-1 flex flex-wrap gap-1">
@@ -177,7 +177,7 @@
         <!-- 卸载按钮 -->
         <Button
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [&_svg]:size-3.5"
+          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger [&_svg]:size-3.5"
           :title="t('settings.extension.uninstallTitle')"
           @click="confirmTarget = ext.name"
         >

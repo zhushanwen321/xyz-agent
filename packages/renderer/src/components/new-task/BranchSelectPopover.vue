@@ -239,7 +239,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     <div
       v-if="pendingDirtyBranch"
       data-testid="dirty-confirm"
-      class="flex flex-col gap-2 border-t border-warning/40 bg-warning/10 px-3 py-2.5 text-[12px] text-fg"
+      class="flex flex-col gap-2 border-t border-warning/40 bg-warning-soft px-3 py-2.5 text-[12px] text-fg"
     >
       <p>
         {{ t('newTask.branchSelect.dirtyWarning', { branch: pendingDirtyBranch, count: dirtyCount }) }}

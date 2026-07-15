@@ -422,6 +422,6 @@ const blockClass = computed(() => {
   if (props.type !== 'tool') return ''
   // 失败 tool / 失败 subagent：整块红框（draft trace-tool.failed）。
   if (!isFailed.value) return ''
-  return 'my-1 rounded-lg border border-danger bg-[color-mix(in_oklch,var(--danger)_6%,transparent)] px-3'
+  return 'my-1 rounded-lg border border-danger bg-danger-soft px-3'
 })
 </script>

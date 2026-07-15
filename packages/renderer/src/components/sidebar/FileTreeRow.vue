@@ -204,12 +204,12 @@ const gitBadge = computed(() => {
 /** M/A/D/U/R 角标配色（design-tokens 语义色） */
 const gitBadgeClass = computed(() => {
   switch (gitStatus.value) {
-    case 'modified': return 'bg-warning/12 text-warning'
-    case 'added': return 'bg-success/12 text-success'
-    case 'deleted': return 'bg-danger/12 text-danger'
-    case 'unmerged': return 'bg-danger/16 text-danger font-semibold'
-    case 'renamed': return 'bg-info/12 text-info'
-    case 'untracked': return 'bg-success/12 text-success'
+    case 'modified': return 'bg-warning-soft text-warning'
+    case 'added': return 'bg-success-soft text-success'
+    case 'deleted': return 'bg-danger-soft text-danger'
+    case 'unmerged': return 'bg-danger-soft text-danger font-semibold'
+    case 'renamed': return 'bg-info-soft text-info'
+    case 'untracked': return 'bg-success-soft text-success'
     default: return ''
   }
 })
