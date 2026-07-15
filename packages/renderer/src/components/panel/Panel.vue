@@ -240,7 +240,13 @@ watch(
   async (agentCallId) => {
     agentCallOverlayFile.value = ''
     if (!agentCallId || !props.sessionId) return
-    agentCallOverlayFile.value = await getAgentCallFilePath(props.sessionId, agentCallId)
+    // 展示型功能：RPC 失败（runtime 未启动/WS 断开）静默降级，按钮不显示即可
+    try {
+      agentCallOverlayFile.value = await getAgentCallFilePath(props.sessionId, agentCallId)
+     
+    } catch {
+      agentCallOverlayFile.value = ''
+    }
   },
   { immediate: true },
 )
