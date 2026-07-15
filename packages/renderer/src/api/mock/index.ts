@@ -260,10 +260,14 @@ export const session = {
     if (target) target.thinkingLevel = level
   },
 
-  /** Mock subagent 列表（返回 fixture，E2E 验证 Agents tab 跟随 session 切换刷新） */
-  async getSubagents(_sessionId: string): Promise<SubagentRecord[]> {
+  /**
+   * Mock subagent 列表。
+   * s3（E2E 默认激活 session）返回 fixture，其他 session 返回空——
+   * 让 E2E 能验证「切 session 后列表刷新」（切到无数据 session 看空态，切回 s3 看列表）。
+   */
+  async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
     await sleep(TIMING.ack)
-    return fixtureSubagents.map((s) => ({ ...s }))
+    return sessionId === 's3' ? fixtureSubagents.map((s) => ({ ...s })) : []
   },
 
   /** Mock subagent 对话流历史（返回空数组，agent call 对话流由 getAgentCallHistory 覆盖） */
@@ -272,10 +276,13 @@ export const session = {
     return []
   },
 
-  /** Mock workflow 列表（返回 fixture，E2E 验证 Flows tab 渲染 + 跟随 session 切换刷新） */
-  async getWorkflows(_sessionId: string): Promise<WorkflowRunRecord[]> {
+  /**
+   * Mock workflow 列表。
+   * s3 返回 fixture，其他 session 返回空——同 getSubagents 的区分逻辑。
+   */
+  async getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]> {
     await sleep(TIMING.ack)
-    return fixtureWorkflows.map((w) => ({ ...w }))
+    return sessionId === 's3' ? fixtureWorkflows.map((w) => ({ ...w })) : []
   },
 
   /** Mock agent call 对话流历史（返回空数组，selectAgentCall 不 throw 即可） */

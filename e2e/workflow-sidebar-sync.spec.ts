@@ -36,10 +36,10 @@ async function activateSession(page: import('@playwright/test').Page): Promise<v
 }
 
 test.describe('Workflow 侧边栏交互同步 E2E', () => {
-  test('E1: Flows tab 显示 workflow 列表，Agents tab 显示 subagent 列表', async ({ page }) => {
+  test('E1a: s3 session 的 Flows tab 显示 workflow 列表，Agents tab 显示 subagent 列表', async ({ page }) => {
     await activateSession(page)
 
-    // 切到工作流 tab，等待 workflow-card 渲染（mock getWorkflows 有延迟）
+    // 切到工作流 tab，等待 workflow-card 渲染（mock getWorkflows 对 s3 返回非空）
     await page.locator('button[title="工作流"]').click()
     await expect(page.getByTestId('workflow-card')).toBeVisible({ timeout: 10_000 })
     // 确认 mock fixture 的 scriptName 渲染
@@ -49,6 +49,31 @@ test.describe('Workflow 侧边栏交互同步 E2E', () => {
     await page.locator('button[title="子代理"]').click()
     await expect(page.getByTestId('subagent-card')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText('reviewer')).toBeVisible()
+  })
+
+  test('E1b: 切到无 workflow 的 session 后 Flows tab 显空态，切回 s3 列表恢复', async ({ page }) => {
+    await activateSession(page)
+
+    // s3 有 workflow → Flows tab 显示列表
+    await page.locator('button[title="工作流"]').click()
+    await expect(page.getByTestId('workflow-card')).toBeVisible({ timeout: 10_000 })
+
+    // 切到 s1（无 workflow 数据）→ 列表应为空态
+    await page.locator('button[title="会话"]').click()
+    await expect(page.getByText('重构 auth 模块')).toBeVisible({ timeout: 10_000 })
+    await page.getByText('重构 auth 模块').click()
+    await page.locator('button[title="工作流"]').click()
+    // mock 对非 s3 session 返回空 → 空态占位
+    await expect(page.getByTestId('workflow-list-empty')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByTestId('workflow-card')).toHaveCount(0)
+
+    // 切回 s3 → 列表恢复（验证不是残留）
+    await page.locator('button[title="会话"]').click()
+    await expect(page.getByText('API 性能优化')).toBeVisible({ timeout: 10_000 })
+    await page.getByText('API 性能优化').click()
+    await page.locator('button[title="工作流"]').click()
+    await expect(page.getByTestId('workflow-card')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('deploy-flow')).toBeVisible()
   })
 
   test('E2: 点 workflow 卡片 → 侧边栏进 detail 视图，Panel 不进 overlay（composer 仍可见）', async ({ page }) => {

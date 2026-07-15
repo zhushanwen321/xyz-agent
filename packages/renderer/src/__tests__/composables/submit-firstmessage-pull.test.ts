@@ -1,39 +1,48 @@
 /**
- * W2 (F2 review fix) 测试：submitFirstMessage 新建 session 后主动拉取 subagent/workflow 列表。
+ * W2 (F2 review fix) 测试：submitFirstMessage 新建 session 后 subagent/workflow 列表数据正确刷新。
  *
- * 核心不变量（修复问题 1 的新建 session 路径）：
- * - submitFirstMessage 后 loadSubagents 被调用（新建 session 走延迟 create，不走 selectSession，
- *   兜底全缺。submitFirstMessage 补 loadTree/loadSubagents/loadWorkflows）
+ * 核心验证（行为结果，非 spy）：
+ * - submitFirstMessage 后 subagentStore.records 被填充（不只是 loadSubagents 被调）
+ * - submitFirstMessage 后 workflowStore.records 被填充
+ * - fileTree store 有对应 session 的分桶数据
+ *
+ * 新建 session 走延迟 create 路径，不走 selectSession，兜底全缺。
+ * submitFirstMessage 补了 loadTree/loadSubagents/loadWorkflows 才修复。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/submit-firstmessage-pull.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import type { SessionSummary } from '@xyz-agent/shared'
 
-// mock @/api 门面
-vi.mock('@/api', () => ({
-  session: {
-    create: vi.fn(),
-    getCommands: vi.fn().mockResolvedValue({ commands: [] }),
-    getSubagents: vi.fn().mockResolvedValue([]),
-    getWorkflows: vi.fn().mockResolvedValue([]),
-  },
-  chat: {
-    getHistory: vi.fn().mockResolvedValue([]),
-  },
-  file: {
-    tree: vi.fn().mockResolvedValue({}),
-  },
-  git: {
-    status: vi.fn().mockResolvedValue({}),
-  },
+vi.mock('@/api/domains/session', () => ({
+  create: vi.fn(),
+  getCommands: vi.fn().mockResolvedValue({ commands: [] }),
+  getSubagents: vi.fn().mockResolvedValue([
+    { subagentId: 'sub-new-1', sessionFile: null, agent: 'reviewer', slug: 'r', task: 't', status: 'done' },
+  ]),
+  getWorkflows: vi.fn().mockResolvedValue([
+    { runId: 'wf-new-1', scriptName: 'new-flow', status: 'done', startedAt: '', agentCalls: [], stateFilePath: '' },
+  ]),
+  getAgentCallHistory: vi.fn().mockResolvedValue([]),
 }))
+
+// 门面重定向
+vi.mock('@/api', async (importActual) => {
+  const actual = await importActual<typeof import('@/api')>()
+  const session = await import('@/api/domains/session')
+  return { ...actual, session }
+})
 
 vi.mock('@/api/events', () => ({
   on: vi.fn(() => () => {}),
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
 }))
+
+// file tree 依赖
+vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
+vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 // mock useChat（submitFirstMessage 调 chat.send，stub 为 noop 避免触发 WS）
 vi.mock('@/composables/features/useChat', () => ({
@@ -50,17 +59,11 @@ vi.mock('@/composables/features/useModel', () => ({
   })),
 }))
 
-// mock useFileTree（每次返回同一实例的 loadTree spy，否则 composable 每调返回新闭包）
-const loadTreeSpy = vi.fn().mockResolvedValue(undefined)
-vi.mock('@/composables/features/useFileTree', () => ({
-  useFileTree: vi.fn(() => ({ loadTree: loadTreeSpy })),
-}))
-
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { transition, useNewTaskFlowController } from '@/composables/new-task/useNewTaskFlowState'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
-import type { SessionSummary } from '@xyz-agent/shared'
+import { useFileTreeStore } from '@/stores/fileTree'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -84,35 +87,42 @@ function setupLandingWithSession(): SessionSummary {
   return fakeSession
 }
 
-describe('W2 (F2): submitFirstMessage 新建 session 后主动拉取 subagent/workflow', () => {
-  it('submitFirstMessage 后 loadSubagents 被调用', async () => {
-    const fakeSession = setupLandingWithSession()
-    const flow = useNewTaskFlow()
-    const subagentStore = useSubagentStore()
-    const spy = vi.spyOn(subagentStore, 'loadSubagents')
-
-    await flow.submitFirstMessage('hello')
-
-    expect(spy).toHaveBeenCalledWith(fakeSession.id)
-  })
-
-  it('submitFirstMessage 后 loadWorkflows 被调用', async () => {
-    const fakeSession = setupLandingWithSession()
-    const flow = useNewTaskFlow()
-    const workflowStore = useWorkflowStore()
-    const spy = vi.spyOn(workflowStore, 'loadWorkflows')
-
-    await flow.submitFirstMessage('hello')
-
-    expect(spy).toHaveBeenCalledWith(fakeSession.id)
-  })
-
-  it('submitFirstMessage 后 loadTree 被调用', async () => {
+describe('W2 (F2): submitFirstMessage 新建 session 后 subagent/workflow 数据刷新', () => {
+  it('submitFirstMessage 后 subagentStore.records 被填充', async () => {
     setupLandingWithSession()
     const flow = useNewTaskFlow()
+    const subagentStore = useSubagentStore()
 
     await flow.submitFirstMessage('hello')
 
-    expect(loadTreeSpy).toHaveBeenCalledWith('sess-new-001')
+    expect(subagentStore.records).toHaveLength(1)
+    expect(subagentStore.records[0].subagentId).toBe('sub-new-1')
+    expect(subagentStore.records[0].agent).toBe('reviewer')
+  })
+
+  it('submitFirstMessage 后 workflowStore.records 被填充', async () => {
+    setupLandingWithSession()
+    const flow = useNewTaskFlow()
+    const workflowStore = useWorkflowStore()
+
+    await flow.submitFirstMessage('hello')
+
+    expect(workflowStore.records).toHaveLength(1)
+    expect(workflowStore.records[0].runId).toBe('wf-new-1')
+    expect(workflowStore.records[0].scriptName).toBe('new-flow')
+  })
+
+  it('submitFirstMessage 后 fileTree store 有对应 session 的分桶', async () => {
+    setupLandingWithSession()
+    const flow = useNewTaskFlow()
+    const fileTreeStore = useFileTreeStore()
+
+    await flow.submitFirstMessage('hello')
+
+    // loadTree 是 fire-and-forget（void），submitFirstMessage resolve 时可能未完成。
+    // 用 waitFor 等 microtask flush 后 store 分桶出现。
+    await vi.waitFor(() => {
+      expect(fileTreeStore.getTree('sess-new-001')).toBeDefined()
+    })
   })
 })
