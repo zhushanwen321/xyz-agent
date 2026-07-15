@@ -72,6 +72,7 @@ export class SessionScanner {
       lastActiveAt: s.lastModified,
       modelId: '',
       tokenCount: 0,
+      sessionFile: s.filePath,
     }
   }
 }

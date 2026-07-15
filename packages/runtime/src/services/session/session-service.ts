@@ -521,6 +521,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       lastActiveAt: s.lastActiveAt, modelId: s.modelId,
       thinkingLevel: s.thinkingLevel, tokenCount: s.tokenCount,
       hidden: s.hidden,
+      sessionFile: s.sessionFilePath,
     }
   }
 
