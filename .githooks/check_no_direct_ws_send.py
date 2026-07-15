@@ -56,6 +56,11 @@ def scan_ws() -> list[str]:
         if f.suffix not in (".ts", ".vue"):
             continue
         rel = f.relative_to(SCAN_ROOT).as_posix()
+        # [HISTORICAL] __tests__/ 排除：单元测试测 ws-client.send 本身是其职责，
+        # 与业务代码（store/composable/组件）直调底层通道是两回事。规则目标是
+        # 防止业务侧绕过 api 门面，不是禁止测试。
+        if rel.startswith("__tests__/"):
+            continue
         text = f.read_text(encoding="utf-8")
         for ln_no, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
@@ -78,6 +83,9 @@ def scan_ipc() -> list[str]:
         if f.suffix not in (".ts", ".vue"):
             continue
         rel = f.relative_to(SCAN_ROOT).as_posix()
+        # [HISTORICAL] __tests__/ 排除（与 scan_ws 同理，见上方注释）
+        if rel.startswith("__tests__/"):
+            continue
         text = f.read_text(encoding="utf-8")
         for ln_no, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
