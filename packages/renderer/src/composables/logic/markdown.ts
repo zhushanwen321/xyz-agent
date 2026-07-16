@@ -18,7 +18,6 @@
  * 非 token 文本（只发 scoped <span>），linkify 识别的 <a> 加 rel/target 安全属性。
  * linkify fuzzyLink:false：只识别带 scheme（http(s)://、ftp://、//）的 URL，不识别裸域名，
  * 避免 .md/.io 等 ccTLD 把文件名误判成 URL（见 getMarkdown 内注释）。
- * 代码块/mermaid 源码进 data 属性前用 base64 编码（UTF-8 安全），杜绝引号/HTML 注入。
  */
 import MarkdownIt from 'markdown-it'
 import { createHighlighter } from 'shiki'
@@ -102,7 +101,6 @@ function encodeBase64(text: string): string {
 /**
  * 用 shiki 单例同步高亮一段代码（调用前需 await getHighlighter）。
  * 返回双主题 HTML（带 --shiki-dark/--shiki-light 变量的 span），未知语言 fallback typescript。
- * XSS 安全：shiki codeToHtml 转义所有非 token 文本，只发 scoped <span>。
  */
 function highlightShikiSync(hl: Highlighter, code: string, lang: string): string {
   const resolved = hl.getLoadedLanguages().includes(lang) ? lang : 'typescript'
@@ -228,12 +226,13 @@ async function getMarkdown(): Promise<MarkdownIt> {
  */
 // 字符集内 `-` 转义为 `\-`（防 `_-`/`/-` 倒序范围触发 "Range out of order"）
 // g 标志 + 捕获组 1 = 路径（含可选前缀，去掉前导边界符）。前导边界符：行首或空白/括号/引号/标点。
-const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?[a-zA-Z0-9._\-]+(?:\/[a-zA-Z0-9._\-]+)+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
+// 路径段允许空格（如 docs/My Document.md），扩展名可选（如 src/Makefile）。
+const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?(?:[a-zA-Z0-9._\-]+(?: [a-zA-Z0-9._\-]+)*)+(?:\/(?:[a-zA-Z0-9._\-]+(?: [a-zA-Z0-9._\-]+)*)+)+(?:\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})?)(?![a-zA-Z0-9._\-\/])/g
 
 /**
  * 裸 basename 识别正则（无 / 前缀的文件名，如 design.md / README.md）。
  *
- * 与 FILEPATH_RE 的差异：去掉 `(?:\/[a-zA-Z0-9._\-]+)+` 段（不要求含 /）。
+ * 与 FILEPATH_RE 的差异：去掉 `(?:\/...)+` 段（不要求含 /）。
  * 扩展名前瞻与 FILEPATH_RE 一致（要求数字之后必有字母，挡掉版本号/小数）。
  *
  * 用途：filepathRule 内 FILEPATH_RE 匹配失败后，用此正则扫 basename 候选，
@@ -241,7 +240,7 @@ const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?[a-zA-Z0-9._\-]+(?:\/[a-zA
  * 避免误把 design.md 这类裸文件名当 URL（linkify fuzzyLink:false 已让裸域名不当 URL，
  * 但也导致裸 basename 默认是纯文本不可点击，此正则 + localFiles 集合打开识别通道）。
  */
-const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
+const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-\/])/g
 
 function filepathRule(state: InlineState, silent: boolean): boolean {
   const pos = state.pos
