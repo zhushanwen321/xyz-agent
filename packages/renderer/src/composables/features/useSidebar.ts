@@ -353,6 +353,15 @@ export function useSidebar() {
     // 清空该 panel 绑定，避免 panel 残留指向已删 session 的悬空引用。
     const boundPanel = panel.findPanelBySession(id)
     if (boundPanel) panel.loadSession(boundPanel.id, null)
+    // [W3 / W-S6] 清 per-panel viewing 状态：删除 session 前该 panel 可能正停在
+    // subagent overlay / agent call overlay，残留 viewing 指向已删 session 的 subagentId /
+    // agentCallId，且 streaming 订阅（subagentStore.panelStreamUnsub）泄漏。此处兜底清。
+    const subagentStore = useSubagentStore()
+    const workflowStore = useWorkflowStore()
+    if (boundPanel) {
+      if (subagentStore.isViewing(boundPanel.id)) subagentStore.backToMain(boundPanel.id)
+      if (workflowStore.isViewing(boundPanel.id)) workflowStore.backFromAgentCall(boundPanel.id)
+    }
     session.removeFromList(id)
     // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅
     useFileTreeStore().clearSession(id)

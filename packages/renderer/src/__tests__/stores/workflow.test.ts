@@ -224,7 +224,7 @@ describe('workflow store · subscribeWorkflowPush', () => {
     expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
   })
 
-  it('切会话后旧 session 的延迟重试不再触发（focusedSessionId 变更）', async () => {
+  it('切会话后旧 session 的延迟重试独立触发（W-S5：局部 sid 解耦单例耦合）', async () => {
     vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
     const store = useWorkflowStore()
 
@@ -236,12 +236,16 @@ describe('workflow store · subscribeWorkflowPush', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
 
-    // 切会话（subscribeWorkflowPush 再次调用，focusedSessionId 变为 'sess-2'）
+    // 切会话（subscribeWorkflowPush 再次调用）。
+    // [W-S5] 旧实现用 store 级单例 let focusedSessionId，第二次调用会覆盖它，
+    // 使 sess-1 已调度的 500ms 重试 `if (focusedSessionId === sid)` 守卫误判为 false 而被吞——
+    // 这是单例耦合 bug（A→B 切换时 A 的重试不应受 B 影响）。改为函数内局部 const sid 后，
+    // sess-1 的重试绑定自己的 sid，独立触发，不再被 sess-2 覆盖。
     store.subscribeWorkflowPush('sess-2')
     eventHandlers = [] // 新 session 的订阅 handler
 
-    // 500ms 后旧的重试不应执行（focusedSessionId 已变）
+    // 500ms 后 sess-1 的重试独立触发（不再被单例变量吞掉）
     await vi.advanceTimersByTimeAsync(500)
-    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
+    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(2)
   })
 })

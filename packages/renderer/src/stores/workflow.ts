@@ -131,9 +131,6 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
-  /** 当前焦点 session ID（subscribeWorkflowPush 回调内重新拉取用） */
-  let focusedSessionId = ''
-
   /** running 信号延迟重试间隔（ms）。workflow-state-link 可能刚写入，首次 RPC 拉取为空。 */
   const RUNNING_RETRY_MS = 500
 
@@ -144,22 +141,25 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * running 信号特殊处理：workflow tool-call-end 触发 running 信号时，主 session JSONL 的
    * workflow-state-link 可能刚 append 还未 flush（pi 延迟写入时序）。延迟 RUNNING_RETRY_MS 再拉一次兜底。
    *
+   * [W3 / W-S5] 资源/状态一致性修复：此前 `let focusedSessionId` 是 store 级单例闭包变量，
+   * 多次调用 subscribeWorkflowPush（A→B）会互相覆盖——A 的回调 / setTimeout 重试读到的
+   * focusedSessionId 已是 B 的值，`if (focusedSessionId === sid)` 守卫误判使 A 的 running 重试被吞。
+   * 改为函数内局部 const 捕获 sessionId，每次调用各自独立。
+   *
    * @param sessionId 当前焦点 session ID
    * @returns 取消订阅函数（切会话时调用，取消旧 session 的订阅）
    */
   function subscribeWorkflowPush(sessionId: string): () => void {
-    focusedSessionId = sessionId
+    const sid = sessionId
     return events.on(sessionId, (msg) => {
       if (msg.type !== 'session.workflowUpdate') return
-      if (!focusedSessionId) return
       // 增量信号 → 重新拉取完整列表
-      void loadWorkflows(focusedSessionId)
+      void loadWorkflows(sid)
       // running 信号延迟重试：workflow-state-link 可能刚写入，首次拉取为空
       const payload = msg.payload as { update?: { status?: string } }
       if (payload.update?.status === 'running') {
-        const sid = focusedSessionId
         setTimeout(() => {
-          if (focusedSessionId === sid) void loadWorkflows(sid)
+          void loadWorkflows(sid)
         }, RUNNING_RETRY_MS)
       }
     })

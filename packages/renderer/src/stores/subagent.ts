@@ -211,7 +211,12 @@ export const useSubagentStore = defineStore('subagent', () => {
         stopStream(pid)
         // 收口 streaming 实体（chat store sealed 收口），再用权威历史覆盖
         chatFinalizeStream(virtualId)
-        void fetchAndInject(mainSessionId, recordId, setMessages)
+        // [W3 / W-S2] fetchAndInject 是 fail-fast 契约（docstring 说明调用方负责 catch）。
+        // 此处是终态收口路径（lines === undefined），getSubagentHistory reject 时若无 catch
+        // 会产生 unhandled rejection。终态历史拉取失败不致命（streaming 已收口），仅记日志。
+        void fetchAndInject(mainSessionId, recordId, setMessages).catch(
+          (e) => console.error('[subagent] finalize refetch failed:', e),
+        )
         return
       }
       chatApplyDelta(virtualId, payload.lines)
@@ -261,17 +266,22 @@ export const useSubagentStore = defineStore('subagent', () => {
    * 取消 running subagent（调 RPC + 乐观更新）。
    * 成功后立即将 records 中对应项 status 改为 cancelled（不等 WS 推送，避免 UI 延迟）。
    * RPC 失败时不改 status（乐观更新回滚），error 向上抛由调用方 toast。
+   *
+   * [W3 / W-S7] 不可变写：此前 `record.status = 'cancelled'` 直接 mutation 数组内对象，
+   * 与 store 其余「取出 → 新数组 → set」的不可变风格不一致（且不保证响应式触发）。改为
+   * map 替换整个 record；回滚用保存的 prevRecords 整体恢复。
    */
   async function cancelSubagent(sessionId: string, subagentId: string): Promise<void> {
-    // 先乐观更新（假设成功）
-    const record = records.value.find((s) => s.subagentId === subagentId)
-    const prevStatus = record?.status
-    if (record) record.status = 'cancelled'
+    const prevRecords = records.value
+    // 乐观更新（假设成功）：不可变 map 替换目标 record
+    records.value = prevRecords.map((s) =>
+      s.subagentId === subagentId ? { ...s, status: 'cancelled' as const } : s,
+    )
     try {
       await sessionApi.subagentAction(sessionId, 'cancel', subagentId)
     } catch (e) {
-      // 回滚乐观更新
-      if (record && prevStatus) record.status = prevStatus
+      // 回滚乐观更新：整体恢复 prevRecords
+      records.value = prevRecords
       throw e
     }
   }
