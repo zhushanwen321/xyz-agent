@@ -111,10 +111,15 @@ export class EventInterpreter {
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
   // ── W6 pi watchdog 状态（per-session，turn 维度）──
-  /** ABORT 定时器句柄（300s 无活动事件触发 onSilentAbort），turn-start/活动事件启动/重置，agent_end 销毁清除 */
+  // M8（perf-quick-batch）：改为单定时器 + lastActivityAt 时间戳方案。
+  // 旧实现每活动事件都 clearWatchdogTimers（2 clearTimeout）+ 重排 2 setTimeout，
+  // 高频 token 流下每 token 4 次定时器操作（2000 token = 8000 次）。
+  // 现在只维护一个指向最近 deadline（WARN 或 ABORT）的定时器 + 最后活动时间戳；
+  // reset 只更新时间戳（O(1)，不碰定时器），定时器到点时据 now-lastActivityAt 判定真阈值。
+  /** 最后一次活动事件的时间戳（Date.now()）。reset 只更新它，不重排定时器。 */
+  private watchdogLastActivityAt = 0
+  /** 单定时器句柄，指向最近的 deadline（WARN 未发→WARN 阈值；已发→ABORT 阈值）。 */
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null
-  /** WARN 定时器句柄（120s 无活动事件广播 stream_error），与 watchdogTimer 同生命周期 */
-  private watchdogWarnTimer: ReturnType<typeof setTimeout> | null = null
   /** 本轮 WARN 是否已广播（避免 reset 前重复广播；活动事件到达时复位） */
   private watchdogWarned = false
 
@@ -358,32 +363,55 @@ export class EventInterpreter {
   /**
    * 启动 watchdog（turn-start 触发）。
    *
-   * 清掉上一轮残留定时器后，启动 WARN（120s）和 ABORT（300s）两级定时器。
-   * WARN 触发时广播 message.stream_error{kind:'silent'} 提醒用户但不中断；
-   * ABORT 触发时调 onSilentAbort（上层 abort pi + 复位 isGenerating）并清自身。
+   * 记录活动时间戳并排一个指向 WARN 阈值的定时器。
    */
   private startWatchdog(): void {
-    this.scheduleWatchdog()
+    this.watchdogLastActivityAt = Date.now()
+    this.watchdogWarned = false
+    this.armWatchdogTimer(SILENT_WARN_MS)
   }
 
   /**
    * 重置 watchdog（活动事件到达时触发）。
    *
-   * 与 startWatchdog 共用 schedule 逻辑：清掉 WARN/ABORT 定时器 + 复位 watchdogWarned 后重排。
+   * M8（perf-quick-batch）：只更新活动时间戳 + 复位 warned，**不重排定时器**。
    * 活动事件定义（设计文档 §3.2）：message（text_delta/thinking_*）/ tool-call-start / tool-call-end。
-   * 这些事件表明 pi 仍在产出，故重置计时，避免长任务/长思考误判。
+   * 这些事件表明 pi 仍在产出，故重置计时。
+   *
+   * INVAR-M8-2（不提前）：定时器到点时用 now-lastActivityAt 判定，活动持续时 diff 不到阈值 → 不触发。
+   * 旧实现每帧 clear+重排两定时器（每 token 4 次操作），现 reset 为 O(1)。
    */
   private resetWatchdog(): void {
-    this.scheduleWatchdog()
+    this.watchdogLastActivityAt = Date.now()
+    this.watchdogWarned = false
+    // 定时器若已存在则保留（到点再判）；若无（如首事件前未 start）则补排指向 WARN。
+    if (!this.watchdogTimer) this.armWatchdogTimer(SILENT_WARN_MS)
   }
 
-  /** 共享的定时器重排逻辑：清旧 + 复位 warned + 排 WARN/ABORT 两级。 */
-  private scheduleWatchdog(): void {
-    this.clearWatchdogTimers()
-    this.watchdogWarned = false
-    // WARN 先到：广播提示，不清 ABORT 计时（继续等卡死判定）
-    this.watchdogWarnTimer = setTimeout(() => {
-      if (this.watchdogWarned) return
+  /**
+   * 排一个定时器，到点后据真实静默时长判定触发 WARN 还是 ABORT。
+   *
+   * 单定时器方案：只指向「当前最近的 deadline」。到点时计算 now-lastActivityAt：
+   * - 未达 WARN → 活动发生过（lastActivityAt 被推进），重排到 WARN 剩余时间
+   * - 达 WARN 未发 → 广播 WARN，重排到 ABORT
+   * - 达 ABORT → 触发 onSilentAbort 并清自身
+   */
+  private armWatchdogTimer(delayMs: number): void {
+    this.clearWatchdogTimer()
+    this.watchdogTimer = setTimeout(() => this.onWatchdogTick(), delayMs)
+  }
+
+  /** 定时器到点回调：据真实静默时长判定。 */
+  private onWatchdogTick(): void {
+    this.watchdogTimer = null
+    const silentFor = Date.now() - this.watchdogLastActivityAt
+    if (silentFor >= SILENT_ABORT_MS) {
+      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
+      this.clearWatchdogTimer()
+      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
+      return
+    }
+    if (silentFor >= SILENT_WARN_MS && !this.watchdogWarned) {
       this.watchdogWarned = true
       console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
       // B1（PR#86 review）：WARN 走独立类型 message.stream_warn（提示性，不中断流），
@@ -396,30 +424,29 @@ export class EventInterpreter {
           content: `长时间无响应（${SILENT_WARN_MS / 1000}s 无活动）`,
         },
       })
-    }, SILENT_WARN_MS)
-    // ABORT 到：判定卡死，触发回调并清自身（abort 路径会广播终态）
-    this.watchdogTimer = setTimeout(() => {
-      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
-      this.clearWatchdogTimers()
-      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
-    }, SILENT_ABORT_MS)
+      // 已发 WARN，重排到 ABORT 剩余时间
+      this.armWatchdogTimer(SILENT_ABORT_MS - silentFor)
+      return
+    }
+    // 未达阈值（活动发生过）或已发 WARN 未到 ABORT：重排到最近 deadline。
+    const nextDeadline = this.watchdogWarned
+      ? SILENT_ABORT_MS - silentFor
+      : SILENT_WARN_MS - silentFor
+    this.armWatchdogTimer(Math.max(0, nextDeadline))
   }
 
   /**
    * 清除 watchdog（agent_end / ABORT 触发 / session 销毁时调用）。
-   * 清掉两级定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
+   * 清掉定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
    */
   private clearWatchdog(): void {
-    this.clearWatchdogTimers()
+    this.clearWatchdogTimer()
     this.watchdogWarned = false
+    this.watchdogLastActivityAt = 0
   }
 
-  /** 仅清定时器句柄（不触碰 warned，供 scheduleWatchdog 重排前调用）。 */
-  private clearWatchdogTimers(): void {
-    if (this.watchdogWarnTimer) {
-      clearTimeout(this.watchdogWarnTimer)
-      this.watchdogWarnTimer = null
-    }
+  /** 仅清定时器句柄（不触碰 warned/timestamp）。 */
+  private clearWatchdogTimer(): void {
     if (this.watchdogTimer) {
       clearTimeout(this.watchdogTimer)
       this.watchdogTimer = null
