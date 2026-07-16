@@ -149,8 +149,8 @@ fi
 EXISTING_RELEASE=$(gh release view "$TAG" --repo "$GH_REPO" --json isDraft,id,body,assets --jq '.' 2>/dev/null || echo "")
 
 if [[ -n "$EXISTING_RELEASE" ]]; then
-    ASSET_COUNT=$(echo "$EXISTING_RELEASE" | jq -r '.assets | length')
-    IS_DRAFT=$(echo "$EXISTING_RELEASE" | jq -r '.isDraft')
+    ASSET_COUNT=$(echo "$EXISTING_RELEASE" | jq -r '.assets | length // 0' 2>/dev/null) || ASSET_COUNT="0"
+    IS_DRAFT=$(echo "$EXISTING_RELEASE" | jq -r '.isDraft // false' 2>/dev/null) || IS_DRAFT="false"
     echo "  发现已有 Release（assets=$ASSET_COUNT, draft=$IS_DRAFT）"
 
     EXISTING_BODY=$(echo "$EXISTING_RELEASE" | jq -r '.body // ""' 2>/dev/null || echo "")
@@ -176,7 +176,7 @@ else
         WAIT_ELAPSED=$((WAIT_ELAPSED + 5))
         EXISTING_RELEASE=$(gh release view "$TAG" --repo "$GH_REPO" --json isDraft,id,body,assets --jq '.' 2>/dev/null || echo "")
         if [[ -n "$EXISTING_RELEASE" ]]; then
-            ASSET_COUNT=$(echo "$EXISTING_RELEASE" | jq -r '.assets | length')
+            ASSET_COUNT=$(echo "$EXISTING_RELEASE" | jq -r '.assets | length // 0' 2>/dev/null) || ASSET_COUNT="0"
             if [[ "$ASSET_COUNT" -gt 0 ]]; then
                 echo -e "  ${GREEN}✅ CI 已创建 Draft Release（$ASSET_COUNT 个产物，${WAIT_ELAPSED}s）${NC}"
                 break
@@ -190,7 +190,7 @@ else
     if [[ -n "$EXISTING_RELEASE" ]]; then
         echo "  Release 已存在，更新 notes"
         gh release edit "$TAG" --repo "$GH_REPO" --notes-file "$FINAL_NOTES_FILE" 2>&1 || true
-        IS_DRAFT=$(echo "$EXISTING_RELEASE" | jq -r '.isDraft')
+        IS_DRAFT=$(echo "$EXISTING_RELEASE" | jq -r '.isDraft // false' 2>/dev/null) || IS_DRAFT="false"
         if [[ "$IS_DRAFT" == "true" ]]; then
             echo "  发布 Draft Release..."
             gh release edit "$TAG" --repo "$GH_REPO" --draft=false 2>&1 || true
