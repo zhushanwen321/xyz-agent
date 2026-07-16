@@ -45,6 +45,15 @@ if [[ ! -d "$MAIN_WT" ]]; then
     exit 1
 fi
 
+# 防御：阶段 4 的版本 bump 需在 main 分支上执行，pr-merge.sh 的 sync 会强制切到 main，
+# 但提前暴露问题比阶段 4 才发现更省事
+MAIN_BRANCH=$(git -C "$MAIN_WT" branch --show-current 2>/dev/null || echo "")
+if [[ "$MAIN_BRANCH" != "main" ]]; then
+    echo -e "${YELLOW}⚠️  main worktree 当前 checkout 在 '$MAIN_BRANCH'（非 main 分支）${NC}"
+    echo "  阶段 4 的版本 bump 需要在 main 分支上执行"
+    echo "  修复: git -C $MAIN_WT checkout main"
+fi
+
 # 分支名
 BRANCH_NAME=$(git -C "$WORKTREE_DIR" branch --show-current)
 if [[ -z "$BRANCH_NAME" ]]; then
