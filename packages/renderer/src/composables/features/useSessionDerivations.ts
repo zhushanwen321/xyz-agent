@@ -19,6 +19,7 @@ import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { normalizeContent } from '@xyz-agent/shared'
 import { useChatStore } from '@/stores/chat'
+import { useSessionStore } from '@/stores/session'
 import { deriveStatus } from '@/composables/logic/sessionStatus'
 import type { DerivedStatus } from '@/types'
 
@@ -48,7 +49,9 @@ const digestCache = new Map<string, ComputedRef<SessionDigest>>()
 
 export function useSessionDerivations() {
   const chat = useChatStore()
-  // [W1] 移除 session store 依赖：isActive 作为 UI 层 SSOT，不再受 activeId 限定
+  // W6：重新引入 session store 取元数据 status（metaStatus）——去全量预 hydrate 后，
+  // 未访问 session 的终态（done/error/stopped）来自 runtime session_end 元数据。
+  const session = useSessionStore()
 
   /**
    * 响应式派生指定 session 的状态点（D6）。
@@ -56,11 +59,15 @@ export function useSessionDerivations() {
    * [W1] isActive 作为 UI 层 SSOT，消除提交后到 message_start 之间空窗期的状态不一致。
    * [W3] 同 id 复用缓存的 ComputedRef（消除每次新建丢弃的浪费）。computed 只在依赖变化时重算，
    * 配合 W2 的 isGenerating O(1)，单次重算也高效。
+   * [W6] 传 metaStatus（session 元数据 status），未 hydrate session 用它兜底终态。
    */
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
     let c = statusCache.get(id)
     if (!c) {
-      c = computed(() => deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id)))
+      c = computed(() => {
+        const meta = session.list.find((s) => s.id === id)?.status
+        return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id), meta)
+      })
       statusCache.set(id, c)
     }
     return c

@@ -433,35 +433,19 @@ export function useSidebar() {
   }
 
   /**
-   * 加载 session 列表（mock 优先，让 fixture 可见）。
+   * 加载 session 列表（W6 去全量预 hydrate）。
    * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
    *
-   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源；
-   * 预 hydrate 各 session 的 chat 历史用 flatMap 展平（derivedStatus/sessionDigest 按 id 查找用扁平视图）。
-   * 否则未访问的 session 在 chat store 为空，deriveStatus 全返回 done，5 态无法可见。
-   * isHydrated 守卫幂等，selectSession 的按需 hydrate 命中后变 no-op，不会重复载入。
-   * TODO 联调：真实 runtime 下全量预载历史有成本，应改为 WS 推送 status 或默认 done/idle + 按需 hydrate。
+   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源。
+   * 不再全量预 hydrate 各 session 历史——侧栏 status 由元数据 status（W5 session_end 终态）
+   * + 瞬态（W2 streamingSessionIds/compactingSessions Set）派生，用户点开 session 时按需 hydrate
+   * （selectSession 路径不变）。消除启动时 N 次 getHistory 全量读 JSONL 的卡顿峰值 + 内存膨胀。
    */
   async function loadSessions(): Promise<void> {
     try {
       const groups = await sessionApi.list()
       session.setGroups(groups)
       session.setListLoadError(null)
-      const flat = groups.flatMap((g) => g.sessions)
-      // L2：allSettled 吸收所有 rejection，对 rejected 的 session 调 markHistoryFailed
-      // 让 landing 显重试出口（对齐 selectSession 内 getHistory 的 catch → markHistoryFailed 策略）
-      const results = await Promise.allSettled(
-        flat.map(async (s) => {
-          if (!chat.isHydrated(s.id)) {
-            chat.hydrate(s.id, await chatApi.getHistory(s.id))
-          }
-        }),
-      )
-      results.forEach((r, i) => {
-        if (r.status === 'rejected') {
-          chat.markHistoryFailed(flat[i].id)
-        }
-      })
     } catch (e) {
       // S5：list 失败设 listLoadError，SessionList 据此显示「加载失败，点击重试」
       const msg = e instanceof Error ? e.message : String(e)

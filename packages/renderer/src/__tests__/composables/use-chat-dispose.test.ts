@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { textToSegments } from '@xyz-agent/shared'
 
 // mock chatApi：streamSubscribe 返回可控的 unsubscribe mock
 const unsubscribeMock = vi.hoisted(() => vi.fn())
@@ -41,7 +42,7 @@ describe('useChat disposeSession（W1：取消 streamSubscriptions + 清 chat st
     const sid = 's1'
 
     // send 触发 ensureStreamSubscription → streamSubscriptions.set(sid, unsub)
-    await chat.send(sid, 'hello')
+    await chat.send(sid, textToSegments('hello'))
 
     // 前置：streamSubscribe 被调用，unsub 已存入 Map
     expect(streamSubscribeMock).toHaveBeenCalledWith(sid, expect.any(Function))
