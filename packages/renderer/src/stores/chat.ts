@@ -26,8 +26,18 @@
  */
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
-import { commitMessages } from './chat-mutations'
+import { commitMessages, truncateMessagesFrom } from './chat-mutations'
 import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
+import {
+  LRU_MAX_SESSIONS,
+  touchLru as lruTouch,
+  evictIfNeeded as lruEvictIfNeeded,
+  evictSessionWithVirtual as lruEvictSession,
+  makeLruEvictDeps,
+} from './chat-lru'
+
+// re-export 供外部消费（测试 / 组件读常量）
+export { LRU_MAX_SESSIONS }
 import type {
   ContentBlock,
   Message,
@@ -400,6 +410,15 @@ export const useChatStore = defineStore('chat', () => {
     return messages.value.get(sessionId) ?? []
   }
 
+  /** W3 H3：session 是否在 LRU 豁免集（streaming/pending/compacting 不驱逐，AC-9） */
+  const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid)
+  /** W3 H3：LRU recency 更新（AC-1 真 LRU） */
+  function touchLru(sessionId: string): void { lruTouch(sessionId) }
+
+  /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key） */
+  function evictIfNeeded(): void { lruEvictIfNeeded(makeLruEvictDeps(messages, hydrated, isLruExempt)) }
+  function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, makeLruEvictDeps(messages, hydrated, isLruExempt)) }
+
   /** 取指定 session 的自动重试态（无则 undefined） */
   function getRetryState(sessionId: string): RetryState | undefined {
     return retryStates.value.get(sessionId)
@@ -439,6 +458,7 @@ export const useChatStore = defineStore('chat', () => {
     const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
     commitMessages(messages, sessionId, cloned)
     hydrated.value = new Set(hydrated.value).add(sessionId)
+    lruTouch(sessionId) // W3: LRU recency
   }
 
   /**
@@ -618,13 +638,7 @@ export const useChatStore = defineStore('chat', () => {
       messages, compactingSessions, retryStates, queueStates, pendingSend,
     )
     for (const sid of candidateSids) {
-      if (
-        isGenerating(sid)
-        || isCompacting(sid)
-        || retryStates.value.has(sid)
-        || queueStates.value.has(sid)
-        || pendingSend.value.has(sid)
-      ) {
+      if (isGenerating(sid) || isCompacting(sid) || retryStates.value.has(sid) || queueStates.value.has(sid) || pendingSend.value.has(sid)) {
         resetTransientStates(sid, reason)
       }
     }
@@ -709,17 +723,16 @@ export const useChatStore = defineStore('chat', () => {
     const prev = messages.value.get(sessionId) ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx >= 0 && prev[idx].status === 'streaming') {
-      // streaming assistant → finalizeSession('error', errorText) 收口（合一逻辑）
       finalizeSession(sessionId, 'error', errorText)
-    } else {
-      // 无 streaming entity → 直接追加 error 消息
-      commitMessages(messages, sessionId, [
-        ...prev,
-        { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
-      ])
-      clearPendingSend(sessionId)
-      clearStreamingTimer(sessionId)
+      return
     }
+    // 无 streaming entity → 直接追加 error 消息
+    commitMessages(messages, sessionId, [
+      ...prev,
+      { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
+    ])
+    clearPendingSend(sessionId)
+    clearStreamingTimer(sessionId)
   }
 
   // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
@@ -753,17 +766,9 @@ export const useChatStore = defineStore('chat', () => {
     appendSystemNoticeImpl(messages, sessionId, text)
   }
 
-  /**
-   * 截断指定 session 的消息：删除 messageId（含/不含）及其后所有消息。
-   * 编辑重发场景（原地替换 user 消息，非 fork）：truncate(含该 user) → appendUser(新文本) → send。
-   * 不可变 set（slice 新数组）保证响应式触发。
-   */
+  /** 截断 session 消息到 messageId（编辑重发用）。委托 chat-mutations.truncateMessagesFrom。 */
   function truncateFrom(sessionId: string, messageId: string, inclusive: boolean): void {
-    const prev = messages.value.get(sessionId) ?? []
-    const idx = prev.findIndex((m) => m.id === messageId)
-    if (idx === -1) return
-    const end = inclusive ? idx : idx + 1
-    commitMessages(messages, sessionId, prev.slice(0, end))
+    truncateMessagesFrom(messages, sessionId, messageId, inclusive)
   }
 
   /**
@@ -822,5 +827,9 @@ export const useChatStore = defineStore('chat', () => {
     truncateFrom,
     applyFileChanges,
     disposeSession,
+    // W3 H3 LRU
+    touchLru,
+    evictIfNeeded,
+    evictSessionWithVirtual,
   }
 })

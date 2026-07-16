@@ -256,6 +256,10 @@ export function useSidebar() {
     const workflowStore = useWorkflowStore()
     void subagentStore.loadSubagents(id)
     void workflowStore.loadWorkflows(id)
+
+    // W3 H3：切 session 后触发 LRU 驱逐（保留最近 8 + panel 绑定 + streaming 中）。
+    // 在所有拉取完成后执行，确保新 session 已 hydrate 不被误驱逐。
+    chat.evictIfNeeded()
   }
 
   /**

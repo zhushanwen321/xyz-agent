@@ -27,3 +27,20 @@ export function commitMessages(
 ): void {
   messages.value = new Map(messages.value).set(sessionId, next)
 }
+
+/**
+ * 截断 session 消息到 messageId（模块级，从 chat.ts 移入控制行数）。
+ * inclusive=true 含 messageId，false 仅其后。findIndex 定位，slice 不可变更新。
+ */
+export function truncateMessagesFrom(
+  messages: MessagesRef,
+  sessionId: string,
+  messageId: string,
+  inclusive: boolean,
+): void {
+  const prev = messages.value.get(sessionId) ?? []
+  const idx = prev.findIndex((m) => m.id === messageId)
+  if (idx === -1) return
+  const end = inclusive ? idx : idx + 1
+  commitMessages(messages, sessionId, prev.slice(0, end))
+}
