@@ -147,6 +147,7 @@ import { Input } from '@/components/ui/input'
 import { type SearchItem } from '@/api'
 import { useSearch } from '@/composables/features/useSearch'
 import { useSearchJump } from '@/composables/features/useSearchJump'
+import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useRecents } from '@/composables/features/useRecents'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { segments } from '@/lib/match-engine'
@@ -205,6 +206,13 @@ const { error: toastError } = useToast()
 const { open: drawerOpen } = useSideDrawer()
 
 const query = ref('')
+const { query: externalQuery } = useSearchModal()
+
+// 与外部 useSearchModal.query 双向同步：打开时预填搜索词，输入时同步回单例
+watch(() => externalQuery.value, (v) => {
+  if (v !== query.value) query.value = v
+}, { immediate: true })
+watch(query, (v) => { externalQuery.value = v })
 const selIdx = ref(0)
 const resultsRef = ref<HTMLElement | null>(null)
 /** 浮层根 div（替代 reka-ui Dialog 的 focus trap 容器；用于自管理 focus） */
