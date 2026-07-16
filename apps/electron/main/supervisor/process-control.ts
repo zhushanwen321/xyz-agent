@@ -40,9 +40,11 @@
  * 依赖方向：process-control → node:child_process + safe-env + electron(app)
  */
 import { type ChildProcess, spawn, execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { createWriteStream, type WriteStream } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import { buildSafeEnv } from './safe-env.js'
 
 /** stop() 默认超时：SIGTERM 后等待 exit，超时则 SIGKILL 进程树 */
@@ -51,8 +53,35 @@ export const STOP_TIMEOUT_MS = 2000
 /** kill 后代时 SIGTERM → 等 → SIGKILL 的等待时间 */
 export const KILL_WAIT_MS = 200
 
-/** ms → sec 转换因子（execSync('sleep N') 需要 sec） */
-export const MS_PER_SEC = 1000
+/**
+ * 打包模式 runtime stderr 兜底写流（module 级单例，lazy 创建）。
+ *
+ * M5（perf-quick-batch）：打包禁用 stdout/stderr 的 console 转发后，runtime 内部
+ * initLogger 只覆盖 runtime 进程启动后的 console.*。启动前（模块加载/早期 throw）
+ * 与原生崩溃期的 stderr 不被 tee，会丢排查证据。此流只兜底 stderr（不动 stdout，
+ * stdout 高吞吐且 initLogger 已覆盖），非阻塞 append 写到 dataDir/logs/。
+ *
+ * dev 模式不用（dev 保留 console 转发方便终端调试）。
+ */
+let stderrSink: WriteStream | null = null
+function getStderrSink(): WriteStream | null {
+  if (!app.isPackaged) return null
+  if (stderrSink) return stderrSink
+  try {
+    const logsDir = path.join(getDataDir(), 'logs')
+    mkdirSync(logsDir, { recursive: true })
+    stderrSink = createWriteStream(path.join(logsDir, 'electron-runtime-stderr.log'), { flags: 'a' })
+  } catch {
+    // eslint-disable-next-line taste/no-silent-catch -- 兜底日志失败不应阻断主流程
+    stderrSink = null
+  }
+  return stderrSink
+}
+
+/** M6: 非阻塞延迟（替代 execSync('sleep') 同步阻塞）。 */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /** tsup(CJS) runtime 入口文件名，须与 runtime/tsup.config.ts format 一致 */
 export const RUNTIME_ENTRY_FILE = 'index.cjs'
@@ -153,13 +182,26 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
     onExit?.(SPAWN_ERROR_EXIT_CODE)
   })
 
-  // runtime 日志转发：只用 console（dev 模式方便调试）
-  child.stdout?.on('data', (data: Buffer) => {
-    console.log(`[runtime:out] ${data.toString().trimEnd()}`)
-  })
-  child.stderr?.on('data', (data: Buffer) => {
-    console.error(`[runtime:err] ${data.toString().trimEnd()}`)
-  })
+  // M5（perf-quick-batch）：runtime 日志转发按打包状态分流。
+  // - dev：stdout + stderr 全量 console 转发（终端调试可见）
+  // - prod：stdout 不转发（runtime initLogger 已 tee 落盘，console 转发会阻塞主进程）；
+  //         stderr 保留非阻塞文件兜底（覆盖 runtime 启动前 + 原生崩溃期，initLogger 不覆盖）
+  if (!app.isPackaged) {
+    child.stdout?.on('data', (data: Buffer) => {
+      console.log(`[runtime:out] ${data.toString().trimEnd()}`)
+    })
+    child.stderr?.on('data', (data: Buffer) => {
+      console.error(`[runtime:err] ${data.toString().trimEnd()}`)
+    })
+  } else {
+    const sink = getStderrSink()
+    if (sink) {
+      child.stderr?.on('data', (data: Buffer) => {
+        // 非阻塞 append；WriteStream 背压时丢弃尾部避免主线程阻塞
+        sink.write(data)
+      })
+    }
+  }
   child.on('exit', (code) => {
     console.log(`[runtime] Process exited with code ${code}`)
     // 通知 supervisor 清理 child/port 状态（自然退出/崩溃路径）
@@ -250,7 +292,7 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
     // （runtime 退出后 pi 的 PPID 变为 1，pgrep -P 查不到）
     const descendantPids = getDescendantPids(childPid)
 
-    const done = () => {
+    const done = async () => {
       if (resolved) return
       resolved = true
       // 杀掉残留的后代进程（pi 等），同步完成后再 resolve
@@ -259,11 +301,11 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
         // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
         try { process.kill(pid, 'SIGTERM') } catch { /* 可能已随 runtime 退出 */ }
       }
-      // 同步等待后补 SIGKILL
-      try {
-        execSync(`sleep ${KILL_WAIT_MS / MS_PER_SEC}`, { stdio: 'ignore' })
-      // eslint-disable-next-line taste/no-silent-catch -- sleep failure is non-critical
-      } catch { /* sleep 失败不影响 */ }
+      // M6（perf-quick-batch）：非阻塞等待后补 SIGKILL。
+      // 旧实现 execSync('sleep 0.2') 同步阻塞主进程 200ms（KILL_WAIT_MS），
+      // stop/restart 路径冻结主进程事件循环。改 await delay 后时长不变（INVAR-M6-1），
+      // 时序不变（INVAR-M6-2：SIGTERM→等→SIGKILL），事件循环畅通（INVAR-M6-6）。
+      await delay(KILL_WAIT_MS)
       for (const pid of descendantPids) {
         // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
         try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
