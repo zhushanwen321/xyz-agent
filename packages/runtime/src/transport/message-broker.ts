@@ -63,12 +63,25 @@ export class ServerMessageBroker implements IMessageBroker {
   }
 
   broadcast(msg: ServerMessage): void {
+    // L6（perf-quick-batch）：循环外序列化一次。
+    // 旧实现循环内调 this.send → send 内 JSON.stringify(msg)，N 客户端 = N 次重复
+    // 序列化同一对象。session.list 等大 payload 广播时主线程被重复 stringify 阻塞。
+    // 现在循环前序列化一次得 payload 字符串，循环内直接 ws.send(payload)。
+    let payload: string
+    try {
+      payload = JSON.stringify(msg)
+    // eslint-disable-next-line taste/no-silent-catch -- D4: 提级后 stringify 失败影响整次广播，与"全 client 各自失败"实际等价。记录后中止本次广播，不静默
+    } catch (e) {
+      console.error('[runtime] broadcast aborted: payload serialization failed', e)
+      return
+    }
     for (const ws of this.pool.clients) {
       // M6: 单 client send 失败不中断其余 client 广播。
-      // TOCTOU：readyState 检查（send 内）与 ws.send 间连接可能已关闭，ws.send 抛错，
+      // TOCTOU：readyState 检查与 ws.send 间连接可能已关闭，ws.send 抛错，
       // 无 try-catch 会中断整个 for 循环，导致其余 client 收不到消息。
+      if (ws.readyState !== WS_OPEN) continue
       try {
-        this.send(ws, msg)
+        ws.send(payload)
       // eslint-disable-next-line taste/no-silent-catch -- broadcast 是 fire-and-forget 推送，单 client 失败不能影响其余 client
       } catch {
         // 单 client 已断连/异常，跳过继续广播给其余 client
