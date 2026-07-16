@@ -24,6 +24,8 @@ import { useFileSearch } from '@/composables/features/useFileSearch'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { findByBasename } from '@/lib/file-basename'
 import { openExternal } from '@/lib/ipc'
+import { useSearchModal } from '@/composables/features/useSearchModal'
+import * as fileApi from '@/api/domains/file'
 import { useCodeblockCopy } from './useCodeblockCopy'
 
 /** 外链协议判定（http(s):// 才走 openExternal；锚点等走默认行为） */
@@ -55,6 +57,7 @@ export function useMarkdownInteractions(opts: MarkdownInteractionsOptions = {}):
   const { load: loadFileCandidates } = useFileSearch()
   const drawer = useSideDrawer()
   const { copyButton, dispose } = useCodeblockCopy()
+  const searchModal = useSearchModal()
 
   function onClick(e: MouseEvent): void {
     const target = e.target as HTMLElement
@@ -76,8 +79,20 @@ export function useMarkdownInteractions(opts: MarkdownInteractionsOptions = {}):
       const pathB64 = filepathLink.dataset.path
       if (pathB64) {
         const path = decodeBase64(pathB64)
-        // 含 / 的完整 path（原含/路径场景）：无歧义，直接打开
+        // 含 / 的完整 path：先 file.read 预检查，失败则打开搜索面板
         if (path.includes('/')) {
+          const sid = readSessionId(opts.sessionId)
+          if (sid) {
+            // 预检查：文件不存在/不可读时 fallback 到搜索面板，避免直接打开 error 态
+            void fileApi.read(path, sid).then(() => {
+              selectFile(path)
+              drawer.open('detail')
+            }).catch(() => {
+              searchModal.open(path)
+            })
+            return
+          }
+          // 无 session 上下文：直接打开，由 DetailPane 处理错误态
           selectFile(path)
           drawer.open('detail')
           return
@@ -95,8 +110,11 @@ export function useMarkdownInteractions(opts: MarkdownInteractionsOptions = {}):
             } else if (matches.length > 1 && opts.onAmbiguous) {
               // 多匹配 → 弹歧义选择浮层
               opts.onAmbiguous(path, filepathLink)
+            } else if (matches.length === 0) {
+              // 0 匹配：打开搜索面板让用户在项目内搜索
+              searchModal.open(path)
             } else {
-              // 0 匹配（缓存过期/文件已删）或无 onAmbiguous：降级 selectFile(basename)
+              // 无 onAmbiguous 的多匹配：降级 selectFile(basename)
               selectFile(path)
               drawer.open('detail')
             }
