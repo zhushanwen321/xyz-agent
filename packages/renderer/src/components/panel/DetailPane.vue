@@ -362,15 +362,11 @@ function injectSelectionToNew(): void {
 
 /**
  * 内容区 mouseup：检测选区，非空且在内容区内时计算行范围显 bubble（FR-4）。
- * 行范围反推：取选中文本首行/末行在 state.content 的行索引近似（首版精度限制见 outOfScope）。
+ * 行范围反推分模式：
+ * - diff 模式：从选区起止行元素读 data-line（newNo）精确反推（DiffView 行 div 标了 data-line）
+ * - preview/code 模式：选中文本首行在 state.content 的行索引近似（首版精度限制）
  */
 function onContentMouseup(): void {
-  // diff 模式 state.content 是 patch 文本，选中行（如 +new line）匹配不到 patch 原始行，
-  // 行范围反推失效（review m1）。首版 diff 模式禁用 bubble，仅 preview/code 模式支持。
-  if (state.value.viewMode === 'diff') {
-    selectionRange.value = null
-    return
-  }
   const sel = window.getSelection()
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
     selectionRange.value = null
@@ -387,7 +383,23 @@ function onContentMouseup(): void {
     selectionRange.value = null
     return
   }
-  // 行范围近似：选中文本首行在 content 的行号（1-based）
+  // diff 模式：从选区起止行元素读 data-line（newNo）精确反推行号。
+  // state.content 是 patch 文本，文本匹配失效；DiffView 行 div 标了 data-line=newNo。
+  if (state.value.viewMode === 'diff') {
+    const rangeFromLine = findDataLineFromNode(range.startContainer)
+    const rangeToLine = findDataLineFromNode(range.endContainer)
+    if (rangeFromLine === null || rangeToLine === null) {
+      // 选区起止不在有效行（如选中纯删除行无 newNo）→ 无法定位，不显 bubble
+      selectionRange.value = null
+      return
+    }
+    selectionRange.value = {
+      lineStart: Math.min(rangeFromLine, rangeToLine),
+      lineEnd: Math.max(rangeFromLine, rangeToLine),
+    }
+    return
+  }
+  // preview/code 模式：选中文本首行在 content 的行号近似（1-based）
   const lines = state.value.content.split('\n')
   const firstLine = selectedText.split('\n')[0] ?? ''
   const idx = lines.findIndex((l) => l.trim() === firstLine.trim())
@@ -397,6 +409,24 @@ function onContentMouseup(): void {
   }
   const lineCount = selectedText.split('\n').length
   selectionRange.value = { lineStart: idx + 1, lineEnd: idx + lineCount }
+}
+
+/**
+ * 从 DOM 节点向上找最近的 [data-line] 行元素，返回其行号（newNo）。
+ * diff 模式选区反推用：选区起止节点向上追溯到 DiffView 行 div，读 data-line。
+ * 无 data-line（纯删除行无 newNo）返回 null——这些行不可定位行号。
+ */
+function findDataLineFromNode(node: Node): number | null {
+  let el: Element | null = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement
+  while (el && contentRef.value?.contains(el)) {
+    const dl = el.getAttribute('data-line')
+    if (dl !== null && dl !== '') {
+      const n = Number(dl)
+      if (!Number.isNaN(n)) return n
+    }
+    el = el.parentElement
+  }
+  return null
 }
 
 /** bubble 引用到当前对话（FR-4）：用 selectionRange 行范围注入 */

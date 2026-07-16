@@ -31,8 +31,14 @@
       <div class="diff-hunk-header px-2 py-0.5 text-subtle">
         {{ hunk.lines[0]?.content }}
       </div>
-      <!-- 行列表 -->
-      <div v-for="(line, li) in codeLines(hunk, hi)" :key="li" class="flex" :class="lineRowClass(line)">
+      <!-- 行列表。data-line 标记 newNo（有值行），供 DetailPane 选区反推行号（FR-4 diff 模式） -->
+      <div
+        v-for="(line, li) in codeLines(hunk, hi)"
+        :key="li"
+        class="flex"
+        :class="lineRowClass(line)"
+        :data-line="line.newNo ?? ''"
+      >
         <!-- 行号槽：oldNo / newNo。newNo 可点击注入该行 file 引用（FR-5） -->
         <span class="w-10 shrink-0 select-none px-1 text-right text-subtle/60">{{ line.oldNo ?? '' }}</span>
         <span
@@ -110,12 +116,16 @@ const emit = defineEmits<{
   lineInject: [payload: { path: string; lineNo: number }]
 }>()
 
-/** 行号点击：emit 行引用信息（FR-5）。优先用 newNo（改动后行号），无则 oldNo。 */
+/**
+ * 行号点击：emit 行引用信息（FR-5）。仅用 newNo（改动后行号）。
+ * 纯删除行（newNo undefined）不可点击注入——该行在新文件已不存在，注入 :L<oldNo>
+ * 语义错误（指向被删行）。模板 v-if="line.newNo !== undefined" 已挡住删除行渲染可点击 span，
+ * 此处 return 是防御性兜底。
+ */
 function onLineClick(line: { oldNo?: number; newNo?: number }): void {
   if (!props.path) return
-  const lineNo = line.newNo ?? line.oldNo
-  if (lineNo === undefined) return
-  emit('lineInject', { path: props.path, lineNo })
+  if (line.newNo === undefined) return
+  emit('lineInject', { path: props.path, lineNo: line.newNo })
 }
 
 const parsed = ref<ParsedDiff>({ hunks: [] })

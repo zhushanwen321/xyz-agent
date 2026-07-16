@@ -14,16 +14,18 @@ import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
+// 可配置的 detail state（测试切换 viewMode/content）
+const detailState = ref({
+  path: 'src/foo.ts',
+  content: 'line1\nline2\nline3\nline4',
+  viewMode: 'preview',
+  kind: 'code',
+  status: 'success',
+  hasGitChange: false,
+})
 vi.mock('@/composables/features/useDetailPane', () => ({
   useDetailPane: () => ({
-    state: ref({
-      path: 'src/foo.ts',
-      content: 'line1\nline2\nline3\nline4',
-      viewMode: 'preview',
-      kind: 'code',
-      status: 'success',
-      hasGitChange: false,
-    }),
+    state: detailState,
     toggleView: vi.fn(),
     sessionCwd: () => '/cwd',
   }),
@@ -117,5 +119,70 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
     expect(store.pendingInjection?.path).toBe('src/foo.ts')
     expect(store.pendingInjection?.sessionId).toBeNull()
     vi.restoreAllMocks()
+  })
+
+  it('U13d: diff 模式从选区行元素 data-line 精确反推行号（不再禁用 bubble）', async () => {
+    // 切 diff 模式：content 是 patch，DiffView 真实渲染行（带 data-line=newNo）
+    detailState.value = {
+      path: 'src/foo.ts',
+      content: '@@ -1,3 +1,4 @@\n context\n-old\n+new line\n+added\n',
+      viewMode: 'diff',
+      kind: 'code',
+      status: 'success',
+      hasGitChange: true,
+    }
+    const wrapper = mount(DetailPane, {
+      props: { sessionId: 's1' },
+      global: {
+        stubs: {
+          HoverCard: SIMPLE, HoverCardContent: SIMPLE, HoverCardTrigger: SIMPLE,
+          CodeBlock: SIMPLE, MarkdownRenderer: SIMPLE,
+          // DiffView 不 stub：真实渲染 patch 行（带 data-line）
+        },
+      },
+    })
+    await wrapper.vm.$nextTick()
+    const store = useComposerInjectionStore()
+
+    // 找 DiffView 渲染的行 div（带 data-line）。patch 有 newNo 的行：context=1, new line=2, added=3
+    const lineEls = wrapper.findAll('[data-line]').filter((w) => w.attributes('data-line') !== '')
+    expect(lineEls.length).toBeGreaterThan(0)
+    // mock selection：startContainer 指向第一行（data-line=1），endContainer 指向最后一行
+    const firstLineEl = lineEls[0].element
+    const lastLineEl = lineEls[lineEls.length - 1].element
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      isCollapsed: false,
+      rangeCount: 1,
+      getRangeAt: () => ({
+        commonAncestorContainer: wrapper.find('[data-testid="detail-content"]').element,
+        startContainer: firstLineEl,
+        endContainer: lastLineEl,
+      }),
+      toString: () => 'some selected text',
+      removeAllRanges: vi.fn(),
+      addRange: vi.fn(),
+    } as unknown as Selection)
+
+    await wrapper.find('[data-testid="detail-content"]').trigger('mouseup')
+    // bubble 应显出（diff 模式不再禁用）
+    const bubble = wrapper.find('[data-testid="detail-selection-bubble"]')
+    expect(bubble.exists()).toBe(true)
+
+    await wrapper.find('[data-testid="bubble-inject-current"]').trigger('click')
+    expect(store.pendingInjection).not.toBeNull()
+    expect(store.pendingInjection?.path).toBe('src/foo.ts')
+    // 行号从 data-line 读取（首行 newNo 到末行 newNo）
+    expect(store.pendingInjection?.lineStart).toBe(Number(firstLineEl.getAttribute('data-line')))
+    expect(store.pendingInjection?.lineEnd).toBe(Number(lastLineEl.getAttribute('data-line')))
+    vi.restoreAllMocks()
+    // 恢复 preview 模式供后续测试
+    detailState.value = {
+      path: 'src/foo.ts',
+      content: 'line1\nline2\nline3\nline4',
+      viewMode: 'preview',
+      kind: 'code',
+      status: 'success',
+      hasGitChange: false,
+    }
   })
 })
