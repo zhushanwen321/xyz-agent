@@ -113,8 +113,12 @@ export function useComposerChipCommands(
     renderIconInto(chip, icon)
     const label = document.createElement('span')
     label.className = 'chip-label'
-    // 归一化：确保 / 前缀（pi getCommands 返回无前缀，发送和显示都依赖它）
-    label.textContent = command.startsWith('/') ? command : `/${command}`
+    // 显示层：skill 只显 chipName（icon+紫色已传达 skill 类型，/skill: 前缀对用户冗余）；
+    // 普通 slash 命令保留 / 前缀（命令调用语义，与用户手打 /command 一致）。
+    // 数据层不受影响：发送的 segment 由 getSegmentsFromEl 读 dataset.chipName 重建，不读 label。
+    label.textContent = chip.dataset.chipType === 'skill'
+      ? (chip.dataset.chipName ?? '')
+      : (command.startsWith('/') ? command : `/${command}`)
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
     // chip 必须在输入流最前（slash 命令是操作模式前缀）

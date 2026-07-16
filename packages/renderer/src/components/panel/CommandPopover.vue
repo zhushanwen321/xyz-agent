@@ -51,9 +51,12 @@
             <div class="truncate font-mono text-[12px]" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</div>
             <div v-if="item.dirPath" class="truncate font-mono text-[10px] leading-tight text-subtle">{{ item.dirPath }}</div>
           </div>
-          <!-- slash 类型：保持单行（命令名 + 右侧 description/kind 提示词） -->
+          <!-- slash 类型：保持单行（命令名 + 右侧 description/kind 提示词）。
+               skill 只显名字（icon+紫色已传达类型，/skill: 前缀对用户冗余）；
+               普通 slash 保留 / 前缀（命令调用语义）。item.name 是完整路由名（含前缀），
+               item.displayName 是显示名（skill 去前缀）——onSelect 传 name 保证路由正确。 -->
           <template v-else>
-            <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</span>
+            <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.displayName ?? item.name }}</span>
             <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-subtle">{{ item.description }}</span>
             <span v-else class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
           </template>
@@ -186,6 +189,8 @@ const items = computed(() => {
       return {
         id: f.id,
         name: f.name,
+        // file 无前缀剥离需求，displayName 与 name 一致（保持联合类型字段对齐）
+        displayName: f.name,
         kind: f.kind,
         // f.kind 是 FileCandidate 的数据契约字面量（@/lib/file-candidates.ts line 45 映射自 FileNode.type='dir'）
         // 是数据值非 UI 文案，不参与 i18n 化
@@ -199,24 +204,42 @@ const items = computed(() => {
   // slash 路径按 query 过滤（命令名子串匹配，比较时用归一化后的 name）
   const q = (props.query ?? '').trim().toLowerCase()
   const filtered = q ? all.filter((c) => normalizedSlashName(c.name).toLowerCase().includes(q)) : all
-  return filtered.map((c) => ({
-    id: c.id,
+  return filtered.map((c) => {
     // 归一化补 / 前缀：pi getCommands 返回无前缀（如 'goal'），但 popover 显示、chip label、
     // 发送给 pi 都需要 / 前缀（pi 按前缀路由命令）。统一在此补齐，兼容 skill fallback 已带 / 的情况。
-    name: normalizedSlashName(c.name),
-    kind: c.kind,
-    icon: c.icon,
-    description: c.description,
-    dirPath: undefined,
-  }))
+    const name = normalizedSlashName(c.name)
+    return {
+      id: c.id,
+      name,
+      // 显示层：skill 去掉 /skill: 前缀（icon 已表示类型）；普通 slash 显 name（/command）。
+      // onSelect 传 name（完整路由名），displayName 仅用于模板渲染。
+      displayName: c.kind === 'skill' ? skillDisplayName(c.name) : name,
+      kind: c.kind,
+      icon: c.icon,
+      description: c.description,
+      dirPath: undefined,
+    }
+  })
 })
 
 /**
- * slash 命令名归一化：确保 / 前缀。
+ * slash 命令名归一化：确保 / 前缀（数据层用）。
  * pi getCommands 返回 'goal'，skill fallback 返回 '/skill:xxx'，此函数统一为 '/goal' '/skill:xxx'。
+ * name 含完整路由前缀，供 onSelect → insertSlashChip → pi 路由用。
  */
 function normalizedSlashName(name: string): string {
   return name.startsWith('/') ? name : `/${name}`
+}
+
+/**
+ * skill 命令的显示名：剥离路由前缀，只留 skill 名（显示层用）。
+ * 兼容两种形态：'/skill:cw-cli'（pi session 态）→ 'cw-cli'；'/cw-cli'（landing 态）→ 'cw-cli'。
+ * icon+紫色已传达 skill 类型，前缀对用户冗余。
+ */
+function skillDisplayName(name: string): string {
+  if (name.startsWith('/skill:')) return name.slice('/skill:'.length)
+  if (name.startsWith('/')) return name.slice(1)
+  return name
 }
 
 /** icon 字段 → lucide 组件（slash chip 复用同一映射，保证选择框/内联 chip 图标一致） */

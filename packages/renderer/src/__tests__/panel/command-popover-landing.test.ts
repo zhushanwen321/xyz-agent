@@ -46,11 +46,11 @@ const SESSION_CMDS = [
   { name: '/fix', description: '修复问题', source: 'skill' },
 ]
 
-/** reka-ui PopoverContent teleport 到 body：在 body 内找命令项按钮（v-for Button 渲染为 native <button>，文本含 /） */
+/** reka-ui PopoverContent teleport 到 body：在 body 内找命令项按钮（v-for Button 渲染为 native <button>）。
+ *  按 item 列表容器（.max-h-[180px]）定位——不依赖 button 文本含 /（skill 项显示去掉了 / 前缀）。 */
 function bodyItemButtons(): HTMLElement[] {
-  return Array.from(document.body.querySelectorAll('button')).filter((b) =>
-    /\//.test(b.textContent ?? ''),
-  )
+  const list = document.body.querySelector('.max-h-\\[180px\\]')
+  return Array.from((list ?? document.body).querySelectorAll('button'))
 }
 
 beforeEach(() => {
@@ -76,18 +76,19 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     await nextTick()
   }
 
-  it('L1 landing 无 session + skills 7 条 → 渲染 7 项，首项含 /code-review', async () => {
+  it('L1 landing 无 session + skills 7 条 → 渲染 7 项，首项含 code-review（显示去 /skill: 前缀）', async () => {
     await mountLanding('')
     const btns = bodyItemButtons()
     expect(btns).toHaveLength(7)
-    expect(btns[0].textContent).toContain('/code-review')
+    // 显示层：skill 只显名字（icon 已表示类型），不含 /skill: 或 / 前缀
+    expect(btns[0].textContent).toContain('code-review')
   })
 
-  it('L2 query="co" → 仅 /code-review（1 项）', async () => {
+  it('L2 query="co" → 仅 code-review（1 项）', async () => {
     await mountLanding('co')
     const btns = bodyItemButtons()
     expect(btns).toHaveLength(1)
-    expect(btns[0].textContent).toContain('/code-review')
+    expect(btns[0].textContent).toContain('code-review')
   })
 
   it('L3 query="zzz" → 0 项，PopoverContent 不渲染（v-if items.length>0）', async () => {

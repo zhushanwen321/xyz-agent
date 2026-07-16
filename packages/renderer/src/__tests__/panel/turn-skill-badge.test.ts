@@ -64,15 +64,16 @@ beforeEach(() => {
 })
 
 describe('Turn skill badge 渲染', () => {
-  it('含skillName时渲染紫色badge + /skill:xxx命令名', () => {
+  it('含skillName时渲染紫色badge + skill名（无/skill:前缀，icon已表示类型）', () => {
     const wrapper = mountTurn(makeTurn({
       content: [{ type: 'skill', name: 'cw-cli' }, { type: 'text', text: '想要都修复' }],
     }))
     // 紫色badge元素存在
     const badge = wrapper.find('.text-reasoning')
     expect(badge.exists()).toBe(true)
-    // badge内包含/skill:cw-cli文本
-    expect(badge.text()).toContain('/skill:cw-cli')
+    // 显示层只显 skill 名（cw-cli），不含 /skill: 前缀（icon+紫色已传达类型）
+    expect(badge.text()).toContain('cw-cli')
+    expect(badge.text()).not.toContain('/skill:')
   })
 
   it('点击badge调用openCommandDoc', async () => {
