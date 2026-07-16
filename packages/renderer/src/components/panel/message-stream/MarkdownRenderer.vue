@@ -42,7 +42,7 @@
  * - 渲染为 segments 数组：text 段走 v-html，mermaid 段走 <MermaidRenderer> 组件（template v-for）。
  * - 代码块复制按钮/链接点击用事件委托（v-html 内不能绑 Vue 事件）→ useMarkdownInteractions。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { renderMarkdownSegments, type MarkdownSegment } from '@/composables/logic/markdown'
 import { useMarkdownInteractions } from '@/composables/panel/useMarkdownInteractions'
 import { useFileSearch } from '@/composables/features/useFileSearch'
@@ -65,6 +65,14 @@ const props = defineProps<{
 
 const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
+
+// ── H2 流式 markdown 渲染 rAF trailing 节流（perf-streaming-md-throttle）──
+// 每个 text_delta/thinking_delta token 触发 watch → renderMarkdownSegments 全量重解析（md.render
+// + 每块 codeToHtml 同步阻塞主线程）。rAF trailing 把一帧内多次 content/localFiles 变化合并为
+// 单次渲染，消除流式卡顿。复用 M4 useChatScroll 的 rAF 节流模式（延迟求值守卫）。
+let rafId: number | null = null
+let pendingContent = ''
+let pendingLocalFiles: Set<string> = new Set()
 
 /**
  * HTML 特殊字符转义（W1 降级路径用）。
@@ -154,31 +162,79 @@ watch(
   { immediate: true },
 )
 
+/**
+ * 实际执行 markdown 渲染（doRender）。
+ *
+ * 封装原 watch 回调体：序号守卫（防旧渲染覆盖新内容）+ renderMarkdownSegments + segments 赋值
+ * + try/catch 降级（renderMarkdownSegments 失败时转义纯文本兜底，保证气泡可读）。
+ * 与原逻辑等价，仅从 watch 回调抽出以便 rAF 节流复用。
+ */
+async function doRender(text: string, files: Set<string>): Promise<void> {
+  if (!text.trim()) {
+    segments.value = []
+    return
+  }
+  // 流式增量会高频触发：用序号守卫，只采纳最新一次的渲染结果（防旧渲染覆盖新内容）
+  const seq = ++renderSeq
+  try {
+    const segs = await renderMarkdownSegments(text, { localFiles: files })
+    if (seq === renderSeq) {
+      segments.value = segs
+    }
+  } catch {
+    // W1 降级：renderMarkdownSegments 失败（shiki/markdown-it/mermaid 异常）时，
+    // 降级为纯文本 segment（转义后走 v-html），保证消息内容可读——绝不能把气泡渲染成空白。
+    // 序号守卫同样适用：只接受最新一次的降级结果（防旧失败覆盖新成功渲染）。
+    if (seq === renderSeq) {
+      segments.value = [{ type: 'text', content: escapeHtmlForFallback(text) }]
+    }
+  }
+}
+
+/**
+ * rAF 回调：执行 pending 渲染（flushRender）。
+ *
+ * 关键——延迟求值守卫（INVAR-H2-2/AC-7）：rafId 在此处先复位（防重入），
+ * 然后读取 pendingContent/pendingLocalFiles 最新值（非 scheduleRender 调用时的快照）。
+ * 这保证一帧内多次 content 变化只渲染末次值，且 content/localFiles 同帧快照一致。
+ */
+function flushRender(): void {
+  rafId = null
+  const text = pendingContent
+  const files = pendingLocalFiles
+  void doRender(text, files)
+}
+
+/**
+ * 调度一次渲染（scheduleRender）。
+ *
+ * 存入 pending 值 → 若当前无挂起 rAF 则 requestAnimationFrame(flushRender)。
+ * 同帧已有挂起 rAF 时仅更新 pending（合并），不重复调度——一帧内 N 次变化 → 1 次 rAF → 1 次渲染。
+ */
+function scheduleRender(text: string, files: Set<string>): void {
+  pendingContent = text
+  pendingLocalFiles = files
+  if (rafId === null) {
+    rafId = requestAnimationFrame(flushRender)
+  }
+}
+
 watch(
   () => [props.content, localFiles.value],
-  async ([text]) => {
-    if (!(text as string).trim()) {
-      segments.value = []
-      return
-    }
-    // 流式增量会高频触发：用序号守卫，只采纳最新一次的渲染结果（防旧渲染覆盖新内容）
-    const seq = ++renderSeq
-    try {
-      const segs = await renderMarkdownSegments(text as string, { localFiles: localFiles.value })
-      if (seq === renderSeq) {
-        segments.value = segs
-      }
-    } catch {
-      // W1 降级：renderMarkdownSegments 失败（shiki/markdown-it/mermaid 异常）时，
-      // 降级为纯文本 segment（转义后走 v-html），保证消息内容可读——绝不能把气泡渲染成空白。
-      // 序号守卫同样适用：只接受最新一次的降级结果（防旧失败覆盖新成功渲染）。
-      if (seq === renderSeq) {
-        segments.value = [{ type: 'text', content: escapeHtmlForFallback(text as string) }]
-      }
-    }
+  ([text]) => {
+    scheduleRender(text as string, localFiles.value)
   },
   { immediate: true },
 )
+
+// INVAR-H2-4/AC-4：组件卸载时取消 pending rAF，防止 flushRender 对已卸载组件写 segments。
+// onScopeDispose（而非 onBeforeUnmount）与 watch/effect 同生命周期，卸载时序更可靠。
+onScopeDispose(() => {
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId)
+    rafId = null
+  }
+})
 </script>
 
 <style scoped>

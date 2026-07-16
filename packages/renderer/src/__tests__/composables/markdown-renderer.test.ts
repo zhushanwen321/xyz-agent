@@ -10,15 +10,16 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/markdown-renderer.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, h } from 'vue'
-import type { MarkdownSegment } from '@/composables/logic/markdown'
+import type { MarkdownSegment, MarkdownEnv } from '@/composables/logic/markdown'
 
-// renderMarkdownSegments stub：每个测试设置返回值，聚焦 MarkdownRenderer 的 segment 分发
+// renderMarkdownSegments stub：每个测试设置返回值，聚焦 MarkdownRenderer 的 segment 分发。
+// 透传 content + env（H2 AC-7 localFiles 同帧快照验证需读 env）。
 const mockRenderSegments = vi.fn()
 vi.mock('@/composables/logic/markdown', () => ({
-  renderMarkdownSegments: (content: string) => mockRenderSegments(content),
+  renderMarkdownSegments: (content: string, env?: MarkdownEnv) => mockRenderSegments(content, env),
   decodeBase64: (b64: string) => {
     // 真实 base64 解码（测试构造 data-code 用）
     const binary = atob(b64)
@@ -80,6 +81,25 @@ function encodeB64(text: string): string {
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
 
 describe('MarkdownRenderer（segments 模式）', () => {
+  // H2 后 watch 改用 rAF 调度渲染。这些既有用例不验证节流时序，只需 rAF 回调同步执行
+  // （mount 后 nextTick 即渲染完成）。H2 节流用例在下方独立 describe 用手动控制 rAF。
+  let originalRAF: typeof requestAnimationFrame
+  let originalCAF: typeof cancelAnimationFrame
+  beforeAll(() => {
+    originalRAF = globalThis.requestAnimationFrame
+    originalCAF = globalThis.cancelAnimationFrame
+    // 同步执行 rAF 回调（非节流场景：mount 后立即渲染，nextTick 后 DOM 就绪）
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    }) as typeof requestAnimationFrame
+    globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+  })
+  afterAll(() => {
+    globalThis.requestAnimationFrame = originalRAF
+    globalThis.cancelAnimationFrame = originalCAF
+  })
+
   beforeEach(() => {
     mockRenderSegments.mockReset()
     mockMermaidSource.mockReset()
@@ -174,5 +194,208 @@ describe('MarkdownRenderer（segments 模式）', () => {
     expect(wrapper.find('.md-codeblock').exists()).toBe(false)
     expect(wrapper.find('.stub-mermaid').exists()).toBe(false)
     expect(mockMermaidSource).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * H2：MarkdownRenderer watch rAF trailing 节流（perf-streaming-md-throttle）。
+ *
+ * 背景：流式 text_delta/thinking_delta 每个 token 触发 watch → renderMarkdownSegments
+ * 全量重解析。改造后 watch 内包 rAF trailing，一帧内多次 content 变化合并为单次渲染。
+ *
+ * 复用 M4 rAF mock 模式（use-chat-scroll.test.ts）：手动控制 rAF 调度，
+ * 测试显式 flushRAF 触发回调，验证节流/trailing/卸载安全/异常恢复/同帧快照。
+ *
+ * 不变量（INVAR-H2）：
+ * - INVAR-H2-1: 一帧内多次 content 变化 → renderMarkdownSegments 调用 1 次（AC-1）
+ * - INVAR-H2-2: rAF 执行时读最新 content（延迟求值，非调度时快照）（AC-2）
+ * - INVAR-H2-3: 渲染异常 rafId 须复位，后续变更仍能调度（AC-6）
+ * - INVAR-H2-4: 卸载 cancelAnimationFrame，flushRAF 后不触发已卸载组件渲染（AC-4）
+ * - INVAR-H2-5: content+localFiles 同帧快照（AC-7）
+ *
+ * [红灯] 当前 watch 无节流，每次 setProps → renderMarkdownSegments 立即调用 → fail。
+ */
+describe('MarkdownRenderer · H2 rAF trailing 节流', () => {
+  let rafCallbacks: FrameRequestCallback[]
+  let originalRAF: typeof requestAnimationFrame
+  let originalCAF: typeof cancelAnimationFrame
+
+  beforeEach(() => {
+    mockRenderSegments.mockReset()
+    // 手动控制 rAF：收集回调，不自动执行（测试显式 flush）
+    rafCallbacks = []
+    originalRAF = globalThis.requestAnimationFrame
+    originalCAF = globalThis.cancelAnimationFrame
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      const handle = rafCallbacks.length
+      rafCallbacks.push(cb)
+      return handle
+    }) as typeof requestAnimationFrame
+    globalThis.cancelAnimationFrame = ((handle: number) => {
+      if (rafCallbacks[handle] !== undefined) rafCallbacks[handle] = undefined as unknown as FrameRequestCallback
+    }) as typeof cancelAnimationFrame
+  })
+
+  afterEach(() => {
+    globalThis.requestAnimationFrame = originalRAF
+    globalThis.cancelAnimationFrame = originalCAF
+  })
+
+  /** flush 所有 pending rAF 回调（跳过已被 cancel 的）。 */
+  function flushRAF(): void {
+    const pending = rafCallbacks.splice(0).filter((cb): cb is FrameRequestCallback => cb !== undefined)
+    pending.forEach((cb) => cb(0))
+  }
+
+  it('H2-1 (AC-1): 一帧内 100 次 content 变化 → renderMarkdownSegments 调用远小于 100（节流合并）', async () => {
+    mockRenderSegments.mockResolvedValue([{ type: 'text', content: '<p>x</p>' }])
+    const wrapper = mount(MarkdownRenderer, { props: { content: '' } })
+    // 首渲染（immediate watch）
+    await nextTick()
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 重置计数，只统计流式阶段
+    mockRenderSegments.mockClear()
+
+    // 模拟流式：一帧内连续 100 次 content 变化（不 flush rAF）
+    for (let i = 0; i < 100; i++) {
+      await wrapper.setProps({ content: `token ${i}` })
+    }
+    flushRAF()
+    await nextTick()
+    await nextTick()
+
+    // 关键断言（AC-1）：100 次变化，renderMarkdownSegments 调用次数远小于 100。
+    // 无节流时：每次 setProps → watch 立即调 → ≈100 次（红灯 fail）。
+    // 节流后：合并到 ≤2 次（首帧 + trailing）。
+    const totalCalls = mockRenderSegments.mock.calls.length
+    expect(totalCalls).toBeLessThan(50)
+    // 末次渲染用的是最新 content（INVAR-H2-2 延迟求值）
+    const lastCallContent = mockRenderSegments.mock.calls.at(-1)?.[0]
+    expect(lastCallContent).toBe('token 99')
+  })
+
+  it('H2-2 (AC-2): 末次 flush 后最终 content 完整渲染（trailing）', async () => {
+    mockRenderSegments.mockResolvedValue([{ type: 'text', content: '<p>final</p>' }])
+    const wrapper = mount(MarkdownRenderer, { props: { content: '' } })
+    await nextTick()
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    mockRenderSegments.mockClear()
+
+    await wrapper.setProps({ content: 'partial' })
+    await wrapper.setProps({ content: 'final content' })
+    flushRAF()
+    await nextTick()
+    await nextTick()
+
+    // trailing 保证：最终渲染入参是末次 content（非 partial）
+    const lastContent = mockRenderSegments.mock.calls.at(-1)?.[0]
+    expect(lastContent).toBe('final content')
+  })
+
+  it('H2-3 (AC-3): 静态首渲染立即调度（rAF 排队，flush 后渲染）', async () => {
+    mockRenderSegments.mockResolvedValue([{ type: 'text', content: '<p>static</p>' }])
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'static doc' } })
+    await nextTick()
+    // immediate watch 触发 rAF 调度（rAF 不应为空——当前无节流实现时为空，红灯）
+    expect(rafCallbacks.length).toBeGreaterThan(0)
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 静态 content 渲染成功
+    expect(mockRenderSegments).toHaveBeenCalledWith('static doc', expect.anything())
+  })
+
+  it('H2-4 (AC-4): 卸载时 cancelAnimationFrame，flushRAF 后不触发已卸载组件渲染', async () => {
+    mockRenderSegments.mockResolvedValue([{ type: 'text', content: '<p>x</p>' }])
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'a' } })
+    await nextTick()
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 清掉首渲染的调用记录，便于断言卸载后净增
+    mockRenderSegments.mockClear()
+
+    // 触发新 content 变化 → 节流下排队 rAF
+    await wrapper.setProps({ content: 'b' })
+
+    // 卸载组件（应 cancelAnimationFrame）
+    wrapper.unmount()
+    // flush 残留 rAF（模拟 rAF 到点）——因已 cancel，回调已被置 undefined
+    flushRAF()
+    await nextTick()
+
+    // 关键断言（AC-4）：卸载后 renderMarkdownSegments 不被调用。
+    // 无节流时：setProps 后 watch 立即调（同步），unmount 前已调用 → calls > 0 但 flushRAF 无影响。
+    // 节流后：setProps 排队 rAF，unmount cancel，flushRAF 不触发 → calls === 0。
+    expect(mockRenderSegments).not.toHaveBeenCalled()
+  })
+
+  it('H2-5 (AC-5): renderSeq 序号守卫保留——节流后连续渲染最终 DOM 为最新 content', async () => {
+    mockRenderSegments.mockResolvedValue([{ type: 'text', content: '<p>v1</p>' }])
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'first' } })
+    await nextTick()
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 首渲染成功
+    expect(wrapper.find('.md-render > div').html()).toContain('v1')
+
+    // 第二次：mock 返回新 segment + content 变化
+    mockRenderSegments.mockResolvedValue([{ type: 'text', content: '<p>v2-updated</p>' }])
+    await wrapper.setProps({ content: 'second' })
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 序号守卫：新渲染覆盖旧，DOM 是 v2（非 v1）
+    expect(wrapper.find('.md-render > div').html()).toContain('v2-updated')
+  })
+
+  it('H2-6 (AC-6): renderMarkdownSegments 抛错 → rafId 复位，后续变更仍能调度', async () => {
+    // 首次抛错
+    mockRenderSegments.mockRejectedValueOnce(new Error('shiki boom'))
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'bad' } })
+    await nextTick()
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 降级：纯文本 segment 可见（escapeHtmlForFallback）
+    expect(wrapper.find('.md-render > div').html()).toContain('bad')
+
+    // 关键：抛错后 rafId 已复位 → 新 content 变化能重新调度 rAF
+    mockRenderSegments.mockResolvedValueOnce([{ type: 'text', content: '<p>recovered</p>' }])
+    await wrapper.setProps({ content: 'recovered' })
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 后续渲染正常，显示新内容（非降级纯文本）
+    expect(wrapper.find('.md-render > div').html()).toContain('<p>recovered</p>')
+  })
+
+  it('H2-7 (AC-7): content + localFiles 同帧变化 → rAF 回调用最新 localFiles（同帧快照）', async () => {
+    mockRenderSegments.mockResolvedValue([{ type: 'text', content: '<p>x</p>' }])
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'init', sessionId: 's1' } })
+    await nextTick()
+    flushRAF()
+    await nextTick()
+    await nextTick()
+    // 等 refreshLocalFiles（sessionId='s1' → loadFileCandidates mock 返回 []）
+    await nextTick()
+    mockRenderSegments.mockClear()
+
+    // content 变化（节流下排队 rAF，不立即渲染）
+    await wrapper.setProps({ content: 'with link' })
+    flushRAF()
+    await nextTick()
+    await nextTick()
+
+    // renderMarkdownSegments 被调用时 env.localFiles 存在（同帧快照，AC-7）
+    expect(mockRenderSegments).toHaveBeenCalled()
+    const lastCallEnv = mockRenderSegments.mock.calls.at(-1)?.[1]
+    expect(lastCallEnv).toBeDefined()
+    expect(lastCallEnv).toHaveProperty('localFiles')
   })
 })
