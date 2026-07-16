@@ -56,21 +56,21 @@
              text segment → MarkdownRenderer 渲染。
              assistant/system content 是 string，不走此分支（下方 userSegments 为空时不渲染 badge） -->
         <template v-for="(seg, i) in userSegments" :key="i">
-          <Button
+          <!-- skill badge：inline span + role=button（不用 Button as-child，
+               避免 buttonVariants 注入 h-9 px-4 py-2 撑大 badge + button 默认 type=submit 卡死） -->
+          <span
             v-if="seg.type === 'skill'"
-            as-child
-            variant="ghost"
+            class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
+            style="vertical-align: middle"
+            role="button"
+            tabindex="0"
             :title="t('panel.message.viewCommandDoc')"
             @click.stop="openCommandDoc(`/skill:${seg.name}`)"
+            @keydown.enter.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
           >
-            <span
-              class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
-              style="vertical-align: middle"
-            >
-              <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
-              <span>/skill:{{ seg.name }}</span>
-            </span>
-          </Button>
+            <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
+            <span>/skill:{{ seg.name }}</span>
+          </span>
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
         <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
