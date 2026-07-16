@@ -162,11 +162,12 @@ describe('W3 chat store LRU 驱逐', () => {
       store.evictSessionWithVirtual('s0')
       expect(store.isHydrated('s0')).toBe(false)
 
-      // 重新 hydrate（模拟切回时的 getHistory）
-      store.hydrate('s0', [makeMessage('m0-reloaded')])
+      // 重新 hydrate（模拟切回时的 getHistory），用自定义 content 匹配 test.json expected
+      const reloadedMsg: Message = { id: 'm0-reloaded', role: 'assistant', content: 'm0-reloaded', status: 'complete', timestamp: Date.now() }
+      store.hydrate('s0', [reloadedMsg])
       expect(store.isHydrated('s0')).toBe(true)
       expect(store.getMessages('s0')).toHaveLength(1)
-      expect(store.getMessages('s0')[0].content).toBe('msg-m0-reloaded')
+      expect(store.getMessages('s0')[0].content).toBe('m0-reloaded')
     })
   })
 
