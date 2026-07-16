@@ -37,8 +37,12 @@ describe('B1: message.stream_warn 不收口 session（WARN 与 ERROR 通道隔�
     }
     store.applyMessageEvent(sid, warnMsg)
 
-    // 核心：WARN 不应收口——session 仍 streaming
-    expect(store.isGenerating(sid)).toBe(true)
+    // 核心：WARN 不应收口——streaming assistant 消息 status 不变（未被 finalize 成 error）
+    // stream_warn 会追加一条 system 提示消息，但不应影响 assistant 实体的 streaming 态
+    const msgs = store.getMessages(sid)
+    const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant')
+    expect(lastAssistant).toBeDefined()
+    expect(lastAssistant!.status).toBe('streaming')
   })
 
   it('stream_error 到达 → 仍正常收口（回归防护，两通道隔离）', () => {
