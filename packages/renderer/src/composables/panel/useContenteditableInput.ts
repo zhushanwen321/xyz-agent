@@ -342,24 +342,14 @@ export function useContenteditableInput(
   function onInput(): void {
     syncEmpty()
     const text = getText()
-    // slash 命令后自动插入空格：/command:text → /command: text
-    // [a-zA-Z0-9_-]+ 精确匹配命令字符（字母数字-_:），避免贪婪匹配吞掉后续文本
-    const spaced = text.replace(/^(\/[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)(\S.*)$/, '$1 $2')
-    if (spaced !== text) {
-      // 自动插入空格后更新 DOM
-      const el = getEl()
-      if (el) el.textContent = spaced
-      emitInput(spaced)
-    } else {
-      emitInput(text)
-    }
+    emitInput(text)
     // 用户输入/删除改变了光标水平位置，重置 preferred X（下次 ↑/↓ 重新锚定）
     preferredCaretX = null
     // slash 触发检测：必须用 DOM 查询判 chip——getText 的 TreeWalker 跳过的是 .chip-x（×按钮），
     // 不跳 chip 本体，故 chip 文本（如 '/commit'）会被读入 text。若靠 text 判 chip 会误触发。
     // startsWith('/') 已隐含「/ 在最左且左侧无内容」，无需额外判断。
     const hasChip = !!getEl()?.querySelector('.slash-chip, .mention-chip')
-    onSlashTrigger(!hasChip && spaced.startsWith('/') ? { query: spaced.slice(1) } : null)
+    onSlashTrigger(!hasChip && text.startsWith('/') ? { query: text.slice(1) } : null)
     // # 文件触发检测：基于光标位置（任意位置触发，不靠整框文本）
     onFileTrigger(detectHashTrigger())
   }
