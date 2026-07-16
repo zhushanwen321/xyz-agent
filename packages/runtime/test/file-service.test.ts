@@ -274,12 +274,14 @@ describe('FileService.readFile (#7 截断 + 越界)', () => {
     expect(r.content).toBe('x'.repeat(MAX_FILE_SIZE))
   })
 
-  it('越界（../etc/secret）→ FileError(out_of_cwd)', async () => {
-    await expect(svc().readFile('s1', '../etc/secret')).rejects.toMatchObject({
-      name: 'FileError',
-      code: 'out_of_cwd',
-    })
-    expect(executor.stat).not.toHaveBeenCalled()
+  it('相对路径越界（../etc/secret）→ 按绝对路径解析并尝试读取，不再抛 out_of_cwd', async () => {
+    executor.stat.mockResolvedValueOnce({ type: 'file', size: 10 })
+    executor.readFile.mockResolvedValueOnce('secret content')
+
+    const r = await svc().readFile('s1', '../etc/secret')
+
+    expect(r).toEqual({ content: 'secret content', truncated: false })
+    expect(executor.readFile).toHaveBeenCalledWith('/etc/secret')
   })
 
   it('文件不存在（stat ENOENT）→ FileError(not_found)', async () => {
@@ -306,6 +308,37 @@ describe('FileService.readFile (#7 截断 + 越界)', () => {
       name: 'FileError',
       code: 'session_not_found',
     })
+  })
+})
+
+describe('FileService.readFile path resolution (#file-path-preview-fix)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionService.getSummary.mockReturnValue({ cwd: '/project' })
+    executor.stat = vi.fn().mockResolvedValue({ type: 'file', size: 0 })
+    executor.readFile = vi.fn().mockResolvedValue('content')
+  })
+
+  it('U1: 相对路径基于 cwd resolve', async () => {
+    await svc().readFile('s1', 'README.md')
+    expect(executor.readFile).toHaveBeenCalledWith('/project/README.md')
+  })
+
+  it('U2: 绝对路径直接使用，不拼到 cwd 下', async () => {
+    await svc().readFile('s1', '/var/tmp/absolute.md')
+    expect(executor.readFile).toHaveBeenCalledWith('/var/tmp/absolute.md')
+  })
+
+  it('U3: ~ 路径展开为家目录', async () => {
+    await svc().readFile('s1', '~/notes.md')
+    const readPath = (executor.readFile as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    expect(readPath.startsWith('/project') ? 'starts-with-cwd' : 'starts-with-home').toBe('starts-with-home')
+  })
+
+  it('U4: 绝对路径位于 cwd 之外也能成功读取', async () => {
+    const result = await svc().readFile('s1', '/etc/passwd')
+    expect(result.content).toBe('content')
+    expect(executor.readFile).toHaveBeenCalledWith('/etc/passwd')
   })
 })
 
