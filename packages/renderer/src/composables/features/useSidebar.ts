@@ -35,6 +35,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useChat } from '@/composables/features/useChat'
+import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
@@ -363,9 +364,11 @@ export function useSidebar() {
       if (workflowStore.isViewing(boundPanel.id)) workflowStore.backFromAgentCall(boundPanel.id)
     }
     session.removeFromList(id)
-    // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅
+    // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
     useChat().disposeSession(id)
+    // W3：清除该 session 的 derivedStatus/sessionDigest 缓存，避免已删 session 的 computed 残留
+    invalidateStatusCache(id)
     if (wasActive) {
       const next = session.list[0]
       if (next) {

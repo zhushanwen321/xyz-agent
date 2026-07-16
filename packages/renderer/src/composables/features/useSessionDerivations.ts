@@ -32,6 +32,20 @@ export interface SessionDigest {
   turnCount: number
 }
 
+/**
+ * computed 实例缓存（W3，ADR 侧栏性能优化）。
+ *
+ * 模块级 Map 缓存 derivedStatus / sessionDigest 的 ComputedRef 实例，同 id 复用，
+ * 消除 Sidebar statusOf 每次 `derivedStatus(id).value` 新建 computed 立即丢弃的浪费
+ * （原实现缓存机制完全失效，侧栏每次渲染 O(N×M)）。
+ *
+ * 缓存共享合理：所有 useSessionDerivations() 调用者（Sidebar/Overview）读同一 chat store，
+ * session id 命名空间一致，Pinia store 是应用级单例。deleteSession 时调 invalidateStatusCache
+ * 清理，避免已删 session 的 computed 残留（残留非泄漏——页面刷新全清，但显式清理更洁）。
+ */
+const statusCache = new Map<string, ComputedRef<DerivedStatus>>()
+const digestCache = new Map<string, ComputedRef<SessionDigest>>()
+
 export function useSessionDerivations() {
   const chat = useChatStore()
   // [W1] 移除 session store 依赖：isActive 作为 UI 层 SSOT，不再受 activeId 限定
@@ -40,37 +54,61 @@ export function useSessionDerivations() {
    * 响应式派生指定 session 的状态点（D6）。
    * 读 chat store 分区末尾消息 + isActive（pendingSend ∨ isGenerating）。
    * [W1] isActive 作为 UI 层 SSOT，消除提交后到 message_start 之间空窗期的状态不一致。
+   * [W3] 同 id 复用缓存的 ComputedRef（消除每次新建丢弃的浪费）。computed 只在依赖变化时重算，
+   * 配合 W2 的 isGenerating O(1)，单次重算也高效。
    */
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
-    return computed(() => {
-      return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id))
-    })
+    let c = statusCache.get(id)
+    if (!c) {
+      c = computed(() => deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id)))
+      statusCache.set(id, c)
+    }
+    return c
   }
 
   /**
    * 响应式派生指定 session 的鸟瞰摘要（Overview 卡片用）。
    * - summary：末条 assistant 文本（content），无则空串（卡片不渲染摘要区）
    * - turnCount：user 消息数（回合 = user + 其后 assistant 序列）
-   * 文件改动数无 mock 数据源（runtime file-changes 未联调），不臆造，卡片隐藏该指标。
-   * 计算逻辑与重构前完全一致。
+   * [W3] 同 id 复用缓存的 ComputedRef（与 derivedStatus 同模式）。
    */
   function sessionDigest(id: string): ComputedRef<SessionDigest> {
-    return computed(() => {
-      const msgs = chat.getMessages(id)
-      let lastAssistant = ''
-      for (let i = msgs.length - 1; i >= 0; i -= 1) {
-        if (msgs[i].role === 'assistant') {
-          lastAssistant = normalizeContent(msgs[i].content)
-          break
+    let c = digestCache.get(id)
+    if (!c) {
+      c = computed(() => {
+        const msgs = chat.getMessages(id)
+        let lastAssistant = ''
+        for (let i = msgs.length - 1; i >= 0; i -= 1) {
+          if (msgs[i].role === 'assistant') {
+            lastAssistant = normalizeContent(msgs[i].content)
+            break
+          }
         }
-      }
-      const turnCount = msgs.filter((m) => m.role === 'user').length
-      return { summary: lastAssistant, turnCount }
-    })
+        const turnCount = msgs.filter((m) => m.role === 'user').length
+        return { summary: lastAssistant, turnCount }
+      })
+      digestCache.set(id, c)
+    }
+    return c
   }
 
   return {
     derivedStatus,
     sessionDigest,
+    invalidateStatusCache,
+  }
+}
+
+/**
+ * 清除派生状态缓存（deleteSession 时调用，W3）。
+ * @param sessionId 指定 id 清除；不传则清除全部。
+ */
+export function invalidateStatusCache(sessionId?: string): void {
+  if (sessionId) {
+    statusCache.delete(sessionId)
+    digestCache.delete(sessionId)
+  } else {
+    statusCache.clear()
+    digestCache.clear()
   }
 }
