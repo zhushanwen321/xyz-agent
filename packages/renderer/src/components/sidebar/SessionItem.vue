@@ -57,8 +57,8 @@
         variant="ghost"
         size="icon"
         :class="confirming
-          ? 'size-[22px] rounded-[5px] border border-danger bg-danger text-white'
-          : 'size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
+          ? 'size-[22px] rounded-sm border border-danger bg-danger text-fg'
+          : 'size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
         :title="confirming ? t('sidebar.sessionItem.deleteConfirm') : t('sidebar.sessionItem.delete')"
         @click.stop="onRemoveClick"
       >

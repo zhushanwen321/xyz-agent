@@ -245,7 +245,7 @@ function onAddPath(): void {
   const path = newPath.value.trim()
   if (!path) return // 空路径：无操作、不报错
   if (localDirs.value.some((d) => d.path === path)) {
-    pathError.value = '路径已存在'
+    pathError.value = t('settings.loadPaths.pathExists')
     return
   }
   pathError.value = ''

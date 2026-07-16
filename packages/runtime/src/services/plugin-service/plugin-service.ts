@@ -243,7 +243,7 @@ export class PluginService implements IPluginService {
         this.activator.stopWatching(pluginId) // 停止热重载监听
         this.statusBarRegistry.clearForPlugin(pluginId) // 清理 status bar items
       }
-    // eslint-disable-next-line taste/no-silent-catch -- toggle: failure returns plugin list for UI rollback
+     
     } catch (err: unknown) {
       console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, toErrorMessage(err))
       // 激活/停用失败仍然返回当前插件列表（允许前端回滚 UI）

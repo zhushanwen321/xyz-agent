@@ -263,14 +263,13 @@ function onSubmit(): void {
     <!-- head 行：脉冲点 + (单问题标题 | 多问题 tab) + 倒计时(absolute 右上) -->
     <div
       data-testid="ask-user-head"
-      class="relative flex items-center gap-[7px] pt-2.5"
-      :class="questions.length > 1 ? 'px-3.5' : 'px-3.5'"
+      class="relative flex items-center gap-2 px-3.5 pt-2.5"
     >
       <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
       <!-- 单问题：标题提到 head 行，单行 truncate，pr 给 timer 留空间 -->
       <span
         v-if="questions.length <= 1"
-        class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap pr-[52px] text-[13px] font-medium text-fg"
+        class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap pr-12 text-[13px] font-medium text-fg"
         data-testid="ask-user-question-text"
       >
         {{ activeQuestion?.question }}
@@ -294,7 +293,7 @@ function onSubmit(): void {
           <span
             v-if="isQuestionAnswered(q)"
             data-testid="ask-user-tab-answered"
-            class="size-[5px] rounded-full bg-success"
+            class="size-1 rounded-full bg-success"
           />
         </Button>
       </div>
@@ -334,7 +333,7 @@ function onSubmit(): void {
         </p>
 
         <!-- 选项列表（单选/多选）：inline 布局，无边框，hover/selected 用 bg -->
-        <div v-if="activeQuestion.options?.length" class="flex flex-col gap-[3px]">
+        <div v-if="activeQuestion.options?.length" class="flex flex-col gap-1">
           <div
             v-for="opt in activeQuestion.options"
             :key="optValue(opt)"
@@ -356,13 +355,13 @@ function onSubmit(): void {
             <Checkbox
               v-if="activeQuestion.multiSelect"
               :model-value="isSelected(activeQuestion, optValue(opt))"
-              class="mt-[2.25px]"
+              class="mt-0.5"
               @update:model-value="toggleOption(activeQuestion, optValue(opt))"
             />
             <div
               v-else
               :class="[
-                'mt-[2.25px] size-[15px] shrink-0 rounded-full border-[1.5px] transition-colors',
+                'mt-0.5 size-4 shrink-0 rounded-full border-2 transition-colors',
                 isSelected(activeQuestion, optValue(opt))
                   ? 'border-accent bg-accent'
                   : 'border-border-strong',
@@ -404,13 +403,13 @@ function onSubmit(): void {
           <Checkbox
             v-if="activeQuestion.multiSelect"
             :model-value="isOtherSelected(activeQuestion)"
-            class="mt-[2.25px]"
+            class="mt-0.5"
             @update:model-value="toggleOption(activeQuestion, OTHER_VALUE)"
           />
           <div
             v-else
             :class="[
-              'mt-[2.25px] size-[15px] shrink-0 rounded-full border-[1.5px] transition-colors',
+              'mt-0.5 size-4 shrink-0 rounded-full border-2 transition-colors',
               isOtherSelected(activeQuestion) ? 'border-accent bg-accent' : 'border-border-strong',
             ]"
           />

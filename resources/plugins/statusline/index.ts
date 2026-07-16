@@ -66,7 +66,7 @@ export async function activate(context: PluginContext): Promise<void> {
             sessionId: meta.scope === 'per-session' ? sessionId : undefined,
           },
         )
-        // eslint-disable-next-line taste/no-silent-catch
+         
       } catch (err) {
         console.error('[statusline] Error handling statusSetUpdate:', err)
         // Intentionally silent — statusline is passive, should not crash the Worker

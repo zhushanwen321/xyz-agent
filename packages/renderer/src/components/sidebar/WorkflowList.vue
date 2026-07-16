@@ -74,7 +74,7 @@
                 size="icon"
                 :data-testid="abortingId === record.runId ? 'workflow-action-abort-confirm' : 'workflow-action-abort'"
                 :class="abortingId === record.runId
-                  ? 'size-5 border border-danger bg-danger text-white'
+                  ? 'size-5 border border-danger bg-danger text-fg'
                   : 'size-5 text-subtle hover:text-danger'"
                 :title="abortingId === record.runId ? t('sidebar.workflowList.terminateConfirm') : t('sidebar.workflowList.terminate')"
                 @click.stop="onAbortClick(record.runId)"

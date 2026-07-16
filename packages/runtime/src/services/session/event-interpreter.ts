@@ -148,8 +148,9 @@ export class EventInterpreter {
         if (ev.kind === 'turn-end') {
           try {
             this.opts.onTurnFinalize?.(this.sessionId)
-          } catch {
-            // 兜底失败也不阻断——至少尝试清 watchdog
+          } catch (finalizeErr) {
+            // 兜底失败也不阻断——至少尝试清 watchdog（best-effort：onTurnFinalize 内部异常不传播）
+            console.debug('[event-interpreter] onTurnFinalize fallback failed:', finalizeErr)
           }
           this.clearWatchdog()
         }

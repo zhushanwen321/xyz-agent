@@ -191,6 +191,7 @@ export default {
     addPath: '添加',
     enableDir: '启用目录 {path}',
     removeDir: '删除目录 {path}',
+    pathExists: '路径已存在',
   },
   // ── 命令名（useAppCommands，用于快捷键展示）──
   command: {

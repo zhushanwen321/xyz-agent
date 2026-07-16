@@ -87,7 +87,7 @@ export class BridgeHandler {
         // 内部走 sendRaw 直接写 stdin），不会抛异步超时错误；但 stdin.write 可能同步抛，
         // 故仍保留 try/catch 兜底。
         client.sendExtensionUiResponse(requestId, { error: String(e) })
-        // eslint-disable-next-line taste/no-silent-catch
+         
       } catch (sendErr) {
         console.error(`[bridge-handler] failed to send error response to pi: ${toErrorMessage(sendErr)}`)
         // Cannot propagate further — both pi and frontend channels exhausted

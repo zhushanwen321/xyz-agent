@@ -295,7 +295,7 @@ async function main(): Promise<void> {
       console.log(`[runtime] auto-upgraded ${upgraded.length} extension(s):`,
         upgraded.map(r => `${r.name} ${r.from ?? '?'}→${r.to ?? '?'}`).join(', '))
     }
-    // eslint-disable-next-line taste/no-silent-catch -- startup: auto-upgrade failure must not block server
+     
   } catch (e) {
     // checkAndAutoUpgrade 内部已 catch 每个扩展，此处是意外错误兜底
     console.warn('[runtime] extension auto-upgrade encountered an error:', e)

@@ -409,7 +409,7 @@ async function installPackageRecursive(
   for (const [depName, depRange] of Object.entries(deps)) {
     try {
       await installPackageRecursive(`${depName}@${depRange}`, nodeModulesDir, options, installed)
-    } catch (e) { // eslint-disable-line taste/no-silent-catch
+    } catch (e) {  
       // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(
         `[npm-installer] Failed to install dependency ${depName}@${depRange}:`,
@@ -515,7 +515,7 @@ export async function installDependencies(
   for (const [depName, depRange] of Object.entries(deps)) {
     try {
       await installPackageRecursive(`${depName}@${depRange}`, nodeModulesDir, options, installed)
-    } catch (e) { // eslint-disable-line taste/no-silent-catch
+    } catch (e) {  
       // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(
         `[npm-installer] Failed to install dependency ${depName}:`,

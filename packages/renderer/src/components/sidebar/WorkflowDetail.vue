@@ -42,7 +42,7 @@
           size="icon"
           :data-testid="aborting ? 'workflow-detail-abort-confirm' : 'workflow-detail-abort'"
           :class="aborting
-            ? 'size-5 border border-danger bg-danger text-white'
+            ? 'size-5 border border-danger bg-danger text-fg'
             : 'size-5 text-subtle hover:text-danger'"
           :title="aborting ? t('sidebar.workflowDetail.terminateConfirm') : t('sidebar.workflowDetail.terminate')"
           @click="onAbortClick"

@@ -191,6 +191,7 @@ export default {
     addPath: 'Add',
     enableDir: 'Enable directory {path}',
     removeDir: 'Remove directory {path}',
+    pathExists: 'Path already exists',
   },
   // ── Command names (useAppCommands, for shortcut display) ──
   command: {

@@ -153,13 +153,14 @@
       <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted">
         <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
         <span class="flex-1 truncate text-fg">{{ t('sidebar.developer') }}</span>
-        <button
+        <Button
+          variant="ghost"
           class="grid size-6 shrink-0 place-items-center rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-fg"
           :title="t('sidebar.settingsTitle')"
           @click="openSettings()"
         >
           <Settings class="size-[14px]" />
-        </button>
+        </Button>
       </div>
     </div>
 

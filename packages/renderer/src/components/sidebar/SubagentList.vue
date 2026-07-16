@@ -59,7 +59,7 @@
               size="icon"
               :data-testid="cancellingId === record.subagentId ? 'subagent-action-cancel-confirm' : 'subagent-action-cancel'"
               :class="cancellingId === record.subagentId
-                ? 'size-5 rounded-[5px] border border-danger bg-danger text-white'
+                ? 'size-5 rounded-sm border border-danger bg-danger text-fg'
                 : 'size-5 text-subtle hover:text-danger'"
               :title="cancellingId === record.subagentId ? t('sidebar.subagentList.cancelConfirm') : t('sidebar.subagentList.cancel')"
               @click.stop="onCancelClick(record.subagentId)"
