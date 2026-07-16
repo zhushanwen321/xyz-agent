@@ -90,6 +90,10 @@ bash scripts/check-version-bump.sh
 ```bash
 cd $WS_ROOT/main
 
+# ⚠️ 先确认当前分支是 main（pr-merge.sh 的 sync 会强制 checkout main，
+#    但阶段 4 执行前必须二次确认，防止意外）
+git branch --show-current  # 必须输出 main，否则 git checkout main
+
 # ⚠️ 必须使用 --no-git-tag-version：所有 package.json 的变更必须在同一个
 #    commit 中，否则第二次 version 因 tag 已存在而失败，导致 apps/electron
 #    的版本号未提交，CI 从 apps/electron/package.json 读取到旧版本号。
