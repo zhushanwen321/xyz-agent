@@ -343,8 +343,8 @@ export function useContenteditableInput(
     syncEmpty()
     const text = getText()
     // slash 命令后自动插入空格：/command:text → /command: text
-    // \S+ 贪婪匹配命令后的所有非空白字符，避免 /skill:cw 被错误拆分为 /skill:c w
-    const spaced = text.replace(/^(\/[a-zA-Z0-9_-]+:\S+)(\S.*)$/, '$1 $2')
+    // [a-zA-Z0-9_-]+ 精确匹配命令字符（字母数字-_:），避免贪婪匹配吞掉后续文本
+    const spaced = text.replace(/^(\/[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)(\S.*)$/, '$1 $2')
     if (spaced !== text) {
       // 自动插入空格后更新 DOM
       const el = getEl()
