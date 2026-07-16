@@ -214,7 +214,7 @@ async function getMarkdown(): Promise<MarkdownIt> {
 /**
  * 文件路径识别正则（filepath inline rule 与 code_inline 二次识别共用）。
  *
- * 匹配「至少含一个 / 且以源码扩展名结尾」的路径片段。三条判别：
+ * 匹配「至少含一个 / 的路径片段」。判别要素：
  *  1. 至少一个路径分隔符 / —— 单独 foo.ts（无 /）不识别，避免误伤版本号/小数/普通词
  *  2. 扩展名前瞻 (?=\d*[a-zA-Z]) 要求至少含一个字母 —— 纯数字扩展名 .2/.0 不识别，
  *     挡掉模型名（glm-5.2）、版本号（node/18.0）、小数（pi/3.14）等 a/b.<数字> 形态；
@@ -223,11 +223,26 @@ async function getMarkdown(): Promise<MarkdownIt> {
  *     （~/Code/project/foo.ts）。不加此前缀时，以 / 开头的路径在起点匹配失败，
  *     等 markdown-it inline 解析器把 pos 推进到路径中间的 _ 等 punctuation 时，
  *     state.src.slice(pos) 的 ^ 分支让后半段被误识别为路径起点（只匹配后半段）。
+ *
+ * [HISTORICAL] 线性无回溯结构（2026-07-17 ReDoS 修复）：
+ * 结构为首段 [chars]+ 后跟一或多个 `/段` (?:\/[chars]+)+，每段都是单层量词，
+ * 匹配时间与输入长度成线性关系。此前 W2（commit 5668fd29）为支持路径段含空格
+ * 改成双层嵌套 (?:[chars]+(?: [chars]+)*)+，触发 O(2^n) 回溯——26 字符纯 word
+ * 序列 146ms、40 字符直接挂死。本次回退为线性结构，代价是不再支持含空格的路径段
+ * （如 docs/My Document.md）。带空格路径罕见，且 AI 通常用反引号标注走 code_inline
+ * renderer；如需识别可由调用方选中文字触发搜索直达，不依赖正文启发式识别。
+ *
+ * 段必须含字母：每段前加前瞻 (?=[chars]*[a-zA-Z])，要求段内至少一个字母。
+ * 原因：「扩展名可选」（为支持 src/Makefile）让正则可在无合法扩展名时退化为纯段匹配，
+ * 导致 node/18.0 匹配到 node/18（18 纯数字段）、pi/3.14 匹配到 pi/3。要求段含字母
+ * 可挡掉纯数字段（版本号/小数的数字段），同时不影响 Makefile 等含字母的真实路径段。
+ * 前瞻不消费字符、不引入嵌套量词，保持线性。
+ * 详见 spec 决策 D1 + 回归测试 markdown-filepath.test.ts 的 AC-1/AC-5/AC-9 断言。
  */
 // 字符集内 `-` 转义为 `\-`（防 `_-`/`/-` 倒序范围触发 "Range out of order"）
 // g 标志 + 捕获组 1 = 路径（含可选前缀，去掉前导边界符）。前导边界符：行首或空白/括号/引号/标点。
-// 路径段允许空格（如 docs/My Document.md），扩展名可选（如 src/Makefile）。
-const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?(?:[a-zA-Z0-9._\-]+(?: [a-zA-Z0-9._\-]+)*)+(?:\/(?:[a-zA-Z0-9._\-]+(?: [a-zA-Z0-9._\-]+)*)+)+(?:\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})?)(?![a-zA-Z0-9._\-\/])/g
+// 扩展名可选（如 src/Makefile）。段前瞻 (?=[chars]*[a-zA-Z]) 要求每段含字母。
+export const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?(?=[a-zA-Z0-9._\-]*[a-zA-Z])[a-zA-Z0-9._\-]+(?:\/(?=[a-zA-Z0-9._\-]*[a-zA-Z])[a-zA-Z0-9._\-]+)+(?:\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})?)(?![a-zA-Z0-9._\-\/])/g
 
 /**
  * 裸 basename 识别正则（无 / 前缀的文件名，如 design.md / README.md）。
@@ -240,7 +255,7 @@ const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?(?:[a-zA-Z0-9._\-]+(?: [a-
  * 避免误把 design.md 这类裸文件名当 URL（linkify fuzzyLink:false 已让裸域名不当 URL，
  * 但也导致裸 basename 默认是纯文本不可点击，此正则 + localFiles 集合打开识别通道）。
  */
-const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-\/])/g
+export const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-\/])/g
 
 function filepathRule(state: InlineState, silent: boolean): boolean {
   const pos = state.pos
