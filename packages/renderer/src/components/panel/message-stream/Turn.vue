@@ -55,20 +55,20 @@
         <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），可点击在 drawer 查看文档。
              Button as-child 让 reka-ui Primitive 合并到 span，保留 chip 行内样式 + 按钮语义 -->
         <Button
-          v-if="slashChip"
+          v-if="displayChip"
           as-child
           variant="ghost"
           :title="t('panel.message.viewCommandDoc')"
-          @click.stop="openCommandDoc(slashChip.name)"
+          @click.stop="openCommandDoc(displayChip.name)"
         >
           <span
             class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
           >
-            <component :is="slashChip.iconComp" class="size-[12px] shrink-0" />
-            <span>{{ slashChip.name }}</span>
+            <component :is="displayChip.iconComp" class="size-[12px] shrink-0" />
+            <span>{{ displayChip.name }}</span>
           </span>
         </Button>
-        <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" :session-id="sessionId" />
+        <MarkdownRenderer v-if="!displayChip || displayChip.rest" :content="displayChip ? displayChip.rest : turn.user.content" :session-id="sessionId" />
       </div>
       <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。
            pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
@@ -305,6 +305,24 @@ const slashChip = computed(() => {
   const iconComp = SLASH_ICON_COMPONENTS[matched.icon as keyof typeof SLASH_ICON_COMPONENTS] ?? SLASH_ICON_COMPONENTS.wrench
   return { name: matched.name, rest, iconComp }
 })
+
+/**
+ * skill badge 检测：从 pi 返回的消息含 skillName 字段时（<skill> 标签已由 message-converter 解析），
+ * 渲染为紫色 badge（star icon + /skill:xxx），点击打开 drawer Doc tab 展示 SKILL.md。
+ * 与 slashChip 互斥：skillName 优先（pi 解析的权威数据），无 skillName 时走原 slashChip 逻辑。
+ */
+const skillChip = computed(() => {
+  const skillName = props.turn.user?.skillName
+  if (!skillName) return null
+  return {
+    name: `/skill:${skillName}`,
+    rest: props.turn.user?.content ?? '',
+    iconComp: SLASH_ICON_COMPONENTS.star,
+  }
+})
+
+/** 合并 skillChip 和 slashChip：skillName 优先 */
+const displayChip = computed(() => skillChip.value ?? slashChip.value)
 
 /**
  * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isGenerating。
