@@ -25,7 +25,7 @@
  * 数据流处理骨架见 applyFileChanges()，类型契约已就绪（F2-1），逻辑 DEFERRED。
  */
 import { defineStore } from 'pinia'
-import { onScopeDispose, ref, shallowRef } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { commitMessages } from './chat-mutations'
 import type {
   ContentBlock,
@@ -354,15 +354,35 @@ export const useChatStore = defineStore('chat', () => {
   // ── 派生态（computed scan，D-005，零手动维护）──
 
   /**
+   * 当前所有含 streaming 消息的 session 集合（W2，ADR 0035）。
+   *
+   * computed 派生 Set——单一真相源，物理不可撕裂（任何 messages 写入路径自动覆盖，
+   * 含 13+ 处写入点 + 3 个边界点 truncateFrom/disposeSession/hydrate）。messages 变化时
+   * 全量扫一次并缓存，服务所有 isGenerating 查询，消除"每个消费点重复 O(n) 扫描"。
+   *
+   * shallowRef 下依赖 messages.value 的整体替换（commitMessages 已保证），computed 正确重算。
+   */
+  const streamingSessionIds = computed(() => {
+    const ids = new Set<string>()
+    for (const [sid, msgs] of messages.value) {
+      for (const m of msgs) {
+        if (m.status === 'streaming') {
+          ids.add(sid)
+          break
+        }
+      }
+    }
+    return ids
+  })
+
+  /**
    * 指定 session 是否有 streaming 实体（派生，无 setter）。
    * 不变式：`isGenerating(sid) ≡ ∃ m ∈ messages[sid], m.status === 'streaming'`
-   * scan 限定 per-session（messages.value.get(sid)），防跨 session 响应式失效扩散。
-   * 取代命令式 isStreaming flag —— 物理不可撕裂（无写路径需手动同步）。
+   * W2：改用 streamingSessionIds computed 的 O(1) has 查询（ADR 0035），
+   * 取代每次调用 O(n) list.some 扫描。不变式逻辑完全相同，仅加缓存层。
    */
   function isGenerating(sessionId: string): boolean {
-    const list = messages.value.get(sessionId)
-    if (!list) return false
-    return list.some((m) => m.status === 'streaming')
+    return streamingSessionIds.value.has(sessionId)
   }
 
   /**
