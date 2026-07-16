@@ -107,6 +107,11 @@ export function useChatScroll() {
       onScopeDispose(() => {
         resizeObserver?.disconnect()
         resizeObserver = null
+        // INVAR-M4-5: 取消 pending rAF，防止卸载后 flushScroll 对已卸载 el 调 scrollTo。
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId)
+          rafId = null
+        }
       })
     }
   }
@@ -134,24 +139,67 @@ export function useChatScroll() {
   }
 
   /**
-   * 滚动到底部。
+   * 滚动到底部（rAF trailing 节流，M4 perf-quick-batch）。
    * - force=false（默认）：受 stickToBottom guard，非贴底时不滚只置 unreadBelow（程序自动跟随用）
    * - force=true：强制滚动并恢复贴底态（用户「回到底部」浮层点击用）
+   *
+   * M4 节流：流式每个 token 触发一次 scrollToBottom（三个触发源：watch messages.length /
+   * watch content.length / ResizeObserver），高频调用合并为单次 rAF 回调执行。trailing 保证
+   * 末次调用必执行（流结束时视图停在真底部）。
+   *
+   * INVAR-M4-2【关键】：stickToBottom guard 在 rAF 执行时重新读取，而非调用时捕获。
+   * 否则：调用时贴底→用户上滑翻 false→rAF 仍按调用时的 true 滚→把上滑用户扯回底部。
+   * 实现分两阶段：
+   *   1. 调用时：非贴底（!force && !stickToBottom）立即置 unreadBelow 并 return（满足 U15 即时语义）
+   *   2. rAF 回调内：再次检查 stickToBottom，用户中途上滑则放弃 scrollTo
    *
    * 无需任何 scroll 事件保护期——onScroll 永不因程序性滚动翻 false（见文件头说明），
    * smooth 动画中途的 scroll 事件（scrollTop 增大）同样不会误判。
    */
+  let rafId: number | null = null
+  /** 待执行的尾部调用参数（trailing：最后一次调用的 behavior/force 生效）。 */
+  let pendingBehavior: ScrollBehavior = 'smooth'
+  let pendingForce = false
+  /** trailing flush 的 resolve 队列：所有合并的调用方 await 的 Promise 在 flush 后一并 resolve。 */
+  let pendingResolvers: Array<() => void> = []
+
+  function flushScroll(): void {
+    rafId = null
+    const behavior = pendingBehavior
+    const force = pendingForce
+    const resolvers = pendingResolvers
+    pendingResolvers = []
+    // INVAR-M4-2: 执行时重新检查 stickToBottom。调用时贴底但中途上滑 → 不扯回。
+    if (!force && !stickToBottom.value) {
+      resolvers.forEach((r) => r())
+      return
+    }
+    void (async () => {
+      await nextTick()
+      const el = scrollEl.value
+      if (el) {
+        el.scrollTo({ top: el.scrollHeight, behavior })
+        stickToBottom.value = true
+        unreadBelow.value = false
+      }
+      resolvers.forEach((r) => r())
+    })()
+  }
+
   async function scrollToBottom(behavior: ScrollBehavior = 'smooth', force = false): Promise<void> {
+    // 调用时 guard：非贴底且非强制 → 立即置 unreadBelow（U15 即时语义），不等 rAF。
     if (!force && !stickToBottom.value) {
       unreadBelow.value = true
       return
     }
-    await nextTick()
-    const el = scrollEl.value
-    if (!el) return
-    el.scrollTo({ top: el.scrollHeight, behavior })
-    stickToBottom.value = true
-    unreadBelow.value = false
+    // trailing：记录末次调用参数，合并到单个 rAF。
+    pendingBehavior = behavior
+    pendingForce = force
+    const p = new Promise<void>((resolve) => pendingResolvers.push(resolve))
+    if (rafId === null) {
+      rafId = requestAnimationFrame(flushScroll)
+    }
+    return p
   }
 
   return { scrollEl, contentEl, stickToBottom, unreadBelow, showJumpButton, onScroll, scrollToBottom }

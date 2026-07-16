@@ -22,7 +22,7 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/effects/use-chat-scroll.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import type { Ref } from 'vue'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
@@ -351,5 +351,115 @@ describe('useChatScroll · 锚定判定（wheel + scrollTop 方向）', () => {
     // 再次上滑
     el.dispatchEvent(wheelEvent(-100))
     expect(showJumpButton.value).toBe(!stickToBottom.value)
+  })
+})
+
+/**
+ * M4（perf-quick-batch）：scrollToBottom rAF trailing 节流。
+ *
+ * 现状缺陷：MessageStream 三个触发源（watch currentMessages.length / watch last.content.length
+ * / ResizeObserver）都无节流调 scrollToBottom。流式每个 token 触发一次 → 高频 scrollTo。
+ * scrollToBottom 内 await nextTick + el.scrollTo，无 rAF/debounce 合并。
+ *
+ * 修复目标：scrollToBottom 加 rAF trailing throttle。
+ * - INVAR-M4-2【关键】: stickToBottom 在 rAF 执行时读取而非调用时捕获（否则把上滑用户扯回底部）
+ * - INVAR-M4-3: trailing 保证末次执行
+ * - INVAR-M4-5: 卸载 cancelAnimationFrame 防 after-unmount
+ *
+ * [红灯] 当前 scrollToBottom 无节流，每次调用立即执行 → 高频调用 scrollTo 次数 = 调用次数 → fail。
+ */
+describe('useChatScroll · M4 rAF trailing 节流', () => {
+  let rafCallbacks: FrameRequestCallback[]
+  let originalRAF: typeof requestAnimationFrame
+  let originalCAF: typeof cancelAnimationFrame
+
+  beforeEach(() => {
+    HTMLElement.prototype.scrollTo = vi.fn()
+    // 手动控制 rAF：收集回调，不自动执行（测试显式 flush）
+    rafCallbacks = []
+    originalRAF = globalThis.requestAnimationFrame
+    originalCAF = globalThis.cancelAnimationFrame
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length // fake handle
+    }) as typeof requestAnimationFrame
+    globalThis.cancelAnimationFrame = ((handle: number) => {
+      delete (rafCallbacks as Record<number, FrameRequestCallback | undefined>)[handle - 1]
+    }) as typeof cancelAnimationFrame
+  })
+
+  afterEach(() => {
+    globalThis.requestAnimationFrame = originalRAF
+    globalThis.cancelAnimationFrame = originalCAF
+  })
+
+  /** flush 所有 pending rAF 回调。 */
+  function flushRAF(): void {
+    const pending = rafCallbacks.splice(0)
+    pending.forEach((cb) => cb(0))
+  }
+
+  /**
+   * M4-1: 一帧内连续触发 100 次 scrollToBottom，el.scrollTo 实际执行 1 次。
+   *
+   * [红灯] 当前无节流，100 次调用 → 100 次 scrollTo → fail。
+   */
+  it('M4-1: 一帧内触发 100 次 scrollToBottom → el.scrollTo 执行 1 次', async () => {
+    const { scrollEl, scrollToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200) // 贴底
+
+    // 连续调 100 次（模拟流式高频 token）。节流后调用返回的 Promise 在 flush 后 resolve，
+    // 这里不逐个 await（节流场景调方也不该逐个 await），fire-and-forget。
+    for (let i = 0; i < 100; i++) {
+      void scrollToBottom('auto')
+    }
+    flushRAF()
+    await nextTick() // flushScroll 内 await nextTick 后才 scrollTo
+
+    expect(vi.mocked(el.scrollTo)).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * M4-2: 调用时 stickToBottom=true，rAF 执行前用户上滑翻 false → 不 scrollTo。
+   *
+   * 这验证 INVAR-M4-2：guard 延迟求值。若节流在调用时捕获 stickToBottom=true，
+   * trailing 执行时仍会滚 → 把上滑用户扯回底部。
+   */
+  it('M4-2: 调用时贴底、rAF 执行前上滑翻 false → 不 scrollTo（延迟求值守卫）', async () => {
+    const { scrollEl, scrollToBottom, stickToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    await bindScroll(scrollEl, el)
+    setScroll(el, 1000, 800, 200) // 贴底
+    expect(stickToBottom.value).toBe(true)
+
+    // 调 scrollToBottom（此时贴底，guard 放行调度 rAF）——不 flush，不 await（节流）
+    void scrollToBottom('auto')
+    // 在 rAF 执行前，用户上滑脱离
+    el.dispatchEvent(wheelEvent(-100))
+    expect(stickToBottom.value).toBe(false)
+
+    // 现在 flush rAF：因为执行时 stickToBottom 已 false，不应 scrollTo
+    flushRAF()
+    await nextTick()
+    expect(vi.mocked(el.scrollTo)).not.toHaveBeenCalled()
+  })
+
+  /**
+   * M4-3: 末次触发后 trailing 执行（贴底态下最终滚到底）。
+   */
+  it('M4-3: 贴底态连续触发后 flush rAF → 末次执行 scrollTo（trailing）', async () => {
+    const { scrollEl, scrollToBottom } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200) // 贴底
+
+    void scrollToBottom('auto')
+    void scrollToBottom('auto')
+    flushRAF()
+    await nextTick()
+
+    expect(vi.mocked(el.scrollTo)).toHaveBeenCalledTimes(1)
   })
 })
