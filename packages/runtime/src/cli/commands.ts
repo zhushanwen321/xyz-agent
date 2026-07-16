@@ -110,9 +110,78 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
       return `session ${session.slice(0, 8)}... thinking = ${level}`
     }
 
+    // ── Phase 2：高危写命令 ──────────────────────────
+
+    case 'set-provider': {
+      const name = flags.name as string
+      const provider = flags.provider as string
+      if (!name || !provider) {
+        throw new Error('Usage: xyz-settings set-provider --name <id> --provider <openai|anthropic|google|openrouter>')
+      }
+      // apiKey 从 stdin 或环境变量读取，禁止 CLI 参数（安全）
+      const apiKey = flags['api-key-stdin']
+        ? await readStdin()
+        : (process.env.XYZ_AGENT_API_KEY ?? '')
+      const payload: Record<string, unknown> = { name, provider }
+      if (apiKey) payload.apiKey = apiKey
+      await rpc('config.setProvider', payload)
+      return `provider ${name} (${provider}) configured` + (apiKey ? ' [apiKey:set]' : ' [apiKey:unchanged]')
+    }
+
+    case 'set-skill-dirs': {
+      const skillDirs = flags['skill-dirs'] as string
+      if (!skillDirs) {
+        throw new Error('Usage: xyz-settings set-skill-dirs --skill-dirs <path1,path2,...>')
+      }
+      await rpc('config.setSkillDirs', { dirs: skillDirs.split(',').map(s => s.trim()) })
+      return `skill_dirs = ${skillDirs}`
+    }
+
+    case 'set-agent-dirs': {
+      const agentDirs = flags['agent-dirs'] as string
+      if (!agentDirs) {
+        throw new Error('Usage: xyz-settings set-agent-dirs --agent-dirs <path1,path2,...>')
+      }
+      await rpc('config.setAgentDirs', { dirs: agentDirs.split(',').map(s => s.trim()) })
+      return `agent_dirs = ${agentDirs}`
+    }
+
+    case 'delete-provider': {
+      const name = flags.name as string
+      if (!name) {
+        throw new Error('Usage: xyz-settings delete-provider --name <id>')
+      }
+      await rpc('config.deleteProvider', { name })
+      return `provider ${name} deleted`
+    }
+
+    case 'discover-models': {
+      const name = flags.name as string
+      if (!name) {
+        throw new Error('Usage: xyz-settings discover-models --name <provider-id>')
+      }
+      const reply = await rpc<{ models?: Array<{ id: string }> }>('config.discoverModels', { name })
+      const models = reply.models ?? []
+      if (json) return JSON.stringify(models, null, 2)
+      return models.map(m => `  ${m.id}`).join('\n')
+    }
+
     default:
       throw new Error(
-        `Unknown command: ${command}\n\nAvailable commands:\n  list-providers\n  get-default-model\n  set-default-model\n  switch-session-model\n  set-thinking`
+        `Unknown command: ${command}\n\nAvailable commands:\n` +
+        `  list-providers\n  get-default-model\n  set-default-model\n` +
+        `  switch-session-model\n  set-thinking\n` +
+        `  set-provider\n  set-skill-dirs\n  set-agent-dirs\n` +
+        `  delete-provider\n  discover-models`
       )
   }
+}
+
+/** 从 stdin 读取一行（用于 --api-key-stdin） */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks).toString('utf-8').trim()
 }

@@ -18,16 +18,24 @@ async function main(): Promise<void> {
   if (!args.command || args.command === '--help' || args.command === '-h') {
     console.log(`xyz-settings — operate xyz-agent settings via CLI
 
-Usage:
-  xyz-settings list-providers [--json]
-  xyz-settings get-default-model
-  xyz-settings set-default-model --provider <p> --model <m>
-  xyz-settings switch-session-model --session <id> --provider <p> --model <m>
-  xyz-settings set-thinking --session <id> --level <off|minimal|low|medium|high|xhigh>
+Read commands:
+  list-providers [--json]          List configured providers
+  get-default-model                Get current default model
+  discover-models --name <id>      Fetch models from provider API
+
+Write commands:
+  set-default-model --provider <p> --model <m>
+  switch-session-model --session <id> --provider <p> --model <m>
+  set-thinking --session <id> --level <off|minimal|low|medium|high|xhigh>
+  set-provider --name <id> --provider <type> [--api-key-stdin]
+  set-skill-dirs --skill-dirs <path1,path2,...>
+  set-agent-dirs --agent-dirs <path1,path2,...>
+  delete-provider --name <id>
 
 Options:
-  --json    Output as JSON (for list-providers)
-  --help    Show this help`)
+  --json              Output as JSON
+  --api-key-stdin     Read apiKey from stdin (never from CLI args)
+  --help              Show this help`
     process.exit(0)
   }
 
