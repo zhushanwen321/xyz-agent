@@ -52,12 +52,14 @@
         class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
       >
         <!-- user 气泡内容：遍历 content Segment[] 渲染 badge + 文本（ADR-0037）。
-             skill segment → 紫色 badge（star icon + /skill:xxx），点击打开 drawer Doc tab；
+             skill segment → 紫色 badge（star icon + skill 名），点击打开 drawer Doc tab；
              text segment → MarkdownRenderer 渲染。
              assistant/system content 是 string，不走此分支（下方 userSegments 为空时不渲染 badge） -->
         <template v-for="(seg, i) in userSegments" :key="i">
           <!-- skill badge：inline span + role=button（不用 Button as-child，
-               避免 buttonVariants 注入 h-9 px-4 py-2 撑大 badge + button 默认 type=submit 卡死） -->
+               避免 buttonVariants 注入 h-9 px-4 py-2 撑大 badge + button 默认 type=submit 卡死）。
+               显示层只显 skill 名（icon+紫色已传达类型，/skill: 前缀对用户是冗余），
+               点击仍传完整 /skill:name 给 openCommandDoc（CommandDocPanel 靠前缀路由）。 -->
           <span
             v-if="seg.type === 'skill'"
             class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
@@ -69,7 +71,23 @@
             @keydown.enter.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
           >
             <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
-            <span>/skill:{{ seg.name }}</span>
+            <span>{{ seg.name }}</span>
+          </span>
+          <!-- FR-7: file badge — 绿色（复用 --success token），路径末段 + 行范围后缀（D2），
+               tooltip 全路径，点击打开 drawer Detail 预览。结构同 skill badge（inline span + role=button） -->
+          <span
+            v-else-if="seg.type === 'file'"
+            class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--success-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-success transition-colors hover:bg-[color-mix(in_oklch,var(--success)_32%,transparent)]"
+            style="vertical-align: middle"
+            role="button"
+            tabindex="0"
+            :data-testid="`msg-file-badge`"
+            :title="seg.path"
+            @click.stop="openFileDetail(seg.path)"
+            @keydown.enter.stop.prevent="openFileDetail(seg.path)"
+          >
+            <FileText class="size-[12px] shrink-0" />
+            <span>{{ fileBasename(seg.path) }}{{ formatLineRange(seg.lineRange) }}</span>
           </span>
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
@@ -250,7 +268,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
+import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
@@ -263,6 +281,7 @@ import { useCopy } from '@/composables/effects/useCopy'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useFileTreeStore } from '@/stores/fileTree'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
@@ -284,10 +303,33 @@ const chat = useChatStore()
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
+const fileTreeStore = useFileTreeStore()
 
 /** 点击用户气泡 skill badge → 打开 drawer Doc tab 展示 SKILL.md */
 function openCommandDoc(commandName: string): void {
   openDrawer('doc', { commandName })
+}
+
+/**
+ * 点击用户气泡 file badge → 打开 drawer Detail tab 预览该文件（FR-7）。
+ * fileTreeStore.selectFile 设 selectedPath（DetailPane watch 自动加载），drawer 切 detail tab。
+ */
+function openFileDetail(path: string): void {
+  fileTreeStore.selectFile(path)
+  openDrawer('detail')
+}
+
+/** file badge 行范围后缀（D2 格式）：单行 L<n>，多行 L<s>-L<e>，无范围空串 */
+function formatLineRange(lineRange?: [number, number]): string {
+  if (!lineRange) return ''
+  const [s, e] = lineRange
+  return s === e ? `:L${s}` : `:L${s}-L${e}`
+}
+
+/** file badge 显示名：路径末段（basename），tooltip 用全路径 */
+function fileBasename(path: string): string {
+  const parts = path.split('/')
+  return parts[parts.length - 1] ?? path
 }
 
 /**
