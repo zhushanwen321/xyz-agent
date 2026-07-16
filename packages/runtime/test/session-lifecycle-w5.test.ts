@@ -60,8 +60,8 @@ function makeMocks() {
       return session
     }),
     toSummary: vi.fn((): SessionSummary => ({
-      id: session.id, cwd: session.cwd, label: 'repo', createdAt: 1, lastActiveAt: 1,
-      tokenCount: 0, inputTokens: 0, isGenerating: false,
+      id: session.id, cwd: session.cwd, label: 'repo', status: 'idle', lastActiveAt: 1,
+      modelId: 'test-model', tokenCount: 0,
     })),
   } as unknown as ISessionServiceInternal
 

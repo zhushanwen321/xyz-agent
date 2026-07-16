@@ -132,7 +132,7 @@ describe('SessionService.getAgentCallHistory', () => {
       .mockReturnValueOnce({ id: 'agentcall-001', cwd: '/project', timestamp: '2026-07-13T05:41:22Z' })
       .mockReturnValueOnce({ id: 'wrong-id', cwd: '/other', timestamp: '2026-07-13T06:00:00Z' })
     const fakeMessages: Message[] = [
-      { id: 'm1', role: 'user', content: 'hello', status: 'complete', timestamp: '2026-07-13T05:41:23Z' },
+      { id: 'm1', role: 'user', content: 'hello', status: 'complete', timestamp: 1689222883000 },
     ]
     mocks.getHistoryFromFilePathMock.mockResolvedValue(fakeMessages)
 
