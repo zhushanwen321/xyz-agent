@@ -9,7 +9,7 @@
 import { readFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import type { ISessionStore } from './ports/session.js'
-import { isEnaent } from '../utils/errors.js'
+import { isEnoent } from '../utils/errors.js'
 import { parseJsonl, readTailBytes } from '../utils/jsonl.js'
 
 /**
@@ -20,6 +20,21 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
   const target = sessionStore.scanSessions().find(s => s.id === sessionId)
   if (!target) return []
   return getHistoryFromFilePath(target.filePath, sessionStore)
+}
+
+/**
+ * W1 H4：从 .jsonl session 文件**尾读**最近 maxTurns 个 turn 的历史。
+ *
+ * 与 getHistoryFromFile 的区别：用 tailReadHistory（256KB 尾读窗口 + turn 边界截断），
+ * 避免大 session 文件全量读取。文件不存在或为空返回空数组。
+ *
+ * getHistory 的文件 fallback 走此函数（默认尾读），getFullHistory（加载更多）走
+ * getHistoryFromFile（全量读）——两者语义互补。
+ */
+export async function getHistoryTailFromFile(sessionId: string, sessionStore: ISessionStore, maxTurns = 20): Promise<import('@xyz-agent/shared').Message[]> {
+  const target = sessionStore.scanSessions().find(s => s.id === sessionId)
+  if (!target) return []
+  return tailReadHistory(target.filePath, sessionStore, maxTurns)
 }
 
 /**
@@ -169,7 +184,7 @@ export async function tailReadHistory(
         const content = await readFile(filePath, 'utf-8')
         entries = parseJsonl(content)
       } catch (e) {
-        if (isEnaent(e)) return []
+        if (isEnoent(e)) return []
         throw e
       }
     }

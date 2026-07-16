@@ -23,7 +23,7 @@ import type {
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import { getHistoryFromFile, getHistoryFromFilePath, tailReadHistory } from '../session-history.js'
+import { getHistoryFromFile, getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
@@ -375,19 +375,20 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         const result = await client.getHistory() as { data?: { messages?: unknown[] } }
         const raw = result.data?.messages ?? []
         if (raw.length > 0) return this.sessionStore.convertHistory(raw)
-        // RPC 返回空时,仅闲置 session fallback 到磁盘(生成中磁盘可能未持久化最新消息)
+        // RPC 返回空时,仅闲置 session fallback 到磁盘尾读(生成中磁盘可能未持久化最新消息)
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
-          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to file read`)
-          return await getHistoryFromFile(sessionId, this.sessionStore)
+          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to tail read`)
+          return await getHistoryTailFromFile(sessionId, this.sessionStore)
         }
         return []
       } catch (e) {
-        console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to file read`)
-        return await getHistoryFromFile(sessionId, this.sessionStore)
+        console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to tail read`)
+        return await getHistoryTailFromFile(sessionId, this.sessionStore)
       }
     }
-    return await getHistoryFromFile(sessionId, this.sessionStore)
+    // 无 RPC client（离线 session）：走尾读，避免大文件全量读
+    return await getHistoryTailFromFile(sessionId, this.sessionStore)
   }
 
   /**

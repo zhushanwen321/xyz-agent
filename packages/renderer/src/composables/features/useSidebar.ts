@@ -195,6 +195,8 @@ export function useSidebar() {
 
     await sessionApi.switchSession(id)
     session.activeId = id
+    // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）
+    chat.touchLru(id)
     if (opts?.panelId) {
       panel.loadSession(opts.panelId, id)
       panel.setActive(opts.panelId)

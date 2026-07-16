@@ -151,6 +151,13 @@ export function _resetLruForTest(): void {
 }
 
 /**
+ * 清理指定 session 的 LRU 时序记录（disposeSession 调用，R5 内存泄漏修复）。
+ */
+export function disposeLruEntry(sessionId: string): void {
+  sessionLastAccessed.delete(sessionId)
+}
+
+/**
  * 构造 LRU 驱逐依赖（W3 H3）。
  * evictIfNeeded / evictSessionWithVirtual 共用此 deps 构造器。
  * 从 chat.ts 移入以控制文件行数。

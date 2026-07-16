@@ -34,6 +34,7 @@ import {
   evictIfNeeded as lruEvictIfNeeded,
   evictSessionWithVirtual as lruEvictSession,
   makeLruEvictDeps,
+  disposeLruEntry,
 } from './chat-lru'
 
 // re-export 供外部消费（测试 / 组件读常量）
@@ -778,6 +779,7 @@ export const useChatStore = defineStore('chat', () => {
       changeSetStatuses,
       [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId)],
     )
+    disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
 
   return {
