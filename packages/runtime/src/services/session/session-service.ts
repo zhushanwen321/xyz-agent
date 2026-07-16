@@ -31,7 +31,7 @@ import { parseSessionHeader } from '../../infra/pi/session-file-utils.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { isStrictlyUnder } from '../../utils/path-utils.js'
 import type { IConfigStore } from '../ports/config.js'
-import type { ISessionStore } from '../ports/session.js'
+import type { ISessionStore, SessionOutcome } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
@@ -113,6 +113,16 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         this.publicSessionId = undefined
         this.schedulePublicSessionRebuild()
         return
+      }
+
+      // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
+      // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
+      if (session.sessionFilePath) {
+        this.sessionStore.persistSessionEnd(
+          session.sessionFilePath,
+          'stopped',
+          `Process exited (code: ${code})`,
+        )
       }
 
       // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
@@ -545,16 +555,32 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * agent_end 副作用（W3 迁移自 attachUsageListener agent_end 分支）。
    *
-   * 承载两个副作用：
+   * 承载三个副作用：
    *   1. 复位 isGenerating=false —— 不迁移则正常生成完成后 session 永远 isGenerating=true，
    *      下一条消息被 busy 拒绝（message-dispatcher preemptive reject），用户无法继续对话。
    *   2. tryPersistLabel 兜底 —— turn_end 时 pi flush 尚未完成（文件不存在）则在此补写。
+   *   3. session_end 终态写入（W4，ADR 0036）—— 让 scanner 读到终态，前端无需预加载历史。
+   *
+   * @param stopReason pi agent_end 的 stopReason（'error' → outcome=error，其余 → done）
    */
-  handleTurnEndSideEffects(sessionId: string): void {
+  handleTurnEndSideEffects(sessionId: string, stopReason?: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.isGenerating = false
     this.tryPersistLabel(session)
+    // W4：写 session_end 终态（正常完成）。stopReason='error' → error，其余 → done
+    this.persistSessionOutcome(sessionId, stopReason === 'error' ? 'error' : 'done')
+  }
+
+  /**
+   * 写 session_end 终态 entry（W4，ADR 0036）。
+   * 3 个终态点复用：正常完成（handleTurnEndSideEffects）/ abort（message-dispatcher）/ 进程崩溃（onSessionExit）。
+   * sessionFilePath 不存在时静默跳过（首 turn 前崩溃 / pi 延迟写入窗口）。
+   */
+  persistSessionOutcome(sessionId: string, outcome: SessionOutcome, reason?: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sessionFilePath) return
+    this.sessionStore.persistSessionEnd(session.sessionFilePath, outcome, reason)
   }
 
   /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId 的 contextWindow 算）。 */

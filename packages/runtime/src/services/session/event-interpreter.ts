@@ -65,7 +65,7 @@ export interface EventInterpreterOptions {
    *   1. 复位 isGenerating=false（不迁移则正常生成完成后 session 永远 busy，下条消息被拒）
    *   2. tryPersistLabel 兜底（turn_end 时 pi flush 尚未完成、文件不存在，在此补写）
    */
-  onTurnFinalize?: (sessionId: string) => void
+  onTurnFinalize?: (sessionId: string, stopReason?: string) => void
   /** thinking_level_changed 回写 session 缓存（组合根注入 sessionService.setThinkingLevelCache）。 */
   onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
   /** extension 交互式 UI 请求（注册前端超时 + 缓存 pending 请求）。组合根注入 server.registerExtensionTimeout。 */
@@ -336,8 +336,8 @@ export class EventInterpreter {
       this.opts.onContextUpdate?.(this.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens ?? 0 })
     }
 
-    // 副作用：复位 isGenerating=false + tryPersistLabel 兜底（原 attachUsageListener agent_end 分支）
-    this.opts.onTurnFinalize?.(this.sessionId)
+    // 副作用：复位 isGenerating=false + tryPersistLabel 兜底 + session_end 终态写入（W4）
+    this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
 
     // 观测 hook（agent_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'agent_end', stopReason: ev.stopReason, usage: ev.usage }).catch(() => {})

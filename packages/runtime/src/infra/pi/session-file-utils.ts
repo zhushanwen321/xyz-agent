@@ -55,6 +55,67 @@ export function extractSessionName(filePath: string): string | null {
   }
 }
 
+// ── session 终态 entry（W4，ADR 0036）─────────────────────────
+
+/**
+ * session 结束时的终态类型（W4，ADR 0036）。
+ * runtime 在 3 个终态点 append session_end entry 到 JSONL，scanner 据此派生终态，
+ * 让前端侧栏无需预加载历史即可显示 done/error/stopped。
+ */
+export type SessionOutcome = 'done' | 'error' | 'stopped'
+
+/**
+ * 将 session 终态持久化到 .jsonl 文件（W4，ADR 0036）。
+ *
+ * 追加一条 `session_end` entry（runtime 自定义格式，pi 忽略未知 type）。
+ * 复用 persistSessionName 的 openSync('a') + writeSync append 模式 + existsSync guard。
+ *
+ * [规则 #6] 文件不存在时**绝不创建文件**（与 pi 0.80.3 _persist 的 openSync("wx") 竞态）。
+ * 进程崩溃（SIGKILL/OOM）可能来不及执行，这类 session 读不到终态 → scanner 回退 idle。
+ *
+ * @param filePath session JSONL 绝对路径
+ * @param outcome 终态：done（正常完成）/ error（LLM 出错）/ stopped（用户 abort/进程崩溃）
+ * @param reason 可选人类可读原因（error 的 errorMessage / stopped 的 abort reason）
+ */
+export function persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void {
+  if (!filePath) return
+  if (!existsSync(filePath)) {
+    // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过。
+    return
+  }
+  const entry = JSON.stringify({ type: 'session_end', outcome, reason, timestamp: new Date().toISOString() }) + '\n'
+  try {
+    const fd = openSync(filePath, 'a')
+    writeSync(fd, entry)
+    closeSync(fd)
+  // eslint-disable-next-line taste/no-silent-catch -- file append: failure to write must not crash caller
+  } catch (e) {
+    console.error(`[session-file-utils] persistSessionEnd failed: ${filePath}`, e)
+  }
+}
+
+/**
+ * 从 .jsonl 文件提取最后一条 session_end 的 outcome（W4，ADR 0036）。
+ * 复用 extractSessionName 的 parseJsonl 倒序扫描模式。
+ *
+ * @returns 终态 outcome；文件无 session_end entry（历史 session / 未结束）返回 null
+ */
+export function extractSessionOutcome(filePath: string): SessionOutcome | null {
+  try {
+    const content = readFileSync(filePath, 'utf-8')
+    const entries = parseJsonl(content)
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i] as { type?: string; outcome?: SessionOutcome }
+      if (entry.type === 'session_end' && entry.outcome) {
+        return entry.outcome
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 // ── 文件操作 ─────────────────────────────────────────────────
 
 // [HISTORICAL] ensureSessionFile 已删除（2026-07-04）。
