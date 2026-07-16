@@ -35,9 +35,7 @@ export function discoverPort(): number {
 
   const port = parseInt(raw, 10)
   if (isNaN(port) || port <= 0 || port > 65535) {
-    throw new Error(
-      `invalid port in ${portFile}: "${raw}". Expected a number 1-65535.`
-    )
+    throw new Error('invalid port')
   }
 
   return port
