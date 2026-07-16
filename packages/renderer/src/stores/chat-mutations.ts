@@ -44,3 +44,19 @@ export function truncateMessagesFrom(
   const end = inclusive ? idx : idx + 1
   commitMessages(messages, sessionId, prev.slice(0, end))
 }
+
+/**
+ * W4 H4：全量历史去重合并到列表头部（模块级，从 chat.ts 移入控制行数）。
+ * 按 messageId 去重，幂等（无新消息不触发写入）。
+ */
+export function prependHistory(
+  messages: MessagesRef,
+  sessionId: string,
+  fullHistory: Message[],
+): void {
+  const prev = messages.value.get(sessionId) ?? []
+  const existingIds = new Set(prev.map((m) => m.id))
+  const newMsgs = fullHistory.filter((m) => !existingIds.has(m.id))
+  if (newMsgs.length === 0) return
+  commitMessages(messages, sessionId, [...newMsgs, ...prev])
+}

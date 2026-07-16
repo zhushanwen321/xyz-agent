@@ -15,6 +15,14 @@
     <!-- contentEl：承载消息内容的 wrapper，供 useChatScroll 的 ResizeObserver 观察高度变化。
          scrollEl 是 overflow 容器，自身 border-box 固定不变，无法观察内容增高。 -->
     <div ref="contentEl" class="flex flex-col gap-[22px] px-5 py-[18px]">
+      <!-- W4 H4：加载更多历史入口（尾读截断时显示，点击 fallback 全量读） -->
+      <div v-if="hasMoreHistory && renderItems.length > 0" class="flex justify-center py-2">
+        <Button variant="ghost" size="sm" :disabled="loadingMore" data-testid="load-more-history" @click="handleLoadMore">
+          <Loader2 v-if="loadingMore" class="mr-1 size-3 animate-spin" />
+          <ChevronUp v-else class="mr-1 size-3" />
+          {{ loadingMore ? t('common.loading') : t('panel.message.loadMore') }}
+        </Button>
+      </div>
       <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
         <Turn
           v-if="item.kind === 'turn'"
@@ -77,11 +85,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Loader2, Sparkles } from '@lucide/vue'
+import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
+import { useChat } from '@/composables/features/useChat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId } from '@/stores/subagent'
@@ -100,7 +109,26 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const chat = useChatStore()
+const { loadMoreHistory } = useChat()
 const subagentStore = useSubagentStore()
+
+/** W4 H4：加载更多历史 loading 状态 */
+const loadingMore = ref(false)
+const hasMoreHistory = ref(true) // 尾读截断后默认有更多历史可加载
+
+async function handleLoadMore(): Promise<void> {
+  if (loadingMore.value || !hasMoreHistory.value) return
+  loadingMore.value = true
+  const beforeCount = chat.getMessages(props.sessionId).length
+  try {
+    await loadMoreHistory(props.sessionId)
+    const afterCount = chat.getMessages(props.sessionId).length
+    // 无新增 = 已全部加载，隐藏入口
+    hasMoreHistory.value = afterCount > beforeCount
+  } finally {
+    loadingMore.value = false
+  }
+}
 
 /**
  * 当前 session 的消息（响应式）。

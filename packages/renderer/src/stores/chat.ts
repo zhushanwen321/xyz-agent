@@ -26,7 +26,7 @@
  */
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
-import { commitMessages, truncateMessagesFrom } from './chat-mutations'
+import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './chat-mutations'
 import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
 import {
   LRU_MAX_SESSIONS,
@@ -412,9 +412,8 @@ export const useChatStore = defineStore('chat', () => {
 
   /** W3 H3：session 是否在 LRU 豁免集（streaming/pending/compacting 不驱逐，AC-9） */
   const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid)
-  /** W3 H3：LRU recency 更新（AC-1 真 LRU） */
-  function touchLru(sessionId: string): void { lruTouch(sessionId) }
-
+  /** W3 H3：LRU recency 更新（AC-1 真 LRU），直接透传 lruTouch */
+  const touchLru = lruTouch
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key） */
   function evictIfNeeded(): void { lruEvictIfNeeded(makeLruEvictDeps(messages, hydrated, isLruExempt)) }
   function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, makeLruEvictDeps(messages, hydrated, isLruExempt)) }
@@ -446,13 +445,7 @@ export const useChatStore = defineStore('chat', () => {
     failedHistory.value = next
   }
 
-  /**
-   * 注入历史消息（首次进入 session 时由 useChat 调用）。
-   * 不可变 set：深拷贝 fixture 避免外部突变污染源数据，标记 hydrated。
-   *
-   * W2 H3：回流路径截断（AC-10/D9）。历史 tool result 经 truncateToolOutputBatch
-   * 截断为 4KB 头部，与实时路径（tool_call_end）策略一致。
-   */
+  /** 注入历史（首入 session）。W2 H3 截断回流（AC-10），W3 touchLru。 */
   function hydrate(sessionId: string, history: Message[]): void {
     if (hydrated.value.has(sessionId)) return
     const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
@@ -462,15 +455,17 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 直接覆盖某 session 的消息（不受 hydrated 不可变约束）。
-   * 用于 subagent 虚拟 session：subagent JSONL 可能延迟写入（pi 延迟 flush），
-   * 首次拉取为空后需要重新拉取覆盖。不标记 hydrated（允许后续 hydrate 再覆盖）。
-   *
+   * 直接覆盖某 session 的消息（subagent 虚拟 session 用，不受 hydrated 守卫）。
    * W2 H3：回流路径截断（AC-10/D9），与 hydrate 一致。
    */
   function setMessages(sessionId: string, history: Message[]): void {
     const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
     commitMessages(messages, sessionId, cloned)
+  }
+
+  /** W4 H4：全量历史去重合并到头部（加载更多）。截断 + 委托 chat-mutations。 */
+  function prependHistory(sessionId: string, fullHistory: Message[]): void {
+    prependHistoryMut(messages, sessionId, truncateToolOutputBatch(fullHistory.map((m) => ({ ...m }))))
   }
 
   /** 追加 user 消息（构造完整 Message，立即 complete）。content 为 Segment[]（ADR-0037） */
@@ -795,16 +790,12 @@ export const useChatStore = defineStore('chat', () => {
     failedHistory,
     hydrated,
     getMessages,
-    getRetryState,
-    getQueueState,
-    getChangeSetStatus,
-    setChangeSetStatus,
+    getRetryState, getQueueState,
+    getChangeSetStatus, setChangeSetStatus,
     markChangeSetsSuperseded,
-    isHydrated,
-    markHistoryFailed,
-    clearHistoryError,
-    hydrate,
-    setMessages,
+    isHydrated, markHistoryFailed, clearHistoryError,
+    hydrate, setMessages,
+    prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => applySubagentStreamDeltaImpl(messages, virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => finalizeSubagentStreamImpl(messages, virtualId),
     appendUser,

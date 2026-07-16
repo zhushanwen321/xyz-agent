@@ -21,7 +21,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
@@ -109,6 +109,10 @@ export class SessionMessageHandler {
       case 'session.history': {
         const messages = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
         return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages })
+      }
+      case 'session.getFullHistory': {
+        const messages = await this.ctx.sessionService.getFullHistory(msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.fullHistory', { sessionId: msg.payload.sessionId, messages })
       }
       case 'session.getSubagents': {
         const subagents = await this.ctx.sessionService.getSubagents(msg.payload.sessionId)

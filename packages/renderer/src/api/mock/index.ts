@@ -309,6 +309,12 @@ export const chat = {
     return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
   },
 
+  /** W4 H4：全量历史（mock 与 getHistory 同行为，mock 无尾读截断） */
+  async getFullHistory(sessionId: string): Promise<Message[]> {
+    await sleep(TIMING.ack)
+    return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
+  },
+
   async send(sessionId: string, text: string): Promise<void> {
     cancelled.delete(sessionId)
     // ack 语义：仅模拟 pi 接收命令，立即 resolve；流式序列 fire-and-forget（不 await）。

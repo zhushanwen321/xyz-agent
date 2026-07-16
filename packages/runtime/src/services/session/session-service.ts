@@ -23,7 +23,7 @@ import type {
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
+import { getHistoryFromFile, getHistoryFromFilePath, tailReadHistory } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
@@ -388,6 +388,19 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       }
     }
     return await getHistoryFromFile(sessionId, this.sessionStore)
+  }
+
+  /**
+   * W4 H4：全量读取 session 历史（加载更多 fallback）。
+   *
+   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getHistory），文件路径
+   * fallback 走尾读（W1 tailReadHistory，只加载最近 20 turn）。本方法显式走全量
+   * 文件读取（getHistoryFromFilePath），供前端「加载更多历史」按钮调用（FR-4）。
+   */
+  async getFullHistory(sessionId: string): Promise<Message[]> {
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) return []
+    return getHistoryFromFilePath(target.filePath, this.sessionStore)
   }
 
   async getSubagents(sessionId: string): Promise<SubagentRecord[]> {

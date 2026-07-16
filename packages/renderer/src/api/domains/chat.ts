@@ -27,6 +27,17 @@ export async function getHistory(sessionId: string): Promise<Message[]> {
   return (await result).messages
 }
 
+/**
+ * W4 H4：全量拉取 session 历史（加载更多 fallback）。
+ * 走 session.getFullHistory → runtime getFullHistory（全量文件读取，非尾读）。
+ */
+export async function getFullHistory(sessionId: string): Promise<Message[]> {
+  const id = pending.create()
+  const result = pending.register<{ sessionId: string; messages: Message[] }>(id)
+  transport.send({ type: 'session.getFullHistory', id, payload: { sessionId } })
+  return (await result).messages
+}
+
 /** 发送消息（mock 不模拟失败，D7） */
 export function send(sessionId: string, text: string): Promise<void> {
   const id = pending.create()

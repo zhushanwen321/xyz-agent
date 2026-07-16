@@ -56,6 +56,7 @@ export default {
     cancel: 'Cancel',
     viewCommandDoc: 'View command docs',
     compressing: 'Compacting',
+    loadMore: 'Load more history',
     dispatching: 'Thinking…',
     startConversation: 'Start a conversation, or select a session from the left',
     scrollToBottom: 'Scroll to bottom',

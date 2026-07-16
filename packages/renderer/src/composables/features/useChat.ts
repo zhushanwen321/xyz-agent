@@ -298,6 +298,23 @@ export function useChat() {
   }
 
   /**
+   * W4 H4：加载更多历史（fallback 全量读 + 合并去重）。
+   *
+   * 调 getFullHistory RPC（runtime 全量文件读取），与 store 现有消息按 id 去重后
+   * 合并到列表头部。幂等：重复调用不追加已有消息（FR-4/AC-7）。
+   * RPC 失败时不破坏现有消息（catch 吞错，与 hydrateHistory 的 markHistoryFailed 同策略）。
+   */
+  async function loadMoreHistory(sessionId: string): Promise<void> {
+    try {
+      const fullHistory = await chatApi.getFullHistory(sessionId)
+      chat.prependHistory(sessionId, fullHistory)
+    // eslint-disable-next-line taste/no-silent-catch -- 加载更多是 best-effort：失败不破坏现有消息，用户可重试。与 hydrateHistory markHistoryFailed 同策略。
+    } catch (e) {
+      console.warn(`[useChat] loadMoreHistory failed for session ${sessionId}:`, e)
+    }
+  }
+
+  /**
    * 清理指定 session 的全部资源（W1 / S3：deleteSession 调用）。
    *
    * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态。
@@ -312,5 +329,5 @@ export function useChat() {
     chat.disposeSession(sessionId)
   }
 
-  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, disposeSession }
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, disposeSession }
 }
