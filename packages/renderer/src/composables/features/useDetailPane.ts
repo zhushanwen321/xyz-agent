@@ -22,6 +22,7 @@ import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { file as fileApi, git as gitApi } from '@/api'
 import { detectFileKind, type FileKind } from '@/composables/logic/file-type'
 import { parseDiff } from '@/composables/logic/parseDiff'
+import { resolvePreviewPath } from '@/lib/path-utils'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -104,13 +105,16 @@ export function useDetailPane(sessionId: Ref<string | null>) {
   async function loadContent(
     sid: string,
     path: string,
+    gitPath: string | null,
     mode: DetailViewMode,
     token: number,
     autoFallback = false,
   ): Promise<void> {
     try {
       if (mode === 'diff') {
-        const result = await gitApi.getDiff(sid, path)
+        // git diff 必须用相对 cwd 路径；gitPath 为 null 时回退原始 path（越界会自然失败）
+        const diffPath = gitPath ?? path
+        const result = await gitApi.getDiff(sid, diffPath)
         // L3：await 后校验 token，旧请求被新 openPreview 抢占时丢弃（stale write 防护）
         if (token !== loadToken) return
         state.value.binary = result.binary
@@ -142,8 +146,12 @@ export function useDetailPane(sessionId: Ref<string | null>) {
   async function openPreview(sid: string, path: string, forceDiff = false): Promise<void> {
     const token = ++loadToken
     state.value = { ...initialState(), status: 'loading', path, viewMode: state.value.viewMode }
+    // 解析路径：cwd 内绝对路径转相对路径，用于 gitOverlay 查询和 git diff
+    const cwd = sessionCwd(sid) ?? ''
+    const resolved = resolvePreviewPath(cwd, path)
+    const gitPath = resolved.relative
     // 判断 git 改动：gitOverlay per-session 查（含 untracked，T2.8b untracked 也算改动可 diff）
-    const gitStatus = store.getGitStatus(sid, path)?.status
+    const gitStatus = gitPath ? store.getGitStatus(sid, gitPath)?.status : undefined
     state.value.hasGitChange = !!gitStatus
     // 默认 viewMode：forceDiff（变更集卡等已知有改动的入口）优先；否则按 gitOverlay 判定
     const mode: DetailViewMode = forceDiff ? 'diff' : gitStatus ? 'diff' : 'preview'
@@ -151,7 +159,7 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     // 文件渲染类别（preview 模式渲染器选择依据；diff 模式统一走 DiffView）
     state.value.kind = detectFileKind(path)
 
-    await loadContent(sid, path, mode, token, true)
+    await loadContent(sid, path, gitPath, mode, token, true)
   }
 
   /**
@@ -166,7 +174,10 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     state.value.viewMode = mode
     state.value.status = 'loading'
     state.value.error = ''
-    await loadContent(sid, path, mode, token)
+    const cwd = sessionCwd(sid) ?? ''
+    const resolved = resolvePreviewPath(cwd, path)
+    const gitPath = resolved.relative
+    await loadContent(sid, path, gitPath, mode, token)
   }
 
   /** 清空预览（关闭 drawer / 取消选中时） */
