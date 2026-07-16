@@ -35,6 +35,6 @@ describe('discoverPort', () => {
     const { readFileSync } = await import('node:fs')
     vi.mocked(readFileSync).mockReturnValue('not-a-port')
     process.env.XYZ_AGENT_DATA_DIR = '/tmp/test-xyz'
-    expect(() => discoverPort()).toThrow(/[Ii]nvalid port/)
+    expect(() => discoverPort()).toThrow(/invalid port/)
   })
 })
