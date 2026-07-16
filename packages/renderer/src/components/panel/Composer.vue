@@ -114,6 +114,7 @@ import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
+import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 
 const props = withDefaults(
@@ -129,7 +130,6 @@ const chatStore = useChatStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
-
 /**
  * 合并活跃态：流式中（isGenerating）或派发空窗期（dispatchingSessionId 命中当前 session）。
  * 替代单一 isGenerating 驱动停止按钮/steer guard/键盘路由，消除「ack 到达但 message_start 未到」
@@ -153,13 +153,13 @@ const {
 /** #13 retry/queue 指示位数据源（store 由 W0/#8 维护，不可变 Map 更新触发响应） */
 const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(props.sessionId) : undefined))
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
-
 const draft = ref('')
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 
 // 命令浮层触发态机（slash/file 浮层触发 + CommandPopover 联动 + pendingSlash 注入）
 // —— 见 useCommandPopoverTrigger。inputRef 先声明，composable 内部回调按需调其方法。
+const sessionIdRef = computed(() => props.sessionId)
 const {
   cmdOpen,
   cmdType,
@@ -170,12 +170,14 @@ const {
   onFileTrigger,
   onAddSelect,
   onCmdSelect,
-} = useCommandPopoverTrigger(inputRef, computed(() => props.sessionId))
+} = useCommandPopoverTrigger(inputRef, sessionIdRef)
+// drawer 选区/文件引用注入消费（跨组件树一次性消息通道）
+useComposerInjection(inputRef, sessionIdRef, computed(() => props.variant))
 
 // 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
 // sessionId null（landing 态无真实 session）时 history 为空。
 const { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing } = useComposerHistory(
-  computed(() => props.sessionId),
+  sessionIdRef,
   {
     getText: () => inputRef.value?.getText() ?? '',
     setText: (text, caretPosition) => inputRef.value?.setText(text, caretPosition),
