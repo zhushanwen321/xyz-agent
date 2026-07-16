@@ -149,8 +149,8 @@ async function main(): Promise<void> {
       cwd,
       send,
       fileChangeDiff,
-      onExtensionUIRequest: (requestId, sid, method) => {
-        server.registerExtensionTimeout(sid, requestId, method)
+      onExtensionUIRequest: (requestId, sid, method, payload) => {
+        server.registerExtensionTimeout(sid, requestId, method, payload)
       },
       onBridgeUIRequest: (requestId, sid, method, data) => {
         server.handleBridgeRequest(sid, requestId, method, data)

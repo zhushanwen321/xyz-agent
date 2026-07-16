@@ -240,6 +240,14 @@ export class ExtensionMessageHandler {
           return this.ctx.sendError(ws, 'set_auto_upgrade_failed', toErrorMessage(e), msg.id)
         }
       }
+      case 'extension.getPendingRequests': {
+        const { sessionId } = msg.payload as { sessionId: string }
+        if (!sessionId) {
+          return this.ctx.sendError(ws, 'invalid_payload', 'extension.getPendingRequests requires "sessionId"', msg.id)
+        }
+        const pendingRequests = this.ctx.extensionTimeoutMgr.getAndClearPendingRequests(sessionId)
+        return this.ctx.reply(ws, msg.id, 'extension.pendingRequests', { sessionId, requests: pendingRequests })
+      }
     }
   }
 

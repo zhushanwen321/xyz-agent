@@ -17,7 +17,7 @@
  * ExtensionUIDialog 只入非 askUser 请求，Panel 只入 askUser 请求——避免同一请求入两份队列。
  */
 import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
-import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, type ExtensionUIRequest } from '@/api/domains/extension'
+import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
 import { useToast } from '@/composables/useToast'
 
 /** 入队过滤谓词：返回 true 的请求才入队 */
@@ -61,6 +61,18 @@ export function useExtensionUI(
         if (idx !== -1) queue.value.splice(idx, 1)
       }),
     )
+    // 拉取 runtime 缓存的 pending 请求（切换 session 后重新订阅时，runtime 会推送缓存的请求）
+    // 异步执行，不阻塞订阅建立
+    getPendingRequests(sid)
+      .then((pendingRequests) => {
+        for (const req of pendingRequests) {
+          if (filter && !filter(req)) continue
+          queue.value.push({ ...req, receivedAt: req.receivedAt ?? Date.now() })
+        }
+      })
+      .catch((err) => {
+        console.warn('[useExtensionUI] Failed to get pending requests:', err)
+      })
   }
 
   subscribe(sessionId.value)

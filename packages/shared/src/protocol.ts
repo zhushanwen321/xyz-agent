@@ -34,6 +34,7 @@ export type ClientMessageType =
   | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
   | 'extension.recommended'
   | 'extension.upgrade' | 'extension.setAutoUpgrade'
+  | 'extension.getPendingRequests'
   | 'ping'
   | 'plugin.list' | 'plugin.toggle'
   | 'plugin.install' | 'plugin.uninstall'
@@ -155,6 +156,7 @@ export interface ClientMessageMap {
   'extension.recommended': Record<string, never>
   'extension.upgrade': { name: string }
   'extension.setAutoUpgrade': { name: string; autoUpgrade: boolean }
+  'extension.getPendingRequests': { sessionId: string }
   'plugin.list': Record<string, never>
   'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
   'plugin.install': { packageSpec: string }
@@ -229,6 +231,7 @@ export type ServerMessageType =
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
   | 'extension.discovered' | 'extension.installCancelled'
   | 'extension.recommended'
+  | 'extension.pendingRequests'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.exited'

@@ -220,3 +220,14 @@ export function sendExtensionUIResponse(sessionId: string, requestId: string, me
     payload: { sessionId, requestId, method, result },
   })
 }
+
+/**
+ * 拉取指定 session 的 pending UI 请求（切换 session 后重新订阅时调用）。
+ * runtime 会返回并清除缓存的 pending 请求，避免重复推送。
+ */
+export function getPendingRequests(sessionId: string): Promise<ExtensionUIRequest[]> {
+  const id = pending.create()
+  const result = pending.register<{ sessionId: string; requests: ExtensionUIRequest[] }>(id)
+  transport.send({ type: 'extension.getPendingRequests', id, payload: { sessionId } })
+  return result.then((r) => r.requests)
+}
