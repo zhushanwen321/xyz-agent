@@ -11,6 +11,8 @@ export type {
   BgNotifyRecord, BgNotifyDetails,
 } from './message'
 export { parseBgNotifyDetails } from './message'
+export type { Segment } from './segments'
+export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
 } from './session'

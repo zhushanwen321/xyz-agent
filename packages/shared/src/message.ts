@@ -1,3 +1,5 @@
+import type { Segment } from './segments'
+
 export type MessageRole = 'user' | 'assistant' | 'system'
 
 /** steer / follow-up 发送模式（appendPending / removePending / markPendingDelivered 共用）。
@@ -192,7 +194,15 @@ export type ReviewDecision = 'pending' | 'accepted' | 'rejected'
 export interface Message {
   id: string
   role: MessageRole
-  content: string
+  /**
+   * 消息内容。按 role 语义区分（ADR-0037）：
+   * - user message → Segment[]（badge 载体，含 skill/file/mention 结构化片段）
+   * - assistant message → string（流式 text_delta 热路径）
+   * - system/custom message → string（提示文本）
+   *
+   * 消费纯文本时用 normalizeContent() 归一化（处理 string | Segment[] 联合类型）。
+   */
+  content: string | Segment[]
   status: MessageStatus
   toolCalls?: ToolCall[]
   thinking?: ThinkingBlock[]
@@ -206,10 +216,6 @@ export interface Message {
    * 仅 assistant 消息有值；user/system 消息不设置。
    */
   fileChanges?: FileChange[]
-  /** 当消息通过 skill 命令触发时设置 */
-  skillName?: string
-  /** SKILL.md 文件路径，从 <skill location="..."> 中提取 */
-  skillLocation?: string
   /** 发送模式，仅 user 消息有值 */
   sendMode?: 'send' | 'steer' | 'follow-up'
   /** 是否被 abort 中断，仅 assistant 消息有值 */
