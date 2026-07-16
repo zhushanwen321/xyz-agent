@@ -93,5 +93,19 @@ WS_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd -P)"
 MAIN_WT="$WS_ROOT/main"
 
 git -C "$MAIN_WT" fetch "$GH_REMOTE" main 2>&1 | tail -1
+
+# 强制切到 main 分支（reset --hard 只移动当前分支 HEAD，不切换分支。
+# 若 main worktree checkout 在其他分支，reset 会把该分支指针移到 github/main，
+# 导致后续 bump/commit/push 落错分支 + tag 指向错误分支）
+git -C "$MAIN_WT" checkout main 2>&1 | tail -1
 git -C "$MAIN_WT" reset --hard "$GH_REMOTE/main" 2>&1 | tail -1
+
+# 校验当前分支确实是 main（checkout 失败时 reset 仍会移动错误分支指针）
+CURRENT_BRANCH=$(git -C "$MAIN_WT" branch --show-current)
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+    echo -e "${RED}Error: main worktree 当前分支为 $CURRENT_BRANCH（非 main）${NC}"
+    echo "  reset 无法切换分支，手动执行: git -C $MAIN_WT checkout main"
+    exit 1
+fi
+
 echo -e "  ${GREEN}✅ 本地 main 已同步到 $GH_REMOTE/main${NC}"
