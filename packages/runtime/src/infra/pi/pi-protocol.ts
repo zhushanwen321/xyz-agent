@@ -293,7 +293,8 @@ export interface PiToolExecutionUpdateEvent extends PiBaseMessage {
  *
  * 注意：pi tool_execution_end **从不发 args**（pi types.ts:430 定义无此字段）。
  * write 工具的 content 在 tool_execution_start 事件里（types.ts:428 args: any）。
- * event-adapter handleToolExecutionEnd 的 writeContent 提取已标注为已知限制（见该处 TODO）。
+ * event-adapter handleToolExecutionEnd 曾据此提取 writeContent 但恒为 undefined，死代码已删除
+ * （W-R2）。EventInterpreter 的 writeContents 累积因此不生效，待后续迁移到 tool_execution_start 路径恢复。
  */
 export interface PiToolExecutionEndEvent extends PiBaseMessage {
   type: 'tool_execution_end'

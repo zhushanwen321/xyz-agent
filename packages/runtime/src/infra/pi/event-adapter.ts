@@ -85,15 +85,6 @@ const INTERACTIVE_UI_METHODS = new Set(
 /** Extension method constant for the editor UI */
 const METHOD_EDITOR = 'editor' as const
 
-/** 取工具参数 path（pi 契约权威参数名；file_path 作防御性 fallback，ADR-0024 D2） */
-function extractPath(args: Record<string, unknown> | undefined): string | undefined {
-  if (!args) return undefined
-  const p = args.path
-  if (typeof p === 'string' && p) return p
-  const fp = args.file_path
-  return typeof fp === 'string' && fp ? fp : undefined
-}
-
 // ── Sub-handlers（纯函数：PiEvent → PiTranslatedEvent[]，无副作用）────────
 
 /** message_update — streaming text/thinking deltas and stream errors */
@@ -154,20 +145,10 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
   const toolName = event.toolName
   const isError = event.isError
 
-  // write 工具写入的 content（供 EventInterpreter 累积，untracked 行数回退用）。
-  // [已知限制] pi tool_execution_end 从不发 args（pi types.ts:430 无此字段）——write 工具的
-  // content 在 tool_execution_start 事件里（types.ts:428 args: any）。当前 writeContent 恒为
-  // undefined（args 来源缺失）。提取逻辑应迁移到 handleToolExecutionStart 路径（tool_execution_start
-  // 发 args），但那涉及 PiTranslatedEvent tool-call-start 中间事件结构变更 + EventInterpreter
-  // 改造，属另一个改动范围，此处保留逻辑块 + 显式逃生，待后续优化迁移。
-  let writeContent: { filePath: string; content: string } | undefined
-  if (!isError && toolName === 'write') {
-    const args = (event as unknown as { args?: Record<string, unknown> }).args
-    const filePath = extractPath(args)
-    if (filePath && typeof args?.content === 'string') {
-      writeContent = { filePath, content: args.content }
-    }
-  }
+  // [已知限制] pi tool_execution_end 从不发 args（pi types.ts:430 无此字段），故 write 工具的
+  // content 无法在此提取。writeContent 提取逻辑已删除（原为恒 undefined 的死代码）。
+  // EventInterpreter 的 writeContents Map 因此恒为空——untracked 行数回退当前不生效，
+  // 待后续在 tool_execution_start 路径（该事件发 args）补齐后恢复。详见 pi-protocol.ts 相关注释。
 
   return [{
     kind: 'tool-call-end',
@@ -177,7 +158,6 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
     images,
     toolName,
     isError,
-    writeContent,
     outputRaw,
   }]
 }

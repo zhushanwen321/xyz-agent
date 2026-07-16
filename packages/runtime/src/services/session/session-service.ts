@@ -26,7 +26,8 @@ import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.j
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
 import { parseSessionHeader } from '../../infra/pi/session-file-utils.js'
-import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
+import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
+import { isStrictlyUnder } from '../../utils/path-utils.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -328,6 +329,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const record = subagents.find((s) => s.subagentId === subagentId)
     if (!record?.sessionFile) return []
 
+    // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（~/.xyz-agent/pi/agent/）。
+    // record.sessionFile 由 subagent-extractor 从 JSONL 文本提取，不可信——攻击者构造的
+    // session JSONL 可塞入任意路径（如 /etc/passwd），不校验直接读会泄露任意文件内容。
+    if (!isStrictlyUnder(getPiAgentDir(), record.sessionFile)) return []
+
     // 直读 subagent JSONL，复用 getHistoryFromFilePath 转换链路（parseJsonl + filter + convertHistory）。
     // subagent JSONL 格式与主 session 一致（pi SessionManager._persist 写入）。
     return getHistoryFromFilePath(record.sessionFile, this.sessionStore)
@@ -426,16 +432,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (s && typeof tokens === 'number') s.inputTokens = tokens
   }
 
-  /**
-   * 处理 context.update（pi agent_end 推送 inputTokens）。session 级状态单一 owner：
-   * 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。index.ts onContextUpdate
-   * 仅调本方法，不再自己算 usagePercent。
-   *
-   * context.update 与 switchModel 竞态（已踩过坑，原 index.ts onContextUpdate 注释保留）：
-   * 此处回写 inputTokens 缓存是打通 context.update 与 switchModel 数据源的关键——
-   * 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）。
-   * 顺序保证：onContextUpdate 回写在先、switchModel 读取在后（缓存写入先于 switchModel 读）。
-   */
   /**
    * 处理 context.update（pi agent_end/turn_end 推送 inputTokens + totalTokens）。session 级状态单一 owner：
    * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。

@@ -290,11 +290,10 @@ export class EventInterpreter {
     // 观测 hook（tool_execution_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_end', toolCallId, output, details, images }).catch(() => {})
 
-    // ADR-0024 D5：失败的调用不触发 diff（避免噪声）；累积 write content + 实时 diff
+    // ADR-0024 D5：失败的调用不触发 diff（避免噪声）；实时 diff
     if (!isError) {
-      if (ev.writeContent) {
-        this.writeContents.set(ev.writeContent.filePath, ev.writeContent.content)
-      }
+      // [已知限制] ev.writeContent 恒为 undefined（pi tool_execution_end 从不发 args，见
+      // event-adapter handleToolExecutionEnd 注释），writeContents 累积逻辑暂不生效。
       if (FILE_MUTATING_TOOLS.has(toolName)) {
         this.sendDiffFileChanges('accumulating')
       }

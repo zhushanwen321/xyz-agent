@@ -97,7 +97,10 @@ process.on('unhandledRejection', (reason) => {
 })
 process.on('uncaughtException', (err) => {
   console.error('[main] Uncaught exception:', err)
-  // 不 exit，避免 runtime 孤儿进程；日志已落盘供诊断
+  // dev 模式（!app.isPackaged）直接 exit(1) 暴露问题——dev 下没有 supervisor/liveness 兜底，
+  // 静默吞会让开发者在不知不觉中带病继续开发。prod 保持「不 exit，靠 supervisor/liveness 兜底」
+  // （exit 会让 runtime 子进程成孤儿，资源泄漏更危险）。
+  if (!app.isPackaged) process.exit(1)
 })
 
 // ── 路径 & 模式 ──────────────────────────────────────────────────

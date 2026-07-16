@@ -110,8 +110,6 @@ export type PiTranslatedEvent =
       images: Array<{ data: string; mimeType: string }> | undefined
       toolName: string
       isError: boolean
-      /** write 工具写入的 content（untracked 行数回退用，interpreter 累积）。 */
-      writeContent?: { filePath: string; content: string }
     }
   /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff + hook + baseline 清空。 */
   | {

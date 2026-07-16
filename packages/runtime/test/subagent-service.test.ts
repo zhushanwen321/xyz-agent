@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionService } from '../src/services/session/session-service.js'
 import { convertPiHistory } from '../src/infra/pi/message-converter.js'
+import { getPiAgentDir } from '../src/infra/pi/pi-paths.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
 import type { ScannedSessionMeta } from '../src/infra/pi/session-file-utils.js'
 
@@ -170,18 +171,29 @@ describe('SessionService.getSubagents', () => {
 
 describe('SessionService.getSubagentHistory', () => {
   let tempDir: string
+  let prevDataDir: string | undefined
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'subagent-hist-'))
+    // 隔离数据目录到 tempDir，使 getPiAgentDir() 返回 tempDir/pi/agent —— 测试文件写入真实
+    // piAgentDir 下（getSubagentHistory W-R1 路径穿越校验），又不污染真实 ~/.xyz-agent。
+    prevDataDir = process.env.XYZ_AGENT_DATA_DIR
+    process.env.XYZ_AGENT_DATA_DIR = tempDir
   })
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true })
+    if (prevDataDir === undefined) delete process.env.XYZ_AGENT_DATA_DIR
+    else process.env.XYZ_AGENT_DATA_DIR = prevDataDir
   })
 
   it('reads subagent JSONL and converts to Message[]', async () => {
     const mainSessionFile = join(tempDir, 'main.jsonl')
-    const subagentFile = join(tempDir, 'subagent.jsonl')
+    // subagent JSONL 必须落在 piAgentDir 下（getSubagentHistory W-R1 路径穿越校验）。
+    // 真实 subagent 文件由 pi-subagent-workflow 写入 getSubagentSessionDir(mainCwd)，位于 piAgentDir 内。
+    const subagentDir = join(getPiAgentDir(), 'subagents', 'mock-subagent-hist')
+    mkdirSync(subagentDir, { recursive: true })
+    const subagentFile = join(subagentDir, 'subagent.jsonl')
     const toolCallId = 'call_hist1'
 
     // 主 session JSONL

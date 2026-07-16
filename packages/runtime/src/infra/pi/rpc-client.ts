@@ -287,6 +287,9 @@ export class RpcClient implements IPiEngine {
       entry.reject(error)
       this.pending.delete(id)
     }
+    // 进程退出 / stream error 时 pending 已全清，对应的 timedOutIds 也应一并清空——
+    // 否则残留 id 会在 Set 里存活到 TTL（5s）才被自动删除（虽进程即将退出，仍补齐一致性）。
+    this.timedOutIds.clear()
   }
 
   private nextId(): string {
