@@ -1,0 +1,37 @@
+export default {
+  branchSelect: {
+    gitNotSupported: 'v1 暂未支持 Git 图谱',
+    searchPlaceholder: '搜索分支',
+    loadFailed: '加载分支失败，请重试',
+    noBranch: '无分支 · 引导首次 commit',
+    branchLabel: '分支',
+    dirtyChanges: '未提交的更改：{count} 个文件',
+    createAndCheckout: '创建并检出新分支…',
+    gitGraph: 'Git 图谱',
+    dirtyWarning: '「{branch}」当前工作区有 {count} 个未提交更改，切走将保留在工作区。',
+    switchAway: '切走',
+  },
+  createBranch: {
+    gitTimeout: 'git 操作超时，请稍后重试',
+    createFailed: '创建分支失败',
+    title: '创建并检出新分支',
+    desc: '基于当前 HEAD 创建一个新的本地分支，并在创建成功后立即切换过去。',
+    nameLabel: '分支名',
+    namePlaceholder: '例如 feature/git-branch-switcher',
+    nameValidation: '分支名只能含字母、数字、点、下划线、斜杠、连字符，不能含空格 / ..',
+    onlyHeadHint: '首版只支持基于当前 HEAD 创建并切换。',
+    createBtn: '创建并切换',
+  },
+  dirSelect: {
+    remoteNotSupported: 'v1 暂未支持远程连接',
+    searchPlaceholder: '搜索工作区',
+    noRecent: '暂无最近工作区 · 选择一个本地目录开始',
+    openFolder: '打开文件夹',
+    remoteConnect: '远程连接',
+  },
+  landing: {
+    dirSelectorFailed: '无法打开目录选择器：{reason}',
+    selectDir: '选择目录',
+    retryHistory: '重试加载历史',
+  },
+}

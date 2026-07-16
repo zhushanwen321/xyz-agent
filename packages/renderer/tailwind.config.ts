@@ -33,12 +33,21 @@ export default {
           ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
-        success: 'var(--success)',
-        warning: 'var(--warning)',
-        danger: 'var(--danger)',
-        info: 'var(--info)',
+        success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
+        warning: { DEFAULT: 'var(--warning)', soft: 'var(--warning-soft)' },
+        danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
+        info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
         // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
-        reasoning: 'var(--reasoning)',
+        reasoning: { DEFAULT: 'var(--reasoning)', soft: 'var(--reasoning-soft)' },
+        // ── diff 行/字符级背景（预混合色，color-mix 派生跟随 --success/--danger）──
+        // 行背景中饱和(18%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
+        // canvas 用 bg-bg-input（暗 #1e1f24 / 亮 #f1f3f6 自动跟随主题），色块叠加其上。
+        diff: {
+          'add-bg': 'color-mix(in oklch, var(--success) 18%, transparent)',
+          'add-strong': 'color-mix(in oklch, var(--success) 45%, transparent)',
+          'del-bg': 'color-mix(in oklch, var(--danger) 18%, transparent)',
+          'del-strong': 'color-mix(in oklch, var(--danger) 45%, transparent)',
+        },
 
         // ── shadcn-vue 命名空间（别名映射到 v3 值，不引入新色）──────────
         // 本地 components/ui（shadcn copy）依赖 shadcn 命名约定，补全 utility
@@ -99,6 +108,20 @@ export default {
           '0%, 50%': { opacity: '1' },
           '51%, 100%': { opacity: '0' },
         },
+        // session status icons（方案 C 优化版 v3）
+        wiggle: {
+          '0%, 100%': { transform: 'rotate(-6deg)' },
+          '50%': { transform: 'rotate(6deg)' },
+        },
+        'pulse-strong': {
+          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
+          '50%': { opacity: '0.65', transform: 'scale(0.92)' },
+        },
+        // ask-user inline overlay 入场（覆盖 composer 位置时滑入，对齐 demo v2 slideUp）
+        'ask-user-slide-up': {
+          from: { opacity: '0', transform: 'translateY(8px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
@@ -106,6 +129,9 @@ export default {
         'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
         'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
+        'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
+        wiggle: 'wiggle 1.2s ease-in-out infinite',
+        'pulse-strong': 'pulse-strong 1.4s ease-in-out infinite',
       },
     },
   },

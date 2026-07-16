@@ -21,7 +21,7 @@ export interface ISessionServiceInternal {
   // ── lifecycle 使用的共享 helper ──
   /** 初始化 ManagedSession 并写入 sessions Map，返回子模块可见视图。hidden 标记隐藏 session。 */
   initializeManagedSession(id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean): Promise<IManagedSessionView>
-  /** Detach adapter + 退订 usage listener（按 id 查 Map）。 */
+  /** Detach adapter（按 id 查 Map）。pi 事件订阅经 EventAdapter 唯一持有，detach 即收口。 */
   detachSession(sessionId: string): void
   /** 将 ManagedSession 转为对外 SessionSummary（含 git 信息）。 */
   toSummary(s: IManagedSessionView): SessionSummary
@@ -37,8 +37,21 @@ export interface ISessionServiceInternal {
   ensureActive(sessionId: string): Promise<IPiEngine>
   /** 按 RPC client 反查 managed session（更新 lastActiveAt / isGenerating 用）。 */
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined
-  /** 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。compact 后用 estimatedTokensAfter 刷新用量。 */
-  applyContextUpdate(sessionId: string, inputTokens: number): void
+  /**
+   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
+   * totalTokens（W3）写入 session.tokenCount；compact 后用 estimatedTokensAfter 刷新用量。
+   */
+  applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
+  /**
+   * turn_end 单 turn 副作用（W3）：tryPersistLabel 主路径——首 turn 即持久化。
+   * 经 EventInterpreter.onTurnUsage 回调注入。
+   */
+  handleTurnUsageSideEffects(sessionId: string): void
+  /**
+   * agent_end 副作用（W3）：复位 isGenerating=false + tryPersistLabel 兜底。
+   * 经 EventInterpreter.onTurnFinalize 回调注入。
+   */
+  handleTurnEndSideEffects(sessionId: string): void
   /**
    * 拉取上下文用量并广播 context.update（restoreSession 兜底用）。
    * fire-and-forget 语义：失败不阻塞 session 恢复（前端主动拉是主路径）。

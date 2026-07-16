@@ -155,7 +155,7 @@ onMounted(() => {
   margin-right: 4px;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
-  background: rgba(167, 139, 250, 0.18);
+  background: var(--reasoning-soft);
   color: var(--reasoning);
   font: 500 12px / 1.4 var(--font-sans);
   user-select: none;
@@ -192,10 +192,10 @@ onMounted(() => {
 }
 .composer-input :deep(.mention-chip.mention-at) {
   color: var(--accent);
-  background: rgba(79, 142, 247, 0.1);
+  background: var(--accent-soft);
 }
 .composer-input :deep(.mention-chip.mention-file) {
   color: var(--success);
-  background: rgba(52, 211, 153, 0.1);
+  background: var(--success-soft);
 }
 </style>

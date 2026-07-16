@@ -34,6 +34,7 @@ function makeMockSession(isGenerating: boolean): IManagedSessionView {
     tokenCount: 0,
     inputTokens: 0,
     isGenerating,
+    isCompacting: false,
     labelPersisted: false,
   }
 }
@@ -106,5 +107,34 @@ describe('MessageDispatcher 错误路径', () => {
     const errMsg = broadcasts.find((m) => m.type === 'message.error')
     expect(errMsg).toBeDefined()
     expect(errMsg!.payload).toMatchObject({ sessionId: 's1' })
+  })
+
+  it('W6: workspace.record 抛同步异常 → 被 catch + console.warn + 不阻断 pi.prompt + isGenerating 保持 true', async () => {
+    // record 抛同步异常（模拟 cache.set OOM 等极端场景）
+    const session = makeMockSession(false)
+    const promptFn = vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
+    const client = { prompt: promptFn } as unknown as IPiEngine
+    const broadcasts: ServerMessage[] = []
+    const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
+    const svc = {
+      ensureActive: vi.fn(async () => client),
+      getSessionByClient: vi.fn(() => session),
+    } as unknown as ISessionServiceInternal
+    const pm = {} as unknown as IProcessManager
+    const workspace = { record: vi.fn(() => { throw new Error('cache boom') }) } as unknown as WorkspaceService
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const dispatcher = new MessageDispatcher(svc, pm, broker, workspace)
+
+    // 不该向上抛
+    const result = await dispatcher.sendMessage('s1', 'hello')
+    // pi.prompt 仍被调用（record 失败不阻断发消息主流程）
+    expect(promptFn).toHaveBeenCalledWith('hello')
+    // isGenerating 保持 true（prompt 成功，record 副作用失败不影响状态机）
+    expect(session.isGenerating).toBe(true)
+    // 正常返回（非 blocked）
+    expect(result.blocked).toBe(false)
+    // console.warn 被调（有诊断信号，非 fail-silent）
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 })

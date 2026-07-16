@@ -17,7 +17,7 @@
   <section
     v-if="result?.isRepo"
     class="relative flex h-full flex-col gap-1.5 overflow-hidden p-2 text-[12px]"
-    :class="result.hasConflict ? 'bg-danger/8' : ''"
+    :class="result.hasConflict ? 'bg-danger-soft' : ''"
   >
     <div
       v-if="result.hasConflict"
@@ -40,7 +40,7 @@
         variant="ghost"
         class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:text-fg"
         :disabled="pending"
-        title="刷新"
+        :title="t('panel.git.refresh')"
         @click="refresh"
       >
         <RefreshCw class="size-3" :class="pending ? 'animate-spin' : ''" />
@@ -48,7 +48,7 @@
     </div>
 
     <!-- 错误提示（操作失败 inline 回显） -->
-    <p v-if="error" class="rounded-sm bg-danger/12 px-2 py-1 text-[11px] text-danger">{{ error }}</p>
+    <p v-if="error" class="rounded-sm bg-danger-soft px-2 py-1 text-[11px] text-danger">{{ error }}</p>
 
     <!-- 文件列表（点击跳转 detail tab 查看 diff：selectFile 设 selectedPath + drawer 切 detail） -->
     <ul v-if="result.files.length" class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
@@ -56,7 +56,7 @@
         v-for="f in result.files"
         :key="f.path"
         class="flex cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 hover:bg-surface-2"
-        :title="`查看 ${f.path} 的差异`"
+        :title="t('panel.git.viewDiff', { path: f.path })"
         @click="onFileClick(f.path)"
       >
         <span
@@ -72,7 +72,7 @@
       <Input
         v-model="commitMsg"
         class="h-7 text-[11px]"
-        placeholder="commit message"
+          :placeholder="t('panel.git.commitPlaceholder')"
         :disabled="pending"
         @keydown.enter="onCommit"
       />
@@ -81,22 +81,22 @@
           variant="ghost"
           class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
           :disabled="pending || result.unstagedCount === 0"
-          title="暂存全部改动"
+          :title="t('panel.git.stageAll')"
           @click="stageAll"
-        >Stage</Button>
+        >{{ t('panel.git.stage') }}</Button>
         <Button
           variant="ghost"
           class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
           :disabled="pending || result.stagedCount === 0"
-          title="取消全部暂存"
+          :title="t('panel.git.unstageAll')"
           @click="unstageAll"
-        >Unstage</Button>
+        >{{ t('panel.git.unstage') }}</Button>
         <Button
           class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
           :disabled="!canCommit"
-          :title="result.hasConflict ? '存在冲突，解决后才能提交' : '提交暂存区'"
+          :title="result.hasConflict ? t('panel.git.conflictBlock') : t('panel.git.commitStaged')"
           @click="onCommit"
-        >Commit</Button>
+        >{{ t('panel.git.commit') }}</Button>
       </div>
     </div>
   </section>
@@ -104,6 +104,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GitBranch, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -111,6 +112,8 @@ import { useGitStatusOrFail, type GitState } from '@/composables/features/useGit
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import type { GitFileStatus } from '@xyz-agent/shared'
+
+const { t } = useI18n()
 
 /** 注入 Panel 提供的唯一 git 状态实例（缺失即装配错误） */
 const {
@@ -145,16 +148,24 @@ function onFileClick(path: string): void {
 }
 
 const pillLabel = computed(
-  () => ({ clean: 'Clean', staged: 'Staged', dirty: 'Dirty', conflict: 'Conflict' })[state.value],
+  () => {
+    const map: Record<GitState, string> = {
+      clean: t('panel.git.pillClean'),
+      staged: t('panel.git.pillStaged'),
+      dirty: t('panel.git.pillDirty'),
+      conflict: t('panel.git.pillConflict'),
+    }
+    return map[state.value as GitState]
+  },
 )
 const pillClass = computed(
   () =>
     (
       {
-        clean: 'bg-success/12 text-success',
-        staged: 'bg-success/12 text-success',
-        dirty: 'bg-warning/14 text-warning',
-        conflict: 'bg-danger/14 text-danger',
+        clean: 'bg-success-soft text-success',
+        staged: 'bg-success-soft text-success',
+        dirty: 'bg-warning-soft text-warning',
+        conflict: 'bg-danger-soft text-danger',
       } satisfies Record<GitState, string>
     )[state.value],
 )

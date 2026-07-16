@@ -24,6 +24,7 @@ import { expandHome } from '../utils/path-utils.js'
 import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
 import { scanAgents } from './scanners/agent-scanner.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
+import { getConfigDir } from '../infra/pi/pi-paths.js'
 
 // ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
@@ -33,10 +34,18 @@ import { pickModelCapabilityFields } from './model-mapper.js'
 // 故强制目录用 pi 实际路径（getPiAgentDir 拼出），而非 ADR 文档的逻辑路径——后者不存在，
 // 会导致强制目录扫描落空（agent 页扫不到任何 agent）。
 // 项目级强制目录（.xyz-agent/skills 等）保留 ADR 逻辑路径（项目相对路径，存在则扫）。
+//
+// W1：全局强制目录从硬编码 '~/.xyz-agent/skills' 改为动态 getConfigDir()。
+// 必须用函数在 loadSkills/loadAgents 调用时求值——不能是模块加载时的常量：
+// 测试在 beforeEach 设 XYZ_AGENT_DATA_DIR，模块导入早于 beforeEach，模块加载时求值
+// 会捕获到缺省 ~/.xyz-agent（env 未设）。getConfigDir 委托 getDataDir 读 env，调用时求值
+// 才能跟随实例隔离 / 自定义数据目录切换。
 const FORCED_PROJECT_SKILL_DIR = '.xyz-agent/skills'
-const FORCED_GLOBAL_SKILL_DIR = '~/.xyz-agent/skills'
 const FORCED_PROJECT_AGENT_DIR = '.xyz-agent/agents'
-const FORCED_GLOBAL_AGENT_DIR = '~/.xyz-agent/agents'
+/** 全局强制 skill 目录：<configDir>/skills（configDir = getConfigDir()，读 env）。 */
+const forcedGlobalSkillDir = (): string => join(getConfigDir(), 'skills')
+/** 全局强制 agent 目录：<configDir>/agents（configDir = getConfigDir()，读 env）。 */
+const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -82,6 +91,8 @@ export class ConfigService implements IConfigService {
     return Object.entries(models.providers).map(([id, config]) => ({
       id,
       name: config.name || id,
+      // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
+      api: config.api,
       baseUrl: config.baseUrl,
       apiKeySet: !!config.apiKey,
       status: config.apiKey ? 'connected' as const : 'not_configured' as const,
@@ -92,9 +103,12 @@ export class ConfigService implements IConfigService {
         baseUrl: m.baseUrl,
         input: m.input,
         compat: m.compat,
+        // W2：model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）
+        enabled: m.enabled !== false,
         ...pickModelCapabilityFields(m),
       })),
-      enabled: true,
+      // W2：从 config.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 provider）
+      enabled: config.enabled !== false,
     }))
   }
 
@@ -103,7 +117,7 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
+    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean }>
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } } {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
@@ -112,6 +126,8 @@ export class ConfigService implements IConfigService {
     if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
     if (data.type !== undefined) merged.api = this.configStore.applyTypeTranslation(data.type as string)
     if (data.name !== undefined) merged.name = data.name as string
+    // W2：provider 级 enabled 透传到合并结果（data 类型已声明 enabled，原合并逻辑漏处理）
+    if (data.enabled !== undefined) merged.enabled = data.enabled
     if (data.models !== undefined) {
       const rawModels = data.models as Array<Record<string, unknown>>
       const existingModels = (existing.models ?? []) as ConfigModelDefinition[]
@@ -132,6 +148,12 @@ export class ConfigService implements IConfigService {
           // buildMap() returned undefined (all passthrough) → remove from model
           delete model.thinkingLevelMap
         }
+        // review must_fix #1：前端回传的 model 级 api/baseUrl/enabled 必须写回，
+        // 否则编辑保存即丢失（新模型 base={} 全丢，编辑现有模型被 base 旧值覆盖）。
+        // 对齐 provider 级的「if (m.X !== undefined) model.X = ...」模式。
+        if (typeof m.api === 'string') model.api = m.api
+        if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
+        if (typeof m.enabled === 'boolean') model.enabled = m.enabled
         return model as unknown as ConfigModelDefinition
       })
     }
@@ -210,7 +232,7 @@ export class ConfigService implements IConfigService {
     const orderedDirs = [
       join(this.configStore.getPiAgentDir(), 'skills'),
       FORCED_PROJECT_SKILL_DIR,
-      FORCED_GLOBAL_SKILL_DIR,
+      forcedGlobalSkillDir(),
       ...this.configStore.getSkillPaths(),
     ]
 
@@ -358,7 +380,7 @@ export class ConfigService implements IConfigService {
     const orderedDirs = [
       join(this.configStore.getPiAgentDir(), 'agents'), // pi 实际路径（最高优先，真实 agent 落点）
       FORCED_PROJECT_AGENT_DIR,
-      FORCED_GLOBAL_AGENT_DIR,
+      forcedGlobalAgentDir(),
       ...this.configStore.getAgentDirs(),
     ].map(expandHome).filter(d => existsSync(d))
 
@@ -366,14 +388,18 @@ export class ConfigService implements IConfigService {
     const files = this.configStore.listAgentFiles(orderedDirs)
     return files.map(f => {
       const { name, description } = parseAgentMd(f.content)
+      // W1：sourceType 从 agent-crud 推断结果读（按 discovered 目录推断，如 ~/.claude/agents → 'claude'），
+      // 不再恒 'pi'——否则 Settings Agent 页按 Claude/Agents tab 过滤永远空。
+      // ?? 'pi' 兜底：向上兼容旧 entry 无 sourceType 字段。
+      const sourceType = f.sourceType ?? 'pi'
       return {
         id: f.name,
         name: name || f.name,
         description: description || '',
         enabled: true, // ADR §5：目录在 = 启用，恒 true
         modelStrategy: 'auto',
-        source: 'pi',
-        sourceType: 'pi',
+        source: sourceType,
+        sourceType,
         content: f.content,
         tools: [],
         effective: true,

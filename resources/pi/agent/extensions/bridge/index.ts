@@ -35,7 +35,7 @@ export async function activate(api: any) {
         bridgeState = 'Ready'
         clearInterval(syncInterval)
       }
-      // eslint-disable-next-line taste/no-silent-catch
+       
     } catch (e) {
       console.debug('[bridge] sync attempt failed, retrying:', e)
       // next interval will retry
@@ -57,7 +57,7 @@ export async function activate(api: any) {
         } else {
           void api.extension_ui_request({ method: 'bridge:event', eventName: evt, data, sessionId: data?.sessionId })
         }
-        // eslint-disable-next-line taste/no-silent-catch
+         
       } catch (e) {
         console.error('[bridge] event forward error:', e)
         // Intentionally silent — single event failure should not break the extension
@@ -73,7 +73,7 @@ export async function activate(api: any) {
       if (payload.method === 'bridge:append_entry' && payload.type === 'plugin-data') {
         api.appendEntry(payload.type, payload.data)
       }
-      // eslint-disable-next-line taste/no-silent-catch
+       
     } catch (e) {
       console.error('[bridge] append_entry error:', e)
       // Intentionally silent — single append failure should not break the extension

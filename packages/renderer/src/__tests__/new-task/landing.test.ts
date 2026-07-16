@@ -13,7 +13,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/landing.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import Landing from '@/components/new-task/Landing.vue'
 import Panel from '@/components/panel/Panel.vue'
@@ -39,6 +39,12 @@ const flowMock = vi.hoisted(() => ({
 vi.mock('@/composables/features/useNewTaskFlow', () => ({
   useNewTaskFlow: () => flowMock,
   resetNewTaskFlow: vi.fn(),
+}))
+
+// mock useToast 捕获 error 调用（W3：openDirDialog IPC 招错 → toastError）
+const toastMock = vi.hoisted(() => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }))
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => toastMock,
 }))
 
 beforeEach(() => {
@@ -215,5 +221,50 @@ describe('Landing getHistory 失败重试（T1.8）', () => {
       global: { stubs: landingStubs },
     })
     expect(wrapper.find('[data-testid="retry-history"]').exists()).toBe(false)
+  })
+})
+
+describe('Landing openDirDialog 异常处理（W3: AC-5.6）', () => {
+  /** W3 测试用 stubs：Popover 系列无条件渲染 slot + Composer/DirSelectPopover stub，聚焦事件路由 */
+  const w3Stubs = {
+    Popover: { template: '<div><slot /></div>' },
+    PopoverTrigger: { template: '<div><slot /></div>' },
+    PopoverContent: { template: '<div><slot /></div>' },
+    Composer: { template: '<div data-testid="composer-stub"><slot name="meta-row" /></div>' },
+    DirSelectPopover: {
+      name: 'DirSelectPopover',
+      template: '<div data-testid="dir-select-stub" />',
+      emits: ['select', 'open-dir-dialog', 'close'],
+    },
+  }
+
+  it('W3-U1: openDirDialog reject → toastError 被调（IPC 招错有反馈，AC-5.6）', async () => {
+    flowMock.openDirDialog.mockRejectedValueOnce(new Error('IPC failed'))
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+      global: { stubs: w3Stubs },
+    })
+    // Popover stub 无条件渲染 slot → DirSelectPopover stub 在 DOM，可 findComponent + emit
+    wrapper.findComponent({ name: 'DirSelectPopover' }).vm.$emit('open-dir-dialog')
+    await flushPromises()
+
+    expect(flowMock.openDirDialog).toHaveBeenCalledTimes(1)
+    expect(toastMock.error).toHaveBeenCalledTimes(1)
+    const msg = String(toastMock.error.mock.calls[0]![0])
+    expect(msg).toContain('无法打开目录选择器')
+    expect(msg).toContain('IPC failed')
+  })
+
+  it('W3-U2: openDirDialog resolve → 不调 toastError（成功路径无错误提示）', async () => {
+    flowMock.openDirDialog.mockResolvedValueOnce(undefined)
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+      global: { stubs: w3Stubs },
+    })
+    wrapper.findComponent({ name: 'DirSelectPopover' }).vm.$emit('open-dir-dialog')
+    await flushPromises()
+
+    expect(flowMock.openDirDialog).toHaveBeenCalledTimes(1)
+    expect(toastMock.error).not.toHaveBeenCalled()
   })
 })

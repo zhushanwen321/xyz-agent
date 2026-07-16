@@ -51,8 +51,16 @@ export function groupTurns(messages: Message[]): MessageTurn[] {
 /**
  * 把扁平 messages 转 RenderItem 列表（turn 与 system 提示行按到达顺序穿插）。
  * MessageStream 据此渲染：turn→<Turn>，system→<SystemNotice>。
+ *
+ * @param messages 扁平消息列表
+ * @param forceWorking 强制最后一个 turn 进入 working 态（subagent running 时使用：
+ *   subagent 消息读自 JSONL，status 恒为 complete，但 subagent 实际可能仍在执行中。
+ *   传 true 让最后一个 turn 的 isWorking=true，trace 展开，与主 agent streaming 态一致）
  */
-export function toRenderItems(messages: Message[]): RenderItem[] {
+export function toRenderItems(
+  messages: Message[],
+  forceWorking = false,
+): RenderItem[] {
   const items: RenderItem[] = []
   let turnSeq = 0
   let current: MessageTurn | null = null
@@ -96,7 +104,8 @@ export function toRenderItems(messages: Message[]): RenderItem[] {
   )
   turnItems.forEach(({ turn }, i) => {
     const last = turn.assistants[turn.assistants.length - 1]
-    turn.isWorking = i === turnItems.length - 1 && last?.status === 'streaming'
+    const isLast = i === turnItems.length - 1
+    turn.isWorking = isLast && (forceWorking || last?.status === 'streaming')
     turn.hasFoldable = turn.assistants.some(
       (m) => (m.thinking?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0,
     )

@@ -22,6 +22,9 @@ import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { file as fileApi, git as gitApi } from '@/api'
 import { detectFileKind, type FileKind } from '@/composables/logic/file-type'
 import { parseDiff } from '@/composables/logic/parseDiff'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /** 预览加载态 */
 export type PreviewStatus = 'idle' | 'loading' | 'content' | 'error'
@@ -72,6 +75,13 @@ export function useDetailPane(sessionId: Ref<string | null>) {
   const state = ref<DetailPaneState>(initialState())
 
   /**
+   * 请求版本号（L3 并发守卫：快速切换文件时丢弃旧请求的 stale write）。
+   * openPreview/toggleView 开头自增 token，loadContent 内每次 await 后校验，
+   * 不匹配则 return（旧请求的慢响应不覆盖新选中文件的 state）。
+   */
+  let loadToken = 0
+
+  /**
    * 取当前 session 的 cwd 绝对路径（图片渲染拼 local-file:// URL 用）。
    * sessionStore.list 按 id 查 SessionSummary.cwd；无 session 返回 null。
    */
@@ -95,11 +105,14 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     sid: string,
     path: string,
     mode: DetailViewMode,
+    token: number,
     autoFallback = false,
   ): Promise<void> {
     try {
       if (mode === 'diff') {
         const result = await gitApi.getDiff(sid, path)
+        // L3：await 后校验 token，旧请求被新 openPreview 抢占时丢弃（stale write 防护）
+        if (token !== loadToken) return
         state.value.binary = result.binary
         state.value.content = result.patch
         // diff 无 hunk 且非二进制 → 自动降级 preview：untracked 文件 git diff 必空，
@@ -108,22 +121,26 @@ export function useDetailPane(sessionId: Ref<string | null>) {
         if (autoFallback && !result.binary && parseDiff(result.patch).hunks.length === 0) {
           state.value.viewMode = 'preview'
           const fileResult = await fileApi.read(path, sid)
+          if (token !== loadToken) return
           state.value.content = fileResult.content
           state.value.truncated = fileResult.truncated
         }
       } else {
         const result = await fileApi.read(path, sid)
+        if (token !== loadToken) return
         state.value.content = result.content
         state.value.truncated = result.truncated
       }
       state.value.status = 'content'
     } catch (e) {
+      if (token !== loadToken) return
       state.value.status = 'error'
-      state.value.error = (e as Error)?.message ?? '加载失败'
+      state.value.error = (e as Error)?.message ?? t('composable.loadFailed')
     }
   }
 
   async function openPreview(sid: string, path: string, forceDiff = false): Promise<void> {
+    const token = ++loadToken
     state.value = { ...initialState(), status: 'loading', path, viewMode: state.value.viewMode }
     // 判断 git 改动：gitOverlay per-session 查（含 untracked，T2.8b untracked 也算改动可 diff）
     const gitStatus = store.getGitStatus(sid, path)?.status
@@ -134,7 +151,7 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     // 文件渲染类别（preview 模式渲染器选择依据；diff 模式统一走 DiffView）
     state.value.kind = detectFileKind(path)
 
-    await loadContent(sid, path, mode, true)
+    await loadContent(sid, path, mode, token, true)
   }
 
   /**
@@ -145,10 +162,11 @@ export function useDetailPane(sessionId: Ref<string | null>) {
     const sid = sessionId.value
     const path = state.value.path
     if (!sid || !path || state.value.viewMode === mode) return
+    const token = ++loadToken
     state.value.viewMode = mode
     state.value.status = 'loading'
     state.value.error = ''
-    await loadContent(sid, path, mode)
+    await loadContent(sid, path, mode, token)
   }
 
   /** 清空预览（关闭 drawer / 取消选中时） */

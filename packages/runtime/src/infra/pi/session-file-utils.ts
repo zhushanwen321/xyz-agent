@@ -5,10 +5,10 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, mkdirSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl } from '../../utils/jsonl.js'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { getSessionsDir } from './pi-paths.js'
 
 // ── 类型定义 ─────────────────────────────────────────────────
@@ -68,31 +68,23 @@ export function extractSessionName(filePath: string): string | null {
  * 将 session 名称持久化到 .jsonl 文件。
  *
  * 追加一条 `session_info` entry（pi 的标准格式），使 extractSessionName
- * 和 pi 进程都能读到新名称。如果文件不存在则静默跳过。
+ * 和 pi 进程都能读到新名称。
+ *
+ * [HISTORICAL] 文件不存在时**绝不创建文件**（规则 #6）。原实现用 openSync(wx)
+ * 提前建文件，与 pi 0.80.3 SessionManager._persist 的 openSync("wx") 冲突 →
+ * EEXIST → pi 抛 error → session 永久卡死（见上方 ensureSessionFile 删除记录）。
+ * 文件不存在时只 console.warn + return，由调用方（tryPersistLabel 在 turn_end /
+ * agent_end 兜底）等 pi 首次 flush 完成后再写。active session 即使磁盘无文件也
+ * 经 SessionScanner.listAll 合并内存 Map 显示，不依赖文件提前创建。
  */
 export function persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void {
+  void id
+  void cwd
   if (!filePath) return
   if (!existsSync(filePath)) {
-    // 文件不存在时，写完整 header + name 确保 scanPiSessions 能找到
-    // （空 session 重命名场景：pi 延迟写入导致文件未创建）
-    const dir = dirname(filePath)
-    // G3: mkdirSync({recursive:true}) 本就幂等，无需 existsSync 守卫。
-    mkdirSync(dir, { recursive: true })
-    const timestamp = new Date().toISOString()
-    const entries = []
-    if (id && cwd) {
-      entries.push(JSON.stringify({ type: 'session', version: 3, id, timestamp, cwd }) + '\n')
-    }
-    entries.push(JSON.stringify({ type: 'session_info', name, timestamp }) + '\n')
-    try {
-      const fd = openSync(filePath, 'wx')
-      writeSync(fd, entries.join(''))
-      closeSync(fd)
-      console.log(`[config-bridge] persistSessionName: created file with name: ${filePath}`)
-    // eslint-disable-next-line taste/no-silent-catch -- file creation: failure to create file must not crash caller
-    } catch (e) {
-      console.error(`[config-bridge] persistSessionName: failed to create file: ${filePath}`, e)
-    }
+    // 文件不存在（pi 延迟写入窗口）：绝不创建文件，等 tryPersistLabel 在
+    // turn_end/agent_end 兜底写盘。此处只 warn 不抛，避免阻断 rename 调用方。
+    console.warn(`[session-file-utils] persistSessionName: file does not exist, skipping (pi delayed write window): ${filePath}`)
     return
   }
   const entry = JSON.stringify({ type: 'session_info', name, timestamp: new Date().toISOString() }) + '\n'
@@ -173,7 +165,15 @@ export function scanPiSessions(): ScannedSessionMeta[] {
   const results: ScannedSessionMeta[] = []
 
   const sessionsDir = getSessionsDir()
-  const entries = readdirSync(sessionsDir)
+  let entries: string[]
+  try {
+    entries = readdirSync(sessionsDir)
+  } catch (e) {
+    // L8: sessions 目录存在但不可读（权限/IO 故障）时，readdirSync 抛 EACCES 等异常。
+    // 原实现未保护会冒泡为进程级未捕获异常，此处降级为返回空数组（scan 容忍失败）。
+    console.error(`[session-file-utils] scanPiSessions: failed to read sessions dir: ${sessionsDir}`, e)
+    return []
+  }
 
   for (const entry of entries) {
     const entryPath = join(sessionsDir, entry)

@@ -44,11 +44,17 @@ import { useSidebar } from '@/composables/features/useSidebar'
 const { state: connectionState, init, teardown, retryRuntime } = useConnection()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
-// 是「连接成功」唯一可靠信号——watch 它触发 initApp，appBootstrapped 守卫保证 HMR/重连幂等。
-const { initApp } = useSidebar()
+// 是「连接成功」唯一可靠信号——watch 它触发 onConnected，appBootstrapped 守卫保证 HMR/重连幂等。
+const { onConnected } = useSidebar()
 onMounted(() => { void init() })
+// [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
+// - 首次 connected → initApp（内部含 workspaceStore.load + presetCwd）
+// - 重连 connected → initApp 因 appBootstrapped 守卫直接 return，records 停留在断连前 stale 数据
+//   （runtime 可能重启后从磁盘重载了新记录，如另一窗口写入），故额外 fire-and-forget load() 刷新。
+//   hasConnectedBefore 与 appBootstrapped 同为模块级，组件卸载重挂（非模块重载）时保留值，
+//   避免新实例误判为「首次」再调 initApp（被守卫吞）导致 load 不刷新。
 watch(connectionState, (s) => {
-  if (s === 'connected') void initApp()
+  if (s === 'connected') void onConnected()
 })
 
 /** 用户点击「重试」：委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。

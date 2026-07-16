@@ -1,5 +1,22 @@
 # Settings 模块重设计 — Spec
 
+> **⚠️ PARTIALLY DEPRECATED — 2026-07-13**
+>
+> 本 spec 的 **Skill/Agent 部分**已被 [ADR-0020](../../../docs/architecture/adr/0020-resource-loading-strategy.md) 推翻，不再作为当前设计规范。现行设计见 [v3 settings spec](../../../docs/page-design/v3/settings/spec.md)。
+>
+> **仍有效的部分**：Provider 全套（ProviderSection/ProviderModal/ModelRow、model.toggle/switch）、System 全套（配色/语言）、§5.1 现有基础设施、§8 视觉规范摘要。
+>
+> **已过时（DEPRECATED）的章节**：
+> - §1 目标末句「新增 Skill/Agent 的扫描导入四步流程」
+> - §2「Skill/Agent 持久化」「扫描导入」「Agent/Skill 扫描来源」4 行 — 文件级 CRUD + 扫描导入模型
+> - §3 WS 协议扩展中的 `config.scanSkills/scannedSkills`、`config.setSkill/skillUpdated`、`config.deleteSkill/skillDeleted` 及 Agent 对称消息（代码中已标 `@deprecated`，保留兼容期）
+> - §4.1 数据流图中的 Skill/Agent 扫描导入分支
+> - §6.2 `ScanImportSection.vue` 整个组件定义 — 被「层 A 加载路径配置 + 只读实体列表」取代
+> - §7.1 扫描导入流程（四步：选源 → 扫描 → 勾选 → 导入）
+> - §7.2 Skill/Agent 的 toggle 启停 / 编辑内容 / 删除操作（Provider 部分仍有效）
+>
+> **设计演进核心**：ADR-0020 从「扫文件 → 勾选文件 → 导入到本地 json → 文件级 toggle/delete」改为「勾选目录 → discovery.json 注入路径 → 目录内资源全开 → 实体列表只读看 badge」。文件级 scan/set/delete/toggle 全部消失，配置粒度收敛到目录级（「目录在 = 启用」）。
+
 ## 视觉参考
 
 **HTML Demo（必须先在浏览器中打开查看最终效果）**: `docs/designs/settings-final.html`

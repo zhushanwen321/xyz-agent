@@ -99,7 +99,7 @@ export class ModelService implements IModelService {
     this.broker.broadcast({
       type: 'config.defaults',
       id: this.nextPushId(),
-      payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' as const },
+      payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' },
     })
   }
 
@@ -115,10 +115,16 @@ export class ModelService implements IModelService {
   }
 
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
-    // model→ModelInfo 的字段映射收敛到 toModelInfo（R6，与 config-service.listProviders 共享）。
-    return providers.flatMap(p =>
-      p.models.map(m => toModelInfo(p.id, p.name, p.api, m)),
-    )
+    // W2：runtime enabled 过滤——provider.enabled===false 时其下所有 model 不进结果；
+    // model.enabled===false 时该 model 不进结果。缺省/true 视为启用（向上兼容存量）。
+    // 过滤在 listProviders 读出 ProviderInfo 之后做，config.enabled !== false 语义统一在此处收敛。
+    return providers
+      .filter(p => p.enabled !== false)
+      .flatMap(p =>
+        p.models
+          .filter(m => m.enabled !== false)
+          .map(m => toModelInfo(p.id, p.name, p.api, m)),
+      )
   }
 
   async discoverModelsFromApi(

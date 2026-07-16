@@ -9,7 +9,7 @@
          onMounted 拉取 installed 状态；install 后 watch(extensions) 刷新。-->
     <section v-if="recommended.length" class="rounded-md border border-border bg-bg">
       <div class="border-b border-border px-3 py-2">
-        <h3 class="text-[12px] font-medium text-fg">推荐扩展</h3>
+        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.extension.recommendedTitle') }}</h3>
       </div>
       <div class="flex flex-col gap-0.5 p-2">
         <div
@@ -31,7 +31,7 @@
           >
             <Loader2 v-if="installingRecommended.has(r.name)" class="animate-spin" />
             <Check v-else-if="r.installed" />
-            {{ r.installed ? '已安装' : '安装' }}
+            {{ r.installed ? t('settings.extension.installed') : t('settings.extension.install') }}
           </Button>
         </div>
       </div>
@@ -62,7 +62,7 @@
           @click="onInstall"
         >
           <Loader2 v-if="installing" class="animate-spin" />
-          安装
+          {{ installButtonText }}
         </Button>
       </div>
       <!-- 错误反馈（非静默吞，CLAUDE.md 规则 #3） -->
@@ -75,23 +75,29 @@
     <!-- 候选内联展开（dir/git 多步第二步，§6.3 点3：安装区下方直接展开） -->
     <section v-if="discovered" class="rounded-md border border-border bg-bg">
       <div class="flex items-center justify-between border-b border-border px-3 py-2">
-        <h3 class="text-[12px] font-medium text-fg">发现 {{ discovered.candidates.length }} 个候选</h3>
-        <Button variant="ghost" class="h-auto px-2 py-0.5 text-[11px] text-subtle" @click="onCancelInstall">取消</Button>
+        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.extension.discoverResultTitle', { count: discovered.candidates.length }) }}</h3>
+        <Button variant="ghost" class="h-auto px-2 py-0.5 text-[11px] text-subtle" @click="onCancelInstall">{{ t('settings.extension.cancel') }}</Button>
       </div>
-      <div v-if="!discovered.candidates.length" class="py-4 text-center text-[11px] text-muted">该来源未发现可安装的扩展</div>
+      <div v-if="!discovered.candidates.length" class="py-4 text-center text-[11px] text-muted">{{ t('settings.extension.noCandidates') }}</div>
       <div v-else class="flex flex-col gap-0.5 p-2">
         <Label
           v-for="c in discovered.candidates"
           :key="c.dirName"
           class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-surface"
         >
-          <!-- 候选多选：Checkbox 受控（selected Set 管理，dirName 为 key）；点击 Label 文字区也触发切换 -->
+          <!--
+            候选多选（W2 D3 修复）：Checkbox 受控（selected Set 管理，dirName 为 key）。
+            原实现还在内层 div 上绑了 @click="toggleCandidate"，导致双触发——
+            点击文字区时浏览器把 Label 的 click 转发给 labelable 的 Checkbox（→ update:model-value
+            → toggleCandidate 加），同时 div @click 又触发 toggleCandidate（减），两次翻转抵消，
+            勾选框不变化。现去掉 div @click，仅靠 Label→Checkbox 转发 + update:model-value 单通道。
+          -->
           <Checkbox
             :model-value="selected.has(c.dirName)"
             class="shrink-0"
             @update:model-value="toggleCandidate(c.dirName)"
           />
-          <div class="min-w-0 flex-1" @click="toggleCandidate(c.dirName)">
+          <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="truncate text-[12px] text-fg">{{ c.name }}</span>
               <span class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ c.dirName }}</span>
@@ -102,10 +108,15 @@
         </Label>
       </div>
       <div v-if="discovered.candidates.length" class="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
-        <span class="text-[11px] text-subtle">已选 {{ selected.size }} / {{ discovered.candidates.length }}</span>
+        <div class="flex items-center gap-2">
+          <span class="text-[11px] text-subtle">{{ t('settings.extension.selectedCount', { selected: selected.size, total: discovered.candidates.length }) }}</span>
+          <Button variant="ghost" size="dense" class="h-auto px-1.5 py-0.5 text-[11px] text-subtle hover:text-fg" @click="toggleSelectAll">
+            {{ isAllSelected ? t('settings.extension.unselectAll') : t('settings.extension.selectAll') }}
+          </Button>
+        </div>
         <Button size="dense" :disabled="selected.size === 0 || installing" @click="onFinishInstall">
           <Loader2 v-if="installing" class="animate-spin" />
-          安装选中
+          {{ t('settings.extension.installSelected') }}
         </Button>
       </div>
     </section>
@@ -113,11 +124,11 @@
     <!-- 已安装列表 -->
     <section>
       <div class="mb-2 flex items-center gap-2">
-        <h3 class="text-[12px] font-medium text-fg">已安装</h3>
+        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.extension.installedTitle') }}</h3>
         <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ extensions.length }}</span>
       </div>
 
-      <div v-if="!extensions.length" class="py-8 text-center text-[12px] text-muted">暂无扩展</div>
+      <div v-if="!extensions.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.extension.noExtensions') }}</div>
 
       <div v-for="ext in extensions" :key="ext.name" class="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2.5">
         <div class="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -125,7 +136,7 @@
             <span class="truncate text-[12px] font-medium text-fg">{{ ext.name }}</span>
             <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">v{{ ext.version }}</span>
             <!-- 来源标签 -->
-            <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">user</span>
+            <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceUser') }}</span>
           </div>
           <span class="truncate text-[11px] text-muted">{{ ext.description }}</span>
           <div v-if="ext.tools?.length" class="mt-1 flex flex-wrap gap-1">
@@ -136,17 +147,19 @@
             <Switch
               :model-value="ext.autoUpgrade ?? false"
               class="shrink-0"
-              aria-label="自动升级"
+              :disabled="toggling.has(ext.name)"
+              :aria-label="t('settings.extension.autoUpgrade')"
               @update:model-value="onSetAutoUpgrade(ext, $event)"
             />
-            <span class="text-[11px] text-muted">自动升级</span>
+            <span class="text-[11px] text-muted">{{ t('settings.extension.autoUpgrade') }}</span>
           </div>
         </div>
-        <!-- 启用开关：Switch 原语（状态经 onExtensions 订阅推回） -->
+        <!-- 启用开关：Switch 原语。乐观更新——点击立即改 store（开关即时滑动），API 失败回滚。 -->
         <Switch
           :model-value="ext.enabled"
           class="shrink-0"
-          :aria-label="ext.enabled ? '禁用扩展' : '启用扩展'"
+          :disabled="toggling.has(ext.name)"
+          :aria-label="ext.enabled ? t('settings.extension.disableExt') : t('settings.extension.enableExt')"
           @update:model-value="onToggle(ext, $event)"
         />
         <!-- 升级按钮（仅 user-installed 扩展显示） -->
@@ -154,7 +167,7 @@
           v-if="ext.source === 'user-installed'"
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-accent-soft hover:text-accent [&_svg]:size-3.5"
-          title="升级"
+          :title="t('settings.extension.upgradeTitle')"
           :disabled="upgrading.has(ext.name)"
           @click="onUpgrade(ext.name)"
         >
@@ -164,8 +177,8 @@
         <!-- 卸载按钮 -->
         <Button
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [&_svg]:size-3.5"
-          title="卸载"
+          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger [&_svg]:size-3.5"
+          :title="t('settings.extension.uninstallTitle')"
           @click="confirmTarget = ext.name"
         >
           <Trash2 />
@@ -177,10 +190,10 @@
     <ConfirmDialog
       v-model:open="uninstallDialogOpen"
       variant="danger"
-      :title="`卸载 ${confirmTarget}？`"
-      description="此操作不可撤销，扩展将从本地移除。"
-      confirm-text="卸载"
-      cancel-text="取消"
+      :title="t('settings.extension.uninstallConfirmTitle', { name: confirmTarget })"
+      :description="t('settings.extension.uninstallConfirmDesc')"
+      :confirm-text="t('settings.extension.uninstallConfirmBtn')"
+      :cancel-text="t('settings.extension.cancel')"
       :loading="uninstalling"
       @confirm="onConfirmUninstall"
     />
@@ -189,6 +202,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Trash2, Loader2, AlertCircle, Check, ArrowUpCircle } from '@lucide/vue'
 import type { ExtensionDiscoveredPayload, RecommendedExtension } from '@xyz-agent/shared'
 import { ConfirmDialog } from '@/components/ui/dialog'
@@ -198,9 +212,16 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import { extension as extensionApi } from '@/api'
-import type { ExtensionItem } from '@/stores/settings'
+import { useSettingsStore, type ExtensionItem } from '@/stores/settings'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ extensions: ExtensionItem[] }>()
+const settingsStore = useSettingsStore()
+const { info: toastInfo } = useToast()
+const { t } = useI18n()
+
+/** toggle 中的扩展名集合（防双击：API 期间 disable Switch） */
+const toggling = ref<Set<string>>(new Set())
 
 const tabs = [
   { id: 'npm', label: 'npm' },
@@ -222,7 +243,9 @@ async function refreshRecommended() {
     recommended.value = await extensionApi.fetchRecommended()
   } catch (e) {
     // 拉取失败仅记录到 actionError，不阻塞页面其余功能
-    actionError.value = e instanceof Error ? `加载推荐扩展失败: ${e.message}` : `加载推荐扩展失败: ${String(e)}`
+    actionError.value = e instanceof Error
+      ? t('settings.extension.loadRecommendedFailed', { msg: e.message })
+      : t('settings.extension.loadRecommendedFailed', { msg: String(e) })
   }
 }
 
@@ -239,6 +262,7 @@ async function onInstallRecommended(pkgName: string) {
   installingRecommended.value = next
   try {
     await extensionApi.install(`npm:${pkgName}`)
+    toastInfo(t('settings.extension.installedToast'))
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -280,20 +304,37 @@ const tabPlaceholder = computed(() => {
   return map[activeTab.value] ?? ''
 })
 
+/** 第一层按钮文案：npm 单步直装→"安装"；dir/git 多步流先发现候选→"发现" */
+const installButtonText = computed(() => activeTab.value === 'npm' ? t('settings.extension.install') : t('settings.extension.discoverBtn'))
+
 // 切换 tab 清空已发现候选（不同来源的候选不再适用）
 watch(activeTab, () => {
   discovered.value = null
   selected.value = new Set()
 })
 
-/** 启用开关 → extension.toggle（状态经 onExtensions 订阅推回）。
- * 失败记录错误供 UI 反馈；onExtensions 订阅未变 → 开关视觉态自动恢复。 */
+/** 启用开关 → 乐观更新 store（开关即时滑动）+ extension.toggle 持久化。
+ * 乐观：先改 store，UI 立即反应；失败回滚 store + 报错。
+ * 广播回来时权威值覆盖 store（幂等：若值一致无副作用）。 */
 async function onToggle(ext: ExtensionItem, enabled: boolean) {
+  if (toggling.value.has(ext.name)) return
   actionError.value = ''
+  // 防双击
+  const next = new Set(toggling.value)
+  next.add(ext.name)
+  toggling.value = next
+  // 乐观：立即改 store
+  const old = settingsStore.setExtensionEnabled(ext.name, enabled)
   try {
     await extensionApi.toggle(ext.name, enabled)
   } catch (e) {
+    // 回滚
+    settingsStore.setExtensionEnabled(ext.name, old)
     actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    const after = new Set(toggling.value)
+    after.delete(ext.name)
+    toggling.value = after
   }
 }
 
@@ -309,6 +350,7 @@ async function onInstall() {
       const source = input.startsWith('npm:') ? input : `npm:${input}`
       await extensionApi.install(source)
       installInput.value = ''
+      toastInfo(t('settings.extension.installedToast'))
     } else if (activeTab.value === 'dir') {
       const result = await extensionApi.installDir(input)
       setDiscovered(result)
@@ -327,7 +369,8 @@ async function onInstall() {
 /** 记录发现结果，默认全选（常见 UX：一次性装全部候选，用户可逐项取消） */
 function setDiscovered(result: ExtensionDiscoveredPayload) {
   discovered.value = result
-  selected.value = new Set(result.candidates.map((c) => c.dirName))
+  // 默认不勾选——用户手动选择要安装的 extension，避免误装
+  selected.value = new Set()
 }
 
 /** 切换候选选中态（dirName 为 key） */
@@ -336,6 +379,21 @@ function toggleCandidate(dirName: string) {
   if (next.has(dirName)) next.delete(dirName)
   else next.add(dirName)
   selected.value = next
+}
+
+/** 是否全选（用于全选/取消全选按钮文案切换） */
+const isAllSelected = computed(() =>
+  !!discovered.value
+  && discovered.value.candidates.length > 0
+  && selected.value.size === discovered.value.candidates.length,
+)
+
+/** 全选/取消全选候选 */
+function toggleSelectAll() {
+  if (!discovered.value) return
+  selected.value = isAllSelected.value
+    ? new Set()
+    : new Set(discovered.value.candidates.map((c) => c.dirName))
 }
 
 /** 完成安装：把选中候选从 tempDir 装入 extensions/，runtime 推 config.extensions 刷新列表 */
@@ -350,6 +408,7 @@ async function onFinishInstall() {
     discovered.value = null
     selected.value = new Set()
     installInput.value = ''
+    toastInfo(t('settings.extension.installedToast'))
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -368,7 +427,7 @@ async function onCancelInstall() {
   } catch (e) {
     // tempDir 清理失败仅记录，不阻塞 UI（候选区已关闭）。临时文件可能未清理，需手动检查。
     const baseMsg = e instanceof Error ? e.message : String(e)
-    actionError.value = `${baseMsg}（临时文件可能未清理）`
+    actionError.value = `${baseMsg}${t('settings.extension.cancelInstallTempHint')}`
   }
 }
 
@@ -381,6 +440,7 @@ async function onConfirmUninstall() {
   try {
     await extensionApi.uninstall(name)
     confirmTarget.value = ''
+    toastInfo(t('settings.extension.uninstalledToast'))
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -397,8 +457,11 @@ async function onUpgrade(name: string) {
   upgrading.value = next
   try {
     await extensionApi.upgrade(name)
+    toastInfo(t('settings.extension.upgradedToast'))
   } catch (e) {
-    actionError.value = e instanceof Error ? `升级失败: ${e.message}` : `升级失败: ${String(e)}`
+    actionError.value = e instanceof Error
+      ? t('settings.extension.upgradeFailed', { msg: e.message })
+      : t('settings.extension.upgradeFailed', { msg: String(e) })
   } finally {
     const after = new Set(upgrading.value)
     after.delete(name)
@@ -406,13 +469,25 @@ async function onUpgrade(name: string) {
   }
 }
 
-/** 设置扩展自动升级开关（仅 user-installed） */
+/** 设置扩展自动升级开关（仅 user-installed）→ 乐观更新 + 持久化。 */
 async function onSetAutoUpgrade(ext: ExtensionItem, enabled: boolean) {
+  if (toggling.value.has(ext.name)) return
   actionError.value = ''
+  const next = new Set(toggling.value)
+  next.add(ext.name)
+  toggling.value = next
+  const old = settingsStore.setExtensionAutoUpgrade(ext.name, enabled)
   try {
     await extensionApi.setAutoUpgrade(ext.name, enabled)
   } catch (e) {
-    actionError.value = e instanceof Error ? `设置自动升级失败: ${e.message}` : `设置自动升级失败: ${String(e)}`
+    settingsStore.setExtensionAutoUpgrade(ext.name, old)
+    actionError.value = e instanceof Error
+      ? t('settings.extension.autoUpgradeFailed', { msg: e.message })
+      : t('settings.extension.autoUpgradeFailed', { msg: String(e) })
+  } finally {
+    const after = new Set(toggling.value)
+    after.delete(ext.name)
+    toggling.value = after
   }
 }
 </script>

@@ -5,7 +5,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
-import { toErrorMessage, isEnoent } from '../utils/errors.js'
+import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
@@ -22,22 +22,45 @@ export class SessionMessageHandler {
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.getSubagents', 'session.getSubagentHistory',
+    'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
+    'session.workflowAction', 'session.subagentAction',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
   async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
-        const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
-        this.ctx.reply(ws, msg.id, 'session.created', { session })
-        return this.ctx.broadcastSessionList()
+        try {
+          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
+          this.ctx.reply(ws, msg.id, 'session.created', { session })
+          return this.ctx.broadcastSessionList()
+        } catch (e) {
+          // L4: model 未配置时返回差异化 error code，前端据此引导去 Settings 配置。
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          throw e
+        }
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
         const { srcSessionId, fromPiEntryId, includeFrom, label } = msg.payload
-        const session = await this.ctx.sessionService.forkSession(srcSessionId, fromPiEntryId, includeFrom ?? true, label)
-        this.ctx.reply(ws, msg.id, 'session.created', { session })
-        return this.ctx.broadcastSessionList()
+        try {
+          const session = await this.ctx.sessionService.forkSession(srcSessionId, fromPiEntryId, includeFrom ?? true, label)
+          this.ctx.reply(ws, msg.id, 'session.created', { session })
+          return this.ctx.broadcastSessionList()
+        } catch (e) {
+          // L4: model 未配置时返回差异化 error code（与 session.create 同模式）。
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          throw e
+        }
       }
       case 'session.delete': {
         const delSid = msg.payload.sessionId
@@ -83,6 +106,34 @@ export class SessionMessageHandler {
       case 'session.history': {
         const messages = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
         return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages })
+      }
+      case 'session.getSubagents': {
+        const subagents = await this.ctx.sessionService.getSubagents(msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.subagents', { sessionId: msg.payload.sessionId, subagents })
+      }
+      case 'session.getSubagentHistory': {
+        const messages = await this.ctx.sessionService.getSubagentHistory(msg.payload.sessionId, msg.payload.subagentId)
+        return this.ctx.reply(ws, msg.id, 'session.subagentHistory', { sessionId: msg.payload.sessionId, subagentId: msg.payload.subagentId, messages })
+      }
+      case 'session.getWorkflows': {
+        const workflows = await this.ctx.sessionService.getWorkflows(msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.workflows', { sessionId: msg.payload.sessionId, workflows })
+      }
+      case 'session.getAgentCallHistory': {
+        const messages = await this.ctx.sessionService.getAgentCallHistory(msg.payload.sessionId, msg.payload.agentCallSessionId)
+        return this.ctx.reply(ws, msg.id, 'session.agentCallHistory', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, messages })
+      }
+      case 'session.getAgentCallFilePath': {
+        const filePath = await this.ctx.sessionService.getAgentCallFilePath(msg.payload.sessionId, msg.payload.agentCallSessionId)
+        return this.ctx.reply(ws, msg.id, 'session.agentCallFilePath', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, filePath })
+      }
+      case 'session.workflowAction': {
+        await this.ctx.sessionService.workflowAction(msg.payload.sessionId, msg.payload.action, msg.payload.runId)
+        return this.ctx.reply(ws, msg.id, 'session.workflowActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, runId: msg.payload.runId })
+      }
+      case 'session.subagentAction': {
+        await this.ctx.sessionService.subagentAction(msg.payload.sessionId, msg.payload.action, msg.payload.subagentId)
+        return this.ctx.reply(ws, msg.id, 'session.subagentActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, subagentId: msg.payload.subagentId })
       }
       case 'session.getCommands': {
         // renderer 切 session 后主动拉取命令（修复 broadcast 与订阅时序竞争）。

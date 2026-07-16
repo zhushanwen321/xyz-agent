@@ -58,9 +58,27 @@ function has(selector: string): boolean {
   return document.body.querySelector(selector) !== null
 }
 
-/** 构造 Section[] fixture */
+/**
+ * label → SectionKind 映射。SearchModal 的 activeType 过滤（Tab 切类）基于 s.kind 而非 s.label
+ * （AH-S3：避免 locale 切换导致硬编码字面量比较回归）。fixture 必须带 kind 才能被正确过滤。
+ * 四类 kind 与 SearchItem['type'] 同名（command/file/symbol/session），外加 recent/suggested。
+ */
+const LABEL_TO_KIND: Record<string, Section['kind']> = {
+  命令: 'command',
+  文件: 'file',
+  符号: 'symbol',
+  会话: 'session',
+  最近: 'recent',
+  建议命令: 'suggested',
+}
+
+/** 构造 Section[] fixture。kind 由 label 映射推导（缺失时回退首项 type），与生产 useSearch 输出对齐。 */
 function sectionsOf(...groups: { label: string; items: SearchItem[] }[]): Section[] {
-  return groups
+  return groups.map((g) => ({
+    kind: LABEL_TO_KIND[g.label] ?? (g.items[0]?.type as Section['kind'] | undefined) ?? 'command',
+    label: g.label,
+    items: g.items,
+  }))
 }
 
 /** 命中项 fixture（title/sub 含查询子串，供 <mark> 高亮断言） */

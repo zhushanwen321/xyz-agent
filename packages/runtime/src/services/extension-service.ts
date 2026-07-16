@@ -17,14 +17,14 @@
  * 5. 清理临时目录
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename, delimiter } from 'node:path'
+import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
-import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
+import { isStrictlyUnder, isUnderOrEqual, extractRepoName } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../utils/runtime-env.js'
 
@@ -155,6 +155,7 @@ export class ExtensionService {
       .split(delimiter)
       .map(p => p.trim())
       .filter(p => p.length > 0)
+      .map(p => p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
       .map(p => resolve(this.projectRoot, p))
   }
 
@@ -299,6 +300,19 @@ export class ExtensionService {
    */
   async uninstallExtension(name: string): Promise<void> {
     return this.withInstallLock(async () => {
+      // 先扫描已安装列表，按 name 查找 extension 的路径
+      const installed = await this.scanExtensions()
+      const target = installed.find((e) => e.name === name)
+      const thirdPartyDir = join(this.settingsDir, 'extensions')
+
+      // local-dir / git 安装的 extension 在 ~/.xyz-agent/pi/agent/extensions/ 下。
+      // finishInstall 时只 cpSync 到此目录，未记录到 settings.json packages[]——
+      // 卸载必须 rmSync 目录，否则 resolver 会重新发现它。
+      if (target?.path && isUnderOrEqual(thirdPartyDir, target.path)) {
+        rmSync(target.path, { recursive: true, force: true })
+      }
+
+      // npm 安装的 extension：从 settings packages[] 移除 + 删 node_modules
       const npmDir = join(this.settingsDir, 'npm')
       const source = `npm:${name}`
 
@@ -435,7 +449,11 @@ export class ExtensionService {
    * Copies to temp dir, discovers extensions, returns candidates.
    */
   async installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: ExtensionInfo[] }> {
-    const absPath = resolve(sourcePath)
+    // 展开 ~ / ~user 为 home 目录（Node.js path.resolve 不认 ~，会当字面量拼到 cwd 上）
+    const expanded = sourcePath.startsWith('~')
+      ? join(homedir(), sourcePath.slice(1))
+      : sourcePath
+    const absPath = resolve(expanded)
 
     if (!existsSync(absPath)) {
       throw new Error(`Source path does not exist: ${absPath}`)
@@ -469,10 +487,26 @@ export class ExtensionService {
     // Create temp directory
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
-    // Copy source to temp, clean up on failure
+    // Copy into tempDir/<sourceBaseName>/ — not tempDir root. When the source IS itself
+    // a pi extension, discoverExtensions returns dirName = basename(scanned dir). Copying
+    // to a named subdir keeps dirName = sourceBaseName, matching finishInstall's contract
+    // (selected names must be tempDir subdirectories). Otherwise dirName becomes the
+    // tempDir basename ("ext-scan-xxxx") and finishInstall fails.
+    const sourceBaseName = basename(checkPath)
+    const destInTemp = join(tempDir, sourceBaseName)
+
     try {
-      cpSync(checkPath, tempDir, { recursive: true })
+      cpSync(checkPath, destInTemp, { recursive: true })
       const candidates = this.discoverExtensions(tempDir)
+      // dirName 改为相对于 tempDir 的路径，使 finishInstall 能正确定位嵌套 extension。
+      // discoverExtensions 返回的 dirName 是 basename（如 "pi-subagent-workflow"），
+      // 但当源目录是包含多个 extension 的父目录时，实际路径是 tempDir/<source>/pi-subagent-workflow。
+      // 用 path 字段（绝对路径）计算相对路径，finishInstall 的 join(tempDir, relPath) 就能命中。
+      for (const c of candidates) {
+        if (c.path) {
+          c.dirName = relative(tempDir, c.path)
+        }
+      }
       return { tempDir, candidates }
     } catch (err) {
       rmSync(tempDir, { recursive: true, force: true })
@@ -497,9 +531,14 @@ export class ExtensionService {
       throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
     }
 
+    // Clone into tempDir/<repoName>/ — same rationale as installLocalDirectory: avoids
+    // the "root IS the extension" case where dirName would become the tempDir basename.
+    const repoName = extractRepoName(url)
+    const destInTemp = join(tempDir, repoName)
+
     // Git clone — 经 IInstaller port（infra spawn git，execFileSync 防 command injection）
     try {
-      await this.installer.installGit(url, tempDir, GIT_CLONE_TIMEOUT)
+      await this.installer.installGit(url, destInTemp, GIT_CLONE_TIMEOUT)
     } catch (e) {
       const msg = toErrorMessage(e)
       // Cleanup temp dir on failure
@@ -510,9 +549,9 @@ export class ExtensionService {
     }
 
     // If package.json exists, install dependencies (经 IInstaller port)
-    if (existsSync(join(tempDir, 'package.json'))) {
+    if (existsSync(join(destInTemp, 'package.json'))) {
       try {
-        await this.installer.installDeps(tempDir)
+        await this.installer.installDeps(destInTemp)
       } catch (e) {
         log.warn(`[extension-service] npm install in git repo failed: ${toErrorMessage(e)}`)
         // Non-fatal — some repos don't need deps to discover extensions
@@ -522,6 +561,12 @@ export class ExtensionService {
     // Discover extensions — wrap in try-catch to clean up tempDir on unexpected errors
     try {
       const candidates = this.discoverExtensions(tempDir)
+      // dirName 改为相对于 tempDir 的路径（同 installLocalDirectory）
+      for (const c of candidates) {
+        if (c.path) {
+          c.dirName = relative(tempDir, c.path)
+        }
+      }
       return { tempDir, candidates }
     } catch (err) {
       try { rmSync(tempDir, { recursive: true, force: true }) } catch (e) { log.debug('cleanup failed:', toErrorMessage(e)) }
@@ -545,13 +590,13 @@ export class ExtensionService {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 
-    // Validate selected are simple dirNames: no path traversal
-    // NOTE: `selected` contains dirName values (filesystem basenames), not npm package names.
-    // scoped packages like @scope/pkg have dirName = 'pkg' (or whatever basename returns).
+    // Validate selected: relative paths allowed (nested extension collections),
+    // but no path traversal (..) or absolute paths.
+    // dirName is relative to tempDir — discoverExtensions computes it via relative(tempDir, path).
     for (const dirName of selected) {
-      if (dirName !== basename(dirName) || dirName.includes('..') || dirName.includes('/') || dirName.includes('\\')) {
+      if (dirName.includes('..') || isAbsolute(dirName) || dirName.includes('\\')) {
         throw new Error(`Invalid extension dirName: "${dirName}"`
-          + ' — must be a simple directory name without path separators or traversal')
+          + ' — must be a relative path without traversal')
       }
     }
 
@@ -579,7 +624,9 @@ export class ExtensionService {
 
     for (const dirName of selected) {
       const srcDir = join(tempDir, dirName)
-      const destDir = join(extensionsDir, dirName)
+      // destDir 用 basename —— dirName 可能是嵌套相对路径（如 "extensions/pi-subagent-workflow"），
+      // 但安装目标应平铺在 extensions/ 下，不保留源目录层级。
+      const destDir = join(extensionsDir, basename(dirName))
       // Remove old version first to prevent residual files from previous installs
       rmSync(destDir, { recursive: true, force: true })
       cpSync(srcDir, destDir, { recursive: true })

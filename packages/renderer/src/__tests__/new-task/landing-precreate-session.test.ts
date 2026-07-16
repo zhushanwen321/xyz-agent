@@ -35,7 +35,9 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('@/api', () => ({
   session: { create: apiMock.create, remove: apiMock.remove },
-  git: {},
+  // submitFirstMessage → useFileTree.loadTree 调 fileApi.tree/gitApi.status（Promise.allSettled）；给空返回避免 unhandled rejection
+  file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
+  git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
   workspace: { record: vi.fn().mockResolvedValue([]), listRecent: vi.fn().mockResolvedValue([]) },
 }))
 

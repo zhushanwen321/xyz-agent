@@ -8,7 +8,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-export type SidebarTab = 'sessions' | 'files'
+export type SidebarTab = 'sessions' | 'files' | 'subagents' | 'workflows'
 
 export const useSidebarStore = defineStore('sidebar', () => {
   const activeTab = ref<SidebarTab>('sessions')

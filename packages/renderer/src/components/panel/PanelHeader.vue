@@ -28,8 +28,8 @@
         variant="ghost"
         size="icon"
         class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg"
-        :title="sidebar.collapsed ? '展开侧栏' : '收起侧栏'"
-        aria-label="切换侧栏"
+        :title="sidebar.collapsed ? t('panel.header.toggleSidebarExpand') : t('panel.header.toggleSidebarCollapse')"
+        :aria-label="t('panel.header.toggleSidebarAria')"
         @click="sidebar.toggleCollapsed()"
       >
         <PanelLeftOpen v-if="sidebar.collapsed" class="size-[14px]" />
@@ -40,8 +40,8 @@
         size="icon"
         class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
         :disabled="!navigation.canBack"
-        title="后退"
-        aria-label="后退"
+        :title="t('panel.header.back')"
+        :aria-label="t('panel.header.back')"
         @click="navigation.back()"
       >
         <ArrowLeft class="size-[14px]" />
@@ -51,28 +51,50 @@
         size="icon"
         class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
         :disabled="!navigation.canForward"
-        title="前进"
-        aria-label="前进"
+        :title="t('panel.header.forward')"
+        :aria-label="t('panel.header.forward')"
         @click="navigation.forward()"
       >
         <ArrowRight class="size-[14px]" />
       </Button>
     </div>
+    <!-- subagent 视图返回按钮：viewingSubagent 态显示，替代正常态的 spinner+breadcrumb。
+         右侧按钮组（drawer/git/split/close）不受影响，继续保留。 -->
+    <Button
+      v-if="viewingSubagent"
+      variant="ghost"
+      size="icon"
+      class="shrink-0 gap-1 rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+      :title="t('panel.header.backToMain')"
+      data-testid="subagent-back-btn"
+      @click="emit('back')"
+    >
+      <ArrowLeft class="size-[14px]" />
+    </Button>
     <span
-      class="size-[7px] shrink-0 rounded-full"
-      :class="statusDotClass"
+      v-if="viewingSubagent"
+      class="min-w-0 shrink truncate text-[12px] font-medium text-fg"
+      :title="subagentLabel"
+    >{{ subagentLabel }}</span>
+    <component
+      :is="ICON_COMPONENTS[iconConfig.icon]"
+      v-if="!viewingSubagent"
+      data-testid="panel-session-icon"
+      :data-icon="iconConfig.icon"
+      class="size-[13px] shrink-0"
+      :class="[iconConfig.color, iconConfig.animation]"
     />
     <!-- breadcrumb（shell/spec §四：项目 ▸ 分支，落点在 main-header 内）。
          不显会话名（仅目录 + 分支两段），避免与目录视觉重复。
          shrink + min-w-0：长目录+分支时截断优先发生于此，绝不盖右侧 3 按钮（按钮组 ml-auto + shrink-0）。 -->
-    <nav class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
-      <ol class="flex min-w-0 items-center gap-1 text-[12.5px]">
+    <nav v-if="!viewingSubagent" class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
+      <ol class="flex min-w-0 items-center gap-1 text-[12px]">
         <li class="flex min-w-0 items-center gap-1.5">
           <Folder class="size-3 shrink-0 opacity-70 text-subtle" />
           <span
             class="truncate font-mono text-[12px] font-semibold"
             :class="active ? 'text-fg' : 'text-muted'"
-            :title="`工作目录：${sessionDir}`"
+            :title="`${t('panel.header.workingDir')}：${sessionDir}`"
           >{{ dirName }}</span>
         </li>
         <template v-if="gitBranch">
@@ -82,7 +104,7 @@
           <li class="min-w-0">
             <span
               class="truncate font-mono text-[11px] text-accent"
-              :title="`分支：${gitBranch}`"
+              :title="`${t('panel.header.branch')}：${gitBranch}`"
             >{{ gitBranch }}</span>
           </li>
         </template>
@@ -90,6 +112,34 @@
     </nav>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+      <!-- session JSONL 文件名（id 前 8 位 + .jsonl）：点击复制磁盘真实绝对路径。
+           正常态用主 sessionFile，overlay 态（subagent/agent call）用 overlaySessionFile。
+           路径为空（pi 延迟写入窗口，规则 #6）时不渲染。放右侧按钮组最前，正常态与 overlay 态复用同一位。 -->
+      <Button
+        v-if="displayFile"
+        variant="ghost"
+        data-testid="panel-session-file"
+        class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        :title="t('panel.header.copySessionFile')"
+        @click="copy(displayFile, 'file')"
+      >
+        <Check v-if="copied === 'file'" class="size-3 text-accent" />
+        <FileText v-else class="size-3 opacity-60" />
+        <span>{{ shortFileName }}</span>
+      </Button>
+      <!-- SideDrawer toggle（always-visible，不依赖 git 仓库）。
+           非折叠态显此按钮；折叠态 chrome 按钮组已含侧栏切换。 -->
+      <Button
+        v-if="!showChrome"
+        variant="ghost"
+        size="icon"
+        class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        data-testid="drawer-toggle"
+        :title="t('panel.sideDrawer.title')"
+        @click="emit('toggleDrawer')"
+      >
+        <PanelRight class="size-[15px]" />
+      </Button>
       <!-- git 入口（panel/spec.md：git 移入 SideDrawer git tab）。
            非 git 仓库不渲染（gitIndicator.hasRepo=false）。脏状态点：
            conflict → danger；有改动（staged/dirty）→ warning；clean → 无点。
@@ -99,7 +149,7 @@
         variant="ghost"
         size="icon"
         class="relative size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-        title="Git 状态 · 打开侧栏"
+        :title="t('panel.header.gitStatus')"
         @click="emit('openGit')"
       >
         <GitBranch class="size-[15px]" />
@@ -117,7 +167,7 @@
         variant="ghost"
         size="icon"
         class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-        title="分屏 · 开第二会话"
+        :title="t('panel.header.split')"
         @click="emit('split')"
       >
         <Columns2 class="size-[15px]" />
@@ -127,7 +177,7 @@
         variant="ghost"
         size="icon"
         class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
-        title="新建会话 · 替换待机侧"
+        :title="t('panel.header.newSession')"
         @click="emit('newSession')"
       >
         <Plus class="size-[15px]" />
@@ -139,8 +189,8 @@
         v-if="isDual"
         variant="ghost"
         size="icon"
-        class="size-[26px] rounded-md text-muted hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [-webkit-app-region:no-drag]"
-        title="关闭会话"
+        class="size-[26px] rounded-md text-muted hover:bg-danger-soft hover:text-danger [-webkit-app-region:no-drag]"
+        :title="t('panel.header.closeSession')"
         @click="emit('close')"
       >
         <X class="size-[15px]" />
@@ -152,17 +202,23 @@
 <script setup lang="ts">
  
 import { computed } from 'vue'
-import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, ArrowLeft, ArrowRight } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
+import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, PanelRight, ArrowLeft, ArrowRight, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle, FileText, Check } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
+import { useCopy } from '@/composables/effects/useCopy'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
+import { STATUS_ICON } from '@/composables/logic/sessionStatus'
+import { formatShortSessionFile } from '@/composables/logic/session-file-format'
 
 const props = defineProps<{
   sessionLabel: string
   sessionDir: string
+  /** session JSONL 绝对路径（pi 延迟写入窗口可能为空，不渲染文件名） */
+  sessionFile?: string
   gitBranch?: string
   /** git 脏状态指示（驱动右侧 git 图标按钮显隐 + 脏状态点色）。hasRepo=false 不渲染按钮 */
   gitIndicator?: GitIndicator
@@ -171,16 +227,27 @@ const props = defineProps<{
   isDual: boolean
   /** 是否为 P1（panel.panels[0]）—— 折叠态 chrome 仅落 P1 header */
   isFirstPanel: boolean
+  /** 是否在查看 subagent 对话流（显示返回按钮，隐藏正常态内容） */
+  viewingSubagent?: boolean
+  /** subagent 视图标题（agent 名称 + subagentId 摘要） */
+  subagentLabel?: string
+  /** overlay 态 JSONL 路径（subagent/agent call 对话流文件，正常态不用） */
+  overlaySessionFile?: string
 }>()
 
 const emit = defineEmits<{
   split: []
   newSession: []
   close: []
-  /** 打开 SideDrawer git tab（panel/spec.md：git 入口落 per-session header） */
+  /** 打开 SideDrawer git tab（PanelContainer 统一渲染抽屉，事件上抛） */
   openGit: []
+  /** 切换 SideDrawer 开关（always-visible 按钮，不依赖 git 仓库） */
+  toggleDrawer: []
+  /** 返回主会话（subagent 视图退出） */
+  back: []
 }>()
 
+const { t } = useI18n()
 const navigation = useNavigationStore()
 const sidebar = useSidebarStore()
 const { isFullscreen } = usePlatformChrome()
@@ -200,15 +267,32 @@ const dirName = computed(() => {
   return segs.length ? segs[segs.length - 1] : props.sessionDir
 })
 
-/** 状态点 5 态色（design-tokens SSOT，与 sidebar 一致）。running 用 animate-pulse 呼吸。 */
-const statusDotClass = computed(() => {
-  const map: Record<DerivedStatus, string> = {
-    running: 'bg-accent animate-pulse',
-    waiting: 'bg-warning',
-    done: 'bg-success',
-    stopped: 'bg-subtle opacity-50',
-    error: 'bg-danger',
-  }
-  return map[props.status]
-})
+/** 当前状态对应的语义图标配置（icon / color / animation） */
+const iconConfig = computed(() => STATUS_ICON[props.status])
+
+/**
+ * 当前要展示/复制的 JSONL 路径：overlay 态用 overlaySessionFile（subagent/agent call 对话流），
+ * 正常态用 sessionFile（主 session）。overlay 态无 overlaySessionFile 时不 fallback 主 sessionFile。
+ */
+const displayFile = computed(() =>
+  props.viewingSubagent ? props.overlaySessionFile : props.sessionFile,
+)
+
+/** session JSONL 短文件名（前 8 位 + .jsonl）；displayFile 为空时返回空串 */
+const shortFileName = computed(() => (displayFile.value ? formatShortSessionFile(displayFile.value) : ''))
+
+/** 复制反馈（点击文件名后 1.2s 显示 Check 图标） */
+const { copied, copy } = useCopy()
+
+/** lucide 图标名 → 组件映射 */
+const ICON_COMPONENTS: Record<string, unknown> = {
+  RefreshCw,
+  ArrowUpCircle,
+  Hourglass,
+  Wrench,
+  Zap,
+  CheckCircle2,
+  Ban,
+  AlertCircle,
+}
 </script>

@@ -1,8 +1,9 @@
 /**
- * isGenerating scan 性能 + 24h timer 不误触发（T8.1/T8.2 perf-chaos）。
+ * isGenerating scan 性能 + streaming timer 阈值不误触发（T8.1/T8.2 perf-chaos）。
  *
  * T8.1: 1000 messages，高频 text_delta → 单次 scan << 50ms + scan 限定 get(sid)
- * T8.2: streaming + fake timer < 24h → finalizeSession 未被 timer 触发
+ * T8.2: streaming + fake timer < 阈值 → finalizeSession 未被 timer 触发
+ *   （W6 调整：streaming 超时阈值从 24h 降到 10min，见 chat.ts DEFAULT_STREAMING_TIMEOUT_MS）
  *
  * 运行：npx vitest run src/__tests__/stores/chat-perf-scan-timer.test.ts
  */
@@ -69,14 +70,14 @@ describe('T8.1 isGenerating scan 性能', () => {
   })
 })
 
-describe('T8.2 24h streaming timer 不误触发', () => {
+describe('T8.2 streaming timer 不在阈值前误触发', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     setActivePinia(createPinia())
   })
   afterEach(() => vi.useRealTimers())
 
-  it('streaming + timer < 24h → finalizeSession 不被 timer 触发', () => {
+  it('streaming + timer < 阈值(10min) → finalizeSession 不被 timer 触发', () => {
     const store = useChatStore()
     const sid = 's-timer'
     store.applyMessageEvent(sid, {
@@ -84,8 +85,8 @@ describe('T8.2 24h streaming timer 不误触发', () => {
       payload: { sessionId: sid, messageId: 'a1' },
     })
     expect(store.isGenerating(sid)).toBe(true)
-    // 推进 23 小时（< 24h 默认阈值）
-    vi.advanceTimersByTime(23 * 60 * 60 * 1000)
+    // 推进 9 分钟（< 10min 阈值 DEFAULT_STREAMING_TIMEOUT_MS）
+    vi.advanceTimersByTime(9 * 60 * 1000)
     // 仍 streaming（timer 未触发 finalizeSession）
     expect(store.isGenerating(sid)).toBe(true)
   })

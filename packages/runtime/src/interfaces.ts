@@ -19,6 +19,8 @@ import type {
   PluginInfo,
   GitStatusResult,
   FileNode,
+  SubagentRecord,
+  WorkflowRunRecord,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -88,6 +90,35 @@ export interface ISessionService {
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string, customInstructions?: string): Promise<void>
   getHistory(sessionId: string): Promise<Message[]>
+  /**
+   * 获取 session 派生的 subagent 列表（从主 session JSONL 的 subagent toolCall/toolResult 提取）。
+   * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 subagent 调用时返回空数组。
+   */
+  getSubagents(sessionId: string): Promise<SubagentRecord[]>
+  /**
+   * 获取 subagent 的对话流历史（直读 subagent JSONL，复用 convertPiHistory 转换）。
+   * subagentId 对应 SubagentRecord.subagentId，从 getSubagents 结果中查找 sessionFile 路径。
+   */
+  getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]>
+  /**
+   * 获取 session 派生的 workflow 列表（从主 session JSONL 的 workflow-state-link 提取）。
+   * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 workflow 调用时返回空数组。
+   */
+  getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]>
+  /**
+   * 获取 workflow 内 agent call 的对话流历史。
+   * agentCallSessionId 是 trace[].sessionId（pi session ID），按 sessionId 全局查找 JSONL。
+   */
+  getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
+  /**
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 findAgentCallFile）。
+   * 找不到返回空串（展示型功能，不 throw）。
+   */
+  getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string>
+  /** 触发 workflow 生命周期操作（pause/resume/abort，经扩展 slash command，不经 LLM） */
+  workflowAction(sessionId: string, action: 'pause' | 'resume' | 'abort', runId: string): Promise<void>
+  /** 取消 running subagent（经扩展 /subagents cancel，不经 LLM；对称 workflowAction） */
+  subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   /**
@@ -104,15 +135,16 @@ export interface ISessionService {
   forkSession(srcSessionId: string, fromPiEntryId: string, includeFrom: boolean, label?: string): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
-  /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/attachUsageListener） */
+  /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/handleTurnEndSideEffects） */
   getInputTokens(sessionId: string): number
   /** 回写 session 缓存的 inputTokens（onContextUpdate 拿到真实值后同步写入，打通 context.update 与 state_changed 数据源） */
   setInputTokens(sessionId: string, tokens: number): void
   /**
-   * 处理 context.update（pi agent_end 推 inputTokens）。session 级状态单一 owner：
-   * 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。index.ts onContextUpdate 仅调本方法。
+   * 处理 context.update（pi agent_end/turn_end 推 inputTokens + totalTokens）。session 级状态单一 owner：
+   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
+   * index.ts onContextUpdate 仅调本方法。totalTokens（W3）写入 session.tokenCount。
    */
-  applyContextUpdate(sessionId: string, inputTokens: number): void
+  applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
   /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId contextWindow 算）。 */
   getUsagePercent(sessionId: string): number
   /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
@@ -270,7 +302,7 @@ export interface IPluginService {
   handleBridgeRequest?(method: string, payload: Record<string, unknown>, sessionId: string): Promise<unknown>
 
   /** Install a plugin from an npm package specifier */
-  installPlugin(packageSpecifier: string): Promise<import('./services/plugin-service/plugin-installer.js').InstallResult>
+  installPlugin(packageSpecifier: string): Promise<import('./services/ports/plugin-installer.js').InstallResult>
   getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]
   /** 构造 bridge:sync 同步负载（工具 schema 塑形下沉 service，transport 只 reply） */
   getBridgeSyncPayload?(): import('./services/plugin-service/plugin-types.js').BridgeSyncPayload

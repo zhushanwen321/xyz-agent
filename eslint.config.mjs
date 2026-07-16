@@ -26,4 +26,14 @@ export default [
       '**/coverage/**',
     ],
   },
+  // [HISTORICAL] mock 门面文件是所有 domain 的聚合中心（session/chat/config/model/extension/plugin/
+  // settings/workspace/composer 共 9 个域），天然需要超 500 行。拆分到 per-domain 文件需要重构
+  // 内部共享函数（pushSession/emit/sleep/fixtureSessions 等），收益不抵成本。fixture 数据已拆到
+  // data.ts/settings-data.ts/composer-data.ts/workflow-data.ts。
+  {
+    files: ['packages/renderer/src/api/mock/index.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
 ];

@@ -24,6 +24,9 @@ import { matchFilter } from '@/lib/match-engine'
 import { toFileCandidates } from '@/lib/file-candidates'
 import type { FileCandidate } from '@/lib/file-candidates'
 import { filterAndSortFileCandidates } from '@/lib/file-match'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 import {
   WS_SOURCE_TIMEOUT_MS,
   type SearchCtx,
@@ -117,22 +120,26 @@ export function useSearch(activeSessionId: { value: string | null }) {
     // AC-5.2：mock 模式走 mockApi.search fixture（search 无 real WS domain，D-026）。
     // 返回已是 Section[] 形态（{label, items}），符号占位恒加入（与 real 轨 groupByType 对齐 D-001）。
     if (isMock) {
-      const mockSections = await mockApi.search.query(q)
+      const mockSections = (await mockApi.search.query(q)) as Section[]
       // BC-9 守卫：旧响应丢弃
       if (seq !== loadSeq) return []
       // 补符号占位 section（mock fixture 无符号数据，与 real 轨 groupByType 占位行为一致 D-001）
-      const hasSymbol = mockSections.some((s) => s.label === '符号')
-      return hasSymbol ? mockSections : [...mockSections, { label: '符号', items: [] }]
+      const symbolLabel = t('search.sectionSymbol')
+      const hasSymbol = mockSections.some((s) => s.label === symbolLabel)
+      return hasSymbol
+        ? mockSections
+        : [...mockSections, { kind: 'symbol', label: symbolLabel, items: [] }]
     }
 
     // 空查询：recents + 建议命令（不查 WS 源）
     if (!q) {
       const recentItems = mapRecentsToItems(recents.read())
       const suggested = mapCommandsToItems(commandRegistry.list().value).slice(0, SUGGESTED_COMMAND_COUNT)
-      return [
-        { label: '最近', items: recentItems },
-        { label: '建议命令', items: suggested },
-      ].filter((s) => s.items.length > 0)
+      const sections: Section[] = [
+        { kind: 'recent', label: t('search.recent'), items: recentItems },
+        { kind: 'suggested', label: t('search.suggestedCommand'), items: suggested },
+      ]
+      return sections.filter((s) => s.items.length > 0)
     }
 
     // 非空查询：allSettled 并行查 3 源
@@ -210,7 +217,7 @@ export function useSearch(activeSessionId: { value: string | null }) {
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error('搜索服务暂时不可用')), // AC-17.3
+        () => reject(new Error(t('composable.searchUnavailable'))), // AC-17.3
         WS_SOURCE_TIMEOUT_MS,
       )
     })
@@ -283,20 +290,20 @@ export function useSearch(activeSessionId: { value: string | null }) {
       byType.set(it.type, arr)
     }
     const labels: Record<SearchItem['type'], string> = {
-      command: '命令',
-      file: '文件',
-      symbol: '符号',
-      session: '会话',
+      command: t('search.sectionCommand'),
+      file: t('search.sectionFile'),
+      symbol: t('search.sectionSymbol'),
+      session: t('search.sectionSession'),
     }
     const sections: Section[] = []
     for (const t of ['command', 'file', 'symbol', 'session'] as const) {
       if (t === 'symbol') {
         // D-001 符号占位：恒占位 section（始终加入，不被空组过滤，不随查询变化，不参与匹配）
         // 调用方（SearchModal）决定如何渲染空符号分组
-        sections.push({ label: labels[t], items: [] })
+        sections.push({ kind: 'symbol', label: labels[t], items: [] })
       } else {
         const its = byType.get(t) ?? []
-        if (its.length > 0) sections.push({ label: labels[t], items: its })
+        if (its.length > 0) sections.push({ kind: t, label: labels[t], items: its })
       }
     }
     return sections

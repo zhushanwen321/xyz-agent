@@ -13,9 +13,9 @@
   <div class="overview flex h-full w-full flex-col overflow-hidden p-6">
     <!-- 工具栏：标题 + 计数 + 新建（筛选/排序 DEFERRED 不渲染入口，G3-002 hide） -->
     <header class="mb-3.5 flex items-center gap-2.5">
-      <h1 class="text-[18px] font-semibold tracking-tight text-fg">概览</h1>
+      <h1 class="text-[18px] font-semibold tracking-tight text-fg">{{ t('overview.title') }}</h1>
       <span class="rounded-full bg-surface px-2 py-0.5 font-mono text-[11px] text-muted">
-        {{ session.list.length }} 个会话
+        {{ t('overview.sessionCount', { count: session.list.length }) }}
       </span>
       <Button
         variant="ghost"
@@ -24,7 +24,7 @@
         @click="onNew"
       >
         <Plus class="size-[15px] text-subtle" />
-        <span>新建</span>
+        <span>{{ t('overview.newSession') }}</span>
         <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
       </Button>
     </header>
@@ -51,10 +51,10 @@
         class="flex flex-col items-center justify-center gap-3.5 rounded-lg border border-dashed border-border-strong p-14 text-center"
       >
         <LayoutGrid class="size-9 text-subtle" />
-        <p class="text-[15px] text-muted">还没有会话</p>
+        <p class="text-[15px] text-muted">{{ t('overview.emptyTitle') }}</p>
         <Button class="gap-1.5 text-[13px] font-semibold" @click="onNew">
           <Plus class="size-[14px]" />
-          新建一个会话开始
+          {{ t('overview.emptyHint') }}
         </Button>
       </div>
     </ScrollArea>
@@ -63,6 +63,7 @@
 
 <script setup lang="ts">
 import { useEventListener } from '@vueuse/core'
+import { useI18n } from 'vue-i18n'
 import { Plus, LayoutGrid } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -72,6 +73,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SessionCard from './SessionCard.vue'
 
+const { t } = useI18n()
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const { selectSession, newSession, focusedSessionId } = useSidebar()

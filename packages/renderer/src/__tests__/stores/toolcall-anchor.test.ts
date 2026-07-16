@@ -173,20 +173,20 @@ describe('end_not_received — 下游消费点', () => {
 describe('W1: isActive 作为 UI 层 SSOT — deriveStatus 消费 isActive（含 pendingSend 空窗）', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('pendingSend 空窗期 deriveStatus 应返回 running（isActive=true）', () => {
+  it('pendingSend 空窗期 deriveStatus 应返回 pending（isActive=true）', () => {
     const store = useChatStore()
     const sid = 's-pending'
     // 用户已提交但 message_start 未到（空窗期）
     store.addPendingSend(sid)
     expect(store.isActive(sid)).toBe(true)
-    // deriveStatus 消费 isActive 应返回 running
+    // deriveStatus 消费 isActive 应返回 pending（已提交待确认，8 态 SSOT）
     const status = deriveStatus(sid, store, true)
-    expect(status).toBe('running')
+    expect(status).toBe('pending')
   })
 
   it('isActive 不再受 activeId 限定：非活跃 session 的 pendingSend 也应驱动状态', () => {
     // 这个测试验证：即使 session 不是 activeId，只要有 pendingSend，
-    // deriveStatus 也应该返回 running（通过 isActive）
+    // deriveStatus 也应该返回 pending（通过 isActive）
     const store = useChatStore()
     const sid = 's-other'
     // 模拟非活跃 session 有 pendingSend
@@ -195,11 +195,11 @@ describe('W1: isActive 作为 UI 层 SSOT — deriveStatus 消费 isActive（含
     // 关键：deriveStatus 的第三个参数应该用 isActive，而不是 isGenerating && activeId
     // 修复后：调用方应该传入 isActive，而不是手动计算 isStreaming
     const status = deriveStatus(sid, store, store.isActive(sid))
-    // 预期：应返回 running（因为 isActive=true）
-    expect(status).toBe('running')
+    // 预期：应返回 pending（因为 isActive=true）
+    expect(status).toBe('pending')
   })
 
-  it('isCompacting 独立于 deriveStatus：compact 期间 isActive 仍可驱动 running', () => {
+  it('isCompacting 独立于 deriveStatus：compact 期间 isActive 仍可驱动 pending', () => {
     const store = useChatStore()
     const sid = 's-compact'
     // 设置 compacting 态
@@ -208,8 +208,8 @@ describe('W1: isActive 作为 UI 层 SSOT — deriveStatus 消费 isActive（含
     // 同时有 pendingSend（用户在 compact 期间提交了新消息）
     store.addPendingSend(sid)
     expect(store.isActive(sid)).toBe(true)
-    // deriveStatus 应返回 running（isActive=true），isCompacting 不影响
+    // deriveStatus 第三参数 isActive=true（isCompacting 默认 false 未透传）→ 返回 pending
     const status = deriveStatus(sid, store, true)
-    expect(status).toBe('running')
+    expect(status).toBe('pending')
   })
 })

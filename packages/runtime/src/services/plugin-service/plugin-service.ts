@@ -13,7 +13,7 @@ import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { bootstrapPluginService } from './plugin-lifecycle.js'
 import { ActiveSessionResolver } from './api/session-api.js'
-import { PluginInstaller, type InstallResult } from './plugin-installer.js'
+import type { InstallResult } from '../ports/plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache } from './bridge-interop.js'
 import { toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { HookPipeline } from './hook-pipeline.js'
@@ -59,9 +59,6 @@ export class PluginService implements IPluginService {
   /** SessionData 内存缓存 + flush + 持久化编排 */
   private readonly sessionDataStore: SessionDataStore
 
-  /** npm 安装器 */
-  private installer: PluginInstaller
-
   /** 注入的外部依赖 */
   private deps: IPluginServiceDeps
 
@@ -88,7 +85,6 @@ export class PluginService implements IPluginService {
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
-    this.installer = new PluginInstaller(pluginsDir)
     this.sessionDataStore = new SessionDataStore(configDir)
     this.permissionChecker = new PermissionChecker(registry, new PermissionStorage(pluginsDir))
 
@@ -247,7 +243,7 @@ export class PluginService implements IPluginService {
         this.activator.stopWatching(pluginId) // 停止热重载监听
         this.statusBarRegistry.clearForPlugin(pluginId) // 清理 status bar items
       }
-    // eslint-disable-next-line taste/no-silent-catch -- toggle: failure returns plugin list for UI rollback
+     
     } catch (err: unknown) {
       console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, toErrorMessage(err))
       // 激活/停用失败仍然返回当前插件列表（允许前端回滚 UI）
@@ -424,7 +420,11 @@ export class PluginService implements IPluginService {
   }
 
   async installPlugin(packageSpecifier: string): Promise<InstallResult> {
-    const result = await this.installer.install(packageSpecifier)
+    const installer = this.deps.pluginInstaller
+    if (!installer) {
+      return { success: false, error: 'Plugin installer not configured (pluginInstaller deps missing)' }
+    }
+    const result = await installer.install(packageSpecifier)
     if (result.success && result.pluginId) {
       // Re-scan registry to pick up the new plugin
       await this.registry.reload()

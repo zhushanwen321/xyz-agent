@@ -514,8 +514,9 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.stream_error')
+      // payload 形状与 shared/protocol 契约对齐：kind（分类）+ content（人类可读）
       expect(sent[0].payload).toMatchObject({
-        reason: 'error',
+        kind: 'error',
         content: 'aborted by user',
       })
     })

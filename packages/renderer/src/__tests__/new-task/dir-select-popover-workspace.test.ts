@@ -44,7 +44,7 @@ beforeEach(() => {
 })
 
 describe('T4.1: 首屏渲染 popover 展示 workspaceStore.records', () => {
-  it('有 records → 渲染列表项，DOM 含目录名和路径', () => {
+  it('有 records → 渲染列表项，DOM 含目录名（不显完整路径）', () => {
     setupWorkspaceStore([
       mkRecord('/repo-a', 300),
       mkRecord('/repo-b', 200),
@@ -52,9 +52,9 @@ describe('T4.1: 首屏渲染 popover 展示 workspaceStore.records', () => {
     const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
     const items = wrapper.findAll('[data-testid="workspace-item"]')
     expect(items).toHaveLength(2)
-    // 第一项含目录名和路径
+    // 只显目录名 basename，不再渗入完整路径
     expect(items[0].text()).toContain('repo-a')
-    expect(items[0].text()).toContain('/repo-a')
+    expect(items[0].text()).not.toContain('/repo-a')
   })
 })
 
@@ -78,7 +78,50 @@ describe('T4.3: 搜索过滤', () => {
     await wrapper.find('input').setValue('foo')
     const items = wrapper.findAll('[data-testid="workspace-item"]')
     expect(items).toHaveLength(1)
-    expect(items[0].text()).toContain('/foo-bar')
+    expect(items[0].text()).toContain('foo-bar')
+  })
+})
+
+describe('同名目录消歧：basename 冲突时追加 (parent)，无冲突只显 basename', () => {
+  it('basename 唯一 → 只显目录名，不追加上级', () => {
+    setupWorkspaceStore([
+      mkRecord('/Code/xyz-agent', 300),
+      mkRecord('/Code/xyz-ui', 200),
+    ])
+    const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
+    const items = wrapper.findAll('[data-testid="workspace-item"]')
+    expect(items[0].text()).toContain('xyz-agent')
+    expect(items[0].text()).not.toContain('(Code)')
+    expect(items[1].text()).toContain('xyz-ui')
+    expect(items[1].text()).not.toContain('(Code)')
+  })
+
+  it('basename 冲突 → 追加上级段名，如 chat_project(Code) / chat_project(Stock)', () => {
+    setupWorkspaceStore([
+      mkRecord('/Users/foo/Code/chat_project', 300),
+      mkRecord('/Users/foo/Stock/chat_project', 200),
+    ])
+    const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
+    const items = wrapper.findAll('[data-testid="workspace-item"]')
+    expect(items[0].text()).toContain('chat_project(Code)')
+    expect(items[1].text()).toContain('chat_project(Stock)')
+  })
+
+  it('搜索缩小范围后只剩唯一 basename → 不再追加消歧', async () => {
+    setupWorkspaceStore([
+      mkRecord('/Code/chat_project', 300),
+      mkRecord('/Stock/chat_project', 200),
+    ])
+    const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
+    // 搜索前两个都消歧
+    const before = wrapper.findAll('[data-testid="workspace-item"]')
+    expect(before[0].text()).toContain('chat_project(Code)')
+    // 搜 Code 只剩一个 → 退回纯 basename
+    await wrapper.find('input').setValue('Code')
+    const after = wrapper.findAll('[data-testid="workspace-item"]')
+    expect(after).toHaveLength(1)
+    expect(after[0].text()).toContain('chat_project')
+    expect(after[0].text()).not.toContain('(Code)')
   })
 })
 

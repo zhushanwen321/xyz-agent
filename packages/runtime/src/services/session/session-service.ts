@@ -10,8 +10,9 @@
  *
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
-import { existsSync } from 'node:fs'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage } from '@xyz-agent/shared'
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getDataDir } from '@xyz-agent/shared/paths'
@@ -21,8 +22,12 @@ import type {
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import { readPiState } from '../ports/pi-engine.js'
-import { getHistoryFromFile } from '../session-history.js'
+import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
+import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
+import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
+import { parseSessionHeader } from '../../infra/pi/session-file-utils.js'
+import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
+import { isStrictlyUnder } from '../../utils/path-utils.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -34,10 +39,9 @@ import { SessionScanner } from './session-scanner.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 
-/** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter/listener)。 */
+/** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
   adapter: IEventAdapter
-  unsubUsageListener: (() => void) | null
 }
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
@@ -99,7 +103,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
-      if (session.unsubUsageListener) session.unsubUsageListener()
       this.sessions.delete(sessionId)
 
       // 公共 session 崩溃：自动重建（landing 态命令源依赖它），不广播 error（对用户透明）
@@ -239,16 +242,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<string> {
     const session = this.sessions.get(sessionId)
-    if (!session) return sessionId
+    if (!session) throw new Error('session not active')
     const newModelId = `${provider}/${modelId}`
     const client = this.pm.getClient(sessionId)
-    if (client) {
-      try {
-        await client.setModel(provider, modelId)
-      } catch (e) {
-        console.error(`[session-service] switchModel RPC failed: sessionId=${sessionId}, model=${newModelId}`, e)
-        throw e
-      }
+    if (!client) return sessionId // 无活跃 pi 进程：跳过缓存写和广播，不假装成功
+    try {
+      await client.setModel(provider, modelId)
+    } catch (e) {
+      console.error(`[session-service] switchModel RPC failed: sessionId=${sessionId}, model=${newModelId}`, e)
+      throw e
     }
     session.modelId = newModelId
 
@@ -296,9 +298,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
-        const result = await client.getHistory() as { data?: { messages?: unknown[] }; payload?: { messages?: unknown[] } }
-        const data = result.data
-        const raw = data?.messages ?? (result.payload?.messages) ?? []
+        const result = await client.getHistory() as { data?: { messages?: unknown[] } }
+        const raw = result.data?.messages ?? []
         if (raw.length > 0) return this.sessionStore.convertHistory(raw)
         // RPC 返回空时,仅闲置 session fallback 到磁盘(生成中磁盘可能未持久化最新消息)
         const session = this.sessions.get(sessionId)
@@ -315,6 +316,109 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return await getHistoryFromFile(sessionId, this.sessionStore)
   }
 
+  async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
+    // 找主 session 文件路径（scanSessions 扫 pi/sessions/，含 cwd-encoded 子目录）
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) return []
+    return extractSubagentsFromSessionFile(target.filePath)
+  }
+
+  async getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]> {
+    // 先从主 session 提取 subagent 列表，找到 sessionFile 路径
+    const subagents = await this.getSubagents(sessionId)
+    const record = subagents.find((s) => s.subagentId === subagentId)
+    if (!record?.sessionFile) return []
+
+    // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（~/.xyz-agent/pi/agent/）。
+    // record.sessionFile 由 subagent-extractor 从 JSONL 文本提取，不可信——攻击者构造的
+    // session JSONL 可塞入任意路径（如 /etc/passwd），不校验直接读会泄露任意文件内容。
+    if (!isStrictlyUnder(getPiAgentDir(), record.sessionFile)) return []
+
+    // 直读 subagent JSONL，复用 getHistoryFromFilePath 转换链路（parseJsonl + filter + convertHistory）。
+    // subagent JSONL 格式与主 session 一致（pi SessionManager._persist 写入）。
+    return getHistoryFromFilePath(record.sessionFile, this.sessionStore)
+  }
+
+  /**
+   * 获取 session 派生的 workflow 列表（从主 session JSONL 的 workflow-state-link 提取）。
+   * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 workflow 调用时返回空数组。
+   */
+  async getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]> {
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) return []
+    return extractWorkflowsFromSessionFile(target.filePath)
+  }
+
+  /**
+   * 获取 workflow 内 agent call 的对话流历史。
+   *
+   * agentCallSessionId 是 trace[].sessionId（pi session ID，uuidv7）。
+   * agent call 的 JSONL 落在 getSubagentSessionDir(mainCwd) 下
+   * （~/.xyz-agent/pi/agent/subagents/<encodedCwd>/sessions/<ISO>_<sessionId>.jsonl），
+   * **不在**主 session 的 sessions 目录。scanPiSessions 只扫主 sessions 目录，
+   * 所以不能用 getHistoryFromFile（它经 scanSessions 查找），需在此直接按 sessionId 在
+   * subagents 目录下查找文件。
+   *
+   * Fail-fast：agent call 有 trace 记录说明执行过，历史文件理应存在。
+   * 找不到文件时 throw（而非静默返回空数组），让前端报错给用户而非显示空白。
+   * 文件存在但解析为空（如 pi 延迟写入只有 session header）返回空数组（正常边界）。
+   *
+   * @throws 找不到主 session / 主 session 无 cwd / subagents 目录不存在 / 无匹配 sessionId 的文件
+   */
+  async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
+    const mainSession = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!mainSession) {
+      throw new Error(`主 session ${sessionId} 不存在，无法查找 agent call 历史`)
+    }
+    if (!mainSession.cwd) {
+      throw new Error(`主 session ${sessionId} 无 cwd，无法推导 subagent session 目录`)
+    }
+
+    const filePath = findAgentCallFile(mainSession.cwd, agentCallSessionId)
+    if (!filePath) {
+      throw new Error(
+        `未找到 agent call 的 session 文件（sessionId=${agentCallSessionId}）。` +
+        `可能原因：agent call 执行失败未创建 session，或 session 文件尚未落盘。`,
+      )
+    }
+    return getHistoryFromFilePath(filePath, this.sessionStore)
+  }
+
+  /**
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 findAgentCallFile）。
+   *
+   * 与 getAgentCallHistory 的区别：找不到时返回空串而非 throw——这是展示型功能
+   *（PanelHeader overlay 文件名），找不到路径不应阻断 UI，前端 v-if 据空串隐藏按钮。
+   */
+  async getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string> {
+    const mainSession = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!mainSession?.cwd) return ''
+    return findAgentCallFile(mainSession.cwd, agentCallSessionId) ?? ''
+  }
+
+  /**
+   * 触发 workflow 生命周期操作（pause/resume/abort）。
+   * 经 client.prompt("/workflows <action> <runId>") 调扩展 slash command，
+   * pi 检测 / 开头直接执行 command handler（不经 LLM）。
+   * 扩展侧 RPC 分支已实现（commands.ts ctx.mode==='rpc'）。
+   */
+  async workflowAction(sessionId: string, action: 'pause' | 'resume' | 'abort', runId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not active`)
+    await client.prompt(`/workflows ${action} ${runId}`)
+  }
+
+  /**
+   * 取消 running subagent（经扩展 slash command，不经 LLM）。
+   * 对称 workflowAction 的转发模式：client.prompt("/subagents cancel <subagentId>")。
+   * 扩展侧 RPC 分支已实现（subagents.ts ctx.mode==='rpc' → service.cancel → SIGTERM kill 子进程）。
+   */
+  async subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not active`)
+    await client.prompt(`/subagents ${action} ${subagentId}`)
+  }
+
   getSummary(sessionId: string): SessionSummary | undefined {
     const session = this.sessions.get(sessionId)
     return session ? this.toSummary(session) : undefined
@@ -329,21 +433,26 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * 处理 context.update（pi agent_end 推送 inputTokens）。session 级状态单一 owner：
-   * 回写 inputTokens 缓存 + 算 usagePercent + 广播 context.update。index.ts onContextUpdate
-   * 仅调本方法，不再自己算 usagePercent。
+   * 处理 context.update（pi agent_end/turn_end 推送 inputTokens + totalTokens）。session 级状态单一 owner：
+   * 回写 inputTokens 缓存 + 写 tokenCount + 算 usagePercent + 广播 context.update。
+   * index.ts onContextUpdate 仅调本方法，不再自己算 usagePercent。
+   *
+   * totalTokens（W3 迁移自 attachUsageListener）：写入 session.tokenCount。turn_end 与 agent_end
+   * 双路径对称回写——SessionSummary.tokenCount 是 UI token 用量显示的数据源，不写则恒 0。
    *
    * context.update 与 switchModel 竞态（已踩过坑，原 index.ts onContextUpdate 注释保留）：
    * 此处回写 inputTokens 缓存是打通 context.update 与 switchModel 数据源的关键——
    * 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）。
    * 顺序保证：onContextUpdate 回写在先、switchModel 读取在后（缓存写入先于 switchModel 读）。
    */
-  applyContextUpdate(sessionId: string, inputTokens: number): void {
+  applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void {
     if (!inputTokens || inputTokens === 0) return
     const session = this.sessions.get(sessionId)
     if (!session) return
     // 回写缓存（打通数据源）
     session.inputTokens = inputTokens
+    // W3：tokenCount 写入（原 attachUsageListener 的 s.tokenCount = usage.totalTokens）
+    if (typeof totalTokens === 'number') session.tokenCount = totalTokens
     // 算 usagePercent + 广播
     const { usagePercent, contextLimit } = this.computeUsage(sessionId, session.modelId)
     this.broker.broadcast({
@@ -351,6 +460,37 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id: `ctx_${Date.now()}`,
       payload: { sessionId, usagePercent, inputTokens, contextLimit },
     })
+  }
+
+  /**
+   * turn_end 单 turn 副作用（W3 迁移自 attachUsageListener turn_end 分支）。
+   *
+   * 承载 tryPersistLabel 主路径——「首 turn 即持久化」时序保证：
+   * 第一个 turn_end 时 pi 已完成该轮 flush（session 文件已存在），此时 append session_info 安全。
+   * 不等 agent_end（后者要等所有工具调用轮次跑完，中途关 app 仍会丢 label）。
+   *
+   * tryPersistLabel 经此方法间接暴露（不直接 public）：封装 existsSync guard（规则 #6，
+   * 禁止在 pi flush 前创建文件 → EEXIST → session 卡死）。
+   */
+  handleTurnUsageSideEffects(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    this.tryPersistLabel(session)
+  }
+
+  /**
+   * agent_end 副作用（W3 迁移自 attachUsageListener agent_end 分支）。
+   *
+   * 承载两个副作用：
+   *   1. 复位 isGenerating=false —— 不迁移则正常生成完成后 session 永远 isGenerating=true，
+   *      下一条消息被 busy 拒绝（message-dispatcher preemptive reject），用户无法继续对话。
+   *   2. tryPersistLabel 兜底 —— turn_end 时 pi flush 尚未完成（文件不存在）则在此补写。
+   */
+  handleTurnEndSideEffects(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    session.isGenerating = false
+    this.tryPersistLabel(session)
   }
 
   /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId 的 contextWindow 算）。 */
@@ -363,7 +503,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
       session.adapter.detach()
-      if (session.unsubUsageListener) session.unsubUsageListener()
     }
     await this.pm.destroyAll()
     this.sessions.clear()
@@ -401,6 +540,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       lastActiveAt: s.lastActiveAt, modelId: s.modelId,
       thinkingLevel: s.thinkingLevel, tokenCount: s.tokenCount,
       hidden: s.hidden,
+      sessionFile: s.sessionFilePath,
     }
   }
 
@@ -416,7 +556,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.adapter.detach()
-    if (session.unsubUsageListener) session.unsubUsageListener()
   }
 
   getActiveSummaries(): SessionSummary[] {
@@ -439,14 +578,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
     const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
-    const unsubUsage = this.attachUsageListener(id, client)
     const modelRef = this.configStore.getDefaultModel()
     const session: ManagedSession = {
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
-      tokenCount: 0, inputTokens: 0, isGenerating: false,
-      adapter, unsubUsageListener: unsubUsage, sessionFilePath,
+      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false,
+      adapter, sessionFilePath,
       hidden,
       labelPersisted: false,
     }
@@ -498,7 +636,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     let thinkingLevel = session.thinkingLevel
     if (client) {
       try {
-        const state = await readPiState(client)
+        const state = await client.getState()
         const level = state?.thinkingLevel as string | undefined
         if (level) {
           this.setThinkingLevelCache(sessionId, level)
@@ -522,40 +660,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         inputTokens,
         contextLimit,
       },
-    })
-  }
-
-  /** Attach turn_end/agent_end listener:track token usage + isGenerating + 持久化 label。 */
-  private attachUsageListener(id: string, client: IPiEngine): () => void {
-    return client.onEvent((event) => {
-      const e = event as Record<string, unknown>
-      const s = this.sessions.get(id)
-      if (!s) return
-      if (e.type === 'turn_end') {
-        // turn_end：单 turn 结束，pi 已完成该轮 flush。第一个 turn_end 即可持久化 label，
-        // 无需等整个 agent 循环结束（agent_end）——后者要等所有工具调用轮次跑完，中途关 app 仍会丢 label。
-        // usage 回写与 agent_end 对称（turn_end.message.usage 含本 turn 用量）。
-        const message = (e.message ?? e.payload) as Record<string, unknown> | undefined
-        const usage = message?.usage as
-          { input?: number; output?: number; totalTokens?: number } | undefined
-        if (usage?.totalTokens != null) {
-          s.tokenCount = usage.totalTokens
-          if (typeof usage.input === 'number') s.inputTokens = usage.input
-        }
-        this.tryPersistLabel(s)
-      } else if (e.type === 'agent_end') {
-        s.isGenerating = false
-        const payload = e.payload as Record<string, unknown> | undefined
-        const usage = payload?.usage as
-          { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
-        if (usage) {
-          s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
-          // 缓存 inputTokens 供 switchModel 重算 usagePercent（无需等下一次 agent_end）
-          if (typeof usage.inputTokens === 'number') s.inputTokens = usage.inputTokens
-        }
-        // agent_end 兜底：若 turn_end 时 pi flush 尚未完成（文件不存在），在此补写。
-        this.tryPersistLabel(s)
-      }
     })
   }
 
@@ -653,4 +757,38 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       console.warn('[session-service] fetchAndBroadcastContext failed:', e)
     }
   }
+}
+
+/**
+ * 在 subagent session 目录下按 sessionId 查找 agent call 的 JSONL 文件。
+ *
+ * agent call（workflow 内的子 agent 执行）JSONL 落在
+ * getSubagentSessionDir(mainCwd) = <piAgentDir>/subagents/<encodedCwd>/sessions/ 下，
+ * 文件名 <ISO>_<sessionId>.jsonl，首行是 {type:"session", id:"<sessionId>"}。
+ * 按 sessionId 匹配首行 header.id（不从文件名解析——文件名 ISO 格式不稳定）。
+ *
+ * 目录不存在或无匹配文件返回 null。
+ */
+function findAgentCallFile(mainCwd: string, agentCallSessionId: string): string | null {
+  let dir: string
+  try {
+    dir = getSubagentSessionDir(mainCwd)
+  } catch {
+    return null
+  }
+  if (!existsSync(dir)) return null
+
+  let files: string[]
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.jsonl') && !f.endsWith('.finalized'))
+  } catch {
+    return null
+  }
+
+  for (const file of files) {
+    const filePath = join(dir, file)
+    const header = parseSessionHeader(filePath)
+    if (header?.id === agentCallSessionId) return filePath
+  }
+  return null
 }

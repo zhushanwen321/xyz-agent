@@ -44,6 +44,7 @@ import { spawnRuntimeProcess, stopRuntimeProcess } from './process-control.js'
 import { waitForHealth } from './health-checker.js'
 import { writePortFile } from './port-file.js'
 import { RestartPolicy } from './restart-policy.js'
+import { LivenessMonitor } from './liveness-probe.js'
 
 /**
  * RuntimeSupervisor 实现。
@@ -63,6 +64,8 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
   private readonly policy = new RestartPolicy()
   /** 重启定时器（在途幂等：存在时不叠加新重启） */
   private restartTimer: ReturnType<typeof setTimeout> | null = null
+  /** 存活探针定时器（start 成功后启动，stop 时关闭） */
+  private livenessMonitor: LivenessMonitor | null = null
 
   /** 当前监听端口（未启动为 null） */
   get port(): number | null {
@@ -99,11 +102,31 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     console.log(`[runtime] Starting on port ${port}`)
     this.child = spawnRuntimeProcess(port, (code) => this.onRuntimeExit(code))
 
-    await waitForHealth(port)
+    // [HISTORICAL] W5 改动 4：spawn 成功但 waitForHealth 可能失败（进程半活）。
+    // 必须包 try-catch：失败时主动 stop() 清理半活 child，
+    // 否则 child 引用残留 → 下次 start 幂等守卫误判存活 → 返回死端口（应用假死）。
+    try {
+      await waitForHealth(port)
+    } catch (e) {
+      console.error(`[runtime] waitForHealth failed on port ${port}, cleaning up half-alive child`)
+      // 复用 stop()：它会 markStopping + kill 进程树 + 清 child/port
+      // markStopping 让 onRuntimeExit 不触发自动重启（这里是 start 路径的清理，由调用方决定下一步）
+      await this.stop()
+      throw e
+    }
+
     writePortFile(port)
     this._port = port
     // 重启成功 → 记录（稳定窗口后清零计数）
     this.policy.recordSuccess()
+
+    // [HISTORICAL] W5 改动 3：启动存活探针，监测 runtime「半活」状态。
+    // 探针在 stop() 时关闭，不会泄漏 timer。连续失败达阈值调 forceRestartForLiveness。
+    this.livenessMonitor = new LivenessMonitor({
+      port,
+      onUnhealthy: () => { void this.forceRestartForLiveness() },
+    })
+    this.livenessMonitor.start()
 
     console.log(`[runtime] Ready on port ${port}`)
     return port
@@ -164,9 +187,50 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     this.policy.markStopping()
     // 取消在途的重启定时器（正在退避等待的重启不再执行）
     this.clearRestartTimer()
+    // 关闭存活探针（避免 stop 后探针继续打无效端口）
+    this.stopLivenessMonitor()
     await stopRuntimeProcess(this.child, timeoutMs)
     this.child = null
     this._port = null
+  }
+
+  /**
+   * 强制重启「半活」进程（存活探针触发）。
+   *
+   * [HISTORICAL] W5 改动 3：runtime 进程未退出（exitCode===null）但 HTTP 服务卡死时，
+   * 存活探针连续失败达阈值（LIVENESS_FAIL_THRESHOLD）后调用此方法。
+   *
+   * 关键不变量（避免重启竞态）：
+   * 1. 先 markStopping：kill 触发的 exit 事件会被 onRuntimeExit 当崩溃 → 重复重启。
+   *    提前 markStopping 让 onRuntimeExit 短路（视为主动停止，不重启）。
+   * 2. 再 stop() kill 进程树 + 清状态（child/port=null）。
+   * 3. 走 onRuntimeExit 走崩溃重启路径：scheduleRestart('crash') 编排退避重启。
+   *    但因 markStopping 已设，onRuntimeExit 会短路——所以此处显式调 scheduleRestart。
+   *
+   * 注意：markStopping 后 scheduleRestart 的 shouldRestart() 会返回 false（stopping 短路）。
+   * 因此 reset() 必须在 scheduleRestart 之前调用，清掉 stopping 标志让重启策略放行。
+   * 顺序：markStopping → stop → reset（清 stopping）→ scheduleRestart。
+   *
+   * @returns Promise（异步 kill + 重启编排）
+   */
+  async forceRestartForLiveness(): Promise<void> {
+    console.warn('[runtime] Liveness probe failed threshold — forcing restart of half-alive process')
+    // markStopping 防止 stop 触发的 exit 被 onRuntimeExit 当崩溃重复重启
+    this.policy.markStopping()
+    // kill 半活进程 + 清 child/port（不触发 onRuntimeExit 的重启逻辑）
+    await this.stop()
+    // 清 stopping 标志：后续 scheduleRestart 才能放行（shouldRestart 不再短路）
+    this.policy.reset()
+    // 走与崩溃相同退避/上限/广播编排
+    this.scheduleRestart('crash')
+  }
+
+  /** 关闭存活探针（幂等：未启动则无操作） */
+  private stopLivenessMonitor(): void {
+    if (this.livenessMonitor) {
+      this.livenessMonitor.stop()
+      this.livenessMonitor = null
+    }
   }
 
   /**

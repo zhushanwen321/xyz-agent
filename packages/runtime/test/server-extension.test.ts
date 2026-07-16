@@ -17,6 +17,7 @@ const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneS
 // ── Mocks ────────────────────────────────────────────────────────
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
+const mockSendExtensionUiResponse = vi.fn()
 const mockSendRaw = vi.fn()
 
 vi.mock('../src/services/session/session-service.js', () => {
@@ -39,6 +40,7 @@ vi.mock('../src/services/session/session-service.js', () => {
       switchModel = vi.fn().mockResolvedValue(undefined)
       getRpcClient = vi.fn().mockReturnValue({
         sendCommand: mockSendCommand,
+        sendExtensionUiResponse: mockSendExtensionUiResponse,
         sendRaw: mockSendRaw,
         onEvent: vi.fn().mockReturnValue(() => {}),
         onExit: vi.fn(),
@@ -222,6 +224,7 @@ describe('RuntimeServer: extension message routing', () => {
 
   beforeEach(async () => {
     mockSendCommand.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     mockSendRaw.mockClear()
     mockInstallLocalDirectory.mockClear()
     mockInstallGitRepository.mockClear()
@@ -261,7 +264,7 @@ describe('RuntimeServer: extension message routing', () => {
   // ── extension.ui_response ────────────────────────────────────────
 
   describe('extension.ui_response', () => {
-    it('forwards ui_response to pi via sendRaw with confirm format', async () => {
+    it('forwards ui_response to pi via sendExtensionUiResponse with confirm format', async () => {
       const client = await connectClient()
 
       ws.send(JSON.stringify({
@@ -281,13 +284,9 @@ describe('RuntimeServer: extension message routing', () => {
       })
 
       expect(sessionService.getRpcClient).toHaveBeenCalledWith('sess-1')
-      // confirm + true → {type:'extension_ui_response', id, confirmed:true}
-      expect(mockSendRaw).toHaveBeenCalledWith(
-        expect.stringContaining('"confirmed":true'),
-      )
-      expect(mockSendRaw).toHaveBeenCalledWith(
-        expect.stringContaining('"id":"req-1"'),
-      )
+      // W2 收口后转发走 sendExtensionUiResponse(id, result, method)
+      // confirm + true → pi 鸭子类型字段 {id, confirmed:true}
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-1', true, 'confirm')
     })
 
     it('handles string result as value format (select/input/editor)', async () => {
@@ -306,15 +305,11 @@ describe('RuntimeServer: extension message routing', () => {
 
       // Wait for server to process the message
       await vi.waitFor(() => {
-        expect(mockSendRaw).toHaveBeenCalledWith(
-          expect.stringContaining('"id":"req-2"'),
-        )
+        expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-2', 'selected-value', 'select')
       })
 
-      // select + string → {type:'extension_ui_response', id, value:'selected-value'}
-      expect(mockSendRaw).toHaveBeenCalledWith(
-        expect.stringContaining('"value":"selected-value"'),
-      )
+      // select + string → pi 鸭子类型字段 {id, value:'selected-value'}
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-2', 'selected-value', 'select')
     })
 
     it('handles null result as cancelled format', async () => {
@@ -333,15 +328,11 @@ describe('RuntimeServer: extension message routing', () => {
 
       // Wait for server to process the message
       await vi.waitFor(() => {
-        expect(mockSendRaw).toHaveBeenCalledWith(
-          expect.stringContaining('"id":"req-3"'),
-        )
+        expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-3', null, 'select')
       })
 
-      // null → {type:'extension_ui_response', id, cancelled:true}
-      expect(mockSendRaw).toHaveBeenCalledWith(
-        expect.stringContaining('"cancelled":true'),
-      )
+      // null → pi 鸭子类型字段 {id, cancelled:true}（sendExtensionUiResponse 收到 null 走取消分支）
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-3', null, 'select')
     })
 
     it('sends error when RpcClient not found', async () => {
@@ -656,6 +647,7 @@ describe('RuntimeServer: extension timeout mechanism', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     mockSendRaw.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
@@ -681,13 +673,8 @@ describe('RuntimeServer: extension timeout mechanism', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    // confirm 超时 → {type:'extension_ui_response', id, confirmed:false}
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"confirmed":false'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-timeout-1"'),
-    )
+    // W2 收口后超时走 sendExtensionUiResponse(id, false, 'confirm')（pi 鸭子类型 {id, confirmed:false}）
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-1', false, 'confirm')
   })
 
   it('triggers default response after timeout (select → cancelled)', () => {
@@ -695,13 +682,8 @@ describe('RuntimeServer: extension timeout mechanism', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    // 非 confirm 超时 → {type:'extension_ui_response', id, cancelled:true}
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"cancelled":true'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-timeout-sel"'),
-    )
+    // 非 confirm 超时 → sendExtensionUiResponse(id, null, method)（pi 鸭子类型 {id, cancelled:true}）
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-sel', null, 'select')
   })
 
   it('triggers default response after timeout (input → cancelled)', () => {
@@ -709,12 +691,7 @@ describe('RuntimeServer: extension timeout mechanism', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-timeout-inp"'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"cancelled":true'),
-    )
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-inp', null, 'input')
   })
 
   it('does NOT trigger timeout if cleared by ui_response', () => {
@@ -724,7 +701,7 @@ describe('RuntimeServer: extension timeout mechanism', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).not.toHaveBeenCalled()
+    expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
   })
 
   it('clears all timeouts for a session', () => {
@@ -736,10 +713,9 @@ describe('RuntimeServer: extension timeout mechanism', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).toHaveBeenCalledTimes(1)
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-c"'),
-    )
+    // 只有 sess-other/req-c 未被清理 → 触发一次（默认 confirm → false）
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-c', false, 'confirm')
   })
 
   it('notify method does not register timeout', () => {
@@ -747,6 +723,6 @@ describe('RuntimeServer: extension timeout mechanism', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    expect(mockSendRaw).not.toHaveBeenCalled()
+    expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
   })
 })

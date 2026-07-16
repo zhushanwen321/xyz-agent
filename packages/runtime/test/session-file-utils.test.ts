@@ -1,8 +1,57 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { patchSessionCwd } from '../src/infra/pi/session-file-utils.js'
+import { patchSessionCwd, persistSessionName } from '../src/infra/pi/session-file-utils.js'
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+
+describe('persistSessionName', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'sfu-persist-'))
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  /**
+   * U1: 文件不存在时不再创建文件（规则 #6 EEXIST 防护）。
+   *
+   * 原实现用 openSync(wx) 提前建文件，与 pi 0.80.3 _persist 的 openSync(wx) 冲突 →
+   * EEXIST → session 永久卡死（同文件第 60-65 行 [HISTORICAL] 注释记录的事故）。
+   * 修复后文件不存在时只 console.warn + return，绝不创建文件。
+   */
+  it('文件不存在时不再创建文件（规则#6 EEXIST 防护）', () => {
+    const filePath = join(tmpDir, 'nonexistent.jsonl')
+    expect(() =>
+      persistSessionName(filePath, 'test-name', 'session-id', '/cwd'),
+    ).not.toThrow()
+    // 核心断言：文件未被创建
+    expect(existsSync(filePath)).toBe(false)
+  })
+
+  /**
+   * U2: 文件已存在时正常 append session_info（不回归）。
+   * 确保删掉 wx 建文件分支后，append 分支仍正常工作。
+   */
+  it('文件已存在时正常 append session_info（不回归）', () => {
+    const filePath = join(tmpDir, 'existing.jsonl')
+    const header = JSON.stringify({ type: 'session', version: 3, id: 's1', timestamp: '2025-01-01T00:00:00Z', cwd: '/proj' })
+    writeFileSync(filePath, header + '\n', 'utf-8')
+
+    persistSessionName(filePath, 'new-name')
+
+    const content = readFileSync(filePath, 'utf-8')
+    const lines = content.trim().split('\n')
+    // 原有 header 保留
+    expect(JSON.parse(lines[0]).type).toBe('session')
+    // 最后一行是新增的 session_info
+    const lastEntry = JSON.parse(lines[lines.length - 1])
+    expect(lastEntry.type).toBe('session_info')
+    expect(lastEntry.name).toBe('new-name')
+  })
+})
 
 describe('patchSessionCwd', () => {
   let tmpDir: string

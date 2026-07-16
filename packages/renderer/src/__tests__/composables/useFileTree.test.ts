@@ -8,23 +8,24 @@
  * - loadTree 已缓存 rehydrate（不重请求）
  * - loadTree 未缓存并行拉 file.tree + git.status（Promise.allSettled）
  *
- * mock 策略：vi.mock('@/api/domains/file') + vi.mock('@/api/domains/git')。
+ * mock 策略：vi.mock('@/api') 聚合门面（VITE_MOCK=true 下 @/api 导出的是 mockApi，
+ * 故必须直接 mock 门面 file/git 命名空间，而非 @/api/domains/* 子模块）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useFileTree.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-// mock api/domains（useFileTree 依赖）
+// mock @/api 门面（useFileTree 经 `import { file as fileApi, git as gitApi } from '@/api'` 依赖）
 const mockFileTree = vi.fn()
 const mockFileExpand = vi.fn()
 const mockGitStatus = vi.fn()
-vi.mock('@/api/domains/file', () => ({
-  tree: (...args: unknown[]) => mockFileTree(...args),
-  expand: (...args: unknown[]) => mockFileExpand(...args),
-}))
-vi.mock('@/api/domains/git', () => ({
-  status: (...args: unknown[]) => mockGitStatus(...args),
+vi.mock('@/api', () => ({
+  file: {
+    tree: (...args: unknown[]) => mockFileTree(...args),
+    expand: (...args: unknown[]) => mockFileExpand(...args),
+  },
+  git: { status: (...args: unknown[]) => mockGitStatus(...args) },
 }))
 
 import { useFileTree } from '@/composables/features/useFileTree'

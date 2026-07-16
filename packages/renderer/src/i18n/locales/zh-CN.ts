@@ -1,12 +1,29 @@
+import common from './zh-CN/common'
+import connection from './zh-CN/connection'
+import app from './zh-CN/app'
+import settings from './zh-CN/settings'
+import sidebar from './zh-CN/sidebar'
+import panel from './zh-CN/panel'
+import workspace from './zh-CN/workspace'
+import overview from './zh-CN/overview'
+import newTask from './zh-CN/newTask'
+import shell from './zh-CN/shell'
+import extensionUI from './zh-CN/extensionUI'
+import search from './zh-CN/search'
+import composable from './zh-CN/composable'
+
 export default {
-  connection: {
-    disconnected: '已断开',
-    connecting: '连接中…',
-    connected: '已连接',
-    reconnecting: '重新连接中…',
-  },
-  app: {
-    title: 'xyz-agent',
-    waiting: '等待 Runtime 服务…',
-  },
+  common,
+  connection,
+  app,
+  settings,
+  sidebar,
+  panel,
+  workspace,
+  overview,
+  newTask,
+  shell,
+  extensionUI,
+  search,
+  composable,
 }

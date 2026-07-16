@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GUI 组件渲染协议 — Demo</title>
+<style>
+  /* ── 设计 Tokens（v3 冷蓝暗色 SSOT） ── */
+  :root {
+    --bg: #1a1b1f;
+    --surface: #222329;
+    --surface-hover: #2d2e36;
+    --surface-2: #282930;
+    --bg-elevated: #2a2b32;
+    --bg-input: #1e1f24;
+
+    --fg: #f7f8fc;
+    --muted: #a8a8b5;
+    --subtle: #82828f;
+
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.15);
+
+    --accent: #4f8ef7;
+    --accent-hover: #6ba3ff;
+    --accent-soft: rgba(79, 142, 247, 0.12);
+    --accent-ring: rgba(79, 142, 247, 0.30);
+
+    --success: #22c55e;
+    --warning: #f5a524;
+    --danger: #ef4444;
+    --info: #38bdf8;
+    --reasoning: #a78bfa;
+
+    --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+    --radius-sm: 3px;
+    --radius: 8px;
+    --radius-lg: 12px;
+
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    padding: 32px 48px 80px;
+    max-width: 880px;
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    color: var(--subtle);
+    font-size: 13px;
+    margin-bottom: 40px;
+  }
+
+  /* ── 模拟 message-stream 容器（tool 块的父） ── */
+  .stream {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* ── tool 块外壳（仿 Block.vue trace-tool） ── */
+  .tool-block {
+    padding: 8px 0;
+  }
+  .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--subtle);
+    margin-bottom: 8px;
+  }
+  .tool-header .arrow { font-size: 10px; opacity: 0.6; }
+  .tool-header .icon { font-size: 12px; }
+  .tool-header .status-running { color: var(--accent); }
+  .tool-header .status-done { color: var(--success); }
+  .tool-header .status-failed { color: var(--danger); }
+
+  /* tool 块展开内容区（GUI 组件渲染在此） */
+  .tool-content {
+    margin-top: 4px;
+    padding-left: 2px;
+  }
+
+  /* ════════════════════════════════════════════
+     1. ansi-text（已实现，基线参照）
+     ════════════════════════════════════════════ */
+  .ansi-text {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    color: var(--muted);
+  }
+  .ansi-text .a-green { color: var(--success); }
+  .ansi-text .a-red { color: var(--danger); }
+  .ansi-text .a-yellow { color: var(--warning); }
+  .ansi-text .a-cyan { color: var(--info); }
+  .ansi-text .a-dim { color: var(--subtle); }
+
+  /* ════════════════════════════════════════════
+     2. progress-bar
+     ════════════════════════════════════════════ */
+  .progress-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .progress-bar__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .progress-bar__label {
+    color: var(--muted);
+  }
+  .progress-bar__count {
+    color: var(--fg);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .progress-bar__count .total { color: var(--subtle); }
+  .progress-bar__track {
+    height: 6px;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .progress-bar__fill {
+    height: 100%;
+    border-radius: var(--radius-sm);
+    transition: width 0.3s var(--ease);
+  }
+  .progress-bar__fill--ok { background: var(--success); }
+  .progress-bar__fill--warn { background: var(--warning); }
+  .progress-bar__fill--danger { background: var(--danger); }
+
+  /* ════════════════════════════════════════════
+     3. stats-line
+     ════════════════════════════════════════════ */
+  .stats-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .stats-line__item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 12px;
+  }
+  .stats-line__item:first-child { padding-left: 0; }
+  .stats-line__item + .stats-line__item {
+    border-left: 1px solid var(--border);
+  }
+  .stats-line__label {
+    color: var(--subtle);
+  }
+  .stats-line__value {
+    color: var(--fg);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .stats-line__value--ok { color: var(--success); }
+  .stats-line__value--warn { color: var(--warning); }
+  .stats-line__value--danger { color: var(--danger); }
+
+  /* ════════════════════════════════════════════
+     4. list-tree
+     ════════════════════════════════════════════ */
+  .list-tree {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .list-tree__item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .list-tree__icon {
+    width: 14px;
+    text-align: center;
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+  .list-tree__label {
+    color: var(--muted);
+  }
+  .list-tree__status {
+    font-size: 10px;
+    margin-left: 4px;
+  }
+  .list-tree__status--running { color: var(--accent); }
+  .list-tree__status--done { color: var(--success); }
+  .list-tree__status--failed { color: var(--danger); }
+
+  /* ════════════════════════════════════════════
+     5. card
+     ════════════════════════════════════════════ */
+  .card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .card--elevated { background: var(--surface-2); border-color: var(--border-strong); }
+  .card--danger { border-color: rgba(239, 68, 68, 0.3); background: color-mix(in oklch, var(--danger) 5%, var(--surface)); }
+  .card--success { border-color: rgba(34, 197, 94, 0.25); background: color-mix(in oklch, var(--success) 5%, var(--surface)); }
+  .card__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .card__body {
+    padding: 12px;
+  }
+
+  /* ════════════════════════════════════════════
+     6. columns
+     ════════════════════════════════════════════ */
+  .columns {
+    display: flex;
+    gap: 12px;
+  }
+  .columns__child {
+    flex: 1;
+    min-width: 0;
+  }
+  .columns__child:nth-child(1) { flex: 2; }
+  .columns__child:nth-child(2) { flex: 1; }
+
+  /* ════════════════════════════════════════════
+     7. tab-bar
+     ════════════════════════════════════════════ */
+  .tab-bar {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1px;
+  }
+  .tab-bar__tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--subtle);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    cursor: default;
+    transition: color 0.15s var(--ease), background 0.15s var(--ease);
+  }
+  .tab-bar__tab:hover { color: var(--muted); }
+  .tab-bar__tab--active {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .tab-bar__tab--done { color: var(--success); }
+  .tab-bar__tab--pending { color: var(--subtle); }
+  .tab-bar__dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tab-bar__dot--done { background: var(--success); }
+  .tab-bar__dot--pending { background: var(--subtle); opacity: 0.5; }
+
+  /* ════════════════════════════════════════════
+     8. custom（JSON fallback 对照）
+     ════════════════════════════════════════════ */
+  .json-fallback {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--subtle);
+    white-space: pre-wrap;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+  }
+
+  /* ── 分隔标题 ── */
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--subtle);
+    margin: 32px 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .section-label .badge {
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 9px;
+    font-weight: 600;
+  }
+  .badge--done { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+  .badge--new { background: var(--accent-soft); color: var(--accent); }
+
+  .fallback-note {
+    font-size: 11px;
+    color: var(--subtle);
+    margin-bottom: 8px;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<h1>GUI 组件渲染协议 — 7 种 block type + JSON fallback 渲染效果</h1>
+<p class="subtitle">模拟 extension tool result 推送的 GuiComponent 在 message-stream 中的渲染。暗色冷蓝主题。</p>
+
+<div class="stream">
+
+  <!-- ════════ 1. ansi-text（已实现） ════════ -->
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon status-done">✓</span>
+      <span>npm test</span>
+      <span style="color: var(--subtle); margin-left: auto;">ansi-text</span>
+    </div>
+    <div class="tool-content">
+      <div class="ansi-text"><span class="a-dim">$ vitest run</span>
+<span class="a-green">✓</span> src/utils/format.test.ts <span class="a-dim">(5 tests)</span>
+<span class="a-green">✓</span> src/stores/chat.test.ts <span class="a-dim">(12 tests)</span>
+<span class="a-red">✗</span> src/components/Panel.test.ts <span class="a-dim">(2 failed)</span>
+
+<span class="a-yellow">⚠</span> 2 tests failed
+<span class="a-cyan">Test Files</span>  1 failed | 2 passed <span class="a-dim">(3)</span>
+<span class="a-cyan">Tests</span>       2 failed | 15 passed <span class="a-dim">(17)</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ 2. progress-bar ════════ -->
+  <div class="section-label"><span class="badge badge--new">NEW</span> progress-bar</div>
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon" style="color: var(--info);">⏵</span>
+      <span>build-project</span>
+      <span style="color: var(--subtle); margin-left: auto;">progress-bar</span>
+    </div>
+    <div class="tool-content" style="display: flex; flex-direction: column; gap: 10px;">
+      <!-- ok 态 -->
+      <div class="progress-bar">
+        <div class="progress-bar__header">
+          <span class="progress-bar__label">编译 TypeScript</span>
+          <span class="progress-bar__count">240<span class="total"> / 240 文件</span></span>
+        </div>
+        <div class="progress-bar__track">
+          <div class="progress-bar__fill progress-bar__fill--ok" style="width: 100%;"></div>
+        </div>
+      </div>
+      <!-- warn 态 -->
+      <div class="progress-bar">
+        <div class="progress-bar__header">
+          <span class="progress-bar__label">打包资源</span>
+          <span class="progress-bar__count">18<span class="total"> / 24 资源</span></span>
+        </div>
+        <div class="progress-bar__track">
+          <div class="progress-bar__fill progress-bar__fill--warn" style="width: 75%;"></div>
+        </div>
+      </div>
+      <!-- danger 态 -->
+      <div class="progress-bar">
+        <div class="progress-bar__header">
+          <span class="progress-bar__label">运行测试</span>
+          <span class="progress-bar__count">12<span class="total"> / 48 用例</span></span>
+        </div>
+        <div class="progress-bar__track">
+          <div class="progress-bar__fill progress-bar__fill--danger" style="width: 25%;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ 3. stats-line ════════ -->
+  <div class="section-label"><span class="badge badge--new">NEW</span> stats-line</div>
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon status-done">✓</span>
+      <span>git-status</span>
+      <span style="color: var(--subtle); margin-left: auto;">stats-line</span>
+    </div>
+    <div class="tool-content">
+      <div class="stats-line">
+        <div class="stats-line__item">
+          <span class="stats-line__label">回合</span>
+          <span class="stats-line__value">15</span>
+        </div>
+        <div class="stats-line__item">
+          <span class="stats-line__label">token</span>
+          <span class="stats-line__value">23.4k</span>
+        </div>
+        <div class="stats-line__item">
+          <span class="stats-line__label">耗时</span>
+          <span class="stats-line__value">2m 18s</span>
+        </div>
+        <div class="stats-line__item">
+          <span class="stats-line__label">改动</span>
+          <span class="stats-line__value stats-line__value--ok">+142</span>
+          <span class="stats-line__value stats-line__value--danger">−38</span>
+        </div>
+        <div class="stats-line__item">
+          <span class="stats-line__label">警告</span>
+          <span class="stats-line__value stats-line__value--warn">3</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ 4. list-tree ════════ -->
+  <div class="section-label"><span class="badge badge--new">NEW</span> list-tree</div>
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon" style="color: var(--info);">⏵</span>
+      <span>deploy-stack</span>
+      <span style="color: var(--subtle); margin-left: auto;">list-tree</span>
+    </div>
+    <div class="tool-content">
+      <div class="list-tree">
+        <div class="list-tree__item">
+          <span class="list-tree__icon">▼</span>
+          <span class="list-tree__label">基础设施</span>
+        </div>
+        <div class="list-tree__item" style="padding-left: 20px;">
+          <span class="list-tree__icon" style="color: var(--success);">✓</span>
+          <span class="list-tree__label">VPC 网络</span>
+          <span class="list-tree__status list-tree__status--done">done</span>
+        </div>
+        <div class="list-tree__item" style="padding-left: 20px;">
+          <span class="list-tree__icon" style="color: var(--success);">✓</span>
+          <span class="list-tree__label">RDS 实例</span>
+          <span class="list-tree__status list-tree__status--done">done</span>
+        </div>
+        <div class="list-tree__item" style="padding-left: 20px;">
+          <span class="list-tree__icon" style="color: var(--accent);">●</span>
+          <span class="list-tree__label">Redis 集群</span>
+          <span class="list-tree__status list-tree__status--running">running</span>
+        </div>
+        <div class="list-tree__item">
+          <span class="list-tree__icon">▶</span>
+          <span class="list-tree__label">应用层</span>
+        </div>
+        <div class="list-tree__item" style="padding-left: 20px;">
+          <span class="list-tree__icon" style="color: var(--danger);">✗</span>
+          <span class="list-tree__label">API Server</span>
+          <span class="list-tree__status list-tree__status--failed">failed</span>
+        </div>
+        <div class="list-tree__item" style="padding-left: 20px;">
+          <span class="list-tree__icon" style="color: var(--subtle);">○</span>
+          <span class="list-tree__label">Worker</span>
+          <span class="list-tree__status" style="color: var(--subtle);">pending</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ 5. card ════════ -->
+  <div class="section-label"><span class="badge badge--new">NEW</span> card（嵌套 stats-line + progress-bar）</div>
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon status-done">✓</span>
+      <span>ci-pipeline</span>
+      <span style="color: var(--subtle); margin-left: auto;">card</span>
+    </div>
+    <div class="tool-content" style="display: flex; flex-direction: column; gap: 10px;">
+      <!-- default variant -->
+      <div class="card">
+        <div class="card__header">
+          <span>📋 CI Pipeline #142</span>
+        </div>
+        <div class="card__body" style="display: flex; flex-direction: column; gap: 10px;">
+          <div class="stats-line">
+            <div class="stats-line__item">
+              <span class="stats-line__label">commit</span>
+              <span class="stats-line__value" style="font-size: 11px;">e9c778a</span>
+            </div>
+            <div class="stats-line__item">
+              <span class="stats-line__label">分支</span>
+              <span class="stats-line__value" style="font-size: 11px;">feat-session-icon</span>
+            </div>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-bar__header">
+              <span class="progress-bar__label">构建进度</span>
+              <span class="progress-bar__count">7<span class="total"> / 8 步骤</span></span>
+            </div>
+            <div class="progress-bar__track">
+              <div class="progress-bar__fill progress-bar__fill--ok" style="width: 87.5%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- elevated variant -->
+      <div class="card card--elevated">
+        <div class="card__header">
+          <span>📦 产物</span>
+        </div>
+        <div class="card__body">
+          <div class="ansi-text"><span class="a-green">✓</span> xyz-agent-0.3.9.dmg <span class="a-dim">(89.2 MB)</span>
+<span class="a-green">✓</span> xyz-agent-0.3.9.zip <span class="a-dim">(92.1 MB)</span>
+<span class="a-green">✓</span> xyz-agent-0.3.9.exe <span class="a-dim">(78.5 MB)</span></div>
+        </div>
+      </div>
+      <!-- danger variant -->
+      <div class="card card--danger">
+        <div class="card__header" style="color: var(--danger);">
+          <span>⚠ 失败步骤</span>
+        </div>
+        <div class="card__body">
+          <div class="ansi-text"><span class="a-red">✗</span> runtime smoke test
+<span class="a-dim">  Error: /health timeout after 5000ms</span>
+<span class="a-dim">  at validate-runtime-bundle.sh:42</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ 6. columns ════════ -->
+  <div class="section-label"><span class="badge badge--new">NEW</span> columns（2:1 分栏）</div>
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon status-done">✓</span>
+      <span>review-summary</span>
+      <span style="color: var(--subtle); margin-left: auto;">columns</span>
+    </div>
+    <div class="tool-content">
+      <div class="columns">
+        <div class="columns__child">
+          <div class="card">
+            <div class="card__header">变更摘要</div>
+            <div class="card__body">
+              <div class="list-tree">
+                <div class="list-tree__item">
+                  <span class="list-tree__icon" style="color: var(--success);">✓</span>
+                  <span class="list-tree__label">SessionItem.vue</span>
+                </div>
+                <div class="list-tree__item">
+                  <span class="list-tree__icon" style="color: var(--success);">✓</span>
+                  <span class="list-tree__label">SessionCard.vue</span>
+                </div>
+                <div class="list-tree__item">
+                  <span class="list-tree__icon" style="color: var(--success);">✓</span>
+                  <span class="list-tree__label">PanelHeader.vue</span>
+                </div>
+                <div class="list-tree__item">
+                  <span class="list-tree__icon" style="color: var(--success);">✓</span>
+                  <span class="list-tree__label">sessionStatus.ts</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="columns__child">
+          <div class="card card--success">
+            <div class="card__header" style="color: var(--success);">检查结果</div>
+            <div class="card__body">
+              <div class="stats-line" style="flex-direction: column; gap: 6px;">
+                <div class="stats-line__item" style="padding: 0;">
+                  <span class="stats-line__label">测试</span>
+                  <span class="stats-line__value stats-line__value--ok">5/5</span>
+                </div>
+                <div class="stats-line__item" style="padding: 0; border: none;">
+                  <span class="stats-line__label">类型</span>
+                  <span class="stats-line__value stats-line__value--ok">✓</span>
+                </div>
+                <div class="stats-line__item" style="padding: 0; border: none;">
+                  <span class="stats-line__label">Lint</span>
+                  <span class="stats-line__value stats-line__value--ok">✓</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ 7. tab-bar ════════ -->
+  <div class="section-label"><span class="badge badge--new">NEW</span> tab-bar</div>
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon" style="color: var(--info);">⏵</span>
+      <span>multi-env-test</span>
+      <span style="color: var(--subtle); margin-left: auto;">tab-bar</span>
+    </div>
+    <div class="tool-content">
+      <div class="tab-bar">
+        <div class="tab-bar__tab tab-bar__tab--active">
+          <span>node 20</span>
+        </div>
+        <div class="tab-bar__tab tab-bar__tab--done">
+          <span class="tab-bar__dot tab-bar__dot--done"></span>
+          <span>node 22</span>
+        </div>
+        <div class="tab-bar__tab tab-bar__tab--done">
+          <span class="tab-bar__dot tab-bar__dot--done"></span>
+          <span>node 24</span>
+        </div>
+        <div class="tab-bar__tab tab-bar__tab--pending">
+          <span class="tab-bar__dot tab-bar__dot--pending"></span>
+          <span>bun</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ 8. custom + fallback 对照 ════════ -->
+  <div class="section-label"><span class="badge badge--new">NEW</span> custom + fallback 对照</div>
+
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon status-done">✓</span>
+      <span>custom-chart（已注册）</span>
+      <span style="color: var(--subtle); margin-left: auto;">custom → registered</span>
+    </div>
+    <div class="tool-content">
+      <div class="card card--elevated">
+        <div class="card__header">📊 Token 使用趋势（custom 组件）</div>
+        <div class="card__body">
+          <div style="display: flex; align-items: flex-end; gap: 4px; height: 60px; padding: 4px 0;">
+            <div style="flex:1; height: 30%; background: var(--accent); opacity: 0.4; border-radius: 2px 2px 0 0;"></div>
+            <div style="flex:1; height: 55%; background: var(--accent); opacity: 0.55; border-radius: 2px 2px 0 0;"></div>
+            <div style="flex:1; height: 45%; background: var(--accent); opacity: 0.5; border-radius: 2px 2px 0 0;"></div>
+            <div style="flex:1; height: 80%; background: var(--accent); opacity: 0.7; border-radius: 2px 2px 0 0;"></div>
+            <div style="flex:1; height: 65%; background: var(--accent); opacity: 0.6; border-radius: 2px 2px 0 0;"></div>
+            <div style="flex:1; height: 95%; background: var(--accent); opacity: 0.9; border-radius: 2px 2px 0 0;"></div>
+            <div style="flex:1; height: 100%; background: var(--danger); opacity: 0.8; border-radius: 2px 2px 0 0;"></div>
+          </div>
+          <div style="display: flex; gap: 4px; margin-top: 4px;">
+            <span style="flex:1; font-family: var(--font-mono); font-size: 9px; color: var(--subtle); text-align: center;">T1</span>
+            <span style="flex:1; font-family: var(--font-mono); font-size: 9px; color: var(--subtle); text-align: center;">T2</span>
+            <span style="flex:1; font-family: var(--font-mono); font-size: 9px; color: var(--subtle); text-align: center;">T3</span>
+            <span style="flex:1; font-family: var(--font-mono); font-size: 9px; color: var(--subtle); text-align: center;">T4</span>
+            <span style="flex:1; font-family: var(--font-mono); font-size: 9px; color: var(--subtle); text-align: center;">T5</span>
+            <span style="flex:1; font-family: var(--font-mono); font-size: 9px; color: var(--subtle); text-align: center;">T6</span>
+            <span style="flex:1; font-family: var(--font-mono); font-size: 9px; color: var(--danger); text-align: center;">T7</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tool-block">
+    <div class="tool-header">
+      <span class="arrow">▾</span>
+      <span class="icon" style="color: var(--warning);">⚠</span>
+      <span>unknown-chart（未注册 custom）</span>
+      <span style="color: var(--subtle); margin-left: auto;">custom → fallback JSON</span>
+    </div>
+    <div class="tool-content">
+      <p class="fallback-note">未注册的 custom 组件降级为 JSON 文本（当前行为，信息不丢失但不美观）</p>
+      <div class="json-fallback">{
+  "component": "radar-chart",
+  "props": {
+    "axes": ["speed", "memory", "accuracy", "cost"],
+    "values": [0.8, 0.6, 0.9, 0.4],
+    "threshold": 0.7
+  }
+}</div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -7,7 +7,7 @@
       S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
     steer/followUp：活跃态（isGenerating/派发空窗期）时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
   -->
-  <div class="composer" :class="props.variant === 'landing' ? 'mx-auto w-full max-w-[720px]' : 'mx-3.5 mb-3.5'">
+  <div class="composer" :class="props.variant === 'landing' ? 'mx-auto w-full max-w-[720px]' : ''">
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
@@ -56,8 +56,8 @@
           v-if="isActive"
           variant="ghost"
           size="icon"
-          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-[rgba(239,68,68,0.15)] hover:text-danger"
-          title="停止"
+          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
+          :title="t('panel.composer.stop')"
           @click="onAbort"
         >
           <Square class="size-[13px]" />
@@ -65,14 +65,14 @@
         <div
           v-else-if="isCompacting"
           class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-surface-hover text-muted"
-          title="压缩中…"
+          :title="t('panel.composer.compacting')"
         >
           <Loader2 class="size-4 animate-spin" />
         </div>
         <div
           v-else-if="isSending"
           class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-[var(--accent)] text-white"
-          title="发送中…"
+          :title="t('panel.composer.sending')"
         >
           <Loader2 class="size-4 animate-spin" />
         </div>
@@ -82,7 +82,7 @@
           size="icon"
           class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
           :disabled="!canSend"
-          :title="canSend ? '发送 · ⏎' : '输入内容后发送'"
+          :title="canSend ? `${t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
@@ -96,6 +96,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, Square } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
@@ -123,6 +124,7 @@ const props = withDefaults(
   { variant: 'panel' },
 )
 
+const { t } = useI18n()
 const chatStore = useChatStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
@@ -251,8 +253,8 @@ const boxClass = computed(() => [
 
 const placeholder = computed(() =>
   isActive.value
-    ? '想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…'
-    : '描述你想让 AI 做什么，或 # 文件、/ 命令…',
+    ? t('panel.composer.steerHint')
+    : t('panel.composer.inputHint'),
 )
 
 /**
@@ -282,7 +284,7 @@ async function onSend(): Promise<void> {
       restoreInput(text)
       // 错误已消化（toast + 草稿恢复），不 throw（throw 只会变 unhandled rejection，用户不可见）。
       const msg = e instanceof Error ? e.message : String(e)
-      toastError(`任务创建失败：${msg}`)
+      toastError(t('panel.panel.taskFailed', { error: msg }))
     } finally {
       isSending.value = false
     }
@@ -313,7 +315,7 @@ async function onSend(): Promise<void> {
     restoreInput(text)
     // 错误已消化（toast + 草稿恢复），不 throw。
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`消息发送失败：${msg}`)
+    toastError(t('panel.panel.sendFailed', { error: msg }))
   } finally {
     isSending.value = false
   }

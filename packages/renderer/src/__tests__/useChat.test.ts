@@ -254,11 +254,11 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
     chat.applyMessageEvent('s-stream-timeout', { type: 'message.message_start', payload: { sessionId: 's-stream-timeout', messageId: 'a1' } })
     chat.armStreamingTimer('s-stream-timeout')
     expect(chat.isGenerating('s-stream-timeout')).toBe(true)
-    // 阈值已从 5min 调整为 24h（chat.ts STREAMING_TIMEOUT_MS：放弃主动检测，靠 runtime 重启兜底）
-    vi.advanceTimersByTime(86_399_000)
+    // 阈值 DEFAULT_STREAMING_TIMEOUT_MS=10min（600_000ms）：10min-1s 未超时，仍 streaming
+    vi.advanceTimersByTime(599_000)
     expect(chat.isGenerating('s-stream-timeout')).toBe(true)
-    // 满 24h 触发超时回调，finalizeSession('timeout') 强制收口
-    vi.advanceTimersByTime(1_000)
+    // 推进到 10min+1s 触发超时回调，finalizeSession('timeout') 强制收口
+    vi.advanceTimersByTime(2_000)
     expect(chat.isGenerating('s-stream-timeout')).toBe(false)
     vi.useRealTimers()
   })

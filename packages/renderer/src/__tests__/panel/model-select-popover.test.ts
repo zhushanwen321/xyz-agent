@@ -137,4 +137,26 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
     await wrapper.vm.$nextTick()
     expect(document.body.textContent).toContain('无匹配模型')
   })
+
+  it('U6: enabled===false 的 model 不出现在分组列表（runtime aggregateModels 已过滤，前端兜底）', async () => {
+    // 双保险：runtime aggregateModels 已过滤 enabled===false，但 ModelSelectPopover 直读
+    // settingsStore.models（与 providers 同源广播），若某次广播未过滤则会泄漏禁用模型到切换器。
+    // 故前端在 groups computed 内也过滤 enabled===false。
+    const mixed: ModelInfo[] = [
+      { id: 'claude-4', name: 'Claude 4', providerId: 'anthropic', providerName: 'Anthropic', enabled: true },
+      { id: 'claude-haiku', name: 'Claude Haiku', providerId: 'anthropic', providerName: 'Anthropic', enabled: false },
+      { id: 'gpt-4', name: 'GPT-4', providerId: 'openai', providerName: 'OpenAI', enabled: true },
+    ] as unknown as ModelInfo[]
+    useSettingsStore().models = mixed
+    const wrapper = mount(ModelSelectPopover, {
+      props: { selected: 'anthropic/claude-4' },
+    })
+    await wrapper.vm.$nextTick()
+    const groups = (wrapper.vm as unknown as { groups: { provider: string; models: ModelInfo[] }[] }).groups
+    const allIds = groups.flatMap((g) => g.models.map((m) => m.id))
+    expect(allIds).toContain('claude-4')
+    expect(allIds).toContain('gpt-4')
+    // enabled===false 的 claude-haiku 被过滤
+    expect(allIds).not.toContain('claude-haiku')
+  })
 })

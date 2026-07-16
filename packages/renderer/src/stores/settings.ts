@@ -48,6 +48,7 @@ const DEFAULT_SYSTEM: SystemSettings = {
   locale: 'zh-CN',
   theme: 'dark',
   themePreset: 'cold-blue',
+  fontSize: 'medium',
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -79,11 +80,25 @@ export const useSettingsStore = defineStore('settings', () => {
    * 更新 system 偏好：合并本地态 → 写 localStorage → 同步 DOM + i18n。
    * 消灭「死设置」：theme/locale 切换现在真正生效。
    * useSettings.init 初始化 system 时也走此 action（确保 DOM/i18n 同步）。
+   *
+   * 乐观更新 + 失败回滚（W2 D9 修复）：
+   *   原实现先乐观改 system.value，再 await updateSystem，失败时 system.value 已是新值不回滚、
+   *   且 applySystemToDom 被跳过（await 抛错后不执行）→ store 说新主题 DOM 是旧主题，状态脱节。
+   *   现顺序：存快照 → 改 state → apply DOM（即时响应）→ await 持久化 → 失败 catch 还原 state
+   *   + 重 apply DOM（快照）→ throw（让调用方 toast 反馈）。
    */
   async function setSystem(patch: Partial<SystemSettings>): Promise<void> {
+    const snapshot = { ...system.value }
     system.value = { ...system.value, ...patch }
-    await settingsApi.updateSystem(patch)
     applySystemToDom(system.value)
+    try {
+      await settingsApi.updateSystem(patch)
+    } catch (e) {
+      // 持久化失败：回滚 state + 重 apply DOM 到快照，保持 state/DOM 一致
+      system.value = snapshot
+      applySystemToDom(snapshot)
+      throw e
+    }
   }
 
   /**
@@ -101,6 +116,65 @@ export const useSettingsStore = defineStore('settings', () => {
     await config.setAgentDirs(dirs)
   }
 
+  // ── 乐观更新（toggle 级，区别于 setSkillDirs 的「靠广播推回」）──
+  // Switch 受控于 store state，点 toggle 到 UI 动效需经历一次 WS 往返（几十~数百 ms），
+  // 纯广播模式期间开关卡在原位 → 用户以为没反应。这些 action 立即改本地 state，
+  // 组件「先调 action 再调 API、失败回滚」，广播回来时权威值自然覆盖（幂等调和）。
+
+  /**
+   * 乐观切换 provider enabled。
+   * 立即改本地 providers 对应项的 enabled，组件负责随后调 API 持久化、失败时回滚。
+   * @returns 旧值（供回滚用）
+   */
+  function setProviderEnabled(id: string, enabled: boolean): boolean {
+    const idx = providers.value.findIndex((p) => p.id === id)
+    if (idx === -1) return false
+    const old = providers.value[idx].enabled ?? true
+    providers.value[idx] = { ...providers.value[idx], enabled }
+    return old
+  }
+
+  /**
+   * 乐观切换 model 级 enabled（D6）。
+   * 立即改本地 providers 中目标 provider 下目标 model 的 enabled，组件随后调 API 持久化、失败回滚。
+   * @returns 旧值（供回滚用），找不到时返回 true（默认启用）
+   */
+  function setModelEnabled(providerId: string, modelId: string, enabled: boolean): boolean {
+    const pIdx = providers.value.findIndex((p) => p.id === providerId)
+    if (pIdx === -1) return true
+    const provider = providers.value[pIdx]
+    const mIdx = provider.models.findIndex((m) => m.id === modelId)
+    if (mIdx === -1) return true
+    const old = provider.models[mIdx].enabled ?? true
+    const nextModels = provider.models.map((m, i) => i === mIdx ? { ...m, enabled } : m)
+    providers.value[pIdx] = { ...provider, models: nextModels }
+    return old
+  }
+
+  /**
+   * 乐观切换 extension enabled。
+   * @returns 旧值（供回滚用）
+   */
+  function setExtensionEnabled(name: string, enabled: boolean): boolean {
+    const idx = extensions.value.findIndex((e) => e.name === name)
+    if (idx === -1) return false
+    const old = extensions.value[idx].enabled ?? true
+    extensions.value[idx] = { ...extensions.value[idx], enabled }
+    return old
+  }
+
+  /**
+   * 乐观切换 extension autoUpgrade。
+   * @returns 旧值（供回滚用）
+   */
+  function setExtensionAutoUpgrade(name: string, autoUpgrade: boolean): boolean {
+    const idx = extensions.value.findIndex((e) => e.name === name)
+    if (idx === -1) return false
+    const old = extensions.value[idx].autoUpgrade ?? false
+    extensions.value[idx] = { ...extensions.value[idx], autoUpgrade }
+    return old
+  }
+
   return {
     // state
     providers,
@@ -116,6 +190,10 @@ export const useSettingsStore = defineStore('settings', () => {
     setSystem,
     setSkillDirs,
     setAgentDirs,
+    setProviderEnabled,
+    setModelEnabled,
+    setExtensionEnabled,
+    setExtensionAutoUpgrade,
   }
 })
 
@@ -124,13 +202,11 @@ export const useSettingsStore = defineStore('settings', () => {
 /**
  * 把 system 偏好同步到运行时副作用：
  * - theme → <html data-theme>（style.css :root 暗默认 / [data-theme=light] 亮色槽位）
+ * - themePreset → <html data-theme-preset>（style.css 11 套 [data-theme-preset] 覆盖 --accent）
  * - locale → i18n.setLocale（切换实际语言）
  *
  * theme='system' 时按 prefers-color-scheme 解析为 light/dark 写入 data-theme
  * （避免 CSS 用 media query 又叠一层，统一走 data-theme 单一通道）。
- *
- * 注：themePreset（palette）暂未实装 CSS 切换（11 个配色 swatch 的 --accent 覆盖待做），
- * 故此处不写 data-theme-preset；store 仍持有 themePreset 状态供 SystemPage 选中态使用。
  */
 function applySystemToDom(s: SystemSettings): void {
   if (typeof document === 'undefined') return
@@ -139,6 +215,14 @@ function applySystemToDom(s: SystemSettings): void {
     ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
     : s.theme
   document.documentElement.setAttribute('data-theme', resolvedTheme)
+
+  // themePreset 写 data-theme-preset，触发 style.css 的 [data-theme-preset] 规则覆盖 --accent。
+  // cold-blue 与 :root 默认一致；其他 preset 各自覆盖 accent/soft/ring。
+  document.documentElement.setAttribute('data-theme-preset', s.themePreset ?? 'cold-blue')
+
+  // fontSize 写 data-font-size（D17），触发 style.css [data-font-size] 规则调整基础字号。
+  // 缺省 medium（与 DEFAULT_SYSTEM 一致），保证老数据无 fontSize 时回落中号。
+  document.documentElement.dataset.fontSize = s.fontSize ?? 'medium'
 
   if (s.locale) setLocale(s.locale)
 }

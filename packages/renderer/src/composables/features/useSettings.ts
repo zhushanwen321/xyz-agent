@@ -24,6 +24,7 @@
  * - 读 @/api（config / model / extension / settings 域订阅与请求）。
  * - 写 settings store（providers/models/skills/agents/extensions/skillDirs/agentDirs/defaultModel/system）。
  */
+import { watch } from 'vue'
 import { config, model as modelApi, extension as extensionApi, settings as settingsApi } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
 import type { ExtensionItem } from '@/stores/settings'
@@ -76,9 +77,47 @@ async function init(): Promise<void> {
   unsubs.push(extensionApi.onExtensions((e) => { store.extensions = e as ExtensionItem[] }))
 
   // system 是纯前端偏好（localStorage），初始化时读并同步到 DOM + i18n
-  // store.setSystem 内部会 applySystemToDom（theme→data-theme + locale→i18n）
+  // store.setSystem 内部会 applySystemToDom（theme→data-theme + themePreset→data-theme-preset + locale→i18n）
   const system = await settingsApi.getSystem()
   await store.setSystem(system)
+
+  // theme=system 时监听 OS 深浅色变化，实时 applySystemToDom（无需重开 Settings）。
+  // watch system.theme 动态挂/卸：切到 system 挂监听，切回 light/dark 卸载。
+  const stopThemeWatch = watch(
+    () => store.system.theme,
+    (theme) => { updateSystemThemeListener(theme, store) },
+    { immediate: true },
+  )
+  unsubs.push(stopThemeWatch)
+}
+
+/**
+ * matchMedia prefers-color-scheme 监听句柄（模块级，theme 切换时动态挂/卸）。
+ * 仅 theme==='system' 时挂载；切回 light/dark 卸载，避免无谓监听。
+ */
+let mediaQueryListener: ((e: MediaQueryListEvent) => void) | null = null
+let mediaQuery: MediaQueryList | null = null
+
+function updateSystemThemeListener(theme: string, store: ReturnType<typeof useSettingsStore>): void {
+  if (typeof window === 'undefined' || !window.matchMedia) return
+
+  // 已挂监听时先卸载（切 theme 时可能从 system 切到非 system，或 system→system 重挂）
+  if (mediaQueryListener && mediaQuery) {
+    mediaQuery.removeEventListener('change', mediaQueryListener)
+    mediaQueryListener = null
+    mediaQuery = null
+  }
+
+  if (theme !== 'system') return
+
+  // theme=system：挂监听，OS 深浅色变化时重新 applySystemToDom
+  mediaQuery = window.matchMedia('(prefers-color-scheme: light)')
+  mediaQueryListener = () => {
+    // store.setSystem 会 applySystemToDom（重新读 prefers-color-scheme 解析 light/dark）
+    // 只需触发 DOM 同步，不持久化（theme 仍是 system，变化的是 OS 偏好）
+    void store.setSystem({ ...store.system })
+  }
+  mediaQuery.addEventListener('change', mediaQueryListener)
 }
 
 /**
@@ -98,6 +137,12 @@ async function refreshProviders(): Promise<void> {
 /** 销毁订阅（AppShell 卸载时调用，应用生命周期内通常不触发）。 */
 function dispose(): void {
   unsubs.splice(0).forEach((u) => u())
+  // 清理 matchMedia 监听（theme=system 时挂的）
+  if (mediaQueryListener && mediaQuery) {
+    mediaQuery.removeEventListener('change', mediaQueryListener)
+    mediaQueryListener = null
+    mediaQuery = null
+  }
   initialized = false
 }
 

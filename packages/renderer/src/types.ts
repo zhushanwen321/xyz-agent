@@ -14,8 +14,16 @@ export type NavEntry = {
   activeTab?: string
 }
 
-/** SessionStatus 前端派生 5 态（D6） */
-export type DerivedStatus = 'running' | 'waiting' | 'done' | 'stopped' | 'error'
+/** SessionStatus 前端派生状态：8 态扩展版（方案 C 优化版 v3） */
+export type DerivedStatus =
+  | 'streaming'
+  | 'pending'
+  | 'compacting'
+  | 'waiting'
+  | 'retrying'
+  | 'done'
+  | 'stopped'
+  | 'error'
 
 /** Panel 树节点（单/双 panel），复用 shared.PanelTree（PanelLeaf | SplitNode） */
 export type PanelTreeNode = PanelTree

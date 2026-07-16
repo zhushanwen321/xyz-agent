@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => ({
   trashMock: vi.fn(),
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
   getHistoryFromFileMock: vi.fn().mockResolvedValue([]),
+  getHistoryFromFilePathMock: vi.fn().mockResolvedValue([]),
 }))
 
 const { mockScannedSessions } = mocks
@@ -95,7 +96,10 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
 
 vi.mock('../src/infra/system/trash.js', () => ({ trash: mocks.trashMock }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: mocks.convertPiHistoryMock }))
-vi.mock('../src/services/session-history.js', () => ({ getHistoryFromFile: mocks.getHistoryFromFileMock }))
+vi.mock('../src/services/session-history.js', () => ({
+  getHistoryFromFile: mocks.getHistoryFromFileMock,
+  getHistoryFromFilePath: mocks.getHistoryFromFilePathMock,
+}))
 
 // ── Mock 之后再 import 被测对象 ─────────────────────────────────────
 
@@ -124,6 +128,10 @@ interface MockClient {
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
   sendCommand: MockInstance<SendCommandFn>
+  /** 切换 pi session 文件（W2 收口：替代 sendCommand('switch_session')）。 */
+  switchSession: MockInstance<(sessionPath: string) => Promise<void>>
+  /** 查询 pi get_state（W2 收口：替代 readPiState/sendCommand('get_state')），返回归一后的 state 对象。 */
+  getState: MockInstance<() => Promise<Record<string, unknown> | undefined>>
   getCommands: MockInstance<() => Promise<unknown>>
   getSessionStats: MockInstance<() => Promise<unknown>>
   onEvent: MockInstance<(listener: PiEventListener) => () => void>
@@ -148,6 +156,8 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     clear: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     getHistory: vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: { messages: [] } }),
     sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
+    switchSession: vi.fn<(sessionPath: string) => Promise<void>>().mockResolvedValue(undefined),
+    getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({}),
     getCommands: vi.fn<() => Promise<unknown>>().mockResolvedValue([]),
     getSessionStats: vi.fn<() => Promise<unknown>>().mockResolvedValue({}),
     // 保存 listener 到 eventListeners，测试可取出触发 agent_end 事件
@@ -205,11 +215,9 @@ function createSetup(): Setup {
     createSession: vi.fn(async (_id: string, _cwd: string) => {
       const piSid = `pi-auto-${++autoId}`
       const client = makeMockClient({
-        sendCommand: vi.fn<SendCommandFn>(async (type) => {
-          if (type === 'get_state') {
-            return { data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }
-          }
-          return { data: {} }
+        // W2 收口后 create 用 client.getState()（返回归一后的 state 对象）
+        getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+          sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
         }),
       })
       clientMap.set(piSid, client)
@@ -279,11 +287,9 @@ function createSetup(): Setup {
   const seedSession: Setup['seedSession'] = async (opts = {}) => {
     const piSid = `pi-seed-${++autoId}`
     const client = makeMockClient({
-      sendCommand: vi.fn<SendCommandFn>(async (type) => {
-        if (type === 'get_state') {
-          return { data: { sessionId: piSid, sessionFile: opts.sessionFile ?? `/fake/${piSid}.jsonl` } }
-        }
-        return { data: {} }
+      // W2 收口后 create 用 client.getState()（返回归一后的 state 对象）
+      getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+        sessionId: piSid, sessionFile: opts.sessionFile ?? `/fake/${piSid}.jsonl`,
       }),
       getCommands: vi.fn<() => Promise<unknown>>().mockResolvedValue(opts.commands ?? []),
     })
@@ -541,8 +547,9 @@ describe('SessionService · lifecycle', () => {
     })
 
     it('throws and destroys session when pi returns no sessionId', async () => {
+      // W2 收口后 create 用 client.getState()，返回空对象 → 无 sessionId → 抛错
       const stateless = makeMockClient({
-        sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
+        getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({}),
       })
       vi.mocked(setup.pm.createSession).mockResolvedValueOnce(stateless as unknown as IPiEngine)
       await expect(setup.service.create(tmpdir())).rejects.toThrow('did not return a session ID')
@@ -631,7 +638,8 @@ describe('SessionService · lifecycle', () => {
       vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       const summary = await setup.service.restoreSession('persist-1')
       expect(summary.id).toBe('persist-1')
-      expect(client.sendCommand).toHaveBeenCalledWith('switch_session', { sessionPath: '/fake/persist-1.jsonl' })
+      // W2 收口后 restoreSession 用 client.switchSession(path)
+      expect(client.switchSession).toHaveBeenCalledWith('/fake/persist-1.jsonl')
     })
 
     it('throws when persisted session not found', async () => {
@@ -653,7 +661,8 @@ describe('SessionService · lifecycle', () => {
         lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0,
       })
       const client = makeMockClient({
-        sendCommand: vi.fn<SendCommandFn>().mockRejectedValue(new Error('switch failed')),
+        // W2 收口后 restoreSession 用 client.switchSession，失败时抛错触发清理
+        switchSession: vi.fn<(sessionPath: string) => Promise<void>>().mockRejectedValue(new Error('switch failed')),
       })
       vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       await expect(setup.service.restoreSession('persist-3')).rejects.toThrow('switch failed')
@@ -685,9 +694,8 @@ describe('SessionService · Facade', () => {
       expect(setup.service.getSummary(id)?.modelId).toBe('anthropic/claude-x')
     })
 
-    it('returns sessionId unchanged when session not in map', async () => {
-      const returned = await setup.service.switchModel('ghost', 'p', 'm')
-      expect(returned).toBe('ghost')
+    it('throws when session not in map (W1/L7: fail-fast，不再静默成功)', async () => {
+      await expect(setup.service.switchModel('ghost', 'p', 'm')).rejects.toThrow('session not active')
     })
 
     it('切换后广播 session.state_changed（含按新 contextWindow 重算用量）', async () => {
@@ -699,7 +707,8 @@ describe('SessionService · Facade', () => {
       vi.mocked(client.setModel).mockClear()
       vi.mocked(setup.broker.broadcast).mockClear()
       // get_state 返回 thinkingLevel（broadcastSessionState 查 pi get_state）
-      vi.mocked(client.sendCommand).mockResolvedValueOnce({ data: { thinkingLevel: 'high' } })
+      // W2 收口后用 client.getState()，返回归一后的 state 对象
+      vi.mocked(client.getState).mockResolvedValueOnce({ thinkingLevel: 'high' })
 
       await setup.service.switchModel(id, 'anthropic', 'claude-x')
 
@@ -735,7 +744,8 @@ describe('SessionService · Facade', () => {
       const { id, client } = await setup.seedSession()
       setup.service.setModelContextWindowResolver(() => 100000)
       setup.service.setThinkingLevelCache(id, 'medium')
-      vi.mocked(client.sendCommand).mockRejectedValueOnce(new Error('get_state boom'))
+      // W2 收口后 broadcastSessionState 用 client.getState()，失败时 thinkingLevel 回退缓存值
+      vi.mocked(client.getState).mockRejectedValueOnce(new Error('get_state boom'))
 
       await setup.service.switchModel(id, 'anthropic', 'claude-x')
 
@@ -863,20 +873,31 @@ describe('SessionService · Facade', () => {
     })
   })
 
-  describe('inputTokens 缓存（attachUsageListener）', () => {
-    it('agent_end 的 usage.inputTokens 被缓存到 session，getInputTokens 可读', async () => {
-      const { id, client } = await setup.seedSession()
-      // initializeManagedSession 注册了 onEvent listener，取出触发 agent_end
-      expect(client.eventListeners.length).toBeGreaterThan(0)
-      client.eventListeners.forEach((fn) => fn({ type: 'agent_end', payload: { usage: { inputTokens: 15000, totalTokens: 20000 } } }))
+  describe('inputTokens 缓存（W3：经 applyContextUpdate + handleTurnEndSideEffects 迁移）', () => {
+    // W3：attachUsageListener 已删除，inputTokens/tokenCount 回写经中间事件链路：
+    //   - applyContextUpdate(sid, inputTokens, totalTokens)：写 inputTokens + tokenCount
+    //   - handleTurnEndSideEffects(sid)：复位 isGenerating（agent_end 副作用）
+    it('agent_end usage 经 applyContextUpdate 回写 inputTokens + tokenCount', async () => {
+      const { id } = await setup.seedSession()
+      // 模拟 EventInterpreter onContextUpdate 回调（agent_end usage）
+      setup.service.applyContextUpdate(id, 15000, 20000)
       expect(setup.service.getInputTokens(id)).toBe(15000)
       expect(setup.service.getSummary(id)?.tokenCount).toBe(20000)
     })
 
-    it('agent_end payload 无 usage 字段时不抛错，inputTokens 保持原值', async () => {
-      const { id, client } = await setup.seedSession()
-      client.eventListeners.forEach((fn) => fn({ type: 'agent_end', payload: {} }))
-      expect(setup.service.getInputTokens(id)).toBe(0) // 未收到 usage，保持初始 0
+    it('agent_end 无 usage（inputTokens=0）时 applyContextUpdate 早退，保持原值', async () => {
+      const { id } = await setup.seedSession()
+      // inputTokens=0 守卫，整个方法早退（不回写不广播）
+      setup.service.applyContextUpdate(id, 0, 0)
+      expect(setup.service.getInputTokens(id)).toBe(0)
+    })
+
+    it('handleTurnEndSideEffects 复位 isGenerating（agent_end 迁移）', async () => {
+      const { id } = await setup.seedSession()
+      await setup.service.sendMessage(id, 'hi') // 标记 generating
+      expect(setup.service.getSummary(id)?.status).toBe('active')
+      setup.service.handleTurnEndSideEffects(id)
+      expect(setup.service.getSummary(id)?.status).toBe('idle')
     })
 
     it('getInputTokens 对未知 session 返回 0', () => {
@@ -1114,6 +1135,30 @@ describe('SessionService · Facade', () => {
     })
   })
 
+  describe('workflowAction + subagentAction（扩展 slash command 转发）', () => {
+    it('workflowAction 转发 /workflows <action> <runId> 到 pi prompt', async () => {
+      const { id, client } = await setup.seedSession()
+      vi.mocked(client.prompt).mockClear()
+      await setup.service.workflowAction(id, 'abort', 'wf-run-1')
+      expect(client.prompt).toHaveBeenCalledWith('/workflows abort wf-run-1')
+    })
+
+    it('workflowAction session 不活跃 → throw', async () => {
+      await expect(setup.service.workflowAction('ghost', 'abort', 'wf-x')).rejects.toThrow('not active')
+    })
+
+    it('subagentAction 转发 /subagents <action> <subagentId> 到 pi prompt', async () => {
+      const { id, client } = await setup.seedSession()
+      vi.mocked(client.prompt).mockClear()
+      await setup.service.subagentAction(id, 'cancel', 'bg-abc-1-123')
+      expect(client.prompt).toHaveBeenCalledWith('/subagents cancel bg-abc-1-123')
+    })
+
+    it('subagentAction session 不活跃 → throw', async () => {
+      await expect(setup.service.subagentAction('ghost', 'cancel', 'bg-x')).rejects.toThrow('not active')
+    })
+  })
+
   describe('public session (ensurePublicSession / onPublicSessionReady)', () => {
     it('ensurePublicSession creates hidden session and fires onPublicSessionReady', async () => {
       // 先注入回调（组合根在 setServices 后调 setOnPublicSessionReady）
@@ -1261,7 +1306,7 @@ describe('SessionService · onSessionExit callback', () => {
     expect(String(exitedMsg?.payload.reason)).toBe('Session process exited (code: 0)')
   })
 
-  it('on exit: adapter.detach and usage listener unsub are invoked', async () => {
+  it('on exit: adapter.detach is invoked (W3: usage listener removed, EventAdapter sole listener)', async () => {
     // 用可观测的 adapter 工厂捕获 detach
     const detachSpy = vi.fn()
     const attachSpy = vi.fn()
@@ -1280,7 +1325,10 @@ describe('SessionService · onSessionExit callback', () => {
     )
     const piSid = 'pi-detach-1'
     const client = makeMockClient({
-      sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }),
+      // W2 收口后 create 用 client.getState()，返回归一后的 state 对象
+      getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
+        sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
+      }),
     })
     vi.mocked(localSetup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
     localSetup.clientMap.set(piSid, client)

@@ -19,16 +19,16 @@
     >
       <Sparkles class="size-8 text-accent opacity-70" />
       <div>
-        <p class="text-[15px] font-medium text-fg">开始你的第一个任务</p>
+        <p class="text-[15px] font-medium text-fg">{{ t('workspace.emptyTitle') }}</p>
         <p class="mt-1 text-[12px] text-muted">
-          或按
+          {{ t('workspace.shortcutHint') }}
           <kbd class="ml-1 rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
-          新建
+          {{ t('workspace.shortcutKey') }}
         </p>
       </div>
       <Button variant="default" size="sm" class="gap-1.5" @click="onNewSession">
         <Plus class="size-[14px]" />
-        新建任务
+        {{ t('workspace.newTask') }}
       </Button>
     </div>
   </div>
@@ -36,6 +36,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -44,6 +45,7 @@ import { useExtensionNotify } from '@/composables/useExtensionUI'
 import PanelContainer from './PanelContainer.vue'
 import ExtensionUIDialog from '@/components/extension/ExtensionUIDialog.vue'
 
+const { t } = useI18n()
 const { newSession, focusedSessionId } = useSidebar()
 const flow = useNewTaskFlow()
 // Extension notify → toast（fire-and-forget，非阻塞通知）

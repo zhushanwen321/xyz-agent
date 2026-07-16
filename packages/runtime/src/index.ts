@@ -13,6 +13,7 @@ import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
 import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
+import { NpmPluginInstaller } from './infra/installers/plugin-installer-adapter.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
@@ -121,10 +122,12 @@ async function main(): Promise<void> {
   // 启动定期 flush 计时器（全量周期，补充 per-write debounce 500ms）
   recentWorkspacesStore.startFlushTimer()
   const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
+  const pluginInstaller = new NpmPluginInstaller(join(configDir, 'plugins'))
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,
     modelService,
     configDir,
+    pluginInstaller,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 
@@ -156,11 +159,18 @@ async function main(): Promise<void> {
         server.handleStatusSetUpdate(payload)
       },
       onContextUpdate: (sid, ctxData) => {
-        // session 级状态单一 owner：inputTokens 回写 + usagePercent 计算 + context.update 广播
+        // session 级状态单一 owner：inputTokens 回写 + tokenCount 写入 + usagePercent 计算 + context.update 广播
         // 全部由 SessionService.applyContextUpdate 负责（contextWindow 经注入的 resolver 解析）。
         // context.update 与 switchModel 的竞态保护（inputTokens 回写打通数据源）也收敛在该方法内。
-        sessionService.applyContextUpdate(sid, ctxData.inputTokens)
+        // W3：totalTokens 写入 session.tokenCount（原 attachUsageListener 的 tokenCount 回写迁移至此）。
+        sessionService.applyContextUpdate(sid, ctxData.inputTokens, ctxData.totalTokens)
       },
+      // W3：turn_end 单 turn 副作用——tryPersistLabel 主路径（首 turn 即持久化）。
+      // 原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发。
+      onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
+      // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
+      // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
+      onTurnFinalize: (sid) => sessionService.handleTurnEndSideEffects(sid),
       onThinkingLevelChanged: (sid, level) => {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
@@ -172,6 +182,13 @@ async function main(): Promise<void> {
         data: { ...context, sessionId },
         timestamp: Date.now(),
       }),
+      // W6 pi watchdog：turn 内连续 300s 无活动事件判定 pi 卡死，触发 abort。
+      // 复用 sessionService.abort → message-dispatcher.abort 完整路径（client.abort 成功/失败
+      // 均有兜底广播 + 复位 isGenerating，设计文档 A2 §3.4）。.catch 兜底防 unhandledRejection
+      // （abort 内部已 try/catch 广播终态，此处只防极端异常逃逸）。
+      onSilentAbort: ({ sessionId: sid }) => {
+        sessionService.abort(sid).catch(() => {})
+      },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
     return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
@@ -278,7 +295,7 @@ async function main(): Promise<void> {
       console.log(`[runtime] auto-upgraded ${upgraded.length} extension(s):`,
         upgraded.map(r => `${r.name} ${r.from ?? '?'}→${r.to ?? '?'}`).join(', '))
     }
-    // eslint-disable-next-line taste/no-silent-catch -- startup: auto-upgrade failure must not block server
+     
   } catch (e) {
     // checkAndAutoUpgrade 内部已 catch 每个扩展，此处是意外错误兜底
     console.warn('[runtime] extension auto-upgrade encountered an error:', e)

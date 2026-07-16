@@ -3,8 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine, PiRpcResponse, PiSessionStats, PiCompactionResult } from '../../services/ports/pi-engine.js'
-import { readRpcData } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiSessionStats, PiCompactionResult } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
@@ -58,7 +57,13 @@ export interface RpcClientOptions {
 const CMD_TIMEOUT_MS = 60_000
 const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
+/** 快速操作超时（L6：getState/getCommands 等毫秒级 RPC，10s 足够，60s 等太久才报错） */
+const FAST_TIMEOUT_MS = 10_000
+/** 慢操作超时（L6：switchSession 加载大 session 文件可能耗时，120s 避免误超时） */
+const SLOW_TIMEOUT_MS = 120_000
 const STARTUP_DELAY_MS = 500
+/** timedOutIds 条目存活时间（S6：超时后迟到响应的防御窗口，5s 后清理避免 Set 无界增长） */
+const TIMED_OUT_ID_TTL_MS = 5_000
 const STDERR_BUFFER_MAX_LINES = 50
 const STDERR_TAIL_LINES = 10
 
@@ -69,6 +74,15 @@ export class RpcClient implements IPiEngine {
     reject: (err: Error) => void
     timer: ReturnType<typeof setTimeout>
   }>()
+  /**
+   * 已超时的 RPC id（S6 防御迟到响应被误当 event 广播）。
+   *
+   * sendCommand 超时后 id 从 pending 删除但记入此 Set（5s TTL）。
+   * handleMessage 收到带这些 id 的迟到响应时丢弃（不当 event 广播给 listeners），
+   * 避免幽灵 UI 副作用（如迟到 get_state 响应触发 sidebar 状态错乱）。
+   * TTL 到后自动从 Set 删除，避免无界增长。
+   */
+  private timedOutIds = new Set<string>()
   private listeners = new Set<PiEventListener>()
   private msgCounter = 0
   private _exited = false
@@ -187,6 +201,17 @@ export class RpcClient implements IPiEngine {
       }
     })
 
+    // W2：监听 stdout stream 的 'error' 事件。
+    // proc.on('error') 只覆盖 spawn 失败；stdout 是独立的 Readable stream，pi 崩溃 /
+    // 管道断裂（EPIPE / ECONNRESET）时 stdout 会 emit 'error'，若无 listener 则升级为
+    // uncaughtException → runtime 主进程崩溃。此处捕获后 rejectAll pending 并标记 _exited，
+    // 把 stream error 纳入与进程退出相同的清理路径。
+    proc.stdout?.on('error', (err: NodeJS.ErrnoException) => {
+      console.error('[rpc] stdout stream error:', err)
+      this._exited = true
+      this.rejectAll(new Error(`pi stdout stream error: ${err.message}`))
+    })
+
     // 收集 stderr 用于错误诊断，同时转发到日志
     this.stderrChunks = []
     if (proc.stderr) {
@@ -198,6 +223,13 @@ export class RpcClient implements IPiEngine {
         if (this.stderrChunks.length > STDERR_BUFFER_MAX_LINES) {
           this.stderrChunks.shift()
         }
+      })
+      // W2：同 stdout，stderr stream 的 'error' 独立于 proc.on('error')。
+      // pi 崩溃时 stderr 管道可能先断，未捕获会变 uncaughtException。捕获后 rejectAll + 标记 _exited。
+      proc.stderr.on('error', (err: NodeJS.ErrnoException) => {
+        console.error('[rpc] stderr stream error:', err)
+        this._exited = true
+        this.rejectAll(new Error(`pi stderr stream error: ${err.message}`))
       })
     }
 
@@ -238,6 +270,10 @@ export class RpcClient implements IPiEngine {
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)
       entry.resolve(msg)
+    } else if (msg.id && this.timedOutIds.has(msg.id)) {
+      // S6: 该 id 的请求已超时 reject，pi 迟到的响应丢弃（不当 event 广播给 listeners，
+      // 避免幽灵 UI 副作用）。timedOutIds 由 sendCommand 超时回调写入，5s TTL 后自动清理。
+      return
     } else {
       for (const listener of this.listeners) {
         listener(msg)
@@ -251,6 +287,9 @@ export class RpcClient implements IPiEngine {
       entry.reject(error)
       this.pending.delete(id)
     }
+    // 进程退出 / stream error 时 pending 已全清，对应的 timedOutIds 也应一并清空——
+    // 否则残留 id 会在 Set 里存活到 TTL（5s）才被自动删除（虽进程即将退出，仍补齐一致性）。
+    this.timedOutIds.clear()
   }
 
   private nextId(): string {
@@ -295,6 +334,10 @@ export class RpcClient implements IPiEngine {
 
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        // S6: 标记此 id 已超时，handleMessage 收到带此 id 的迟到响应时丢弃而非广播为 event。
+        // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
+        this.timedOutIds.add(id)
+        setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
         reject(new Error(`RPC command "${type}" timed out after ${timeout}ms`))
       }, timeout)
 
@@ -304,6 +347,11 @@ export class RpcClient implements IPiEngine {
           if (msg.success === false) {
             reject(new Error(msg.error ?? `RPC command "${type}" failed`))
           } else {
+            // 归一：pi 响应兼容 data/payload 两位置（historically readRpcData 在调用方做
+            // data ?? payload），现下沉到 sendCommand，统一后调用方直接读 msg.data。
+            if (msg.data === undefined && msg.payload !== undefined) {
+              msg.data = msg.payload
+            }
             resolve(msg)
           }
         },
@@ -394,8 +442,8 @@ export class RpcClient implements IPiEngine {
   }
 
   async compact(customInstructions?: string): Promise<PiCompactionResult> {
-    const data = readRpcData(await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS) as PiRpcResponse)
-    return data as unknown as PiCompactionResult
+    const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
+    return msg.data as unknown as PiCompactionResult
   }
 
   /**
@@ -407,13 +455,62 @@ export class RpcClient implements IPiEngine {
   }
 
   async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
-    const data = readRpcData(await this.sendCommand('get_commands') as PiRpcResponse)
-    return (data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
+    // L6：getCommands 是毫秒级操作，用 FAST_TIMEOUT_MS（10s）替代默认 60s，失败更快报错
+    const msg = await this.sendCommand('get_commands', {}, FAST_TIMEOUT_MS)
+    return (msg.data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
   }
 
   async getSessionStats(): Promise<PiSessionStats> {
-    const data = readRpcData(await this.sendCommand('get_session_stats') as PiRpcResponse)
-    return (data ?? {}) as PiSessionStats
+    const msg = await this.sendCommand('get_session_stats')
+    return (msg.data ?? {}) as PiSessionStats
+  }
+
+  /** 切换 pi 进程到指定 session 文件（restore / fork 用）。 */
+  switchSession(sessionPath: string): Promise<void> {
+    // L6：switchSession 加载大 session 文件可能耗时，用 SLOW_TIMEOUT_MS（120s）避免误超时
+    return this.sendCommand('switch_session', { sessionPath }, SLOW_TIMEOUT_MS).then(() => undefined)
+  }
+
+  /** 查询 pi session 状态（get_state），返回归一后的 state 对象（sendCommand 已归一 data ?? payload）。 */
+  async getState(): Promise<Record<string, unknown> | undefined> {
+    // L6：getState 是毫秒级操作，用 FAST_TIMEOUT_MS（10s）替代默认 60s
+    return (await this.sendCommand('get_state', {}, FAST_TIMEOUT_MS)).data
+  }
+
+  /**
+   * 向 pi 发送 extension_ui_response（extension UI 请求 / bridge 请求的响应）。
+   *
+   * pi 对 extension_ui_response 不回 RPC reply（rpc-mode.ts 直接 resolve pending 后 return），
+   * 故用 sendRaw 写入（不等 reply，不注册 pending，避免 60s timer 泄漏）。
+   *
+   * 两种 payload 格式（吸收 extension-message-handler 的 buildExtensionUiResponse 映射）：
+   *
+   * 1. extension UI 场景（带 method）——pi 鸭子类型字段检测（rpc-mode.ts:136-149）：
+   *    - response === null → {id, cancelled:true}（取消 / 超时）
+   *    - method === 'confirm' → {id, confirmed:boolean}
+   *    - 其余（select/input/editor）→ {id, value:string}
+   *
+   * 2. bridge 场景（无 method）——pi bridge extension 的 pendingExtensionRequests 期望
+   *    `{response: <payload>}` 包裹结构（见 transport/bridge-handler.ts:32）：
+   *    - response 是对象 → {id, response}（原样发）
+   *
+   * 判定优先级：null（取消）> bridge（无 method 且对象）> confirm > value。
+   */
+  sendExtensionUiResponse(id: string, response: unknown, method?: string): void {
+    let payload: Record<string, unknown>
+    if (response === null) {
+      // 取消 / 超时（无论 method）
+      payload = { type: 'extension_ui_response', id, cancelled: true }
+    } else if (method === undefined && typeof response === 'object') {
+      // bridge 场景：response 是完整对象 + 无 method → {id, response}
+      payload = { type: 'extension_ui_response', id, response }
+    } else if (method === 'confirm') {
+      payload = { type: 'extension_ui_response', id, confirmed: response as boolean }
+    } else {
+      // select / input / editor → value
+      payload = { type: 'extension_ui_response', id, value: String(response) }
+    }
+    this.sendRaw(JSON.stringify(payload))
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────

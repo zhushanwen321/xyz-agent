@@ -4,6 +4,9 @@
  * 规则：今天 HH:MM；昨天「昨天」；7 天内「N 天前」；更早「M 月 D 日」。
  * 复用点：SessionItem（sidebar）+ SessionCard（Overview）——同一信息原子、同一呈现。
  */
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /** 1 天毫秒数（相对时间分桶阈值） */
 const ONE_DAY = 86_400_000
@@ -27,8 +30,8 @@ export function formatRelativeTime(ts: number): string {
   }
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)
-  if (yesterday.toDateString() === date.toDateString()) return '昨天'
+  if (yesterday.toDateString() === date.toDateString()) return t('composable.yesterday')
   const days = Math.floor((now.getTime() - ts) / ONE_DAY)
-  if (days < RECENT_DAYS_LIMIT) return `${days} 天前`
-  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+  if (days < RECENT_DAYS_LIMIT) return t('composable.daysAgo', { days })
+  return t('composable.dateFormat', { month: date.getMonth() + 1, day: date.getDate() })
 }

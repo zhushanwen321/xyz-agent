@@ -42,24 +42,24 @@
         <!-- 展开在途：loading 指示（nodeStates[path].status==='loading'） -->
         <div
           v-if="dirState === 'loading'"
-          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10.5px] text-subtle"
+          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-subtle"
           :style="childHintPaddingStyle"
           :data-testid="`file-tree-loading-${node.path}`"
         >
           <span :class="chevronSlotClass" data-testid="chevron-slot" />
           <Loader2 class="size-3 animate-spin opacity-60" />
-          <span>加载...</span>
+          <span>{{ t('sidebar.fileTree.loading') }}</span>
         </div>
         <div
           v-else-if="dirState === 'error'"
-          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10.5px] text-danger"
+          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-danger"
           :style="childHintPaddingStyle"
           :data-testid="`file-tree-error-${node.path}`"
           @click="toggle"
         >
           <span :class="chevronSlotClass" data-testid="chevron-slot" />
           <AlertCircle class="size-3" />
-          <span>加载失败（点击重试）</span>
+          <span>{{ t('sidebar.fileTree.loadFailed') }}</span>
         </div>
         <template v-else>
           <FileTreeRow
@@ -72,10 +72,10 @@
           <!-- 已加载但空目录（按过滤后判定：全部 ignored 被过滤后也视为空） -->
           <div
             v-if="node.children && visibleChildren.length === 0"
-            class="py-1 pr-2 font-mono text-[10.5px] text-subtle italic"
+            class="py-1 pr-2 font-mono text-[10px] text-subtle italic"
             :style="childHintPaddingStyle"
           >
-            （空目录）
+            {{ t('sidebar.fileTree.emptyDir') }}
           </div>
         </template>
       </template>
@@ -123,10 +123,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ChevronRight, Folder, FileText, FileCode, FileJson, Loader2, AlertCircle } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import type { FileNode } from '@xyz-agent/shared'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 节点（shared FileNode，GAP-S6 统一） */
@@ -201,12 +204,12 @@ const gitBadge = computed(() => {
 /** M/A/D/U/R 角标配色（design-tokens 语义色） */
 const gitBadgeClass = computed(() => {
   switch (gitStatus.value) {
-    case 'modified': return 'bg-warning/12 text-warning'
-    case 'added': return 'bg-success/12 text-success'
-    case 'deleted': return 'bg-danger/12 text-danger'
-    case 'unmerged': return 'bg-danger/16 text-danger font-semibold'
-    case 'renamed': return 'bg-info/12 text-info'
-    case 'untracked': return 'bg-success/12 text-success'
+    case 'modified': return 'bg-warning-soft text-warning'
+    case 'added': return 'bg-success-soft text-success'
+    case 'deleted': return 'bg-danger-soft text-danger'
+    case 'unmerged': return 'bg-danger-soft text-danger font-semibold'
+    case 'renamed': return 'bg-info-soft text-info'
+    case 'untracked': return 'bg-success-soft text-success'
     default: return ''
   }
 })

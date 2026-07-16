@@ -19,6 +19,7 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     listProviders: vi.fn().mockReturnValue([{ id: 'p1' }]),
     setProvider: overrides.setProvider ?? vi.fn().mockReturnValue({}),
     deleteProvider: overrides.deleteProvider ?? vi.fn().mockReturnValue({}),
+    setDefaultModel: vi.fn(),
     getProvider: vi.fn().mockReturnValue(undefined),
     updateToolPermissions: vi.fn(),
     loadSkills: vi.fn().mockReturnValue([]),
@@ -92,6 +93,23 @@ describe('SettingsMessageHandler', () => {
       await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
       const d = broadcasts.find(b => b.type === 'config.defaults')
       expect(d?.payload).toMatchObject({ defaultModel: 'p2/m2', source: 'provider-deleted' })
+    })
+  })
+
+  describe('config.setDefaultModel（W3 默认模型持久化）', () => {
+    it('调 configService.setDefaultModel(provider, modelId) + reply config.defaults + 广播给所有 panel', async () => {
+      // W3：前端设置默认模型。handler 路由到 configService.setDefaultModel（已存在，写 settings.json），
+      // 回发起端 reply config.defaults，并广播给所有 panel（与 setProvider/deleteProvider 的
+      // newDefault 广播同构），让其它打开的设置面板同步默认模型下拉。
+      const { ctx, replies, broadcasts, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.setDefaultModel', { provider: 'p1', modelId: 'm1' }), WS)
+      expect(ctx.configService.setDefaultModel).toHaveBeenCalledWith('p1', 'm1')
+      // reply：回发起端，defaultModel 形如 "provider/modelId"
+      expect(replies[0]).toMatchObject({ type: 'config.defaults', payload: { defaultModel: 'p1/m1' } })
+      // 广播：推给所有 panel
+      const d = broadcasts.find(b => b.type === 'config.defaults')
+      expect(d).toBeDefined()
+      expect(d?.payload).toMatchObject({ defaultModel: 'p1/m1' })
     })
   })
 

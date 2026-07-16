@@ -15,21 +15,23 @@
     <div v-if="type === 'thinking'" class="trace-think">
       <div
         class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning transition-colors hover:text-[var(--reasoning)]"
-        :title="thinkingExpanded ? '收起推理' : '展开推理'"
+        :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
         @click="toggleThinking"
       >
         <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="thinkingExpanded ? 'rotate-90' : ''" />
         <Brain class="size-3 shrink-0" />
-        <span class="shrink-0 whitespace-nowrap">思考</span>
+        <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.thinkingBlock') }}</span>
         <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-muted">· {{ previewText }}</span>
       </div>
-      <!-- text-[12px] 对齐 tool 详情字号（曾用继承字号偏大） -->
-      <p v-if="thinkingExpanded" class="mt-1 text-[12px] italic leading-relaxed text-muted">{{ content }}</p>
+      <!-- text-[12px] 对齐 tool 详情字号；去 italic（md 结构+全局 italic 可读性差，由 thinking variant 降级样式表达次要语义） -->
+      <div v-if="thinkingExpanded" class="trace-think-body mt-1 text-[12px] leading-relaxed text-muted">
+        <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
+      </div>
     </div>
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
          streaming 光标已移到 Turn.vue trace 末尾（保证永远在最后一行，不受 contentBlocks 时序影响）。 -->
-    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12.5px] leading-relaxed text-muted">
+    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12px] leading-relaxed text-muted">
       <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
     </div>
 
@@ -41,27 +43,27 @@
         <div
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
           :class="subagentHeaderColor"
-          :title="toolExpanded ? '收起' : '展开'"
+          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
           <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
           <Bot class="size-3 shrink-0" />
-          <span class="shrink-0 whitespace-nowrap">Subagent</span>
+          <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.subagent') }}</span>
           <span class="shrink-0 normal-case tracking-normal text-muted">{{ subagentAgent || subagentHeaderLabel }}</span>
           <span v-if="subagentTask" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ subagentTaskPreview }}</span>
           <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
           <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
             <span class="size-[6px] shrink-0 rounded-full bg-reasoning animate-working-pulse" />
-            <span class="truncate">{{ subagentLiveInfo || '运行中' }}</span>
+            <span class="truncate">{{ subagentLiveInfo || t('panel.message.running') }}</span>
           </span>
           <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
         </div>
         <template v-if="toolExpanded">
           <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
           <div v-if="subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted">
-            <span v-if="subagentProgressDetail.toolCount != null" class="text-info">工具 ×{{ subagentProgressDetail.toolCount }}</span>
+            <span v-if="subagentProgressDetail.toolCount != null" class="text-info">{{ t('panel.subagent.toolCount', { count: subagentProgressDetail.toolCount }) }}</span>
             <span v-if="subagentProgressDetail.turnCount != null">turn {{ subagentProgressDetail.turnCount }}</span>
             <span v-if="subagentProgressDetail.tokens != null">{{ formatTokens(subagentProgressDetail.tokens) }}</span>
             <span v-if="subagentProgressDetail.durationMs != null">{{ formatDuration(subagentProgressDetail.durationMs) }}</span>
@@ -81,9 +83,10 @@
       <!-- ── 普通 tool 块：1 行收起（header 含 toolName+argPath 摘要+状态），点击展开详情 ── -->
       <div v-else>
         <div
+          data-testid="tool-block-header"
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
           :class="isFailed ? 'text-danger' : isUnfinished ? 'text-subtle' : 'text-info'"
-          :title="toolExpanded ? '收起' : '展开'"
+          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
           <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
@@ -92,24 +95,31 @@
           <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ argPath }}</span>
           <!-- 状态指示：running 脉冲点 / completed Check 图标 / failed XCircle 图标 -->
           <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-0.5 normal-case tracking-normal whitespace-nowrap text-accent">
-            <span class="size-[6px] shrink-0 rounded-full bg-accent animate-working-pulse" />进行中
+            <span class="size-[6px] shrink-0 rounded-full bg-accent animate-working-pulse" />{{ t('panel.message.inProgress') }}
           </span>
           <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">未收到结果</span>
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
         </div>
         <template v-if="toolExpanded">
-          <div class="mt-1 font-mono text-[12px] text-fg">
-            <span :class="isFailed ? 'text-danger' : 'text-info'">{{ toolName }}</span>
-            <span class="text-muted">({{ argPath }})</span>
+          <!-- 补充细节条：失败错误摘要 + 行数/字符数 + 耗时。对齐 subagent 展开体信息架构 -->
+          <div v-if="metaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px]">
+            <span
+              v-for="(item, idx) in metaItems"
+              :key="idx"
+              :class="{
+                'text-danger font-semibold': item.tone === 'danger',
+                'text-info': item.tone === 'info',
+                'text-muted': item.tone === 'muted',
+              }"
+            >{{ item.text }}</span>
           </div>
+          <!-- 结果区：无 Check/XCircle 图标（header 状态指示已覆盖） -->
           <div
             v-if="result"
-            class="mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap"
+            class="mt-1 font-mono text-[12px] leading-snug whitespace-pre-wrap"
             :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-muted'"
           >
-            <Check v-if="!isFailed" class="mt-0.5 size-3 shrink-0 text-success" />
-            <XCircle v-else class="mt-0.5 size-3 shrink-0 text-danger" />
             <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
             <AnsiText v-else-if="outputRaw" :content="outputRaw" />
             <span v-else>{{ result }}</span>
@@ -122,6 +132,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Bot, Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
@@ -130,6 +141,8 @@ import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
 import AnsiText from './gui/AnsiText.vue'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   type: 'thinking' | 'tool' | 'text'
@@ -175,6 +188,64 @@ const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
+/** 补充细节条 meta 项：耗时 + 工具特化信息（read/bash 的输出行数、read 字符数）。
+ *  - 耗时：startTime→endTime，数据源已就绪。
+ *  - 行数/字符数：pi 协议不返回文件元信息（exit code / fileSize 均无），前端从 output 文本自算。
+ *    read 工具的 output 是文件内容，行数/字符数有统计意义；bash 的 output 是命令输出，行数有参考价值；
+ *    edit/write 等 output 是简短确认（如 "done"），行数无意义不展示。
+ *  exit code / 测试数等无法从 output 可靠提取（pi 不返回数值 exit code），不做。
+ *  失败态首项（错误性质）用 danger 色强调。 */
+const OUTPUT_META_TOOLS = new Set(['read', 'bash', 'cat', 'glob', 'grep', 'list'])
+
+interface MetaItem {
+  /** 高亮态：failed 首项用 danger，普通信息用 info（蓝），其余默认 muted */
+  tone: 'danger' | 'info' | 'muted'
+  text: string
+}
+
+/** 错误摘要截断长度（细节条单行不撑爆） */
+const ERROR_SUMMARY_LIMIT = 40
+/** 字符数格式化阈值（>= 此值显示为 XK chars） */
+const CHAR_K_THRESHOLD = 1000
+
+const metaItems = computed<MetaItem[]>(() => {
+  const items: MetaItem[] = []
+  // 失败态首项：错误定性（从 error/output 首行提取一句话）
+  if (isFailed.value) {
+    const errText = (props.tool?.error ?? props.tool?.output ?? '').trim()
+    if (errText) {
+      const firstLine = errText.split('\n')[0].trim()
+      items.push({
+        tone: 'danger',
+        text: firstLine.length > ERROR_SUMMARY_LIMIT ? `${firstLine.slice(0, ERROR_SUMMARY_LIMIT)}…` : firstLine,
+      })
+    }
+  }
+  // 工具特化：行数/字符数（仅 read/bash 等输出有统计意义的工具）
+  const name = toolName.value
+  const output = props.tool?.output ?? ''
+  if (OUTPUT_META_TOOLS.has(name) && output.trim()) {
+    const lineCount = output.split('\n').length
+    items.push({ tone: 'muted', text: `${lineCount} 行` })
+    // read/cat 额外显示字符数（文件内容大小有参考价值）
+    if (name === 'read' || name === 'cat') {
+      items.push({ tone: 'muted', text: formatCharCount(output.length) })
+    }
+  }
+  // 耗时（末位）
+  const start = props.tool?.startTime
+  const end = props.tool?.endTime
+  if (typeof start === 'number' && typeof end === 'number' && end > start) {
+    items.push({ tone: 'muted', text: formatDuration(end - start) })
+  }
+  return items
+})
+
+/** 字符数格式化：>= CHAR_K_THRESHOLD 显示为 XK chars，否则原值 + chars */
+function formatCharCount(n: number): string {
+  if (n >= CHAR_K_THRESHOLD) return `${(n / CHAR_K_THRESHOLD).toFixed(1)}K chars`
+  return `${n} chars`
+}
 
 /**
  * 从 tool.details.__gui__ 提取结构化渲染组件（extension GUI 协议，spec §9.1）。
@@ -243,7 +314,9 @@ const subagentAgent = computed(() => {
   if (arr && arr.length > 0) {
     const first = arr[0] as Record<string, unknown> | undefined
     const firstName = first && typeof first.agent === 'string' ? first.agent : ''
-    return arr.length > 1 ? `${firstName} 等 ${arr.length} 个` : firstName
+    return arr.length > 1
+      ? t('panel.subagent.multiSummary', { first: firstName, count: arr.length })
+      : firstName
   }
   return ''
 })
@@ -273,7 +346,7 @@ const subagentTaskPreview = computed(() => {
 /** parallel/chain 无 agent 名时的兜底标签 */
 const subagentHeaderLabel = computed(() => {
   const input = props.tool?.input as Record<string, unknown> | undefined
-  if (Array.isArray(input?.tasks) || Array.isArray(input?.chain)) return '多 Subagent'
+  if (Array.isArray(input?.tasks) || Array.isArray(input?.chain)) return t('panel.message.multiSubagent')
   return ''
 })
 
@@ -349,6 +422,6 @@ const blockClass = computed(() => {
   if (props.type !== 'tool') return ''
   // 失败 tool / 失败 subagent：整块红框（draft trace-tool.failed）。
   if (!isFailed.value) return ''
-  return 'my-1 rounded-lg border border-danger bg-[color-mix(in_oklch,var(--danger)_6%,transparent)] px-3'
+  return 'my-1 rounded-lg border border-danger bg-danger-soft px-3'
 })
 </script>

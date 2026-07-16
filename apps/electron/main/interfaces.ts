@@ -83,7 +83,6 @@ export interface IWindowManager {
   unregister(windowId: string): void
   get(windowId: string): BrowserWindow | undefined
   getAll(): WindowState[]
-  updateState(windowId: string, patch: Partial<WindowState>): void
   focus(windowId: string): void
   close(windowId: string): void
   findSessionBySessionId(sessionId: string): { windowId: string; paneId: string } | null

@@ -40,6 +40,7 @@
  */
 import { type FunctionalComponent } from 'vue'
 import { X, Minus, Plus } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { detectPlatform, usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import { windowClose, windowMinimize, windowToggleMaximize } from '@/lib/ipc'
@@ -52,14 +53,15 @@ interface DotDef {
   icon: FunctionalComponent<{ size?: number }>
 }
 
+const { t } = useI18n()
 const isMac = detectPlatform() === 'mac'
 const { isFullscreen } = usePlatformChrome()
 
 // 红=close / 黄=minimize / 绿=maximize（mac 红黄绿标准映射）
 const dots: DotDef[] = [
-  { bgClass: 'bg-[#ff5f57]', action: 'close', label: '关闭', icon: X },
-  { bgClass: 'bg-[#febc2e]', action: 'minimize', label: '最小化', icon: Minus },
-  { bgClass: 'bg-[#28c840]', action: 'toggleMaximize', label: '最大化', icon: Plus },
+  { bgClass: 'bg-[#ff5f57]', action: 'close', label: t('shell.close'), icon: X },
+  { bgClass: 'bg-[#febc2e]', action: 'minimize', label: t('shell.minimize'), icon: Minus },
+  { bgClass: 'bg-[#28c840]', action: 'toggleMaximize', label: t('shell.maximize'), icon: Plus },
 ]
 
 function onAction(action: WinAction): void {

@@ -19,6 +19,7 @@
  * → useExtensionNotify → useToast 渲染为非阻塞 toast。
  */
 import { ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,6 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useExtensionUI, dialogFilter } from '@/composables/useExtensionUI'
 import { useSidebar } from '@/composables/features/useSidebar'
 
+const { t } = useI18n()
 const { focusedSessionId } = useSidebar()
 // B1 防重复入队：ExtensionUIDialog 只收非 askUser 请求（askUser 由 Panel inline 处理）
 const { currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId, dialogFilter)
@@ -62,21 +64,21 @@ function onConfirm(): void {
   <Dialog :open="isOpen" @update:open="(v: boolean) => { if (!v && req) cancel(req.requestId) }">
     <DialogContent hide-close class="max-w-[420px]" data-testid="extension-ui-dialog">
       <DialogHeader>
-        <DialogTitle>{{ req?.title || 'Extension 请求' }}</DialogTitle>
+        <DialogTitle>{{ req?.title || t('extensionUI.dialogTitle') }}</DialogTitle>
         <DialogDescription v-if="req?.message">{{ req.message }}</DialogDescription>
       </DialogHeader>
 
       <!-- confirm -->
       <div v-if="req?.method === 'confirm'" class="flex justify-end gap-2 pt-2">
-        <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
-        <Button variant="default" @click="onConfirm">确认</Button>
+        <Button variant="ghost" @click="req && cancel(req.requestId)">{{ t('common.cancel') }}</Button>
+        <Button variant="default" @click="onConfirm">{{ t('common.confirm') }}</Button>
       </div>
 
       <!-- select -->
       <div v-else-if="req?.method === 'select'" class="flex flex-col gap-3 pt-2">
         <Select v-model="selectValue">
           <SelectTrigger data-testid="extension-ui-select">
-            <SelectValue placeholder="请选择" />
+            <SelectValue :placeholder="t('extensionUI.selectPlaceholder')" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem
@@ -89,8 +91,8 @@ function onConfirm(): void {
           </SelectContent>
         </Select>
         <div class="flex justify-end gap-2">
-          <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
-          <Button variant="default" :disabled="!selectValue" @click="onConfirm">确认</Button>
+          <Button variant="ghost" @click="req && cancel(req.requestId)">{{ t('common.cancel') }}</Button>
+          <Button variant="default" :disabled="!selectValue" @click="onConfirm">{{ t('common.confirm') }}</Button>
         </div>
       </div>
 
@@ -109,8 +111,8 @@ function onConfirm(): void {
           data-testid="extension-ui-input"
         />
         <div class="flex justify-end gap-2">
-          <Button variant="ghost" @click="req && cancel(req.requestId)">取消</Button>
-          <Button variant="default" @click="onConfirm">确认</Button>
+          <Button variant="ghost" @click="req && cancel(req.requestId)">{{ t('common.cancel') }}</Button>
+          <Button variant="default" @click="onConfirm">{{ t('common.confirm') }}</Button>
         </div>
       </div>
     </DialogContent>

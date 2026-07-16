@@ -6,7 +6,7 @@
  * (types.ts ← interfaces.ts 单向)。
  *
  * Facade 内部用完整 ManagedSession(extends IManagedSessionView,
- * 额外持有 adapter / interceptor / unsubUsageListener 等运行时句柄)。
+ * 额外持有 adapter 等运行时句柄)。
  * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
@@ -34,6 +34,15 @@ export interface IManagedSessionView {
   /** 最近一次 agent_end / context.update 的 inputTokens 缓存，供 switchModel 重算用量 */
   inputTokens: number
   isGenerating: boolean
+  /**
+   * compact 进行中标记（W3, U6）。
+   *
+   * compact 期间 pi 正在做上下文压缩（不开 isGenerating），sendPrompt 的 busy 预检
+   * 只看 isGenerating 会让 compact 中途的消息进入 pi.prompt 触发竞态/卡死。
+   * 故 compact 用 try/finally 置此标记，sendPrompt 预检同时拒 isGenerating/isCompacting。
+   * 与 isGenerating 对称：不进 toSummary（前端状态摘要只看 isGenerating 推 active/idle）。
+   */
+  isCompacting: boolean
   thinkingLevel?: string
   sessionFilePath?: string
   /**
@@ -101,8 +110,6 @@ export type PiTranslatedEvent =
       images: Array<{ data: string; mimeType: string }> | undefined
       toolName: string
       isError: boolean
-      /** write 工具写入的 content（untracked 行数回退用，interpreter 累积）。 */
-      writeContent?: { filePath: string; content: string }
     }
   /** turn 结束（agent_end）—— interpreter 触发 context.update 回写 + file_changes ready diff + hook + baseline 清空。 */
   | {
@@ -132,4 +139,10 @@ export type PiTranslatedEvent =
   | { kind: 'thinking-level'; level: string | undefined }
   /** 触发 plugin hook（agent_start / tool_execution_* / agent_end 等观测事件）—— interpreter 调 pluginService.executeHooks。 */
   | { kind: 'hook'; eventType: string; data: Record<string, unknown> }
+  /**
+   * subagent 逐字 streaming（路径 A-1）—— 扩展层合并 text_delta 后经 setWidget("subagent-stream-<id>") 转发。
+   * interpreter 转成 subagent.stream_delta WS 帧 → 前端 applyStreamDelta 增量更新虚拟 session。
+   * lines 是累积全文（split('\n')），undefined = subagent 终态清除（setWidget(key, undefined)）。
+   */
+  | { kind: 'subagent-stream'; sessionId: string; recordId: string; lines: string[] | undefined }
 

@@ -18,14 +18,24 @@ import { parseJsonl } from '../utils/jsonl.js'
 export async function getHistoryFromFile(sessionId: string, sessionStore: ISessionStore): Promise<import('@xyz-agent/shared').Message[]> {
   const target = sessionStore.scanSessions().find(s => s.id === sessionId)
   if (!target) return []
+  return getHistoryFromFilePath(target.filePath, sessionStore)
+}
 
+/**
+ * 从指定文件路径读取 .jsonl session 历史并转换为 Message[]。
+ *
+ * 底层函数——getHistoryFromFile（主 session）和 SessionService.getSubagentHistory
+ * （subagent session）共用此转换链路。subagent JSONL 格式与主 session 一致
+ * （pi SessionManager._persist 写入），parseJsonl + filter + convertHistory 零适配复用。
+ */
+export async function getHistoryFromFilePath(filePath: string, sessionStore: ISessionStore): Promise<import('@xyz-agent/shared').Message[]> {
   let content: string
   try {
-    content = await readFile(target.filePath, 'utf-8')
+    content = await readFile(filePath, 'utf-8')
   } catch (e) {
     // Session 文件可能已被外部删除（pi 进程异常退出未 flush、用户手动清理等）
     if (isEnoent(e)) {
-      console.warn(`[session-history] session file missing, returning empty history: ${target.filePath}`)
+      console.warn(`[session-history] session file missing, returning empty history: ${filePath}`)
       return []
     }
     throw e

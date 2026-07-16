@@ -534,6 +534,71 @@ else
 fi
 
 # ============================================================================
+# i18n CJK 残留检测（.vue 模板不得含硬编码中文）
+# ============================================================================
+
+I18N_CJK_CHECKER=".githooks/check_i18n_cjk.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_I18N_CJK_CHECK" != "1" ]; then
+    # 仅当 staged 含 .vue 文件时检查
+    STAGED_VUE=$(echo "$STAGED_FILES" | grep -E "^packages/renderer/src/.*\.vue$" || true)
+    if [ -n "$STAGED_VUE" ]; then
+        echo -e "${BLUE}[INFO] 运行 i18n CJK 残留检测...${NC}"
+
+        if [ ! -f "$I18N_CJK_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $I18N_CJK_CHECKER${NC}"
+        else
+            ABSOLUTE_VUE=""
+            for FILE in $STAGED_VUE; do
+                ABSOLUTE_VUE="$ABSOLUTE_VUE $PROJECT_ROOT/$FILE"
+            done
+
+            python3 "$I18N_CJK_CHECKER" $ABSOLUTE_VUE
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] i18n CJK 残留检测失败：模板含硬编码中文${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+                exit 1
+            fi
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] i18n CJK 残留检测已跳过${NC}"
+fi
+
+# ============================================================================
+# i18n locale 双侧 key 对齐检查（zh-CN === en-US）
+# ============================================================================
+
+I18N_LOCALE_CHECKER=".githooks/check_i18n_locale_sync.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_I18N_LOCALE_SYNC_CHECK" != "1" ]; then
+    # 仅当 staged 含 locale .ts 文件时检查
+    LOCALE_CHANGED=$(echo "$STAGED_FILES" | grep -E "^packages/renderer/src/i18n/locales/.*\.ts$" || true)
+    if [ -n "$LOCALE_CHANGED" ]; then
+        echo -e "${BLUE}[INFO] 运行 i18n locale 双侧 key 对齐检查...${NC}"
+
+        if [ ! -f "$I18N_LOCALE_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $I18N_LOCALE_CHECKER${NC}"
+        else
+            python3 "$I18N_LOCALE_CHECKER"
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] i18n locale 双侧 key 不一致：zh-CN 与 en-US key 集合 desync${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+                exit 1
+            fi
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] i18n locale 双侧对齐检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -574,6 +639,8 @@ echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
 echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
+echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"
+echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-US）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

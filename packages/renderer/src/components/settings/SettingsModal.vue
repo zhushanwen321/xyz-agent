@@ -12,14 +12,14 @@
     >
       <!-- modal-head -->
       <div class="modal-head flex h-[44px] flex-none items-center gap-2.5 border-b border-border px-3.5">
-        <span class="text-[14px] font-semibold tracking-tight text-fg">设置</span>
+        <span class="text-[14px] font-semibold tracking-tight text-fg">{{ t('settings.title') }}</span>
         <div class="ml-auto flex items-center gap-2">
           <DialogClose
             class="grid size-7 place-items-center rounded-sm text-muted transition-colors hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            title="关闭（Esc）"
+            :title="t('settings.closeEsc')"
           >
             <X class="size-4" />
-            <span class="sr-only">关闭</span>
+            <span class="sr-only">{{ t('settings.close') }}</span>
           </DialogClose>
         </div>
       </div>
@@ -41,7 +41,7 @@
             @click="activeMenu = item.id"
           >
             <component :is="item.icon" class="size-[17px] flex-shrink-0" />
-            <span>{{ item.label }}</span>
+            <span>{{ t(item.labelKey) }}</span>
             <span
               v-if="getItemCount(item.id)"
               class="ml-auto rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle"
@@ -52,8 +52,8 @@
         <!-- 右详情 -->
         <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div class="border-b border-border px-6 pb-4 pt-5">
-            <h2 class="text-[20px] font-semibold tracking-tight text-fg">{{ currentMenu.label }}</h2>
-            <p class="mt-0.5 text-[13px] text-muted">{{ currentMenu.desc }}</p>
+            <h2 class="text-[20px] font-semibold tracking-tight text-fg">{{ t(currentMenu.labelKey) }}</h2>
+            <p class="mt-0.5 text-[13px] text-muted">{{ t(currentMenu.descKey) }}</p>
           </div>
           <ScrollArea class="min-h-0 flex-1">
             <div class="px-6 py-4">
@@ -80,8 +80,8 @@
       </div>
 
       <DialogHeader class="sr-only">
-        <DialogTitle>设置</DialogTitle>
-        <DialogDescription>配置 Provider / Skill / Agent / Extension / System</DialogDescription>
+        <DialogTitle>{{ t('settings.title') }}</DialogTitle>
+        <DialogDescription>{{ t('settings.dialogDescription') }}</DialogDescription>
       </DialogHeader>
     </DialogContent>
   </Dialog>
@@ -90,6 +90,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useI18n } from 'vue-i18n'
 import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, X } from '@lucide/vue'
 import {
   Dialog,
@@ -103,6 +104,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSettingsStore, type SystemSettings } from '@/stores/settings'
 import { useSettings } from '@/composables/features/useSettings'
+import { useToast } from '@/composables/useToast'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import ProviderPage from './ProviderPage.vue'
 import SettingsResourcePage from './SettingsResourcePage.vue'
@@ -110,12 +112,14 @@ import ExtensionPage from './ExtensionPage.vue'
 import SystemPage from './SystemPage.vue'
 
 const menus = [
-  { id: 'provider', label: 'Provider', icon: Settings, desc: '配置模型供应商与 API Key' },
-  { id: 'skill', label: 'Skill', icon: Sparkles, desc: '管理 Skill 加载路径与来源' },
-  { id: 'agent', label: 'Agent', icon: Bot, desc: '管理 Agent 加载路径与来源' },
-  { id: 'extension', label: 'Extension', icon: Blocks, desc: '管理 MCP 扩展与工具' },
-  { id: 'system', label: 'System', icon: SlidersHorizontal, desc: '外观、语言与快捷键偏好' },
+  { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings, descKey: 'settings.menu.providerDesc' },
+  { id: 'skill', labelKey: 'settings.menu.skill', icon: Sparkles, descKey: 'settings.menu.skillDesc' },
+  { id: 'agent', labelKey: 'settings.menu.agent', icon: Bot, descKey: 'settings.menu.agentDesc' },
+  { id: 'extension', labelKey: 'settings.menu.extension', icon: Blocks, descKey: 'settings.menu.extensionDesc' },
+  { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal, descKey: 'settings.menu.systemDesc' },
 ] as const
+
+const { t } = useI18n()
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -144,19 +148,38 @@ function getItemCount(id: string): number {
   }
 }
 
-/** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM data-theme + i18n）。 */
-function onSystemUpdate(patch: Partial<SystemSettings>) {
-  settingsStore.setSystem(patch)
+/** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM data-theme + i18n）+ toast 反馈。 */
+const { info: toastInfo, error: toastError } = useToast()
+async function onSystemUpdate(patch: Partial<SystemSettings>) {
+  try {
+    await settingsStore.setSystem(patch)
+    toastInfo(t('settings.applied'))
+   
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
 }
 
-/** SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0020 §1）。 */
-function onUpdateSkillDirs(dirs: SkillDirConfig[]) {
+/**
+ * SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0020 §1）。
+ * W2 D10 修复：setSkillDirs 是 async（store 内 await config.setSkillDirs），原实现未 await 未 catch，
+ * reject 时 unhandled rejection + 静默失败。现 await + try/catch + toast error 反馈（CLAUDE.md 规则 #3）。
+ */
+async function onUpdateSkillDirs(dirs: SkillDirConfig[]) {
   // 只把 enabled 路径写进 discovery（目录在 = 启用，ADR §5）
-  settingsStore.setSkillDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+  try {
+    await settingsStore.setSkillDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
 }
 
-/** AgentPage 加载路径变更 → 走 store（写 discovery.json）。 */
-function onUpdateAgentDirs(dirs: SkillDirConfig[]) {
-  settingsStore.setAgentDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+/** AgentPage 加载路径变更 → 走 store（写 discovery.json），语义同 onUpdateSkillDirs。 */
+async function onUpdateAgentDirs(dirs: SkillDirConfig[]) {
+  try {
+    await settingsStore.setAgentDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
 }
 </script>

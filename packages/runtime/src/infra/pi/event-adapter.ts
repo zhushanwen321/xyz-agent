@@ -25,21 +25,34 @@ import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent } from '@xyz-agent/e
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
+import { stripAnsi, normalizePiToolResult } from './normalize-tool-result.js'
+import type {
+  PiEvent,
+  PiMessageStartEvent,
+  PiMessageUpdateEvent,
+  PiAgentEndEvent,
+  PiToolExecutionStartEvent,
+  PiToolExecutionUpdateEvent,
+  PiToolExecutionEndEvent,
+  PiTurnEndEvent,
+  PiExtensionUiRequestEvent,
+  PiExtensionErrorEvent,
+  PiAutoRetryStartEvent,
+  PiAutoRetryEndEvent,
+  PiQueueUpdateEvent,
+  PiSessionInfoChangedEvent,
+  PiThinkingLevelChangedEvent,
+  PiStatusEvent,
+  PiErrorEvent,
+} from './pi-protocol.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
 //
-// [ADR-0003] translate() 入参故意用宽类型 Record<string, unknown>（而非 pi-protocol.ts
-// 的 Pi* 联合类型）：pi 实际发送的数据比类型声明更宽（见 handleToolExecutionEnd 的
-// result 多形态、handleToolExecutionStart 的 args??input 双读），且未知事件类型不能崩。
-// 下面的防御式 `?? ''` / `as` fallback 不是冗余——它们处理 pi 实际行为的非规范面。
-// 升级 pi 后若字段稳定，可逐 handler 引入 pi-protocol 类型做窄化（保留 default 容错）。
-type PiEvent = Record<string, unknown>
-
-/** Strip ANSI escape sequences from text (pi RPC mode sends raw escape codes for themed output) */
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g
-function stripAnsi(text: string): string {
-  return text.replace(ANSI_REGEX, '')
-}
+// [ADR-0033] translate() 入参用 pi-protocol.ts 的 PiEvent 联合类型（真契约）。
+// 每个 handler 入参窄化为对应的 Pi*Event interface（如 handleToolExecutionEnd →
+// PiToolExecutionEndEvent）。pi 升级时若新增事件类型，PiEvent 联合的 exhaustive
+// 检查会提示补 handler 或登记到 NULL_EVENTS。
+// 对未知事件类型（联合外）translate() 走 default warn + return []（见文件末尾）。
 
 const STOP_REASON_MAP: Record<string, string> = {
   stop: 'end_turn',
@@ -72,19 +85,10 @@ const INTERACTIVE_UI_METHODS = new Set(
 /** Extension method constant for the editor UI */
 const METHOD_EDITOR = 'editor' as const
 
-/** 取工具参数 path（pi 契约权威参数名；file_path 作防御性 fallback，ADR-0024 D2） */
-function extractPath(args: Record<string, unknown> | undefined): string | undefined {
-  if (!args) return undefined
-  const p = args.path
-  if (typeof p === 'string' && p) return p
-  const fp = args.file_path
-  return typeof fp === 'string' && fp ? fp : undefined
-}
-
 // ── Sub-handlers（纯函数：PiEvent → PiTranslatedEvent[]，无副作用）────────
 
 /** message_update — streaming text/thinking deltas and stream errors */
-function handleMessageUpdate(event: PiEvent, sid: string): PiTranslatedEvent[] {
+function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTranslatedEvent[] {
   const sub = event.assistantMessageEvent as
     { type: string; delta?: string; content?: string; contentIndex?: number } | undefined
   if (!sub) return [{ kind: 'noop' }]
@@ -102,8 +106,9 @@ function handleMessageUpdate(event: PiEvent, sid: string): PiTranslatedEvent[] {
     case 'text_start': case 'text_end':
       return [{ kind: 'noop' }]
     // FR-5: streaming error — surface as message.stream_error
+    // payload 形状与 protocol 契约对齐：content（人类可读）+ kind（分类，可选）
     case 'error':
-      return [{ kind: 'message', message: { type: 'message.stream_error', payload: { sessionId: sid, reason: 'error', content: sub.content ?? '' } } }]
+      return [{ kind: 'message', message: { type: 'message.stream_error', payload: { sessionId: sid, content: sub.content ?? '', kind: 'error' } } }]
     default:
       console.warn('[EventAdapter] Unhandled message_update sub-type:', sub.type)
       return [{ kind: 'noop' }]
@@ -114,14 +119,13 @@ function handleMessageUpdate(event: PiEvent, sid: string): PiTranslatedEvent[] {
  * tool_execution_start — 产出 tool-call-start 中间事件（携带原始 input）。
  * EventInterpreter 据此跑 onBeforeToolCall hook（可阻断 / 改写 input）后产出 tool_call_start WS 帧。
  */
-function handleToolExecutionStart(event: PiEvent, _sid: string): PiTranslatedEvent[] {
-  // pi-protocol.PiToolExecutionStartEvent 声明 toolName: string（必有），但 pi 实际可能缺省——保留 fallback
-  const toolName = String(event.toolName ?? '')
-  // pi-protocol 声明 args（规范），但 pi 历史版本用 input——双读覆盖协议漂移（见 pi-protocol.ts TODO）
-  const input = event.args ?? event.input
+function handleToolExecutionStart(event: PiToolExecutionStartEvent, _sid: string): PiTranslatedEvent[] {
+  const toolName = event.toolName
+  // pi 用 args 是规范字段名（pi 从不发 input，ADR-0033）。
+  const input = event.args
   return [{
     kind: 'tool-call-start',
-    toolCallId: String(event.toolCallId ?? ''),
+    toolCallId: event.toolCallId,
     toolName,
     input,
   }]
@@ -131,55 +135,20 @@ function handleToolExecutionStart(event: PiEvent, _sid: string): PiTranslatedEve
  * tool_execution_end — 产出 tool-call-end 中间事件（携带原始 output/details/images）。
  * EventInterpreter 据此跑 onAfterToolResult hook（改写 output）+ 触发 file_changes baseline diff。
  */
-function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent[] {
-  let output: string
-  let outputRaw: string | undefined
-  let images: Array<{ data: string; mimeType: string }> | undefined
-  // pi-protocol.PiToolExecutionEndEvent 声明 result: PiToolExecutionResult（固定 content 数组），
-  // 但 pi 实际 result 可能是 string | object-with-content | 其他——双读 + 多形态判定覆盖协议漂移
-  // （见 pi-protocol.ts 的 TODO(pi-协议漂移) 注释）
-  const raw = event.result ?? event.output
-  if (typeof raw === 'string') {
-    output = stripAnsi(raw)
-    if (output !== raw) outputRaw = raw
-  } else if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).content)) {
-    const contentArr = (raw as Record<string, unknown>).content as Array<Record<string, unknown>>
-    const rawText = contentArr
-      .filter((c) => c.type === 'text')
-      .map((c) => (c.text as string) ?? '')
-      .join('\n')
-    output = stripAnsi(rawText)
-    if (output !== rawText) outputRaw = rawText
-    const imageBlocks = contentArr
-      .filter((c) => c.type === 'image')
-      .map((c) => ({ data: String(c.data ?? ''), mimeType: String(c.mimeType ?? '') }))
-      .filter((img) => img.data !== '' || img.mimeType !== '')
-    if (imageBlocks.length > 0) images = imageBlocks
-  } else if (raw != null) {
-    output = JSON.stringify(raw)
-  } else {
-    output = ''
-  }
+function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): PiTranslatedEvent[] {
+  // pi 用 result 是规范字段名（pi 从不发 output，ADR-0033）。
+  // 三态判定 + stripAnsi + images/details 提取统一委托 normalizePiToolResult（W1）。
+  const raw = event.result
+  const { output, outputRaw, details, images } = normalizePiToolResult(raw)
 
-  let details: Record<string, unknown> | undefined
-  if (raw && typeof raw === 'object') {
-    const d = (raw as Record<string, unknown>).details
-    if (d && typeof d === 'object' && !Array.isArray(d)) details = d as Record<string, unknown>
-  }
+  const toolCallId = event.toolCallId
+  const toolName = event.toolName
+  const isError = event.isError
 
-  const toolCallId = String(event.toolCallId ?? '')
-  const toolName = String(event.toolName ?? '')
-  const isError = Boolean(event.isError)
-
-  // write 工具写入的 content（供 EventInterpreter 累积，untracked 行数回退用）。
-  let writeContent: { filePath: string; content: string } | undefined
-  if (!isError && toolName === 'write') {
-    const args = (event.args ?? event.input) as Record<string, unknown> | undefined
-    const filePath = extractPath(args)
-    if (filePath && typeof args?.content === 'string') {
-      writeContent = { filePath, content: args.content }
-    }
-  }
+  // [已知限制] pi tool_execution_end 从不发 args（pi types.ts:430 无此字段），故 write 工具的
+  // content 无法在此提取。writeContent 提取逻辑已删除（原为恒 undefined 的死代码）。
+  // EventInterpreter 的 writeContents Map 因此恒为空——untracked 行数回退当前不生效，
+  // 待后续在 tool_execution_start 路径（该事件发 args）补齐后恢复。详见 pi-protocol.ts 相关注释。
 
   return [{
     kind: 'tool-call-end',
@@ -189,24 +158,48 @@ function handleToolExecutionEnd(event: PiEvent, _sid: string): PiTranslatedEvent
     images,
     toolName,
     isError,
-    writeContent,
     outputRaw,
   }]
 }
 
 /** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
-function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const messages = event.messages as Array<Record<string, unknown>> | undefined
-  const lastMsg = messages?.[messages.length - 1]
-  const rawReason = (lastMsg?.stopReason as string) ?? 'stop'
-  const usage = lastMsg?.usage as
-    { input: number; output: number; totalTokens?: number; cacheRead?: number; cacheWrite?: number } | undefined
-  const responseModel = lastMsg?.responseModel as string | undefined
-  const diagnostics = lastMsg?.diagnostics as Record<string, unknown> | undefined
-  const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsg?.errorMessage as string | undefined : undefined
+function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[] {
+  // W1：messages 为空数组 / undefined 时降级为 turn-end{stopReason:'error'}，不抛 TypeError。
+  // 异常会从 translate() 抛出 → 经 EventAdapter.attach 的整批 try-catch 被吞 →
+  // agent_end 整批事件丢失 → isGenerating 永不复位 + message.complete 不送达。
+  // messages 可能在 pi 内部异常 / 会话尚未产出任何 assistant 消息时为空。
+  const messages = event.messages
+  if (!messages || messages.length === 0) {
+    console.warn(`[EventAdapter] agent_end with empty messages (degraded to turn-end{error}) sid=${sid}`)
+    return [{
+      kind: 'turn-end',
+      message: { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } },
+      stopReason: 'error',
+    }]
+  }
+  // pi 事件是强类型契约（ADR-0033）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
+  // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。但 pi 在此还附带
+  // responseModel / diagnostics / errorMessage 等运行时字段（超出 PiAgentEndMessage 声明范围，
+  // pi AgentMessage 实际形态比声明的 union 更宽）——这些用 as 提取。
+  const lastMsg = messages[messages.length - 1]
+  const rawReason = lastMsg.stopReason ?? 'stop'
+  const usage = lastMsg.usage
+  const lastMsgExtra = lastMsg as unknown as {
+    responseModel?: string
+    diagnostics?: Record<string, unknown>
+    errorMessage?: string
+    content?: unknown
+  }
+  const responseModel = lastMsgExtra.responseModel
+  const diagnostics = lastMsgExtra.diagnostics
+  const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsgExtra.errorMessage : undefined
   // 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
   // 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
-  const finalContent = ((Array.isArray(lastMsg?.content) ? lastMsg!.content : []) as Array<Record<string, unknown>>).filter((c) => c.type === 'text').map((c) => (c.text as string) ?? '').join('')
+  // content 在 PiAgentEndMessage 中是 unknown，此处按 pi 运行时形态（content block 数组）提取。
+  const finalContent = (Array.isArray(lastMsgExtra.content) ? lastMsgExtra.content : [] as unknown[])
+    .filter((c): c is { type: string; text?: string } => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'text')
+    .map((c) => c.text ?? '')
+    .join('')
   const message: ServerMessage = {
     type: 'message.complete',
     payload: {
@@ -242,9 +235,10 @@ function handleAgentEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
  * 避免每 turn 触发前端 message.complete → setStreaming(false) 闪烁。
  * totalTokens 缺失时返回空（纯工具结果 turn 可能无 usage）。
  */
-function handleTurnEndPi(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const message = event.message as Record<string, unknown> | undefined
-  const usage = message?.usage as { input?: number; output?: number; totalTokens?: number } | undefined
+function handleTurnEndPi(event: PiTurnEndEvent, sid: string): PiTranslatedEvent[] {
+  // pi turn_end 事件把 message 放在顶层 message 字段（ADR-0033 契约，pi 从不发 payload）。
+  const message = event.message
+  const usage = message?.usage
   if (!usage?.totalTokens) return []
   return [{
     kind: 'turn-usage',
@@ -255,8 +249,8 @@ function handleTurnEndPi(event: PiEvent, sid: string): PiTranslatedEvent[] {
 }
 
 /** extension_ui_request — route by method (setStatus, setWidget, editor, etc.) */
-function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const method = event.method as string | undefined
+function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
+  const method = event.method as string
 
   // setStatus → status-set（interpreter 路由 server）+ status-broadcast（WS 帧）
   // 审计项 B（协议 spec §8.1）：保留 text（stripAnsi 后纯文本，向后兼容）+ textRaw（原始 ANSI 文本），
@@ -277,10 +271,19 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
     ]
   }
 
-  // setWidget → WS event（检测 GUI 协议 marker / 清除语义）
+  // setWidget → WS event（检测 subagent streaming / GUI 协议 marker / 清除语义）
   if (method === 'setWidget') {
     const widgetKey = String(event.widgetKey ?? '')
     const rawLines = Array.isArray(event.widgetLines) ? event.widgetLines as unknown[] : []
+
+    // subagent streaming（路径 A-1）：widgetKey 匹配 subagent-stream-<recordId> 前缀。
+    // pi 扩展层合并 text_delta 后用此 key 转发累积全文。短路——不走后续 widget 逻辑。
+    const streamMatch = widgetKey.match(/^subagent-stream-(.+)$/)
+    if (streamMatch) {
+      const recordId = streamMatch[1]
+      const lines = rawLines.length > 0 ? rawLines.map((l) => String(l)) : undefined
+      return [{ kind: 'subagent-stream', sessionId: sid, recordId, lines }]
+    }
 
     // 清除语义：widgetLines 缺失或空数组 → extension 清除此 widget（guiSetWidget(key, undefined)）。
     // 发 extension:widgetGui 带 gui:null，前端据此删 guiWidgetsByTab 条目 + 清 lines。
@@ -312,7 +315,7 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
           }]
         }
         console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', gui)
-      // eslint-disable-next-line taste/no-silent-catch -- console.warn 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4），与 logger.ts 内部 catch 容错模式一致
+       
       } catch (e) {
         // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget
         console.warn('[EventAdapter] widgetGui marker JSON parse failed, falling back to text widget', e)
@@ -363,7 +366,7 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
   // bridge:* → bridge-ui（interpreter 路由 server）
   if (method?.startsWith('bridge:')) {
     const requestId = String(event.id ?? '')
-    const data = (event as Record<string, unknown>).data as Record<string, unknown> ?? {}
+    const data = event.data as Record<string, unknown> ?? {}
     return [{ kind: 'bridge-ui', requestId, sessionId: sid, method, data }]
   }
 
@@ -440,8 +443,11 @@ function handleExtensionUIRequest(event: PiEvent, sid: string): PiTranslatedEven
 }
 
 /** message_start — role-based routing for non-assistant messages */
-function handleMessageStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const msg = event.message as Record<string, unknown> | undefined
+function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslatedEvent[] {
+  // pi 事件是强类型契约（ADR-0033），但 message_start.message 含 pi 声明之外的运行时字段
+  // （summary / tokensBefore / fromId / customType / details / display），且 assistant turn 开始时
+  // message 缺省。此处局部放宽为 Record 提取这些超范围字段。
+  const msg = event.message as unknown as Record<string, unknown> | undefined
   if (!msg) {
     // assistant turn 开始（无 role）。生成 messageId 供 file_changes 挂载，并跟踪到 interpreter 态。
     const messageId = `a-${randomUUID()}`
@@ -511,11 +517,12 @@ function handleMessageStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
   ]
 }
 
-/** tool_execution_update — forward detail (string or object, extract details if present) */
-function handleToolExecutionUpdate(event: PiEvent, sid: string): PiTranslatedEvent[] {
+/** tool_execution_update — forward detail (partialResult is unknown: string or object, extract details if present) */
+function handleToolExecutionUpdate(event: PiToolExecutionUpdateEvent, sid: string): PiTranslatedEvent[] {
+  // partialResult 是 unknown（pi 声明 any，运行时形态不定）。按 typeof 分流：
+  //   object → 提取 .details（含 __gui__），无 details 时 fallback 用整个对象（兼容 subagent 扁平 progress）。
+  //   string → 原样作 detail。
   const partialResult = event.partialResult
-  // 提取 partialResult.details（含 __gui__），与 tool_execution_end 路径对齐。
-  // fallback：无 details 时用整个对象（兼容 subagent 的扁平 progress 形态）。
   const detail: string | Record<string, unknown> | undefined =
     partialResult != null && typeof partialResult === 'object'
       ? ((partialResult as Record<string, unknown>).details as Record<string, unknown> | undefined)
@@ -525,89 +532,89 @@ function handleToolExecutionUpdate(event: PiEvent, sid: string): PiTranslatedEve
     kind: 'message',
     message: {
       type: 'message.tool_call_update',
-      payload: { sessionId: sid, toolCallId: event.toolCallId ?? '', detail },
+      payload: { sessionId: sid, toolCallId: event.toolCallId, detail },
     },
   }]
 }
 
 /** extension_error — field rename extensionPath → extensionName + errorEvent */
-function handleExtensionError(event: PiEvent, sid: string): PiTranslatedEvent[] {
+function handleExtensionError(event: PiExtensionErrorEvent, sid: string): PiTranslatedEvent[] {
   return [{
     kind: 'message',
     message: {
       type: 'extension.error',
       payload: {
         sessionId: sid,
-        extensionName: (event.extensionPath as string) ?? '',
-        error: event.error ?? 'Unknown extension error',
-        errorEvent: event.event as string | undefined,
+        extensionName: event.extensionPath,
+        error: event.error,
+        errorEvent: event.event,
       },
     },
   }]
 }
 
 /** auto_retry_start → message.auto_retry_start */
-function handleAutoRetryStart(event: PiEvent, sid: string): PiTranslatedEvent[] {
+function handleAutoRetryStart(event: PiAutoRetryStartEvent, sid: string): PiTranslatedEvent[] {
   return [{
     kind: 'message',
     message: {
       type: 'message.auto_retry_start',
       payload: {
         sessionId: sid,
-        attempt: event.attempt as number | undefined,
-        maxAttempts: event.maxAttempts as number | undefined,
-        delayMs: event.delayMs as number | undefined,
-        errorMessage: event.errorMessage as string | undefined,
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        errorMessage: event.errorMessage,
       },
     },
   }]
 }
 
 /** auto_retry_end → message.auto_retry_end */
-function handleAutoRetryEnd(event: PiEvent, sid: string): PiTranslatedEvent[] {
+function handleAutoRetryEnd(event: PiAutoRetryEndEvent, sid: string): PiTranslatedEvent[] {
   return [{
     kind: 'message',
     message: {
       type: 'message.auto_retry_end',
       payload: {
         sessionId: sid,
-        success: event.success as boolean | undefined,
-        attempt: event.attempt as number | undefined,
-        finalError: event.finalError as string | undefined,
+        success: event.success,
+        attempt: event.attempt,
+        finalError: event.finalError,
       },
     },
   }]
 }
 
 /** queue_update → message.queue_update */
-function handleQueueUpdate(event: PiEvent, sid: string): PiTranslatedEvent[] {
+function handleQueueUpdate(event: PiQueueUpdateEvent, sid: string): PiTranslatedEvent[] {
   return [{
     kind: 'message',
     message: {
       type: 'message.queue_update',
       payload: {
         sessionId: sid,
-        steering: event.steering as string[] | undefined,
-        followUp: event.followUp as string[] | undefined,
+        steering: [...event.steering],
+        followUp: [...event.followUp],
       },
     },
   }]
 }
 
 /** session_info_changed → session.renamed */
-function handleSessionInfoChanged(event: PiEvent, sid: string): PiTranslatedEvent[] {
+function handleSessionInfoChanged(event: PiSessionInfoChangedEvent, sid: string): PiTranslatedEvent[] {
   return [{
     kind: 'message',
     message: {
       type: 'session.renamed',
-      payload: { sessionId: sid, name: event.name as string | undefined },
+      payload: { sessionId: sid, name: event.name },
     },
   }]
 }
 
 /** thinking_level_changed → session.thinkingLevelSet + 回写 session 缓存（interpreter 处理） */
-function handleThinkingLevelChanged(event: PiEvent, sid: string): PiTranslatedEvent[] {
-  const level = event.level as string | undefined
+function handleThinkingLevelChanged(event: PiThinkingLevelChangedEvent, sid: string): PiTranslatedEvent[] {
+  const level = event.level
   return [
     // 回写 session.thinkingLevel 缓存（interpreter 调 sessionService）
     { kind: 'thinking-level', level },
@@ -615,46 +622,61 @@ function handleThinkingLevelChanged(event: PiEvent, sid: string): PiTranslatedEv
   ]
 }
 
-// ── Null-event types (lifecycle events not forwarded to frontend) ──
-// 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
-const NULL_EVENTS = new Set([
-  'agent_start', 'turn_start', 'message_end',
-  'extension_config', 'extension_ui_response', 'response',
-  'compaction_start', 'compaction_end',
-])
-
-// ── Dispatcher map ─────────────────────────────────────────────────
-const DISPATCHER = new Map<string, (event: PiEvent, sid: string) => PiTranslatedEvent[]>()
-;(function registerHandlers() {
-  DISPATCHER.set('message_update', handleMessageUpdate)
-  DISPATCHER.set('tool_execution_start', handleToolExecutionStart)
-  DISPATCHER.set('tool_execution_end', handleToolExecutionEnd)
-  DISPATCHER.set('agent_end', handleAgentEnd)
-  DISPATCHER.set('turn_end', handleTurnEndPi)
-  DISPATCHER.set('extension_ui_request', handleExtensionUIRequest)
-  DISPATCHER.set('message_start', handleMessageStart)
-  DISPATCHER.set('tool_execution_update', handleToolExecutionUpdate)
-  DISPATCHER.set('extension_error', handleExtensionError)
-  DISPATCHER.set('auto_retry_start', handleAutoRetryStart)
-  DISPATCHER.set('auto_retry_end', handleAutoRetryEnd)
-  DISPATCHER.set('queue_update', handleQueueUpdate)
-  DISPATCHER.set('session_info_changed', handleSessionInfoChanged)
-  DISPATCHER.set('thinking_level_changed', handleThinkingLevelChanged)
-  // Simple passthrough handlers
-  DISPATCHER.set('status', (event, sid) => [{
+/** status → message.status passthrough */
+function handleStatus(event: PiStatusEvent, sid: string): PiTranslatedEvent[] {
+  return [{
     kind: 'message',
     message: {
       type: 'message.status',
-      payload: { sessionId: sid, status: event.status ?? '', detail: event.detail },
+      payload: { sessionId: sid, status: event.status, detail: event.detail },
     },
-  }])
-  DISPATCHER.set('error', (event, sid) => [{
+  }]
+}
+
+/** error → message.error passthrough */
+function handleError(event: PiErrorEvent, sid: string): PiTranslatedEvent[] {
+  return [{
     kind: 'message',
     message: {
       type: 'message.error',
-      payload: { sessionId: sid, message: event.message ?? 'Unknown error' },
+      payload: { sessionId: sid, message: event.message },
     },
-  }])
+  }]
+}
+
+// ── Null-event types (lifecycle events not forwarded to frontend) ──
+// 注意：turn_end 不在此列——它经 handleTurnEndPi 提取 usage 触发 context.update（见 DISPATCHER）。
+// agent_settled 是 pi 0.80.3 稳态事件（无待处理工具/消息），xyz-agent 不消费——显式登记忽略。
+const NULL_EVENTS = new Set([
+  'agent_start', 'turn_start', 'message_end',
+  'extension_config', 'extension_ui_response', 'response',
+  'compaction_start', 'compaction_end', 'agent_settled',
+])
+
+// ── Dispatcher map ─────────────────────────────────────────────────
+// handler 入参是窄类型（PiMessageUpdateEvent 等），DISPATCHER value 是联合入参签名。
+// TS 逆变：窄入参 handler 不能直接赋给联合入参函数类型，注册处用 as 断言（运行时 event
+// 已由 translate 按 type 分派，handler 只会收到匹配类型的 event）。
+type Handler = (event: PiEvent, sid: string) => PiTranslatedEvent[]
+const DISPATCHER = new Map<string, Handler>()
+;(function registerHandlers() {
+  DISPATCHER.set('message_update', handleMessageUpdate as Handler)
+  DISPATCHER.set('tool_execution_start', handleToolExecutionStart as Handler)
+  DISPATCHER.set('tool_execution_end', handleToolExecutionEnd as Handler)
+  DISPATCHER.set('agent_end', handleAgentEnd as Handler)
+  DISPATCHER.set('turn_end', handleTurnEndPi as Handler)
+  DISPATCHER.set('extension_ui_request', handleExtensionUIRequest as Handler)
+  DISPATCHER.set('message_start', handleMessageStart as Handler)
+  DISPATCHER.set('tool_execution_update', handleToolExecutionUpdate as Handler)
+  DISPATCHER.set('extension_error', handleExtensionError as Handler)
+  DISPATCHER.set('auto_retry_start', handleAutoRetryStart as Handler)
+  DISPATCHER.set('auto_retry_end', handleAutoRetryEnd as Handler)
+  DISPATCHER.set('queue_update', handleQueueUpdate as Handler)
+  DISPATCHER.set('session_info_changed', handleSessionInfoChanged as Handler)
+  DISPATCHER.set('thinking_level_changed', handleThinkingLevelChanged as Handler)
+  // Simple passthrough handlers
+  DISPATCHER.set('status', handleStatus as Handler)
+  DISPATCHER.set('error', handleError as Handler)
 })()
 
 /**
@@ -748,7 +770,8 @@ export class EventAdapter {
   /** Start listening to events from an RpcClient. */
   attach(client: { onEvent: (listener: PiEventListener) => (() => void) }): void {
     this.unsub = client.onEvent((event) => {
-      const events = translate(event as unknown as Record<string, unknown>, this.sessionId)
+      // PiEventListener 的 event 是 unknown（pi 动态 JSON），断言为 PiEvent 联合翻译。
+      const events = translate(event as unknown as PiEvent, this.sessionId)
       if (events.length === 0) return
       // interpret 同步执行（message/status WS 帧即时送出）；
       // 仅 tool-call-* 的 hook 改写异步（handler 内部 await），不阻塞本回调。

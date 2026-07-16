@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtemp, rm, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -265,6 +265,77 @@ describe('WriteBackCache', () => {
       cache.delete('p1', 'a')
       cache.flush('p1')
       expect(readPart(tmpDir, 'p1')).toEqual({ b: 2 })
+    })
+
+    // W0: flush 持久化失败时不抛异常、记日志、保留 dirty（下次 flush 重试）
+    it('flush 失败时不抛异常且记 console.error（W0 异常隔离）', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      // persistPartition 抛错模拟盘满/权限不足
+      const backing = makeBacking(tmpDir)
+      backing.persistPartition = vi.fn(() => { throw new Error('disk full') })
+      const cache = new WriteBackCache(backing, { flushMs: 500 })
+
+      cache.set('p1', 'a', 1)
+
+      // flush 不抛（修复前会抛 → setTimeout 回调内变 uncaughtException → crash）
+      expect(() => cache.flush('p1')).not.toThrow()
+
+      // 记录了错误日志
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      const logMsg = String(errorSpy.mock.calls[0]!.join(' '))
+      expect(logMsg).toContain('flush failed')
+      expect(logMsg).toContain('disk full')
+
+      // persistPartition 被调用（flush 尝试了持久化）
+      expect(backing.persistPartition).toHaveBeenCalledTimes(1)
+
+      errorSpy.mockRestore()
+    })
+
+    it('flush 失败后保留 dirty，下次 flush 重试 persistPartition（W0）', () => {
+      vi.useFakeTimers()
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const backing = makeBacking(tmpDir)
+      const realPersist = backing.persistPartition.bind(backing)
+      let failCount = 0
+      backing.persistPartition = vi.fn((k: string, data: Map<string, unknown>) => {
+        failCount++
+        if (failCount <= 1) throw new Error('transient error')
+        realPersist(k, data) // 第二次成功，执行真实落盘
+      })
+      const cache = new WriteBackCache(backing, { flushMs: 500 })
+
+      cache.set('p1', 'a', 1)
+
+      // 第一次 flush 失败
+      cache.flush('p1')
+      expect(backing.persistPartition).toHaveBeenCalledTimes(1)
+
+      // flush 内 scheduleFlush(500) 安排了重试 → advance 触发第二次 flush
+      vi.advanceTimersByTime(500)
+      // 第二次 flush 重试成功（failCount=2 不再抛，真实落盘）
+      expect(backing.persistPartition).toHaveBeenCalledTimes(2)
+      expect(readPart(tmpDir, 'p1')).toEqual({ a: 1 })
+
+      errorSpy.mockRestore()
+      vi.useRealTimers()
+    })
+
+    it('flush 成功路径不重试 persistPartition（W0 回归）', () => {
+      vi.useFakeTimers()
+      const backing = makeBacking(tmpDir)
+      backing.persistPartition = vi.fn(backing.persistPartition)
+      const cache = new WriteBackCache(backing, { flushMs: 500 })
+
+      cache.set('p1', 'a', 1)
+      cache.flush('p1')
+
+      expect(backing.persistPartition).toHaveBeenCalledTimes(1)
+      // advance 不会触发额外 flush（dirty 已清，scheduleFlush 不会再调 persistPartition）
+      vi.advanceTimersByTime(1000)
+      expect(backing.persistPartition).toHaveBeenCalledTimes(1)
+
+      vi.useRealTimers()
     })
   })
 

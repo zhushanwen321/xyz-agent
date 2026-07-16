@@ -41,7 +41,7 @@ export class SettingsMessageHandler {
           this.ctx.broadcast({
             type: 'config.defaults',
             id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' as const },
+            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' },
           })
         }
         return true
@@ -55,7 +55,7 @@ export class SettingsMessageHandler {
           this.ctx.broadcast({
             type: 'config.defaults',
             id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' as const },
+            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' },
           })
         }
         return true
@@ -132,6 +132,23 @@ export class SettingsMessageHandler {
         console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
         await this.ctx.modelService.switchModel(sessionId, provider, modelId)
         this.ctx.reply(ws, msg.id, 'model.switched', { sessionId, provider, modelId })
+        return true
+      }
+      case 'config.setDefaultModel': {
+        // W3 默认模型持久化：configService.setDefaultModel 已存在（写 settings.json）。
+        // reply 回发起端（不带 source） + 广播给所有 panel（带 source='default-set'），与
+        // setProvider/deleteProvider 的 newDefault 广播同构，让其它打开的设置面板同步默认模型下拉。
+        // reply 与 broadcast 共用 ServerMessageMap['config.defaults'] 类型，source 为 optional。
+        const { provider, modelId } = msg.payload
+        this.ctx.configService.setDefaultModel(provider, modelId)
+        this.ctx.reply(ws, msg.id, 'config.defaults', {
+          defaultModel: `${provider}/${modelId}`,
+        })
+        this.ctx.broadcast({
+          type: 'config.defaults',
+          id: this.ctx.nextPushId(),
+          payload: { defaultModel: `${provider}/${modelId}`, source: 'default-set' },
+        })
         return true
       }
       case 'session.setThinkingLevel': {

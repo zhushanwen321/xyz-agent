@@ -58,6 +58,15 @@ export const MS_PER_SEC = 1000
 export const RUNTIME_ENTRY_FILE = 'index.cjs'
 
 /**
+ * spawn 'error' 事件哨兵退出码（W5 改动 5）。
+ *
+ * [HISTORICAL] spawn 失败（命令不存在/权限不足等）不会产生真实退出码，
+ * 用 -1 表示「spawn 失败」走与 exit 相同的清理路径（onExit(-1)）。
+ * 真实进程退出码 >= 0，-1 不会与之冲突。
+ */
+export const SPAWN_ERROR_EXIT_CODE = -1
+
+/**
  * 启动 runtime 子进程（按打包状态选 spawn 方式）。
  *
  * 打包：process.execPath + ELECTRON_RUN_AS_NODE=1 运行 unpacked 的 index.cjs
@@ -134,8 +143,14 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
   }
   const child = spawn(cmd, args, spawnOptions)
 
+  // [HISTORICAL] W5 改动 5：spawn 'error' 事件（如命令不存在/权限不足）必须走与 exit 相同的清理路径。
+  // 旧实现仅 console.error 记日志，supervisor 收不到通知 → child 引用残留 →
+  // 下次 start 幂等守卫误判存活（exitCode 此时仍是 null）→ 返回死端口（应用假死）。
+  // 改为调 onExit(SPAWN_ERROR_EXIT_CODE) 哨兵退出码（真实 exit 不会产生负退出码），
+  // 让 supervisor 清 child/port。
   child.on('error', (err) => {
     console.error(`[runtime] Spawn error: ${err.message}`)
+    onExit?.(SPAWN_ERROR_EXIT_CODE)
   })
 
   // runtime 日志转发：只用 console（dev 模式方便调试）

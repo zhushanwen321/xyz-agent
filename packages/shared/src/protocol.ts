@@ -10,15 +10,20 @@ import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod } fro
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
+import type { SubagentRecord } from './subagent'
+import type { WorkflowRunRecord } from './workflow'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
+  | 'session.getSubagents' | 'session.getSubagentHistory'
+  | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
+  | 'session.workflowAction' | 'session.subagentAction'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
-  | 'config.discoverModels'
+  | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'config.setSkillDirs' | 'config.setAgentDirs'
@@ -45,13 +50,31 @@ export type ClientMessageType =
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
-/** config.setProvider 除 providerId 外的透传字段，与 IConfigService.setProvider 参数对齐 */
+/** config.setProvider 除 providerId 外的透传字段，与 IConfigService.setProvider 参数对齐。
+ *  models 元素字段与 runtime ConfigModelDefinition 对齐（含 api/baseUrl/enabled 透传位，
+ *  W2/W4 model 级配置不丢字段）。 */
 export interface SetProviderData {
   name?: string
   type?: string
   apiKey?: string
   baseUrl?: string
-  models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
+  /** 自定义请求头（provider 级，与 ProviderInfo.headers 对齐）。 */
+  headers?: Record<string, string>
+  /** 是否把 apiKey 写入 Authorization header（与 ProviderInfo.authHeader 对齐）。 */
+  authHeader?: boolean
+  models?: Array<string | {
+    id: string
+    name?: string
+    api?: string
+    baseUrl?: string
+    reasoning?: boolean
+    input?: Array<'text' | 'image'>
+    contextWindow?: number
+    maxTokens?: number
+    thinkingLevelMap?: Record<string, string | null>
+    /** model 级启停（W2）。省略时默认 true，与 PiModelDefinition 同构。 */
+    enabled?: boolean
+  }>
   enabled?: boolean
 }
 
@@ -75,6 +98,17 @@ export interface ClientMessageMap {
   // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
   // fromPiEntryId 缺失（RPC 路径读取的 session 无 piEntryId）时报错——fork 需文件路径加载的历史。
   'session.fork': { srcSessionId: string; fromPiEntryId: string; includeFrom?: boolean; label?: string }
+  // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
+  'session.getSubagents': { sessionId: string }
+  'session.getSubagentHistory': { sessionId: string; subagentId: string }
+  // workflow 列表/agent call 对话流读取（runtime 直读主 session JSONL + workflow-state JSONL，不依赖扩展）
+  'session.getWorkflows': { sessionId: string }
+  'session.getAgentCallHistory': { sessionId: string; agentCallSessionId: string }
+  'session.getAgentCallFilePath': { sessionId: string; agentCallSessionId: string }
+  'session.workflowAction': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
+  // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
+  // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
+  'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
@@ -84,6 +118,8 @@ export interface ClientMessageMap {
   'config.deleteProvider': { providerId: string }
   'config.setToolPermissions': { permissions: Record<string, string> }
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
+  // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
+  'config.setDefaultModel': { provider: string; modelId: string }
   'config.scanSkills': { sources: string[] }
   'config.setSkill': { skill: SkillInfo }
   'config.deleteSkill': { skillId: string }
@@ -151,9 +187,23 @@ export type ClientMessage = {
 
 // ── Runtime → Client message types ──────────────────────────────
 
+/**
+ * config.defaults 广播的来源标签（仅 broadcast 携带，reply 不带）。
+ * 收紧为联合类型：新增来源时编译器强制在此登记，避免 runtime 散落未约束的字面量。
+ */
+export type DefaultModelSource =
+  | 'provider-updated' // setProvider 后 fallback 修正了默认模型
+  | 'provider-deleted' // deleteProvider 后 fallback 修正了默认模型
+  | 'default-set'      // config.setDefaultModel 主动设置
+  | 'model-switch'     // model.switch 时持久化全局默认模型
+
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
+  | 'session.subagents' | 'session.subagentHistory'
+  | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
+  | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
+  | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end'
@@ -186,6 +236,7 @@ export type ServerMessageType =
   | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
+  | 'message.stream_warn'
   | 'send.rejected'
   | 'message.file_changes'
   | 'message.changeSetInvalidated'
@@ -219,7 +270,11 @@ export interface ServerMessageMapBase {
   /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
   'config.skillDirs': { dirs: SkillDirConfig[] }
   'config.agentDirs': { dirs: SkillDirConfig[] }
-  'config.defaults': { defaultModel: string }
+  'config.defaults': {
+    defaultModel: string
+    /** 默认模型变更来源，仅 broadcast 携带（reply 不带）。reply/broadcast 共用此类型，故 source 为 optional。 */
+    source?: DefaultModelSource
+  }
   'config.extensions': { extensions: ExtensionInfo[]; upgradeResult?: { upgraded: boolean; from: string; to: string } }
   /** extension.recommended reply：推荐扩展列表（含已安装状态） */
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
@@ -232,6 +287,13 @@ export interface ServerMessageMapBase {
   'error': { code: string; message: string; sessionId?: string; details?: Record<string, unknown> }
   // 流式异步推送失败（server-push 通道，区别于请求级 error envelope；见错误契约文档）
   'message.error': { sessionId: string; message: string }
+  // message.stream_error：流式真错误（pi 异常 / 流终止）。前端收到后 finalizeSession 收口。
+  // content 为人类可读原因（前端 chat-message-effects 读 readString(payload,'content')）。
+  'message.stream_error': { sessionId: string; content: string; kind?: string }
+  // message.stream_warn：pi 静默卡死 WARN（120s 无活动，提示性，不中断流）。
+  // 与 stream_error 物理隔离——前端仅追加提示文案，不调 finalizeSession，session 保持 streaming 态。
+  // B1（PR#86 review）：原先 WARN 复用 stream_error{kind:'silent'}，前端无条件收口破坏「不中断」设计。
+  'message.stream_warn': { sessionId: string; content: string }
   // send.rejected：runtime 预检拦截（busy 时发送），防御性反馈通道（D-006）。
   // 语义：操作拒绝，区别于 message.error（流终止）。不进对话流，不翻流式态。
   // useChat 收到后回滚 pendingSend + toast。
@@ -272,6 +334,27 @@ export interface ServerMessageMapBase {
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // session.subagents：当前 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）
+  'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
+  // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
+  'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
+  // session.workflows：当前 session 派生的 workflow 列表（runtime 从主 session JSONL 的 workflow-state-link 提取）
+  'session.workflows': { sessionId: string; workflows: WorkflowRunRecord[] }
+  // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）
+  'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[] }
+  // session.agentCallFilePath：agent call 对话流 JSONL 绝对路径（PanelHeader overlay 文件名展示用，找不到为空串）
+  'session.agentCallFilePath': { sessionId: string; agentCallSessionId: string; filePath: string }
+  // session.workflowUpdate：workflow 状态变化增量信号（event-interpreter 推送，发起/结束时刻）。
+  // 前端收到后调 loadWorkflows RPC 拉取完整列表。与 session.workflows（RPC reply 全量列表）区分。
+  'session.workflowUpdate': { sessionId: string; update: { runId: string; status: string; reason?: string } }
+  // session.workflowActionDone：workflow 操作完成确认（session.workflowAction RPC reply）
+  'session.workflowActionDone': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
+  // session.subagentActionDone：subagent 操作完成确认（session.subagentAction RPC reply）
+  'session.subagentActionDone': { sessionId: string; action: 'cancel'; subagentId: string }
+  // subagent.stream_delta：running subagent 的逐字 streaming（路径 A-1）。
+  // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
+  // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
+  'subagent.stream_delta': { sessionId: string; recordId: string; lines: string[] | undefined }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
   // publicSessionId：公共 session 的真实 id（pi 生成 UUID，启动期创建后填）。
   // 前端 landing 态用此 id 从 commandStore 取命令（pi extension slash 命令）。

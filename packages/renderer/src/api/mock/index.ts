@@ -12,13 +12,14 @@
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
-  SkillDirConfig, FileNode, RecommendedExtension,
+  SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
 import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
 import { SEARCH_MOCK, SEARCH_RECENTS, SEARCH_SUGGESTED_COUNT, type SearchItem } from './search-data'
+import type { Section } from '@/lib/search-types'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
@@ -30,6 +31,9 @@ import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '..
 export { git, fixtureGitStatus } from './git'
 // mock/file.ts 的 file domain 透出（W3 file-tree real domain 落地后由 api/index 接线）
 export { file } from './file'
+
+// workflow/subagent fixture（E2E 验证 Flows/Agents tab，从 workflow-data.ts 拆出控文件行数）
+import { fixtureWorkflows, fixtureSubagents } from './workflow-data'
 
 /** "npm:" 前缀长度（install source 解析用，对齐 runtime NPM_PREFIX_LENGTH） */
 const NPM_PREFIX = 'npm:'
@@ -255,6 +259,47 @@ export const session = {
     const target = fixtureSessions.find((s) => s.id === sessionId)
     if (target) target.thinkingLevel = level
   },
+
+  /**
+   * Mock subagent 列表。
+   * s3（E2E 默认激活 session）返回 fixture，其他 session 返回空——
+   * 让 E2E 能验证「切 session 后列表刷新」（切到无数据 session 看空态，切回 s3 看列表）。
+   */
+  async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
+    await sleep(TIMING.ack)
+    return sessionId === 's3' ? fixtureSubagents.map((s) => ({ ...s })) : []
+  },
+
+  /** Mock subagent 对话流历史（返回空数组，agent call 对话流由 getAgentCallHistory 覆盖） */
+  async getSubagentHistory(_sessionId: string, _subagentId: string): Promise<Message[]> {
+    await sleep(TIMING.ack)
+    return []
+  },
+
+  /**
+   * Mock workflow 列表。
+   * s3 返回 fixture，其他 session 返回空——同 getSubagents 的区分逻辑。
+   */
+  async getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]> {
+    await sleep(TIMING.ack)
+    return sessionId === 's3' ? fixtureWorkflows.map((w) => ({ ...w })) : []
+  },
+
+  /** Mock agent call 对话流历史（返回空数组，selectAgentCall 不 throw 即可） */
+  async getAgentCallHistory(_sessionId: string, _agentCallSessionId: string): Promise<Message[]> {
+    await sleep(TIMING.ack)
+    return []
+  },
+
+  /** Mock workflow 操作（pause/resume/abort，E2E 不断言此路径，stub resolve 即可） */
+  async workflowAction(_sessionId: string, _action: string, _runId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
+
+  /** Mock subagent cancel（对称 workflowAction，stub resolve 即可） */
+  async subagentAction(_sessionId: string, _action: string, _subagentId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
 }
 
 export const chat = {
@@ -425,6 +470,15 @@ export const config = {
     if (idx >= 0) fixtureProviders.splice(idx, 1)
     broadcastProviders()
   },
+  /**
+   * 设默认模型（W3 协议 config.setDefaultModel 的 mock 对齐）。
+   * 改 defaultsSub 内部值并广播 "provider/modelId" 复合串，与 runtime 广播 config.defaults 同构。
+   * 状态经 onDefaults 订阅推回 settingsStore.defaultModel，前端无需本地乐观更新。
+   */
+  async setDefaultModel(provider: string, modelId: string) {
+    await sleep(TIMING.ack)
+    defaultsSub.broadcast(`${provider}/${modelId}`)
+  },
   async scanSkills(_sources: string[]) {
     await sleep(TIMING.ack)
     // 扫描后广播当前 skills 快照（runtime scan 后会刷新 config.skills）
@@ -499,6 +553,11 @@ const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({
 
 export const extension = {
   onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
+  /** 主动重拉（对齐 runtime extension.list → 广播 config.extensions 刷新） */
+  async scan() {
+    await sleep(TIMING.ack)
+    extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+  },
   async toggle(name: string, enabled: boolean) {
     await sleep(TIMING.ack)
     const target = fixtureExtensions.find((e) => e.name === name)
@@ -590,20 +649,26 @@ export const composer = {
 /* ── Search mock（全局搜索浮层 ⌘K；后端 LSP/命令注册表就绪后接 real domain）── */
 
 export const search = {
-  /** 按查询过滤四类数据，空查询返回 recent + suggested */
-  async query(q: string): Promise<{ label: string; items: SearchItem[] }[]> {
+  /**
+   * 按查询过滤四类数据，空查询返回 recent + suggested。
+   * W1 i18n-frontend-p2：返回 Section[] 带 kind 字段（recent/suggested/command/file/symbol/session），
+   * 供 SearchModal kind-based 判定用（不再依赖中文字面量 s.label === '最近' 比较）。
+   * label 仍为本地化文案（mock 内联 zh-CN 默认值，real 轨 useSearch 统一走 i18n.t）。
+   */
+  async query(q: string): Promise<Section[]> {
     await sleep(TIMING.ack)
     const trimmed = q.trim().toLowerCase()
     if (!trimmed) {
       return [
-        { label: '最近', items: SEARCH_RECENTS.map((i) => ({ ...i })) },
-        { label: '建议命令', items: SEARCH_MOCK.command.slice(0, SEARCH_SUGGESTED_COUNT).map((i) => ({ ...i })) },
+        { kind: 'recent', label: '最近', items: SEARCH_RECENTS.map((i) => ({ ...i })) },
+        { kind: 'suggested', label: '建议命令', items: SEARCH_MOCK.command.slice(0, SEARCH_SUGGESTED_COUNT).map((i) => ({ ...i })) },
       ]
     }
     const TYPES: SearchItem['type'][] = ['command', 'file', 'symbol', 'session']
     const LABEL: Record<SearchItem['type'], string> = { command: '命令', file: '文件', symbol: '符号', session: '会话' }
     return TYPES
       .map((t) => ({
+        kind: t,
         label: LABEL[t],
         items: SEARCH_MOCK[t]
           .filter((it) => it.title.toLowerCase().includes(trimmed) || it.sub.toLowerCase().includes(trimmed))

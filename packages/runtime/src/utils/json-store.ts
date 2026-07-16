@@ -243,7 +243,15 @@ export class WriteBackCache<K extends string, IK extends string, IV> {
     return Array.from(this.partitions.keys())
   }
 
-  /** 同步持久化单分区：清 timer → persistPartition → 清 dirty。 */
+  /**
+   * 同步持久化单分区：清 timer → persistPartition → 清 dirty。
+   *
+   * [W0 异常隔离] persistPartition 失败（盘满 / 权限 / 只读挂载）时：
+   * - 不向上抛（flush 被两处 timer 回调同步调用，抛出会变 uncaughtException → 进程 crash）
+   * - console.error 记录原因
+   * - 保留 dirty 不清除（下次 flush 重试）
+   * - scheduleFlush 安排重试
+   */
   flush(k: K): void {
     const partition = this.partitions.get(k)
     if (!partition || partition.dirty.size === 0) return
@@ -251,8 +259,15 @@ export class WriteBackCache<K extends string, IK extends string, IV> {
       clearTimeout(partition.flushTimer)
       partition.flushTimer = null
     }
-    this.backing.persistPartition(k, partition.data)
-    partition.dirty.clear()
+    try {
+      this.backing.persistPartition(k, partition.data)
+      partition.dirty.clear()
+    } catch (e) {
+      // 保留 dirty，下次 flush 重试；避免 timer 回调抛错导致 uncaughtException crash
+      console.error(`[json-store] flush failed for partition "${k}", will retry:`,
+        e instanceof Error ? e.message : e)
+      this.scheduleFlush(k)
+    }
   }
 
   /** 同步持久化所有 dirty 分区。 */

@@ -15,10 +15,12 @@ export interface SystemSettings {
   locale: 'zh-CN' | 'en-US'
   theme: 'light' | 'dark' | 'system'
   themePreset: string
+  /** 字体大小：small/medium/large，缺省按 medium（D17） */
+  fontSize?: 'small' | 'medium' | 'large'
 }
 
 const SYSTEM_KEY = 'xyz-agent:system-settings'
-const DEFAULT_SYSTEM: SystemSettings = { locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue' }
+const DEFAULT_SYSTEM: SystemSettings = { locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue', fontSize: 'medium' }
 
 // ── 订阅（转发 config / extension 域）──
 export const onProviders = configDomain.onProviders
@@ -48,10 +50,8 @@ export function getSystem(): Promise<SystemSettings> {
   return Promise.resolve({ ...DEFAULT_SYSTEM, ...parsed })
 }
 
-export function updateSystem(patch: Partial<SystemSettings>): Promise<void> {
-  // 同步读当前值再合并写回（getSystem 已做容错）
-  void getSystem().then((cur) => {
-    localStorage.setItem(SYSTEM_KEY, JSON.stringify({ ...cur, ...patch }))
-  })
-  return Promise.resolve()
+export async function updateSystem(patch: Partial<SystemSettings>): Promise<void> {
+  // 真 await：读当前值 → 合并 → 写回。写入失败 throw（调用方可据 toast 提示）。
+  const cur = await getSystem()
+  localStorage.setItem(SYSTEM_KEY, JSON.stringify({ ...cur, ...patch }))
 }

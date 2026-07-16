@@ -56,8 +56,16 @@ def extract_bare_spec(spec: str) -> str:
     """从 import 说明符提取包名（去子路径/alias）。
     @scope/pkg/sub -> @scope/pkg
     pkg/sub -> pkg
+    node:fs -> fs（node: 前缀的 Node 内置模块统一剥前缀匹配 BUILTIN_EXEMPT）
+
+    [HISTORICAL] 2026-07-14：测试文件用 `import { readFileSync } from 'node:fs'`，
+    但 BUILTIN_EXEMPT 只含 'fs' 不含 'node:fs'，导致 pre-commit hook 误报未声明 import。
+    node: 前缀是 Node.js 标准 builtin 模块标识，剥前缀后统一匹配。
     """
     spec = spec.strip().strip("'\"")
+    # node: 前缀的内置模块（node:fs / node:path / node:crypto 等）剥前缀
+    if spec.startswith('node:'):
+        spec = spec[len('node:'):]
     if spec.startswith('@'):
         parts = spec.split('/')
         return '/'.join(parts[:2]) if len(parts) >= 2 else spec

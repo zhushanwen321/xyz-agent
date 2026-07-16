@@ -10,10 +10,10 @@
     class="sidebar h-full transition-[width,opacity] duration-[var(--duration-slow)] ease-[var(--ease)]"
     :class="{ 'w-0 opacity-0 overflow-hidden': sidebar.collapsed }"
   >
-    <div class="sidebar__inner flex h-full w-[340px] flex-col pl-0.5">
+    <div class="sidebar__inner flex h-full w-[300px] flex-col pl-0.5">
       <!-- Brand -->
       <div class="flex items-center gap-2 px-2 pb-3.5">
-        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-white">x</span>
+        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-fg">x</span>
         <div class="flex flex-col leading-tight">
           <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
           <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
@@ -28,7 +28,7 @@
           @click="onNewSession"
         >
           <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
-          <span class="flex-1 text-left">新建任务</span>
+          <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
           <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
         </Button>
         <Button
@@ -37,7 +37,7 @@
           @click="searchOpen = true"
         >
           <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
-          <span class="flex-1 text-left">搜索</span>
+          <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
           <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ K</kbd>
         </Button>
       </nav>
@@ -59,7 +59,7 @@
           class="size-[15px] transition-colors"
           :class="isOverviewActive ? 'text-accent' : 'text-subtle group-hover:text-muted'"
         />
-        <span class="flex-1 text-left">概览</span>
+        <span class="flex-1 text-left">{{ t('sidebar.overview') }}</span>
         <span
           v-if="session.list.length"
           class="font-mono text-[10px]"
@@ -67,17 +67,32 @@
         >{{ session.list.length }}</span>
       </Button>
 
-      <!-- segmented tab（会话 | 文件） -->
+      <!-- segmented tab（会话 | 文件 | Agents | Flows） -->
       <SegmentedTab
         v-model="sidebar.activeTab"
         :session-count="session.list.length"
         :file-count="fileCount"
+        :subagent-count="subagentCount"
+        :workflow-count="workflowCount"
+        :subagent-running-count="subagentRunningCount"
+        :workflow-running-count="workflowRunningCount"
       />
 
-      <!-- 子视图区：会话列表（A）/ 文件视图（B，聚合 chat store fileChanges） -->
+      <!-- 子视图区：会话列表 / 文件视图 / subagent 列表 -->
       <div class="mt-1 min-h-0 flex-1">
         <template v-if="sidebar.activeTab === 'sessions'">
+          <!-- S5：加载失败态 + 重试（session.listLoadError 非空时） -->
+          <div
+            v-if="session.listLoadError"
+            class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+            data-testid="session-list-error"
+          >
+            <AlertCircle class="size-5 text-danger opacity-60" />
+            <p class="text-[11px] text-muted">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
+            <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">{{ t('sidebar.retry') }}</Button>
+          </div>
           <SessionList
+            v-else
             :groups="session.groups"
             :active-id="focusedSessionId"
             :status-of="statusOf"
@@ -85,6 +100,34 @@
             @new-session="onNewSession"
             @rename="onRenameSession"
             @delete="onDeleteSession"
+          />
+        </template>
+        <template v-else-if="sidebar.activeTab === 'subagents'">
+          <SubagentList
+            :subagents="subagentList"
+            :is-loading="subagentStore.isLoading"
+            :load-error="subagentStore.loadError"
+            @select="onSelectSubagent"
+            @cancel="onCancelSubagent"
+            @retry="onRetrySubagents"
+          />
+        </template>
+        <template v-else-if="sidebar.activeTab === 'workflows'">
+          <WorkflowDetail
+            v-if="currentWorkflow"
+            :workflow="currentWorkflow"
+            @back="onWorkflowBack"
+            @select-agent-call="onSelectAgentCall"
+            @action="onWorkflowAction"
+          />
+          <WorkflowList
+            v-else
+            :workflows="workflowList"
+            :is-loading="workflowStore.isLoading"
+            :load-error="workflowStore.loadError"
+            @select="onSelectWorkflow"
+            @action="onWorkflowAction"
+            @retry="onRetryWorkflows"
           />
         </template>
         <template v-else>
@@ -101,7 +144,7 @@
             data-testid="file-view-no-session"
           >
             <FolderOpen class="size-5 text-subtle opacity-40" />
-            <p class="text-[11.5px] text-subtle opacity-55">选择会话查看文件</p>
+            <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
           </div>
         </template>
       </div>
@@ -109,14 +152,15 @@
       <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
       <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted">
         <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
-        <span class="flex-1 truncate text-fg">开发者</span>
-        <button
+        <span class="flex-1 truncate text-fg">{{ t('sidebar.developer') }}</span>
+        <Button
+          variant="ghost"
           class="grid size-6 shrink-0 place-items-center rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-fg"
-          title="设置"
+          :title="t('sidebar.settingsTitle')"
           @click="openSettings()"
         >
           <Settings class="size-[14px]" />
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -134,26 +178,43 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings, FolderOpen } from '@lucide/vue'
+import { Plus, LayoutGrid, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SearchModal from '@/components/overlays/SearchModal.vue'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useCommandStore } from '@/stores/command'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
+import SubagentList from './SubagentList.vue'
+import WorkflowList from './WorkflowList.vue'
+import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
+import { usePanelStore } from '@/stores/panel'
+import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
+import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
+import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
+import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
+import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 import * as events from '@/api/events'
 
+const { t } = useI18n()
 const navigation = useNavigationStore()
 const session = useSessionStore()
+const { error: toastError } = useToast()
 const sidebar = useSidebarStore()
 const fileTreeStore = useFileTreeStore()
+const panelStore = usePanelStore()
+const subagentStore = useSubagentStore()
+const workflowStore = useWorkflowStore()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -187,17 +248,75 @@ const fileCount = computed(() => {
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
 
+/** subagent tab 计数（当前 session 的 subagent 数量，读 store 共享列表） */
+const subagentCount = computed(() => subagentStore.records.length)
+
+/** subagent running 态数量（badge 精确化：仅 running>0 亮蓝点） */
+const subagentRunningCount = computed(() => subagentStore.records.filter((r) => r.status === 'running').length)
+
+/** subagent 列表（store records 的 computed 解包，供 template 直接用） */
+const subagentList = computed(() => subagentStore.records)
+
+/** workflow tab 计数（当前 session 的 workflow 数量，读 store 共享列表） */
+const workflowCount = computed(() => workflowStore.workflowCount())
+
+/** workflow running/paused 态数量（badge 精确化：仅活跃态>0 亮蓝点） */
+const workflowRunningCount = computed(() => workflowStore.records.filter((r) => r.status === 'running' || r.status === 'paused').length)
+
+/** workflow 列表（store records 的 computed 解包，供 template 直接用） */
+const workflowList = computed(() => workflowStore.records)
+
+/** 当前查看的 workflow record（视图 2 详情态，null 时显示视图 1 列表） */
+const currentWorkflow = computed(() => workflowStore.getCurrentWorkflow(panelStore.activePanelId))
+
 /** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
   return derivedStatus(id).value
 }
 
 async function onSelectSession(id: string): Promise<void> {
-  await selectSession(id)
+  try {
+    await selectSession(id)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(t('sidebar.switchSessionFailed', { msg }))
+  }
+}
+
+/** subagent/workflow 操作 handler（提取到 composable 减行） */
+const {
+  onSelectSubagent,
+  onCancelSubagent,
+  onSelectWorkflow,
+  onWorkflowBack,
+  onSelectAgentCall,
+  onWorkflowAction,
+} = useSidebarSubagentActions(focusedSessionId)
+
+/** S5：重试加载会话列表（loadSessions 失败后用户点击重试） */
+function onRetryLoadSessions(): void {
+  void loadSessions()
+}
+
+/** M1：重试加载 workflow 列表 */
+function onRetryWorkflows(): void {
+  const sid = focusedSessionId.value
+  if (sid) void workflowStore.loadWorkflows(sid)
+}
+
+/** M1：重试加载 subagent 列表 */
+function onRetrySubagents(): void {
+  const sid = focusedSessionId.value
+  if (sid) void subagentStore.loadSubagents(sid)
 }
 
 async function onNewSession(): Promise<void> {
-  await newSession()
+  try {
+    await newSession()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(t('sidebar.newTaskFailed', { msg }))
+  }
 }
 
 async function onRenameSession(id: string): Promise<void> {
@@ -206,17 +325,30 @@ async function onRenameSession(id: string): Promise<void> {
 }
 
 async function onDeleteSession(id: string): Promise<void> {
-  await deleteSession(id)
+  try {
+    await deleteSession(id)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(t('sidebar.deleteSessionFailed', { msg }))
+  }
 }
 
 async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {
-  await renameSession(payload.sessionId, payload.label)
+  try {
+    await renameSession(payload.sessionId, payload.label)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(t('sidebar.renameFailed', { msg }))
+  }
 }
 
-/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本 */
+/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本
+ *  + 启动 subagent 列表同步（watch 生命周期跟随 Sidebar 组件） */
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
+  useSubagentListSync()
+  useWorkflowListSync()
 })
 
 /**
@@ -225,29 +357,49 @@ onMounted(() => {
  * - ⌘N 新建 session（shell spec §五）
  * - ⌘B 折叠侧栏（shell spec §⌘B；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED）
  *
- * [DEVIATED] AC-10.1 原文「改读 useCommandRegistry」未完全达成。现状（2026-07 修正后）：
- * commandStore.appCommands 已由 useSidebar.initApp → registerAppCommands 注册（新建任务/收起侧栏/概览），
- * 搜索浮层（⌘K）命令源聚合正常工作，点击命令能执行对应 action。
- * 但本地 keymap 仍保留，未完全切换为「读 useCommandRegistry 派发」：⌘K 不注册为 appCommand
- * （搜索结果里出现「搜索」命令是逻辑自指），完全通用化需独立 keymap 注册表 + shortcut DSL
- * （'mod+n'）+ 匹配引擎，属 D-019 标注的额外基础设施，超 P2 scope，登记 P3 后续迭代。
+ * ⌘K 不注册为 appCommand（搜索结果里出现「搜索」命令是逻辑自指），始终硬编码。
+ * ⌘N/⌘B 支持用户自定义覆盖（commandStore.shortcutOverrides），SystemPage 设置页可重录。
  */
 interface KeymapEntry {
+  /** 默认 key（无 override 时用 ⌘+key 匹配） */
   key: string
+  /** commandStore.shortcutOverrides 中的 id（有 override 时走 matchOverrideKey） */
+  commandId?: string
   action: () => void
 }
+const commandStore = useCommandStore()
 const keymap: KeymapEntry[] = [
   { key: 'k', action: () => { searchOpen.value = !searchOpen.value } },
-  { key: 'n', action: () => { void newSession() } },
-  { key: 'b', action: () => { sidebar.toggleCollapsed() } },
+  { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
+  { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
 ]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
-  const mod = e.metaKey || e.ctrlKey
-  if (!mod) return
-  const hit = keymap.find((m) => m.key === e.key.toLowerCase())
+  const overrides = commandStore.shortcutOverrides
+  const hit = keymap.find((m) => {
+    // 有 override → 解析组合键格式（'mod+n' / 'shift+j' / 'j'）
+    if (m.commandId && overrides[m.commandId]) {
+      return matchOverrideKey(e, overrides[m.commandId])
+    }
+    // 默认：⌘/Ctrl + key
+    const mod = e.metaKey || e.ctrlKey
+    return mod && e.key.toLowerCase() === m.key
+  })
   if (hit) {
     e.preventDefault()
     hit.action()
   }
 })
+
+/** 匹配自定义快捷键格式（'mod+n' / 'shift+j' / 'j' / 'alt+x' 等） */
+function matchOverrideKey(e: KeyboardEvent, override: string): boolean {
+  const parts = override.toLowerCase().split('+')
+  const key = parts[parts.length - 1]
+  const needMod = parts.includes('mod')
+  const needShift = parts.includes('shift')
+  const needAlt = parts.includes('alt')
+  if (needMod && !(e.metaKey || e.ctrlKey)) return false
+  if (needShift && !e.shiftKey) return false
+  if (needAlt && !e.altKey) return false
+  return e.key.toLowerCase() === key
+}
 </script>

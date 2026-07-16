@@ -14,12 +14,14 @@
  * 空态（T3.2 / AC-5.4）：records=[] → 「暂无最近工作区 · 选择一个本地目录开始」。
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Folder, FolderPlus, Cloud } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useToast } from '@/composables/useToast'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
+import { dirNameOf, parentDirNameOf } from '@/composables/logic/path'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -33,11 +35,12 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
+const { t } = useI18n()
 const workspaceStore = useWorkspaceStore()
 const { error: toastError } = useToast()
 
 /** spec §6：远程连接 v1 stub（issues #11 P3），点开 toast 提示 */
-const REMOTE_UNSUPPORTED_MSG = 'v1 暂未支持远程连接'
+// v1 暂未支持远程连接（i18n key: newTask.dirSelect.remoteNotSupported）
 /** 扁平化键盘导航的尾部动作项数（打开文件夹 + 远程连接） */
 const ACTION_ITEM_COUNT = 2
 
@@ -58,6 +61,31 @@ const filtered = computed<RecentWorkspaceRecord[]>(() => {
 /** 空态：无最近工作区，或搜索无命中 */
 const isEmpty = computed(() => filtered.value.length === 0)
 
+/** basename 出现该次数即视为同名，需追加上级段名消歧 */
+const DUP_THRESHOLD = 2
+
+/**
+ * 当前可见列表内重复 ≥ DUP_THRESHOLD 次的 basename 集合——这些目录需追加上级段名消歧
+ * （如 /Code/chat_project 与 /Stock/chat_project → 都显 chat_project(Code)/chat_project(Stock)）。
+ * 以 filtered（搜索后实际展示的列表）为统计范围，让搜索缩小范围后也能正确消歧。
+ */
+const dupBasenames = computed<Set<string>>(() => {
+  const counts = new Map<string, number>()
+  for (const w of filtered.value) {
+    const b = dirNameOf(w.cwd)
+    counts.set(b, (counts.get(b) ?? 0) + 1)
+  }
+  return new Set([...counts.entries()].filter(([, n]) => n >= DUP_THRESHOLD).map(([b]) => b))
+})
+
+/** 列表项显示文案：默认 basename，同名时追加 (parent) 消歧 */
+function displayLabel(ws: RecentWorkspaceRecord): string {
+  const base = dirNameOf(ws.cwd)
+  if (!dupBasenames.value.has(base)) return base
+  const parent = parentDirNameOf(ws.cwd)
+  return parent ? `${base}(${parent})` : base
+}
+
 onMounted(() => {
   // 打开即 focus 搜索框（spec §3.2 键盘契约）
   nextTick(() => root.value?.querySelector('input')?.focus())
@@ -72,7 +100,7 @@ function openFolder(): void {
 }
 
 function remoteStub(): void {
-  toastError(REMOTE_UNSUPPORTED_MSG)
+  toastError(t('newTask.dirSelect.remoteNotSupported'))
 }
 
 /** 扁平化激活：列表项区间 → selectWorkspace，尾部动作项 → openFolder / remoteStub */
@@ -102,7 +130,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     <div class="border-b border-border p-2">
       <Input
         v-model="search"
-        placeholder="搜索工作区"
+        :placeholder="t('newTask.dirSelect.searchPlaceholder')"
         class="h-8 bg-surface-2 text-[13px]"
       />
     </div>
@@ -115,10 +143,10 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         class="flex flex-col items-center gap-2 px-4 py-6 text-center"
       >
         <Folder class="size-5 text-subtle" />
-        <p class="text-[12.5px] text-muted">暂无最近工作区 · 选择一个本地目录开始</p>
+        <p class="text-[12px] text-muted">{{ t('newTask.dirSelect.noRecent') }}</p>
       </div>
 
-      <!-- 列表项（非空态） -->
+      <!-- 列表项（非空态）：默认只显目录名，同名时追加 (parent) 消歧 -->
       <PopoverListItem
         v-for="(ws, i) in filtered"
         :key="ws.cwd"
@@ -131,9 +159,8 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <template #icon>
           <Folder class="shrink-0 text-subtle" />
         </template>
-        <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-          <span class="truncate text-fg">{{ ws.label }}</span>
-          <span class="truncate font-mono text-[11px] text-subtle">{{ ws.cwd }}</span>
+        <span class="flex min-w-0 flex-1 flex-col items-start">
+          <span class="truncate text-fg">{{ displayLabel(ws) }}</span>
         </span>
       </PopoverListItem>
 
@@ -150,7 +177,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <template #icon>
           <FolderPlus class="shrink-0 text-subtle" />
         </template>
-        打开文件夹
+        {{ t('newTask.dirSelect.openFolder') }}
       </PopoverActionItem>
 
       <!-- 动作项：远程连接（v1 stub） -->
@@ -163,7 +190,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <template #icon>
           <Cloud class="shrink-0 text-subtle" />
         </template>
-        远程连接
+        {{ t('newTask.dirSelect.remoteConnect') }}
       </PopoverActionItem>
     </div>
   </div>

@@ -64,8 +64,7 @@ export class ExtensionMessageHandler {
     this.ctx.extensionTimeoutMgr.markTimedOut(requestId)
     const client = this.ctx.sessionService.getRpcClient(sessionId)
     if (client) {
-      const raw = buildExtensionUiResponse(method, requestId, method === 'confirm' ? false : null)
-      client.sendRaw(raw)
+      client.sendExtensionUiResponse(requestId, method === 'confirm' ? false : null, method)
     }
     this.ctx.broadcast({
       type: 'extension.ui_timeout',
@@ -98,7 +97,7 @@ export class ExtensionMessageHandler {
           this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
           return this.ctx.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, { sessionId: extSid })
         }
-        client.sendRaw(buildExtensionUiResponse(method, requestId, extResult ?? null))
+        client.sendExtensionUiResponse(requestId, extResult ?? null, method)
         this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
         return
       }
@@ -254,36 +253,4 @@ export class ExtensionMessageHandler {
     // matched 分支透传 e.hint；fallback 分支不带 details（保持既有行为）。
     sendHandlerError(this.ctx, ws, ExtensionInstallError, 'install_failed', e, id, (matched) => matched.hint ? { hint: matched.hint } : undefined)
   }
-}
-
-/**
- * 构建 pi extension_ui_response 的 JSON 行（pi 鸭子类型字段检测协议）。
- *
- * pi rpc-mode.ts:136-149 按 method 绑定的 parseResponse 解析 response：
- * - confirm → `confirmed` in r ? r.confirmed : false
- * - select/input/editor → `value` in r ? r.value : undefined
- * - 任何 method → `cancelled` in r && r.cancelled ? <default> : <按字段>
- *
- * 故 runtime（pi 协议唯一适配点，规则 5）必须按 method 发正确字段名：
- * - result === null → {id, cancelled:true}（取消/超时）
- * - method === 'confirm' → {id, confirmed:boolean}
- * - method === select/input/editor → {id, value:string}
- *
- * 不含 RPC 关联 id（pi 不回复 extension_ui_response 的 RPC 确认，sendRaw 直接写 stdin）。
- */
-function buildExtensionUiResponse(
-  method: string,
-  requestId: string,
-  result: boolean | string | null,
-): string {
-  let payload: Record<string, unknown>
-  if (result === null) {
-    payload = { type: 'extension_ui_response', id: requestId, cancelled: true }
-  } else if (method === 'confirm') {
-    payload = { type: 'extension_ui_response', id: requestId, confirmed: result as boolean }
-  } else {
-    // select / input / editor → value
-    payload = { type: 'extension_ui_response', id: requestId, value: String(result) }
-  }
-  return JSON.stringify(payload)
 }

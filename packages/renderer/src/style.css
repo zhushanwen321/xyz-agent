@@ -13,13 +13,17 @@
    ============================================================ */
 
 :root {
-  /* ── 背景层级（2026-07-09 提亮校准，对标 VS Code Dark）──── */
-  --bg: #1a1b1f;                /* 画布底层 */
-  --surface: #222329;           /* 面板/卡片 */
-  --surface-hover: #2d2e36;     /* 面板悬停 */
-  --surface-2: #282930;         /* 二级表面（Card-Elevated） */
-  --bg-elevated: #2a2b32;       /* 浮起面板/激活面板底色 */
-  --bg-input: #1e1f24;          /* 输入区底色 */
+  /* ── 背景层级 ──────────────────────────────────────────────
+     2026-07-09 提亮校准（对标 VS Code Dark）。
+     2026-07-12 拉大层级间距：原相邻 token 亮度差 <3%（bg→surface 仅 Δ8），
+     侧边栏与对话流肉眼不可辨。surface 以上整体上推，bg→surface 拉到 Δ13（≈5%），
+     每层 ≥Δ5 肉眼可辨。bg / bg-input 保持不变（锚点 + 输入坑凹陷语义）。 */
+  --bg: #1a1b1f;                /* 画布底层（锚点，不变） */
+  --surface: #272830;           /* 面板/卡片（原 #222329，+5 拉大与 bg 间距） */
+  --surface-hover: #363740;     /* 面板悬停（原 #2d2e36，+9 最高） */
+  --surface-2: #2e2f38;         /* 二级表面 Card-Elevated（原 #282930，+6） */
+  --bg-elevated: #313239;       /* 浮起面板/激活面板底色（原 #2a2b32，+7） */
+  --bg-input: #1e1f24;          /* 输入区底色（不变，Δ4 from bg 凹陷） */
 
   /* ── 文字 ───────────────────────────────────────────────── */
   --fg: #f7f8fc;                /* 主文字 */
@@ -33,7 +37,7 @@
   /* ── 主色（冷蓝）───────────────────────────────────────── */
   --accent: #4f8ef7;
   --accent-hover: #6ba3ff;
-  --accent-soft: rgba(79, 142, 247, 0.12);
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
   --accent-ring: rgba(79, 142, 247, 0.30); /* 选中态内描边（Card-Active），见 design-system §2 */
 
   /* ── 状态色 ─────────────────────────────────────────────── */
@@ -43,8 +47,13 @@
   --info: #38bdf8;
   /* reasoning 紫：思考块色相（draft-message-stream §4 + composer 思考等级） */
   --reasoning: #a78bfa;
-  /* reasoning 软底：slash 命令 chip 背景（与 --accent-soft 同构，color-mix 派生跟随主题） */
-  --reasoning-soft: color-mix(in oklch, var(--reasoning) 18%, transparent);
+  /* reasoning 软底：think badge / slash chip 背景（统一 12% 基准，与状态色 soft 对齐） */
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+  /* 状态色软底（12% 基准，color-mix 派生：palette 切换 / 亮暗主题自动跟随） */
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --warning-soft: color-mix(in oklch, var(--warning) 12%, transparent);
 
   /* ── 字体 ───────────────────────────────────────────────── */
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
@@ -137,6 +146,144 @@
 }
 
 /* ============================================================
+   配色主题槽位（data-theme-preset 切换）
+   settings store.setSystem({themePreset}) 同步 <html data-theme-preset>。
+   仅覆盖 --accent / --accent-hover；--accent-soft / --accent-ring 经
+   color-mix 自动跟随（L113-114），无需逐主题手写。
+   dark 态用 :root[data-theme-preset]（:root 即 dark 默认）；
+   light 态用 [data-theme=light][data-theme-preset] 加深派生。
+   cold-blue 与 :root 默认 accent 一致（ redundantly 覆盖确保显式）。
+   ============================================================ */
+
+:root[data-theme-preset="warm-teal"] {
+  --accent: oklch(60% 0.08 195);
+  --accent-hover: oklch(68% 0.08 195);
+}
+
+[data-theme="light"][data-theme-preset="warm-teal"] {
+  --accent: color-mix(in oklch, oklch(60% 0.08 195) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(68% 0.08 195) 82%, black 18%);
+}
+
+:root[data-theme-preset="cold-teal"] {
+  --accent: oklch(62% 0.10 190);
+  --accent-hover: oklch(70% 0.10 190);
+}
+
+[data-theme="light"][data-theme-preset="cold-teal"] {
+  --accent: color-mix(in oklch, oklch(62% 0.10 190) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(70% 0.10 190) 82%, black 18%);
+}
+
+:root[data-theme-preset="neutral"] {
+  --accent: oklch(55% 0.01 250);
+  --accent-hover: oklch(63% 0.01 250);
+}
+
+[data-theme="light"][data-theme-preset="neutral"] {
+  --accent: color-mix(in oklch, oklch(55% 0.01 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(63% 0.01 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="sharp"] {
+  --accent: oklch(45% 0.01 250);
+  --accent-hover: oklch(55% 0.01 250);
+}
+
+[data-theme="light"][data-theme-preset="sharp"] {
+  --accent: color-mix(in oklch, oklch(45% 0.01 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(55% 0.01 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="warm-neutral"] {
+  --accent: oklch(55% 0.04 80);
+  --accent-hover: oklch(63% 0.04 80);
+}
+
+[data-theme="light"][data-theme-preset="warm-neutral"] {
+  --accent: color-mix(in oklch, oklch(55% 0.04 80) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(63% 0.04 80) 82%, black 18%);
+}
+
+:root[data-theme-preset="cold-blue"] {
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+}
+
+[data-theme="light"][data-theme-preset="cold-blue"] {
+  --accent: color-mix(in oklch, #4f8ef7 82%, black 18%);
+  --accent-hover: color-mix(in oklch, #6ba3ff 82%, black 18%);
+}
+
+:root[data-theme-preset="terracotta"] {
+  --accent: oklch(60% 0.13 28);
+  --accent-hover: oklch(68% 0.13 28);
+}
+
+[data-theme="light"][data-theme-preset="terracotta"] {
+  --accent: color-mix(in oklch, oklch(60% 0.13 28) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(68% 0.13 28) 82%, black 18%);
+}
+
+:root[data-theme-preset="rose"] {
+  --accent: oklch(62% 0.14 350);
+  --accent-hover: oklch(70% 0.14 350);
+}
+
+[data-theme="light"][data-theme-preset="rose"] {
+  --accent: color-mix(in oklch, oklch(62% 0.14 350) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(70% 0.14 350) 82%, black 18%);
+}
+
+:root[data-theme-preset="amber"] {
+  --accent: oklch(64% 0.15 65);
+  --accent-hover: oklch(72% 0.15 65);
+}
+
+[data-theme="light"][data-theme-preset="amber"] {
+  --accent: color-mix(in oklch, oklch(64% 0.15 65) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(72% 0.15 65) 82%, black 18%);
+}
+
+:root[data-theme-preset="blue"] {
+  --accent: oklch(58% 0.15 250);
+  --accent-hover: oklch(66% 0.15 250);
+}
+
+[data-theme="light"][data-theme-preset="blue"] {
+  --accent: color-mix(in oklch, oklch(58% 0.15 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(66% 0.15 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="violet"] {
+  --accent: oklch(58% 0.15 280);
+  --accent-hover: oklch(66% 0.15 280);
+}
+
+[data-theme="light"][data-theme-preset="violet"] {
+  --accent: color-mix(in oklch, oklch(58% 0.15 280) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(66% 0.15 280) 82%, black 18%);
+}
+
+/* ============================================================
+   字体大小槽位（data-font-size 切换，D17）
+   settings store.setSystem({fontSize}) 同步 <html data-font-size>。
+   默认 medium（:root 之外，依赖 data-font-size 属性，applySystemToDom 始终写入）。
+   仅调整根 font-size，组件内 rem/tailwind text-[px] 不受影响，避免大面积布局抖动。
+   ============================================================ */
+:root[data-font-size="small"] {
+  font-size: 14px;
+}
+
+:root[data-font-size="medium"] {
+  font-size: 15px;
+}
+
+:root[data-font-size="large"] {
+  font-size: 16px;
+}
+
+/* ============================================================
    基础重置（style.css 只放 token + base reset，组件样式走 Tailwind）
    ============================================================ */
 * {
@@ -158,4 +305,18 @@ body {
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================
+   Reduced motion（PRODUCT.md Accessibility：prefers-reduced-motion 兜底）
+   用户系统开启「减少动态效果」时，所有动画/过渡降级为瞬时。
+   覆盖 5 个无限循环动画（blink / pulse-accent / working-pulse /
+   steer-breathe / spin）及所有 transition。
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

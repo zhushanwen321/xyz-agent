@@ -16,7 +16,7 @@
     >
       <ChevronRight class="size-3 shrink-0 text-muted transition-transform" :class="collapsed ? '' : 'rotate-90'" />
       <FileEdit class="size-3.5 shrink-0 text-info" />
-      <span class="text-[12px] font-medium text-fg">变更集</span>
+      <span class="text-[12px] font-medium text-fg">{{ t('panel.changeset.title') }}</span>
       <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ fileChanges.length }}</span>
       <!-- 状态 badge -->
       <span class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="statusClass">{{ statusLabel }}</span>
@@ -34,12 +34,12 @@
         :key="c.filePath"
         class="group/cs-file flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[12px] transition-colors hover:bg-surface-hover"
         data-testid="change-set-file"
-        :title="`查看 ${c.filePath} 的 diff`"
+        :title="t('panel.changeset.viewDiff', { path: c.filePath })"
         @click="onClickFile(c.filePath)"
       >
         <span class="shrink-0 rounded-sm px-1 py-0.5 font-mono text-[10px] font-semibold" :class="changeBadgeClass(c.status)">{{ changeLabel(c.status) }}</span>
         <span class="flex-1 truncate font-mono text-fg">{{ c.filePath }}</span>
-        <ExternalLink class="size-3 shrink-0 text-subtle opacity-0 transition-opacity group-hover/cs-file:opacity-100" />
+        <ExternalLink class="size-3 shrink-0 text-subtle opacity-0 transition-opacity group-hover/cs-file:opacity-100 group-focus-within/cs-file:opacity-100" />
         <span v-if="c.addLines !== undefined || c.delLines !== undefined" class="shrink-0 flex items-center gap-1 text-[10px] tabular-nums">
           <span v-if="c.addLines !== undefined" class="text-success">+{{ c.addLines }}</span>
           <span v-if="c.delLines !== undefined" class="text-danger">-{{ c.delLines }}</span>
@@ -51,9 +51,12 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ChevronRight, ExternalLink, FileEdit } from '@lucide/vue'
 import type { FileChange, ChangeSetStatus } from '@xyz-agent/shared'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   fileChanges: FileChange[]
@@ -80,22 +83,22 @@ const statusClass = computed(() => resolveStatusClass(props.status))
 
 function resolveStatusLabel(status: ChangeSetStatus | undefined): string {
   switch (status) {
-    case 'accumulating': return '生成中'
-    case 'ready': return '待审查'
-    case 'partially-reviewed': return '部分已审'
-    case 'resolved': return '已完成'
-    case 'superseded': return '已过期'
-    default: return '待审查'
+    case 'accumulating': return t('panel.changeset.generating')
+    case 'ready': return t('panel.changeset.pendingReview')
+    case 'partially-reviewed': return t('panel.changeset.partiallyReviewed')
+    case 'resolved': return t('panel.changeset.resolved')
+    case 'superseded': return t('panel.changeset.superseded')
+    default: return t('panel.changeset.pendingReview')
   }
 }
 function resolveStatusClass(status: ChangeSetStatus | undefined): string {
   switch (status) {
     case 'accumulating': return 'bg-accent-soft text-accent'
-    case 'ready': return 'bg-info/10 text-info'
-    case 'partially-reviewed': return 'bg-amber-500/10 text-amber-500'
-    case 'resolved': return 'bg-success/10 text-success'
+    case 'ready': return 'bg-info-soft text-info'
+    case 'partially-reviewed': return 'bg-warning-soft text-warning'
+    case 'resolved': return 'bg-success-soft text-success'
     case 'superseded': return 'bg-surface text-subtle'
-    default: return 'bg-info/10 text-info'
+    default: return 'bg-info-soft text-info'
   }
 }
 
@@ -113,9 +116,9 @@ function changeLabel(status: FileChange['status']): string {
 }
 function changeBadgeClass(status: FileChange['status']): string {
   return {
-    added: 'bg-success/10 text-success',
-    modified: 'bg-info/10 text-info',
-    deleted: 'bg-danger/10 text-danger',
+    added: 'bg-success-soft text-success',
+    modified: 'bg-info-soft text-info',
+    deleted: 'bg-danger-soft text-danger',
     unmerged: 'bg-danger/20 text-danger ring-1 ring-danger/40',
   }[status]
 }

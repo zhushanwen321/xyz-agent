@@ -56,6 +56,16 @@ export interface RawCommand {
   source: string
 }
 
+/** 从 localStorage 加载快捷键覆盖 */
+function loadShortcutOverrides(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(SHORTCUT_OVERRIDES_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
 /** source → icon key（extension→terminal, skill→star, 默认 wrench）。
  *  与 CommandPopover.iconForSource 同源逻辑，集中在此避免漂移。 */
 function iconKeyForSource(source: string): string {
@@ -64,9 +74,16 @@ function iconKeyForSource(source: string): string {
   return 'wrench'
 }
 
+/** localStorage key for shortcut overrides persistence */
+const SHORTCUT_OVERRIDES_KEY = 'xyz-agent-shortcut-overrides'
+
 export const useCommandStore = defineStore('command', () => {
   /** 按 sessionId 分区的命令表（UC-2 隔离，同 chat store messages 模式） */
   const commandsBySession = ref<Map<string, SessionCommand[]>>(new Map())
+
+  /** 用户自定义快捷键覆盖（commandId → key，如 'new-session' → 'j'）。
+   *  持久化到 localStorage，启动时恢复。 */
+  const shortcutOverrides = ref<Record<string, string>>(loadShortcutOverrides())
 
   /**
    * 全局应用命令区（D-016 物理隔离）：静态、与 session 无关。
@@ -139,6 +156,20 @@ export const useCommandStore = defineStore('command', () => {
     commandsBySession.value = new Map(commandsBySession.value).set(sessionId, normalized)
   }
 
+  /** 设置快捷键覆盖（commandId → key）。null 清除自定义，恢复默认。持久化到 localStorage。 */
+  function setShortcutOverride(commandId: string, key: string | null): void {
+    const next = { ...shortcutOverrides.value }
+    if (key === null) {
+      delete next[commandId]
+    } else {
+      next[commandId] = key
+    }
+    shortcutOverrides.value = next
+    try {
+      localStorage.setItem(SHORTCUT_OVERRIDES_KEY, JSON.stringify(next))
+    } catch (e) { /* localStorage quota exceeded — non-critical, overrides still in memory */ void e }
+  }
+
   /** 清除指定 session 的命令（session 删除时） */
   function clearCommands(sessionId: string): void {
     if (!commandsBySession.value.has(sessionId)) return
@@ -149,6 +180,7 @@ export const useCommandStore = defineStore('command', () => {
   return {
     commandsBySession,
     appCommands,
+    shortcutOverrides,
     pendingSlash,
     getCommands,
     findCommandByName,
@@ -157,6 +189,7 @@ export const useCommandStore = defineStore('command', () => {
     registerApp,
     applyCommands,
     clearCommands,
+    setShortcutOverride,
     requestSlashInjection,
     clearPendingSlash,
   }

@@ -12,6 +12,9 @@ import * as transport from '../transport'
 import * as pending from '../pending'
 import * as events from '../events'
 
+/** compact 超时（ms）：对齐 runtime rpc-client COMPACT_TIMEOUT_MS，大上下文压缩需数分钟 */
+const COMPACT_TIMEOUT_MS = 300_000
+
 /**
  * 拉取 session 历史（UC-2 切换 session 时回填 message-stream）。
  * runtime session.history reply envelope 是 `{ sessionId, messages }`（session-message-handler.ts:78），
@@ -52,10 +55,13 @@ export function followUp(sessionId: string, text: string): Promise<void> {
  * 压缩上下文（#6：触发 runtime session.compact）。
  * runtime 生命周期推送：session.compacting（开始）→ session.compacted（完成/失败）。
  * 这些广播走 session 通道，由 useChat 的会话级订阅消费，驱动 store 的 isCompacting 状态。
+ *
+ * 超时 300s：对齐 runtime rpc-client 的 COMPACT_TIMEOUT_MS（大上下文压缩需数分钟），
+ * 默认 65s 超时会在大 session 压缩时误 reject。
  */
 export function compact(sessionId: string, customInstructions?: string): Promise<void> {
   const id = pending.create()
-  const result = pending.register<void>(id)
+  const result = pending.register<void>(id, COMPACT_TIMEOUT_MS)
   transport.send({ type: 'session.compact', id, payload: { sessionId, customInstructions } })
   return result
 }

@@ -49,6 +49,9 @@ import {
   readChangeSetStatus,
 } from './chat-readers'
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /**
  * 计数差集：返回 prev 比 next 多出的元素（按出现次数，非子串匹配）。
@@ -252,6 +255,19 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     }
   },
 
+  // B1（PR#86 review）：pi 静默卡死 WARN（120s 无活动，提示性，不中断流）。
+  // 与 stream_error 物理隔离——仅追加 system 提示消息，不调 finalizeSession，
+  // session 保持 streaming 态（pi 可能只是慢，130s 后恢复产出）。
+  'message.stream_warn': (ctx, sid, payload) => {
+    const { messages } = ctx
+    const warnContent = readString(payload, 'content') ?? '长时间无响应'
+    const prev = messages.value.get(sid) ?? []
+    messages.value.set(sid, [
+      ...prev,
+      { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now() },
+    ])
+  },
+
   // ── 文本流（纯 chunk 更新，不翻 lifecycle flag）──
   'message.text_delta': (ctx, sid, payload) => {
     const { messages } = ctx
@@ -444,7 +460,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       {
         id: `c-${crypto.randomUUID()}`,
         role: 'system',
-        content: summary.summary ?? '上下文已压缩',
+        content: summary.summary ?? t('composable.contextCompacted'),
         status: 'complete',
         timestamp: summary.timestamp ?? Date.now(),
         compactionSummary: summary,
@@ -462,7 +478,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       {
         id: `br-${crypto.randomUUID()}`,
         role: 'system',
-        content: summary.summary ?? '已分支',
+        content: summary.summary ?? t('composable.branched'),
         status: 'complete',
         timestamp: summary.timestamp ?? Date.now(),
         branchSummary: summary,

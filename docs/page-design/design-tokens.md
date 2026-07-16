@@ -10,15 +10,19 @@
 > 长时间使用体感"太暗"；提亮后 bg L=0.0110，与 VS Code Dark 持平。
 > subtle 一并修复到 ≥4.5:1（原 2.85:1 不达 WCAG AA）。
 > fg 提到更白的 #f7f8fc。
+>
+> 2026-07-12 拉大层级间距：原相邻 token 亮度差 <3%（bg→surface 仅 Δ8），
+> 侧边栏与对话流肉眼不可辨。surface 以上整体上推，bg→surface 拉到 Δ13（≈5%），
+> 每层 ≥Δ5 肉眼可辨。bg / bg-input 保持不变（锚点 + 输入坑凹陷语义）。
 
 | Token | 值 | 用途 | 来源 |
 |-------|-----|------|------|
-| `--bg` | `#1a1b1f` | 画布底层 | 2026-07-09 提亮（原 C 原始 `#0d0d0f`） |
-| `--surface` | `#222329` | 面板/卡片 | 2026-07-09 提亮（原 C `#151519`） |
-| `--surface-hover` | `#2d2e36` | 面板悬停 | 2026-07-09 提亮（原 `#1f1f26`） |
-| `--surface-2` | `#282930` | 二级表面（Card-Elevated） | 2026-07-09 提亮（原 `#1b1b20`） |
-| `--bg-elevated` | `#2a2b32` | 浮起面板/激活面板底色 | 2026-07-09 提亮（原 `#1c1c20`） |
-| `--bg-input` | `#1e1f24` | 输入区底色（Input/Textarea/Composer zone） | 2026-07-09 提亮（原 `#101013`） |
+| `--bg` | `#1a1b1f` | 画布底层 | 2026-07-09 提亮（原 C 原始 `#0d0d0f`）。07-12 锚点不变 |
+| `--surface` | `#272830` | 面板/卡片 | 2026-07-12 拉距（原 07-09 `#222329`，+5 拉大与 bg 间距） |
+| `--surface-hover` | `#363740` | 面板悬停 | 2026-07-12 拉距（原 07-09 `#2d2e36`，+9） |
+| `--surface-2` | `#2e2f38` | 二级表面（Card-Elevated） | 2026-07-12 拉距（原 07-09 `#282930`，+6） |
+| `--bg-elevated` | `#313239` | 浮起面板/激活面板底色 | 2026-07-12 拉距（原 07-09 `#2a2b32`，+7） |
+| `--bg-input` | `#1e1f24` | 输入区底色（Input/Textarea/Composer zone） | 2026-07-09 提亮（原 `#101013`）。07-12 不变（Δ4 from bg 凹陷语义） |
 | `--fg` | `#f7f8fc` | 主文字 | 2026-07-09 提亮（原 `#f0f0f5`） |
 | `--muted` | `#a8a8b5` | 次级文字 | 2026-07-09 提亮（原 `#8a8a95`） |
 | `--subtle` | `#82828f` | 三级文字/占位 | 2026-07-09 修复 a11y（原 `#5a5a65`，对比度 2.85→4.5:1） |
@@ -26,7 +30,7 @@
 | `--border-strong` | `rgba(255,255,255,0.15)` | 强调分隔 | 2026-07-09 提亮（原 0.12） |
 | `--accent` | `#4f8ef7` | 主色/链接/聚焦 | C 原始 |
 | `--accent-hover` | `#6ba3ff` | 主色悬停 | 补全 |
-| `--accent-soft` | `rgba(79,142,247,0.12)` | 主色背景填充 | 补全 |
+| `--accent-soft` | `color-mix(in oklch, var(--accent) 12%, transparent)` | 主色背景填充（color-mix 派生：palette 切换自动跟随 --accent） | 补全（暗色从 rgba 硬编码改为 color-mix，与亮色一致） |
 | `--accent-ring` | `rgba(79,142,247,0.30)` | 选中态内描边（Card-Active `inset 0 0 0 1px`）| workspace/spec.md（draft 间 0.30/0.45/0.50 不一，以 spec 为准）|
 
 ## 状态色（继承 D 的结构，色相对齐冷蓝体系）
@@ -38,7 +42,11 @@
 | `--danger` | `#ef4444` | 错误/危险 | 补全 |
 | `--info` | `#38bdf8` | 信息/提示 | 补全 |
 | `--reasoning` | `#a78bfa` | 思考块色相（draft-message-stream §4 + composer 思考等级） | 补全（v3 重建 Wave 1） |
-| `--reasoning-soft` | `color-mix(in oklch, var(--reasoning) 18%, transparent)` | slash 命令 chip 背景（与 `--accent-soft` 同构派生：跟随 --reasoning 自动适配明暗） | 补全 |
+| `--reasoning-soft` | `color-mix(in oklch, var(--reasoning) 12%, transparent)` | think badge / slash chip 背景（统一 12% 基准，与状态色 soft 对齐） | 补全（18%→12% 统一） |
+| `--info-soft` | `color-mix(in oklch, var(--info) 12%, transparent)` | 信息/提示软底（badge/提示条背景，12% 基准） | 补全（状态色 soft 归一） |
+| `--success-soft` | `color-mix(in oklch, var(--success) 12%, transparent)` | 成功软底（badge/changeset resolved 背景，12% 基准） | 补全（状态色 soft 归一） |
+| `--danger-soft` | `color-mix(in oklch, var(--danger) 12%, transparent)` | 错误/危险软底（失败块/badge 背景，12% 基准） | 补全（状态色 soft 归一） |
+| `--warning-soft` | `color-mix(in oklch, var(--warning) 12%, transparent)` | 警告软底（badge/提示条背景，12% 基准） | 补全（状态色 soft 归一） |
 
 ## 字体
 

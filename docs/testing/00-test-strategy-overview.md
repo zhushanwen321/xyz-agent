@@ -303,7 +303,56 @@ npm run build:e2e   # 或删除 dist/ 强制 globalSetup 重建
 
 手动开了 dev app（`npm run dev`）又跑 E2E → Chromium userData LOCK 冲突。**跑 E2E 前关掉所有 xyz-agent 窗口**。E2E fixture 用独立临时 `XYZ_AGENT_DATA_DIR` 规避，但 dev app 用的是 `~/.xyz-agent-dev`，两者不冲突；冲突来自同一数据目录的多个实例。
 
-## 7. 下一步
+### 6.7 窗口可见性：不抢焦点但不完全隐藏
+
+**Playwright Electron 不支持 headless**（macOS 无 xvfb）。E2E 启动的窗口**必须可见**——Playwright 需要窗口在渲染管线中才能截图/操作 DOM。
+
+当前行为（`window-factory.ts:100-108`）：
+
+| 模式 | 窗口显示方式 | 效果 |
+|---|---|---|
+| E2E（`XYZ_E2E=1`） | `win.showInactive()` | 窗口渲染但**不抢焦点**——不打断用户当前工作，窗口出现在 dock 但不激活 |
+| dev / prod | `win.show()` | 正常显示并抢焦点 |
+
+**不抢焦点 ≠ 不可见**。窗口仍然出现在屏幕上（可能覆盖在用户工作区上方）。如果跑 E2E 时不希望窗口挡住屏幕：
+
+- **macOS**：用 `showInactive` 已是不抢焦点的最佳方案。可以把窗口拖到另一个 Space / 显示器。无法完全隐藏（无 xvfb）。
+- **Linux**：可用 `xvfb-run npx playwright test` 在虚拟帧缓冲中跑，窗口完全不可见。
+- **CI 环境**：CI 通常无桌面，Playwright Electron 在 CI 上需要 `xvfb`（Linux）或 headless 显示（macOS CI 用 `screen` 命令推到后台 Space）。
+
+**不修改 `skipTaskbar` / `setBounds`**：这些选项可能导致 Playwright 无法截图或操作窗口，得不偿失。`showInactive` 是当前最优解。
+
+## 7. E2E 用例覆盖盘点
+
+### 7.1 MOCK 轨（自动化，Playwright）
+
+| spec | 用例数 | 覆盖功能 | 状态 |
+|---|---|---|---|
+| `gui-components.spec.ts` | 4 | GUI 组件渲染（card/progress-bar/stats-line/list-tree 两条路径） | ✅ 全绿 |
+| `state-tearing.spec.ts` | 6 | 流式状态切换/隔离/steer/abort | ✅ 全绿 |
+| `file-tree.spec.ts` | 11 | 文件树懒加载/过滤/git 角标/SideDrawer detail | ⚠️ E2E-3b flaky |
+| `composer.spec.ts` | 7 | composer # 文件候选 inline 触发 | ⚠️ E2E-CF-3 flaky |
+| `search-modal.spec.ts` | 11 | ⌘K 搜索浮层 四类分组/键盘导航/slash 注入 | ✅ 全绿 |
+| `workspace.spec.ts` | 3 | 最近工作区 popover | ✅ 全绿 |
+| **合计 mock 轨** | **43** | | **41 绿 / 2 flaky** |
+
+### 7.2 real 轨（半自动化，需真实 runtime + pi）
+
+| spec | 用例数 | 覆盖功能 | 状态 |
+|---|---|---|---|
+| `workspace-real.spec.ts` | 1 | 跨进程持久化（record → 重启 → list 一致） | ❌ 需真实 runtime（`ECONNREFUSED`） |
+
+real 轨当前只有 1 个自动化用例，且需要真实 runtime 在 `3310` 端口运行。real 轨的定位是**验证 mock 轨覆盖不到的盲区**（runtime/pi 真实协议、WS 生命周期、文件系统真实读写），不适合做全量自动化。
+
+### 7.3 real 轨策略：手工测试文档驱动
+
+real E2E 依赖真实 runtime + pi + provider 配置，环境敏感、CI 不稳定。更适合的方式是**把测试流程写成文档**，让 ai-agent（或人）照着手动执行，而非跑自动化脚本。
+
+现有各功能文档（01-07）都有 `## N. 非 MOCK 模式测试` 章节，列了手工冒烟清单。但缺少统一的 real 轨测试入口文档。
+
+→ 详见 [08-real-track-manual.md](./08-real-track-manual.md)：real 轨手工测试用例（给 ai-agent 照着执行）
+
+## 8. 下一步
 
 读完本文，按功能选文档：
 - 新建任务流程 → [01-new-task.md](./01-new-task.md)
@@ -311,3 +360,6 @@ npm run build:e2e   # 或删除 dist/ 强制 globalSetup 重建
 - 对话流 / 流式消息 → [03-chat-flow.md](./03-chat-flow.md)
 - 文件树 → [04-file-tree.md](./04-file-tree.md)
 - SideDrawer → [05-side-drawer.md](./05-side-drawer.md)
+- 搜索浮层 → [06-search-modal.md](./06-search-modal.md)
+- GUI 组件渲染 → [07-gui-components.md](./07-gui-components.md)
+- real 轨手工测试 → [08-real-track-manual.md](./08-real-track-manual.md)

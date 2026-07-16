@@ -8,8 +8,8 @@
     <PopoverTrigger as-child>
       <Button
         variant="ghost"
-        class="h-7 gap-1 rounded-sm px-2 text-[11.5px] text-subtle transition-colors hover:text-muted"
-        title="思考等级"
+        class="h-7 gap-1 rounded-sm px-2 text-[11px] text-subtle transition-colors hover:text-muted"
+        :title="t('panel.thinkingLevel.title')"
       >
         <Brain class="size-3 shrink-0" />
         <span>{{ currentLabel }}</span>
@@ -24,7 +24,7 @@
       <div
         class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
-        <span>思考等级</span>
+        <span>{{ t('panel.thinkingLevel.title') }}</span>
       </div>
       <!-- 可用档位列表（由当前模型的 thinkingLevelMap 动态决定，只显示可用的） -->
       <Button
@@ -39,7 +39,7 @@
           class="size-[7px] shrink-0 rounded-full"
           :class="level === opt.level ? 'bg-accent' : 'bg-subtle'"
         />
-        <span class="flex-1 text-left">{{ getDisplayLabel(opt.level, props.levelMap) }}</span>
+        <span class="flex-1 text-left">{{ getDisplayLabel(opt.level, props.levelMap, t) }}</span>
         <Check
           class="size-[13px] text-accent transition-opacity"
           :class="level === opt.level ? 'opacity-100' : 'opacity-0'"
@@ -51,6 +51,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Check, ChevronDown, Brain } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -79,6 +80,7 @@ const props = defineProps<{
   levelMap?: Record<string, string | null>
 }>()
 
+const { t } = useI18n()
 const open = ref(false)
 // prop level 是 runtime 返回的 value，反查 map 得到 UI 档位 key
 const level = ref<ThinkingLevel>(
@@ -95,7 +97,7 @@ const availableOptions = computed<ThinkingLevelOption[]>(() => {
 })
 
 const currentLabel = computed(
-  () => getDisplayLabel(level.value, props.levelMap),
+  () => getDisplayLabel(level.value, props.levelMap, t),
 )
 
 function onSelect(opt: ThinkingLevelOption): void {

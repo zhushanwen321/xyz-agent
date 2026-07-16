@@ -7,14 +7,14 @@
   <Popover v-model:open="open">
     <PopoverTriggerButton
       :open="open"
-      title="切换模型"
+      :title="t('panel.modelSelect.switchModel')"
     >
       <span class="truncate">{{ currentName }}</span>
     </PopoverTriggerButton>
     <PopoverContent side="top" class="w-[220px] p-0">
       <!-- 搜索 -->
       <div class="border-b border-border p-2">
-        <Input v-model="query" placeholder="搜索模型…" class="h-7 bg-surface-2 text-[12px]" />
+        <Input v-model="query" :placeholder="t('panel.modelSelect.searchPlaceholder')" class="h-7 bg-surface-2 text-[12px]" />
       </div>
 
       <!-- 分组列表 -->
@@ -44,7 +44,7 @@
           v-if="groups.length === 0"
           class="px-2.5 py-3 text-center text-[12px] text-subtle"
         >
-          无匹配模型
+          {{ t('panel.modelSelect.noMatch') }}
         </div>
       </div>
 
@@ -54,6 +54,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Check } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -71,6 +72,7 @@ const props = defineProps<{
   selected?: string
 }>()
 
+const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const open = ref(false)
 const query = ref('')
@@ -95,10 +97,14 @@ interface ModelGroup {
 }
 
 // 按 provider 分组 + 按 query 过滤（name 包含，大小写不敏感）。空分组不渲染。
+// 同时过滤 enabled===false 的 model：runtime aggregateModels 已过滤一遍，
+// 但 settingsStore.models 与 providers 同源广播，若某次广播未过滤则会泄漏禁用模型到切换器，
+// 故前端兜底再过滤一次（双保险）。
 const groups = computed<ModelGroup[]>(() => {
   const q = query.value.trim().toLowerCase()
   const map = new Map<string, ModelGroup>()
   for (const m of settingsStore.models) {
+    if (m.enabled === false) continue
     if (q && !m.name.toLowerCase().includes(q)) continue
     const key = m.providerId
     let g = map.get(key)

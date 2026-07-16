@@ -7,7 +7,8 @@ import type { WebSocket } from 'ws'
  *
  * The fix changed two things:
  * 1. Reuse original sessionId instead of crypto.randomUUID()
- * 2. Call adapter.detach() + unsubUsageListener() on existing session before overwrite
+ * 2. Call adapter.detach() on existing session before overwrite (W3: usage listener removed,
+ *    EventAdapter is sole pi-event listener owner)
  *
  * We mock ProcessManager, EventAdapter, scanSessions, and config-store
  * so the tests run without spawning real pi processes or touching the filesystem.
@@ -118,7 +119,9 @@ function addScannedSession(id: string, cwd = tmpdir()) {
 function makeMockClient() {
   return {
   onEvent: vi.fn().mockReturnValue(vi.fn()), // returns unsub fn
-  sendCommand: vi.fn().mockResolvedValue({ type: 'success', payload: {} }),
+  // W2 收口后 restoreSession 用 client.switchSession / getState
+  switchSession: vi.fn().mockResolvedValue(undefined),
+  getState: vi.fn().mockResolvedValue({}),
   prompt: vi.fn().mockResolvedValue(undefined),
   kill: vi.fn().mockResolvedValue(undefined),
   }
@@ -210,10 +213,8 @@ describe('SessionService.restoreSession', () => {
 
   await service.restoreSession(id)
 
-  expect(mockClient.sendCommand).toHaveBeenCalledWith(
-    'switch_session',
-    { sessionPath: entry.filePath },
-  )
+  // W2 收口后 restoreSession 用 client.switchSession(path)
+  expect(mockClient.switchSession).toHaveBeenCalledWith(entry.filePath)
   })
 
   // ── Boundary ─────────────────────────────────────────────────
@@ -252,11 +253,12 @@ describe('SessionService.restoreSession', () => {
   await expect(service.restoreSession(id)).rejects.toThrow('spawn pi failed')
   })
 
-  it('should keep session in map even if client.sendCommand(switch_session) fails', async () => {
+  it('should keep session in map even if client.switchSession fails', async () => {
   const id = 'switch-fail-id'
   addScannedSession(id)
   const mockClient = makeMockClient()
-  mockClient.sendCommand.mockRejectedValue(new Error('switch failed'))
+  // W2 收口后 restoreSession 用 client.switchSession
+  mockClient.switchSession.mockRejectedValue(new Error('switch failed'))
   createSessionMock.mockResolvedValue(mockClient)
 
   // restoreSession does NOT catch switch_session errors — they propagate

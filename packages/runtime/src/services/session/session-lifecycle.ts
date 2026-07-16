@@ -11,15 +11,16 @@
  */
 import { basename } from 'node:path'
 import { existsSync } from 'node:fs'
+import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
-import { readPiState } from '../ports/pi-engine.js'
+import type { IManagedSessionView } from './types.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
-import { toErrorMessage } from '../../utils/errors.js'
+import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 
@@ -52,7 +53,7 @@ export class SessionLifecycle {
 
     // 启动 pi 前检查 model 配置,避免 pi 因无 model 直接 exit(1)
     if (!this.configStore.getDefaultModel()) {
-      throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before starting a session.', MODEL_NOT_CONFIGURED)
     }
 
     const allExtPaths = await this.svc.getExtensionPaths()
@@ -65,7 +66,7 @@ export class SessionLifecycle {
     let piSessionId: string
     let sessionFilePath: string | undefined
     try {
-      const stateData = await readPiState(client)
+      const stateData = await client.getState()
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {
@@ -84,9 +85,18 @@ export class SessionLifecycle {
       this.pm.rekey(tempId, id)
     }
 
-    const session = await this.svc.initializeManagedSession(
-      id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
-    )
+    // M3: initializeManagedSession 失败时（adapterFactory/attach 可能抛错），
+    // pi 进程已 spawn 但未进 sessions Map → 不可见不可销毁的僵尸进程。
+    // try-catch + safeDestroy 保证异常时清理 pi 进程。
+    let session: IManagedSessionView
+    try {
+      session = await this.svc.initializeManagedSession(
+        id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
+      )
+    } catch (initErr) {
+      await this.safeDestroy(id)
+      throw initErr
+    }
 
     // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
     // 之前的实现在此处用 openSync(wx) 创建含 session+session_info 两行的最小文件，理由是
@@ -96,7 +106,9 @@ export class SessionLifecycle {
     // 现在依赖 SessionScanner.listAll 的合并机制：active session 从内存 Map（this.sessions）读，
     // 即使磁盘无文件也显示（restart 后内存清空，但此时未 flush 的 session 本就无内容，丢失合理）。
     this.sessionStore.refreshAll()
-    // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表
+    // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
+    // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
+    // lifecycle 层不再关心 cwd 是否降级。
     if (!options?.hidden) {
       this.workspaceService.record(sessionCwd)
     }
@@ -107,7 +119,11 @@ export class SessionLifecycle {
     const session = this.svc.getSession(sessionId)
     if (session) {
       session.label = newName
-      // 活跃 session:写入 sessionFilePath 使重启后保留
+      // 重置 labelPersisted：rename 后新名需要重新写盘。
+      // 若文件已存在（pi 已 flush），persistSessionName 的 append 分支立即写 session_info；
+      // 若文件不存在（pi 延迟写入窗口），persistSessionName no-op，labelPersisted=false 让
+      // tryPersistLabel 在下次 turn_end/agent_end 兜底写新名（规则 #6：绝不提前建文件）。
+      session.labelPersisted = false
       if (session.sessionFilePath) {
         this.sessionStore.persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
       }
@@ -145,7 +161,7 @@ export class SessionLifecycle {
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
     if (!this.configStore.getDefaultModel()) {
-      throw new Error('No model configured. Please configure a provider and model in Settings before restoring a session.')
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before restoring a session.', MODEL_NOT_CONFIGURED)
     }
     const existing = this.svc.getSession(sessionId)
     if (existing) {
@@ -169,16 +185,23 @@ export class SessionLifecycle {
     })
 
     try {
-      await client.sendCommand('switch_session', { sessionPath: target.filePath })
+      await client.switchSession(target.filePath)
     } catch (e) {
       // switch_session 失败时清理已创建的资源,避免子进程/监听器泄漏
       await this.safeDestroy(id)
       throw e
     }
 
-    const session = await this.svc.initializeManagedSession(
-      id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
-    )
+    // M3: initializeManagedSession 失败时清理 pi 进程（与 create 同模式）
+    let session: IManagedSessionView
+    try {
+      session = await this.svc.initializeManagedSession(
+        id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
+      )
+    } catch (initErr) {
+      await this.safeDestroy(id)
+      throw initErr
+    }
     // 恢复后兜底广播一次上下文用量（pi 从历史估算 contextUsage）。
     // 注意：此广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
     // 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
@@ -208,7 +231,7 @@ export class SessionLifecycle {
     label?: string,
   ): Promise<SessionSummary> {
     if (!this.configStore.getDefaultModel()) {
-      throw new Error('No model configured. Please configure a provider and model in Settings before forking a session.')
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
     }
 
     // 1. 查源 session 文件路径（scanSessions 合并磁盘 + 内存 active）
@@ -235,16 +258,27 @@ export class SessionLifecycle {
 
     try {
       // 4. switch_session 让 pi 加载截断后的历史
-      await client.sendCommand('switch_session', { sessionPath: forkedFilePath })
+      await client.switchSession(forkedFilePath)
     } catch (e) {
+      // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
+      await unlink(forkedFilePath).catch(() => {})
       throw e
     }
 
     // 5. 初始化 managed session（adapter、入 sessions Map）
-    const session = await this.svc.initializeManagedSession(
-      forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
-    )
+    // M3: initializeManagedSession 失败时清理 pi 进程（与 create/restore 同模式）
+    let session: IManagedSessionView
+    try {
+      session = await this.svc.initializeManagedSession(
+        forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
+      )
+    } catch (initErr) {
+      // L5: initializeManagedSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）
+      await this.safeDestroy(forkedId)
+      await unlink(forkedFilePath).catch(() => {})
+      throw initErr
+    }
 
     void this.svc.fetchAndBroadcastContext(forkedId)
     return this.svc.toSummary(session)

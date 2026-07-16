@@ -5,6 +5,9 @@
  * 用于「复制为 MD」功能。分区：思考（引用块）/ 工具（代码块）/ 正文。
  */
 import type { Message } from '@xyz-agent/shared'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /** JSON 缩进空格数（工具参数序列化） */
 const JSON_INDENT = 2
@@ -15,11 +18,11 @@ export function assistantToMarkdown(msg: Message): string {
 
   for (const th of msg.thinking ?? []) {
     const c = th.content.trim()
-    if (c) parts.push(`> ## 思考\n>\n> ${c.replace(/\n/g, '\n> ')}`)
+    if (c) parts.push(`> ${t('panel.message.thinkingHeader')}\n>\n> ${c.replace(/\n/g, '\n> ')}`)
   }
 
   for (const tc of msg.toolCalls ?? []) {
-    const status = tc.status === 'error' ? '（失败）' : tc.status === 'end_not_received' ? '（未收到结果）' : ''
+    const status = tc.status === 'error' ? t('panel.message.toolFailed') : tc.status === 'end_not_received' ? t('panel.message.toolNoResult') : ''
     let block = `**工具 \`${tc.toolName}\`**${status}`
     const input = tc.input
     if (input && Object.keys(input as object).length > 0) {

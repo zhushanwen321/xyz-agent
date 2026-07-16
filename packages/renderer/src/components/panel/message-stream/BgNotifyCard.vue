@@ -19,7 +19,7 @@
       <div
         v-for="record in records"
         :key="record.id"
-        class="flex items-center gap-1.5 font-mono text-[11.5px]"
+        class="flex items-center gap-1.5 font-mono text-[11px]"
         :class="recordTextClass(record)"
       >
         <component :is="recordIcon(record)" class="size-3 shrink-0" />
@@ -32,9 +32,9 @@
     <!-- 单条：状态行 + 摘要 + 可展开详情 -->
     <div v-else class="flex flex-col gap-1">
       <div
-        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[11.5px] transition-opacity hover:opacity-80"
+        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[11px] transition-opacity hover:opacity-80"
         :class="single ? recordTextClass(single) : ''"
-        :title="expanded ? '收起' : '展开'"
+        :title="expanded ? t('panel.message.collapse') : t('panel.message.expand')"
         @click="expanded = !expanded"
       >
         <ChevronRight class="size-2.5 transition-transform" :class="expanded ? 'rotate-90' : ''" />
@@ -49,11 +49,13 @@
 
       <!-- 展开详情：完整 content + patchFile 提示 -->
       <template v-if="expanded">
-        <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info/5 px-2 py-1 font-mono text-[11px] text-info">
+        <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info-soft px-2 py-1 font-mono text-[11px] text-info">
           {{ patchHint }}
         </div>
-        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto whitespace-pre-wrap rounded-sm bg-surface-2/50 px-2 py-1 text-[11.5px] leading-relaxed text-muted">
-          {{ fullContent }}
+        <!-- fullContent 走 MarkdownRenderer（thinking variant，同为次要过程信息语义）。
+             subagent 返回的 LLM 生成文本含 md 语法（bold/列表/标题），纯文本不渲染。 -->
+        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto rounded-sm bg-surface-2/50 px-2 py-1 text-[11px] leading-relaxed text-muted">
+          <MarkdownRenderer :content="fullContent" variant="thinking" />
         </div>
       </template>
     </div>
@@ -62,9 +64,13 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { CheckCircle2, XCircle, Pause, ChevronRight } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { BgNotifyRecord, Message } from '@xyz-agent/shared'
+import MarkdownRenderer from './MarkdownRenderer.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   message: Message
@@ -101,7 +107,7 @@ const cardClass = computed(() => {
   const hasFailed = recs.some((r) => r.status === 'failed')
   const hasCancelled = recs.some((r) => r.status === 'cancelled')
   if (hasFailed) {
-    return 'border-danger/40 bg-[color-mix(in_oklch,var(--danger)_5%,transparent)]'
+    return 'border-danger/40 bg-danger-soft'
   }
   if (hasCancelled) {
     return 'border-muted/30 bg-muted/5'
@@ -114,7 +120,7 @@ const summaryLine = computed(() => {
   const s = single.value
   if (!s) return ''
   if (s.status === 'failed') return s.error ?? ''
-  if (s.status === 'cancelled') return '已取消'
+  if (s.status === 'cancelled') return t('panel.bgNotify.cancelled')
   return s.result ?? ''
 })
 
@@ -125,7 +131,7 @@ const fullContent = computed(() => props.message.content || '')
 const patchHint = computed(() => {
   const s = single.value
   if (!s?.patchFile) return ''
-  return `改动以 patch 形式保存：${s.patchFile}（用 git apply 应用到当前仓库）`
+  return t('panel.bgNotify.patchHint', { file: s.patchFile })
 })
 
 /** record → 状态图标 */

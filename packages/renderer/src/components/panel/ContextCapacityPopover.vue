@@ -11,11 +11,11 @@
         variant="ghost"
         :class="
           cn(
-            'h-7 gap-1 rounded-sm px-2 text-[11.5px] transition-colors',
+            'h-7 gap-1 rounded-sm px-2 text-[11px] transition-colors',
             isHigh ? 'text-warning hover:text-warning' : 'text-subtle hover:text-muted',
           )
         "
-        title="上下文容量"
+        :title="t('panel.context.capacity')"
       >
         <span class="tabular-nums">{{ hasUsage ? usedDisplay : '—' }}</span>
         <template v-if="hasPercent">
@@ -29,7 +29,7 @@
       <div
         class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
-        <span>上下文容量</span>
+        <span>{{ t('panel.context.capacity') }}</span>
         <span>{{ stats.modelId ?? '—' }}</span>
       </div>
       <!-- bar（仅 contextWindow 已知时显示） -->
@@ -42,19 +42,19 @@
       <!-- stats -->
       <div class="grid grid-cols-2 gap-x-3.5 gap-y-2 px-2.5 py-2.5">
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">已用</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.used') }}</span>
           <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ usedDisplay }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">总量</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasPercent ? totalDisplay : '未知' }}</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.total') }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasPercent ? totalDisplay : t('panel.context.unknown') }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">使用率</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.usageRate') }}</span>
           <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasPercent ? `${stats.percent}%` : '—' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">缓存命中</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.cacheHit') }}</span>
           <span
             :class="cn('font-sans text-[14px] font-semibold tabular-nums', cacheHitClass)"
           >{{ stats.cacheHit != null ? `${stats.cacheHit}%` : '—' }}</span>
@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
@@ -88,6 +89,8 @@ const stats = ref<ContextStats>({
   cacheHit: null,
   modelId: null,
 })
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** session 通道订阅键（D8：context.update 带 sessionId，走 events.on(sessionId)） */

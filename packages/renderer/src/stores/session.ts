@@ -25,6 +25,12 @@ export const useSessionStore = defineStore('session', () => {
     groups.value.flatMap((g) => g.sessions),
   )
 
+  /**
+   * 当前导航/启动语义的 session ID。不驱动 UI 高亮——UI 高亮由
+   * useSidebar.focusedSessionId（panel store activePanelId → sessionId 派生）负责。
+   * activeId 仅用于：removeFromList 删 active 回退判断、deleteSession 回退、
+   * useNewTaskFlow landing/预建写入、AppShell 导航栈回溯。
+   */
   const activeId = ref<string | null>(null)
 
   /**
@@ -33,6 +39,12 @@ export const useSessionStore = defineStore('session', () => {
    * undefined 表示公共 session 不可用（model 未配置/runtime 未启动完成），landing 降级到 skills。
    */
   const publicSessionId = ref<string | null>(null)
+
+  /**
+   * 列表加载错误（S5：loadSessions 失败时设错误消息，SessionList 据此显示「加载失败，点击重试」）。
+   * null = 无错误（未加载或加载成功）；非空字符串 = 加载失败的错误消息。
+   */
+  const listLoadError = ref<string | null>(null)
 
   const active = computed<SessionSummary | null>(
     () => list.value.find((s) => s.id === activeId.value) ?? null,
@@ -90,6 +102,11 @@ export const useSessionStore = defineStore('session', () => {
     groups.value = next
   }
 
+  /** 设置列表加载错误消息（loadSessions 失败时调，null 清空） */
+  function setListLoadError(msg: string | null): void {
+    listLoadError.value = msg
+  }
+
   /** 追加单个新建 session（按 cwd 归组：命中已有组则入尾，否则新建组在末尾） */
   function appendSession(s: SessionSummary): void {
     const group = groups.value.find((g) => g.cwd === s.cwd)
@@ -100,5 +117,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { groups, list, activeId, active, publicSessionId, setGroups, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive }
+  return { groups, list, activeId, active, publicSessionId, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive }
 })

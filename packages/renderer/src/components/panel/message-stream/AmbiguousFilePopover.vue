@@ -26,7 +26,7 @@
     >
       <!-- 标题行：basename + 匹配数 -->
       <div class="border-b border-border px-2.5 py-1.5 text-[11px] text-subtle">
-        「{{ basename }}」有 {{ candidates.length }} 个匹配，选择要打开的文件
+        {{ t('panel.ambiguous.title', { basename, count: candidates.length }) }}
       </div>
       <!-- 候选列表 -->
       <div class="max-h-[220px] overflow-y-auto py-1">
@@ -62,10 +62,13 @@
  * 选中后 emit('select', path)，调用方负责 selectFile + drawer.open + 清 ambiguousState。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { File as FileIcon } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import type { FileNode } from '@xyz-agent/shared'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 浮层开关（v-model:open） */

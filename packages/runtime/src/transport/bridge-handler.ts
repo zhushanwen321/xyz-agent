@@ -29,14 +29,14 @@ export class BridgeHandler {
           const payload = this.pluginService?.getBridgeSyncPayload
             ? this.pluginService.getBridgeSyncPayload()
             : { tools: [], commands: [], success: true }
-          await client.sendCommand('extension_ui_response', { id: requestId, response: payload })
+          client.sendExtensionUiResponse(requestId, payload)
           return
         }
 
         // 执行 bridge 工具（ADR-0012 契约）；请求对象构造是 transport↔service 边界编组
         case 'bridge:tool_execute': {
           if (!this.pluginService?.handleBridgeToolExecute) {
-            await client.sendCommand('extension_ui_response', { id: requestId, response: { content: 'Plugin system not available', isError: true } })
+            client.sendExtensionUiResponse(requestId, { content: 'Plugin system not available', isError: true })
             return
           }
           const result = await this.pluginService.handleBridgeToolExecute({
@@ -46,7 +46,7 @@ export class BridgeHandler {
             toolCallId: (data.toolCallId as string) ?? '',
             sessionId,
           })
-          await client.sendCommand('extension_ui_response', { id: requestId, response: result })
+          client.sendExtensionUiResponse(requestId, result)
           return
         }
 
@@ -58,7 +58,9 @@ export class BridgeHandler {
             (data.data as Record<string, unknown>) ?? {},
             sessionId,
           )
-          await client.sendCommand('extension_ui_response', { id: requestId, response: null })
+          // response=null → sendExtensionUiResponse 发 {cancelled:true}（非旧 {response:null}）。
+          // 无功能影响：bridge 扩展对 bridge:event 的响应 void 丢弃（见 pi bridge/index.ts:58）。
+          client.sendExtensionUiResponse(requestId, null)
           return
         }
 
@@ -69,20 +71,23 @@ export class BridgeHandler {
           const result = this.pluginService?.handleBridgeIntercept
             ? await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
             : {}
-          await client.sendCommand('extension_ui_response', { id: requestId, response: result })
+          client.sendExtensionUiResponse(requestId, result)
           return
         }
 
         default: {
           console.warn(`[server] Unknown bridge method: ${method}`)
-          await client.sendCommand('extension_ui_response', { id: requestId, response: { error: `Unknown bridge method: ${method}` } })
+          client.sendExtensionUiResponse(requestId, { error: `Unknown bridge method: ${method}` })
         }
       }
     } catch (e) {
       console.error(`[server] bridge request failed: ${method}`, e)
       try {
-        await client.sendCommand('extension_ui_response', { id: requestId, response: { error: String(e) } })
-        // eslint-disable-next-line taste/no-silent-catch
+        // sendExtensionUiResponse 是同步 void（pi 不回 extension_ui_response 的 RPC reply，
+        // 内部走 sendRaw 直接写 stdin），不会抛异步超时错误；但 stdin.write 可能同步抛，
+        // 故仍保留 try/catch 兜底。
+        client.sendExtensionUiResponse(requestId, { error: String(e) })
+         
       } catch (sendErr) {
         console.error(`[bridge-handler] failed to send error response to pi: ${toErrorMessage(sendErr)}`)
         // Cannot propagate further — both pi and frontend channels exhausted

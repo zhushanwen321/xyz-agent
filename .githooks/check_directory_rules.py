@@ -73,8 +73,20 @@ def check_symlinks(staged_files):
         for name in dirs + files:
             full_path = os.path.join(root, name)
             if os.path.islink(full_path):
-                target = os.readlink(full_path)
                 rel_path = os.path.relpath(full_path, project_root)
+
+                # [HISTORICAL] 跳过 .gitignore 覆盖的 symlink：这些文件不会进仓库，
+                # 不存在「打包后目标路径缺失」风险。如 apps/electron/resources/pi/*.wasm
+                # 指向 workspace 级 .pi-binary-cache（prepare-pi-resources.sh 创建的
+                # pi binary 缓存复用），.gitignore 已忽略 resources/，不会打包。
+                ignore_check = subprocess.run(
+                    ["git", "check-ignore", "-q", rel_path],
+                    capture_output=True,
+                )
+                if ignore_check.returncode == 0:
+                    continue
+
+                target = os.readlink(full_path)
 
                 # 允许 ../ 相对路径 symlink
                 if any(target.startswith(prefix) for prefix in SYMLINK_ALLOWED_PREFIXES):

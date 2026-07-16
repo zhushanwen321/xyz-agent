@@ -16,6 +16,9 @@ import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /**
  * 会话级流式订阅表（sessionId → 取消函数）。
@@ -43,7 +46,7 @@ function ensureStreamSubscription(
       const payload = msg.payload as { sessionId: string; reason: string; message: string }
       chat.clearPendingSend(sid)
       const { error } = useToast()
-      error(payload.message ?? 'Agent 正在处理')
+      error(payload.message ?? t('composable.agentProcessing'))
       return
     }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。
@@ -145,7 +148,7 @@ export function useChat() {
       chat.clearPendingSend(sid)
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
-      error(`消息发送失败：${msg}`)
+      error(t('composable.sendFailed', { msg }))
     }
   }
 
@@ -170,7 +173,7 @@ export function useChat() {
       chat.removePending(sid, trimmed, 'steer')
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
-      error(`补充消息发送失败：${msg}`)
+      error(t('composable.supplementSendFailed', { msg }))
     }
   }
 
@@ -200,7 +203,7 @@ export function useChat() {
       chat.removePending(sid, trimmed, 'follow-up')
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
-      error(`下轮消息发送失败：${msg}`)
+      error(t('composable.nextTurnSendFailed', { msg }))
     }
   }
 
@@ -223,7 +226,7 @@ export function useChat() {
       // pendingSend 已清（乐观），实体收口靠 runtime 广播 message.complete{aborted} 兑底。
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
-      error(`停止失败：${msg}`)
+      error(t('composable.stopFailed', { msg }))
     }
   }
 
@@ -244,7 +247,7 @@ export function useChat() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
-      error(`压缩失败：${msg}`)
+      error(t('composable.compactFailed', { msg }))
     }
   }
 
@@ -273,7 +276,7 @@ export function useChat() {
       chat.clearPendingSend(sessionId)
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
-      error(`消息发送失败：${msg}`)
+      error(t('composable.sendFailed', { msg }))
     }
   }
 
@@ -287,5 +290,20 @@ export function useChat() {
     chat.hydrate(sessionId, history)
   }
 
-  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory }
+  /**
+   * 清理指定 session 的全部资源（W1 / S3：deleteSession 调用）。
+   *
+   * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态。
+   * session 删除后若不取消订阅，WS 事件仍会推给已删 session 的 handler，且 Map 永久增长。
+   */
+  function disposeSession(sessionId: string): void {
+    const unsub = streamSubscriptions.get(sessionId)
+    if (unsub) {
+      unsub()
+      streamSubscriptions.delete(sessionId)
+    }
+    chat.disposeSession(sessionId)
+  }
+
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, disposeSession }
 }

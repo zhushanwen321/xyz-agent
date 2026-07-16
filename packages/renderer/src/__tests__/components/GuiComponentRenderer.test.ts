@@ -3,7 +3,7 @@
  *
  * 验证：
  * - ansi-text 类型 → 渲染 AnsiText（lines join 成 content，ansi_up 着色）
- * - 协议内但 P2 前未实现的通用原语（如 card）→ 降级 AnsiText，content 为 props 的 JSON 文本
+ * - card 类型 → 路由到真实 Card 组件（不再降级 AnsiText JSON）
  * - custom 类型未注册 → 降级 AnsiText，content 为 props 的 JSON 文本
  * - custom 类型已注册（provide 'gui-custom-registry'）→ 路由到注册组件
  *
@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import GuiComponentRenderer from '@/components/panel/message-stream/GuiComponentRenderer.vue'
+import { GUI_CUSTOM_REGISTRY_KEY } from '@/components/panel/message-stream/gui/gui-registry'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 
 describe('GuiComponentRenderer 路由', () => {
@@ -31,19 +32,16 @@ describe('GuiComponentRenderer 路由', () => {
     expect(wrapper.html()).toContain('color')
   })
 
-  it('协议内但 P2 前未实现的通用原语（card）→ 降级 AnsiText，content 为 JSON 文本', () => {
+  it('card 类型 → 路由到真实 Card 组件（不再降级 AnsiText JSON）', () => {
     const component: GuiComponent = {
       type: 'card',
       props: { variant: 'elevated', body: [] },
     }
     const wrapper = mount(GuiComponentRenderer, { props: { component } })
 
-    // 降级到 AnsiText
-    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
-    // content 是 props 的 JSON 文本（缩进 2 空格，关键字段可见）
-    const text = wrapper.text()
-    expect(text).toContain('"variant": "elevated"')
-    expect(text).toContain('"body"')
+    // 路由到 Card 组件而非 AnsiText
+    expect(wrapper.find('[data-testid="gui-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
   })
 
   it('custom 类型未注册 → 降级 AnsiText，content 为 JSON 文本', () => {
@@ -79,7 +77,7 @@ describe('GuiComponentRenderer 路由', () => {
     const wrapper = mount(GuiComponentRenderer, {
       props: { component },
       global: {
-        provide: { 'gui-custom-registry': { 'my-widget': MyWidget } },
+        provide: { [GUI_CUSTOM_REGISTRY_KEY]: { 'my-widget': MyWidget } },
       },
     })
 
@@ -101,5 +99,55 @@ describe('GuiComponentRenderer 路由', () => {
     // 仍渲染 AnsiText（不崩），content 序列化脏数据
     expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('"wrong": "shape"')
+  })
+
+  it('progress-bar → 路由到真实 ProgressBar 组件', () => {
+    const component: GuiComponent = {
+      type: 'progress-bar',
+      props: { current: 3, total: 4 },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-progress-bar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('stats-line → 路由到真实 StatsLine 组件', () => {
+    const component: GuiComponent = {
+      type: 'stats-line',
+      props: { items: [{ value: '42' }] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-stats-line"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('tab-bar → 路由到真实 TabBar 组件', () => {
+    const component: GuiComponent = {
+      type: 'tab-bar',
+      props: { tabs: [{ label: 'tab1' }] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-tab-bar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('columns → 路由到真实 Columns 组件', () => {
+    const component: GuiComponent = {
+      type: 'columns',
+      props: { children: [] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-columns"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
+  })
+
+  it('list-tree → 路由到真实 ListTree 组件', () => {
+    const component: GuiComponent = {
+      type: 'list-tree',
+      props: { items: [{ label: 'item1' }] },
+    }
+    const wrapper = mount(GuiComponentRenderer, { props: { component } })
+    expect(wrapper.find('[data-testid="gui-list-tree"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(false)
   })
 })

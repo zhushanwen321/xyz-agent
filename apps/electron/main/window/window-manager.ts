@@ -81,14 +81,6 @@ export class WindowManager implements IWindowManager {
     return Array.from(this.windows.values()).map(w => w.state)
   }
 
-  /** 合并更新窗口状态（Partial，供 renderer 推送投影） */
-  updateState(windowId: string, patch: Partial<WindowState>): void {
-    const managed = this.windows.get(windowId)
-    if (managed) {
-      managed.state = { ...managed.state, ...patch }
-    }
-  }
-
   /** 聚焦窗口 */
   focus(windowId: string): void {
     const managed = this.windows.get(windowId)

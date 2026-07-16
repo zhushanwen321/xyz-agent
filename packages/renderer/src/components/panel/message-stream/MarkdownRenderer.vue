@@ -16,7 +16,7 @@
     shiki codeToHtml 转义所有非 token 文本（只发 scoped <span>），markdown-it 不透传用户原始 HTML，
     代码源码经 base64 编码进 data 属性。故在此受控渲染点局部放开 taste-lint vue/no-v-html。仅此组件。
   -->
-  <div class="md-render select-text" @click="onClick">
+  <div class="md-render select-text" :class="{ 'md-render--thinking': variant === 'thinking' }" @click="onClick">
     <template v-for="(seg, i) in segments" :key="i">
       <!-- eslint-disable-next-line vue/no-v-html -- text 段是 shiki+markdown-it(html:false) 安全输出，仅此受控点放开。 -->
       <div v-if="seg.type === 'text'" v-html="seg.content" />
@@ -57,10 +57,29 @@ const props = defineProps<{
   content: string
   /** 所属 session（文件路径打开 DetailPane 走 cwd 守门用）；命令文档等无 session 场景传 undefined */
   sessionId?: string | null
+  /** 渲染变体：默认 undefined（正文级排版）；'thinking' 用于 thinking 块/次要过程信息，
+   *  降级 markdown 元素到 thinking 语义（标题用 reasoning 色而非 fg，marker/引用压到 subtle，
+   *  strong 回升到 fg 提供强调层级）。不影响默认行为（现有调用零影响）。 */
+  variant?: 'thinking'
 }>()
 
 const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
+
+/**
+ * HTML 特殊字符转义（W1 降级路径用）。
+ *
+ * renderMarkdownSegments 抛错（shiki 加载失败 / markdown-it 解析异常 / mermaid 占位解码失败等）
+ * 时，把原始 content 转义后作为单个 text segment 回填——保证消息气泡可读（用户能看到原始文字，
+ * 而不是空气泡）。与 markdown.ts 的 escapeHtml 保持一致语义（& < > " 四字符转义，XSS 安全）。
+ */
+function escapeHtmlForFallback(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 /**
  * 当前 session 的本地文件 basename 集合（供 markdown 裸 basename 识别）。
@@ -144,9 +163,18 @@ watch(
     }
     // 流式增量会高频触发：用序号守卫，只采纳最新一次的渲染结果（防旧渲染覆盖新内容）
     const seq = ++renderSeq
-    const segs = await renderMarkdownSegments(text as string, { localFiles: localFiles.value })
-    if (seq === renderSeq) {
-      segments.value = segs
+    try {
+      const segs = await renderMarkdownSegments(text as string, { localFiles: localFiles.value })
+      if (seq === renderSeq) {
+        segments.value = segs
+      }
+    } catch {
+      // W1 降级：renderMarkdownSegments 失败（shiki/markdown-it/mermaid 异常）时，
+      // 降级为纯文本 segment（转义后走 v-html），保证消息内容可读——绝不能把气泡渲染成空白。
+      // 序号守卫同样适用：只接受最新一次的降级结果（防旧失败覆盖新成功渲染）。
+      if (seq === renderSeq) {
+        segments.value = [{ type: 'text', content: escapeHtmlForFallback(text as string) }]
+      }
     }
   },
   { immediate: true },
@@ -370,5 +398,33 @@ watch(
 }
 :global([data-theme="light"]) .md-render :deep(.shiki span) {
   color: var(--shiki-light);
+}
+
+/* ── thinking variant：次要过程信息的降级排版 ──
+   用于 thinking 块 / BgNotifyCard 详情等「过程性次要信息」语境。
+   设计取向（impeccable critique 确认）：
+   - 标题用 --reasoning（紫）而非 --fg（白），避免与正文 summary 白标题撞色，保持紫色语义族
+   - li::marker / blockquote 压到 --subtle（三级灰），结构存在但不抢戏
+   - strong 回升到 --fg，提供强调层级（muted 段落里 fg 粗体是唯一强调点）
+   - p 行高保持 1.7（继承默认），段落间距与正文一致 */
+.md-render--thinking :deep(h1),
+.md-render--thinking :deep(h2),
+.md-render--thinking :deep(h3),
+.md-render--thinking :deep(h4) {
+  color: var(--reasoning);
+}
+.md-render--thinking :deep(li)::marker {
+  color: var(--subtle);
+}
+.md-render--thinking :deep(blockquote) {
+  color: var(--subtle);
+  border-left-color: var(--border-strong);
+}
+.md-render--thinking :deep(blockquote) p {
+  color: var(--subtle);
+}
+.md-render--thinking :deep(strong) {
+  color: var(--fg);
+  font-weight: 600;
 }
 </style>

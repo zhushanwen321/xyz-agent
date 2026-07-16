@@ -20,7 +20,7 @@
     <aside
       v-if="isOpen"
       :class="asideClass"
-      aria-label="侧边抽屉"
+      :aria-label="t('panel.sideDrawer.title')"
     >
       <!-- header：tab 栏（仅 icon，左）+ 钉住/关闭（右）。label 收进 title 供 hover 查看。 -->
       <header class="flex items-center gap-1 border-b border-border px-2 py-1.5">
@@ -32,6 +32,7 @@
             class="size-7 shrink-0 justify-center rounded-sm p-0"
             :class="activeTab === t.key ? 'bg-accent-soft text-accent' : 'text-muted'"
             :title="t.label"
+            :data-testid="`drawer-tab-${t.key}`"
             @click="emit('set-tab', t.key)"
           >
             <component :is="t.icon" class="size-3.5" />
@@ -42,7 +43,7 @@
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0"
           :class="docked ? 'text-accent' : 'text-subtle'"
-          :title="docked ? '取消钉住' : '钉住'"
+          :title="docked ? t('panel.sideDrawer.unpin') : t('panel.sideDrawer.pin')"
           @click="emit('toggle-dock')"
         >
           <PinOff v-if="docked" class="size-3" />
@@ -51,7 +52,7 @@
         <Button
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:text-fg"
-          title="关闭"
+          :title="t('panel.sideDrawer.close')"
           @click="emit('close')"
         >
           <X class="size-3" />
@@ -86,7 +87,7 @@
             v-if="activeLinesMeta.unknown"
             class="mb-1 rounded-sm border border-border bg-surface px-1.5 py-0.5 text-[10px] text-muted"
           >
-            未识别 widget：{{ activeLinesMeta.key }}
+            {{ t('panel.sideDrawer.unknownWidget') }}：{{ activeLinesMeta.key }}
           </div>
           <code
             v-for="(line, i) in activeLines"
@@ -115,7 +116,7 @@
         <div
           v-for="entry in statusEntries"
           :key="entry.statusKey"
-          class="flex items-center gap-1.5 font-mono text-[10.5px]"
+          class="flex items-center gap-1.5 font-mono text-[10px]"
         >
           <span class="shrink-0 text-subtle">{{ entry.statusKey }}</span>
           <!-- textRaw 有 ANSI 着色 → AnsiText 渲染保留颜色；否则纯文本兜底。
@@ -132,6 +133,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
@@ -165,6 +167,8 @@ const emit = defineEmits<{
   'set-tab': [tab: SideDrawerTab]
   'toggle-dock': []
 }>()
+
+const { t } = useI18n()
 
 /**
  * aside 容器 class（按 mode 切换定位策略）：
@@ -201,45 +205,45 @@ interface TabMeta {
 }
 
 /** tab 元信息（§6.3 点2：Terminal/Browser/Git）。Git tab 内容为 GitPanel（inject 数据）。 */
-const tabs: TabMeta[] = [
+const tabs = computed<TabMeta[]>(() => [
   {
     key: 'terminal',
-    label: 'Terminal',
+    label: t('panel.sideDrawer.tabTerminal'),
     icon: TerminalIcon,
-    emptyText: '暂无终端输出',
-    emptyHint: 'extension 推送 terminal widget 后显示实时输出',
+    emptyText: t('panel.sideDrawer.noTerminal'),
+    emptyHint: t('panel.sideDrawer.terminalHint'),
   },
   {
     key: 'browser',
-    label: 'Browser',
+    label: t('panel.sideDrawer.tabBrowser'),
     icon: Globe,
-    emptyText: '暂无浏览器预览',
-    emptyHint: 'extension 推送 browser widget 后显示预览',
+    emptyText: t('panel.sideDrawer.noBrowser'),
+    emptyHint: t('panel.sideDrawer.browserHint'),
   },
   {
     key: 'git',
-    label: 'Git',
+    label: t('panel.sideDrawer.tabGit'),
     icon: GitBranch,
-    emptyText: '当前目录非 git 仓库',
-    emptyHint: '在 git 仓库内打开 session 后可查看状态并暂存/提交',
+    emptyText: t('panel.sideDrawer.noGit'),
+    emptyHint: t('panel.sideDrawer.gitHint'),
   },
   {
     key: 'doc',
-    label: 'Doc',
+    label: t('panel.sideDrawer.tabDoc'),
     icon: BookOpen,
-    emptyText: '未选择命令',
-    emptyHint: '点击用户气泡中的命令 chip 查看命令/skill 文档',
+    emptyText: t('panel.sideDrawer.noDoc'),
+    emptyHint: t('panel.sideDrawer.docHint'),
   },
   {
     key: 'detail',
-    label: 'Detail',
+    label: t('panel.sideDrawer.tabDetail'),
     icon: FileText,
-    emptyText: '未选择文件',
-    emptyHint: '点击侧栏文件树中的文件预览内容',
+    emptyText: t('panel.sideDrawer.noFileSelected'),
+    emptyHint: t('panel.sideDrawer.detailHint'),
   },
-]
+])
 
-const activeTabMeta = computed(() => tabs.find((t) => t.key === props.activeTab) ?? tabs[0])
+const activeTabMeta = computed(() => tabs.value.find((tab) => tab.key === props.activeTab) ?? tabs.value[0])
 
 /** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量）。 */
 const terminalLines = ref<string[]>([])

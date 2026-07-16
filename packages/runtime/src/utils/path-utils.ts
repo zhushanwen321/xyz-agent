@@ -50,3 +50,20 @@ export function isStrictlyUnder(parent: string, child: string): boolean {
   const rel = relative(resolve(parent), resolve(child))
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
 }
+
+const GIT_SUFFIX = '.git'
+
+/**
+ * 从 Git URL 提取仓库名（用于 clone 目标子目录命名）。
+ *
+ * 处理 https:// / ssh:// / git@ 三种格式，取末段去 `.git` 后缀：
+ * `git@github.com:user/repo.git` → `repo`；`https://github.com/user/repo` → `repo`。
+ * 解析失败 fallback `'repo'`。
+ */
+export function extractRepoName(url: string): string {
+  const cleanUrl = url.split(/[?#]/)[0]
+  const parts = cleanUrl.replace(/[/]+$/, '').split(/[/]/)
+  const last = parts[parts.length - 1] ?? ''
+  const name = last.endsWith(GIT_SUFFIX) ? last.slice(0, -GIT_SUFFIX.length) : last
+  return name || 'repo'
+}

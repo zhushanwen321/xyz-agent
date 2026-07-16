@@ -32,7 +32,7 @@ const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneS
 
 // ── Mocks ────────────────────────────────────────────────────────
 
-const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
+const mockSendExtensionUiResponse = vi.fn()
 const mockSendRaw = vi.fn()
 
 vi.mock('../src/services/session/session-service.js', () => {
@@ -54,7 +54,7 @@ vi.mock('../src/services/session/session-service.js', () => {
       abort = vi.fn().mockResolvedValue(undefined)
       switchModel = vi.fn().mockResolvedValue(undefined)
       getRpcClient = vi.fn().mockReturnValue({
-        sendCommand: mockSendCommand,
+        sendExtensionUiResponse: mockSendExtensionUiResponse,
         sendRaw: mockSendRaw,
         onEvent: vi.fn().mockReturnValue(() => {}),
         onExit: vi.fn(),
@@ -278,7 +278,7 @@ describe('RuntimeServer: bridge request routing', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
-    mockSendCommand.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     mockSendRaw.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
@@ -300,15 +300,13 @@ describe('RuntimeServer: bridge request routing', () => {
     it('sends tools and commands response via extension_ui_response', async () => {
       await server.handleBridgeRequest('sess-1', 'bridge-req-1', 'bridge:sync', {})
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
+      // sendExtensionUiResponse(id, response, method?) — bridge 场景无 method，response 是对象
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
+        'bridge-req-1',
         expect.objectContaining({
-          id: 'bridge-req-1',
-          response: expect.objectContaining({
-            tools: expect.any(Array),
-            commands: expect.any(Array),
-            success: true,
-          }),
+          tools: expect.any(Array),
+          commands: expect.any(Array),
+          success: true,
         }),
       )
     })
@@ -332,12 +330,12 @@ describe('RuntimeServer: bridge request routing', () => {
       // Re-set services to use the overridden mock
       const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
       server.setServices(sessionService, {} as never, {} as never, {} as never, pluginService)
-      mockSendCommand.mockClear()
+      mockSendExtensionUiResponse.mockClear()
 
       await server.handleBridgeRequest('sess-1', 'bridge-req-2', 'bridge:sync', {})
 
-      const callArgs = mockSendCommand.mock.calls[0]
-      const response = callArgs[1].response as Record<string, unknown>
+      const callArgs = mockSendExtensionUiResponse.mock.calls[0]
+      const response = callArgs[1] as Record<string, unknown>
 
       expect(response.tools).toHaveLength(0)
       expect(response.commands).toHaveLength(0)
@@ -352,11 +350,9 @@ describe('RuntimeServer: bridge request routing', () => {
         params: { name: 'world' },
       })
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
-        expect.objectContaining({
-          id: 'bridge-req-exec',
-        }),
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
+        'bridge-req-exec',
+        expect.anything(),
       )
     })
   })
@@ -368,13 +364,7 @@ describe('RuntimeServer: bridge request routing', () => {
         eventData: { sessionId: 'sess-1' },
       })
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
-        expect.objectContaining({
-          id: 'bridge-req-ev',
-          response: null,
-        }),
-      )
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('bridge-req-ev', null)
     })
   })
 
@@ -385,12 +375,9 @@ describe('RuntimeServer: bridge request routing', () => {
         data: { sessionId: 'sess-1', query: 'hello' },
       })
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
-        expect.objectContaining({
-          id: 'bridge-req-int',
-          response: expect.any(Object),
-        }),
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
+        'bridge-req-int',
+        expect.any(Object),
       )
     })
   })
@@ -399,13 +386,10 @@ describe('RuntimeServer: bridge request routing', () => {
     it('sends error response for unknown method', async () => {
       await server.handleBridgeRequest('sess-1', 'bridge-req-unk', 'bridge:unknown_method', {})
 
-      expect(mockSendCommand).toHaveBeenCalledWith(
-        'extension_ui_response',
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
+        'bridge-req-unk',
         expect.objectContaining({
-          id: 'bridge-req-unk',
-          response: expect.objectContaining({
-            error: expect.stringContaining('Unknown bridge method'),
-          }),
+          error: expect.stringContaining('Unknown bridge method'),
         }),
       )
     })
@@ -419,7 +403,7 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
-    mockSendCommand.mockClear()
+    mockSendExtensionUiResponse.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     server.setServices(
       new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
@@ -445,7 +429,7 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
     vi.advanceTimersByTime(300_000)
 
     // No timeout responses should be sent for bridge methods
-    expect(mockSendCommand).not.toHaveBeenCalled()
+    expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
   })
 
   it('tracks bridge requestIds in bridgeRequestIds set', () => {
@@ -461,13 +445,9 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    // Normal confirm should timeout after 5 minutes → sendRaw with confirmed:false
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"confirmed":false'),
-    )
-    expect(mockSendRaw).toHaveBeenCalledWith(
-      expect.stringContaining('"id":"req-confirm"'),
-    )
+    // Normal confirm should timeout after 5 minutes → sendExtensionUiResponse(id, false, 'confirm')
+    // （pi 鸭子类型：method==='confirm' → {id, confirmed:boolean}）
+    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-confirm', false, 'confirm')
   })
 })
 

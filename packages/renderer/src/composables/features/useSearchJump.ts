@@ -27,6 +27,9 @@ import { useRecents } from '@/composables/features/useRecents'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useCommandStore } from '@/stores/command'
 import { useFileTreeStore } from '@/stores/fileTree'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 export function useSearchJump() {
   const recents = useRecents()
@@ -47,7 +50,7 @@ export function useSearchJump() {
         return confirmSession(item)
       case 'symbol':
         // D-001 占位不跳转（不调任何 domain/store）
-        return { ok: false, error: '符号搜索暂不可用' }
+        return { ok: false, error: t('search.symbolUnavailable') }
     }
   }
 
@@ -72,7 +75,7 @@ export function useSearchJump() {
         // 应用命令：commandStore.appCommands 取 action 执行
         const cmd = commandStore.appCommands.find((c) => c.name === item.title)
         if (!cmd) {
-          return { ok: false, error: `未找到命令: ${item.title}` }
+          return { ok: false, error: t('search.commandNotFound', { title: item.title }) }
         }
         cmd.action() // AC-6.8：action 抛错由 catch 捕获
       }
@@ -80,7 +83,7 @@ export function useSearchJump() {
       return { ok: true }
     } catch (e) {
       // AC-6.8：action 抛错 → {ok:false,error}
-      return { ok: false, error: (e as Error)?.message ?? '命令执行失败' }
+      return { ok: false, error: (e as Error)?.message ?? t('search.commandExecFailed') }
     }
   }
 
@@ -104,7 +107,7 @@ export function useSearchJump() {
       return { ok: true, drawerTab: 'detail' }
     } catch (e) {
       // AC-6.5：file.read reject → {ok:false}（直调使 reject 真冒泡，不经吞错层）
-      return { ok: false, error: (e as Error)?.message ?? '文件打开失败' }
+      return { ok: false, error: (e as Error)?.message ?? t('search.fileOpenFailed') }
     }
   }
 
@@ -121,7 +124,7 @@ export function useSearchJump() {
     try {
       const id = await resolveSessionId(item.title)
       if (!id) {
-        return { ok: false, error: `未找到会话: ${item.title}` }
+        return { ok: false, error: t('search.sessionNotFound', { title: item.title }) }
       }
       const { selectSession } = useSidebar()
       await selectSession(id) // AC-6.6：switchSession reject 抛错由 catch 捕获
@@ -129,7 +132,7 @@ export function useSearchJump() {
       return { ok: true }
     } catch (e) {
       // AC-6.6：session.switch reject → {ok:false,error}
-      return { ok: false, error: (e as Error)?.message ?? '会话切换失败' }
+      return { ok: false, error: (e as Error)?.message ?? t('search.sessionSwitchFailed') }
     }
   }
 

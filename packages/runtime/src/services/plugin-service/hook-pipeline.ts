@@ -98,7 +98,7 @@ export class HookPipeline {
             data: result.modifiedData,
           }
         }
-      // eslint-disable-next-line taste/no-silent-catch -- hook: timeout/error means proceed, non-blocking by design
+       
       } catch (err: unknown) {
         // 超时或错误 → 视为放行（不阻止链路）
         console.warn(

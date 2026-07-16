@@ -18,16 +18,22 @@
     <PanelHeader
       :session-label="sessionLabel"
       :session-dir="sessionDir"
+      :session-file="sessionFile"
       :git-branch="gitBranch"
       :git-indicator="gitIndicator"
       :status="status"
       :active="active"
       :is-dual="isDual"
       :is-first-panel="isFirstPanel"
+      :viewing-subagent="isViewingSubagent"
+      :subagent-label="subagentLabel"
+      :overlay-session-file="overlaySessionFile"
       @split="emit('split')"
       @new-session="emit('new-session')"
       @close="emit('close')"
       @open-git="emit('openGit')"
+      @toggle-drawer="emit('toggleDrawer')"
+      @back="onSubagentBack"
     />
 
     <!-- 渲染分支对齐 NewTaskFlow 状态机（修恢复空 session 的 chip 死锁）：
@@ -44,16 +50,24 @@
     >
       <AlertCircle class="size-8 text-danger opacity-60" />
       <div class="space-y-1">
-        <p class="text-sm text-text">会话进程已退出</p>
-        <p class="text-xs text-subtle">进程异常终止，对话不可继续。可尝试重新打开。</p>
+        <p class="text-sm text-text">{{ t('panel.panel.sessionDead') }}</p>
+        <p class="text-xs text-subtle">{{ t('panel.panel.sessionDeadHint') }}</p>
       </div>
       <Button variant="default" size="sm" @click="onReviveSession">
         <RotateCcw class="mr-1.5 size-3.5" />
-        重新打开
+        {{ t('panel.panel.reopen') }}
       </Button>
     </div>
 
-    <MessageStream v-else-if="sessionId && messageCount > 0" :session-id="sessionId" />
+    <MessageStream v-else-if="effectiveSessionId && effectiveMessageCount > 0" :session-id="effectiveSessionId" />
+    <!-- overlay 态（subagent/agent call）但消息为空：agent call 历史文件只有 header（pi 延迟写入）或执行失败无输出 -->
+    <div
+      v-else-if="isViewingSubagent"
+      class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
+    >
+      <MessageSquare class="size-6 text-subtle opacity-40" />
+      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.message.noAgentCall') }}</p>
+    </div>
     <Landing
       v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"
@@ -67,18 +81,18 @@
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
       <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">输入消息开始对话</p>
+      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.panel.startConversation') }}</p>
     </div>
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
       <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">选择左侧会话开始</p>
+      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.panel.selectSession') }}</p>
     </div>
 
     <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
          git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。
          ask-user 富交互（W2）：请求到达时 AskUserOverlay 覆盖 composer 位置（互斥），
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。 -->
-    <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
+    <div v-if="!isViewingSubagent" class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-3.5 pb-3.5">
       <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
       <ProgressZone />
 
@@ -101,7 +115,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { MessageSquare, AlertCircle, RotateCcw } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
@@ -110,20 +125,26 @@ import PanelHeader from './PanelHeader.vue'
 import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
+import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useToast } from '@/composables/useToast'
 import { useExtensionUI, askUserFilter } from '@/composables/useExtensionUI'
+import { getAgentCallFilePath } from '@/api/domains/session'
 
 const props = defineProps<{
   panelId: string
   sessionId: string | null
   sessionLabel: string
   sessionDir: string
+  /** session JSONL 绝对路径（pi 延迟写入窗口可能为空，PanelHeader 据此渲染短文件名） */
+  sessionFile?: string
   gitBranch?: string
   /** git 脏状态指示（PanelContainer 统一提供，透传给 PanelHeader；hasRepo=false 不渲染 git 按钮） */
   gitIndicator?: GitIndicator
@@ -141,6 +162,8 @@ const emit = defineEmits<{
   close: []
   /** 打开 SideDrawer git tab（PanelContainer 统一渲染抽屉，事件上抛） */
   openGit: []
+  /** 切换 SideDrawer 开关（PanelContainer 统一渲染抽屉，事件上抛） */
+  toggleDrawer: []
 }>()
 
 /** 点击 panel body 切 active（双 panel 主从焦点）；点 header 按钮不误切（按钮自身 stopPropagation） */
@@ -151,11 +174,96 @@ function onPanelMouseDown(e: MouseEvent): void {
   emit('activate', props.panelId)
 }
 
+const { t } = useI18n()
 const chat = useChatStore()
 const sessionStore = useSessionStore()
 const { error: toastError } = useToast()
+const subagentStore = useSubagentStore()
+const workflowStore = useWorkflowStore()
 
 const flow = useNewTaskFlow()
+
+/** overlay 视图标题：subagent 或 agent call 的摘要 */
+const SUBAGENT_ID_DISPLAY_LENGTH = 12
+const subagentLabel = computed(() => {
+  // agent call overlay
+  const agentCallId = workflowStore.getViewingAgentCallId(props.panelId)
+  if (agentCallId) {
+    return t('panel.overlay.agentCallId', { id: agentCallId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH) })
+  }
+  // subagent overlay
+  const record = subagentStore.getCurrentSubagent(props.panelId)
+  if (!record) return t('panel.overlay.subagent')
+  return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
+})
+
+/** 返回主会话（subagent overlay 或 agent call overlay 均回退） */
+function onSubagentBack(): void {
+  if (workflowStore.isViewing(props.panelId)) {
+    workflowStore.backFromAgentCall(props.panelId)
+  } else {
+    subagentStore.backToMain(props.panelId)
+  }
+}
+
+/** Panel 卸载时停止 subagent streaming 订阅（防止泄漏） */
+onUnmounted(() => {
+  subagentStore.stopStream(props.panelId)
+})
+
+/**
+ * overlay 模式：viewing subagent 或 agent call 时用虚拟 session ID 渲染 MessageStream，
+ * 否则用主 session ID。panel store 的 sessionId 从不被替换（主 session 保持高亮、文件视图不变）。
+ * subagent overlay 优先于 agent call overlay（两者互斥，不会同时 active）。
+ */
+const effectiveSessionId = computed(
+  () => subagentStore.getActiveSubagentVirtualId(props.panelId)
+    ?? workflowStore.getActiveAgentCallVirtualId(props.panelId)
+    ?? props.sessionId,
+)
+
+/** 本 panel 是否正在查看 overlay（subagent 或 agent call） */
+const isViewingSubagent = computed(
+  () => subagentStore.isViewing(props.panelId) || workflowStore.isViewing(props.panelId),
+)
+
+/**
+ * overlay 态当前展示的 JSONL 文件路径（PanelHeader 文件名按钮用）。
+ * - subagent overlay：SubagentRecord.sessionFile（store 已持有，同步读）
+ * - agent call overlay：经 getAgentCallFilePath RPC 拉取（trace 只有 sessionId，路径需 runtime 解析）
+ * - 正常态（非 overlay）：undefined，PanelHeader 回落用主 sessionFile
+ */
+const agentCallOverlayFile = ref('')
+const viewingAgentCallId = computed(() => workflowStore.getViewingAgentCallId(props.panelId))
+watch(
+  viewingAgentCallId,
+  async (agentCallId) => {
+    agentCallOverlayFile.value = ''
+    if (!agentCallId || !props.sessionId) return
+    // 展示型功能：RPC 失败（runtime 未启动/WS 断开）静默降级，按钮不显示即可
+    try {
+      agentCallOverlayFile.value = await getAgentCallFilePath(props.sessionId, agentCallId)
+     
+    } catch {
+      agentCallOverlayFile.value = ''
+    }
+  },
+  { immediate: true },
+)
+const overlaySessionFile = computed(() => {
+  if (subagentStore.isViewing(props.panelId)) {
+    return subagentStore.getCurrentSubagent(props.panelId)?.sessionFile ?? undefined
+  }
+  if (viewingAgentCallId.value) {
+    return agentCallOverlayFile.value || undefined
+  }
+  return undefined
+})
+
+/** subagent overlay 时的消息数（虚拟 session 的消息数） */
+const effectiveMessageCount = computed(() =>
+  effectiveSessionId.value ? chat.getMessages(effectiveSessionId.value).length : 0,
+)
 
 // W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。
 // B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 ExtensionUIDialog modal 处理）
@@ -170,10 +278,6 @@ const isSessionDead = computed(() => {
   return s?.status === 'dead'
 })
 
-/** 当前 session 消息数（未 hydrate / 无 session → 0） */
-const messageCount = computed(() =>
-  props.sessionId ? chat.getMessages(props.sessionId).length : 0,
-)
 /** 生成态优先：本 Panel 的 session 正在流式时不渲染 landing（AC-2.8）。
  *  [HISTORICAL] 原用全局 chat.isGenerating，A 会话流式时点新建切到空 session（sessionId=null），
  *  空 session 的 Landing 被 !isGenerating 守卫误伤 → 落到分支兜底空态（「选择左侧会话开始」），
@@ -254,7 +358,7 @@ async function onReviveSession(): Promise<void> {
     sessionStore.revive(props.sessionId)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    toastError(`重新打开失败：${msg}`)
+    toastError(t('panel.panel.reopenFailed', { error: msg }))
   }
 }
 
@@ -273,7 +377,7 @@ const panelStateClass = computed(() => {
     return 'opacity-100 ring-1 ring-[var(--accent-ring)]'
   }
   if (!props.active && props.isDual) {
-    return 'opacity-50 hover:opacity-[0.78]'
+    return 'opacity-70 hover:opacity-90'
   }
   // 单 panel：无 ring、满 opacity（底色透明继承 MainPanel）
   return ''

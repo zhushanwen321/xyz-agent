@@ -127,6 +127,14 @@ export function setProvider(providerId: string, data: SetProviderData): Promise<
   return result
 }
 
+// W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
+export function setDefaultModel(provider: string, modelId: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'config.setDefaultModel', id, payload: { provider, modelId } })
+  return result
+}
+
 export function deleteProvider(providerId: string): Promise<void> {
   const id = pending.create()
   const result = pending.register<void>(id)

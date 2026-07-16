@@ -52,3 +52,6 @@ export function errorWithCode(message: string, code: string | number): Error & {
   err.code = code
   return err
 }
+
+/** session 创建/恢复/fork 时 model 未配置的错误码（前端据此引导用户去 Settings 配置） */
+export const MODEL_NOT_CONFIGURED = 'MODEL_NOT_CONFIGURED'

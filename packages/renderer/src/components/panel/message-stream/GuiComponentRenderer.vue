@@ -2,8 +2,7 @@
 /**
  * GUI 组件路由器——按 GuiComponent.type 路由到对应 Vue 组件（spec §9.1）。
  *
- * P0+P1 阶段只实现路由骨架：仅 ansi-text 内置组件已落地，其余通用原语（card /
- * stats-line / progress-bar 等）属 P2 范围。未识别类型与未注册的 custom 均降级到 AnsiText，
+ * 已实现 6 种内置组件 + ansi-text 兜底。未识别类型与未注册的 custom 降级到 AnsiText，
  * 把结构化数据 JSON 序列化为文本展示（保证不丢信息，且不崩渲染）。
  *
  * 降级时的 prop 适配（关键点）：
@@ -20,18 +19,31 @@
  */
 import { computed, inject } from 'vue'
 import type { Component } from 'vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import type { GuiComponent, GuiComponentType } from '@xyz-agent/extension-protocol'
 import AnsiText from './gui/AnsiText.vue'
+import ProgressBar from './gui/ProgressBar.vue'
+import StatsLine from './gui/StatsLine.vue'
+import TabBar from './gui/TabBar.vue'
+import Card from './gui/Card.vue'
+import Columns from './gui/Columns.vue'
+import ListTree from './gui/ListTree.vue'
+import { GUI_CUSTOM_REGISTRY_KEY } from './gui/gui-registry'
 
 const props = defineProps<{ component: GuiComponent }>()
 
-/** 已实现的内置组件映射。P2 阶段逐步补充 card / stats-line / progress-bar 等。 */
-const BUILTIN_MAP: Record<string, Component> = {
+/** 已实现的内置组件映射。键钉到 GuiComponentType，新增 type 时编译期可见。 */
+const BUILTIN_MAP: Partial<Record<GuiComponentType, Component>> = {
   'ansi-text': AnsiText,
+  'progress-bar': ProgressBar,
+  'stats-line': StatsLine,
+  'tab-bar': TabBar,
+  'card': Card,
+  'columns': Columns,
+  'list-tree': ListTree,
 }
 
 /** custom 组件注册表（内置 extension 编译期注册，P2 实现）。默认空表。 */
-const CUSTOM_MAP = inject<Record<string, Component>>('gui-custom-registry', {})
+const CUSTOM_MAP = inject(GUI_CUSTOM_REGISTRY_KEY, {})
 
 /** JSON 序列化缩进（降级渲染用） */
 const JSON_INDENT = 2

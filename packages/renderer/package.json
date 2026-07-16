@@ -8,7 +8,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:i18n": "vitest run src/__tests__/i18n/"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",

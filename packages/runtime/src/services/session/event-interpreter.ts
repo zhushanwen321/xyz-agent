@@ -19,8 +19,10 @@
  * 依赖经构造注入：send（WS 帧）、fileChangeDiff（port，git 纯函数经组合根注入）、
  * 各业务回调（executeHooks / contextUpdate / thinkingLevel / status/bridge/extension-ui 路由）。
  */
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
+import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
@@ -48,6 +50,22 @@ export interface EventInterpreterOptions {
   executeHooks?: ExecuteHookFn
   /** agent_end usage 回写 session 缓存（组合根注入 sessionService.applyContextUpdate）。 */
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
+  /**
+   * pi turn_end 单 turn 用量到达后触发（组合根注入 sessionService.handleTurnUsageSideEffects）。
+   *
+   * 承载 tryPersistLabel 主路径——「首 turn 即持久化」时序保证：第一个 turn_end 时 pi 已完成
+   * 该轮 flush（session 文件存在），此时 append session_info 行安全。不等 agent_end（后者要等
+   * 所有工具调用轮次跑完，中途关 app 仍会丢 label）。
+   */
+  onTurnUsage?: (sessionId: string) => void
+  /**
+   * pi agent_end 整循环结束时触发（组合根注入 sessionService.handleTurnEndSideEffects）。
+   *
+   * 承载两个副作用：
+   *   1. 复位 isGenerating=false（不迁移则正常生成完成后 session 永远 busy，下条消息被拒）
+   *   2. tryPersistLabel 兜底（turn_end 时 pi flush 尚未完成、文件不存在，在此补写）
+   */
+  onTurnFinalize?: (sessionId: string) => void
   /** thinking_level_changed 回写 session 缓存（组合根注入 sessionService.setThinkingLevelCache）。 */
   onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
   /** extension 交互式 UI 请求（注册前端超时）。组合根注入 server.registerExtensionTimeout。 */
@@ -56,10 +74,26 @@ export interface EventInterpreterOptions {
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string; textRaw?: string }) => void
+  /**
+   * pi 静默卡死 abort 回调（W6, U12，设计文档 A2）。
+   *
+   * 当 turn 内连续 SILENT_ABORT_MS（300s）无任何活动事件时，watchdog 判定 pi 卡死，
+   * 触发本回调由组合根调 message-dispatcher.abort（复用现有 abort 兜底广播路径）。
+   * payload 携带 sessionId，供上层定位要 abort 的 session。
+   */
+  onSilentAbort?: (payload: { sessionId: string }) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
 const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
+
+// ── W6 pi watchdog 阈值（设计文档 A2）──
+// pi 子进程偶发静默卡死（0% CPU、不退出、不发事件），导致 isGenerating 永久 true。
+// watchdog 在 turn 维度维护两级定时器：WARN 提示用户 + ABORT 自动中断。
+/** WARN 阈值：连续 120s 无活动事件 → 广播 message.stream_error{kind:'silent'}（不中断）。 */
+const SILENT_WARN_MS = 120_000
+/** ABORT 阈值：连续 300s 无活动事件 → 判定卡死，触发 onSilentAbort（上层 abort pi + 复位 isGenerating）。 */
+const SILENT_ABORT_MS = 300_000
 
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
@@ -68,6 +102,21 @@ export class EventInterpreter {
   private statusBaseline: FileChangeSnapshot = null
   /** 本 turn write 工具写入的 content（untracked 行数回退用，message_start 清空） */
   private writeContents: Map<string, string> = new Map()
+  /**
+   * subagent 内存态：subagentId → SubagentRecord。
+   * tool-call-end 建 running 记录，bg-notify 更新终态。每次变更广播 session.subagents。
+   * per-session（interpreter 实例级），session 销毁时随实例释放。
+   */
+  private subagentRecords: Map<string, SubagentRecord> = new Map()
+  /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
+  private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
+  // ── W6 pi watchdog 状态（per-session，turn 维度）──
+  /** ABORT 定时器句柄（300s 无活动事件触发 onSilentAbort），turn-start/活动事件启动/重置，agent_end 销毁清除 */
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null
+  /** WARN 定时器句柄（120s 无活动事件广播 stream_error），与 watchdogTimer 同生命周期 */
+  private watchdogWarnTimer: ReturnType<typeof setTimeout> | null = null
+  /** 本轮 WARN 是否已广播（避免 reset 前重复广播；活动事件到达时复位） */
+  private watchdogWarned = false
 
   constructor(
     private readonly sessionId: string,
@@ -84,7 +133,32 @@ export class EventInterpreter {
    */
   interpret(events: PiTranslatedEvent[]): void {
     for (const ev of events) {
-      this.handle(ev)
+      // W1：per-event try-catch —— 对每个事件的编排（hook/diff/WS 转发）单独隔离。
+      // 若第 N 个事件触发 handler 抛错（如 send 回调抛、某 details 形状异常），
+      // 裸 for 循环会被中断，后续事件（含关键的 turn-end / agent_end）被吞掉，导致：
+      //   - isGenerating 永不复位（onTurnFinalize 未触发）
+      //   - message.complete 不送达前端（streaming 永远不停）
+      // 故单事件失败仅记日志不中断批次（复用 event-adapter.logInterpretFailure 的隔离思路）。
+      try {
+        this.handle(ev)
+      } catch (err: unknown) {
+        // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize +
+        // clearWatchdog 未执行 → isGenerating 永不复位（session 永久 busy，违反 AGENTS.md 规则 #3）。
+        // 兜底强制执行。onTurnFinalize 幂等（finalizeSession 幂等，见 chat.ts），重复调用无副作用。
+        if (ev.kind === 'turn-end') {
+          try {
+            this.opts.onTurnFinalize?.(this.sessionId)
+          } catch (finalizeErr) {
+            // 兜底失败也不阻断——至少尝试清 watchdog（best-effort：onTurnFinalize 内部异常不传播）
+            console.debug('[event-interpreter] onTurnFinalize fallback failed:', finalizeErr)
+          }
+          this.clearWatchdog()
+        }
+        console.error(
+          `[event-interpreter] handle event error (isolated; batch continues) sid=${this.sessionId} kind=${ev.kind}:`,
+          err,
+        )
+      }
     }
   }
 
@@ -94,6 +168,12 @@ export class EventInterpreter {
         return
       case 'message':
         this.opts.send(ev.message)
+        // subagent bg-notify：更新内存态终态 → 广播 session.subagents
+        this.handleSubagentBgNotify(ev.message)
+        // workflow-result（run 完成）：广播 session.workflows 增量信号
+        this.handleWorkflowResult(ev.message)
+        // [W6] message（含 text_delta/thinking_*）是活动事件 → 重置 watchdog 计时
+        this.resetWatchdog()
         return
       case 'turn-start':
         // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
@@ -102,21 +182,30 @@ export class EventInterpreter {
           ? this.opts.fileChangeDiff.snapshotGitStatus(this.opts.cwd)
           : null
         this.writeContents.clear()
+        // [W6] turn 开始 → 启动 watchdog（等待后续活动事件；无事件到达时按阈值 WARN/ABORT）
+        this.startWatchdog()
         return
       case 'tool-call-start':
+        // [W6] 工具执行开始是活动事件 → 重置 watchdog（长任务期间避免误判卡死）
+        this.resetWatchdog()
         // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
         void this.handleToolCallStart(ev)
         return
       case 'tool-call-end':
+        // [W6] 工具执行结束是活动事件 → 重置 watchdog
+        this.resetWatchdog()
         void this.handleToolCallEnd(ev)
         return
       case 'turn-end':
         this.handleTurnEnd(ev)
         return
       case 'turn-usage':
-        // pi turn_end 的单 turn 用量：只回写 context.update，不转发 message.complete
-        // （避免每 turn 触发 setStreaming 闪烁；message.complete 仍由 turn-end/agent_end 独占）
+        // pi turn_end 的单 turn 用量：回写 context.update（用量在前），再触发 onTurnUsage
+        // （tryPersistLabel 主路径——首 turn 即持久化，文件已由 pi flush 创建）。
+        // 不转发 message.complete（避免每 turn 触发 setStreaming 闪烁；
+        // message.complete 仍由 turn-end/agent_end 独占）。
         this.opts.onContextUpdate?.(ev.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens })
+        this.opts.onTurnUsage?.(ev.sessionId)
         return
       case 'status-set':
         this.opts.onStatusSetUpdate?.({ sessionId: this.sessionId, key: ev.key, text: ev.text, textRaw: ev.textRaw })
@@ -137,6 +226,13 @@ export class EventInterpreter {
         // agent_start 等纯观测事件（无 WS 帧产出）
         this.opts.executeHooks?.('onPiEvent', { event: ev.eventType, ...ev.data }).catch(() => {})
         return
+      case 'subagent-stream':
+        // 路径 A-1：subagent 逐字 streaming → subagent.stream_delta WS 帧
+        this.opts.send({
+          type: 'subagent.stream_delta' as ServerMessageType,
+          payload: { sessionId: ev.sessionId, recordId: ev.recordId, lines: ev.lines },
+        })
+        return
     }
   }
 
@@ -156,8 +252,8 @@ export class EventInterpreter {
         if (hookResult.transformedData !== undefined) {
           input = hookResult.transformedData
         }
-      // eslint-disable-next-line taste/no-silent-catch
       } catch (e) {
+        // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
         console.debug(`[event-interpreter] hook tool_execution_start error: ${toErrorMessage(e)}`)
       }
     }
@@ -169,6 +265,11 @@ export class EventInterpreter {
       type: 'message.tool_call_start',
       payload: { sessionId: this.sessionId, toolCallId, toolName, input },
     })
+
+    // subagent tool-call-start：缓存 startParam（agent/slug/task），end 时取出合并 details 建记录
+    if (SUBAGENT_TOOL_NAMES.has(toolName)) {
+      this.cacheSubagentStartParam(toolCallId, input)
+    }
   }
 
   /** tool-call-end：跑 onAfterToolResult hook（改写 output）+ 触发 file_changes diff + 产出 tool_call_end WS 帧 + onPiEvent hook。 */
@@ -181,8 +282,8 @@ export class EventInterpreter {
       try {
         const hookResult = await this.opts.executeHooks('onAfterToolResult', { toolCallId, output })
         if (hookResult.transformedData !== undefined) output = hookResult.transformedData as string
-      // eslint-disable-next-line taste/no-silent-catch
       } catch (e) {
+        // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
         console.debug(`[event-interpreter] hook tool_execution_end error: ${toErrorMessage(e)}`)
       }
     }
@@ -190,11 +291,10 @@ export class EventInterpreter {
     // 观测 hook（tool_execution_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_end', toolCallId, output, details, images }).catch(() => {})
 
-    // ADR-0024 D5：失败的调用不触发 diff（避免噪声）；累积 write content + 实时 diff
+    // ADR-0024 D5：失败的调用不触发 diff（避免噪声）；实时 diff
     if (!isError) {
-      if (ev.writeContent) {
-        this.writeContents.set(ev.writeContent.filePath, ev.writeContent.content)
-      }
+      // [已知限制] ev.writeContent 恒为 undefined（pi tool_execution_end 从不发 args，见
+      // event-adapter handleToolExecutionEnd 注释），writeContents 累积逻辑暂不生效。
       if (FILE_MUTATING_TOOLS.has(toolName)) {
         this.sendDiffFileChanges('accumulating')
       }
@@ -215,9 +315,18 @@ export class EventInterpreter {
         error: isError ? output : undefined,
       },
     })
+
+    // subagent tool-call-end：合并缓存 startParam + details 建记录 → 广播 session.subagents
+    if (SUBAGENT_TOOL_NAMES.has(toolName)) {
+      this.handleSubagentEnd(toolCallId, details)
+    }
+    // workflow tool-call-end：action=run 发起 → 广播 session.workflows running 信号
+    if (WORKFLOW_TOOL_NAMES.has(toolName)) {
+      this.handleWorkflowToolEnd(details)
+    }
   }
 
-  /** turn-end（agent_end）：转发 message.complete + context.update 回写 + 观测 hook + file_changes ready diff + 清空态。 */
+  /** turn-end（agent_end）：转发 message.complete + context.update 回写 + onTurnFinalize（副作用）+ 观测 hook + file_changes ready diff + 清空态。 */
   private handleTurnEnd(ev: PiTranslatedEvent & { kind: 'turn-end' }): Promise<void> {
     // 转发 message.complete WS 帧
     this.opts.send(ev.message)
@@ -227,6 +336,9 @@ export class EventInterpreter {
       this.opts.onContextUpdate?.(this.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens ?? 0 })
     }
 
+    // 副作用：复位 isGenerating=false + tryPersistLabel 兜底（原 attachUsageListener agent_end 分支）
+    this.opts.onTurnFinalize?.(this.sessionId)
+
     // 观测 hook（agent_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'agent_end', stopReason: ev.stopReason, usage: ev.usage }).catch(() => {})
 
@@ -235,7 +347,83 @@ export class EventInterpreter {
     this.statusBaseline = null
     this.writeContents.clear()
 
+    // [W6] agent_end 正常到达 → turn 已结束，清除 watchdog（避免 turn 后误触发 abort）
+    this.clearWatchdog()
+
     return Promise.resolve()
+  }
+
+  // ── W6 pi watchdog：turn 级静默卡死检测（设计文档 A2）──
+
+  /**
+   * 启动 watchdog（turn-start 触发）。
+   *
+   * 清掉上一轮残留定时器后，启动 WARN（120s）和 ABORT（300s）两级定时器。
+   * WARN 触发时广播 message.stream_error{kind:'silent'} 提醒用户但不中断；
+   * ABORT 触发时调 onSilentAbort（上层 abort pi + 复位 isGenerating）并清自身。
+   */
+  private startWatchdog(): void {
+    this.scheduleWatchdog()
+  }
+
+  /**
+   * 重置 watchdog（活动事件到达时触发）。
+   *
+   * 与 startWatchdog 共用 schedule 逻辑：清掉 WARN/ABORT 定时器 + 复位 watchdogWarned 后重排。
+   * 活动事件定义（设计文档 §3.2）：message（text_delta/thinking_*）/ tool-call-start / tool-call-end。
+   * 这些事件表明 pi 仍在产出，故重置计时，避免长任务/长思考误判。
+   */
+  private resetWatchdog(): void {
+    this.scheduleWatchdog()
+  }
+
+  /** 共享的定时器重排逻辑：清旧 + 复位 warned + 排 WARN/ABORT 两级。 */
+  private scheduleWatchdog(): void {
+    this.clearWatchdogTimers()
+    this.watchdogWarned = false
+    // WARN 先到：广播提示，不清 ABORT 计时（继续等卡死判定）
+    this.watchdogWarnTimer = setTimeout(() => {
+      if (this.watchdogWarned) return
+      this.watchdogWarned = true
+      console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
+      // B1（PR#86 review）：WARN 走独立类型 message.stream_warn（提示性，不中断流），
+      // 不再复用 stream_error——前端 stream_error effect 会无条件 finalizeSession 收口，
+      // 破坏「WARN 提示但不中断」设计。stream_warn 仅追加提示，session 保持 streaming。
+      this.opts.send({
+        type: 'message.stream_warn' as ServerMessageType,
+        payload: {
+          sessionId: this.sessionId,
+          content: `长时间无响应（${SILENT_WARN_MS / 1000}s 无活动）`,
+        },
+      })
+    }, SILENT_WARN_MS)
+    // ABORT 到：判定卡死，触发回调并清自身（abort 路径会广播终态）
+    this.watchdogTimer = setTimeout(() => {
+      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
+      this.clearWatchdogTimers()
+      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
+    }, SILENT_ABORT_MS)
+  }
+
+  /**
+   * 清除 watchdog（agent_end / ABORT 触发 / session 销毁时调用）。
+   * 清掉两级定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
+   */
+  private clearWatchdog(): void {
+    this.clearWatchdogTimers()
+    this.watchdogWarned = false
+  }
+
+  /** 仅清定时器句柄（不触碰 warned，供 scheduleWatchdog 重排前调用）。 */
+  private clearWatchdogTimers(): void {
+    if (this.watchdogWarnTimer) {
+      clearTimeout(this.watchdogWarnTimer)
+      this.watchdogWarnTimer = null
+    }
+    if (this.watchdogTimer) {
+      clearTimeout(this.watchdogTimer)
+      this.watchdogTimer = null
+    }
   }
 
   /**
@@ -263,6 +451,148 @@ export class EventInterpreter {
         fileChanges: changes,
         changeSetStatus,
         isFullSet: true,
+      },
+    })
+  }
+
+  // ── subagent 内存态 + session.subagents 广播 ──
+
+  /**
+   * 缓存 subagent tool-call-start 的 startParam（agent/slug/task）。
+   * tool-call-end 时按 toolCallId 取出，合并 details 的 subagentId/sessionFile/bgResponse 建记录。
+   */
+  private cacheSubagentStartParam(toolCallId: string, input: unknown): void {
+    const args = input as { action?: string; startParam?: Record<string, unknown> } | undefined
+    if (!args || args.action !== 'start' || !args.startParam) return
+    const sp = args.startParam
+    this.pendingStartParams.set(toolCallId, {
+      agent: typeof sp.agent === 'string' ? sp.agent : 'general-purpose',
+      slug: typeof sp.slug === 'string' ? sp.slug : '',
+      task: typeof sp.task === 'string' ? sp.task : '',
+    })
+  }
+
+  /**
+   * subagent tool-call-end：合并缓存 startParam + details(SubagentToolResult) 建 running 记录。
+   * details 结构（pi-subagent-workflow）：{action:'start', subagentId, sessionFile, bgResponse:{status:'running',...}}
+   */
+  private handleSubagentEnd(toolCallId: string, details: Record<string, unknown> | undefined): void {
+    const startParam = this.pendingStartParams.get(toolCallId)
+    this.pendingStartParams.delete(toolCallId)
+    // start 事件丢失或不匹配 → 无法建记录（agent/slug/task 缺失），跳过
+    if (!startParam) return
+    if (!details) return
+
+    const subagentId = typeof details.subagentId === 'string' ? details.subagentId : null
+    if (!subagentId) return
+
+    // 新发起的 subagent 恒为 running（pi-subagent-workflow 的 start action 返回 bgResponse.status='running'）
+    const status: SubagentStatus = 'running'
+
+    const record: SubagentRecord = {
+      subagentId,
+      sessionFile: typeof details.sessionFile === 'string' ? details.sessionFile : null,
+      agent: startParam.agent,
+      slug: startParam.slug,
+      task: startParam.task,
+      status,
+    }
+
+    this.subagentRecords.set(subagentId, record)
+    this.broadcastSubagents()
+  }
+
+  /**
+   * subagent bg-notify（custom_message）：更新已有记录的终态。
+   * details 结构（BgNotifyDetails）：{id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
+   */
+  private handleSubagentBgNotify(msg: ServerMessage): void {
+    const payload = msg.payload as { customType?: string; details?: Record<string, unknown> } | undefined
+    if (payload?.customType !== 'subagent-bg-notify') return
+    const details = payload.details
+    if (!details) return
+
+    const subagentId = typeof details.id === 'string' ? details.id : null
+    if (!subagentId) return
+
+    const existing = this.subagentRecords.get(subagentId)
+    if (!existing) return
+
+    const status = details.status === 'done' ? 'done'
+      : details.status === 'failed' ? 'failed'
+      : details.status === 'cancelled' ? 'cancelled'
+      : existing.status
+
+    const updated: SubagentRecord = {
+      ...existing,
+      status,
+      model: typeof details.model === 'string' ? details.model : existing.model,
+      error: typeof details.error === 'string' ? details.error : existing.error,
+      startedAt: typeof details.startedAt === 'number' ? details.startedAt : existing.startedAt,
+      endedAt: typeof details.endedAt === 'number' ? details.endedAt : existing.endedAt,
+    }
+
+    this.subagentRecords.set(subagentId, updated)
+    this.broadcastSubagents()
+  }
+
+  /** 广播当前内存态的全量 subagent 列表（session.subagents server push） */
+  private broadcastSubagents(): void {
+    this.opts.send({
+      type: 'session.subagents' as ServerMessageType,
+      payload: {
+        sessionId: this.sessionId,
+        subagents: Array.from(this.subagentRecords.values()),
+      },
+    })
+  }
+
+  // ── workflow 实时推送 ──
+
+  /**
+   * workflow-result customStart（run 完成通知）：广播 session.workflows 增量信号。
+   * details 结构（pi-subagent-workflow notifyDone）：{runId, name, status:'done', reason, traceLength, __gui__?}
+   * 前端收到推送后调 loadWorkflows RPC 拉取完整列表（含 agentCalls）。
+   */
+  private handleWorkflowResult(msg: ServerMessage): void {
+    const payload = msg.payload as { customType?: string; details?: Record<string, unknown> } | undefined
+    if (payload?.customType !== 'workflow-result') return
+    const details = payload.details
+    if (!details) return
+
+    const runId = typeof details.runId === 'string' ? details.runId : null
+    if (!runId) return
+
+    const reason = typeof details.reason === 'string' ? details.reason : undefined
+    this.broadcastWorkflowUpdate({ runId, status: 'done', reason })
+  }
+
+  /**
+   * workflow tool-call-end（action=run 发起）：广播 session.workflows running 信号。
+   * details 结构（pi-subagent-workflow tool-workflow.ts）：{action:'run', runId, status:'running', name, slug?}
+   * 前端收到推送后调 loadWorkflows RPC 拉取完整列表。
+   */
+  private handleWorkflowToolEnd(details: Record<string, unknown> | undefined): void {
+    if (!details) return
+    if (details.action !== 'run' || details.status !== 'running') return
+    const runId = typeof details.runId === 'string' ? details.runId : null
+    if (!runId) return
+
+    this.broadcastWorkflowUpdate({ runId, status: 'running' })
+  }
+
+  /**
+   * 广播 workflow 增量信号（session.workflows server push）。
+   * 推送 {runId, status, reason?} 增量，非全量列表——前端收到后触发 loadWorkflows RPC 拉取完整数据。
+   * 设计理由：发起时刻 runtime 无 agentCalls（workflow 刚启动），全量需读 state 文件增加复杂度；
+   * 增量信号 + RPC 拉取复用现有 loadWorkflows 链路，零新增 IO 逻辑。
+   */
+  private broadcastWorkflowUpdate(update: { runId: string; status: string; reason?: string }): void {
+    this.opts.send({
+      type: 'session.workflowUpdate' as ServerMessageType,
+      payload: {
+        sessionId: this.sessionId,
+        update,
       },
     })
   }

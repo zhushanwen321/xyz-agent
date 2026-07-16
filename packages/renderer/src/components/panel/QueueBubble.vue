@@ -15,22 +15,22 @@
 <template>
   <div
     v-if="state && hasAny"
-    class="mb-1.5 overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-[color-mix(in_oklch,var(--accent)_6%,transparent)] text-[12px]"
+    class="mb-1.5 overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-accent-soft text-[12px]"
   >
     <!-- head：脉冲点 + 标签 + 计数摘要 + chevron（多条可折叠） -->
     <Button
       variant="ghost"
-      class="flex h-auto w-full items-center gap-2 rounded-none px-3 py-1.5 text-left font-normal hover:bg-[color-mix(in_oklch,var(--accent)_8%,transparent)] disabled:opacity-100"
+      class="flex h-auto w-full items-center gap-2 rounded-none px-3 py-1.5 text-left font-normal hover:bg-accent-soft disabled:opacity-100"
       :class="!canToggle ? 'cursor-default' : ''"
       :disabled="!canToggle"
       :aria-expanded="canToggle ? expanded : undefined"
-      :title="canToggle ? (expanded ? '收起队列' : '展开队列') : undefined"
+      :title="canToggle ? (expanded ? t('panel.queue.collapseQueue') : t('panel.queue.expandQueue')) : undefined"
       @click="toggle"
     >
       <span class="size-[7px] shrink-0 animate-pulse-accent rounded-full bg-accent" />
-      <span class="shrink-0 font-mono text-[10px] font-semibold tracking-wider text-accent">待发送</span>
+      <span class="shrink-0 font-mono text-[10px] font-semibold tracking-wider text-accent">{{ t('panel.queue.pending') }}</span>
       <span class="min-w-0 flex-1 truncate text-muted">
-        <template v-if="totalCount > 1">{{ totalCount }} 条 · </template>{{ summary }}
+        <template v-if="totalCount > 1">{{ t('panel.queue.itemCount', { count: totalCount }) }} · </template>{{ summary }}
       </span>
       <ChevronRight
         v-if="canToggle"
@@ -52,7 +52,7 @@
           class="size-[6px] animate-pulse-accent rounded-full"
           :class="singleGroup.key === 'followUp' ? 'bg-info' : 'bg-accent'"
         />
-        {{ singleGroup.key === 'followUp' ? 'FOLLOWUP 新轮' : 'STEER 追加' }}
+        {{ singleGroup.key === 'followUp' ? t('panel.queue.followupLabel') : t('panel.queue.steerLabel') }}
       </span>
       <p class="mt-0.5 text-fg">{{ singleGroup.items[0] }}</p>
     </div>
@@ -70,7 +70,7 @@
             :class="group.key === 'followUp' ? 'text-info' : 'text-accent'"
           >{{ group.key === 'followUp' ? 'FOLLOWUP' : 'STEERING' }}</span>
           <span class="text-[10px] text-subtle">
-            {{ group.key === 'followUp' ? '后生效 · 回合后开新轮' : '先生效 · 追加当前回合' }}
+            {{ group.key === 'followUp' ? t('panel.queue.followupFirst') : t('panel.queue.steerFirst') }}
           </span>
         </div>
         <div
@@ -83,7 +83,7 @@
         </div>
       </div>
       <div class="border-t border-[color-mix(in_oklch,var(--accent)_18%,transparent)] px-3 py-1 text-[10px] text-subtle">
-        生效顺序：steering FIFO → followUp FIFO
+        {{ t('panel.queue.effectOrder') }}
       </div>
     </template>
   </div>
@@ -91,9 +91,12 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ChevronRight } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { QueueState } from '@/stores/chat'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   state: QueueState | undefined

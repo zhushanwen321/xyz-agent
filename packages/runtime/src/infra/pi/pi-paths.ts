@@ -50,3 +50,24 @@ export function getSessionsDir(): string {
 export function getAgentsDir(): string {
   return join(getPiAgentDir(), 'agents')
 }
+
+/**
+ * 编码 cwd 为目录名（复刻 pi-subagent-workflow 的 path-encoding.ts）。
+ *
+ * 规则：'--' + cwd 去掉首斜杠 + 所有 / \ : 替换为 - + '--'
+ * 例：/Users/x/proj → --Users-x-proj--
+ *     C:\Users\x\proj → --C-Users-x-proj--
+ *
+ * 用于定位 subagent session 目录：<piAgentDir>/subagents/<encodeCwd(cwd)>/sessions/
+ */
+export function encodeCwd(cwd: string): string {
+  return '--' + cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-') + '--'
+}
+
+/**
+ * 获取 subagent session 目录路径。
+ * <piAgentDir>/subagents/<encodeCwd(mainCwd)>/sessions/
+ */
+export function getSubagentSessionDir(mainCwd: string): string {
+  return join(getPiAgentDir(), 'subagents', encodeCwd(mainCwd), 'sessions')
+}

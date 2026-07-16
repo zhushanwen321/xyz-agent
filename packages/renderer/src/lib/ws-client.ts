@@ -32,6 +32,10 @@ const HEARTBEAT_INTERVAL_MS = 15_000
 const RECONNECT_BASE_DELAY_MS = 1_000
 const RECONNECT_BACKOFF_EXPONENT = 2
 const MAX_RECONNECT_DELAY_MS = 30_000
+/** 重连尝试上限（设计文档 A4 §3.3）：超此不再自动重连，置 failed 待用户手动重试 */
+const MAX_RECONNECT_ATTEMPTS = 20
+/** 重连总时长上限（ms）：超过即放弃，避免长时间无意义重试占用资源 */
+const MAX_RECONNECT_DURATION_MS = 60_000
 
 // ── 状态 ────────────────────────────────────────────────────
 const state = ref<ConnectionState>('disconnected')
@@ -41,6 +45,8 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectAttempts = 0
 let wsGeneration = 0
 let currentUrl: string | null = null
+/** 本轮重连起始时间戳（首次 scheduleReconnect 设置，connect 成功后置 null 重置） */
+let reconnectStartedAt: number | null = null
 
 // Vite HMR：热重载前保存 url，重载后自动重连
 let hmrUrl = (import.meta.hot?.data as { wsUrl?: string } | undefined)?.wsUrl ?? null
@@ -110,6 +116,8 @@ export function connect(url: string): void {
     if (gen !== wsGeneration) return // 旧 WS 残余回调，忽略
     state.value = 'connected'
     reconnectAttempts = 0
+    // 连接成功 → 重置重连计时窗口（下次掉线重新开始计数）
+    reconnectStartedAt = null
     startHeartbeat()
   }
 
@@ -158,21 +166,43 @@ export function disconnect(): void {
   state.value = 'disconnected'
 }
 
-/** 发送消息（连接骨架阶段仅用于心跳 ping） */
-export function send(msg: ClientMessage): void {
+/**
+ * 发送消息（W4：返回 boolean，让调用方 fast-fail）。
+ *
+ * 返回契约：
+ * - readyState=OPEN → 实际发送，返回 true（已发送确认）
+ * - readyState≠OPEN（CONNECTING/CLOSED）→ 不发送，返回 false（调用方可立即 reject / 重试）
+ *
+ * mock 模式：mock 始终「可发送」，返回 true（mockSend 不抛即视为发送成功）。
+ * 透传 mockSend 返回值以支持测试桩精确控制（mockSend 返回 boolean 时以它为准）。
+ */
+export function send(msg: ClientMessage): boolean {
   if (isMock) {
-    mockSend(msg)
-    return
+    const ret = mockSend(msg)
+    // mockSend 桩默认返回 undefined（视为发送成功 → true）；测试桩可返回 boolean 精确控制
+    return typeof ret === 'boolean' ? ret : true
   }
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg))
+    return true
   }
+  return false
 }
 
 // ── 内部 ────────────────────────────────────────────────────
 
 function scheduleReconnect(): void {
   if (!currentUrl) return
+  // 重连上限兜底（设计文档 A4 §3.3）：尝试次数或总时长超限 → 放弃自动重连，置 failed
+  if (reconnectStartedAt === null) reconnectStartedAt = Date.now()
+  if (
+    reconnectAttempts >= MAX_RECONNECT_ATTEMPTS ||
+    Date.now() - reconnectStartedAt > MAX_RECONNECT_DURATION_MS
+  ) {
+    console.warn('[ws] reconnect attempts exhausted, giving up (state=failed)')
+    setFailed()
+    return
+  }
   const delay = Math.min(
     RECONNECT_BASE_DELAY_MS * Math.pow(RECONNECT_BACKOFF_EXPONENT, reconnectAttempts),
     MAX_RECONNECT_DELAY_MS,

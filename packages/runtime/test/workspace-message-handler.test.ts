@@ -140,19 +140,17 @@ describe('WorkspaceMessageHandler — T1.9 RPC 贯穿', () => {
 
 // ── T2.1-T2.5: 写入时机接入 ────────────────────────────────────
 
-// Mock readPiState — SessionLifecycle 顶层 import 它，必须在 import 前 mock
-vi.mock('../src/services/ports/pi-engine.js', () => ({
-  readPiState: vi.fn().mockResolvedValue({ sessionId: 's1', sessionFile: '/tmp/s1.jsonl' }),
-}))
+// SessionLifecycle 不再 import readPiState（W2 已删，create 改用 client.getState()）。
+// pi-engine.js 仅剩类型导出，无需 vi.mock 运行时值。
 
 describe('SessionLifecycle — 写入时机 record', () => {
   it('T2.1: create 成功后 record(sessionCwd) 被调', async () => {
-    // 注意：readPiState 已被顶层 vi.mock 拦截，返回 { sessionId: 's1', sessionFile: '/tmp/s1.jsonl' }
+    // client.getState() 返回 pi session 状态（sessionId/sessionFile）
     const { SessionLifecycle } = await import('../src/services/session/session-lifecycle.js')
     const workspaceRecord = vi.fn()
     const workspaceService = { record: workspaceRecord, list: vi.fn().mockReturnValue([]) }
     const mockClient = {
-      sendCommand: vi.fn().mockResolvedValue({ success: true }),
+      getState: vi.fn().mockResolvedValue({ sessionId: 's1', sessionFile: '/tmp/s1.jsonl' }),
       onEvent: vi.fn().mockReturnValue(() => {}),
     }
     const svc = {

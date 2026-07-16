@@ -15,6 +15,9 @@
  */
 import { watch } from 'vue'
 import { connect, disconnect, getState, setRestarting, setFailed } from '../lib/ws-client'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 import {
   getRuntimePort,
   getRuntimePortOffset,
@@ -45,7 +48,7 @@ function handleSessionExited(sessionId: string, payload: { code: number | null; 
   useSessionStore().markDead(sessionId)
   // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
   const shortReason = payload.reason.split('\n')[0]
-  useToast().error(`会话进程已退出：${shortReason}`)
+  useToast().error(t('connection.runtimeExited', { reason: shortReason }))
 }
 
 export type ConnectionStatus =
@@ -95,11 +98,16 @@ function routeInbound(msg: ServerMessage): void {
     }
   } else {
     events.dispatchGlobal(msg)
+    // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
+    // 让 runtime bug 可见（违反规则 #7 隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
+    if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
+      console.warn('[useConnection] session-level message missing sessionId, routed to global:', msg.type)
+    }
     // 全局 error 兜底：无 sessionId、无 id 的 server-push error 此前静默丢弃。
     // 现 toast 提示（如 config 加载失败等全局错误）。
     if (msg.type === 'error' && !msg.id) {
       const payload = msg.payload as { message?: string }
-      const message = typeof payload.message === 'string' ? payload.message : '未知错误'
+      const message = typeof payload.message === 'string' ? payload.message : t('connection.unknownError')
       useToast().error(message)
     }
   }
@@ -113,6 +121,15 @@ function ensureDispatcher(): void {
   if (dispatcherInstalled) return
   dispatcherInstalled = true
   removeTransportListener = transport.on(routeInbound)
+}
+
+/**
+ * 连接 WS 并记录 url（W4 visibility 重连复用）。
+ * 包装 ws-client connect：调前把 url 存入 lastConnectedUrl，供用户切回前台时主动重连。
+ */
+function connectWs(url: string): void {
+  lastConnectedUrl = url
+  connect(url)
 }
 
 /** 获取 fallback 端口（考虑 dev 偏移） */
@@ -129,6 +146,14 @@ let removeRuntimePortListener: (() => void) | null = null
 let removeRuntimeRestartingListener: (() => void) | null = null
 let removeRuntimeFailedListener: (() => void) | null = null
 let removeStateWatch: (() => void) | null = null
+/**
+ * 最近一次 connect 使用的 url（W4 visibility 重连复用）。
+ * 用户从后台切回前台且未连接时，用此 url 主动重连，不干等 ws-client 指数退避（最长 30s）。
+ * null 表示从未连过（此时也无 url 可复用，visibility 不触发重连）。
+ */
+let lastConnectedUrl: string | null = null
+/** visibilitychange handler 引用（teardown 时 removeEventListener 用） */
+let visibilityHandler: (() => void) | null = null
 
 export function useConnection() {
   const state = getState()
@@ -137,18 +162,43 @@ export function useConnection() {
     // 入站消息分发器在任何模式下都安装（mock 模式仅收到 pong，无副作用）
     ensureDispatcher()
 
+    // W4：安装 visibilitychange 监听（幂等——visibilityHandler 守卫防重复注册）。
+    // 用户从其它标签页 / 系统切回应用（visibilityState 变 visible）且当前未连接时，
+    // 用最近一次 url 主动重连，不干等 ws-client 指数退避（最长 30s）。
+    if (!visibilityHandler) {
+      visibilityHandler = () => {
+        // 守卫 1：只有切回可见（visible）才重连，切到后台（hidden）不触发
+        if (document.visibilityState !== 'visible') return
+        // 守卫 2：已连接就不重连（避免无谓连接触发）
+        if (getState().value === 'connected') return
+        // 守卫 3：从未连过（无 url 复用）则不触发
+        if (!lastConnectedUrl) return
+        connectWs(lastConnectedUrl)
+      }
+      document.addEventListener('visibilitychange', visibilityHandler)
+    }
+
     if (initialised) {
       // HMR 后重连
       if (import.meta.env.VITE_MOCK !== 'true') {
-        connect('ws://localhost:' + await resolveFallbackPort())
+        connectWs('ws://localhost:' + await resolveFallbackPort())
       }
       return
     }
     initialised = true
 
+    // L10：WS 连接状态监听在任何模式都安装（含 mock），确保 mock 断连时也 rejectAll pending。
+    // 此前在 mock 分支之后，mock 模式跳过安装 → mock 断连时 pending 永不 reject。
+    const stopStateWatch = watch(getState(), (newState, oldState) => {
+      if (oldState === 'connected' && newState !== 'connected') {
+        pending.rejectAll(new Error(t('connection.disconnectedError')))
+      }
+    })
+    removeStateWatch = stopStateWatch
+
     // mock 模式：走 mock，不需要端口发现，也不监听 runtime 崩溃事件（mock 无 runtime 进程）
     if (import.meta.env.VITE_MOCK === 'true') {
-      connect('mock://localhost')
+      connectWs('mock://localhost')
       return
     }
 
@@ -156,7 +206,7 @@ export function useConnection() {
     removeRuntimePortListener = onRuntimePort((newPort) => {
       if (newPort && state.value !== 'disconnected') {
         disconnect()
-        connect('ws://localhost:' + newPort)
+        connectWs('ws://localhost:' + newPort)
       }
     })
 
@@ -165,35 +215,26 @@ export function useConnection() {
     // 避免 UI 卡「思考中」+ in-flight Promise 永挂（runtime 重启后是全新实例，旧 pending 永远收不到响应）。
     removeRuntimeRestartingListener = onRuntimeRestarting(() => {
       setRestarting()
-      pending.rejectAll(new Error('Runtime 正在重启'))
+      pending.rejectAll(new Error(t('connection.runtimeRestarting')))
       useChatStore().finalizeAllStreaming('restart')
     })
 
     // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
     removeRuntimeFailedListener = onRuntimeFailed(() => {
       setFailed()
-      pending.rejectAll(new Error('Runtime 不可用'))
+      pending.rejectAll(new Error(t('connection.runtimeUnavailable')))
       useChatStore().finalizeAllStreaming('disconnect')
     })
-
-    // 监听 WS 连接状态变化：connected → 断开时清理 pending（覆盖 runtime 未崩溃但 WS 断连的场景，
-    // 如网络抖动。ws-client.onclose 不通知业务层，通过 watch state 变化间接感知）。
-    const stopStateWatch = watch(getState(), (newState, oldState) => {
-      if (oldState === 'connected' && newState !== 'connected') {
-        pending.rejectAll(new Error('连接已断开'))
-      }
-    })
-    removeStateWatch = stopStateWatch
 
     // 尝试从主进程获取已知端口
     const knownPort = await getRuntimePort()
     if (knownPort) {
-      connect('ws://localhost:' + knownPort)
+      connectWs('ws://localhost:' + knownPort)
       return
     }
 
     // Runtime 尚未启动：用 fallback 端口（ws-client 会自动重连，runtime 起来后连上）
-    connect('ws://localhost:' + await resolveFallbackPort())
+    connectWs('ws://localhost:' + await resolveFallbackPort())
   }
 
   /**
@@ -222,6 +263,11 @@ export function useConnection() {
       removeStateWatch()
       removeStateWatch = null
     }
+    // W4：卸载 visibilitychange 监听（与 init 的 addEventListener 配对，防内存泄漏 + 重复触发）
+    if (visibilityHandler) {
+      document.removeEventListener('visibilitychange', visibilityHandler)
+      visibilityHandler = null
+    }
     if (removeTransportListener) {
       removeTransportListener()
       removeTransportListener = null
@@ -229,6 +275,7 @@ export function useConnection() {
     dispatcherInstalled = false
     disconnect()
     initialised = false
+    lastConnectedUrl = null
   }
 
   return { state, init, teardown, retryRuntime }

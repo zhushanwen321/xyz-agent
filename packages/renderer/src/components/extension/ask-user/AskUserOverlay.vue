@@ -19,13 +19,15 @@
  * - Other：独立 key `${header}__other`
  * - comment：独立 key `${header}__comment`
  *
- * 样式对齐 demo v2（docs/page-design/v3/ask-user/inline-ask-user-demo.html）：
- * - 字体统一：tab(非选中) / 标题 / 选项 label 均 text-[13px] font-normal，选中态 tab font-medium + accent 下划线
- * - description 弱化：opt-desc 同字号 text-[13px]、muted 色建立层级
- * - 请求头 ask-user-head：脉冲圆点 + 标识 + 右上倒计时（5min 超时，warning 色，Clock 图标）
+ * 样式对齐 demo v3（docs/page-design/v3/ask-user/inline-ask-user-demo-v3.html）：
+ * - 无边框一体化：去掉 border-b/border-t 分层，单容器 bg-input 靠间距分区
+ * - head 行：脉冲点 + 单问题标题(或 tab) + 倒计时(absolute 右上角不受换行影响)
+ * - 选项 inline：indicator + label + description 同行流式，无边框 hover/selected 用 bg
+ * - Other 卡片化：最后一个选项(label="其他")，选中后 label 下方展开输入框
  */
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Clock } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -44,6 +46,8 @@ const emit = defineEmits<{
   submit: [answers: string]   // JSON.stringify(AskUserAnswers)
   cancel: []
 }>()
+
+const { t } = useI18n()
 
 // ── 倒计时（5min 超时，每秒刷新剩余）──
 const MS_PER_SEC = 1000
@@ -69,6 +73,8 @@ const countdownText = computed(() => {
   const ss = String(s % SEC_PER_MIN).padStart(TIME_FIELD_PAD, '0')
   return `${mm}:${ss}`
 })
+/** 紧迫态：剩余 < 1min 才转 warning 色（对齐 pi TUI 仅尾部高亮，避免全程橙黄制造焦虑） */
+const isUrgent = computed(() => remainingSec.value < SEC_PER_MIN)
 
 // ── 问题 key（header 缺失时用 question 文本）──
 function qKey(q: AskUserQuestion): string {
@@ -103,21 +109,111 @@ function optValue(o: AskUserOption): string {
   return o.value ?? o.label
 }
 
+/** Other 特殊选项的 value（卡片化，选中后展开输入框）*/
+const OTHER_VALUE = '__other__'
+
+/** Other 选项是否选中（控制输入框展开）*/
+function isOtherSelected(q: AskUserQuestion): boolean {
+  return isSelected(q, OTHER_VALUE)
+}
+
 // ── 单选 / 多选 toggle ──
+// 单选选中后自动前进到下一题（对齐 pi TUI advanceAfterAnswer），多选不前进。
+// Other 是特殊选项（OTHER_VALUE）：选中不 auto-advance，展开 input 并自动聚焦。
 function toggleOption(q: AskUserQuestion, value: string): void {
   const st = states.value[qKey(q)]
   if (!st) return
   if (q.multiSelect) {
     const idx = st.selectedValues.indexOf(value)
-    if (idx >= 0) st.selectedValues.splice(idx, 1)
-    else st.selectedValues.push(value)
+    if (idx >= 0) {
+      st.selectedValues.splice(idx, 1)
+      if (value === OTHER_VALUE) st.otherText = '' // 取消 Other 清文本
+    } else {
+      st.selectedValues.push(value)
+      if (value === OTHER_VALUE) focusOtherInput() // 选中 Other 聚焦 input
+    }
   } else {
     st.selectedValues = st.selectedValues[0] === value ? [] : [value]
+    if (st.selectedValues.length > 0 && value !== OTHER_VALUE) {
+      st.otherText = '' // 选普通选项清 Other（互斥）
+      advanceToNext()
+    } else if (value === OTHER_VALUE && st.selectedValues.length > 0) {
+      focusOtherInput() // 选中 Other 聚焦 input
+    }
+    // 选 Other 时不 auto-advance（用户要输入文本），不前进
   }
+}
+
+/** Other input 组件实例引用（选中展开后自动聚焦）*/
+const otherInputComp = ref<{ $el: HTMLInputElement } | null>(null)
+
+/** Other 选中后聚焦 input（等 v-if 渲染完成）*/
+function focusOtherInput(): void {
+  nextTick(() => {
+    // shadcn Input 根元素就是 <input>，$el 直接是原生 input
+    otherInputComp.value?.$el?.focus()
+  })
 }
 
 function isSelected(q: AskUserQuestion, value: string): boolean {
   return states.value[qKey(q)]?.selectedValues.includes(value) ?? false
+}
+
+/** 单选选中后自动前进到下一题；已是最后一题则停（Submit 常驻底部 action bar） */
+function advanceToNext(): void {
+  if (activeIdx.value < props.questions.length - 1) {
+    activeIdx.value++
+  }
+}
+
+/** 当前问题是否为最后一题（决定按钮显示"下一题"还是"提交"）*/
+const isLastQuestion = computed(() => activeIdx.value >= props.questions.length - 1)
+
+/** Other input 的 Enter 处理：非最后一题前进到下一题，最后一题不拦截（让按钮提交）*/
+function onOtherEnter(): void {
+  if (!isLastQuestion.value) {
+    advanceToNext()
+  } else if (allAnswered.value) {
+    onSubmit()
+  }
+}
+
+/** 点击"下一题"按钮：前进到下一题 */
+function onNextQuestion(): void {
+  advanceToNext()
+}
+
+/** 问题是否已作答（普通选项选中 ≥1，或 Other 选中且有文本，或无选项问题 otherText 有值）
+ *  —— tab 绿点 + allAnswered 共用 */
+function isQuestionAnswered(q: AskUserQuestion): boolean {
+  const st = states.value[qKey(q)]
+  if (!st) return false
+  // 无选项的纯自由文本问题：otherText 有值即答完
+  if (!q.options?.length) return st.otherText.trim().length > 0
+  // 有选项：Other 选中必须有文本才算答完
+  const otherSelected = st.selectedValues.includes(OTHER_VALUE)
+  if (otherSelected && !st.otherText.trim()) {
+    // Other 选中但没文本：检查是否还选了其他选项（多选场景）
+    return st.selectedValues.some((v) => v !== OTHER_VALUE)
+  }
+  return st.selectedValues.length > 0
+}
+
+/** 全部问题已作答（Submit 启用守卫，对齐 pi TUI allAnswered） */
+const allAnswered = computed(() => props.questions.every(isQuestionAnswered))
+/** 未答题数（disabled tooltip 文案） */
+const unansweredCount = computed(() => props.questions.filter((q) => !isQuestionAnswered(q)).length)
+
+/** Tab / Shift+Tab 在问题间循环导航（多问题时生效） */
+function onTabKey(e: KeyboardEvent): void {
+  if (props.questions.length <= 1) return
+  e.preventDefault()
+  const total = props.questions.length
+  if (e.shiftKey) {
+    activeIdx.value = (activeIdx.value - 1 + total) % total
+  } else {
+    activeIdx.value = (activeIdx.value + 1) % total
+  }
 }
 
 // 是否在选项末尾追加 Other 输入框（有 options 且 allowOther !== false）
@@ -126,6 +222,7 @@ function showOther(q: AskUserQuestion): boolean {
 }
 
 // ── Submit：构造 answers JSON ──
+// Other 选中时，otherText 文本替代 OTHER_VALUE 占位符作为实际答案值。
 function onSubmit(): void {
   const answers: Record<string, string> = {}
   for (const q of props.questions) {
@@ -134,15 +231,10 @@ function onSubmit(): void {
     if (!st) continue
 
     if (q.options?.length) {
-      // 有选项的问题：选中项作为主答案
-      if (st.selectedValues.length > 0) {
-        answers[key] = q.multiSelect
-          ? JSON.stringify(st.selectedValues)   // 多选：JSON 数组
-          : st.selectedValues[0]                // 单选：单个 value string
-      }
-      // Other 自由文本（独立 key，仅 options 存在时追加）
-      if (st.otherText && showOther(q)) {
-        answers[`${key}__other`] = st.otherText
+      // 有选项的问题：选中项作为主答案（Other 选中时用 otherText 文本替代占位符）
+      const vals = st.selectedValues.map((v) => v === OTHER_VALUE ? (st.otherText || '') : v).filter(Boolean)
+      if (vals.length > 0) {
+        answers[key] = q.multiSelect ? JSON.stringify(vals) : vals[0]
       }
     } else {
       // 无选项的纯自由文本问题：输入文本作为主答案
@@ -160,71 +252,88 @@ function onSubmit(): void {
 </script>
 
 <template>
-  <!-- W2 inline 卡片：由 Panel.vue 直接挂载（覆盖 composer 位置），不再包 Dialog。
-       结构对齐 demo v2：ask-user-head（来源 + 倒计时）/ ask-user-body（tab + 问题 + 选项）/ actions。 -->
+  <!-- v3 无边框一体化：单容器靠间距分区，head 行含脉冲点+标题/tab+倒计时(absolute)。
+       选项 inline（indicator + label + desc 同行流式），无边框 hover/selected 用 bg。
+       Other 卡片化：最后一个选项，选中后 label 下方展开输入框。 -->
   <div
     data-testid="ask-user-overlay"
-    class="flex flex-col overflow-hidden rounded-lg border border-border-strong bg-surface-2 shadow-lg"
+    class="relative flex flex-col animate-ask-user-slide-up overflow-hidden rounded-lg bg-bg-input motion-reduce:animate-none"
+    @keydown.tab="onTabKey"
   >
-    <!-- 请求头：脉冲圆点 + 来源标识 + 右上倒计时（5min 超时，warning 色） -->
+    <!-- head 行：脉冲点 + (单问题标题 | 多问题 tab) + 倒计时(absolute 右上) -->
     <div
       data-testid="ask-user-head"
-      class="flex items-center gap-2 border-b border-border bg-accent-soft px-3.5 py-2"
+      class="relative flex items-center gap-2 px-3.5 pt-2.5"
     >
       <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-      <span class="text-[13px] font-medium text-accent">ask-user</span>
-      <span class="text-[13px] text-text-muted">· 需要你的输入才能继续</span>
+      <!-- 单问题：标题提到 head 行，单行 truncate，pr 给 timer 留空间 -->
+      <span
+        v-if="questions.length <= 1"
+        class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap pr-12 text-[13px] font-medium text-fg"
+        data-testid="ask-user-question-text"
+      >
+        {{ activeQuestion?.question }}
+      </span>
+      <!-- 多问题：tab 整合到 head 行 -->
+      <div v-else class="flex items-center gap-0.5">
+        <Button
+          v-for="(q, i) in questions"
+          :key="qKey(q)"
+          variant="ghost"
+          :class="[
+            'rounded-sm px-2.5 py-1 text-[12px] font-normal transition-colors',
+            i === activeIdx
+              ? 'bg-accent-soft font-medium text-fg'
+              : 'text-subtle hover:text-muted',
+          ]"
+          :data-testid="`ask-user-tab-${i}`"
+          @click="activeIdx = i"
+        >
+          {{ q.header ?? q.question.slice(0, 12) }}
+          <span
+            v-if="isQuestionAnswered(q)"
+            data-testid="ask-user-tab-answered"
+            class="size-1 rounded-full bg-success"
+          />
+        </Button>
+      </div>
       <span class="flex-1" />
+      <!-- 倒计时：absolute 固定右上角，不受 head 内容换行影响 -->
       <span
         data-testid="ask-user-countdown"
-        class="flex items-center gap-0.5 font-mono text-[11px] text-warning"
+        class="absolute right-3.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 bg-bg-input pl-1.5 font-mono text-[11px]"
+        :class="isUrgent ? 'text-warning' : 'text-subtle'"
+        style="margin-top: 5px"
       >
         <Clock class="size-3" />
         {{ countdownText }}
       </span>
     </div>
 
-    <!-- 问题区域 -->
-    <div class="flex flex-col gap-3.5 px-4 py-3.5">
-      <!-- tab 导航（多问题时显示） -->
-      <div v-if="questions.length > 1" class="flex gap-0.5 border-b border-border">
-        <Button
-          v-for="(q, i) in questions"
-          :key="qKey(q)"
-          variant="ghost"
-          :class="[
-            'rounded-none -mb-px border-b-2 px-3 py-2 text-[13px] font-normal transition-colors',
-            i === activeIdx
-              ? 'border-accent font-medium text-foreground'
-              : 'border-transparent text-text-muted hover:text-foreground',
-          ]"
-          :data-testid="`ask-user-tab-${i}`"
-          @click="activeIdx = i"
-        >
-          {{ q.header ?? q.question.slice(0, 12) }}
-        </Button>
-      </div>
-
-      <!-- 当前问题面板 -->
-      <div v-if="activeQuestion" class="flex flex-col gap-2.5">
-        <!-- 上下文摘要（弱化背景 + 左侧 reasoning 色竖条，对齐 demo v2 .q-context） -->
+    <!-- body：问题内容 + 选项，紧凑间距 -->
+    <div class="flex flex-col gap-2 px-3.5 pb-1 pt-2.5">
+      <!-- 多问题时：当前问题文本 + context -->
+      <template v-if="activeQuestion">
+        <!-- context（reasoning-soft 软底，无边框） -->
         <p
           v-if="activeQuestion.context"
-          class="rounded-sm border-l-2 border-[var(--reasoning)] bg-input px-3 py-2 text-[13px] text-text-muted"
+          data-testid="ask-user-context"
+          class="rounded bg-[var(--reasoning-soft)] px-2.5 py-1.5 text-[12px] leading-1.5 text-text-muted"
         >
           {{ activeQuestion.context }}
         </p>
 
-        <!-- 问题文本（统一 13px，medium 字重做强调） -->
+        <!-- 多问题时的问题文本（单问题已在 head 行） -->
         <p
-          class="text-[13px] font-medium text-foreground"
-          data-testid="ask-user-question-text"
+          v-if="questions.length > 1"
+          class="py-0.5 text-[13px] font-medium text-fg"
+          data-testid="ask-user-question-text-multi"
         >
           {{ activeQuestion.question }}
         </p>
 
-        <!-- 选项列表（单选/多选） -->
-        <div v-if="activeQuestion.options?.length" class="flex flex-col gap-1.5">
+        <!-- 选项列表（单选/多选）：inline 布局，无边框，hover/selected 用 bg -->
+        <div v-if="activeQuestion.options?.length" class="flex flex-col gap-1">
           <div
             v-for="opt in activeQuestion.options"
             :key="optValue(opt)"
@@ -233,15 +342,16 @@ function onSubmit(): void {
             :tabindex="0"
             :aria-checked="isSelected(activeQuestion, optValue(opt))"
             :class="[
-              'flex cursor-pointer items-start gap-2.5 rounded-sm border bg-input px-3 py-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent',
+              'flex cursor-pointer items-start gap-2 rounded px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent',
               isSelected(activeQuestion, optValue(opt))
-                ? 'border-accent bg-accent-soft'
-                : 'border-border hover:border-border-strong hover:bg-surface-hover',
+                ? 'bg-accent-soft'
+                : 'hover:bg-white/[0.04]',
             ]"
             @click="toggleOption(activeQuestion, optValue(opt))"
             @keydown.enter="toggleOption(activeQuestion, optValue(opt))"
             @keydown.space.prevent="toggleOption(activeQuestion, optValue(opt))"
           >
+            <!-- indicator：钉首行文字中线 -->
             <Checkbox
               v-if="activeQuestion.multiSelect"
               :model-value="isSelected(activeQuestion, optValue(opt))"
@@ -251,33 +361,74 @@ function onSubmit(): void {
             <div
               v-else
               :class="[
-                'mt-0.5 size-4 shrink-0 rounded-full border-2',
+                'mt-0.5 size-4 shrink-0 rounded-full border-2 transition-colors',
                 isSelected(activeQuestion, optValue(opt))
                   ? 'border-accent bg-accent'
                   : 'border-border-strong',
               ]"
             />
-            <div class="flex flex-col gap-0.5">
-              <span
-                data-testid="ask-user-option-label"
-                class="text-[13px] font-normal text-foreground"
-              >{{ opt.label }}</span>
-              <span
-                v-if="opt.description"
-                data-testid="ask-user-option-desc"
-                class="text-[13px] text-text-muted"
-              >{{ opt.description }}</span>
+            <!-- 内容：label + desc inline 同行 -->
+            <div class="flex min-w-0 flex-1 flex-col">
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span
+                  data-testid="ask-user-option-label"
+                  class="text-[13px] font-normal leading-1.5 text-fg"
+                >{{ opt.label }}</span>
+                <span
+                  v-if="opt.description"
+                  data-testid="ask-user-option-desc"
+                  class="text-[12px] leading-1.5 text-subtle"
+                >{{ opt.description }}</span>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Other 自由文本（有 options 时追加） -->
-        <div v-if="showOther(activeQuestion)" class="flex flex-col gap-1">
-          <Input
-            v-model="states[qKey(activeQuestion)].otherText"
-            placeholder="Other（自由输入）"
-            :data-testid="`ask-user-other-${qKey(activeQuestion)}`"
+        <!-- Other 卡片化选项（有 options 且 allowOther !== false）。
+             作为最后一个选项卡片，选中后 label 下方展开输入框 -->
+        <div
+          v-if="showOther(activeQuestion)"
+          :data-testid="`ask-user-option-${OTHER_VALUE}`"
+          :role="activeQuestion.multiSelect ? 'checkbox' : 'radio'"
+          :tabindex="0"
+          :aria-checked="isOtherSelected(activeQuestion)"
+          :class="[
+            'flex cursor-pointer items-start gap-2 rounded px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent',
+            isOtherSelected(activeQuestion) ? 'bg-accent-soft' : 'hover:bg-white/[0.04]',
+          ]"
+          @click="toggleOption(activeQuestion, OTHER_VALUE)"
+          @keydown.enter="toggleOption(activeQuestion, OTHER_VALUE)"
+          @keydown.space.prevent="toggleOption(activeQuestion, OTHER_VALUE)"
+        >
+          <Checkbox
+            v-if="activeQuestion.multiSelect"
+            :model-value="isOtherSelected(activeQuestion)"
+            class="mt-0.5"
+            @update:model-value="toggleOption(activeQuestion, OTHER_VALUE)"
           />
+          <div
+            v-else
+            :class="[
+              'mt-0.5 size-4 shrink-0 rounded-full border-2 transition-colors',
+              isOtherSelected(activeQuestion) ? 'border-accent bg-accent' : 'border-border-strong',
+            ]"
+          />
+          <div class="flex min-w-0 flex-1 flex-col">
+            <span class="text-[13px] font-normal leading-1.5 text-fg">{{ t('extensionUI.other') }}</span>
+            <!-- 选中时展开输入框（独立成行，自动聚焦）。
+                 @keydown.stop 阻止冒泡到卡片容器；Enter 单独处理前进到下一题 -->
+            <Input
+              v-if="isOtherSelected(activeQuestion)"
+              ref="otherInputComp"
+              v-model="states[qKey(activeQuestion)].otherText"
+              :placeholder="t('extensionUI.customAnswerPlaceholder')"
+              :data-testid="`ask-user-other-${qKey(activeQuestion)}`"
+              class="mt-1.5"
+              @click.stop
+              @keydown.enter.stop="onOtherEnter"
+              @keydown.space.stop
+            />
+          </div>
         </div>
 
         <!-- 无 options 的纯自由文本输入 -->
@@ -285,33 +436,50 @@ function onSubmit(): void {
           v-if="!activeQuestion.options?.length"
           v-model="states[qKey(activeQuestion)].otherText"
           rows="3"
-          placeholder="请输入..."
+          :placeholder="t('extensionUI.inputPlaceholder')"
           data-testid="ask-user-free-text"
         />
 
         <!-- 附加评论 -->
-        <div v-if="activeQuestion.allowComment" class="flex flex-col gap-1">
+        <div v-if="activeQuestion.allowComment" class="flex flex-col gap-0.5">
+          <span class="pl-0.5 text-[11px] text-subtle">{{ t('extensionUI.additionalComment') }}</span>
           <Input
             v-model="states[qKey(activeQuestion)].comment"
-            placeholder="附加评论（可选）"
+            :placeholder="t('extensionUI.commentPlaceholder')"
             :data-testid="`ask-user-comment-${qKey(activeQuestion)}`"
           />
         </div>
-      </div>
+      </template>
     </div>
 
-    <!-- 操作区 -->
-    <div class="flex items-center justify-end gap-2 border-t border-border bg-surface px-4 py-2.5">
+    <!-- actions：无边框，透明继承根。非最后一题显示"下一题"，最后一题显示"提交"(守卫 allAnswered) -->
+    <div class="flex items-center justify-end gap-2 px-3.5 pb-2.5 pt-1">
       <Button
         v-if="allowCancel !== false"
         variant="ghost"
         data-testid="ask-user-cancel"
         @click="emit('cancel')"
       >
-        取消
+        {{ t('common.cancel') }}
       </Button>
-      <Button variant="default" data-testid="ask-user-submit" @click="onSubmit">
-        提交
+      <Button
+        v-if="!isLastQuestion"
+        variant="default"
+        data-testid="ask-user-next"
+        :disabled="!isQuestionAnswered(activeQuestion!)"
+        @click="onNextQuestion"
+      >
+        {{ t('common.next') }}
+      </Button>
+      <Button
+        v-else
+        variant="default"
+        data-testid="ask-user-submit"
+        :disabled="!allAnswered"
+        :title="allAnswered ? t('common.submit') : t('extensionUI.unansweredHint', { count: unansweredCount })"
+        @click="onSubmit"
+      >
+        {{ t('common.submit') }}
       </Button>
     </div>
   </div>

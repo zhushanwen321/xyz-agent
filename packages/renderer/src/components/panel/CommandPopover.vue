@@ -65,6 +65,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
@@ -99,6 +100,7 @@ const controlledOpen = computed({
 
 const activeIndex = ref(0)
 
+const { t } = useI18n()
 const commandStore = useCommandStore()
 const settingsStore = useSettingsStore()
 const { load: loadFileCandidates } = useFileSearch()
@@ -140,7 +142,7 @@ watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 const slashCommands = computed(() => {
   if (props.sessionId) {
     // compact 只在有 session 时注入（landing 态无上下文可压缩）
-    const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: '压缩会话上下文' }
+    const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }
     const piCmds = commandStore.getCommands(props.sessionId)
     return [compactCmd, ...piCmds]
   }
@@ -185,6 +187,8 @@ const items = computed(() => {
         id: f.id,
         name: f.name,
         kind: f.kind,
+        // f.kind 是 FileCandidate 的数据契约字面量（@/lib/file-candidates.ts line 45 映射自 FileNode.type='dir'）
+        // 是数据值非 UI 文案，不参与 i18n 化
         icon: f.kind === '目录' ? 'folder' : 'file',
         description: undefined,
         dirPath,
