@@ -170,7 +170,8 @@ async function main(): Promise<void> {
       onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
       // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
-      onTurnFinalize: (sid) => sessionService.handleTurnEndSideEffects(sid),
+      // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
+      onTurnFinalize: (sid, stopReason) => sessionService.handleTurnEndSideEffects(sid, stopReason),
       onThinkingLevelChanged: (sid, level) => {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。

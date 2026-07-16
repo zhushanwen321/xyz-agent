@@ -561,15 +561,21 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    *   2. tryPersistLabel 兜底 —— turn_end 时 pi flush 尚未完成（文件不存在）则在此补写。
    *   3. session_end 终态写入（W4，ADR 0036）—— 让 scanner 读到终态，前端无需预加载历史。
    *
-   * @param stopReason pi agent_end 的 stopReason（'error' → outcome=error，其余 → done）
+   * @param stopReason pi agent_end 的 stopReason。
+   *   outcome 映射：'error'→error，'aborted'→stopped，其余→done。
+   *   aborted 走 stopped 与 message-dispatcher.abort 路径一致（abort 写 stopped 后若 pi 仍发
+   *   agent_end{stopReason:'aborted'}，此处也写 stopped，两条 session_end 一致不冲突）。
    */
   handleTurnEndSideEffects(sessionId: string, stopReason?: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.isGenerating = false
     this.tryPersistLabel(session)
-    // W4：写 session_end 终态（正常完成）。stopReason='error' → error，其余 → done
-    this.persistSessionOutcome(sessionId, stopReason === 'error' ? 'error' : 'done')
+    // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
+    const outcome = stopReason === 'error' ? 'error'
+      : stopReason === 'aborted' ? 'stopped'
+      : 'done'
+    this.persistSessionOutcome(sessionId, outcome)
   }
 
   /**
