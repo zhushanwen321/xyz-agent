@@ -64,6 +64,11 @@ extraResources:
   # 不再打包进产物。详见 recommended-extensions.json + extension.recommended WS 协议。
   - from: ../../xyz-agent-extension.js
     to: xyz-agent-extension.js
+  # xyz-settings CLI（从 tsup 打包的 cli.cjs）
+  # packaged app 中位置：resources/bin/xyz-settings
+  # pi Skill 通过绝对路径引用此文件
+  - from: dist/runtime/cli.cjs
+    to: bin/xyz-settings
 
 # NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。
 # 如需 Intel Mac 支持，追加 macos-13 (Intel) 或配置 universal。
