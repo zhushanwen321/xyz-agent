@@ -32,7 +32,11 @@ vi.mock('@/api', () => ({
   },
 }))
 
-vi.mock('@/i18n', () => ({ setLocale: vi.fn() }))
+// 保留真实 default（i18n.global.t 等），仅 stub setLocale 避免 SettingsModal onMounted 拉起实例
+vi.mock('@/i18n', async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  setLocale: vi.fn(),
+}))
 
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 import SettingsResourcePage from '@/components/settings/SettingsResourcePage.vue'

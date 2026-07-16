@@ -7,7 +7,7 @@
  * - 无 git 改动文件 → 直接 preview（file.read）
  * - 用户手动 toggle 切回 Diff（空 patch）→ 不降级，显示空 diff 内容
  *
- * mock 策略：vi.mock('@/api/domains/file') + vi.mock('@/api/domains/git')，
+ * mock 策略：vi.mock('@/api') 聚合门面覆盖 file.read + git.getDiff，
  * vi.mock('@/stores/session')（sessionCwd 查 cwd 用）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useDetailPane.test.ts
@@ -16,14 +16,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
-// mock api/domains（useDetailPane 依赖 file.read + git.getDiff）
+// mock @/api 聚合门面：useDetailPane 源码 import { file, git } from '@/api'，
+// vitest VITE_MOCK=true 下 @/api 默认指向 mockApi fixture，须在此聚合门面层
+// 覆盖 file/git 导出，否则 mock 不生效（会走 mockApi 基于文件名的 fixture 内容）。
 const mockFileRead = vi.fn()
 const mockGitGetDiff = vi.fn()
-vi.mock('@/api/domains/file', () => ({
-  read: (...args: unknown[]) => mockFileRead(...(args as [string, string?])),
-}))
-vi.mock('@/api/domains/git', () => ({
-  getDiff: (...args: unknown[]) => mockGitGetDiff(...(args as [string, string])),
+vi.mock('@/api', () => ({
+  file: { read: (...args: unknown[]) => mockFileRead(...(args as [string, string?])) },
+  git: { getDiff: (...args: unknown[]) => mockGitGetDiff(...(args as [string, string])) },
 }))
 // sessionStore.list 查 cwd（sessionCwd），此处给空列表即可（测试不涉及图片 URL）
 vi.mock('@/stores/session', () => ({

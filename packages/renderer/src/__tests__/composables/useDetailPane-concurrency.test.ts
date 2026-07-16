@@ -10,14 +10,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
-// mock api/domains：第一次 read 延迟，第二次立即返回
+// mock @/api 聚合门面：useDetailPane 源码 import { file, git } from '@/api'，
+// vitest VITE_MOCK=true 下须在聚合门面层覆盖 file/git 导出，否则走 mockApi fixture。
+// 第一次 read 延迟，第二次立即返回
 const mockFileRead = vi.fn()
 const mockGitGetDiff = vi.fn()
-vi.mock('@/api/domains/file', () => ({
-  read: (...args: unknown[]) => mockFileRead(...(args as [string, string?])),
-}))
-vi.mock('@/api/domains/git', () => ({
-  getDiff: (...args: unknown[]) => mockGitGetDiff(...(args as [string, string])),
+vi.mock('@/api', () => ({
+  file: { read: (...args: unknown[]) => mockFileRead(...(args as [string, string?])) },
+  git: { getDiff: (...args: unknown[]) => mockGitGetDiff(...(args as [string, string])) },
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ list: [] }),

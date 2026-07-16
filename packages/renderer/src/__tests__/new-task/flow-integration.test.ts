@@ -58,6 +58,10 @@ const chatMock = vi.hoisted(() => ({
 
 vi.mock('@/api', () => ({
   session: { create: createCtrl.create, remove: createCtrl.remove },
+  // submitFirstMessage → useFileTree.loadTree 调 fileApi.tree/gitApi.status（Promise.allSettled）；
+  // 给空返回避免 unhandled rejection
+  file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
+  git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
 }))
 vi.mock('@/lib/ipc', () => ({ pickDirectory: pickCtrl.pickDirectory }))
 // submitFirstMessage 终端调用 useChat.send；mock 掉避免拖入 chat 订阅机制（useChat 自有单测）

@@ -101,14 +101,19 @@ describe('subagent store — loadSubagents', () => {
     expect(store.records[0].agent).toBe('reviewer')
   })
 
-  it('失败时 records 清空', async () => {
+  it('失败时保留 records 并设 loadError（M1：失败不清空）', async () => {
     vi.mocked(sessionApi.getSubagents).mockRejectedValue(new Error('network'))
 
     const store = useSubagentStore()
     store.records = [makeRecord()] // 预置旧数据
     await store.loadSubagents('session-1')
 
-    expect(store.records).toEqual([])
+    // M1 契约：失败不清空 records（保留旧数据），设 loadError 供错误态展示
+    // 注意 store.records 经 pinia 响应式 unwrap，非同一引用，按内容 + 长度断言保留。
+    expect(store.records).toHaveLength(1)
+    expect(store.records[0].subagentId).toBe('bg-test-1-111')
+    expect(store.loadError).toBe('network')
+    expect(store.isLoading).toBe(false)
   })
 
   it('sessionId 为空时 records 清空', async () => {
@@ -222,14 +227,19 @@ describe('subagent store — selectSubagent', () => {
     expect(chat.setMessages).toHaveBeenCalledWith('subagent:bg-1', fakeHistory)
   })
 
-  it('getSubagentHistory 失败时 setMessages 注入空数组', async () => {
+  it('getSubagentHistory 失败时 fail-fast throw（调用方负责 catch + 回滚）', async () => {
     vi.mocked(sessionApi.getSubagentHistory).mockRejectedValue(new Error('network'))
     const store = useSubagentStore()
     const chat = makeChatMock()
 
-    await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
+    // W2/M5 fail-fast 契约：selectSubagent → fetchAndInject 不静默注入空数组，
+    // 错误上抛由调用方（onSelectSubagent）catch + toast + backToMain 回滚。
+    await expect(
+      store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages),
+    ).rejects.toThrow('network')
 
-    expect(chat.setMessages).toHaveBeenCalledWith('subagent:bg-1', [])
+    // 失败时不应注入历史（避免用户看到空对话流，无重试入口）
+    expect(chat.setMessages).not.toHaveBeenCalled()
   })
 })
 

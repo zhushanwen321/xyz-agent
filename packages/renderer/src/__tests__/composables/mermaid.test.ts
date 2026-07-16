@@ -72,7 +72,8 @@ describe('MermaidRenderer（W5）', () => {
     await nextTick()
     await nextTick()
     expect(wrapper.find('.md-mermaid__error').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Mermaid 渲染失败')
+    // 错误态文案取自 i18n key panel.mermaid.renderFailed = '图表渲染失败'
+    expect(wrapper.text()).toContain('图表渲染失败')
     // 「查看源码」按钮存在（默认折叠，源码未展开时不可见）
     const toggleBtn = wrapper.findAll('button').find((b) => b.text().includes('查看源码'))
     expect(toggleBtn).toBeDefined()

@@ -26,7 +26,23 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearch.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+
+/**
+ * 本文件测的是 useSearch 的 real 轨 3 源聚合（命令内存 / file WS 缓存优先 / session WS）。
+ *
+ * vitest.config.ts 给所有测试注入了 VITE_MOCK='true'（让 useSearch 等 mock-mode 分支走 fixture，
+ * 提供 recents/suggested seed）。但 useSearch.ts 顶层 `const isMock = import.meta.env.VITE_MOCK === 'true'`
+ * 在模块加载时求值：若 isMock=true，query() 会短路走 mockApi.search fixture，本文件 setUp 的
+ * vi.mock('@/api') / useCommandStore / mockSessionList 全部不生效，断言自然挂。
+ *
+ * 这些用例验证的是 real 轨行为（注释明示「vitest 未设 VITE_MOCK，isMock=false」），故这里用
+ * vi.stubEnv 覆盖为 'false'，并以 **动态 import** 在 stubEnv 之后加载 useSearch 模块，
+ * 确保 useSearch.ts 模块求值时读到 VITE_MOCK='false'（静态 import 会被 hoist 到 stubEnv 之前，
+ * 那样 isMock 仍是 true）。
+ */
+vi.stubEnv('VITE_MOCK', 'false')
+
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import type { FileNode, SessionGroup } from '@xyz-agent/shared'
@@ -59,8 +75,20 @@ vi.mock('@/composables/features/useFileSearch', () => ({
   useFileSearch: () => ({ setupInvalidation: mockSetupInvalidation }),
 }))
 
-import { useSearch } from '@/composables/features/useSearch'
 import type { SearchItem } from '@/lib/search-types'
+
+/**
+ * 动态加载 useSearch：必须在 vi.stubEnv('VITE_MOCK','false')（见文件顶部）之后，
+ * 才能让 useSearch.ts 模块求值时 `const isMock` 读到 'false'。
+ * beforeAll 解析后 useSearch 即可按原 `useSearch(sid)` 形态调用（每个 it 均 async，
+ * beforeAll 先于所有 it 执行）。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let useSearch: any
+beforeAll(async () => {
+  const mod = await import('@/composables/features/useSearch')
+  useSearch = mod.useSearch
+})
 
 /** 辅助：从 sections 找指定 label 的 section */
 function findSection(sections: { label: string; items: SearchItem[] }[], label: string) {

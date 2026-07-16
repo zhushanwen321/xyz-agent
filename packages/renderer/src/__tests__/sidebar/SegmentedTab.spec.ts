@@ -29,11 +29,11 @@ describe('SegmentedTab', () => {
     const buttons = wrapper.findAll('button')
     expect(buttons).toHaveLength(4)
 
-    // tab title 含 label
+    // tab title 含 label（i18n 中文：与组件 t('sidebar.segmentedTab.*') 输出对齐）
     expect(buttons[0].attributes('title')).toBe('会话')
     expect(buttons[1].attributes('title')).toBe('文件')
-    expect(buttons[2].attributes('title')).toBe('Agents')
-    expect(buttons[3].attributes('title')).toBe('Flows')
+    expect(buttons[2].attributes('title')).toBe('子代理')
+    expect(buttons[3].attributes('title')).toBe('工作流')
   })
 
   it('subagents tab 含 count 数字', () => {
@@ -61,13 +61,16 @@ describe('SegmentedTab', () => {
         fileCount: 4,
         subagentCount: 3,
         workflowCount: 0,
+        // badge 精确化：仅 running 态 > 0 亮蓝点（组件 badge = subagentRunningCount > 0）
+        subagentRunningCount: 1,
+        workflowRunningCount: 0,
       },
     })
 
     const buttons = wrapper.findAll('button')
     const subagentBtn = buttons[2]
-    // badge dot 是 absolute 定位的 span
-    const badge = subagentBtn.find('.absolute.right-1.top-1')
+    // badge dot 是 absolute 定位的 span（组件 class: absolute right-0 top-0）
+    const badge = subagentBtn.find('.absolute.right-0.top-0')
     expect(badge.exists()).toBe(true)
   })
 
@@ -79,12 +82,14 @@ describe('SegmentedTab', () => {
         fileCount: 4,
         subagentCount: 0,
         workflowCount: 0,
+        subagentRunningCount: 0,
+        workflowRunningCount: 0,
       },
     })
 
     const buttons = wrapper.findAll('button')
     const subagentBtn = buttons[2]
-    const badge = subagentBtn.find('.absolute.right-1.top-1')
+    const badge = subagentBtn.find('.absolute.right-0.top-0')
     expect(badge.exists()).toBe(false)
   })
 

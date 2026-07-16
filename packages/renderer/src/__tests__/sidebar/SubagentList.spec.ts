@@ -137,8 +137,8 @@ describe('SubagentList', () => {
     const records = [makeRecord({ subagentId: 'bg-abc-1-1234567890', slug: 'review-changes', agent: 'reviewer' })]
     const wrapper = mount(SubagentList, { props: { subagents: records } })
     const card = wrapper.find('[data-testid="subagent-card"]')
-    // slug 显示在卡片中
-    expect(card.text()).toContain('review-changes')
+    // slug 显示在卡片 title 属性（组件 :title="agent + ' · ' + slug"）
+    expect(card.attributes('title')).toBe('reviewer · review-changes')
     // 完整 hash 不显示在卡片可见区域（已截断或移到 title）
     expect(card.text()).not.toContain('bg-abc-1-1234567890')
   })

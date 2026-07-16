@@ -39,6 +39,12 @@ vi.mock('@/api', () => ({
     remove: sessionCtrl.remove,
   },
   chat: { getHistory: chatCtrl.getHistory },
+  // onConnected 重连分支调 extensionApi.scan()（fire-and-forget）→ 给 resolve
+  extension: { scan: vi.fn().mockResolvedValue(undefined) },
+  // 重连 → useNewTaskFlow.submitFirstMessage → useFileTree.loadTree 调 file.tree / git.status
+  // （fire-and-forget，补 mock 避免 unhandled rejection）
+  file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
+  git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
 }))
 
 // W3: mock workspaceStore 让 initApp 能正确预填 cwd
