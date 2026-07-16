@@ -62,8 +62,10 @@ export class SessionScanner {
 
   private scannedToSummary(s: ScannedSession): SessionSummary {
     const git = this.gitInfoReader.readGitInfo(s.cwd)
-    // W5：读 session_end 终态（ADR 0036）。无 entry（历史 session / 未结束）→ idle 兜底
-    const outcome = this.sessionStore.extractSessionOutcome(s.filePath)
+    // W3 三读合一：outcome 随 scanPiSessions 一起提取进 ScannedSessionMeta，
+    // 此处直接取 s.outcome，不再独立调 extractSessionOutcome（消除第 3 次全量读）。
+    // 无 session_end entry（历史 session / 未结束）→ idle 兜底
+    const outcome = s.outcome
     return {
       id: s.id,
       label: s.name ?? basename(s.cwd),

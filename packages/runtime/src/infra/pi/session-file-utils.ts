@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
-import { parseJsonl } from '../../utils/jsonl.js'
+import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join } from 'node:path'
 import { getSessionsDir } from './pi-paths.js'
 
@@ -37,22 +37,17 @@ export function parseSessionHeader(filePath: string): SessionHeader | null {
 /**
  * 从 .jsonl 文件提取最后一个 session_info 的 name 字段。
  * pi 的 session 会 append 多条 session_info，取最后一条作为当前名称。
+ *
+ * W2 尾读优化：先尾读（readTailEntries）找尾部最后一条 session_info。
+ * pi persistSessionName 是 append，晚期 rename 的 session_info 在尾部可命中。
+ * 未命中（INVAR-tail-2 SR1）→ fallback 全量读——早期命名 + 长对话追加会把最后一条
+ * session_info 推到文件头部，尾窗找不到，必须 fallback 保证正确性（不丢名字）。
  */
 export function extractSessionName(filePath: string): string | null {
-  try {
-    const content = readFileSync(filePath, 'utf-8')
-    // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架；倒序找最后一条 session_info。
-    const entries = parseJsonl(content)
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i] as { type?: string; name?: string }
-      if (entry.type === 'session_info' && entry.name) {
-        return entry.name
-      }
-    }
-    return null
-  } catch {
-    return null
-  }
+  return findLastEntryField(filePath,
+    (e) => e.type === 'session_info' && typeof e.name === 'string',
+    (e) => e.name as string,
+  )
 }
 
 // ── session 终态 entry（W4，ADR 0036）─────────────────────────
@@ -96,24 +91,60 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
 
 /**
  * 从 .jsonl 文件提取最后一条 session_end 的 outcome（W4，ADR 0036）。
- * 复用 extractSessionName 的 parseJsonl 倒序扫描模式。
+ *
+ * W2 尾读优化：先尾读找尾部最后一条 session_end。persistSessionEnd 是 session 结束时
+ * 最后写入的 entry → session_end 始终在文件最尾部 → 尾读几乎必中。
+ * 未命中（理论可能：session_end 后又有别的 runtime 写入）→ fallback 全量读兜底。
  *
  * @returns 终态 outcome；文件无 session_end entry（历史 session / 未结束）返回 null
  */
 export function extractSessionOutcome(filePath: string): SessionOutcome | null {
+  return findLastEntryField(filePath,
+    (e) => e.type === 'session_end' && typeof e.outcome === 'string',
+    (e) => e.outcome as SessionOutcome,
+  )
+}
+
+/**
+ * 尾读 + fallback 全量读，倒序找最后一条匹配 entry 的字段值（W2 共用骨架）。
+ *
+ * 1. readTailEntries 尾读尾部块（offset=max(0,size-32KB)）
+ * 2. 倒序找匹配 predicate 的 entry，命中返回 extract(entry)
+ * 3. 尾读未命中（INVAR-tail-2 SR1）→ fallback 全量 readFileSync + parseJsonl 倒序找
+ * 4. 全量也无 → 返回 null
+ *
+ * 错误对等（INVAR-tail-7）：ENOENT/EACCES/JSON parse 错误与原实现一致返回 null，不引入新 throw。
+ */
+function findLastEntryField<R>(
+  filePath: string,
+  predicate: (e: Record<string, unknown>) => boolean,
+  extract: (e: Record<string, unknown>) => R,
+): R | null {
+  // 尾读阶段
+  const tailEntries = readTailEntries(filePath)
+  if (tailEntries !== null) {
+    for (let i = tailEntries.length - 1; i >= 0; i--) {
+      const entry = tailEntries[i]
+      if (typeof entry === 'object' && entry !== null && predicate(entry as Record<string, unknown>)) {
+        return extract(entry as Record<string, unknown>)
+      }
+    }
+  }
+  // fallback 全量读（INVAR-tail-2: 尾读未命中，目标可能在文件头部）
   try {
     const content = readFileSync(filePath, 'utf-8')
     const entries = parseJsonl(content)
     for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i] as { type?: string; outcome?: SessionOutcome }
-      if (entry.type === 'session_end' && entry.outcome) {
-        return entry.outcome
+      const entry = entries[i]
+      if (typeof entry === 'object' && entry !== null && predicate(entry as Record<string, unknown>)) {
+        return extract(entry as Record<string, unknown>)
       }
     }
-    return null
+  // eslint-disable-next-line taste/no-silent-catch -- 文件读取/解析失败返回 null，与原实现对等
   } catch {
     return null
   }
+  return null
 }
 
 // ── 文件操作 ─────────────────────────────────────────────────
@@ -212,13 +243,89 @@ export interface ScannedSessionMeta {
   cwd: string
   timestamp: string
   name: string | null
+  /** W3 三读合一：outcome 随 meta 一起提取，scannedToSummary 直接取不再独立读文件（消除第 3 次全量读）。 */
+  outcome: SessionOutcome | null
   lastModified: number
   size: number
 }
 
 /**
+ * W3 文件级 mtime+size 缓存（INVAR-cache-1 模块级跨两阶段共享）。
+ *
+ * scanPiSessions（header+name+outcome 三读合一）与 scannedToSummary（取 outcome）共享此缓存。
+ * 缓存键含 (path, mtimeMs, size)（INVAR-cache-2 SR4）——同 ms 内并发 append mtimeMs 不变但
+ * size 变 → miss，消除竞态。无上限（INVAR-cache-6，每条~几百字节，10k session≈数 MB）。
+ * 不跨进程（runtime 重启清空，首次 scan 冷读）。
+ */
+interface CachedSessionMeta {
+  mtimeMs: number
+  size: number
+  meta: ScannedSessionMeta
+}
+const sessionMetaCache = new Map<string, CachedSessionMeta>()
+
+/** 仅供测试重置缓存用（生产不调）。 */
+export function _resetSessionMetaCacheForTest(): void {
+  sessionMetaCache.clear()
+}
+
+/**
+ * 单个 session 文件的元数据提取（三读合一 + 缓存）。
+ *
+ * 1. statSync 拿 mtimeMs + size，查缓存 (path, mtimeMs, size)
+ * 2. 命中（INVAR-cache-3）→ 返回缓存 meta（零文件读取）
+ * 3. miss → parseSessionHeader + extractSessionName + extractSessionOutcome 一次提取全部 → 写缓存
+ *
+ * 三读合一（FR-three-read-merge）：原 scanPiSessions 调 parseSessionHeader（全量读首行）
+ * + extractSessionName（尾读），scannedToSummary 再调 extractSessionOutcome（第 3 次全量读）。
+ * 现统一在此一次提取，scannedToSummary 从 meta.outcome 取（INVAR-merge-2）。
+ *
+ * 文件删除/不可读（INVAR-cache-4）→ 清该 key 返回 null。
+ */
+function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
+  let fstat
+  try {
+    fstat = statSync(filePath)
+  } catch {
+    // 文件不存在/不可读：清 stale 缓存条目（INVAR-cache-4），返回 null
+    sessionMetaCache.delete(filePath)
+    return null
+  }
+
+  const cached = sessionMetaCache.get(filePath)
+  // INVAR-cache-2: 键含 (mtimeMs, size)，任一变 → miss
+  if (cached && cached.mtimeMs === fstat.mtimeMs && cached.size === fstat.size) {
+    return cached.meta // INVAR-cache-3: 命中，逐字节一致
+  }
+
+  // miss：三读合一提取全部元数据
+  const header = parseSessionHeader(filePath)
+  if (!header) {
+    // 非 session 文件（首行不是 session header）：不缓存（下次仍尝试，开销小）
+    return null
+  }
+  const name = extractSessionName(filePath)
+  const outcome = extractSessionOutcome(filePath)
+  const meta: ScannedSessionMeta = {
+    id: header.id,
+    filePath,
+    cwd: header.cwd,
+    timestamp: header.timestamp,
+    name,
+    outcome,
+    lastModified: fstat.mtimeMs,
+    size: fstat.size,
+  }
+  sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
+  return meta
+}
+
+/**
  * 扫描 pi 的 sessions 目录（按 cwd 分组的子目录结构）。
  * 返回扁平化的 session 列表。
+ *
+ * W3：scanSessionMeta 三读合一 + 缓存。每文件 miss 时 1 次提取 header+name+outcome，
+ * hit 时零读取（仅 statSync）。
  */
 export function scanPiSessions(): ScannedSessionMeta[] {
   if (!existsSync(getSessionsDir())) return []
@@ -250,20 +357,9 @@ export function scanPiSessions(): ScannedSessionMeta[] {
         const files = readdirSync(entryPath).filter(f => f.endsWith('.jsonl'))
         for (const file of files) {
           const filePath = join(entryPath, file)
-          const header = parseSessionHeader(filePath)
-          if (!header) continue
           try {
-            const fstat = statSync(filePath)
-            const sessionName = extractSessionName(filePath)
-            results.push({
-              id: header.id,
-              filePath,
-              cwd: header.cwd,
-              timestamp: header.timestamp,
-              name: sessionName,
-              lastModified: fstat.mtimeMs,
-              size: fstat.size,
-            })
+            const meta = scanSessionMeta(filePath)
+            if (meta) results.push(meta)
           // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entries
           } catch {
             // skip
@@ -274,19 +370,9 @@ export function scanPiSessions(): ScannedSessionMeta[] {
         // skip unreadable dir
       }
     } else if (entry.endsWith('.jsonl')) {
-      const header = parseSessionHeader(entryPath)
-      if (!header) continue
       try {
-        const sessionName = extractSessionName(entryPath)
-        results.push({
-          id: header.id,
-          filePath: entryPath,
-          cwd: header.cwd,
-          timestamp: header.timestamp,
-          name: sessionName,
-          lastModified: stat.mtimeMs,
-          size: stat.size,
-        })
+        const meta = scanSessionMeta(entryPath)
+        if (meta) results.push(meta)
       // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entry
       } catch {
         // skip
