@@ -50,6 +50,22 @@ describe('segmentsToText', () => {
     const segs: Segment[] = [{ type: 'skill', name: 'cw-cli', location: '/path/SKILL.md' }]
     expect(segmentsToText(segs)).toBe('/skill:cw-cli')
   })
+
+  it('file 无行范围序列化为 path', () => {
+    expect(segmentsToText([{ type: 'file', path: 'src/foo.ts' }])).toBe('src/foo.ts')
+  })
+
+  it('file 单行范围序列化为 path:L<n>（D2）', () => {
+    expect(segmentsToText([{ type: 'file', path: 'src/foo.ts', lineRange: [10, 10] }])).toBe(
+      'src/foo.ts:L10',
+    )
+  })
+
+  it('file 多行范围序列化为 path:L<s>-L<e>（D2，review M1 回归）', () => {
+    expect(segmentsToText([{ type: 'file', path: 'src/foo.ts', lineRange: [10, 20] }])).toBe(
+      'src/foo.ts:L10-L20',
+    )
+  })
 })
 
 describe('segmentsToPrompt', () => {

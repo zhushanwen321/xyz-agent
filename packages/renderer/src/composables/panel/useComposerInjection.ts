@@ -84,7 +84,11 @@ export function useComposerInjection(
         return true
       }
       // 阶段一：session composer 触发 startFlow + routeToLanding（store 把 target 改 current）。
-      // 本实例（panel）不注入——landing composer 挂载后接手阶段二。
+      // 仅当前 session 是活跃 session 时才 startFlow——避免 dual 挂载（landing+panel）时
+      // 多个 panel composer 都触发 startFlow 误拆活跃 session（review M2）。
+      // landing composer 若也挂载会直接消费 target=new（上方分支），但 routeToLanding 改写后
+      // 它看到 target=current；panel 这里只做路由触发，不注入。
+      if (sessionId.value !== sessionStore.active?.id) return false
       const cwd = resolveCwdForNewSession()
       await flow.startFlow(cwd)
       store.routeToLanding()

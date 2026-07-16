@@ -54,9 +54,17 @@ export function segmentsToText(segments: Segment[]): string {
       case 'skill':
         parts.push(`/skill:${seg.name}`)
         break
-      case 'file':
-        parts.push(seg.path)
+      case 'file': {
+        // D2 格式：行范围序列化（path:L<n> 单行 / path:L<s>-L<e> 多行）。
+        // lineRange 必须进 prompt 文本，否则 LLM 看不到行号（review M1）。
+        let fileText = seg.path
+        if (seg.lineRange) {
+          const [s, e] = seg.lineRange
+          fileText += s === e ? `:L${s}` : `:L${s}-L${e}`
+        }
+        parts.push(fileText)
         break
+      }
       case 'mention':
         parts.push(`@${seg.name}`)
         break

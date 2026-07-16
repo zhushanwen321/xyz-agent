@@ -70,7 +70,7 @@ describe('W5: Turn file badge 渲染（FR-7）', () => {
     })
     const wrapper = mountTurn(turn)
 
-    const badge = wrapper.find('[data-testid="msg-file-badge"]')
+    const badge = wrapper.find('[data-testid^="msg-file-badge"]')
     expect(badge.exists()).toBe(true)
     // basename + 行范围后缀
     expect(badge.text()).toContain('foo.ts')
@@ -87,7 +87,7 @@ describe('W5: Turn file badge 渲染（FR-7）', () => {
     })
     const wrapper = mountTurn(turn)
 
-    const badge = wrapper.find('[data-testid="msg-file-badge"]')
+    const badge = wrapper.find('[data-testid^="msg-file-badge"]')
     expect(badge.exists()).toBe(true)
     expect(badge.text()).toContain('bar.ts')
     expect(badge.text()).not.toContain('L')
@@ -99,7 +99,7 @@ describe('W5: Turn file badge 渲染（FR-7）', () => {
     })
     const wrapper = mountTurn(turn)
 
-    const badge = wrapper.find('[data-testid="msg-file-badge"]')
+    const badge = wrapper.find('[data-testid^="msg-file-badge"]')
     expect(badge.text()).toContain('L5')
     expect(badge.text()).not.toContain('L5-L5')
   })
@@ -110,7 +110,7 @@ describe('W5: Turn file badge 渲染（FR-7）', () => {
     })
     const wrapper = mountTurn(turn)
 
-    await wrapper.find('[data-testid="msg-file-badge"]').trigger('click')
+    await wrapper.find('[data-testid^="msg-file-badge"]').trigger('click')
     expect(mockSelectFile).toHaveBeenCalledWith('src/foo.ts')
     expect(mockOpenDrawer).toHaveBeenCalledWith('detail')
   })

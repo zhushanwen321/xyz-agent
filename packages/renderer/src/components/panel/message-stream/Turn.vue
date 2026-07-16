@@ -81,7 +81,7 @@
             style="vertical-align: middle"
             role="button"
             tabindex="0"
-            :data-testid="`msg-file-badge`"
+            :data-testid="`msg-file-badge-${i}`"
             :title="seg.path"
             @click.stop="openFileDetail(seg.path)"
             @keydown.enter.stop.prevent="openFileDetail(seg.path)"

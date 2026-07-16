@@ -166,6 +166,7 @@
           size="sm"
           data-testid="bubble-inject-current"
           class="h-6 rounded-sm px-2 text-[11px]"
+          @mousedown.prevent
           @click="injectSelectionToCurrent"
         >{{ t('panel.detail.injectFileRef') }}</Button>
         <Button
@@ -173,6 +174,7 @@
           size="sm"
           data-testid="bubble-inject-new"
           class="h-6 rounded-sm px-2 text-[11px]"
+          @mousedown.prevent
           @click="injectSelectionToNew"
         >{{ t('panel.detail.injectToNew') }}</Button>
       </div>
@@ -363,6 +365,12 @@ function injectSelectionToNew(): void {
  * 行范围反推：取选中文本首行/末行在 state.content 的行索引近似（首版精度限制见 outOfScope）。
  */
 function onContentMouseup(): void {
+  // diff 模式 state.content 是 patch 文本，选中行（如 +new line）匹配不到 patch 原始行，
+  // 行范围反推失效（review m1）。首版 diff 模式禁用 bubble，仅 preview/code 模式支持。
+  if (state.value.viewMode === 'diff') {
+    selectionRange.value = null
+    return
+  }
   const sel = window.getSelection()
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
     selectionRange.value = null
