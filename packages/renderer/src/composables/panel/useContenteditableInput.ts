@@ -220,7 +220,7 @@ function moveCaretVerticalOf(
  *   过滤 \u00A0→空格、\u200B→删除（与原 getTextFromEl 一致）。
  * - BR：在当前 text segment 里追加 \n。
  */
-function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
+export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
   if (!el) return []
   const segments: Segment[] = []
   // 当前正在累积的 text segment 文本（null 表示无待提交 text segment）
@@ -229,10 +229,11 @@ function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
   const rejectChips = new Set<Element>()
 
   const flushText = (): void => {
-    if (pendingText !== null) {
+    // 跳过空串：chip 后的 ZWSP spacer 过滤后为 ''，不应产出空 text segment 污染 segments
+    if (pendingText !== null && pendingText !== '') {
       segments.push({ type: 'text', text: pendingText })
-      pendingText = null
     }
+    pendingText = null
   }
 
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
@@ -265,6 +266,27 @@ function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
         // 普通 slash 命令：读 .chip-label 文本（如 /commit），并入当前 text 累积
         const labelText = chip.querySelector('.chip-label')?.textContent ?? ''
         pendingText = (pendingText ?? '') + labelText
+      }
+      rejectChips.add(chip)
+      continue
+    }
+
+    // mention-file 元素（结构化 file chip，ADR-0034）：产出 file segment，跳过子树。
+    // 旧 mention-file 无 dataset 时 chipType 为 undefined → 仍产出 file segment（path 从 chipPath 取，
+    // 无 chipPath 时从 textContent 去 # 前缀兜底，向后兼容）。
+    if (
+      node.nodeType === Node.ELEMENT_NODE &&
+      (node as Element).classList?.contains('mention-file')
+    ) {
+      const chip = node as HTMLElement
+      flushText()
+      const path = chip.dataset.chipPath ?? ''
+      const ls = chip.dataset.chipLineStart
+      const le = chip.dataset.chipLineEnd
+      if (ls !== undefined && le !== undefined) {
+        segments.push({ type: 'file', path, lineRange: [Number(ls), Number(le)] })
+      } else {
+        segments.push({ type: 'file', path })
       }
       rejectChips.add(chip)
       continue

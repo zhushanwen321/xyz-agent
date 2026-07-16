@@ -126,16 +126,76 @@ export function useComposerChipCommands(
     onChanged()
   }
 
-  /** 插入 @/# mention 内联 chip（§2d：蓝名/绿名，插在当前光标位置） */
-  function insertMentionChip(type: '@' | '#', name: string): void {
+  /**
+   * 插入 # 文件引用内联 chip（结构化 file segment，ADR-0034）。
+   *
+   * 与旧 insertMentionChip('#', name) 的区别：设 dataset（chipType=file/chipPath/
+   * chipLineStart/chipLineEnd）供 getSegmentsFromEl 重建 {type:file} segment，
+   * 用 .chip-label 子元素显示路径（格式 D2：无范围 path；单行 path:L<n>；多行 path:L<s>-L<e>）。
+   * 旧 # chip 无 dataset 被 getSegmentsFromEl 读成纯文本（结构丢失），本方法修复。
+   * 复用 .mention-file 绿色样式（不新增 CSS 类），加 .chip-x 删除按钮（与 slash chip 一致）。
+   *
+   * 行范围格式（D2）：start===end 单行显示 L<start>；start!==end 多行显示 L<start>-L<end>。
+   */
+  function insertFileChip(path: string, lineRange?: [number, number]): void {
     const el = getEl()
     if (!el) return
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
-    chip.className = type === '@' ? 'mention-chip mention-at' : 'mention-chip mention-file'
+    chip.className = 'mention-chip mention-file'
     chip.contentEditable = 'false'
-    chip.textContent = `${type}${name}`
+    // 结构化 dataset：getSegmentsFromEl 依此重建 {type:file} segment
+    chip.dataset.chipType = 'file'
+    chip.dataset.chipPath = path
+    let labelText = path
+    if (lineRange) {
+      const [start, end] = lineRange
+      chip.dataset.chipLineStart = String(start)
+      chip.dataset.chipLineEnd = String(end)
+      // D2 格式：单行 L<n>，多行 L<s>-L<e>
+      labelText += start === end ? `:L${start}` : `:L${start}-L${end}`
+    }
+    const label = document.createElement('span')
+    label.className = 'chip-label'
+    label.textContent = labelText
+    chip.appendChild(label)
+    chip.appendChild(makeXButton(chip))
+    // 插入光标处（同 mention chip，非最前）
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) {
+      el.appendChild(chip)
+    } else {
+      const range = sel.getRangeAt(0)
+      range.deleteContents()
+      range.insertNode(chip)
+    }
+    const spacer = document.createTextNode('\u200B')
+    chip.after(spacer)
+    placeCursorAfter(spacer)
+    onChanged()
+  }
+
+  /**
+   * 插入 @ mention 内联 chip（§2d：蓝名，插在当前光标位置）。
+   *
+   * # file 引用已迁移到 insertFileChip（结构化，ADR-0034）。本方法只保留 @ 分支——
+   * @mention 暂无结构化需求（无 Segment 消费方），保持纯文本 chip。
+   * # 入口委托 insertFileChip（向后兼容现有 insertMentionChip('#', name) 调用方）。
+   */
+  function insertMentionChip(type: '@' | '#', name: string): void {
+    if (type === '#') {
+      insertFileChip(name)
+      return
+    }
+    const el = getEl()
+    if (!el) return
+    restoreSelection()
+    el.focus()
+    const chip = document.createElement('span')
+    chip.className = 'mention-chip mention-at'
+    chip.contentEditable = 'false'
+    chip.textContent = `@${name}`
     const sel = window.getSelection()
     if (!sel || !sel.rangeCount) {
       el.appendChild(chip)
@@ -188,5 +248,5 @@ export function useComposerChipCommands(
     return false
   }
 
-  return { insertSlashChip, insertMentionChip, handleBackspaceOnChip }
+  return { insertSlashChip, insertMentionChip, insertFileChip, handleBackspaceOnChip }
 }

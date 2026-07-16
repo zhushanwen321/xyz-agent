@@ -94,6 +94,7 @@ const chipCommands = useComposerChipCommands(elRef, {
 })
 const insertSlashChip = chipCommands.insertSlashChip
 const insertMentionChip = chipCommands.insertMentionChip
+const insertFileChip = chipCommands.insertFileChip
 // 后赋值：补回上面 forward 占位（setup 同步执行完毕，onKeydown 运行期读到真实实现）
 handleBackspaceOnChip = chipCommands.handleBackspaceOnChip
 
@@ -121,6 +122,7 @@ defineExpose({
   insertTextAtCursor,
   insertSlashChip,
   insertMentionChip,
+  insertFileChip,
   clearSlashQueryText,
   clearHashQueryText,
   saveSelection,
