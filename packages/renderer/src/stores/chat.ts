@@ -27,6 +27,7 @@
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { commitMessages } from './chat-mutations'
+import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
 import type {
   ContentBlock,
   Message,
@@ -429,10 +430,13 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 注入历史消息（首次进入 session 时由 useChat 调用）。
    * 不可变 set：深拷贝 fixture 避免外部突变污染源数据，标记 hydrated。
+   *
+   * W2 H3：回流路径截断（AC-10/D9）。历史 tool result 经 truncateToolOutputBatch
+   * 截断为 4KB 头部，与实时路径（tool_call_end）策略一致。
    */
   function hydrate(sessionId: string, history: Message[]): void {
     if (hydrated.value.has(sessionId)) return
-    const cloned = history.map((m) => ({ ...m }))
+    const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
     commitMessages(messages, sessionId, cloned)
     hydrated.value = new Set(hydrated.value).add(sessionId)
   }
@@ -441,9 +445,11 @@ export const useChatStore = defineStore('chat', () => {
    * 直接覆盖某 session 的消息（不受 hydrated 不可变约束）。
    * 用于 subagent 虚拟 session：subagent JSONL 可能延迟写入（pi 延迟 flush），
    * 首次拉取为空后需要重新拉取覆盖。不标记 hydrated（允许后续 hydrate 再覆盖）。
+   *
+   * W2 H3：回流路径截断（AC-10/D9），与 hydrate 一致。
    */
   function setMessages(sessionId: string, history: Message[]): void {
-    const cloned = history.map((m) => ({ ...m }))
+    const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
     commitMessages(messages, sessionId, cloned)
   }
 

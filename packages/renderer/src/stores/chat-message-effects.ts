@@ -50,6 +50,7 @@ import {
 } from './chat-readers'
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
 import { commitMessages } from './chat-mutations'
+import { truncateToolCall } from '@/utils/truncate-tool-output'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -380,7 +381,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
       c.id === callId
-        ? {
+        ? truncateToolCall({
           ...c,
           output: readString(payload, 'output') ?? c.output,
           outputRaw: readString(payload, 'outputRaw') ?? c.outputRaw,
@@ -388,7 +389,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
           error: readString(payload, 'error') ?? c.error,
           endTime: Date.now(),
           details,
-        }
+        })
         : c,
     )
     next[idx] = { ...next[idx], toolCalls }
