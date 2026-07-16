@@ -1,0 +1,1 @@
+E1 手动验证 placeholder：sidebar 300px 布局需用户 npm run dev 后确认
