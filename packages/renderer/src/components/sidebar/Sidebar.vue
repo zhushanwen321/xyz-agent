@@ -13,7 +13,7 @@
     <div class="sidebar__inner flex h-full w-[300px] flex-col pl-0.5">
       <!-- Brand -->
       <div class="flex items-center gap-2 px-2 pb-3.5">
-        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-white">x</span>
+        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-fg">x</span>
         <div class="flex flex-col leading-tight">
           <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
           <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
