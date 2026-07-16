@@ -18,9 +18,10 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { textToSegments } from '@xyz-agent/shared'
 
 const apiMock = vi.hoisted(() => {
   const holder: { handler: ((msg: ServerMessage) => void) | null } = { handler: null }
@@ -84,11 +85,21 @@ import { useChat } from '@/composables/features/useChat'
 import Composer from '@/components/panel/Composer.vue'
 
 // ── Composer 子组件 stub（参照 composer-three-states.test.ts，最小化 mount 开销）──
+// getSegments 通过 emits 验证器捕获 input payload，用 textToSegments 还原（ADR-0037）。
+const lastInputText = ref('')
 const ComposerInputMock = defineComponent({
   name: 'ComposerInput',
-  emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
+  emits: {
+    input: (val: string) => {
+      lastInputText.value = val
+      return true
+    },
+    keydown: null,
+    'slash-trigger': null,
+    'file-trigger': null,
+  },
   setup(_, { expose }) {
-    expose({ clear: vi.fn(), setText: vi.fn(), insertSlashChip: vi.fn() })
+    expose({ clear: vi.fn(), setText: vi.fn(), insertSlashChip: vi.fn(), getSegments: () => textToSegments(lastInputText.value) })
     return {}
   },
   template: '<div data-testid="composer-input" />',
@@ -110,6 +121,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   apiMock.holder.handler = null
+  lastInputText.value = ''
 })
 
 function emit(msg: ServerMessage): void {
@@ -120,7 +132,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
   it('send.rejected → clearPendingSend（isActive 恢复 false）', async () => {
     const chat = useChatStore()
     const { send } = useChat()
-    await send('s-reject-1', 'hello')
+    await send('s-reject-1', textToSegments('hello'))
     // send 后 pendingSend 置位 → isActive=true（空窗期）
     expect(chat.isActive('s-reject-1')).toBe(true)
     // 必须先订阅才能 emit
@@ -137,7 +149,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
   it('send.rejected → 不产出消息气泡（getMessages 不变）', async () => {
     const chat = useChatStore()
     const { send } = useChat()
-    await send('s-reject-2', 'hello')
+    await send('s-reject-2', textToSegments('hello'))
     const msgsBefore = chat.getMessages('s-reject-2')
     emit({
       type: 'send.rejected',
@@ -150,7 +162,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
   it('send.rejected → isGenerating 不变（不翻流式态）', async () => {
     const chat = useChatStore()
     const { send } = useChat()
-    await send('s-reject-3', 'hello')
+    await send('s-reject-3', textToSegments('hello'))
     // send.rejected 时无 streaming entity → isGenerating=false
     expect(chat.isGenerating('s-reject-3')).toBe(false)
     emit({
@@ -165,7 +177,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
     const chat = useChatStore()
     const { send } = useChat()
     // session A send → pendingSend
-    await send('s-reject-4', 'hello')
+    await send('s-reject-4', textToSegments('hello'))
     // 手动给 session B 加 pendingSend（模拟另一个 panel 正在发送）
     chat.addPendingSend('s-other')
     expect(chat.isActive('s-other')).toBe(true)

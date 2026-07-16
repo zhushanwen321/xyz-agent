@@ -62,7 +62,7 @@ export function segmentsToText(segments: Segment[]): string {
         break
     }
   }
-  return parts.join('').trim()
+  return parts.join('')
 }
 
 /**
@@ -79,12 +79,11 @@ export function textToSegments(text: string): Segment[] {
 /**
  * Segment[] → pi prompt 字符串（pi 边界序列化）。
  *
- * 当前与 segmentsToText 实现相同。语义分离供未来分化：
- * 如 file 段发 pi 可能需要包 `<file>` 标签或走 pi 的 @file 机制，
- * 而展示侧 segmentsToText 只需显示路径。
+ * 基于 segmentsToText 但 trim 首尾空白（pi prompt 不需要尾随换行/空格）。
+ * 语义分离：segmentsToText 保留原始格式（含末尾换行），segmentsToPrompt 做发送归一化。
  */
 export function segmentsToPrompt(segments: Segment[]): string {
-  return segmentsToText(segments)
+  return segmentsToText(segments).trim()
 }
 
 /**

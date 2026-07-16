@@ -32,7 +32,7 @@ function makeTurn(userOver: Partial<Message> = {}): MessageTurn {
     user: {
       id: 'u1',
       role: 'user',
-      content: '想要都修复',
+      content: [{ type: 'text', text: '想要都修复' }],
       status: 'complete',
       timestamp: Date.now(),
       ...userOver,
@@ -66,8 +66,7 @@ beforeEach(() => {
 describe('Turn skill badge 渲染', () => {
   it('含skillName时渲染紫色badge + /skill:xxx命令名', () => {
     const wrapper = mountTurn(makeTurn({
-      skillName: 'cw-cli',
-      content: '想要都修复',
+      content: [{ type: 'skill', name: 'cw-cli' }, { type: 'text', text: '想要都修复' }],
     }))
     // 紫色badge元素存在
     const badge = wrapper.find('.text-reasoning')
@@ -78,8 +77,7 @@ describe('Turn skill badge 渲染', () => {
 
   it('点击badge调用openCommandDoc', async () => {
     const wrapper = mountTurn(makeTurn({
-      skillName: 'cw-cli',
-      content: '想要都修复',
+      content: [{ type: 'skill', name: 'cw-cli' }, { type: 'text', text: '想要都修复' }],
     }))
     // 点击badge
     const badge = wrapper.find('.cursor-pointer')
@@ -91,7 +89,7 @@ describe('Turn skill badge 渲染', () => {
 
   it('无skillName时走原slashChip逻辑', () => {
     const wrapper = mountTurn(makeTurn({
-      content: '/compact 压缩上下文',
+      content: [{ type: 'text', text: '/compact 压缩上下文' }],
     }))
     // 不显示skill badge（.text-reasoning）
     const badge = wrapper.find('.text-reasoning')
@@ -103,7 +101,7 @@ describe('Turn skill badge 渲染', () => {
 
   it('无skillName且无slash命令时显示纯文本', () => {
     const wrapper = mountTurn(makeTurn({
-      content: '普通消息',
+      content: [{ type: 'text', text: '普通消息' }],
     }))
     // MarkdownRenderer被stub，检查skill badge不存在
     expect(wrapper.find('.text-reasoning').exists()).toBe(false)

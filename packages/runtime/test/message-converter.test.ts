@@ -21,7 +21,8 @@ describe('convertPiHistory', () => {
 
     expect(messages).toHaveLength(2)
     expect(messages[0].role).toBe('user')
-    expect(messages[0].content).toBe('Hello')
+    expect((messages[0].content as Array<{ type: string; text?: string }>)
+      .find((s) => s.type === 'text')?.text).toBe('Hello')
     expect(messages[0].timestamp).toBe(1000)
     expect(messages[1].role).toBe('assistant')
     expect(messages[1].content).toBe('Hi there')
@@ -93,48 +94,56 @@ describe('convertPiHistory - skill block parsing', () => {
     const messages = convertPiHistory(skillUser(
       '<skill name="code-review" location="/abs/path/SKILL.md">skill body</skill>do the thing',
     ))
-    expect(messages[0].skillName).toBe('code-review')
-    expect(messages[0].skillLocation).toBe('/abs/path/SKILL.md')
-    expect(messages[0].content).toBe('do the thing')
+    const skillSeg = (messages[0].content as any[]).find((s) => s.type === 'skill')
+    expect(skillSeg?.name).toBe('code-review')
+    expect(skillSeg?.location).toBe('/abs/path/SKILL.md')
+    expect((messages[0].content as any[]).find((s) => s.type === 'text')?.text).toBe('do the thing')
   })
 
   it('parses a skill block without location (skillLocation undefined)', () => {
     const messages = convertPiHistory(skillUser(
       '<skill name="merge">body</skill>ship it',
     ))
-    expect(messages[0].skillName).toBe('merge')
-    expect(messages[0].skillLocation).toBeUndefined()
-    expect(messages[0].content).toBe('ship it')
+    const skillSeg = (messages[0].content as any[]).find((s) => s.type === 'skill')
+    expect(skillSeg?.name).toBe('merge')
+    expect(skillSeg?.location).toBeUndefined()
+    expect((messages[0].content as any[]).find((s) => s.type === 'text')?.text).toBe('ship it')
   })
 
   it('leaves content as-is when skill block lacks name attribute (regex no match)', () => {
     const raw = '<skill location="/x">body</skill>keep me'
     const messages = convertPiHistory(skillUser(raw))
-    expect(messages[0].skillName).toBeUndefined()
-    expect(messages[0].content).toBe(raw)
+    const content = messages[0].content as any[]
+    // 无 skill 匹配 → 整段包成单个 text segment，无 skill segment
+    expect(content.find((s) => s.type === 'skill')).toBeUndefined()
+    expect(content.find((s) => s.type === 'text')?.text).toBe(raw)
   })
 
   it('leaves content as-is when skill block is unclosed (regex no match)', () => {
     const raw = '<skill name="x">body without close'
     const messages = convertPiHistory(skillUser(raw))
-    expect(messages[0].skillName).toBeUndefined()
-    expect(messages[0].content).toBe(raw)
+    const content = messages[0].content as any[]
+    expect(content.find((s) => s.type === 'skill')).toBeUndefined()
+    expect(content.find((s) => s.type === 'text')?.text).toBe(raw)
   })
 
   it('takes only the first skill block (non-greedy), rest stays in user text', () => {
     const messages = convertPiHistory(skillUser(
       '<skill name="first">A</skill><skill name="second">B</skill>tail',
     ))
-    expect(messages[0].skillName).toBe('first')
-    expect(messages[0].content).toBe('<skill name="second">B</skill>tail')
+    const content = messages[0].content as any[]
+    expect(content.find((s) => s.type === 'skill')?.name).toBe('first')
+    expect(content.find((s) => s.type === 'text')?.text).toBe('<skill name="second">B</skill>tail')
   })
 
   it('trims trailing user text (whitespace only after close)', () => {
     const messages = convertPiHistory(skillUser(
       '<skill name="x">body</skill>   \n  ',
     ))
-    expect(messages[0].skillName).toBe('x')
-    expect(messages[0].content).toBe('')
+    const content = messages[0].content as any[]
+    expect(content.find((s) => s.type === 'skill')?.name).toBe('x')
+    // trim 后无剩余用户文本 → 不追加 text segment
+    expect(content.find((s) => s.type === 'text')).toBeUndefined()
   })
 })
 

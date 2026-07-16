@@ -11,9 +11,10 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { textToSegments, normalizeContent } from '@xyz-agent/shared'
 
 const apiMock = vi.hoisted(() => {
   const holder: { handler: ((msg: ServerMessage) => void) | null } = { handler: null }
@@ -77,11 +78,21 @@ import { useChat } from '@/composables/features/useChat'
 import Composer from '@/components/panel/Composer.vue'
 
 // ── Composer 子组件 stub（参照 composer-three-states.test.ts，最小化 mount 开销）──
+// getSegments 通过 emits 验证器捕获 input payload，用 textToSegments 还原（ADR-0037）。
+const lastInputText = ref('')
 const ComposerInputMock = defineComponent({
   name: 'ComposerInput',
-  emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
+  emits: {
+    input: (val: string) => {
+      lastInputText.value = val
+      return true
+    },
+    keydown: null,
+    'slash-trigger': null,
+    'file-trigger': null,
+  },
   setup(_, { expose }) {
-    expose({ clear: vi.fn(), setText: vi.fn(), insertSlashChip: vi.fn() })
+    expose({ clear: vi.fn(), setText: vi.fn(), insertSlashChip: vi.fn(), getSegments: () => textToSegments(lastInputText.value) })
     return {}
   },
   template: '<div data-testid="composer-input" />',
@@ -103,6 +114,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   apiMock.holder.handler = null
+  lastInputText.value = ''
 })
 
 function emit(msg: ServerMessage): void {
@@ -113,10 +125,10 @@ describe('T1.4 useChat.send 全链', () => {
   it('send(text) → appendUser + addPendingSend + api.send → message_start → clearPendingSend', async () => {
     const chat = useChatStore()
     const { send } = useChat()
-    await send('s-fullchain', 'hello')
+    await send('s-fullchain', textToSegments('hello'))
     // 1. appendUser：消息列表有 user 气泡
     const msgs = chat.getMessages('s-fullchain')
-    expect(msgs.some((m) => m.role === 'user' && m.content === 'hello')).toBe(true)
+    expect(msgs.some((m) => m.role === 'user' && normalizeContent(m.content) === 'hello')).toBe(true)
     // 2. addPendingSend：isActive=true（空窗期）
     expect(chat.isActive('s-fullchain')).toBe(true)
     // 3. api.send 被调
@@ -135,7 +147,7 @@ describe('T1.5 send api.send 失败回滚', () => {
     const { send } = useChat()
     apiMock.send.mockRejectedValueOnce(new Error('ws disconnected'))
     // [W2] send 失败不再 throw（与 steer/followUp/abort 对齐：clearPendingSend + toast，不 throw）
-    await expect(send('s-fail', 'hello')).resolves.toBeUndefined()
+    await expect(send('s-fail', textToSegments('hello'))).resolves.toBeUndefined()
     // clearPendingSend：isActive 恢复 false（无 streaming entity + 无 pendingSend）
     expect(chat.isActive('s-fail')).toBe(false)
   })
@@ -147,7 +159,7 @@ describe('T5.1 editAndResend pendingSend 对称', () => {
     session.activeId = 's-edit'
     const chat = useChatStore()
     // 先注入历史消息（供 truncateFrom 操作）
-    chat.appendUser('s-edit', '原问题')
+    chat.appendUser('s-edit', textToSegments('原问题'))
     const userMsg = chat.getMessages('s-edit').find((m) => m.role === 'user')!
     const { editAndResend } = useChat()
     await editAndResend('s-edit', userMsg.id, 'edited text')
@@ -161,7 +173,7 @@ describe('T5.1 editAndResend pendingSend 对称', () => {
     const session = useSessionStore()
     session.activeId = 's-edit-fail'
     const chat = useChatStore()
-    chat.appendUser('s-edit-fail', '原问题')
+    chat.appendUser('s-edit-fail', textToSegments('原问题'))
     const userMsg = chat.getMessages('s-edit-fail').find((m) => m.role === 'user')!
     apiMock.send.mockRejectedValueOnce(new Error('ws disconnected'))
     const { editAndResend } = useChat()

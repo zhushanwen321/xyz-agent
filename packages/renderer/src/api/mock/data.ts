@@ -15,6 +15,7 @@
  * 内存介质（D7）：reload 重置，不写文件。
  */
 import type { SessionSummary, Message } from '@xyz-agent/shared'
+import { textToSegments } from '@xyz-agent/shared'
 
 // E2E 构建期由 Vite define 注入 globalThis.__E2E_SAMPLE_PROJECT_CWD__（renderer/vite.config.ts）：
 // E2E 构建时替换为 sample-project 绝对路径。vitest/非 E2E 构建时该属性 undefined → 空串兜底。
@@ -95,8 +96,7 @@ export const fixtureMessages: Record<string, Message[]> = {
     {
       id: 'u1',
       role: 'user',
-      content: '帮我看一下 auth 模块的结构，把登录校验改成 async。'
-      ,
+      content: textToSegments('帮我看一下 auth 模块的结构，把登录校验改成 async。'),
       status: 'complete',
       timestamp: NOW - 10 * MINUTE,
     },
@@ -146,7 +146,7 @@ export const fixtureMessages: Record<string, Message[]> = {
     {
       id: 'u2',
       role: 'user',
-      content: '把改动提交一下',
+      content: textToSegments('把改动提交一下'),
       status: 'complete',
       timestamp: NOW - 3 * MINUTE,
     },
@@ -178,7 +178,7 @@ export const fixtureMessages: Record<string, Message[]> = {
     {
       id: 'u3',
       role: 'user',
-      content: '跑一下 lint 看看还有没有问题',
+      content: textToSegments('跑一下 lint 看看还有没有问题'),
       status: 'complete',
       timestamp: NOW - 30 * MINUTE,
     },
@@ -206,7 +206,7 @@ export const fixtureMessages: Record<string, Message[]> = {
     {
       id: 'u4',
       role: 'user',
-      content: '解释一下 Promise.allSettled 和 Promise.all 的区别',
+      content: textToSegments('解释一下 Promise.allSettled 和 Promise.all 的区别'),
       status: 'complete',
       timestamp: NOW - 5 * MINUTE,
     },
@@ -223,7 +223,7 @@ export const fixtureMessages: Record<string, Message[]> = {
     {
       id: 'u5',
       role: 'user',
-      content: '把整个状态机重构一遍',
+      content: textToSegments('把整个状态机重构一遍'),
       status: 'complete',
       timestamp: NOW - 60 * MINUTE,
     },
