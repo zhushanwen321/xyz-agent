@@ -67,6 +67,25 @@ export const READ_TAIL_BYTES = 32 * 1024
  * @returns 尾部解析出的 entry 数组（offset>0 时不含被丢弃的残行）；文件不存在返回 null
  */
 export function readTailEntries(filePath: string): unknown[] | null {
+  return readTailBytes(filePath, READ_TAIL_BYTES)
+}
+
+/**
+ * 尾读指定字节数的 JSONL 并解析 entry（W1 H4 尾读优化）。
+ *
+ * readTailEntries 的参数化版本：readTailEntries 固定读 READ_TAIL_BYTES(32KB)，
+ * 本函数允许调用方指定字节数（tailReadHistory 需要更大窗口覆盖 20 turn）。
+ *
+ * 同样遵守 INVAR-tail-3/4/5：
+ * - offset>0 时首行视为残行丢弃
+ * - 文件不存在返回 null
+ * - size < maxBytes 时 offset=0 读全文件
+ *
+ * @param filePath JSONL 文件绝对路径
+ * @param maxBytes 尾部读取的最大字节数
+ * @returns 尾部解析出的 entry 数组；文件不存在返回 null
+ */
+export function readTailBytes(filePath: string, maxBytes: number): unknown[] | null {
   let fd: number
   try {
     fd = openSync(filePath, 'r')
@@ -78,8 +97,8 @@ export function readTailEntries(filePath: string): unknown[] | null {
     const stat = fstatSync(fd)
     const size = stat.size
     if (size === 0) return []
-    // offset = max(0, size - READ_TAIL_BYTES)；size < READ_TAIL_BYTES 时 offset=0 读全文件
-    const offset = Math.max(0, size - READ_TAIL_BYTES)
+    // offset = max(0, size - maxBytes)；size < maxBytes 时 offset=0 读全文件
+    const offset = Math.max(0, size - maxBytes)
     const readLen = size - offset
     const buf = Buffer.alloc(readLen)
     // readSync 从 offset 读 readLen 字节到 buf
