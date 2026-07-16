@@ -65,6 +65,7 @@
           >
             <span
               class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
+              style="vertical-align: middle"
             >
               <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
               <span>/skill:{{ seg.name }}</span>
