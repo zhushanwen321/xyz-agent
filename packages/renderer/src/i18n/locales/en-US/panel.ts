@@ -244,6 +244,7 @@ export default {
     tabDiff: 'Diff',
     copyFileName: 'Copy file name',
     copyFilePath: 'Copy path',
+    injectFileRef: 'Add file reference to composer',
   },
   panel: {
     sessionDead: 'Session process exited',

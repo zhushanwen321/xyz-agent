@@ -63,6 +63,17 @@
         <Check v-if="copied === 'path'" class="size-3.5 text-accent" />
         <Copy v-else class="size-3.5 text-subtle" />
       </Button>
+      <!-- FR-3: 加入文件引用到 composer（无行范围，target=current） -->
+      <Button
+        variant="ghost"
+        data-testid="detail-inject-file"
+        class="h-6 w-6 rounded-sm p-0"
+        :title="t('panel.detail.injectFileRef')"
+        :disabled="!state.path"
+        @click="injectFileRef()"
+      >
+        <Quote class="size-3.5 text-subtle" />
+      </Button>
       <!-- view toggle：有 git 改动时可切换 diff/preview -->
       <div v-if="state.hasGitChange" class="flex gap-0.5" data-testid="detail-view-toggle">
         <Button
@@ -142,6 +153,7 @@
         :patch="state.content"
         :path="state.path ?? undefined"
         data-testid="detail-diff"
+        @line-inject="injectFileRef($event.lineNo, $event.lineNo)"
       />
 
       <!-- ── preview 模式：按 kind 分发 ── -->
@@ -199,11 +211,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FileText, Loader2, AlertCircle, Image as ImageIcon, Copy, Check } from '@lucide/vue'
+import { FileText, Loader2, AlertCircle, Image as ImageIcon, Copy, Check, Quote } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useDetailPane, type DetailViewMode } from '@/composables/features/useDetailPane'
 import { useCopy } from '@/composables/effects/useCopy'
+import { useComposerInjectionStore } from '@/stores/composer-injection'
 import { extToLang } from '@/composables/logic/file-type'
 import { resolvePreviewPath } from '@/lib/path-utils'
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
@@ -213,6 +226,7 @@ import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
 const { t } = useI18n()
 
 const { copied, copy } = useCopy()
+const composerInjection = useComposerInjectionStore()
 
 const props = defineProps<{
   /** widget 订阅的 session 标识（与 SideDrawer sessionId 一致，useDetailPane watch 用） */
@@ -275,5 +289,21 @@ watch(
 
 function onToggleView(mode: DetailViewMode): void {
   void toggleView(mode)
+}
+
+/**
+ * 注入当前预览文件的 file chip 到 composer（FR-3 header 按钮）。
+ * 无行范围，target=current（当前 session 的 composer）。
+ * DiffView 行级点击（FR-5）也经此函数，带 lineStart/lineEnd。
+ */
+function injectFileRef(lineStart?: number, lineEnd?: number): void {
+  if (!state.value.path) return
+  composerInjection.requestInjection({
+    target: 'current',
+    path: state.value.path,
+    lineStart,
+    lineEnd,
+    sessionId: props.sessionId,
+  })
 }
 </script>

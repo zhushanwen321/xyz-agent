@@ -33,9 +33,15 @@
       </div>
       <!-- 行列表 -->
       <div v-for="(line, li) in codeLines(hunk, hi)" :key="li" class="flex" :class="lineRowClass(line)">
-        <!-- 行号槽：oldNo / newNo -->
+        <!-- 行号槽：oldNo / newNo。newNo 可点击注入该行 file 引用（FR-5） -->
         <span class="w-10 shrink-0 select-none px-1 text-right text-subtle/60">{{ line.oldNo ?? '' }}</span>
-        <span class="w-10 shrink-0 select-none px-1 text-right text-subtle/60">{{ line.newNo ?? '' }}</span>
+        <span
+          v-if="line.newNo !== undefined"
+          class="w-10 shrink-0 cursor-pointer select-none px-1 text-right text-subtle/60 transition-colors hover:text-accent"
+          :title="t('panel.detail.injectFileRef')"
+          @click="onLineClick(line)"
+        >{{ line.newNo }}</span>
+        <span v-else class="w-10 shrink-0 select-none px-1 text-right text-subtle/60"></span>
         <!-- +/- 符号槽 -->
         <span class="w-4 shrink-0 select-none text-center" :class="signClass(line)">{{ sign(line) }}</span>
         <!-- 代码内容：shiki 高亮片段 v-html，降级纯文本。
@@ -95,6 +101,22 @@ const props = defineProps<{
   /** 文件路径（用于推断 shiki 语言；从 patch 内 +++ b/xxx 也可，但 path 更可靠） */
   path?: string
 }>()
+
+/**
+ * FR-5: 行号点击注入该行 file chip 到 composer。
+ * payload: path（props.path）+ lineNo（优先 newNo，无则 oldNo，用于 #file:Lno 引用）。
+ */
+const emit = defineEmits<{
+  lineInject: [payload: { path: string; lineNo: number }]
+}>()
+
+/** 行号点击：emit 行引用信息（FR-5）。优先用 newNo（改动后行号），无则 oldNo。 */
+function onLineClick(line: { oldNo?: number; newNo?: number }): void {
+  if (!props.path) return
+  const lineNo = line.newNo ?? line.oldNo
+  if (lineNo === undefined) return
+  emit('lineInject', { path: props.path, lineNo })
+}
 
 const parsed = ref<ParsedDiff>({ hunks: [] })
 
