@@ -8,6 +8,7 @@
  * 共性骨架：split 行 → 跳空行 → JSON.parse → 失败静默跳过 → 成功 yield。
  * 各消费方对返回的 entries 再做自己的领域过滤（type 判定 / 取字段等）。
  */
+import { openSync, readSync, closeSync, fstatSync } from 'node:fs'
 
 /**
  * 把 JSONL 文本解析成成功解析的条目数组（按行序，跳过空行与畸形行）。
@@ -37,4 +38,70 @@ export function parseJsonl(raw: string): unknown[] {
     }
   }
   return entries
+}
+
+/**
+ * 尾读块大小（D4）。session_end 总在文件尾部（百字节级即够命中）；
+ * session_info 若晚期 rename 也在尾部，早期命名则靠 fallback 全量读。
+ * 32KB 对齐典型 fs readahead，相对 session 文件 size（实测 max 0.93MB）开销小。
+ */
+export const READ_TAIL_BYTES = 32 * 1024
+
+/**
+ * 尾读 JSONL 文件并解析尾部 entry（W1，ADR 尾读优化）。
+ *
+ * 用 openSync + readSync 从 offset=max(0, size-READ_TAIL_BYTES) 做 partial read，
+ * 避免 readFileSync 全量读取。专为 extractSessionName/Outcome 这类「找尾部最后一条
+ * 匹配 entry」的场景设计——pi 的 persistSessionName/End 都是 append（尾部追加）。
+ *
+ * INVAR-tail-3：offset>0 时尾块**首行视为残行丢弃**——从文件中间位置读可能切断
+ * 某行或多字节 UTF-8 字符，残行可能恰好是合法 JSON 导致误匹配，靠丢首行消除
+ * （不靠 try-catch 吞错，因残行可能 parse 成功但语义错误）。
+ * INVAR-tail-4：文件不存在/ENOENT 返回 null 不抛（规则 #6 pi 延迟写入，文件可能不存在）。
+ * INVAR-tail-5：size<READ_TAIL_BYTES 时 offset=0 读全文件（自然退化，无残行丢弃）。
+ *
+ * 未命中（尾部块无目标 entry）时返回的数组不含目标——调用方（extractSessionName/Outcome）
+ * 负责 fallback 全量读（SR1：早期命名长 session 的最后一条 session_info 在文件头部）。
+ *
+ * @param filePath JSONL 文件绝对路径
+ * @returns 尾部解析出的 entry 数组（offset>0 时不含被丢弃的残行）；文件不存在返回 null
+ */
+export function readTailEntries(filePath: string): unknown[] | null {
+  let fd: number
+  try {
+    fd = openSync(filePath, 'r')
+  } catch {
+    // INVAR-tail-4: 文件不存在（ENOENT）/不可读 → 返回 null 不抛
+    return null
+  }
+  try {
+    const stat = fstatSync(fd)
+    const size = stat.size
+    if (size === 0) return []
+    // offset = max(0, size - READ_TAIL_BYTES)；size < READ_TAIL_BYTES 时 offset=0 读全文件
+    const offset = Math.max(0, size - READ_TAIL_BYTES)
+    const readLen = size - offset
+    const buf = Buffer.alloc(readLen)
+    // readSync 从 offset 读 readLen 字节到 buf
+    const bytesRead = readSync(fd, buf, 0, readLen, offset)
+    const content = buf.subarray(0, bytesRead).toString('utf-8')
+    const lines = content.split('\n')
+    // INVAR-tail-3: offset>0 时首行是残行（被切断），丢弃不参与 parse
+    // offset===0 时首行是完整行，不丢
+    const startIdx = offset > 0 ? 1 : 0
+    const entries: unknown[] = []
+    for (let i = startIdx; i < lines.length; i++) {
+      const trimmed = lines[i].trim()
+      if (!trimmed) continue
+      try {
+        entries.push(JSON.parse(trimmed))
+      // eslint-disable-next-line taste/no-silent-catch -- JSONL: skip malformed line, keep parsing
+      } catch {
+        // skip malformed line
+      }
+    }
+    return entries
+  } finally {
+    closeSync(fd)
+  }
 }
