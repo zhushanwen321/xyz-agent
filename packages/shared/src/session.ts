@@ -1,9 +1,21 @@
 /**
- * 'dead'：pi 进程异常退出（前端收到 session.exited 后标记）。dead session 在侧栏置灰，
- * panel 显示「进程已退出」占位，点击「重新打开」触发 restore 重新 spawn pi。
- * 加在末尾以避免破坏现有 active/idle 序列消费方。
+ * session 状态。
+ *
+ * 三态（进程级，runtime 维护）：
+ * - 'active'：pi 进程存活且正在生成
+ * - 'idle'：session 存在但 pi 未在生成（内存 session 默认态 / 磁盘历史 session 扫描态）
+ * - 'dead'：pi 进程异常退出（前端收到 session.exited 后标记）。dead session 在侧栏置灰，
+ *   panel 显示「进程已退出」占位，点击「重新打开」触发 restore 重新 spawn pi。
+ *
+ * 终态（W5，ADR 0036，来自 session_end entry）：
+ * - 'done'：正常完成
+ * - 'error'：LLM 出错
+ * - 'stopped'：用户 abort / 进程崩溃
+ *
+ * 新增态加在末尾以避免破坏现有 active/idle/dead 序列消费方。
+ * 历史 session（方案上线前产生，无 session_end entry）一律 idle（渐进迁移）。
  */
-export type SessionStatus = 'active' | 'idle' | 'dead'
+export type SessionStatus = 'active' | 'idle' | 'dead' | 'done' | 'error' | 'stopped'
 
 export interface SessionSummary {
   id: string

@@ -62,13 +62,15 @@ export class SessionScanner {
 
   private scannedToSummary(s: ScannedSession): SessionSummary {
     const git = this.gitInfoReader.readGitInfo(s.cwd)
+    // W5：读 session_end 终态（ADR 0036）。无 entry（历史 session / 未结束）→ idle 兜底
+    const outcome = this.sessionStore.extractSessionOutcome(s.filePath)
     return {
       id: s.id,
       label: s.name ?? basename(s.cwd),
       cwd: s.cwd,
       gitBranch: git?.branch,
       gitIsWorktree: git?.isWorktree,
-      status: 'idle' as SessionStatus,
+      status: (outcome ?? 'idle') as SessionStatus,
       lastActiveAt: s.lastModified,
       modelId: '',
       tokenCount: 0,

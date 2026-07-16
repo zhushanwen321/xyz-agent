@@ -13,6 +13,7 @@ import {
   scanPiSessions,
   persistSessionName,
   persistSessionEnd,
+  extractSessionOutcome,
   patchSessionCwd,
 } from './session-file-utils.js'
 import { refreshAll } from './pi-provider-store.js'
@@ -34,6 +35,10 @@ export class PiSessionStore implements ISessionStore {
 
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void {
     persistSessionEnd(filePath, outcome, reason)
+  }
+
+  extractSessionOutcome(filePath: string): SessionOutcome | null {
+    return extractSessionOutcome(filePath)
   }
 
   patchSessionCwd(filePath: string, newCwd: string): boolean {
