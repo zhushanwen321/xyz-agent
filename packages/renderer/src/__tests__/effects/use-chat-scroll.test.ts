@@ -23,7 +23,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/effects/use-chat-scroll.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, effectScope } from 'vue'
 import type { Ref } from 'vue'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 
@@ -380,11 +380,13 @@ describe('useChatScroll · M4 rAF trailing 节流', () => {
     originalRAF = globalThis.requestAnimationFrame
     originalCAF = globalThis.cancelAnimationFrame
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      const handle = rafCallbacks.length
       rafCallbacks.push(cb)
-      return rafCallbacks.length // fake handle
+      return handle // fake handle = 数组索引
     }) as typeof requestAnimationFrame
     globalThis.cancelAnimationFrame = ((handle: number) => {
-      delete (rafCallbacks as Record<number, FrameRequestCallback | undefined>)[handle - 1]
+      // 按 handle 索引移除回调（cancel 后 flush 不应执行它）
+      if (rafCallbacks[handle] !== undefined) rafCallbacks[handle] = undefined as unknown as FrameRequestCallback
     }) as typeof cancelAnimationFrame
   })
 
@@ -393,9 +395,9 @@ describe('useChatScroll · M4 rAF trailing 节流', () => {
     globalThis.cancelAnimationFrame = originalCAF
   })
 
-  /** flush 所有 pending rAF 回调。 */
+  /** flush 所有 pending rAF 回调（跳过已被 cancel 的）。 */
   function flushRAF(): void {
-    const pending = rafCallbacks.splice(0)
+    const pending = rafCallbacks.splice(0).filter((cb): cb is FrameRequestCallback => cb !== undefined)
     pending.forEach((cb) => cb(0))
   }
 
@@ -461,5 +463,36 @@ describe('useChatScroll · M4 rAF trailing 节流', () => {
     await nextTick()
 
     expect(vi.mocked(el.scrollTo)).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * M4-4: 卸载时 pending rAF 被取消（INVAR-M4-5 / AC-M4-4）。
+   *
+   * 防止组件卸载后 flushScroll 对已卸载 el 调 scrollTo 报错。
+   * 在 effectScope 内调度 rAF，dispose scope 后 flushRAF 不应触发 scrollTo。
+   */
+  it('M4-4: effectScope dispose 后 pending rAF 被取消，flush 不触发 scrollTo', async () => {
+    const scope = effectScope()
+    let scoped: ReturnType<typeof useChatScroll> | undefined
+    scope.run(() => {
+      scoped = useChatScroll()
+    })
+    const { scrollEl, scrollToBottom } = scoped!
+    const el = document.createElement('div')
+    scrollEl.value = el
+    setScroll(el, 1000, 800, 200) // 贴底
+
+    // 调度 rAF（不 flush）
+    void scrollToBottom('auto')
+    expect(rafCallbacks.length).toBeGreaterThan(0)
+
+    // 卸载：onScopeDispose 应取消 rAF（effectScope.stop 触发 onScopeDispose）
+    scope.stop()
+
+    // 手动 flush 残留回调（模拟 rAF 到点）——因已 cancelAnimationFrame，
+    // flushScroll 不应执行，scrollTo 未被调用
+    flushRAF()
+    await nextTick()
+    expect(vi.mocked(el.scrollTo)).not.toHaveBeenCalled()
   })
 })
