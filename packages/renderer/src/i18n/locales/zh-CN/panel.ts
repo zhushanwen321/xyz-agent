@@ -245,6 +245,7 @@ export default {
     copyFileName: '复制文件名',
     copyFilePath: '复制路径',
     injectFileRef: '加入文件引用到对话框',
+    injectToNew: '引用到新对话',
   },
   panel: {
     sessionDead: '会话进程已退出',

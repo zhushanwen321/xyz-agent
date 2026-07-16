@@ -245,6 +245,7 @@ export default {
     copyFileName: 'Copy file name',
     copyFilePath: 'Copy path',
     injectFileRef: 'Add file reference to composer',
+    injectToNew: 'Reference in new chat',
   },
   panel: {
     sessionDead: 'Session process exited',

@@ -136,8 +136,15 @@
     </div>
 
     <!-- 内容区：按 viewMode + kind 分发渲染（禁 v-html，<pre> + 文本插值，XSS 安全；
-         markdown/code/diff 经各自渲染器的受控 v-html 点处理，论证 XSS 安全） -->
-    <div v-else class="min-h-0 flex-1 overflow-auto" data-testid="detail-content">
+         markdown/code/diff 经各自渲染器的受控 v-html 点处理，论证 XSS 安全）。
+         @mouseup 检测选区（FR-4）：选中文本后弹引用 bubble。 -->
+    <div
+      v-else
+      ref="contentRef"
+      class="relative min-h-0 flex-1 overflow-auto"
+      data-testid="detail-content"
+      @mouseup="onContentMouseup"
+    >
       <!-- 截断提示（>1MB，AC-6.5/T6.5） -->
       <div
         v-if="state.truncated"
@@ -145,6 +152,29 @@
         data-testid="detail-truncated"
       >
         {{ t('panel.detail.truncated') }}
+      </div>
+
+      <!-- FR-4: 选区引用 bubble。选中文本后 mouseup 触发，提供引用到当前/新对话。
+           absolute 定位在内容区右上（首版不跟随 range，简化定位）。 -->
+      <div
+        v-if="selectionRange"
+        class="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-sm border border-border bg-surface p-1 shadow-md"
+        data-testid="detail-selection-bubble"
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="bubble-inject-current"
+          class="h-6 rounded-sm px-2 text-[11px]"
+          @click="injectSelectionToCurrent"
+        >{{ t('panel.detail.injectFileRef') }}</Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="bubble-inject-new"
+          class="h-6 rounded-sm px-2 text-[11px]"
+          @click="injectSelectionToNew"
+        >{{ t('panel.detail.injectToNew') }}</Button>
       </div>
 
       <!-- ── diff 模式：所有文件类型统一走 DiffView（parseDiff 着色）── -->
@@ -228,6 +258,11 @@ const { t } = useI18n()
 const { copied, copy } = useCopy()
 const composerInjection = useComposerInjectionStore()
 
+/** 内容区 ref（FR-4 选区检测用） */
+const contentRef = ref<HTMLElement | null>(null)
+/** 当前选区的行范围（FR-4 bubble 显隐驱动）。null=无选区/bubble 隐藏 */
+const selectionRange = ref<{ lineStart: number; lineEnd: number } | null>(null)
+
 const props = defineProps<{
   /** widget 订阅的 session 标识（与 SideDrawer sessionId 一致，useDetailPane watch 用） */
   sessionId: string | null
@@ -305,5 +340,61 @@ function injectFileRef(lineStart?: number, lineEnd?: number): void {
     lineEnd,
     sessionId: props.sessionId,
   })
+}
+
+/**
+ * 注入选区到新对话（FR-4 bubble "新对话" 按钮）。
+ * target=new：触发 useNewTaskFlow 进 landing 后注入。
+ */
+function injectSelectionToNew(): void {
+  if (!state.value.path || !selectionRange.value) return
+  composerInjection.requestInjection({
+    target: 'new',
+    path: state.value.path,
+    lineStart: selectionRange.value.lineStart,
+    lineEnd: selectionRange.value.lineEnd,
+    sessionId: props.sessionId,
+  })
+  selectionRange.value = null
+}
+
+/**
+ * 内容区 mouseup：检测选区，非空且在内容区内时计算行范围显 bubble（FR-4）。
+ * 行范围反推：取选中文本首行/末行在 state.content 的行索引近似（首版精度限制见 outOfScope）。
+ */
+function onContentMouseup(): void {
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+    selectionRange.value = null
+    return
+  }
+  // 选区必须在内容区内
+  const range = sel.getRangeAt(0)
+  if (!contentRef.value || !contentRef.value.contains(range.commonAncestorContainer)) {
+    selectionRange.value = null
+    return
+  }
+  const selectedText = sel.toString()
+  if (!selectedText.trim()) {
+    selectionRange.value = null
+    return
+  }
+  // 行范围近似：选中文本首行在 content 的行号（1-based）
+  const lines = state.value.content.split('\n')
+  const firstLine = selectedText.split('\n')[0] ?? ''
+  const idx = lines.findIndex((l) => l.trim() === firstLine.trim())
+  if (idx < 0) {
+    selectionRange.value = null
+    return
+  }
+  const lineCount = selectedText.split('\n').length
+  selectionRange.value = { lineStart: idx + 1, lineEnd: idx + lineCount }
+}
+
+/** bubble 引用到当前对话（FR-4）：用 selectionRange 行范围注入 */
+function injectSelectionToCurrent(): void {
+  if (!selectionRange.value) return
+  injectFileRef(selectionRange.value.lineStart, selectionRange.value.lineEnd)
+  selectionRange.value = null
 }
 </script>
