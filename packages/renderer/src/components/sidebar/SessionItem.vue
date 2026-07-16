@@ -47,7 +47,7 @@
         v-if="!confirming"
         variant="ghost"
         size="icon"
-        class="size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
+        class="size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
         :title="t('sidebar.sessionItem.rename')"
         @click.stop="emit('rename', session.id)"
       >

@@ -11,7 +11,7 @@
       variant="ghost"
       :title="tab.label"
       :class="cn(
-        'relative h-auto flex-1 justify-center gap-1 rounded-[5px] px-1 py-[5px]',
+        'relative h-auto flex-1 justify-center gap-1 rounded-sm px-1 py-1',
         modelValue === tab.value
           ? 'border border-border-strong bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
           : 'border border-border text-muted hover:bg-surface-hover hover:text-fg',
