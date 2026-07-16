@@ -236,6 +236,7 @@ export type ServerMessageType =
   | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
+  | 'message.stream_warn'
   | 'send.rejected'
   | 'message.file_changes'
   | 'message.changeSetInvalidated'
@@ -286,10 +287,13 @@ export interface ServerMessageMapBase {
   'error': { code: string; message: string; sessionId?: string; details?: Record<string, unknown> }
   // 流式异步推送失败（server-push 通道，区别于请求级 error envelope；见错误契约文档）
   'message.error': { sessionId: string; message: string }
-  // message.stream_error：流式异常。WARN（pi 静默卡死）与真正错误共用本类型。
-  // content 为人类可读原因（前端 chat-message-effects 读 readString(payload,'content')），
-  // kind 仅作分类标记（'silent' 等），可选——前端不依赖它显示。
+  // message.stream_error：流式真错误（pi 异常 / 流终止）。前端收到后 finalizeSession 收口。
+  // content 为人类可读原因（前端 chat-message-effects 读 readString(payload,'content')）。
   'message.stream_error': { sessionId: string; content: string; kind?: string }
+  // message.stream_warn：pi 静默卡死 WARN（120s 无活动，提示性，不中断流）。
+  // 与 stream_error 物理隔离——前端仅追加提示文案，不调 finalizeSession，session 保持 streaming 态。
+  // B1（PR#86 review）：原先 WARN 复用 stream_error{kind:'silent'}，前端无条件收口破坏「不中断」设计。
+  'message.stream_warn': { sessionId: string; content: string }
   // send.rejected：runtime 预检拦截（busy 时发送），防御性反馈通道（D-006）。
   // 语义：操作拒绝，区别于 message.error（流终止）。不进对话流，不翻流式态。
   // useChat 收到后回滚 pendingSend + toast。

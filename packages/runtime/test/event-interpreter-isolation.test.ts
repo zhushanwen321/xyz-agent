@@ -98,4 +98,22 @@ describe('EventInterpreter · W1 interpret 循环事件级隔离', () => {
     expect(onTurnFinalize).toHaveBeenCalledTimes(1)
     expect(onTurnFinalize).toHaveBeenCalledWith('sid-iso')
   })
+
+  // ── ISO3：turn-end 自己抛错时 onTurnFinalize 兜底复位（B2 核心） ──
+  it('ISO3: turn-end handler 自身抛错 → onTurnFinalize 仍被兜底调用（isGenerating 不永久 busy）', () => {
+    // send 在处理 turn-end（message.complete）时抛错——模拟 send 回调抛 / details 形状异常
+    send = (msg) => {
+      if (msg.type === 'message.complete') throw new Error('boom inside turn-end')
+      sent.push(msg)
+    }
+    const onTurnFinalize = vi.fn()
+    const interpreter = new EventInterpreter('sid-iso', { send, onTurnFinalize })
+
+    interpreter.interpret([turnEnd()])
+
+    // B2: 即使 turn-end 自身 handler 抛错，catch 兜底也必须调 onTurnFinalize，
+    // 否则 isGenerating 永不复位 → session 永久 busy（AGENTS.md 规则 #3）
+    expect(onTurnFinalize).toHaveBeenCalledTimes(1)
+    expect(onTurnFinalize).toHaveBeenCalledWith('sid-iso')
+  })
 })

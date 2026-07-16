@@ -89,9 +89,9 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
     }
   }
 
-  /** 取出 sent 中的 message.stream_error 帧（WARN 广播）。 */
-  function findStreamError(): ServerMessage | undefined {
-    return sent.find((m) => m.type === 'message.stream_error')
+  /** 取出 sent 中的 message.stream_warn 帧（WARN 广播，B1 后与 stream_error 物理隔离）。 */
+  function findStreamWarn(): ServerMessage | undefined {
+    return sent.find((m) => m.type === 'message.stream_warn')
   }
 
   // ── WD1：正常 turn 不误报 ─────────────────────────────────────
@@ -140,14 +140,19 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
   })
 
   // ── WD5：WARN 级别先广播再算 abort ────────────────────────────
-  it('WD5: 推进超过 WARN 但未到 ABORT → 广播 message.stream_error，onSilentAbort 不调用', () => {
+  it('WD5: 推进超过 WARN 但未到 ABORT → 广播 message.stream_warn（非 stream_error），onSilentAbort 不调用', () => {
     interpreter.interpret([turnStart()])
     // 超过 WARN 阈值但未到 ABORT 阈值
     vi.advanceTimersByTime(WARN_THRESHOLD_MS + 1_000)
 
-    // WARN：先广播 stream_error 提醒用户
-    const warn = findStreamError()
+    // B1: WARN 走独立类型 message.stream_warn（提示性，不中断），
+    // 不再复用 message.stream_error（前端会当真错误收口）
+    const warn = findStreamWarn()
     expect(warn).toBeDefined()
+    expect(warn!.type).toBe('message.stream_warn')
+    // stream_error 不应被 WARN 触发（那是真错误的通道）
+    const strayError = sent.find((m) => m.type === 'message.stream_error')
+    expect(strayError).toBeUndefined()
     // 尚未到 abort，不触发 onSilentAbort
     expect(onSilentAbort).not.toHaveBeenCalled()
   })

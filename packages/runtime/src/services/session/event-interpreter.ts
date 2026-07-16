@@ -141,8 +141,18 @@ export class EventInterpreter {
       // 故单事件失败仅记日志不中断批次（复用 event-adapter.logInterpretFailure 的隔离思路）。
       try {
         this.handle(ev)
-      // eslint-disable-next-line taste/no-silent-catch -- 仅隔离日志：不 re-throw 会让后续事件（含 agent_end）无法投递，单条坏事件炸掉整条事件流
       } catch (err: unknown) {
+        // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize +
+        // clearWatchdog 未执行 → isGenerating 永不复位（session 永久 busy，违反 AGENTS.md 规则 #3）。
+        // 兜底强制执行。onTurnFinalize 幂等（finalizeSession 幂等，见 chat.ts），重复调用无副作用。
+        if (ev.kind === 'turn-end') {
+          try {
+            this.opts.onTurnFinalize?.(this.sessionId)
+          } catch {
+            // 兜底失败也不阻断——至少尝试清 watchdog
+          }
+          this.clearWatchdog()
+        }
         console.error(
           `[event-interpreter] handle event error (isolated; batch continues) sid=${this.sessionId} kind=${ev.kind}:`,
           err,
@@ -241,8 +251,8 @@ export class EventInterpreter {
         if (hookResult.transformedData !== undefined) {
           input = hookResult.transformedData
         }
-      // eslint-disable-next-line taste/no-silent-catch
       } catch (e) {
+        // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
         console.debug(`[event-interpreter] hook tool_execution_start error: ${toErrorMessage(e)}`)
       }
     }
@@ -271,8 +281,8 @@ export class EventInterpreter {
       try {
         const hookResult = await this.opts.executeHooks('onAfterToolResult', { toolCallId, output })
         if (hookResult.transformedData !== undefined) output = hookResult.transformedData as string
-      // eslint-disable-next-line taste/no-silent-catch
       } catch (e) {
+        // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
         console.debug(`[event-interpreter] hook tool_execution_end error: ${toErrorMessage(e)}`)
       }
     }
@@ -376,14 +386,14 @@ export class EventInterpreter {
       if (this.watchdogWarned) return
       this.watchdogWarned = true
       console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
-      // WARN payload 与前端 message.stream_error 契约对齐：带 content 字段（人类可读原因），
-      // 前端 chat-message-effects 读 readString(payload,'content') 显示。kind 保留作分类标记。
+      // B1（PR#86 review）：WARN 走独立类型 message.stream_warn（提示性，不中断流），
+      // 不再复用 stream_error——前端 stream_error effect 会无条件 finalizeSession 收口，
+      // 破坏「WARN 提示但不中断」设计。stream_warn 仅追加提示，session 保持 streaming。
       this.opts.send({
-        type: 'message.stream_error' as ServerMessageType,
+        type: 'message.stream_warn' as ServerMessageType,
         payload: {
           sessionId: this.sessionId,
           content: `长时间无响应（${SILENT_WARN_MS / 1000}s 无活动）`,
-          kind: 'silent',
         },
       })
     }, SILENT_WARN_MS)

@@ -255,6 +255,19 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     }
   },
 
+  // B1（PR#86 review）：pi 静默卡死 WARN（120s 无活动，提示性，不中断流）。
+  // 与 stream_error 物理隔离——仅追加 system 提示消息，不调 finalizeSession，
+  // session 保持 streaming 态（pi 可能只是慢，130s 后恢复产出）。
+  'message.stream_warn': (ctx, sid, payload) => {
+    const { messages } = ctx
+    const warnContent = readString(payload, 'content') ?? '长时间无响应'
+    const prev = messages.value.get(sid) ?? []
+    messages.value.set(sid, [
+      ...prev,
+      { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now() },
+    ])
+  },
+
   // ── 文本流（纯 chunk 更新，不翻 lifecycle flag）──
   'message.text_delta': (ctx, sid, payload) => {
     const { messages } = ctx
