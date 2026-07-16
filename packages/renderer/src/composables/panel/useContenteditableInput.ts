@@ -23,6 +23,8 @@
  * - caret 滚动比较：折叠选区 getBoundingClientRect vs 容器 rect，超下沿则补 scrollTop。
  */
 import { ref, type Ref } from 'vue'
+import type { Segment } from '@xyz-agent/shared'
+import { segmentsToText } from '@xyz-agent/shared'
 
 /** 输入区触发事件回调（ComposerInput 通过 emit 转发） */
 interface ContenteditableCallbacks {
@@ -206,27 +208,84 @@ function moveCaretVerticalOf(
   return { result: 'moved', preferredX: activePreferredX }
 }
 
-/** 提取纯文本：TreeWalker 遍历 TEXT + ELEMENT，跳过 chip × 按钮文本 */
-function getTextFromEl(el: HTMLDivElement | null): string {
-  if (!el) return ''
-  let text = ''
+/**
+ * 把 contenteditable DOM 解析为 Segment[]（W2）。
+ *
+ * TreeWalker 遍历逻辑与原 getTextFromEl 一致（SHOW_TEXT | SHOW_ELEMENT，跳过 .chip-x），
+ * 但产出结构化 segment 而非拍平字符串：
+ * - .slash-chip 元素 → 读 dataset.chipType：'skill' 产出 skill segment（有 location 则带上），
+ *   其余产出 text segment（读 .chip-label 的 textContent）。遇到 chip 元素后跳过其子树
+ *   （icon/label/x 按钮不单独遍历）——用 rejectChipSubtree 集合在 acceptNode 里直接拒绝。
+ * - 文本节点：累加进当前 text segment（相邻文本节点合并，不每个产一个 segment），
+ *   过滤 \u00A0→空格、\u200B→删除（与原 getTextFromEl 一致）。
+ * - BR：在当前 text segment 里追加 \n。
+ */
+function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
+  if (!el) return []
+  const segments: Segment[] = []
+  // 当前正在累积的 text segment 文本（null 表示无待提交 text segment）
+  let pendingText: string | null = null
+  // 收集需要跳过子树的 chip 元素（遇到 chip 后，其所有后代在 acceptNode 里 REJECT）
+  const rejectChips = new Set<Element>()
+
+  const flushText = (): void => {
+    if (pendingText !== null) {
+      segments.push({ type: 'text', text: pendingText })
+      pendingText = null
+    }
+  }
+
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
     acceptNode(node: Node): number {
+      // 跳过 chip × 按钮文本
       if (node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x')) {
         return NodeFilter.FILTER_REJECT
+      }
+      // 跳过已收集 chip 的子树节点（REJECT 让 walker 不深入，自动跨过整个子树）
+      for (const chip of rejectChips) {
+        if (chip.contains(node)) return NodeFilter.FILTER_REJECT
       }
       return NodeFilter.FILTER_ACCEPT
     },
   })
+
   while (walker.nextNode()) {
     const node = walker.currentNode
+
+    // slash-chip 元素：产出对应 segment，加入 rejectChips 跳过子树
+    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).classList?.contains('slash-chip')) {
+      const chip = node as HTMLElement
+      const chipType = chip.dataset.chipType
+      if (chipType === 'skill') {
+        flushText()
+        const name = chip.dataset.chipName ?? ''
+        const location = chip.dataset.chipLocation
+        segments.push(location ? { type: 'skill', name, location } : { type: 'skill', name })
+      } else {
+        // 普通 slash 命令：读 .chip-label 文本（如 /commit），并入当前 text 累积
+        const labelText = chip.querySelector('.chip-label')?.textContent ?? ''
+        pendingText = (pendingText ?? '') + labelText
+      }
+      rejectChips.add(chip)
+      continue
+    }
+
     if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent ?? ''
+      const raw = node.textContent ?? ''
+      const filtered = raw.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
+      pendingText = (pendingText ?? '') + filtered
     } else if (node.nodeName === 'BR') {
-      text += '\n'
+      pendingText = (pendingText ?? '') + '\n'
     }
   }
-  return text.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
+
+  flushText()
+  return segments
+}
+
+/** 提取纯文本：getSegmentsFromEl + segmentsToText 的便捷封装（现有调用方零影响） */
+function getTextFromEl(el: HTMLDivElement | null): string {
+  return segmentsToText(getSegmentsFromEl(el))
 }
 
 /** # 文件触发检测：基于光标位置，任意位置触发 */
@@ -280,6 +339,7 @@ export function useContenteditableInput(
   onPaste: (e: ClipboardEvent) => void
   syncEmpty: () => void
   getText: () => string
+  getSegments: () => Segment[]
   saveSelection: () => void
   restoreSelection: () => void
   clearSlashQueryText: () => void
@@ -328,6 +388,11 @@ export function useContenteditableInput(
 
   function getText(): string {
     return getTextFromEl(getEl())
+  }
+
+  /** 提取结构化 segments（W2：composer 出口结构化，供 send 链路传 Segment[]） */
+  function getSegments(): Segment[] {
+    return getSegmentsFromEl(getEl())
   }
 
   function syncEmpty(): void {
@@ -600,6 +665,7 @@ export function useContenteditableInput(
     onPaste,
     syncEmpty,
     getText,
+    getSegments,
     saveSelection,
     restoreSelection,
     clearSlashQueryText,

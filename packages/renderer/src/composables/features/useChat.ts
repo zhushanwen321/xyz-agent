@@ -17,6 +17,8 @@ import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
+import type { Segment } from '@xyz-agent/shared'
+import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
 
 const t = i18n.global.t
 
@@ -124,22 +126,23 @@ export function useChat() {
    * 显式接收 sessionId：双 panel 下 Composer 各自有独立 sessionId（panel leaf 绑定），
    * send 目标由调用方传入，不读全局 session.activeId（否则 standby panel 发消息会串到 active panel）。
    */
-  async function send(sessionId: string, text: string): Promise<void> {
+  async function send(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
-    const trimmed = text.trim()
-    if (!trimmed) return
+    if (segments.length === 0) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim()) return
 
     // [B 策略 D-001] busy 时自动转 steer（追加上下文，不打断当前回合）
     if (chat.isActive(sid)) {
-      await steer(sid, trimmed)
+      await steer(sid, segments)
       return
     }
 
-    chat.appendUser(sid, trimmed)
+    chat.appendUser(sid, segments)
     ensureStreamSubscription(sid, chat, session)
     chat.addPendingSend(sid)
     try {
-      await chatApi.send(sid, trimmed)
+      await chatApi.send(sid, promptText)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
@@ -158,19 +161,20 @@ export function useChat() {
    *
    * 显式接收 sessionId：与 send 同理，per-panel 隔离，不读全局 activeId。
    */
-  async function steer(sessionId: string, text: string): Promise<void> {
+  async function steer(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
-    const trimmed = text.trim()
-    if (!trimmed || !chat.isActive(sid)) return
+    if (segments.length === 0) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim() || !chat.isActive(sid)) return
 
     // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete。
     // [W1] API 失败（WS 断连/steer_failed envelope/hook 拦截）回滚 pending + toast 提示，
     // 不 throw（错误已消化：pending 已回滚 + 用户已得反馈；throw 只会变 unhandled rejection）。
-    chat.appendPending(sid, trimmed, 'steer')
+    chat.appendPending(sid, segments, 'steer')
     try {
-      await chatApi.steer(sid, trimmed)
+      await chatApi.steer(sid, promptText)
     } catch (e) {
-      chat.removePending(sid, trimmed, 'steer')
+      chat.removePending(sid, segments, 'steer')
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
       error(t('composable.supplementSendFailed', { msg }))
@@ -183,24 +187,25 @@ export function useChat() {
    *
    * 显式接收 sessionId：与 send 同理，per-panel 隔离。
    */
-  async function followUp(sessionId: string, text: string): Promise<void> {
+  async function followUp(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
-    const trimmed = text.trim()
-    if (!trimmed) return
+    if (segments.length === 0) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim()) return
 
     // 非活跃（含空窗期）退化为普通发送，避免 Alt+⏎ 死键
     if (!chat.isActive(sid)) {
-      await send(sid, trimmed)
+      await send(sid, segments)
       return
     }
 
     // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete。
     // [W1] API 失败回滚 pending + toast 提示（同 steer，不 throw）。
-    chat.appendPending(sid, trimmed, 'follow-up')
+    chat.appendPending(sid, segments, 'follow-up')
     try {
-      await chatApi.followUp(sid, trimmed)
+      await chatApi.followUp(sid, promptText)
     } catch (e) {
-      chat.removePending(sid, trimmed, 'follow-up')
+      chat.removePending(sid, segments, 'follow-up')
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
       error(t('composable.nextTurnSendFailed', { msg }))
@@ -264,8 +269,10 @@ export function useChat() {
   async function editAndResend(sessionId: string, userMessageId: string, text: string): Promise<void> {
     const trimmed = text.trim()
     if (!trimmed || chat.isActive(sessionId)) return
+    // 编辑来自 textarea 纯文本，转 Segment[] 保持 user message content 类型一致（ADR-0037）
+    const segments = textToSegments(trimmed)
     chat.truncateFrom(sessionId, userMessageId, true)
-    chat.appendUser(sessionId, trimmed)
+    chat.appendUser(sessionId, segments)
     ensureStreamSubscription(sessionId, chat, session)
     chat.addPendingSend(sessionId)
     try {

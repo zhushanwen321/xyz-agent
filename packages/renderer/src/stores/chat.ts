@@ -25,12 +25,16 @@
  * 数据流处理骨架见 applyFileChanges()，类型契约已就绪（F2-1），逻辑 DEFERRED。
  */
 import { defineStore } from 'pinia'
-import { onScopeDispose, ref } from 'vue'
+import { onScopeDispose, ref, shallowRef } from 'vue'
+import { commitMessages } from './chat-mutations'
 import type {
+  ContentBlock,
   Message,
+  Segment,
   ServerMessage,
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
+import { normalizeContent } from '@xyz-agent/shared'
 import { dispatchMessageEvent } from './chat-message-effects'
 import { findLastAssistantIndex } from './chat-chunk-processor'
 import { createChangeSetController } from './chat-changeset'
@@ -81,18 +85,22 @@ function disposeSessionImpl(
   changeSetStatuses: DisposableRefs<Map<string, unknown>>,
   clearTimers: (() => void)[],
 ): void {
-  // Map ref：不可变写保证响应式
+  // Map ref：不可变写保证响应式（new Map + delete + 赋值新 Map）。
+  // W1 后 messages 是 shallowRef，必须整体替换 .value 才触发；retryStates/queueStates
+  // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
   for (const ref of mapRefs) {
     if (ref.value.has(sessionId)) {
-      ref.value = new Map(ref.value)
-      ref.value.delete(sessionId)
+      const next = new Map(ref.value)
+      next.delete(sessionId)
+      ref.value = next
     }
   }
   // Set ref：不可变写保证响应式
   for (const ref of setRefs) {
     if (ref.value.has(sessionId)) {
-      ref.value = new Set(ref.value)
-      ref.value.delete(sessionId)
+      const next = new Set(ref.value)
+      next.delete(sessionId)
+      ref.value = next
     }
   }
   // changeSetStatuses：key 格式 `${sessionId}:${messageId}`，前缀过滤删除
@@ -122,7 +130,7 @@ function appendSystemNoticeImpl(
   text: string,
 ): void {
   const prev = messages.value.get(sessionId) ?? []
-  messages.value.set(sessionId, [
+  commitMessages(messages, sessionId, [
     ...prev,
     {
       id: `sys-${crypto.randomUUID()}`,
@@ -156,12 +164,12 @@ function applySubagentStreamDeltaImpl(
   const lastAssistantIdx = findLastAssistantIndex(prev)
   const next = [...prev]
   if (lastAssistantIdx >= 0 && next[lastAssistantIdx].status === 'streaming') {
-    const msg = { ...next[lastAssistantIdx] }
-    msg.content = fullText
-    if (!msg.contentBlocks?.some((b) => b.type === 'text')) {
-      msg.contentBlocks = [...(msg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
-    }
-    next[lastAssistantIdx] = msg
+    const prevMsg = next[lastAssistantIdx]
+    // 不可变写法（W1）：shallowRef 下不依赖字段级 mutate，整体构造新对象
+    const contentBlocks: ContentBlock[] = prevMsg.contentBlocks?.some((b) => b.type === 'text')
+      ? prevMsg.contentBlocks
+      : [...(prevMsg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
+    next[lastAssistantIdx] = { ...prevMsg, content: fullText, contentBlocks }
   } else {
     next.push({
       id: `sa-${crypto.randomUUID()}`,
@@ -172,7 +180,7 @@ function applySubagentStreamDeltaImpl(
       timestamp: Date.now(),
     })
   }
-  messages.value.set(virtualId, next)
+  commitMessages(messages, virtualId, next)
 }
 
 /**
@@ -193,7 +201,7 @@ function finalizeSubagentStreamImpl(
   if (lastAssistantIdx < 0 || prev[lastAssistantIdx].status !== 'streaming') return
   const next = [...prev]
   next[lastAssistantIdx] = { ...next[lastAssistantIdx], status: 'complete' }
-  messages.value.set(virtualId, next)
+  commitMessages(messages, virtualId, next)
 }
 
 /**
@@ -291,14 +299,17 @@ function finalizeMessagesImpl(
       : m.content
     return { ...m, status: finalStatus, content: finalContent, toolCalls } satisfies Message
   })
-  messages.value.set(sessionId, next)
+  commitMessages(messages, sessionId, next)
 }
 
 
 
 export const useChatStore = defineStore('chat', () => {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
-  const messages = ref<Map<string, Message[]>>(new Map())
+  // W1: shallowRef——messages 更新全部走 commitMessages（新 Map + set + 赋值 .value），
+  // 不再用 messages.value.set（shallowRef 下 Map mutation 不触发响应式）。
+  // 消除万级深 proxy（每条 Message 的嵌套对象不再被代理），降低长对话内存与 GC 压力（ADR 0034）。
+  const messages = shallowRef<Map<string, Message[]>>(new Map())
   /** 已 hydrate 的 session（避免切换时重复注入历史） */
   const hydrated = ref<Set<string>>(new Set())
   /**
@@ -402,7 +413,7 @@ export const useChatStore = defineStore('chat', () => {
   function hydrate(sessionId: string, history: Message[]): void {
     if (hydrated.value.has(sessionId)) return
     const cloned = history.map((m) => ({ ...m }))
-    messages.value.set(sessionId, cloned)
+    commitMessages(messages, sessionId, cloned)
     hydrated.value = new Set(hydrated.value).add(sessionId)
   }
 
@@ -413,18 +424,18 @@ export const useChatStore = defineStore('chat', () => {
    */
   function setMessages(sessionId: string, history: Message[]): void {
     const cloned = history.map((m) => ({ ...m }))
-    messages.value.set(sessionId, cloned)
+    commitMessages(messages, sessionId, cloned)
   }
 
-  /** 追加 user 消息（构造完整 Message，立即 complete） */
-  function appendUser(sessionId: string, text: string): void {
+  /** 追加 user 消息（构造完整 Message，立即 complete）。content 为 Segment[]（ADR-0037） */
+  function appendUser(sessionId: string, segments: Segment[]): void {
     const prev = messages.value.get(sessionId) ?? []
-    messages.value.set(sessionId, [
+    commitMessages(messages, sessionId, [
       ...prev,
       {
         id: `u-${crypto.randomUUID()}`,
         role: 'user',
-        content: text,
+        content: segments,
         status: 'complete',
         timestamp: Date.now(),
       },
@@ -437,14 +448,14 @@ export const useChatStore = defineStore('chat', () => {
    * 投递时（queue_update 移除该项 → markPendingDelivered）转 complete。
    * sendMode 区分 steer（追加当前回合）/ follow-up（回合后新轮），驱动气泡配色。
    */
-  function appendPending(sessionId: string, text: string, sendMode: SteerFollowUpMode): void {
+  function appendPending(sessionId: string, segments: Segment[], sendMode: SteerFollowUpMode): void {
     const prev = messages.value.get(sessionId) ?? []
-    messages.value.set(sessionId, [
+    commitMessages(messages, sessionId, [
       ...prev,
       {
         id: `u-${crypto.randomUUID()}`,
         role: 'user',
-        content: text,
+        content: segments,
         status: 'pending',
         sendMode,
         timestamp: Date.now(),
@@ -453,22 +464,29 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 定位 session 里第一条匹配 text + sendMode 的 pending user 消息（FIFO）。
+   * 定位 session 里第一条匹配的 pending user 消息（FIFO）。
    * markPendingDelivered / removePending 共用的匹配逻辑，抽此 helper 避免谓词重复漂移。
    * sendMode 可选——未传时退化为仅 content 匹配（兼容宽松场景）。
+   *
+   * content 改 Segment[] 后，用 normalizeContent 归一化两边比较（FR-7，AC-5.1）。
+   * matcher 接收 string | Segment[]：
+   * - removePending（useChat 调）传 Segment[]（前端发送时的 segments）
+   * - markPendingDelivered（chat-message-effects 调）传 string（pi queue_update 回传的 text）
+   * 两种来源经 normalizeContent 归一化后统一比较。
    */
   function findPendingIndex(
     sessionId: string,
-    text: string,
+    matcher: string | Segment[],
     sendMode?: SteerFollowUpMode,
   ): number {
     const prev = messages.value.get(sessionId)
     if (!prev) return -1
+    const target = normalizeContent(matcher)
     return prev.findIndex(
       (m) =>
         m.role === 'user'
         && m.status === 'pending'
-        && m.content === text
+        && normalizeContent(m.content) === target
         && (sendMode === undefined || m.sendMode === sendMode),
     )
   }
@@ -482,15 +500,15 @@ export const useChatStore = defineStore('chat', () => {
    */
   function markPendingDelivered(
     sessionId: string,
-    text: string,
+    matcher: string | Segment[],
     sendMode?: SteerFollowUpMode,
   ): void {
-    const idx = findPendingIndex(sessionId, text, sendMode)
+    const idx = findPendingIndex(sessionId, matcher, sendMode)
     if (idx === -1) return
     const prev = messages.value.get(sessionId)!
     const next = [...prev]
     next[idx] = { ...next[idx], status: 'complete' }
-    messages.value.set(sessionId, next)
+    commitMessages(messages, sessionId, next)
   }
 
   /**
@@ -500,13 +518,13 @@ export const useChatStore = defineStore('chat', () => {
    */
   function removePending(
     sessionId: string,
-    text: string,
+    matcher: string | Segment[],
     sendMode: SteerFollowUpMode,
   ): void {
-    const idx = findPendingIndex(sessionId, text, sendMode)
+    const idx = findPendingIndex(sessionId, matcher, sendMode)
     if (idx === -1) return
     const prev = messages.value.get(sessionId)!
-    messages.value.set(sessionId, prev.filter((_, i) => i !== idx))
+    commitMessages(messages, sessionId, prev.filter((_, i) => i !== idx))
   }
 
   /**
@@ -669,7 +687,7 @@ export const useChatStore = defineStore('chat', () => {
       finalizeSession(sessionId, 'error', errorText)
     } else {
       // 无 streaming entity → 直接追加 error 消息
-      messages.value.set(sessionId, [
+      commitMessages(messages, sessionId, [
         ...prev,
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
       ])
@@ -719,7 +737,7 @@ export const useChatStore = defineStore('chat', () => {
     const idx = prev.findIndex((m) => m.id === messageId)
     if (idx === -1) return
     const end = inclusive ? idx : idx + 1
-    messages.value.set(sessionId, prev.slice(0, end))
+    commitMessages(messages, sessionId, prev.slice(0, end))
   }
 
   /**

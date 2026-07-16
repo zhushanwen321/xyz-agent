@@ -49,6 +49,7 @@ import {
   readChangeSetStatus,
 } from './chat-readers'
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
+import { commitMessages } from './chat-mutations'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -161,7 +162,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     queueStates.value.delete(sid)
     const prev = messages.value.get(sid) ?? []
     const messageId = readString(payload, 'messageId') ?? `a-${crypto.randomUUID()}`
-    messages.value.set(sid, [
+    commitMessages(messages, sid, [
       ...prev,
       {
         id: messageId,
@@ -213,7 +214,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ...(shouldOverrideContent ? { content: finalContent } : {}),
       } satisfies Message
     })
-    if (changed) messages.value.set(sid, next)
+    if (changed) commitMessages(messages, sid, next)
     // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
     // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
     const reason: FinalizeReason = isErrorStop ? 'error' : (stopReason === 'aborted' ? 'aborted' : 'normal')
@@ -231,7 +232,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     finalizeSession(sid, 'error', errorText)
     // 无前置 streaming entity 时 finalizeSession 不追加消息——需手动追加
     if (!hasStreaming) {
-      messages.value.set(sid, [
+      commitMessages(messages, sid, [
         ...prev,
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
       ])
@@ -248,7 +249,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     finalizeSession(sid, 'stream_error', streamErrContent)
     // 无前置 streaming entity 时需手动追加
     if (!hasStreaming) {
-      messages.value.set(sid, [
+      commitMessages(messages, sid, [
         ...prev,
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: streamErrContent, status: 'error', timestamp: Date.now() },
       ])
@@ -262,7 +263,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const { messages } = ctx
     const warnContent = readString(payload, 'content') ?? '长时间无响应'
     const prev = messages.value.get(sid) ?? []
-    messages.value.set(sid, [
+    commitMessages(messages, sid, [
       ...prev,
       { id: `s-${crypto.randomUUID()}`, role: 'system', content: warnContent, status: 'complete', timestamp: Date.now() },
     ])
@@ -284,7 +285,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       ? prevBlocks
       : [...prevBlocks, { type: 'text', refId: 'text' } satisfies ContentBlock]
     next[idx] = { ...next[idx], content: next[idx].content + delta, contentBlocks }
-    messages.value.set(sid, next)
+    commitMessages(messages, sid, next)
   },
 
   // ── thinking 流（折进 trace，W05 endTime）──
@@ -301,7 +302,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // push 到 contentBlocks 尾部（refId 复用 blockId，防两处分别 randomUUID 断链）。
     const contentBlocks = [...(next[idx].contentBlocks ?? []), { type: 'thinking', refId: blockId } satisfies ContentBlock]
     next[idx] = { ...next[idx], thinking, contentBlocks }
-    messages.value.set(sid, next)
+    commitMessages(messages, sid, next)
   },
 
   'message.thinking_end': (ctx, sid) => {
@@ -320,7 +321,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const nextThinking = [...thinking]
     nextThinking[lastIdx] = { ...nextThinking[lastIdx], endTime: Date.now() }
     next[idx] = { ...next[idx], thinking: nextThinking }
-    messages.value.set(sid, next)
+    commitMessages(messages, sid, next)
   },
 
   'message.thinking_delta': (ctx, sid, payload) => {
@@ -336,7 +337,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const last = thinking[thinking.length - 1]
     if (last) thinking[thinking.length - 1] = { ...last, content: last.content + delta }
     next[idx] = { ...next[idx], thinking }
-    messages.value.set(sid, next)
+    commitMessages(messages, sid, next)
   },
 
   // ── tool_call 流（ID 锚定，W05 detail）──
@@ -361,7 +362,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // push 到 contentBlocks 尾部（callId 复用，与 toolCalls[].id 一致）。
     const contentBlocks = [...(next[idx].contentBlocks ?? []), { type: 'toolCall', refId: callId } satisfies ContentBlock]
     next[idx] = { ...next[idx], toolCalls, contentBlocks }
-    messages.value.set(sid, next)
+    commitMessages(messages, sid, next)
   },
 
   'message.tool_call_end': (ctx, sid, payload) => {
@@ -391,7 +392,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         : c,
     )
     next[idx] = { ...next[idx], toolCalls }
-    messages.value.set(sid, next)
+    commitMessages(messages, sid, next)
   },
 
   'message.tool_call_update': (ctx, sid, payload) => {
@@ -412,7 +413,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       c.id === callId ? { ...c, detail } : c,
     )
     next[idx] = { ...next[idx], toolCalls }
-    messages.value.set(sid, next)
+    commitMessages(messages, sid, next)
   },
 
   // ── pi CustomMessage 注入（扩展向对话流注入结构化通知）──
@@ -438,7 +439,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       const bgNotify = parseBgNotifyDetails(details)
       if (bgNotify) msg.bgNotify = bgNotify
     }
-    messages.value.set(sid, [...prev, msg])
+    commitMessages(messages, sid, [...prev, msg])
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──
@@ -455,7 +456,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const prev = messages.value.get(sid) ?? []
     // W07-C：上下文压缩摘要。作 system 提示行。
     const summary = readCompactionSummary(payload)
-    messages.value.set(sid, [
+    commitMessages(messages, sid, [
       ...prev,
       {
         id: `c-${crypto.randomUUID()}`,
@@ -473,7 +474,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const prev = messages.value.get(sid) ?? []
     // W07-C：分支摘要。作 system 提示行。
     const summary = readBranchSummary(payload)
-    messages.value.set(sid, [
+    commitMessages(messages, sid, [
       ...prev,
       {
         id: `br-${crypto.randomUUID()}`,

@@ -17,6 +17,7 @@
  */
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
+import { normalizeContent } from '@xyz-agent/shared'
 import { useChatStore } from '@/stores/chat'
 import { deriveStatus } from '@/composables/logic/sessionStatus'
 import type { DerivedStatus } from '@/types'
@@ -59,7 +60,7 @@ export function useSessionDerivations() {
       let lastAssistant = ''
       for (let i = msgs.length - 1; i >= 0; i -= 1) {
         if (msgs[i].role === 'assistant') {
-          lastAssistant = msgs[i].content
+          lastAssistant = normalizeContent(msgs[i].content)
           break
         }
       }

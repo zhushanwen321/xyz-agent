@@ -18,6 +18,7 @@
  * role==='user' && status==='complete' 的 content，按时间倒序，连续相同文本去重。
  */
 import { computed, ref, watch, type Ref } from 'vue'
+import { normalizeContent } from '@xyz-agent/shared'
 import { useChatStore } from '@/stores/chat'
 
 /** DOM 操作回调 */
@@ -56,7 +57,8 @@ export function useComposerHistory(
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i]
       if (m.role !== 'user' || m.status !== 'complete') continue
-      const text = m.content
+      // content 可能是 string | Segment[]（ADR-0037），归一化为纯文本用于历史导航
+      const text = normalizeContent(m.content)
       // 连续相同文本去重
       if (result.length > 0 && result[result.length - 1] === text) continue
       result.push(text)

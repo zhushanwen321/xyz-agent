@@ -309,7 +309,9 @@ async function onSend(): Promise<void> {
   clearInput()
   isSending.value = true
   try {
-    await send(props.sessionId!, text)
+    // 从 DOM 提取结构化 segments 传给 send（ADR-0037：composer 出口结构化）
+    const segments = inputRef.value?.getSegments() ?? []
+    await send(props.sessionId!, segments)
   } catch (e) {
     // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
     restoreInput(text)
@@ -324,22 +326,28 @@ async function onSend(): Promise<void> {
 /** 追加 steer：活跃态（流式/派发）有输入时 ⏎ 触发 */
 async function onSteer(): Promise<void> {
   if (!hasInput.value || !isActive.value) return
-  await submit(draft.value, (t) => steer(props.sessionId!, t))
+  await submit(draft.value, () => {
+    const segments = inputRef.value?.getSegments() ?? []
+    return steer(props.sessionId!, segments)
+  })
 }
 
 /** 追加 follow-up：S6 有输入时 Alt+⏎ 触发；非流式则退化为普通发送 */
 async function onFollowUp(): Promise<void> {
   if (!hasInput.value) return
-  await submit(draft.value, (t) => followUp(props.sessionId!, t))
+  await submit(draft.value, () => {
+    const segments = inputRef.value?.getSegments() ?? []
+    return followUp(props.sessionId!, segments)
+  })
 }
 
 /** 公共提交：清空输入 → 调用 sender → 失败时恢复草稿 */
-async function submit(text: string, sender: (t: string) => Promise<void>): Promise<void> {
+async function submit(text: string, sender: () => Promise<void>): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed) return
   clearInput()
   try {
-    await sender(trimmed)
+    await sender()
   } catch (e) {
     restoreInput(text)
     throw e

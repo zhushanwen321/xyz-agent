@@ -4,6 +4,7 @@
  * assistantToMarkdown：把一条 assistant 消息（thinking/tool/content）展平为 markdown，
  * 用于「复制为 MD」功能。分区：思考（引用块）/ 工具（代码块）/ 正文。
  */
+import { normalizeContent } from '@xyz-agent/shared'
 import type { Message } from '@xyz-agent/shared'
 import i18n from '@/i18n'
 
@@ -32,6 +33,7 @@ export function assistantToMarkdown(msg: Message): string {
     parts.push(block)
   }
 
-  if (msg.content.trim()) parts.push(msg.content)
+  const text = normalizeContent(msg.content)
+  if (text.trim()) parts.push(text)
   return parts.join('\n\n')
 }

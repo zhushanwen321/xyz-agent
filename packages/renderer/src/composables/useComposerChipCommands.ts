@@ -100,6 +100,16 @@ export function useComposerChipCommands(
     const chip = document.createElement('span')
     chip.className = 'slash-chip'
     chip.contentEditable = 'false'
+    // 标注 chip data 属性，供 getSegmentsFromEl 重建 skill/slash segment（W2）。
+    // skill 命令形如 /skill:cw-cli → chipType=skill, chipName=cw-cli；
+    // 普通 slash 命令（如 /commit）→ chipType=slash, chipName=commit（不带 / 前缀）。
+    if (command.startsWith('/skill:')) {
+      chip.dataset.chipType = 'skill'
+      chip.dataset.chipName = command.slice('/skill:'.length)
+    } else {
+      chip.dataset.chipType = 'slash'
+      chip.dataset.chipName = command.startsWith('/') ? command.slice(1) : command
+    }
     renderIconInto(chip, icon)
     const label = document.createElement('span')
     label.className = 'chip-label'

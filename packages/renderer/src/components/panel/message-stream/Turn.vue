@@ -45,30 +45,35 @@
           <span class="size-[6px] animate-pulse-accent rounded-full" :class="pendingDotClass" />
           {{ pendingLabel }}
         </span>
-        <span>{{ turn.user.content }}</span>
+        <span>{{ normalizeContent(turn.user.content) }}</span>
       </div>
       <div
         v-else
         class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
       >
-        <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），后接剩余文本 -->
-        <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），可点击在 drawer 查看文档。
-             Button as-child 让 reka-ui Primitive 合并到 span，保留 chip 行内样式 + 按钮语义 -->
-        <Button
-          v-if="displayChip"
-          as-child
-          variant="ghost"
-          :title="t('panel.message.viewCommandDoc')"
-          @click.stop="openCommandDoc(displayChip.name)"
-        >
-          <span
-            class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
+        <!-- user 气泡内容：遍历 content Segment[] 渲染 badge + 文本（ADR-0037）。
+             skill segment → 紫色 badge（star icon + /skill:xxx），点击打开 drawer Doc tab；
+             text segment → MarkdownRenderer 渲染。
+             assistant/system content 是 string，不走此分支（下方 userSegments 为空时不渲染 badge） -->
+        <template v-for="(seg, i) in userSegments" :key="i">
+          <Button
+            v-if="seg.type === 'skill'"
+            as-child
+            variant="ghost"
+            :title="t('panel.message.viewCommandDoc')"
+            @click.stop="openCommandDoc(`/skill:${seg.name}`)"
           >
-            <component :is="displayChip.iconComp" class="size-[12px] shrink-0" />
-            <span>{{ displayChip.name }}</span>
-          </span>
-        </Button>
-        <MarkdownRenderer v-if="!displayChip || displayChip.rest" :content="displayChip ? displayChip.rest : turn.user.content" :session-id="sessionId" />
+            <span
+              class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
+            >
+              <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
+              <span>/skill:{{ seg.name }}</span>
+            </span>
+          </Button>
+          <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
+        </template>
+        <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
+        <MarkdownRenderer v-if="!userSegments.length && typeof turn.user.content === 'string'" :content="turn.user.content" :session-id="sessionId" />
       </div>
       <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。
            pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
@@ -81,7 +86,7 @@
           size="icon"
           class="size-6 text-subtle hover:text-fg"
           :title="t('panel.message.copy')"
-          @click="copy(turn.user.content, userCopyKey)"
+          @click="copy(normalizeContent(turn.user.content), userCopyKey)"
         >
           <Check v-if="copied === userCopyKey" class="size-3 text-success" />
           <Copy v-else class="size-3" />
@@ -249,13 +254,13 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
-import type { ThinkingBlock, ToolCall, Message } from '@xyz-agent/shared'
+import type { ThinkingBlock, ToolCall, Message, Segment } from '@xyz-agent/shared'
+import { normalizeContent } from '@xyz-agent/shared'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useCopy } from '@/composables/effects/useCopy'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
-import { useCommandStore } from '@/stores/command'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
@@ -278,51 +283,23 @@ const chat = useChatStore()
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
-const commandStore = useCommandStore()
 
-/** 点击用户气泡 slash chip → 打开 drawer Doc tab 展示命令/skill 文档 */
+/** 点击用户气泡 skill badge → 打开 drawer Doc tab 展示 SKILL.md */
 function openCommandDoc(commandName: string): void {
   openDrawer('doc', { commandName })
 }
 
 /**
- * 用户气泡 slash 命令检测：content 以已知 slash 命令开头（如 /commit）时，
- * 渲染 composer 同款 chip（icon + 紫色底）+ 命令名后的剩余文本。
- * slash chip 发送时被 getText 扁平化为纯文本（/commit），此处从 command store
- * 解析回 icon（SSOT：与选择框/chip 同源），不改 Message 协议。
- * 匹配规则：content 以 command.name 开头，且其后是空格或字符串结束（避免 /co 误命中 /commit）。
+ * user message 的 content segments（ADR-0037）。
+ * content 是 string | Segment[] 联合类型——user message 是 Segment[]，
+ * 遍历渲染 badge（skill segment）+ 文本（text segment）。
+ * 非 Segment[]（异常/退化）返回空数组，模板兜底走纯文本渲染。
  */
-const slashChip = computed(() => {
-  const content = props.turn.user?.content ?? ''
-  if (!content.startsWith('/')) return null
-  const commands = commandStore.getCommands(props.sessionId)
-  // 取最长匹配（避免 /commit 命中 /c）：按 name 长度降序
-  const matched = commands
-    .filter((c) => content === c.name || content.startsWith(c.name + ' '))
-    .sort((a, b) => b.name.length - a.name.length)[0]
-  if (!matched) return null
-  const rest = content.slice(matched.name.length).trim()
-  const iconComp = SLASH_ICON_COMPONENTS[matched.icon as keyof typeof SLASH_ICON_COMPONENTS] ?? SLASH_ICON_COMPONENTS.wrench
-  return { name: matched.name, rest, iconComp }
+const userSegments = computed<Segment[]>(() => {
+  const content = props.turn.user?.content
+  if (Array.isArray(content)) return content
+  return []
 })
-
-/**
- * skill badge 检测：从 pi 返回的消息含 skillName 字段时（<skill> 标签已由 message-converter 解析），
- * 渲染为紫色 badge（star icon + /skill:xxx），点击打开 drawer Doc tab 展示 SKILL.md。
- * 与 slashChip 互斥：skillName 优先（pi 解析的权威数据），无 skillName 时走原 slashChip 逻辑。
- */
-const skillChip = computed(() => {
-  const skillName = props.turn.user?.skillName
-  if (!skillName) return null
-  return {
-    name: `/skill:${skillName}`,
-    rest: props.turn.user?.content ?? '',
-    iconComp: SLASH_ICON_COMPONENTS.star,
-  }
-})
-
-/** 合并 skillChip 和 slashChip：skillName 优先 */
-const displayChip = computed(() => skillChip.value ?? slashChip.value)
 
 /**
  * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isGenerating。
@@ -397,7 +374,7 @@ const isEditingThisUser = computed(
 function startEdit(): void {
   if (!props.turn.user) return
   editingUserId.value = props.turn.user.id
-  draftText.value = props.turn.user.content
+  draftText.value = normalizeContent(props.turn.user.content)
 }
 
 function cancelEdit(): void {
@@ -437,7 +414,9 @@ async function onForkConfirm(): Promise<void> {
 const summaryText = computed(() => {
   const as = props.turn.assistants
   const last = as[as.length - 1]
-  return last?.content?.trim() ? last.content : ''
+  if (!last?.content) return ''
+  const text = normalizeContent(last.content)
+  return text.trim() ? text : ''
 })
 
 /** 最后一条 assistant 的索引（streaming 光标 / complete 跳过末位 text 用） */

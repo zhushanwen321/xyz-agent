@@ -13,6 +13,7 @@
  * - 遇到 system 消息 → 产出独立 SystemNotice 项（不并入 turn）
  * - streaming 中的 turn（最后一条 assistant status==='streaming'）→ working 态，默认展开 trace
  */
+import { normalizeContent } from '@xyz-agent/shared'
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /** 一个渲染回合：起点 user + 其后的 assistant 消息序列 */
@@ -162,7 +163,7 @@ export function expandAssistantBlocks(msg: Message): OrderedBlock[] {
       if (b.type === 'text') {
         // text 块的 refId 恒为 'text'（chat-message-effects / message-converter 约定），
         // 实际内容取 msg.content（text_delta 累积的完整字符串）
-        if (msg.content) result.push({ kind: 'text', ref: msg.content })
+        if (msg.content) result.push({ kind: 'text', ref: normalizeContent(msg.content) })
       } else if (b.type === 'thinking') {
         const th = msg.thinking?.find((t) => t.id === b.refId)
         if (th) result.push({ kind: 'thinking', ref: th })
@@ -175,7 +176,8 @@ export function expandAssistantBlocks(msg: Message): OrderedBlock[] {
   }
   // 降级：无 contentBlocks，旧顺序 text→thinking→tool
   const fallback: OrderedBlock[] = []
-  if (msg.content.trim()) fallback.push({ kind: 'text', ref: msg.content })
+  const text = normalizeContent(msg.content)
+  if (text.trim()) fallback.push({ kind: 'text', ref: text })
   for (const th of msg.thinking ?? []) fallback.push({ kind: 'thinking', ref: th })
   for (const tc of msg.toolCalls ?? []) fallback.push({ kind: 'tool', ref: tc })
   return fallback

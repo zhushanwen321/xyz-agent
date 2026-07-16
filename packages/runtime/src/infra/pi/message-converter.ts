@@ -2,8 +2,8 @@ import type {
   PiHistoryMessage,
   PiHistoryToolResult,
 } from './pi-protocol.js'
-import type { Message, ThinkingBlock, ToolCall, FileChange } from '@xyz-agent/shared'
-import { parseBgNotifyDetails } from '@xyz-agent/shared'
+import type { Message, ThinkingBlock, ToolCall, FileChange, Segment } from '@xyz-agent/shared'
+import { parseBgNotifyDetails, textToSegments } from '@xyz-agent/shared'
 import { normalizePiToolResult } from './normalize-tool-result.js'
 
 /**
@@ -12,14 +12,20 @@ import { normalizePiToolResult } from './normalize-tool-result.js'
  * remaining user text (everything after the closing `</skill>` tag).
  * Returns `null` if no skill block is found.
  */
-function parseSkillBlock(text: string): { skillName: string; skillLocation?: string; userText: string } | null {
+function parseSkillBlock(text: string): Segment[] | null {
   const match = text.match(/<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
   if (!match) return null
-  return {
-    skillName: match[1],
-    skillLocation: match[2] || undefined,
-    userText: match[3].trim(),
+  const segments: Segment[] = [
+    { type: 'skill', name: match[1] },
+  ]
+  if (match[2]) {
+    (segments[0] as { location?: string }).location = match[2]
   }
+  const userText = match[3].trim()
+  if (userText) {
+    segments.push({ type: 'text', text: userText })
+  }
+  return segments
 }
 
 /**
@@ -217,14 +223,14 @@ export function convertPiHistory(raw: unknown[]): Message[] {
     }
 
     // For user messages, parse <skill> blocks injected by pi backend.
-    // Strips the entire skill document from content, sets skillName,
-    // and leaves only the user's actual text.
+    // content 统一为 Segment[]：有 skill 标签时拆出 skill segment + 后续 user text，
+    // 无 skill 标签时用 textToSegments 包成纯 text segment。
     if (m.role === 'user' && textContent) {
       const parsed = parseSkillBlock(textContent)
       if (parsed) {
-        msg.skillName = parsed.skillName
-        if (parsed.skillLocation) msg.skillLocation = parsed.skillLocation
-        msg.content = parsed.userText
+        msg.content = parsed
+      } else {
+        msg.content = textToSegments(textContent)
       }
     }
     result.push(msg)

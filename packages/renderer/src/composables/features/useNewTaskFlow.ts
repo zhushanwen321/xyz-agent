@@ -26,6 +26,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
+import { textToSegments } from '@xyz-agent/shared'
 import { useModel } from '@/composables/features/useModel'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useSubagentStore } from '@/stores/subagent'
@@ -216,7 +217,9 @@ export function useNewTaskFlow() {
       void useSubagentStore().loadSubagents(newSid)
       void useWorkflowStore().loadWorkflows(newSid)
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
-      await chat.send(newSid, trimmed)
+      // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
+      // landing 态 text 来自 draft 纯文本，转 Segment[] 保持类型一致（ADR-0037）
+      await chat.send(newSid, textToSegments(trimmed))
       transition('completed') // landing→completed（首发成功，终态）
     } finally {
       controller.setCreateInFlight(false)
