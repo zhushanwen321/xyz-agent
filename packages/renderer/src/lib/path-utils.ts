@@ -28,17 +28,21 @@ export interface ResolvePreviewPathResult {
 
 /** 解析预览路径：返回展示用 absolute 和 git 查询用 relative。 */
 export function resolvePreviewPath(cwd: string, path: string): ResolvePreviewPathResult {
+  // 统一分隔符：Windows 反斜杠在计算前缀时转成正斜杠，结果仍保持原始展示
+  const normalizedCwd = cwd.replace(/\\/g, '/')
+  const normalizedPath = path.replace(/\\/g, '/')
+
   if (isAbsolutePath(path)) {
     // ~ 路径：保持原样展示，无法确定与 cwd 关系 → relative 为 null
     if (path.startsWith('~')) {
       return { absolute: path, relative: null }
     }
     // Unix / Windows 绝对路径
-    const prefix = cwd.endsWith('/') ? cwd : `${cwd}/`
-    const relative = path.startsWith(prefix) ? path.slice(prefix.length) : null
+    const prefix = normalizedCwd.endsWith('/') ? normalizedCwd : `${normalizedCwd}/`
+    const relative = normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : null
     return { absolute: path, relative }
   }
   // 相对路径
-  const absolute = cwd.endsWith('/') ? `${cwd}${path}` : `${cwd}/${path}`
+  const absolute = normalizedCwd.endsWith('/') ? `${normalizedCwd}${path}` : `${normalizedCwd}/${path}`
   return { absolute, relative: path }
 }

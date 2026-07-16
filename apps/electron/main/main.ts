@@ -74,6 +74,8 @@ import { fixPathEnv } from './supervisor/shell-env.js'
 // 必须在 buildSafeEnv / spawn 之前执行。
 fixPathEnv()
 
+import { expandLocalFilePath } from './utils/path.js'
+
 // ── EPIPE 兜底 ───────────────────────────────────────────────────
 // concurrently/终端关闭后 pipe 断开，console 写入触发 uncaught exception
 process.stdout?.on?.('error', (err: NodeJS.ErrnoException) => {
@@ -168,7 +170,9 @@ async function bootstrapMainWindow(): Promise<void> {
 app.whenReady().then(async () => {
   // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
   protocol.handle('local-file', (request) => {
-    const filePath = decodeURIComponent(new URL(request.url).pathname)
+    const rawPath = decodeURIComponent(new URL(request.url).pathname)
+    // 渲染进程无法安全展开 ~，主进程统一处理（图片 URL 可能含 ~/）
+    const filePath = expandLocalFilePath(rawPath)
     // Restrict to safe directories: project cwd, config dir, home, temp
     // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
     const sep = path.sep
