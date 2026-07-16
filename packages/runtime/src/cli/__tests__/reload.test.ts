@@ -17,7 +17,7 @@ describe('attemptReload', () => {
 
   it('skips reload when session is busy, returns hint message', async () => {
     const { rpc } = await import('../ws-client.js')
-    vi.mocked(rpc).mockResolvedValueOnce({ data: { isGenerating: true } })
+    vi.mocked(rpc).mockResolvedValueOnce({ isGenerating: true })
 
     const result = await attemptReload()
     expect(result.reloaded).toBe(false)
