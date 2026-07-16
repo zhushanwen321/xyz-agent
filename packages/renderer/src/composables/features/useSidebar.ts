@@ -405,12 +405,11 @@ export function useSidebar() {
     if (!forkMsg) {
       throw new Error(`fork: message ${fromMessageId} not found in session ${srcSessionId}`)
     }
-    if (!forkMsg.piEntryId) {
-      throw new Error('fork: 该 session 缺少 piEntryId（历史未从文件加载），无法定位 fork 点')
-    }
-
-    // runtime 截断 JSONL + 新进程 switch_session，返回新 session summary
-    const created = await sessionApi.fork(srcSessionId, forkMsg.piEntryId, {
+    // [HISTORICAL] 2026-07-16：RPC 路径加载的 session 无 piEntryId，传 timestamp + role 让 runtime 读 JSONL 匹配
+    const created = await sessionApi.fork(srcSessionId, {
+      piEntryId: forkMsg.piEntryId,
+      messageTimestamp: forkMsg.timestamp,
+      messageRole: forkMsg.role,
       includeFrom: opts?.includeFrom,
     })
     session.appendSession(created)

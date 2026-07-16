@@ -96,8 +96,16 @@ export interface ClientMessageMap {
   // fork：从 srcSessionId 截断到 fromPiEntryId（pi JSONL entry id，前端 Message.piEntryId），
   // includeFrom=true 保留到该 entry（含），false 保留到该 entry 前（不含）。
   // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
-  // fromPiEntryId 缺失（RPC 路径读取的 session 无 piEntryId）时报错——fork 需文件路径加载的历史。
-  'session.fork': { srcSessionId: string; fromPiEntryId: string; includeFrom?: boolean; label?: string }
+  // fromPiEntryId 缺失（RPC 路径读取的 session 无 piEntryId）时，用 fromMessageTimestamp +
+  // fromMessageRole fallback 读 JSONL 按 timestamp 匹配 entryId（HISTORICAL: 2026-07-16）。
+  'session.fork': {
+    srcSessionId: string
+    fromPiEntryId?: string
+    fromMessageTimestamp?: number
+    fromMessageRole?: string
+    includeFrom?: boolean
+    label?: string
+  }
   // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
   'session.getSubagents': { sessionId: string }
   'session.getSubagentHistory': { sessionId: string; subagentId: string }

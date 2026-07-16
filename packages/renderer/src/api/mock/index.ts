@@ -201,11 +201,11 @@ export const session = {
    * mock 模式无真实 JSONL 截断，仅创建空 session（历史由前端 selectSession 拉）。
    * 与 real domain 同接口，签名一致。
    */
-  async fork(srcSessionId: string, _fromPiEntryId: string, opts?: { includeFrom?: boolean; label?: string }): Promise<SessionSummary> {
+  async fork(srcSessionId: string, _opts?: { piEntryId?: string; messageTimestamp?: number; messageRole?: string; includeFrom?: boolean; label?: string }): Promise<SessionSummary> {
     await sleep(TIMING.ack)
     const src = fixtureSessions.find((s) => s.id === srcSessionId)
     const cwd = src?.cwd
-    const s = createSession(cwd, opts?.label)
+    const s = createSession(cwd, _opts?.label)
     fixtureSessions.push(s)
     pushSessionList()
     return { ...s }

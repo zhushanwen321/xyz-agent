@@ -47,9 +47,12 @@ export class SessionMessageHandler {
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
-        const { srcSessionId, fromPiEntryId, includeFrom, label } = msg.payload
+        const { srcSessionId, fromPiEntryId, fromMessageTimestamp, fromMessageRole, includeFrom, label } = msg.payload
         try {
-          const session = await this.ctx.sessionService.forkSession(srcSessionId, fromPiEntryId, includeFrom ?? true, label)
+          const session = await this.ctx.sessionService.forkSession(
+            srcSessionId, fromPiEntryId, includeFrom ?? true, label,
+            { fromMessageTimestamp, fromMessageRole },
+          )
           this.ctx.reply(ws, msg.id, 'session.created', { session })
           return this.ctx.broadcastSessionList()
         } catch (e) {

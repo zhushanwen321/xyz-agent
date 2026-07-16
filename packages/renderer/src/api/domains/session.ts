@@ -43,13 +43,21 @@ export function switchSession(sessionId: string): Promise<void> {
  */
 export async function fork(
   srcSessionId: string,
-  fromPiEntryId: string,
-  opts?: { includeFrom?: boolean; label?: string },
+  opts: {
+    piEntryId?: string
+    messageTimestamp?: number
+    messageRole?: string
+    includeFrom?: boolean
+    label?: string
+  },
 ): Promise<SessionSummary> {
   const reply = await request<{ session: SessionSummary }>('session.fork', {
     srcSessionId,
-    fromPiEntryId,
-    ...opts,
+    fromPiEntryId: opts.piEntryId,
+    fromMessageTimestamp: opts.messageTimestamp,
+    fromMessageRole: opts.messageRole,
+    includeFrom: opts.includeFrom,
+    label: opts.label,
   })
   return reply.session
 }

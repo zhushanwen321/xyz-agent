@@ -11,6 +11,7 @@
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
 import { existsSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
@@ -23,6 +24,7 @@ import type {
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
+import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
 import { parseSessionHeader } from '../../infra/pi/session-file-utils.js'
@@ -203,7 +205,69 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
-  async forkSession(srcSessionId: string, fromPiEntryId: string, includeFrom: boolean, label?: string): Promise<SessionSummary> { return this.lifecycle.forkSession(srcSessionId, fromPiEntryId, includeFrom, label) }
+  async forkSession(
+    srcSessionId: string,
+    fromPiEntryId: string | undefined,
+    includeFrom: boolean,
+    label?: string,
+    opts?: { fromMessageTimestamp?: number; fromMessageRole?: string },
+  ): Promise<SessionSummary> {
+    // piEntryId 缺失（RPC 路径读取的 session）时，读 JSONL 按 timestamp + role 匹配 entryId
+    let resolvedEntryId = fromPiEntryId
+    if (!resolvedEntryId) {
+      resolvedEntryId = await this.resolveEntryIdByTimestamp(
+        srcSessionId,
+        opts?.fromMessageTimestamp,
+        opts?.fromMessageRole,
+      )
+    }
+    return this.lifecycle.forkSession(srcSessionId, resolvedEntryId, includeFrom, label)
+  }
+
+  /**
+   * RPC 路径加载的 session 无 piEntryId，读 JSONL 按 timestamp + role 匹配 entryId。
+   * [HISTORICAL] 2026-07-16：历史 session 通过 RPC 加载后 fork 报“缺少 piEntryId”。
+   */
+  private async resolveEntryIdByTimestamp(
+    sessionId: string,
+    messageTimestamp?: number,
+    messageRole?: string,
+  ): Promise<string> {
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) throw new Error(`fork: source session not found for resolve: ${sessionId}`)
+    const entries = parseJsonl(await readFile(target.filePath, 'utf-8')) as Array<Record<string, unknown>>
+    // 只看 message 类型 entry（有 entry.id 和 entry.message.timestamp）
+    const msgEntries = entries.filter((e) =>
+      e.type === 'message'
+      && typeof e.id === 'string'
+      && e.message && typeof e.message === 'object'
+    )
+    if (msgEntries.length === 0) {
+      throw new Error(`fork: source session has no message entries: ${target.filePath}`)
+    }
+    // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
+    // ±TIMESTAMP_TOLERANCE_MS 容差：JSONL 时间戳精度（毫秒）与 Date 序列化舍入可能差 1ms
+    const TIMESTAMP_TOLERANCE_MS = 2 // eslint-disable-line no-magic-numbers -- 容差常量，非业务数字
+    if (messageTimestamp != null) {
+      for (const e of msgEntries) {
+        const msg = e.message as Record<string, unknown>
+        const entryTs = typeof msg.timestamp === 'string'
+          ? new Date(msg.timestamp).getTime()
+          : typeof e.timestamp === 'string'
+            ? new Date(e.timestamp).getTime()
+            : 0
+        const roleMatch = !messageRole || msg.role === messageRole
+        if (roleMatch && Math.abs(entryTs - messageTimestamp) <= TIMESTAMP_TOLERANCE_MS) {
+          return e.id as string
+        }
+      }
+    }
+    // fallback：取最后一条 message entry（用户最可能 fork 到最近的消息）
+    const last = msgEntries[msgEntries.length - 1]!
+    console.warn(`[session-service] resolveEntryIdByTimestamp: no timestamp match, falling back to last entry: ${last.id}`)
+    return last.id as string
+  }
+
   async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
   async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
