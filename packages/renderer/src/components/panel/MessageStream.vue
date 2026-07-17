@@ -12,10 +12,11 @@
       class="message-stream flex-1 overflow-y-auto"
       @scroll.passive="onScroll"
     >
-    <!-- contentEl：承载消息内容的 wrapper，供 useChatScroll 的 ResizeObserver 观察高度变化。
-         scrollEl 是 overflow 容器，自身 border-box 固定不变，无法观察内容增高。 -->
-    <div ref="contentEl" class="flex flex-col gap-[22px] px-5 py-[18px]">
-      <!-- W4 H4：加载更多历史入口（尾读截断时显示，点击 fallback 全量读） -->
+    <!-- contentEl：虚拟滚动 spacer，高度=totalHeight 撑出滚动条。
+         useChatScroll 的 ResizeObserver 观测它（totalHeight 变化→末项增高→触发 scrollToBottom）。
+         可见 items 用 absolute 定位到各自 offset，视口外不挂载（虚拟化核心）。 -->
+    <div ref="contentEl" class="relative px-5 py-[18px]" :style="{ height: totalHeight + 'px' }">
+      <!-- W4 H4：加载更多历史入口（非虚拟化，置顶固定） -->
       <div v-if="showLoadMore && renderItems.length > 0" class="flex justify-center py-2">
         <Button variant="ghost" size="sm" :disabled="loadingMore" data-testid="load-more-history" @click="handleLoadMore">
           <Loader2 v-if="loadingMore" class="mr-1 size-3 animate-spin" />
@@ -23,45 +24,52 @@
           {{ loadingMore ? t('common.loading') : t('panel.message.loadMore') }}
         </Button>
       </div>
-      <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
-        <Turn
-          v-if="item.kind === 'turn'"
-          :turn="item.turn"
-          :session-id="sessionId"
-          :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
-        />
-        <BgNotifyCard v-else-if="item.message.bgNotify" :message="item.message" />
-        <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。
-             customStart 把 details（含 __gui__）存进 system 消息，此处检测并路由到
-             GuiComponentRenderer；无 __gui__ 则落到下面的 SystemNotice 纯文本兜底。
-             容器样式与 SystemNotice 视觉一致（左内边距、等宽字体），用通用 Tailwind 类。 -->
-        <div
-          v-else-if="getGuiComponent(item.message)"
-          class="py-1 pl-1 font-mono text-[12px] leading-snug text-fg"
-        >
-          <GuiComponentRenderer :component="getGuiComponent(item.message)!" />
+      <!-- 虚拟化：只渲染 visibleRange 内的 items，absolute 定位到各自 offset -->
+      <template v-for="vi in visibleItems" :key="vi.key">
+        <div class="absolute left-5 right-5" :style="{ top: offsetOf(vi.idx) + 'px' }">
+          <Turn
+            v-if="vi.item.kind === 'turn'"
+            :turn="vi.item.turn"
+            :session-id="sessionId"
+            :can-edit="!!vi.item.turn.user && vi.idx === lastUserTurnIdx"
+          />
+          <BgNotifyCard v-else-if="vi.item.message.bgNotify" :message="vi.item.message" />
+          <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
+          <div
+            v-else-if="getGuiComponent(vi.item.message)"
+            class="py-1 pl-1 font-mono text-[12px] leading-snug text-fg"
+          >
+            <GuiComponentRenderer :component="getGuiComponent(vi.item.message)!" />
+          </div>
+          <SystemNotice v-else :message="vi.item.message" />
         </div>
-        <SystemNotice v-else :message="item.message" />
       </template>
 
-      <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代） -->
-      <div v-if="isCompacting" class="system-notice flex min-w-0 items-center gap-2 py-1">
+      <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
+           非虚拟化，absolute 定位到列表末尾。 -->
+      <div
+        v-if="isCompacting"
+        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 py-1"
+        :style="{ top: totalHeight + 'px' }"
+      >
         <span class="h-px flex-1 bg-border" />
         <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
         <span class="min-w-0 truncate text-[11px] leading-snug text-muted">{{ t('panel.message.compressing') }}</span>
         <span class="h-px flex-1 bg-border" />
       </div>
 
-      <!-- dispatching 空窗期占位：已发送（pendingSend 命中）但 message_start 未到。
-           message_start 到达后 hasWorkingTurn 变 true，占位消失，由 working turn 的 sticky header 接管。
-           纯 UI 瞬时反馈，不插入 assistant message 污染消息历史。 -->
-      <div v-if="isDispatching && !hasWorkingTurn" class="flex items-center gap-2 py-2 pl-1 text-[12px] text-muted">
+      <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾） -->
+      <div
+        v-if="isDispatching && !hasWorkingTurn"
+        class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[12px] text-muted"
+        :style="{ top: (isCompacting ? totalHeight + 28 : totalHeight) + 'px' }"
+      >
         <Loader2 class="size-3 animate-spin text-accent" />
         <span>{{ t('panel.message.dispatching') }}</span>
       </div>
 
-      <!-- 空态欢迎语（G2-004） -->
-      <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
+      <!-- 空态欢迎语（G2-004，spacer height=0 时居中显示） -->
+      <div v-if="renderItems.length === 0" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
         <Sparkles class="size-6 text-accent opacity-70" />
         <p class="text-[13px] text-muted">{{ t('panel.message.startConversation') }}</p>
       </div>
@@ -92,6 +100,8 @@ import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
 import { useChat } from '@/composables/features/useChat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
+import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
+import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId } from '@/stores/subagent'
 import { useSubagentStore } from '@/stores/subagent'
@@ -165,6 +175,41 @@ const forceWorking = computed(() => {
 const renderItems = computed(() => toRenderItems(currentMessages.value, forceWorking.value))
 
 /**
+ * 虚拟滚动（W3）：窗口化渲染，视口外 turn 不挂载，长对话 DOM 从 O(N) 降到 O(视口可见)。
+ * items getter 返回完整 renderItems（含 turn + system），composable 内部统一处理。
+ * 高度缓存键用首消息 id（turn）/ s-message.id（system），非 t-index（防 truncateFrom 张冠李戴）。
+ * 前置依赖 M4（scrollToBottom rAF trailing 节流 + INVAR-M4-2 延迟求值守卫）已落地。
+ */
+/** 虚拟滚动估算高度（未实测 turn 的初始高度，block 加权的经验值，测量后替换为实测） */
+const ESTIMATED_TURN_HEIGHT = 200
+/** 虚拟滚动上下 buffer turn 数（快速滚动时预渲染视口外的 turn，防白屏） */
+const VIRTUAL_BUFFER_TURNS = 2
+
+const virtualList = useVirtualTurnList({
+  items: () => renderItems.value,
+  scrollEl: () => scrollEl.value,
+  estimatedHeight: () => ESTIMATED_TURN_HEIGHT,
+  buffer: () => VIRTUAL_BUFFER_TURNS,
+})
+const { totalHeight, visibleRange, offsetOf } = virtualList
+
+/** 可见项 { idx, item, key } 数组（末项钉扎保证流式末项恒在窗口内）。预计算 key 避免 template :key 里调函数致 vue-tsc 误报 unused */
+const visibleItems = computed(() => {
+  const { startIndex, endIndex } = visibleRange.value
+  const items = renderItems.value
+  const arr: Array<{ idx: number; item: typeof items[number]; key: string }> = []
+  for (let i = startIndex; i <= endIndex && i < items.length; i++) {
+    arr.push({ idx: i, item: items[i], key: renderKey(items[i]) })
+  }
+  return arr
+})
+
+/** provide Turn 高度上报 registry（W2），Turn.vue inject 后用 ResizeObserver 上报自身高度 */
+provideTurnResizeRegistry({
+  reportHeight: (key, h) => virtualList.reportHeight(key, h),
+})
+
+/**
  * 从 system 消息的 details.__gui__ 提取结构化渲染组件（extension GUI 协议 E5）。
  * customStart 把含 __gui__ 的 details 存进 system 消息；无 __gui__ 返回 undefined，
  * 由模板落回 SystemNotice 纯文本兜底。封装为函数避免模板里重复调用 extractGui。
@@ -230,10 +275,24 @@ watch(
   },
 )
 
-// 切换 session → 强制滚到底（展示最新内容，不受 guard）
+// 切换 session → 重置虚拟列表高度缓存（不同 session 键语义不同，复用致错位，SR10/INVAR-8）
+//   + 强制滚到底（展示最新内容，不受 guard）
 watch(
   () => props.sessionId,
-  () => scrollToBottom('auto', true),
+  () => {
+    virtualList.resetSession()
+    scrollToBottom('auto', true)
+  },
+)
+
+// 视口锚定补偿（SR4/INVAR-2）：视口上方 turn 从估算切实测时 scrollTop 需补偿，防用户所见内容跳
+watch(
+  () => virtualList.scrollAdjustDelta.value,
+  (delta) => {
+    if (delta !== 0 && scrollEl.value) {
+      scrollEl.value.scrollTop += delta
+    }
+  },
 )
 </script>
 

@@ -44,11 +44,18 @@ export interface VisibleRange {
   endIndex: number
 }
 
-/** 取 turn 的首消息 id（heights Map 的键）。system 项无 turn，返回 null */
-function firstMessageId(item: RenderItem): string | null {
-  if (item.kind !== 'turn') return null
-  const turn = item.turn
-  return turn.user?.id ?? turn.assistants[0]?.id ?? null
+/**
+ * 取 RenderItem 的虚拟化键（heights Map 的键）。
+ * - turn → 首消息 id（turn.user?.id ?? turn.assistants[0]?.id），truncateFrom 后被移除 turn 的 id 自然失效（SR1/D7）
+ * - system → s-${message.id}，system 消息（compactionSummary/branchSummary/bashExecution）也参与虚拟化，
+ *   不能丢弃（否则从 DOM 消失）。system 高度由 RO 上报（SystemNotice 内部也接 registry）或用估算。
+ */
+function itemKey(item: RenderItem): string | null {
+  if (item.kind === 'turn') {
+    return item.turn.user?.id ?? item.turn.assistants[0]?.id ?? null
+  }
+  // system 项：用 s-${message.id} 作键
+  return item.message.id ? `s-${item.message.id}` : null
 }
 
 /**
@@ -81,12 +88,15 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     return measured ?? estimatedHeight()
   }
 
-  /** 取参与虚拟滚动的 turn 项（过滤 system 提示行）+ 对应首消息 id */
-  function turnEntries(): Array<{ id: string; item: Extract<RenderItem, { kind: 'turn' }> }> {
-    const out: Array<{ id: string; item: Extract<RenderItem, { kind: 'turn' }> }> = []
+  /**
+   * 取参与虚拟滚动的所有项（turn + system，不丢弃 system 消息）+ 对应键。
+   * system 消息（compactionSummary/branchSummary/bashExecution/bgNotify）也占高度，
+   * 必须纳入 offset 计算和窗口判定，否则虚拟化后从 DOM 消失。
+   */
+  function allEntries(): Array<{ id: string; item: RenderItem }> {
+    const out: Array<{ id: string; item: RenderItem }> = []
     for (const item of items()) {
-      if (item.kind !== 'turn') continue
-      const id = firstMessageId(item)
+      const id = itemKey(item)
       if (id !== null) out.push({ id, item })
     }
     return out
@@ -101,8 +111,8 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     ids: string[]
     offsets: number[]
     total: number
-  } {
-    const entries = turnEntries()
+    } {
+    const entries = allEntries()
     const n = entries.length
     const ids: string[] = new Array(n)
     const offsets: number[] = new Array(n)
@@ -121,6 +131,15 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     // Number.isFinite 兜底：极端情况下（NaN/Infinity）归零，绝不让 spacer NaN/负
     return Number.isFinite(total) && total >= 0 ? total : 0
   })
+
+  /**
+   * 取某 index 项的 offset（top 偏移），供 template absolute 定位（W3）。
+   * liveComputed 每次 access 重读 computeLayout，保证 heights 变化后 offset 最新。
+   */
+  function offsetOf(idx: number): number {
+    const { offsets } = computeLayout()
+    return offsets[idx] ?? 0
+  }
 
   /**
    * 可见窗口 { startIndex, endIndex }（AC-2 + INVAR-1a 纯派生）。
@@ -232,6 +251,7 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
   return {
     totalHeight,
     visibleRange,
+    offsetOf,
     reportHeight,
     scrollAdjustDelta,
     pinEditing,
