@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join } from 'node:path'
@@ -78,12 +78,10 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
     // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过。
     return
   }
-  const entry = JSON.stringify({ type: 'session_end', outcome, reason, timestamp: new Date().toISOString() }) + '\n'
+  const meta = { type: 'session_end', outcome, reason, timestamp: new Date().toISOString() }
   try {
-    const fd = openSync(filePath, 'a')
-    writeSync(fd, entry)
-    closeSync(fd)
-  // eslint-disable-next-line taste/no-silent-catch -- file append: failure to write must not crash caller
+    writeFileSync(filePath + '.meta.json', JSON.stringify(meta))
+  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
   } catch (e) {
     console.error(`[session-file-utils] persistSessionEnd failed: ${filePath}`, e)
   }
@@ -99,10 +97,50 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
  * @returns 终态 outcome；文件无 session_end entry（历史 session / 未结束）返回 null
  */
 export function extractSessionOutcome(filePath: string): SessionOutcome | null {
+  // 优先读 sidecar（W1 sidecar 元数据方案）
+  const sidecarPath = filePath + '.meta.json'
+  try {
+    const raw = readFileSync(sidecarPath, 'utf-8')
+    const meta = JSON.parse(raw)
+    if (meta && typeof meta.outcome === 'string') {
+      return meta.outcome as SessionOutcome
+    }
+  // eslint-disable-next-line taste/no-silent-catch -- ENOENT/no-parse → fallback to JSONL
+  } catch { void 0 /* no sidecar or invalid → fallback */ }
+
+  // fallback: 从 JSONL 读（历史 session / 无 sidecar 时的兼容路径）
   return findLastEntryField(filePath,
     (e) => e.type === 'session_end' && typeof e.outcome === 'string',
     (e) => e.outcome as SessionOutcome,
   )
+}
+
+/**
+ * 从 JSONL 文件中移除 session_end 及其后的孤立 metadata entries。
+ * 用于 restore/fork 时给 pi 提供干净的历史文件（pi 未知 type 会忽略，
+ * 但 session_end 携带的旧终态信息会干扰新 session 的状态判断）。
+ *
+ * @returns 清理后的内容（不含 session_end 及其后续孤立 metadata entries）
+ */
+export function stripSessionEnd(filePath: string): string {
+  const content = readFileSync(filePath, 'utf-8')
+  const lines = content.split('\n')
+  // 找到 session_end 所在行索引，截断到该行为止（含 session_end 及其后的孤立 entries）
+  let cutIndex = lines.length
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line.trim()) continue
+    try {
+      const entry = JSON.parse(line)
+      if (entry.type === 'session_end') {
+        cutIndex = i
+        break
+      }
+    } catch { void 0 /* non-JSON line, keep */ }
+  }
+  // 保留 cutIndex 之前的行，过滤空行
+  const kept = lines.slice(0, cutIndex).filter(l => l.trim())
+  return kept.join('\n') + '\n'
 }
 
 /**
@@ -140,7 +178,7 @@ function findLastEntryField<R>(
         return extract(entry as Record<string, unknown>)
       }
     }
-  // eslint-disable-next-line taste/no-silent-catch -- 文件读取/解析失败返回 null，与原实现对等
+  // eslint-disable-next-line taste/no-silent-catch no-empty -- 文件读取/解析失败返回 null，与原实现对等
   } catch {
     return null
   }

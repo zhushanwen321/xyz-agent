@@ -9,10 +9,10 @@
  *
  * 依赖经构造注入:svc(Facade 内部协议)、pm(进程创建/销毁/rekey)。
  */
-import { basename } from 'node:path'
-import { existsSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
@@ -23,6 +23,7 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
+import { stripSessionEnd } from '../../infra/pi/session-file-utils.js'
 
 export class SessionLifecycle {
   constructor(
@@ -146,11 +147,15 @@ export class SessionLifecycle {
       this.svc.removeSessionEntry(sessionId)
       if (session.sessionFilePath && existsSync(session.sessionFilePath)) {
         await this.sessionStore.trash(session.sessionFilePath)
+        // 清理 sidecar（删除失败不阻塞主流程）
+        try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
       }
     } else {
       const target = this.svc.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
       if (existsSync(target.filePath)) await this.sessionStore.trash(target.filePath)
+      // 清理 sidecar（删除失败不阻塞主流程）
+      try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
     }
     this.sessionStore.refreshAll()
   }
@@ -185,7 +190,16 @@ export class SessionLifecycle {
     })
 
     try {
-      await client.switchSession(target.filePath)
+      // strip session_end：restore 时给 pi 提供干净的历史文件，旧终态不应影响新 session
+      const cleaned = stripSessionEnd(target.filePath)
+      const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
+      writeFileSync(tmpFile, cleaned)
+      try {
+        await client.switchSession(tmpFile)
+      } finally {
+        // switch 完成后清理临时文件，pi 已读入内存
+        try { unlinkSync(tmpFile) } catch { void 0 }
+      }
     } catch (e) {
       // switch_session 失败时清理已创建的资源,避免子进程/监听器泄漏
       await this.safeDestroy(id)
@@ -257,8 +271,15 @@ export class SessionLifecycle {
     })
 
     try {
-      // 4. switch_session 让 pi 加载截断后的历史
-      await client.switchSession(forkedFilePath)
+      // 4. switch_session 让 pi 加载截断后的历史（strip session_end 给干净文件）
+      const cleaned = stripSessionEnd(forkedFilePath)
+      const tmpFile = join(tmpdir(), `xyz-fork-${forkedId}-${Date.now()}.jsonl`)
+      writeFileSync(tmpFile, cleaned)
+      try {
+        await client.switchSession(tmpFile)
+      } finally {
+        try { unlinkSync(tmpFile) } catch {}
+      }
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
