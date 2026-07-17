@@ -84,7 +84,8 @@
           class="min-h-[120px] resize-y font-mono text-[12px]"
         />
         <div class="mt-1 flex items-center justify-between">
-          <span class="font-mono text-[10px] text-subtle">{{ appendPrompt.length }}/{{ maxLength }}</span>
+          <!-- append 走 hook 不经 argv，无 32k/16000 硬上限约束，故只显示字符数不显示上限（R3）。 -->
+          <span class="font-mono text-[10px] text-subtle">{{ appendPrompt.length }} {{ t('settings.systemPrompt.charCount') }}</span>
           <Button
             data-testid="system-prompt-append-save"
             size="dense"

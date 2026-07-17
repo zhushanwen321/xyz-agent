@@ -245,6 +245,16 @@ export class ServerMessageBroker implements IMessageBroker {
         run: () => this.send(ws, this.buildAgentDirsMsg()),
       },
       {
+        // config.systemPrompt（FR-4/FR-5）：spec §6 要求「reply + broadcast + 初始推送三用」。
+        // 前两用在 settings handler + ConfigService 变更广播，此段补 initial-state 推送，
+        // 前端首次打开 Settings · SystemPromptPage 无需额外 getSystemPrompt 往返即可填充编辑态。
+        label: 'config.systemPrompt',
+        run: () => {
+          const r = configService.getSystemPromptConfig()
+          this.send(ws, { type: 'config.systemPrompt', id: this.nextPushId(), payload: { config: r.config, corrupted: r.corrupted } })
+        },
+      },
+      {
         label: 'config.plugins',
         run: () => {
           if (pluginService) {

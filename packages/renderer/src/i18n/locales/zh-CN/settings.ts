@@ -44,6 +44,7 @@ export default {
     save: '保存',
     savedToast: '已保存',
     corruptedHint: '系统提示词配置文件已损坏，已回退默认配置',
+    charCount: '字符',
   },
   // ── Provider 页（ProviderPage）──
   provider: {

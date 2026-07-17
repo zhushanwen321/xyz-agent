@@ -45,6 +45,7 @@ export default {
     save: 'Save',
     savedToast: 'Saved',
     corruptedHint: 'The system prompt config file is corrupted; rolled back to defaults',
+    charCount: 'chars',
   },
   // ── Provider page (ProviderPage) ──
   provider: {

@@ -76,6 +76,8 @@ export interface PiSessionOptions {
   env?: Record<string, string>
   skillPaths?: string[]
   extensionPaths?: string[]
+  /** 替换 pi 核心系统提示词（透传到 RpcClientOptions.systemPrompt → --system-prompt CLI）。 */
+  systemPrompt?: string
   piCommand?: string
 }
 
