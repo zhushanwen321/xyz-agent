@@ -17,7 +17,6 @@ import type {
   SetProviderData,
   SkillDirConfig,
   SystemPromptConfig,
-  SystemPromptSnapshot,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -149,11 +148,6 @@ export async function getSystemPrompt(): Promise<{ config: SystemPromptConfig; c
 export async function setSystemPrompt(config: SystemPromptConfig): Promise<{ config: SystemPromptConfig; corrupted: boolean }> {
   const reply = await command('config.setSystemPrompt', { config })
   return { config: reply.config, corrupted: reply.corrupted ?? false }
-}
-
-/** 读取实际生效提示词快照（插件每轮写入）。 */
-export async function getSystemPromptSnapshot(): Promise<SystemPromptSnapshot> {
-  return command('config.getSystemPromptSnapshot', {})
 }
 
 /** 订阅系统提示词配置广播（多 panel 同步）。 */

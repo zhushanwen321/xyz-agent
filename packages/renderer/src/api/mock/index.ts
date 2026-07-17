@@ -13,7 +13,7 @@ import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
-  SystemPromptConfig, SystemPromptSnapshot,
+  SystemPromptConfig,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -555,10 +555,6 @@ export const config = {
     const next = { config: cfg, corrupted: false }
     systemPromptSub.broadcast(next)
     return next
-  },
-  async getSystemPromptSnapshot() {
-    await sleep(TIMING.ack)
-    return { exists: false } as SystemPromptSnapshot
   },
   onSystemPrompt: (h: (config: SystemPromptConfig, corrupted: boolean) => void) =>
     systemPromptSub.subscribe((p) => h(p.config, p.corrupted)),

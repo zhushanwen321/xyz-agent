@@ -28,12 +28,6 @@ interface SystemPromptConfig {
   append: { enabled: boolean; prompt: string }
 }
 
-interface SystemPromptSnapshotInfo {
-  exists: boolean
-  content?: string
-  updatedAt?: string
-}
-
 function defaultConfig(): SystemPromptConfig {
   return {
     version: 1,
@@ -45,7 +39,6 @@ function defaultConfig(): SystemPromptConfig {
 const configMock = vi.hoisted(() => ({
   getSystemPrompt: vi.fn(() => Promise.resolve({ config: defaultConfig(), corrupted: false })),
   setSystemPrompt: vi.fn((cfg: SystemPromptConfig) => Promise.resolve({ config: cfg, corrupted: false })),
-  getSystemPromptSnapshot: vi.fn(() => Promise.resolve<SystemPromptSnapshotInfo>({ exists: false })),
   listProviders: vi.fn(() => Promise.resolve([])),
   setSkillDirs: vi.fn(() => Promise.resolve()),
   setAgentDirs: vi.fn(() => Promise.resolve()),
@@ -88,7 +81,6 @@ beforeEach(() => {
   toasts.value = []
   configMock.getSystemPrompt.mockClear()
   configMock.setSystemPrompt.mockClear()
-  configMock.getSystemPromptSnapshot.mockClear()
   configMock.listProviders.mockClear()
 })
 
@@ -100,7 +92,7 @@ afterEach(() => {
 
 /**
  * 打开 SettingsModal 并切换到「系统提示词」菜单。
- * 当前实现尚未添加该菜单项，因此所有调用此 helper 的测试都会因找不到菜单按钮而红灯。
+ * 用 nav 按钮顺序定位（systemPrompt 是第 5 个菜单项，index 4），不依赖 textContent。
  */
 async function openSystemPromptPage(): Promise<void> {
   wrapper = mount(SettingsModal, {
@@ -110,9 +102,8 @@ async function openSystemPromptPage(): Promise<void> {
   await flushPromises()
 
   const navButtons = Array.from(document.body.querySelectorAll('nav button'))
-  const systemPromptBtn = navButtons.find((b) =>
-    (b.textContent ?? '').includes('systemPrompt'),
-  )
+  // systemPrompt 菜单排在 provider/skill/agent/extension 之后，index 4
+  const systemPromptBtn = navButtons[4]
   expect(systemPromptBtn).toBeTruthy()
   systemPromptBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await flushPromises()
@@ -130,9 +121,6 @@ describe('SystemPromptPage 渲染 gate', () => {
       'system-prompt-append-switch',
       'system-prompt-append-input',
       'system-prompt-append-save',
-      'system-prompt-snapshot-refresh',
-      'system-prompt-snapshot-content',
-      'system-prompt-snapshot-updated-at',
     ]
     for (const id of requiredIds) {
       expect(hasTestId(id)).toBe(true)
@@ -198,30 +186,6 @@ describe('SystemPromptPage 保存交互', () => {
     expect(configMock.setSystemPrompt).toHaveBeenCalledTimes(1)
     const { toasts } = useToast()
     expect(toasts.value.some((t) => t.type === 'error' && t.message.includes('保存失败'))).toBe(true)
-  })
-})
-
-describe('SystemPromptPage 快照卡', () => {
-  it('渲染快照内容与更新时间；点击刷新后重新拉取快照', async () => {
-    configMock.getSystemPromptSnapshot.mockResolvedValueOnce({
-      exists: true,
-      content: 'PROMPT_TEXT',
-      updatedAt: '2026-07-16T10:00:00.000Z',
-    })
-
-    await openSystemPromptPage()
-
-    expect(configMock.getSystemPromptSnapshot).toHaveBeenCalledTimes(1)
-    const content = $('[data-testid="system-prompt-snapshot-content"]')
-    expect(content.element.textContent).toContain('PROMPT_TEXT')
-
-    const updatedAt = document.body.querySelector('[data-testid="system-prompt-snapshot-updated-at"]')
-    expect(updatedAt).toBeTruthy()
-    expect(updatedAt!.textContent).toBeTruthy()
-
-    await $('[data-testid="system-prompt-snapshot-refresh"]').trigger('click')
-    await flushPromises()
-    expect(configMock.getSystemPromptSnapshot).toHaveBeenCalledTimes(2)
   })
 })
 

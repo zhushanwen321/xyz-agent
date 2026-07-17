@@ -15,17 +15,12 @@ export default {
     agentDesc: 'Manage Agent load paths and sources',
     extension: 'Extension',
     extensionDesc: 'Manage MCP extensions and tools',
+    systemPrompt: 'System Prompt',
     system: 'System',
     systemDesc: 'Appearance, language and shortcut preferences',
     systemPromptDesc: 'Configure replace and append system prompts',
   },
   // ── SystemPrompt page (SystemPromptPage) ──
-  // Note: settings.menu.systemPrompt is intentionally NOT translated here.
-  // The red-light test (system-prompt-page.test.ts openSystemPromptPage) locates the
-  // menu button via nav button textContent.includes('systemPrompt'); the test setup
-  // (vitest-i18n-setup.ts) resolves t() from this file, falling back to the key string
-  // when unset. Leaving the key untranslated falls back to 'settings.menu.systemPrompt'
-  // which contains 'systemPrompt' so the test can locate it.
   systemPrompt: {
     replaceTitle: 'Replace system prompt',
     replaceSubtitle: 'Fully override pi default identity and guidance',
@@ -37,17 +32,14 @@ export default {
     appendHint: 'Appended to the end of the system prompt; takes effect on the next turn after saving (including in-progress sessions)',
     appendLabel: 'Prompt to append',
     appendPlaceholder: 'Enter the prompt to append…',
-    snapshotTitle: 'Effective prompt',
-    snapshotSubtitle: 'The plugin writes the full effective system prompt each turn',
-    snapshotEmpty: 'No snapshot yet; it appears here after the first conversation',
-    snapshotNoTime: 'Not updated yet',
-    refresh: 'Refresh',
     save: 'Save',
     savedToast: 'Saved',
     corruptedHint: 'The system prompt config file is corrupted; rolled back to defaults',
     charCount: 'chars',
     defaultToggle: 'View pi default prompt',
     defaultHint: 'This is the pi default core prompt (identity + tool list + guidelines). Replacing overrides this segment with your text; dynamic segments (AGENTS.md/skills/cwd) are unaffected and still appended by pi.',
+    copy: 'Copy',
+    copiedToast: 'Copied to clipboard',
   },
   // ── Provider page (ProviderPage) ──
   provider: {

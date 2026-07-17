@@ -1,8 +1,9 @@
 <!--
   Settings · SystemPrompt 菜单页（FR-4/FR-5）。
-  三卡片：替换系统提示词 / 注入额外提示词 / 当前生效提示词快照。
-  数据层由 W6 提供：config.getSystemPrompt / setSystemPrompt / getSystemPromptSnapshot。
-  保存为显式按钮触发（不自动保存），失败走 toast error，成功走 toast info。
+  两卡片：替换系统提示词 / 注入额外提示词。
+  数据层：config.getSystemPrompt / setSystemPrompt（保存为显式按钮触发，不自动保存，
+  失败走 toast error，成功走 toast info）。
+  替换卡下方含可折叠的 pi 默认提示词参考区，展开后可一键复制（DEFAULT_PI_SYSTEM_PROMPT）。
 -->
 <template>
   <div data-testid="system-prompt-page" class="flex max-w-[860px] flex-col gap-3">
@@ -60,7 +61,7 @@
             data-testid="system-prompt-default-toggle"
             variant="ghost"
             size="sm"
-            class="h-auto w-full justify-start gap-1 px-0 py-0 text-[11px] font-normal text-subtle hover:bg-transparent hover:text-fg [&_svg]:size-3"
+            class="h-auto w-full justify-start gap-1 px-0 py-0 text-[11px] font-normal text-accent hover:bg-transparent hover:text-accent [&_svg]:size-3"
             @click="showDefaultPrompt = !showDefaultPrompt"
           >
             <ChevronRight class="transition-transform" :class="{ 'rotate-90': showDefaultPrompt }" />
@@ -70,6 +71,16 @@
             <p class="mb-2 text-[10px] leading-relaxed text-subtle">
               {{ t('settings.systemPrompt.defaultHint') }}
             </p>
+            <Button
+              data-testid="system-prompt-default-copy"
+              variant="ghost"
+              size="sm"
+              class="mb-2 h-auto gap-1 px-0 py-0 text-[11px] text-subtle hover:bg-transparent hover:text-fg [&_svg]:size-3"
+              @click="copyDefaultPrompt"
+            >
+              <Copy />
+              {{ t('settings.systemPrompt.copy') }}
+            </Button>
             <pre
               data-testid="system-prompt-default-content"
               class="max-h-[240px] select-text overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg"
@@ -120,48 +131,13 @@
         </div>
       </div>
     </div>
-
-    <!-- 卡 3：当前生效提示词快照 -->
-    <div class="rounded-md border border-border bg-bg">
-      <div class="flex items-center justify-between px-4 pb-3 pt-3">
-        <div class="min-w-0">
-          <h3 class="text-[13px] font-medium text-fg">{{ t('settings.systemPrompt.snapshotTitle') }}</h3>
-          <p class="mt-0.5 text-[11px] text-subtle">{{ t('settings.systemPrompt.snapshotSubtitle') }}</p>
-        </div>
-        <Button
-          data-testid="system-prompt-snapshot-refresh"
-          variant="secondary"
-          size="dense"
-          :disabled="snapshotRefreshing"
-          @click="refreshSnapshot"
-        >
-          <RefreshCw class="size-3.5" :class="{ 'animate-spin': snapshotRefreshing }" />
-          {{ t('settings.systemPrompt.refresh') }}
-        </Button>
-      </div>
-      <div class="border-t border-border px-4 py-3">
-        <div
-          data-testid="system-prompt-snapshot-content"
-          class="max-h-[280px] min-h-[80px] overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg"
-        >
-          <span v-if="snapshot && snapshot.exists && snapshot.content">{{ snapshot.content }}</span>
-          <span v-else class="text-subtle">{{ t('settings.systemPrompt.snapshotEmpty') }}</span>
-        </div>
-        <div class="mt-2 flex items-center gap-1.5 text-[10px] text-subtle">
-          <Clock class="size-3" />
-          <span data-testid="system-prompt-snapshot-updated-at">
-            {{ snapshot && snapshot.exists && snapshot.updatedAt ? formatTime(snapshot.updatedAt) : t('settings.systemPrompt.snapshotNoTime') }}
-          </span>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, RefreshCw, Clock, ChevronRight } from '@lucide/vue'
+import { AlertTriangle, ChevronRight, Copy } from '@lucide/vue'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -169,7 +145,7 @@ import { Label } from '@/components/ui/label'
 import { config } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { SYSTEM_PROMPT_MAX_LENGTH, DEFAULT_PI_SYSTEM_PROMPT } from '@xyz-agent/shared'
-import type { SystemPromptConfig, SystemPromptSnapshot } from '@xyz-agent/shared'
+import type { SystemPromptConfig } from '@xyz-agent/shared'
 
 const { t } = useI18n()
 const { info, error } = useToast()
@@ -185,10 +161,6 @@ const appendPrompt = ref('')
 
 /** 参考区展开态（默认折叠）。 */
 const showDefaultPrompt = ref(false)
-
-/** 快照（getSystemPromptSnapshot 返回）。null=尚未加载。 */
-const snapshot = ref<SystemPromptSnapshot | null>(null)
-const snapshotRefreshing = ref(false)
 
 /** 构造完整 SystemPromptConfig（替换卡与追加卡当前编辑值的快照）。 */
 function buildConfig(): SystemPromptConfig {
@@ -208,15 +180,6 @@ async function loadConfig(): Promise<void> {
     replacePrompt.value = res.config.replace.prompt
     appendEnabled.value = res.config.append.enabled
     appendPrompt.value = res.config.append.prompt
-  } catch (e) {
-    error(e instanceof Error ? e.message : String(e))
-  }
-}
-
-/** 加载快照。 */
-async function loadSnapshot(): Promise<void> {
-  try {
-    snapshot.value = await config.getSystemPromptSnapshot()
   } catch (e) {
     error(e instanceof Error ? e.message : String(e))
   }
@@ -242,29 +205,17 @@ async function saveAppend(): Promise<void> {
   }
 }
 
-/** 刷新快照（点击刷新按钮）。 */
-async function refreshSnapshot(): Promise<void> {
-  snapshotRefreshing.value = true
+/** 复制 pi 默认提示词到剪贴板。失败走 error toast，成功走 info toast。 */
+async function copyDefaultPrompt(): Promise<void> {
   try {
-    await loadSnapshot()
-  } finally {
-    snapshotRefreshing.value = false
-  }
-}
-
-/** ISO 时间字符串格式化为本地可读时间。输入为空时返回占位符。 */
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return iso
-    return d.toLocaleString()
-  } catch {
-    return iso
+    await navigator.clipboard.writeText(DEFAULT_PI_SYSTEM_PROMPT)
+    info(t('settings.systemPrompt.copiedToast'))
+  } catch (e) {
+    error(e instanceof Error ? e.message : String(e))
   }
 }
 
 onMounted(() => {
   void loadConfig()
-  void loadSnapshot()
 })
 </script>
