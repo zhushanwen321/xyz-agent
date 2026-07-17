@@ -55,20 +55,22 @@ const UTF8_CONTINUATION_PREFIX = 0x80
 /**
  * 按 UTF-8 字节截断字符串，在 codepoint 边界对齐（AC-11/D10）。
  * 不切断多字节字符（如 CJK 3 字节字符不会被切成半个）。
+ *
+ * 用 TextEncoder 代替 Node.js Buffer（浏览器端无 Buffer 全局）。
  */
 export function truncateToBytes(str: string, maxBytes: number): string {
-  const buf = Buffer.from(str, 'utf-8')
-  if (buf.length <= maxBytes) return str
+  const bytes = new TextEncoder().encode(str)
+  if (bytes.length <= maxBytes) return str
 
   // 从 maxBytes 往前找 codepoint 边界
   // UTF-8 多字节字符：首字节高位是 11xxxxxx，续字节是 10xxxxxx
   // 找到第一个非续字节位置即为 codepoint 起点
   let cutPos = maxBytes
   // 往回找直到不是续字节（10xxxxxx = 0x80-0xBF）
-  while (cutPos > 0 && (buf[cutPos] & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_PREFIX) {
+  while (cutPos > 0 && (bytes[cutPos]! & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_PREFIX) {
     cutPos--
   }
-  return buf.subarray(0, cutPos).toString('utf-8')
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, cutPos))
 }
 
 /**
@@ -84,20 +86,21 @@ export function truncateToolCall<T extends import('@xyz-agent/shared').ToolCall>
 
   let truncated = false
   const next: Partial<T> = {}
-  const markerBytes = Buffer.byteLength(TRUNCATION_MARKER, 'utf-8')
+  const encoder = new TextEncoder()
+  const markerBytes = encoder.encode(TRUNCATION_MARKER).length
   // 截断体预算 = MAX - marker，保证含标记后总长 ≤ MAX
   const bodyBudget = TOOL_OUTPUT_MAX_BYTES - markerBytes
 
   if (tc.output !== undefined) {
-    const buf = Buffer.from(tc.output, 'utf-8')
-    if (buf.length > TOOL_OUTPUT_MAX_BYTES) {
+    const byteLen = encoder.encode(tc.output).length
+    if (byteLen > TOOL_OUTPUT_MAX_BYTES) {
       next.output = truncateToBytes(tc.output, bodyBudget) + TRUNCATION_MARKER
       truncated = true
     }
   }
   if (tc.outputRaw !== undefined) {
-    const buf = Buffer.from(tc.outputRaw, 'utf-8')
-    if (buf.length > TOOL_OUTPUT_MAX_BYTES) {
+    const byteLen = encoder.encode(tc.outputRaw).length
+    if (byteLen > TOOL_OUTPUT_MAX_BYTES) {
       next.outputRaw = truncateToBytes(tc.outputRaw, bodyBudget) + TRUNCATION_MARKER
       truncated = true
     }

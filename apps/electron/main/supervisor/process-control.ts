@@ -40,8 +40,7 @@
  * 依赖方向：process-control → node:child_process + safe-env + electron(app)
  */
 import { type ChildProcess, spawn, execSync } from 'node:child_process'
-import { createWriteStream, type WriteStream } from 'node:fs'
-import { mkdirSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, type WriteStream } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
 import { getDataDir } from '@xyz-agent/shared/paths'
