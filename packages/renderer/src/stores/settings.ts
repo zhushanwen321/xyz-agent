@@ -23,7 +23,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig, ModelInfo, ExtensionInfo } from '@xyz-agent/shared'
+import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig, ModelInfo, ExtensionInfo, SystemPromptConfig } from '@xyz-agent/shared'
 import { config, settings as settingsApi } from '@/api'
 import type { SystemSettings } from '@/api'
 import { setLocale } from '@/i18n'
@@ -73,6 +73,8 @@ export const useSettingsStore = defineStore('settings', () => {
   // runtime 在连接 / model.switch / provider 增删时经 config.defaults 推送；
   // landing 态（无 active session）的 composer 模型选择器取它作 fallback。
   const defaultModel = ref('')
+  /** 系统提示词配置（FR-4，config.systemPrompt 广播同步）。null=尚未加载。 */
+  const systemPromptConfig = ref<{ config: SystemPromptConfig; corrupted: boolean } | null>(null)
 
   // ── Actions（纯写入；订阅生命周期在 useSettings composable）──
 
@@ -186,6 +188,7 @@ export const useSettingsStore = defineStore('settings', () => {
     skillDirs,
     agentDirs,
     defaultModel,
+    systemPromptConfig,
     // actions（纯写入）
     setSystem,
     setSkillDirs,

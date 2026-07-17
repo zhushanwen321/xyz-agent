@@ -13,6 +13,7 @@ import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
+  SystemPromptConfig, SystemPromptSnapshot,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -434,6 +435,17 @@ function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDir
 const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_SKILL_DIRS, mockSkillDirPaths).map((d) => ({ ...d })))
 const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_AGENT_DIRS, mockAgentDirPaths).map((d) => ({ ...d })))
 
+/** 默认系统提示词配置（与 W7 system-prompt-page.test defaultConfig 同构）。 */
+function defaultSystemPromptConfig(): SystemPromptConfig {
+  return {
+    version: 1,
+    replace: { enabled: false, prompt: '' },
+    append: { enabled: false, prompt: '' },
+  }
+}
+// 系统提示词配置订阅（模拟 config.systemPrompt 广播；初始推默认配置，corrupted=false）。
+const systemPromptSub = makeMockSubscription(() => ({ config: defaultSystemPromptConfig(), corrupted: false }))
+
 export const config = {
   // 请求型：直接返 fixture 深拷贝（不依赖 sub）
   async listProviders() {
@@ -532,6 +544,24 @@ export const config = {
     if (idx >= 0) fixtureAgents.splice(idx, 1)
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
   },
+  // ── 系统提示词配置（W6 FR-4/FR-5，与 real domains/config 同构）──
+  // mock 持内存默认配置；setSystemPrompt 广播 config.systemPrompt，与 runtime 行为一致。
+  async getSystemPrompt() {
+    await sleep(TIMING.ack)
+    return { config: defaultSystemPromptConfig(), corrupted: false }
+  },
+  async setSystemPrompt(cfg: SystemPromptConfig) {
+    await sleep(TIMING.ack)
+    const next = { config: cfg, corrupted: false }
+    systemPromptSub.broadcast(next)
+    return next
+  },
+  async getSystemPromptSnapshot() {
+    await sleep(TIMING.ack)
+    return { exists: false } as SystemPromptSnapshot
+  },
+  onSystemPrompt: (h: (config: SystemPromptConfig, corrupted: boolean) => void) =>
+    systemPromptSub.subscribe((p) => h(p.config, p.corrupted)),
 }
 
 /** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */

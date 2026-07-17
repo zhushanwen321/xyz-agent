@@ -16,6 +16,8 @@ import type {
   AgentInfo,
   SetProviderData,
   SkillDirConfig,
+  SystemPromptConfig,
+  SystemPromptSnapshot,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -131,4 +133,32 @@ export function setAgent(agent: AgentInfo): Promise<void> {
 
 export function deleteAgent(agentId: string): Promise<void> {
   return command('config.deleteAgent', { agentId })
+}
+
+// ── System prompt config（FR-4/FR-5）──
+// settings-handler reply config.systemPrompt 形状 `{ config, corrupted? }`；
+// setSystemPrompt 失败时走 sendError，command reject（前端 catch 提示）。
+
+/** 读取系统提示词配置。corrupted=true 表示磁盘配置损坏已回退默认。 */
+export async function getSystemPrompt(): Promise<{ config: SystemPromptConfig; corrupted: boolean }> {
+  const reply = await command('config.getSystemPrompt', {})
+  return { config: reply.config, corrupted: reply.corrupted ?? false }
+}
+
+/** 保存系统提示词配置（replace + append）。失败时 runtime 返回 error envelope，command 会 reject。 */
+export async function setSystemPrompt(config: SystemPromptConfig): Promise<{ config: SystemPromptConfig; corrupted: boolean }> {
+  const reply = await command('config.setSystemPrompt', { config })
+  return { config: reply.config, corrupted: reply.corrupted ?? false }
+}
+
+/** 读取实际生效提示词快照（插件每轮写入）。 */
+export async function getSystemPromptSnapshot(): Promise<SystemPromptSnapshot> {
+  return command('config.getSystemPromptSnapshot', {})
+}
+
+/** 订阅系统提示词配置广播（多 panel 同步）。 */
+export function onSystemPrompt(handler: (config: SystemPromptConfig, corrupted: boolean) => void): () => void {
+  return events.onGlobalType('config.systemPrompt', (msg) => {
+    handler(msg.payload.config, msg.payload.corrupted ?? false)
+  })
 }

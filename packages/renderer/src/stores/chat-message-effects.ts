@@ -583,7 +583,10 @@ export function dispatchMessageEvent(
   msg: ServerMessage,
 ): void {
   const handler = messageEffects[msg.type as ServerMessageType]
-  if (handler) handler(ctx, sessionId, msg.payload)
+  // msg.payload 是 ServerMessageMap 的联合（含 SystemPromptSnapshot 等 interface 类型，
+  // 无 string index signature）。handler 内部统一用 readString 等安全窄化（见上方注释），
+  // 不依赖 index signature，故 cast 到 Record<string, unknown> 是安全的。
+  if (handler) handler(ctx, sessionId, msg.payload as Record<string, unknown>)
 }
 
 /** 注册表是否覆盖某 type（测试可断言完整性，防新增 message.* 漏注册） */

@@ -573,6 +573,11 @@ export interface ReplyPayloadMap {
   'config.getProviders': ServerMessageMap['config.providers']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
+  // 系统提示词配置（W2，FR-4/FR-5）：get/setSystemPrompt reply config.systemPrompt
+  //   形状 `{ config, corrupted? }`；getSystemPromptSnapshot reply config.systemPromptSnapshot。
+  'config.getSystemPrompt': ServerMessageMap['config.systemPrompt']
+  'config.setSystemPrompt': ServerMessageMap['config.systemPrompt']
+  'config.getSystemPromptSnapshot': ServerMessageMap['config.systemPromptSnapshot']
   'extension.getPendingRequests': ServerMessageMap['extension.pendingRequests']
   'extension.installDir': ServerMessageMap['extension.discovered']
   'extension.installGit': ServerMessageMap['extension.discovered']
