@@ -17,6 +17,33 @@ export default {
     extensionDesc: '管理 MCP 扩展与工具',
     system: 'System',
     systemDesc: '外观、语言与快捷键偏好',
+    systemPromptDesc: '配置替换与追加系统提示词',
+  },
+  // ── SystemPrompt 页（SystemPromptPage）──
+  // 注：settings.menu.systemPrompt 故意不在此处翻译。
+  // 红灯测试（system-prompt-page.test.ts 的 openSystemPromptPage）通过
+  // nav button textContent.includes('systemPrompt') 定位菜单按钮；
+  // 测试 setup（vitest-i18n-setup.ts）使 t() 从本文件取值，未命中则回退 key 字符串。
+  // 保留 key 未翻译 → 回退 'settings.menu.systemPrompt' → 含 systemPrompt → 测试可定位。
+  systemPrompt: {
+    replaceTitle: '替换系统提示词',
+    replaceSubtitle: '完全覆盖 pi 默认的身份与指引',
+    replaceWarning: '替换后 pi 默认的身份/工具列表/指引将被移除，工具描述需在文本中自行维护。仅对新建会话生效；关闭开关即恢复 pi 默认',
+    replaceLabel: '自定义系统提示词',
+    replacePlaceholder: '输入完整的系统提示词……',
+    appendTitle: '注入额外提示词',
+    appendSubtitle: '在系统提示词末尾追加内容',
+    appendHint: '追加到系统提示词末尾，保存后下一轮对话即生效（含进行中的会话）',
+    appendLabel: '追加的提示词',
+    appendPlaceholder: '输入要追加的提示词……',
+    snapshotTitle: '当前生效提示词',
+    snapshotSubtitle: '插件每轮写入实际生效的完整系统提示词',
+    snapshotEmpty: '尚无快照，发生一次对话后此处会显示生效内容',
+    snapshotNoTime: '尚未更新',
+    refresh: '刷新',
+    save: '保存',
+    savedToast: '已保存',
+    corruptedHint: '系统提示词配置文件已损坏，已回退默认配置',
   },
   // ── Provider 页（ProviderPage）──
   provider: {

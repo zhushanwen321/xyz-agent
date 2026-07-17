@@ -74,6 +74,7 @@
               />
               <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
               <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
+              <SystemPromptPage v-else-if="activeMenu === 'systemPrompt'" />
             </div>
           </ScrollArea>
         </div>
@@ -91,7 +92,7 @@
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, X } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, X } from '@lucide/vue'
 import {
   Dialog,
   DialogContent,
@@ -110,12 +111,14 @@ import ProviderPage from './ProviderPage.vue'
 import SettingsResourcePage from './SettingsResourcePage.vue'
 import ExtensionPage from './ExtensionPage.vue'
 import SystemPage from './SystemPage.vue'
+import SystemPromptPage from './SystemPromptPage.vue'
 
 const menus = [
   { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings, descKey: 'settings.menu.providerDesc' },
   { id: 'skill', labelKey: 'settings.menu.skill', icon: Sparkles, descKey: 'settings.menu.skillDesc' },
   { id: 'agent', labelKey: 'settings.menu.agent', icon: Bot, descKey: 'settings.menu.agentDesc' },
   { id: 'extension', labelKey: 'settings.menu.extension', icon: Blocks, descKey: 'settings.menu.extensionDesc' },
+  { id: 'systemPrompt', labelKey: 'settings.menu.systemPrompt', icon: ScrollText, descKey: 'settings.menu.systemPromptDesc' },
   { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal, descKey: 'settings.menu.systemDesc' },
 ] as const
 
