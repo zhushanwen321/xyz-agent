@@ -1,8 +1,7 @@
 /**
  * ConfigService system-prompt 新方法单测（TDD 红灯）。
  *
- * 覆盖：getSystemPromptConfig / setSystemPromptConfig / getReplaceSystemPrompt /
- *       getSystemPromptSnapshot 的常规与异常路径。
+ * 覆盖：getSystemPromptConfig / setSystemPromptConfig / getReplaceSystemPrompt 的常规与异常路径。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
@@ -45,7 +44,6 @@ type SystemPromptSvc = {
   getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean }
   setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string }
   getReplaceSystemPrompt(): string | undefined
-  getSystemPromptSnapshot(): { exists: boolean; content?: string; updatedAt?: string }
 }
 
 let tmpDir: string
@@ -72,10 +70,6 @@ afterEach(() => {
 
 function systemPromptPath(): string {
   return join(configDir, 'system-prompt.json')
-}
-
-function snapshotPath(): string {
-  return join(configDir, 'system-prompt-snapshot.md')
 }
 
 describe('ConfigService system-prompt', () => {
@@ -154,19 +148,6 @@ describe('ConfigService system-prompt', () => {
     service.setSystemPromptConfig(cfg)
 
     expect(service.getReplaceSystemPrompt()).toBeUndefined()
-  })
-
-  it('getSystemPromptSnapshot：文件缺失时返回 exists:false', () => {
-    expect(service.getSystemPromptSnapshot()).toEqual({ exists: false })
-  })
-
-  it('getSystemPromptSnapshot：写入后返回 content、updatedAt', () => {
-    writeFileSync(snapshotPath(), 'final prompt snapshot', 'utf-8')
-
-    const snap = service.getSystemPromptSnapshot()
-    expect(snap.exists).toBe(true)
-    expect(snap.content).toBe('final prompt snapshot')
-    expect(snap.updatedAt).toBeTruthy()
   })
 
   it('setSystemPromptConfig 超长拒绝时不会覆盖已有的合法配置', () => {

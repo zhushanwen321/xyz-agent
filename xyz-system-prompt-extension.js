@@ -5,9 +5,6 @@
  *  1. Reads <dataDir>/system-prompt.json every turn (never cached).
  *  2. When `append.enabled === true` and `append.prompt` is non-blank,
  *     appends the user's text to the event's systemPrompt.
- *  3. Atomically writes the final systemPrompt to
- *     <dataDir>/system-prompt-snapshot.md (debounced: skip rewrite when the
- *     content is identical, preserving the existing mtime).
  *
  * Fail-safe: any error in the handler is swallowed and `undefined` is returned
  * so the agent loop is never blocked.
@@ -17,10 +14,9 @@
  */
 
 import path from 'node:path'
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 
 const CONFIG_FILE = 'system-prompt.json'
-const SNAPSHOT_FILE = 'system-prompt-snapshot.md'
 
 /**
  * Resolve the data directory from the environment.
@@ -82,30 +78,6 @@ function readConfig(dataDir) {
   }
 }
 
-/**
- * Atomically write the snapshot file, but only when the content differs from
- * the existing one (debounce). When the content is identical the existing
- * file — and its mtime — is left untouched.
- */
-function writeSnapshot(dataDir, content) {
-  const snapPath = path.join(dataDir, SNAPSHOT_FILE)
-  if (existsSync(snapPath)) {
-    let existing = ''
-    try {
-      existing = readFileSync(snapPath, 'utf-8')
-    } catch {
-      existing = '' // fall through to write below
-    }
-    if (existing === content) {
-      return // debounce: identical content, preserve mtime
-    }
-  }
-  // Atomic write: tmp file + rename.
-  const tmpPath = snapPath + '.tmp-' + process.pid
-  writeFileSync(tmpPath, content, 'utf-8')
-  renameSync(tmpPath, snapPath)
-}
-
 export default function (pi) {
   pi.on('before_agent_start', (event) => {
     try {
@@ -118,10 +90,6 @@ export default function (pi) {
       if (cfg.append.enabled && cfg.append.prompt.trim()) {
         newPrompt = basePrompt + '\n\n' + cfg.append.prompt
       }
-
-      // Snapshot is written unconditionally (regardless of append state) —
-      // it is the only visible window into the effective prompt.
-      writeSnapshot(dataDir, newPrompt)
 
       return newPrompt === event.systemPrompt ? undefined : { systemPrompt: newPrompt }
     } catch {

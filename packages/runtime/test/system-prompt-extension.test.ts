@@ -4,11 +4,10 @@
  * 动态 import repo root 的插件文件，验证 before_agent_start hook 行为：
  * - append 开启且 prompt 非空 → 追加到 event.systemPrompt
  * - append 关闭 / 配置缺失 / 配置损坏 / append.prompt 空白 → 返回 undefined
- * - 每轮把最终 prompt 原子写入 system-prompt-snapshot.md（相同内容防抖）
  * - 支持 XYZ_AGENT_DATA_DIR 与 PI_CODING_AGENT_DIR 回退两种目录解析
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -71,10 +70,6 @@ function installPlugin(factory: (pi: unknown) => void): { pi: PiLike; handler: H
   return { pi, handler: call![1] as Handler }
 }
 
-function snapshotPath(): string {
-  return join(dataDir, 'system-prompt-snapshot.md')
-}
-
 describe('xyz-system-prompt-extension', () => {
   it('append 开启且非空 → 返回 BASE + "\\n\\n" + EXTRA', async () => {
     const factory = await loadPlugin()
@@ -126,49 +121,6 @@ describe('xyz-system-prompt-extension', () => {
     const { handler } = installPlugin(factory)
 
     expect(handler({ systemPrompt: 'BASE' })).toBeUndefined()
-  })
-
-  it('调用后写入 system-prompt-snapshot.md，内容与最终 prompt 一致', async () => {
-    const factory = await loadPlugin()
-    writeConfig(dataDir, {
-      version: 1,
-      replace: { enabled: false, prompt: '' },
-      append: { enabled: true, prompt: 'EXTRA' },
-    })
-    const { handler } = installPlugin(factory)
-
-    handler({ systemPrompt: 'BASE' })
-    expect(readFileSync(snapshotPath(), 'utf-8')).toBe('BASE\n\nEXTRA')
-  })
-
-  it('相同内容第二次调用不更新 mtime（防抖写入）', async () => {
-    const factory = await loadPlugin()
-    writeConfig(dataDir, {
-      version: 1,
-      replace: { enabled: false, prompt: '' },
-      append: { enabled: true, prompt: 'EXTRA' },
-    })
-    const { handler } = installPlugin(factory)
-
-    handler({ systemPrompt: 'BASE' })
-    const mtime1 = statSync(snapshotPath()).mtimeMs
-    handler({ systemPrompt: 'BASE' })
-    const mtime2 = statSync(snapshotPath()).mtimeMs
-
-    expect(mtime2).toBe(mtime1)
-  })
-
-  it('append 关闭时也把原 systemPrompt 写入快照', async () => {
-    const factory = await loadPlugin()
-    writeConfig(dataDir, {
-      version: 1,
-      replace: { enabled: false, prompt: '' },
-      append: { enabled: false, prompt: '' },
-    })
-    const { handler } = installPlugin(factory)
-
-    handler({ systemPrompt: 'BASE' })
-    expect(readFileSync(snapshotPath(), 'utf-8')).toBe('BASE')
   })
 
   it('未设 XYZ_AGENT_DATA_DIR 时可用 PI_CODING_AGENT_DIR 回退定位配置', async () => {

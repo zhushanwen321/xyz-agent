@@ -177,12 +177,6 @@ export class SettingsMessageHandler {
         })
         return true
       }
-      case 'config.getSystemPromptSnapshot': {
-        // FR-7：读取插件每轮写入的实际生效 systemPrompt 快照（只读展示）。
-        const snapshot = this.ctx.configService.getSystemPromptSnapshot()
-        this.ctx.reply(ws, msg.id, 'config.systemPromptSnapshot', snapshot)
-        return true
-      }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
         await this.ctx.modelService.setThinkingLevel(sid as string, level as string)

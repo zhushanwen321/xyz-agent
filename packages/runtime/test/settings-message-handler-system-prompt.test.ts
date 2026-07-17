@@ -1,10 +1,9 @@
 /**
  * SettingsMessageHandler system-prompt 路由单测（TDD 红灯）。
  *
- * 覆盖 3 个新 WS case：
+ * 覆盖 2 个 WS case：
  * - config.getSystemPrompt
  * - config.setSystemPrompt（成功/失败两种回复路径）
- * - config.getSystemPromptSnapshot
  */
 import { describe, it, expect, vi } from 'vitest'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
@@ -50,7 +49,6 @@ function makeHandler() {
     getAgentDirs: vi.fn().mockReturnValue([]),
     getSystemPromptConfig: vi.fn().mockReturnValue({ config: DEFAULT_CONFIG, corrupted: false }),
     setSystemPromptConfig: vi.fn().mockReturnValue({ ok: true }),
-    getSystemPromptSnapshot: vi.fn().mockReturnValue({ exists: false }),
   }
 
   const modelService: IModelService = {
@@ -163,20 +161,5 @@ describe('SettingsMessageHandler system-prompt routes', () => {
     })
     expect(replies).toHaveLength(0)
     expect(broadcasts).toHaveLength(0)
-  })
-
-  it('config.getSystemPromptSnapshot → reply config.systemPromptSnapshot', async () => {
-    const { handler, configService, replies } = makeHandler()
-    const snapshot = { exists: true, content: 'snapshot content', updatedAt: '2026-07-17T00:00:00.000Z' }
-    configService.getSystemPromptSnapshot.mockReturnValue(snapshot)
-
-    const handled = await handler.handleSettingsMessage(msg('config.getSystemPromptSnapshot', {}), WS)
-
-    expect(handled).toBe(true)
-    expect(configService.getSystemPromptSnapshot).toHaveBeenCalledTimes(1)
-    expect(replies[0]).toMatchObject({
-      type: 'config.systemPromptSnapshot',
-      payload: snapshot,
-    })
   })
 })

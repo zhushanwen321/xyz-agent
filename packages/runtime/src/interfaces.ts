@@ -22,7 +22,6 @@ import type {
   SubagentRecord,
   WorkflowRunRecord,
   SystemPromptConfig,
-  SystemPromptSnapshot,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -239,8 +238,6 @@ export interface IConfigService {
   setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string }
   /** 返回当前生效的替换提示词（replace.enabled && prompt 非空白时），否则 undefined。rpc-client spawn 时透传。 */
   getReplaceSystemPrompt(): string | undefined
-  /** 读取 system-prompt-snapshot.md（插件每轮写入的实际生效提示词快照）。 */
-  getSystemPromptSnapshot(): SystemPromptSnapshot
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

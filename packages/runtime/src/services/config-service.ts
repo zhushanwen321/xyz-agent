@@ -19,7 +19,6 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
   SystemPromptConfig,
-  SystemPromptSnapshot,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -450,10 +449,6 @@ export class ConfigService implements IConfigService {
     return join(this.configStore.getConfigDir(), 'system-prompt.json')
   }
 
-  private systemPromptSnapshotPath(): string {
-    return join(this.configStore.getConfigDir(), 'system-prompt-snapshot.md')
-  }
-
   private defaultSystemPromptConfig(): SystemPromptConfig {
     return {
       version: 1,
@@ -527,13 +522,5 @@ export class ConfigService implements IConfigService {
       return config.replace.prompt
     }
     return undefined
-  }
-
-  getSystemPromptSnapshot(): SystemPromptSnapshot {
-    const sp = this.systemPromptSnapshotPath()
-    if (!existsSync(sp)) return { exists: false }
-    const content = readFileSync(sp, 'utf-8')
-    const updatedAt = statSync(sp).mtime.toISOString()
-    return { exists: true, content, updatedAt }
   }
 }
