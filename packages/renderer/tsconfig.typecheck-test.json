@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/__tests__/api/rpc-type-pairing.test.ts",
+    "src/**/*.d.ts",
+    "../../apps/electron/preload/index.d.ts"
+  ],
+  "exclude": []
+}

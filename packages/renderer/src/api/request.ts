@@ -33,7 +33,7 @@ import * as pending from './pending'
  */
 export async function command<K extends keyof ReplyPayloadMap>(
   type: K,
-  payload: ClientMessageMap[K] = {} as ClientMessageMap[K],
+  payload: ClientMessageMap[K],
   timeoutMs?: number,
 ): Promise<ReplyPayloadMap[K]> {
   const id = pending.create()

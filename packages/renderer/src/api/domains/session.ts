@@ -15,7 +15,7 @@ import { command } from '../request'
  * reply payload 是 { groups: SessionGroup[] }，解包 .groups。
  */
 export async function list(): Promise<SessionGroup[]> {
-  const reply = await command('session.list')
+  const reply = await command('session.list', {})
   return reply.groups
 }
 

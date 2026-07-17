@@ -73,7 +73,7 @@ export function cancelInstall(tempDir: string): Promise<void> {
  * 故需在此解包 .recommended 字段返回数组。
  */
 export async function fetchRecommended(): Promise<Array<RecommendedExtension & { installed: boolean }>> {
-  const reply = await command('extension.recommended')
+  const reply = await command('extension.recommended', {})
   return reply.recommended
 }
 
@@ -88,7 +88,7 @@ export async function fetchRecommended(): Promise<Array<RecommendedExtension & {
  * 而丢失（broker.ts async fire-and-forget），此处主动补拉确保扩展列表新鲜。
  */
 export async function scan(): Promise<void> {
-  await command('extension.list')
+  await command('extension.list', {})
 }
 
 /**

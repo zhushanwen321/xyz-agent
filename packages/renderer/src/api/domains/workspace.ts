@@ -16,7 +16,7 @@ import { command } from '../request'
  * 解包 `.records` 返 RecentWorkspaceRecord[]。
  */
 export async function listRecent(): Promise<RecentWorkspaceRecord[]> {
-  const reply = await command('workspace.listRecent')
+  const reply = await command('workspace.listRecent', {})
   return reply.records
 }
 
