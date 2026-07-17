@@ -52,6 +52,8 @@ export interface RpcClientOptions {
   extensionPaths?: string[]
   /** session id（用于命名 pi stdout 日志文件，架构约定 #4） */
   sessionId?: string
+  /** 替换 pi 核心系统提示词（走 --system-prompt CLI，仅新建会话生效）。空白时不传。 */
+  systemPrompt?: string
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -125,6 +127,11 @@ export class RpcClient implements IPiEngine {
     // 当前为产品决策（local-first 工具，所有项目可信），非临时 hack。
     const args = ['--mode', 'rpc', '--no-extensions', '--approve']
     if (model) args.push('--model', model)
+    // --system-prompt: 替换 pi 核心系统提示词（身份/工具列表/指引/pi 文档路径 4 段）。
+    // 动态段（project_context/skills/日期/cwd）仍由 pi 照常拼接。空白/未传不拼。
+    if (this.options.systemPrompt?.trim()) {
+      args.push('--system-prompt', this.options.systemPrompt)
+    }
     if (this.options.skillPaths?.length) {
       for (const skillPath of this.options.skillPaths) {
         args.push('--skill', skillPath)

@@ -19,7 +19,7 @@ import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessag
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type {
   ISessionService, IMessageBroker,
-  IEventAdapter, IExtensionService,
+  IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
@@ -72,6 +72,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 查 ProviderInfo→ModelInfo 得到 contextWindow。未注入时 fallback 0（无法算百分比）。
    */
   private modelContextWindowResolver: ModelContextWindowResolver | null = null
+  /**
+   * ConfigService 引用（组合根注入）。getReplaceSystemPrompt 委托用——
+   * spawn pi 时透传用户配置的替换系统提示词。经 setter 注入而非构造参数，与
+   * setModelContextWindowResolver 同模式，避免破坏 SessionService 的 18+ 测试调用点。
+   * 未注入时 getReplaceSystemPrompt 返回 undefined（pi 走默认系统提示词）。
+   */
+  private configService: IConfigService | null = null
   /**
    * 公共 session 创建成功回调（组合根注入，调 broker.broadcastAppInfo 重广播 app.info）。
    *
@@ -199,6 +206,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   setModelContextWindowResolver(resolver: ModelContextWindowResolver): void {
     this.modelContextWindowResolver = resolver
+  }
+
+  /**
+   * 注入 ConfigService（组合根在所有服务构造后调用）。
+   * getReplaceSystemPrompt 委托用——spawn pi 时透传用户配置的替换系统提示词。
+   */
+  setConfigService(configService: IConfigService): void {
+    this.configService = configService
   }
 
   /**
@@ -641,6 +656,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       console.warn('[session-service] getExtensionPaths failed:', e)
       return []
     }
+  }
+
+  /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
+  getReplaceSystemPrompt(): string | undefined {
+    return this.configService?.getReplaceSystemPrompt()
   }
 
   findScannedSession(sessionId: string): ScannedSession | undefined {

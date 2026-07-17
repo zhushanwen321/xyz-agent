@@ -32,6 +32,8 @@ export interface ISessionServiceInternal {
   getSkillPaths(cwd: string): string[]
   /** 收集有效的 extension 路径（经 ExtensionService）。 */
   getExtensionPaths(): Promise<string[]>
+  /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
+  getReplaceSystemPrompt(): string | undefined
 
   // ── dispatcher 使用 ──
   /** 确保会话活跃，必要时自动 restore。 */

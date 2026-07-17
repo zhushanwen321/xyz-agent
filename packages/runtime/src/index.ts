@@ -243,6 +243,10 @@ async function main(): Promise<void> {
     return model?.contextWindow ?? 0
   })
 
+  // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
+  // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
+  sessionService.setConfigService(configService)
+
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }

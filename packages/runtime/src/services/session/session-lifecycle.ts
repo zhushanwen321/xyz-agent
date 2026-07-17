@@ -61,6 +61,7 @@ export class SessionLifecycle {
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
+      systemPrompt: this.svc.getReplaceSystemPrompt(),
     })
 
     // 从 pi 获取真实 session ID
@@ -187,6 +188,7 @@ export class SessionLifecycle {
     const client = await this.pm.createSession(id, sessionCwd, {
       skillPaths: this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
+      systemPrompt: this.svc.getReplaceSystemPrompt(),
     })
 
     try {
@@ -270,6 +272,7 @@ export class SessionLifecycle {
     const client = await this.pm.createSession(forkedId, sessionCwd, {
       skillPaths: this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
+      systemPrompt: this.svc.getReplaceSystemPrompt(),
     })
 
     try {
