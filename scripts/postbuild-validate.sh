@@ -143,6 +143,14 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} xyz-agent-extension.js 缺失（检查 electron-builder.yml from 路径）"
             FAILED=1
         fi
+        # extraResources: xyz-system-prompt-extension.js（before_agent_start hook 扩展）
+        # 与 xyz-agent-extension.js 同模式校验（规则 #12 打包验证）。
+        if [ -f "$APP_PATH/Contents/Resources/xyz-system-prompt-extension.js" ]; then
+            echo -e "  ${GREEN}✓${NC} xyz-system-prompt-extension.js in Resources"
+        else
+            echo -e "  ${RED}✗${NC} xyz-system-prompt-extension.js 缺失（检查 electron-builder.yml from 路径）"
+            FAILED=1
+        fi
     else
         echo -e "  ${YELLOW}⚠ 未找到 .app 目录${NC}"
     fi

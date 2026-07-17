@@ -64,6 +64,10 @@ extraResources:
   # 不再打包进产物。详见 recommended-extensions.json + extension.recommended WS 协议。
   - from: ../../xyz-agent-extension.js
     to: xyz-agent-extension.js
+  # xyz-system-prompt-extension.js（before_agent_start hook：追加注入 + 快照）
+  # 同 xyz-agent-extension.js，源文件在 repo root，from 需上两级。
+  - from: ../../xyz-system-prompt-extension.js
+    to: xyz-system-prompt-extension.js
   # xyz-settings CLI（从 tsup 打包的 cli.cjs）
   # packaged app 中位置：resources/bin/xyz-settings
   # pi Skill 通过绝对路径引用此文件
