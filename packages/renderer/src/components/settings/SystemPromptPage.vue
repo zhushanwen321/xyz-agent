@@ -53,6 +53,29 @@
             {{ t('settings.systemPrompt.save') }}
           </Button>
         </div>
+
+        <!-- 可折叠：查看 pi 默认提示词参考 -->
+        <div class="mt-3 border-t border-border pt-3">
+          <Button
+            data-testid="system-prompt-default-toggle"
+            variant="ghost"
+            size="sm"
+            class="h-auto w-full justify-start gap-1 px-0 py-0 text-[11px] font-normal text-subtle hover:bg-transparent hover:text-fg [&_svg]:size-3"
+            @click="showDefaultPrompt = !showDefaultPrompt"
+          >
+            <ChevronRight class="transition-transform" :class="{ 'rotate-90': showDefaultPrompt }" />
+            {{ t('settings.systemPrompt.defaultToggle') }}
+          </Button>
+          <div v-if="showDefaultPrompt" class="mt-2">
+            <p class="mb-2 text-[10px] leading-relaxed text-subtle">
+              {{ t('settings.systemPrompt.defaultHint') }}
+            </p>
+            <pre
+              data-testid="system-prompt-default-content"
+              class="max-h-[240px] select-text overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg"
+            >{{ DEFAULT_PI_SYSTEM_PROMPT }}</pre>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -138,14 +161,14 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, RefreshCw, Clock } from '@lucide/vue'
+import { AlertTriangle, RefreshCw, Clock, ChevronRight } from '@lucide/vue'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { config } from '@/api'
 import { useToast } from '@/composables/useToast'
-import { SYSTEM_PROMPT_MAX_LENGTH } from '@xyz-agent/shared'
+import { SYSTEM_PROMPT_MAX_LENGTH, DEFAULT_PI_SYSTEM_PROMPT } from '@xyz-agent/shared'
 import type { SystemPromptConfig, SystemPromptSnapshot } from '@xyz-agent/shared'
 
 const { t } = useI18n()
@@ -159,6 +182,9 @@ const replaceEnabled = ref(false)
 const replacePrompt = ref('')
 const appendEnabled = ref(false)
 const appendPrompt = ref('')
+
+/** 参考区展开态（默认折叠）。 */
+const showDefaultPrompt = ref(false)
 
 /** 快照（getSystemPromptSnapshot 返回）。null=尚未加载。 */
 const snapshot = ref<SystemPromptSnapshot | null>(null)

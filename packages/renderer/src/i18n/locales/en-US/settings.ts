@@ -46,6 +46,8 @@ export default {
     savedToast: 'Saved',
     corruptedHint: 'The system prompt config file is corrupted; rolled back to defaults',
     charCount: 'chars',
+    defaultToggle: 'View pi default prompt',
+    defaultHint: 'This is the pi default core prompt (identity + tool list + guidelines). Replacing overrides this segment with your text; dynamic segments (AGENTS.md/skills/cwd) are unaffected and still appended by pi.',
   },
   // ── Provider page (ProviderPage) ──
   provider: {

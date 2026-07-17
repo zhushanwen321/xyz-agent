@@ -45,6 +45,8 @@ export default {
     savedToast: '已保存',
     corruptedHint: '系统提示词配置文件已损坏，已回退默认配置',
     charCount: '字符',
+    defaultToggle: '查看 pi 默认提示词',
+    defaultHint: '这是 pi 的默认核心提示词（身份+工具列表+指引）。替换后此段会被你的文本覆盖；动态段（AGENTS.md/skills/cwd）不受影响，仍由 pi 照常拼接。',
   },
   // ── Provider 页（ProviderPage）──
   provider: {
