@@ -2,6 +2,10 @@
  * Extension UI request timeout manager.
  * Handles registration, clearing, and session-scoped cleanup of extension timeouts.
  *
+ * Extension UI requests block indefinitely waiting for user response.
+ * Interactive methods (confirm/select/input/editor/ask-user) no longer set a timer;
+ * only session tracking is retained so clearForSession can clean up on session end.
+ *
  * [2026-07-16] 新增 pending request 缓存：缓存 pending 的 ask-user 请求内容，
  * 当 session 重新激活时（前端重新订阅时），runtime 主动推送缓存的请求，
  * 解决「切换 session 后 ask-user 请求丢失」问题。
@@ -42,6 +46,10 @@ export class ExtensionTimeoutManager {
   /**
    * Register a timeout for an extension UI request.
    * Returns cleanup info or undefined if no timer needed (notify/bridge methods).
+   *
+   * [2026-07-16] 取消所有 extension UI 超时：confirm/select/input/editor/ask-user
+   * 统一不超时，block 等待用户决策。保留 session 跟踪以便 clearForSession 清理。
+   * onTimeout 参数保留为 dead callback（不再被调用），维持调用点签名稳定。
    */
   registerTimeout(
     sessionId: string,
@@ -49,6 +57,7 @@ export class ExtensionTimeoutManager {
     method: string,
     onTimeout: () => void,
   ): void {
+    void onTimeout // 不再排定时器，回调保留为签名稳定占位
     if (method === 'notify') return
 
     if (method.startsWith('bridge:')) {
@@ -57,15 +66,7 @@ export class ExtensionTimeoutManager {
       return
     }
 
-    this.clearTimeout(requestId)
-
-    const timer = setTimeout(() => {
-      this.extensionTimeouts.delete(requestId)
-      this.removeSessionRequest(sessionId, requestId)
-      onTimeout()
-    }, EXTENSION_UI_REQUEST_TIMEOUT_MS)
-
-    this.extensionTimeouts.set(requestId, timer)
+    // 交互式 method（select/confirm/input/editor/ask-user）：只做 session 跟踪，不排超时定时器
     this.trackSessionRequest(sessionId, requestId)
   }
 
