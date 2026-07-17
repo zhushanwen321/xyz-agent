@@ -128,7 +128,7 @@ async function main(): Promise<void> {
     modelService,
     configDir,
     pluginInstaller,
-    broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
+    broadcastFn: (type, payload) => server.broadcast({ type: type as 'config.sessions', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 
   // ── R1 重构：EventAdapter（infra 纯翻译）+ EventInterpreter（service 编排）──

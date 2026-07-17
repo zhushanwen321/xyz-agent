@@ -74,7 +74,7 @@ function buildGroups(): SessionGroup[] {
  * useSidebar 经 events.onGlobalType('session.list') 订阅（refCount 防重复），mock 直 dispatchGlobal。
  */
 function pushSessionList(): void {
-  events.dispatchGlobal({ type: 'session.list', id: nextId('sl'), payload: { groups: buildGroups() } })
+  events.dispatchGlobal({ type: 'config.sessions', id: nextId('sl'), payload: { groups: buildGroups() } })
 }
 
 /** Mock 静态 slash 命令（模拟 pi getCommands 返回的扩展命令） */

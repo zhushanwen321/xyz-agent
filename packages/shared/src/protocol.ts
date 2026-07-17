@@ -16,7 +16,7 @@ import type { WorkflowRunRecord } from './workflow'
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
+  | 'session.create' | 'session.delete' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
@@ -87,7 +87,7 @@ export interface ClientMessageMap {
   // hidden:true 创建隐藏 session（公共 session），不进 sidebar 列表，仅供内部使用。
   'session.create': { cwd?: string; label?: string; hidden?: boolean }
   'session.delete': { sessionId: string }
-  'session.list': Record<string, never>
+  'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
   'session.history': { sessionId: string }
   'session.getFullHistory': { sessionId: string }
@@ -209,7 +209,7 @@ export type DefaultModelSource =
   | 'model-switch'     // model.switch 时持久化全局默认模型
 
 export type ServerMessageType =
-  | 'session.created' | 'session.deleted' | 'session.list' | 'session.history' | 'session.fullHistory'
+  | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
@@ -292,7 +292,7 @@ export interface ServerMessageMapBase {
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
   'config.plugins': { plugins: PluginInfo[] }
   'model.list': { models: ModelInfo[] }
-  'session.list': { groups: SessionGroup[] }
+  'config.sessions': { groups: SessionGroup[] }
 
   // ── 协议级 reply / push（精确）──
   'pong': Record<string, never>
@@ -567,7 +567,7 @@ export interface ReplyPayloadMap {
   'session.getSubagents': ServerMessageMap['session.subagents']
   'session.getWorkflows': ServerMessageMap['session.workflows']
   'session.history': ServerMessageMap['session.history']
-  'session.list': ServerMessageMap['session.list']
+  'config.sessions': ServerMessageMap['config.sessions']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
 

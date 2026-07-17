@@ -121,7 +121,7 @@ export class ServerMessageBroker implements IMessageBroker {
   // 每个 builder 返回 1~2 条消息（provider 段含 config.providers + model.list）。
 
   private buildSessionListMsg(): ServerMessage {
-    return { type: 'session.list', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } }
+    return { type: 'config.sessions', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } }
   }
   /**
    * app.info 消息构造（sendInitialState 首推 + broadcastAppInfo 重广播共用）。
@@ -212,7 +212,7 @@ export class ServerMessageBroker implements IMessageBroker {
         run: () => this.send(ws, this.buildAppInfoMsg()),
       },
       {
-        label: 'session.list',
+        label: 'config.sessions',
         run: () => this.send(ws, this.buildSessionListMsg()),
       },
       {

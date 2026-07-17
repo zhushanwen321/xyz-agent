@@ -50,7 +50,7 @@ let sessionListUnsub: (() => void) | null = null
 function bindSessionListBroadcast(setGroups: (groups: SessionGroup[]) => void): void {
   sessionListSubCount += 1
   if (sessionListSubCount === 1) {
-    sessionListUnsub = events.onGlobalType('session.list', (msg) => setGroups(msg.payload.groups))
+    sessionListUnsub = events.onGlobalType('config.sessions', (msg) => setGroups(msg.payload.groups))
   }
 }
 

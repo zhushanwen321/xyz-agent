@@ -130,7 +130,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         ? `Session process exited (code: ${code})\n\n${stderr}`
         : `Session process exited (code: ${code})`
 
-      this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
+      this.broker.broadcast({ type: 'config.sessions', payload: { groups: this.listPersistedSessions() } })
       // session.exited（独立事件，区别于 message.error 的「单次消息失败」语义）：
       // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
       this.broker.broadcast({ type: 'session.exited', payload: { sessionId, code, reason } })
