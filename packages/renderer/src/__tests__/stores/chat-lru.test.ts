@@ -19,6 +19,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore, LRU_MAX_SESSIONS } from '@/stores/chat'
 import { _resetLruForTest } from '@/stores/chat-lru'
+import { subagentVirtualId } from '@/stores/subagent'
 import type { Message } from '@xyz-agent/shared'
 
 function makeMessage(id: string): Message {
@@ -122,32 +123,36 @@ describe('W3 chat store LRU 驱逐', () => {
     })
   })
 
-  describe('AC-2: subagent:xxx 虚拟 key 同步清理', () => {
-    it('驱逐主 session 时同步清 subagent:xxx 虚拟 key', () => {
+  describe('AC-2: subagent:xxx 虚拟 key 同步清理（真实工厂生成 key）', () => {
+    it('驱逐主 session 时同步清真实 subagentVirtualId 生成的虚拟 key', () => {
       const store = useChatStore()
+      // [M7] 用真实工厂生成 key（防假绿：不手写三段式字符串）
+      const virtualKey = subagentVirtualId('s0', 'sa1')
 
       // 主 session s0 + 其 subagent 虚拟 key
       store.hydrate('s0', [makeMessage('m0')])
-      store.setMessages('subagent:s0:sa1', [makeMessage('sa1')])
+      store.setMessages(virtualKey, [makeMessage('sa1')])
 
       // 驱逐 s0
       store.evictSessionWithVirtual('s0')
 
       // 主 session + 虚拟 key 都清
       expect(store.getMessages('s0')).toEqual([])
-      expect(store.getMessages('subagent:s0:sa1')).toEqual([])
+      expect(store.getMessages(virtualKey)).toEqual([])
     })
 
-    it('agentcall:xxx 虚拟 key 同步清理', () => {
+    it('agentcall 两段式虚拟 key 不走 LRU 联动清理（D6：由 workflow 映射清理）', () => {
       const store = useChatStore()
 
       store.hydrate('s0', [makeMessage('m0')])
-      store.setMessages('agentcall:s0:ac1', [makeMessage('ac1')])
+      store.setMessages('agentcall:ac1', [makeMessage('ac1')])
 
       store.evictSessionWithVirtual('s0')
 
+      // 主 session 清
       expect(store.getMessages('s0')).toEqual([])
-      expect(store.getMessages('agentcall:s0:ac1')).toEqual([])
+      // agentcall 两段式不含 mainSid，LRU 不联动清理（留给 workflow 映射显式清）
+      expect(store.getMessages('agentcall:ac1')).toHaveLength(1)
     })
   })
 
