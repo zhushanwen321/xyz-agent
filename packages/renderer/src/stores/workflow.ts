@@ -70,6 +70,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
    */
   const agentCallMap = ref<Map<string, string>>(new Map())
 
+  /**
+   * [M7 D6] mainSessionId → Set<agentCallVirtualId> 映射。
+   * agentcall 虚拟 key 是两段式（agentcall:<agentCallSessionId>），不含 mainSid 命名空间，
+   * 主 session delete 时无法按前缀定位。此映射让 deleteSession 经它清全部 agentcall virtualId。
+   */
+  const mainSessionAgentCalls = new Map<string, Set<string>>()
+
   // ── getters ──
   /** workflow 列表计数 */
   function workflowCount(): number {
@@ -201,6 +208,10 @@ export const useWorkflowStore = defineStore('workflow', () => {
     const next = new Map(agentCallMap.value)
     next.set(panelId, agentCallSessionId)
     agentCallMap.value = next
+    // [M7 D6] 记录 mainSessionId → virtualId 映射，供 deleteSession 精确清理 agentcall
+    const set = mainSessionAgentCalls.get(mainSessionId) ?? new Set<string>()
+    set.add(virtualId)
+    mainSessionAgentCalls.set(mainSessionId, set)
     const history = await sessionApi.getAgentCallHistory(mainSessionId, agentCallSessionId)
     setMessages(virtualId, history)
   }
@@ -212,11 +223,36 @@ export const useWorkflowStore = defineStore('workflow', () => {
     detailRunIdMap.value = next
   }
 
-  /** Panel overlay → 返回（从 agent call 对话流返回）。只清 agentCallMap，保留 detailRunIdMap（侧边栏保持停在 workflow-detail）。 */
-  function backFromAgentCall(panelId: string): void {
+  /**
+   * Panel overlay → 返回（从 agent call 对话流返回）。
+   *
+   * [M7 FR-4] 立即清 messages[virtualId]（对称 subagent backToMain，立即清+tombstone）。
+   * 保留 detailRunIdMap（侧边栏保持停在 workflow-detail）。
+   *
+   * @param chatEvict chat.evictSessionWithVirtual 注入回调（清 messages，store 不互 import）
+   */
+  function backFromAgentCall(panelId: string, chatEvict?: (agentCallSessionId: string) => void): void {
+    const agentCallSessionId = agentCallMap.value.get(panelId)
     const next = new Map(agentCallMap.value)
     next.delete(panelId)
     agentCallMap.value = next
+    // 立即清 messages[agentcallVirtualId]（FR-4，与 subagent backToMain 对称）
+    if (agentCallSessionId && chatEvict) {
+      chatEvict(agentCallSessionId)
+    }
+  }
+
+  /**
+   * [M7 D6] 查询主 session 名下的全部 agentcall virtualId（deleteSession 调，精确清理不泄漏）。
+   * 返回后调用方负责 delete messages[key]。
+   */
+  function getAgentCallVirtualIdsByMain(mainSessionId: string): string[] {
+    return [...(mainSessionAgentCalls.get(mainSessionId) ?? [])]
+  }
+
+  /** [M7 D6] deleteSession 后清映射条目（主 session 已删，映射无意义） */
+  function clearAgentCallMapping(mainSessionId: string): void {
+    mainSessionAgentCalls.delete(mainSessionId)
   }
 
   return {
@@ -239,5 +275,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     selectAgentCall,
     backToWorkflowList,
     backFromAgentCall,
+    getAgentCallVirtualIdsByMain,
+    clearAgentCallMapping,
   }
 })

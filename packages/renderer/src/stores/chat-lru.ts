@@ -7,7 +7,8 @@
  * - 切走 session 时触发 evictIfNeeded
  * - 保留最近 K=LRU_MAX_SESSIONS(8) 个 + 当前 panel 绑定的 + streaming 中的
  * - 驱逐用 delete key（与 disposeSession 一致，D13）
- * - subagent:xxx / agentcall:xxx 虚拟 key 同步驱逐（M7 修复，AC-2）
+ * - subagent:xxx 三段式虚拟 key 按主 session 前缀同步驱逐（M7 修复，AC-2）
+ * - agentcall:xxx 两段式虚拟 key 不走 LRU 联动（无 mainSid 命名空间），由 workflow store 映射清理（D6）
  * - 驱逐时同步清 hydrated 标记（AC-8：切回重新 hydrate）
  *
  * LRU 时序：用模块级 Map<sessionId, timestamp> 记录访问顺序。
@@ -48,10 +49,14 @@ export function isVirtualKey(sessionId: string): boolean {
 
 /**
  * 判断 sessionId 是否为某主 session 的虚拟 key（前缀匹配）。
- * subagent:sid:xxx / agentcall:sid:xxx → 主 session 是 sid
+ *
+ * [M7] 仅 subagent 用三段式（含 mainSid 命名空间）可按前缀匹配。
+ * agentcall 保持两段式（参数是 agent call 自己 session id，无独立子 id），
+ * 无法按主 session 前缀定位，其清理走 workflow store 的 mainSessionId 映射（D6），
+ * 不在 LRU 联动清理范围内。
  */
 export function isVirtualKeyOf(virtualId: string, mainSid: string): boolean {
-  return virtualId.startsWith(`subagent:${mainSid}:`) || virtualId.startsWith(`agentcall:${mainSid}:`)
+  return virtualId.startsWith(`subagent:${mainSid}:`)
 }
 
 /**
@@ -78,7 +83,7 @@ export interface LruEvictDeps {
  * 按最久未访问顺序驱逐超出的部分。驱逐时：
  * 1. deleteMessageKey（清 messages）
  * 2. deleteHydrated（清 hydrated，AC-8 切回重 hydrate）
- * 3. 同步驱逐关联的 subagent:xxx/agentcall:xxx 虚拟 key（AC-2）
+ * 3. 同步驱逐关联的 subagent:sid:xxx 三段式虚拟 key（AC-2，isVirtualKeyOf 仅匹配三段式）
  *
  * SR8 竞态防护：驱逐前对每个候选 double-check isExempt（防止驱逐决策后
  * session 变为 streaming 状态）。

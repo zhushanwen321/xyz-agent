@@ -368,12 +368,33 @@ export function useSidebar() {
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
     if (boundPanel) {
-      if (subagentStore.isViewing(boundPanel.id)) subagentStore.backToMain(boundPanel.id)
-      if (workflowStore.isViewing(boundPanel.id)) workflowStore.backFromAgentCall(boundPanel.id)
+      if (subagentStore.isViewing(boundPanel.id)) {
+        // [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）
+        const viewingSubId = subagentStore.getViewingSubagentId(boundPanel.id)
+        const chatStore = useChatStore()
+        subagentStore.backToMain(
+          boundPanel.id,
+          id,
+          viewingSubId ?? undefined,
+          (sid) => chatStore.evictSessionWithVirtual(sid),
+        )
+      }
+      if (workflowStore.isViewing(boundPanel.id)) {
+        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictSessionWithVirtual(acsId))
+      }
     }
     session.removeFromList(id)
     // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
+    // [M7 FR-5] evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
+    // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
+    const chatStoreForEvict = useChatStore()
+    chatStoreForEvict.evictSessionWithVirtual(id)
+    // [M7 D6] agentcall 两段式无 mainSid 前缀，经 workflow 映射清全部 agentcall virtualId
+    for (const acsVirtualId of workflowStore.getAgentCallVirtualIdsByMain(id)) {
+      chatStoreForEvict.evictSessionWithVirtual(acsVirtualId)
+    }
+    workflowStore.clearAgentCallMapping(id)
     useChat().disposeSession(id)
     // W3：清除该 session 的 derivedStatus/sessionDigest 缓存，避免已删 session 的 computed 残留
     invalidateStatusCache(id)
