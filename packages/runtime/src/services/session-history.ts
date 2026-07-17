@@ -26,14 +26,14 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
  * W1 H4：从 .jsonl session 文件**尾读**最近 maxTurns 个 turn 的历史。
  *
  * 与 getHistoryFromFile 的区别：用 tailReadHistory（256KB 尾读窗口 + turn 边界截断），
- * 避免大 session 文件全量读取。文件不存在或为空返回空数组。
+ * 避免大 session 文件全量读取。返回 TailReadResult（含 truncated 标志）。
  *
  * getHistory 的文件 fallback 走此函数（默认尾读），getFullHistory（加载更多）走
  * getHistoryFromFile（全量读）——两者语义互补。
  */
-export async function getHistoryTailFromFile(sessionId: string, sessionStore: ISessionStore, maxTurns = 20): Promise<import('@xyz-agent/shared').Message[]> {
+export async function getHistoryTailFromFile(sessionId: string, sessionStore: ISessionStore, maxTurns = 20): Promise<TailReadResult> {
   const target = sessionStore.scanSessions().find(s => s.id === sessionId)
-  if (!target) return []
+  if (!target) return { messages: [], truncated: false }
   return tailReadHistory(target.filePath, sessionStore, maxTurns)
 }
 
@@ -128,40 +128,39 @@ function getMessageRole(entry: unknown): string | undefined {
 }
 
 /**
+ * 尾读结果（含截断标志，N1 修复）。
+ * truncated=true 表示文件里有比返回的更多的 turn（前端据此显隐「加载更多」）。
+ */
+export interface TailReadResult {
+  messages: import('@xyz-agent/shared').Message[]
+  truncated: boolean
+}
+
+/**
  * W1 H4：尾读 JSONL 历史，按 turn 边界截断加载最近 maxTurns 个完整 turn。
  *
  * 对应 FR-3 + AC-5/6/12。从文件尾部读字节窗口，倒序计数 turn（user message 为边界，
  * D11），收集最近 maxTurns 个完整 turn 对应的 message entry，经 convertHistory 转换。
  *
- * turn 配对完整性（AC-5/D14）：convertHistory 的 toolResult 合并是前向依赖——toolResult
- * 必须在对应的带 toolCalls 的 assistant 之后。本函数保证：若窗口首条 message 是孤立
- * toolResult（其 assistant tool_call 落在窗口外），最多向前扩 1 轮尝试配对；仍无法配对
- * 则该 toolResult 被 convertHistory warn 丢弃（不拉回整个文件）。
+ * N1 修复：返回 TailReadResult（含 truncated 标志），前端据此控制「加载更多」显隐，
+ * 避免空 session 闪现按钮。
  *
- * 尾读窗口策略：先读 READ_TAIL_WINDOW_BYTES(256KB)，若不够 maxTurns turn 且文件更大，
- * fallback 全量读（大文件少见，全量是可接受的 fallback）。
- *
- * 规则 #6：文件不存在返回空数组不抛（pi 延迟写入）。
+ * 规则 #6：文件不存在返回 { messages: [], truncated: false } 不抛（pi 延迟写入）。
  * AC-12：末行损坏复用 readTailBytes 的残行丢弃（INVAR-tail-3）。
- *
- * @param filePath JSONL 文件绝对路径
- * @param sessionStore ISessionStore port（提供 convertHistory）
- * @param maxTurns 加载最近几个完整 turn（默认 20，D8）
- * @returns 转换后的 Message[]；文件不存在返回空数组
  */
 export async function tailReadHistory(
   filePath: string,
   sessionStore: ISessionStore,
   maxTurns = 20,
-): Promise<import('@xyz-agent/shared').Message[]> {
+): Promise<TailReadResult> {
   // 规则 #6：文件不存在返回空数组
   let fileSize: number
   try {
     fileSize = statSync(filePath).size
   } catch {
-    return []
+    return { messages: [], truncated: false }
   }
-  if (fileSize === 0) return []
+  if (fileSize === 0) return { messages: [], truncated: false }
 
   // 尾读窗口：256KB 通常覆盖 20 turn（实测平均 1 turn ≈ 12KB）
   // eslint-disable-next-line no-magic-numbers -- 256KB tail window for 20 turns
@@ -184,7 +183,7 @@ export async function tailReadHistory(
         const content = await readFile(filePath, 'utf-8')
         entries = parseJsonl(content)
       } catch (e) {
-        if (isEnoent(e)) return []
+        if (isEnoent(e)) return { messages: [], truncated: false }
         throw e
       }
     }
@@ -253,5 +252,7 @@ export async function tailReadHistory(
       return { ...msg, __entryId: typeof e.id === 'string' ? e.id : undefined }
     })
 
-  return sessionStore.convertHistory(piMessages)
+  // N1: truncated = 文件里的总 turn 数 > maxTurns（有更早的 turn 被截掉）
+  const truncated = userMsgIndices.length > maxTurns
+  return { messages: sessionStore.convertHistory(piMessages), truncated }
 }

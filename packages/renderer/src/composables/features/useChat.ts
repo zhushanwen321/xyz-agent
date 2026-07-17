@@ -12,6 +12,7 @@
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
+import { ref } from 'vue'
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
@@ -34,6 +35,13 @@ const t = i18n.global.t
  *   不在 ack 时拆订阅。
  */
 const streamSubscriptions = new Map<string, () => void>()
+
+/**
+ * W4/N1：记录哪些 session 的历史被尾读截断了（有更早的 turn 可加载）。
+ * MessageStream 据此显隐「加载更多历史」按钮。hydrate 时设置。
+ * 用 ref<Set> 保证响应式（MessageStream 的 computed showLoadMore 能自动更新）。
+ */
+const historyTruncatedSessions = ref<Set<string>>(new Set())
 
 /** 确保指定 session 已订阅流式事件（幂等：已订阅则 no-op）。 */
 function ensureStreamSubscription(
@@ -293,8 +301,31 @@ export function useChat() {
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return
-    const history = await chatApi.getHistory(sessionId)
-    chat.hydrate(sessionId, history)
+    const { messages, historyTruncated } = await chatApi.getHistory(sessionId)
+    chat.hydrate(sessionId, messages)
+    setHistoryTruncated(sessionId, historyTruncated)
+  }
+
+  /** N1: 查询 session 历史是否被截断（有更早的 turn 可加载） */
+  function hasMoreHistory(sessionId: string): boolean {
+    return historyTruncatedSessions.value.has(sessionId)
+  }
+
+  /** N1: 设置 session 历史截断标记（selectSession hydrate 时调用） */
+  function setHistoryTruncated(sessionId: string, truncated: boolean): void {
+    const next = new Set(historyTruncatedSessions.value)
+    if (truncated) next.add(sessionId)
+    else next.delete(sessionId)
+    historyTruncatedSessions.value = next
+  }
+
+  /** N1: 加载更多成功后清除截断标记（已全量加载） */
+  function clearHistoryTruncated(sessionId: string): void {
+    if (historyTruncatedSessions.value.has(sessionId)) {
+      const next = new Set(historyTruncatedSessions.value)
+      next.delete(sessionId)
+      historyTruncatedSessions.value = next
+    }
   }
 
   /**
@@ -308,6 +339,7 @@ export function useChat() {
     try {
       const fullHistory = await chatApi.getFullHistory(sessionId)
       chat.prependHistory(sessionId, fullHistory)
+      clearHistoryTruncated(sessionId) // N1: 全量加载后不再有更多历史
     // eslint-disable-next-line taste/no-silent-catch -- 加载更多是 best-effort：失败不破坏现有消息，用户可重试。与 hydrateHistory markHistoryFailed 同策略。
     } catch (e) {
       console.warn(`[useChat] loadMoreHistory failed for session ${sessionId}:`, e)
@@ -329,5 +361,5 @@ export function useChat() {
     chat.disposeSession(sessionId)
   }
 
-  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, disposeSession }
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, hasMoreHistory, setHistoryTruncated, disposeSession }
 }

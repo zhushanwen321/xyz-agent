@@ -368,20 +368,26 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }
   }
 
-  async getHistory(sessionId: string): Promise<Message[]> {
+  /**
+   * 拉取 session 历史。
+   * 优先 RPC（pi client.getHistory，返回全量不截断）；RPC 空/失败 fallback 文件尾读。
+   * 返回 { messages, truncated }——truncated=true 表示文件尾读截断了早期 turn（N1）。
+   */
+  async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
         const result = await client.getHistory() as { data?: { messages?: unknown[] } }
         const raw = result.data?.messages ?? []
-        if (raw.length > 0) return this.sessionStore.convertHistory(raw)
-        // RPC 返回空时,仅闲置 session fallback 到磁盘尾读(生成中磁盘可能未持久化最新消息)
+        // RPC 路径返回全量历史（pi get_messages 不截断），truncated=false
+        if (raw.length > 0) return { messages: this.sessionStore.convertHistory(raw), truncated: false }
+        // RPC 返回空时,仅闲置 session fallback 到磁盘尾读
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
           console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to tail read`)
           return await getHistoryTailFromFile(sessionId, this.sessionStore)
         }
-        return []
+        return { messages: [], truncated: false }
       } catch (e) {
         console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to tail read`)
         return await getHistoryTailFromFile(sessionId, this.sessionStore)

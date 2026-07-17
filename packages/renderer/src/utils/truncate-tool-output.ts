@@ -114,6 +114,12 @@ export function truncateToolCall<T extends import('@xyz-agent/shared').ToolCall>
  *
  * 不可变写法：返回新对象（与 chat store commitMessages 的不可变约定一致）。
  *
+ * [不可变约束 R7] 本函数**不 mutate 入参 msg 及其 toolCalls**——始终返回新对象
+ * （`{...msg, toolCalls: newToolCalls}`），newToolCalls 是 `.map(truncateToolCall)`
+ * 产出的新数组，truncateToolCall 返回 `{...tc, ...next}` 新对象。调用方
+ * （hydrate/setMessages/prependHistory）传入的 history 的 toolCalls 永不被修改。
+ * 不做深 clone toolCalls（大 toolCall 含 MB 级 output，深 clone 开销不合理）。
+ *
  * @param msg 原始 Message
  * @returns 截断后的 Message（如无截断则原样返回同一引用）
  */

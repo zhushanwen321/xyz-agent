@@ -16,7 +16,7 @@
          scrollEl 是 overflow 容器，自身 border-box 固定不变，无法观察内容增高。 -->
     <div ref="contentEl" class="flex flex-col gap-[22px] px-5 py-[18px]">
       <!-- W4 H4：加载更多历史入口（尾读截断时显示，点击 fallback 全量读） -->
-      <div v-if="hasMoreHistory && renderItems.length > 0" class="flex justify-center py-2">
+      <div v-if="showLoadMore && renderItems.length > 0" class="flex justify-center py-2">
         <Button variant="ghost" size="sm" :disabled="loadingMore" data-testid="load-more-history" @click="handleLoadMore">
           <Loader2 v-if="loadingMore" class="mr-1 size-3 animate-spin" />
           <ChevronUp v-else class="mr-1 size-3" />
@@ -109,22 +109,20 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const chat = useChatStore()
-const { loadMoreHistory } = useChat()
+const { loadMoreHistory, hasMoreHistory: checkHasMore } = useChat()
 const subagentStore = useSubagentStore()
 
 /** W4 H4：加载更多历史 loading 状态 */
 const loadingMore = ref(false)
-const hasMoreHistory = ref(true) // 尾读截断后默认有更多历史可加载
+/** N1: 是否有更多历史可加载（由 hydrate 的 historyTruncated 标志驱动，非默认 true） */
+const showLoadMore = computed(() => checkHasMore(props.sessionId))
 
 async function handleLoadMore(): Promise<void> {
-  if (loadingMore.value || !hasMoreHistory.value) return
+  if (loadingMore.value || !showLoadMore.value) return
   loadingMore.value = true
-  const beforeCount = chat.getMessages(props.sessionId).length
   try {
     await loadMoreHistory(props.sessionId)
-    const afterCount = chat.getMessages(props.sessionId).length
-    // 无新增 = 已全部加载，隐藏入口
-    hasMoreHistory.value = afterCount > beforeCount
+    // loadMoreHistory 内部 clearHistoryTruncated 会更新 showLoadMore
   } finally {
     loadingMore.value = false
   }

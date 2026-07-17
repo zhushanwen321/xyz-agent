@@ -15,16 +15,23 @@ import * as events from '../events'
 /** compact 超时（ms）：对齐 runtime rpc-client COMPACT_TIMEOUT_MS，大上下文压缩需数分钟 */
 const COMPACT_TIMEOUT_MS = 300_000
 
+/** getHistory 返回结构（含 historyTruncated 标志，N1 修复） */
+export interface HistoryResult {
+  messages: Message[]
+  historyTruncated: boolean
+}
+
 /**
  * 拉取 session 历史（UC-2 切换 session 时回填 message-stream）。
- * runtime session.history reply envelope 是 `{ sessionId, messages }`（session-message-handler.ts:78），
- * 解包 `.messages` 返 Message[]（mock 门面有独立实现，不受影响）。
+ * runtime reply envelope 是 `{ sessionId, messages, historyTruncated }`，
+ * historyTruncated=true 表示文件尾读截断了早期 turn（前端据此显隐「加载更多」）。
  */
-export async function getHistory(sessionId: string): Promise<Message[]> {
+export async function getHistory(sessionId: string): Promise<HistoryResult> {
   const id = pending.create()
-  const result = pending.register<{ sessionId: string; messages: Message[] }>(id)
+  const result = pending.register<{ sessionId: string; messages: Message[]; historyTruncated?: boolean }>(id)
   transport.send({ type: 'session.history', id, payload: { sessionId } })
-  return (await result).messages
+  const reply = await result
+  return { messages: reply.messages, historyTruncated: reply.historyTruncated ?? false }
 }
 
 /**

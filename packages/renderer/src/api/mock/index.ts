@@ -304,9 +304,9 @@ export const session = {
 
 export const chat = {
   /** 拉 session 历史（深拷贝 fixture，避免外部突变污染） */
-  async getHistory(sessionId: string): Promise<Message[]> {
+  async getHistory(sessionId: string): Promise<{ messages: Message[]; historyTruncated: boolean }> {
     await sleep(TIMING.ack)
-    return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
+    return { messages: (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m })), historyTruncated: false }
   },
 
   /** W4 H4：全量历史（mock 与 getHistory 同行为，mock 无尾读截断） */

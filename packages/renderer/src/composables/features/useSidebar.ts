@@ -208,8 +208,9 @@ export function useSidebar() {
     // getHistory 失败 → 标记 failedHistory，landing 显重试出口（AC-2.6），不永久卡住
     if (!chat.isHydrated(id)) {
       try {
-        const history = await chatApi.getHistory(id)
-        chat.hydrate(id, history)
+        const { messages, historyTruncated } = await chatApi.getHistory(id)
+        chat.hydrate(id, messages)
+        useChat().setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
@@ -270,8 +271,9 @@ export function useSidebar() {
   async function retryHistory(sessionId: string): Promise<void> {
     chat.clearHistoryError(sessionId)
     try {
-      const history = await chatApi.getHistory(sessionId)
-      chat.hydrate(sessionId, history)
+      const { messages, historyTruncated } = await chatApi.getHistory(sessionId)
+      chat.hydrate(sessionId, messages)
+      useChat().setHistoryTruncated(sessionId, historyTruncated)
     } catch {
       chat.markHistoryFailed(sessionId)
     }

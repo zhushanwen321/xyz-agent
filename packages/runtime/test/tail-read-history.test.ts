@@ -74,7 +74,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     }
     const filePath = writeSessionFile(lines)
 
-    const messages = await tailReadHistory(filePath, store, 20)
+    const { messages } = await tailReadHistory(filePath, store, 20)
 
     // 应加载最近 20 turn（每个 turn 3 条 message = 60 条）
     expect(messages.length).toBe(60)
@@ -104,14 +104,32 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     }
     const filePath = writeSessionFile(lines)
 
-    const messages5 = await tailReadHistory(filePath, store, 5)
+    const { messages: messages5 } = await tailReadHistory(filePath, store, 5)
     // 5 turn × 3 message = 15 条（不含 session header）
     expect(messages5.length).toBeLessThanOrEqual(15)
   })
 
+  it('N1: truncated 标志——文件 turn 数 > maxTurns 时 truncated=true', async () => {
+    const lines: string[] = [
+      JSON.stringify({ type: 'session', id: 's1', cwd: '/proj', timestamp: '2025-01-01T00:00:00Z' }),
+    ]
+    for (let i = 0; i < 25; i++) {
+      lines.push(...makeTurn(i))
+    }
+    const filePath = writeSessionFile(lines)
+
+    // 25 turn 文件取 20 turn → truncated=true
+    const result20 = await tailReadHistory(filePath, store, 20)
+    expect(result20.truncated).toBe(true)
+
+    // 25 turn 文件取 30 turn（> 文件总量）→ truncated=false
+    const result30 = await tailReadHistory(filePath, store, 30)
+    expect(result30.truncated).toBe(false)
+  })
+
   it('AC-6: 文件不存在返回空数组不抛', async () => {
     const noExist = join(tmpDir, 'never-exists.jsonl')
-    await expect(tailReadHistory(noExist, store, 20)).resolves.toEqual([])
+    await expect(tailReadHistory(noExist, store, 20)).resolves.toEqual({ messages: [], truncated: false })
   })
 
   it('AC-12: 文件末行损坏（JSON 不完整）不抛异常', async () => {
@@ -123,7 +141,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     const filePath = join(tmpDir, 'session.jsonl')
     writeFileSync(filePath, lines.join('\n') + '\n' + '{"type":"message","id":"broken","message":{', 'utf-8')
 
-    const messages = await tailReadHistory(filePath, store, 20)
+    const { messages } = await tailReadHistory(filePath, store, 20)
     // 损坏行被跳过，正常 turn 的消息仍加载
     expect(messages.length).toBeGreaterThan(0)
   })
@@ -138,7 +156,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     }
     const filePath = writeSessionFile(lines)
 
-    const messages = await tailReadHistory(filePath, store, 20)
+    const { messages } = await tailReadHistory(filePath, store, 20)
     // 验证 turn 2（第 3 个 turn，索引从 0 计：0..21，取尾部 2..21）的 assistant 在结果里
     const hasTurn2Assistant = messages.some(
       (m) => (m as { role?: string; content?: string }).role === 'assistant' && (m as { content?: string }).content === 'assistant-2',
@@ -159,7 +177,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     ]
     const filePath = writeSessionFile(lines)
 
-    const messages = await tailReadHistory(filePath, store, 20)
+    const { messages } = await tailReadHistory(filePath, store, 20)
     // 2 turn × 3 message = 6 条
     expect(messages.length).toBe(6)
   })
@@ -173,7 +191,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     ]
     const filePath = writeSessionFile(lines)
 
-    const messages = await tailReadHistory(filePath, store, 20)
+    const { messages } = await tailReadHistory(filePath, store, 20)
     // compaction + custom_message + 1 turn(3条) = 5 条
     expect(messages.length).toBe(5)
     const types = messages.map((m) => (m as { role?: string }).role)

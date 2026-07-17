@@ -79,11 +79,11 @@ export class SessionMessageHandler {
         const summary = this.ctx.sessionService.getSummary(switchId)
         if (summary) {
           try {
-            const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages })
+            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages, historyTruncated: truncated })
           } catch (e) {
             console.error('[runtime] failed to load history for switch:', e)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages: [] })
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages: [], historyTruncated: false })
           }
         } else {
           try {
@@ -92,8 +92,8 @@ export class SessionMessageHandler {
             if (!restored) {
               throw new Error(`Session ${switchId} restored but summary unavailable`)
             }
-            const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: restored, messages })
+            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: restored, messages, historyTruncated: truncated })
           } catch (e) {
             const errMsg = toErrorMessage(e)
             const isENOENT = isEnoent(e)
@@ -107,8 +107,8 @@ export class SessionMessageHandler {
         return
       }
       case 'session.history': {
-        const messages = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
-        return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages })
+        const { messages, truncated } = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages, historyTruncated: truncated })
       }
       case 'session.getFullHistory': {
         const messages = await this.ctx.sessionService.getFullHistory(msg.payload.sessionId)
