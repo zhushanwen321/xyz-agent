@@ -89,6 +89,17 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
     }
   }
 
+  /** 构造一个 extension-ui 事件（ask-user 等阻塞式 UI 请求，应暂停 watchdog）。 */
+  function extensionUi(): PiTranslatedEvent {
+    return {
+      kind: 'extension-ui',
+      requestId: 'req-ask',
+      sessionId: 'sid-watchdog',
+      method: 'select',
+      payload: {},
+    }
+  }
+
   /** 取出 sent 中的 message.stream_warn 帧（WARN 广播，B1 后与 stream_error 物理隔离）。 */
   function findStreamWarn(): ServerMessage | undefined {
     return sent.find((m) => m.type === 'message.stream_warn')
@@ -155,6 +166,51 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
     expect(strayError).toBeUndefined()
     // 尚未到 abort，不触发 onSilentAbort
     expect(onSilentAbort).not.toHaveBeenCalled()
+  })
+
+  // ── WD6/7/8：extension-ui 暂停 watchdog（2026-07-16 对齐 main W1）──
+  // ask-user 等交互式 extension UI 等待用户期间暂停 watchdog：
+  //   - 暂停期间推进时间不触发 WARN/ABORT（用户未响应不应视为 pi 卡死）
+  //   - 用户响应后 pi 继续产出活动事件 → resetWatchdog 隐式恢复
+  //   - turn-end 兜底复位 paused 标志（防跨 turn 泄漏）
+
+  it('WD6: extension-ui 期间暂停 watchdog，推进超 ABORT 阈值 → 不触发 WARN/ABORT（pause 保护）', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // ask-user 请求 → pauseWatchdog
+    // 暂停期间推进远超 ABORT 阈值（5min），用户仍未响应
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 60_000)
+
+    expect(findStreamWarn()).toBeUndefined() // 不广播 WARN
+    expect(onSilentAbort).not.toHaveBeenCalled() // 不触发 ABORT
+  })
+
+  it('WD7: extension-ui 暂停后喂 text_delta 恢复 watchdog → 再静默达 WARN 阈值触发 WARN', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // 暂停
+    // 暂停期间推进 100s（不到 ABORT，验证暂停生效）
+    vi.advanceTimersByTime(100_000)
+    expect(findStreamWarn()).toBeUndefined()
+
+    // 用户响应后 pi 继续产出 text_delta → resetWatchdog 隐式恢复（清 paused + 重排 timer）
+    interpreter.interpret([textDelta()])
+    // 再静默达 WARN 阈值 → 应触发 WARN（证明已恢复）
+    vi.advanceTimersByTime(WARN_THRESHOLD_MS + 1_000)
+    expect(findStreamWarn()).toBeDefined()
+  })
+
+  it('WD8: extension-ui 暂停期间收到 turn-end → watchdog 清除且 paused 复位（之后新 turn 正常工作）', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // 暂停
+    interpreter.interpret([turnEnd()]) // turn 结束 → clearWatchdog（应复位 paused）
+
+    // 推进超过 ABORT 阈值，watchdog 已 clear，不触发
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
+    expect(onSilentAbort).not.toHaveBeenCalled()
+
+    // 新 turn：paused 应已复位，watchdog 正常工作（静默达 ABORT 触发）
+    interpreter.interpret([turnStart()])
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
+    expect(onSilentAbort).toHaveBeenCalledTimes(1)
   })
 })
 

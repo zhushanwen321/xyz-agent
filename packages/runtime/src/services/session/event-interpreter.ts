@@ -122,6 +122,8 @@ export class EventInterpreter {
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null
   /** 本轮 WARN 是否已广播（避免 reset 前重复广播；活动事件到达时复位） */
   private watchdogWarned = false
+  /** extension-ui 等待用户期间暂停 watchdog（用户未响应时不视为卡死）。 */
+  private watchdogPaused = false
 
   constructor(
     private readonly sessionId: string,
@@ -222,6 +224,9 @@ export class EventInterpreter {
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
         return
       case 'extension-ui':
+        // [2026-07-16] ask-user 等 extension UI 等待用户期间暂停 watchdog，
+        // 用户未响应不应触发「长时间无响应」警告或 ABORT。
+        this.pauseWatchdog()
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':
@@ -361,6 +366,17 @@ export class EventInterpreter {
   // ── W6 pi watchdog：turn 级静默卡死检测（设计文档 A2）──
 
   /**
+   * 暂停 watchdog（extension-ui 等待用户期间调用）。
+   *
+   * 清当前定时器并置暂停标志；暂停期间 armWatchdogTimer 不排新定时器。
+   * 恢复靠 resetWatchdog（用户响应后 pi 继续产出活动事件时触发），无显式 resume 方法。
+   */
+  private pauseWatchdog(): void {
+    this.clearWatchdogTimer()
+    this.watchdogPaused = true
+  }
+
+  /**
    * 启动 watchdog（turn-start 触发）。
    *
    * 记录活动时间戳并排一个指向 WARN 阈值的定时器。
@@ -382,9 +398,11 @@ export class EventInterpreter {
    * 旧实现每帧 clear+重排两定时器（每 token 4 次操作），现 reset 为 O(1)。
    */
   private resetWatchdog(): void {
+    // 暂停态恢复：用户响应后 pi 继续产出活动事件，清暂停标志（隐式 resume，无独立方法）
+    if (this.watchdogPaused) this.watchdogPaused = false
     this.watchdogLastActivityAt = Date.now()
     this.watchdogWarned = false
-    // 定时器若已存在则保留（到点再判）；若无（如首事件前未 start）则补排指向 WARN。
+    // 定时器若已存在则保留（到点再判）；若无（如首事件前未 start 或刚从暂停恢复）则补排指向 WARN。
     if (!this.watchdogTimer) this.armWatchdogTimer(SILENT_WARN_MS)
   }
 
@@ -397,6 +415,7 @@ export class EventInterpreter {
    * - 达 ABORT → 触发 onSilentAbort 并清自身
    */
   private armWatchdogTimer(delayMs: number): void {
+    if (this.watchdogPaused) return // 暂停期间不排定时器（pauseWatchdog 已清旧 timer）
     this.clearWatchdogTimer()
     this.watchdogTimer = setTimeout(() => this.onWatchdogTick(), delayMs)
   }
@@ -442,6 +461,7 @@ export class EventInterpreter {
   private clearWatchdog(): void {
     this.clearWatchdogTimer()
     this.watchdogWarned = false
+    this.watchdogPaused = false
     this.watchdogLastActivityAt = 0
   }
 
