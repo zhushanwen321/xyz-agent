@@ -2,6 +2,7 @@ export type {
   ClientMessageType, ClientMessage, ClientMessageMap,
   SetProviderData,
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
+  ReplyPayloadMap,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
