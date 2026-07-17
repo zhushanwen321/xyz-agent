@@ -6,7 +6,7 @@
  * 请求-响应形态（对称 file.ts）：
  * - getFileCandidates → file.search → 'file.search:result' 同步 reply，返回 FileNode[]
  *
- * 依赖方向：transport（send）+ pending（请求-响应配对）。
+ * 依赖方向：command（类型化原语，统一 pending.create + register + transport.send）。
  * 失败走 error envelope（routeInbound 对 type==='error' 走 pending.reject，code 透传到 Error.code）。
  *
  * 注意：domain 返回原始 FileNode[]（保持真实数据语义）；FileNode → CommandPopover
@@ -17,19 +17,16 @@
  * 返回空数组保留签名，避免 CommandPopover 大改。mock 侧仍返回 fixture（mock 模式不受影响）。
  */
 import type { FileNode } from '@xyz-agent/shared'
-import * as transport from '../transport'
-import * as pending from '../pending'
+import { command } from '../request'
 
 /**
  * 拉 `#` 文件候选（全量递归当前 cwd，受 ignore + 深度上限 + 结果数上限）。
  * @param sessionId 当前 session（取其 cwd 作为搜索根）
  * @returns FileNode[]（扁平，path 相对 cwd 无前导斜杠）
  */
-export function getFileCandidates(sessionId: string): Promise<FileNode[]> {
-  const id = pending.create()
-  const result = pending.register<{ sessionId: string; files: FileNode[] }>(id)
-  transport.send({ type: 'file.search', id, payload: { sessionId } })
-  return result.then((r) => r.files)
+export async function getFileCandidates(sessionId: string): Promise<FileNode[]> {
+  const reply = await command('file.search', { sessionId })
+  return reply.files
 }
 
 /**
