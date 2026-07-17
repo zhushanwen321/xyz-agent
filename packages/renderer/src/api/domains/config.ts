@@ -8,7 +8,7 @@
  *
  * 动作触发后状态变更由对应订阅通道推回（单一数据源，避免竞态）。
  *
- * 依赖方向：transport + pending（请求/动作）+ events（订阅，走全局通道）。
+ * 依赖方向：command（请求/动作）+ events（订阅，走全局通道）。
  */
 import type {
   ProviderInfo,
@@ -17,32 +17,25 @@ import type {
   SetProviderData,
   SkillDirConfig,
 } from '@xyz-agent/shared'
-import * as transport from '../transport'
-import * as pending from '../pending'
+import { command } from '../request'
 import * as events from '../events'
 
 // ── 请求-响应 ──
 // runtime 请求-响应 reply 均为命名 envelope（settings-message-handler.ts），
 // 此处统一解包对应字段，与 session.list 解包 `.groups` 同构。mock 门面有独立实现不受影响。
 export async function listProviders(): Promise<ProviderInfo[]> {
-  const id = pending.create()
-  const result = pending.register<{ providers: ProviderInfo[] }>(id)
-  transport.send({ type: 'config.getProviders', id, payload: {} })
-  return (await result).providers
+  const reply = await command('config.getProviders', {})
+  return reply.providers
 }
 
 export async function scanSkills(sources: string[]): Promise<SkillInfo[]> {
-  const id = pending.create()
-  const result = pending.register<{ skills: SkillInfo[]; success: boolean }>(id)
-  transport.send({ type: 'config.scanSkills', id, payload: { sources } })
-  return (await result).skills
+  const reply = await command('config.scanSkills', { sources })
+  return reply.skills
 }
 
 export async function scanAgents(sources: string[]): Promise<AgentInfo[]> {
-  const id = pending.create()
-  const result = pending.register<{ agents: AgentInfo[]; success: boolean }>(id)
-  transport.send({ type: 'config.scanAgents', id, payload: { sources } })
-  return (await result).agents
+  const reply = await command('config.scanAgents', { sources })
+  return reply.agents
 }
 
 /** discoverModels 的响应载荷（config.discoveredModels reply，settings-message-handler） */
@@ -58,10 +51,7 @@ export function discoverModels(req: {
   providerType?: string
   providerId?: string
 }): Promise<DiscoveredModelsResult> {
-  const id = pending.create()
-  const result = pending.register<DiscoveredModelsResult>(id)
-  transport.send({ type: 'config.discoverModels', id, payload: req })
-  return result
+  return command('config.discoverModels', req)
 }
 
 // ── 订阅-推送（sendInitialState 主动推 + 运行时广播）──
@@ -107,65 +97,38 @@ export function onDefaults(handler: (defaultModel: string) => void): () => void 
  * 状态变更经 onSkills + onSkillDirs 订阅推回（后端 setSkillDirs 后广播）。
  */
 export function setSkillDirs(dirs: string[]): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.setSkillDirs', id, payload: { dirs } })
-  return result
+  return command('config.setSkillDirs', { dirs })
 }
 
 export function setAgentDirs(dirs: string[]): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.setAgentDirs', id, payload: { dirs } })
-  return result
+  return command('config.setAgentDirs', { dirs })
 }
 
 export function setProvider(providerId: string, data: SetProviderData): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.setProvider', id, payload: { providerId, ...data } })
-  return result
+  return command('config.setProvider', { providerId, ...data })
 }
 
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
 export function setDefaultModel(provider: string, modelId: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.setDefaultModel', id, payload: { provider, modelId } })
-  return result
+  return command('config.setDefaultModel', { provider, modelId })
 }
 
 export function deleteProvider(providerId: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.deleteProvider', id, payload: { providerId } })
-  return result
+  return command('config.deleteProvider', { providerId })
 }
 
 export function setSkill(skill: SkillInfo): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.setSkill', id, payload: { skill } })
-  return result
+  return command('config.setSkill', { skill })
 }
 
 export function deleteSkill(skillId: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.deleteSkill', id, payload: { skillId } })
-  return result
+  return command('config.deleteSkill', { skillId })
 }
 
 export function setAgent(agent: AgentInfo): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.setAgent', id, payload: { agent } })
-  return result
+  return command('config.setAgent', { agent })
 }
 
 export function deleteAgent(agentId: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'config.deleteAgent', id, payload: { agentId } })
-  return result
+  return command('config.deleteAgent', { agentId })
 }
