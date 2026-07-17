@@ -133,6 +133,15 @@ function disposeSessionImpl(
 }
 
 /**
+ * [M7] 仅删单个虚拟 key 的 messages（模块级，控制 setup 行数）。
+ * backToMain/backFromAgentCall 退出 overlay 时调，避免误删主 session 消息。
+ * 与 evictSessionWithVirtual 的区别：后者删主 session + 联动虚拟 key，本方法只删传入的虚拟 key。
+ */
+function evictVirtualKeyImpl(deps: { deleteMessageKey: (sid: string) => void }, virtualId: string): void {
+  deps.deleteMessageKey(virtualId)
+}
+
+/**
  * 追加 system 提示行纯逻辑（模块级，控制 setup 行数）。
  * runtime 主动推送的元信息反馈（如 compactionSummary），作 SystemNotice 渲染。
  */
@@ -415,9 +424,10 @@ export const useChatStore = defineStore('chat', () => {
   const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid)
   /** W3 H3：LRU recency 更新（AC-1 真 LRU），直接透传 lruTouch */
   const touchLru = lruTouch
-  /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key） */
+  /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
   function evictIfNeeded(): void { lruEvictIfNeeded(makeLruEvictDeps(messages, hydrated, isLruExempt)) }
   function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, makeLruEvictDeps(messages, hydrated, isLruExempt)) }
+  function evictVirtualKey(virtualId: string): void { evictVirtualKeyImpl(makeLruEvictDeps(messages, hydrated, isLruExempt), virtualId) }
 
   /** 取指定 session 的自动重试态（无则 undefined） */
   function getRetryState(sessionId: string): RetryState | undefined {
@@ -824,5 +834,6 @@ export const useChatStore = defineStore('chat', () => {
     touchLru,
     evictIfNeeded,
     evictSessionWithVirtual,
+    evictVirtualKey,
   }
 })

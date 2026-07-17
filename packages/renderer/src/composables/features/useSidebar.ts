@@ -376,11 +376,11 @@ export function useSidebar() {
           boundPanel.id,
           id,
           viewingSubId ?? undefined,
-          (sid) => chatStore.evictSessionWithVirtual(sid),
+          (sid) => chatStore.evictVirtualKey(sid),
         )
       }
       if (workflowStore.isViewing(boundPanel.id)) {
-        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictSessionWithVirtual(acsId))
+        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId))
       }
     }
     session.removeFromList(id)
@@ -392,7 +392,7 @@ export function useSidebar() {
     chatStoreForEvict.evictSessionWithVirtual(id)
     // [M7 D6] agentcall 两段式无 mainSid 前缀，经 workflow 映射清全部 agentcall virtualId
     for (const acsVirtualId of workflowStore.getAgentCallVirtualIdsByMain(id)) {
-      chatStoreForEvict.evictSessionWithVirtual(acsVirtualId)
+      chatStoreForEvict.evictVirtualKey(acsVirtualId)
     }
     workflowStore.clearAgentCallMapping(id)
     useChat().disposeSession(id)

@@ -124,8 +124,8 @@ describe('M7 FR-3: backToMain 立即清 messages + tombstone', () => {
     store.setMessages(virtualKey, [makeMessage('bg-msg')])
     expect(store.getMessages(virtualKey)).toHaveLength(1)
 
-    // backToMain 立即清（需传 mainSessionId + chatEvict 回调）
-    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid: string) => store.evictSessionWithVirtual(sid))
+    // backToMain 立即清（需传 mainSessionId + chatEvict 回调，evictVirtualKey 只删虚拟 key 不删主 session）
+    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid: string) => store.evictVirtualKey(sid))
 
     expect(store.getMessages(virtualKey)).toEqual([])
   })
@@ -134,6 +134,23 @@ describe('M7 FR-3: backToMain 立即清 messages + tombstone', () => {
     const subagentStore = useSubagentStore()
     // 未注入任何 messages 直接 backToMain
     expect(() => subagentStore.backToMain('panel-A', 'sess-1', 'never', (sid: string) => {})).not.toThrow()
+  })
+
+  it('backToMain 只删虚拟 key 不删主 session messages（防 evictSessionWithVirtual 误删回归）', () => {
+    const store = useChatStore()
+    const subagentStore = useSubagentStore()
+    const virtualKey = subagentVirtualId('sess-1', 'bg-1')
+
+    // 主 session + subagent 虚拟 key 都有 messages
+    store.hydrate('sess-1', [makeMessage('main-msg')])
+    store.setMessages(virtualKey, [makeMessage('bg-msg')])
+
+    // backToMain 只清虚拟 key
+    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid) => store.evictVirtualKey(sid))
+
+    // 虚拟 key 清空，主 session 消息保留
+    expect(store.getMessages(virtualKey)).toEqual([])
+    expect(store.getMessages('sess-1')).toHaveLength(1)
   })
 })
 
@@ -151,7 +168,7 @@ describe('M7 FR-7: tombstone 防终态 fetchAndInject 复活', () => {
 
     store.setMessages(virtualKey, [makeMessage('bg-msg')])
     // backToMain 设 tombstone + 清
-    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid: string) => store.evictSessionWithVirtual(sid))
+    subagentStore.backToMain('panel-A', 'sess-1', 'bg-1', (sid: string) => store.evictVirtualKey(sid))
     expect(store.getMessages(virtualKey)).toEqual([])
 
     // 模拟迟到的终态 fetchAndInject（subscribeStream 终态回调在 backToMain 前已启动）

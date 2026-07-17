@@ -82,8 +82,8 @@ export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 export type ApplyDeltaFn = (virtualId: string, lines: string[]) => void
 /** chat.finalizeSubagentStream 注入回调（W4：streaming → complete 收口进 chat store） */
 export type FinalizeStreamFn = (virtualId: string) => void
-/** chat.evictSessionWithVirtual 注入回调（M7：backToMain 清 messages[virtualId]，store 不互 import） */
-export type ChatEvictFn = (sessionId: string) => void
+/** chat.evictVirtualKey 注入回调（M7：backToMain 清单个 messages[virtualId]，store 不互 import） */
+export type ChatEvictFn = (virtualId: string) => void
 
 export const useSubagentStore = defineStore('subagent', () => {
   // ── state ──
@@ -315,10 +315,11 @@ export const useSubagentStore = defineStore('subagent', () => {
     stopStream(panelId)
     setViewingSubagentId(panelId, null)
     // 立即清 messages[virtualId] + 设 tombstone 防终态 fetchAndInject 复活（FR-3/FR-7）
+    // 注意：只删单个虚拟 key（evictVirtualKey），不调 evictSessionWithVirtual（会误删主 session 消息）
     if (mainSessionId && subagentId) {
       const virtualId = subagentVirtualId(mainSessionId, subagentId)
       clearedVirtualIds.add(virtualId)
-      chatEvict?.(mainSessionId)
+      chatEvict?.(virtualId)
     }
   }
 
