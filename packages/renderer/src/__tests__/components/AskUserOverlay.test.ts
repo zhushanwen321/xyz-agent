@@ -311,31 +311,6 @@ describe('AskUserOverlay', () => {
 })
 
 describe('AskUserOverlay · v3 样式对齐 demo v3', () => {
-  it('U6: 倒计时显示——[data-testid="ask-user-countdown"] 文本匹配 mm:ss，初值 04:59-05:00', () => {
-    // startedAt = 当前时间，倒计时 300s，刚 mount 剩余接近 300s（05:00）
-    const wrapper = mount(AskUserOverlay, {
-      props: { questions: [singleSelectQ], allowCancel: true, startedAt: Date.now() },
-    })
-
-    const timer = wrapper.find('[data-testid="ask-user-countdown"]')
-    expect(timer.exists()).toBe(true)
-    const text = timer.text()
-    // mm:ss 格式
-    expect(text).toMatch(/^\d{2}:\d{2}$/)
-    const [mm, ss] = text.split(':').map(Number)
-    const totalSec = mm * 60 + ss
-    // 初值在 04:59-05:00 区间（刚 mount，剩余 299-300s）
-    expect(totalSec).toBeGreaterThanOrEqual(299)
-    expect(totalSec).toBeLessThanOrEqual(300)
-  })
-
-  it('U6 补充: startedAt 可选——缺省也能渲染倒计时', () => {
-    const wrapper = mountOverlay([singleSelectQ])
-    const timer = wrapper.find('[data-testid="ask-user-countdown"]')
-    expect(timer.exists()).toBe(true)
-    expect(timer.text()).toMatch(/^\d{2}:\d{2}$/)
-  })
-
   it('U7: 字体——tab 12px / 单问题标题 13px / opt-label 13px', () => {
     // 多问题 + 带选项（含 description）
     const wrapper = mountOverlay([optWithDescQ, singleSelectQ])
@@ -375,7 +350,5 @@ describe('AskUserOverlay · v3 样式对齐 demo v3', () => {
     const headTitle = head.find('[data-testid="ask-user-question-text"]')
     expect(headTitle.exists()).toBe(true)
     expect(headTitle.text()).toContain('选哪个数据库?')
-    // head 含倒计时
-    expect(head.find('[data-testid="ask-user-countdown"]').exists()).toBe(true)
   })
 })

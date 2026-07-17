@@ -21,12 +21,11 @@
  *
  * 样式对齐 demo v3（docs/page-design/v3/ask-user/inline-ask-user-demo-v3.html）：
  * - 无边框一体化：去掉 border-b/border-t 分层，单容器 bg-input 靠间距分区
- * - head 行：脉冲点 + 单问题标题(或 tab) + 倒计时(absolute 右上角不受换行影响)
+ * - head 行：脉冲点 + 单问题标题(或 tab)
  * - 选项 inline：indicator + label + description 同行流式，无边框 hover/selected 用 bg
  * - Other 卡片化：最后一个选项(label="其他")，选中后 label 下方展开输入框
  */
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Clock } from '@lucide/vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,7 +36,7 @@ import type { AskUserQuestion, AskUserOption } from '@xyz-agent/extension-protoc
 const props = withDefaults(defineProps<{
   questions: AskUserQuestion[]
   allowCancel?: boolean
-  /** 请求到达时间戳（ms）。用于倒计时显示（5min 超时）。缺省取组件 mount 时间近似。 */
+  /** 请求到达时间戳（ms）。保留用于未来审计/调试，当前 UI 不再做倒计时。缺省取组件 mount 时间近似。 */
   startedAt?: number
 }>(), {
   startedAt: () => Date.now(),
@@ -48,33 +47,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-
-// ── 倒计时（5min 超时，每秒刷新剩余）──
-const MS_PER_SEC = 1000
-const SEC_PER_MIN = 60
-const TIMEOUT_MINUTES = 5 // 对齐 runtime ExtensionTimeoutManager 5min 超时
-const TIMEOUT_MS = TIMEOUT_MINUTES * SEC_PER_MIN * MS_PER_SEC
-const TIME_FIELD_PAD = 2 // mm/ss 两位补零
-const now = ref(Date.now())
-let timer: ReturnType<typeof setInterval> | null = null
-onMounted(() => {
-  timer = setInterval(() => { now.value = Date.now() }, MS_PER_SEC)
-})
-onUnmounted(() => { if (timer) clearInterval(timer) })
-/** 剩余秒数（下界 0，请求到达 + 5min 超时） */
-const remainingSec = computed(() => {
-  const elapsed = now.value - props.startedAt
-  return Math.max(0, Math.floor((TIMEOUT_MS - elapsed) / MS_PER_SEC))
-})
-/** mm:ss 格式倒计时文本 */
-const countdownText = computed(() => {
-  const s = remainingSec.value
-  const mm = String(Math.floor(s / SEC_PER_MIN)).padStart(TIME_FIELD_PAD, '0')
-  const ss = String(s % SEC_PER_MIN).padStart(TIME_FIELD_PAD, '0')
-  return `${mm}:${ss}`
-})
-/** 紧迫态：剩余 < 1min 才转 warning 色（对齐 pi TUI 仅尾部高亮，避免全程橙黄制造焦虑） */
-const isUrgent = computed(() => remainingSec.value < SEC_PER_MIN)
 
 // ── 问题 key（header 缺失时用 question 文本）──
 function qKey(q: AskUserQuestion): string {
@@ -252,7 +224,7 @@ function onSubmit(): void {
 </script>
 
 <template>
-  <!-- v3 无边框一体化：单容器靠间距分区，head 行含脉冲点+标题/tab+倒计时(absolute)。
+  <!-- v3 无边框一体化：单容器靠间距分区，head 行含脉冲点+标题/tab。
        选项 inline（indicator + label + desc 同行流式），无边框 hover/selected 用 bg。
        Other 卡片化：最后一个选项，选中后 label 下方展开输入框。 -->
   <div
@@ -260,16 +232,16 @@ function onSubmit(): void {
     class="relative flex flex-col animate-ask-user-slide-up overflow-hidden rounded-lg bg-bg-input motion-reduce:animate-none"
     @keydown.tab="onTabKey"
   >
-    <!-- head 行：脉冲点 + (单问题标题 | 多问题 tab) + 倒计时(absolute 右上) -->
+    <!-- head 行：脉冲点 + (单问题标题 | 多问题 tab) -->
     <div
       data-testid="ask-user-head"
       class="relative flex items-center gap-2 px-3.5 pt-2.5"
     >
       <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-      <!-- 单问题：标题提到 head 行，单行 truncate，pr 给 timer 留空间 -->
+      <!-- 单问题：标题提到 head 行，单行 truncate -->
       <span
         v-if="questions.length <= 1"
-        class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap pr-12 text-[13px] font-medium text-fg"
+        class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium text-fg"
         data-testid="ask-user-question-text"
       >
         {{ activeQuestion?.question }}
@@ -298,16 +270,6 @@ function onSubmit(): void {
         </Button>
       </div>
       <span class="flex-1" />
-      <!-- 倒计时：absolute 固定右上角，不受 head 内容换行影响 -->
-      <span
-        data-testid="ask-user-countdown"
-        class="absolute right-3.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 bg-bg-input pl-1.5 font-mono text-[11px]"
-        :class="isUrgent ? 'text-warning' : 'text-subtle'"
-        style="margin-top: 5px"
-      >
-        <Clock class="size-3" />
-        {{ countdownText }}
-      </span>
     </div>
 
     <!-- body：问题内容 + 选项，紧凑间距 -->
