@@ -9,12 +9,17 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import {
+  SYSTEM_PROMPT_MAX_LENGTH,
+} from '@xyz-agent/shared'
 import type {
   ProviderInfo,
   SkillInfo,
   AgentInfo,
   ScannedSkillInfo,
   ScannedAgentInfo,
+  SystemPromptConfig,
+  SystemPromptSnapshot,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -435,5 +440,100 @@ export class ConfigService implements IConfigService {
 
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[] {
     return scanAgents(sources, existingIds)
+  }
+
+  // ── System prompt config（FR-6/FR-7，ADR-0038）──
+  // 独立文件 system-prompt.json（不复用 config.json）：replace/append 两段提示词配置，
+  // 插件读此文件热生效（replace 启动期注入、append 每轮 before_agent_start 注入）。
+
+  private systemPromptPath(): string {
+    return join(this.configStore.getConfigDir(), 'system-prompt.json')
+  }
+
+  private systemPromptSnapshotPath(): string {
+    return join(this.configStore.getConfigDir(), 'system-prompt-snapshot.md')
+  }
+
+  private defaultSystemPromptConfig(): SystemPromptConfig {
+    return {
+      version: 1,
+      replace: { enabled: false, prompt: '' },
+      append: { enabled: false, prompt: '' },
+    }
+  }
+
+  /**
+   * 防御性合并：把磁盘读到的 raw（可能字段缺失/类型错）合并到默认值上。
+   * corrupted=false（字段级容错，不视为损坏）；只有 JSON.parse 失败才 corrupted=true。
+   */
+  private mergeSystemPromptConfig(raw: unknown): SystemPromptConfig {
+    const base = this.defaultSystemPromptConfig()
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return base
+    const r = raw as Record<string, unknown>
+    const replaceRaw = r['replace']
+    const appendRaw = r['append']
+    const replace = (typeof replaceRaw === 'object' && replaceRaw !== null && !Array.isArray(replaceRaw))
+      ? replaceRaw as Record<string, unknown>
+      : {}
+    const append = (typeof appendRaw === 'object' && appendRaw !== null && !Array.isArray(appendRaw))
+      ? appendRaw as Record<string, unknown>
+      : {}
+    return {
+      version: typeof r['version'] === 'number' ? r['version'] : base.version,
+      replace: {
+        enabled: typeof replace['enabled'] === 'boolean' ? replace['enabled'] : false,
+        prompt: typeof replace['prompt'] === 'string' ? replace['prompt'] : '',
+      },
+      append: {
+        enabled: typeof append['enabled'] === 'boolean' ? append['enabled'] : false,
+        prompt: typeof append['prompt'] === 'string' ? append['prompt'] : '',
+      },
+    }
+  }
+
+  getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean } {
+    const cp = this.systemPromptPath()
+    if (!existsSync(cp)) {
+      return { config: this.defaultSystemPromptConfig(), corrupted: false }
+    }
+    let raw: unknown
+    try {
+      raw = JSON.parse(readFileSync(cp, 'utf-8'))
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: JSON 解析失败 → corrupted=true + 默认配置
+    } catch {
+      return { config: this.defaultSystemPromptConfig(), corrupted: true }
+    }
+    return { config: this.mergeSystemPromptConfig(raw), corrupted: false }
+  }
+
+  setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string } {
+    if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+      return {
+        ok: false,
+        // eslint-disable-next-line no-magic-numbers -- 与 SYSTEM_PROMPT_MAX_LENGTH 对齐的错误文案
+        error: `replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
+      }
+    }
+    const cd = this.configStore.getConfigDir()
+    if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+    // eslint-disable-next-line no-magic-numbers -- standard JSON indent
+    atomicWrite(this.systemPromptPath(), JSON.stringify(config, null, 2))
+    return { ok: true }
+  }
+
+  getReplaceSystemPrompt(): string | undefined {
+    const { config } = this.getSystemPromptConfig()
+    if (config.replace.enabled && config.replace.prompt.trim() !== '') {
+      return config.replace.prompt
+    }
+    return undefined
+  }
+
+  getSystemPromptSnapshot(): SystemPromptSnapshot {
+    const sp = this.systemPromptSnapshotPath()
+    if (!existsSync(sp)) return { exists: false }
+    const content = readFileSync(sp, 'utf-8')
+    const updatedAt = statSync(sp).mtime.toISOString()
+    return { exists: true, content, updatedAt }
   }
 }

@@ -21,6 +21,8 @@ import type {
   FileNode,
   SubagentRecord,
   WorkflowRunRecord,
+  SystemPromptConfig,
+  SystemPromptSnapshot,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -230,6 +232,15 @@ export interface IConfigService {
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
   getConfigDir(): string
+  // ── System prompt config（FR-6/FR-7，ADR-0038）──
+  /** 读取 system-prompt.json。损坏时 corrupted=true 且返回默认配置。 */
+  getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean }
+  /** 写入 system-prompt.json。replace.prompt 超长（>SYSTEM_PROMPT_MAX_LENGTH）返回 ok:false + error，不写盘。 */
+  setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string }
+  /** 返回当前生效的替换提示词（replace.enabled && prompt 非空白时），否则 undefined。rpc-client spawn 时透传。 */
+  getReplaceSystemPrompt(): string | undefined
+  /** 读取 system-prompt-snapshot.md（插件每轮写入的实际生效提示词快照）。 */
+  getSystemPromptSnapshot(): SystemPromptSnapshot
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

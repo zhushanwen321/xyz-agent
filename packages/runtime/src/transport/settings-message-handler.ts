@@ -151,6 +151,38 @@ export class SettingsMessageHandler {
         })
         return true
       }
+      case 'config.getSystemPrompt': {
+        // FR-6：读取 system-prompt 配置。corrupted 透传给前端（提示用户文件已损坏并重置）。
+        const result = this.ctx.configService.getSystemPromptConfig()
+        this.ctx.reply(ws, msg.id, 'config.systemPrompt', {
+          config: result.config,
+          corrupted: result.corrupted,
+        })
+        return true
+      }
+      case 'config.setSystemPrompt': {
+        // FR-6：写入 system-prompt 配置。失败（超长等）按 D10 错误信封回复，不广播；
+        // 成功 reply + 广播 config.systemPrompt（corrupted=false）让所有 panel 同步。
+        const { config } = msg.payload
+        const result = this.ctx.configService.setSystemPromptConfig(config)
+        if (!result.ok) {
+          this.ctx.sendError(ws, 'set_system_prompt_failed', result.error ?? 'unknown error', msg.id)
+          return true
+        }
+        this.ctx.reply(ws, msg.id, 'config.systemPrompt', { config, corrupted: false })
+        this.ctx.broadcast({
+          type: 'config.systemPrompt',
+          id: this.ctx.nextPushId(),
+          payload: { config, corrupted: false },
+        })
+        return true
+      }
+      case 'config.getSystemPromptSnapshot': {
+        // FR-7：读取插件每轮写入的实际生效 systemPrompt 快照（只读展示）。
+        const snapshot = this.ctx.configService.getSystemPromptSnapshot()
+        this.ctx.reply(ws, msg.id, 'config.systemPromptSnapshot', snapshot)
+        return true
+      }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
         await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
