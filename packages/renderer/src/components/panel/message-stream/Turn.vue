@@ -9,7 +9,7 @@
     Output Text 中间/收尾拆分（draft §4）：多 assistant 回合，非最后一条 content 折进 trace，
     仅最后一条作收尾 summary 恒显。
   -->
-  <div class="flex flex-col gap-3.5">
+  <div ref="rootEl" class="flex flex-col gap-3.5">
     <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
     <div v-if="turn.user" class="group/user flex flex-col items-end gap-1">
       <!-- 编辑态：编辑后 fork 新会话 -->
@@ -285,6 +285,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
+import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
 import ForkConfirmModal from './ForkConfirmModal.vue'
@@ -304,6 +305,14 @@ const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
 const fileTreeStore = useFileTreeStore()
+
+/**
+ * 虚拟滚动高度测量（W4）：rootEl + ResizeObserver 上报自身高度给 useVirtualTurnList。
+ * key 用 turn 首消息 id（与 heights Map 键一致）。非虚拟列表环境下 inject 不到 registry，
+ * useResizeReport 内部优雅降级为 no-op。
+ */
+const rootEl = ref<HTMLElement | null>(null)
+useResizeReport(rootEl, () => props.turn.user?.id ?? props.turn.assistants[0]?.id ?? '')
 
 /** 点击用户气泡 skill badge → 打开 drawer Doc tab 展示 SKILL.md */
 function openCommandDoc(commandName: string): void {
