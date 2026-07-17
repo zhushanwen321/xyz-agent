@@ -192,6 +192,8 @@ export class SessionLifecycle {
     try {
       // strip session_end：restore 时给 pi 提供干净的历史文件，旧终态不应影响新 session
       const cleaned = stripSessionEnd(target.filePath)
+      // 清理旧 sidecar（restore 后不应保留旧终态）
+      try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
       const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
       try {
@@ -273,6 +275,8 @@ export class SessionLifecycle {
     try {
       // 4. switch_session 让 pi 加载截断后的历史（strip session_end 给干净文件）
       const cleaned = stripSessionEnd(forkedFilePath)
+      // 清理旧 sidecar（fork 后不应保留旧终态）
+      try { unlinkSync(forkedFilePath + '.meta.json') } catch { void 0 }
       const tmpFile = join(tmpdir(), `xyz-fork-${forkedId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
       try {
