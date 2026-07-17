@@ -5,7 +5,11 @@
  *
  * 核心策略：
  * - 切走 session 时触发 evictIfNeeded
- * - 保留最近 K=LRU_MAX_SESSIONS(8) 个 + 当前 panel 绑定的 + streaming 中的
+ * - 保留最近 K=LRU_MAX_SESSIONS(8) 个 + streaming/pending/compacting 豁免的
+ * - panel 绑定 session 由 composable 层（useSidebar.selectSession）在 evictIfNeeded 前
+ *   刷新 recency 保护（lru-panel-exempt-fix），不在本模块的 isExempt 内判定——
+ *   evictSessionWithVirtual 与 evictIfNeeded 共用 isExempt，若加 panel 检查会让
+ *   deleteSession 流程中被删 session（必然还绑定 panel）被 exempt 拦截 → 内存泄漏
  * - 驱逐用 delete key（与 disposeSession 一致，D13）
  * - subagent:xxx 三段式虚拟 key 按主 session 前缀同步驱逐（M7 修复，AC-2）
  * - agentcall:xxx 两段式虚拟 key 不走 LRU 联动（无 mainSid 命名空间），由 workflow store 映射清理（D6）
@@ -20,7 +24,8 @@
 
 /**
  * LRU 保留阈值：最近 8 个 session（D6）。
- * 不含当前 panel 绑定的 + streaming 中的（豁免集）。
+ * 不含 streaming/pending/compacting 豁免的（isExempt 判定）。
+ * panel 绑定 session 不在本阈值/豁免集内判定，由 composable 层刷新 recency 保护（见文件头注释）。
  */
 export const LRU_MAX_SESSIONS = 8
 
@@ -68,7 +73,7 @@ export interface LruEvictDeps {
   messagesValue: Map<string, unknown>
   /** hydrated Set 的 value */
   hydratedValue: Set<string>
-  /** 判断 session 是否在豁免集（panel 绑定 / streaming 中） */
+  /** 判断 session 是否在豁免集（streaming/pending/compacting 中）。不含 panel 绑定判定——见文件头注释 */
   isExempt: (sessionId: string) => boolean
   /** 删除 messages key（不可变写，返回新 Map） */
   deleteMessageKey: (sessionId: string) => void

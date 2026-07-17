@@ -260,8 +260,16 @@ export function useSidebar() {
     void subagentStore.loadSubagents(id)
     void workflowStore.loadWorkflows(id)
 
-    // W3 H3：切 session 后触发 LRU 驱逐（保留最近 8 + panel 绑定 + streaming 中）。
-    // 在所有拉取完成后执行，确保新 session 已 hydrate 不被误驱逐。
+    // [lru-panel-exempt-fix] evictIfNeeded 前刷新所有 panel 绑定 session 的 LRU recency。
+    // panel 绑定 session（含 standby 侧）是用户当前可见的活跃 session，刷新其 recency 确保不被误驱逐。
+    // 保护随 panel 解绑自然衰减（close/unbind 后不再 touch → 回到正常 LRU 候选）。
+    // 不改 isLruExempt（chat.ts:424）：evictSessionWithVirtual 与 evictIfNeeded 共用同一 isExempt，
+    // 若加 panel 检查会让 deleteSession 流程中被删 session（必然还绑定 panel）被 exempt 拦截 → 内存泄漏。
+    for (const p of panel.panels) {
+      if (p.sessionId) chat.touchLru(p.sessionId)
+    }
+    // W3 H3：切 session 后触发 LRU 驱逐（保留最近 8 个 + streaming/pending/compacting 豁免）。
+    // panel 绑定 session 由上方 touchLru 刷新保护，非 panel 绑定的最旧 session 按序驱逐。
     chat.evictIfNeeded()
   }
 
