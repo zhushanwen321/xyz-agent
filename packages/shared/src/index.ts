@@ -3,6 +3,7 @@ export type {
   SetProviderData,
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
   ReplyPayloadMap,
+  SystemPromptConfig, SystemPromptSnapshot,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
@@ -30,7 +31,7 @@ export type {
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH } from './constants'
 export type { ProviderApiType } from './constants'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
 import recommendedExtensions from './recommended-extensions.json'
