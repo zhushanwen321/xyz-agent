@@ -3,7 +3,7 @@ export type {
   SetProviderData,
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
   ReplyPayloadMap,
-  SystemPromptConfig, SystemPromptSnapshot,
+  SystemPromptConfig,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,

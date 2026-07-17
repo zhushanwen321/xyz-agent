@@ -27,7 +27,7 @@ export type ClientMessageType =
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'config.setSkillDirs' | 'config.setAgentDirs'
-  | 'config.getSystemPrompt' | 'config.setSystemPrompt' | 'config.getSystemPromptSnapshot'
+  | 'config.getSystemPrompt' | 'config.setSystemPrompt'
   | 'model.list' | 'model.switch' | 'session.setThinkingLevel'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
@@ -88,14 +88,6 @@ export interface SystemPromptConfig {
   version: number
   replace: { enabled: boolean; prompt: string }
   append: { enabled: boolean; prompt: string }
-}
-
-/** system-prompt 快照：插件每轮写入实际生效的完整 systemPrompt（含动态段）。
- *  exists=false 表示尚无快照（从未发生过对话）；exists=true 时 content/updatedAt 必有。 */
-export interface SystemPromptSnapshot {
-  exists: boolean
-  content?: string
-  updatedAt?: string
 }
 
 // ── ClientMessage discriminated union ───────────────────────────
@@ -160,7 +152,6 @@ export interface ClientMessageMap {
   'config.setAgentDirs': { dirs: string[] }
   'config.getSystemPrompt': Record<string, never>
   'config.setSystemPrompt': { config: SystemPromptConfig }
-  'config.getSystemPromptSnapshot': Record<string, never>
   'model.list': Record<string, never>
   'model.switch': { sessionId: string; provider: string; modelId: string }
   'session.setThinkingLevel': { sessionId: string; level: string }
@@ -247,7 +238,7 @@ export type ServerMessageType =
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
   | 'config.skillDirs' | 'config.agentDirs'
-  | 'config.systemPrompt' | 'config.systemPromptSnapshot'
+  | 'config.systemPrompt'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
   | 'session.state_changed'
@@ -318,8 +309,6 @@ export interface ServerMessageMapBase {
   'config.sessions': { groups: SessionGroup[] }
   /** config.systemPrompt：reply + broadcast + 初始推送三用。corrupted=true 表示磁盘配置损坏已回退默认（SR5）。 */
   'config.systemPrompt': { config: SystemPromptConfig; corrupted?: boolean }
-  /** config.systemPromptSnapshot：仅 reply，实际生效提示词快照（含动态段）。 */
-  'config.systemPromptSnapshot': SystemPromptSnapshot
 
   // ── 协议级 reply / push（精确）──
   'pong': Record<string, never>
@@ -574,10 +563,9 @@ export interface ReplyPayloadMap {
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
   // 系统提示词配置（W2，FR-4/FR-5）：get/setSystemPrompt reply config.systemPrompt
-  //   形状 `{ config, corrupted? }`；getSystemPromptSnapshot reply config.systemPromptSnapshot。
+  //   形状 `{ config, corrupted? }`。
   'config.getSystemPrompt': ServerMessageMap['config.systemPrompt']
   'config.setSystemPrompt': ServerMessageMap['config.systemPrompt']
-  'config.getSystemPromptSnapshot': ServerMessageMap['config.systemPromptSnapshot']
   'extension.getPendingRequests': ServerMessageMap['extension.pendingRequests']
   'extension.installDir': ServerMessageMap['extension.discovered']
   'extension.installGit': ServerMessageMap['extension.discovered']
