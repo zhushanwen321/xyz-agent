@@ -485,18 +485,21 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('mock getHistory 返回 fixture 全字段（G2-006 契约）', async () => {
     const s1 = await mockApi.chat.getHistory('s1')
-    expect(s1.length).toBeGreaterThanOrEqual(2)
+    // N1 修复：getHistory 返回 { messages, historyTruncated }
+    expect(s1.historyTruncated).toBe(false)
+    expect(s1.messages.length).toBeGreaterThanOrEqual(2)
     // 含 user / assistant text / tool_call / 失败 tool
-    const roles = s1.map((m) => m.role)
+    const roles = s1.messages.map((m) => m.role)
     expect(roles).toContain('user')
     expect(roles).toContain('assistant')
-    const withTools = s1.find((m) => (m.toolCalls?.length ?? 0) > 0)
+    const withTools = s1.messages.find((m) => (m.toolCalls?.length ?? 0) > 0)
     expect(withTools).toBeTruthy()
   })
 
   it('mock getHistory 空会话返回空数组', async () => {
     const s3 = await mockApi.chat.getHistory('s3')
-    expect(s3).toEqual([])
+    expect(s3.historyTruncated).toBe(false)
+    expect(s3.messages).toEqual([])
   })
 
   // ── W10: FileChanges 通道（applyFileChanges + message.file_changes case）──

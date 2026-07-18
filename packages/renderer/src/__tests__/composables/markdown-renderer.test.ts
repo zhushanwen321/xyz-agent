@@ -11,7 +11,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/markdown-renderer.test.ts
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, h } from 'vue'
 import type { MarkdownSegment, MarkdownEnv } from '@/composables/logic/markdown'
 
@@ -53,6 +53,21 @@ vi.mock('@/composables/features/useSideDrawer', () => ({
 const mockOpenExternal = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/lib/ipc', () => ({
   openExternal: (url: string) => mockOpenExternal(url),
+}))
+
+// fileApi.read：W4 起 useMarkdownInteractions 对含/路径（含 sessionId）先 file.read 预检查，
+// 成功才 selectFile + drawer.open。默认 mock 解析成功（让 U14 happy path 走 selectFile 分支）；
+// 拒绝分支由 useMarkdownInteractions-fallback.test.ts 专门覆盖（mockRejectedValue → searchModal）。
+const mockFileRead = vi.fn().mockResolvedValue({ content: '', truncated: false })
+vi.mock('@/api/domains/file', () => ({
+  read: (...args: unknown[]) => mockFileRead(...args),
+  tree: vi.fn(),
+  expand: vi.fn(),
+}))
+// useMarkdownInteractions 还引入 useSearchModal（file.read 失败 fallback 用）；U14 happy path
+// 不触发，stub 掉避免真实单例状态污染。
+vi.mock('@/composables/features/useSearchModal', () => ({
+  useSearchModal: () => ({ open: vi.fn(), close: vi.fn(), toggle: vi.fn(), isOpen: { value: false }, query: { value: '' } }),
 }))
 
 // useFileSearch + fileSearchStore stub（裸 basename 识别 + 歧义反查数据源，测 segment 分发时不参与）
@@ -106,6 +121,9 @@ describe('MarkdownRenderer（segments 模式）', () => {
     mockSelectFile.mockReset()
     mockDrawerOpen.mockReset()
     mockOpenExternal.mockClear()
+    // file.read 默认解析成功（U14 happy path）；个别用例可覆盖为 rejected 测 fallback（见 fallback 测试套件）
+    mockFileRead.mockReset()
+    mockFileRead.mockResolvedValue({ content: '', truncated: false })
     vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
   })
 
@@ -183,6 +201,10 @@ describe('MarkdownRenderer（segments 模式）', () => {
     await nextTick()
     await nextTick()
     await wrapper.find('.md-filepath').trigger('click')
+    // W4 起，含/路径 + sessionId → useMarkdownInteractions 先 fileApi.read 预检查（mock 解析成功），
+    // selectFile + drawer.open 在 .then 微任务里调用 → 需 flushPromises 等待。
+    await flushPromises()
+    expect(mockFileRead).toHaveBeenCalledWith(path, 's1')
     expect(mockSelectFile).toHaveBeenCalledWith(path)
     expect(mockDrawerOpen).toHaveBeenCalledWith('detail')
   })

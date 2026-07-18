@@ -18,7 +18,7 @@ import SessionItem from '@/components/sidebar/SessionItem.vue'
 import Panel from '@/components/panel/Panel.vue'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { useSessionDerivations, invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { DOT_CLASS } from '@/composables/logic/sessionStatus'
 import type { SessionSummary } from '@xyz-agent/shared'
 
@@ -59,7 +59,13 @@ function mountPanel(sessionId: string | null) {
   })
 }
 
-beforeEach(() => setActivePinia(createPinia()))
+beforeEach(() => {
+  setActivePinia(createPinia())
+  // useSessionDerivations 的 statusCache 是模块级（同 id 复用 ComputedRef），跨测试残留。
+  // 各用例新建独立 pinia，但缓存仍持有上个用例的 chat/session store 引用（已随旧 pinia 失活），
+  // 导致 derivedStatus 复用陈旧闭包。每个用例前清空缓存，保证派生绑定当前 pinia 的 store。
+  invalidateStatusCache()
+})
 
 describe('E1: 提交后空窗期 pending 态（核心 bug 回归）', () => {
   it('addPendingSend 后 isActive=true → derivedStatus=pending，渲染 ArrowUpCircle 图标', () => {

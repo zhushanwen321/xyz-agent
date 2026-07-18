@@ -31,6 +31,8 @@ vi.mock('@/api', () => ({
     onSkillDirs: vi.fn(() => () => {}),
     onAgentDirs: vi.fn(() => () => {}),
     onDefaults: vi.fn(() => () => {}),
+    // FR-4/FR-5 system prompt config：useSettings.init 会订阅 onSystemPrompt（PR #87 新增）
+    onSystemPrompt: vi.fn(() => () => {}),
   },
   model: {
     onModels: vi.fn((cb: (models: ModelInfo[]) => void) => {

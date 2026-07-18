@@ -1,10 +1,12 @@
 /**
- * useSidebar session.list 订阅单测（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）。
+ * useSidebar config.sessions 订阅单测（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）。
  *
  * 覆盖：
- * - session.list 广播 → session store setGroups 更新列表（不重载历史）
+ * - config.sessions 广播 → session store setGroups 更新列表（不重载历史）
  * - 多实例 refCount 去重：N 次 useSidebar() 只注册 1 个 handler，一次广播只触发 1 次 setGroups
  * - 全部 effect scope 释放后监听取消（onScopeDispose 收尾），广播不再更新
+ *
+ * 注：WS 消息类型原为 session.list，PR #87 D1 重构重命名为 config.sessions（useSidebar 同步订阅 config.sessions）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/useSidebar-session-list.test.ts
  */
@@ -42,12 +44,12 @@ function makeGroups(): SessionGroup[] {
   return [{ cwd: '/proj', sessions: [makeSummary('s1')] }]
 }
 
-/** 模拟 runtime broadcastSessionList：广播一条 session.list ServerMessage */
+/** 模拟 runtime broadcastSessionList：广播一条 config.sessions ServerMessage（PR #87 D1：session.list → config.sessions 重命名） */
 function broadcastSessionList(groups: SessionGroup[]): void {
-  events.dispatchGlobal({ type: 'session.list', payload: { groups } })
+  events.dispatchGlobal({ type: 'config.sessions', payload: { groups } })
 }
 
-it('session.list 广播经 useSidebar 订阅更新 session store', () => {
+it('config.sessions 广播经 useSidebar 订阅更新 session store', () => {
   const scope = effectScope()
   scope.run(() => useSidebar())
   const store = useSessionStore()

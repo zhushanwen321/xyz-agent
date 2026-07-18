@@ -66,12 +66,15 @@ describe('useFileSearch.setupInvalidation', () => {
     const sidRef = ref('s1')
     const unwatch = setupInvalidation(sidRef)
 
-    // 模拟 agent 改文件：往 chatStore 注入含 fileChanges 的 assistant message
-    chatStore.messages.set('s1', [
+    // 模拟 agent 改文件：往 chatStore 注入含 fileChanges 的 assistant message。
+    // 必须用 setMessages（commitMessages 不可变写：新 Map → set → 赋值 .value）——
+    // W1 shallowRef 后，直接 messages.value.set 的 Map mutation 不触发响应式，
+    // setupInvalidation 的 watch 收不到变更。
+    chatStore.setMessages('s1', [
       { role: 'assistant', content: 'done', fileChanges: [{ filePath: 'src/a.ts', changeType: 'edit' }] },
     ] as never)
 
-    await nextTick() // 触发 Vue watch（ref<Map>.set 在 Vue 3 触发响应式）
+    await nextTick() // 触发 Vue watch（shallowRef .value 整体替换触发响应式）
     // 缓存被失效（G9：删缓存不重拉）
     expect(store.get('s1')).toBeUndefined()
     // 未自动重拉（load 未被触发）
@@ -92,8 +95,8 @@ describe('useFileSearch.setupInvalidation', () => {
     await load('s1')
     expect(store.get('s1')).toHaveLength(1)
 
-    // 触发失效
-    chatStore.messages.set('s1', [
+    // 触发失效（setMessages 走 commitMessages 不可变写，触发 shallowRef 响应式）
+    chatStore.setMessages('s1', [
       { role: 'assistant', content: 'done', fileChanges: [{ filePath: 'x.ts', changeType: 'edit' }] },
     ] as never)
     await nextTick()

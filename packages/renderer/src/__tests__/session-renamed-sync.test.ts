@@ -21,6 +21,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
+import { textToSegments } from '@xyz-agent/shared'
 
 type StreamCb = (msg: { type: string; payload: Record<string, unknown> }) => void
 
@@ -68,7 +69,7 @@ describe('session.renamed 事件 → store label 同步', () => {
     })
     const chat = useChat()
     // send 触发 ensureStreamSubscription，注册回调（mock 捕获）
-    await chat.send('s1', '触发订阅')
+    await chat.send('s1', textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
     // 模拟 runtime 推送 session.renamed
@@ -89,7 +90,7 @@ describe('session.renamed 事件 → store label 同步', () => {
       tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send('s2', '触发订阅')
+    await chat.send('s2', textToSegments('触发订阅'))
 
     streamCbHolder.current!({ type: 'session.renamed', payload: { sessionId: 's2', name: '' } })
 
@@ -108,7 +109,7 @@ describe('session.renamed 事件 → store label 同步', () => {
       tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send('s3', '触发订阅')
+    await chat.send('s3', textToSegments('触发订阅'))
 
     // event-adapter 对 event.name 为 undefined 时 payload.name 也为 undefined
     streamCbHolder.current!({ type: 'session.renamed', payload: { sessionId: 's3' } })

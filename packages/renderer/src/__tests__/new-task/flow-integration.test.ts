@@ -31,6 +31,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { textToSegments } from '@xyz-agent/shared'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 
 // 可控依赖：测试按需让 create/pickDirectory/chat.send pending/resolve/reject
@@ -57,7 +58,15 @@ const chatMock = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api', () => ({
-  session: { create: createCtrl.create, remove: createCtrl.remove },
+  session: {
+    create: createCtrl.create,
+    remove: createCtrl.remove,
+    // PR #87：submitFirstMessage 现调 sessionApi.getCommands（兜底拉取 slash 命令）；
+    // loadSubagents/loadWorkflows 也在首发路径内。给空返回避免 unhandled rejection。
+    getCommands: vi.fn().mockResolvedValue({ commands: [] }),
+    getSubagents: vi.fn().mockResolvedValue([]),
+    getWorkflows: vi.fn().mockResolvedValue([]),
+  },
   // submitFirstMessage → useFileTree.loadTree 调 fileApi.tree/gitApi.status（Promise.allSettled）；
   // 给空返回避免 unhandled rejection
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
@@ -250,8 +259,8 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     // navigation push chat view
     expect(navigation.current.view).toBe('chat')
     expect(navigation.current.sessionId).toBe('new-1')
-    // chat.send 被调用（显式 sid + trimmed）
-    expect(chatMock.send).toHaveBeenCalledWith('new-1', 'hello world')
+    // chat.send 被调用（显式 sid + trimmed 转 Segment[]，ADR-0037）
+    expect(chatMock.send).toHaveBeenCalledWith('new-1', textToSegments('hello world'))
     expect(flow.state.value).toBe('completed')
   })
 
