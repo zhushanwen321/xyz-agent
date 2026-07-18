@@ -9,24 +9,33 @@
   <div class="relative flex min-h-0 flex-1 flex-col">
     <div
       ref="scrollEl"
-      class="message-stream flex-1 overflow-y-auto"
-      @scroll.passive="onScroll"
+      class="message-stream relative flex-1 overflow-y-auto"
+      @scroll.passive="handleScroll"
     >
-    <!-- contentEl：虚拟滚动 spacer，高度=totalHeight 撑出滚动条。
+    <!-- 空态欢迎语（G2-004）：独立于虚拟列表 spacer，作为 scrollEl 直接子节点撑满视口。
+         contentEl 在空会话时 height=0（totalHeight=0），若空态放其内部 absolute inset-0 会随之塌陷。 -->
+    <div v-if="renderItems.length === 0" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+      <Sparkles class="size-6 text-accent opacity-70" />
+      <p class="text-[13px] text-muted">{{ t('panel.message.startConversation') }}</p>
+    </div>
+    <!-- contentEl：虚拟滚动 spacer，高度=totalHeight+topOffset 撑出滚动条。
          useChatScroll 的 ResizeObserver 观测它（totalHeight 变化→末项增高→触发 scrollToBottom）。
-         可见 items 用 absolute 定位到各自 offset，视口外不挂载（虚拟化核心）。 -->
-    <div ref="contentEl" class="relative px-5 py-[18px]" :style="{ height: totalHeight + 'px' }">
-      <!-- W4 H4：加载更多历史入口（非虚拟化，置顶固定） -->
-      <div v-if="showLoadMore && renderItems.length > 0" class="flex justify-center py-2">
+         可见 items 用 absolute 定位到各自 offset（+ topOffset 预留顶部 load-more 空间），视口外不挂载（虚拟化核心）。 -->
+    <div ref="contentEl" class="relative px-5 py-[18px]" :style="{ height: totalHeight + topOffset + 'px' }">
+      <!-- W4 H4：加载更多历史入口（abs 定位 top=0，所有 turn offset 加 topOffset 预留空间防遮挡） -->
+      <div
+        v-if="showLoadMore && renderItems.length > 0"
+        class="absolute left-5 right-5 top-0 flex justify-center py-2"
+      >
         <Button variant="ghost" size="sm" :disabled="loadingMore" data-testid="load-more-history" @click="handleLoadMore">
           <Loader2 v-if="loadingMore" class="mr-1 size-3 animate-spin" />
           <ChevronUp v-else class="mr-1 size-3" />
           {{ loadingMore ? t('common.loading') : t('panel.message.loadMore') }}
         </Button>
       </div>
-      <!-- 虚拟化：只渲染 visibleRange 内的 items，absolute 定位到各自 offset -->
+      <!-- 虚拟化：只渲染 visibleRange 内的 items，absolute 定位到各自 offset + topOffset -->
       <template v-for="vi in visibleItems" :key="vi.key">
-        <div class="absolute left-5 right-5" :style="{ top: offsetOf(vi.idx) + 'px' }">
+        <div class="absolute left-5 right-5" :style="{ top: offsetOf(vi.idx) + topOffset + 'px' }">
           <Turn
             v-if="vi.item.kind === 'turn'"
             :turn="vi.item.turn"
@@ -46,11 +55,11 @@
       </template>
 
       <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
-           非虚拟化，absolute 定位到列表末尾。 -->
+           非虚拟化，absolute 定位到列表末尾（+ topOffset）。 -->
       <div
         v-if="isCompacting"
         class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 py-1"
-        :style="{ top: totalHeight + 'px' }"
+        :style="{ top: totalHeight + topOffset + 'px' }"
       >
         <span class="h-px flex-1 bg-border" />
         <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
@@ -58,20 +67,14 @@
         <span class="h-px flex-1 bg-border" />
       </div>
 
-      <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾） -->
+      <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + topOffset） -->
       <div
         v-if="isDispatching && !hasWorkingTurn"
         class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[12px] text-muted"
-        :style="{ top: (isCompacting ? totalHeight + 28 : totalHeight) + 'px' }"
+        :style="{ top: (isCompacting ? totalHeight + 28 : totalHeight) + topOffset + 'px' }"
       >
         <Loader2 class="size-3 animate-spin text-accent" />
         <span>{{ t('panel.message.dispatching') }}</span>
-      </div>
-
-      <!-- 空态欢迎语（G2-004，spacer height=0 时居中显示） -->
-      <div v-if="renderItems.length === 0" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
-        <Sparkles class="size-6 text-accent opacity-70" />
-        <p class="text-[13px] text-muted">{{ t('panel.message.startConversation') }}</p>
       </div>
     </div>
     </div>
@@ -184,6 +187,8 @@ const renderItems = computed(() => toRenderItems(currentMessages.value, forceWor
 const ESTIMATED_TURN_HEIGHT = 200
 /** 虚拟滚动上下 buffer turn 数（快速滚动时预渲染视口外的 turn，防白屏） */
 const VIRTUAL_BUFFER_TURNS = 2
+/** load-more 按钮预留高度（按钮 + py-2 padding，所有 turn offset 加此值防 abs 定位的按钮遮挡首 turn） */
+const LOAD_MORE_RESERVED_HEIGHT = 44
 
 const virtualList = useVirtualTurnList({
   items: () => renderItems.value,
@@ -192,6 +197,15 @@ const virtualList = useVirtualTurnList({
   buffer: () => VIRTUAL_BUFFER_TURNS,
 })
 const { totalHeight, visibleRange, offsetOf } = virtualList
+
+/**
+ * load-more 按钮占的顶部预留高度：显示 load-more 且有 turns 时为 LOAD_MORE_RESERVED_HEIGHT，
+ * 否则 0。所有 turn 的 abs 定位 top = offsetOf(idx) + topOffset，load-more 按钮 abs 定位 top=0，
+ * 两者在垂直方向不重叠（修复 load-more 被首条 turn 遮挡的 BLOCKER）。
+ */
+const topOffset = computed(() =>
+  showLoadMore.value && renderItems.value.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0,
+)
 
 /** 可见项 { idx, item, key } 数组（末项钉扎保证流式末项恒在窗口内）。预计算 key 避免 template :key 里调函数致 vue-tsc 误报 unused */
 const visibleItems = computed(() => {
@@ -243,6 +257,29 @@ const lastRenderTurn = computed(() => {
  * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
  */
 const { scrollEl, contentEl, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
+
+/**
+ * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），
+ * virtualList.onScrollUpdate 把 DOM scrollTop/clientHeight 同步进响应式 ref 驱动
+ * visibleRange 失效重算（纯滚动场景下窗口跟随收敛，修复 liveComputed 假 computed 的 BLOCKER）。
+ */
+function handleScroll(): void {
+  onScroll()
+  virtualList.onScrollUpdate()
+}
+
+/**
+ * scrollEl 挂载后立即同步一次 scrollTop/viewportHeight：virtualList 的 visibleRange 是
+ * 真 computed，初始 scrollTop/viewportHeight ref 均为 0，需读 DOM 真值写入 ref 才能让
+ * 窗口基于真实视口定位（否则首次渲染窗口按 viewportHeight=0 算，仅末项钉扎撑场）。
+ */
+watch(
+  scrollEl,
+  (el) => {
+    if (el) virtualList.onScrollUpdate()
+  },
+  { immediate: true },
+)
 
 /**
  * 首次挂载强制滚到底（force=true 绕过 guard）。

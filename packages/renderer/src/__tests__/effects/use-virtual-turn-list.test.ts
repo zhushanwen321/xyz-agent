@@ -15,8 +15,8 @@
  *
  * [红灯说明] useVirtualTurnList 尚未实现，import 会失败 → 测试红灯。W1 实现后转绿。
  */
-import { describe, it, expect, vi } from 'vitest'
-import { effectScope, nextTick, type Ref } from 'vue'
+import { describe, it, expect } from 'vitest'
+import { effectScope, nextTick, shallowRef, triggerRef } from 'vue'
 import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import type { RenderItem } from '@/composables/logic/messageTurns'
 
@@ -66,20 +66,26 @@ async function setup(opts: {
   viewportHeight?: number
   buffer?: number
 }) {
-  const items = opts.items ?? makeItems(20)
+  // items 用 shallowRef 包裹：真 computed（totalHeight/visibleRange/layout）依赖 items()，
+  // 测试对数组做 splice（模拟 truncateFrom / 每 token 重建）后需 triggerRef 触发失效，
+  // 否则 computed 不知数组内容变了（生产侧 renderItems 是真 computed，重建即失效，无需此处理）。
+  const itemsRef = shallowRef(opts.items ?? makeItems(20))
   const scope = effectScope()
   const scrollEl = mockScrollEl(opts.scrollTop ?? 0, opts.viewportHeight ?? 600)
   let state!: ReturnType<typeof useVirtualTurnList>
   scope.run(() => {
     state = useVirtualTurnList({
-      items: () => items,
+      items: () => itemsRef.value,
       scrollEl: () => scrollEl,
       estimatedHeight: () => 200,
       buffer: () => opts.buffer ?? 1,
     })
   })
+  // 同步初始 scrollTop/viewportHeight 进响应式 ref：visibleRange 是真 computed，
+  // 需 onScrollUpdate 把 DOM 的 scrollTop/clientHeight 写入 ref 才能基于真实视口算窗口。
+  state.onScrollUpdate()
   await nextTick()
-  return { state, scope, scrollEl, items }
+  return { state, scope, scrollEl, items: itemsRef.value, itemsRef }
 }
 
 // ── computeWindow 二分查找定位 ──────────────────────────────────────
@@ -127,11 +133,13 @@ describe('useVirtualTurnList · heights/offsets（AC-3, SR1 首消息 id 键）'
 
   it('SR1: 用首消息 id 键非 t-index——renderItems 重建数组身份后同键高度保留', async () => {
     const items = makeItems(5)
-    const { state } = await setup({ items, scrollTop: 0, viewportHeight: 600 })
+    const { state, itemsRef } = await setup({ items, scrollTop: 0, viewportHeight: 600 })
     state.reportHeight('user-k1', 300)
     await nextTick()
-    // 模拟 commitMessages 每 token 重建数组身份（新数组对象，同内容）
-    items.splice(0, items.length, ...makeItems(5))
+    // 模拟 commitMessages 每 token 重建数组身份（新数组对象，同内容）。
+    // 生产侧 renderItems 是真 computed 重建即触发；测试用 shallowRef，splice 后手动 triggerRef。
+    itemsRef.value.splice(0, itemsRef.value.length, ...makeItems(5))
+    triggerRef(itemsRef)
     await nextTick()
     // 同首消息 id（user-k1）高度应保留 300，不回退为估算 200
     expect(state.totalHeight.value).toBe(1100) // 300 + 4*200
@@ -139,17 +147,39 @@ describe('useVirtualTurnList · heights/offsets（AC-3, SR1 首消息 id 键）'
 
   it('truncateFrom 后被移除 turn 的高度失效（首消息 id 不在新 items 自然清除）', async () => {
     const items = makeItems(5)
-    const { state } = await setup({ items, scrollTop: 0, viewportHeight: 600 })
+    const { state, itemsRef } = await setup({ items, scrollTop: 0, viewportHeight: 600 })
     state.reportHeight('user-k1', 300)
     state.reportHeight('user-k3', 500)
     await nextTick()
     // totalHeight = 300 + 200 + 500 + 200 + 200 = 1400
     expect(state.totalHeight.value).toBe(1400)
     // truncate：移除后 3 个 turn（k3,k4,k5），只留前 2 个（k1,k2）
-    items.splice(2) // 只留前 2 项
+    // 生产侧 renderItems 是真 computed（truncateFrom→currentMessages 变→renderItems 重算即失效）；
+    // 测试用 shallowRef，splice 后手动 triggerRef 通知 computed 重算。
+    itemsRef.value.splice(2) // 只留前 2 项
+    triggerRef(itemsRef)
     await nextTick()
     // totalHeight = 300 + 200 = 500（k3 的 500 已失效，不在新 items）
     expect(state.totalHeight.value).toBe(500)
+  })
+})
+
+// ── offsets 前缀和定位（offsetOf） ───────────────────────────────────
+
+describe('useVirtualTurnList · offsetOf 前缀和定位', () => {
+  it('offsetOf(i) 返回 turn i 的顶部偏移（前缀和，随实测高度更新）', async () => {
+    const { state } = await setup({ items: makeItems(5), scrollTop: 0, viewportHeight: 600 })
+    // 初始全估算 200：offsets=[0,200,400,600,800]
+    expect(state.offsetOf(0)).toBe(0)
+    expect(state.offsetOf(1)).toBe(200)
+    expect(state.offsetOf(2)).toBe(400)
+    // 上报 turn1（makeItems 第 2 项，key=user-k2）实测 300，后续 offset 偏移
+    state.reportHeight('user-k2', 300)
+    await nextTick()
+    // offsets=[0,200,500,700,900]——turn0 高度不变，turn1 之后整体后移 100
+    expect(state.offsetOf(1)).toBe(200) // turn0 高 200 不变
+    expect(state.offsetOf(2)).toBe(500) // 200 + 300
+    expect(state.offsetOf(3)).toBe(700) // 500 + 200
   })
 })
 
@@ -206,25 +236,44 @@ describe('useVirtualTurnList · editing 钉扎（SR5）', () => {
 // ── 空态（SR12/INVAR-9） ─────────────────────────────────────────────
 
 describe('useVirtualTurnList · 空态（SR12, INVAR-9）', () => {
-  it('renderItems 为空时 totalHeight=0（不得 NaN/负值）', async () => {
+  it('renderItems 为空时 totalHeight=0 + visibleRange={0,0}（不得 NaN/负值）', async () => {
     const { state } = await setup({ items: [], scrollTop: 0, viewportHeight: 600 })
     expect(state.totalHeight.value).toBe(0)
     expect(Number.isFinite(state.totalHeight.value)).toBe(true)
+    // visibleRange 空态早返回 {0,0}，不得 NaN/越界（防窗口计算对空数组二分错乱）
+    expect(state.visibleRange.value).toEqual({ startIndex: 0, endIndex: 0 })
   })
 })
 
 // ── session 切换重置（SR10/INVAR-8） ─────────────────────────────────
 
 describe('useVirtualTurnList · session 切换重置（SR10, INVAR-8）', () => {
-  it('resetSession 后 heights 清空，totalHeight 重算（防不同 session 残留错位）', async () => {
-    const { state } = await setup({ items: makeItems(5), scrollTop: 0, viewportHeight: 600 })
+  it('resetSession 后 heights Map 真被清空（非仅 totalHeight 重算）——视口上方 report 走 estimated 基准', async () => {
+    // scrollTop=2000，turn0 在视口上方（offsets[0]=0，turnBottom=200 <= 2000），命中 SR4 视口锚定补偿分支。
+    // scrollAdjustDelta = h - old；old 取自 heights Map（无则 estimated=200）。
+    // 通过比较「reset 前后同 key 同高度的 delta」区分 Map 是否清空：
+    //   - Map 清空：old 回到 estimated(200)，delta=400-200=200
+    //   - Map 残留：old=旧实测(400)，delta=400-400=0
+    const { state } = await setup({ items: makeItems(20), scrollTop: 2000, viewportHeight: 600 })
+
+    // 首次上报 turn0 = 300：old=estimated(200) → delta=100
     state.reportHeight('user-k1', 300)
     await nextTick()
-    expect(state.totalHeight.value).toBe(1100)
-    // 切 session：重置
+    expect(state.scrollAdjustDelta.value).toBe(100)
+
+    // 再次上报 turn0 = 400：old=300（Map 已有）→ delta=100
+    state.reportHeight('user-k1', 400)
+    await nextTick()
+    expect(state.scrollAdjustDelta.value).toBe(100)
+
+    // resetSession：heights Map 应清空（SR10/INVAR-8）
     state.resetSession()
     await nextTick()
-    // 重置后全估算
-    expect(state.totalHeight.value).toBe(1000) // 5*200
+
+    // 重新上报 turn0 = 400：Map 清空后 old 回到 estimated(200) → delta=200
+    // 若 Map 未清空：old=400 → delta=0。此断言能真正区分 Map 是否清空。
+    state.reportHeight('user-k1', 400)
+    await nextTick()
+    expect(state.scrollAdjustDelta.value).toBe(200)
   })
 })

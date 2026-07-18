@@ -9,13 +9,13 @@
     Output Text 中间/收尾拆分（draft §4）：多 assistant 回合，非最后一条 content 折进 trace，
     仅最后一条作收尾 summary 恒显。
   -->
-  <div ref="rootEl" class="flex flex-col gap-3.5">
+  <div ref="rootEl" class="flex flex-col gap-3.5 pb-3.5">
     <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
     <div v-if="turn.user" class="group/user flex flex-col items-end gap-1">
       <!-- 编辑态：编辑后 fork 新会话 -->
       <div
         v-if="isEditingThisUser"
-        class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_rgba(79,142,247,0.18)]"
+        class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_color-mix(in_oklch,var(--accent)_22%,transparent)]"
       >
         <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
         <div class="mt-1.5 flex items-center justify-between px-1">
@@ -182,7 +182,7 @@
       <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
         <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
           <Block
-            v-for="(blk, bIdx) in traceBlocks(assistant, aIdx)"
+            v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]"
             :key="`${assistant.id}-${blk.kind}-${bIdx}`"
             :type="blk.kind"
             :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
@@ -273,7 +273,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
-import type { ThinkingBlock, ToolCall, Message, Segment } from '@xyz-agent/shared'
+import type { ThinkingBlock, ToolCall, Segment } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
@@ -475,22 +475,20 @@ const summaryText = computed(() => {
 const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
 
 /**
- * 取某条 assistant 在 trace 内应渲染的有序块（draft §4：按真实时序）。
+ * trace 内每个 assistant 的有序块（缓存，避免 v-for 内每次 render 重算）。
  * - 末位 assistant：始终跳过 text 块（text 在底部 summary 位渲染，streaming 带 cursor / complete 终态），
  *   trace 只保留 thinking/tool 过程。
  * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留）。
  * 消除停止时 text 从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
+ * streaming 时每 token 触发 re-render，computed 缓存避免对每个 assistant 重跑 expandAssistantBlocks。
  */
-function traceBlocks(msg: Message, idx: number): OrderedBlock[] {
-  const blocks = expandAssistantBlocks(msg)
-  if (idx === lastAssistantIdx.value) {
-    return blocks.filter((b) => b.kind !== 'text')
-  }
-  return blocks
-}
-
-/**
- * streaming 光标已移到 trace 末尾独立元素（见模板 streaming-tail），
- * 不再按块判定。保留 lastAssistantIdx 供 traceBlocks 的 complete 态跳过末位 text 使用。
- */
+const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
+  return props.turn.assistants.map((a, i) => {
+    const blocks = expandAssistantBlocks(a)
+    if (i === lastAssistantIdx.value) {
+      return blocks.filter((b) => b.kind !== 'text')
+    }
+    return blocks
+  })
+})
 </script>

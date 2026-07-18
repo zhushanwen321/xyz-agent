@@ -12,18 +12,19 @@
  * - editing 钉扎：pinEditing(idx) 后 startIndex 不超过 idx（SR5）
  *
  * ── computeWindow 派生性（INVAR-1a）─────────────────────────────
- * 窗口只依赖 (scrollTop, viewportHeight, offsets, buffer) 这些标量，不依赖 renderItems
- * 的数组身份。renderItems 每 token 重建数组（新对象）本身不触发窗口重算——窗口随
- * scrollTop/heights 变化而变。
+ * 窗口依赖 (scrollTop, viewportHeight, offsets, buffer)，其中 scrollTop/viewportHeight
+ * 由 onScrollUpdate 写入响应式 ref（scroll 事件回调内调用），offsets 来自 layout
+ * computed（依赖 heights ref + renderItems）。纯滚动场景（messages/heights 不变、只有
+ * scrollTop 变）也能触发 visibleRange 失效重算 → 窗口跟随滚动收敛。
  *
- * ── 非响应式 items 适配 ────────────────────────────────────────
- * 测试与部分调用方通过 getter 传入**普通数组**（非 ref/reactive），对其做 splice
- * （truncateFrom / 每 token 重建）Vue 响应式无法感知。故 totalHeight/visibleRange 采用
- * 「每次 .value 访问重读 getter」的 live ref：普通数组 splice 后下次访问即得新值。
- * 生产侧 renderItems 为真正的 computed（MessageStream.vue），live ref 在其 effect
- * 重新运行时同样能读到最新值——响应式不回退。
+ * ── 响应式追踪链路 ──────────────────────────────────────────────
+ * - heights 是 ref（Map），reportHeight 内 triggerRef(heights) 触发依赖失效。
+ * - scrollTop/viewportHeight 是 ref，onScrollUpdate 写入触发依赖失效。
+ * - layout 是真 computed：内部访问 allEntries()（调 items()→读 renderItems.value，追踪
+ *   renderItems 这个真 computed）+ heightForId()（读 heights.value，被 triggerRef 失效）。
+ * - totalHeight/visibleRange 是真 computed，共享 layout 实例（避免重复 O(n)）。
  */
-import { ref, triggerRef, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, triggerRef, type ComputedRef, type Ref } from 'vue'
 import type { RenderItem } from '@/composables/logic/messageTurns'
 
 /** composable 入参：全部 getter，供调用方传 ref/computed/普通值 */
@@ -49,24 +50,16 @@ export interface VisibleRange {
  * - turn → 首消息 id（turn.user?.id ?? turn.assistants[0]?.id），truncateFrom 后被移除 turn 的 id 自然失效（SR1/D7）
  * - system → s-${message.id}，system 消息（compactionSummary/branchSummary/bashExecution）也参与虚拟化，
  *   不能丢弃（否则从 DOM 消失）。system 高度由 RO 上报（SystemNotice 内部也接 registry）或用估算。
- */
-function itemKey(item: RenderItem): string | null {
-  if (item.kind === 'turn') {
-    return item.turn.user?.id ?? item.turn.assistants[0]?.id ?? null
-  }
-  // system 项：用 s-${message.id} 作键
-  return item.message.id ? `s-${item.message.id}` : null
-}
-
-/**
- * 「活计算 ref」：每次 .value 访问都重跑 fn。
  *
- * 用途：当数据源是普通数组（非响应式）时，computed 会缓存旧值无法感知 splice；
- * live ref 每次 access 重读 getter，保证普通数组变更后立即得到最新结果。
- * 对真正的响应式源（ref/computed）也能正确取值——其依赖在消费方 effect 内被追踪。
+ * null 兜底为 `idx-${数组下标}` / `s-idx-${数组下标}`：itemKey 永不返回 null（防 DOM 仍渲染但 offset
+ * 错位）。保留 null 类型签名以兼容未来扩展。
  */
-function liveComputed<T>(fn: () => T): ComputedRef<T> {
-  return { get value(): T { return fn() } } as unknown as ComputedRef<T>
+function itemKey(item: RenderItem, idx: number): string | null {
+  if (item.kind === 'turn') {
+    return item.turn.user?.id ?? item.turn.assistants[0]?.id ?? `idx-${idx}`
+  }
+  // system 项：用 s-${message.id} 作键；无 id 时兜底 s-idx-${idx}（永不返回 null）
+  return item.message.id ? `s-${item.message.id}` : `s-idx-${idx}`
 }
 
 export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
@@ -82,6 +75,25 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
   /** 视口锚定补偿量：reportHeight 时若该 turn 在视口上方则设为 measured-旧值 */
   const scrollAdjustDelta: Ref<number> = ref(0)
 
+  /**
+   * 响应式 scrollTop/viewportHeight：由 onScrollUpdate（调用方在 scroll 事件回调内调）
+   * 写入，驱动 visibleRange 在纯滚动场景下失效重算（DOM scrollTop 本身非 reactive）。
+   * 初始 0；scrollEl 挂载后调用方应立即调一次 onScrollUpdate 同步真值。
+   */
+  const scrollTop = ref(0)
+  const viewportHeight = ref(0)
+
+  /**
+   * scroll 事件同步入口：调用方在 scroll handler 内调用，读取 DOM scrollTop/clientHeight
+   * 写入响应式 ref，触发 visibleRange 失效重算。scrollEl 不存在时 no-op。
+   */
+  function onScrollUpdate(): void {
+    const el = scrollEl()
+    if (!el) return
+    scrollTop.value = el.scrollTop
+    viewportHeight.value = el.clientHeight
+  }
+
   /** 取某 turn 的当前高度：实测优先，否则估算 */
   function heightForId(id: string): number {
     const measured = heights.value.get(id)
@@ -92,26 +104,25 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
    * 取参与虚拟滚动的所有项（turn + system，不丢弃 system 消息）+ 对应键。
    * system 消息（compactionSummary/branchSummary/bashExecution/bgNotify）也占高度，
    * 必须纳入 offset 计算和窗口判定，否则虚拟化后从 DOM 消失。
+   * itemKey 带数组下标做兜底（永不返回 null），但保留 null 类型签名兼容未来扩展。
    */
   function allEntries(): Array<{ id: string; item: RenderItem }> {
     const out: Array<{ id: string; item: RenderItem }> = []
-    for (const item of items()) {
-      const id = itemKey(item)
-      if (id !== null) out.push({ id, item })
+    const list = items()
+    for (let i = 0; i < list.length; i++) {
+      const id = itemKey(list[i], i)
+      if (id !== null) out.push({ id, item: list[i] })
     }
     return out
   }
 
   /**
-   * 计算各 turn 的 offset（前缀和）与总高（INVAR-3）。
-   * 每帧调用——非缓存，因 heights/items 随时变；规模通常 <1000，O(n) 可接受。
-   * 返回 { ids, offsets, total }：offsets[i]=sum(heights[0..i-1])，total=sum(全部)。
+   * layout 真 computed：各 turn 的 offset（前缀和）与总高（INVAR-3）。
+   * 依赖：allEntries()→items()→renderItems.value（真 computed，被追踪）+
+   * heightForId()→heights.value（ref，被 triggerRef 失效）。heights/items 变化自动重算。
+   * totalHeight/visibleRange/offsetOf 共享此实例，避免重复 O(n) computeLayout 调用。
    */
-  function computeLayout(): {
-    ids: string[]
-    offsets: number[]
-    total: number
-    } {
+  const layout: ComputedRef<{ ids: string[]; offsets: number[]; total: number }> = computed(() => {
     const entries = allEntries()
     const n = entries.length
     const ids: string[] = new Array(n)
@@ -123,22 +134,21 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
       total += heightForId(entries[i].id)
     }
     return { ids, offsets, total }
-  }
+  })
 
   /** totalHeight：撑 spacer 高度。空态=0（SR12/INVAR-9，reduce 初值 0 防 NaN） */
-  const totalHeight: ComputedRef<number> = liveComputed(() => {
-    const { total } = computeLayout()
+  const totalHeight: ComputedRef<number> = computed(() => {
+    const { total } = layout.value
     // Number.isFinite 兜底：极端情况下（NaN/Infinity）归零，绝不让 spacer NaN/负
     return Number.isFinite(total) && total >= 0 ? total : 0
   })
 
   /**
    * 取某 index 项的 offset（top 偏移），供 template absolute 定位（W3）。
-   * liveComputed 每次 access 重读 computeLayout，保证 heights 变化后 offset 最新。
+   * 读 layout computed（heights/items 变化后自动最新）。
    */
   function offsetOf(idx: number): number {
-    const { offsets } = computeLayout()
-    return offsets[idx] ?? 0
+    return layout.value.offsets[idx] ?? 0
   }
 
   /**
@@ -152,21 +162,20 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
    * 3. 末项钉扎（SR3/INVAR-10）：endIndex = max(computedEnd, lastIndex)
    * 4. editing 钉扎（SR5）：startIndex = min(startIndex, editingPinIndex) 若已钉
    */
-  const visibleRange: ComputedRef<VisibleRange> = liveComputed(() => {
-    const el = scrollEl()
-    const scrollTop = el?.scrollTop ?? 0
-    const viewportHeight = el?.clientHeight ?? 0
+  const visibleRange: ComputedRef<VisibleRange> = computed(() => {
+    const st = scrollTop.value
+    const vh = viewportHeight.value
     const buf = buffer()
     const estH = estimatedHeight()
     const bufferHeight = buf * estH
 
-    const { ids, offsets } = computeLayout()
+    const { ids, offsets } = layout.value
     const n = ids.length
     if (n === 0) return { startIndex: 0, endIndex: 0 }
 
-    // 1. 二分：首个 i 使 offsets[i] + heightForId(ids[i]) > scrollTop - bufferHeight
-    //    即 turn i 的底边超过 (scrollTop - bufferHeight) —— 它是首个需渲染的 turn
-    const top = scrollTop - bufferHeight
+    // 1. 二分：首个 i 使 offsets[i] + heightForId(ids[i]) > st - bufferHeight
+    //    即 turn i 的底边超过 (st - bufferHeight) —— 它是首个需渲染的 turn
+    const top = st - bufferHeight
     let lo = 0
     let hi = n - 1
     let startIndex = 0
@@ -181,8 +190,8 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
       }
     }
 
-    // 2. 从 startIndex 向后累加到 sum > scrollTop + viewportHeight + bufferHeight
-    const bottom = scrollTop + viewportHeight + bufferHeight
+    // 2. 从 startIndex 向后累加到 sum > st + vh + bufferHeight
+    const bottom = st + vh + bufferHeight
     let acc = offsets[startIndex]
     let computedEnd = startIndex
     for (let i = startIndex; i < n; i++) {
@@ -215,22 +224,20 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
   function reportHeight(key: string, h: number): void {
     const old = heights.value.get(key) ?? estimatedHeight()
     // 判定该 turn 是否在视口上方：用当前 offsets 找它的位置
-    const el = scrollEl()
-    const scrollTop = el?.scrollTop ?? 0
-    const { ids, offsets } = computeLayout()
+    const st = scrollTop.value
+    const { ids, offsets } = layout.value
     const idx = ids.indexOf(key)
     let delta = 0
     if (idx >= 0) {
       const turnBottom = offsets[idx] + old
-      if (turnBottom <= scrollTop) {
+      if (turnBottom <= st) {
         // 视口上方 turn：实测与估算/旧值之差需补偿（防用户所见内容跳）
         delta = h - old
       }
     }
     // 写入实测高度（增量更新单个键，Map 引用不变）
     heights.value.set(key, h)
-    // 通知任何把 heights 当真 ref 依赖的消费者（liveComputed 每次 access 自取最新，
-    // 不依赖此触发；保留是为兼容未来改成真 computed 的消费路径）
+    // 触发依赖失效：layout/totalHeight/visibleRange 内访问 heights.value，会被此处 trigger
     triggerRef(heights)
     // 暴露补偿量（每次 reportHeight 覆盖；调用方读取后可自行清零）
     scrollAdjustDelta.value = delta
@@ -256,5 +263,6 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     scrollAdjustDelta,
     pinEditing,
     resetSession,
+    onScrollUpdate,
   }
 }
