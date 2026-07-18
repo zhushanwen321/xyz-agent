@@ -575,9 +575,16 @@ export interface ReplyPayloadMap {
   'file.read': ServerMessageMap['file.read:result']
   'file.search': ServerMessageMap['file.search:result']
   'file.tree': ServerMessageMap['file.tree:result']
+  // file.write.*（D-018 实现延后，runtime 回 implemented:false 骨架 reply；reply type 见 :result）
+  'file.write.create': ServerMessageMap['file.write.create:result']
+  'file.write.rename': ServerMessageMap['file.write.rename:result']
+  'file.write.delete': ServerMessageMap['file.write.delete:result']
   'file.tree.expand': ServerMessageMap['file.tree.expand:result']
   'git.diff': ServerMessageMap['git.diff:result']
   'git.status': ServerMessageMap['git.status:result']
+  // model.list：runtime reply 'model.list' { models }（settings-message-handler.ts:128）。
+  //   当前 renderer 当订阅型消费（onGlobalType），但协议层是 RPC 型，此处登记保证 SSOT 完整。
+  'model.list': ServerMessageMap['model.list']
   'session.create': ServerMessageMap['session.created']
   'session.fork': ServerMessageMap['session.created']
   'session.getAgentCallFilePath': ServerMessageMap['session.agentCallFilePath']
@@ -603,6 +610,7 @@ export interface ReplyPayloadMap {
   'config.setProvider': void      // reply config.providerUpdated
   'config.setSkill': void         // reply config.skillUpdated
   'config.setSkillDirs': void     // reply config.skillDirs
+  'config.setToolPermissions': void // reply config.providerUpdated（settings-message-handler.ts:65）
   'extension.cancelInstall': void // reply extension.installCancelled
   'extension.finishInstall': void // reply config.extensions
   'extension.install': void       // reply config.extensions
