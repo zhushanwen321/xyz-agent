@@ -108,9 +108,11 @@ function ensureStreamSubscription(
       case 'session.renamed': {
         // pi 改写 session 名（session_info_changed → session.renamed，见 event-adapter.ts）。
         // guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
-        const payload = msg.payload as { sessionId?: string; name?: string }
-        if (payload.sessionId && payload.name) {
-          sessionStore.updateLabel(payload.sessionId, payload.name)
+        // 用闭包 sid（对称 compacting/compacted handler）：session.* 走 session 级通道
+        // (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。
+        const payload = msg.payload as { name?: string }
+        if (payload.name) {
+          sessionStore.updateLabel(sid, payload.name)
         }
         break
       }

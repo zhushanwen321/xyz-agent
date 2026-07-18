@@ -13,7 +13,7 @@
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -120,6 +120,22 @@ export const useSubagentStore = defineStore('subagent', () => {
   /** per-panel streaming 订阅取消函数 */
   const panelStreamUnsub = new Map<string, () => void>()
 
+  // 防御性清理：正常由 Panel.vue onUnmounted→stopStream 清理，
+  // 此处防止非 Panel 组件调 subscribeStream 后未清。
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      for (const unsub of panelStreamUnsub.values()) {
+        try {
+          unsub()
+        // eslint-disable-next-line taste/no-silent-catch -- 作用域销毁兜底清理：unsub 失败不应阻断其余清理，仅记录便于诊断
+        } catch (e) {
+          console.warn('[subagent-store] panel stream unsub on scope dispose failed:', e)
+        }
+      }
+      panelStreamUnsub.clear()
+    })
+  }
+
   // ── getters ──
   /** 本 panel 当前是否在查看 subagent 对话流 */
   function isViewing(panelId: string): boolean {
@@ -199,8 +215,11 @@ export const useSubagentStore = defineStore('subagent', () => {
   function subscribeSubagentPush(sessionId: string): () => void {
     return events.on(sessionId, (msg) => {
       if (msg.type !== 'session.subagents') return
-      const payload = msg.payload as { subagents: SubagentRecord[] }
-      records.value = payload.subagents
+      const payload = msg.payload as { subagents?: unknown }
+      // 运行时守卫：runtime 契约稳定但仍校验，避免字段漂移时静默覆盖 records。
+      if (Array.isArray(payload.subagents)) {
+        records.value = payload.subagents as SubagentRecord[]
+      }
     })
   }
 

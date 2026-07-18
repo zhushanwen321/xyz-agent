@@ -91,6 +91,9 @@ export function useComposerInjection(
       if (sessionId.value !== sessionStore.active?.id) return false
       const cwd = resolveCwdForNewSession()
       await flow.startFlow(cwd)
+      // 竞态防护：await 期间若 pendingInjection 被新请求覆盖（用户连续点注入），
+      // 不再 routeToLanding（新请求会自己走 watch 流程）。引用相等 = 未被覆盖。
+      if (store.pendingInjection !== req) return true
       store.routeToLanding()
       return true
     }
@@ -111,9 +114,12 @@ export function useComposerInjection(
 
   watch(
     () => store.pendingInjection,
-    async (req) => {
+    (req) => {
       if (!req) return
-      await consume(req)
+      // consume 内部应自处理错误；此处 catch 兜底防 watch 回调 reject 漏成 unhandled rejection。
+      void consume(req).catch(() => {
+        /* consume 内部应自处理错误 */
+      })
     },
   )
 
@@ -129,6 +135,8 @@ export function useComposerInjection(
     // 仅消费 target=current 的遗留请求（target=new 的阶段一由 session composer 触发，
     // landing composer 首次挂载若看到原始 target=new 说明阶段一未执行，不在此触发 startFlow）
     if (req.target !== 'current') return
-    void consume(req)
+    consume(req).catch(() => {
+      /* consume 内部应自处理错误，此处兜底防 unhandled rejection */
+    })
   })
 }
