@@ -63,6 +63,8 @@ function readConfig(dataDir) {
     return defaults
   }
   // Merge defensively — every field has its own default.
+  // replace 字段仅防御性解析保持 config 结构完整，不参与本 hook 逻辑——
+  // replace 走 --system-prompt CLI（ADR-0038），hook 只处理 append。
   const replaceRaw = parsed.replace && typeof parsed.replace === 'object' ? parsed.replace : {}
   const appendRaw = parsed.append && typeof parsed.append === 'object' ? parsed.append : {}
   return {
@@ -92,8 +94,13 @@ export default function (pi) {
       }
 
       return newPrompt === event.systemPrompt ? undefined : { systemPrompt: newPrompt }
-    } catch {
-      // Never block the agent loop.
+    } catch (err) {
+      // Never block the agent loop. 落盘诊断（pi stderr 经 rpc-client 写入 logs/pi-*.jsonl），
+      // 不泄露配置内容，只记错误类型与消息摘要。
+      try {
+        const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+        process.stderr.write(`[xyz-system-prompt-extension] before_agent_start hook failed: ${msg}\n`)
+      } catch { /* stderr 写失败也忽略 */ }
       return undefined
     }
   })

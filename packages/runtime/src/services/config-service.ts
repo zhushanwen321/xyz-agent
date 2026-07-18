@@ -11,14 +11,12 @@ import { dirname, join } from 'node:path'
 
 import {
   SYSTEM_PROMPT_MAX_LENGTH,
-} from '@xyz-agent/shared'
-import type {
-  ProviderInfo,
-  SkillInfo,
-  AgentInfo,
-  ScannedSkillInfo,
-  ScannedAgentInfo,
-  SystemPromptConfig,
+  type ProviderInfo,
+  type SkillInfo,
+  type AgentInfo,
+  type ScannedSkillInfo,
+  type ScannedAgentInfo,
+  type SystemPromptConfig,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -50,6 +48,18 @@ const FORCED_PROJECT_AGENT_DIR = '.xyz-agent/agents'
 const forcedGlobalSkillDir = (): string => join(getConfigDir(), 'skills')
 /** 全局强制 agent 目录：<configDir>/agents（configDir = getConfigDir()，读 env）。 */
 const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
+
+/** JSON 序列化缩进（saveAppConfig / setSystemPromptConfig 的 atomicWrite 共用）。 */
+const JSON_INDENT = 2
+
+/**
+ * 生成 atomicWrite 的唯一 tmp 后缀（时间戳 + 随机串），避免并发写入撞固定 .tmp 文件。
+ * saveAppConfig / setSystemPromptConfig 共用。
+ */
+function uniqueTmpSuffix(): string {
+  // eslint-disable-next-line no-magic-numbers -- base36 radix + slice 掉 "0." 前缀（惯用唯一串生成）
+  return `${Date.now()}_${Math.random().toString(36).slice(2)}`
+}
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -209,11 +219,10 @@ export class ConfigService implements IConfigService {
       const cd = this.configStore.getConfigDir()
       if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
       // 用唯一 tmp 后缀避免并发 saveAppConfig 撞固定 .tmp 文件（同 setSystemPromptConfig）。
-      // eslint-disable-next-line no-magic-numbers -- standard JSON indent
       atomicWrite(
         this.appConfigPath(),
-        JSON.stringify(config, null, 2),
-        `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        JSON.stringify(config, null, JSON_INDENT),
+        uniqueTmpSuffix(),
       )
     // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
     } catch (e) {
@@ -499,7 +508,6 @@ export class ConfigService implements IConfigService {
     let raw: unknown
     try {
       raw = JSON.parse(readFileSync(cp, 'utf-8'))
-    // eslint-disable-next-line taste/no-silent-catch -- intentional: JSON 解析失败 → corrupted=true + 默认配置
     } catch {
       return { config: this.defaultSystemPromptConfig(), corrupted: true }
     }
@@ -510,19 +518,25 @@ export class ConfigService implements IConfigService {
     if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
       return {
         ok: false,
-        // eslint-disable-next-line no-magic-numbers -- 与 SYSTEM_PROMPT_MAX_LENGTH 对齐的错误文案
         error: `replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
+      }
+    }
+    // append 同样校验长度：append 虽不走 argv（无 Windows 32k 限制），但无上限会导致
+    // 每轮拼进 systemPrompt 的 token 失控。复用同一上限保持双卡 UX 一致。
+    if (config.append.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+      return {
+        ok: false,
+        error: `append prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
       }
     }
     const cd = this.configStore.getConfigDir()
     if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
     // 用唯一 tmp 后缀避免并发 setSystemPromptConfig 撞固定 .tmp 文件
     // （两次并发写入会共用同一 system-prompt.json.tmp，后写的 writeFileSync 覆盖前者数据）。
-    // eslint-disable-next-line no-magic-numbers -- standard JSON indent
     atomicWrite(
       this.systemPromptPath(),
-      JSON.stringify(config, null, 2),
-      `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      JSON.stringify(config, null, JSON_INDENT),
+      uniqueTmpSuffix(),
     )
     return { ok: true }
   }

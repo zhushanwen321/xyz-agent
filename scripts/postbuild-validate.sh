@@ -151,6 +151,14 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} xyz-system-prompt-extension.js 缺失（检查 electron-builder.yml from 路径）"
             FAILED=1
         fi
+        # extraResources: bin/xyz-settings CLI（tsup 打包的 cli.cjs，pi Skill 引用）
+        # 与两个 extension.js 同模式校验（electron-builder from 错误只警告不失败）。
+        if [ -f "$APP_PATH/Contents/Resources/bin/xyz-settings" ]; then
+            echo -e "  ${GREEN}✓${NC} bin/xyz-settings in Resources"
+        else
+            echo -e "  ${RED}✗${NC} bin/xyz-settings 缺失（检查 electron-builder.yml from 路径 dist/runtime/cli.cjs）"
+            FAILED=1
+        fi
     else
         echo -e "  ${YELLOW}⚠ 未找到 .app 目录${NC}"
     fi

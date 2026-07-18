@@ -113,6 +113,8 @@ function runPi(piBin, extPath) {
     })
 
     // Safety timeout — never hang the script.
+    // SIGKILL 后由 child.on('close') 异步 resolve Promise（内核 SIGKILL 后会派发 close），
+    // 此处不额外 await；close 前的 stdout/stderr 缓冲可能被截断（best-effort 诊断工具可接受）。
     const timer = setTimeout(() => {
       try { child.kill('SIGKILL') } catch (_) { /* ignore */ }
     }, 15000)
