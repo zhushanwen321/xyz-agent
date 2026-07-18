@@ -39,7 +39,7 @@
  *
  * 依赖方向：process-control → node:child_process + safe-env + electron(app)
  */
-import { type ChildProcess, spawn, execSync } from 'node:child_process'
+import { type ChildProcess, spawn, execFileSync } from 'node:child_process'
 import { createWriteStream, existsSync, mkdirSync, type WriteStream } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
@@ -71,13 +71,27 @@ function getStderrSink(): WriteStream | null {
     mkdirSync(logsDir, { recursive: true })
     stderrSink = createWriteStream(path.join(logsDir, 'electron-runtime-stderr.log'), { flags: 'a' })
   } catch {
-    // eslint-disable-next-line taste/no-silent-catch -- 兜底日志失败不应阻断主流程
     stderrSink = null
   }
   return stderrSink
 }
 
-/** M6: 非阻塞延迟（替代 execSync('sleep') 同步阻塞）。 */
+/**
+ * 显式 flush stderrSink（app quit 时调用，确保 WriteStream 内部 buffer 落盘）。
+ *
+ * 正常 stop 路径走 stopRuntimeProcess→done() 已 end()；但若 app 在 runtime 自然退出后
+ * 通过 before-quit 直接 quit（未触发 stop 链，或 stop 链已 resolve 但 end 后又有新 spawn 写入），
+ * sink 的 buffer 可能未 flush 到磁盘，丢失原生崩溃期排查证据。
+ *
+ * 幂等：done() 已 end() 后 stderrSink=null，再次调用为 no-op。
+ */
+export function flushStderrSink(): void {
+  if (stderrSink) {
+    // eslint-disable-next-line taste/no-silent-catch -- flush 失败不应阻断退出
+    try { stderrSink.end() } catch { /* end 失败不阻断退出 */ }
+    stderrSink = null
+  }
+}
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -110,6 +124,12 @@ export const SPAWN_ERROR_EXIT_CODE = -1
  * @throws runtime 入口文件不存在
  */
 export function spawnRuntimeProcess(port: number, onExit?: (code: number | null) => void): ChildProcess {
+  // Windows 显式拒绝：本模块全部依赖 Unix 命令（pgrep/SIGTERM/SIGKILL/bin/bash），
+  // 静默失败会让 runtime 子进程成僵尸（PPID 变 1、无人 kill）。显式 throw 让上层 fail-fast。
+  // TODO: 抽象 platform 层（见文件头 TODO(Windows)）。
+  if (process.platform === 'win32') {
+    throw new Error('runtime supervisor not yet supported on Windows (see TODO in process-control.ts)')
+  }
   // 根据打包状态选择 runtime 启动方式
   const projectRoot = app.getAppPath()
   let cmd: string
@@ -195,12 +215,16 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
   } else {
     const sink = getStderrSink()
     if (sink) {
+      // W6 背压保护：累计写入字节超 1MB 后丢弃（pi 崩溃循环高频 stderr 时不撑爆磁盘）。
+      // 用累计字节计数器替代 sink.writableLength（后者只反映 WriteStream 内部 buffer，
+      // 不反映 OS 级 page cache + 已 drain 部分，保护效果有限）。stderr 仅用于排查证据，
+      // 部分丢失可接受。计数器在 spawnRuntimeProcess 函数作用域内，每次 spawn 重置。
+      // eslint-disable-next-line no-magic-numbers -- 1MB stderr 背压上限（非业务常量）
+      const WRITE_BUFFER_LIMIT = 1024 * 1024
+      let stderrBytes = 0
       child.stderr?.on('data', (data: Buffer) => {
-        // 非阻塞 append。W6 背压保护：sink.write 返回 false 时 WriteStream 内部会 buffer，
-        // 若持续背压（pi 崩溃循环高频 stderr）buffer 会无界增长 → OOM。设 1MB 上限：
-        // 超限则丢弃本批（防 OOM，stderr 仅用于排查证据，部分丢失可接受）。
-        const WRITE_BUFFER_LIMIT = 1024 * 1024 // eslint-disable-line no-magic-numbers -- 1MB backpressure cap
-        if (sink.writableLength > WRITE_BUFFER_LIMIT) return
+        if (stderrBytes > WRITE_BUFFER_LIMIT) return
+        stderrBytes += data.length
         sink.write(data)
       })
     }
@@ -230,9 +254,11 @@ export function getDescendantPids(parentPid: number): number[] {
   while (queue.length > 0) {
     const pid = queue.shift()!
     try {
-      const output = execSync(`pgrep -P ${pid} 2>/dev/null || true`, {
+      // execFileSync 不经 shell（pid 已是 number 无注入风险，但更稳健——避免 shell 解析/路径差异）。
+      // 原实现用 `pgrep -P ${pid} 2>/dev/null || true` + shell:true 吞 stderr 和 exit code 1；
+      // execFileSync 不支持 shell 重定向，需在 catch 里处理 pgrep 无匹配时 exit code 1。
+      const output = execFileSync('pgrep', ['-P', String(pid)], {
         encoding: 'utf-8',
-        shell: '/bin/bash',
         stdio: ['pipe', 'pipe', 'pipe'],
       }).trim()
       if (output) {
@@ -240,9 +266,15 @@ export function getDescendantPids(parentPid: number): number[] {
         result.push(...childPids)
         queue.push(...childPids)
       }
-    // eslint-disable-next-line taste/no-silent-catch -- pgrep 失败（进程已退出）非关键
     } catch (e) {
-      console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
+      // pgrep 无子进程时 exit code 1（execFileSync 会抛）属正常，静默 continue；
+      // ENOENT（pgrep 不存在，极少见）也不阻断 stop 流程；其他真实错误才 warn。
+      // execFileSync 抛出的错误对象带 status（exit code）/ code（spawn 错误如 ENOENT）字段。
+      const status = (e && typeof e === 'object' && 'status' in e) ? e.status : undefined
+      const code = (e && typeof e === 'object' && 'code' in e) ? e.code : undefined
+      if (status !== 1 && code !== 'ENOENT') {
+        console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
+      }
     }
   }
   return result
@@ -317,6 +349,7 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
       // 防止 app.quit() 前 WriteStream 内部 buffer 未落盘丢失崩溃期证据。
       // done() 可能在 exit/timeout 两条路径触发，end() 幂等（第二次 no-op）。
       if (stderrSink) {
+        // eslint-disable-next-line taste/no-silent-catch -- end 失败不阻断退出（stderr 仅排查证据）
         try { stderrSink.end() } catch { /* end 失败不阻断退出 */ }
         stderrSink = null
       }

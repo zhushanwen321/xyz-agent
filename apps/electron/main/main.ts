@@ -66,6 +66,7 @@ import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
+import { flushStderrSink } from './supervisor/process-control.js'
 import { expandLocalFilePath } from './utils/path.js'
 
 // ── PATH 修复（GUI 启动时补全用户级 bin 目录）──────────────────────
@@ -214,6 +215,9 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   ctx.runtime.stop().finally(() => {
     shortcuts.unregisterAll()
+    // W-Proc2：runtime 停止后显式 flush stderrSink，确保打包模式下 WriteStream 内部
+    // buffer 落盘（否则崩溃期 stderr 证据可能随进程退出丢失）。幂等：stop 链已 end 则 no-op。
+    flushStderrSink()
     app.quit()
   })
 })
