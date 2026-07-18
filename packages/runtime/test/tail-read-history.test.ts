@@ -31,7 +31,7 @@ import type { ISessionStore } from '../src/services/ports/session.js'
 function makePassthroughStore(): ISessionStore {
   return {
     scanSessions: () => [],
-    convertHistory: (piMessages) => piMessages as never,
+    convertHistory: (piMessages: unknown[]) => piMessages as never,
   } as unknown as ISessionStore
 }
 

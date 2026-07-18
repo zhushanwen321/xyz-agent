@@ -20,7 +20,11 @@ const fsMock = vi.hoisted(() => ({ existsSync: vi.fn(() => true) }))
 vi.mock('node:fs', () => ({
   existsSync: fsMock.existsSync,
   readdirSync: vi.fn(),
-  readFileSync: vi.fn(),
+  readFileSync: vi.fn(() => ''),
+  // B7: session-lifecycle 直读/写 JSONL（stripSessionEnd 已删），需 mock 这些同步 fs 操作
+  writeFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
+  mkdirSync: vi.fn(),
 }))
 
 // node:fs/promises: unlink 是本次修复的核心观察对象
@@ -96,6 +100,7 @@ function makeLifecycle(opts: MakeOpts = {}) {
   const svc = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
+    getReplaceSystemPrompt: vi.fn(() => undefined),
     findScannedSession: vi.fn(() => ({
       id: 'src', filePath: '/fake/src.jsonl', cwd: tmpdir(), name: 'src',
       lastModified: 1, timestamp: '', size: 0,

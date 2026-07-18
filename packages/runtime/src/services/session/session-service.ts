@@ -125,11 +125,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
       // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
       if (session.sessionFilePath) {
-        this.sessionStore.persistSessionEnd(
-          session.sessionFilePath,
-          'stopped',
-          `Process exited (code: ${code})`,
-        )
+        // W2-5：已有成功终态（done）或 error 终态则不覆盖为 stopped。
+        // 正常 turn 完成时 handleTurnEndSideEffects 已写 'done'；随后 pi 进程正常退出触发本回调，
+        // 此处若再写 'stopped' 会覆盖已写入的 'done'。进程退出是正常结束的副作用，非用户中止。
+        // 用 extractSessionOutcome 读 sidecar 当前终态：done/error 表示已记录终态，跳过；其余（null/stopped）继续写。
+        const existingOutcome = this.sessionStore.extractSessionOutcome(session.sessionFilePath)
+        if (existingOutcome !== 'done' && existingOutcome !== 'error') {
+          this.sessionStore.persistSessionEnd(
+            session.sessionFilePath,
+            'stopped',
+            `Process exited (code: ${code})`,
+          )
+        }
       }
 
       // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
@@ -272,7 +279,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }
     // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
     // ±TIMESTAMP_TOLERANCE_MS 容差：JSONL 时间戳精度（毫秒）与 Date 序列化舍入可能差 1ms
-    const TIMESTAMP_TOLERANCE_MS = 2 // eslint-disable-line no-magic-numbers -- 容差常量，非业务数字
+    const TIMESTAMP_TOLERANCE_MS = 2 // 容差常量，非业务数字
     if (messageTimestamp != null) {
       for (const e of msgEntries) {
         const msg = e.message as Record<string, unknown>

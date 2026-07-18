@@ -651,6 +651,13 @@ describe('RuntimeServer: extension timeout mechanism', () => {
     mockSendRaw.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
+    // 超时路径调 getRpcClient(sessionId) → client.sendExtensionUiResponse。
+    // SessionService 用 {} 占位构造，getRpcClient 返回 undefined → mock 返回带 sendExtensionUiResponse 的假 client。
+    vi.spyOn(sessionService, 'getRpcClient').mockReturnValue({
+      sendCommand: mockSendCommand,
+      sendExtensionUiResponse: mockSendExtensionUiResponse,
+      sendRaw: mockSendRaw,
+    } as never)
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
@@ -668,34 +675,13 @@ describe('RuntimeServer: extension timeout mechanism', () => {
     vi.useRealTimers()
   })
 
-  it('triggers default response after timeout (confirm → confirmed:false)', () => {
-    server.registerExtensionTimeout('sess-1', 'req-timeout-1', 'confirm')
-
-    vi.advanceTimersByTime(300_000)
-
-    // W2 收口后超时走 sendExtensionUiResponse(id, false, 'confirm')（pi 鸭子类型 {id, confirmed:false}）
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-1', false, 'confirm')
-  })
-
-  it('triggers default response after timeout (select → cancelled)', () => {
-    server.registerExtensionTimeout('sess-1', 'req-timeout-sel', 'select')
-
-    vi.advanceTimersByTime(300_000)
-
-    // 非 confirm 超时 → sendExtensionUiResponse(id, null, method)（pi 鸭子类型 {id, cancelled:true}）
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-sel', null, 'select')
-  })
-
-  it('triggers default response after timeout (input → cancelled)', () => {
-    server.registerExtensionTimeout('sess-1', 'req-timeout-inp', 'input')
-
-    vi.advanceTimersByTime(300_000)
-
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-inp', null, 'input')
-  })
+  // [2026-07-16] extension UI 超时已取消（confirm/select/input/editor/ask-user 统一不超时，
+  // block 等待用户决策）。原「triggers default response after timeout」× 3 + 「clears all
+  // timeouts for a session」共 4 个用例断言超时触发 sendExtensionUiResponse，行为已移除，
+  // 测试随之删除。clearForSession 的 session 级清理由 bridge timeout exclusion 用例覆盖。
 
   it('does NOT trigger timeout if cleared by ui_response', () => {
-    server.registerExtensionTimeout('sess-1', 'req-clear-1', 'confirm')
+    server.registerExtensionTimeout('sess-1', 'req-clear-1', 'confirm', {})
 
     server.clearExtensionTimeout('req-clear-1')
 
@@ -704,22 +690,8 @@ describe('RuntimeServer: extension timeout mechanism', () => {
     expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
   })
 
-  it('clears all timeouts for a session', () => {
-    server.registerExtensionTimeout('sess-cleanup', 'req-a', 'confirm')
-    server.registerExtensionTimeout('sess-cleanup', 'req-b', 'select')
-    server.registerExtensionTimeout('sess-other', 'req-c', 'confirm')
-
-    server.clearExtensionTimeoutsForSession('sess-cleanup')
-
-    vi.advanceTimersByTime(300_000)
-
-    // 只有 sess-other/req-c 未被清理 → 触发一次（默认 confirm → false）
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-c', false, 'confirm')
-  })
-
   it('notify method does not register timeout', () => {
-    server.registerExtensionTimeout('sess-1', 'req-notify', 'notify')
+    server.registerExtensionTimeout('sess-1', 'req-notify', 'notify', {})
 
     vi.advanceTimersByTime(300_000)
 

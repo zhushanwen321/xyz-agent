@@ -82,6 +82,12 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
   const meta = { type: 'session_end', outcome, reason, timestamp: new Date().toISOString() }
   try {
     writeFileSync(filePath + '.meta.json', JSON.stringify(meta))
+    // W2-2：sidecar 写入后主动失效该文件的 meta 缓存。
+    // scanSessionMeta 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不会让 JSONL 的 stat 变化，
+    // 导致命中缓存返回旧 outcome（如 session 被 abort/崩溃 → persistSessionEnd 写 stopped 到 sidecar，
+    // 但 JSONL 未变 → 下次 scan 命中缓存 → 返回 stale outcome=null，侧栏显示 idle 而非 stopped）。
+    // 删除缓存条目后，下次 scan 重新读 sidecar 拿到新 outcome。
+    sessionMetaCache.delete(filePath)
   // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
   } catch (e) {
     console.error(`[session-file-utils] persistSessionEnd failed: ${filePath}`, e)

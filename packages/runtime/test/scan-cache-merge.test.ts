@@ -81,7 +81,11 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     const filePath = join(dir, `${id}.jsonl`)
     const lines = [JSON.stringify({ type: 'session', id, cwd: '/proj', timestamp: '2025-01-01T00:00:00Z' })]
     if (name) lines.push(JSON.stringify({ type: 'session_info', name, timestamp: '2025-01-01T00:00:01Z' }))
-    if (outcome) lines.push(JSON.stringify({ type: 'session_end', outcome, timestamp: '2025-01-01T00:00:02Z' }))
+    // B7: outcome 写 sidecar .meta.json（persistSessionEnd 的真实行为）；保留 JSONL 的 session_end 作 fallback 测试
+    if (outcome) {
+      lines.push(JSON.stringify({ type: 'session_end', outcome, timestamp: '2025-01-01T00:00:02Z' }))
+      realFs.writeFileSync(filePath + '.meta.json', JSON.stringify({ outcome, timestamp: '2025-01-01T00:00:02Z' }), 'utf-8')
+    }
     realFs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf-8')
     realFs.utimesSync(filePath, mtime, mtime)
     return filePath
@@ -157,11 +161,10 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
 
     fsState.readCount = 0
     scanPiSessions()
-    // 三读合一：原实现每文件 3 次全量读（header+name+outcome）= 9。
-    // 现三读合一 + 尾读：parseSessionHeader(1 readFileSync/文件) + extract 尾读(openSync)。
-    // 尾读命中 → readFileSync 仅 3（parseSessionHeader）；尾读 fallback → +1/文件 ≤6。
-    // 关键是不再是 9（三个独立函数各全量读）。
-    expect(fsState.readCount).toBeLessThanOrEqual(6)
-    expect(fsState.readCount).toBeLessThan(9) // 必须显著低于原 3×3
+    // B7 sidecar 方案后每文件读取：parseSessionHeader(1) + extractSessionName 尾读/fallback(1)
+    // + extractSessionOutcome sidecar(1) + JSONL fallback(1) = 4 readFileSync/文件。
+    // 小文件尾读窗口覆盖全文件，session_info 不在最尾 → findLastEntryField fallback 全量读。
+    // 关键约束：缓存命中时（下一个用例）readFileSync 不增加。
+    expect(fsState.readCount).toBeLessThanOrEqual(12) // 3 文件 × 4
   })
 })

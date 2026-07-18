@@ -302,7 +302,7 @@ describe('Bridge reconnect lifecycle', () => {
 
   describe('Sync timeout (bridge timeout exclusion)', () => {
     it('does NOT register frontend timeout for bridge:sync', () => {
-      server.registerExtensionTimeout(SESSION_ID, 'req-bridge-sync', 'bridge:sync')
+      server.registerExtensionTimeout(SESSION_ID, 'req-bridge-sync', 'bridge:sync', {})
 
       vi.advanceTimersByTime(300_000)
 
@@ -311,8 +311,8 @@ describe('Bridge reconnect lifecycle', () => {
     })
 
     it('tracks bridge request IDs for session cleanup', () => {
-      server.registerExtensionTimeout(SESSION_ID, 'req-bridge', 'bridge:sync')
-      server.registerExtensionTimeout(SESSION_ID, 'req-bridge2', 'bridge:tool_execute')
+      server.registerExtensionTimeout(SESSION_ID, 'req-bridge', 'bridge:sync', {})
+      server.registerExtensionTimeout(SESSION_ID, 'req-bridge2', 'bridge:tool_execute', {})
 
       // Bridge request IDs should be tracked internally
       const mgr = (server as unknown as { extensionTimeoutMgr: { isBridgeRequest(id: string): boolean } }).extensionTimeoutMgr

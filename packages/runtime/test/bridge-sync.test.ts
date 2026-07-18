@@ -405,8 +405,11 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
     vi.useFakeTimers()
     mockSendExtensionUiResponse.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
+    const ss = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
+    // 超时路径调 getRpcClient → client.sendExtensionUiResponse；mock 返回假 client。
+    vi.spyOn(ss, 'getRpcClient').mockReturnValue({ sendExtensionUiResponse: mockSendExtensionUiResponse } as never)
     server.setServices(
-      new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
+      ss,
       {} as never,
       {} as never,
       {} as never,
@@ -420,10 +423,10 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
   })
 
   it('does NOT register frontend timeout for bridge: methods', () => {
-    server.registerExtensionTimeout('sess-1', 'req-bridge-sync', 'bridge:sync')
-    server.registerExtensionTimeout('sess-1', 'req-bridge-exec', 'bridge:tool_execute')
-    server.registerExtensionTimeout('sess-1', 'req-bridge-ev', 'bridge:event')
-    server.registerExtensionTimeout('sess-1', 'req-bridge-int', 'bridge:intercept')
+    server.registerExtensionTimeout('sess-1', 'req-bridge-sync', 'bridge:sync', {})
+    server.registerExtensionTimeout('sess-1', 'req-bridge-exec', 'bridge:tool_execute', {})
+    server.registerExtensionTimeout('sess-1', 'req-bridge-ev', 'bridge:event', {})
+    server.registerExtensionTimeout('sess-1', 'req-bridge-int', 'bridge:intercept', {})
 
     // Advance time past the normal timeout duration
     vi.advanceTimersByTime(300_000)
@@ -433,22 +436,16 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
   })
 
   it('tracks bridge requestIds in bridgeRequestIds set', () => {
-    server.registerExtensionTimeout('sess-1', 'req-bridge-track', 'bridge:sync')
+    server.registerExtensionTimeout('sess-1', 'req-bridge-track', 'bridge:sync', {})
 
     // Bridge requestIds should be tracked
     const mgr = (server as unknown as { extensionTimeoutMgr: { isBridgeRequest(id: string): boolean } }).extensionTimeoutMgr
     expect(mgr.isBridgeRequest('req-bridge-track')).toBe(true)
   })
 
-  it('still registers normal timeout for non-bridge methods', () => {
-    server.registerExtensionTimeout('sess-1', 'req-confirm', 'confirm')
-
-    vi.advanceTimersByTime(300_000)
-
-    // Normal confirm should timeout after 5 minutes → sendExtensionUiResponse(id, false, 'confirm')
-    // （pi 鸭子类型：method==='confirm' → {id, confirmed:boolean}）
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-confirm', false, 'confirm')
-  })
+  // [2026-07-16] extension UI 超时已取消（confirm/select/input 等统一不超时）。
+  // 原「still registers normal timeout for non-bridge methods」断言 confirm 超时触发
+  // sendExtensionUiResponse，行为已移除，测试删除。
 })
 
 // ── Bridge extension message format validation ───────────────────

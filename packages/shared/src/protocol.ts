@@ -1,6 +1,6 @@
 // Client → Runtime message types
 
-import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig } from './provider'
+import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo } from './provider'
 import type { SessionGroup, SessionSummary } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { FileNode } from './file-tree'
@@ -478,9 +478,11 @@ export interface ServerMessageMapBase {
   // sessionId optional 对齐前端 file.ts:47 register（无 sessionId）+ rpc-type-pairing.test U1（带 sessionId 样本）。
   'file.read:result': { sessionId?: string; content: string; truncated: boolean; path: string }
   // config.scannedSkills：scanSkills reply（settings-message-handler.ts:69 reply { skills, success: true }）。
-  'config.scannedSkills': { skills: SkillInfo[]; success: boolean }
+  // skills 是扫描发现结果，形状为 ScannedSkillInfo（含 sourceType/alreadyImported），非已加载的 SkillInfo。
+  'config.scannedSkills': { skills: ScannedSkillInfo[]; success: boolean }
   // config.scannedAgents：scanAgents reply（settings-message-handler.ts:99 reply { agents, success: true }）。
-  'config.scannedAgents': { agents: AgentInfo[]; success: boolean }
+  // agents 是扫描发现结果，形状为 ScannedAgentInfo（含 sourceType/alreadyImported），非已加载的 AgentInfo。
+  'config.scannedAgents': { agents: ScannedAgentInfo[]; success: boolean }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。

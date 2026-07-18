@@ -107,7 +107,8 @@ export interface SessionInfo {
   id: string
   label: string
   cwd: string
-  status: 'active' | 'idle' | 'error' | 'dead'
+  // 与 shared/session.ts 的 SessionStatus 对齐（含 W4 新增的 'done'/'stopped' 终态）。
+  status: 'active' | 'idle' | 'error' | 'dead' | 'done' | 'stopped'
   createdAt: number
   lastActiveAt: number
 }

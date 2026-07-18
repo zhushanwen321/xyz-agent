@@ -77,6 +77,14 @@ export const useWorkflowStore = defineStore('workflow', () => {
    */
   const mainSessionAgentCalls = new Map<string, Set<string>>()
 
+  /**
+   * [W3-3] sid → running 信号延迟重试的 setTimeout id 映射。
+   * subscribeWorkflowPush 的 unsub 仅移除 WS 事件监听，不 clearTimeout。切 session 时若有在途
+   * setTimeout，500ms 后仍会触发 loadWorkflows(旧sid)，用旧 session 列表覆盖新 session。
+   * unsub 时经此 Map clearTimeout 并 delete。
+   */
+  const workflowReloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
   // ── getters ──
   /** workflow 列表计数 */
   function workflowCount(): number {
@@ -158,18 +166,32 @@ export const useWorkflowStore = defineStore('workflow', () => {
    */
   function subscribeWorkflowPush(sessionId: string): () => void {
     const sid = sessionId
-    return events.on(sessionId, (msg) => {
+    const off = events.on(sessionId, (msg) => {
       if (msg.type !== 'session.workflowUpdate') return
       // 增量信号 → 重新拉取完整列表
       void loadWorkflows(sid)
       // running 信号延迟重试：workflow-state-link 可能刚写入，首次拉取为空
       const payload = msg.payload as { update?: { status?: string } }
       if (payload.update?.status === 'running') {
-        setTimeout(() => {
+        // W3-3：用模块级 Map 跟踪 timer，去重 + 允许 unsub 时 clearTimeout（防切 session 后旧 timer 触发 loadWorkflows(旧sid)）
+        const existing = workflowReloadTimers.get(sid)
+        if (existing) clearTimeout(existing)
+        const timer = setTimeout(() => {
+          workflowReloadTimers.delete(sid)
           void loadWorkflows(sid)
         }, RUNNING_RETRY_MS)
+        workflowReloadTimers.set(sid, timer)
       }
     })
+    // unsub：移除 WS 事件监听 + 清在途的 running 重试 timer（防 500ms 后 loadWorkflows(旧sid) 覆盖新 session）
+    return () => {
+      off()
+      const t = workflowReloadTimers.get(sid)
+      if (t) {
+        clearTimeout(t)
+        workflowReloadTimers.delete(sid)
+      }
+    }
   }
 
   /** 清空 workflow 列表 + 退出所有 panel viewing 状态（两个 Map 都清） */
@@ -177,6 +199,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     records.value = []
     detailRunIdMap.value = new Map()
     agentCallMap.value = new Map()
+    // W3-2：清非响应式的 mainSessionAgentCalls（selectAgentCall 写入，useWorkflowListSync 切 session 时调本函数）
+    mainSessionAgentCalls.clear()
   }
 
   /**

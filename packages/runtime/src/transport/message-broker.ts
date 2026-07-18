@@ -70,7 +70,7 @@ export class ServerMessageBroker implements IMessageBroker {
     let payload: string
     try {
       payload = JSON.stringify(msg)
-    // eslint-disable-next-line taste/no-silent-catch -- D4: 提级后 stringify 失败影响整次广播，与"全 client 各自失败"实际等价。记录后中止本次广播，不静默
+    // D4: 提级后 stringify 失败影响整次广播，与"全 client 各自失败"实际等价。记录后中止本次广播，不静默
     } catch (e) {
       console.error('[runtime] broadcast aborted: payload serialization failed', e)
       return

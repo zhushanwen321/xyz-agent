@@ -15,6 +15,8 @@ export interface ScannedSessionMeta {
   name: string | null
   lastModified: number
   size: number
+  /** session 终态（W4，ADR 0036）；无 session_end entry（历史/未结束）→ null。 */
+  outcome: SessionOutcome | null
 }
 
 /** session 终态类型（W4，ADR 0036）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */

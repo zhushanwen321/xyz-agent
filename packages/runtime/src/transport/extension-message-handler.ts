@@ -31,6 +31,7 @@ export class ExtensionMessageHandler {
     'extension.installDir', 'extension.installGit', 'extension.finishInstall', 'extension.cancelInstall',
     'extension.recommended',
     'extension.upgrade', 'extension.setAutoUpgrade',
+    'extension.getPendingRequests',
   ]
 
   /**

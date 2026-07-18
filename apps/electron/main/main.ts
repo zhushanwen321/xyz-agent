@@ -66,6 +66,7 @@ import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
+import { expandLocalFilePath } from './utils/path.js'
 
 // ── PATH 修复（GUI 启动时补全用户级 bin 目录）──────────────────────
 // macOS LaunchServices 给 GUI 进程的 PATH 是最小值（/usr/bin:/bin:...），
@@ -73,8 +74,6 @@ import { fixPathEnv } from './supervisor/shell-env.js'
 // 完整 PATH 补全，后续 buildSafeEnv 自然传递到 pi，pi 的 bash 工具才能找到 uv 等用户 CLI。
 // 必须在 buildSafeEnv / spawn 之前执行。
 fixPathEnv()
-
-import { expandLocalFilePath } from './utils/path.js'
 
 // ── EPIPE 兜底 ───────────────────────────────────────────────────
 // concurrently/终端关闭后 pipe 断开，console 写入触发 uncaught exception
@@ -173,7 +172,9 @@ app.whenReady().then(async () => {
     const rawPath = decodeURIComponent(new URL(request.url).pathname)
     // 渲染进程无法安全展开 ~，主进程统一处理（图片 URL 可能含 ~/）
     const filePath = expandLocalFilePath(rawPath)
-    // Restrict to safe directories: project cwd, config dir, home, temp
+    // Restrict to safe directories: project cwd, config dir, home, temp.
+    // 注意：homedir() 允许读取整个家目录（含 ~/.ssh 等敏感文件）。当前渲染进程是 trusted 代码
+    // （不加载远程内容），此白名单可接受。若未来引入未沙箱 webview 或远程内容，需收窄到具体子目录。
     // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
     const sep = path.sep
     const allowedPrefixes = [app.getAppPath(), getDataDir(), homedir(), tmpdir()]

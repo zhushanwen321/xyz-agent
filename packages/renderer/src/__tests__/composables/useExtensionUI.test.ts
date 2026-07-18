@@ -29,6 +29,8 @@ vi.mock('@/api/domains/extension', () => ({
   },
   sendExtensionUIResponse: vi.fn(),
   onNotify: () => () => {},
+  // subscribe 切换 session 时拉取缓存的 pending 请求；测试默认返回空数组
+  getPendingRequests: vi.fn().mockResolvedValue([]),
 }))
 
 import { useExtensionUI } from '@/composables/useExtensionUI'

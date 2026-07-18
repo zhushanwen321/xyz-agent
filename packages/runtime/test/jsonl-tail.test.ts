@@ -43,6 +43,7 @@ describe('W1 jsonl readTailEntries', () => {
     ]
     const path = makeFile(entries)
     const result = readTailEntries(path)
+    if (!result) throw new Error('readTailEntries returned null')
     // offset=0 时无残行丢弃，全部 entry 返回
     expect(result).toHaveLength(3)
     expect(result[2]).toEqual({ type: 'session_info', name: '尾部名字' })
@@ -55,6 +56,7 @@ describe('W1 jsonl readTailEntries', () => {
     const tailEntry = { type: 'session_end', outcome: 'done' as const }
     const path = makeFile([longLine, tailEntry])
     const result = readTailEntries(path)
+    if (!result) throw new Error('readTailEntries returned null')
     // 首行残行（padding 被切断的部分）必须被丢弃，不参与 parse
     // 只返回完整的 session_end（残行要么 parse 失败被跳，要么即使侥幸 parse 成功也不应出现）
     const outcomes = result.filter((e) => (e as { type?: string }).type === 'session_end')
@@ -75,6 +77,7 @@ describe('W1 jsonl readTailEntries', () => {
     // 不应抛错（残行被丢弃，不因乱码崩溃）
     expect(() => readTailEntries(path)).not.toThrow()
     const result = readTailEntries(path)
+    if (!result) throw new Error('readTailEntries returned null')
     const found = result.find((e) => (e as { type?: string }).type === 'session_info')
     expect(found).toEqual(target)
   })

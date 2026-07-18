@@ -21,9 +21,11 @@ export function getCliPath(): string {
     return resolve(envPath)
   }
 
-  // packaged 模式：extraResources bin/xyz-settings
-  if (process.resourcesPath) {
-    const packagedPath = join(process.resourcesPath, 'bin', 'xyz-settings')
+  // packaged 模式：extraResources bin/xyz-settings。
+  // process.resourcesPath 是 Electron 注入的属性，Node 的 Process 类型不包含它 → 用 cast 安全访问。
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  if (resourcesPath) {
+    const packagedPath = join(resourcesPath, 'bin', 'xyz-settings')
     if (existsSync(packagedPath)) {
       return packagedPath
     }

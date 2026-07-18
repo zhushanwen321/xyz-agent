@@ -194,8 +194,6 @@ export class SessionLifecycle {
       // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），
       // 无需 strip。直接读 JSONL 原文件给 pi 提供历史。
       const cleaned = readFileSync(target.filePath, 'utf-8')
-      // 清理旧 sidecar（restore 后不应保留旧终态）
-      try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
       const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
       try {
@@ -204,6 +202,10 @@ export class SessionLifecycle {
         // switch 完成后清理临时文件，pi 已读入内存
         try { unlinkSync(tmpFile) } catch { void 0 }
       }
+      // W2-4：清理旧 sidecar 移到 switchSession 成功之后。
+      // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，原 session 的终态 sidecar
+      //（done/stopped）已被删 → 原会话终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
+      try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
     } catch (e) {
       // switch_session 失败时清理已创建的资源,避免子进程/监听器泄漏
       await this.safeDestroy(id)
@@ -280,8 +282,6 @@ export class SessionLifecycle {
       // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），
       // 无需 strip。直接读截断后的 JSONL 文件。
       const cleaned = readFileSync(forkedFilePath, 'utf-8')
-      // 清理旧 sidecar（fork 后不应保留旧终态）
-      try { unlinkSync(forkedFilePath + '.meta.json') } catch { void 0 }
       const tmpFile = join(tmpdir(), `xyz-fork-${forkedId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
       try {
@@ -289,6 +289,10 @@ export class SessionLifecycle {
       } finally {
         try { unlinkSync(tmpFile) } catch { void 0 }
       }
+      // W2-4：清理旧 sidecar 移到 switchSession 成功之后。
+      // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，session 的终态 sidecar
+      //（done/stopped）已被删 → 终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
+      try { unlinkSync(forkedFilePath + '.meta.json') } catch { void 0 }
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)

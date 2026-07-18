@@ -60,8 +60,10 @@ export function resetChatModuleState(): void {
   for (const [, unsub] of streamSubscriptions) {
     try {
       unsub()
-     
-    } catch { void 0 }
+    // eslint-disable-next-line taste/no-silent-catch -- 测试隔离用：unsub 失败不应阻断其余订阅清理，仅记录便于诊断
+    } catch (e) {
+      console.warn('[useChat] stream unsub failed:', e)
+    }
   }
   streamSubscriptions.clear()
   // 重置 history 截断标记

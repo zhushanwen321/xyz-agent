@@ -251,7 +251,7 @@ async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   const adapterSent: ServerMessage[] = []
   const adapter = createEventAdapter('test-session-1', (msg) => adapterSent.push(msg), {
     onExtensionUIRequest: (requestId, sid, method) => {
-      server.registerExtensionTimeout(sid, requestId, method)
+      server.registerExtensionTimeout(sid, requestId, method, {})
     },
   })
 
@@ -453,7 +453,7 @@ describe('DF-1: Extension UI 超时路径', () => {
       new ModelService(new ModelApiDiscoverer()),
     )
 
-    vi.mocked(sessionService.getRpcClient).mockReturnValue({
+    vi.spyOn(sessionService, "getRpcClient").mockReturnValue({
       sendCommand: mockSendCommand,
       sendExtensionUiResponse: mockSendExtensionUiResponse,
       sendRaw: mockSendRaw,
@@ -469,25 +469,12 @@ describe('DF-1: Extension UI 超时路径', () => {
     vi.useRealTimers()
   })
 
-  it('confirm 超时 → server 通过 sendExtensionUiResponse 发送 confirmed:false', () => {
-    server.registerExtensionTimeout('sess-1', 'req-timeout-confirm', 'confirm')
-
-    vi.advanceTimersByTime(300_000)
-
-    // W2 收口后超时走 sendExtensionUiResponse(id, false, 'confirm')（pi 鸭子类型 {id, confirmed:false}）
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-confirm', false, 'confirm')
-  })
-
-  it('select 超时 → server 通过 sendExtensionUiResponse 发送 cancelled:true', () => {
-    server.registerExtensionTimeout('sess-1', 'req-timeout-select', 'select')
-
-    vi.advanceTimersByTime(300_000)
-
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-timeout-select', null, 'select')
-  })
+  // [2026-07-16] extension UI 超时已取消（confirm/select/input 等统一不超时）。
+  // 原「confirm 超时 → sendExtensionUiResponse」「select 超时 → sendExtensionUiResponse」
+  // 2 个用例断言超时触发，行为已移除，测试删除。
 
   it('超时后 clearExtensionTimeout → 不再触发', () => {
-    server.registerExtensionTimeout('sess-1', 'req-clear-timeout', 'confirm')
+    server.registerExtensionTimeout('sess-1', 'req-clear-timeout', 'confirm', {})
     server.clearExtensionTimeout('req-clear-timeout')
 
     vi.advanceTimersByTime(300_000)
@@ -496,7 +483,7 @@ describe('DF-1: Extension UI 超时路径', () => {
   })
 
   it('notify 不注册超时 (fire-and-forget)', () => {
-    server.registerExtensionTimeout('sess-1', 'req-notify', 'notify')
+    server.registerExtensionTimeout('sess-1', 'req-notify', 'notify', {})
 
     vi.advanceTimersByTime(300_000)
 
@@ -504,55 +491,10 @@ describe('DF-1: Extension UI 超时路径', () => {
   })
 })
 
-// ── DF-1 session 删除清理超时 (fake timers) ───────────────────────
-
-describe('DF-1: session 删除清理超时', () => {
-  let server: RuntimeServer
-  let sessionService: SessionService
-
-  beforeEach(() => {
-    vi.useFakeTimers()
-    mockSendCommand.mockClear()
-    mockSendRaw.mockClear()
-    mockSendExtensionUiResponse.mockClear()
-    server = new RuntimeServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
-    server.setServices(
-      sessionService,
-      new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(new ModelApiDiscoverer()),
-    )
-
-    vi.mocked(sessionService.getRpcClient).mockReturnValue({
-      sendCommand: mockSendCommand,
-      sendExtensionUiResponse: mockSendExtensionUiResponse,
-      sendRaw: mockSendRaw,
-      onEvent: vi.fn().mockReturnValue(() => {}),
-      onExit: vi.fn(),
-      exited: false,
-      kill: vi.fn(),
-      start: vi.fn(),
-    } as never)
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('session 删除清理超时: registerTimeout → clearExtensionTimeoutsForSession → 超时不触发', () => {
-    server.registerExtensionTimeout('sess-del-1', 'req-del-a', 'confirm')
-    server.registerExtensionTimeout('sess-del-1', 'req-del-b', 'select')
-    server.registerExtensionTimeout('sess-other', 'req-del-c', 'confirm')
-
-    server.clearExtensionTimeoutsForSession('sess-del-1')
-
-    vi.advanceTimersByTime(300_000)
-
-    // sess-del-1 的超时不触发，sess-other 的仍然触发
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-    expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-del-c', false, 'confirm')
-  })
-})
+// ── DF-1 session 删除清理超时 ─────────────────────────────────────
+// [2026-07-16] extension UI 超时已取消，原 describe 的唯一用例断言
+// 「clearForSession 后 sess-other 超时仍触发」，超时行为已移除 → 整个 describe 删除。
+// clearForSession 的 session 级清理覆盖由 bridge-sync 的 bridge tracking 用例承担。
 
 // ══════════════════════════════════════════════════════════════════
 // DF-2: Extension 错误转发 (EventAdapter translate)

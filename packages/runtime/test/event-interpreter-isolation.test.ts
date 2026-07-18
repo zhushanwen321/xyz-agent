@@ -96,7 +96,8 @@ describe('EventInterpreter · W1 interpret 循环事件级隔离', () => {
 
     // turn-end 的 onTurnFinalize（复位 isGenerating）必须被触发，否则 session 永远 busy
     expect(onTurnFinalize).toHaveBeenCalledTimes(1)
-    expect(onTurnFinalize).toHaveBeenCalledWith('sid-iso')
+    // onTurnFinalize 签名 (sessionId, stopReason?) —— 正常 turn-end 路径传 stopReason
+    expect(onTurnFinalize).toHaveBeenCalledWith('sid-iso', 'end_turn')
   })
 
   // ── ISO3：turn-end 自己抛错时 onTurnFinalize 兜底复位（B2 核心） ──

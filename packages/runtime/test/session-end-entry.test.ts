@@ -44,32 +44,34 @@ describe('W4: persistSessionEnd + extractSessionOutcome round-trip（AC-3）', (
     expect(extractSessionOutcome(filePath)).toBe('stopped')
   })
 
-  it('写入的 entry 含 type=session_end + outcome + timestamp', () => {
+  it('写入的 sidecar .meta.json 含 outcome + timestamp（B7 sidecar 方案）', () => {
     persistSessionEnd(filePath, 'done')
-    const lines = readFileSync(filePath, 'utf-8').trim().split('\n')
-    const lastLine = lines[lines.length - 1]
-    const entry = JSON.parse(lastLine)
-    expect(entry.type).toBe('session_end')
-    expect(entry.outcome).toBe('done')
-    expect(entry.timestamp).toBeTruthy()
+    // B7: persistSessionEnd 写 sidecar .meta.json（不再往 JSONL append session_end）
+    const metaPath = filePath + '.meta.json'
+    expect(existsSync(metaPath)).toBe(true)
+    const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+    expect(meta.outcome).toBe('done')
+    expect(meta.timestamp).toBeTruthy()
   })
 
   it('无 session_end 的文件 → extractSessionOutcome 返回 null（AC-4 回退）', () => {
     expect(extractSessionOutcome(filePath)).toBeNull()
   })
 
-  it('append 不覆盖已有内容（session_end 在文件尾部）', () => {
+  it('sidecar 不覆盖 JSONL 原有内容（B7: 写 .meta.json，JSONL 不变）', () => {
     // 先写几条消息
     writeFileSync(filePath, JSON.stringify({ type: 'session', id: 's1', cwd: '/x', timestamp: '2026-01-01T00:00:00.000Z' }) + '\n'
       + JSON.stringify({ type: 'message', id: 'm1', message: { role: 'user', content: 'hi' }, timestamp: '2026-01-01T00:00:01.000Z' }) + '\n')
     persistSessionEnd(filePath, 'done')
+    // JSONL 内容不变（2 行），session_end 写进 sidecar
     const content = readFileSync(filePath, 'utf-8')
     const lines = content.trim().split('\n')
-    expect(lines).toHaveLength(3)
-    expect(JSON.parse(lines[2]).type).toBe('session_end')
-    // 前两条完好
+    expect(lines).toHaveLength(2)
     expect(JSON.parse(lines[0]).type).toBe('session')
     expect(JSON.parse(lines[1]).type).toBe('message')
+    // sidecar 存在且含 outcome
+    const meta = JSON.parse(readFileSync(filePath + '.meta.json', 'utf-8'))
+    expect(meta.outcome).toBe('done')
   })
 })
 

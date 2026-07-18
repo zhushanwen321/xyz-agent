@@ -14,6 +14,8 @@ import type {
   ProviderInfo,
   SkillInfo,
   AgentInfo,
+  ScannedSkillInfo,
+  ScannedAgentInfo,
   SetProviderData,
   SkillDirConfig,
   SystemPromptConfig,
@@ -29,12 +31,12 @@ export async function listProviders(): Promise<ProviderInfo[]> {
   return reply.providers
 }
 
-export async function scanSkills(sources: string[]): Promise<SkillInfo[]> {
+export async function scanSkills(sources: string[]): Promise<ScannedSkillInfo[]> {
   const reply = await command('config.scanSkills', { sources })
   return reply.skills
 }
 
-export async function scanAgents(sources: string[]): Promise<AgentInfo[]> {
+export async function scanAgents(sources: string[]): Promise<ScannedAgentInfo[]> {
   const reply = await command('config.scanAgents', { sources })
   return reply.agents
 }

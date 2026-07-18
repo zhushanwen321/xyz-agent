@@ -313,6 +313,13 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
         // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
         try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
       }
+      // 子进程树已全部 kill，stderr 不再有新数据 → flush 并关闭 sink，
+      // 防止 app.quit() 前 WriteStream 内部 buffer 未落盘丢失崩溃期证据。
+      // done() 可能在 exit/timeout 两条路径触发，end() 幂等（第二次 no-op）。
+      if (stderrSink) {
+        try { stderrSink.end() } catch { /* end 失败不阻断退出 */ }
+        stderrSink = null
+      }
       resolve()
     }
     child.once('exit', done)

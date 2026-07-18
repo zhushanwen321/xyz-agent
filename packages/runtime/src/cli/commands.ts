@@ -3,8 +3,7 @@
  * 每个命令映射一个 runtime config.* 消息，逻辑单一真值源在 ConfigService。
  */
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { getDataDir } from '@xyz-agent/shared/paths'
+import { getSettingsPath } from '../infra/pi/pi-paths.js'
 import { rpc } from './ws-client.js'
 
 // ── 参数解析 ──────────────────────────────────
@@ -78,11 +77,14 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
     case 'get-default-model': {
       // config.getProviders reply 是 { providers }，不含 defaultModel。
       // defaultModel 只通过 config.defaults 订阅推送（CLI 无订阅），故直接读 settings.json。
+      // settings.json 在 getPiAgentDir()（~/.xyz-agent/pi/agent/settings.json），由 getSettingsPath() 返回；
+      // 磁盘格式是 { defaultProvider: string, defaultModel: string } 两个独立字符串字段（见 pi-provider-store.ts updateSettingsSync）。
       try {
-        const raw = readFileSync(join(getDataDir(), 'settings.json'), 'utf-8')
-        const settings = JSON.parse(raw) as { defaultModel?: { provider: string; modelId: string } }
+        const raw = readFileSync(getSettingsPath(), 'utf-8')
+        const settings = JSON.parse(raw) as { defaultProvider?: string; defaultModel?: string }
+        const dp = settings.defaultProvider
         const dm = settings.defaultModel
-        return dm ? `${dm.provider}/${dm.modelId}` : 'not set'
+        return dp && dm ? `${dp}/${dm}` : 'not set'
       } catch {
         // settings.json 不存在或解析失败 → 未设置默认模型
         return 'not set'

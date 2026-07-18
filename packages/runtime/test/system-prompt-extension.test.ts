@@ -54,8 +54,9 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true })
 })
 
-async function loadPlugin() {
+async function loadPlugin(): Promise<(pi: unknown) => void> {
   const mod = await import(PLUGIN_PATH) as unknown as { default?: (pi: unknown) => void }
+  if (!mod.default) throw new Error('plugin default export missing')
   return mod.default
 }
 
@@ -65,7 +66,7 @@ type Handler = (event: { systemPrompt: string }) => { systemPrompt?: string } | 
 function installPlugin(factory: (pi: unknown) => void): { pi: PiLike; handler: Handler } {
   const pi: PiLike = { on: vi.fn() }
   factory(pi)
-  const call = pi.on.mock.calls.find(([name]: [string]) => name === 'before_agent_start')
+  const call = pi.on.mock.calls.find((c) => c?.[0] === 'before_agent_start')
   expect(call).toBeDefined()
   return { pi, handler: call![1] as Handler }
 }
