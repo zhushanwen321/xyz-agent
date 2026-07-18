@@ -279,7 +279,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }
     // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
     // ±TIMESTAMP_TOLERANCE_MS 容差：JSONL 时间戳精度（毫秒）与 Date 序列化舍入可能差 1ms
-    const TIMESTAMP_TOLERANCE_MS = 2 // 容差常量，非业务数字
+    // 容差常量，非业务数字（no-magic-numbers 默认对 const 初始化豁免，无需 disable）
+    const TIMESTAMP_TOLERANCE_MS = 2
     if (messageTimestamp != null) {
       for (const e of msgEntries) {
         const msg = e.message as Record<string, unknown>
@@ -617,7 +618,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
     const outcome = stopReason === 'error' ? 'error'
       : stopReason === 'aborted' ? 'stopped'
-      : 'done'
+        : 'done'
     this.persistSessionOutcome(sessionId, outcome)
   }
 

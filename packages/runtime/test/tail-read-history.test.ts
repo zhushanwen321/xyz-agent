@@ -198,4 +198,31 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
     expect(types).toContain('compactionSummary')
     expect(types).toContain('custom')
   })
+
+  it('W-Runtime2: 大文件（fileSize > TAIL_WINDOW）尾窗口含足够 turn 时 truncated=true（didFullRead=false 保守判定）', async () => {
+    // maxTurns=20 → TAIL_WINDOW = max(256KB, 20*32KB) = 640KB。要触发尾读-only 路径（不走 fallback 全量读），
+    // 需 fileSize > 640KB 且尾窗口（640KB）内 >= 20 个 turn（否则会 fallback 全量读 → didFullRead=true）。
+    // 构造：25 个 turn，每个 turn 用大 payload 撑大文件（user content 塞 ~30KB 文本），
+    // 总大小 ≈ 25 * 30KB = 750KB > 640KB。尾 640KB 窗口含尾部约 21 turn > 20 → 不 fallback。
+    const padding = 'x'.repeat(30 * 1024) // 30KB padding per user message
+    const lines: string[] = [
+      JSON.stringify({ type: 'session', id: 's1', cwd: '/proj', timestamp: '2025-01-01T00:00:00Z' }),
+    ]
+    for (let i = 0; i < 25; i++) {
+      // 自定义 turn：user message 带 padding（撑大文件），后跟 assistant + toolResult
+      lines.push(
+        JSON.stringify({ type: 'message', id: `u-${i}`, message: { role: 'user', content: `user-${i}-${padding}` } }),
+        JSON.stringify({ type: 'message', id: `a-${i}`, message: { role: 'assistant', content: `assistant-${i}`, toolCalls: [{ id: `tc-${i}`, toolName: 'read', input: {} }] } }),
+        JSON.stringify({ type: 'message', id: `tr-${i}`, message: { role: 'toolResult', toolCallId: `tc-${i}`, content: `result-${i}` } }),
+      )
+    }
+    const filePath = writeSessionFile(lines)
+
+    const result = await tailReadHistory(filePath, store, 20)
+    // W-Runtime2 核心：尾窗口只读了文件尾部（didFullRead=false），窗口外 turn 数未知，
+    // 即使尾窗口内 turn 数 >= maxTurns 也保守认定 truncated=true（宁可多显示「加载更多」也别漏）。
+    expect(result.truncated).toBe(true)
+    // 尾窗口含足够 turn，应加载 maxTurns 个 turn（每个 3 条 = 60 条）
+    expect(result.messages.length).toBe(60)
+  })
 })

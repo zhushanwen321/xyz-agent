@@ -10,7 +10,58 @@ import { readFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import type { ISessionStore } from './ports/session.js'
 import { isEnoent } from '../utils/errors.js'
+
+/** 尾读窗口默认保留的 turn 数上限（getHistoryTailFromFile / tailReadHistory 共用）。 */
+const DEFAULT_MAX_TURNS = 20
 import { parseJsonl, readTailBytes } from '../utils/jsonl.js'
+
+/**
+ * 把 JSONL entry 过滤+映射为 pi message 数组（供 convertHistory 消费）。
+ * 放行四类 entry：message / compaction / custom_message / branch_summary。
+ * branch_summary 是 pi BranchSummaryEntry（session-manager.ts:80），转 role:'branchSummary' 伪消息，
+ * 与 RPC 路径（pi get_messages 返回 role:'branchSummary'）在 convertPiHistory 汇合（规则 7.5）。
+ */
+function mapEntriesToPiMessages(entries: unknown[]): unknown[] {
+  return entries
+    .filter((e): e is Record<string, unknown> =>
+      typeof e === 'object' && e !== null && (
+        ((e as { type?: string }).type === 'message' && 'message' in e) ||
+        (e as { type?: string }).type === 'compaction' ||
+        (e as { type?: string }).type === 'custom_message' ||
+        (e as { type?: string }).type === 'branch_summary'
+      ))
+    .map((e) => {
+      if (e.type === 'compaction') {
+        return {
+          role: 'compactionSummary',
+          summary: e.summary,
+          tokensBefore: e.tokensBefore,
+          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
+        }
+      }
+      if (e.type === 'custom_message') {
+        const content = e.content
+        return {
+          role: 'custom',
+          customType: e.customType,
+          content: typeof content === 'string' ? content : '',
+          details: e.details,
+          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
+        }
+      }
+      if (e.type === 'branch_summary') {
+        return {
+          role: 'branchSummary',
+          summary: e.summary,
+          fromId: e.fromId,
+          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
+        }
+      }
+      // message entry：透传 message 体，附加 __entryId（pi JSONL entry id）供 fork 定位。
+      const msg = (e.message && typeof e.message === 'object' ? e.message : {}) as Record<string, unknown>
+      return { ...msg, __entryId: typeof e.id === 'string' ? e.id : undefined }
+    })
+}
 
 /**
  * 从 .jsonl session 文件读取消息历史。
@@ -31,7 +82,7 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
  * getHistory 的文件 fallback 走此函数（默认尾读），getFullHistory（加载更多）走
  * getHistoryFromFile（全量读）——两者语义互补。
  */
-export async function getHistoryTailFromFile(sessionId: string, sessionStore: ISessionStore, maxTurns = 20): Promise<TailReadResult> {
+export async function getHistoryTailFromFile(sessionId: string, sessionStore: ISessionStore, maxTurns = DEFAULT_MAX_TURNS): Promise<TailReadResult> {
   const target = sessionStore.scanSessions().find(s => s.id === sessionId)
   if (!target) return { messages: [], truncated: false }
   return tailReadHistory(target.filePath, sessionStore, maxTurns)
@@ -57,46 +108,9 @@ export async function getHistoryFromFilePath(filePath: string, sessionStore: ISe
     throw e
   }
   // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架，消费方只做领域过滤。
-  // 保留三类 entry：
-  // - message：常规消息（取 e.message）
-  // - compaction：压缩记录顶层 entry（无 message 字段），转 compactionSummary 伪消息
-  // - custom_message：扩展经 pi.sendMessage 注入的 CustomMessage（如 subagent-bg-notify），
-  //   转 role:'custom' 伪消息，与 RPC 路径（pi get_messages 返回的 role:'custom'）
-  //   在 convertPiHistory 汇合，统一还原成 system 消息（AGENTS.md 规则 7.5：可重开恢复）。
-  const piMessages = parseJsonl(content)
-    .filter((e): e is Record<string, unknown> =>
-      typeof e === 'object' && e !== null && (
-        ((e as { type?: string }).type === 'message' && 'message' in e) ||
-        (e as { type?: string }).type === 'compaction' ||
-        (e as { type?: string }).type === 'custom_message'
-      ))
-    .map((e) => {
-      if (e.type === 'compaction') {
-        return {
-          role: 'compactionSummary',
-          summary: e.summary,
-          tokensBefore: e.tokensBefore,
-          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
-        }
-      }
-      if (e.type === 'custom_message') {
-        // custom_message entry → role:'custom' 伪消息（convertPiHistory 的 role:'custom' 分支消费）
-        const content = e.content
-        // content 可能是 string 或 content array（pi CustomMessage.content 类型），
-        // convertPiHistory 的 custom 分支只取 cm.content ?? ''，string 直传，array 会被 String() 兜底
-        return {
-          role: 'custom',
-          customType: e.customType,
-          content: typeof content === 'string' ? content : '',
-          details: e.details,
-          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
-        }
-      }
-      // message entry：透传 message 体，附加 __entryId（pi JSONL entry id）供 fork 定位。
-      // RPC 路径（pi get_messages）不返回 entryId，此通道仅文件路径读取时填充。
-      const msg = (e.message && typeof e.message === 'object' ? e.message : {}) as Record<string, unknown>
-      return { ...msg, __entryId: typeof e.id === 'string' ? e.id : undefined }
-    })
+  // mapEntriesToPiMessages 放行四类 entry：message / compaction / custom_message / branch_summary
+  // （AGENTS.md 规则 7.5：可重开恢复——重开 session 时分支摘要/压缩记录/扩展通知都需还原）。
+  const piMessages = mapEntriesToPiMessages(parseJsonl(content))
 
   return sessionStore.convertHistory(piMessages)
 }
@@ -138,7 +152,7 @@ export interface TailReadResult {
 export async function tailReadHistory(
   filePath: string,
   sessionStore: ISessionStore,
-  maxTurns = 20,
+  maxTurns = DEFAULT_MAX_TURNS,
 ): Promise<TailReadResult> {
   // 规则 #6：文件不存在返回空数组
   let fileSize: number
@@ -154,6 +168,11 @@ export async function tailReadHistory(
   // eslint-disable-next-line no-magic-numbers -- dynamic tail window based on maxTurns
   const TAIL_WINDOW = Math.max(256 * 1024, maxTurns * 32 * 1024)
 
+  // W-Runtime2：是否全量读了整个文件（fileSize<=TAIL_WINDOW 或 fallback 全量读）。
+  // 决定 truncated 判定方式：全量读时 userMsgIndices 是文件全部 turn，可按数量精确判定；
+  // 只读了尾窗口时窗口外 turn 数未知，truncated 保守认定 true（宁可多显示「加载更多」也别漏）。
+  let didFullRead = false
+
   // 收集尾部 entries（先尝试尾读窗口，不够再全量）
   let entries: unknown[]
   if (fileSize <= TAIL_WINDOW) {
@@ -163,6 +182,7 @@ export async function tailReadHistory(
     // 不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）。
     if (tailEntries === null) return { messages: [], truncated: false }
     entries = tailEntries
+    didFullRead = true
   } else {
     // 尾读窗口
     const tailEntries = readTailBytes(filePath, TAIL_WINDOW)
@@ -176,6 +196,7 @@ export async function tailReadHistory(
       try {
         const content = await readFile(filePath, 'utf-8')
         entries = parseJsonl(content)
+        didFullRead = true
       } catch (e) {
         if (isEnoent(e)) return { messages: [], truncated: false }
         throw e
@@ -197,7 +218,7 @@ export async function tailReadHistory(
     windowStart = userMsgIndices[userMsgIndices.length - maxTurns]
   }
 
-  // 收集窗口内所有 message/compaction/custom_message entry（正序）
+  // 收集窗口内所有 message/compaction/custom_message/branch_summary entry（正序）
   const messageEntries: unknown[] = []
   for (let i = windowStart; i < entries.length; i++) {
     const entry = entries[i]
@@ -206,7 +227,8 @@ export async function tailReadHistory(
     const isMsg = e.type === 'message'
     const isCompaction = e.type === 'compaction'
     const isCustom = e.type === 'custom_message'
-    if (isMsg || isCompaction || isCustom) {
+    const isBranch = e.type === 'branch_summary'
+    if (isMsg || isCompaction || isCustom || isBranch) {
       messageEntries.push(entry)
     }
   }
@@ -215,38 +237,11 @@ export async function tailReadHistory(
   // 尝试从原始 entries 向前找 1 轮配对。仍无法配对则 convertHistory 会 warn 丢弃。
   // 这里不额外拉取——外扩逻辑在 convertHistory 内部处理（toolResult 找不到 assistant 时 warn skip）。
 
-  // 转换：复用 getHistoryFromFilePath 的 filter+map+convertHistory 逻辑
-  const piMessages = messageEntries
-    .filter((e): e is Record<string, unknown> =>
-      typeof e === 'object' && e !== null && (
-        ((e as { type?: string }).type === 'message' && 'message' in e) ||
-        (e as { type?: string }).type === 'compaction' ||
-        (e as { type?: string }).type === 'custom_message'
-      ))
-    .map((e) => {
-      if (e.type === 'compaction') {
-        return {
-          role: 'compactionSummary',
-          summary: e.summary,
-          tokensBefore: e.tokensBefore,
-          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
-        }
-      }
-      if (e.type === 'custom_message') {
-        const content = e.content
-        return {
-          role: 'custom',
-          customType: e.customType,
-          content: typeof content === 'string' ? content : '',
-          details: e.details,
-          timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
-        }
-      }
-      const msg = (e.message && typeof e.message === 'object' ? e.message : {}) as Record<string, unknown>
-      return { ...msg, __entryId: typeof e.id === 'string' ? e.id : undefined }
-    })
+  // 转换：复用 mapEntriesToPiMessages（与 getHistoryFromFilePath 同一份 filter+map 逻辑）
+  const piMessages = mapEntriesToPiMessages(messageEntries)
 
-  // N1: truncated = 文件里的总 turn 数 > maxTurns（有更早的 turn 被截掉）
-  const truncated = userMsgIndices.length > maxTurns
+  // N1: truncated 判定。全量读时按 turn 数判定；只读了尾窗口时保守认定 true
+  // （尾窗口外的 turn 数未知，宁可多显示「加载更多」也别漏）。
+  const truncated = didFullRead ? (userMsgIndices.length > maxTurns) : true
   return { messages: sessionStore.convertHistory(piMessages), truncated }
 }

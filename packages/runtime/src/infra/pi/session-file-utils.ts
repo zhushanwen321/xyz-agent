@@ -60,6 +60,13 @@ export function extractSessionName(filePath: string): string | null {
 export type SessionOutcome = 'done' | 'error' | 'stopped'
 
 /**
+ * W-Runtime4：合法的 outcome 值集合（与 SessionOutcome 类型同步）。
+ * extractSessionOutcome 读 sidecar/JSONL 时校验值合法性——文件内容可能损坏/被篡改，
+ * 不校验直接断言会把无效值当合法终态返回，污染 session 状态。
+ */
+const VALID_SESSION_OUTCOMES = ['done', 'error', 'stopped'] as const
+
+/**
  * 将 session 终态持久化到 sidecar `.meta.json`（W4，ADR 0036 + W1 sidecar 方案）。
  *
  * 与 JSONL 同目录写 `.meta.json`（存 session_end 元数据），不污染 JSONL——pi 的
@@ -110,14 +117,20 @@ export function extractSessionOutcome(filePath: string): SessionOutcome | null {
     const raw = readFileSync(sidecarPath, 'utf-8')
     const meta = JSON.parse(raw)
     if (meta && typeof meta.outcome === 'string') {
-      return meta.outcome as SessionOutcome
+      // W-Runtime4：校验 outcome 值合法性——sidecar 是文件，内容可能损坏/被篡改，
+      // 不校验直接断言会把无效值（如 typo、旧版残留）当合法终态返回，污染 session 状态。
+      return VALID_SESSION_OUTCOMES.includes(meta.outcome as SessionOutcome)
+        ? (meta.outcome as SessionOutcome)
+        : null
     }
-  // eslint-disable-next-line taste/no-silent-catch -- ENOENT/no-parse → fallback to JSONL
-  } catch { void 0 /* no sidecar or invalid → fallback */ }
+  } catch { void 0 /* no sidecar or invalid → fallback to JSONL */ }
 
   // fallback: 从 JSONL 读（历史 session / 无 sidecar 时的兼容路径）
+  // findLastEntryField 的 predicate 只校验了 typeof，未校验值合法性——
+  // JSONL 历史数据可能含未知 outcome 字符串（旧版本/手写），同样需校验。
   return findLastEntryField(filePath,
-    (e) => e.type === 'session_end' && typeof e.outcome === 'string',
+    (e) => e.type === 'session_end' && typeof e.outcome === 'string'
+      && VALID_SESSION_OUTCOMES.includes(e.outcome as SessionOutcome),
     (e) => e.outcome as SessionOutcome,
   )
 }
@@ -157,7 +170,6 @@ function findLastEntryField<R>(
         return extract(entry as Record<string, unknown>)
       }
     }
-  // eslint-disable-next-line taste/no-silent-catch -- 文件读取/解析失败返回 null，与原实现对等
   } catch {
     return null
   }
@@ -291,6 +303,11 @@ const sessionMetaCache = new Map<string, CachedSessionMeta>()
 /** 仅供测试重置缓存用（生产不调）。 */
 export function _resetSessionMetaCacheForTest(): void {
   sessionMetaCache.clear()
+}
+
+/** 删除 session 时调用，清理 sessionMetaCache 中的 stale 条目（避免无界增长）。 */
+export function invalidateSessionMetaCache(filePath: string): void {
+  sessionMetaCache.delete(filePath)
 }
 
 /**

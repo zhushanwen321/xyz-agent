@@ -23,6 +23,7 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
+import { invalidateSessionMetaCache } from '../../infra/pi/session-file-utils.js'
 
 export class SessionLifecycle {
   constructor(
@@ -149,6 +150,8 @@ export class SessionLifecycle {
         await this.sessionStore.trash(session.sessionFilePath)
         // 清理 sidecar（删除失败不阻塞主流程）
         try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
+        // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
+        invalidateSessionMetaCache(session.sessionFilePath)
       }
     } else {
       const target = this.svc.findScannedSession(sessionId)
@@ -156,6 +159,8 @@ export class SessionLifecycle {
       if (existsSync(target.filePath)) await this.sessionStore.trash(target.filePath)
       // 清理 sidecar（删除失败不阻塞主流程）
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
+      // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
+      invalidateSessionMetaCache(target.filePath)
     }
     this.sessionStore.refreshAll()
   }

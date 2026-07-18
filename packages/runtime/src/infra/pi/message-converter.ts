@@ -15,12 +15,12 @@ import { normalizePiToolResult } from './normalize-tool-result.js'
 function parseSkillBlock(text: string): Segment[] | null {
   const match = text.match(/<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
   if (!match) return null
-  const segments: Segment[] = [
-    { type: 'skill', name: match[1] },
-  ]
-  if (match[2]) {
-    (segments[0] as { location?: string }).location = match[2]
-  }
+  // Segment 类型的 skill 变体本身已有 location?: string 字段（shared/segments.ts:26），
+  // 构造时直接带 location，无需运行时断言赋值。
+  const skillSeg: Segment = match[2]
+    ? { type: 'skill', name: match[1], location: match[2] }
+    : { type: 'skill', name: match[1] }
+  const segments: Segment[] = [skillSeg]
   const userText = match[3].trim()
   if (userText) {
     segments.push({ type: 'text', text: userText })
@@ -76,7 +76,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
   let lastAssistantWithToolCalls = -1
 
   for (const item of raw) {
-    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number }
+    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
@@ -156,6 +156,26 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         if (bgNotify) msg.bgNotify = bgNotify
       }
       result.push(msg)
+      continue
+    }
+
+    // branchSummary：pi 分支摘要记录（实时链路 event-adapter.ts:487 已处理）。
+    // 历史路径（文件读取/RPC get_messages 返回 role:'branchSummary'）对称还原，
+    // 否则重开 session 后分支摘要丢失（AGENTS.md 规则 7.5：可重开恢复）。
+    if (m.role === 'branchSummary') {
+      const bm = m as { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
+      result.push({
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: bm.summary ?? '',
+        status: 'complete',
+        branchSummary: {
+          summary: bm.summary,
+          fromId: bm.fromId,
+          timestamp: bm.timestamp ?? Date.now(),
+        },
+        timestamp: bm.timestamp ?? Date.now(),
+      })
       continue
     }
 
