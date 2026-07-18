@@ -235,7 +235,7 @@
           >
             <Check v-if="copied === aiMdKey" class="size-3 text-success" />
             <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-white">MD</span>
+            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-accent-foreground">MD</span>
           </Button>
           <Button
             v-if="!isSessionActive && !isSubagentVirtualId(sessionId)"
@@ -477,8 +477,8 @@ async function onForkConfirm(): Promise<void> {
 
 /**
  * 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠，作回合焦点）。
- * streaming 态 text 不在此显示（在 trace 内按真实时序展示，见 traceBlocks），
- * 模板已用 `v-if="summaryText && !turn.isWorking"` 守卫；此处仅提供文本。
+ * streaming 和 complete 态都渲染（模板 v-if="summaryText"，无 isWorking 守卫）。
+ * streaming 态末位 text 在此实时展示（traceBlocks 跳过末位 text 块避免重复）。
  */
 const summaryText = computed(() => {
   const as = props.turn.assistants

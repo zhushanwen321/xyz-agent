@@ -6,7 +6,7 @@
  * - 方案 a：mount Block，改 props.tool.status（叶子组件单元回归）
  * - 方案 b：mount Turn，改 turn.assistants[0].toolCalls[0].status（单 turn 链路回归）
  * - 方案 c：mount MessageStream（真 store + 真虚拟滚动层），applyMessageEvent 走 tool_call_end 路径
- * - 方案 d：虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算（Wave1 liveComputed→真 computed 修复回归）
+ * - 方案 d：虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算（真 computed）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/effects/tool-status-flip.test.ts
  */
@@ -360,7 +360,7 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
   })
 })
 
-/* ─────────────────────── 方案 d：虚拟滚动响应式——Wave1 liveComputed→真 computed 修复回归 ───────────────────────
+/* ─────────────────────── 方案 d：虚拟滚动响应式——真 computed（Wave1 已从 liveComputed 改为真 computed）───────────────────────
  * 复刻 MessageStream.vue 的真实装配：renderItems 是真 computed（包 ref 数据源），
  * useVirtualTurnList 的 items getter 读 renderItems.value。visibleItems 是真 computed，
  * 内部读 visibleRange.value（Wave1 后为真 computed）+ renderItems.value（真 computed）。
@@ -383,10 +383,19 @@ function turnItemR(index: number, key: string): RenderItem {
 }
 
 describe('方案 d: 虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算', () => {
-  it('d1: reportHeight 后 heights 变 → visibleRange 重算（非过时）', () => {
+  /**
+   * flush pending rAF 回调（happy-dom 的 rAF 是异步——经 setImmediate 调度）。
+   * onScrollUpdate / reportHeight 改 rAF trailing 节流后（W-VS1/W-VS3），
+   * 需 await 一个宏任务让 rAF 落地，响应式 ref 才更新、visibleRange 才重算。
+   */
+  async function flushRaf(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  it('d1: reportHeight 后 heights 变 → visibleRange 重算（非过时）', async () => {
     const scope = effectScope()
     let assertCount = 0
-    scope.run(() => {
+    await scope.run(async () => {
       const data = ref<RenderItem[]>([turnItemR(1, 'k1'), turnItemR(2, 'k2'), turnItemR(3, 'k3')])
       const renderItems = computed(() => data.value)
       const scrollEl = document.createElement('div')
@@ -401,8 +410,10 @@ describe('方案 d: 虚拟滚动响应式——heights/scrollTop 变化触发 vi
         buffer: () => 0,
       })
       // 初始化 scrollTop/viewportHeight 响应式 ref（Wave1：visibleRange 是真 computed，
-      // 依赖响应式 scrollTop/viewportHeight；不调 onScrollUpdate 则用 ref 初始值 0）
+      // 依赖响应式 scrollTop/viewportHeight；不调 onScrollUpdate 则用 ref 初始值 0）。
+      // onScrollUpdate 改 rAF trailing（W-VS1）：需 await flushRaf 让 scrollTop/clientHeight 写入 ref。
       vl.onScrollUpdate()
+      await flushRaf()
 
       // visibleItems 复刻 MessageStream.vue 真实派生
       const visibleItems = computed(() => {
@@ -418,10 +429,11 @@ describe('方案 d: 虚拟滚动响应式——heights/scrollTop 变化触发 vi
       expect(initialCount).toBeGreaterThan(0)
       assertCount++
 
-      // reportHeight 让 k1 变成 50px（变小，但末项钉扎保证全 3 项仍渲染）
+      // reportHeight 让 k1 变成 50px（变小，但末项钉扎保证全 3 项仍渲染）。
+      // reportHeight 改批量 rAF flush（W-VS3）：需 await flushRaf 让 heights 写入 + triggerRef。
       vl.reportHeight('u-k1', 50)
+      await flushRaf()
       // visibleItems 是真 computed；heights 变化经 triggerRef 失效 layout→visibleRange→visibleItems。
-      // 真 computed 在 .value 访问时同步求值，无需 await nextTick。
       const countAfterHeight = visibleItems.value.length
       expect(countAfterHeight).toBeGreaterThan(0)
       assertCount++
@@ -429,6 +441,7 @@ describe('方案 d: 虚拟滚动响应式——heights/scrollTop 变化触发 vi
       // 滚动：改 DOM scrollTop + 调 onScrollUpdate（Wave1：把 DOM scrollTop 写入响应式 ref）
       scrollEl.scrollTop = 400
       vl.onScrollUpdate()
+      await flushRaf()
       // k1=50, k2=200, k3=200 → offsets=[0,50,250], total=450
       // scrollTop=400 在 turn2 内（offset 250-450）；buffer 0 → 窗口 [2,2]
       const rangeAfterScroll = vl.visibleRange.value

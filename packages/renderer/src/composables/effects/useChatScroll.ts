@@ -84,6 +84,14 @@ export function useChatScroll() {
     },
     { immediate: true },
   )
+  // effectScope 卸载兜底（对称下方 RO 的 onScopeDispose）：组件卸载时 watch 的 onCleanup
+  // 已清 wheel listener，此处防 composable 在非组件 scope 调用后泄漏。无 active scope（如纯单测）跳过。
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      const el = scrollEl.value
+      if (el) el.removeEventListener('wheel', onWheel)
+    })
+  }
 
   /**
    * ResizeObserver：观察 contentEl 高度变化，贴底态下内容增高即跟随滚到底。
@@ -112,19 +120,26 @@ export function useChatScroll() {
       },
       { immediate: true },
     )
-    // effectScope 卸载兜底（组件卸载时 watch 的 onCleanup 会清理，此处防止
+    // effectScope 卸载兜底（组件卸载时 watch 的 onCleanup 会断开 RO，此处防止
     // composable 在非组件 scope 调用后泄漏）。无 active scope（如纯单测）时跳过。
     if (getCurrentScope()) {
       onScopeDispose(() => {
         resizeObserver?.disconnect()
         resizeObserver = null
-        // INVAR-M4-5: 取消 pending rAF，防止卸载后 flushScroll 对已卸载 el 调 scrollTo。
-        if (rafId !== null) {
-          cancelAnimationFrame(rafId)
-          rafId = null
-        }
       })
     }
+  }
+
+  // INVAR-M4-5: 取消 pending rAF，防止卸载后 flushScroll 对已卸载 el 调 scrollTo。
+  // 公共 onScopeDispose（独立于上方 RO 分支）：RO 不存在（如 happy-dom 单测）时也要清 rafId，
+  // 否则 scrollToBottom 已调度的 rAF 在 scope dispose 后仍 flush 会报错。
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+    })
   }
 
   /**

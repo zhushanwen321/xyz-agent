@@ -31,8 +31,8 @@
  * 参考 use-chat-scroll.test.ts 的 setScroll helper。
  *
  * ── 关于 visibleRange 响应式触发 ────────────────────────────────
- * useVirtualTurnList 的 totalHeight/visibleRange 用 liveComputed（每次 .value 访问重读
- * getter）。DOM 的 scrollTop 变化本身不触发 Vue 响应式——生产中窗口重算由 Turn 挂载 →
+ * useVirtualTurnList 的 totalHeight/visibleRange 用真 computed（依赖 scrollTop/viewportHeight
+ * ref 驱动失效）。DOM 的 scrollTop 变化本身不触发 Vue 响应式——生产中窗口重算由 Turn 挂载 →
  * ResizeObserver → reportHeight → heights ref 变化驱动（视口外 turn 卸载后停止上报，
  * 窗口收敛到可见范围）。测试模拟此触发：mount 后设 scrollTop，再 append 一条消息让
  * renderItems 重算，连带 visibleItems 重读 scrollTop 得到收敛后的窗口。
@@ -100,6 +100,17 @@ function setScroll(el: HTMLElement, scrollHeight: number, clientHeight: number, 
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight })
   Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: scrollTop })
   el.dispatchEvent(new Event('scroll'))
+}
+
+/**
+ * flush pending rAF 回调（happy-dom 的 requestAnimationFrame 是异步——经 setImmediate 调度，
+ * await nextTick 不触发；改 rAF trailing 节流后，onScrollUpdate 把 scrollTop 写入 ref 走 rAF，
+ * 需 await 一个宏任务让 rAF 落地，visibleRange 才会基于新 scrollTop 重算）。
+ * 不用 vi.useFakeTimers：集成测试 mount 完整组件，useChatScroll / onMounted / RO 都会调度 rAF，
+ * fake timers 下需手动推进全部，反而更脆弱；用真实 timer + 宏任务 flush 更贴近生产行为。
+ */
+async function flushRaf(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 const NOW = Date.now()
@@ -200,7 +211,7 @@ describe('虚拟滚动集成 · 场景 2：DOM 只渲染可见窗口（核心收
   /**
    * 25 turn × 估算 200px/turn（MessageStream ESTIMATED_TURN_HEIGHT=200），buffer=2。
    * 滚到底部区：totalHeight=5000，viewport=600，scrollTop=4400（近底，看最后几个 turn）。
-   * computeWindow（liveComputed 每次访问重算）：
+   * computeWindow（真 computed，依赖 scrollTop ref）：
    *   startIndex ≈ 20（视口上方 turn 不渲染），endIndex=24（末项钉扎 INVAR-10）
    *   → visibleRange = {20, 24}
    * 触发 visibleItems 重算（生产中由 ResizeObserver→reportHeight 驱动；测试通过 append 一条
@@ -216,10 +227,12 @@ describe('虚拟滚动集成 · 场景 2：DOM 只渲染可见窗口（核心收
     const scrollEl = getScrollEl(wrapper)
     // 滚到底部区：25*200=5000 总高，viewport 600，scrollTop=4400（近底）
     setScroll(scrollEl, 5000, 600, 4400)
-    await nextTick()
+    // onScrollUpdate 改 rAF trailing（W-VS1）：dispatch scroll 调 onScrollUpdate 调度 rAF，
+    // 需 await flushRaf 让 rAF 把 scrollTop/clientHeight 写入 ref，visibleRange 才会重算。
+    await flushRaf()
 
     // visibleRange 是真 computed：Vue setupState 代理自动解包 ref，vm.visibleRange 直接是值（非 ref），
-    // 故不写 .value。setScroll 内已 dispatch scroll → onScrollUpdate 同步 scrollTop ref 驱动重算。
+    // 故不写 .value。setScroll 内已 dispatch scroll → onScrollUpdate（rAF）同步 scrollTop ref 驱动重算。
     const range = (wrapper.vm as unknown as { visibleRange: { startIndex: number; endIndex: number } }).visibleRange
     expect(range.startIndex).toBe(20)
     expect(range.endIndex).toBe(24) // 末项钉扎（INVAR-10）
@@ -270,7 +283,8 @@ describe('虚拟滚动集成 · 场景 2：DOM 只渲染可见窗口（核心收
     const scrollEl = getScrollEl(wrapper)
     // 中间位置：scrollTop=2000，viewport=600
     setScroll(scrollEl, 5000, 600, 2000)
-    await nextTick()
+    // onScrollUpdate 改 rAF trailing（W-VS1）：dispatch scroll 后需 await flushRaf 让 rAF 落地。
+    await flushRaf()
 
     const range = (wrapper.vm as unknown as { visibleRange: { startIndex: number; endIndex: number } }).visibleRange
     // startIndex > 0（视口上方 turn 被裁掉，证明窗口化生效）

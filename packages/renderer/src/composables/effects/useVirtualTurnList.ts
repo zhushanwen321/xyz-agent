@@ -84,14 +84,39 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
   const viewportHeight = ref(0)
 
   /**
+   * onScrollUpdate 的 rAF trailing 节流句柄（spec SR11）。
+   * 浏览器原生 scroll 事件高频触发（拖滚动条/触控板惯性每秒数十次），若每次都同步写
+   * scrollTop/viewportHeight ref，会令 visibleRange computed（O(n)）在每帧重算多次。
+   * 用 rAF trailing：同帧内多次 scroll 事件合并为单次 ref 写入（与 scrollToBottom M4 同款模式）。
+   */
+  let scrollRafId: number | null = null
+
+  /**
+   * reportHeight 的批量收集缓冲（spec SR11）：rAF flush 前所有同帧高度上报先攒进此 Map，
+   * flush 时一次性读 layout + triggerRef，把 O(n·k)（k 个 turn 同帧测量）压成 O(n+k)。
+   */
+  const pendingHeightReports = new Map<string, number>()
+  /** flushHeightReports 的 rAF 句柄。 */
+  let heightRafId: number | null = null
+
+  /**
    * scroll 事件同步入口：调用方在 scroll handler 内调用，读取 DOM scrollTop/clientHeight
    * 写入响应式 ref，触发 visibleRange 失效重算。scrollEl 不存在时 no-op。
+   *
+   * rAF trailing 节流（spec SR11）：同帧多次 scroll 事件合并为单次重算（与 scrollToBottom
+   * M4 同款模式）。scrollEl 缺失时直接 return，不调度 rAF（无 DOM 可读）。
    */
   function onScrollUpdate(): void {
-    const el = scrollEl()
-    if (!el) return
-    scrollTop.value = el.scrollTop
-    viewportHeight.value = el.clientHeight
+    // scrollEl 不存在时 no-op（不调度 rAF，避免空转）
+    if (!scrollEl()) return
+    if (scrollRafId !== null) return // 已有 pending rAF，同帧合并
+    scrollRafId = requestAnimationFrame(() => {
+      scrollRafId = null
+      const el = scrollEl()
+      if (!el) return
+      scrollTop.value = el.scrollTop
+      viewportHeight.value = el.clientHeight
+    })
   }
 
   /** 取某 turn 的当前高度：实测优先，否则估算 */
@@ -202,9 +227,12 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
       if (acc >= bottom) break
     }
 
-    // 3. 末项钉扎（SR3/INVAR-10）：末项恒在窗口内
+    // 3. 末项钉扎（SR3/INVAR-10）：末项恒在窗口内，确保 sticky-bottom 准确。
+    // [KNOWN-LIMIT] Math.max 致 endIndex 恒为 n-1，底部虚拟化失效（用户滚到中部时仍渲染
+    // startIndex→lastIndex 全部）。spec SR3 明确批准此设计取舍——末项必须挂载 RO 上报高度，
+    // 否则流式追加时 sticky-bottom 失准。Math.max(computedEnd, n-1) 结果必 <= n-1，无需再 clamp。
+    // let 而非 const：下方 editing 钉扎分支可能把 endIndex 抬到 startIndex。
     let endIndex = Math.max(computedEnd, n - 1)
-    if (endIndex >= n) endIndex = n - 1
 
     // 4. editing 钉扎（SR5）：startIndex 不超过 editingPinIndex
     if (editingPinIndex.value >= 0 && startIndex > editingPinIndex.value) {
@@ -219,30 +247,53 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
   /**
    * RO 上报实测高度入口（key=turn 首消息 id）。
    *
-   * 视口锚定（SR4/INVAR-2）：该 turn 若在视口上方（offset + 旧高 <= scrollTop），
-   * 则实测后内容会相对上移/下移 (measured - 旧高)，需补偿 scrollTop 同向移动。
-   * scrollAdjustDelta 暴露本次补偿量；视口内/下方的 turn delta=0（视口内跳跃可接受）。
+   * 批量收集（spec SR11）：同帧多 turn 测量（典型：流式追加后一批 RO 回调）时，单次 reportHeight
+   * 读 layout.value（O(n)）+ triggerRef(heights)（令 layout 失效），k 个 turn 即 O(n·k)。
+   * 改为只写入 pendingHeightReports Map、调度 rAF flush；flush 时一次性读 layout + 一次性
+   * triggerRef，把 O(n·k) 压成 O(n+k)。
+   *
+   * 视口锚定（SR4/INVAR-2）delta 逻辑保持与原单次路径一致：该 turn 若在视口上方
+   * （offset + 旧高 <= scrollTop），实测后内容相对上移/下移 (measured - 旧高)，需补偿 scrollTop。
+   * flush 时用「本次 flush 开始时的 scrollTop + 单次 layout 快照」逐 turn 累加 delta
+   * （累加语义保留 B10：同帧多个视口上方 turn 上报时 delta 求和不互相覆盖）。
    */
   function reportHeight(key: string, h: number): void {
-    const old = heights.value.get(key) ?? estimatedHeight()
-    // 判定该 turn 是否在视口上方：用当前 offsets 找它的位置
+    pendingHeightReports.set(key, h)
+    if (heightRafId !== null) return // 已有 pending flush，合并
+    heightRafId = requestAnimationFrame(() => {
+      heightRafId = null
+      flushHeightReports()
+    })
+  }
+
+  /**
+   * 一次性处理本帧所有 pendingHeightReports。单次 layout.value 读 + 单次 triggerRef。
+   * delta 计算与原单次 reportHeight 等价（逐 turn 判定视口上方并累加，B10 语义不变）。
+   */
+  function flushHeightReports(): void {
+    if (pendingHeightReports.size === 0) return
     const st = scrollTop.value
+    // 单次 O(n) 读 layout 快照：本帧内所有 turn 共用同一 ids/offsets 基准
     const { ids, offsets } = layout.value
-    const idx = ids.indexOf(key)
     let delta = 0
-    if (idx >= 0) {
-      const turnBottom = offsets[idx] + old
-      if (turnBottom <= st) {
-        // 视口上方 turn：实测与估算/旧值之差需补偿（防用户所见内容跳）
-        delta = h - old
+    for (const [key, h] of pendingHeightReports) {
+      const old = heights.value.get(key) ?? estimatedHeight()
+      const idx = ids.indexOf(key)
+      if (idx >= 0) {
+        const turnBottom = offsets[idx] + old
+        if (turnBottom <= st) {
+          // 视口上方 turn：实测与估算/旧值之差需补偿（防用户所见内容跳）
+          delta += h - old
+        }
       }
+      // 增量更新单键（Map 引用不变）
+      heights.value.set(key, h)
     }
-    // 写入实测高度（增量更新单个键，Map 引用不变）
-    heights.value.set(key, h)
-    // 触发依赖失效：layout/totalHeight/visibleRange 内访问 heights.value，会被此处 trigger
+    pendingHeightReports.clear()
+    // 单次失效：layout/totalHeight/visibleRange 内访问 heights.value，被此处 trigger
     triggerRef(heights)
     // 累积补偿量（同帧多次视口上方 turn 上报时累加，防末次覆盖中间值；调用方读取应用后清零）
-    scrollAdjustDelta.value += delta
+    if (delta !== 0) scrollAdjustDelta.value += delta
   }
 
   /** editing 钉扎：startIndex 不超过 idx（防 lastUserTurn 滚出视口 draftText 丢失，SR5） */
@@ -250,8 +301,19 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     editingPinIndex.value = idx
   }
 
-  /** session 切换重置：清空 heights，totalHeight 回全估算（SR10/INVAR-8） */
+  /** session 切换重置：清空 heights，totalHeight 回全估算（SR10/INVAR-8）。
+   *  同时取消 pending rAF（scroll/height flush）并丢弃待处理高度上报——它们引用旧 session
+   *  的 key，若 flush 进新 session 的 heights Map 会张冠李戴（INVAR-8 一致性）。 */
   function resetSession(): void {
+    if (scrollRafId !== null) {
+      cancelAnimationFrame(scrollRafId)
+      scrollRafId = null
+    }
+    if (heightRafId !== null) {
+      cancelAnimationFrame(heightRafId)
+      heightRafId = null
+    }
+    pendingHeightReports.clear()
     heights.value = new Map()
     scrollAdjustDelta.value = 0
     editingPinIndex.value = -1
