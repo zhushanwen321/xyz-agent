@@ -9,6 +9,19 @@
  * [2026-07-16] 新增 pending request 缓存：缓存 pending 的 ask-user 请求内容，
  * 当 session 重新激活时（前端重新订阅时），runtime 主动推送缓存的请求，
  * 解决「切换 session 后 ask-user 请求丢失」问题。
+ *
+ * TODO（死代码现状，待重新设计或彻底移除）：registerTimeout 改为同步 `void onTimeout`
+ * 不排定时器后，下列字段/方法成了事实上的死代码——
+ *   - extensionTimeouts Map：registerTimeout 不再写入，clearTimeout/clearForSession 内的
+ *     `extensionTimeouts.get` 恒为 undefined（保留无害但无意义）
+ *   - timedOutIds Set / markTimedOut / isTimedOut / clearTimedOut：由 transport/
+ *     extension-message-handler.handleExtensionTimeout（经 server.ts 的 dead 回调闭包）
+ *     调用，但该闭包随 registerTimeout 改为同步触发后永不再被调用，整条链不触发
+ *   - handleExtensionTimeout / ui_timeout 广播分支：同上
+ * 故意保留而非删除，原因：(1) TIMEOUT_MS / EXTENSION_UI_TIMEOUT_MS 仍被单测
+ * （extension-timeout-manager.test.ts 用 advanceTimersByTime 验证「不触发」）引用；
+ * (2) 超时编排链跨 transport/extension-message-handler.ts + server.ts 两个文件，
+ * 整链移除需协同改动且超出本 PR scope。待超时机制重新设计或确认废弃后统一清理。
  */
 
 /** 缓存的 pending UI 请求 */

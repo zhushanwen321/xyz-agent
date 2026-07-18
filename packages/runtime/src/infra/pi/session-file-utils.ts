@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数（pi-config-bridge 已删除）。
  */
 
-import { existsSync, readFileSync, writeFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, openSync, writeSync, closeSync, readdirSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join } from 'node:path'
@@ -88,7 +88,8 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
   }
   const meta = { type: 'session_end', outcome, reason, timestamp: new Date().toISOString() }
   try {
-    writeFileSync(filePath + '.meta.json', JSON.stringify(meta))
+    // 原子写（tmpfile + rename）：与 patchSessionCwd 一致，防止并发读读到半写的 sidecar。
+    atomicWrite(filePath + '.meta.json', JSON.stringify(meta), `meta-${Date.now()}`)
     // W2-2：sidecar 写入后主动失效该文件的 meta 缓存。
     // scanSessionMeta 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不会让 JSONL 的 stat 变化，
     // 导致命中缓存返回旧 outcome（如 session 被 abort/崩溃 → persistSessionEnd 写 stopped 到 sidecar，
@@ -119,13 +120,15 @@ export function extractSessionOutcome(filePath: string): SessionOutcome | null {
     if (meta && typeof meta.outcome === 'string') {
       // W-Runtime4：校验 outcome 值合法性——sidecar 是文件，内容可能损坏/被篡改，
       // 不校验直接断言会把无效值（如 typo、旧版残留）当合法终态返回，污染 session 状态。
-      return VALID_SESSION_OUTCOMES.includes(meta.outcome as SessionOutcome)
-        ? (meta.outcome as SessionOutcome)
-        : null
+      if (VALID_SESSION_OUTCOMES.includes(meta.outcome as SessionOutcome)) {
+        return meta.outcome as SessionOutcome
+      }
+      // outcome 非法：sidecar 损坏/篡改，与 sidecar 不存在等价 → fallthrough 到 JSONL 兜底。
+      // （原来此处直接 return null，会丢失 JSONL 中可能存在的合法 session_end 终态。）
     }
   } catch { void 0 /* no sidecar or invalid → fallback to JSONL */ }
 
-  // fallback: 从 JSONL 读（历史 session / 无 sidecar 时的兼容路径）
+  // fallback: 从 JSONL 读（历史 session / 无 sidecar / sidecar outcome 非法时的兼容路径）
   // findLastEntryField 的 predicate 只校验了 typeof，未校验值合法性——
   // JSONL 历史数据可能含未知 outcome 字符串（旧版本/手写），同样需校验。
   return findLastEntryField(filePath,

@@ -114,7 +114,8 @@ describe('EventInterpreter · W1 interpret 循环事件级隔离', () => {
 
     // B2: 即使 turn-end 自身 handler 抛错，catch 兜底也必须调 onTurnFinalize，
     // 否则 isGenerating 永不复位 → session 永久 busy（AGENTS.md 规则 #3）
+    // S4：catch 兜底也传 stopReason（对齐正常路径 + handleTurnEndSideEffects 的 outcome 映射）
     expect(onTurnFinalize).toHaveBeenCalledTimes(1)
-    expect(onTurnFinalize).toHaveBeenCalledWith('sid-iso')
+    expect(onTurnFinalize).toHaveBeenCalledWith('sid-iso', 'end_turn')
   })
 })

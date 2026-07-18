@@ -146,7 +146,7 @@
       class="relative min-h-0 flex-1 overflow-auto"
       data-testid="detail-content"
       @mouseup="onContentMouseup"
-      @scroll="selectionRange = null"
+      @scroll="onContentScroll"
     >
       <!-- 截断提示（>1MB，AC-6.5/T6.5） -->
       <div
@@ -364,10 +364,20 @@ function injectSelectionToNew(): void {
 }
 
 /**
+ * 内容区滚动：清 selectionRange（W11，规则 15——模板内联副作用抽方法）。
+ * 滚动后选区定位偏移、bubble 不再贴合原文，残留会误导用户注入错误行范围，故滚动即清。
+ */
+function onContentScroll(): void {
+  selectionRange.value = null
+}
+
+/**
  * 内容区 mouseup：检测选区，非空且在内容区内时计算行范围显 bubble（FR-4）。
  * 行范围反推分模式：
  * - diff 模式：从选区起止行元素读 data-line（newNo）精确反推（DiffView 行 div 标了 data-line）
- * - preview/code 模式：选中文本首行在 state.content 的行索引近似（首版精度限制）
+ * - preview/code 模式：优先从 DOM 行节点（shiki `.line` / `<pre>` 文本）精确反推行号
+ *   （W14：原 findIndex 反推命中重复行首项致 selectionRange 指向错误行）；DOM 取不到时
+ *   退化为「带上下文的文本匹配」（首尾行同时比对缩小歧义），仍无果则不显 bubble。
  */
 function onContentMouseup(): void {
   const sel = window.getSelection()
@@ -402,15 +412,30 @@ function onContentMouseup(): void {
     }
     return
   }
-  // preview/code 模式：选中文本首行在 content 的行号近似（1-based）
+  // preview/code 模式：优先从 DOM 行节点精确反推（W14）。
+  // CodeBlock 用 shiki 渲染，每行一个 `<span class="line">`；找到选区起止所在行节点，
+  // 按其在容器内的行序算 1-based 行号。纯文本 mode（pre 文本插值）无 .line，落到下方文本回退。
+  const fromLine = findCodeLineIndex(range.startContainer)
+  const toLine = findCodeLineIndex(range.endContainer)
+  if (fromLine !== null && toLine !== null) {
+    selectionRange.value = {
+      lineStart: Math.min(fromLine, toLine),
+      lineEnd: Math.max(fromLine, toLine),
+    }
+    return
+  }
+  // 文本回退（纯文本 mode / shiki 未就绪降级 pre）：首尾行同时比对缩小重复行歧义。
+  // 仍用文本匹配因 pre 无行节点；相比原 findIndex 增加首尾双锚，命中重复行更稳。
   const lines = state.value.content.split('\n')
-  const firstLine = selectedText.split('\n')[0] ?? ''
-  const idx = lines.findIndex((l) => l.trim() === firstLine.trim())
+  const selLines = selectedText.split('\n')
+  const firstLine = selLines[0] ?? ''
+  const lastLine = selLines[selLines.length - 1] ?? ''
+  const lineCount = selLines.length
+  const idx = findUniqueLineIndex(lines, firstLine, lastLine, lineCount)
   if (idx < 0) {
     selectionRange.value = null
     return
   }
-  const lineCount = selectedText.split('\n').length
   selectionRange.value = { lineStart: idx + 1, lineEnd: idx + lineCount }
 }
 
@@ -430,6 +455,55 @@ function findDataLineFromNode(node: Node): number | null {
     el = el.parentElement
   }
   return null
+}
+
+/**
+ * 从选区节点反推所在代码行的 1-based 行号（W14，preview/code 模式）。
+ * CodeBlock 经 shiki 渲染产出 `<span class="line">` 行节点；从 node 向上找到最近的 `.line`，
+ * 再统计它在 CodeBlock 容器内之前的 `.line` 兄弟数 +1 即行号（精确，重复行不受影响）。
+ * 节点不在任何 `.line` 内（如纯文本 mode 的 pre 文本、shiki 未就绪降级）返回 null，由调用方文本回退。
+ */
+function findCodeLineIndex(node: Node): number | null {
+  if (!contentRef.value) return null
+  let el: Element | null = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement
+  while (el && contentRef.value.contains(el)) {
+    if (el.classList?.contains('line')) {
+      // 行号 = 该行之前的 .line 兄弟数 + 1（1-based，与 state.content 行号对齐）
+      let lineNo = 1
+      let prev: Element | null = el.previousElementSibling
+      while (prev) {
+        if (prev.classList?.contains('line')) lineNo++
+        prev = prev.previousElementSibling
+      }
+      return lineNo
+    }
+    el = el.parentElement
+  }
+  return null
+}
+
+/**
+ * 在 lines 里定位首行唯一位置（W14 文本回退）：原 findIndex 只比首行 trim()，
+ * 重复行命中最早一次。改为「首行 + 尾行 + 行数」三锚点匹配——候选首行位置后
+ * lines[idx..idx+lineCount-1] 首尾需同时匹配才采纳，缩小重复行歧义。
+ * 仍可能近似（极端重复内容），但比单行匹配显著更稳。
+ */
+function findUniqueLineIndex(
+  lines: string[],
+  firstLine: string,
+  lastLine: string,
+  lineCount: number,
+): number {
+  const firstTrim = firstLine.trim()
+  const lastTrim = lastLine.trim()
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() !== firstTrim) continue
+    // 单行选区：首尾同匹配即可
+    if (lineCount <= 1) return i
+    const tailIdx = i + lineCount - 1
+    if (tailIdx < lines.length && lines[tailIdx].trim() === lastTrim) return i
+  }
+  return -1
 }
 
 /** bubble 引用到当前对话（FR-4）：用 selectionRange 行范围注入 */

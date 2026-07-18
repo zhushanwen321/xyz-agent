@@ -227,8 +227,6 @@ const piVersion = ref('')
 /** xyz-agent 版本（vite define 构建时注入，见 renderer/vite.config.ts） */
 const appVersion = __APP_VERSION__
 
-/** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
-
 /** Dialog 状态 */
 const renameOpen = ref(false)
 const targetSessionId = ref('')

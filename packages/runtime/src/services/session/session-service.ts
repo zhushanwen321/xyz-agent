@@ -38,7 +38,7 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
-import { toErrorMessage } from '../../utils/errors.js'
+import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
@@ -267,7 +267,19 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   ): Promise<string> {
     const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
     if (!target) throw new Error(`fork: source session not found for resolve: ${sessionId}`)
-    const entries = parseJsonl(await readFile(target.filePath, 'utf-8')) as Array<Record<string, unknown>>
+    // AGENTS.md 规则 #6：所有读取 session 文件必须处理「不存在」（scan 与读间竞态——
+    // 文件可能已被外部删除：pi 异常退出未 flush / 用户手动清理）。模式对齐 getHistoryFromFilePath。
+    let content: string
+    try {
+      content = await readFile(target.filePath, 'utf-8')
+    } catch (e) {
+      if (isEnoent(e)) {
+        console.warn(`[session-service] resolveEntryIdByTimestamp: session file missing: ${target.filePath}`)
+        throw new Error(`fork: source session file missing for resolve: ${target.filePath}`)
+      }
+      throw e
+    }
+    const entries = parseJsonl(content) as Array<Record<string, unknown>>
     // 只看 message 类型 entry（有 entry.id 和 entry.message.timestamp）
     const msgEntries = entries.filter((e) =>
       e.type === 'message'

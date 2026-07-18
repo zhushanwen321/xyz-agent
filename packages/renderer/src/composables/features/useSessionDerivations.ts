@@ -64,6 +64,10 @@ export function useSessionDerivations() {
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
     let c = statusCache.get(id)
     if (!c) {
+      // [W10 KNOWN-LIMIT] session.list.find 是 O(n)，侧栏 N 个 session 各调一次 derivedStatus
+      // 致整体 O(n²)。session.list 规模通常 <50（用户活跃 session 数有限，LRU 上限 8），
+      // O(n²) 可接受，不做 index Map 优化（避免引入额外维护成本）。若未来 session 规模增长，
+      // 可改用 Map<id, status> 索引（session store 内维护）降至 O(n)。
       c = computed(() => {
         const meta = session.list.find((s) => s.id === id)?.status
         return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id), meta)

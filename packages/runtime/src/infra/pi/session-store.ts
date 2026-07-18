@@ -15,6 +15,7 @@ import {
   persistSessionEnd,
   extractSessionOutcome,
   patchSessionCwd,
+  invalidateSessionMetaCache,
 } from './session-file-utils.js'
 import { refreshAll } from './pi-provider-store.js'
 import { convertPiHistory } from './message-converter.js'
@@ -39,6 +40,10 @@ export class PiSessionStore implements ISessionStore {
 
   extractSessionOutcome(filePath: string): SessionOutcome | null {
     return extractSessionOutcome(filePath)
+  }
+
+  invalidateMetaCache(filePath: string): void {
+    invalidateSessionMetaCache(filePath)
   }
 
   patchSessionCwd(filePath: string, newCwd: string): boolean {

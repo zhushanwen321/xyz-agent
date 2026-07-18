@@ -36,6 +36,8 @@ export interface ISessionStore {
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void
   /** 读取 session 终态（W5）；无 session_end entry 返回 null（历史 session）。 */
   extractSessionOutcome(filePath: string): SessionOutcome | null
+  /** 清除 session 元信息缓存的 stale 条目（session 删除/重命名后调用，避免无界增长）。 */
+  invalidateMetaCache(filePath: string): void
   /** 修正 session 文件的 cwd 字段。 */
   patchSessionCwd(filePath: string, newCwd: string): boolean
   /** 翻译 pi 历史（unknown[] → Message[]）。pi 结构只在此实现内部断言。 */

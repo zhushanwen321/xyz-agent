@@ -59,6 +59,14 @@ export function useMarkdownInteractions(opts: MarkdownInteractionsOptions = {}):
   const { copyButton, dispose } = useCodeblockCopy()
   const searchModal = useSearchModal()
 
+  /**
+   * 文件预览请求 token（stale-write 守卫，同 useDetailPane.loadToken 模式）。
+   * 快速连点不同文件链接时，fileApi.read 是 fire-and-forget 的 Promise，慢的 read 后到
+   * 会覆盖快的 drawer 内容（selectFile + drawer.open）。每次预检查前自增 token 记录当前值，
+   * .then 回调内校验 token 是否仍为最新，过期则丢弃（仅最后一次点击生效）。
+   */
+  let previewToken = 0
+
   function onClick(e: MouseEvent): void {
     const target = e.target as HTMLElement
 
@@ -83,11 +91,16 @@ export function useMarkdownInteractions(opts: MarkdownInteractionsOptions = {}):
         if (path.includes('/')) {
           const sid = readSessionId(opts.sessionId)
           if (sid) {
-            // 预检查：文件不存在/不可读时 fallback 到搜索面板，避免直接打开 error 态
+            // 预检查：文件不存在/不可读时 fallback 到搜索面板，避免直接打开 error 态。
+            // token 守卫：快速连点不同文件时，慢的 read 后到不应覆盖快的 selectFile/drawer
+            // （B1 stale-write 防护，同 useDetailPane.loadToken 模式）。
+            const token = ++previewToken
             void fileApi.read(path, sid).then(() => {
+              if (token !== previewToken) return // 已被后续点击抢占，丢弃本次结果
               selectFile(path)
               drawer.open('detail')
             }).catch(() => {
+              if (token !== previewToken) return // 已被后续点击抢占，不弹搜索面板
               searchModal.open(path)
             })
             return

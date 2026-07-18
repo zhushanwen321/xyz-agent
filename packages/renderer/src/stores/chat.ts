@@ -424,10 +424,17 @@ export const useChatStore = defineStore('chat', () => {
   const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid)
   /** W3 H3：LRU recency 更新（AC-1 真 LRU），直接透传 lruTouch */
   const touchLru = lruTouch
+  /**
+   * LRU 驱逐依赖（W9：store setup 时构造一次复用）。
+   * messages/hydrated 是稳定 ref 引用，isLruExempt 闭包每次调用读当前 .value（无快照陈旧），
+   * makeLruEvictDeps 内部又用 getter（() => messages.value）延迟读取，故 deps 可在 setup 时
+   * 构造一次，三个 evict 函数复用，避免每次 evictIfNeeded 重建 5 个闭包对象。
+   */
+  const lruEvictDeps = makeLruEvictDeps(messages, hydrated, isLruExempt)
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
-  function evictIfNeeded(): void { lruEvictIfNeeded(makeLruEvictDeps(messages, hydrated, isLruExempt)) }
-  function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, makeLruEvictDeps(messages, hydrated, isLruExempt)) }
-  function evictVirtualKey(virtualId: string): void { evictVirtualKeyImpl(makeLruEvictDeps(messages, hydrated, isLruExempt), virtualId) }
+  function evictIfNeeded(): void { lruEvictIfNeeded(lruEvictDeps) }
+  function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, lruEvictDeps) }
+  function evictVirtualKey(virtualId: string): void { evictVirtualKeyImpl(lruEvictDeps, virtualId) }
 
   /** 取指定 session 的自动重试态（无则 undefined） */
   function getRetryState(sessionId: string): RetryState | undefined {

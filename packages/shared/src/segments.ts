@@ -82,6 +82,11 @@ export function segmentsToText(segments: Segment[]): string {
  *
  * 用于构造不含 badge 的 user message（如 mock 数据、从纯文本恢复的消息）。
  * 不做反向解析（不从字符串提取 /skill: 前缀）——结构化 segments 应从 composer DOM 直接产出。
+ *
+ * 已知限制：此函数用于从纯文本恢复 Segment[]（如读取 pi JSONL 历史），不做反向解析——
+ * 历史 user message 中的 /skill: 等前缀不会还原为 badge segment。新消息的 badge 由
+ * composer DOM 直接产出结构化 segments，不经此函数。历史回读时 badge 信息会丢失，
+ * 表现为纯文本展示（不影响功能正确性，仅丢失可视化标记）。
  */
 export function textToSegments(text: string): Segment[] {
   if (!text) return []

@@ -29,7 +29,7 @@ export function useSearchModal() {
 
   /** 关闭搜索浮层 */
   function close(): void {
-    query.value = ""
+    query.value = ''
     isOpen.value = false
   }
 

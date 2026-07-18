@@ -90,7 +90,15 @@ export function useComposerInjection(
       // 它看到 target=current；panel 这里只做路由触发，不注入。
       if (sessionId.value !== sessionStore.active?.id) return false
       const cwd = resolveCwdForNewSession()
-      await flow.startFlow(cwd)
+      try {
+        await flow.startFlow(cwd)
+      } catch {
+        // startFlow 失败（如 landing 已占用 / 创建 session 失败）：清空占位请求，
+        // 否则 pendingInjection 残留永久占槽位，后续注入被误判为「阶段二遗留」误消费（W8）。
+        // 仅当本次请求未被新请求覆盖时才清（覆盖时新请求自己管生命周期）。
+        if (store.pendingInjection === req) store.clearInjection()
+        return true
+      }
       // 竞态防护：await 期间若 pendingInjection 被新请求覆盖（用户连续点注入），
       // 不再 routeToLanding（新请求会自己走 watch 流程）。引用相等 = 未被覆盖。
       if (store.pendingInjection !== req) return true

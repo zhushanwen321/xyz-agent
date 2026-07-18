@@ -23,7 +23,6 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
-import { invalidateSessionMetaCache } from '../../infra/pi/session-file-utils.js'
 
 export class SessionLifecycle {
   constructor(
@@ -151,7 +150,7 @@ export class SessionLifecycle {
         // 清理 sidecar（删除失败不阻塞主流程）
         try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
         // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
-        invalidateSessionMetaCache(session.sessionFilePath)
+        this.sessionStore.invalidateMetaCache(session.sessionFilePath)
       }
     } else {
       const target = this.svc.findScannedSession(sessionId)
@@ -160,7 +159,7 @@ export class SessionLifecycle {
       // 清理 sidecar（删除失败不阻塞主流程）
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
       // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
-      invalidateSessionMetaCache(target.filePath)
+      this.sessionStore.invalidateMetaCache(target.filePath)
     }
     this.sessionStore.refreshAll()
   }
@@ -196,8 +195,9 @@ export class SessionLifecycle {
     })
 
     try {
-      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），
-      // 无需 strip。直接读 JSONL 原文件给 pi 提供历史。
+      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），无需 strip。
+      // 保守隔离：pi switchSession 对源文件的写回行为未确认，先拷贝到 tmpdir 再 switchSession，
+      // 避免 pi 可能的写回污染原 JSONL（原文件仍是 source of truth，需保持完整）。
       const cleaned = readFileSync(target.filePath, 'utf-8')
       const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
@@ -284,8 +284,9 @@ export class SessionLifecycle {
 
     try {
       // 4. switch_session 让 pi 加载截断后的历史。
-      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），
-      // 无需 strip。直接读截断后的 JSONL 文件。
+      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），无需 strip。
+      // 保守隔离：pi switchSession 对源文件的写回行为未确认，先拷贝到 tmpdir 再 switchSession，
+      // 避免 pi 可能的写回污染 forkedFilePath（fork 产物需保持完整）。
       const cleaned = readFileSync(forkedFilePath, 'utf-8')
       const tmpFile = join(tmpdir(), `xyz-fork-${forkedId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)

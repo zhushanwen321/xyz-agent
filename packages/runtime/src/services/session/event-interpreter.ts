@@ -156,7 +156,10 @@ export class EventInterpreter {
         // 兜底强制执行。onTurnFinalize 幂等（finalizeSession 幂等，见 chat.ts），重复调用无副作用。
         if (ev.kind === 'turn-end') {
           try {
-            this.opts.onTurnFinalize?.(this.sessionId)
+            // S4：传 ev.stopReason 而非 undefined——对齐正常路径（handleTurnEnd L352）。
+            // handleTurnEndSideEffects 在 stopReason undefined 时 outcome 走 'done' 分支，
+            // 对「handler 抛错」场景写 'done' 是错的；turn-end 事件本身携带 stopReason（types.ts L120）。
+            this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
           } catch (finalizeErr) {
             // 兜底失败也不阻断——至少尝试清 watchdog（best-effort：onTurnFinalize 内部异常不传播）
             console.debug('[event-interpreter] onTurnFinalize fallback failed:', finalizeErr)

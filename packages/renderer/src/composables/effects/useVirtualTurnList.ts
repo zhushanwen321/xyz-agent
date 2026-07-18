@@ -231,6 +231,9 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     // [KNOWN-LIMIT] Math.max 致 endIndex 恒为 n-1，底部虚拟化失效（用户滚到中部时仍渲染
     // startIndex→lastIndex 全部）。spec SR3 明确批准此设计取舍——末项必须挂载 RO 上报高度，
     // 否则流式追加时 sticky-bottom 失准。Math.max(computedEnd, n-1) 结果必 <= n-1，无需再 clamp。
+    // 取代代价：底部虚拟化失效，startIndex 靠近 0 时渲染量接近全量（n - startIndex 条）。
+    //   这是为 sticky-bottom 准确性支付的已知性能代价，由 spec SR3 批准；正常滚动场景
+    //   startIndex 远离 0 时窗口仍只渲染视口 + buffer 区间，性能影响有限。
     // let 而非 const：下方 editing 钉扎分支可能把 endIndex 抬到 startIndex。
     let endIndex = Math.max(computedEnd, n - 1)
 
@@ -275,11 +278,15 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     const st = scrollTop.value
     // 单次 O(n) 读 layout 快照：本帧内所有 turn 共用同一 ids/offsets 基准
     const { ids, offsets } = layout.value
+    // 构建 id→index Map 一次（O(n)），把循环内 ids.indexOf(key) 的 O(n·k) 压成真正的 O(n+k)
+    // （原注释声称 O(n+k) 但 indexOf 实为 O(n·k)，W6 修正使注释与实现一致）。
+    const idToIndex = new Map<string, number>()
+    for (let i = 0; i < ids.length; i++) idToIndex.set(ids[i]!, i)
     let delta = 0
     for (const [key, h] of pendingHeightReports) {
       const old = heights.value.get(key) ?? estimatedHeight()
-      const idx = ids.indexOf(key)
-      if (idx >= 0) {
+      const idx = idToIndex.get(key)
+      if (idx !== undefined) {
         const turnBottom = offsets[idx] + old
         if (turnBottom <= st) {
           // 视口上方 turn：实测与估算/旧值之差需补偿（防用户所见内容跳）

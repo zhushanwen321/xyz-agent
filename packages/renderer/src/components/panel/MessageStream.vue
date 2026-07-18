@@ -20,11 +20,14 @@
     </div>
     <!-- contentEl：虚拟滚动 spacer，高度=totalHeight+topOffset 撑出滚动条。
          useChatScroll 的 ResizeObserver 观测它（totalHeight 变化→末项增高→触发 scrollToBottom）。
-         可见 items 用 absolute 定位到各自 offset（+ topOffset 预留顶部 load-more 空间），视口外不挂载（虚拟化核心）。 -->
-    <div ref="contentEl" class="relative px-5 py-[18px]" :style="{ height: totalHeight + topOffset + 'px' }">
+         可见 items 用 absolute 定位到各自 offset（+ topOffset 预留顶部 load-more 空间），视口外不挂载（虚拟化核心）。
+         py-5：内容区上下 padding（对齐视觉间距，与左右 px-5 同档 20px）。 -->
+    <div ref="contentEl" class="relative px-5 py-5" :style="{ height: totalHeight + topOffset + 'px' }">
       <!-- W4 H4：加载更多历史入口（abs 定位 top=0，所有 turn offset 加 topOffset 预留空间防遮挡） -->
+      <!-- ref 供 dev-only 断言：实测高度 vs LOAD_MORE_RESERVED_HEIGHT 常量漂移检测（见下方 assertConstantHeights）。 -->
       <div
         v-if="showLoadMore && renderItems.length > 0"
+        ref="loadMoreEl"
         class="absolute left-5 right-5 top-0 flex justify-center py-2"
       >
         <Button variant="ghost" size="sm" :disabled="loadingMore" data-testid="load-more-history" @click="handleLoadMore">
@@ -34,7 +37,9 @@
         </Button>
       </div>
       <!-- 虚拟化：只渲染 visibleRange 内的 items，absolute 定位到各自 offset + topOffset -->
-      <template v-for="vi in visibleItems" :key="vi.key">
+      <!-- key 拼 sessionId 前缀：renderKey 在 turn.index/system.id 维度唯一，但跨 session/subagent
+           虚拟 id 全局唯一性无保证，拼前缀做命名空间隔离防 Vue 复用错位。同 session 内 key 仍唯一。 -->
+      <template v-for="vi in visibleItems" :key="`${sessionId}-${vi.key}`">
         <div class="absolute left-5 right-5" :style="{ top: offsetOf(vi.idx) + topOffset + 'px' }">
           <Turn
             v-if="vi.item.kind === 'turn'"
@@ -56,9 +61,11 @@
       </template>
 
       <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
-           非虚拟化，absolute 定位到列表末尾（+ topOffset）。 -->
+           非虚拟化，absolute 定位到列表末尾（+ topOffset）。
+           ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测（见下方 assertConstantHeights）。 -->
       <div
         v-if="isCompacting"
+        ref="compactingNoticeEl"
         class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 py-1"
         :style="{ top: totalHeight + topOffset + 'px' }"
       >
@@ -105,6 +112,7 @@ import { useChatStore } from '@/stores/chat'
 import { useChat } from '@/composables/features/useChat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
+import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
 import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId } from '@/stores/subagent'
@@ -184,14 +192,34 @@ const renderItems = computed(() => toRenderItems(currentMessages.value, forceWor
  * 高度缓存键用首消息 id（turn）/ s-message.id（system），非 t-index（防 truncateFrom 张冠李戴）。
  * 前置依赖 M4（scrollToBottom rAF trailing 节流 + INVAR-M4-2 延迟求值守卫）已落地。
  */
-/** 虚拟滚动估算高度（未实测 turn 的初始高度，block 加权的经验值，测量后替换为实测） */
+/**
+ * ── 像素常量与 DOM 强绑定（B2）──────────────────────────────────────────
+ * 下面三个高度常量直接参与 absolute 定位 top 计算，依赖模板对应 DOM 块的真实高度。
+ * 改任何一方的 padding/字号/icon size 都必须同步另一方，否则定位会静默漂移。
+ * dev-only assertConstantHeights（见下方）会实测对比并在不匹配时 console.warn。
+ */
+/**
+ * 虚拟滚动估算高度（未实测 turn 的初始高度，经验值）。
+ * 与定位无关——只在 ResizeObserver 上报实测值之前作 fallback，上报后即被替换。
+ */
 const ESTIMATED_TURN_HEIGHT = 200
 /** 虚拟滚动上下 buffer turn 数（快速滚动时预渲染视口外的 turn，防白屏） */
 const VIRTUAL_BUFFER_TURNS = 2
-/** load-more 按钮预留高度（按钮 + py-2 padding，所有 turn offset 加此值防 abs 定位的按钮遮挡首 turn） */
+/**
+ * load-more 按钮预留高度。
+ * 强绑定 DOM：模板 load-more 块（abs top=0，`flex justify-center py-2` 内含 `Button size="sm"`）。
+ *   实际高度 = Button(h-8=32px) + py-2(8px*2=16px) ≈ 48px；常量取 44 是历史值（略偏小，
+ *   topOffset 给 turn 留的避让空间略紧但未致遮挡，保持现状避免引入定位回归）。
+ *   若改 Button size / py-* / icon size，必须重测并同步此常量（dev 断言会提醒）。
+ */
 const LOAD_MORE_RESERVED_HEIGHT = 44
-/** compaction notice 占位高度估算（py-1 + spinner + text，与模板 isCompacting 块同源）。
- *  dispatching 占位 top 在 isCompacting 时需避让 compaction notice，故 + 此值。 */
+/**
+ * compaction notice 占位高度。
+ * 强绑定 DOM：模板 isCompacting 块（`flex items-center gap-2 py-1`，含 `size-3` spinner
+ *   + `text-[11px] leading-snug` 文本 + 两条 `h-px` 分隔线）。
+ *   实际高度 ≈ py-1(4px*2) + max(spinner 12px, text≈16px) ≈ 24px；常量 28 略大，给 dispatching
+ *   占位避让留 4px 余量。改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
+ */
 const COMPACTING_NOTICE_HEIGHT = 28
 
 const virtualList = useVirtualTurnList({
@@ -210,6 +238,16 @@ const { totalHeight, visibleRange, offsetOf } = virtualList
 const topOffset = computed(() =>
   showLoadMore.value && renderItems.value.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0,
 )
+
+/**
+ * B2 dev-only 常量高度漂移检测：绑定对应 DOM 块，ResizeObserver 实测高度 vs 像素常量，
+ * 不匹配时 console.warn（提示 padding/字号/icon 改动未同步常量）。生产构建被 import.meta.env.DEV
+ * 守卫裁剪，零运行时开销。逻辑封装在 useConstantHeightAssert，此处只注册常量并取回 ref 绑模板。
+ */
+const [loadMoreEl, compactingNoticeEl] = useConstantHeightAssert([
+  { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
+  { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
+]).els
 
 /** 可见项 { idx, item, key } 数组（末项钉扎保证流式末项恒在窗口内）。预计算 key 避免 template :key 里调函数致 vue-tsc 误报 unused */
 const visibleItems = computed(() => {

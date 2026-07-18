@@ -544,6 +544,16 @@ export class ConfigService implements IConfigService {
   getReplaceSystemPrompt(): string | undefined {
     const { config } = this.getSystemPromptConfig()
     if (config.replace.enabled && config.replace.prompt.trim() !== '') {
+      // 防御性长度兜底：setSystemPromptConfig 写入期已校验上限，但 replace/append 启用态切换
+      // 或外部直接篡改 system-prompt.json 可能写入超长 prompt。原样返回会让超长 prompt 进
+      // pi spawn argv，触发 Windows 32k 命令行截断。降级为不注入（返回 undefined）比注入
+      // 残缺内容更安全。错误信息风格与 setSystemPromptConfig 一致。
+      if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+        console.warn(
+          `[config-service] replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH}), falling back to undefined (replace disabled this run)`,
+        )
+        return undefined
+      }
       return config.replace.prompt
     }
     return undefined

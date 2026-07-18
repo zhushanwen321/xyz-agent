@@ -69,6 +69,7 @@
             :title="t('panel.message.viewCommandDoc')"
             @click.stop="openCommandDoc(`/skill:${seg.name}`)"
             @keydown.enter.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
+            @keydown.space.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
           >
             <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
             <span>{{ seg.name }}</span>
@@ -85,6 +86,7 @@
             :title="seg.path"
             @click.stop="openFileDetail(seg.path)"
             @keydown.enter.stop.prevent="openFileDetail(seg.path)"
+            @keydown.space.stop.prevent="openFileDetail(seg.path)"
           >
             <FileText class="size-[12px] shrink-0" />
             <span>{{ fileBasename(seg.path) }}{{ formatLineRange(seg.lineRange) }}</span>
@@ -208,7 +210,9 @@
       >
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
-             原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。 -->
+             原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。
+             w-[7px] / rounded-[1px] 为设计精确值（与 h-3.5=14px 配出 2:1 细竖条比例 + 1px 微圆角），
+             非魔数——改宽度需同步 h-3.5 比例。 -->
         <span v-if="turn.isWorking" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
         <!-- hover actions：复制 / 复制为 MD（常驻）+ fork（仅 AI 停止时）。
            与 user 区一致（Turn.vue:76,90）：容器不守 isSessionActive，fork 单独守卫。 -->

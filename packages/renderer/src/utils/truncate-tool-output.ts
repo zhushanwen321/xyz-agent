@@ -36,6 +36,15 @@ export const TOOL_OUTPUT_MAX_BYTES = 4096
 const TRUNCATION_MARKER = '\n\n[...output truncated...]'
 
 /**
+ * TextEncoder/TextDecoder 模块级单例（S9）。
+ * 这些是无状态工具对象，构造零成本但重复 new 仍是不必要分配。提为模块级单例复用。
+ * Decoder fatal=false：截断体在 codepoint 边界对齐（truncateToBytes 内保证），
+ * 即便边界对齐有偏差也不抛错（容错 decode 截断字节）。
+ */
+const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder('utf-8', { fatal: false })
+
+/**
  * 判断 toolName 是否需要截断（D12 MCP 前缀兼容）。
  * mcp__server__read 按末段匹配 read。
  */
@@ -65,7 +74,7 @@ const UTF8_CONTINUATION_PREFIX = 0x80
  * 用 TextEncoder 代替 Node.js Buffer（浏览器端无 Buffer 全局）。
  */
 export function truncateToBytes(str: string, maxBytes: number): string {
-  const bytes = new TextEncoder().encode(str)
+  const bytes = textEncoder.encode(str)
   if (bytes.length <= maxBytes) return str
 
   // 从 maxBytes 往前找 codepoint 边界
@@ -76,7 +85,7 @@ export function truncateToBytes(str: string, maxBytes: number): string {
   while (cutPos > 0 && (bytes[cutPos]! & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_PREFIX) {
     cutPos--
   }
-  return new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, cutPos))
+  return textDecoder.decode(bytes.subarray(0, cutPos))
 }
 
 /**
@@ -92,20 +101,19 @@ export function truncateToolCall<T extends import('@xyz-agent/shared').ToolCall>
 
   let truncated = false
   const next: Partial<T> = {}
-  const encoder = new TextEncoder()
-  const markerBytes = encoder.encode(TRUNCATION_MARKER).length
+  const markerBytes = textEncoder.encode(TRUNCATION_MARKER).length
   // 截断体预算 = MAX - marker，保证含标记后总长 ≤ MAX
   const bodyBudget = TOOL_OUTPUT_MAX_BYTES - markerBytes
 
   if (tc.output !== undefined) {
-    const byteLen = encoder.encode(tc.output).length
+    const byteLen = textEncoder.encode(tc.output).length
     if (byteLen > TOOL_OUTPUT_MAX_BYTES) {
       next.output = truncateToBytes(tc.output, bodyBudget) + TRUNCATION_MARKER
       truncated = true
     }
   }
   if (tc.outputRaw !== undefined) {
-    const byteLen = encoder.encode(tc.outputRaw).length
+    const byteLen = textEncoder.encode(tc.outputRaw).length
     if (byteLen > TOOL_OUTPUT_MAX_BYTES) {
       next.outputRaw = truncateToBytes(tc.outputRaw, bodyBudget) + TRUNCATION_MARKER
       truncated = true

@@ -208,11 +208,14 @@ const { open: drawerOpen } = useSideDrawer()
 const query = ref('')
 const { query: externalQuery } = useSearchModal()
 
-// 与外部 useSearchModal.query 双向同步：打开时预填搜索词，输入时同步回单例
+// 与外部 useSearchModal.query 双向同步：打开时预填搜索词，输入时同步回单例。
+// 两个 watch 都加 !== 守卫保持对称，避免一方回写触发另一方形成死循环（W12）。
 watch(() => externalQuery.value, (v) => {
   if (v !== query.value) query.value = v
 }, { immediate: true })
-watch(query, (v) => { externalQuery.value = v })
+watch(query, (v) => {
+  if (v !== externalQuery.value) externalQuery.value = v
+})
 const selIdx = ref(0)
 const resultsRef = ref<HTMLElement | null>(null)
 /** 浮层根 div（替代 reka-ui Dialog 的 focus trap 容器；用于自管理 focus） */

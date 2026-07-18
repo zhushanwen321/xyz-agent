@@ -6,6 +6,8 @@
   替换卡下方含可折叠的 pi 默认提示词参考区，展开后可一键复制（DEFAULT_PI_SYSTEM_PROMPT）。
 -->
 <template>
+  <!-- max-w-[860px]：设置页内容列标准宽度（与 SystemPage.vue 共用同一约定）。
+       非 Tailwind 标准档（3xl=768/4xl=896）——介于两者间为长表单宽度，改需同步 SystemPage。 -->
   <div data-testid="system-prompt-page" class="flex max-w-[860px] flex-col gap-3">
     <!-- corrupted 提示条：getSystemPrompt 返回 corrupted=true 时显示 -->
     <div
@@ -37,8 +39,7 @@
         <Textarea
           id="system-prompt-replace-input"
           data-testid="system-prompt-replace-input"
-          :model-value="replacePrompt"
-          @update:model-value="replacePrompt = String($event)"
+          v-model="replacePrompt"
           :placeholder="t('settings.systemPrompt.replacePlaceholder')"
           :disabled="!replaceEnabled"
           class="min-h-[120px] resize-y font-mono text-[12px]"
@@ -111,8 +112,7 @@
         <Textarea
           id="system-prompt-append-input"
           data-testid="system-prompt-append-input"
-          :model-value="appendPrompt"
-          @update:model-value="appendPrompt = String($event)"
+          v-model="appendPrompt"
           :placeholder="t('settings.systemPrompt.appendPlaceholder')"
           :disabled="!appendEnabled"
           class="min-h-[120px] resize-y font-mono text-[12px]"
