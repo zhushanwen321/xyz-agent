@@ -56,7 +56,7 @@ function pushSession(sessionId: string, msg: ServerMessage): void {
  */
 const isE2E = import.meta.env.VITE_E2E === 'true'
 
-/** 按 cwd 聚合 fixtureSessions 为 SessionGroup[]（session.list reply 与 server-push 共用） */
+/** 按 cwd 聚合 fixtureSessions 为 SessionGroup[]（config.sessions reply 与 server-push 共用） */
 function buildGroups(): SessionGroup[] {
   // E2E 模式注入 fixture session（不修改 fixtureSessions 源数组，保持 idempotent）
   const base = fixtureSessions.map((s) => ({ ...s }))
@@ -178,7 +178,7 @@ function sleep(ms: number): Promise<void> {
 export const session = {
   /**
    * 按 cwd 分组返回（对齐后端 SessionGroup[]，D7）。
-   * runtime 的 session.list reply 是 `{ groups: SessionGroup[] }`，同构返分组结构。
+   * runtime 的 config.sessions reply 是 `{ groups: SessionGroup[] }`，同构返分组结构。
    * 同 cwd 的 session 归入一组，组内保持插入顺序（按 lastActiveAt 降序更贴近真实，
    * 但 mock fixture 已手排，此处保持稳定顺序避免打乱既有的 5 态演示）。
    */

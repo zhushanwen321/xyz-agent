@@ -13,6 +13,7 @@ import { command } from '../request'
 /**
  * 列出所有 session，按 cwd 分组（对齐后端 SessionGroup[]，D7）。
  * reply payload 是 { groups: SessionGroup[] }，解包 .groups。
+ * type=config.sessions（原 session.list，W2 重命名）。
  */
 export async function list(): Promise<SessionGroup[]> {
   const reply = await command('config.sessions', {})

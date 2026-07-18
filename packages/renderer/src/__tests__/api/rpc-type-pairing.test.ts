@@ -138,20 +138,6 @@ describe('U4: ServerMessageMap — RPC reply 条目已收紧（非兜底 Record<
     }
     expect(sample.historyTruncated).toBe(false)
   })
-
-  it('session.created 的 payload 含 session 字段（非兜底）', () => {
-    type CreatedPayload = ServerMessageMap['session.created']
-    // 非兜底时，session 字段类型具体；兜底 Record<string,unknown> 时 session 是 unknown
-    const sample: CreatedPayload = { session: { id: 's1' } } as CreatedPayload
-    expect(sample).toBeDefined()
-  })
-
-  it('model.switched 的 payload 已收紧（非兜底）', () => {
-    type SwitchedPayload = ServerMessageMap['model.switched']
-    // 若兜底则为 Record<string,unknown>，无法确保字段存在
-    const sample = { modelId: 'gpt-4' } as SwitchedPayload
-    expect(sample).toBeDefined()
-  })
 })
 
 // ════════════════════════════════════════════════════════════════════════
@@ -178,7 +164,7 @@ describe('U5: domain 层零手写 pending.register 泛型', () => {
     for (const f of files) {
       const content = readFileSync(resolve(domainsDir, f), 'utf-8')
       // 不应再有裸 request( 调用（已改名 command）
-      if (/\brequest\s*\(/.test(content) && !content.includes('interface') === false) {
+      if (/\brequest\s*\(/.test(content)) {
         // 排除注释和类型定义里的 request 字样
         const lines = content.split('\n').filter(
           (l) => /\brequest\s*\(/.test(l) && !l.trim().startsWith('//') && !l.trim().startsWith('*'),

@@ -194,6 +194,9 @@ export function sendExtensionUIResponse(sessionId: string, requestId: string, me
  */
 export async function getPendingRequests(sessionId: string): Promise<ExtensionUIRequest[]> {
   const reply = await command('extension.getPendingRequests', { sessionId })
-  // reply.requests 是 unknown[]（runtime PendingUIRequest 未下沉 shared），按 ExtensionUIRequest 收窄
-  return reply.requests as ExtensionUIRequest[]
+  // reply.requests 是 unknown[]（runtime PendingUIRequest 未下沉 shared），用类型守卫收窄为 ExtensionUIRequest
+  return reply.requests.filter((r): r is ExtensionUIRequest =>
+    r != null && typeof r === 'object' &&
+    typeof (r as Record<string, unknown>).requestId === 'string' &&
+    typeof (r as Record<string, unknown>).method === 'string')
 }
