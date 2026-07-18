@@ -52,6 +52,17 @@ export function useChatScroll() {
    * 程序性 scrollToBottom 只增不减 scrollTop，故「scrollTop 明显减小」必为用户操作。
    */
   let lastScrollTop = 0
+  /**
+   * rAF trailing 节流状态（M4）：rafId 是当前排队的 rAF 句柄，pending* 是末次调用参数。
+   * 声明在 onScopeDispose（引用 rafId 做卸载清理）之前——后者虽是闭包、运行时才读 rafId，
+   * 但按「先声明后引用」惯例前置，避免读者混淆 TDZ 风险。
+   */
+  let rafId: number | null = null
+  /** 待执行的尾部调用参数（trailing：最后一次调用的 behavior/force 生效）。 */
+  let pendingBehavior: ScrollBehavior = 'smooth'
+  let pendingForce = false
+  /** trailing flush 的 resolve 队列：所有合并的调用方 await 的 Promise 在 flush 后一并 resolve。 */
+  let pendingResolvers: Array<() => void> = []
 
   /**
    * wheel 事件回调：滚轮 / 触控板上滑（deltaY < 0）→ 脱离锚定。
@@ -156,13 +167,6 @@ export function useChatScroll() {
    * 无需任何 scroll 事件保护期——onScroll 永不因程序性滚动翻 false（见文件头说明），
    * smooth 动画中途的 scroll 事件（scrollTop 增大）同样不会误判。
    */
-  let rafId: number | null = null
-  /** 待执行的尾部调用参数（trailing：最后一次调用的 behavior/force 生效）。 */
-  let pendingBehavior: ScrollBehavior = 'smooth'
-  let pendingForce = false
-  /** trailing flush 的 resolve 队列：所有合并的调用方 await 的 Promise 在 flush 后一并 resolve。 */
-  let pendingResolvers: Array<() => void> = []
-
   function flushScroll(): void {
     rafId = null
     const behavior = pendingBehavior

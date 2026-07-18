@@ -43,6 +43,31 @@ const streamSubscriptions = new Map<string, () => void>()
  */
 const historyTruncatedSessions = ref<Set<string>>(new Set())
 
+/**
+ * 重置 useChat 模块级状态（测试隔离用）。
+ *
+ * useChat() 是 composable 工厂但把会话级状态（streamSubscriptions Map、
+ * historyTruncatedSessions Set）放在模块顶层，跨 useChat() 调用共享
+ * （Composer/Panel/Sidebar/useNewTaskFlow 共用同一份）。测试间不 reset
+ * 会泄漏到下一用例：streamSubscriptions 残留 + historyTruncatedSessions
+ * 永久 true。测试需在 beforeEach 调用本函数重置。
+ *
+ * 生产代码无需调用（session 切换/删除时各自清理：disposeSession 取消订阅，
+ * loadMoreHistory 清截断标记）。
+ */
+export function resetChatModuleState(): void {
+  // 清空 stream 订阅：逐个调 unsub（解除 WS 订阅）+ 清空 Map
+  for (const [, unsub] of streamSubscriptions) {
+    try {
+      unsub()
+     
+    } catch { void 0 }
+  }
+  streamSubscriptions.clear()
+  // 重置 history 截断标记
+  historyTruncatedSessions.value = new Set()
+}
+
 /** 确保指定 session 已订阅流式事件（幂等：已订阅则 no-op）。 */
 function ensureStreamSubscription(
   sid: string,
@@ -349,8 +374,9 @@ export function useChat() {
   /**
    * 清理指定 session 的全部资源（W1 / S3：deleteSession 调用）。
    *
-   * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态。
-   * session 删除后若不取消订阅，WS 事件仍会推给已删 session 的 handler，且 Map 永久增长。
+   * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态
+   * + 清 historyTruncatedSessions 标记。session 删除后若不取消订阅，WS 事件仍会推给已删
+   * session 的 handler，且 Map 永久增长；historyTruncated 标记同理残留（SUGGESTION）。
    */
   function disposeSession(sessionId: string): void {
     const unsub = streamSubscriptions.get(sessionId)
@@ -358,6 +384,7 @@ export function useChat() {
       unsub()
       streamSubscriptions.delete(sessionId)
     }
+    clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
     chat.disposeSession(sessionId)
   }
 

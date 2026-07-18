@@ -72,7 +72,7 @@ function buildGroups(): SessionGroup[] {
 
 /**
  * 模拟 runtime broadcastSessionList（create/delete/rename 后推全量分组到 global 通道）。
- * useSidebar 经 events.onGlobalType('session.list') 订阅（refCount 防重复），mock 直 dispatchGlobal。
+ * useSidebar 经 events.onGlobalType('config.sessions') 订阅（refCount 防重复），mock 直 dispatchGlobal。
  */
 function pushSessionList(): void {
   events.dispatchGlobal({ type: 'config.sessions', id: nextId('sl'), payload: { groups: buildGroups() } })
@@ -200,13 +200,13 @@ export const session = {
   /**
    * Mock fork：模拟 runtime 截断 + 新进程，返回新 session。
    * mock 模式无真实 JSONL 截断，仅创建空 session（历史由前端 selectSession 拉）。
-   * 与 real domain 同接口，签名一致。
+   * 与 real domain 同接口，签名一致（opts 必选，对齐 session.ts fork）。
    */
-  async fork(srcSessionId: string, _opts?: { piEntryId?: string; messageTimestamp?: number; messageRole?: string; includeFrom?: boolean; label?: string }): Promise<SessionSummary> {
+  async fork(srcSessionId: string, opts: { piEntryId?: string; messageTimestamp?: number; messageRole?: string; includeFrom?: boolean; label?: string }): Promise<SessionSummary> {
     await sleep(TIMING.ack)
     const src = fixtureSessions.find((s) => s.id === srcSessionId)
     const cwd = src?.cwd
-    const s = createSession(cwd, _opts?.label)
+    const s = createSession(cwd, opts?.label)
     fixtureSessions.push(s)
     pushSessionList()
     return { ...s }

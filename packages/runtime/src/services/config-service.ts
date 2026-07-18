@@ -208,8 +208,13 @@ export class ConfigService implements IConfigService {
     try {
       const cd = this.configStore.getConfigDir()
       if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+      // 用唯一 tmp 后缀避免并发 saveAppConfig 撞固定 .tmp 文件（同 setSystemPromptConfig）。
       // eslint-disable-next-line no-magic-numbers -- standard JSON indent
-      atomicWrite(this.appConfigPath(), JSON.stringify(config, null, 2))
+      atomicWrite(
+        this.appConfigPath(),
+        JSON.stringify(config, null, 2),
+        `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      )
     // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
     } catch (e) {
       console.error('[config-service] save config.json error:', e)
@@ -511,8 +516,14 @@ export class ConfigService implements IConfigService {
     }
     const cd = this.configStore.getConfigDir()
     if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+    // 用唯一 tmp 后缀避免并发 setSystemPromptConfig 撞固定 .tmp 文件
+    // （两次并发写入会共用同一 system-prompt.json.tmp，后写的 writeFileSync 覆盖前者数据）。
     // eslint-disable-next-line no-magic-numbers -- standard JSON indent
-    atomicWrite(this.systemPromptPath(), JSON.stringify(config, null, 2))
+    atomicWrite(
+      this.systemPromptPath(),
+      JSON.stringify(config, null, 2),
+      `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    )
     return { ok: true }
   }
 

@@ -266,7 +266,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -297,6 +297,15 @@ const props = defineProps<{
   sessionId: string
   /** 该 user 是否可编辑（仅当前 session 最后一条 user，避免编辑中间 user 丢失其后对话） */
   canEdit?: boolean
+}>()
+
+/**
+ * B9：编辑状态变化通知父组件。
+ * Turn 内部编辑状态（editingUserId）对 MessageStream 不可见，但被编辑 turn 滚出视口会卸载
+ * 丢失 draftText（SR5）。父组件据此调 virtualList.pinEditing(idx) 钉住该 turn 在窗口内。
+ */
+const emit = defineEmits<{
+  'edit-state-change': [{ editing: boolean }]
 }>()
 
 const { t } = useI18n()
@@ -422,6 +431,14 @@ const draftText = ref('')
 const isEditingThisUser = computed(
   () => !!props.turn.user && editingUserId.value === props.turn.user.id,
 )
+
+/**
+ * B9：编辑状态变化 → 通知父组件（MessageStream 据此 pinEditing 钉住该 turn 在视口内，
+ * 防滚出视口卸载丢失 draftText）。watch isEditingThisUser：startEdit→true，cancel/submit→false。
+ */
+watch(isEditingThisUser, (editing) => {
+  emit('edit-state-change', { editing })
+})
 
 function startEdit(): void {
   if (!props.turn.user) return

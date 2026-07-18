@@ -23,7 +23,7 @@ import type {
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import { getHistoryFromFile, getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
+import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
@@ -288,7 +288,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       }
     }
     // fallback：取最后一条 message entry（用户最可能 fork 到最近的消息）
-    const last = msgEntries[msgEntries.length - 1]!
+    const last = msgEntries[msgEntries.length - 1]
+    if (!last) throw new Error('msgEntries unexpectedly empty after length check')
     console.warn(`[session-service] resolveEntryIdByTimestamp: no timestamp match, falling back to last entry: ${last.id}`)
     return last.id as string
   }

@@ -30,7 +30,7 @@ vi.mock('@/api', async () => {
 })
 
 import { useChatStore } from '@/stores/chat'
-import { useChat } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/useChat'
 import { chat } from '@/api'
 
 function makeMessage(id: string, content: string): Message {
@@ -42,6 +42,7 @@ describe('W4 加载更多历史 fallback', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    resetChatModuleState()
     loadMoreHistory = useChat().loadMoreHistory
     vi.mocked(chat.getFullHistory).mockReset()
   })

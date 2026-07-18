@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { persistSessionEnd, extractSessionOutcome, stripSessionEnd } from '../infra/pi/session-file-utils.js'
+import { persistSessionEnd, extractSessionOutcome } from '../infra/pi/session-file-utils.js'
 
 describe('session-file-utils sidecar', () => {
   let dir: string
@@ -40,15 +40,5 @@ describe('session-file-utils sidecar', () => {
     const filePath = join(dir, 'test.jsonl')
     writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
     expect(extractSessionOutcome(filePath)).toBeNull()
-  })
-
-  it('U3: stripSessionEnd removes session_end from JSONL', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n{"type":"session_end","outcome":"done","timestamp":"2026-01-01"}\n{"type":"model_change","modelId":"x"}\n')
-    const cleaned = stripSessionEnd(filePath)
-    expect(cleaned).toContain('message')
-    expect(cleaned).not.toContain('session_end')
-    // orphan metadata after session_end also stripped
-    expect(cleaned).not.toContain('model_change')
   })
 })

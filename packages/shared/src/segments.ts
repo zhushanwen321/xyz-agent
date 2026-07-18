@@ -59,7 +59,11 @@ export function segmentsToText(segments: Segment[]): string {
         // lineRange 必须进 prompt 文本，否则 LLM 看不到行号（review M1）。
         let fileText = seg.path
         if (seg.lineRange) {
-          const [s, e] = seg.lineRange
+          // 归一化 lineRange：防负数 / s>e 产出非法 prompt 文本（L0、L5-L3 等）。
+          // 输入边界防御——上游 composer/DiffView 正常不会传非法值，此处兜底保证序列化恒合法。
+          const [s0, e0] = seg.lineRange
+          const s = Math.max(1, s0)
+          const e = Math.max(s, e0)
           fileText += s === e ? `:L${s}` : `:L${s}-L${e}`
         }
         parts.push(fileText)

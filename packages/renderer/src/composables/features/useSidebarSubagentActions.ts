@@ -87,7 +87,12 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
       )
     } catch (e) {
       // [M7] catch 回滚：backFromAgentCall 清理（幂等，messages 可能未注入）
-      workflowStore.backFromAgentCall(panelStore.activePanelId, (acsId) => chat.evictVirtualKey(acsId))
+      // [W2] 传 mainSessionId 清 mainSessionAgentCalls Set（selectAgentCall 失败回滚也需清映射）
+      workflowStore.backFromAgentCall(
+        panelStore.activePanelId,
+        (acsId) => chat.evictVirtualKey(acsId),
+        activePanel.sessionId,
+      )
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('sidebar.agentCallLoadFailed', { msg }))
     }

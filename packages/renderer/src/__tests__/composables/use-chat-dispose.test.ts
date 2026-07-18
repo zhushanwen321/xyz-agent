@@ -27,12 +27,13 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useChat } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 
 describe('useChat disposeSession（W1：取消 streamSubscriptions + 清 chat store）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    resetChatModuleState()
     vi.clearAllMocks()
   })
 

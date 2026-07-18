@@ -53,22 +53,23 @@ export function extractSessionName(filePath: string): string | null {
 // ── session 终态 entry（W4，ADR 0036）─────────────────────────
 
 /**
- * session 结束时的终态类型（W4，ADR 0036）。
- * runtime 在 3 个终态点 append session_end entry 到 JSONL，scanner 据此派生终态，
- * 让前端侧栏无需预加载历史即可显示 done/error/stopped。
+ * session 结束时的终态类型（W4，ADR 0036 + W1 sidecar 方案）。
+ * runtime 在 3 个终态点写 session_end 到 sidecar `.meta.json`（不写 JSONL），scanner
+ * 据此派生终态，让前端侧栏无需预加载历史即可显示 done/error/stopped。
  */
 export type SessionOutcome = 'done' | 'error' | 'stopped'
 
 /**
- * 将 session 终态持久化到 .jsonl 文件（W4，ADR 0036）。
+ * 将 session 终态持久化到 sidecar `.meta.json`（W4，ADR 0036 + W1 sidecar 方案）。
  *
- * 追加一条 `session_end` entry（runtime 自定义格式，pi 忽略未知 type）。
- * 复用 persistSessionName 的 openSync('a') + writeSync append 模式 + existsSync guard。
+ * 与 JSONL 同目录写 `.meta.json`（存 session_end 元数据），不污染 JSONL——pi 的
+ * _persist 永远只写 message/session_info，runtime 的终态独立存 sidecar，避免「pi
+ * 忽略未知 type」的隐式约定。
  *
- * [规则 #6] 文件不存在时**绝不创建文件**（与 pi 0.80.3 _persist 的 openSync("wx") 竞态）。
+ * [规则 #6] 文件不存在时**绝不创建 sidecar**（与 pi 0.80.3 _persist 的 openSync("wx") 竞态）。
  * 进程崩溃（SIGKILL/OOM）可能来不及执行，这类 session 读不到终态 → scanner 回退 idle。
  *
- * @param filePath session JSONL 绝对路径
+ * @param filePath session JSONL 绝对路径（sidecar = filePath + '.meta.json'）
  * @param outcome 终态：done（正常完成）/ error（LLM 出错）/ stopped（用户 abort/进程崩溃）
  * @param reason 可选人类可读原因（error 的 errorMessage / stopped 的 abort reason）
  */
@@ -116,34 +117,6 @@ export function extractSessionOutcome(filePath: string): SessionOutcome | null {
 }
 
 /**
- * 从 JSONL 文件中移除 session_end 及其后的孤立 metadata entries。
- * 用于 restore/fork 时给 pi 提供干净的历史文件（pi 未知 type 会忽略，
- * 但 session_end 携带的旧终态信息会干扰新 session 的状态判断）。
- *
- * @returns 清理后的内容（不含 session_end 及其后续孤立 metadata entries）
- */
-export function stripSessionEnd(filePath: string): string {
-  const content = readFileSync(filePath, 'utf-8')
-  const lines = content.split('\n')
-  // 找到 session_end 所在行索引，截断到该行为止（含 session_end 及其后的孤立 entries）
-  let cutIndex = lines.length
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]
-    if (!line.trim()) continue
-    try {
-      const entry = JSON.parse(line)
-      if (entry.type === 'session_end') {
-        cutIndex = i
-        break
-      }
-    } catch { void 0 /* non-JSON line, keep */ }
-  }
-  // 保留 cutIndex 之前的行，过滤空行
-  const kept = lines.slice(0, cutIndex).filter(l => l.trim())
-  return kept.join('\n') + '\n'
-}
-
-/**
  * 尾读 + fallback 全量读，倒序找最后一条匹配 entry 的字段值（W2 共用骨架）。
  *
  * 1. readTailEntries 尾读尾部块（offset=max(0,size-32KB)）
@@ -178,7 +151,7 @@ function findLastEntryField<R>(
         return extract(entry as Record<string, unknown>)
       }
     }
-  // eslint-disable-next-line taste/no-silent-catch no-empty -- 文件读取/解析失败返回 null，与原实现对等
+  // eslint-disable-next-line taste/no-silent-catch -- 文件读取/解析失败返回 null，与原实现对等
   } catch {
     return null
   }
@@ -294,6 +267,13 @@ export interface ScannedSessionMeta {
  * 缓存键含 (path, mtimeMs, size)（INVAR-cache-2 SR4）——同 ms 内并发 append mtimeMs 不变但
  * size 变 → miss，消除竞态。无上限（INVAR-cache-6，每条~几百字节，10k session≈数 MB）。
  * 不跨进程（runtime 重启清空，首次 scan 冷读）。
+ *
+ * [KNOWN-LIMIT 无界增长] 缓存以 filePath 为键，删除 session 不会主动清条目（deleteSession
+ * 走 trash 不回调此模块）。长时间运行的 runtime + 频繁创建/删除 session 时条目累积，
+ * 但单条 ~几百字节、且 filePath 含 sessionId 不会重复，实测量级可控（数千条 ≈ 1MB）。
+ * 若未来 session 生命周期变长/创建频繁导致内存压力，可在此加 LRU 上限或定期 sweep
+ * （按 lastModified 淘汰 stale 条目）。当前 runtime 进程为 session 级常驻，生命周期内
+ * session 总数有限，暂不引入淘汰逻辑。
  */
 interface CachedSessionMeta {
   mtimeMs: number

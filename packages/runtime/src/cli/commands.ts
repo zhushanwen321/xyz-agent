@@ -2,6 +2,9 @@
  * CLI 命令实现：参数解析 + WS 消息构造 + 响应格式化。
  * 每个命令映射一个 runtime config.* 消息，逻辑单一真值源在 ConfigService。
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import { rpc } from './ws-client.js'
 
 // ── 参数解析 ──────────────────────────────────
@@ -73,10 +76,17 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
     }
 
     case 'get-default-model': {
-      // getDefaults 是订阅推送，CLI 需要主动拉——用 listProviders 的 defaultModel 字段
-      // 或者直接读 settings.json。这里走 WS 查询。
-      const reply = await rpc<{ defaultModel?: string }>('config.getProviders', {})
-      return reply.defaultModel ?? 'not set'
+      // config.getProviders reply 是 { providers }，不含 defaultModel。
+      // defaultModel 只通过 config.defaults 订阅推送（CLI 无订阅），故直接读 settings.json。
+      try {
+        const raw = readFileSync(join(getDataDir(), 'settings.json'), 'utf-8')
+        const settings = JSON.parse(raw) as { defaultModel?: { provider: string; modelId: string } }
+        const dm = settings.defaultModel
+        return dm ? `${dm.provider}/${dm.modelId}` : 'not set'
+      } catch {
+        // settings.json 不存在或解析失败 → 未设置默认模型
+        return 'not set'
+      }
     }
 
     case 'set-default-model': {
@@ -122,7 +132,9 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
       const apiKey = flags['api-key-stdin']
         ? await readStdin()
         : (process.env.XYZ_AGENT_API_KEY ?? '')
-      const payload: Record<string, unknown> = { name, provider }
+      // 协议（protocol.ts:138）：config.setProvider payload = { providerId } & SetProviderData。
+      // SetProviderData（protocol.ts:58）含 apiKey/name/baseUrl/models 等字段；provider 类型走 type 字段。
+      const payload: Record<string, unknown> = { providerId: name, type: provider }
       if (apiKey) payload.apiKey = apiKey
       await rpc('config.setProvider', payload)
       return `provider ${name} (${provider}) configured` + (apiKey ? ' [apiKey:set]' : ' [apiKey:unchanged]')
@@ -151,16 +163,36 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
       if (!name) {
         throw new Error('Usage: xyz-settings delete-provider --name <id>')
       }
-      await rpc('config.deleteProvider', { name })
+      await rpc('config.deleteProvider', { providerId: name })
       return `provider ${name} deleted`
     }
 
     case 'discover-models': {
-      const name = flags.name as string
-      if (!name) {
-        throw new Error('Usage: xyz-settings discover-models --name <provider-id>')
+      // 协议（protocol.ts:141）：{ baseUrl, apiKey?, providerType?, providerId? }。
+      // handler（settings-message-handler.ts:197-209）把 baseUrl 作为位置参数传给
+      // modelService.discoverModelsFromApi(baseUrl, ...)，必填；apiKey 缺省时用 providerId 查已配置 provider。
+      const baseUrl = flags['base-url'] as string
+      if (!baseUrl) {
+        throw new Error(
+          'Usage: xyz-settings discover-models --base-url <url> [--name <provider-id>] [--provider <type>] [--api-key-stdin]',
+        )
       }
-      const reply = await rpc<{ models?: Array<{ id: string }> }>('config.discoverModels', { name })
+      const providerId = (flags.name as string) || undefined
+      const providerType = (flags.provider as string) || undefined
+      const apiKey = flags['api-key-stdin']
+        ? await readStdin()
+        : (process.env.XYZ_AGENT_API_KEY ?? undefined)
+      const payload: Record<string, unknown> = { baseUrl }
+      if (providerId) payload.providerId = providerId
+      if (providerType) payload.providerType = providerType
+      if (apiKey) payload.apiKey = apiKey
+      const reply = await rpc<{ models?: Array<{ id: string }>; success?: boolean; error?: string }>(
+        'config.discoverModels',
+        payload,
+      )
+      if (reply.success === false) {
+        throw new Error(reply.error ?? 'discover failed')
+      }
       const models = reply.models ?? []
       if (json) return JSON.stringify(models, null, 2)
       return models.map(m => `  ${m.id}`).join('\n')
@@ -172,7 +204,8 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
         `  list-providers\n  get-default-model\n  set-default-model\n` +
         `  switch-session-model\n  set-thinking\n` +
         `  set-provider\n  set-skill-dirs\n  set-agent-dirs\n` +
-        `  delete-provider\n  discover-models`
+        `  delete-provider\n  discover-models\n` +
+        `\ndiscover-models requires --base-url; see --help for details`,
       )
   }
 }

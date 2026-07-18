@@ -196,7 +196,11 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
     const sink = getStderrSink()
     if (sink) {
       child.stderr?.on('data', (data: Buffer) => {
-        // 非阻塞 append；WriteStream 背压时丢弃尾部避免主线程阻塞
+        // 非阻塞 append。W6 背压保护：sink.write 返回 false 时 WriteStream 内部会 buffer，
+        // 若持续背压（pi 崩溃循环高频 stderr）buffer 会无界增长 → OOM。设 1MB 上限：
+        // 超限则丢弃本批（防 OOM，stderr 仅用于排查证据，部分丢失可接受）。
+        const WRITE_BUFFER_LIMIT = 1024 * 1024 // eslint-disable-line no-magic-numbers -- 1MB backpressure cap
+        if (sink.writableLength > WRITE_BUFFER_LIMIT) return
         sink.write(data)
       })
     }

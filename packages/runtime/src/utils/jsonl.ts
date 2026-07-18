@@ -107,6 +107,12 @@ export function readTailBytes(filePath: string, maxBytes: number): unknown[] | n
     const lines = content.split('\n')
     // INVAR-tail-3: offset>0 时首行是残行（被切断），丢弃不参与 parse
     // offset===0 时首行是完整行，不丢
+    //
+    // UTF-8 多字节字符的取舍：offset 切点可能落在多字节字符中间（如中文占 3 字节），
+    // 此时残行在 toString('utf-8') 时会得到替换字符（U+FFFD）。丢首行 = 保守丢弃可能
+    // 完整的行——即切点恰好在某行行首或上一行行尾时首行本完整，但仍按残行丢弃。这是
+    // 有意权衡：宁可多丢一行也不冒险 parse 残行（残行可能 parse 成语义错误的 JSON），
+    // 调用方有 fallback 全量读兜底，丢一行不丢正确性。
     const startIdx = offset > 0 ? 1 : 0
     const entries: unknown[] = []
     for (let i = startIdx; i < lines.length; i++) {

@@ -41,6 +41,7 @@
             :turn="vi.item.turn"
             :session-id="sessionId"
             :can-edit="!!vi.item.turn.user && vi.idx === lastUserTurnIdx"
+            @edit-state-change="onEditStateChange(vi.idx, $event.editing)"
           />
           <BgNotifyCard v-else-if="vi.item.message.bgNotify" :message="vi.item.message" />
           <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
@@ -71,7 +72,7 @@
       <div
         v-if="isDispatching && !hasWorkingTurn"
         class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[12px] text-muted"
-        :style="{ top: (isCompacting ? totalHeight + 28 : totalHeight) + topOffset + 'px' }"
+        :style="{ top: (isCompacting ? totalHeight + COMPACTING_NOTICE_HEIGHT : totalHeight) + topOffset + 'px' }"
       >
         <Loader2 class="size-3 animate-spin text-accent" />
         <span>{{ t('panel.message.dispatching') }}</span>
@@ -189,6 +190,9 @@ const ESTIMATED_TURN_HEIGHT = 200
 const VIRTUAL_BUFFER_TURNS = 2
 /** load-more 按钮预留高度（按钮 + py-2 padding，所有 turn offset 加此值防 abs 定位的按钮遮挡首 turn） */
 const LOAD_MORE_RESERVED_HEIGHT = 44
+/** compaction notice 占位高度估算（py-1 + spinner + text，与模板 isCompacting 块同源）。
+ *  dispatching 占位 top 在 isCompacting 时需避让 compaction notice，故 + 此值。 */
+const COMPACTING_NOTICE_HEIGHT = 28
 
 const virtualList = useVirtualTurnList({
   items: () => renderItems.value,
@@ -240,6 +244,15 @@ const lastUserTurnIdx = computed(() => {
   }
   return -1
 })
+
+/**
+ * editing 钉扎（SR5，B9）：编辑中的 turn 滚出视口会卸载丢失 Turn.vue 的 draftText。
+ * Turn.vue watch isEditingThisUser 变化时 emit edit-state-change，据此钉住（editing=true）
+ * 或释放（editing=false）该 turn 在窗口内。编辑只发生在 lastUserTurn，idx 即其数组下标。
+ */
+function onEditStateChange(idx: number, editing: boolean): void {
+  virtualList.pinEditing(editing ? idx : -1)
+}
 
 /** 渲染项里最后一个 turn（streaming 滚动判定用） */
 const lastRenderTurn = computed(() => {
@@ -322,12 +335,15 @@ watch(
   },
 )
 
-// 视口锚定补偿（SR4/INVAR-2）：视口上方 turn 从估算切实测时 scrollTop 需补偿，防用户所见内容跳
+// 视口锚定补偿（SR4/INVAR-2）：视口上方 turn 从估算切实测时 scrollTop 需补偿，防用户所见内容跳。
+// reportHeight 累积 delta（同帧多次视口上方 turn 上报累加防末次覆盖中间值），此处应用后清零防重复补偿。
 watch(
   () => virtualList.scrollAdjustDelta.value,
   (delta) => {
     if (delta !== 0 && scrollEl.value) {
       scrollEl.value.scrollTop += delta
+      // 清零，防下次 reportHeight 残留值导致重复补偿
+      virtualList.scrollAdjustDelta.value = 0
     }
   },
 )

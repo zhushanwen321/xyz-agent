@@ -229,13 +229,27 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * [M7 FR-4] 立即清 messages[virtualId]（对称 subagent backToMain，立即清+tombstone）。
    * 保留 detailRunIdMap（侧边栏保持停在 workflow-detail）。
    *
+   * [W2] mainSessionAgentCalls 的 Set 清理：backFromAgentCall 此前只清 agentCallMap（panel→sessionId），
+   * 不清 mainSessionAgentCalls 的 Set，导致非 deleteSession 路径（Panel 返回 / catch 回滚）下 Set 无界增长。
+   * deleteSession 路径经 clearAgentCallMapping 整条 delete 已覆盖，但返回主面板路径漏清。
+   * 调用方传 mainSessionId（panel 绑定 session）即可精确删该 virtualId。
+   *
    * @param chatEvict chat.evictSessionWithVirtual 注入回调（清 messages，store 不互 import）
+   * @param mainSessionId 主 session ID（清 mainSessionAgentCalls Set 用，调用方可获取）
    */
-  function backFromAgentCall(panelId: string, chatEvict?: (agentCallSessionId: string) => void): void {
+  function backFromAgentCall(
+    panelId: string,
+    chatEvict?: (agentCallSessionId: string) => void,
+    mainSessionId?: string,
+  ): void {
     const agentCallSessionId = agentCallMap.value.get(panelId)
     const next = new Map(agentCallMap.value)
     next.delete(panelId)
     agentCallMap.value = next
+    // 清 mainSessionAgentCalls 映射（防 Set 无界增长，W2）
+    if (agentCallSessionId && mainSessionId) {
+      mainSessionAgentCalls.get(mainSessionId)?.delete(agentCallVirtualId(agentCallSessionId))
+    }
     // 立即清 messages[agentcallVirtualId]（FR-4，与 subagent backToMain 对称）
     if (agentCallSessionId && chatEvict) {
       chatEvict(agentCallSessionId)

@@ -21,7 +21,8 @@ async function main(): Promise<void> {
 Read commands:
   list-providers [--json]          List configured providers
   get-default-model                Get current default model
-  discover-models --name <id>      Fetch models from provider API
+  discover-models --base-url <url> [--name <id>] [--provider <type>]
+                                   Fetch models from provider API
 
 Write commands:
   set-default-model --provider <p> --model <m>
@@ -35,7 +36,7 @@ Write commands:
 Options:
   --json              Output as JSON
   --api-key-stdin     Read apiKey from stdin (never from CLI args)
-  --help              Show this help`
+  --help              Show this help`)
     process.exit(0)
   }
 
@@ -49,4 +50,8 @@ Options:
   }
 }
 
-main()
+main().catch((err) => {
+  // main 内部已 catch 业务异常；此兜底仅处理未预期的 reject（如 main 同步 throw）
+  console.error(`Fatal: ${err instanceof Error ? err.message : String(err)}`)
+  process.exit(1)
+})

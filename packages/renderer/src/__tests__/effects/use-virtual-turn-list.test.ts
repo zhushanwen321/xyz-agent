@@ -205,6 +205,20 @@ describe('useVirtualTurnList · 估算→实测视口锚定（AC-4, SR4）', () 
     // 视口内不补偿（防补偿引入额外跳动）
     expect(state.scrollAdjustDelta.value).toBe(0)
   })
+
+  it('B10: 同帧多次视口上方 turn 上报 → delta 累加（防末次覆盖中间值）', async () => {
+    // 10 turn 各估算 200px，scrollTop=1000（看着 turn 5），viewport 600。
+    // turn 0、turn 1 均在视口上方（offsets[0]+200=200 <= 1000，offsets[1]+200=400 <= 1000）。
+    const { state } = await setup({ items: makeItems(10), scrollTop: 1000, viewportHeight: 600 })
+    // turn 0 实测 400（比估算多 200）→ +200
+    state.reportHeight('user-k1', 400)
+    // turn 1 实测 300（比估算多 100）→ +100
+    // 旧逻辑（覆盖）：delta=100（末次覆盖首次的 200）→ 首次补偿丢失致内容跳。
+    // 新逻辑（累加）：delta=200+100=300（两者都补偿，调用方应用后清零）。
+    state.reportHeight('user-k2', 300)
+    await nextTick()
+    expect(state.scrollAdjustDelta.value).toBe(300)
+  })
 })
 
 // ── 末项钉扎（SR3/INVAR-10） ─────────────────────────────────────────
@@ -236,12 +250,12 @@ describe('useVirtualTurnList · editing 钉扎（SR5）', () => {
 // ── 空态（SR12/INVAR-9） ─────────────────────────────────────────────
 
 describe('useVirtualTurnList · 空态（SR12, INVAR-9）', () => {
-  it('renderItems 为空时 totalHeight=0 + visibleRange={0,0}（不得 NaN/负值）', async () => {
+  it('renderItems 为空时 totalHeight=0 + visibleRange={0,-1}（不得 NaN/负值，空循环语义清晰）', async () => {
     const { state } = await setup({ items: [], scrollTop: 0, viewportHeight: 600 })
     expect(state.totalHeight.value).toBe(0)
     expect(Number.isFinite(state.totalHeight.value)).toBe(true)
-    // visibleRange 空态早返回 {0,0}，不得 NaN/越界（防窗口计算对空数组二分错乱）
-    expect(state.visibleRange.value).toEqual({ startIndex: 0, endIndex: 0 })
+    // visibleRange 空态早返回 {0,-1}：调用方 `i(0) <= -1` 为 false → 空循环（与 n=1 正常路径区分）
+    expect(state.visibleRange.value).toEqual({ startIndex: 0, endIndex: -1 })
   })
 })
 
@@ -260,11 +274,14 @@ describe('useVirtualTurnList · session 切换重置（SR10, INVAR-8）', () => 
     state.reportHeight('user-k1', 300)
     await nextTick()
     expect(state.scrollAdjustDelta.value).toBe(100)
+    // B10：reportHeight 累积 delta，调用方应用后清零（模拟 MessageStream watch 消费行为）
+    state.scrollAdjustDelta.value = 0
 
     // 再次上报 turn0 = 400：old=300（Map 已有）→ delta=100
     state.reportHeight('user-k1', 400)
     await nextTick()
     expect(state.scrollAdjustDelta.value).toBe(100)
+    state.scrollAdjustDelta.value = 0
 
     // resetSession：heights Map 应清空（SR10/INVAR-8）
     state.resetSession()

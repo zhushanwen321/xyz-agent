@@ -11,8 +11,6 @@
  * 解决「切换 session 后 ask-user 请求丢失」问题。
  */
 
-const EXTENSION_UI_REQUEST_TIMEOUT_MS = 300_000 // 5min — UI interactions (select/confirm) need user manual action
-
 /** 缓存的 pending UI 请求 */
 export interface PendingUIRequest {
   requestId: string
@@ -31,7 +29,12 @@ export class ExtensionTimeoutManager {
   /** 缓存 pending 的 UI 请求（per-session），用于 session 重新激活时推送 */
   private pendingRequests = new Map<string, Map<string, PendingUIRequest>>()
 
-  readonly TIMEOUT_MS = EXTENSION_UI_REQUEST_TIMEOUT_MS
+  /**
+   * 历史 5min UI 超时常量（300_000ms）。交互式 method 已不再排定时器，
+   * 此属性仅保留供单测（extension-timeout-manager.test.ts 用 vi.advanceTimersByTime
+   * 推进超大偏移验证回调不触发）使用——不得删除。
+   */
+  readonly TIMEOUT_MS = 300_000
 
   /** Check if a requestId is a bridge request */
   isBridgeRequest(requestId: string): boolean {
@@ -126,14 +129,6 @@ export class ExtensionTimeoutManager {
     requestSet.add(requestId)
   }
 
-  private removeSessionRequest(sessionId: string, requestId: string): void {
-    const requestSet = this.extensionSessionRequests.get(sessionId)
-    if (requestSet) {
-      requestSet.delete(requestId)
-      if (requestSet.size === 0) this.extensionSessionRequests.delete(sessionId)
-    }
-  }
-
   // ── Pending request 缓存（解决切换 session 后 ask-user 请求丢失问题）──
 
   /**
@@ -181,7 +176,9 @@ export class ExtensionTimeoutManager {
     if (!sessionCache || sessionCache.size === 0) return []
     const requests = Array.from(sessionCache.values())
     this.pendingRequests.delete(sessionId)
-    return requests
+    // 解包 payload 到顶层：renderer 的 ExtensionUIRequest 期望 title/message/options/askUser
+    // 在顶层（与 extension.ui_request 实时推送同构），pendingRequests 缓存时嵌套在 .payload
+    return requests.map(r => ({ ...r, ...r.payload }))
   }
 
   /**
@@ -190,6 +187,7 @@ export class ExtensionTimeoutManager {
   getPendingRequests(sessionId: string): PendingUIRequest[] {
     const sessionCache = this.pendingRequests.get(sessionId)
     if (!sessionCache || sessionCache.size === 0) return []
-    return Array.from(sessionCache.values())
+    const requests = Array.from(sessionCache.values())
+    return requests.map(r => ({ ...r, ...r.payload }))
   }
 }

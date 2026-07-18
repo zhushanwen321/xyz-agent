@@ -1,6 +1,9 @@
 /**
  * CLI WS client：连 runtime WebSocket，发 config.* 消息，等 reply。
  * 无业务逻辑，纯 transport。
+ *
+ * Design：one-shot connection per RPC（发完即 close）。CLI 场景单命令单连接，
+ * 避免长连接管理（心跳/重连/超时）。批量操作请用脚本多次调用。
  */
 import { WebSocket } from 'ws'
 import { randomUUID } from 'node:crypto'
@@ -54,8 +57,9 @@ export async function rpc<T = Record<string, unknown>>(
           ws.close()
           resolve(msg as T)
         }
+      // eslint-disable-next-line taste/no-silent-catch -- ignore non-JSON heartbeat/keepalive frames
       } catch {
-        // ignore non-JSON messages (heartbeat etc.)
+        /* ignore non-JSON messages (heartbeat etc.) */
       }
     })
 

@@ -120,6 +120,10 @@ export class FileService implements IFileService {
     // 路径识别：~ 展开 → 绝对路径直接用，相对路径基于 cwd resolve
     const expandedPath = expandHome(path)
     const resolvePath_ = isAbsolute(expandedPath) ? resolvePath(expandedPath) : resolvePath(cwd, expandedPath)
+    // 安全守门（NFR-AC-S2 越界统一守门）：所有路径（含 ~ 展开后的绝对路径）必须落在 cwd 下，
+    // 防 `../../etc/passwd` 相对穿越与 `~/...` / `/etc/...` 绝对路径越界 → 越界抛 FileError('out_of_cwd')。
+    // cwd 外文件读取（BC-3 skill 文件预览）走 readFileFromWhitelist（自带 allowedReadDirs 白名单）。
+    if (!isUnderOrEqual(cwd, resolvePath_)) throw new FileError('out_of_cwd', path)
     const statResult = await this.callFs(() => this.opts.executor.stat(resolvePath_))
     const full = await this.callFs(() => this.opts.executor.readFile(resolvePath_))
     if (statResult.size > MAX_FILE_SIZE) {

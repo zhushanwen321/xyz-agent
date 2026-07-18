@@ -32,7 +32,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useSubagentStore } from '@/stores/subagent'
+import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
@@ -388,7 +388,7 @@ export function useSidebar() {
         )
       }
       if (workflowStore.isViewing(boundPanel.id)) {
-        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId))
+        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId), id)
       }
     }
     session.removeFromList(id)
@@ -398,6 +398,9 @@ export function useSidebar() {
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     const chatStoreForEvict = useChatStore()
     chatStoreForEvict.evictSessionWithVirtual(id)
+    // [B8] 主 session 已删，其名下 subagent tombstone（模块级 Set 不随 store 销毁）无意义，
+    // 按 mainSid 前缀精确清理，防 Set 随 session 建删单调增长（泄漏）。
+    clearSubagentTombstones(id)
     // [M7 D6] agentcall 两段式无 mainSid 前缀，经 workflow 映射清全部 agentcall virtualId
     for (const acsVirtualId of workflowStore.getAgentCallVirtualIdsByMain(id)) {
       chatStoreForEvict.evictVirtualKey(acsVirtualId)

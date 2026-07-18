@@ -66,6 +66,18 @@ describe('segmentsToText', () => {
       'src/foo.ts:L10-L20',
     )
   })
+
+  it('file lineRange 归一化：负数起点钳到 1', () => {
+    expect(segmentsToText([{ type: 'file', path: 'src/foo.ts', lineRange: [-3, 5] }])).toBe(
+      'src/foo.ts:L1-L5',
+    )
+  })
+
+  it('file lineRange 归一化：s>e 时 e 抬到 s（退化为单行）', () => {
+    expect(segmentsToText([{ type: 'file', path: 'src/foo.ts', lineRange: [20, 10] }])).toBe(
+      'src/foo.ts:L20',
+    )
+  })
 })
 
 describe('segmentsToPrompt', () => {

@@ -6,8 +6,8 @@
  * - heights 用**首消息 id** 键（`turn.user?.id ?? turn.assistants[0]?.id`），不是 t-${index}
  *   → truncateFrom 重排后老索引键不会张冠李戴（SR1/D7）
  * - offsets 前缀和：offsets[i]=sum(heights[0..i-1])，totalHeight=sum(全部)（INVAR-3 等式守恒）
- * - 估算→实测视口锚定：视口上方 turn 首次实测时 scrollAdjustDelta=measured-estimated，
- *   调用方据此补偿 scrollTop，防用户所见内容跳（SR4/INVAR-2）
+ * - 估算→实测视口锚定：视口上方 turn 首次实测时 scrollAdjustDelta 累加 measured-estimated，
+ *   调用方据此补偿 scrollTop（应用后清零），防用户所见内容跳（SR4/INVAR-2）
  * - 末项钉扎：endIndex=max(computedEnd, lastIndex) 恒成立（SR3/INVAR-10）
  * - editing 钉扎：pinEditing(idx) 后 startIndex 不超过 idx（SR5）
  *
@@ -18,13 +18,13 @@
  * scrollTop 变）也能触发 visibleRange 失效重算 → 窗口跟随滚动收敛。
  *
  * ── 响应式追踪链路 ──────────────────────────────────────────────
- * - heights 是 ref（Map），reportHeight 内 triggerRef(heights) 触发依赖失效。
+ * - heights 是 shallowRef（Map），reportHeight 内 triggerRef(heights) 触发依赖失效。
  * - scrollTop/viewportHeight 是 ref，onScrollUpdate 写入触发依赖失效。
  * - layout 是真 computed：内部访问 allEntries()（调 items()→读 renderItems.value，追踪
  *   renderItems 这个真 computed）+ heightForId()（读 heights.value，被 triggerRef 失效）。
  * - totalHeight/visibleRange 是真 computed，共享 layout 实例（避免重复 O(n)）。
  */
-import { computed, ref, triggerRef, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, triggerRef, type ComputedRef, type Ref } from 'vue'
 import type { RenderItem } from '@/composables/logic/messageTurns'
 
 /** composable 入参：全部 getter，供调用方传 ref/computed/普通值 */
@@ -67,12 +67,12 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
 
   /**
    * heights Map：键=turn 首消息 id，值=实测高度。
-   * 用 ref 包普通 Map，变更需 triggerRef（reportHeight 内处理）。
+   * 用 shallowRef 包（整体替换/触发语义），单键 set 后需显式 triggerRef（reportHeight 内处理）。
    */
-  const heights = ref<Map<string, number>>(new Map())
+  const heights = shallowRef<Map<string, number>>(new Map())
   /** editing 钉扎索引（pinEditing 设置，-1 表示无钉扎） */
   const editingPinIndex = ref(-1)
-  /** 视口锚定补偿量：reportHeight 时若该 turn 在视口上方则设为 measured-旧值 */
+  /** 视口锚定补偿量：reportHeight 时若该 turn 在视口上方则累加 measured-旧值（调用方应用后清零） */
   const scrollAdjustDelta: Ref<number> = ref(0)
 
   /**
@@ -171,7 +171,9 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
 
     const { ids, offsets } = layout.value
     const n = ids.length
-    if (n === 0) return { startIndex: 0, endIndex: 0 }
+    // 空态返回 endIndex=-1：调用方 `i <= endIndex` 自然空循环（i(0) <= -1 为 false），
+    // 与 n=1 正常路径（endIndex 也=0）区分开，语义清晰。
+    if (n === 0) return { startIndex: 0, endIndex: -1 }
 
     // 1. 二分：首个 i 使 offsets[i] + heightForId(ids[i]) > st - bufferHeight
     //    即 turn i 的底边超过 (st - bufferHeight) —— 它是首个需渲染的 turn
@@ -239,8 +241,8 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     heights.value.set(key, h)
     // 触发依赖失效：layout/totalHeight/visibleRange 内访问 heights.value，会被此处 trigger
     triggerRef(heights)
-    // 暴露补偿量（每次 reportHeight 覆盖；调用方读取后可自行清零）
-    scrollAdjustDelta.value = delta
+    // 累积补偿量（同帧多次视口上方 turn 上报时累加，防末次覆盖中间值；调用方读取应用后清零）
+    scrollAdjustDelta.value += delta
   }
 
   /** editing 钉扎：startIndex 不超过 idx（防 lastUserTurn 滚出视口 draftText 丢失，SR5） */

@@ -10,7 +10,7 @@
  * 依赖经构造注入:svc(Facade 内部协议)、pm(进程创建/销毁/rekey)。
  */
 import { basename, join } from 'node:path'
-import { existsSync, writeFileSync, unlinkSync } from 'node:fs'
+import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
@@ -23,7 +23,6 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
-import { stripSessionEnd } from '../../infra/pi/session-file-utils.js'
 
 export class SessionLifecycle {
   constructor(
@@ -192,8 +191,9 @@ export class SessionLifecycle {
     })
 
     try {
-      // strip session_end：restore 时给 pi 提供干净的历史文件，旧终态不应影响新 session
-      const cleaned = stripSessionEnd(target.filePath)
+      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），
+      // 无需 strip。直接读 JSONL 原文件给 pi 提供历史。
+      const cleaned = readFileSync(target.filePath, 'utf-8')
       // 清理旧 sidecar（restore 后不应保留旧终态）
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
       const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
@@ -276,8 +276,10 @@ export class SessionLifecycle {
     })
 
     try {
-      // 4. switch_session 让 pi 加载截断后的历史（strip session_end 给干净文件）
-      const cleaned = stripSessionEnd(forkedFilePath)
+      // 4. switch_session 让 pi 加载截断后的历史。
+      // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），
+      // 无需 strip。直接读截断后的 JSONL 文件。
+      const cleaned = readFileSync(forkedFilePath, 'utf-8')
       // 清理旧 sidecar（fork 后不应保留旧终态）
       try { unlinkSync(forkedFilePath + '.meta.json') } catch { void 0 }
       const tmpFile = join(tmpdir(), `xyz-fork-${forkedId}-${Date.now()}.jsonl`)
@@ -285,7 +287,7 @@ export class SessionLifecycle {
       try {
         await client.switchSession(tmpFile)
       } finally {
-        try { unlinkSync(tmpFile) } catch {}
+        try { unlinkSync(tmpFile) } catch { void 0 }
       }
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）

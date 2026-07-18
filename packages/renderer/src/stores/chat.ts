@@ -533,12 +533,15 @@ export const useChatStore = defineStore('chat', () => {
   ): number {
     const prev = messages.value.get(sessionId)
     if (!prev) return -1
-    const target = normalizeContent(matcher)
+    // 两边统一 trim 后比较：matcher 可能是 Segment[]（前端发送，segmentsToText 不 trim）
+    // 或 string（pi 回流，已 trim）；m.content 是 Segment[]（segmentsToText 不 trim）。
+    // trim 对齐防止首尾空白致匹配失败（pending 卡住无法转 complete）。
+    const target = normalizeContent(matcher).trim()
     return prev.findIndex(
       (m) =>
         m.role === 'user'
         && m.status === 'pending'
-        && normalizeContent(m.content) === target
+        && normalizeContent(m.content).trim() === target
         && (sendMode === undefined || m.sendMode === sendMode),
     )
   }

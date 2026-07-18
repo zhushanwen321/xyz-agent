@@ -53,10 +53,11 @@ vi.mock('@/api', () => ({
 }))
 
 import { useChatStore } from '@/stores/chat'
-import { useChat } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  resetChatModuleState()
   vi.clearAllMocks()
   apiMock.holder.handler = null
 })

@@ -201,7 +201,12 @@ const subagentLabel = computed(() => {
 function onSubagentBack(): void {
   if (workflowStore.isViewing(props.panelId)) {
     // [M7 FR-4] backFromAgentCall 立即清 messages[agentcallVirtualId]（对称 subagent）
-    workflowStore.backFromAgentCall(props.panelId, (acsId) => chat.evictVirtualKey(acsId))
+    // [W2] 传 mainSessionId 清 mainSessionAgentCalls Set（防无界增长）
+    workflowStore.backFromAgentCall(
+      props.panelId,
+      (acsId) => chat.evictVirtualKey(acsId),
+      props.sessionId ?? undefined,
+    )
   } else {
     // [M7] backToMain 立即清 messages[virtualId] + tombstone 防终态复活
     const subagentId = subagentStore.getViewingSubagentId(props.panelId)

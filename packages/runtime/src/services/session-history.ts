@@ -115,19 +115,6 @@ function isTurnBoundary(entry: unknown): boolean {
 }
 
 /**
- * 提取 entry 的 message role（用于 toolResult 配对检查）。
- */
-function getMessageRole(entry: unknown): string | undefined {
-  if (typeof entry !== 'object' || entry === null) return undefined
-  const e = entry as Record<string, unknown>
-  if (e.type !== 'message') return undefined
-  const msg = e.message
-  if (typeof msg !== 'object' || msg === null) return undefined
-  const role = (msg as Record<string, unknown>).role
-  return typeof role === 'string' ? role : undefined
-}
-
-/**
  * 尾读结果（含截断标志，N1 修复）。
  * truncated=true 表示文件里有比返回的更多的 turn（前端据此显隐「加载更多」）。
  */
@@ -162,20 +149,27 @@ export async function tailReadHistory(
   }
   if (fileSize === 0) return { messages: [], truncated: false }
 
-  // 尾读窗口：256KB 通常覆盖 20 turn（实测平均 1 turn ≈ 12KB）
-  // eslint-disable-next-line no-magic-numbers -- 256KB tail window for 20 turns
-  const TAIL_WINDOW = 256 * 1024
+  // 尾读窗口：按 maxTurns 动态估算（平均 1 turn ≈ 12KB，留余量到 32KB/turn 防长
+  // tool_result/assistant 回复单 turn 达 50KB+ 触发不必要的 fallback 全量读）。
+  // eslint-disable-next-line no-magic-numbers -- dynamic tail window based on maxTurns
+  const TAIL_WINDOW = Math.max(256 * 1024, maxTurns * 32 * 1024)
 
   // 收集尾部 entries（先尝试尾读窗口，不够再全量）
   let entries: unknown[]
   if (fileSize <= TAIL_WINDOW) {
     // 文件小于窗口，全量读（offset=0 无残行丢弃）
     const tailEntries = readTailBytes(filePath, TAIL_WINDOW)
-    entries = tailEntries ?? []
+    // B6: readTailBytes 返回 null（文件 openSync 失败，如 EACCES）→ 直接返回空，
+    // 不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）。
+    if (tailEntries === null) return { messages: [], truncated: false }
+    entries = tailEntries
   } else {
     // 尾读窗口
     const tailEntries = readTailBytes(filePath, TAIL_WINDOW)
-    entries = tailEntries ?? []
+    // B6: readTailBytes 返回 null（文件 openSync 失败，如 EACCES）→ 直接返回空，
+    // 不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）。
+    if (tailEntries === null) return { messages: [], truncated: false }
+    entries = tailEntries
     // 检查尾读窗口内是否有足够 turn；不够则 fallback 全量读
     const turnCount = entries.filter(isTurnBoundary).length
     if (turnCount < maxTurns) {
@@ -191,7 +185,7 @@ export async function tailReadHistory(
 
   // 确定窗口起点：从尾部数 maxTurns 个 user message，最早的那个 user message 的索引即为起点。
   // D11：turn = user message 到下一个 user message 之前。窗口含 maxTurns 个完整 turn。
-  let userMsgIndices: number[] = []
+  const userMsgIndices: number[] = []
   for (let i = 0; i < entries.length; i++) {
     if (isTurnBoundary(entries[i])) userMsgIndices.push(i)
   }

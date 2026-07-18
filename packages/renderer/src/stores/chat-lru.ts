@@ -69,10 +69,15 @@ export function isVirtualKeyOf(virtualId: string, mainSid: string): boolean {
  * 用函数类型而非直接引用 store，避免循环依赖 + 便于测试。
  */
 export interface LruEvictDeps {
-  /** messages Map 的 value（shallowRef<Map>） */
-  messagesValue: Map<string, unknown>
-  /** hydrated Set 的 value */
-  hydratedValue: Set<string>
+  /**
+   * messages Map 的 value getter（shallowRef<Map>）。
+   * [W7] 改 getter 而非快照引用——deleteMessageKey 会 messages.value = next（替换 Map），
+   * 若 deps 在构造时快照引用，后续 evict 迭代用的是旧 Map，漏判新写入。
+   * getter 每次调用读当前值，消除快照陈旧问题。
+   */
+  messagesValue: () => Map<string, unknown>
+  /** hydrated Set 的 value getter（同 messagesValue 理由） */
+  hydratedValue: () => Set<string>
   /** 判断 session 是否在豁免集（streaming/pending/compacting 中）。不含 panel 绑定判定——见文件头注释 */
   isExempt: (sessionId: string) => boolean
   /** 删除 messages key（不可变写，返回新 Map） */
@@ -95,8 +100,9 @@ export interface LruEvictDeps {
  */
 export function evictIfNeeded(deps: LruEvictDeps): void {
   // 收集可驱逐的候选（有 messages + 非 virtual + 非豁免 + 有访问记录）
+  // [W7] 经 getter 读当前 messages Map（非构造时快照），防 deleteMessageKey 替换 Map 后迭代旧引用。
   const candidates: Array<{ sid: string; lastAccessed: number }> = []
-  for (const sid of deps.messagesValue.keys()) {
+  for (const sid of deps.messagesValue().keys()) {
     if (isVirtualKey(sid)) continue
     if (deps.isExempt(sid)) continue
     const lastAccessed = sessionLastAccessed.get(sid)
@@ -120,8 +126,8 @@ export function evictIfNeeded(deps: LruEvictDeps): void {
     deps.deleteHydrated(sid)
     sessionLastAccessed.delete(sid)
 
-    // AC-2：同步驱逐关联的虚拟 key（subagent:sid:xxx / agentcall:sid:xxx）
-    for (const virtualKey of [...deps.messagesValue.keys()]) {
+    // AC-2：同步驱逐关联的 subagent:sid:xxx 三段式虚拟 key（agentcall 两段式无 mainSid 前缀，由 workflow store 映射清理）
+    for (const virtualKey of [...deps.messagesValue().keys()]) {
       if (isVirtualKeyOf(virtualKey, sid)) {
         deps.deleteMessageKey(virtualKey)
         sessionLastAccessed.delete(virtualKey)
@@ -144,8 +150,8 @@ export function evictSessionWithVirtual(sessionId: string, deps: LruEvictDeps): 
   deps.deleteHydrated(sessionId)
   sessionLastAccessed.delete(sessionId)
 
-  // AC-2：同步驱逐关联的虚拟 key
-  for (const virtualKey of [...deps.messagesValue.keys()]) {
+  // AC-2：同步驱逐关联的 subagent:sid:xxx 三段式虚拟 key（agentcall 两段式无 mainSid 前缀，由 workflow store 映射清理）
+  for (const virtualKey of [...deps.messagesValue().keys()]) {
     if (isVirtualKeyOf(virtualKey, sessionId)) {
       deps.deleteMessageKey(virtualKey)
       sessionLastAccessed.delete(virtualKey)
@@ -178,8 +184,10 @@ export function makeLruEvictDeps(
   isExempt: (sid: string) => boolean,
 ): LruEvictDeps {
   return {
-    messagesValue: messages.value,
-    hydratedValue: hydrated.value,
+    // [W7] getter 而非快照——deleteMessageKey/deleteHydrated 会替换 .value，
+    // getter 保证 deps 消费方始终读到当前 Map/Set（消除快照陈旧引用 bug）。
+    messagesValue: () => messages.value,
+    hydratedValue: () => hydrated.value,
     isExempt,
     deleteMessageKey: (sid) => {
       if (messages.value.has(sid)) {

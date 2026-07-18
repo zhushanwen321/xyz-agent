@@ -70,6 +70,21 @@ export function extractMainSessionId(virtualId: string): string {
 }
 
 /**
+ * 清理指定主 session 名下的所有 tombstone（deleteSession 调）。
+ *
+ * 主 session 删除后，其名下 subagent 的 tombstone 无意义（虚拟 key 已随 evictSessionWithVirtual
+ * 前缀清理一并删 messages）。tombstone 是模块级 Set，不随 store 实例销毁，若不显式清则随 session
+ * 建删单调增长（B8 内存泄漏）。按 extractMainSessionId 前缀精确匹配删除，不误清其他主 session。
+ */
+export function clearSubagentTombstones(mainSessionId: string): void {
+  for (const id of [...clearedVirtualIds]) {
+    if (extractMainSessionId(id) === mainSessionId) {
+      clearedVirtualIds.delete(id)
+    }
+  }
+}
+
+/**
  * selectSubagent 的 chat 注入回调类型。
  * store 不 import chatStore（铁律），由调用方（features 层 Sidebar.vue）注入。
  *

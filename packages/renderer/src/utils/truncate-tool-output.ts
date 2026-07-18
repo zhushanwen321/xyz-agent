@@ -20,6 +20,10 @@ import type { Message } from '@xyz-agent/shared'
 /**
  * 需要截断 output 的工具名（D7/AC-4）。
  * 这些工具的 output 可能很大（文件内容、命令输出、搜索结果）。
+ *
+ * MCP 工具命名约定：mcp server 暴露的工具名形如 `mcp__<server>__<tool>`
+ * （双下划线分段，末段为工具短名）。末段匹配让 TRUNCATE_TOOLS 对 MCP
+ * 命名空间工具同样生效（如 mcp__fs__read 命中 read）。
  */
 export const TRUNCATE_TOOLS = new Set([
   'read', 'bash', 'cat', 'grep', 'glob', 'list',
@@ -37,9 +41,11 @@ const TRUNCATION_MARKER = '\n\n[...output truncated...]'
  */
 export function shouldTruncate(toolName: string): boolean {
   if (TRUNCATE_TOOLS.has(toolName)) return true
-  // MCP 命名空间前缀：按 __ split 取最后一段匹配
+  // MCP 命名空间前缀：按 __ split 取最后一段匹配。
+  // split 结果恒非空（即使空串也返回 ['']），用 ?? '' 兜底替代非空断言，
+  // 让类型表达更显式——空串不会命中 TRUNCATE_TOOLS，行为等价且无 ! 。
   if (toolName.includes('__')) {
-    const lastSegment = toolName.split('__').pop()!
+    const lastSegment = toolName.split('__').pop() ?? ''
     return TRUNCATE_TOOLS.has(lastSegment)
   }
   return false

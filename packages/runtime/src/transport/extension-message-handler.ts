@@ -80,6 +80,7 @@ export class ExtensionMessageHandler {
 
         if (this.ctx.extensionTimeoutMgr.isBridgeRequest(requestId)) {
           this.ctx.extensionTimeoutMgr.removeBridgeRequest(requestId)
+          this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
           return
         }
 
@@ -89,16 +90,19 @@ export class ExtensionMessageHandler {
         if (this.ctx.extensionTimeoutMgr.isTimedOut(requestId)) {
           this.ctx.extensionTimeoutMgr.clearTimedOut(requestId)
           this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
+          this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
           return
         }
 
         const client = this.ctx.sessionService.getRpcClient(extSid)
         if (!client) {
           this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
+          this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
           return this.ctx.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, { sessionId: extSid })
         }
         client.sendExtensionUiResponse(requestId, extResult ?? null, method)
         this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
+        this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
         return
       }
       case 'extension.list': {

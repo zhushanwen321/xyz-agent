@@ -274,14 +274,31 @@ describe('FileService.readFile (#7 截断 + 越界)', () => {
     expect(r.content).toBe('x'.repeat(MAX_FILE_SIZE))
   })
 
-  it('相对路径越界（../etc/secret）→ 按绝对路径解析并尝试读取，不再抛 out_of_cwd', async () => {
-    executor.stat.mockResolvedValueOnce({ type: 'file', size: 10 })
-    executor.readFile.mockResolvedValueOnce('secret content')
+  it('相对路径越界（../etc/secret）→ FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '../etc/secret')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
+  })
 
-    const r = await svc().readFile('s1', '../etc/secret')
+  it('绝对路径越界（/etc/passwd）→ FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '/etc/passwd')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
+  })
 
-    expect(r).toEqual({ content: 'secret content', truncated: false })
-    expect(executor.readFile).toHaveBeenCalledWith('/etc/secret')
+  it('家目录展开越界（~/../etc/secret）→ FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '~/../etc/secret')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
   })
 
   it('文件不存在（stat ENOENT）→ FileError(not_found)', async () => {
@@ -311,7 +328,7 @@ describe('FileService.readFile (#7 截断 + 越界)', () => {
   })
 })
 
-describe('FileService.readFile path resolution (#file-path-preview-fix)', () => {
+describe('FileService.readFile path resolution (安全守门: cwd 之外一律拒绝)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     sessionService.getSummary.mockReturnValue({ cwd: '/project' })
@@ -319,26 +336,36 @@ describe('FileService.readFile path resolution (#file-path-preview-fix)', () => 
     executor.readFile = vi.fn().mockResolvedValue('content')
   })
 
-  it('U1: 相对路径基于 cwd resolve', async () => {
+  it('U1: cwd 下相对路径基于 cwd resolve，正常读取', async () => {
     await svc().readFile('s1', 'README.md')
     expect(executor.readFile).toHaveBeenCalledWith('/project/README.md')
   })
 
-  it('U2: 绝对路径直接使用，不拼到 cwd 下', async () => {
-    await svc().readFile('s1', '/var/tmp/absolute.md')
-    expect(executor.readFile).toHaveBeenCalledWith('/var/tmp/absolute.md')
+  it('U2: cwd 外绝对路径（/var/tmp/...）→ FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '/var/tmp/absolute.md')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
   })
 
-  it('U3: ~ 路径展开为家目录', async () => {
-    await svc().readFile('s1', '~/notes.md')
-    const readPath = (executor.readFile as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
-    expect(readPath.startsWith('/project') ? 'starts-with-cwd' : 'starts-with-home').toBe('starts-with-home')
+  it('U3: ~ 展开（~/notes.md）仍受 cwd 守门约束，越界 → FileError(out_of_cwd)', async () => {
+    await expect(svc().readFile('s1', '~/notes.md')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
   })
 
-  it('U4: 绝对路径位于 cwd 之外也能成功读取', async () => {
-    const result = await svc().readFile('s1', '/etc/passwd')
-    expect(result.content).toBe('content')
-    expect(executor.readFile).toHaveBeenCalledWith('/etc/passwd')
+  it('U4: 绝对路径 /etc/passwd 越界 → FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '/etc/passwd')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
   })
 })
 

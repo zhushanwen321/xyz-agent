@@ -3,17 +3,8 @@
  * 与 apps/electron/main/supervisor/port-file.ts 对称（写 vs 读）。
  */
 import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
-
-/**
- * 推导 xyz-agent 数据目录。读 XYZ_AGENT_DATA_DIR 环境变量，缺省 ~/.xyz-agent。
- * 与 packages/shared/src/paths.ts getDataDir() 逻辑一致（CLI 不直接 import runtime 依赖，
- * 复制核心路径逻辑保持契约一致）。
- */
-function getDataDir(): string {
-  return process.env.XYZ_AGENT_DATA_DIR ?? join(homedir(), '.xyz-agent')
-}
+import { getDataDir } from '@xyz-agent/shared/paths'
 
 /**
  * 读 runtime.port 文件，返回端口号。

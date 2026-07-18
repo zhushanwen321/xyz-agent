@@ -36,11 +36,7 @@ import type { AskUserQuestion, AskUserOption } from '@xyz-agent/extension-protoc
 const props = withDefaults(defineProps<{
   questions: AskUserQuestion[]
   allowCancel?: boolean
-  /** 请求到达时间戳（ms）。保留用于未来审计/调试，当前 UI 不再做倒计时。缺省取组件 mount 时间近似。 */
-  startedAt?: number
-}>(), {
-  startedAt: () => Date.now(),
-})
+}>(), {})
 const emit = defineEmits<{
   submit: [answers: string]   // JSON.stringify(AskUserAnswers)
   cancel: []

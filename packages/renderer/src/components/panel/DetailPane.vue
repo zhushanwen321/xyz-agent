@@ -137,13 +137,16 @@
 
     <!-- 内容区：按 viewMode + kind 分发渲染（禁 v-html，<pre> + 文本插值，XSS 安全；
          markdown/code/diff 经各自渲染器的受控 v-html 点处理，论证 XSS 安全）。
-         @mouseup 检测选区（FR-4）：选中文本后弹引用 bubble。 -->
+         @mouseup 检测选区（FR-4）：选中文本后弹引用 bubble。
+         @scroll 清 selectionRange：滚动后选区定位偏移、bubble 不再贴合原文，
+         残留 bubble 会误导用户注入错误行范围，故滚动即清。 -->
     <div
       v-else
       ref="contentRef"
       class="relative min-h-0 flex-1 overflow-auto"
       data-testid="detail-content"
       @mouseup="onContentMouseup"
+      @scroll="selectionRange = null"
     >
       <!-- 截断提示（>1MB，AC-6.5/T6.5） -->
       <div
