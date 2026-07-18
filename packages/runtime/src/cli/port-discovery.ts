@@ -6,6 +6,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getDataDir } from '@xyz-agent/shared/paths'
 
+/** TCP/UDP 端口上限（16-bit port number space）。 */
+const MAX_PORT = 65535
+
 /**
  * 读 runtime.port 文件，返回端口号。
  * @throws runtime 没跑时文件不存在 → 抛出用户可读错误
@@ -25,7 +28,7 @@ export function discoverPort(): number {
   }
 
   const port = parseInt(raw, 10)
-  if (isNaN(port) || port <= 0 || port > 65535) {
+  if (isNaN(port) || port <= 0 || port > MAX_PORT) {
     throw new Error('invalid port')
   }
 

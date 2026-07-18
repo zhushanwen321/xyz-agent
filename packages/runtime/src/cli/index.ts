@@ -13,6 +13,7 @@
 import { parseArgs, executeCommand } from './commands.js'
 
 async function main(): Promise<void> {
+  // eslint-disable-next-line no-magic-numbers -- argv[0]=node、argv[1]=script 路径，slice(2) 跳过是惯用写法
   const args = parseArgs(process.argv.slice(2))
 
   if (!args.command || args.command === '--help' || args.command === '-h') {

@@ -107,6 +107,8 @@ export class MessageDispatcher {
       try {
         this.workspaceService.record(activeSession.cwd)
       } catch (e) {
+        // best-effort 降级：record 是非用户阻塞的副作用，失败仅 warn 不传播——
+        // isGenerating 已置 true 不回退，pi.prompt 照常执行（见上方 W6 说明）。
         console.warn('[message-dispatcher] workspace.record failed (non-blocking), sid=',
           sessionId, e instanceof Error ? e.message : e)
       }

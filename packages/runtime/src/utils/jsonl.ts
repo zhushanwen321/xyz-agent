@@ -10,6 +10,11 @@
  */
 import { openSync, readSync, closeSync, fstatSync } from 'node:fs'
 
+/** 1KB 的字节数（尾读窗口以 KB 为单位表达更直观）。 */
+const BYTES_PER_KB = 1024
+/** 尾读窗口大小（KB）；session_end/session_info 总在文件尾部，32KB 足够命中。 */
+const READ_TAIL_KB = 32
+
 /**
  * 把 JSONL 文本解析成成功解析的条目数组（按行序，跳过空行与畸形行）。
  *
@@ -45,7 +50,7 @@ export function parseJsonl(raw: string): unknown[] {
  * session_info 若晚期 rename 也在尾部，早期命名则靠 fallback 全量读。
  * 32KB 对齐典型 fs readahead，相对 session 文件 size（实测 max 0.93MB）开销小。
  */
-export const READ_TAIL_BYTES = 32 * 1024
+export const READ_TAIL_BYTES = READ_TAIL_KB * BYTES_PER_KB
 
 /**
  * 尾读 JSONL 文件并解析尾部 entry（W1，ADR 尾读优化）。

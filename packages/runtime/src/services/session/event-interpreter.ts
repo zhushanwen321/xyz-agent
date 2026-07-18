@@ -94,6 +94,8 @@ const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
 const SILENT_WARN_MS = 120_000
 /** ABORT 阈值：连续 300s 无活动事件 → 判定卡死，触发 onSilentAbort（上层 abort pi + 复位 isGenerating）。 */
 const SILENT_ABORT_MS = 300_000
+/** ms → s 换算系数（WARN 文案展示秒数）。 */
+const MS_PER_SECOND = 1000
 
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
@@ -440,7 +442,7 @@ export class EventInterpreter {
         type: 'message.stream_warn' as ServerMessageType,
         payload: {
           sessionId: this.sessionId,
-          content: `长时间无响应（${SILENT_WARN_MS / 1000}s 无活动）`,
+          content: `长时间无响应（${SILENT_WARN_MS / MS_PER_SECOND}s 无活动）`,
         },
       })
       // 已发 WARN，重排到 ABORT 剩余时间
@@ -567,8 +569,8 @@ export class EventInterpreter {
 
     const status = details.status === 'done' ? 'done'
       : details.status === 'failed' ? 'failed'
-      : details.status === 'cancelled' ? 'cancelled'
-      : existing.status
+        : details.status === 'cancelled' ? 'cancelled'
+          : existing.status
 
     const updated: SubagentRecord = {
       ...existing,

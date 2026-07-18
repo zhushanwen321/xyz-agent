@@ -6,6 +6,13 @@ import { readFileSync } from 'node:fs'
 import { getSettingsPath } from '../infra/pi/pi-paths.js'
 import { rpc } from './ws-client.js'
 
+/** CLI flag 前缀 `--` 的长度，parseArgs slice 剥离它得到 flag 名。 */
+const FLAG_PREFIX_LEN = 2
+/** `--json` 输出时的 JSON 序列化缩进（沿用全仓 JSON_INDENT = 2 约定）。 */
+const JSON_INDENT = 2
+/** session id 在 CLI 回显中的截断长度（短前缀便于人眼识别）。 */
+const SESSION_ID_DISPLAY_LEN = 8
+
 // ── 参数解析 ──────────────────────────────────
 
 export interface ParsedArgs {
@@ -20,7 +27,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]
     if (arg.startsWith('--')) {
-      const key = arg.slice(2)
+      const key = arg.slice(FLAG_PREFIX_LEN)
       const next = argv[i + 1]
       if (!next || next.startsWith('--')) {
         flags[key] = true
@@ -41,7 +48,7 @@ export function formatProviders(
   options?: { json?: boolean }
 ): string {
   if (options?.json) {
-    return JSON.stringify(providers, null, 2)
+    return JSON.stringify(providers, null, JSON_INDENT)
   }
   return providers
     .map((p) => {
@@ -70,7 +77,7 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
         {}
       )
       const providers = reply.providers ?? []
-      if (json) return JSON.stringify(providers, null, 2)
+      if (json) return JSON.stringify(providers, null, JSON_INDENT)
       return formatProviders(providers)
     }
 
@@ -109,7 +116,7 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
         throw new Error('Usage: xyz-settings switch-session-model --session <id> --provider <p> --model <m>')
       }
       await rpc('model.switch', { sessionId: session, provider, modelId: model })
-      return `session ${session.slice(0, 8)}... model = ${formatDefaultModel(provider, model)}`
+      return `session ${session.slice(0, SESSION_ID_DISPLAY_LEN)}... model = ${formatDefaultModel(provider, model)}`
     }
 
     case 'set-thinking': {
@@ -119,7 +126,7 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
         throw new Error('Usage: xyz-settings set-thinking --session <id> --level <off|minimal|low|medium|high|xhigh>')
       }
       await rpc('session.setThinkingLevel', { sessionId: session, level })
-      return `session ${session.slice(0, 8)}... thinking = ${level}`
+      return `session ${session.slice(0, SESSION_ID_DISPLAY_LEN)}... thinking = ${level}`
     }
 
     // ── Phase 2：高危写命令 ──────────────────────────
@@ -196,7 +203,7 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
         throw new Error(reply.error ?? 'discover failed')
       }
       const models = reply.models ?? []
-      if (json) return JSON.stringify(models, null, 2)
+      if (json) return JSON.stringify(models, null, JSON_INDENT)
       return models.map(m => `  ${m.id}`).join('\n')
     }
 

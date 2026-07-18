@@ -20,6 +20,13 @@ export interface PendingUIRequest {
   receivedAt: number
 }
 
+/**
+ * 历史 5min UI 超时常量（300_000ms）。交互式 method 已不再排定时器，
+ * 此常量仅保留供单测（extension-timeout-manager.test.ts 用 vi.advanceTimersByTime
+ * 推进超大偏移验证回调不触发）使用——不得删除。
+ */
+const EXTENSION_UI_TIMEOUT_MS = 300_000
+
 export class ExtensionTimeoutManager {
   private extensionTimeouts = new Map<string, NodeJS.Timeout>()
   private extensionSessionRequests = new Map<string, Set<string>>()
@@ -30,11 +37,10 @@ export class ExtensionTimeoutManager {
   private pendingRequests = new Map<string, Map<string, PendingUIRequest>>()
 
   /**
-   * 历史 5min UI 超时常量（300_000ms）。交互式 method 已不再排定时器，
-   * 此属性仅保留供单测（extension-timeout-manager.test.ts 用 vi.advanceTimersByTime
-   * 推进超大偏移验证回调不触发）使用——不得删除。
+   * 历史 5min UI 超时常量。交互式 method 已不再排定时器，
+   * 此属性仅保留供单测使用——不得删除。值见模块级 EXTENSION_UI_TIMEOUT_MS。
    */
-  readonly TIMEOUT_MS = 300_000
+  readonly TIMEOUT_MS = EXTENSION_UI_TIMEOUT_MS
 
   /** Check if a requestId is a bridge request */
   isBridgeRequest(requestId: string): boolean {
