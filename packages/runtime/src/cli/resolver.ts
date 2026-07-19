@@ -34,11 +34,11 @@ export function getCliPath(): string {
   // dev 模式：tsup 输出。cliDir 在 ESM（vitest）下可能 undefined → 跳过候选。
   const devCandidates = cliDir
     ? [
-        // 从 tsup 输出的 cli.cjs（bundle 后 __dirname = apps/electron/dist/runtime/）
-        join(cliDir, 'cli.cjs'),
-        // 从 src 源码（vitest 测试时 __dirname = packages/runtime/src/cli/）
-        resolve(cliDir, '..', '..', '..', '..', 'apps', 'electron', 'dist', 'runtime', 'cli.cjs'),
-      ]
+      // 从 tsup 输出的 cli.cjs（bundle 后 __dirname = apps/electron/dist/runtime/）
+      join(cliDir, 'cli.cjs'),
+      // 从 src 源码（vitest 测试时 __dirname = packages/runtime/src/cli/）
+      resolve(cliDir, '..', '..', '..', '..', 'apps', 'electron', 'dist', 'runtime', 'cli.cjs'),
+    ]
     : []
 
   for (const candidate of devCandidates) {
