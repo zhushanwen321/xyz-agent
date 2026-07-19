@@ -72,9 +72,13 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
   it('U13b: bubble "引用当前" 按钮注入 path+行范围 target=current（不含 text）', async () => {
     const wrapper = mountDetailPane()
     const store = useComposerInjectionStore()
-    // mock window.getSelection 返回模拟选区（content 第 2-3 行）
+    // mock window.getSelection 返回模拟选区（content 第 2-3 行）。
+    // fakeRange 必须含 startContainer/endContainer —— onContentMouseup 直接访问这俩字段，
+    // 缺失会让 findCodeLineIndex(node=undefined) 在 node.nodeType 抛 TypeError。
+    // preview 模式下内容区无 .line 节点（CodeBlock stub 成空 div），
+    // findCodeLineIndex 返回 null，自然落到文本回退分支。
     const contentEl = wrapper.find('[data-testid="detail-content"]').element
-    const fakeRange = { commonAncestorContainer: contentEl }
+    const fakeRange = { commonAncestorContainer: contentEl, startContainer: contentEl, endContainer: contentEl }
     vi.spyOn(window, 'getSelection').mockReturnValue({
       isCollapsed: false,
       rangeCount: 1,
@@ -102,8 +106,9 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
   it('U13c: bubble "新对话" 按钮走 target=new', async () => {
     const wrapper = mountDetailPane()
     const store = useComposerInjectionStore()
+    // fakeRange 需含 startContainer/endContainer（详见 U13b 注释）
     const contentEl = wrapper.find('[data-testid="detail-content"]').element
-    const fakeRange = { commonAncestorContainer: contentEl }
+    const fakeRange = { commonAncestorContainer: contentEl, startContainer: contentEl, endContainer: contentEl }
     vi.spyOn(window, 'getSelection').mockReturnValue({
       isCollapsed: false,
       rangeCount: 1,
