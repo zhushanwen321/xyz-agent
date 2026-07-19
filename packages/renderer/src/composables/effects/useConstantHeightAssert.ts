@@ -41,6 +41,10 @@ export function useConstantHeightAssert(specs: ConstantSpec[]) {
     el: ref<HTMLElement | null>(null),
   }))
   let observer: ResizeObserver | null = null
+  // W16: watch 内调度的 rAF 句柄。registered els 每次变化都请求一帧跑 assert，
+  // 不保存句柄时组件在 rAF pending 期间卸载，回调仍会 fire（虽 assert 内有 observer 短路，
+  // 但多个 pending rAF 会堆积泄漏）。保存句柄后可在调度前取消旧的、卸载时统一取消。
+  let pendingRafId: number | null = null
 
   /** 对比所有注册常量的实测高度与期望值，不符时 console.warn。 */
   function assert(): void {
@@ -74,7 +78,13 @@ export function useConstantHeightAssert(specs: ConstantSpec[]) {
         if (el.value) observer.observe(el.value)
       }
       // 首帧布局稳定后跑一次断言（RO 仅在 size 变化时回调，挂载后首次 size 可能未变）
-      requestAnimationFrame(assert)
+      // W16: 先取消上一帧 pending 的 rAF，避免 els 高频切换时多个 assert 回调堆积；
+      // 句柄保存在 pendingRafId，卸载时 onBeforeUnmount 一并取消。
+      if (pendingRafId !== null) cancelAnimationFrame(pendingRafId)
+      pendingRafId = requestAnimationFrame(() => {
+        pendingRafId = null
+        assert()
+      })
     },
   )
 
@@ -82,6 +92,11 @@ export function useConstantHeightAssert(specs: ConstantSpec[]) {
     if (observer) {
       observer.disconnect()
       observer = null
+    }
+    // W16: 取消 watch 调度的 pending rAF，防卸载后回调仍 fire。
+    if (pendingRafId !== null) {
+      cancelAnimationFrame(pendingRafId)
+      pendingRafId = null
     }
   })
 

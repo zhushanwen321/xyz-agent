@@ -29,6 +29,21 @@ export function commitMessages(
 }
 
 /**
+ * 不可变删除：构造新 Map，delete 后整体赋值 .value，触发 shallowRef 响应式。
+ * 替代 `messages.value.delete(sid)`（shallowRef 下 Map mutation 不触发）。
+ *
+ * 与 commitMessages 对称的删除入口——所有 messages 写入（含 delete）收敛到本模块，
+ * 不再散落 `messages.value = new Map(...)`。LRU 驱逐（chat-lru.deleteMessageKey）经此 helper。
+ *
+ * 类型参数 V 默认 Message[]，但允许泛化（chat-lru 的 deps 用 Map<string, unknown> 宽类型）。
+ */
+export function deleteMessages<V = Message[]>(messages: { value: Map<string, V> }, sessionId: string): void {
+  const next = new Map(messages.value)
+  next.delete(sessionId)
+  messages.value = next
+}
+
+/**
  * 截断 session 消息到 messageId（模块级，从 chat.ts 移入控制行数）。
  * inclusive=true 含 messageId，false 仅其后。findIndex 定位，slice 不可变更新。
  */

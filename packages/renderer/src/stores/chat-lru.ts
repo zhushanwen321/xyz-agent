@@ -22,6 +22,8 @@
  * 驱逐前 double-check streaming 状态（SR8 竞态防护）。
  */
 
+import { deleteMessages } from './chat-mutations'
+
 /**
  * LRU 保留阈值：最近 8 个 session（D6）。
  * 不含 streaming/pending/compacting 豁免的（isExempt 判定）。
@@ -189,11 +191,12 @@ export function makeLruEvictDeps(
     messagesValue: () => messages.value,
     hydratedValue: () => hydrated.value,
     isExempt,
+    // W14: 走 deleteMessages 不可变写入口（与 commitMessages 对称），收敛所有 messages
+    // 写入到 chat-mutations，不再散落 new Map + delete + 赋值。
+    // has 检查保留——避免无该 session 时也构造新 Map 触发无谓响应式。
     deleteMessageKey: (sid) => {
       if (messages.value.has(sid)) {
-        const next = new Map(messages.value)
-        next.delete(sid)
-        messages.value = next
+        deleteMessages(messages, sid)
       }
     },
     deleteHydrated: (sid) => {

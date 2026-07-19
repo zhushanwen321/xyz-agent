@@ -139,6 +139,12 @@ export function useChatScroll() {
         cancelAnimationFrame(rafId)
         rafId = null
       }
+      // W12: 卸载时 resolve 在途的 await scrollToBottom() 调用方 Promise。
+      // rAF 已取消 → flushScroll 永不执行 → pendingResolvers 内的 resolve 永不调用，
+      // 调用方 await 永挂、闭包无法 GC。此处统一 resolve 并清空队列。
+      const resolvers = pendingResolvers
+      pendingResolvers = []
+      resolvers.forEach((r) => r())
     })
   }
 

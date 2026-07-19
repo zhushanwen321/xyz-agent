@@ -375,6 +375,9 @@ watch(
 
 // 视口锚定补偿（SR4/INVAR-2）：视口上方 turn 从估算切实测时 scrollTop 需补偿，防用户所见内容跳。
 // reportHeight 累积 delta（同帧多次视口上方 turn 上报累加防末次覆盖中间值），此处应用后清零防重复补偿。
+// W19: flush:'post'——DOM 更新后再应用 delta。pre 模式下 watch 与下次 flushHeightReports
+// 可能同帧执行：watch 应用并清零后，同一 tick 内又累积的 delta 会在清零时被抹除（中间 delta 丢失）。
+// post 模式保证 watch 在 DOM flush 后触发，此时 reportHeight 的 rAF flush 已结束，本帧 delta 全部累积到位。
 watch(
   () => virtualList.scrollAdjustDelta.value,
   (delta) => {
@@ -384,6 +387,7 @@ watch(
       virtualList.scrollAdjustDelta.value = 0
     }
   },
+  { flush: 'post' },
 )
 </script>
 
