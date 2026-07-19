@@ -207,14 +207,26 @@ export function useDetailPane(sessionId: Ref<string | null>) {
    * useSideDrawer.open('detail', { filePath }) 设置 detailFilePath。
    * 变化时用 forceDiff 打开该文件（绕过 gitOverlay 判定——变更集文件来源即 git diff，
    * 一定有改动，overlay 可能未刷新会导致误判 preview 模式）。消费后清空避免残留。
+   *
+   * immediate=true 兜底首次挂载时序：DetailPane 在 SideDrawer 内是条件挂载
+   * （<aside v-if="isOpen"><DetailPane v-else-if="activeTab==='detail'">），
+   * 首次从变更集卡点文件时 drawer.open 同步设置 detailFilePath，但此时 DetailPane
+   * 尚未挂载、watch 尚未建立；等 Vue 渲染完成、DetailPane 挂载、watch 建立时，
+   * detailFilePath 早已是目标值。watch 默认不对「建立时已存在的值」触发回调，
+   * 导致首次打开 drawer 显示空态（要再点别的文件让值变化才能加载）。
+   * immediate 让 setup 阶段同步消费当前值。消费后清空，无残留误触发风险。
    */
   const { detailFilePath } = useSideDrawer()
-  watch(detailFilePath, (path) => {
-    const sid = sessionId.value
-    if (!sid || !path) return
-    void openPreview(sid, path, true)
-    detailFilePath.value = null
-  })
+  watch(
+    detailFilePath,
+    (path) => {
+      const sid = sessionId.value
+      if (!sid || !path) return
+      void openPreview(sid, path, true)
+      detailFilePath.value = null
+    },
+    { immediate: true },
+  )
 
   return {
     state,

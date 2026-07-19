@@ -32,6 +32,7 @@ vi.mock('@/stores/session', () => ({
 
 import { useDetailPane } from '@/composables/features/useDetailPane'
 import { useFileTreeStore } from '@/stores/fileTree'
+import { useSideDrawer, resetSideDrawer } from '@/composables/features/useSideDrawer'
 
 /** 准备一个 session + gitOverlay 记录，返回 store */
 function setupSession(sid: string, path: string, status: string) {
@@ -137,5 +138,47 @@ describe('useDetailPane diff 空 → 自动降级 preview', () => {
 
     expect(state.value.viewMode).toBe('diff')
     expect(state.value.content).toBe('') // 空 patch（用户主动选择，保留空态）
+  })
+})
+
+describe('useDetailPane 变更集卡入口（detailFilePath）', () => {
+  /**
+   * 回归测试：DetailPane 是在 SideDrawer 内 v-else-if="activeTab==='detail'" 条件挂载的，
+   * 首次从变更集卡点文件时，drawer.open('detail', { filePath }) 同步设置 detailFilePath，
+   * 但此时 DetailPane（及 useDetailPane 的 watch）尚未建立。
+   * 等 Vue 渲染完成、watch 建立时，detailFilePath 早已是目标值——
+   * 若 watch 无 immediate，建立时不会对已存在的值触发回调 → 首次打开 drawer 显示空态。
+   */
+  it('useDetailPane 在 detailFilePath 已被设置后调用（首挂载场景）→ immediate 消费加载内容', async () => {
+    resetSideDrawer()
+    const sid = 's1'
+    const path = 'src/from-changeset.ts'
+    setupSession(sid, path, 'modified')
+
+    const patch = 'diff --git a/src/from-changeset.ts b/src/from-changeset.ts\n@@ -1 +1,2 @@\n-old\n+new'
+    mockGitGetDiff.mockResolvedValueOnce({ patch, binary: false })
+
+    // 模拟变更集卡点击：先 drawer.open 同步设置 detailFilePath
+    // （此时 useDetailPane 尚未调用，对应 DetailPane 还没挂载）
+    const drawer = useSideDrawer()
+    drawer.open('detail', { filePath: path })
+    expect(drawer.detailFilePath.value).toBe(path)
+
+    // 「挂载」DetailPane：调用 useDetailPane → watch 建立
+    // immediate=true 应立即消费当前 detailFilePath，触发 openPreview(forceDiff=true)
+    const sessionId = ref<string | null>(sid)
+    const { state } = useDetailPane(sessionId)
+    await nextTick()
+    await vi.waitFor(() => expect(state.value.status).toBe('content'))
+
+    expect(state.value.path).toBe(path)
+    // forceDiff 生效：变更集文件必走 diff 模式（不依赖 gitOverlay 判定）
+    expect(state.value.viewMode).toBe('diff')
+    expect(state.value.content).toBe(patch)
+    expect(mockGitGetDiff).toHaveBeenCalled()
+    // 消费后清空，避免下次 DetailPane 挂载时被残留值劫持
+    expect(drawer.detailFilePath.value).toBeNull()
+
+    resetSideDrawer()
   })
 })
