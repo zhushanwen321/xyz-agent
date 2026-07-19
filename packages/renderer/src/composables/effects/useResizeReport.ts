@@ -122,11 +122,24 @@ export function useResizeReport(
       if (!el) return
 
       ro = new ResizeObserver((entries: ResizeObserverEntry[]) => {
-        // SR8 同帧合并：RO 可能一次回调多个 entry，取最后一个的 contentRect.height。
+        // SR8 同帧合并：RO 可能一次回调多 entry，取最后一个的高度上报。
         // 单元素 observe 理论上只有 1 个 entry，但防御性取末项避免多 entry 逐个上报。
         const last = entries[entries.length - 1]
         if (!last) return
-        const newH = last.contentRect.height
+
+        // 测量取 border-box（含 padding + border），不是 contentRect（content-box，不含 padding/border）。
+        // 虚拟滚动 offset = 累加各 turn 高度，若上报 contentRect 则底部 padding（如 Turn rootEl 的
+        // pb-5 间距、SystemNotice 的 padding）被漏算 → 下一个 turn 的 top 算少 → 贴在上一个 turn
+        // 末尾（如 ChangeSetCard 下沿贴下一个 user 气泡）。borderBoxSize 是数组（[0].blockSize
+        // = 垂直尺寸）；不支持的旧环境 fallback 到 target.getBoundingClientRect().height
+        // （同样含 padding + border，等价 border-box，绝不退到 contentRect）。
+        let newH: number
+        const bb = last.borderBoxSize
+        if (bb && bb.length > 0) {
+          newH = bb[0].blockSize
+        } else {
+          newH = (last.target as HTMLElement).getBoundingClientRect().height
+        }
 
         // SR8 ε 阈值：亚像素抖动（< 1px）忽略，防 report→重排→再回调死循环。
         // 首次测量（lastReportedHeight === null）必报，让估算值尽快被实测替换。

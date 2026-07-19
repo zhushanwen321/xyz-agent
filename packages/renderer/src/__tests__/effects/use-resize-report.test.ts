@@ -92,8 +92,16 @@ afterEach(() => {
   allROInstances = []
 })
 
-/** 构造一个 ResizeObserverEntry（contentRect.height = h） */
-function mockEntry(target: Element, height: number): ResizeObserverEntry {
+/**
+ * 构造一个 ResizeObserverEntry。
+ * - height：contentRect.height（content-box，不含 padding/border）
+ * - borderBoxHeight（可选）：borderBoxSize[0].blockSize（border-box，含 padding/border）。
+ *   不传时默认 = height（content-box 与 border-box 等高，模拟无 padding 场景，保持与旧用例兼容）。
+ *   传不同值时模拟有 padding 场景（如 Turn rootEl 的 pb-5），用于验证测量取的是 border-box
+ *   而非 content-box——虚拟滚动 offset 计算依赖 border-box，否则底部 padding 被漏算致 turn 贴顶。
+ */
+function mockEntry(target: Element, height: number, borderBoxHeight?: number): ResizeObserverEntry {
+  const bbh = borderBoxHeight ?? height
   return {
     target,
     contentRect: {
@@ -107,16 +115,27 @@ function mockEntry(target: Element, height: number): ResizeObserverEntry {
       bottom: height,
       toJSON: () => ({}),
     },
-    borderBoxSize: [],
-    contentBoxSize: [],
+    borderBoxSize: [{ blockSize: bbh, inlineSize: 100 }],
+    contentBoxSize: [{ blockSize: height, inlineSize: 100 }],
     devicePixelContentBoxSize: [],
   } as unknown as ResizeObserverEntry
 }
 
-/** 触发当前活跃 RO 的回调（模拟元素高度变化） */
+/** 触发当前活跃 RO 的回调（模拟元素高度变化，content-box 高度 == border-box 高度） */
 function fireRO(target: Element, heights: number[]): void {
   if (!activeRO) throw new Error('fireRO: 无活跃 MockResizeObserver（observe 未被调用？）')
   const entries = heights.map((h) => mockEntry(target, h))
+  activeRO.callback(entries, activeRO as unknown as ResizeObserver)
+}
+
+/**
+ * 触发当前活跃 RO 的回调，模拟 padding 场景（content-box != border-box）。
+ * 每项 { content, border }：content=contentRect.height（不含 padding），border=borderBoxSize.blockSize（含 padding）。
+ * 用于验证测量取 border-box（虚拟滚动 offset 需要含 padding 的高度）。
+ */
+function fireROWithPadding(target: Element, heights: Array<{ content: number; border: number }>): void {
+  if (!activeRO) throw new Error('fireROWithPadding: 无活跃 MockResizeObserver（observe 未被调用？）')
+  const entries = heights.map(({ content, border }) => mockEntry(target, content, border))
   activeRO.callback(entries, activeRO as unknown as ResizeObserver)
 }
 
@@ -244,6 +263,51 @@ describe('useResizeReport · ε 阈值防死循环（SR8）', () => {
     wrapper.unmount()
   })
 })
+
+describe('useResizeReport · 测量取 border-box（含 padding，虚拟滚动 offset 正确性）', () => {
+  /**
+   * 回归用例：Turn rootEl 有 pb-5(20px) 底部留白。ResizeObserver 的 contentRect 是 content-box
+   * （不含 padding），borderBoxSize 是 border-box（含 padding）。虚拟滚动 offset = 累加各 turn
+   * 高度，若上报的是 contentRect，pb-5 被漏算 → 下一个 turn 的 top 算少 20px → 贴在上一个
+   * turn 末尾（如 ChangeSetCard 下沿）。必须上报 border-box 高度。
+   *
+   * 复现路径：contentRect.height=100（content-box），borderBoxSize.blockSize=120（含 20px pb）。
+   * 期望上报 120（border-box）。若实现误用 contentRect 会报 100 → 测试失败。
+   */
+  it('有 padding 时上报 borderBoxSize.blockSize（含 padding），不报 contentRect.height', async () => {
+    const turnKey = { value: 'turn-padding' }
+    const mock = makeMockRegistry()
+    const wrapper = mount(makeProviderTree(mock, turnKey))
+    await nextTick()
+    const el = wrapper.find('.turn-host').element
+
+    // contentRect.height=100（content-box），borderBoxSize.blockSize=120（含 20px pb）
+    fireROWithPadding(el, [{ content: 100, border: 120 }])
+
+    expect(mock.reports).toHaveLength(1)
+    // 必须是 border-box 120，不是 content-box 100
+    expect(mock.reports[0]!.h).toBe(120)
+    wrapper.unmount()
+  })
+
+  it('padding 变化（pb-3.5→pb-5）触发重测上报新的 border-box 高度', async () => {
+    const turnKey = { value: 'turn-padding-grow' }
+    const mock = makeMockRegistry()
+    const wrapper = mount(makeProviderTree(mock, turnKey))
+    await nextTick()
+    const el = wrapper.find('.turn-host').element
+
+    // 首测：content=100, border=114（pb-3.5=14px）
+    fireROWithPadding(el, [{ content: 100, border: 114 }])
+    expect(mock.reports[0]!.h).toBe(114)
+
+    // pb 改 3.5→5：content=100（不变）, border=114→120（含 20px pb）
+    fireROWithPadding(el, [{ content: 100, border: 120 }])
+    expect(mock.reports).toHaveLength(2)
+    expect(mock.reports[1]!.h).toBe(120)
+    wrapper.unmount()
+  })
+});
 
 describe('useResizeReport · 同帧多 entry 合并（SR8）', () => {
   it('一次 RO 回调多 entry → 取最后一个高度上报（仅上报 1 次）', async () => {
