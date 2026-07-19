@@ -70,9 +70,13 @@ export class ServerMessageBroker implements IMessageBroker {
     let payload: string
     try {
       payload = JSON.stringify(msg)
-    // D4: 提级后 stringify 失败影响整次广播，与"全 client 各自失败"实际等价。记录后中止本次广播，不静默
+    // D4（不等价语义，刻意取舍）：提级后整次广播只 stringify 一次，
+    // 一旦失败 → 本次广播对**所有 client 都丢弃**（连原本可正常收的 client 也收不到）。
+    // 旧实现（循环内 per-client send 各自 stringify）失败只影响那一个 client，其余 client 照常收到。
+    // 取舍：减少 N×stringify 主线程开销（大 payload 广播时显著）换取 per-client 失败隔离性损失。
+    // 失败时显眼告警（[broadcast] 前缀，便于运维日志检索排查）。
     } catch (e) {
-      console.error('[runtime] broadcast aborted: payload serialization failed', e)
+      console.error('[broadcast] payload serialization failed — entire broadcast dropped for all clients:', e)
       return
     }
     for (const ws of this.pool.clients) {

@@ -180,6 +180,13 @@ export function convertPiHistory(raw: unknown[]): Message[] {
     }
 
     // user or assistant
+    // W11：显式拒绝未知 role，避免把任何非 user 也非已处理特殊类型的 entry 默认归入 assistant
+    // （旧实现 `m.role === 'user' ? 'user' : 'assistant'` 把未知 role 当 assistant，掩盖数据异常）。
+    // 已处理：toolResult / compactionSummary / custom / branchSummary（上面各分支 continue）。
+    if (m.role !== 'user' && m.role !== 'assistant') {
+      console.warn(`[message-converter] unknown role: ${String(m.role)}, skipping`)
+      continue
+    }
     const parts = Array.isArray(m.content)
       ? m.content
       : [{ type: 'text' as const, text: m.content != null ? String(m.content) : '' }]

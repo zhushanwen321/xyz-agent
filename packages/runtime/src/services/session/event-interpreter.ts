@@ -401,13 +401,19 @@ export class EventInterpreter {
    *
    * INVAR-M8-2（不提前）：定时器到点时用 now-lastActivityAt 判定，活动持续时 diff 不到阈值 → 不触发。
    * 旧实现每帧 clear+重排两定时器（每 token 4 次操作），现 reset 为 O(1)。
+   *
+   * W6（可维护性硬化）：暂停态恢复语义对顺序敏感——「先清 paused」与「后 armWatchdogTimer」不可颠倒
+   * （armWatchdogTimer 内有 `if (paused) return`，若先 arm 再清 paused，下次 tick 仍可能误判暂停态）。
+   * 这里显式分两步：①清 paused 标志（恢复 active），②据 timer 是否存在决定是否补排。
    */
   private resetWatchdog(): void {
-    // 暂停态恢复：用户响应后 pi 继续产出活动事件，清暂停标志（隐式 resume，无独立方法）
-    if (this.watchdogPaused) this.watchdogPaused = false
+    // ① 暂停态恢复：用户响应后 pi 继续产出活动事件，清暂停标志（隐式 resume，无独立方法）。
+    //    必须在 armWatchdogTimer 之前清——否则 arm 内部 `if (paused) return` 会误跳过补排。
+    this.watchdogPaused = false
+    // ② 更新活动时间戳 + 复位 warned（活动发生 → 已发 WARN 也作废，下轮重新计）。
     this.watchdogLastActivityAt = Date.now()
     this.watchdogWarned = false
-    // 定时器若已存在则保留（到点再判）；若无（如首事件前未 start 或刚从暂停恢复）则补排指向 WARN。
+    // ③ 定时器若已存在则保留（到点再判）；若无（如首事件前未 start 或刚从暂停恢复）则补排指向 WARN。
     if (!this.watchdogTimer) this.armWatchdogTimer(SILENT_WARN_MS)
   }
 

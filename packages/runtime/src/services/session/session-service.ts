@@ -50,6 +50,21 @@ interface ManagedSession extends IManagedSessionView {
 const MAX_PERCENT = 100
 
 /**
+ * fork 点 entryId 按 timestamp 匹配时的容差（W7）。
+ *
+ * 来源：前端 messageTimestamp 是 Unix ms（Date.now()），JSONL 中 pi 写入的 timestamp 是
+ * ISO 字符串（new Date(...).getTime() 还原回 ms）。两者本应完全相等，但：
+ *   - 早期实现/历史 session 的 timestamp 精度可能到秒（无毫秒位）；
+ *   - 时钟在不同阶段读到的瞬时值可能差几毫秒；
+ *   - 序列化舍入（JSONL 写入时 Date.toISOString 的毫秒舍入）。
+ * 旧值 2ms 在历史 session（秒级精度）下会全部漏匹配 → fallback 到最后一条 entry，
+ * 导致 fork 点错位（用户期望 fork 到第 N 条消息，实际 fork 到最后一条）。
+ * 1000ms 容差让「同一秒内」的 entry 视为同一条——fork 点按 timestamp + role 唯一性已足够区分，
+ * 同秒内两条相同 role 的 entry 概率极低，且 fallback warn 仍会触发（兜底可见）。
+ */
+const TIMESTAMP_TOLERANCE_MS = 1000
+
+/**
  * 按 provider/modelId 解析模型 contextWindow 的窄函数（port）。
  *
  * SessionService 作为 session 级状态单一 owner，需读 model contextWindow 才能算
@@ -125,12 +140,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
       // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
       if (session.sessionFilePath) {
-        // W2-5：已有成功终态（done）或 error 终态则不覆盖为 stopped。
+        // W2-5/W8：已有任意终态（done/error/stopped）则不覆盖。
         // 正常 turn 完成时 handleTurnEndSideEffects 已写 'done'；随后 pi 进程正常退出触发本回调，
         // 此处若再写 'stopped' 会覆盖已写入的 'done'。进程退出是正常结束的副作用，非用户中止。
-        // 用 extractSessionOutcome 读 sidecar 当前终态：done/error 表示已记录终态，跳过；其余（null/stopped）继续写。
+        // W8：abort 路径 dispatcher 已写 'stopped' + 原始 abort reason，随后进程退出触发本回调时，
+        // 若再次用「Process exited (code: N)」覆盖，会丢失 dispatcher 写入的原始 abort reason——
+        // 第一个终态优先（abort 是用户主动行为，reason 比 process exit 更具诊断价值）。
         const existingOutcome = this.sessionStore.extractSessionOutcome(session.sessionFilePath)
-        if (existingOutcome !== 'done' && existingOutcome !== 'error') {
+        if (existingOutcome !== 'done' && existingOutcome !== 'error' && existingOutcome !== 'stopped') {
           this.sessionStore.persistSessionEnd(
             session.sessionFilePath,
             'stopped',
@@ -290,9 +307,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       throw new Error(`fork: source session has no message entries: ${target.filePath}`)
     }
     // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
-    // ±TIMESTAMP_TOLERANCE_MS 容差：JSONL 时间戳精度（毫秒）与 Date 序列化舍入可能差 1ms
-    // 容差常量，非业务数字（no-magic-numbers 默认对 const 初始化豁免，无需 disable）
-    const TIMESTAMP_TOLERANCE_MS = 2
+    // ±TIMESTAMP_TOLERANCE_MS（模块顶层常量，W7）容差：历史 session 可能秒级精度，1000ms 容差兜底
     if (messageTimestamp != null) {
       for (const e of msgEntries) {
         const msg = e.message as Record<string, unknown>

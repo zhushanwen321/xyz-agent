@@ -212,6 +212,38 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
     vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
     expect(onSilentAbort).toHaveBeenCalledTimes(1)
   })
+
+  // ── WD9：pause→reset→pause 序列（W6 可维护性硬化）──
+  // 验证 resetWatchdog 显式「先清 paused，后 armWatchdogTimer」顺序在 pause/resume 多轮交替下稳定。
+  // 反模式（先 arm 后清 paused）会让 arm 内 `if (paused) return` 误跳过补排 → 漏排定时器。
+  it('WD9: pause→reset→pause 序列 → 最终 paused 时静默超 ABORT 阈值不触发（顺序硬化回归）', () => {
+    interpreter.interpret([turnStart()]) // start watchdog
+    interpreter.interpret([extensionUi()]) // ① pause #1
+    interpreter.interpret([textDelta()]) // ② reset（隐式 resume：清 paused + 补排 timer）
+    interpreter.interpret([extensionUi()]) // ③ pause #2（最终态：paused）
+
+    // 暂停期间推进远超 ABORT 阈值，应受 pause 保护不触发
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 60_000)
+    expect(findStreamWarn()).toBeUndefined()
+    expect(onSilentAbort).not.toHaveBeenCalled()
+
+    // 再次 reset 恢复后，静默达 WARN 阈值应触发 WARN（证明 timer 正确补排、paused 正确清除）
+    interpreter.interpret([textDelta()])
+    vi.advanceTimersByTime(WARN_THRESHOLD_MS + 1_000)
+    expect(findStreamWarn()).toBeDefined()
+  })
+
+  // ── WD10：reset 在「无 timer + 暂停态」下正确补排（覆盖冷启动边角）──
+  // 场景：extension-ui 暂停后 timer 被清，textDelta 到达应清 paused + 补排新 timer。
+  it('WD10: extension-ui 暂停后 timer=null，textDelta 触发 reset → 补排 timer，达 ABORT 触发 abort', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // pause（timer 被清）
+    // textDelta reset：此时 timer=null，应补排（验证 if (!this.watchdogTimer) arm 分支）
+    interpreter.interpret([textDelta()])
+    // 静默达 ABORT 阈值 → 应触发 abort（证明补排的 timer 正常工作）
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
+    expect(onSilentAbort).toHaveBeenCalledTimes(1)
+  })
 })
 
 /**

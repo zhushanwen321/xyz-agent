@@ -82,8 +82,12 @@ export class SessionMessageHandler {
             const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
             this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages, historyTruncated: truncated })
           } catch (e) {
-            console.error('[runtime] failed to load history for switch:', e)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages: [], historyTruncated: false })
+            // W5：历史加载失败时绝不能 reply messages:[] + historyTruncated:false——
+            // 前端会误判「全部历史已加载且未截断」并把空列表当真。改走 sendError（统一 error
+            // envelope），与项目「错误作为 assistant 消息/可见告警插入」模式一致，前端据此渲染失败态。
+            const errMsg = toErrorMessage(e)
+            console.error('[runtime] failed to load history for switch:', errMsg)
+            this.ctx.sendError(ws, 'history_load_failed', errMsg, msg.id, { sessionId: switchId })
           }
         } else {
           try {

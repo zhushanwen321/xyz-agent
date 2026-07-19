@@ -24,6 +24,35 @@ import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED } from '../../utils
 import { createForkedSessionFile } from './session-fork.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 
+/**
+ * 从 JSONL 文本中剔除 session_end 行（W9）。
+ *
+ * 背景：B7 sidecar 方案下 runtime 不再往 JSONL 写 session_end（改写 .meta.json sidecar）。
+ * 但历史 session（迁移前写入的）JSONL 仍可能含 `type:"session_end"` 行；extractSessionOutcome 的
+ * fallback 也仍会读 JSONL 中的 session_end。pi switchSession 对该 entry type 的处理未验证，
+ * restore/fork 拷贝整份 JSONL 时保守 strip 掉比让 pi 报错更安全。
+ *
+ * 实现按行扫描：匹配 `"type":"session_end"` 或 `'type':'session_end'`（容忍引号/空格差异），
+ * 命中的整行丢弃，其余行原样保留（含换行）。纯文本扫描不解析 JSON，避免格式异常的行被误吞。
+ *
+ * @param jsonlContent 原始 JSONL 文本
+ * @returns 剔除 session_end 行后的文本（行数可能减少；末尾换行保留）
+ */
+export function stripSessionEndEntries(jsonlContent: string): string {
+  // 匹配 "type":"session_end" / "type": "session_end" / 'type':'session_end' 等变体。
+  // 用单/双引号字符类容忍 JSON.stringify（双引号）与手写（单引号）两种写法。
+  const sessionEndRe = /["']type["']\s*:\s*["']session_end["']/
+  const lines = jsonlContent.split('\n')
+  const kept: string[] = []
+  for (const line of lines) {
+    if (line === '') continue // split 末尾产生的空串（原末尾换行）跳过，末尾统一补回
+    if (sessionEndRe.test(line)) continue
+    kept.push(line)
+  }
+  // 末尾统一补一个换行（pi _persist 期望每行以 \n 结尾）
+  return kept.length > 0 ? kept.join('\n') + '\n' : ''
+}
+
 export class SessionLifecycle {
   constructor(
     private readonly svc: ISessionServiceInternal,
@@ -198,7 +227,9 @@ export class SessionLifecycle {
       // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），无需 strip。
       // 保守隔离：pi switchSession 对源文件的写回行为未确认，先拷贝到 tmpdir 再 switchSession，
       // 避免 pi 可能的写回污染原 JSONL（原文件仍是 source of truth，需保持完整）。
-      const cleaned = readFileSync(target.filePath, 'utf-8')
+      // W9：历史 session（迁移前写入的）JSONL 可能含 session_end 行，pi 对该 type 处理未验证 →
+      // 拷贝时 stripSessionEndEntries 保守剔除（比让 pi 报错更安全；其他行原样保留）。
+      const cleaned = stripSessionEndEntries(readFileSync(target.filePath, 'utf-8'))
       const tmpFile = join(tmpdir(), `xyz-session-${sessionId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
       try {
@@ -287,7 +318,9 @@ export class SessionLifecycle {
       // B7: sidecar 方案下 JSONL 无 session_end entry（persistSessionEnd 写 .meta.json sidecar），无需 strip。
       // 保守隔离：pi switchSession 对源文件的写回行为未确认，先拷贝到 tmpdir 再 switchSession，
       // 避免 pi 可能的写回污染 forkedFilePath（fork 产物需保持完整）。
-      const cleaned = readFileSync(forkedFilePath, 'utf-8')
+      // W9：fork 产物虽由 createForkedSessionFile 按树过滤生成（session_end 不在 keepIds 内本就不写入），
+      // 但保守 strip 一道——防御 createForkedSessionFile 行为变更或源文件含游离 session_end 行。
+      const cleaned = stripSessionEndEntries(readFileSync(forkedFilePath, 'utf-8'))
       const tmpFile = join(tmpdir(), `xyz-fork-${forkedId}-${Date.now()}.jsonl`)
       writeFileSync(tmpFile, cleaned)
       try {
