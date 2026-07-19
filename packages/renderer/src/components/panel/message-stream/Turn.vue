@@ -9,7 +9,10 @@
     Output Text 中间/收尾拆分（draft §4）：多 assistant 回合，非最后一条 content 折进 trace，
     仅最后一条作收尾 summary 恒显。
   -->
-  <div ref="rootEl" class="flex flex-col gap-3.5 pb-3.5">
+  <!-- rootEl：单 turn 容器。gap-3.5 = turn 内 user→assistant 间距（一轮对话内部紧凑）；
+       pb-5 = turn 底部留白（turn 间距 + 末条到 composer），与 MessageStream scrollEl 的 pt-5 对齐
+       到统一 20px——使每条 user 气泡上方间距全一致（首条靠 scrollEl pt-5，其余靠此处 pb-5）。 -->
+  <div ref="rootEl" class="flex flex-col gap-3.5 pb-5">
     <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
     <div v-if="turn.user" class="group/user flex flex-col items-end gap-1">
       <!-- 编辑态：编辑后 fork 新会话 -->

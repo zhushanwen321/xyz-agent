@@ -9,7 +9,7 @@
   <div class="relative flex min-h-0 flex-1 flex-col">
     <div
       ref="scrollEl"
-      class="message-stream relative flex-1 overflow-y-auto py-5"
+      class="message-stream relative flex-1 overflow-y-auto pt-5"
       @scroll.passive="handleScroll"
     >
     <!-- 空态欢迎语（G2-004）：独立于虚拟列表 spacer，作为 scrollEl 直接子节点撑满视口。
@@ -21,7 +21,9 @@
     <!-- contentEl：虚拟滚动 spacer，高度=totalHeight+topOffset 撑出滚动条。
          useChatScroll 的 ResizeObserver 观测它（totalHeight 变化→末项增高→触发 scrollToBottom）。
          可见 items 用 absolute 定位到各自 offset（+ topOffset 预留顶部 load-more 空间），视口外不挂载（虚拟化核心）。
-         上下留白由 scrollEl 的 py-5 提供（scroll container padding 随内容滚动，顶/底都能留白）；
+         上下留白分工（统一 20px，全 user 气泡上方间距一致）：
+         - 顶部留白：scrollEl 的 pt-5（首条 user 气泡距视口顶 20px）
+         - turn 间距 + 末条到 composer：Turn.vue 的 pb-5（每条 user 气泡距上一个 AI 回复 20px，末条到 composer 20px）
          此处不放 py-5——abs 子元素包含块是本元素 padding box，padding 会被 abs 覆盖无效（曾因此致首条消息贴顶）。
          px-5 保留：与 abs 子元素 left-5/right-5 同档 20px，视觉对齐参考。 -->
     <div ref="contentEl" class="relative px-5" :style="{ height: totalHeight + topOffset + 'px' }">
