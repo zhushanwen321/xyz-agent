@@ -83,14 +83,40 @@ function getStderrSink(): WriteStream | null {
  * 通过 before-quit 直接 quit（未触发 stop 链，或 stop 链已 resolve 但 end 后又有新 spawn 写入），
  * sink 的 buffer 可能未 flush 到磁盘，丢失原生崩溃期排查证据。
  *
- * 幂等：done() 已 end() 后 stderrSink=null，再次调用为 no-op。
+ * [HISTORICAL] W2：end() 是异步的（只是发 EOF 到流），返回的 Promise 等 'finish' 事件
+ * （OS 层 buffer 刷盘完成）才 resolve。否则 before-quit 紧接 app.quit() 会丢尾部 stderr。
+ * 调用方（main.ts before-quit handler）必须 await 此 Promise 后再 app.quit()。
+ *
+ * 幂等：done() 已 end() 后 stderrSink=null，再次调用为 no-op（直接 resolve）。
+ *
+ * @returns Promise，在 WriteStream 'finish'（或 'error'）后 resolve。
+ *          超时兜底：若底层 fs 卡住 1s 内未 finish 也 resolve（不阻断退出）。
  */
-export function flushStderrSink(): void {
-  if (stderrSink) {
-    // eslint-disable-next-line taste/no-silent-catch -- flush 失败不应阻断退出
-    try { stderrSink.end() } catch { /* end 失败不阻断退出 */ }
-    stderrSink = null
-  }
+export function flushStderrSink(): Promise<void> {
+  if (!stderrSink) return Promise.resolve()
+  const sink = stderrSink
+  stderrSink = null
+  // 兜底超时：极端情况底层 fs 不发 finish（如磁盘满/挂载丢失），1s 后强制 resolve
+  // 避免退出被无限阻塞（stderr 仅排查证据，可接受部分丢失）。
+  const FLUSH_TIMEOUT_MS = 1000
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(finish, FLUSH_TIMEOUT_MS)
+    sink.once('finish', finish)
+    sink.once('error', finish)
+    try {
+      sink.end()
+    } catch {
+      // end 失败不阻断退出（stderr 仅排查证据）
+      finish()
+    }
+  })
 }
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -327,9 +353,20 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
     // （runtime 退出后 pi 的 PPID 变为 1，pgrep -P 查不到）
     const descendantPids = getDescendantPids(childPid)
 
+    // [HISTORICAL] timer 在 done 闭包外具名持有，done() 顶部 clearTimeout。
+    // 否则 exit 先到 → done() resolve → 2s 后 timer 仍执行 killProcessTree，
+    // 此时 PID 可能已被 OS 复用 → 误杀无关进程。
+    let timer: ReturnType<typeof setTimeout> | null = null
+
     const done = async () => {
       if (resolved) return
       resolved = true
+      // 双重保险：clearTimeout 防止 exit/timeout 竞态后 timer 仍触发 killProcessTree。
+      // （timer 回调进入 done 时 resolved=true 会短路，但 clearTimeout 后连短路判断都不必走）
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
       // 杀掉残留的后代进程（pi 等），同步完成后再 resolve
       // 避免异步 setTimeout 在 resolve 后误杀 PID 复用的新进程
       for (const pid of descendantPids) {
@@ -347,18 +384,17 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
       }
       // 子进程树已全部 kill，stderr 不再有新数据 → flush 并关闭 sink，
       // 防止 app.quit() 前 WriteStream 内部 buffer 未落盘丢失崩溃期证据。
-      // done() 可能在 exit/timeout 两条路径触发，end() 幂等（第二次 no-op）。
-      if (stderrSink) {
-        // eslint-disable-next-line taste/no-silent-catch -- end 失败不阻断退出（stderr 仅排查证据）
-        try { stderrSink.end() } catch { /* end 失败不阻断退出 */ }
-        stderrSink = null
-      }
+      // done() 可能在 exit/timeout 两条路径触发，flushStderrSink 内置幂等（stderrSink=null 后 no-op）。
+      // [HISTORICAL] W2：必须 await 等 'finish' 落盘，否则 stop() resolve 后 before-quit
+      // 紧接 app.quit() 可能丢尾部 stderr。
+      await flushStderrSink()
       resolve()
     }
     child.once('exit', done)
     child.kill('SIGTERM')
-    // 超时后强制 SIGKILL（先杀整棵进程树）
-    setTimeout(() => {
+    // 超时后强制 SIGKILL（先杀整棵进程树）。done() 顶部 clearTimeout 保证 exit 先到时
+    // 此 timer 不会在 2s 后误杀 PID 复用的新进程。
+    timer = setTimeout(() => {
       child.removeListener('exit', done)
       // 强制杀进程树：runtime + 所有子进程
       killProcessTree(childPid, descendantPids)

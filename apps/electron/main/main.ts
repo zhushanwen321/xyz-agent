@@ -173,13 +173,25 @@ app.whenReady().then(async () => {
     const rawPath = decodeURIComponent(new URL(request.url).pathname)
     // 渲染进程无法安全展开 ~，主进程统一处理（图片 URL 可能含 ~/）
     const filePath = expandLocalFilePath(rawPath)
-    // Restrict to safe directories: project cwd, config dir, home, temp.
-    // 注意：homedir() 允许读取整个家目录（含 ~/.ssh 等敏感文件）。当前渲染进程是 trusted 代码
-    // （不加载远程内容），此白名单可接受。若未来引入未沙箱 webview 或远程内容，需收窄到具体子目录。
+    // [HISTORICAL] W3：禁止把整个 homedir() 加入白名单——会把「不能读 ~/.ssh」
+    // 放宽成「能读 ~/.ssh」。白名单只含可信子集：
+    //   - app.getAppPath()：当前 app 资源目录（dev 模式即项目根）
+    //   - getDataDir()：xyz-agent 数据目录（动态推导，dev=~/.xyz-agent-dev，符合架构约定 #2）
+    //   - process.cwd()：当前项目工作目录（图片预览主要场景，cwd 通常是用户项目）
+    //   - os.tmpdir()：临时文件（导出/截图等）
+    //   - 特定用户子目录：~/Documents / ~/Desktop / ~/Downloads（用户内容常见位置，
+    //     预览家目录下的普通文件）。绝不放行 ~ 本身（含 ~/.ssh、~/.aws 等敏感文件）。
     // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
     const sep = path.sep
-    const allowedPrefixes = [app.getAppPath(), getDataDir(), homedir(), tmpdir()]
-      .map(p => p.endsWith(sep) ? p : p + sep)
+    const home = homedir()
+    const userContentSubdirs = ['Documents', 'Desktop', 'Downloads'].map(d => path.join(home, d))
+    const allowedPrefixes = [
+      app.getAppPath(),
+      getDataDir(),
+      process.cwd(),
+      tmpdir(),
+      ...userContentSubdirs,
+    ].map(p => p.endsWith(sep) ? p : p + sep)
     const resolved = path.resolve(filePath)
     // 校验逻辑集中到 input-validators，拒绝不在白名单前缀内的路径（防目录穿越）
     if (!isPathInAllowedPrefixes(resolved, allowedPrefixes)) {
@@ -208,16 +220,19 @@ app.on('activate', async () => {
 })
 
 let isQuitting = false
-// 应用退出前清理：确保 runtime 子进程完全退出再 quit
+// 应用退出前清理：确保 runtime 子进程完全退出再 quit。
+// async handler：Electron 支持 event.preventDefault() + 异步操作 + 延迟 app.quit()。
+// 必须等 flushStderrSink 的 'finish' 事件（WriteStream 落盘完成）再 quit，否则丢尾部 stderr。
 app.on('before-quit', (event) => {
   if (isQuitting) return // 第二次进入（app.quit() 触发），放行
   isQuitting = true
   event.preventDefault()
-  ctx.runtime.stop().finally(() => {
-    shortcuts.unregisterAll()
-    // W-Proc2：runtime 停止后显式 flush stderrSink，确保打包模式下 WriteStream 内部
-    // buffer 落盘（否则崩溃期 stderr 证据可能随进程退出丢失）。幂等：stop 链已 end 则 no-op。
-    flushStderrSink()
-    app.quit()
-  })
+  // W-Proc2 + W2：runtime stop 已 end() stderrSink；此处 flush 等 'finish' 落盘后再 quit。
+  // stop() 路径未触发（runtime 自然退出）时此 flush 是落盘的唯一保障。
+  void ctx.runtime.stop()
+    .then(() => flushStderrSink())
+    .finally(() => {
+      shortcuts.unregisterAll()
+      app.quit()
+    })
 })
