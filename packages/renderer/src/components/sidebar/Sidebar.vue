@@ -155,7 +155,7 @@
         <span class="flex-1 truncate text-fg">{{ t('sidebar.developer') }}</span>
         <Button
           variant="ghost"
-          class="grid size-6 shrink-0 place-items-center rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-fg"
+          class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-subtle transition-colors hover:bg-surface-hover hover:text-fg [&_svg]:size-[14px]"
           :title="t('sidebar.settingsTitle')"
           @click="openSettings()"
         >
