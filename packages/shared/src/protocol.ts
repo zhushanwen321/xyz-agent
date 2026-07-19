@@ -111,10 +111,20 @@ export interface ClientMessageMap {
   // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
   // fromPiEntryId 缺失（RPC 路径读取的 session 无 piEntryId）时，用 fromMessageTimestamp +
   // fromMessageRole fallback 读 JSONL 按 timestamp 匹配 entryId（HISTORICAL: 2026-07-16）。
+  //
+  // ⚠️ timestamp fallback 精度风险（W21）：
+  // 调用方应优先传 fromPiEntryId 确保精确匹配。一旦走 fromMessageTimestamp fallback，
+  // 当 timestamp + role 在容差内仍匹配失败时（session-service.resolveEntryIdByTimestamp），
+  // runtime 只 console.warn 后 fallback 取 msgEntries[last]——用户以为 fork 到消息 A，
+  // 实际可能 fork 到完全不相关的最近一条。前端在能取到 piEntryId 时务必走 RPC 之外的路径
+  // （如 session.fullHistory 已填充 piEntryId 的 message）以保证 fork 点语义正确。
   'session.fork': {
     srcSessionId: string
+    /** pi JSONL entry id（精确匹配，优先使用）。缺失时走 timestamp fallback（见上方风险注释）。 */
     fromPiEntryId?: string
+    /** timestamp fallback 匹配键（Unix ms）。匹配失败会静默 fallback 到最近一条 message（非用户期望 fork 点）。 */
     fromMessageTimestamp?: number
+    /** timestamp fallback 辅助收窄键（与 timestamp 配对，缩小匹配范围）。失败同样 fallback 到最近一条。 */
     fromMessageRole?: string
     includeFrom?: boolean
     label?: string
@@ -305,6 +315,10 @@ export interface ServerMessageMapBase {
   /** extension.recommended reply：推荐扩展列表（含已安装状态） */
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
   'config.plugins': { plugins: PluginInfo[] }
+  // plugin:config：plugin.config.get / plugin.config.set 的 reply（plugin-message-handler.ts:56/61
+  // reply { pluginId, config }）。config 是该插件全量配置对象（get 不带 key 时）或单 key 子树。
+  // 用 Record<string, unknown> 保持 shared 依赖最小化（与 extension:widgetGui.gui:unknown 同先例）。
+  'plugin:config': { pluginId: string; config: Record<string, unknown> }
   'model.list': { models: ModelInfo[] }
   'config.sessions': { groups: SessionGroup[] }
   /** config.systemPrompt：reply + broadcast + 初始推送三用。corrupted=true 表示磁盘配置损坏已回退默认（SR5）。 */
@@ -597,6 +611,20 @@ export interface ReplyPayloadMap {
   'session.getWorkflows': ServerMessageMap['session.workflows']
   'session.history': ServerMessageMap['session.history']
   'config.sessions': ServerMessageMap['config.sessions']
+  // plugin.* RPC reply 映射（plugin-message-handler.ts 全部发 reply）：
+  //  - plugin.list / toggle / uninstall / install / approvePermissions / revokePermissions
+  //    → reply 'config.plugins' { plugins }（前端读 plugins 列表刷新 UI）
+  //  - plugin.executeCommand → reply 'pong' {}（fire-and-forget ack，前端不读 payload）
+  //  - plugin.config.get / set → reply 'plugin:config' { pluginId, config }（前端读 config 应用到设置面板）
+  'plugin.list': ServerMessageMap['config.plugins']
+  'plugin.toggle': ServerMessageMap['config.plugins']
+  'plugin.uninstall': ServerMessageMap['config.plugins']
+  'plugin.install': ServerMessageMap['config.plugins']
+  'plugin.approvePermissions': ServerMessageMap['config.plugins']
+  'plugin.revokePermissions': ServerMessageMap['config.plugins']
+  'plugin.executeCommand': ServerMessageMap['pong']
+  'plugin.config.get': ServerMessageMap['plugin:config']
+  'plugin.config.set': ServerMessageMap['plugin:config']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
 

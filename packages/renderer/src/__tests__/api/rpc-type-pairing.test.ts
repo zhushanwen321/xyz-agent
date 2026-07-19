@@ -62,6 +62,60 @@ describe('U1: ReplyPayloadMap — key 覆盖 RPC request type', () => {
     }
     expect(sample.content).toBe('hello')
   })
+
+  it('plugin.* 9 个 RPC key 全部映射存在（W20：ReplyPayloadMap SSOT 完整性）', () => {
+    // plugin-message-handler.ts 对 9 个 plugin.* 请求都发了 reply，ReplyPayloadMap 必须全部登记。
+    // 此处只断言「key 存在且类型可赋值」——具体 shape 由 ServerMessageMap['config.plugins']/
+    // ['plugin:config']/['pong'] 定义，下面三个 it 分别精确校验。
+    type PluginKeys =
+      | 'plugin.list' | 'plugin.toggle' | 'plugin.uninstall' | 'plugin.install'
+      | 'plugin.approvePermissions' | 'plugin.revokePermissions'
+      | 'plugin.executeCommand' | 'plugin.config.get' | 'plugin.config.set'
+    // 把 ReplyPayloadMap 收窄到这 9 个 key，若任一缺失编译报错（编译期防御）。
+    type PluginSubset = Pick<ReplyPayloadMap, PluginKeys>
+    const _check: PluginSubset = {
+      'plugin.list': undefined as unknown as ReplyPayloadMap['plugin.list'],
+      'plugin.toggle': undefined as unknown as ReplyPayloadMap['plugin.toggle'],
+      'plugin.uninstall': undefined as unknown as ReplyPayloadMap['plugin.uninstall'],
+      'plugin.install': undefined as unknown as ReplyPayloadMap['plugin.install'],
+      'plugin.approvePermissions': undefined as unknown as ReplyPayloadMap['plugin.approvePermissions'],
+      'plugin.revokePermissions': undefined as unknown as ReplyPayloadMap['plugin.revokePermissions'],
+      'plugin.executeCommand': undefined as unknown as ReplyPayloadMap['plugin.executeCommand'],
+      'plugin.config.get': undefined as unknown as ReplyPayloadMap['plugin.config.get'],
+      'plugin.config.set': undefined as unknown as ReplyPayloadMap['plugin.config.set'],
+    }
+    expect(Object.keys(_check)).toHaveLength(9)
+  })
+
+  it('plugin.list/toggle/uninstall/install/approve/revoke 映射到 config.plugins（含 plugins 字段）', () => {
+    // 6 个变更型请求都 reply 'config.plugins' { plugins }（plugin-message-handler.ts:31/35/39/43/47/71）
+    type PluginsReply = ReplyPayloadMap['plugin.list']
+    const sample: PluginsReply = { plugins: [] }
+    expect(sample.plugins).toEqual([])
+    // 同类型引用一致性（任取其一即可代表其余 5 个）
+    const _t1: ReplyPayloadMap['plugin.toggle'] = sample
+    const _t2: ReplyPayloadMap['plugin.uninstall'] = sample
+    const _t3: ReplyPayloadMap['plugin.install'] = sample
+    const _t4: ReplyPayloadMap['plugin.approvePermissions'] = sample
+    const _t5: ReplyPayloadMap['plugin.revokePermissions'] = sample
+    void [_t1, _t2, _t3, _t4, _t5]
+  })
+
+  it('plugin.executeCommand 映射到 pong（ack 型，无 payload 字段）', () => {
+    type PongReply = ReplyPayloadMap['plugin.executeCommand']
+    const sample: PongReply = {}
+    expect(sample).toEqual({})
+  })
+
+  it('plugin.config.get/set 映射到 plugin:config（含 pluginId + config）', () => {
+    // plugin-message-handler.ts:56/61 reply { pluginId, config }
+    type ConfigReply = ReplyPayloadMap['plugin.config.get']
+    const sample: ConfigReply = { pluginId: 'demo', config: { enabled: true } }
+    expect(sample.pluginId).toBe('demo')
+    expect(sample.config).toEqual({ enabled: true })
+    const _setCheck: ReplyPayloadMap['plugin.config.set'] = sample
+    void _setCheck
+  })
 })
 
 // ════════════════════════════════════════════════════════════════════════
