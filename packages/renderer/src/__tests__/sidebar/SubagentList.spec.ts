@@ -101,6 +101,22 @@ describe('SubagentList', () => {
     expect(dot.exists()).toBe(true)
   })
 
+  it('crashed 状态显示 danger 色点（与 failed 同为异常终态，不落 default bg-accent）', () => {
+    const records = [makeRecord({ status: 'crashed', subagentId: 'run-crash-1' })]
+
+    const wrapper = mount(SubagentList, {
+      props: { subagents: records },
+    })
+
+    // crashed 不等于 running，不显示 spinner
+    const spinner = wrapper.find('[data-testid="subagent-card-spinner"]')
+    expect(spinner.exists()).toBe(false)
+
+    // crashed 圆点含 bg-danger class（历史 bug：crashed 落 default 分支显示 bg-accent，与 done 视觉混淆）
+    const dot = wrapper.find('.bg-danger')
+    expect(dot.exists()).toBe(true)
+  })
+
   // ── cancel 两段式确认（W3 新增）──
 
   it('running 态渲染 cancel 按钮，done 态不渲染', () => {

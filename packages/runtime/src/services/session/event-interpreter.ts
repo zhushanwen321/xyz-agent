@@ -21,8 +21,8 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
-import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
-import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
+import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
@@ -556,36 +556,46 @@ export class EventInterpreter {
 
   /**
    * subagent bg-notify（custom_message）：更新已有记录的终态。
-   * details 结构（BgNotifyDetails）：{id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
+   *
+   * details 两种形态（pi-subagent-workflow notifier 滑动窗口 60s 内合并）：
+   *   - 单条：BgNotifyRecord = {id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
+   *   - 批量：{batch:true, items: BgNotifyRecord[]}
+   *
+   * 用 parseBgNotifyDetails 解析（统一处理两种形态 + 防御性校验），
+   * 用 normalizeSubagentStatus 归一（兼容 completed/error/crashed 等上游变体）。
+   * agent 字段以 notify.agent 为准（pi 执行期回传的真实值，比 startParam 兜底权威）。
+   * 批量多条更新后只广播一次（避免 N 次广播）。
    */
   private handleSubagentBgNotify(msg: ServerMessage): void {
-    const payload = msg.payload as { customType?: string; details?: Record<string, unknown> } | undefined
+    const payload = msg.payload as { customType?: string; details?: unknown } | undefined
     if (payload?.customType !== 'subagent-bg-notify') return
-    const details = payload.details
-    if (!details) return
 
-    const subagentId = typeof details.id === 'string' ? details.id : null
-    if (!subagentId) return
+    const parsed = parseBgNotifyDetails(payload.details)
+    if (!parsed) return
 
-    const existing = this.subagentRecords.get(subagentId)
-    if (!existing) return
+    const records: BgNotifyRecord[] = 'batch' in parsed ? parsed.items : [parsed]
+    let changed = false
+    for (const notify of records) {
+      const existing = this.subagentRecords.get(notify.id)
+      // 只更新已存在的内存记录（running 记录由 handleSubagentEnd 建入），不新建
+      if (!existing) continue
 
-    const status = details.status === 'done' ? 'done'
-      : details.status === 'failed' ? 'failed'
-        : details.status === 'cancelled' ? 'cancelled'
-          : existing.status
-
-    const updated: SubagentRecord = {
-      ...existing,
-      status,
-      model: typeof details.model === 'string' ? details.model : existing.model,
-      error: typeof details.error === 'string' ? details.error : existing.error,
-      startedAt: typeof details.startedAt === 'number' ? details.startedAt : existing.startedAt,
-      endedAt: typeof details.endedAt === 'number' ? details.endedAt : existing.endedAt,
+      const updated: SubagentRecord = {
+        ...existing,
+        status: normalizeSubagentStatus(notify.status),
+        // notify.agent 是 pi 执行期回传的真实 agent（finalize 时从 record.agent 来），
+        // 覆盖 startParam 兜底的 'general-purpose'
+        agent: notify.agent ?? existing.agent,
+        model: notify.model ?? existing.model,
+        error: notify.error ?? existing.error,
+        startedAt: notify.startedAt ?? existing.startedAt,
+        endedAt: notify.endedAt ?? existing.endedAt,
+      }
+      this.subagentRecords.set(notify.id, updated)
+      changed = true
     }
 
-    this.subagentRecords.set(subagentId, updated)
-    this.broadcastSubagents()
+    if (changed) this.broadcastSubagents()
   }
 
   /** 广播当前内存态的全量 subagent 列表（session.subagents server push） */

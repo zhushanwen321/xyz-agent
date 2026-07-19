@@ -146,6 +146,9 @@ function statusDotClass(status: SubagentStatus): string {
     case 'done':
       return 'bg-success'
     case 'failed':
+    case 'crashed':
+      // crashed（子进程崩溃）与 failed 同为异常终态，共用 danger 色。
+      // running 走 spinner 不会到这里，故 crashed 用 bg-danger 不会与 running 混淆。
       return 'bg-danger'
     case 'cancelled':
       return 'bg-subtle opacity-50'

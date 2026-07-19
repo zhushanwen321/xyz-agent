@@ -127,6 +127,95 @@ describe('EventInterpreter · subagent 内存态 + session.subagents 广播', ()
       expect(payload.subagents[0].endedAt).toBe(2000)
       expect(payload.subagents[0].model).toBe('glm-5.2')
     })
+
+    it('batch 形态 bg-notify → 多条记录更新为 done + 仅广播一次', () => {
+      const interpreter = new EventInterpreter('sid-u2b', { send })
+
+      // 先建 2 条 running 记录（模拟 60s 内并发完成的两个 subagent）
+      interpreter.interpret([
+        subagentStart('call-a', { agent: 'worker', slug: 'task-a', task: 'Do A' }),
+        subagentEnd('call-a', {
+          action: 'start', subagentId: 'bg-a-1', sessionFile: '/a.jsonl',
+          bgResponse: { status: 'running', message: 'detached' },
+        }),
+        subagentStart('call-b', { agent: 'researcher', slug: 'task-b', task: 'Do B' }),
+        subagentEnd('call-b', {
+          action: 'start', subagentId: 'bg-b-2', sessionFile: '/b.jsonl',
+          bgResponse: { status: 'running', message: 'detached' },
+        }),
+      ])
+      const runningBroadcasts = sent.filter((m) => m.type === 'session.subagents')
+      expect(runningBroadcasts).toHaveLength(2)
+
+      // 发 batch bg-notify
+      interpreter.interpret([{
+        kind: 'message',
+        message: {
+          type: 'message.customStart',
+          payload: {
+            sessionId: 'sid-u2b',
+            customType: 'subagent-bg-notify',
+            details: {
+              batch: true,
+              items: [
+                { id: 'bg-a-1', status: 'done', agent: 'worker', startedAt: 1000, endedAt: 2000 },
+                { id: 'bg-b-2', status: 'done', agent: 'researcher', startedAt: 1100, endedAt: 2200 },
+              ],
+            },
+          },
+        } as ServerMessage,
+      }])
+
+      const subagentsMsgs = sent.filter((m) => m.type === 'session.subagents')
+      // batch 多条更新只广播一次
+      expect(subagentsMsgs).toHaveLength(3)
+      const payload = subagentsMsgs[2]!.payload as { subagents: Array<Record<string, unknown>> }
+      const a = payload.subagents.find((s) => s.subagentId === 'bg-a-1')
+      const b = payload.subagents.find((s) => s.subagentId === 'bg-b-2')
+      expect(a?.status).toBe('done')
+      expect(a?.agent).toBe('worker')
+      expect(a?.endedAt).toBe(2000)
+      expect(b?.status).toBe('done')
+      expect(b?.agent).toBe('researcher')
+      expect(b?.endedAt).toBe(2200)
+    })
+
+    it('bg-notify.agent 覆盖 startParam 兜底值（LLM 没传 agent 时显示真实 agent）', () => {
+      const interpreter = new EventInterpreter('sid-u2c', { send })
+
+      // startParam 不带 agent → 兜底 'general-purpose'
+      interpreter.interpret([
+        subagentStart('call-c', { slug: 'research', task: 'Research something' }),
+        subagentEnd('call-c', {
+          action: 'start', subagentId: 'bg-c-3', sessionFile: '/c.jsonl',
+          bgResponse: { status: 'running', message: 'detached' },
+        }),
+      ])
+      const runningPayload = sent.filter((m) => m.type === 'session.subagents')[0]!
+        .payload as { subagents: Array<Record<string, unknown>> }
+      expect(runningPayload.subagents[0]!.agent).toBe('general-purpose')
+
+      // bg-notify 回传真实 agent 'researcher'
+      interpreter.interpret([{
+        kind: 'message',
+        message: {
+          type: 'message.customStart',
+          payload: {
+            sessionId: 'sid-u2c',
+            customType: 'subagent-bg-notify',
+            details: {
+              id: 'bg-c-3', status: 'done', agent: 'researcher', startedAt: 1000, endedAt: 2000,
+            },
+          },
+        } as ServerMessage,
+      }])
+
+      const donePayload = sent.filter((m) => m.type === 'session.subagents')[1]!
+        .payload as { subagents: Array<Record<string, unknown>> }
+      // 更新后 agent 是 pi 回传的真实值，不再是 startParam 兜底
+      expect(donePayload.subagents[0]!.agent).toBe('researcher')
+      expect(donePayload.subagents[0]!.status).toBe('done')
+    })
   })
 
   // ── U3：非 subagent 工具不触发 ───────────────────────────────────

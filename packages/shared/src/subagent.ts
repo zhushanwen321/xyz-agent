@@ -62,3 +62,37 @@ export interface SubagentRecord {
   /** failed 状态的错误文本 */
   error?: string
 }
+
+/**
+ * 将 pi-subagent-workflow 各出口的状态字符串归一化为 SubagentStatus。
+ *
+ * pi 侧状态来源分散且命名不一致（bg-notify 发 done/failed/cancelled、
+ * listResponse 可能给 running/done、PR #85 的 manifest 写 completed/failed、
+ * 子进程崩溃重建路径推断 crashed），本函数统一收敛到 SubagentStatus 五态。
+ *
+ * runtime 的 event-interpreter（实时路径）与 subagent-extractor（磁盘路径）共用此函数，
+ * 避免两处手写三元/switch 漂移（历史 bug：event-interpreter 的三元缺 completed/crashed 归一）。
+ */
+export function normalizeSubagentStatus(status: string | undefined): SubagentStatus {
+  if (!status) return 'running'
+  switch (status) {
+    case 'done':
+    case 'completed':
+    case 'success':
+      return 'done'
+    case 'failed':
+    case 'error':
+      return 'failed'
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelled'
+    case 'crashed':
+      return 'crashed'
+    case 'running':
+    case 'pending':
+    case 'active':
+      return 'running'
+    default:
+      return 'running'
+  }
+}
