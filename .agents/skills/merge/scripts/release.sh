@@ -151,7 +151,11 @@ EXISTING_RELEASE=$(gh release view "$TAG" --repo "$GH_REPO" --json isDraft,id,bo
 if [[ -n "$EXISTING_RELEASE" ]]; then
     ASSET_COUNT=$(echo "$EXISTING_RELEASE" | jq -r '.assets | length // 0' 2>/dev/null) || ASSET_COUNT="0"
     IS_DRAFT=$(echo "$EXISTING_RELEASE" | jq -r '.isDraft // false' 2>/dev/null) || IS_DRAFT="false"
-    echo "  发现已有 Release（assets=$ASSET_COUNT, draft=$IS_DRAFT）"
+    # [HISTORICAL] $IS_DRAFT 必须用 ${IS_DRAFT} 显式界定变量名边界：
+    # 紧跟的 ） 是 UTF-8 全角括号（U+FF09，3 字节 ef bc 89）。
+    # 裸 $IS_DRAFT 后 bash 变量名扫描器会把首字节 0xEF 吞进变量名，
+    # 触发 `IS_DRAFT$'\357': unbound variable`（set -u 下退出）。
+    echo "  发现已有 Release（assets=$ASSET_COUNT, draft=${IS_DRAFT}）"
 
     EXISTING_BODY=$(echo "$EXISTING_RELEASE" | jq -r '.body // ""' 2>/dev/null || echo "")
     if [[ -z "$EXISTING_BODY" ]] || [[ ${#EXISTING_BODY} -lt 20 ]]; then
