@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统提示词配置 · Settings Demo</title>
+<style>
+  :root {
+    --bg: #1a1b1f;
+    --surface: #272830;
+    --surface-2: #2e2f38;
+    --surface-hover: #363740;
+    --bg-input: #1e1f24;
+    --fg: #f7f8fc;
+    --muted: #a8a8b5;
+    --subtle: #82828f;
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.15);
+    --accent: #4f8ef7;
+    --accent-hover: #6ba3ff;
+    --accent-soft: rgba(79,142,247,0.12);
+    --accent-ring: rgba(79,142,247,0.30);
+    --warning: #f5a524;
+    --warning-soft: rgba(245,165,36,0.12);
+    --danger: #f87171;
+    --radius-sm: 3px;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 48px 24px;
+  }
+
+  .container {
+    max-width: 860px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ── 页面标题 ── */
+  .page-header {
+    margin-bottom: 8px;
+  }
+  .page-header h2 {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .page-header p {
+    margin-top: 2px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  /* ── corrupted 提示条 ── */
+  .corrupted-bar {
+    display: none;
+    align-items: flex-start;
+    gap: 8px;
+    border-radius: var(--radius);
+    border: 1px solid rgba(245,165,36,0.4);
+    background: var(--warning-soft);
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--fg);
+  }
+  .corrupted-bar.visible { display: flex; }
+  .corrupted-bar svg { flex-shrink: 0; margin-top: 1px; color: var(--warning); }
+
+  /* ── 卡片 ── */
+  .card {
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+  }
+  .card-title { min-width: 0; }
+  .card-title h3 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .card-title p {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--subtle);
+  }
+  .card-body {
+    border-top: 1px solid var(--border);
+    padding: 12px 16px;
+  }
+
+  /* ── Switch 开关 ── */
+  .switch {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border-strong);
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    flex-shrink: 0;
+  }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--fg);
+    transition: transform 0.2s;
+  }
+  .switch.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .switch.on::after { transform: translateX(16px); }
+
+  /* ── 文本区 ── */
+  .field-label {
+    display: block;
+    font-size: 11px;
+    color: var(--subtle);
+    margin-bottom: 4px;
+  }
+  .warning-text {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .hint-text {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  textarea {
+    width: 100%;
+    min-height: 120px;
+    resize: vertical;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--fg);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  textarea::placeholder { color: var(--subtle); }
+  textarea:focus {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow);
+  }
+  textarea:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* ── 计数器 + 保存按钮行 ── */
+  .footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+  }
+  .counter {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--subtle);
+  }
+  .counter.over-limit { color: var(--danger); }
+
+  /* ── Button ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    line-height: 1.4;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--fg);
+    border-color: var(--border-strong);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ── 快照预览 ── */
+  .snapshot-preview {
+    max-height: 280px;
+    min-height: 80px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    padding: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--fg);
+  }
+  .snapshot-empty { color: var(--subtle); }
+  .snapshot-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--subtle);
+  }
+  .snapshot-meta svg { color: var(--subtle); }
+
+  /* ── Toast ── */
+  .toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 100;
+  }
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    font-size: 12px;
+    color: var(--fg);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: slideIn 0.25s ease;
+    max-width: 360px;
+  }
+  .toast.info { background: var(--accent); color: #fff; }
+  .toast.error { background: #3a2020; border: 1px solid var(--danger); }
+  @keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  /* ── 顶部控制条（demo 专用：切换 corrupted / 快照状态）── */
+  .demo-controls {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    display: flex;
+    gap: 8px;
+    z-index: 50;
+  }
+  .demo-controls .btn {
+    font-size: 11px;
+    padding: 4px 10px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.8s linear infinite; }
+</style>
+</head>
+<body>
+
+<!-- demo 控制条：模拟 runtime 状态 -->
+<div class="demo-controls">
+  <button class="btn btn-secondary" onclick="toggleCorrupted()">模拟配置损坏</button>
+</div>
+
+<div class="container">
+  <div class="page-header">
+    <h2>系统提示词</h2>
+    <p>配置替换与追加系统提示词</p>
+  </div>
+
+  <!-- corrupted 提示条 -->
+  <div id="corrupted-bar" class="corrupted-bar">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/>
+      <line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+    <span>系统提示词配置文件已损坏，已回退默认配置</span>
+  </div>
+
+  <!-- 卡 1：替换系统提示词 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <h3>替换系统提示词</h3>
+        <p>完全覆盖 pi 默认的身份与指引</p>
+      </div>
+      <div id="replace-switch" class="switch" onclick="toggleSwitch('replace')"></div>
+    </div>
+    <div class="card-body">
+      <p class="warning-text">替换后 pi 默认的身份/工具列表/指引将被移除，工具描述需在文本中自行维护。仅对新建会话生效；关闭开关即恢复 pi 默认</p>
+      <label class="field-label" for="replace-input">自定义系统提示词</label>
+      <textarea id="replace-input" placeholder="输入完整的系统提示词……" disabled></textarea>
+      <div class="footer-row">
+        <span id="replace-counter" class="counter">0/16000</span>
+        <button class="btn btn-primary" id="replace-save" disabled onclick="saveReplace()">保存</button>
+      </div>
+      <!-- 可折叠：查看 pi 默认提示词参考（accent 主色 toggle + 复制按钮） -->
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+        <button class="btn btn-secondary" style="width:100%;justify-content:flex-start;padding:4px 0;font-size:11px;font-weight:500;color:var(--accent);" onclick="toggleDefaultPrompt()">
+          <svg id="default-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition:transform 0.2s;">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+          查看 pi 默认提示词
+        </button>
+        <div id="default-prompt-area" style="display:none;margin-top:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <p style="font-size:10px;line-height:1.6;color:var(--subtle);margin:0;flex:1;margin-right:8px;">
+              这是 pi 的默认核心提示词（身份+工具列表+指引）。替换后此段会被你的文本覆盖；动态段（AGENTS.md/skills/cwd）不受影响，仍由 pi 照常拼接。
+            </p>
+            <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;flex-shrink:0;" onclick="copyDefaultPrompt()">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              复制
+            </button>
+          </div>
+          <pre style="max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;border-radius:var(--radius-sm);background:var(--surface-2);padding:12px;font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--fg);user-select:text;cursor:text;">You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+Available tools:
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
+- write: Create or overwrite files
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+
+Guidelines:
+- Use read to examine files instead of cat or sed.
+- Use write only for new files or complete rewrites.
+- Use edit for precise changes (edits[].oldText must match exactly)
+- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls
+- Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
+- Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.
+- Be concise in your responses
+- Show file paths clearly when working with files
+
+Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: &lt;pi package dir&gt;/README.md
+- Additional docs: &lt;pi package dir&gt;/docs
+- Examples: &lt;pi package dir&gt;/examples (extensions, custom tools, SDK)
+- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
+- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 卡 2：注入额外提示词 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <h3>注入额外提示词</h3>
+        <p>在系统提示词末尾追加内容</p>
+      </div>
+      <div id="append-switch" class="switch" onclick="toggleSwitch('append')"></div>
+    </div>
+    <div class="card-body">
+      <p class="hint-text">追加到系统提示词末尾，保存后下一轮对话即生效（含进行中的会话）</p>
+      <label class="field-label" for="append-input">追加的提示词</label>
+      <textarea id="append-input" placeholder="输入要追加的提示词……" disabled></textarea>
+      <div class="footer-row">
+        <span id="append-counter" class="counter">0 字符</span>
+        <button class="btn btn-primary" id="append-save" disabled onclick="saveAppend()">保存</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast-container" class="toast-container"></div>
+
+<script>
+const MAX_LENGTH = 16000;
+const state = {
+  replaceEnabled: false,
+  appendEnabled: false,
+  corrupted: false,
+};
+
+// ── Switch 切换 ──
+function toggleSwitch(type) {
+  const key = type + 'Enabled';
+  state[key] = !state[key];
+  const sw = document.getElementById(type + '-switch');
+  sw.classList.toggle('on', state[key]);
+
+  const textarea = document.getElementById(type + '-input');
+  const saveBtn = document.getElementById(type + '-save');
+  textarea.disabled = !state[key];
+  saveBtn.disabled = !state[key];
+}
+
+// ── 字符计数 ──
+document.getElementById('replace-input').addEventListener('input', function() {
+  const len = this.value.length;
+  const counter = document.getElementById('replace-counter');
+  counter.textContent = len + '/' + MAX_LENGTH;
+  counter.classList.toggle('over-limit', len > MAX_LENGTH);
+});
+document.getElementById('append-input').addEventListener('input', function() {
+  document.getElementById('append-counter').textContent = this.value.length + ' 字符';
+});
+
+// ── 保存（模拟）──
+function saveReplace() {
+  const val = document.getElementById('replace-input').value;
+  if (val.length > MAX_LENGTH) {
+    showToast('error', 'replace prompt exceeds max length (16000)');
+    return;
+  }
+  showToast('info', '替换系统提示词已保存（仅对新建会话生效）');
+}
+function saveAppend() {
+  showToast('info', '追加提示词已保存（下一轮对话即生效）');
+}
+
+// ── Toast ──
+function showToast(type, message) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.transition = 'opacity 0.3s';
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 2800);
+}
+
+// ── 可折叠参考区 ──
+function toggleDefaultPrompt() {
+  const area = document.getElementById('default-prompt-area');
+  const chevron = document.getElementById('default-chevron');
+  const shown = area.style.display !== 'none';
+  area.style.display = shown ? 'none' : 'block';
+  chevron.style.transform = shown ? '' : 'rotate(90deg)';
+}
+
+// ── 复制默认提示词 ──
+function copyDefaultPrompt() {
+  const text = document.querySelector('#default-prompt-area pre').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('info', '已复制到剪贴板');
+  }).catch(() => {
+    showToast('error', '复制失败');
+  });
+}
+
+// ── demo 控制：切换 corrupted ──
+function toggleCorrupted() {
+  state.corrupted = !state.corrupted;
+  document.getElementById('corrupted-bar').classList.toggle('visible', state.corrupted);
+}
+
+</script>
+
+</body>
+</html>

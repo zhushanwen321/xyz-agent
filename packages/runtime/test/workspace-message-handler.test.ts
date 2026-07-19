@@ -156,6 +156,7 @@ describe('SessionLifecycle — 写入时机 record', () => {
     const svc = {
       getExtensionPaths: vi.fn().mockResolvedValue([]),
       getSkillPaths: vi.fn().mockReturnValue([]),
+      getReplaceSystemPrompt: vi.fn(() => undefined),
       initializeManagedSession: vi.fn().mockResolvedValue({ id: 's1', cwd: '/test', label: 'test' }),
       toSummary: vi.fn().mockReturnValue({ id: 's1', cwd: '/test', label: 'test' }),
     }
@@ -191,6 +192,7 @@ describe('SessionLifecycle — 写入时机 record', () => {
     const svc = {
       getExtensionPaths: vi.fn().mockResolvedValue([]),
       getSkillPaths: vi.fn().mockReturnValue([]),
+      getReplaceSystemPrompt: vi.fn(() => undefined),
       initializeManagedSession: vi.fn(),
       toSummary: vi.fn(),
     }

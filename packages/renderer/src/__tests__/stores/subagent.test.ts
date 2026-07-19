@@ -174,7 +174,7 @@ describe('subagent store — per-panel getters', () => {
 
     await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
-    expect(store.getActiveSubagentVirtualId('panel-A')).toBe('subagent:bg-1')
+    expect(store.getActiveSubagentVirtualId('panel-A', 'session-1')).toBe('subagent:session-1:bg-1')
   })
 
   it('getCurrentSubagent 从 records 查找当前查看的记录', async () => {
@@ -224,7 +224,7 @@ describe('subagent store — selectSubagent', () => {
     await store.selectSubagent('panel-A', 'session-1', 'bg-1', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
     expect(sessionApi.getSubagentHistory).toHaveBeenCalledWith('session-1', 'bg-1')
-    expect(chat.setMessages).toHaveBeenCalledWith('subagent:bg-1', fakeHistory)
+    expect(chat.setMessages).toHaveBeenCalledWith('subagent:session-1:bg-1', fakeHistory)
   })
 
   it('getSubagentHistory 失败时 fail-fast throw（调用方负责 catch + 回滚）', async () => {

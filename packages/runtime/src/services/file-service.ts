@@ -16,10 +16,10 @@
  *   防 `../../etc/passwd` 路径穿越 → 越界抛 FileError('out_of_cwd')。
  *   （listTree 入口对 cwd 自身守门，恒 true，保持入口统一守门模式。）
  */
-import { resolve as resolvePath, join, relative } from 'node:path'
+import { resolve as resolvePath, join, relative, isAbsolute } from 'node:path'
 import type { FileNode, IgnoreMatcher } from '@xyz-agent/shared'
 import { compileIgnoreRules, matchPath } from '@xyz-agent/shared'
-import { isUnderOrEqual } from '../utils/path-utils.js'
+import { isUnderOrEqual, expandHome } from '../utils/path-utils.js'
 import type { IFileExecutor, FsEntry } from './ports/file-executor.js'
 import type { ISessionService, IFileService } from '../interfaces.js'
 import { FileError } from './file-error.js'
@@ -117,7 +117,12 @@ export class FileService implements IFileService {
    */
   async readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }> {
     const cwd = this.requireCwd(sessionId)
-    const resolvePath_ = resolvePath(cwd, path)
+    // 路径识别：~ 展开 → 绝对路径直接用，相对路径基于 cwd resolve
+    const expandedPath = expandHome(path)
+    const resolvePath_ = isAbsolute(expandedPath) ? resolvePath(expandedPath) : resolvePath(cwd, expandedPath)
+    // 安全守门（NFR-AC-S2 越界统一守门）：所有路径（含 ~ 展开后的绝对路径）必须落在 cwd 下，
+    // 防 `../../etc/passwd` 相对穿越与 `~/...` / `/etc/...` 绝对路径越界 → 越界抛 FileError('out_of_cwd')。
+    // cwd 外文件读取（BC-3 skill 文件预览）走 readFileFromWhitelist（自带 allowedReadDirs 白名单）。
     if (!isUnderOrEqual(cwd, resolvePath_)) throw new FileError('out_of_cwd', path)
     const statResult = await this.callFs(() => this.opts.executor.stat(resolvePath_))
     const full = await this.callFs(() => this.opts.executor.readFile(resolvePath_))

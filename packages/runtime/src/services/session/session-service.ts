@@ -11,6 +11,7 @@
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
 import { existsSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
@@ -18,25 +19,26 @@ import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessag
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type {
   ISessionService, IMessageBroker,
-  IEventAdapter, IExtensionService,
+  IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import { getHistoryFromFile, getHistoryFromFilePath } from '../session-history.js'
+import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
+import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
 import { parseSessionHeader } from '../../infra/pi/session-file-utils.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { isStrictlyUnder } from '../../utils/path-utils.js'
 import type { IConfigStore } from '../ports/config.js'
-import type { ISessionStore } from '../ports/session.js'
+import type { ISessionStore, SessionOutcome } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
-import { toErrorMessage } from '../../utils/errors.js'
+import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
@@ -46,6 +48,21 @@ interface ManagedSession extends IManagedSessionView {
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
 const MAX_PERCENT = 100
+
+/**
+ * fork 点 entryId 按 timestamp 匹配时的容差（W7）。
+ *
+ * 来源：前端 messageTimestamp 是 Unix ms（Date.now()），JSONL 中 pi 写入的 timestamp 是
+ * ISO 字符串（new Date(...).getTime() 还原回 ms）。两者本应完全相等，但：
+ *   - 早期实现/历史 session 的 timestamp 精度可能到秒（无毫秒位）；
+ *   - 时钟在不同阶段读到的瞬时值可能差几毫秒；
+ *   - 序列化舍入（JSONL 写入时 Date.toISOString 的毫秒舍入）。
+ * 旧值 2ms 在历史 session（秒级精度）下会全部漏匹配 → fallback 到最后一条 entry，
+ * 导致 fork 点错位（用户期望 fork 到第 N 条消息，实际 fork 到最后一条）。
+ * 1000ms 容差让「同一秒内」的 entry 视为同一条——fork 点按 timestamp + role 唯一性已足够区分，
+ * 同秒内两条相同 role 的 entry 概率极低，且 fallback warn 仍会触发（兜底可见）。
+ */
+const TIMESTAMP_TOLERANCE_MS = 1000
 
 /**
  * 按 provider/modelId 解析模型 contextWindow 的窄函数（port）。
@@ -70,6 +87,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 查 ProviderInfo→ModelInfo 得到 contextWindow。未注入时 fallback 0（无法算百分比）。
    */
   private modelContextWindowResolver: ModelContextWindowResolver | null = null
+  /**
+   * ConfigService 引用（组合根注入）。getReplaceSystemPrompt 委托用——
+   * spawn pi 时透传用户配置的替换系统提示词。经 setter 注入而非构造参数，与
+   * setModelContextWindowResolver 同模式，避免破坏 SessionService 的 18+ 测试调用点。
+   * 未注入时 getReplaceSystemPrompt 返回 undefined（pi 走默认系统提示词）。
+   */
+  private configService: IConfigService | null = null
   /**
    * 公共 session 创建成功回调（组合根注入，调 broker.broadcastAppInfo 重广播 app.info）。
    *
@@ -113,12 +137,31 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         return
       }
 
+      // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
+      // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
+      if (session.sessionFilePath) {
+        // W2-5/W8：已有任意终态（done/error/stopped）则不覆盖。
+        // 正常 turn 完成时 handleTurnEndSideEffects 已写 'done'；随后 pi 进程正常退出触发本回调，
+        // 此处若再写 'stopped' 会覆盖已写入的 'done'。进程退出是正常结束的副作用，非用户中止。
+        // W8：abort 路径 dispatcher 已写 'stopped' + 原始 abort reason，随后进程退出触发本回调时，
+        // 若再次用「Process exited (code: N)」覆盖，会丢失 dispatcher 写入的原始 abort reason——
+        // 第一个终态优先（abort 是用户主动行为，reason 比 process exit 更具诊断价值）。
+        const existingOutcome = this.sessionStore.extractSessionOutcome(session.sessionFilePath)
+        if (existingOutcome !== 'done' && existingOutcome !== 'error' && existingOutcome !== 'stopped') {
+          this.sessionStore.persistSessionEnd(
+            session.sessionFilePath,
+            'stopped',
+            `Process exited (code: ${code})`,
+          )
+        }
+      }
+
       // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
       const reason = stderr
         ? `Session process exited (code: ${code})\n\n${stderr}`
         : `Session process exited (code: ${code})`
 
-      this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
+      this.broker.broadcast({ type: 'config.sessions', payload: { groups: this.listPersistedSessions() } })
       // session.exited（独立事件，区别于 message.error 的「单次消息失败」语义）：
       // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
       this.broker.broadcast({ type: 'session.exited', payload: { sessionId, code, reason } })
@@ -190,6 +233,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
+   * 注入 ConfigService（组合根在所有服务构造后调用）。
+   * getReplaceSystemPrompt 委托用——spawn pi 时透传用户配置的替换系统提示词。
+   */
+  setConfigService(configService: IConfigService): void {
+    this.configService = configService
+  }
+
+  /**
    * 注入公共 session 创建成功回调（组合根调用）。
    * ensurePublicSession 成功（含崩溃重建）后触发——重广播 app.info 补发 publicSessionId。
    */
@@ -203,7 +254,81 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
-  async forkSession(srcSessionId: string, fromPiEntryId: string, includeFrom: boolean, label?: string): Promise<SessionSummary> { return this.lifecycle.forkSession(srcSessionId, fromPiEntryId, includeFrom, label) }
+  async forkSession(
+    srcSessionId: string,
+    fromPiEntryId: string | undefined,
+    includeFrom: boolean,
+    label?: string,
+    opts?: { fromMessageTimestamp?: number; fromMessageRole?: string },
+  ): Promise<SessionSummary> {
+    // piEntryId 缺失（RPC 路径读取的 session）时，读 JSONL 按 timestamp + role 匹配 entryId
+    let resolvedEntryId = fromPiEntryId
+    if (!resolvedEntryId) {
+      resolvedEntryId = await this.resolveEntryIdByTimestamp(
+        srcSessionId,
+        opts?.fromMessageTimestamp,
+        opts?.fromMessageRole,
+      )
+    }
+    return this.lifecycle.forkSession(srcSessionId, resolvedEntryId, includeFrom, label)
+  }
+
+  /**
+   * RPC 路径加载的 session 无 piEntryId，读 JSONL 按 timestamp + role 匹配 entryId。
+   * [HISTORICAL] 2026-07-16：历史 session 通过 RPC 加载后 fork 报“缺少 piEntryId”。
+   */
+  private async resolveEntryIdByTimestamp(
+    sessionId: string,
+    messageTimestamp?: number,
+    messageRole?: string,
+  ): Promise<string> {
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) throw new Error(`fork: source session not found for resolve: ${sessionId}`)
+    // AGENTS.md 规则 #6：所有读取 session 文件必须处理「不存在」（scan 与读间竞态——
+    // 文件可能已被外部删除：pi 异常退出未 flush / 用户手动清理）。模式对齐 getHistoryFromFilePath。
+    let content: string
+    try {
+      content = await readFile(target.filePath, 'utf-8')
+    } catch (e) {
+      if (isEnoent(e)) {
+        console.warn(`[session-service] resolveEntryIdByTimestamp: session file missing: ${target.filePath}`)
+        throw new Error(`fork: source session file missing for resolve: ${target.filePath}`)
+      }
+      throw e
+    }
+    const entries = parseJsonl(content) as Array<Record<string, unknown>>
+    // 只看 message 类型 entry（有 entry.id 和 entry.message.timestamp）
+    const msgEntries = entries.filter((e) =>
+      e.type === 'message'
+      && typeof e.id === 'string'
+      && e.message && typeof e.message === 'object'
+    )
+    if (msgEntries.length === 0) {
+      throw new Error(`fork: source session has no message entries: ${target.filePath}`)
+    }
+    // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
+    // ±TIMESTAMP_TOLERANCE_MS（模块顶层常量，W7）容差：历史 session 可能秒级精度，1000ms 容差兜底
+    if (messageTimestamp != null) {
+      for (const e of msgEntries) {
+        const msg = e.message as Record<string, unknown>
+        const entryTs = typeof msg.timestamp === 'string'
+          ? new Date(msg.timestamp).getTime()
+          : typeof e.timestamp === 'string'
+            ? new Date(e.timestamp).getTime()
+            : 0
+        const roleMatch = !messageRole || msg.role === messageRole
+        if (roleMatch && Math.abs(entryTs - messageTimestamp) <= TIMESTAMP_TOLERANCE_MS) {
+          return e.id as string
+        }
+      }
+    }
+    // fallback：取最后一条 message entry（用户最可能 fork 到最近的消息）
+    const last = msgEntries[msgEntries.length - 1]
+    if (!last) throw new Error('msgEntries unexpectedly empty after length check')
+    console.warn(`[session-service] resolveEntryIdByTimestamp: no timestamp match, falling back to last entry: ${last.id}`)
+    return last.id as string
+  }
+
   async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
   async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
@@ -294,26 +419,46 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }
   }
 
-  async getHistory(sessionId: string): Promise<Message[]> {
+  /**
+   * 拉取 session 历史。
+   * 优先 RPC（pi client.getHistory，返回全量不截断）；RPC 空/失败 fallback 文件尾读。
+   * 返回 { messages, truncated }——truncated=true 表示文件尾读截断了早期 turn（N1）。
+   */
+  async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
         const result = await client.getHistory() as { data?: { messages?: unknown[] } }
         const raw = result.data?.messages ?? []
-        if (raw.length > 0) return this.sessionStore.convertHistory(raw)
-        // RPC 返回空时,仅闲置 session fallback 到磁盘(生成中磁盘可能未持久化最新消息)
+        // RPC 路径返回全量历史（pi get_messages 不截断），truncated=false
+        if (raw.length > 0) return { messages: this.sessionStore.convertHistory(raw), truncated: false }
+        // RPC 返回空时,仅闲置 session fallback 到磁盘尾读
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
-          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to file read`)
-          return await getHistoryFromFile(sessionId, this.sessionStore)
+          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to tail read`)
+          return await getHistoryTailFromFile(sessionId, this.sessionStore)
         }
-        return []
+        return { messages: [], truncated: false }
       } catch (e) {
-        console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to file read`)
-        return await getHistoryFromFile(sessionId, this.sessionStore)
+        console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to tail read`)
+        return await getHistoryTailFromFile(sessionId, this.sessionStore)
       }
     }
-    return await getHistoryFromFile(sessionId, this.sessionStore)
+    // 无 RPC client（离线 session）：走尾读，避免大文件全量读
+    return await getHistoryTailFromFile(sessionId, this.sessionStore)
+  }
+
+  /**
+   * W4 H4：全量读取 session 历史（加载更多 fallback）。
+   *
+   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getHistory），文件路径
+   * fallback 走尾读（W1 tailReadHistory，只加载最近 20 turn）。本方法显式走全量
+   * 文件读取（getHistoryFromFilePath），供前端「加载更多历史」按钮调用（FR-4）。
+   */
+  async getFullHistory(sessionId: string): Promise<Message[]> {
+    const target = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
+    if (!target) return []
+    return getHistoryFromFilePath(target.filePath, this.sessionStore)
   }
 
   async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
@@ -481,16 +626,38 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * agent_end 副作用（W3 迁移自 attachUsageListener agent_end 分支）。
    *
-   * 承载两个副作用：
+   * 承载三个副作用：
    *   1. 复位 isGenerating=false —— 不迁移则正常生成完成后 session 永远 isGenerating=true，
    *      下一条消息被 busy 拒绝（message-dispatcher preemptive reject），用户无法继续对话。
    *   2. tryPersistLabel 兜底 —— turn_end 时 pi flush 尚未完成（文件不存在）则在此补写。
+   *   3. session_end 终态写入（W4，ADR 0036）—— 让 scanner 读到终态，前端无需预加载历史。
+   *
+   * @param stopReason pi agent_end 的 stopReason。
+   *   outcome 映射：'error'→error，'aborted'→stopped，其余→done。
+   *   aborted 走 stopped 与 message-dispatcher.abort 路径一致（abort 写 stopped 后若 pi 仍发
+   *   agent_end{stopReason:'aborted'}，此处也写 stopped，两条 session_end 一致不冲突）。
    */
-  handleTurnEndSideEffects(sessionId: string): void {
+  handleTurnEndSideEffects(sessionId: string, stopReason?: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.isGenerating = false
     this.tryPersistLabel(session)
+    // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
+    const outcome = stopReason === 'error' ? 'error'
+      : stopReason === 'aborted' ? 'stopped'
+        : 'done'
+    this.persistSessionOutcome(sessionId, outcome)
+  }
+
+  /**
+   * 写 session_end 终态 entry（W4，ADR 0036）。
+   * 3 个终态点复用：正常完成（handleTurnEndSideEffects）/ abort（message-dispatcher）/ 进程崩溃（onSessionExit）。
+   * sessionFilePath 不存在时静默跳过（首 turn 前崩溃 / pi 延迟写入窗口）。
+   */
+  persistSessionOutcome(sessionId: string, outcome: SessionOutcome, reason?: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sessionFilePath) return
+    this.sessionStore.persistSessionEnd(session.sessionFilePath, outcome, reason)
   }
 
   /** 取 session 当前 usagePercent（按缓存 inputTokens + 当前 modelId 的 contextWindow 算）。 */
@@ -525,6 +692,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       console.warn('[session-service] getExtensionPaths failed:', e)
       return []
     }
+  }
+
+  /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
+  getReplaceSystemPrompt(): string | undefined {
+    return this.configService?.getReplaceSystemPrompt()
   }
 
   findScannedSession(sessionId: string): ScannedSession | undefined {

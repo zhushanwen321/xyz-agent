@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
+import { textToSegments } from '@xyz-agent/shared'
 
 type StreamCb = (msg: { type: string; payload: Record<string, unknown> }) => void
 
@@ -51,7 +52,7 @@ describe('session.state_changed 事件 → store 状态同步', () => {
       lastActiveAt: 100, modelId: 'old/model', thinkingLevel: 'medium', tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send('s1', '触发订阅')
+    await chat.send('s1', textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
     streamCbHolder.current!({
@@ -77,7 +78,7 @@ describe('session.state_changed 事件 → store 状态同步', () => {
       lastActiveAt: 100, modelId: 'old/model', thinkingLevel: 'low', tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send('s2', '触发订阅')
+    await chat.send('s2', textToSegments('触发订阅'))
 
     streamCbHolder.current!({
       type: 'session.state_changed',
@@ -102,7 +103,7 @@ describe('session.state_changed 事件 → store 状态同步', () => {
       lastActiveAt: 100, modelId: 'original', thinkingLevel: 'max', tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send('s3', '触发订阅')
+    await chat.send('s3', textToSegments('触发订阅'))
 
     // payload.sessionId 指向另一个 session（streamSubscribe 按 sid 路由，实际不会收到，
     // 但 updateSessionState 内部按 id 查找，不匹配则 no-op）
@@ -133,7 +134,7 @@ describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () =>
       lastActiveAt: 100, modelId: 'm', thinkingLevel: 'low', tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send(sid, '触发订阅')
+    await chat.send(sid, textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
     const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
@@ -152,7 +153,7 @@ describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () =>
       lastActiveAt: 100, modelId: 'm', thinkingLevel: 'low', tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send(sid, '触发订阅')
+    await chat.send(sid, textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
     const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
@@ -171,7 +172,7 @@ describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () =>
       lastActiveAt: 100, modelId: 'm', thinkingLevel: 'low', tokenCount: 0,
     })
     const chat = useChat()
-    await chat.send(sid, '触发订阅')
+    await chat.send(sid, textToSegments('触发订阅'))
     expect(streamCbHolder.current).not.toBeNull()
 
     const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')

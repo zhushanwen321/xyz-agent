@@ -274,12 +274,31 @@ describe('FileService.readFile (#7 截断 + 越界)', () => {
     expect(r.content).toBe('x'.repeat(MAX_FILE_SIZE))
   })
 
-  it('越界（../etc/secret）→ FileError(out_of_cwd)', async () => {
+  it('相对路径越界（../etc/secret）→ FileError(out_of_cwd)，不触达 executor', async () => {
     await expect(svc().readFile('s1', '../etc/secret')).rejects.toMatchObject({
       name: 'FileError',
       code: 'out_of_cwd',
     })
     expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
+  })
+
+  it('绝对路径越界（/etc/passwd）→ FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '/etc/passwd')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
+  })
+
+  it('家目录展开越界（~/../etc/secret）→ FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '~/../etc/secret')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
   })
 
   it('文件不存在（stat ENOENT）→ FileError(not_found)', async () => {
@@ -306,6 +325,47 @@ describe('FileService.readFile (#7 截断 + 越界)', () => {
       name: 'FileError',
       code: 'session_not_found',
     })
+  })
+})
+
+describe('FileService.readFile path resolution (安全守门: cwd 之外一律拒绝)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionService.getSummary.mockReturnValue({ cwd: '/project' })
+    executor.stat = vi.fn().mockResolvedValue({ type: 'file', size: 0 })
+    executor.readFile = vi.fn().mockResolvedValue('content')
+  })
+
+  it('U1: cwd 下相对路径基于 cwd resolve，正常读取', async () => {
+    await svc().readFile('s1', 'README.md')
+    expect(executor.readFile).toHaveBeenCalledWith('/project/README.md')
+  })
+
+  it('U2: cwd 外绝对路径（/var/tmp/...）→ FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '/var/tmp/absolute.md')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
+  })
+
+  it('U3: ~ 展开（~/notes.md）仍受 cwd 守门约束，越界 → FileError(out_of_cwd)', async () => {
+    await expect(svc().readFile('s1', '~/notes.md')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
+  })
+
+  it('U4: 绝对路径 /etc/passwd 越界 → FileError(out_of_cwd)，不触达 executor', async () => {
+    await expect(svc().readFile('s1', '/etc/passwd')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'out_of_cwd',
+    })
+    expect(executor.stat).not.toHaveBeenCalled()
+    expect(executor.readFile).not.toHaveBeenCalled()
   })
 })
 

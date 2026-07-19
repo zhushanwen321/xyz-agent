@@ -56,6 +56,7 @@ export default {
     cancel: 'Cancel',
     viewCommandDoc: 'View command docs',
     compressing: 'Compacting',
+    loadMore: 'Load more history',
     dispatching: 'Thinking…',
     startConversation: 'Start a conversation, or select a session from the left',
     scrollToBottom: 'Scroll to bottom',
@@ -244,6 +245,8 @@ export default {
     tabDiff: 'Diff',
     copyFileName: 'Copy file name',
     copyFilePath: 'Copy path',
+    injectFileRef: 'Add file reference to composer',
+    injectToNew: 'Reference in new chat',
   },
   panel: {
     sessionDead: 'Session process exited',

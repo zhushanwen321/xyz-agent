@@ -23,6 +23,8 @@
  * - caret 滚动比较：折叠选区 getBoundingClientRect vs 容器 rect，超下沿则补 scrollTop。
  */
 import { ref, type Ref } from 'vue'
+import type { Segment } from '@xyz-agent/shared'
+import { segmentsToText } from '@xyz-agent/shared'
 
 /** 输入区触发事件回调（ComposerInput 通过 emit 转发） */
 interface ContenteditableCallbacks {
@@ -207,6 +209,143 @@ function moveCaretVerticalOf(
 }
 
 /**
+ * 把 contenteditable DOM 解析为 Segment[]（W2）。
+ *
+ * TreeWalker 遍历逻辑与原 getTextFromEl 一致（SHOW_TEXT | SHOW_ELEMENT，跳过 .chip-x），
+ * 但产出结构化 segment 而非拍平字符串：
+ * - .slash-chip 元素 → 读 dataset.chipType：'skill' 产出 skill segment（有 location 则带上），
+ *   其余产出 text segment（读 .chip-label 的 textContent）。遇到 chip 元素后跳过其子树
+ *   （icon/label/x 按钮不单独遍历）——用 rejectChipSubtree 集合在 acceptNode 里直接拒绝。
+ * - 文本节点：累加进当前 text segment（相邻文本节点合并，不每个产一个 segment），
+ *   过滤 \u00A0→空格、\u200B→删除（与原 getTextFromEl 一致）。
+ * - BR：在当前 text segment 里追加 \n。
+ */
+export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
+  if (!el) return []
+  const segments: Segment[] = []
+  // 当前正在累积的 text segment 文本（null 表示无待提交 text segment）
+  let pendingText: string | null = null
+  // 收集需要跳过子树的 chip 元素（遇到 chip 后，其所有后代在 acceptNode 里 REJECT）
+  const rejectChips = new Set<Element>()
+
+  const flushText = (): void => {
+    // 跳过空串：chip 后的 ZWSP spacer 过滤后为 ''，不应产出空 text segment 污染 segments
+    if (pendingText !== null && pendingText !== '') {
+      segments.push({ type: 'text', text: pendingText })
+    }
+    pendingText = null
+  }
+
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node: Node): number {
+      // 跳过 chip × 按钮文本
+      if (node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x')) {
+        return NodeFilter.FILTER_REJECT
+      }
+      // 跳过已收集 chip 的子树节点（REJECT 让 walker 不深入，自动跨过整个子树）
+      for (const chip of rejectChips) {
+        if (chip.contains(node)) return NodeFilter.FILTER_REJECT
+      }
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+
+    // slash-chip 元素：产出对应 segment，加入 rejectChips 跳过子树
+    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).classList?.contains('slash-chip')) {
+      const chip = node as HTMLElement
+      const chipType = chip.dataset.chipType
+      if (chipType === 'skill') {
+        flushText()
+        const name = chip.dataset.chipName ?? ''
+        const location = chip.dataset.chipLocation
+        segments.push(location ? { type: 'skill', name, location } : { type: 'skill', name })
+      } else {
+        // 普通 slash 命令：读 .chip-label 文本（如 /commit），并入当前 text 累积
+        const labelText = chip.querySelector('.chip-label')?.textContent ?? ''
+        pendingText = (pendingText ?? '') + labelText
+      }
+      rejectChips.add(chip)
+      continue
+    }
+
+    // mention-file 元素（结构化 file chip，ADR-0034）：产出 file segment，跳过子树。
+    // 旧 mention-file 无 dataset 时 chipType 为 undefined → 仍产出 file segment（path 从 chipPath 取，
+    // 无 chipPath 时从 textContent 去 # 前缀兜底，向后兼容）。
+    if (
+      node.nodeType === Node.ELEMENT_NODE &&
+      (node as Element).classList?.contains('mention-file')
+    ) {
+      const chip = node as HTMLElement
+      flushText()
+      const path = chip.dataset.chipPath ?? ''
+      const ls = chip.dataset.chipLineStart
+      const le = chip.dataset.chipLineEnd
+      if (ls !== undefined && le !== undefined) {
+        segments.push({ type: 'file', path, lineRange: [Number(ls), Number(le)] })
+      } else {
+        segments.push({ type: 'file', path })
+      }
+      rejectChips.add(chip)
+      continue
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const raw = node.textContent ?? ''
+      const filtered = raw.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
+      pendingText = (pendingText ?? '') + filtered
+    } else if (node.nodeName === 'BR') {
+      pendingText = (pendingText ?? '') + '\n'
+    }
+  }
+
+  flushText()
+  return segments
+}
+
+/** 提取纯文本：getSegmentsFromEl + segmentsToText 的便捷封装（现有调用方零影响） */
+function getTextFromEl(el: HTMLDivElement | null): string {
+  return segmentsToText(getSegmentsFromEl(el))
+}
+
+/** # 文件触发检测：基于光标位置，任意位置触发 */
+function detectHashTriggerFromEl(el: HTMLDivElement | null): { query: string } | null {
+  if (!el) return null
+  const sel = window.getSelection()
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return null
+  const node = sel.anchorNode
+  if (!node || !el.contains(node)) return null
+  const offset = sel.anchorOffset
+  if (node.nodeType !== Node.TEXT_NODE) return null
+  const beforeCursor = (node.textContent ?? '').slice(0, offset)
+  const m = /(?:^|\s)#(\S*)$/.exec(beforeCursor)
+  return m ? { query: m[1] } : null
+}
+
+/** contenteditable insertLineBreak 后 0 rect 兜底探测 */
+function getCaretLineRect(range: Range): DOMRect | null {
+  const rect = range.getBoundingClientRect()
+  if (rect.top !== 0 || rect.bottom !== 0 || rect.height !== 0) return rect
+  const probe = document.createTextNode('\u200B')
+  try {
+    range.insertNode(probe)
+    const probeRange = document.createRange()
+    probeRange.selectNode(probe)
+    const probeRect = probeRange.getBoundingClientRect()
+    if (probeRect.top === 0 && probeRect.bottom === 0) return null
+    return probeRect
+  } finally {
+    const parent = probe.parentNode
+    probe.remove()
+    if (parent?.nodeType === Node.ELEMENT_NODE) {
+      ;(parent as Element).normalize()
+    }
+  }
+}
+
+/**
  * @param elRef contenteditable 根元素 ref
  * @param callbacks 触发事件 + Backspace-chip 删除委派
  */
@@ -222,6 +361,7 @@ export function useContenteditableInput(
   onPaste: (e: ClipboardEvent) => void
   syncEmpty: () => void
   getText: () => string
+  getSegments: () => Segment[]
   saveSelection: () => void
   restoreSelection: () => void
   clearSlashQueryText: () => void
@@ -269,65 +409,21 @@ export function useContenteditableInput(
   }
 
   function getText(): string {
-    const el = getEl()
-    if (!el) return ''
-    // TreeWalker 遍历 TEXT + ELEMENT：
-    // - TEXT：收集文本（跳过 chip × 按钮文本，避免发送内容混入 '×'）
-    // - ELEMENT：<br> 补 \n（Shift+Enter 产生的换行元素，SHOW_TEXT 会跳过它，
-    //   导致发送文本丢失软换行，用户气泡无法保留换行）
-    let text = ''
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-      acceptNode(node: Node): number {
-        // chip × 按钮内的一切（含其子 <span>× 文本与自身）跳过
-        if (node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x')) {
-          return NodeFilter.FILTER_REJECT
-        }
-        return NodeFilter.FILTER_ACCEPT
-      },
-    })
-    while (walker.nextNode()) {
-      const node = walker.currentNode
-      if (node.nodeType === Node.TEXT_NODE) {
-        text += node.textContent ?? ''
-      } else if (node.nodeName === 'BR') {
-        text += '\n'
-      }
-    }
-    // nbsp 转普通空格；零宽空格（chip 后的可定位锚点）过滤掉
-    return text.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
+    return getTextFromEl(getEl())
+  }
+
+  /** 提取结构化 segments（W2：composer 出口结构化，供 send 链路传 Segment[]） */
+  function getSegments(): Segment[] {
+    return getSegmentsFromEl(getEl())
   }
 
   function syncEmpty(): void {
     isEmpty.value = getText().trim() === ''
   }
 
-  /**
-   * # 文件触发检测（§2d：任意位置触发）。
-   *
-   * 与 slash 不同（slash 靠 text.startsWith('/') 判最左），# 是「任意位置」触发：
-   * 必须基于光标位置判断——取光标前到所属文本节点开头的文本，正则匹配「空格/行首 + # + 非空白序列到光标」。
-   *
-   * 触发条件（用户确认）：
-   * - # 前是空格或行首，# 后紧跟非空白 → 触发（query=# 后到光标的内容，可为空串）
-   * - # 后遇空格（query 末尾是空格）→ 不匹配（终止浮层）
-   *
-   * @returns 触发时 { query }；否则 null（关闭浮层）
-   */
+  /** # 文件触发检测（委托模块级 detectHashTriggerFromEl） */
   function detectHashTrigger(): { query: string } | null {
-    const el = getEl()
-    if (!el) return null
-    const sel = window.getSelection()
-    // 非折叠选区（用户选中一段文本）不触发；光标不在输入区内不触发
-    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return null
-    const node = sel.anchorNode
-    if (!node || !el.contains(node)) return null
-    const offset = sel.anchorOffset
-    // 光标必须在文本节点内（chip 是 contentEditable=false 的元素节点，光标在其后由 spacer 文本节点承接）
-    if (node.nodeType !== Node.TEXT_NODE) return null
-    const beforeCursor = (node.textContent ?? '').slice(0, offset)
-    // (?:^|\s)：# 前是行首或空白；# 后 (\S*) 到光标必须全非空白（遇空格则不匹配 → 终止）
-    const m = /(?:^|\s)#(\S*)$/.exec(beforeCursor)
-    return m ? { query: m[1] } : null
+    return detectHashTriggerFromEl(getEl())
   }
 
   function onInput(): void {
@@ -350,44 +446,7 @@ export function useContenteditableInput(
     onInput()
   }
 
-  /**
-   * contenteditable insertLineBreak 后浏览器不自动滚动（与 textarea 不同）：
-   * 当 max-h-[120px] 触发 overflow 时，连续换行会把光标推出可视区，视觉上"停在当前行"。
-   * 实现：取折叠选区所在行的视觉矩形，与容器 rect 比较，超出下沿则补偿 scrollTop。
-   * 用视口坐标（getBoundingClientRect）而非 offsetTop：与 scrollTop 调整方向一致。
-   *
-   * [HISTORICAL] 0 rect 误判事故：insertLineBreak 后光标落在新建的空行（<br> 之后、空行内），
-   * 折叠选区的 getBoundingClientRect() 在多数浏览器返回全 0 rect（{top:0,bottom:0,height:0}）。
-   * 旧实现直接拿这个 0 rect 做比较：caretRect.top(0) < elRect.top(正值，如 800) 命中向上补偿分支
-   * → el.scrollTop -= 800 → scrollTop 被钳为 0 → composer 跳回顶部（光标实际在底部视口外）。
-   * 现象：composer 行数多滚动后按换行，内容区跳回顶部，光标在底部不可见。
-   *
-   * 修复：0 rect 时改用零宽字符探测真实行位置（插入不可见 ZWSP 取其 rect 再删掉），
-   * 仍取不到则放弃修正（不误操作 scrollTop），交回浏览器默认行为。
-   */
-  function getCaretLineRect(range: Range): DOMRect | null {
-    // 正常情况：折叠选区所在行有内容，getBoundingClientRect 返回有效行矩形
-    const rect = range.getBoundingClientRect()
-    if (rect.top !== 0 || rect.bottom !== 0 || rect.height !== 0) return rect
-    // 0 rect 兜底：空行内折叠选区，插入零宽字符取其视觉位置再移除。
-    // range 是调用方传入的 clone，probe 操作不影响实际 selection——无需重建光标。
-    const probe = document.createTextNode('\u200B')
-    try {
-      range.insertNode(probe)
-      const probeRange = document.createRange()
-      probeRange.selectNode(probe)
-      const probeRect = probeRange.getBoundingClientRect()
-      if (probeRect.top === 0 && probeRect.bottom === 0) return null
-      return probeRect
-    } finally {
-      // try/finally 确保中途异常也不泄漏 ZWSP 到 DOM
-      const parent = probe.parentNode
-      probe.remove()
-      if (parent?.nodeType === Node.ELEMENT_NODE) {
-        ;(parent as Element).normalize()
-      }
-    }
-  }
+  // getCaretLineRect 已提取为模块级函数（见文件顶部）
 
   function scrollCursorIntoView(): void {
     const el = getEl()
@@ -628,6 +687,7 @@ export function useContenteditableInput(
     onPaste,
     syncEmpty,
     getText,
+    getSegments,
     saveSelection,
     restoreSelection,
     clearSlashQueryText,

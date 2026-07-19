@@ -55,6 +55,7 @@ function makeMocks() {
   const svc = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
+    getReplaceSystemPrompt: vi.fn(() => undefined),
     initializeManagedSession: vi.fn(async (_id: string, _client: unknown, cwd: string) => {
       session.cwd = cwd
       return session

@@ -35,7 +35,13 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
         (virtualId, msgs) => chat.setMessages(virtualId, msgs),
       )
     } catch (e) {
-      subagentStore.backToMain(panelStore.activePanelId)
+      // [M7] catch 回滚：selectSubagent 失败时 backToMain 清理（幂等，messages 可能未注入）
+      subagentStore.backToMain(
+        panelStore.activePanelId,
+        activePanel.sessionId,
+        subagentId,
+        (sid) => chat.evictVirtualKey(sid),
+      )
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('sidebar.loadSubagentFailed', { msg }))
     }
@@ -80,7 +86,13 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
         (virtualId, msgs) => chat.setMessages(virtualId, msgs),
       )
     } catch (e) {
-      workflowStore.backFromAgentCall(panelStore.activePanelId)
+      // [M7] catch 回滚：backFromAgentCall 清理（幂等，messages 可能未注入）
+      // [W2] 传 mainSessionId 清 mainSessionAgentCalls Set（selectAgentCall 失败回滚也需清映射）
+      workflowStore.backFromAgentCall(
+        panelStore.activePanelId,
+        (acsId) => chat.evictVirtualKey(acsId),
+        activePanel.sessionId,
+      )
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('sidebar.agentCallLoadFailed', { msg }))
     }

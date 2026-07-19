@@ -67,6 +67,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CheckCircle2, XCircle, Pause, ChevronRight } from '@lucide/vue'
 import type { Component } from 'vue'
+import { normalizeContent } from '@xyz-agent/shared'
 import type { BgNotifyRecord, Message } from '@xyz-agent/shared'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
@@ -125,7 +126,7 @@ const summaryLine = computed(() => {
 })
 
 /** 完整 content（展开后显示 LLM 看到的全文） */
-const fullContent = computed(() => props.message.content || '')
+const fullContent = computed(() => normalizeContent(props.message.content || ''))
 
 /** patchFile 提示（fork+worktree 模式改动回传契约） */
 const patchHint = computed(() => {

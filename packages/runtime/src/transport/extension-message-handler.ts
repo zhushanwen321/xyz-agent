@@ -31,6 +31,7 @@ export class ExtensionMessageHandler {
     'extension.installDir', 'extension.installGit', 'extension.finishInstall', 'extension.cancelInstall',
     'extension.recommended',
     'extension.upgrade', 'extension.setAutoUpgrade',
+    'extension.getPendingRequests',
   ]
 
   /**
@@ -80,6 +81,7 @@ export class ExtensionMessageHandler {
 
         if (this.ctx.extensionTimeoutMgr.isBridgeRequest(requestId)) {
           this.ctx.extensionTimeoutMgr.removeBridgeRequest(requestId)
+          this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
           return
         }
 
@@ -89,16 +91,19 @@ export class ExtensionMessageHandler {
         if (this.ctx.extensionTimeoutMgr.isTimedOut(requestId)) {
           this.ctx.extensionTimeoutMgr.clearTimedOut(requestId)
           this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
+          this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
           return
         }
 
         const client = this.ctx.sessionService.getRpcClient(extSid)
         if (!client) {
           this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
+          this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
           return this.ctx.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, { sessionId: extSid })
         }
         client.sendExtensionUiResponse(requestId, extResult ?? null, method)
         this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
+        this.ctx.extensionTimeoutMgr.removePendingRequest(extSid, requestId)
         return
       }
       case 'extension.list': {
@@ -239,6 +244,14 @@ export class ExtensionMessageHandler {
         } catch (e) {
           return this.ctx.sendError(ws, 'set_auto_upgrade_failed', toErrorMessage(e), msg.id)
         }
+      }
+      case 'extension.getPendingRequests': {
+        const { sessionId } = msg.payload as { sessionId: string }
+        if (!sessionId) {
+          return this.ctx.sendError(ws, 'invalid_payload', 'extension.getPendingRequests requires "sessionId"', msg.id)
+        }
+        const pendingRequests = this.ctx.extensionTimeoutMgr.getAndClearPendingRequests(sessionId)
+        return this.ctx.reply(ws, msg.id, 'extension.pendingRequests', { sessionId, requests: pendingRequests })
       }
     }
   }

@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
+    "typecheck:test": "vue-tsc --noEmit -p tsconfig.typecheck-test.json",
     "test": "vitest run",
     "check:i18n": "vitest run src/__tests__/i18n/"
   },

@@ -39,10 +39,11 @@
  *
  * 依赖方向：process-control → node:child_process + safe-env + electron(app)
  */
-import { type ChildProcess, spawn, execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { type ChildProcess, spawn, execFileSync } from 'node:child_process'
+import { createWriteStream, existsSync, mkdirSync, type WriteStream } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import { buildSafeEnv } from './safe-env.js'
 
 /** stop() 默认超时：SIGTERM 后等待 exit，超时则 SIGKILL 进程树 */
@@ -51,8 +52,75 @@ export const STOP_TIMEOUT_MS = 2000
 /** kill 后代时 SIGTERM → 等 → SIGKILL 的等待时间 */
 export const KILL_WAIT_MS = 200
 
-/** ms → sec 转换因子（execSync('sleep N') 需要 sec） */
-export const MS_PER_SEC = 1000
+/**
+ * 打包模式 runtime stderr 兜底写流（module 级单例，lazy 创建）。
+ *
+ * M5（perf-quick-batch）：打包禁用 stdout/stderr 的 console 转发后，runtime 内部
+ * initLogger 只覆盖 runtime 进程启动后的 console.*。启动前（模块加载/早期 throw）
+ * 与原生崩溃期的 stderr 不被 tee，会丢排查证据。此流只兜底 stderr（不动 stdout，
+ * stdout 高吞吐且 initLogger 已覆盖），非阻塞 append 写到 dataDir/logs/。
+ *
+ * dev 模式不用（dev 保留 console 转发方便终端调试）。
+ */
+let stderrSink: WriteStream | null = null
+function getStderrSink(): WriteStream | null {
+  if (!app.isPackaged) return null
+  if (stderrSink) return stderrSink
+  try {
+    const logsDir = path.join(getDataDir(), 'logs')
+    mkdirSync(logsDir, { recursive: true })
+    stderrSink = createWriteStream(path.join(logsDir, 'electron-runtime-stderr.log'), { flags: 'a' })
+  } catch {
+    stderrSink = null
+  }
+  return stderrSink
+}
+
+/**
+ * 显式 flush stderrSink（app quit 时调用，确保 WriteStream 内部 buffer 落盘）。
+ *
+ * 正常 stop 路径走 stopRuntimeProcess→done() 已 end()；但若 app 在 runtime 自然退出后
+ * 通过 before-quit 直接 quit（未触发 stop 链，或 stop 链已 resolve 但 end 后又有新 spawn 写入），
+ * sink 的 buffer 可能未 flush 到磁盘，丢失原生崩溃期排查证据。
+ *
+ * [HISTORICAL] W2：end() 是异步的（只是发 EOF 到流），返回的 Promise 等 'finish' 事件
+ * （OS 层 buffer 刷盘完成）才 resolve。否则 before-quit 紧接 app.quit() 会丢尾部 stderr。
+ * 调用方（main.ts before-quit handler）必须 await 此 Promise 后再 app.quit()。
+ *
+ * 幂等：done() 已 end() 后 stderrSink=null，再次调用为 no-op（直接 resolve）。
+ *
+ * @returns Promise，在 WriteStream 'finish'（或 'error'）后 resolve。
+ *          超时兜底：若底层 fs 卡住 1s 内未 finish 也 resolve（不阻断退出）。
+ */
+export function flushStderrSink(): Promise<void> {
+  if (!stderrSink) return Promise.resolve()
+  const sink = stderrSink
+  stderrSink = null
+  // 兜底超时：极端情况底层 fs 不发 finish（如磁盘满/挂载丢失），1s 后强制 resolve
+  // 避免退出被无限阻塞（stderr 仅排查证据，可接受部分丢失）。
+  const FLUSH_TIMEOUT_MS = 1000
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(finish, FLUSH_TIMEOUT_MS)
+    sink.once('finish', finish)
+    sink.once('error', finish)
+    try {
+      sink.end()
+    } catch {
+      // end 失败不阻断退出（stderr 仅排查证据）
+      finish()
+    }
+  })
+}
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /** tsup(CJS) runtime 入口文件名，须与 runtime/tsup.config.ts format 一致 */
 export const RUNTIME_ENTRY_FILE = 'index.cjs'
@@ -82,6 +150,12 @@ export const SPAWN_ERROR_EXIT_CODE = -1
  * @throws runtime 入口文件不存在
  */
 export function spawnRuntimeProcess(port: number, onExit?: (code: number | null) => void): ChildProcess {
+  // Windows 显式拒绝：本模块全部依赖 Unix 命令（pgrep/SIGTERM/SIGKILL/bin/bash），
+  // 静默失败会让 runtime 子进程成僵尸（PPID 变 1、无人 kill）。显式 throw 让上层 fail-fast。
+  // TODO: 抽象 platform 层（见文件头 TODO(Windows)）。
+  if (process.platform === 'win32') {
+    throw new Error('runtime supervisor not yet supported on Windows (see TODO in process-control.ts)')
+  }
   // 根据打包状态选择 runtime 启动方式
   const projectRoot = app.getAppPath()
   let cmd: string
@@ -153,13 +227,34 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
     onExit?.(SPAWN_ERROR_EXIT_CODE)
   })
 
-  // runtime 日志转发：只用 console（dev 模式方便调试）
-  child.stdout?.on('data', (data: Buffer) => {
-    console.log(`[runtime:out] ${data.toString().trimEnd()}`)
-  })
-  child.stderr?.on('data', (data: Buffer) => {
-    console.error(`[runtime:err] ${data.toString().trimEnd()}`)
-  })
+  // M5（perf-quick-batch）：runtime 日志转发按打包状态分流。
+  // - dev：stdout + stderr 全量 console 转发（终端调试可见）
+  // - prod：stdout 不转发（runtime initLogger 已 tee 落盘，console 转发会阻塞主进程）；
+  //         stderr 保留非阻塞文件兜底（覆盖 runtime 启动前 + 原生崩溃期，initLogger 不覆盖）
+  if (!app.isPackaged) {
+    child.stdout?.on('data', (data: Buffer) => {
+      console.log(`[runtime:out] ${data.toString().trimEnd()}`)
+    })
+    child.stderr?.on('data', (data: Buffer) => {
+      console.error(`[runtime:err] ${data.toString().trimEnd()}`)
+    })
+  } else {
+    const sink = getStderrSink()
+    if (sink) {
+      // W6 背压保护：累计写入字节超 1MB 后丢弃（pi 崩溃循环高频 stderr 时不撑爆磁盘）。
+      // 用累计字节计数器替代 sink.writableLength（后者只反映 WriteStream 内部 buffer，
+      // 不反映 OS 级 page cache + 已 drain 部分，保护效果有限）。stderr 仅用于排查证据，
+      // 部分丢失可接受。计数器在 spawnRuntimeProcess 函数作用域内，每次 spawn 重置。
+      // eslint-disable-next-line no-magic-numbers -- 1MB stderr 背压上限（非业务常量）
+      const WRITE_BUFFER_LIMIT = 1024 * 1024
+      let stderrBytes = 0
+      child.stderr?.on('data', (data: Buffer) => {
+        if (stderrBytes > WRITE_BUFFER_LIMIT) return
+        stderrBytes += data.length
+        sink.write(data)
+      })
+    }
+  }
   child.on('exit', (code) => {
     console.log(`[runtime] Process exited with code ${code}`)
     // 通知 supervisor 清理 child/port 状态（自然退出/崩溃路径）
@@ -185,9 +280,11 @@ export function getDescendantPids(parentPid: number): number[] {
   while (queue.length > 0) {
     const pid = queue.shift()!
     try {
-      const output = execSync(`pgrep -P ${pid} 2>/dev/null || true`, {
+      // execFileSync 不经 shell（pid 已是 number 无注入风险，但更稳健——避免 shell 解析/路径差异）。
+      // 原实现用 `pgrep -P ${pid} 2>/dev/null || true` + shell:true 吞 stderr 和 exit code 1；
+      // execFileSync 不支持 shell 重定向，需在 catch 里处理 pgrep 无匹配时 exit code 1。
+      const output = execFileSync('pgrep', ['-P', String(pid)], {
         encoding: 'utf-8',
-        shell: '/bin/bash',
         stdio: ['pipe', 'pipe', 'pipe'],
       }).trim()
       if (output) {
@@ -195,9 +292,15 @@ export function getDescendantPids(parentPid: number): number[] {
         result.push(...childPids)
         queue.push(...childPids)
       }
-    // eslint-disable-next-line taste/no-silent-catch -- pgrep 失败（进程已退出）非关键
     } catch (e) {
-      console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
+      // pgrep 无子进程时 exit code 1（execFileSync 会抛）属正常，静默 continue；
+      // ENOENT（pgrep 不存在，极少见）也不阻断 stop 流程；其他真实错误才 warn。
+      // execFileSync 抛出的错误对象带 status（exit code）/ code（spawn 错误如 ENOENT）字段。
+      const status = (e && typeof e === 'object' && 'status' in e) ? e.status : undefined
+      const code = (e && typeof e === 'object' && 'code' in e) ? e.code : undefined
+      if (status !== 1 && code !== 'ENOENT') {
+        console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
+      }
     }
   }
   return result
@@ -250,30 +353,48 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
     // （runtime 退出后 pi 的 PPID 变为 1，pgrep -P 查不到）
     const descendantPids = getDescendantPids(childPid)
 
-    const done = () => {
+    // [HISTORICAL] timer 在 done 闭包外具名持有，done() 顶部 clearTimeout。
+    // 否则 exit 先到 → done() resolve → 2s 后 timer 仍执行 killProcessTree，
+    // 此时 PID 可能已被 OS 复用 → 误杀无关进程。
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const done = async () => {
       if (resolved) return
       resolved = true
+      // 双重保险：clearTimeout 防止 exit/timeout 竞态后 timer 仍触发 killProcessTree。
+      // （timer 回调进入 done 时 resolved=true 会短路，但 clearTimeout 后连短路判断都不必走）
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
       // 杀掉残留的后代进程（pi 等），同步完成后再 resolve
       // 避免异步 setTimeout 在 resolve 后误杀 PID 复用的新进程
       for (const pid of descendantPids) {
         // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
         try { process.kill(pid, 'SIGTERM') } catch { /* 可能已随 runtime 退出 */ }
       }
-      // 同步等待后补 SIGKILL
-      try {
-        execSync(`sleep ${KILL_WAIT_MS / MS_PER_SEC}`, { stdio: 'ignore' })
-      // eslint-disable-next-line taste/no-silent-catch -- sleep failure is non-critical
-      } catch { /* sleep 失败不影响 */ }
+      // M6（perf-quick-batch）：非阻塞等待后补 SIGKILL。
+      // 旧实现 execSync('sleep 0.2') 同步阻塞主进程 200ms（KILL_WAIT_MS），
+      // stop/restart 路径冻结主进程事件循环。改 await delay 后时长不变（INVAR-M6-1），
+      // 时序不变（INVAR-M6-2：SIGTERM→等→SIGKILL），事件循环畅通（INVAR-M6-6）。
+      await delay(KILL_WAIT_MS)
       for (const pid of descendantPids) {
         // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
         try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
       }
+      // 子进程树已全部 kill，stderr 不再有新数据 → flush 并关闭 sink，
+      // 防止 app.quit() 前 WriteStream 内部 buffer 未落盘丢失崩溃期证据。
+      // done() 可能在 exit/timeout 两条路径触发，flushStderrSink 内置幂等（stderrSink=null 后 no-op）。
+      // [HISTORICAL] W2：必须 await 等 'finish' 落盘，否则 stop() resolve 后 before-quit
+      // 紧接 app.quit() 可能丢尾部 stderr。
+      await flushStderrSink()
       resolve()
     }
     child.once('exit', done)
     child.kill('SIGTERM')
-    // 超时后强制 SIGKILL（先杀整棵进程树）
-    setTimeout(() => {
+    // 超时后强制 SIGKILL（先杀整棵进程树）。done() 顶部 clearTimeout 保证 exit 先到时
+    // 此 timer 不会在 2s 后误杀 PID 复用的新进程。
+    timer = setTimeout(() => {
       child.removeListener('exit', done)
       // 强制杀进程树：runtime + 所有子进程
       killProcessTree(childPid, descendantPids)

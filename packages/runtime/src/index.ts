@@ -128,7 +128,7 @@ async function main(): Promise<void> {
     modelService,
     configDir,
     pluginInstaller,
-    broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
+    broadcastFn: (type, payload) => server.broadcast({ type: type as 'config.sessions', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 
   // ── R1 重构：EventAdapter（infra 纯翻译）+ EventInterpreter（service 编排）──
@@ -149,8 +149,8 @@ async function main(): Promise<void> {
       cwd,
       send,
       fileChangeDiff,
-      onExtensionUIRequest: (requestId, sid, method) => {
-        server.registerExtensionTimeout(sid, requestId, method)
+      onExtensionUIRequest: (requestId, sid, method, payload) => {
+        server.registerExtensionTimeout(sid, requestId, method, payload)
       },
       onBridgeUIRequest: (requestId, sid, method, data) => {
         server.handleBridgeRequest(sid, requestId, method, data)
@@ -170,7 +170,8 @@ async function main(): Promise<void> {
       onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
       // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
-      onTurnFinalize: (sid) => sessionService.handleTurnEndSideEffects(sid),
+      // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
+      onTurnFinalize: (sid, stopReason) => sessionService.handleTurnEndSideEffects(sid, stopReason),
       onThinkingLevelChanged: (sid, level) => {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
@@ -241,6 +242,10 @@ async function main(): Promise<void> {
     const model = models.find(m => m.providerId === provider && m.id === modelId)
     return model?.contextWindow ?? 0
   })
+
+  // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
+  // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
+  sessionService.setConfigService(configService)
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
   const piVersion = await pm.getPiVersion()

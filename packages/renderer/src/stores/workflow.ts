@@ -20,7 +20,7 @@
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { WorkflowRunRecord, Message } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -69,6 +69,33 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * 仅影响 Panel 渲染（overlay 对话流），不影响侧边栏视图。
    */
   const agentCallMap = ref<Map<string, string>>(new Map())
+
+  /**
+   * [M7 D6] mainSessionId → Set<agentCallVirtualId> 映射。
+   * agentcall 虚拟 key 是两段式（agentcall:<agentCallSessionId>），不含 mainSid 命名空间，
+   * 主 session delete 时无法按前缀定位。此映射让 deleteSession 经它清全部 agentcall virtualId。
+   */
+  const mainSessionAgentCalls = new Map<string, Set<string>>()
+
+  /**
+   * [W3-3] sid → running 信号延迟重试的 setTimeout id 映射。
+   * subscribeWorkflowPush 的 unsub 仅移除 WS 事件监听，不 clearTimeout。切 session 时若有在途
+   * setTimeout，500ms 后仍会触发 loadWorkflows(旧sid)，用旧 session 列表覆盖新 session。
+   * unsub 时经此 Map clearTimeout 并 delete。
+   */
+  const workflowReloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  // [W15] 防御性清理：workflowReloadTimers 是模块级 Map（不在 ref 里），HMR / store dispose
+  // 时若不主动 clearTimeout，在途的 running 重试 timer 仍会在 500ms 后触发 loadWorkflows(sid)
+  // 操作已废弃的 store。参照 subagent.ts 的 onScopeDispose panelStreamUnsub 模式。
+  // mainSessionAgentCalls 由 clearWorkflows / clearAgentCallMapping 显式管理（业务路径触发），
+  // 此处不重复清理（避免与 deleteSession 的精确清理冲突）。
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      workflowReloadTimers.forEach((t) => clearTimeout(t))
+      workflowReloadTimers.clear()
+    })
+  }
 
   // ── getters ──
   /** workflow 列表计数 */
@@ -151,18 +178,32 @@ export const useWorkflowStore = defineStore('workflow', () => {
    */
   function subscribeWorkflowPush(sessionId: string): () => void {
     const sid = sessionId
-    return events.on(sessionId, (msg) => {
+    const off = events.on(sessionId, (msg) => {
       if (msg.type !== 'session.workflowUpdate') return
       // 增量信号 → 重新拉取完整列表
       void loadWorkflows(sid)
       // running 信号延迟重试：workflow-state-link 可能刚写入，首次拉取为空
       const payload = msg.payload as { update?: { status?: string } }
       if (payload.update?.status === 'running') {
-        setTimeout(() => {
+        // W3-3：用模块级 Map 跟踪 timer，去重 + 允许 unsub 时 clearTimeout（防切 session 后旧 timer 触发 loadWorkflows(旧sid)）
+        const existing = workflowReloadTimers.get(sid)
+        if (existing) clearTimeout(existing)
+        const timer = setTimeout(() => {
+          workflowReloadTimers.delete(sid)
           void loadWorkflows(sid)
         }, RUNNING_RETRY_MS)
+        workflowReloadTimers.set(sid, timer)
       }
     })
+    // unsub：移除 WS 事件监听 + 清在途的 running 重试 timer（防 500ms 后 loadWorkflows(旧sid) 覆盖新 session）
+    return () => {
+      off()
+      const t = workflowReloadTimers.get(sid)
+      if (t) {
+        clearTimeout(t)
+        workflowReloadTimers.delete(sid)
+      }
+    }
   }
 
   /** 清空 workflow 列表 + 退出所有 panel viewing 状态（两个 Map 都清） */
@@ -170,6 +211,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     records.value = []
     detailRunIdMap.value = new Map()
     agentCallMap.value = new Map()
+    // W3-2：清非响应式的 mainSessionAgentCalls（selectAgentCall 写入，useWorkflowListSync 切 session 时调本函数）
+    mainSessionAgentCalls.clear()
   }
 
   /**
@@ -201,6 +244,10 @@ export const useWorkflowStore = defineStore('workflow', () => {
     const next = new Map(agentCallMap.value)
     next.set(panelId, agentCallSessionId)
     agentCallMap.value = next
+    // [M7 D6] 记录 mainSessionId → virtualId 映射，供 deleteSession 精确清理 agentcall
+    const set = mainSessionAgentCalls.get(mainSessionId) ?? new Set<string>()
+    set.add(virtualId)
+    mainSessionAgentCalls.set(mainSessionId, set)
     const history = await sessionApi.getAgentCallHistory(mainSessionId, agentCallSessionId)
     setMessages(virtualId, history)
   }
@@ -212,11 +259,57 @@ export const useWorkflowStore = defineStore('workflow', () => {
     detailRunIdMap.value = next
   }
 
-  /** Panel overlay → 返回（从 agent call 对话流返回）。只清 agentCallMap，保留 detailRunIdMap（侧边栏保持停在 workflow-detail）。 */
-  function backFromAgentCall(panelId: string): void {
+  /**
+   * Panel overlay → 返回（从 agent call 对话流返回）。
+   *
+   * [M7 FR-4] 立即清 messages[virtualId]（对称 subagent backToMain，立即清+tombstone）。
+   * 保留 detailRunIdMap（侧边栏保持停在 workflow-detail）。
+   *
+   * [W2] mainSessionAgentCalls 的 Set 清理：backFromAgentCall 此前只清 agentCallMap（panel→sessionId），
+   * 不清 mainSessionAgentCalls 的 Set，导致非 deleteSession 路径（Panel 返回 / catch 回滚）下 Set 无界增长。
+   * deleteSession 路径经 clearAgentCallMapping 整条 delete 已覆盖，但返回主面板路径漏清。
+   * 调用方传 mainSessionId（panel 绑定 session）即可精确删该 virtualId。
+   *
+   * [B3] chatEvict 必须传带前缀的 agentCallVirtualId，不能传 raw sessionId：
+   * selectAgentCall 写入 messages 用的 key 是 `agentcall:<acsId>`（agentCallVirtualId），
+   * chatEvict 的实际实现是 chat.evictVirtualKey(virtualId) → deleteMessageKey(virtualId)，
+   * 若传 raw sessionId 会 delete 一个从未存在过的 key（no-op），导致 agentcall 虚拟 session
+   * 消息永久残留（内存泄漏）。对称参照 subagent.backToMain 传 chatEvict?.(virtualId)。
+   *
+   * @param chatEvict chat.evictVirtualKey 注入回调（接收带前缀的 virtualId，清 messages，store 不互 import）
+   * @param mainSessionId 主 session ID（清 mainSessionAgentCalls Set 用，调用方可获取）
+   */
+  function backFromAgentCall(
+    panelId: string,
+    chatEvict?: (virtualId: string) => void,
+    mainSessionId?: string,
+  ): void {
+    const agentCallSessionId = agentCallMap.value.get(panelId)
     const next = new Map(agentCallMap.value)
     next.delete(panelId)
     agentCallMap.value = next
+    // 清 mainSessionAgentCalls 映射（防 Set 无界增长，W2）
+    if (agentCallSessionId && mainSessionId) {
+      mainSessionAgentCalls.get(mainSessionId)?.delete(agentCallVirtualId(agentCallSessionId))
+    }
+    // 立即清 messages[agentcallVirtualId]（FR-4，与 subagent backToMain 对称）
+    // [B3] 必须传 agentCallVirtualId(agentCallSessionId)——与 selectAgentCall 写入时的 key 一致
+    if (agentCallSessionId && chatEvict) {
+      chatEvict(agentCallVirtualId(agentCallSessionId))
+    }
+  }
+
+  /**
+   * [M7 D6] 查询主 session 名下的全部 agentcall virtualId（deleteSession 调，精确清理不泄漏）。
+   * 返回后调用方负责 delete messages[key]。
+   */
+  function getAgentCallVirtualIdsByMain(mainSessionId: string): string[] {
+    return [...(mainSessionAgentCalls.get(mainSessionId) ?? [])]
+  }
+
+  /** [M7 D6] deleteSession 后清映射条目（主 session 已删，映射无意义） */
+  function clearAgentCallMapping(mainSessionId: string): void {
+    mainSessionAgentCalls.delete(mainSessionId)
   }
 
   return {
@@ -239,5 +332,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     selectAgentCall,
     backToWorkflowList,
     backFromAgentCall,
+    getAgentCallVirtualIdsByMain,
+    clearAgentCallMapping,
   }
 })

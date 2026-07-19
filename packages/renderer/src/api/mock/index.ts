@@ -8,11 +8,19 @@
  * - 流式事件名严格按 protocol.ts ServerMessageType（message_start/text_delta/complete）
  *
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
+ *
+ * [W17] ⚠️ 事件总线共享警告：mock 直接复用 real events 总线（pushSession/dispatchSession
+ * 走的是 real `@/api/events`），mock 推送的 server-push 会被所有经 events.on 注册的订阅者收到。
+ * 因此 **mock 不可与 real 模式同进程加载**——若 real ws-client 已连，mock 推送会污染 real 订阅者。
+ * 工程约定：测试/E2E/演示环境只用 mock（VITE_MOCK=true），生产构建不走 mock 门面（api/index
+ * 在构建期静态选 real），两者互斥。若检测到 mock 与 real 同时激活（first-push 时 ws-client 已
+ * connected），打一次 console.warn 提示。
  */
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
+  SystemPromptConfig,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -23,6 +31,8 @@ import type { Section } from '@/lib/search-types'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
+// [W17] 检测 real ws-client 是否已 connected（mock 与 real 同进程时打 warn，防 events 总线污染）
+import * as wsClient from '@/lib/ws-client'
 // settings 的纯前端偏好（getSystem/updateSystem）与 transport 无关，复用 real 实现消除手工同构；
 // mock 域隔离原则针对 transport/events/pending，localStorage 偏好不在此列。
 import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '../domains/settings'
@@ -39,12 +49,41 @@ import { fixtureWorkflows, fixtureSubagents } from './workflow-data'
 const NPM_PREFIX = 'npm:'
 
 /**
+ * [W17] mock 与 real 同进程加载的 once-warn（防 events 总线污染）。
+ * mock 直接 dispatchSession 走 real events 总线，若 real ws-client 已 connected，
+ * mock 推送会污染 real 订阅者。检测到该状态时打一次 warn（不阻断，因测试环境可能合法共用）。
+ * 用模块级 flag once-warn，避免每次 pushSession 都刷屏。
+ */
+let mockRealCollisionWarned = false
+function warnIfRealClientActive(): void {
+  if (mockRealCollisionWarned) return
+  let state: string | undefined
+  try {
+    state = wsClient.getState?.().value
+  } catch {
+    // ws-client 未初始化或不可用——mock 独占模式，无需 warn
+    return
+  }
+  if (state === 'connected') {
+    mockRealCollisionWarned = true
+    console.warn(
+      '[mock] 检测到 real ws-client 已 connected，mock 推送将污染 real 订阅者（events 总线共用）。' +
+      '工程约定 mock 与 real 互斥加载，请检查 VITE_MOCK 配置。',
+    )
+  }
+}
+
+/**
  * Mock 模拟 runtime session 通道推送（dispatchSession）。
  * 组件用 events.on(sessionId) 订阅 session.commands / context.update / extension:widget 等；
  * mock 不走 transport，故在此桥接——直接 dispatchSession 模拟 server-push，
  * 让组件订阅在 mock 模式下也能触发（mock/real 同构）。
+ *
+ * [W17] pushSession 是 mock 与 real events 总线的接触点：首次推送时检测 real ws-client 是否
+ * 已 connected，若是则 warn（防 mock 推送污染 real 订阅者）。
  */
 function pushSession(sessionId: string, msg: ServerMessage): void {
+  warnIfRealClientActive()
   events.dispatchSession(sessionId, msg)
 }
 
@@ -55,7 +94,7 @@ function pushSession(sessionId: string, msg: ServerMessage): void {
  */
 const isE2E = import.meta.env.VITE_E2E === 'true'
 
-/** 按 cwd 聚合 fixtureSessions 为 SessionGroup[]（session.list reply 与 server-push 共用） */
+/** 按 cwd 聚合 fixtureSessions 为 SessionGroup[]（config.sessions reply 与 server-push 共用） */
 function buildGroups(): SessionGroup[] {
   // E2E 模式注入 fixture session（不修改 fixtureSessions 源数组，保持 idempotent）
   const base = fixtureSessions.map((s) => ({ ...s }))
@@ -71,10 +110,10 @@ function buildGroups(): SessionGroup[] {
 
 /**
  * 模拟 runtime broadcastSessionList（create/delete/rename 后推全量分组到 global 通道）。
- * useSidebar 经 events.onGlobalType('session.list') 订阅（refCount 防重复），mock 直 dispatchGlobal。
+ * useSidebar 经 events.onGlobalType('config.sessions') 订阅（refCount 防重复），mock 直 dispatchGlobal。
  */
 function pushSessionList(): void {
-  events.dispatchGlobal({ type: 'session.list', id: nextId('sl'), payload: { groups: buildGroups() } })
+  events.dispatchGlobal({ type: 'config.sessions', id: nextId('sl'), payload: { groups: buildGroups() } })
 }
 
 /** Mock 静态 slash 命令（模拟 pi getCommands 返回的扩展命令） */
@@ -177,7 +216,7 @@ function sleep(ms: number): Promise<void> {
 export const session = {
   /**
    * 按 cwd 分组返回（对齐后端 SessionGroup[]，D7）。
-   * runtime 的 session.list reply 是 `{ groups: SessionGroup[] }`，同构返分组结构。
+   * runtime 的 config.sessions reply 是 `{ groups: SessionGroup[] }`，同构返分组结构。
    * 同 cwd 的 session 归入一组，组内保持插入顺序（按 lastActiveAt 降序更贴近真实，
    * 但 mock fixture 已手排，此处保持稳定顺序避免打乱既有的 5 态演示）。
    */
@@ -199,9 +238,9 @@ export const session = {
   /**
    * Mock fork：模拟 runtime 截断 + 新进程，返回新 session。
    * mock 模式无真实 JSONL 截断，仅创建空 session（历史由前端 selectSession 拉）。
-   * 与 real domain 同接口，签名一致。
+   * 与 real domain 同接口，签名一致（opts 必选，对齐 session.ts fork）。
    */
-  async fork(srcSessionId: string, _fromPiEntryId: string, opts?: { includeFrom?: boolean; label?: string }): Promise<SessionSummary> {
+  async fork(srcSessionId: string, opts: { piEntryId?: string; messageTimestamp?: number; messageRole?: string; includeFrom?: boolean; label?: string }): Promise<SessionSummary> {
     await sleep(TIMING.ack)
     const src = fixtureSessions.find((s) => s.id === srcSessionId)
     const cwd = src?.cwd
@@ -304,7 +343,13 @@ export const session = {
 
 export const chat = {
   /** 拉 session 历史（深拷贝 fixture，避免外部突变污染） */
-  async getHistory(sessionId: string): Promise<Message[]> {
+  async getHistory(sessionId: string): Promise<{ messages: Message[]; historyTruncated: boolean }> {
+    await sleep(TIMING.ack)
+    return { messages: (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m })), historyTruncated: false }
+  },
+
+  /** W4 H4：全量历史（mock 与 getHistory 同行为，mock 无尾读截断） */
+  async getFullHistory(sessionId: string): Promise<Message[]> {
     await sleep(TIMING.ack)
     return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
   },
@@ -428,6 +473,17 @@ function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDir
 const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_SKILL_DIRS, mockSkillDirPaths).map((d) => ({ ...d })))
 const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_AGENT_DIRS, mockAgentDirPaths).map((d) => ({ ...d })))
 
+/** 默认系统提示词配置（与 W7 system-prompt-page.test defaultConfig 同构）。 */
+function defaultSystemPromptConfig(): SystemPromptConfig {
+  return {
+    version: 1,
+    replace: { enabled: false, prompt: '' },
+    append: { enabled: false, prompt: '' },
+  }
+}
+// 系统提示词配置订阅（模拟 config.systemPrompt 广播；初始推默认配置，corrupted=false）。
+const systemPromptSub = makeMockSubscription(() => ({ config: defaultSystemPromptConfig(), corrupted: false }))
+
 export const config = {
   // 请求型：直接返 fixture 深拷贝（不依赖 sub）
   async listProviders() {
@@ -526,6 +582,20 @@ export const config = {
     if (idx >= 0) fixtureAgents.splice(idx, 1)
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
   },
+  // ── 系统提示词配置（W6 FR-4/FR-5，与 real domains/config 同构）──
+  // mock 持内存默认配置；setSystemPrompt 广播 config.systemPrompt，与 runtime 行为一致。
+  async getSystemPrompt() {
+    await sleep(TIMING.ack)
+    return { config: defaultSystemPromptConfig(), corrupted: false }
+  },
+  async setSystemPrompt(cfg: SystemPromptConfig) {
+    await sleep(TIMING.ack)
+    const next = { config: cfg, corrupted: false }
+    systemPromptSub.broadcast(next)
+    return next
+  },
+  onSystemPrompt: (h: (config: SystemPromptConfig, corrupted: boolean) => void) =>
+    systemPromptSub.subscribe((p) => h(p.config, p.corrupted)),
 }
 
 /** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */

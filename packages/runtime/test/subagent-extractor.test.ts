@@ -433,6 +433,144 @@ describe('extractSubagentsFromSessionFile', () => {
     expect(records[1].agent).toBe('general-purpose')
     expect(records[1].slug).toBe('task-b')
   })
+
+  it('startParam.agent 缺失时 agent 兜底为 general-purpose（对齐 pi DEFAULT_AGENT_NAME）', () => {
+    const sessionFile = join(tempDir, 'no-agent.jsonl')
+    const subagentId = 'bg-noagent-1'
+    const toolCallId = 'call-noagent'
+    const entries = [
+      { type: 'session', id: 'main', cwd: '/proj', timestamp: '2026-07-11T06:00:00Z' },
+      {
+        type: 'message', id: 'm1', timestamp: '2026-07-11T06:38:29Z',
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'toolCall', id: toolCallId, name: 'subagent',
+            // startParam 不带 agent —— 模拟 LLM 省略 agent 参数（实测最常见情况）
+            arguments: { action: 'start', startParam: { slug: 'task-x', task: 'Do X' } },
+          }],
+        },
+      },
+      {
+        type: 'message', id: 'm2', timestamp: '2026-07-11T06:38:30Z',
+        message: {
+          role: 'toolResult', toolCallId, toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({
+            action: 'start', subagentId, sessionFile: null,
+            bgResponse: { status: 'running', message: 'detached' },
+          }) }],
+        },
+      },
+      {
+        type: 'custom_message', customType: 'subagent-bg-notify',
+        details: { id: subagentId, status: 'running', agent: 'general-purpose', startedAt: 1783751909029 },
+        timestamp: '2026-07-11T06:38:31Z',
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+    const records = extractSubagentsFromSessionFile(sessionFile)
+
+    expect(records).toHaveLength(1)
+    // 不再是 'unknown'，对齐 pi 的 DEFAULT_AGENT_NAME
+    expect(records[0].agent).toBe('general-purpose')
+  })
+
+  it('batch 形态 bg-notify → 多个 subagent 终态都被更新（pi notifier 60s 合并窗口）', () => {
+    const sessionFile = join(tempDir, 'batch-notify.jsonl')
+    const idA = 'bg-batch-a'
+    const idB = 'bg-batch-b'
+    const entries = [
+      { type: 'session', id: 'main', cwd: '/proj', timestamp: '2026-07-11T06:00:00Z' },
+      // subagent A
+      {
+        type: 'message', id: 'm1', timestamp: '2026-07-11T06:38:29Z',
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-a', name: 'subagent',
+          arguments: { action: 'start', startParam: { agent: 'worker', slug: 'a', task: 'A' } } }] },
+      },
+      {
+        type: 'message', id: 'm2', timestamp: '2026-07-11T06:38:30Z',
+        message: { role: 'toolResult', toolCallId: 'call-a', toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({
+            action: 'start', subagentId: idA, sessionFile: null,
+            bgResponse: { status: 'running', message: 'detached' },
+          }) }] },
+      },
+      // subagent B
+      {
+        type: 'message', id: 'm3', timestamp: '2026-07-11T06:38:31Z',
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-b', name: 'subagent',
+          arguments: { action: 'start', startParam: { agent: 'researcher', slug: 'b', task: 'B' } } }] },
+      },
+      {
+        type: 'message', id: 'm4', timestamp: '2026-07-11T06:38:32Z',
+        message: { role: 'toolResult', toolCallId: 'call-b', toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({
+            action: 'start', subagentId: idB, sessionFile: null,
+            bgResponse: { status: 'running', message: 'detached' },
+          }) }] },
+      },
+      // batch bg-notify —— 60s 内两个 subagent 完成合并成 {batch:true, items:[...]}
+      {
+        type: 'custom_message', customType: 'subagent-bg-notify',
+        details: { batch: true, items: [
+          { id: idA, status: 'done', agent: 'worker', startedAt: 1783751900000, endedAt: 1783752000000 },
+          { id: idB, status: 'done', agent: 'researcher', startedAt: 1783751901000, endedAt: 1783752001000 },
+        ] },
+        timestamp: '2026-07-11T07:00:00Z',
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+    const records = extractSubagentsFromSessionFile(sessionFile)
+
+    expect(records).toHaveLength(2)
+    const a = records.find((r) => r.subagentId === idA)
+    const b = records.find((r) => r.subagentId === idB)
+    // batch 形态下两个 subagent 都被更新为 done（不再整批丢弃）
+    expect(a?.status).toBe('done')
+    expect(a?.agent).toBe('worker')
+    expect(a?.endedAt).toBe(1783752000000)
+    expect(b?.status).toBe('done')
+    expect(b?.agent).toBe('researcher')
+    expect(b?.endedAt).toBe(1783752001000)
+  })
+
+  it('bg-notify.agent 优先于 startParam.agent（pi 执行期回传覆盖 LLM 入参）', () => {
+    const sessionFile = join(tempDir, 'agent-override.jsonl')
+    const subagentId = 'bg-override-1'
+    const toolCallId = 'call-override'
+    const entries = [
+      { type: 'session', id: 'main', cwd: '/proj', timestamp: '2026-07-11T06:00:00Z' },
+      {
+        type: 'message', id: 'm1', timestamp: '2026-07-11T06:38:29Z',
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: toolCallId, name: 'subagent',
+          // LLM 声明 general-purpose
+          arguments: { action: 'start', startParam: { agent: 'general-purpose', slug: 'x', task: 'X' } } }] },
+      },
+      {
+        type: 'message', id: 'm2', timestamp: '2026-07-11T06:38:30Z',
+        message: { role: 'toolResult', toolCallId, toolName: 'subagent',
+          content: [{ type: 'text', text: JSON.stringify({
+            action: 'start', subagentId, sessionFile: null,
+            bgResponse: { status: 'running', message: 'detached' },
+          }) }] },
+      },
+      {
+        type: 'custom_message', customType: 'subagent-bg-notify',
+        // pi 回传的真实 agent 是 'researcher'，覆盖 startParam 的 'general-purpose'
+        details: { id: subagentId, status: 'done', agent: 'researcher', startedAt: 1783751900000, endedAt: 1783752000000 },
+        timestamp: '2026-07-11T07:00:00Z',
+      },
+    ]
+
+    writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n'))
+    const records = extractSubagentsFromSessionFile(sessionFile)
+
+    expect(records).toHaveLength(1)
+    // agent 是 notify.agent（真实值），不是 startParam.agent
+    expect(records[0].agent).toBe('researcher')
+  })
 })
 
 describe('extractSubagentsFromSessionFile — background sessionFile 回退查找', () => {

@@ -21,7 +21,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.create', 'session.delete', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
@@ -47,9 +47,12 @@ export class SessionMessageHandler {
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
-        const { srcSessionId, fromPiEntryId, includeFrom, label } = msg.payload
+        const { srcSessionId, fromPiEntryId, fromMessageTimestamp, fromMessageRole, includeFrom, label } = msg.payload
         try {
-          const session = await this.ctx.sessionService.forkSession(srcSessionId, fromPiEntryId, includeFrom ?? true, label)
+          const session = await this.ctx.sessionService.forkSession(
+            srcSessionId, fromPiEntryId, includeFrom ?? true, label,
+            { fromMessageTimestamp, fromMessageRole },
+          )
           this.ctx.reply(ws, msg.id, 'session.created', { session })
           return this.ctx.broadcastSessionList()
         } catch (e) {
@@ -69,18 +72,22 @@ export class SessionMessageHandler {
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
         return this.ctx.broadcastSessionList()
       }
-      case 'session.list':
-        return this.ctx.reply(ws, msg.id, 'session.list', { groups: this.ctx.sessionService.listPersistedSessions() })
+      case 'config.sessions':
+        return this.ctx.reply(ws, msg.id, 'config.sessions', { groups: this.ctx.sessionService.listPersistedSessions() })
       case 'session.switch': {
         const switchId = msg.payload.sessionId
         const summary = this.ctx.sessionService.getSummary(switchId)
         if (summary) {
           try {
-            const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages })
+            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages, historyTruncated: truncated })
           } catch (e) {
-            console.error('[runtime] failed to load history for switch:', e)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages: [] })
+            // W5：历史加载失败时绝不能 reply messages:[] + historyTruncated:false——
+            // 前端会误判「全部历史已加载且未截断」并把空列表当真。改走 sendError（统一 error
+            // envelope），与项目「错误作为 assistant 消息/可见告警插入」模式一致，前端据此渲染失败态。
+            const errMsg = toErrorMessage(e)
+            console.error('[runtime] failed to load history for switch:', errMsg)
+            this.ctx.sendError(ws, 'history_load_failed', errMsg, msg.id, { sessionId: switchId })
           }
         } else {
           try {
@@ -89,8 +96,8 @@ export class SessionMessageHandler {
             if (!restored) {
               throw new Error(`Session ${switchId} restored but summary unavailable`)
             }
-            const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: restored, messages })
+            const { messages, truncated } = await this.ctx.sessionService.getHistory(switchId)
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: restored, messages, historyTruncated: truncated })
           } catch (e) {
             const errMsg = toErrorMessage(e)
             const isENOENT = isEnoent(e)
@@ -104,8 +111,12 @@ export class SessionMessageHandler {
         return
       }
       case 'session.history': {
-        const messages = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
-        return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages })
+        const { messages, truncated } = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages, historyTruncated: truncated })
+      }
+      case 'session.getFullHistory': {
+        const messages = await this.ctx.sessionService.getFullHistory(msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.fullHistory', { sessionId: msg.payload.sessionId, messages })
       }
       case 'session.getSubagents': {
         const subagents = await this.ctx.sessionService.getSubagents(msg.payload.sessionId)

@@ -17,6 +17,7 @@
 import { GitBranch, Archive } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
+import { normalizeContent } from '@xyz-agent/shared'
 import type { Message } from '@xyz-agent/shared'
 
 const { t } = useI18n()
@@ -39,7 +40,7 @@ function resolveNotice(message: Message): { icon: Component; text: string } {
     return { icon: GitBranch, text: from ? t('panel.message.branchCreated', { from }) : t('panel.message.branchCreatedNoFrom') }
   }
   // 兜底：纯 system 文本
-  return { icon: Archive, text: message.content }
+  return { icon: Archive, text: normalizeContent(message.content) }
 }
 
 /** K 格式阈值（>= 此值显示 K，如 237186 → 237.2K，< 此值显原数） */

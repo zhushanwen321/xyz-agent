@@ -17,8 +17,9 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import { textToSegments } from '@xyz-agent/shared'
 
 // ── mock useChat（spy 化 send/steer/abort）──
 const chatApiMock = {
@@ -50,13 +51,24 @@ vi.mock('@/stores/settings', () => ({
 }))
 
 // ── ComposerInput mock：defineExpose + emit ──
+// 追踪 input 事件携带的文本（Composer.onSend/onSteer 调 inputRef.getSegments() 取结构化 segments）。
+// 通过 emits 验证器捕获 input payload，getSegments 用 textToSegments 还原（ADR-0037）。
+const lastInputText = ref('')
 const ComposerInputMock = defineComponent({
   name: 'ComposerInput',
-  emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
+  emits: {
+    input: (val: string) => {
+      lastInputText.value = val
+      return true
+    },
+    keydown: null,
+    'slash-trigger': null,
+    'file-trigger': null,
+  },
   setup(_, { expose }) {
     const clear = vi.fn()
     const setText = vi.fn()
-    expose({ clear, setText, insertSlashChip: vi.fn() })
+    expose({ clear, setText, insertSlashChip: vi.fn(), getSegments: () => textToSegments(lastInputText.value) })
     return { clear, setText }
   },
   template: '<div data-testid="composer-input" />',
@@ -81,6 +93,7 @@ import { useChatStore } from '@/stores/chat'
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  lastInputText.value = ''
 })
 
 function mountComposer(props: { sessionId: string | null; variant?: 'panel' | 'landing' }) {
@@ -160,7 +173,7 @@ describe('T2.2 B 策略：busy 时 Enter → steer（不调 send）', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick() // steer 是 async，需 flush
 
-    expect(chatApiMock.steer).toHaveBeenCalledWith('s-steer-enter', '补充内容')
+    expect(chatApiMock.steer).toHaveBeenCalledWith('s-steer-enter', textToSegments('补充内容'))
     expect(chatApiMock.send).not.toHaveBeenCalled()
   })
 })
@@ -175,7 +188,7 @@ describe('T2.3 B 策略：idle 时 Enter → send', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    expect(chatApiMock.send).toHaveBeenCalledWith('s-send-enter', '第一条消息')
+    expect(chatApiMock.send).toHaveBeenCalledWith('s-send-enter', textToSegments('第一条消息'))
     expect(chatApiMock.steer).not.toHaveBeenCalled()
   })
 })

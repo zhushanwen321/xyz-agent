@@ -10,6 +10,7 @@
  * 不依赖任何 composable 闭包 / 副作用，放 logic 层与 STATUS_ICON/DOT_CLASS 同源（8 态 SSOT 聚合）。
  * useSidebar 与 useSessionDerivations 都从此 import，避免逻辑两份。
  */
+import type { SessionStatus } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
 import type { useChatStore } from '@/stores/chat'
 
@@ -118,16 +119,22 @@ const TOOL_RUNNING = 'running'
  * isActive 包含 pendingSend（用户已提交但 pi 未确认）+ isGenerating（streaming 实体存在）。
  * 取代原 isStreaming 参数，不再受 activeId 限定。
  *
+ * [W6] metaStatus：未 hydrate session（messages 为空）的终态兜底。去全量预 hydrate 后，
+ * 侧栏未访问的 session 无消息历史，靠 runtime session_end 元数据（done/error/stopped）兜底。
+ * 瞬态（streaming/compacting/waiting/...）由 chat store 的 Set 派生，不依赖 metaStatus。
+ *
  * @param sessionId 目标 session
  * @param chat chat store 实例（读 getMessages / getRetryState / isGenerating 分区）
  * @param isActive 该 session 是否活跃（pendingSend ∨ isGenerating）
  * @param isCompacting 该 session 是否处于 compact 互斥态
+ * @param metaStatus runtime session 元数据 status（未 hydrate 兜底用，W6）
  */
 export function deriveStatus(
   sessionId: string,
   chat: ReturnType<typeof useChatStore>,
   isActive: boolean,
   isCompacting = false,
+  metaStatus?: SessionStatus,
 ): DerivedStatus {
   const msgs = chat.getMessages(sessionId)
   const last = msgs[msgs.length - 1]
@@ -154,7 +161,14 @@ export function deriveStatus(
   // 已提交、等待 pi 确认（pendingSend 空窗期）
   if (isActive) return 'pending'
 
-  if (!last) return 'done'
+  // W6：未 hydrate（messages 为空）→ 用元数据终态兜底，无则 done。
+  // 瞬态（streaming/compacting/waiting/retrying/pending）已在上方分支处理，
+  // 此处仅处理无消息历史的终态显示。
+  if (!last) {
+    if (metaStatus === 'error') return 'error'
+    if (metaStatus === 'stopped') return 'stopped'
+    return 'done'
+  }
   if (last.status === ERROR_STATUS) return 'error'
   if (last.role === 'assistant' && last.isInterrupted) return 'stopped'
   return 'done'

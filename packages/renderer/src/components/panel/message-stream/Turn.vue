@@ -9,13 +9,16 @@
     Output Text 中间/收尾拆分（draft §4）：多 assistant 回合，非最后一条 content 折进 trace，
     仅最后一条作收尾 summary 恒显。
   -->
-  <div class="flex flex-col gap-3.5">
+  <!-- rootEl：单 turn 容器。gap-3.5 = turn 内 user→assistant 间距（一轮对话内部紧凑）；
+       pb-5 = turn 底部留白（turn 间距 + 末条到 composer），与 MessageStream scrollEl 的 pt-5 对齐
+       到统一 20px——使每条 user 气泡上方间距全一致（首条靠 scrollEl pt-5，其余靠此处 pb-5）。 -->
+  <div ref="rootEl" class="flex flex-col gap-3.5 pb-5">
     <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
     <div v-if="turn.user" class="group/user flex flex-col items-end gap-1">
       <!-- 编辑态：编辑后 fork 新会话 -->
       <div
         v-if="isEditingThisUser"
-        class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_rgba(79,142,247,0.18)]"
+        class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_color-mix(in_oklch,var(--accent)_22%,transparent)]"
       >
         <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
         <div class="mt-1.5 flex items-center justify-between px-1">
@@ -45,30 +48,56 @@
           <span class="size-[6px] animate-pulse-accent rounded-full" :class="pendingDotClass" />
           {{ pendingLabel }}
         </span>
-        <span>{{ turn.user.content }}</span>
+        <span>{{ normalizeContent(turn.user.content) }}</span>
       </div>
       <div
         v-else
         class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
       >
-        <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），后接剩余文本 -->
-        <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），可点击在 drawer 查看文档。
-             Button as-child 让 reka-ui Primitive 合并到 span，保留 chip 行内样式 + 按钮语义 -->
-        <Button
-          v-if="slashChip"
-          as-child
-          variant="ghost"
-          :title="t('panel.message.viewCommandDoc')"
-          @click.stop="openCommandDoc(slashChip.name)"
-        >
+        <!-- user 气泡内容：遍历 content Segment[] 渲染 badge + 文本（ADR-0037）。
+             skill segment → 紫色 badge（star icon + skill 名），点击打开 drawer Doc tab；
+             text segment → MarkdownRenderer 渲染。
+             assistant/system content 是 string，不走此分支（下方 userSegments 为空时不渲染 badge） -->
+        <template v-for="(seg, i) in userSegments" :key="i">
+          <!-- skill badge：inline span + role=button（不用 Button as-child，
+               避免 buttonVariants 注入 h-9 px-4 py-2 撑大 badge + button 默认 type=submit 卡死）。
+               显示层只显 skill 名（icon+紫色已传达类型，/skill: 前缀对用户是冗余），
+               点击仍传完整 /skill:name 给 openCommandDoc（CommandDocPanel 靠前缀路由）。 -->
           <span
+            v-if="seg.type === 'skill'"
             class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
+            style="vertical-align: middle"
+            role="button"
+            tabindex="0"
+            :title="t('panel.message.viewCommandDoc')"
+            @click.stop="openCommandDoc(`/skill:${seg.name}`)"
+            @keydown.enter.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
+            @keydown.space.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
           >
-            <component :is="slashChip.iconComp" class="size-[12px] shrink-0" />
-            <span>{{ slashChip.name }}</span>
+            <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
+            <span>{{ seg.name }}</span>
           </span>
-        </Button>
-        <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" :session-id="sessionId" />
+          <!-- FR-7: file badge — 绿色（复用 --success token），路径末段 + 行范围后缀（D2），
+               tooltip 全路径，点击打开 drawer Detail 预览。结构同 skill badge（inline span + role=button） -->
+          <span
+            v-else-if="seg.type === 'file'"
+            class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--success-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-success transition-colors hover:bg-[color-mix(in_oklch,var(--success)_32%,transparent)]"
+            style="vertical-align: middle"
+            role="button"
+            tabindex="0"
+            :data-testid="`msg-file-badge-${i}`"
+            :title="seg.path"
+            @click.stop="openFileDetail(seg.path)"
+            @keydown.enter.stop.prevent="openFileDetail(seg.path)"
+            @keydown.space.stop.prevent="openFileDetail(seg.path)"
+          >
+            <FileText class="size-[12px] shrink-0" />
+            <span>{{ fileBasename(seg.path) }}{{ formatLineRange(seg.lineRange) }}</span>
+          </span>
+          <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
+        </template>
+        <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
+        <MarkdownRenderer v-if="!userSegments.length && typeof turn.user.content === 'string'" :content="turn.user.content" :session-id="sessionId" />
       </div>
       <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。
            pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
@@ -81,7 +110,7 @@
           size="icon"
           class="size-6 text-subtle hover:text-fg"
           :title="t('panel.message.copy')"
-          @click="copy(turn.user.content, userCopyKey)"
+          @click="copy(normalizeContent(turn.user.content), userCopyKey)"
         >
           <Check v-if="copied === userCopyKey" class="size-3 text-success" />
           <Copy v-else class="size-3" />
@@ -158,7 +187,7 @@
       <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
         <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
           <Block
-            v-for="(blk, bIdx) in traceBlocks(assistant, aIdx)"
+            v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]"
             :key="`${assistant.id}-${blk.kind}-${bIdx}`"
             :type="blk.kind"
             :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
@@ -184,7 +213,9 @@
       >
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
-             原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。 -->
+             原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。
+             w-[7px] / rounded-[1px] 为设计精确值（与 h-3.5=14px 配出 2:1 细竖条比例 + 1px 微圆角），
+             非魔数——改宽度需同步 h-3.5 比例。 -->
         <span v-if="turn.isWorking" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
         <!-- hover actions：复制 / 复制为 MD（常驻）+ fork（仅 AI 停止时）。
            与 user 区一致（Turn.vue:76,90）：容器不守 isSessionActive，fork 单独守卫。 -->
@@ -211,7 +242,7 @@
           >
             <Check v-if="copied === aiMdKey" class="size-3 text-success" />
             <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-white">MD</span>
+            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-accent-foreground">MD</span>
           </Button>
           <Button
             v-if="!isSessionActive && !isSubagentVirtualId(sessionId)"
@@ -242,24 +273,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
+import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
-import type { ThinkingBlock, ToolCall, Message } from '@xyz-agent/shared'
+import type { ThinkingBlock, ToolCall, Segment } from '@xyz-agent/shared'
+import { normalizeContent } from '@xyz-agent/shared'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useCopy } from '@/composables/effects/useCopy'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
-import { useCommandStore } from '@/stores/command'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useFileTreeStore } from '@/stores/fileTree'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
+import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
 import ForkConfirmModal from './ForkConfirmModal.vue'
@@ -273,37 +306,67 @@ const props = defineProps<{
   canEdit?: boolean
 }>()
 
+/**
+ * B9：编辑状态变化通知父组件。
+ * Turn 内部编辑状态（editingUserId）对 MessageStream 不可见，但被编辑 turn 滚出视口会卸载
+ * 丢失 draftText（SR5）。父组件据此调 virtualList.pinEditing(idx) 钉住该 turn 在窗口内。
+ */
+const emit = defineEmits<{
+  'edit-state-change': [{ editing: boolean }]
+}>()
+
 const { t } = useI18n()
 const chat = useChatStore()
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
-const commandStore = useCommandStore()
+const fileTreeStore = useFileTreeStore()
 
-/** 点击用户气泡 slash chip → 打开 drawer Doc tab 展示命令/skill 文档 */
+/**
+ * 虚拟滚动高度测量（W4）：rootEl + ResizeObserver 上报自身高度给 useVirtualTurnList。
+ * key 用 turn 首消息 id（与 heights Map 键一致）。非虚拟列表环境下 inject 不到 registry，
+ * useResizeReport 内部优雅降级为 no-op。
+ */
+const rootEl = ref<HTMLElement | null>(null)
+useResizeReport(rootEl, () => props.turn.user?.id ?? props.turn.assistants[0]?.id ?? '')
+
+/** 点击用户气泡 skill badge → 打开 drawer Doc tab 展示 SKILL.md */
 function openCommandDoc(commandName: string): void {
   openDrawer('doc', { commandName })
 }
 
 /**
- * 用户气泡 slash 命令检测：content 以已知 slash 命令开头（如 /commit）时，
- * 渲染 composer 同款 chip（icon + 紫色底）+ 命令名后的剩余文本。
- * slash chip 发送时被 getText 扁平化为纯文本（/commit），此处从 command store
- * 解析回 icon（SSOT：与选择框/chip 同源），不改 Message 协议。
- * 匹配规则：content 以 command.name 开头，且其后是空格或字符串结束（避免 /co 误命中 /commit）。
+ * 点击用户气泡 file badge → 打开 drawer Detail tab 预览该文件（FR-7）。
+ * fileTreeStore.selectFile 设 selectedPath（DetailPane watch 自动加载），drawer 切 detail tab。
  */
-const slashChip = computed(() => {
-  const content = props.turn.user?.content ?? ''
-  if (!content.startsWith('/')) return null
-  const commands = commandStore.getCommands(props.sessionId)
-  // 取最长匹配（避免 /commit 命中 /c）：按 name 长度降序
-  const matched = commands
-    .filter((c) => content === c.name || content.startsWith(c.name + ' '))
-    .sort((a, b) => b.name.length - a.name.length)[0]
-  if (!matched) return null
-  const rest = content.slice(matched.name.length).trim()
-  const iconComp = SLASH_ICON_COMPONENTS[matched.icon as keyof typeof SLASH_ICON_COMPONENTS] ?? SLASH_ICON_COMPONENTS.wrench
-  return { name: matched.name, rest, iconComp }
+function openFileDetail(path: string): void {
+  fileTreeStore.selectFile(path)
+  openDrawer('detail')
+}
+
+/** file badge 行范围后缀（D2 格式）：单行 L<n>，多行 L<s>-L<e>，无范围空串 */
+function formatLineRange(lineRange?: [number, number]): string {
+  if (!lineRange) return ''
+  const [s, e] = lineRange
+  return s === e ? `:L${s}` : `:L${s}-L${e}`
+}
+
+/** file badge 显示名：路径末段（basename），tooltip 用全路径 */
+function fileBasename(path: string): string {
+  const parts = path.split('/')
+  return parts[parts.length - 1] ?? path
+}
+
+/**
+ * user message 的 content segments（ADR-0037）。
+ * content 是 string | Segment[] 联合类型——user message 是 Segment[]，
+ * 遍历渲染 badge（skill segment）+ 文本（text segment）。
+ * 非 Segment[]（异常/退化）返回空数组，模板兜底走纯文本渲染。
+ */
+const userSegments = computed<Segment[]>(() => {
+  const content = props.turn.user?.content
+  if (Array.isArray(content)) return content
+  return []
 })
 
 /**
@@ -376,10 +439,18 @@ const isEditingThisUser = computed(
   () => !!props.turn.user && editingUserId.value === props.turn.user.id,
 )
 
+/**
+ * B9：编辑状态变化 → 通知父组件（MessageStream 据此 pinEditing 钉住该 turn 在视口内，
+ * 防滚出视口卸载丢失 draftText）。watch isEditingThisUser：startEdit→true，cancel/submit→false。
+ */
+watch(isEditingThisUser, (editing) => {
+  emit('edit-state-change', { editing })
+})
+
 function startEdit(): void {
   if (!props.turn.user) return
   editingUserId.value = props.turn.user.id
-  draftText.value = props.turn.user.content
+  draftText.value = normalizeContent(props.turn.user.content)
 }
 
 function cancelEdit(): void {
@@ -413,35 +484,35 @@ async function onForkConfirm(): Promise<void> {
 
 /**
  * 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠，作回合焦点）。
- * streaming 态 text 不在此显示（在 trace 内按真实时序展示，见 traceBlocks），
- * 模板已用 `v-if="summaryText && !turn.isWorking"` 守卫；此处仅提供文本。
+ * streaming 和 complete 态都渲染（模板 v-if="summaryText"，无 isWorking 守卫）。
+ * streaming 态末位 text 在此实时展示（traceBlocks 跳过末位 text 块避免重复）。
  */
 const summaryText = computed(() => {
   const as = props.turn.assistants
   const last = as[as.length - 1]
-  return last?.content?.trim() ? last.content : ''
+  if (!last?.content) return ''
+  const text = normalizeContent(last.content)
+  return text.trim() ? text : ''
 })
 
 /** 最后一条 assistant 的索引（streaming 光标 / complete 跳过末位 text 用） */
 const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
 
 /**
- * 取某条 assistant 在 trace 内应渲染的有序块（draft §4：按真实时序）。
+ * trace 内每个 assistant 的有序块（缓存，避免 v-for 内每次 render 重算）。
  * - 末位 assistant：始终跳过 text 块（text 在底部 summary 位渲染，streaming 带 cursor / complete 终态），
  *   trace 只保留 thinking/tool 过程。
  * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留）。
  * 消除停止时 text 从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
+ * streaming 时每 token 触发 re-render，computed 缓存避免对每个 assistant 重跑 expandAssistantBlocks。
  */
-function traceBlocks(msg: Message, idx: number): OrderedBlock[] {
-  const blocks = expandAssistantBlocks(msg)
-  if (idx === lastAssistantIdx.value) {
-    return blocks.filter((b) => b.kind !== 'text')
-  }
-  return blocks
-}
-
-/**
- * streaming 光标已移到 trace 末尾独立元素（见模板 streaming-tail），
- * 不再按块判定。保留 lastAssistantIdx 供 traceBlocks 的 complete 态跳过末位 text 使用。
- */
+const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
+  return props.turn.assistants.map((a, i) => {
+    const blocks = expandAssistantBlocks(a)
+    if (i === lastAssistantIdx.value) {
+      return blocks.filter((b) => b.kind !== 'text')
+    }
+    return blocks
+  })
+})
 </script>

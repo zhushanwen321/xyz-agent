@@ -2,8 +2,8 @@ import type {
   PiHistoryMessage,
   PiHistoryToolResult,
 } from './pi-protocol.js'
-import type { Message, ThinkingBlock, ToolCall, FileChange } from '@xyz-agent/shared'
-import { parseBgNotifyDetails } from '@xyz-agent/shared'
+import type { Message, ThinkingBlock, ToolCall, FileChange, Segment } from '@xyz-agent/shared'
+import { parseBgNotifyDetails, textToSegments } from '@xyz-agent/shared'
 import { normalizePiToolResult } from './normalize-tool-result.js'
 
 /**
@@ -12,14 +12,20 @@ import { normalizePiToolResult } from './normalize-tool-result.js'
  * remaining user text (everything after the closing `</skill>` tag).
  * Returns `null` if no skill block is found.
  */
-function parseSkillBlock(text: string): { skillName: string; skillLocation?: string; userText: string } | null {
+function parseSkillBlock(text: string): Segment[] | null {
   const match = text.match(/<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
   if (!match) return null
-  return {
-    skillName: match[1],
-    skillLocation: match[2] || undefined,
-    userText: match[3].trim(),
+  // Segment 类型的 skill 变体本身已有 location?: string 字段（shared/segments.ts:26），
+  // 构造时直接带 location，无需运行时断言赋值。
+  const skillSeg: Segment = match[2]
+    ? { type: 'skill', name: match[1], location: match[2] }
+    : { type: 'skill', name: match[1] }
+  const segments: Segment[] = [skillSeg]
+  const userText = match[3].trim()
+  if (userText) {
+    segments.push({ type: 'text', text: userText })
   }
+  return segments
 }
 
 /**
@@ -70,7 +76,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
   let lastAssistantWithToolCalls = -1
 
   for (const item of raw) {
-    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number }
+    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
@@ -153,7 +159,34 @@ export function convertPiHistory(raw: unknown[]): Message[] {
       continue
     }
 
+    // branchSummary：pi 分支摘要记录（实时链路 event-adapter.ts:487 已处理）。
+    // 历史路径（文件读取/RPC get_messages 返回 role:'branchSummary'）对称还原，
+    // 否则重开 session 后分支摘要丢失（AGENTS.md 规则 7.5：可重开恢复）。
+    if (m.role === 'branchSummary') {
+      const bm = m as { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
+      result.push({
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: bm.summary ?? '',
+        status: 'complete',
+        branchSummary: {
+          summary: bm.summary,
+          fromId: bm.fromId,
+          timestamp: bm.timestamp ?? Date.now(),
+        },
+        timestamp: bm.timestamp ?? Date.now(),
+      })
+      continue
+    }
+
     // user or assistant
+    // W11：显式拒绝未知 role，避免把任何非 user 也非已处理特殊类型的 entry 默认归入 assistant
+    // （旧实现 `m.role === 'user' ? 'user' : 'assistant'` 把未知 role 当 assistant，掩盖数据异常）。
+    // 已处理：toolResult / compactionSummary / custom / branchSummary（上面各分支 continue）。
+    if (m.role !== 'user' && m.role !== 'assistant') {
+      console.warn(`[message-converter] unknown role: ${String(m.role)}, skipping`)
+      continue
+    }
     const parts = Array.isArray(m.content)
       ? m.content
       : [{ type: 'text' as const, text: m.content != null ? String(m.content) : '' }]
@@ -217,14 +250,14 @@ export function convertPiHistory(raw: unknown[]): Message[] {
     }
 
     // For user messages, parse <skill> blocks injected by pi backend.
-    // Strips the entire skill document from content, sets skillName,
-    // and leaves only the user's actual text.
+    // content 统一为 Segment[]：有 skill 标签时拆出 skill segment + 后续 user text，
+    // 无 skill 标签时用 textToSegments 包成纯 text segment。
     if (m.role === 'user' && textContent) {
       const parsed = parseSkillBlock(textContent)
       if (parsed) {
-        msg.skillName = parsed.skillName
-        if (parsed.skillLocation) msg.skillLocation = parsed.skillLocation
-        msg.content = parsed.userText
+        msg.content = parsed
+      } else {
+        msg.content = textToSegments(textContent)
       }
     }
     result.push(msg)

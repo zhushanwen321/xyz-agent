@@ -52,6 +52,17 @@ export function useChatScroll() {
    * 程序性 scrollToBottom 只增不减 scrollTop，故「scrollTop 明显减小」必为用户操作。
    */
   let lastScrollTop = 0
+  /**
+   * rAF trailing 节流状态（M4）：rafId 是当前排队的 rAF 句柄，pending* 是末次调用参数。
+   * 声明在 onScopeDispose（引用 rafId 做卸载清理）之前——后者虽是闭包、运行时才读 rafId，
+   * 但按「先声明后引用」惯例前置，避免读者混淆 TDZ 风险。
+   */
+  let rafId: number | null = null
+  /** 待执行的尾部调用参数（trailing：最后一次调用的 behavior/force 生效）。 */
+  let pendingBehavior: ScrollBehavior = 'smooth'
+  let pendingForce = false
+  /** trailing flush 的 resolve 队列：所有合并的调用方 await 的 Promise 在 flush 后一并 resolve。 */
+  let pendingResolvers: Array<() => void> = []
 
   /**
    * wheel 事件回调：滚轮 / 触控板上滑（deltaY < 0）→ 脱离锚定。
@@ -73,6 +84,14 @@ export function useChatScroll() {
     },
     { immediate: true },
   )
+  // effectScope 卸载兜底（对称下方 RO 的 onScopeDispose）：组件卸载时 watch 的 onCleanup
+  // 已清 wheel listener，此处防 composable 在非组件 scope 调用后泄漏。无 active scope（如纯单测）跳过。
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      const el = scrollEl.value
+      if (el) el.removeEventListener('wheel', onWheel)
+    })
+  }
 
   /**
    * ResizeObserver：观察 contentEl 高度变化，贴底态下内容增高即跟随滚到底。
@@ -101,7 +120,7 @@ export function useChatScroll() {
       },
       { immediate: true },
     )
-    // effectScope 卸载兜底（组件卸载时 watch 的 onCleanup 会清理，此处防止
+    // effectScope 卸载兜底（组件卸载时 watch 的 onCleanup 会断开 RO，此处防止
     // composable 在非组件 scope 调用后泄漏）。无 active scope（如纯单测）时跳过。
     if (getCurrentScope()) {
       onScopeDispose(() => {
@@ -109,6 +128,24 @@ export function useChatScroll() {
         resizeObserver = null
       })
     }
+  }
+
+  // INVAR-M4-5: 取消 pending rAF，防止卸载后 flushScroll 对已卸载 el 调 scrollTo。
+  // 公共 onScopeDispose（独立于上方 RO 分支）：RO 不存在（如 happy-dom 单测）时也要清 rafId，
+  // 否则 scrollToBottom 已调度的 rAF 在 scope dispose 后仍 flush 会报错。
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+      // W12: 卸载时 resolve 在途的 await scrollToBottom() 调用方 Promise。
+      // rAF 已取消 → flushScroll 永不执行 → pendingResolvers 内的 resolve 永不调用，
+      // 调用方 await 永挂、闭包无法 GC。此处统一 resolve 并清空队列。
+      const resolvers = pendingResolvers
+      pendingResolvers = []
+      resolvers.forEach((r) => r())
+    })
   }
 
   /**
@@ -134,24 +171,60 @@ export function useChatScroll() {
   }
 
   /**
-   * 滚动到底部。
+   * 滚动到底部（rAF trailing 节流，M4 perf-quick-batch）。
    * - force=false（默认）：受 stickToBottom guard，非贴底时不滚只置 unreadBelow（程序自动跟随用）
    * - force=true：强制滚动并恢复贴底态（用户「回到底部」浮层点击用）
+   *
+   * M4 节流：流式每个 token 触发一次 scrollToBottom（三个触发源：watch messages.length /
+   * watch content.length / ResizeObserver），高频调用合并为单次 rAF 回调执行。trailing 保证
+   * 末次调用必执行（流结束时视图停在真底部）。
+   *
+   * INVAR-M4-2【关键】：stickToBottom guard 在 rAF 执行时重新读取，而非调用时捕获。
+   * 否则：调用时贴底→用户上滑翻 false→rAF 仍按调用时的 true 滚→把上滑用户扯回底部。
+   * 实现分两阶段：
+   *   1. 调用时：非贴底（!force && !stickToBottom）立即置 unreadBelow 并 return（满足 U15 即时语义）
+   *   2. rAF 回调内：再次检查 stickToBottom，用户中途上滑则放弃 scrollTo
    *
    * 无需任何 scroll 事件保护期——onScroll 永不因程序性滚动翻 false（见文件头说明），
    * smooth 动画中途的 scroll 事件（scrollTop 增大）同样不会误判。
    */
+  function flushScroll(): void {
+    rafId = null
+    const behavior = pendingBehavior
+    const force = pendingForce
+    const resolvers = pendingResolvers
+    pendingResolvers = []
+    // INVAR-M4-2: 执行时重新检查 stickToBottom。调用时贴底但中途上滑 → 不扯回。
+    if (!force && !stickToBottom.value) {
+      resolvers.forEach((r) => r())
+      return
+    }
+    void (async () => {
+      await nextTick()
+      const el = scrollEl.value
+      if (el) {
+        el.scrollTo({ top: el.scrollHeight, behavior })
+        stickToBottom.value = true
+        unreadBelow.value = false
+      }
+      resolvers.forEach((r) => r())
+    })()
+  }
+
   async function scrollToBottom(behavior: ScrollBehavior = 'smooth', force = false): Promise<void> {
+    // 调用时 guard：非贴底且非强制 → 立即置 unreadBelow（U15 即时语义），不等 rAF。
     if (!force && !stickToBottom.value) {
       unreadBelow.value = true
       return
     }
-    await nextTick()
-    const el = scrollEl.value
-    if (!el) return
-    el.scrollTo({ top: el.scrollHeight, behavior })
-    stickToBottom.value = true
-    unreadBelow.value = false
+    // trailing：记录末次调用参数，合并到单个 rAF。
+    pendingBehavior = behavior
+    pendingForce = force
+    const p = new Promise<void>((resolve) => pendingResolvers.push(resolve))
+    if (rafId === null) {
+      rafId = requestAnimationFrame(flushScroll)
+    }
+    return p
   }
 
   return { scrollEl, contentEl, stickToBottom, unreadBelow, showJumpButton, onScroll, scrollToBottom }

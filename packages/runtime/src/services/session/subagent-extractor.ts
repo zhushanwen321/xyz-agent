@@ -26,7 +26,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
-import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
+import { parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
+import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 
 /** subagent toolCall 的 arguments 结构（start action） */
 interface SubagentStartArgs {
@@ -70,17 +71,7 @@ interface SubagentToolResultData {
   }
 }
 
-/** bg-notify details 结构（与 shared/message.ts BgNotifyRecord 一致） */
-interface BgNotifyDetails {
-  id: string
-  status: 'done' | 'failed' | 'cancelled'
-  agent?: string
-  model?: string
-  result?: string
-  error?: string
-  startedAt?: number
-  endedAt?: number
-}
+/** bg-notify 单条记录复用 shared/message.ts 的 BgNotifyRecord（不再本地重复定义） */
 
 /** JSONL 中的 message entry 结构（简化） */
 interface JsonlMessageEntry {
@@ -129,8 +120,9 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
   const toolCalls = new Map<string, { agent: string; slug: string; task: string }>()
   // 收集 subagent toolResult（按 toolCallId 索引）
   const toolResults = new Map<string, SubagentToolResultData>()
-  // 收集 bg-notify（按 subagentId 索引）
-  const bgNotifies = new Map<string, BgNotifyDetails>()
+  // 收集 bg-notify（按 subagentId 索引）。复用 shared 的 BgNotifyRecord 类型，
+  // 解析逻辑统一走 parseBgNotifyDetails（正确处理 single + batch 两种形态）。
+  const bgNotifies = new Map<string, BgNotifyRecord>()
   // 收集 list response 中的 items（background 模式状态更新）
   const listItems = new Map<string, NonNullable<NonNullable<SubagentToolResultData['listResponse']>['items']>[number]>()
 
@@ -153,7 +145,9 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
             const args = b.arguments as SubagentStartArgs
             if (args.action === 'start') {
               toolCalls.set(b.id, {
-                agent: args.startParam?.agent ?? 'unknown',
+                // 对齐 pi-subagent-workflow DEFAULT_AGENT_NAME。LLM 没传 agent 时 pi 实际启动的就是 general-purpose，
+                // 不是"未知"。真实值会在 record 合并时被 notify.agent 覆盖（见下方 agent 优先级链）。
+                agent: args.startParam?.agent ?? 'general-purpose',
                 slug: args.startParam?.slug ?? '',
                 task: args.startParam?.task ?? '',
               })
@@ -180,19 +174,15 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
     }
 
     // 处理 custom_message entry：找 subagent-bg-notify
-    if (e.type === 'custom_message' && e.customType === 'subagent-bg-notify' && e.details) {
-      const details = e.details as BgNotifyDetails
-      if (details.id) {
-        bgNotifies.set(details.id, {
-          id: details.id,
-          status: details.status,
-          agent: details.agent,
-          model: details.model,
-          result: details.result,
-          error: details.error,
-          startedAt: details.startedAt,
-          endedAt: details.endedAt,
-        })
+    // 用 parseBgNotifyDetails 统一解析 single + batch 两种形态（pi notifier 滑动窗口 60s 合并），
+    // 避免 batch 形态 {batch:true, items:[...]} 时 details.id 为 undefined 整批被丢弃。
+    if (e.type === 'custom_message' && e.customType === 'subagent-bg-notify') {
+      const parsed = parseBgNotifyDetails(e.details)
+      if (!parsed) continue
+      const records: BgNotifyRecord[] = 'batch' in parsed ? parsed.items : [parsed]
+      for (const record of records) {
+        // 同 id 后到的覆盖先到的（理论上同一 subagent 只 notify 一次）
+        bgNotifies.set(record.id, record)
       }
     }
   }
@@ -226,7 +216,11 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
       const listItem = listItems.get(subagentId)
       const notify = bgNotifies.get(subagentId)
 
-      const status: SubagentStatus = notify?.status ?? normalizeStatus(listItem?.status) ?? normalizeStatus(tr.bgResponse.status)
+      // status 归一：notify.status 是 pi 严格枚举（done/failed/cancelled），但走 normalizeSubagentStatus
+      // 统一兼容上游变体（completed/error/crashed 等）。notify 缺失时回落到 listItem/bgResponse。
+      const status: SubagentStatus = notify
+        ? normalizeSubagentStatus(notify.status)
+        : normalizeSubagentStatus(listItem?.status) ?? normalizeSubagentStatus(tr.bgResponse.status)
 
       // sessionFile 回退查找：listResponse/bg-notify 都不带 sessionFile 时，
       // 扫描 subagent session 目录用 startedAt 时间戳匹配最近的 JSONL 文件。
@@ -239,7 +233,8 @@ export function extractSubagentsFromSessionFile(filePath: string): SubagentRecor
       records.push({
         subagentId,
         sessionFile: resolvedSessionFile,
-        agent: listItem?.agent ?? tc.agent,
+        // agent 优先级：bg-notify（pi 执行期真实值）> listResponse item > toolCall startParam（LLM 传的，兜底 general-purpose）
+        agent: notify?.agent ?? listItem?.agent ?? tc.agent,
         slug: tc.slug,
         task: tc.task,
         status,
@@ -336,27 +331,5 @@ function parseIsoFromFilename(filename: string): number | null {
   return Number.isNaN(time) ? null : time
 }
 
-/** 将 pi-subagent-workflow 的状态字符串归一化为 SubagentStatus */
-function normalizeStatus(status: string | undefined): SubagentStatus {
-  if (!status) return 'running'
-  switch (status) {
-    case 'done':
-    case 'completed':
-    case 'success':
-      return 'done'
-    case 'failed':
-    case 'error':
-      return 'failed'
-    case 'cancelled':
-    case 'canceled':
-      return 'cancelled'
-    case 'crashed':
-      return 'crashed'
-    case 'running':
-    case 'pending':
-    case 'active':
-      return 'running'
-    default:
-      return 'running'
-  }
-}
+// 状态归一化已迁移至 @xyz-agent/shared 的 normalizeSubagentStatus（runtime 实时路径与磁盘路径共用，
+// 避免两份手写实现漂移）。历史 bug：event-interpreter 的三元缺 completed/crashed 归一。

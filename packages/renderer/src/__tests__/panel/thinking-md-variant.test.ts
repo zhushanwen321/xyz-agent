@@ -13,7 +13,7 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/thinking-md-variant.test.ts
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, h } from 'vue'
 
@@ -46,6 +46,22 @@ vi.mock('@/components/panel/message-stream/AmbiguousFilePopover.vue', () => ({
 }))
 
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
+
+// H2 后 MarkdownRenderer watch 改用 rAF 调度渲染。这些用例不验证节流时序，
+// 只需 rAF 回调同步执行（mount 后 nextTick 即渲染完成）。
+const _originalRAF = globalThis.requestAnimationFrame
+const _originalCAF = globalThis.cancelAnimationFrame
+beforeAll(() => {
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+    cb(0)
+    return 0
+  }) as typeof requestAnimationFrame
+  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+})
+afterAll(() => {
+  globalThis.requestAnimationFrame = _originalRAF
+  globalThis.cancelAnimationFrame = _originalCAF
+})
 
 /** 让 mockRenderSegments 返回 markdown 结构段（模拟 markdown-it 解析结果） */
 function mockMarkdownSegments(html: string): void {

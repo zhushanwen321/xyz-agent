@@ -107,6 +107,8 @@ export class MessageDispatcher {
       try {
         this.workspaceService.record(activeSession.cwd)
       } catch (e) {
+        // best-effort 降级：record 是非用户阻塞的副作用，失败仅 warn 不传播——
+        // isGenerating 已置 true 不回退，pi.prompt 照常执行（见上方 W6 说明）。
         console.warn('[message-dispatcher] workspace.record failed (non-blocking), sid=',
           sessionId, e instanceof Error ? e.message : e)
       }
@@ -167,6 +169,8 @@ export class MessageDispatcher {
       console.error(`[message-dispatcher] abort failed: sessionId=${sessionId}`, errMsg)
       const active = this.svc.getSessionByClient(client)
       if (active) active.isGenerating = false
+      // W4：abort 失败（异常退出）写 stopped 终态
+      this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed: ${errMsg}`)
       this.broker.broadcast({
         type: 'message.error',
         payload: { sessionId, message: `Abort failed: ${errMsg}` },
@@ -181,6 +185,8 @@ export class MessageDispatcher {
     // 广播流式 message.complete 让前端正常收口（与 sendPrompt 错误路径广播 message.error 对称）。
     const active = this.svc.getSessionByClient(client)
     if (active) active.isGenerating = false
+    // W4：用户主动 abort 写 stopped 终态
+    this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
     this.broker.broadcast({
       type: 'message.complete',
       payload: { sessionId, stopReason: 'aborted' },

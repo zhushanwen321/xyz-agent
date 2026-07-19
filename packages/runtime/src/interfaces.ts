@@ -21,6 +21,7 @@ import type {
   FileNode,
   SubagentRecord,
   WorkflowRunRecord,
+  SystemPromptConfig,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -89,7 +90,13 @@ export interface ISessionService {
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string, customInstructions?: string): Promise<void>
-  getHistory(sessionId: string): Promise<Message[]>
+  getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
+  /**
+   * 获取 session 全量历史（直读 JSONL 文件，不截断）。
+   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getHistory），文件路径 fallback 截断尾读；
+   * getFullHistory 直接全量读文件，供前端「加载更多历史」按钮调用（FR-4）。
+   */
+  getFullHistory(sessionId: string): Promise<Message[]>
   /**
    * 获取 session 派生的 subagent 列表（从主 session JSONL 的 subagent toolCall/toolResult 提取）。
    * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 subagent 调用时返回空数组。
@@ -132,7 +139,13 @@ export interface ISessionService {
    * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
    * runtime 读源 JSONL 按树回溯截断，写新文件后 switch_session 加载。源 session 不受影响。
    */
-  forkSession(srcSessionId: string, fromPiEntryId: string, includeFrom: boolean, label?: string): Promise<SessionSummary>
+  forkSession(
+    srcSessionId: string,
+    fromPiEntryId: string | undefined,
+    includeFrom: boolean,
+    label?: string,
+    opts?: { fromMessageTimestamp?: number; fromMessageRole?: string },
+  ): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
   /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/handleTurnEndSideEffects） */
@@ -224,6 +237,13 @@ export interface IConfigService {
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
   getConfigDir(): string
+  // ── System prompt config（FR-6/FR-7，ADR-0038）──
+  /** 读取 system-prompt.json。损坏时 corrupted=true 且返回默认配置。 */
+  getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean }
+  /** 写入 system-prompt.json。replace.prompt 超长（>SYSTEM_PROMPT_MAX_LENGTH）返回 ok:false + error，不写盘。 */
+  setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string }
+  /** 返回当前生效的替换提示词（replace.enabled && prompt 非空白时），否则 undefined。rpc-client spawn 时透传。 */
+  getReplaceSystemPrompt(): string | undefined
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

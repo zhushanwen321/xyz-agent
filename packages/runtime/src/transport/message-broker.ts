@@ -63,12 +63,29 @@ export class ServerMessageBroker implements IMessageBroker {
   }
 
   broadcast(msg: ServerMessage): void {
+    // L6（perf-quick-batch）：循环外序列化一次。
+    // 旧实现循环内调 this.send → send 内 JSON.stringify(msg)，N 客户端 = N 次重复
+    // 序列化同一对象。session.list 等大 payload 广播时主线程被重复 stringify 阻塞。
+    // 现在循环前序列化一次得 payload 字符串，循环内直接 ws.send(payload)。
+    let payload: string
+    try {
+      payload = JSON.stringify(msg)
+    // D4（不等价语义，刻意取舍）：提级后整次广播只 stringify 一次，
+    // 一旦失败 → 本次广播对**所有 client 都丢弃**（连原本可正常收的 client 也收不到）。
+    // 旧实现（循环内 per-client send 各自 stringify）失败只影响那一个 client，其余 client 照常收到。
+    // 取舍：减少 N×stringify 主线程开销（大 payload 广播时显著）换取 per-client 失败隔离性损失。
+    // 失败时显眼告警（[broadcast] 前缀，便于运维日志检索排查）。
+    } catch (e) {
+      console.error('[broadcast] payload serialization failed — entire broadcast dropped for all clients:', e)
+      return
+    }
     for (const ws of this.pool.clients) {
       // M6: 单 client send 失败不中断其余 client 广播。
-      // TOCTOU：readyState 检查（send 内）与 ws.send 间连接可能已关闭，ws.send 抛错，
+      // TOCTOU：readyState 检查与 ws.send 间连接可能已关闭，ws.send 抛错，
       // 无 try-catch 会中断整个 for 循环，导致其余 client 收不到消息。
+      if (ws.readyState !== WS_OPEN) continue
       try {
-        this.send(ws, msg)
+        ws.send(payload)
       // eslint-disable-next-line taste/no-silent-catch -- broadcast 是 fire-and-forget 推送，单 client 失败不能影响其余 client
       } catch {
         // 单 client 已断连/异常，跳过继续广播给其余 client
@@ -108,7 +125,7 @@ export class ServerMessageBroker implements IMessageBroker {
   // 每个 builder 返回 1~2 条消息（provider 段含 config.providers + model.list）。
 
   private buildSessionListMsg(): ServerMessage {
-    return { type: 'session.list', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } }
+    return { type: 'config.sessions', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } }
   }
   /**
    * app.info 消息构造（sendInitialState 首推 + broadcastAppInfo 重广播共用）。
@@ -199,7 +216,7 @@ export class ServerMessageBroker implements IMessageBroker {
         run: () => this.send(ws, this.buildAppInfoMsg()),
       },
       {
-        label: 'session.list',
+        label: 'config.sessions',
         run: () => this.send(ws, this.buildSessionListMsg()),
       },
       {
@@ -230,6 +247,16 @@ export class ServerMessageBroker implements IMessageBroker {
       {
         label: 'config.agentDirs',
         run: () => this.send(ws, this.buildAgentDirsMsg()),
+      },
+      {
+        // config.systemPrompt（FR-4/FR-5）：spec §6 要求「reply + broadcast + 初始推送三用」。
+        // 前两用在 settings handler + ConfigService 变更广播，此段补 initial-state 推送，
+        // 前端首次打开 Settings · SystemPromptPage 无需额外 getSystemPrompt 往返即可填充编辑态。
+        label: 'config.systemPrompt',
+        run: () => {
+          const r = configService.getSystemPromptConfig()
+          this.send(ws, { type: 'config.systemPrompt', id: this.nextPushId(), payload: { config: r.config, corrupted: r.corrupted } })
+        },
       },
       {
         label: 'config.plugins',

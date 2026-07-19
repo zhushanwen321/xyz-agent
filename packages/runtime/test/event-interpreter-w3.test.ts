@@ -94,7 +94,8 @@ describe('EventInterpreter · W3 onTurnUsage / onTurnFinalize 回调', () => {
       await new Promise<void>(r => setTimeout(r, 0))
 
       expect(onTurnFinalize).toHaveBeenCalledTimes(1)
-      expect(onTurnFinalize).toHaveBeenCalledWith('sid-u6b')
+      // onTurnFinalize 签名 (sessionId, stopReason?) —— 正常 turn-end 路径传 stopReason
+      expect(onTurnFinalize).toHaveBeenCalledWith('sid-u6b', 'end_turn')
     })
 
     it('turn-end 先转发 message.complete 再调 onTurnFinalize', async () => {

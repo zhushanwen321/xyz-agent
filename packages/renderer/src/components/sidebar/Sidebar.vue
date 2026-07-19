@@ -34,7 +34,7 @@
         <Button
           variant="ghost"
           class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg"
-          @click="searchOpen = true"
+          @click="searchModal.open()"
         >
           <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
@@ -155,7 +155,7 @@
         <span class="flex-1 truncate text-fg">{{ t('sidebar.developer') }}</span>
         <Button
           variant="ghost"
-          class="grid size-6 shrink-0 place-items-center rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-fg"
+          class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-subtle transition-colors hover:bg-surface-hover hover:text-fg [&_svg]:size-[14px]"
           :title="t('sidebar.settingsTitle')"
           @click="openSettings()"
         >
@@ -165,7 +165,7 @@
     </div>
 
     <!-- 搜索浮层（⌘K 触发的全局 Overlay，spec §搜索浮层剥离） -->
-    <SearchModal v-model:open="searchOpen" :active-session-id="focusedSessionId" />
+    <SearchModal v-model:open="isOpen" :active-session-id="focusedSessionId" />
 
     <RenameSessionDialog
       v-model:open="renameOpen"
@@ -202,11 +202,14 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
 import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
+import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import * as events from '@/api/events'
 
 const { t } = useI18n()
+const searchModal = useSearchModal()
+const { isOpen } = searchModal
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const { error: toastError } = useToast()
@@ -223,9 +226,6 @@ const openSettings = inject<() => void>('openSettings', () => {})
 const piVersion = ref('')
 /** xyz-agent 版本（vite define 构建时注入，见 renderer/vite.config.ts） */
 const appVersion = __APP_VERSION__
-
-/** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
-const searchOpen = ref(false)
 
 /** Dialog 状态 */
 const renameOpen = ref(false)
@@ -369,7 +369,7 @@ interface KeymapEntry {
 }
 const commandStore = useCommandStore()
 const keymap: KeymapEntry[] = [
-  { key: 'k', action: () => { searchOpen.value = !searchOpen.value } },
+  { key: 'k', action: () => { searchModal.toggle() } },
   { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
   { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
 ]

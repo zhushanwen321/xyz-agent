@@ -5,46 +5,37 @@
  * - 请求-响应：status（→ 'git.status:result' 同步 reply，经 pending.resolve 消费）
  * - 动作-ack：stage/unstage/commit（→ 'message.status' ack，payload {sessionId, status}）
  *
- * 依赖方向：transport（send）+ pending（请求-响应配对）。不 import events（git 无 server-push 订阅）。
+ * 依赖方向：command（类型化原语，统一 pending.create + register + transport.send）。不 import events（git 无 server-push 订阅）。
  *
  * 注：stage/unstage/commit 的 ack 复用 'message.status' type（protocol.ts 既有），前端 routeInbound
  * 按 msg.id resolve pending；domain 返回 Promise<void>，忽略 ack payload。失败走 error envelope
  * （routeInbound 对 type==='error' 走 pending.reject），domain Promise 抛出。
  */
 import type { GitStatusResult } from '@xyz-agent/shared'
-import * as transport from '../transport'
-import * as pending from '../pending'
+import { command } from '../request'
 
 /** 查询 session cwd 的全量 git 状态（FR-12）。session 不存在 / 非 git 仓库 → isRepo=false 降级结果。 */
 export function status(sessionId: string): Promise<GitStatusResult> {
-  const id = pending.create()
-  const result = pending.register<GitStatusResult>(id)
-  transport.send({ type: 'git.status', id, payload: { sessionId } })
-  return result
+  return command('git.status', { sessionId })
 }
 
 /** 单文件 diff patch（#5，UC-6 点文件预览）。越界/超时/非 repo → Promise reject（error envelope）。 */
-export function getDiff(sessionId: string, path: string): Promise<{ patch: string; binary: boolean }> {
-  const id = pending.create()
-  const result = pending.register<{ patch: string; binary: boolean }>(id)
-  transport.send({ type: 'git.diff', id, payload: { sessionId, path } })
-  return result
+export async function getDiff(
+  sessionId: string,
+  path: string,
+): Promise<{ patch: string; binary: boolean }> {
+  const reply = await command('git.diff', { sessionId, path })
+  return { patch: reply.patch, binary: reply.binary }
 }
 
 /** 暂存文件。空 filePaths → git add -A（全量暂存）。 */
 export function stage(sessionId: string, filePaths?: string[]): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'git.stage', id, payload: { sessionId, filePaths } })
-  return result
+  return command('git.stage', { sessionId, filePaths })
 }
 
 /** 取消暂存。空 filePaths → git reset HEAD（全量取消暂存）。 */
 export function unstage(sessionId: string, filePaths?: string[]): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'git.unstage', id, payload: { sessionId, filePaths } })
-  return result
+  return command('git.unstage', { sessionId, filePaths })
 }
 
 /**
@@ -52,10 +43,7 @@ export function unstage(sessionId: string, filePaths?: string[]): Promise<void> 
  * 冲突态 → runtime 返回 'git_conflict' error（domain Promise reject）。
  */
 export function commit(sessionId: string, message?: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'git.commit', id, payload: { sessionId, message: message ?? '' } })
-  return result
+  return command('git.commit', { sessionId, message: message ?? '' })
 }
 
 /**
@@ -63,10 +51,7 @@ export function commit(sessionId: string, message?: string): Promise<void> {
  * 分支不存在 / dirty 冲突 / 非 git → runtime GitError → Promise reject（调用方留 popover 显错）。
  */
 export function checkout(sessionId: string, name: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'git.checkout', id, payload: { sessionId, name } })
-  return result
+  return command('git.checkout', { sessionId, name })
 }
 
 /**
@@ -74,8 +59,5 @@ export function checkout(sessionId: string, name: string): Promise<void> {
  * 分支名非法/已存在/超时→runtime GitError→Promise reject（调用方留 modal 显错，D-7）。
  */
 export function createBranch(sessionId: string, name: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'git.createBranch', id, payload: { sessionId, name } })
-  return result
+  return command('git.createBranch', { sessionId, name })
 }

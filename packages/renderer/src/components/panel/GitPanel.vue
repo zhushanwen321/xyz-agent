@@ -55,7 +55,7 @@
       <li
         v-for="f in result.files"
         :key="f.path"
-        class="flex cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 hover:bg-surface-2"
+        class="group/li flex cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 hover:bg-surface-2"
         :title="t('panel.git.viewDiff', { path: f.path })"
         @click="onFileClick(f.path)"
       >
@@ -64,6 +64,15 @@
           :class="statusBadgeClass(f.status)"
         >{{ statusBadge(f.status) }}</span>
         <span class="min-w-0 flex-1 truncate text-subtle">{{ f.path }}</span>
+        <Button
+          variant="ghost"
+          data-testid="git-inject-file"
+          class="size-5 shrink-0 rounded-sm p-0 opacity-0 transition-opacity hover:text-accent group-hover/li:opacity-100"
+          :title="t('panel.detail.injectFileRef')"
+          @click.stop="onInjectFileRef(f.path)"
+        >
+          <Quote class="size-3" />
+        </Button>
       </li>
     </ul>
 
@@ -105,12 +114,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GitBranch, RefreshCw } from '@lucide/vue'
+import { GitBranch, RefreshCw, Quote } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useGitStatusOrFail, type GitState } from '@/composables/features/useGitStatus'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useSessionStore } from '@/stores/session'
+import { useComposerInjectionStore } from '@/stores/composer-injection'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 const { t } = useI18n()
@@ -131,6 +142,21 @@ const {
 
 const fileTreeStore = useFileTreeStore()
 const drawer = useSideDrawer()
+const sessionStore = useSessionStore()
+const composerInjection = useComposerInjectionStore()
+
+/**
+ * FR-6: 注入文件引用到 composer（无行范围，target=current）。
+ * GitPanel 无 sessionId prop（git 状态全局），取活跃 session id 作为注入目标。
+ * @click.stop 阻止冒泡到 li 的 onFileClick（跳 detail），使注入与跳转互不干扰。
+ */
+function onInjectFileRef(path: string): void {
+  composerInjection.requestInjection({
+    target: 'current',
+    path,
+    sessionId: sessionStore.active?.id ?? null,
+  })
+}
 
 /**
  * 点击文件项 → 跳 detail tab 查看 diff（复刻 FileTreeRow.onSelectFile 模式）。

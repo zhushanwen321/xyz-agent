@@ -21,8 +21,8 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
-import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
-import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
+import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
@@ -65,11 +65,11 @@ export interface EventInterpreterOptions {
    *   1. 复位 isGenerating=false（不迁移则正常生成完成后 session 永远 busy，下条消息被拒）
    *   2. tryPersistLabel 兜底（turn_end 时 pi flush 尚未完成、文件不存在，在此补写）
    */
-  onTurnFinalize?: (sessionId: string) => void
+  onTurnFinalize?: (sessionId: string, stopReason?: string) => void
   /** thinking_level_changed 回写 session 缓存（组合根注入 sessionService.setThinkingLevelCache）。 */
   onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
-  /** extension 交互式 UI 请求（注册前端超时）。组合根注入 server.registerExtensionTimeout。 */
-  onExtensionUIRequest?: (requestId: string, sessionId: string, method: string) => void
+  /** extension 交互式 UI 请求（注册前端超时 + 缓存 pending 请求）。组合根注入 server.registerExtensionTimeout。 */
+  onExtensionUIRequest?: (requestId: string, sessionId: string, method: string, payload: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
@@ -94,6 +94,8 @@ const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
 const SILENT_WARN_MS = 120_000
 /** ABORT 阈值：连续 300s 无活动事件 → 判定卡死，触发 onSilentAbort（上层 abort pi + 复位 isGenerating）。 */
 const SILENT_ABORT_MS = 300_000
+/** ms → s 换算系数（WARN 文案展示秒数）。 */
+const MS_PER_SECOND = 1000
 
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
@@ -111,12 +113,19 @@ export class EventInterpreter {
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
   // ── W6 pi watchdog 状态（per-session，turn 维度）──
-  /** ABORT 定时器句柄（300s 无活动事件触发 onSilentAbort），turn-start/活动事件启动/重置，agent_end 销毁清除 */
+  // M8（perf-quick-batch）：改为单定时器 + lastActivityAt 时间戳方案。
+  // 旧实现每活动事件都 clearWatchdogTimers（2 clearTimeout）+ 重排 2 setTimeout，
+  // 高频 token 流下每 token 4 次定时器操作（2000 token = 8000 次）。
+  // 现在只维护一个指向最近 deadline（WARN 或 ABORT）的定时器 + 最后活动时间戳；
+  // reset 只更新时间戳（O(1)，不碰定时器），定时器到点时据 now-lastActivityAt 判定真阈值。
+  /** 最后一次活动事件的时间戳（Date.now()）。reset 只更新它，不重排定时器。 */
+  private watchdogLastActivityAt = 0
+  /** 单定时器句柄，指向最近的 deadline（WARN 未发→WARN 阈值；已发→ABORT 阈值）。 */
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null
-  /** WARN 定时器句柄（120s 无活动事件广播 stream_error），与 watchdogTimer 同生命周期 */
-  private watchdogWarnTimer: ReturnType<typeof setTimeout> | null = null
   /** 本轮 WARN 是否已广播（避免 reset 前重复广播；活动事件到达时复位） */
   private watchdogWarned = false
+  /** extension-ui 等待用户期间暂停 watchdog（用户未响应时不视为卡死）。 */
+  private watchdogPaused = false
 
   constructor(
     private readonly sessionId: string,
@@ -147,7 +156,10 @@ export class EventInterpreter {
         // 兜底强制执行。onTurnFinalize 幂等（finalizeSession 幂等，见 chat.ts），重复调用无副作用。
         if (ev.kind === 'turn-end') {
           try {
-            this.opts.onTurnFinalize?.(this.sessionId)
+            // S4：传 ev.stopReason 而非 undefined——对齐正常路径（handleTurnEnd L352）。
+            // handleTurnEndSideEffects 在 stopReason undefined 时 outcome 走 'done' 分支，
+            // 对「handler 抛错」场景写 'done' 是错的；turn-end 事件本身携带 stopReason（types.ts L120）。
+            this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
           } catch (finalizeErr) {
             // 兜底失败也不阻断——至少尝试清 watchdog（best-effort：onTurnFinalize 内部异常不传播）
             console.debug('[event-interpreter] onTurnFinalize fallback failed:', finalizeErr)
@@ -217,7 +229,10 @@ export class EventInterpreter {
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
         return
       case 'extension-ui':
-        this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method)
+        // [2026-07-16] ask-user 等 extension UI 等待用户期间暂停 watchdog，
+        // 用户未响应不应触发「长时间无响应」警告或 ABORT。
+        this.pauseWatchdog()
+        this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':
         this.opts.onThinkingLevelChanged?.(this.sessionId, ev.level)
@@ -336,8 +351,8 @@ export class EventInterpreter {
       this.opts.onContextUpdate?.(this.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens ?? 0 })
     }
 
-    // 副作用：复位 isGenerating=false + tryPersistLabel 兜底（原 attachUsageListener agent_end 分支）
-    this.opts.onTurnFinalize?.(this.sessionId)
+    // 副作用：复位 isGenerating=false + tryPersistLabel 兜底 + session_end 终态写入（W4）
+    this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
 
     // 观测 hook（agent_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'agent_end', stopReason: ev.stopReason, usage: ev.usage }).catch(() => {})
@@ -356,34 +371,77 @@ export class EventInterpreter {
   // ── W6 pi watchdog：turn 级静默卡死检测（设计文档 A2）──
 
   /**
+   * 暂停 watchdog（extension-ui 等待用户期间调用）。
+   *
+   * 清当前定时器并置暂停标志；暂停期间 armWatchdogTimer 不排新定时器。
+   * 恢复靠 resetWatchdog（用户响应后 pi 继续产出活动事件时触发），无显式 resume 方法。
+   */
+  private pauseWatchdog(): void {
+    this.clearWatchdogTimer()
+    this.watchdogPaused = true
+  }
+
+  /**
    * 启动 watchdog（turn-start 触发）。
    *
-   * 清掉上一轮残留定时器后，启动 WARN（120s）和 ABORT（300s）两级定时器。
-   * WARN 触发时广播 message.stream_error{kind:'silent'} 提醒用户但不中断；
-   * ABORT 触发时调 onSilentAbort（上层 abort pi + 复位 isGenerating）并清自身。
+   * 记录活动时间戳并排一个指向 WARN 阈值的定时器。
    */
   private startWatchdog(): void {
-    this.scheduleWatchdog()
+    this.watchdogLastActivityAt = Date.now()
+    this.watchdogWarned = false
+    this.armWatchdogTimer(SILENT_WARN_MS)
   }
 
   /**
    * 重置 watchdog（活动事件到达时触发）。
    *
-   * 与 startWatchdog 共用 schedule 逻辑：清掉 WARN/ABORT 定时器 + 复位 watchdogWarned 后重排。
+   * M8（perf-quick-batch）：只更新活动时间戳 + 复位 warned，**不重排定时器**。
    * 活动事件定义（设计文档 §3.2）：message（text_delta/thinking_*）/ tool-call-start / tool-call-end。
-   * 这些事件表明 pi 仍在产出，故重置计时，避免长任务/长思考误判。
+   * 这些事件表明 pi 仍在产出，故重置计时。
+   *
+   * INVAR-M8-2（不提前）：定时器到点时用 now-lastActivityAt 判定，活动持续时 diff 不到阈值 → 不触发。
+   * 旧实现每帧 clear+重排两定时器（每 token 4 次操作），现 reset 为 O(1)。
+   *
+   * W6（可维护性硬化）：暂停态恢复语义对顺序敏感——「先清 paused」与「后 armWatchdogTimer」不可颠倒
+   * （armWatchdogTimer 内有 `if (paused) return`，若先 arm 再清 paused，下次 tick 仍可能误判暂停态）。
+   * 这里显式分两步：①清 paused 标志（恢复 active），②据 timer 是否存在决定是否补排。
    */
   private resetWatchdog(): void {
-    this.scheduleWatchdog()
+    // ① 暂停态恢复：用户响应后 pi 继续产出活动事件，清暂停标志（隐式 resume，无独立方法）。
+    //    必须在 armWatchdogTimer 之前清——否则 arm 内部 `if (paused) return` 会误跳过补排。
+    this.watchdogPaused = false
+    // ② 更新活动时间戳 + 复位 warned（活动发生 → 已发 WARN 也作废，下轮重新计）。
+    this.watchdogLastActivityAt = Date.now()
+    this.watchdogWarned = false
+    // ③ 定时器若已存在则保留（到点再判）；若无（如首事件前未 start 或刚从暂停恢复）则补排指向 WARN。
+    if (!this.watchdogTimer) this.armWatchdogTimer(SILENT_WARN_MS)
   }
 
-  /** 共享的定时器重排逻辑：清旧 + 复位 warned + 排 WARN/ABORT 两级。 */
-  private scheduleWatchdog(): void {
-    this.clearWatchdogTimers()
-    this.watchdogWarned = false
-    // WARN 先到：广播提示，不清 ABORT 计时（继续等卡死判定）
-    this.watchdogWarnTimer = setTimeout(() => {
-      if (this.watchdogWarned) return
+  /**
+   * 排一个定时器，到点后据真实静默时长判定触发 WARN 还是 ABORT。
+   *
+   * 单定时器方案：只指向「当前最近的 deadline」。到点时计算 now-lastActivityAt：
+   * - 未达 WARN → 活动发生过（lastActivityAt 被推进），重排到 WARN 剩余时间
+   * - 达 WARN 未发 → 广播 WARN，重排到 ABORT
+   * - 达 ABORT → 触发 onSilentAbort 并清自身
+   */
+  private armWatchdogTimer(delayMs: number): void {
+    if (this.watchdogPaused) return // 暂停期间不排定时器（pauseWatchdog 已清旧 timer）
+    this.clearWatchdogTimer()
+    this.watchdogTimer = setTimeout(() => this.onWatchdogTick(), delayMs)
+  }
+
+  /** 定时器到点回调：据真实静默时长判定。 */
+  private onWatchdogTick(): void {
+    this.watchdogTimer = null
+    const silentFor = Date.now() - this.watchdogLastActivityAt
+    if (silentFor >= SILENT_ABORT_MS) {
+      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
+      this.clearWatchdogTimer()
+      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
+      return
+    }
+    if (silentFor >= SILENT_WARN_MS && !this.watchdogWarned) {
       this.watchdogWarned = true
       console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
       // B1（PR#86 review）：WARN 走独立类型 message.stream_warn（提示性，不中断流），
@@ -393,33 +451,33 @@ export class EventInterpreter {
         type: 'message.stream_warn' as ServerMessageType,
         payload: {
           sessionId: this.sessionId,
-          content: `长时间无响应（${SILENT_WARN_MS / 1000}s 无活动）`,
+          content: `长时间无响应（${SILENT_WARN_MS / MS_PER_SECOND}s 无活动）`,
         },
       })
-    }, SILENT_WARN_MS)
-    // ABORT 到：判定卡死，触发回调并清自身（abort 路径会广播终态）
-    this.watchdogTimer = setTimeout(() => {
-      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
-      this.clearWatchdogTimers()
-      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
-    }, SILENT_ABORT_MS)
+      // 已发 WARN，重排到 ABORT 剩余时间
+      this.armWatchdogTimer(SILENT_ABORT_MS - silentFor)
+      return
+    }
+    // 未达阈值（活动发生过）或已发 WARN 未到 ABORT：重排到最近 deadline。
+    const nextDeadline = this.watchdogWarned
+      ? SILENT_ABORT_MS - silentFor
+      : SILENT_WARN_MS - silentFor
+    this.armWatchdogTimer(Math.max(0, nextDeadline))
   }
 
   /**
    * 清除 watchdog（agent_end / ABORT 触发 / session 销毁时调用）。
-   * 清掉两级定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
+   * 清掉定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
    */
   private clearWatchdog(): void {
-    this.clearWatchdogTimers()
+    this.clearWatchdogTimer()
     this.watchdogWarned = false
+    this.watchdogPaused = false
+    this.watchdogLastActivityAt = 0
   }
 
-  /** 仅清定时器句柄（不触碰 warned，供 scheduleWatchdog 重排前调用）。 */
-  private clearWatchdogTimers(): void {
-    if (this.watchdogWarnTimer) {
-      clearTimeout(this.watchdogWarnTimer)
-      this.watchdogWarnTimer = null
-    }
+  /** 仅清定时器句柄（不触碰 warned/timestamp）。 */
+  private clearWatchdogTimer(): void {
     if (this.watchdogTimer) {
       clearTimeout(this.watchdogTimer)
       this.watchdogTimer = null
@@ -504,36 +562,46 @@ export class EventInterpreter {
 
   /**
    * subagent bg-notify（custom_message）：更新已有记录的终态。
-   * details 结构（BgNotifyDetails）：{id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
+   *
+   * details 两种形态（pi-subagent-workflow notifier 滑动窗口 60s 内合并）：
+   *   - 单条：BgNotifyRecord = {id, status:'done'|'failed'|'cancelled', agent, model, result, error, startedAt, endedAt}
+   *   - 批量：{batch:true, items: BgNotifyRecord[]}
+   *
+   * 用 parseBgNotifyDetails 解析（统一处理两种形态 + 防御性校验），
+   * 用 normalizeSubagentStatus 归一（兼容 completed/error/crashed 等上游变体）。
+   * agent 字段以 notify.agent 为准（pi 执行期回传的真实值，比 startParam 兜底权威）。
+   * 批量多条更新后只广播一次（避免 N 次广播）。
    */
   private handleSubagentBgNotify(msg: ServerMessage): void {
-    const payload = msg.payload as { customType?: string; details?: Record<string, unknown> } | undefined
+    const payload = msg.payload as { customType?: string; details?: unknown } | undefined
     if (payload?.customType !== 'subagent-bg-notify') return
-    const details = payload.details
-    if (!details) return
 
-    const subagentId = typeof details.id === 'string' ? details.id : null
-    if (!subagentId) return
+    const parsed = parseBgNotifyDetails(payload.details)
+    if (!parsed) return
 
-    const existing = this.subagentRecords.get(subagentId)
-    if (!existing) return
+    const records: BgNotifyRecord[] = 'batch' in parsed ? parsed.items : [parsed]
+    let changed = false
+    for (const notify of records) {
+      const existing = this.subagentRecords.get(notify.id)
+      // 只更新已存在的内存记录（running 记录由 handleSubagentEnd 建入），不新建
+      if (!existing) continue
 
-    const status = details.status === 'done' ? 'done'
-      : details.status === 'failed' ? 'failed'
-      : details.status === 'cancelled' ? 'cancelled'
-      : existing.status
-
-    const updated: SubagentRecord = {
-      ...existing,
-      status,
-      model: typeof details.model === 'string' ? details.model : existing.model,
-      error: typeof details.error === 'string' ? details.error : existing.error,
-      startedAt: typeof details.startedAt === 'number' ? details.startedAt : existing.startedAt,
-      endedAt: typeof details.endedAt === 'number' ? details.endedAt : existing.endedAt,
+      const updated: SubagentRecord = {
+        ...existing,
+        status: normalizeSubagentStatus(notify.status),
+        // notify.agent 是 pi 执行期回传的真实 agent（finalize 时从 record.agent 来），
+        // 覆盖 startParam 兜底的 'general-purpose'
+        agent: notify.agent ?? existing.agent,
+        model: notify.model ?? existing.model,
+        error: notify.error ?? existing.error,
+        startedAt: notify.startedAt ?? existing.startedAt,
+        endedAt: notify.endedAt ?? existing.endedAt,
+      }
+      this.subagentRecords.set(notify.id, updated)
+      changed = true
     }
 
-    this.subagentRecords.set(subagentId, updated)
-    this.broadcastSubagents()
+    if (changed) this.broadcastSubagents()
   }
 
   /** 广播当前内存态的全量 subagent 列表（session.subagents server push） */

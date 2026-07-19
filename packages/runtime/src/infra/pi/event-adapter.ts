@@ -390,22 +390,23 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
       }
 
       if (Array.isArray(askUserData?.questions) && askUserData.questions.length > 0) {
+        const requestPayload = {
+          sessionId: sid,
+          requestId,
+          method: 'select',              // 仍是 select（复用回传通道）
+          askUser: true,                 // 标记 ask-user 富交互，前端据此路由到 AskUserOverlay
+          askUserQuestions: askUserData.questions,
+          allowCancel: askUserData.allowCancel ?? true,
+        }
         return [
-          // ★ extension-ui kind 事件：timeout-manager 据此注册 5min 超时。
-          // 漏掉这个会导致用户不响应时 pi select Promise 永挂（与普通 select 分支一致）。
-          { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod },
+          // ★ extension-ui kind 事件：EventInterpreter 据此暂停 watchdog，并通知 server 跟踪请求 + 缓存 pending 请求。
+          // 2026-07-16 后 extension UI 不超时，block 等待用户响应。
+          { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
           {
             kind: 'message',
             message: {
               type: 'extension.ui_request' as ServerMessageType,
-              payload: {
-                sessionId: sid,
-                requestId,
-                method: 'select',              // 仍是 select（复用回传通道）
-                askUser: true,                 // 标记 ask-user 富交互，前端据此路由到 AskUserOverlay
-                askUserQuestions: askUserData.questions,
-                allowCancel: askUserData.allowCancel ?? true,
-              },
+              payload: requestPayload,
             },
           },
         ]
@@ -417,23 +418,24 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     // rpc-mode.js 原样透传），旧代码把 rawOptions 断言为 Array<{label,value}> 后 .map(o=>o.label)
     // 对 string 元素调 .label 产出 undefined[]——普通 select 在前端是坏的。改为 .map(String) 透传。
     const rawOptions = Array.isArray(event.options) ? event.options as unknown[] : undefined
+    const requestPayload = {
+      sessionId: sid,
+      requestId,
+      method,
+      title: event.title,
+      message: event.message,
+      options: rawOptions ? rawOptions.map(String) : undefined,
+      default: event.default as string | undefined,
+      level: event.level as 'info' | 'warn' | 'error' | undefined,
+      prefill: method === METHOD_EDITOR ? (event.prefill as string | undefined) : undefined,
+    }
     return [
-      { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod },
+      { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
       {
         kind: 'message',
         message: {
           type: 'extension.ui_request',
-          payload: {
-            sessionId: sid,
-            requestId,
-            method,
-            title: event.title,
-            message: event.message,
-            options: rawOptions ? rawOptions.map(String) : undefined,
-            default: event.default as string | undefined,
-            level: event.level as 'info' | 'warn' | 'error' | undefined,
-            prefill: method === METHOD_EDITOR ? (event.prefill as string | undefined) : undefined,
-          },
+          payload: requestPayload,
         },
       },
     ]

@@ -17,7 +17,9 @@
  */
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
+import { normalizeContent } from '@xyz-agent/shared'
 import { useChatStore } from '@/stores/chat'
+import { useSessionStore } from '@/stores/session'
 import { deriveStatus } from '@/composables/logic/sessionStatus'
 import type { DerivedStatus } from '@/types'
 
@@ -31,45 +33,93 @@ export interface SessionDigest {
   turnCount: number
 }
 
+/**
+ * computed 实例缓存（W3，ADR 侧栏性能优化）。
+ *
+ * 模块级 Map 缓存 derivedStatus / sessionDigest 的 ComputedRef 实例，同 id 复用，
+ * 消除 Sidebar statusOf 每次 `derivedStatus(id).value` 新建 computed 立即丢弃的浪费
+ * （原实现缓存机制完全失效，侧栏每次渲染 O(N×M)）。
+ *
+ * 缓存共享合理：所有 useSessionDerivations() 调用者（Sidebar/Overview）读同一 chat store，
+ * session id 命名空间一致，Pinia store 是应用级单例。deleteSession 时调 invalidateStatusCache
+ * 清理，避免已删 session 的 computed 残留（残留非泄漏——页面刷新全清，但显式清理更洁）。
+ */
+const statusCache = new Map<string, ComputedRef<DerivedStatus>>()
+const digestCache = new Map<string, ComputedRef<SessionDigest>>()
+
 export function useSessionDerivations() {
   const chat = useChatStore()
-  // [W1] 移除 session store 依赖：isActive 作为 UI 层 SSOT，不再受 activeId 限定
+  // W6：重新引入 session store 取元数据 status（metaStatus）——去全量预 hydrate 后，
+  // 未访问 session 的终态（done/error/stopped）来自 runtime session_end 元数据。
+  const session = useSessionStore()
 
   /**
    * 响应式派生指定 session 的状态点（D6）。
    * 读 chat store 分区末尾消息 + isActive（pendingSend ∨ isGenerating）。
    * [W1] isActive 作为 UI 层 SSOT，消除提交后到 message_start 之间空窗期的状态不一致。
+   * [W3] 同 id 复用缓存的 ComputedRef（消除每次新建丢弃的浪费）。computed 只在依赖变化时重算，
+   * 配合 W2 的 isGenerating O(1)，单次重算也高效。
+   * [W6] 传 metaStatus（session 元数据 status），未 hydrate session 用它兜底终态。
    */
   function derivedStatus(id: string): ComputedRef<DerivedStatus> {
-    return computed(() => {
-      return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id))
-    })
+    let c = statusCache.get(id)
+    if (!c) {
+      // [W10 KNOWN-LIMIT] session.list.find 是 O(n)，侧栏 N 个 session 各调一次 derivedStatus
+      // 致整体 O(n²)。session.list 规模通常 <50（用户活跃 session 数有限，LRU 上限 8），
+      // O(n²) 可接受，不做 index Map 优化（避免引入额外维护成本）。若未来 session 规模增长，
+      // 可改用 Map<id, status> 索引（session store 内维护）降至 O(n)。
+      c = computed(() => {
+        const meta = session.list.find((s) => s.id === id)?.status
+        return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id), meta)
+      })
+      statusCache.set(id, c)
+    }
+    return c
   }
 
   /**
    * 响应式派生指定 session 的鸟瞰摘要（Overview 卡片用）。
    * - summary：末条 assistant 文本（content），无则空串（卡片不渲染摘要区）
    * - turnCount：user 消息数（回合 = user + 其后 assistant 序列）
-   * 文件改动数无 mock 数据源（runtime file-changes 未联调），不臆造，卡片隐藏该指标。
-   * 计算逻辑与重构前完全一致。
+   * [W3] 同 id 复用缓存的 ComputedRef（与 derivedStatus 同模式）。
    */
   function sessionDigest(id: string): ComputedRef<SessionDigest> {
-    return computed(() => {
-      const msgs = chat.getMessages(id)
-      let lastAssistant = ''
-      for (let i = msgs.length - 1; i >= 0; i -= 1) {
-        if (msgs[i].role === 'assistant') {
-          lastAssistant = msgs[i].content
-          break
+    let c = digestCache.get(id)
+    if (!c) {
+      c = computed(() => {
+        const msgs = chat.getMessages(id)
+        let lastAssistant = ''
+        for (let i = msgs.length - 1; i >= 0; i -= 1) {
+          if (msgs[i].role === 'assistant') {
+            lastAssistant = normalizeContent(msgs[i].content)
+            break
+          }
         }
-      }
-      const turnCount = msgs.filter((m) => m.role === 'user').length
-      return { summary: lastAssistant, turnCount }
-    })
+        const turnCount = msgs.filter((m) => m.role === 'user').length
+        return { summary: lastAssistant, turnCount }
+      })
+      digestCache.set(id, c)
+    }
+    return c
   }
 
   return {
     derivedStatus,
     sessionDigest,
+    invalidateStatusCache,
+  }
+}
+
+/**
+ * 清除派生状态缓存（deleteSession 时调用，W3）。
+ * @param sessionId 指定 id 清除；不传则清除全部。
+ */
+export function invalidateStatusCache(sessionId?: string): void {
+  if (sessionId) {
+    statusCache.delete(sessionId)
+    digestCache.delete(sessionId)
+  } else {
+    statusCache.clear()
+    digestCache.clear()
   }
 }

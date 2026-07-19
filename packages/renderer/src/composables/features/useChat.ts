@@ -12,11 +12,14 @@
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
+import { ref } from 'vue'
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
+import type { Segment } from '@xyz-agent/shared'
+import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
 
 const t = i18n.global.t
 
@@ -32,6 +35,40 @@ const t = i18n.global.t
  *   不在 ack 时拆订阅。
  */
 const streamSubscriptions = new Map<string, () => void>()
+
+/**
+ * W4/N1：记录哪些 session 的历史被尾读截断了（有更早的 turn 可加载）。
+ * MessageStream 据此显隐「加载更多历史」按钮。hydrate 时设置。
+ * 用 ref<Set> 保证响应式（MessageStream 的 computed showLoadMore 能自动更新）。
+ */
+const historyTruncatedSessions = ref<Set<string>>(new Set())
+
+/**
+ * 重置 useChat 模块级状态（测试隔离用）。
+ *
+ * useChat() 是 composable 工厂但把会话级状态（streamSubscriptions Map、
+ * historyTruncatedSessions Set）放在模块顶层，跨 useChat() 调用共享
+ * （Composer/Panel/Sidebar/useNewTaskFlow 共用同一份）。测试间不 reset
+ * 会泄漏到下一用例：streamSubscriptions 残留 + historyTruncatedSessions
+ * 永久 true。测试需在 beforeEach 调用本函数重置。
+ *
+ * 生产代码无需调用（session 切换/删除时各自清理：disposeSession 取消订阅，
+ * loadMoreHistory 清截断标记）。
+ */
+export function resetChatModuleState(): void {
+  // 清空 stream 订阅：逐个调 unsub（解除 WS 订阅）+ 清空 Map
+  for (const [, unsub] of streamSubscriptions) {
+    try {
+      unsub()
+    // eslint-disable-next-line taste/no-silent-catch -- 测试隔离用：unsub 失败不应阻断其余订阅清理，仅记录便于诊断
+    } catch (e) {
+      console.warn('[useChat] stream unsub failed:', e)
+    }
+  }
+  streamSubscriptions.clear()
+  // 重置 history 截断标记
+  historyTruncatedSessions.value = new Set()
+}
 
 /** 确保指定 session 已订阅流式事件（幂等：已订阅则 no-op）。 */
 function ensureStreamSubscription(
@@ -71,9 +108,11 @@ function ensureStreamSubscription(
       case 'session.renamed': {
         // pi 改写 session 名（session_info_changed → session.renamed，见 event-adapter.ts）。
         // guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
-        const payload = msg.payload as { sessionId?: string; name?: string }
-        if (payload.sessionId && payload.name) {
-          sessionStore.updateLabel(payload.sessionId, payload.name)
+        // 用闭包 sid（对称 compacting/compacted handler）：session.* 走 session 级通道
+        // (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。
+        const payload = msg.payload as { name?: string }
+        if (payload.name) {
+          sessionStore.updateLabel(sid, payload.name)
         }
         break
       }
@@ -124,22 +163,23 @@ export function useChat() {
    * 显式接收 sessionId：双 panel 下 Composer 各自有独立 sessionId（panel leaf 绑定），
    * send 目标由调用方传入，不读全局 session.activeId（否则 standby panel 发消息会串到 active panel）。
    */
-  async function send(sessionId: string, text: string): Promise<void> {
+  async function send(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
-    const trimmed = text.trim()
-    if (!trimmed) return
+    if (segments.length === 0) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim()) return
 
     // [B 策略 D-001] busy 时自动转 steer（追加上下文，不打断当前回合）
     if (chat.isActive(sid)) {
-      await steer(sid, trimmed)
+      await steer(sid, segments)
       return
     }
 
-    chat.appendUser(sid, trimmed)
+    chat.appendUser(sid, segments)
     ensureStreamSubscription(sid, chat, session)
     chat.addPendingSend(sid)
     try {
-      await chatApi.send(sid, trimmed)
+      await chatApi.send(sid, promptText)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
@@ -158,19 +198,20 @@ export function useChat() {
    *
    * 显式接收 sessionId：与 send 同理，per-panel 隔离，不读全局 activeId。
    */
-  async function steer(sessionId: string, text: string): Promise<void> {
+  async function steer(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
-    const trimmed = text.trim()
-    if (!trimmed || !chat.isActive(sid)) return
+    if (segments.length === 0) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim() || !chat.isActive(sid)) return
 
     // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete。
     // [W1] API 失败（WS 断连/steer_failed envelope/hook 拦截）回滚 pending + toast 提示，
     // 不 throw（错误已消化：pending 已回滚 + 用户已得反馈；throw 只会变 unhandled rejection）。
-    chat.appendPending(sid, trimmed, 'steer')
+    chat.appendPending(sid, segments, 'steer')
     try {
-      await chatApi.steer(sid, trimmed)
+      await chatApi.steer(sid, promptText)
     } catch (e) {
-      chat.removePending(sid, trimmed, 'steer')
+      chat.removePending(sid, segments, 'steer')
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
       error(t('composable.supplementSendFailed', { msg }))
@@ -183,24 +224,25 @@ export function useChat() {
    *
    * 显式接收 sessionId：与 send 同理，per-panel 隔离。
    */
-  async function followUp(sessionId: string, text: string): Promise<void> {
+  async function followUp(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
-    const trimmed = text.trim()
-    if (!trimmed) return
+    if (segments.length === 0) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim()) return
 
     // 非活跃（含空窗期）退化为普通发送，避免 Alt+⏎ 死键
     if (!chat.isActive(sid)) {
-      await send(sid, trimmed)
+      await send(sid, segments)
       return
     }
 
     // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete。
     // [W1] API 失败回滚 pending + toast 提示（同 steer，不 throw）。
-    chat.appendPending(sid, trimmed, 'follow-up')
+    chat.appendPending(sid, segments, 'follow-up')
     try {
-      await chatApi.followUp(sid, trimmed)
+      await chatApi.followUp(sid, promptText)
     } catch (e) {
-      chat.removePending(sid, trimmed, 'follow-up')
+      chat.removePending(sid, segments, 'follow-up')
       const msg = e instanceof Error ? e.message : String(e)
       const { error } = useToast()
       error(t('composable.nextTurnSendFailed', { msg }))
@@ -264,8 +306,10 @@ export function useChat() {
   async function editAndResend(sessionId: string, userMessageId: string, text: string): Promise<void> {
     const trimmed = text.trim()
     if (!trimmed || chat.isActive(sessionId)) return
+    // 编辑来自 textarea 纯文本，转 Segment[] 保持 user message content 类型一致（ADR-0037）
+    const segments = textToSegments(trimmed)
     chat.truncateFrom(sessionId, userMessageId, true)
-    chat.appendUser(sessionId, trimmed)
+    chat.appendUser(sessionId, segments)
     ensureStreamSubscription(sessionId, chat, session)
     chat.addPendingSend(sessionId)
     try {
@@ -286,15 +330,57 @@ export function useChat() {
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return
-    const history = await chatApi.getHistory(sessionId)
-    chat.hydrate(sessionId, history)
+    const { messages, historyTruncated } = await chatApi.getHistory(sessionId)
+    chat.hydrate(sessionId, messages)
+    setHistoryTruncated(sessionId, historyTruncated)
+  }
+
+  /** N1: 查询 session 历史是否被截断（有更早的 turn 可加载） */
+  function hasMoreHistory(sessionId: string): boolean {
+    return historyTruncatedSessions.value.has(sessionId)
+  }
+
+  /** N1: 设置 session 历史截断标记（selectSession hydrate 时调用） */
+  function setHistoryTruncated(sessionId: string, truncated: boolean): void {
+    const next = new Set(historyTruncatedSessions.value)
+    if (truncated) next.add(sessionId)
+    else next.delete(sessionId)
+    historyTruncatedSessions.value = next
+  }
+
+  /** N1: 加载更多成功后清除截断标记（已全量加载） */
+  function clearHistoryTruncated(sessionId: string): void {
+    if (historyTruncatedSessions.value.has(sessionId)) {
+      const next = new Set(historyTruncatedSessions.value)
+      next.delete(sessionId)
+      historyTruncatedSessions.value = next
+    }
+  }
+
+  /**
+   * W4 H4：加载更多历史（fallback 全量读 + 合并去重）。
+   *
+   * 调 getFullHistory RPC（runtime 全量文件读取），与 store 现有消息按 id 去重后
+   * 合并到列表头部。幂等：重复调用不追加已有消息（FR-4/AC-7）。
+   * RPC 失败时不破坏现有消息（catch 吞错，与 hydrateHistory 的 markHistoryFailed 同策略）。
+   */
+  async function loadMoreHistory(sessionId: string): Promise<void> {
+    try {
+      const fullHistory = await chatApi.getFullHistory(sessionId)
+      chat.prependHistory(sessionId, fullHistory)
+      clearHistoryTruncated(sessionId) // N1: 全量加载后不再有更多历史
+    // eslint-disable-next-line taste/no-silent-catch -- 加载更多是 best-effort：失败不破坏现有消息，用户可重试。与 hydrateHistory markHistoryFailed 同策略。
+    } catch (e) {
+      console.warn(`[useChat] loadMoreHistory failed for session ${sessionId}:`, e)
+    }
   }
 
   /**
    * 清理指定 session 的全部资源（W1 / S3：deleteSession 调用）。
    *
-   * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态。
-   * session 删除后若不取消订阅，WS 事件仍会推给已删 session 的 handler，且 Map 永久增长。
+   * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态
+   * + 清 historyTruncatedSessions 标记。session 删除后若不取消订阅，WS 事件仍会推给已删
+   * session 的 handler，且 Map 永久增长；historyTruncated 标记同理残留（SUGGESTION）。
    */
   function disposeSession(sessionId: string): void {
     const unsub = streamSubscriptions.get(sessionId)
@@ -302,8 +388,9 @@ export function useChat() {
       unsub()
       streamSubscriptions.delete(sessionId)
     }
+    clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
     chat.disposeSession(sessionId)
   }
 
-  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, disposeSession }
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, hasMoreHistory, setHistoryTruncated, disposeSession }
 }

@@ -25,12 +25,28 @@
  * 数据流处理骨架见 applyFileChanges()，类型契约已就绪（F2-1），逻辑 DEFERRED。
  */
 import { defineStore } from 'pinia'
-import { onScopeDispose, ref } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef } from 'vue'
+import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './chat-mutations'
+import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
+import {
+  LRU_MAX_SESSIONS,
+  touchLru as lruTouch,
+  evictIfNeeded as lruEvictIfNeeded,
+  evictSessionWithVirtual as lruEvictSession,
+  makeLruEvictDeps,
+  disposeLruEntry,
+} from './chat-lru'
+
+// re-export 供外部消费（测试 / 组件读常量）
+export { LRU_MAX_SESSIONS }
 import type {
+  ContentBlock,
   Message,
+  Segment,
   ServerMessage,
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
+import { normalizeContent } from '@xyz-agent/shared'
 import { dispatchMessageEvent } from './chat-message-effects'
 import { findLastAssistantIndex } from './chat-chunk-processor'
 import { createChangeSetController } from './chat-changeset'
@@ -81,18 +97,22 @@ function disposeSessionImpl(
   changeSetStatuses: DisposableRefs<Map<string, unknown>>,
   clearTimers: (() => void)[],
 ): void {
-  // Map ref：不可变写保证响应式
+  // Map ref：不可变写保证响应式（new Map + delete + 赋值新 Map）。
+  // W1 后 messages 是 shallowRef，必须整体替换 .value 才触发；retryStates/queueStates
+  // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
   for (const ref of mapRefs) {
     if (ref.value.has(sessionId)) {
-      ref.value = new Map(ref.value)
-      ref.value.delete(sessionId)
+      const next = new Map(ref.value)
+      next.delete(sessionId)
+      ref.value = next
     }
   }
   // Set ref：不可变写保证响应式
   for (const ref of setRefs) {
     if (ref.value.has(sessionId)) {
-      ref.value = new Set(ref.value)
-      ref.value.delete(sessionId)
+      const next = new Set(ref.value)
+      next.delete(sessionId)
+      ref.value = next
     }
   }
   // changeSetStatuses：key 格式 `${sessionId}:${messageId}`，前缀过滤删除
@@ -113,6 +133,15 @@ function disposeSessionImpl(
 }
 
 /**
+ * [M7] 仅删单个虚拟 key 的 messages（模块级，控制 setup 行数）。
+ * backToMain/backFromAgentCall 退出 overlay 时调，避免误删主 session 消息。
+ * 与 evictSessionWithVirtual 的区别：后者删主 session + 联动虚拟 key，本方法只删传入的虚拟 key。
+ */
+function evictVirtualKeyImpl(deps: { deleteMessageKey: (sid: string) => void }, virtualId: string): void {
+  deps.deleteMessageKey(virtualId)
+}
+
+/**
  * 追加 system 提示行纯逻辑（模块级，控制 setup 行数）。
  * runtime 主动推送的元信息反馈（如 compactionSummary），作 SystemNotice 渲染。
  */
@@ -122,7 +151,7 @@ function appendSystemNoticeImpl(
   text: string,
 ): void {
   const prev = messages.value.get(sessionId) ?? []
-  messages.value.set(sessionId, [
+  commitMessages(messages, sessionId, [
     ...prev,
     {
       id: `sys-${crypto.randomUUID()}`,
@@ -156,12 +185,12 @@ function applySubagentStreamDeltaImpl(
   const lastAssistantIdx = findLastAssistantIndex(prev)
   const next = [...prev]
   if (lastAssistantIdx >= 0 && next[lastAssistantIdx].status === 'streaming') {
-    const msg = { ...next[lastAssistantIdx] }
-    msg.content = fullText
-    if (!msg.contentBlocks?.some((b) => b.type === 'text')) {
-      msg.contentBlocks = [...(msg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
-    }
-    next[lastAssistantIdx] = msg
+    const prevMsg = next[lastAssistantIdx]
+    // 不可变写法（W1）：shallowRef 下不依赖字段级 mutate，整体构造新对象
+    const contentBlocks: ContentBlock[] = prevMsg.contentBlocks?.some((b) => b.type === 'text')
+      ? prevMsg.contentBlocks
+      : [...(prevMsg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
+    next[lastAssistantIdx] = { ...prevMsg, content: fullText, contentBlocks }
   } else {
     next.push({
       id: `sa-${crypto.randomUUID()}`,
@@ -172,7 +201,7 @@ function applySubagentStreamDeltaImpl(
       timestamp: Date.now(),
     })
   }
-  messages.value.set(virtualId, next)
+  commitMessages(messages, virtualId, next)
 }
 
 /**
@@ -193,7 +222,7 @@ function finalizeSubagentStreamImpl(
   if (lastAssistantIdx < 0 || prev[lastAssistantIdx].status !== 'streaming') return
   const next = [...prev]
   next[lastAssistantIdx] = { ...next[lastAssistantIdx], status: 'complete' }
-  messages.value.set(virtualId, next)
+  commitMessages(messages, virtualId, next)
 }
 
 /**
@@ -291,14 +320,17 @@ function finalizeMessagesImpl(
       : m.content
     return { ...m, status: finalStatus, content: finalContent, toolCalls } satisfies Message
   })
-  messages.value.set(sessionId, next)
+  commitMessages(messages, sessionId, next)
 }
 
 
 
 export const useChatStore = defineStore('chat', () => {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
-  const messages = ref<Map<string, Message[]>>(new Map())
+  // W1: shallowRef——messages 更新全部走 commitMessages（新 Map + set + 赋值 .value），
+  // 不再用 messages.value.set（shallowRef 下 Map mutation 不触发响应式）。
+  // 消除万级深 proxy（每条 Message 的嵌套对象不再被代理），降低长对话内存与 GC 压力（ADR 0034）。
+  const messages = shallowRef<Map<string, Message[]>>(new Map())
   /** 已 hydrate 的 session（避免切换时重复注入历史） */
   const hydrated = ref<Set<string>>(new Set())
   /**
@@ -343,15 +375,35 @@ export const useChatStore = defineStore('chat', () => {
   // ── 派生态（computed scan，D-005，零手动维护）──
 
   /**
+   * 当前所有含 streaming 消息的 session 集合（W2，ADR 0035）。
+   *
+   * computed 派生 Set——单一真相源，物理不可撕裂（任何 messages 写入路径自动覆盖，
+   * 含 13+ 处写入点 + 3 个边界点 truncateFrom/disposeSession/hydrate）。messages 变化时
+   * 全量扫一次并缓存，服务所有 isGenerating 查询，消除"每个消费点重复 O(n) 扫描"。
+   *
+   * shallowRef 下依赖 messages.value 的整体替换（commitMessages 已保证），computed 正确重算。
+   */
+  const streamingSessionIds = computed(() => {
+    const ids = new Set<string>()
+    for (const [sid, msgs] of messages.value) {
+      for (const m of msgs) {
+        if (m.status === 'streaming') {
+          ids.add(sid)
+          break
+        }
+      }
+    }
+    return ids
+  })
+
+  /**
    * 指定 session 是否有 streaming 实体（派生，无 setter）。
    * 不变式：`isGenerating(sid) ≡ ∃ m ∈ messages[sid], m.status === 'streaming'`
-   * scan 限定 per-session（messages.value.get(sid)），防跨 session 响应式失效扩散。
-   * 取代命令式 isStreaming flag —— 物理不可撕裂（无写路径需手动同步）。
+   * W2：改用 streamingSessionIds computed 的 O(1) has 查询（ADR 0035），
+   * 取代每次调用 O(n) list.some 扫描。不变式逻辑完全相同，仅加缓存层。
    */
   function isGenerating(sessionId: string): boolean {
-    const list = messages.value.get(sessionId)
-    if (!list) return false
-    return list.some((m) => m.status === 'streaming')
+    return streamingSessionIds.value.has(sessionId)
   }
 
   /**
@@ -367,6 +419,22 @@ export const useChatStore = defineStore('chat', () => {
   function getMessages(sessionId: string): Message[] {
     return messages.value.get(sessionId) ?? []
   }
+
+  /** W3 H3：session 是否在 LRU 豁免集（streaming/pending/compacting 不驱逐，AC-9） */
+  const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid)
+  /** W3 H3：LRU recency 更新（AC-1 真 LRU），直接透传 lruTouch */
+  const touchLru = lruTouch
+  /**
+   * LRU 驱逐依赖（W9：store setup 时构造一次复用）。
+   * messages/hydrated 是稳定 ref 引用，isLruExempt 闭包每次调用读当前 .value（无快照陈旧），
+   * makeLruEvictDeps 内部又用 getter（() => messages.value）延迟读取，故 deps 可在 setup 时
+   * 构造一次，三个 evict 函数复用，避免每次 evictIfNeeded 重建 5 个闭包对象。
+   */
+  const lruEvictDeps = makeLruEvictDeps(messages, hydrated, isLruExempt)
+  /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
+  function evictIfNeeded(): void { lruEvictIfNeeded(lruEvictDeps) }
+  function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, lruEvictDeps) }
+  function evictVirtualKey(virtualId: string): void { evictVirtualKeyImpl(lruEvictDeps, virtualId) }
 
   /** 取指定 session 的自动重试态（无则 undefined） */
   function getRetryState(sessionId: string): RetryState | undefined {
@@ -395,36 +463,38 @@ export const useChatStore = defineStore('chat', () => {
     failedHistory.value = next
   }
 
-  /**
-   * 注入历史消息（首次进入 session 时由 useChat 调用）。
-   * 不可变 set：深拷贝 fixture 避免外部突变污染源数据，标记 hydrated。
-   */
+  /** 注入历史（首入 session）。W2 H3 截断回流（AC-10），W3 touchLru。 */
   function hydrate(sessionId: string, history: Message[]): void {
     if (hydrated.value.has(sessionId)) return
-    const cloned = history.map((m) => ({ ...m }))
-    messages.value.set(sessionId, cloned)
+    const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
+    commitMessages(messages, sessionId, cloned)
     hydrated.value = new Set(hydrated.value).add(sessionId)
+    lruTouch(sessionId) // W3: LRU recency
   }
 
   /**
-   * 直接覆盖某 session 的消息（不受 hydrated 不可变约束）。
-   * 用于 subagent 虚拟 session：subagent JSONL 可能延迟写入（pi 延迟 flush），
-   * 首次拉取为空后需要重新拉取覆盖。不标记 hydrated（允许后续 hydrate 再覆盖）。
+   * 直接覆盖某 session 的消息（subagent 虚拟 session 用，不受 hydrated 守卫）。
+   * W2 H3：回流路径截断（AC-10/D9），与 hydrate 一致。
    */
   function setMessages(sessionId: string, history: Message[]): void {
-    const cloned = history.map((m) => ({ ...m }))
-    messages.value.set(sessionId, cloned)
+    const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
+    commitMessages(messages, sessionId, cloned)
   }
 
-  /** 追加 user 消息（构造完整 Message，立即 complete） */
-  function appendUser(sessionId: string, text: string): void {
+  /** W4 H4：全量历史去重合并到头部（加载更多）。截断 + 委托 chat-mutations。 */
+  function prependHistory(sessionId: string, fullHistory: Message[]): void {
+    prependHistoryMut(messages, sessionId, truncateToolOutputBatch(fullHistory.map((m) => ({ ...m }))))
+  }
+
+  /** 追加 user 消息（构造完整 Message，立即 complete）。content 为 Segment[]（ADR-0037） */
+  function appendUser(sessionId: string, segments: Segment[]): void {
     const prev = messages.value.get(sessionId) ?? []
-    messages.value.set(sessionId, [
+    commitMessages(messages, sessionId, [
       ...prev,
       {
         id: `u-${crypto.randomUUID()}`,
         role: 'user',
-        content: text,
+        content: segments,
         status: 'complete',
         timestamp: Date.now(),
       },
@@ -437,14 +507,14 @@ export const useChatStore = defineStore('chat', () => {
    * 投递时（queue_update 移除该项 → markPendingDelivered）转 complete。
    * sendMode 区分 steer（追加当前回合）/ follow-up（回合后新轮），驱动气泡配色。
    */
-  function appendPending(sessionId: string, text: string, sendMode: SteerFollowUpMode): void {
+  function appendPending(sessionId: string, segments: Segment[], sendMode: SteerFollowUpMode): void {
     const prev = messages.value.get(sessionId) ?? []
-    messages.value.set(sessionId, [
+    commitMessages(messages, sessionId, [
       ...prev,
       {
         id: `u-${crypto.randomUUID()}`,
         role: 'user',
-        content: text,
+        content: segments,
         status: 'pending',
         sendMode,
         timestamp: Date.now(),
@@ -453,22 +523,32 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 定位 session 里第一条匹配 text + sendMode 的 pending user 消息（FIFO）。
+   * 定位 session 里第一条匹配的 pending user 消息（FIFO）。
    * markPendingDelivered / removePending 共用的匹配逻辑，抽此 helper 避免谓词重复漂移。
    * sendMode 可选——未传时退化为仅 content 匹配（兼容宽松场景）。
+   *
+   * content 改 Segment[] 后，用 normalizeContent 归一化两边比较（FR-7，AC-5.1）。
+   * matcher 接收 string | Segment[]：
+   * - removePending（useChat 调）传 Segment[]（前端发送时的 segments）
+   * - markPendingDelivered（chat-message-effects 调）传 string（pi queue_update 回传的 text）
+   * 两种来源经 normalizeContent 归一化后统一比较。
    */
   function findPendingIndex(
     sessionId: string,
-    text: string,
+    matcher: string | Segment[],
     sendMode?: SteerFollowUpMode,
   ): number {
     const prev = messages.value.get(sessionId)
     if (!prev) return -1
+    // 两边统一 trim 后比较：matcher 可能是 Segment[]（前端发送，segmentsToText 不 trim）
+    // 或 string（pi 回流，已 trim）；m.content 是 Segment[]（segmentsToText 不 trim）。
+    // trim 对齐防止首尾空白致匹配失败（pending 卡住无法转 complete）。
+    const target = normalizeContent(matcher).trim()
     return prev.findIndex(
       (m) =>
         m.role === 'user'
         && m.status === 'pending'
-        && m.content === text
+        && normalizeContent(m.content).trim() === target
         && (sendMode === undefined || m.sendMode === sendMode),
     )
   }
@@ -482,15 +562,15 @@ export const useChatStore = defineStore('chat', () => {
    */
   function markPendingDelivered(
     sessionId: string,
-    text: string,
+    matcher: string | Segment[],
     sendMode?: SteerFollowUpMode,
   ): void {
-    const idx = findPendingIndex(sessionId, text, sendMode)
+    const idx = findPendingIndex(sessionId, matcher, sendMode)
     if (idx === -1) return
     const prev = messages.value.get(sessionId)!
     const next = [...prev]
     next[idx] = { ...next[idx], status: 'complete' }
-    messages.value.set(sessionId, next)
+    commitMessages(messages, sessionId, next)
   }
 
   /**
@@ -500,13 +580,13 @@ export const useChatStore = defineStore('chat', () => {
    */
   function removePending(
     sessionId: string,
-    text: string,
+    matcher: string | Segment[],
     sendMode: SteerFollowUpMode,
   ): void {
-    const idx = findPendingIndex(sessionId, text, sendMode)
+    const idx = findPendingIndex(sessionId, matcher, sendMode)
     if (idx === -1) return
     const prev = messages.value.get(sessionId)!
-    messages.value.set(sessionId, prev.filter((_, i) => i !== idx))
+    commitMessages(messages, sessionId, prev.filter((_, i) => i !== idx))
   }
 
   /**
@@ -554,7 +634,8 @@ export const useChatStore = defineStore('chat', () => {
     // 清 pendingSend + timer
     clearPendingSend(sessionId)
     clearStreamingTimer(sessionId)
-    console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
+    // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
+    if (import.meta.env.DEV && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
   }
 
   /**
@@ -574,13 +655,7 @@ export const useChatStore = defineStore('chat', () => {
       messages, compactingSessions, retryStates, queueStates, pendingSend,
     )
     for (const sid of candidateSids) {
-      if (
-        isGenerating(sid)
-        || isCompacting(sid)
-        || retryStates.value.has(sid)
-        || queueStates.value.has(sid)
-        || pendingSend.value.has(sid)
-      ) {
+      if (isGenerating(sid) || isCompacting(sid) || retryStates.value.has(sid) || queueStates.value.has(sid) || pendingSend.value.has(sid)) {
         resetTransientStates(sid, reason)
       }
     }
@@ -665,17 +740,16 @@ export const useChatStore = defineStore('chat', () => {
     const prev = messages.value.get(sessionId) ?? []
     const idx = findLastAssistantIndex(prev)
     if (idx >= 0 && prev[idx].status === 'streaming') {
-      // streaming assistant → finalizeSession('error', errorText) 收口（合一逻辑）
       finalizeSession(sessionId, 'error', errorText)
-    } else {
-      // 无 streaming entity → 直接追加 error 消息
-      messages.value.set(sessionId, [
-        ...prev,
-        { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
-      ])
-      clearPendingSend(sessionId)
-      clearStreamingTimer(sessionId)
+      return
     }
+    // 无 streaming entity → 直接追加 error 消息
+    commitMessages(messages, sessionId, [
+      ...prev,
+      { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
+    ])
+    clearPendingSend(sessionId)
+    clearStreamingTimer(sessionId)
   }
 
   // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
@@ -709,17 +783,9 @@ export const useChatStore = defineStore('chat', () => {
     appendSystemNoticeImpl(messages, sessionId, text)
   }
 
-  /**
-   * 截断指定 session 的消息：删除 messageId（含/不含）及其后所有消息。
-   * 编辑重发场景（原地替换 user 消息，非 fork）：truncate(含该 user) → appendUser(新文本) → send。
-   * 不可变 set（slice 新数组）保证响应式触发。
-   */
+  /** 截断 session 消息到 messageId（编辑重发用）。委托 chat-mutations.truncateMessagesFrom。 */
   function truncateFrom(sessionId: string, messageId: string, inclusive: boolean): void {
-    const prev = messages.value.get(sessionId) ?? []
-    const idx = prev.findIndex((m) => m.id === messageId)
-    if (idx === -1) return
-    const end = inclusive ? idx : idx + 1
-    messages.value.set(sessionId, prev.slice(0, end))
+    truncateMessagesFrom(messages, sessionId, messageId, inclusive)
   }
 
   /**
@@ -734,6 +800,7 @@ export const useChatStore = defineStore('chat', () => {
       changeSetStatuses,
       [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId)],
     )
+    disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
 
   return {
@@ -746,16 +813,12 @@ export const useChatStore = defineStore('chat', () => {
     failedHistory,
     hydrated,
     getMessages,
-    getRetryState,
-    getQueueState,
-    getChangeSetStatus,
-    setChangeSetStatus,
+    getRetryState, getQueueState,
+    getChangeSetStatus, setChangeSetStatus,
     markChangeSetsSuperseded,
-    isHydrated,
-    markHistoryFailed,
-    clearHistoryError,
-    hydrate,
-    setMessages,
+    isHydrated, markHistoryFailed, clearHistoryError,
+    hydrate, setMessages,
+    prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => applySubagentStreamDeltaImpl(messages, virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => finalizeSubagentStreamImpl(messages, virtualId),
     appendUser,
@@ -778,5 +841,10 @@ export const useChatStore = defineStore('chat', () => {
     truncateFrom,
     applyFileChanges,
     disposeSession,
+    // W3 H3 LRU
+    touchLru,
+    evictIfNeeded,
+    evictSessionWithVirtual,
+    evictVirtualKey,
   }
 })

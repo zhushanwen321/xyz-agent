@@ -68,6 +68,7 @@ const {
   onPaste,
   syncEmpty,
   getText,
+  getSegments,
   saveSelection,
   restoreSelection,
   clearSlashQueryText,
@@ -93,6 +94,7 @@ const chipCommands = useComposerChipCommands(elRef, {
 })
 const insertSlashChip = chipCommands.insertSlashChip
 const insertMentionChip = chipCommands.insertMentionChip
+const insertFileChip = chipCommands.insertFileChip
 // 后赋值：补回上面 forward 占位（setup 同步执行完毕，onKeydown 运行期读到真实实现）
 handleBackspaceOnChip = chipCommands.handleBackspaceOnChip
 
@@ -115,10 +117,12 @@ defineExpose({
   clear,
   focus,
   getText,
+  getSegments,
   setText,
   insertTextAtCursor,
   insertSlashChip,
   insertMentionChip,
+  insertFileChip,
   clearSlashQueryText,
   clearHashQueryText,
   saveSelection,
@@ -150,6 +154,9 @@ onMounted(() => {
 .composer-input :deep(.slash-chip) {
   display: inline-flex;
   align-items: center;
+  /* inline-flex 默认 vertical-align:baseline，chip 底边与文字基线对齐导致偏上。
+     middle 让 chip 中线与文字 x-height 中线对齐，视觉与文字水平居中。 */
+  vertical-align: middle;
   gap: 3px;
   /* 与后续文字空开约一字符宽（4px），避免 chip 边框贴紧正文 */
   margin-right: 4px;

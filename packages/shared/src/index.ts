@@ -2,6 +2,8 @@ export type {
   ClientMessageType, ClientMessage, ClientMessageMap,
   SetProviderData,
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
+  ReplyPayloadMap,
+  SystemPromptConfig,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
@@ -11,6 +13,8 @@ export type {
   BgNotifyRecord, BgNotifyDetails,
 } from './message'
 export { parseBgNotifyDetails } from './message'
+export type { Segment } from './segments'
+export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
 } from './session'
@@ -27,8 +31,9 @@ export type {
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH } from './constants'
 export type { ProviderApiType } from './constants'
+export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi-default-prompt'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
 import recommendedExtensions from './recommended-extensions.json'
 export { recommendedExtensions }
@@ -40,6 +45,7 @@ export * from './ignore-parser'
 export * from './git-status-parser'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { SubagentRecord, SubagentStatus } from './subagent'
+export { normalizeSubagentStatus } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,

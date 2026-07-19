@@ -15,6 +15,7 @@
  */
 import type { IPiEngine } from '../ports/pi-engine.js'
 import type { SessionSummary } from '@xyz-agent/shared'
+import type { SessionOutcome } from '../ports/session.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
 
 export interface ISessionServiceInternal {
@@ -31,6 +32,8 @@ export interface ISessionServiceInternal {
   getSkillPaths(cwd: string): string[]
   /** 收集有效的 extension 路径（经 ExtensionService）。 */
   getExtensionPaths(): Promise<string[]>
+  /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
+  getReplaceSystemPrompt(): string | undefined
 
   // ── dispatcher 使用 ──
   /** 确保会话活跃，必要时自动 restore。 */
@@ -48,10 +51,15 @@ export interface ISessionServiceInternal {
    */
   handleTurnUsageSideEffects(sessionId: string): void
   /**
-   * agent_end 副作用（W3）：复位 isGenerating=false + tryPersistLabel 兜底。
+   * agent_end 副作用（W3 + W4）：复位 isGenerating=false + tryPersistLabel 兜底 + session_end 终态写入。
    * 经 EventInterpreter.onTurnFinalize 回调注入。
+   * @param stopReason pi agent_end 的 stopReason（W4：决定 outcome=error|done）
    */
-  handleTurnEndSideEffects(sessionId: string): void
+  handleTurnEndSideEffects(sessionId: string, stopReason?: string): void
+  /**
+   * 写 session_end 终态 entry（W4，ADR 0036）。3 个终态点复用。
+   */
+  persistSessionOutcome(sessionId: string, outcome: SessionOutcome, reason?: string): void
   /**
    * 拉取上下文用量并广播 context.update（restoreSession 兜底用）。
    * fire-and-forget 语义：失败不阻塞 session 恢复（前端主动拉是主路径）。

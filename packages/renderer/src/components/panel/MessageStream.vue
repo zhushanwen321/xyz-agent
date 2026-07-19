@@ -9,53 +9,84 @@
   <div class="relative flex min-h-0 flex-1 flex-col">
     <div
       ref="scrollEl"
-      class="message-stream flex-1 overflow-y-auto"
-      @scroll.passive="onScroll"
+      class="message-stream relative flex-1 overflow-y-auto pt-5"
+      @scroll.passive="handleScroll"
     >
-    <!-- contentEl：承载消息内容的 wrapper，供 useChatScroll 的 ResizeObserver 观察高度变化。
-         scrollEl 是 overflow 容器，自身 border-box 固定不变，无法观察内容增高。 -->
-    <div ref="contentEl" class="flex flex-col gap-[22px] px-5 py-[18px]">
-      <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
-        <Turn
-          v-if="item.kind === 'turn'"
-          :turn="item.turn"
-          :session-id="sessionId"
-          :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
-        />
-        <BgNotifyCard v-else-if="item.message.bgNotify" :message="item.message" />
-        <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。
-             customStart 把 details（含 __gui__）存进 system 消息，此处检测并路由到
-             GuiComponentRenderer；无 __gui__ 则落到下面的 SystemNotice 纯文本兜底。
-             容器样式与 SystemNotice 视觉一致（左内边距、等宽字体），用通用 Tailwind 类。 -->
-        <div
-          v-else-if="getGuiComponent(item.message)"
-          class="py-1 pl-1 font-mono text-[12px] leading-snug text-fg"
-        >
-          <GuiComponentRenderer :component="getGuiComponent(item.message)!" />
+    <!-- 空态欢迎语（G2-004）：独立于虚拟列表 spacer，作为 scrollEl 直接子节点撑满视口。
+         contentEl 在空会话时 height=0（totalHeight=0），若空态放其内部 absolute inset-0 会随之塌陷。 -->
+    <div v-if="renderItems.length === 0" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+      <Sparkles class="size-6 text-accent opacity-70" />
+      <p class="text-[13px] text-muted">{{ t('panel.message.startConversation') }}</p>
+    </div>
+    <!-- contentEl：虚拟滚动 spacer，高度=totalHeight+topOffset 撑出滚动条。
+         useChatScroll 的 ResizeObserver 观测它（totalHeight 变化→末项增高→触发 scrollToBottom）。
+         可见 items 用 absolute 定位到各自 offset（+ topOffset 预留顶部 load-more 空间），视口外不挂载（虚拟化核心）。
+         上下留白分工（统一 20px，全 user 气泡上方间距一致）：
+         - 顶部留白：scrollEl 的 pt-5（首条 user 气泡距视口顶 20px）
+         - turn 间距 + 末条到 composer：Turn.vue 的 pb-5（每条 user 气泡距上一个 AI 回复 20px，末条到 composer 20px）
+         此处不放 py-5——abs 子元素包含块是本元素 padding box，padding 会被 abs 覆盖无效（曾因此致首条消息贴顶）。
+         px-5 保留：与 abs 子元素 left-5/right-5 同档 20px，视觉对齐参考。 -->
+    <div ref="contentEl" class="relative px-5" :style="{ height: totalHeight + topOffset + 'px' }">
+      <!-- W4 H4：加载更多历史入口（abs 定位 top=0，所有 turn offset 加 topOffset 预留空间防遮挡） -->
+      <!-- ref 供 dev-only 断言：实测高度 vs LOAD_MORE_RESERVED_HEIGHT 常量漂移检测（见下方 assertConstantHeights）。 -->
+      <div
+        v-if="showLoadMore && renderItems.length > 0"
+        ref="loadMoreEl"
+        class="absolute left-5 right-5 top-0 flex justify-center py-2"
+      >
+        <Button variant="ghost" size="sm" :disabled="loadingMore" data-testid="load-more-history" @click="handleLoadMore">
+          <Loader2 v-if="loadingMore" class="mr-1 size-3 animate-spin" />
+          <ChevronUp v-else class="mr-1 size-3" />
+          {{ loadingMore ? t('common.loading') : t('panel.message.loadMore') }}
+        </Button>
+      </div>
+      <!-- 虚拟化：只渲染 visibleRange 内的 items，absolute 定位到各自 offset + topOffset -->
+      <!-- key 拼 sessionId 前缀：renderKey 在 turn.index/system.id 维度唯一，但跨 session/subagent
+           虚拟 id 全局唯一性无保证，拼前缀做命名空间隔离防 Vue 复用错位。同 session 内 key 仍唯一。 -->
+      <template v-for="vi in visibleItems" :key="`${sessionId}-${vi.key}`">
+        <div class="absolute left-5 right-5" :style="{ top: offsetOf(vi.idx) + topOffset + 'px' }">
+          <Turn
+            v-if="vi.item.kind === 'turn'"
+            :turn="vi.item.turn"
+            :session-id="sessionId"
+            :can-edit="!!vi.item.turn.user && vi.idx === lastUserTurnIdx"
+            @edit-state-change="onEditStateChange(vi.idx, $event.editing)"
+          />
+          <BgNotifyCard v-else-if="vi.item.message.bgNotify" :message="vi.item.message" />
+          <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
+          <div
+            v-else-if="getGuiComponent(vi.item.message)"
+            class="py-1 pl-1 font-mono text-[12px] leading-snug text-fg"
+          >
+            <GuiComponentRenderer :component="getGuiComponent(vi.item.message)!" />
+          </div>
+          <SystemNotice v-else :message="vi.item.message" />
         </div>
-        <SystemNotice v-else :message="item.message" />
       </template>
 
-      <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代） -->
-      <div v-if="isCompacting" class="system-notice flex min-w-0 items-center gap-2 py-1">
+      <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
+           非虚拟化，absolute 定位到列表末尾（+ topOffset）。
+           ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测（见下方 assertConstantHeights）。 -->
+      <div
+        v-if="isCompacting"
+        ref="compactingNoticeEl"
+        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 py-1"
+        :style="{ top: totalHeight + topOffset + 'px' }"
+      >
         <span class="h-px flex-1 bg-border" />
         <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
         <span class="min-w-0 truncate text-[11px] leading-snug text-muted">{{ t('panel.message.compressing') }}</span>
         <span class="h-px flex-1 bg-border" />
       </div>
 
-      <!-- dispatching 空窗期占位：已发送（pendingSend 命中）但 message_start 未到。
-           message_start 到达后 hasWorkingTurn 变 true，占位消失，由 working turn 的 sticky header 接管。
-           纯 UI 瞬时反馈，不插入 assistant message 污染消息历史。 -->
-      <div v-if="isDispatching && !hasWorkingTurn" class="flex items-center gap-2 py-2 pl-1 text-[12px] text-muted">
+      <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + topOffset） -->
+      <div
+        v-if="isDispatching && !hasWorkingTurn"
+        class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[12px] text-muted"
+        :style="{ top: (isCompacting ? totalHeight + COMPACTING_NOTICE_HEIGHT : totalHeight) + topOffset + 'px' }"
+      >
         <Loader2 class="size-3 animate-spin text-accent" />
         <span>{{ t('panel.message.dispatching') }}</span>
-      </div>
-
-      <!-- 空态欢迎语（G2-004） -->
-      <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
-        <Sparkles class="size-6 text-accent opacity-70" />
-        <p class="text-[13px] text-muted">{{ t('panel.message.startConversation') }}</p>
       </div>
     </div>
     </div>
@@ -77,12 +108,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Loader2, Sparkles } from '@lucide/vue'
+import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
+import { useChat } from '@/composables/features/useChat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
+import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
+import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
+import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId } from '@/stores/subagent'
 import { useSubagentStore } from '@/stores/subagent'
@@ -100,7 +135,24 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const chat = useChatStore()
+const { loadMoreHistory, hasMoreHistory: checkHasMore } = useChat()
 const subagentStore = useSubagentStore()
+
+/** W4 H4：加载更多历史 loading 状态 */
+const loadingMore = ref(false)
+/** N1: 是否有更多历史可加载（由 hydrate 的 historyTruncated 标志驱动，非默认 true） */
+const showLoadMore = computed(() => checkHasMore(props.sessionId))
+
+async function handleLoadMore(): Promise<void> {
+  if (loadingMore.value || !showLoadMore.value) return
+  loadingMore.value = true
+  try {
+    await loadMoreHistory(props.sessionId)
+    // loadMoreHistory 内部 clearHistoryTruncated 会更新 showLoadMore
+  } finally {
+    loadingMore.value = false
+  }
+}
 
 /**
  * 当前 session 的消息（响应式）。
@@ -139,6 +191,85 @@ const forceWorking = computed(() => {
 const renderItems = computed(() => toRenderItems(currentMessages.value, forceWorking.value))
 
 /**
+ * 虚拟滚动（W3）：窗口化渲染，视口外 turn 不挂载，长对话 DOM 从 O(N) 降到 O(视口可见)。
+ * items getter 返回完整 renderItems（含 turn + system），composable 内部统一处理。
+ * 高度缓存键用首消息 id（turn）/ s-message.id（system），非 t-index（防 truncateFrom 张冠李戴）。
+ * 前置依赖 M4（scrollToBottom rAF trailing 节流 + INVAR-M4-2 延迟求值守卫）已落地。
+ */
+/**
+ * ── 像素常量与 DOM 强绑定（B2）──────────────────────────────────────────
+ * 下面三个高度常量直接参与 absolute 定位 top 计算，依赖模板对应 DOM 块的真实高度。
+ * 改任何一方的 padding/字号/icon size 都必须同步另一方，否则定位会静默漂移。
+ * dev-only assertConstantHeights（见下方）会实测对比并在不匹配时 console.warn。
+ */
+/**
+ * 虚拟滚动估算高度（未实测 turn 的初始高度，经验值）。
+ * 与定位无关——只在 ResizeObserver 上报实测值之前作 fallback，上报后即被替换。
+ */
+const ESTIMATED_TURN_HEIGHT = 200
+/** 虚拟滚动上下 buffer turn 数（快速滚动时预渲染视口外的 turn，防白屏） */
+const VIRTUAL_BUFFER_TURNS = 2
+/**
+ * load-more 按钮预留高度。
+ * 强绑定 DOM：模板 load-more 块（abs top=0，`flex justify-center py-2` 内含 `Button size="sm"`）。
+ *   实际高度 = Button(h-8=32px) + py-2(8px*2=16px) ≈ 48px；常量取 44 是历史值（略偏小，
+ *   topOffset 给 turn 留的避让空间略紧但未致遮挡，保持现状避免引入定位回归）。
+ *   若改 Button size / py-* / icon size，必须重测并同步此常量（dev 断言会提醒）。
+ */
+const LOAD_MORE_RESERVED_HEIGHT = 44
+/**
+ * compaction notice 占位高度。
+ * 强绑定 DOM：模板 isCompacting 块（`flex items-center gap-2 py-1`，含 `size-3` spinner
+ *   + `text-[11px] leading-snug` 文本 + 两条 `h-px` 分隔线）。
+ *   实际高度 ≈ py-1(4px*2) + max(spinner 12px, text≈16px) ≈ 24px；常量 28 略大，给 dispatching
+ *   占位避让留 4px 余量。改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
+ */
+const COMPACTING_NOTICE_HEIGHT = 28
+
+const virtualList = useVirtualTurnList({
+  items: () => renderItems.value,
+  scrollEl: () => scrollEl.value,
+  estimatedHeight: () => ESTIMATED_TURN_HEIGHT,
+  buffer: () => VIRTUAL_BUFFER_TURNS,
+})
+const { totalHeight, visibleRange, offsetOf } = virtualList
+
+/**
+ * load-more 按钮占的顶部预留高度：显示 load-more 且有 turns 时为 LOAD_MORE_RESERVED_HEIGHT，
+ * 否则 0。所有 turn 的 abs 定位 top = offsetOf(idx) + topOffset，load-more 按钮 abs 定位 top=0，
+ * 两者在垂直方向不重叠（修复 load-more 被首条 turn 遮挡的 BLOCKER）。
+ */
+const topOffset = computed(() =>
+  showLoadMore.value && renderItems.value.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0,
+)
+
+/**
+ * B2 dev-only 常量高度漂移检测：绑定对应 DOM 块，ResizeObserver 实测高度 vs 像素常量，
+ * 不匹配时 console.warn（提示 padding/字号/icon 改动未同步常量）。生产构建被 import.meta.env.DEV
+ * 守卫裁剪，零运行时开销。逻辑封装在 useConstantHeightAssert，此处只注册常量并取回 ref 绑模板。
+ */
+const [loadMoreEl, compactingNoticeEl] = useConstantHeightAssert([
+  { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
+  { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
+]).els
+
+/** 可见项 { idx, item, key } 数组（末项钉扎保证流式末项恒在窗口内）。预计算 key 避免 template :key 里调函数致 vue-tsc 误报 unused */
+const visibleItems = computed(() => {
+  const { startIndex, endIndex } = visibleRange.value
+  const items = renderItems.value
+  const arr: Array<{ idx: number; item: typeof items[number]; key: string }> = []
+  for (let i = startIndex; i <= endIndex && i < items.length; i++) {
+    arr.push({ idx: i, item: items[i], key: renderKey(items[i]) })
+  }
+  return arr
+})
+
+/** provide Turn 高度上报 registry（W2），Turn.vue inject 后用 ResizeObserver 上报自身高度 */
+provideTurnResizeRegistry({
+  reportHeight: (key, h) => virtualList.reportHeight(key, h),
+})
+
+/**
  * 从 system 消息的 details.__gui__ 提取结构化渲染组件（extension GUI 协议 E5）。
  * customStart 把含 __gui__ 的 details 存进 system 消息；无 __gui__ 返回 undefined，
  * 由模板落回 SystemNotice 纯文本兜底。封装为函数避免模板里重复调用 extractGui。
@@ -156,6 +287,15 @@ const lastUserTurnIdx = computed(() => {
   return -1
 })
 
+/**
+ * editing 钉扎（SR5，B9）：编辑中的 turn 滚出视口会卸载丢失 Turn.vue 的 draftText。
+ * Turn.vue watch isEditingThisUser 变化时 emit edit-state-change，据此钉住（editing=true）
+ * 或释放（editing=false）该 turn 在窗口内。编辑只发生在 lastUserTurn，idx 即其数组下标。
+ */
+function onEditStateChange(idx: number, editing: boolean): void {
+  virtualList.pinEditing(editing ? idx : -1)
+}
+
 /** 渲染项里最后一个 turn（streaming 滚动判定用） */
 const lastRenderTurn = computed(() => {
   for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
@@ -172,6 +312,29 @@ const lastRenderTurn = computed(() => {
  * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
  */
 const { scrollEl, contentEl, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
+
+/**
+ * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），
+ * virtualList.onScrollUpdate 把 DOM scrollTop/clientHeight 同步进响应式 ref 驱动
+ * visibleRange 失效重算（纯滚动场景下窗口跟随收敛，修复 liveComputed 假 computed 的 BLOCKER）。
+ */
+function handleScroll(): void {
+  onScroll()
+  virtualList.onScrollUpdate()
+}
+
+/**
+ * scrollEl 挂载后立即同步一次 scrollTop/viewportHeight：virtualList 的 visibleRange 是
+ * 真 computed，初始 scrollTop/viewportHeight ref 均为 0，需读 DOM 真值写入 ref 才能让
+ * 窗口基于真实视口定位（否则首次渲染窗口按 viewportHeight=0 算，仅末项钉扎撑场）。
+ */
+watch(
+  scrollEl,
+  (el) => {
+    if (el) virtualList.onScrollUpdate()
+  },
+  { immediate: true },
+)
 
 /**
  * 首次挂载强制滚到底（force=true 绕过 guard）。
@@ -204,10 +367,31 @@ watch(
   },
 )
 
-// 切换 session → 强制滚到底（展示最新内容，不受 guard）
+// 切换 session → 重置虚拟列表高度缓存（不同 session 键语义不同，复用致错位，SR10/INVAR-8）
+//   + 强制滚到底（展示最新内容，不受 guard）
 watch(
   () => props.sessionId,
-  () => scrollToBottom('auto', true),
+  () => {
+    virtualList.resetSession()
+    scrollToBottom('auto', true)
+  },
+)
+
+// 视口锚定补偿（SR4/INVAR-2）：视口上方 turn 从估算切实测时 scrollTop 需补偿，防用户所见内容跳。
+// reportHeight 累积 delta（同帧多次视口上方 turn 上报累加防末次覆盖中间值），此处应用后清零防重复补偿。
+// W19: flush:'post'——DOM 更新后再应用 delta。pre 模式下 watch 与下次 flushHeightReports
+// 可能同帧执行：watch 应用并清零后，同一 tick 内又累积的 delta 会在清零时被抹除（中间 delta 丢失）。
+// post 模式保证 watch 在 DOM flush 后触发，此时 reportHeight 的 rAF flush 已结束，本帧 delta 全部累积到位。
+watch(
+  () => virtualList.scrollAdjustDelta.value,
+  (delta) => {
+    if (delta !== 0 && scrollEl.value) {
+      scrollEl.value.scrollTop += delta
+      // 清零，防下次 reportHeight 残留值导致重复补偿
+      virtualList.scrollAdjustDelta.value = 0
+    }
+  },
+  { flush: 'post' },
 )
 </script>
 

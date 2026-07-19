@@ -228,12 +228,14 @@ export class RuntimeServer implements IMessageBroker {
 
   // ── Extension timeout delegation ─────────────────────────────────
 
-  registerExtensionTimeout(sessionId: string, requestId: string, method: string): void {
+  registerExtensionTimeout(sessionId: string, requestId: string, method: string, payload: Record<string, unknown>): void {
     // 只注册 timer + 委托：超时后的扩展响应编排（默认值 / RPC / 广播）已下沉到
     // extensionHandler.handleExtensionTimeout，不再让 transport 层承载扩展响应业务逻辑。
     this.extensionTimeoutMgr.registerTimeout(sessionId, requestId, method, () => {
       this.extensionHandler.handleExtensionTimeout(sessionId, requestId, method)
     })
+    // 缓存 pending 请求（ask-user 等阻塞式请求），session 重新激活时推送
+    this.extensionTimeoutMgr.cachePendingRequest(sessionId, requestId, method, payload)
   }
 
   clearExtensionTimeout(requestId: string): void {

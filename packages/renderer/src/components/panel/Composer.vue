@@ -114,6 +114,7 @@ import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
+import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 
 const props = withDefaults(
@@ -129,7 +130,6 @@ const chatStore = useChatStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
-
 /**
  * 合并活跃态：流式中（isGenerating）或派发空窗期（dispatchingSessionId 命中当前 session）。
  * 替代单一 isGenerating 驱动停止按钮/steer guard/键盘路由，消除「ack 到达但 message_start 未到」
@@ -153,13 +153,13 @@ const {
 /** #13 retry/queue 指示位数据源（store 由 W0/#8 维护，不可变 Map 更新触发响应） */
 const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(props.sessionId) : undefined))
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
-
 const draft = ref('')
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 
 // 命令浮层触发态机（slash/file 浮层触发 + CommandPopover 联动 + pendingSlash 注入）
 // —— 见 useCommandPopoverTrigger。inputRef 先声明，composable 内部回调按需调其方法。
+const sessionIdRef = computed(() => props.sessionId)
 const {
   cmdOpen,
   cmdType,
@@ -170,12 +170,14 @@ const {
   onFileTrigger,
   onAddSelect,
   onCmdSelect,
-} = useCommandPopoverTrigger(inputRef, computed(() => props.sessionId))
+} = useCommandPopoverTrigger(inputRef, sessionIdRef)
+// drawer 选区/文件引用注入消费（跨组件树一次性消息通道）
+useComposerInjection(inputRef, sessionIdRef, computed(() => props.variant))
 
 // 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
 // sessionId null（landing 态无真实 session）时 history 为空。
 const { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing } = useComposerHistory(
-  computed(() => props.sessionId),
+  sessionIdRef,
   {
     getText: () => inputRef.value?.getText() ?? '',
     setText: (text, caretPosition) => inputRef.value?.setText(text, caretPosition),
@@ -306,10 +308,12 @@ async function onSend(): Promise<void> {
     await compact(props.sessionId!, customInstructions)
     return
   }
+  // 先快照 segments（clearInput 会清空 DOM，必须在清空前提取，否则 getSegments 返回 []）。
+  const segments = inputRef.value?.getSegments() ?? []
   clearInput()
   isSending.value = true
   try {
-    await send(props.sessionId!, text)
+    await send(props.sessionId!, segments)
   } catch (e) {
     // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
     restoreInput(text)
@@ -324,22 +328,26 @@ async function onSend(): Promise<void> {
 /** 追加 steer：活跃态（流式/派发）有输入时 ⏎ 触发 */
 async function onSteer(): Promise<void> {
   if (!hasInput.value || !isActive.value) return
-  await submit(draft.value, (t) => steer(props.sessionId!, t))
+  // submit 内部会 clearInput（清空 DOM），必须在调 submit 之前快照 segments，否则 getSegments 返回 []。
+  const segments = inputRef.value?.getSegments() ?? []
+  await submit(draft.value, () => steer(props.sessionId!, segments))
 }
 
 /** 追加 follow-up：S6 有输入时 Alt+⏎ 触发；非流式则退化为普通发送 */
 async function onFollowUp(): Promise<void> {
   if (!hasInput.value) return
-  await submit(draft.value, (t) => followUp(props.sessionId!, t))
+  // submit 内部会 clearInput（清空 DOM），必须在调 submit 之前快照 segments，否则 getSegments 返回 []。
+  const segments = inputRef.value?.getSegments() ?? []
+  await submit(draft.value, () => followUp(props.sessionId!, segments))
 }
 
 /** 公共提交：清空输入 → 调用 sender → 失败时恢复草稿 */
-async function submit(text: string, sender: (t: string) => Promise<void>): Promise<void> {
+async function submit(text: string, sender: () => Promise<void>): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed) return
   clearInput()
   try {
-    await sender(trimmed)
+    await sender()
   } catch (e) {
     restoreInput(text)
     throw e

@@ -200,9 +200,22 @@ const subagentLabel = computed(() => {
 /** 返回主会话（subagent overlay 或 agent call overlay 均回退） */
 function onSubagentBack(): void {
   if (workflowStore.isViewing(props.panelId)) {
-    workflowStore.backFromAgentCall(props.panelId)
+    // [M7 FR-4] backFromAgentCall 立即清 messages[agentcallVirtualId]（对称 subagent）
+    // [W2] 传 mainSessionId 清 mainSessionAgentCalls Set（防无界增长）
+    workflowStore.backFromAgentCall(
+      props.panelId,
+      (acsId) => chat.evictVirtualKey(acsId),
+      props.sessionId ?? undefined,
+    )
   } else {
-    subagentStore.backToMain(props.panelId)
+    // [M7] backToMain 立即清 messages[virtualId] + tombstone 防终态复活
+    const subagentId = subagentStore.getViewingSubagentId(props.panelId)
+    subagentStore.backToMain(
+      props.panelId,
+      props.sessionId ?? undefined,
+      subagentId ?? undefined,
+      (sid) => chat.evictVirtualKey(sid),
+    )
   }
 }
 
@@ -217,7 +230,7 @@ onUnmounted(() => {
  * subagent overlay 优先于 agent call overlay（两者互斥，不会同时 active）。
  */
 const effectiveSessionId = computed(
-  () => subagentStore.getActiveSubagentVirtualId(props.panelId)
+  () => subagentStore.getActiveSubagentVirtualId(props.panelId, props.sessionId)
     ?? workflowStore.getActiveAgentCallVirtualId(props.panelId)
     ?? props.sessionId,
 )

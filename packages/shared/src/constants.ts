@@ -45,3 +45,9 @@ export const ENV_WHITELIST_PREFIXES: readonly string[] = [
   'NODE_', 'NVM_', 'XYZ_', 'XDG_',
   'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP',
 ]
+
+/** 系统提示词 replace.prompt 最大字符长度（argv 安全边界）。
+ *  走 pi `--system-prompt` CLI → 进程 argv，Windows 命令行约 32k 上限，留安全边际。
+ *  runtime ConfigService.setSystemPromptConfig 超限拒存；前端 UI 计数器/提示共用此值。 */
+// eslint-disable-next-line no-magic-numbers
+export const SYSTEM_PROMPT_MAX_LENGTH = 16000 as const

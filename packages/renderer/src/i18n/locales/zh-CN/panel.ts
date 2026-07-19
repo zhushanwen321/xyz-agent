@@ -56,6 +56,7 @@ export default {
     cancel: '取消',
     viewCommandDoc: '查看命令文档',
     compressing: '压缩中',
+    loadMore: '加载更多历史',
     dispatching: '思考中…',
     startConversation: '开始对话，或从左侧选择一个会话',
     scrollToBottom: '回到底部',
@@ -244,6 +245,8 @@ export default {
     tabDiff: '差异',
     copyFileName: '复制文件名',
     copyFilePath: '复制路径',
+    injectFileRef: '加入文件引用到对话框',
+    injectToNew: '引用到新对话',
   },
   panel: {
     sessionDead: '会话进程已退出',

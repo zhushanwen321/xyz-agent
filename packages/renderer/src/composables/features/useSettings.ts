@@ -69,6 +69,10 @@ async function init(): Promise<void> {
   unsubs.push(config.onSkillDirs((d) => { store.skillDirs = d }))
   unsubs.push(config.onAgentDirs((d) => { store.agentDirs = d }))
   unsubs.push(config.onDefaults((m) => { store.defaultModel = m }))
+  // 系统提示词配置（FR-4，config.systemPrompt 广播 → store.systemPromptConfig 常驻同步）
+  unsubs.push(config.onSystemPrompt((cfg, corrupted) => {
+    store.systemPromptConfig = { config: cfg, corrupted }
+  }))
   // onExtensions real 签名返 ExtensionInfo[]；mock 用 GlobalHandler<unknown>（数据是
   // fixtureExtensions，缺 dirName/path/source 但 ExtensionPage 不消费这些字段）。
   // 类型联合后 e 是 unknown，这里 cast 到 ExtensionItem（= ExtensionInfo alias）。

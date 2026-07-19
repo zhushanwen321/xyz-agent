@@ -74,14 +74,32 @@ const command = computed(() => {
   const name = selectedCommandName.value
   const sid = props.sessionId
   if (!name || !sid) return null
+  // 如果是 /skill:xxx 格式，构造虚拟命令对象
+  if (name.startsWith('/skill:')) {
+    const skillName = name.replace('/skill:', '')
+    return {
+      name: `/${skillName}`,
+      kind: 'skill' as const,
+      icon: 'star',
+      description: undefined,
+    }
+  }
   return commandStore.findCommandByName(sid, name) ?? null
 })
 
 /**
  * skill 命令 join SkillInfo：去 / 后按 skill.name 或 triggers 匹配。
  * 非 skill 命令（extension/builtin）返回 null → 走信息卡分支。
+ * 支持 /skill:xxx 格式直接从 settings.skills 查找。
  */
 const skill = computed<SkillInfo | null>(() => {
+  const name = selectedCommandName.value
+  // 直接从 /skill:xxx 格式查找
+  if (name?.startsWith('/skill:')) {
+    const skillName = name.replace('/skill:', '')
+    return settings.skills.find((s) => s.name === skillName || s.triggers?.includes(skillName)) ?? null
+  }
+  // 从 commandStore 查找
   const cmd = command.value
   if (!cmd || cmd.kind !== 'skill') return null
   const bareName = cmd.name.replace(/^\//, '')

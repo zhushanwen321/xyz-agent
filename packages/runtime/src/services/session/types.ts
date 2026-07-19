@@ -134,7 +134,7 @@ export type PiTranslatedEvent =
   /** bridge:* 前缀请求 —— interpreter 路由到 server.handleBridgeRequest。 */
   | { kind: 'bridge-ui'; requestId: string; sessionId: string; method: string; data: Record<string, unknown> }
   /** 交互式 extension_ui_request（confirm/select/input/notify/editor）—— interpreter 注册超时。 */
-  | { kind: 'extension-ui'; requestId: string; sessionId: string; method: string }
+  | { kind: 'extension-ui'; requestId: string; sessionId: string; method: string; payload: Record<string, unknown> }
   /** thinking_level_changed —— interpreter 回写 session 缓存（与 session.thinkingLevelSet WS 帧成对）。 */
   | { kind: 'thinking-level'; level: string | undefined }
   /** 触发 plugin hook（agent_start / tool_execution_* / agent_end 等观测事件）—— interpreter 调 pluginService.executeHooks。 */

@@ -95,6 +95,9 @@ export class ExtensionService {
   /** 文件型 extension 路径（如 xyz-agent-extension.js），打包/开发模式不同 */
   private extensionFilePath: string
 
+  /** 第二个文件型 extension 路径（xyz-system-prompt-extension.js），链式位置在 extensionFilePath 之后 */
+  private systemPromptExtensionFilePath: string
+
   /** npm install 串行锁——多个扩展共享同一 --prefix 目录（~/.xyz-agent/pi/agent/npm/），
    * npm 不支持对同一 prefix 的并发安装，并发会损坏 node_modules。
    * 所有写操作（install/uninstall/upgrade/autoUpgrade）走此锁串行化。 */
@@ -116,6 +119,8 @@ export class ExtensionService {
 
     // 文件型 extension 路径
     this.extensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged)
+    // 第二个文件型 extension 路径（system-prompt 扩展，链式位置在 agent extension 之后）
+    this.systemPromptExtensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged, 'xyz-system-prompt-extension.js')
 
     // Cleanup orphaned temp directories from previous crashes (>24h old)
     // Defer to next tick to avoid blocking constructor
@@ -252,6 +257,11 @@ export class ExtensionService {
     // 追加文件型 extension
     if (existsSync(this.extensionFilePath)) {
       filtered.push(this.extensionFilePath)
+    }
+    // 追加第二个文件型 extension（system-prompt 扩展，必须在 agent extension 之后：
+    // spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
+    if (existsSync(this.systemPromptExtensionFilePath)) {
+      filtered.push(this.systemPromptExtensionFilePath)
     }
 
     return filtered

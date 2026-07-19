@@ -36,4 +36,19 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] runtime 核心服务聚合点：event-adapter（pi 事件→前端消息的唯一适配层）、
+  // extension-service（扩展生命周期 + 路径解析 + 热重载）、session-service（session 生命周期/历史/
+  // fork/agentcall 的 facade）。三者都是本子系统的唯一聚合中心，职责内聚但行数超 500。
+  // 拆分需先理清职责边界（如 session-service 的 fork vs history vs lifecycle 三块），
+  // 属独立重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+  {
+    files: [
+      'packages/runtime/src/infra/pi/event-adapter.ts',
+      'packages/runtime/src/services/extension-service.ts',
+      'packages/runtime/src/services/session/session-service.ts',
+    ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
 ];

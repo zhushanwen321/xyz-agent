@@ -18,7 +18,6 @@
  * 非 token 文本（只发 scoped <span>），linkify 识别的 <a> 加 rel/target 安全属性。
  * linkify fuzzyLink:false：只识别带 scheme（http(s)://、ftp://、//）的 URL，不识别裸域名，
  * 避免 .md/.io 等 ccTLD 把文件名误判成 URL（见 getMarkdown 内注释）。
- * 代码块/mermaid 源码进 data 属性前用 base64 编码（UTF-8 安全），杜绝引号/HTML 注入。
  */
 import MarkdownIt from 'markdown-it'
 import { createHighlighter } from 'shiki'
@@ -102,7 +101,6 @@ function encodeBase64(text: string): string {
 /**
  * 用 shiki 单例同步高亮一段代码（调用前需 await getHighlighter）。
  * 返回双主题 HTML（带 --shiki-dark/--shiki-light 变量的 span），未知语言 fallback typescript。
- * XSS 安全：shiki codeToHtml 转义所有非 token 文本，只发 scoped <span>。
  */
 function highlightShikiSync(hl: Highlighter, code: string, lang: string): string {
   const resolved = hl.getLoadedLanguages().includes(lang) ? lang : 'typescript'
@@ -216,7 +214,7 @@ async function getMarkdown(): Promise<MarkdownIt> {
 /**
  * 文件路径识别正则（filepath inline rule 与 code_inline 二次识别共用）。
  *
- * 匹配「至少含一个 / 且以源码扩展名结尾」的路径片段。三条判别：
+ * 匹配「至少含一个 / 的路径片段」。判别要素：
  *  1. 至少一个路径分隔符 / —— 单独 foo.ts（无 /）不识别，避免误伤版本号/小数/普通词
  *  2. 扩展名前瞻 (?=\d*[a-zA-Z]) 要求至少含一个字母 —— 纯数字扩展名 .2/.0 不识别，
  *     挡掉模型名（glm-5.2）、版本号（node/18.0）、小数（pi/3.14）等 a/b.<数字> 形态；
@@ -225,15 +223,67 @@ async function getMarkdown(): Promise<MarkdownIt> {
  *     （~/Code/project/foo.ts）。不加此前缀时，以 / 开头的路径在起点匹配失败，
  *     等 markdown-it inline 解析器把 pos 推进到路径中间的 _ 等 punctuation 时，
  *     state.src.slice(pos) 的 ^ 分支让后半段被误识别为路径起点（只匹配后半段）。
+ *
+ * [HISTORICAL] 线性无回溯结构（2026-07-17 ReDoS 修复）：
+ * 结构为首段 [chars]+ 后跟一或多个 `/段` (?:\/[chars]+)+，每段都是单层量词，
+ * 匹配时间与输入长度成线性关系。此前 W2（commit 5668fd29）为支持路径段含空格
+ * 改成双层嵌套 (?:[chars]+(?: [chars]+)*)+，触发 O(2^n) 回溯——26 字符纯 word
+ * 序列 146ms、40 字符直接挂死。本次回退为线性结构，代价是不再支持含空格的路径段
+ * （如 docs/My Document.md）。带空格路径罕见，且 AI 通常用反引号标注走 code_inline
+ * renderer；如需识别可由调用方选中文字触发搜索直达，不依赖正文启发式识别。
+ *
+ * 段必须含字母：每段前加前瞻 (?=[chars]*[a-zA-Z])，要求段内至少一个字母。
+ * 原因：「扩展名可选」（为支持 src/Makefile）让正则可在无合法扩展名时退化为纯段匹配，
+ * 导致 node/18.0 匹配到 node/18（18 纯数字段）、pi/3.14 匹配到 pi/3。要求段含字母
+ * 可挡掉纯数字段（版本号/小数的数字段），同时不影响 Makefile 等含字母的真实路径段。
+ * 前瞻不消费字符、不引入嵌套量词，保持线性。
+ *
+ * [HISTORICAL] 段字符集不含 `.`（2026-07-17 U10b 修复）：
+ * 此前段字符集是 [a-zA-Z0-9._\-]，含 `.`，导致 glm-5.2（模型名/版本号）整段被消费
+ * 成单个 segment，末尾 .2 不进入可选扩展名组 → 扩展名前瞻 (?=\d*[a-zA-Z]) 被绕过，
+ * model zhipu-coding-plan-router/glm-5.2 被误识别。把 `.` 移出段字符集后，末尾 .ext
+ * 必须走可选扩展名组（其前瞻要求数字后必有字母），.2/.0 等纯数字扩展名被挡掉。
+ * 多段路径中间的点号段（如 handoff-portfolio-service-dev.md 的 basename）由可选扩展名组承接。
+ *
+ * 绝对路径无扩展名不识别（isAcceptableFilePath 后置过滤，2026-07-17 U13d 修复）：
+ * 「扩展名可选」（为支持相对路径 src/Makefile）的副作用是 /usr/bin、/var/log 这类
+ * 系统目录（无扩展名、段含字母）也被匹配。系统目录与项目文件（src/Makefile）在正则结构上
+ * 同构（段含字母 + 无扩展名），无法用正则区分。用 JS 后置过滤：以 / 开头的绝对路径必须
+ * 有扩展名才识别（系统目录 /usr/bin 等无扩展名 → 拒；文件路径 /var/folders/x.md、
+ * /etc/nginx/nginx.conf 有扩展名 → 留）。相对路径（src/Makefile）与家目录路径（~/...）
+ * 不受此约束，继续支持无扩展名。
+ *
+ * 详见 spec 决策 D1 + 回归测试 markdown-filepath.test.ts 的 AC-1/AC-5/AC-9 断言。
  */
 // 字符集内 `-` 转义为 `\-`（防 `_-`/`/-` 倒序范围触发 "Range out of order"）
 // g 标志 + 捕获组 1 = 路径（含可选前缀，去掉前导边界符）。前导边界符：行首或空白/括号/引号/标点。
-const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?[a-zA-Z0-9._\-]+(?:\/[a-zA-Z0-9._\-]+)+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
+// 段字符集 [a-zA-Z0-9_\-]（不含 `.`，见上方 HISTORICAL）。扩展名可选（如 src/Makefile）。
+// 段前瞻 (?=[chars]*[a-zA-Z]) 要求每段含字母。绝对路径无扩展名由 isAcceptableFilePath 后置过滤。
+export const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?(?=[a-zA-Z0-9_\-]*[a-zA-Z])[a-zA-Z0-9_\-]+(?:\/(?=[a-zA-Z0-9_\-]*[a-zA-Z])[a-zA-Z0-9_\-]+)+(?:\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})?)(?![a-zA-Z0-9._\-\/])/g
+
+/**
+ * 文件路径命中语义过滤（filepathRule 与 linkifyFilePathsHtml 共用）。
+ *
+ * 正则只判「形似路径」，语义边界在此 JS 过滤补充（避免正则复杂化、保持线性无回溯）：
+ * - 绝对路径（以 / 开头）必须带扩展名 —— 系统目录 /usr/bin、/var/log、/etc/nginx 无扩展名
+ *   且段含字母，会被正则匹配；它们是目录不是文件，要求绝对路径必须有扩展名（文件几乎都带扩展名，
+ *   系统目录几乎都不带）即可挡掉。文件路径 /var/folders/x.md、/etc/nginx/nginx.conf 有扩展名 → 留。
+ * - 相对路径（src/Makefile）与家目录路径（~/Code/...）不受此约束，无扩展名仍识别
+ *   （项目内无扩展名文件常见，如 Makefile/Dockerfile/LICENSE）。
+ */
+function isAcceptableFilePath(path: string): boolean {
+  if (path.startsWith('/')) {
+    const basename = path.slice(path.lastIndexOf('/') + 1)
+    // 扩展名 = basename 内的 `.ext`（点后跟字母数字，点不在首字符）
+    return /\.[a-zA-Z0-9]+$/.test(basename)
+  }
+  return true
+}
 
 /**
  * 裸 basename 识别正则（无 / 前缀的文件名，如 design.md / README.md）。
  *
- * 与 FILEPATH_RE 的差异：去掉 `(?:\/[a-zA-Z0-9._\-]+)+` 段（不要求含 /）。
+ * 与 FILEPATH_RE 的差异：去掉 `(?:\/...)+` 段（不要求含 /）。
  * 扩展名前瞻与 FILEPATH_RE 一致（要求数字之后必有字母，挡掉版本号/小数）。
  *
  * 用途：filepathRule 内 FILEPATH_RE 匹配失败后，用此正则扫 basename 候选，
@@ -241,7 +291,7 @@ const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?[a-zA-Z0-9._\-]+(?:\/[a-zA
  * 避免误把 design.md 这类裸文件名当 URL（linkify fuzzyLink:false 已让裸域名不当 URL，
  * 但也导致裸 basename 默认是纯文本不可点击，此正则 + localFiles 集合打开识别通道）。
  */
-const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-/])/g
+export const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-\/])/g
 
 function filepathRule(state: InlineState, silent: boolean): boolean {
   const pos = state.pos
@@ -249,7 +299,15 @@ function filepathRule(state: InlineState, silent: boolean): boolean {
   // （空格不是 terminator），故本规则必须在 text 之前主动扫描并拦截路径。
   const rest = state.src.slice(pos)
   FILEPATH_RE.lastIndex = 0
-  let match = FILEPATH_RE.exec(rest)
+  let match: RegExpExecArray | null = null
+  // 含/路径：逐个扫描，跳过语义过滤拒绝的命中（如绝对路径无扩展名 /usr/bin）
+  let candidate: RegExpExecArray | null
+  while ((candidate = FILEPATH_RE.exec(rest)) !== null) {
+    if (isAcceptableFilePath(candidate[1])) {
+      match = candidate
+      break
+    }
+  }
   // 含/路径未命中时，尝试裸 basename（仅在 env.localFiles 非空时，避免无谓扫描）
   if (!match && state.env?.localFiles && state.env.localFiles.size > 0) {
     BASENAME_RE.lastIndex = 0
@@ -317,9 +375,11 @@ function linkifyFilePathsHtml(content: string, localFiles?: Set<string>): string
   let result = ''
   let lastIndex = 0
   let match: RegExpExecArray | null
-  // 收集所有命中（含/路径 + localFiles 里的裸 basename），按 index 排序后顺序拼接
+  // 收集所有命中（含/路径 + localFiles 里的裸 basename），按 index 排序后顺序拼接。
+  // 含/路径需过 isAcceptableFilePath 语义过滤（绝对路径无扩展名等拒绝，与 filepathRule 对称）。
   const hits: Array<{ index: number; leadLen: number; path: string }> = []
   while ((match = FILEPATH_RE.exec(content)) !== null) {
+    if (!isAcceptableFilePath(match[1])) continue
     const leadLen = match[0].length - match[1].length
     hits.push({ index: match.index, leadLen, path: match[1] })
   }

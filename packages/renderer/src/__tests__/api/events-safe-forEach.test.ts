@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as events from '@/api/events'
 import type { ServerMessage } from '@xyz-agent/shared'
 
-const msg: ServerMessage = { type: 'session.list', payload: { groups: [] } }
+const msg: ServerMessage = { type: 'config.sessions', payload: { groups: [] } }
 
 beforeEach(() => {
   // events 是模块级单例，无法清理已注册的 handler。每个 case 用唯一 sessionId 避免串扰。

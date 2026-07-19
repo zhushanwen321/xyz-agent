@@ -15,14 +15,11 @@ export function isPackaged(): boolean {
   return process.env.XYZ_AGENT_PACKAGED === '1'
 }
 
-/**
- * 解析文件型 extension（xyz-agent-extension.js）的绝对路径。
- *
- * - 打包模式：在 `process.cwd()`（Resources 根）下
- * - 开发模式：在 `projectRoot/..`（repo root，apps/electron/ 父目录）下
- */
-export function getExtensionFilePath(projectRoot: string, packaged: boolean): string {
+/** 解析文件型 extension 的绝对路径。
+ *  packaged=true（生产）从 process.cwd() 取；packaged=false（开发）从 projectRoot/.. 取。
+ *  fileName 默认 'xyz-agent-extension.js'，传 'xyz-system-prompt-extension.js' 等可解析第二个文件型扩展。 */
+export function getExtensionFilePath(projectRoot: string, packaged: boolean, fileName = 'xyz-agent-extension.js'): string {
   return packaged
-    ? resolve(process.cwd(), 'xyz-agent-extension.js')
-    : resolve(resolve(projectRoot, '..'), 'xyz-agent-extension.js')
+    ? resolve(process.cwd(), fileName)
+    : resolve(resolve(projectRoot, '..'), fileName)
 }

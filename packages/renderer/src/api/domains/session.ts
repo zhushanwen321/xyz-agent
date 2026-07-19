@@ -8,14 +8,15 @@
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
 import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message } from '@xyz-agent/shared'
-import { request } from '../request'
+import { command } from '../request'
 
 /**
  * 列出所有 session，按 cwd 分组（对齐后端 SessionGroup[]，D7）。
  * reply payload 是 { groups: SessionGroup[] }，解包 .groups。
+ * type=config.sessions（原 session.list，W2 重命名）。
  */
 export async function list(): Promise<SessionGroup[]> {
-  const reply = await request<{ groups: SessionGroup[] }>('session.list')
+  const reply = await command('config.sessions', {})
   return reply.groups
 }
 
@@ -28,13 +29,13 @@ export async function create(cwd?: string, label?: string): Promise<SessionSumma
   const payload: { cwd?: string; label?: string } = {}
   if (cwd !== undefined) payload.cwd = cwd
   if (label !== undefined) payload.label = label
-  const reply = await request<{ session: SessionSummary }>('session.create', payload)
+  const reply = await command('session.create', payload)
   return reply.session
 }
 
 /** 切换到指定 session（id 无效时由 runtime/pending reject） */
 export function switchSession(sessionId: string): Promise<void> {
-  return request<void>('session.switch', { sessionId })
+  return command('session.switch', { sessionId })
 }
 
 /**
@@ -43,13 +44,21 @@ export function switchSession(sessionId: string): Promise<void> {
  */
 export async function fork(
   srcSessionId: string,
-  fromPiEntryId: string,
-  opts?: { includeFrom?: boolean; label?: string },
+  opts: {
+    piEntryId?: string
+    messageTimestamp?: number
+    messageRole?: string
+    includeFrom?: boolean
+    label?: string
+  },
 ): Promise<SessionSummary> {
-  const reply = await request<{ session: SessionSummary }>('session.fork', {
+  const reply = await command('session.fork', {
     srcSessionId,
-    fromPiEntryId,
-    ...opts,
+    fromPiEntryId: opts.piEntryId,
+    fromMessageTimestamp: opts.messageTimestamp,
+    fromMessageRole: opts.messageRole,
+    includeFrom: opts.includeFrom,
+    label: opts.label,
   })
   return reply.session
 }
@@ -62,10 +71,7 @@ export async function fork(
 export function getCommands(
   sessionId: string,
 ): Promise<{ sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }> {
-  return request<{ sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }>(
-    'session.getCommands',
-    { sessionId },
-  )
+  return command('session.getCommands', { sessionId })
 }
 
 /**
@@ -75,20 +81,17 @@ export function getCommands(
 export function getContext(
   sessionId: string,
 ): Promise<{ sessionId: string; inputTokens: number; contextLimit: number; usagePercent: number }> {
-  return request<{ sessionId: string; inputTokens: number; contextLimit: number; usagePercent: number }>(
-    'session.getContext',
-    { sessionId },
-  )
+  return command('session.getContext', { sessionId })
 }
 
 /** 重命名 session（label 更新） */
 export function rename(sessionId: string, label: string): Promise<void> {
-  return request<void>('session.rename', { sessionId, name: label })
+  return command('session.rename', { sessionId, name: label })
 }
 
 /** 删除 session（从列表移除） */
 export function remove(sessionId: string): Promise<void> {
-  return request<void>('session.delete', { sessionId })
+  return command('session.delete', { sessionId })
 }
 
 /**
@@ -96,7 +99,7 @@ export function remove(sessionId: string): Promise<void> {
  * level 是前端 6 级枚举字符串（off/low/medium/high/xhigh/max，见 thinking-levels.ts）。
  */
 export function setThinkingLevel(sessionId: string, level: string): Promise<void> {
-  return request<void>('session.setThinkingLevel', { sessionId, level })
+  return command('session.setThinkingLevel', { sessionId, level })
 }
 
 /**
@@ -104,7 +107,7 @@ export function setThinkingLevel(sessionId: string, level: string): Promise<void
  * reply payload 是 { sessionId, subagents }，解包 .subagents。
  */
 export async function getSubagents(sessionId: string): Promise<SubagentRecord[]> {
-  const reply = await request<{ subagents: SubagentRecord[] }>('session.getSubagents', { sessionId })
+  const reply = await command('session.getSubagents', { sessionId })
   return reply.subagents
 }
 
@@ -113,7 +116,7 @@ export async function getSubagents(sessionId: string): Promise<SubagentRecord[]>
  * reply payload 是 { sessionId, subagentId, messages }，解包 .messages。
  */
 export async function getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]> {
-  const reply = await request<{ messages: Message[] }>('session.getSubagentHistory', { sessionId, subagentId })
+  const reply = await command('session.getSubagentHistory', { sessionId, subagentId })
   return reply.messages
 }
 
@@ -122,7 +125,7 @@ export async function getSubagentHistory(sessionId: string, subagentId: string):
  * reply payload 是 { sessionId, workflows }，解包 .workflows。
  */
 export async function getWorkflows(sessionId: string): Promise<WorkflowRunRecord[]> {
-  const reply = await request<{ workflows: WorkflowRunRecord[] }>('session.getWorkflows', { sessionId })
+  const reply = await command('session.getWorkflows', { sessionId })
   return reply.workflows
 }
 
@@ -131,7 +134,7 @@ export async function getWorkflows(sessionId: string): Promise<WorkflowRunRecord
  * reply payload 是 { sessionId, agentCallSessionId, messages }，解包 .messages。
  */
 export async function getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
-  const reply = await request<{ messages: Message[] }>('session.getAgentCallHistory', { sessionId, agentCallSessionId })
+  const reply = await command('session.getAgentCallHistory', { sessionId, agentCallSessionId })
   return reply.messages
 }
 
@@ -140,7 +143,7 @@ export async function getAgentCallHistory(sessionId: string, agentCallSessionId:
  * runtime 按 trace[].sessionId 在 subagents 目录查找，找不到返回空串（展示型功能不 throw）。
  */
 export async function getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string> {
-  const reply = await request<{ filePath: string }>('session.getAgentCallFilePath', { sessionId, agentCallSessionId })
+  const reply = await command('session.getAgentCallFilePath', { sessionId, agentCallSessionId })
   return reply.filePath
 }
 
@@ -153,7 +156,7 @@ export function workflowAction(
   action: 'pause' | 'resume' | 'abort',
   runId: string,
 ): Promise<void> {
-  return request<void>('session.workflowAction', { sessionId, action, runId })
+  return command('session.workflowAction', { sessionId, action, runId })
 }
 
 /**
@@ -165,5 +168,5 @@ export function subagentAction(
   action: 'cancel',
   subagentId: string,
 ): Promise<void> {
-  return request<void>('session.subagentAction', { sessionId, action, subagentId })
+  return command('session.subagentAction', { sessionId, action, subagentId })
 }

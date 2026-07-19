@@ -1,5 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import type { WebSocket } from 'ws'
 
 /**
@@ -108,9 +110,17 @@ import type { IGitInfoReader } from '../src/services/ports/git-info.js'
 // IGitInfoReader 桩：本测试聚焦 restore 语义，不验证 git 摘要字段（readGitInfo 恒 undefined）。
 const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneStaleCache: () => {} }
 
-/** Minimal scanned session fixture */
+/** Per-test temp directory holding real jsonl files. */
+let tmpRoot = ''
+
+/** Minimal scanned session fixture.
+ * B7: restoreSession 直读 JSONL（readFileSync → writeFileSync tmpFile → switchSession），
+ * 不再走 session-file-utils.stripSessionEnd，所以 entry.filePath 必须指向真实文件。 */
 function addScannedSession(id: string, cwd = tmpdir()) {
-  const entry = { id, filePath: `/fake/sessions/${id}.jsonl`, cwd, name: null, lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0 }
+  // 用真实 tmp 目录建真实 jsonl 文件，避免 readFileSync ENOENT
+  const filePath = join(tmpRoot, `${id}.jsonl`)
+  writeFileSync(filePath, JSON.stringify({ type: 'session', id, cwd, timestamp: new Date().toISOString() }))
+  const entry = { id, filePath, cwd, name: null, lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0 }
   mockScannedSessions.push(entry)
   return entry
 }
@@ -170,7 +180,12 @@ describe('SessionService.restoreSession', () => {
   beforeEach(() => {
   vi.clearAllMocks()
   mockScannedSessions.length = 0
+  tmpRoot = mkdtempSync(join(tmpdir(), 'restore-'))
   service = createService()
+  })
+
+  afterEach(() => {
+  if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true })
   })
 
   // ── Normal path ──────────────────────────────────────────────
@@ -207,14 +222,15 @@ describe('SessionService.restoreSession', () => {
 
   it('should call switch_session with the scanned session file path', async () => {
   const id = 'switch-test-id'
-  const entry = addScannedSession(id, '/my/project')
+  addScannedSession(id, '/my/project')
   const mockClient = makeMockClient()
   createSessionMock.mockResolvedValue(mockClient)
 
   await service.restoreSession(id)
 
-  // W2 收口后 restoreSession 用 client.switchSession(path)
-  expect(mockClient.switchSession).toHaveBeenCalledWith(entry.filePath)
+  // W2 收口后 restoreSession 读原文件 → 写 tmpFile → switchSession(tmpFile)
+  // B7: 不再收到原 entry.filePath，而是 tmpFile（xyz-session-{id}-{ts}.jsonl）
+  expect(mockClient.switchSession).toHaveBeenCalledWith(expect.stringContaining('xyz-session-switch-test-id'))
   })
 
   // ── Boundary ─────────────────────────────────────────────────

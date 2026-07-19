@@ -12,7 +12,7 @@
  *
  * 契约见 contract.md §2.5 / code-architecture.md §3.2/§4.3/§4.9。
  *
- * 依赖方向：events（订阅）+ transport + pending（请求/动作）。
+ * 依赖方向：events（订阅）+ command（类型化请求/动作原语）+ transport（extension.ui_response fire-and-forget）。
  */
 import type {
   ExtensionInfo,
@@ -20,8 +20,8 @@ import type {
   ExtensionInteractMethod,
   RecommendedExtension,
 } from '@xyz-agent/shared'
+import { command } from '../request'
 import * as transport from '../transport'
-import * as pending from '../pending'
 import * as events from '../events'
 
 export function onExtensions(handler: (extensions: ExtensionInfo[]) => void): () => void {
@@ -31,57 +31,36 @@ export function onExtensions(handler: (extensions: ExtensionInfo[]) => void): ()
 }
 
 export function toggle(name: string, enabled: boolean): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.toggle', id, payload: { name, enabled } })
-  return result
+  return command('extension.toggle', { name, enabled })
 }
 
 /** npm 包名直装（单步：runtime 装完推 config.extensions，onExtensions 刷新） */
 export function install(source: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.install', id, payload: { source } })
-  return result
+  return command('extension.install', { source })
 }
 
 export function uninstall(name: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.uninstall', id, payload: { name } })
-  return result
+  return command('extension.uninstall', { name })
 }
 
 /** 本地目录安装（多步第一步）：runtime 复制到 tempDir + 发现候选，回 extension.discovered */
 export function installDir(path: string): Promise<ExtensionDiscoveredPayload> {
-  const id = pending.create()
-  const result = pending.register<ExtensionDiscoveredPayload>(id)
-  transport.send({ type: 'extension.installDir', id, payload: { path } })
-  return result
+  return command('extension.installDir', { path })
 }
 
 /** Git URL 安装（多步第一步）：runtime clone 到 tempDir + 发现候选，回 extension.discovered */
 export function installGitRepository(url: string): Promise<ExtensionDiscoveredPayload> {
-  const id = pending.create()
-  const result = pending.register<ExtensionDiscoveredPayload>(id)
-  transport.send({ type: 'extension.installGit', id, payload: { url } })
-  return result
+  return command('extension.installGit', { url })
 }
 
 /** 完成安装（多步第二步）：把选中候选从 tempDir 复制到 extensions/，runtime 推 config.extensions */
 export function finishInstall(tempDir: string, selected: string[]): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.finishInstall', id, payload: { tempDir, selected } })
-  return result
+  return command('extension.finishInstall', { tempDir, selected })
 }
 
 /** 放弃安装：清理 tempDir（回 extension.installCancelled） */
 export function cancelInstall(tempDir: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.cancelInstall', id, payload: { tempDir } })
-  return result
+  return command('extension.cancelInstall', { tempDir })
 }
 
 /**
@@ -94,11 +73,8 @@ export function cancelInstall(tempDir: string): Promise<void> {
  * 故需在此解包 .recommended 字段返回数组。
  */
 export async function fetchRecommended(): Promise<Array<RecommendedExtension & { installed: boolean }>> {
-  const id = pending.create()
-  const result = pending.register<{ recommended: Array<RecommendedExtension & { installed: boolean }> }>(id)
-  transport.send({ type: 'extension.recommended', id, payload: {} })
-  const payload = await result
-  return payload.recommended
+  const reply = await command('extension.recommended', {})
+  return reply.recommended
 }
 
 /**
@@ -112,10 +88,7 @@ export async function fetchRecommended(): Promise<Array<RecommendedExtension & {
  * 而丢失（broker.ts async fire-and-forget），此处主动补拉确保扩展列表新鲜。
  */
 export async function scan(): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.list', id, payload: {} })
-  await result
+  await command('extension.list', {})
 }
 
 /**
@@ -124,10 +97,7 @@ export async function scan(): Promise<void> {
  * runtime 执行 npm install <pkg>@latest → 替换旧版 → 推 config.extensions 刷新。
  */
 export function upgrade(name: string): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.upgrade', id, payload: { name } })
-  return result
+  return command('extension.upgrade', { name })
 }
 
 /**
@@ -135,10 +105,7 @@ export function upgrade(name: string): Promise<void> {
  * runtime 将 autoUpgrade 状态持久化到 extension-settings，启动时批量检查并升级。
  */
 export function setAutoUpgrade(name: string, enabled: boolean): Promise<void> {
-  const id = pending.create()
-  const result = pending.register<void>(id)
-  transport.send({ type: 'extension.setAutoUpgrade', id, payload: { name, autoUpgrade: enabled } })
-  return result
+  return command('extension.setAutoUpgrade', { name, autoUpgrade: enabled })
 }
 
 // ── Extension UI 交互（confirm/select/input/notify/editor）──────────
@@ -219,4 +186,17 @@ export function sendExtensionUIResponse(sessionId: string, requestId: string, me
     type: 'extension.ui_response',
     payload: { sessionId, requestId, method, result },
   })
+}
+
+/**
+ * 拉取指定 session 的 pending UI 请求（切换 session 后重新订阅时调用）。
+ * runtime 会返回并清除缓存的 pending 请求，避免重复推送。
+ */
+export async function getPendingRequests(sessionId: string): Promise<ExtensionUIRequest[]> {
+  const reply = await command('extension.getPendingRequests', { sessionId })
+  // reply.requests 是 unknown[]（runtime PendingUIRequest 未下沉 shared），用类型守卫收窄为 ExtensionUIRequest
+  return reply.requests.filter((r): r is ExtensionUIRequest =>
+    r != null && typeof r === 'object' &&
+    typeof (r as Record<string, unknown>).requestId === 'string' &&
+    typeof (r as Record<string, unknown>).method === 'string')
 }

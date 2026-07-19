@@ -11,6 +11,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'plugin-bootstrap': 'src/services/plugin-service/plugin-bootstrap.ts',
+    cli: 'src/cli/index.ts',  // xyz-settings CLI 入口（打包后 dist/runtime/cli.cjs）
   },
   // 输出到 apps/electron/dist/runtime（与 main/preload dist 同级，供 electron-builder 打包）
   outDir: '../../apps/electron/dist/runtime',
@@ -62,6 +63,14 @@ export default defineConfig({
     }
     const bootstrapSizeKB = Math.round(statSync(bootstrapPath).size / BYTES_PER_KB)
     console.log(`[tsup] Plugin bootstrap: ${bootstrapPath} (${bootstrapSizeKB}KB)`)
+
+    // 验证 CLI bundle（xyz-settings）
+    const cliPath = path.join('..', '..', 'apps', 'electron', 'dist', 'runtime', 'cli.cjs')
+    if (!existsSync(cliPath)) {
+      throw new Error(`CLI bundle not found: ${cliPath}`)
+    }
+    const cliSizeKB = Math.round(statSync(cliPath).size / BYTES_PER_KB)
+    console.log(`[tsup] CLI bundle: ${cliPath} (${cliSizeKB}KB)`)
 
     console.log('[tsup] Runtime bundle validated ✓')
   },

@@ -17,7 +17,7 @@
  * ExtensionUIDialog 只入非 askUser 请求，Panel 只入 askUser 请求——避免同一请求入两份队列。
  */
 import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
-import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, type ExtensionUIRequest } from '@/api/domains/extension'
+import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
 import { useToast } from '@/composables/useToast'
 
 /** 入队过滤谓词：返回 true 的请求才入队 */
@@ -36,6 +36,15 @@ export function useExtensionUI(
   const queue = ref<ExtensionUIRequest[]>([])
 
   let unsubFns: Array<() => void> = []
+
+  /**
+   * 请求版本号（W3-1 并发守卫，与 useDetailPane.ts 的 loadToken 模式对齐）。
+   * subscribe 进入时自增 token；getPendingRequests 的 then 回调内校验 token，
+   * 不匹配说明已切走，丢弃旧 session 的 stale 响应——避免 subscribe(A) 慢响应
+   * 在 subscribe(B) 之后 push 到共享 queue，导致 B 的 UI 误显 A 的 extension 对话框。
+   * 作用域在 composable 闭包内，跨多次 subscribe 调用共享。
+   */
+  let pendingReqToken = 0
 
   function subscribe(sid: string | null): void {
     // 切换 session 先退订旧订阅
@@ -61,6 +70,21 @@ export function useExtensionUI(
         if (idx !== -1) queue.value.splice(idx, 1)
       }),
     )
+    // 拉取 runtime 缓存的 pending 请求（切换 session 后重新订阅时，runtime 会推送缓存的请求）
+    // 异步执行，不阻塞订阅建立
+    const token = ++pendingReqToken
+    getPendingRequests(sid)
+      .then((pendingRequests) => {
+        // W3-1：版本不匹配说明已切走，丢弃旧 session 的 stale 响应，避免误推到新 session 的 queue
+        if (token !== pendingReqToken) return
+        for (const req of pendingRequests) {
+          if (filter && !filter(req)) continue
+          queue.value.push({ ...req, receivedAt: req.receivedAt ?? Date.now() })
+        }
+      })
+      .catch((err) => {
+        console.warn('[useExtensionUI] Failed to get pending requests:', err)
+      })
   }
 
   subscribe(sessionId.value)

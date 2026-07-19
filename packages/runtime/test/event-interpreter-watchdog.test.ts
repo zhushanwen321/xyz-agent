@@ -89,6 +89,17 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
     }
   }
 
+  /** 构造一个 extension-ui 事件（ask-user 等阻塞式 UI 请求，应暂停 watchdog）。 */
+  function extensionUi(): PiTranslatedEvent {
+    return {
+      kind: 'extension-ui',
+      requestId: 'req-ask',
+      sessionId: 'sid-watchdog',
+      method: 'select',
+      payload: {},
+    }
+  }
+
   /** 取出 sent 中的 message.stream_warn 帧（WARN 广播，B1 后与 stream_error 物理隔离）。 */
   function findStreamWarn(): ServerMessage | undefined {
     return sent.find((m) => m.type === 'message.stream_warn')
@@ -146,7 +157,7 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
     vi.advanceTimersByTime(WARN_THRESHOLD_MS + 1_000)
 
     // B1: WARN 走独立类型 message.stream_warn（提示性，不中断），
-    // 不再复用 message.stream_error（前端会当真错误收口）
+    // 不再复用 stream_error（前端会当真错误收口）
     const warn = findStreamWarn()
     expect(warn).toBeDefined()
     expect(warn!.type).toBe('message.stream_warn')
@@ -155,5 +166,203 @@ describe('EventInterpreter · W6 turn 级 pi watchdog（A2）', () => {
     expect(strayError).toBeUndefined()
     // 尚未到 abort，不触发 onSilentAbort
     expect(onSilentAbort).not.toHaveBeenCalled()
+  })
+
+  // ── WD6/7/8：extension-ui 暂停 watchdog（2026-07-16 对齐 main W1）──
+  // ask-user 等交互式 extension UI 等待用户期间暂停 watchdog：
+  //   - 暂停期间推进时间不触发 WARN/ABORT（用户未响应不应视为 pi 卡死）
+  //   - 用户响应后 pi 继续产出活动事件 → resetWatchdog 隐式恢复
+  //   - turn-end 兜底复位 paused 标志（防跨 turn 泄漏）
+
+  it('WD6: extension-ui 期间暂停 watchdog，推进超 ABORT 阈值 → 不触发 WARN/ABORT（pause 保护）', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // ask-user 请求 → pauseWatchdog
+    // 暂停期间推进远超 ABORT 阈值（5min），用户仍未响应
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 60_000)
+
+    expect(findStreamWarn()).toBeUndefined() // 不广播 WARN
+    expect(onSilentAbort).not.toHaveBeenCalled() // 不触发 ABORT
+  })
+
+  it('WD7: extension-ui 暂停后喂 text_delta 恢复 watchdog → 再静默达 WARN 阈值触发 WARN', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // 暂停
+    // 暂停期间推进 100s（不到 ABORT，验证暂停生效）
+    vi.advanceTimersByTime(100_000)
+    expect(findStreamWarn()).toBeUndefined()
+
+    // 用户响应后 pi 继续产出 text_delta → resetWatchdog 隐式恢复（清 paused + 重排 timer）
+    interpreter.interpret([textDelta()])
+    // 再静默达 WARN 阈值 → 应触发 WARN（证明已恢复）
+    vi.advanceTimersByTime(WARN_THRESHOLD_MS + 1_000)
+    expect(findStreamWarn()).toBeDefined()
+  })
+
+  it('WD8: extension-ui 暂停期间收到 turn-end → watchdog 清除且 paused 复位（之后新 turn 正常工作）', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // 暂停
+    interpreter.interpret([turnEnd()]) // turn 结束 → clearWatchdog（应复位 paused）
+
+    // 推进超过 ABORT 阈值，watchdog 已 clear，不触发
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
+    expect(onSilentAbort).not.toHaveBeenCalled()
+
+    // 新 turn：paused 应已复位，watchdog 正常工作（静默达 ABORT 触发）
+    interpreter.interpret([turnStart()])
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
+    expect(onSilentAbort).toHaveBeenCalledTimes(1)
+  })
+
+  // ── WD9：pause→reset→pause 序列（W6 可维护性硬化）──
+  // 验证 resetWatchdog 显式「先清 paused，后 armWatchdogTimer」顺序在 pause/resume 多轮交替下稳定。
+  // 反模式（先 arm 后清 paused）会让 arm 内 `if (paused) return` 误跳过补排 → 漏排定时器。
+  it('WD9: pause→reset→pause 序列 → 最终 paused 时静默超 ABORT 阈值不触发（顺序硬化回归）', () => {
+    interpreter.interpret([turnStart()]) // start watchdog
+    interpreter.interpret([extensionUi()]) // ① pause #1
+    interpreter.interpret([textDelta()]) // ② reset（隐式 resume：清 paused + 补排 timer）
+    interpreter.interpret([extensionUi()]) // ③ pause #2（最终态：paused）
+
+    // 暂停期间推进远超 ABORT 阈值，应受 pause 保护不触发
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 60_000)
+    expect(findStreamWarn()).toBeUndefined()
+    expect(onSilentAbort).not.toHaveBeenCalled()
+
+    // 再次 reset 恢复后，静默达 WARN 阈值应触发 WARN（证明 timer 正确补排、paused 正确清除）
+    interpreter.interpret([textDelta()])
+    vi.advanceTimersByTime(WARN_THRESHOLD_MS + 1_000)
+    expect(findStreamWarn()).toBeDefined()
+  })
+
+  // ── WD10：reset 在「无 timer + 暂停态」下正确补排（覆盖冷启动边角）──
+  // 场景：extension-ui 暂停后 timer 被清，textDelta 到达应清 paused + 补排新 timer。
+  it('WD10: extension-ui 暂停后 timer=null，textDelta 触发 reset → 补排 timer，达 ABORT 触发 abort', () => {
+    interpreter.interpret([turnStart()])
+    interpreter.interpret([extensionUi()]) // pause（timer 被清）
+    // textDelta reset：此时 timer=null，应补排（验证 if (!this.watchdogTimer) arm 分支）
+    interpreter.interpret([textDelta()])
+    // 静默达 ABORT 阈值 → 应触发 abort（证明补排的 timer 正常工作）
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
+    expect(onSilentAbort).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * M8（perf-quick-batch）：watchdog 消除每帧定时器重排。
+ *
+ * 现状缺陷：resetWatchdog → scheduleWatchdog 每个 message 事件（含 text_delta）都
+ * clearWatchdogTimers（2 个 clearTimeout）+ 重排 2 个 setTimeout。高频 token 流下
+ * 每 token = 4 次定时器操作，2000 token = 8000 次。clearTimeout/setTimeout 虽廉价，
+ * 但批量下是显著的 V8 定时器堆重排开销 + 无谓的 timer 对象分配。
+ *
+ * 修复目标：消除每帧重排。只锁不变量不规定机制，但必须满足：
+ * - INVAR-M8-1: warn/abort 语义不变（warn 120s 先于 abort 300s）
+ * - INVAR-M8-2【关键】: 不得比真实无活动更早触发（朴素"距上次 schedule 超阈值才重排"
+ *   会让旧定时器 deadline 比新 deadline 近 → 提前触发，方向错误）
+ * - INVAR-M8-3: 不得延后漏报（真实无活动达阈值 ±帧级容差触发）
+ * - INVAR-M8-4: 冷启动/长间隔后首 token 正常建立定时器
+ *
+ * [红灯] 当前实现每事件 4 次定时器操作，1000 事件后 setTimeout+clearTimeout 调用
+ * 远超 O(1) 上限 → fail。
+ */
+describe('EventInterpreter · M8 watchdog 定时器摊还（消除每帧重排）', () => {
+  let sent: ServerMessage[]
+  let send: (msg: ServerMessage) => void
+  let onSilentAbort: ReturnType<typeof vi.fn>
+  let interpreter: EventInterpreter
+  let setTimeoutSpy: ReturnType<typeof vi.spyOn>
+  let clearTimeoutSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    sent = []
+    send = (msg) => { sent.push(msg) }
+    onSilentAbort = vi.fn()
+    // spy 全局定时器（fake timers 模式下 spy 仍能捕获 vi 内部委托的真实调用计数）
+    setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+    interpreter = new EventInterpreter('sid-m8', {
+      send,
+      onSilentAbort,
+    } as ConstructorParameters<typeof EventInterpreter>[1])
+  })
+
+  afterEach(() => {
+    setTimeoutSpy.mockRestore()
+    clearTimeoutSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
+  function textDelta(): PiTranslatedEvent {
+    return {
+      kind: 'message',
+      message: { type: 'message.text_delta', payload: { sessionId: 'sid-m8', delta: 'x' } },
+    }
+  }
+
+  /**
+   * M8-1: 高频 token 流下定时器操作摊还为 O(1)（不再每 token 4 次）。
+   *
+   * 判定标准：1000 个 text_delta 后，setTimeout + clearTimeout 总调用次数
+   * 不超过某常数上限（如 20），而非 4×1000=4000。
+   *
+   * [红灯] 当前实现调 scheduleWatchdog 每 4 次/事件 → 4000+ 次 → 远超上限 → fail。
+   */
+  it('M8-1: 1000 个 text_delta 后 setTimeout/clearTimeout 总调用 O(1)（≤上限，非 4N）', () => {
+    interpreter.interpret([{ kind: 'turn-start', messageId: 'm-m8' }])
+    // 重置 spy 基线（turn-start 的 startWatchdog 不算 token 流开销）
+    setTimeoutSpy.mockClear()
+    clearTimeoutSpy.mockClear()
+
+    // 模拟 1000 个连续 text_delta（pi 高速产 token，每两个间隔极小）
+    for (let i = 0; i < 1000; i++) {
+      interpreter.interpret([textDelta()])
+    }
+
+    const totalCalls = setTimeoutSpy.mock.calls.length + clearTimeoutSpy.mock.calls.length
+    // O(1) 上限：允许少量摊还（如周期性重排或首尾建立），但禁止线性增长。
+    // 4N=4000，O(1) 上限设 50（宽松，留实现选择空间）。
+    expect(totalCalls).toBeLessThanOrEqual(50)
+  })
+
+  /**
+   * M8-2: 不提前触发——token 流期间（持续有活动）绝不触发 warn/abort。
+   *
+   * 即使定时器摊还，持续活动下 deadline 不断被推远，warn/abort 不应触发。
+   * 复用 WD1 语义但在高频场景下验证（防摊还实现把 deadline 算错提前）。
+   */
+  it('M8-2: 持续 token 流（每 10s 一个 delta）推进 200s → 不触发 warn/abort（不提前）', () => {
+    interpreter.interpret([{ kind: 'turn-start', messageId: 'm-m8b' }])
+    // 每 10s 一个 token，持续 200s（远超 WARN=120s，但因持续活动不应触发）
+    for (let i = 0; i < 20; i++) {
+      interpreter.interpret([textDelta()])
+      vi.advanceTimersByTime(10_000)
+    }
+    expect(sent.find((m) => m.type === 'message.stream_warn')).toBeUndefined()
+    expect(onSilentAbort).not.toHaveBeenCalled()
+  })
+
+  /**
+   * M8-3: 不延后——真实静默达阈值时 warn/abort 在阈值点触发（容差内）。
+   */
+  it('M8-3: token 流后静默达 WARN 阈值 → warn 在阈值点触发（不延后）', () => {
+    interpreter.interpret([{ kind: 'turn-start', messageId: 'm-m8c' }])
+    // 先有几个 token 建立活动基线
+    interpreter.interpret([textDelta()])
+    interpreter.interpret([textDelta()])
+    // 然后静默达 WARN 阈值
+    vi.advanceTimersByTime(WARN_THRESHOLD_MS + 500)
+    const warn = sent.find((m) => m.type === 'message.stream_warn')
+    expect(warn).toBeDefined()
+  })
+
+  /**
+   * M8-4: 冷启动首 token 正常建立定时器（不被阈值逻辑误判跳过）。
+   */
+  it('M8-4: turn-start 后单 token → 静默达 ABORT 阈值 → onSilentAbort 触发（定时器正确建立）', () => {
+    interpreter.interpret([{ kind: 'turn-start', messageId: 'm-m8d' }])
+    interpreter.interpret([textDelta()])
+    // 静默超过 ABORT 阈值
+    vi.advanceTimersByTime(ABORT_THRESHOLD_MS + 1_000)
+    expect(onSilentAbort).toHaveBeenCalledTimes(1)
   })
 })

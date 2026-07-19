@@ -9,12 +9,14 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import type {
-  ProviderInfo,
-  SkillInfo,
-  AgentInfo,
-  ScannedSkillInfo,
-  ScannedAgentInfo,
+import {
+  SYSTEM_PROMPT_MAX_LENGTH,
+  type ProviderInfo,
+  type SkillInfo,
+  type AgentInfo,
+  type ScannedSkillInfo,
+  type ScannedAgentInfo,
+  type SystemPromptConfig,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -46,6 +48,18 @@ const FORCED_PROJECT_AGENT_DIR = '.xyz-agent/agents'
 const forcedGlobalSkillDir = (): string => join(getConfigDir(), 'skills')
 /** 全局强制 agent 目录：<configDir>/agents（configDir = getConfigDir()，读 env）。 */
 const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
+
+/** JSON 序列化缩进（saveAppConfig / setSystemPromptConfig 的 atomicWrite 共用）。 */
+const JSON_INDENT = 2
+
+/**
+ * 生成 atomicWrite 的唯一 tmp 后缀（时间戳 + 随机串），避免并发写入撞固定 .tmp 文件。
+ * saveAppConfig / setSystemPromptConfig 共用。
+ */
+function uniqueTmpSuffix(): string {
+  // eslint-disable-next-line no-magic-numbers -- base36 radix + slice 掉 "0." 前缀（惯用唯一串生成）
+  return `${Date.now()}_${Math.random().toString(36).slice(2)}`
+}
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -204,8 +218,12 @@ export class ConfigService implements IConfigService {
     try {
       const cd = this.configStore.getConfigDir()
       if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
-      // eslint-disable-next-line no-magic-numbers -- standard JSON indent
-      atomicWrite(this.appConfigPath(), JSON.stringify(config, null, 2))
+      // 用唯一 tmp 后缀避免并发 saveAppConfig 撞固定 .tmp 文件（同 setSystemPromptConfig）。
+      atomicWrite(
+        this.appConfigPath(),
+        JSON.stringify(config, null, JSON_INDENT),
+        uniqueTmpSuffix(),
+      )
     // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
     } catch (e) {
       console.error('[config-service] save config.json error:', e)
@@ -435,5 +453,109 @@ export class ConfigService implements IConfigService {
 
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[] {
     return scanAgents(sources, existingIds)
+  }
+
+  // ── System prompt config（FR-6/FR-7，ADR-0038）──
+  // 独立文件 system-prompt.json（不复用 config.json）：replace/append 两段提示词配置，
+  // 插件读此文件热生效（replace 启动期注入、append 每轮 before_agent_start 注入）。
+
+  private systemPromptPath(): string {
+    return join(this.configStore.getConfigDir(), 'system-prompt.json')
+  }
+
+  private defaultSystemPromptConfig(): SystemPromptConfig {
+    return {
+      version: 1,
+      replace: { enabled: false, prompt: '' },
+      append: { enabled: false, prompt: '' },
+    }
+  }
+
+  /**
+   * 防御性合并：把磁盘读到的 raw（可能字段缺失/类型错）合并到默认值上。
+   * corrupted=false（字段级容错，不视为损坏）；只有 JSON.parse 失败才 corrupted=true。
+   */
+  private mergeSystemPromptConfig(raw: unknown): SystemPromptConfig {
+    const base = this.defaultSystemPromptConfig()
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return base
+    const r = raw as Record<string, unknown>
+    const replaceRaw = r['replace']
+    const appendRaw = r['append']
+    const replace = (typeof replaceRaw === 'object' && replaceRaw !== null && !Array.isArray(replaceRaw))
+      ? replaceRaw as Record<string, unknown>
+      : {}
+    const append = (typeof appendRaw === 'object' && appendRaw !== null && !Array.isArray(appendRaw))
+      ? appendRaw as Record<string, unknown>
+      : {}
+    return {
+      version: typeof r['version'] === 'number' ? r['version'] : base.version,
+      replace: {
+        enabled: typeof replace['enabled'] === 'boolean' ? replace['enabled'] : false,
+        prompt: typeof replace['prompt'] === 'string' ? replace['prompt'] : '',
+      },
+      append: {
+        enabled: typeof append['enabled'] === 'boolean' ? append['enabled'] : false,
+        prompt: typeof append['prompt'] === 'string' ? append['prompt'] : '',
+      },
+    }
+  }
+
+  getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean } {
+    const cp = this.systemPromptPath()
+    if (!existsSync(cp)) {
+      return { config: this.defaultSystemPromptConfig(), corrupted: false }
+    }
+    let raw: unknown
+    try {
+      raw = JSON.parse(readFileSync(cp, 'utf-8'))
+    } catch {
+      return { config: this.defaultSystemPromptConfig(), corrupted: true }
+    }
+    return { config: this.mergeSystemPromptConfig(raw), corrupted: false }
+  }
+
+  setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string } {
+    if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+      return {
+        ok: false,
+        error: `replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
+      }
+    }
+    // append 同样校验长度：append 虽不走 argv（无 Windows 32k 限制），但无上限会导致
+    // 每轮拼进 systemPrompt 的 token 失控。复用同一上限保持双卡 UX 一致。
+    if (config.append.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+      return {
+        ok: false,
+        error: `append prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
+      }
+    }
+    const cd = this.configStore.getConfigDir()
+    if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+    // 用唯一 tmp 后缀避免并发 setSystemPromptConfig 撞固定 .tmp 文件
+    // （两次并发写入会共用同一 system-prompt.json.tmp，后写的 writeFileSync 覆盖前者数据）。
+    atomicWrite(
+      this.systemPromptPath(),
+      JSON.stringify(config, null, JSON_INDENT),
+      uniqueTmpSuffix(),
+    )
+    return { ok: true }
+  }
+
+  getReplaceSystemPrompt(): string | undefined {
+    const { config } = this.getSystemPromptConfig()
+    if (config.replace.enabled && config.replace.prompt.trim() !== '') {
+      // 防御性长度兜底：setSystemPromptConfig 写入期已校验上限，但 replace/append 启用态切换
+      // 或外部直接篡改 system-prompt.json 可能写入超长 prompt。原样返回会让超长 prompt 进
+      // pi spawn argv，触发 Windows 32k 命令行截断。降级为不注入（返回 undefined）比注入
+      // 残缺内容更安全。错误信息风格与 setSystemPromptConfig 一致。
+      if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+        console.warn(
+          `[config-service] replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH}), falling back to undefined (replace disabled this run)`,
+        )
+        return undefined
+      }
+      return config.replace.prompt
+    }
+    return undefined
   }
 }

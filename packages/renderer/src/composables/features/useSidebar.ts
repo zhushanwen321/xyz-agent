@@ -32,9 +32,10 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useSubagentStore } from '@/stores/subagent'
+import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useChat } from '@/composables/features/useChat'
+import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
@@ -49,7 +50,7 @@ let sessionListUnsub: (() => void) | null = null
 function bindSessionListBroadcast(setGroups: (groups: SessionGroup[]) => void): void {
   sessionListSubCount += 1
   if (sessionListSubCount === 1) {
-    sessionListUnsub = events.onGlobalType('session.list', (msg) => setGroups(msg.payload.groups))
+    sessionListUnsub = events.onGlobalType('config.sessions', (msg) => setGroups(msg.payload.groups))
   }
 }
 
@@ -194,6 +195,8 @@ export function useSidebar() {
 
     await sessionApi.switchSession(id)
     session.activeId = id
+    // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）
+    chat.touchLru(id)
     if (opts?.panelId) {
       panel.loadSession(opts.panelId, id)
       panel.setActive(opts.panelId)
@@ -205,8 +208,9 @@ export function useSidebar() {
     // getHistory 失败 → 标记 failedHistory，landing 显重试出口（AC-2.6），不永久卡住
     if (!chat.isHydrated(id)) {
       try {
-        const history = await chatApi.getHistory(id)
-        chat.hydrate(id, history)
+        const { messages, historyTruncated } = await chatApi.getHistory(id)
+        chat.hydrate(id, messages)
+        useChat().setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
@@ -255,6 +259,18 @@ export function useSidebar() {
     const workflowStore = useWorkflowStore()
     void subagentStore.loadSubagents(id)
     void workflowStore.loadWorkflows(id)
+
+    // [lru-panel-exempt-fix] evictIfNeeded 前刷新所有 panel 绑定 session 的 LRU recency。
+    // panel 绑定 session（含 standby 侧）是用户当前可见的活跃 session，刷新其 recency 确保不被误驱逐。
+    // 保护随 panel 解绑自然衰减（close/unbind 后不再 touch → 回到正常 LRU 候选）。
+    // 不改 isLruExempt（chat.ts:424）：evictSessionWithVirtual 与 evictIfNeeded 共用同一 isExempt，
+    // 若加 panel 检查会让 deleteSession 流程中被删 session（必然还绑定 panel）被 exempt 拦截 → 内存泄漏。
+    for (const p of panel.panels) {
+      if (p.sessionId) chat.touchLru(p.sessionId)
+    }
+    // W3 H3：切 session 后触发 LRU 驱逐（保留最近 8 个 + streaming/pending/compacting 豁免）。
+    // panel 绑定 session 由上方 touchLru 刷新保护，非 panel 绑定的最旧 session 按序驱逐。
+    chat.evictIfNeeded()
   }
 
   /**
@@ -263,8 +279,9 @@ export function useSidebar() {
   async function retryHistory(sessionId: string): Promise<void> {
     chat.clearHistoryError(sessionId)
     try {
-      const history = await chatApi.getHistory(sessionId)
-      chat.hydrate(sessionId, history)
+      const { messages, historyTruncated } = await chatApi.getHistory(sessionId)
+      chat.hydrate(sessionId, messages)
+      useChat().setHistoryTruncated(sessionId, historyTruncated)
     } catch {
       chat.markHistoryFailed(sessionId)
     }
@@ -359,13 +376,39 @@ export function useSidebar() {
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
     if (boundPanel) {
-      if (subagentStore.isViewing(boundPanel.id)) subagentStore.backToMain(boundPanel.id)
-      if (workflowStore.isViewing(boundPanel.id)) workflowStore.backFromAgentCall(boundPanel.id)
+      if (subagentStore.isViewing(boundPanel.id)) {
+        // [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）
+        const viewingSubId = subagentStore.getViewingSubagentId(boundPanel.id)
+        const chatStore = useChatStore()
+        subagentStore.backToMain(
+          boundPanel.id,
+          id,
+          viewingSubId ?? undefined,
+          (sid) => chatStore.evictVirtualKey(sid),
+        )
+      }
+      if (workflowStore.isViewing(boundPanel.id)) {
+        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId), id)
+      }
     }
     session.removeFromList(id)
-    // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅
+    // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
+    // [M7 FR-5] evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
+    // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
+    const chatStoreForEvict = useChatStore()
+    chatStoreForEvict.evictSessionWithVirtual(id)
+    // [B8] 主 session 已删，其名下 subagent tombstone（模块级 Set 不随 store 销毁）无意义，
+    // 按 mainSid 前缀精确清理，防 Set 随 session 建删单调增长（泄漏）。
+    clearSubagentTombstones(id)
+    // [M7 D6] agentcall 两段式无 mainSid 前缀，经 workflow 映射清全部 agentcall virtualId
+    for (const acsVirtualId of workflowStore.getAgentCallVirtualIdsByMain(id)) {
+      chatStoreForEvict.evictVirtualKey(acsVirtualId)
+    }
+    workflowStore.clearAgentCallMapping(id)
     useChat().disposeSession(id)
+    // W3：清除该 session 的 derivedStatus/sessionDigest 缓存，避免已删 session 的 computed 残留
+    invalidateStatusCache(id)
     if (wasActive) {
       const next = session.list[0]
       if (next) {
@@ -405,12 +448,11 @@ export function useSidebar() {
     if (!forkMsg) {
       throw new Error(`fork: message ${fromMessageId} not found in session ${srcSessionId}`)
     }
-    if (!forkMsg.piEntryId) {
-      throw new Error('fork: 该 session 缺少 piEntryId（历史未从文件加载），无法定位 fork 点')
-    }
-
-    // runtime 截断 JSONL + 新进程 switch_session，返回新 session summary
-    const created = await sessionApi.fork(srcSessionId, forkMsg.piEntryId, {
+    // [HISTORICAL] 2026-07-16：RPC 路径加载的 session 无 piEntryId，传 timestamp + role 让 runtime 读 JSONL 匹配
+    const created = await sessionApi.fork(srcSessionId, {
+      piEntryId: forkMsg.piEntryId,
+      messageTimestamp: forkMsg.timestamp,
+      messageRole: forkMsg.role,
       includeFrom: opts?.includeFrom,
     })
     session.appendSession(created)
@@ -431,35 +473,19 @@ export function useSidebar() {
   }
 
   /**
-   * 加载 session 列表（mock 优先，让 fixture 可见）。
+   * 加载 session 列表（W6 去全量预 hydrate）。
    * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
    *
-   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源；
-   * 预 hydrate 各 session 的 chat 历史用 flatMap 展平（derivedStatus/sessionDigest 按 id 查找用扁平视图）。
-   * 否则未访问的 session 在 chat store 为空，deriveStatus 全返回 done，5 态无法可见。
-   * isHydrated 守卫幂等，selectSession 的按需 hydrate 命中后变 no-op，不会重复载入。
-   * TODO 联调：真实 runtime 下全量预载历史有成本，应改为 WS 推送 status 或默认 done/idle + 按需 hydrate。
+   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源。
+   * 不再全量预 hydrate 各 session 历史——侧栏 status 由元数据 status（W5 session_end 终态）
+   * + 瞬态（W2 streamingSessionIds/compactingSessions Set）派生，用户点开 session 时按需 hydrate
+   * （selectSession 路径不变）。消除启动时 N 次 getHistory 全量读 JSONL 的卡顿峰值 + 内存膨胀。
    */
   async function loadSessions(): Promise<void> {
     try {
       const groups = await sessionApi.list()
       session.setGroups(groups)
       session.setListLoadError(null)
-      const flat = groups.flatMap((g) => g.sessions)
-      // L2：allSettled 吸收所有 rejection，对 rejected 的 session 调 markHistoryFailed
-      // 让 landing 显重试出口（对齐 selectSession 内 getHistory 的 catch → markHistoryFailed 策略）
-      const results = await Promise.allSettled(
-        flat.map(async (s) => {
-          if (!chat.isHydrated(s.id)) {
-            chat.hydrate(s.id, await chatApi.getHistory(s.id))
-          }
-        }),
-      )
-      results.forEach((r, i) => {
-        if (r.status === 'rejected') {
-          chat.markHistoryFailed(flat[i].id)
-        }
-      })
     } catch (e) {
       // S5：list 失败设 listLoadError，SessionList 据此显示「加载失败，点击重试」
       const msg = e instanceof Error ? e.message : String(e)

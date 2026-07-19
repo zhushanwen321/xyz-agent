@@ -7,7 +7,7 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/useSidebar-get-commands.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { ServerMessage, SessionGroup, SessionSummary } from '@xyz-agent/shared'
@@ -39,7 +39,6 @@ vi.mock('@/api', () => ({
 import { session as sessionMock } from '@/api'
 
 import { useSidebar } from '@/composables/features/useSidebar'
-import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -58,7 +57,7 @@ it('U1: selectSession 调 switchSession 后调 sessionApi.getCommands 拉命令'
   const scope = effectScope()
   const sidebar = scope.run(() => useSidebar())!
   // 喂一个 session 列表让 activeId 可设
-  events.dispatchGlobal({ type: 'session.list', payload: { groups: makeGroups(['s1']) } })
+  events.dispatchGlobal({ type: 'config.sessions', payload: { groups: makeGroups(['s1']) } })
 
   await sidebar.selectSession('s1')
 
@@ -71,7 +70,7 @@ it('U1: selectSession 调 switchSession 后调 sessionApi.getCommands 拉命令'
 it('U2: getCommands 拉到命令后 events.dispatchSession 本地投递 session.commands', async () => {
   const scope = effectScope()
   const sidebar = scope.run(() => useSidebar())!
-  events.dispatchGlobal({ type: 'session.list', payload: { groups: makeGroups(['s1']) } })
+  events.dispatchGlobal({ type: 'config.sessions', payload: { groups: makeGroups(['s1']) } })
 
   // 订阅 s1 session 通道，捕获投递的消息
   const received: ServerMessage[] = []
@@ -88,10 +87,10 @@ it('U2: getCommands 拉到命令后 events.dispatchSession 本地投递 session.
 })
 
 it('U3: getCommands 失败不阻断 selectSession（命令缺失不致命，可后补）', async () => {
-  sessionMock.getCommands.mockRejectedValueOnce(new Error('pi not ready'))
+  vi.mocked(sessionMock.getCommands).mockRejectedValueOnce(new Error('pi not ready'))
   const scope = effectScope()
   const sidebar = scope.run(() => useSidebar())!
-  events.dispatchGlobal({ type: 'session.list', payload: { groups: makeGroups(['s1']) } })
+  events.dispatchGlobal({ type: 'config.sessions', payload: { groups: makeGroups(['s1']) } })
 
   // 不应抛
   await expect(sidebar.selectSession('s1')).resolves.toBeUndefined()
