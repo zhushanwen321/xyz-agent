@@ -180,6 +180,42 @@ describe('workflow store', () => {
     // setMessages 不应被调用（fetchAndInject 失败）
     expect(setMessages).not.toHaveBeenCalled()
   })
+
+  it('[B3] backFromAgentCall 传给 chatEvict 的是带前缀的 virtualId（防 raw sessionId 致 no-op 泄漏）', async () => {
+    // 回归 B3：selectAgentCall 写入 messages 用的 key 是 `agentcall:<acsId>`，
+    // backFromAgentCall 调 chatEvict 时必须传带前缀的 virtualId，与写入时 key 对齐。
+    // 否则 chat.evictVirtualKey(rawId) → deleteMessageKey(rawId) 删一个从未存在过的 key（no-op），
+    // agentcall 虚拟 session 消息永久残留（内存泄漏）。
+    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
+    const store = useWorkflowStore()
+
+    // 1. selectAgentCall 写入消息到 'agentcall:sess-agent-1'
+    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
+    expect(store.getViewingAgentCallId('panel-1')).toBe('sess-agent-1')
+
+    // 2. backFromAgentCall：chatEvict mock 捕获实际传入的参数
+    const chatEvict = vi.fn()
+    store.backFromAgentCall('panel-1', chatEvict, 'sess-main')
+
+    // 3. 断言：chatEvict 收到的是带前缀的 'agentcall:sess-agent-1'，不是 raw 'sess-agent-1'
+    expect(chatEvict).toHaveBeenCalledTimes(1)
+    expect(chatEvict).toHaveBeenCalledWith('agentcall:sess-agent-1')
+    expect(chatEvict).not.toHaveBeenCalledWith('sess-agent-1')
+    // Panel overlay 已退出
+    expect(store.isViewing('panel-1')).toBe(false)
+    expect(store.getViewingAgentCallId('panel-1')).toBeNull()
+  })
+
+  it('[B3] backFromAgentCall 不传 chatEvict 时 messages 残留（仅清 viewing 状态）', async () => {
+    // 边界：调用方未注入 chatEvict（如非 Panel 组件的轻量回退）时只清 viewing，
+    // 不抛错——messages 清理由调用方负责（与 subagent backToMain 行为一致）。
+    vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
+    const store = useWorkflowStore()
+    await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
+
+    expect(() => store.backFromAgentCall('panel-1')).not.toThrow()
+    expect(store.isViewing('panel-1')).toBe(false)
+  })
 })
 
 describe('workflow store · subscribeWorkflowPush', () => {

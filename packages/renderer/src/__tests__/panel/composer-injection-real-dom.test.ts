@@ -109,3 +109,93 @@ describe('composer 注入真实 DOM chip（R1/R3）', () => {
     expect(store.pendingInjection).toBeNull()
   })
 })
+
+// ── W18: split / dual panel 多 Composer 实例守护测试 ─────────────────────────────
+// 防的 bug：split（panel+landing 同时挂载）/ dual panel 场景下，target=current 且
+// sessionId 匹配活跃 session 时，可能被多个 Composer 实例误消费（双重注入）。
+// 锁定契约：variant=panel 按 sessionId 精确匹配，variant=landing 仅消费 sessionId=null 的请求。
+describe('W18: split / dual panel 多 Composer 实例注入隔离', () => {
+  /**
+   * 双挂载 setup：panel + landing 两个 Composer 共享同一 composerInjectionStore
+   * 与同一 contenteditable 池（用不同 el 模拟两个独立 Composer 实例）。
+   */
+  function setupDualMount(panelSessionId: string | null) {
+    const panelChain = setupRealChipChain('panel', panelSessionId)
+    const landingChain = setupRealChipChain('landing', null)
+    // 共享同一 store（pinia 单例，第二次 setupRealChipChain 复用同一 store 实例）
+    return {
+      panelEl: panelChain.el,
+      landingEl: landingChain.el,
+      store: panelChain.store,
+    }
+  }
+
+  it('W18-1: panel + landing 双挂载 + target=current + sessionId=活跃 session → 仅 panel 注入，landing 不误消费', async () => {
+    // 场景：split 视图（panel 显示活跃 session 的对话流，landing 显示空起始页）。
+    // 用户从 drawer 注入到「当前活跃 session」。
+    // 期望：panel composer（variant=panel，sessionId 匹配活跃 session）消费；
+    //      landing composer（variant=landing，sessionId=null 不匹配 current 的非 null sessionId）不消费。
+    const { panelEl, landingEl, store } = setupDualMount('s-active')
+    store.requestInjection({ target: 'current', path: 'main.ts', sessionId: 's-active' })
+    await nextTick()
+
+    // panel 注入成功
+    const panelChip = panelEl.querySelector('.mention-file') as HTMLElement
+    expect(panelChip).toBeTruthy()
+    expect(panelChip.dataset.chipPath).toBe('main.ts')
+
+    // landing 未注入（variant=landing 只消费 sessionId=null 的请求）
+    expect(landingEl.querySelector('.mention-file')).toBeNull()
+
+    // pendingInjection 被消费后清空（一次注入只对应一个 Composer，无双重消费）
+    expect(store.pendingInjection).toBeNull()
+  })
+
+  it('W18-2: panel + landing 双挂载 + target=current + sessionId=null（routeToLanding 改写后）→ 仅 landing 注入', async () => {
+    // 场景：阶段二，routeToLanding 把 target=new 改为 current 且 sessionId=null。
+    // 此时 panel composer 不匹配（sessionId=null ≠ panel 的活跃 session），landing 匹配。
+    const { panelEl, landingEl, store } = setupDualMount('s-active')
+    store.requestInjection({ target: 'current', path: 'new-task.ts', sessionId: null })
+    await nextTick()
+
+    // landing 注入成功（variant=landing 消费 sessionId=null 的 current 请求）
+    const landingChip = landingEl.querySelector('.mention-file') as HTMLElement
+    expect(landingChip).toBeTruthy()
+    expect(landingChip.dataset.chipPath).toBe('new-task.ts')
+
+    // panel 不匹配（sessionId=null ≠ 's-active'）
+    expect(panelEl.querySelector('.mention-file')).toBeNull()
+    expect(store.pendingInjection).toBeNull()
+  })
+
+  it('W18-3: panel + landing 双挂载 + target=new → landing 直接消费（阶段一前置：landing 已挂载）', async () => {
+    // 场景：用户停在 landing 态，从 drawer 发起新对话注入。
+    // 期望：landing composer 已挂载时直接消费 target=new（不路由到自身），
+    //      panel composer 不消费 target=new（仅 session composer 触发 startFlow，但此处 panel 不匹配）。
+    const { panelEl, landingEl, store } = setupDualMount('s-active')
+    store.requestInjection({ target: 'new', path: 'fresh.ts', sessionId: 's-active' })
+    await nextTick()
+
+    // landing 直接消费 target=new
+    const landingChip = landingEl.querySelector('.mention-file') as HTMLElement
+    expect(landingChip).toBeTruthy()
+    expect(landingChip.dataset.chipPath).toBe('fresh.ts')
+
+    // panel 不注入（target=new 仅 landing composer 或路由阶段二消费）
+    expect(panelEl.querySelector('.mention-file')).toBeNull()
+    expect(store.pendingInjection).toBeNull()
+  })
+
+  it('W18-4: 双 Composer 注入 chip 数量守恒（无双重注入）', async () => {
+    // 防止 split 模式下 watch 在两个 Composer 实例都触发导致同一请求注入两次（chip 翻倍）。
+    const { panelEl, landingEl, store } = setupDualMount('s-active')
+    store.requestInjection({ target: 'current', path: 'once.ts', sessionId: 's-active' })
+    await nextTick()
+
+    // 两个 Composer 实例合计只产生 1 个 chip（panel 消费，landing 不消费）
+    const totalChips =
+      panelEl.querySelectorAll('.mention-file').length +
+      landingEl.querySelectorAll('.mention-file').length
+    expect(totalChips).toBe(1)
+  })
+})

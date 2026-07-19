@@ -8,6 +8,13 @@
  * - 流式事件名严格按 protocol.ts ServerMessageType（message_start/text_delta/complete）
  *
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
+ *
+ * [W17] ⚠️ 事件总线共享警告：mock 直接复用 real events 总线（pushSession/dispatchSession
+ * 走的是 real `@/api/events`），mock 推送的 server-push 会被所有经 events.on 注册的订阅者收到。
+ * 因此 **mock 不可与 real 模式同进程加载**——若 real ws-client 已连，mock 推送会污染 real 订阅者。
+ * 工程约定：测试/E2E/演示环境只用 mock（VITE_MOCK=true），生产构建不走 mock 门面（api/index
+ * 在构建期静态选 real），两者互斥。若检测到 mock 与 real 同时激活（first-push 时 ws-client 已
+ * connected），打一次 console.warn 提示。
  */
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
@@ -24,6 +31,8 @@ import type { Section } from '@/lib/search-types'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
+// [W17] 检测 real ws-client 是否已 connected（mock 与 real 同进程时打 warn，防 events 总线污染）
+import * as wsClient from '@/lib/ws-client'
 // settings 的纯前端偏好（getSystem/updateSystem）与 transport 无关，复用 real 实现消除手工同构；
 // mock 域隔离原则针对 transport/events/pending，localStorage 偏好不在此列。
 import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '../domains/settings'
@@ -40,12 +49,41 @@ import { fixtureWorkflows, fixtureSubagents } from './workflow-data'
 const NPM_PREFIX = 'npm:'
 
 /**
+ * [W17] mock 与 real 同进程加载的 once-warn（防 events 总线污染）。
+ * mock 直接 dispatchSession 走 real events 总线，若 real ws-client 已 connected，
+ * mock 推送会污染 real 订阅者。检测到该状态时打一次 warn（不阻断，因测试环境可能合法共用）。
+ * 用模块级 flag once-warn，避免每次 pushSession 都刷屏。
+ */
+let mockRealCollisionWarned = false
+function warnIfRealClientActive(): void {
+  if (mockRealCollisionWarned) return
+  let state: string | undefined
+  try {
+    state = wsClient.getState?.().value
+  } catch {
+    // ws-client 未初始化或不可用——mock 独占模式，无需 warn
+    return
+  }
+  if (state === 'connected') {
+    mockRealCollisionWarned = true
+    console.warn(
+      '[mock] 检测到 real ws-client 已 connected，mock 推送将污染 real 订阅者（events 总线共用）。' +
+      '工程约定 mock 与 real 互斥加载，请检查 VITE_MOCK 配置。',
+    )
+  }
+}
+
+/**
  * Mock 模拟 runtime session 通道推送（dispatchSession）。
  * 组件用 events.on(sessionId) 订阅 session.commands / context.update / extension:widget 等；
  * mock 不走 transport，故在此桥接——直接 dispatchSession 模拟 server-push，
  * 让组件订阅在 mock 模式下也能触发（mock/real 同构）。
+ *
+ * [W17] pushSession 是 mock 与 real events 总线的接触点：首次推送时检测 real ws-client 是否
+ * 已 connected，若是则 warn（防 mock 推送污染 real 订阅者）。
  */
 function pushSession(sessionId: string, msg: ServerMessage): void {
+  warnIfRealClientActive()
   events.dispatchSession(sessionId, msg)
 }
 

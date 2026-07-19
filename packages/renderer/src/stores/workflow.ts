@@ -20,7 +20,7 @@
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { WorkflowRunRecord, Message } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -84,6 +84,18 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * unsub 时经此 Map clearTimeout 并 delete。
    */
   const workflowReloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  // [W15] 防御性清理：workflowReloadTimers 是模块级 Map（不在 ref 里），HMR / store dispose
+  // 时若不主动 clearTimeout，在途的 running 重试 timer 仍会在 500ms 后触发 loadWorkflows(sid)
+  // 操作已废弃的 store。参照 subagent.ts 的 onScopeDispose panelStreamUnsub 模式。
+  // mainSessionAgentCalls 由 clearWorkflows / clearAgentCallMapping 显式管理（业务路径触发），
+  // 此处不重复清理（避免与 deleteSession 的精确清理冲突）。
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      workflowReloadTimers.forEach((t) => clearTimeout(t))
+      workflowReloadTimers.clear()
+    })
+  }
 
   // ── getters ──
   /** workflow 列表计数 */
@@ -258,12 +270,18 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * deleteSession 路径经 clearAgentCallMapping 整条 delete 已覆盖，但返回主面板路径漏清。
    * 调用方传 mainSessionId（panel 绑定 session）即可精确删该 virtualId。
    *
-   * @param chatEvict chat.evictSessionWithVirtual 注入回调（清 messages，store 不互 import）
+   * [B3] chatEvict 必须传带前缀的 agentCallVirtualId，不能传 raw sessionId：
+   * selectAgentCall 写入 messages 用的 key 是 `agentcall:<acsId>`（agentCallVirtualId），
+   * chatEvict 的实际实现是 chat.evictVirtualKey(virtualId) → deleteMessageKey(virtualId)，
+   * 若传 raw sessionId 会 delete 一个从未存在过的 key（no-op），导致 agentcall 虚拟 session
+   * 消息永久残留（内存泄漏）。对称参照 subagent.backToMain 传 chatEvict?.(virtualId)。
+   *
+   * @param chatEvict chat.evictVirtualKey 注入回调（接收带前缀的 virtualId，清 messages，store 不互 import）
    * @param mainSessionId 主 session ID（清 mainSessionAgentCalls Set 用，调用方可获取）
    */
   function backFromAgentCall(
     panelId: string,
-    chatEvict?: (agentCallSessionId: string) => void,
+    chatEvict?: (virtualId: string) => void,
     mainSessionId?: string,
   ): void {
     const agentCallSessionId = agentCallMap.value.get(panelId)
@@ -275,8 +293,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
       mainSessionAgentCalls.get(mainSessionId)?.delete(agentCallVirtualId(agentCallSessionId))
     }
     // 立即清 messages[agentcallVirtualId]（FR-4，与 subagent backToMain 对称）
+    // [B3] 必须传 agentCallVirtualId(agentCallSessionId)——与 selectAgentCall 写入时的 key 一致
     if (agentCallSessionId && chatEvict) {
-      chatEvict(agentCallSessionId)
+      chatEvict(agentCallVirtualId(agentCallSessionId))
     }
   }
 

@@ -634,8 +634,8 @@ export const useChatStore = defineStore('chat', () => {
     // 清 pendingSend + timer
     clearPendingSend(sessionId)
     clearStreamingTimer(sessionId)
-    // 收口日志每次正常 message.complete 都打一条，长对话噪音大 → dev-only。
-    if (import.meta.env.DEV) console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
+    // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
+    if (import.meta.env.DEV && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
   }
 
   /**
