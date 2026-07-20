@@ -20,6 +20,8 @@
  * 避免 .md/.io 等 ccTLD 把文件名误判成 URL（见 getMarkdown 内注释）。
  */
 import MarkdownIt from 'markdown-it'
+import type Token from 'markdown-it/lib/token.mjs'
+import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import { createHighlighter } from 'shiki'
 import type { Highlighter } from 'shiki'
 import i18n from '@/i18n'
@@ -27,38 +29,22 @@ import i18n from '@/i18n'
 const t = i18n.global.t
 
 /**
- * markdown-it StateInline 的最小结构类型（@types/markdown-it 极简，未导出 StateInline）。
- * 仅声明 filepath rule 用到的字段。
- */
-interface InlineState {
-  src: string
-  pos: number
-  posMax: number
-  pending: string
-  /** md.render(content, env) 的第二参 env，markdown-it 运行时注入（见 StateInline 构造） */
-  env?: MarkdownEnv
-  push(type: string, tag: string, nesting: number): InlineStateToken
-}
-interface InlineStateToken {
-  content: string
-  attrSet(key: string, value: string): void
-}
-
-/** markdown-it 实例上 inline ruler 的最小结构类型（@types 未暴露 md.inline.ruler） */
-interface InlineRulerHost {
-  inline: { ruler: { before(beforeName: string, ruleName: string, fn: (s: InlineState, silent: boolean) => boolean): void } }
-}
-
 /**
- * renderMarkdown 的 env 参数：贯穿 inline rule（state.env）+ renderer rule（第 4 参）。
+ * renderMarkdown 的 env 参数：贯穿 core rule（state.env）+ renderer rule（第 4 参）。
  *
- * - localFiles：当前 session 项目里的文件 basename 集合（如 {'design.md', 'README.md', ...}）。
- *   裸 basename（无 / 前缀，如 design.md）若在此集合里 → 识别为本地文件链接（.md-filepath），
- *   否则维持纯文本（linkify fuzzyLink:false 已让裸域名不当 URL）。
- *   数据源：fileSearchStore 的全量递归 file.search 结果，扁平化为 basename Set。
- *   首渲染时可能为空集（fileSearch 未加载）→ basename 降级纯文本，加载完成后响应式重渲染。
+ * - filePaths：当前 session 项目里文件的**完整路径**集合（如 {'src/index.ts', 'packages/x.ts'}）。
+ *   含/路径识别的白名单——正文里的裸路径（如 src/foo.ts）必须命中此集合才链接化。
+ *   数据源：fileSearchStore 的全量递归 file.search 结果（FileNode[]），扁平化为 FileNode.path Set。
+ * - localFiles：当前 session 项目里文件的 **basename** 集合（如 {'design.md', 'README.md'}）。
+ *   裸 basename（无 / 前缀，如 design.md）识别的白名单。
+ *   数据源：同上，扁平化为 FileNode.name Set。
+ *
+ * 两者首渲染时可能为空集（fileSearch 未加载）→ 路径降级纯文本，加载完成后响应式重渲染。
  */
 export interface MarkdownEnv {
+  /** 含/路径识别的白名单（FileNode.path 集合，相对 cwd，无前导 /） */
+  filePaths?: Set<string>
+  /** 裸 basename 识别的白名单（FileNode.name 集合） */
   localFiles?: Set<string>
 }
 
@@ -185,26 +171,34 @@ async function getMarkdown(): Promise<MarkdownIt> {
     return defaultLinkOpen(tokens, idx, options, env, self)
   }
 
-  // ── 文件路径识别：含 / 的路径片段 → 可点击 <a data-path> ──
-  // 两层覆盖，确保正文裸路径与反引号 `src/foo.ts` 内路径都能点击：
-  //  1. filepath inline rule（在 text 前）：拦截正文裸路径，push filepath_open/text/close token
-  //  2. code_inline renderer 覆盖：反引号内路径也链接化。backticks rule 先于 filepath rule
-  //     执行，反引号内容被消费成 code_inline token，filepath rule 接触不到——只能在渲染期二次识别
-  // AI 用反引号标注文件路径是 markdown 惯例，最该可点击的恰恰是这些反引号内的路径。
-  // @types/markdown-it 未暴露 md.inline.ruler，运行时确存在（parser_inline.mjs）。用结构类型断言。
-  ;(md as unknown as InlineRulerHost).inline.ruler.before('text', 'filepath', filepathRule)
-  // 自定义 token type 的 renderer：输出 <a class="md-filepath" data-path="...">
-  // data-path base64 编码（与 code/mermaid 同 XSS 防线，防引号注入）
-  md.renderer.rules.filepath_open = (tokens, idx) => {
-    const path = tokens[idx].attrGet('data-path') ?? ''
-    return `<a class="md-filepath" data-path="${path}">`
-  }
-  md.renderer.rules.filepath_close = () => '</a>'
-  // 反引号内路径链接化：覆盖 code_inline renderer，内容跑 linkifyFilePathsHtml，
-  // 产出 <code>...<a class="md-filepath" data-path="...">path</a>...</code>——
+  // ── 文件路径识别（core rule，注册于 replacements 之后） ──
+  // [HISTORICAL] 架构选型（2026-07-20 重构）：
+  // 旧实现用 inline rule 在 `text` rule 之前抢跑、扫 state.src.slice(pos) 整段剩余文本，
+  // 命中后 push filepath_open/text/close token。这会切断 emphasis 配对所需的 text 序列连续性
+  // ——markdown-it 的 emphasis 配对在 inline parser 的 ruler2 后处理阶段（balance_pairs +
+  // emphasis.postProcess），要求 ** 开/闭在同一连续 text token 序列里。被 filepath token 切断后
+  // 配对失败，整段 **xxx** 降级为字面 **（P0 bug：**折中** 不加粗，实测同段所有 emphasis 全失效）。
+  //
+  // 新实现改为 core rule（注册于 replacements 之后）：此时 emphasis 已配对完毕，token 树里
+  // **bold** 已是 strong_open/text/strong_close 三段。本 rule 遍历 inline token 的 children，
+  // 对 text token 的 .content 做候选扫描 + 白名单校验，命中则把该 text token 拆成
+  // [text(前缀), link_open, text(路径), link_close, text(后缀)]。拆分发生在「已确定无 emphasis
+  // 边界的纯 text token 内部」，不影响任何相邻 strong/emphasis/code/link token 的开闭配对
+  // （那些配对在更外层已成立）。PoC 实测验证 emphasis 完整保留。
+  //
+  // 误识别防御从「正则前瞻/后顾堆 hack」改为「数据白名单」：env.filePaths（含/路径）+
+  // env.localFiles（裸 basename）任一命中才链接化。pi/3.14、glm-5.2、node/18.0、
+  // necessity/sufficiency 全部因不在项目文件集合里被否决，无需任何正则 hack。
+  md.core.ruler.after('replacements', 'filepath', filepathCoreRule)
+
+  // 反引号内路径链接化：覆盖 code_inline renderer。backticks rule 在 inline 解析期把反引号内容
+  // 消费成 code_inline token，core rule 接触不到（code_inline 不是 text），只能在渲染期二次识别。
+  // 走与 core rule 对称的候选正则 + 白名单（env 透传），产出
+  // <code>...<a class="md-filepath" data-path="...">path</a>...</code>——
   // 保留等宽 code 视觉，路径可点击（点击处理统一走 useMarkdownInteractions）。
   md.renderer.rules.code_inline = (tokens, idx, _options, env) => {
-    return `<code>${linkifyFilePathsHtml(tokens[idx].content, (env as MarkdownEnv | undefined)?.localFiles)}</code>`
+    const mdEnv = env as MarkdownEnv | undefined
+    return `<code>${linkifyFilePathsHtml(tokens[idx].content, mdEnv?.filePaths, mdEnv?.localFiles)}</code>`
   }
 
   cachedMarkdown = md
@@ -212,139 +206,184 @@ async function getMarkdown(): Promise<MarkdownIt> {
 }
 
 /**
- * 文件路径识别正则（filepath inline rule 与 code_inline 二次识别共用）。
+ * 含/路径候选正则（filepath core rule 与 code_inline 二次识别共用）。
  *
- * 匹配「至少含一个 / 的路径片段」。判别要素：
- *  1. 至少一个路径分隔符 / —— 单独 foo.ts（无 /）不识别，避免误伤版本号/小数/普通词
- *  2. 扩展名前瞻 (?=\d*[a-zA-Z]) 要求至少含一个字母 —— 纯数字扩展名 .2/.0 不识别，
- *     挡掉模型名（glm-5.2）、版本号（node/18.0）、小数（pi/3.14）等 a/b.<数字> 形态；
- *     .7z 这类数字开头的真实扩展名仍可匹配（前瞻只要求「数字之后必有字母」）
- *  3. 可选前缀 (?:~\/|\/)? —— 支持绝对路径（/var/folders/.../x.md）和家目录路径
- *     （~/Code/project/foo.ts）。不加此前缀时，以 / 开头的路径在起点匹配失败，
- *     等 markdown-it inline 解析器把 pos 推进到路径中间的 _ 等 punctuation 时，
- *     state.src.slice(pos) 的 ^ 分支让后半段被误识别为路径起点（只匹配后半段）。
+ * [HISTORICAL] 2026-07-20 架构重构：旧 FILEPATH_RE 是「严格防御型」——含段含字母前瞻、
+ * 绝对路径必须有扩展名、可选前缀 ~/ / 等一堆 hack（为在「无白名单」语义下区分真路径 vs
+ * 版本号/小数/模型名）。重构后误识别防御改为「数据白名单」（env.filePaths），正则退化为
+ * 「宽松候选型」：只做形似路径的廉价预筛，存在性判断交给白名单。pi/3.14、glm-5.2、
+ * node/18.0、necessity/sufficiency 全部因不在白名单被否决，正则无需任何前瞻/后顾防御。
  *
- * [HISTORICAL] 线性无回溯结构（2026-07-17 ReDoS 修复）：
- * 结构为首段 [chars]+ 后跟一或多个 `/段` (?:\/[chars]+)+，每段都是单层量词，
- * 匹配时间与输入长度成线性关系。此前 W2（commit 5668fd29）为支持路径段含空格
- * 改成双层嵌套 (?:[chars]+(?: [chars]+)*)+，触发 O(2^n) 回溯——26 字符纯 word
- * 序列 146ms、40 字符直接挂死。本次回退为线性结构，代价是不再支持含空格的路径段
- * （如 docs/My Document.md）。带空格路径罕见，且 AI 通常用反引号标注走 code_inline
- * renderer；如需识别可由调用方选中文字触发搜索直达，不依赖正文启发式识别。
+ * 匹配规则：[前导边界符或行首] + 可选 ~/ 或 / 前缀 + 2+ 段标识符（每段 [a-zA-Z0-9._-]+，段间用 / 连接）。
+ * 前导边界符集合：空白 / 半角括号 / 引号 / 方括号 / 逗号 / 分号 / 冒号。
+ * 可选前缀支持三种路径形态：相对路径（src/foo.ts）、绝对路径（/var/x.md）、家目录路径（~/Code/p.ts）。
+ * 捕获组 1 = 边界符（行首命中时为空字符串 ''），捕获组 2 = 路径（含可选 ~/ / 前缀）。
  *
- * 段必须含字母：每段前加前瞻 (?=[chars]*[a-zA-Z])，要求段内至少一个字母。
- * 原因：「扩展名可选」（为支持 src/Makefile）让正则可在无合法扩展名时退化为纯段匹配，
- * 导致 node/18.0 匹配到 node/18（18 纯数字段）、pi/3.14 匹配到 pi/3。要求段含字母
- * 可挡掉纯数字段（版本号/小数的数字段），同时不影响 Makefile 等含字母的真实路径段。
- * 前瞻不消费字符、不引入嵌套量词，保持线性。
+ * 线性无回溯（单层量词 (?:...)+ 外层无嵌套量词），无 ReDoS 风险。AC-9 静态结构断言防护。
  *
- * [HISTORICAL] 段字符集不含 `.`（2026-07-17 U10b 修复）：
- * 此前段字符集是 [a-zA-Z0-9._\-]，含 `.`，导致 glm-5.2（模型名/版本号）整段被消费
- * 成单个 segment，末尾 .2 不进入可选扩展名组 → 扩展名前瞻 (?=\d*[a-zA-Z]) 被绕过，
- * model zhipu-coding-plan-router/glm-5.2 被误识别。把 `.` 移出段字符集后，末尾 .ext
- * 必须走可选扩展名组（其前瞻要求数字后必有字母），.2/.0 等纯数字扩展名被挡掉。
- * 多段路径中间的点号段（如 handoff-portfolio-service-dev.md 的 basename）由可选扩展名组承接。
- *
- * 绝对路径无扩展名不识别（isAcceptableFilePath 后置过滤，2026-07-17 U13d 修复）：
- * 「扩展名可选」（为支持相对路径 src/Makefile）的副作用是 /usr/bin、/var/log 这类
- * 系统目录（无扩展名、段含字母）也被匹配。系统目录与项目文件（src/Makefile）在正则结构上
- * 同构（段含字母 + 无扩展名），无法用正则区分。用 JS 后置过滤：以 / 开头的绝对路径必须
- * 有扩展名才识别（系统目录 /usr/bin 等无扩展名 → 拒；文件路径 /var/folders/x.md、
- * /etc/nginx/nginx.conf 有扩展名 → 留）。相对路径（src/Makefile）与家目录路径（~/...）
- * 不受此约束，继续支持无扩展名。
- *
- * 详见 spec 决策 D1 + 回归测试 markdown-filepath.test.ts 的 AC-1/AC-5/AC-9 断言。
+ * 不在此正则处理：
+ *  - 裸 basename（无 /）：走 BASENAME_CANDIDATE_RE + env.localFiles 白名单
+ *  - 反引号内路径：code_inline renderer 独立通路（渲染期二次识别，不走 core rule）
  */
-// 字符集内 `-` 转义为 `\-`（防 `_-`/`/-` 倒序范围触发 "Range out of order"）
-// g 标志 + 捕获组 1 = 路径（含可选前缀，去掉前导边界符）。前导边界符：行首或空白/括号/引号/标点。
-// 段字符集 [a-zA-Z0-9_\-]（不含 `.`，见上方 HISTORICAL）。扩展名可选（如 src/Makefile）。
-// 段前瞻 (?=[chars]*[a-zA-Z]) 要求每段含字母。绝对路径无扩展名由 isAcceptableFilePath 后置过滤。
-export const FILEPATH_RE = /(?:^|[\s(>"'(\[,{;:])((?:~\/|\/)?(?=[a-zA-Z0-9_\-]*[a-zA-Z])[a-zA-Z0-9_\-]+(?:\/(?=[a-zA-Z0-9_\-]*[a-zA-Z])[a-zA-Z0-9_\-]+)+(?:\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})?)(?![a-zA-Z0-9._\-\/])/g
+// 字符集含 `-`（转义 `\-` 防 range 警告）。g 标志 + 捕获组 2 = 路径（无前导边界符）。
+export const PATH_CANDIDATE_RE = /(^|[\s(>"'\[,{;:])(~?\/?[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)+)(?![a-zA-Z0-9._\/-])/g
 
 /**
- * 文件路径命中语义过滤（filepathRule 与 linkifyFilePathsHtml 共用）。
+ * 裸 basename 候选正则（必须有扩展名，避免误伤普通词）。
  *
- * 正则只判「形似路径」，语义边界在此 JS 过滤补充（避免正则复杂化、保持线性无回溯）：
- * - 绝对路径（以 / 开头）必须带扩展名 —— 系统目录 /usr/bin、/var/log、/etc/nginx 无扩展名
- *   且段含字母，会被正则匹配；它们是目录不是文件，要求绝对路径必须有扩展名（文件几乎都带扩展名，
- *   系统目录几乎都不带）即可挡掉。文件路径 /var/folders/x.md、/etc/nginx/nginx.conf 有扩展名 → 留。
- * - 相对路径（src/Makefile）与家目录路径（~/Code/...）不受此约束，无扩展名仍识别
- *   （项目内无扩展名文件常见，如 Makefile/Dockerfile/LICENSE）。
+ * 与 PATH_CANDIDATE_RE 的差异：去掉 (?:\/...)+ 段（不要求含 /）。
+ * 扩展名必须以字母开头（`\.[a-zA-Z][a-zA-Z0-9]{1,8}`），挡住 version 18.0、3.14 这类
+ * 纯数字扩展名。最终是否链接由 env.localFiles 白名单决定（与 PATH_CANDIDATE_RE 对称）。
+ * 捕获组结构与 PATH_CANDIDATE_RE 一致（组1=边界符，组2=basename）。
  */
-function isAcceptableFilePath(path: string): boolean {
-  if (path.startsWith('/')) {
-    const basename = path.slice(path.lastIndexOf('/') + 1)
-    // 扩展名 = basename 内的 `.ext`（点后跟字母数字，点不在首字符）
-    return /\.[a-zA-Z0-9]+$/.test(basename)
-  }
-  return true
+export const BASENAME_CANDIDATE_RE = /(^|[\s(>"'\[,{;:])([a-zA-Z0-9._-]+\.[a-zA-Z][a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\/-])/g
+
+/** 路径命中（含/路径或裸 basename），供 core rule 与 code_inline renderer 共用 */
+interface PathHit {
+  /** 路径起点在 content 中的索引（已减去前导边界符） */
+  start: number
+  /** 路径终点在 content 中的索引（exclusive） */
+  end: number
+  /** 命中的路径文本（含/路径场景为完整路径；裸 basename 场景为 basename） */
+  path: string
 }
 
 /**
- * 裸 basename 识别正则（无 / 前缀的文件名，如 design.md / README.md）。
- *
- * 与 FILEPATH_RE 的差异：去掉 `(?:\/...)+` 段（不要求含 /）。
- * 扩展名前瞻与 FILEPATH_RE 一致（要求数字之后必有字母，挡掉版本号/小数）。
- *
- * 用途：filepathRule 内 FILEPATH_RE 匹配失败后，用此正则扫 basename 候选，
- * 再过滤 state.env.localFiles 集合——只在「项目里真有该文件」时识别为本地文件链接，
- * 避免误把 design.md 这类裸文件名当 URL（linkify fuzzyLink:false 已让裸域名不当 URL，
- * 但也导致裸 basename 默认是纯文本不可点击，此正则 + localFiles 集合打开识别通道）。
+ * 从一次正则 exec 结果提取 PathHit。
+ * PATH_CANDIDATE_RE / BASENAME_CANDIDATE_RE 捕获组结构一致：组1=边界符（行首时 ''），组2=路径。
  */
-export const BASENAME_RE = /(?:^|[\s(>"'(\[,{;:])([a-zA-Z0-9._\-]+\.(?=\d*[a-zA-Z])[a-zA-Z0-9]{1,8})(?![a-zA-Z0-9._\-\/])/g
+function extractHit(m: RegExpExecArray): PathHit {
+  const path = m[2] ?? ''
+  const leadLen = (m[1] ?? '').length
+  const start = m.index + leadLen
+  return { start, end: start + path.length, path }
+}
 
-function filepathRule(state: InlineState, silent: boolean): boolean {
-  const pos = state.pos
-  // 从当前 pos 起搜索第一个含/路径或裸 basename。text rule 会一次吃掉整段非 terminator 文本
-  // （空格不是 terminator），故本规则必须在 text 之前主动扫描并拦截路径。
-  const rest = state.src.slice(pos)
-  FILEPATH_RE.lastIndex = 0
-  let match: RegExpExecArray | null = null
-  // 含/路径：逐个扫描，跳过语义过滤拒绝的命中（如绝对路径无扩展名 /usr/bin）
-  let candidate: RegExpExecArray | null
-  while ((candidate = FILEPATH_RE.exec(rest)) !== null) {
-    if (isAcceptableFilePath(candidate[1])) {
-      match = candidate
-      break
-    }
-  }
-  // 含/路径未命中时，尝试裸 basename（仅在 env.localFiles 非空时，避免无谓扫描）
-  if (!match && state.env?.localFiles && state.env.localFiles.size > 0) {
-    BASENAME_RE.lastIndex = 0
+/**
+ * 扫描 content，返回白名单内的路径命中。
+ *
+ * - 含/路径：PATH_CANDIDATE_RE 候选 + env.filePaths 白名单校验
+ * - 裸 basename：BASENAME_CANDIDATE_RE 候选 + env.localFiles 白名单校验
+ *
+ * 白名单任一为空集（fileSearch 未加载）则对应识别通路关闭（降级纯文本，无回归）。
+ * 返回结果按 start 升序排列，重叠命中以含/路径优先（裸 basename 同位的被丢弃）。
+ */
+function collectPathHits(content: string, env?: MarkdownEnv): PathHit[] {
+  const hits: PathHit[] = []
+  const pathSet = env?.filePaths
+  const basenameSet = env?.localFiles
+
+  if (pathSet && pathSet.size > 0) {
+    PATH_CANDIDATE_RE.lastIndex = 0
     let m: RegExpExecArray | null
-    while ((m = BASENAME_RE.exec(rest)) !== null) {
-      if (state.env.localFiles.has(m[1])) {
-        match = m
-        break
-      }
+    while ((m = PATH_CANDIDATE_RE.exec(content)) !== null) {
+      const hit = extractHit(m)
+      if (hit.path && pathSet.has(hit.path)) hits.push(hit)
     }
   }
-  if (!match) return false
-
-  // match.index = 边界符位置（或 0）；路径起点 = match.index + 前导边界符长度
-  const leadLen = match[0].length - match[1].length
-  const pathStartInRest = match.index + leadLen
-  const path = match[1]
-  const pathEndInRest = pathStartInRest + path.length
-
-  if (silent) return true
-
-  // 前置文本（边界符 + 之前）累积进 pending —— state.push 会把 pending 自动 flush 成 text token
-  if (pathStartInRest > 0) {
-    state.pending += rest.slice(0, pathStartInRest)
+  if (basenameSet && basenameSet.size > 0) {
+    BASENAME_CANDIDATE_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = BASENAME_CANDIDATE_RE.exec(content)) !== null) {
+      const hit = extractHit(m)
+      if (hit.path && basenameSet.has(hit.path)) hits.push(hit)
+    }
   }
+  hits.sort((a, b) => a.start - b.start)
+  // 丢弃重叠：start 相同时含/路径先入（sort 稳定 + 含/路径 push 在前），后入的被过滤
+  return hits.filter((h, i) => i === 0 || h.start >= hits[i - 1].end)
+}
 
-  // push filepath_open + text + filepath_close（push 前会自动 flush pending 为 text token）
-  // data-path 存 path（含/路径场景）或 basename（裸 basename 场景），base64 编码
-  const openToken = state.push('filepath_open', 'a', 1)
-  openToken.attrSet('data-path', encodeBase64(path))
-  const textToken = state.push('text', '', 0)
-  textToken.content = path
-  state.push('filepath_close', 'a', -1)
+/** markdown-it Token 构造器的类型（用 new 签名保留构造能力；nesting 类型与 Token 一致： 1 | 0 | -1） */
+type TokenCtor = new (type: string, tag: string, nesting: 1 | 0 | -1) => Token
 
-  // pos 推进到路径结尾（前置文本已通过 pending 记录，不丢）
-  state.pos = pos + pathEndInRest
-  return true
+/** 构造单个 text token */
+function makeTextToken(TokenCtor: TokenCtor, content: string): Token {
+  const t = new TokenCtor('text', '', 0)
+  t.content = content
+  return t
+}
+
+/** 构造 md-filepath 链接三件套 [link_open, text, link_close] */
+function makeFilepathLink(TokenCtor: TokenCtor, path: string): Token[] {
+  const open = new TokenCtor('link_open', 'a', 1)
+  // data-path base64 编码（与 code_inline / mermaid 同 XSS 防线，防引号注入）
+  open.attrs = [
+    ['class', 'md-filepath'],
+    ['data-path', encodeBase64(path)],
+  ]
+  const text = new TokenCtor('text', '', 0)
+  text.content = path
+  const close = new TokenCtor('link_close', 'a', -1)
+  return [open, text, close]
+}
+
+/**
+ * 文件路径识别 core rule（注册于 replacements 之后）。
+ *
+ * 此时 emphasis 已在 inline parser 的 ruler2 后处理阶段配对完毕。本 rule 遍历所有 inline token
+ * 的 children，对 text token 的 .content 做候选扫描 + 白名单校验，命中则把该 text token 拆成
+ * [text(前缀), link_open, text(路径), link_close, text(后缀)]。
+ *
+ * 安全性（emphasis 不被破坏）：拆分发生在「已确定无 emphasis 边界的纯 text token 内部」——
+ * emphasis 的 ** 已在更早阶段被剥离为 strong_open/close，此处的 text token 是独立纯文本段。
+ * 拆分它等于在该纯文本内部插 link，不影响任何相邻 strong/emphasis/code/link 的开闭配对。
+ *
+ * 跳过 code_inline / link 内部的 text：code_inline 是独立 token 类型不进入本 rule；
+ * link_open/close 内部的 text 通过遍历时的 inLink 标志跳过（避免 <a> 嵌套 <a> 产生非法 HTML）。
+ */
+function filepathCoreRule(state: StateCore): void {
+  for (const token of state.tokens) {
+    if (token.type !== 'inline' || !token.children) continue
+    const newChildren: Token[] = []
+    let inLink = false
+    for (const child of token.children) {
+      if (child.type === 'link_open') {
+        inLink = true
+        newChildren.push(child)
+        continue
+      }
+      if (child.type === 'link_close') {
+        inLink = false
+        newChildren.push(child)
+        continue
+      }
+      if (child.type !== 'text' || inLink) {
+        newChildren.push(child)
+        continue
+      }
+      rewriteTextToken(child, newChildren, state.Token, state.env)
+    }
+    token.children = newChildren
+  }
+}
+
+/** 把单个 text token 按白名单命中拆分为多个 token（无命中则原样 push）。 */
+function rewriteTextToken(
+  textToken: Token,
+  out: Token[],
+  TokenCtor: TokenCtor,
+  env?: MarkdownEnv,
+): void {
+  const content = textToken.content
+  const hits = collectPathHits(content, env)
+  if (hits.length === 0) {
+    out.push(textToken)
+    return
+  }
+  let last = 0
+  for (const hit of hits) {
+    if (hit.start > last) {
+      out.push(makeTextToken(TokenCtor, content.slice(last, hit.start)))
+    }
+    for (const t of makeFilepathLink(TokenCtor, hit.path)) {
+      out.push(t)
+    }
+    last = hit.end
+  }
+  if (last < content.length) {
+    out.push(makeTextToken(TokenCtor, content.slice(last)))
+  }
 }
 
 /** markdown-it 的 escapeHtml（复用其与 fence 一致的转义语义） */
@@ -357,62 +396,32 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * 在已转义的 code_inline HTML 文本中识别文件路径，包成可点击 <a class="md-filepath">。
+ * 在 code_inline 的内容里识别文件路径，包成可点击 <a class="md-filepath">。
  *
  * code_inline renderer 用：反引号内容被 backticks rule 消费成 code_inline token，
- * filepath inline rule 接触不到（backticks 先于 filepath 执行），只能在渲染期二次识别。
+ * filepath core rule 接触不到（code_inline 不是 text token），只能在渲染期二次识别。
  *
- * 输入是已 escapeHtml 的文本（renderer 拿到的 token.content 是原文，但 code_inline 的输出
- * 会直接进 HTML，所以这里对非路径片段先 escape 再拼接）。匹配到的路径同样 escapeHtml，
- * data-path 用 base64 编码（与 filepath rule 一致的 XSS 防线）。
+ * 复用 collectPathHits（与 core rule 对称的候选正则 + 白名单），产出
+ * <code>...<a class="md-filepath" data-path="...">path</a>...</code>——
+ * 保留等宽 code 视觉，路径可点击。非路径片段 escapeHtml，data-path base64 编码
+ * （与 core rule 一致的 XSS 防线）。
  */
-function linkifyFilePathsHtml(content: string, localFiles?: Set<string>): string {
-  // FILEPATH_RE 前导边界符含 [;: 等，但 code_inline 内容是孤立片段——
-  // 为让行首即路径（如 `src/foo.ts`，反引号内就一个路径，前面无边界符）也能识别，
-  // 用「相同正则」对原文跑一次：FILEPATH_RE 已含 ^ 行首分支，能覆盖这种情况。
-  // localFiles 非空时，额外用 BASENAME_RE 扫裸 basename（与 filepathRule 对称）。
-  FILEPATH_RE.lastIndex = 0
+function linkifyFilePathsHtml(content: string, filePaths?: Set<string>, localFiles?: Set<string>): string {
+  const hits = collectPathHits(content, { filePaths, localFiles })
+  if (hits.length === 0) return escapeHtml(content)
   let result = ''
   let lastIndex = 0
-  let match: RegExpExecArray | null
-  // 收集所有命中（含/路径 + localFiles 里的裸 basename），按 index 排序后顺序拼接。
-  // 含/路径需过 isAcceptableFilePath 语义过滤（绝对路径无扩展名等拒绝，与 filepathRule 对称）。
-  const hits: Array<{ index: number; leadLen: number; path: string }> = []
-  while ((match = FILEPATH_RE.exec(content)) !== null) {
-    if (!isAcceptableFilePath(match[1])) continue
-    const leadLen = match[0].length - match[1].length
-    hits.push({ index: match.index, leadLen, path: match[1] })
-  }
-  if (localFiles && localFiles.size > 0) {
-    BASENAME_RE.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = BASENAME_RE.exec(content)) !== null) {
-      if (localFiles.has(m[1])) {
-        const leadLen = m[0].length - m[1].length
-        hits.push({ index: m.index, leadLen, path: m[1] })
-      }
-    }
-  }
-  hits.sort((a, b) => a.index - b.index)
   for (const hit of hits) {
-    const pathStart = hit.index + hit.leadLen
-    const pathEnd = pathStart + hit.path.length
-    // 跳过与上一命中重叠的（含/路径与 basename 同位时，含/优先已在前，basename 在后被 pathStart<lastIndex 过滤）
-    if (pathStart < lastIndex) continue
-    // 前置文本（含边界符）转义后追加
-    if (pathStart > lastIndex) {
-      result += escapeHtml(content.slice(lastIndex, pathStart))
+    if (hit.start > lastIndex) {
+      result += escapeHtml(content.slice(lastIndex, hit.start))
     }
-    // 路径片段包成 .md-filepath 链接（data-path base64，路径文本 escapeHtml）
     result += `<a class="md-filepath" data-path="${encodeBase64(hit.path)}">${escapeHtml(hit.path)}</a>`
-    lastIndex = pathEnd
+    lastIndex = hit.end
   }
-  // 剩余文本转义后追加
   if (lastIndex < content.length) {
     result += escapeHtml(content.slice(lastIndex))
   }
-  // 无匹配时整段 escape（等价于原 code_inline 默认行为）
-  return result || escapeHtml(content)
+  return result
 }
 
 /**

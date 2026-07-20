@@ -37,8 +37,11 @@ async function freshRender(content: string): Promise<string> {
   return renderMarkdown(content)
 }
 
-/** 同 freshRender 但带 env（localFiles 等），用于裸 basename 识别测试 */
-async function freshRenderWithEnv(content: string, localFiles: Set<string>): Promise<string> {
+/** 同 freshRender 但带 env（filePaths/localFiles），用于路径识别测试 */
+async function freshRenderWithEnv(
+  content: string,
+  env?: { filePaths?: Set<string>; localFiles?: Set<string> },
+): Promise<string> {
   vi.resetModules()
   vi.doMock('shiki', () => ({
     createHighlighter: () =>
@@ -48,7 +51,7 @@ async function freshRenderWithEnv(content: string, localFiles: Set<string>): Pro
       }),
   }))
   const { renderMarkdown } = await import('@/composables/logic/markdown')
-  return renderMarkdown(content, { localFiles })
+  return renderMarkdown(content, env)
 }
 
 /** 同 freshRender 但返回 segments（text/mermaid 拆分） */
@@ -131,8 +134,10 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(html.indexOf('正文段落')).toBeLessThan(html.indexOf('md-codeblock'))
   })
 
-  it('U9: 含/的文件路径识别为可点击 .md-filepath', async () => {
-    const html = await freshRender('修改了 src/foo.ts 文件\n')
+  it('U9: 含/的文件路径识别为可点击 .md-filepath（需白名单命中）', async () => {
+    // [语义变更 2026-07-20] 含/路径识别从「形似即链接」改为「白名单命中才链接」（详见
+    // docs/page-design/markdown-filepath-redesign/design.md）。
+    const html = await freshRenderWithEnv('修改了 src/foo.ts 文件\n', { filePaths: new Set(['src/foo.ts']) })
     expect(html).toContain('class="md-filepath"')
     expect(html).toContain('data-path="')
     // 路径文本在链接内
@@ -154,8 +159,8 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(html3).not.toContain('md-filepath')
   })
 
-  it('U10c: 数字开头的真实扩展名仍识别（如 .7z）', async () => {
-    const html = await freshRender('下载 arch/a.7z\n')
+  it('U10c: 数字开头的真实扩展名仍识别（如 .7z，需白名单命中）', async () => {
+    const html = await freshRenderWithEnv('下载 arch/a.7z\n', { filePaths: new Set(['arch/a.7z']) })
     expect(html).toContain('md-filepath')
     expect(html).toContain('>arch/a.7z<')
   })
@@ -181,7 +186,7 @@ describe('markdown fence 规则覆盖（W3）', () => {
 
   it('U10f: 裸 basename 在 localFiles 里 → 识别为 .md-filepath 链接', async () => {
     const localFiles = new Set(['design.md', 'README.md'])
-    const html = await freshRenderWithEnv('更新了 design.md 文档\n', localFiles)
+    const html = await freshRenderWithEnv('更新了 design.md 文档\n', { localFiles })
     expect(html).toContain('class="md-filepath"')
     expect(html).toContain('>design.md<')
     // 不生成 http 链接（本地文件优先，不当 URL）
@@ -190,7 +195,7 @@ describe('markdown fence 规则覆盖（W3）', () => {
 
   it('U10g: 裸 basename 不在 localFiles 里 → 维持纯文本（无 env.localFiles 命中）', async () => {
     const localFiles = new Set(['README.md'])
-    const html = await freshRenderWithEnv('更新了 design.md 文档\n', localFiles)
+    const html = await freshRenderWithEnv('更新了 design.md 文档\n', { localFiles })
     // design.md 不在集合 → 不识别（纯文本），避免误判
     expect(html).not.toContain('md-filepath')
     expect(html).toContain('design.md') // 纯文本仍渲染
@@ -208,30 +213,33 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(html).toContain('design.md')
   })
 
-  it('U10i: 含/路径识别不受 localFiles 影响（原 FILEPATH_RE 逻辑不变）', async () => {
-    const localFiles = new Set(['foo.ts']) // 故意不含 foo.ts 在集合，但 src/foo.ts 含/应识别
-    const html = await freshRenderWithEnv('修改了 src/foo.ts\n', localFiles)
-    expect(html).toContain('md-filepath')
-    expect(html).toContain('>src/foo.ts<')
+  it('U10i: 含/路径识别受 filePaths 白名单控制（语义变更：不再形似即链接）', async () => {
+    // [语义变更 2026-07-20] 含/路径识别从「不受 localFiles 影响、形似即链接」改为
+    // 「必须命中 env.filePaths 白名单」。白名单命中 → 链接；不含 → 纯文本。
+    const htmlHit = await freshRenderWithEnv('修改了 src/foo.ts\n', { filePaths: new Set(['src/foo.ts']) })
+    expect(htmlHit).toContain('md-filepath')
+    expect(htmlHit).toContain('>src/foo.ts<')
+    const htmlMiss = await freshRenderWithEnv('修改了 src/foo.ts\n', { filePaths: new Set(['other.ts']) })
+    expect(htmlMiss).not.toContain('md-filepath')
   })
 
   it('U10j: 段首/多 basename 边界场景', async () => {
     const localFiles = new Set(['design.md', 'config.json'])
     // 段首
-    let html = await freshRenderWithEnv('design.md 是入口\n', localFiles)
+    let html = await freshRenderWithEnv('design.md 是入口\n', { localFiles })
     expect(html).toContain('>design.md<')
     // 半角括号内
-    html = await freshRenderWithEnv('见 (design.md) 文档\n', localFiles)
+    html = await freshRenderWithEnv('见 (design.md) 文档\n', { localFiles })
     expect(html).toContain('>design.md<')
     // 多 basename 同段
-    html = await freshRenderWithEnv('design.md 和 config.json 都改了\n', localFiles)
+    html = await freshRenderWithEnv('design.md 和 config.json 都改了\n', { localFiles })
     expect(html).toContain('>design.md<')
     expect(html).toContain('>config.json<')
   })
 
   it('U10k: 反引号内裸 basename 也识别（code_inline renderer 拿 env）', async () => {
     const localFiles = new Set(['design.md'])
-    const html = await freshRenderWithEnv('见 `design.md` 文档\n', localFiles)
+    const html = await freshRenderWithEnv('见 `design.md` 文档\n', { localFiles })
     // 反引号内 basename 包成 .md-filepath，外层保留 <code>
     expect(html).toContain('md-filepath')
     expect(html).toContain('<code>')
@@ -241,7 +249,7 @@ describe('markdown fence 规则覆盖（W3）', () => {
   it('U10l: data-path 存 basename（裸 basename 场景，非完整 path）', async () => {
     // 裸 basename 场景下 data-path 存 basename 本身（base64），由前端反查完整 path
     const localFiles = new Set(['design.md'])
-    const html = await freshRenderWithEnv('design.md\n', localFiles)
+    const html = await freshRenderWithEnv('design.md\n', { localFiles })
     const m = html.match(/data-path="([^"]+)"/)
     expect(m).not.toBeNull()
     const decoded = new TextDecoder().decode(Uint8Array.from(atob(m![1]), (c) => c.charCodeAt(0)))
@@ -249,7 +257,8 @@ describe('markdown fence 规则覆盖（W3）', () => {
   })
 
   it('U11: 文件路径 base64 编码（防 XSS 注入）', async () => {
-    const html = await freshRender('见 a/b.ts\n')
+    // [语义变更] 含/路径需白名单命中（不再形似即链接）
+    const html = await freshRenderWithEnv('见 a/b.ts\n', { filePaths: new Set(['a/b.ts']) })
     const m = html.match(/data-path="([^"]+)"/)
     expect(m).not.toBeNull()
     // base64 解码后才是路径
@@ -261,8 +270,8 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(m![1]).toMatch(/^[A-Za-z0-9+/=]+$/)
   })
 
-  it('U12: 反引号内的路径也链接化（code_inline 二次识别）', async () => {
-    const html = await freshRender('运行 `src/foo.ts` 命令\n')
+  it('U12: 反引号内的路径也链接化（code_inline 二次识别，需白名单）', async () => {
+    const html = await freshRenderWithEnv('运行 `src/foo.ts` 命令\n', { filePaths: new Set(['src/foo.ts']) })
     // 反引号内路径包成 .md-filepath，外层保留 <code> 等宽样式
     expect(html).toContain('md-filepath')
     expect(html).toContain('<code>')
@@ -272,7 +281,7 @@ describe('markdown fence 规则覆盖（W3）', () => {
   })
 
   it('U12b: 反引号内路径 data-path base64 编码（与正文路径一致）', async () => {
-    const html = await freshRender('见 `a/b.ts`\n')
+    const html = await freshRenderWithEnv('见 `a/b.ts`\n', { filePaths: new Set(['a/b.ts']) })
     const m = html.match(/data-path="([^"]+)"/)
     expect(m).not.toBeNull()
     const decoded = new TextDecoder().decode(
@@ -282,7 +291,9 @@ describe('markdown fence 规则覆盖（W3）', () => {
   })
 
   it('U12c: 反引号内多路径混合识别', async () => {
-    const html = await freshRender('改了 `a/b.ts` 和 `x/y.vue`\n')
+    const html = await freshRenderWithEnv('改了 `a/b.ts` 和 `x/y.vue`\n', {
+      filePaths: new Set(['a/b.ts', 'x/y.vue']),
+    })
     // 两个 code_inline 各含一个 md-filepath 链接
     const matches = html.match(/md-filepath/g)
     expect(matches?.length).toBe(2)
@@ -297,30 +308,36 @@ describe('markdown fence 规则覆盖（W3）', () => {
     expect(html).toContain('<code>')
   })
 
-  // ── 绝对路径 / 家目录路径识别（FILEPATH_RE 前缀 (?:~\/|\/)? 支持）──
-  // 回归防护：修复前以 / 开头的绝对路径，markdown-it 逐 pos 遍历时 filepath rule
-  // 在路径起点匹配失败，等 pos 推进到路径中间的 _ 等 punctuation 时后半段才被误识别。
+  // ── 绝对路径 / 家目录路径识别（需白名单命中，2026-07-20 重构后语义）──
+  // [HISTORICAL] 旧实现（inline rule 抢跑）下，绝对路径需 FILEPATH_RE 前缀 (?:~/|/)?
+  // 才能整段识别（否则 markdown-it 逐 pos 遍历时前缀匹配失败）。重构后（core rule + 白名单），
+  // 绝对路径必须在 env.filePaths 里完整出现才识别。实际运行时 env.filePaths 只含相对 cwd 路径
+  // （FileNode.path 规范），所以绝对路径/家目录路径默认不链接——这是设计取舍（详见 design.md §7）。
+  // 这些用例通过显式注入白名单验证「白名单命中即链接」的语义。
 
-  it('U13: 绝对路径整段识别为链接（不截断到后半段）', async () => {
-    const html = await freshRender('/var/folders/3p/d4mx1j_j5s7bn3_03x48kpkw0000gn/T/handoff-portfolio-service-dev.md\n')
+  it('U13: 绝对路径在白名单 → 整段识别为链接', async () => {
+    const absPath = '/var/folders/3p/d4mx1j_j5s7bn3_03x48kpkw0000gn/T/handoff-portfolio-service-dev.md'
+    const html = await freshRenderWithEnv(absPath + '\n', { filePaths: new Set([absPath]) })
     expect(html).toContain('class="md-filepath"')
-    // 关键断言：整段（含 /var 前缀）在链接内，前缀不以纯文本泄漏
-    expect(html).toContain('>/var/folders/3p/d4mx1j_j5s7bn3_03x48kpkw0000gn/T/handoff-portfolio-service-dev.md<')
-    // data-path 解码后含完整绝对路径
+    expect(html).toContain(`>${absPath}<`)
     const m = html.match(/data-path="([^"]+)"/)
     expect(m).not.toBeNull()
     const decoded = new TextDecoder().decode(Uint8Array.from(atob(m![1]), (c) => c.charCodeAt(0)))
-    expect(decoded).toBe('/var/folders/3p/d4mx1j_j5s7bn3_03x48kpkw0000gn/T/handoff-portfolio-service-dev.md')
+    expect(decoded).toBe(absPath)
   })
 
-  it('U13b: 句中绝对路径整段识别（前导空格边界）', async () => {
-    const html = await freshRender('文件在 /absolute/path/to/file.ts 这里\n')
+  it('U13b: 句中绝对路径在白名单 → 整段识别（前导空格边界）', async () => {
+    const html = await freshRenderWithEnv('文件在 /absolute/path/to/file.ts 这里\n', {
+      filePaths: new Set(['/absolute/path/to/file.ts']),
+    })
     expect(html).toContain('class="md-filepath"')
     expect(html).toContain('>/absolute/path/to/file.ts<')
   })
 
-  it('U13c: 家目录路径（~/...）整段识别，~ 不被截断', async () => {
-    const html = await freshRender('编辑 ~/Code/project/src/main.ts 现在\n')
+  it('U13c: 家目录路径（~/...）在白名单 → 整段识别，~ 不截断', async () => {
+    const html = await freshRenderWithEnv('编辑 ~/Code/project/src/main.ts 现在\n', {
+      filePaths: new Set(['~/Code/project/src/main.ts']),
+    })
     expect(html).toContain('class="md-filepath"')
     expect(html).toContain('>~/Code/project/src/main.ts<')
   })
@@ -332,8 +349,10 @@ describe('markdown fence 规则覆盖（W3）', () => {
     }
   })
 
-  it('U13e: 反引号内绝对路径也链接化（code_inline 二次识别覆盖）', async () => {
-    const html = await freshRender('见 `/abs/path/config.json`\n')
+  it('U13e: 反引号内绝对路径在白名单 → 链接化（code_inline 二次识别覆盖）', async () => {
+    const html = await freshRenderWithEnv('见 `/abs/path/config.json`\n', {
+      filePaths: new Set(['/abs/path/config.json']),
+    })
     expect(html).toContain('md-filepath')
     expect(html).toContain('>/abs/path/config.json<')
   })
