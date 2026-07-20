@@ -20,6 +20,17 @@ import { toErrorMessage } from '../../utils/errors.js'
 
 export class MessageDispatcher {
   private sendMessageHook: SendMessageHook | null = null
+  /**
+   * [ADR-0035 FR-5] prompt 成功发送后的回调注入点。
+   *
+   * turn-start 近似覆盖了「prompt 后起算」语义（interpreter 在 turn-start 启动 ping），
+   * 但存在盲区：prompt 发出到 pi 推 turn-start 之间若 pi 卡住，turn-start 未到则 ping 不起。
+   * 本 hook 让组合根在 prompt resolve 后立即启动 ping（覆盖该盲区）。
+   *
+   * 当前组合根未接入（turn-start 起算已满足测试覆盖 + 间隔 60s 延迟可接受）。
+   * 预留接口供后续如需提前起算时接线，保持 message-dispatcher 与 interpreter 解耦。
+   */
+  private onPromptSent: ((sessionId: string) => void) | null = null
 
   constructor(
     private readonly svc: ISessionServiceInternal,
@@ -31,6 +42,11 @@ export class MessageDispatcher {
   /** 注册消息发送前 hook(PluginService 调用,实现 beforeSend 拦截)。 */
   setSendMessageHook(hook: SendMessageHook): void {
     this.sendMessageHook = hook
+  }
+
+  /** [ADR-0035 FR-5] 注册 prompt 发送成功回调（prompt resolve 后触发）。 */
+  setOnPromptSent(cb: (sessionId: string) => void): void {
+    this.onPromptSent = cb
   }
 
   /**
@@ -125,6 +141,16 @@ export class MessageDispatcher {
       // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
       // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
       return { blocked: true }
+    }
+    // [ADR-0035 FR-5] prompt 成功发送后触发注入点（当前组合根未接线；turn-start 起算已覆盖语义）。
+    // 故意不接管 interpreter：message-dispatcher 与 interpreter 解耦，接线责任在组合根。
+    if (this.onPromptSent) {
+      try {
+        this.onPromptSent(sessionId)
+      } catch (e) {
+        console.warn('[message-dispatcher] onPromptSent callback failed (non-blocking), sid=',
+          sessionId, e instanceof Error ? e.message : e)
+      }
     }
     return { blocked: false }
   }

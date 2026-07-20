@@ -21,6 +21,17 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
+
+/**
+ * [ADR-0035] ping 间隔：turn 进行中每 60s 发一次 get_state 进程健康探测。
+ *
+ * 阈值依据见 ADR-0035「阈值依据」。平衡 RPC 流量（轻量）与响应速度。
+ */
+const PING_INTERVAL_MS = 60_000
+/** [ADR-0035] 连续失败阈值：3 次（180s）→ 判定 pi 进程真死 → onSilentAbort。 */
+const PING_FAIL_THRESHOLD = 3
+/** [AC-8] 连续 2 次失败（120s）→ 广播 message.stream_warn 一次（提示性，不中断）。 */
+const PING_WARN_FAIL_COUNT = 2
 import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -78,12 +89,27 @@ export interface EventInterpreterOptions {
    * pi 卡死 abort 回调（ADR-0035 ping 探测机制）。
    *
    * turn 进行中每 60s ping get_state，连续 3 次（180s）失败时判定 pi 进程真死，
-   * 触发本回调由组合根调 message-dispatcher.abort（复用现有 abort 兜底广播路径）。
+   * 触发本回调由组合根调 sessionService.abort（复用现有 abort 兜底广播路径）。
    * payload 携带 sessionId，供上层定位要 abort 的 session。
-   *
-   * 注：ping 探测由 W2 实现；此 option 字段先保留作为 W2 的注入点。
    */
   onSilentAbort?: (payload: { sessionId: string }) => void
+  /**
+   * [ADR-0035] ping get_state 进程健康探测回调（组合根注入）。
+   *
+   * 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
+   * 回调内部按当前 sessionId 取 pm.getClient(sessionId)?.getState()，client 未就绪时
+   * 返回 undefined（计为一次失败但不抛错——AC-9：client 偶发未就绪不应让 interpret 批次崩溃）。
+   *
+   * 返回值语义：
+   *   - resolve(非 undefined) → pi 健康（事件循环活，能响应 get_state）→ 清零失败计数
+   *   - resolve(undefined)   → client 未就绪或拿不到 state → 计失败但不抛错（AC-9）
+   *   - reject               → pi 真卡死（get_state 超时）→ 计失败
+   *
+   * 设计权衡：ping 能穿透所有「pi 合理等待」场景（ask_user / 网络 / 文件锁）——
+   * pi 阻塞在 await 时事件循环仍活，get_state 必响应。只有进程真死才连续 3 次失败。
+   * 详见 ADR-0035「ping 可行性验证」。
+   */
+  pingPi?: () => Promise<Record<string, unknown> | undefined> | undefined
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
@@ -104,6 +130,14 @@ export class EventInterpreter {
   private subagentRecords: Map<string, SubagentRecord> = new Map()
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
+
+  // ── [ADR-0035] ping 探测状态 ──
+  /** ping 定时器句柄（null = 未在探测） */
+  private pingTimer: ReturnType<typeof setInterval> | null = null
+  /** 当前连续失败计数（成功即清零） */
+  private pingFailCount = 0
+  /** 本 turn 是否已广播过 message.stream_warn（避免重复） */
+  private pingWarned = false
 
   constructor(
     private readonly sessionId: string,
@@ -168,6 +202,10 @@ export class EventInterpreter {
           ? this.opts.fileChangeDiff.snapshotGitStatus(this.opts.cwd)
           : null
         this.writeContents.clear()
+        // [ADR-0035] turn 开始启动 ping 探测（每 60s get_state）。
+        // ping 在 turn 进行中持续，turn-end / agent_end / onSilentAbort 停止（见各分支）。
+        // turn 间不探测（AC-3）：startPingLoop 在 turn-start 调用，确保只在 turn 内跑。
+        this.startPingLoop()
         return
       case 'tool-call-start':
         // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
@@ -326,6 +364,9 @@ export class EventInterpreter {
     this.sendDiffFileChanges('ready')
     this.statusBaseline = null
     this.writeContents.clear()
+
+    // [ADR-0035] turn 结束停止 ping 探测（AC-3：turn 间不探测）。
+    this.stopPingLoop()
 
     return Promise.resolve()
   }
@@ -509,5 +550,72 @@ export class EventInterpreter {
         update,
       },
     })
+  }
+
+  // ── [ADR-0035] ping 探测（进程健康检测，替代事件静默检测）──
+
+  /**
+   * 启动 ping 探测循环（turn-start 调用）。
+   *
+   * 幂等：若已有循环在跑（如上一 turn 未正常 stop），先清。每次 turn-start 重置
+   * 失败计数与 warned，确保跨 turn 独立计数（本 turn 第 1 次失败 = 新一轮，不继承上 turn）。
+   */
+  private startPingLoop(): void {
+    this.stopPingLoop()
+    this.pingFailCount = 0
+    this.pingWarned = false
+    // [vitest 时序] setInterval 回调同步调度 tick；tick 内 await pingPi() 是微任务，
+    // vi.advanceTimersByTimeAsync 能同时推进宏任务（setInterval tick）与被 flush 的微任务。
+    this.pingTimer = setInterval(() => { void this.pingTick() }, PING_INTERVAL_MS)
+  }
+
+  /** 停止 ping 探测循环（turn-end / agent_end / onSilentAbort 调用）。幂等。 */
+  private stopPingLoop(): void {
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer)
+      this.pingTimer = null
+    }
+  }
+
+  /**
+   * 单次 ping tick：调 pingPi() 探测 pi 进程是否响应 get_state。
+   *
+   * 成功（resolve 非 undefined）→ 清零失败计数 + warned 标志（AC-8b：中途成功重置累积）。
+   * 失败（reject 或 resolve undefined）→ failCount++；达 2 次且 !warned 广播 WARN；达 3 次触发 onSilentAbort + stopPingLoop（AC-7）。
+   */
+  private async pingTick(): Promise<void> {
+    const cb = this.opts.pingPi
+    if (!cb) return // 未注入 pingPi（如组合根尚未接入）→ 不探测，不误 abort
+    let ok = false
+    try {
+      const state = await cb()
+      // resolve(undefined) 计为失败但不抛错（AC-9：client 未就绪不算崩溃信号，累积到 3 次仍 abort）
+      ok = state !== undefined
+    } catch {
+      ok = false
+    }
+    if (ok) {
+      // 健康响应 → 清零（AC-8b：中途成功后需重新累积 2 次才 WARN）
+      this.pingFailCount = 0
+      this.pingWarned = false
+      return
+    }
+    this.pingFailCount += 1
+    // AC-8：连续 2 次失败广播 message.stream_warn 一次（提示性，不中断流）
+    if (this.pingFailCount === PING_WARN_FAIL_COUNT && !this.pingWarned) {
+      this.pingWarned = true
+      this.opts.send({
+        type: 'message.stream_warn',
+        payload: {
+          sessionId: this.sessionId,
+          content: `pi 进程连续 ${this.pingFailCount * 60}s 未响应健康探测，可能卡死`,
+        },
+      })
+    }
+    // ADR-0035：连续 3 次失败 → 判定 pi 进程真死 → onSilentAbort + 停止 ping（AC-7）
+    if (this.pingFailCount >= PING_FAIL_THRESHOLD) {
+      this.stopPingLoop()
+      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
+    }
   }
 }

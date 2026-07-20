@@ -190,6 +190,15 @@ async function main(): Promise<void> {
       onSilentAbort: ({ sessionId: sid }) => {
         sessionService.abort(sid).catch(() => {})
       },
+      // [ADR-0035] ping get_state 进程健康探测（替代事件静默检测）。
+      // 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
+      // pm（ProcessManager）在本闭包外已创建，getClient 返回 undefined 时计为一次失败
+      // （AC-9），但不抛错——client 偶发未就绪不应让 interpret 批次崩溃。
+      pingPi: async () => {
+        const client = pm.getClient(sessionId)
+        if (!client) return undefined
+        return client.getState()
+      },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
     return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
