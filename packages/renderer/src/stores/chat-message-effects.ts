@@ -51,6 +51,9 @@ import {
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
 import { commitMessages } from './chat-mutations'
 import { truncateToolCall } from '@/utils/truncate-tool-output'
+import { useTasksStore } from './tasks'
+import type { TodoItem } from './tasks'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -148,6 +151,85 @@ function isLastAssistantStreaming(
     if (list[i].role === 'assistant') return list[i].status === 'streaming'
   }
   return false
+}
+
+/**
+ * tool result 到达时按 toolName 路由 details 到 tasks store。
+ *
+ * - toolName === 'todo' → setTodoFromGui（details.__gui__ list-tree）+ setTodos（details.todos 原始数组，含 isVerification）
+ * - toolName === 'goal_control' → setGoalFromGui（details.__gui__ card/stats-line）+ setGoalMeta（details.slug）
+ * - 其他 tool / 无 details → no-op
+ *
+ * details 是 pi tool_execution_end 的 result.details。todo/goal extension 把结构化快照放进
+ * details.__gui__.component（guiResult helper 产物）；todo 额外暴露 details.todos 原始数组
+ * （含 isVerification，list-tree 的 TreeItem 不含此字段）；goal_control 暴露 details.slug。
+ */
+function routeToolResultToTasks(
+  sid: string,
+  payload: Record<string, unknown>,
+  details: Record<string, unknown> | undefined,
+): void {
+  const toolName = readString(payload, 'toolName') ?? 'tool'
+  if (toolName !== 'todo' && toolName !== 'goal_control') return
+  if (!details) return
+  const tasksStore = useTasksStore()
+
+  // 结构化快照（__gui__.component）
+  const rawGui = details['__gui__']
+  if (rawGui && typeof rawGui === 'object' && 'component' in rawGui) {
+    const component = (rawGui as { component: GuiComponent }).component
+    if (toolName === 'todo') {
+      tasksStore.setTodoFromGui(sid, component)
+    } else {
+      tasksStore.setGoalFromGui(sid, component)
+    }
+  }
+
+  // todo 原始数组（含 isVerification，TasksPanel 渲染 VERIFY 标签依据）
+  if (toolName === 'todo') {
+    const rawTodos = details['todos']
+    if (Array.isArray(rawTodos)) {
+      const todos = rawTodos.filter(isTodoItem) as TodoItem[]
+      if (todos.length > 0) tasksStore.setTodos(sid, todos)
+    }
+  }
+
+  // goal slug（card header 也含 slug，但 details.slug 更可靠——避免解析 card props）
+  if (toolName === 'goal_control') {
+    const slug = readString(details, 'slug')
+    if (slug) tasksStore.setGoalMeta(sid, { slug })
+  }
+}
+
+/** details.todos 元素类型守卫（容错：过滤掉非合法结构） */
+function isTodoItem(v: unknown): v is TodoItem {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  return (
+    typeof o['id'] === 'number' &&
+    typeof o['text'] === 'string' &&
+    typeof o['status'] === 'string' &&
+    ['pending', 'in_progress', 'completed', 'cancelled'].includes(o['status'] as string)
+  )
+}
+
+/**
+ * tool_call_start 到达时提取 goal_control create 的 input.objective。
+ * objective 只在 create action 的 input 里（tool result details 不回传），需单独提取。
+ */
+function routeToolStartToTasks(
+  sid: string,
+  payload: Record<string, unknown>,
+): void {
+  const toolName = readString(payload, 'toolName') ?? 'tool'
+  if (toolName !== 'goal_control') return
+  const input = readRecord(payload, 'input')
+  if (!input) return
+  const objective = readString(input, 'objective')
+  const slug = readString(input, 'slug')
+  if (objective || slug) {
+    useTasksStore().setGoalMeta(sid, { objective: objective ?? undefined, slug: slug ?? undefined })
+  }
 }
 
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
@@ -358,6 +440,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       status: 'running',
       startTime: Date.now(),
     }
+    // goal_control create 的 input.objective 只在此刻可得（tool result details 不回传），提前提取。
+    routeToolStartToTasks(sid, payload)
     const next = [...prev]
     const toolCalls = [...(next[idx].toolCalls ?? []), call]
     // push 到 contentBlocks 尾部（callId 复用，与 toolCalls[].id 一致）。
@@ -378,6 +462,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // details：pi tool_execution_end result.details（结构化扩展数据）。
     // subagent sync 模式的 progress 快照（currentTool/turn/tokens）在这里，前端 Block.vue 据此滚动更新。
     const details = readRecord(payload, 'details')
+
+    // tool result 到达时按 toolName 路由 details 到 tasks store
+    // （__gui__ 快照 + todos 原始数组 + goal slug）。
+    routeToolResultToTasks(sid, payload, details)
+
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
       c.id === callId

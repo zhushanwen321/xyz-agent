@@ -36,8 +36,9 @@
     </div>
 
     <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
-         subagent（pi-subagents 的 "subagent" tool）用独立样式：紫色 Subagent 行，sync 模式滚动进度。 -->
-    <div v-else class="trace-tool">
+         subagent（pi-subagents 的 "subagent" tool）用独立样式：紫色 Subagent 行，sync 模式滚动进度。
+         HIDDEN_TOOL_NAMES（todo/goal_control 等状态管理类 tool）直接跳过——状态由 SideDrawer Tasks tab 展示。 -->
+    <div v-else-if="!isHidden" class="trace-tool">
       <!-- ── subagent 块：独立样式（紫色，Bot 图标，与思考块同语义族）── -->
       <div v-if="isSubagent" class="trace-subagent">
         <div
@@ -137,7 +138,7 @@ import { Bot, Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
-import { SUBAGENT_TOOL_NAMES } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES } from '@xyz-agent/shared'
 import AnsiText from './gui/AnsiText.vue'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -302,6 +303,10 @@ const argPath = computed(() => {
 
 /* ── subagent（pi-subagents 扩展的 "subagent" tool）特殊渲染 ── */
 const isSubagent = computed(() => SUBAGENT_TOOL_NAMES.has(toolName.value))
+
+/** 状态管理类 tool（todo/goal_control）：对话流完全不渲染（v-else-if=!isHidden 跳过）。
+ *  其状态变化由 SideDrawer Tasks tab 展示。仅影响渲染层，数据仍完整存储。 */
+const isHidden = computed(() => !isSubagent.value && HIDDEN_TOOL_NAMES.has(toolName.value))
 
 /** subagent input 的 agent / task（single 模式）。
  *  parallel(chain 模式 input 有 tasks/chain 数组，P1 取首项摘要，P2 再完善。 */
