@@ -26,18 +26,16 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventInterpreter } from '../src/services/session/event-interpreter.js'
+// SR6（SSOT）：ping 阈值常量从源码 import，测试跟随源码调参，不本地重复定义（避免漂移）
+import {
+  PING_INTERVAL_MS,
+  PING_WARN_FAIL_COUNT,
+} from '../src/services/session/event-interpreter.js'
 import { translate } from '../src/infra/pi/event-adapter.js'
 import { ASK_USER_MARKER } from '@xyz-agent/extension-protocol'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { PiTranslatedEvent } from '../src/services/session/types.js'
 import type { PiExtensionUiRequestEvent } from '../src/infra/pi/pi-protocol.js'
-
-/** ping 间隔（ADR-0035：每 60s 一次 get_state）。 */
-const PING_INTERVAL_MS = 60_000
-/** ping 连续失败阈值（ADR-0035：连续 3 次 = 180s → onSilentAbort）。 */
-const PING_FAIL_THRESHOLD = 3
-/** WARN 阈值（AC-8：连续 2 次失败 = 120s → 广播 message.stream_warn 一次）。 */
-const PING_WARN_FAIL_COUNT = 2
 
 /**
  * 构造 ask_user 的真实双事件输入（用 translate() 翻译 pi 原始 extension_ui_request 事件）。

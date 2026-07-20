@@ -26,12 +26,14 @@ import type { FileChange } from '@xyz-agent/shared'
  * [ADR-0035] ping 间隔：turn 进行中每 60s 发一次 get_state 进程健康探测。
  *
  * 阈值依据见 ADR-0035「阈值依据」。平衡 RPC 流量（轻量）与响应速度。
+ *
+ * export 供测试 import（SR6 SSOT：测试跟随源码常量，不漂移）。
  */
-const PING_INTERVAL_MS = 60_000
-/** [ADR-0035] 连续失败阈值：3 次（180s）→ 判定 pi 进程真死 → onSilentAbort。 */
-const PING_FAIL_THRESHOLD = 3
-/** [AC-8] 连续 2 次失败（120s）→ 广播 message.stream_warn 一次（提示性，不中断）。 */
-const PING_WARN_FAIL_COUNT = 2
+export const PING_INTERVAL_MS = 60_000
+/** [ADR-0035] 连续失败阈值：3 次（180s）→ 判定 pi 进程真死 → onSilentAbort。export 供测试（SR6）。 */
+export const PING_FAIL_THRESHOLD = 3
+/** [AC-8] 连续 2 次失败（120s）→ 广播 message.stream_warn 一次（提示性，不中断）。export 供测试（SR6）。 */
+export const PING_WARN_FAIL_COUNT = 2
 import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -591,9 +593,16 @@ export class EventInterpreter {
       const state = await cb()
       // resolve(undefined) 计为失败但不抛错（AC-9：client 未就绪不算崩溃信号，累积到 3 次仍 abort）
       ok = state !== undefined
-    } catch {
+    } catch (e) {
+      // SR5：记日志（经 logger patchConsole 落盘，架构约定 #4），不静默吞错——pi 卡死的真实诊断依赖此处
+      console.warn('[event-interpreter] ping get_state failed:', e)
       ok = false
     }
+    // SR1（M1 并发 bug）：await cb() 窗口最长 PING_INTERVAL_MS，期间 turn-end 可能已到来
+    // 触发 stopPingLoop（清 timer）。此时已 in-flight 的 pingTick 绝不能继续更新 failCount——
+    // 否则 turn 已正常结束却因累积达阈值误触发 onSilentAbort，广播 aborted。
+    // pingTimer === null 即被 stop，直接 return（不增计数、不广播、不 abort）。
+    if (this.pingTimer === null) return
     if (ok) {
       // 健康响应 → 清零（AC-8b：中途成功后需重新累积 2 次才 WARN）
       this.pingFailCount = 0
@@ -608,7 +617,10 @@ export class EventInterpreter {
         type: 'message.stream_warn',
         payload: {
           sessionId: this.sessionId,
-          content: `pi 进程连续 ${this.pingFailCount * 60}s 未响应健康探测，可能卡死`,
+          // SR3：间隔由 PING_INTERVAL_MS 决定，不硬编码 60（常量 SSOT）
+          // 1000 = ms→s 换算常数，无语义歧义
+          // eslint-disable-next-line no-magic-numbers
+          content: `pi 进程连续 ${this.pingFailCount * (PING_INTERVAL_MS / 1000)}s 未响应健康探测，可能卡死`,
         },
       })
     }
