@@ -75,27 +75,19 @@ export interface EventInterpreterOptions {
   /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string; textRaw?: string }) => void
   /**
-   * pi 静默卡死 abort 回调（W6, U12，设计文档 A2）。
+   * pi 卡死 abort 回调（ADR-0035 ping 探测机制）。
    *
-   * 当 turn 内连续 SILENT_ABORT_MS（300s）无任何活动事件时，watchdog 判定 pi 卡死，
+   * turn 进行中每 60s ping get_state，连续 3 次（180s）失败时判定 pi 进程真死，
    * 触发本回调由组合根调 message-dispatcher.abort（复用现有 abort 兜底广播路径）。
    * payload 携带 sessionId，供上层定位要 abort 的 session。
+   *
+   * 注：ping 探测由 W2 实现；此 option 字段先保留作为 W2 的注入点。
    */
   onSilentAbort?: (payload: { sessionId: string }) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
 const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
-
-// ── W6 pi watchdog 阈值（设计文档 A2）──
-// pi 子进程偶发静默卡死（0% CPU、不退出、不发事件），导致 isGenerating 永久 true。
-// watchdog 在 turn 维度维护两级定时器：WARN 提示用户 + ABORT 自动中断。
-/** WARN 阈值：连续 120s 无活动事件 → 广播 message.stream_error{kind:'silent'}（不中断）。 */
-const SILENT_WARN_MS = 120_000
-/** ABORT 阈值：连续 300s 无活动事件 → 判定卡死，触发 onSilentAbort（上层 abort pi + 复位 isGenerating）。 */
-const SILENT_ABORT_MS = 300_000
-/** ms → s 换算系数（WARN 文案展示秒数）。 */
-const MS_PER_SECOND = 1000
 
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
@@ -112,20 +104,6 @@ export class EventInterpreter {
   private subagentRecords: Map<string, SubagentRecord> = new Map()
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
-  // ── W6 pi watchdog 状态（per-session，turn 维度）──
-  // M8（perf-quick-batch）：改为单定时器 + lastActivityAt 时间戳方案。
-  // 旧实现每活动事件都 clearWatchdogTimers（2 clearTimeout）+ 重排 2 setTimeout，
-  // 高频 token 流下每 token 4 次定时器操作（2000 token = 8000 次）。
-  // 现在只维护一个指向最近 deadline（WARN 或 ABORT）的定时器 + 最后活动时间戳；
-  // reset 只更新时间戳（O(1)，不碰定时器），定时器到点时据 now-lastActivityAt 判定真阈值。
-  /** 最后一次活动事件的时间戳（Date.now()）。reset 只更新它，不重排定时器。 */
-  private watchdogLastActivityAt = 0
-  /** 单定时器句柄，指向最近的 deadline（WARN 未发→WARN 阈值；已发→ABORT 阈值）。 */
-  private watchdogTimer: ReturnType<typeof setTimeout> | null = null
-  /** 本轮 WARN 是否已广播（避免 reset 前重复广播；活动事件到达时复位） */
-  private watchdogWarned = false
-  /** extension-ui 等待用户期间暂停 watchdog（用户未响应时不视为卡死）。 */
-  private watchdogPaused = false
 
   constructor(
     private readonly sessionId: string,
@@ -151,8 +129,8 @@ export class EventInterpreter {
       try {
         this.handle(ev)
       } catch (err: unknown) {
-        // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize +
-        // clearWatchdog 未执行 → isGenerating 永不复位（session 永久 busy，违反 AGENTS.md 规则 #3）。
+        // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize 未执行 →
+        // isGenerating 永不复位（session 永久 busy，违反 AGENTS.md 规则 #3）。
         // 兜底强制执行。onTurnFinalize 幂等（finalizeSession 幂等，见 chat.ts），重复调用无副作用。
         if (ev.kind === 'turn-end') {
           try {
@@ -161,10 +139,8 @@ export class EventInterpreter {
             // 对「handler 抛错」场景写 'done' 是错的；turn-end 事件本身携带 stopReason（types.ts L120）。
             this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
           } catch (finalizeErr) {
-            // 兜底失败也不阻断——至少尝试清 watchdog（best-effort：onTurnFinalize 内部异常不传播）
             console.debug('[event-interpreter] onTurnFinalize fallback failed:', finalizeErr)
           }
-          this.clearWatchdog()
         }
         console.error(
           `[event-interpreter] handle event error (isolated; batch continues) sid=${this.sessionId} kind=${ev.kind}:`,
@@ -184,8 +160,6 @@ export class EventInterpreter {
         this.handleSubagentBgNotify(ev.message)
         // workflow-result（run 完成）：广播 session.workflows 增量信号
         this.handleWorkflowResult(ev.message)
-        // [W6] message（含 text_delta/thinking_*）是活动事件 → 重置 watchdog 计时
-        this.resetWatchdog()
         return
       case 'turn-start':
         // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
@@ -194,18 +168,12 @@ export class EventInterpreter {
           ? this.opts.fileChangeDiff.snapshotGitStatus(this.opts.cwd)
           : null
         this.writeContents.clear()
-        // [W6] turn 开始 → 启动 watchdog（等待后续活动事件；无事件到达时按阈值 WARN/ABORT）
-        this.startWatchdog()
         return
       case 'tool-call-start':
-        // [W6] 工具执行开始是活动事件 → 重置 watchdog（长任务期间避免误判卡死）
-        this.resetWatchdog()
         // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
         void this.handleToolCallStart(ev)
         return
       case 'tool-call-end':
-        // [W6] 工具执行结束是活动事件 → 重置 watchdog
-        this.resetWatchdog()
         void this.handleToolCallEnd(ev)
         return
       case 'turn-end':
@@ -229,9 +197,6 @@ export class EventInterpreter {
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
         return
       case 'extension-ui':
-        // [2026-07-16] ask-user 等 extension UI 等待用户期间暂停 watchdog，
-        // 用户未响应不应触发「长时间无响应」警告或 ABORT。
-        this.pauseWatchdog()
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':
@@ -362,126 +327,7 @@ export class EventInterpreter {
     this.statusBaseline = null
     this.writeContents.clear()
 
-    // [W6] agent_end 正常到达 → turn 已结束，清除 watchdog（避免 turn 后误触发 abort）
-    this.clearWatchdog()
-
     return Promise.resolve()
-  }
-
-  // ── W6 pi watchdog：turn 级静默卡死检测（设计文档 A2）──
-
-  /**
-   * 暂停 watchdog（extension-ui 等待用户期间调用）。
-   *
-   * 清当前定时器并置暂停标志；暂停期间 armWatchdogTimer 不排新定时器。
-   * 恢复靠 resetWatchdog（用户响应后 pi 继续产出活动事件时触发），无显式 resume 方法。
-   */
-  private pauseWatchdog(): void {
-    this.clearWatchdogTimer()
-    this.watchdogPaused = true
-  }
-
-  /**
-   * 启动 watchdog（turn-start 触发）。
-   *
-   * 记录活动时间戳并排一个指向 WARN 阈值的定时器。
-   */
-  private startWatchdog(): void {
-    this.watchdogLastActivityAt = Date.now()
-    this.watchdogWarned = false
-    this.armWatchdogTimer(SILENT_WARN_MS)
-  }
-
-  /**
-   * 重置 watchdog（活动事件到达时触发）。
-   *
-   * M8（perf-quick-batch）：只更新活动时间戳 + 复位 warned，**不重排定时器**。
-   * 活动事件定义（设计文档 §3.2）：message（text_delta/thinking_*）/ tool-call-start / tool-call-end。
-   * 这些事件表明 pi 仍在产出，故重置计时。
-   *
-   * INVAR-M8-2（不提前）：定时器到点时用 now-lastActivityAt 判定，活动持续时 diff 不到阈值 → 不触发。
-   * 旧实现每帧 clear+重排两定时器（每 token 4 次操作），现 reset 为 O(1)。
-   *
-   * W6（可维护性硬化）：暂停态恢复语义对顺序敏感——「先清 paused」与「后 armWatchdogTimer」不可颠倒
-   * （armWatchdogTimer 内有 `if (paused) return`，若先 arm 再清 paused，下次 tick 仍可能误判暂停态）。
-   * 这里显式分两步：①清 paused 标志（恢复 active），②据 timer 是否存在决定是否补排。
-   */
-  private resetWatchdog(): void {
-    // ① 暂停态恢复：用户响应后 pi 继续产出活动事件，清暂停标志（隐式 resume，无独立方法）。
-    //    必须在 armWatchdogTimer 之前清——否则 arm 内部 `if (paused) return` 会误跳过补排。
-    this.watchdogPaused = false
-    // ② 更新活动时间戳 + 复位 warned（活动发生 → 已发 WARN 也作废，下轮重新计）。
-    this.watchdogLastActivityAt = Date.now()
-    this.watchdogWarned = false
-    // ③ 定时器若已存在则保留（到点再判）；若无（如首事件前未 start 或刚从暂停恢复）则补排指向 WARN。
-    if (!this.watchdogTimer) this.armWatchdogTimer(SILENT_WARN_MS)
-  }
-
-  /**
-   * 排一个定时器，到点后据真实静默时长判定触发 WARN 还是 ABORT。
-   *
-   * 单定时器方案：只指向「当前最近的 deadline」。到点时计算 now-lastActivityAt：
-   * - 未达 WARN → 活动发生过（lastActivityAt 被推进），重排到 WARN 剩余时间
-   * - 达 WARN 未发 → 广播 WARN，重排到 ABORT
-   * - 达 ABORT → 触发 onSilentAbort 并清自身
-   */
-  private armWatchdogTimer(delayMs: number): void {
-    if (this.watchdogPaused) return // 暂停期间不排定时器（pauseWatchdog 已清旧 timer）
-    this.clearWatchdogTimer()
-    this.watchdogTimer = setTimeout(() => this.onWatchdogTick(), delayMs)
-  }
-
-  /** 定时器到点回调：据真实静默时长判定。 */
-  private onWatchdogTick(): void {
-    this.watchdogTimer = null
-    const silentFor = Date.now() - this.watchdogLastActivityAt
-    if (silentFor >= SILENT_ABORT_MS) {
-      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
-      this.clearWatchdogTimer()
-      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
-      return
-    }
-    if (silentFor >= SILENT_WARN_MS && !this.watchdogWarned) {
-      this.watchdogWarned = true
-      console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
-      // B1（PR#86 review）：WARN 走独立类型 message.stream_warn（提示性，不中断流），
-      // 不再复用 stream_error——前端 stream_error effect 会无条件 finalizeSession 收口，
-      // 破坏「WARN 提示但不中断」设计。stream_warn 仅追加提示，session 保持 streaming。
-      this.opts.send({
-        type: 'message.stream_warn' as ServerMessageType,
-        payload: {
-          sessionId: this.sessionId,
-          content: `长时间无响应（${SILENT_WARN_MS / MS_PER_SECOND}s 无活动）`,
-        },
-      })
-      // 已发 WARN，重排到 ABORT 剩余时间
-      this.armWatchdogTimer(SILENT_ABORT_MS - silentFor)
-      return
-    }
-    // 未达阈值（活动发生过）或已发 WARN 未到 ABORT：重排到最近 deadline。
-    const nextDeadline = this.watchdogWarned
-      ? SILENT_ABORT_MS - silentFor
-      : SILENT_WARN_MS - silentFor
-    this.armWatchdogTimer(Math.max(0, nextDeadline))
-  }
-
-  /**
-   * 清除 watchdog（agent_end / ABORT 触发 / session 销毁时调用）。
-   * 清掉定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
-   */
-  private clearWatchdog(): void {
-    this.clearWatchdogTimer()
-    this.watchdogWarned = false
-    this.watchdogPaused = false
-    this.watchdogLastActivityAt = 0
-  }
-
-  /** 仅清定时器句柄（不触碰 warned/timestamp）。 */
-  private clearWatchdogTimer(): void {
-    if (this.watchdogTimer) {
-      clearTimeout(this.watchdogTimer)
-      this.watchdogTimer = null
-    }
   }
 
   /**
