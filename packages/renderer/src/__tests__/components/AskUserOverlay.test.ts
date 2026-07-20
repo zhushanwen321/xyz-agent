@@ -308,6 +308,34 @@ describe('AskUserOverlay', () => {
     const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
     expect(answers.db).toBe('自定义数据库')
   })
+
+  it('U26: IME 组合输入中的 Enter 不提交也不前进（中文输入法拼音未确认）', async () => {
+    // 复现：中文输入法打拼音还没确认候选词时按 Enter，应交给浏览器确认候选词，
+    // 而不是触发 onOtherEnter 的提交/前进。对应 Composer.vue:369 的 isComposing 守护。
+    const wrapper = mountOverlay([singleSelectQ])
+
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义数据库')
+    // 模拟 IME composition 中按 Enter（isComposing: true）
+    await otherInput.trigger('keydown', { key: 'Enter', isComposing: true })
+    // 不应触发 submit、不应前进
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
+  })
+
+  it('U27: IME 组合输入中的 Enter 不前进到下一题（多问题场景）', async () => {
+    const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
+
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义数据库')
+    // composition 中 Enter —— 不前进
+    await otherInput.trigger('keydown', { key: 'Enter', isComposing: true })
+    // 仍在第一题（第二题的 Other 输入框 testid 是 lang，不应出现）
+    expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ask-user-other-lang"]').exists()).toBe(false)
+  })
 })
 
 describe('AskUserOverlay · v3 样式对齐 demo v3', () => {

@@ -137,8 +137,12 @@ function advanceToNext(): void {
 /** 当前问题是否为最后一题（决定按钮显示"下一题"还是"提交"）*/
 const isLastQuestion = computed(() => activeIdx.value >= props.questions.length - 1)
 
-/** Other input 的 Enter 处理：非最后一题前进到下一题，最后一题不拦截（让按钮提交）*/
-function onOtherEnter(): void {
+/** Other input 的 Enter 处理：非最后一题前进到下一题，最后一题不拦截（让按钮提交）。
+ *  IME 组合输入中（中文/日文输入法拼音未确认）的 Enter 不拦截，交给浏览器确认候选词，
+ *  否则会把拼音未确认状态下的 Enter 当成提交/前进，导致用户还没选字就提交了。
+ *  与 Composer.vue:369 的 `if (e.isComposing) return` 守护一致。 */
+function onOtherEnter(e: KeyboardEvent): void {
+  if (e.isComposing) return
   if (!isLastQuestion.value) {
     advanceToNext()
   } else if (allAnswered.value) {
