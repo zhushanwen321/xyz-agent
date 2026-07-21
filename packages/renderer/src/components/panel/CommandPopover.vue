@@ -77,6 +77,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useFileSearch } from '@/composables/features/useFileSearch'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { toFileCandidates } from '@/lib/file-candidates'
+import type { SkillInfo } from '@xyz-agent/shared'
 import { filterAndSortFileCandidates } from '@/lib/file-match'
 
 type CmdType = 'file' | 'slash'
@@ -94,6 +95,10 @@ const props = defineProps<{
   variant?: ComposerVariant
   /** 过滤 query（输入区 / 或 # 后的内容，空串/缺省=不过滤；file 按 name+path 过滤，slash 按命令名过滤） */
   query?: string
+  /** landing 态当前 cwd 的项目 skill（useProjectSkills 按 cwd key 缓存，W3 ADR-0038）。
+   *  landing 分支合并三源：publicSession 命令 ∪ settingsStore.skills（全局）∪ projectSkills（当前 cwd）。
+   *  默认空（未传时仅合并前两源，向后兼容）。Composer 从 useProjectSkills(flow.currentCwd) 取后透传。 */
+  projectSkills?: SkillInfo[]
 }>()
 
 const emit = defineEmits<{
@@ -158,22 +163,30 @@ const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
  */
 const slashCommands = computed(() => {
   if (variant.value === 'landing') {
-    // landing 合并源：publicSession 的 pi 命令 ∪ settingsStore.skills（去重，pi 源优先）
+    // landing 合并三源（W3 ADR-0038）：publicSession pi 命令 ∪ settingsStore.skills（全局）
+    // ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。去重 pi 源优先 → 全局 → 项目。
     const extCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
-    // 去重 key 集：pi 源命令归一化后的 name（如 /skill:cw-cli、/commit、/goal）
-    const piNames = new Set(extCmds.map((c) => normalizedSlashName(c.name)))
-    // settingsStore 只补 pi 源没有的 skill（项目级 .xyz-agent/skills + discovery 独有项）
-    const extraSkillCmds = settingsStore.skills
-      .filter((s) => !piNames.has(`/skill:${s.name}`))
-      .map((s) => ({
-        id: `skill-${s.name}`,
-        // FR-4：归一化为 /skill:<name>（非裸名 /<name>），pi agent-session.ts:1210 要求 /skill: 前缀
-        name: `/skill:${s.name}`,
-        kind: 'skill',
-        icon: 'star',
-        description: s.description,
-      }))
-    return [...extCmds, ...extraSkillCmds]
+    // 去重 key 集：累积已选入命令的归一化 name（/skill:<name> / /commit / /goal 等）
+    const seen = new Set<string>()
+    extCmds.forEach((c) => seen.add(normalizedSlashName(c.name)))
+    /** 把 SkillInfo[] 转成 slash 命令项（/skill:<name> 归一化），跳过 seen 已有的同名。 */
+    const mapSkillInfo = (skills: SkillInfo[]) =>
+      skills
+        .filter((s) => !seen.has(`/skill:${s.name}`))
+        .map((s) => {
+          seen.add(`/skill:${s.name}`)
+          return {
+            id: `skill-${s.name}`,
+            name: `/skill:${s.name}`,
+            kind: 'skill',
+            icon: 'star',
+            description: s.description,
+          }
+        })
+    // 优先级：全局 settingsStore.skills 先选，projectSkills 补项目独有项（两者同名取全局）
+    const globalSkillCmds = mapSkillInfo(settingsStore.skills)
+    const projectSkillCmds = mapSkillInfo(props.projectSkills ?? [])
+    return [...extCmds, ...globalSkillCmds, ...projectSkillCmds]
   }
   // panel 态：compact + commandStore（pi 真源），不并入 settingsStore.skills
   const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }

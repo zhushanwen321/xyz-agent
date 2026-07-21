@@ -259,4 +259,68 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     // max-w 兜底防视口溢出（非旧的 820px 固定值）
     expect(content!.className).toContain('max-w-[calc(100vw-16px)]')
   })
+
+  // ── W3（cw-2026-07-21-scan-project-agents-skills）：landing 三源合并（projectSkills）──
+  // landing 分支合并三源：commandStore(publicSession pi extension) ∪ settingsStore.skills(全局)
+  // ∪ projectSkills(当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存)。按归一化 name 去重。
+  it('L12 landing + projectSkills prop → 三源合并（publicSession 命令 + 全局 skills + 项目 skills）', async () => {
+    // 全局 skill（settingsStore.skills）2 条
+    const globalSkills: SkillInfo[] = [
+      { id: 'sk-global-1', name: 'global-skill-1', description: 'g1', enabled: true, source: 'pi', effective: true },
+      { id: 'sk-global-2', name: 'global-skill-2', description: 'g2', enabled: true, source: 'pi', effective: true },
+    ]
+    useSettingsStore().skills = globalSkills
+    // 项目 skill（projectSkills prop）2 条
+    const projectSkills: SkillInfo[] = [
+      { id: 'sk-proj-1', name: 'proj-skill-1', description: 'p1', enabled: true, source: 'agents', effective: true },
+      { id: 'sk-proj-2', name: 'proj-skill-2', description: 'p2', enabled: true, source: 'agents', effective: true },
+    ]
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '', projectSkills },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 2 全局 + 2 项目 = 4 项（无 publicSession pi 命令推送，extCmds 空）
+    expect(btns).toHaveLength(4)
+    expect(btns.some((b) => b.textContent?.includes('global-skill-1'))).toBe(true)
+    expect(btns.some((b) => b.textContent?.includes('proj-skill-1'))).toBe(true)
+  })
+
+  it('L13 landing 三源去重——全局 skill 与项目 skill 同名 → 去重 1 项（全局优先）', async () => {
+    // 全局和项目都有同名 skill（模拟全局 ~/.agents/skills 与项目 .agents/skills 重叠场景）
+    const overlap = { id: 'sk-overlap', name: 'overlap-skill', description: 'overlap', enabled: true, source: 'agents', effective: true }
+    useSettingsStore().skills = [overlap, { id: 'sk-g', name: 'global-only', description: 'g', enabled: true, source: 'pi', effective: true }]
+    const projectSkills: SkillInfo[] = [overlap, { id: 'sk-p', name: 'proj-only', description: 'p', enabled: true, source: 'agents', effective: true }]
+
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '', projectSkills },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // overlap-skill 去重 1 项 + global-only 1 项 + proj-only 1 项 = 3 项（非 4 项）
+    expect(btns).toHaveLength(3)
+    const overlapCount = btns.filter((b) => b.textContent?.includes('overlap-skill')).length
+    expect(overlapCount).toBe(1)
+  })
+
+  it('L14 landing projectSkills 默认空（未传 prop）→ 仅全局 skill，行为与修复前一致', async () => {
+    useSettingsStore().skills = LANDING_SKILLS
+    // 不传 projectSkills（默认空）
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '' },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 仅 7 条全局 skill（projectSkills 空）
+    expect(btns).toHaveLength(7)
+  })
 })

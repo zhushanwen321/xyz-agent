@@ -36,6 +36,17 @@ export async function scanSkills(sources: string[]): Promise<ScannedSkillInfo[]>
   return reply.skills
 }
 
+/**
+ * W2 配套（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill。
+ * 调 runtime loadSkills(cwd) 扫描 <cwd>/.agents/skills + <cwd>/.xyz-agent/skills 等已生效目录，
+ * 返回 SkillInfo[]。与 scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；
+ * scanSessionSkills 扫某 cwd 的已生效项目 skill（按需拉取，不进全局 config.skills）。
+ */
+export async function scanSessionSkills(cwd: string): Promise<SkillInfo[]> {
+  const reply = await command('config.scanSessionSkills', { cwd })
+  return reply.skills
+}
+
 export async function scanAgents(sources: string[]): Promise<ScannedAgentInfo[]> {
   const reply = await command('config.scanAgents', { sources })
   return reply.agents

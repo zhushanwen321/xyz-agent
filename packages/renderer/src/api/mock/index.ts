@@ -540,6 +540,11 @@ export const config = {
     // 扫描后广播当前 skills 快照（runtime scan 后会刷新 config.skills）
     skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
+  // W2（ADR-0038）：按 session cwd 拉 project skill。mock 返回空（mock 模式无真实文件系统扫描）。
+  async scanSessionSkills(_cwd: string) {
+    await sleep(TIMING.ack)
+    return []
+  },
   /** ADR-0020 §1 目录级管道写入：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
   async setSkillDirs(dirs: string[]) {
     await sleep(TIMING.ack)
