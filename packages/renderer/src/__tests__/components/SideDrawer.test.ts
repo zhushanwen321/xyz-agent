@@ -30,26 +30,29 @@ beforeEach(() => {
 })
 
 // ── mock useSessionEvents：捕获 onMessage 注册的 handler，模拟真实退订语义 ──
-// 真实 useSessionEvents：watch(sessionId) 切换时退订旧 sid 底层订阅（同步 events.off）
-// + 开新 sid 订阅（复用路由表）。真实 events.on/off 是同步的（api/events.ts:50 off=Set.delete），
-// 不存在「退订窗口内的飞行事件」——退订后旧 sid 消息立即停止进入 handler。
-// 本 mock 对齐此语义：emitTo(sid) 只触发「该 handler 绑定的 sidRef 当前值 === sid」的 handler，
-// 切 sid 后 sidRef.value 变化，旧 sid 的 handler 不再响应（模拟真实退订后旧 sid 消息不到达）。
+// 真实 useSessionEvents：subscribe(sid) 闭包捕获订阅时 sid，分发时把它传给 handler（第二参数）。
+// handler 收到的 sid 是「订阅时捕获值」（不随当前 sid 变化），调用方据此调 updateFor(sid) 写
+// 「消息所属 sid」分区——即使 watch flush:pre 异步退订窗口内有旧 sid 迟到消息，也只写旧 sid 分区，
+// 从结构上消除竞态（ADR-0036 W4 M1）。
+// 本 mock 对齐此语义：注册时快照 sidRef.value（注册时 sid），emitTo(sid) 只触发「快照 sid === sid」
+// 的 handler，并把快照 sid 作为第二参数传给 handler。切 sid 后快照不变，旧 sid 的 handler 仍响应
+// 旧 sid 的 emit（但写入旧 sid 分区，不污染新 sid）——验证 updateFor 的结构性隔离。
 // vi.mock 工厂被提升到文件顶部，必须用 vi.hoisted 声明共享状态，否则 ReferenceError
 const mockState = vi.hoisted(() => ({
-  // 每个 registration 绑定注册时的 sidRef（而非 sid 快照）——这样切 sid 后读 sidRef.value
-  // 能感知变化，对齐真实 useSessionEvents 复用路由表 + 切底层订阅的行为
-  registrations: [] as Array<{ sidRef: { value: string | null }; type: string; handler: (msg: unknown) => void }>,
+  // 每个 registration 绑定注册时的 sid 快照（而非 sidRef 引用）——对齐真实 useSessionEvents
+  // 的 subscribe(sid) 闭包捕获 sid（handler 拿到的第二参数是这个快照值，不随当前 sid 变化）
+  registrations: [] as Array<{ sidAtRegistration: string; type: string; handler: (msg: unknown, sid: string) => void }>,
   subscribeOrder: [] as string[],
 }))
 
 vi.mock('@/composables/features/useSessionEvents', () => ({
   useSessionEvents: (sidRef: { value: string | null }) => {
-    return (type: string, handler: (msg: unknown) => void) => {
+    return (type: string, handler: (msg: unknown, sid: string) => void) => {
       const sid = sidRef.value
       if (sid == null) return
+      // 注册时快照当前 sidRef.value（对齐真实 subscribe(sid) 闭包捕获 sid）
       mockState.subscribeOrder.push(`${sid}:${type}`)
-      mockState.registrations.push({ sidRef, type, handler })
+      mockState.registrations.push({ sidAtRegistration: sid, type, handler })
     }
   },
 }))
@@ -85,13 +88,15 @@ function mkStatusMsg(statusKey: string, text: string): ServerMessage<'extension:
 
 /**
  * 向某 sid 的某 type 推送消息。
- * 对齐真实 useSessionEvents 退订语义：只触发「handler 绑定的 sidRef 当前值 === sid」的 handler。
- * 切 sid 后 sidRef.value 变化，旧 sid 的 handler 不再响应（真实 events.off 同步退订后旧 sid 消息不到达）。
+ * 对齐真实 useSessionEvents：只触发「注册时快照 sid === sid」的 handler，并把该快照 sid
+ * 作为第二参数传给 handler（模拟真实 subscribe(sid) 闭包捕获后透传）。
+ * 切 sid 后快照不变，旧 sid 的 handler 仍响应旧 sid 的 emit（但调用方 updateFor(sid) 写旧 sid
+ * 分区，不污染新 sid）——验证 updateFor 的结构性竞态隔离（M1 修复核心）。
  */
 function emitTo(sid: string, type: string, msg: ServerMessage): void {
   for (const entry of mockState.registrations) {
-    if (entry.sidRef.value === sid && entry.type === type) {
-      entry.handler(msg)
+    if (entry.sidAtRegistration === sid && entry.type === type) {
+      entry.handler(msg, entry.sidAtRegistration)
     }
   }
 }
@@ -236,10 +241,11 @@ describe('W4 SideDrawer AC-4 (时序): 切 sid 时缓冲与 useSessionEvents 退
     mockState.subscribeOrder.length = 0
   })
 
-  it('切到 B 后，向 A 推送的事件不写入 B 的缓冲分区（真实退订语义）', async () => {
-    // 真实 events.on/off 同步（api/events.ts:50 off=Set.delete），useSessionEvents 切 sid 时
-    // 退订旧底层订阅后，A 通道消息立即停止进入 handler。本用例验证此真实行为：
-    // 切到 B 后 emitTo(SID_A) 不触发任何 handler（sidRef.value 已是 B，A 的 handler 不匹配）。
+  it('切到 B 后，向 A 推送的事件不写入 B 的缓冲分区（updateFor 结构性隔离）', async () => {
+    // 真实 useSessionEvents：subscribe(sid) 闭包捕获订阅时 sid，分发时透传给 handler。即使
+    // watch flush:pre 异步退订窗口内旧 sid 迟到消息仍进入 handler，handler 传入的仍是旧 sid，
+    // 调 updateFor(旧 sid) 写旧 sid 分区。本用例验证此结构性隔离：切到 B 后 emitTo(SID_A)
+    // 会触发 A 的 handler（注册时 sid=A 快照匹配），handler 写 A 分区，但 B 渲染不受影响。
     const wrapper = mountDrawer(SID_A, 'terminal')
     await flushPromises()
 
@@ -247,11 +253,11 @@ describe('W4 SideDrawer AC-4 (时序): 切 sid 时缓冲与 useSessionEvents 退
     await wrapper.setProps({ sessionId: SID_B })
     await flushPromises()
 
-    // 向 A 推送：真实退订后 A 消息不到达 handler，B 缓冲不受影响
+    // 向 A 推送：handler 触发，写 A 分区（updateFor(SID_A)）；B 分区不受影响，B 渲染不显示 A 内容
     emitTo(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['late-from-A']))
     await nextTick()
 
-    // B 的 terminal tab 不应渲染 A 的内容
+    // B 的 terminal tab 不应渲染 A 的内容（updateFor 结构性隔离：A 消息写 A 分区，不串 B）
     const codes = wrapper.findAll('code')
     expect(codes.some((c) => c.text() === 'late-from-A')).toBe(false)
 

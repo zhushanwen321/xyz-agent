@@ -346,13 +346,13 @@ function truncateLines(lines: string[]): string[] {
  */
 const onMessage = useSessionEvents(toRef(props, 'sessionId'))
 // extension:widget：按 widgetKey 路由到 terminal/browser tab，未匹配走 fallback
-// handler 写 drawerState.current.value（当前 sid 分区）——安全因为真实 events.on/off 同步
-// （api/events.ts:50 off=Set.delete），进入 handler 的消息必然属于当前活跃 sid
-onMessage('extension:widget', (msg) => {
+// handler 收到第二参数 sid（订阅时捕获的消息所属 session），调 updateFor(sid) 写入该 sid 分区——
+// 即使 watch flush:pre 异步退订窗口内有旧 sid 迟到消息，也只写旧 sid 分区，不污染新 sid（M1 竞态修复）
+onMessage('extension:widget', (msg, sid) => {
   const payload = msg.payload
   const lines = truncateLines(payload.lines)
   const tab = mapWidgetKeyToTab(payload.widgetKey)
-  drawerState.update((buf) => {
+  drawerState.updateFor(sid, (buf) => {
     if (tab === 'terminal') buf.terminalLines = lines
     else if (tab === 'browser') buf.browserLines = lines
     else buf.unknownWidget = { key: payload.widgetKey, lines }
@@ -366,10 +366,10 @@ onMessage('extension:widget', (msg) => {
 // 注：drawerState 是 useSessionScopedState reactive 容器，buf.guiWidgetsByTab / buf.statusMap
 // 都是 reactive Map。Vue 3 reactive 对 Map 有 collection handlers——.set()/.delete() 本身就触发
 // 依赖了该 Map 的下游 computed 重算，**无需重新赋值 Map 字段**（旧 ref<Map> 实现才需要 reassign）。
-onMessage('extension:widgetGui', (msg) => {
+onMessage('extension:widgetGui', (msg, sid) => {
   const payload = msg.payload
   const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
-  drawerState.update((buf) => {
+  drawerState.updateFor(sid, (buf) => {
     if (payload.gui === null) {
       // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
       buf.guiWidgetsByTab.delete(tab)
@@ -381,9 +381,9 @@ onMessage('extension:widgetGui', (msg) => {
   })
 })
 // extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
-onMessage('extension:status', (msg) => {
+onMessage('extension:status', (msg, sid) => {
   const payload = msg.payload
-  drawerState.update((buf) => {
+  drawerState.updateFor(sid, (buf) => {
     buf.statusMap.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
   })
 })
