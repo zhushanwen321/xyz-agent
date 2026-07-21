@@ -10,22 +10,39 @@
  * 禁止 node:test / tsx --test。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { ref } from 'vue'
+import { effectScope, ref, nextTick } from 'vue'
 
 // ── mock extension api domain ──
 // 拦截 onUIRequest / onUITimeout / sendExtensionUIResponse，让测试能模拟 WS 事件分发。
-// onUIRequest/onUITimeout 捕获 handler 到各自的 map，测试通过 emitXxx 触发。
-const uiRequestHandlers = new Map<string, (req: unknown) => void>()
-const uiTimeoutHandlers = new Map<string, (requestId: string) => void>()
+// onUIRequest/onUITimeout 捕获 handler 到各自的列表（同 sid 多订阅共存，对齐真实 events.on 的 Set 语义），
+// 测试通过 emitXxx 触发所有该 sid 的 handler（split 双 panel 同 sid 分流测试依赖此）。
+const uiRequestHandlers = new Map<string, Array<(req: unknown) => void>>()
+const uiTimeoutHandlers = new Map<string, Array<(requestId: string) => void>>()
 
 vi.mock('@/api/domains/extension', () => ({
   onUIRequest: (sid: string, handler: (req: unknown) => void) => {
-    uiRequestHandlers.set(sid, handler)
-    return () => uiRequestHandlers.delete(sid)
+    const arr = uiRequestHandlers.get(sid) ?? []
+    arr.push(handler)
+    uiRequestHandlers.set(sid, arr)
+    return () => {
+      const cur = uiRequestHandlers.get(sid)
+      if (!cur) return
+      const idx = cur.indexOf(handler)
+      if (idx !== -1) cur.splice(idx, 1)
+      if (cur.length === 0) uiRequestHandlers.delete(sid)
+    }
   },
   onUITimeout: (sid: string, handler: (requestId: string) => void) => {
-    uiTimeoutHandlers.set(sid, handler)
-    return () => uiTimeoutHandlers.delete(sid)
+    const arr = uiTimeoutHandlers.get(sid) ?? []
+    arr.push(handler)
+    uiTimeoutHandlers.set(sid, arr)
+    return () => {
+      const cur = uiTimeoutHandlers.get(sid)
+      if (!cur) return
+      const idx = cur.indexOf(handler)
+      if (idx !== -1) cur.splice(idx, 1)
+      if (cur.length === 0) uiTimeoutHandlers.delete(sid)
+    }
   },
   sendExtensionUIResponse: vi.fn(),
   onNotify: () => () => {},
@@ -33,7 +50,7 @@ vi.mock('@/api/domains/extension', () => ({
   getPendingRequests: vi.fn().mockResolvedValue([]),
 }))
 
-import { useExtensionUI } from '@/composables/useExtensionUI'
+import { useExtensionUI, askUserFilter, dialogFilter } from '@/composables/useExtensionUI'
 import { sendExtensionUIResponse } from '@/api/domains/extension'
 
 // ── 测试数据构造 helper ──
@@ -53,11 +70,11 @@ function mkDialogReq(sid: string, requestId: string, method: 'confirm' | 'select
 
 /** 触发某 session 的 ui_request 事件 */
 function emitUIRequest(sid: string, req: unknown): void {
-  uiRequestHandlers.get(sid)?.(req)
+  uiRequestHandlers.get(sid)?.forEach((h) => h(req))
 }
 /** 触发某 session 的 ui_timeout 事件 */
 function emitUITimeout(sid: string, requestId: string): void {
-  uiTimeoutHandlers.get(sid)?.(requestId)
+  uiTimeoutHandlers.get(sid)?.forEach((h) => h(requestId))
 }
 
 beforeEach(() => {
@@ -141,5 +158,120 @@ describe('useExtensionUI U3 ui_timeout 按 requestId 精确出队', () => {
     // r-timeout 消失，r-keep 保留
     expect(currentDialogRequest.value).toBeUndefined()
     expect(currentAskUserRequest.value?.requestId).toBe('r-keep')
+  })
+})
+
+// ── AC-1/AC-2/AC-6：同一 composable 实例切换 sessionId 的隔离（W2 新增，TDD 红灯） ──
+// 当前实现 watch(sessionId) 切换时只退订 WS、不清 queue.value → A 的 pending 残留到 B。
+// W2 改 Map 分区后这些用例转绿。
+
+/** 在独立 effectScope 内运行，模拟单 Panel 实例的完整生命周期 */
+function runWithScope<T>(fn: () => T): { result: T; dispose: () => void } {
+  const scope = effectScope()
+  let result!: T
+  scope.run(() => {
+    result = fn()
+  })
+  return { result, dispose: () => scope.stop() }
+}
+
+describe('useExtensionUI AC-1/AC-2 同实例切 session 隔离', () => {
+  it('AC-1: 同一实例 sessionId 从 A 切到 B 后 currentAskUserRequest 变 undefined', async () => {
+    const sid = ref<string | null>('sessionA')
+    const { result, dispose } = runWithScope(() => useExtensionUI(sid))
+
+    // A 收到 ask-user pending
+    emitUIRequest('sessionA', mkAskUserReq('sessionA', 'r-a1'))
+    expect(result.currentAskUserRequest.value?.requestId).toBe('r-a1')
+
+    // 同一实例切到 B
+    sid.value = 'sessionB'
+    await nextTick()
+
+    // B 没有 ask-user 请求时，currentAskUserRequest 必须是 undefined（A 的 pending 不应残留）
+    expect(result.currentAskUserRequest.value).toBeUndefined()
+
+    dispose()
+  })
+
+  it('AC-2: 切回 A 后 pending ask-user overlay 恢复显示', async () => {
+    const sid = ref<string | null>('sessionA')
+    const { result, dispose } = runWithScope(() => useExtensionUI(sid))
+
+    emitUIRequest('sessionA', mkAskUserReq('sessionA', 'r-a1'))
+    sid.value = 'sessionB'
+    await nextTick()
+    expect(result.currentAskUserRequest.value).toBeUndefined()
+
+    // 切回 A：A 的 pending 请求应恢复（Map 分区天然保留，不丢数据）
+    sid.value = 'sessionA'
+    await nextTick()
+    expect(result.currentAskUserRequest.value).toBeDefined()
+    expect(result.currentAskUserRequest.value?.requestId).toBe('r-a1')
+
+    dispose()
+  })
+
+  it('AC-1 (dialog): 同一实例切 session 后 currentDialogRequest 不残留旧 session 的 confirm', async () => {
+    const sid = ref<string | null>('sessionA')
+    const { result, dispose } = runWithScope(() => useExtensionUI(sid))
+
+    emitUIRequest('sessionA', mkDialogReq('sessionA', 'r-dlg-a', 'confirm'))
+    expect(result.currentDialogRequest.value?.requestId).toBe('r-dlg-a')
+
+    sid.value = 'sessionB'
+    await nextTick()
+    // B 没有 dialog 时 currentDialogRequest 应 undefined
+    expect(result.currentDialogRequest.value).toBeUndefined()
+
+    // 切回 A 恢复
+    sid.value = 'sessionA'
+    await nextTick()
+    expect(result.currentDialogRequest.value?.requestId).toBe('r-dlg-a')
+
+    dispose()
+  })
+})
+
+describe('useExtensionUI AC-6 split 双 panel 同 sid 分流', () => {
+  it('askUserFilter 与 dialogFilter 在同 sid 下分流：ask-user 只入 Panel，dialog 只入 Dialog modal', () => {
+    // split 模式：两个 Panel 实例订阅同一 sid，但 filter 不同（Panel 入 askUser，Dialog 入非 askUser）
+    const sid = ref<string | null>('shared')
+    const { result: panelInstance } = runWithScope(() =>
+      useExtensionUI(sid, askUserFilter),
+    )
+    const { result: dialogInstance } = runWithScope(() =>
+      useExtensionUI(sid, dialogFilter),
+    )
+
+    // 同 sid 推 ask-user + confirm
+    emitUIRequest('shared', mkAskUserReq('shared', 'r-ask'))
+    emitUIRequest('shared', mkDialogReq('shared', 'r-confirm', 'confirm'))
+
+    // Panel（askUserFilter）只看到 ask-user
+    expect(panelInstance.currentAskUserRequest.value?.requestId).toBe('r-ask')
+    expect(panelInstance.currentDialogRequest.value).toBeUndefined()
+
+    // Dialog modal（dialogFilter）只看到 confirm
+    expect(dialogInstance.currentDialogRequest.value?.requestId).toBe('r-confirm')
+    expect(dialogInstance.currentAskUserRequest.value).toBeUndefined()
+  })
+
+  it('split 双 panel 同 sid 切走后两边都不残留对方 filter 的请求', async () => {
+    const sidA = ref<string | null>('sid-shared')
+    const sidB = ref<string | null>('sid-shared')
+    const { result: panelA } = runWithScope(() => useExtensionUI(sidA, askUserFilter))
+    const { result: dialogA } = runWithScope(() => useExtensionUI(sidB, dialogFilter))
+
+    emitUIRequest('sid-shared', mkAskUserReq('sid-shared', 'r-ask'))
+    emitUIRequest('sid-shared', mkDialogReq('sid-shared', 'r-confirm', 'confirm'))
+
+    // 两 panel 同时切走（模拟用户切到另一 session）
+    sidA.value = 'other'
+    sidB.value = 'other'
+    await nextTick()
+
+    expect(panelA.currentAskUserRequest.value).toBeUndefined()
+    expect(dialogA.currentDialogRequest.value).toBeUndefined()
   })
 })
