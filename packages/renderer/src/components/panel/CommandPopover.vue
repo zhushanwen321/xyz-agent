@@ -145,6 +145,11 @@ const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
  * - landing 态：合并 commandStore.getCommands(sessionId)（publicSession 的 pi extension 命令如 /goal）
  *   ∪ settingsStore.skills（项目级 + 全局 skill）。不含 compact（landing 无上下文可压缩）。
  *   skill name 归一化为 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 路由前缀，裸名 pi 不认）。
+ * - landing 态：合并 publicSession 的 pi 命令（extension + pi 扫描到的全局 skill）∪
+ *   settingsStore.skills（项目级 .xyz-agent/skills + 全局 + discovery）。**去重**（pi 源优先）：
+ *   publicSession 的 cwd=~/.xyz-agent，pi 扫不到用户项目 .xyz-agent/skills；settingsStore
+ *   相对 runtime 进程 cwd 扫描，能扫到项目级 skill。两者在 <piAgentDir>/skills + 全局 skill
+ *   上常态重叠（同一批目录两种视图），去重后 settingsStore 只补 pi 源没有的项目级 skill。
  * - panel 态：compact + commandStore.getCommands(sessionId)（pi 真源，含 pi 返回的 skill 命令）。
  *   不并入 settingsStore.skills（settingsStore 是配置态全局扫描，commandStore 是该 session 的
  *   运行态真源——合并会导致 session A 看到 session B 才有的项目 skill、选中后 pi 不认）。
@@ -153,17 +158,22 @@ const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
  */
 const slashCommands = computed(() => {
   if (variant.value === 'landing') {
-    // landing 合并源：publicSession 的 pi extension 命令 ∪ settingsStore.skills
+    // landing 合并源：publicSession 的 pi 命令 ∪ settingsStore.skills（去重，pi 源优先）
     const extCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
-    const skillCmds = settingsStore.skills.map((s) => ({
-      id: `skill-${s.name}`,
-      // FR-4：归一化为 /skill:<name>（非裸名 /<name>），pi agent-session.ts:1210 要求 /skill: 前缀
-      name: `/skill:${s.name}`,
-      kind: 'skill',
-      icon: 'star',
-      description: s.description,
-    }))
-    return [...extCmds, ...skillCmds]
+    // 去重 key 集：pi 源命令归一化后的 name（如 /skill:cw-cli、/commit、/goal）
+    const piNames = new Set(extCmds.map((c) => normalizedSlashName(c.name)))
+    // settingsStore 只补 pi 源没有的 skill（项目级 .xyz-agent/skills + discovery 独有项）
+    const extraSkillCmds = settingsStore.skills
+      .filter((s) => !piNames.has(`/skill:${s.name}`))
+      .map((s) => ({
+        id: `skill-${s.name}`,
+        // FR-4：归一化为 /skill:<name>（非裸名 /<name>），pi agent-session.ts:1210 要求 /skill: 前缀
+        name: `/skill:${s.name}`,
+        kind: 'skill',
+        icon: 'star',
+        description: s.description,
+      }))
+    return [...extCmds, ...extraSkillCmds]
   }
   // panel 态：compact + commandStore（pi 真源），不并入 settingsStore.skills
   const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }

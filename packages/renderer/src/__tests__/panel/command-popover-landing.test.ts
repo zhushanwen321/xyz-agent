@@ -185,6 +185,64 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     expect(btns.some((b) => b.textContent?.includes('compact'))).toBe(false)
   })
 
+  // L10 [R2 fix]：pi 源 skill 命令与 settingsStore skill 同名 → 去重（pi 源优先），不重复显示
+  // 真实场景：publicSession 的 pi 扫描全局 skill（如 code-review），settingsStore 也扫到同一个
+  // （<piAgentDir>/skills + 全局重叠）。去重后只显一项。pi 源优先（运行态真源）。
+  it('L10 landing pi 源 skill 与 settingsStore skill 同名 → 去重（1 项非 2 项，pi 源优先）', async () => {
+    // pi 返回的 skill 命令：name='skill:code-review'（pi 真实格式，归一化后 /skill:code-review）
+    const piCmdsWithSkill = [
+      { name: 'skill:code-review', description: 'pi 扫描的 code-review', source: 'skill' },
+      { name: '/goal', description: '目标管理', source: 'extension' },
+    ]
+    // settingsStore 也有 code-review（同名重叠）+ diagnose（独有，settingsStore 补项目级）
+    const skills = [
+      LANDING_SKILLS[0], // code-review（与 pi 源重叠，去重）
+      LANDING_SKILLS[1], // diagnose（settingsStore 独有）
+    ]
+    useSettingsStore().skills = skills
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '' },
+    })
+    await flushPromises()
+    const msg = {
+      type: 'session.commands',
+      payload: { sessionId: 'public-sid', commands: piCmdsWithSkill },
+    } as ServerMessage<'session.commands'>
+    events.dispatchSession('public-sid', msg)
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // pi 源 2 项（skill:code-review + /goal）+ settingsStore 独有 1 项（diagnose）= 3 项
+    // code-review 不重复（pi 源优先，settingsStore 的被去重掉）
+    expect(btns).toHaveLength(3)
+    // code-review 只出现一次（去重验证）
+    const codeReviewCount = btns.filter((b) => b.textContent?.includes('code-review')).length
+    expect(codeReviewCount).toBe(1)
+    // diagnose 在列（settingsStore 独有项保留）
+    expect(btns.some((b) => b.textContent?.includes('diagnose'))).toBe(true)
+  })
+
+  // L11 [R3 fix]：landing + sessionId=undefined（publicSession 创建失败/model 未配置）→ 仅显 skills 不崩溃
+  it('L11 landing + sessionId=undefined → 仅显 skills（不加载 pi 命令，不崩溃）', async () => {
+    // publicSession 不可用时 landing composerSid 可能为 undefined（Landing.vue:70 三元 fallback 全 null）
+    useSettingsStore().skills = LANDING_SKILLS
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: undefined, query: '' },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 无 pi 命令源，只显 7 条 skills（extCmds 为空，全部 skills 都是「独有」不过滤）
+    expect(btns).toHaveLength(7)
+    expect(btns.some((b) => b.textContent?.includes('code-review'))).toBe(true)
+    // 无 compact（landing 态）
+    expect(btns.some((b) => b.textContent?.includes('compact'))).toBe(false)
+  })
+
   // L8:回归防护 — 浮层宽度严格对齐 composer-box（w=anchor-width），不溢出。
   // [HISTORICAL] 事故：原 min-w + max-w-[820px] 让浮层可扩展到 >composer 宽度（slash 命令
   // 提示词列撑宽），landing 720px composer 时浮层右边缘溢出 ~70px。改 w-[anchor-width] 固定。
