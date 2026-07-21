@@ -488,6 +488,111 @@ describe('tasks store', () => {
 
   // ── goal objective / slug 元数据 ──
 
+  describe('hydrateFromMessages（持久化恢复，规则 7.5）', () => {
+    // [HISTORICAL] tasks store 数据原本只来自实时 tool result 事件。重启 app / 刷新页面后
+    // store 清空，tasks tab 消失。message-converter F1 修复已透传 toolCall.details（含 __gui__
+    // /todos），hydrateFromMessages 在 chat.hydrate 后遍历历史复现写入。
+    it('从历史 assistant.toolCalls 恢复 todo 快照（裸 __gui__ + todos 数组）', () => {
+      const store = useTasksStore()
+      const history = [{
+        id: 'a1', role: 'assistant', content: '',
+        toolCalls: [{
+          id: 'tc1', toolName: 'todo',
+          input: { action: 'add' },
+          status: 'completed',
+          details: {
+            action: 'add', nextId: 2,
+            todos: [
+              { id: 1, text: '历史任务1', status: 'completed' },
+              { id: 2, text: '历史任务2', status: 'pending', isVerification: true },
+            ],
+            __gui__: { type: 'list-tree', props: { items: [{ label: '#1: 历史任务1' }] } },
+          },
+        }],
+      }]
+      store.hydrateFromMessages('s1', history as never)
+      expect(store.hasData('s1')).toBe(true)
+      expect(store.getTodos('s1')).toEqual([
+        { id: 1, text: '历史任务1', status: 'completed' },
+        { id: 2, text: '历史任务2', status: 'pending', isVerification: true },
+      ])
+      expect(store.getTodoCount('s1')).toEqual({ done: 1, total: 2 })
+      expect(store.getTodo('s1')?.type).toBe('list-tree')
+    })
+
+    it('从历史 goal_control toolCall 恢复 goal 快照 + objective + slug', () => {
+      const store = useTasksStore()
+      const history = [{
+        id: 'a1', role: 'assistant', content: '',
+        toolCalls: [
+          // create：input.objective / slug（tool_call_start 路径）
+          {
+            id: 'tc1', toolName: 'goal_control',
+            input: { action: 'create', objective: '实现登录功能', slug: 'impl-login' },
+            status: 'completed',
+          },
+          // report：details.__gui__ + slug（tool_call_end 路径）
+          {
+            id: 'tc2', toolName: 'goal_control',
+            input: { action: 'report' },
+            status: 'completed',
+            details: {
+              slug: 'impl-login',
+              __gui__: { v: 1, component: { type: 'stats-line', props: { content: '50% (2/4)' } } },
+            },
+          },
+        ],
+      }]
+      store.hydrateFromMessages('s1', history as never)
+      const goal = store.getGoal('s1')
+      expect(goal?.objective).toBe('实现登录功能')
+      expect(goal?.slug).toBe('impl-login')
+      // 包装层 __gui__ {v, component} 被解开
+      expect(goal?.gui?.type).toBe('stats-line')
+    })
+
+    it('多条同类 toolCall 按顺序覆盖（最后一条为准）', () => {
+      const store = useTasksStore()
+      const history = [{
+        id: 'a1', role: 'assistant', content: '',
+        toolCalls: [
+          { id: 'tc1', toolName: 'todo', input: {}, status: 'completed',
+            details: { todos: [{ id: 1, text: '旧', status: 'pending' }] } },
+          { id: 'tc2', toolName: 'todo', input: {}, status: 'completed',
+            details: { todos: [
+              { id: 1, text: '新', status: 'completed' },
+              { id: 2, text: '新2', status: 'pending' },
+            ] } },
+        ],
+      }]
+      store.hydrateFromMessages('s1', history as never)
+      expect(store.getTodos('s1').map(t => t.text)).toEqual(['新', '新2'])
+      expect(store.getTodoCount('s1')).toEqual({ done: 1, total: 2 })
+    })
+
+    it('非 todo/goal_control toolCall 被忽略', () => {
+      const store = useTasksStore()
+      const history = [{
+        id: 'a1', role: 'assistant', content: '',
+        toolCalls: [
+          { id: 'tc1', toolName: 'bash', input: { cmd: 'ls' }, status: 'completed',
+            details: { output: 'file1' } },
+          { id: 'tc2', toolName: 'read', input: { path: '/a' }, status: 'completed' },
+        ],
+      }]
+      store.hydrateFromMessages('s1', history as never)
+      expect(store.hasData('s1')).toBe(false)
+    })
+
+    it('空历史 / 无 toolCalls 的 message 不报错', () => {
+      const store = useTasksStore()
+      store.hydrateFromMessages('s1', [])
+      store.hydrateFromMessages('s2', [{ id: 'u1', role: 'user', content: 'hi' }] as never)
+      expect(store.hasData('s1')).toBe(false)
+      expect(store.hasData('s2')).toBe(false)
+    })
+  })
+
   describe('setGoalMeta（objective / slug）', () => {
     it('setGoalMeta 写入 objective 和 slug', () => {
       const store = useTasksStore()

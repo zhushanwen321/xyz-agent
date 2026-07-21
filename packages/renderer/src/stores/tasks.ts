@@ -18,6 +18,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import type { Message, ToolCall } from '@xyz-agent/shared'
 
 // ── 常量 ────────────────────────────────────────────
 
@@ -321,6 +322,100 @@ export const useTasksStore = defineStore('tasks', () => {
     sessions.value = next
   }
 
+  // ── 持久化恢复（规则 7.5：重开 session 后 goal/todo 仍可见）─────────────────
+  //
+  // 实时链路（routeToolResultToTasks）只管「此刻发生」的 tool result；重开 session 时
+  // getHistory 返回的历史 messages 里 toolCall.details 已含 __gui__/todos（message-converter
+  // F1 修复透传），但不会自动进 store。本方法在 chat.hydrate 后遍历历史，把每个 todo /
+  // goal_control toolCall 的 details + input 再调一遍 set*，复现实时链路的写入。
+
+  /** details.todos 元素类型守卫（容错：过滤掉非合法结构） */
+  function isTodoItem(v: unknown): v is TodoItem {
+    if (!v || typeof v !== 'object') return false
+    const o = v as Record<string, unknown>
+    return (
+      typeof o['id'] === 'number' &&
+      typeof o['text'] === 'string' &&
+      typeof o['status'] === 'string' &&
+      ['pending', 'in_progress', 'completed', 'cancelled'].includes(o['status'] as string)
+    )
+  }
+
+  /** details.__gui__ 守卫：可能是 {v:1, component} 包装，也可能是裸 GuiComponent */
+  function extractGuiComponent(rawGui: unknown): GuiComponent | undefined {
+    if (!rawGui || typeof rawGui !== 'object') return undefined
+    // 包装层 { v: 1, component: GuiComponent }（pi-subagents / pi-goal 的包装格式）
+    if ('component' in rawGui) {
+      const c = (rawGui as { component: unknown }).component
+      if (c && typeof c === 'object' && 'type' in c) return c as GuiComponent
+    }
+    // 裸 GuiComponent（pi-todo 的格式，直接 { type: 'list-tree', props: {...} }）
+    if ('type' in rawGui) return rawGui as GuiComponent
+    return undefined
+  }
+
+  /**
+   * 从历史 messages 恢复 goal/todo 快照到 store。
+   *
+   * 在 chat.hydrate(sessionId, messages) 之后调。遍历所有 assistant message 的 toolCalls，
+   * 按时间顺序复现实时链路的写入（后调的 set* 覆盖前者，最终状态 = 最后一条 toolCall 的状态）。
+   *
+   * 注意：只处理 toolName 明确是 'todo' / 'goal_control' 的 toolCall（历史路 toolCall.toolName
+   * 由 message-converter 从 pi arguments 透传，是权威值，不存在实时路 tool_call_end 的 fallback 问题）。
+   */
+  function hydrateFromMessages(sessionId: string, history: Message[]): void {
+    for (const msg of history) {
+      if (msg.role !== 'assistant' || !msg.toolCalls) continue
+      for (const tc of msg.toolCalls) {
+        hydrateFromToolCall(sessionId, tc)
+      }
+    }
+  }
+
+  /** 单个 toolCall 的 details/input 提取（与 chat-message-effects 的 routeToolResultToTasks /
+   *  routeToolStartToTasks 数据结构一致，独立实现避免 store → effects 循环依赖） */
+  function hydrateFromToolCall(sessionId: string, tc: ToolCall): void {
+    if (tc.toolName !== 'todo' && tc.toolName !== 'goal_control') return
+    const details = tc.details
+    const input = (tc.input ?? {}) as Record<string, unknown>
+
+    // goal_control create 的 objective / slug（实时路在 tool_call_start 提取，历史路从 input 取）
+    if (tc.toolName === 'goal_control') {
+      const objective = typeof input['objective'] === 'string' ? input['objective'] : undefined
+      const inputSlug = typeof input['slug'] === 'string' ? input['slug'] : undefined
+      if (objective || inputSlug) {
+        setGoalMeta(sessionId, { objective, slug: inputSlug })
+      }
+    }
+
+    if (!details) return
+
+    // __gui__ 快照
+    const gui = extractGuiComponent(details['__gui__'])
+    if (gui) {
+      if (tc.toolName === 'todo') {
+        setTodoFromGui(sessionId, gui)
+      } else {
+        setGoalFromGui(sessionId, gui)
+      }
+    }
+
+    // todo 原始数组（含 isVerification）
+    if (tc.toolName === 'todo') {
+      const rawTodos = details['todos']
+      if (Array.isArray(rawTodos)) {
+        const todos = rawTodos.filter(isTodoItem)
+        if (todos.length > 0) setTodos(sessionId, todos)
+      }
+    }
+
+    // goal slug（details.slug 比 card header 解析更可靠）
+    if (tc.toolName === 'goal_control') {
+      const detailSlug = typeof details['slug'] === 'string' ? details['slug'] : undefined
+      if (detailSlug) setGoalMeta(sessionId, { slug: detailSlug })
+    }
+  }
+
   /** 读取 session 的原始 todo 项数组（TasksPanel 渲染 VERIFY 标签用） */
   function getTodos(sessionId: string): TodoItem[] {
     return sessions.value.get(sessionId)?.todos ?? []
@@ -337,6 +432,7 @@ export const useTasksStore = defineStore('tasks', () => {
     setGoalMeta,
     setTodoFromGui,
     setTodos,
+    hydrateFromMessages,
     mergeGoalWidget,
     clearSession,
   }

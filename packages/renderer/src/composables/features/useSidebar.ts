@@ -28,6 +28,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useTasksStore } from '@/stores/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
@@ -124,6 +125,7 @@ export function useSidebar() {
   const navigation = useNavigationStore()
   const session = useSessionStore()
   const chat = useChatStore()
+  const tasks = useTasksStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
   const commandStore = useCommandStore()
@@ -210,6 +212,7 @@ export function useSidebar() {
       try {
         const { messages, historyTruncated } = await chatApi.getHistory(id)
         chat.hydrate(id, messages)
+        tasks.hydrateFromMessages(id, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
         useChat().setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
@@ -281,6 +284,7 @@ export function useSidebar() {
     try {
       const { messages, historyTruncated } = await chatApi.getHistory(sessionId)
       chat.hydrate(sessionId, messages)
+      tasks.hydrateFromMessages(sessionId, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
       useChat().setHistoryTruncated(sessionId, historyTruncated)
     } catch {
       chat.markHistoryFailed(sessionId)
