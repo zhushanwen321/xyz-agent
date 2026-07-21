@@ -163,14 +163,22 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
   })
 
   it('CM-5: 点创建 → 进 progress 态 → 调 worktreeApi.create', async () => {
+    // create 挂起 → 停留 progress 态（验证创建中 DOM + create 已被调）
+    let _resolve!: (v: { cwd: string; steps: unknown[] }) => void
+    worktreeApiMockHolder.create.mockImplementationOnce(
+      () => new Promise((r) => { _resolve = r }),
+    )
     await mountModal()
     await $('[data-testid="worktree-branch-input"]').setValue('feat/x')
     await flushPromises()
     await $('[data-testid="worktree-create-btn"]').trigger('click')
     await flushPromises()
-    // progress 态：loading bar + 步骤列表可见
+    // progress 态：loading bar 可见
     expect(has('[data-testid="worktree-loading-bar"]')).toBe(true)
     expect(worktreeApiMockHolder.create).toHaveBeenCalledTimes(1)
+    // 释放挂起 promise 避免 unhandled rejection
+    _resolve({ cwd: '/repo/.worktrees/feat-x', steps: [] })
+    await flushPromises()
   })
 
   it('CM-6: worktreeApi.create 成功 → 进 success 态 → 2s 后 emit success(cwd)', async () => {
@@ -184,15 +192,13 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
       await flushPromises()
       // success 态：成功图标/提示可见
       expect(has('[data-testid="worktree-success"]')).toBe(true)
-      const successSpy = vi.fn()
-      currentWrapper!.on('success', successSpy)
       // 2s 前未 emit
       vi.advanceTimersByTime(1999)
-      expect(successSpy).not.toHaveBeenCalled()
+      expect(currentWrapper!.emitted('success')).toBeFalsy()
       // 2s 后 emit success(cwd)
       vi.advanceTimersByTime(1)
-      expect(successSpy).toHaveBeenCalledTimes(1)
-      expect(successSpy).toHaveBeenCalledWith('/repo/.worktrees/feat-x')
+      expect(currentWrapper!.emitted('success')).toHaveLength(1)
+      expect(currentWrapper!.emitted('success')![0]).toEqual(['/repo/.worktrees/feat-x'])
     } finally {
       vi.useRealTimers()
     }
@@ -259,12 +265,10 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
     await flushPromises()
     await $('[data-testid="worktree-create-btn"]').trigger('click')
     await flushPromises()
-    const useExistingSpy = vi.fn()
-    currentWrapper!.on('use-existing', useExistingSpy)
     await $('[data-testid="worktree-use-existing-btn"]').trigger('click')
     await flushPromises()
-    expect(useExistingSpy).toHaveBeenCalledTimes(1)
-    expect(useExistingSpy).toHaveBeenCalledWith('/repo/.worktrees/feat-x')
+    expect(currentWrapper!.emitted('use-existing')).toHaveLength(1)
+    expect(currentWrapper!.emitted('use-existing')![0]).toEqual(['/repo/.worktrees/feat-x'])
   })
 })
 

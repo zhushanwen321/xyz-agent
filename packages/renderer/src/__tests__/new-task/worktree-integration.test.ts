@@ -122,9 +122,17 @@ function has(selector: string): boolean {
   return document.body.querySelector(selector) !== null
 }
 
-/** Composer stub：渲染 meta-row slot（让 chip 进 DOM 可查），避免拖入真实 Composer 重依赖 */
+/**
+ * stubs：Composer 渲染 meta-row slot（让 chip 进 DOM 可查），避免拖入真实 Composer 重依赖；
+ * Popover/PopoverTrigger/PopoverContent 无条件渲染 slot——reka-ui Popover 在 happy-dom 下
+ * 依赖 teleport + 实际布局计算，测试环境会渲染空 teleport，故 stub 掉让 DirSelectPopover（真实组件）
+ * 直接进 DOM（参考 landing.test.ts w3Stubs 同模式）。DirSelectPopover 不 stub：要验证真实动作项渲染。
+ */
 const landingStubs = {
   Composer: { template: '<div data-testid="composer-stub"><slot name="meta-row" /></div>' },
+  Popover: { template: '<div><slot /></div>' },
+  PopoverTrigger: { template: '<div><slot /></div>' },
+  PopoverContent: { template: '<div><slot /></div>' },
 }
 
 let currentWrapper: ReturnType<typeof mount> | null = null
@@ -150,9 +158,17 @@ beforeEach(() => {
   flowOpenCreateWorktree.mockReset()
   flowCreateWorktree.mockReset().mockResolvedValue(undefined)
   flowStartCreateWorktree.mockReset()
-  flowSelectWorkspace.mockReset()
+  // selectWorkspace mock 真切 currentCwd：CreateWorktreeModal success/use-existing → Landing 调
+  // flow.selectWorkspace(cwd) → chip 回灌新 worktree basename（与生产 selectWorkspace 写 pendingCwd 等效）。
+  flowSelectWorkspace.mockReset().mockImplementation((cwd: string) => {
+    flowMock._currentCwd.value = cwd
+  })
   flowOpenDirPopover.mockReset()
-  flowCloseOverlay.mockReset()
+  // closeOverlay mock 真切 state：模态成功/取消后 isWorktreeModalOpen computed 转 false，
+  // 让 Landing 卸载 CreateWorktreeModal（与生产 flow.closeOverlay transition('landing') 等效）。
+  flowCloseOverlay.mockReset().mockImplementation(() => {
+    flowMock._state.value = 'landing'
+  })
 })
 
 afterEach(() => {
@@ -207,24 +223,23 @@ describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 �
     await $('[data-testid="worktree-branch-input"]').setValue('feat-new-thing')
     await flushPromises()
 
-    // worktreeApi.create 默认 resolve（beforeEach 设好）→ 调用前先 mock flow.createWorktree 调 worktreeApi
-    // 组件提交会调 flow.createWorktree(branch)，flow 内部调 worktreeApi.create；
-    // 这里 mock flow.createWorktree 直接调 worktreeApi.create 模拟真链路
-    flowCreateWorktree.mockImplementation(async (branch: string) => {
-      const result = await worktreeCtrl.create({ branch })
-      flowMock._currentCwd.value = result.cwd
-    })
+    // 组件提交直接调 worktreeApi.create（不经 flow.createWorktree，CM-5 契约）。
+    // worktreeApi.create 默认 resolve（beforeEach 设好）→ success 态 → 2s 后 emit success(cwd)
+    // → Landing onWorktreeSuccess → flow.selectWorkspace(cwd)（beforeEach mock 真切 currentCwd）。
 
     // 点创建按钮
     await $('[data-testid="worktree-create-btn"]').trigger('click')
     await flushPromises()
 
-    // 创建中：worktreeApi.create 被调（progress 态）
-    expect(worktreeCtrl.create).toHaveBeenCalledWith({ branch: 'feat-new-thing' })
+    // 创建中：worktreeApi.create 被调（progress 态）。baseBranch 默认 origin/main（D3 决策）。
+    expect(worktreeCtrl.create).toHaveBeenCalledWith({
+      branch: 'feat-new-thing',
+      baseBranch: 'origin/main',
+    })
     // success 态显示（modal 仍在，等 2s 自动关）
     expect(has('[data-testid="worktree-success"]')).toBe(true)
 
-    // 推进 2s → modal 自动关闭
+    // 推进 2s → modal 自动关闭（emit close → closeOverlay mock 切回 landing）
     vi.advanceTimersByTime(2000)
     await flushPromises()
 
@@ -247,43 +262,25 @@ describe('INT-2: 目录已存在（worktreeApi.create reject WORKTREE_EXISTS →
     await $('[data-testid="worktree-branch-input"]').setValue('feat-exists')
     await flushPromises()
 
-    // worktreeApi.create reject：带 code=WORKTREE_EXISTS + existingCwd
+    // worktreeApi.create reject：带 code=WORKTREE_EXISTS + cwd（已存在 worktree 路径）。
+    // 组件直接调 worktreeApi.create（不经 flow.createWorktree），reject 后捕获错误按 code 切 exists 态。
     worktreeCtrl.create.mockRejectedValue({
       code: 'WORKTREE_EXISTS',
-      existingCwd: '/ws/feat-exists',
+      cwd: '/ws/feat-exists',
       message: 'worktree already exists',
-    })
-    flowCreateWorktree.mockImplementation(async (branch: string) => {
-      try {
-        await worktreeCtrl.create({ branch })
-      } catch (e) {
-        // exists 态：组件捕获错误展示「直接开始」，点后切 cwd
-        const err = e as { code: string; existingCwd: string }
-        if (err.code === 'WORKTREE_EXISTS') {
-          // 暂存 existingCwd 供「直接开始」用（组件内部状态，mock 简化）
-          ;(flowCreateWorktree as unknown as { _existingCwd: string })._existingCwd = err.existingCwd
-        }
-        throw e
-      }
     })
 
     // 点创建 → reject → exists 态
     await $('[data-testid="worktree-create-btn"]').trigger('click')
     await flushPromises()
 
-    // modal 转 exists 态：显示「直接开始」入口
-    expect(has('[data-testid="worktree-exists"]')).toBe(true)
-    expect(has('[data-testid="worktree-start-existing-btn"]')).toBe(true)
+    // modal 转 exists 态：显示「直接开始」入口（testid 对齐 create-worktree-modal.test.ts CM-8/CM-14）
+    expect(has('[data-testid="worktree-exists-notice"]')).toBe(true)
+    expect(has('[data-testid="worktree-use-existing-btn"]')).toBe(true)
 
-    // 点「直接开始」→ chip 切到 existingCwd
-    const existingCwd = '/ws/feat-exists'
-    flowSelectWorkspace.mockImplementationOnce((cwd: string) => {
-      flowMock._currentCwd.value = cwd
-    })
-    await $('[data-testid="worktree-start-existing-btn"]').trigger('click')
-    // mock flow 切回 landing + chip 切 cwd
-    flowMock._currentCwd.value = existingCwd
-    flowMock._state.value = 'landing'
+    // 点「直接开始」→ emit use-existing(cwd) → flow.selectWorkspace + closeOverlay
+    // （beforeEach 已 mock selectWorkspace 真切 currentCwd、closeOverlay 真切 state=landing）
+    await $('[data-testid="worktree-use-existing-btn"]').trigger('click')
     await flushPromises()
 
     // modal 关闭
@@ -304,7 +301,8 @@ describe('INT-3: 创建失败（worktreeApi.create reject SETUP_FAILED → error
     await $('[data-testid="worktree-branch-input"]').setValue('feat-fail')
     await flushPromises()
 
-    // worktreeApi.create reject：带 code=SETUP_FAILED + exitCode + stderr
+    // worktreeApi.create reject：带 code=SETUP_FAILED + exitCode + stderr。
+    // 组件直接调 worktreeApi.create（不经 flow.createWorktree），reject 后捕获错误按 code 切 error 态。
     const setupErr = {
       code: 'SETUP_FAILED',
       exitCode: 128,
@@ -312,37 +310,34 @@ describe('INT-3: 创建失败（worktreeApi.create reject SETUP_FAILED → error
       message: 'git worktree add failed',
     }
     worktreeCtrl.create.mockRejectedValue(setupErr)
-    flowCreateWorktree.mockImplementation(async (branch: string) => {
-      await worktreeCtrl.create({ branch })
-    })
 
     // 点创建 → reject → error 态
     await $('[data-testid="worktree-create-btn"]').trigger('click')
     await flushPromises()
 
-    // modal 转 error 态：显示退出码 + stderr
-    expect(has('[data-testid="worktree-error"]')).toBe(true)
-    const errorText = $('[data-testid="worktree-error"]').text()
-    expect(errorText).toContain('128')
-    expect(errorText).toContain('fatal: not a valid object name')
+    // modal 转 error 态：失败步骤（含 exitCode）+ 错误输出（含 stderr）。
+    // testid 对齐 create-worktree-modal.test.ts CM-7/CM-13。
+    expect(has('[data-testid="worktree-step-failed"]')).toBe(true)
+    expect($('[data-testid="worktree-step-failed"]').text()).toContain('128')
+    expect(has('[data-testid="worktree-error-output"]')).toBe(true)
+    expect($('[data-testid="worktree-error-output"]').text()).toContain('fatal: not a valid object name')
 
     // 重试：worktreeApi.create 改为成功
     worktreeCtrl.create.mockResolvedValue({
       cwd: '/ws/feat-fail',
       branch: 'feat-fail',
     })
-    flowCreateWorktree.mockImplementation(async (branch: string) => {
-      const result = await worktreeCtrl.create({ branch })
-      flowMock._currentCwd.value = result.cwd
-    })
 
     // 点重试按钮
     await $('[data-testid="worktree-retry-btn"]').trigger('click')
     await flushPromises()
 
-    // worktreeApi.create 被再次调用（重试）
+    // worktreeApi.create 被再次调用（重试）。baseBranch 默认 origin/main（D3 决策）。
     expect(worktreeCtrl.create).toHaveBeenCalledTimes(2)
-    expect(worktreeCtrl.create).toHaveBeenLastCalledWith({ branch: 'feat-fail' })
+    expect(worktreeCtrl.create).toHaveBeenLastCalledWith({
+      branch: 'feat-fail',
+      baseBranch: 'origin/main',
+    })
 
     // 重试成功 → 进 success 态
     expect(has('[data-testid="worktree-success"]')).toBe(true)

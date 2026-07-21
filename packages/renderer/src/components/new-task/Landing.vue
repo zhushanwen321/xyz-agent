@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import DirSelectPopover from './DirSelectPopover.vue'
 import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
+import CreateWorktreeModal from './CreateWorktreeModal.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
@@ -100,6 +101,19 @@ const isBranchOpen = computed({
 /** 创建分支 modal 渲染绑定（#7）：state===branch-modal 时挂载 CreateBranchModal（Dialog teleport 到 body） */
 const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
 
+/**
+ * 创建 worktree modal 渲染绑定（W2 wave）：state===worktree-modal 时挂载 CreateWorktreeModal。
+ * DirSelectPopover 点「新建 worktree…」→ flow.openCreateWorktree → state=worktree-modal。
+ */
+const isWorktreeModalOpen = computed(() => flow.state.value === 'worktree-modal')
+
+/**
+ * 是否在 bare repo + worktree 结构下。
+ * 数据源：gitInfo.isBare（runtime 经 session.gitIsWorktree 透出，待 RPC 接通后填充）。
+ * 测试经 gitInfo 注入（INT-1 默认 isBare=true）。
+ */
+const isBareWorkspace = computed(() => flow.gitInfo.value?.isBare ?? false)
+
 function onSelectWorkspace(payload: { cwd: string }): void {
   flow.selectWorkspace(payload.cwd)
 }
@@ -108,6 +122,23 @@ function onSelectBranch(payload: { name: string }): void {
 }
 function onConfirmDirtySwitch(payload: { name: string }): void {
   flow.confirmDirtySwitch(payload.name)
+}
+
+/**
+ * worktree 创建成功（CreateWorktreeModal emit success）：
+ * 选定新 worktree 的 cwd（chip 回灌）+ 关 overlay 回 landing。
+ */
+function onWorktreeSuccess(cwd: string): void {
+  flow.selectWorkspace(cwd)
+  flow.closeOverlay()
+}
+/**
+ * exists 态「直接开始」（CreateWorktreeModal emit use-existing）：
+ * 用已存在 worktree 的 cwd + 关 overlay。语义同 onWorktreeSuccess，独立函数保语义清晰。
+ */
+function onWorktreeUseExisting(cwd: string): void {
+  flow.selectWorkspace(cwd)
+  flow.closeOverlay()
 }
 function onRetry(): void {
   emit('retry')
@@ -170,8 +201,10 @@ function onRetry(): void {
             <PopoverContent side="top" class="w-[380px] p-0">
               <DirSelectPopover
                 :current-cwd="currentCwd ?? null"
+                :is-bare-workspace="isBareWorkspace"
                 @select="onSelectWorkspace"
                 @open-dir-dialog="onOpenDirDialog"
+                @create-worktree="flow.openCreateWorktree()"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>
@@ -204,5 +237,14 @@ function onRetry(): void {
 
     <!-- 创建分支 modal（#7）：BranchSelectPopover emit open-branch-modal → openBranchModal → state=branch-modal → 渲染。modal 内 Esc/提交失败留 modal（D-7）。 -->
     <CreateBranchModal v-if="isBranchModalOpen" />
+
+    <!-- 创建 worktree modal（W2 wave）：DirSelectPopover emit create-worktree → openCreateWorktree →
+         state=worktree-modal → 渲染。modal 内五态自管，success/use-existing → selectWorkspace + closeOverlay。 -->
+    <CreateWorktreeModal
+      v-if="isWorktreeModalOpen"
+      @close="flow.closeOverlay()"
+      @success="onWorktreeSuccess"
+      @use-existing="onWorktreeUseExisting"
+    />
   </div>
 </template>

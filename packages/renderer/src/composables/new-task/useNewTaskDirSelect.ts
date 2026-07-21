@@ -24,6 +24,7 @@ export function useNewTaskDirSelect(
   openDirPopover: () => void
   selectWorkspace: (cwd: string) => Promise<void>
   openDirDialog: () => Promise<void>
+  openWorktreeModal: () => void
 } {
   const { state, pendingCwd } = useNewTaskFlowState()
   const workspaceStore = useWorkspaceStore()
@@ -34,6 +35,19 @@ export function useNewTaskDirSelect(
     // 走 transition（带守卫）而非直置后门——保持状态变更统一走守卫表，杜绝绕过。
     if (state.value === 'branch-popover') transition('landing')
     transition('dir-popover')
+  }
+
+  /**
+   * openWorktreeModal —— 点「新建 worktree…」动作项打开 CreateWorktreeModal（W2 wave）。
+   *
+   * 来源态：dir-popover（DirSelectPopover 动作项）。overlay 互斥下先归 landing 再开 modal，
+   * 与 openDirPopover 同模式（branch-popover→landing→dir-popover）。landing→worktree-modal
+   * 在 ALLOWED 表内合法，状态变更统一走守卫表。
+   * CreateWorktreeModal 由 Landing 按 state==='worktree-modal' 挂载，内部自管五态机。
+   */
+  function openWorktreeModal(): void {
+    if (state.value === 'dir-popover') transition('landing')
+    transition('worktree-modal')
   }
 
   /**
@@ -87,5 +101,6 @@ export function useNewTaskDirSelect(
     openDirPopover,
     selectWorkspace,
     openDirDialog,
+    openWorktreeModal,
   }
 }

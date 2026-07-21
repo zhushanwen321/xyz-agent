@@ -45,6 +45,7 @@ import {
 } from '@/composables/new-task/useNewTaskFlowState'
 import { useNewTaskBranch } from '@/composables/new-task/useNewTaskBranch'
 import { useNewTaskDirSelect } from '@/composables/new-task/useNewTaskDirSelect'
+import { useNewTaskWorktree } from '@/composables/new-task/useNewTaskWorktree'
 
 // 重导出供既有 import 消费（types + reset 原从本模块导入，保持非破坏）
 export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTaskFlowState'
@@ -268,6 +269,10 @@ export function useNewTaskFlow() {
     },
   )
   const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
+  const worktree = useNewTaskWorktree(
+    () => currentCwd.value,
+    () => gitInfo.value,
+  )
 
   /** 任意 overlay→landing（Esc/点外）。同一时刻只一层（AC-3.9）。 */
   function closeOverlay(): void {
@@ -312,6 +317,9 @@ export function useNewTaskFlow() {
     confirmDirtySwitch: branch.confirmDirtySwitch,
     openBranchModal: branch.openBranchModal,
     submitCreateBranch: branch.submitCreateBranch,
+    openCreateWorktree: dirSelect.openWorktreeModal,
+    createWorktree: worktree.createWorktree,
+    startCreateWorktree: worktree.startCreateWorktree,
     closeOverlay,
     cancelFlow,
     reenterFlow,

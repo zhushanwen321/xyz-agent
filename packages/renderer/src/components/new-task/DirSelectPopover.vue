@@ -15,7 +15,7 @@
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, FolderPlus, Cloud } from '@lucide/vue'
+import { Folder, FolderPlus, Cloud, GitFork } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -24,14 +24,20 @@ import { useFlatListNav } from '@/composables/logic/useFlatListNav'
 import { dirNameOf, parentDirNameOf } from '@/composables/logic/path'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 
-const props = defineProps<{
-  /** 当前 cwd（高亮已选项，Card-Active） */
-  currentCwd: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 当前 cwd（高亮已选项，Card-Active） */
+    currentCwd: string | null
+    /** 是否在 bare repo + worktree 结构下（true 才显示「新建 worktree…」动作项，W2 wave） */
+    isBareWorkspace?: boolean
+  }>(),
+  { isBareWorkspace: false },
+)
 
 const emit = defineEmits<{
   (e: 'select', payload: { cwd: string }): void
   (e: 'open-dir-dialog'): void
+  (e: 'create-worktree'): void
   (e: 'close'): void
 }>()
 
@@ -41,8 +47,17 @@ const { error: toastError } = useToast()
 
 /** spec §6：远程连接 v1 stub（issues #11 P3），点开 toast 提示 */
 // v1 暂未支持远程连接（i18n key: newTask.dirSelect.remoteNotSupported）
-/** 扁平化键盘导航的尾部动作项数（打开文件夹 + 远程连接） */
-const ACTION_ITEM_COUNT = 2
+/** 基础动作项数（打开文件夹 + 远程连接） */
+const BASE_ACTION_COUNT = 2
+/** bare repo 模式下新增的动作项数（新建 worktree） */
+const WORKTREE_ACTION_COUNT = 1
+/**
+ * 扁平化键盘导航的尾部动作项数。
+ * 基础 2 项（打开文件夹 + 远程连接）；bare repo 下 +1（新建 worktree，插在两者之间）。
+ */
+const ACTION_ITEM_COUNT = computed(() =>
+  props.isBareWorkspace ? BASE_ACTION_COUNT + WORKTREE_ACTION_COUNT : BASE_ACTION_COUNT,
+)
 
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
@@ -60,6 +75,13 @@ const filtered = computed<RecentWorkspaceRecord[]>(() => {
 
 /** 空态：无最近工作区，或搜索无命中 */
 const isEmpty = computed(() => filtered.value.length === 0)
+
+/** 尾部动作项扁平索引（键盘导航用）。DOM 顺序：open-dir → create-worktree（bare）→ remote */
+const openDirIdx = computed(() => filtered.value.length)
+const createWorktreeIdx = computed(() => filtered.value.length + 1)
+const remoteIdx = computed(() =>
+  filtered.value.length + (props.isBareWorkspace ? BASE_ACTION_COUNT : WORKTREE_ACTION_COUNT),
+)
 
 /** basename 出现该次数即视为同名，需追加上级段名消歧 */
 const DUP_THRESHOLD = 2
@@ -99,21 +121,35 @@ function openFolder(): void {
   emit('open-dir-dialog')
 }
 
+function createWorktree(): void {
+  emit('create-worktree')
+}
+
 function remoteStub(): void {
   toastError(t('newTask.dirSelect.remoteNotSupported'))
 }
 
-/** 扁平化激活：列表项区间 → selectWorkspace，尾部动作项 → openFolder / remoteStub */
+/**
+ * 扁平化激活：列表项区间 → selectWorkspace，尾部动作项按 DOM 顺序激活。
+ * 动作项 DOM 顺序：open-dir → create-worktree（仅 bare repo）→ remote。
+ * 索引基准：listLen（列表尾）后第 0 个动作项 = open-dir，依次递增。
+ */
 function activate(idx: number): void {
   const listLen = filtered.value.length
-  if (idx < listLen) selectWorkspace(filtered.value[idx])
-  else if (idx === listLen) openFolder()
+  if (idx < listLen) {
+    selectWorkspace(filtered.value[idx])
+    return
+  }
+  const actionOffset = idx - listLen
+  // open-dir 永远是第 0 个动作项；remote 永远是最后一个；create-worktree 夹在中间（bare repo 下）。
+  if (actionOffset === 0) openFolder()
+  else if (props.isBareWorkspace && actionOffset === 1) createWorktree()
   else remoteStub()
 }
 
 // 键盘导航收敛到 logic/useFlatListNav（与 BranchSelectPopover 共用）。
 const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
-  getTotal: () => filtered.value.length + ACTION_ITEM_COUNT,
+  getTotal: () => filtered.value.length + ACTION_ITEM_COUNT.value,
   onActivate: activate,
   onEscape: () => emit('close'),
 })
@@ -170,9 +206,9 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       <!-- 动作项：打开文件夹（空态时即 Primary 入口，spec §6） -->
       <PopoverActionItem
         test-id="action-open-dir"
-        :active="isActiveItem(filtered.length)"
+        :active="isActiveItem(openDirIdx)"
         @click="openFolder"
-        @mouseenter="activeIndex = filtered.length"
+        @mouseenter="activeIndex = openDirIdx"
       >
         <template #icon>
           <FolderPlus class="shrink-0 text-subtle" />
@@ -180,12 +216,28 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         {{ t('newTask.dirSelect.openFolder') }}
       </PopoverActionItem>
 
+      <!-- 动作项：新建 worktree（仅 bare repo + worktree 结构，W2 wave）。
+           accent-soft 底色 + accent 图标：区别于「打开文件夹」（中性），强调 bare repo 的推荐入口。 -->
+      <PopoverActionItem
+        v-if="isBareWorkspace"
+        test-id="action-create-worktree"
+        class="bg-accent-soft"
+        :active="isActiveItem(createWorktreeIdx)"
+        @click="createWorktree"
+        @mouseenter="activeIndex = createWorktreeIdx"
+      >
+        <template #icon>
+          <GitFork class="shrink-0 text-accent" />
+        </template>
+        {{ t('newTask.dirSelect.createWorktree') }}
+      </PopoverActionItem>
+
       <!-- 动作项：远程连接（v1 stub） -->
       <PopoverActionItem
         test-id="action-remote"
-        :active="isActiveItem(filtered.length + 1)"
+        :active="isActiveItem(remoteIdx)"
         @click="remoteStub"
-        @mouseenter="activeIndex = filtered.length + 1"
+        @mouseenter="activeIndex = remoteIdx"
       >
         <template #icon>
           <Cloud class="shrink-0 text-subtle" />
