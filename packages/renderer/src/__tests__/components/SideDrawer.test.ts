@@ -22,26 +22,27 @@ import { nextTick } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 
-// ── mock useSessionEvents：捕获 onMessage 注册的 handler，并模拟 sid 切换退订 ──
-// 对齐真实 useSessionEvents 语义：watch(sessionId) 切换时退订旧 sid、订新 sid。
-// 本 mock 用「当前活跃 sid」过滤：只有当前 sid 的 handler 会被 emitTo 触发，
-// 旧 sid 的 handler 在切走后不再响应（模拟退订）。
+// ── mock useSessionEvents：捕获 onMessage 注册的 handler，模拟真实退订语义 ──
+// 真实 useSessionEvents：watch(sessionId) 切换时退订旧 sid 底层订阅（同步 events.off）
+// + 开新 sid 订阅（复用路由表）。真实 events.on/off 是同步的（api/events.ts:50 off=Set.delete），
+// 不存在「退订窗口内的飞行事件」——退订后旧 sid 消息立即停止进入 handler。
+// 本 mock 对齐此语义：emitTo(sid) 只触发「该 handler 绑定的 sidRef 当前值 === sid」的 handler，
+// 切 sid 后 sidRef.value 变化，旧 sid 的 handler 不再响应（模拟真实退订后旧 sid 消息不到达）。
 // vi.mock 工厂被提升到文件顶部，必须用 vi.hoisted 声明共享状态，否则 ReferenceError
 const mockState = vi.hoisted(() => ({
-  allRegistrations: [] as Array<{ sid: string; type: string; handler: (msg: unknown) => void }>,
+  // 每个 registration 绑定注册时的 sidRef（而非 sid 快照）——这样切 sid 后读 sidRef.value
+  // 能感知变化，对齐真实 useSessionEvents 复用路由表 + 切底层订阅的行为
+  registrations: [] as Array<{ sidRef: { value: string | null }; type: string; handler: (msg: unknown) => void }>,
   subscribeOrder: [] as string[],
-  activeSid: null as string | null,
 }))
 
 vi.mock('@/composables/features/useSessionEvents', () => ({
   useSessionEvents: (sidRef: { value: string | null }) => {
-    // 跟踪当前活跃 sid（对齐真实 watch(sessionId) 行为）
-    mockState.activeSid = sidRef.value
     return (type: string, handler: (msg: unknown) => void) => {
       const sid = sidRef.value
       if (sid == null) return
       mockState.subscribeOrder.push(`${sid}:${type}`)
-      mockState.allRegistrations.push({ sid, type, handler })
+      mockState.registrations.push({ sidRef, type, handler })
     }
   },
 }))
@@ -75,21 +76,14 @@ function mkStatusMsg(statusKey: string, text: string): ServerMessage<'extension:
   } as unknown as ServerMessage<'extension:status'>
 }
 
-/** 向某 sid 的某 type 推送消息（仅触发该 sid 且仍为活跃 sid 的 handler，模拟退订） */
+/**
+ * 向某 sid 的某 type 推送消息。
+ * 对齐真实 useSessionEvents 退订语义：只触发「handler 绑定的 sidRef 当前值 === sid」的 handler。
+ * 切 sid 后 sidRef.value 变化，旧 sid 的 handler 不再响应（真实 events.off 同步退订后旧 sid 消息不到达）。
+ */
 function emitTo(sid: string, type: string, msg: ServerMessage): void {
-  // 模拟 useSessionEvents 退订：只有当前活跃 sid 的 handler 响应
-  if (mockState.activeSid !== sid) return
-  for (const entry of mockState.allRegistrations) {
-    if (entry.sid === sid && entry.type === type) {
-      entry.handler(msg)
-    }
-  }
-}
-
-/** 不经退订过滤，直接向指定 sid 的所有 handler 推送（模拟迟到事件/竞态窗口） */
-function emitRaw(sid: string, type: string, msg: ServerMessage): void {
-  for (const entry of mockState.allRegistrations) {
-    if (entry.sid === sid && entry.type === type) {
+  for (const entry of mockState.registrations) {
+    if (entry.sidRef.value === sid && entry.type === type) {
       entry.handler(msg)
     }
   }
@@ -115,9 +109,8 @@ const SID_B = 'drawer-sess-b'
 describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    mockState.allRegistrations.length = 0
+    mockState.registrations.length = 0
     mockState.subscribeOrder.length = 0
-    mockState.activeSid = null
   })
 
   it('terminal widget 推送按 sid 路由，切换 activeTab 后渲染对应 sid 的缓冲', async () => {
@@ -232,12 +225,14 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
 describe('W4 SideDrawer AC-4 (时序): 切 sid 时缓冲与 useSessionEvents 退订一致', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    mockState.allRegistrations.length = 0
+    mockState.registrations.length = 0
     mockState.subscribeOrder.length = 0
-    mockState.activeSid = null
   })
 
-  it('切到 B 后，向 A 推送的事件不写入 B 的缓冲分区', async () => {
+  it('切到 B 后，向 A 推送的事件不写入 B 的缓冲分区（真实退订语义）', async () => {
+    // 真实 events.on/off 同步（api/events.ts:50 off=Set.delete），useSessionEvents 切 sid 时
+    // 退订旧底层订阅后，A 通道消息立即停止进入 handler。本用例验证此真实行为：
+    // 切到 B 后 emitTo(SID_A) 不触发任何 handler（sidRef.value 已是 B，A 的 handler 不匹配）。
     const wrapper = mountDrawer(SID_A, 'terminal')
     await flushPromises()
 
@@ -245,13 +240,11 @@ describe('W4 SideDrawer AC-4 (时序): 切 sid 时缓冲与 useSessionEvents 退
     await wrapper.setProps({ sessionId: SID_B })
     await flushPromises()
 
-    // 模拟退订后 A 的迟到事件（emitRaw 绕过退订过滤，模拟竞态窗口内的事件）
-    // W4 后：useSessionEvents 已退订 A，且 Map 分区已切到 B，A 的 handler 不再写入当前分区
-    // 当前实现：handler 闭包写组件级 ref，切 sid 后 A 迟到事件仍污染 B 的显示 → 红灯
-    emitRaw(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['late-from-A']))
+    // 向 A 推送：真实退订后 A 消息不到达 handler，B 缓冲不受影响
+    emitTo(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['late-from-A']))
     await nextTick()
 
-    // B 的 terminal tab 不应渲染 A 迟到的内容
+    // B 的 terminal tab 不应渲染 A 的内容
     const codes = wrapper.findAll('code')
     expect(codes.some((c) => c.text() === 'late-from-A')).toBe(false)
 
