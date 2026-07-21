@@ -15,7 +15,6 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
-import { sendHandlerError } from './handler-utils.js'
 
 /** Worktree handler 依赖的 context（messaging + worktreeService）。 */
 export interface WorktreeHandlerContext extends MessageHandlerContext {

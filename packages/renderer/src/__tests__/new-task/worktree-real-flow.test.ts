@@ -26,7 +26,15 @@ import type { SessionSummary, RecentWorkspaceRecord } from '@xyz-agent/shared'
 // 真实 flow 经 sessionApi.create 拿到 runtime 摘要 → bindCurrentSession。不 mock useNewTaskFlow。
 const sessionCreateMock = vi.hoisted(() => ({ create: vi.fn() }))
 vi.mock('@/api', () => ({
-  session: { create: sessionCreateMock.create, remove: vi.fn().mockResolvedValue(undefined) },
+  session: {
+    create: sessionCreateMock.create,
+    remove: vi.fn().mockResolvedValue(undefined),
+    // PR #87：submitFirstMessage 现调 sessionApi.getCommands（兜底拉取 slash 命令）；
+    // loadSubagents/loadWorkflows 也在首发路径内。给空返回避免 unhandled rejection。
+    getCommands: vi.fn().mockResolvedValue({ commands: [] }),
+    getSubagents: vi.fn().mockResolvedValue([]),
+    getWorkflows: vi.fn().mockResolvedValue([]),
+  },
   // submitFirstMessage → useFileTree.loadTree / useSubagentStore / useWorkflowStore fire-and-forget
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
