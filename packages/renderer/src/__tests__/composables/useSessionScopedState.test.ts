@@ -88,6 +88,44 @@ describe('W1 useSessionScopedState: Map 分区工厂', () => {
     expect(result.current.value.v).toBe(99)
   })
 
+  it('updateFor(targetSid, updater) 显式指定分区，不读 sid.value 实时值（M1 竞态防护）', () => {
+    // 场景：WS handler 闭包捕获订阅时 sid='A'，切到 B 后旧消息到达。
+    // updateFor(A, ...) 写 A 分区，不污染 B（即使 sid.value 已是 B）
+    const sid = ref<string | null>('A')
+    const { result } = runWithScope(() => useSessionScopedState(sid, () => ({ v: 0 })))
+
+    // 模拟切到 B（sid.value 变为 B）
+    sid.value = 'B'
+
+    // 此时模拟 A 的迟到 WS 消息：handler 闭包捕获的 sid 仍是 A，调 updateFor('A', ...)
+    result.updateFor('A', (s) => { s.v = 42 })
+
+    // A 分区被写入（迟到消息落地到它所属的 session）
+    sid.value = 'A'
+    expect(result.current.value.v).toBe(42)
+
+    // B 分区不受污染
+    sid.value = 'B'
+    expect(result.current.value.v).toBe(0)
+  })
+
+  it('updateFor 对比 update：update 读实时 sid.value，updateFor 读参数（竞态场景差异）', () => {
+    const sid = ref<string | null>('A')
+    const { result } = runWithScope(() => useSessionScopedState(sid, () => ({ v: 0 })))
+
+    sid.value = 'B'  // 模拟切到 B
+
+    // update（读实时值 B）：写入 B 分区
+    result.update((s) => { s.v = 10 })
+    // updateFor(A)（读参数 A）：写入 A 分区
+    result.updateFor('A', (s) => { s.v = 20 })
+
+    sid.value = 'A'
+    expect(result.current.value.v).toBe(20)  // A 分区
+    sid.value = 'B'
+    expect(result.current.value.v).toBe(10)  // B 分区
+  })
+
   it('cleanup(sid) 从 Map 移除指定分区（下次访问重新 init）', () => {
     const init = vi.fn(() => ({ n: 0 }))
     const sid = ref<string | null>('a')

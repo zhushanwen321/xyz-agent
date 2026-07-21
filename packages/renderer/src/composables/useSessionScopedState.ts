@@ -12,8 +12,15 @@
  *   null sid 返回 `init()` 默认实例但不写入 Map（防 null key 污染真实分区）
  * - `update(updater)`：操作当前 sid 分区（先确保分区存在）；null sid 时 no-op
  *   （null current 是每次新建的临时默认实例，对其修改不持久，避免污染任何真实分区）
+ * - `updateFor(targetSid, updater)`：显式指定 sid 分区操作（不读 sid.value 实时值）。
+ *   用于 WS handler 捕获订阅时 sid，防切 sid 后旧消息写入新分区（M1 竞态修复）
  * - `cleanup(sid)`：从 Map 移除指定 sid 分区（下次访问重新 init）
  * - 切 sid 不丢旧数据（Map 保留），切回恢复
+ *
+ * **响应式契约（重要）**：init 工厂**必须返回 reactive 容器**（`reactive({...})` / `reactive([])`），
+ * 不能是 plain object/array。原因：update/updateFor 内 mutate 分区对象，下游 computed
+ * （如 `computed(() => state.current.value.find(...))`）需要在 reactive 容器上建立依赖才能
+ * 在 mutate 时失效重算。plain object 的 mutate 不触发任何下游。W2 useExtensionUI 首次发现此契约。
  *
  * cleanup 注册机制（模块级，供 W5 useSidebar.deleteSession 统一编排 session 销毁）：
  * - `registerSessionCleanup(fn)`：加入模块级 Set，返回反注册函数
@@ -82,9 +89,10 @@ export function __clearSessionCleanupRegistryForTest(): void {
  *
  * @param sid 响应式 session id（Ref<string|null>），null 表示无活跃 session
  * @param init 新 session 的状态工厂（惰性调用，每 sid 仅一次）
- * @returns { current, update, cleanup }
+ * @returns { current, update, updateFor, cleanup }
  *   - current: 当前 sid 分区的 computed（null 返回默认实例不写 Map）
- *   - update(updater): 操作当前 sid 分区
+ *   - update(updater): 操作当前 sid 分区（读 sid.value 实时值，用于 UI 操作）
+ *   - updateFor(targetSid, updater): 显式指定 sid 分区（用于 WS handler 捕获订阅时 sid，防 M1 竞态）
  *   - cleanup(sid): 移除指定 sid 分区
  */
 export function useSessionScopedState<T>(
@@ -93,6 +101,7 @@ export function useSessionScopedState<T>(
 ): {
   current: ComputedRef<T>
   update: (updater: (state: T) => void) => void
+  updateFor: (targetSid: string, updater: (state: T) => void) => void
   cleanup: (sid: string) => void
 } {
   // per-instance Map：每个 useSessionScopedState 调用建自己的分区表
@@ -153,6 +162,24 @@ export function useSessionScopedState<T>(
     updater(partition)
   }
 
+  /**
+   * updateFor(sid, updater)：显式指定 sid 分区操作（不读 sid.value 实时值）。
+   *
+   * 用途（M1 竞态修复）：WS 事件 handler 闭包捕获订阅时的 sid，调 updateFor(capturedSid, ...)
+   * 写入「消息所属 sid」的分区。即使 session 切换后退订是异步的（watch flush:pre），
+   * 旧 sid 的迟到消息也只会写入旧 sid 分区，不污染新 sid 分区——从结构上消除竞态。
+   *
+   * 与 update 的区别：update 读 sid.value（当前值），用于 UI 操作（用户主动操作当前 session）；
+   * updateFor 读参数 sid（订阅时捕获值），用于 WS handler（消息属于固定 sid）。
+   *
+   * @param targetSid 目标分区 sid（由 handler 闭包捕获，不随当前 sid 变化）
+   * @param updater 分区操作函数
+   */
+  function updateFor(targetSid: string, updater: (state: T) => void): void {
+    const partition = getOrCreatePartition(targetSid)
+    updater(partition)
+  }
+
   // 注册实例 cleanup 到模块级注册表，scope dispose 时反注册。
   // 防 composable 卸载后 triggerSessionCleanups 仍调用其 cleanup（操作已废弃 Map 无意义，
   // 且若未来 Map 持有需要释放的资源会造成 use-after-unmount）。
@@ -164,6 +191,7 @@ export function useSessionScopedState<T>(
   return {
     current,
     update,
+    updateFor,
     cleanup,
   }
 }
