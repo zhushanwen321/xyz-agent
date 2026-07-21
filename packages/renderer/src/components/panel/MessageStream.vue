@@ -118,7 +118,7 @@ import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
 import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
-import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
+import { toRenderItems, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId } from '@/stores/subagent'
 import { useSubagentStore } from '@/stores/subagent'
 import Turn from './message-stream/Turn.vue'
@@ -127,7 +127,7 @@ import BgNotifyCard from './message-stream/BgNotifyCard.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
-import type { Message } from '@xyz-agent/shared'
+import { type Message } from '@xyz-agent/shared'
 
 const props = defineProps<{
   sessionId: string
@@ -187,8 +187,12 @@ const forceWorking = computed(() => {
   return subagentStore.isRunning(subagentId)
 })
 
-/** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数） */
-const renderItems = computed(() => toRenderItems(currentMessages.value, forceWorking.value))
+/** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。
+ *  先用 filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0035，读 pi CustomMessage.display
+ *  字段非黑名单），再转渲染项。 */
+const renderItems = computed(() =>
+  toRenderItems(filterDisplayableMessages(currentMessages.value), forceWorking.value),
+)
 
 /**
  * 虚拟滚动（W3）：窗口化渲染，视口外 turn 不挂载，长对话 DOM 从 O(N) 降到 O(视口可见)。

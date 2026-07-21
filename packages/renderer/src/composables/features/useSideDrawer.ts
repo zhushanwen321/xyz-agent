@@ -18,7 +18,7 @@
  */
 import { ref } from 'vue'
 
-export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail'
+export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail' | 'tasks'
 
 /** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab）/ 文件路径（Detail tab） */
 export interface OpenDrawerOptions {
@@ -59,7 +59,11 @@ export function resetSideDrawer(): void {
 export function useSideDrawer() {
   /** 打开抽屉，可指定初始 tab + Doc tab 的选中命令 / Detail tab 的文件路径 */
   function open(tab?: SideDrawerTab, opts?: OpenDrawerOptions): void {
-    if (tab) activeTab.value = tab
+    if (tab) {
+      activeTab.value = tab
+      // tasks tab 强制 docked（任务面板需稳定展示，不能被外部交互自动关闭）
+      if (tab === 'tasks') docked.value = true
+    }
     if (opts?.commandName !== undefined) selectedCommandName.value = opts.commandName
     if (opts?.filePath !== undefined) detailFilePath.value = opts.filePath
     isOpen.value = true
@@ -76,9 +80,10 @@ export function useSideDrawer() {
     else open(tab)
   }
 
-  /** 切换 tab（抽屉关闭时仅改 activeTab，不自动打开） */
+  /** 切换 tab（抽屉关闭时仅改 activeTab，不自动打开）。tasks tab 自动 docked */
   function setTab(tab: SideDrawerTab): void {
     activeTab.value = tab
+    if (tab === 'tasks') docked.value = true
   }
 
   /** 切换钉住态 */

@@ -70,6 +70,8 @@
         <CommandDocPanel v-else-if="activeTab === 'doc'" :session-id="sessionId" />
         <!-- Detail tab：文件预览（#6，useDetailPane watch selectedPath 自动加载，禁 v-html） -->
         <DetailPane v-else-if="activeTab === 'detail'" :session-id="sessionId" />
+        <!-- Tasks tab：goal 卡片 + todo 列表（tasks store 按 sessionId 分区，只读渲染） -->
+        <TasksPanel v-else-if="activeTab === 'tasks'" :session-id="sessionId" />
         <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
         <div
           v-else-if="activeGuiComponent"
@@ -132,19 +134,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X } from '@lucide/vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X, CheckSquare } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import GitPanel from './GitPanel.vue'
 import CommandDocPanel from './CommandDocPanel.vue'
 import DetailPane from './DetailPane.vue'
+import TasksPanel from './TasksPanel.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import AnsiText from './message-stream/gui/AnsiText.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
-import { useSessionEvents } from '@/composables/features/useSessionEvents'
+import { useDrawerWidgets } from '@/composables/features/useDrawerWidgets'
+import { useTasksStore } from '@/stores/tasks'
 
 const props = defineProps<{
   isOpen: boolean
@@ -169,6 +172,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const tasksStore = useTasksStore()
 
 /**
  * aside 容器 class（按 mode 切换定位策略）：
@@ -204,172 +209,74 @@ interface TabMeta {
   emptyHint: string
 }
 
-/** tab 元信息（§6.3 点2：Terminal/Browser/Git）。Git tab 内容为 GitPanel（inject 数据）。 */
-const tabs = computed<TabMeta[]>(() => [
-  {
-    key: 'terminal',
-    label: t('panel.sideDrawer.tabTerminal'),
-    icon: TerminalIcon,
-    emptyText: t('panel.sideDrawer.noTerminal'),
-    emptyHint: t('panel.sideDrawer.terminalHint'),
-  },
-  {
-    key: 'browser',
-    label: t('panel.sideDrawer.tabBrowser'),
-    icon: Globe,
-    emptyText: t('panel.sideDrawer.noBrowser'),
-    emptyHint: t('panel.sideDrawer.browserHint'),
-  },
-  {
-    key: 'git',
-    label: t('panel.sideDrawer.tabGit'),
-    icon: GitBranch,
-    emptyText: t('panel.sideDrawer.noGit'),
-    emptyHint: t('panel.sideDrawer.gitHint'),
-  },
-  {
-    key: 'doc',
-    label: t('panel.sideDrawer.tabDoc'),
-    icon: BookOpen,
-    emptyText: t('panel.sideDrawer.noDoc'),
-    emptyHint: t('panel.sideDrawer.docHint'),
-  },
-  {
-    key: 'detail',
-    label: t('panel.sideDrawer.tabDetail'),
-    icon: FileText,
-    emptyText: t('panel.sideDrawer.noFileSelected'),
-    emptyHint: t('panel.sideDrawer.detailHint'),
-  },
-])
+/** tab 元信息（§6.3 点2：Terminal/Browser/Git）。Git tab 内容为 GitPanel（inject 数据）。
+ *  Tasks tab 仅在当前 session 有 goal/todo 数据时追加（避免空 icon 噪音）。 */
+const tabs = computed<TabMeta[]>(() => {
+  const base: TabMeta[] = [
+    {
+      key: 'terminal',
+      label: t('panel.sideDrawer.tabTerminal'),
+      icon: TerminalIcon,
+      emptyText: t('panel.sideDrawer.noTerminal'),
+      emptyHint: t('panel.sideDrawer.terminalHint'),
+    },
+    {
+      key: 'browser',
+      label: t('panel.sideDrawer.tabBrowser'),
+      icon: Globe,
+      emptyText: t('panel.sideDrawer.noBrowser'),
+      emptyHint: t('panel.sideDrawer.browserHint'),
+    },
+    {
+      key: 'git',
+      label: t('panel.sideDrawer.tabGit'),
+      icon: GitBranch,
+      emptyText: t('panel.sideDrawer.noGit'),
+      emptyHint: t('panel.sideDrawer.gitHint'),
+    },
+    {
+      key: 'doc',
+      label: t('panel.sideDrawer.tabDoc'),
+      icon: BookOpen,
+      emptyText: t('panel.sideDrawer.noDoc'),
+      emptyHint: t('panel.sideDrawer.docHint'),
+    },
+    {
+      key: 'detail',
+      label: t('panel.sideDrawer.tabDetail'),
+      icon: FileText,
+      emptyText: t('panel.sideDrawer.noFileSelected'),
+      emptyHint: t('panel.sideDrawer.detailHint'),
+    },
+  ]
+  // Tasks tab 条件 push：有 goal/todo 数据才显示 icon（避免无数据时占位）
+  if (props.sessionId && tasksStore.hasData(props.sessionId)) {
+    base.push({
+      key: 'tasks',
+      label: t('panel.sideDrawer.tabTasks'),
+      icon: CheckSquare,
+      emptyText: t('panel.sideDrawer.noTasks'),
+      emptyHint: t('panel.sideDrawer.tasksHint'),
+    })
+  }
+  return base
+})
 
 const activeTabMeta = computed(() => tabs.value.find((tab) => tab.key === props.activeTab) ?? tabs.value[0])
 
-/** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量）。 */
-const terminalLines = ref<string[]>([])
-const browserLines = ref<string[]>([])
-/** 未匹配 tab 的 widgetKey fallback：存最后一个未知 widget 的 {key, lines}，默认路由到 terminal 显示 */
-const unknownWidget = ref<{ key: string; lines: string[] } | null>(null)
-
-/**
- * 结构化 GUI widget 缓冲（extension:widgetGui，spec §9.1）。
- * 按 tab 路由聚合：widgetKey 经 mapWidgetKeyToTab 归一化到 terminal/browser，未匹配归 terminal。
- * 同 tab 的结构化组件覆盖纯文本 lines：activeGuiComponent 命中时优先用 GuiComponentRenderer 渲染，
- * 保留交互/着色能力；纯文本 lines 作兜底。
- */
-const guiWidgetsByTab = ref<Map<SideDrawerTab, GuiComponent>>(new Map())
-
-/** 当前 active tab 的结构化组件（命中时优先于纯文本 lines 渲染） */
-const activeGuiComponent = computed<GuiComponent | undefined>(() =>
-  guiWidgetsByTab.value.get(props.activeTab),
-)
-
-const activeLines = computed<string[]>(() => {
-  if (props.activeTab === 'browser') return browserLines.value
-  return terminalLines.value.length ? terminalLines.value : unknownWidget.value?.lines ?? []
-})
-
-/** active 内容的元信息（用于 fallback 标记） */
-const activeLinesMeta = computed(() => {
-  if (props.activeTab === 'browser') return { unknown: false, key: '' }
-  if (terminalLines.value.length) return { unknown: false, key: '' }
-  if (unknownWidget.value) return { unknown: true, key: unknownWidget.value.key }
-  return { unknown: false, key: '' }
-})
-
-/**
- * widgetKey → tab 路由启发式（NFR Prototype 1 枚举对齐前的过渡方案）。
- * runtime 推送的 widgetKey 为 extension 自定义字符串，归一化后匹配常见关键词。
- * 未命中 → null（调用方走 fallback）。
- */
-function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
-  const k = key.toLowerCase()
-  if (k.includes('terminal') || k.includes('shell') || k.includes('console') || k.includes('bash')) {
-    return 'terminal'
-  }
-  if (k.includes('browser') || k === 'web' || k.startsWith('webview') || k.includes('preview')) {
-    return 'browser'
-  }
-  return null
-}
-
-/** extension status 缓冲：statusKey → 最新 {text, textRaw}（runtime 推送全量替换，与 widget 同语义） */
-const statusMap = ref<Map<string, { text: string; textRaw?: string }>>(new Map())
-const statusEntries = computed(() =>
-  Array.from(statusMap.value.entries()).map(([statusKey, v]) => ({
-    statusKey,
-    text: v.text,
-    textRaw: v.textRaw,
-  })),
-)
-
-/** widget 缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
-const WIDGET_MAX_LINES = 1000
-
-/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，截断保留尾部最新） */
-function truncateLines(lines: string[]): string[] {
-  if (lines.length <= WIDGET_MAX_LINES) return lines
-  return lines.slice(lines.length - WIDGET_MAX_LINES)
-}
-
-/**
- * widget/status 订阅编排（#11 W3a）：订阅时机、sessionId 切换重订、卸载退订归 useSessionEvents
- * （features 层，session 通道）。本组件只保留 widget 缓冲逻辑（tab 路由 + lines 截断 + status 聚合）。
- *
- * sessionId 变化时清空缓冲（与原 watch 行为等价：terminalLines/browserLines/unknownWidget/statusMap 复位），
- * 由下方 watch(sessionId) 负责；本处 handler 只处理消息分发。
- */
-const onMessage = useSessionEvents(toRef(props, 'sessionId'))
-// extension:widget：按 widgetKey 路由到 terminal/browser tab，未匹配走 fallback
-onMessage('extension:widget', (msg) => {
-  const payload = msg.payload
-  const lines = truncateLines(payload.lines)
-  const tab = mapWidgetKeyToTab(payload.widgetKey)
-  if (tab === 'terminal') terminalLines.value = lines
-  else if (tab === 'browser') browserLines.value = lines
-  else unknownWidget.value = { key: payload.widgetKey, lines }
-})
-// extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
-// gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），
-// 删 guiWidgetsByTab 条目 + 清对应 tab 的纯文本 lines。
-// 未匹配 tab 的 widgetKey 归 terminal（与 extension:widget fallback 语义一致：unknownWidget 默认显 terminal）
-onMessage('extension:widgetGui', (msg) => {
-  const payload = msg.payload
-  const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
-  if (payload.gui === null) {
-    // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
-    guiWidgetsByTab.value.delete(tab)
-    guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
-    if (tab === 'terminal') terminalLines.value = []
-    else if (tab === 'browser') browserLines.value = []
-    return
-  }
-  guiWidgetsByTab.value.set(tab, payload.gui as GuiComponent)
-  guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
-})
-// extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
-onMessage('extension:status', (msg) => {
-  const payload = msg.payload
-  statusMap.value.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
-  statusMap.value = new Map(statusMap.value)
-})
-
-// sessionId 变化时清空缓冲（useSessionEvents 已负责底层订阅重订，这里只复位组件缓冲状态）
-watch(
-  () => props.sessionId,
-  () => {
-    terminalLines.value = []
-    browserLines.value = []
-    unknownWidget.value = null
-    guiWidgetsByTab.value = new Map()
-    statusMap.value = new Map()
-  },
-  { immediate: true },
+/** widget/status 缓冲与 extension 事件订阅（含 ExtensionRegistry 对 goal/todo 等已知
+ *  extension 的分流）抽到 useDrawerWidgets composable，本组件只消费其暴露的响应式状态。 */
+const { activeGuiComponent, activeLines, activeLinesMeta, statusEntries } = useDrawerWidgets(
+  toRef(props, 'sessionId'),
+  toRef(props, 'activeTab'),
 )
 
 /**
  * ESC 关闭抽屉（panel/spec.md：抽屉是浮层，ESC 收起）。
  * 仅在 isOpen 时挂监听，避免抽屉关闭后仍抢全局 keydown（如 composer 输入态）。
+ * 单实例安全：SideDrawer 由 PanelContainer 单实例挂载（见 PanelContainer.vue 注释「drawer 固定挂本容器，单实例」），
+ * split/overlay 模式切换不创建第二个实例，故实例级 onKeyDown 不会重复注册（规则 2）。
+ * 若未来支持多 SideDrawer 实例，需改为模块级 refCount 栈保护。
  */
 function onKeyDown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {

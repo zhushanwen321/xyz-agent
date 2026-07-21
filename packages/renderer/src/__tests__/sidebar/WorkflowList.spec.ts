@@ -34,6 +34,20 @@ function makeRecord(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunReco
   }
 }
 
+describe('WorkflowList 布局结构（滚动修复）', () => {
+  // 回归防护：根 div 缺 h-full 会导致 flex 高度传递链断裂，
+  // 列表超长时 ScrollArea 不出现滚动条（CW topic: fix-sidebar-subagent-workflow-scroll）
+  it('根 div 含 h-full + min-h-0 + flex-col（确保撑满父容器，ScrollArea flex-1 才能正确约束高度）', () => {
+    const records = [makeRecord()]
+    const wrapper = mount(WorkflowList, { props: { workflows: records } })
+    const root = wrapper.find('[data-testid="workflow-list"]')
+    expect(root.exists()).toBe(true)
+    expect(root.classes()).toContain('h-full')
+    expect(root.classes()).toContain('min-h-0')
+    expect(root.classes()).toContain('flex-col')
+  })
+})
+
 describe('WorkflowList', () => {
   it('渲染 workflow 卡片列表（含 scriptName + slug + 进度）', () => {
     const records = [

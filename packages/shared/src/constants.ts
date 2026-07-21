@@ -19,6 +19,10 @@ export const MAX_PORT = 65535 as const
  *  pi-subagents 通过名为 "subagent" 的 tool 执行子 agent，前端据此判定特殊渲染。 */
 export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
 
+/** 应在对话流中隐藏的 tool name（状态管理类 tool，其状态由 SideDrawer Tasks tab 展示）。
+ *  这些 tool call 在 Block.vue 渲染时直接跳过（v-if=false），不产生 trace block。 */
+export const HIDDEN_TOOL_NAMES: ReadonlySet<string> = new Set(['todo', 'goal_control'])
+
 /** pi-subagent-workflow 扩展的 workflow tool 名集合（识别 workflow 调用用，SSOT）。
  *  workflow 扩展通过名为 "workflow" 的 tool 执行 workflow run，event-interpreter 据此
  *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */

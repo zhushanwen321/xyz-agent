@@ -43,6 +43,18 @@ export function renderKey(item: RenderItem): string {
  * 把扁平 messages 按 turn 分组，system 消息作独立项穿插。
  * 纯函数：相同输入产生相同输出，不依赖响应式。
  */
+/** 过滤掉不在对话流展示的消息（ADR-0035：按 pi CustomMessage.display 字段过滤）。
+ *  extension 经 pi sendMessage 注入 custom message 时声明 display（pi 协议必填 boolean）：
+ *  - display:false = 隐藏（goal/todo extension 的 <goal_context>/<todo_context> 上下文提示，
+ *    对 AI 有用但对用户是噪声，状态已由 Tasks tab 展示）
+ *  - display:true = 用区别样式渲染（workflow-result / subagent-bg-notify）
+ *  过滤在渲染层做（本函数），不影响 chat store 的完整 messages——fork/compact/replay
+ *  需完整历史（AGENTS.md 规则 7.5）。判断用 `!== false`：仅 false 隐藏，undefined/true 显示
+ *  （undefined 来自无 customType 的普通消息或旧数据，安全保留）。 */
+export function filterDisplayableMessages(messages: Message[]): Message[] {
+  return messages.filter((m) => m.display !== false)
+}
+
 export function groupTurns(messages: Message[]): MessageTurn[] {
   return toRenderItems(messages)
     .filter((item): item is { kind: 'turn'; turn: MessageTurn } => item.kind === 'turn')

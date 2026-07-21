@@ -279,6 +279,71 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       expect(messages[0].bgNotify).toBeUndefined()
     })
 
+    // ── display 字段透传（FR-3 / AC-6）──────────────────────────────────
+    // pi CustomMessage.display 是必填 boolean（false=隐藏不渲染，true=渲染）。
+    // convertPiHistory 此前转 custom → system 时丢了 display，本次修复透传。
+    it('display:false 的 custom message → 透传到 msg.display（goal/todo context 类应隐藏）', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'goal-context',
+          content: '<goal_context>...</goal_context>',
+          display: false,
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      expect(messages[0].display).toBe(false)
+    })
+
+    it('display:true 的 custom message → 透传到 msg.display（workflow-result/subagent-bg-notify 类应显示）', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'workflow-result',
+          content: 'done',
+          display: true,
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].display).toBe(true)
+    })
+
+    it('display 缺失的旧 custom message → msg.display 为 undefined（渲染层按 !== false 判断，保留显示）', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'legacy',
+          content: 'old',
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].display).toBeUndefined()
+    })
+
+    it('display:false 的 custom message 仍进 result（converter 不丢消息，过滤在渲染层）', () => {
+      // AC-3 / FR-7：chat store 保留完整 messages，filterDisplayableMessages 只在渲染层过滤。
+      // converter 若丢消息会破坏规则 7.5（fork/compact/replay 需完整历史）。
+      const raw = [
+        { role: 'user', content: 'hi', timestamp: 1000 },
+        {
+          role: 'custom',
+          customType: 'todo-context',
+          content: '<todo_context>...</todo_context>',
+          display: false,
+          timestamp: 2000,
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'ok' }], timestamp: 3000 },
+      ]
+      const messages = convertPiHistory(raw)
+      // user + custom(system) + assistant = 3 条，display:false 的 custom 不丢
+      expect(messages).toHaveLength(3)
+      expect(messages[1].display).toBe(false)
+    })
+
     it('subagent-bg-notify details 缺必需字段 → bgNotify 为 undefined（降级纯文本）', () => {
       const raw = [
         {
@@ -333,6 +398,70 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       ]
       const messages = convertPiHistory(raw)
       expect(messages[0].piEntryId).toBeUndefined()
+    })
+  })
+
+  describe('compactionSummary / branchSummary role', () => {
+    it('compactionSummary → system + compactionSummary 字段', () => {
+      const raw = [
+        { role: 'compactionSummary', summary: '压缩摘要', tokensBefore: 10000, timestamp: 123 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      const m = messages[0]
+      expect(m.role).toBe('system')
+      expect(m.content).toBe('压缩摘要')
+      expect(m.compactionSummary).toEqual({ summary: '压缩摘要', tokensBefore: 10000, timestamp: 123 })
+    })
+
+    it('compactionSummary 字段缺失时 content fallback 为“上下文已压缩”', () => {
+      const raw = [{ role: 'compactionSummary', timestamp: 100 }]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].content).toBe('上下文已压缩')
+      expect(messages[0].compactionSummary?.summary).toBeUndefined()
+    })
+
+    it('branchSummary → system + branchSummary 字段', () => {
+      const raw = [
+        { role: 'branchSummary', summary: '分支摘要', fromId: 'msg-abc', timestamp: 456 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      const m = messages[0]
+      expect(m.role).toBe('system')
+      expect(m.content).toBe('分支摘要')
+      expect(m.branchSummary).toEqual({ summary: '分支摘要', fromId: 'msg-abc', timestamp: 456 })
+    })
+
+    it('branchSummary 字段缺失时 content fallback 为空字符串', () => {
+      const raw = [{ role: 'branchSummary', timestamp: 200 }]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].content).toBe('')
+      expect(messages[0].branchSummary?.summary).toBeUndefined()
+    })
+
+    it('compactionSummary/branchSummary display 未设（保留显示）', () => {
+      const raw = [
+        { role: 'compactionSummary', summary: '压缩', timestamp: 100 },
+        { role: 'branchSummary', summary: '分支', timestamp: 200 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].display).toBeUndefined()
+      expect(messages[1].display).toBeUndefined()
+    })
+
+    it('混合 user/assistant/compactionSummary 顺序不乱', () => {
+      const raw = [
+        { role: 'user', content: [{ type: 'text', text: '问题' }], timestamp: 100 },
+        { role: 'compactionSummary', summary: '压缩摘要', timestamp: 200 },
+        { role: 'assistant', content: [{ type: 'text', text: '回答' }], timestamp: 300 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(3)
+      expect(messages[0].role).toBe('user')
+      expect(messages[1].role).toBe('system')
+      expect(messages[1].compactionSummary).toBeDefined()
+      expect(messages[2].role).toBe('assistant')
     })
   })
 })

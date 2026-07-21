@@ -5,7 +5,7 @@
     点击卡片 → emit('select', runId)，由父组件进入视图 2（WorkflowDetail）。
     空态展示提示文案。
   -->
-  <div class="flex min-h-0 flex-col" data-testid="workflow-list">
+  <div class="flex h-full min-h-0 flex-col" data-testid="workflow-list">
     <!-- 加载态（M1：loadWorkflows 在途） -->
     <div
       v-if="isLoading"

@@ -51,7 +51,11 @@ import {
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
 import { commitMessages } from './chat-mutations'
 import { truncateToolCall } from '@/utils/truncate-tool-output'
+import { useTasksStore } from './tasks'
+import { isTodoItem } from './tasks-readers'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import i18n from '@/i18n'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
 
 const t = i18n.global.t
 
@@ -148,6 +152,92 @@ function isLastAssistantStreaming(
     if (list[i].role === 'assistant') return list[i].status === 'streaming'
   }
   return false
+}
+
+/**
+ * tool result 到达时按 toolName 路由 details 到 tasks store。
+ *
+ * - toolName === 'todo' → setTodoFromGui（details.__gui__ list-tree）+ setTodos（details.todos 原始数组，含 isVerification）
+ * - toolName === 'goal_control' → setGoalFromGui（details.__gui__ card/stats-line）+ setGoalMeta（details.slug）
+ * - 其他 tool / 无 details → no-op
+ *
+ * details 是 pi tool_execution_end 的 result.details。todo/goal extension 把结构化快照放进
+ * details.__gui__.component（guiResult helper 产物）；todo 额外暴露 details.todos 原始数组
+ * （含 isVerification，list-tree 的 TreeItem 不含此字段）；goal_control 暴露 details.slug。
+ */
+/**
+ * 首个 todo/goal 数据写入 tasks store 时，自动打开 SideDrawer 并切到 tasks tab。
+ *
+ * 仅在 hasData 从 false → true 的瞬间触发（后续 update 不重复弹）。
+ * 放在实时路径（routeToolResult/routeToolStart），hydrate（重开 session）不调——用户主动切换
+ * session 不应强制弹 drawer，只有「新任务实时到达」才主动提示。
+ */
+function openTasksDrawerOnFirstData(sid: string, hadDataBefore: boolean): void {
+  if (hadDataBefore) return // 已有数据，非首次
+  const tasksStore = useTasksStore()
+  if (!tasksStore.hasData(sid)) return // 写入后仍无数据（守卫，理论上不达）
+  useSideDrawer().open('tasks')
+}
+
+function routeToolResultToTasks(
+  sid: string,
+  toolName: string,
+  details: Record<string, unknown> | undefined,
+): void {
+  if (toolName !== 'todo' && toolName !== 'goal_control') return
+  if (!details) return
+  const tasksStore = useTasksStore()
+  const hadDataBefore = tasksStore.hasData(sid)
+
+  // 结构化快照（__gui__.component）
+  const rawGui = details['__gui__']
+  if (rawGui && typeof rawGui === 'object' && 'component' in rawGui) {
+    const component = (rawGui as { component: GuiComponent }).component
+    if (toolName === 'todo') {
+      tasksStore.setTodoFromGui(sid, component)
+    } else {
+      tasksStore.setGoalFromGui(sid, component)
+    }
+  }
+
+  // todo 原始数组（含 isVerification，TasksPanel 渲染 VERIFY 标签依据）
+  if (toolName === 'todo') {
+    const rawTodos = details['todos']
+    if (Array.isArray(rawTodos)) {
+      const todos = rawTodos.filter(isTodoItem)
+      if (todos.length > 0) tasksStore.setTodos(sid, todos)
+    }
+  }
+
+  // goal slug（card header 也含 slug，但 details.slug 更可靠——避免解析 card props）
+  if (toolName === 'goal_control') {
+    const slug = readString(details, 'slug')
+    if (slug) tasksStore.setGoalMeta(sid, { slug })
+  }
+
+  openTasksDrawerOnFirstData(sid, hadDataBefore)
+}
+
+/**
+ * tool_call_start 到达时提取 goal_control create 的 input.objective。
+ * objective 只在 create action 的 input 里（tool result details 不回传），需单独提取。
+ */
+function routeToolStartToTasks(
+  sid: string,
+  payload: Record<string, unknown>,
+): void {
+  const toolName = readString(payload, 'toolName') ?? 'tool'
+  if (toolName !== 'goal_control') return
+  const input = readRecord(payload, 'input')
+  if (!input) return
+  const objective = readString(input, 'objective')
+  const slug = readString(input, 'slug')
+  if (objective || slug) {
+    const tasksStore = useTasksStore()
+    const hadDataBefore = tasksStore.hasData(sid)
+    tasksStore.setGoalMeta(sid, { objective: objective ?? undefined, slug: slug ?? undefined })
+    openTasksDrawerOnFirstData(sid, hadDataBefore)
+  }
 }
 
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
@@ -358,6 +448,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       status: 'running',
       startTime: Date.now(),
     }
+    // goal_control create 的 input.objective 只在此刻可得（tool result details 不回传），提前提取。
+    routeToolStartToTasks(sid, payload)
     const next = [...prev]
     const toolCalls = [...(next[idx].toolCalls ?? []), call]
     // push 到 contentBlocks 尾部（callId 复用，与 toolCalls[].id 一致）。
@@ -378,6 +470,15 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // details：pi tool_execution_end result.details（结构化扩展数据）。
     // subagent sync 模式的 progress 快照（currentTool/turn/tokens）在这里，前端 Block.vue 据此滚动更新。
     const details = readRecord(payload, 'details')
+
+    // tool result 到达时按 toolName 路由 details 到 tasks store
+    // （__gui__ 快照 + todos 原始数组 + goal slug）。
+    // toolName 从已锚定的 toolCall 取——tool_call_end 事件 payload 可能不带 toolName
+    // （event-adapter 只保证 tool_call_start 带），靠 payload 会 fallback 成 'tool' 导致漏路由。
+    const existingCall = prev[idx].toolCalls?.find((c) => c.id === callId)
+    const resolvedToolName = existingCall?.toolName ?? readString(payload, 'toolName') ?? 'tool'
+    routeToolResultToTasks(sid, resolvedToolName, details)
+
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
       c.id === callId
@@ -423,6 +524,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const customType = readString(payload, 'customType') ?? ''
     const content = readString(payload, 'content') ?? ''
     const details = readRecord(payload, 'details')
+    // display 来自 event-adapter.ts 的 custom message 分支（payload.display，~line 509 透传）。
+    // FR-2 依赖 event-adapter 已透传；extension 声明 display:false 的 context 消息据此在渲染层隐藏。
+    // display 不能用 readBool（缺失时返回 false），需三态保留：
+    // true/false 显式透传，undefined 安全保留显示（!== false 即显示，ADR-0035 决策点 3）。
+    const display = payload['display'] === true || payload['display'] === false ? payload['display'] : undefined
     const prev = messages.value.get(sid) ?? []
     // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
     const msg: Message = {
@@ -431,6 +537,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       content,
       status: 'complete',
       customType,
+      display,
       // 保留原始 details（含 __gui__），前端检测 details.__gui__ 路由到 GuiComponentRenderer
       details,
       timestamp: Date.now(),
@@ -587,9 +694,4 @@ export function dispatchMessageEvent(
   // 无 string index signature）。handler 内部统一用 readString 等安全窄化（见上方注释），
   // 不依赖 index signature，故 cast 到 Record<string, unknown> 是安全的。
   if (handler) handler(ctx, sessionId, msg.payload as Record<string, unknown>)
-}
-
-/** 注册表是否覆盖某 type（测试可断言完整性，防新增 message.* 漏注册） */
-export function hasMessageEffect(type: ServerMessageType): boolean {
-  return type in messageEffects
 }

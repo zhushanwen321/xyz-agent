@@ -28,6 +28,20 @@ function makeRecord(overrides: Partial<SubagentRecord> = {}): SubagentRecord {
   }
 }
 
+describe('SubagentList 布局结构（滚动修复）', () => {
+  // 回归防护：根 div 缺 h-full 会导致 flex 高度传递链断裂，
+  // 列表超长时 ScrollArea 不出现滚动条（CW topic: fix-sidebar-subagent-workflow-scroll）
+  it('根 div 含 h-full + min-h-0 + flex-col（确保撑满父容器，ScrollArea flex-1 才能正确约束高度）', () => {
+    const records = [makeRecord()]
+    const wrapper = mount(SubagentList, { props: { subagents: records } })
+    const root = wrapper.find('[data-testid="subagent-list"]')
+    expect(root.exists()).toBe(true)
+    expect(root.classes()).toContain('h-full')
+    expect(root.classes()).toContain('min-h-0')
+    expect(root.classes()).toContain('flex-col')
+  })
+})
+
 describe('SubagentList', () => {
   it('渲染 subagent 卡片列表', () => {
     const records = [

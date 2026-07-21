@@ -135,3 +135,50 @@ describe('D5: SegmentedTab badge 微调', () => {
     expect(oldBadge.exists()).toBe(false)
   })
 })
+
+// ── 滚动修复：根 div h-full + Sidebar overflow-hidden（CW topic: fix-sidebar-subagent-workflow-scroll）
+// 根因：三个侧边栏组件根 div 缺 h-full，flex 高度传递链断裂，
+// 列表超长时 ScrollArea 不出现滚动条。Sidebar 子视图区缺 overflow-hidden 防御。
+describe('滚动修复：根 div h-full', () => {
+  function makeWorkflow(): WorkflowRunRecord {
+    return {
+      runId: 'run-scroll-1',
+      scriptName: 'lint-fix',
+      slug: 'lf-001',
+      status: 'done',
+      reason: 'completed',
+      startedAt: '2026-07-15T10:00:00Z',
+      completedAt: '2026-07-15T10:05:00Z',
+      agentCalls: [{
+        id: 'call-1',
+        agent: 'coder',
+        status: 'completed',
+        phase: 'implement',
+      }] as WorkflowRunRecord['agentCalls'][number],
+    } as unknown as WorkflowRunRecord
+  }
+
+  it('WorkflowDetail 根 div 含 h-full（确保撑满父容器，ScrollArea flex-1 才能正确约束高度）', () => {
+    const wrapper = mount(WorkflowDetail, { props: { workflow: makeWorkflow() } })
+    const root = wrapper.find('[data-testid="workflow-detail"]')
+    expect(root.exists()).toBe(true)
+    expect(root.classes()).toContain('h-full')
+    expect(root.classes()).toContain('min-h-0')
+    expect(root.classes()).toContain('flex-col')
+  })
+})
+
+describe('滚动修复：Sidebar 子视图区 overflow-hidden 防御', () => {
+  it('Sidebar.vue 子视图区容器含 overflow-hidden（防止子组件溢出撑开 footer）', async () => {
+    // 静态源码断言：Sidebar 整体 mount 依赖多个 store/composable，成本高且与滚动修复无关。
+    // 滚动修复的关键是子视图区容器（SegmentedTab 下方）的 class，直接读源码验证。
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const sidebarPath = path.resolve(__dirname, '../../components/sidebar/Sidebar.vue')
+    const source = fs.readFileSync(sidebarPath, 'utf-8')
+    // 子视图区容器：mt-1 min-h-0 flex-1 后须含 overflow-hidden
+    // 正则匹配 `mt-1 min-h-0 flex-1 overflow-hidden`（允许 class 顺序中三者同时出现）
+    const hasOverflowHidden = /mt-1\s+min-h-0\s+flex-1\s+overflow-hidden/.test(source)
+    expect(hasOverflowHidden).toBe(true)
+  })
+})
