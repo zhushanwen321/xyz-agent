@@ -217,7 +217,10 @@ export const useTasksStore = defineStore('tasks', () => {
   function hasData(sessionId: string): boolean {
     const s = sessions.value.get(sessionId)
     if (!s) return false
-    return s.goal !== undefined || s.todo !== undefined
+    // goal（含 widget merge 创建的空 gui 分区）/ todo list-tree gui / 原始 todos 数组任一非空即有数据。
+    // 必须含 todos：real todo extension 的 tool result 可能只含 details.todos 无 details.__gui__，
+    // 此时 s.todo 为 undefined 但 s.todos 非空——漏检 todos 会导致 tasks tab 不显示。
+    return s.goal !== undefined || s.todo !== undefined || s.todos.length > 0
   }
 
   // ── 写 API ──

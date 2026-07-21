@@ -381,6 +381,17 @@ describe('tasks store', () => {
       expect(store.hasData('s1')).toBe(true)
     })
 
+    it('hasData：只有原始 todos 数组（无 __gui__）时 true（real todo extension 场景）', () => {
+      const store = useTasksStore()
+      // real todo extension 的 tool result 可能只含 details.todos 无 details.__gui__，
+      // 此时 s.todo 为 undefined 但 s.todos 非空——hasData 必须识别这种情况，否则 tasks tab 不显示。
+      store.setTodos('s1', [
+        { id: 1, text: 'a', status: 'pending' },
+        { id: 2, text: 'b', status: 'completed' },
+      ])
+      expect(store.hasData('s1')).toBe(true)
+    })
+
     it('clearSession 后 hasData false、getTodo/getGoal undefined', () => {
       const store = useTasksStore()
       store.setTodoFromGui('s1', flatTodoList())

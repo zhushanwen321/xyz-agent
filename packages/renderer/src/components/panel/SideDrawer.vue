@@ -344,16 +344,21 @@ const onMessage = useSessionEvents(toRef(props, 'sessionId'))
 onMessage('extension:widget', (msg) => {
   const payload = msg.payload
   const lines = truncateLines(payload.lines)
-  // goal extension 推的 ANSI widget（widgetKey='goal'）：merge 进 tasks store 的 goal 实时字段
-  // （status/token%/time%），不进 terminal/browser 缓冲（Tasks tab 自定义渲染 goal 卡片）
-  if (payload.widgetKey === 'goal' && props.sessionId) {
+  const widgetKey = payload.widgetKey
+  // tasks 相关 widget（goal/todo extension 推）：Tasks tab 自定义渲染，不走 terminal/browser。
+  // - goal widget：merge 进 tasks store 的 goal 实时字段（status/token%/time%，tool result 不含）
+  // - todo widget：权威数据是 tool result 的 details.todos（含准确 status + isVerification），
+  //   widget 与 tool result 同步推送（refreshDisplay 在 tool 回调里），解析 widget 是冗余且更弱
+  //   （无 isVerification），故 no-op 忽略——不能让它落到 unknownWidget 污染 terminal tab。
+  if (widgetKey === 'goal' && props.sessionId) {
     tasksStore.mergeGoalWidget(props.sessionId, lines)
     return
   }
-  const tab = mapWidgetKeyToTab(payload.widgetKey)
+  if (widgetKey === 'todo') return
+  const tab = mapWidgetKeyToTab(widgetKey)
   if (tab === 'terminal') terminalLines.value = lines
   else if (tab === 'browser') browserLines.value = lines
-  else unknownWidget.value = { key: payload.widgetKey, lines }
+  else unknownWidget.value = { key: widgetKey, lines }
 })
 // extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
 // gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），

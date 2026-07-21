@@ -166,10 +166,9 @@ function isLastAssistantStreaming(
  */
 function routeToolResultToTasks(
   sid: string,
-  payload: Record<string, unknown>,
+  toolName: string,
   details: Record<string, unknown> | undefined,
 ): void {
-  const toolName = readString(payload, 'toolName') ?? 'tool'
   if (toolName !== 'todo' && toolName !== 'goal_control') return
   if (!details) return
   const tasksStore = useTasksStore()
@@ -465,7 +464,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
     // tool result 到达时按 toolName 路由 details 到 tasks store
     // （__gui__ 快照 + todos 原始数组 + goal slug）。
-    routeToolResultToTasks(sid, payload, details)
+    // toolName 从已锚定的 toolCall 取——tool_call_end 事件 payload 可能不带 toolName
+    // （event-adapter 只保证 tool_call_start 带），靠 payload 会 fallback 成 'tool' 导致漏路由。
+    const existingCall = prev[idx].toolCalls?.find((c) => c.id === callId)
+    const resolvedToolName = existingCall?.toolName ?? readString(payload, 'toolName') ?? 'tool'
+    routeToolResultToTasks(sid, resolvedToolName, details)
 
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
