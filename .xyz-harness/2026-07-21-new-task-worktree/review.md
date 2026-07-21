@@ -82,3 +82,19 @@ WS-1~7 无 git add exitCode 非 0 用例（R5 的 bug 因此隐藏）。补 WS-8
 **位置**：`worktree-integration.test.ts:49-52`
 
 vi.mock 整个 useNewTaskFlow，绕过真实 computed。补真实 flow 集成测试用例（R1 修复后）。
+
+## 第 2 轮审查（review_fix 后确认）
+
+7 个 issue 修复均已验证闭环（commit 8d7cff0a）：
+
+| Issue | 修复 | 测试 | 状态 |
+|-------|------|------|------|
+| R1 isBareWorkspace 数据源 | SessionSummary 加字段 + WorkspaceDetector 缓存复用 + 前端 gitInfo 派生 | RF-1/2 真实 flow 集成测试 | 闭环 |
+| R2 details 透传 | useConnection reject 展开 details.detail | useConnection-visibility 3 cases | 闭环 |
+| R3 runtime 分支名校验 | INVALID_BRANCH_REGEX (含反斜杠) | WS-8 | 闭环 |
+| R4 SIGKILL 升级 | SIGTERM + 5s escalation | SR-4 | 闭环 |
+| R5 git add exitCode 检查 | exitCode!=0 抛 GIT_FAILED | WS-9 | 闭环 |
+| R6 WorkspaceDetector 死代码 | 删除 | — | 闭环 |
+| R7 watch(isOpen) 死代码 | 删除 | — | 闭环 |
+
+验证：runtime 16/16 + renderer 159/159 测试全绿，typecheck 双通过，lint 0 warning。可进 test 阶段。
