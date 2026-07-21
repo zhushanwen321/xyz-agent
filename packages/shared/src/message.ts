@@ -227,6 +227,12 @@ export interface Message {
   /** pi CustomMessage 的 customType（识别来源扩展，如 "subagent-bg-notify"）。
    *  来自 pi sendMessage 注入的 custom message，role 还原为 system。 */
   customType?: string
+  /** pi CustomMessage 的 display 字段透传（ADR-0035）。
+   *  pi 协议层是必填 boolean（false=隐藏不渲染，true=用区别样式渲染）。
+   *  shared.Message 是聚合类型含非 custom 消息，故 optional——
+   *  消费侧（renderer filterDisplayableMessages）按 `display !== false` 判断：
+   *  仅 false 隐藏，undefined/true 都显示（undefined 来自无 customType 的普通消息或旧数据）。 */
+  display?: boolean
   /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
   bgNotify?: BgNotifyDetails
   /** pi CustomMessage details 原始字段（含 __gui__ 结构化渲染数据）。

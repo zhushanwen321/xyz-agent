@@ -22,40 +22,69 @@ function makeMsg(over: Partial<Message> = {}): Message {
   return { id: 'a1', role: 'assistant', content: '', status: 'complete', timestamp: Date.now(), ...over }
 }
 
-describe('filterDisplayableMessages —— 过滤隐藏的 custom message', () => {
-  // [HISTORICAL] goal/todo extension 注入 <goal_context>/<todo_context> 上下文提示（customType:
-  // goal-context/goal-context-exceeded/goal-history/todo-context），声明 display:false 但 message-converter
-  // 转 system 时丢了 display 字段，renderer 也没过滤 → 对话流显示机器指令噪声。filterDisplayableMessages
-  // 在渲染层过滤，状态由 Tasks tab 展示，对话流不重复。
-  it('过滤 HIDDEN_CUSTOM_TYPES 的 system 消息（goal-context / todo-context 等）', () => {
+describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-1/2/3）', () => {
+  // [HISTORICAL] pi CustomMessage.display 是必填 boolean（false=隐藏不渲染）。
+  // pi-goal/pi-todo 的 context 消息（<goal_context>/<todo_context>）声明 display:false。
+  // 本次修复 message-converter/session-history/customStart 三路径透传 display 后，
+  // filterDisplayableMessages 从 HIDDEN_CUSTOM_TYPES 黑名单改为读 m.display !== false。
+  // 过滤只在渲染层（本函数），chat store 保留完整 messages（规则 7.5 fork/compact/replay）。
+  it('display:false 的消息过滤掉（goal/todo context 类）', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: '开始' }),
-      makeMsg({ id: 's1', role: 'system', customType: 'goal-context', content: '<goal_context>...' }),
+      makeMsg({ id: 's1', role: 'system', customType: 'goal-context', display: false, content: '<goal_context>...' }),
       makeMsg({ id: 'a1', role: 'assistant', content: '好的' }),
-      makeMsg({ id: 's2', role: 'system', customType: 'todo-context', content: '<todo_context>...' }),
-      makeMsg({ id: 's3', role: 'system', customType: 'goal-context-exceeded', content: '超限' }),
+      makeMsg({ id: 's2', role: 'system', customType: 'todo-context', display: false, content: '<todo_context>...' }),
+      makeMsg({ id: 's3', role: 'system', customType: 'goal-context-exceeded', display: false, content: '超限' }),
     ]
     const filtered = filterDisplayableMessages(messages)
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
   })
 
-  it('保留普通 system 消息（非 goal/todo context，如 compactionSummary）', () => {
+  it('display:true 的 custom message 保留（workflow-result / subagent-bg-notify）', () => {
     const messages: Message[] = [
-      makeMsg({ id: 's1', role: 'system', customType: 'compactionSummary', content: '压缩' }),
-      makeMsg({ id: 's2', role: 'system', customType: 'subagent-bg-notify', content: '子代理完成' }),
-      makeMsg({ id: 's3', role: 'system', customType: 'goal-context', content: '应被过滤' }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', display: true, content: 'done' }),
+      makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: true, content: '子代理完成' }),
+      makeMsg({ id: 'g1', role: 'system', customType: 'goal-context', display: false, content: '隐藏' }),
     ]
     const filtered = filterDisplayableMessages(messages)
-    expect(filtered.map((m) => m.id)).toEqual(['s1', 's2'])
+    expect(filtered.map((m) => m.id)).toEqual(['w1', 'n1'])
   })
 
-  it('customType 为 undefined 的消息保留（普通 user/assistant 无 customType）', () => {
+  it('display:undefined 保留（普通消息无 display 字段，按 !== false 判断安全）', () => {
     const messages: Message[] = [
       makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
       makeMsg({ id: 'a1', role: 'assistant', content: 'hello' }),
+      // compactionSummary / branchSummary 走独立字段，无 customType 无 display
+      makeMsg({ id: 'c1', role: 'system', content: '压缩记录' }),
     ]
     const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1', 'c1'])
+  })
+
+  it('AC-3 双层：原数组含 display:false（store 保留）+ filter 后不含（渲染过滤）', () => {
+    const messages: Message[] = [
+      makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
+      makeMsg({ id: 'h1', role: 'system', customType: 'todo-context', display: false, content: '隐藏' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
+    ]
+    // store 层：原数组完整保留 display:false 消息（filter 不改原数组，不丢消息）
+    expect(messages.map((m) => m.id)).toEqual(['u1', 'h1', 'a1'])
+    expect(messages.find((m) => m.id === 'h1')?.display).toBe(false)
+    // 渲染层：filter 后不含 display:false
+    const filtered = filterDisplayableMessages(messages)
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
+    expect(filtered.find((m) => m.display === false)).toBeUndefined()
+  })
+
+  // 关键红灯验证：customType 不在旧黑名单、但 display:false 的消息也必须被过滤。
+  // 证明 filter 读的是 display 字段而非 customType 黑名单（旧实现会漏这个）。
+  it('customType 未知的 display:false 消息也被过滤（证明读 display 字段非黑名单）', () => {
+    const messages: Message[] = [
+      makeMsg({ id: 'x1', role: 'system', customType: 'future-extension-context', display: false, content: '隐藏' }),
+      makeMsg({ id: 'y1', role: 'system', customType: 'future-extension-notify', display: true, content: '显示' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['y1'])
   })
 })
 

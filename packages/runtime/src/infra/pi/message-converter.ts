@@ -141,6 +141,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         content?: string
         details?: Record<string, unknown>
         timestamp?: number
+        display?: boolean
       }
       const msg: Message = {
         id: crypto.randomUUID(),
@@ -150,6 +151,7 @@ export function convertPiHistory(raw: unknown[]): Message[] {
         customType: cm.customType,
         details: cm.details as Record<string, unknown> | undefined,
         timestamp: cm.timestamp ?? Date.now(),
+        display: cm.display,
       }
       if (cm.customType === 'subagent-bg-notify' && cm.details) {
         const bgNotify = parseBgNotifyDetails(cm.details)

@@ -536,6 +536,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const customType = readString(payload, 'customType') ?? ''
     const content = readString(payload, 'content') ?? ''
     const details = readRecord(payload, 'details')
+    // display 来自 event-adapter.ts 的 custom message 分支（payload.display，~line 509 透传）。
+    // FR-2 依赖 event-adapter 已透传；extension 声明 display:false 的 context 消息据此在渲染层隐藏。
+    const display = payload['display'] === true || payload['display'] === false ? payload['display'] : undefined
     const prev = messages.value.get(sid) ?? []
     // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
     const msg: Message = {
@@ -544,6 +547,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       content,
       status: 'complete',
       customType,
+      display,
       // 保留原始 details（含 __gui__），前端检测 details.__gui__ 路由到 GuiComponentRenderer
       details,
       timestamp: Date.now(),

@@ -188,7 +188,8 @@ const forceWorking = computed(() => {
 })
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。
- *  先用 filterDisplayableMessages 过滤 HIDDEN_CUSTOM_TYPES 的 custom message，再转渲染项。 */
+ *  先用 filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0035，读 pi CustomMessage.display
+ *  字段非黑名单），再转渲染项。 */
 const renderItems = computed(() =>
   toRenderItems(filterDisplayableMessages(currentMessages.value), forceWorking.value),
 )

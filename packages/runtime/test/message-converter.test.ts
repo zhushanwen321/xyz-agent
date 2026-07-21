@@ -279,6 +279,71 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       expect(messages[0].bgNotify).toBeUndefined()
     })
 
+    // ── display 字段透传（FR-3 / AC-6）──────────────────────────────────
+    // pi CustomMessage.display 是必填 boolean（false=隐藏不渲染，true=渲染）。
+    // convertPiHistory 此前转 custom → system 时丢了 display，本次修复透传。
+    it('display:false 的 custom message → 透传到 msg.display（goal/todo context 类应隐藏）', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'goal-context',
+          content: '<goal_context>...</goal_context>',
+          display: false,
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      expect(messages[0].display).toBe(false)
+    })
+
+    it('display:true 的 custom message → 透传到 msg.display（workflow-result/subagent-bg-notify 类应显示）', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'workflow-result',
+          content: 'done',
+          display: true,
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].display).toBe(true)
+    })
+
+    it('display 缺失的旧 custom message → msg.display 为 undefined（渲染层按 !== false 判断，保留显示）', () => {
+      const raw = [
+        {
+          role: 'custom',
+          customType: 'legacy',
+          content: 'old',
+          timestamp: 1000,
+        },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].display).toBeUndefined()
+    })
+
+    it('display:false 的 custom message 仍进 result（converter 不丢消息，过滤在渲染层）', () => {
+      // AC-3 / FR-7：chat store 保留完整 messages，filterDisplayableMessages 只在渲染层过滤。
+      // converter 若丢消息会破坏规则 7.5（fork/compact/replay 需完整历史）。
+      const raw = [
+        { role: 'user', content: 'hi', timestamp: 1000 },
+        {
+          role: 'custom',
+          customType: 'todo-context',
+          content: '<todo_context>...</todo_context>',
+          display: false,
+          timestamp: 2000,
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'ok' }], timestamp: 3000 },
+      ]
+      const messages = convertPiHistory(raw)
+      // user + custom(system) + assistant = 3 条，display:false 的 custom 不丢
+      expect(messages).toHaveLength(3)
+      expect(messages[1].display).toBe(false)
+    })
+
     it('subagent-bg-notify details 缺必需字段 → bgNotify 为 undefined（降级纯文本）', () => {
       const raw = [
         {
