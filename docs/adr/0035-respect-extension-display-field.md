@@ -14,11 +14,11 @@ extension 经 `sendMessage({customType, content, display, details})` 注入 cust
 
 **xyz-agent 三条转换路径都丢了 display**：
 
-| 路径 | 文件 | 现状 |
+| 路径 | 文件 | 修复前缺口 |
 |------|------|------|
-| 实时（event-adapter → effect） | event-adapter.ts:509 已透传到 payload | chat-message-effects customStart effect（:534-555）没读 |
-| 持久化 RPC（get_messages） | message-converter.ts:137-160 | 类型断言 + msg 构造都没 display |
-| 持久化文件（JSONL） | session-history.ts:44-58 | mapEntries 没透传 `e.display` |
+| 实时（event-adapter → effect） | event-adapter.ts:509 已透传到 payload | chat-message-effects customStart effect（修复前 :534-555）没读 |
+| 持久化 RPC（get_messages） | message-converter.ts（修复前 :137-160） | 类型断言 + msg 构造都没 display |
+| 持久化文件（JSONL） | session-history.ts（修复前 :44-58） | mapEntries 没透传 `e.display` |
 
 → extension 声明的 `display: false` 不生效，goal/todo context 污染对话流。
 
