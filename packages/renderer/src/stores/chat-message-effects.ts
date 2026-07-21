@@ -55,6 +55,7 @@ import { useTasksStore } from './tasks'
 import type { TodoItem } from './tasks'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import i18n from '@/i18n'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
 
 const t = i18n.global.t
 
@@ -164,6 +165,20 @@ function isLastAssistantStreaming(
  * details.__gui__.component（guiResult helper 产物）；todo 额外暴露 details.todos 原始数组
  * （含 isVerification，list-tree 的 TreeItem 不含此字段）；goal_control 暴露 details.slug。
  */
+/**
+ * 首个 todo/goal 数据写入 tasks store 时，自动打开 SideDrawer 并切到 tasks tab。
+ *
+ * 仅在 hasData 从 false → true 的瞬间触发（后续 update 不重复弹）。
+ * 放在实时路径（routeToolResult/routeToolStart），hydrate（重开 session）不调——用户主动切换
+ * session 不应强制弹 drawer，只有「新任务实时到达」才主动提示。
+ */
+function openTasksDrawerOnFirstData(sid: string, hadDataBefore: boolean): void {
+  if (hadDataBefore) return // 已有数据，非首次
+  const tasksStore = useTasksStore()
+  if (!tasksStore.hasData(sid)) return // 写入后仍无数据（守卫，理论上不达）
+  useSideDrawer().open('tasks')
+}
+
 function routeToolResultToTasks(
   sid: string,
   toolName: string,
@@ -172,6 +187,7 @@ function routeToolResultToTasks(
   if (toolName !== 'todo' && toolName !== 'goal_control') return
   if (!details) return
   const tasksStore = useTasksStore()
+  const hadDataBefore = tasksStore.hasData(sid)
 
   // 结构化快照（__gui__.component）
   const rawGui = details['__gui__']
@@ -198,6 +214,8 @@ function routeToolResultToTasks(
     const slug = readString(details, 'slug')
     if (slug) tasksStore.setGoalMeta(sid, { slug })
   }
+
+  openTasksDrawerOnFirstData(sid, hadDataBefore)
 }
 
 /** details.todos 元素类型守卫（容错：过滤掉非合法结构） */
@@ -227,7 +245,10 @@ function routeToolStartToTasks(
   const objective = readString(input, 'objective')
   const slug = readString(input, 'slug')
   if (objective || slug) {
-    useTasksStore().setGoalMeta(sid, { objective: objective ?? undefined, slug: slug ?? undefined })
+    const tasksStore = useTasksStore()
+    const hadDataBefore = tasksStore.hasData(sid)
+    tasksStore.setGoalMeta(sid, { objective: objective ?? undefined, slug: slug ?? undefined })
+    openTasksDrawerOnFirstData(sid, hadDataBefore)
   }
 }
 
