@@ -12,7 +12,7 @@
  */
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, isAbsolute, resolve } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
@@ -677,12 +677,20 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionServiceInternal:子模块经此访问 sessions / 共享 helper ──
 
-  getSkillPaths(_cwd: string): string[] {
+  getSkillPaths(cwd: string): string[] {
+    // FR-1（cw-2026-07-21-scan-project-agents-skills）：相对路径按 session cwd resolve 成绝对路径再 existsSync filter。
+    // 修复现状 bug：原 getSkillPaths(_cwd) 忽略 cwd，discovery.json 中的相对路径（如 .agents/skills）
+    // 按 runtime 进程 cwd（app.getAppPath/resourcesPath）解析 → 在该 cwd 下不存在被 filter 掉 →
+    // pi 启动 --skill 参数为空 → pi 加载不到项目 skill。
+    // resolve 基准是 session cwd（用户当前项目），返回绝对路径避免 pi 侧再次错位。
     return this.configStore.getSkillPaths().filter((p) => {
-      if (existsSync(p)) return true
-      console.warn(`[session-service] skill path not found, skipping: ${p}`)
+      const resolved = isAbsolute(p) ? p : resolve(cwd, p)
+      if (existsSync(resolved)) {
+        return true
+      }
+      console.warn(`[session-service] skill path not found, skipping: ${p} (resolved: ${resolved})`)
       return false
-    })
+    }).map((p) => (isAbsolute(p) ? p : resolve(cwd, p)))
   }
 
   async getExtensionPaths(): Promise<string[]> {
