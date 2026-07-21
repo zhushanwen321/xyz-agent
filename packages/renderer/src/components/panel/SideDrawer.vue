@@ -132,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X } from '@lucide/vue'
@@ -145,6 +145,7 @@ import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import AnsiText from './message-stream/gui/AnsiText.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
+import { useSessionScopedState } from '@/composables/useSessionScopedState'
 
 const props = defineProps<{
   isOpen: boolean
@@ -245,35 +246,61 @@ const tabs = computed<TabMeta[]>(() => [
 
 const activeTabMeta = computed(() => tabs.value.find((tab) => tab.key === props.activeTab) ?? tabs.value[0])
 
-/** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量）。 */
-const terminalLines = ref<string[]>([])
-const browserLines = ref<string[]>([])
-/** 未匹配 tab 的 widgetKey fallback：存最后一个未知 widget 的 {key, lines}，默认路由到 terminal 显示 */
-const unknownWidget = ref<{ key: string; lines: string[] } | null>(null)
-
 /**
- * 结构化 GUI widget 缓冲（extension:widgetGui，spec §9.1）。
- * 按 tab 路由聚合：widgetKey 经 mapWidgetKeyToTab 归一化到 terminal/browser，未匹配归 terminal。
- * 同 tab 的结构化组件覆盖纯文本 lines：activeGuiComponent 命中时优先用 GuiComponentRenderer 渲染，
- * 保留交互/着色能力；纯文本 lines 作兜底。
+ * widget/status 缓冲的 per-session 状态结构（ADR-0036 W4：Map 分区派）。
+ * 五个原组件级 ref/reactive（terminalLines/browserLines/unknownWidget/guiWidgetsByTab/statusMap）
+ * 收进一个 reactive 对象，经 useSessionScopedState 按 sessionId 分区。
+ *
+ * reactive 容器必要性（W2 经验）：init 工厂必须返回 reactive 容器，模板里读 state.xxx +
+ * handler 里 mutate state.xxx 才能被响应式追踪——plain object 的 mutate 不触发下游 computed。
+ *
+ * init 必须返回全新实例：每 sid 独立分区，切回恢复不残留旧 session 数据。
  */
-const guiWidgetsByTab = ref<Map<SideDrawerTab, GuiComponent>>(new Map())
+interface DrawerBuffers {
+  /** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量） */
+  terminalLines: string[]
+  browserLines: string[]
+  /** 未匹配 tab 的 widgetKey fallback：存最后一个未知 widget 的 {key, lines}，默认路由到 terminal 显示 */
+  unknownWidget: { key: string; lines: string[] } | null
+  /**
+   * 结构化 GUI widget 缓冲（extension:widgetGui，spec §9.1）。
+   * 按 tab 路由聚合：widgetKey 经 mapWidgetKeyToTab 归一化到 terminal/browser，未匹配归 terminal。
+   * 同 tab 的结构化组件覆盖纯文本 lines：activeGuiComponent 命中时优先用 GuiComponentRenderer 渲染，
+   * 保留交互/着色能力；纯文本 lines 作兜底。
+   */
+  guiWidgetsByTab: Map<SideDrawerTab, GuiComponent>
+  /** extension status 缓冲：statusKey → 最新 {text, textRaw}（runtime 推送全量替换，与 widget 同语义） */
+  statusMap: Map<string, { text: string; textRaw?: string }>
+}
+
+const drawerState = useSessionScopedState(
+  toRef(props, 'sessionId'),
+  () => reactive<DrawerBuffers>({
+    terminalLines: [],
+    browserLines: [],
+    unknownWidget: null,
+    guiWidgetsByTab: new Map(),
+    statusMap: new Map(),
+  }),
+)
 
 /** 当前 active tab 的结构化组件（命中时优先于纯文本 lines 渲染） */
 const activeGuiComponent = computed<GuiComponent | undefined>(() =>
-  guiWidgetsByTab.value.get(props.activeTab),
+  drawerState.current.value.guiWidgetsByTab.get(props.activeTab),
 )
 
 const activeLines = computed<string[]>(() => {
-  if (props.activeTab === 'browser') return browserLines.value
-  return terminalLines.value.length ? terminalLines.value : unknownWidget.value?.lines ?? []
+  const buf = drawerState.current.value
+  if (props.activeTab === 'browser') return buf.browserLines
+  return buf.terminalLines.length ? buf.terminalLines : buf.unknownWidget?.lines ?? []
 })
 
 /** active 内容的元信息（用于 fallback 标记） */
 const activeLinesMeta = computed(() => {
+  const buf = drawerState.current.value
   if (props.activeTab === 'browser') return { unknown: false, key: '' }
-  if (terminalLines.value.length) return { unknown: false, key: '' }
-  if (unknownWidget.value) return { unknown: true, key: unknownWidget.value.key }
+  if (buf.terminalLines.length) return { unknown: false, key: '' }
+  if (buf.unknownWidget) return { unknown: true, key: buf.unknownWidget.key }
   return { unknown: false, key: '' }
 })
 
@@ -293,10 +320,8 @@ function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
   return null
 }
 
-/** extension status 缓冲：statusKey → 最新 {text, textRaw}（runtime 推送全量替换，与 widget 同语义） */
-const statusMap = ref<Map<string, { text: string; textRaw?: string }>>(new Map())
 const statusEntries = computed(() =>
-  Array.from(statusMap.value.entries()).map(([statusKey, v]) => ({
+  Array.from(drawerState.current.value.statusMap.entries()).map(([statusKey, v]) => ({
     statusKey,
     text: v.text,
     textRaw: v.textRaw,
@@ -316,18 +341,22 @@ function truncateLines(lines: string[]): string[] {
  * widget/status 订阅编排（#11 W3a）：订阅时机、sessionId 切换重订、卸载退订归 useSessionEvents
  * （features 层，session 通道）。本组件只保留 widget 缓冲逻辑（tab 路由 + lines 截断 + status 聚合）。
  *
- * sessionId 变化时清空缓冲（与原 watch 行为等价：terminalLines/browserLines/unknownWidget/statusMap 复位），
- * 由下方 watch(sessionId) 负责；本处 handler 只处理消息分发。
+ * sessionId 切换无需手动清缓冲——drawerState 经 useSessionScopedState 分区，切 sid 切分区，
+ * 切回原 sid 自动恢复缓冲（AC-4）。
  */
 const onMessage = useSessionEvents(toRef(props, 'sessionId'))
 // extension:widget：按 widgetKey 路由到 terminal/browser tab，未匹配走 fallback
+// handler 写 drawerState.current.value（当前 sid 分区）——安全因为真实 events.on/off 同步
+// （api/events.ts:50 off=Set.delete），进入 handler 的消息必然属于当前活跃 sid
 onMessage('extension:widget', (msg) => {
   const payload = msg.payload
   const lines = truncateLines(payload.lines)
   const tab = mapWidgetKeyToTab(payload.widgetKey)
-  if (tab === 'terminal') terminalLines.value = lines
-  else if (tab === 'browser') browserLines.value = lines
-  else unknownWidget.value = { key: payload.widgetKey, lines }
+  drawerState.update((buf) => {
+    if (tab === 'terminal') buf.terminalLines = lines
+    else if (tab === 'browser') buf.browserLines = lines
+    else buf.unknownWidget = { key: payload.widgetKey, lines }
+  })
 })
 // extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
 // gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），
@@ -336,36 +365,29 @@ onMessage('extension:widget', (msg) => {
 onMessage('extension:widgetGui', (msg) => {
   const payload = msg.payload
   const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
-  if (payload.gui === null) {
-    // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
-    guiWidgetsByTab.value.delete(tab)
-    guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
-    if (tab === 'terminal') terminalLines.value = []
-    else if (tab === 'browser') browserLines.value = []
-    return
-  }
-  guiWidgetsByTab.value.set(tab, payload.gui as GuiComponent)
-  guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
+  drawerState.update((buf) => {
+    if (payload.gui === null) {
+      // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
+      buf.guiWidgetsByTab.delete(tab)
+      // Map 原地 delete 不触发 Vue 对 Map 的响应式追踪（reactive 对 Map 是 collection handlers），
+      // 需重新赋值触发下游 computed 重算。reactive buf 上 reassign Map 字段会触发 set trap
+      buf.guiWidgetsByTab = new Map(buf.guiWidgetsByTab)
+      if (tab === 'terminal') buf.terminalLines = []
+      else if (tab === 'browser') buf.browserLines = []
+      return
+    }
+    buf.guiWidgetsByTab.set(tab, payload.gui as GuiComponent)
+    buf.guiWidgetsByTab = new Map(buf.guiWidgetsByTab)
+  })
 })
 // extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
 onMessage('extension:status', (msg) => {
   const payload = msg.payload
-  statusMap.value.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
-  statusMap.value = new Map(statusMap.value)
+  drawerState.update((buf) => {
+    buf.statusMap.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
+    buf.statusMap = new Map(buf.statusMap)
+  })
 })
-
-// sessionId 变化时清空缓冲（useSessionEvents 已负责底层订阅重订，这里只复位组件缓冲状态）
-watch(
-  () => props.sessionId,
-  () => {
-    terminalLines.value = []
-    browserLines.value = []
-    unknownWidget.value = null
-    guiWidgetsByTab.value = new Map()
-    statusMap.value = new Map()
-  },
-  { immediate: true },
-)
 
 /**
  * ESC 关闭抽屉（panel/spec.md：抽屉是浮层，ESC 收起）。
