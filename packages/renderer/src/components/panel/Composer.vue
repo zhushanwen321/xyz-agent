@@ -19,6 +19,7 @@
       v-model:open="cmdOpen"
       :type="cmdType"
       :session-id="sessionId ?? undefined"
+      :variant="variant"
       :query="cmdType === 'file' ? fileQuery : slashQuery"
       @select="onCmdSelect"
     >

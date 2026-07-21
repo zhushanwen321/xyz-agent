@@ -81,11 +81,17 @@ import { filterAndSortFileCandidates } from '@/lib/file-match'
 
 type CmdType = 'file' | 'slash'
 
+type ComposerVariant = 'panel' | 'landing'
+
 const props = defineProps<{
   open: boolean
   type: CmdType
   /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
+  /** composer 形态：landing（新建任务页空态）vs panel（对话态）。ADR-0037：slash 命令源按 variant 分支，
+   *  与 Composer.vue variant prop 同源。landing 合并 publicSession 命令 ∪ settingsStore.skills；
+   *  panel 用 commandStore + compact，不并入 skills（配置态/运行态不混淆）。默认 'panel' 兼容旧调用。 */
+  variant?: ComposerVariant
   /** 过滤 query（输入区 / 或 # 后的内容，空串/缺省=不过滤；file 按 name+path 过滤，slash 按命令名过滤） */
   query?: string
 }>()
@@ -125,37 +131,44 @@ onMounted(() => { void loadCandidates() })
 // sessionId 变化时重新加载（切 session，loaded 复位触发重拉新 session 缓存）
 watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 
+/** composer 形态归一化（默认 panel，兼容未透传 variant 的旧调用） */
+const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
+
 /**
- * slash 命令源（双源，按 session 有无切换）：
- * - session 态：commandStore（pi get_commands 返回的 extension/prompt/skill 三类动态命令）
- *   + 前端 builtin 命令（compact）。pi 的 get_commands 不返回 builtin（builtin 仅服务
- *   pi 自己的 TUI autocomplete，不通过 RPC 暴露），故需前端注入。compact 执行本就在
- *   前端拦截（Composer.vue submit 检测 '/compact' → 专用 compact RPC），与 pi prompt
- *   路径无关，作为前端 builtin 入口最合理。
- * - landing 态（无 session）：settingsStore.skills（config.skills 全局扫描结果）。
- *   landing 无 pi 子进程，get_commands 不可达；skills 扫描目录集（discovery.json +
- *   强制目录）与 pi 实际加载目录集同源，create session 后 fetchAndBroadcastCommands
- *   刷新 commandStore，切回 session 源时失效 skill 自然消失。
- *   builtin/extension 命令（/compact 等）在 landing 无意义，故不含。
+ * slash 命令源（ADR-0037：按 variant 分支，替代原按 sessionId 互斥分支）。
  *
- * SkillInfo.name（无 / 前缀，如 "code-review"）→ 补 "/" 前缀（如 "/code-review"），
- *   与 runtime get_commands 返回格式对齐——chip label 显示与 draft 检测（如 /compact）
- *   都依赖 / 前缀。icon 统一 'star'（与 iconKeyForSource('skill')='star' 一致）。
+ * 根因（已修复）：原 `if (props.sessionId)` 互斥分支在 landing 态被非空 composerSid 拦截
+ * （Landing.vue:70 composerSid = flow.currentSessionId ?? props.sessionId ?? publicSessionId，
+ *  publicSessionId 存在时常态非空），导致 settingsStore.skills 永远读不到，项目维度 skill 不显示。
+ *
+ * 现行分支（判定用 variant，与 Composer.vue:280 范式对齐）：
+ * - landing 态：合并 commandStore.getCommands(sessionId)（publicSession 的 pi extension 命令如 /goal）
+ *   ∪ settingsStore.skills（项目级 + 全局 skill）。不含 compact（landing 无上下文可压缩）。
+ *   skill name 归一化为 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 路由前缀，裸名 pi 不认）。
+ * - panel 态：compact + commandStore.getCommands(sessionId)（pi 真源，含 pi 返回的 skill 命令）。
+ *   不并入 settingsStore.skills（settingsStore 是配置态全局扫描，commandStore 是该 session 的
+ *   运行态真源——合并会导致 session A 看到 session B 才有的项目 skill、选中后 pi 不认）。
+ *
+ * skillDisplayName（显示层）仍去前缀只显 skill 名，icon 已表示类型。
  */
 const slashCommands = computed(() => {
-  if (props.sessionId) {
-    // compact 只在有 session 时注入（landing 态无上下文可压缩）
-    const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }
-    const piCmds = commandStore.getCommands(props.sessionId)
-    return [compactCmd, ...piCmds]
+  if (variant.value === 'landing') {
+    // landing 合并源：publicSession 的 pi extension 命令 ∪ settingsStore.skills
+    const extCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
+    const skillCmds = settingsStore.skills.map((s) => ({
+      id: `skill-${s.name}`,
+      // FR-4：归一化为 /skill:<name>（非裸名 /<name>），pi agent-session.ts:1210 要求 /skill: 前缀
+      name: `/skill:${s.name}`,
+      kind: 'skill',
+      icon: 'star',
+      description: s.description,
+    }))
+    return [...extCmds, ...skillCmds]
   }
-  return settingsStore.skills.map((s) => ({
-    id: s.name,
-    name: `/${s.name}`,
-    kind: 'skill',
-    icon: 'star',
-    description: s.description,
-  }))
+  // panel 态：compact + commandStore（pi 真源），不并入 settingsStore.skills
+  const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }
+  const piCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
+  return [compactCmd, ...piCmds]
 })
 
 /**
