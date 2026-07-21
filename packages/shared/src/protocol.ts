@@ -49,6 +49,7 @@ export type ClientMessageType =
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
   | 'workspace.listRecent' | 'workspace.record'
+  | 'worktree.create'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -208,6 +209,14 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
+  /** worktree.create：在 bare repo + worktree 结构中创建隔离的工作目录。
+   *  branch 必填；baseBranch 默认 'current'（继承当前分支），可选 'origin/main'（校验远端 ref 存在后使用）。
+   *  workspaceHint 用于显式指定 workspace 根（检测 .bare 的起点 cwd），省略则用 process.cwd()。 */
+  'worktree.create': {
+    branch: string
+    baseBranch?: 'current' | 'origin/main'
+    workspaceHint?: string
+  }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -283,6 +292,7 @@ export type ServerMessageType =
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
   | 'git.status:result'
   | 'workspace.recentList'
+  | 'worktree.created'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -452,6 +462,8 @@ export interface ServerMessageMapBase {
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
+  /** worktree.created：worktree.create 的成功 reply（新 worktree 的 cwd 与分支名）。 */
+  'worktree.created': { cwd: string; branch: string }
 
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
@@ -627,6 +639,7 @@ export interface ReplyPayloadMap {
   'plugin.config.set': ServerMessageMap['plugin:config']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
+  'worktree.create': ServerMessageMap['worktree.created']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted
