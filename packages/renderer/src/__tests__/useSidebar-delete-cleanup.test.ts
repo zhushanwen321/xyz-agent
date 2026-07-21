@@ -43,7 +43,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
-import { registerSessionCleanup } from '@/composables/useSessionScopedState'
+import { registerSessionCleanup, __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 
 function makeSummary(id: string): SessionSummary {
   return { id, label: id, cwd: '/proj', status: 'idle', lastActiveAt: 1, modelId: 'm1', tokenCount: 0 }
@@ -56,6 +56,8 @@ function seedSessions(ids: string[]): void {
 }
 
 beforeEach(() => {
+  // 模块级 cleanup registry 跨测试可能残留（本文件断言 cleanup 调用次数）→ 显式清空防 flaky
+  __clearSessionCleanupRegistryForTest()
   setActivePinia(createPinia())
   vi.clearAllMocks()
   removeMock.mockResolvedValue(undefined)

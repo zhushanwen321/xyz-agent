@@ -70,6 +70,14 @@ export function triggerSessionCleanups(sid: string): void {
 }
 
 /**
+ * 测试专用：清空 sessionCleanupRegistry。生产代码禁止调用。
+ * 用途：vitest 用例间隔离，防上例的 cleanup 注册残留污染下例（如未包 effectScope 的 useExtensionUI 测试）。
+ */
+export function __clearSessionCleanupRegistryForTest(): void {
+  sessionCleanupRegistry.clear()
+}
+
+/**
  * per-session 状态隔离工厂。
  *
  * @param sid 响应式 session id（Ref<string|null>），null 表示无活跃 session

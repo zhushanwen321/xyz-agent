@@ -21,6 +21,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
+import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
+
+// 组件 mount 时 useSideDrawer 内的 useSessionScopedState 会注册 cleanup 到模块级 registry；
+// 虽然 unmount 会触发 onScopeDispose 反注册，保险起见每个用例前清空防跨用例残留
+beforeEach(() => {
+  __clearSessionCleanupRegistryForTest()
+})
 
 // ── mock useSessionEvents：捕获 onMessage 注册的 handler，模拟真实退订语义 ──
 // 真实 useSessionEvents：watch(sessionId) 切换时退订旧 sid 底层订阅（同步 events.off）

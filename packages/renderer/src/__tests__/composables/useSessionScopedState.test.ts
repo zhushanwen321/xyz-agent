@@ -19,7 +19,14 @@ import {
   useSessionScopedState,
   registerSessionCleanup,
   triggerSessionCleanups,
+  __clearSessionCleanupRegistryForTest,
 } from '@/composables/useSessionScopedState'
+
+// 模块级 cleanup registry 跨测试可能残留（未包 effectScope 的用例无法触发反注册），
+// 每个用例前清空，防污染下游断言
+beforeEach(() => {
+  __clearSessionCleanupRegistryForTest()
+})
 
 describe('W1 useSessionScopedState: Map 分区工厂', () => {
   /** 在独立 effectScope 内运行 composable，测试后 dispose 模拟卸载 */

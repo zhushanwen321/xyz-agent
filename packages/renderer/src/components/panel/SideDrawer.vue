@@ -362,6 +362,10 @@ onMessage('extension:widget', (msg) => {
 // gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），
 // 删 guiWidgetsByTab 条目 + 清对应 tab 的纯文本 lines。
 // 未匹配 tab 的 widgetKey 归 terminal（与 extension:widget fallback 语义一致：unknownWidget 默认显 terminal）
+//
+// 注：drawerState 是 useSessionScopedState reactive 容器，buf.guiWidgetsByTab / buf.statusMap
+// 都是 reactive Map。Vue 3 reactive 对 Map 有 collection handlers——.set()/.delete() 本身就触发
+// 依赖了该 Map 的下游 computed 重算，**无需重新赋值 Map 字段**（旧 ref<Map> 实现才需要 reassign）。
 onMessage('extension:widgetGui', (msg) => {
   const payload = msg.payload
   const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
@@ -369,15 +373,11 @@ onMessage('extension:widgetGui', (msg) => {
     if (payload.gui === null) {
       // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
       buf.guiWidgetsByTab.delete(tab)
-      // Map 原地 delete 不触发 Vue 对 Map 的响应式追踪（reactive 对 Map 是 collection handlers），
-      // 需重新赋值触发下游 computed 重算。reactive buf 上 reassign Map 字段会触发 set trap
-      buf.guiWidgetsByTab = new Map(buf.guiWidgetsByTab)
       if (tab === 'terminal') buf.terminalLines = []
       else if (tab === 'browser') buf.browserLines = []
       return
     }
     buf.guiWidgetsByTab.set(tab, payload.gui as GuiComponent)
-    buf.guiWidgetsByTab = new Map(buf.guiWidgetsByTab)
   })
 })
 // extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
@@ -385,7 +385,6 @@ onMessage('extension:status', (msg) => {
   const payload = msg.payload
   drawerState.update((buf) => {
     buf.statusMap.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
-    buf.statusMap = new Map(buf.statusMap)
   })
 })
 

@@ -52,6 +52,7 @@ vi.mock('@/api/domains/extension', () => ({
 
 import { useExtensionUI, askUserFilter, dialogFilter } from '@/composables/useExtensionUI'
 import { sendExtensionUIResponse } from '@/api/domains/extension'
+import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 
 // ── 测试数据构造 helper ──
 function mkAskUserReq(sid: string, requestId: string) {
@@ -78,6 +79,9 @@ function emitUITimeout(sid: string, requestId: string): void {
 }
 
 beforeEach(() => {
+  // 模块级 cleanup registry 跨测试可能残留（本文件用 useExtensionUI 不包 effectScope，
+  // onScopeDispose 在测试环境无 scope 不触发反注册）→ 显式清空防污染下游断言
+  __clearSessionCleanupRegistryForTest()
   uiRequestHandlers.clear()
   uiTimeoutHandlers.clear()
   vi.mocked(sendExtensionUIResponse).mockClear()

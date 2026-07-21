@@ -22,12 +22,18 @@ import {
   useSessionScopedState,
   registerSessionCleanup,
   triggerSessionCleanups,
+  __clearSessionCleanupRegistryForTest,
 } from '@/composables/useSessionScopedState'
+
+// 模块级 cleanup registry 跨测试可能残留（未包 effectScope 的用例无法触发反注册），
+// 每个用例前清空，防污染下游断言
+beforeEach(() => {
+  __clearSessionCleanupRegistryForTest()
+})
 
 describe('W5 session cleanup: triggerSessionCleanups 移除 Map 分区 (AC-8)', () => {
   beforeEach(() => {
-    // 清空 cleanup 注册表（trigger 一个不存在的 sid 不影响；模块级 Set 需显式管理）
-    // 注：实现侧应在测试间不残留，此处依赖 register/unregister 的正确性
+    // registry 清空已由文件级顶层 beforeEach 完成
   })
 
   it('triggerSessionCleanups(sid) 后该 sid 的 Map 分区被移除，重新访问触发 init', () => {
