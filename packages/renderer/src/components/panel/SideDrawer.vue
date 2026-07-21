@@ -134,11 +134,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X, CheckSquare } from '@lucide/vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { Button } from '@/components/ui/button'
 import GitPanel from './GitPanel.vue'
 import CommandDocPanel from './CommandDocPanel.vue'
@@ -147,7 +146,7 @@ import TasksPanel from './TasksPanel.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import AnsiText from './message-stream/gui/AnsiText.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
-import { useSessionEvents } from '@/composables/features/useSessionEvents'
+import { useDrawerWidgets } from '@/composables/features/useDrawerWidgets'
 import { useTasksStore } from '@/stores/tasks'
 
 const props = defineProps<{
@@ -265,137 +264,11 @@ const tabs = computed<TabMeta[]>(() => {
 
 const activeTabMeta = computed(() => tabs.value.find((tab) => tab.key === props.activeTab) ?? tabs.value[0])
 
-/** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量）。 */
-const terminalLines = ref<string[]>([])
-const browserLines = ref<string[]>([])
-/** 未匹配 tab 的 widgetKey fallback：存最后一个未知 widget 的 {key, lines}，默认路由到 terminal 显示 */
-const unknownWidget = ref<{ key: string; lines: string[] } | null>(null)
-
-/**
- * 结构化 GUI widget 缓冲（extension:widgetGui，spec §9.1）。
- * 按 tab 路由聚合：widgetKey 经 mapWidgetKeyToTab 归一化到 terminal/browser，未匹配归 terminal。
- * 同 tab 的结构化组件覆盖纯文本 lines：activeGuiComponent 命中时优先用 GuiComponentRenderer 渲染，
- * 保留交互/着色能力；纯文本 lines 作兜底。
- */
-const guiWidgetsByTab = ref<Map<SideDrawerTab, GuiComponent>>(new Map())
-
-/** 当前 active tab 的结构化组件（命中时优先于纯文本 lines 渲染） */
-const activeGuiComponent = computed<GuiComponent | undefined>(() =>
-  guiWidgetsByTab.value.get(props.activeTab),
-)
-
-const activeLines = computed<string[]>(() => {
-  if (props.activeTab === 'browser') return browserLines.value
-  return terminalLines.value.length ? terminalLines.value : unknownWidget.value?.lines ?? []
-})
-
-/** active 内容的元信息（用于 fallback 标记） */
-const activeLinesMeta = computed(() => {
-  if (props.activeTab === 'browser') return { unknown: false, key: '' }
-  if (terminalLines.value.length) return { unknown: false, key: '' }
-  if (unknownWidget.value) return { unknown: true, key: unknownWidget.value.key }
-  return { unknown: false, key: '' }
-})
-
-/**
- * widgetKey → tab 路由启发式（NFR Prototype 1 枚举对齐前的过渡方案）。
- * runtime 推送的 widgetKey 为 extension 自定义字符串，归一化后匹配常见关键词。
- * 未命中 → null（调用方走 fallback）。
- */
-function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
-  const k = key.toLowerCase()
-  if (k.includes('terminal') || k.includes('shell') || k.includes('console') || k.includes('bash')) {
-    return 'terminal'
-  }
-  if (k.includes('browser') || k === 'web' || k.startsWith('webview') || k.includes('preview')) {
-    return 'browser'
-  }
-  return null
-}
-
-/** extension status 缓冲：statusKey → 最新 {text, textRaw}（runtime 推送全量替换，与 widget 同语义） */
-const statusMap = ref<Map<string, { text: string; textRaw?: string }>>(new Map())
-const statusEntries = computed(() =>
-  Array.from(statusMap.value.entries()).map(([statusKey, v]) => ({
-    statusKey,
-    text: v.text,
-    textRaw: v.textRaw,
-  })),
-)
-
-/** widget 缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
-const WIDGET_MAX_LINES = 1000
-
-/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，截断保留尾部最新） */
-function truncateLines(lines: string[]): string[] {
-  if (lines.length <= WIDGET_MAX_LINES) return lines
-  return lines.slice(lines.length - WIDGET_MAX_LINES)
-}
-
-/**
- * widget/status 订阅编排（#11 W3a）：订阅时机、sessionId 切换重订、卸载退订归 useSessionEvents
- * （features 层，session 通道）。本组件只保留 widget 缓冲逻辑（tab 路由 + lines 截断 + status 聚合）。
- *
- * sessionId 变化时清空缓冲（与原 watch 行为等价：terminalLines/browserLines/unknownWidget/statusMap 复位），
- * 由下方 watch(sessionId) 负责；本处 handler 只处理消息分发。
- */
-const onMessage = useSessionEvents(toRef(props, 'sessionId'))
-// extension:widget：按 widgetKey 路由到 terminal/browser tab，未匹配走 fallback
-onMessage('extension:widget', (msg) => {
-  const payload = msg.payload
-  const lines = truncateLines(payload.lines)
-  const widgetKey = payload.widgetKey
-  // tasks 相关 widget（goal/todo extension 推）：Tasks tab 自定义渲染，不走 terminal/browser。
-  // - goal widget：merge 进 tasks store 的 goal 实时字段（status/token%/time%，tool result 不含）
-  // - todo widget：权威数据是 tool result 的 details.todos（含准确 status + isVerification），
-  //   widget 与 tool result 同步推送（refreshDisplay 在 tool 回调里），解析 widget 是冗余且更弱
-  //   （无 isVerification），故 no-op 忽略——不能让它落到 unknownWidget 污染 terminal tab。
-  if (widgetKey === 'goal' && props.sessionId) {
-    tasksStore.mergeGoalWidget(props.sessionId, lines)
-    return
-  }
-  if (widgetKey === 'todo') return
-  const tab = mapWidgetKeyToTab(widgetKey)
-  if (tab === 'terminal') terminalLines.value = lines
-  else if (tab === 'browser') browserLines.value = lines
-  else unknownWidget.value = { key: widgetKey, lines }
-})
-// extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
-// gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），
-// 删 guiWidgetsByTab 条目 + 清对应 tab 的纯文本 lines。
-// 未匹配 tab 的 widgetKey 归 terminal（与 extension:widget fallback 语义一致：unknownWidget 默认显 terminal）
-onMessage('extension:widgetGui', (msg) => {
-  const payload = msg.payload
-  const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
-  if (payload.gui === null) {
-    // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
-    guiWidgetsByTab.value.delete(tab)
-    guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
-    if (tab === 'terminal') terminalLines.value = []
-    else if (tab === 'browser') browserLines.value = []
-    return
-  }
-  guiWidgetsByTab.value.set(tab, payload.gui as GuiComponent)
-  guiWidgetsByTab.value = new Map(guiWidgetsByTab.value)
-})
-// extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
-onMessage('extension:status', (msg) => {
-  const payload = msg.payload
-  statusMap.value.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
-  statusMap.value = new Map(statusMap.value)
-})
-
-// sessionId 变化时清空缓冲（useSessionEvents 已负责底层订阅重订，这里只复位组件缓冲状态）
-watch(
-  () => props.sessionId,
-  () => {
-    terminalLines.value = []
-    browserLines.value = []
-    unknownWidget.value = null
-    guiWidgetsByTab.value = new Map()
-    statusMap.value = new Map()
-  },
-  { immediate: true },
+/** widget/status 缓冲与 extension 事件订阅（含 ExtensionRegistry 对 goal/todo 等已知
+ *  extension 的分流）抽到 useDrawerWidgets composable，本组件只消费其暴露的响应式状态。 */
+const { activeGuiComponent, activeLines, activeLinesMeta, statusEntries } = useDrawerWidgets(
+  toRef(props, 'sessionId'),
+  toRef(props, 'activeTab'),
 )
 
 /**
