@@ -396,8 +396,9 @@ export function useSidebar() {
       }
     }
     session.removeFromList(id)
-    // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅 + 派生状态缓存
+    // 跨 store 清理（S3）：fileTree + tasks + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
+    tasks.clearSession(id)
     // [M7 FR-5] evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     const chatStoreForEvict = useChatStore()

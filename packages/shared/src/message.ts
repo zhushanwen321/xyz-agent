@@ -228,7 +228,9 @@ export interface Message {
    *  来自 pi sendMessage 注入的 custom message，role 还原为 system。 */
   customType?: string
   /** pi CustomMessage 的 display 字段透传（ADR-0035）。
-   *  pi 协议层是必填 boolean（false=隐藏不渲染，true=用区别样式渲染）。
+   *  pi 协议层是必填 boolean：false=隐藏不渲染，true=用区别于 user message 的样式渲染。
+   *  xyz-agent 当前只消费 false 分支（filterDisplayableMessages 按 `!== false` 过滤），
+   *  true 与 undefined 在渲染上等价（ADR-0035 决策点 3 scope 只做过滤，未实现区别样式）。
    *  shared.Message 是聚合类型含非 custom 消息，故 optional——
    *  消费侧（renderer filterDisplayableMessages）按 `display !== false` 判断：
    *  仅 false 隐藏，undefined/true 都显示（undefined 来自无 customType 的普通消息或旧数据）。 */

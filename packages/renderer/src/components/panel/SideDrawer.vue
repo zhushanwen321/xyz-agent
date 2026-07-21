@@ -274,6 +274,9 @@ const { activeGuiComponent, activeLines, activeLinesMeta, statusEntries } = useD
 /**
  * ESC 关闭抽屉（panel/spec.md：抽屉是浮层，ESC 收起）。
  * 仅在 isOpen 时挂监听，避免抽屉关闭后仍抢全局 keydown（如 composer 输入态）。
+ * 单实例安全：SideDrawer 由 PanelContainer 单实例挂载（见 PanelContainer.vue 注释「drawer 固定挂本容器，单实例」），
+ * split/overlay 模式切换不创建第二个实例，故实例级 onKeyDown 不会重复注册（规则 2）。
+ * 若未来支持多 SideDrawer 实例，需改为模块级 refCount 栈保护。
  */
 function onKeyDown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {

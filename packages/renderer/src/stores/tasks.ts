@@ -19,6 +19,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { Message, ToolCall } from '@xyz-agent/shared'
+import { isTodoItem } from './tasks-readers'
 
 // ── 常量 ────────────────────────────────────────────
 
@@ -45,7 +46,7 @@ export interface GoalSnapshot {
   /** 来自 ANSI widget 解析的 time 用量百分比 0-100（无预算或解析失败时 undefined） */
   liveTimePct?: number
   /** ANSI widget 原始到达时间戳（用于判断新鲜度） */
-  widgetUpdatedAt?: number
+  // widgetUpdatedAt 已删除：写入但无读取点，属推测性字段（AGENTS.md 规则 7「不加推测性功能」）。
 }
 
 /**
@@ -118,11 +119,11 @@ function parseGoalWidget(lines: string[]): {
     status = 'budget_limited'
   } else if (/Time budget exhausted/i.test(text)) {
     status = 'time_limited'
-  } else if (/✓\s*Completed|Completed/i.test(text)) {
+  } else if (/\bCompleted\b/i.test(text)) {
     status = 'complete'
-  } else if (/Paused/i.test(text)) {
+  } else if (/\bPaused\b/i.test(text)) {
     status = 'paused'
-  } else if (/Blocked/i.test(text)) {
+  } else if (/\bBlocked\b/i.test(text)) {
     status = 'blocked'
   } else {
     status = 'active'
@@ -241,7 +242,6 @@ export const useTasksStore = defineStore('tasks', () => {
         liveStatus: prev?.liveStatus,
         liveTokenPct: prev?.liveTokenPct,
         liveTimePct: prev?.liveTimePct,
-        widgetUpdatedAt: prev?.widgetUpdatedAt,
       },
     })
   }
@@ -285,7 +285,6 @@ export const useTasksStore = defineStore('tasks', () => {
         liveStatus: prevGoal?.liveStatus,
         liveTokenPct: prevGoal?.liveTokenPct,
         liveTimePct: prevGoal?.liveTimePct,
-        widgetUpdatedAt: prevGoal?.widgetUpdatedAt,
       },
     })
   }
@@ -309,7 +308,6 @@ export const useTasksStore = defineStore('tasks', () => {
         ...(parsed.status !== undefined ? { liveStatus: parsed.status } : {}),
         ...(parsed.tokenPct !== undefined ? { liveTokenPct: parsed.tokenPct } : {}),
         ...(parsed.timePct !== undefined ? { liveTimePct: parsed.timePct } : {}),
-        widgetUpdatedAt: Date.now(),
       },
     })
   }
@@ -328,18 +326,6 @@ export const useTasksStore = defineStore('tasks', () => {
   // getHistory 返回的历史 messages 里 toolCall.details 已含 __gui__/todos（message-converter
   // F1 修复透传），但不会自动进 store。本方法在 chat.hydrate 后遍历历史，把每个 todo /
   // goal_control toolCall 的 details + input 再调一遍 set*，复现实时链路的写入。
-
-  /** details.todos 元素类型守卫（容错：过滤掉非合法结构） */
-  function isTodoItem(v: unknown): v is TodoItem {
-    if (!v || typeof v !== 'object') return false
-    const o = v as Record<string, unknown>
-    return (
-      typeof o['id'] === 'number' &&
-      typeof o['text'] === 'string' &&
-      typeof o['status'] === 'string' &&
-      ['pending', 'in_progress', 'completed', 'cancelled'].includes(o['status'] as string)
-    )
-  }
 
   /** details.__gui__ 守卫：可能是 {v:1, component} 包装，也可能是裸 GuiComponent */
   function extractGuiComponent(rawGui: unknown): GuiComponent | undefined {
@@ -364,6 +350,10 @@ export const useTasksStore = defineStore('tasks', () => {
    * 由 message-converter 从 pi arguments 透传，是权威值，不存在实时路 tool_call_end 的 fallback 问题）。
    */
   function hydrateFromMessages(sessionId: string, history: Message[]): void {
+    // [规则 7.5] 先清空旧快照再重建：LRU evict 后重新进入 session 时，
+    // 旧快照可能残留（compact 后历史不含早期 toolCall，旧快照无法被覆盖）。
+    // 受 chat.isHydrated 守卫，重开频率低，重建代价可接受。
+    clearSession(sessionId)
     for (const msg of history) {
       if (msg.role !== 'assistant' || !msg.toolCalls) continue
       for (const tc of msg.toolCalls) {

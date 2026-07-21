@@ -227,7 +227,6 @@ describe('tasks store', () => {
       expect(goal?.gui).toBeDefined()
       expect(goal?.liveStatus).toBe('active')
       expect(goal?.liveTokenPct).toBe(36)
-      expect(goal?.widgetUpdatedAt).toBeTypeOf('number')
     })
   })
 
@@ -241,7 +240,6 @@ describe('tasks store', () => {
       expect(goal?.liveStatus).toBe('active')
       expect(goal?.liveTokenPct).toBe(36)
       expect(goal?.liveTimePct).toBe(40)
-      expect(goal?.widgetUpdatedAt).toBeTypeOf('number')
     })
 
     it('completed 终态：status=complete，tokenPct 从 header 解析', () => {
@@ -319,7 +317,6 @@ describe('tasks store', () => {
       // 空数组 parseGoalWidget 返回 {}，merge 时无 status/key 被写入
       expect(goal?.liveStatus).toBeUndefined()
       expect(goal?.liveTokenPct).toBeUndefined()
-      expect(goal?.widgetUpdatedAt).toBeTypeOf('number')
     })
 
     it('乱码字符串：不抛错，status=active', () => {

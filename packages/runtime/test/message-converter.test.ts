@@ -400,4 +400,68 @@ describe('convertPiHistory - contentBlocks 到达顺序（循环内 push）', ()
       expect(messages[0].piEntryId).toBeUndefined()
     })
   })
+
+  describe('compactionSummary / branchSummary role', () => {
+    it('compactionSummary → system + compactionSummary 字段', () => {
+      const raw = [
+        { role: 'compactionSummary', summary: '压缩摘要', tokensBefore: 10000, timestamp: 123 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      const m = messages[0]
+      expect(m.role).toBe('system')
+      expect(m.content).toBe('压缩摘要')
+      expect(m.compactionSummary).toEqual({ summary: '压缩摘要', tokensBefore: 10000, timestamp: 123 })
+    })
+
+    it('compactionSummary 字段缺失时 content fallback 为“上下文已压缩”', () => {
+      const raw = [{ role: 'compactionSummary', timestamp: 100 }]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].content).toBe('上下文已压缩')
+      expect(messages[0].compactionSummary?.summary).toBeUndefined()
+    })
+
+    it('branchSummary → system + branchSummary 字段', () => {
+      const raw = [
+        { role: 'branchSummary', summary: '分支摘要', fromId: 'msg-abc', timestamp: 456 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(1)
+      const m = messages[0]
+      expect(m.role).toBe('system')
+      expect(m.content).toBe('分支摘要')
+      expect(m.branchSummary).toEqual({ summary: '分支摘要', fromId: 'msg-abc', timestamp: 456 })
+    })
+
+    it('branchSummary 字段缺失时 content fallback 为空字符串', () => {
+      const raw = [{ role: 'branchSummary', timestamp: 200 }]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].content).toBe('')
+      expect(messages[0].branchSummary?.summary).toBeUndefined()
+    })
+
+    it('compactionSummary/branchSummary display 未设（保留显示）', () => {
+      const raw = [
+        { role: 'compactionSummary', summary: '压缩', timestamp: 100 },
+        { role: 'branchSummary', summary: '分支', timestamp: 200 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages[0].display).toBeUndefined()
+      expect(messages[1].display).toBeUndefined()
+    })
+
+    it('混合 user/assistant/compactionSummary 顺序不乱', () => {
+      const raw = [
+        { role: 'user', content: [{ type: 'text', text: '问题' }], timestamp: 100 },
+        { role: 'compactionSummary', summary: '压缩摘要', timestamp: 200 },
+        { role: 'assistant', content: [{ type: 'text', text: '回答' }], timestamp: 300 },
+      ]
+      const messages = convertPiHistory(raw)
+      expect(messages).toHaveLength(3)
+      expect(messages[0].role).toBe('user')
+      expect(messages[1].role).toBe('system')
+      expect(messages[1].compactionSummary).toBeDefined()
+      expect(messages[2].role).toBe('assistant')
+    })
+  })
 })

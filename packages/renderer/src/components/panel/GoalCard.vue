@@ -279,8 +279,11 @@ function resolveFillClass(severity: 'ok' | 'warn' | 'danger' | undefined, ratio:
 
 /**
  * 从 card GuiComponent 的 stats-line items 推断 status（liveStatus 缺失时的回退）。
- * goal extension buildGoalCard 的 stats-line 含 status 项（label='Status' 或 icon 标记），
- * 找 value 含 blocked/paused/complete 等关键词的 item。找不到回退 'active'。
+ *
+ * 契约依赖：goal extension（@zhushanwen/pi-goal）的 stats-line 输出格式，约定关键词：
+ * blocked/paused/completed。若 extension 改输出语言（如中文「已阻塞」）或改文案，此推断会失配
+ * → fallback 到 'active'。权威 status 应来自 tool result 的结构化字段（非文案解析），
+ * 此函数是 widget 实时字段的容错补充。
  */
 function inferStatusFromGui(gui: GuiComponent | undefined): GoalLiveStatus {
   if (!gui || gui.type !== 'card') return 'active'

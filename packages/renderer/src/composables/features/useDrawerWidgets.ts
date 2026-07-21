@@ -32,15 +32,23 @@ function truncateLines(lines: string[]): string[] {
   return lines.slice(lines.length - WIDGET_MAX_LINES)
 }
 
+/**
+ * widgetKey → tab 的启发式匹配关键字。
+ *
+ * 注意：这是启发式 fallback，不是 SSOT。ExtensionRegistry 已截走已知 extension（goal/todo 等）
+ * 的 widget，这里只处理未被 registry 认领的 widgetKey。新增 extension 若 widgetKey 含这些关键字
+ * 会被误归对应 tab——新增 extension 应在 ExtensionRegistry 注册精确 widgetKey，不依赖此 fallback。
+ */
+const TERMINAL_KEYWORDS = ['terminal', 'shell', 'console', 'bash'] as const
+const BROWSER_KEYWORDS = ['browser', 'preview'] as const
+const BROWSER_EXACT = 'web' as const
+const BROWSER_PREFIX = 'webview' as const
+
 /** 按 widgetKey 启发式归一化到 terminal/browser tab，未匹配返回 null（由调用方决定兜底） */
 function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
   const k = key.toLowerCase()
-  if (k.includes('terminal') || k.includes('shell') || k.includes('console') || k.includes('bash')) {
-    return 'terminal'
-  }
-  if (k.includes('browser') || k === 'web' || k.startsWith('webview') || k.includes('preview')) {
-    return 'browser'
-  }
+  if (TERMINAL_KEYWORDS.some((kw) => k.includes(kw))) return 'terminal'
+  if (BROWSER_KEYWORDS.some((kw) => k.includes(kw)) || k === BROWSER_EXACT || k.startsWith(BROWSER_PREFIX)) return 'browser'
   return null
 }
 

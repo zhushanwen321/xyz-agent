@@ -46,7 +46,7 @@ function mapEntriesToPiMessages(entries: unknown[]): unknown[] {
           customType: e.customType,
           content: typeof content === 'string' ? content : '',
           details: e.details,
-          display: e.display as boolean | undefined,
+          display: typeof e.display === 'boolean' ? e.display : undefined,
           timestamp: e.timestamp ? new Date(e.timestamp as string).getTime() : Date.now(),
         }
       }

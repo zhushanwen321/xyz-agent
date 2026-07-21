@@ -52,7 +52,7 @@ import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processo
 import { commitMessages } from './chat-mutations'
 import { truncateToolCall } from '@/utils/truncate-tool-output'
 import { useTasksStore } from './tasks'
-import type { TodoItem } from './tasks'
+import { isTodoItem } from './tasks-readers'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import i18n from '@/i18n'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
@@ -204,7 +204,7 @@ function routeToolResultToTasks(
   if (toolName === 'todo') {
     const rawTodos = details['todos']
     if (Array.isArray(rawTodos)) {
-      const todos = rawTodos.filter(isTodoItem) as TodoItem[]
+      const todos = rawTodos.filter(isTodoItem)
       if (todos.length > 0) tasksStore.setTodos(sid, todos)
     }
   }
@@ -216,18 +216,6 @@ function routeToolResultToTasks(
   }
 
   openTasksDrawerOnFirstData(sid, hadDataBefore)
-}
-
-/** details.todos 元素类型守卫（容错：过滤掉非合法结构） */
-function isTodoItem(v: unknown): v is TodoItem {
-  if (!v || typeof v !== 'object') return false
-  const o = v as Record<string, unknown>
-  return (
-    typeof o['id'] === 'number' &&
-    typeof o['text'] === 'string' &&
-    typeof o['status'] === 'string' &&
-    ['pending', 'in_progress', 'completed', 'cancelled'].includes(o['status'] as string)
-  )
 }
 
 /**
@@ -538,6 +526,8 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const details = readRecord(payload, 'details')
     // display 来自 event-adapter.ts 的 custom message 分支（payload.display，~line 509 透传）。
     // FR-2 依赖 event-adapter 已透传；extension 声明 display:false 的 context 消息据此在渲染层隐藏。
+    // display 不能用 readBool（缺失时返回 false），需三态保留：
+    // true/false 显式透传，undefined 安全保留显示（!== false 即显示，ADR-0035 决策点 3）。
     const display = payload['display'] === true || payload['display'] === false ? payload['display'] : undefined
     const prev = messages.value.get(sid) ?? []
     // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）
@@ -704,9 +694,4 @@ export function dispatchMessageEvent(
   // 无 string index signature）。handler 内部统一用 readString 等安全窄化（见上方注释），
   // 不依赖 index signature，故 cast 到 Record<string, unknown> 是安全的。
   if (handler) handler(ctx, sessionId, msg.payload as Record<string, unknown>)
-}
-
-/** 注册表是否覆盖某 type（测试可断言完整性，防新增 message.* 漏注册） */
-export function hasMessageEffect(type: ServerMessageType): boolean {
-  return type in messageEffects
 }
