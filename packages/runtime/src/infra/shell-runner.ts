@@ -7,8 +7,11 @@
  * 注入：构造函数 `{ spawn }`，production 由 index.ts 传真实 spawn，测试传 mock spawn。
  * 此模式让 ShellRunner 单测无需真 spawn —— vi.doMock('node:child_process') 后把 mock 注入。
  *
- * 关键时序处理（SR-3 timeout）：
- * - timeout 到期 → child.kill('SIGTERM') + 设 `timedOut=true` 标记 + 启动 reject。
+ * 关键时序处理（SR-3 timeout + escalation）：
+ * - timeout 到期 → child.kill('SIGTERM') + 设 `timedOut=true` 标记 + 启动 reject +
+ *   启动 escalation timer（ESCALATION_DELAY_MS）。
+ * - escalation：SIGTERM 后 5s 仍未 close 则 SIGKILL（防脚本 trap 忽略 SIGTERM / npm install
+ *   子进程不在同一进程组导致孤儿进程）。
  * - 之后 child 必然 emit 'close'（被 kill 的进程会发 exit+close）—— 若不标记，close handler
  *   会 resolve 一个已 reject 的 promise（无效但易混淆）。故 close handler 先判 timedOut，
  *   已超时则不 resolve（保留 timeout reject）。
@@ -23,6 +26,14 @@ import type { IShellRunner, ShellRunnerExecuteOptions, ShellRunnerResult, SpawnF
 
 /** 默认超时 ms。setup-worktree.sh 通常含 npm install，给 2 分钟兜底。 */
 const DEFAULT_TIMEOUT_MS = 120_000
+
+/**
+ * SIGTERM 后等待 SIGKILL 的升级延迟。
+ * SIGTERM 可被脚本捕获/忽略（trap），npm install 子进程可能不在同一进程组——
+ * 若 SIGTERM 后子进程不退出会变孤儿。给 5s 缓冲让 graceful shutdown 跑完，
+ * 仍未 close 则 SIGKILL 强制终止。
+ */
+const ESCALATION_DELAY_MS = 5000
 
 /**
  * ShellRunner infra 适配器。spawn 经依赖注入，可替换为 mock 做单测。
@@ -53,7 +64,9 @@ export class ShellRunner implements IShellRunner {
     let stdout = ''
     let stderr = ''
     let timedOut = false
+    let closed = false
     let timer: NodeJS.Timeout | undefined
+    let escalationTimer: NodeJS.Timeout | undefined
 
     return new Promise<ShellRunnerResult>((resolve, reject) => {
       const onStdoutData = (chunk: Buffer | string): void => {
@@ -70,8 +83,13 @@ export class ShellRunner implements IShellRunner {
           for (const line of splitLines(text)) onOutput(line, 'stderr')
         }
       }
-      const onClose = (exitCode: number | null): void => {
+      const cleanupTimers = (): void => {
         if (timer) clearTimeout(timer)
+        if (escalationTimer) clearTimeout(escalationTimer)
+      }
+      const onClose = (exitCode: number | null): void => {
+        closed = true
+        cleanupTimers()
         // timeout 路径已 reject；后续 close 不再 resolve（保留 timeout 语义，避免 SR-3 失败）。
         if (timedOut) return
         child.stdout.removeListener('data', onStdoutData)
@@ -79,7 +97,7 @@ export class ShellRunner implements IShellRunner {
         resolve({ exitCode: exitCode ?? 0, stdout, stderr })
       }
       const onError = (err: NodeJS.ErrnoException): void => {
-        if (timer) clearTimeout(timer)
+        cleanupTimers()
         if (timedOut) return
         child.stdout.removeListener('data', onStdoutData)
         child.stderr.removeListener('data', onStderrData)
@@ -100,6 +118,10 @@ export class ShellRunner implements IShellRunner {
         timer = setTimeout(() => {
           timedOut = true
           child.kill('SIGTERM')
+          // escalation：SIGTERM 后 5s 仍未 close 则 SIGKILL（防 SIGTERM 被捕获/忽略导致孤儿进程）
+          escalationTimer = setTimeout(() => {
+            if (!closed) child.kill('SIGKILL')
+          }, ESCALATION_DELAY_MS)
           reject(new ShellRunnerError('timeout', `脚本执行超时（${timeout}ms）: ${scriptPath}`))
         }, timeout)
       }

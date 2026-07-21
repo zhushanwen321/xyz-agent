@@ -75,13 +75,30 @@ export type ConnectionStatus =
 function routeInbound(msg: ServerMessage): void {
   if (msg.id) {
     if (msg.type === 'error') {
-      // type==='error' 已窄化 payload 为 error envelope（含 code + message）。
+      // type==='error' 已窄化 payload 为 error envelope（含 code + message + 可选 details）。
       // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，
       // 如 out_of_cwd / permission_denied / timeout）。此前只透传 message 丢了 code。
-      const payload = msg.payload as { code?: string; message?: string }
+      // R2：details.detail 展开到 reject 的 Error 上——
+      // - worktree handler 把 WORKTREE_EXISTS 的 cwd（string）放 detail；
+      // - 把 SETUP_FAILED/GIT_FAILED 的 { exitCode, stderr } 放 detail。
+      // 不展开则 CreateWorktreeModal error 态读不到 stderr、exists 态「直接开始」读不到 cwd。
+      const payload = msg.payload as {
+        code?: string
+        message?: string
+        details?: { detail?: unknown }
+      }
       const message = typeof payload.message === 'string' ? payload.message : 'request failed'
       const code = typeof payload.code === 'string' ? payload.code : 'unknown'
-      pending.reject(msg.id, Object.assign(new Error(message), { code }))
+      const enriched: Record<string, unknown> = { code }
+      const d = payload.details?.detail
+      if (typeof d === 'string') {
+        // 字符串 detail（如 WORKTREE_EXISTS 的 cwd）直接作 cwd 字段
+        enriched.cwd = d
+      } else if (d && typeof d === 'object') {
+        // 对象 detail（如 { exitCode, stderr }）展开到 Error 上
+        Object.assign(enriched, d)
+      }
+      pending.reject(msg.id, Object.assign(new Error(message), enriched))
     } else {
       pending.resolve(msg.id, msg.payload)
     }

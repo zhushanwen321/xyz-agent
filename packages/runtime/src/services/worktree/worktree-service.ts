@@ -44,21 +44,26 @@ const SETUP_TIMEOUT_MS = 120_000
 /** 主分支 fallback（origin/main ref 不存在时用本地 main）。 */
 const LOCAL_MAIN = 'main'
 
+/**
+ * 非法分支名规则（与前端 CreateWorktreeModal.INVALID_BRANCH_REGEX 一致 + 反斜杠）。
+ * runtime 是安全边界，前端校验只是 UX——此处必须独立校验防 Windows 路径遍历
+ * （branch=`..\\..\\evil` → dirName 保留反斜杠 → join 解析到 wsRoot 外）。
+ * 匹配任一即非法：以 . 或 - 开头、含 .. / ~ / ^ / : / 空格 / 反斜杠。
+ */
+const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:]|\s|\\)/
+
 export class WorktreeService implements IWorktreeService {
   constructor(private deps: WorktreeServiceDeps) {}
 
   async create(params: WorktreeCreateParams): Promise<WorktreeCreateResult> {
     const { branch, baseBranch = 'origin/main', workspaceHint } = params
 
-    // 1. 检测 .bare workspace 结构
-    const detector = new WorkspaceDetector({
-      statSync: (p) => this.deps.fs.existsSync(p)
-        ? { isDirectory: () => true }
-        : (() => { const e = new Error('not found') as NodeJS.ErrnoException; e.code = 'ENOENT'; throw e })(),
-    })
-    // 注：上面的 detector 包装层把 existsSync 适配成 statSync 语义。
-    // 但测试 WS-2 期望 isBareMode=false 时 existsSync 全返回 false（包括 .bare），
-    // WS-1/3 期望 barePath 的 existsSync 返回 true。这里直接复用注入的 fs。
+    // 0. 分支名校验（安全边界，防 Windows 路径遍历）。前端校验只是 UX，runtime 必须独立校验。
+    if (INVALID_BRANCH_REGEX.test(branch)) {
+      throw Object.assign(new Error(`非法分支名: ${branch}`), { code: 'INVALID_BRANCH' })
+    }
+
+    // 1. 检测 .bare workspace 结构（detectBare 内部复用 WorkspaceDetector）
     const { isBareMode, wsRoot, barePath } = this.detectBare(workspaceHint)
 
     if (!isBareMode) {
@@ -80,10 +85,16 @@ export class WorktreeService implements IWorktreeService {
     // 3. base 解析
     const baseRef = await this.resolveBaseRef(barePath, baseBranch, workspaceHint)
 
-    // 4. git worktree add
-    await this.deps.gitExecutor.exec(barePath, 'worktree', [
+    // 4. git worktree add（exitCode 非 0 → 抛 GIT_FAILED + detail，避免静默吞 stderr 后跑 setup 到未创建目录）
+    const addResult = await this.deps.gitExecutor.exec(barePath, 'worktree', [
       'add', newWtPath, '-b', branch, baseRef,
     ])
+    if (addResult.exitCode !== 0) {
+      throw Object.assign(new Error(`git worktree add 失败: ${addResult.stderr}`), {
+        code: 'GIT_FAILED',
+        detail: { exitCode: addResult.exitCode, stderr: addResult.stderr },
+      })
+    }
 
     // 5. setup 脚本（可选，不存在跳过）
     const setupScriptPath = join(barePath, 'custom-hooks', 'setup-worktree.sh')

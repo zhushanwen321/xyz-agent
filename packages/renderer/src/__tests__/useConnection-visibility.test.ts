@@ -43,13 +43,20 @@ vi.mock('@/lib/ipc', () => ({
 }))
 
 // ── transport / pending / events mock：init 安装分发器时需要 ─────────
+// transport.on 捕获传入的 routeInbound，测试直接调它模拟入站消息。
+let transportListener: ((msg: unknown) => void) | null = null
 vi.mock('@/api/transport', () => ({
-  on: vi.fn().mockReturnValue(() => {}),
+  on: (cb: (msg: unknown) => void) => {
+    transportListener = cb
+    return () => { transportListener = null }
+  },
 }))
+const mockPendingResolve = vi.fn()
+const mockPendingReject = vi.fn()
 vi.mock('@/api/pending', () => ({
   rejectAll: vi.fn(),
-  resolve: vi.fn(),
-  reject: vi.fn(),
+  resolve: (...args: unknown[]) => mockPendingResolve(...args),
+  reject: (...args: unknown[]) => mockPendingReject(...args),
 }))
 vi.mock('@/api/events', () => ({
   dispatchSession: vi.fn(),
@@ -142,5 +149,86 @@ describe('useConnection 可见性切换主动重连（W4）', () => {
       configurable: true,
       get: () => 'visible',
     })
+  })
+})
+
+describe('useConnection error envelope details 透传（R2）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockStateRef = ref('connected')
+    transportListener = null
+  })
+
+  it('error envelope details.detail 为对象 → exitCode/stderr 展开到 reject Error', async () => {
+    const { init, teardown } = useConnection()
+    await init()
+    expect(transportListener).not.toBeNull()
+
+    // 模拟 runtime worktree handler 发来的 error envelope：
+    // code=SETUP_FAILED, message, details.detail={ exitCode, stderr }
+    transportListener!({
+      type: 'error',
+      id: 'req-1',
+      payload: {
+        code: 'SETUP_FAILED',
+        message: 'setup 脚本失败',
+        details: { detail: { exitCode: 2, stderr: 'npm install failed' } },
+      },
+    })
+
+    expect(mockPendingReject).toHaveBeenCalledTimes(1)
+    const [rejectedId, err] = mockPendingReject.mock.calls[0]
+    expect(rejectedId).toBe('req-1')
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe('setup 脚本失败')
+    // code + 展开的 exitCode/stderr 都在 Error 上
+    expect((err as { code: string }).code).toBe('SETUP_FAILED')
+    expect((err as { exitCode: number }).exitCode).toBe(2)
+    expect((err as { stderr: string }).stderr).toBe('npm install failed')
+
+    teardown()
+  })
+
+  it('error envelope details.detail 为字符串 → 作 cwd 字段（WORKTREE_EXISTS 场景）', async () => {
+    const { init, teardown } = useConnection()
+    await init()
+
+    transportListener!({
+      type: 'error',
+      id: 'req-2',
+      payload: {
+        code: 'WORKTREE_EXISTS',
+        message: 'worktree 目录已存在',
+        details: { detail: '/ws/feat-existing' },
+      },
+    })
+
+    expect(mockPendingReject).toHaveBeenCalledTimes(1)
+    const [, err] = mockPendingReject.mock.calls[0]
+    expect((err as { code: string }).code).toBe('WORKTREE_EXISTS')
+    // 字符串 detail → cwd 字段（CreateWorktreeModal exists 态「直接开始」读此 cwd）
+    expect((err as { cwd: string }).cwd).toBe('/ws/feat-existing')
+
+    teardown()
+  })
+
+  it('error envelope 无 details → 只透传 code（保持向后兼容）', async () => {
+    const { init, teardown } = useConnection()
+    await init()
+
+    transportListener!({
+      type: 'error',
+      id: 'req-3',
+      payload: { code: 'out_of_cwd', message: 'cwd 不存在' },
+    })
+
+    expect(mockPendingReject).toHaveBeenCalledTimes(1)
+    const [, err] = mockPendingReject.mock.calls[0]
+    expect((err as { code: string }).code).toBe('out_of_cwd')
+    expect((err as Error).message).toBe('cwd 不存在')
+    // 无 details.detail → 不附加 cwd/exitCode/stderr
+    expect((err as { cwd?: string }).cwd).toBeUndefined()
+
+    teardown()
   })
 })

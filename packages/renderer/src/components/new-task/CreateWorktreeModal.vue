@@ -20,7 +20,7 @@
  *
  * 依赖：useNewTaskFlow（gitInfo.branch 回灌 base current 文案）、worktreeApi（RPC）。
  */
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Check, AlertTriangle, ChevronDown, ChevronRight } from '@lucide/vue'
 import {
@@ -231,11 +231,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearSuccessTimer()
-})
-
-// 外部关闭（父级切 state 卸载组件）时清理定时器
-watch(isOpen, (open) => {
-  if (!open) clearSuccessTimer()
 })
 </script>
 

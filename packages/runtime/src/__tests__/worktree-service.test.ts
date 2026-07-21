@@ -220,6 +220,42 @@ describe('ShellRunner', () => {
 
     await expect(promise).rejects.toMatchObject({ name: 'ShellRunnerError', code: 'timeout' })
   })
+
+  // SR-4: SIGTERM 后未 close → SIGKILL 升级（防孤儿进程）
+  it('SR-4: 超时后先 SIGTERM，5s 未 close 则升级 SIGKILL', async () => {
+    vi.useFakeTimers()
+    const fake = makeFakeChild()
+    // 记录收到的 signal 序列（不自动 close，模拟脚本 trap 忽略 SIGTERM）
+    const signals: string[] = []
+    fake.kill = (signal?: string) => {
+      if (signal) signals.push(signal)
+      fake.killed = true
+      // 不 emit close —— SIGTERM 被忽略，只有 SIGKILL 后才 close（测试手动触发）
+    }
+    spawnMock.mockReturnValue(fake)
+
+    const { spawn } = await import('node:child_process')
+    const runner = new ShellRunner({ spawn: spawn as any })
+
+    const promise = runner.execute({
+      scriptPath: '/hooks/zombie.sh',
+      cwd: '/ws/new',
+      timeout: 5000,
+    })
+
+    // 推进超过 timeout（5000）→ SIGTERM + reject + 启动 escalation timer
+    vi.advanceTimersByTime(5001)
+    await expect(promise).rejects.toMatchObject({ name: 'ShellRunnerError', code: 'timeout' })
+    expect(signals).toContain('SIGTERM')
+    expect(signals).not.toContain('SIGKILL')
+
+    // 推进 escalation 延迟（5000ms）→ 仍未 close → SIGKILL
+    vi.advanceTimersByTime(5000)
+    expect(signals).toContain('SIGKILL')
+
+    // SIGKILL 后子进程 close —— 不应再 resolve/reject（promise 已 reject，close handler 早退）
+    fake.emit('close', 137)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -381,5 +417,40 @@ describe('WorktreeService', () => {
     )
     expect(addCall![2]).toContain('-b')
     expect(addCall![2]).toContain('feat/oauth')
+  })
+
+  // WS-8: 非法分支名（路径遍历风险）→ 抛 INVALID_BRANCH（runtime 安全边界，不依赖前端校验）
+  it('WS-8: 非法分支名抛 INVALID_BRANCH（路径遍历防护）', async () => {
+    existsSyncMock.mockImplementation((p: string) => p === barePath)
+    gitExecutor.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 })
+
+    const service = await makeService()
+    // .. 路径遍历 + 反斜杠（Windows 风险）：runtime 必须独立拦截
+    await expect(
+      service.create({ branch: '..\\..\\evil', workspaceHint: wsRoot }),
+    ).rejects.toMatchObject({ code: 'INVALID_BRANCH' })
+
+    // 校验失败不应触达 git / shell
+    expect(gitExecutor.exec).not.toHaveBeenCalled()
+    expect(shellRunner.execute).not.toHaveBeenCalled()
+  })
+
+  // WS-9: git worktree add 失败（exitCode 非 0）→ 抛 GIT_FAILED + detail（含 exitCode + stderr）
+  it('WS-9: git worktree add exitCode 非 0 抛 GIT_FAILED 含 exitCode 与 stderr', async () => {
+    existsSyncMock.mockImplementation((p: string) => p === barePath)
+    // rev-parse（base 解析）成功；worktree add 失败（exitCode=1 + stderr）
+    gitExecutor.exec.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // rev-parse
+    gitExecutor.exec.mockResolvedValueOnce({ stdout: '', stderr: 'fatal: not a valid object name', exitCode: 1 }) // worktree add
+
+    const service = await makeService()
+    await expect(
+      service.create({ branch: 'feat/a', baseBranch: 'origin/main', workspaceHint: wsRoot }),
+    ).rejects.toMatchObject({
+      code: 'GIT_FAILED',
+      detail: { exitCode: 1, stderr: 'fatal: not a valid object name' },
+    })
+
+    // add 失败不应继续跑 setup 脚本
+    expect(shellRunner.execute).not.toHaveBeenCalled()
   })
 })

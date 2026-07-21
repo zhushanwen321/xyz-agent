@@ -94,11 +94,14 @@ export function useNewTaskFlow() {
   /**
    * gitInfo（UC-7 chip 可见性派生）：从当前 flow 绑定 session 的 gitBranch 派生。
    * 统一延迟 create 后 landing 态无 session → null → branch chip 隐藏（分支切换需已建 session）。
+   *
+   * R1：isBare 从 session.isBareWorkspace 派生（runtime WorkspaceDetector 检测，经
+   * SessionSummary 透出）。Landing.vue 据此渲染 DirSelectPopover「新建 worktree…」动作项。
    */
   const gitInfo: ComputedRef<GitInfo | null> = computed(() => {
     const s = currentSession.value
     if (!s?.gitBranch) return null
-    return { branch: s.gitBranch, isRepo: true }
+    return { branch: s.gitBranch, isRepo: true, isBare: s.isBareWorkspace ?? false }
   })
 
   /**
