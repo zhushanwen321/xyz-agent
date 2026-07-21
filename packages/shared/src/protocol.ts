@@ -25,6 +25,7 @@ export type ClientMessageType =
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
+  | 'config.scanSessionSkills'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'config.setSkillDirs' | 'config.setAgentDirs'
   | 'config.getSystemPrompt' | 'config.setSystemPrompt'
@@ -152,6 +153,9 @@ export interface ClientMessageMap {
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
   'config.setDefaultModel': { provider: string; modelId: string }
   'config.scanSkills': { sources: string[] }
+  // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill（.agents/skills + .xyz-agent/skills）。
+  // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；scanSessionSkills 扫某 cwd 已生效目录。
+  'config.scanSessionSkills': { cwd: string }
   'config.setSkill': { skill: SkillInfo }
   'config.deleteSkill': { skillId: string }
   'config.scanAgents': { sources: string[] }
@@ -245,6 +249,7 @@ export type ServerMessageType =
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
+  | 'config.sessionSkills'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
   | 'config.skillDirs' | 'config.agentDirs'
@@ -494,6 +499,9 @@ export interface ServerMessageMapBase {
   // config.scannedSkills：scanSkills reply（settings-message-handler.ts:69 reply { skills, success: true }）。
   // skills 是扫描发现结果，形状为 ScannedSkillInfo（含 sourceType/alreadyImported），非已加载的 SkillInfo。
   'config.scannedSkills': { skills: ScannedSkillInfo[]; success: boolean }
+  // W2：scanSessionSkills reply（settings-message-handler.ts reply { skills }，不广播，按需 RPC）。
+  // skills 是已加载的 SkillInfo（loadSkills(cwd) 扫描结果），非 ScannedSkillInfo。
+  'config.sessionSkills': { skills: SkillInfo[] }
   // config.scannedAgents：scanAgents reply（settings-message-handler.ts:99 reply { agents, success: true }）。
   // agents 是扫描发现结果，形状为 ScannedAgentInfo（含 sourceType/alreadyImported），非已加载的 AgentInfo。
   'config.scannedAgents': { agents: ScannedAgentInfo[]; success: boolean }
@@ -578,6 +586,7 @@ export interface ReplyPayloadMap {
   'config.getProviders': ServerMessageMap['config.providers']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
+  'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   // 系统提示词配置（W2，FR-4/FR-5）：get/setSystemPrompt reply config.systemPrompt
   //   形状 `{ config, corrupted? }`。
   'config.getSystemPrompt': ServerMessageMap['config.systemPrompt']

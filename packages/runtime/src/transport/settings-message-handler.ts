@@ -71,6 +71,15 @@ export class SettingsMessageHandler {
         this.ctx.broadcastSkillList()
         return true
       }
+      case 'config.scanSessionSkills': {
+        // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill。
+        // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery + 广播全局；
+        // scanSessionSkills 扫某 cwd 的 .agents/skills + .xyz-agent/skills 已生效目录，不广播
+        // （按需 RPC，避免污染全局 config.skills，前端 useProjectSkills 按 cwd key 独立缓存）。
+        const skills = this.ctx.configService.loadSkills(msg.payload.cwd)
+        this.ctx.reply(ws, msg.id, 'config.sessionSkills', { skills })
+        return true
+      }
       case 'config.setSkillDirs': {
         // ADR-0020 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
         this.ctx.configService.setSkillDirs(msg.payload.dirs)

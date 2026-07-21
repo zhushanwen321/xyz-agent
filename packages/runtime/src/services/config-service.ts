@@ -7,7 +7,7 @@
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import {
   SYSTEM_PROMPT_MAX_LENGTH,
@@ -244,14 +244,22 @@ export class ConfigService implements IConfigService {
    * 强制目录靠桥接层重定向注入 pi 原生扫描；可选目录靠 discovery→settings 投影 + argv 注入。
    */
    
-  loadSkills(_projectRoot: string): SkillInfo[] {
+  loadSkills(projectRoot: string): SkillInfo[] {
     // 优先级从高到低的目录列表（pi 实际路径 > 强制项目 > 强制全局 > discovery 可选，靠前覆盖靠后）
     // pi 实际路径 <piAgentDir>/skills 是 pi 重定向后的真实 skill 落点（与 loadAgents 对称）。
+    //
+    // FR-2（cw-2026-07-21-scan-project-agents-skills）：相对路径（FORCED_PROJECT_SKILL_DIR='.xyz-agent/skills'
+    // + discovery.json 的相对路径如 .agents/skills）按 projectRoot resolve 成绝对路径。
+    // 修复现状 bug：原 loadSkills(_projectRoot) 忽略 projectRoot，相对路径按 runtime 进程 cwd
+    // （app.getAppPath/resourcesPath）解析错位 → 扫不到用户项目 skill → landing 浮层看不到项目 skill。
+    // resolve 基准是 projectRoot（用户当前项目 cwd）。
+    const resolveDir = (dir: string): string =>
+      isAbsolute(dir) ? dir : resolve(projectRoot, dir)
     const orderedDirs = [
       join(this.configStore.getPiAgentDir(), 'skills'),
-      FORCED_PROJECT_SKILL_DIR,
+      resolveDir(FORCED_PROJECT_SKILL_DIR),
       forcedGlobalSkillDir(),
-      ...this.configStore.getSkillPaths(),
+      ...this.configStore.getSkillPaths().map(resolveDir),
     ]
 
     // name → 按 priority 收集的所有来源（用于合并去重 + sources badge 链）

@@ -101,3 +101,83 @@ describe('W1: config-service skill/agent 全局强制目录跟随 getConfigDir()
     expect(ids).toContain('env-agent')
   })
 })
+
+// ── W2（cw-2026-07-21-scan-project-agents-skills）：loadSkills(cwd) 相对路径 resolve ──
+// 修复现状 bug：loadSkills(_projectRoot) 忽略 projectRoot 参数，discovery.json 中的相对路径
+// （如 .agents/skills）和 FORCED_PROJECT_SKILL_DIR（.xyz-agent/skills）按 runtime 进程 cwd
+// 解析错位 → 扫不到用户项目 skill → landing 浮层看不到。
+// 修复：相对路径按传入的 projectRoot resolve 扫描。
+describe('W2: loadSkills(cwd) relative-path projectRoot resolution', () => {
+  let w2DataDir: string
+  let w2ProjectDir: string
+  let w2Service: ConfigService
+  let w2SavedEnv: string | undefined
+
+  beforeEach(() => {
+    w2DataDir = mkdtempSync(join(tmpdir(), 'w2-data-'))
+    w2ProjectDir = mkdtempSync(join(tmpdir(), 'w2-proj-'))
+    mkdirSync(join(w2DataDir, 'pi', 'agent'), { recursive: true })
+
+    w2SavedEnv = process.env.XYZ_AGENT_DATA_DIR
+    process.env.XYZ_AGENT_DATA_DIR = w2DataDir
+
+    setModelsPath(join(w2DataDir, 'pi', 'agent', 'models.json'))
+    setSettingsPath(join(w2DataDir, 'pi', 'agent', 'settings.json'))
+    setDiscoveryPath(join(w2DataDir, 'pi', 'agent', 'discovery.json'))
+    refreshModels()
+    invalidateDiscoveryCache()
+
+    w2Service = new ConfigService(w2DataDir, new PiConfigStore())
+  })
+
+  afterEach(() => {
+    if (w2SavedEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR
+    else process.env.XYZ_AGENT_DATA_DIR = w2SavedEnv
+    rmSync(w2DataDir, { recursive: true, force: true })
+    rmSync(w2ProjectDir, { recursive: true, force: true })
+  })
+
+  it('AC-4: discovery 配 .agents/skills 相对路径 → loadSkills(projectRoot) 扫描 <projectRoot>/.agents/skills', () => {
+    // discovery.json 配 .agents/skills 相对路径（用户现状）
+    writeFileSync(join(w2DataDir, 'pi', 'agent', 'discovery.json'), JSON.stringify({
+      version: 1, skillDirs: ['.agents/skills'], agentDirs: [],
+    }))
+    invalidateDiscoveryCache()
+
+    // 项目目录下放一个 skill（<projectRoot>/.agents/skills/proj-skill/SKILL.md）
+    const projSkillDir = join(w2ProjectDir, '.agents', 'skills', 'proj-skill')
+    mkdirSync(projSkillDir, { recursive: true })
+    writeFileSync(join(projSkillDir, 'SKILL.md'), '---\ndescription: proj skill\n---\nbody')
+
+    // 传 projectRoot=w2ProjectDir，应扫到项目 skill
+    const skills = w2Service.loadSkills(w2ProjectDir)
+    const names = skills.map((s) => s.name)
+
+    // 现状 bug：loadSkills 忽略 projectRoot，相对路径按 runtime 进程 cwd 解析 → 扫不到 → 红灯
+    expect(names).toContain('proj-skill')
+  })
+
+  it('AC-4 补充：FORCED_PROJECT_SKILL_DIR (.xyz-agent/skills) 也按 projectRoot resolve', () => {
+    // 项目目录下放 .xyz-agent/skills/forced-skill/SKILL.md（不配 discovery，靠强制目录）
+    const forcedDir = join(w2ProjectDir, '.xyz-agent', 'skills', 'forced-skill')
+    mkdirSync(forcedDir, { recursive: true })
+    writeFileSync(join(forcedDir, 'SKILL.md'), '---\ndescription: forced skill\n---\nbody')
+
+    const skills = w2Service.loadSkills(w2ProjectDir)
+    const names = skills.map((s) => s.name)
+
+    expect(names).toContain('forced-skill')
+  })
+
+  it('相对路径在 projectRoot 下不存在时不崩（扫不到但返回空数组或仅全局）', () => {
+    writeFileSync(join(w2DataDir, 'pi', 'agent', 'discovery.json'), JSON.stringify({
+      version: 1, skillDirs: ['.agents/skills'], agentDirs: [],
+    }))
+    invalidateDiscoveryCache()
+
+    // projectRoot 下无 .agents/skills 目录
+    const skills = w2Service.loadSkills(w2ProjectDir)
+    // 不崩 + 不含项目 skill（可能含全局 skill，这里只断言不含 proj-skill）
+    expect(skills.map((s) => s.name)).not.toContain('proj-skill')
+  })
+})
