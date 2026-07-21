@@ -61,10 +61,13 @@ export function useExtensionUI(
     }
     if (!sid) return
     // UI 请求入队（经 filter 过滤，避免双消费者重复入队）
+    // M1 竞态修复：handler 闭包捕获 subscribe 时的 sid（参数），调 updateFor(sid, ...)
+    // 写入订阅时 sid 的分区。即使 session 切换后退订是异步的（watch flush:pre），
+    // 旧 sid 的迟到消息也只写旧 sid 分区，不污染新 sid 分区。
     unsubFns.push(
       onUIRequest(sid, (req) => {
         if (filter && !filter(req)) return
-        queueState.update((queue) => {
+        queueState.updateFor(sid, (queue) => {
           queue.push({ ...req, receivedAt: Date.now() })
         })
       }),
@@ -73,9 +76,10 @@ export function useExtensionUI(
     // 同时已向 pi 发默认响应（confirm→false，其余→null）。前端必须出队超时的请求，
     // 否则对话框残留，用户点击会发送过期的 ui_response。
     // 按 requestId 精确移除：pi 无串行保证，队列可能同时有多个 pending，超时的不一定在队首。
+    // M1 竞态修复：同上，updateFor(sid, ...) 用订阅时 sid。
     unsubFns.push(
       onUITimeout(sid, (requestId) => {
-        queueState.update((queue) => {
+        queueState.updateFor(sid, (queue) => {
           const idx = queue.findIndex(r => r.requestId === requestId)
           if (idx !== -1) queue.splice(idx, 1)
         })
@@ -86,9 +90,11 @@ export function useExtensionUI(
     const token = ++pendingReqToken
     getPendingRequests(sid)
       .then((pendingRequests) => {
-        // W3-1：版本不匹配说明已切走，丢弃旧 session 的 stale 响应，避免误推到新 session 的 queue
+        // W3-1：版本不匹配说明已切走，丢弃旧 session 的 stale 响应，避免误推到新 session 的 queue。
+        // M1 竞态修复：updateFor(sid, ...) 用订阅时 sid——与 pendingReqToken 守卫双重保险，
+        // 即使 token 不匹配（已切走），写入的也是旧 sid 分区，不污染新 sid。
         if (token !== pendingReqToken) return
-        queueState.update((queue) => {
+        queueState.updateFor(sid, (queue) => {
           for (const req of pendingRequests) {
             if (filter && !filter(req)) continue
             queue.push({ ...req, receivedAt: req.receivedAt ?? Date.now() })
