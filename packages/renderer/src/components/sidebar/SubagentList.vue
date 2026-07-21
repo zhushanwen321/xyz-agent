@@ -5,7 +5,7 @@
     点击卡片 → emit('select', subagentId)，由父组件切换 Panel sessionId。
     空态展示提示文案。
   -->
-  <div class="flex min-h-0 flex-col" data-testid="subagent-list">
+  <div class="flex h-full min-h-0 flex-col" data-testid="subagent-list">
     <!-- 加载态（M1：loadSubagents 在途） -->
     <div
       v-if="isLoading"

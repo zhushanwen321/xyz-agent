@@ -79,7 +79,7 @@
       />
 
       <!-- 子视图区：会话列表 / 文件视图 / subagent 列表 -->
-      <div class="mt-1 min-h-0 flex-1">
+      <div class="mt-1 min-h-0 flex-1 overflow-hidden">
         <template v-if="sidebar.activeTab === 'sessions'">
           <!-- S5：加载失败态 + 重试（session.listLoadError 非空时） -->
           <div

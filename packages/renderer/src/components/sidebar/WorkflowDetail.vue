@@ -5,7 +5,7 @@
     点击 agent call → emit('select-agent-call', sessionId)，由父组件切 Panel。
     点击 ← 返回 → emit('back')，回视图 1。
   -->
-  <div class="flex min-h-0 flex-col" data-testid="workflow-detail">
+  <div class="flex h-full min-h-0 flex-col" data-testid="workflow-detail">
     <!-- header：返回按钮 + scriptName + slug -->
     <div class="flex items-center gap-2 px-2 py-2">
       <Button
