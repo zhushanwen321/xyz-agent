@@ -36,6 +36,7 @@ import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
+import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
@@ -409,6 +410,10 @@ export function useSidebar() {
     useChat().disposeSession(id)
     // W3：清除该 session 的 derivedStatus/sessionDigest 缓存，避免已删 session 的 computed 残留
     invalidateStatusCache(id)
+    // ADR-0036 W5：触发所有 useSessionScopedState 实例清理该 sid 的 Map 分区，
+    // 防已销毁 session 的 per-session 状态条目在 Map 中积累导致内存泄漏（AC-8）。
+    // 与 invalidateStatusCache 并列——两者同构（都是单例 composable 的 per-session Map 分区释放）。
+    triggerSessionCleanups(id)
     if (wasActive) {
       const next = session.list[0]
       if (next) {
