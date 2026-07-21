@@ -138,9 +138,12 @@ const state = useSessionScopedState(
 )
 
 state.current.value  // 当前 sid 分区（null sid 返回默认实例不写 Map）
-state.update(s => { s.count++ })  // 操作当前 sid 分区（null sid no-op）
+state.update(s => { s.count++ })  // 操作当前 sid 分区（null sid no-op）。用于 UI 操作（用户主动操作当前 session）
+state.updateFor(sid, s => { s.count++ })  // 显式指定分区，不读 sid.value 实时值。用于 WS handler（消息属于固定 sid）
 state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 deleteSession 编排）
 ```
+
+**WS handler 必须用 `updateFor` 不用 `update`**：WS handler 闭包捕获订阅时 sid，调 `updateFor(capturedSid, ...)`。即使 session 切换的退订是异步的（watch flush:pre），旧 sid 的迟到消息也只写旧 sid 分区，不污染新 sid（结构性消除竞态，M1 修复）。UI handler（用户主动操作）用 `update`（读实时 sid 正确）。useExtensionUI / SideDrawer 已遵守此契约。
 
 #### session 销毁 → cleanup 自动触发
 

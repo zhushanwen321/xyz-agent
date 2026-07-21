@@ -106,7 +106,19 @@ xyz-agent 前端有大量 per-session 状态（聊天消息、ask-user 队列、
 1. ~~`useSessionEvents.ts` 是否真要迁移~~ → **已决（D3）：不迁移**
 2. ~~ESLint 规则的检测精度~~ → **已决（D4）：放弃 ESLint 规则**
 3. **session 销毁时机（何时调 cleanup）** —— 留待 plan 阶段定义调用点 deliverable（FR-4 约束）
-4. SideDrawer 切 sid 时缓冲清空时序与 useSessionEvents 退订时序的竞态（AC-4 约束）
+4. ~~SideDrawer 切 sid 时缓冲清空时序与 useSessionEvents 退订时序的竞态（AC-4 约束）~~ → **已修复**：useSessionEvents 把订阅时 sid 传给 handler（`(msg, sid) => void`），SideDrawer handler 调 `drawerState.updateFor(sid, ...)` 写「消息所属 sid」分区。从结构上消除竞态（非时序依赖）。commit bf1fffc + 19ea684f。
+
+## Addendum：M1/M2 竞态修复（post-review）
+
+review 阶段发现 M1 竞态（切 sid 的 WS 消息写入）+ M2 测试假绿，曾作为 known risk 留后续。后补充修复（commit 49b2e577 + bf1fffc + 19ea684f）：
+
+- **useSessionScopedState 工厂加 `updateFor(targetSid, updater)`**：显式指定分区，不读 `sid.value` 实时值
+- **useExtensionUI handler**（onUIRequest/onUITimeout/getPendingRequests）闭包捕获 subscribe 参数 sid，调 `updateFor(sid, ...)`
+- **useSessionEvents 接口扩展**：`onMessage` handler 签名加第二参数 sid（订阅时捕获），分发时透传。其他消费者（useGitStatus/CommandPopover/ContextCapacityPopover）handler 参数更少，TS 允许赋值，无需改
+- **SideDrawer handler** 加 sid 参数，调 `drawerState.updateFor(sid, ...)`
+- **SideDrawer.test.ts mock** 从 `sidRef.value` 实时匹配改为注册时 sid 快照，对齐真实 useSessionEvents 行为。M2 假绿确证已修（临时验证脚本确认 handler 被真触发）
+
+核心思路：**隔离靠结构（handler 捕获订阅时 sid + updateFor 显式分区），不靠时序（watch flush 退订）**。即使 flush:pre 异步退订窗口内有旧 sid 迟到消息，也只写旧 sid 分区。
 
 ## References
 
