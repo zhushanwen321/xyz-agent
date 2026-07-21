@@ -15,12 +15,49 @@
  * 运行：npx vitest run src/__tests__/composables/message-turns.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { expandAssistantBlocks } from '@/composables/logic/messageTurns'
+import { expandAssistantBlocks, filterDisplayableMessages } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
 
 function makeMsg(over: Partial<Message> = {}): Message {
   return { id: 'a1', role: 'assistant', content: '', status: 'complete', timestamp: Date.now(), ...over }
 }
+
+describe('filterDisplayableMessages —— 过滤隐藏的 custom message', () => {
+  // [HISTORICAL] goal/todo extension 注入 <goal_context>/<todo_context> 上下文提示（customType:
+  // goal-context/goal-context-exceeded/goal-history/todo-context），声明 display:false 但 message-converter
+  // 转 system 时丢了 display 字段，renderer 也没过滤 → 对话流显示机器指令噪声。filterDisplayableMessages
+  // 在渲染层过滤，状态由 Tasks tab 展示，对话流不重复。
+  it('过滤 HIDDEN_CUSTOM_TYPES 的 system 消息（goal-context / todo-context 等）', () => {
+    const messages: Message[] = [
+      makeMsg({ id: 'u1', role: 'user', content: '开始' }),
+      makeMsg({ id: 's1', role: 'system', customType: 'goal-context', content: '<goal_context>...' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: '好的' }),
+      makeMsg({ id: 's2', role: 'system', customType: 'todo-context', content: '<todo_context>...' }),
+      makeMsg({ id: 's3', role: 'system', customType: 'goal-context-exceeded', content: '超限' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
+  })
+
+  it('保留普通 system 消息（非 goal/todo context，如 compactionSummary）', () => {
+    const messages: Message[] = [
+      makeMsg({ id: 's1', role: 'system', customType: 'compactionSummary', content: '压缩' }),
+      makeMsg({ id: 's2', role: 'system', customType: 'subagent-bg-notify', content: '子代理完成' }),
+      makeMsg({ id: 's3', role: 'system', customType: 'goal-context', content: '应被过滤' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['s1', 's2'])
+  })
+
+  it('customType 为 undefined 的消息保留（普通 user/assistant 无 customType）', () => {
+    const messages: Message[] = [
+      makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'hello' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
+  })
+})
 
 describe('expandAssistantBlocks —— 单条 assistant 内部块按时序展开', () => {
   it('B1: 有 contentBlocks → 严格按其顺序输出（thinking→text→tool→thinking 交替）', () => {

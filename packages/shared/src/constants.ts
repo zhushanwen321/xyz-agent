@@ -23,6 +23,23 @@ export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['subagent'])
  *  这些 tool call 在 Block.vue 渲染时直接跳过（v-if=false），不产生 trace block。 */
 export const HIDDEN_TOOL_NAMES: ReadonlySet<string> = new Set(['todo', 'goal_control'])
 
+/** 应在对话流中隐藏的 custom message customType（pi-goal/pi-todo extension 注入的上下文提示，
+ *  对 AI 有用但对用户是噪声——状态已由 SideDrawer Tasks tab 展示，对话流不重复）。
+ *
+ *  这些 extension 经 pi sendMessage({customType, content, display:false}) 注入。display:false 是
+ *  extension 声明「不展示」的意图，但 message-converter 转 system 消息时丢了 display 字段，
+ *  renderer 也没根据 display 过滤。本集合在前端渲染层（MessageStream）显式过滤，与 display 语义对齐。
+ *
+ *  值与 extension 源码的 customType 字面量一致：
+ *  - pi-goal: 'goal-context'（before_agent_start 注入）/ 'goal-context-exceeded'（预算超限）/ 'goal-history'
+ *  - pi-todo: 'todo-context'（beforeAgentStart 注入） */
+export const HIDDEN_CUSTOM_TYPES: ReadonlySet<string> = new Set([
+  'goal-context',
+  'goal-context-exceeded',
+  'goal-history',
+  'todo-context',
+])
+
 /** pi-subagent-workflow 扩展的 workflow tool 名集合（识别 workflow 调用用，SSOT）。
  *  workflow 扩展通过名为 "workflow" 的 tool 执行 workflow run，event-interpreter 据此
  *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */
