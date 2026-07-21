@@ -194,9 +194,10 @@ describe('W1 registerSessionCleanup / triggerSessionCleanups 注册机制', () =
     const sid = ref<string | null>('doomed')
     const scope = effectScope()
     scope.run(() => {
-      useSessionScopedState(sid, init)
+      // 访问 current 触发惰性 init，建立 'doomed' 分区（惰性 init 契约：不访问不 init）
+      const state = useSessionScopedState(sid, init)
+      void state.current.value
     })
-    // 先访问触发 init，建立分区
     expect(init).toHaveBeenCalledTimes(1)
 
     scope.stop()
