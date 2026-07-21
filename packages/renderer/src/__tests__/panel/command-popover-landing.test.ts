@@ -1,9 +1,12 @@
 /**
  * CommandPopover landing 态 slash 命令源 单测（L1-L7）。
  *
- * 验证双源切换：session 态用 commandStore（pi get_commands），landing 态（无 session）
- * fallback 到 settingsStore.skills（config.skills 全局扫描）。landing 命令归一化为
- * SessionCommand（补 / 前缀、icon='star'），与 runtime get_commands name 格式对齐。
+ * 验证按 variant 分支：landing 态（variant='landing'）合并 commandStore.getCommands(publicSessionId)
+ * （pi extension 命令）∪ settingsStore.skills（config.skills 全局扫描），skill name 归一化为
+ * /skill:<name>（pi agent-session.ts:1210 要求 /skill: 路由前缀）；session 态（variant='panel'）
+ * 用 commandStore + compact，不并入 settingsStore.skills（配置态/运行态不混淆，ADR-0037）。
+ * [HISTORICAL] 根因回归：原 mount 用 sessionId:undefined 模拟 landing，与现实（composerSid 非空，
+ * 含 publicSessionId 兜底）脱节，测试全绿但 bug 照出。现 mount 用 variant:'landing' + 非空 sessionId。
  *
  * 覆盖三视角：
  * - 构建者（白盒）：items 来源（commandStore vs skills）、归一化字段
@@ -66,17 +69,23 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     document.body.innerHTML = ''
   })
 
-  async function mountLanding(query = '', skills: SkillInfo[] = LANDING_SKILLS): Promise<void> {
+  /** mount landing 态：variant='landing' + 非空 sessionId（模拟 publicSessionId）。
+   *  反映真实运行——Landing.vue:70 composerSid = flow.currentSessionId ?? props.sessionId ??
+   *  sessionStore.publicSessionId，publicSessionId 存在时（model 已配置的常态）非空。
+   *  sessionId 传 undefined 会走不到根因场景（variant 分支替代 sessionId 分支后，
+   *  landing 判定只看 variant，但保留非空 sessionId 确保回归断言有意义）。 */
+  async function mountLanding(query = '', skills: SkillInfo[] = LANDING_SKILLS, sid = 'public-sid'): Promise<void> {
     useSettingsStore().skills = skills
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
-      props: { open: true, type: 'slash', sessionId: undefined, query },
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: sid, query },
     })
     await flushPromises()
     await nextTick()
   }
 
-  it('L1 landing 无 session + skills 7 条 → 渲染 7 项，首项含 code-review（显示去 /skill: 前缀）', async () => {
+  it('L1 landing（variant=landing + 非空 sessionId）+ skills 7 条 → 渲染 7 项，首项含 code-review（显示去 /skill: 前缀）', async () => {
+    // AC-5 根因回归点：非空 sessionId 下仍显示 settingsStore.skills（现状 bug 正是 sessionId 非空走错分支）
     await mountLanding('')
     const btns = bodyItemButtons()
     expect(btns).toHaveLength(7)
@@ -102,11 +111,12 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     expect(bodyItemButtons()).toHaveLength(0)
   })
 
-  it('L5 session 态（sessionId=s1）→ 用 commandStore（3 项 pi 命令）+ 前端注入 compact = 4 项，不被 skills(7) 污染', async () => {
+  it('L5 session 态（variant=panel + sessionId=s1）→ 用 commandStore（3 项 pi 命令）+ 前端注入 compact = 4 项，不被 skills(7) 污染', async () => {
+    // AC-3：session 态不并入 settingsStore.skills（配置态/运行态不混淆，ADR-0037 D2）
     useSettingsStore().skills = LANDING_SKILLS
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
-      props: { open: true, type: 'slash', sessionId: 's1', query: '' },
+      props: { open: true, type: 'slash', variant: 'panel', sessionId: 's1', query: '' },
     })
     await flushPromises()
     // 推 session 源命令（3 条 pi 动态命令）
@@ -131,7 +141,8 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     }
   })
 
-  it('L7 选中首项 → emit select {type:"slash", name:"/code-review", icon:"star", description:"审查代码变更"}', async () => {
+  it('L7 选中首项 → emit select {type:"slash", name:"/skill:code-review", icon:"star", description:"审查代码变更"}（AC-4：name 带 /skill: 路由前缀，pi 可路由）', async () => {
+    // AC-4：landing 选中 skill 后 emit name 形如 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 前缀）
     await mountLanding('')
     const btns = bodyItemButtons()
     await btns[0].click()
@@ -140,10 +151,38 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     const payload = selectEvents!.at(-1)![0] as { type: string; name: string; icon?: string; description?: string }
     expect(payload).toEqual({
       type: 'slash',
-      name: '/code-review',
+      name: '/skill:code-review',
       icon: 'star',
       description: '审查代码变更',
     })
+  })
+
+  // L9 [AC-2]：landing 合并源验证——同时显示 publicSession 的 pi extension 命令 + skills
+  it('L9 landing（variant=landing + sessionId=public-sid + commandStore 有 public-sid 命令）→ 同时显示 pi extension 命令 + skills（合并源）', async () => {
+    useSettingsStore().skills = LANDING_SKILLS
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '' },
+    })
+    await flushPromises()
+    // 推 publicSession 的 pi extension 命令（3 条）
+    const msg = {
+      type: 'session.commands',
+      payload: { sessionId: 'public-sid', commands: SESSION_CMDS },
+    } as ServerMessage<'session.commands'>
+    events.dispatchSession('public-sid', msg)
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 3 pi extension 命令 + 7 skills = 10 项（landing 合并源，无 compact）
+    expect(btns).toHaveLength(10)
+    // pi extension 命令在列（/commit 来自 SESSION_CMDS）
+    expect(btns.some((b) => b.textContent?.includes('commit'))).toBe(true)
+    // skills 在列（code-review 来自 LANDING_SKILLS）
+    expect(btns.some((b) => b.textContent?.includes('code-review'))).toBe(true)
+    // landing 不含 compact（无上下文可压缩）
+    expect(btns.some((b) => b.textContent?.includes('compact'))).toBe(false)
   })
 
   // L8:回归防护 — 浮层宽度严格对齐 composer-box（w=anchor-width），不溢出。
