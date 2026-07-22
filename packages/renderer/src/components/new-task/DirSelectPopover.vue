@@ -123,7 +123,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
   <div
     ref="root"
     data-testid="dir-select-popover"
-    class="w-[380px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
+    class="w-[380px] max-h-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
     @keydown="onKeydown"
   >
     <!-- 搜索 input（sticky 顶部，spec §3.2） -->
@@ -135,7 +135,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       />
     </div>
 
-    <div class="py-1">
+    <div class="max-h-[360px] overflow-y-auto py-1">
       <!-- 空态（T3.2 / AC-5.4，spec §6 三要素：subtle 图标 + 说明 + Primary 入口在下方动作项） -->
       <div
         v-if="isEmpty"
