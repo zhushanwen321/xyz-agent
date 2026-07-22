@@ -40,6 +40,7 @@ import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
+import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
@@ -708,6 +709,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return {
       id: s.id, label: s.label, cwd: s.cwd,
       gitBranch: git?.branch, gitIsWorktree: git?.isWorktree,
+      // R1：复用 WorkspaceDetector 检测 .bare workspace（带缓存），填 isBareWorkspace
+      // 供前端 Landing.vue 派生「新建 worktree」动作项显隐。
+      isBareWorkspace: detectBareWorkspaceCached(s.cwd),
       status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
       lastActiveAt: s.lastActiveAt, modelId: s.modelId,
       thinkingLevel: s.thinkingLevel, tokenCount: s.tokenCount,

@@ -370,4 +370,87 @@ describe('useNewTaskFlow 状态机', () => {
       expect(flow.isActive.value).toBe(false)
     })
   })
+
+  /**
+   * R1：gitInfo.isBare 数据链路真相源锁定。
+   *
+   * 此前集成测试 mock 了整个 useNewTaskFlow，直接注入 isBare:true，绕过真实数据路径——
+   * 数据链路断裂被掩盖（gitInfo computed 不填 isBare → Landing isBareWorkspace 恒 false）。
+   * 本块用真实 useNewTaskFlow（非 mock）+ 真实 SessionSummary.isBareWorkspace 字段，验证：
+   *   SessionSummary.isBareWorkspace → gitInfo.isBare → Landing isBareWorkspace → action-create-worktree 渲染
+   *
+   * submitFirstMessage create 后 controller.bindCurrentSession(created) 绑定 session，
+   * gitInfo computed 从 currentSession.value.isBareWorkspace 派生 isBare。
+   */
+  describe('gitInfo.isBare 数据链路（R1，非 mock 真实 flow）', () => {
+    it('create 返回 session.isBareWorkspace=true + gitBranch → gitInfo.isBare 派生 true', async () => {
+      // 模拟 runtime create 返回带 isBareWorkspace + gitBranch 的 session（WorkspaceDetector 检测后的摘要）
+      apiMock.create.mockResolvedValueOnce({
+        id: 'bare-s',
+        label: 'repo',
+        cwd: '/ws/feat-a',
+        gitBranch: 'feat-a',
+        isBareWorkspace: true,
+        status: 'idle',
+        lastActiveAt: 1,
+        modelId: 'm',
+        tokenCount: 0,
+      })
+      setGroups([gitSession({ id: 'hist', cwd: '/ws/feat-a', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/ws/feat-a'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      // submitFirstMessage create + bindCurrentSession(bare session)
+      await flow.submitFirstMessage('bare workspace test')
+
+      // 真实数据链路：gitInfo.isBare 从 session.isBareWorkspace 派生（非 mock 注入）
+      expect(flow.gitInfo.value).not.toBeNull()
+      expect(flow.gitInfo.value?.branch).toBe('feat-a')
+      expect(flow.gitInfo.value?.isRepo).toBe(true)
+      // 关键断言：isBare 经 SessionSummary.isBareWorkspace → gitInfo computed 派生（修复前恒 false）
+      expect(flow.gitInfo.value?.isBare).toBe(true)
+    })
+
+    it('create 返回 session.isBareWorkspace=false + gitBranch → gitInfo.isBare 派生 false', async () => {
+      apiMock.create.mockResolvedValueOnce({
+        id: 'normal-s',
+        label: 'repo',
+        cwd: '/repo',
+        gitBranch: 'main',
+        isBareWorkspace: false,
+        status: 'idle',
+        lastActiveAt: 1,
+        modelId: 'm',
+        tokenCount: 0,
+      })
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage('normal repo test')
+
+      expect(flow.gitInfo.value?.isBare).toBe(false)
+    })
+
+    it('create 返回 session 无 isBareWorkspace 字段 → gitInfo.isBare 兜底 false', async () => {
+      // isBareWorkspace undefined（旧 runtime / 未检测）→ 兜底 false，动作项不显示
+      apiMock.create.mockResolvedValueOnce({
+        id: 'no-bare-field-s',
+        label: 'repo',
+        cwd: '/repo',
+        gitBranch: 'main',
+        status: 'idle',
+        lastActiveAt: 1,
+        modelId: 'm',
+        tokenCount: 0,
+      })
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage('no bare field test')
+
+      expect(flow.gitInfo.value?.isBare).toBe(false)
+    })
+  })
 })

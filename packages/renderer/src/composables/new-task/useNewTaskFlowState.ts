@@ -19,7 +19,7 @@ import { ref, readonly } from 'vue'
 import type { Ref, DeepReadonly } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 
-/** NewTaskFlow 8 态枚举（②§5） */
+/** NewTaskFlow 态枚举（②§5）。worktree-modal 为 W2 wave 新增（创建 worktree modal）。 */
 export type NewTaskFlowState =
   | 'idle'
   | 'landing'
@@ -27,6 +27,7 @@ export type NewTaskFlowState =
   | 'branch-popover'
   | 'dir-dialog'
   | 'branch-modal'
+  | 'worktree-modal'
   | 'completed'
   | 'cancelled'
 
@@ -37,10 +38,12 @@ export type NewTaskFlowState =
  */
 export type TransitionUncheckedTarget = 'idle'
 
-/** 当前 session 的 git 派生（UC-7 chip 可见性 + openBranchPopover 守卫） */
+/** 当前 session 的 git 派生（UC-7 chip 可见性 + openBranchPopover 守卫 + isBareWorkspace 派生） */
 export interface GitInfo {
   branch: string
   isRepo: boolean
+  /** 是否在 bare repo + worktree 结构下（W2 wave：DirSelectPopover「新建 worktree…」动作项显隐） */
+  isBare?: boolean
 }
 
 /** overlay 态集合（overlay 互斥 / cancelFlow 判定用） */
@@ -49,6 +52,7 @@ export const OVERLAY_STATES: ReadonlySet<NewTaskFlowState> = new Set([
   'branch-popover',
   'dir-dialog',
   'branch-modal',
+  'worktree-modal',
 ])
 
 /**
@@ -63,6 +67,7 @@ export const ACTIVE_STATES: ReadonlySet<NewTaskFlowState> = new Set([
   'branch-popover',
   'dir-dialog',
   'branch-modal',
+  'worktree-modal',
 ])
 
 /**
@@ -71,11 +76,12 @@ export const ACTIVE_STATES: ReadonlySet<NewTaskFlowState> = new Set([
  */
 const ALLOWED: Record<NewTaskFlowState, NewTaskFlowState[]> = {
   idle: ['landing'],
-  landing: ['dir-popover', 'branch-popover', 'completed', 'cancelled'],
+  landing: ['dir-popover', 'branch-popover', 'worktree-modal', 'completed', 'cancelled'],
   'dir-popover': ['landing', 'dir-dialog', 'cancelled'],
   'branch-popover': ['landing', 'branch-modal', 'cancelled'],
   'dir-dialog': ['landing', 'dir-popover', 'cancelled'],
   'branch-modal': ['landing', 'cancelled'],
+  'worktree-modal': ['landing', 'cancelled'],
   completed: [], // 终态，无出口（⌘N 再触发走 startFlow 内的销毁重建）
   cancelled: ['landing'], // reenterFlow 复活
 }

@@ -45,6 +45,7 @@ import {
 } from '@/composables/new-task/useNewTaskFlowState'
 import { useNewTaskBranch } from '@/composables/new-task/useNewTaskBranch'
 import { useNewTaskDirSelect } from '@/composables/new-task/useNewTaskDirSelect'
+import { useNewTaskWorktree } from '@/composables/new-task/useNewTaskWorktree'
 
 // 重导出供既有 import 消费（types + reset 原从本模块导入，保持非破坏）
 export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTaskFlowState'
@@ -93,11 +94,14 @@ export function useNewTaskFlow() {
   /**
    * gitInfo（UC-7 chip 可见性派生）：从当前 flow 绑定 session 的 gitBranch 派生。
    * 统一延迟 create 后 landing 态无 session → null → branch chip 隐藏（分支切换需已建 session）。
+   *
+   * R1：isBare 从 session.isBareWorkspace 派生（runtime WorkspaceDetector 检测，经
+   * SessionSummary 透出）。Landing.vue 据此渲染 DirSelectPopover「新建 worktree…」动作项。
    */
   const gitInfo: ComputedRef<GitInfo | null> = computed(() => {
     const s = currentSession.value
     if (!s?.gitBranch) return null
-    return { branch: s.gitBranch, isRepo: true }
+    return { branch: s.gitBranch, isRepo: true, isBare: s.isBareWorkspace ?? false }
   })
 
   /**
@@ -268,6 +272,10 @@ export function useNewTaskFlow() {
     },
   )
   const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
+  const worktree = useNewTaskWorktree(
+    () => currentCwd.value,
+    () => gitInfo.value,
+  )
 
   /** 任意 overlay→landing（Esc/点外）。同一时刻只一层（AC-3.9）。 */
   function closeOverlay(): void {
@@ -312,6 +320,9 @@ export function useNewTaskFlow() {
     confirmDirtySwitch: branch.confirmDirtySwitch,
     openBranchModal: branch.openBranchModal,
     submitCreateBranch: branch.submitCreateBranch,
+    openCreateWorktree: dirSelect.openWorktreeModal,
+    createWorktree: worktree.createWorktree,
+    startCreateWorktree: worktree.startCreateWorktree,
     closeOverlay,
     cancelFlow,
     reenterFlow,

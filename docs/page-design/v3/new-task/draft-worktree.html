@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>新建任务 · worktree 创建 · new-task worktree</title>
+<style>
+  :root{
+    --bg:#1a1b1f; --surface:#222329; --surface-2:#282930; --surface-hover:#2d2e36;
+    --bg-input:#1e1f24; --bg-elevated:#2a2b32;
+    --fg:#f7f8fc; --muted:#a8a8b5; --subtle:#82828f;
+    --text-primary:#e8e8ea; --text-secondary:#a8a8b5; --text-tertiary:#82828f;
+    --bg-hover:#232328;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.45);
+    --success:#22c55e; --success-soft:rgba(34,197,94,0.12);
+    --warning:#f5a524; --warning-soft:rgba(245,165,36,0.12);
+    --danger:#ef4444; --danger-soft:rgba(239,68,68,0.12);
+    --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-1:0 0 0 1px rgba(0,0,0,0.2);
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --shadow-3:0 20px 50px rgba(0,0,0,0.55);
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --duration-fast:120ms; --duration:200ms; --duration-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:820px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+
+  /* ===== window-mock ===== */
+  .window-mock{position:relative;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);margin-top:14px}
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:#fc6155} .dot-yellow{background:#fdb40a} .dot-green{background:#34c84a}
+  .app-nav{position:absolute;left:90px;top:16px;display:flex;gap:4px;z-index:10}
+  .app-nav button{width:24px;height:24px;border:0;background:transparent;border-radius:var(--radius-sm);
+    color:var(--muted);display:grid;place-items:center;cursor:pointer}
+  .app-nav button:hover{background:var(--surface-hover);color:var(--fg)}
+  .app-nav button svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .app-shell{display:flex;height:640px;padding:12px;gap:12px}
+
+  /* ===== Sidebar ===== */
+  .aside-region{width:200px;flex-shrink:0;display:flex;flex-direction:column;padding-top:52px;padding-left:2px}
+  .a-logo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:0 8px 14px}
+  .a-logo .a-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0}
+  .a-nav{display:flex;flex-direction:column;gap:1px;padding:0 4px}
+  .a-item{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);
+    padding:6px 8px;border-radius:6px;cursor:pointer}
+  .a-item:hover{background:var(--surface-hover);color:var(--fg)}
+  .a-item.active{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .a-item svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .a-item .a-kbd{margin-left:auto;font:10px/1 var(--font-mono);color:var(--subtle);
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px}
+
+  /* ===== Main Panel ===== */
+  .main-panel{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-1),0 8px 24px rgba(0,0,0,0.3);
+    display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .main-header{display:flex;align-items:center;gap:10px;height:42px;padding:0 16px;
+    border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+  .crumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .crumb-sep{color:var(--subtle);font-size:10px}
+  .crumb b{color:var(--fg);font-weight:550}
+
+  /* ===== Landing 空态 ===== */
+  .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 24px 48px;position:relative;overflow:hidden;background:var(--bg);
+    background-image:radial-gradient(circle at 50% 0%, rgba(79,142,247,0.04) 0%, transparent 60%)}
+  .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
+    font:600 220px/1 var(--font-sans);color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;
+    user-select:none;pointer-events:none;white-space:nowrap}
+  .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
+    margin:0 0 28px;text-align:center;position:relative;z-index:1}
+
+  /* ===== Composer ===== */
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;padding:10px 0 0}
+  .composer-box{
+    background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius-lg);position:relative;overflow:visible;
+    transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease);
+  }
+  .composer-box.focus{border-color:var(--border-strong);box-shadow:0 0 0 2px rgba(255,255,255,0.04)}
+  .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:1px solid transparent;border-radius:var(--radius);
+    color:var(--text-secondary);font:500 12px/1 var(--font-sans);cursor:pointer;
+    max-width:220px;transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .chip svg{width:14px;height:14px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .chip .ch-name{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+  .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
+  .composer-area{
+    width:100%;min-height:40px;max-height:120px;overflow-y:auto;
+    border:0;outline:0;background:transparent;
+    color:var(--text-primary);font:13px/1.55 var(--font-sans);
+    padding:11px 13px 4px;white-space:pre-wrap;word-break:break-word;
+  }
+  .composer-area[contenteditable][data-placeholder]:empty:before{
+    content:attr(data-placeholder);color:var(--text-tertiary);pointer-events:none;
+  }
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px;flex-wrap:nowrap}
+  .c-insert{width:28px;height:28px;border-radius:var(--radius-sm);border:0;background:transparent;
+    color:var(--text-tertiary);cursor:pointer;display:grid;place-items:center;flex-shrink:0}
+  .c-insert:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-insert svg{width:16px;height:16px}
+  .c-text{font:500 11.5px/1 var(--font-sans);color:var(--text-tertiary);
+    background:transparent;border:0;padding:6px 8px;border-radius:var(--radius-sm);
+    cursor:pointer;display:inline-flex;align-items:center;gap:5px;flex-shrink:0}
+  .c-text:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-text.think[data-lvl="max"]{color:#fff;background:rgba(167,139,250,0.85);box-shadow:0 0 12px rgba(167,139,250,0.4)}
+  .c-send{margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--accent);color:#fff;cursor:pointer;
+    display:grid;place-items:center;flex-shrink:0;transition:background var(--duration) var(--ease)}
+  .c-send:hover{background:var(--accent-hover)}
+  .c-send svg{width:15px;height:15px}
+  .c-send:disabled{background:transparent;color:var(--text-tertiary);cursor:default;opacity:0.5}
+  .composer-hint{font:10px/1.3 var(--font-mono);color:var(--text-tertiary);padding:6px 4px 0}
+  .composer-hint .kbd{background:var(--surface-2);border:1px solid var(--border);padding:1px 4px;border-radius:3px}
+
+  /* ===== Directory Select Popover（向上展开，锚定 directory chip） ===== */
+  .dir-pop{
+    position:absolute;bottom:calc(100% + 6px);left:10px;width:380px;
+    background:var(--bg-elevated);border:1px solid var(--border-strong);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-3);overflow:hidden;z-index:20}
+  .dir-pop-arrow{position:absolute;bottom:-6px;left:28px;width:10px;height:10px;
+    background:var(--bg-elevated);border-right:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong);
+    transform:rotate(45deg)}
+  .dir-search{padding:10px;border-bottom:1px solid var(--border)}
+  .dir-search input{width:100%;height:32px;background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius);padding:0 11px;color:var(--text-primary);font:13px/1 var(--font-sans);outline:0}
+  .dir-search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .dir-search input::placeholder{color:var(--text-tertiary)}
+  .dir-list{max-height:260px;overflow-y:auto;padding:4px}
+  .dir-group-hd{font:600 10px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.06em;
+    padding:8px 8px 4px}
+  .dir-item{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:var(--radius);
+    cursor:pointer;transition:background var(--duration-fast) var(--ease)}
+  .dir-item:hover{background:var(--bg-hover)}
+  .dir-item.active{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .dir-item svg.di-ic{width:15px;height:15px;color:var(--text-tertiary);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5}
+  .dir-item.active svg.di-ic{color:var(--accent)}
+  .di-body{flex:1;min-width:0}
+  .di-name{font:500 12.5px/1.3 var(--font-sans);color:var(--text-primary)}
+  .di-path{font:10.5px/1.3 var(--font-mono);color:var(--text-tertiary);margin-top:1px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dir-item .di-check{width:14px;height:14px;color:var(--accent);flex-shrink:0;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .dir-item:not(.active) .di-check{display:none}
+
+  /* 动作项分隔 + 列表 */
+  .dir-actions{border-top:1px solid var(--border);padding:4px}
+  .dir-action{display:flex;align-items:center;gap:9px;padding:8px;border-radius:var(--radius);
+    cursor:pointer;transition:background var(--duration-fast) var(--ease)}
+  .dir-action:hover{background:var(--bg-hover)}
+  .dir-action svg.da-ic{width:15px;height:15px;color:var(--text-tertiary);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .dir-action:hover svg.da-ic{color:var(--text-secondary)}
+  .da-body{flex:1}
+  .da-name{font:500 12.5px/1.3 var(--font-sans);color:var(--text-secondary)}
+  .da-desc{font:10.5px/1.3 var(--font-mono);color:var(--text-tertiary);margin-top:1px}
+
+  /* ★ 新增动作项：新建 worktree（accent 强调，区分于其他两个常规动作）★ */
+  .dir-action.wt-action{
+    background:var(--accent-soft);
+    border:1px solid rgba(79,142,247,0.2);
+    margin:2px 0;
+  }
+  .dir-action.wt-action:hover{background:rgba(79,142,247,0.18)}
+  .dir-action.wt-action svg.da-ic{color:var(--accent)}
+  .dir-action.wt-action .da-name{color:var(--accent)}
+  .dir-action.wt-action .da-desc{color:var(--text-secondary)}
+
+  /* ===== Modal overlay ===== */
+  .modal-overlay{position:absolute;inset:0;background:rgba(10,11,15,0.65);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    display:flex;align-items:center;justify-content:center;z-index:50;
+    opacity:0;pointer-events:none;transition:opacity var(--duration) var(--ease)}
+  .window-mock[data-modal="open"] .modal-overlay{opacity:1;pointer-events:auto}
+  .modal{width:460px;max-width:calc(100% - 48px);background:var(--bg-elevated);
+    border:1px solid var(--border-strong);border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-3);overflow:hidden;
+    transform:translateY(8px) scale(0.98);opacity:0;
+    transition:transform var(--duration) var(--ease),opacity var(--duration) var(--ease)}
+  .window-mock[data-modal="open"] .modal{transform:translateY(0) scale(1);opacity:1}
+
+  .modal-head{display:flex;align-items:flex-start;gap:10px;padding:18px 18px 0}
+  .modal-head .m-icon{width:30px;height:30px;border-radius:var(--radius);
+    background:var(--accent-soft);color:var(--accent);
+    display:grid;place-items:center;flex-shrink:0}
+  .modal-head .m-icon svg{width:16px;height:16px;stroke:currentColor;stroke-width:1.5;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .modal-title{font-size:15px;font-weight:650;color:var(--fg);letter-spacing:-0.01em}
+  .modal-desc{font-size:12.5px;color:var(--text-secondary);line-height:1.5;margin-top:3px}
+  .modal-x{margin-left:auto;width:26px;height:26px;border:0;background:transparent;border-radius:var(--radius-sm);
+    color:var(--text-tertiary);cursor:pointer;display:grid;place-items:center;flex-shrink:0;
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .modal-x:hover{background:var(--surface-hover);color:var(--fg)}
+  .modal-x svg{width:14px;height:14px;stroke:currentColor;stroke-width:1.5;fill:none;stroke-linecap:round}
+  .modal-body{padding:16px 18px}
+  .field{margin-bottom:14px}
+  .field:last-child{margin-bottom:0}
+  .field-label{display:block;font:600 11px/1 var(--font-sans);color:var(--text-secondary);margin-bottom:6px}
+  .field-input{
+    width:100%;height:36px;background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius);padding:0 12px;
+    color:var(--text-primary);font:13px/1 var(--font-mono);outline:0;
+    transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease);
+  }
+  .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .field-preview{
+    display:flex;align-items:center;gap:6px;margin-top:8px;
+    font:11.5px/1.4 var(--font-mono);color:var(--text-secondary);
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:7px 10px;
+  }
+  .field-preview .pv-label{color:var(--text-tertiary)}
+  .field-preview .pv-value{color:var(--accent);font-weight:600}
+  .field-preview svg{width:12px;height:12px;color:var(--text-tertiary);flex-shrink:0;stroke:currentColor;stroke-width:1.5;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .field-hint{font:11.5px/1.5 var(--font-mono);color:var(--text-tertiary);margin-top:6px}
+  .seg{display:flex;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:2px;gap:2px}
+  .seg button{flex:1;height:30px;border:0;background:transparent;color:var(--text-secondary);
+    font:500 12px/1 var(--font-sans);border-radius:calc(var(--radius) - 2px);cursor:pointer;
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .seg button.on{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--border-strong)}
+
+  .modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;
+    padding:12px 18px;border-top:1px solid var(--border);background:var(--surface)}
+  .btn{height:32px;padding:0 14px;border-radius:var(--radius);border:1px solid transparent;
+    font:600 12.5px/1 var(--font-sans);cursor:pointer;
+    transition:background var(--duration) var(--ease),border-color var(--duration) var(--ease),color var(--duration) var(--ease)}
+  .btn.ghost{background:transparent;color:var(--text-secondary);border-color:var(--border-strong)}
+  .btn.ghost:hover{background:var(--surface-hover);color:var(--fg)}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.primary:disabled{background:var(--surface-2);color:var(--text-tertiary);cursor:default;opacity:0.7}
+  .btn .spin{width:13px;height:13px;border:1.5px solid rgba(255,255,255,0.3);border-top-color:#fff;
+    border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block;margin-right:6px;vertical-align:-2px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* progress 步骤列表 */
+  .steps{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+  .step{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);
+    font:13px/1.4 var(--font-sans);color:var(--text-tertiary);
+    transition:background var(--duration) var(--ease),color var(--duration) var(--ease)}
+  .step .s-ic{width:18px;height:18px;flex-shrink:0;display:grid;place-items:center}
+  .step.done{color:var(--text-secondary)}
+  .step.done .s-ic{color:var(--success)}
+  .step.done .s-ic svg{width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .step.run{color:var(--fg);background:var(--accent-soft)}
+  .step.run .s-ic .spin{width:14px;height:14px;border:1.5px solid var(--accent-soft);border-top-color:var(--accent);
+    border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block}
+  .step.todo .s-ic{width:14px;height:14px;border:1.5px solid var(--border-strong);border-radius:50%}
+  .step .s-label{flex:1}
+  .step .s-sub{font:11px/1.3 var(--font-mono);color:var(--text-tertiary);margin-top:1px}
+  .step.done .s-sub{color:var(--success)}
+  /* 可折叠实时输出区（setup 脚本 stdout/stderr） */
+  .log-toggle{display:flex;align-items:center;gap:5px;margin-top:10px;
+    font:500 11px/1 var(--font-mono);color:var(--text-tertiary);cursor:pointer;
+    background:transparent;border:0;padding:4px 0}
+  .log-toggle:hover{color:var(--text-secondary)}
+  .log-toggle .chev{transition:transform var(--duration) var(--ease)}
+  .log-toggle[data-open="true"] .chev{transform:rotate(90deg)}
+  .log-box{margin-top:6px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:10px 12px;font:11px/1.55 var(--font-mono);color:var(--text-tertiary);
+    max-height:110px;overflow-y:auto;white-space:pre-wrap;display:none}
+  .log-toggle[data-open="true"] ~ .log-box{display:block}
+  .log-box .ln-ok{color:var(--success)}
+  .log-box .ln-warn{color:var(--warning)}
+  .log-box .ln-act{color:var(--accent)}
+  .log-box .ln-err{color:var(--danger)}
+  /* progress 态 head spinner */
+  .m-icon .m-spin{width:14px;height:14px;border:1.5px solid rgba(79,142,247,0.25);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block}
+  /* 顶部 indeterminate loading bar */
+  .loading-bar{height:2px;background:var(--surface-2);position:relative;overflow:hidden}
+  .loading-bar::after{content:'';position:absolute;top:0;width:40%;background:var(--accent);animation:loading-slide 1.2s var(--ease) infinite;border-radius:1px}
+  @keyframes loading-slide{0%{left:-40%}100%{left:100%}}
+
+  .anno{position:absolute;font:500 10px/1.2 var(--font-mono);padding:3px 6px;border-radius:3px;
+    pointer-events:none;z-index:30;white-space:nowrap;letter-spacing:0.02em}
+  .anno.a{color:var(--accent);background:rgba(79,142,247,0.12);border:1px solid var(--accent)}
+  .anno.m{color:var(--muted);background:rgba(138,138,149,0.1);border:1px solid var(--muted)}
+  .anno.s{color:var(--success);background:var(--success-soft);border:1px solid var(--success)}
+
+  .flow-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px}
+  .flow-table th,.flow-table td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .flow-table th{font:500 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em;font-weight:500}
+  .flow-table td b{color:var(--fg)}
+  .flow-table .step-tag{font:600 11px/1 var(--font-mono);padding:3px 7px;border-radius:3px;display:inline-block}
+  .flow-table .step-tag.t-done{color:var(--success);background:var(--success-soft)}
+  .flow-table .step-tag.t-run{color:var(--accent);background:var(--accent-soft)}
+  .flow-table .step-tag.t-todo{color:var(--text-tertiary);background:var(--surface)}
+
+  .demo-ctrl{display:flex;gap:6px;margin:14px 0 0;flex-wrap:wrap}
+  .demo-ctrl button{font:500 11px/1 var(--font-mono);color:var(--text-secondary);
+    background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 11px;cursor:pointer;
+    transition:all var(--duration) var(--ease)}
+  .demo-ctrl button.on{color:var(--accent);background:var(--accent-soft);border-color:var(--accent)}
+  .demo-ctrl button:hover{color:var(--fg)}
+  .stage[data-show="false"]{display:none}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="3.5" cy="3" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><path d="M3.5 4.5v7M3.5 8h4a3 3 0 0 0 3-3V3.5"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-msg" viewBox="0 0 16 16"><path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 12H6.5L4 14v-2H4a1.5 1.5 0 0 1-1.5-1.5v-6z"/></symbol>
+    <symbol id="i-wt" viewBox="0 0 16 16"><circle cx="3" cy="3" r="1.4"/><circle cx="3" cy="13" r="1.4"/><circle cx="12" cy="8" r="1.4"/><path d="M3 4.4v7.2M3 6c0-1.5 1.5-2 3-2h4.6M3 10c0 1.5 1.5 2 3 2h4.6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/><path d="M8 7v3.5M6.2 8.7h3.6"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 16 16"><path d="M4.5 12.5a3 3 0 0 1 0-6 4 4 0 0 1 7.8 1 2.5 2.5 0 0 1-.3 5z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></symbol>
+  </defs>
+</svg>
+
+<h1>新建任务 · worktree 创建</h1>
+<p class="lede">
+  bare repo + worktree 模式下，<b>在选目录 popover 里加一条「新建 worktree」动作项</b>。
+  点击后弹 modal 填参数（分支名 + base），创建完<b>立即生效</b>——directory/branch chip 自动切到新 worktree 的值，
+  popover 关闭，用户回到 landing 态继续写消息。worktree 创建是<b>独立的前置步骤</b>，不与消息发送耦合。
+</p>
+<div class="meta">
+  <span>位置 <b>DirSelectPopover 动作项</b></span>
+  <span>执行 <b>eager（创建完立即生效）</b></span>
+  <span>适用 <b>bare repo + worktree（.bare 模式）</b></span>
+</div>
+
+<h2><span class="num">§1</span>入口 · DirSelectPopover 新增动作项</h2>
+<p class="lede">
+  点 directory chip → DirSelectPopover 展开（与 <code>draft-directory-select.html</code> 同源）。
+  动作项区现有「打开文件夹」「远程连接」两个，<b>新增「新建 worktree」</b>放在两者之间（仅 .bare 模式显示）。
+  用 accent-soft 底色区分于其他两个常规动作，表达「这是一个能力扩展，不是常规选目录」。
+</p>
+
+<div class="window-mock" data-fullscreen="false">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-nav">
+    <button><svg viewBox="0 0 16 16"><path d="M3 5h10M3 8h10M3 11h7"/></svg></button>
+  </div>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item active"><svg viewBox="0 0 16 16"><use href="#i-new"/></svg>新建任务<span class="a-kbd">⌘N</span></div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg>搜索<span class="a-kbd">⌘K</span></div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-msg"/></svg>会话</div>
+      </div>
+    </div>
+    <div class="main-panel">
+      <div class="main-header">
+        <div class="crumb"><b>新会话</b><span class="crumb-sep">▸</span><span style="color:var(--accent);font:500 10.5px/1 var(--font-mono)">feat-new-worktree-task</span></div>
+      </div>
+      <div class="landing">
+        <span class="watermark">xyz</span>
+        <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+        <div class="composer">
+          <div class="composer-box" style="position:relative">
+            <div class="meta-row">
+              <button class="chip" style="background:var(--surface-2);color:var(--text-primary);box-shadow:inset 0 0 0 1px var(--accent-ring)">
+                <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+                <span class="ch-name">feat-new-worktree-task</span>
+              </button>
+              <div class="meta-sep"></div>
+              <button class="chip"><svg viewBox="0 0 16 16"><use href="#i-branch"/></svg><span class="ch-name">feat-new-worktree-task</span></button>
+            </div>
+            <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么…"></div>
+
+            <!-- DirSelectPopover 向上展开 -->
+            <div class="dir-pop">
+              <div class="dir-pop-arrow"></div>
+              <div class="dir-search">
+                <input type="text" placeholder="搜索工作区" />
+              </div>
+              <div class="dir-list">
+                <div class="dir-group-hd">最近</div>
+                <div class="dir-item active">
+                  <svg class="di-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                  <div class="di-body">
+                    <div class="di-name">feat-new-worktree-task</div>
+                    <div class="di-path">~/Code/xyz-agent-workspace/feat-new-worktree-task</div>
+                  </div>
+                  <svg class="di-check" viewBox="0 0 16 16"><use href="#i-check"/></svg>
+                </div>
+                <div class="dir-item">
+                  <svg class="di-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                  <div class="di-body">
+                    <div class="di-name">main</div>
+                    <div class="di-path">~/Code/xyz-agent-workspace/main</div>
+                  </div>
+                  <svg class="di-check" viewBox="0 0 16 16"><use href="#i-check"/></svg>
+                </div>
+                <div class="dir-item">
+                  <svg class="di-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                  <div class="di-body">
+                    <div class="di-name">dag-executor</div>
+                    <div class="di-path">~/Code/dag-executor-workspace/main</div>
+                  </div>
+                  <svg class="di-check" viewBox="0 0 16 16"><use href="#i-check"/></svg>
+                </div>
+              </div>
+
+              <!-- 动作项区 -->
+              <div class="dir-actions">
+                <div class="dir-action">
+                  <svg class="da-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                  <div class="da-body">
+                    <div class="da-name">打开文件夹…</div>
+                    <div class="da-desc">系统目录选择器</div>
+                  </div>
+                </div>
+
+                <!-- ★ 新增：新建 worktree（accent-soft 强调）★ -->
+                <div class="dir-action wt-action" onclick="document.getElementById('wm2').dataset.modal='open'">
+                  <svg class="da-ic" viewBox="0 0 16 16"><use href="#i-wt"/></svg>
+                  <div class="da-body">
+                    <div class="da-name">新建 worktree…</div>
+                    <div class="da-desc">创建分支 + 工作目录</div>
+                  </div>
+                </div>
+
+                <div class="dir-action">
+                  <svg class="da-ic" viewBox="0 0 16 16"><use href="#i-cloud"/></svg>
+                  <div class="da-body">
+                    <div class="da-name">远程连接…</div>
+                    <div class="da-desc">v2 支持</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <span class="anno a" style="right:-10px;top:-180px;">新增动作项 · accent-soft 底色区分</span>
+            <span class="anno m" style="left:200px;top:-20px;">仅 .bare 模式显示</span>
+          </div>
+          <div class="composer-hint"><span class="kbd">⏎</span> 发送 · <span class="kbd">⇧⏎</span> 换行</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>入口设计裁决</b>：
+  ① <b>放在 DirSelectPopover 动作项区</b>——worktree 本质是「选一个目录」，与「打开文件夹」（选本地已有目录）、「远程连接」（选远程目录）是平行路径。心智模型一致：确定在哪个目录工作；
+  ② <b>accent-soft 底色</b>——区别于其他两个常规动作项（透明底）。表达「这是 .bare 模式的扩展能力」，视觉上可快速定位，但不喧宾夺主（列表项仍是主角）；
+  ③ <b>条件显示</b>——仅当 <code>gitIsWorktree === true</code> 或向上能找到 <code>.bare/</code> 时显示。非 bare repo 项目不显示此动作项，其他两个动作项正常；
+  ④ <b>文案「新建 worktree…」</b>——省略号表示「会弹框填参数」（与「打开文件夹…」同语言），动词开头（design-system §9）。
+</div>
+
+<h2><span class="num">§2</span>CreateWorktreeModal · 三态</h2>
+<p class="lede">
+  点击「新建 worktree…」→ 居中 modal（不可逆动作必须 modal，参 spec §2.3）。三态：<b>form</b>（填参数）→
+  <b>progress</b>（创建中 10-30s）→ <b>success</b>（成功，2s 自动关闭）。创建完立即生效，directory/branch chip 切到新值。
+</p>
+
+<div class="demo-ctrl" id="ctrl-modal">
+  <button class="on" onclick="showModal('form')">① form 填参数</button>
+  <button onclick="showModal('progress')">② progress 创建中</button>
+  <button onclick="showModal('success')">③ success 完成</button>
+  <button onclick="showModal('error')">④ 创建失败</button>
+</div>
+
+<div class="window-mock" data-fullscreen="false" data-modal="open" id="wm2">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-nav"><button><svg viewBox="0 0 16 16"><path d="M3 5h10M3 8h10M3 11h7"/></svg></button></div>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+    </div>
+    <div class="main-panel">
+      <div class="main-header">
+        <div class="crumb"><b>新会话</b><span class="crumb-sep">▸</span><span style="color:var(--accent);font:500 10.5px/1 var(--font-mono)">feat-new-worktree-task</span></div>
+      </div>
+      <div class="landing" style="filter:blur(0.5px)">
+        <span class="watermark">xyz</span>
+        <h2 class="greeting" style="opacity:0.5">上午好呀，有什么想让我帮忙的吗</h2>
+      </div>
+
+      <div class="modal-overlay">
+        <div class="modal">
+
+          <!-- ① form -->
+          <div class="stage" data-stage="form" data-show="true">
+            <div class="modal-head">
+              <div class="m-icon"><svg viewBox="0 0 16 16"><use href="#i-wt"/></svg></div>
+              <div style="flex:1">
+                <div class="modal-title">新建 worktree</div>
+                <div class="modal-desc">创建分支和工作目录，自动安装依赖。完成后自动切换到新目录。</div>
+              </div>
+              <button class="modal-x" onclick="this.closest('.window-mock').dataset.modal='closed'"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="modal-body">
+              <div class="field">
+                <label class="field-label">分支名</label>
+                <input class="field-input" type="text" value="feat/oauth-login" oninput="updateDirPreview(this.value)" />
+                <div class="field-preview" id="dir-preview">
+                  <svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                  <span class="pv-label">将创建</span>
+                  <span class="pv-value">xyz-agent-workspace/feat-oauth-login</span>
+                </div>
+                <div class="field-hint">分支名中的 <code style="background:var(--surface-2);padding:1px 4px;border-radius:2px">/</code> 映射为 <code style="background:var(--surface-2);padding:1px 4px;border-radius:2px">-</code>（与 git-cwt 一致）</div>
+              </div>
+              <div class="field">
+                <label class="field-label">基于分支</label>
+                <div class="seg">
+                  <button>当前 feat-new-worktree-task</button>
+                  <button class="on">origin/main</button>
+                </div>
+                <div class="field-hint">默认基于 origin/main（与 git-cwt 一致）</div>
+              </div>
+              <div class="field-hint" style="margin-top:0">⚠ 安装依赖约需 10-30s（复用缓存后更快）</div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn ghost" onclick="this.closest('.window-mock').dataset.modal='closed'">取消</button>
+              <button class="btn primary" onclick="showModal('progress')">创建</button>
+            </div>
+            <span class="anno a" style="right:14px;top:64px;">分支名 → 目录名实时预览</span>
+            <span class="anno m" style="left:14px;bottom:60px;">base 默认 origin/main</span>
+          </div>
+
+          <!-- ② progress -->
+          <div class="stage" data-stage="progress" data-show="false">
+            <div class="modal-head">
+              <div class="m-icon"><span class="m-spin"></span></div>
+              <div style="flex:1">
+                <div class="modal-title">正在创建 worktree…</div>
+                <div class="modal-desc">feat-oauth-login · 请稍候，请勿关闭</div>
+              </div>
+            </div>
+            <div class="loading-bar"></div>
+            <div class="modal-body">
+              <div class="steps">
+                <div class="step done">
+                  <div class="s-ic"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></div>
+                  <div><div class="s-label">创建分支 <code style="background:var(--surface);padding:1px 5px;border-radius:2px;color:var(--accent)">feat/oauth-login</code></div></div>
+                </div>
+                <div class="step done">
+                  <div class="s-ic"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></div>
+                  <div><div class="s-label">检出 worktree 目录</div><div class="s-sub">xyz-agent-workspace/feat-oauth-login</div></div>
+                </div>
+                <div class="step run">
+                  <div class="s-ic"><span class="spin"></span></div>
+                  <div>
+                    <div class="s-label">运行 setup 脚本</div>
+                    <div class="s-sub">.bare/custom-hooks/setup-worktree.sh</div>
+                  </div>
+                </div>
+              </div>
+              <button class="log-toggle" data-open="false" onclick="this.dataset.open=this.dataset.open==='false'?'true':'false'">
+                <svg class="chev" viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 4l4 4-4 4"/></svg>
+                实时输出
+              </button>
+              <div class="log-box"><span class="ln-act">→</span> ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile
+<span class="ln-ok">✓</span> Reusing linked binaries from store
+<span class="ln-act">→</span> Resolving 948 packages...
+<span class="ln-ok">✓</span> Progress: resolved 948, reused 948
+<span class="ln-act">→</span> Reusing Electron v42.2.0 cache (symlink)
+<span class="ln-act">→</span> Reusing pi 0.80.3 cache (symlink)
+<span class="ln-warn">⚠</span> electron postinstall skipped (path.txt exists)
+<span class="ln-act">→</span> Done in 18.4s</div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn primary" disabled><span class="spin"></span>创建中…</button>
+            </div>
+            <span class="anno a" style="right:14px;top:130px;">3 步固定 · 第三步黑盒</span>
+            <span class="anno m" style="left:14px;bottom:60px;">实时输出可折叠</span>
+          </div>
+
+          <!-- ③ success -->
+          <div class="stage" data-stage="success" data-show="false">
+            <div class="modal-head">
+              <div class="m-icon" style="background:var(--success-soft);color:var(--success)"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></div>
+              <div style="flex:1">
+                <div class="modal-title" style="color:var(--success)">worktree 已就绪</div>
+                <div class="modal-desc">已切换到新目录，可以开始写任务了</div>
+              </div>
+            </div>
+            <div class="modal-body">
+              <div class="field-preview" style="background:var(--success-soft);border-color:rgba(34,197,94,0.25);padding:10px 13px">
+                <svg viewBox="0 0 16 16" style="color:var(--success)"><use href="#i-folder"/></svg>
+                <span class="pv-label" style="color:var(--text-secondary)">已切换到</span>
+                <span class="pv-value" style="color:var(--success)">feat-oauth-login</span>
+              </div>
+              <div class="steps" style="margin-top:10px">
+                <div class="step done"><div class="s-ic"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></div><div><div class="s-label">setup 脚本完成</div><div class="s-sub">18.4s</div></div></div>
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn primary" onclick="this.closest('.window-mock').dataset.modal='closed'">开始</button>
+            </div>
+            <span class="anno s" style="right:14px;top:60px;">2s 后自动关闭，chip 已更新</span>
+          </div>
+
+          <!-- ④ error -->
+          <div class="stage" data-stage="error" data-show="false">
+              <div class="modal-head">
+              <div class="m-icon" style="background:var(--danger-soft);color:var(--danger)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2L1.5 13h13L8 2z"/><path d="M8 6.5v3M8 11.5v0.5"/></svg></div>
+                <div style="flex:1">
+                <div class="modal-title" style="color:var(--danger)">创建失败</div>
+                <div class="modal-desc">setup 脚本运行出错</div>
+              </div>
+              <button class="modal-x" onclick="this.closest('.window-mock').dataset.modal='closed'"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="modal-body">
+              <div class="steps">
+                <div class="step done"><div class="s-ic"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></div><div><div class="s-label">创建分支</div></div></div>
+                <div class="step done"><div class="s-ic"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></div><div><div class="s-label">检出 worktree 目录</div></div></div>
+                <div class="step run" style="background:var(--danger-soft)"><div class="s-ic" style="color:var(--danger)"><svg viewBox="0 0 16 16" width="15" height="15"><use href="#i-x"/></svg></div><div><div class="s-label" style="color:var(--danger)">setup 脚本失败</div></div></div>
+              </div>
+              <div style="background:var(--danger-soft);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius);padding:11px 13px;margin-top:12px">
+                <div style="font:600 12.5px/1.4 var(--font-sans);color:var(--danger);margin-bottom:6px">脚本退出码 1</div>
+                <div style="font:11px/1.55 var(--font-mono);color:var(--text-secondary);background:var(--bg);border-radius:var(--radius-sm);padding:8px 10px;white-space:pre-wrap;max-height:80px;overflow-y:auto"><span class="ln-err">ERR!</span>  Permission denied accessing node_modules/.pnpm
+<span class="ln-err">ERR!</span>  at checkPermission (node:internal/fs:142:11)
+<span class="ln-err">ERR!</span>  at Object.mkdirSync (node:fs:558:5)</div>
+              </div>
+              <div style="font:12.5px/1.55 var(--font-sans);color:var(--text-secondary);margin-top:12px">
+                已创建的 worktree 目录 <b style="color:var(--fg)">feat-oauth-login</b> 已保留。可手动排查后重试，或清理目录。
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn ghost">清理目录</button>
+              <button class="btn primary" onclick="showModal('progress')">重试 setup 脚本</button>
+            </div>
+            <span class="anno a" style="right:14px;top:210px;">默认保留，不自动删</span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>三态裁决</b>：
+  ① <b>form</b>：分支名 + base branch + 实时预览目录名。base 默认 origin/main（与 git-cwt 一致）；
+  ② <b>progress</b>：顶部 indeterminate loading bar + head icon 变 spinner + <b>3 步固定列表</b>（创建分支 → 检出目录 → 运行 setup 脚本）。前两步通用，第三步是<b>项目脚本黑盒</b>（运行 <code>.bare/custom-hooks/setup-worktree.sh</code>），用户可折叠查看实时 stdout/stderr。不可配置，降低认知负荷。创建中 modal 不可关闭（无 X，foot 只有 disabled「创建中…」按钮），强制等待完成或失败；
+  ③ <b>success</b>：2s 后自动关闭。关闭的同时 <code>flow.selectWorkspace(newCwd)</code> 被调用，directory chip 切到新 worktree，branch chip 经 git info 刷新切到新分支。用户回到 landing 继续写消息；
+  ④ <b>失败</b>：不自动清理已创建的 worktree（遵循 AGENTS.md 规则 #0）。默认按钮是「重试 setup 脚本」不是「清理」（破坏性操作默认偏保守）。失败信息含脚本退出码 + stderr 输出，便于定位。
+</div>
+
+<div class="note" style="margin-top:10px">
+  <b>setup 脚本契约（方案 A）</b>：
+  ① <b>脚本路径固定</b>：<code>&lt;wsRoot&gt;/.bare/custom-hooks/setup-worktree.sh</code>（git-cwt 约定）；
+  ② <b>脚本内容是项目黑盒</b>——xyz-agent 不假设项目用什么包管理器、构建工具、缓存机制。脚本可能是 pnpm install（前端）、uv sync（Python）、cargo build（Rust），或完全自定义（如 xyz-agent 自己的脚本还会复用 Electron/pi 二进制缓存）；
+  ③ <b>脚本不存在时跳过</b>——步骤 3 显示「未找到 setup 脚本，已跳过」+ worktree 直接可用（但没装依赖，用户需手动）。<b>xyz-agent 不做 fallback 项目类型检测</b>（pnpm/npm/uv/cargo 全家桶识别不全且永远是坑）；
+  ④ <b>实时输出</b>：脚本 stdout/stderr 实时 tee 到 log-box，用户可折叠查看。完成态保留输出供失败时排查。
+</div>
+
+<h2><span class="num">§3</span>创建后立即生效</h2>
+<p class="lede">
+  modal 关闭（success 自动 / 用户点「开始」）后，<b>同一画面</b>的 directory/branch chip 已更新为新 worktree 的值。
+  用户无需任何额外操作，直接在 composer 写消息发送，走正常 <code>submitFirstMessage</code>（pendingCwd 已是新 worktree 路径）。
+</p>
+
+<div class="window-mock" data-fullscreen="false">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-nav"><button><svg viewBox="0 0 16 16"><path d="M3 5h10M3 8h10M3 11h7"/></svg></button></div>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+    </div>
+    <div class="main-panel">
+      <div class="main-header">
+        <div class="crumb">
+          <b>新会话</b>
+          <span class="crumb-sep">▸</span>
+          <span style="color:var(--success);font:500 10.5px/1 var(--font-mono)">feat-oauth-login</span>
+        </div>
+      </div>
+      <div class="landing">
+        <span class="watermark">xyz</span>
+        <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+        <div class="composer">
+          <div class="composer-box focus">
+            <div class="meta-row">
+              <!-- chip 已切到新 worktree -->
+              <button class="chip">
+                <svg viewBox="0 0 16 16" style="color:var(--success)"><use href="#i-folder"/></svg>
+                <span class="ch-name">feat-oauth-login</span>
+              </button>
+              <div class="meta-sep"></div>
+              <button class="chip">
+                <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <span class="ch-name">feat-oauth-login</span>
+              </button>
+            </div>
+            <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么…">帮我实现 OAuth2 登录流程，先看现有的 auth 模块</div>
+            <div class="composer-bar">
+              <button class="c-insert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+              <span style="margin-left:auto"></span>
+              <button class="c-text">sonnet-4.5 ▾</button>
+              <button class="c-text think" data-lvl="max">思考 最高 ▾</button>
+              <button class="c-send"><svg viewBox="0 0 24 24"><use href="#i-send"/></svg></button>
+            </div>
+          </div>
+          <div class="composer-hint"><span class="kbd">⏎</span> 发送 · <span class="kbd">⇧⏎</span> 换行</div>
+        </div>
+      </div>
+      <span class="anno s" style="right:20px;top:56px;">directory/branch 已切到新 worktree</span>
+      <span class="anno m" style="right:20px;bottom:80px;">正常写消息发送即可</span>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>立即生效的数据流</b>：modal success → <code>worktreeApi.create()</code> 的 reply 已含 <code>{cwd, branch}</code> →
+  调 <code>flow.selectWorkspace(newCwd)</code>（现有方法，写 pendingCwd + 刷最近工作区列表）→
+  git info 由 <code>GitInfoReader.readGitInfo(newCwd)</code> 刷新填入 branch chip。
+  <b>不新增状态</b>，不新增 ref——worktree 创建完成后，landing 态数据和「用户从最近列表选了一个已有 worktree」完全一样。
+</div>
+
+<h2><span class="num">§4</span>选目录的三条路径</h2>
+<p class="lede">DirSelectPopover 的三个动作项，本质是「确定在哪个目录工作」的三种方式：</p>
+<table class="flow-table">
+  <thead><tr><th>路径</th><th>动作</th><th>适用场景</th><th>执行方式</th></tr></thead>
+  <tbody>
+    <tr><td><b>列表选已有</b></td><td>点列表项</td><td>最近用过的 workspace / worktree</td><td>即时（仅写 pendingCwd）</td></tr>
+    <tr><td><b>打开文件夹</b></td><td>OS 原生 dialog</td><td>选本地任意目录（不在最近列表里）</td><td>即时（OS dialog → pendingCwd）</td></tr>
+    <tr><td><span class="step-tag t-run">新建 worktree</span></td><td>modal 填参数 → 创建</td><td>.bare 模式下派生新工作目录</td><td><b>异步</b>（git worktree add + setup 10-30s → pendingCwd）</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  三条路径<b>终点一致</b>：都是写 pendingCwd，landing 态后续行为完全相同。
+  区别只在「目录怎么来的」——已存在（列表/dialog）vs 新建（worktree）。
+  这正是把 worktree 放在 DirSelectPopover 的根本理由：它就是「选目录」的一种方式。
+</div>
+
+<h2><span class="num">§5</span>实现要点</h2>
+<table class="flow-table">
+  <thead><tr><th>改动点</th><th>内容</th><th>性质</th></tr></thead>
+  <tbody>
+    <tr><td><b>DirSelectPopover.vue</b></td><td>新增「新建 worktree」动作项（条件显示：.bare 模式）+ emit <code>create-worktree</code></td><td>组件改动</td></tr>
+    <tr><td><b>CreateWorktreeModal.vue</b></td><td>新组件。form/progress/success/error 四态。调 <code>worktreeApi.create()</code></td><td>新增组件</td></tr>
+    <tr><td><b>useNewTaskDirSelect.ts</b></td><td>新增 <code>openWorktreeModal()</code>（transition 到 dir-popover 的子态或新 overlay 态）</td><td>composable 扩展</td></tr>
+    <tr><td><b>worktreeApi.ts</b></td><td>新增 <code>create({branch, baseBranch})</code> → RPC <code>worktree.create</code></td><td>新增 API</td></tr>
+    <tr><td><b>protocol.ts</b></td><td>新增 <code>'worktree.create'</code> / <code>'worktree.created'</code> 协议定义</td><td>shared 类型</td></tr>
+    <tr><td><b>WorktreeService</b>（runtime）</td><td>新增 service：WorkspaceDetector + WorktreeCreator + SetupRunner</td><td>新增 runtime service</td></tr>
+    <tr><td><b>submitFirstMessage</b></td><td><b>不改</b>。worktree 创建在选目录阶段已完成，pendingCwd 已是新路径</td><td>零改动</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  <b>关键优势</b>：<code>submitFirstMessage</code> 零改动——worktree 创建是选目录阶段的前置步骤，创建完 pendingCwd 已是新 worktree 路径，
+  后续 session.create + chat.send 走现有逻辑。<b>不需要打包执行、不需要 preparing 态、不需要 pendingWorktree ref</b>。
+  这是把 worktree 放在「选目录」层的根本好处：与现有架构完全解耦。
+</div>
+
+<h2><span class="num">§6</span>边界与错误矩阵</h2>
+<table class="flow-table">
+  <thead><tr><th>场景</th><th>处理</th></tr></thead>
+  <tbody>
+    <tr><td>非 bare repo</td><td>「新建 worktree」动作项不显示（其他动作项正常）</td></tr>
+    <tr><td>modal 里分支名留空</td><td>「创建」按钮 disabled</td></tr>
+    <tr><td>分支已存在但无 worktree</td><td><code>git worktree add &lt;path&gt; &lt;branch&gt;</code>（检出已有分支，不 -b）</td></tr>
+    <tr><td>目录已存在（同名 worktree）</td><td>modal 报错 + 提示「该 worktree 已存在」→ 关闭后走列表选已有</td></tr>
+    <tr><td>setup 脚本不存在</td><td>步骤 3 显示「未找到 setup 脚本，已跳过」+ worktree 直接可用（无依赖，需手动装）。<b>不做 fallback 项目类型检测</b></td></tr>
+    <tr><td>setup 脚本失败（非 0 退出）</td><td>modal 转 error 态 + 显示退出码 + stderr 输出。保留 worktree 目录。默认按钮「重试 setup 脚本」</td></tr>
+    <tr><td>setup 超时（120s）</td><td>杀进程 + 报错 + 保留目录</td></tr>
+    <tr><td>创建中用户关 modal</td><td>progress 态 X 按钮隐藏，不可关闭。必须等完成或失败</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§7</span>不做的事（YAGNI）</h2>
+<ul style="font-size:13px;color:var(--muted);line-height:1.85;padding-left:18px">
+  <li><b>worktree 管理 UI</b>（列表/删除/切换）—— separate feature</li>
+  <li><b>fallback 项目类型检测</b>（检测 package.json / pyproject.toml 自动装依赖）——识别不全且永远是坑。setup 脚本不存在时直接跳过，让用户自己装</li>
+  <li><b>streaming 实时日志</b>——MVP 用固定步骤列表。完整版后续改 WS streaming</li>
+  <li><b>非 bare repo 的通用 <code>git worktree add</code></b>——场景不同，不在本方案</li>
+  <li><b>worktree 间 session 迁移</b>——session cwd 固定，迁移需 fork</li>
+</ul>
+
+<script>
+  function showModal(name){
+    const wm = document.getElementById('wm2');
+    wm.dataset.modal = 'open';
+    wm.querySelectorAll('.stage').forEach(s=>{
+      s.dataset.show = s.dataset.stage===name ? 'true' : 'false';
+    });
+    document.querySelectorAll('#ctrl-modal button').forEach(b=>b.classList.remove('on'));
+    const labels={'form':'① form 填参数','progress':'② progress 创建中','success':'③ success 完成','error':'④ 创建失败'};
+    document.querySelectorAll('#ctrl-modal button').forEach(b=>{if(b.textContent.trim()===labels[name])b.classList.add('on')});
+  }
+  function updateDirPreview(val){
+    const dir = val.replace(/\//g,'-');
+    const el = document.getElementById('dir-preview');
+    if(el) el.querySelector('.pv-value').textContent = 'xyz-agent-workspace/' + dir;
+  }
+</script>
+
+</body>
+</html>
