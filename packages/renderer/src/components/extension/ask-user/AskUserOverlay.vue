@@ -176,8 +176,11 @@ const allAnswered = computed(() => props.questions.every(isQuestionAnswered))
 /** 未答题数（disabled tooltip 文案） */
 const unansweredCount = computed(() => props.questions.filter((q) => !isQuestionAnswered(q)).length)
 
-/** Tab / Shift+Tab 在问题间循环导航（多问题时生效） */
+/** Tab / Shift+Tab 在问题间循环导航（多问题时生效）。
+ *  IME 组合输入中（中文/日文输入法拼音未确认）按 Tab 可能是候选词选择操作，
+ *  此时拦截 Tab 做问题切换会打断用户的输入法操作，故加 isComposing 守卫。 */
 function onTabKey(e: KeyboardEvent): void {
+  if (e.isComposing) return
   if (props.questions.length <= 1) return
   e.preventDefault()
   const total = props.questions.length

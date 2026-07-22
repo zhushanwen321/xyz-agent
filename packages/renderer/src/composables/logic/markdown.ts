@@ -29,7 +29,6 @@ import i18n from '@/i18n'
 const t = i18n.global.t
 
 /**
-/**
  * renderMarkdown 的 env 参数：贯穿 core rule（state.env）+ renderer rule（第 4 参）。
  *
  * - filePaths：当前 session 项目里文件的**完整路径**集合（如 {'src/index.ts', 'packages/x.ts'}）。

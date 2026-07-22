@@ -361,6 +361,30 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
   // ── W4 AC-8：反向断言——slash 命令源不读 settingsStore.skills（FR-5）──
   // 验证：settingsStore.skills 有值，但 globalSkills prop 为空时，landing 不显示任何 skill。
   // 这证明 CommandPopover 已与 settingsStore.skills 解耦（W4 前 landing 读 settingsStore.skills）。
+  it('L18: CommandPopover.handleKeydown 不守卫 isComposing（守卫职责在 Composer 层）', async () => {
+    // 验证守卫责任链路：isComposing 守卫在 Composer.vue onKeydown 第一行，
+    // 不在 CommandPopover.handleKeydown 内。Composer 不调用 handleKeydown →
+    // 命令不执行。本用例确认 handleKeydown 本身不检查 isComposing，
+    // 守卫职责明确在调用方（Composer）。Composer 级集成覆盖见 composer-three-states T2.x。
+    await mountLanding('co')
+    const btns = bodyItemButtons()
+    expect(btns).toHaveLength(1)
+
+    const popover = wrapper!.findComponent(CommandPopover)
+    const handleKeydown = popover.vm.handleKeydown as (e: KeyboardEvent) => boolean
+    expect(typeof handleKeydown).toBe('function')
+
+    // composition 中 Enter 事件（isComposing: true）
+    const imeEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    Object.defineProperty(imeEvent, 'isComposing', { value: true })
+
+    // handleKeydown 处理了 Enter（返回 true）——它不守卫 isComposing
+    const result = handleKeydown(imeEvent)
+    expect(result).toBe(true)
+    // select 被 emit（handleKeydown 不管 isComposing，照常选中）
+    expect(wrapper!.emitted('select')).toBeTruthy()
+  })
+
   it('L17 AC-8 反向：settingsStore.skills 有值但 globalSkills prop 空 → landing 不显示 skill（FR-5 解耦）', async () => {
     // settingsStore.skills 注入 7 条（模拟修复前的数据源）
     useSettingsStore().skills = LANDING_SKILLS

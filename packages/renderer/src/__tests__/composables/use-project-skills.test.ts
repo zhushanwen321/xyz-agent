@@ -91,9 +91,10 @@ describe('useProjectSkills (W4)', () => {
     const { projectSkills } = useProjectSkills(cwd)
 
     // 等待一个 tick 确保 watch 不触发
-    await new Promise((r) => setTimeout(r, 10))
-    expect(getProjectSkillsMock).not.toHaveBeenCalled()
-    expect(projectSkills.value).toEqual([])
+    await vi.waitFor(() => {
+      expect(getProjectSkillsMock).not.toHaveBeenCalled()
+      expect(projectSkills.value).toEqual([])
+    })
   })
 
   it('getProjectSkills 抛错 → projectSkills 为空数组，不崩（best-effort）', async () => {
@@ -103,7 +104,8 @@ describe('useProjectSkills (W4)', () => {
     const { projectSkills } = useProjectSkills(cwd)
 
     await vi.waitFor(() => expect(getProjectSkillsMock).toHaveBeenCalled())
-    await new Promise((r) => setTimeout(r, 10))
-    expect(projectSkills.value).toEqual([])
+    await vi.waitFor(() => {
+      expect(projectSkills.value).toEqual([])
+    })
   })
 })

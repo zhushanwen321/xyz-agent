@@ -131,6 +131,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
+      // 注意：此处 session 是 delete 前缓存的引用，removeSessionEntry 后 Map 条目已删除
       // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）
       this.removeSessionEntry(sessionId)
 

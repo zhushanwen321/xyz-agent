@@ -135,7 +135,8 @@ export class ConfigService implements IConfigService {
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } } {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
-    const merged = { ...existing }
+    // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
+    const merged: Record<string, unknown> = { ...existing }
     if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
     if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
     if (data.type !== undefined) merged.api = this.configStore.applyTypeTranslation(data.type as string)

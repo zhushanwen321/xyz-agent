@@ -261,21 +261,26 @@ export class EventInterpreter {
     const { toolCallId, toolName } = ev
     let input = ev.input
 
+    let blocked = false
     if (this.opts.executeHooks) {
       try {
         const hookResult = await this.opts.executeHooks('onBeforeToolCall', { toolName, input })
         if (hookResult.blocked === true) {
-          // 阻断：不产出 tool_call_start，但仍触发 onPiEvent hook（带 blocked 标记，供观测插件）
-          this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_start', toolCallId, toolName, input, blocked: true }).catch(() => {})
-          return
-        }
-        if (hookResult.transformedData !== undefined) {
+          blocked = true
+        } else if (hookResult.transformedData !== undefined) {
           input = hookResult.transformedData
         }
       } catch (e) {
         // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
         console.debug(`[event-interpreter] hook tool_execution_start error: ${toErrorMessage(e)}`)
       }
+    }
+    if (blocked) {
+      // 阻断：不产出 tool_call_start，但仍触发 onPiEvent hook（带 blocked 标记，供观测插件）。
+      // 移到 try-catch 外：与 tool_execution_end 的 fire-and-forget 模式一致——
+      // onBeforeToolCall hook 失败（catch 分支）时仍触发 onPiEvent（不因 hook 失败丢观测事件）。
+      this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_start', toolCallId, toolName, input, blocked: true }).catch(() => {})
+      return
     }
 
     // 观测 hook（tool_execution_start）
@@ -347,7 +352,7 @@ export class EventInterpreter {
   }
 
   /** turn-end（agent_end）：转发 message.complete + context.update 回写 + onTurnFinalize（副作用）+ 观测 hook + file_changes ready diff + 清空态。 */
-  private handleTurnEnd(ev: PiTranslatedEvent & { kind: 'turn-end' }): Promise<void> {
+  private handleTurnEnd(ev: PiTranslatedEvent & { kind: 'turn-end' }): void {
     // 转发 message.complete WS 帧
     this.opts.send(ev.message)
 
@@ -369,8 +374,6 @@ export class EventInterpreter {
 
     // [ADR-0035] turn 结束停止 ping 探测（AC-3：turn 间不探测）。
     this.stopPingLoop()
-
-    return Promise.resolve()
   }
 
   /**

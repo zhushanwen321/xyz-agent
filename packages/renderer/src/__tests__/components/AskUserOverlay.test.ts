@@ -324,6 +324,46 @@ describe('AskUserOverlay', () => {
     expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
   })
 
+  it('U28: 空 questions 数组不崩溃，显示容器但无选项', () => {
+    // 边界：questions=[] 时组件不抛异常，head 容器存在但无选项可渲染
+    // questions.length=0 满足 <=1 条件，ask-user-question-text 仍渲染（空文本）
+    // 但 activeQuestion 为 undefined，v-if="activeQuestion" 阻止选项渲染
+    const wrapper = mountOverlay([])
+    // 不抛异常即通过（mount 成功）
+    expect(wrapper.exists()).toBe(true)
+    // head 容器存在
+    expect(wrapper.find('[data-testid="ask-user-head"]').exists()).toBe(true)
+    // question-text 存在但内容为空（activeQuestion 为 undefined）
+    const qText = wrapper.find('[data-testid="ask-user-question-text"]')
+    expect(qText.exists()).toBe(true)
+    expect(qText.text()).toBe('')
+    // 无选项（activeQuestion 为 undefined，v-if 阻止渲染）
+    expect(wrapper.find('[data-testid="ask-user-option-pg"]').exists()).toBe(false)
+    // 无 Other 输入框
+    expect(wrapper.find('[data-testid="ask-user-free-text"]').exists()).toBe(false)
+  })
+
+  it('U29: composition 结束后 Enter 正常提交（compositionend 恢复）', async () => {
+    // U26 只测了守卫生效（composition 中不提交），本用例测解除后恢复正常。
+    // 流程：compositionstart → Enter（不提交）→ compositionend → Enter（应提交）
+    const wrapper = mountOverlay([singleSelectQ])
+
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    await otherInput.setValue('自定义答案')
+
+    // composition 中 Enter → 不提交
+    await otherInput.trigger('keydown', { key: 'Enter', isComposing: true })
+    expect(wrapper.emitted('submit')).toBeUndefined()
+
+    // composition 结束后 Enter → 正常提交
+    await otherInput.trigger('keydown', { key: 'Enter', isComposing: false })
+    const submitEvents = wrapper.emitted('submit')
+    expect(submitEvents).toHaveLength(1)
+    const answers = JSON.parse(submitEvents![0][0] as string)
+    expect(answers.db).toBe('自定义答案')
+  })
+
   it('U27: IME 组合输入中的 Enter 不前进到下一题（多问题场景）', async () => {
     const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
 

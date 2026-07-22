@@ -184,6 +184,9 @@ function waitForMessage(ws: WebSocket, type: string, timeout = 3000): Promise<Re
 /** Wait for async handleEvent to flush */
 const flushAsync = () => new Promise<void>(r => setTimeout(r, 0))
 
+/** Wait for WS message propagation (real I/O needs a few event loop cycles). */
+const waitForWs = () => new Promise<void>(r => setTimeout(r, 50))
+
 function connectClient(port: number): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}`)
@@ -330,7 +333,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
     }))
 
     // 4. 验证 server 通过 sendExtensionUiResponse 转发到 pi（confirm+true → {id, confirmed:true}）
-    await new Promise((r) => setTimeout(r, 200))
+    await waitForWs()
     expect(fixture.sessionService.getRpcClient).toHaveBeenCalledWith('test-session-1')
     expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-confirm-1', true, 'confirm')
   })
@@ -366,7 +369,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
     }))
 
     // 4. 验证 server 通过 sendExtensionUiResponse 转发到 pi（select+string → {id, value:'option1'}）
-    await new Promise((r) => setTimeout(r, 200))
+    await waitForWs()
     expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-select-1', 'option1', 'select')
   })
 
@@ -395,7 +398,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
     }))
 
     // 3. 验证 server 通过 sendExtensionUiResponse 转发到 pi（confirm+false → {id, confirmed:false}）
-    await new Promise((r) => setTimeout(r, 200))
+    await waitForWs()
     expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-cancel-1', false, 'confirm')
   })
 
@@ -424,7 +427,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
     }))
 
     // 3. 验证 server 通过 sendExtensionUiResponse 转发到 pi（null → {id, cancelled:true}）
-    await new Promise((r) => setTimeout(r, 200))
+    await waitForWs()
     expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-null-1', null, 'input')
   })
 })

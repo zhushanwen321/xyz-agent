@@ -298,7 +298,6 @@ export type ServerMessageType =
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
-  | 'message.compactionSummary'
   | 'extension:setEditorText'
   | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'

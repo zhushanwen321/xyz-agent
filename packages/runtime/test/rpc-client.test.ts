@@ -13,6 +13,7 @@
  * 从而驱动 pending resolve。这样不依赖真实 pi 进程。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { RpcClient } from '../src/infra/pi/rpc-client.js'
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -120,8 +121,7 @@ function pendingSize(client: { pending?: Map<unknown, unknown> }): number {
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('RpcClient W1', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let client: any
+  let client: RpcClient
 
   beforeEach(async () => {
     stdinWrites.length = 0

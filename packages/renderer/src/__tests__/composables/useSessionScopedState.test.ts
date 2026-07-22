@@ -157,6 +157,30 @@ describe('W1 useSessionScopedState: Map 分区工厂', () => {
     expect(result.current.value.items).toEqual(['a-1'])
   })
 
+  it('大量 sid 创建后 Map 分区可被 cleanup 回收（防内存泄漏）', () => {
+    const sid = ref<string | null>('init-sid')
+    const { result } = runWithScope(() => useSessionScopedState(sid, () => ({ v: 0 })))
+
+    // 创建 100 个 sid 分区
+    for (let i = 0; i < 100; i++) {
+      sid.value = `session-${i}`
+      result.update((s) => { s.v = i })
+    }
+
+    // 逐个 cleanup
+    for (let i = 0; i < 100; i++) {
+      result.cleanup(`session-${i}`)
+    }
+
+    // cleanup 后访问已 cleanup 的 sid 应重新 init（v 回到 0），
+    // 证明 Map 不持有旧分区引用
+    sid.value = 'session-0'
+    expect(result.current.value.v).toBe(0) // 重新 init
+
+    // cleanup 不存在的 sid 不抛错
+    expect(() => result.cleanup('nonexistent')).not.toThrow()
+  })
+
   it('null sid 时 current 返回 init() 默认实例但不写入 Map', () => {
     const init = vi.fn(() => ({ x: 'default' }))
     const sid = ref<string | null>(null)

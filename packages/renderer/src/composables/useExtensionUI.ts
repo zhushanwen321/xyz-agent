@@ -18,7 +18,7 @@
  * 可能在 split 模式下订阅同一 sessionId。filter 参数让两个消费者从源头分流——
  * ExtensionUIDialog 只入非 askUser 请求，Panel 只入 askUser 请求——避免同一请求入两份队列。
  */
-import { computed, watch, onUnmounted, reactive, type Ref } from 'vue'
+import { computed, watch, onScopeDispose, reactive, type Ref } from 'vue'
 import { onUIRequest, onUITimeout, onNotify, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
 import { useToast } from '@/composables/useToast'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
@@ -109,7 +109,7 @@ export function useExtensionUI(
   subscribe(sessionId.value)
   watch(sessionId, (sid) => subscribe(sid))
 
-  onUnmounted(() => {
+  onScopeDispose(() => {
     unsubFns.forEach(fn => fn())
     unsubFns = []
   })
@@ -179,7 +179,7 @@ export function useExtensionNotify(focusedSessionId: Ref<string | null>) {
 
   watch(focusedSessionId, (sid) => subscribe(sid), { immediate: true })
 
-  onUnmounted(() => {
+  onScopeDispose(() => {
     if (unsubFn) unsubFn()
   })
 }
