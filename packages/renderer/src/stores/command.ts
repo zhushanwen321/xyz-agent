@@ -21,6 +21,7 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import type { CommandSourceInfo } from '@xyz-agent/shared'
 import type { AppCommand } from '@/lib/search-types'
 
 /** slash 命令项（runtime session.commands payload 归一化 + icon key 推断） */
@@ -32,6 +33,9 @@ export interface SessionCommand {
   /** icon key（与 SLASH_ICON_COMPONENTS 同源：terminal/star/wrench/...） */
   icon: string
   description?: string
+  /** 命令来源元信息（SKILL.md / extension 文件路径等），透传自 pi get_commands。
+ *  CommandDocPanel 据此直接读文件渲染，不依赖 settingsStore.skills 扫描。 */
+  sourceInfo?: CommandSourceInfo
 }
 
 /**
@@ -54,6 +58,7 @@ export interface RawCommand {
   name: string
   description?: string
   source: string
+  sourceInfo?: CommandSourceInfo
 }
 
 /** 从 localStorage 加载快捷键覆盖 */
@@ -152,6 +157,7 @@ export const useCommandStore = defineStore('command', () => {
       kind: c.source,
       icon: iconKeyForSource(c.source),
       description: c.description,
+      sourceInfo: c.sourceInfo,
     }))
     commandsBySession.value = new Map(commandsBySession.value).set(sessionId, normalized)
   }

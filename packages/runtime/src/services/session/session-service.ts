@@ -22,7 +22,7 @@ import type {
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
-import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
+import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
@@ -802,10 +802,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 用于 renderer 切 session 后主动拉取（修复 broadcast 与订阅时序竞争）。
    * @throws session 未激活或 pi getCommands 失败时抛（调用方 try-catch）
    */
-  async getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>> {
+  async getCommands(sessionId: string): Promise<PiCommandInfo[]> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`session ${sessionId} not active`)
-    return client.getCommands() as Promise<Array<{ name: string; description?: string; source: string }>>
+    return client.getCommands()
   }
 
   /** Query pi extension commands 并广播。失败不阻塞 session。 */

@@ -202,7 +202,7 @@ interface Setup {
     label?: string
     cwd?: string
     sessionFile?: string
-    commands?: Array<{ name: string; source: string }>
+    commands?: Array<{ name: string; source: string; sourceInfo?: Record<string, unknown> }>
     hidden?: boolean
   }) => Promise<{ id: string; client: MockClient }>
 }
@@ -542,6 +542,26 @@ describe('SessionService · lifecycle', () => {
       // commands 广播给前端
       const cmds = findBroadcast(setup, 'session.commands')
       expect(cmds?.payload).toMatchObject({ sessionId: id })
+    })
+
+    it('broadcasts session.commands 含 sourceInfo 透传（W2）', async () => {
+      const { id } = await setup.seedSession({
+        commands: [
+          {
+            name: 'fix',
+            source: 'skill',
+            sourceInfo: { path: '/proj/skills/fix/SKILL.md', source: 'skill', scope: 'project' },
+          },
+        ],
+      })
+      const cmds = findBroadcast(setup, 'session.commands')
+      // sourceInfo 从 pi get_commands 透传到 session.commands 广播 payload
+      expect(cmds?.payload.commands[0]).toMatchObject({
+        name: 'fix',
+        source: 'skill',
+        sourceInfo: { path: '/proj/skills/fix/SKILL.md', source: 'skill', scope: 'project' },
+      })
+      expect(id).toBeDefined()
     })
 
     it('throws when no default model configured', async () => {

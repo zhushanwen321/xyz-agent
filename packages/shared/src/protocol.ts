@@ -13,6 +13,23 @@ import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
 
+// ── Client → Runtime message types
+
+/** pi get_commands 返回的命令来源元信息（RpcSlashCommand.sourceInfo 透传）。
+ *  sourceInfo.path 是 SKILL.md / extension 文件绝对路径，供 CommandDocPanel 直接读文件渲染。 */
+export interface CommandSourceInfo {
+  /** SKILL.md / extension 文件绝对路径 */
+  path: string
+  /** pi 来源分类（extension / prompt / skill） */
+  source: string
+  /** 作用域：user / project / temporary */
+  scope?: string
+  /** 包来源：package / top-level */
+  origin?: string
+  /** 基础目录（pi 用于相对路径解析的基准） */
+  baseDir?: string
+}
+
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
@@ -380,7 +397,8 @@ export interface ServerMessageMapBase {
   'session.compacting': { sessionId: string }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
-  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // sourceInfo 透传自 pi get_commands 的 RpcSlashCommand（SKILL.md / extension 文件路径等），可选（旧消费方向后兼容）
+  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string; sourceInfo?: CommandSourceInfo }> }
   // session.subagents：当前 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
   // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）

@@ -4,6 +4,7 @@ export type {
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
   ReplyPayloadMap,
   SystemPromptConfig,
+  CommandSourceInfo,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
