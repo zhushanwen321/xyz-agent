@@ -233,7 +233,7 @@ export type DefaultModelSource =
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -461,6 +461,15 @@ export interface ServerMessageMapBase {
   'session.deleted': { sessionId: string }
   // session.renamed：session.rename reply（session-message-handler.ts:162 reply { sessionId, name }）。
   'session.renamed': { sessionId: string; name: string }
+  // session.forkNotice：session.fork 成功后的广播（FR-12 修订 PR2），通知 srcSession 所在 panel
+  // 在对话流插一条 ForkNotice 反馈行。广播时机：fork RPC 成功创建 newSession 之后。
+  // branchName/preview optional——纯后台 fork 传 branchName，fork-ask 传 preview（提问预览）。
+  'session.forkNotice': {
+    srcSessionId: string
+    newSessionId: string
+    branchName?: string
+    preview?: string
+  }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。

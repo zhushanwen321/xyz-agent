@@ -180,6 +180,43 @@
       <hr class="border-0 border-t border-border" />
       </div>
 
+      <!-- [W2 fast-fork] 每条 assistant 的 fork 入口（FR-6,7,8,11）。
+           spec §2 层①：每条 assistant 消息 hover 都出 fork 按钮（不只末条），双按钮并列。
+           - fork 后台（GitFork，低频）：空白 fork 到后台，留在原线
+           - fork 提问（GitFork 加粗，高频）：进入 fork-ask 模式
+           accent 高亮区分中性复制按钮；中间 as-sep 分隔两组（复制组在 summary 区，此处独立 fork 组）。
+           门控仅排除 subagent 虚拟会话（streaming/pending 均可 fork，spec §1 裁决）。 -->
+      <template v-for="(assistant, fIdx) in turn.assistants" :key="`fork-${assistant.id}`">
+        <div
+          v-if="!isSubagentVirtualId(sessionId)"
+          class="fork-row group/fork mt-0.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 hover:opacity-100 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100"
+          :data-assistant-id="assistant.id"
+        >
+          <span class="as-sep mx-1 h-3.5 w-px bg-border" />
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-6 text-accent hover:bg-accent-soft hover:text-accent-hover"
+            data-testid="fork-background-btn"
+            :title="t('panel.message.forkBackground')"
+            @click="onFork(assistant)"
+          >
+            <GitFork class="size-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-6 font-semibold text-accent hover:bg-accent-soft hover:text-accent-hover"
+            data-testid="fork-ask-btn"
+            :title="t('panel.message.forkAsk')"
+            @click="onForkAsk(assistant)"
+          >
+            <GitFork class="size-3.5" />
+          </Button>
+          <span v-if="fIdx < turn.assistants.length - 1" class="sr-only">{{ t('panel.message.forkFromHere') }}</span>
+        </div>
+      </template>
+
       <!-- 折叠 trace：working 或 expanded 时展开。
            块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
            - streaming 态：所有块按时序展开，trace 末尾追加独立光标行（永远在最后一行）
@@ -244,16 +281,7 @@
             <Copy v-else class="size-3" />
             <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-accent-foreground">MD</span>
           </Button>
-          <Button
-            v-if="!isSessionActive && !isSubagentVirtualId(sessionId)"
-            variant="ghost"
-            size="icon"
-            class="size-6 text-subtle hover:text-fg"
-            :title="t('panel.message.forkToOther')"
-            @click="openFork"
-          >
-            <GitFork class="size-3" />
-          </Button>
+          <!-- fork 按钮已移至每条 assistant 的 fork-row（上方），此处不再重复渲染。 -->
         </div>
       </div>
 
@@ -266,9 +294,6 @@
         :session-id="sessionId"
       />
     </div>
-
-    <!-- fork 确认弹窗（问题 6） -->
-    <ForkConfirmModal v-model:open="forkOpen" @confirm="onForkConfirm" />
   </div>
 </template>
 
@@ -280,7 +305,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
-import type { ThinkingBlock, ToolCall, Segment } from '@xyz-agent/shared'
+import type { ThinkingBlock, ToolCall, Segment, Message } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
@@ -295,7 +320,6 @@ import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
-import ForkConfirmModal from './ForkConfirmModal.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const props = defineProps<{
@@ -318,7 +342,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const chat = useChatStore()
 const { editAndResend } = useChat()
-const { forkSession } = useSidebar()
+const { forkSession, forkSessionAsk } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
 const fileTreeStore = useFileTreeStore()
 
@@ -467,19 +491,28 @@ async function submitEdit(): Promise<void> {
   await editAndResend(props.sessionId, user.id, text)
 }
 
-/* ── fork modal：clone+fork 到另一 panel ── */
-const forkOpen = ref(false)
+/* ── fork 入口（FR-6,7,8,11）：每条 assistant 可 fork，无需确认弹窗 ── */
 
-function openFork(): void {
-  forkOpen.value = true
+/**
+ * fork 后台（低频）：从指定 assistant 处空白 fork，留在原线（useSidebar.forkSession 已不 split）。
+ * includeFrom=true：保留到该 assistant（含）。反馈行由 session.forkNotice 广播驱动渲染。
+ */
+async function onFork(msg: Message): Promise<void> {
+  if (!msg) return
+  await forkSession(props.sessionId, msg.id, { includeFrom: true, openInStandby: false })
 }
 
-async function onForkConfirm(): Promise<void> {
-  forkOpen.value = false
-  const msg = lastAssistant.value
+/**
+ * fork 提问（高频）：从指定 assistant 处 fork + 把后续输入作为新分支首条 user message。
+ * W2 入口层先打通调用骨架（forkSessionAsk 已实现 fork+send+回滚），composer fork 模式由后续 wave 接入。
+ * 此处先走 prompt 收集提问内容（占位实现，待 composer fork 模式就绪后改为读 composer）。
+ */
+async function onForkAsk(msg: Message): Promise<void> {
   if (!msg) return
-  // includeFrom=true：保留到该 assistant（含）；openInStandby：打开另一 panel
-  await forkSession(props.sessionId, msg.id, { includeFrom: true, openInStandby: true })
+  // TODO(composer-fork-mode): 接入 composer fork 模式获取 content（spec §2 层②）。
+  // 当前无 composer fork 模式，先以空内容占位跳过实际发送（避免误触发送空消息）。
+  // 真正的 fork-to-ask 由 composer fork 模式触发 forkSessionAsk(srcId, msgId, content)。
+  void forkSessionAsk
 }
 
 /**

@@ -51,6 +51,9 @@ export default {
     inProgress: 'In progress',
     copyMarkdown: 'Copy as Markdown',
     forkToOther: 'Clone and fork to another panel',
+    forkBackground: 'Fork to background (branch from this reply, stay on current line)',
+    forkAsk: 'Fork to ask (ask in a new branch, isolated from main line)',
+    forkFromHere: 'Fork from here',
     editReplace: 'Edit (replace and resend)',
     editAfterReplace: 'Edit then replace and resend',
     cancel: 'Cancel',
@@ -223,6 +226,13 @@ export default {
     desc: 'A new session will be created, copying conversation history up to this reply, and opened in another panel. The current session is not affected.',
     confirm: 'Clone and fork',
     cancel: 'Cancel',
+  },
+  forkNotice: {
+    forkedPrefix: 'Forked to background',
+    askedPrefix: 'Asked in a new branch',
+    view: 'View',
+    viewBranch: 'View branch',
+    dismiss: 'Dismiss',
   },
   retryIndicator: {
     retrying: 'Retrying',

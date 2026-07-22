@@ -51,6 +51,9 @@ export default {
     inProgress: '进行中',
     copyMarkdown: '复制为 Markdown',
     forkToOther: '克隆并分叉到另一面板',
+    forkBackground: 'fork 后台（从该回复分叉新会话，留在当前线）',
+    forkAsk: 'fork 提问（在新分支追问，与主线隔离）',
+    forkFromHere: '从此处分叉',
     editReplace: '编辑（替换并重新发送）',
     editAfterReplace: '编辑后替换并重新发送',
     cancel: '取消',
@@ -223,6 +226,13 @@ export default {
     desc: '将创建一个新会话，复制到该回复为止的对话历史，并在另一个面板打开。当前会话不受影响。',
     confirm: '克隆并分叉',
     cancel: '取消',
+  },
+  forkNotice: {
+    forkedPrefix: '已 fork 到后台',
+    askedPrefix: '已在新分支提问',
+    view: '查看',
+    viewBranch: '查看分支',
+    dismiss: '关闭',
   },
   retryIndicator: {
     retrying: '重试中',

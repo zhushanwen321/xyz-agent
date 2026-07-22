@@ -20,6 +20,7 @@
  */
 import { computed, onScopeDispose } from 'vue'
 import type { SessionGroup } from '@xyz-agent/shared'
+import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
@@ -36,10 +37,15 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useChat } from '@/composables/features/useChat'
+import { useToast } from '@/composables/useToast'
+import i18n from '@/i18n'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
+
+// 模块级 i18n t（非 setup 上下文也能用，与 useChat 同模式）
+const t = i18n.global.t
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
 // useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），
@@ -461,15 +467,51 @@ export function useSidebar() {
       includeFrom: opts?.includeFrom,
     })
     session.appendSession(created)
-
-    // 打开在另一 panel（单 panel 先 split 出 standby）
-    if (opts?.openInStandby && !panel.isDual) panel.split()
-    const standby = opts?.openInStandby
-      ? panel.panels.find((p) => p.id !== panel.activePanelId)
-      : undefined
-    await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
-
+    // [W2 fast-fork] 后台 fork 不再 split/跳转：去掉 panel.split() + selectSession(standby)。
+    // fork 后留在原线，对话流经 session.forkNotice 广播插反馈行（FR-9/10），侧栏静默新增。
+    // openInStandby 选项保留为契约（调用方可能传入），但行为退化为「不切焦点」。
     return created.id
+  }
+
+  /**
+   * Fork-to-Ask（FR-9/10 高频路径）：fork 新 session + 把 content 作为首条 user message 发送。
+   *
+   * 原子语义：
+   * - fork 失败 → 不发送（forkSession 内部抛错自然短路，无占位 session 需回滚）。
+   * - send 失败 → 回滚（sessionApi.remove + session.removeFromList）清理占位 session，避免悬挂空壳。
+   *
+   * 直接调 chatApi.send 而非 useChat().send：后者内部 try/catch 吞掉 send 错误（仅 toast），
+   * 此处需要捕获 reject 触发回滚。toast 由此处显式给出（保证用户可见反馈）。
+   * 主线 session 全程不参与（不写入、不 streaming、不 split）。
+   */
+  async function forkSessionAsk(
+    srcSessionId: string,
+    fromMessageId: string,
+    content: string,
+  ): Promise<void> {
+    // 解析 fork 点：尽量取 piEntryId（精确），取不到则降级传 fromMessageId（runtime 走 JSONL 兜底）。
+    // 不像 forkSession 那样在消息缺失时硬抛——fork-ask 的核心有效负载是 content，fork 点缺失不应阻断。
+    const forkMsg = chat.getMessages(srcSessionId).find((m) => m.id === fromMessageId)
+    const created = await sessionApi.fork(srcSessionId, {
+      piEntryId: forkMsg?.piEntryId,
+      messageTimestamp: forkMsg?.timestamp,
+      messageRole: forkMsg?.role,
+      includeFrom: true,
+    })
+    session.appendSession(created)
+    const newId = created.id
+    const prompt = segmentsToPrompt(textToSegments(content))
+    try {
+      await chatApi.send(newId, prompt)
+    } catch (e) {
+      // send 失败回滚：删除占位 session（runtime + 列表），避免空壳悬挂。
+      // 不 rethrow：错误已 toast 化，forkSessionAsk 对调用方表现为「已处理」（resolves undefined）。
+      await sessionApi.remove(newId).catch(() => {})
+      session.removeFromList(newId)
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error: toastError } = useToast()
+      toastError(t('composable.sendFailed', { msg }))
+    }
   }
 
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
@@ -594,5 +636,6 @@ export function useSidebar() {
     renameSession,
     deleteSession,
     forkSession,
+    forkSessionAsk,
   }
 }

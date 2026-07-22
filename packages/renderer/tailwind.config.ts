@@ -122,6 +122,11 @@ export default {
           from: { opacity: '0', transform: 'translateY(8px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
+        // ForkNotice 反馈行入场（spec §3：从 -4px translateY 淡入，200ms ease）
+        'notice-in': {
+          from: { opacity: '0', transform: 'translateY(-4px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
@@ -132,6 +137,7 @@ export default {
         'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
         wiggle: 'wiggle 1.2s ease-in-out infinite',
         'pulse-strong': 'pulse-strong 1.4s ease-in-out infinite',
+        'notice-in': 'notice-in 200ms var(--ease)',
       },
     },
   },
