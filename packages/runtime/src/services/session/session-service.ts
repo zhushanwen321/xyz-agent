@@ -101,6 +101,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 未注入时 message.complete 广播无额外副作用（reload 编排不生效）。
    */
   private onMessageComplete: ((sessionId: string) => void) | null = null
+  /**
+   * R3：session 删除回调（组合根注入 ReloadOrchestrator.clearPending）。
+   * 主动 delete（lifecycle.delete）和进程异常退出（onSessionExit）均经 removeSessionEntry
+   * 汇聚触发，清掉 pendingReload 残留（running session 入队后被删，永不发 message.complete）。
+   */
+  private onSessionDelete: ((sessionId: string) => void) | null = null
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -125,7 +131,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
-      this.sessions.delete(sessionId)
+      // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）
+      this.removeSessionEntry(sessionId)
 
       // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
       // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
@@ -177,6 +184,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /** W5：注入 message.complete 回调（组合根绑 ReloadOrchestrator.onMessageComplete）。 */
   setOnMessageComplete(handler: (sessionId: string) => void): void {
     this.onMessageComplete = handler
+  }
+
+  /** R3：注入 session 删除回调（组合根绑 ReloadOrchestrator.clearPending）。 */
+  setOnSessionDelete(handler: (sessionId: string) => void): void {
+    this.onSessionDelete = handler
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
@@ -704,7 +716,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   getSession(sessionId: string): IManagedSessionView | undefined { return this.sessions.get(sessionId) }
-  removeSessionEntry(sessionId: string): void { this.sessions.delete(sessionId) }
+  removeSessionEntry(sessionId: string): void {
+    this.sessions.delete(sessionId)
+    // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
+    // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
+    this.onSessionDelete?.(sessionId)
+  }
 
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined {
     const id = this.pm.getSessionIdByClient(client)

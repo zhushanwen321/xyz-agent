@@ -149,8 +149,9 @@ const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
  * - landing 态：globalSkills（skillRegistry globalCache 经 RPC，W4 FR-5 替代 settingsStore.skills）
  *   ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。
  *   skill name 归一化为 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 路由前缀，裸名 pi 不认）。
- *   [W3] 已移除公共 session：landing 态 composerSid 为 null，无 pi extension 命令源（/goal 等
- *   不再出现于 landing slash popover）。extCmds 保留为空集，代码不依赖该源。
+ *   [W3] landing 态：未选目录（sessionId=null）时 extCmds 空，纯 globalSkills + projectSkills；
+ *   选目录后 session 已 create（sessionId 非 null），extCmds 含该 session 的 pi 命令（/goal 等）。
+ *   这是预期行为——选了目录就有 session 就有命令。extCmds 保留为可能非空。
  *   [W4] __ 前缀命令过滤：name（去 / 前缀后）以 __ 开头的命令不显示（W5 /__xyz_reload__ 准备，
  *   内部触发命令不可见）。
  * - panel 态：compact + commandStore.getCommands(sessionId)（pi 真源，含 pi 返回的 skill 命令）。
@@ -163,6 +164,7 @@ const slashCommands = computed(() => {
   if (variant.value === 'landing') {
     // landing 合并两源（W4 FR-5）：globalSkills（skillRegistry globalCache，经 useGlobalSkills RPC）
     // ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。去重 → 全局 → 项目。
+    // extCmds：未选目录（sessionId=null）时为空；选目录后 session 已 create，含该 session 的 pi 命令。
     const extCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
     // 去重 key 集：累积已选入命令的归一化 name（/skill:<name> / /commit / /goal 等）
     const seen = new Set<string>()

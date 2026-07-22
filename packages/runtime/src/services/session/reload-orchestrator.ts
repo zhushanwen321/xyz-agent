@@ -58,6 +58,15 @@ export class ReloadOrchestrator {
     await this.doReload(sessionId)
   }
 
+  /**
+   * R3：session 删除时清 pendingReload 残留。
+   * running session 入队后被 delete（或进程异常退出），永不发 message.complete，
+   * 不清则永久残留 Set。组合根绑 sessionService.setOnSessionDelete → 此方法。
+   */
+  clearPending(sessionId: string): void {
+    this.pendingReload.delete(sessionId)
+  }
+
   /** 单个 session 的 skill 变更处理。 */
   private async handleSkillChangeForSession(sessionId: string): Promise<void> {
     // 排队期 session 被删除（deleteSession）→ 跳过

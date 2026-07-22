@@ -282,6 +282,10 @@ async function main(): Promise<void> {
   sessionService.setOnMessageComplete((sid) => {
     void reloadOrchestrator.onMessageComplete(sid)
   })
+  // R3：session 删除（主动 delete / 进程异常退出）清 pendingReload 残留。
+  sessionService.setOnSessionDelete((sid) => {
+    reloadOrchestrator.clearPending(sid)
+  })
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
   const piVersion = await pm.getPiVersion()
@@ -298,6 +302,8 @@ async function main(): Promise<void> {
     try {
       recentWorkspacesStore.flushAll()
       recentWorkspacesStore.stopFlushTimer()
+      // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
+      skillRegistry.dispose()
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {

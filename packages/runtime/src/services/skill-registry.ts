@@ -92,6 +92,10 @@ export class SkillRegistry {
         ignored: /(^|[\/\\])\../,
         persistent: true,
       })
+      // R4：watcher error（权限/目录删/EMFILE）记日志不崩。chokidar 自动处理重建，best-effort。
+      this.globalWatcher.on('error', (e) => {
+        console.error('[skill-registry] global watcher error:', e)
+      })
       this.globalWatcher.on('all', () => {
         void this.debounce(GLOBAL_KEY, async () => {
           this.globalCache = await this.scanFn('')
@@ -121,6 +125,10 @@ export class SkillRegistry {
     const watcher = watch(cwd, {
       ignored: /(^|[\/\\])\../,
       persistent: true,
+    })
+    // R4：watcher error（权限/目录删/EMFILE）记日志不崩。chokidar 自动处理重建，best-effort。
+    watcher.on('error', (e) => {
+      console.error(`[skill-registry] project watcher error (cwd=${cwd}):`, e)
     })
     watcher.on('all', () => {
       void this.debounce(cwd, async () => {
