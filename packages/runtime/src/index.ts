@@ -20,12 +20,18 @@ import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
 import { join, resolve } from 'node:path'
+import { spawn } from 'node:child_process'
+import * as fs from 'node:fs'
 import { ExtensionService } from './services/extension-service.js'
+import { SkillRegistry } from './services/skill-registry.js'
+import { ReloadOrchestrator } from './services/session/reload-orchestrator.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
+import { ShellRunner } from './infra/shell-runner.js'
+import { WorktreeService } from './services/worktree/worktree-service.js'
 import { FileService } from './services/file-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
@@ -183,12 +189,21 @@ async function main(): Promise<void> {
         data: { ...context, sessionId },
         timestamp: Date.now(),
       }),
-      // W6 pi watchdog：turn 内连续 300s 无活动事件判定 pi 卡死，触发 abort。
+      // [ADR-0035] ping 探测连续 3 次失败（180s）判定 pi 进程真死，触发 abort。
       // 复用 sessionService.abort → message-dispatcher.abort 完整路径（client.abort 成功/失败
-      // 均有兜底广播 + 复位 isGenerating，设计文档 A2 §3.4）。.catch 兜底防 unhandledRejection
+      // 均有兜底广播 + 复位 isGenerating）。.catch 兜底防 unhandledRejection
       // （abort 内部已 try/catch 广播终态，此处只防极端异常逃逸）。
       onSilentAbort: ({ sessionId: sid }) => {
         sessionService.abort(sid).catch(() => {})
+      },
+      // [ADR-0035] ping get_state 进程健康探测（替代事件静默检测）。
+      // 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
+      // pm（ProcessManager）在本闭包外已创建，getClient 返回 undefined 时计为一次失败
+      // （AC-9），但不抛错——client 偶发未就绪不应让 interpret 批次崩溃。
+      pingPi: async () => {
+        const client = pm.getClient(sessionId)
+        if (!client) return undefined
+        return client.getState()
       },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
@@ -247,16 +262,51 @@ async function main(): Promise<void> {
   // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
   sessionService.setConfigService(configService)
 
+  // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
+  // 构造在 sessionService 之后（依赖其 getActiveSessionIds/getSessionCwd 窄接口）。
+  // initGlobal() 在 server.start 后调（下文），启动期扫描全局 skill 目录挂 watcher。
+  const skillRegistry = new SkillRegistry({
+    configStore: {
+      getSkillPaths: () => configService.getSkillDirs(),
+      getPiAgentDir: () => configService.getPiAgentDir(),
+    },
+    configDir,
+    sessionService,
+  })
+
+  // ── W5 ReloadOrchestrator：skill 变动 → 受影响 session pi reload（重扫 skill）────
+  // 依赖 sessionService 窄接口（isSessionIdle/promptReload/hasSession），故在 skillRegistry 之后构造。
+  // 绑定两条链路：
+  //   1. skillRegistry.onChange → onSkillChange（skill 变动触发）
+  //   2. sessionService message.complete 广播 → onMessageComplete（running session 生成完成消费 pending 队）
+  const reloadOrchestrator = new ReloadOrchestrator({ sessionService })
+  skillRegistry.onChange((affectedSessionIds) => {
+    void reloadOrchestrator.onSkillChange(affectedSessionIds)
+  })
+  sessionService.setOnMessageComplete((sid) => {
+    void reloadOrchestrator.onMessageComplete(sid)
+  })
+  // R3：session 删除（主动 delete / 进程异常退出）清 pendingReload 残留。
+  sessionService.setOnSessionDelete((sid) => {
+    reloadOrchestrator.clearPending(sid)
+  })
+
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo)
+  // WorktreeService：编排 .bare workspace 下 worktree 创建（git worktree add + setup-worktree.sh）。
+  // 依赖全注入：GitExecutor（git 子命令）/ ShellRunner（setup 脚本，用 child_process.spawn）/
+  // GitInfoReader（当前分支查询）/ fs（existsSync，检测 .bare 与目录冲突）。
+  // 经 server.setServices 注入到 WorktreeMessageHandler（worktree.create 路由）。
+  const worktreeService = new WorktreeService({
+    gitExecutor: new GitExecutor(),
+    shellRunner: new ShellRunner({ spawn }),
+    gitInfoReader: new GitInfoReader(),
+    fs,
+  })
 
-  // 公共 session 就绪回调：重广播 app.info（带 publicSessionId）。
-  // 解决时序竞争——ensurePublicSession 在 server.start 之后才执行，首次 sendInitialState
-  // 推 app.info 时它尚未创建。创建成功后经此回调补发，前端 landing slash popover 才有数据源。
-  sessionService.setOnPublicSessionReady(() => server.broadcastAppInfo())
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService)
 
   // Graceful shutdown on signals
   let shuttingDown = false
@@ -267,6 +317,8 @@ async function main(): Promise<void> {
     try {
       recentWorkspacesStore.flushAll()
       recentWorkspacesStore.stopFlushTimer()
+      // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
+      skillRegistry.dispose()
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {
@@ -290,9 +342,19 @@ async function main(): Promise<void> {
   await server.start()
   console.log('[runtime] ready')
 
+  // SkillRegistry 全局扫描：启动期扫描全局 skill 目录（piAgentDir/skills、configDir/skills、
+  // discovery.skillDirs）并挂 chokidar watcher。变动时 300ms debounce 重扫缓存 + 经 onChange
+  // 通知上游。必须在 server.start 后调（确保异常不阻塞服务启动）。失败不阻塞（skill 降级空缓存）。
+  try {
+    await skillRegistry.initGlobal()
+    console.log(`[runtime] skill registry initialized (${skillRegistry.getGlobalSkills().length} global skills)`)
+  // eslint-disable-next-line taste/no-silent-catch -- skill 扫描失败不阻塞 runtime，UI 降级空列表
+  } catch (e) {
+    console.error('[runtime] skill registry initialization failed:', e)
+  }
+
   // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，
   // semver.lt 判定后静默升级。失败不阻塞启动（每个扩展独立 try-catch）。
-  // [HISTORICAL] 在 ensurePublicSession 之前执行，确保公共 session 启动时扩展已最新。
   try {
     const upgradeResults = await extensionService.checkAndAutoUpgrade()
     const upgraded = upgradeResults.filter(r => r.upgraded)
@@ -300,16 +362,10 @@ async function main(): Promise<void> {
       console.log(`[runtime] auto-upgraded ${upgraded.length} extension(s):`,
         upgraded.map(r => `${r.name} ${r.from ?? '?'}→${r.to ?? '?'}`).join(', '))
     }
-     
   } catch (e) {
     // checkAndAutoUpgrade 内部已 catch 每个扩展，此处是意外错误兜底
     console.warn('[runtime] extension auto-upgrade encountered an error:', e)
   }
-
-  // 公共 session 创建：隐藏 session（cwd=数据目录），pi 进程常驻，供 landing 态获取 pi 命令。
-  // model 未配置时失败不阻塞（landing 降级到 skills fallback）。server.start 后调用，
-  // 确保前端连接时能尽快收到 app.info.publicSessionId（经 broker 读 sessionService.getPublicSessionId）。
-  await sessionService.ensurePublicSession()
 
   // 插件系统初始化（扫描、激活 onStartupFinished 插件）
   try {

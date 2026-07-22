@@ -23,6 +23,13 @@ export interface SessionSummary {
   cwd: string
   gitBranch?: string
   gitIsWorktree?: boolean
+  /**
+   * 是否处于 bare repo + worktree 结构（cwd 位于 .bare 目录下某级）。
+   * 由 runtime WorkspaceDetector 检测填充（SessionService.toSummary / SessionScanner.scannedToSummary）。
+   * 前端 Landing.vue 据此派生 DirSelectPopover「新建 worktree…」动作项显隐
+   * （useNewTaskFlow.gitInfo.isBare）。未检测（undefined）→ 前端按 false 兜底。
+   */
+  isBareWorkspace?: boolean
   status: SessionStatus
   lastActiveAt: number
   modelId: string

@@ -58,6 +58,7 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({
     submitFirstMessage: vi.fn(),
     currentModel: { value: null },
+    currentCwd: { value: null },
     setPendingModel: vi.fn(),
   }),
   resetNewTaskFlow: vi.fn(),

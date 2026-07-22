@@ -14,6 +14,7 @@ import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
+import type { SkillRegistry } from '../services/skill-registry.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ConnectionManager } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
@@ -25,8 +26,10 @@ import { PluginMessageHandler } from './plugin-message-handler.js'
 import { GitMessageHandler } from './git-message-handler.js'
 import { FileMessageHandler } from './file-message-handler.js'
 import { WorkspaceMessageHandler } from './workspace-message-handler.js'
+import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
+import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 export class RuntimeServer implements IMessageBroker {
@@ -41,6 +44,8 @@ export class RuntimeServer implements IMessageBroker {
   private pluginService!: IPluginService
   private gitService?: GitService
   private fileService?: FileService
+  /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
+  private skillRegistry?: SkillRegistry
 
   // ── Message handlers (extracted) ────────────────────────────────
   // Constructed in setServices() — not at field-init time — so `this` is fully
@@ -55,6 +60,7 @@ export class RuntimeServer implements IMessageBroker {
   private gitMessageHandler?: GitMessageHandler
   private fileMessageHandler?: FileMessageHandler
   private workspaceMessageHandler!: WorkspaceMessageHandler
+  private worktreeMessageHandler?: WorktreeMessageHandler
 
   /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
@@ -76,12 +82,13 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService): void {
     this.gitService = git
     this.fileService = file
     this.sessionService = session
     this.configService = config
     this.modelService = model
+    this.skillRegistry = skillRegistry
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
 
@@ -94,9 +101,6 @@ export class RuntimeServer implements IMessageBroker {
       extensionService: this.extensionService,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
-      // 公共 session id 动态读取器：broker 推 app.info 时调用，把 publicSessionId 带给前端。
-      // sessionService.ensurePublicSession 在 server.start 后才创建，故用 getter 动态读。
-      getPublicSessionId: () => this.sessionService?.getPublicSessionId(),
     })
 
     // ── Assemble handlers with explicit context objects ──────────────
@@ -118,6 +122,9 @@ export class RuntimeServer implements IMessageBroker {
       configService: this.configService,
       sessionService: this.sessionService,
       modelService: this.modelService,
+      // W4：skillRegistry 必须注入（settings-handler 的 config.getGlobalSkills/getProjectSkills 依赖）。
+      // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
+      skillRegistry: this.skillRegistry!,
       projectRoot: this.projectRoot,
       nextPushId: () => this.broker.nextPushId(),
       broadcast: (msg) => this.broker.broadcast(msg),
@@ -174,6 +181,12 @@ export class RuntimeServer implements IMessageBroker {
         workspaceService: workspace,
       })
     }
+    if (worktree) {
+      this.worktreeMessageHandler = new WorktreeMessageHandler({
+        ...messaging,
+        worktreeService: worktree,
+      })
+    }
 
     // ── Build the central dispatch table (D1) ───────────────────────
     // ping 内联（无对应 handler）；file.read 已迁入 fileMessageHandler（W2）；settings 走兜底（见 handleMessage）。
@@ -182,6 +195,7 @@ export class RuntimeServer implements IMessageBroker {
     const gitHandler = this.gitMessageHandler
     const fileHandler = this.fileMessageHandler
     const workspaceHandler = this.workspaceMessageHandler
+    const worktreeHandler = this.worktreeMessageHandler
     this.routes = new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
@@ -191,6 +205,7 @@ export class RuntimeServer implements IMessageBroker {
       ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
       ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
       ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
+      ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
     ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
   }
 
@@ -198,8 +213,6 @@ export class RuntimeServer implements IMessageBroker {
 
   send(ws: WsType, msg: ServerMessage): void { this.broker.send(ws, msg) }
   broadcast(msg: ServerMessage): void { this.broker.broadcast(msg) }
-  /** 重广播 app.info（公共 session 创建成功后补发 publicSessionId）。 */
-  broadcastAppInfo(): void { this.broker.broadcastAppInfo() }
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     this.broker.sendError(ws, code, message, id, details)
   }

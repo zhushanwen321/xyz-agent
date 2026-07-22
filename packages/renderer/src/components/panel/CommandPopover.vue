@@ -73,21 +73,36 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore, type RawCommand } from '@/stores/command'
-import { useSettingsStore } from '@/stores/settings'
 import { useFileSearch } from '@/composables/features/useFileSearch'
+import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { toFileCandidates } from '@/lib/file-candidates'
+import type { SkillInfo } from '@xyz-agent/shared'
 import { filterAndSortFileCandidates } from '@/lib/file-match'
 
 type CmdType = 'file' | 'slash'
+
+type ComposerVariant = 'panel' | 'landing'
 
 const props = defineProps<{
   open: boolean
   type: CmdType
   /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
+  /** composer 形态：landing（新建任务页空态）vs panel（对话态）。ADR-0037：slash 命令源按 variant 分支，
+   *  与 Composer.vue variant prop 同源。landing 合并 globalSkills + projectSkills（W4：FR-5 全局走 skillRegistry globalCache，
+   *  不走 settingsStore.skills；W3 移除公共 session 后无 pi extension 命令源）；
+   *  panel 用 commandStore + compact，不并入 skills（配置态/运行态不混淆）。默认 'panel' 兼容旧调用。 */
+  variant?: ComposerVariant
   /** 过滤 query（输入区 / 或 # 后的内容，空串/缺省=不过滤；file 按 name+path 过滤，slash 按命令名过滤） */
   query?: string
+  /** landing 态全局 skill（useGlobalSkills 拉取，skillRegistry globalCache 经 RPC，W4 FR-5）。
+   *  landing 分支合并两源：globalSkills（全局）∪ projectSkills（当前 cwd）。默认空（向后兼容）。 */
+  globalSkills?: SkillInfo[]
+  /** landing 态当前 cwd 的项目 skill（useProjectSkills 按 cwd key 缓存，W3 ADR-0038）。
+   *  landing 分支合并两源：globalSkills（全局）∪ projectSkills（当前 cwd）。
+   *  默认空（Composer 从 useProjectSkills(flow.currentCwd) 取后透传）。 */
+  projectSkills?: SkillInfo[]
 }>()
 
 const emit = defineEmits<{
@@ -105,7 +120,6 @@ const activeIndex = ref(0)
 
 const { t } = useI18n()
 const commandStore = useCommandStore()
-const settingsStore = useSettingsStore()
 const { load: loadFileCandidates } = useFileSearch()
 
 // slash 命令：从 commandStore 读取（session-scoped，组件 v-if 重建不丢数据）。
@@ -125,37 +139,63 @@ onMounted(() => { void loadCandidates() })
 // sessionId 变化时重新加载（切 session，loaded 复位触发重拉新 session 缓存）
 watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 
+/** composer 形态归一化（默认 panel，兼容未透传 variant 的旧调用） */
+const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
+
 /**
- * slash 命令源（双源，按 session 有无切换）：
- * - session 态：commandStore（pi get_commands 返回的 extension/prompt/skill 三类动态命令）
- *   + 前端 builtin 命令（compact）。pi 的 get_commands 不返回 builtin（builtin 仅服务
- *   pi 自己的 TUI autocomplete，不通过 RPC 暴露），故需前端注入。compact 执行本就在
- *   前端拦截（Composer.vue submit 检测 '/compact' → 专用 compact RPC），与 pi prompt
- *   路径无关，作为前端 builtin 入口最合理。
- * - landing 态（无 session）：settingsStore.skills（config.skills 全局扫描结果）。
- *   landing 无 pi 子进程，get_commands 不可达；skills 扫描目录集（discovery.json +
- *   强制目录）与 pi 实际加载目录集同源，create session 后 fetchAndBroadcastCommands
- *   刷新 commandStore，切回 session 源时失效 skill 自然消失。
- *   builtin/extension 命令（/compact 等）在 landing 无意义，故不含。
+ * slash 命令源（ADR-0037：按 variant 分支，替代原按 sessionId 互斥分支）。
  *
- * SkillInfo.name（无 / 前缀，如 "code-review"）→ 补 "/" 前缀（如 "/code-review"），
- *   与 runtime get_commands 返回格式对齐——chip label 显示与 draft 检测（如 /compact）
- *   都依赖 / 前缀。icon 统一 'star'（与 iconKeyForSource('skill')='star' 一致）。
+ * 现行分支（判定用 variant，与 Composer.vue:280 范式对齐）：
+ * - landing 态：globalSkills（skillRegistry globalCache 经 RPC，W4 FR-5 替代 settingsStore.skills）
+ *   ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。
+ *   skill name 归一化为 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 路由前缀，裸名 pi 不认）。
+ *   [W3] landing 态：未选目录（sessionId=null）时 extCmds 空，纯 globalSkills + projectSkills；
+ *   选目录后 session 已 create（sessionId 非 null），extCmds 含该 session 的 pi 命令（/goal 等）。
+ *   这是预期行为——选了目录就有 session 就有命令。extCmds 保留为可能非空。
+ *   [W4] __ 前缀命令过滤：name（去 / 前缀后）以 __ 开头的命令不显示（W5 /__xyz_reload__ 准备，
+ *   内部触发命令不可见）。
+ * - panel 态：compact + commandStore.getCommands(sessionId)（pi 真源，含 pi 返回的 skill 命令）。
+ *   不并入 globalSkills（globalSkills 是全局缓存，commandStore 是该 session 的运行态真源——
+ *   合并会导致 session A 看到 session B 才有的项目 skill、选中后 pi 不认）。
+ *
+ * skillDisplayName（显示层）仍去前缀只显 skill 名，icon 已表示类型。
  */
 const slashCommands = computed(() => {
-  if (props.sessionId) {
-    // compact 只在有 session 时注入（landing 态无上下文可压缩）
-    const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }
-    const piCmds = commandStore.getCommands(props.sessionId)
-    return [compactCmd, ...piCmds]
+  if (variant.value === 'landing') {
+    // landing 合并两源（W4 FR-5）：globalSkills（skillRegistry globalCache，经 useGlobalSkills RPC）
+    // ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。去重 → 全局 → 项目。
+    // extCmds：未选目录（sessionId=null）时为空；选目录后 session 已 create，含该 session 的 pi 命令。
+    const extCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
+    // 去重 key 集：累积已选入命令的归一化 name（/skill:<name> / /commit / /goal 等）
+    const seen = new Set<string>()
+    // 预填 pi 源命令（extCmds）进 seen：pi 源优先，globalSkills/projectSkills 同名被去重。
+    // pi 源 skill 命令归一化后 /skill:<name>，与 globalSkills 的 /skill:<name> 同 key 去重。
+    extCmds.forEach((c) => seen.add(normalizedSlashName(c.name)))
+    /** 把 SkillInfo[] 转成 slash 命令项（/skill:<name> 归一化），跳过 seen 已有的同名 + __ 前缀命令。 */
+    const mapSkillInfo = (skills: SkillInfo[]) =>
+      skills
+        .filter((s) => !isInternalSkillName(s.name))
+        .filter((s) => !seen.has(`/skill:${s.name}`))
+        .map((s) => {
+          seen.add(`/skill:${s.name}`)
+          return {
+            id: `skill-${s.name}`,
+            name: `/skill:${s.name}`,
+            kind: 'skill',
+            icon: 'star',
+            description: s.description,
+          }
+        })
+    // 优先级：pi 源已在 seen，全局次之（globalSkills），项目最后（projectSkills 补独有项）
+    const globalSkillCmds = mapSkillInfo(props.globalSkills ?? [])
+    const projectSkillCmds = mapSkillInfo(props.projectSkills ?? [])
+    return [...extCmds, ...globalSkillCmds, ...projectSkillCmds]
   }
-  return settingsStore.skills.map((s) => ({
-    id: s.name,
-    name: `/${s.name}`,
-    kind: 'skill',
-    icon: 'star',
-    description: s.description,
-  }))
+  // panel 态：compact + commandStore（pi 真源），不并入 globalSkills
+  const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'wrench', description: t('panel.command.compactDesc') }
+  const piCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
+  // panel 态同样过滤 __ 前缀命令（W5 准备，pi 可能返回 /__xyz_reload__ 等）
+  return [compactCmd, ...piCmds.filter((c) => !isInternalSlashName(c.name))]
 })
 
 /**

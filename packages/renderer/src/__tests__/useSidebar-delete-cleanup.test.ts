@@ -43,6 +43,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
+import { registerSessionCleanup, __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 
 function makeSummary(id: string): SessionSummary {
   return { id, label: id, cwd: '/proj', status: 'idle', lastActiveAt: 1, modelId: 'm1', tokenCount: 0 }
@@ -55,6 +56,8 @@ function seedSessions(ids: string[]): void {
 }
 
 beforeEach(() => {
+  // 模块级 cleanup registry 跨测试可能残留（本文件断言 cleanup 调用次数）→ 显式清空防 flaky
+  __clearSessionCleanupRegistryForTest()
   setActivePinia(createPinia())
   vi.clearAllMocks()
   removeMock.mockResolvedValue(undefined)
@@ -119,6 +122,28 @@ describe('useSidebar deleteSession 删 active 后 fallback（W1 / S4）', () => 
     await sidebar.deleteSession('s1')
 
     expect(pushSpy).toHaveBeenCalledWith({ view: 'chat' })
+
+    scope.stop()
+  })
+})
+
+describe('useSidebar deleteSession 触发 session-scoped cleanup（W5 / ADR-0036）', () => {
+  it('U5: deleteSession 调 triggerSessionCleanups(id)，注册的 cleanup 被执行', async () => {
+    const scope = effectScope()
+    const sidebar = scope.run(() => useSidebar())!
+    seedSessions(['s1'])
+
+    // 注册 sentinel cleanup，捕获 deleteSession 是否编排了 triggerSessionCleanups。
+    // 不 mock 模块——保留真实模块级注册表行为，验证端到端通路。
+    let cleanupArg: string | null = null
+    const unregister = registerSessionCleanup((sid) => { cleanupArg = sid })
+
+    try {
+      await sidebar.deleteSession('s1')
+      expect(cleanupArg).toBe('s1')
+    } finally {
+      unregister()
+    }
 
     scope.stop()
   })

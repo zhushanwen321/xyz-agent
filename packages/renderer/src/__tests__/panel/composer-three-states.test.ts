@@ -35,13 +35,14 @@ vi.mock('@/composables/features/useChat', () => ({
   useChat: () => chatApiMock,
 }))
 vi.mock('@/composables/features/useNewTaskFlow', () => ({
-  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn() }),
+  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn(), currentCwd: ref(null) }),
   resetNewTaskFlow: vi.fn(),
 }))
 vi.mock('@/api', () => ({
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
+  config: { getGlobalSkills: vi.fn().mockResolvedValue([]), getProjectSkills: vi.fn().mockResolvedValue([]) },
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
@@ -190,6 +191,68 @@ describe('T2.3 B 策略：idle 时 Enter → send', () => {
 
     expect(chatApiMock.send).toHaveBeenCalledWith('s-send-enter', textToSegments('第一条消息'))
     expect(chatApiMock.steer).not.toHaveBeenCalled()
+  })
+})
+
+describe('T2.x IME composition 中 Enter 不触发 send/steer', () => {
+  it('idle 态 composition 中 Enter 不触发 send', async () => {
+    const wrapper = mountComposer({ sessionId: 's-ime-idle' })
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', '你好')
+    await wrapper.vm.$nextTick()
+
+    // compositionstart（模拟中文输入法开始）
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown',
+      new KeyboardEvent('keydown', { key: 'Process' }))
+    // Enter + isComposing: true（拼音未确认）
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown',
+      new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }))
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // 不应调 send
+    expect(chatApiMock.send).not.toHaveBeenCalled()
+    expect(chatApiMock.steer).not.toHaveBeenCalled()
+  })
+
+  it('idle 态 composition 结束后 Enter 正常 send', async () => {
+    const wrapper = mountComposer({ sessionId: 's-ime-idle-end' })
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', '你好世界')
+    await wrapper.vm.$nextTick()
+
+    // compositionstart → Enter (isComposing, 不触发)
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown',
+      new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }))
+    await wrapper.vm.$nextTick()
+    expect(chatApiMock.send).not.toHaveBeenCalled()
+
+    // compositionend → 正常 Enter (isComposing=false, 触发 send)
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown',
+      new KeyboardEvent('keydown', { key: 'Enter', isComposing: false }))
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(chatApiMock.send).toHaveBeenCalledWith('s-ime-idle-end', textToSegments('你好世界'))
+  })
+
+  it('busy 态 composition 中 Enter 不触发 steer', async () => {
+    const chat = useChatStore()
+    const sid = 's-ime-busy'
+    chat.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a1' },
+    })
+    const wrapper = mountComposer({ sessionId: sid })
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', '补充')
+    await wrapper.vm.$nextTick()
+
+    // composition 中 Enter → 不触发 steer
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown',
+      new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }))
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(chatApiMock.steer).not.toHaveBeenCalled()
+    expect(chatApiMock.send).not.toHaveBeenCalled()
   })
 })
 

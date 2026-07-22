@@ -202,7 +202,7 @@ interface Setup {
     label?: string
     cwd?: string
     sessionFile?: string
-    commands?: Array<{ name: string; source: string }>
+    commands?: Array<{ name: string; source: string; sourceInfo?: Record<string, unknown> }>
     hidden?: boolean
   }) => Promise<{ id: string; client: MockClient }>
 }
@@ -542,6 +542,26 @@ describe('SessionService · lifecycle', () => {
       // commands 广播给前端
       const cmds = findBroadcast(setup, 'session.commands')
       expect(cmds?.payload).toMatchObject({ sessionId: id })
+    })
+
+    it('broadcasts session.commands 含 sourceInfo 透传（W2）', async () => {
+      const { id } = await setup.seedSession({
+        commands: [
+          {
+            name: 'fix',
+            source: 'skill',
+            sourceInfo: { path: '/proj/skills/fix/SKILL.md', source: 'skill', scope: 'project' },
+          },
+        ],
+      })
+      const cmds = findBroadcast(setup, 'session.commands')
+      // sourceInfo 从 pi get_commands 透传到 session.commands 广播 payload
+      expect(cmds?.payload.commands[0]).toMatchObject({
+        name: 'fix',
+        source: 'skill',
+        sourceInfo: { path: '/proj/skills/fix/SKILL.md', source: 'skill', scope: 'project' },
+      })
+      expect(id).toBeDefined()
     })
 
     it('throws when no default model configured', async () => {
@@ -1178,79 +1198,6 @@ describe('SessionService · Facade', () => {
 
     it('subagentAction session 不活跃 → throw', async () => {
       await expect(setup.service.subagentAction('ghost', 'cancel', 'bg-x')).rejects.toThrow('not active')
-    })
-  })
-
-  describe('public session (ensurePublicSession / onPublicSessionReady)', () => {
-    it('ensurePublicSession creates hidden session and fires onPublicSessionReady', async () => {
-      // 先注入回调（组合根在 setServices 后调 setOnPublicSessionReady）
-      const ready = vi.fn()
-      setup.service.setOnPublicSessionReady(ready)
-
-      await setup.service.ensurePublicSession()
-
-      // publicSessionId 已设
-      const sid = setup.service.getPublicSessionId()
-      expect(sid).toBeTruthy()
-      // 回调触发一次（公共 session 就绪 → 重广播 app.info）
-      expect(ready).toHaveBeenCalledTimes(1)
-      // 公共 session 不进 sidebar 列表（hidden=true）
-      const allIds = setup.service.listPersistedSessions().flatMap(g => g.sessions.map(s => s.id))
-      expect(allIds).not.toContain(sid)
-    })
-
-    it('ensurePublicSession is idempotent: second call no-op, no second ready callback', async () => {
-      const ready = vi.fn()
-      setup.service.setOnPublicSessionReady(ready)
-
-      await setup.service.ensurePublicSession()
-      await setup.service.ensurePublicSession()
-
-      expect(ready).toHaveBeenCalledTimes(1)
-    })
-
-    it('ensurePublicSession fires ready callback again after crash rebuild', async () => {
-      const ready = vi.fn()
-      setup.service.setOnPublicSessionReady(ready)
-
-      await setup.service.ensurePublicSession()
-      const sidBefore = setup.service.getPublicSessionId()
-      expect(ready).toHaveBeenCalledTimes(1)
-
-      // 模拟公共 session 进程崩溃：触发 onSessionExit 回调
-      // （schedulePublicSessionRebuild 用真实 setTimeout 2s，测试用 fake timers 加速）
-      vi.useFakeTimers()
-      try {
-        setup.triggerExit(sidBefore!, 1)
-        // publicSessionId 已清空
-        expect(setup.service.getPublicSessionId()).toBeUndefined()
-        // 崩溃时不广播 session.exited（公共 session 对用户透明）—— broadcast 在崩溃路径不被调用
-        // （重建后才会通过 onPublicSessionReady 间接触发 app.info 重广播）
-
-        // 推进 fake timer 触发 schedulePublicSessionRebuild 的 setTimeout
-        // 注意：ensurePublicSession 内部 await create() 含 microtask，需 await setTimeout
-        await vi.advanceTimersByTimeAsync(3000)
-
-        // 重建成功：新 publicSessionId + ready 再次触发
-        const sidAfter = setup.service.getPublicSessionId()
-        expect(sidAfter).toBeTruthy()
-        expect(sidAfter).not.toBe(sidBefore)
-        expect(ready).toHaveBeenCalledTimes(2)
-      } finally {
-        vi.useRealTimers()
-      }
-    })
-
-    it('ensurePublicSession with no model configured: no throw, no ready callback, publicSessionId undefined', async () => {
-      // 清掉默认 model 配置
-      mocks.defaultModel.value = null
-      const ready = vi.fn()
-      setup.service.setOnPublicSessionReady(ready)
-
-      // 不应抛错（model 未配置是合法态，landing 降级到 skills fallback）
-      await expect(setup.service.ensurePublicSession()).resolves.toBeUndefined()
-      expect(setup.service.getPublicSessionId()).toBeUndefined()
-      expect(ready).not.toHaveBeenCalled()
     })
   })
 

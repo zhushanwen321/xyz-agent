@@ -137,6 +137,27 @@ describe('SettingsMessageHandler', () => {
       // 裂缝①核心修复：扫描后必须广播，让前端 onSkills 订阅推回
       expect(ctx.broadcastSkillList).toHaveBeenCalledOnce()
     })
+
+    // ── W2（cw-2026-07-21-scan-project-agents-skills）：config.scanSessionSkills RPC ──
+    // 按 session cwd 拉 project skill（.agents/skills + .xyz-agent/skills 扫描结果）。
+    // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery + 广播；
+    // scanSessionSkills 扫某 cwd 的已生效目录 + 不广播（按需 RPC）。
+    it('W2: config.scanSessionSkills → loadSkills(cwd) + reply config.sessionSkills，不广播', async () => {
+      const { replies, ctx, handler } = makeHandler()
+      // mock loadSkills 返回项目 skill
+      ;(ctx.configService.loadSkills as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: 's1', name: 'proj-skill', description: 'proj', enabled: true, source: 'agents', effective: true },
+      ])
+
+      await handler.handleSettingsMessage(msg('config.scanSessionSkills', { cwd: '/user-project' }), WS)
+
+      // 关键：loadSkills 用传入的 cwd 调用（非全局 projectRoot）
+      expect(ctx.configService.loadSkills).toHaveBeenCalledWith('/user-project')
+      // reply 类型 config.sessionSkills（与 config.skills 区分，后者是全局广播）
+      expect(replies[0]).toMatchObject({ type: 'config.sessionSkills', payload: { skills: expect.any(Array) } })
+      // 不广播（按需 RPC，不污染全局 config.skills）
+      expect(ctx.broadcastSkillList).not.toHaveBeenCalled()
+    })
     it('config.scanAgents → 广播 config.agents（修裂缝①）', async () => {
       const { ctx, handler } = makeHandler()
       await handler.handleSettingsMessage(msg('config.scanAgents', { sources: ['/x'] }), WS)

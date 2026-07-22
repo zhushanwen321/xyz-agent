@@ -40,6 +40,11 @@ vi.mock('@/api', () => ({
   session: { setThinkingLevel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
+// main 合并引入 useProjectSkills/useGlobalSkills（landing skill），与 fork 测试无关，stub 掉
+vi.mock('@/composables/features/useProjectSkills', () => ({
+  useProjectSkills: () => ({ projectSkills: [] }),
+  useGlobalSkills: () => ({ globalSkills: [] }),
+}))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))

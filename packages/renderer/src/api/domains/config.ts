@@ -36,6 +36,37 @@ export async function scanSkills(sources: string[]): Promise<ScannedSkillInfo[]>
   return reply.skills
 }
 
+/**
+ * W2 配套（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill。
+ * 调 runtime loadSkills(cwd) 扫描 <cwd>/.agents/skills + <cwd>/.xyz-agent/skills 等已生效目录，
+ * 返回 SkillInfo[]。与 scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；
+ * scanSessionSkills 扫某 cwd 的已生效项目 skill（按需拉取，不进全局 config.skills）。
+ */
+export async function scanSessionSkills(cwd: string): Promise<SkillInfo[]> {
+  const reply = await command('config.scanSessionSkills', { cwd })
+  return reply.skills
+}
+
+/**
+ * W4（cw-2026-07-21-fix-ask-user-ime）：拉全局 skill（skillRegistry globalCache）。
+ * landing 全局 slash 命令源走此 RPC（FR-5：不再走 settingsStore.skills 配置态扫描）。
+ * runtime 端 skillRegistry.getGlobalSkills() 同步读启动期扫描缓存（watcher 自动刷新），零 RPC 开销。
+ */
+export async function getGlobalSkills(): Promise<SkillInfo[]> {
+  const reply = await command('config.getGlobalSkills', {})
+  return reply.skills
+}
+
+/**
+ * W4：按 cwd 拉项目 skill（skillRegistry projectCache，首次扫描 + 挂 watcher，命中缓存零开销）。
+ * 与 scanSessionSkills 区分：getProjectSkills 走 skillRegistry（带缓存 + 文件监听 W1 单例），
+ * scanSessionSkills 直接调 configService.loadSkills(cwd)（无缓存无 watcher）。前端 useProjectSkills 已切到本 RPC。
+ */
+export async function getProjectSkills(cwd: string): Promise<SkillInfo[]> {
+  const reply = await command('config.getProjectSkills', { cwd })
+  return reply.skills
+}
+
 export async function scanAgents(sources: string[]): Promise<ScannedAgentInfo[]> {
   const reply = await command('config.scanAgents', { sources })
   return reply.agents

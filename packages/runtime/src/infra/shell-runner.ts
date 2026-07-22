@@ -1,0 +1,157 @@
+/**
+ * IShellRunner 的真实实现 —— `child_process.spawn` 流式执行（W1 worktree setup 钩子）。
+ *
+ * 🔒 三层架构：infra 层实现 services/ports/shell-runner.ts 的 IShellRunner port。
+ * 真引 node:child_process 的 spawn（Tier 2 证伪：编译器对依赖声明验签）。
+ *
+ * 注入：构造函数 `{ spawn }`，production 由 index.ts 传真实 spawn，测试传 mock spawn。
+ * 此模式让 ShellRunner 单测无需真 spawn —— vi.doMock('node:child_process') 后把 mock 注入。
+ *
+ * 关键时序处理（SR-3 timeout + escalation）：
+ * - timeout 到期 → child.kill('SIGTERM') + 设 `timedOut=true` 标记 + 启动 reject +
+ *   启动 escalation timer（ESCALATION_DELAY_MS）。
+ * - escalation：SIGTERM 后 5s 仍未 close 则 SIGKILL（防脚本 trap 忽略 SIGTERM / npm install
+ *   子进程不在同一进程组导致孤儿进程）。
+ * - 之后 child 必然 emit 'close'（被 kill 的进程会发 exit+close）—— 若不标记，close handler
+ *   会 resolve 一个已 reject 的 promise（无效但易混淆）。故 close handler 先判 timedOut，
+ *   已超时则不 resolve（保留 timeout reject）。
+ * - 同理 error handler 也判 timedOut（极端：kill 后子进程 error 而非 close）。
+ *
+ * 行切分策略：Buffer → utf8 → 按 \n split。**跨 chunk 缓冲**——每个 stream 维护独立
+ * lineBuffer，chunk 进来后先 append，再 split('\n')，最后一段（不含 \n）回写 lineBuffer
+ * 留给下次。这样子进程输出 'installing pack' + 'age done\n' 两个 chunk 时，onOutput 只收到
+ * 一行 'installing package done'（契约：逐行回调），不会先收到半行 'installing pack'。
+ * close 时 flush 各 buffer 的剩余半行（若有）。累积 stdout/stderr 仍用原始字符串（含 \n）。
+ */
+import { EventEmitter } from 'node:events'
+import { ShellRunnerError } from '../services/ports/shell-runner.js'
+import type { IShellRunner, ShellRunnerExecuteOptions, ShellRunnerResult, SpawnFn } from '../services/ports/shell-runner.js'
+
+/** 默认超时 ms。setup-worktree.sh 通常含 npm install，给 2 分钟兜底。 */
+const DEFAULT_TIMEOUT_MS = 120_000
+
+/**
+ * SIGTERM 后等待 SIGKILL 的升级延迟。
+ * SIGTERM 可被脚本捕获/忽略（trap），npm install 子进程可能不在同一进程组——
+ * 若 SIGTERM 后子进程不退出会变孤儿。给 5s 缓冲让 graceful shutdown 跑完，
+ * 仍未 close 则 SIGKILL 强制终止。
+ */
+const ESCALATION_DELAY_MS = 5000
+
+/**
+ * ShellRunner infra 适配器。spawn 经依赖注入，可替换为 mock 做单测。
+ *
+ * child 形状契约（与 node:child_process.ChildProcess 一致）：
+ * - extends EventEmitter：emit 'close'(exitCode) / 'error'(Error)
+ * - stdout/stderr: EventEmitter（emit 'data'(Buffer)）
+ * - kill(signal): 终止子进程
+ * - killed: boolean（kill 后置 true）
+ */
+export class ShellRunner implements IShellRunner {
+  constructor(private deps: { spawn: SpawnFn }) {}
+
+  execute(opts: ShellRunnerExecuteOptions): Promise<ShellRunnerResult> {
+    const { scriptPath, args, cwd, onOutput } = opts
+    const timeout = opts.timeout ?? DEFAULT_TIMEOUT_MS
+
+    const child = this.deps.spawn(scriptPath, args ?? [], {
+      cwd,
+      // stdin 显式 ignore：setup-worktree.sh 若 read stdin 会立即得 EOF，避免卡到 timeout。
+      // stdout/stderr 仍 pipe 出来给 onOutput 流式回调。
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }) as unknown as EventEmitter & {
+      stdout: EventEmitter
+      stderr: EventEmitter
+      kill: (signal?: string) => void
+      killed: boolean
+    }
+
+    let stdout = ''
+    let stderr = ''
+    // 跨 chunk 行缓冲：stdout / stderr 各自独立，避免两个流的半行互相拼接（stream 标识必须正确）。
+    let stdoutBuffer = ''
+    let stderrBuffer = ''
+    let timedOut = false
+    let closed = false
+    let timer: NodeJS.Timeout | undefined
+    let escalationTimer: NodeJS.Timeout | undefined
+
+    return new Promise<ShellRunnerResult>((resolve, reject) => {
+      /**
+       * 把 chunk 追加到对应 stream 的 lineBuffer，按 \n 切出完整行回调 onOutput；
+       * 末段（不含 \n）留回 buffer 等下个 chunk 补全。空行不发（与原 splitLines 语义一致）。
+       */
+      const emitLines = (text: string, stream: 'stdout' | 'stderr'): void => {
+        const merged = (stream === 'stdout' ? stdoutBuffer : stderrBuffer) + text
+        const lines = merged.split('\n')
+        // 最后一段不含 \n，回写 buffer 留给下次（若以 \n 结尾，最后一段是空串，buffer 清空）
+        if (stream === 'stdout') stdoutBuffer = lines.pop() ?? ''
+        else stderrBuffer = lines.pop() ?? ''
+        if (onOutput) {
+          for (const line of lines) {
+            if (line.length > 0) onOutput(line, stream)
+          }
+        }
+      }
+      const onStdoutData = (chunk: Buffer | string): void => {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        stdout += text
+        emitLines(text, 'stdout')
+      }
+      const onStderrData = (chunk: Buffer | string): void => {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        stderr += text
+        emitLines(text, 'stderr')
+      }
+      const cleanupTimers = (): void => {
+        if (timer) clearTimeout(timer)
+        if (escalationTimer) clearTimeout(escalationTimer)
+      }
+      const onClose = (exitCode: number | null): void => {
+        closed = true
+        cleanupTimers()
+        // timeout 路径已 reject；后续 close 不再 resolve（保留 timeout 语义，避免 SR-3 失败）。
+        if (timedOut) return
+        child.stdout.removeListener('data', onStdoutData)
+        child.stderr.removeListener('data', onStderrData)
+        // flush 两个 stream 残留的半行（子进程输出未以 \n 结尾时）。
+        if (onOutput) {
+          if (stdoutBuffer.length > 0) onOutput(stdoutBuffer, 'stdout')
+          if (stderrBuffer.length > 0) onOutput(stderrBuffer, 'stderr')
+        }
+        stdoutBuffer = ''
+        stderrBuffer = ''
+        resolve({ exitCode: exitCode ?? 0, stdout, stderr })
+      }
+      const onError = (err: NodeJS.ErrnoException): void => {
+        cleanupTimers()
+        if (timedOut) return
+        child.stdout.removeListener('data', onStdoutData)
+        child.stderr.removeListener('data', onStderrData)
+        // 脚本不存在（ENOENT）→ not_found；其余 errno 也归 not_found（语义上都是「找不到可执行文件」）
+        if (err.code === 'ENOENT') {
+          reject(new ShellRunnerError('not_found', `脚本不存在或不可执行: ${scriptPath}`))
+        } else {
+          reject(new ShellRunnerError('not_found', `脚本执行失败: ${err.message}`))
+        }
+      }
+
+      child.stdout.on('data', onStdoutData)
+      child.stderr.on('data', onStderrData)
+      child.on('close', onClose)
+      child.on('error', onError)
+
+      if (timeout > 0) {
+        timer = setTimeout(() => {
+          timedOut = true
+          child.kill('SIGTERM')
+          // escalation：SIGTERM 后 5s 仍未 close 则 SIGKILL（防 SIGTERM 被捕获/忽略导致孤儿进程）
+          escalationTimer = setTimeout(() => {
+            if (!closed) child.kill('SIGKILL')
+          }, ESCALATION_DELAY_MS)
+          reject(new ShellRunnerError('timeout', `脚本执行超时（${timeout}ms）: ${scriptPath}`))
+        }, timeout)
+      }
+    })
+  }
+}

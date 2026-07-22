@@ -34,13 +34,6 @@ export const useSessionStore = defineStore('session', () => {
   const activeId = ref<string | null>(null)
 
   /**
-   * 公共 session id（runtime 启动期创建的隐藏 session，经 app.info 推送）。
-   * landing 态 composer 用此 id 从 commandStore 取 pi extension 命令（/goal 等）。
-   * undefined 表示公共 session 不可用（model 未配置/runtime 未启动完成），landing 降级到 skills。
-   */
-  const publicSessionId = ref<string | null>(null)
-
-  /**
    * 列表加载错误（S5：loadSessions 失败时设错误消息，SessionList 据此显示「加载失败，点击重试」）。
    * null = 无错误（未加载或加载成功）；非空字符串 = 加载失败的错误消息。
    */
@@ -117,5 +110,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { groups, list, activeId, active, publicSessionId, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive }
+  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive }
 })

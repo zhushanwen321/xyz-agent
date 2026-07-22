@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine, PiSessionStats, PiCompactionResult } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiSessionStats, PiCompactionResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
@@ -461,10 +461,11 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('new_session')
   }
 
-  async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
+  async getCommands(): Promise<PiCommandInfo[]> {
     // L6：getCommands 是毫秒级操作，用 FAST_TIMEOUT_MS（10s）替代默认 60s，失败更快报错
     const msg = await this.sendCommand('get_commands', {}, FAST_TIMEOUT_MS)
-    return (msg.data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
+    // 透传 pi RpcSlashCommand 的完整结构（含 sourceInfo），消费方按需取用
+    return (msg.data?.commands as PiCommandInfo[]) ?? []
   }
 
   async getSessionStats(): Promise<PiSessionStats> {

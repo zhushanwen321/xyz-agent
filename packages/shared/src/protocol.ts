@@ -13,6 +13,23 @@ import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
 
+// ── Client → Runtime message types
+
+/** pi get_commands 返回的命令来源元信息（RpcSlashCommand.sourceInfo 透传）。
+ *  sourceInfo.path 是 SKILL.md / extension 文件绝对路径，供 CommandDocPanel 直接读文件渲染。 */
+export interface CommandSourceInfo {
+  /** SKILL.md / extension 文件绝对路径 */
+  path: string
+  /** pi 来源分类（extension / prompt / skill） */
+  source: string
+  /** 作用域：user / project / temporary */
+  scope?: string
+  /** 包来源：package / top-level */
+  origin?: string
+  /** 基础目录（pi 用于相对路径解析的基准） */
+  baseDir?: string
+}
+
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
@@ -25,6 +42,8 @@ export type ClientMessageType =
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
+  | 'config.scanSessionSkills'
+  | 'config.getGlobalSkills' | 'config.getProjectSkills'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'config.setSkillDirs' | 'config.setAgentDirs'
   | 'config.getSystemPrompt' | 'config.setSystemPrompt'
@@ -49,6 +68,7 @@ export type ClientMessageType =
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
   | 'workspace.listRecent' | 'workspace.record'
+  | 'worktree.create'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -152,6 +172,16 @@ export interface ClientMessageMap {
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
   'config.setDefaultModel': { provider: string; modelId: string }
   'config.scanSkills': { sources: string[] }
+  // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill（.agents/skills + .xyz-agent/skills）。
+  // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；scanSessionSkills 扫某 cwd 已生效目录。
+  'config.scanSessionSkills': { cwd: string }
+  // W4（cw-2026-07-21-fix-ask-user-ime）：landing 全局 skill 走 skillRegistry globalCache（经 RPC），
+  // 不走 settingsStore.skills（FR-5：landing 全局 skill 与配置态扫描解耦）。
+  'config.getGlobalSkills': Record<string, never>
+  // W4：按 cwd 拉项目 skill（skillRegistry projectCache，首次扫描 + watcher，命中缓存零开销）。
+  // 与 config.scanSessionSkills 区分：scanSessionSkills 直接调 configService.loadSkills(cwd)（无缓存无 watcher），
+  // getProjectSkills 走 skillRegistry（带缓存 + 文件监听，W1 单例）。
+  'config.getProjectSkills': { cwd: string }
   'config.setSkill': { skill: SkillInfo }
   'config.deleteSkill': { skillId: string }
   'config.scanAgents': { sources: string[] }
@@ -208,6 +238,14 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
+  /** worktree.create：在 bare repo + worktree 结构中创建隔离的工作目录。
+   *  branch 必填；baseBranch 默认 'current'（继承当前分支），可选 'origin/main'（校验远端 ref 存在后使用）。
+   *  workspaceHint 用于显式指定 workspace 根（检测 .bare 的起点 cwd），省略则用 process.cwd()。 */
+  'worktree.create': {
+    branch: string
+    baseBranch?: 'current' | 'origin/main'
+    workspaceHint?: string
+  }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -231,6 +269,29 @@ export type DefaultModelSource =
   | 'default-set'      // config.setDefaultModel 主动设置
   | 'model-switch'     // model.switch 时持久化全局默认模型
 
+/**
+ * WorktreeService 抛出的业务错误码（runtime ↔ renderer 契约 SSOT）。
+ *
+ * runtime WorktreeService.create 抛 `Object.assign(new Error(msg), { code, detail })` 扁平错误，
+ * WorktreeMessageHandler.sendWorktreeError 把 code 透传到 error envelope 的 code 字段。
+ * renderer CreateWorktreeModal / useConnection 按 code 分流：
+ * - WORKTREE_EXISTS → modal 转 exists 态（detail 是已存在 cwd 字符串）
+ * - SETUP_FAILED / GIT_FAILED / INVALID_BRANCH / NOT_BARE_REPO → modal 转 error 态（detail 是 {exitCode,stderr} 或无）
+ * - 兜底字面量 'worktree_failed'（handler 对未知错误归一，不在 WorktreeService 主动抛出）
+ *
+ * 新增错误码必须在此登记，编译器强制两端同步（防止 runtime 改码 renderer switch 静默失效）。
+ */
+export type WorktreeErrorCode =
+  | 'NOT_BARE_REPO'     // 当前 cwd 非 .bare workspace（WorkspaceDetector 未命中）
+  | 'WORKTREE_EXISTS'   // 目标 worktree 目录已存在（detail: string = 已存在 cwd）
+  | 'SETUP_FAILED'      // .bare/custom-hooks/setup-worktree.sh 失败（detail: {exitCode, stderr}）
+  | 'GIT_FAILED'        // git worktree add 失败（detail: {exitCode, stderr}）
+  | 'INVALID_BRANCH'    // 分支名非法（INVALID_BRANCH_REGEX 拦截，含路径遍历防护）
+/** handler 对未知错误归一的兜底字面量（非 WorktreeService 主动抛出，单列让 renderer switch 可穷尽） */
+export type WorktreeUnknownErrorCode = 'worktree_failed'
+/** envelope code 字段的完整联合（业务码 + 兜底） */
+export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
+
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice'
@@ -245,6 +306,8 @@ export type ServerMessageType =
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
+  | 'config.sessionSkills'
+  | 'config.globalSkills' | 'config.projectSkills'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
   | 'config.skillDirs' | 'config.agentDirs'
@@ -267,7 +330,6 @@ export type ServerMessageType =
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
-  | 'message.compactionSummary'
   | 'extension:setEditorText'
   | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
@@ -283,6 +345,7 @@ export type ServerMessageType =
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
   | 'git.status:result'
   | 'workspace.recentList'
+  | 'worktree.created'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -375,7 +438,8 @@ export interface ServerMessageMapBase {
   'session.compacting': { sessionId: string }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
-  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // sourceInfo 透传自 pi get_commands 的 RpcSlashCommand（SKILL.md / extension 文件路径等），可选（旧消费方向后兼容）
+  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string; sourceInfo?: CommandSourceInfo }> }
   // session.subagents：当前 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
   // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
@@ -398,9 +462,7 @@ export interface ServerMessageMapBase {
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
   'subagent.stream_delta': { sessionId: string; recordId: string; lines: string[] | undefined }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
-  // publicSessionId：公共 session 的真实 id（pi 生成 UUID，启动期创建后填）。
-  // 前端 landing 态用此 id 从 commandStore 取命令（pi extension slash 命令）。
-  'app.info': { appVersion: string; piVersion: string; publicSessionId?: string }
+  'app.info': { appVersion: string; piVersion: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
   // message.compactionSummary：上下文压缩摘要（compact 执行后推送，进对话流作 SystemNotice）。
@@ -452,6 +514,8 @@ export interface ServerMessageMapBase {
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
+  /** worktree.created：worktree.create 的成功 reply（新 worktree 的 cwd 与分支名）。 */
+  'worktree.created': { cwd: string; branch: string }
 
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
@@ -503,6 +567,13 @@ export interface ServerMessageMapBase {
   // config.scannedSkills：scanSkills reply（settings-message-handler.ts:69 reply { skills, success: true }）。
   // skills 是扫描发现结果，形状为 ScannedSkillInfo（含 sourceType/alreadyImported），非已加载的 SkillInfo。
   'config.scannedSkills': { skills: ScannedSkillInfo[]; success: boolean }
+  // W2：scanSessionSkills reply（settings-message-handler.ts reply { skills }，不广播，按需 RPC）。
+  // skills 是已加载的 SkillInfo（loadSkills(cwd) 扫描结果），非 ScannedSkillInfo。
+  'config.sessionSkills': { skills: SkillInfo[] }
+  // W4：getGlobalSkills reply（settings-message-handler reply skillRegistry.getGlobalSkills()，不广播，按需 RPC）。
+  'config.globalSkills': { skills: SkillInfo[] }
+  // W4：getProjectSkills reply（settings-message-handler reply skillRegistry.getProjectSkills(cwd)，不广播，按需 RPC）。
+  'config.projectSkills': { skills: SkillInfo[] }
   // config.scannedAgents：scanAgents reply（settings-message-handler.ts:99 reply { agents, success: true }）。
   // agents 是扫描发现结果，形状为 ScannedAgentInfo（含 sourceType/alreadyImported），非已加载的 AgentInfo。
   'config.scannedAgents': { agents: ScannedAgentInfo[]; success: boolean }
@@ -587,6 +658,9 @@ export interface ReplyPayloadMap {
   'config.getProviders': ServerMessageMap['config.providers']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
+  'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
+  'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
+  'config.getProjectSkills': ServerMessageMap['config.projectSkills']
   // 系统提示词配置（W2，FR-4/FR-5）：get/setSystemPrompt reply config.systemPrompt
   //   形状 `{ config, corrupted? }`。
   'config.getSystemPrompt': ServerMessageMap['config.systemPrompt']
@@ -636,6 +710,7 @@ export interface ReplyPayloadMap {
   'plugin.config.set': ServerMessageMap['plugin:config']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
+  'worktree.create': ServerMessageMap['worktree.created']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted

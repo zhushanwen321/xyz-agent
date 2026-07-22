@@ -62,6 +62,11 @@ vi.mock('@/api', () => ({
   model: { switchModel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
+// main 合并引入 useProjectSkills/useGlobalSkills（landing skill），与 fork 测试无关，stub 掉
+vi.mock('@/composables/features/useProjectSkills', () => ({
+  useProjectSkills: () => ({ projectSkills: [] }),
+  useGlobalSkills: () => ({ globalSkills: [] }),
+}))
 
 // ── mock useChat（流式依赖；fork 不走 send/steer，但 Composer setup 取这些引用）──
 // 注意：必须返回稳定对象（同 composer-fork-mode.test.ts），避免每帧新引用导致 watch 抖动。

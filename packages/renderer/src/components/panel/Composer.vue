@@ -19,6 +19,9 @@
       v-model:open="cmdOpen"
       :type="cmdType"
       :session-id="sessionId ?? undefined"
+      :variant="variant"
+      :project-skills="landingProjectSkills"
+      :global-skills="landingGlobalSkills"
       :query="cmdType === 'file' ? fileQuery : slashQuery"
       @select="onCmdSelect"
     >
@@ -128,6 +131,7 @@ import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useProjectSkills, useGlobalSkills } from '@/composables/features/useProjectSkills'
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
@@ -149,6 +153,8 @@ const chatStore = useChatStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
+const { projectSkills: landingProjectSkills } = useProjectSkills(flow.currentCwd) // W3 ADR-0038：landing 当前 cwd 项目 skill
+const { globalSkills: landingGlobalSkills } = useGlobalSkills() // W4 FR-5：landing 全局 skill
 /** 合并活跃态：流式中（isGenerating）或派发空窗期——消除 ack 到达但 message_start 未到的空窗期 */
 const isActive = computed(() => {
   if (!props.sessionId) return false
