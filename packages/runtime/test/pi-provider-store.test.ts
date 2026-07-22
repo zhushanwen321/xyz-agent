@@ -238,8 +238,14 @@ describe('pi-provider-store — models.json', () => {
     })
 
     it('skillPaths round-trip', () => {
-      setSkillPaths(['/path/a', '/path/b'])
-      expect(getSkillPaths()).toEqual(['/path/a', '/path/b'])
+      // 用真实存在的目录验证 round-trip（脏数据 /path/a 等不存在的路径会被 setSkillDirs 过滤，
+      // 这是 ADR §5 的新行为——非 preset 绝对路径不存在则剔除）
+      const realDir1 = join(tmpDir, 'skills-a')
+      const realDir2 = join(tmpDir, 'skills-b')
+      mkdirSync(realDir1, { recursive: true })
+      mkdirSync(realDir2, { recursive: true })
+      setSkillPaths([realDir1, realDir2])
+      expect(getSkillPaths()).toEqual([realDir1, realDir2])
     })
   })
 

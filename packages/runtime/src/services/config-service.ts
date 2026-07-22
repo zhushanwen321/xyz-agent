@@ -7,7 +7,7 @@
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import {
   SYSTEM_PROMPT_MAX_LENGTH,
@@ -24,6 +24,10 @@ import { atomicWrite } from '../utils/fs-utils.js'
 import { extractFrontmatter, extractDescription } from '../utils/frontmatter.js'
 import { expandHome } from '../utils/path-utils.js'
 import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
+import {
+  resolveGlobalSkillDirs,
+  resolveProjectSkillDirs,
+} from './skill-dirs.js'
 import { scanAgents } from './scanners/agent-scanner.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 import { getConfigDir } from '../infra/pi/pi-paths.js'
@@ -42,10 +46,9 @@ import { getConfigDir } from '../infra/pi/pi-paths.js'
 // 测试在 beforeEach 设 XYZ_AGENT_DATA_DIR，模块导入早于 beforeEach，模块加载时求值
 // 会捕获到缺省 ~/.xyz-agent（env 未设）。getConfigDir 委托 getDataDir 读 env，调用时求值
 // 才能跟随实例隔离 / 自定义数据目录切换。
-const FORCED_PROJECT_SKILL_DIR = '.xyz-agent/skills'
+// 注：FORCED_PROJECT_SKILL_DIR / forcedGlobalSkillDir 已迁移至 skill-dirs.ts（scanner + watcher SSOT）。
+// 此处仅保留 agent 的对应常量（agent 目录发现尚未统一到 SSOT，未来若统一再迁）。
 const FORCED_PROJECT_AGENT_DIR = '.xyz-agent/agents'
-/** 全局强制 skill 目录：<configDir>/skills（configDir = getConfigDir()，读 env）。 */
-const forcedGlobalSkillDir = (): string => join(getConfigDir(), 'skills')
 /** 全局强制 agent 目录：<configDir>/agents（configDir = getConfigDir()，读 env）。 */
 const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
 
@@ -246,21 +249,12 @@ export class ConfigService implements IConfigService {
    */
    
   loadSkills(projectRoot: string): SkillInfo[] {
-    // 优先级从高到低的目录列表（pi 实际路径 > 强制项目 > 强制全局 > discovery 可选，靠前覆盖靠后）
-    // pi 实际路径 <piAgentDir>/skills 是 pi 重定向后的真实 skill 落点（与 loadAgents 对称）。
-    //
-    // FR-2（cw-2026-07-21-scan-project-agents-skills）：相对路径（FORCED_PROJECT_SKILL_DIR='.xyz-agent/skills'
-    // + discovery.json 的相对路径如 .agents/skills）按 projectRoot resolve 成绝对路径。
-    // 修复现状 bug：原 loadSkills(_projectRoot) 忽略 projectRoot，相对路径按 runtime 进程 cwd
-    // （app.getAppPath/resourcesPath）解析错位 → 扫不到用户项目 skill → landing 浮层看不到项目 skill。
-    // resolve 基准是 projectRoot（用户当前项目 cwd）。
-    const resolveDir = (dir: string): string =>
-      isAbsolute(dir) ? dir : resolve(projectRoot, dir)
+    // 目录发现 SSOT（skill-dirs.ts）：scanner 与 watcher 共用同一份逻辑，
+    // 从结构上保证 watch 范围 = scan 范围（修复 EMFILE 事故的 watch 整个 cwd 问题）。
+    // 相对路径（.xyz-agent/skills + discovery 相对路径）按 projectRoot resolve 成绝对路径。
     const orderedDirs = [
-      join(this.configStore.getPiAgentDir(), 'skills'),
-      resolveDir(FORCED_PROJECT_SKILL_DIR),
-      forcedGlobalSkillDir(),
-      ...this.configStore.getSkillPaths().map(resolveDir),
+      ...resolveGlobalSkillDirs(this.configStore, getConfigDir()),
+      ...resolveProjectSkillDirs(projectRoot, this.configStore),
     ]
 
     // name → 按 priority 收集的所有来源（用于合并去重 + sources badge 链）

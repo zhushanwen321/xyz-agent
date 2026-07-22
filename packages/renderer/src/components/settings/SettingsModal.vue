@@ -38,6 +38,7 @@
                 ? 'bg-surface-hover text-fg ring-1 ring-inset ring-accent hover:bg-surface-hover hover:text-fg'
                 : 'text-muted hover:bg-surface-hover hover:text-fg'
             "
+            :data-testid="`settings-nav-${item.id}`"
             @click="activeMenu = item.id"
           >
             <component :is="item.icon" class="size-[17px] flex-shrink-0" />
@@ -74,7 +75,7 @@
               />
               <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
               <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
-              <SystemPromptPage v-else-if="activeMenu === 'systemPrompt'" />
+              <SystemPromptPage v-else-if="activeMenu === 'system-prompt'" />
             </div>
           </ScrollArea>
         </div>
@@ -118,7 +119,7 @@ const menus = [
   { id: 'skill', labelKey: 'settings.menu.skill', icon: Sparkles, descKey: 'settings.menu.skillDesc' },
   { id: 'agent', labelKey: 'settings.menu.agent', icon: Bot, descKey: 'settings.menu.agentDesc' },
   { id: 'extension', labelKey: 'settings.menu.extension', icon: Blocks, descKey: 'settings.menu.extensionDesc' },
-  { id: 'systemPrompt', labelKey: 'settings.menu.systemPrompt', icon: ScrollText, descKey: 'settings.menu.systemPromptDesc' },
+  { id: 'system-prompt', labelKey: 'settings.menu.systemPrompt', icon: ScrollText, descKey: 'settings.menu.systemPromptDesc' },
   { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal, descKey: 'settings.menu.systemDesc' },
 ] as const
 

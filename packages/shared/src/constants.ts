@@ -55,3 +55,27 @@ export const ENV_WHITELIST_PREFIXES: readonly string[] = [
  *  runtime ConfigService.setSystemPromptConfig 超限拒存；前端 UI 计数器/提示共用此值。 */
 // eslint-disable-next-line no-magic-numbers
 export const SYSTEM_PROMPT_MAX_LENGTH = 16000 as const
+
+/**
+ * ADR-0020 §2/§3 预设可选 skill/agent 目录候选（UI 「可选目录」的固定来源）。
+ *
+ * SSOT：services/skill-dir-config.ts（buildDirConfigs 读取端）与 infra/pi/discovery-store.ts
+ * （setSkillDirs/setAgentDirs 写入端）共同 import 此常量，消除本地副本漂移风险。
+ *
+ * 语义：用户可勾选启用/可拖排序；勾选的进 discovery.json 数组。强制目录
+ * （~/.xyz-agent/...）不在此列（UI 另行只读展示）。preset 成员豁免 existsSync 脏数据过滤
+ * ——推荐候选语义，启用后即使此机器不存在也要保留（防 UI 消失回归）。
+ */
+export const PRESET_SKILL_DIRS = [
+  '~/.pi/agent/skills',
+  '~/.claude/skills',
+  '~/.agents/skills',
+  '.agents/skills',
+] as const
+
+export const PRESET_AGENT_DIRS = [
+  '~/.pi/agent/agents',
+  '~/.claude/agents',
+  '~/.agents/agents',
+  '.agents/agents',
+] as const
