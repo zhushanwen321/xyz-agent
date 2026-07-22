@@ -38,6 +38,7 @@
                 ? 'bg-surface-hover text-fg ring-1 ring-inset ring-accent hover:bg-surface-hover hover:text-fg'
                 : 'text-muted hover:bg-surface-hover hover:text-fg'
             "
+            :data-testid="`settings-nav-${item.id}`"
             @click="activeMenu = item.id"
           >
             <component :is="item.icon" class="size-[17px] flex-shrink-0" />

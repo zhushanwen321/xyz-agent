@@ -67,9 +67,8 @@ describe('SettingsModal onUpdateSkillDirs 错误反馈（W2 D10）', () => {
     await flushPromises()
 
     // Dialog 内容经 reka-ui teleport 到 body，故从 document.body 查询。
-    // 找到 skill 菜单按钮（含 'Skill' 文本的 nav 按钮）。
-    const navButtons = Array.from(document.body.querySelectorAll('nav button'))
-    const skillBtn = navButtons.find((b) => (b.textContent ?? '').includes('Skill'))
+    // 找到 skill 菜单按钮（用 testid 定位，与文案解耦——locale 变化不影响测试）。
+    const skillBtn = document.body.querySelector('[data-testid="settings-nav-skill"]')
     expect(skillBtn).toBeTruthy()
     skillBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
