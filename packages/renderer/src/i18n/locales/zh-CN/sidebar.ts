@@ -20,10 +20,17 @@ export default {
     rename: '重命名',
     delete: '删除',
     deleteConfirm: '确认删除？',
+    forkFrom: 'fork 自',
   },
   sessionList: {
     empty: '暂无会话',
     newSession: '新建会话',
+  },
+  forkGroup: {
+    title: '本会话的分支',
+    branchN: '分支 {n}',
+    stop: '停止',
+    stopConfirm: '确认停止？',
   },
   segmentedTab: {
     session: '会话',

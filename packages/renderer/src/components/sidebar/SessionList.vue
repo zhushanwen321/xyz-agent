@@ -21,16 +21,28 @@
           </span>
           <span class="font-mono text-[10px] text-subtle opacity-60">{{ g.sessions.length }}</span>
         </div>
-        <SessionItem
-          v-for="s in g.sessions"
-          :key="s.id"
-          :session="s"
-          :active="s.id === activeId"
-          :status="statusOf(s.id)"
-          @select="emit('select', $event)"
-          @rename="emit('rename', $event)"
-          @delete="emit('delete', $event)"
-        />
+        <!-- 每条 session 渲染 SessionItem；当前激活 session 下方紧跟其分支小列表
+             （spec §2 层③ 方案3：仅当前 session 展开自己的分支，不破坏其他 session 扁平结构）。
+             用 template v-for 聚合 SessionItem + 条件 ForkGroup，保持 s 在作用域内。 -->
+        <template v-for="s in g.sessions" :key="s.id">
+          <SessionItem
+            :session="s"
+            :active="s.id === activeId"
+            :status="statusOf(s.id)"
+            @select="emit('select', $event)"
+            @rename="emit('rename', $event)"
+            @delete="emit('delete', $event)"
+          />
+          <!-- 当前 session 的分支：从组内 sessions filter parentSession 指向当前 session
+               （sessionFile 路径或 sessionId，FR-20 fallback）。无分支时不渲染空容器。 -->
+          <ForkGroup
+            v-if="s.id === activeId && branchesOf(s).length > 0"
+            :branches="branchesOf(s)"
+            :parent-id="s.id"
+            @select="emit('select', $event)"
+            @stop="emit('stopBranch', $event)"
+          />
+        </template>
       </div>
     </div>
     <div
@@ -52,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import type { SessionGroup } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
 import { computed, provide, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
@@ -62,6 +74,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { dirNameOf } from '@/composables/logic/path'
 import SessionItem from './SessionItem.vue'
+import ForkGroup from './ForkGroup.vue'
 
 const { t } = useI18n()
 
@@ -78,12 +91,29 @@ const emit = defineEmits<{
   rename: [sessionId: string]
   delete: [sessionId: string]
   newSession: []
+  /** 停止后台分支 session（FR-19，ForkGroup 两段式确认后调 abort） */
+  stopBranch: [sessionId: string]
 }>()
 
 /** 全部 session 总数（空态判定，跨组汇总） */
 const totalCount = computed(() =>
   props.groups.reduce((sum, g) => sum + g.sessions.length, 0),
 )
+
+/**
+ * 取当前 session 的直接子分支列表（FR-17，spec §2 层③）。
+ * 从组内 sessions filter parentSession 指向当前 session：
+ * - 优先匹配 parentSession === sessionFile（活跃 session 落盘路径，§8.1 规范）
+ * - fallback 匹配 parentSession === id（源 session 未落盘时用 sessionId 作血缘键，FR-20）
+ * 仅在当前 session 所在组内 filter（分支与父同 cwd，不需跨组扫描）。
+ */
+function branchesOf(s: SessionSummary): SessionSummary[] {
+  const parentKey = s.sessionFile || s.id
+  return props.groups
+    .filter((g) => g.cwd === s.cwd)
+    .flatMap((g) => g.sessions)
+    .filter((b) => b.parentSession != null && b.parentSession === parentKey)
+}
 
 /** 单一 Esc 监听器——避免每个 SessionItem 各自注册 window keydown listener（N 项 N 个监听器）。
  *  SessionItem inject 后 watch escCount 变化清自身确认态。 */
