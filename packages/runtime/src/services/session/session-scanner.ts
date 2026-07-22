@@ -81,6 +81,9 @@ export class SessionScanner {
       modelId: '',
       tokenCount: 0,
       sessionFile: s.filePath,
+      parentSession: s.parentSession,
+      forkEntryId: s.forkEntryId,
+      handedOffTo: s.handedOffTo,
     }
   }
 }

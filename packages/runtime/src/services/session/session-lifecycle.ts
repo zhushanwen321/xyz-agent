@@ -296,12 +296,22 @@ export class SessionLifecycle {
       throw new Error(`fork: source session not found: ${srcSessionId}`)
     }
 
-    // 2. 截断源 JSONL → 写新文件（parentSession 指回源文件，形成父子链）
+    // FR-20 parentSession fallback：源 session 可能尚未落盘（pi 延迟写入窗口，
+    // 内存 active session 的 sessionFilePath=undefined）。fork 时若用未落盘的临时路径
+    // 作 parentSession 会断裂血缘链，故用源 sessionId 作 fallback 键。
+    // 仅当源 sessionFilePath 缺失时才传 fallbackParentId（落盘则用真实路径，更可读）。
+    const sourceActive = this.svc.getSession(srcSessionId)
+    const fallbackParentId = sourceActive?.sessionFilePath ? undefined : srcSessionId
+
+    // 2. 截断源 JSONL → 写新文件（parentSession 指回源文件/源 sessionId，形成父子链）
+    // forkEntryId 字段写入新 header（= 截断锚点 fromPiEntryId），供后续 merge 定位 fork 点
     const { filePath: forkedFilePath, sessionId: forkedId } = await createForkedSessionFile(
       source.filePath,
       fromPiEntryId,
       includeFrom,
       getSessionsDir(),
+      fromPiEntryId,
+      fallbackParentId,
     )
 
     // 3. spawn 新 pi 进程（与 restore 同模式）
@@ -340,11 +350,17 @@ export class SessionLifecycle {
     }
 
     // 5. 初始化 managed session（adapter、入 sessions Map）
+    // FR-2 active 路径回传血缘：parentSession + forkEntryId 透传到 IManagedSessionView，
+    // toSummary 输出到 SessionSummary，前端据此渲染 fork 父子关系。
+    // parentSession 键与 createForkedSessionFile 写入 header 的 resolvedParentSession 一致
+    //（源 sessionFilePath 落盘→用文件路径；未落盘→用源 sessionId）。
     // M3: initializeManagedSession 失败时清理 pi 进程（与 create/restore 同模式）
+    const parentSessionKey = sourceActive?.sessionFilePath ?? srcSessionId
     let session: IManagedSessionView
     try {
       session = await this.svc.initializeManagedSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
+        undefined, parentSessionKey, fromPiEntryId,
       )
     } catch (initErr) {
       // L5: initializeManagedSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）

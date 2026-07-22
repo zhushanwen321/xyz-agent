@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
@@ -14,6 +14,8 @@ export interface SessionHandlerContext extends MessageHandlerContext {
   nextPushId(): string
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void
+  /** 广播一条 ServerMessage 给所有连接（FR-12：fork 后广播 session.forkNotice）。 */
+  broadcast(msg: ServerMessage): void
 }
 
 export class SessionMessageHandler {
@@ -54,6 +56,14 @@ export class SessionMessageHandler {
             { fromMessageTimestamp, fromMessageRole },
           )
           this.ctx.reply(ws, msg.id, 'session.created', { session })
+          // [W2 FR-12] fork 成功后广播 session.forkNotice：通知 srcSession 所在 panel
+          // 在对话流插一条 ForkNotice 反馈行（spec §3）。广播在 reply + broadcastSessionList 之后，
+          // 确保新 session 已入列表 + reply 已发出（前端可据 newSessionId 跳转）。
+          this.ctx.broadcast({
+            type: 'session.forkNotice',
+            id: this.ctx.nextPushId(),
+            payload: { srcSessionId, newSessionId: session.id, branchName: label },
+          })
           return this.ctx.broadcastSessionList()
         } catch (e) {
           // L4: model 未配置时返回差异化 error code（与 session.create 同模式）。

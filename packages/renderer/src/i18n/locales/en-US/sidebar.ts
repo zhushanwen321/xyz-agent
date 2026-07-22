@@ -20,10 +20,17 @@ export default {
     rename: 'Rename',
     delete: 'Delete',
     deleteConfirm: 'Confirm delete?',
+    forkFrom: 'forked from',
   },
   sessionList: {
     empty: 'No sessions',
     newSession: 'New session',
+  },
+  forkGroup: {
+    title: 'Branches',
+    branchN: 'Branch {n}',
+    stop: 'Stop',
+    stopConfirm: 'Confirm stop?',
   },
   segmentedTab: {
     session: 'Session',

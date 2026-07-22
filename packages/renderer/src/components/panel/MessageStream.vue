@@ -88,6 +88,28 @@
         <Loader2 class="size-3 animate-spin text-accent" />
         <span>{{ t('panel.message.dispatching') }}</span>
       </div>
+
+      <!-- ForkNotice 反馈行（transient，非虚拟化，RV1）。
+           fork 成功 / 后台分支状态变化时经 session.forkNotice 广播插入。
+           绝对定位到列表末尾 + topOffset + compacting/dispatching 占位高度；多条通知垂直堆叠。
+           不写 chat store messages（transient，不持久化不进 JSONL）。 -->
+      <template v-if="forkNotices.length > 0">
+        <div
+          v-for="(notice, idx) in forkNotices"
+          :key="notice.id"
+          class="absolute left-5 right-5 py-1"
+          :style="{ top: forkNoticeTop(idx) + 'px' }"
+        >
+          <ForkNotice
+            :branch-name="notice.branchName"
+            :preview="notice.preview"
+            :kind="notice.kind"
+            :session-deleted="notice.sessionDeleted ?? false"
+            @view="onForkNoticeView(notice.newSessionId)"
+            @dismiss="onForkNoticeDismiss(notice.id)"
+          />
+        </div>
+      </template>
     </div>
     </div>
 
@@ -108,26 +130,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
-import { useChat } from '@/composables/features/useChat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
 import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
 import { toRenderItems, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
-import { isSubagentVirtualId, extractSubagentId } from '@/stores/subagent'
-import { useSubagentStore } from '@/stores/subagent'
+import { isSubagentVirtualId, extractSubagentId, useSubagentStore } from '@/stores/subagent'
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
+import ForkNotice from './ForkNotice.vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import { type Message } from '@xyz-agent/shared'
+import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
+import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 
 const props = defineProps<{
   sessionId: string
@@ -135,24 +158,10 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const chat = useChatStore()
-const { loadMoreHistory, hasMoreHistory: checkHasMore } = useChat()
 const subagentStore = useSubagentStore()
 
-/** W4 H4：加载更多历史 loading 状态 */
-const loadingMore = ref(false)
-/** N1: 是否有更多历史可加载（由 hydrate 的 historyTruncated 标志驱动，非默认 true） */
-const showLoadMore = computed(() => checkHasMore(props.sessionId))
-
-async function handleLoadMore(): Promise<void> {
-  if (loadingMore.value || !showLoadMore.value) return
-  loadingMore.value = true
-  try {
-    await loadMoreHistory(props.sessionId)
-    // loadMoreHistory 内部 clearHistoryTruncated 会更新 showLoadMore
-  } finally {
-    loadingMore.value = false
-  }
-}
+/** W4 H4：加载更多历史 loading 状态 + handler（封装进 useLoadMoreHistory） */
+const { loadingMore, showLoadMore, handleLoadMore } = useLoadMoreHistory(() => props.sessionId)
 
 /**
  * 当前 session 的消息（响应式）。
@@ -272,6 +281,22 @@ const visibleItems = computed(() => {
 provideTurnResizeRegistry({
   reportHeight: (key, h) => virtualList.reportHeight(key, h),
 })
+
+/**
+ * ForkNotice 反馈行（transient，RV1）：feed 消费 + 定位 + 交互已封装进 useForkNoticeStream。
+ * bindForkNoticeEffect（App.vue）订阅 session.forkNotice 广播并按 srcSessionId 路由入 feed，
+ * 本 composable 读自身 session 的通知并在对话流末尾定位渲染。不进 chat store（transient）。
+ * 定位依赖以 ComputedRef 注入（totalHeight/topOffset/isCompacting 等，容器侧计算结果）。
+ */
+const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
+  useForkNoticeStream(() => props.sessionId, {
+    totalHeight,
+    topOffset,
+    isCompacting,
+    isDispatching,
+    hasWorkingTurn,
+    compactNoticeHeight: COMPACTING_NOTICE_HEIGHT,
+  })
 
 /**
  * 从 system 消息的 details.__gui__ 提取结构化渲染组件（extension GUI 协议 E5）。

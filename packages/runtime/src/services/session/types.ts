@@ -51,6 +51,26 @@ export interface IManagedSessionView {
    */
   hidden?: boolean
   /**
+   * 父 session 血缘键（FR-2 active 路径回传血缘）。fork 出的 session 在 initializeManagedSession
+   * 时写入，toSummary 透传到 SessionSummary.parentSession。源 session 未落盘时用源 sessionId 作
+   * fallback（FR-20）。ManagedSession 经 extends 自动继承此字段。
+   */
+  parentSession?: string
+  /** fork 锚点 entry id（FR-2）。toSummary 透传到 SessionSummary.forkEntryId。 */
+  forkEntryId?: string
+  /**
+   * handoff 目标 session id（FR-5 active 路径透传）。
+   *
+   * 与 scannedToSummary（磁盘路径从 ScannedSessionMeta.handedOffTo 取）对称：toSummary
+   * 透传此字段到 SessionSummary.handedOffTo，保持双路径输出一致。ManagedSession 经
+   * extends 自动继承此字段。
+   *
+   * [KNOWN-LIMIT] handedOffTo 的写入逻辑（persistHandedOff 调用）在批 2 handoff-service
+   * 中接线，当前 active session 的 handedOffTo 恒 undefined——但字段透传链路要完整，
+   * 待批 2 接线后即生效。
+   */
+  handedOffTo?: string
+  /**
    * label 是否已持久化到 session JSONL 的 session_info 行。
    *
    * pi 0.80.3 的 SessionManager._persist 首次 flush（首条 assistant 消息后）才用

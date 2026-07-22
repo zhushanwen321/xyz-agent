@@ -17,6 +17,12 @@ export interface ScannedSessionMeta {
   size: number
   /** session 终态（W4，ADR 0036）；无 session_end entry（历史/未结束）→ null。 */
   outcome: SessionOutcome | null
+  /** 父 session 血缘键（FR-3，与 infra/pi/session-file-utils 版本对齐）。 */
+  parentSession?: string
+  /** fork 锚点 entry id（FR-3，与 infra/pi/session-file-utils 版本对齐）。 */
+  forkEntryId?: string
+  /** handoff 目标 session id（FR-5，与 infra/pi/session-file-utils 版本对齐）。 */
+  handedOffTo?: string
 }
 
 /** session 终态类型（W4，ADR 0036）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */

@@ -10,18 +10,18 @@
       <!-- runtime 重启中 -->
       <template v-if="connectionState === 'restarting'">
         <Loader2 class="size-4 animate-spin text-subtle" />
-        <span class="text-[12.5px] text-subtle">runtime 重启中…</span>
+        <span class="text-[12.5px] text-subtle">{{ t('connection.restarting') }}</span>
       </template>
       <!-- runtime 重启用尽，需手动重试 -->
       <template v-else-if="connectionState === 'failed'">
         <AlertCircle class="size-5 text-danger" />
-        <span class="text-[12.5px] text-muted">runtime 不可用，重试多次仍失败</span>
+        <span class="text-[12.5px] text-muted">{{ t('connection.failed') }}</span>
         <Button variant="default" size="sm" data-testid="runtime-retry-btn" @click="onRetry">
-          重试
+          {{ t('connection.retry') }}
         </Button>
       </template>
       <!-- 默认连接中（connecting/disconnected/reconnecting） -->
-      <span v-else class="text-[12.5px] text-subtle">连接中…</span>
+      <span v-else class="text-[12.5px] text-subtle">{{ t('connection.connecting') }}</span>
     </div>
   </div>
   <template v-else>
@@ -34,18 +34,25 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { Loader2, AlertCircle } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import AppShell from '@/components/shell/AppShell.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 
 // 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
+const { t } = useI18n()
 const { state: connectionState, init, teardown, retryRuntime } = useConnection()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
 // 是「连接成功」唯一可靠信号——watch 它触发 onConnected，appBootstrapped 守卫保证 HMR/重连幂等。
 const { onConnected } = useSidebar()
+// RV1+RV2：fork 反馈行 + 后台分支通知全局订阅（session.forkNotice 广播 → transient feed；
+// useForkBranchNotify diff 分支状态 → 状态变化反馈行）。App setup 是全局 effect 作用域，
+// onScopeDispose 随 App 卸载退订（单实例，与 events.onGlobalType 范式一致）。
+bindForkNoticeEffect()
 onMounted(() => { void init() })
 // [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
 // - 首次 connected → initApp（内部含 workspaceStore.load + presetCwd）

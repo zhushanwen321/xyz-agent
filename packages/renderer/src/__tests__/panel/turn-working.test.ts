@@ -40,19 +40,19 @@ function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
   }
 }
 
-/** mount Turn，stub 掉子组件（Block/ChangeSetCard/ForkConfirmModal/MarkdownRenderer），隔离 Turn 自身逻辑 */
+/** mount Turn，stub 掉子组件（Block/ChangeSetCard/MarkdownRenderer），隔离 Turn 自身逻辑 */
 function mountTurn(props: { turn: MessageTurn; sessionId?: string }) {
   return mount(Turn, {
     props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
     global: {
       plugins: [createPinia()],
-      stubs: { Block: true, ChangeSetCard: true, ForkConfirmModal: true, MarkdownRenderer: true },
+      stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
 }
 
 /**
- * mount Turn 但用真实 Block（仅 stub 重依赖 MarkdownRenderer/ChangeSetCard/ForkConfirmModal），
+ * mount Turn 但用真实 Block（仅 stub 重依赖 MarkdownRenderer/ChangeSetCard），
  * 用于断言 trace 内块的 DOM 顺序（三视角之「观察者」视角，防 contentBlocks 乱序回归）。
  */
 function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
@@ -60,7 +60,7 @@ function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }
     props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
     global: {
       plugins: [createPinia()],
-      stubs: { ChangeSetCard: true, ForkConfirmModal: true, MarkdownRenderer: true },
+      stubs: { ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
 }

@@ -20,8 +20,12 @@ import type { IManagedSessionView, ScannedSession } from './types.js'
 
 export interface ISessionServiceInternal {
   // ── lifecycle 使用的共享 helper ──
-  /** 初始化 ManagedSession 并写入 sessions Map，返回子模块可见视图。hidden 标记隐藏 session。 */
-  initializeManagedSession(id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean): Promise<IManagedSessionView>
+  /**
+   * 初始化 ManagedSession 并写入 sessions Map，返回子模块可见视图。hidden 标记隐藏 session。
+   * parentSession/forkEntryId 透传 fork 血缘（FR-2 active 路径回传），存入 session 对象后
+   * 经 toSummary 输出到 SessionSummary。
+   */
+  initializeManagedSession(id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean, parentSession?: string, forkEntryId?: string): Promise<IManagedSessionView>
   /** Detach adapter（按 id 查 Map）。pi 事件订阅经 EventAdapter 唯一持有，detach 即收口。 */
   detachSession(sessionId: string): void
   /** 将 ManagedSession 转为对外 SessionSummary（含 git 信息）。 */

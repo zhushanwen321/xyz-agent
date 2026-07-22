@@ -100,6 +100,7 @@
             @new-session="onNewSession"
             @rename="onRenameSession"
             @delete="onDeleteSession"
+            @stop-branch="onStopBranch"
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'subagents'">
@@ -187,6 +188,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useCommandStore } from '@/stores/command'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useChat } from '@/composables/features/useChat'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
@@ -218,7 +220,8 @@ const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant } = useSidebar()
+const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
 
@@ -333,6 +336,14 @@ async function onDeleteSession(id: string): Promise<void> {
   }
 }
 
+/**
+ * 停止后台分支 session（FR-19，ForkGroup 两段式确认后 emit stopBranch）。
+ * 调 useChat.abort 中断该分支的活跃回合——abort 乐观清 dispatching，收口靠 runtime 广播。
+ */
+function onStopBranch(id: string): void {
+  void abortSession(id)
+}
+
 async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {
   try {
     await renameSession(payload.sessionId, payload.label)
@@ -365,6 +376,8 @@ interface KeymapEntry {
   key: string
   /** commandStore.shortcutOverrides 中的 id（有 override 时走 matchOverrideKey） */
   commandId?: string
+  /** 要求 shift 修饰键（⌘⇧G 进 fork 模式 vs ⌘G 后台 fork；无此字段则要求不带 shift） */
+  shift?: boolean
   action: () => void
 }
 const commandStore = useCommandStore()
@@ -372,23 +385,49 @@ const keymap: KeymapEntry[] = [
   { key: 'k', action: () => { searchModal.toggle() } },
   { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
   { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
+  // FR-16 fork 快捷键：⌘G 从末条 assistant 后台 fork（留在原线）；⌘⇧G 进 composer fork 模式。
+  // shift 守卫（keydown handler 内）区分同 key 的 shift/非 shift 项，避免 ⌘G 误命中 ⌘⇧G。
+  // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。
+  { key: 'g', action: () => { void forkFromLastAssistant() } },
+  { key: 'g', shift: true, action: () => { void enterForkModeFromLastAssistant() } },
 ]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
+  // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。
+  // 检测：activeElement 落在 composer-box（contenteditable 输入区）内 → 不派发任何 keymap。
+  if (isComposerFocused()) return
   const overrides = commandStore.shortcutOverrides
   const hit = keymap.find((m) => {
     // 有 override → 解析组合键格式（'mod+n' / 'shift+j' / 'j'）
     if (m.commandId && overrides[m.commandId]) {
       return matchOverrideKey(e, overrides[m.commandId])
     }
-    // 默认：⌘/Ctrl + key
+    // 默认：⌘/Ctrl + key，shift 守卫区分同 key 的 shift/非 shift 项
     const mod = e.metaKey || e.ctrlKey
-    return mod && e.key.toLowerCase() === m.key
+    if (!mod) return false
+    if (e.key.toLowerCase() !== m.key) return false
+    // shift 项要求 e.shiftKey；非 shift 项要求 !e.shiftKey（否则 ⌘G 和 ⌘⇧G 都命中 ⌘G）
+    return m.shift ? e.shiftKey : !e.shiftKey
   })
   if (hit) {
     e.preventDefault()
+    // stopImmediatePropagation：避免多 Sidebar 实例（测试 mount 未 unmount 堆积 / HMR 残留）
+    // 各自注册的 window keydown 监听器对同一事件重复派发。首个命中的实例处理后阻止后续实例，
+    // 保证一次按键只触发一次 action（与生产单实例行为一致）。
+    e.stopImmediatePropagation()
     hit.action()
   }
 })
+
+/**
+ * composer 是否聚焦（全局快捷键守卫用）：activeElement 落在 composer-box 内即为聚焦。
+ * composer-box 是 contenteditable 输入区（ComposerInput 根元素带 composer-box class + data-testid），
+ * 用户在其中键入时 activeElement 是它或其后代；此时 ⌘G/⌘⇧G 不应触发 fork（与输入语义冲突）。
+ */
+function isComposerFocused(): boolean {
+  const el = document.activeElement
+  if (!el) return false
+  return !!el.closest('.composer-box, [data-testid="composer-box"]')
+}
 
 /** 匹配自定义快捷键格式（'mod+n' / 'shift+j' / 'j' / 'alt+x' 等） */
 function matchOverrideKey(e: KeyboardEvent, override: string): boolean {

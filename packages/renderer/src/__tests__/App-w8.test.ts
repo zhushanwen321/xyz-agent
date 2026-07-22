@@ -41,6 +41,8 @@ vi.mock('@/composables/features/useSidebar', () => ({
 // stub 掉重组件，避免渲染 AppShell/ToastContainer 的依赖树
 vi.mock('@/components/shell/AppShell.vue', () => ({ default: { name: 'AppShell', template: '<div />' } }))
 vi.mock('@/components/ui/ToastContainer.vue', () => ({ default: { name: 'ToastContainer', template: '<div />' } }))
+// stub fork-notice 全局效果（App setup 调用，依赖 pinia/session store，本测试只验证 onConnected）
+vi.mock('@/composables/effects/useForkNoticeEffect', () => ({ bindForkNoticeEffect: () => {} }))
 
 import { mount } from '@vue/test-utils'
 import App from '@/App.vue'

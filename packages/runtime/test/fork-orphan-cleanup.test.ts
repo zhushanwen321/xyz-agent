@@ -105,6 +105,9 @@ function makeLifecycle(opts: MakeOpts = {}) {
       id: 'src', filePath: '/fake/src.jsonl', cwd: tmpdir(), name: 'src',
       lastModified: 1, timestamp: '', size: 0,
     })),
+    // FR-20: forkSession 读源 active session 的 sessionFilePath 判断 parentSession fallback。
+    // mock 返回 undefined（源未活跃 / 已落盘），走 source.filePath 主路径。
+    getSession: vi.fn(() => undefined),
     initializeManagedSession: opts.initFails
       ? vi.fn(async () => { throw new Error('init failed') })
       : vi.fn(async () => session),

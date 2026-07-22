@@ -39,6 +39,7 @@ import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
+import { useForkActions } from '@/composables/features/useForkActions'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
 
@@ -387,53 +388,23 @@ export function useSidebar() {
     }
   }
 
-  /**
-   * Fork 会话：从指定源 session 截断历史到 fork 点，新建 session（独立 pi 进程）。
-   *
-   * 语义（问题 6 AI 收尾 fork）：includeFrom=true → 保留到该 assistant（含），
-   * openInStandby 打开另一 panel。原 session 不变。
-   *
-   * 实现：runtime 读源 session JSONL 按 piEntryId 截断 → 新进程 switch_session 加载。
-   * 不再前端 hydrate（runtime 通过 switch_session 让 pi 加载截断历史，selectSession 的
-   * getHistory 拉真实历史）。fork 需要 Message.piEntryId（文件路径读取时填充），
-   * RPC 路径读取的 session 无 piEntryId 时报错提示。
-   *
-   * srcSessionId 显式传入：Turn 可能在非 active 的 standby panel，fork 源必须是其所在 session。
-   */
-  async function forkSession(
-    srcSessionId: string,
-    fromMessageId: string,
-    opts?: { includeFrom?: boolean; openInStandby?: boolean },
-  ): Promise<string> {
-    // 从前端 Message.id 查到 piEntryId（runtime fork 截断定位用）
-    const msgs = chat.getMessages(srcSessionId)
-    const forkMsg = msgs.find((m) => m.id === fromMessageId)
-    if (!forkMsg) {
-      throw new Error(`fork: message ${fromMessageId} not found in session ${srcSessionId}`)
-    }
-    // [HISTORICAL] 2026-07-16：RPC 路径加载的 session 无 piEntryId，传 timestamp + role 让 runtime 读 JSONL 匹配
-    const created = await sessionApi.fork(srcSessionId, {
-      piEntryId: forkMsg.piEntryId,
-      messageTimestamp: forkMsg.timestamp,
-      messageRole: forkMsg.role,
-      includeFrom: opts?.includeFrom,
-    })
-    session.appendSession(created)
-
-    // 打开在另一 panel（单 panel 先 split 出 standby）
-    if (opts?.openInStandby && !panel.isDual) panel.split()
-    const standby = opts?.openInStandby
-      ? panel.panels.find((p) => p.id !== panel.activePanelId)
-      : undefined
-    await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
-
-    return created.id
-  }
-
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
   function goOverview(): void {
     navigation.push({ view: 'overview' })
   }
+
+  /**
+   * Fork 操作（forkSession / forkSessionAsk / forkFromLastAssistant / enterForkModeFromLastAssistant）。
+   * 编排逻辑抽到 useForkActions（参照 useSidebarSubagentActions 范式），注入 focusedSessionId ref，
+   * 内部自行获取 chat/session stores + api。fork 逻辑与 session CRUD 正交，独立 composable 职责内聚。
+   */
+  const {
+    forkSession,
+    forkSessionAsk,
+    forkFromLastAssistant,
+    enterForkModeFromLastAssistant,
+  } = useForkActions(focusedSessionId)
+
 
   /**
    * 加载 session 列表（W6 去全量预 hydrate）。
@@ -552,5 +523,8 @@ export function useSidebar() {
     renameSession,
     deleteSession,
     forkSession,
+    forkSessionAsk,
+    forkFromLastAssistant,
+    enterForkModeFromLastAssistant,
   }
 }

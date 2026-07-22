@@ -29,8 +29,16 @@
       >
         {{ session.label }}
       </div>
-      <div class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-subtle">
-        {{ dirName }}
+      <div
+        class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-subtle"
+        data-testid="sidebar-session-dirname"
+      >
+        <!-- 分支血缘元信息（spec §8.5 审查 1-C2：分支 session 自身显示「↑ fork 自 <父名>」）。
+             parentLabel 优先（显式父名），否则回退到 parentSession（路径/id），都没有时显示 dirName。 -->
+        <template v-if="session.parentSession">
+          <span class="fork-lineage text-accent/80">{{ t('sidebar.sessionItem.forkFrom') }} {{ session.parentLabel || session.parentSession }}</span>
+        </template>
+        <template v-else>{{ dirName }}</template>
       </div>
     </div>
     <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-subtle">
@@ -106,6 +114,10 @@ const props = defineProps<{
     cwd: string
     lastActiveAt: number
     status?: string
+    /** 父 session 文件路径/id（fork 血缘键）。有值则为分支 session，sub 行显示血缘元信息。 */
+    parentSession?: string
+    /** 父 session 显示名（血缘展示用，SessionList 容器可注入避免重复查找父 label）。 */
+    parentLabel?: string
   }
   active: boolean
   status: DerivedStatus
