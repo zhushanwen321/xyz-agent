@@ -90,14 +90,14 @@ const props = defineProps<{
   /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
   /** composer 形态：landing（新建任务页空态）vs panel（对话态）。ADR-0037：slash 命令源按 variant 分支，
-   *  与 Composer.vue variant prop 同源。landing 合并 publicSession 命令 ∪ settingsStore.skills；
+   *  与 Composer.vue variant prop 同源。landing 合并 settingsStore.skills + projectSkills（W3 移除公共 session 后无 pi extension 命令源）；
    *  panel 用 commandStore + compact，不并入 skills（配置态/运行态不混淆）。默认 'panel' 兼容旧调用。 */
   variant?: ComposerVariant
   /** 过滤 query（输入区 / 或 # 后的内容，空串/缺省=不过滤；file 按 name+path 过滤，slash 按命令名过滤） */
   query?: string
   /** landing 态当前 cwd 的项目 skill（useProjectSkills 按 cwd key 缓存，W3 ADR-0038）。
-   *  landing 分支合并三源：publicSession 命令 ∪ settingsStore.skills（全局）∪ projectSkills（当前 cwd）。
-   *  默认空（未传时仅合并前两源，向后兼容）。Composer 从 useProjectSkills(flow.currentCwd) 取后透传。 */
+   *  landing 分支合并两源：settingsStore.skills（全局）∪ projectSkills（当前 cwd）。
+   *  默认空（未传时仅 settingsStore.skills，向后兼容）。Composer 从 useProjectSkills(flow.currentCwd) 取后透传。 */
   projectSkills?: SkillInfo[]
 }>()
 
@@ -142,19 +142,12 @@ const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
 /**
  * slash 命令源（ADR-0037：按 variant 分支，替代原按 sessionId 互斥分支）。
  *
- * 根因（已修复）：原 `if (props.sessionId)` 互斥分支在 landing 态被非空 composerSid 拦截
- * （Landing.vue:70 composerSid = flow.currentSessionId ?? props.sessionId ?? publicSessionId，
- *  publicSessionId 存在时常态非空），导致 settingsStore.skills 永远读不到，项目维度 skill 不显示。
- *
  * 现行分支（判定用 variant，与 Composer.vue:280 范式对齐）：
- * - landing 态：合并 commandStore.getCommands(sessionId)（publicSession 的 pi extension 命令如 /goal）
- *   ∪ settingsStore.skills（项目级 + 全局 skill）。不含 compact（landing 无上下文可压缩）。
+ * - landing 态：settingsStore.skills（项目级 .xyz-agent/skills + 全局 + discovery）
+ *   ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。
  *   skill name 归一化为 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 路由前缀，裸名 pi 不认）。
- * - landing 态：合并 publicSession 的 pi 命令（extension + pi 扫描到的全局 skill）∪
- *   settingsStore.skills（项目级 .xyz-agent/skills + 全局 + discovery）。**去重**（pi 源优先）：
- *   publicSession 的 cwd=~/.xyz-agent，pi 扫不到用户项目 .xyz-agent/skills；settingsStore
- *   相对 runtime 进程 cwd 扫描，能扫到项目级 skill。两者在 <piAgentDir>/skills + 全局 skill
- *   上常态重叠（同一批目录两种视图），去重后 settingsStore 只补 pi 源没有的项目级 skill。
+ *   [W3] 已移除公共 session：landing 态 composerSid 为 null，无 pi extension 命令源（/goal 等
+ *   不再出现于 landing slash popover）。extCmds 保留为空集，代码不依赖该源。
  * - panel 态：compact + commandStore.getCommands(sessionId)（pi 真源，含 pi 返回的 skill 命令）。
  *   不并入 settingsStore.skills（settingsStore 是配置态全局扫描，commandStore 是该 session 的
  *   运行态真源——合并会导致 session A 看到 session B 才有的项目 skill、选中后 pi 不认）。
@@ -163,8 +156,8 @@ const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
  */
 const slashCommands = computed(() => {
   if (variant.value === 'landing') {
-    // landing 合并三源（W3 ADR-0038）：publicSession pi 命令 ∪ settingsStore.skills（全局）
-    // ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。去重 pi 源优先 → 全局 → 项目。
+    // landing 合并两源（W3 移除公共 session）：settingsStore.skills（全局）
+    // ∪ projectSkills（当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存）。去重 → 全局 → 项目。
     const extCmds = props.sessionId ? commandStore.getCommands(props.sessionId) : []
     // 去重 key 集：累积已选入命令的归一化 name（/skill:<name> / /commit / /goal 等）
     const seen = new Set<string>()

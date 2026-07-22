@@ -1,12 +1,12 @@
 /**
  * CommandPopover landing 态 slash 命令源 单测（L1-L7）。
  *
- * 验证按 variant 分支：landing 态（variant='landing'）合并 commandStore.getCommands(publicSessionId)
- * （pi extension 命令）∪ settingsStore.skills（config.skills 全局扫描），skill name 归一化为
+ * 验证按 variant 分支：landing 态（variant='landing'）合并 settingsStore.skills（config.skills
+ * 全局扫描）∪ projectSkills（当前 cwd 项目 skill），skill name 归一化为
  * /skill:<name>（pi agent-session.ts:1210 要求 /skill: 路由前缀）；session 态（variant='panel'）
  * 用 commandStore + compact，不并入 settingsStore.skills（配置态/运行态不混淆，ADR-0037）。
- * [HISTORICAL] 根因回归：原 mount 用 sessionId:undefined 模拟 landing，与现实（composerSid 非空，
- * 含 publicSessionId 兜底）脱节，测试全绿但 bug 照出。现 mount 用 variant:'landing' + 非空 sessionId。
+ * [W3] 已移除公共 session：landing 态 composerSid 为 null，无 pi extension 命令源。本测试仍用
+ * 非空 sessionId 显式 mount 以复用合并逻辑验证（组件本身不依赖 publicSession，extCmds 可空可非空）。
  *
  * 覆盖三视角：
  * - 构建者（白盒）：items 来源（commandStore vs skills）、归一化字段
@@ -69,11 +69,9 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     document.body.innerHTML = ''
   })
 
-  /** mount landing 态：variant='landing' + 非空 sessionId（模拟 publicSessionId）。
-   *  反映真实运行——Landing.vue:70 composerSid = flow.currentSessionId ?? props.sessionId ??
-   *  sessionStore.publicSessionId，publicSessionId 存在时（model 已配置的常态）非空。
-   *  sessionId 传 undefined 会走不到根因场景（variant 分支替代 sessionId 分支后，
-   *  landing 判定只看 variant，但保留非空 sessionId 确保回归断言有意义）。 */
+  /** mount landing 态：variant='landing' + 非空 sessionId。
+   *  [W3] 公共 session 已移除，生产 landing composerSid 为 null。这里传非空 sid 仅复用
+   *  CommandPopover 合并逻辑验证（组件支持非空 sessionId + extCmds）；L11 另用 undefined 测空源。 */
   async function mountLanding(query = '', skills: SkillInfo[] = LANDING_SKILLS, sid = 'public-sid'): Promise<void> {
     useSettingsStore().skills = skills
     wrapper = mount(CommandPopover, {
@@ -157,7 +155,8 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     })
   })
 
-  // L9 [AC-2]：landing 合并源验证——同时显示 publicSession 的 pi extension 命令 + skills
+  // L9 [AC-2]：landing 合并源验证——同时显示 pi extension 命令 + skills
+  // [W3] 生产 landing 态无 pi 命令源；本用例显式 dispatch pi 命令验证合并逻辑（组件支持非空 sessionId + extCmds）。
   it('L9 landing（variant=landing + sessionId=public-sid + commandStore 有 public-sid 命令）→ 同时显示 pi extension 命令 + skills（合并源）', async () => {
     useSettingsStore().skills = LANDING_SKILLS
     wrapper = mount(CommandPopover, {
@@ -165,7 +164,7 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
       props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '' },
     })
     await flushPromises()
-    // 推 publicSession 的 pi extension 命令（3 条）
+    // 推 pi extension 命令（3 条，模拟 session.commands 事件，组件合并逻辑验证）
     const msg = {
       type: 'session.commands',
       payload: { sessionId: 'public-sid', commands: SESSION_CMDS },
@@ -186,8 +185,8 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
   })
 
   // L10 [R2 fix]：pi 源 skill 命令与 settingsStore skill 同名 → 去重（pi 源优先），不重复显示
-  // 真实场景：publicSession 的 pi 扫描全局 skill（如 code-review），settingsStore 也扫到同一个
-  // （<piAgentDir>/skills + 全局重叠）。去重后只显一项。pi 源优先（运行态真源）。
+  // [W3] 生产 landing 态无 pi 命令源（公共 session 已移除）；本用例显式 dispatch pi 命令验证合并去重逻辑
+  // （CommandPopover 组件本身仍支持非空 sessionId + extCmds 去重，panel 态会用到）。
   it('L10 landing pi 源 skill 与 settingsStore skill 同名 → 去重（1 项非 2 项，pi 源优先）', async () => {
     // pi 返回的 skill 命令：name='skill:code-review'（pi 真实格式，归一化后 /skill:code-review）
     const piCmdsWithSkill = [
@@ -224,9 +223,9 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     expect(btns.some((b) => b.textContent?.includes('diagnose'))).toBe(true)
   })
 
-  // L11 [R3 fix]：landing + sessionId=undefined（publicSession 创建失败/model 未配置）→ 仅显 skills 不崩溃
+  // L11 [R3 fix]：landing + sessionId=undefined（W3 后常态：composerSid 为 null）→ 仅显 skills 不崩溃
   it('L11 landing + sessionId=undefined → 仅显 skills（不加载 pi 命令，不崩溃）', async () => {
-    // publicSession 不可用时 landing composerSid 可能为 undefined（Landing.vue:70 三元 fallback 全 null）
+    // [W3] 公共 session 已移除，landing composerSid 恒为 null（Landing.vue 不再有 publicSessionId fallback）
     useSettingsStore().skills = LANDING_SKILLS
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
@@ -260,10 +259,10 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     expect(content!.className).toContain('max-w-[calc(100vw-16px)]')
   })
 
-  // ── W3（cw-2026-07-21-scan-project-agents-skills）：landing 三源合并（projectSkills）──
-  // landing 分支合并三源：commandStore(publicSession pi extension) ∪ settingsStore.skills(全局)
-  // ∪ projectSkills(当前 cwd 项目 skill，useProjectSkills 按 cwd key 缓存)。按归一化 name 去重。
-  it('L12 landing + projectSkills prop → 三源合并（publicSession 命令 + 全局 skills + 项目 skills）', async () => {
+  // ── W3（cw-2026-07-21-scan-project-agents-skills）：landing 两源合并（projectSkills）──
+  // landing 分支合并两源：settingsStore.skills(全局) ∪ projectSkills(当前 cwd 项目 skill，
+  // useProjectSkills 按 cwd key 缓存)。按归一化 name 去重。[W3] 已移除公共 session pi 命令源。
+  it('L12 landing + projectSkills prop → 两源合并（全局 skills + 项目 skills）', async () => {
     // 全局 skill（settingsStore.skills）2 条
     const globalSkills: SkillInfo[] = [
       { id: 'sk-global-1', name: 'global-skill-1', description: 'g1', enabled: true, source: 'pi', effective: true },

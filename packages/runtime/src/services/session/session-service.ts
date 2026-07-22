@@ -17,7 +17,6 @@ import { expandHome } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
-import { getDataDir } from '@xyz-agent/shared/paths'
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService, IConfigService,
@@ -95,15 +94,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 未注入时 getReplaceSystemPrompt 返回 undefined（pi 走默认系统提示词）。
    */
   private configService: IConfigService | null = null
-  /**
-   * 公共 session 创建成功回调（组合根注入，调 broker.broadcastAppInfo 重广播 app.info）。
-   *
-   * 时序：公共 session 在 server.start 之后才创建，首次 sendInitialState 推 app.info 时
-   * publicSessionId 多为 undefined。创建成功后触发本回调，重广播带 publicSessionId 的 app.info，
-   * 前端据此填 sessionStore.publicSessionId + 拉命令到 commandStore（landing slash 数据源）。
-   */
-  private onPublicSessionReady: (() => void) | null = null
-
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -129,14 +119,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       if (!session) return
       session.adapter.detach()
       this.sessions.delete(sessionId)
-
-      // 公共 session 崩溃：自动重建（landing 态命令源依赖它），不广播 error（对用户透明）
-      const isPublic = sessionId === this.publicSessionId
-      if (isPublic) {
-        this.publicSessionId = undefined
-        this.schedulePublicSessionRebuild()
-        return
-      }
 
       // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
       // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
@@ -170,62 +152,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * 公共 session：隐藏的常驻 session，cwd=数据目录，仅供 landing 态获取 pi 命令（/goal 等）。
-   * 随 runtime 启动创建，pi 进程常驻。landing 态 composer 用此 session 的 commands。
-   *
-   * model 未配置时创建会失败（pi 要求 model），catch 后仅 warn，landing 态 fallback 到 skills。
-   */
-  private publicSessionId: string | undefined
-  private publicSessionRebuildTimer: NodeJS.Timeout | undefined
-  private publicSessionRebuildCount = 0
-  // eslint-disable-next-line no-magic-numbers -- pi 持续 crash 时的重建上限，超过则放弃
-  private static readonly PUBLIC_REBUILD_MAX = 3
-  // eslint-disable-next-line no-magic-numbers -- 重建延迟（ms），避免立即重试撞同一错误
-  private static readonly PUBLIC_REBUILD_DELAY_MS = 2000
-  private static readonly PUBLIC_LABEL = '__public__'
-
-  /** 当前公共 session id（供 broker app.info 推送；undefined 表示未创建/不可用） */
-  getPublicSessionId(): string | undefined {
-    return this.publicSessionId
-  }
-
-  /**
-   * 创建公共 session。model 未配置 / spawn 失败时不抛（landing 降级到 skills）。
-   * 在 runtime 启动收尾（server.start 后）调用。
-   */
-  async ensurePublicSession(): Promise<void> {
-    if (this.publicSessionId) return
-    try {
-      const pub = await this.create(getDataDir(), SessionService.PUBLIC_LABEL, { hidden: true })
-      this.publicSessionId = pub.id
-      this.publicSessionRebuildCount = 0
-      console.log(`[session-service] public session created: ${pub.id}`)
-      // 通知前端：公共 session 就绪。首次 sendInitialState 推 app.info 时它尚未创建，
-      // 这里重广播带 publicSessionId 的 app.info，前端据此填 landing slash 命令源。
-      this.onPublicSessionReady?.()
-    // eslint-disable-next-line taste/no-silent-catch -- 公共 session 是 best-effort：model 未配置/spawn 失败时 landing 降级到 skills fallback
-    } catch (e) {
-      console.warn(`[session-service] public session create failed (landing slash will use skills fallback):`, e)
-    }
-  }
-
-  /**
-   * 崩溃后延迟重建公共 session。带重试上限避免死循环（pi 持续 crash 时不再重建）。
-   */
-  private schedulePublicSessionRebuild(): void {
-    if (this.publicSessionRebuildCount >= SessionService.PUBLIC_REBUILD_MAX) {
-      console.warn(`[session-service] public session rebuild gave up after ${SessionService.PUBLIC_REBUILD_MAX} attempts`)
-      return
-    }
-    this.publicSessionRebuildCount++
-    if (this.publicSessionRebuildTimer) clearTimeout(this.publicSessionRebuildTimer)
-    this.publicSessionRebuildTimer = setTimeout(() => {
-      this.publicSessionRebuildTimer = undefined
-      void this.ensurePublicSession()
-    }, SessionService.PUBLIC_REBUILD_DELAY_MS)
-  }
-
-  /**
    * 注入 model contextWindow 解析器（组合根在所有服务构造后调用）。
    * session 级状态 owner 需读 contextWindow 才能算 usagePercent / 推 contextLimit。
    */
@@ -239,14 +165,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   setConfigService(configService: IConfigService): void {
     this.configService = configService
-  }
-
-  /**
-   * 注入公共 session 创建成功回调（组合根调用）。
-   * ensurePublicSession 成功（含崩溃重建）后触发——重广播 app.info 补发 publicSessionId。
-   */
-  setOnPublicSessionReady(cb: () => void): void {
-    this.onPublicSessionReady = cb
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────

@@ -47,11 +47,6 @@ vi.mock('../src/services/session/session-service.js', () => {
       compact = vi.fn().mockResolvedValue(undefined)
       abort = vi.fn().mockResolvedValue(undefined)
       switchModel = vi.fn().mockResolvedValue(undefined)
-      // 公共 session 接口（ISessionService）：mock 返回 undefined（未创建），
-      // 避免 broker.buildAppInfoMsg 调用时 TypeError（被 sendInitialState catch 后噪音日志）
-      getPublicSessionId = vi.fn().mockReturnValue(undefined)
-      ensurePublicSession = vi.fn().mockResolvedValue(undefined)
-      setOnPublicSessionReady = vi.fn()
       getRpcClient = vi.fn().mockReturnValue({
         sendCommand: mockSendCommand,
         sendExtensionUiResponse: mockSendExtensionUiResponse,

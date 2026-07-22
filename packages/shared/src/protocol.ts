@@ -403,9 +403,7 @@ export interface ServerMessageMapBase {
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
   'subagent.stream_delta': { sessionId: string; recordId: string; lines: string[] | undefined }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
-  // publicSessionId：公共 session 的真实 id（pi 生成 UUID，启动期创建后填）。
-  // 前端 landing 态用此 id 从 commandStore 取命令（pi extension slash 命令）。
-  'app.info': { appVersion: string; piVersion: string; publicSessionId?: string }
+  'app.info': { appVersion: string; piVersion: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
   // message.compactionSummary：上下文压缩摘要（compact 执行后推送，进对话流作 SystemNotice）。

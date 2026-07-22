@@ -37,12 +37,6 @@ export interface BrokerServices {
   projectRoot: string
   /** 应用 + pi 版本号（sendInitialState 推 app.info）。 */
   appInfo: { appVersion: string; piVersion: string }
-  /**
-   * 公共 session id 的动态读取器（runtime 启动期创建后才有值）。
-   * sendInitialState 推 app.info 时调用，把 publicSessionId 带给前端。
-   * undefined 表示公共 session 尚未创建/不可用，前端 landing 降级到 skills fallback。
-   */
-  getPublicSessionId?: () => string | undefined
 }
 
 export class ServerMessageBroker implements IMessageBroker {
@@ -128,18 +122,13 @@ export class ServerMessageBroker implements IMessageBroker {
     return { type: 'config.sessions', id: this.nextPushId(), payload: { groups: this.services.sessionService.listPersistedSessions() } }
   }
   /**
-   * app.info 消息构造（sendInitialState 首推 + broadcastAppInfo 重广播共用）。
-   * publicSessionId 动态读 getPublicSessionId()——公共 session 在 runtime 启动收尾才创建，
-   * 首次 sendInitialState 时可能 undefined，创建成功后需重广播（broadcastAppInfo）补发。
+   * app.info 消息构造（sendInitialState 首推）。
    */
   private buildAppInfoMsg(): ServerMessage {
     return {
       type: 'app.info',
       id: this.nextPushId(),
-      payload: {
-        ...this.services.appInfo,
-        publicSessionId: this.services.getPublicSessionId?.(),
-      },
+      payload: { ...this.services.appInfo },
     }
   }
   private buildProviderListMsgs(): ServerMessage[] {
@@ -185,17 +174,6 @@ export class ServerMessageBroker implements IMessageBroker {
   /** 广播 agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastAgentDirs(): void {
     this.broadcast(this.buildAgentDirsMsg())
-  }
-  /**
-   * 重广播 app.info（带最新 publicSessionId）。
-   *
-   * 用途：公共 session 在 runtime 启动收尾才创建（server.start 之后 ensurePublicSession），
-   * 首次 sendInitialState 推 app.info 时 publicSessionId 多为 undefined。公共 session
-   * 创建成功后调此方法补发，前端据此填 sessionStore.publicSessionId + 拉命令到 commandStore，
-   * landing 态 slash popover 才能显示 pi extension 命令（/goal 等）。
-   */
-  broadcastAppInfo(): void {
-    this.broadcast(this.buildAppInfoMsg())
   }
 
   /**

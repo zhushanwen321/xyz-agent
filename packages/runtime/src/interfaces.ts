@@ -79,10 +79,6 @@ export interface SessionCreateOptions {
 /** Session lifecycle: creation, deletion, messaging, history. */
 export interface ISessionService {
   create(cwd?: string, label?: string, options?: SessionCreateOptions): Promise<SessionSummary>
-  /** 公共 session id（供 broker app.info 推送；undefined 表示未创建/不可用） */
-  getPublicSessionId(): string | undefined
-  /** 创建公共 session（runtime 启动期调用，model 未配置时不抛） */
-  ensurePublicSession(): Promise<void>
   delete(sessionId: string): Promise<void>
   renameSession(sessionId: string, newName: string): Promise<void>
   sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }>
