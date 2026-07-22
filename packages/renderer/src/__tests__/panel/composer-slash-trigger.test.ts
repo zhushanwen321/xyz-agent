@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, defineComponent } from 'vue'
+import { nextTick, defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import * as events from '@/api/events'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -36,7 +36,7 @@ vi.mock('@/composables/features/useChat', () => ({
   }),
 }))
 vi.mock('@/composables/features/useNewTaskFlow', () => ({
-  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, currentCwd: { value: null }, setPendingModel: vi.fn() }),
+  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, currentCwd: ref(null), setPendingModel: vi.fn() }),
   resetNewTaskFlow: vi.fn(),
 }))
 vi.mock('@/api', () => ({

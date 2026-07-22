@@ -273,7 +273,7 @@ async function main(): Promise<void> {
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry)
 
   // Graceful shutdown on signals
   let shuttingDown = false

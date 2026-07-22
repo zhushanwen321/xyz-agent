@@ -35,13 +35,14 @@ vi.mock('@/composables/features/useChat', () => ({
   useChat: () => chatApiMock,
 }))
 vi.mock('@/composables/features/useNewTaskFlow', () => ({
-  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn() }),
+  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn(), currentCwd: ref(null) }),
   resetNewTaskFlow: vi.fn(),
 }))
 vi.mock('@/api', () => ({
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
+  config: { getGlobalSkills: vi.fn().mockResolvedValue([]), getProjectSkills: vi.fn().mockResolvedValue([]) },
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),

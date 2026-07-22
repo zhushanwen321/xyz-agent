@@ -38,6 +38,7 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
     setPendingModel: vi.fn(),
     state: { value: 'idle' },
     currentSessionId: { value: null },
+    currentCwd: ref(null), // W4：useProjectSkills(flow.currentCwd) watch 需要真 ref，非裸对象
   }),
   resetNewTaskFlow: vi.fn(),
 }))
@@ -47,6 +48,11 @@ vi.mock('@/api', () => ({
   composer: {
     getMentionCandidates: vi.fn().mockResolvedValue([]),
     getFileCandidates: vi.fn().mockResolvedValue([]),
+  },
+  config: {
+    // W4：useGlobalSkills/useProjectSkills 调用
+    getGlobalSkills: vi.fn().mockResolvedValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
   },
 }))
 

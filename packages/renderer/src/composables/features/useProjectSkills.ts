@@ -1,19 +1,19 @@
 /**
- * useProjectSkills —— 按 session cwd 缓存项目 skill（W3，cw-2026-07-21-scan-project-agents-skills）。
+ * useProjectSkills / useGlobalSkills —— skill 命令源 composable（W4，cw-2026-07-21-fix-ask-user-ime）。
  *
- * 解决问题：landing 浮层要显示当前 cwd 的项目 skill（.agents/skills + .xyz-agent/skills），
- * 但 settingsStore.skills 是 AppShell 单例订阅 config.skills 全局广播的 state（useSettings.ts:67），
- * broadcastSkillList 用 services.projectRoot（Electron app 路径）扫，扫不到用户项目。
- * 直接合并项目 skill 进 settingsStore.skills 会污染全局 state（切 session/双 panel/广播覆盖残留）。
+ * W4 改动：
+ * - useProjectSkills 改调 configApi.getProjectSkills(cwd)（走 skillRegistry projectCache，带 watcher），
+ *   替代原 configApi.scanSessionSkills(cwd)（无缓存直调 configService.loadSkills）。
+ * - 新增 useGlobalSkills()：模块级 singleton 缓存，启动拉一次全局 skill（skillRegistry globalCache），
+ *   供 landing slash 命令源（FR-5：不再走 settingsStore.skills 配置态扫描）。
  *
- * 方案：独立 composable，按 cwd key 缓存（Map<cwd, SkillInfo[]>），watch(currentCwd) 触发
- * scanSessionSkills(cwd) RPC 拉取。按 cwd key 天然隔离，切 cwd 切分区，无需手动回滚。
- * landing 态无 sessionId 也能用（key 是 cwd 非 sid，不依赖 ADR-0036 per-session 分区）。
- *
- * 数据流：
- *   useNewTaskDirSelect.selectWorkspace 设 flow.currentCwd → 本 composable watch(currentCwd)
- *     → scanSessionSkills(cwd) RPC → runtime loadSkills(cwd) → 返回 SkillInfo[] → 缓存 + 暴露 projectSkills
- *   CommandPopover landing 分支合并 settingsStore.skills（全局）∪ projectSkills（当前 cwd）按 name 去重
+ * 设计取舍：
+ * - useGlobalSkills 用模块级 singleton（cache + loaded flag）：全局 skill 是 AppShell 级数据，
+ *   所有 landing CommandPopover 共享一份。首次调用触发 RPC，后续命中缓存。skillRegistry runtime 侧
+ *   有 chokidar watcher 自动刷新 globalCache，但 renderer 侧不监听文件变动（landing 浮层打开时拉一次即可，
+ *   skill 目录变动是低频操作，重启或切 landing 可覆盖；如需实时刷新后续加 WS 广播）。
+ * - useProjectSkills 保持实例级 Map<cwd, SkillInfo[]>（按 cwd key 隔离，切 cwd 切分区）。
+ *   当前唯一消费者是 landing Composer（单例活跃），per-instance 缓存足够。
  */
 import { computed, ref, watch, type Ref } from 'vue'
 import { config as configApi } from '@/api'
@@ -42,13 +42,12 @@ export function useProjectSkills(currentCwd: Ref<string | null>) {
   async function loadFor(cwd: string): Promise<void> {
     inFlight.add(cwd)
     try {
-      const skills = await configApi.scanSessionSkills(cwd)
+      const skills = await configApi.getProjectSkills(cwd)
       const next = new Map(skillsByCwd.value)
       next.set(cwd, skills)
       skillsByCwd.value = next
-     
     } catch (e) {
-      console.warn(`[useProjectSkills] scanSessionSkills failed for cwd=${cwd}, projectSkills will be empty:`, e)
+      console.warn(`[useProjectSkills] getProjectSkills failed for cwd=${cwd}, projectSkills will be empty:`, e)
       const next = new Map(skillsByCwd.value)
       next.set(cwd, [])
       skillsByCwd.value = next
@@ -71,4 +70,58 @@ export function useProjectSkills(currentCwd: Ref<string | null>) {
   )
 
   return { projectSkills }
+}
+
+// ── useGlobalSkills：模块级 singleton 缓存 ──────────────────────────
+// 全局 skill 是 AppShell 级数据，所有 landing CommandPopover 共享一份。模块级 singleton 保证
+// 首次调用触发一次 RPC，后续命中缓存（skillRegistry runtime 侧 watcher 自动刷新 globalCache，
+// renderer 侧不监听文件变动，landing 浮层打开时拉一次即可）。
+let globalSkillsCache: SkillInfo[] | null = null
+let globalLoaded = false
+let globalInFlight: Promise<SkillInfo[]> | null = null
+
+/**
+ * 拉取全局 skill（skillRegistry globalCache）。模块级 singleton：
+ * - 首次调用触发 configApi.getGlobalSkills() RPC，结果缓存到 globalSkillsCache。
+ * - 后续调用命中缓存，返回同一份 ref（响应式）。
+ * - in-flight 去重：并发调用共享同一个 Promise，避免重复 RPC。
+ *
+ * 供 landing slash 命令源（FR-5：不走 settingsStore.skills）。
+ */
+export function useGlobalSkills() {
+  const globalSkills = ref<SkillInfo[]>(globalSkillsCache ?? [])
+
+  async function loadGlobal(): Promise<void> {
+    if (globalLoaded) {
+      globalSkills.value = globalSkillsCache ?? []
+      return
+    }
+    if (globalInFlight) {
+      globalSkills.value = await globalInFlight
+      return
+    }
+    globalInFlight = (async () => {
+      try {
+        const skills = await configApi.getGlobalSkills()
+        globalSkillsCache = skills
+        globalLoaded = true
+        globalSkills.value = skills
+        return skills
+      } catch (e) {
+        console.warn('[useGlobalSkills] getGlobalSkills failed, globalSkills will be empty:', e)
+        globalSkillsCache = []
+        globalLoaded = true
+        globalSkills.value = []
+        return []
+      } finally {
+        globalInFlight = null
+      }
+    })()
+    await globalInFlight
+  }
+
+  // 模块加载即触发（AppShell 级，启动拉一次）。loadGlobal 内部命中缓存/in-flight 去重。
+  void loadGlobal()
+
+  return { globalSkills }
 }
