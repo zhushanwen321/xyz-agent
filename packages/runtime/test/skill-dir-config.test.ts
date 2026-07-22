@@ -79,4 +79,19 @@ describe('skill-dir-config buildDirConfigs', () => {
     expect(configs).toHaveLength(PRESET_AGENT_DIRS.length)
     expect(configs.every(c => c.enabled === false)).toBe(true)
   })
+
+  it('preset 成员即使不存在也保留为 enabled（推荐候选语义，防回归）', () => {
+    // 回归场景：用户在 Settings 勾选启用了某 preset 路径（如 ~/.claude/skills），
+    // 它被写入 discovery.json，但该目录在本机器不存在（未安装 Claude Code / 换机器 / 正准备创建）。
+    // 修复前：step1 过滤掉它（不存在）+ step2 认为已启用不追加候选 → 从 UI 彻底消失，不可取消勾选。
+    // 修复后：preset 成员豁免 existsSync，显示为 enabled，用户可管理。
+    const configs = buildDirConfigs(PRESET_SKILL_DIRS, ['~/.claude/skills'])
+    const claudeEntry = configs.find(c => c.path === '~/.claude/skills')
+    expect(claudeEntry).toBeTruthy()
+    expect(claudeEntry!.enabled).toBe(true)
+    // 其余 preset 仍追加为候选
+    const otherPresets = configs.filter(c => c.path !== '~/.claude/skills')
+    expect(otherPresets.every(c => c.enabled === false)).toBe(true)
+    expect(otherPresets).toHaveLength(PRESET_SKILL_DIRS.length - 1)
+  })
 })

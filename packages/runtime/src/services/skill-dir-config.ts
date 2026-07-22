@@ -39,19 +39,24 @@ export const PRESET_AGENT_DIRS = [
  * 这保证用户拖拽改变 discovery 顺序后，广播回来的 UI 列表顺序与之一致，
  * 不会被 preset 固定顺序覆盖（否则拖拽排序失效）。
  *
- * 过滤：不存在的启用路径不展示（脏数据，如 /path/a 等 pi 首制 discovery 占位符）。ADR §5。
- * 归一化：比较时展开 ~，避免 ~/.pi 与 /Users/.../pi 因字符串不同而重复。
+ * 过滤：不存在的「自定义」启用路径不展示（脏数据，如 /path/a 等 pi 首制 discovery 占位符）。ADR §5。
+ * **preset 成员豁免存在性检查**：preset 是「推荐候选」语义，用户勾选启用后即使该目录在此机器
+ * 上不存在（未安装 Claude Code / 换机器 / 正准备创建），也应显示为 enabled，否则用户启用的配置
+ * 会从 UI 消失、不可取消勾选（回归）。脏数据 /path/a 不在 preset 里，仍被过滤。
+ * 相对路径（如 .agents/skills）不检查（buildDirConfigs 不知 cwd，且 preset 含相对路径作为候选语义）。
  */
 export function buildDirConfigs(preset: string[], enabledDirs: string[]): SkillDirConfig[] {
   const configs: SkillDirConfig[] = []
+  const presetNormalized = new Set(preset.map(expandHome))
 
   // 1. discovery 启用目录，按 discovery 顺序（= 用户拖拽优先级，靠前覆盖靠后）。
   //    ADR §5 脏数据过滤：展开 ~ 后为绝对路径的，检查存在性——不存在则跳过
-  //    （/path/a 等 pi 首次写入的占位符、已删除的目录）。相对路径（如 .agents/skills）
-  //    不检查（buildDirConfigs 不知 cwd，且 preset 含相对路径作为候选语义）。
+  //    （/path/a 等 pi 首次写入的占位符、已删除的自定义路径）。
+  //    preset 成员豁免（推荐候选语义，启用后即使不存在也要显示，见函数 JSDoc）。
   for (const dir of enabledDirs) {
     const resolved = expandHome(dir)
-    if (isAbsolute(resolved) && !existsSync(resolved)) continue
+    const isPresetMember = presetNormalized.has(resolved)
+    if (!isPresetMember && isAbsolute(resolved) && !existsSync(resolved)) continue
     configs.push({ path: dir, enabled: true })
   }
 

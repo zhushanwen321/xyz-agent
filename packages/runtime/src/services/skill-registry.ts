@@ -86,6 +86,13 @@ export class SkillRegistry {
   private globalCache: SkillInfo[] = []
   private readonly projectCache = new Map<string, SkillInfo[]>()
   private readonly projectWatchers = new Map<string, FSWatcher>()
+  /**
+   * 进行中的 getProjectSkills Promise，按 cwd 去重（防 TOCTOU 竞态导致重复挂 watcher）。
+   * 背景：缓存守卫在 await 之前，并发同 cwd 请求会各自走 scanFn + watch()，第二个 set 覆盖丢掉
+   * 第一个 watcher（永不 close → fd 泄漏，正是本 PR 要消除的故障类别）。in-flight Promise 让并发
+   * 调用共享同一次 scan + watch。
+   */
+  private readonly projectInFlight = new Map<string, Promise<SkillInfo[]>>()
   private globalWatcher: FSWatcher | null = null
   private readonly changeHandlers = new Set<(affectedSessionIds: string[]) => void>()
   private readonly debounceTimers = new Map<string, NodeJS.Timeout>()
@@ -104,8 +111,11 @@ export class SkillRegistry {
     // watch 范围 = scan 范围（SSOT）：只 watch 实际存在的全局 skill 目录，不递归 watch 整个父目录。
     const dirs = resolveGlobalSkillDirs(this.options.configStore, this.options.configDir).filter(d => existsSync(d))
     if (dirs.length > 0) {
+      // 幂等防护：若已存在 globalWatcher（重试逻辑/测试重复调用），先 close 旧的避免泄漏。
+      this.globalWatcher?.close().catch(() => {})
       this.globalWatcher = watch(dirs, {
         ignored: WATCH_IGNORED,
+        ignoreInitial: true,
         persistent: true,
       })
       this.setupWatcher(this.globalWatcher, 'global', GLOBAL_KEY, async () => {
@@ -123,33 +133,52 @@ export class SkillRegistry {
   /**
    * 取指定项目根下的 skill 列表。首次扫描 + 挂 watcher + 缓存；后续命中缓存零开销。
    * 不同 cwd 互不污染（projectCache 按 cwd 分区，架构约定 #7.6 Map 分区范式）。
+   *
+   * 并发安全：用 in-flight Promise Map 防止 TOCTOU 竞态。若同一 cwd 的多个请求并发到达
+   * （多 panel / 多窗口同 cwd），它们共享同一次 scanFn + watch()，不会各自创建 watcher
+   * 导致第二个 set 覆盖丢掉第一个 watcher（fd 泄漏）。
+   *
+   * 已知限制：若项目 skill 目录在首次扫描时不存在（被 existsSync 过滤），后来用户创建了该
+   * 目录，由于缓存已 set，本方法不会重新检查目录是否出现，需重启 session 才能检测到新建 skill。
+   * 这是「watch 范围收窄到已有 skill 子目录」的取舍（原实现 watch 整个 cwd 能捕获，但代价是 EMFILE）。
    */
-  async getProjectSkills(cwd: string): Promise<SkillInfo[]> {
+  getProjectSkills(cwd: string): Promise<SkillInfo[]> {
     const cached = this.projectCache.get(cwd)
-    if (cached) return cached
+    if (cached) return Promise.resolve(cached)
 
-    const skills = await this.scanFn(cwd)
-    this.projectCache.set(cwd, skills)
+    const inFlight = this.projectInFlight.get(cwd)
+    if (inFlight) return inFlight
 
-    // 挂项目 watcher：watch 范围 = scan 范围（SSOT），只 watch 实际存在的项目 skill 子目录
-    // （.xyz-agent/skills、discovery 相对路径 resolve 后），不递归 watch 整个 cwd。
-    // 原实现 watch 整个 cwd → cwd 为 home 目录时 chokidar 递归 watch 几十万文件 → EMFILE fd 耗尽
-    // → pi spawn EBADF → 发消息/读历史全挂 + runtime 崩溃（2026-07-22 事故根因）。
-    const dirs = resolveProjectSkillDirs(cwd, this.options.configStore).filter(d => existsSync(d))
-    if (dirs.length > 0) {
-      const watcher = watch(dirs, {
-        ignored: WATCH_IGNORED,
-        persistent: true,
-      })
-      this.setupWatcher(watcher, `project:${cwd}`, cwd, async () => {
-        this.projectCache.set(cwd, await this.scanFn(cwd))
-        await this.notifyProjectChange(cwd)
-      })
-      this.projectWatchers.set(cwd, watcher)
-    }
-    // dirs 为空（项目无 skill 目录）时不挂 watcher：无 skill 可监听，缓存已 set（上面 scan 结果），返回即可。
+    const p = (async () => {
+      const skills = await this.scanFn(cwd)
+      this.projectCache.set(cwd, skills)
 
-    return skills
+      // 挂项目 watcher：watch 范围 = scan 范围（SSOT），只 watch 实际存在的项目 skill 子目录
+      // （.xyz-agent/skills、discovery 相对路径 resolve 后），不递归 watch 整个 cwd。
+      // 原实现 watch 整个 cwd → cwd 为 home 目录时 chokidar 递归 watch 几十万文件 → EMFILE fd 耗尽
+      // → pi spawn EBADF → 发消息/读历史全挂 + runtime 崩溃（2026-07-22 事故根因）。
+      const dirs = resolveProjectSkillDirs(cwd, this.options.configStore).filter(d => existsSync(d))
+      if (dirs.length > 0) {
+        const watcher = watch(dirs, {
+          ignored: WATCH_IGNORED,
+          ignoreInitial: true,
+          persistent: true,
+        })
+        this.setupWatcher(watcher, `project:${cwd}`, cwd, async () => {
+          this.projectCache.set(cwd, await this.scanFn(cwd))
+          await this.notifyProjectChange(cwd)
+        })
+        this.projectWatchers.set(cwd, watcher)
+      }
+      // dirs 为空（项目无 skill 目录）时不挂 watcher：无 skill 可监听，缓存已 set（上面 scan 结果），返回即可。
+
+      return skills
+    })().finally(() => {
+      this.projectInFlight.delete(cwd)
+    })
+
+    this.projectInFlight.set(cwd, p)
+    return p
   }
 
   /**
@@ -237,7 +266,19 @@ export class SkillRegistry {
         console.error(
           `[skill-registry] ${label} watcher circuit-break: ${errorCount} consecutive ${code} errors, closing watcher`,
         )
+        // 熝断后摘除 listener + 从 watchers Map 删除引用，避免后续同类错误反复调 close()
+        // （S2）以及 dispose 时对已关闭 watcher 重复 close。注意：熔断后该 cwd 的 skill
+        // 列表将不再自动刷新，需重启 session 才能恢复——这是 fd 耗尽场景下的安全网取舍。
+        watcher.removeAllListeners('error')
+        watcher.removeAllListeners('all')
         watcher.close().catch(() => {})
+        if (debounceKey !== GLOBAL_KEY) {
+          this.projectWatchers.delete(debounceKey)
+        } else if (this.globalWatcher === watcher) {
+          this.globalWatcher = null
+        }
+        lastCode = ''
+        errorCount = 0
       } else {
         console.error(`[skill-registry] ${label} watcher error (${errorCount}/${MAX_WATCHER_ERRORS} ${code}):`, err)
       }

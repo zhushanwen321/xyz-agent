@@ -87,10 +87,16 @@ describe('skillRegistry (W1)', () => {
     try {
       await reg.getProjectSkills(cwd)
       expect(chokidar.watch).toHaveBeenCalledTimes(1)
-      const watchedPaths = vi.mocked(chokidar.watch).mock.calls[0][0] as string[]
+      const watchArgs = vi.mocked(chokidar.watch).mock.calls[0]
+      const watchedPaths = watchArgs[0] as string[]
       // 核心断言：watch 的是 skill 子目录，不是整个 cwd（原 bug）
       expect(watchedPaths).toContain(join(cwd, '.xyz-agent', 'skills'))
       expect(watchedPaths).not.toContain(cwd)
+      // options 断言：ignored 正则 + ignoreInitial:true（防几余重扫 + node_modules 排除被删）
+      expect(watchArgs[1]).toMatchObject({
+        ignored: expect.any(RegExp),
+        ignoreInitial: true,
+      })
     } finally {
       reg.dispose()
       rmSync(cwd, { recursive: true, force: true })
@@ -122,6 +128,38 @@ describe('skillRegistry (W1)', () => {
       // 第 5 次达阈值 → 熔断 close
       fakeWatcher.emit('error', emfile())
       expect(closeSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      reg.dispose()
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('U6: getProjectSkills 并发同 cwd 去重——只 scan 一次 + 只 watch 一次（防 TOCTOU watcher 泄漏）', async () => {
+    const chokidar = await import('chokidar')
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const cwd = mkdtempSync(join(tmpdir(), 'skill-reg-u6-'))
+    mkdirSync(join(cwd, '.xyz-agent', 'skills'), { recursive: true })
+    // scanFn 加人为延迟，让多个 getProjectSkills 调用同时处于 in-flight 窗口
+    let resolveScan!: (v: []) => void
+    const scanSpy = vi.fn(
+      () => new Promise<[]>(resolve => { resolveScan = resolve as (v: []) => void }),
+    )
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => [] } as never,
+      _scanFn: scanSpy,
+    } as never)
+    try {
+      // 三个并发调用，全部在 scanFn resolve 前发出
+      const p1 = reg.getProjectSkills(cwd)
+      const p2 = reg.getProjectSkills(cwd)
+      const p3 = reg.getProjectSkills(cwd)
+      resolveScan([])
+      await Promise.all([p1, p2, p3])
+      // in-flight 去重：三个调用共享同一次 scan + 同一次 watch
+      expect(scanSpy).toHaveBeenCalledTimes(1)
+      expect(chokidar.watch).toHaveBeenCalledTimes(1)
     } finally {
       reg.dispose()
       rmSync(cwd, { recursive: true, force: true })
