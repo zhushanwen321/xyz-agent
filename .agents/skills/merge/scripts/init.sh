@@ -54,6 +54,28 @@ if [[ "$MAIN_BRANCH" != "main" ]]; then
     echo "  修复: git -C $MAIN_WT checkout main"
 fi
 
+# 防御：feature 分支不应提前 bump 版本（版本 bump 只能在阶段 4 的 main 分支执行）
+# 事故教训：feature 分支上误 bump 0.7.2→0.7.3，导致阶段 3.5 版本校验失败 + tag 混乱
+FEAT_VERSION=$(node -p "require('$WORKTREE_DIR/package.json').version" 2>/dev/null || echo "unknown")
+MAIN_VERSION=$(node -p "require('$MAIN_WT/package.json').version" 2>/dev/null || echo "unknown")
+if [[ "$FEAT_VERSION" != "unknown" && "$MAIN_VERSION" != "unknown" && "$FEAT_VERSION" != "$MAIN_VERSION" ]]; then
+    # semver 数值对比：feature > main 说明 feature 被提前 bump
+    _feat_major=$(echo "$FEAT_VERSION" | cut -d. -f1)
+    _feat_minor=$(echo "$FEAT_VERSION" | cut -d. -f2)
+    _feat_patch=$(echo "$FEAT_VERSION" | cut -d. -f3)
+    _main_major=$(echo "$MAIN_VERSION" | cut -d. -f1)
+    _main_minor=$(echo "$MAIN_VERSION" | cut -d. -f2)
+    _main_patch=$(echo "$MAIN_VERSION" | cut -d. -f3)
+    if [[ "$_feat_major" -gt "$_main_major" ]] || \
+       { [[ "$_feat_major" -eq "$_main_major" ]] && [[ "$_feat_minor" -gt "$_main_minor" ]]; } || \
+       { [[ "$_feat_major" -eq "$_main_major" ]] && [[ "$_feat_minor" -eq "$_main_minor" ]] && [[ "$_feat_patch" -gt "$_main_patch" ]]; }; then
+        echo -e "${RED}Error: feature 分支版本 ($FEAT_VERSION) 高于 main ($MAIN_VERSION)，疑似被提前 bump${NC}"
+        echo "  版本 bump 只能在阶段 4（main 分支）执行，feature 分支不应改动 package.json 版本号"
+        echo "  修复: cd $WORKTREE_DIR && npm version $MAIN_VERSION --no-git-tag-version  (回退到 main 版本)"
+        exit 1
+    fi
+fi
+
 # 分支名
 BRANCH_NAME=$(git -C "$WORKTREE_DIR" branch --show-current)
 if [[ -z "$BRANCH_NAME" ]]; then

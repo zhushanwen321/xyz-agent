@@ -35,10 +35,10 @@ bash .agents/skills/merge/scripts/init.sh <worktree-dir>
 ### 阶段 1: 本地验证
 
 ```bash
-bash ~/.agents/skills/merge-worktree/pre-merge-check.sh <worktree-dir>
+bash .agents/skills/merge/scripts/pre-merge-check.sh <worktree-dir>
 ```
 
-阶段 1 调用全局 pre-merge-check.sh（依赖安装、类型检查、lint、测试、构建）。该脚本是通用工具，逻辑复杂（16KB），本项目复用而非重新实现。
+阶段 1 调用 pre-merge-check.sh（依赖安装、类型检查、lint、测试、构建）。该脚本已内联到项目 merge skill 目录（自包含，不依赖全局 agents 安装）。
 
 ℹ️ **pnpm workspace 单步安装**：项目使用 pnpm workspace（`packages/* + apps/*`），`pnpm install` 一次装完所有依赖，无需手动 cd 子目录。如果 pre-merge-check.sh 未自动处理依赖安装，需手动执行：
 
@@ -62,10 +62,10 @@ bash .agents/skills/merge/scripts/pr-merge.sh <branch-name> <pr-number>
 cd $WS_ROOT/main
 git fetch github
 MAIN_SHA=$(git rev-parse github/main)
-bash ~/.agents/skills/merge-worktree/wait-for-ci.sh "$MAIN_SHA"
+bash .agents/skills/merge/scripts/wait-for-ci.sh "$MAIN_SHA"
 ```
 
-等待 main 分支 CI 通过。wait-for-ci.sh 是全局通用工具（CI 轮询），需传入 commit SHA。
+等待 main 分支 CI 通过。wait-for-ci.sh 已内联到项目 merge skill 目录（自包含，CI 轮询），需传入 commit SHA。
 
 ### [MANDATORY] 阶段 3.5: 版本校验
 
@@ -159,10 +159,10 @@ bash scripts/validate-runtime-bundle.sh
 ### 阶段 7: 清理
 
 ```bash
-bash ~/.agents/skills/remove-worktree/remove-worktree.sh <branch-name> --force --skip-sync
+bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --skip-sync
 ```
 
-调用全局 remove-worktree.sh 清理 feature worktree 和本地分支。`--force` 因为分支已删除（远程 delete-branch），本地 `git branch --merged` 检查会误判。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
+调用项目内 remove-worktree.sh（已内联 _lib/workspace.sh 依赖，自包含）清理 feature worktree 和本地分支。`--force` 因为分支已删除（远程 delete-branch），本地 `git branch --merged` 检查会误判。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
 
 门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
 
