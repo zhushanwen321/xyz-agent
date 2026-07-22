@@ -19,9 +19,11 @@ import path from 'node:path'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
 
-// useChat mock（Turn 编辑路径依赖，fork 不走它，但 setup 会调）
+// useChat mock（Turn 编辑路径依赖；forkSessionAsk 复用其 ensureStreamSubscription/disposeSession）
+// ensureStreamSubscription 导出作 no-op stub：U9 测回滚编排（remove + removeFromList），不验真实流式订阅。
 vi.mock('@/composables/features/useChat', () => ({
   useChat: () => ({ editAndResend: vi.fn(), disposeSession: vi.fn(), setHistoryTruncated: vi.fn() }),
+  ensureStreamSubscription: vi.fn(),
 }))
 vi.mock('@/composables/features/useSideDrawer', () => ({
   useSideDrawer: () => ({ open: vi.fn() }),

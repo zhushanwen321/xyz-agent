@@ -70,8 +70,15 @@ export function resetChatModuleState(): void {
   historyTruncatedSessions.value = new Set()
 }
 
-/** 确保指定 session 已订阅流式事件（幂等：已订阅则 no-op）。 */
-function ensureStreamSubscription(
+/**
+ * 确保指定 session 已订阅流式事件（幂等：已订阅则 no-op）。
+ *
+ * 导出供 forkSessionAsk 复用：fork-to-ask 发送的首条消息需要与正常 send 同样的
+ * 订阅建立（否则 pi 生成的流式回复被 events.dispatchSession 静默丢弃——无订阅者）。
+ * forkSessionAsk 不走 useChat().send：send 内部 try/catch 吞错（仅 toast）会阻断
+ * fork 占位 session 的回滚，且其 busy→steer 路由对新 fork session 不适用。
+ */
+export function ensureStreamSubscription(
   sid: string,
   chat: ReturnType<typeof useChatStore>,
   sessionStore: ReturnType<typeof useSessionStore>,

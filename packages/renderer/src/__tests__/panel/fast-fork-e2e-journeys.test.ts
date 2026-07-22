@@ -57,6 +57,7 @@ vi.mock('@/api', () => ({
 
 // ── mock useChat（流式依赖；fork 不走 send/steer，但 Composer setup 取这些引用）──
 // 注意：必须返回稳定对象（同 composer-fork-mode.test.ts），避免每帧新引用导致 watch 抖动。
+// ensureStreamSubscription 导出作 no-op stub：层 1 只验编排（fork RPC → send RPC），真实流式订阅由 useChat.test.ts 覆盖。
 vi.mock('@/composables/features/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
@@ -69,6 +70,7 @@ vi.mock('@/composables/features/useChat', () => ({
     hydrateHistory: vi.fn(),
     setHistoryTruncated: vi.fn(),
   }),
+  ensureStreamSubscription: vi.fn(),
 }))
 vi.mock('@/composables/features/useSideDrawer', () => ({ useSideDrawer: () => ({ open: vi.fn() }) }))
 vi.mock('@/composables/features/useNewTaskFlow', () => ({

@@ -13,6 +13,7 @@ import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { ensureStreamSubscription, useChat } from '@/composables/features/useChat'
 import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
 import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
@@ -76,9 +77,14 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
    * - fork 失败 → 不发送（forkSession 内部抛错自然短路，无占位 session 需回滚）。
    * - send 失败 → 回滚（sessionApi.remove + session.removeFromList）清理占位 session，避免悬挂空壳。
    *
+   * 流式订阅：fork 成功后先 ensureStreamSubscription(newId) 建立对该新 session 事件通道的订阅，
+   * 否则 pi 收到 prompt 生成的流式回复（message.*）经 events.dispatchSession(newId, msg) 路由时
+   * 无订阅者被静默丢弃，agent 回复看不到。同步 appendUser + addPendingSend，与正常 send 路径一致，
+   * 让用户消息经 chat store 正常显示 + pending 态填充 ack 空窗。
+   *
    * 直接调 chatApi.send 而非 useChat().send：后者内部 try/catch 吞掉 send 错误（仅 toast），
-   * 此处需要捕获 reject 触发回滚。toast 由此处显式给出（保证用户可见反馈）。
-   * 主线 session 全程不参与（不写入、不 streaming、不 split）。
+   * 此处需要捕获 reject 触发回滚；其 busy→steer 路由对新 fork session 也不适用。
+   * toast 由此处显式给出（保证用户可见反馈）。主线 session 全程不参与（不写入、不 streaming、不 split）。
    */
   async function forkSessionAsk(
     srcSessionId: string,
@@ -96,12 +102,22 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
     })
     session.appendSession(created)
     const newId = created.id
-    const prompt = segmentsToPrompt(textToSegments(content))
+    const segments = textToSegments(content)
+    const prompt = segmentsToPrompt(segments)
+    // [fast-fork] 建立新 session 的流式订阅 + 写入用户消息 + 标记 pending（对齐正常 send 的前置编排，
+    // 但跳过 send 的 busy→steer 检测与错误吞没）。订阅幂等：ensureStreamSubscription 已防重复。
+    ensureStreamSubscription(newId, chat, session)
+    chat.appendUser(newId, segments)
+    chat.addPendingSend(newId)
     try {
       await chatApi.send(newId, prompt)
     } catch (e) {
       // send 失败回滚：删除占位 session（runtime + 列表），避免空壳悬挂。
+      // 同步拆流式订阅 + 清 chat store 的 per-session 状态（含刚 appendUser 的消息 + pendingSend timer），
+      // 否则订阅残留在模块级 Map、pendingSend timer 30s 后触发 finalizeSession 操作已删 session。
+      // disposeSession 与 deleteSession 清理口径一致（取消 WS 订阅 + clearPendingSend + 清 messages）。
       // 不 rethrow：错误已 toast 化，forkSessionAsk 对调用方表现为「已处理」（resolves undefined）。
+      useChat().disposeSession(newId)
       await sessionApi.remove(newId).catch(() => {})
       session.removeFromList(newId)
       const msg = e instanceof Error ? e.message : String(e)
