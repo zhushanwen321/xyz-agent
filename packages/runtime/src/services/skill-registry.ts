@@ -16,9 +16,9 @@
  *   也必须带 sessionId，故 _notifyGlobalChange 传整个活跃列表，上游自行过滤。
  */
 import { watch, type FSWatcher } from 'chokidar'
-import { join, isAbsolute } from 'node:path'
+import { existsSync } from 'node:fs'
 import type { SkillInfo } from '@xyz-agent/shared'
-import { expandHome } from '../utils/path-utils.js'
+import { resolveGlobalSkillDirs, resolveProjectSkillDirs } from './skill-dirs.js'
 
 /**
  * skill 扫描函数签名：给定 projectRoot（项目根 / cwd），返回该根下解析出的 skill 列表。
@@ -60,6 +60,21 @@ const DEBOUNCE_MS = 300
 const GLOBAL_KEY = '__global__'
 
 /**
+ * chokidar ignore 兜底：排除 node_modules/dist/build/.git 等大目录。watch 范围已收窄到 skill 子目录，
+ * 此为防御性兜底（容器目录意外混入这些目录时不爆 fd）。不忽略点目录——.agents/.pi/.xyz-agent 等
+ * 是合法 skill 路径，原实现的通用点文件忽略 `(^|[\/\\])\..` 会连这些一起过滤掉，
+ * 违背「watch 范围 = scan 范围」原则。
+ */
+const WATCH_IGNORED = /(^|[\/\\])(node_modules|dist|build|\.git)([\/\\]|$)/
+
+/**
+ * watcher 连续同类错误熔断阈值：达到则 close 该 watcher。背景：chokidar 遇 EMFILE 会自动重试 watch，
+ * 但 fd 已耗尽时重试必再失败 → 死循环刷屏（2026-07-22 事故中 10899 次，撑账 2.9MB stderr）。
+ * 熔断后停止重试，释放该 watcher 占用的句柄，让 pi spawn 等关键操作能拿到 fd。
+ */
+const MAX_WATCHER_ERRORS = 5
+
+/**
  * SkillRegistry：全局 + 项目级 skill 缓存 + chokidar 文件监听。
  *
  * 生命周期：
@@ -86,21 +101,16 @@ export class SkillRegistry {
    */
   async initGlobal(): Promise<void> {
     this.globalCache = await this.scanFn('')
-    const dirs = this.getGlobalDirs()
+    // watch 范围 = scan 范围（SSOT）：只 watch 实际存在的全局 skill 目录，不递归 watch 整个父目录。
+    const dirs = resolveGlobalSkillDirs(this.options.configStore, this.options.configDir).filter(d => existsSync(d))
     if (dirs.length > 0) {
       this.globalWatcher = watch(dirs, {
-        ignored: /(^|[\/\\])\../,
+        ignored: WATCH_IGNORED,
         persistent: true,
       })
-      // R4：watcher error（权限/目录删/EMFILE）记日志不崩。chokidar 自动处理重建，best-effort。
-      this.globalWatcher.on('error', (e) => {
-        console.error('[skill-registry] global watcher error:', e)
-      })
-      this.globalWatcher.on('all', () => {
-        void this.debounce(GLOBAL_KEY, async () => {
-          this.globalCache = await this.scanFn('')
-          await this.notifyGlobalChange()
-        })
+      this.setupWatcher(this.globalWatcher, 'global', GLOBAL_KEY, async () => {
+        this.globalCache = await this.scanFn('')
+        await this.notifyGlobalChange()
       })
     }
   }
@@ -121,22 +131,23 @@ export class SkillRegistry {
     const skills = await this.scanFn(cwd)
     this.projectCache.set(cwd, skills)
 
-    // 挂项目 watcher（仅监听该 cwd 目录，变动重扫该分区 + 通知匹配 session）
-    const watcher = watch(cwd, {
-      ignored: /(^|[\/\\])\../,
-      persistent: true,
-    })
-    // R4：watcher error（权限/目录删/EMFILE）记日志不崩。chokidar 自动处理重建，best-effort。
-    watcher.on('error', (e) => {
-      console.error(`[skill-registry] project watcher error (cwd=${cwd}):`, e)
-    })
-    watcher.on('all', () => {
-      void this.debounce(cwd, async () => {
+    // 挂项目 watcher：watch 范围 = scan 范围（SSOT），只 watch 实际存在的项目 skill 子目录
+    // （.xyz-agent/skills、discovery 相对路径 resolve 后），不递归 watch 整个 cwd。
+    // 原实现 watch 整个 cwd → cwd 为 home 目录时 chokidar 递归 watch 几十万文件 → EMFILE fd 耗尽
+    // → pi spawn EBADF → 发消息/读历史全挂 + runtime 崩溃（2026-07-22 事故根因）。
+    const dirs = resolveProjectSkillDirs(cwd, this.options.configStore).filter(d => existsSync(d))
+    if (dirs.length > 0) {
+      const watcher = watch(dirs, {
+        ignored: WATCH_IGNORED,
+        persistent: true,
+      })
+      this.setupWatcher(watcher, `project:${cwd}`, cwd, async () => {
         this.projectCache.set(cwd, await this.scanFn(cwd))
         await this.notifyProjectChange(cwd)
       })
-    })
-    this.projectWatchers.set(cwd, watcher)
+      this.projectWatchers.set(cwd, watcher)
+    }
+    // dirs 为空（项目无 skill 目录）时不挂 watcher：无 skill 可监听，缓存已 set（上面 scan 结果），返回即可。
 
     return skills
   }
@@ -196,6 +207,46 @@ export class SkillRegistry {
     this.projectWatchers.clear()
   }
 
+  /**
+   * 统一设置 watcher 的 error 处理（熔断）+ all 事件（debounce 重扫）。
+   *
+   * 熔断：watcher 连续同类错误（如 EMFILE）达 MAX_WATCHER_ERRORS 次时主动 close 该 watcher。
+   * 背景：chokidar 遇 EMFILE 会自动重试 watch，但 fd 已耗尽时重试必再失败 → 死循环刷屏（事故中
+   * 10899 次）。熔断后停止重试，释放该 watcher 占用的句柄，让 pi spawn 等关键操作能拿到 fd。
+   *
+   * label：日志标识（'global' / 'project:<cwd>'）。debounceKey：debounce 分区 key。rescan：变动时的重扫回调。
+   */
+  private setupWatcher(
+    watcher: FSWatcher,
+    label: string,
+    debounceKey: string,
+    rescan: () => Promise<void>,
+  ): void {
+    let errorCount = 0
+    let lastCode = ''
+    watcher.on('error', (e: unknown) => {
+      const err = e as NodeJS.ErrnoException
+      const code = err?.code ?? 'UNKNOWN'
+      if (code === lastCode) {
+        errorCount++
+      } else {
+        errorCount = 1
+        lastCode = code
+      }
+      if (errorCount >= MAX_WATCHER_ERRORS) {
+        console.error(
+          `[skill-registry] ${label} watcher circuit-break: ${errorCount} consecutive ${code} errors, closing watcher`,
+        )
+        watcher.close().catch(() => {})
+      } else {
+        console.error(`[skill-registry] ${label} watcher error (${errorCount}/${MAX_WATCHER_ERRORS} ${code}):`, err)
+      }
+    })
+    watcher.on('all', () => {
+      void this.debounce(debounceKey, rescan)
+    })
+  }
+
   // ── 内部工具 ──────────────────────────────────────────────────
 
   /**
@@ -216,19 +267,6 @@ export class SkillRegistry {
     const root = projectRoot || process.cwd()
     const configService = new ConfigService(root, realConfigStore)
     return configService.loadSkills(root)
-  }
-
-  /** 计算全局 skill 目录列表（piAgentDir/skills、configDir/skills、discovery 绝对/~ 路径）。 */
-  private getGlobalDirs(): string[] {
-    const dirs = [
-      join(this.options.configStore.getPiAgentDir(), 'skills'),
-      join(this.options.configDir, 'skills'),
-      ...this.options.configStore
-        .getSkillPaths()
-        .filter(d => isAbsolute(d) || d.startsWith('~'))
-        .map(d => expandHome(d)),
-    ]
-    return dirs
   }
 
   /**
