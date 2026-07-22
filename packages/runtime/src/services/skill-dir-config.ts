@@ -6,6 +6,8 @@
  * 两个 broadcast helper（目录变更后广播）。
  */
 import type { SkillDirConfig } from '@xyz-agent/shared'
+import { existsSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import { expandHome } from '../utils/path-utils.js'
 
 /**
@@ -37,14 +39,19 @@ export const PRESET_AGENT_DIRS = [
  * 这保证用户拖拽改变 discovery 顺序后，广播回来的 UI 列表顺序与之一致，
  * 不会被 preset 固定顺序覆盖（否则拖拽排序失效）。
  *
- * 过滤：不存在 / 非 skill 容器的启用路径不展示（脏数据，如 /path/a）。ADR §5。
+ * 过滤：不存在的启用路径不展示（脏数据，如 /path/a 等 pi 首制 discovery 占位符）。ADR §5。
  * 归一化：比较时展开 ~，避免 ~/.pi 与 /Users/.../pi 因字符串不同而重复。
  */
 export function buildDirConfigs(preset: string[], enabledDirs: string[]): SkillDirConfig[] {
   const configs: SkillDirConfig[] = []
 
-  // 1. discovery 启用目录，按 discovery 顺序（= 用户拖拽优先级，靠前覆盖靠后）
+  // 1. discovery 启用目录，按 discovery 顺序（= 用户拖拽优先级，靠前覆盖靠后）。
+  //    ADR §5 脏数据过滤：展开 ~ 后为绝对路径的，检查存在性——不存在则跳过
+  //    （/path/a 等 pi 首次写入的占位符、已删除的目录）。相对路径（如 .agents/skills）
+  //    不检查（buildDirConfigs 不知 cwd，且 preset 含相对路径作为候选语义）。
   for (const dir of enabledDirs) {
+    const resolved = expandHome(dir)
+    if (isAbsolute(resolved) && !existsSync(resolved)) continue
     configs.push({ path: dir, enabled: true })
   }
 
