@@ -273,7 +273,20 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
 - **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0018，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
 
-### 14. git status untracked 目录展开 [HISTORICAL]
+### 14. 项目 skill 必须自包含 [HISTORICAL]
+
+**项目维度 skill（`.agents/skills/`）引用的所有脚本必须复制到项目 skill 目录内，禁止依赖全局脚本目录（`~/.agents/skills/`）或 symlink。**
+
+- **根因**：项目 skill 依赖全局脚本时，全局脚本变更会悄悄影响项目行为（如 pre-merge-check.sh 改了 remote 检查逻辑），且 bare repo workspace 项目的 remote 语义（`origin`=本地 bare repo，`github`=真正远程）与通用脚本不一致，导致检查误报。全局脚本不随项目 git 跟踪，无法保证可复现。
+- **规则**：
+  1. 项目 skill 需要的脚本 → 复制到 `.agents/skills/<skill-name>/scripts/` 下，随 git 跟踪推送
+  2. SKILL.md 里的路径引用 → 用项目内相对路径（`.agents/skills/merge/scripts/pre-merge-check.sh`），不用 `~/.agents/...`
+  3. 禁止用 symlink 指向全局脚本（symlink 不随 git 跟踪，且违反 §13 外部 symlink 禁令）
+  4. 如果复制的脚本有问题（如 remote 检查逻辑不适用本项目），直接改项目内副本，不影响全局
+- **事故记录**：2026-07-22 merge 流程阶段 1 pre-merge-check.sh 报"有未推送 commits"误报。根因是全局脚本检查 `origin/$BRANCH`（bare repo），但实际推送到 `github/$BRANCH`。修复方式：复制脚本到项目内，改为优先检查 `github` remote（bare repo workspace），fallback `origin`（普通 repo）
+- **当前项目内自包含脚本**：`.agents/skills/merge/scripts/` 含 init.sh / pr-merge.sh / pre-merge-check.sh / release.sh / remove-worktree.sh / wait-for-ci.sh（全部 git 跟踪）
+
+### 15. git status untracked 目录展开 [HISTORICAL]
 
 `GitService.getStatus` 执行 `git status --porcelain=v1 -z -b` **必须带 `--untracked-files=all`**。
 
