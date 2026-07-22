@@ -43,22 +43,32 @@ interface SessionHeaderEntry extends PiEntry {
   timestamp: string
   cwd: string
   parentSession?: string
+  forkEntryId?: string
 }
 
-/** fork 结果：新文件路径 + 新 session id。 */
+/** fork 结果：新文件路径 + 新 session id（+ sourceFilePath 供 FR-20 fallback 判断）。 */
 export interface ForkedFile {
   filePath: string
   sessionId: string
+  /** 源 session 文件路径（fork 调用方传入的 sourceFilePath，供上层判断 parentSession fallback）。 */
+  sourceFilePath: string
 }
 
 /**
  * 读源 session JSONL，按 forkEntryId 截断，写新 JSONL 文件。
  *
- * @param sourceFilePath 源 session JSONL 绝对路径
- * @param forkEntryId    fork 点的 pi entryId（message entry 的 id）
- * @param includeFrom    true: 保留到 forkEntry（含）；false: 保留到 forkEntry 前（不含）
- * @param targetDir      新 JSONL 写入目录（pi sessions 目录）
- * @returns 新文件路径 + 新 session id
+ * @param sourceFilePath   源 session JSONL 绝对路径
+ * @param forkEntryId      fork 点的 pi entryId（截断用，message entry 的 id）
+ * @param includeFrom      true: 保留到 forkEntry（含）；false: 保留到 forkEntry 前（不含）
+ * @param targetDir        新 JSONL 写入目录（pi sessions 目录）
+ * @param forkEntryIdField 可选，写入新 header 的 forkEntryId 字段（供后续 merge 定位 fork 点）。
+ *                         与 forkEntryId 区别：后者用于截断回溯，前者是落盘标记（二者常相等，
+ *                         但 includeFrom=false 等场景下语义不同；undefined 时不写该字段）。
+ * @param fallbackParentId 可选，源 session 未落盘（sessionFilePath=undefined）时的 parentSession
+ *                         fallback 键（FR-20）：源 header 无 parentSession 时用此值（源 sessionId）
+ *                         而非 sourceFilePath，形成可追溯的父子链。源 header 已有 parentSession
+ *                         （fork 出的 session 再 fork）时透传原值。
+ * @returns 新文件路径 + 新 session id + sourceFilePath（供上层 fallback 判断）
  * @throws 源文件不存在 / forkEntryId 在树中找不到 / 源文件无 session header
  */
 export async function createForkedSessionFile(
@@ -66,6 +76,8 @@ export async function createForkedSessionFile(
   forkEntryId: string,
   includeFrom: boolean,
   targetDir: string,
+  forkEntryIdField?: string,
+  fallbackParentId?: string,
 ): Promise<ForkedFile> {
   // 1. 读源文件
   let raw: string
@@ -133,14 +145,24 @@ export async function createForkedSessionFile(
   // 6. 构建新文件内容
   const lines: string[] = []
 
-  // 新 session header（parentSession 指回源文件，形成父子链）
+  // parentSession 血缘键（FR-20 fallback）：
+  // - 源 header 已有 parentSession（多级 fork：fork 出的 session 再被 fork）→ 透传原值。
+  // - 源 header 无 parentSession（顶层 session）→ 默认用 sourceFilePath（指回源文件）。
+  //   但源 session 可能尚未落盘（pi 延迟写入，上层 sessionFilePath=undefined），此时
+  //   sourceFilePath 是上层临时拷贝/不可靠路径，改用 fallbackParentId（源 sessionId）作血缘键，
+  //   保证父子链可追溯（FR-20）。
+  const resolvedParentSession = header.parentSession
+    ?? (fallbackParentId ?? sourceFilePath)
+
+  // 新 session header（parentSession 指回源文件/源 sessionId，形成父子链）
   const newHeader: SessionHeaderEntry = {
     ...header,
     id: newSessionId,
     timestamp: now.toISOString(),
-    parentSession: sourceFilePath,
+    parentSession: resolvedParentSession,
+    ...(forkEntryIdField !== undefined ? { forkEntryId: forkEntryIdField } : {}),
   }
-  // 保留源 header 的额外字段（如 label），但强制覆盖 id/timestamp/parentSession
+  // 保留源 header 的额外字段（如 label），但强制覆盖 id/timestamp/parentSession/forkEntryId
   lines.push(JSON.stringify(newHeader))
 
   // 按原始顺序写入保留的 entry（保持 entry 到达顺序，pi 重建树依赖顺序）
@@ -152,5 +174,5 @@ export async function createForkedSessionFile(
 
   await writeFile(newFilePath, lines.join('\n') + '\n', 'utf-8')
 
-  return { filePath: newFilePath, sessionId: newSessionId }
+  return { filePath: newFilePath, sessionId: newSessionId, sourceFilePath }
 }

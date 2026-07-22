@@ -17,6 +17,10 @@ export interface SessionHeader {
   id: string
   cwd: string
   timestamp: string
+  /** 父 session 血缘键（fork 出的 session header 指回源文件/源 sessionId）。 */
+  parentSession?: string
+  /** fork 锚点 entry id（截断点）。 */
+  forkEntryId?: string
 }
 
 // ── 解析工具 ─────────────────────────────────────────────────
@@ -28,7 +32,13 @@ export function parseSessionHeader(filePath: string): SessionHeader | null {
     if (!firstLine) return null
     const entry = JSON.parse(firstLine)
     if (entry.type !== 'session') return null
-    return { id: entry.id, cwd: entry.cwd, timestamp: entry.timestamp }
+    return {
+      id: entry.id,
+      cwd: entry.cwd,
+      timestamp: entry.timestamp,
+      parentSession: typeof entry.parentSession === 'string' ? entry.parentSession : undefined,
+      forkEntryId: typeof entry.forkEntryId === 'string' ? entry.forkEntryId : undefined,
+    }
   } catch {
     return null
   }
@@ -223,6 +233,64 @@ export function persistSessionName(filePath: string, name: string, id?: string, 
 }
 
 /**
+ * 将 handoff marker 追加到 session JSONL（FR-5）。
+ *
+ * 源 session 交接给新 session 后，append 一条 `handoff_marker` entry，记录新 session id。
+ * extractHandedOff 尾读此行；scanner scanSessionMeta 提取后填入 ScannedSessionMeta.handedOffTo，
+ * 供前端识别「该 session 已交接，可在 UI 标记/跳转新 session」。
+ *
+ * [HISTORICAL/规则 #6] 文件不存在时**绝不创建文件**（与 persistSessionName 同理由）。
+ *
+ * @param filePath 源 session JSONL 绝对路径
+ * @param newSessionId 交接目标的新 session id
+ */
+export function persistHandedOff(filePath: string, newSessionId: string): void {
+  if (!filePath) return
+  if (!existsSync(filePath)) {
+    console.warn(`[session-file-utils] persistHandedOff: file does not exist, skipping (pi delayed write window): ${filePath}`)
+    return
+  }
+  const entry = JSON.stringify({
+    type: 'handoff_marker',
+    handedOffTo: newSessionId,
+    timestamp: new Date().toISOString(),
+  }) + '\n'
+  try {
+    const fd = openSync(filePath, 'a')
+    writeSync(fd, entry)
+    closeSync(fd)
+  // eslint-disable-next-line taste/no-silent-catch -- file append: failure to write must not crash caller
+  } catch (e) {
+    console.error(`[session-file-utils] persistHandedOff: failed to write: ${filePath}`, e)
+  }
+}
+
+/**
+ * 从 .jsonl 文件提取最后一条 handoff_marker 的 handedOffTo（FR-5）。
+ *
+ * 仅尾读（readTailEntries）：persistHandedOff 是 append，handoff_marker 始终是文件
+ * 最后写入的 entry → 总在尾部窗口（32KB）内。无需 fallback 全量读——这保持了
+ * scanSessionMeta 三读合一的 readFileSync 预算（W3 AC-merge-1：每文件固定读取次数，
+ * 若此函数也全量读会打破计数契约）。未命中（无 marker / 尾窗外）→ 返回 undefined。
+ *
+ * @returns 交接目标的新 session id；文件无 handoff_marker（未交接）返回 undefined
+ */
+export function extractHandedOff(filePath: string): string | undefined {
+  const tailEntries = readTailEntries(filePath)
+  if (tailEntries !== null) {
+    for (let i = tailEntries.length - 1; i >= 0; i--) {
+      const entry = tailEntries[i]
+      if (typeof entry === 'object' && entry !== null
+        && (entry as Record<string, unknown>).type === 'handoff_marker'
+        && typeof (entry as Record<string, unknown>).handedOffTo === 'string') {
+        return (entry as Record<string, unknown>).handedOffTo as string
+      }
+    }
+  }
+  return undefined
+}
+
+/**
  * Patch session 文件首行的 cwd 字段。用于 session 的原始 cwd 已不存在时，
  * 将 cwd 更新为 fallback 值，使 pi 的 switch_session 不会因 cwd 不存在而失败。
  * 只修改首行（session header），不影响后续 entry。
@@ -279,6 +347,12 @@ export interface ScannedSessionMeta {
   outcome: SessionOutcome | null
   lastModified: number
   size: number
+  /** 父 session 血缘键（FR-3，从 header 提取）。 */
+  parentSession?: string
+  /** fork 锚点 entry id（FR-3，从 header 提取）。 */
+  forkEntryId?: string
+  /** handoff 目标 session id（FR-5，从 JSONL handoff_marker 尾读）。 */
+  handedOffTo?: string
 }
 
 /**
@@ -350,6 +424,7 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
   }
   const name = extractSessionName(filePath)
   const outcome = extractSessionOutcome(filePath)
+  const handedOffTo = extractHandedOff(filePath)
   const meta: ScannedSessionMeta = {
     id: header.id,
     filePath,
@@ -359,6 +434,9 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     outcome,
     lastModified: fstat.mtimeMs,
     size: fstat.size,
+    parentSession: header.parentSession,
+    forkEntryId: header.forkEntryId,
+    handedOffTo,
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta

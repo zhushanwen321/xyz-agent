@@ -51,6 +51,14 @@ export interface IManagedSessionView {
    */
   hidden?: boolean
   /**
+   * 父 session 血缘键（FR-2 active 路径回传血缘）。fork 出的 session 在 initializeManagedSession
+   * 时写入，toSummary 透传到 SessionSummary.parentSession。源 session 未落盘时用源 sessionId 作
+   * fallback（FR-20）。ManagedSession 经 extends 自动继承此字段。
+   */
+  parentSession?: string
+  /** fork 锚点 entry id（FR-2）。toSummary 透传到 SessionSummary.forkEntryId。 */
+  forkEntryId?: string
+  /**
    * label 是否已持久化到 session JSONL 的 session_info 行。
    *
    * pi 0.80.3 的 SessionManager._persist 首次 flush（首条 assistant 消息后）才用

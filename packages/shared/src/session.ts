@@ -41,6 +41,18 @@ export interface SessionSummary {
    * landing 态命令源）。scanner listAll 过滤掉 hidden:true 的 session。
    */
   hidden?: boolean
+  /**
+   * 父 session 文件路径（fork 血缘键）。fork 出的 session 在 header 记录此字段指回源文件，
+   * 形成 fork 父子链。源 session 尚未落盘（pi 延迟写入窗口）时用源 sessionId 作 fallback 键
+   * （FR-20，避免血缘断裂）。非 fork 产出的顶层 session 无此字段。
+   */
+  parentSession?: string
+  /** fork 锚点 entry id：fork 截断点的 pi entryId，供后续 merge 定位 fork 点。 */
+  forkEntryId?: string
+  /** handoff 后指向新 session（痛点3 基础层）：源 session 交接给新 session 后记录其 id。 */
+  handedOffTo?: string
+  /** 上次 merge 时间（占位，痛点2 基础层）。 */
+  lastMergedAt?: number
 }
 
 export interface SessionGroup {

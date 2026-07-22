@@ -712,6 +712,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       lastActiveAt: s.lastActiveAt, modelId: s.modelId,
       thinkingLevel: s.thinkingLevel, tokenCount: s.tokenCount,
       hidden: s.hidden,
+      parentSession: s.parentSession,
+      forkEntryId: s.forkEntryId,
       sessionFile: s.sessionFilePath,
     }
   }
@@ -745,6 +747,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /** 初始化 ManagedSession:建 adapter、注册监听、入 Map、查 commands。 */
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
+    parentSession?: string, forkEntryId?: string,
   ): Promise<IManagedSessionView> {
     const send = (msg: ServerMessage) => this.broker.broadcast(msg)
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
@@ -758,6 +761,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false,
       adapter, sessionFilePath,
       hidden,
+      parentSession,
+      forkEntryId,
       labelPersisted: false,
     }
     this.sessions.set(id, session)
