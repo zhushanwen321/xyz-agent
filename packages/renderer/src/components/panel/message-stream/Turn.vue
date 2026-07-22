@@ -184,42 +184,9 @@
       <hr class="border-0 border-t border-border" />
       </div>
 
-      <!-- [W2 fast-fork] 每条 assistant 的 fork 入口（FR-6,7,8,11）。
-           spec §2 层①：每条 assistant 消息 hover 都出 fork 按钮（不只末条），双按钮并列。
-           - fork 后台（GitFork，低频）：空白 fork 到后台，留在原线
-           - fork 提问（GitFork 加粗，高频）：进入 fork-ask 模式
-           accent 高亮区分中性复制按钮；中间 as-sep 分隔两组（复制组在 summary 区，此处独立 fork 组）。
-           门控仅排除 subagent 虚拟会话（streaming/pending 均可 fork，spec §1 裁决）。 -->
-      <template v-for="(assistant, fIdx) in turn.assistants" :key="`fork-${assistant.id}`">
-        <div
-          v-if="!isSubagentVirtualId(sessionId)"
-          class="fork-row group/fork mt-0.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 hover:opacity-100 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100"
-          :data-assistant-id="assistant.id"
-        >
-          <span class="as-sep mx-1 h-3.5 w-px bg-border" />
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-6 text-accent hover:bg-accent-soft hover:text-accent-hover"
-            data-testid="fork-background-btn"
-            :title="t('panel.message.forkBackground')"
-            @click="onFork(assistant)"
-          >
-            <GitFork class="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-6 font-semibold text-accent hover:bg-accent-soft hover:text-accent-hover"
-            data-testid="fork-ask-btn"
-            :title="t('panel.message.forkAsk')"
-            @click="onForkAsk(assistant)"
-          >
-            <GitFork class="size-3.5" />
-          </Button>
-          <span v-if="fIdx < turn.assistants.length - 1" class="sr-only">{{ t('panel.message.forkFromHere') }}</span>
-        </div>
-      </template>
+      <!-- [W2 fast-fork] fork 入口已合并到下方 summary action 行（与复制/复制MD 同行，spec §2 层① + draft-fast-fork.html）。
+           每条 assistant 的独立 fork-row 已移除——主场景单 assistant，fork 按钮在 summary 下方即可。
+           trace 内非末位 assistant 的 fork 入口（方案 a）留待多 assistant 场景需求明确后再加。 -->
 
       <!-- 折叠 trace：working 或 expanded 时展开。
            块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
@@ -285,7 +252,38 @@
             <Copy v-else class="size-3" />
             <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-accent-foreground">MD</span>
           </Button>
-          <!-- fork 按钮已移至每条 assistant 的 fork-row（上方），此处不再重复渲染。 -->
+          <!-- fork 按钮与复制同组（spec §2 层① + draft-fast-fork.html）。
+               两组用 as-sep 分隔：[复制 复制MD] | [fork 后台 fork 提问]。
+               fork 后台（GitFork 线性 + 文字）：低频，空白 fork 留后台。
+               fork 提问（GitFork 实心 + accent-soft 强调底 + 文字）：高频，进 composer fork 模式。
+               差异靠：实心 vs 线性图标 + 强调底色 + 文字标签 + kbd 快捷键。 -->
+          <span v-if="!isSubagentVirtualId(sessionId)" class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
+          <Button
+            v-if="!isSubagentVirtualId(sessionId)"
+            variant="ghost"
+            size="sm"
+            class="fork-btn h-6 gap-1 px-1.5 text-accent hover:bg-accent-soft hover:text-accent-hover"
+            data-testid="fork-background-btn"
+            :title="t('panel.message.forkBackground')"
+            @click="onFork(lastAssistant)"
+          >
+            <GitFork class="size-3" />
+            <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
+            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">⌘G</span>
+          </Button>
+          <Button
+            v-if="!isSubagentVirtualId(sessionId)"
+            variant="ghost"
+            size="sm"
+            class="fork-ask-btn h-6 gap-1 bg-accent-soft px-1.5 font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
+            data-testid="fork-ask-btn"
+            :title="t('panel.message.forkAsk')"
+            @click="onForkAsk(lastAssistant)"
+          >
+            <GitFork class="size-3.5 fill-current" />
+            <span class="text-[11px]">{{ t('panel.message.forkAskLabel') }}</span>
+            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">⌘⇧G</span>
+          </Button>
         </div>
       </div>
 

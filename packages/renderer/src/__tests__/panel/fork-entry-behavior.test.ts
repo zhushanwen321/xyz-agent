@@ -104,18 +104,22 @@ describe('U7 首屏冒烟：streaming 态每条 assistant 有 fork 后台 + fork
     expect(forkBtns.length).toBeGreaterThan(0)
   })
 
-  it('多条 assistant 消息时，每条 assistant 区都有 fork 后台 + fork 提问按钮（非仅末条 1 个）', () => {
+  it('多条 assistant 消息时，summary action 行有 fork 后台 + fork 提问按钮（与复制同行）', () => {
     const turn = makeTurn([
       makeAssistant({ id: 'a1', content: '第一条回复' }),
       makeAssistant({ id: 'a2', content: '第二条回复' }),
     ])
     const wrapper = mountTurn(turn, 's-idle')
-    // W2：每条 assistant 都有 fork 后台按钮（data-testid=fork-background-btn）
+    // fork 按钮在 summary action 行（与复制/复制MD 同行），末条 assistant 位 1 组
     const forkBackgroundBtns = wrapper.findAll('[data-testid="fork-background-btn"]')
-    expect(forkBackgroundBtns.length).toBe(2)
-    // 每条 assistant 都有 fork 提问按钮（data-testid=fork-ask-btn）
+    expect(forkBackgroundBtns.length).toBe(1)
     const forkAskBtns = wrapper.findAll('[data-testid="fork-ask-btn"]')
-    expect(forkAskBtns.length).toBe(2)
+    expect(forkAskBtns.length).toBe(1)
+    // fork 按钮与复制按钮在同一容器（action 行）
+    const actionRow = forkBackgroundBtns[0]?.element.parentElement
+    expect(actionRow?.querySelector('[data-testid="fork-ask-btn"]')).toBeTruthy()
+    // 同行还应有复制按钮（Copy icon button）
+    expect(actionRow?.querySelectorAll('button').length).toBeGreaterThanOrEqual(4)
   })
 })
 

@@ -192,9 +192,9 @@ describe('E2E-L1-1: fork-ask 完整旅程（Turn → channel → Composer → fo
       props: { turn, sessionId: 's-src' },
       global: { stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true } },
     })
-    // 用户可见：两条 assistant 各有 fork 提问按钮
+    // 用户可见：summary action 行有 fork 提问按钮（与复制同行，末条 assistant 位 1 组）
     const forkAskBtns = wrapper.findAll('[data-testid="fork-ask-btn"]')
-    expect(forkAskBtns.length).toBe(2)
+    expect(forkAskBtns.length).toBe(1)
   })
 
   it('点 fork 提问按钮 → useForkModeChannel signal 更新（携带 srcSessionId + fromMessageId）', async () => {
