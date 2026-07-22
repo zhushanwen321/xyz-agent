@@ -183,7 +183,7 @@ const slashCommands = computed(() => {
             description: s.description,
           }
         })
-    // 优先级：全局 settingsStore.skills 先选，projectSkills 补项目独有项（两者同名取全局）
+    // 优先级：pi 源已在 seen，全局次之（settingsStore.skills），项目最后（projectSkills 补独有项）
     const globalSkillCmds = mapSkillInfo(settingsStore.skills)
     const projectSkillCmds = mapSkillInfo(props.projectSkills ?? [])
     return [...extCmds, ...globalSkillCmds, ...projectSkillCmds]

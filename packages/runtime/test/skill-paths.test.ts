@@ -353,5 +353,27 @@ describe('skillPaths passing chain', () => {
       const skillArgs = extractSkillArgs(spawnArgsCapture[0].args)
       expect(skillArgs).toEqual([resolved, absPath])
     })
+
+    // R1（review fix）：~/xxx 家目录前缀展开（与 W2 loadSkills 对称）
+    it('R1: ~/xxx 前缀路径 expandHome 展开后 existsSync（不 resolve 到 cwd 下）', async () => {
+      const service = await createSessionService()
+      // discovery.json 实际配置用 ~ 前缀（如 ~/.pi/agent/skills）
+      mockSkillPaths.push('~/.agents/skills')
+      // mock home 是 /mock/home（node:os homedir mock），展开后 = /mock/home/.agents/skills
+      existingPaths.add(path.normalize('/mock/home/.agents/skills'))
+      // cwd 必须存在（避免 session-lifecycle fallback）
+      existingPaths.add(path.normalize('/proj'))
+
+      try {
+        await service.create('/proj')
+      } catch {
+        // expected
+      }
+
+      expect(spawnArgsCapture.length).toBeGreaterThanOrEqual(1)
+      const skillArgs = extractSkillArgs(spawnArgsCapture[0].args)
+      // 关键断言：~/.agents/skills 展开为 /mock/home/.agents/skills（不是 /proj/~/.agents/skills 错位）
+      expect(skillArgs).toEqual(['/mock/home/.agents/skills'])
+    })
   })
 })

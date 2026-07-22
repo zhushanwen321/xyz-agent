@@ -28,6 +28,9 @@ export function useProjectSkills(currentCwd: Ref<string | null>) {
   // 命中缓存不重复 RPC，避免闪烁 + 省 RPC。当前唯一消费者是 landing CommandPopover（单例活跃），
   // per-instance 缓存足够；未来多消费者共享再提升到模块级或 store。
   const skillsByCwd = ref<Map<string, SkillInfo[]>>(new Map())
+  // R3（review fix）：in-flight 去重。cwd 快速切 A→B→A 时，若 A 的 RPC 仍 pending，
+  // 没有 in-flight 标记会重复触发 loadFor(A)。Set 记录 pending cwd，RPC 完成后删除。
+  const inFlight = new Set<string>()
 
   const projectSkills = computed<SkillInfo[]>(() => {
     const cwd = currentCwd.value
@@ -37,26 +40,31 @@ export function useProjectSkills(currentCwd: Ref<string | null>) {
 
   /** 拉取某 cwd 的 project skill 并写缓存（best-effort：RPC 失败留空数组，不崩）。 */
   async function loadFor(cwd: string): Promise<void> {
+    inFlight.add(cwd)
     try {
       const skills = await configApi.scanSessionSkills(cwd)
       const next = new Map(skillsByCwd.value)
       next.set(cwd, skills)
       skillsByCwd.value = next
-    // eslint-disable-next-line taste/no-silent-catch -- project skill 拉取是 best-effort：失败时 projectSkills 降级为空数组，landing 浮层仅显全局 skill，不阻塞用户
+     
     } catch (e) {
       console.warn(`[useProjectSkills] scanSessionSkills failed for cwd=${cwd}, projectSkills will be empty:`, e)
       const next = new Map(skillsByCwd.value)
       next.set(cwd, [])
       skillsByCwd.value = next
+    } finally {
+      inFlight.delete(cwd)
     }
   }
 
   // watch currentCwd：变化时按需拉取（缓存命中跳过）。immediate 触发初始 cwd 的拉取。
+  // R3：in-flight cwd 也跳过（RPC pending 中不重复触发）。
   watch(
     currentCwd,
     (cwd) => {
       if (!cwd) return // null cwd 不 RPC
       if (skillsByCwd.value.has(cwd)) return // 缓存命中，不重复 RPC
+      if (inFlight.has(cwd)) return // RPC pending 中，不重复触发
       void loadFor(cwd)
     },
     { immediate: true },

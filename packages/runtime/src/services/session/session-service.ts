@@ -13,6 +13,7 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, isAbsolute, resolve } from 'node:path'
+import { expandHome } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
@@ -683,14 +684,22 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 按 runtime 进程 cwd（app.getAppPath/resourcesPath）解析 → 在该 cwd 下不存在被 filter 掉 →
     // pi 启动 --skill 参数为空 → pi 加载不到项目 skill。
     // resolve 基准是 session cwd（用户当前项目），返回绝对路径避免 pi 侧再次错位。
+    //
+    // R1（review fix）：~/xxx 家目录前缀先 expandHome 展开（与 W2 loadSkills 对称）。
+    // 否则 isAbsolute('~/...') false → resolve(cwd, '~/...') = <cwd>/~/... 错位 → filter 掉全局 skill。
+    // discovery.json 实际配置 ~/.pi/agent/skills、~/.agents/skills 等带 ~ 前缀，必须展开。
+    const normalize = (p: string): string => {
+      const expanded = expandHome(p)
+      return isAbsolute(expanded) ? expanded : resolve(cwd, expanded)
+    }
     return this.configStore.getSkillPaths().filter((p) => {
-      const resolved = isAbsolute(p) ? p : resolve(cwd, p)
+      const resolved = normalize(p)
       if (existsSync(resolved)) {
         return true
       }
       console.warn(`[session-service] skill path not found, skipping: ${p} (resolved: ${resolved})`)
       return false
-    }).map((p) => (isAbsolute(p) ? p : resolve(cwd, p)))
+    }).map(normalize)
   }
 
   async getExtensionPaths(): Promise<string[]> {
