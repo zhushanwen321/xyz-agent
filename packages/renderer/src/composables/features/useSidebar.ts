@@ -28,6 +28,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useTasksStore } from '@/stores/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
@@ -81,6 +82,7 @@ export function useSidebar() {
   const navigation = useNavigationStore()
   const session = useSessionStore()
   const chat = useChatStore()
+  const tasks = useTasksStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
   const commandStore = useCommandStore()
@@ -164,6 +166,7 @@ export function useSidebar() {
       try {
         const { messages, historyTruncated } = await chatApi.getHistory(id)
         chat.hydrate(id, messages)
+        tasks.hydrateFromMessages(id, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
         useChat().setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
@@ -235,6 +238,7 @@ export function useSidebar() {
     try {
       const { messages, historyTruncated } = await chatApi.getHistory(sessionId)
       chat.hydrate(sessionId, messages)
+      tasks.hydrateFromMessages(sessionId, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
       useChat().setHistoryTruncated(sessionId, historyTruncated)
     } catch {
       chat.markHistoryFailed(sessionId)
@@ -346,8 +350,9 @@ export function useSidebar() {
       }
     }
     session.removeFromList(id)
-    // 跨 store 清理（S3）：fileTree + chat store + WS 流式订阅 + 派生状态缓存
+    // 跨 store 清理（S3）：fileTree + tasks + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
+    tasks.clearSession(id)
     // [M7 FR-5] evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     const chatStoreForEvict = useChatStore()

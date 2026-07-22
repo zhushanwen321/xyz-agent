@@ -70,6 +70,8 @@
         <CommandDocPanel v-else-if="activeTab === 'doc'" :session-id="sessionId" />
         <!-- Detail tab：文件预览（#6，useDetailPane watch selectedPath 自动加载，禁 v-html） -->
         <DetailPane v-else-if="activeTab === 'detail'" :session-id="sessionId" />
+        <!-- Tasks tab：goal 卡片 + todo 列表（tasks store 按 sessionId 分区，只读渲染） -->
+        <TasksPanel v-else-if="activeTab === 'tasks'" :session-id="sessionId" />
         <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
         <div
           v-else-if="activeGuiComponent"
@@ -135,17 +137,19 @@
 import { computed, onBeforeUnmount, reactive, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X, CheckSquare } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import GitPanel from './GitPanel.vue'
 import CommandDocPanel from './CommandDocPanel.vue'
 import DetailPane from './DetailPane.vue'
+import TasksPanel from './TasksPanel.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import AnsiText from './message-stream/gui/AnsiText.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
+import { useTasksStore } from '@/stores/tasks'
 
 const props = defineProps<{
   isOpen: boolean
@@ -170,6 +174,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const tasksStore = useTasksStore()
 
 /**
  * aside 容器 class（按 mode 切换定位策略）：
@@ -205,44 +211,58 @@ interface TabMeta {
   emptyHint: string
 }
 
-/** tab 元信息（§6.3 点2：Terminal/Browser/Git）。Git tab 内容为 GitPanel（inject 数据）。 */
-const tabs = computed<TabMeta[]>(() => [
-  {
-    key: 'terminal',
-    label: t('panel.sideDrawer.tabTerminal'),
-    icon: TerminalIcon,
-    emptyText: t('panel.sideDrawer.noTerminal'),
-    emptyHint: t('panel.sideDrawer.terminalHint'),
-  },
-  {
-    key: 'browser',
-    label: t('panel.sideDrawer.tabBrowser'),
-    icon: Globe,
-    emptyText: t('panel.sideDrawer.noBrowser'),
-    emptyHint: t('panel.sideDrawer.browserHint'),
-  },
-  {
-    key: 'git',
-    label: t('panel.sideDrawer.tabGit'),
-    icon: GitBranch,
-    emptyText: t('panel.sideDrawer.noGit'),
-    emptyHint: t('panel.sideDrawer.gitHint'),
-  },
-  {
-    key: 'doc',
-    label: t('panel.sideDrawer.tabDoc'),
-    icon: BookOpen,
-    emptyText: t('panel.sideDrawer.noDoc'),
-    emptyHint: t('panel.sideDrawer.docHint'),
-  },
-  {
-    key: 'detail',
-    label: t('panel.sideDrawer.tabDetail'),
-    icon: FileText,
-    emptyText: t('panel.sideDrawer.noFileSelected'),
-    emptyHint: t('panel.sideDrawer.detailHint'),
-  },
-])
+/** tab 元信息（§6.3 点2：Terminal/Browser/Git）。Git tab 内容为 GitPanel（inject 数据）。
+ *  Tasks tab 仅在当前 session 有 goal/todo 数据时追加（避免空 icon 噪音）。 */
+const tabs = computed<TabMeta[]>(() => {
+  const base: TabMeta[] = [
+    {
+      key: 'terminal',
+      label: t('panel.sideDrawer.tabTerminal'),
+      icon: TerminalIcon,
+      emptyText: t('panel.sideDrawer.noTerminal'),
+      emptyHint: t('panel.sideDrawer.terminalHint'),
+    },
+    {
+      key: 'browser',
+      label: t('panel.sideDrawer.tabBrowser'),
+      icon: Globe,
+      emptyText: t('panel.sideDrawer.noBrowser'),
+      emptyHint: t('panel.sideDrawer.browserHint'),
+    },
+    {
+      key: 'git',
+      label: t('panel.sideDrawer.tabGit'),
+      icon: GitBranch,
+      emptyText: t('panel.sideDrawer.noGit'),
+      emptyHint: t('panel.sideDrawer.gitHint'),
+    },
+    {
+      key: 'doc',
+      label: t('panel.sideDrawer.tabDoc'),
+      icon: BookOpen,
+      emptyText: t('panel.sideDrawer.noDoc'),
+      emptyHint: t('panel.sideDrawer.docHint'),
+    },
+    {
+      key: 'detail',
+      label: t('panel.sideDrawer.tabDetail'),
+      icon: FileText,
+      emptyText: t('panel.sideDrawer.noFileSelected'),
+      emptyHint: t('panel.sideDrawer.detailHint'),
+    },
+  ]
+  // Tasks tab 条件 push：有 goal/todo 数据才显示 icon（避免无数据时占位）
+  if (props.sessionId && tasksStore.hasData(props.sessionId)) {
+    base.push({
+      key: 'tasks',
+      label: t('panel.sideDrawer.tabTasks'),
+      icon: CheckSquare,
+      emptyText: t('panel.sideDrawer.noTasks'),
+      emptyHint: t('panel.sideDrawer.tasksHint'),
+    })
+  }
+  return base
+})
 
 const activeTabMeta = computed(() => tabs.value.find((tab) => tab.key === props.activeTab) ?? tabs.value[0])
 
@@ -387,10 +407,12 @@ onMessage('extension:status', (msg, sid) => {
     buf.statusMap.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
   })
 })
-
 /**
  * ESC 关闭抽屉（panel/spec.md：抽屉是浮层，ESC 收起）。
  * 仅在 isOpen 时挂监听，避免抽屉关闭后仍抢全局 keydown（如 composer 输入态）。
+ * 单实例安全：SideDrawer 由 PanelContainer 单实例挂载（见 PanelContainer.vue 注释「drawer 固定挂本容器，单实例」），
+ * split/overlay 模式切换不创建第二个实例，故实例级 onKeyDown 不会重复注册（规则 2）。
+ * 若未来支持多 SideDrawer 实例，需改为模块级 refCount 栈保护。
  */
 function onKeyDown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {

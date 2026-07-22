@@ -20,6 +20,8 @@ import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
 import { join, resolve } from 'node:path'
+import { spawn } from 'node:child_process'
+import * as fs from 'node:fs'
 import { ExtensionService } from './services/extension-service.js'
 import { SkillRegistry } from './services/skill-registry.js'
 import { ReloadOrchestrator } from './services/session/reload-orchestrator.js'
@@ -28,6 +30,8 @@ import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
+import { ShellRunner } from './infra/shell-runner.js'
+import { WorktreeService } from './services/worktree/worktree-service.js'
 import { FileService } from './services/file-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
@@ -291,7 +295,23 @@ async function main(): Promise<void> {
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry)
+  // WorktreeService：编排 .bare workspace 下 worktree 创建（git worktree add + setup-worktree.sh）。
+  // 依赖全注入：GitExecutor（git 子命令）/ ShellRunner（setup 脚本，用 child_process.spawn）/
+  // GitInfoReader（当前分支查询）/ fs（existsSync，检测 .bare 与目录冲突）。
+  // 经 server.setServices 注入到 WorktreeMessageHandler（worktree.create 路由）。
+  const worktreeService = new WorktreeService({
+    gitExecutor: new GitExecutor(),
+    shellRunner: new ShellRunner({ spawn }),
+    gitInfoReader: new GitInfoReader(),
+    fs,
+  })
+
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService)
+
+  // 公共 session 就绪回调：重广播 app.info（带 publicSessionId）。
+  // 解决时序竞争——ensurePublicSession 在 server.start 之后才执行，首次 sendInitialState
+  // 推 app.info 时它尚未创建。创建成功后经此回调补发，前端 landing slash popover 才有数据源。
+  sessionService.setOnPublicSessionReady(() => server.broadcastAppInfo())
 
   // Graceful shutdown on signals
   let shuttingDown = false

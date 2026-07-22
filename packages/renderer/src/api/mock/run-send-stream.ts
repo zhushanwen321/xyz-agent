@@ -91,9 +91,125 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
   if (isCancelled(sessionId)) return
   emit(sessionId, { type: 'message.thinking_end', payload: { sessionId } })
 
-  // tool_call 块（start → update → end），证明 tool 卡渲染 + 进度更新
+  // tool_call 块 + extension widget 块：按用户输入 text 分支，让不同 E2E 场景各取所需序列。
+  // 默认（read）：tool_call_start/update/end（card 嵌套 GUI）+ terminal widget + widgetGui × 2 + status
+  //   → 覆盖 gui-components.spec.ts 的路径 A/B 验证（零回归）
+  // 含 'todo'/'任务'：todo tool_call 序列（details.todos + __gui__ list-tree），不推 extension widget
+  //   → 让 Tasks Drawer P0 Case 1 验证 5 项 + 三态 + VERIFY
+  // 含 'goal'/'目标'：goal_control tool_call 序列（details.slug + __gui__ card）+ goal ANSI widget
+  //   → 让 Tasks Drawer P0 Case 2/3 验证 GoalCard + objective 提取
   if (isCancelled(sessionId)) return
   await sleep(TIMING.toolGap)
+  const branch = detectBranch(text)
+  if (branch === 'todo') {
+    await emitTodoBranch(sessionId, { nextId, emit, sleep, isCancelled, TIMING })
+  } else if (branch === 'goal') {
+    await emitGoalBranch(sessionId, { nextId, emit, sleep, pushSession, isCancelled, TIMING })
+  } else {
+    await emitReadBranch(sessionId, { nextId, emit, sleep, pushSession, isCancelled, TIMING })
+  }
+
+  // 文本流式
+  for (const chunk of splitChunks(reply)) {
+    if (isCancelled(sessionId)) return
+    await sleep(TIMING.chunk)
+    emit(sessionId, {
+      type: 'message.text_delta',
+      id: messageId,
+      payload: { sessionId, messageId, delta: chunk },
+    })
+  }
+
+  // file_changes（accumulating → ready），证明 ChangeSetCard/FileView 渲染。
+  // ADR-0024 D5 重构：baseline diff，isFullSet 恒 true（每次 diff 都是全量结果，全集替换不增量合并）。
+  // 任务4：ready 帧加 unmerged 样本，让 FileView U 标注在 mock 下可验。
+  if (isCancelled(sessionId)) return
+  await sleep(TIMING.fileChangesGap)
+  emit(sessionId, {
+    type: 'message.file_changes',
+    payload: {
+      sessionId,
+      messageId,
+      fileChanges: [
+        { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
+      ],
+      changeSetStatus: 'accumulating',
+      isFullSet: true,
+    },
+  })
+  await sleep(TIMING.fileChangesGap)
+  if (isCancelled(sessionId)) return
+  emit(sessionId, {
+    type: 'message.file_changes',
+    payload: {
+      sessionId,
+      messageId,
+      fileChanges: [
+        { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
+        { filePath: 'src/new-file.ts', status: 'added', addLines: 24 },
+        { filePath: 'src/merge-conflict.ts', status: 'unmerged', addLines: 5, delLines: 3 },
+      ],
+      changeSetStatus: 'ready',
+      isFullSet: true,
+    },
+  })
+
+  // Extension UI 交互请求（extension.ui_request）：pi extension 调 ctx.ui.select/confirm/input 时，
+  // runtime 经 event-adapter 翻译后推此帧。useExtensionUI composable 经 events.on(sessionId) 订阅，
+  // mock 走 pushSession(dispatchSession) 同构透传，让 ExtensionUIDialog 在 mock 下可验证。
+  // 仅关键词触发（不污染所有消息，避免 modal 弹窗挡住后续 E2E 交互——如 ST-1 的 complete 后输入）。
+  // 用 'ui-select' 哨兵词 + '部署' 中文，避免 /select/i 匹配自然语言中含 "select" 的普通输入。
+  if (/ui[-_ ]?select|部署/i.test(text)) {
+    if (isCancelled(sessionId)) return
+    await sleep(TIMING.done)
+    pushSession(sessionId, {
+      type: 'extension.ui_request',
+      id: nextId('uir'),
+      payload: {
+        sessionId,
+        requestId: `mock-ui-${Date.now()}`,
+        method: 'select',
+        title: 'Mock: 选择部署目标',
+        message: '选择部署环境',
+        options: ['生产环境', '预发环境', '测试环境'],
+      },
+    })
+  }
+
+  // complete（含 usage，证明 W05-A usage 回填）
+  if (isCancelled(sessionId)) return
+  await sleep(TIMING.done)
+  emit(sessionId, {
+    type: 'message.complete',
+    id: messageId,
+    payload: {
+      sessionId,
+      messageId,
+      stopReason: 'complete',
+      usage: { inputTokens: 1280, outputTokens: 642, totalTokens: 1922 },
+    },
+  })
+}
+
+// ── tool_call + widget 分支：按用户输入分发不同序列 ──────────────────────────
+
+type BranchDeps = Pick<SendStreamDeps, 'nextId' | 'emit' | 'sleep' | 'isCancelled' | 'TIMING'>
+type BranchDepsWithPush = BranchDeps & Pick<SendStreamDeps, 'pushSession'>
+
+/** 按 text 关键词判分支：todo / goal / 默认（read） */
+function detectBranch(text: string): 'todo' | 'goal' | 'read' {
+  const lower = text.toLowerCase()
+  if (/\btodo\b|任务/.test(lower)) return 'todo'
+  if (/\bgoal\b|目标/.test(lower)) return 'goal'
+  return 'read'
+}
+
+/**
+ * 默认分支（read tool + extension widget × 3 + status）。
+ * 行为与重构前完全一致（gui-components.spec.ts 路径 A/B 零回归）。
+ */
+async function emitReadBranch(sessionId: string, deps: BranchDepsWithPush): Promise<void> {
+  const { nextId, emit, sleep, pushSession, isCancelled, TIMING } = deps
   const toolCallId = nextId('tc')
   emit(sessionId, {
     type: 'message.tool_call_start',
@@ -199,85 +315,139 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
       textRaw: '\x1b[32m● Mock: Running\x1b[0m',
     },
   })
+}
 
-  // 文本流式
-  for (const chunk of splitChunks(reply)) {
-    if (isCancelled(sessionId)) return
-    await sleep(TIMING.chunk)
-    emit(sessionId, {
-      type: 'message.text_delta',
-      id: messageId,
-      payload: { sessionId, messageId, delta: chunk },
-    })
-  }
-
-  // file_changes（accumulating → ready），证明 ChangeSetCard/FileView 渲染。
-  // ADR-0024 D5 重构：baseline diff，isFullSet 恒 true（每次 diff 都是全量结果，全集替换不增量合并）。
-  // 任务4：ready 帧加 unmerged 样本，让 FileView U 标注在 mock 下可验。
-  if (isCancelled(sessionId)) return
-  await sleep(TIMING.fileChangesGap)
+/**
+ * todo 分支：todo tool_call_start + tool_call_end（details.todos 原始数组 + __gui__ list-tree）。
+ * chat-message-effects.routeToolResultToTasks 消费这两段，写入 tasks store 的 todos/todo/todoDone/todoTotal。
+ * 不推 extension widget（todo 不走 widget 通道，TasksPanel 直读 store）。
+ */
+async function emitTodoBranch(sessionId: string, deps: BranchDeps): Promise<void> {
+  const { nextId, emit, sleep, isCancelled, TIMING } = deps
+  const toolCallId = nextId('tc')
   emit(sessionId, {
-    type: 'message.file_changes',
+    type: 'message.tool_call_start',
     payload: {
       sessionId,
-      messageId,
-      fileChanges: [
-        { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
-      ],
-      changeSetStatus: 'accumulating',
-      isFullSet: true,
-    },
-  })
-  await sleep(TIMING.fileChangesGap)
-  if (isCancelled(sessionId)) return
-  emit(sessionId, {
-    type: 'message.file_changes',
-    payload: {
-      sessionId,
-      messageId,
-      fileChanges: [
-        { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
-        { filePath: 'src/new-file.ts', status: 'added', addLines: 24 },
-        { filePath: 'src/merge-conflict.ts', status: 'unmerged', addLines: 5, delLines: 3 },
-      ],
-      changeSetStatus: 'ready',
-      isFullSet: true,
-    },
-  })
-
-  // Extension UI 交互请求（extension.ui_request）：pi extension 调 ctx.ui.select/confirm/input 时，
-  // runtime 经 event-adapter 翻译后推此帧。useExtensionUI composable 经 events.on(sessionId) 订阅，
-  // mock 走 pushSession(dispatchSession) 同构透传，让 ExtensionUIDialog 在 mock 下可验证。
-  // 仅关键词触发（不污染所有消息，避免 modal 弹窗挡住后续 E2E 交互——如 ST-1 的 complete 后输入）。
-  // 用 'ui-select' 哨兵词 + '部署' 中文，避免 /select/i 匹配自然语言中含 "select" 的普通输入。
-  if (/ui[-_ ]?select|部署/i.test(text)) {
-    if (isCancelled(sessionId)) return
-    await sleep(TIMING.done)
-    pushSession(sessionId, {
-      type: 'extension.ui_request',
-      id: nextId('uir'),
-      payload: {
-        sessionId,
-        requestId: `mock-ui-${Date.now()}`,
-        method: 'select',
-        title: 'Mock: 选择部署目标',
-        message: '选择部署环境',
-        options: ['生产环境', '预发环境', '测试环境'],
+      toolCallId,
+      toolName: 'todo',
+      input: {
+        action: 'add',
+        texts: [
+          '复现 token 过期场景',
+          '定位 refreshToken 循环点',
+          '添加 maxRetry 守卫',
+          '编写单元测试覆盖边界',
+          '更新 auth 模块文档',
+        ],
       },
-    })
-  }
-
-  // complete（含 usage，证明 W05-A usage 回填）
+    },
+  })
+  await sleep(TIMING.toolGap)
   if (isCancelled(sessionId)) return
-  await sleep(TIMING.done)
+  // 5 项任务，覆盖三态 + 2 个 isVerification（#3 #4）
+  // 对齐 chat-message-effects.isTodoItem 类型守卫：id:number / text:string / status 枚举
+  const todos = [
+    { id: 1, text: '复现 token 过期场景', status: 'completed' as const },
+    { id: 2, text: '定位 refreshToken 循环点', status: 'completed' as const },
+    { id: 3, text: '添加 maxRetry 守卫', status: 'completed' as const, isVerification: true },
+    { id: 4, text: '编写单元测试覆盖边界', status: 'in_progress' as const, isVerification: true },
+    { id: 5, text: '更新 auth 模块文档', status: 'pending' as const },
+  ]
   emit(sessionId, {
-    type: 'message.complete',
-    id: messageId,
+    type: 'message.tool_call_end',
     payload: {
       sessionId,
-      messageId,
-      stopReason: 'complete',
-      usage: { inputTokens: 1280, outputTokens: 642, totalTokens: 1922 },
+      toolCallId,
+      toolName: 'todo',
+      status: 'completed',
+      // routeToolResultToTasks 读 details.todos（含 isVerification）+ details.__gui__.component（list-tree）
+      details: {
+        action: 'add',
+        nextId: 6,
+        todos,
+        // list-tree 对齐 todo extension buildGui 映射：completed→done, in_progress→running, pending→无 status
+        __gui__: guiResult(guiComponent('list-tree', { items: [
+          { icon: 'check', label: '#1: 复现 token 过期场景', status: 'done', depth: 0 },
+          { icon: 'check', label: '#2: 定位 refreshToken 循环点', status: 'done', depth: 0 },
+          { icon: 'check', label: '#3: 添加 maxRetry 守卫', status: 'done', depth: 0 },
+          { icon: 'circle', label: '#4: 编写单元测试覆盖边界', status: 'running', depth: 0 },
+          { icon: 'dot', label: '#5: 更新 auth 模块文档', depth: 0 },
+        ] })),
+      },
+    },
+  })
+}
+
+/**
+ * goal 分支：goal_control tool_call_start（input.objective/slug，routeToolStartToTasks 提 objective）
+ * + tool_call_end（details.slug + __gui__ card，routeToolResultToTasks 写 goal.gui/slug）
+ * + goal ANSI widget（extension:widget widgetKey='goal'，SideDrawer 解析后 merge 实时字段）。
+ */
+async function emitGoalBranch(sessionId: string, deps: BranchDepsWithPush): Promise<void> {
+  const { nextId, emit, sleep, pushSession, isCancelled, TIMING } = deps
+  const toolCallId = nextId('tc')
+  // tool_call_start：input.objective 是 Case 3 断言的目标文本
+  emit(sessionId, {
+    type: 'message.tool_call_start',
+    payload: {
+      sessionId,
+      toolCallId,
+      toolName: 'goal_control',
+      input: {
+        action: 'create',
+        objective: '修复登录模块 token 过期无限重定向问题',
+        slug: 'fix-auth-bug',
+      },
+    },
+  })
+  await sleep(TIMING.toolGap)
+  if (isCancelled(sessionId)) return
+  emit(sessionId, {
+    type: 'message.tool_call_end',
+    payload: {
+      sessionId,
+      toolCallId,
+      toolName: 'goal_control',
+      status: 'completed',
+      // routeToolResultToTasks 读 details.slug + details.__gui__.component（card）
+      details: {
+        action: 'create',
+        goalId: 'g-mock',
+        status: 'active',
+        slug: 'fix-auth-bug',
+        // GoalCard 遍历 card body 找 progress-bar，severity 控制填充色（warn→warning）
+        // 不传 unit：value 显示 '71/200'（避免 '71000k/200000k' 的单位错配）
+        __gui__: guiResult(guiComponent('card', {
+          variant: 'default',
+          header: 'fix-auth-bug',
+          body: [
+            guiComponent('progress-bar', { label: 'tokens', current: 71, total: 200, severity: 'warn' }),
+            guiComponent('progress-bar', { label: 'time', current: 720, total: 1800, severity: 'ok' }),
+            guiComponent('stats-line', { items: [
+              { label: 'status', value: 'active', severity: 'ok' },
+              { label: 'turn', value: '3' },
+            ] }),
+          ],
+        })),
+      },
+    },
+  })
+
+  // goal ANSI widget：走 session 通道，widgetKey='goal'。
+  // SideDrawer.onMessage('extension:widget') 识别 widgetKey==='goal'，调 tasksStore.mergeGoalWidget 解析实时字段。
+  // header 行格式对齐 parseGoalWidget：`◆ <slug> Turn N | NN% tokens | NN% time`
+  if (isCancelled(sessionId)) return
+  await sleep(TIMING.toolGap)
+  pushSession(sessionId, {
+    type: 'extension:widget',
+    id: nextId('gw'),
+    payload: {
+      sessionId,
+      widgetKey: 'goal',
+      lines: [
+        '\x1b[36m◆ fix-auth-bug\x1b[0m\x1b[90m Turn 3\x1b[0m\x1b[33m | 36% tokens\x1b[0m\x1b[33m | 40% time\x1b[0m',
+      ],
     },
   })
 }

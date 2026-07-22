@@ -1,0 +1,181 @@
+/**
+ * WorktreeService —— worktree 创建的领域编排实现（W1）。
+ *
+ * 🔒 三层架构：本类实现 services/ports/worktree-service.ts 的 IWorktreeService port。
+ * 编排三步：(1) WorkspaceDetector 检测 .bare 结构 (2) IGitExecutor 跑 git worktree add
+ * (3) IShellRunner 跑可选的 setup-worktree.sh（项目黑盒，不存在则跳过）。
+ *
+ * 依赖全经构造函数注入（gitExecutor / shellRunner / gitInfoReader / fs），production 由
+ * index.ts 传真实实现，测试传 mock。此模式让 WorktreeService 单测完全隔离 IO。
+ *
+ * 错误对象用 `Object.assign(new Error(msg), { code, detail })` 扁平模式（非 class）——
+ * 测试用 toMatchObject 断言 code/detail，详见 port 注释。
+ *
+ * 编排顺序与测试 WS-1~7 严格对齐：
+ * 1. detect → isBareMode=false 抛 NOT_BARE_REPO（WS-2）
+ * 2. 目录名 = branch.replace(/\//g,'-')，existsSync(newWtPath) 冲突检查（WS-3 WORKTREE_EXISTS）
+ * 3. base 解析：origin/main 先 rev-parse 验证 ref 存在（WS-6 两次 gitExecutor 调用）
+ * 4. git worktree add -b branch baseRef（WS-1/WS-7）
+ * 5. setup 脚本 existsSync 检查：不存在跳过（WS-4），存在则 IShellRunner.execute（WS-5 SETUP_FAILED）
+ */
+import { join } from 'node:path'
+import { WorkspaceDetector } from './workspace-detector.js'
+import type { WorktreeErrorCode } from '@xyz-agent/shared'
+import type { IShellRunner } from '../ports/shell-runner.js'
+import type { IGitExecutor } from '../ports/git-executor.js'
+import type { IGitInfoReader } from '../ports/git-info.js'
+import type {
+  IWorktreeService,
+  WorktreeCreateParams,
+  WorktreeCreateResult,
+} from '../ports/worktree-service.js'
+
+/** WorktreeService 依赖（全注入，可 mock）。 */
+export interface WorktreeServiceDeps {
+  gitExecutor: IGitExecutor
+  shellRunner: IShellRunner
+  gitInfoReader: IGitInfoReader
+  /** node:fs 的 existsSync（测试用 vi.doMock 后传入） */
+  fs: { existsSync: (path: string) => boolean }
+}
+
+/** setup-worktree.sh 默认超时（pnpm install 最坏情况）。 */
+const SETUP_TIMEOUT_MS = 120_000
+
+/** 主分支 fallback（origin/main ref 不存在时用本地 main）。 */
+const LOCAL_MAIN = 'main'
+
+/**
+ * 非法分支名规则（与前端 CreateWorktreeModal.INVALID_BRANCH_REGEX 一致 + 反斜杠）。
+ * runtime 是安全边界，前端校验只是 UX——此处必须独立校验防 Windows 路径遍历
+ * （branch=`..\\..\\evil` → dirName 保留反斜杠 → join 解析到 wsRoot 外）。
+ *
+ * 匹配任一即非法（对齐 git refname 规则 git check-ref-format）：
+ * - `^\.` / `^-`：以点 / 横杠开头（git refname 禁止以 . 开头；此处一并挡 - 开头以便目录名规整）
+ * - `..`：连续两点
+ * - `[~^:?*\[\]@{}]`：git refname 禁止字符（~ ^ : ? * [ ] @{ } 等；@{ 单独也挡）
+ * - `\s`：空格
+ * - `\\`：反斜杠（Windows 路径遍历防护，git refname 同样禁止）
+ * - `\/$`：以 / 结尾（git refname 禁止）
+ * - `\.lock$`：.lock 后缀（git refname 保留）
+ *
+ * 控制字符（\x00-\x1f\x7f）git refname 同样禁止，但 npm 分支名极少含，暂不挡（git 兜底拒绝）。
+ */
+const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
+
+/**
+ * 构造 WorktreeService 扁平错误（code 类型编译时校验为 WorktreeErrorCode）。
+ * 错误对象形状：`Error & { code: WorktreeErrorCode; detail?: unknown }`。
+ */
+function worktreeError(code: WorktreeErrorCode, message: string, detail?: unknown): Error {
+  return Object.assign(new Error(message), detail !== undefined ? { code, detail } : { code })
+}
+
+export class WorktreeService implements IWorktreeService {
+  constructor(private deps: WorktreeServiceDeps) {}
+
+  async create(params: WorktreeCreateParams): Promise<WorktreeCreateResult> {
+    const { branch, baseBranch = 'origin/main', workspaceHint } = params
+
+    // 0. 分支名校验（安全边界，防 Windows 路径遍历）。前端校验只是 UX，runtime 必须独立校验。
+    if (INVALID_BRANCH_REGEX.test(branch)) {
+      throw worktreeError('INVALID_BRANCH', `非法分支名: ${branch}`)
+    }
+
+    // 1. 检测 .bare workspace 结构（detectBare 内部复用 WorkspaceDetector）
+    const { isBareMode, wsRoot, barePath } = this.detectBare(workspaceHint)
+
+    if (!isBareMode) {
+      throw worktreeError('NOT_BARE_REPO', '当前目录不在 .bare workspace 下，无法创建 worktree')
+    }
+
+    // 2. 目录名转换 + 冲突检查
+    const dirName = branch.replace(/\//g, '-')
+    const newWtPath = join(wsRoot, dirName)
+    if (this.deps.fs.existsSync(newWtPath)) {
+      // detail 同时带 cwd + dirName：前端可核对 dirName 是否与当前请求分支一致，
+      // 区分「同分支已存在」（可直接开始）与「另一分支名映射同目录碰撞」（不可直接开始，
+      // 否则切到错误 worktree）。feat/a 与 feat-a 映射同目录即此类碰撞。
+      throw worktreeError(
+        'WORKTREE_EXISTS',
+        `worktree 目录已存在: ${newWtPath}`,
+        { cwd: newWtPath, dirName },
+      )
+    }
+
+    // 3. base 解析
+    const baseRef = await this.resolveBaseRef(barePath, baseBranch, workspaceHint)
+
+    // 4. git worktree add（exitCode 非 0 → 抛 GIT_FAILED + detail，避免静默吞 stderr 后跑 setup 到未创建目录）
+    // 参数顺序对齐 git-worktree(1) man page：`git worktree add [-b <branch>] <path> <commit-ish>`
+    // 选项 -b 在前，位置参数 path/commit-ish 在后。
+    const addResult = await this.deps.gitExecutor.exec(barePath, 'worktree', [
+      'add', '-b', branch, newWtPath, baseRef,
+    ])
+    if (addResult.exitCode !== 0) {
+      throw worktreeError(
+        'GIT_FAILED',
+        `git worktree add 失败: ${addResult.stderr}`,
+        { exitCode: addResult.exitCode, stderr: addResult.stderr },
+      )
+    }
+
+    // 5. setup 脚本（可选，不存在跳过）
+    const setupScriptPath = join(barePath, 'custom-hooks', 'setup-worktree.sh')
+    if (this.deps.fs.existsSync(setupScriptPath)) {
+      const result = await this.deps.shellRunner.execute({
+        scriptPath: setupScriptPath,
+        args: [newWtPath],
+        cwd: newWtPath,
+        timeout: SETUP_TIMEOUT_MS,
+      })
+      if (result.exitCode !== 0) {
+        throw worktreeError(
+          'SETUP_FAILED',
+          `setup 脚本失败（exitCode=${result.exitCode}）`,
+          { exitCode: result.exitCode, stderr: result.stderr },
+        )
+      }
+    }
+
+    return { cwd: newWtPath, branch }
+  }
+
+  /**
+   * 检测 .bare workspace 结构（内部复用 WorkspaceDetector）。
+   * 把注入的 fs.existsSync 适配成 WorkspaceDetector 期望的 statSync 语义。
+   */
+  private detectBare(workspaceHint?: string) {
+    const detector = new WorkspaceDetector({
+      statSync: (p: string) => {
+        if (this.deps.fs.existsSync(p)) return { isDirectory: () => true }
+        const e = new Error('not found') as NodeJS.ErrnoException
+        e.code = 'ENOENT'
+        throw e
+      },
+    })
+    return detector.detect(workspaceHint ?? process.cwd())
+  }
+
+  /**
+   * 解析 base ref。
+   * - 'current'：用 gitInfoReader 读当前分支，读不到 fallback main
+   * - 'origin/main'：用 gitExecutor rev-parse 验证远端 ref 存在，不存在 fallback 本地 main
+   *
+   * WS-6 期望：baseBranch='origin/main' 时 gitExecutor 第一次调用是 rev-parse（检查 ref），
+   * 第二次才是 worktree add。
+   */
+  private async resolveBaseRef(
+    barePath: string,
+    baseBranch: 'current' | 'origin/main',
+    workspaceHint?: string,
+  ): Promise<string> {
+    if (baseBranch === 'current') {
+      const info = this.deps.gitInfoReader.readGitInfo(workspaceHint ?? process.cwd())
+      return info?.branch ?? LOCAL_MAIN
+    }
+    // 'origin/main'：验证 ref 存在
+    const result = await this.deps.gitExecutor.exec(barePath, 'rev-parse', ['--verify', baseBranch])
+    return result.exitCode === 0 ? baseBranch : LOCAL_MAIN
+  }
+}
