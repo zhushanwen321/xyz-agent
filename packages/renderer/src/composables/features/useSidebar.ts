@@ -41,6 +41,7 @@ import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
+import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
 
@@ -520,6 +521,45 @@ export function useSidebar() {
   }
 
   /**
+   * 找当前焦点 session 的末条 assistant 消息（⌘G / ⌘⇧G 全局快捷键默认 fork 点）。
+   * 全局快捷键无 hover 上下文，按 spec §2 层② 默认从末条 assistant fork。
+   * 无焦点 session 或无 assistant 消息时返回 null（调用方静默 no-op）。
+   */
+  function lastAssistantOfFocused(): { sessionId: string; messageId: string } | null {
+    const sid = focusedSessionId.value
+    if (!sid) return null
+    const msgs = chat.getMessages(sid)
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (msgs[i].role === 'assistant') {
+        return { sessionId: sid, messageId: msgs[i].id }
+      }
+    }
+    return null
+  }
+
+  /**
+   * 从末条 assistant 后台 fork（FR-16 ⌘G）：空白 fork 新 session，留在原线。
+   * 无末条 assistant 时静默 no-op（无消息可 fork）。
+   */
+  async function forkFromLastAssistant(): Promise<void> {
+    const last = lastAssistantOfFocused()
+    if (!last) return
+    await forkSession(last.sessionId, last.messageId, { includeFrom: true, openInStandby: false })
+  }
+
+  /**
+   * 从末条 assistant 进入 composer fork 模式（FR-16 ⌘⇧G）：
+   * 经 useForkModeChannel 发 signal，Composer 监听后调自身 enterForkMode（聚焦输入框等用户键入）。
+   * 无末条 assistant 时静默 no-op。
+   */
+  async function enterForkModeFromLastAssistant(): Promise<void> {
+    const last = lastAssistantOfFocused()
+    if (!last) return
+    triggerEnterForkMode(last.sessionId, last.messageId)
+  }
+
+
+  /**
    * 加载 session 列表（W6 去全量预 hydrate）。
    * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
    *
@@ -637,5 +677,7 @@ export function useSidebar() {
     deleteSession,
     forkSession,
     forkSessionAsk,
+    forkFromLastAssistant,
+    enterForkModeFromLastAssistant,
   }
 }

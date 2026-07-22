@@ -28,6 +28,10 @@ export default {
     addContent: 'Add content (attachment / command)',
     attach: 'Attachment',
     command: 'Command',
+    forkHint: 'Fork from this reply to ask anything (⏎ fork & send, Esc to exit)',
+    forkChip: 'Sends to a new branch · isolated from main line',
+    forkSend: 'fork & send',
+    forkExit: 'Exit fork mode',
   },
   message: {
     copy: 'Copy',

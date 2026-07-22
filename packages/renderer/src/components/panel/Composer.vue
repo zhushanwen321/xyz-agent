@@ -23,6 +23,24 @@
       @select="onCmdSelect"
     >
       <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass" data-testid="composer-box">
+        <!-- Fork 模式标识 chip（FR-13）：顶部 accent chip 提示「将发到新分支 · 与主线隔离」+ × 退出 -->
+        <div
+          v-if="fork.forkMode.value"
+          class="composer-mode-chip mx-2.5 mt-2 flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--accent)]"
+          data-testid="composer-mode-chip"
+        >
+          <GitFork class="size-3" />
+          <span class="flex-1">{{ t('panel.composer.forkChip') }}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-4 rounded-sm p-0 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
+            :title="t('panel.composer.forkExit')"
+            @click="fork.exitForkMode"
+          >
+            <X class="size-3" />
+          </Button>
+        </div>
         <!-- 顶部元信息行 slot（landing 态：directory/branch chip；panel 态留空） -->
         <slot name="meta-row" />
         <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
@@ -82,7 +100,7 @@
           size="icon"
           class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
           :disabled="!canSend"
-          :title="canSend ? `${t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
+          :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
@@ -97,7 +115,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, Loader2, Square } from '@lucide/vue'
+import { ArrowUp, Loader2, Square, X, GitFork } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
 import AddMenuPopover from './AddMenuPopover.vue'
@@ -116,6 +134,7 @@ import { useComposerModelThinking } from '@/composables/panel/useComposerModelTh
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
 import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
+import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
 
 const props = withDefaults(
   defineProps<{
@@ -130,11 +149,7 @@ const chatStore = useChatStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
-/**
- * 合并活跃态：流式中（isGenerating）或派发空窗期（dispatchingSessionId 命中当前 session）。
- * 替代单一 isGenerating 驱动停止按钮/steer guard/键盘路由，消除「ack 到达但 message_start 未到」
- * 的空窗期——点发送后立刻显示停止按钮、steer 可用，message_start 到达无缝切交流式态。
- */
+/** 合并活跃态：流式中（isGenerating）或派发空窗期——消除 ack 到达但 message_start 未到的空窗期 */
 const isActive = computed(() => {
   if (!props.sessionId) return false
   return chatStore.isActive(props.sessionId)
@@ -195,6 +210,8 @@ watch(
       // browsing 态下 getText() 返回历史条目，应保存用户实际输入的 savedDraft
       drafts.set(oldId, isBrowsing.value ? (draft.value || '') : (inputRef.value?.getText() ?? ''))
     }
+    // FR-15：切 session 自动退出 fork 模式，避免 fork 来源（srcSessionId）残留指向错误 session。
+    if (fork.forkMode.value) fork.exitForkMode()
     resetBrowsing()
     if (newId) {
       const saved = drafts.get(newId)
@@ -234,6 +251,15 @@ function restoreInput(text: string): void {
   inputRef.value?.setText(text)
 }
 
+// Fork 提问模式（FR-13/14/15）：forkMode 状态真源 + 跨组件触发通道 + fork 发送/Esc/视觉派生
+// —— 见 useComposerForkMode。发送/清空等副作用经 deps 注入（保持 fork 状态真源单一）。
+const fork = useComposerForkMode(sessionIdRef, {
+  inputRef,
+  setSending: (value) => { isSending.value = value },
+  clearInput,
+  restoreInput,
+})
+
 const hasInput = computed(() => draft.value.trim().length > 0)
 /** 可发送：有输入且非活跃（流式/派发）非 sending 非 compacting。
  *  landing 态（sessionId 可能为公共 session id 或 null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
@@ -241,42 +267,39 @@ const canSend = computed(() => hasInput.value && !isActive.value && !isSending.v
 
 /**
  * composer-box class（draft）：
+ * - fork 模式：accent 边 + 3px ring glow + accent 底（forkBoxClass）
  * - S6 流式中/派发空窗期：accent 蓝 steer 呼吸 ring
  * - S2 普通输入中：中性聚焦 ring
  */
 const boxClass = computed(() => [
-  isActive.value
-    ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
-    : hasInput.value
-      ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
-      : '',
+  fork.forkBoxClass.value
+    || (isActive.value
+      ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
+      : hasInput.value
+        ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
+        : ''),
   isSending.value && 'opacity-[0.55]',
 ])
 
 const placeholder = computed(() =>
-  isActive.value
-    ? t('panel.composer.steerHint')
-    : t('panel.composer.inputHint'),
+  fork.forkPlaceholder.value
+    ?? (isActive.value ? t('panel.composer.steerHint') : t('panel.composer.inputHint')),
 )
 
 /**
- * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。
- * landing 态首发提交走 submitFirstMessage（延迟 create session 后再发）；
- * 非 landing 走 useChat.send。/compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6）。
- * 检测：slash chip 的命令名 '/compact' 会被 ComposerInput.getText 读入 draft，
- * '/compact'（纯 chip）或 '/compact <指令>'（chip + 附加文本）均判定为 compact 操作，
- * 后者提取附加文本作为 customInstructions 透传给 pi 压缩 prompt。
- *
- * landing 判定用 variant 而非 sessionId：landing 态 composer 的 sessionId 可能是
- * 公共 session id（用于 CommandPopover 显示 pi extension 命令），但它不是真实工作
- * session——首发提交仍需走 submitFirstMessage 延迟 create。variant='landing' 是
- * 渲染层确定的 landing 语义，与 sessionId 解耦。
+ * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。分支优先级：
+ * 1. fork 模式 → forkSessionAsk（fork 新分支 + content 作首条 user），详见 useComposerForkMode。
+ * 2. landing 态 → submitFirstMessage（延迟 create session 后再发）。用 variant 而非 sessionId 判定：
+ *    landing 态 sessionId 可能是公共 session id（供 CommandPopover 显示 pi 命令），非真实工作 session。
+ * 3. /compact slash chip（操作型前缀）→ 专用 compact RPC（#6），不发 prompt 给 pi。
+ *    检测：'/compact'（纯 chip）或 '/compact <指令>'（chip + 附加文本 → customInstructions），
+ *    与 pi TUI interactive-mode.ts:2656 解析对齐。必须在此拦截：pi RPC 不解析 builtin slash。
+ * 4. 普通发送 → useChat.send。
  */
 async function onSend(): Promise<void> {
   if (!canSend.value) return
   const text = draft.value
-  // landing 态首发提交：统一延迟 create → submitFirstMessage 负责 create+载入+发送。
-  // 用 variant 判定（非 sessionId），因为 landing 态 sessionId 可能是公共 session id。
+  if (await fork.handleForkSend(text)) return
   if (props.variant === 'landing') {
     clearInput()
     isSending.value = true
@@ -284,7 +307,6 @@ async function onSend(): Promise<void> {
       await flow.submitFirstMessage(text, localThinkingLevel.value)
     } catch (e) {
       restoreInput(text)
-      // 错误已消化（toast + 草稿恢复），不 throw（throw 只会变 unhandled rejection，用户不可见）。
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('panel.panel.taskFailed', { error: msg }))
     } finally {
@@ -292,13 +314,6 @@ async function onSend(): Promise<void> {
     }
     return
   }
-  // /compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6），不发 prompt 给 pi。
-  // 检测：slash chip 的命令名 '/compact' 会被 ComposerInput.getText 读入 draft。
-  // 支持两种形态：
-  //   - 纯 '/compact'（chip 单独存在，无附加文本）→ 无 customInstructions
-  //   - '/compact <指令>'（chip + 后续文本）→ 提取为 customInstructions 透传给 pi 压缩 prompt
-  // 与 pi TUI interactive-mode.ts:2656 的解析对齐（text === '/compact' || startsWith('/compact ')）。
-  // 必须在此拦截：pi RPC prompt 路径不解析 builtin slash，/compact 当 prompt 发过去会被当普通消息发给 LLM。
   const trimmed = text.trim()
   if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
     const customInstructions = trimmed.startsWith('/compact ')
@@ -315,9 +330,8 @@ async function onSend(): Promise<void> {
   try {
     await send(props.sessionId!, segments)
   } catch (e) {
-    // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
+    // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免输入丢失。
     restoreInput(text)
-    // 错误已消化（toast + 草稿恢复），不 throw。
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('panel.panel.sendFailed', { error: msg }))
   } finally {
@@ -360,15 +374,12 @@ async function onAbort(): Promise<void> {
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
- *  ↑/↓ 翻阅输入历史——权威规则见
- *  `.xyz-harness/2026-07-10-composer-history-navigation/spec.md` FR1（三阶段模型）。
- *  摘要：edit/browsing 态统一三阶段——先视觉行移动（caretRangeFromPoint），到边缘才翻历史。 */
+ *  ↑/↓ 翻历史（三阶段模型：先视觉行移动，到边缘才翻历史，spec FR1）。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
-  // IME 组合中不拦截任何键（与 useContenteditableInput 的 IME 守卫一致）
-  if (e.isComposing) return
+  if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
+  if (fork.handleForkEsc(e)) return // Fork 模式 Esc 退出（仅 composer 聚焦时到达，不与全局 Esc 冲突）
   // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
-  // edit/browsing 态统一三阶段模型：先视觉行移动，到边缘才翻历史（spec FR1）
   if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     if (inputRef.value?.moveCaretVertical('up') === 'moved') return
@@ -391,5 +402,13 @@ function onKeydown(e: KeyboardEvent): void {
     onSend()
   }
 }
+
+// Fork 模式 API 暴露：测试与跨组件触发通道需经组件实例访问 forkMode 状态 + enter/exit 方法。
+// forkModeRef 是 { value } 包装对象（非 ref 不被 defineExpose 解包），对齐 vm.forkMode.value 契约。
+defineExpose({
+  forkMode: fork.forkModeRef,
+  enterForkMode: fork.enterForkMode,
+  exitForkMode: fork.exitForkMode,
+})
 </script>
 
