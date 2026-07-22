@@ -17,7 +17,7 @@
  * MessageStream 依赖：chat store（真 pinia）/ useChat（vi.mock）/ useChatScroll（真）/
  * useVirtualTurnList（真）/ provideTurnResizeRegistry（真）/ i18n（vitest setup 已 mock）/
  * subagentStore（真 pinia）。子组件 Turn/SystemNotice/BgNotifyCard/GuiComponentRenderer
- * 有重依赖（MarkdownRenderer/ChangeSetCard/ForkConfirmModal/...），全 stub 隔离——
+ * 有重依赖（MarkdownRenderer/ChangeSetCard/...），全 stub 隔离——
  * 本测聚焦虚拟化窗口逻辑（visibleItems 数量），不验证 Turn 内部渲染。
  *
  * Turn stub 带 data-testid="turn-stub-${首消息id}"，findAllComponents 或 selector 计数。

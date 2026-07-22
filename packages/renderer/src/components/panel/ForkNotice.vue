@@ -20,6 +20,7 @@
       {{ prefix }}<span v-if="label" class="font-[550] font-medium">{{ label }}</span>
     </span>
     <!-- 查看链接：sessionDeleted 时降级为纯文本 span（不可点，无交互语义） -->
+    <!-- [P4] 文案区分：有 preview（fork-ask）→ viewBranch（"查看分支"）；纯 fork → view（"查看"）。 -->
     <Button
       v-if="!sessionDeleted"
       variant="ghost"
@@ -28,14 +29,14 @@
       data-testid="fork-notice-view"
       @click="emit('view')"
     >
-      {{ t('panel.forkNotice.view') }}
+      {{ t(viewLabelKey) }}
     </Button>
     <span
       v-else
       class="shrink-0 text-[12px] text-subtle"
       data-testid="fork-notice-view"
     >
-      {{ t('panel.forkNotice.view') }}
+      {{ t(viewLabelKey) }}
     </span>
     <!-- 关闭 × -->
     <Button
@@ -98,4 +99,12 @@ const prefix = computed(() => {
 
 /** 加粗展示的分支名 / 提问预览。 */
 const label = computed(() => props.preview || props.branchName || '')
+
+/**
+ * 查看链接文案 i18n key（P4）。
+ * 有 preview（fork-ask）→ viewBranch（"查看分支"）；纯 fork（无 preview）→ view（"查看"）。
+ */
+const viewLabelKey = computed(() =>
+  props.preview ? 'panel.forkNotice.viewBranch' : 'panel.forkNotice.view',
+)
 </script>

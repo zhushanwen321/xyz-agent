@@ -129,7 +129,11 @@
     </div>
 
     <!-- assistant 区：背景融为一体，透明无边框 -->
-    <div class="flex flex-col gap-0 self-stretch">
+    <!-- group/ai 定义在 assistant 区根容器：fork-row（每条 assistant 上方）与 turn-summary
+         （收尾文案）是兄弟节点，共享此 group 上下文。hover 任一 assistant 内容均令 fork
+         按钮 + summary 复制组浮现（spec §2 层①可发现性）。
+         [P1] 原 group/ai 定义在 turn-summary 上，fork-row 是其兄弟 → group-hover/ai 永不触发。 -->
+    <div class="group/ai flex flex-col gap-0 self-stretch">
       <!--
         turn-meta：有 assistant 回复即显示（回合级耗时 + working 指示），左对齐收缩（self-start，
         对齐设计稿 align-self:flex-start —— 按钮宽度=内容宽度，hover 背景不撑满整行）。
@@ -245,7 +249,7 @@
            字号/行高/字体 streaming 与 complete 一致；streaming 时颜色用 muted（偏淡），complete 用 fg。 -->
       <div
         v-if="summaryText"
-        class="turn-summary group/ai pt-3 text-[13.5px] leading-7 transition-colors duration-200"
+        class="turn-summary pt-3 text-[13.5px] leading-7 transition-colors duration-200"
         :class="turn.isWorking ? 'text-muted' : 'text-fg'"
       >
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />

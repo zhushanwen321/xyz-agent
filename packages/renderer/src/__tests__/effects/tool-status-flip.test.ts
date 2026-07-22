@@ -307,7 +307,7 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
 
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's1' },
-      global: { stubs: { ChangeSetCard: true, ForkConfirmModal: true, MarkdownRenderer: true } },
+      global: { stubs: { ChangeSetCard: true, MarkdownRenderer: true } },
     })
 
     // 需展开 trace 才能看到 Block（showTrace = isWorking || expanded；这里 isWorking=false）
@@ -344,7 +344,7 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
 
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's1' },
-      global: { stubs: { ChangeSetCard: true, ForkConfirmModal: true, MarkdownRenderer: true } },
+      global: { stubs: { ChangeSetCard: true, MarkdownRenderer: true } },
     })
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()

@@ -44,7 +44,7 @@ function mountTurn(turn: MessageTurn) {
     props: { turn, sessionId: 's1' },
     global: {
       plugins: [createPinia()],
-      stubs: { Block: true, ChangeSetCard: true, ForkConfirmModal: true, MarkdownRenderer: true },
+      stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
 }

@@ -29,6 +29,7 @@
             :session="s"
             :active="s.id === activeId"
             :status="statusOf(s.id)"
+            :parent-label="parentLabelOf(s)"
             @select="emit('select', $event)"
             @rename="emit('rename', $event)"
             @delete="emit('delete', $event)"
@@ -120,6 +121,27 @@ function branchesOf(s: SessionSummary): SessionSummary[] {
         b.parentSession != null &&
         (b.parentSession === s.sessionFile || b.parentSession === s.id),
     )
+}
+
+/**
+ * 反查分支 session 的父 session label（P3 修复血缘显示）。
+ *
+ * SessionItem 模板用 `session.parentLabel || session.parentSession` 展示血缘，但此前 SessionList
+ * 从未传 parentLabel → 实际显示 parentSession（文件路径或 UUID，不可读）。本 helper 按
+ * session.parentSession 反查父 session，取其 label 注入 parentLabel。
+ *
+ * 匹配规则与 branchesOf 一致（FR-20 双键兜底）：parentSession 可能是父的 sessionFile（活跃 session
+ * 落盘路径）或父的 id（源未落盘时用 sessionId 作血缘键），两种 key 取并集保证命中。
+ * 仅在当前 session 所在组内查找（分支与父同 cwd，不需跨组扫描）；无父（parentSession 空）或
+ * 父不在当前分组返回空串，SessionItem 回退到 parentSession 原值。
+ */
+function parentLabelOf(s: SessionSummary): string {
+  if (!s.parentSession) return ''
+  const parent = props.groups
+    .filter((g) => g.cwd === s.cwd)
+    .flatMap((g) => g.sessions)
+    .find((p) => p.sessionFile === s.parentSession || p.id === s.parentSession)
+  return parent?.label ?? ''
 }
 
 /** 单一 Esc 监听器——避免每个 SessionItem 各自注册 window keydown listener（N 项 N 个监听器）。

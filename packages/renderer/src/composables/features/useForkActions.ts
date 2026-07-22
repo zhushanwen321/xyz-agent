@@ -1,0 +1,162 @@
+/**
+ * useForkActions —— sidebar fork 操作集合（从 useSidebar 提取，减行用）。
+ *
+ * 职责：fork 会话的三类入口编排（后台 fork / fork-to-ask / 末条 assistant 快捷键）。
+ * 跨 api + stores 编排在此层完成（铁律 1：唯一跨 api + stores 的层）。
+ *
+ * 拆分原因：useSidebar 函数体超 max-lines-per-function(300)，fork 编排逻辑职责内聚，
+ * 与 session CRUD / 启动编排正交，适合独立 composable。参照 useSidebarSubagentActions 范式
+ * （调用方注入 focusedSessionId ref，内部自行获取 stores/api）。
+ */
+import type { Ref } from 'vue'
+import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
+import { chat as chatApi, session as sessionApi } from '@/api'
+import { useChatStore } from '@/stores/chat'
+import { useSessionStore } from '@/stores/session'
+import { useToast } from '@/composables/useToast'
+import i18n from '@/i18n'
+import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
+import { pushForkNoticeAsk } from '@/composables/effects/useForkNoticeEffect'
+
+// 模块级 i18n t（非 setup 上下文也能用，与 useSidebar 同模式）
+const t = i18n.global.t
+
+/**
+ * Fork 操作 composable。
+ *
+ * @param focusedSessionId 焦点 panel 绑定的 session（来自 useSidebar，驱动 ⌘G/⌘⇧G 快捷键的 fork 源）。
+ *   注入而非内部派生：focusedSessionId 是 useSidebar 的派生状态，复用避免重复定义 + 单一来源。
+ */
+export function useForkActions(focusedSessionId: Ref<string | null>) {
+  const chat = useChatStore()
+  const session = useSessionStore()
+
+  /**
+   * Fork 会话：从指定源 session 截断历史到 fork 点，新建 session（独立 pi 进程）。
+   *
+   * 语义（问题 6 AI 收尾 fork）：includeFrom=true → 保留到该 assistant（含），
+   * openInStandby 打开另一 panel。原 session 不变。
+   *
+   * 实现：runtime 读源 session JSONL 按 piEntryId 截断 → 新进程 switch_session 加载。
+   * 不再前端 hydrate（runtime 通过 switch_session 让 pi 加载截断历史，selectSession 的
+   * getHistory 拉真实历史）。fork 需要 Message.piEntryId（文件路径读取时填充），
+   * RPC 路径读取的 session 无 piEntryId 时报错提示。
+   *
+   * srcSessionId 显式传入：Turn 可能在非 active 的 standby panel，fork 源必须是其所在 session。
+   */
+  async function forkSession(
+    srcSessionId: string,
+    fromMessageId: string,
+    opts?: { includeFrom?: boolean; openInStandby?: boolean },
+  ): Promise<string> {
+    // 从前端 Message.id 查到 piEntryId（runtime fork 截断定位用）
+    const msgs = chat.getMessages(srcSessionId)
+    const forkMsg = msgs.find((m) => m.id === fromMessageId)
+    if (!forkMsg) {
+      throw new Error(`fork: message ${fromMessageId} not found in session ${srcSessionId}`)
+    }
+    // [HISTORICAL] 2026-07-16：RPC 路径加载的 session 无 piEntryId，传 timestamp + role 让 runtime 读 JSONL 匹配
+    const created = await sessionApi.fork(srcSessionId, {
+      piEntryId: forkMsg.piEntryId,
+      messageTimestamp: forkMsg.timestamp,
+      messageRole: forkMsg.role,
+      includeFrom: opts?.includeFrom,
+    })
+    session.appendSession(created)
+    // [W2 fast-fork] 后台 fork 不再 split/跳转：去掉 panel.split() + selectSession(standby)。
+    // fork 后留在原线，对话流经 session.forkNotice 广播插反馈行（FR-9/10），侧栏静默新增。
+    // openInStandby 选项保留为契约（调用方可能传入），但行为退化为「不切焦点」。
+    return created.id
+  }
+
+  /**
+   * Fork-to-Ask（FR-9/10 高频路径）：fork 新 session + 把 content 作为首条 user message 发送。
+   *
+   * 原子语义：
+   * - fork 失败 → 不发送（forkSession 内部抛错自然短路，无占位 session 需回滚）。
+   * - send 失败 → 回滚（sessionApi.remove + session.removeFromList）清理占位 session，避免悬挂空壳。
+   *
+   * 直接调 chatApi.send 而非 useChat().send：后者内部 try/catch 吞掉 send 错误（仅 toast），
+   * 此处需要捕获 reject 触发回滚。toast 由此处显式给出（保证用户可见反馈）。
+   * 主线 session 全程不参与（不写入、不 streaming、不 split）。
+   */
+  async function forkSessionAsk(
+    srcSessionId: string,
+    fromMessageId: string,
+    content: string,
+  ): Promise<void> {
+    // 解析 fork 点：尽量取 piEntryId（精确），取不到则降级传 fromMessageId（runtime 走 JSONL 兜底）。
+    // 不像 forkSession 那样在消息缺失时硬抛——fork-ask 的核心有效负载是 content，fork 点缺失不应阻断。
+    const forkMsg = chat.getMessages(srcSessionId).find((m) => m.id === fromMessageId)
+    const created = await sessionApi.fork(srcSessionId, {
+      piEntryId: forkMsg?.piEntryId,
+      messageTimestamp: forkMsg?.timestamp,
+      messageRole: forkMsg?.role,
+      includeFrom: true,
+    })
+    session.appendSession(created)
+    const newId = created.id
+    const prompt = segmentsToPrompt(textToSegments(content))
+    try {
+      await chatApi.send(newId, prompt)
+    } catch (e) {
+      // send 失败回滚：删除占位 session（runtime + 列表），避免空壳悬挂。
+      // 不 rethrow：错误已 toast 化，forkSessionAsk 对调用方表现为「已处理」（resolves undefined）。
+      await sessionApi.remove(newId).catch(() => {})
+      session.removeFromList(newId)
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error: toastError } = useToast()
+      toastError(t('composable.sendFailed', { msg }))
+      return
+    }
+    // [P2] fork + send 均成功 → 本地推送带 preview 的 ForkNotice，走 askedPrefix（"已在新分支提问"）。
+    // 纯 fork（forkSession）走 runtime 广播（forkedPrefix），此处不重复推。
+    // 提问内容首行作 preview（与侧栏分支标题语义一致），过长截断由渲染层处理。
+    pushForkNoticeAsk(srcSessionId, newId, content.trim().split('\n')[0] || content.trim())
+  }
+
+  /**
+   * 找当前焦点 session 的末条 assistant 消息（⌘G / ⌘⇧G 全局快捷键默认 fork 点）。
+   * 全局快捷键无 hover 上下文，按 spec §2 层② 默认从末条 assistant fork。
+   * 无焦点 session 或无 assistant 消息时返回 null（调用方静默 no-op）。
+   */
+  function lastAssistantOfFocused(): { sessionId: string; messageId: string } | null {
+    const sid = focusedSessionId.value
+    if (!sid) return null
+    const msgs = chat.getMessages(sid)
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (msgs[i].role === 'assistant') {
+        return { sessionId: sid, messageId: msgs[i].id }
+      }
+    }
+    return null
+  }
+
+  /**
+   * 从末条 assistant 后台 fork（FR-16 ⌘G）：空白 fork 新 session，留在原线。
+   * 无末条 assistant 时静默 no-op（无消息可 fork）。
+   */
+  async function forkFromLastAssistant(): Promise<void> {
+    const last = lastAssistantOfFocused()
+    if (!last) return
+    await forkSession(last.sessionId, last.messageId, { includeFrom: true, openInStandby: false })
+  }
+
+  /**
+   * 从末条 assistant 进入 composer fork 模式（FR-16 ⌘⇧G）：
+   * 经 useForkModeChannel 发 signal，Composer 监听后调自身 enterForkMode（聚焦输入框等用户键入）。
+   * 无末条 assistant 时静默 no-op。
+   */
+  async function enterForkModeFromLastAssistant(): Promise<void> {
+    const last = lastAssistantOfFocused()
+    if (!last) return
+    triggerEnterForkMode(last.sessionId, last.messageId)
+  }
+
+  return {
+    forkSession,
+    forkSessionAsk,
+    forkFromLastAssistant,
+    enterForkModeFromLastAssistant,
+  }
+}

@@ -51,7 +51,6 @@ function mountTurn(turn: MessageTurn, sessionId = 's1') {
       stubs: {
         Block: true,
         ChangeSetCard: true,
-        ForkConfirmModal: true,
         MarkdownRenderer: true,
       },
     },

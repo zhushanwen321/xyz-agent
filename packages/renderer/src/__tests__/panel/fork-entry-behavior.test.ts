@@ -73,10 +73,6 @@ function mountTurn(turn: MessageTurn, sessionId = 's1') {
         Block: true,
         ChangeSetCard: true,
         MarkdownRenderer: true,
-        // 注意：不 stub ForkConfirmModal —— U11 要求它已被删除。
-        // 但当前它仍存在，若 import Turn 时它仍被引用则 mount 可渲染。
-        // 此处保留 stub 仅避免 Dialog portal 依赖，U11 用 fs.existsSync 单独断言文件删除。
-        ForkConfirmModal: true,
       },
     },
   })

@@ -52,6 +52,9 @@ const feedMap = shallowRef<Map<string, ForkNoticeEntry[]>>(new Map())
 const trackedBranchesRef = ref<ReadonlySet<string>>(new Set())
 const unreadByBranchRef = ref<ReadonlyMap<string, boolean>>(new Map())
 
+/** 模块级 registerFork 实现引用（bindForkNoticeEffect 写入，pushForkNoticeAsk 复用 RV2 分支追踪） */
+let registerForkImpl: ((srcSessionId: string, branchId: string, label: string) => void) | null = null
+
 /**
  * 读取指定 session 的 ForkNotice 反馈行列表（响应式）。
  * MessageStream 各实例调此函数读自身 session 的通知，在对话流末尾渲染。
@@ -103,6 +106,7 @@ export function resetForkNoticeFeed(): void {
   trackedBranchesRef.value = new Set()
   unreadByBranchRef.value = new Map()
   clearUnreadImpl = null
+  registerForkImpl = null
 }
 
 /**
@@ -119,6 +123,65 @@ function pushNotice(
   const map = new Map(feedMap.value)
   map.set(srcSessionId, [...prev, entry])
   feedMap.value = map
+}
+
+/**
+ * 判断指定 srcSessionId 的 feed 中是否已有指向 newSessionId 的 notice（去重用）。
+ * fork-ask 本地推送与 runtime 广播可能竞速（runtime 对每次 session.fork 都广播 session.forkNotice，
+ * 无 preview），用 newSessionId 作唯一键去重，保证 fork-ask 只留一条 askedPrefix notice。
+ */
+function hasNoticeForBranch(srcSessionId: string, newSessionId: string): boolean {
+  const list = feedMap.value.get(srcSessionId)
+  return !!list?.some((e) => e.newSessionId === newSessionId)
+}
+
+/**
+ * 移除指定 srcSessionId 下指向 newSessionId 的 notice（替换语义）。
+ * fork-ask 本地推送前调：若 runtime 广播先到（forkedPrefix，无 preview），替换为 askedPrefix。
+ */
+function removeNoticeForBranch(srcSessionId: string, newSessionId: string): void {
+  const list = feedMap.value.get(srcSessionId)
+  if (!list) return
+  const next = list.filter((e) => e.newSessionId !== newSessionId)
+  const map = new Map(feedMap.value)
+  if (next.length === 0) {
+    map.delete(srcSessionId)
+  } else {
+    map.set(srcSessionId, next)
+  }
+  feedMap.value = map
+}
+
+/**
+ * fork-ask 本地推送 ForkNotice（FR-9/10 高频路径，P2 修复）。
+ *
+ * 与纯 fork（forkSession）不同：fork-ask 的提问内容由前端持有，runtime 的 session.fork
+ * RPC 不携带 preview，故 session.forkNotice 广播 payload 只有 { srcSessionId, newSessionId,
+ * branchName }（无 preview）→ ForkNotice 永远走 forkedPrefix（"已 fork 到后台"），分支标题也不
+ * 用提问预览。此函数让 fork-ask 在 fork + send 成功后**本地直接**推送带 preview 的 notice，
+ * 走 askedPrefix（"已在新分支提问"）+ 分支标题用提问预览。
+ *
+ * 仅 fork-ask 调本函数；纯 fork 仍走 runtime 广播（bindForkNoticeEffect 的 session.forkNotice
+ * 订阅 → forkedPrefix）。RV2 分支追踪（registerFork）两边都建立——fork-ask 也需追踪后台状态变化。
+ * bindForkNoticeEffect 未注册时（如测试未调）registerForkImpl 为 null，安全降级为 no-op。
+ *
+ * 去重（防 fork-ask 双 notice）：runtime 对每次 session.fork 都广播（含 fork-ask 的 fork），
+ * 与本地推送存在竞速。双向去重——
+ * - 本地推送先到：hasNoticeForBranch 让广播 handler 跳过 pushNotice（仍 registerFork）。
+ * - 广播先到（forkedPrefix）：removeNoticeForBranch 清掉它，再 push askedPrefix，保证只留一条。
+ *
+ * @param srcSessionId 源（主线）session id（反馈行落点）
+ * @param newSessionId 新分支 session id（查看跳转目标 + 追踪键）
+ * @param preview 提问内容预览（branch 标题 + askedPrefix 展示）
+ */
+export function pushForkNoticeAsk(
+  srcSessionId: string,
+  newSessionId: string,
+  preview: string,
+): void {
+  removeNoticeForBranch(srcSessionId, newSessionId)
+  pushNotice(srcSessionId, { newSessionId, preview })
+  registerForkImpl?.(srcSessionId, newSessionId, preview)
 }
 
 /**
@@ -144,7 +207,12 @@ export function bindForkNoticeEffect(): void {
   const unsubForkNotice = events.onGlobalType('session.forkNotice', (msg) => {
     const payload = (msg as ServerMessage<'session.forkNotice'>).payload
     const { srcSessionId, newSessionId, branchName, preview } = payload
-    pushNotice(srcSessionId, { newSessionId, branchName, preview })
+    // [P2 去重] fork-ask 在本地 pushForkNoticeAsk 已推 askedPrefix notice（带 preview）。
+    // runtime 对每次 session.fork 都广播（含 fork-ask），此 newSessionId 已有 notice 时跳过
+    // pushNotice（避免 forkedPrefix 重复）；registerFork 仍执行（RV2 分支追踪两边都需建立）。
+    if (!hasNoticeForBranch(srcSessionId, newSessionId)) {
+      pushNotice(srcSessionId, { newSessionId, branchName, preview })
+    }
     // RV2：fork 成功 → registerFork 建立分支追踪基线（label 用 branchName/preview 兜底）。
     registerFork(srcSessionId, newSessionId, branchName ?? preview ?? '')
   })
@@ -164,10 +232,13 @@ export function bindForkNoticeEffect(): void {
   watch(unreadByBranch, (m) => { unreadByBranchRef.value = m }, { immediate: true })
   // 暴露 clearUnread 给 useForkBranchBadges（模块级引用，侧栏角标消费时调）。
   clearUnreadImpl = clearUnread
+  // 暴露 registerFork 给 pushForkNoticeAsk（fork-ask 本地推送时复用 RV2 分支追踪）。
+  registerForkImpl = registerFork
 
   onScopeDispose(() => {
     unsubForkNotice()
     clearUnreadImpl = null
+    registerForkImpl = null
     trackedBranchesRef.value = new Set()
     unreadByBranchRef.value = new Map()
   })
