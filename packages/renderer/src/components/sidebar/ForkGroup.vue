@@ -45,14 +45,22 @@
         :class="[
           isFreshActive(b.id) ? 'fresh bg-accent-soft ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover',
         ]"
-        @click="emit('select', b.id)"
+        @click="onBranchClick(b.id)"
         @mouseleave="confirmingStopId = null"
       >
-        <!-- 状态点：running → accent 脉冲；done → success；error → danger；其余 subtle -->
-        <span
-          class="size-[5px] shrink-0 rounded-full"
-          :class="dotClassFor(b)"
-        />
+        <!-- 状态点：running → accent 脉冲；done → success；error → danger；其余 subtle。
+             未读角标（RV2）：分支状态变化未查看时在状态点外加 accent ring 高亮，用户 select 后清除。 -->
+        <span class="relative flex shrink-0">
+          <span
+            class="size-[5px] rounded-full"
+            :class="dotClassFor(b)"
+          />
+          <span
+            v-if="isUnread(b.id)"
+            class="absolute -right-1 -top-1 size-[5px] rounded-full bg-accent ring-2 ring-bg"
+            data-testid="fork-group-branch-unread"
+          />
+        </span>
         <div class="min-w-0 flex-1">
           <div class="truncate text-[12px] leading-[1.3] text-fg">{{ b.label }}</div>
           <!-- 分支 N pill（accent-soft 底 + 9px mono，spec §7 branch-pill） -->
@@ -122,11 +130,22 @@ import { GitFork, ChevronRight, ChevronDown, Square, Check } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { SessionSummary } from '@xyz-agent/shared'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
+import { useForkBranchBadges } from '@/composables/effects/useForkNoticeEffect'
 
 /** fresh 高亮持续时间（ms）。测试用 vi.useFakeTimers + advanceTimersByTime 推进。 */
 const FRESH_FADE_MS = 3200
 
 const { t } = useI18n()
+
+/** RV2 未读角标：分支状态变化未查看时 unreadByBranch[branchId]=true。select 时清未读。 */
+const { unreadByBranch, clearUnread } = useForkBranchBadges()
+function isUnread(branchId: string): boolean {
+  return unreadByBranch.value.get(branchId) === true
+}
+function onBranchClick(branchId: string): void {
+  clearUnread(branchId)
+  emit('select', branchId)
+}
 
 const props = withDefaults(
   defineProps<{

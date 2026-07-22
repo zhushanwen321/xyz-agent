@@ -234,6 +234,9 @@ export default {
   forkNotice: {
     forkedPrefix: '已 fork 到后台',
     askedPrefix: '已在新分支提问',
+    branchDone: '分支已完成',
+    branchError: '分支出错',
+    branchStopped: '分支已停止',
     view: '查看',
     viewBranch: '查看分支',
     dismiss: '关闭',

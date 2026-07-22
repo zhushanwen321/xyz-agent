@@ -234,6 +234,9 @@ export default {
   forkNotice: {
     forkedPrefix: 'Forked to background',
     askedPrefix: 'Asked in a new branch',
+    branchDone: 'Branch completed',
+    branchError: 'Branch errored',
+    branchStopped: 'Branch stopped',
     view: 'View',
     viewBranch: 'View branch',
     dismiss: 'Dismiss',

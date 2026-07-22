@@ -100,6 +100,7 @@
             @new-session="onNewSession"
             @rename="onRenameSession"
             @delete="onDeleteSession"
+            @stop-branch="onStopBranch"
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'subagents'">
@@ -187,6 +188,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useCommandStore } from '@/stores/command'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useChat } from '@/composables/features/useChat'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
@@ -219,6 +221,7 @@ const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant } = useSidebar()
+const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
 
@@ -331,6 +334,14 @@ async function onDeleteSession(id: string): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('sidebar.deleteSessionFailed', { msg }))
   }
+}
+
+/**
+ * 停止后台分支 session（FR-19，ForkGroup 两段式确认后 emit stopBranch）。
+ * 调 useChat.abort 中断该分支的活跃回合——abort 乐观清 dispatching，收口靠 runtime 广播。
+ */
+function onStopBranch(id: string): void {
+  void abortSession(id)
 }
 
 async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {

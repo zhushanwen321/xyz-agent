@@ -105,14 +105,21 @@ const totalCount = computed(() =>
  * 从组内 sessions filter parentSession 指向当前 session：
  * - 优先匹配 parentSession === sessionFile（活跃 session 落盘路径，§8.1 规范）
  * - fallback 匹配 parentSession === id（源 session 未落盘时用 sessionId 作血缘键，FR-20）
+ *
+ * 竞态修复（RV5）：同时匹配两种 key，而非 `sessionFile || id` 单一键。
+ * FR-20 fallback 在 fork 时可能写 srcSessionId（源未落盘），渲染时源已落盘 sessionFile 变为文件路径，
+ * 若只取 sessionFile 会漏掉按 id 注册的分支；若只取 id 会漏掉已落盘的源。两种 key 取并集保证稳定命中。
  * 仅在当前 session 所在组内 filter（分支与父同 cwd，不需跨组扫描）。
  */
 function branchesOf(s: SessionSummary): SessionSummary[] {
-  const parentKey = s.sessionFile || s.id
   return props.groups
     .filter((g) => g.cwd === s.cwd)
     .flatMap((g) => g.sessions)
-    .filter((b) => b.parentSession != null && b.parentSession === parentKey)
+    .filter(
+      (b) =>
+        b.parentSession != null &&
+        (b.parentSession === s.sessionFile || b.parentSession === s.id),
+    )
 }
 
 /** 单一 Esc 监听器——避免每个 SessionItem 各自注册 window keydown listener（N 项 N 个监听器）。

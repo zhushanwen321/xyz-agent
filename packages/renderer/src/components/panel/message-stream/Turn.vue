@@ -317,6 +317,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
+import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
@@ -342,7 +343,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const chat = useChatStore()
 const { editAndResend } = useChat()
-const { forkSession, forkSessionAsk } = useSidebar()
+const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
 const fileTreeStore = useFileTreeStore()
 
@@ -503,16 +504,14 @@ async function onFork(msg: Message): Promise<void> {
 }
 
 /**
- * fork 提问（高频）：从指定 assistant 处 fork + 把后续输入作为新分支首条 user message。
- * W2 入口层先打通调用骨架（forkSessionAsk 已实现 fork+send+回滚），composer fork 模式由后续 wave 接入。
- * 此处先走 prompt 收集提问内容（占位实现，待 composer fork 模式就绪后改为读 composer）。
+ * fork 提问（高频）：从指定 assistant 处进入 composer fork 模式（spec §2 层②）。
+ * 经 useForkModeChannel 发 signal，Composer 监听后调自身 enterForkMode（聚焦输入框等用户键入），
+ * 用户输入完成后由 Composer 的 fork 模式发送路径调 forkSessionAsk（fork + 把 content 作首条 user）。
+ * 不在此处直接 fork——fork 点的选择权交回 composer（与末条 assistant 快捷键 ⌘⇧G 同路径）。
  */
-async function onForkAsk(msg: Message): Promise<void> {
+function onForkAsk(msg: Message): void {
   if (!msg) return
-  // TODO(composer-fork-mode): 接入 composer fork 模式获取 content（spec §2 层②）。
-  // 当前无 composer fork 模式，先以空内容占位跳过实际发送（避免误触发送空消息）。
-  // 真正的 fork-to-ask 由 composer fork 模式触发 forkSessionAsk(srcId, msgId, content)。
-  void forkSessionAsk
+  triggerEnterForkMode(props.sessionId, msg.id)
 }
 
 /**

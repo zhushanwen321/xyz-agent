@@ -55,6 +55,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitFork, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import type { BranchChangeKind } from '@/composables/features/useForkBranchNotify'
 
 const { t } = useI18n()
 
@@ -64,6 +65,8 @@ const props = withDefaults(
     branchName?: string
     /** fork-ask 的提问预览（优先于 branchName 展示）。 */
     preview?: string
+    /** 后台分支状态变化语义（RV2）：done/error/stopped 时前缀展示分支状态文案。 */
+    kind?: BranchChangeKind
     /** 源分支是否已删除——true 时「查看」降级为纯文本不可点（spec §4）。 */
     sessionDeleted?: boolean
   }>(),
@@ -77,12 +80,21 @@ const emit = defineEmits<{
   dismiss: []
 }>()
 
-/** 前缀文案：有 preview → fork-ask 文案；否则 fork 后台文案。 */
-const prefix = computed(() =>
-  props.preview
-    ? t('panel.forkNotice.askedPrefix')
-    : t('panel.forkNotice.forkedPrefix'),
-)
+/** 前缀文案：kind 优先（分支状态变化）→ preview（fork-ask）→ fork 后台文案。 */
+const prefix = computed(() => {
+  switch (props.kind) {
+    case 'done':
+      return t('panel.forkNotice.branchDone')
+    case 'error':
+      return t('panel.forkNotice.branchError')
+    case 'stopped':
+      return t('panel.forkNotice.branchStopped')
+    default:
+      return props.preview
+        ? t('panel.forkNotice.askedPrefix')
+        : t('panel.forkNotice.forkedPrefix')
+  }
+})
 
 /** 加粗展示的分支名 / 提问预览。 */
 const label = computed(() => props.preview || props.branchName || '')
