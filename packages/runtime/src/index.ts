@@ -22,6 +22,7 @@ import { EventInterpreter } from './services/session/event-interpreter.js'
 import { join, resolve } from 'node:path'
 import { ExtensionService } from './services/extension-service.js'
 import { SkillRegistry } from './services/skill-registry.js'
+import { ReloadOrchestrator } from './services/session/reload-orchestrator.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
@@ -267,6 +268,19 @@ async function main(): Promise<void> {
     },
     configDir,
     sessionService,
+  })
+
+  // ── W5 ReloadOrchestrator：skill 变动 → 受影响 session pi reload（重扫 skill）────
+  // 依赖 sessionService 窄接口（isSessionIdle/promptReload/hasSession），故在 skillRegistry 之后构造。
+  // 绑定两条链路：
+  //   1. skillRegistry.onChange → onSkillChange（skill 变动触发）
+  //   2. sessionService message.complete 广播 → onMessageComplete（running session 生成完成消费 pending 队）
+  const reloadOrchestrator = new ReloadOrchestrator({ sessionService })
+  skillRegistry.onChange((affectedSessionIds) => {
+    void reloadOrchestrator.onSkillChange(affectedSessionIds)
+  })
+  sessionService.setOnMessageComplete((sid) => {
+    void reloadOrchestrator.onMessageComplete(sid)
   })
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）

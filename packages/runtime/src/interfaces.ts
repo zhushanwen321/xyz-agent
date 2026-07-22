@@ -122,6 +122,12 @@ export interface ISessionService {
   workflowAction(sessionId: string, action: 'pause' | 'resume' | 'abort', runId: string): Promise<void>
   /** 取消 running subagent（经扩展 /subagents cancel，不经 LLM；对称 workflowAction） */
   subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void>
+  /** W5：session 是否空闲（进程存活且非生成中），供 ReloadOrchestrator 判断立即/排队 reload。 */
+  isSessionIdle(sessionId: string): boolean
+  /** W5：session 是否仍存活（未被 delete），供 ReloadOrchestrator 检测排队期删除。 */
+  hasSession(sessionId: string): boolean
+  /** W5：发 `/__xyz_reload__` 触发 pi reload（builtin extension handler 调 ctx.reload）。 */
+  promptReload(sessionId: string): Promise<void>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   /**

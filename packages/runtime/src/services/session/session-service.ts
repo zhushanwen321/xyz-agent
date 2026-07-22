@@ -94,6 +94,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 未注入时 getReplaceSystemPrompt 返回 undefined（pi 走默认系统提示词）。
    */
   private configService: IConfigService | null = null
+  /**
+   * W5：message.complete 广播回调（组合根注入 ReloadOrchestrator.onMessageComplete）。
+   * 经 setter 注入（同 setModelContextWindowResolver 模式），避免构造参数环
+   * （orchestrator 依赖 sessionService，sessionService 不能反向依赖 orchestrator 具体类型）。
+   * 未注入时 message.complete 广播无额外副作用（reload 编排不生效）。
+   */
+  private onMessageComplete: ((sessionId: string) => void) | null = null
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -165,6 +172,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   setConfigService(configService: IConfigService): void {
     this.configService = configService
+  }
+
+  /** W5：注入 message.complete 回调（组合根绑 ReloadOrchestrator.onMessageComplete）。 */
+  setOnMessageComplete(handler: (sessionId: string) => void): void {
+    this.onMessageComplete = handler
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
@@ -494,6 +506,35 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     await client.prompt(`/subagents ${action} ${subagentId}`)
   }
 
+  /**
+   * W5：session 是否处于可 reload 的空闲态（进程存活且非生成中）。
+   * 供 ReloadOrchestrator 判断 skill 变更时是立即 reload 还是排队。
+   */
+  isSessionIdle(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId)
+    return !!session && !session.isGenerating
+  }
+
+  /**
+   * W5：session 是否仍存活（sessions Map 含此 id，进程未退出 / 未被 delete）。
+   * 供 ReloadOrchestrator 检测排队期 session 删除，避免对已死 session 发 reload。
+   */
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId)
+  }
+
+  /**
+   * W5：向 session 发 `/__xyz_reload__` 触发 pi reload（重扫 skill + 重建 runtime）。
+   * 对称 workflowAction 的转发模式：直接 client.prompt 绕过 dispatcher busy 预检 / hook，
+   * 专用于 internal reload action（builtin extension 注册，不经 LLM）。client 不存在或
+   * prompt 抛错向上抛，由 ReloadOrchestrator 降级 catch（best-effort，不阻塞）。
+   */
+  async promptReload(sessionId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not active`)
+    await client.prompt('/__xyz_reload__')
+  }
+
   getSummary(sessionId: string): SessionSummary | undefined {
     const session = this.sessions.get(sessionId)
     return session ? this.toSummary(session) : undefined
@@ -692,7 +733,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
   ): Promise<IManagedSessionView> {
-    const send = (msg: ServerMessage) => this.broker.broadcast(msg)
+    const send = (msg: ServerMessage) => {
+      this.broker.broadcast(msg)
+      // W5：message.complete 广播后通知 reload-orchestrator（消费 pendingReload 队）。
+      // 覆盖所有 message.complete 路径（event-interpreter turn-end 主路径 + dispatcher abort
+      // 手动广播）。onMessageComplete 未注入时为 no-op。
+      if (msg.type === 'message.complete' && msg.payload && typeof msg.payload === 'object' && 'sessionId' in msg.payload) {
+        this.onMessageComplete?.((msg.payload as { sessionId: string }).sessionId)
+      }
+    }
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
     const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
