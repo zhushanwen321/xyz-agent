@@ -64,6 +64,16 @@ v3/
 ├── flow-2-code-review/     [L3/L4 跨区联动 · 完成] spec.md + draft-cases.html（含变更集卡 5 态）
 ├── flow-3-subagent/        ✅ 护城河：多 agent 编排 + 进度聚合 + steer（spec + draft 已立）
 │
+├── fast-fork/              [L2 跨区联动 · 痛点1 spec + draft 已立，待实现]
+│   ├── spec.md             ✅ 快速分叉设计 SSOT（Fork-to-Ask + 后台分支管理）
+│   └── draft-fast-fork.html ✅ 终态交互 demo（composer fork 模式 + 分支小列表 + streaming 态 fork）
+│
+├── fast-merge/             [L2 跨区联动 + Extension · 痛点2 spec 已立，待实现（依赖痛点1 基础层）]
+│   └── spec.md             ✅ 多分支差异聚合设计 SSOT（B+C+F 三件套 + structured-output + 贴 composer）
+│
+├── fast-handoff/           [L2 跨区联动 + Extension · 痛点3 spec 已立，待实现（与痛点2 共享三件套架构）]
+│   └── spec.md             ✅ 一键交接到新 session 设计 SSOT（三件套 + structured-output + 新建空白 session）
+│
 ├── research/               [调研依据 · 非设计稿]
 │   └── pi-steer-followup-capability.md   pi composer steer/followup 队列源码调研（panel/composer draft 依据）
 │

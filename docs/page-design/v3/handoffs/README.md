@@ -62,8 +62,11 @@
 | 14 | `handoff-overview-view.md` | draft-overview | overview | ✅ 完成 | — |
 | 15 | `handoff-flows-flow-2-code-review.md` | draft-cases | flow-2 | ✅ 完成（老叶子补录） | — |
 | 16 | `handoff-flows-flow-3-subagent.md` | draft-cases | flow-3 | ✅ 完成 | — |
+| 17 | `handoff-fast-fork.md` | draft-fast-fork | fast-fork | ⏳ 待开工（spec + demo 已立） | ★痛点1 主线 |
+| 18 | `handoff-fast-merge.md` | （无独立 draft，复用 fast-fork） | fast-merge | ⏳ 待开工（spec 已立，依赖痛点1 基础层） | ★痛点2 主线 |
+| 19 | `handoff-fast-handoff.md` | （无独立 draft） | fast-handoff | ⏳ 待开工（spec 已立，与痛点2 共享三件套架构） | ★痛点3 主线 |
 
-**完成度**：本目录 16 叶 handoff 全部 ✅（含计划外深化 `panel-breadcrumb-popovers`、`sidebar-collapsed-state`、`flows-flow-2-code-review`）。原 `handoff-settings-view.md`（空白占位 + 全屏覆盖形态）已删除——settings 单元已完整落地，5 份 per-menu handoff 见下方特例。
+**完成度**：本目录 19 叶 handoff（16 ✅ 完成 + 3 ⏳ 待开工）。原 `handoff-settings-view.md`（空白占位 + 全屏覆盖形态）已删除——settings 单元已完整落地，5 份 per-menu handoff 见下方特例。`handoff-fast-fork.md` / `handoff-fast-merge.md` / `handoff-fast-handoff.md` 是"设计完成待实现"型 handoff（非验收型）。痛点2 强依赖痛点1 的 parentSession + forkEntryId 基础层；痛点3 与痛点2 共享 B+C+F 三件套架构（setActiveTools + before_agent_start + turn_end + structured-output），可并行开发。
 
 ## 全局交接约束（所有 handoff 共享，不每份重复）
 
