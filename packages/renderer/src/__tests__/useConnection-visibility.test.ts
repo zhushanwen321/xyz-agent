@@ -75,11 +75,6 @@ describe('useConnection 可见性切换主动重连（W4）', () => {
     vi.clearAllMocks()
     mockStateRef = ref('disconnected')
   })
-  afterEach(() => {
-    // 清掉可能残留的 visibilitychange 监听（每个测试 init 后会 teardown）
-    document.removeEventListener('visibilitychange', () => {})
-    document.visibilityState // 触发一次读，无害
-  })
 
   it('切回应用（visible）且未连接时 → connect 被调用', async () => {
     const { init, teardown } = useConnection()
@@ -189,7 +184,7 @@ describe('useConnection error envelope details 透传（R2）', () => {
     teardown()
   })
 
-  it('error envelope details.detail 为字符串 → 作 cwd 字段（WORKTREE_EXISTS 场景）', async () => {
+  it('error envelope details.detail 为对象（WORKTREE_EXISTS 的 {cwd, dirName}）→ cwd 展开到 reject Error', async () => {
     const { init, teardown } = useConnection()
     await init()
 
@@ -199,15 +194,17 @@ describe('useConnection error envelope details 透传（R2）', () => {
       payload: {
         code: 'WORKTREE_EXISTS',
         message: 'worktree 目录已存在',
-        details: { detail: '/ws/feat-existing' },
+        details: { detail: { cwd: '/ws/feat-existing', dirName: 'feat-existing' } },
       },
     })
 
     expect(mockPendingReject).toHaveBeenCalledTimes(1)
     const [, err] = mockPendingReject.mock.calls[0]
     expect((err as { code: string }).code).toBe('WORKTREE_EXISTS')
-    // 字符串 detail → cwd 字段（CreateWorktreeModal exists 态「直接开始」读此 cwd）
+    // object detail 经 Object.assign 展开 → cwd + dirName 都在 Error 上
+    // CreateWorktreeModal exists 态「直接开始」读 lastError.cwd
     expect((err as { cwd: string }).cwd).toBe('/ws/feat-existing')
+    expect((err as { dirName: string }).dirName).toBe('feat-existing')
 
     teardown()
   })

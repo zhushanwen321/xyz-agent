@@ -20,6 +20,7 @@
  */
 import { join } from 'node:path'
 import { WorkspaceDetector } from './workspace-detector.js'
+import type { WorktreeErrorCode } from '@xyz-agent/shared'
 import type { IShellRunner } from '../ports/shell-runner.js'
 import type { IGitExecutor } from '../ports/git-executor.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -48,9 +49,27 @@ const LOCAL_MAIN = 'main'
  * 非法分支名规则（与前端 CreateWorktreeModal.INVALID_BRANCH_REGEX 一致 + 反斜杠）。
  * runtime 是安全边界，前端校验只是 UX——此处必须独立校验防 Windows 路径遍历
  * （branch=`..\\..\\evil` → dirName 保留反斜杠 → join 解析到 wsRoot 外）。
- * 匹配任一即非法：以 . 或 - 开头、含 .. / ~ / ^ / : / 空格 / 反斜杠。
+ *
+ * 匹配任一即非法（对齐 git refname 规则 git check-ref-format）：
+ * - `^\.` / `^-`：以点 / 横杠开头（git refname 禁止以 . 开头；此处一并挡 - 开头以便目录名规整）
+ * - `..`：连续两点
+ * - `[~^:?*\[\]@{}]`：git refname 禁止字符（~ ^ : ? * [ ] @{ } 等；@{ 单独也挡）
+ * - `\s`：空格
+ * - `\\`：反斜杠（Windows 路径遍历防护，git refname 同样禁止）
+ * - `\/$`：以 / 结尾（git refname 禁止）
+ * - `\.lock$`：.lock 后缀（git refname 保留）
+ *
+ * 控制字符（\x00-\x1f\x7f）git refname 同样禁止，但 npm 分支名极少含，暂不挡（git 兜底拒绝）。
  */
-const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:]|\s|\\)/
+const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
+
+/**
+ * 构造 WorktreeService 扁平错误（code 类型编译时校验为 WorktreeErrorCode）。
+ * 错误对象形状：`Error & { code: WorktreeErrorCode; detail?: unknown }`。
+ */
+function worktreeError(code: WorktreeErrorCode, message: string, detail?: unknown): Error {
+  return Object.assign(new Error(message), detail !== undefined ? { code, detail } : { code })
+}
 
 export class WorktreeService implements IWorktreeService {
   constructor(private deps: WorktreeServiceDeps) {}
@@ -60,40 +79,45 @@ export class WorktreeService implements IWorktreeService {
 
     // 0. 分支名校验（安全边界，防 Windows 路径遍历）。前端校验只是 UX，runtime 必须独立校验。
     if (INVALID_BRANCH_REGEX.test(branch)) {
-      throw Object.assign(new Error(`非法分支名: ${branch}`), { code: 'INVALID_BRANCH' })
+      throw worktreeError('INVALID_BRANCH', `非法分支名: ${branch}`)
     }
 
     // 1. 检测 .bare workspace 结构（detectBare 内部复用 WorkspaceDetector）
     const { isBareMode, wsRoot, barePath } = this.detectBare(workspaceHint)
 
     if (!isBareMode) {
-      throw Object.assign(new Error('当前目录不在 .bare workspace 下，无法创建 worktree'), {
-        code: 'NOT_BARE_REPO',
-      })
+      throw worktreeError('NOT_BARE_REPO', '当前目录不在 .bare workspace 下，无法创建 worktree')
     }
 
     // 2. 目录名转换 + 冲突检查
     const dirName = branch.replace(/\//g, '-')
     const newWtPath = join(wsRoot, dirName)
     if (this.deps.fs.existsSync(newWtPath)) {
-      throw Object.assign(new Error(`worktree 目录已存在: ${newWtPath}`), {
-        code: 'WORKTREE_EXISTS',
-        detail: newWtPath,
-      })
+      // detail 同时带 cwd + dirName：前端可核对 dirName 是否与当前请求分支一致，
+      // 区分「同分支已存在」（可直接开始）与「另一分支名映射同目录碰撞」（不可直接开始，
+      // 否则切到错误 worktree）。feat/a 与 feat-a 映射同目录即此类碰撞。
+      throw worktreeError(
+        'WORKTREE_EXISTS',
+        `worktree 目录已存在: ${newWtPath}`,
+        { cwd: newWtPath, dirName },
+      )
     }
 
     // 3. base 解析
     const baseRef = await this.resolveBaseRef(barePath, baseBranch, workspaceHint)
 
     // 4. git worktree add（exitCode 非 0 → 抛 GIT_FAILED + detail，避免静默吞 stderr 后跑 setup 到未创建目录）
+    // 参数顺序对齐 git-worktree(1) man page：`git worktree add [-b <branch>] <path> <commit-ish>`
+    // 选项 -b 在前，位置参数 path/commit-ish 在后。
     const addResult = await this.deps.gitExecutor.exec(barePath, 'worktree', [
-      'add', newWtPath, '-b', branch, baseRef,
+      'add', '-b', branch, newWtPath, baseRef,
     ])
     if (addResult.exitCode !== 0) {
-      throw Object.assign(new Error(`git worktree add 失败: ${addResult.stderr}`), {
-        code: 'GIT_FAILED',
-        detail: { exitCode: addResult.exitCode, stderr: addResult.stderr },
-      })
+      throw worktreeError(
+        'GIT_FAILED',
+        `git worktree add 失败: ${addResult.stderr}`,
+        { exitCode: addResult.exitCode, stderr: addResult.stderr },
+      )
     }
 
     // 5. setup 脚本（可选，不存在跳过）
@@ -106,10 +130,11 @@ export class WorktreeService implements IWorktreeService {
         timeout: SETUP_TIMEOUT_MS,
       })
       if (result.exitCode !== 0) {
-        throw Object.assign(new Error(`setup 脚本失败（exitCode=${result.exitCode}）`), {
-          code: 'SETUP_FAILED',
-          detail: { exitCode: result.exitCode, stderr: result.stderr },
-        })
+        throw worktreeError(
+          'SETUP_FAILED',
+          `setup 脚本失败（exitCode=${result.exitCode}）`,
+          { exitCode: result.exitCode, stderr: result.stderr },
+        )
       }
     }
 

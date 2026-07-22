@@ -78,7 +78,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   worktreeApiMockHolder.create.mockReset()
   // 默认实现：create 成功返回新 cwd
-  worktreeApiMockHolder.create.mockResolvedValue({ cwd: '/repo/.worktrees/feat-x', steps: [] })
+  worktreeApiMockHolder.create.mockResolvedValue({ cwd: '/repo/.worktrees/feat-x', branch: 'feat-x' })
   flowMock._branch.value = 'main'
 })
 
@@ -162,9 +162,17 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
     expect($('[data-testid="worktree-create-btn"]').attributes('disabled')).toBeDefined()
   })
 
+  it('CM-4e: 分支名含反斜杠 → error + disabled（与 runtime 一致，防 Windows 路径遍历）', async () => {
+    await mountModal()
+    await $('[data-testid="worktree-branch-input"]').setValue('a\\b')
+    await flushPromises()
+    expect(has('[data-testid="worktree-branch-error"]')).toBe(true)
+    expect($('[data-testid="worktree-create-btn"]').attributes('disabled')).toBeDefined()
+  })
+
   it('CM-5: 点创建 → 进 progress 态 → 调 worktreeApi.create', async () => {
     // create 挂起 → 停留 progress 态（验证创建中 DOM + create 已被调）
-    let _resolve!: (v: { cwd: string; steps: unknown[] }) => void
+    let _resolve!: (v: { cwd: string; branch: string }) => void
     worktreeApiMockHolder.create.mockImplementationOnce(
       () => new Promise((r) => { _resolve = r }),
     )
@@ -177,14 +185,14 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
     expect(has('[data-testid="worktree-loading-bar"]')).toBe(true)
     expect(worktreeApiMockHolder.create).toHaveBeenCalledTimes(1)
     // 释放挂起 promise 避免 unhandled rejection
-    _resolve({ cwd: '/repo/.worktrees/feat-x', steps: [] })
+    _resolve({ cwd: '/repo/.worktrees/feat-x', branch: 'feat-x' })
     await flushPromises()
   })
 
   it('CM-6: worktreeApi.create 成功 → 进 success 态 → 2s 后 emit success(cwd)', async () => {
     vi.useFakeTimers()
     try {
-      worktreeApiMockHolder.create.mockResolvedValueOnce({ cwd: '/repo/.worktrees/feat-x', steps: [] })
+      worktreeApiMockHolder.create.mockResolvedValueOnce({ cwd: '/repo/.worktrees/feat-x', branch: 'feat-x' })
       await mountModal()
       await $('[data-testid="worktree-branch-input"]').setValue('feat/x')
       await flushPromises()
@@ -223,6 +231,40 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
     expect($('[data-testid="worktree-error-output"]').text()).toContain('npm: command not found')
   })
 
+  it('CM-7b: worktreeApi.create 失败(GIT_FAILED) → 进 error 态 → 显示 exitCode+stderr（与 SETUP_FAILED 同形 detail）', async () => {
+    await mountModal()
+    worktreeApiMockHolder.create.mockRejectedValueOnce(
+      Object.assign(new Error('git worktree add failed'), {
+        code: 'GIT_FAILED',
+        exitCode: 128,
+        stderr: 'fatal: not a valid object name',
+      }),
+    )
+    await $('[data-testid="worktree-branch-input"]').setValue('feat/x')
+    await flushPromises()
+    await $('[data-testid="worktree-create-btn"]').trigger('click')
+    await flushPromises()
+    expect(has('[data-testid="worktree-step-failed"]')).toBe(true)
+    expect($('[data-testid="worktree-step-failed"]').text()).toContain('128')
+    expect(has('[data-testid="worktree-error-output"]')).toBe(true)
+    expect($('[data-testid="worktree-error-output"]').text()).toContain('fatal: not a valid object name')
+  })
+
+  it('CM-7c: worktreeApi.create 失败(NOT_BARE_REPO) → 进 error 态 → 无 stderr 时显 message fallback', async () => {
+    await mountModal()
+    worktreeApiMockHolder.create.mockRejectedValueOnce(
+      Object.assign(new Error('当前目录不在 .bare workspace 下'), { code: 'NOT_BARE_REPO' }),
+    )
+    await $('[data-testid="worktree-branch-input"]').setValue('feat/x')
+    await flushPromises()
+    await $('[data-testid="worktree-create-btn"]').trigger('click')
+    await flushPromises()
+    expect(has('[data-testid="worktree-step-failed"]')).toBe(true)
+    expect(has('[data-testid="worktree-error-output"]')).toBe(true)
+    // 无 stderr → 走 message fallback（pre 标签显 message）
+    expect($('[data-testid="worktree-error-output"]').text()).toContain('当前目录不在 .bare workspace 下')
+  })
+
   it('CM-8: worktreeApi.create 失败(WORKTREE_EXISTS) → 进 exists 态', async () => {
     await mountModal()
     worktreeApiMockHolder.create.mockRejectedValueOnce(
@@ -247,7 +289,7 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
     await flushPromises()
     expect(has('[data-testid="worktree-retry-btn"]')).toBe(true)
     // 重试：create 第二次调用成功 → 回 progress 后转 success
-    worktreeApiMockHolder.create.mockResolvedValueOnce({ cwd: '/repo/.worktrees/feat-x', steps: [] })
+    worktreeApiMockHolder.create.mockResolvedValueOnce({ cwd: '/repo/.worktrees/feat-x', branch: 'feat-x' })
     await $('[data-testid="worktree-retry-btn"]').trigger('click')
     await flushPromises()
     // 第二次调用 create
@@ -288,7 +330,7 @@ describe('CreateWorktreeModal 使用者视角（DOM 可见）', () => {
 
   it('CM-12: progress 态 DOM 含 3 步列表 + loading bar，无关闭 X', async () => {
     // create 挂起 → 停留 progress 态
-    let _resolve!: (v: { cwd: string; steps: unknown[] }) => void
+    let _resolve!: (v: { cwd: string; branch: string }) => void
     worktreeApiMockHolder.create.mockImplementationOnce(
       () => new Promise((r) => { _resolve = r }),
     )
@@ -306,7 +348,7 @@ describe('CreateWorktreeModal 使用者视角（DOM 可见）', () => {
     // 无关闭 X（progress 创建中不可关闭）
     expect(has('[data-testid="worktree-close-x"]')).toBe(false)
     // 释放挂起 promise 避免 unhandled rejection
-    _resolve({ cwd: '/repo/.worktrees/feat-x', steps: [] })
+    _resolve({ cwd: '/repo/.worktrees/feat-x', branch: 'feat-x' })
     await flushPromises()
   })
 

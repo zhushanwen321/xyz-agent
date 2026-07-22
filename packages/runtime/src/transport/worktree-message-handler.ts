@@ -8,11 +8,13 @@
  *
  * 错误：WorktreeService 用 `Object.assign(new Error(...), { code, detail })` 扁平错误模式
  * （非 class，详见 ports/worktree-service.ts 注释）。本 handler 从 error.code 提取业务错误码
- * 透传给前端（NOT_BARE_REPO / WORKTREE_EXISTS / SETUP_FAILED / GIT_FAILED）；
+ * 透传给前端（NOT_BARE_REPO / WORKTREE_EXISTS / SETUP_FAILED / GIT_FAILED / INVALID_BRANCH）；
  * 无 code 的未知错误归为 'worktree_failed'。
+ *
+ * 错误码联合类型见 shared WorktreeEnvelopeCode（runtime ↔ renderer 契约 SSOT）。
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, WorktreeEnvelopeCode } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 
@@ -60,7 +62,9 @@ export class WorktreeMessageHandler {
    */
   private sendWorktreeError(ws: WsType, id: string | undefined, e: unknown): void {
     const err = e as CodedError & Error
-    const code = (err && typeof err.code === 'string') ? err.code : 'worktree_failed'
+    const code: WorktreeEnvelopeCode = (err && typeof err.code === 'string')
+      ? (err.code as WorktreeEnvelopeCode)
+      : 'worktree_failed'
     const message = (err && err.message) ? err.message : 'worktree 创建失败'
     const details = (err && err.detail !== undefined) ? { detail: err.detail } : undefined
     this.ctx.sendError(ws, code, message, id, details)

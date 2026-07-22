@@ -109,7 +109,8 @@ const isWorktreeModalOpen = computed(() => flow.state.value === 'worktree-modal'
 
 /**
  * 是否在 bare repo + worktree 结构下。
- * 数据源：gitInfo.isBare（runtime 经 session.gitIsWorktree 透出，待 RPC 接通后填充）。
+ * 数据源：gitInfo.isBare（runtime 经 session.isBareWorkspace 透出，WorkspaceDetector
+ * 检测 .bare 命中后填充）。注：gitIsWorktree 是另一个未连通字段，勿混淆。
  * 测试经 gitInfo 注入（INT-1 默认 isBare=true）。
  */
 const isBareWorkspace = computed(() => flow.gitInfo.value?.isBare ?? false)

@@ -39,7 +39,9 @@ export interface WorktreeCreateResult {
  *
  * 失败模式（实现抛 Object.assign 错误）：
  * - NOT_BARE_REPO：当前 cwd 不在 bare repo + worktree 结构下
- * - WORKTREE_EXISTS：目标 worktree 目录已存在（同分支名重复创建）
+ * - WORKTREE_EXISTS：目标 worktree 目录已存在。detail = { cwd, dirName }，
+ *   前端可核对 dirName 是否与当前请求分支一致——区分「同分支已存在」与
+ *   「另一分支名映射同目录碰撞」（feat/a 与 feat-a 映射同目录）。
  * - GIT_FAILED：git worktree add 失败（exitCode 非 0）
  * - SETUP_FAILED：setup-worktree.sh 失败（exitCode 非 0），detail 含 exitCode + stderr
  */

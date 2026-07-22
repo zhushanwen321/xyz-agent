@@ -50,7 +50,7 @@ export default {
     successDesc: 'Switching to the new working directory…',
     failedStep: 'Failed step',
     retryBtn: 'Retry',
-    cleanupBtn: 'Cleanup and close',
+    cleanupBtn: 'Close',
     existsNotice: 'A worktree for this branch already exists. You can start directly.',
     useExistingBtn: 'Start here',
   },

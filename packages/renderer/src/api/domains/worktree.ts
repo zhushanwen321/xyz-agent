@@ -11,24 +11,13 @@
  * 依赖方向：api/request（command）+ shared（协议类型 ReplyPayloadMap）。
  */
 import { command } from '../request'
+import type { ClientMessageMap, ServerMessageMap } from '@xyz-agent/shared'
 
-/** worktree.create 入参（对齐 ClientMessageMap['worktree.create']） */
-export interface WorktreeCreateParams {
-  /** 新分支名（如 'feat/oauth'）。目录名由 runtime 派生（/ → -）。 */
-  branch: string
-  /** 基分支：current（继承当前分支）/ origin/main（校验远端 ref 存在后使用） */
-  baseBranch?: 'current' | 'origin/main'
-  /** workspace 检测起点 cwd（缺省用 process.cwd()）。前端发起时显式传入 */
-  workspaceHint?: string
-}
-
-/** worktree.create 成功 reply（对齐 ServerMessageMap['worktree.created']） */
-export interface WorktreeCreateReply {
-  /** 新 worktree 的绝对路径（cwd） */
-  cwd: string
-  /** 新分支名（与入参一致，原始分支名含斜杠） */
-  branch: string
-}
+// 从 shared 契约派生，消除本地手写定义的漂移风险。
+// 形状与原手写一致：WorktreeCreateParams = { branch, baseBranch?, workspaceHint? }，
+// WorktreeCreateReply = { cwd, branch }。
+export type WorktreeCreateParams = ClientMessageMap['worktree.create']
+export type WorktreeCreateReply = ServerMessageMap['worktree.created']
 
 /**
  * worktree 域 API。

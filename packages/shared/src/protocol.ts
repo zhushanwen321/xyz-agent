@@ -240,6 +240,29 @@ export type DefaultModelSource =
   | 'default-set'      // config.setDefaultModel 主动设置
   | 'model-switch'     // model.switch 时持久化全局默认模型
 
+/**
+ * WorktreeService 抛出的业务错误码（runtime ↔ renderer 契约 SSOT）。
+ *
+ * runtime WorktreeService.create 抛 `Object.assign(new Error(msg), { code, detail })` 扁平错误，
+ * WorktreeMessageHandler.sendWorktreeError 把 code 透传到 error envelope 的 code 字段。
+ * renderer CreateWorktreeModal / useConnection 按 code 分流：
+ * - WORKTREE_EXISTS → modal 转 exists 态（detail 是已存在 cwd 字符串）
+ * - SETUP_FAILED / GIT_FAILED / INVALID_BRANCH / NOT_BARE_REPO → modal 转 error 态（detail 是 {exitCode,stderr} 或无）
+ * - 兜底字面量 'worktree_failed'（handler 对未知错误归一，不在 WorktreeService 主动抛出）
+ *
+ * 新增错误码必须在此登记，编译器强制两端同步（防止 runtime 改码 renderer switch 静默失效）。
+ */
+export type WorktreeErrorCode =
+  | 'NOT_BARE_REPO'     // 当前 cwd 非 .bare workspace（WorkspaceDetector 未命中）
+  | 'WORKTREE_EXISTS'   // 目标 worktree 目录已存在（detail: string = 已存在 cwd）
+  | 'SETUP_FAILED'      // .bare/custom-hooks/setup-worktree.sh 失败（detail: {exitCode, stderr}）
+  | 'GIT_FAILED'        // git worktree add 失败（detail: {exitCode, stderr}）
+  | 'INVALID_BRANCH'    // 分支名非法（INVALID_BRANCH_REGEX 拦截，含路径遍历防护）
+/** handler 对未知错误归一的兜底字面量（非 WorktreeService 主动抛出，单列让 renderer switch 可穷尽） */
+export type WorktreeUnknownErrorCode = 'worktree_failed'
+/** envelope code 字段的完整联合（业务码 + 兜底） */
+export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
+
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
   | 'session.compacting' | 'session.compacted' | 'session.renamed'

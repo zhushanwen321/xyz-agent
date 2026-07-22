@@ -256,6 +256,37 @@ describe('ShellRunner', () => {
     // SIGKILL 后子进程 close —— 不应再 resolve/reject（promise 已 reject，close handler 早退）
     fake.emit('close', 137)
   })
+
+  // SR-5: 跨 chunk 行缓冲 —— 子进程输出被拆成多个 chunk，onOutput 不应收半行
+  it('SR-5: stdout 跨 chunk 的半行应拼接成完整行后再回调 onOutput（不拆半行）', async () => {
+    const fake = makeFakeChild()
+    spawnMock.mockReturnValue(fake)
+
+    const { spawn } = await import('node:child_process')
+    const runner = new ShellRunner({ spawn: spawn as any })
+
+    const onOutput = vi.fn()
+    const promise = runner.execute({
+      scriptPath: '/hooks/setup.sh',
+      cwd: '/ws/new',
+      onOutput,
+    })
+
+    // 模拟子进程把 'line1partialline2\n' 拆成两个 chunk 送达（典型 spawn chunk 边界）
+    fake.stdout.emit('data', Buffer.from('line1partial'))
+    fake.stdout.emit('data', Buffer.from('line2\n'))
+    fake.emit('close', 0)
+
+    await promise
+
+    // onOutput 应只收到一次完整行，而非两次半行
+    const stdoutCalls = onOutput.mock.calls.filter((c: any[]) => c[1] === 'stdout')
+    expect(stdoutCalls).toHaveLength(1)
+    expect(stdoutCalls[0]).toEqual(['line1partialline2', 'stdout'])
+    // 累积 stdout 仍保留完整原始文本（含 \n）
+    expect(onOutput).not.toHaveBeenCalledWith('line1partial', 'stdout')
+    expect(onOutput).not.toHaveBeenCalledWith('line2', 'stdout')
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,7 +370,7 @@ describe('WorktreeService', () => {
   })
 
   // WS-3: 目录已存在
-  it('WS-3: 目标 worktree 目录已存在抛 WORKTREE_EXISTS', async () => {
+  it('WS-3: 目标 worktree 目录已存在抛 WORKTREE_EXISTS（detail 带 cwd + dirName）', async () => {
     // detector 命中 .bare（第一个 existsSync 路径），目标 worktree 目录已存在
     existsSyncMock.mockImplementation((p: string) => {
       if (p === barePath) return true
@@ -350,7 +381,11 @@ describe('WorktreeService', () => {
     const service = await makeService()
     await expect(
       service.create({ branch: 'feat/a', workspaceHint: wsRoot }),
-    ).rejects.toMatchObject({ code: 'WORKTREE_EXISTS' })
+    ).rejects.toMatchObject({
+      code: 'WORKTREE_EXISTS',
+      // detail 是对象（非裸 cwd 字符串）：前端可读 dirName 核对是否同分支碰撞
+      detail: { cwd: join(wsRoot, 'feat-a'), dirName: 'feat-a' },
+    })
 
     expect(gitExecutor.exec).not.toHaveBeenCalled()
   })
@@ -400,6 +435,30 @@ describe('WorktreeService', () => {
     )
     expect(addCall).toBeDefined()
     expect(addCall![2]).toContain('origin/main')
+  })
+
+  // WS-6b: baseBranch='current' → resolveBaseRef 走 gitInfoReader 路径（读当前分支，不 rev-parse）
+  it('WS-6b: baseBranch=current → resolveBaseRef 走 gitInfoReader 路径（读当前分支，不 rev-parse）', async () => {
+    existsSyncMock.mockImplementation((p: string) => p === barePath)
+    // gitInfoReader 返回当前分支 develop（current 路径读这个）
+    gitInfoReader.readGitInfo.mockReturnValue({ branch: 'develop', isWorktree: true })
+    // worktree add 成功（current 路径只调一次 gitExecutor：无 rev-parse）
+    gitExecutor.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 })
+
+    const service = await makeService()
+    await service.create({ branch: 'feat/x', baseBranch: 'current', workspaceHint: wsRoot })
+
+    // current 路径不调 rev-parse（gitExecutor 只被 worktree add 调一次）
+    const revParseCalls = gitExecutor.exec.mock.calls.filter((c: any[]) => c[1] === 'rev-parse')
+    expect(revParseCalls).toHaveLength(0)
+    expect(gitExecutor.exec).toHaveBeenCalledTimes(1)
+
+    // worktree add 的 base 参数是 develop（来自 gitInfoReader）
+    const addCall = gitExecutor.exec.mock.calls.find((c: any[]) => c[1] === 'worktree')
+    expect(addCall).toBeDefined()
+    expect(addCall![2]).toContain('develop')
+    // 不应误用 origin/main（默认值）
+    expect(addCall![2]).not.toContain('origin/main')
   })
 
   // WS-7: 分支名含 / 时目录名转换（feat/oauth → feat-oauth）
@@ -452,5 +511,38 @@ describe('WorktreeService', () => {
 
     // add 失败不应继续跑 setup 脚本
     expect(shellRunner.execute).not.toHaveBeenCalled()
+  })
+
+  // WS-10: 并发创建同 branch → 第二次 existsSync 命中 WORKTREE_EXISTS（防竞态）
+  // 真正的竞态防护是 git worktree add 本身（文件系统原子），此处只测 WorktreeService 层的
+  // existsSync 检查行为：模拟两次 create() 之间目标目录被另一个进程创建出来的场景。
+  it('WS-10: 并发创建同 branch → 第二次 existsSync 命中 WORKTREE_EXISTS（防竞态）', async () => {
+    // existsSync 行为：.bare 永远存在；目标 worktree 目录第一次查 false、第二次查 true
+    // （模拟并发：A 进程 create() 前目录不存在，B 进程在 A 的 existsSync 与 git add 之间创建了目录）
+    const targetPath = join(wsRoot, 'feat-concurrent')
+    existsSyncMock.mockImplementation((p: string) => {
+      if (p === barePath) return true
+      if (p === targetPath) {
+        // 按调用次数返回：第一次 false（允许 A 创建），第二次 true（B 的 existsSync 命中）
+        const calls = existsSyncMock.mock.calls.filter((c: any[]) => c[0] === targetPath).length
+        return calls > 1
+      }
+      return false
+    })
+    // gitExecutor：A 的 rev-parse + add 都成功；B 不会走到 gitExecutor（existsSync 拦截）
+    gitExecutor.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 })
+
+    const service = await makeService()
+    const params = { branch: 'feat-concurrent', baseBranch: 'origin/main' as const, workspaceHint: wsRoot }
+    // Promise.all：A 成功，B 在 existsSync 命中后 reject WORKTREE_EXISTS
+    const results = await Promise.allSettled([service.create(params), service.create(params)])
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled')
+    const rejected = results.filter((r) => r.status === 'rejected')
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    const rejectedErr = (rejected[0] as PromiseRejectedResult).reason
+    expect(rejectedErr).toMatchObject({ code: 'WORKTREE_EXISTS' })
+    expect(rejectedErr.detail).toMatchObject({ dirName: 'feat-concurrent' })
   })
 })

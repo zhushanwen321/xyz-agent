@@ -50,7 +50,7 @@ export default {
     successDesc: '即将切换到新工作目录…',
     failedStep: '失败步骤',
     retryBtn: '重试',
-    cleanupBtn: '清理并关闭',
+    cleanupBtn: '关闭',
     existsNotice: '该分支的 worktree 已存在，可直接开始。',
     useExistingBtn: '直接开始',
   },

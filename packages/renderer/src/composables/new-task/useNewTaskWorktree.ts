@@ -1,5 +1,5 @@
 /**
- * useNewTaskWorktree —— worktree 创建编排子 composable（W2 wave，单一变化轴「创建 worktree」）。
+ * useNewTaskWorktree —— worktree 创建的 flow 级封装（modal 开关 + base 分支选择）。
  *
  * 职责（薄编排器）：
  * - createWorktree：调 worktreeApi.create RPC 创建 worktree（branch/baseBranch/workspaceHint 透传），
@@ -12,9 +12,10 @@
  *
  * 依赖方向：api/domains/worktree（RPC）+ useNewTaskFlowState（transition + refs）。
  *
- * 注：CreateWorktreeModal 内部自管五态机 + 直接调 worktreeApi.create（不经此 composable），
- * 因此本 createWorktree 主要供「非 modal 路径」或父编排器统一入口调用。Landing 的成功/exists
- * 分支直接经 selectWorkspace/closeOverlay，但为兼容现有调用约定与测试仍暴露此方法。
+ * @deprecated 当前无消费方。CreateWorktreeModal 内部自管五态机 + 直接调 worktreeApi.create，
+ * 不经此 composable。createWorktree/startCreateWorktree 被 useNewTaskFlow re-export 但无调用方。
+ * 保留是为了 follow-up 评估：若 modal 自管路径稳定，应删此文件 + useNewTaskFlow 的 re-export。
+ * 使用者：暂无。
  */
 import { worktreeApi } from '@/api/domains/worktree'
 import { transition, useNewTaskFlowState } from './useNewTaskFlowState'

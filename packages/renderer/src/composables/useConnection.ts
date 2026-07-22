@@ -79,9 +79,11 @@ function routeInbound(msg: ServerMessage): void {
       // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，
       // 如 out_of_cwd / permission_denied / timeout）。此前只透传 message 丢了 code。
       // R2：details.detail 展开到 reject 的 Error 上——
-      // - worktree handler 把 WORKTREE_EXISTS 的 cwd（string）放 detail；
+      // - worktree handler 把 WORKTREE_EXISTS 的 { cwd, dirName } 放 detail（对象，S5 后）；
       // - 把 SETUP_FAILED/GIT_FAILED 的 { exitCode, stderr } 放 detail。
       // 不展开则 CreateWorktreeModal error 态读不到 stderr、exists 态「直接开始」读不到 cwd。
+      // 注：object 分支 Object.assign(enriched, d) 会把 cwd 和 dirName 都赋到 Error 上，
+      // lastError.cwd 仍可读（onUseExisting 用），dirName 可用于前端核对是否同分支名碰撞。
       const payload = msg.payload as {
         code?: string
         message?: string

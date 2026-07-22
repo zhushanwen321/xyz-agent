@@ -62,11 +62,12 @@ interface ProgressStep {
 /** success 态 emit success 前的延迟（让用户看到成功提示） */
 const SUCCESS_EMIT_DELAY_MS = 2000
 
-/** 分支名非法字符/形态规则（与 runtime GitService 一致）：
- *  - 含 .. / 空格 / ~ / ^ / :
- *  - 以 . 或 - 开头
- *  正则匹配任一即非法。 */
-const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:]|\s)/
+/** 分支名非法字符/形态规则（与 runtime WorktreeService.INVALID_BRANCH_REGEX 完全一致）：
+ *  对齐 git check-ref-format 规则——含 .. / 空白 / ~ ^ : ? * [ ] @ { } / 反斜杠 /
+ *  以 . 或 - 开头 / 以 / 或 .lock 结尾。
+ *  runtime 是安全边界（必拒），前端是 UX 校验（早拒减少无效 RPC），两者必须保持一致
+ *  （任一侧漏判都会让另一侧独自暴露规则漂移）。 */
+const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
 
 /** base 分支默认值（D3 决策：origin/main） */
 const DEFAULT_BASE = 'origin/main' as const
@@ -92,8 +93,6 @@ const inputRef = ref<InstanceType<typeof Input> | null>(null)
 
 // ── 状态机 ──
 const phase = ref<ModalPhase>('form')
-/** worktreeApi.create 成功返回的 cwd（success 态 emit 用） */
-const successCwd = ref<string>('')
 /** worktreeApi.create 失败错误对象（error/exists 态展示用） */
 const lastError = ref<WorktreeError | null>(null)
 /** progress 实时输出折叠开关 */
@@ -101,6 +100,10 @@ const logExpanded = ref(false)
 
 /** 成功态 2s 后 emit 的定时器句柄（卸载/重置时清理） */
 let successTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 组件卸载标志：progress 态 unmount 后 in-flight create Promise / successTimer 回调
+ * 不再 mutate phase / emit，避免对已卸载组件副作用（W3）。 */
+let cancelled = false
 
 const trimmedName = computed(() => branchName.value.trim())
 
@@ -133,10 +136,11 @@ const progressSteps = computed<ProgressStep[]>(() => [
   { testid: 'worktree-step-2', label: t('newTask.createWorktree.stepRunSetup') },
 ])
 
-/** Dialog open：组件挂载即开（父级按 state 控制挂载，Dialog 内只管自身 open=true） */
-const isOpen = computed(() => true)
+// Dialog open 永远 true（组件挂载即开，父级按 state==='worktree-modal' 控制挂载，
+// Dialog 内只管自身 open=true；:open 直接绑字面量，避免常量 computed 误导）。
 
-/** Dialog open 变化：progress 态不可关闭（D4 决策）；其他态 false → emit close */
+/** Dialog open 变化：open 永远 true，reka-ui Dialog 仍可能在 mount 时触发 open=true 的
+ * update:open，故 `if (v) return` 防御性保留；progress 态不可关闭（D4 决策），其他态 false → emit close。 */
 function onOpenChange(v: boolean): void {
   if (v) return
   // progress 态：忽略外部关闭（防止误点遮罩中断创建）
@@ -168,11 +172,13 @@ async function runCreate(branch: string, base: 'current' | 'origin/main'): Promi
       branch,
       baseBranch: base,
     })
+    // 卸载后不再 mutate phase / 不 schedule（避免对已卸载组件副作用）
+    if (cancelled) return
     // 成功 → success 态，2s 后 emit success + close
-    successCwd.value = result.cwd
     phase.value = 'success'
     scheduleSuccessEmit(result.cwd)
   } catch (e) {
+    if (cancelled) return
     const err = (e as WorktreeError) ?? {}
     lastError.value = err
     if (err.code === 'WORKTREE_EXISTS') {
@@ -205,14 +211,17 @@ async function onRetry(): Promise<void> {
   await runCreate(trimmedName.value, baseBranch.value)
 }
 
-/** error 态清理：emit close（父级负责真清理，MVP 只关 modal） */
+/** error 态「关闭」：emit close（MVP 不清理 worktree 目录——SETUP_FAILED 时 git worktree add
+ * 可能已建目录，但本按钮只关 modal；下次同分支创建会走 WORKTREE_EXISTS → exists 态「直接开始」复用）。 */
 function onCleanup(): void {
   emit('close')
 }
 
-/** exists 态「直接开始」：emit use-existing(已存在 cwd) */
+/** exists 态「直接开始」：emit use-existing(已存在 cwd)。
+ *  注：exists 态唯一入口是 runCreate catch 且 code === 'WORKTREE_EXISTS'，此时 lastError.cwd 必有值
+ *  （routeInbound 把 detail.{cwd,dirName} 展开到 Error 上）；不再 fallback successCwd（success 态不会进 exists）。 */
 function onUseExisting(): void {
-  const cwd = lastError.value?.cwd ?? successCwd.value
+  const cwd = lastError.value?.cwd
   if (cwd) emit('use-existing', cwd)
 }
 
@@ -230,12 +239,13 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  cancelled = true
   clearSuccessTimer()
 })
 </script>
 
 <template>
-  <Dialog :open="isOpen" @update:open="onOpenChange">
+  <Dialog :open="true" @update:open="onOpenChange">
     <DialogContent
       data-testid="create-worktree-modal"
       class="sm:max-w-[560px]"

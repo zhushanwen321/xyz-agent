@@ -17,8 +17,11 @@
  *   已超时则不 resolve（保留 timeout reject）。
  * - 同理 error handler 也判 timedOut（极端：kill 后子进程 error 而非 close）。
  *
- * 行切分策略：Buffer → utf8 → 按 \n split，丢弃尾空行（避免末尾 \n 产生空行回调）。
- * 累积 stdout/stderr 用原始字符串（含 \n），onOutput 收到的是单行（无 \n）。
+ * 行切分策略：Buffer → utf8 → 按 \n split。**跨 chunk 缓冲**——每个 stream 维护独立
+ * lineBuffer，chunk 进来后先 append，再 split('\n')，最后一段（不含 \n）回写 lineBuffer
+ * 留给下次。这样子进程输出 'installing pack' + 'age done\n' 两个 chunk 时，onOutput 只收到
+ * 一行 'installing package done'（契约：逐行回调），不会先收到半行 'installing pack'。
+ * close 时 flush 各 buffer 的剩余半行（若有）。累积 stdout/stderr 仍用原始字符串（含 \n）。
  */
 import { EventEmitter } from 'node:events'
 import { ShellRunnerError } from '../services/ports/shell-runner.js'
@@ -53,7 +56,9 @@ export class ShellRunner implements IShellRunner {
 
     const child = this.deps.spawn(scriptPath, args ?? [], {
       cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      // stdin 显式 ignore：setup-worktree.sh 若 read stdin 会立即得 EOF，避免卡到 timeout。
+      // stdout/stderr 仍 pipe 出来给 onOutput 流式回调。
+      stdio: ['ignore', 'pipe', 'pipe'],
     }) as unknown as EventEmitter & {
       stdout: EventEmitter
       stderr: EventEmitter
@@ -63,25 +68,40 @@ export class ShellRunner implements IShellRunner {
 
     let stdout = ''
     let stderr = ''
+    // 跨 chunk 行缓冲：stdout / stderr 各自独立，避免两个流的半行互相拼接（stream 标识必须正确）。
+    let stdoutBuffer = ''
+    let stderrBuffer = ''
     let timedOut = false
     let closed = false
     let timer: NodeJS.Timeout | undefined
     let escalationTimer: NodeJS.Timeout | undefined
 
     return new Promise<ShellRunnerResult>((resolve, reject) => {
+      /**
+       * 把 chunk 追加到对应 stream 的 lineBuffer，按 \n 切出完整行回调 onOutput；
+       * 末段（不含 \n）留回 buffer 等下个 chunk 补全。空行不发（与原 splitLines 语义一致）。
+       */
+      const emitLines = (text: string, stream: 'stdout' | 'stderr'): void => {
+        const merged = (stream === 'stdout' ? stdoutBuffer : stderrBuffer) + text
+        const lines = merged.split('\n')
+        // 最后一段不含 \n，回写 buffer 留给下次（若以 \n 结尾，最后一段是空串，buffer 清空）
+        if (stream === 'stdout') stdoutBuffer = lines.pop() ?? ''
+        else stderrBuffer = lines.pop() ?? ''
+        if (onOutput) {
+          for (const line of lines) {
+            if (line.length > 0) onOutput(line, stream)
+          }
+        }
+      }
       const onStdoutData = (chunk: Buffer | string): void => {
         const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
         stdout += text
-        if (onOutput) {
-          for (const line of splitLines(text)) onOutput(line, 'stdout')
-        }
+        emitLines(text, 'stdout')
       }
       const onStderrData = (chunk: Buffer | string): void => {
         const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
         stderr += text
-        if (onOutput) {
-          for (const line of splitLines(text)) onOutput(line, 'stderr')
-        }
+        emitLines(text, 'stderr')
       }
       const cleanupTimers = (): void => {
         if (timer) clearTimeout(timer)
@@ -94,6 +114,13 @@ export class ShellRunner implements IShellRunner {
         if (timedOut) return
         child.stdout.removeListener('data', onStdoutData)
         child.stderr.removeListener('data', onStderrData)
+        // flush 两个 stream 残留的半行（子进程输出未以 \n 结尾时）。
+        if (onOutput) {
+          if (stdoutBuffer.length > 0) onOutput(stdoutBuffer, 'stdout')
+          if (stderrBuffer.length > 0) onOutput(stderrBuffer, 'stderr')
+        }
+        stdoutBuffer = ''
+        stderrBuffer = ''
         resolve({ exitCode: exitCode ?? 0, stdout, stderr })
       }
       const onError = (err: NodeJS.ErrnoException): void => {
@@ -127,17 +154,4 @@ export class ShellRunner implements IShellRunner {
       }
     })
   }
-}
-
-/**
- * 把 chunk 文本切成行（去尾空行）。
- * 'a\nb\n' → ['a','b']；'a\nb' → ['a','b']；'' → []。
- * 末尾的 \n 不应产生空行回调，避免给 onOutput 多发一个无意义的空串。
- */
-function splitLines(text: string): string[] {
-  if (text.length === 0) return []
-  const lines = text.split('\n')
-  // 末元素为空串（text 以 \n 结尾）则丢弃；非空则保留（text 不以 \n 结尾的尾行）。
-  if (lines[lines.length - 1] === '') lines.pop()
-  return lines
 }

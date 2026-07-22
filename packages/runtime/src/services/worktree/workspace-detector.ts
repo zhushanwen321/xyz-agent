@@ -14,7 +14,7 @@
  * skill 一致）：workspace 根下放 .bare（bare repo）+ 各 worktree 子目录（feat-x / fix-y ...）。
  *
  * detectBareWorkspaceCached：session 摘要链路（toSummary / scannedToSummary）复用的缓存版本。
- * 缓存模式镜像 GitInfoReader（per-cwd TTL + LRU 上限），避免每次 listPersistedSessions 对
+ * 缓存模式镜像 GitInfoReader（per-cwd TTL + 最老条目淘汰），避免每次 listPersistedSessions 对
  * 每个 session 重新向上 statSync。失败（statSync 抛非 ENOENT）兜底 false，绝不传播异常——
  * session 摘要生成不能因 workspace 检测失败而中断。
  */
@@ -78,8 +78,8 @@ export class WorkspaceDetector {
 }
 
 // ── session 摘要链路用的缓存版本（R1）──────────────────────────────────────
-// 镜像 GitInfoReader 的 per-cwd TTL + LRU 缓存，避免每次列举 session 重复向上 statSync。
-// 真实 node:fs 直接用（detect 仅 statSync，无需注入——注入模式仅 WorktreeService 单测需要）。
+// 镜像 GitInfoReader 的 per-cwd TTL + 最老条目淘汰（oldest-insert）缓存，避免每次列举 session
+// 重复向上 statSync。真实 node:fs 直接用（detect 仅 statSync，无需注入——注入模式仅 WorktreeService 单测需要）。
 // eslint-disable-next-line no-magic-numbers -- 5 minutes = 5 * 60 * 1000ms, self-documenting with comment
 const BARE_CACHE_TTL_MS = 5 * 60 * 1000
 const BARE_CACHE_MAX_SIZE = 500
@@ -90,7 +90,7 @@ const realDetector = new WorkspaceDetector({
 })
 
 /**
- * 检测 cwd 是否位于 .bare workspace 下（带 per-cwd TTL+LRU 缓存）。
+ * 检测 cwd 是否位于 .bare workspace 下（带 per-cwd TTL + 最老条目淘汰缓存）。
  *
  * 供 SessionService.toSummary / SessionScanner.scannedToSummary 填充 SessionSummary.isBareWorkspace。
  * 绝不抛——任何异常（权限、IO 错误）兜底 false，确保 session 摘要生成不被中断。
@@ -102,7 +102,7 @@ export function detectBareWorkspaceCached(cwd: string): boolean {
   const cached = bareCache.get(cwd)
   if (cached && (now - cached.ts) < BARE_CACHE_TTL_MS) return cached.isBare
 
-  // LRU 上限淘汰：淘汰最老条目
+  // 最老条目淘汰（oldest-insert，非真 LRU——命中不刷新 ts）：超过上限时删 ts 最小的条目
   if (bareCache.size >= BARE_CACHE_MAX_SIZE) {
     let oldestKey: string | null = null
     let oldestTs = Infinity
