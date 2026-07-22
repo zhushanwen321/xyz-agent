@@ -39,7 +39,6 @@
       <div
         v-for="(b, idx) in branches"
         :key="b.id"
-        :ref="(el) => setBranchEl(b.id, el as HTMLElement | null)"
         data-testid="fork-group-branch"
         class="fork-branch-item group relative flex cursor-pointer items-center gap-1.5 rounded-sm px-2 py-[6px] transition-colors"
         :class="[
@@ -172,24 +171,14 @@ const collapsed = ref(false)
 /** 停止两段式确认态：记录当前在确认态的分支 id（同时只允许一个分支处于确认态） */
 const confirmingStopId = ref<string | null>(null)
 
-/** 分支项 DOM 元素引用映射（id → HTMLElement），用于 fresh 淡出的同步 DOM class 操作 */
-const branchEls = new Map<string, HTMLElement>()
-
-/** v-for 内 :ref 回调：收集/清理分支项 DOM 元素引用 */
-function setBranchEl(id: string, el: HTMLElement | null): void {
-  if (el) branchEls.set(id, el)
-  else branchEls.delete(id)
-}
-
 function onStopConfirm(id: string): void {
   confirmingStopId.value = null
   emit('stop', id)
 }
 
 // ── fresh 高亮：内部维护活跃 fresh 集合，每个 id 独立计时（FRESH_FADE_MS 后移除） ──
-// 初始渲染由 isFreshActive(b.id) 决定 fresh class（响应式）；
-// 淡出移除走同步 DOM 操作——timer 回调直接 toggle 元素 classList，
-// 不依赖 Vue 异步 patch（测试用 fake timer 后立即断言，无 nextTick 等待窗口）。
+// 纯响应式驱动：isFreshActive(id) 决定 fresh class，timer 到期从 activeFresh 删除 id，
+// 模板 :class 绑定自然更新（DOM patch 异步，测试断言前需 await nextTick）。
 const activeFresh = ref(new Set<string>())
 /** id → timer 句柄映射（卸载时清理，避免泄漏 + 测试 fake timer 残留） */
 const freshTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -202,13 +191,9 @@ function scheduleFreshFade(id: string): void {
   const old = freshTimers.get(id)
   if (old) clearTimeout(old)
   const handle = setTimeout(() => {
-    // 同步从 DOM 移除 fresh 视觉类（避免等待 Vue 异步 render patch）
-    const el = branchEls.get(id)
-    if (el) {
-      el.classList.remove('fresh', 'bg-accent-soft', 'ring-1', 'ring-inset', 'ring-accent-ring')
-      el.classList.add('hover:bg-surface-hover')
-    }
-    // 同步更新响应式状态（后续重渲染保持一致）
+    // 纯响应式驱动：从 activeFresh 删除 id，模板 :class 绑定 isFreshActive(id)
+    // 自然移除 fresh 视觉类。DOM 更新异步（需 nextTick）——测试用 fake timer
+    // 后立即断言 class 者需 await nextTick（见 fork-group.test.ts U20）。
     const next = new Set(activeFresh.value)
     next.delete(id)
     activeFresh.value = next

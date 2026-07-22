@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 
@@ -225,7 +226,10 @@ describe('U20: ForkGroup fresh 高亮 3.2s 后淡出', () => {
     expect(branchItem.classes()).toContain('fresh')
 
     // 2. 推进 FRESH_FADE_MS（3.2s）→ fresh class 移除（淡出）
+    // [S2] ForkGroup fresh 淡出改为纯响应式驱动（timer 回调只更新 activeFresh Set，
+    // DOM patch 走 Vue 响应式异步更新）。fake timer 推进后必须 await nextTick 让 DOM patch 落地。
     vi.advanceTimersByTime(FRESH_FADE_MS)
+    await nextTick()
 
     // 3. fresh class 应已移除
     const branchItemAfter = wrapper.find('[data-testid="fork-group-branch"]')

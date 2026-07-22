@@ -65,9 +65,9 @@ export interface ForkedFile {
  *                         与 forkEntryId 区别：后者用于截断回溯，前者是落盘标记（二者常相等，
  *                         但 includeFrom=false 等场景下语义不同；undefined 时不写该字段）。
  * @param fallbackParentId 可选，源 session 未落盘（sessionFilePath=undefined）时的 parentSession
- *                         fallback 键（FR-20）：源 header 无 parentSession 时用此值（源 sessionId）
- *                         而非 sourceFilePath，形成可追溯的父子链。源 header 已有 parentSession
- *                         （fork 出的 session 再 fork）时透传原值。
+ *                         fallback 键（FR-20）：用此值（源 sessionId）而非 sourceFilePath，
+ *                         形成可追溯的父子链。parentSession 始终指向直接父级（源 session），
+ *                         不透传源 header 的 parentSession（那是祖父）。
  * @returns 新文件路径 + 新 session id + sourceFilePath（供上层 fallback 判断）
  * @throws 源文件不存在 / forkEntryId 在树中找不到 / 源文件无 session header
  */
@@ -145,14 +145,14 @@ export async function createForkedSessionFile(
   // 6. 构建新文件内容
   const lines: string[] = []
 
-  // parentSession 血缘键（FR-20 fallback）：
-  // - 源 header 已有 parentSession（多级 fork：fork 出的 session 再被 fork）→ 透传原值。
-  // - 源 header 无 parentSession（顶层 session）→ 默认用 sourceFilePath（指回源文件）。
-  //   但源 session 可能尚未落盘（pi 延迟写入，上层 sessionFilePath=undefined），此时
-  //   sourceFilePath 是上层临时拷贝/不可靠路径，改用 fallbackParentId（源 sessionId）作血缘键，
-  //   保证父子链可追溯（FR-20）。
-  const resolvedParentSession = header.parentSession
-    ?? (fallbackParentId ?? sourceFilePath)
+  // parentSession 指向直接父级（源 session），不透传源的 parentSession（那是祖父）。
+  // 多级 fork（A→B→C）：C 读 B 的文件，B.header.parentSession 是 A 的路径——但 C 的直接父级
+  // 是 B，不能透传 A。故 parentSession 始终用源 session 的文件路径（sourceFilePath），
+  // 它指向直接父级文件，与 forkEntryId（指向 B 内 entry）坐标系一致。
+  // 源 session 可能尚未落盘（pi 延迟写入，上层 sessionFilePath=undefined），此时
+  // sourceFilePath 是上层临时拷贝/不可靠路径，改用 fallbackParentId（源 sessionId）作血缘键，
+  // 保证父子链可追溯（FR-20）。
+  const resolvedParentSession = fallbackParentId ?? sourceFilePath
 
   // 新 session header（parentSession 指回源文件/源 sessionId，形成父子链）
   const newHeader: SessionHeaderEntry = {

@@ -320,6 +320,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
+import { useToast } from '@/composables/useToast'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
@@ -347,6 +348,7 @@ const chat = useChatStore()
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
+const { error: toastError } = useToast()
 const fileTreeStore = useFileTreeStore()
 
 /**
@@ -499,10 +501,16 @@ async function submitEdit(): Promise<void> {
 /**
  * fork 后台（低频）：从指定 assistant 处空白 fork，留在原线（useSidebar.forkSession 已不 split）。
  * includeFrom=true：保留到该 assistant（含）。反馈行由 session.forkNotice 广播驱动渲染。
+ * 失败时 toast 反馈（与 fork-ask 路径对称），避免静默 unhandled rejection。
  */
 async function onFork(msg: Message): Promise<void> {
   if (!msg) return
-  await forkSession(props.sessionId, msg.id, { includeFrom: true, openInStandby: false })
+  try {
+    await forkSession(props.sessionId, msg.id, { includeFrom: true, openInStandby: false })
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e)
+    toastError(t('panel.message.forkFailed', { error }))
+  }
 }
 
 /**

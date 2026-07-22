@@ -156,7 +156,7 @@ describe('U12：forkMode 三重视觉 + mode-chip + placeholder 切换', () => {
 
 // ── U13：forkMode 发送后自动退出 ─────────────────────────────────────────
 describe('U13：forkMode 下发送 → 调 forkSessionAsk + forkMode 自动复位 false', () => {
-  it('输入 + Enter 触发 forkSessionAsk（非 send），forkMode 复位', async () => {
+  it('fork 模式下发送 → 在新分支提问并退出 fork 模式', async () => {
     const wrapper = mountComposer({ sessionId: 's1' })
     const vm = wrapper.vm as unknown as {
       enterForkMode?: (sessionId: string, messageId: string) => void

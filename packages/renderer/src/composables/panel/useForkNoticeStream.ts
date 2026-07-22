@@ -55,6 +55,8 @@ export function useForkNoticeStream(
   onDismiss: (noticeId: number) => void
   } {
   const { notices: forkNoticeFeed, dismissNotice: dismissForkNotice } = useForkNoticeFeed()
+  // [W6] 顶层实例化 useSidebar：避免在 onView 回调内每次新建实例（composable 工厂模式反模式）。
+  const { selectSession } = useSidebar()
 
   /** 当前 session 的 ForkNotice 列表（响应式，feed 变化自动更新） */
   const forkNotices = computed(() => forkNoticeFeed(sessionId()))
@@ -77,7 +79,7 @@ export function useForkNoticeStream(
 
   /** 点击查看 → 跳转到分支 session（selectSession 载入 panel） */
   function onView(newSessionId: string): void {
-    void useSidebar().selectSession(newSessionId)
+    void selectSession(newSessionId)
   }
 
   /** 点击关闭 × → 移除该条通知 */

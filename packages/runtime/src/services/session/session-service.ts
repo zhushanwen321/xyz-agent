@@ -714,6 +714,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       hidden: s.hidden,
       parentSession: s.parentSession,
       forkEntryId: s.forkEntryId,
+      handedOffTo: s.handedOffTo,
       sessionFile: s.sessionFilePath,
     }
   }

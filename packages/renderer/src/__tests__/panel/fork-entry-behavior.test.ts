@@ -18,11 +18,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
+import { useToast } from '@/composables/useToast'
 
-// useChat mock（Turn 编辑路径依赖；forkSessionAsk 复用其 ensureStreamSubscription/disposeSession）
-// ensureStreamSubscription 导出作 no-op stub：U9 测回滚编排（remove + removeFromList），不验真实流式订阅。
+// useChat mock（Turn 编辑路径依赖；forkSessionAsk 复用其 ensureStreamSubscription/disposeSession）。
+// disposeSession 用模块级 spy，让 U9 W7 断言可断言「回滚时被调」（拆流式订阅 + 清 store per-session 状态）。
+// ensureStreamSubscription 导出作 no-op stub：U9 测回滚编排，不验真实流式订阅。
+const disposeSessionMock = vi.fn()
 vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn(), disposeSession: vi.fn(), setHistoryTruncated: vi.fn() }),
+  useChat: () => ({ editAndResend: vi.fn(), disposeSession: disposeSessionMock, setHistoryTruncated: vi.fn() }),
   ensureStreamSubscription: vi.fn(),
 }))
 vi.mock('@/composables/features/useSideDrawer', () => ({
@@ -82,6 +85,11 @@ function mountTurn(turn: MessageTurn, sessionId = 's1') {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  // 模块级 mock（disposeSessionMock）需跨用例清调用记录，避免 U9 断言被先前用例污染。
+  vi.clearAllMocks()
+  // useToast 是模块级单例，跨用例共享 → 清空残留 toast（U9-fail 断言 toasts 内容）。
+  const { toasts } = useToast()
+  toasts.value = []
 })
 
 // ── U7：首屏冒烟 —— streaming/pending 态每条 assistant 有 fork 按钮 ────────
@@ -127,7 +135,7 @@ describe('U7 首屏冒烟：streaming 态每条 assistant 有 fork 后台 + fork
 
 // ── U8：forkSession 不调 panel.split + selectSession ──────────────────────
 describe('U8：forkSession 后台 fork 不切焦点（不调 panel.split + selectSession）', () => {
-  it('调用 useSidebar().forkSession 时 panel.split 未被调用（后台 fork 不切焦点）', async () => {
+  it('fork 后台后焦点留在原 session（不切换面板）', async () => {
     // 直接对真实 useSidebar 行为做断言：forkSession 内部不应再调 panel.split。
     const { useSidebar } = await import('@/composables/features/useSidebar')
     const sidebar = useSidebar()
@@ -163,8 +171,8 @@ describe('U8：forkSession 后台 fork 不切焦点（不调 panel.split + selec
 })
 
 // ── U9：forkSessionAsk send 失败自动回滚 ─────────────────────────────────
-describe('U9：forkSessionAsk send 失败自动回滚（sessionApi.remove + removeFromList）', () => {
-  it('send reject 时调 sessionApi.remove + session.removeFromList 清理占位 session', async () => {
+describe('U9：forkSessionAsk send 失败自动回滚（disposeSession + sessionApi.remove + removeFromList）', () => {
+  it('fork 提问发送失败后不留空白分支（回滚清理）', async () => {
     const { useSidebar } = await import('@/composables/features/useSidebar')
     const sidebar = useSidebar()
 
@@ -179,16 +187,15 @@ describe('U9：forkSessionAsk send 失败自动回滚（sessionApi.remove + remo
       label: 'fork',
       cwd: '/tmp',
     } as never)
-    const { useChat } = await import('@/composables/features/useChat')
     const chatApi = (await import('@/api')).chat
     vi.spyOn(chatApi, 'send' as never).mockRejectedValue(new Error('send failed') as never)
 
-    // forkSessionAsk 是 W2 新增函数，当前不存在 → 调用应抛 TypeError
-    // W2 实现后：fork 占位 + send，send 失败 → remove + removeFromList 回滚
-    await expect(
-      sidebar.forkSessionAsk('s-src', 'm1', '追问内容'),
-    ).resolves.toBeUndefined()
+    // [W1] forkSessionAsk 现在 rethrow 而非吞错 resolve（错误反馈职责上移到调用方）。
+    // 资源清理（disposeSession + remove + removeFromList）仍在 catch 内 rethrow 前执行。
+    await expect(sidebar.forkSessionAsk('s-src', 'm1', '追问内容')).rejects.toThrow('send failed')
 
+    // 回滚三件套均被调（W7 补 disposeSession 断言：拆流式订阅 + 清 chat store per-session 状态）
+    expect(disposeSessionMock).toHaveBeenCalledWith('fork-placeholder')
     expect(removeSpy).toHaveBeenCalledWith('fork-placeholder')
     expect(removeFromListSpy).toHaveBeenCalledWith('fork-placeholder')
   })
@@ -254,5 +261,32 @@ describe('U11：ForkConfirmModal 已删除（文件不存在 + Turn.vue 无 impo
     const source = fs.readFileSync(turnPath, 'utf-8')
     // 红灯：当前 Turn.vue:298 `import ForkConfirmModal from './ForkConfirmModal.vue'`
     expect(source).not.toContain('ForkConfirmModal')
+  })
+})
+
+// ── 盲区 2（renderer）：fork 失败反馈（W2 修复验证） ──────────────────────
+// sessionApi.fork reject → Turn.onFork 被 catch → toastError 被调（W2 加 try/catch + toastError）。
+// 回归防护：若 W2 回退（onFork 无 catch），reject 变 unhandled rejection，toast 不弹，此用例 fail。
+describe('盲区 2：fork 后台 RPC 失败 → toast 错误反馈（W2 onFork try/catch）', () => {
+  it('点 fork 后台按钮 → sessionApi.fork reject → toast 弹出 fork 失败文案', async () => {
+    const sessionApi = (await import('@/api')).session
+    // fork RPC reject（runtime 侧源文件不存在 / fork 点找不到 等场景透传到此）
+    vi.spyOn(sessionApi, 'fork').mockRejectedValue(new Error('source not found') as never)
+
+    const turn = makeTurn([makeAssistant({ id: 'a1', piEntryId: 'pi-a1' })])
+    const wrapper = mountTurn(turn, 's-fork-fail')
+
+    // 点 fork 后台按钮（触发 onFork → forkSession → sessionApi.fork reject）
+    await wrapper.find('[data-testid="fork-background-btn"]').trigger('click')
+    // onFork 是 async（await forkSession），需 flush 微任务让 catch 跑完 + toast 入列
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // toast 弹出：含 fork 失败语义文案（i18n key panel.message.forkFailed = 「fork 后台失败：…」）
+    const { toasts } = useToast()
+    expect(toasts.value.length).toBeGreaterThan(0)
+    const lastToast = toasts.value[toasts.value.length - 1]
+    expect(lastToast.type).toBe('error')
+    expect(lastToast.message).toContain('fork')
   })
 })

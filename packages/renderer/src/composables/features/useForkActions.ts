@@ -14,13 +14,8 @@ import { chat as chatApi, session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { ensureStreamSubscription, useChat } from '@/composables/features/useChat'
-import { useToast } from '@/composables/useToast'
-import i18n from '@/i18n'
 import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
 import { pushForkNoticeAsk } from '@/composables/effects/useForkNoticeEffect'
-
-// 模块级 i18n t（非 setup 上下文也能用，与 useSidebar 同模式）
-const t = i18n.global.t
 
 /**
  * Fork 操作 composable。
@@ -31,6 +26,9 @@ const t = i18n.global.t
 export function useForkActions(focusedSessionId: Ref<string | null>) {
   const chat = useChatStore()
   const session = useSessionStore()
+  // [W6] 顶层实例化 useChat：避免在 catch 内每次新建实例（composable 工厂模式反模式）。
+  // disposeSession 用于 send 失败时清理新 session 的流式订阅 + per-session 状态。
+  const { disposeSession } = useChat()
 
   /**
    * Fork 会话：从指定源 session 截断历史到 fork 点，新建 session（独立 pi 进程）。
@@ -84,7 +82,9 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
    *
    * 直接调 chatApi.send 而非 useChat().send：后者内部 try/catch 吞掉 send 错误（仅 toast），
    * 此处需要捕获 reject 触发回滚；其 busy→steer 路由对新 fork session 也不适用。
-   * toast 由此处显式给出（保证用户可见反馈）。主线 session 全程不参与（不写入、不 streaming、不 split）。
+   * [W1] 错误反馈职责上移调用方：此处只做资源清理（disposeSession + remove + removeFromList），
+   * 不 toast、不吞错——rethrow 让 handleForkSend 统一负责 toastError + restoreInput（避免草稿丢失）。
+   * 主线 session 全程不参与（不写入、不 streaming、不 split）。
    */
   async function forkSessionAsk(
     srcSessionId: string,
@@ -116,14 +116,11 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
       // 同步拆流式订阅 + 清 chat store 的 per-session 状态（含刚 appendUser 的消息 + pendingSend timer），
       // 否则订阅残留在模块级 Map、pendingSend timer 30s 后触发 finalizeSession 操作已删 session。
       // disposeSession 与 deleteSession 清理口径一致（取消 WS 订阅 + clearPendingSend + 清 messages）。
-      // 不 rethrow：错误已 toast 化，forkSessionAsk 对调用方表现为「已处理」（resolves undefined）。
-      useChat().disposeSession(newId)
+      // [W1] 只做资源清理，不 toast、不吞错——rethrow 让调用方 handleForkSend 统一反馈 + restoreInput。
+      disposeSession(newId)
       await sessionApi.remove(newId).catch(() => {})
       session.removeFromList(newId)
-      const msg = e instanceof Error ? e.message : String(e)
-      const { error: toastError } = useToast()
-      toastError(t('composable.sendFailed', { msg }))
-      return
+      throw e
     }
     // [P2] fork + send 均成功 → 本地推送带 preview 的 ForkNotice，走 askedPrefix（"已在新分支提问"）。
     // 纯 fork（forkSession）走 runtime 广播（forkedPrefix），此处不重复推。

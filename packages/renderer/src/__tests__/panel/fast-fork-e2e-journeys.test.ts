@@ -3,9 +3,17 @@
  *
  * 设计依据：.xyz-harness/fast-fork/changes/e2e-test-plan.md §2 层 1。
  * 与现有 4 个隔离测试（fork-entry-behavior / composer-fork-mode / fork-keymap / fork-group）的差异：
- * 现有测试每个只 mount 单组件 + mock 编排层。本文件**真实链通多组件**——
- *   Turn.onForkAsk → useForkModeChannel.triggerEnterForkMode → Composer.enterForkMode →
- *   handleForkSend → useForkActions.forkSessionAsk → sessionApi.fork + chatApi.send
+ * 现有测试每个只 mount 单组件 + mock 编排层。本文件用**分段断言拼接**覆盖 fork-ask 旅程——
+ * 跨 mount 实例的真实链通在此受 jsdom 限制（Turn 与 Composer 各自独立 mount，channel→Composer 的
+ * watch 联动由手动调 vm.enterForkMode 短路，非同进程信号传递）。
+ *
+ * 名实标注：**跨组件 channel 真实联动**（Turn 点击 → channel signal → Composer watch 自动进 fork 模式）
+ * 留 Playwright E2E。本文件用分段断言拼接覆盖：
+ *   - Turn 断言 signal 更新（点 fork 提问按钮 → useForkModeChannel.signal 携带 srcSessionId/fromMessageId）
+ *   - Composer 手动调 enterForkMode 断言 fork 模式三重视觉
+ *   - handleForkSend 断言 forkSessionAsk（sessionApi.fork + chatApi.send 新 session id）
+ * 非真正跨 mount 实例链通（Turn 与 Composer 未同屏 mount，channel 经 watch 的真实投递未在此验证）。
+ *
  * 只 mock 最底层 system boundary：api domain（RPC）+ useChat（流式依赖）。
  *
  * 用例覆盖（按计划 §2 汇总表，只写真正新增的增量）：

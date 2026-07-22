@@ -241,6 +241,10 @@ export function persistSessionName(filePath: string, name: string, id?: string, 
  *
  * [HISTORICAL/规则 #6] 文件不存在时**绝不创建文件**（与 persistSessionName 同理由）。
  *
+ * ⚠️ 批 1 只铺基础层接口，业务调用在批 2 handoff-service.runHandoff 中接线。
+ * 当前无生产调用方是预期的（见 plan.md D7）——本函数是 handoff 持久化的原子原语，
+ * 不应在批 1 引入调用方以免耦合未稳定的 handoff-service。待批 2 接线后即有调用。
+ *
  * @param filePath 源 session JSONL 绝对路径
  * @param newSessionId 交接目标的新 session id
  */
@@ -272,6 +276,13 @@ export function persistHandedOff(filePath: string, newSessionId: string): void {
  * 最后写入的 entry → 总在尾部窗口（32KB）内。无需 fallback 全量读——这保持了
  * scanSessionMeta 三读合一的 readFileSync 预算（W3 AC-merge-1：每文件固定读取次数，
  * 若此函数也全量读会打破计数契约）。未命中（无 marker / 尾窗外）→ 返回 undefined。
+ *
+ * [NOTE 不复用 findLastEntryField] 此处手写「尾读 + 倒序找 + 类型守卫」循环看似与
+ * findLastEntryField 骨架重复，但**刻意不复用**：findLastEntryField 在尾读未命中时会
+ * fallback 全量读（readFileSync + parseJsonl），那会打破 scanSessionMeta 的三读合一预算
+ * （W3 AC-merge-1）。handoff_marker 总在文件最尾部，尾读必中，永远走不到 fallback——
+ * 但若复用 findLastEntryField，未来若有人放宽其 predicate 会意外引入全量读。
+ * 故保持独立的「仅尾读」实现，返回类型为 `undefined`（非 null）以匹配 ScannedSessionMeta.handedOffTo 的可选字段语义。
  *
  * @returns 交接目标的新 session id；文件无 handoff_marker（未交接）返回 undefined
  */
