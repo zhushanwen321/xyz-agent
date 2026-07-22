@@ -21,6 +21,7 @@ import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
 import { join, resolve } from 'node:path'
 import { ExtensionService } from './services/extension-service.js'
+import { SkillRegistry } from './services/skill-registry.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
@@ -256,6 +257,18 @@ async function main(): Promise<void> {
   // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
   sessionService.setConfigService(configService)
 
+  // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
+  // 构造在 sessionService 之后（依赖其 getActiveSessionIds/getSessionCwd 窄接口）。
+  // initGlobal() 在 server.start 后调（下文），启动期扫描全局 skill 目录挂 watcher。
+  const skillRegistry = new SkillRegistry({
+    configStore: {
+      getSkillPaths: () => configService.getSkillDirs(),
+      getPiAgentDir: () => configService.getPiAgentDir(),
+    },
+    configDir,
+    sessionService,
+  })
+
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }
@@ -298,6 +311,17 @@ async function main(): Promise<void> {
 
   await server.start()
   console.log('[runtime] ready')
+
+  // SkillRegistry 全局扫描：启动期扫描全局 skill 目录（piAgentDir/skills、configDir/skills、
+  // discovery.skillDirs）并挂 chokidar watcher。变动时 300ms debounce 重扫缓存 + 经 onChange
+  // 通知上游。必须在 server.start 后调（确保异常不阻塞服务启动）。失败不阻塞（skill 降级空缓存）。
+  try {
+    await skillRegistry.initGlobal()
+    console.log(`[runtime] skill registry initialized (${skillRegistry.getGlobalSkills().length} global skills)`)
+  // eslint-disable-next-line taste/no-silent-catch -- skill 扫描失败不阻塞 runtime，UI 降级空列表
+  } catch (e) {
+    console.error('[runtime] skill registry initialization failed:', e)
+  }
 
   // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，
   // semver.lt 判定后静默升级。失败不阻塞启动（每个扩展独立 try-catch）。

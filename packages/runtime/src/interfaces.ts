@@ -134,6 +134,10 @@ export interface ISessionService {
    * 用于 renderer 切 session 后主动拉取（修复 broadcast 与订阅时序竞争）。
    */
   fetchContext(sessionId: string): Promise<{ inputTokens: number; contextLimit: number; usagePercent: number } | null>
+  /** 活跃 session id 列表（含公共 session）。供 SkillRegistry 计算 skill 变更广播的 affectedSessionIds。 */
+  getActiveSessionIds(): string[]
+  /** 取 session 的 cwd（未激活/不存在返回 undefined）。供 SkillRegistry 按项目 skill 变更定位受影响 session。 */
+  getSessionCwd(sessionId: string): string | undefined
   restoreSession(sessionId: string): Promise<SessionSummary>
   /**
    * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。

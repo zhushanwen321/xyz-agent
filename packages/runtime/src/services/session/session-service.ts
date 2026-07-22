@@ -399,6 +399,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   hasActiveSession(sessionId: string): boolean { return this.pm.hasClient(sessionId) }
+
+  /** 活跃 session id 列表（含公共 session，供 SkillRegistry 计算 skill 变更广播范围）。 */
+  getActiveSessionIds(): string[] {
+    return Array.from(this.sessions.keys())
+  }
+
+  /** 取 session cwd（未激活/不存在返回 undefined，供 SkillRegistry 按项目 skill 变更定位受影响 session）。 */
+  getSessionCwd(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.cwd
+  }
+
   getRpcClient(sessionId: string): IPiEngine | undefined { return this.pm.getClient(sessionId) }
 
   /** 确保会话活跃;不存在则自动 restore。并发 restore 时去重拒绝。 */
