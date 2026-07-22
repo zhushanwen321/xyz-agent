@@ -308,11 +308,6 @@ async function main(): Promise<void> {
 
   server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService)
 
-  // 公共 session 就绪回调：重广播 app.info（带 publicSessionId）。
-  // 解决时序竞争——ensurePublicSession 在 server.start 之后才执行，首次 sendInitialState
-  // 推 app.info 时它尚未创建。创建成功后经此回调补发，前端 landing slash popover 才有数据源。
-  sessionService.setOnPublicSessionReady(() => server.broadcastAppInfo())
-
   // Graceful shutdown on signals
   let shuttingDown = false
   const shutdown = async (signal: string) => {
