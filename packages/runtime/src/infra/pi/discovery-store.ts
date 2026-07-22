@@ -16,8 +16,12 @@
  * 🔒 三层架构：本模块属 infra（直接碰文件系统），services 经 port 访问。
  * 与 pi-settings-store / pi-provider-store 同构：JsonStore 封装 + 测试用 setDiscoveryPath + invalidate。
  */
+import { existsSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
+import { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS } from '@xyz-agent/shared'
 import { JsonStore } from '../../utils/json-store.js'
 import { getPiAgentDir } from './pi-paths.js'
+import { expandHome } from '../../utils/path-utils.js'
 import type { DiscoveryConfig } from '@xyz-agent/shared'
 
 const DEFAULT_DISCOVERY: DiscoveryConfig = { version: 1, skillDirs: [], agentDirs: [] }
@@ -88,14 +92,39 @@ export function getAgentDirs(): string[] {
   return readDiscovery().agentDirs
 }
 
-/** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。 */
+/**
+ * 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。
+ *
+ * ADR §5 脏数据过滤：写入前剔除不存在的「自定义」绝对路径（/path/a 等 pi 首次写入的占位符、
+ * 已删除的自定义路径）。与 services/skill-dir-config.ts 的 buildDirConfigs 读取端过滤对齐——
+ * 双向拦截，确保 discovery.json 不残留脏数据（否则用户日后 mkdir 该路径会重新作为 enabled 出现）。
+ *
+ * 豁免（与 buildDirConfigs 一致）：
+ *   - preset 成员（推荐候选语义，即使不存在也保留）—— PRESET_SKILL_DIRS 从 @xyz-agent/shared
+ *     import（SSOT，与读取端共用同一份，无副本漂移风险）
+ *   - 相对路径（无 cwd 上下文，不检查存在性）
+ */
 export function setSkillDirs(dirs: string[]): void {
+  const presetNormalized = new Set(PRESET_SKILL_DIRS.map(expandHome))
+  const filtered = dirs.filter(dir => {
+    const resolved = expandHome(dir)
+    const isPresetMember = presetNormalized.has(resolved)
+    return isPresetMember || !isAbsolute(resolved) || existsSync(resolved)
+  })
   const draft = readDiscovery()
-  writeDiscovery({ ...draft, skillDirs: dirs })
+  writeDiscovery({ ...draft, skillDirs: filtered })
 }
 
-/** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。 */
+/**
+ * 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。与 setSkillDirs 对称的脏数据过滤。
+ */
 export function setAgentDirs(dirs: string[]): void {
+  const presetNormalized = new Set(PRESET_AGENT_DIRS.map(expandHome))
+  const filtered = dirs.filter(dir => {
+    const resolved = expandHome(dir)
+    const isPresetMember = presetNormalized.has(resolved)
+    return isPresetMember || !isAbsolute(resolved) || existsSync(resolved)
+  })
   const draft = readDiscovery()
-  writeDiscovery({ ...draft, agentDirs: dirs })
+  writeDiscovery({ ...draft, agentDirs: filtered })
 }

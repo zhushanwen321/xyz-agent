@@ -2,7 +2,7 @@ export default {
   title: 'Settings',
   close: 'Close',
   closeEsc: 'Close (Esc)',
-  dialogDescription: 'Configure Provider / Skill / Agent / Pi Extension / System',
+  dialogDescription: 'Configure Provider / Skill / Agent / Pi Extension / System Prompt / System',
   applied: 'Applied',
   saved: 'Saved',
   // ── Menu navigation (SettingsModal left nav + right detail title/desc) ──

@@ -24,9 +24,28 @@ vi.mock('chokidar', () => ({
   }),
 }))
 
+// 捕获 ConfigService 构造时传入的 root（S5 验证全局扫描不传 process.cwd()）。
+// vi.hoisted 保证 hoisted 的 mock factory 能引用到此数组。
+const { configRoots } = vi.hoisted(() => ({ configRoots: [] as string[] }))
+
+// mock config-service：defaultScanFn 经此 mock 返回空数组（U1 不依赖真实磁盘扫描），
+// 同时捕获构造 root 供 S5 断言「全局扫描 root !== process.cwd()」。
+// 用 class 而非 vi.fn：ConfigService 以 `new` 调用，箭头函数不能作构造函数。
+vi.mock('../src/services/config-service.js', () => ({
+  ConfigService: class {
+    constructor(root: string) {
+      configRoots.push(root)
+    }
+    loadSkills() {
+      return []
+    }
+  },
+}))
+
 describe('skillRegistry (W1)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    configRoots.length = 0
   })
 
   it('U1: getGlobalSkills 返回启动扫描的 skill', async () => {
@@ -39,7 +58,7 @@ describe('skillRegistry (W1)', () => {
     await reg.initGlobal()
     const skills = reg.getGlobalSkills()
     expect(Array.isArray(skills)).toBe(true)
-    // 全局 skill 取决于环境是否有 ~/.agents/skills 目录，不断言非空
+    // config-service 已 mock（返回 []），此处只验证 initGlobal 不抛错 + 返回数组
   })
 
   it('U2: projectCache 懒加载 + cwd 隔离（同 cwd 二次命中缓存）', async () => {
@@ -164,5 +183,83 @@ describe('skillRegistry (W1)', () => {
       reg.dispose()
       rmSync(cwd, { recursive: true, force: true })
     }
+  })
+
+  it('W3: 缓存命中时补查新建的 skill 目录——补挂 watcher + 重扫缓存', async () => {
+    const chokidar = await import('chokidar')
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const cwd = mkdtempSync(join(tmpdir(), 'skill-reg-w3-'))
+    // scanFn 返回空——本用例只验证「补挂 watcher + 重扫触发」，不关心扫到的 skill 内容
+    const scanSpy = vi.fn().mockResolvedValue([])
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => [] } as never,
+      _scanFn: scanSpy,
+    } as never)
+    try {
+      // 首次扫描：无 skill 目录 → dirs 为空 → 不挂 watcher，缓存空数组
+      await reg.getProjectSkills(cwd)
+      expect(chokidar.watch).not.toHaveBeenCalled()
+      expect(scanSpy).toHaveBeenCalledTimes(1)
+      // 用户后续创建 skill 目录（首次扫描时不存在，现在出现）
+      mkdirSync(join(cwd, '.xyz-agent', 'skills'), { recursive: true })
+      // 再次调用：命中缓存，但检测到「应 watch 但无 watcher」→ 异步补挂 watcher + 重扫
+      // setupProjectWatcher 同步注册 watcher 后 scanFn 被同步调用（await 前），放此处的断言可立即生效
+      await reg.getProjectSkills(cwd)
+      expect(chokidar.watch).toHaveBeenCalledTimes(1)
+      expect(scanSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      reg.dispose()
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('W4: watcher 熔断后推终态通知（上游感知 skill 列表已停更）', async () => {
+    const chokidar = await import('chokidar')
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const cwd = mkdtempSync(join(tmpdir(), 'skill-reg-w4-'))
+    mkdirSync(join(cwd, '.xyz-agent', 'skills'), { recursive: true })
+    const fakeWatcher = new EventEmitter()
+    ;(fakeWatcher as unknown as { close: () => Promise<void> }).close = () => Promise.resolve()
+    vi.mocked(chokidar.watch).mockReturnValueOnce(fakeWatcher as never)
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: {
+        getActiveSessionIds: () => ['sid-x'],
+        getSessionCwd: (sid: string) => (sid === 'sid-x' ? cwd : undefined),
+      } as never,
+      _scanFn: vi.fn().mockResolvedValue([]),
+    } as never)
+    const onChangeSpy = vi.fn()
+    reg.onChange(onChangeSpy)
+    const emfile = () => Object.assign(new Error('too many open files'), { code: 'EMFILE' })
+    try {
+      await reg.getProjectSkills(cwd)
+      // 5 次同类错误 → 熔断 → notifyProjectChange(cwd) → affected = cwd 匹配的 ['sid-x']
+      for (let i = 0; i < 5; i++) fakeWatcher.emit('error', emfile())
+      expect(onChangeSpy).toHaveBeenCalledWith(['sid-x'])
+    } finally {
+      reg.dispose()
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('S5: 全局扫描（projectRoot 空串）不传 process.cwd()，避免项目 skill 混入 globalCache', async () => {
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => [] } as never,
+    })
+    await reg.initGlobal()
+    // defaultScanFn 经 mock ConfigService 捕获构造 root
+    expect(configRoots).toHaveLength(1)
+    // 核心断言：全局扫描的 root 绝不能是 process.cwd()（否则 cwd 下项目 skill 混入 globalCache，
+    // 且这些条目不被全局 watcher 监听 → 缓存与磁盘发散）
+    expect(configRoots[0]).not.toBe(process.cwd())
+    // S5 用 os.tmpdir() 下不存在的子路径作为 root
+    expect(configRoots[0]).toContain(tmpdir())
   })
 })

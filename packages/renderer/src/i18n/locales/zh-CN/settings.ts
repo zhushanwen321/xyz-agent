@@ -2,7 +2,7 @@ export default {
   title: '设置',
   close: '关闭',
   closeEsc: '关闭（Esc）',
-  dialogDescription: '配置供应商 / 技能 / 子代理 / Pi 扩展 / 系统',
+  dialogDescription: '配置供应商 / 技能 / 子代理 / Pi 扩展 / 系统提示词 / 系统',
   applied: '已应用',
   saved: '已保存',
   // ── 菜单导航（SettingsModal 左导航 + 右详情标题/描述）──

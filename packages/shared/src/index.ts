@@ -33,7 +33,7 @@ export type {
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS } from './constants'
 export type { ProviderApiType } from './constants'
 export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi-default-prompt'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
