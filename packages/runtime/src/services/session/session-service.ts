@@ -12,17 +12,17 @@
  */
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, isAbsolute, resolve } from 'node:path'
+import { expandHome } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
-import { getDataDir } from '@xyz-agent/shared/paths'
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
-import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
+import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
@@ -96,14 +96,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   private configService: IConfigService | null = null
   /**
-   * 公共 session 创建成功回调（组合根注入，调 broker.broadcastAppInfo 重广播 app.info）。
-   *
-   * 时序：公共 session 在 server.start 之后才创建，首次 sendInitialState 推 app.info 时
-   * publicSessionId 多为 undefined。创建成功后触发本回调，重广播带 publicSessionId 的 app.info，
-   * 前端据此填 sessionStore.publicSessionId + 拉命令到 commandStore（landing slash 数据源）。
+   * W5：message.complete 广播回调（组合根注入 ReloadOrchestrator.onMessageComplete）。
+   * 经 setter 注入（同 setModelContextWindowResolver 模式），避免构造参数环
+   * （orchestrator 依赖 sessionService，sessionService 不能反向依赖 orchestrator 具体类型）。
+   * 未注入时 message.complete 广播无额外副作用（reload 编排不生效）。
    */
-  private onPublicSessionReady: (() => void) | null = null
-
+  private onMessageComplete: ((sessionId: string) => void) | null = null
+  /**
+   * R3：session 删除回调（组合根注入 ReloadOrchestrator.clearPending）。
+   * 主动 delete（lifecycle.delete）和进程异常退出（onSessionExit）均经 removeSessionEntry
+   * 汇聚触发，清掉 pendingReload 残留（running session 入队后被删，永不发 message.complete）。
+   */
+  private onSessionDelete: ((sessionId: string) => void) | null = null
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -128,15 +132,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       const session = this.sessions.get(sessionId)
       if (!session) return
       session.adapter.detach()
-      this.sessions.delete(sessionId)
-
-      // 公共 session 崩溃：自动重建（landing 态命令源依赖它），不广播 error（对用户透明）
-      const isPublic = sessionId === this.publicSessionId
-      if (isPublic) {
-        this.publicSessionId = undefined
-        this.schedulePublicSessionRebuild()
-        return
-      }
+      // 注意：此处 session 是 delete 前缓存的引用，removeSessionEntry 后 Map 条目已删除
+      // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）
+      this.removeSessionEntry(sessionId)
 
       // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
       // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
@@ -170,62 +168,6 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * 公共 session：隐藏的常驻 session，cwd=数据目录，仅供 landing 态获取 pi 命令（/goal 等）。
-   * 随 runtime 启动创建，pi 进程常驻。landing 态 composer 用此 session 的 commands。
-   *
-   * model 未配置时创建会失败（pi 要求 model），catch 后仅 warn，landing 态 fallback 到 skills。
-   */
-  private publicSessionId: string | undefined
-  private publicSessionRebuildTimer: NodeJS.Timeout | undefined
-  private publicSessionRebuildCount = 0
-  // eslint-disable-next-line no-magic-numbers -- pi 持续 crash 时的重建上限，超过则放弃
-  private static readonly PUBLIC_REBUILD_MAX = 3
-  // eslint-disable-next-line no-magic-numbers -- 重建延迟（ms），避免立即重试撞同一错误
-  private static readonly PUBLIC_REBUILD_DELAY_MS = 2000
-  private static readonly PUBLIC_LABEL = '__public__'
-
-  /** 当前公共 session id（供 broker app.info 推送；undefined 表示未创建/不可用） */
-  getPublicSessionId(): string | undefined {
-    return this.publicSessionId
-  }
-
-  /**
-   * 创建公共 session。model 未配置 / spawn 失败时不抛（landing 降级到 skills）。
-   * 在 runtime 启动收尾（server.start 后）调用。
-   */
-  async ensurePublicSession(): Promise<void> {
-    if (this.publicSessionId) return
-    try {
-      const pub = await this.create(getDataDir(), SessionService.PUBLIC_LABEL, { hidden: true })
-      this.publicSessionId = pub.id
-      this.publicSessionRebuildCount = 0
-      console.log(`[session-service] public session created: ${pub.id}`)
-      // 通知前端：公共 session 就绪。首次 sendInitialState 推 app.info 时它尚未创建，
-      // 这里重广播带 publicSessionId 的 app.info，前端据此填 landing slash 命令源。
-      this.onPublicSessionReady?.()
-    // eslint-disable-next-line taste/no-silent-catch -- 公共 session 是 best-effort：model 未配置/spawn 失败时 landing 降级到 skills fallback
-    } catch (e) {
-      console.warn(`[session-service] public session create failed (landing slash will use skills fallback):`, e)
-    }
-  }
-
-  /**
-   * 崩溃后延迟重建公共 session。带重试上限避免死循环（pi 持续 crash 时不再重建）。
-   */
-  private schedulePublicSessionRebuild(): void {
-    if (this.publicSessionRebuildCount >= SessionService.PUBLIC_REBUILD_MAX) {
-      console.warn(`[session-service] public session rebuild gave up after ${SessionService.PUBLIC_REBUILD_MAX} attempts`)
-      return
-    }
-    this.publicSessionRebuildCount++
-    if (this.publicSessionRebuildTimer) clearTimeout(this.publicSessionRebuildTimer)
-    this.publicSessionRebuildTimer = setTimeout(() => {
-      this.publicSessionRebuildTimer = undefined
-      void this.ensurePublicSession()
-    }, SessionService.PUBLIC_REBUILD_DELAY_MS)
-  }
-
-  /**
    * 注入 model contextWindow 解析器（组合根在所有服务构造后调用）。
    * session 级状态 owner 需读 contextWindow 才能算 usagePercent / 推 contextLimit。
    */
@@ -241,12 +183,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.configService = configService
   }
 
-  /**
-   * 注入公共 session 创建成功回调（组合根调用）。
-   * ensurePublicSession 成功（含崩溃重建）后触发——重广播 app.info 补发 publicSessionId。
-   */
-  setOnPublicSessionReady(cb: () => void): void {
-    this.onPublicSessionReady = cb
+  /** W5：注入 message.complete 回调（组合根绑 ReloadOrchestrator.onMessageComplete）。 */
+  setOnMessageComplete(handler: (sessionId: string) => void): void {
+    this.onMessageComplete = handler
+  }
+
+  /** R3：注入 session 删除回调（组合根绑 ReloadOrchestrator.clearPending）。 */
+  setOnSessionDelete(handler: (sessionId: string) => void): void {
+    this.onSessionDelete = handler
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
@@ -399,6 +343,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   hasActiveSession(sessionId: string): boolean { return this.pm.hasClient(sessionId) }
+
+  /** 活跃 session id 列表（含公共 session，供 SkillRegistry 计算 skill 变更广播范围）。 */
+  getActiveSessionIds(): string[] {
+    return Array.from(this.sessions.keys())
+  }
+
+  /** 取 session cwd（未激活/不存在返回 undefined，供 SkillRegistry 按项目 skill 变更定位受影响 session）。 */
+  getSessionCwd(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.cwd
+  }
+
   getRpcClient(sessionId: string): IPiEngine | undefined { return this.pm.getClient(sessionId) }
 
   /** 确保会话活跃;不存在则自动 restore。并发 restore 时去重拒绝。 */
@@ -565,6 +520,35 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     await client.prompt(`/subagents ${action} ${subagentId}`)
   }
 
+  /**
+   * W5：session 是否处于可 reload 的空闲态（进程存活且非生成中）。
+   * 供 ReloadOrchestrator 判断 skill 变更时是立即 reload 还是排队。
+   */
+  isSessionIdle(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId)
+    return !!session && !session.isGenerating
+  }
+
+  /**
+   * W5：session 是否仍存活（sessions Map 含此 id，进程未退出 / 未被 delete）。
+   * 供 ReloadOrchestrator 检测排队期 session 删除，避免对已死 session 发 reload。
+   */
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId)
+  }
+
+  /**
+   * W5：向 session 发 `/__xyz_reload__` 触发 pi reload（重扫 skill + 重建 runtime）。
+   * 对称 workflowAction 的转发模式：直接 client.prompt 绕过 dispatcher busy 预检 / hook，
+   * 专用于 internal reload action（builtin extension 注册，不经 LLM）。client 不存在或
+   * prompt 抛错向上抛，由 ReloadOrchestrator 降级 catch（best-effort，不阻塞）。
+   */
+  async promptReload(sessionId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not active`)
+    await client.prompt('/__xyz_reload__')
+  }
+
   getSummary(sessionId: string): SessionSummary | undefined {
     const session = this.sessions.get(sessionId)
     return session ? this.toSummary(session) : undefined
@@ -678,12 +662,28 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionServiceInternal:子模块经此访问 sessions / 共享 helper ──
 
-  getSkillPaths(_cwd: string): string[] {
+  getSkillPaths(cwd: string): string[] {
+    // FR-1（cw-2026-07-21-scan-project-agents-skills）：相对路径按 session cwd resolve 成绝对路径再 existsSync filter。
+    // 修复现状 bug：原 getSkillPaths(_cwd) 忽略 cwd，discovery.json 中的相对路径（如 .agents/skills）
+    // 按 runtime 进程 cwd（app.getAppPath/resourcesPath）解析 → 在该 cwd 下不存在被 filter 掉 →
+    // pi 启动 --skill 参数为空 → pi 加载不到项目 skill。
+    // resolve 基准是 session cwd（用户当前项目），返回绝对路径避免 pi 侧再次错位。
+    //
+    // R1（review fix）：~/xxx 家目录前缀先 expandHome 展开（与 W2 loadSkills 对称）。
+    // 否则 isAbsolute('~/...') false → resolve(cwd, '~/...') = <cwd>/~/... 错位 → filter 掉全局 skill。
+    // discovery.json 实际配置 ~/.pi/agent/skills、~/.agents/skills 等带 ~ 前缀，必须展开。
+    const normalize = (p: string): string => {
+      const expanded = expandHome(p)
+      return isAbsolute(expanded) ? expanded : resolve(cwd, expanded)
+    }
     return this.configStore.getSkillPaths().filter((p) => {
-      if (existsSync(p)) return true
-      console.warn(`[session-service] skill path not found, skipping: ${p}`)
+      const resolved = normalize(p)
+      if (existsSync(resolved)) {
+        return true
+      }
+      console.warn(`[session-service] skill path not found, skipping: ${p} (resolved: ${resolved})`)
       return false
-    })
+    }).map(normalize)
   }
 
   async getExtensionPaths(): Promise<string[]> {
@@ -721,7 +721,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   getSession(sessionId: string): IManagedSessionView | undefined { return this.sessions.get(sessionId) }
-  removeSessionEntry(sessionId: string): void { this.sessions.delete(sessionId) }
+  removeSessionEntry(sessionId: string): void {
+    this.sessions.delete(sessionId)
+    // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
+    // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
+    this.onSessionDelete?.(sessionId)
+  }
 
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined {
     const id = this.pm.getSessionIdByClient(client)
@@ -750,7 +755,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
   ): Promise<IManagedSessionView> {
-    const send = (msg: ServerMessage) => this.broker.broadcast(msg)
+    const send = (msg: ServerMessage) => {
+      this.broker.broadcast(msg)
+      // W5：message.complete 广播后通知 reload-orchestrator（消费 pendingReload 队）。
+      // 覆盖所有 message.complete 路径（event-interpreter turn-end 主路径 + dispatcher abort
+      // 手动广播）。onMessageComplete 未注入时为 no-op。
+      if (msg.type === 'message.complete' && msg.payload && typeof msg.payload === 'object' && 'sessionId' in msg.payload) {
+        this.onMessageComplete?.((msg.payload as { sessionId: string }).sessionId)
+      }
+    }
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
     const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
@@ -860,10 +873,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 用于 renderer 切 session 后主动拉取（修复 broadcast 与订阅时序竞争）。
    * @throws session 未激活或 pi getCommands 失败时抛（调用方 try-catch）
    */
-  async getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>> {
+  async getCommands(sessionId: string): Promise<PiCommandInfo[]> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`session ${sessionId} not active`)
-    return client.getCommands() as Promise<Array<{ name: string; description?: string; source: string }>>
+    return client.getCommands()
   }
 
   /** Query pi extension commands 并广播。失败不阻塞 session。 */

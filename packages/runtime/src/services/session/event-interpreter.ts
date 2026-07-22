@@ -21,6 +21,19 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { FileChange } from '@xyz-agent/shared'
+
+/**
+ * [ADR-0035] ping 间隔：turn 进行中每 60s 发一次 get_state 进程健康探测。
+ *
+ * 阈值依据见 ADR-0035「阈值依据」。平衡 RPC 流量（轻量）与响应速度。
+ *
+ * export 供测试 import（SR6 SSOT：测试跟随源码常量，不漂移）。
+ */
+export const PING_INTERVAL_MS = 60_000
+/** [ADR-0035] 连续失败阈值：3 次（180s）→ 判定 pi 进程真死 → onSilentAbort。export 供测试（SR6）。 */
+export const PING_FAIL_THRESHOLD = 3
+/** [AC-8] 连续 2 次失败（120s）→ 广播 message.stream_warn 一次（提示性，不中断）。export 供测试（SR6）。 */
+export const PING_WARN_FAIL_COUNT = 2
 import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -75,27 +88,34 @@ export interface EventInterpreterOptions {
   /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string; textRaw?: string }) => void
   /**
-   * pi 静默卡死 abort 回调（W6, U12，设计文档 A2）。
+   * pi 卡死 abort 回调（ADR-0035 ping 探测机制）。
    *
-   * 当 turn 内连续 SILENT_ABORT_MS（300s）无任何活动事件时，watchdog 判定 pi 卡死，
-   * 触发本回调由组合根调 message-dispatcher.abort（复用现有 abort 兜底广播路径）。
+   * turn 进行中每 60s ping get_state，连续 3 次（180s）失败时判定 pi 进程真死，
+   * 触发本回调由组合根调 sessionService.abort（复用现有 abort 兜底广播路径）。
    * payload 携带 sessionId，供上层定位要 abort 的 session。
    */
   onSilentAbort?: (payload: { sessionId: string }) => void
+  /**
+   * [ADR-0035] ping get_state 进程健康探测回调（组合根注入）。
+   *
+   * 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
+   * 回调内部按当前 sessionId 取 pm.getClient(sessionId)?.getState()，client 未就绪时
+   * 返回 undefined（计为一次失败但不抛错——AC-9：client 偶发未就绪不应让 interpret 批次崩溃）。
+   *
+   * 返回值语义：
+   *   - resolve(非 undefined) → pi 健康（事件循环活，能响应 get_state）→ 清零失败计数
+   *   - resolve(undefined)   → client 未就绪或拿不到 state → 计失败但不抛错（AC-9）
+   *   - reject               → pi 真卡死（get_state 超时）→ 计失败
+   *
+   * 设计权衡：ping 能穿透所有「pi 合理等待」场景（ask_user / 网络 / 文件锁）——
+   * pi 阻塞在 await 时事件循环仍活，get_state 必响应。只有进程真死才连续 3 次失败。
+   * 详见 ADR-0035「ping 可行性验证」。
+   */
+  pingPi?: () => Promise<Record<string, unknown> | undefined> | undefined
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
 const FILE_MUTATING_TOOLS = new Set(['write', 'edit', 'bash'])
-
-// ── W6 pi watchdog 阈值（设计文档 A2）──
-// pi 子进程偶发静默卡死（0% CPU、不退出、不发事件），导致 isGenerating 永久 true。
-// watchdog 在 turn 维度维护两级定时器：WARN 提示用户 + ABORT 自动中断。
-/** WARN 阈值：连续 120s 无活动事件 → 广播 message.stream_error{kind:'silent'}（不中断）。 */
-const SILENT_WARN_MS = 120_000
-/** ABORT 阈值：连续 300s 无活动事件 → 判定卡死，触发 onSilentAbort（上层 abort pi + 复位 isGenerating）。 */
-const SILENT_ABORT_MS = 300_000
-/** ms → s 换算系数（WARN 文案展示秒数）。 */
-const MS_PER_SECOND = 1000
 
 export class EventInterpreter {
   /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
@@ -112,20 +132,14 @@ export class EventInterpreter {
   private subagentRecords: Map<string, SubagentRecord> = new Map()
   /** subagent tool-call-start 的 startParam 缓存（toolCallId → startParam），end 时取出合并 */
   private pendingStartParams: Map<string, { agent: string; slug: string; task: string }> = new Map()
-  // ── W6 pi watchdog 状态（per-session，turn 维度）──
-  // M8（perf-quick-batch）：改为单定时器 + lastActivityAt 时间戳方案。
-  // 旧实现每活动事件都 clearWatchdogTimers（2 clearTimeout）+ 重排 2 setTimeout，
-  // 高频 token 流下每 token 4 次定时器操作（2000 token = 8000 次）。
-  // 现在只维护一个指向最近 deadline（WARN 或 ABORT）的定时器 + 最后活动时间戳；
-  // reset 只更新时间戳（O(1)，不碰定时器），定时器到点时据 now-lastActivityAt 判定真阈值。
-  /** 最后一次活动事件的时间戳（Date.now()）。reset 只更新它，不重排定时器。 */
-  private watchdogLastActivityAt = 0
-  /** 单定时器句柄，指向最近的 deadline（WARN 未发→WARN 阈值；已发→ABORT 阈值）。 */
-  private watchdogTimer: ReturnType<typeof setTimeout> | null = null
-  /** 本轮 WARN 是否已广播（避免 reset 前重复广播；活动事件到达时复位） */
-  private watchdogWarned = false
-  /** extension-ui 等待用户期间暂停 watchdog（用户未响应时不视为卡死）。 */
-  private watchdogPaused = false
+
+  // ── [ADR-0035] ping 探测状态 ──
+  /** ping 定时器句柄（null = 未在探测） */
+  private pingTimer: ReturnType<typeof setInterval> | null = null
+  /** 当前连续失败计数（成功即清零） */
+  private pingFailCount = 0
+  /** 本 turn 是否已广播过 message.stream_warn（避免重复） */
+  private pingWarned = false
 
   constructor(
     private readonly sessionId: string,
@@ -151,8 +165,8 @@ export class EventInterpreter {
       try {
         this.handle(ev)
       } catch (err: unknown) {
-        // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize +
-        // clearWatchdog 未执行 → isGenerating 永不复位（session 永久 busy，违反 AGENTS.md 规则 #3）。
+        // B2（PR#86 review）：终态事件（turn-end）自身 handler 抛错时，onTurnFinalize 未执行 →
+        // isGenerating 永不复位（session 永久 busy，违反 AGENTS.md 规则 #3）。
         // 兜底强制执行。onTurnFinalize 幂等（finalizeSession 幂等，见 chat.ts），重复调用无副作用。
         if (ev.kind === 'turn-end') {
           try {
@@ -161,10 +175,8 @@ export class EventInterpreter {
             // 对「handler 抛错」场景写 'done' 是错的；turn-end 事件本身携带 stopReason（types.ts L120）。
             this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
           } catch (finalizeErr) {
-            // 兜底失败也不阻断——至少尝试清 watchdog（best-effort：onTurnFinalize 内部异常不传播）
             console.debug('[event-interpreter] onTurnFinalize fallback failed:', finalizeErr)
           }
-          this.clearWatchdog()
         }
         console.error(
           `[event-interpreter] handle event error (isolated; batch continues) sid=${this.sessionId} kind=${ev.kind}:`,
@@ -184,8 +196,6 @@ export class EventInterpreter {
         this.handleSubagentBgNotify(ev.message)
         // workflow-result（run 完成）：广播 session.workflows 增量信号
         this.handleWorkflowResult(ev.message)
-        // [W6] message（含 text_delta/thinking_*）是活动事件 → 重置 watchdog 计时
-        this.resetWatchdog()
         return
       case 'turn-start':
         // 记 messageId（file_changes 挂载目标）+ 采 baseline 快照（ADR-0024 D5）
@@ -194,18 +204,16 @@ export class EventInterpreter {
           ? this.opts.fileChangeDiff.snapshotGitStatus(this.opts.cwd)
           : null
         this.writeContents.clear()
-        // [W6] turn 开始 → 启动 watchdog（等待后续活动事件；无事件到达时按阈值 WARN/ABORT）
-        this.startWatchdog()
+        // [ADR-0035] turn 开始启动 ping 探测（每 60s get_state）。
+        // ping 在 turn 进行中持续，turn-end / agent_end / onSilentAbort 停止（见各分支）。
+        // turn 间不探测（AC-3）：startPingLoop 在 turn-start 调用，确保只在 turn 内跑。
+        this.startPingLoop()
         return
       case 'tool-call-start':
-        // [W6] 工具执行开始是活动事件 → 重置 watchdog（长任务期间避免误判卡死）
-        this.resetWatchdog()
         // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
         void this.handleToolCallStart(ev)
         return
       case 'tool-call-end':
-        // [W6] 工具执行结束是活动事件 → 重置 watchdog
-        this.resetWatchdog()
         void this.handleToolCallEnd(ev)
         return
       case 'turn-end':
@@ -229,9 +237,6 @@ export class EventInterpreter {
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
         return
       case 'extension-ui':
-        // [2026-07-16] ask-user 等 extension UI 等待用户期间暂停 watchdog，
-        // 用户未响应不应触发「长时间无响应」警告或 ABORT。
-        this.pauseWatchdog()
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':
@@ -256,21 +261,26 @@ export class EventInterpreter {
     const { toolCallId, toolName } = ev
     let input = ev.input
 
+    let blocked = false
     if (this.opts.executeHooks) {
       try {
         const hookResult = await this.opts.executeHooks('onBeforeToolCall', { toolName, input })
         if (hookResult.blocked === true) {
-          // 阻断：不产出 tool_call_start，但仍触发 onPiEvent hook（带 blocked 标记，供观测插件）
-          this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_start', toolCallId, toolName, input, blocked: true }).catch(() => {})
-          return
-        }
-        if (hookResult.transformedData !== undefined) {
+          blocked = true
+        } else if (hookResult.transformedData !== undefined) {
           input = hookResult.transformedData
         }
       } catch (e) {
         // 插件 hook 失败不影响主流程（best-effort 数据改写），降级到 debug 日志
         console.debug(`[event-interpreter] hook tool_execution_start error: ${toErrorMessage(e)}`)
       }
+    }
+    if (blocked) {
+      // 阻断：不产出 tool_call_start，但仍触发 onPiEvent hook（带 blocked 标记，供观测插件）。
+      // 移到 try-catch 外：与 tool_execution_end 的 fire-and-forget 模式一致——
+      // onBeforeToolCall hook 失败（catch 分支）时仍触发 onPiEvent（不因 hook 失败丢观测事件）。
+      this.opts.executeHooks?.('onPiEvent', { event: 'tool_execution_start', toolCallId, toolName, input, blocked: true }).catch(() => {})
+      return
     }
 
     // 观测 hook（tool_execution_start）
@@ -342,7 +352,7 @@ export class EventInterpreter {
   }
 
   /** turn-end（agent_end）：转发 message.complete + context.update 回写 + onTurnFinalize（副作用）+ 观测 hook + file_changes ready diff + 清空态。 */
-  private handleTurnEnd(ev: PiTranslatedEvent & { kind: 'turn-end' }): Promise<void> {
+  private handleTurnEnd(ev: PiTranslatedEvent & { kind: 'turn-end' }): void {
     // 转发 message.complete WS 帧
     this.opts.send(ev.message)
 
@@ -362,126 +372,8 @@ export class EventInterpreter {
     this.statusBaseline = null
     this.writeContents.clear()
 
-    // [W6] agent_end 正常到达 → turn 已结束，清除 watchdog（避免 turn 后误触发 abort）
-    this.clearWatchdog()
-
-    return Promise.resolve()
-  }
-
-  // ── W6 pi watchdog：turn 级静默卡死检测（设计文档 A2）──
-
-  /**
-   * 暂停 watchdog（extension-ui 等待用户期间调用）。
-   *
-   * 清当前定时器并置暂停标志；暂停期间 armWatchdogTimer 不排新定时器。
-   * 恢复靠 resetWatchdog（用户响应后 pi 继续产出活动事件时触发），无显式 resume 方法。
-   */
-  private pauseWatchdog(): void {
-    this.clearWatchdogTimer()
-    this.watchdogPaused = true
-  }
-
-  /**
-   * 启动 watchdog（turn-start 触发）。
-   *
-   * 记录活动时间戳并排一个指向 WARN 阈值的定时器。
-   */
-  private startWatchdog(): void {
-    this.watchdogLastActivityAt = Date.now()
-    this.watchdogWarned = false
-    this.armWatchdogTimer(SILENT_WARN_MS)
-  }
-
-  /**
-   * 重置 watchdog（活动事件到达时触发）。
-   *
-   * M8（perf-quick-batch）：只更新活动时间戳 + 复位 warned，**不重排定时器**。
-   * 活动事件定义（设计文档 §3.2）：message（text_delta/thinking_*）/ tool-call-start / tool-call-end。
-   * 这些事件表明 pi 仍在产出，故重置计时。
-   *
-   * INVAR-M8-2（不提前）：定时器到点时用 now-lastActivityAt 判定，活动持续时 diff 不到阈值 → 不触发。
-   * 旧实现每帧 clear+重排两定时器（每 token 4 次操作），现 reset 为 O(1)。
-   *
-   * W6（可维护性硬化）：暂停态恢复语义对顺序敏感——「先清 paused」与「后 armWatchdogTimer」不可颠倒
-   * （armWatchdogTimer 内有 `if (paused) return`，若先 arm 再清 paused，下次 tick 仍可能误判暂停态）。
-   * 这里显式分两步：①清 paused 标志（恢复 active），②据 timer 是否存在决定是否补排。
-   */
-  private resetWatchdog(): void {
-    // ① 暂停态恢复：用户响应后 pi 继续产出活动事件，清暂停标志（隐式 resume，无独立方法）。
-    //    必须在 armWatchdogTimer 之前清——否则 arm 内部 `if (paused) return` 会误跳过补排。
-    this.watchdogPaused = false
-    // ② 更新活动时间戳 + 复位 warned（活动发生 → 已发 WARN 也作废，下轮重新计）。
-    this.watchdogLastActivityAt = Date.now()
-    this.watchdogWarned = false
-    // ③ 定时器若已存在则保留（到点再判）；若无（如首事件前未 start 或刚从暂停恢复）则补排指向 WARN。
-    if (!this.watchdogTimer) this.armWatchdogTimer(SILENT_WARN_MS)
-  }
-
-  /**
-   * 排一个定时器，到点后据真实静默时长判定触发 WARN 还是 ABORT。
-   *
-   * 单定时器方案：只指向「当前最近的 deadline」。到点时计算 now-lastActivityAt：
-   * - 未达 WARN → 活动发生过（lastActivityAt 被推进），重排到 WARN 剩余时间
-   * - 达 WARN 未发 → 广播 WARN，重排到 ABORT
-   * - 达 ABORT → 触发 onSilentAbort 并清自身
-   */
-  private armWatchdogTimer(delayMs: number): void {
-    if (this.watchdogPaused) return // 暂停期间不排定时器（pauseWatchdog 已清旧 timer）
-    this.clearWatchdogTimer()
-    this.watchdogTimer = setTimeout(() => this.onWatchdogTick(), delayMs)
-  }
-
-  /** 定时器到点回调：据真实静默时长判定。 */
-  private onWatchdogTick(): void {
-    this.watchdogTimer = null
-    const silentFor = Date.now() - this.watchdogLastActivityAt
-    if (silentFor >= SILENT_ABORT_MS) {
-      console.error(`[event-interpreter] pi silent ABORT (no activity for ${SILENT_ABORT_MS}ms), sid=${this.sessionId}`)
-      this.clearWatchdogTimer()
-      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
-      return
-    }
-    if (silentFor >= SILENT_WARN_MS && !this.watchdogWarned) {
-      this.watchdogWarned = true
-      console.warn(`[event-interpreter] pi silent WARN (no activity for ${SILENT_WARN_MS}ms), sid=${this.sessionId}`)
-      // B1（PR#86 review）：WARN 走独立类型 message.stream_warn（提示性，不中断流），
-      // 不再复用 stream_error——前端 stream_error effect 会无条件 finalizeSession 收口，
-      // 破坏「WARN 提示但不中断」设计。stream_warn 仅追加提示，session 保持 streaming。
-      this.opts.send({
-        type: 'message.stream_warn' as ServerMessageType,
-        payload: {
-          sessionId: this.sessionId,
-          content: `长时间无响应（${SILENT_WARN_MS / MS_PER_SECOND}s 无活动）`,
-        },
-      })
-      // 已发 WARN，重排到 ABORT 剩余时间
-      this.armWatchdogTimer(SILENT_ABORT_MS - silentFor)
-      return
-    }
-    // 未达阈值（活动发生过）或已发 WARN 未到 ABORT：重排到最近 deadline。
-    const nextDeadline = this.watchdogWarned
-      ? SILENT_ABORT_MS - silentFor
-      : SILENT_WARN_MS - silentFor
-    this.armWatchdogTimer(Math.max(0, nextDeadline))
-  }
-
-  /**
-   * 清除 watchdog（agent_end / ABORT 触发 / session 销毁时调用）。
-   * 清掉定时器并复位 warned，防止 turn 结束后定时器泄漏或误触发。
-   */
-  private clearWatchdog(): void {
-    this.clearWatchdogTimer()
-    this.watchdogWarned = false
-    this.watchdogPaused = false
-    this.watchdogLastActivityAt = 0
-  }
-
-  /** 仅清定时器句柄（不触碰 warned/timestamp）。 */
-  private clearWatchdogTimer(): void {
-    if (this.watchdogTimer) {
-      clearTimeout(this.watchdogTimer)
-      this.watchdogTimer = null
-    }
+    // [ADR-0035] turn 结束停止 ping 探测（AC-3：turn 间不探测）。
+    this.stopPingLoop()
   }
 
   /**
@@ -663,5 +555,82 @@ export class EventInterpreter {
         update,
       },
     })
+  }
+
+  // ── [ADR-0035] ping 探测（进程健康检测，替代事件静默检测）──
+
+  /**
+   * 启动 ping 探测循环（turn-start 调用）。
+   *
+   * 幂等：若已有循环在跑（如上一 turn 未正常 stop），先清。每次 turn-start 重置
+   * 失败计数与 warned，确保跨 turn 独立计数（本 turn 第 1 次失败 = 新一轮，不继承上 turn）。
+   */
+  private startPingLoop(): void {
+    this.stopPingLoop()
+    this.pingFailCount = 0
+    this.pingWarned = false
+    // [vitest 时序] setInterval 回调同步调度 tick；tick 内 await pingPi() 是微任务，
+    // vi.advanceTimersByTimeAsync 能同时推进宏任务（setInterval tick）与被 flush 的微任务。
+    this.pingTimer = setInterval(() => { void this.pingTick() }, PING_INTERVAL_MS)
+  }
+
+  /** 停止 ping 探测循环（turn-end / agent_end / onSilentAbort 调用）。幂等。 */
+  private stopPingLoop(): void {
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer)
+      this.pingTimer = null
+    }
+  }
+
+  /**
+   * 单次 ping tick：调 pingPi() 探测 pi 进程是否响应 get_state。
+   *
+   * 成功（resolve 非 undefined）→ 清零失败计数 + warned 标志（AC-8b：中途成功重置累积）。
+   * 失败（reject 或 resolve undefined）→ failCount++；达 2 次且 !warned 广播 WARN；达 3 次触发 onSilentAbort + stopPingLoop（AC-7）。
+   */
+  private async pingTick(): Promise<void> {
+    const cb = this.opts.pingPi
+    if (!cb) return // 未注入 pingPi（如组合根尚未接入）→ 不探测，不误 abort
+    let ok = false
+    try {
+      const state = await cb()
+      // resolve(undefined) 计为失败但不抛错（AC-9：client 未就绪不算崩溃信号，累积到 3 次仍 abort）
+      ok = state !== undefined
+    } catch (e) {
+      // SR5：记日志（经 logger patchConsole 落盘，架构约定 #4），不静默吞错——pi 卡死的真实诊断依赖此处
+      console.warn('[event-interpreter] ping get_state failed:', e)
+      ok = false
+    }
+    // SR1（M1 并发 bug）：await cb() 窗口最长 PING_INTERVAL_MS，期间 turn-end 可能已到来
+    // 触发 stopPingLoop（清 timer）。此时已 in-flight 的 pingTick 绝不能继续更新 failCount——
+    // 否则 turn 已正常结束却因累积达阈值误触发 onSilentAbort，广播 aborted。
+    // pingTimer === null 即被 stop，直接 return（不增计数、不广播、不 abort）。
+    if (this.pingTimer === null) return
+    if (ok) {
+      // 健康响应 → 清零（AC-8b：中途成功后需重新累积 2 次才 WARN）
+      this.pingFailCount = 0
+      this.pingWarned = false
+      return
+    }
+    this.pingFailCount += 1
+    // AC-8：连续 2 次失败广播 message.stream_warn 一次（提示性，不中断流）
+    if (this.pingFailCount === PING_WARN_FAIL_COUNT && !this.pingWarned) {
+      this.pingWarned = true
+      this.opts.send({
+        type: 'message.stream_warn',
+        payload: {
+          sessionId: this.sessionId,
+          // SR3：间隔由 PING_INTERVAL_MS 决定，不硬编码 60（常量 SSOT）
+          // 1000 = ms→s 换算常数，无语义歧义
+          // eslint-disable-next-line no-magic-numbers
+          content: `pi 进程连续 ${this.pingFailCount * (PING_INTERVAL_MS / 1000)}s 未响应健康探测，可能卡死`,
+        },
+      })
+    }
+    // ADR-0035：连续 3 次失败 → 判定 pi 进程真死 → onSilentAbort + 停止 ping（AC-7）
+    if (this.pingFailCount >= PING_FAIL_THRESHOLD) {
+      this.stopPingLoop()
+      this.opts.onSilentAbort?.({ sessionId: this.sessionId })
+    }
   }
 }

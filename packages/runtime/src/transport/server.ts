@@ -14,6 +14,7 @@ import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
+import type { SkillRegistry } from '../services/skill-registry.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ConnectionManager } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
@@ -43,6 +44,8 @@ export class RuntimeServer implements IMessageBroker {
   private pluginService!: IPluginService
   private gitService?: GitService
   private fileService?: FileService
+  /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
+  private skillRegistry?: SkillRegistry
 
   // ── Message handlers (extracted) ────────────────────────────────
   // Constructed in setServices() — not at field-init time — so `this` is fully
@@ -79,12 +82,13 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, worktree?: IWorktreeService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService): void {
     this.gitService = git
     this.fileService = file
     this.sessionService = session
     this.configService = config
     this.modelService = model
+    this.skillRegistry = skillRegistry
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
 
@@ -97,9 +101,6 @@ export class RuntimeServer implements IMessageBroker {
       extensionService: this.extensionService,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
-      // 公共 session id 动态读取器：broker 推 app.info 时调用，把 publicSessionId 带给前端。
-      // sessionService.ensurePublicSession 在 server.start 后才创建，故用 getter 动态读。
-      getPublicSessionId: () => this.sessionService?.getPublicSessionId(),
     })
 
     // ── Assemble handlers with explicit context objects ──────────────
@@ -121,6 +122,9 @@ export class RuntimeServer implements IMessageBroker {
       configService: this.configService,
       sessionService: this.sessionService,
       modelService: this.modelService,
+      // W4：skillRegistry 必须注入（settings-handler 的 config.getGlobalSkills/getProjectSkills 依赖）。
+      // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
+      skillRegistry: this.skillRegistry!,
       projectRoot: this.projectRoot,
       nextPushId: () => this.broker.nextPushId(),
       broadcast: (msg) => this.broker.broadcast(msg),
@@ -208,8 +212,6 @@ export class RuntimeServer implements IMessageBroker {
 
   send(ws: WsType, msg: ServerMessage): void { this.broker.send(ws, msg) }
   broadcast(msg: ServerMessage): void { this.broker.broadcast(msg) }
-  /** 重广播 app.info（公共 session 创建成功后补发 publicSessionId）。 */
-  broadcastAppInfo(): void { this.broker.broadcastAppInfo() }
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     this.broker.sendError(ws, code, message, id, details)
   }

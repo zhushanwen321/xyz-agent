@@ -23,11 +23,14 @@ import { onBeforeUnmount, watch, getCurrentInstance, type Ref } from 'vue'
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 
-/** 单 type 的窄化 handler（msg.type 已收窄为 T，payload 按 ServerMessageMap[T] 解析） */
-type TypedHandler<T extends ServerMessageType> = (msg: ServerMessage<T>) => void
+/** 单 type 的窄化 handler（msg.type 已收窄为 T，payload 按 ServerMessageMap[T] 解析）
+ *  第二参数 sid 是消息所属 session（订阅时捕获，不随当前 sid 变化），供 handler 调
+ *  useSessionScopedState.updateFor(sid, ...) 写入「消息所属 sid」的分区，消除切 sid 时序竞态 */
+type TypedHandler<T extends ServerMessageType> = (msg: ServerMessage<T>, sid: string) => void
 
-/** 多 type 的宽 handler（msg.type ∈ types，但 payload 仍为联合宽类型，调用方按需窄断言） */
-type MultiTypeHandler = (msg: ServerMessage) => void
+/** 多 type 的宽 handler（msg.type ∈ types，但 payload 仍为联合宽类型，调用方按需窄断言）
+ *  第二参数 sid 同 TypedHandler：消息所属 session（订阅时捕获） */
+type MultiTypeHandler = (msg: ServerMessage, sid: string) => void
 
 /** onMessage 重载签名：单 type → 窄 handler；多 type → 宽 handler */
 export interface OnMessage {
@@ -39,8 +42,8 @@ export interface OnMessage {
 interface Registration {
   /** 命中白名单（单 type 或多 type 数组，用 Set 做 O(1) 查询） */
   types: Set<ServerMessageType>
-  /** 调用方注册的 handler（分发时透传匹配的 ServerMessage） */
-  handler: (msg: ServerMessage) => void
+  /** 调用方注册的 handler（分发时透传匹配的 ServerMessage + 订阅时 sid） */
+  handler: (msg: ServerMessage, sid: string) => void
 }
 
 /**
@@ -80,9 +83,13 @@ export function useSessionEvents(sessionIdRef: Ref<string | null | undefined>): 
   function subscribe(sid: string): void {
     // 幂等：已订阅同 sid 不重开（watch immediate + 同步多次触发时的保护）
     if (unsub) return
+    // handler 闭包捕获订阅时 sid 参数，分发时透传给每个命中 handler。
+    // 关键：即使 watch(sessionId) 的 flush:pre 异步退订窗口内有旧 sid 的迟到消息进入此 handler，
+    // handler 传入的仍是「订阅时 sid」（本闭包的 sid 形参），调用方用此 sid 调 updateFor(sid)
+    // 写入「消息所属 sid」分区，不污染新 sid 分区——从结构上消除 M1 竞态（ADR-0036）。
     unsub = events.on(sid, (msg) => {
       for (const reg of registrations) {
-        if (reg.types.has(msg.type)) reg.handler(msg)
+        if (reg.types.has(msg.type)) reg.handler(msg, sid)
       }
     })
   }
@@ -108,9 +115,9 @@ export function useSessionEvents(sessionIdRef: Ref<string | null | undefined>): 
   ): void => {
     const types = new Set(Array.isArray(typeOrTypes) ? typeOrTypes : [typeOrTypes])
     // 类型擦除说明：单 type 的 TypedHandler<T> 接收窄 ServerMessage<T>，但路由表统一存宽 handler。
-    // 运行时分发只喂命中 type 的 msg（types.has(msg.type) 守卫），调用方拿到的 msg.type 必然 ∈ 白名单，
-    // 故窄断言安全（与 events.onGlobalType 的 erased 模式同构）。
-    registrations.push({ types, handler: handler as (msg: ServerMessage) => void })
+    // 运行时分发只喂命中 type 的 msg（types.has(msg.type) 守卫）+ 订阅时 sid，调用方拿到的 msg.type
+    // 必然 ∈ 白名单，故窄断言安全（与 events.onGlobalType 的 erased 模式同构）。
+    registrations.push({ types, handler: handler as (msg: ServerMessage, sid: string) => void })
   }
 
   // 订阅生命周期：sessionId 变化先退订旧、再订新；null/undefined 仅退订不重订。

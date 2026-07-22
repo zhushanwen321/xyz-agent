@@ -13,6 +13,23 @@ import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
 
+// ── Client → Runtime message types
+
+/** pi get_commands 返回的命令来源元信息（RpcSlashCommand.sourceInfo 透传）。
+ *  sourceInfo.path 是 SKILL.md / extension 文件绝对路径，供 CommandDocPanel 直接读文件渲染。 */
+export interface CommandSourceInfo {
+  /** SKILL.md / extension 文件绝对路径 */
+  path: string
+  /** pi 来源分类（extension / prompt / skill） */
+  source: string
+  /** 作用域：user / project / temporary */
+  scope?: string
+  /** 包来源：package / top-level */
+  origin?: string
+  /** 基础目录（pi 用于相对路径解析的基准） */
+  baseDir?: string
+}
+
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
@@ -25,6 +42,8 @@ export type ClientMessageType =
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
+  | 'config.scanSessionSkills'
+  | 'config.getGlobalSkills' | 'config.getProjectSkills'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'config.setSkillDirs' | 'config.setAgentDirs'
   | 'config.getSystemPrompt' | 'config.setSystemPrompt'
@@ -153,6 +172,16 @@ export interface ClientMessageMap {
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
   'config.setDefaultModel': { provider: string; modelId: string }
   'config.scanSkills': { sources: string[] }
+  // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill（.agents/skills + .xyz-agent/skills）。
+  // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；scanSessionSkills 扫某 cwd 已生效目录。
+  'config.scanSessionSkills': { cwd: string }
+  // W4（cw-2026-07-21-fix-ask-user-ime）：landing 全局 skill 走 skillRegistry globalCache（经 RPC），
+  // 不走 settingsStore.skills（FR-5：landing 全局 skill 与配置态扫描解耦）。
+  'config.getGlobalSkills': Record<string, never>
+  // W4：按 cwd 拉项目 skill（skillRegistry projectCache，首次扫描 + watcher，命中缓存零开销）。
+  // 与 config.scanSessionSkills 区分：scanSessionSkills 直接调 configService.loadSkills(cwd)（无缓存无 watcher），
+  // getProjectSkills 走 skillRegistry（带缓存 + 文件监听，W1 单例）。
+  'config.getProjectSkills': { cwd: string }
   'config.setSkill': { skill: SkillInfo }
   'config.deleteSkill': { skillId: string }
   'config.scanAgents': { sources: string[] }
@@ -277,6 +306,8 @@ export type ServerMessageType =
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
+  | 'config.sessionSkills'
+  | 'config.globalSkills' | 'config.projectSkills'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
   | 'config.skillDirs' | 'config.agentDirs'
@@ -299,7 +330,6 @@ export type ServerMessageType =
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
-  | 'message.compactionSummary'
   | 'extension:setEditorText'
   | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
@@ -408,7 +438,8 @@ export interface ServerMessageMapBase {
   'session.compacting': { sessionId: string }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
-  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // sourceInfo 透传自 pi get_commands 的 RpcSlashCommand（SKILL.md / extension 文件路径等），可选（旧消费方向后兼容）
+  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string; sourceInfo?: CommandSourceInfo }> }
   // session.subagents：当前 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
   // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
@@ -431,9 +462,7 @@ export interface ServerMessageMapBase {
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
   'subagent.stream_delta': { sessionId: string; recordId: string; lines: string[] | undefined }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
-  // publicSessionId：公共 session 的真实 id（pi 生成 UUID，启动期创建后填）。
-  // 前端 landing 态用此 id 从 commandStore 取命令（pi extension slash 命令）。
-  'app.info': { appVersion: string; piVersion: string; publicSessionId?: string }
+  'app.info': { appVersion: string; piVersion: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
   // message.compactionSummary：上下文压缩摘要（compact 执行后推送，进对话流作 SystemNotice）。
@@ -529,6 +558,13 @@ export interface ServerMessageMapBase {
   // config.scannedSkills：scanSkills reply（settings-message-handler.ts:69 reply { skills, success: true }）。
   // skills 是扫描发现结果，形状为 ScannedSkillInfo（含 sourceType/alreadyImported），非已加载的 SkillInfo。
   'config.scannedSkills': { skills: ScannedSkillInfo[]; success: boolean }
+  // W2：scanSessionSkills reply（settings-message-handler.ts reply { skills }，不广播，按需 RPC）。
+  // skills 是已加载的 SkillInfo（loadSkills(cwd) 扫描结果），非 ScannedSkillInfo。
+  'config.sessionSkills': { skills: SkillInfo[] }
+  // W4：getGlobalSkills reply（settings-message-handler reply skillRegistry.getGlobalSkills()，不广播，按需 RPC）。
+  'config.globalSkills': { skills: SkillInfo[] }
+  // W4：getProjectSkills reply（settings-message-handler reply skillRegistry.getProjectSkills(cwd)，不广播，按需 RPC）。
+  'config.projectSkills': { skills: SkillInfo[] }
   // config.scannedAgents：scanAgents reply（settings-message-handler.ts:99 reply { agents, success: true }）。
   // agents 是扫描发现结果，形状为 ScannedAgentInfo（含 sourceType/alreadyImported），非已加载的 AgentInfo。
   'config.scannedAgents': { agents: ScannedAgentInfo[]; success: boolean }
@@ -613,6 +649,9 @@ export interface ReplyPayloadMap {
   'config.getProviders': ServerMessageMap['config.providers']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
+  'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
+  'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
+  'config.getProjectSkills': ServerMessageMap['config.projectSkills']
   // 系统提示词配置（W2，FR-4/FR-5）：get/setSystemPrompt reply config.systemPrompt
   //   形状 `{ config, corrupted? }`。
   'config.getSystemPrompt': ServerMessageMap['config.systemPrompt']

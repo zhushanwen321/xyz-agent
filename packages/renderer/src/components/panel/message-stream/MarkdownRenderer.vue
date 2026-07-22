@@ -49,7 +49,7 @@ import { useFileSearch } from '@/composables/features/useFileSearch'
 import { useFileSearchStore } from '@/stores/fileSearch'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
-import { collectBasenames, findByBasename } from '@/lib/file-basename'
+import { collectBasenames, collectFilePaths, findByBasename } from '@/lib/file-basename'
 import AmbiguousFilePopover from './AmbiguousFilePopover.vue'
 import MermaidRenderer from './MermaidRenderer.vue'
 
@@ -72,6 +72,7 @@ let renderSeq = 0
 // 单次渲染，消除流式卡顿。复用 M4 useChatScroll 的 rAF 节流模式（延迟求值守卫）。
 let rafId: number | null = null
 let pendingContent = ''
+let pendingFilePaths: Set<string> = new Set()
 let pendingLocalFiles: Set<string> = new Set()
 
 /**
@@ -96,20 +97,25 @@ function escapeHtmlForFallback(s: string): string {
  * 响应式 ref（非 store 直接派生——fileSearchStore.set 用 Map mutation 不触发 Vue 响应式，
  * 这里在 load 完成后手动赋值触发重渲染）。
  *
- * 首渲染时可能为空集（fileSearch 未加载）→ markdown 裸 basename 降级纯文本（与无 env 一致，无回归）。
- * load 完成后赋值 → watch 触发重渲染 → basename 变可点击链接。
+ * 首渲染时可能为空集（fileSearch 未加载）→ markdown 路径/basename 降级纯文本（与无 env 一致，无回归）。
+ * load 完成后赋值 → watch 触发重渲染 → 路径变可点击链接。
  * sessionId 变化（切 session）→ 重新 load + 重渲染。
  */
+// filePaths：含/路径识别白名单（FileNode.path 集合，如 'src/index.ts'）
+const filePaths = ref<Set<string>>(new Set())
+// localFiles：裸 basename 识别白名单（FileNode.name 集合，如 'design.md'）
 const localFiles = ref<Set<string>>(new Set())
 const { load: loadFileCandidates } = useFileSearch()
 let loadedSessionId: string | null | undefined
 async function refreshLocalFiles(sid: string | null | undefined): Promise<void> {
   if (!sid) {
+    filePaths.value = new Set()
     localFiles.value = new Set()
     return
   }
   // 缓存命中（fileSearchStore.get）走同步路径，否则 fire-and-forget RPC，完成后赋值触发重渲染
   const nodes = await loadFileCandidates(sid)
+  filePaths.value = collectFilePaths(nodes)
   localFiles.value = collectBasenames(nodes)
 }
 
@@ -169,7 +175,7 @@ watch(
  * + try/catch 降级（renderMarkdownSegments 失败时转义纯文本兜底，保证气泡可读）。
  * 与原逻辑等价，仅从 watch 回调抽出以便 rAF 节流复用。
  */
-async function doRender(text: string, files: Set<string>): Promise<void> {
+async function doRender(text: string, paths: Set<string>, files: Set<string>): Promise<void> {
   if (!text.trim()) {
     segments.value = []
     return
@@ -177,7 +183,7 @@ async function doRender(text: string, files: Set<string>): Promise<void> {
   // 流式增量会高频触发：用序号守卫，只采纳最新一次的渲染结果（防旧渲染覆盖新内容）
   const seq = ++renderSeq
   try {
-    const segs = await renderMarkdownSegments(text, { localFiles: files })
+    const segs = await renderMarkdownSegments(text, { filePaths: paths, localFiles: files })
     if (seq === renderSeq) {
       segments.value = segs
     }
@@ -195,14 +201,15 @@ async function doRender(text: string, files: Set<string>): Promise<void> {
  * rAF 回调：执行 pending 渲染（flushRender）。
  *
  * 关键——延迟求值守卫（INVAR-H2-2/AC-7）：rafId 在此处先复位（防重入），
- * 然后读取 pendingContent/pendingLocalFiles 最新值（非 scheduleRender 调用时的快照）。
- * 这保证一帧内多次 content 变化只渲染末次值，且 content/localFiles 同帧快照一致。
+ * 然后读取 pendingContent/pendingFilePaths/pendingLocalFiles 最新值（非 scheduleRender 调用时的快照）。
+ * 这保证一帧内多次 content 变化只渲染末次值，且 content/paths/localFiles 同帧快照一致。
  */
 function flushRender(): void {
   rafId = null
   const text = pendingContent
+  const paths = pendingFilePaths
   const files = pendingLocalFiles
-  void doRender(text, files)
+  void doRender(text, paths, files)
 }
 
 /**
@@ -211,8 +218,9 @@ function flushRender(): void {
  * 存入 pending 值 → 若当前无挂起 rAF 则 requestAnimationFrame(flushRender)。
  * 同帧已有挂起 rAF 时仅更新 pending（合并），不重复调度——一帧内 N 次变化 → 1 次 rAF → 1 次渲染。
  */
-function scheduleRender(text: string, files: Set<string>): void {
+function scheduleRender(text: string, paths: Set<string>, files: Set<string>): void {
   pendingContent = text
+  pendingFilePaths = paths
   pendingLocalFiles = files
   if (rafId === null) {
     rafId = requestAnimationFrame(flushRender)
@@ -220,9 +228,9 @@ function scheduleRender(text: string, files: Set<string>): void {
 }
 
 watch(
-  () => [props.content, localFiles.value],
+  () => [props.content, filePaths.value, localFiles.value],
   ([text]) => {
-    scheduleRender(text as string, localFiles.value)
+    scheduleRender(text as string, filePaths.value, localFiles.value)
   },
   { immediate: true },
 )

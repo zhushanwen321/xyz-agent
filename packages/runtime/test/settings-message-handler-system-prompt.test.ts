@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
+import type { SettingsHandlerContext } from '../src/transport/settings-message-handler.js'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { IConfigService, IModelService, ISessionService } from '../src/interfaces.js'
 
@@ -69,6 +70,7 @@ function makeHandler() {
     configService: configService as unknown as IConfigService,
     sessionService: {} as unknown as ISessionService,
     modelService,
+    skillRegistry: { getGlobalSkills: () => [], getProjectSkills: vi.fn().mockResolvedValue([]) } as unknown as SettingsHandlerContext['skillRegistry'],
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('push-1'),
     broadcast: vi.fn((m: ServerMessage) => broadcasts.push(m)),

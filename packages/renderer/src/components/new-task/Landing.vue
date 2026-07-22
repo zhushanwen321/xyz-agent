@@ -21,7 +21,6 @@ import CreateBranchModal from './CreateBranchModal.vue'
 import CreateWorktreeModal from './CreateWorktreeModal.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
-import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
 import { dirNameOf } from '@/composables/logic/path'
 
@@ -61,14 +60,11 @@ function onOpenDirDialog(): void {
     toastError(t('newTask.landing.dirSelectorFailed', { reason }))
   })
 }
-const sessionStore = useSessionStore()
 // landing 态 session 真源是 NewTaskFlow（selectWorkspace/openDirDialog create 的 session 不经
 // useSidebar，panel leaf.sessionId 滞后）。优先 flow 真源，props 作 fallback（常态新建两者一致）。
-// 前两者都 null（真 landing 态，未发消息未选目录）时 fallback 到公共 session——它的 pi 命令
-// （/goal 等 extension 命令）已由 useSidebar 的 app.info 订阅拉到 commandStore，key=公共 sid。
-// CommandPopover 据此在 landing 态显示 pi extension 命令。公共 session 不可用时（model 未配置）
-// publicSessionId=null，CommandPopover 走 skills fallback（现状不变）。
-const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId ?? sessionStore.publicSessionId)
+// 前两者都 null（真 landing 态）时 composerSid 为 null——CommandPopover 走 skills fallback
+// （settingsStore 全局 skills + projectSkills），不再依赖公共 session pi 命令（W3 已移除公共 session）。
+const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId)
 const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
 const branch = computed(() => flow.gitInfo.value?.branch ?? props.gitBranch ?? null)
 
@@ -151,18 +147,6 @@ function onRetry(): void {
     data-testid="new-task-landing"
     class="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-8 overflow-hidden p-6"
   >
-    <!-- watermark：zcode 描边，opacity 0.04 背景层（spec §3.1） -->
-    <svg
-      aria-hidden="true"
-      class="pointer-events-none absolute inset-0 m-auto h-1/2 w-1/2 text-fg opacity-[0.04]"
-      viewBox="0 0 100 100"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-    >
-      <rect x="20" y="20" width="60" height="60" rx="10" />
-      <path d="M35 50 L45 60 L65 40" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
 
     <!-- 问候语（22px / weight 650 / --fg，spec §3.1） -->
     <h1 class="z-10 text-center text-[22px] font-[650] text-fg">

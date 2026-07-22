@@ -315,7 +315,7 @@ const lastRenderTurn = computed(() => {
  * contentEl 绑定内容 wrapper，供 useChatScroll 的 ResizeObserver 观察异步渲染抖动。
  * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
  */
-const { scrollEl, contentEl, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
+const { scrollEl, contentEl, stickToBottom, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
 
 /**
  * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），
@@ -386,12 +386,20 @@ watch(
 // W19: flush:'post'——DOM 更新后再应用 delta。pre 模式下 watch 与下次 flushHeightReports
 // 可能同帧执行：watch 应用并清零后，同一 tick 内又累积的 delta 会在清零时被抹除（中间 delta 丢失）。
 // post 模式保证 watch 在 DOM flush 后触发，此时 reportHeight 的 rAF flush 已结束，本帧 delta 全部累积到位。
+//
+// [fix-scroll-jump-during-streaming] 用户主动滚动 guard：补偿只应稳定「程序性滚动后的视口」。
+// stickToBottom=false（用户已 wheel 上滑脱离锚定）时视口位置由用户掌控，历史 delta 已无意义——
+// 跳过施加但仍清零（FR1 不施加 + FR2 丢弃不延后，防回到底部瞬间被陈旧 offset 拉偏）。
+// stickToBottom 读 watch 回调内的当前值（非调用时捕获），保证用户当帧 wheel 后当帧即跳过（FR5）。
 watch(
   () => virtualList.scrollAdjustDelta.value,
   (delta) => {
     if (delta !== 0 && scrollEl.value) {
-      scrollEl.value.scrollTop += delta
-      // 清零，防下次 reportHeight 残留值导致重复补偿
+      // FR1/FR2：用户主动滚动期间（stickToBottom=false）跳过施加，仅清零丢弃，不延后到回到底部
+      if (stickToBottom.value) {
+        scrollEl.value.scrollTop += delta
+      }
+      // 清零，防下次 reportHeight 残留值导致重复补偿（两个分支都清零——FR3 贴底原行为 + FR2 脱离丢弃）
       virtualList.scrollAdjustDelta.value = 0
     }
   },

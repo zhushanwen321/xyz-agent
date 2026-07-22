@@ -29,6 +29,15 @@ export interface PiCommandInfo {
   name: string
   description?: string
   source: string
+  /** 命令来源元信息（SKILL.md / extension 文件路径等），透传自 pi RpcSlashCommand.sourceInfo。
+ *  CommandDocPanel 据此直接读文件渲染，不再依赖 settingsStore.skills 扫描（解决 cwd 错位扫不到项目 skill）。 */
+  sourceInfo?: {
+    path: string
+    source: string
+    scope?: string
+    origin?: string
+    baseDir?: string
+  }
 }
 
 /**

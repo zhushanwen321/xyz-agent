@@ -5,6 +5,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
+import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
@@ -13,6 +14,8 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   configService: IConfigService
   sessionService: ISessionService
   modelService: IModelService
+  /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
+  skillRegistry: SkillRegistry
   projectRoot: string
   nextPushId(): string
   broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
@@ -69,6 +72,30 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.scannedSkills', { skills: this.ctx.configService.scanSkills(msg.payload.sources, existingIds), success: true })
         // 修裂缝①：扫描后广播最新 skill 列表（与 set/delete 对称），让前端 onSkills 订阅推回
         this.ctx.broadcastSkillList()
+        return true
+      }
+      case 'config.scanSessionSkills': {
+        // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill。
+        // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery + 广播全局；
+        // scanSessionSkills 扫某 cwd 的 .agents/skills + .xyz-agent/skills 已生效目录，不广播
+        // （按需 RPC，避免污染全局 config.skills，前端 useProjectSkills 按 cwd key 独立缓存）。
+        const skills = this.ctx.configService.loadSkills(msg.payload.cwd)
+        this.ctx.reply(ws, msg.id, 'config.sessionSkills', { skills })
+        return true
+      }
+      case 'config.getGlobalSkills': {
+        // W4：返回 skillRegistry globalCache（启动期扫描 + watcher 自动刷新，同步读缓存零开销）。
+        // landing 全局 skill 走此 RPC（FR-5：不再走 settingsStore.skills 配置态扫描）。
+        const skills = this.ctx.skillRegistry.getGlobalSkills()
+        this.ctx.reply(ws, msg.id, 'config.globalSkills', { skills })
+        return true
+      }
+      case 'config.getProjectSkills': {
+        // W4：按 cwd 拉项目 skill（skillRegistry projectCache，首次扫描 + 挂 watcher，命中缓存零开销）。
+        // 与 config.scanSessionSkills 区分：getProjectSkills 走 skillRegistry（带缓存 + 文件监听 W1 单例），
+        // scanSessionSkills 直接调 configService.loadSkills(cwd)（无缓存）。前端 useProjectSkills 已切到本 RPC。
+        const skills = await this.ctx.skillRegistry.getProjectSkills(msg.payload.cwd)
+        this.ctx.reply(ws, msg.id, 'config.projectSkills', { skills })
         return true
       }
       case 'config.setSkillDirs': {

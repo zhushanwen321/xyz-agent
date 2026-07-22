@@ -7,7 +7,7 @@
  *  - U8 target=new 仅 landing composer（variant=landing）消费
  *  - U9 target=new 不被 session composer（variant=panel）消费
  *  - R1 端到端：store 写入 → Composer 真实消费 → DOM 真实 chip（real 层）
- *  - R3 target=new 真实路由 landing composer 消费（real 层，绕过 publicSessionId 坑点）
+ *  - R3 target=new 真实路由 landing composer 消费（real 层，不依赖 sessionId 匹配）
  *
  * 策略同 composer-slash-injection.test.ts：真 pinia + 真 composerInjectionStore，
  * mock 其余 store/composable/api，ComposerInput stub 暴露 insertFileChip spy。
@@ -38,6 +38,7 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
     setPendingModel: vi.fn(),
     state: { value: 'idle' },
     currentSessionId: { value: null },
+    currentCwd: ref(null), // W4：useProjectSkills(flow.currentCwd) watch 需要真 ref，非裸对象
   }),
   resetNewTaskFlow: vi.fn(),
 }))
@@ -47,6 +48,11 @@ vi.mock('@/api', () => ({
   composer: {
     getMentionCandidates: vi.fn().mockResolvedValue([]),
     getFileCandidates: vi.fn().mockResolvedValue([]),
+  },
+  config: {
+    // W4：useGlobalSkills/useProjectSkills 调用
+    getGlobalSkills: vi.fn().mockResolvedValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
   },
 }))
 

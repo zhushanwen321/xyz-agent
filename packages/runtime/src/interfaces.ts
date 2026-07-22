@@ -79,10 +79,6 @@ export interface SessionCreateOptions {
 /** Session lifecycle: creation, deletion, messaging, history. */
 export interface ISessionService {
   create(cwd?: string, label?: string, options?: SessionCreateOptions): Promise<SessionSummary>
-  /** 公共 session id（供 broker app.info 推送；undefined 表示未创建/不可用） */
-  getPublicSessionId(): string | undefined
-  /** 创建公共 session（runtime 启动期调用，model 未配置时不抛） */
-  ensurePublicSession(): Promise<void>
   delete(sessionId: string): Promise<void>
   renameSession(sessionId: string, newName: string): Promise<void>
   sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }>
@@ -126,6 +122,12 @@ export interface ISessionService {
   workflowAction(sessionId: string, action: 'pause' | 'resume' | 'abort', runId: string): Promise<void>
   /** 取消 running subagent（经扩展 /subagents cancel，不经 LLM；对称 workflowAction） */
   subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void>
+  /** W5：session 是否空闲（进程存活且非生成中），供 ReloadOrchestrator 判断立即/排队 reload。 */
+  isSessionIdle(sessionId: string): boolean
+  /** W5：session 是否仍存活（未被 delete），供 ReloadOrchestrator 检测排队期删除。 */
+  hasSession(sessionId: string): boolean
+  /** W5：发 `/__xyz_reload__` 触发 pi reload（builtin extension handler 调 ctx.reload）。 */
+  promptReload(sessionId: string): Promise<void>
   /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
   getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   /**
@@ -134,6 +136,10 @@ export interface ISessionService {
    * 用于 renderer 切 session 后主动拉取（修复 broadcast 与订阅时序竞争）。
    */
   fetchContext(sessionId: string): Promise<{ inputTokens: number; contextLimit: number; usagePercent: number } | null>
+  /** 活跃 session id 列表（含公共 session）。供 SkillRegistry 计算 skill 变更广播的 affectedSessionIds。 */
+  getActiveSessionIds(): string[]
+  /** 取 session 的 cwd（未激活/不存在返回 undefined）。供 SkillRegistry 按项目 skill 变更定位受影响 session。 */
+  getSessionCwd(sessionId: string): string | undefined
   restoreSession(sessionId: string): Promise<SessionSummary>
   /**
    * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。

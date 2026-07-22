@@ -1,19 +1,21 @@
 /**
- * CommandPopover landing 态 slash 命令源 单测（L1-L7）。
+ * CommandPopover landing 态 slash 命令源 单测（L1-L14，W4 重构后）。
  *
- * 验证双源切换：session 态用 commandStore（pi get_commands），landing 态（无 session）
- * fallback 到 settingsStore.skills（config.skills 全局扫描）。landing 命令归一化为
- * SessionCommand（补 / 前缀、icon='star'），与 runtime get_commands name 格式对齐。
+ * W4 改动：landing 全局 skill 源从 settingsStore.skills 改为 globalSkills prop（经 useGlobalSkills
+ * 拉取 skillRegistry globalCache，FR-5：不走 settingsStore.skills 配置态扫描）。CommandPopover 不再
+ * import useSettingsStore，变纯展示组件（globalSkills + projectSkills 两 prop 驱动）。
+ *
+ * 验证按 variant 分支：landing 态（variant='landing'）合并 globalSkills（全局）∪ projectSkills
+ * （当前 cwd），skill name 归一化为 /skill:<name>；panel 态用 commandStore + compact，不并入
+ * globalSkills。__ 前缀命令过滤（W5 /__xyz_reload__ 准备）。
  *
  * 覆盖三视角：
- * - 构建者（白盒）：items 来源（commandStore vs skills）、归一化字段
+ * - 构建者（白盒）：items 来源（commandStore vs globalSkills/projectSkills props）、归一化字段
  * - 使用者（黑盒）：输入 / → 能看到并选中 skill 命令（L7 select）
  * - 观察者（形态）：命令项 DOM、svg 图标渲染、PopoverContent 显隐
  *
- * mock 策略：
- * - pinia 测试模式（beforeEach setActivePinia），useSettingsStore().skills 直接赋值注入
- * - session 源用 events.dispatchSession 推 session.commands（与 composer-slash-trigger 同模式）
- * - reka-ui PopoverContent teleport 到 body：body 内查 button/svg
+ * AC-8 反向断言：slash 命令源不读 settingsStore.skills（FR-5）。验证：即使 settingsStore.skills
+ * 有值，landing 不显示（globalSkills prop 空时 landing 为空）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/command-popover-landing.test.ts
  */
@@ -57,7 +59,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
+describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () => {
   let wrapper: ReturnType<typeof mount> | null = null
 
   afterEach(() => {
@@ -66,17 +68,19 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     document.body.innerHTML = ''
   })
 
-  async function mountLanding(query = '', skills: SkillInfo[] = LANDING_SKILLS): Promise<void> {
-    useSettingsStore().skills = skills
+  /** mount landing 态：variant='landing' + globalSkills prop（W4：替代 settingsStore.skills）。
+   *  [W3] 公共 session 已移除，生产 landing composerSid 为 null。这里传非空 sid 仅复用
+   *  CommandPopover 合并逻辑验证（组件支持非空 sessionId + extCmds）；L11 另用 undefined 测空源。 */
+  async function mountLanding(query = '', globalSkills: SkillInfo[] = LANDING_SKILLS, sid = 'public-sid'): Promise<void> {
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
-      props: { open: true, type: 'slash', sessionId: undefined, query },
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: sid, query, globalSkills },
     })
     await flushPromises()
     await nextTick()
   }
 
-  it('L1 landing 无 session + skills 7 条 → 渲染 7 项，首项含 code-review（显示去 /skill: 前缀）', async () => {
+  it('L1 landing（variant=landing + 非空 sessionId）+ globalSkills 7 条 → 渲染 7 项，首项含 code-review（显示去 /skill: 前缀）', async () => {
     await mountLanding('')
     const btns = bodyItemButtons()
     expect(btns).toHaveLength(7)
@@ -97,16 +101,16 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
   })
 
-  it('L4 skills 空 → 0 项', async () => {
+  it('L4 globalSkills 空 → 0 项', async () => {
     await mountLanding('', [])
     expect(bodyItemButtons()).toHaveLength(0)
   })
 
-  it('L5 session 态（sessionId=s1）→ 用 commandStore（3 项 pi 命令）+ 前端注入 compact = 4 项，不被 skills(7) 污染', async () => {
-    useSettingsStore().skills = LANDING_SKILLS
+  it('L5 session 态（variant=panel + sessionId=s1）→ 用 commandStore（3 项 pi 命令）+ 前端注入 compact = 4 项，不被 globalSkills(7) 污染', async () => {
+    // AC-3：session 态不并入 globalSkills（配置态/运行态不混淆，ADR-0037 D2）
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
-      props: { open: true, type: 'slash', sessionId: 's1', query: '' },
+      props: { open: true, type: 'slash', variant: 'panel', sessionId: 's1', query: '', globalSkills: LANDING_SKILLS },
     })
     await flushPromises()
     // 推 session 源命令（3 条 pi 动态命令）
@@ -119,8 +123,8 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     await nextTick()
 
     const btns = bodyItemButtons()
-    expect(btns).toHaveLength(4) // 3 pi 命令 + 1 前端注入 compact，非 7 条 skills
-    expect(btns.some((b) => b.textContent?.includes('/compact'))).toBe(true) // 前端注入的 builtin，skills 里没有
+    expect(btns).toHaveLength(4) // 3 pi 命令 + 1 前端注入 compact，非 7 条 globalSkills
+    expect(btns.some((b) => b.textContent?.includes('/compact'))).toBe(true) // 前端注入的 builtin，globalSkills 里没有
   })
 
   it('L6 每个命令项含 svg（icon=star 渲染）', async () => {
@@ -131,7 +135,8 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     }
   })
 
-  it('L7 选中首项 → emit select {type:"slash", name:"/code-review", icon:"star", description:"审查代码变更"}', async () => {
+  it('L7 选中首项 → emit select {type:"slash", name:"/skill:code-review", icon:"star", description:"审查代码变更"}（AC-4：name 带 /skill: 路由前缀，pi 可路由）', async () => {
+    // AC-4：landing 选中 skill 后 emit name 形如 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 前缀）
     await mountLanding('')
     const btns = bodyItemButtons()
     await btns[0].click()
@@ -140,10 +145,94 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     const payload = selectEvents!.at(-1)![0] as { type: string; name: string; icon?: string; description?: string }
     expect(payload).toEqual({
       type: 'slash',
-      name: '/code-review',
+      name: '/skill:code-review',
       icon: 'star',
       description: '审查代码变更',
     })
+  })
+
+  // L9 [AC-2]：landing 合并源验证——同时显示 pi extension 命令 + globalSkills
+  // [W3] 生产 landing 态无 pi 命令源；本用例显式 dispatch pi 命令验证合并逻辑（组件支持非空 sessionId + extCmds）。
+  it('L9 landing（variant=landing + sessionId=public-sid + commandStore 有 public-sid 命令）→ 同时显示 pi extension 命令 + globalSkills（合并源）', async () => {
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '', globalSkills: LANDING_SKILLS },
+    })
+    await flushPromises()
+    // 推 pi extension 命令（3 条，模拟 session.commands 事件，组件合并逻辑验证）
+    const msg = {
+      type: 'session.commands',
+      payload: { sessionId: 'public-sid', commands: SESSION_CMDS },
+    } as ServerMessage<'session.commands'>
+    events.dispatchSession('public-sid', msg)
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 3 pi extension 命令 + 7 globalSkills = 10 项（landing 合并源，无 compact）
+    expect(btns).toHaveLength(10)
+    // pi extension 命令在列（/commit 来自 SESSION_CMDS）
+    expect(btns.some((b) => b.textContent?.includes('commit'))).toBe(true)
+    // globalSkills 在列（code-review 来自 LANDING_SKILLS）
+    expect(btns.some((b) => b.textContent?.includes('code-review'))).toBe(true)
+    // landing 不含 compact（无上下文可压缩）
+    expect(btns.some((b) => b.textContent?.includes('compact'))).toBe(false)
+  })
+
+  // L10 [R2 fix]：pi 源 skill 命令与 globalSkills 同名 → 去重（pi 源优先），不重复显示
+  // [W3] 生产 landing 态无 pi 命令源（公共 session 已移除）；本用例显式 dispatch pi 命令验证合并去重逻辑
+  // （CommandPopover 组件本身仍支持非空 sessionId + extCmds 去重，panel 态会用到）。
+  it('L10 landing pi 源 skill 与 globalSkills 同名 → 去重（1 项非 2 项，pi 源优先）', async () => {
+    // pi 返回的 skill 命令：name='skill:code-review'（pi 真实格式，归一化后 /skill:code-review）
+    const piCmdsWithSkill = [
+      { name: 'skill:code-review', description: 'pi 扫描的 code-review', source: 'skill' },
+      { name: '/goal', description: '目标管理', source: 'extension' },
+    ]
+    // globalSkills 也有 code-review（同名重叠）+ diagnose（独有，全局补项目级）
+    const globalSkills = [
+      LANDING_SKILLS[0], // code-review（与 pi 源重叠，去重）
+      LANDING_SKILLS[1], // diagnose（全局独有）
+    ]
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '', globalSkills },
+    })
+    await flushPromises()
+    const msg = {
+      type: 'session.commands',
+      payload: { sessionId: 'public-sid', commands: piCmdsWithSkill },
+    } as ServerMessage<'session.commands'>
+    events.dispatchSession('public-sid', msg)
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // pi 源 2 项（skill:code-review + /goal）+ globalSkills 独有 1 项（diagnose）= 3 项
+    // code-review 不重复（pi 源优先，globalSkills 的被去重掉）
+    expect(btns).toHaveLength(3)
+    // code-review 只出现一次（去重验证）
+    const codeReviewCount = btns.filter((b) => b.textContent?.includes('code-review')).length
+    expect(codeReviewCount).toBe(1)
+    // diagnose 在列（globalSkills 独有项保留）
+    expect(btns.some((b) => b.textContent?.includes('diagnose'))).toBe(true)
+  })
+
+  // L11 [R3 fix]：landing + sessionId=undefined（W3 后常态：composerSid 为 null）→ 仅显 globalSkills 不崩溃
+  it('L11 landing + sessionId=undefined → 仅显 globalSkills（不加载 pi 命令，不崩溃）', async () => {
+    // [W3] 公共 session 已移除，landing composerSid 恒为 null（Landing.vue 不再有 publicSessionId fallback）
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: undefined, query: '', globalSkills: LANDING_SKILLS },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 无 pi 命令源，只显 7 条 globalSkills（extCmds 为空，全部 skills 都是「独有」不过滤）
+    expect(btns).toHaveLength(7)
+    expect(btns.some((b) => b.textContent?.includes('code-review'))).toBe(true)
+    // 无 compact（landing 态）
+    expect(btns.some((b) => b.textContent?.includes('compact'))).toBe(false)
   })
 
   // L8:回归防护 — 浮层宽度严格对齐 composer-box（w=anchor-width），不溢出。
@@ -161,5 +250,148 @@ describe('CommandPopover landing 态用 config.skills（L1-L7）', () => {
     expect(content!.className).not.toContain('min-w-[var(--reka-popper-anchor-width)]')
     // max-w 兜底防视口溢出（非旧的 820px 固定值）
     expect(content!.className).toContain('max-w-[calc(100vw-16px)]')
+  })
+
+  // ── W4：landing 两源合并（globalSkills + projectSkills）──
+  // landing 分支合并两源：globalSkills(全局 skillRegistry) ∪ projectSkills(当前 cwd 项目 skill，
+  // useProjectSkills 按 cwd key 缓存)。按归一化 name 去重。[W3] 已移除公共 session pi 命令源。
+  it('L12 landing + projectSkills prop → 两源合并（全局 skills + 项目 skills）', async () => {
+    // 全局 skill（globalSkills prop）2 条
+    const globalSkills: SkillInfo[] = [
+      { id: 'sk-global-1', name: 'global-skill-1', description: 'g1', enabled: true, source: 'pi', effective: true },
+      { id: 'sk-global-2', name: 'global-skill-2', description: 'g2', enabled: true, source: 'pi', effective: true },
+    ]
+    // 项目 skill（projectSkills prop）2 条
+    const projectSkills: SkillInfo[] = [
+      { id: 'sk-proj-1', name: 'proj-skill-1', description: 'p1', enabled: true, source: 'agents', effective: true },
+      { id: 'sk-proj-2', name: 'proj-skill-2', description: 'p2', enabled: true, source: 'agents', effective: true },
+    ]
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '', globalSkills, projectSkills },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 2 全局 + 2 项目 = 4 项（无 publicSession pi 命令推送，extCmds 空）
+    expect(btns).toHaveLength(4)
+    expect(btns.some((b) => b.textContent?.includes('global-skill-1'))).toBe(true)
+    expect(btns.some((b) => b.textContent?.includes('proj-skill-1'))).toBe(true)
+  })
+
+  it('L13 landing 三源去重——全局 skill 与项目 skill 同名 → 去重 1 项（全局优先）', async () => {
+    // 全局和项目都有同名 skill（模拟全局 ~/.agents/skills 与项目 .agents/skills 重叠场景）
+    const overlap = { id: 'sk-overlap', name: 'overlap-skill', description: 'overlap', enabled: true, source: 'agents', effective: true }
+    const globalSkills: SkillInfo[] = [overlap, { id: 'sk-g', name: 'global-only', description: 'g', enabled: true, source: 'pi', effective: true }]
+    const projectSkills: SkillInfo[] = [overlap, { id: 'sk-p', name: 'proj-only', description: 'p', enabled: true, source: 'agents', effective: true }]
+
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '', globalSkills, projectSkills },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // overlap-skill 去重 1 项 + global-only 1 项 + proj-only 1 项 = 3 项（非 4 项）
+    expect(btns).toHaveLength(3)
+    const overlapCount = btns.filter((b) => b.textContent?.includes('overlap-skill')).length
+    expect(overlapCount).toBe(1)
+  })
+
+  it('L14 landing projectSkills 默认空（未传 prop）→ 仅全局 skill，行为与修复前一致', async () => {
+    // 不传 projectSkills（默认空），globalSkills 传 7 条
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'landing', sessionId: 'public-sid', query: '', globalSkills: LANDING_SKILLS },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // 仅 7 条全局 skill（projectSkills 空）
+    expect(btns).toHaveLength(7)
+  })
+
+  // ── W4：__ 前缀命令过滤（W5 /__xyz_reload__ 准备）──
+  // skill name 以 __ 开头的命令不显示（内部触发命令，W5 reload-orchestrator 用）。
+  it('L15 landing globalSkills 含 __ 前缀 skill → 不显示（W5 内部命令过滤）', async () => {
+    const skillsWithInternal: SkillInfo[] = [
+      { id: 'sk-normal', name: 'normal-skill', description: '正常', enabled: true, source: 'agents', effective: true },
+      { id: 'sk-internal', name: '__xyz_reload', description: '内部命令', enabled: true, source: 'agents', effective: true },
+    ]
+    await mountLanding('', skillsWithInternal)
+    const btns = bodyItemButtons()
+    // 仅 1 项（normal-skill），__xyz_reload 被过滤
+    expect(btns).toHaveLength(1)
+    expect(btns[0].textContent).toContain('normal-skill')
+    expect(btns.some((b) => b.textContent?.includes('xyz_reload'))).toBe(false)
+  })
+
+  it('L16 panel 态 pi 命令含 /__ 前缀 → 不显示（panel 态同样过滤内部命令）', async () => {
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', variant: 'panel', sessionId: 's1', query: '' },
+    })
+    await flushPromises()
+    // pi 返回的命令含 /__xyz_reload（带 / 前缀）+ 正常命令
+    const msg = {
+      type: 'session.commands',
+      payload: {
+        sessionId: 's1',
+        commands: [
+          { name: '/__xyz_reload', description: '内部 reload', source: 'extension' },
+          { name: '/commit', description: '提交', source: 'extension' },
+        ],
+      },
+    } as ServerMessage<'session.commands'>
+    events.dispatchSession('s1', msg)
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    // compact + commit = 2 项，/__xyz_reload 被过滤
+    expect(btns).toHaveLength(2)
+    expect(btns.some((b) => b.textContent?.includes('xyz_reload'))).toBe(false)
+    expect(btns.some((b) => b.textContent?.includes('compact'))).toBe(true)
+    expect(btns.some((b) => b.textContent?.includes('commit'))).toBe(true)
+  })
+
+  // ── W4 AC-8：反向断言——slash 命令源不读 settingsStore.skills（FR-5）──
+  // 验证：settingsStore.skills 有值，但 globalSkills prop 为空时，landing 不显示任何 skill。
+  // 这证明 CommandPopover 已与 settingsStore.skills 解耦（W4 前 landing 读 settingsStore.skills）。
+  it('L18: CommandPopover.handleKeydown 不守卫 isComposing（守卫职责在 Composer 层）', async () => {
+    // 验证守卫责任链路：isComposing 守卫在 Composer.vue onKeydown 第一行，
+    // 不在 CommandPopover.handleKeydown 内。Composer 不调用 handleKeydown →
+    // 命令不执行。本用例确认 handleKeydown 本身不检查 isComposing，
+    // 守卫职责明确在调用方（Composer）。Composer 级集成覆盖见 composer-three-states T2.x。
+    await mountLanding('co')
+    const btns = bodyItemButtons()
+    expect(btns).toHaveLength(1)
+
+    const popover = wrapper!.findComponent(CommandPopover)
+    const handleKeydown = popover.vm.handleKeydown as (e: KeyboardEvent) => boolean
+    expect(typeof handleKeydown).toBe('function')
+
+    // composition 中 Enter 事件（isComposing: true）
+    const imeEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    Object.defineProperty(imeEvent, 'isComposing', { value: true })
+
+    // handleKeydown 处理了 Enter（返回 true）——它不守卫 isComposing
+    const result = handleKeydown(imeEvent)
+    expect(result).toBe(true)
+    // select 被 emit（handleKeydown 不管 isComposing，照常选中）
+    expect(wrapper!.emitted('select')).toBeTruthy()
+  })
+
+  it('L17 AC-8 反向：settingsStore.skills 有值但 globalSkills prop 空 → landing 不显示 skill（FR-5 解耦）', async () => {
+    // settingsStore.skills 注入 7 条（模拟修复前的数据源）
+    useSettingsStore().skills = LANDING_SKILLS
+    // globalSkills prop 不传（空）
+    await mountLanding('', [])
+    const btns = bodyItemButtons()
+    // 0 项——证明 settingsStore.skills 的 7 条未被读取（FR-5：不走 settingsStore.skills）
+    expect(btns).toHaveLength(0)
   })
 })

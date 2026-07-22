@@ -29,7 +29,7 @@ export default defineConfig({
   // ══════════════════════════════════════════════════════════════
   // @xyz-agent/shared：workspace 包（纯 TS 类型 + 工具函数），必须打包进 bundle，
   // 否则打包后 require('@xyz-agent/shared') 找不到（runtime 子进程无 node_modules）
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol'],
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', 'chokidar'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   external: [],
   splitting: false,

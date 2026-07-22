@@ -17,7 +17,7 @@
  * ## target 路由（FR-2.1）
  * - `current`：注入到 sessionId 匹配的当前 session composer
  * - `new`：先触发 useNewTaskFlow.startFlow 进 landing，再注入到 landing composer。
- *   landing composer 的 sessionId 是 publicSessionId（非 null，见 Landing.vue:70），
+ *   landing composer 的 sessionId 可能为 null（W3 移除公共 session 后），
  *   故 target=new 的匹配不依赖 sessionId=null，改用 Composer variant=landing 判定
  *   （见 useComposerInjection）。store 只做传输 + routeToLanding 改写。
  *

@@ -8,9 +8,9 @@
  *    （landing composer 接手阶段二）
  * 2. target='current' → 按目标侧判定匹配 → insertFileChip → clearInjection
  *
- * ## 目标侧匹配（FR-2.1，绕过 publicSessionId 坑点）
- * landing composer 的 sessionId 是 publicSessionId（非 null，Landing.vue:70），不能用
- * sessionId=null 匹配 landing。改用 **variant** 判定：
+ * ## 目标侧匹配（FR-2.1）
+ * landing composer 的 sessionId 可能为 null（W3 移除公共 session 后，Landing.vue 的 composerSid
+ * 无公共 session fallback，真 landing 态为 null），不能用 sessionId=null 匹配 landing。改用 **variant** 判定：
  * - variant='landing'：消费 target=current 且 sessionId=null 的请求（routeToLanding 改写后）
  * - variant='panel'：消费 target=current 且 sessionId===当前 session 的请求
  * target=new 的原始请求（未 routeToLanding 前）只被 session composer 触发 startFlow，

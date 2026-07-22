@@ -17,7 +17,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, defineComponent } from 'vue'
+import { nextTick, defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 // ── Composer 路径 mock（U10）—— vi.mock factory 必须早于 import ──
@@ -33,7 +33,7 @@ vi.mock('@/composables/features/useChat', () => ({
   }),
 }))
 vi.mock('@/composables/features/useNewTaskFlow', () => ({
-  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn() }),
+  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn(), currentCwd: ref(null) }),
   resetNewTaskFlow: vi.fn(),
 }))
 vi.mock('@/api', () => ({
@@ -42,6 +42,10 @@ vi.mock('@/api', () => ({
   composer: {
     getMentionCandidates: vi.fn().mockResolvedValue([]),
     getFileCandidates: vi.fn().mockResolvedValue([]),
+  },
+  config: {
+    getGlobalSkills: vi.fn().mockResolvedValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
   },
 }))
 

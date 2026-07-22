@@ -107,6 +107,55 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 
 Runtime 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
 
+### 7.6 per-session 状态隔离范式 [ADR-0036]
+
+**所有持有 per-session 状态的 composable 必须用 `useSessionScopedState` 工厂（`composables/useSessionScopedState.ts`），统一采用 Map 分区派范式。** 禁止实例级状态 + watch(sessionId) 手动清空（脆弱模式）。
+
+#### 范式定义
+
+| 范式 | 含义 | 评价 |
+|------|------|------|
+| **Map 分区派（SSOT）** | 单例 composable 内部 `Map<sessionId, T>`，按 sid 查分区，切 sid 切分区 | ✅ 正确范式。天然隔离，切回恢复，不依赖人记得清空 |
+| **实例级隔离（反模式）** | 每组件实例各自状态，靠组件树天然多实例隔离 | ❌ 脆弱。切 sid 时同一实例的状态没清就泄漏（useExtensionUI bug 即此模式失效） |
+| **watch 清理派（反模式）** | 单实例状态 + `watch(sessionId)` 切换时手动清空 | ❌ 脆弱。依赖开发者记得清空**所有**字段，新加字段忘了清就泄漏 |
+
+#### 三个术语区分
+
+- **Map 分区**：单例 composable 内 `Map<sessionId, T>`，本次统一目标范式
+- **实例级隔离**：每组件实例各自状态（靠组件树多实例）。useExtensionUI 旧实现
+- **watch 清理派**：单实例状态 + watch(sessionId) 手动清空。SideDrawer/useComposerHistory 旧实现
+
+#### useSessionScopedState 工厂用法
+
+```ts
+import { reactive } from 'vue'
+import { useSessionScopedState } from '@/composables/useSessionScopedState'
+
+// init 工厂必须返回 **reactive** 容器（plain object mutate 不触发下游 computed）
+const state = useSessionScopedState(
+  sessionIdRef,  // Ref<string|null>
+  () => reactive({ count: 0, items: [] as string[] }),
+)
+
+state.current.value  // 当前 sid 分区（null sid 返回默认实例不写 Map）
+state.update(s => { s.count++ })  // 操作当前 sid 分区（null sid no-op）。用于 UI 操作（用户主动操作当前 session）
+state.updateFor(sid, s => { s.count++ })  // 显式指定分区，不读 sid.value 实时值。用于 WS handler（消息属于固定 sid）
+state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 deleteSession 编排）
+```
+
+**WS handler 必须用 `updateFor` 不用 `update`**：WS handler 闭包捕获订阅时 sid，调 `updateFor(capturedSid, ...)`。即使 session 切换的退订是异步的（watch flush:pre），旧 sid 的迟到消息也只写旧 sid 分区，不污染新 sid（结构性消除竞态，M1 修复）。UI handler（用户主动操作）用 `update`（读实时 sid 正确）。useExtensionUI / SideDrawer 已遵守此契约。
+
+#### session 销毁 → cleanup 自动触发
+
+`useSidebar.deleteSession(id)` 是 session 销毁的唯一编排点（所有真正释放 per-session 分区的路径都经过它）。其内部调 `triggerSessionCleanups(id)`（与 `invalidateStatusCache(id)` 并列），遍历所有 `useSessionScopedState` 实例注册的 cleanup 函数，移除该 sid 的 Map 分区。**新 composable 用工厂后，无需手动挂钩 cleanup**——工厂在 setup 时自动注册，scope dispose 时反注册。
+
+#### 例外（不需迁移）
+
+- `useSessionEvents.ts`：订阅编排层，不持有 per-session 业务状态（registrations 是 handler 路由表，随实例销毁清）。不套 Map 分区。
+- `useDetailPane` / `useFileTree` 等：已正确隔离（loadToken / 现有 Map 分区），不在本次重构范围。
+
+详见 [ADR-0036](docs/adr/0036-session-isolation-map-partition.md)。
+
 ### 7.5 对话流状态必须可重开恢复 [HISTORICAL]
 
 **所有进入对话流的状态（消息、系统通知、压缩记录、工具结果等），必须同时满足两条：实时可见 + 重开 session 后仍可见。** 只做到实时可见、重开后消失的，视为未完成。

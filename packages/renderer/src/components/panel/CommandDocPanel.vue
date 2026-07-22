@@ -3,8 +3,9 @@
     展示组件 · 命令/skill 文档（drawer Doc tab 内容）。
     数据源：
     - SessionCommand（commandStore，按 sessionId + selectedCommandName 查）：name/source/icon/description
-    - SkillInfo（settings.skills 全局）：join 命中时渲染完整 SKILL.md（content）
-    join 规则：skill 命令（source=skill）去 / 后按 skill.name 或 skill.triggers 匹配。
+    - SKILL.md content（file.read RPC 读 sourceInfo.path，W2 透传）：skill 命令渲染完整文档
+    skill 路径优先用 command.sourceInfo.path（W2 透传，含项目级 skill）；
+    /skill:xxx 格式无 sourceInfo 时兜底从 settings.skills 查 sourcePath。
     非 skill 命令（extension/builtin）：仅有 description，退化为信息卡。
     selectedCommandName 由 useSideDrawer 单例持有（用户气泡 slash chip 点击时设置）。
   -->
@@ -47,21 +48,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Wrench } from '@lucide/vue'
 import type { Component } from 'vue'
-import type { SkillInfo } from '@xyz-agent/shared'
 import { useCommandStore } from '@/stores/command'
 import { useSettingsStore } from '@/stores/settings'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
+import * as fileApi from '@/api/domains/file'
 import MarkdownRenderer from './message-stream/MarkdownRenderer.vue'
 
 const { t } = useI18n()
 
 const props = defineProps<{
-  /** drawer 所属 panel 的 session（查 commandStore 用） */
+  /** drawer 所属 panel 的 session（查 commandStore + file.read cwd 守门用） */
   sessionId: string | null
 }>()
 
@@ -74,7 +75,7 @@ const command = computed(() => {
   const name = selectedCommandName.value
   const sid = props.sessionId
   if (!name || !sid) return null
-  // 如果是 /skill:xxx 格式，构造虚拟命令对象
+  // 如果是 /skill:xxx 格式，构造虚拟命令对象（无 sourceInfo，走 settings.skills 兜底）
   if (name.startsWith('/skill:')) {
     const skillName = name.replace('/skill:', '')
     return {
@@ -82,30 +83,92 @@ const command = computed(() => {
       kind: 'skill' as const,
       icon: 'star',
       description: undefined,
+      sourceInfo: undefined,
     }
   }
   return commandStore.findCommandByName(sid, name) ?? null
 })
 
 /**
- * skill 命令 join SkillInfo：去 / 后按 skill.name 或 triggers 匹配。
- * 非 skill 命令（extension/builtin）返回 null → 走信息卡分支。
- * 支持 /skill:xxx 格式直接从 settings.skills 查找。
+ * skill 命令判定 + SKILL.md 路径来源：
+ * - source=skill 且 command.sourceInfo.path 存在 → 直接用（W2 透传，主路径）
+ * - /skill:xxx 格式无 sourceInfo → 兜底从 settings.skills 查 sourcePath（向后兼容）
+ * 非 skill 命令返回 null → 走信息卡分支。
  */
-const skill = computed<SkillInfo | null>(() => {
-  const name = selectedCommandName.value
-  // 直接从 /skill:xxx 格式查找
-  if (name?.startsWith('/skill:')) {
-    const skillName = name.replace('/skill:', '')
-    return settings.skills.find((s) => s.name === skillName || s.triggers?.includes(skillName)) ?? null
-  }
-  // 从 commandStore 查找
+const skillPath = computed<string | null>(() => {
   const cmd = command.value
   if (!cmd || cmd.kind !== 'skill') return null
+  // 优先用 pi 透传的 sourceInfo.path（含项目级 skill，解决 cwd 错位扫不到的问题）
+  if (cmd.sourceInfo?.path) return cmd.sourceInfo.path
+  // /skill:xxx 兜底：从 settings.skills 查（旧路径，sourceInfo 不可用时降级）
+  const name = selectedCommandName.value
+  if (name?.startsWith('/skill:')) {
+    const skillName = name.replace('/skill:', '')
+    return settings.skills.find((s) => s.name === skillName)?.sourcePath ?? null
+  }
   const bareName = cmd.name.replace(/^\//, '')
-  return (
-    settings.skills.find((s) => s.name === bareName || s.triggers?.includes(bareName)) ?? null
-  )
+  return settings.skills.find((s) => s.name === bareName)?.sourcePath ?? null
+})
+
+/** skill 描述：/skill:xxx 从 settings.skills 查，其余用 command.description */
+const skillDescription = computed<string | undefined>(() => {
+  const name = selectedCommandName.value
+  if (name?.startsWith('/skill:')) {
+    const skillName = name.replace('/skill:', '')
+    return settings.skills.find((s) => s.name === skillName)?.description
+  }
+  return command.value?.description
+})
+
+/** skill content（异步从 SKILL.md 加载）。null = 未加载/加载失败。 */
+const skillContent = ref<string | null>(null)
+/** 防重入标记：避免 watch 多次触发时并发发请求（竞态导致旧请求覆盖新结果） */
+let loadingPath: string | null = null
+
+/**
+ * 读 SKILL.md：先带 sessionId 走 cwd 守门（项目级 skill 在 cwd 下），
+ * 失败（out_of_cwd）再不带 sessionId 走白名单（全局 skill 如 ~/.agents/skills）。
+ * 两条守门都不绕过，任一通过即读到。
+ */
+async function loadSkillContent(path: string): Promise<void> {
+  if (!path || loadingPath === path) {
+    if (!path) skillContent.value = null
+    return
+  }
+  loadingPath = path
+  try {
+    const sid = props.sessionId ?? undefined
+    const result = sid
+      ? await fileApi.read(path, sid).catch(() => fileApi.read(path))
+      : await fileApi.read(path)
+    // 防竞态：异步期间用户已切到别的命令，丢弃本次结果
+    if (loadingPath === path) skillContent.value = result.content
+  } catch {
+    // 两路守门均拒绝（路径既不在 cwd 下也不在白名单）→ 退化为无文档体
+    if (loadingPath === path) skillContent.value = null
+  } finally {
+    if (loadingPath === path) loadingPath = null
+  }
+}
+
+// skillPath 变化（切换命令）重新加载 SKILL.md
+watch(
+  skillPath,
+  (path) => {
+    if (path) void loadSkillContent(path)
+    else skillContent.value = null
+  },
+  { immediate: true },
+)
+
+/** skill 渲染对象（合并 sourcePath / content / description 供模板用） */
+const skill = computed(() => {
+  if (!skillPath.value) return null
+  return {
+    sourcePath: skillPath.value,
+    content: skillContent.value,
+    description: skillDescription.value,
+  }
 })
 
 /** source 标签：skill→「Skill」、extension→「Extension」、builtin→「内置」 */

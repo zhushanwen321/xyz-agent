@@ -4,6 +4,7 @@ export type {
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
   ReplyPayloadMap,
   SystemPromptConfig,
+  CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
 } from './protocol'
 export type {

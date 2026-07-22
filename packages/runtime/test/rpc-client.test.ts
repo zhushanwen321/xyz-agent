@@ -13,6 +13,7 @@
  * 从而驱动 pending resolve。这样不依赖真实 pi 进程。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { RpcClient } from '../src/infra/pi/rpc-client.js'
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -120,8 +121,7 @@ function pendingSize(client: { pending?: Map<unknown, unknown> }): number {
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('RpcClient W1', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let client: any
+  let client: RpcClient
 
   beforeEach(async () => {
     stdinWrites.length = 0
@@ -276,7 +276,7 @@ describe('RpcClient W1', () => {
     expect(result.summary).toBe('s2')
   })
 
-  it('U6c: getCommands returns normalized data.commands', async () => {
+  it('U6c: getCommands returns normalized data.commands (含 sourceInfo 透传)', async () => {
     const p = client.getCommands()
     await Promise.resolve()
     const sent = lastWrittenJson()
@@ -284,10 +284,26 @@ describe('RpcClient W1', () => {
       type: 'response',
       id: sent.id,
       success: true,
-      payload: { commands: [{ name: 'cmd1', source: 'builtin' }] },
+      payload: {
+        commands: [
+          {
+            name: 'cmd1',
+            source: 'skill',
+            sourceInfo: { path: '/proj/skills/cmd1/SKILL.md', source: 'skill', scope: 'project' },
+          },
+          { name: 'cmd2', source: 'builtin' },
+        ],
+      },
     })
     const result = await p
-    expect(result).toEqual([{ name: 'cmd1', source: 'builtin' }])
+    expect(result).toEqual([
+      {
+        name: 'cmd1',
+        source: 'skill',
+        sourceInfo: { path: '/proj/skills/cmd1/SKILL.md', source: 'skill', scope: 'project' },
+      },
+      { name: 'cmd2', source: 'builtin' },
+    ])
   })
 
   it('U6d: getSessionStats returns normalized data', async () => {
