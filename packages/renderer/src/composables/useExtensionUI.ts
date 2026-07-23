@@ -68,6 +68,9 @@ export function useExtensionUI(
       onUIRequest(sid, (req) => {
         if (filter && !filter(req)) return
         queueState.updateFor(sid, (queue) => {
+          // requestId 去重：实时帧可能已通过切回拉取入队（T2 后 runtime 返回完整快照），
+          // 或 ExtensionUIDialog/Panel split 模式下另一消费者已入。按 requestId 唯一化队列。
+          if (queue.some(r => r.requestId === req.requestId)) return
           queue.push({ ...req, receivedAt: Date.now() })
         })
       }),
@@ -97,6 +100,9 @@ export function useExtensionUI(
         queueState.updateFor(sid, (queue) => {
           for (const req of pendingRequests) {
             if (filter && !filter(req)) continue
+            // requestId 去重：拉取的 pending 可能已通过实时帧入队（用户切走前实时帧已到达）。
+            // 按 requestId 唯一化，避免同一请求入两份。
+            if (queue.some(r => r.requestId === req.requestId)) continue
             queue.push({ ...req, receivedAt: req.receivedAt ?? Date.now() })
           }
         })

@@ -51,7 +51,7 @@ vi.mock('@/api/domains/extension', () => ({
 }))
 
 import { useExtensionUI, askUserFilter, dialogFilter } from '@/composables/useExtensionUI'
-import { sendExtensionUIResponse } from '@/api/domains/extension'
+import { sendExtensionUIResponse, getPendingRequests } from '@/api/domains/extension'
 import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 
 // ── 测试数据构造 helper ──
@@ -277,5 +277,92 @@ describe('useExtensionUI AC-6 split 双 panel 同 sid 分流', () => {
 
     expect(panelA.currentAskUserRequest.value).toBeUndefined()
     expect(dialogA.currentDialogRequest.value).toBeUndefined()
+  })
+})
+
+// ── TC4：requestId 去重（T3 直接验证）──
+// 两条入队通路（实时帧 onUIRequest + 切回拉取 getPendingRequests）可能对同一 requestId 各投一次。
+// T2 后 runtime 返回完整快照，切回拉取会重复包含已通过实时帧入队的请求 → 需按 requestId 去重。
+// 验证策略：useExtensionUI 不直接暴露 queue，用用户可见行为（currentAskUserRequest 指向 + respond 后状态）
+// 间接验证。去重失败的关键信号：respond(r1) 后若存在第二个 r1，currentAskUserRequest 仍指向 r1（而非 r2）。
+
+describe('useExtensionUI requestId 去重（实时帧 + 切回拉取）', () => {
+  beforeEach(() => {
+    // 每个测试前重置 getPendingRequests mock（默认空）
+    vi.mocked(getPendingRequests).mockResolvedValue([])
+  })
+
+  it('TC4-a: 实时帧先入队，切回拉取同 requestId 不重复入队', async () => {
+    // 场景：用户在 sessionA 时实时帧已把 r1 入队；切走再切回，拉取返回 [r1, r2]
+    // 期望：queue 最终只有 [r1, r2]（r1 不重复）
+    const sid = ref<string | null>('sessionA')
+    const { result, dispose } = runWithScope(() => useExtensionUI(sid, askUserFilter))
+
+    // 1. 实时帧入 r1
+    emitUIRequest('sessionA', mkAskUserReq('sessionA', 'r1'))
+    expect(result.currentAskUserRequest.value?.requestId).toBe('r1')
+
+    // 2. 切到 B（此时不再有 pending），mock 切回时拉取返回 [r1, r2]
+    sid.value = 'sessionB'
+    await nextTick()
+
+    // 3. 切回 A：拉取会返回 [r1, r2]，但 r1 已在队列（实时帧入的），去重后只入 r2
+    vi.mocked(getPendingRequests).mockResolvedValue([
+      mkAskUserReq('sessionA', 'r1'),
+      mkAskUserReq('sessionA', 'r2'),
+    ])
+    sid.value = 'sessionA'
+    await nextTick()
+    // 等待 getPendingRequests 的 Promise resolve + queueState 更新
+    await nextTick()
+    await nextTick()
+
+    // 4. 关键去重断言：currentAskUserRequest 仍指向 r1（队首未变，没有重复 r1 把状态搞乱）
+    expect(result.currentAskUserRequest.value?.requestId).toBe('r1')
+
+    // 5. respond(r1) 后 currentAskUserRequest 应晋升为 r2 —— 若有重复 r1 入队，
+    //    respond 只 splice 第一个 r1，currentAskUserRequest 仍会命中第二个 r1（去重失败信号）
+    result.respond('r1', true)
+    expect(result.currentAskUserRequest.value?.requestId).toBe('r2')
+
+    // 6. respond(r1) 只发送一次（去重不会触发重复响应）
+    const r1Calls = vi.mocked(sendExtensionUIResponse).mock.calls.filter(
+      (c) => c[1] === 'r1',
+    )
+    expect(r1Calls).toHaveLength(1)
+
+    dispose()
+  })
+
+  it('TC4-b: 拉取先入队，后续实时帧同 requestId 不重复入队', async () => {
+    // 反向场景：切回时拉取入 r1，之后实时帧又推 r1（runtime 重放 / 重复推送）
+    // 期望：queue 只有 1 个 r1，respond(r1) 后 currentAskUserRequest 变 undefined
+    const sid = ref<string | null>('sessionA')
+    // 切回 A 时拉取返回 [r1]
+    vi.mocked(getPendingRequests).mockResolvedValue([mkAskUserReq('sessionA', 'r1')])
+    const { result, dispose } = runWithScope(() => useExtensionUI(sid, askUserFilter))
+
+    // 等待拉取 Promise resolve（初始 subscribe 即触发一次 getPendingRequests）
+    await nextTick()
+    await nextTick()
+
+    // 拉取入队后 currentAskUserRequest 指向 r1
+    expect(result.currentAskUserRequest.value?.requestId).toBe('r1')
+
+    // 模拟实时帧又推一次 r1（同 requestId）—— 去重应跳过，不入第二份
+    emitUIRequest('sessionA', mkAskUserReq('sessionA', 'r1'))
+
+    // 关键去重断言：respond(r1) 后 currentAskUserRequest 应为 undefined（队列里只有 1 个 r1）。
+    // 若去重失败入了两个 r1，respond splice 第一个后 currentAskUserRequest 仍命中第二个 r1。
+    result.respond('r1', true)
+    expect(result.currentAskUserRequest.value).toBeUndefined()
+
+    // respond(r1) 只发一次
+    const r1Calls = vi.mocked(sendExtensionUIResponse).mock.calls.filter(
+      (c) => c[1] === 'r1',
+    )
+    expect(r1Calls).toHaveLength(1)
+
+    dispose()
   })
 })
