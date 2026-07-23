@@ -344,6 +344,18 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **修改位置**：`packages/runtime/src/services/git-service.ts` getStatus 的 status 命令。commit 用 `git diff --numstat HEAD`（不受此约束，numstat 只管 tracked 改动）。
 - **测试基线**：`git-service.test.ts` 的 `status 命令带 --untracked-files=all 展开未跟踪目录到单文件` 用例断言了命令参数。
 
+### 16. 禁止写死项目绝对路径（必须动态推导）[HISTORICAL]
+
+**runtime 代码禁止出现特定项目的绝对路径（如 `/Users/.../xyz-agent-workspace`）或对特定项目的硬编码假设。所有 workspace / bare repo / 数据目录路径必须从运行时上下文动态推导。**
+
+- **根因**：xyz-agent 是通用工具，用户会在任意 bare repo + worktree 结构的项目中使用（不只限 xyz-agent 自身）。写死 `xyz-agent-workspace` 等特定路径会导致其他项目（如 xyz-pi-extensions-workspace）功能失效。用户报告在 xyz-pi-extensions-workspace 执行「新建 worktree」失败，初看像写死路径，实际排查后发现 detector 正确动态查找 .bare，真正的 bug 是 spawn 权限（见下）——但「禁止写死路径」作为通用原则必须固化为规范。
+- **正确做法**：
+  - workspace 根 / bare repo 路径：用 `WorkspaceDetector.detect(currentCwd)` 从当前 cwd 向上逐级查找 `.bare`（`packages/runtime/src/services/worktree/workspace-detector.ts`）
+  - 数据目录：用 `getDataDir()` / `getConfigDir()`（`packages/shared/src/paths.ts`），禁止硬编码 `~/.xyz-agent`
+  - 路径白名单：用动态函数推导，禁止硬编码（见架构约定 #2）
+- **事故关联**（spawn 脚本权限）：`ShellRunner.execute` 原用 `spawn(scriptPath, args)` 直接 spawn 脚本，依赖文件 +x 权限位。git 跟踪的脚本默认 644（无 x 位）→ EACCES。修复为 `spawn('bash', [scriptPath, ...args])`（不依赖 +x）。这是独立 bug，但与「路径」无关——记在 `shell-runner.ts` 的 [HISTORICAL] 注释中。教训：执行外部脚本用 bash 包装，不依赖文件权限位。
+- **检查方法**：`grep -rn "xyz-agent-workspace\|/Users/zhushanwen" packages/runtime/src/` 应只在注释/示例中出现，不得在逻辑代码中出现硬编码绝对路径。
+
 ## 测试规范 [HISTORICAL]
 
 > **执行测试或设计测试计划前，先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层策略/mock 策略/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**（各页面组件的 MOCK/非MOCK 测试步骤 + Playwright E2E 调用链 + 每步期望输入输出 + 已知坑）。docs/testing/ 00 总览是入口篇。复用已有 testid 清单/调用链/fixture 数据/历史踩坑经验，不从零重新探索——这些文档记录了 mock 回显双匹配、thinking 收起态 v-if 时序、initApp 预填 cwd 等仅靠读组件代码无法发现的运行时行为。
