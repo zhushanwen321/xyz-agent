@@ -11,8 +11,8 @@
  *   与 useSidebar 持 session.list 订阅、useChat 持 chat 订阅同构（features 层管订阅，store 只存）。
  *
  * 持有什么：
- * - 7 个常驻订阅句柄（config.onProviders / model.onModels / config.onSkills / config.onAgents /
- *   config.onSkillDirs / config.onAgentDirs / config.onDefaults / extension.onExtensions）。
+ * - 常驻订阅句柄（config.onProviders / model.onModels / config.onSkills / config.onAgents /
+ *   config.onSkillDirs / config.onAgentDirs / config.onExtensionDirs / config.onDefaults / extension.onExtensions）。
  * - 幂等守卫（initialized 去重；模块级 refCount 让多消费方只挂载一次订阅）。
  *
  * 不持有什么：
@@ -22,7 +22,7 @@
  *
  * 依赖方向（features 层是跨 api + stores 的唯一合法层）：
  * - 读 @/api（config / model / extension / settings 域订阅与请求）。
- * - 写 settings store（providers/models/skills/agents/extensions/skillDirs/agentDirs/defaultModel/system）。
+ * - 写 settings store（providers/models/skills/agents/extensions/skillDirs/agentDirs/extensionDirs/defaultModel/system）。
  */
 import { watch } from 'vue'
 import { config, model as modelApi, extension as extensionApi, settings as settingsApi } from '@/api'
@@ -40,20 +40,22 @@ const unsubs: Array<() => void> = []
 let initialized = false
 
 /**
- * 幂等初始化：挂载 7 域常驻订阅 + 同步 system 偏好到 store（store 的 setSystem 内部再落 DOM/i18n）。
+ * 幂等初始化：挂载常驻订阅 + 同步 system 偏好到 store（store 的 setSystem 内部再落 DOM/i18n）。
  *
  * 由 AppShell（应用级，常驻）调用一次即可；多次调用安全（initialized 去重）。
  * 订阅常驻不随 modal 关闭断开，保证 settings 数据全局可消费。
  *
- * 7 个通道（行为不变约束）：
+ * 通道（行为不变约束）：
  * 1. config.onProviders → providers
  * 2. model.onModels → models（与 providers 同源，故常驻）
  * 3. config.onSkills → skills
  * 4. config.onAgents → agents
  * 5. config.onSkillDirs → skillDirs
  * 6. config.onAgentDirs → agentDirs
- * 7. config.onDefaults → defaultModel
- * 8. extension.onExtensions → extensions（extension 本地桥接类型转译）
+ * 7. config.onExtensionDirs → extensionDirs（Phase 4）
+ * 8. config.onDefaults → defaultModel
+ * 9. config.onSystemPrompt → systemPromptConfig
+ * 10. extension.onExtensions → extensions（extension 本地桥接类型转译）
  */
 async function init(): Promise<void> {
   if (initialized) return
@@ -68,6 +70,7 @@ async function init(): Promise<void> {
   unsubs.push(config.onAgents((a) => { store.agents = a }))
   unsubs.push(config.onSkillDirs((d) => { store.skillDirs = d }))
   unsubs.push(config.onAgentDirs((d) => { store.agentDirs = d }))
+  unsubs.push(config.onExtensionDirs((d) => { store.extensionDirs = d }))
   unsubs.push(config.onDefaults((m) => { store.defaultModel = m }))
   // 系统提示词配置（FR-4，config.systemPrompt 广播 → store.systemPromptConfig 常驻同步）
   unsubs.push(config.onSystemPrompt((cfg, corrupted) => {

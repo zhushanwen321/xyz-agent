@@ -8,10 +8,10 @@
  * 与其他 store（session/chat/navigation…）同构：只持 state + 纯写入方法，由 composable 喂数据。
  *
  * 当前职责：
- * - 持有 providers / models / skills / agents / extensions / system / skillDirs / agentDirs / defaultModel 九份 state。
+ * - 持有 providers / models / skills / agents / extensions / system / skillDirs / agentDirs / extensionDirs / defaultModel 十份 state。
  * - setSystem(patch)：合并本地态 → 写 localStorage（settingsApi.updateSystem）→ 同步 DOM + i18n（applySystemToDom）。
  *   这是纯函数式副作用（无订阅、无跨 store 依赖），符合 store action 定位；订阅生命周期才必须归 composable。
- * - setSkillDirs / setAgentDirs：发请求持久化，靠后端广播推回权威值（订阅在 useSettings.init 注册）。
+ * - setSkillDirs / setAgentDirs / setExtensionDirs：发请求持久化，靠后端广播推回权威值（订阅在 useSettings.init 注册）。
  *
  * 不再职责（已移至 useSettings composable）：
  * - init / refreshProviders / dispose（订阅生命周期编排）。
@@ -69,6 +69,9 @@ export const useSettingsStore = defineStore('settings', () => {
   // ADR-0020 §1 加载路径配置（层 A 勾选/拖动用）：预设候选 + enabled 状态
   const skillDirs = ref<SkillDirConfig[]>([])
   const agentDirs = ref<SkillDirConfig[]>([])
+  // ADR-0020 §1 extension 加载路径配置（Phase 4）：与 skill/agent 同构，靠前 = 先加载。
+  // extension 的「优先级」语义因资源类型而异（tool 靠前生效、hook 全部执行），故 UI 措辞用「加载顺序」。
+  const extensionDirs = ref<SkillDirConfig[]>([])
   // 默认模型（"provider/modelId" 复合串，与 SessionSummary.modelId 同格式）。
   // runtime 在连接 / model.switch / provider 增删时经 config.defaults 推送；
   // landing 态（无 active session）的 composer 模型选择器取它作 fallback。
@@ -116,6 +119,13 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 覆盖 agent 加载路径（ADR-0020 §1 目录级管道），语义同 setSkillDirs。 */
   async function setAgentDirs(dirs: string[]): Promise<void> {
     await config.setAgentDirs(dirs)
+  }
+
+  /** 覆盖 extension 加载路径（Phase 4 目录级管道），语义同 setSkillDirs/setAgentDirs。
+   *  dirs 是启用的路径有序数组（靠前先加载）。只发请求持久化，靠后端广播推回权威值。
+   *  extension 不需要重启提示——新 session 生效（与 agent 的「重开会话」提示不同）。 */
+  async function setExtensionDirs(dirs: string[]): Promise<void> {
+    await config.setExtensionDirs(dirs)
   }
 
   // ── 乐观更新（toggle 级，区别于 setSkillDirs 的「靠广播推回」）──
@@ -187,12 +197,14 @@ export const useSettingsStore = defineStore('settings', () => {
     system,
     skillDirs,
     agentDirs,
+    extensionDirs,
     defaultModel,
     systemPromptConfig,
     // actions（纯写入）
     setSystem,
     setSkillDirs,
     setAgentDirs,
+    setExtensionDirs,
     setProviderEnabled,
     setModelEnabled,
     setExtensionEnabled,

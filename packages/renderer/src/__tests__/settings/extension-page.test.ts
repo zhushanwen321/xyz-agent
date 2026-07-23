@@ -166,7 +166,8 @@ describe('ExtensionPage 候选项点击不双触发（W2 D3）', () => {
     const dirTab = wrapper.findAll('button').find((b) => b.text() === 'Local Dir')
     expect(dirTab).toBeTruthy()
     await dirTab!.trigger('click')
-    await wrapper.find('input').setValue('/some/dir')
+    // 用 testid 精确定位安装输入框（顶部 LoadPaths 也有 input，避免误中）
+    await wrapper.find('[data-testid="install-input"]').setValue('/some/dir')
     const discoverBtn = wrapper.findAll('button').find((b) => b.text() === '发现')
     expect(discoverBtn).toBeTruthy()
     await discoverBtn!.trigger('click')
@@ -219,8 +220,8 @@ describe('ExtensionPage 操作成功 toast 反馈（W4 D11）', () => {
     const { toasts } = useToast()
     wrapper = mount(ExtensionPage, { props: { extensions: [] } })
     await flushPromises()
-    // npm tab 默认选中；输入包名点安装
-    await wrapper.find('input').setValue('foo-pkg')
+    // npm tab 默认选中；输入包名点安装（用 testid 精确定位，顶部 LoadPaths 也有 input）
+    await wrapper.find('[data-testid="install-input"]').setValue('foo-pkg')
     const installBtn = wrapper.findAll('button').find((b) => b.text().includes('安装'))
     expect(installBtn).toBeTruthy()
     await installBtn!.trigger('click')

@@ -210,6 +210,7 @@ export default {
     forced: 'Forced',
     optionalDirs: 'Optional directories (checkable, drag to reorder, earlier overrides later)',
     agentRestartHint: 'Requires reopening the session to take effect',
+    extensionLoadOrderHint: 'Drag to adjust load order. Extension priority varies by resource type (tools: first-wins, hooks: all execute)',
     dragSort: 'Drag to reorder',
     addPath: 'Add',
     enableDir: 'Enable directory {path}',

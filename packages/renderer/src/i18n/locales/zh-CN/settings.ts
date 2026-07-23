@@ -210,6 +210,7 @@ export default {
     forced: '强制',
     optionalDirs: '可选目录（可勾选、可拖动排序，靠前覆盖靠后）',
     agentRestartHint: '改后需重开会话生效',
+    extensionLoadOrderHint: '拖拽调整加载顺序。extension 的优先级因资源类型而异（tool 靠前生效、hook 全部执行）',
     dragSort: '拖动排序',
     addPath: '添加',
     enableDir: '启用目录 {path}',
