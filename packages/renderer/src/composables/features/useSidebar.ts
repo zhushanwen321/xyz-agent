@@ -35,6 +35,7 @@ import { useFileTree } from '@/composables/features/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
+import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
@@ -341,6 +342,7 @@ export function useSidebar() {
     // agentCallId，且 streaming 订阅（subagentStore.panelStreamUnsub）泄漏。此处兜底清。
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
+    const extensionUIStore = useExtensionUIStore()
     if (boundPanel) {
       if (subagentStore.isViewing(boundPanel.id)) {
         // [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）
@@ -364,6 +366,8 @@ export function useSidebar() {
     // ADR-0036 Map 分区派：释放 subagent/workflow store 的 per-session records 分区（防泄漏，AC-8）
     subagentStore.clearSession(id)
     workflowStore.clearSession(id)
+    // [CW session-active-ssot] 释放 extension UI pending 分区（防泄漏，与 subagent/workflow 同范式）
+    extensionUIStore.clearSession(id)
     // [M7 FR-5] evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     const chatStoreForEvict = useChatStore()
