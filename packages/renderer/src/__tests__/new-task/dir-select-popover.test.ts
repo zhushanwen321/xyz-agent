@@ -8,6 +8,7 @@
  * - 列表项点击 → emit('select', { cwd })
  * - 搜索输入 → 即时过滤命中
  * - 「打开文件夹」动作项 → emit('open-dir-dialog')
+ * - W1（MAX_RECORDS 10→6）：records 超过 6 条 → 只渲染前 6 个 workspace-item
  *
  * mock 策略：mock workspaceStore 直接控制 records 数据。
  *
@@ -118,5 +119,47 @@ describe('DirSelectPopover 列表项显示目录名（非 session 名）[回归]
     expect(item.exists()).toBe(true)
     expect(item.text()).toContain('bar') // 目录名
     expect(item.text()).not.toContain('我的自定义会话名') // session 名不应渗入
+  })
+})
+
+/**
+ * W1（MAX_RECORDS 10→6）：records 超过 6 条时，popover 列表只渲染前 6 个 workspace-item。
+ *
+ * 背景：runtime RecentWorkspacesStore MAX_RECORDS 从 10 改为 6 后，前端 popover 列表上限也应
+ * 收敛到 6（与 runtime 一致，避免 UI 显示 10 条而 store 只回 6 的认知错位）。当前组件直接
+ * `workspaces = workspaceStore.records` 未 slice，本组用例在 records=8 时断言只渲染 6 项。
+ */
+describe('DirSelectPopover 列表上限 6（W1 MAX_RECORDS 10→6）', () => {
+  it('records=8 → 只渲染 6 个 workspace-item', () => {
+    const records = Array.from({ length: 8 }, (_, i) =>
+      mkRecord(`/repo/ws-${i + 1}`, 800 - i),
+    )
+    setupWorkspaceStore(records)
+    const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
+    expect(wrapper.findAll('[data-testid="workspace-item"]')).toHaveLength(6)
+  })
+
+  it('records=6 → 渲染 6 个（恰达上限不裁剪）', () => {
+    const records = Array.from({ length: 6 }, (_, i) =>
+      mkRecord(`/repo/ws-${i + 1}`, 600 - i),
+    )
+    setupWorkspaceStore(records)
+    const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
+    expect(wrapper.findAll('[data-testid="workspace-item"]')).toHaveLength(6)
+  })
+
+  it('records=8 且渲染的是 lastUsedAt 最大的前 6 个（淘汰最旧两个）', () => {
+    const records = Array.from({ length: 8 }, (_, i) =>
+      mkRecord(`/repo/ws-${i + 1}`, 800 - i),
+    )
+    setupWorkspaceStore(records)
+    const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
+    const items = wrapper.findAll('[data-testid="workspace-item"]')
+    // 期望渲染 ws-1..ws-6（lastUsedAt 800..750），淘汰 ws-7、ws-8（lastUsedAt 740..730）
+    const cwds = items.map((it) => it.text())
+    expect(cwds.some((t) => t.includes('ws-1'))).toBe(true)
+    expect(cwds.some((t) => t.includes('ws-6'))).toBe(true)
+    expect(cwds.some((t) => t.includes('ws-7'))).toBe(false)
+    expect(cwds.some((t) => t.includes('ws-8'))).toBe(false)
   })
 })
