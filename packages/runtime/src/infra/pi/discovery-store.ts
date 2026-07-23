@@ -18,13 +18,13 @@
  */
 import { existsSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS } from '@xyz-agent/shared'
+import { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '@xyz-agent/shared'
 import { JsonStore } from '../../utils/json-store.js'
 import { getPiAgentDir } from './pi-paths.js'
 import { expandHome } from '../../utils/path-utils.js'
 import type { DiscoveryConfig } from '@xyz-agent/shared'
 
-const DEFAULT_DISCOVERY: DiscoveryConfig = { version: 1, skillDirs: [], agentDirs: [] }
+const DEFAULT_DISCOVERY: DiscoveryConfig = { version: 1, skillDirs: [], agentDirs: [], extensionDirs: [] }
 
 /**
  * discovery.json 存储：read-through（TTL 缓存 + ENOENT 容错）+ atomicWrite。
@@ -45,10 +45,11 @@ function createDiscoveryStore(path: string): JsonStore<DiscoveryConfig> {
         version: 1,
         skillDirs: Array.isArray(obj.skillDirs) ? obj.skillDirs.filter((s): s is string => typeof s === 'string') : [],
         agentDirs: Array.isArray(obj.agentDirs) ? obj.agentDirs.filter((s): s is string => typeof s === 'string') : [],
+        extensionDirs: Array.isArray(obj.extensionDirs) ? obj.extensionDirs.filter((s): s is string => typeof s === 'string') : [],
       }
     },
-    // skillDirs + agentDirs 都空 → 删文件（与 disabled-packages.json 的「空则删」语义一致）
-    shouldDeleteWhen: (v) => v.skillDirs.length === 0 && v.agentDirs.length === 0,
+    // skillDirs + agentDirs + extensionDirs 都空 → 删文件（与 disabled-packages.json 的「空则删」语义一致）
+    shouldDeleteWhen: (v) => v.skillDirs.length === 0 && v.agentDirs.length === 0 && v.extensionDirs.length === 0,
   })
 }
 
@@ -92,6 +93,11 @@ export function getAgentDirs(): string[] {
   return readDiscovery().agentDirs
 }
 
+/** 读取 extensionDirs 有序数组（SSOT）。 */
+export function getExtensionDirs(): string[] {
+  return readDiscovery().extensionDirs
+}
+
 /**
  * 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。
  *
@@ -127,4 +133,18 @@ export function setAgentDirs(dirs: string[]): void {
   })
   const draft = readDiscovery()
   writeDiscovery({ ...draft, agentDirs: filtered })
+}
+
+/**
+ * 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。与 setSkillDirs/setAgentDirs 对称的脏数据过滤。
+ */
+export function setExtensionDirs(dirs: string[]): void {
+  const presetNormalized = new Set(PRESET_EXTENSION_DIRS.map(expandHome))
+  const filtered = dirs.filter(dir => {
+    const resolved = expandHome(dir)
+    const isPresetMember = presetNormalized.has(resolved)
+    return isPresetMember || !isAbsolute(resolved) || existsSync(resolved)
+  })
+  const draft = readDiscovery()
+  writeDiscovery({ ...draft, extensionDirs: filtered })
 }

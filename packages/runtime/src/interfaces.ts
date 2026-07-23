@@ -223,6 +223,10 @@ export interface IConfigService {
   setAgentDirs(dirs: string[]): void
   /** 读取 agentDirs（有序数组）。 */
   getAgentDirs(): string[]
+  /** 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
+  setExtensionDirs(dirs: string[]): void
+  /** 读取 extensionDirs（有序数组）。 */
+  getExtensionDirs(): string[]
   /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
   migrateSettingsSkillsToDiscovery(): void
   loadSkills(projectRoot: string): SkillInfo[]
@@ -264,7 +268,8 @@ export interface IExtensionService {
   upgradeExtension(name: string): Promise<{ upgraded: boolean; from: string; to: string }>
   /** 开关某扩展的启动期自动升级。 */
   setAutoUpgrade(name: string, autoUpgrade: boolean): Promise<void>
-  getExtensionPaths(): Promise<string[]>
+  /** 启用的 extension 路径列表（供 pi --extension 参数）。cwd 用于解析相对的 discovery extension 目录。 */
+  getExtensionPaths(cwd?: string): Promise<string[]>
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>
   installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>

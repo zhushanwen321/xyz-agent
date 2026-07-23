@@ -103,6 +103,11 @@ export interface IConfigStore {
   /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
   setAgentDirs(dirs: string[]): void
 
+  // ── Extension dirs（discovery.json SSOT，ADR-0020 §1）──
+  getExtensionDirs(): string[]
+  /** 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
+  setExtensionDirs(dirs: string[]): void
+
   // ── Agent files（强制目录 + discovery 多目录扫描）──
   /**
    * 扫描 agent .md 文件。

@@ -113,6 +113,7 @@ async function main(): Promise<void> {
     installer: extensionInstaller,
     resolver: extensionResolver,
     extensionSettings,
+    configStore,
     extensionsDir: getExtensionsDir(),
     npmDir: getNpmDir(),
     tmpDir: getTmpDir(),

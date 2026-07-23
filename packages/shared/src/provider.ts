@@ -75,15 +75,19 @@ export interface SkillInfo {
 export type ScanSourceType = 'pi' | 'claude' | 'agents' | 'custom'
 
 /**
- * discovery.json schema（ADR-0020 §1）—— skill/agent 加载路径的唯一真相源。
+ * discovery.json schema（ADR-0020 §1）—— skill/agent/extension 加载路径的唯一真相源。
  * 位于 `<piAgentDir>/discovery.json`（~/.xyz-agent/pi/agent/discovery.json）。
- * skillDirs / agentDirs 是有序数组，靠前覆盖靠后（§1.1 层 3）。
+ * skillDirs / agentDirs / extensionDirs 是有序数组，靠前覆盖靠后（§1.1 层 3）。
  * 强制目录不进此文件（桥接层硬编码注入）。
+ *
+ * extensionDirs：用户勾选的外部 extension 扫描目录（P1 pi 原生 + P2 xyz-agent + 自定义），
+ * 复刻 pi 的 collectAutoExtensionEntries 扫描。npm 安装的 extension 不进此文件（走 settings.json packages[]）。
  */
 export interface DiscoveryConfig {
   version: 1
   skillDirs: string[]
   agentDirs: string[]
+  extensionDirs: string[]
 }
 
 /**

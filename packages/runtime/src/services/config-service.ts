@@ -382,6 +382,14 @@ export class ConfigService implements IConfigService {
     this.configStore.setAgentDirs(dirs)
   }
 
+  getExtensionDirs(): string[] {
+    return this.configStore.getExtensionDirs()
+  }
+
+  setExtensionDirs(dirs: string[]): void {
+    this.configStore.setExtensionDirs(dirs)
+  }
+
   migrateSettingsSkillsToDiscovery(): void {
     this.configStore.migrateSettingsSkillsToDiscovery()
   }

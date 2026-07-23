@@ -14,7 +14,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ServerMessage, ServerMessageMap, ServerMessageType } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
-import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS } from '../services/skill-dir-config.js'
+import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
 import type { ErrorDetails } from './message-context.js'
 import { WS_OPEN } from './connection-manager.js'
 
@@ -152,6 +152,10 @@ export class ServerMessageBroker implements IMessageBroker {
   private buildAgentDirsMsg(): ServerMessage {
     return { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentDirs()) } }
   }
+  /** extension 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  private buildExtensionDirsMsg(): ServerMessage {
+    return { type: 'config.extensionDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_EXTENSION_DIRS, this.services.configService.getExtensionDirs()) } }
+  }
 
   // ── Broadcast helpers ──────────────────────────────────────────
 
@@ -174,6 +178,10 @@ export class ServerMessageBroker implements IMessageBroker {
   /** 广播 agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastAgentDirs(): void {
     this.broadcast(this.buildAgentDirsMsg())
+  }
+  /** 广播 extension 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  broadcastExtensionDirs(): void {
+    this.broadcast(this.buildExtensionDirsMsg())
   }
 
   /**
@@ -225,6 +233,10 @@ export class ServerMessageBroker implements IMessageBroker {
       {
         label: 'config.agentDirs',
         run: () => this.send(ws, this.buildAgentDirsMsg()),
+      },
+      {
+        label: 'config.extensionDirs',
+        run: () => this.send(ws, this.buildExtensionDirsMsg()),
       },
       {
         // config.systemPrompt（FR-4/FR-5）：spec §6 要求「reply + broadcast + 初始推送三用」。

@@ -686,9 +686,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }).map(normalize)
   }
 
-  async getExtensionPaths(): Promise<string[]> {
+  async getExtensionPaths(cwd?: string): Promise<string[]> {
     try {
-      return await this.extensionService.getExtensionPaths()
+      return await this.extensionService.getExtensionPaths(cwd)
     } catch (e) {
       console.warn('[session-service] getExtensionPaths failed:', e)
       return []

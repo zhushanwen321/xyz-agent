@@ -45,7 +45,7 @@ export type ClientMessageType =
   | 'config.scanSessionSkills'
   | 'config.getGlobalSkills' | 'config.getProjectSkills'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
-  | 'config.setSkillDirs' | 'config.setAgentDirs'
+  | 'config.setSkillDirs' | 'config.setAgentDirs' | 'config.setExtensionDirs'
   | 'config.getSystemPrompt' | 'config.setSystemPrompt'
   | 'model.list' | 'model.switch' | 'session.setThinkingLevel'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
@@ -190,6 +190,7 @@ export interface ClientMessageMap {
   /** 目录级管道写入（ADR-0020 §5）：dirs 为有序数组，靠前覆盖靠后。写 discovery.json。 */
   'config.setSkillDirs': { dirs: string[] }
   'config.setAgentDirs': { dirs: string[] }
+  'config.setExtensionDirs': { dirs: string[] }
   'config.getSystemPrompt': Record<string, never>
   'config.setSystemPrompt': { config: SystemPromptConfig }
   'model.list': Record<string, never>
@@ -312,7 +313,7 @@ export type ServerMessageType =
   | 'config.globalSkills' | 'config.projectSkills'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
-  | 'config.skillDirs' | 'config.agentDirs'
+  | 'config.skillDirs' | 'config.agentDirs' | 'config.extensionDirs'
   | 'config.systemPrompt'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
@@ -372,6 +373,7 @@ export interface ServerMessageMapBase {
   /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
   'config.skillDirs': { dirs: SkillDirConfig[] }
   'config.agentDirs': { dirs: SkillDirConfig[] }
+  'config.extensionDirs': { dirs: SkillDirConfig[] }
   'config.defaults': {
     defaultModel: string
     /** 默认模型变更来源，仅 broadcast 携带（reply 不带）。reply/broadcast 共用此类型，故 source 为 optional。 */
@@ -725,6 +727,7 @@ export interface ReplyPayloadMap {
   'config.setAgent': void         // reply config.agentUpdated
   'config.setAgentDirs': void     // reply config.agentDirs
   'config.setDefaultModel': void  // reply config.defaults
+  'config.setExtensionDirs': void // reply config.extensionDirs
   'config.setProvider': void      // reply config.providerUpdated
   'config.setSkill': void         // reply config.skillUpdated
   'config.setSkillDirs': void     // reply config.skillDirs

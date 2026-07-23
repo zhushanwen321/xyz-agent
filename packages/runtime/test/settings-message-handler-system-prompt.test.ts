@@ -79,6 +79,7 @@ function makeHandler() {
     broadcastAgentList: vi.fn(),
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
+    broadcastExtensionDirs: vi.fn(),
   }
 
   const handler = new SettingsMessageHandler(ctx)
