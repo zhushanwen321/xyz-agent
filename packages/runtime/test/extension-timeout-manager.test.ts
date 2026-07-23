@@ -103,7 +103,7 @@ describe('ExtensionTimeoutManager', () => {
     expect(mgr.isBridgeRequest('never-registered')).toBe(false)
   })
 
-  it('getPendingRequests 非破坏性：多次 peek 不清缓存，返回格式与 getAndClearPendingRequests 一致', () => {
+  it('getPendingRequests 非破坏性：多次 peek 不清缓存，payload 解包到顶层', () => {
     const mgr = new ExtensionTimeoutManager()
     // cachePendingRequest 签名：(sessionId, requestId, method, payload)
     mgr.cachePendingRequest('s1', 'r1', 'select', { title: 'ask', askUser: true, askUserQuestions: [] })
@@ -119,7 +119,7 @@ describe('ExtensionTimeoutManager', () => {
     const ids = (arr: { requestId: string }[]) => arr.map(r => r.requestId).sort()
     expect(ids(first)).toEqual(ids(second))
 
-    // payload 解包到顶层（与 getAndClearPendingRequests 同构）
+    // payload 解包到顶层
     const askReq = first.find(r => r.requestId === 'r1')
     expect(askReq?.title).toBe('ask') // payload.title 解包到顶层
     expect(askReq?.askUser).toBe(true) // payload.askUser 解包到顶层

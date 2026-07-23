@@ -188,22 +188,6 @@ export class ExtensionTimeoutManager {
   }
 
   /**
-   * @deprecated 方案2 改用 getPendingRequests（非破坏快照）。此方法保留至 T6 清理所有调用方后删除。
-   *
-   * 获取指定 session 的所有 pending 请求（session 重新激活时调用）。
-   * 返回后清除缓存（避免重复推送）。
-   */
-  getAndClearPendingRequests(sessionId: string): PendingUIRequest[] {
-    const sessionCache = this.pendingRequests.get(sessionId)
-    if (!sessionCache || sessionCache.size === 0) return []
-    const requests = Array.from(sessionCache.values())
-    this.pendingRequests.delete(sessionId)
-    // 解包 payload 到顶层：renderer 的 ExtensionUIRequest 期望 title/message/options/askUser
-    // 在顶层（与 extension.ui_request 实时推送同构），pendingRequests 缓存时嵌套在 .payload
-    return requests.map(r => ({ ...r, ...r.payload }))
-  }
-
-  /**
    * 获取指定 session 的所有 pending 请求（非破坏性只读快照）。
    *
    * 用于方案2 的 session 级状态快照模型：pending UI 请求是 session 固有状态，
