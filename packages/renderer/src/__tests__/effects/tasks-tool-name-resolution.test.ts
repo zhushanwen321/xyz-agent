@@ -17,15 +17,29 @@ import { useTasksStore } from '@/stores/tasks'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // mock useSideDrawer，捕获 open('tasks') 调用（首数据写入时自动弹 drawer）
+// setPendingOpenForSid 是具名导出，chat-message-effects.ts 直接 import 调用（sid 守卫不通过时置标记）
 const openSpy = vi.fn()
+const setPendingOpenSpy = vi.fn()
 vi.mock('@/composables/features/useSideDrawer', () => ({
   useSideDrawer: () => ({ open: openSpy }),
+  setPendingOpenForSid: (...args: unknown[]) => setPendingOpenSpy(...args),
+}))
+
+// mock usePanelStore，让 focusedSessionId 可写（真实 store 是 computed 只读）
+const mockFocusedSessionId = { value: null as string | null }
+vi.mock('@/stores/panel', () => ({
+  usePanelStore: () => ({
+    get focusedSessionId() { return mockFocusedSessionId.value },
+    set focusedSessionId(v: string | null) { mockFocusedSessionId.value = v },
+  }),
 }))
 
 describe('tasks tool_call_end toolName 解析', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     openSpy.mockClear()
+    setPendingOpenSpy.mockClear()
+    mockFocusedSessionId.value = null
   })
 
   it('tool_call_end payload 不带 toolName → 从已存 toolCall 取 todo，tasks store 正确写入', () => {
@@ -108,11 +122,15 @@ describe('首个 todo/goal 数据自动打开 SideDrawer tasks tab', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     openSpy.mockClear()
+    setPendingOpenSpy.mockClear()
+    mockFocusedSessionId.value = null
   })
 
   it('首个 todo tool result 到达 → open("tasks") 被调一次', () => {
     const chat = useChatStore()
     const sid = 's-auto-open'
+    // 设置 focusedSessionId 使 sid 守卫通过，走 open('tasks') 分支
+    mockFocusedSessionId.value = sid
     chat.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'm1' },
@@ -136,6 +154,8 @@ describe('首个 todo/goal 数据自动打开 SideDrawer tasks tab', () => {
   it('后续 todo update 不重复弹 drawer', () => {
     const chat = useChatStore()
     const sid = 's-no-repeat'
+    // 首个 todo 到达时 focusedSessionId 匹配，走 open('tasks') 分支
+    mockFocusedSessionId.value = sid
     chat.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'm1' },
@@ -169,6 +189,8 @@ describe('首个 todo/goal 数据自动打开 SideDrawer tasks tab', () => {
   it('goal_control tool result 首个到达 → open("tasks")', () => {
     const chat = useChatStore()
     const sid = 's-goal-auto'
+    // goal 在 tool_call_start 阶段就触发 routeToolStartToTasks，需提前设置
+    mockFocusedSessionId.value = sid
     chat.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'm1' },

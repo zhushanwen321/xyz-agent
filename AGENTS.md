@@ -521,6 +521,19 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 
 ## 跳过检查
 
+### cw v1 testRunner cwd 对 monorepo 失效 [HISTORICAL]
+
+cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vitest run`。本项目的 vitest 配置在 `packages/renderer/vitest.config.ts`（含 `@/` alias 等），根目录跑出大量「配置/alias 找不到」的假失败（test files 层面 200+ failed），gate `tests-all-pass` 永远不过——**即使本次改动零回归**。
+
+2026-07-23 事故：session-bg-work-status wave 的 renderer 目录内 vitest 是 1827 passed / 5 认知外失败，但 cw 在根目录跑出 160 passed / 32 failed（解析还受彩色输出干扰），test gate 卡死无法推进 exec-review。
+
+**临时对策**（coding-workflow 修复前）：wave test gate 的判定**以 `packages/renderer` 目录内的 `npx vitest run` 结果为准**，不用 cw gate 的数字。具体：
+1. `cd packages/renderer && npx vitest run` 拿真实 pass/fail
+2. 确认失败的测试是否在本次 wave 范围（看 plan.files）——范围外的预存失败需单独修，但不阻塞本 wave
+3. 若本 wave 范围内测试全绿，人工判定 test 阶段通过，推进 exec-review
+
+**根治方向**（待提 PR 到 coding-workflow）：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
+
 > **默认禁止跳过**（见上文「Lint / Git Hooks 问题处理原则 [MANDATORY]」）。以下变量仅供线上热修复等紧急场景，使用时必须在 commit message 说明原因。
 
 ```bash
