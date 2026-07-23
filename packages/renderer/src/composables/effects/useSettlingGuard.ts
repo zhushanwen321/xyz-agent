@@ -14,7 +14,7 @@ import { onScopeDispose, ref } from 'vue'
 export function useSettlingGuard(): {
   settling: Readonly<ReturnType<typeof ref<boolean>>>
   startSettling: () => void
-} {
+  } {
   const settling = ref(false)
   let raf1 = 0
   let raf2 = 0
