@@ -38,6 +38,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
+import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
@@ -200,6 +201,12 @@ export function useSidebar() {
     } catch (e) {
       console.warn('[useSidebar] getContext failed, context popover will be empty:', e)
     }
+
+    // pendingOpen 消费（FR-3）：后台 session 的 tasks 事件到达时若用户不在该 session，只置 pendingOpen
+    // 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开 tasks tab。
+    // 挂 selectSession 内部（与 commands/context 兜底同位置），不挂独立 watch(focusedSessionId)，
+    // 避免撞 Runtime broadcast 时序竞争。consumePendingOpen 内部已含幂等（消费后清标记）。
+    consumePendingOpen(id)
 
     // 文件树预加载：切 session 即拉取，使侧栏「文件」tab 计数（fileCount 读 store.getTree）
     // 立即更新——不依赖用户切到文件 tab 才触发 FileView 的 loadTree。loadTree 内部缓存复用
