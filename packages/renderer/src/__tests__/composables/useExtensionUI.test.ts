@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { effectScope, ref, nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 // ── mock extension api domain ──
 // 拦截 onUIRequest / onUITimeout / sendExtensionUIResponse，让测试能模拟 WS 事件分发。
@@ -52,7 +53,7 @@ vi.mock('@/api/domains/extension', () => ({
 
 import { useExtensionUI, askUserFilter, dialogFilter } from '@/composables/useExtensionUI'
 import { sendExtensionUIResponse, getPendingRequests } from '@/api/domains/extension'
-import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
+import { useExtensionUIStore } from '@/stores/extension-ui'
 
 // ── 测试数据构造 helper ──
 function mkAskUserReq(sid: string, requestId: string) {
@@ -79,9 +80,9 @@ function emitUITimeout(sid: string, requestId: string): void {
 }
 
 beforeEach(() => {
-  // 模块级 cleanup registry 跨测试可能残留（本文件用 useExtensionUI 不包 effectScope，
-  // onScopeDispose 在测试环境无 scope 不触发反注册）→ 显式清空防污染下游断言
-  __clearSessionCleanupRegistryForTest()
+  // T2 后 pending 状态归属 extensionUIStore（pinia store）→ 每个测试用新 pinia 实例隔离，
+  // 避免 store 单例跨测试残留污染（对齐 W2 前用 useSessionScopedState 时清 registry 的作用）。
+  setActivePinia(createPinia())
   uiRequestHandlers.clear()
   uiTimeoutHandlers.clear()
   vi.mocked(sendExtensionUIResponse).mockClear()
