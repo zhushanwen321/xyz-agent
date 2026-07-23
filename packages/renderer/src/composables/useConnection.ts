@@ -33,6 +33,7 @@ import * as pending from '../api/pending'
 import * as events from '../api/events'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
+import { useExtensionUIStore } from '../stores/extension-ui'
 import { useToast } from './useToast'
 
 /**
@@ -232,10 +233,12 @@ export function useConnection() {
     // 监听 runtime 崩溃重启中（主进程正在拉起新实例 → 进 restarting 态，停自动重连）
     // runtime 崩溃 = pi 子进程没了 = 流不可能继续。重置 chat 活跃态 + 清理 pending，
     // 避免 UI 卡「思考中」+ in-flight Promise 永挂（runtime 重启后是全新实例，旧 pending 永远收不到响应）。
+    // ask-user pending 同理：pi 死了 ask-user 的 Promise 永远不会被 resolve，必须 clearAllPending（T5）。
     removeRuntimeRestartingListener = onRuntimeRestarting(() => {
       setRestarting()
       pending.rejectAll(new Error(t('connection.runtimeRestarting')))
       useChatStore().finalizeAllStreaming('restart')
+      useExtensionUIStore().clearAllPending()
     })
 
     // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
@@ -243,6 +246,7 @@ export function useConnection() {
       setFailed()
       pending.rejectAll(new Error(t('connection.runtimeUnavailable')))
       useChatStore().finalizeAllStreaming('disconnect')
+      useExtensionUIStore().clearAllPending()
     })
 
     // 尝试从主进程获取已知端口

@@ -20,6 +20,7 @@ import type { ComputedRef } from 'vue'
 import { normalizeContent } from '@xyz-agent/shared'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { deriveStatus } from '@/composables/logic/sessionStatus'
@@ -54,10 +55,11 @@ export function useSessionDerivations() {
   // W6：重新引入 session store 取元数据 status（metaStatus）——去全量预 hydrate 后，
   // 未访问 session 的终态（done/error/stopped）来自 runtime session_end 元数据。
   const session = useSessionStore()
-  // RK3：subagent/workflow store 在 useSessionDerivations 外层闭包取（Pinia 单例引用稳定）。
-  // computed 体内实际调用 hasRunning/hasRunningOrPaused，建立对 recordsBySession 的响应式依赖。
+  // RK3：subagent/workflow/extensionUI store 在 useSessionDerivations 外层闭包取（Pinia 单例引用稳定）。
+  // computed 体内实际调用 hasRunning/hasRunningOrPaused/hasPendingAskUser，建立对各自 records Map 的响应式依赖。
   const subagentStore = useSubagentStore()
   const workflowStore = useWorkflowStore()
+  const extensionUIStore = useExtensionUIStore()
 
   /**
    * 响应式派生指定 session 的状态点（D6）。
@@ -79,7 +81,10 @@ export function useSessionDerivations() {
         // hasBackgroundWork：主 turn 已结束但有 background subagent/workflow 仍在跑 → working 态。
         // 必须在 computed 体内读（建立对 recordsBySession 的响应式依赖，records 变化自动重算）。
         const hasBackgroundWork = subagentStore.hasRunning(id) || workflowStore.hasRunningOrPaused(id)
-        return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id), hasBackgroundWork, meta)
+        // hasAskUserPending：ask-user 富交互请求 pending → waiting 态（T3）。
+        // 非响应式 getter，但 computed 通过其引用的 requestsBySession 响应式 ref 建立依赖。
+        const hasAskUserPending = extensionUIStore.hasPendingAskUser(id)
+        return deriveStatus(id, chat, chat.isActive(id), chat.isCompacting(id), hasBackgroundWork, meta, hasAskUserPending)
       })
       statusCache.set(id, c)
     }
