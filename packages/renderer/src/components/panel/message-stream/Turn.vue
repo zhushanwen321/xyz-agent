@@ -116,7 +116,7 @@
           <Copy v-else class="size-3" />
         </Button>
         <Button
-          v-if="canEdit && !isSessionActive"
+          v-if="canEdit && !isSessionEditable"
           variant="ghost"
           size="icon"
           class="size-6 text-subtle hover:text-fg"
@@ -139,7 +139,7 @@
         对齐设计稿 align-self:flex-start —— 按钮宽度=内容宽度，hover 背景不撑满整行）。
         顺序：working 态行首脉冲点 → 「已工作/工作中 Xs」→ chevron（完成态有可折叠内容时）→ badge
         - chevron 折叠入口在 elapsed 之后、badge 之前（紧贴耗时，语义为「展开详情」入口）
-        - working 态：行首脉冲点 + 禁用点击（trace 由 isWorking 强制展开）
+        - working 态：行首 spinner + 禁用点击（trace 由 sessionActive 强制展开）
         - 完成态 + 无 foldable：无 chevron，纯展示耗时
       -->
       <!-- turn-meta + hr 包在同一 sticky wrapper：working 态贴顶时两者一起固定，
@@ -148,7 +148,7 @@
            用 --panel-bg（Panel 注入，随 panel 状态变化）不透明遮挡滚动文字。 -->
       <div
         v-if="turn.assistants.length > 0"
-        :class="turn.isWorking ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))]' : ''"
+        :class="sessionActive ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))]' : ''"
       >
       <Button
         variant="ghost"
@@ -159,18 +159,18 @@
             ? 'cursor-default hover:text-muted'
             : 'cursor-pointer hover:text-fg',
         ]"
-        :disabled="turn.isWorking || !turn.hasFoldable"
+        :disabled="sessionActive || !turn.hasFoldable"
         @click="expanded = !expanded"
       >
-        <!-- working 态：spinner（更显眼的 streaming 指示），替代原脉冲点 -->
-        <Loader2 v-if="turn.isWorking" class="size-3 shrink-0 animate-spin text-accent" />
+        <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
+        <Loader2 v-if="isStreaming" class="size-3 shrink-0 animate-spin text-accent" />
         <span class="text-[12px] font-medium">
-          <span class="lbl" :class="turn.isWorking ? 'text-accent' : 'text-muted'">{{ turn.isWorking ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
+          <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-muted'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
           <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
         </span>
         <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
         <ChevronRight
-          v-if="turn.hasFoldable && !turn.isWorking"
+          v-if="turn.hasFoldable && !sessionActive"
           class="chev size-[9px] text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
           :class="expanded ? 'rotate-90 text-accent' : ''"
         />
@@ -201,7 +201,7 @@
             :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
             :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
             :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
-            :working="turn.isWorking"
+            :working="sessionActive"
             :session-id="sessionId"
           />
         </template>
@@ -217,14 +217,14 @@
       <div
         v-if="summaryText"
         class="turn-summary pt-3 text-[13.5px] leading-7 transition-colors duration-200"
-        :class="turn.isWorking ? 'text-muted' : 'text-fg'"
+        :class="isStreaming ? 'text-muted' : 'text-fg'"
       >
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
              原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。
              w-[7px] / rounded-[1px] 为设计精确值（与 h-3.5=14px 配出 2:1 细竖条比例 + 1px 微圆角），
              非魔数——改宽度需同步 h-3.5 比例。 -->
-        <span v-if="turn.isWorking" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
+        <span v-if="isStreaming" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
         <!-- hover actions：复制 / 复制为 MD（常驻）+ fork（仅 AI 停止时）。
            与 user 区一致（Turn.vue:76,90）：容器不守 isSessionActive，fork 单独守卫。 -->
         <div
@@ -326,13 +326,22 @@ import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
-const props = defineProps<{
-  turn: MessageTurn
-  /** Turn 所在 session（fork 源，双 panel standby 场景不能依赖全局 activeId） */
-  sessionId: string
-  /** 该 user 是否可编辑（仅当前 session 最后一条 user，避免编辑中间 user 丢失其后对话） */
-  canEdit?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    turn: MessageTurn
+    /** Turn 所在 session（fork 源，双 panel standby 场景不能依赖全局 activeId） */
+    sessionId: string
+    /** 该 user 是否可编辑（仅当前 session 最后一条 user，避免编辑中间 user 丢失其后对话） */
+    canEdit?: boolean
+    /** 该 turn 所属 session 是否「对话进行中」（session 级信号，CW wave session-active-ssot T4）。
+     *  含 streaming/ask-user(subagent waiting)/working(后台 subagent/workflow)/pending/compacting/retrying。
+     *  驱动 sticky 贴顶、折叠 disabled、trace 展开、thinking 文案等「对话进行中」相关 UI。
+     *  缺省（undefined）回退到 turn.isStreaming（向后兼容：历史调用方/test 不传时仍按流式态渲染）。
+     *  default:undefined 显式禁用 Vue boolean prop 的缺省 false 强转（否则 `??`/`=== undefined` 回退失效）。 */
+    isSessionActive?: boolean
+  }>(),
+  { isSessionActive: undefined },
+)
 
 /**
  * B9：编辑状态变化通知父组件。
@@ -401,8 +410,27 @@ const userSegments = computed<Segment[]>(() => {
 /**
  * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isGenerating。
  * standby panel 的 Turn 不会被 active panel 的流式态误伤；编辑/fork 仅在本 session 活跃时禁用。
+ * 注意：这是「编辑权限」门控（活跃期禁止编辑），与 isSessionActive prop（对话进行中信号）不同。
  */
-const isSessionActive = computed(() => chat.isActive(props.sessionId))
+const isSessionEditable = computed(() => chat.isActive(props.sessionId))
+
+/**
+ * CW wave session-active-ssot T4 —— isWorking 拆分为两个信号：
+ *
+ * - isStreaming（turn 级）：文本正在流式生成。来源 turn.isStreaming（原 turn.isWorking 的流式语义）。
+ *   服务：Loader 转圈、streaming 光标、summary 文案颜色、计时器、滚动跟随（A 类，5 处）。
+ * - sessionActive（session 级）：对话进行中（含 streaming/ask-user/subagent/compacting 等）。
+ *   来源 isSessionActive prop（MessageStream 读 derivedStatus 注入），无 prop 时回退到 turn.isStreaming
+ *   （向后兼容：历史调用方/test 不传 prop 时仍按流式态渲染）。服务：sticky 贴顶、折叠 disabled、
+ *   trace 展开、thinking 文案、完成自动收起（B/C 类，6 处）。
+ *
+ * ask-user 等待期关键差异：message.complete 让 isStreaming=false（Loader 不转/光标不闪），
+ * 但对话仍在进行（sessionActive=true，trace 展开/折叠 disabled/贴顶）——对话流不收起（M3 修复）。
+ */
+const isStreaming = computed(() => props.turn.isStreaming)
+// prop 未传入时回退到 turn.isStreaming（向后兼容）。
+// withDefaults 显式 default:undefined 禁用 Vue boolean prop 的缺省 false 强转，保证 `??` 回退生效。
+const sessionActive = computed(() => props.isSessionActive ?? props.turn.isStreaming)
 
 /**
  * pending user 气泡（draft-composer-states S7）：steer/followup 已入队 pi 但未投递。
@@ -425,17 +453,21 @@ const pendingLabel = computed(() => (isSteerMode.value ? t('panel.queue.steerLab
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
 
-/** working 或 expanded 时展开 trace */
+/** 对话进行中（含 ask-user）或手动 expanded 时展开 trace（B 类：sessionActive 驱动） */
 const expanded = ref(false)
-const showTrace = computed(() => props.turn.isWorking || expanded.value)
+const showTrace = computed(() => sessionActive.value || expanded.value)
 
 /**
  * 工作耗时 live 计时（提取至 useTurnElapsed composable，纯计时关注点）。
- * 完成回调：isWorking true→false 时复位折叠态（自动收起成一行 meta）。
+ * T4 拆分两个信号：
+ * - 计时器 start/stop 看 isStreaming（文本流式生成耗时，ask-user 等待不算生成耗时）。
+ * - 完成自动收起看 sessionActive（对话真正结束才复位 expanded 成一行 meta）：
+ *   ask-user 期间 message.complete 让 isStreaming false 但 session 仍 waiting，不应收起。
  */
 const { elapsed } = useTurnElapsed(
   () => props.turn.assistants,
-  () => props.turn.isWorking,
+  () => isStreaming.value,
+  () => sessionActive.value,
   () => {
     expanded.value = false
   },

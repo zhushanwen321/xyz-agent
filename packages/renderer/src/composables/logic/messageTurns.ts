@@ -23,8 +23,11 @@ export interface MessageTurn {
   user: Message | null
   /** 回合内的 assistant 消息（一条或多条） */
   assistants: Message[]
-  /** 是否正在工作（最后一条 assistant 处于 streaming） */
-  isWorking: boolean
+  /** 文本是否正在流式生成（turn 级信号，最后一条 assistant 处于 streaming 或 subagent 强制态）。
+   *  语义仅「文本正在流式生成」——驱动 Loader 转圈、streaming 光标、计时器、滚动跟随。
+   *  ask-user 等待期间 message 已 complete → false，但对话仍在进行中（该信号由 session 级
+   *  isSessionActive 表达，见 MessageStream 传给 Turn 的同名 prop）。CW wave session-active-ssot T4。 */
+  isStreaming: boolean
   /** 是否含可折叠块（thinking/toolCall → 有折叠条；纯文字无） */
   hasFoldable: boolean
 }
@@ -68,7 +71,7 @@ export function groupTurns(messages: Message[]): MessageTurn[] {
  * @param messages 扁平消息列表
  * @param forceWorking 强制最后一个 turn 进入 working 态（subagent running 时使用：
  *   subagent 消息读自 JSONL，status 恒为 complete，但 subagent 实际可能仍在执行中。
- *   传 true 让最后一个 turn 的 isWorking=true，trace 展开，与主 agent streaming 态一致）
+ *   传 true 让最后一个 turn 的 isStreaming=true，trace 展开，与主 agent streaming 态一致）
  */
 export function toRenderItems(
   messages: Message[],
@@ -86,7 +89,7 @@ export function toRenderItems(
         index: turnSeq,
         user: msg,
         assistants: [],
-        isWorking: false,
+        isStreaming: false,
         hasFoldable: false,
       }
       items.push({ kind: 'turn', turn: current })
@@ -98,7 +101,7 @@ export function toRenderItems(
           index: turnSeq,
           user: null,
           assistants: [],
-          isWorking: false,
+          isStreaming: false,
           hasFoldable: false,
         }
         items.push({ kind: 'turn', turn: current })
@@ -111,14 +114,14 @@ export function toRenderItems(
     }
   }
 
-  // 回填 isWorking / hasFoldable（最后一条 turn 的 working 态）
+  // 回填 isStreaming / hasFoldable（最后一条 turn 的 streaming 态）
   const turnItems = items.filter(
     (item): item is { kind: 'turn'; turn: MessageTurn } => item.kind === 'turn',
   )
   turnItems.forEach(({ turn }, i) => {
     const last = turn.assistants[turn.assistants.length - 1]
     const isLast = i === turnItems.length - 1
-    turn.isWorking = isLast && (forceWorking || last?.status === 'streaming')
+    turn.isStreaming = isLast && (forceWorking || last?.status === 'streaming')
     turn.hasFoldable = turn.assistants.some(
       (m) => (m.thinking?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0,
     )

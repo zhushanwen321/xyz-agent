@@ -59,12 +59,12 @@ function makeAssistantWithTool(tool: ToolCall): Message {
   }
 }
 
-function makeTurn(assistant: Message, isWorking = false): MessageTurn {
+function makeTurn(assistant: Message, isStreaming = false): MessageTurn {
   return {
     index: 1,
     user: { id: 'u1', role: 'user', content: 'q', status: 'complete', timestamp: NOW },
     assistants: [assistant],
-    isWorking,
+    isStreaming,
     hasFoldable: true,
   }
 }
@@ -252,7 +252,7 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
     const wrapper = mountStream(sid)
     await nextTick()
 
-    // message_start（streaming assistant）→ turn isWorking=true
+    // message_start（streaming assistant）→ turn isStreaming=true
     chat.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } } as ServerMessage<'message.message_start'>)
     await nextTick()
 
@@ -303,14 +303,14 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
   it('running→completed：Turn 内 Block 脉冲消失，Check 出现', async () => {
     const tool = makeTool({ status: 'running' })
     const assistant = makeAssistantWithTool(tool)
-    const turn = makeTurn(assistant, /* isWorking */ false)
+    const turn = makeTurn(assistant, /* isStreaming */ false)
 
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's1' },
       global: { stubs: { ChangeSetCard: true, MarkdownRenderer: true } },
     })
 
-    // 需展开 trace 才能看到 Block（showTrace = isWorking || expanded；这里 isWorking=false）
+    // 需展开 trace 才能看到 Block（showTrace = isSessionActive || expanded；这里 isSessionActive=false）
     // 点击 turn-meta 按钮展开
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()
@@ -376,7 +376,7 @@ function turnItemR(index: number, key: string): RenderItem {
       index,
       user: { id: `u-${key}`, role: 'user', content: 'q', status: 'complete', timestamp: NOW } as never,
       assistants: [],
-      isWorking: false,
+      isStreaming: false,
       hasFoldable: false,
     },
   }

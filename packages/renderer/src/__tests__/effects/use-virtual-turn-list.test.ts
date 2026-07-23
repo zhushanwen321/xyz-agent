@@ -45,7 +45,7 @@ function turnItem(index: number, key: string): RenderItem {
       index,
       user: { id: `user-${key}`, role: 'user', content: 'q' } as never,
       assistants: [],
-      isWorking: false,
+      isStreaming: false,
       hasFoldable: false,
     },
   }
