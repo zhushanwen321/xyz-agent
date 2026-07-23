@@ -86,9 +86,17 @@ export const usePanelStore = defineStore('panel', () => {
     activePanelId.value = kept.id
   }
 
+  /** active panel 绑定的 sessionId（drawer / 文件树等 per-session 状态的分区键）。
+ *  与 useSidebar.focusedSessionId 同源（useSidebar 从本 store 派生），提升到 store 层供
+ *  useSideDrawer 等 composable 直接读，避免经 useSidebar 实例引入循环依赖。*/
+  const focusedSessionId = computed<string | null>(
+    () => panels.value.find((p) => p.id === activePanelId.value)?.sessionId ?? null,
+  )
+
   return {
     layout,
     activePanelId,
+    focusedSessionId,
     isDual,
     panels,
     findPanelBySession,

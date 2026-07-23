@@ -103,6 +103,8 @@ export function useSessionScopedState<T>(
   update: (updater: (state: T) => void) => void
   updateFor: (targetSid: string, updater: (state: T) => void) => void
   cleanup: (sid: string) => void
+  /** 测试钩子：清空所有分区（bump version 触发 current 重算）。生产代码禁止调用。 */
+  _clearAllForTest: () => void
 } {
   // per-instance Map：每个 useSessionScopedState 调用建自己的分区表
   const partitions = new Map<string, T>()
@@ -193,5 +195,9 @@ export function useSessionScopedState<T>(
     update,
     updateFor,
     cleanup,
+    _clearAllForTest: () => {
+      partitions.clear()
+      version.value += 1
+    },
   }
 }
