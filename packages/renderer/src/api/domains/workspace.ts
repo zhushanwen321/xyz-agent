@@ -30,3 +30,13 @@ export async function record(cwd: string): Promise<RecentWorkspaceRecord[]> {
   const reply = await command('workspace.record', { cwd })
   return reply.records
 }
+
+/**
+ * 检测 cwd 是否位于 bare repo + worktree 结构（runtime workspace.detectBare → workspace.bareDetected reply）。
+ *
+ * landing 态按 pendingCwd 驱动 isBare：useNewTaskDirSelect watch pendingCwd 变化时调用，
+ * 结果回填 isBare ref，取代旧 gitInfo.isBare 派生（延迟 create 架构下 landing 无 session → gitInfo 恒 null）。
+ */
+export async function detectBare(cwd: string): Promise<{ isBare: boolean; wsRoot: string; barePath: string }> {
+  return command('workspace.detectBare', { cwd })
+}

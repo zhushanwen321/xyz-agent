@@ -18,7 +18,7 @@ export class WorkspaceMessageHandler {
   constructor(private ctx: WorkspaceHandlerContext) {}
 
   /** D1: 本 handler 认领的 ClientMessageType 清单。 */
-  readonly handles: ClientMessageType[] = ['workspace.listRecent', 'workspace.record']
+  readonly handles: ClientMessageType[] = ['workspace.listRecent', 'workspace.record', 'workspace.detectBare']
 
   async handleWorkspaceMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
@@ -39,6 +39,13 @@ export class WorkspaceMessageHandler {
         return this.ctx.reply(ws, msg.id, 'workspace.recentList', {
           records: this.ctx.workspaceService.list(),
         })
+      }
+      case 'workspace.detectBare': {
+        // service 返 detector 原始结构 {isBareMode, wsRoot, barePath}，此处映射 isBareMode→isBare
+        // 对齐 workspace.bareDetected 协议 payload（landing 态 isBare 由 pendingCwd 驱动，W2）。
+        const { cwd } = msg.payload
+        const { isBareMode, wsRoot, barePath } = await this.ctx.workspaceService.detectBare(cwd)
+        return this.ctx.reply(ws, msg.id, 'workspace.bareDetected', { isBare: isBareMode, wsRoot, barePath })
       }
     }
   }

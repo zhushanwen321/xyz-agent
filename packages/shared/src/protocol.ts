@@ -67,7 +67,7 @@ export type ClientMessageType =
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
-  | 'workspace.listRecent' | 'workspace.record'
+  | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare'
   | 'worktree.create'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
@@ -238,6 +238,8 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
+  /** workspace.detectBare：检测 cwd 是否位于 bare repo + worktree 结构（landing 态按 pendingCwd 驱动 isBare，W2）。 */
+  'workspace.detectBare': { cwd: string }
   /** worktree.create：在 bare repo + worktree 结构中创建隔离的工作目录。
    *  branch 必填；baseBranch 默认 'current'（继承当前分支），可选 'origin/main'（校验远端 ref 存在后使用）。
    *  workspaceHint 用于显式指定 workspace 根（检测 .bare 的起点 cwd），省略则用 process.cwd()。 */
@@ -345,6 +347,7 @@ export type ServerMessageType =
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
   | 'git.status:result'
   | 'workspace.recentList'
+  | 'workspace.bareDetected'
   | 'worktree.created'
 
 /**
@@ -514,6 +517,8 @@ export interface ServerMessageMapBase {
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
+  /** workspace.bareDetected：workspace.detectBare 的 reply（isBare/wsRoot/barePath）。 */
+  'workspace.bareDetected': { isBare: boolean; wsRoot: string; barePath: string }
   /** worktree.created：worktree.create 的成功 reply（新 worktree 的 cwd 与分支名）。 */
   'worktree.created': { cwd: string; branch: string }
 
@@ -710,6 +715,7 @@ export interface ReplyPayloadMap {
   'plugin.config.set': ServerMessageMap['plugin:config']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
+  'workspace.detectBare': ServerMessageMap['workspace.bareDetected']
   'worktree.create': ServerMessageMap['worktree.created']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──

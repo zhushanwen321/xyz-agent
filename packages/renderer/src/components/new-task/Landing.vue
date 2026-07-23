@@ -105,11 +105,12 @@ const isWorktreeModalOpen = computed(() => flow.state.value === 'worktree-modal'
 
 /**
  * 是否在 bare repo + worktree 结构下。
- * 数据源：gitInfo.isBare（runtime 经 session.isBareWorkspace 透出，WorkspaceDetector
- * 检测 .bare 命中后填充）。注：gitIsWorktree 是另一个未连通字段，勿混淆。
- * 测试经 gitInfo 注入（INT-1 默认 isBare=true）。
+ * 数据源优先级：
+ * 1. flow.isBare（pendingCwd 驱动，landing 态主源，W2）——watch pendingCwd 调 workspace.detectBare
+ * 2. flow.gitInfo.isBare（session 态 fallback，runtime 经 session.isBareWorkspace 透出）
+ * 延迟 create 架构下 landing 无 session → gitInfo 恒 null，必须靠 pendingCwd 驱动才能显示「新建 worktree」。
  */
-const isBareWorkspace = computed(() => flow.gitInfo.value?.isBare ?? false)
+const isBareWorkspace = computed(() => flow.isBare?.value ?? flow.gitInfo.value?.isBare ?? false)
 
 function onSelectWorkspace(payload: { cwd: string }): void {
   flow.selectWorkspace(payload.cwd)

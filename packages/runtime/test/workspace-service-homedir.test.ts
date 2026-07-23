@@ -20,19 +20,24 @@ function makeMockStore() {
   } as unknown as RecentWorkspacesStore
 }
 
+/** detectBare 测试无关，给个最小 stub（record/list 不触发 detect）。 */
+function makeStubDetector() {
+  return { detect: () => ({ isBareMode: false, wsRoot: '', barePath: '' }) } as never
+}
+
 describe('WorkspaceService.record homedir 守卫（方案A）', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('record(homedir) → store.record 不被调用', () => {
     const store = makeMockStore()
-    const svc = new WorkspaceService(store)
+    const svc = new WorkspaceService(store, makeStubDetector())
     svc.record(homedir())
     expect(store.record).not.toHaveBeenCalled()
   })
 
   it('record(普通路径) → store.record 被调用，参数透传', () => {
     const store = makeMockStore()
-    const svc = new WorkspaceService(store)
+    const svc = new WorkspaceService(store, makeStubDetector())
     svc.record('/my/repo')
     expect(store.record).toHaveBeenCalledTimes(1)
     expect(store.record).toHaveBeenCalledWith('/my/repo')
@@ -40,7 +45,7 @@ describe('WorkspaceService.record homedir 守卫（方案A）', () => {
 
   it('record(空串) → store.record 不被调用（INV-1 既有不变式回归）', () => {
     const store = makeMockStore()
-    const svc = new WorkspaceService(store)
+    const svc = new WorkspaceService(store, makeStubDetector())
     svc.record('')
     svc.record('   ')
     expect(store.record).not.toHaveBeenCalled()

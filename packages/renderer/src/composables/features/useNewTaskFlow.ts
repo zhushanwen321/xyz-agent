@@ -321,6 +321,7 @@ export function useNewTaskFlow() {
     openBranchModal: branch.openBranchModal,
     submitCreateBranch: branch.submitCreateBranch,
     openCreateWorktree: dirSelect.openWorktreeModal,
+    isBare: dirSelect.isBare,
     createWorktree: worktree.createWorktree,
     startCreateWorktree: worktree.startCreateWorktree,
     closeOverlay,

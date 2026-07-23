@@ -37,6 +37,7 @@ import { getAppVersion } from './services/plugin-service/plugin-version-checker.
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
 import { WorkspaceService } from './services/workspace/workspace-service.js'
+import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
   // RecentWorkspacesStore：最近工作区持久化（WriteBackCache 固定 partition 'global'）。
   // configDir 由 configService 动态推导，无硬编码路径（INV-5）。
   const recentWorkspacesStore = new RecentWorkspacesStore(configDir)
-  const workspaceService = new WorkspaceService(recentWorkspacesStore)
+  const workspaceService = new WorkspaceService(recentWorkspacesStore, new WorkspaceDetector(fs))
   // 启动定期 flush 计时器（全量周期，补充 per-write debounce 500ms）
   recentWorkspacesStore.startFlushTimer()
   const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)

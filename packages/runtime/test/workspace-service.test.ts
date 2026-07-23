@@ -55,7 +55,7 @@ describe('WorkspaceService — behavior', () => {
       startFlushTimer: vi.fn(),
     } as unknown as RecentWorkspacesStore
 
-    service = new WorkspaceService(mockStore)
+    service = new WorkspaceService(mockStore, { detect: () => ({ isBareMode: false, wsRoot: '', barePath: '' }) } as never)
   })
 
   it('record delegates to store.record', () => {

@@ -11,7 +11,9 @@
  *
  * 依赖方向：lib/ipc(pickDirectory) + useNewTaskFlowState（transition + refs）。
  */
+import { ref, watch } from 'vue'
 import { pickDirectory } from '@/lib/ipc'
+import { workspace as workspaceApi } from '@/api'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { transition, useNewTaskFlowState } from './useNewTaskFlowState'
 
@@ -25,9 +27,36 @@ export function useNewTaskDirSelect(
   selectWorkspace: (cwd: string) => Promise<void>
   openDirDialog: () => Promise<void>
   openWorktreeModal: () => void
+  isBare: ReturnType<typeof ref<boolean>>
 } {
   const { state, pendingCwd } = useNewTaskFlowState()
   const workspaceStore = useWorkspaceStore()
+
+  /**
+   * isBare —— landing 态 bare workspace 检测结果（W2）。
+   *
+   * 旧实现 Landing.vue 读 gitInfo.isBare（依赖已绑定 session），延迟 create 架构下 landing 无 session
+   * → gitInfo 恒 null → isBare 恒 false → 「新建 worktree」按钮永不显示。改由 pendingCwd 驱动：
+   * watch pendingCwd 变化时调 workspace.detectBare(cwd)（runtime WorkspaceDetector 检测 .bare 命中），
+   * 结果回填本 ref。pendingCwd=null 兜底 false（不调 RPC）。检测失败静默降级 false（不阻断选目录流程）。
+   */
+  const isBare = ref(false)
+  watch(
+    () => pendingCwd.value,
+    async (cwd) => {
+      if (!cwd) {
+        isBare.value = false
+        return
+      }
+      try {
+        const r = await workspaceApi.detectBare(cwd)
+        isBare.value = r.isBare
+      } catch {
+        isBare.value = false
+      }
+    },
+    { immediate: true },
+  )
 
   /** landing→dir-popover（点 directory chip）。overlay 互斥：已开 branch-popover 时先归 landing 再开。 */
   function openDirPopover(): void {
@@ -102,5 +131,6 @@ export function useNewTaskDirSelect(
     selectWorkspace,
     openDirDialog,
     openWorktreeModal,
+    isBare,
   }
 }
