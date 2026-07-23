@@ -39,8 +39,11 @@ export interface IInstaller {
  * ExtensionResolver（infra/installers/）实现。
  */
 export interface IExtensionResolver {
-  /** 按优先级解析所有 extension 路径（bundled/third-party/settings/user/npm 去重）。 */
-  resolve(projectRoot: string, packaged: boolean, userExtPaths: string[]): ExtensionPaths
+  /**
+   * 按优先级解析所有 extension 路径（bundled/third-party/settings/user/discovery/npm 去重）。
+   * @param discoveryExtDirs 用户勾选的 discovery.json 额外扫描目录（复刻 pi collectAutoExtensionEntries）
+   */
+  resolve(projectRoot: string, packaged: boolean, userExtPaths: string[], discoveryExtDirs?: string[]): ExtensionPaths
   /** 校验目录是否为有效的 pi extension。 */
   isValidPiExtension(pkgDir: string): boolean
 }

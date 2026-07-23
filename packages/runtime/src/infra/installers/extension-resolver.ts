@@ -13,7 +13,7 @@
  * disabled-packages.json 控制启用/禁用状态。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
-import { join, dirname, basename } from 'node:path'
+import { join, dirname, basename, resolve } from 'node:path'
 import { getPiAgentDir, getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { readSettings } from '../pi/pi-settings-store.js'
 import { readDisabledPackages as readDisabledPackagesFromStore } from '../pi/pi-extension-settings.js'
@@ -30,7 +30,7 @@ const log = {
 }
 
 /** 优先级：数值越小优先级越高（npm 最高） */
-const PRIORITY_ORDER = ['npm', 'user', 'settings', 'third-party', 'bundled'] as const
+const PRIORITY_ORDER = ['npm', 'user', 'discovery', 'settings', 'third-party', 'bundled'] as const
 type SourceName = (typeof PRIORITY_ORDER)[number]
 
 /** 扫描结果：extension name → 目录绝对路径 */
@@ -61,8 +61,11 @@ export class ExtensionResolver implements IExtensionResolver {
   /**
    * 解析所有 extension 路径，按优先级去重。
    * deduplicate() 按 PRIORITY_ORDER 升序遍历（高优先级先写入），first-write-wins。
+   *
+   * @param discoveryExtDirs 用户在 discovery.json 勾选的额外扫描目录（P1 pi 原生 + P2 xyz-agent），
+   *   复刻 pi 的 collectAutoExtensionEntries 三种结构识别（单文件/index.ts/manifest）
    */
-  resolve(projectRoot: string, packaged: boolean, userExtPaths: string[]): ExtensionPaths {
+  resolve(projectRoot: string, packaged: boolean, userExtPaths: string[], discoveryExtDirs: string[] = []): ExtensionPaths {
     const sources: SourceMap[] = []
 
     sources.push({ source: 'bundled', extensions: this.scanBundledExtensions(projectRoot, packaged) })
@@ -70,6 +73,9 @@ export class ExtensionResolver implements IExtensionResolver {
     sources.push({ source: 'settings', extensions: this.scanSettingsExtensions() })
     if (userExtPaths.length > 0) {
       sources.push({ source: 'user', extensions: this.scanUserExtensions(userExtPaths) })
+    }
+    if (discoveryExtDirs.length > 0) {
+      sources.push({ source: 'discovery', extensions: this.scanDiscoveryExtensions(discoveryExtDirs) })
     }
     sources.push({ source: 'npm', extensions: this.scanNpmExtensions(projectRoot, packaged) })
 
@@ -242,6 +248,127 @@ export class ExtensionResolver implements IExtensionResolver {
     }
 
     return result
+  }
+
+  /**
+   * 扫描用户在 discovery.json 勾选的额外目录（P1 pi 原生 + P2 xyz-agent + 自定义）。
+   *
+   * 复刻 pi 的 collectAutoExtensionEntries（pi-mono package-manager.ts:575）：
+   * 支持三种 extension 结构——单文件 *.ts/*.js、子目录 index.ts/index.js、
+   * package.json 的 pi.extensions manifest 字段。只识别路径返回，不加载模块（加载仍由 pi 完成）。
+   *
+   * 与 scanThirdPartyExtensions 的区别：后者只识别「子目录 + isValidPiExtension」结构，
+   * discovery 扫描复刻 pi 原生完整识别（含单文件和 manifest 入口），保证勾选 pi 原生目录
+   * （如 ~/.pi/agent/extensions）时行为与 pi 自身扫描一致。
+   */
+  scanDiscoveryExtensions(dirs: string[]): ExtensionMap {
+    const result: ExtensionMap = new Map()
+    for (const dir of dirs) {
+      if (!existsSync(dir)) continue
+      try {
+        if (!statSync(dir).isDirectory()) continue
+      } catch {
+        continue
+      }
+      const entries = this.collectExtensionEntries(dir)
+      for (const entryPath of entries) {
+        // 用入口路径的父目录名（子目录形式）或文件名（单文件形式）做 dedup key
+        const isFile = entryPath.endsWith('.ts') || entryPath.endsWith('.js')
+        const name = isFile ? basename(entryPath).replace(/\.(ts|js)$/, '') : basename(dirname(entryPath))
+        const extName = this.normalizeExtName(name)
+        if (!result.has(extName)) {
+          result.set(extName, isFile ? entryPath : dirname(entryPath))
+        }
+      }
+    }
+    return result
+  }
+
+  /**
+   * 复刻 pi 的 collectAutoExtensionEntries：扫描一个目录，识别 extension 入口路径列表。
+   *
+   * 逻辑（与 pi 一致）：
+   * 1. 先检查目录自身是否是 extension（resolveExtensionEntries）
+   * 2. 否则遍历子项：单文件 *.ts/*.js 直接收集，子目录递归 resolveExtensionEntries
+   * 3. 跳过 .开头 和 node_modules（pi 用 ignore 库做 gitignore 过滤，xyz-agent discovery
+   *    目录是用户明确勾选的，不需要 gitignore 过滤）
+   */
+  private collectExtensionEntries(dir: string): string[] {
+    // 先检查目录自身是否有 explicit extension entries
+    const rootEntries = this.resolveExtensionEntries(dir)
+    if (rootEntries) return rootEntries
+
+    const entries: string[] = []
+    try {
+      const dirEntries = readdirSync(dir, { withFileTypes: true })
+      for (const entry of dirEntries) {
+        if (entry.name.startsWith('.')) continue
+        if (entry.name === 'node_modules') continue
+
+        const fullPath = join(dir, entry.name)
+        let isDir = entry.isDirectory()
+        let isFile = entry.isFile()
+
+        // 符号链接解析真实类型（与 pi 一致）
+        if (entry.isSymbolicLink()) {
+          try {
+            const stats = statSync(fullPath)
+            isDir = stats.isDirectory()
+            isFile = stats.isFile()
+          } catch {
+            continue
+          }
+        }
+
+        if (isFile && (entry.name.endsWith('.ts') || entry.name.endsWith('.js'))) {
+          entries.push(fullPath)
+        } else if (isDir) {
+          const resolved = this.resolveExtensionEntries(fullPath)
+          if (resolved) {
+            entries.push(...resolved)
+          }
+        }
+      }
+    } catch {
+      // 目录读取失败，静默跳过（与 pi 一致）
+    }
+    return entries
+  }
+
+  /**
+   * 复刻 pi 的 resolveExtensionEntries（package-manager.ts:545）：
+   * 解析一个目录的 extension 入口，三种结构按优先级：
+   * 1. package.json 的 pi.extensions manifest 字段 → 声明的入口路径列表
+   * 2. index.ts / index.js → 单入口
+   * 3. 都没有 → 返回 null（不是 extension 目录）
+   */
+  private resolveExtensionEntries(dir: string): string[] | null {
+    const packageJsonPath = join(dir, 'package.json')
+    if (existsSync(packageJsonPath)) {
+      try {
+        const raw = readFileSync(packageJsonPath, 'utf-8')
+        const pkg = JSON.parse(raw) as { pi?: { extensions?: string[] } }
+        if (pkg.pi?.extensions?.length) {
+          const resolved: string[] = []
+          for (const extPath of pkg.pi.extensions) {
+            const resolvedExtPath = resolve(dir, extPath)
+            if (existsSync(resolvedExtPath)) {
+              resolved.push(resolvedExtPath)
+            }
+          }
+          if (resolved.length > 0) return resolved
+        }
+      } catch {
+        // package.json 解析失败，继续尝试 index.ts/index.js
+      }
+    }
+
+    const indexTs = join(dir, 'index.ts')
+    if (existsSync(indexTs)) return [indexTs]
+    const indexJs = join(dir, 'index.js')
+    if (existsSync(indexJs)) return [indexJs]
+
+    return null
   }
 
   /**
