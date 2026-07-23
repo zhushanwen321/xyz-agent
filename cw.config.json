@@ -1,6 +1,6 @@
 {
   "testRunner": {
-    "command": "bash .xyz-harness/cw-2026-07-23-ui-requests-push-model/run-tests.sh",
+    "command": "bash .xyz-harness/cw-2026-07-23-session-active-ssot/run-tests.sh",
     "cwd": "."
   }
 }
