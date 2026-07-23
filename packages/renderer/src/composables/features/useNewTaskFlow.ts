@@ -277,9 +277,20 @@ export function useNewTaskFlow() {
     () => gitInfo.value,
   )
 
-  /** 任意 overlay→landing（Esc/点外）。同一时刻只一层（AC-3.9）。 */
+  /**
+   * 任意 overlay→landing（Esc/点外）。同一时刻只一层（AC-3.9）。幂等：仅当前处于 overlay 态
+   * 才转换，否则 noop——避免重复调用导致 landing→landing 非法转换（state 被打回 idle）。
+   *
+   * [HISTORICAL] 重复调用来源：worktree/branch 成功回调先 selectWorkspace（已 transition('landing')）
+   * 再 closeOverlay，加上 modal @close 又触发一次 closeOverlay，叠加成 landing→landing 非法转换
+   * → transition 非法分支置 state='idle' → 用户在 landing 页提交时撞 submitFirstMessage 的
+   * `state !== 'landing'` guard 报「非 landing 态不可首发提交」。渲染判定（Panel isLandingView
+   * 看 sessionId prop）与提交 guard（看 flow.state）真源不一致，导致「明明在 landing 页却报非 landing」
+   * 的诡异现象。幂等化根因修复，所有正常调用点（来源态均 overlay）行为不变。
+   */
   function closeOverlay(): void {
-    transition('landing') // dir-popover/branch-popover/dir-dialog/branch-modal → landing（均合法）
+    if (!OVERLAY_STATES.has(state.value)) return // 幂等：非 overlay 态 noop（已 landing/idle 等）
+    transition('landing') // dir-popover/branch-popover/dir-dialog/branch-modal/worktree-modal → landing
   }
 
   /** landing/overlay→cancelled（overlay 打开时切 session，AC-3.10）。 */
