@@ -287,9 +287,12 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
       const old = heights.value.get(key) ?? estimatedHeight()
       const idx = idToIndex.get(key)
       if (idx !== undefined) {
-        const turnBottom = offsets[idx] + old
-        if (turnBottom <= st) {
-          // 视口上方 turn：实测与估算/旧值之差需补偿（防用户所见内容跳）
+        // 锚定判定：turn 顶边（基于前缀和的绝对 top）不超过 scrollTop 即补偿。
+        // 旧判定用 turnBottom = offsets[idx] + old（估算高度算底边），向上滚动时视口顶部边缘的 turn
+        // 因估算偏大(200)使 turnBottom > scrollTop 被错误排除，实测后下方内容 offset 重算致跳变。
+        // 改用顶边判定：顶边 <= scrollTop（含刚进入视口顶部的 turn，其顶边 ≈ scrollTop）即纳入补偿，
+        // 消除盲区。视口下方 turn（offsets > scrollTop + viewport）顶边 > scrollTop，仍不补偿。
+        if (offsets[idx] <= st) {
           delta += h - old
         }
       }
@@ -323,6 +326,9 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     pendingHeightReports.clear()
     heights.value = new Map()
     scrollAdjustDelta.value = 0
+    // 重置 scrollTop：session 切换后滚动位置归零，防 visibleRange 首帧基于上一个 session 的 scrollTop 算窗口。
+    // viewportHeight 不重置——滚动容器尺寸未变，复用实际高度避免首帧 visibleRange 窗口为 0 渲染异常。
+    scrollTop.value = 0
     editingPinIndex.value = -1
   }
 
