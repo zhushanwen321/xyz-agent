@@ -113,7 +113,7 @@ describe('U6: workflow store loadError（W2 / M1）', () => {
     // 先成功加载一条数据
     getWorkflowsMock.mockResolvedValueOnce([record1])
     await store.loadWorkflows(sid)
-    expect(store.records).toHaveLength(1)
+    expect(store.getRecordsBySession(sid)).toHaveLength(1)
 
     // 再失败
     getWorkflowsMock.mockRejectedValue(new Error('timeout'))
@@ -121,7 +121,7 @@ describe('U6: workflow store loadError（W2 / M1）', () => {
 
     expect(store.loadError).toBe('timeout')
     // records 保留旧数据（未被清空）
-    expect(store.records).toEqual([record1])
+    expect(store.getRecordsBySession(sid)).toEqual([record1])
     expect(store.isLoading).toBe(false)
   })
 })
