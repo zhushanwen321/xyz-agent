@@ -474,7 +474,8 @@ export function useSidebar() {
       const sessions = session.list
       let recentCwd: string | undefined
       if (sessions.length > 0) {
-        const latest = sessions.reduce((a, b) => (a.lastActiveAt > b.lastActiveAt ? a : b))
+        // 用 >= 取首个最大（稳定，与 reduce 从左到右 + RecentWorkspacesStore 稳定排序一致）
+        const latest = sessions.reduce((a, b) => (a.lastActiveAt >= b.lastActiveAt ? a : b))
         recentCwd = latest.cwd
       }
       if (!recentCwd) recentCwd = workspaceStore.defaultCwd

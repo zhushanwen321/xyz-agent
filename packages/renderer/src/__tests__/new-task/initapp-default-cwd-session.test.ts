@@ -175,4 +175,17 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
     const allSessions = useSessionStore().list
     expect(allSessions.some((s) => s.id === 'x1' && s.cwd === '/x')).toBe(true)
   })
+
+  it('IC-6: 多个 session lastActiveAt 相同 → reduce 稳定取首个（数组中靠前胜出）', async () => {
+    // 两个 session lastActiveAt 都是 300，cwd 不同；reduce 用 >= 取首个最大
+    // 数组顺序 /first 在前 → currentCwd === '/first'
+    sessionCtrl.list.mockResolvedValue([
+      { cwd: '/first', sessions: [mkSession({ id: 'first', cwd: '/first', lastActiveAt: 300 })] },
+      { cwd: '/second', sessions: [mkSession({ id: 'second', cwd: '/second', lastActiveAt: 300 })] },
+    ])
+
+    await useSidebar().initApp()
+
+    expect(useNewTaskFlow().currentCwd.value).toBe('/first')
+  })
 })

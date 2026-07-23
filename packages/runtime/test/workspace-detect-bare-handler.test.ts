@@ -135,4 +135,86 @@ describe('WorkspaceMessageHandler — workspace.detectBare RPC 贯穿（W2）', 
     )
     expect(handler.handles).toContain('workspace.detectBare')
   })
+
+  it('DB-4: workspace.detectBare({cwd:""}) → 空 cwd 守卫：reply {isBare:false,...} 且 detectBare 未被调', async () => {
+    const { WorkspaceMessageHandler } = await import('../src/transport/workspace-message-handler.js')
+    const cap = {
+      replies: [] as Array<{ id: string | undefined; type: string; payload: Record<string, unknown> }>,
+    }
+    const workspaceService = {
+      list: vi.fn().mockReturnValue([]),
+      record: vi.fn(),
+      detectBare: vi.fn().mockResolvedValue({ isBareMode: true, wsRoot: '/x', barePath: '/x/.bare' }),
+    }
+    const ctx = {
+      send: vi.fn(),
+      sendError: vi.fn(),
+      reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
+        cap.replies.push({ id, type, payload })
+      }),
+      workspaceService,
+    }
+    const handler = new WorkspaceMessageHandler(
+      ctx as unknown as ConstructorParameters<typeof WorkspaceMessageHandler>[0],
+    )
+    const msg = {
+      type: 'workspace.detectBare',
+      id: 'req-db4',
+      payload: { cwd: '' },
+    } as unknown as ClientMessage
+    const WS = {} as never
+
+    await handler.handleWorkspaceMessage(msg, WS)
+
+    // 守卫命中：detectBare 根本没被调用
+    expect(workspaceService.detectBare).not.toHaveBeenCalled()
+    // 仍必须 reply，保证前端 pending Promise resolve
+    expect(cap.replies).toHaveLength(1)
+    expect(cap.replies[0]).toMatchObject({
+      id: 'req-db4',
+      type: 'workspace.bareDetected',
+      payload: { isBare: false, wsRoot: '', barePath: '' },
+    })
+  })
+
+  it('DB-5: workspaceService.detectBare 拋错 → handler catch 后 reply {isBare:false,...}（不破坏 RPC 契约）', async () => {
+    const { WorkspaceMessageHandler } = await import('../src/transport/workspace-message-handler.js')
+    const cap = {
+      replies: [] as Array<{ id: string | undefined; type: string; payload: Record<string, unknown> }>,
+    }
+    const workspaceService = {
+      list: vi.fn().mockReturnValue([]),
+      record: vi.fn(),
+      detectBare: vi.fn().mockRejectedValue(new Error('stat fail')),
+    }
+    const ctx = {
+      send: vi.fn(),
+      sendError: vi.fn(),
+      reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
+        cap.replies.push({ id, type, payload })
+      }),
+      workspaceService,
+    }
+    const handler = new WorkspaceMessageHandler(
+      ctx as unknown as ConstructorParameters<typeof WorkspaceMessageHandler>[0],
+    )
+    const msg = {
+      type: 'workspace.detectBare',
+      id: 'req-db5',
+      payload: { cwd: '/some/dir' },
+    } as unknown as ClientMessage
+    const WS = {} as never
+
+    await handler.handleWorkspaceMessage(msg, WS)
+
+    expect(workspaceService.detectBare).toHaveBeenCalledTimes(1)
+    expect(workspaceService.detectBare).toHaveBeenCalledWith('/some/dir')
+    // 拋错也被 catch，reply 降级为 isBare:false（RPC 契约不破）
+    expect(cap.replies).toHaveLength(1)
+    expect(cap.replies[0]).toMatchObject({
+      id: 'req-db5',
+      type: 'workspace.bareDetected',
+      payload: { isBare: false, wsRoot: '', barePath: '' },
+    })
+  })
 })
