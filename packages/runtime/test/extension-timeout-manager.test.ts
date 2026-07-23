@@ -102,4 +102,52 @@ describe('ExtensionTimeoutManager', () => {
     const mgr = new ExtensionTimeoutManager()
     expect(mgr.isBridgeRequest('never-registered')).toBe(false)
   })
+
+  it('getPendingRequests 非破坏性：多次 peek 不清缓存，返回格式与 getAndClearPendingRequests 一致', () => {
+    const mgr = new ExtensionTimeoutManager()
+    // cachePendingRequest 签名：(sessionId, requestId, method, payload)
+    mgr.cachePendingRequest('s1', 'r1', 'select', { title: 'ask', askUser: true, askUserQuestions: [] })
+    mgr.cachePendingRequest('s1', 'r2', 'confirm', { title: 'cf', message: 'sure?' })
+
+    const first = mgr.getPendingRequests('s1')
+    const second = mgr.getPendingRequests('s1')
+
+    // 两次都拿到完整列表（非破坏）
+    expect(first).toHaveLength(2)
+    expect(second).toHaveLength(2)
+    // requestId 集合一致
+    const ids = (arr: { requestId: string }[]) => arr.map(r => r.requestId).sort()
+    expect(ids(first)).toEqual(ids(second))
+
+    // payload 解包到顶层（与 getAndClearPendingRequests 同构）
+    const askReq = first.find(r => r.requestId === 'r1')
+    expect(askReq?.title).toBe('ask') // payload.title 解包到顶层
+    expect(askReq?.askUser).toBe(true) // payload.askUser 解包到顶层
+    expect(askReq?.method).toBe('select')
+    expect(typeof askReq?.receivedAt).toBe('number')
+  })
+
+  it('getPendingRequests 对未激活/无 pending 的 session 返回空数组（非抛错）', () => {
+    const mgr = new ExtensionTimeoutManager()
+    expect(mgr.getPendingRequests('never-active')).toEqual([])
+  })
+
+  it('removePendingRequest 后 getPendingRequests 快照收缩（respond 生命周期）', () => {
+    const mgr = new ExtensionTimeoutManager()
+    mgr.cachePendingRequest('s1', 'r1', 'select', { askUser: true })
+    mgr.cachePendingRequest('s1', 'r2', 'confirm', {})
+
+    mgr.removePendingRequest('s1', 'r1') // 模拟 extension.ui_response 到达，r1 已 respond
+
+    const pending = mgr.getPendingRequests('s1')
+    expect(pending).toHaveLength(1)
+    expect(pending[0].requestId).toBe('r2')
+  })
+
+  it('clearForSession 后 getPendingRequests 返回空数组（session 销毁清理）', () => {
+    const mgr = new ExtensionTimeoutManager()
+    mgr.cachePendingRequest('s1', 'r1', 'select', { askUser: true })
+    mgr.clearForSession('s1')
+    expect(mgr.getPendingRequests('s1')).toEqual([])
+  })
 })

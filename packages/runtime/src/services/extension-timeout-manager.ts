@@ -124,6 +124,9 @@ export class ExtensionTimeoutManager {
 
   /** Clear all pending timeouts for a session */
   clearForSession(sessionId: string): void {
+    // 清除缓存的 pending 请求（必须在 extensionSessionRequests 早退之前执行，
+    // 否则只 cachePendingRequest 而未 registerTimeout 的 session 会漏清 pending 缓存）
+    this.pendingRequests.delete(sessionId)
     const requestIds = this.extensionSessionRequests.get(sessionId)
     if (!requestIds) return
     for (const reqId of requestIds) {
@@ -135,8 +138,6 @@ export class ExtensionTimeoutManager {
       this.bridgeRequestIds.delete(reqId)
     }
     this.extensionSessionRequests.delete(sessionId)
-    // 清除缓存的 pending 请求
-    this.pendingRequests.delete(sessionId)
   }
 
   private trackSessionRequest(sessionId: string, requestId: string): void {
@@ -187,6 +188,8 @@ export class ExtensionTimeoutManager {
   }
 
   /**
+   * @deprecated 方案2 改用 getPendingRequests（非破坏快照）。此方法保留至 T6 清理所有调用方后删除。
+   *
    * 获取指定 session 的所有 pending 请求（session 重新激活时调用）。
    * 返回后清除缓存（避免重复推送）。
    */
@@ -201,7 +204,12 @@ export class ExtensionTimeoutManager {
   }
 
   /**
-   * 获取指定 session 的所有 pending 请求（不清除缓存，用于查询）。
+   * 获取指定 session 的所有 pending 请求（非破坏性只读快照）。
+   *
+   * 用于方案2 的 session 级状态快照模型：pending UI 请求是 session 固有状态，
+   * 多次拉取都返回完整列表（与 session.commands 快照语义同构）。
+   * 移除时机由 removePendingRequest（respond 后）或 clearForSession（session 销毁）控制，
+   * 不由拉取动作控制。
    */
   getPendingRequests(sessionId: string): PendingUIRequest[] {
     const sessionCache = this.pendingRequests.get(sessionId)
