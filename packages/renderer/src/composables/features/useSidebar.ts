@@ -467,9 +467,17 @@ export function useSidebar() {
       await loadSessions()
       // 2b) INV-6: 加载最近工作区记录（workspaceStore.load 必须在 presetCwd 前）。
       await workspaceStore.load()
-      // 3) 预填 cwd（G1.1「沿用最近 session 目录」做新任务，chip 所见即所得）：
-      //    W3: 改接 workspaceStore.defaultCwd（取代从 session.list 派生 resolveDefaultCwd）。
-      const recentCwd = workspaceStore.defaultCwd
+      // 3) 预填 cwd（G1.1「沿用最近 session 目录」做新任务，chip 所见即所得）。
+      //    W3: 数据源改为 session 级——取 sessionStore.list 中 lastActiveAt 最大者的 cwd
+      //    （session 的 lastActiveAt 是「上次活跃」真源，比 workspace record 更贴近用户心智）。
+      //    无 session 时回退 workspaceStore.defaultCwd（workspace 级兜底）。
+      const sessions = session.list
+      let recentCwd: string | undefined
+      if (sessions.length > 0) {
+        const latest = sessions.reduce((a, b) => (a.lastActiveAt > b.lastActiveAt ? a : b))
+        recentCwd = latest.cwd
+      }
+      if (!recentCwd) recentCwd = workspaceStore.defaultCwd
       if (recentCwd) flow.presetCwd(recentCwd)
     } catch (e) {
       // L1：启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试
