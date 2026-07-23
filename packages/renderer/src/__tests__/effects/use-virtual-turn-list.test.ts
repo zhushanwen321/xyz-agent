@@ -221,8 +221,10 @@ describe('useVirtualTurnList · 估算→实测视口锚定（AC-4, SR4）', () 
 
   it('视口内 turn 首次实测时不补偿（或补偿 0，视口内跳跃可接受但不应反向）', async () => {
     const { state } = await setup({ items: makeItems(10), scrollTop: 1000, viewportHeight: 600 })
-    // turn 5 在视口内（offsets[5]=1000 在 [1000, 1600) 内）
-    state.reportHeight('user-k6', 400)
+    // turn 6 在视口内（offsets[6]=1200 在 [1000, 1600) 内，且顶边 1200 > scrollTop 1000）。
+    // 选顶边严格 > scrollTop 的 turn：顶边 == scrollTop 的 turn（如 turn5，offsets[5]=1000）
+    // 经 T1 顶边判定修复后命中补偿（消除视口顶部边缘盲区），此处测「严格视口内部」不补偿。
+    state.reportHeight('user-k7', 400)
     flushRaf()
     await nextTick()
     // 视口内不补偿（防补偿引入额外跳动）
@@ -319,5 +321,54 @@ describe('useVirtualTurnList · session 切换重置（SR10, INVAR-8）', () => 
     flushRaf()
     await nextTick()
     expect(state.scrollAdjustDelta.value).toBe(200)
+  })
+})
+
+// ── TC1/TC2：chat 虚拟列表滚动 bug 修复回归（顶边锚定 + resetSession scrollTop 重置） ────
+//
+// 覆盖两个实测根因：
+// - TC1（flushHeightReports 锚定盲区）：旧判定用 turnBottom = offsets[idx] + old（估算高度算底边），
+//   向上滚动时视口顶部边缘 turn 因估算偏大(200)使 turnBottom > scrollTop 被漏补偿，下方内容 offset
+//   重算后跳变。T1 改用顶边判定（offsets[idx] <= scrollTop）消除盲区。
+// - TC2（resetSession 漏重置 scrollTop）：旧 resetSession 清了 heights/pendingHeightReports 等，
+//   但漏重置内部 scrollTop ref（:83），session 切换后 visibleRange 首帧基于上一个 session 的
+//   scrollTop 算窗口。T2 补 scrollTop.value = 0。
+
+describe('useVirtualTurnList · TC1: 锚定盲区——顶边判定 offsets<=st 命中（T1）', () => {
+  it('视口顶部边缘 turn（顶边<=scrollTop 但估算 turnBottom>scrollTop）实测后命中补偿', async () => {
+    // 5 turn 全估算 200px，scrollTop=250：turn1（offsets[1]=200）恰为视口顶部边缘 turn。
+    //   新判定（顶边）：offsets[1]=200 <= 250 → 命中补偿，delta += 60-200 = -140
+    //   旧判定（底边）：turnBottom=200+200=400 > 250 → 被漏，delta=0（盲区）
+    // 实测 60 < 估算 200，delta 为负——证明新判定命中（旧判定此处漏补偿致下方内容跳变）。
+    const { state } = await setup({ items: makeItems(5), scrollTop: 250, viewportHeight: 600 })
+    state.reportHeight('user-k2', 60)
+    flushRaf()
+    await nextTick()
+    expect(state.scrollAdjustDelta.value).toBe(60 - 200)
+  })
+})
+
+describe('useVirtualTurnList · TC2: resetSession 重置 scrollTop ref（T2）', () => {
+  it('resetSession 后 scrollTop 归零——visibleRange 首帧从 startIndex=0 开始', async () => {
+    // scrollTop 未导出，用 visibleRange.startIndex 间接验证（窗口二分查找依赖 scrollTop.value）。
+    // 20 turn 各 200px，驱动 scrollTop=2000（看着中部 turn10），viewportHeight=600。
+    // 关键：resetSession 后**不**调 onScrollUpdate——否则它会从 DOM 重新同步 scrollTop 进 ref，
+    // 掩盖 resetSession 是否真重置了 ref（T2 修的就是 ref 本身，不是 DOM）。
+    // 直接读 visibleRange.value（响应式，依赖 scrollTop.value）：T2 修复后 ref=0 → startIndex=0。
+    const { state } = await setup({ items: makeItems(20), scrollTop: 2000, viewportHeight: 600 })
+    // 滚动后 startIndex 应 > 0（基于 scrollTop=2000 推导中部 turn）。
+    const startIndexBefore = state.visibleRange.value.startIndex
+    expect(startIndexBefore).toBeGreaterThan(0)
+
+    // resetSession：T2 补 scrollTop.value = 0。不清 DOM scrollTop、不调 onScrollUpdate，
+    // 让断言纯粹反映 ref 是否被 resetSession 重置。
+    state.resetSession()
+    await nextTick()
+
+    // scrollTop 归零后窗口二分查找从顶部开始：startIndex=0。
+    // 若 T2 漏重置 scrollTop（残留 2000），startIndex 仍 > 0（基于旧 session 的 scrollTop 算窗口）。
+    expect(state.visibleRange.value.startIndex).toBe(0)
+    // viewportHeight 未重置（T2 注释说明复用容器尺寸），保持 600，endIndex 仍为 lastIndex（末项钉扎）。
+    expect(state.visibleRange.value.endIndex).toBe(19) // lastIndex
   })
 })

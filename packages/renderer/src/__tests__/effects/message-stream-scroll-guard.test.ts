@@ -243,3 +243,122 @@ describe('AC3：贴底态补偿行为不变', () => {
     wrapper.unmount()
   })
 })
+
+// ────────────────────────────────────────────────────────────────────
+// TC3/TC4/TC5：chat 虚拟列表滚动 bug 修复回归（session 切换 settling guard）
+//
+// 覆盖 T3 settling guard（session 切换后首轮实测稳定前跳过 delta 施加）：
+// - TC3（session 切换 settling guard）：切换 session 后产生负 delta（实测<估算），
+//   settling 期间 delta 不被施加（scrollTop 不被负值往上拉），让 scrollToBottom 跟随主导贴底。
+// - TC4（正常补偿回归）：非切换场景（settling 已翻 false），贴底态正 delta 正常施加。
+// - TC5（ba26c322 guard 回归）：用户 wheel 上滑脱离锚定后 delta 不施加（已有 AC1 同源，
+//   此处作为 settingling guard 之外另一独立 guard 的回归，确保两条 guard 并存）。
+//
+// scrollTo 在 beforeEach 被 mock 成 vi.fn()（happy-dom 默认不真改 scrollTop），
+// 故 scrollTop 只经 setScroll 手动设或经 delta 施加改变——delta 是否施加可直接观测。
+
+// 经 registry 触发视口上方 turn 实测化产生负 delta：u1 估算 200 → 实测 60，delta = -140。
+// 估算偏大（200）致实测<估算时 delta 为负，与切换 session 后 scrollToBottom 跟随竞争时
+// 会把 scrollTop 往上拉（bug 1 根因）。
+function triggerNegativeAboveViewportDelta(): void {
+  if (!injectedRegistry) {
+    throw new Error('registry 未注入（Turn stub 未挂载或 provide 链路断）')
+  }
+  injectedRegistry.reportHeight('u1', 60)
+}
+
+describe('TC3：session 切换后 settling guard 跳过负 delta 施加', () => {
+  it('切换 session 期间负 delta 不把 scrollTop 往上拉（让 scrollToBottom 跟随主导贴底）', async () => {
+    const chat = useChatStore()
+    chat.hydrate('s1', makeHistory(10))
+    chat.hydrate('s2', makeHistory(10))
+    const wrapper = mountStream('s1')
+    await nextTick()
+
+    const scrollEl = getScrollEl(wrapper)
+    // 贴底态：scrollHeight=2000, clientHeight=600, scrollTop=1400（distance=0 <= 40）
+    setScroll(scrollEl, 2000, 600, 1400)
+    await flushRaf()
+    await nextTick()
+
+    const beforeSwitch = scrollEl.scrollTop
+
+    // 切换 session：resetSession + scrollToBottom('auto', true) + startSettling()
+    // settling 立即 true；经连续 2 rAF 后翻 false。
+    await wrapper.setProps({ sessionId: 's2' })
+    await nextTick()
+
+    // settling 窗口内产生负 delta（实测 60 < 估算 200，delta=-140）。
+    triggerNegativeAboveViewportDelta()
+    await flushRaf()
+    await nextTick()
+    await nextTick() // flush:'post' watch 在 DOM flush 后触发
+
+    // 核心断言（TC3）：settling 期间负 delta 不被施加，scrollTop 不被往上拉。
+    // 修复前（无 settling guard）：delta=-140 会被施加，scrollTop = 1400-140 = 1260（往上拉）。
+    // 修复后：guard 跳过施加，scrollTop 保持切换前的贴底值（scrollTo noop 不改 scrollTop）。
+    expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(beforeSwitch)
+    wrapper.unmount()
+  })
+})
+
+describe('TC4：非切换场景 settling 已 false 时正常补偿施加', () => {
+  it('mount 后等 settling 翻 false，正 delta 在贴底态正常施加到 scrollTop', async () => {
+    const chat = useChatStore()
+    chat.hydrate('s4', makeHistory(10))
+    const wrapper = mountStream('s4')
+    await nextTick()
+
+    const scrollEl = getScrollEl(wrapper)
+    // 贴底态：scrollHeight=2000, clientHeight=600, scrollTop=1400
+    setScroll(scrollEl, 2000, 600, 1400)
+    await flushRaf()
+    // mount 的 onMounted 不触发 session watch（watch 监听变化，挂载不算变化）→ 不 startSettling，
+    // settling 初始 false。再 flushRaf 确保无 pending rAF 干扰。
+    await flushRaf()
+    await nextTick()
+
+    const beforeTop = scrollEl.scrollTop
+    // 视口上方 turn（u1）实测化：估算 200 → 实测 400，delta=+200（正 delta）
+    triggerAboveViewportDelta()
+    await flushRaf()
+    await nextTick()
+    await nextTick() // flush:'post' watch
+
+    // 核心断言（TC4）：settling 已 false，贴底态正 delta 正常施加。
+    // 证明 settling guard 不影响正常补偿路径（只对 session 切换窗口生效）。
+    expect(scrollEl.scrollTop).toBe(beforeTop + 200)
+    wrapper.unmount()
+  })
+})
+
+describe('TC5：用户上滑脱离锚定后 delta 不施加（ba26c322 guard 回归）', () => {
+  it('wheel 上滑脱离锚定后，视口上方 turn 实测化产生的 delta 不改变 scrollTop', async () => {
+    const chat = useChatStore()
+    chat.hydrate('s5', makeHistory(10))
+    const wrapper = mountStream('s5')
+    await nextTick()
+
+    const scrollEl = getScrollEl(wrapper)
+    // 非贴底态：distance = 2000 - 1000 - 600 = 400 > 40
+    setScroll(scrollEl, 2000, 600, 1000)
+    await flushRaf()
+    await flushRaf() // 确保 settling（本用例无 session 切换，settling 恒 false）
+    await nextTick()
+
+    // 用户主动上滑：wheel deltaY<0 → useChatScroll.onWheel → stickToBottom=false
+    scrollEl.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    await nextTick()
+
+    const beforeTop = scrollEl.scrollTop
+    // 视口上方 turn（u1）实测化产生 delta（正负皆可，此处正 delta）
+    triggerAboveViewportDelta()
+    await flushRaf()
+    await nextTick()
+    await nextTick() // flush:'post' watch
+
+    // 核心断言（TC5）：stickToBottom=false（用户上滑）时 delta 不施加（与 settling guard 独立并存）。
+    expect(scrollEl.scrollTop).toBe(beforeTop)
+    wrapper.unmount()
+  })
+})
