@@ -140,7 +140,7 @@ import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
 import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
 import { toRenderItems, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
-import { isSubagentVirtualId, extractSubagentId, useSubagentStore } from '@/stores/subagent'
+import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
@@ -184,16 +184,11 @@ const isDispatching = computed(() => chat.isActive(props.sessionId) && !chat.isG
 /** 最后一个 turn 是否正在 working（message_start 已到，有 streaming assistant） */
 const hasWorkingTurn = computed(() => lastRenderTurn.value?.isWorking ?? false)
 
-/**
- * subagent 虚拟 session 且 subagent 仍在 running 时，强制最后一个 turn working。
- * subagent 消息读自 JSONL（status 恒 complete），但 subagent 可能仍在执行中——
- * forceWorking 让 trace 展开，视觉与主 agent streaming 态一致。
- * 读 subagentStore.records（共享列表），store getter isRunning 判断状态。
- */
+/** subagent 虚拟 session 仍在 running 时强制 trace 展开（JSONL 读出的 status 恒 complete，但 subagent 可能还在跑）。
+ * props.sessionId 是虚拟 id `subagent:<main>:<subid>`，用 extractMainSessionId 取 mainSessionId 读该分区。 */
 const forceWorking = computed(() => {
   if (!isSubagentVirtualId(props.sessionId)) return false
-  const subagentId = extractSubagentId(props.sessionId)
-  return subagentStore.isRunning(subagentId)
+  return subagentStore.isRunning(extractMainSessionId(props.sessionId), extractSubagentId(props.sessionId))
 })
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。

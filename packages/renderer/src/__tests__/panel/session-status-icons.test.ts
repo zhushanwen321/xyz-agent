@@ -27,6 +27,7 @@ describe('session status icons extended states', () => {
       'compacting',
       'waiting',
       'retrying',
+      'working',
       'done',
       'stopped',
       'error',
@@ -43,6 +44,7 @@ describe('session status icons extended states', () => {
       'compacting',
       'waiting',
       'retrying',
+      'working',
       'done',
       'stopped',
       'error',
@@ -64,6 +66,27 @@ describe('session status icons extended states', () => {
     const chat = useChatStore()
     chat.setCompacting('sid', true)
     expect(deriveStatus('sid', chat, false, true)).toBe('compacting')
+  })
+
+  it('hasBackgroundWork=true 且非活跃 派生为 working', () => {
+    const chat = useChatStore()
+    expect(deriveStatus('sid', chat, false, false, true)).toBe('working')
+  })
+
+  it('streaming 优先于 working（主 turn 流式时不被 working 抢占）', () => {
+    const chat = useChatStore()
+    // isGenerating 经 messages 含 status='streaming' 派生（无 setter），构造 streaming 消息触发
+    chat.setMessages('sid', [
+      { id: 'm1', role: 'assistant', content: '', timestamp: 1, status: 'streaming' },
+    ])
+    expect(deriveStatus('sid', chat, true, false, true)).toBe('streaming')
+  })
+
+  it('working 优先于 pending（isActive 但非 streaming 时 working 抢先）', () => {
+    const chat = useChatStore()
+    // pendingSend → isActive=true，但非 isGenerating 非 streaming；hasBackgroundWork=true → working 先于 pending
+    chat.addPendingSend('sid')
+    expect(deriveStatus('sid', chat, true, false, true)).toBe('working')
   })
 
   it('streaming 状态 SessionItem 渲染 RefreshCw 图标', () => {

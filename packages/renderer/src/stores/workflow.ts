@@ -20,7 +20,8 @@
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
  */
 import { defineStore } from 'pinia'
-import { getCurrentScope, onScopeDispose, ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
+import type { ComputedRef } from 'vue'
 import type { WorkflowRunRecord, Message } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -48,8 +49,11 @@ export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 
 export const useWorkflowStore = defineStore('workflow', () => {
   // ── state ──
-  /** 共享 workflow 列表（Sidebar 管理，所有 panel 共享） */
-  const records = ref<WorkflowRunRecord[]>([])
+  /**
+   * 按 sessionId 分区的 workflow 列表（ADR-0036 Map 分区派，同 command.ts / subagent.ts 范式）。
+   * 切走不清、切回直接读 Map 分区；deleteSession 经 clearSession(sid) 精确释放。
+   */
+  const recordsBySession = ref<Map<string, WorkflowRunRecord[]>>(new Map())
 
   /** 加载态（M1：loadWorkflows 在途时 true，组件据此显示 spinner） */
   const isLoading = ref(false)
@@ -97,10 +101,44 @@ export const useWorkflowStore = defineStore('workflow', () => {
     })
   }
 
+  /**
+   * 响应式视图：指定 session 的 workflow 列表（供组件 computed 订阅，对齐 command.ts commandsOf）。
+   * 切会话时读不同分区，records 变化自动重算。
+   */
+  function recordsOf(sessionId: string): ComputedRef<WorkflowRunRecord[]> {
+    return computed(() => recordsBySession.value.get(sessionId) ?? [])
+  }
+
+  /** 非响应式读：指定 session 的 workflow 列表（不写 Map，无则空数组） */
+  function getRecordsBySession(sessionId: string): WorkflowRunRecord[] {
+    return recordsBySession.value.get(sessionId) ?? []
+  }
+
+  /** 该 session 是否有 workflow 仍在 running 或 paused（供 derivedStatus 计算 hasBackgroundWork） */
+  function hasRunningOrPaused(sessionId: string): boolean {
+    return getRecordsBySession(sessionId).some((s) => s.status === 'running' || s.status === 'paused')
+  }
+
+  /** 写入指定 session 的 workflow 列表（不可变写，确保 Map 响应性触发） */
+  function applyRecords(sessionId: string, list: WorkflowRunRecord[]): void {
+    recordsBySession.value = new Map(recordsBySession.value).set(sessionId, list)
+  }
+
+  /** 清除指定 session 的 workflow 列表分区（deleteSession 调，防泄漏，ADR-0036 AC-8） */
+  function clearSession(sessionId: string): void {
+    if (!recordsBySession.value.has(sessionId)) return
+    const next = new Map(recordsBySession.value)
+    next.delete(sessionId)
+    recordsBySession.value = next
+  }
+
   // ── getters ──
-  /** workflow 列表计数 */
-  function workflowCount(): number {
-    return records.value.length
+  /**
+   * 响应式视图：指定 session 的 workflow 计数（Sidebar badge 用，读取 recordsOf 分区）。
+   * 旧的无参 workflowCount() 已移除（store 拿不到 focusedSessionId，调用方传 sid）。
+   */
+  function workflowCount(sessionId: string): number {
+    return getRecordsBySession(sessionId).length
   }
 
   /**
@@ -127,29 +165,26 @@ export const useWorkflowStore = defineStore('workflow', () => {
     return sid ? agentCallVirtualId(sid) : null
   }
 
-  /** 本 panel 当前查看的 workflow record（视图 2 详情态） */
-  function getCurrentWorkflow(panelId: string): WorkflowRunRecord | null {
+  /** 本 panel 当前查看的 workflow record（视图 2 详情态，从 mainSessionId 分区查） */
+  function getCurrentWorkflow(panelId: string, mainSessionId: string): WorkflowRunRecord | null {
     const rid = getViewingRunId(panelId)
-    return rid ? records.value.find((w) => w.runId === rid) ?? null : null
+    if (!rid) return null
+    return getRecordsBySession(mainSessionId).find((w) => w.runId === rid) ?? null
   }
 
   // ── actions ──
   /**
-   * 加载 session 的 workflow 列表（共享状态）。
+   * 加载 session 的 workflow 列表（写入该 sid 分区）。
    * 在 Sidebar 切到 Flows tab 或 session 切换时调用。
    */
   async function loadWorkflows(sessionId: string): Promise<void> {
-    if (!sessionId) {
-      records.value = []
-      loadError.value = null
-      return
-    }
+    if (!sessionId) return // 空 sid 不写分区
     isLoading.value = true
     loadError.value = null
     try {
-      records.value = await sessionApi.getWorkflows(sessionId)
+      applyRecords(sessionId, await sessionApi.getWorkflows(sessionId))
     } catch (e) {
-      // M1：失败不清空 records（保留旧数据），设 loadError 让组件显示重试态
+      // M1：失败不覆盖现有分区（保留旧数据），设 loadError 让组件显示重试态
       const msg = e instanceof Error ? e.message : String(e)
       console.error('[workflow-store] loadWorkflows failed:', e)
       loadError.value = msg
@@ -206,9 +241,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
-  /** 清空 workflow 列表 + 退出所有 panel viewing 状态（两个 Map 都清） */
+  /** 清空所有 workflow 分区 + 退出所有 panel viewing 状态（两个 Map 都清；全局重置场景用） */
   function clearWorkflows(): void {
-    records.value = []
+    recordsBySession.value = new Map()
     detailRunIdMap.value = new Map()
     agentCallMap.value = new Map()
     // W3-2：清非响应式的 mainSessionAgentCalls（selectAgentCall 写入，useWorkflowListSync 切 session 时调本函数）
@@ -314,7 +349,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   return {
     // state
-    records,
+    recordsBySession,
     isLoading,
     loadError,
     // getters
@@ -324,6 +359,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
     getViewingAgentCallId,
     getActiveAgentCallVirtualId,
     getCurrentWorkflow,
+    // per-session 分区读写（ADR-0036 Map 分区派）
+    recordsOf,
+    getRecordsBySession,
+    hasRunningOrPaused,
+    applyRecords,
+    clearSession,
     // actions
     loadWorkflows,
     subscribeWorkflowPush,

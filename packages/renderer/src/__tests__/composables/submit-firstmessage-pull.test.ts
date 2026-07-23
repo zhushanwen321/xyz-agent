@@ -2,8 +2,8 @@
  * W2 (F2 review fix) 测试：submitFirstMessage 新建 session 后 subagent/workflow 列表数据正确刷新。
  *
  * 核心验证（行为结果，非 spy）：
- * - submitFirstMessage 后 subagentStore.records 被填充（不只是 loadSubagents 被调）
- * - submitFirstMessage 后 workflowStore.records 被填充
+ * - submitFirstMessage 后 subagentStore 该 sid 分区被填充（不只是 loadSubagents 被调）
+ * - submitFirstMessage 后 workflowStore 该 sid 分区被填充
  * - fileTree store 有对应 session 的分桶数据
  *
  * 新建 session 走延迟 create 路径，不走 selectSession，兜底全缺。
@@ -88,28 +88,28 @@ function setupLandingWithSession(): SessionSummary {
 }
 
 describe('W2 (F2): submitFirstMessage 新建 session 后 subagent/workflow 数据刷新', () => {
-  it('submitFirstMessage 后 subagentStore.records 被填充', async () => {
+  it('submitFirstMessage 后 subagentStore sess-new-001 分区被填充', async () => {
     setupLandingWithSession()
     const flow = useNewTaskFlow()
     const subagentStore = useSubagentStore()
 
     await flow.submitFirstMessage('hello')
 
-    expect(subagentStore.records).toHaveLength(1)
-    expect(subagentStore.records[0].subagentId).toBe('sub-new-1')
-    expect(subagentStore.records[0].agent).toBe('reviewer')
+    expect(subagentStore.getRecordsBySession('sess-new-001')).toHaveLength(1)
+    expect(subagentStore.getRecordsBySession('sess-new-001')[0].subagentId).toBe('sub-new-1')
+    expect(subagentStore.getRecordsBySession('sess-new-001')[0].agent).toBe('reviewer')
   })
 
-  it('submitFirstMessage 后 workflowStore.records 被填充', async () => {
+  it('submitFirstMessage 后 workflowStore sess-new-001 分区被填充', async () => {
     setupLandingWithSession()
     const flow = useNewTaskFlow()
     const workflowStore = useWorkflowStore()
 
     await flow.submitFirstMessage('hello')
 
-    expect(workflowStore.records).toHaveLength(1)
-    expect(workflowStore.records[0].runId).toBe('wf-new-1')
-    expect(workflowStore.records[0].scriptName).toBe('new-flow')
+    expect(workflowStore.getRecordsBySession('sess-new-001')).toHaveLength(1)
+    expect(workflowStore.getRecordsBySession('sess-new-001')[0].runId).toBe('wf-new-1')
+    expect(workflowStore.getRecordsBySession('sess-new-001')[0].scriptName).toBe('new-flow')
   })
 
   it('submitFirstMessage 后 fileTree store 有对应 session 的分桶', async () => {
