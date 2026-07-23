@@ -54,7 +54,13 @@ export class ShellRunner implements IShellRunner {
     const { scriptPath, args, cwd, onOutput } = opts
     const timeout = opts.timeout ?? DEFAULT_TIMEOUT_MS
 
-    const child = this.deps.spawn(scriptPath, args ?? [], {
+    // 用 bash 执行脚本而非直接 spawn(scriptPath)：git 跟踪的脚本默认 644（无 +x 位），
+    // 直接 spawn 会 EACCES。bash 只需文件可读即可执行，跨平台一致且不依赖文件权限位。
+    // [HISTORICAL] 事故：ShellRunner 原直接 spawn(scriptPath, args)，setup-worktree.sh 无
+    // +x → spawn 报 EACCES，用户在非 xyz-agent workspace（如 xyz-pi-extensions-workspace）
+    // 创建 worktree 时「新建 worktree」功能整体失败。根因不是路径写死（detector 正确动态
+    // 查找 .bare），而是 spawn 对脚本权限位的隐式依赖。
+    const child = this.deps.spawn('bash', [scriptPath, ...(args ?? [])], {
       cwd,
       // stdin 显式 ignore：setup-worktree.sh 若 read stdin 会立即得 EOF，避免卡到 timeout。
       // stdout/stderr 仍 pipe 出来给 onOutput 流式回调。
