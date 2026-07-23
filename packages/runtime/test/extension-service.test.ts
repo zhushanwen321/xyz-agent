@@ -64,10 +64,20 @@ describe('ExtensionService', () => {
       settingsDir: testSettingsDir,
       projectRoot: process.cwd(),
       installer: new NpmGitInstaller(),
-      resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+      resolver: new ExtensionResolver({
+        settingsDir: testSettingsDir,
+        thirdPartyDir: join(testSettingsDir, 'extensions'),
+        // Phase 1 路径迁移：npmDir 已从 settingsDir 子树迁出，注入回 testSettingsDir/npm 让 fixture 继续生效。
+        npmDir: join(testSettingsDir, 'npm'),
+      }),
       // IExtensionSettings port：经 pi-settings-store 统一读写 settings.json（D17）。
       // 构造时把 store 路径对齐到 testSettingsDir，使 model 域与 extension 域在测试中读写同一文件。
       extensionSettings: new PiExtensionSettings(testSettingsDir),
+      // Phase 1 路径迁移：extensions/npm/tmp 已从 settingsDir 子树迁出到 dataDir 根层，
+      // 注入回 testSettingsDir 子目录让现有 fixture（settingsDir/npm、settingsDir/extensions、settingsDir/tmp）继续生效。
+      extensionsDir: join(testSettingsDir, 'extensions'),
+      npmDir: join(testSettingsDir, 'npm'),
+      tmpDir: join(testSettingsDir, 'tmp'),
     })
   })
 

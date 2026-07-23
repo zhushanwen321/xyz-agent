@@ -42,6 +42,33 @@ vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(() => ''),
 }))
 
+/**
+ * Phase 1 路径迁移适配：extensions/npm/tmp 已从 settingsDir 子树迁出到 dataDir 根层，
+ * ExtensionService/ExtensionResolver 不再 join(settingsDir, ...)。此工厂把三个目录注入回
+ * testSettingsDir 子目录，让现有 fixture（settingsDir/npm、settingsDir/extensions、settingsDir/tmp）继续生效。
+ * 只需传 installer 和 extensionSettings（各测试差异点），路径注入统一在此收口。
+ */
+function createExtensionService(
+  testSettingsDir: string,
+  installer: NpmGitInstaller,
+  extensionSettings: PiExtensionSettings,
+): ExtensionService {
+  return new ExtensionService({
+    settingsDir: testSettingsDir,
+    projectRoot: process.cwd(),
+    installer,
+    resolver: new ExtensionResolver({
+      settingsDir: testSettingsDir,
+      thirdPartyDir: join(testSettingsDir, 'extensions'),
+      npmDir: join(testSettingsDir, 'npm'),
+    }),
+    extensionSettings,
+    extensionsDir: join(testSettingsDir, 'extensions'),
+    npmDir: join(testSettingsDir, 'npm'),
+    tmpDir: join(testSettingsDir, 'tmp'),
+  })
+}
+
 describe('Extension Upgrade', () => {
   let testSettingsDir: string
 
@@ -167,13 +194,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       const result = await service.upgradeExtension('pi-test-ext')
       expect(result).toEqual({ upgraded: true, from: '1.0.0', to: '2.0.0' })
@@ -183,13 +204,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('1.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       const result = await service.upgradeExtension('pi-test-ext')
       expect(result).toEqual({ upgraded: false, from: '1.0.0', to: '1.0.0' })
@@ -212,13 +227,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       await expect(service.upgradeExtension('pi-builtin-ext'))
         .rejects.toThrow('Built-in extensions cannot be upgraded')
@@ -227,13 +236,7 @@ describe('Extension Upgrade', () => {
     it('throws for non-existent extension', async () => {
       const installer = new NpmGitInstaller()
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       await expect(service.upgradeExtension('nonexistent-ext'))
         .rejects.toThrow('Extension not installed')
@@ -258,13 +261,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       await expect(service.upgradeExtension('pi-test-ext'))
         .rejects.toSatisfy((err: unknown) => {
@@ -285,13 +282,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       await expect(service.upgradeExtension('pi-test-ext'))
         .rejects.toSatisfy((err: unknown) => {
@@ -330,13 +321,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: settings,
-      })
+      const service = createExtensionService(testSettingsDir, installer, settings)
 
       const results = await service.checkAndAutoUpgrade()
       expect(results).toHaveLength(1)
@@ -347,13 +332,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       const results = await service.checkAndAutoUpgrade()
       expect(results).toHaveLength(0)
@@ -373,13 +352,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: settings,
-      })
+      const service = createExtensionService(testSettingsDir, installer, settings)
 
       // Should not throw — failures are collected, not propagated
       const results = await service.checkAndAutoUpgrade()
@@ -407,13 +380,7 @@ describe('Extension Upgrade', () => {
       const installer = new NpmGitInstaller()
       const spy = vi.spyOn(installer, 'getLatestVersion').mockResolvedValue('2.0.0')
 
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       const results = await service.checkAndAutoUpgrade()
       // Should only check pi-test-ext (user-installed), not pi-builtin-ext
@@ -571,13 +538,7 @@ describe('Extension Upgrade', () => {
       mockedUninstall.mockResolvedValue(undefined)
 
       const installer = new NpmGitInstaller()
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: settings,
-      })
+      const service = createExtensionService(testSettingsDir, installer, settings)
 
       await service.uninstallExtension('pi-test-ext')
       // autoUpgrade list should now be empty after uninstall
@@ -593,13 +554,7 @@ describe('Extension Upgrade', () => {
       expect(settings.getAutoUpgrade()).toEqual([])
 
       const installer = new NpmGitInstaller()
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: settings,
-      })
+      const service = createExtensionService(testSettingsDir, installer, settings)
 
       // Should not throw even though extension not in autoUpgrade list
       await expect(service.uninstallExtension('pi-test-ext')).resolves.toBeUndefined()
@@ -614,13 +569,7 @@ describe('Extension Upgrade', () => {
       await settings.setAutoUpgrade('npm:pi-test-ext', true)
 
       const installer = new NpmGitInstaller()
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: settings,
-      })
+      const service = createExtensionService(testSettingsDir, installer, settings)
 
       const extensions = await service.scanExtensions()
       const ext = extensions.find(e => e.name === 'pi-test-ext')
@@ -630,13 +579,7 @@ describe('Extension Upgrade', () => {
 
     it('sets autoUpgrade=false for extensions not in autoUpgrade list (U16)', async () => {
       const installer = new NpmGitInstaller()
-      const service = new ExtensionService({
-        settingsDir: testSettingsDir,
-        projectRoot: process.cwd(),
-        installer,
-        resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
-        extensionSettings: new PiExtensionSettings(testSettingsDir),
-      })
+      const service = createExtensionService(testSettingsDir, installer, new PiExtensionSettings(testSettingsDir))
 
       const extensions = await service.scanExtensions()
       const ext = extensions.find(e => e.name === 'pi-test-ext')

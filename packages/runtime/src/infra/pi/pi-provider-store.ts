@@ -13,7 +13,7 @@ import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 import { JsonStore } from '../../utils/json-store.js'
 import { normalizeToHome } from '../../utils/path-utils.js'
-import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir } from './pi-paths.js'
+import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir, getExtensionsDir, getNpmDir, getTmpDir } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsSync/PiSettings/缓存/原子写
 // 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
 import {
@@ -492,16 +492,26 @@ export function migrateToPiSubdir(): void {
   migrateDirContents(oldSessionsDir, sessionsDir, 'session files → pi/sessions/')
   migrateDirContents(oldAgentsDir, agentsDir, 'agent files → pi/agent/agents/')
 
+  // extension/npm/tmp 目录迁移：原在 pi/agent/ 子树下，迁出到 dataDir 根层
+  // （与 skills/agents 强制目录结构对齐，详见 paths.ts 目录结构注释）。
+  // 幂等：新目录已有内容时跳过（migrateDirContents 内部逐项判重）。
+  migrateDirContents(join(piAgentDir, 'extensions'), getExtensionsDir(), 'extension files → extensions/')
+  migrateDirContents(join(piAgentDir, 'npm'), getNpmDir(), 'npm packages → npm/')
+  migrateDirContents(join(piAgentDir, 'tmp'), getTmpDir(), 'temp files → tmp/')
+
   // 打包模式：从 bundled 资源同步
   if (isPackaged()) {
     const bundledAgentDir = join(process.cwd(), 'pi', 'agent')
-    for (const subDir of ['extensions', 'skills'] as const) {
+    // skills 仍在 pi/agent/skills（bundled pi 自带 skill）；extensions 已迁出到 dataDir/extensions
+    for (const [subDir, destDir] of [
+      ['extensions', getExtensionsDir()],
+      ['skills', join(piAgentDir, 'skills')],
+    ] as const) {
       const src = join(bundledAgentDir, subDir)
-      const dest = join(piAgentDir, subDir)
-      if (existsSync(src) && !existsSync(dest)) {
+      if (existsSync(src) && !existsSync(destDir)) {
         try {
-          cpSync(src, dest, { recursive: true })
-          console.log(`[provider-store] synced bundled ${subDir} → ${dest}`)
+          cpSync(src, destDir, { recursive: true })
+          console.log(`[provider-store] synced bundled ${subDir} → ${destDir}`)
         // eslint-disable-next-line taste/no-silent-catch -- bundled sync: error logged, non-critical
         } catch (e) {
           console.error(`[provider-store] failed to sync bundled ${subDir}:`, e)

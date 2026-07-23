@@ -9,12 +9,12 @@
  * 不硬编码 scope 或前缀 —— dependencies 本身就是白名单。
  *
  * settings 扫描：读取 ~/.xyz-agent/pi/agent/settings.json 的 packages[]，
- * 定位 ~/.xyz-agent/pi/agent/npm/node_modules/ 下的扩展目录。
+ * 定位 ~/.xyz-agent/npm/node_modules/ 下的扩展目录。
  * disabled-packages.json 控制启用/禁用状态。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
-import { getPiAgentDir } from '../pi/pi-paths.js'
+import { getPiAgentDir, getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { readSettings } from '../pi/pi-settings-store.js'
 import { readDisabledPackages as readDisabledPackagesFromStore } from '../pi/pi-extension-settings.js'
 import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
@@ -49,8 +49,10 @@ export interface ResolverOptions {
   npmResolvePaths?: string[]
   /** 用户 settings 目录，默认 ~/.xyz-agent/pi/agent */
   settingsDir?: string
-  /** 第三方 extensions 目录，默认 ~/.xyz-agent/pi/agent/extensions */
+  /** 第三方 extensions 目录，默认 ~/.xyz-agent/extensions */
   thirdPartyDir?: string
+  /** npm 安装目录，默认 ~/.xyz-agent/npm（settings 源定位 node_modules 用） */
+  npmDir?: string
 }
 
 export class ExtensionResolver implements IExtensionResolver {
@@ -165,7 +167,7 @@ export class ExtensionResolver implements IExtensionResolver {
 
       const NPM_PREFIX_LEN = 4
       const pkgName = source.slice(NPM_PREFIX_LEN)
-      const pkgDir = join(settingsDir, 'npm', 'node_modules', pkgName)
+      const pkgDir = join(this.options.npmDir ?? getNpmDir(), 'node_modules', pkgName)
 
       if (!existsSync(pkgDir)) {
         log.debug(`[extension-resolver] settings package not installed: ${pkgName}`)
@@ -210,11 +212,11 @@ export class ExtensionResolver implements IExtensionResolver {
   }
 
   /**
-   * 扫描第三方 extensions：~/.xyz-agent/pi/agent/extensions/
+   * 扫描第三方 extensions：~/.xyz-agent/extensions/（local/git 安装目录）
    */
   scanThirdPartyExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const thirdPartyDir = this.options.thirdPartyDir ?? join(getPiAgentDir(), 'extensions')
+    const thirdPartyDir = this.options.thirdPartyDir ?? getExtensionsDir()
     if (!existsSync(thirdPartyDir)) return result
 
     this.scanDirectory(thirdPartyDir, result, 'third-party')

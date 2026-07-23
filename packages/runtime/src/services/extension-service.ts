@@ -27,6 +27,7 @@ import type { IExtensionSettings } from './ports/extension-settings.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../utils/runtime-env.js'
+import { getExtensionsDir, getNpmDir, getTmpDir } from '../infra/pi/pi-paths.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
@@ -82,6 +83,12 @@ export interface ExtensionServiceOptions {
    * 经此 port 读写 settings.json，不再直接 readFileSync/writeFileSync（D17 收口）。
    */
   extensionSettings: IExtensionSettings
+  /** 用户安装的 extension 目录，默认 getExtensionsDir()（~/.xyz-agent/extensions） */
+  extensionsDir?: string
+  /** npm 安装目录，默认 getNpmDir()（~/.xyz-agent/npm） */
+  npmDir?: string
+  /** extension 安装临时目录，默认 getTmpDir()（~/.xyz-agent/tmp） */
+  tmpDir?: string
 }
 
 export class ExtensionService {
@@ -91,6 +98,9 @@ export class ExtensionService {
   private readonly extSettings: IExtensionSettings
   private readonly projectRoot: string
   private readonly packaged: boolean
+  private readonly extensionsDir: string
+  private readonly npmDir: string
+  private readonly tmpDir: string
 
   /** 文件型 extension 路径（如 xyz-agent-extension.js），打包/开发模式不同 */
   private extensionFilePath: string
@@ -116,6 +126,9 @@ export class ExtensionService {
     this.extSettings = options.extensionSettings
     this.projectRoot = options.projectRoot ?? process.cwd()
     this.packaged = options.packaged ?? isPackaged()
+    this.extensionsDir = options.extensionsDir ?? getExtensionsDir()
+    this.npmDir = options.npmDir ?? getNpmDir()
+    this.tmpDir = options.tmpDir ?? getTmpDir()
 
     // 文件型 extension 路径
     this.extensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged)
@@ -129,7 +142,7 @@ export class ExtensionService {
 
   private cleanupOrphanedTempDirs(): void {
     try {
-      const tmpDir = join(this.settingsDir, 'tmp')
+      const tmpDir = this.tmpDir
       if (!existsSync(tmpDir)) return
       const entries = readdirSync(tmpDir)
       const cutoff = Date.now() - ORPHAN_TEMP_MAX_AGE_MS
@@ -285,7 +298,7 @@ export class ExtensionService {
       if (!isValidNpmPackageName(pkgName)) {
         throw new ExtensionInstallError('not_found', `Invalid npm package name: ${pkgName}`)
       }
-      const npmDir = join(this.settingsDir, 'npm')
+      const npmDir = this.npmDir
 
       // 确保 npm 目录有 package.json
       if (!existsSync(npmDir)) {
@@ -313,7 +326,7 @@ export class ExtensionService {
       // 先扫描已安装列表，按 name 查找 extension 的路径
       const installed = await this.scanExtensions()
       const target = installed.find((e) => e.name === name)
-      const thirdPartyDir = join(this.settingsDir, 'extensions')
+      const thirdPartyDir = this.extensionsDir
 
       // local-dir / git 安装的 extension 在 ~/.xyz-agent/pi/agent/extensions/ 下。
       // finishInstall 时只 cpSync 到此目录，未记录到 settings.json packages[]——
@@ -323,7 +336,7 @@ export class ExtensionService {
       }
 
       // npm 安装的 extension：从 settings packages[] 移除 + 删 node_modules
-      const npmDir = join(this.settingsDir, 'npm')
+      const npmDir = this.npmDir
       const source = `npm:${name}`
 
       // 从 settings packages[] 移除（经 port → pi-settings-store 互斥 RMW）
@@ -402,7 +415,7 @@ export class ExtensionService {
       }
 
       // 执行升级：npm install 最新版（复用 installExtension 的错误分类 + isValidPiExtension 验证）
-      const npmDir = join(this.settingsDir, 'npm')
+      const npmDir = this.npmDir
       await this.installAndValidate(name, npmDir, 'upgrade')
 
       // 从 node_modules/<name>/package.json 读取实际安装版本，
@@ -491,7 +504,7 @@ export class ExtensionService {
     }
 
     // Ensure tmp parent directory exists
-    const tmpParent = join(this.settingsDir, 'tmp')
+    const tmpParent = this.tmpDir
     mkdirSync(tmpParent, { recursive: true })
 
     // Create temp directory
@@ -530,7 +543,7 @@ export class ExtensionService {
    */
   async installGitRepository(url: string): Promise<{ tempDir: string; candidates: ExtensionInfo[] }> {
     // Ensure tmp parent directory exists
-    const tmpParent = join(this.settingsDir, 'tmp')
+    const tmpParent = this.tmpDir
     mkdirSync(tmpParent, { recursive: true })
 
     // Create temp directory
@@ -629,7 +642,7 @@ export class ExtensionService {
       }
     }
 
-    const extensionsDir = join(this.settingsDir, 'extensions')
+    const extensionsDir = this.extensionsDir
     mkdirSync(extensionsDir, { recursive: true })
 
     for (const dirName of selected) {

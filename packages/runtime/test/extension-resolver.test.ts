@@ -19,6 +19,7 @@ vi.mock('node:path', () => ({
 }))
 
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const mockedExistsSync = vi.mocked(existsSync)
 const mockedReaddirSync = vi.mocked(readdirSync)
@@ -137,7 +138,9 @@ describe('ExtensionResolver', () => {
     const settingsDir = '/home/user/.xyz-agent/pi/agent'
 
     beforeEach(() => {
-      resolver = new ExtensionResolver({ settingsDir })
+      // Phase 1 路径迁移：npmDir 已从 settingsDir 子树迁出到 dataDir 根层，
+      // 注入 npmDir: join(settingsDir, 'npm') 让测试 fixture（settingsDir/npm/node_modules/...）继续生效。
+      resolver = new ExtensionResolver({ settingsDir, npmDir: join(settingsDir, 'npm') })
       // 对齐 pi-settings-store 的读取路径到测试 settingsDir（scanSettingsExtensions 经 store 读 settings.json，D17）。
       setSettingsPath(`${settingsDir}/settings.json`)
       invalidateSettingsCache()
@@ -467,7 +470,7 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      resolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions` })
+      resolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions`, npmDir: join(settingsDir, 'npm') })
       const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
       // bundled ext-a

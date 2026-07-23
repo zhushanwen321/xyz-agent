@@ -9,6 +9,7 @@ import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { migrateToPiSubdir } from './infra/pi/pi-provider-store.js'
+import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
@@ -100,7 +101,8 @@ async function main(): Promise<void> {
   const extensionInstaller = new NpmGitInstaller()
   const extensionResolver = new ExtensionResolver({
     settingsDir: configStore.getPiAgentDir(),
-    thirdPartyDir: join(configStore.getPiAgentDir(), 'extensions'),
+    thirdPartyDir: getExtensionsDir(),
+    npmDir: getNpmDir(),
   })
   // IExtensionSettings port 的 infra 实现：经 pi-settings-store 统一读写 settings.json（D17）。
   // 构造时对齐 settings 路径到 pi agent 目录，保证 model 域与 extension 域读写同一文件。
@@ -111,6 +113,9 @@ async function main(): Promise<void> {
     installer: extensionInstaller,
     resolver: extensionResolver,
     extensionSettings,
+    extensionsDir: getExtensionsDir(),
+    npmDir: getNpmDir(),
+    tmpDir: getTmpDir(),
   })
   const configService = new ConfigService(effectiveRoot, configStore)
   // ADR-0020 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
