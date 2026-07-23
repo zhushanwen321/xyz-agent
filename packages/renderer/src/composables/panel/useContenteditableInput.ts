@@ -48,14 +48,36 @@ interface ContenteditableCallbacks {
 /**
  * 视觉行 rect 过滤器：`<br>` 硬换行会产生零宽 line box（left === right），
  * 这些零宽 rect 会污染 lineRects 导致 currentLine/targetLine 偏移（spec 缺陷 5）。
- * 过滤后只保留真实视觉行（right > left）。
  *
- * [HISTORICAL] 缺陷 5：`<br>` 零宽 line box 的 top 与相邻真实行相同，被当作独立
+ * 但并非所有零宽 rect 都该过滤——必须区分两种本质不同的零宽 rect：
+ *
+ * | 类型            | DOM 形态                  | rect 特征                          | 处理 |
+ * |----------------|---------------------------|------------------------------------|------|
+ * | 行尾 br（缺陷5）| `md1<br>md2` 行尾/软换行   | 零宽，top 与前面有文字行**相同**    | 过滤 |
+ * | 空行 br（本次） | `md1<br><br>md2` 连续两 br | 零宽，top **不与任何有宽行相同**    | 保留 |
+ *
+ * [HISTORICAL] 缺陷 5：行尾 br 的零宽 line box 的 top 与相邻真实行相同，被当作独立
  * 视觉行计入 lineRects 后，光标在 br 相邻行按 ↓ 会定位到零宽 rect（Y 不变），
- * 返回 moved 但光标实际没跨行（CDP 实测确认）。过滤零宽 rect 是根因修复。
+ * 返回 moved 但光标实际没跨行（CDP 实测确认）。过滤这类零宽 rect 是根因修复。
+ *
+ * [HISTORICAL] 空行 bug：原修复一刀切过滤所有零宽 rect，把空行 br（`md1<br><br>md2`
+ * 中间那个独立 top 的 br）也过滤掉了，导致 lineRects 丢失空行，光标 ↓/↑ 直接跳过空行。
+ * 区分依据：零宽 rect 的 top 若与某有宽行重叠（TOLERANCE 内）→ 行尾 br（过滤）；
+ * 否则是独立空行（保留）。CDP 实测 `md1<br><br>md2` 的 getClientRects：
+ *   [0] top=668.68 w=23.95  ← md1
+ *   [1] top=668.68 w=0      ← 行尾 br（top 同 [0]，过滤）
+ *   [2] top=688.83 w=0      ← 空行 br（top 独立，保留）★
+ *   [3] top=708.98 w=26.54  ← md2
  */
 function getVisualLineRects(range: Range): DOMRect[] {
-  return Array.from(range.getClientRects()).filter((r) => r.right > r.left)
+  const all = Array.from(range.getClientRects())
+  const wide = all.filter((r) => r.right > r.left)
+  const TOP_TOLERANCE = 1
+  // 零宽 rect：top 与某有宽行重叠 → 行尾 br，丢弃；否则是独立空行，保留
+  const blankLines = all.filter(
+    (r) => r.right <= r.left && !wide.some((w) => Math.abs(w.top - r.top) <= TOP_TOLERANCE),
+  )
+  return [...wide, ...blankLines].sort((a, b) => a.top - b.top)
 }
 
 /**
@@ -109,13 +131,23 @@ function moveCaretVerticalOf(
   if (lineRects.length <= 1) return noop  // single line, nowhere to move
 
   // 2. Find current caret's visual line by matching caretRect.top against line rects
-  const caretRect = before.getBoundingClientRect()
+  let caretRect = before.getBoundingClientRect()
   if (caretRect.top === 0 && caretRect.bottom === 0) {
-    // 0-rect trap: fall back to Selection.modify
-    const bc = before.startContainer, bo = before.startOffset
-    sel.modify('move', dir, 'line')
-    const after = sel.getRangeAt(0)
-    return { result: (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved', preferredX }
+    // 0-rect trap: caret 落在元素节点边界（如空行 <br> 之间的 DIV offset），
+    // 折叠选区的 getBoundingClientRect() 返回 0-rect。先用 ZWSP probe 探测真实 Y
+    // （与 getCaretLineRect 同思路），能拿到真实行就走坐标方案；probe 也失败才回退
+    // Selection.modify（sel.modify 对 <br> 之间的元素边界位置常常无效，是最后兆底）。
+    // [HISTORICAL] 空行 bug：光标在空行（DIV@2）按 ↓ 时 caretRect 为 0-rect，旧逻辑直接
+    // sel.modify 回退，但 sel.modify 对 br 间位置无效（CDP 实测 moved=false），光标卡死。
+    const probed = getCaretLineRect(before)
+    if (probed) {
+      caretRect = probed
+    } else {
+      const bc = before.startContainer, bo = before.startOffset
+      sel.modify('move', dir, 'line')
+      const after = sel.getRangeAt(0)
+      return { result: (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved', preferredX }
+    }
   }
 
   // Record preferred X on first vertical move (null = no prior ↑/↓ since last reset)
