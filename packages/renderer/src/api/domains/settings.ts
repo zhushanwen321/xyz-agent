@@ -10,6 +10,8 @@
  */
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
+import { command } from '../request'
+import type { ServerMessageMap } from '@xyz-agent/shared'
 
 export interface SystemSettings {
   locale: 'zh-CN' | 'en-US'
@@ -36,6 +38,32 @@ export const listProviders = configDomain.listProviders
 
 // ── 动作 ──
 export const setProvider = configDomain.setProvider
+
+// ── Worktree 配置（config.setWorktreeRootDir / config.getWorktreeRootDir）──
+/** worktree 专用目录配置 reply 类型。 */
+export type WorktreeRootDirReply = ServerMessageMap['config.worktreeRootDir']
+/** worktree 初始化脚本配置 reply 类型。 */
+export type SetupScriptReply = ServerMessageMap['config.setupScript']
+
+/** 设置 worktree 专用目录（持久化到 settings.json）。 */
+export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
+  return command('config.setWorktreeRootDir', { dir })
+}
+
+/** 读取 worktree 专用目录配置。 */
+export async function getWorktreeRootDir(): Promise<WorktreeRootDirReply> {
+  return command('config.getWorktreeRootDir', {})
+}
+
+/** 设置 worktree 初始化脚本（持久化到 settings.json）。 */
+export async function setSetupScript(script: string): Promise<SetupScriptReply> {
+  return command('config.setSetupScript', { script })
+}
+
+/** 读取 worktree 初始化脚本配置。 */
+export async function getSetupScript(): Promise<SetupScriptReply> {
+  return command('config.getSetupScript', {})
+}
 
 // ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──
 export function getSystem(): Promise<SystemSettings> {
