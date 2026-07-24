@@ -154,6 +154,12 @@ export default {
     downloadHint: '内嵌浏览器不支持下载，如需请在系统浏览器打开',
     guideHint: '链接现在在此处打开，不会跳出应用',
   },
+  terminal: {
+    clear: '清屏',
+    kill: '终止终端进程',
+    sendToAI: '发给 AI',
+    runInTerminal: '在终端运行',
+  },
   mermaid: {
     rendering: '图表渲染中…',
     zoomIn: '放大',

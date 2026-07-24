@@ -17,6 +17,7 @@ import {
   type ScannedSkillInfo,
   type ScannedAgentInfo,
   type SystemPromptConfig,
+  type TerminalConfig,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -54,6 +55,11 @@ const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
 
 /** JSON 序列化缩进（saveAppConfig / setSystemPromptConfig 的 atomicWrite 共用）。 */
 const JSON_INDENT = 2
+
+/** Terminal config 校验范围（setTerminalConfig 写入期校验，与 TerminalPage 前端一致） */
+const FONT_SIZE_MIN = 6
+const FONT_SIZE_MAX = 72
+const SCROLLBACK_MAX = 100000
 
 /**
  * 生成 atomicWrite 的唯一 tmp 后缀（时间戳 + 随机串），避免并发写入撞固定 .tmp 文件。
@@ -568,5 +574,85 @@ export class ConfigService implements IConfigService {
       return config.replace.prompt
     }
     return undefined
+  }
+
+  // ── Terminal config（Phase 6 settings）──
+  // 独立文件 terminal.json（不复用 config.json）：shell/字体/scrollback 等终端偏好。
+  // 仅对新 spawn 的 PTY 生效（已启动的 PTY 不动态切换 shell），由 TerminalService.resolveShell 读取。
+
+  private terminalPath(): string {
+    return join(this.configStore.getConfigDir(), 'terminal.json')
+  }
+
+  private defaultTerminalConfig(): TerminalConfig {
+    return {
+      version: 1,
+      shell: '',
+      shellArgs: [],
+      fontSize: 14,
+      fontFamily: '',
+      scrollback: 5000,
+      cursorStyle: 'block',
+      bell: true,
+    }
+  }
+
+  /**
+   * 防御性合并：把磁盘读到的 raw（可能字段缺失/类型错）合并到默认值上。
+   * corrupted=false（字段级容错，不视为损坏）；只有 JSON.parse 失败才 corrupted=true。
+   */
+  private mergeTerminalConfig(raw: unknown): TerminalConfig {
+    const base = this.defaultTerminalConfig()
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return base
+    const r = raw as Record<string, unknown>
+    const validCursorStyles: TerminalConfig['cursorStyle'][] = ['block', 'underline', 'bar']
+    const cursorRaw = r['cursorStyle']
+    return {
+      version: typeof r['version'] === 'number' ? r['version'] : base.version,
+      shell: typeof r['shell'] === 'string' ? r['shell'] : base.shell,
+      shellArgs: Array.isArray(r['shellArgs']) ? r['shellArgs'].filter((a): a is string => typeof a === 'string') : base.shellArgs,
+      fontSize: typeof r['fontSize'] === 'number' && Number.isFinite(r['fontSize']) ? r['fontSize'] : base.fontSize,
+      fontFamily: typeof r['fontFamily'] === 'string' ? r['fontFamily'] : base.fontFamily,
+      scrollback: typeof r['scrollback'] === 'number' && Number.isFinite(r['scrollback']) ? r['scrollback'] : base.scrollback,
+      cursorStyle: typeof cursorRaw === 'string' && (validCursorStyles as string[]).includes(cursorRaw) ? cursorRaw as TerminalConfig['cursorStyle'] : base.cursorStyle,
+      bell: typeof r['bell'] === 'boolean' ? r['bell'] : base.bell,
+    }
+  }
+
+  getTerminalConfig(): { config: TerminalConfig; corrupted: boolean } {
+    const tp = this.terminalPath()
+    if (!existsSync(tp)) {
+      return { config: this.defaultTerminalConfig(), corrupted: false }
+    }
+    let raw: unknown
+    try {
+      raw = JSON.parse(readFileSync(tp, 'utf-8'))
+    } catch {
+      return { config: this.defaultTerminalConfig(), corrupted: true }
+    }
+    return { config: this.mergeTerminalConfig(raw), corrupted: false }
+  }
+
+  setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string } {
+    // 校验数值字段的合理范围（防异常值写盘后破坏 xterm 渲染或终端启动）
+    if (!Number.isFinite(config.fontSize) || config.fontSize < FONT_SIZE_MIN || config.fontSize > FONT_SIZE_MAX) {
+      return { ok: false, error: `fontSize out of range (${FONT_SIZE_MIN}-${FONT_SIZE_MAX}): ${config.fontSize}` }
+    }
+    if (!Number.isFinite(config.scrollback) || config.scrollback < 0 || config.scrollback > SCROLLBACK_MAX) {
+      return { ok: false, error: `scrollback out of range (0-${SCROLLBACK_MAX}): ${config.scrollback}` }
+    }
+    const validCursorStyles: TerminalConfig['cursorStyle'][] = ['block', 'underline', 'bar']
+    if (!validCursorStyles.includes(config.cursorStyle)) {
+      return { ok: false, error: `invalid cursorStyle: ${config.cursorStyle}` }
+    }
+    const cd = this.configStore.getConfigDir()
+    if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+    // 用唯一 tmp 后缀避免并发 setTerminalConfig 撞固定 .tmp 文件（同 setSystemPromptConfig）
+    atomicWrite(
+      this.terminalPath(),
+      JSON.stringify(config, null, JSON_INDENT),
+      uniqueTmpSuffix(),
+    )
+    return { ok: true }
   }
 }

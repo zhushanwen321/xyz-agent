@@ -69,6 +69,8 @@ export type ClientMessageType =
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
   | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare'
   | 'worktree.create'
+  | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
+  | 'config.getTerminalConfig' | 'config.setTerminalConfig'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -109,6 +111,37 @@ export interface SystemPromptConfig {
   replace: { enabled: boolean; prompt: string }
   append: { enabled: boolean; prompt: string }
 }
+
+/** 终端配置（Phase 6 settings）。文件：<dataDir>/terminal.json。
+ *  - shell: 默认 shell 路径（如 /bin/zsh）；空串则 fallback $SHELL → /bin/bash（win: powershell）
+ *  - shellArgs: 传给 shell 的额外参数
+ *  - fontSize/fontFamily: xterm 渲染偏好（纯前端，但合并进同一文件便于一次读写）
+ *  - scrollback: xterm scrollback 行数上限
+ *  - cursorStyle: 光标样式
+ *  - bell: 是否响铃
+ *  version: schema 版本号
+ *  仅对新 spawn 的 PTY 生效（已启动的 PTY 不动态切换 shell）。 */
+export interface TerminalConfig {
+  version: number
+  shell: string
+  shellArgs: string[]
+  fontSize: number
+  fontFamily: string
+  scrollback: number
+  cursorStyle: 'block' | 'underline' | 'bar'
+  bell: boolean
+}
+
+/** 终端错误码（TerminalService 主动抛出）。 */
+export type TerminalErrorCode =
+  | 'spawn_failed'     // pty.spawn 失败（shell 不存在/无执行权限）
+  | 'not_found'        // 操作的 sessionId 无对应 PTY
+  | 'resize_failed'    // pty.resize 失败
+  | 'kill_failed'      // pty.kill 失败
+/** handler 对未知错误归一的兜底字面量（非 TerminalService 主动抛出，单列让 renderer switch 可穷尽） */
+export type TerminalUnknownErrorCode = 'terminal_failed'
+/** envelope code 字段的完整联合（业务码 + 兜底） */
+export type TerminalEnvelopeCode = TerminalErrorCode | TerminalUnknownErrorCode
 
 // ── ClientMessage discriminated union ───────────────────────────
 
@@ -249,6 +282,16 @@ export interface ClientMessageMap {
     baseBranch?: 'current' | 'origin/main'
     workspaceHint?: string
   }
+  // terminal.*：drawer 集成终端的 PTY 控制（Phase 2 runtime service）。
+  // spawn 是 lazy 的（首次打开 terminal tab 才调），cwd 省略则用 session.cwd。
+  // write 的 data 是原始字节字符串（含 ANSI/控制字符），不带换行则 shell 不提交（联动 2 填命令）。
+  'terminal.spawn': { sessionId: string; cwd?: string; cols: number; rows: number }
+  'terminal.write': { sessionId: string; data: string }
+  'terminal.resize': { sessionId: string; cols: number; rows: number }
+  'terminal.kill': { sessionId: string }
+  'terminal.attach': { sessionId: string }
+  'config.getTerminalConfig': Record<string, never>
+  'config.setTerminalConfig': { config: TerminalConfig }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -350,6 +393,8 @@ export type ServerMessageType =
   | 'workspace.recentList'
   | 'workspace.bareDetected'
   | 'worktree.created'
+  | 'terminal.data' | 'terminal.exit' | 'terminal.alive' | 'terminal.ack'
+  | 'config.terminalConfig'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -523,6 +568,16 @@ export interface ServerMessageMapBase {
   'workspace.bareDetected': { isBare: boolean; wsRoot: string; barePath: string }
   /** worktree.created：worktree.create 的成功 reply（新 worktree 的 cwd 与分支名）。 */
   'worktree.created': { cwd: string; branch: string }
+  // terminal.data：PTY 输出流（高频广播，按 sessionId 路由到对应 panel 的 scrollback buffer）。
+  'terminal.data': { sessionId: string; data: string }
+  // terminal.exit：PTY 进程退出（exitCode 来自 node-pty onExit）。PTY 销毁后 ptyMap 移除。
+  'terminal.exit': { sessionId: string; exitCode: number }
+  // terminal.alive：PTY 就绪信号（spawn 成功后发，renderer flush 写队列——联动 2 异步写时序）。
+  'terminal.alive': { sessionId: string }
+  // terminal.ack：spawn/write/resize/kill/attach 的通用 ack reply（空 payload，前端按 id 匹配）。
+  'terminal.ack': Record<string, never>
+  // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
+  'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
 
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
@@ -719,6 +774,8 @@ export interface ReplyPayloadMap {
   'workspace.record': ServerMessageMap['workspace.recentList']
   'workspace.detectBare': ServerMessageMap['workspace.bareDetected']
   'worktree.create': ServerMessageMap['worktree.created']
+  'config.getTerminalConfig': ServerMessageMap['config.terminalConfig']
+  'config.setTerminalConfig': ServerMessageMap['config.terminalConfig']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted
@@ -757,6 +814,12 @@ export interface ReplyPayloadMap {
   'session.subagentAction': void  // reply session.subagentActionDone
   'session.switch': void          // reply session.history（前端不读 payload）
   'session.workflowAction': void  // reply session.workflowActionDone
+  // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
+  'terminal.attach': ServerMessageMap['terminal.ack']
+  'terminal.kill': ServerMessageMap['terminal.ack']
+  'terminal.resize': ServerMessageMap['terminal.ack']
+  'terminal.spawn': ServerMessageMap['terminal.ack']
+  'terminal.write': ServerMessageMap['terminal.ack']
 }
 
 /**

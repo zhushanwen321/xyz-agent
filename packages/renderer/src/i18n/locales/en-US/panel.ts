@@ -154,6 +154,12 @@ export default {
     downloadHint: 'Downloads are not supported in the embedded browser. Open in system browser if needed.',
     guideHint: 'Links now open here, without leaving the app',
   },
+  terminal: {
+    clear: 'Clear',
+    kill: 'Kill terminal process',
+    sendToAI: 'Send to AI',
+    runInTerminal: 'Run in terminal',
+  },
   mermaid: {
     rendering: 'Rendering diagram…',
     zoomIn: 'Zoom in',

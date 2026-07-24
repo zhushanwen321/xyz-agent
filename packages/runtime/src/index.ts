@@ -33,6 +33,7 @@ import { GitExecutor } from './infra/git-executor.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
+import { TerminalService } from './services/terminal/terminal-service.js'
 import { FileService } from './services/file-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
@@ -281,6 +282,15 @@ async function main(): Promise<void> {
     sessionService,
   })
 
+  // TerminalService：drawer 集成终端的 PTY 生命周期管理（node-pty spawn + per-session 映射）。
+  // 声明在生命周期挂钩之前（session 销毁回调引用它，TDZ 要求先声明）。
+  // 依赖：broker.broadcast（PTY 输出/退出/就绪广播）+ broker.nextPushId（广播消息 id）。
+  // Phase 6 接入 configService 读 shell 配置（当前用 $SHELL fallback）。
+  const terminalService = new TerminalService({
+    broadcast: (msg) => server.broadcast(msg),
+    configService,
+  })
+
   // ── W5 ReloadOrchestrator：skill 变动 → 受影响 session pi reload（重扫 skill）────
   // 依赖 sessionService 窄接口（isSessionIdle/promptReload/hasSession），故在 skillRegistry 之后构造。
   // 绑定两条链路：
@@ -294,8 +304,10 @@ async function main(): Promise<void> {
     void reloadOrchestrator.onMessageComplete(sid)
   })
   // R3：session 删除（主动 delete / 进程异常退出）清 pendingReload 残留。
+  // Terminal：同步销毁该 session 绑定的 PTY（kill 进程 + 清 ptyMap）。
   sessionService.setOnSessionDelete((sid) => {
     reloadOrchestrator.clearPending(sid)
+    terminalService.destroyPty(sid)
   })
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
@@ -313,7 +325,7 @@ async function main(): Promise<void> {
     fs,
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

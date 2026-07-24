@@ -13,6 +13,7 @@
  * 运行：cd apps/electron/main && npx vitest run test/privileged-handlers.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { homedir } from 'node:os'
 
 // 捕获注册的 handler（key=channel, value=handler fn），由 ipcMain.handle 桩写入
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -68,5 +69,36 @@ describe('W7: pick-directory IPC try/catch 一致性', () => {
     const pickDir = handlers.get('pick-directory')!
     const result = await pickDir({}, {})
     expect(result).toEqual({ canceled: true, path: null })
+  })
+
+  it('传入存在的 defaultPath → dialog 用该路径作为初始位置', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/picked'] })
+    const pickDir = handlers.get('pick-directory')!
+    await pickDir({}, { defaultPath: process.cwd() })
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ defaultPath: process.cwd() }),
+    )
+  })
+
+  it('传入已删除的 defaultPath → 回退到 homedir（不回退到 Documents）', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/picked'] })
+    const pickDir = handlers.get('pick-directory')!
+    const ghostPath = '/this/path/definitely/does/not/exist/xyz-12345'
+    await pickDir({}, { defaultPath: ghostPath })
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ defaultPath: homedir() }),
+    )
+  })
+
+  it('不传 defaultPath → 回退到 homedir', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/picked'] })
+    const pickDir = handlers.get('pick-directory')!
+    await pickDir({}, {})
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ defaultPath: homedir() }),
+    )
   })
 })

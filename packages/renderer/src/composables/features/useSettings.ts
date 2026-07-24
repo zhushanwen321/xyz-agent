@@ -55,7 +55,8 @@ let initialized = false
  * 7. config.onExtensionDirs → extensionDirs（Phase 4）
  * 8. config.onDefaults → defaultModel
  * 9. config.onSystemPrompt → systemPromptConfig
- * 10. extension.onExtensions → extensions（extension 本地桥接类型转译）
+ * 10. config.onTerminalConfig → terminalConfig（Phase 6）
+ * 11. extension.onExtensions → extensions（extension 本地桥接类型转译）
  */
 async function init(): Promise<void> {
   if (initialized) return
@@ -75,6 +76,10 @@ async function init(): Promise<void> {
   // 系统提示词配置（FR-4，config.systemPrompt 广播 → store.systemPromptConfig 常驻同步）
   unsubs.push(config.onSystemPrompt((cfg, corrupted) => {
     store.systemPromptConfig = { config: cfg, corrupted }
+  }))
+  // 终端配置（Phase 6，config.terminalConfig 广播 → store.terminalConfig 常驻同步）
+  unsubs.push(config.onTerminalConfig((cfg, corrupted) => {
+    store.terminalConfig = { config: cfg, corrupted }
   }))
   // onExtensions real 签名返 ExtensionInfo[]；mock 用 GlobalHandler<unknown>（数据是
   // fixtureExtensions，缺 dirName/path/source 但 ExtensionPage 不消费这些字段）。

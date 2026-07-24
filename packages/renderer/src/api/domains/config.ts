@@ -19,6 +19,7 @@ import type {
   SetProviderData,
   SkillDirConfig,
   SystemPromptConfig,
+  TerminalConfig,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -198,6 +199,29 @@ export async function setSystemPrompt(config: SystemPromptConfig): Promise<{ con
 /** 订阅系统提示词配置广播（多 panel 同步）。 */
 export function onSystemPrompt(handler: (config: SystemPromptConfig, corrupted: boolean) => void): () => void {
   return events.onGlobalType('config.systemPrompt', (msg) => {
+    handler(msg.payload.config, msg.payload.corrupted ?? false)
+  })
+}
+
+// ── Terminal config（Phase 6，复刻 SystemPromptConfig 范式）──
+// settings-handler reply config.terminalConfig 形状 `{ config, corrupted? }`；
+// setTerminalConfig 失败时走 sendError，command reject（前端 catch 提示）。
+
+/** 读取终端配置。corrupted=true 表示磁盘配置损坏已回退默认。 */
+export async function getTerminalConfig(): Promise<{ config: TerminalConfig; corrupted: boolean }> {
+  const reply = await command('config.getTerminalConfig', {})
+  return { config: reply.config, corrupted: reply.corrupted ?? false }
+}
+
+/** 保存终端配置（shell/字体/scrollback/cursor/bell 等）。失败时 runtime 返回 error envelope，command 会 reject。 */
+export async function setTerminalConfig(config: TerminalConfig): Promise<{ config: TerminalConfig; corrupted: boolean }> {
+  const reply = await command('config.setTerminalConfig', { config })
+  return { config: reply.config, corrupted: reply.corrupted ?? false }
+}
+
+/** 订阅终端配置广播（多 panel 同步）。 */
+export function onTerminalConfig(handler: (config: TerminalConfig, corrupted: boolean) => void): () => void {
+  return events.onGlobalType('config.terminalConfig', (msg) => {
     handler(msg.payload.config, msg.payload.corrupted ?? false)
   })
 }

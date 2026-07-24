@@ -19,6 +19,8 @@ export default {
     system: 'System',
     systemDesc: 'Appearance, language and shortcut preferences',
     systemPromptDesc: 'Configure replace and append system prompts',
+    terminal: 'Terminal',
+    terminalDesc: 'Shell, font and terminal preferences',
   },
   // ── SystemPrompt page (SystemPromptPage) ──
   systemPrompt: {
@@ -40,6 +42,26 @@ export default {
     defaultHint: 'This is the pi default core prompt (identity + tool list + guidelines). Replacing overrides this segment with your text; dynamic segments (AGENTS.md/skills/cwd) are unaffected and still appended by pi.',
     copy: 'Copy',
     copiedToast: 'Copied to clipboard',
+  },
+  // ── Terminal page (TerminalPage) ──
+  terminal: {
+    title: 'Terminal',
+    corruptedHint: 'The terminal config file is corrupted; rolled back to defaults',
+    shell: 'Default Shell',
+    shellPlaceholder: 'Leave blank to use $SHELL default',
+    shellArgs: 'Shell arguments',
+    shellArgsPlaceholder: 'Comma-separated, e.g. -l,-i',
+    fontSize: 'Font size',
+    fontFamily: 'Font family',
+    fontFamilyPlaceholder: 'Leave blank for default, e.g. Menlo, monospace',
+    scrollback: 'Scrollback limit (lines)',
+    cursorStyle: 'Cursor style',
+    cursorBlock: 'Block',
+    cursorUnderline: 'Underline',
+    cursorBar: 'Bar',
+    bell: 'Bell',
+    save: 'Save',
+    savedToast: 'Saved',
   },
   // ── Provider page (ProviderPage) ──
   provider: {

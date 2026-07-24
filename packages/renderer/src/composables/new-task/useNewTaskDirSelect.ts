@@ -110,7 +110,9 @@ export function useNewTaskDirSelect(
   async function openDirDialog(): Promise<void> {
     transition('dir-dialog') // dir-popover→dir-dialog
     try {
-      const result = await pickDirectory()
+      // defaultPath 候选 = 当前 cwd（chip 回灌值）。主进程 existsSync 守卫：存在则定位到该目录，
+      // 不存在（目录被删）则回退 ~。避免 macOS 原生 dialog 在记忆位置失效时回退到 Documents。
+      const result = await pickDirectory({ defaultPath: currentCwd() ?? undefined })
       if (result.canceled || !result.path) {
         transition('dir-popover') // 取消落回（AC-5.3）
         return

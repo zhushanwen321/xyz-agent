@@ -26,6 +26,9 @@ files:
   - node_modules/is-glob/**/*
   - node_modules/markdown-it-footnote/**/*
   - node_modules/@types/markdown-it-footnote/**/*
+  # node-pty（native module）：runtime 通过 external 引用，必须打包进产物。
+  # native binary（.node + spawn-helper）靠 asarUnpack 解包，子进程才能加载。
+  - node_modules/node-pty/**/*
   # 排除
   - "!node_modules/**/test/**"
   - "!node_modules/**/tests/**"
@@ -47,6 +50,10 @@ files:
 # 检查：scripts/preflight-check.sh [5/7] asarUnpack vs files consistency
 asarUnpack:
   - "dist/runtime/**/*"
+  # node-pty native binary（prebuilds/<platform>/pty.node + spawn-helper）
+  # 必须解包到 app.asar.unpacked，子进程（runtime）才能 require .node 和 exec spawn-helper。
+  # spawn-helper 需 +x 权限（见 scripts/fix-node-pty-permissions.sh，postinstall 自动修）。
+  - "node_modules/node-pty/**/*"
 
 # pi Bun binary + bundled agent (extensions + skills)
 # from 路径相对于 apps/electron/（electron-builder 的工作目录）
