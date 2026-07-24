@@ -133,6 +133,7 @@ export default {
     tabTasks: '任务',
     noTasks: '暂无任务',
     tasksHint: 'goal/todo 创建后显示',
+    unreadMessages: '抽屉打开期间有 {count} 条新消息',
   },
   browserPane: {
     back: '后退',
@@ -151,6 +152,7 @@ export default {
     loginHint: '内嵌浏览器无法保持登录态，请在系统浏览器中打开',
     downloadBlocked: '已拦截下载',
     downloadHint: '内嵌浏览器不支持下载，如需请在系统浏览器打开',
+    guideHint: '链接现在在此处打开，不会跳出应用',
   },
   mermaid: {
     rendering: '图表渲染中…',

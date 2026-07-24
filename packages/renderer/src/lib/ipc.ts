@@ -134,6 +134,11 @@ export function browserGetZoom(sessionId: string): Promise<number> {
   return api?.browserGetZoom(sessionId) ?? Promise.resolve(1.0)
 }
 
+/** 读取嵌入页当前选区 + URL（二期扩展点预留）。无 IPC 时返回空选区。 */
+export function browserGetSelection(sessionId: string): Promise<{ text: string; url: string }> {
+  return api?.browserGetSelection(sessionId) ?? Promise.resolve({ text: '', url: '' })
+}
+
 /**
  * 推送 view 的位置/尺寸（rect 同步 Wave 3）。
  *

@@ -20,6 +20,18 @@
     本组件不接触 webContents，只经 IPC 触发 create/navigate/hide/show/setRect。
   -->
   <div class="flex h-full flex-col" data-testid="browser-pane">
+    <!-- 首次使用引导（spec §4.6：首次触发时提示条，可关闭，localStorage 记录已看过） -->
+    <div
+      v-if="showGuide"
+      class="flex flex-shrink-0 items-center gap-2 border-b border-border bg-accent-soft px-3 py-2"
+      data-testid="browser-guide"
+    >
+      <Globe class="size-4 flex-shrink-0 text-accent" />
+      <span class="flex-1 text-[12px] text-fg">{{ t('panel.browserPane.guideHint') }}</span>
+      <Button variant="ghost" size="sm" class="flex-shrink-0" data-testid="browser-guide-close" @click="dismissGuide">
+        <X class="size-3" />
+      </Button>
+    </div>
     <!-- 导航栏骨架 -->
     <div class="flex-shrink-0 border-b border-border">
       <div class="flex items-center gap-1 px-2 py-1.5">
@@ -146,6 +158,7 @@ import {
   Globe,
   Copy,
   Check,
+  X,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
@@ -174,6 +187,27 @@ const HTTP_UNAUTHORIZED = 401
 const HTTP_FORBIDDEN = 403
 /** 复制成功反馈显示时长（ms） */
 const COPY_FEEDBACK_MS = 2000
+/** localStorage key：首次使用引导是否已关闭 */
+const GUIDE_DISMISSED_KEY = 'xyz-browser-guide-dismissed'
+
+/** 首次使用引导（spec §4.6）：未关闭过则显示。localStorage 持久化跨 session 记住。
+ * localStorage 读取用安全访问（隐私模式/iframe 可能抛 SecurityError，引导非关键功能，失败默认显示）。 */
+const showGuide = ref<boolean>(safeLocalStorage()?.getItem(GUIDE_DISMISSED_KEY) === null)
+
+/** 关闭首次引导，持久化到 localStorage（下次不再显示） */
+function dismissGuide(): void {
+  showGuide.value = false
+  safeLocalStorage()?.setItem(GUIDE_DISMISSED_KEY, '1')
+}
+
+/** 安全访问 localStorage（隐私模式/iframe 抛 SecurityError 时返回 null，调用方可选链兜底） */
+function safeLocalStorage(): Storage | null {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
 
 const props = defineProps<{
   /** widget 订阅的 session 标识（与 SideDrawer sessionId 一致，作 WebContentsView key） */

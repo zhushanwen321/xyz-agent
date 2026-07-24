@@ -57,6 +57,16 @@
         >
           <X class="size-3" />
         </Button>
+        <!-- AC-13：drawer 打开期间 agent 新消息角标（脉动蓝点 + 计数，非侵入式） -->
+        <div
+          v-if="unreadCount > 0"
+          class="flex items-center gap-0.5 rounded-full bg-accent px-1.5 py-0.5"
+          data-testid="drawer-unread-badge"
+          :title="t('panel.sideDrawer.unreadMessages', { count: unreadCount })"
+        >
+          <span class="size-1.5 animate-pulse rounded-full bg-fg" />
+          <span class="font-mono text-[10px] text-fg">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+        </div>
       </header>
 
       <!-- 内容区：Git / Terminal / Browser。
@@ -143,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X, CheckSquare } from '@lucide/vue'
@@ -159,6 +169,7 @@ import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useDrawerWidgetBuffers } from '@/composables/features/useDrawerWidgetBuffers'
 import { useTasksStore } from '@/stores/tasks'
+import { useChatStore } from '@/stores/chat'
 
 const props = defineProps<{
   isOpen: boolean
@@ -185,6 +196,37 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const tasksStore = useTasksStore()
+const chatStore = useChatStore()
+
+// ── AC-13：drawer 打开期间 agent 新消息感知 ──────────────────────────────
+// drawer 打开时对话流被遮挡，agent 新消息需非侵入式感知（spec §4.5）。
+// 机制：drawer isOpen 时 watch 当前 session 消息数增长，累加 unreadCount；
+// 用户关 drawer（回对话流）或切回 chat 相关操作时清零。
+const unreadCount = ref(0)
+watch(
+  () => [props.isOpen, props.sessionId] as const,
+  ([open, sid], [wasOpen]) => {
+    // drawer 关闭时清零（用户回到对话流，角标无意义）
+    if (wasOpen && !open) {
+      unreadCount.value = 0
+    }
+    // 切 session 时清零（per-session 计数，不跨 session 累加）
+    if (sid !== prevSid) {
+      unreadCount.value = 0
+      prevSid = sid
+    }
+  },
+)
+let prevSid = props.sessionId
+// 消息数增长时（drawer 打开期间 agent 新消息到达）→ 累加计数
+watch(
+  () => (props.sessionId ? chatStore.getMessages(props.sessionId).length : 0),
+  (newLen, oldLen) => {
+    if (props.isOpen && props.sessionId && newLen > oldLen) {
+      unreadCount.value += newLen - oldLen
+    }
+  },
+)
 
 // useSideDrawer 暴露的 browserUrl（点击 agent 链接时设置，模块级单例 ref）。
 // browser tab 传给 BrowserPane 触发导航。为空（null）时传空字符串让 BrowserPane 显空态。

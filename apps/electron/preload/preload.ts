@@ -65,6 +65,8 @@ export interface ElectronAPI {
   browserSetZoom(sessionId: string, factor: number): Promise<void>
   /** 读取当前缩放因子（Wave 5；sessionId 不存在返回 1.0） */
   browserGetZoom(sessionId: string): Promise<number>
+  /** 读取 WebContentsView 内当前选区文本 + URL（二期扩展点，Wave 6 预留） */
+  browserGetSelection(sessionId: string): Promise<{ text: string; url: string }>
   /** 监听 browser 状态变化（url/isLoading/error/canGoBack/canGoForward，主进程 did-navigate 等事件推送），返回取消订阅函数 */
   onBrowserState(callback: (state: {
     sessionId: string
@@ -140,6 +142,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserForward: (sessionId: string) => ipcRenderer.invoke('browser:forward', sessionId),
   browserSetZoom: (sessionId: string, factor: number) => ipcRenderer.invoke('browser:set-zoom', { sessionId, factor }),
   browserGetZoom: (sessionId: string) => ipcRenderer.invoke('browser:get-zoom', sessionId),
+  browserGetSelection: (sessionId: string) => ipcRenderer.invoke('browser:get-selection', sessionId),
   onBrowserState: (callback: (state: {
     sessionId: string
     currentUrl: string

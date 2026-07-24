@@ -133,6 +133,7 @@ export default {
     tabTasks: 'Tasks',
     noTasks: 'No tasks',
     tasksHint: 'Shows after goal/todo created',
+    unreadMessages: '{count} new messages while drawer was open',
   },
   browserPane: {
     back: 'Back',
@@ -151,6 +152,7 @@ export default {
     loginHint: 'The embedded browser cannot keep you logged in. Open in system browser.',
     downloadBlocked: 'Download blocked',
     downloadHint: 'Downloads are not supported in the embedded browser. Open in system browser if needed.',
+    guideHint: 'Links now open here, without leaving the app',
   },
   mermaid: {
     rendering: 'Rendering diagram…',

@@ -393,6 +393,33 @@ export class BrowserViewManager {
   }
 
   /**
+   * 读取 WebContentsView 内的当前文本选区 + 页面 URL（二期扩展点，Wave 6 预留）。
+   *
+   * 用 webContents.executeJavaScript 执行 window.getSelection().toString()。
+   * 返回 { text, url }：text 为选中文本（无选中返回空串），url 为当前页面 URL。
+   * sessionId 不存在或 webContents 已销毁返回 { text: '', url: '' }。
+   *
+   * 安全：executeJavaScript 在零信任页执行，只读 window.getSelection()（无副作用），
+   * 不注入任何脚本文件、不暴露 Node API（contextIsolation + sandbox 保护）。
+   *
+   * 二期用法：前端 composer「引用网页选区」功能调此 IPC 拿到选区文本，作为 badge 注入消息。
+   */
+  async getSelection(sessionId: string): Promise<{ text: string; url: string }> {
+    const entry = this.views.get(sessionId)
+    if (!entry) return { text: '', url: '' }
+    const wc = entry.view.webContents
+    if (wc.isDestroyed()) return { text: '', url: '' }
+    const url = entry.state.currentUrl
+    return wc
+      .executeJavaScript('window.getSelection().toString()')
+      .then((text: unknown) => ({ text: typeof text === 'string' ? text : '', url }))
+      .catch(() => {
+        /* executeJavaScript 可能因导航中断/CSP 失败，返回空选区（非关键路径） */
+        return { text: '', url }
+      })
+  }
+
+  /**
    * 绑定 webContents 事件到 state 暂存，并经 onStateChange 回调推送 renderer。
    * 抽出方法便于复用 + 单测可观察 state 变化。
    */

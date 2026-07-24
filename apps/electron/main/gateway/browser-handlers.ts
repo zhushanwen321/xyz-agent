@@ -72,6 +72,11 @@ export function registerBrowserHandlers(
     return manager.getZoomFactor(sessionId)
   })
 
+  // 读取选区（二期扩展点，Wave 6 预留）
+  ipcMain.handle('browser:get-selection', (_event, sessionId: string) => {
+    return manager.getSelection(sessionId)
+  })
+
   // 销毁（removeChildView + webContents.destroy）
   ipcMain.handle('browser:destroy', (_event, sessionId: string) => {
     manager.destroy(sessionId)
