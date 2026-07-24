@@ -69,6 +69,12 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     setWorktreeRootDir: vi.fn(),
     getSetupScript: vi.fn(() => 'custom-hooks/setup-worktree.sh'),
     setSetupScript: vi.fn(),
+    getBareSetupScript: vi.fn(() => 'custom-hooks/setup-worktree.sh'),
+    setBareSetupScript: vi.fn(),
+    getTimeout: vi.fn(() => 60),
+    setTimeout: vi.fn(),
+    getDefaultBaseBranch: vi.fn(() => 'origin/main'),
+    setDefaultBaseBranch: vi.fn(),
     // 其他方法 stub
     listProviders: vi.fn(() => []),
     getDefaultModel: vi.fn(() => null),

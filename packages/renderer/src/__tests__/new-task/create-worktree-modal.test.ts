@@ -591,9 +591,9 @@ describe('CreateWorktreeModal 创建位置 radio', () => {
     await mountModal()
     expect(has('[data-testid="location-repo-dir"]')).toBe(true)
     expect(has('[data-testid="location-dedicated-dir"]')).toBe(true)
-    // dedicated-dir 默认选中（radio checked）
-    const dedicatedRadio = $('[data-testid="location-dedicated-dir"]').find('input[type="radio"]')
-    expect((dedicatedRadio.element as HTMLInputElement).checked).toBe(true)
+    // dedicated-dir 默认选中（aria-checked=true；不是原生 input，改用项目 Button + ARIA radio role）
+    expect($('[data-testid="location-dedicated-dir"]').attributes('aria-checked')).toBe('true')
+    expect($('[data-testid="location-repo-dir"]').attributes('aria-checked')).toBe('false')
   })
 
   it('CM-21: plain-repo 模式切换位置选项', async () => {
@@ -605,12 +605,12 @@ describe('CreateWorktreeModal 创建位置 radio', () => {
       defaultBranch: 'main',
     })
     await mountModal()
-    // 点击 repo-dir radio
-    const repoDirRadio = $('[data-testid="location-repo-dir"]').find('input[type="radio"]')
-    await repoDirRadio.trigger('change')
+    // 点击 repo-dir radio（Button + @click=selectLocation('repo-dir')）
+    await $('[data-testid="location-repo-dir"]').trigger('click')
     await flushPromises()
-    // repo-dir 现在应被选中
-    expect((repoDirRadio.element as HTMLInputElement).checked).toBe(true)
+    // repo-dir 现在应被选中（aria-checked 翻转）
+    expect($('[data-testid="location-repo-dir"]').attributes('aria-checked')).toBe('true')
+    expect($('[data-testid="location-dedicated-dir"]').attributes('aria-checked')).toBe('false')
   })
 })
 

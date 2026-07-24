@@ -260,6 +260,8 @@ export default {
     worktreeRootDirHint: 'worktree 创建的根目录，留空使用默认位置',
     worktreeRootDirPlaceholder: '~/worktrees',
     browse: '浏览',
+    browseComingSoon: '浏览功能将在后续版本中支持，目前请手动输入路径',
+    loadFailed: '部分 worktree 配置加载失败，请检查网络或重启应用: {details}',
     setupScript: '初始化脚本',
     setupScriptHint: 'worktree 创建后执行的脚本（相对于仓库根目录），留空则不执行',
     setupScriptPlaceholder: '如 custom-hooks/setup-worktree.sh',

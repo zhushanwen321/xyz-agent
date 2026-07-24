@@ -28,7 +28,8 @@
             <Button
               variant="ghost"
               class="h-8 px-2 text-[11px] text-accent hover:bg-transparent hover:underline"
-              @click="onBrowseWorktreeRootDir"
+              disabled
+              :title="t('settings.worktree.browseComingSoon')"
             >
               {{ t('settings.worktree.browse') }}
             </Button>
@@ -155,37 +156,41 @@ let prevDefaultBaseBranch = 'origin/main'
 
 // ── 加载初始配置 ──
 onMounted(async () => {
-  try {
-    const [rootDirRes, scriptRes, bareScriptRes, timeoutRes, baseBranchRes] = await Promise.allSettled([
-      getWorktreeRootDir(),
-      getSetupScript(),
-      getBareSetupScript(),
-      getWorktreeTimeout(),
-      getDefaultBaseBranch(),
-    ])
+  const [rootDirRes, scriptRes, bareScriptRes, timeoutRes, baseBranchRes] = await Promise.allSettled([
+    getWorktreeRootDir(),
+    getSetupScript(),
+    getBareSetupScript(),
+    getWorktreeTimeout(),
+    getDefaultBaseBranch(),
+  ])
 
-    if (rootDirRes.status === 'fulfilled') {
-      worktreeRootDir.value = rootDirRes.value.dir
-      prevWorktreeRootDir = rootDirRes.value.dir
-    }
-    if (scriptRes.status === 'fulfilled') {
-      setupScript.value = scriptRes.value.script
-      prevSetupScript = scriptRes.value.script
-    }
-    if (bareScriptRes.status === 'fulfilled') {
-      bareSetupScript.value = bareScriptRes.value.script
-      prevBareSetupScript = bareScriptRes.value.script
-    }
-    if (timeoutRes.status === 'fulfilled') {
-      timeout.value = timeoutRes.value.timeout
-      prevTimeout = timeoutRes.value.timeout
-    }
-    if (baseBranchRes.status === 'fulfilled') {
-      defaultBaseBranch.value = baseBranchRes.value.baseBranch
-      prevDefaultBaseBranch = baseBranchRes.value.baseBranch
-    }
-  } catch (e) {
-    toastError(e instanceof Error ? e.message : String(e))
+  if (rootDirRes.status === 'fulfilled') {
+    worktreeRootDir.value = rootDirRes.value.dir
+    prevWorktreeRootDir = rootDirRes.value.dir
+  }
+  if (scriptRes.status === 'fulfilled') {
+    setupScript.value = scriptRes.value.script
+    prevSetupScript = scriptRes.value.script
+  }
+  if (bareScriptRes.status === 'fulfilled') {
+    bareSetupScript.value = bareScriptRes.value.script
+    prevBareSetupScript = bareScriptRes.value.script
+  }
+  if (timeoutRes.status === 'fulfilled') {
+    timeout.value = timeoutRes.value.timeout
+    prevTimeout = timeoutRes.value.timeout
+  }
+  if (baseBranchRes.status === 'fulfilled') {
+    defaultBaseBranch.value = baseBranchRes.value.baseBranch
+    prevDefaultBaseBranch = baseBranchRes.value.baseBranch
+  }
+
+  // 收集所有 rejected，提示用户（allSettled 自身永不 reject，但内部 RPC 可能失败）
+  const failures = [rootDirRes, scriptRes, bareScriptRes, timeoutRes, baseBranchRes]
+    .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+  if (failures.length > 0) {
+    const details = failures.map(r => r.reason instanceof Error ? r.reason.message : String(r.reason)).join('; ')
+    toastError(t('settings.worktree.loadFailed', { details }))
   }
 })
 
@@ -262,8 +267,8 @@ async function onSaveDefaultBaseBranch() {
 }
 
 // ── 浏览按钮（placeholder：后续可接入 Electron dialog）──
-function onBrowseWorktreeRootDir() {
-  // TODO: 接入 Electron dialog.showOpenDialog
-  toastInfo('浏览功能待实现')
-}
+// stub: onBrowseWorktreeRootDir 暂不导出——按钮 disabled，后续 wave 接 dialog.showOpenDialog 时再加
+// function onBrowseWorktreeRootDir(): void {
+//   toastInfo(t('settings.worktree.browseComingSoon'))
+// }
 </script>

@@ -260,6 +260,8 @@ export default {
     worktreeRootDirHint: 'Root directory for worktree creation, leave empty to use default location',
     worktreeRootDirPlaceholder: '~/worktrees',
     browse: 'Browse',
+    browseComingSoon: 'Browse dialog coming in a future update — type the path manually for now',
+    loadFailed: 'Some worktree settings failed to load, check network or restart: {details}',
     setupScript: 'Setup Script',
     setupScriptHint: 'Script to execute after worktree creation (relative to repo root), leave empty to skip',
     setupScriptPlaceholder: 'e.g. custom-hooks/setup-worktree.sh',

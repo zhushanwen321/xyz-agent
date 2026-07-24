@@ -49,9 +49,6 @@ export interface WorktreeServiceDeps {
   fs: { existsSync: (path: string) => boolean }
 }
 
-/** setup-worktree.sh 默认超时（pnpm install 最坏情况）。 */
-const SETUP_TIMEOUT_MS = 120_000
-
 /** 主分支 fallback（origin/main ref 不存在时用本地 main）。 */
 const LOCAL_MAIN = 'main'
 
@@ -81,6 +78,13 @@ function worktreeError(code: WorktreeErrorCode, message: string, detail?: unknow
   return Object.assign(new Error(message), detail !== undefined ? { code, detail } : { code })
 }
 
+/** 展开 ~ 前缀到 $HOME（路径字符串预处理，path.join 不展开 ~）。 */
+function expandHome(p: string): string {
+  if (p === '~') return process.env['HOME'] ?? p
+  if (p.startsWith('~/')) return join(process.env['HOME'] ?? '', p.slice(2))
+  return p
+}
+
 /** 为 plain-repo 模式计算 worktree 目录路径。 */
 function computePlainRepoWorktreeDir(
   worktreeRootDir: string,
@@ -88,8 +92,10 @@ function computePlainRepoWorktreeDir(
   branchDir: string,
   fsExists: (path: string) => boolean,
 ): string {
+  // worktreeRootDir 默认值 '~/worktrees' 是用户友好配置，path.join 不展开 ~，必须预处理
+  const expandedRoot = expandHome(worktreeRootDir)
   const repoName = basename(repoRoot)
-  const baseDir = join(worktreeRootDir, repoName, branchDir)
+  const baseDir = join(expandedRoot, repoName, branchDir)
 
   if (!fsExists(baseDir)) {
     return baseDir
@@ -98,7 +104,7 @@ function computePlainRepoWorktreeDir(
   // 目标已存在：检查是否属于同一 repo（.git 文件内容可比对，但简单起见检查父级 repo 目录结构）
   // 策略：追加 repo 路径短 hash 后缀避免冲突
   const hash = createHash('md5').update(repoRoot).digest('hex').slice(0, 6)
-  return join(worktreeRootDir, `${repoName}-${hash}`, branchDir)
+  return join(expandedRoot, `${repoName}-${hash}`, branchDir)
 }
 
 export class WorktreeService implements IWorktreeService {
@@ -283,8 +289,9 @@ export class WorktreeService implements IWorktreeService {
       )
     }
 
-    // setup 脚本（可选，不存在跳过）
-    await this.runSetupScript(barePath, newWtPath)
+    // setup 脚本（可选，不存在跳过）—— 从 configService.getBareSetupScript() 读取脚本相对路径
+    const bareSetupScriptRel = this.deps.configService.getBareSetupScript()
+    await this.runSetupScript(barePath, newWtPath, bareSetupScriptRel)
 
     return { cwd: newWtPath, branch }
   }
@@ -327,25 +334,27 @@ export class WorktreeService implements IWorktreeService {
       )
     }
 
-    // setup 脚本（可选，不存在跳过）—— plain-repo 模式检查 repoRoot 下的 custom-hooks
-    const setupScriptPath = join(repoRoot, '.bare', 'custom-hooks', 'setup-worktree.sh')
-    if (this.deps.fs.existsSync(setupScriptPath)) {
-      await this.runSetupScript(repoRoot, newWtPath)
-    }
+    // setup 脚本（可选，不存在跳过）—— plain-repo 模式从 configService.getSetupScript() 读取脚本相对路径
+    // 相对 repoRoot 解析（plain-repo 没有 barePath，仓库结构与传统 git 一致）
+    const setupScriptRel = this.deps.configService.getSetupScript()
+    await this.runSetupScript(repoRoot, newWtPath, setupScriptRel)
 
     return { cwd: newWtPath, branch }
   }
 
-  /** 运行 setup 脚本（通用逻辑）。 */
-  private async runSetupScript(cwd: string, worktreePath: string): Promise<void> {
-    // setup 脚本路径：barePath/custom-hooks/setup-worktree.sh 或通过 configService 读取
-    const setupScriptPath = join(cwd, 'custom-hooks', 'setup-worktree.sh')
+  /** 运行 setup 脚本（通用逻辑）。setupScriptRel 来自 configService（相对 cwd 解析）；不存在则跳过。 */
+  private async runSetupScript(cwd: string, worktreePath: string, setupScriptRel: string): Promise<void> {
+    // setup 脚本路径：cwd + configService.get*SetupScript() 相对路径
+    // 默认 'custom-hooks/setup-worktree.sh'（与原 bare-workspace 工作流一致）
+    const setupScriptPath = join(cwd, setupScriptRel)
     if (this.deps.fs.existsSync(setupScriptPath)) {
+      // 超时从 configService.getTimeout() 读（默认 60s，setup 脚本一般很快；用户可调到 120s 给 pnpm install 留余量）
+      const timeoutMs = this.deps.configService.getTimeout() * 1000
       const result = await this.deps.shellRunner.execute({
         scriptPath: setupScriptPath,
         args: [worktreePath],
         cwd: worktreePath,
-        timeout: SETUP_TIMEOUT_MS,
+        timeout: timeoutMs,
       })
       if (result.exitCode !== 0) {
         throw worktreeError(

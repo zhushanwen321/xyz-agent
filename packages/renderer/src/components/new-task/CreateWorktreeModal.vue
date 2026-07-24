@@ -264,25 +264,52 @@ onBeforeUnmount(() => { cancelled = true; clearSuccessTimer() })
           </Popover>
         </div>
 
-        <!-- 创建位置 radio -->
+        <!-- 创建位置 radio（用 Button + aria-pressed 表达单选；不用原生 <input type="radio">） -->
         <div class="space-y-1">
           <p class="text-[12px] text-subtle">{{ t('newTask.createWorktree.locationLabel') }}</p>
           <div v-if="isBareMode" class="space-y-1">
-            <label data-testid="location-workspace" class="flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 transition-colors" :class="locationMode === 'workspace' ? 'border-accent bg-accent/5' : 'border-border bg-surface-2'">
-              <input type="radio" name="location-mode" :checked="locationMode === 'workspace'" class="size-3.5 accent-accent" @change="selectLocation('workspace')" />
-              <span class="text-[13px] text-fg">{{ t('newTask.createWorktree.locationWorkspace') }}</span>
-            </label>
+            <Button
+              type="button"
+              variant="ghost"
+              data-testid="location-workspace"
+              role="radio"
+              :aria-checked="locationMode === 'workspace'"
+              class="flex h-auto w-full cursor-pointer items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors hover:bg-transparent"
+              :class="locationMode === 'workspace' ? 'border-accent bg-accent/5 text-fg hover:bg-accent/5' : 'border-border bg-surface-2 text-fg hover:bg-surface-2'"
+              @click="selectLocation('workspace')"
+            >
+              <span class="size-3.5 shrink-0 rounded-full border" :class="locationMode === 'workspace' ? 'border-accent bg-accent' : 'border-border'" />
+              <span class="text-[13px]">{{ t('newTask.createWorktree.locationWorkspace') }}</span>
+            </Button>
           </div>
           <div v-else-if="isPlainRepoMode" class="space-y-1">
-            <label data-testid="location-repo-dir" class="flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 transition-colors" :class="locationMode === 'repo-dir' ? 'border-accent bg-accent/5' : 'border-border bg-surface-2'">
-              <input type="radio" name="location-mode" :checked="locationMode === 'repo-dir'" class="size-3.5 accent-accent" @change="selectLocation('repo-dir')" />
-              <span class="text-[13px] text-fg">{{ t('newTask.createWorktree.locationRepoDir') }}</span>
-            </label>
-            <label data-testid="location-dedicated-dir" class="flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 transition-colors" :class="locationMode === 'dedicated-dir' ? 'border-accent bg-accent/5' : 'border-border bg-surface-2'">
-              <input type="radio" name="location-mode" :checked="locationMode === 'dedicated-dir'" class="size-3.5 accent-accent" @change="selectLocation('dedicated-dir')" />
-              <span class="text-[13px] text-fg">{{ t('newTask.createWorktree.locationDedicatedDir', { dir: dedicatedDirPreview }) }}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              data-testid="location-repo-dir"
+              role="radio"
+              :aria-checked="locationMode === 'repo-dir'"
+              class="flex h-auto w-full cursor-pointer items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors hover:bg-transparent"
+              :class="locationMode === 'repo-dir' ? 'border-accent bg-accent/5 text-fg hover:bg-accent/5' : 'border-border bg-surface-2 text-fg hover:bg-surface-2'"
+              @click="selectLocation('repo-dir')"
+            >
+              <span class="size-3.5 shrink-0 rounded-full border" :class="locationMode === 'repo-dir' ? 'border-accent bg-accent' : 'border-border'" />
+              <span class="text-[13px]">{{ t('newTask.createWorktree.locationRepoDir') }}</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              data-testid="location-dedicated-dir"
+              role="radio"
+              :aria-checked="locationMode === 'dedicated-dir'"
+              class="flex h-auto w-full cursor-pointer items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors hover:bg-transparent"
+              :class="locationMode === 'dedicated-dir' ? 'border-accent bg-accent/5 text-fg hover:bg-accent/5' : 'border-border bg-surface-2 text-fg hover:bg-surface-2'"
+              @click="selectLocation('dedicated-dir')"
+            >
+              <span class="size-3.5 shrink-0 rounded-full border" :class="locationMode === 'dedicated-dir' ? 'border-accent bg-accent' : 'border-border'" />
+              <span class="flex-1 text-left text-[13px]">{{ t('newTask.createWorktree.locationDedicatedDir', { dir: dedicatedDirPreview }) }}</span>
               <span data-testid="location-recommended-badge" class="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">{{ t('newTask.createWorktree.locationRecommended') }}</span>
-            </label>
+            </Button>
           </div>
         </div>
 
