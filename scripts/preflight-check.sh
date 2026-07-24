@@ -39,8 +39,11 @@ cd "$PROJECT_ROOT"
 # 这种路径（require 会返回 MODULE_NOT_FOUND）。Node 调用前必须把绝对路径转回 Windows 原生形态
 # （cygpath -w 在 Git Bash for Windows 自带；非 Windows 时为 no-op）。
 # 其它程序（ls/cp/git 等 Git Bash 内置命令）继续用 POSIX 风格路径不受影响。
+#
+# Windows 原生路径含反斜杠（D:\...），直接嵌入 JS 字符串字面量会被 V8 解析为转义序列
+# （\a 触发 SyntaxError）。需要再把反斜杠换成双反斜杠。
 if command -v cygpath >/dev/null 2>&1; then
-    to_native_path() { cygpath -w "$1"; }
+    to_native_path() { cygpath -w "$1" | sed 's/\\/\\\\/g'; }
 else
     to_native_path() { echo "$1"; }
 fi
