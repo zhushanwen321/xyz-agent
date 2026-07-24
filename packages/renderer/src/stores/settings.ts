@@ -49,6 +49,7 @@ const DEFAULT_SYSTEM: SystemSettings = {
   theme: 'dark',
   themePreset: 'cold-blue',
   fontSize: 'medium',
+  completionSound: true,
 }
 
 export const useSettingsStore = defineStore('settings', () => {

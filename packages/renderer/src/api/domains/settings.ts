@@ -17,10 +17,12 @@ export interface SystemSettings {
   themePreset: string
   /** 字体大小：small/medium/large，缺省按 medium（D17） */
   fontSize?: 'small' | 'medium' | 'large'
+  /** 后台完成提示音开关 */
+  completionSound?: boolean
 }
 
 const SYSTEM_KEY = 'xyz-agent:system-settings'
-const DEFAULT_SYSTEM: SystemSettings = { locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue', fontSize: 'medium' }
+const DEFAULT_SYSTEM: SystemSettings = { locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue', fontSize: 'medium', completionSound: true }
 
 // ── 订阅（转发 config / extension 域）──
 export const onProviders = configDomain.onProviders

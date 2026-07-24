@@ -182,6 +182,7 @@ export default {
     fontSmall: 'Small',
     fontMedium: 'Medium',
     fontLarge: 'Large',
+    completionSound: 'Completion sound',
     shortcutTitle: 'Shortcuts',
     shortcutName: 'Command',
     shortcutKey: 'Shortcut',
