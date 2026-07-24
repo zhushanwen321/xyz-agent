@@ -19,6 +19,8 @@ export default {
     system: '系统',
     systemDesc: '外观、语言与快捷键偏好',
     systemPromptDesc: '配置替换与追加系统提示词',
+    terminal: '终端',
+    terminalDesc: 'Shell、字体与终端偏好',
   },
   // ── SystemPrompt 页（SystemPromptPage）──
   systemPrompt: {
@@ -40,6 +42,26 @@ export default {
     defaultHint: '这是 pi 的默认核心提示词（身份+工具列表+指引）。替换后此段会被你的文本覆盖；动态段（AGENTS.md/skills/cwd）不受影响，仍由 pi 照常拼接。',
     copy: '复制',
     copiedToast: '已复制到剪贴板',
+  },
+  // ── Terminal 页（TerminalPage）──
+  terminal: {
+    title: '终端配置',
+    corruptedHint: '终端配置文件已损坏，已回退默认配置',
+    shell: '默认 Shell',
+    shellPlaceholder: '留空使用 $SHELL 默认',
+    shellArgs: 'Shell 参数',
+    shellArgsPlaceholder: '逗号分隔，如 -l,-i',
+    fontSize: '字号',
+    fontFamily: '字体',
+    fontFamilyPlaceholder: '留空使用默认字体，如 Menlo, monospace',
+    scrollback: '回滚行数上限',
+    cursorStyle: '光标样式',
+    cursorBlock: '方块',
+    cursorUnderline: '下划线',
+    cursorBar: '竖线',
+    bell: '响铃',
+    save: '保存',
+    savedToast: '已保存',
   },
   // ── Provider 页（ProviderPage）──
   provider: {

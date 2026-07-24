@@ -6,6 +6,7 @@ export type {
   SystemPromptConfig,
   CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
+  TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,

@@ -111,17 +111,31 @@ else console.log('');
 ")
 
     MISSING=""
+    NATIVE_SKIPPED=""
     for dep in $DEPS; do
-        if [ -n "$dep" ] && ! echo "$NO_EXT" | grep -qx "$dep"; then
-            MISSING="$MISSING $dep"
+        if [ -z "$dep" ]; then continue; fi
+        if echo "$NO_EXT" | grep -qx "$dep"; then continue; fi
+        # [HISTORICAL] native module（含 .node 二进制）必须保持 external，不能 bundle 进 JS：
+        # native 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，
+        # bundle 后 __dirname 变 dist/runtime，找不到 prebuilds 导致运行时 Cannot find module。
+        # 判定标志：dep 目录下有 binding.gyp（node-gyp 项目）或 prebuilds 目录（prebuildify）或 .node 文件。
+        # tsup external 列表 + electron-builder asarUnpack 共同处理（见 §12 native module 约束）。
+        DEP_DIR="$PROJECT_ROOT/node_modules/$dep"
+        if [ -f "$DEP_DIR/binding.gyp" ] || [ -d "$DEP_DIR/prebuilds" ] || find "$DEP_DIR" -name '*.node' 2>/dev/null | grep -q .; then
+            NATIVE_SKIPPED="$NATIVE_SKIPPED $dep"
+            continue
         fi
+        MISSING="$MISSING $dep"
     done
 
+    if [ -n "$NATIVE_SKIPPED" ]; then
+        echo -e "  ${GREEN}✓ native module(external 正确):$NATIVE_SKIPPED${NC}"
+    fi
     if [ -n "$MISSING" ]; then
         echo -e "  ${RED}✗ noExternal 缺少依赖:$MISSING${NC}"
         echo -e "  ${YELLOW}FIX: 编辑 $RUNTIME_TSUP，noExternal 追加:$MISSING${NC}"
         FAILED=1
-    else
+    elif [ -z "$NATIVE_SKIPPED" ]; then
         echo -e "  ${GREEN}✓ noExternal 覆盖所有 runtime dependencies${NC}"
     fi
 else

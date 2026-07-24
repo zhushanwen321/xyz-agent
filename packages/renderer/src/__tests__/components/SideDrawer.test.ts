@@ -125,14 +125,16 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
     mockState.subscribeOrder.length = 0
   })
 
-  it('terminal widget 推送按 sid 路由，切换 activeTab 后渲染对应 sid 的缓冲', async () => {
-    const wrapper = mountDrawer(SID_A, 'terminal')
+  it('browser widget 推送按 sid 路由，切换 activeTab 后渲染对应 sid 的缓冲', async () => {
+    // 注：terminal tab 自 Phase 3 起渲染 TerminalView（PTY），不再消费 widget 数据；
+    // widget 分区隔离机制改用 browser tab 验证（browser 走 widget fallback 路径）
+    const wrapper = mountDrawer(SID_A, 'browser')
     await flushPromises()
 
-    emitTo(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['a-line-1', 'a-line-2']))
+    emitTo(SID_A, 'extension:widget', mkWidgetMsg('browser', ['a-line-1', 'a-line-2']))
     await nextTick()
 
-    // terminal tab 渲染 a 的 lines
+    // browser tab 渲染 a 的 lines
     const codeEls = wrapper.findAll('code')
     expect(codeEls.length).toBe(2)
     expect(codeEls[0].text()).toBe('a-line-1')
@@ -140,11 +142,11 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
     wrapper.unmount()
   })
 
-  it('AC-4: session A 有 terminal 缓冲，切到 B 后 B 不显示 A 的缓冲', async () => {
-    const wrapper = mountDrawer(SID_A, 'terminal')
+  it('AC-4: session A 有 browser 缓冲，切到 B 后 B 不显示 A 的缓冲', async () => {
+    const wrapper = mountDrawer(SID_A, 'browser')
     await flushPromises()
 
-    emitTo(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['a-content']))
+    emitTo(SID_A, 'extension:widget', mkWidgetMsg('browser', ['a-content']))
     await nextTick()
     expect(wrapper.findAll('code').length).toBe(1)
 
@@ -152,7 +154,7 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
     await wrapper.setProps({ sessionId: SID_B })
     await flushPromises()
 
-    // B 没有 widget 推送时，terminal tab 应是空态（不显示 A 的 'a-content'）
+    // B 没有 widget 推送时，browser tab 应是空态（不显示 A 的 'a-content'）
     const codes = wrapper.findAll('code')
     expect(codes.length).toBe(0)
     // A 的缓冲不应残留到 B 的渲染（空态文案存在）
@@ -161,10 +163,10 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
     wrapper.unmount()
   })
 
-  it('AC-4: 切回 A 后 A 的 terminal 缓冲恢复显示', async () => {
-    const wrapper = mountDrawer(SID_A, 'terminal')
+  it('AC-4: 切回 A 后 A 的 browser 缓冲恢复显示', async () => {
+    const wrapper = mountDrawer(SID_A, 'browser')
     await flushPromises()
-    emitTo(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['a-persistent']))
+    emitTo(SID_A, 'extension:widget', mkWidgetMsg('browser', ['a-persistent']))
     await nextTick()
 
     // 切到 B（当前实现会清空缓冲 → 切回看不到；W4 Map 分区后应保留）
@@ -182,12 +184,13 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
     wrapper.unmount()
   })
 
-  it('AC-4: browser 缓冲与 terminal 缓冲各自独立隔离', async () => {
-    const wrapper = mountDrawer(SID_A, 'terminal')
+  it('AC-4: browser 缓冲与 unknown widget 缓冲各自独立隔离', async () => {
+    // 注：原 terminal/browser 双 widget 测试改用 browser/unknown（terminal tab 不再消费 widget）
+    const wrapper = mountDrawer(SID_A, 'browser')
     await flushPromises()
 
-    emitTo(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['t-content']))
     emitTo(SID_A, 'extension:widget', mkWidgetMsg('browser', ['b-content']))
+    emitTo(SID_A, 'extension:widget', mkWidgetMsg('custom-widget', ['c-content']))
     await nextTick()
 
     // 切到 B 再切回 A，两种缓冲都应保留
@@ -196,17 +199,11 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
     await wrapper.setProps({ sessionId: SID_A })
     await flushPromises()
 
-    // 切到 browser tab：应显示 b-content
+    // browser tab：应显示 b-content
     await wrapper.setProps({ activeTab: 'browser' })
     await nextTick()
     const browserCodes = wrapper.findAll('code')
     expect(browserCodes.some((c) => c.text() === 'b-content')).toBe(true)
-
-    // 切回 terminal tab：应显示 t-content
-    await wrapper.setProps({ activeTab: 'terminal' })
-    await nextTick()
-    const termCodes = wrapper.findAll('code')
-    expect(termCodes.some((c) => c.text() === 't-content')).toBe(true)
 
     wrapper.unmount()
   })
@@ -246,7 +243,8 @@ describe('W4 SideDrawer AC-4 (时序): 切 sid 时缓冲与 useSessionEvents 退
     // watch flush:pre 异步退订窗口内旧 sid 迟到消息仍进入 handler，handler 传入的仍是旧 sid，
     // 调 updateFor(旧 sid) 写旧 sid 分区。本用例验证此结构性隔离：切到 B 后 emitTo(SID_A)
     // 会触发 A 的 handler（注册时 sid=A 快照匹配），handler 写 A 分区，但 B 渲染不受影响。
-    const wrapper = mountDrawer(SID_A, 'terminal')
+    // 注：terminal tab 自 Phase 3 起渲染 TerminalView，改用 browser tab 验证 widget 分区
+    const wrapper = mountDrawer(SID_A, 'browser')
     await flushPromises()
 
     // 切到 B
@@ -254,10 +252,10 @@ describe('W4 SideDrawer AC-4 (时序): 切 sid 时缓冲与 useSessionEvents 退
     await flushPromises()
 
     // 向 A 推送：handler 触发，写 A 分区（updateFor(SID_A)）；B 分区不受影响，B 渲染不显示 A 内容
-    emitTo(SID_A, 'extension:widget', mkWidgetMsg('terminal', ['late-from-A']))
+    emitTo(SID_A, 'extension:widget', mkWidgetMsg('browser', ['late-from-A']))
     await nextTick()
 
-    // B 的 terminal tab 不应渲染 A 的内容（updateFor 结构性隔离：A 消息写 A 分区，不串 B）
+    // B 的 browser tab 不应渲染 A 的内容（updateFor 结构性隔离：A 消息写 A 分区，不串 B）
     const codes = wrapper.findAll('code')
     expect(codes.some((c) => c.text() === 'late-from-A')).toBe(false)
 
@@ -265,10 +263,10 @@ describe('W4 SideDrawer AC-4 (时序): 切 sid 时缓冲与 useSessionEvents 退
   })
 
   it('切到 B 后向 B 推送的事件正确写入 B 缓冲（正向对照）', async () => {
-    const wrapper = mountDrawer(SID_B, 'terminal')
+    const wrapper = mountDrawer(SID_B, 'browser')
     await flushPromises()
 
-    emitTo(SID_B, 'extension:widget', mkWidgetMsg('terminal', ['b-fresh']))
+    emitTo(SID_B, 'extension:widget', mkWidgetMsg('browser', ['b-fresh']))
     await nextTick()
 
     const codes = wrapper.findAll('code')

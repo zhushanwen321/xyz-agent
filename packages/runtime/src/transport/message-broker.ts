@@ -249,6 +249,15 @@ export class ServerMessageBroker implements IMessageBroker {
         },
       },
       {
+        // config.terminalConfig（Phase 6）：复刻 config.systemPrompt 范式，初始推送 terminal 配置，
+        // 前端首次打开 Settings · TerminalPage 无需额外 getTerminalConfig 往返即可填充编辑态。
+        label: 'config.terminalConfig',
+        run: () => {
+          const r = configService.getTerminalConfig()
+          this.send(ws, { type: 'config.terminalConfig', id: this.nextPushId(), payload: { config: r.config, corrupted: r.corrupted } })
+        },
+      },
+      {
         label: 'config.plugins',
         run: () => {
           if (pluginService) {

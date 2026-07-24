@@ -61,8 +61,8 @@
 
       <!-- 内容区：Git / Terminal / Browser。
            Git tab → GitPanel（inject GIT_STATUS_KEY，自取 git 全量状态；非 git 仓库组件内自隐藏走空态）。
-           Terminal/Browser → widget 订阅（#11 W3a），按 widgetKey 路由（mapWidgetKeyToTab），
-           未匹配 widgetKey 走 fallback。空态：widget 未推送或 session 未连接。 -->
+           Terminal tab → TerminalView（PTY 优先，交互式终端；决策 4-B，widget 死路径保留为非 terminal tab fallback）。
+           Browser → widget 订阅（#11 W3a），按 widgetKey 路由（mapWidgetKeyToTab）。 -->
       <div class="min-h-0 flex-1 overflow-auto">
         <!-- Git tab：全量 git 状态 + 暂存/提交（非 git 仓库 GitPanel 内自隐藏，此处显空态） -->
         <GitPanel v-if="activeTab === 'git'" />
@@ -72,6 +72,9 @@
         <DetailPane v-else-if="activeTab === 'detail'" :session-id="sessionId" />
         <!-- Tasks tab：goal 卡片 + todo 列表（tasks store 按 sessionId 分区，只读渲染） -->
         <TasksPanel v-else-if="activeTab === 'tasks'" :session-id="sessionId" />
+        <!-- Terminal tab：PTY 优先渲染交互式终端（TerminalView 内管 PTY 生命周期 + scrollback 回放）。
+             widget 死路径（extension:widget 推 terminal 关键词）经查证 0 命中，PTY 接管后不再触发。 -->
+        <TerminalView v-else-if="activeTab === 'terminal'" :session-id="sessionId" />
         <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
         <div
           v-else-if="activeGuiComponent"
@@ -144,6 +147,7 @@ import GitPanel from './GitPanel.vue'
 import CommandDocPanel from './CommandDocPanel.vue'
 import DetailPane from './DetailPane.vue'
 import TasksPanel from './TasksPanel.vue'
+import TerminalView from './TerminalView.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import AnsiText from './message-stream/gui/AnsiText.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
