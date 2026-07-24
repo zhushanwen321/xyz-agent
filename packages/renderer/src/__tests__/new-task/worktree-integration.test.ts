@@ -145,8 +145,8 @@ function has(selector: string): boolean {
 /**
  * stubs：Composer 渲染 meta-row slot（让 chip 进 DOM 可查），避免拖入真实 Composer 重依赖；
  * Popover/PopoverTrigger/PopoverContent 无条件渲染 slot——reka-ui Popover 在 happy-dom 下
- * 依赖 teleport + 实际布局计算，测试环境会渲染空 teleport，故 stub 掉让 DirSelectPopover（真实组件）
- * 直接进 DOM（参考 landing.test.ts w3Stubs 同模式）。DirSelectPopover 不 stub：要验证真实动作项渲染。
+ * 依赖 teleport + 实际布局计算，测试环境会渲染空 teleport，故 stub 掉让 BranchSelectPopover（真实组件）
+ * 直接进 DOM（参考 landing.test.ts w3Stubs 同模式）。BranchSelectPopover 不 stub：要验证真实动作项渲染。
  */
 const landingStubs = {
   Composer: { template: '<div data-testid="composer-stub"><slot name="meta-row" /></div>' },
@@ -222,7 +222,8 @@ afterEach(() => {
 /** mount Landing（mock isBareWorkspace=true 经 gitInfo 注入） */
 async function mountLanding(): Promise<ReturnType<typeof mount>> {
   currentWrapper = mount(Landing, {
-    props: { sessionId: null, currentCwd: '/ws', gitBranch: null },
+    // gitBranch='main' 让 Git chip 渲染（UC-7 守卫：空 branch 不显 chip）
+    props: { sessionId: null, currentCwd: '/ws', gitBranch: 'main' },
     global: { stubs: landingStubs },
     attachTo: document.body,
   })
@@ -231,22 +232,32 @@ async function mountLanding(): Promise<ReturnType<typeof mount>> {
 }
 
 /**
- * 打开 DirSelectPopover（点 directory chip）。
- * Landing 内 Popover open 绑定 flow.state==='dir-popover'，故需切 state 触发渲染。
+ * 打开 BranchSelectPopover（点 Git chip → state=branch-popover）。
+ * IA 重构后：「新建 worktree」动作从 DirSelectPopover 迁至 BranchSelectPopover 的 Worktree tab。
+ * Landing 内 Popover open 绑定 flow.state==='branch-popover'，故需切 state 触发渲染。
  */
-async function openDirPopover(wrapper: ReturnType<typeof mount>): Promise<void> {
-  // 点 chip → flow.openDirPopover()（mock 不真切 state，需测试手动切）
-  await wrapper.find('[data-testid="chip-directory"]').trigger('click')
-  flowMock._state.value = 'dir-popover'
+async function openBranchPopover(wrapper: ReturnType<typeof mount>): Promise<void> {
+  // 点 Git chip → flow.openBranchPopover()（mock 不真切 state，需测试手动切）
+  await wrapper.find('[data-testid="chip-branch"]').trigger('click')
+  flowMock._state.value = 'branch-popover'
+  await flushPromises()
+}
+
+/**
+ * 切到 BranchSelectPopover 的 Worktree tab（默认是分支 tab，「新建 worktree」在 Worktree tab）。
+ */
+async function switchToWorktreeTab(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await wrapper.find('[data-testid="git-tab-worktree"]').trigger('click')
   await flushPromises()
 }
 
 describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 → 创建 → success → chip 切换）', () => {
   it('点击「新建 worktree」→ modal 出现 → 填分支名 → 创建成功 → 2s 后 modal 关闭 + chip 切到新 worktree', async () => {
     const wrapper = await mountLanding()
-    await openDirPopover(wrapper)
+    await openBranchPopover(wrapper)
+    await switchToWorktreeTab(wrapper)
 
-    // popover 渲染且含「新建 worktree…」动作项（bare repo 下显示）
+    // Worktree tab 渲染且含「新建 worktree…」动作项（从 DirSelectPopover 迁入）
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(true)
 
     // 点「新建 worktree…」→ 触发 openCreateWorktree → flow 切到 worktree-modal 态
@@ -297,7 +308,8 @@ describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 �
 describe('INT-2: 目录已存在（worktreeApi.create reject WORKTREE_EXISTS → exists 态 → 直接开始）', () => {
   it('reject WORKTREE_EXISTS → modal 转 exists 态 → 点「直接开始」→ chip 切到 existingCwd', async () => {
     const wrapper = await mountLanding()
-    await openDirPopover(wrapper)
+    await openBranchPopover(wrapper)
+    await switchToWorktreeTab(wrapper)
 
     // 进 worktree-modal
     await wrapper.find('[data-testid="action-create-worktree"]').trigger('click')
@@ -337,7 +349,8 @@ describe('INT-2: 目录已存在（worktreeApi.create reject WORKTREE_EXISTS →
 describe('INT-3: 创建失败（worktreeApi.create reject SETUP_FAILED → error 态 → 重试）', () => {
   it('reject SETUP_FAILED → modal 转 error 态 → 显示退出码+stderr → 点重试 → 重新调 worktreeApi.create', async () => {
     const wrapper = await mountLanding()
-    await openDirPopover(wrapper)
+    await openBranchPopover(wrapper)
+    await switchToWorktreeTab(wrapper)
 
     await wrapper.find('[data-testid="action-create-worktree"]').trigger('click')
     flowMock._state.value = 'worktree-modal'

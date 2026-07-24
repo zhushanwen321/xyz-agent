@@ -1,68 +1,44 @@
 <script setup lang="ts">
 /**
- * DirSelectPopover.vue —— 步骤2 选目录 popover（#5，spec §3.2）。
+ * DirSelectPopover.vue —— 步骤2 选目录 popover（spec §3.2 IA 重构后）。
  *
- * 形态：popover 内容面板（锚定 + 宽度由本组件定 380px；向上展开由父级 PopoverContent side="top" 控制）。
+ * 纯文件系统导航：最近工作区 + 打开文件夹。
+ * Worktree 相关内容（已有 worktree 列表 / 新建 worktree / 远程连接）已迁至 BranchSelectPopover 的
+ * Worktree tab，本组件只保留目录选择职责。
+ *
+ * 形态：popover 内容面板（宽度 320px；向上展开由父级 PopoverContent side="top" 控制）。
  *
  * 数据流（container for data）：workspaceStore.records → RecentWorkspaceRecord[] top6。
  * 动作（presentational for actions，emit 单 payload 对象）：
  * - 选列表项 → emit('select', { cwd })（父接 useNewTaskFlow.selectWorkspace）
  * - 「打开文件夹」→ emit('open-dir-dialog')（父接 useNewTaskFlow.openDirDialog → OS 原生 dialog）
- * - 「远程连接」→ v1 stub toast「v1 暂未支持」（spec §6 / issues #11 P3 延后）
  * - Esc → emit('close')
  *
  * 空态（T3.2 / AC-5.4）：records=[] → 「暂无最近工作区 · 选择一个本地目录开始」。
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, FolderPlus, Cloud, GitFork } from '@lucide/vue'
+import { Folder, FolderPlus } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { useToast } from '@/composables/useToast'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
 import { dirNameOf, parentDirNameOf } from '@/composables/logic/path'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 
-const props = withDefaults(
-  defineProps<{
-    /** 当前 cwd（高亮已选项，Card-Active） */
-    currentCwd: string | null
-    /** 是否在 bare repo + worktree 结构下（true 才显示「新建 worktree…」动作项，W2 wave） */
-    isBareWorkspace?: boolean
-    /** 是否为 git 仓库目录（bare-workspace 或 plain-repo 均为 true） */
-    isGitRepo?: boolean
-    /** 当前 cwd 所在 workspace 的已有 worktree 列表 */
-    worktreeItems?: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }>
-  }>(),
-  { isBareWorkspace: false, isGitRepo: false, worktreeItems: () => [] },
-)
+const props = defineProps<{
+  /** 当前 cwd（高亮已选项，Card-Active） */
+  currentCwd: string | null
+}>()
 
 const emit = defineEmits<{
   (e: 'select', payload: { cwd: string }): void
   (e: 'open-dir-dialog'): void
-  (e: 'create-worktree'): void
-  (e: 'select-worktree', payload: { path: string }): void
   (e: 'close'): void
 }>()
 
 const { t } = useI18n()
 const workspaceStore = useWorkspaceStore()
-const { error: toastError } = useToast()
-
-/** spec §6：远程连接 v1 stub（issues #11 P3），点开 toast 提示 */
-// v1 暂未支持远程连接（i18n key: newTask.dirSelect.remoteNotSupported）
-/** 基础动作项数（打开文件夹 + 远程连接） */
-const BASE_ACTION_COUNT = 2
-/** git repo 模式下新增的动作项数（新建 worktree） */
-const WORKTREE_ACTION_COUNT = 1
-/**
- * 扁平化键盘导航的尾部动作项数。
- * 基础 2 项（打开文件夹 + 远程连接）；git repo 下 +1（新建 worktree，插在两者之间）。
- */
-const ACTION_ITEM_COUNT = computed(() =>
-  props.isGitRepo ? BASE_ACTION_COUNT + WORKTREE_ACTION_COUNT : BASE_ACTION_COUNT,
-)
 
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
@@ -70,6 +46,9 @@ const root = ref<HTMLElement | null>(null)
 /** W1（MAX_RECORDS 10→6）：popover 列表展示上限，与 runtime RecentWorkspacesStore.MAX_RECORDS 对齐
  *  双保险：即便 runtime 返超量也只显 6 项 */
 const MAX_DISPLAY = 6
+
+/** 尾部动作项数（只剩「打开文件夹」一项） */
+const ACTION_ITEM_COUNT = 1
 
 /** W3: 改接 workspaceStore.records（取代旧 session.list 派生） */
 const workspaces = computed<RecentWorkspaceRecord[]>(() => workspaceStore.records)
@@ -86,24 +65,8 @@ const filtered = computed<RecentWorkspaceRecord[]>(() => {
 /** 空态：无最近工作区，或搜索无命中 */
 const isEmpty = computed(() => filtered.value.length === 0)
 
-/** 已有 worktree 列表（来自 props，无需本地过滤） */
-const wtItems = computed(() => props.worktreeItems)
-
-/** worktree 区域是否为空态 */
-const isWtEmpty = computed(() => wtItems.value.length === 0)
-
-/**
- * 扁平化索引基准：recent 列表 + worktree 列表 + 动作项。
- * DOM 顺序：recent items → worktree items → open-dir → create-worktree（git repo）→ remote
- */
-const recentEnd = computed(() => filtered.value.length)
-const wtStart = computed(() => recentEnd.value)
-const actionStart = computed(() => recentEnd.value + wtItems.value.length)
-const openDirIdx = computed(() => actionStart.value)
-const createWorktreeIdx = computed(() => actionStart.value + 1)
-const remoteIdx = computed(() =>
-  actionStart.value + (props.isGitRepo ? BASE_ACTION_COUNT : WORKTREE_ACTION_COUNT),
-)
+/** 扁平化索引基准：recent 列表 + 动作项。DOM 顺序：recent items → open-dir */
+const openDirIdx = computed(() => filtered.value.length)
 
 /** basename 出现该次数即视为同名，需追加上级段名消歧 */
 const DUP_THRESHOLD = 2
@@ -139,26 +102,12 @@ function selectWorkspace(ws: RecentWorkspaceRecord): void {
   emit('select', { cwd: ws.cwd })
 }
 
-function selectWorktree(path: string): void {
-  emit('select-worktree', { path })
-}
-
 function openFolder(): void {
   emit('open-dir-dialog')
 }
 
-function createWorktree(): void {
-  emit('create-worktree')
-}
-
-function remoteStub(): void {
-  toastError(t('newTask.dirSelect.remoteNotSupported'))
-}
-
 /**
- * 扁平化激活：列表项区间 → selectWorkspace，尾部动作项按 DOM 顺序激活。
- * 动作项 DOM 顺序：open-dir → create-worktree（仅 bare repo）→ remote。
- * 索引基准：listLen（列表尾）后第 0 个动作项 = open-dir，依次递增。
+ * 扁平化激活：列表项区间 → selectWorkspace，尾部动作项（idx === listLen）→ openFolder()。
  */
 function activate(idx: number): void {
   const listLen = filtered.value.length
@@ -166,23 +115,13 @@ function activate(idx: number): void {
     selectWorkspace(filtered.value[idx])
     return
   }
-  // worktree 区域
-  const wtOffset = idx - wtStart.value
-  if (wtOffset >= 0 && wtOffset < wtItems.value.length) {
-    selectWorktree(wtItems.value[wtOffset].path)
-    return
-  }
-  // 动作项
-  const actionOffset = idx - actionStart.value
-  // open-dir 永远是第 0 个动作项；remote 永远是最后一个；create-worktree 夹在中间（git repo 下）。
-  if (actionOffset === 0) openFolder()
-  else if (props.isGitRepo && actionOffset === 1) createWorktree()
-  else remoteStub()
+  // 动作项：仅 open-dir 一项
+  openFolder()
 }
 
 // 键盘导航收敛到 logic/useFlatListNav（与 BranchSelectPopover 共用）。
 const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
-  getTotal: () => filtered.value.length + wtItems.value.length + ACTION_ITEM_COUNT.value,
+  getTotal: () => filtered.value.length + ACTION_ITEM_COUNT,
   onActivate: activate,
   onEscape: () => emit('close'),
 })
@@ -192,7 +131,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
   <div
     ref="root"
     data-testid="dir-select-popover"
-    class="w-[380px] max-h-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
+    class="w-[320px] max-h-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
     @keydown="onKeydown"
   >
     <!-- 搜索 input（sticky 顶部，spec §3.2） -->
@@ -233,37 +172,6 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         </span>
       </PopoverListItem>
 
-      <!-- 已有 worktree 区域（git repo 下显示） -->
-      <template v-if="isGitRepo">
-        <div class="px-3 pt-2 pb-1">
-          <span class="text-[11px] font-medium text-muted uppercase tracking-wider">{{ t('newTask.dirSelect.existingWorktrees') }}</span>
-        </div>
-        <!-- worktree 空态 -->
-        <div
-          v-if="isWtEmpty"
-          class="px-4 py-2 text-[12px] text-subtle"
-        >
-          {{ t('newTask.dirSelect.noWorktrees') }}
-        </div>
-        <!-- worktree 列表项 -->
-        <PopoverListItem
-          v-for="(wt, wi) in wtItems"
-          :key="wt.path"
-          test-id="worktree-item"
-          :active="isActiveItem(wtStart + wi)"
-          @click="selectWorktree(wt.path)"
-          @mouseenter="activeIndex = wtStart + wi"
-        >
-          <template #icon>
-            <GitFork class="shrink-0 text-subtle" />
-          </template>
-          <span class="flex min-w-0 flex-1 flex-col items-start">
-            <span class="truncate text-fg">{{ wt.branch }}{{ wt.HEAD ? ' (HEAD)' : '' }}</span>
-            <span class="truncate font-mono text-[11px] text-subtle">{{ wt.path }}</span>
-          </span>
-        </PopoverListItem>
-      </template>
-
       <!-- 分隔线 -->
       <div class="my-1 h-px bg-border" />
 
@@ -278,35 +186,6 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           <FolderPlus class="shrink-0 text-subtle" />
         </template>
         {{ t('newTask.dirSelect.openFolder') }}
-      </PopoverActionItem>
-
-      <!-- 动作项：新建 worktree（git repo 下均显示，W2 wave）。
-           accent-soft 底色 + accent 图标：区别于「打开文件夹」（中性），强调 git repo 的推荐入口。 -->
-      <PopoverActionItem
-        v-if="isGitRepo"
-        test-id="action-create-worktree"
-        class="bg-accent-soft"
-        :active="isActiveItem(createWorktreeIdx)"
-        @click="createWorktree"
-        @mouseenter="activeIndex = createWorktreeIdx"
-      >
-        <template #icon>
-          <GitFork class="shrink-0 text-accent" />
-        </template>
-        {{ t('newTask.dirSelect.createWorktree') }}
-      </PopoverActionItem>
-
-      <!-- 动作项：远程连接（v1 stub） -->
-      <PopoverActionItem
-        test-id="action-remote"
-        :active="isActiveItem(remoteIdx)"
-        @click="remoteStub"
-        @mouseenter="activeIndex = remoteIdx"
-      >
-        <template #icon>
-          <Cloud class="shrink-0 text-subtle" />
-        </template>
-        {{ t('newTask.dirSelect.remoteConnect') }}
       </PopoverActionItem>
     </div>
   </div>

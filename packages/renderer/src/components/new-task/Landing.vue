@@ -12,7 +12,7 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, GitBranch, RefreshCw } from '@lucide/vue'
+import { Folder, GitFork, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import DirSelectPopover from './DirSelectPopover.vue'
@@ -99,7 +99,7 @@ const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
 
 /**
  * 创建 worktree modal 渲染绑定（W2 wave）：state===worktree-modal 时挂载 CreateWorktreeModal。
- * DirSelectPopover 点「新建 worktree…」→ flow.openCreateWorktree → state=worktree-modal。
+ * BranchSelectPopover Worktree tab 点「新建 worktree…」→ flow.openCreateWorktree → state=worktree-modal。
  */
 const isWorktreeModalOpen = computed(() => flow.state.value === 'worktree-modal')
 
@@ -205,16 +205,11 @@ function onRetry(): void {
                 <span class="font-mono">{{ dirLabel }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" class="w-[380px] p-0">
+            <PopoverContent side="top" class="w-[320px] p-0">
               <DirSelectPopover
                 :current-cwd="currentCwd ?? null"
-                :is-bare-workspace="isBareWorkspace"
-                :is-git-repo="isGitRepo"
-                :worktree-items="worktreeItems"
                 @select="onSelectWorkspace"
                 @open-dir-dialog="onOpenDirDialog"
-                @create-worktree="flow.openCreateWorktree()"
-                @select-worktree="onSelectWorktree"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>
@@ -227,16 +222,21 @@ function onRetry(): void {
                 variant="ghost"
                 class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
               >
-                <GitBranch class="shrink-0" />
+                <GitFork class="shrink-0" />
                 <span class="font-mono">{{ branch }}</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent side="top" class="w-[420px] p-0">
               <BranchSelectPopover
                 :session-id="sessionId"
+                :worktree-items="worktreeItems"
+                :is-bare-workspace="isBareWorkspace"
+                :is-git-repo="isGitRepo"
                 @select="onSelectBranch"
                 @confirm-dirty-switch="onConfirmDirtySwitch"
                 @open-branch-modal="flow.openBranchModal()"
+                @select-worktree="onSelectWorktree"
+                @create-worktree="flow.openCreateWorktree()"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>
@@ -248,7 +248,7 @@ function onRetry(): void {
     <!-- 创建分支 modal（#7）：BranchSelectPopover emit open-branch-modal → openBranchModal → state=branch-modal → 渲染。modal 内 Esc/提交失败留 modal（D-7）。 -->
     <CreateBranchModal v-if="isBranchModalOpen" />
 
-    <!-- 创建 worktree modal（W2 wave）：DirSelectPopover emit create-worktree → openCreateWorktree →
+    <!-- 创建 worktree modal（W2 wave）：BranchSelectPopover emit create-worktree → openCreateWorktree →
          state=worktree-modal → 渲染。modal 内五态自管，success/use-existing → selectWorkspace + closeOverlay。 -->
     <CreateWorktreeModal
       v-if="isWorktreeModalOpen"
