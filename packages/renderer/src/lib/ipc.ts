@@ -114,6 +114,26 @@ export function browserFocus(sessionId: string): Promise<void> {
   return api?.browserFocus(sessionId) ?? Promise.resolve()
 }
 
+/** 后退（webContents.navigationHistory.goBack）。无 IPC 时 no-op。Wave 5 历史导航。 */
+export function browserBack(sessionId: string): Promise<void> {
+  return api?.browserBack(sessionId) ?? Promise.resolve()
+}
+
+/** 前进（webContents.navigationHistory.goForward）。无 IPC 时 no-op。Wave 5 历史导航。 */
+export function browserForward(sessionId: string): Promise<void> {
+  return api?.browserForward(sessionId) ?? Promise.resolve()
+}
+
+/** 设置缩放因子（1.0=100%）。无 IPC 时 no-op。Wave 5 缩放。 */
+export function browserSetZoom(sessionId: string, factor: number): Promise<void> {
+  return api?.browserSetZoom(sessionId, factor) ?? Promise.resolve()
+}
+
+/** 读取当前缩放因子。无 IPC 时返回 1.0。Wave 5 缩放。 */
+export function browserGetZoom(sessionId: string): Promise<number> {
+  return api?.browserGetZoom(sessionId) ?? Promise.resolve(1.0)
+}
+
 /**
  * 推送 view 的位置/尺寸（rect 同步 Wave 3）。
  *
@@ -145,6 +165,8 @@ export function onBrowserState(
     currentUrl: string
     isLoading: boolean
     error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+    canGoBack: boolean
+    canGoForward: boolean
   }) => void,
 ): () => void {
   // onBrowserState 在 preload 暴露（Wave 2 加）；类型经 declare global ElectronAPI 对齐。

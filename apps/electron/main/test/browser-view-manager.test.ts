@@ -29,10 +29,19 @@ const hoisted = vi.hoisted(() => {
       url: string
       destroyed: boolean
       listeners: Map<string, WcListener[]>
+      navigationHistory: {
+        canGoBack: ReturnType<typeof vi.fn>
+        canGoForward: ReturnType<typeof vi.fn>
+        goBack: ReturnType<typeof vi.fn>
+        goForward: ReturnType<typeof vi.fn>
+      }
+      zoomFactor: number
       loadURL(url: string): Promise<void>
       on(event: string, listener: WcListener): void
       isDestroyed(): boolean
       close(): void
+      setZoomFactor(factor: number): void
+      getZoomFactor(): number
       session: { on: ReturnType<typeof vi.fn> }
     }
   }> = []
@@ -41,10 +50,20 @@ const hoisted = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const WebContentsViewMock = function (this: any, options?: { webPreferences?: Record<string, unknown> }) {
     const listeners = new Map<string, WcListener[]>()
+    // navigationHistory 桩：Wave 5 notify() 会读 canGoBack/canGoForward。
+    // 默认 false，测试可改写以验证 back/forward 方法。
+    const navigationHistory = {
+      canGoBack: vi.fn(() => false),
+      canGoForward: vi.fn(() => false),
+      goBack: vi.fn(),
+      goForward: vi.fn(),
+    }
     const wc = {
       url: '',
       destroyed: false,
       listeners,
+      navigationHistory,
+      zoomFactor: 1,
       loadURL(url: string) {
         this.url = url
         return Promise.resolve()
@@ -58,6 +77,12 @@ const hoisted = vi.hoisted(() => {
       },
       close() {
         this.destroyed = true
+      },
+      setZoomFactor(factor: number) {
+        this.zoomFactor = factor
+      },
+      getZoomFactor() {
+        return this.zoomFactor
       },
       session: { on: sessionOn },
     }
@@ -400,6 +425,103 @@ describe('BrowserViewManager', () => {
         createdViews[0].wc.listeners.get('did-navigate')![0](undefined, 'https://example.com')
       }).not.toThrow()
       expect(mgr.getState('sess-1')!.currentUrl).toBe('https://example.com')
+    })
+  })
+
+  describe('历史导航 + 缩放（Wave 5）', () => {
+    it('canGoBack / canGoForward 透传 webContents.navigationHistory，不存在 session 返回 false', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      // 默认桩返回 false
+      expect(mgr.canGoBack('sess-1')).toBe(false)
+      expect(mgr.canGoForward('sess-1')).toBe(false)
+
+      // 改写桩返回 true
+      createdViews[0].wc.navigationHistory.canGoBack.mockReturnValue(true)
+      createdViews[0].wc.navigationHistory.canGoForward.mockReturnValue(true)
+      expect(mgr.canGoBack('sess-1')).toBe(true)
+      expect(mgr.canGoForward('sess-1')).toBe(true)
+
+      // 不存在 session 一律 false
+      expect(mgr.canGoBack('nope')).toBe(false)
+      expect(mgr.canGoForward('nope')).toBe(false)
+    })
+
+    it('goBack / goForward 在可导航时调 navigationHistory.goBack/goForward', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      const nav = createdViews[0].wc.navigationHistory
+
+      // canGoBack=false 时无操作
+      mgr.goBack('sess-1')
+      expect(nav.goBack).not.toHaveBeenCalled()
+
+      nav.canGoBack.mockReturnValue(true)
+      mgr.goBack('sess-1')
+      expect(nav.goBack).toHaveBeenCalledTimes(1)
+
+      // canGoForward=false 时无操作
+      mgr.goForward('sess-1')
+      expect(nav.goForward).not.toHaveBeenCalled()
+
+      nav.canGoForward.mockReturnValue(true)
+      mgr.goForward('sess-1')
+      expect(nav.goForward).toHaveBeenCalledTimes(1)
+    })
+
+    it('goBack / goForward / setZoomFactor / getZoomFactor 对不存在 session 幂等无操作', () => {
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
+      expect(() => mgr.goBack('nope')).not.toThrow()
+      expect(() => mgr.goForward('nope')).not.toThrow()
+      expect(() => mgr.setZoomFactor('nope', 1.25)).not.toThrow()
+      expect(mgr.getZoomFactor('nope')).toBe(1.0)
+    })
+
+    it('setZoomFactor / getZoomFactor 读写 webContents 缩放因子', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      // 默认 1.0
+      expect(mgr.getZoomFactor('sess-1')).toBe(1)
+
+      mgr.setZoomFactor('sess-1', 1.25)
+      expect(mgr.getZoomFactor('sess-1')).toBe(1.25)
+
+      mgr.setZoomFactor('sess-1', 0.75)
+      expect(mgr.getZoomFactor('sess-1')).toBe(0.75)
+    })
+
+    it('notify 在事件推送时同步 canGoBack / canGoForward 到 state', () => {
+      const onStateChange = vi.fn()
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win), onStateChange)
+      mgr.create('sess-1', 'win-1')
+
+      // 改写桩：did-navigate 触发 notify 后，state.canGoBack 应为 true
+      createdViews[0].wc.navigationHistory.canGoBack.mockReturnValue(true)
+      createdViews[0].wc.navigationHistory.canGoForward.mockReturnValue(false)
+
+      createdViews[0].wc.listeners.get('did-navigate')![0](undefined, 'https://example.com')
+      const state = mgr.getState('sess-1')!
+      expect(state.canGoBack).toBe(true)
+      expect(state.canGoForward).toBe(false)
+      expect(onStateChange).toHaveBeenLastCalledWith(
+        'sess-1',
+        expect.objectContaining({ canGoBack: true, canGoForward: false }),
+      )
+    })
+
+    it('create 初始化 state.canGoBack / canGoForward 为 false', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      const state = mgr.getState('sess-1')!
+      expect(state.canGoBack).toBe(false)
+      expect(state.canGoForward).toBe(false)
     })
   })
 })

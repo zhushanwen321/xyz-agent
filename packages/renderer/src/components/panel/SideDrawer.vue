@@ -70,11 +70,12 @@
         <CommandDocPanel v-else-if="activeTab === 'doc'" :session-id="sessionId" />
         <!-- Detail tab：文件预览（#6，useDetailPane watch selectedPath 自动加载，禁 v-html） -->
         <DetailPane v-else-if="activeTab === 'detail'" :session-id="sessionId" />
-        <!-- Browser tab：嵌入式浏览器（WebContentsView，#browser-drawer Wave 2）。
-             Wave 2：browser tab 永远显 BrowserPane（覆盖下方 widget 通路），点击 agent 输出链接触发。
-             Wave 5 会做「url 消费后回落 widget 通路」（extension 推的 widget 在无 url 时显示）。-->
+        <!-- Browser tab：嵌入式浏览器（WebContentsView，#browser-drawer Wave 2 + Wave 5）。
+             Wave 5 AC-18 widget 回落：有 browserUrl（刚点链接）时显 BrowserPane 导航；
+             无 browserUrl 时回落到 widget 通路（extension 推的 browser/preview widget 显示）。
+             已加载的网页由主进程 view keep-alive 保留，重新点链接时 BrowserPane remount 恢复。-->
         <BrowserPane
-          v-else-if="activeTab === 'browser'"
+          v-else-if="activeTab === 'browser' && browserUrl"
           :session-id="sessionId ?? ''"
           :url="browserUrlForRender"
         />

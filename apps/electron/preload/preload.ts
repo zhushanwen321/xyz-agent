@@ -57,12 +57,22 @@ export interface ElectronAPI {
   browserSetRect(sessionId: string, rect: { x: number; y: number; width: number; height: number }): Promise<void>
   /** 销毁 view（removeChildView + webContents.destroy） */
   browserDestroy(sessionId: string): Promise<void>
-  /** 监听 browser 状态变化（url/isLoading/error，主进程 did-navigate 等事件推送），返回取消订阅函数 */
+  /** 后退（Wave 5 历史；sessionId 不存在或无法后退时无操作） */
+  browserBack(sessionId: string): Promise<void>
+  /** 前进（Wave 5 历史；sessionId 不存在或无法前进时无操作） */
+  browserForward(sessionId: string): Promise<void>
+  /** 设置缩放因子（1.0=100%；Wave 5） */
+  browserSetZoom(sessionId: string, factor: number): Promise<void>
+  /** 读取当前缩放因子（Wave 5；sessionId 不存在返回 1.0） */
+  browserGetZoom(sessionId: string): Promise<number>
+  /** 监听 browser 状态变化（url/isLoading/error/canGoBack/canGoForward，主进程 did-navigate 等事件推送），返回取消订阅函数 */
   onBrowserState(callback: (state: {
     sessionId: string
     currentUrl: string
     isLoading: boolean
     error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+    canGoBack: boolean
+    canGoForward: boolean
   }) => void): () => void
 }
 
@@ -126,17 +136,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserSetRect: (sessionId: string, rect: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.invoke('browser:set-rect', { sessionId, rect }),
   browserDestroy: (sessionId: string) => ipcRenderer.invoke('browser:destroy', sessionId),
+  browserBack: (sessionId: string) => ipcRenderer.invoke('browser:back', sessionId),
+  browserForward: (sessionId: string) => ipcRenderer.invoke('browser:forward', sessionId),
+  browserSetZoom: (sessionId: string, factor: number) => ipcRenderer.invoke('browser:set-zoom', { sessionId, factor }),
+  browserGetZoom: (sessionId: string) => ipcRenderer.invoke('browser:get-zoom', sessionId),
   onBrowserState: (callback: (state: {
     sessionId: string
     currentUrl: string
     isLoading: boolean
     error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+    canGoBack: boolean
+    canGoForward: boolean
   }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: {
       sessionId: string
       currentUrl: string
       isLoading: boolean
       error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+      canGoBack: boolean
+      canGoForward: boolean
     }) => callback(state)
     ipcRenderer.on('browser:state', handler)
     return () => ipcRenderer.removeListener('browser:state', handler)

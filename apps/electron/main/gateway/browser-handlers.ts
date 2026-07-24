@@ -54,6 +54,24 @@ export function registerBrowserHandlers(
     manager.focus(sessionId)
   })
 
+  // 历史导航（Wave 5）：后退 / 前进。sessionId 不存在或无法导航时无操作。
+  // 单值 payload（裸 sessionId）。
+  ipcMain.handle('browser:back', (_event, sessionId: string) => {
+    manager.goBack(sessionId)
+  })
+  ipcMain.handle('browser:forward', (_event, sessionId: string) => {
+    manager.goForward(sessionId)
+  })
+
+  // 缩放（Wave 5）：设置 / 读取缩放因子。
+  // set-zoom 用单对象 payload（AGENTS 规则 #1，两个参数）；get-zoom 用裸 sessionId（单参数）。
+  ipcMain.handle('browser:set-zoom', (_event, { sessionId, factor }: { sessionId: string; factor: number }) => {
+    manager.setZoomFactor(sessionId, factor)
+  })
+  ipcMain.handle('browser:get-zoom', (_event, sessionId: string) => {
+    return manager.getZoomFactor(sessionId)
+  })
+
   // 销毁（removeChildView + webContents.destroy）
   ipcMain.handle('browser:destroy', (_event, sessionId: string) => {
     manager.destroy(sessionId)

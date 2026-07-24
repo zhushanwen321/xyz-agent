@@ -27,7 +27,11 @@ const mockBrowserCreate = vi.fn().mockResolvedValue(undefined)
 const mockBrowserNavigate = vi.fn().mockResolvedValue(undefined)
 const mockBrowserHide = vi.fn().mockResolvedValue(undefined)
 const mockBrowserShow = vi.fn().mockResolvedValue(undefined)
+const mockBrowserBack = vi.fn().mockResolvedValue(undefined)
+const mockBrowserForward = vi.fn().mockResolvedValue(undefined)
 const mockBrowserSetRect = vi.fn().mockResolvedValue(undefined)
+const mockBrowserSetZoom = vi.fn().mockResolvedValue(undefined)
+const mockBrowserGetZoom = vi.fn().mockResolvedValue(1.0)
 const mockOnBrowserState = vi.fn().mockReturnValue(() => {})
 const mockOpenExternal = vi.fn().mockResolvedValue(undefined)
 
@@ -36,10 +40,14 @@ vi.mock('@/lib/ipc', () => ({
   browserNavigate: (sessionId: string, url: string) => mockBrowserNavigate(sessionId, url),
   browserHide: (sessionId: string) => mockBrowserHide(sessionId),
   browserShow: (sessionId: string) => mockBrowserShow(sessionId),
+  browserBack: (sessionId: string) => mockBrowserBack(sessionId),
+  browserForward: (sessionId: string) => mockBrowserForward(sessionId),
   browserSetRect: (
     sessionId: string,
     rect: { x: number; y: number; width: number; height: number },
   ) => mockBrowserSetRect(sessionId, rect),
+  browserSetZoom: (sessionId: string, factor: number) => mockBrowserSetZoom(sessionId, factor),
+  browserGetZoom: (sessionId: string) => mockBrowserGetZoom(sessionId),
   onBrowserState: (cb: unknown) => mockOnBrowserState(cb),
   openExternal: (url: string) => mockOpenExternal(url),
 }))
@@ -105,6 +113,80 @@ describe('BrowserPane（Wave 2 + Wave 3）', () => {
     const wrapper = mountPane({ url: 'https://example.com' })
     await wrapper.find('[data-testid="browser-open-external"]').trigger('click')
     expect(mockOpenExternal).toHaveBeenCalledWith('https://example.com')
+    wrapper.unmount()
+  })
+})
+
+describe('BrowserPane（Wave 5 导航 + 安全）', () => {
+  it('back/forward 按钮初始 disabled（canGoBack/canGoForward=false）', () => {
+    const wrapper = mountPane({ url: 'https://example.com' })
+    expect(wrapper.find('[data-testid="browser-back"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="browser-forward"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('点 back 按钮（canGoBack=true 后）→ browserBack(sessionId)', async () => {
+    const wrapper = mountPane({ url: 'https://example.com' })
+    const stateCb = mockOnBrowserState.mock.calls[0][0] as (s: {
+      sessionId: string; currentUrl: string; isLoading: boolean
+      error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+      canGoBack: boolean; canGoForward: boolean
+    }) => void
+    // 推 canGoBack=true 启用 back 按钮
+    stateCb({ sessionId: 'sess-1', currentUrl: 'https://example.com', isLoading: false, error: null, canGoBack: true, canGoForward: false })
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-testid="browser-back"]').trigger('click')
+    expect(mockBrowserBack).toHaveBeenCalledWith('sess-1')
+    wrapper.unmount()
+  })
+
+  it('点 forward 按钮（canGoForward=true 后）→ browserForward(sessionId)', async () => {
+    const wrapper = mountPane({ url: 'https://example.com' })
+    const stateCb = mockOnBrowserState.mock.calls[0][0] as (s: {
+      sessionId: string; currentUrl: string; isLoading: boolean
+      error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+      canGoBack: boolean; canGoForward: boolean
+    }) => void
+    stateCb({ sessionId: 'sess-1', currentUrl: 'https://example.com', isLoading: false, error: null, canGoBack: false, canGoForward: true })
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-testid="browser-forward"]').trigger('click')
+    expect(mockBrowserForward).toHaveBeenCalledWith('sess-1')
+    wrapper.unmount()
+  })
+
+  it('点复制按钮 → navigator.clipboard.writeText(url)', async () => {
+    const writeTextSpy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
+    const wrapper = mountPane({ url: 'https://example.com' })
+    await wrapper.find('[data-testid="browser-copy-url"]').trigger('click')
+    expect(writeTextSpy).toHaveBeenCalledWith('https://example.com')
+    writeTextSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('登录墙检测：401 errorCode → 显提示条', async () => {
+    // 拿到 onBrowserState 的 callback，模拟主进程推 401 错误
+    const wrapper = mountPane({ url: 'https://example.com' })
+    const stateCb = mockOnBrowserState.mock.calls[0][0] as (s: {
+      sessionId: string
+      currentUrl: string
+      isLoading: boolean
+      error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+      canGoBack: boolean
+      canGoForward: boolean
+    }) => void
+    // 初始无提示条
+    expect(wrapper.find('[data-testid="browser-login-wall"]').exists()).toBe(false)
+    // 推 401 错误
+    stateCb({
+      sessionId: 'sess-1',
+      currentUrl: 'https://example.com/login',
+      isLoading: false,
+      error: { errorCode: 401, errorDescription: 'Unauthorized', validatedURL: 'https://example.com' },
+      canGoBack: false,
+      canGoForward: false,
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="browser-login-wall"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

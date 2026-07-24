@@ -23,11 +23,10 @@
     <!-- 导航栏骨架 -->
     <div class="flex-shrink-0 border-b border-border">
       <div class="flex items-center gap-1 px-2 py-1.5">
-        <!-- back/forward 占位：Wave 2 不接 history，先 disabled -->
-        <Button variant="ghost" size="icon" disabled data-testid="browser-back" class="size-7" :title="t('panel.browserPane.back')">
+        <Button variant="ghost" size="icon" :disabled="!canGoBack" data-testid="browser-back" class="size-7" :title="t('panel.browserPane.back')" @click="goBack">
           <ArrowLeft />
         </Button>
-        <Button variant="ghost" size="icon" disabled data-testid="browser-forward" class="size-7" :title="t('panel.browserPane.forward')">
+        <Button variant="ghost" size="icon" :disabled="!canGoForward" data-testid="browser-forward" class="size-7" :title="t('panel.browserPane.forward')" @click="goForward">
           <ArrowRight />
         </Button>
         <Button variant="ghost" size="icon" data-testid="browser-reload" class="size-7" :title="t('panel.browserPane.reload')" @click="reload">
@@ -41,6 +40,18 @@
           <Lock v-if="isSecure" class="size-3 text-success" />
           <span class="truncate font-mono text-[11px] text-fg">{{ displayUrl || 'about:blank' }}</span>
         </div>
+        <!-- 复制链接 -->
+        <Button
+          variant="ghost"
+          size="icon"
+          data-testid="browser-copy-url"
+          class="size-7"
+          :title="t('panel.browserPane.copyUrl')"
+          :disabled="!displayUrl"
+          @click="copyUrl"
+        >
+          <component :is="copied ? Check : Copy" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -53,6 +64,22 @@
           <ExternalLink />
         </Button>
       </div>
+    </div>
+
+    <!-- 登录墙提示（spec §4.2：检测 401/403 → 醒目提示条 + 系统浏览器出口）-->
+    <div
+      v-if="loginRequired"
+      class="flex flex-shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 py-2"
+      data-testid="browser-login-wall"
+    >
+      <AlertCircle class="size-4 flex-shrink-0 text-warning" />
+      <div class="min-w-0 flex-1">
+        <p class="text-[12px] font-medium text-warning">{{ t('panel.browserPane.loginRequired') }}</p>
+        <p class="truncate text-[11px] text-muted">{{ t('panel.browserPane.loginHint') }}</p>
+      </div>
+      <Button variant="ghost" size="sm" class="flex-shrink-0" @click="openInExternal">
+        <ExternalLink class="size-3" />
+      </Button>
     </div>
 
     <!-- viewport 区域（Wave 3：主进程 WebContentsView 经 setRect 定位到本元素的位置/尺寸，
@@ -107,7 +134,7 @@
  * - windowId：从 URLSearchParams(window.location.search).get('windowId') 读（主窗口 URL 是 ?windowId=win-1，
  *   由 window-factory 注入）。项目无现成 getCurrentWindowId 工具，用 URLSearchParams 最简。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
@@ -117,6 +144,8 @@ import {
   ExternalLink,
   AlertCircle,
   Globe,
+  Copy,
+  Check,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
@@ -124,10 +153,13 @@ import {
   browserNavigate,
   browserHide,
   browserShow,
+  browserBack,
+  browserForward,
   browserSetRect,
   onBrowserState,
   openExternal,
 } from '@/lib/ipc'
+import { useBrowserZoom } from '@/composables/features/useBrowserZoom'
 
 /** 主进程推送的 browser 加载错误结构（与 BrowserViewState.error 对齐） */
 interface BrowserLoadError {
@@ -135,6 +167,13 @@ interface BrowserLoadError {
   errorDescription: string
   validatedURL: string
 }
+
+/** HTTP 401 Unauthorized（登录墙检测） */
+const HTTP_UNAUTHORIZED = 401
+/** HTTP 403 Forbidden（登录墙检测，权限不足也常因未登录） */
+const HTTP_FORBIDDEN = 403
+/** 复制成功反馈显示时长（ms） */
+const COPY_FEEDBACK_MS = 2000
 
 const props = defineProps<{
   /** widget 订阅的 session 标识（与 SideDrawer sessionId 一致，作 WebContentsView key） */
@@ -154,6 +193,22 @@ const displayUrl = ref<string>(props.url)
 const isLoading = ref<boolean>(Boolean(props.url))
 /** 最近一次加载错误（成功导航后清空） */
 const error = ref<BrowserLoadError | null>(null)
+/** 是否可后退（主进程 navigationHistory.canGoBack 回传，控制 back 按钮 disabled） */
+const canGoBack = ref<boolean>(false)
+/** 是否可前进 */
+const canGoForward = ref<boolean>(false)
+/** 复制成功反馈（点复制后 2s 内显 Check icon） */
+const copied = ref<boolean>(false)
+
+/** 缩放管理（Wave 5）：zoomFactor 状态 + Cmd+/-/0 快捷键 + 主进程 IPC 同步 */
+const { onZoomKeydown } = useBrowserZoom(toRef(props, 'sessionId'))
+
+/** 登录墙检测（spec §4.2）：HTTP 401/403 errorCode → 显提示条。
+ * did-fail-load 的 errorCode 对应 HTTP 状态码（-3=ABORTED 已在主进程过滤）。 */
+const LOGIN_ERROR_CODES = new Set([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN])
+const loginRequired = computed<boolean>(() =>
+  error.value !== null && LOGIN_ERROR_CODES.has(error.value.errorCode),
+)
 
 /** 是否 https（地址栏锁标） */
 const isSecure = computed(() => displayUrl.value.startsWith('https://'))
@@ -246,6 +301,8 @@ onMounted(() => {
   }
   // window resize（拖窗口，高频）：ResizeObserver 不一定捕获（元素尺寸可能不变但位置变）
   window.addEventListener('resize', scheduleRectPush)
+  // 缩放快捷键（Cmd/Ctrl +/-/0）
+  window.addEventListener('keydown', onZoomKeydown)
 
   // 有 url：先 pushRect（更新 lastRect）再 navigate + show（show 时 setBounds(lastRect) 定位到正确位置）。
   // nextTick 确保 DOM 布局完成（getBoundingClientRect 才有真实值）。
@@ -257,12 +314,14 @@ onMounted(() => {
     }
   })
 
-  // 订阅状态推送（地址栏真实 URL 回填 + loading/error 态）。仅处理本 sessionId 的推送。
+  // 订阅状态推送（地址栏真实 URL 回填 + loading/error/canGoBack/canGoForward 态）。仅处理本 sessionId。
   unsubscribe = onBrowserState((state) => {
     if (state.sessionId !== props.sessionId) return
     if (state.currentUrl) displayUrl.value = state.currentUrl
     isLoading.value = state.isLoading
     error.value = state.error
+    canGoBack.value = state.canGoBack
+    canGoForward.value = state.canGoForward
   })
 })
 
@@ -273,6 +332,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   window.removeEventListener('resize', scheduleRectPush)
+  window.removeEventListener('keydown', onZoomKeydown)
   if (rectRafId !== null) {
     cancelAnimationFrame(rectRafId)
     rectRafId = null
@@ -280,6 +340,31 @@ onBeforeUnmount(() => {
   unsubscribe?.()
   unsubscribe = null
 })
+
+/** 后退（主进程 navigationHistory.goBack） */
+function goBack(): void {
+  void browserBack(props.sessionId)
+}
+
+/** 前进（主进程 navigationHistory.goForward） */
+function goForward(): void {
+  void browserForward(props.sessionId)
+}
+
+/** 复制当前 URL 到剪贴板（spec §4.2 复制链接）。2s 内显 Check 反馈。
+ * 失败静默（clipboard API 可能被权限策略拦截，非关键路径不阻塞 UI）。 */
+function copyUrl(): void {
+  const target = displayUrl.value || props.url
+  if (!target) return
+  navigator.clipboard.writeText(target).then(() => {
+    copied.value = true
+    window.setTimeout(() => {
+      copied.value = false
+    }, COPY_FEEDBACK_MS)
+  }).catch(() => {
+    /* 剪贴板失败静默：非关键路径，不阻塞 UI */
+  })
+}
 
 /** 重载当前 URL */
 function reload(): void {

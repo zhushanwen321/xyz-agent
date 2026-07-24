@@ -62,6 +62,10 @@ export interface BrowserViewState {
   isLoading: boolean
   /** 最近一次加载错误（did-fail-load 记录；成功导航后清空） */
   error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+  /** 是否可后退（did-navigate 等事件后同步 webContents.navigationHistory，供 renderer 更新 back 按钮 disabled 态） */
+  canGoBack: boolean
+  /** 是否可前进 */
+  canGoForward: boolean
 }
 
 /** 单个 sessionId 对应的托管条目 */
@@ -162,6 +166,8 @@ export class BrowserViewManager {
       currentUrl: '',
       isLoading: false,
       error: null,
+      canGoBack: false,
+      canGoForward: false,
     }
     this.bindWebContentsEvents(view, state, sessionId)
 
@@ -310,12 +316,94 @@ export class BrowserViewManager {
   }
 
   /**
+   * 是否可后退。sessionId 不存在返回 false。
+   *
+   * [HISTORICAL] Electron 42 的 webContents.canGoBack() 已废弃，
+   * 用 webContents.navigationHistory.canGoBack()。
+   */
+  canGoBack(sessionId: string): boolean {
+    const entry = this.views.get(sessionId)
+    return entry ? entry.view.webContents.navigationHistory.canGoBack() : false
+  }
+
+  /**
+   * 是否可前进。sessionId 不存在返回 false。
+   *
+   * [HISTORICAL] Electron 42 的 webContents.canGoForward() 已废弃，
+   * 用 webContents.navigationHistory.canGoForward()。
+   */
+  canGoForward(sessionId: string): boolean {
+    const entry = this.views.get(sessionId)
+    return entry ? entry.view.webContents.navigationHistory.canGoForward() : false
+  }
+
+  /**
+   * 后退。sessionId 不存在或无法后退时无操作。
+   *
+   * [HISTORICAL] Electron 42 的 webContents.goBack() 已废弃，
+   * 用 webContents.navigationHistory.goBack()。isDestroyed 守卫防 webContents 已销毁时报错。
+   */
+  goBack(sessionId: string): void {
+    const entry = this.views.get(sessionId)
+    if (!entry) return
+    const wc = entry.view.webContents
+    if (!wc.isDestroyed() && wc.navigationHistory.canGoBack()) {
+      wc.navigationHistory.goBack()
+    }
+  }
+
+  /**
+   * 前进。sessionId 不存在或无法前进时无操作。
+   *
+   * [HISTORICAL] Electron 42 的 webContents.goForward() 已废弃，
+   * 用 webContents.navigationHistory.goForward()。isDestroyed 守卫防 webContents 已销毁时报错。
+   */
+  goForward(sessionId: string): void {
+    const entry = this.views.get(sessionId)
+    if (!entry) return
+    const wc = entry.view.webContents
+    if (!wc.isDestroyed() && wc.navigationHistory.canGoForward()) {
+      wc.navigationHistory.goForward()
+    }
+  }
+
+  /**
+   * 设置缩放因子（1.0=100%，1.25=125%，0.75=75%）。
+   * sessionId 不存在或 webContents 已销毁时无操作。
+   *
+   * [HISTORICAL] setZoomFactor 单位是因子（1.0=100%），不是百分比；负值会被 Chromium 忽略。
+   */
+  setZoomFactor(sessionId: string, factor: number): void {
+    const entry = this.views.get(sessionId)
+    if (!entry) return
+    const wc = entry.view.webContents
+    if (!wc.isDestroyed()) {
+      wc.setZoomFactor(factor)
+    }
+  }
+
+  /**
+   * 读取当前缩放因子。sessionId 不存在或 webContents 已销毁返回 1.0（默认）。
+   */
+  getZoomFactor(sessionId: string): number {
+    const entry = this.views.get(sessionId)
+    if (!entry) return 1.0
+    const wc = entry.view.webContents
+    return wc.isDestroyed() ? 1.0 : wc.getZoomFactor()
+  }
+
+  /**
    * 绑定 webContents 事件到 state 暂存，并经 onStateChange 回调推送 renderer。
    * 抽出方法便于复用 + 单测可观察 state 变化。
    */
   private bindWebContentsEvents(view: WebContentsView, state: BrowserViewState, sessionId: string): void {
     const wc = view.webContents
     const notify = (): void => {
+      // 同步导航历史状态（back/forward 按钮 disabled 态）。
+      // [HISTORICAL] Electron 42 的 webContents.canGoBack() / goBack() 等已废弃，
+      // 必须用 webContents.navigationHistory.canGoBack() / goBack()。
+      state.canGoBack = wc.navigationHistory.canGoBack()
+      state.canGoForward = wc.navigationHistory.canGoForward()
       this.onStateChange?.(sessionId, state)
     }
     wc.on('did-start-loading', () => {
