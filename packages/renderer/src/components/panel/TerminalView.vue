@@ -66,6 +66,16 @@ import { Button } from '@/components/ui/button'
 import { useTerminal } from '@/composables/features/useTerminal'
 import { useSessionStore } from '@/stores/session'
 import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useSettingsStore } from '@/stores/settings'
+
+/**
+ * xterm 默认字体栈（canvas 渲染，不能用 CSS 变量 var()——canvas 不解析）。
+ * 项目首选 JetBrains Mono 但未加载 webfont，canvas 回退到系统等宽字体 Menlo（macOS）/ Monaco。
+ * 用户可在 Settings → Terminal 用 fontFamily 覆盖。
+ */
+const DEFAULT_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace'
+const DEFAULT_FONT_SIZE = 13
+const DEFAULT_SCROLLBACK = 5000
 import '@xterm/xterm/css/xterm.css'
 
 const props = defineProps<{ sessionId: string | null }>()
@@ -76,12 +86,25 @@ const xtermContainer = ref<HTMLDivElement | null>(null)
 const terminal = useTerminal(toRef(props, 'sessionId'))
 const state = terminal.current
 const composerInjection = useComposerInjectionStore()
+const settingsStore = useSettingsStore()
+
+/** 从 settings store 的 terminalConfig 解析 xterm 渲染选项。config 未加载时用默认值。 */
+function resolveXtermFontOptions() {
+  const cfg = settingsStore.terminalConfig?.config
+  return {
+    fontFamily: cfg && cfg.fontFamily.trim() !== '' ? cfg.fontFamily : DEFAULT_FONT_FAMILY,
+    fontSize: cfg?.fontSize ?? DEFAULT_FONT_SIZE,
+    scrollback: cfg?.scrollback ?? DEFAULT_SCROLLBACK,
+    cursorStyle: cfg?.cursorStyle ?? 'bar',
+  }
+}
 
 // Phase 4 联动 1：选区浮动按钮状态
 const hasSelection = ref(false)
 const selectionPos = ref({ top: 0, left: 0 })
 
 let xterm: Terminal | null = null
+let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 // scrollback 回放标记：mount 后把 buffer 全量 write 一次，之后只 write 增量
 let replayedScrollbackLength = 0
@@ -98,12 +121,14 @@ function initXterm(): FitAddon | null {
   if (!xtermContainer.value || xterm) return null
 
   const fit = new FitAddon()
+  fitAddon = fit
+  const fontOpts = resolveXtermFontOptions()
   const term = new Terminal({
-    fontSize: 13,
-    fontFamily: 'var(--font-mono, Menlo, Monaco, "Courier New", monospace)',
-    cursorStyle: 'bar',
+    fontSize: fontOpts.fontSize,
+    fontFamily: fontOpts.fontFamily,
+    cursorStyle: fontOpts.cursorStyle,
     cursorBlink: true,
-    scrollback: 5000,
+    scrollback: fontOpts.scrollback,
     allowProposedApi: true,
   })
   term.loadAddon(fit)
@@ -223,6 +248,7 @@ onBeforeUnmount(() => {
   resizeObserver = null
   xterm?.dispose()
   xterm = null
+  fitAddon = null
   replayedScrollbackLength = 0
 })
 
@@ -231,6 +257,27 @@ watch(
   () => state.value.scrollback.length,
   () => {
     if (xterm) replayScrollback()
+  },
+)
+
+// Settings → Terminal 配置变化（字体/字号/scrollback/cursorStyle）：动态应用到已挂载的 xterm。
+// mount 时若 config 尚未加载（null），会用默认值 init；config 广播到达后此处补偿更新。
+watch(
+  () => settingsStore.terminalConfig,
+  () => {
+    if (!xterm) return
+    const opts = resolveXtermFontOptions()
+    xterm.options.fontSize = opts.fontSize
+    xterm.options.fontFamily = opts.fontFamily
+    xterm.options.scrollback = opts.scrollback
+    xterm.options.cursorStyle = opts.cursorStyle
+    // 字号/字体变化后 cell 尺寸变，需重新 fit 同步 PTY resize
+    try {
+      fitAddon?.fit()
+    } catch (e) {
+      // best-effort：config 变化时容器若未渲染（如 tab 不可见）fit 抛错，降级为不调整——下次可见时 ResizeObserver 补偿
+      console.debug('[terminal] refit skipped after config change', e)
+    }
   },
 )
 
@@ -243,6 +290,7 @@ watch(
     resizeObserver?.disconnect()
     xterm?.dispose()
     xterm = null
+    fitAddon = null
     replayedScrollbackLength = 0
     await nextTick()
     const fit2 = initXterm()

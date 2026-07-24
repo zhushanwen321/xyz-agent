@@ -10,8 +10,9 @@
  * 4. destroyPty：session 销毁时 kill + 清理
  *
  * shell 解析（Phase 6）：
- *   config.terminal.json 的 shell 字段（deps.configService 注入）→ fallback $SHELL
- *   → '/bin/bash'（win: 'powershell.exe'）。仅对新 spawn 的 PTY 生效。
+ *   config.terminal.json 的 shell 字段（deps.configService 注入）→ fallback 登录 shell
+ *   （macOS: dscl 读 UserShell；Linux: $SHELL）→ '/bin/bash'（win: 'powershell.exe'）。
+ *   仅对新 spawn 的 PTY 生效。
  *
  * 错误模式：扁平 `Object.assign(new Error(msg), { code })`（仿 worktree-service），
  * code 为 TerminalErrorCode。write/resize/kill/attach 对不存在 sid 是 no-op（不抛错）。
@@ -19,6 +20,7 @@
  * 日志：直接用 console.*（initLogger 已 patch 全局，tee 到文件，见架构约定 #4）。
  */
 import * as pty from 'node-pty'
+import { execFileSync } from 'node:child_process'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ITerminalService } from '../ports/terminal-service.js'
 
@@ -159,12 +161,17 @@ export class TerminalService implements ITerminalService {
   }
 
   /**
-   * 解析 shell：优先 config.terminal.json 的 shell 字段，其次 $SHELL 环境变量，最后平台默认。
+   * 解析 shell：优先 config.terminal.json 的 shell 字段，其次用户真实登录 shell，最后平台默认。
    * 登录 shell（非 config 路径）加 -l（加载 ~/.zshrc / ~/.bash_profile，让别名/PATH 生效）。
+   *
+   * [HISTORICAL] 不信 $SHELL 环境变量：Electron 从 GUI（Dock/Finder）启动时，process.env.SHELL
+   * 继承自 launchd，是 macOS 历史默认的 /bin/bash，不反映用户 chsh 后的登录 shell。导致用户
+   * 明明 chsh 成了 zsh，drawer 终端仍启动 bash 3.2，触发 bash 4+ 脚本（如 sdkman）报
+   * bad substitution。macOS 正确做法是用 dscl 读 /Users/$USER 的 UserShell 记录。
    */
   private resolveShell(): { shell: string; shellArgs: string[] } {
-    // Phase 6：读 terminal config（config 缺失或读取失败时 fallback 环境变量）。
-    // configService 可选——测试构造时不传，走环境变量 fallback。
+    // Phase 6：读 terminal config（config 缺失或读取失败时 fallback 登录 shell）。
+    // configService 可选——测试构造时不传，走 fallback。
     try {
       const cfg = this.deps.configService?.getTerminalConfig()
       if (cfg && cfg.config.shell.trim() !== '') {
@@ -172,15 +179,22 @@ export class TerminalService implements ITerminalService {
         return { shell: cfg.config.shell, shellArgs: cfg.config.shellArgs }
       }
     } catch (e) {
-      // best-effort：config 读取失败（文件损坏/IO 错误）降级到 $SHELL 环境变量——不阻塞 PTY 启动
-      console.warn('[terminal] read terminal config failed, falling back to $SHELL', e)
+      // best-effort：config 读取失败（文件损坏/IO 错误）降级到登录 shell——不阻塞 PTY 启动
+      console.warn('[terminal] read terminal config failed, falling back to login shell', e)
     }
     if (process.platform === 'win32') {
       return { shell: 'powershell.exe', shellArgs: [] }
     }
+    // macOS：用 dscl 读真实登录 shell（不信 GUI 继承的 $SHELL，见方法注释 [HISTORICAL]）
+    if (process.platform === 'darwin') {
+      const loginShell = readDarwinLoginShell()
+      if (loginShell) {
+        return { shell: loginShell, shellArgs: ['-l'] }
+      }
+    }
+    // Linux / dscl 失败：fallback $SHELL
     const shell = process.env.SHELL
     if (shell && shell.trim() !== '') {
-      // 登录 shell 加 -l（加载 ~/.zshrc / ~/.bash_profile，让别名/PATH 生效）
       return { shell, shellArgs: ['-l'] }
     }
     return { shell: '/bin/bash', shellArgs: ['-l'] }
@@ -196,5 +210,26 @@ export class TerminalService implements ITerminalService {
     // TERM 让终端应用（vim/htop）正确渲染
     env.TERM = env.TERM || 'xterm-256color'
     return env
+  }
+}
+
+/**
+ * 读取 macOS 当前用户的真实登录 shell（chsh 后的设置）。
+ * 用 dscl 查 UserShell 记录，而非信 GUI 应用继承的 $SHELL（launchd 历史默认 /bin/bash）。
+ * 失败（dscl 不存在/非 macOS/记录缺失）返回空串，由调用方走 $SHELL fallback。
+ */
+function readDarwinLoginShell(): string {
+  try {
+    const out = execFileSync('dscl', ['.', '-read', `/Users/${process.env.USER}`, 'UserShell'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    })
+    // 输出形如 "UserShell: /bin/zsh"
+    const match = out.match(/UserShell:\s*(\S+)/)
+    const shell = match?.[1]?.trim() ?? ''
+    return shell
+  } catch {
+    return ''
   }
 }
