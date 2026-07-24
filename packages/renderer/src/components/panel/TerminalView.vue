@@ -67,6 +67,7 @@ import { useTerminal } from '@/composables/features/useTerminal'
 import { useSessionStore } from '@/stores/session'
 import { useComposerInjectionStore } from '@/stores/composer-injection'
 import { useSettingsStore } from '@/stores/settings'
+import { darkTerminalTheme } from '@/composables/terminal/terminal-themes'
 
 /**
  * xterm 默认字体栈（canvas 渲染，不能用 CSS 变量 var()——canvas 不解析）。
@@ -130,6 +131,7 @@ function initXterm(): FitAddon | null {
     cursorBlink: true,
     scrollback: fontOpts.scrollback,
     allowProposedApi: true,
+    theme: darkTerminalTheme,
   })
   term.loadAddon(fit)
   term.loadAddon(new WebLinksAddon())
