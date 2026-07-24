@@ -74,7 +74,14 @@ export class TerminalService implements ITerminalService {
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      console.error(`[terminal] spawn failed: sid=${sid} shell=${shell}`, e)
+      // 序列化 Error 关键属性为 plain object 再传 logger：直接传 Error 实例会被 JSON.stringify 成 {}，
+      // 丢失 message/stack/code（logger monkey-patch 了 console，走 JSON 序列化），
+      // 导致 spawn 失败时日志看不出真实原因（node-pty 的笼统 'posix_spawnp failed.' 难以诊断）。
+      const errInfo =
+        e instanceof Error
+          ? { message: e.message, stack: e.stack, ...('code' in e ? { code: (e as Error & { code: unknown }).code } : {}) }
+          : { value: String(e) }
+      console.error(`[terminal] spawn failed: sid=${sid} shell=${shell}`, errInfo)
       throw terminalError('spawn_failed', `Failed to spawn terminal: ${msg}`)
     }
 
