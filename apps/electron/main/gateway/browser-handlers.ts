@@ -52,4 +52,13 @@ export function registerBrowserHandlers(
   ipcMain.handle('browser:destroy', (_event, sessionId: string) => {
     manager.destroy(sessionId)
   })
+
+  // 设置 view 位置/尺寸（renderer 推送，CSS px = DIP，不乘 dpr）。
+  // 单对象 payload（AGENTS 规则 #1）：{ sessionId, rect }。
+  ipcMain.handle(
+    'browser:set-rect',
+    (_event, { sessionId, rect }: { sessionId: string; rect: { x: number; y: number; width: number; height: number } }) => {
+      manager.setRect(sessionId, rect)
+    },
+  )
 }

@@ -1,18 +1,23 @@
 <template>
   <!--
-    BrowserPane —— 嵌入式浏览器面板（Browser Drawer Wave 2）。
+    BrowserPane —— 嵌入式浏览器面板（Browser Drawer Wave 2 + Wave 3）。
 
     挂在 SideDrawer 的 browser tab，点击 agent 输出的 http(s) 链接 → drawer.open('browser',{url})
-    → SideDrawer 显本组件 → onMounted 创建 WebContentsView（主进程）+ 加载 url + show。
+    → SideDrawer 显本组件 → onMounted 创建 WebContentsView（主进程）+ pushRect（推 viewport 元素位置/尺寸）
+    + 加载 url + show。主进程 view 经 setBounds 定位到本组件 browser-vp 元素，覆盖渲染真实页面。
     主进程 webContents 事件经 onBrowserState 推回，更新地址栏真实 URL（防钓鱼）+ loading/error 态。
 
     Wave 2 最小闭环：
     - 导航栏骨架（back/forward 占位 disabled，reload 可用，外链导出降级到系统浏览器）
-    - viewport 占位区（Wave 3 接 rect 同步，Wave 2 仅状态占位）
     - 加载 / 错误 / 空态三态切换
 
+    Wave 3 rect 同步：
+    - ResizeObserver + window resize + rAF + 33ms 节流推 viewport 元素 rect 给主进程 setRect
+    - show 前先 pushRect（否则 lastRect 是 HIDDEN_RECT，show 后 view 在 0,0,0,0）
+    - [HISTORICAL] rect 不乘 devicePixelRatio（setBounds 用 DIP，与 CSS px 1:1）
+
     安全：WebContentsView 由主进程创建，零信任 webPreferences（contextIsolation + sandbox），
-    本组件不接触 webContents，只经 IPC 触发 create/navigate/hide/show。
+    本组件不接触 webContents，只经 IPC 触发 create/navigate/hide/show/setRect。
   -->
   <div class="flex h-full flex-col" data-testid="browser-pane">
     <!-- 导航栏骨架 -->
@@ -50,8 +55,8 @@
       </div>
     </div>
 
-    <!-- viewport 占位区（Wave 3 接 rect 同步：主进程 setBounds 用此元素的位置/尺寸）。
-         Wave 2 仅渲染加载 / 错误 / 空态三态，真实页面由主进程 WebContentsView 覆盖渲染。-->
+    <!-- viewport 区域（Wave 3：主进程 WebContentsView 经 setRect 定位到本元素的位置/尺寸，
+         真实页面由主进程 view 覆盖渲染；本组件仅渲染加载 / 错误 / 空态覆盖层）。-->
     <div ref="viewportEl" class="relative min-h-0 flex-1 bg-bg" data-testid="browser-vp">
       <!-- 加载态 -->
       <div
@@ -91,16 +96,18 @@
 
 <script setup lang="ts">
 /**
- * BrowserPane 脚本：生命周期 + 状态订阅。
+ * BrowserPane 脚本：生命周期 + rect 同步 + 状态订阅。
  *
  * 流程：
- * - onMounted：browserCreate(sessionId, windowId) → 若 url：browserNavigate + browserShow → 订阅 onBrowserState
- * - onBeforeUnmount：browserHide（keep-alive，不 destroy）
+ * - onMounted：browserCreate → 注册 ResizeObserver + window resize → nextTick：pushRect（更新 lastRect）
+ *   → 若 url：browserNavigate + browserShow（show setBounds(lastRect) 定位到正确位置）→ 订阅 onBrowserState
+ * - onBeforeUnmount：browserHide（keep-alive，不 destroy）+ 清理 rect 同步监听 + 取消订阅
+ * - pushRect：getBoundingClientRect()（CSS px）→ browserSetRect（[HISTORICAL] 不乘 dpr）
  * - onBrowserState：更新 displayUrl（真实 URL，防钓鱼）+ isLoading + error
  * - windowId：从 URLSearchParams(window.location.search).get('windowId') 读（主窗口 URL 是 ?windowId=win-1，
  *   由 window-factory 注入）。项目无现成 getCurrentWindowId 工具，用 URLSearchParams 最简。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
@@ -117,6 +124,7 @@ import {
   browserNavigate,
   browserHide,
   browserShow,
+  browserSetRect,
   onBrowserState,
   openExternal,
 } from '@/lib/ipc'
@@ -137,7 +145,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-/** viewport 容器 ref（Wave 3 接 rect 同步用，Wave 2 仅占位） */
+/** viewport 容器 ref（Wave 3：主进程 WebContentsView 经 setRect 定位到该元素的位置/尺寸） */
 const viewportEl = ref<HTMLElement | null>(null)
 
 /** 地址栏显示 URL：初始 = props.url，由 onBrowserState 更新为真实 URL（防钓鱼） */
@@ -163,6 +171,66 @@ function getCurrentWindowId(): string {
   }
 }
 
+// ── rect 同步（Wave 3）──────────────────────────────────────────────
+// ResizeObserver 监听 viewport 尺寸变化（drawer 开合/模式切换），window resize 监听拖窗口
+// （元素尺寸可能不变但位置变）。rAF 合并同帧多次触发 + 时间节流下限（降到 ~30fps，避免高频 IPC 阻塞主进程）。
+
+/** rect 推送节流间隔（ms）。~30fps 足够视觉连续，避免 60fps 同步 IPC 阻塞主进程单线程 */
+const RECT_PUSH_THROTTLE_MS = 33
+/** 上次推 rect 的时间戳（时间节流） */
+let lastRectPushTs = 0
+/** 待推的 rAF id（null 表示无待执行帧） */
+let rectRafId: number | null = null
+/** viewport 尺寸监听器（onBeforeUnmount disconnect） */
+let resizeObserver: ResizeObserver | null = null
+
+/**
+ * 算 viewport 元素的 rect 并推给主进程 setBounds。
+ * [HISTORICAL] 不乘 devicePixelRatio——setBounds 用 DIP，与 CSS px 1:1。
+ * 乘 dpr 在 retina 屏会导致 view 定位屏外 + 尺寸翻倍。
+ */
+function pushRect(): void {
+  const el = viewportEl.value
+  if (!el) return
+  const domRect = el.getBoundingClientRect()
+  const rect = {
+    x: Math.round(domRect.x),
+    y: Math.round(domRect.y),
+    width: Math.round(domRect.width),
+    height: Math.round(domRect.height),
+  }
+  // 跳过 0 尺寸（隐藏中/未布局），避免把 view 设成 0,0,0,0 等效隐藏
+  if (rect.width === 0 || rect.height === 0) return
+  void browserSetRect(props.sessionId, rect)
+}
+
+/**
+ * 节流推 rect：rAF 合并同帧 + 33ms 时间下限。
+ * 拖窗口 resize 每秒可触发 60 次，不加时间下限会让同步 IPC 阻塞主进程。
+ * 节流窗口内的最后一次变化用 setTimeout 兜底，避免丢失。
+ */
+function scheduleRectPush(): void {
+  const now = Date.now()
+  if (now - lastRectPushTs < RECT_PUSH_THROTTLE_MS) {
+    // 节流窗口内：setTimeout 兜底，保证窗口结束后再推一次（避免最后一次 resize 丢失）
+    window.setTimeout(() => {
+      if (rectRafId !== null) return // 已有 rAF 在路上，让它推
+      rectRafId = requestAnimationFrame(() => {
+        rectRafId = null
+        lastRectPushTs = Date.now()
+        pushRect()
+      })
+    }, RECT_PUSH_THROTTLE_MS - (now - lastRectPushTs))
+    return
+  }
+  if (rectRafId !== null) return // 已有待执行 rAF
+  rectRafId = requestAnimationFrame(() => {
+    rectRafId = null
+    lastRectPushTs = Date.now()
+    pushRect()
+  })
+}
+
 /** onBrowserState 取消订阅函数（onBeforeUnmount 调） */
 let unsubscribe: (() => void) | null = null
 
@@ -171,11 +239,23 @@ onMounted(() => {
   // 创建 WebContentsView（attach 到主窗口，初始隐藏）。幂等：已存在则主进程复用。
   void browserCreate(props.sessionId, windowId)
 
-  // 有初始 url：导航 + 显示
-  if (props.url) {
-    void browserNavigate(props.sessionId, props.url)
-    void browserShow(props.sessionId)
+  // rect 同步：ResizeObserver 监听 viewport 尺寸变化（drawer 开合/模式切换）
+  if (viewportEl.value) {
+    resizeObserver = new ResizeObserver(() => scheduleRectPush())
+    resizeObserver.observe(viewportEl.value)
   }
+  // window resize（拖窗口，高频）：ResizeObserver 不一定捕获（元素尺寸可能不变但位置变）
+  window.addEventListener('resize', scheduleRectPush)
+
+  // 有 url：先 pushRect（更新 lastRect）再 navigate + show（show 时 setBounds(lastRect) 定位到正确位置）。
+  // nextTick 确保 DOM 布局完成（getBoundingClientRect 才有真实值）。
+  nextTick(() => {
+    pushRect()
+    if (props.url) {
+      void browserNavigate(props.sessionId, props.url)
+      void browserShow(props.sessionId)
+    }
+  })
 
   // 订阅状态推送（地址栏真实 URL 回填 + loading/error 态）。仅处理本 sessionId 的推送。
   unsubscribe = onBrowserState((state) => {
@@ -189,6 +269,14 @@ onMounted(() => {
 onBeforeUnmount(() => {
   // hide（keep-alive，不 destroy）：切 tab/关 drawer 时隐藏 WebContentsView，下次打开复用。
   void browserHide(props.sessionId)
+  // 清理 rect 同步
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  window.removeEventListener('resize', scheduleRectPush)
+  if (rectRafId !== null) {
+    cancelAnimationFrame(rectRafId)
+    rectRafId = null
+  }
   unsubscribe?.()
   unsubscribe = null
 })

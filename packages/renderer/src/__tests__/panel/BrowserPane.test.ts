@@ -1,5 +1,5 @@
 /**
- * BrowserPane 组件最小 mount 测试（Browser Drawer Wave 2）。
+ * BrowserPane 组件最小 mount 测试（Browser Drawer Wave 2 + Wave 3）。
  *
  * 覆盖：
  * - mount 后 [data-testid=browser-pane] 存在（组件根渲染）
@@ -7,7 +7,13 @@
  * - 无 url 时显空态（Globe icon + 文案）
  * - reload / openInExternal 触发对应 IPC（mock 捕获）
  *
- * mock 策略：vi.mock('@/lib/ipc') 捕获 browserCreate/Navigate/Hide/Show + onBrowserState（返回 no-op 退订），
+ * Wave 3：
+ * - navigate/show 被移入 onMounted 的 nextTick（先 pushRect 再 navigate+show），
+ *   断言需 await wrapper.vm.$nextTick() 才能捕获。
+ * - pushRect 在 nextTick 调 browserSetRect，mock 工厂必须导出 browserSetRect 否则抛错中断 nextTick 回调。
+ * - rect 不乘 dpr：mount 后 browserSetRect 收到 getBoundingClientRect 的 round 值（jsdom 固定 0，故仅验证不抛错 + 被调用）。
+ *
+ * mock 策略：vi.mock('@/lib/ipc') 捕获 browserCreate/Navigate/Hide/Show/SetRect + onBrowserState（返回 no-op 退订），
  *            openExternal 捕获外链导出。useI18n 经 vitest-i18n-setup 全局注入。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/BrowserPane.test.ts
@@ -21,6 +27,7 @@ const mockBrowserCreate = vi.fn().mockResolvedValue(undefined)
 const mockBrowserNavigate = vi.fn().mockResolvedValue(undefined)
 const mockBrowserHide = vi.fn().mockResolvedValue(undefined)
 const mockBrowserShow = vi.fn().mockResolvedValue(undefined)
+const mockBrowserSetRect = vi.fn().mockResolvedValue(undefined)
 const mockOnBrowserState = vi.fn().mockReturnValue(() => {})
 const mockOpenExternal = vi.fn().mockResolvedValue(undefined)
 
@@ -29,6 +36,7 @@ vi.mock('@/lib/ipc', () => ({
   browserNavigate: (...args: unknown[]) => mockBrowserNavigate(...(args as [string, string])),
   browserHide: (...args: unknown[]) => mockBrowserHide(...(args as [string])),
   browserShow: (...args: unknown[]) => mockBrowserShow(...(args as [string])),
+  browserSetRect: (...args: unknown[]) => mockBrowserSetRect(...(args as [string, { x: number; y: number; width: number; height: number }]),
   onBrowserState: (cb: unknown) => mockOnBrowserState(cb),
   openExternal: (url: string) => mockOpenExternal(url),
 }))
@@ -46,16 +54,20 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('BrowserPane（Wave 2）', () => {
+describe('BrowserPane（Wave 2 + Wave 3）', () => {
   it('mount 后渲染 [data-testid=browser-pane] 根节点', () => {
     const wrapper = mountPane({ url: 'https://example.com' })
     expect(wrapper.find('[data-testid="browser-pane"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('有 url 时 onMounted 调 browserCreate + browserNavigate + browserShow', () => {
+  it('有 url 时 onMounted（nextTick 内）调 browserCreate + browserNavigate + browserShow', async () => {
     const wrapper = mountPane({ url: 'https://example.com' })
+    // Wave 3：create 在 onMounted 同步调，navigate/show 在 nextTick 内（先 pushRect 再 navigate+show）。
     expect(mockBrowserCreate).toHaveBeenCalledWith('sess-1', expect.any(String))
+    // 等 nextTick 回调执行（pushRect → navigate → show）
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
     expect(mockBrowserNavigate).toHaveBeenCalledWith('sess-1', 'https://example.com')
     expect(mockBrowserShow).toHaveBeenCalledWith('sess-1')
     // 订阅 onBrowserState

@@ -3,6 +3,7 @@
  *
  * 覆盖 Wave 1 核心生命周期：create / navigate / hide / show / destroy，
  * 以及零信任 webPreferences、下载拦截、状态暂存、destroy 顺序等 [HISTORICAL] 不变量。
+ * Wave 3 覆盖：setRect（rect 同步）+ isVisible 显隐标志（hide 态 setRect 不重显）。
  *
  * Mock 策略：vi.hoisted 创建稳定引用（vi.mock factory 被 hoist，顶层 const 在
  * factory 执行时尚处 TDZ），vi.mock('electron') 注入桩 WebContentsView + session，
@@ -219,6 +220,61 @@ describe('BrowserViewManager', () => {
       const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
       expect(() => mgr.hide('nope')).not.toThrow()
       expect(() => mgr.show('nope')).not.toThrow()
+    })
+  })
+
+  describe('setRect + isVisible（Wave 3）', () => {
+    it('create 后 isVisible=false；show 后 isVisible=true；hide 后=false', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      // 模拟 view 当前真实 rect（show 后 getBounds 返回此值）
+      createdViews[0].getBounds.mockReturnValue({ x: 10, y: 10, width: 200, height: 300 })
+
+      // 初始隐藏：setRect 仅更新 lastRect，不 setBounds（isVisible=false）
+      mgr.setRect('sess-1', { x: 5, y: 5, width: 100, height: 100 })
+      const setBoundsCountAfterSetRect = createdViews[0].setBounds.mock.calls.length
+
+      // show：isVisible=true，setBounds(lastRect=刚推的 rect)
+      mgr.show('sess-1')
+      const showBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
+      expect(showBoundsCall).toEqual({ x: 5, y: 5, width: 100, height: 100 })
+
+      // 可见态 setRect：立即 setBounds（增量调用）
+      mgr.setRect('sess-1', { x: 20, y: 20, width: 300, height: 400 })
+      expect(createdViews[0].setBounds.mock.calls.length).toBeGreaterThan(setBoundsCountAfterSetRect + 1)
+      const lastBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
+      expect(lastBoundsCall).toEqual({ x: 20, y: 20, width: 300, height: 400 })
+
+      // hide：isVisible=false，setBounds(HIDDEN_RECT)
+      mgr.hide('sess-1')
+      const hideBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
+      expect(hideBoundsCall).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+
+      // 隐藏态 setRect：仅更新 lastRect，不 setBounds（防 hide 中 resize 意外重显）
+      const countBeforeHiddenSetRect = createdViews[0].setBounds.mock.calls.length
+      mgr.setRect('sess-1', { x: 50, y: 50, width: 500, height: 600 })
+      expect(createdViews[0].setBounds.mock.calls.length).toBe(countBeforeHiddenSetRect)
+
+      // 再次 show：setBounds(lastRect=隐藏态推的最新 rect)
+      mgr.show('sess-1')
+      const reShowBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
+      expect(reShowBoundsCall).toEqual({ x: 50, y: 50, width: 500, height: 600 })
+    })
+
+    it('setRect 不存在的 session 幂等无操作', () => {
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
+      expect(() => mgr.setRect('nope', { x: 0, y: 0, width: 10, height: 10 })).not.toThrow()
+    })
+
+    it('show 前未推 rect 时 setBounds(HIDDEN_RECT)（create 默认 lastRect）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      // 不调 setRect 直接 show：lastRect 仍是 HIDDEN_RECT
+      mgr.show('sess-1')
+      const showBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
+      expect(showBoundsCall).toEqual({ x: 0, y: 0, width: 0, height: 0 })
     })
   })
 

@@ -23,9 +23,14 @@
  *    （文档：成功 close 后 webContents 被销毁，emit destroyed 事件）。
  *
  * 5. hide = setBounds({0,0,0,0})（keep-alive 不销毁），show 恢复最近 rect。
- *    W1 暂用占位 0,0,0,0（W3 接真实 rect 由 renderer 推送）。
+ *    W3 接 renderer 推送真实 rect：setRect 更新 lastRect + setBounds，
+ *    show/hide 用 isVisible 标志精确切换显隐（hide 态收到 setRect 不会意外重显）。
  *
- * 6. W1 内部用 Map<sessionId, entry>，无 LRU 上限（W4 再加淘汰策略）。
+ * 6. [HISTORICAL] rect 坐标系：setBounds 用 DIP（device-independent pixels），
+ *    与 CSS px 1:1，**绝对不乘 devicePixelRatio**。renderer 的
+ *    getBoundingClientRect() 返回 CSS px，直接透传即可（详见 setRect）。
+ *
+ * 7. W1 内部用 Map<sessionId, entry>，无 LRU 上限（W4 再加淘汰策略）。
  *
  * 状态暂存：webContents 事件（did-navigate / did-fail-load / isLoading）W1 先暂存到
  * manager 内部 entry，W2 经 IPC 回传 renderer。
@@ -53,8 +58,11 @@ export interface BrowserViewState {
 interface ManagedView {
   view: WebContentsView
   windowId: string
-  /** 最近 rect（show 时恢复；W1 恒为 HIDDEN_RECT，W3 由 renderer 推送） */
+  /** 最近 rect（show 时恢复；W3 由 renderer 经 setRect 推送真实 rect） */
   lastRect: Rectangle
+  /** 当前是否可见。create=false，show=true，hide=false。
+   *  setRect 始终更新 lastRect，但仅当 isVisible 才 setBounds（防止隐藏中 resize 把 view 意外重显） */
+  isVisible: boolean
   /** webContents 状态投影 */
   state: BrowserViewState
 }
@@ -92,7 +100,7 @@ export class BrowserViewManager {
   /**
    * 创建 view 并 attach 到指定窗口。
    *
-   * 初始 setBounds({0,0,0,0}) 隐藏（renderer show 前不可见）。
+   * 初始 setBounds({0,0,0,0}) 隐藏（renderer show 前不可见），isVisible=false。
    * 若 sessionId 已存在则幂等复用（不重复创建）。
    */
   create(sessionId: string, windowId: string): void {
@@ -135,7 +143,7 @@ export class BrowserViewManager {
     }
     this.bindWebContentsEvents(view, state, sessionId)
 
-    this.views.set(sessionId, { view, windowId, lastRect: HIDDEN_RECT, state })
+    this.views.set(sessionId, { view, windowId, lastRect: HIDDEN_RECT, isVisible: false, state })
   }
 
   /**
@@ -152,24 +160,47 @@ export class BrowserViewManager {
   }
 
   /**
+   * 设置 view 的位置和尺寸（renderer 推送）。
+   *
+   * [HISTORICAL] rect 坐标系：bounds 单位是 DIP，与 CSS px 1:1，**不乘 devicePixelRatio**。
+   * renderer 的 getBoundingClientRect() 返回 CSS px，直接透传（retina dpr=2 误乘会定位屏外+尺寸翻倍）。
+   *
+   * 行为：始终更新 lastRect（hide 态也记，show 时恢复最新）；
+   * 仅当 isVisible 时 setBounds（隐藏中收到 resize 不会把 view 意外重显——防御性）。
+   * 幂等：sessionId 不存在时无操作。
+   */
+  setRect(sessionId: string, rect: Rectangle): void {
+    const entry = this.views.get(sessionId)
+    if (!entry) return
+    entry.lastRect = rect
+    if (entry.isVisible) {
+      entry.view.setBounds(rect)
+    }
+  }
+
+  /**
    * 隐藏 view（setBounds {0,0,0,0}，keep-alive 不销毁）。
-   * 记录当前 rect 以便 show 恢复（W1 为占位 HIDDEN_RECT）。
+   * 记录当前 getBounds 到 lastRect（show 时恢复）。isVisible 置 false。
+   * 幂等：sessionId 不存在时无操作。
    */
   hide(sessionId: string): void {
     const entry = this.views.get(sessionId)
     if (!entry) return
+    // 记录当前可见 rect（若已隐藏，getBounds 返回 HIDDEN_RECT，无副作用）
     entry.lastRect = entry.view.getBounds()
+    entry.isVisible = false
     entry.view.setBounds(HIDDEN_RECT)
   }
 
   /**
-   * 显示 view（恢复最近 rect）。
-   * W1 lastRect 恒为 HIDDEN_RECT（show 前未设过真实 rect），
-   * W3 接 renderer 推送真实 rect 后此处才有意义。
+   * 显示 view（恢复最近 rect）。isVisible 置 true。
+   * show 前若 setRect 推过真实 rect，lastRect 即真实值；否则为 HIDDEN_RECT。
+   * 幂等：sessionId 不存在时无操作。
    */
   show(sessionId: string): void {
     const entry = this.views.get(sessionId)
     if (!entry) return
+    entry.isVisible = true
     entry.view.setBounds(entry.lastRect)
   }
 

@@ -107,6 +107,20 @@ export function browserShow(sessionId: string): Promise<void> {
   return api?.browserShow(sessionId) ?? Promise.resolve()
 }
 
+/**
+ * 推送 view 的位置/尺寸（rect 同步 Wave 3）。
+ *
+ * [HISTORICAL] rect 坐标系：主进程 setBounds 用 DIP，与 CSS px 1:1，**不乘 devicePixelRatio**。
+ * 调用方传 getBoundingClientRect() 的值（CSS px）即可（retina dpr=2 误乘会定位屏外+尺寸翻倍）。
+ * 无 IPC（web/mock）静默 no-op。
+ */
+export function browserSetRect(
+  sessionId: string,
+  rect: { x: number; y: number; width: number; height: number },
+): Promise<void> {
+  return api?.browserSetRect(sessionId, rect) ?? Promise.resolve()
+}
+
 /** 销毁 view（removeChildView + webContents.close）。无 IPC 时 no-op。 */
 export function browserDestroy(sessionId: string): Promise<void> {
   return api?.browserDestroy(sessionId) ?? Promise.resolve()
