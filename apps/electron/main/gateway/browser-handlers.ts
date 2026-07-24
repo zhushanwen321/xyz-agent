@@ -48,6 +48,12 @@ export function registerBrowserHandlers(
     manager.show(sessionId)
   })
 
+  // 切换可见 view（Wave 4 per-session 隔离）：隐藏当前可见的其他 session view，显示 target session view。
+  // 场景：renderer watch(focusedSessionId) → 切 session 时调，确保屏幕只显示新 session 的 view。
+  ipcMain.handle('browser:focus', (_event, sessionId: string) => {
+    manager.focus(sessionId)
+  })
+
   // 销毁（removeChildView + webContents.destroy）
   ipcMain.handle('browser:destroy', (_event, sessionId: string) => {
     manager.destroy(sessionId)

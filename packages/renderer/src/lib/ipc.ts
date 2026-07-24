@@ -107,6 +107,13 @@ export function browserShow(sessionId: string): Promise<void> {
   return api?.browserShow(sessionId) ?? Promise.resolve()
 }
 
+/** 切换可见 view 到指定 session（Wave 4 per-session 隔离）。
+ * 隐藏当前可见的其他 session view，显示 target session view。切 session 时由 useBrowserFocusSync 调用。
+ * 无 IPC（web/mock）静默 no-op。 */
+export function browserFocus(sessionId: string): Promise<void> {
+  return api?.browserFocus(sessionId) ?? Promise.resolve()
+}
+
 /**
  * 推送 view 的位置/尺寸（rect 同步 Wave 3）。
  *

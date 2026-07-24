@@ -51,6 +51,8 @@ export interface ElectronAPI {
   browserHide(sessionId: string): Promise<void>
   /** 显示 view（恢复最近 rect） */
   browserShow(sessionId: string): Promise<void>
+  /** 切换可见 view 到指定 session（Wave 4：隐藏其他可见 view，显示 target；用于切 session 时 swap） */
+  browserFocus(sessionId: string): Promise<void>
   /** 设置 view 位置/尺寸（CSS px = DIP，不乘 dpr；renderer 经 getBoundingClientRect 推送） */
   browserSetRect(sessionId: string, rect: { x: number; y: number; width: number; height: number }): Promise<void>
   /** 销毁 view（removeChildView + webContents.destroy） */
@@ -120,6 +122,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserNavigate: (sessionId: string, url: string) => ipcRenderer.invoke('browser:navigate', { sessionId, url }),
   browserHide: (sessionId: string) => ipcRenderer.invoke('browser:hide', sessionId),
   browserShow: (sessionId: string) => ipcRenderer.invoke('browser:show', sessionId),
+  browserFocus: (sessionId: string) => ipcRenderer.invoke('browser:focus', sessionId),
   browserSetRect: (sessionId: string, rect: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.invoke('browser:set-rect', { sessionId, rect }),
   browserDestroy: (sessionId: string) => ipcRenderer.invoke('browser:destroy', sessionId),

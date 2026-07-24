@@ -42,6 +42,7 @@ import { Button } from '@/components/ui/button'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useExtensionNotify } from '@/composables/useExtensionUI'
+import { useBrowserFocusSync } from '@/composables/features/useBrowserFocusSync'
 import PanelContainer from './PanelContainer.vue'
 import ExtensionUIDialog from '@/components/extension/ExtensionUIDialog.vue'
 
@@ -50,6 +51,8 @@ const { newSession, focusedSessionId } = useSidebar()
 const flow = useNewTaskFlow()
 // Extension notify → toast（fire-and-forget，非阻塞通知）
 useExtensionNotify(focusedSessionId)
+// Browser drawer view swap：切 session 时通知主进程切换可见 WebContentsView（Wave 4 per-session 隔离）
+useBrowserFocusSync()
 
 /** 是否有焦点 session（决定渲染 panel 还是空态，跟随 panel focus） */
 const hasSession = computed(() => focusedSessionId.value !== null)

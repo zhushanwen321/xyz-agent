@@ -35,14 +35,24 @@
  * 状态暂存：webContents 事件（did-navigate / did-fail-load / isLoading）W1 先暂存到
  * manager 内部 entry，W2 经 IPC 回传 renderer。
  *
- * 依赖方向：browser-view-manager → electron(WebContentsView/session) + interfaces(type-only)
+ * 依赖方向：browser-view-manager → electron(WebContentsView) + interfaces(type-only)
+ * （will-download 拦截用 view.webContents.session 实例属性，不需 electron 的 session 模块导入）
  */
-import { WebContentsView, session } from 'electron'
+import { WebContentsView } from 'electron'
 import type { Rectangle } from 'electron'
 import type { IWindowManager } from '../interfaces.js'
 
 /** 隐藏占位 rect（0,0,0,0） */
 const HIDDEN_RECT: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
+
+/** view 池 LRU 上限。超过时淘汰 lastUsed 最旧的（removeChildView + webContents.close）。
+ * 3 = 最多同时保留 3 个 session 的 view（keep-alive 复用），第 4 个 session 创建时淘汰最旧。
+ * rationale：每个 view 独立 webContents（独立渲染进程），内存开销大；3 是用户实际同时切换的合理上限。 */
+const MAX_VIEWS = 3
+
+/** Chromium net 错误码：ABORTED（-3）。重定向过程中旧请求被新导航抢占时触发，非真错误，需过滤。
+ * 详见 did-fail-load handler 的 [HISTORICAL] 注释。 */
+const ERR_ABORTED = -3
 
 /** 暂存的 view 状态（W2 经 IPC 回传 renderer） */
 export interface BrowserViewState {
@@ -65,6 +75,8 @@ interface ManagedView {
   isVisible: boolean
   /** webContents 状态投影 */
   state: BrowserViewState
+  /** 最近访问时间戳（Date.now()）。LRU 排序依据：create/focus 时更新，evictLRU 淘汰最小值。 */
+  lastUsed: number
 }
 
 /**
@@ -104,8 +116,18 @@ export class BrowserViewManager {
    * 若 sessionId 已存在则幂等复用（不重复创建）。
    */
   create(sessionId: string, windowId: string): void {
-    // 幂等：已存在直接复用，避免重复 attach 造成 view 泄漏
-    if (this.views.has(sessionId)) return
+    // 幂等：已存在直接复用，避免重复 attach 造成 view 泄漏。
+    // 复用即重新访问，更新 lastUsed 提升 LRU 优先级（防最近用的 session 被淘汰）。
+    const existing = this.views.get(sessionId)
+    if (existing) {
+      existing.lastUsed = Date.now()
+      return
+    }
+
+    // 新建前 LRU 淘汰：池满（>=MAX_VIEWS）时淘汰 lastUsed 最旧的 entry。
+    if (this.views.size >= MAX_VIEWS) {
+      this.evictLRU()
+    }
 
     const win = this.windows.get(windowId)
     if (!win) {
@@ -143,7 +165,7 @@ export class BrowserViewManager {
     }
     this.bindWebContentsEvents(view, state, sessionId)
 
-    this.views.set(sessionId, { view, windowId, lastRect: HIDDEN_RECT, isVisible: false, state })
+    this.views.set(sessionId, { view, windowId, lastRect: HIDDEN_RECT, isVisible: false, state, lastUsed: Date.now() })
   }
 
   /**
@@ -227,6 +249,58 @@ export class BrowserViewManager {
   }
 
   /**
+   * LRU 淘汰：找 lastUsed 最小的 entry，调 destroy() 释放。
+   * 仅在 create 超上限时调；destroy 自身不会循环调 evictLRU（destroy 是显式释放，不走 LRU）。
+   * 策略：Map 保持插入顺序，遍历找最小 lastUsed 的 key（不用额外链表，3 个 entry 遍历开销可忽略）。
+   */
+  private evictLRU(): void {
+    if (this.views.size < MAX_VIEWS) return
+    let oldestKey: string | null = null
+    let oldestTs = Infinity
+    for (const [sid, entry] of this.views) {
+      if (entry.lastUsed < oldestTs) {
+        oldestTs = entry.lastUsed
+        oldestKey = sid
+      }
+    }
+    if (oldestKey) {
+      console.log(`[browser-view] LRU evict: ${oldestKey} (pool size ${this.views.size})`)
+      this.destroy(oldestKey)
+    }
+  }
+
+  /**
+   * 切换可见 view 到指定 session（Wave 4 per-session 隔离）。
+   *
+   * 行为：遍历所有 entry，隐藏当前 isVisible=true 的 entry（除 target 外），显示 target。
+   * - 若 target 存在：更新 lastUsed（LRU 提升优先级），isVisible=true，setBounds(lastRect)
+   * - 其他 isVisible=true 的 entry：hide（setBounds HIDDEN_RECT + isVisible=false，keep-alive）
+   * - 若 target 不存在（view 池里没有，如 LRU 被淘汰或从未创建）：仅隐藏所有可见 view，
+   *   renderer 侧 BrowserPane 会经 create + show 重建
+   *
+   * 幂等：target 已是唯一可见 view 时无操作（仅更新 lastUsed）。
+   * 场景：renderer watch(focusedSessionId) → browser:focus(newSid)。切 session 时屏幕只显示新 sid 的 view。
+   */
+  focus(sessionId: string): void {
+    const target = this.views.get(sessionId)
+    // 隐藏所有当前可见的 entry（除 target 外）
+    for (const [sid, entry] of this.views) {
+      if (sid === sessionId) continue
+      if (entry.isVisible) {
+        entry.isVisible = false
+        entry.view.setBounds(HIDDEN_RECT)
+      }
+    }
+    // 显示 target（若存在）
+    if (target) {
+      target.lastUsed = Date.now()
+      target.isVisible = true
+      target.view.setBounds(target.lastRect)
+    }
+    // target 不存在时不报错——renderer 侧 BrowserPane onMounted 会 create + show 重建
+  }
+
+  /**
    * 读取某 session 的状态投影（W2 IPC 回传 renderer 用）。
    * 不存在返回 null。
    */
@@ -263,9 +337,9 @@ export class BrowserViewManager {
       notify()
     })
     wc.on('did-fail-load', (_e, errorCode: number, errorDescription: string, validatedURL: string) => {
-      // [HISTORICAL] -3 ABORTED：重定向过程中的正常取消（被新导航抢占），非真错误，过滤。
+      // [HISTORICAL] ERR_ABORTED(-3)：重定向过程中的正常取消（被新导航抢占），非真错误，过滤。
       // 不过滤会让重定向中闪现的 ABORTED 把 BrowserPane 切到错误态。
-      if (errorCode === -3) return
+      if (errorCode === ERR_ABORTED) return
       state.error = { errorCode, errorDescription, validatedURL }
       notify()
     })

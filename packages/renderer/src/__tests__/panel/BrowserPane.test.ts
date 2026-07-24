@@ -32,11 +32,14 @@ const mockOnBrowserState = vi.fn().mockReturnValue(() => {})
 const mockOpenExternal = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/lib/ipc', () => ({
-  browserCreate: (...args: unknown[]) => mockBrowserCreate(...(args as [string, string])),
-  browserNavigate: (...args: unknown[]) => mockBrowserNavigate(...(args as [string, string])),
-  browserHide: (...args: unknown[]) => mockBrowserHide(...(args as [string])),
-  browserShow: (...args: unknown[]) => mockBrowserShow(...(args as [string])),
-  browserSetRect: (...args: unknown[]) => mockBrowserSetRect(...(args as [string, { x: number; y: number; width: number; height: number }]),
+  browserCreate: (sessionId: string, windowId: string) => mockBrowserCreate(sessionId, windowId),
+  browserNavigate: (sessionId: string, url: string) => mockBrowserNavigate(sessionId, url),
+  browserHide: (sessionId: string) => mockBrowserHide(sessionId),
+  browserShow: (sessionId: string) => mockBrowserShow(sessionId),
+  browserSetRect: (
+    sessionId: string,
+    rect: { x: number; y: number; width: number; height: number },
+  ) => mockBrowserSetRect(sessionId, rect),
   onBrowserState: (cb: unknown) => mockOnBrowserState(cb),
   openExternal: (url: string) => mockOpenExternal(url),
 }))
