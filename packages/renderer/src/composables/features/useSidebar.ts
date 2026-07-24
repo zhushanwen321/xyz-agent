@@ -15,8 +15,6 @@
  * 派生纯函数 deriveStatus 下沉到 composables/logic/sessionStatus.ts（与 DOT_CLASS 同源 5 态 SSOT）。
  * 本 composable 保留 session CRUD + panel/nav 同步 + hydrate + 命令时序 + 文件树预触发 + initApp
  * （核心粘合价值，deletion test 证明不可删）。
- *
- * deriveStatus 仍从此处 re-export（向后兼容：历史上有调用方直接从 useSidebar import 该纯函数）。
  */
 import { computed, onScopeDispose } from 'vue'
 import type { SessionGroup } from '@xyz-agent/shared'
@@ -42,8 +40,6 @@ import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
-// deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
-export { deriveStatus } from '@/composables/logic/sessionStatus'
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
 // useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），

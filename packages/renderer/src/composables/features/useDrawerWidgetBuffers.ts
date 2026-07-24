@@ -12,8 +12,8 @@
  *   不用 update()——update 读实时 sessionIdRef.value，退订窗口内旧 sid 迟到消息会污染新 sid
  *   （M1 竞态修复的核心）。
  *
- * 注意：与同目录 useDrawerWidgets.ts 范式不同（后者是实例级 ref + watch 清空派，ADR-0036 反模式，
- * 未接线，旧探索产物）。本 composable 是 Map 分区派，不可互相替换（会退化范式）。
+ * 注意：此前有过实例级 ref + watch 清空派的探索产物（ADR-0036 反模式，已删除）。
+ * 本 composable 是 Map 分区派，不可退化回实例级范式。
  *
  * 依赖方向：useSessionEvents（订阅）+ useSessionScopedState（分区）+ @xyz-agent/extension-protocol（类型）。
  * 不依赖任何 store。
