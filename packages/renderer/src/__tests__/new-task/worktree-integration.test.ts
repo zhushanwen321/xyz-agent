@@ -27,7 +27,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref, readonly } from 'vue'
+import { ref, readonly, computed } from 'vue'
 import type { Ref, DeepReadonly } from 'vue'
 
 // ── worktreeApi mock：控制 create 的 resolve/reject（INT-1/2/3 的核心驱动）──
@@ -35,11 +35,26 @@ import type { Ref, DeepReadonly } from 'vue'
 // reject 时抛带 code+stderr 的错误（模拟 runtime 的 WorktreeError）。
 const worktreeCtrl = vi.hoisted(() => ({
   create: vi.fn(),
+  listBranches: vi.fn(),
 }))
 vi.mock('@/api/domains/worktree', () => ({
   worktreeApi: {
     create: worktreeCtrl.create,
+    listBranches: worktreeCtrl.listBranches,
   },
+}))
+
+// ── workspace.detect mock：CreateWorktreeModal onMounted 调用 ──
+const workspaceDetectMock = vi.hoisted(() => ({
+  detect: vi.fn(),
+}))
+vi.mock('@/api/domains/workspace', () => ({
+  detect: workspaceDetectMock.detect,
+}))
+
+// ── pickDirectory mock：CreateWorktreeModal onChangeRepo 调用 ──
+vi.mock('@/lib/ipc', () => ({
+  pickDirectory: vi.fn().mockResolvedValue({ canceled: true, path: '' }),
 }))
 
 // ── useNewTaskFlow mock：控制 state/gitInfo/selectWorkspace/currentCwd 等 ──
@@ -73,6 +88,8 @@ import Landing from '@/components/new-task/Landing.vue'
 const flowState: Ref<string> = ref('landing')
 const flowCurrentCwd: Ref<string | null> = ref(null)
 const flowGitInfo: Ref<{ branch: string; isRepo: boolean; isBare?: boolean } | null> = ref(null)
+const flowMode: Ref<'bare-workspace' | 'plain-repo' | 'not-repo'> = ref('bare-workspace')
+const flowWorktreeItems: Ref<Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }>> = ref([])
 const flowSelectWorkspace = vi.fn<(cwd: string) => void>()
 const flowOpenDirPopover = vi.fn<() => void>()
 const flowCloseOverlay = vi.fn<() => void>()
@@ -88,6 +105,9 @@ const flowMock = {
   currentCwd: readonly(flowCurrentCwd) as DeepReadonly<Ref<string | null>>,
   currentModel: readonly(ref(null)) as DeepReadonly<Ref<string | null>>,
   gitInfo: readonly(flowGitInfo) as DeepReadonly<Ref<typeof flowGitInfo.value>>,
+  mode: readonly(flowMode) as DeepReadonly<Ref<typeof flowMode.value>>,
+  worktreeItems: readonly(flowWorktreeItems) as DeepReadonly<Ref<typeof flowWorktreeItems.value>>,
+  isBare: computed(() => flowMode.value === 'bare-workspace'),
   isInflight: readonly(ref(false)) as DeepReadonly<Ref<boolean>>,
   isBranchCreating: readonly(ref(false)) as DeepReadonly<Ref<boolean>>,
   isOverlay: readonly(ref(false)) as DeepReadonly<Ref<boolean>>,
@@ -141,10 +161,14 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.useFakeTimers()
   vi.clearAllMocks()
-  // 重置 flow 态：landing / 空 cwd / bare repo gitInfo
+  // 重置 flow 态：landing / 预置 cwd='/ws'（与 workspace.detect mock 返回 wsRoot 对齐）/
+  // bare repo gitInfo。cwd 必须非 null——CreateWorktreeModal onMounted 看到空 cwd 立即 return，
+  // baseBranch 永远空，canSubmit 永远 false，按钮 disabled → worktreeApi.create 永远不被调。
   flowMock._state.value = 'landing'
-  flowMock._currentCwd.value = null
+  flowMock._currentCwd.value = '/ws'
   flowMock._gitInfo.value = { branch: 'main', isRepo: true, isBare: true }
+  flowMode.value = 'bare-workspace'
+  flowWorktreeItems.value = []
   // 重置 workspaceStore mock
   workspaceStoreMock.records = []
   workspaceStoreMock.defaultCwd = undefined
@@ -153,6 +177,22 @@ beforeEach(() => {
   worktreeCtrl.create.mockResolvedValue({
     cwd: '/ws/feat-new-thing',
     branch: 'feat-new-thing',
+  })
+  // 重置 worktreeApi.listBranches：默认返回分支列表
+  worktreeCtrl.listBranches.mockReset()
+  worktreeCtrl.listBranches.mockResolvedValue({
+    local: ['main', 'feat-x'],
+    remote: ['origin/main', 'origin/develop'],
+    defaultBranch: 'main',
+  })
+  // 重置 workspace.detect：默认返回 bare-workspace 模式
+  workspaceDetectMock.detect.mockReset()
+  workspaceDetectMock.detect.mockResolvedValue({
+    mode: 'bare-workspace',
+    wsRoot: '/ws',
+    barePath: '/ws/.bare',
+    repoRoot: '/ws',
+    defaultBranch: 'main',
   })
   // 重置 flow worktree 动作
   flowOpenCreateWorktree.mockReset()
@@ -182,7 +222,7 @@ afterEach(() => {
 /** mount Landing（mock isBareWorkspace=true 经 gitInfo 注入） */
 async function mountLanding(): Promise<ReturnType<typeof mount>> {
   currentWrapper = mount(Landing, {
-    props: { sessionId: null, currentCwd: null, gitBranch: null },
+    props: { sessionId: null, currentCwd: '/ws', gitBranch: null },
     global: { stubs: landingStubs },
     attachTo: document.body,
   })
@@ -231,10 +271,14 @@ describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 �
     await $('[data-testid="worktree-create-btn"]').trigger('click')
     await flushPromises()
 
-    // 创建中：worktreeApi.create 被调（progress 态）。baseBranch 默认 origin/main（D3 决策）。
+    // 创建中：worktreeApi.create 被调（progress 态）。
+    // baseBranch 默认 origin/main（D3 决策），locationMode 默认 'workspace'（bare 模式），
+    // workspaceHint 透传 repoPath（workspace detect 后的 wsRoot='/ws'）。
     expect(worktreeCtrl.create).toHaveBeenCalledWith({
       branch: 'feat-new-thing',
       baseBranch: 'origin/main',
+      locationMode: 'workspace',
+      workspaceHint: '/ws',
     })
     // success 态显示（modal 仍在，等 2s 自动关）
     expect(has('[data-testid="worktree-success"]')).toBe(true)
@@ -332,11 +376,14 @@ describe('INT-3: 创建失败（worktreeApi.create reject SETUP_FAILED → error
     await $('[data-testid="worktree-retry-btn"]').trigger('click')
     await flushPromises()
 
-    // worktreeApi.create 被再次调用（重试）。baseBranch 默认 origin/main（D3 决策）。
+    // worktreeApi.create 被再次调用（重试）。baseBranch 默认 origin/main（D3 决策），
+    // locationMode/workspaceHint 同 INT-1。
     expect(worktreeCtrl.create).toHaveBeenCalledTimes(2)
     expect(worktreeCtrl.create).toHaveBeenLastCalledWith({
       branch: 'feat-fail',
       baseBranch: 'origin/main',
+      locationMode: 'workspace',
+      workspaceHint: '/ws',
     })
 
     // 重试成功 → 进 success 态

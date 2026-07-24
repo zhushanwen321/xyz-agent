@@ -1,20 +1,20 @@
 /**
- * DirSelectPopover worktree 动作项条件显示测试 —— TDD 红灯阶段（AC-1/AC-2）。
+ * DirSelectPopover worktree 动作项条件显示测试。
  *
- * 测 DirSelectPopover.vue 待实现的改动（实现未写，本文件先红灯）：
+ * 测 DirSelectPopover.vue 的改动：
  * - 动作项区新增「新建 worktree…」（data-testid="action-create-worktree"）
- * - 仅当 isBareWorkspace===true 时 v-if 显示（非 bare repo 不显示）
+ * - 仅当 isGitRepo===true 时 v-if 显示（非 git repo 不显示）
  * - 点击 emit 'create-worktree' 事件
  * - 位置：放在「打开文件夹」（action-open-dir）与「远程连接」（action-remote）之间
  *
  * 覆盖：
- * - DP-1: isBareWorkspace=true → action-create-worktree 存在（DOM 断言）
- * - DP-2: isBareWorkspace=false → action-create-worktree 不存在（DOM 断言）
+ * - DP-1: isGitRepo=true → action-create-worktree 存在（DOM 断言）
+ * - DP-2: isGitRepo=false → action-create-worktree 不存在（DOM 断言）
  * - DP-3: 点击 action-create-worktree → emit 'create-worktree'
  * - DP-4: 动作项顺序——action-create-worktree 在 action-open-dir 之后、action-remote 之前
  *
  * Mock 策略：参考 dir-select-popover-workspace.test.ts。mock workspaceStore 控 records；
- * isBareWorkspace 通过 prop 注入（DirSelectPopover 待加 prop `isBareWorkspace?: boolean`）。
+ * isGitRepo 通过 prop 注入（DirSelectPopover 的 prop `isGitRepo?: boolean`）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/new-task/dir-select-popover-worktree.test.ts
  */
@@ -50,26 +50,26 @@ beforeEach(() => {
   mockUseWorkspaceStore.mockReset()
 })
 
-describe('DP-1: isBareWorkspace=true → action-create-worktree 存在', () => {
-  it('bare repo 下渲染「新建 worktree…」动作项', () => {
+describe('DP-1: isGitRepo=true → action-create-worktree 存在', () => {
+  it('git repo 下渲染「新建 worktree…」动作项', () => {
     setupWorkspaceStore([mkRecord('/repo-a', 300)])
     const wrapper = mount(DirSelectPopover, {
-      props: { currentCwd: null, isBareWorkspace: true },
+      props: { currentCwd: null, isGitRepo: true },
     })
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(true)
   })
 })
 
-describe('DP-2: isBareWorkspace=false → action-create-worktree 不存在', () => {
-  it('非 bare repo 下隐藏「新建 worktree…」动作项', () => {
+describe('DP-2: isGitRepo=false → action-create-worktree 不存在', () => {
+  it('非 git repo 下隐藏「新建 worktree…」动作项', () => {
     setupWorkspaceStore([mkRecord('/repo-a', 300)])
     const wrapper = mount(DirSelectPopover, {
-      props: { currentCwd: null, isBareWorkspace: false },
+      props: { currentCwd: null, isGitRepo: false },
     })
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(false)
   })
 
-  it('未传 isBareWorkspace（缺省）→ 默认不显示（非 bare 兜底）', () => {
+  it('未传 isGitRepo（缺省）→ 默认不显示（非 git repo 兜底）', () => {
     setupWorkspaceStore([mkRecord('/repo-a', 300)])
     const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(false)
@@ -80,7 +80,7 @@ describe('DP-3: 点击 action-create-worktree → emit create-worktree', () => {
   it('点击动作项 emit 单 payload 对象（空 payload）', async () => {
     setupWorkspaceStore([mkRecord('/repo-a', 300)])
     const wrapper = mount(DirSelectPopover, {
-      props: { currentCwd: null, isBareWorkspace: true },
+      props: { currentCwd: null, isGitRepo: true },
     })
     await wrapper.find('[data-testid="action-create-worktree"]').trigger('click')
     expect(wrapper.emitted('create-worktree')).toBeTruthy()
@@ -93,7 +93,7 @@ describe('DP-4: 动作项顺序——create-worktree 在 open-dir 之后、remot
   it('DOM 顺序：action-open-dir → action-create-worktree → action-remote', () => {
     setupWorkspaceStore([mkRecord('/repo-a', 300)])
     const wrapper = mount(DirSelectPopover, {
-      props: { currentCwd: null, isBareWorkspace: true },
+      props: { currentCwd: null, isGitRepo: true },
     })
     const openDir = wrapper.find('[data-testid="action-open-dir"]').element
     const createWorktree = wrapper.find('[data-testid="action-create-worktree"]').element

@@ -97,10 +97,11 @@ describe('RF-1: 真实 flow — session.isBareWorkspace=true → gitInfo.isBare=
     expect(flow.gitInfo.value?.isBare).toBe(true)
 
     // 真实组件渲染链路：把真实 flow.gitInfo.isBare 传给 DirSelectPopover（与 Landing.vue 同逻辑）
+    // 现在用 isGitRepo 替代 isBareWorkspace
     const wrapper = mount(DirSelectPopover, {
       props: {
         currentCwd: null,
-        isBareWorkspace: flow.gitInfo.value?.isBare ?? false,
+        isGitRepo: flow.gitInfo.value?.isBare ?? false,
       },
     })
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(true)
