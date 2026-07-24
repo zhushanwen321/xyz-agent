@@ -1,6 +1,6 @@
 {
   "testRunner": {
-    "command": "bash .xyz-harness/cw-2026-07-23-session-active-ssot/run-tests.sh",
-    "cwd": "."
+    "command": "npx vitest run",
+    "cwd": "packages/renderer"
   }
 }

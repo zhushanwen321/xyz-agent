@@ -416,7 +416,10 @@ watch(
   (delta) => {
     if (delta !== 0 && scrollEl.value) {
       // FR1/FR2：stickToBottom=false（用户上滑）或 settling（session 切换首轮）期间跳过施加，仅清零
-      if (stickToBottom.value && !settling.value) {
+      // [fix-scroll-jump] 翻转 guard：贴底态跳过 delta（由 scrollToBottom 统一跟随到底），
+      // 非贴底态正常补偿（保持视口中段内容稳定）。
+      // 旧 guard (stickToBottom && !settling) 在负 delta（trace 收起）时与 scrollToBottom 冲突导致跳变。
+      if (!stickToBottom.value && !settling.value) {
         scrollEl.value.scrollTop += delta
       }
       // 清零，防下次 reportHeight 残留值导致重复补偿（两个分支都清零——FR3 贴底原行为 + FR2 脱离丢弃）
