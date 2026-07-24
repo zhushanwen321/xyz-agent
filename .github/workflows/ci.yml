@@ -81,6 +81,36 @@ jobs:
       - name: TypeCheck - shared
         run: pnpm --filter @xyz-agent/shared run typecheck
 
+  # SDK 类型同步防漂移：runtime 的 plugin-types 是 single source of truth，
+  # plugin-sdk/src/types.ts 由 sync-types.sh 自动生成。此 job 重新生成并要求
+  # git diff 为空——任何对 runtime plugin-types 的改动必须同步刷新 SDK types，
+  # 否则 CI 失败（防止两份文件再次漂移）。
+  sdk-sync:
+    name: SDK types in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
+
+      - name: Check plugin-sdk types are synced with runtime
+        working-directory: packages/plugin-sdk
+        run: npm run check-sync
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -123,10 +153,10 @@ jobs:
           retention-days: 7
 
   # PR 构建检查：完整 electron-builder 打包流程（与 release 一致），不在 PR 上传产物。
-  # needs gate：lint/typecheck/test 已知失败时不浪费 mac runner（mac 构建 5-8min）。
+  # needs gate：lint/typecheck/sdk-sync/test 已知失败时不浪费 mac runner（mac 构建 5-8min）。
   build:
     name: Build
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, sdk-sync, test]
     uses: ./.github/workflows/build.yml
     with:
       upload-artifacts: false
