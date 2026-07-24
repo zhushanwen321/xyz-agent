@@ -13,7 +13,9 @@
  * - getStatus 失败（T4.6 / AC-6.4）：reject → 显错不崩
  * - 分支 100+（T4.9 / AC-6.9）：渲染上限 + 搜索过滤
  *
- * 数据流（Worktree tab）：worktreeItems 由父级注入（DirSelectPopover 同名 props 类型）。
+ * 数据流（Worktree tab）：worktreeItems 由父级注入。
+ * 守卫说明：本组件在 git 仓库下打开（调用方 Landing 的 Git chip 用 `v-if="branch"` 守卫，
+ * 非 git 目录不显 chip → 本组件不会被打开），故 Worktree tab 无需额外 isGitRepo 守卫。
  *
  * 动作（presentational for actions，emit 单 payload 对象）：
  * 分支 tab：
@@ -51,14 +53,10 @@ const props = withDefaults(
   defineProps<{
     /** 当前 session id（拉取 git status 用） */
     sessionId: string | null
-    /** 当前 cwd 所在 workspace 的已有 worktree 列表（Worktree tab 数据源，与 DirSelectPopover 同类型） */
+    /** 当前 cwd 所在 workspace 的已有 worktree 列表（Worktree tab 数据源） */
     worktreeItems?: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }>
-    /** 是否在 bare repo + worktree 结构下（影响 Worktree tab 是否强调 accent 入口，与 DirSelectPopover 同语义） */
-    isBareWorkspace?: boolean
-    /** 是否为 git 仓库目录（Worktree tab 仅在 git repo 下展示，与 DirSelectPopover 同语义） */
-    isGitRepo?: boolean
   }>(),
-  { worktreeItems: () => [], isBareWorkspace: false, isGitRepo: false },
+  { worktreeItems: () => [] },
 )
 
 const emit = defineEmits<{

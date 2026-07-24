@@ -103,25 +103,7 @@ const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
  */
 const isWorktreeModalOpen = computed(() => flow.state.value === 'worktree-modal')
 
-/**
- * 是否在 bare repo + worktree 结构下。
- * 数据源优先级：
- * 1. flow.isBare（pendingCwd 驱动，landing 态主源，W2）——watch pendingCwd 调 workspace.detectBare
- * 2. flow.gitInfo.isBare（session 态 fallback，runtime 经 session.isBareWorkspace 透出）
- * 延迟 create 架构下 landing 无 session → gitInfo 恒 null，必须靠 pendingCwd 驱动才能显示「新建 worktree」。
- */
-const isBareWorkspace = computed(() => flow.isBare?.value ?? flow.gitInfo.value?.isBare ?? false)
-
-/**
- * 是否为 git 仓库目录（bare-workspace 或 plain-repo 均为 true）。
- * 数据源：flow.mode（pendingCwd 驱动，workspace.detect 返回三态）。not-repo 时不显示「新建 worktree」。
- */
-const isGitRepo = computed(() => {
-  const m = flow.mode?.value
-  return m === 'bare-workspace' || m === 'plain-repo'
-})
-
-/** 当前 cwd 所在 workspace 的已有 worktree 列表。 */
+/** 当前 cwd 所在 workspace 的已有 worktree 列表（BranchSelectPopover Worktree tab 数据源）。 */
 const worktreeItems = computed(() => flow.worktreeItems?.value ?? [])
 
 function onSelectWorkspace(payload: { cwd: string }): void {
@@ -230,8 +212,6 @@ function onRetry(): void {
               <BranchSelectPopover
                 :session-id="sessionId"
                 :worktree-items="worktreeItems"
-                :is-bare-workspace="isBareWorkspace"
-                :is-git-repo="isGitRepo"
                 @select="onSelectBranch"
                 @confirm-dirty-switch="onConfirmDirtySwitch"
                 @open-branch-modal="flow.openBranchModal()"
