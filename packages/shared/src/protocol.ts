@@ -67,10 +67,12 @@ export type ClientMessageType =
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
-  | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare'
-  | 'worktree.create'
+  | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare' | 'workspace.detect'
+  | 'worktree.create' | 'worktree.listBranches' | 'worktree.list'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
+  | 'config.setWorktreeRootDir' | 'config.getWorktreeRootDir'
+  | 'config.setSetupScript' | 'config.getSetupScript'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -272,14 +274,27 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
-  /** workspace.detectBare：检测 cwd 是否位于 bare repo + worktree 结构（landing 态按 pendingCwd 驱动 isBare，W2）。 */
+  /** workspace.detectBare：向后兼容别名，等价于 workspace.detect。 */
   'workspace.detectBare': { cwd: string }
+  /** workspace.detect：检测 cwd 所在 git 仓库模式（bare-workspace / plain-repo / not-repo）。
+   *  返回三态 { mode, wsRoot, barePath, repoRoot, defaultBranch }。
+   *  workspace.detectBare 为此接口的向后兼容别名。 */
+  'workspace.detect': { cwd: string }
+  /** worktree.listBranches：列出 cwd 所在仓库的本地和远程分支。 */
+  'worktree.listBranches': { cwd: string }
+  /** worktree.list：列出 cwd 所在 workspace 的所有 worktree。 */
+  'worktree.list': { cwd: string }
   /** worktree.create：在 bare repo + worktree 结构中创建隔离的工作目录。
-   *  branch 必填；baseBranch 默认 'current'（继承当前分支），可选 'origin/main'（校验远端 ref 存在后使用）。
+   *  branch 必填；baseBranch 默认 'current'（继承当前分支），可为任意分支名（runtime 验证存在性）。
+   *  locationMode 控制 worktree 创建位置：'workspace'（workspace 根，bare 模式默认）、
+   *  'repo-dir'（.bare 同级 repo 子目录）、'dedicated-dir'（用户指定的专用目录）。
    *  workspaceHint 用于显式指定 workspace 根（检测 .bare 的起点 cwd），省略则用 process.cwd()。 */
   'worktree.create': {
     branch: string
-    baseBranch?: 'current' | 'origin/main'
+    /** 基础分支。'current' 为特殊值（继承当前分支），其余为具体分支名（runtime 验证存在性）。 */
+    baseBranch?: string
+    /** worktree 创建位置模式。省略时 bare 模式默认 'workspace'。 */
+    locationMode?: 'workspace' | 'repo-dir' | 'dedicated-dir'
     workspaceHint?: string
   }
   // terminal.*：drawer 集成终端的 PTY 控制（Phase 2 runtime service）。
@@ -292,6 +307,14 @@ export interface ClientMessageMap {
   'terminal.attach': { sessionId: string }
   'config.getTerminalConfig': Record<string, never>
   'config.setTerminalConfig': { config: TerminalConfig }
+  /** config.setWorktreeRootDir：设置 worktree 专用目录配置（前端写入）。 */
+  'config.setWorktreeRootDir': { dir: string }
+  /** config.getWorktreeRootDir：读取 worktree 专用目录配置（前端读取）。 */
+  'config.getWorktreeRootDir': Record<string, never>
+  /** config.setSetupScript：设置 worktree 初始化脚本配置（前端写入）。 */
+  'config.setSetupScript': { script: string }
+  /** config.getSetupScript：读取 worktree 初始化脚本配置（前端读取）。 */
+  'config.getSetupScript': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -328,6 +351,7 @@ export type DefaultModelSource =
  * 新增错误码必须在此登记，编译器强制两端同步（防止 runtime 改码 renderer switch 静默失效）。
  */
 export type WorktreeErrorCode =
+  | 'NOT_GIT_REPO'      // cwd 不在 git 仓库内（git rev-parse 失败）
   | 'NOT_BARE_REPO'     // 当前 cwd 非 .bare workspace（WorkspaceDetector 未命中）
   | 'WORKTREE_EXISTS'   // 目标 worktree 目录已存在（detail: string = 已存在 cwd）
   | 'SETUP_FAILED'      // .bare/custom-hooks/setup-worktree.sh 失败（detail: {exitCode, stderr}）
@@ -392,9 +416,14 @@ export type ServerMessageType =
   | 'git.status:result'
   | 'workspace.recentList'
   | 'workspace.bareDetected'
+  | 'workspace.detected'
   | 'worktree.created'
   | 'terminal.data' | 'terminal.exit' | 'terminal.alive' | 'terminal.ack'
   | 'config.terminalConfig'
+  | 'worktree.branches'
+  | 'worktree.list:result'
+  | 'config.worktreeRootDir'
+  | 'config.setupScript'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -564,8 +593,16 @@ export interface ServerMessageMapBase {
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
-  /** workspace.bareDetected：workspace.detectBare 的 reply（isBare/wsRoot/barePath）。 */
+  /** workspace.bareDetected：workspace.detectBare 的向后兼容 reply（isBare/wsRoot/barePath）。 */
   'workspace.bareDetected': { isBare: boolean; wsRoot: string; barePath: string }
+  /** workspace.detected：workspace.detect 的三态 reply。 */
+  'workspace.detected': {
+    mode: 'bare-workspace' | 'plain-repo' | 'not-repo'
+    wsRoot: string
+    barePath: string
+    repoRoot: string
+    defaultBranch: string
+  }
   /** worktree.created：worktree.create 的成功 reply（新 worktree 的 cwd 与分支名）。 */
   'worktree.created': { cwd: string; branch: string }
   // terminal.data：PTY 输出流（高频广播，按 sessionId 路由到对应 panel 的 scrollback buffer）。
@@ -578,6 +615,14 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
+  /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
+  'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
+  /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */
+  'worktree.list:result': { items: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> }
+  /** config.worktreeRootDir：config.getWorktreeRootDir 的 reply。 */
+  'config.worktreeRootDir': { dir: string }
+  /** config.setupScript：config.getSetupScript 的 reply。 */
+  'config.setupScript': { script: string }
 
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
@@ -772,10 +817,17 @@ export interface ReplyPayloadMap {
   'plugin.config.set': ServerMessageMap['plugin:config']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
-  'workspace.detectBare': ServerMessageMap['workspace.bareDetected']
+  'workspace.detectBare': ServerMessageMap['workspace.detected']
+  'workspace.detect': ServerMessageMap['workspace.detected']
   'worktree.create': ServerMessageMap['worktree.created']
   'config.getTerminalConfig': ServerMessageMap['config.terminalConfig']
   'config.setTerminalConfig': ServerMessageMap['config.terminalConfig']
+  'worktree.listBranches': ServerMessageMap['worktree.branches']
+  'worktree.list': ServerMessageMap['worktree.list:result']
+  'config.setWorktreeRootDir': ServerMessageMap['config.worktreeRootDir']
+  'config.getWorktreeRootDir': ServerMessageMap['config.worktreeRootDir']
+  'config.setSetupScript': ServerMessageMap['config.setupScript']
+  'config.getSetupScript': ServerMessageMap['config.setupScript']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted
