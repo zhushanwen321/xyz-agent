@@ -26,7 +26,7 @@
  * 依赖方向：panel store（读 focusedSessionId 作分区键）。不触碰 session store / api。
  * widget 订阅在 SideDrawer.vue 内按 sessionId 独立接入；git 数据由 PanelContainer provide。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { useSessionScopedState, registerSessionCleanup } from '@/composables/useSessionScopedState'
 import { usePanelStore } from '@/stores/panel'
 
@@ -47,9 +47,12 @@ interface DrawerControlState {
   docked: boolean
 }
 
-/** 新 session 的默认控制态 */
+/** 新 session 的默认控制态。[HISTORICAL] 必须返回 reactive 容器——plain object 的 mutate
+ *  不触发下游 computed 重算，导致 sid 稳定时手动 open() 失效（drawer 打不开）。
+ *  违反 useSessionScopedState 响应式契约曾导致 todo/goal 自动打开能开、手动点击打不开。
+ */
 function createDefaultControlState(): DrawerControlState {
-  return { isOpen: false, activeTab: 'terminal', docked: false }
+  return reactive({ isOpen: false, activeTab: 'terminal', docked: false })
 }
 
 // ── per-session 分区状态（useSessionScopedState）──
