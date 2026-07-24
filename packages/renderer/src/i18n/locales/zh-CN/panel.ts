@@ -134,6 +134,15 @@ export default {
     noTasks: '暂无任务',
     tasksHint: 'goal/todo 创建后显示',
   },
+  browserPane: {
+    back: '后退',
+    forward: '前进',
+    reload: '重载',
+    openExternal: '在系统浏览器打开',
+    loadFailed: '无法加载页面',
+    retry: '重试',
+    empty: '在对话中点击链接以打开',
+  },
   mermaid: {
     rendering: '图表渲染中…',
     zoomIn: '放大',

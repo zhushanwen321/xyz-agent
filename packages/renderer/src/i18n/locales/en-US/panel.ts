@@ -134,6 +134,15 @@ export default {
     noTasks: 'No tasks',
     tasksHint: 'Shows after goal/todo created',
   },
+  browserPane: {
+    back: 'Back',
+    forward: 'Forward',
+    reload: 'Reload',
+    openExternal: 'Open in system browser',
+    loadFailed: 'Failed to load page',
+    retry: 'Retry',
+    empty: 'Click a link in the conversation to open',
+  },
   mermaid: {
     rendering: 'Rendering diagram…',
     zoomIn: 'Zoom in',

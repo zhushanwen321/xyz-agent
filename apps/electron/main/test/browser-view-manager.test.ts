@@ -267,7 +267,7 @@ describe('BrowserViewManager', () => {
       const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
       mgr.create('sess-1', 'win-1')
 
-      // 先制造一个 error
+      // 先制造一个 error（用非 ABORTED 错误码，-3 已被过滤）
       createdViews[0].wc.listeners.get('did-fail-load')![0](undefined, -105, 'ERR_NAME_NOT_RESOLVED', 'https://x')
       expect(mgr.getState('sess-1')!.error).not.toBeNull()
 
@@ -287,14 +287,19 @@ describe('BrowserViewManager', () => {
       expect(mgr.getState('sess-1')!.currentUrl).toBe('https://example.com/page#hash')
     })
 
-    it('did-fail-load 记录 error', () => {
+    it('did-fail-load 记录 error（ABORTED -3 过滤：重定向正常取消不算错误）', () => {
       const win = makeWindow()
       const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
       mgr.create('sess-1', 'win-1')
 
-      createdViews[0].wc.listeners.get('did-fail-load')![0](undefined, -3, 'ERR_ABORTED', 'https://blocked')
+      // -3 ABORTED（重定向过程中的正常取消）应被过滤，不记录 error
+      createdViews[0].wc.listeners.get('did-fail-load')![0](undefined, -3, 'ERR_ABORTED', 'https://redirecting')
+      expect(mgr.getState('sess-1')!.error).toBeNull()
+
+      // 真错误（如 -105 ERR_NAME_NOT_RESOLVED）应记录
+      createdViews[0].wc.listeners.get('did-fail-load')![0](undefined, -105, 'ERR_NAME_NOT_RESOLVED', 'https://blocked')
       const state = mgr.getState('sess-1')!
-      expect(state.error).toEqual({ errorCode: -3, errorDescription: 'ERR_ABORTED', validatedURL: 'https://blocked' })
+      expect(state.error).toEqual({ errorCode: -105, errorDescription: 'ERR_NAME_NOT_RESOLVED', validatedURL: 'https://blocked' })
     })
 
     it('did-start-loading / did-stop-loading 切换 isLoading', () => {
@@ -307,6 +312,38 @@ describe('BrowserViewManager', () => {
 
       createdViews[0].wc.listeners.get('did-stop-loading')![0]()
       expect(mgr.getState('sess-1')!.isLoading).toBe(false)
+    })
+  })
+
+  describe('onStateChange 回调推送（W2）', () => {
+    it('did-navigate / did-start-loading 触发 onStateChange，携带 sessionId + state', () => {
+      const onStateChange = vi.fn()
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win), onStateChange)
+      mgr.create('sess-1', 'win-1')
+
+      // did-start-loading → isLoading: true
+      createdViews[0].wc.listeners.get('did-start-loading')![0]()
+      expect(onStateChange).toHaveBeenLastCalledWith('sess-1', expect.objectContaining({ isLoading: true }))
+
+      // did-navigate → currentUrl 更新 + error 清空
+      createdViews[0].wc.listeners.get('did-navigate')![0](undefined, 'https://example.com')
+      expect(onStateChange).toHaveBeenLastCalledWith(
+        'sess-1',
+        expect.objectContaining({ currentUrl: 'https://example.com', error: null }),
+      )
+    })
+
+    it('未注入 onStateChange 时（旧调用方）内部 state 仍更新，不抛错', () => {
+      const win = makeWindow()
+      // 不传第二参数（向后兼容：Wave 1 调用方 new BrowserViewManager(windows)）
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      expect(() => {
+        createdViews[0].wc.listeners.get('did-navigate')![0](undefined, 'https://example.com')
+      }).not.toThrow()
+      expect(mgr.getState('sess-1')!.currentUrl).toBe('https://example.com')
     })
   })
 })

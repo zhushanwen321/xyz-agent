@@ -64,9 +64,16 @@ interface ManagedView {
  *
  * 依赖注入 IWindowManager（取 BrowserWindow 引用 attach view），不依赖具体类。
  *
+ * @param windows 窗口 Facade（取 BrowserWindow 引用 attach view）
+ * @param onStateChange 可选状态推送回调（W2）：webContents 事件触发时回调，main.ts
+ *   构造时注入「向主窗口 webContents.send('browser:state')」的实现，renderer（BrowserPane）
+ *   据此更新地址栏真实 URL（防钓鱼）+ loading/error 态。无注入时仅内部暂存 state。
+ *
  * 使用方法：
  * ```ts
- * const mgr = new BrowserViewManager(windows)
+ * const mgr = new BrowserViewManager(windows, (sid, state) => {
+ *   win.webContents.send('browser:state', { sessionId: sid, ...state })
+ * })
  * mgr.create('sess-1', 'win-1')
  * await mgr.navigate('sess-1', 'https://example.com')
  * mgr.hide('sess-1')
@@ -77,7 +84,10 @@ interface ManagedView {
 export class BrowserViewManager {
   private views = new Map<string, ManagedView>()
 
-  constructor(private readonly windows: IWindowManager) {}
+  constructor(
+    private readonly windows: IWindowManager,
+    private readonly onStateChange?: (sessionId: string, state: BrowserViewState) => void,
+  ) {}
 
   /**
    * 创建 view 并 attach 到指定窗口。
@@ -123,7 +133,7 @@ export class BrowserViewManager {
       isLoading: false,
       error: null,
     }
-    this.bindWebContentsEvents(view, state)
+    this.bindWebContentsEvents(view, state, sessionId)
 
     this.views.set(sessionId, { view, windowId, lastRect: HIDDEN_RECT, state })
   }
@@ -195,27 +205,38 @@ export class BrowserViewManager {
   }
 
   /**
-   * 绑定 webContents 事件到 state 暂存。
+   * 绑定 webContents 事件到 state 暂存，并经 onStateChange 回调推送 renderer。
    * 抽出方法便于复用 + 单测可观察 state 变化。
    */
-  private bindWebContentsEvents(view: WebContentsView, state: BrowserViewState): void {
+  private bindWebContentsEvents(view: WebContentsView, state: BrowserViewState, sessionId: string): void {
     const wc = view.webContents
+    const notify = (): void => {
+      this.onStateChange?.(sessionId, state)
+    }
     wc.on('did-start-loading', () => {
       state.isLoading = true
+      notify()
     })
     wc.on('did-stop-loading', () => {
       state.isLoading = false
+      notify()
     })
     wc.on('did-navigate', (_e, url: string) => {
       state.currentUrl = url
       state.error = null
+      notify()
     })
     wc.on('did-navigate-in-page', (_e, url: string) => {
       state.currentUrl = url
       state.error = null
+      notify()
     })
     wc.on('did-fail-load', (_e, errorCode: number, errorDescription: string, validatedURL: string) => {
+      // [HISTORICAL] -3 ABORTED：重定向过程中的正常取消（被新导航抢占），非真错误，过滤。
+      // 不过滤会让重定向中闪现的 ABORTED 把 BrowserPane 切到错误态。
+      if (errorCode === -3) return
       state.error = { errorCode, errorDescription, validatedURL }
+      notify()
     })
   }
 }

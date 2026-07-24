@@ -127,8 +127,16 @@ const runtime = new RuntimeSupervisor()
 const windows = new WindowManager()
 const shortcuts = new ShortcutRegistry()
 const ctx: MainContext = createMainContext({ runtime, windows, shortcuts, isDev })
-// Browser drawer 的 WebContentsView 管理器（依赖 windows Facade 取窗口引用）
-const browserViewManager = new BrowserViewManager(windows)
+// Browser drawer 的 WebContentsView 管理器（依赖 windows Facade 取窗口引用）。
+// W2：注入 onStateChange 回调，webContents 事件触发时把 state 推给主窗口 renderer（BrowserPane），
+// 用于地址栏回填真实 URL（防钓鱼）+ loading/error 态切换。win 在 ctx.mainWindow 设置后才有值，
+// 故此处读 ctx.mainWindow（bootstrap 后非 null）。
+const browserViewManager = new BrowserViewManager(windows, (sid, state) => {
+  const win = ctx.mainWindow
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('browser:state', { sessionId: sid, ...state })
+  }
+})
 
 /** createWindow 适配器：把 ctx.windows.generateId 注入 window-factory */
 const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>

@@ -81,3 +81,52 @@ export function windowClose(): Promise<void> {
 export function openExternal(url: string): Promise<void> {
   return api?.openExternal(url) ?? Promise.resolve()
 }
+
+// ── Browser drawer（嵌入式浏览器，WebContentsView 生命周期）─────────────
+// Wave 2：renderer → main 五个 IPC 封装（create/navigate/hide/show/destroy）。
+// onBrowserState 订阅主进程推送的加载状态（url/isLoading/error），供 BrowserPane 更新地址栏 + 态切换。
+// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe。
+
+/** 创建 WebContentsView 并 attach 到指定窗口（初始隐藏）。无 IPC 时 no-op。 */
+export function browserCreate(sessionId: string, windowId: string): Promise<void> {
+  return api?.browserCreate(sessionId, windowId) ?? Promise.resolve()
+}
+
+/** 导航到指定 URL（loadURL 失败时 reject）。无 IPC 时 no-op。 */
+export function browserNavigate(sessionId: string, url: string): Promise<void> {
+  return api?.browserNavigate(sessionId, url) ?? Promise.resolve()
+}
+
+/** 隐藏 view（keep-alive，不销毁）。无 IPC 时 no-op。 */
+export function browserHide(sessionId: string): Promise<void> {
+  return api?.browserHide(sessionId) ?? Promise.resolve()
+}
+
+/** 显示 view（恢复最近 rect）。无 IPC 时 no-op。 */
+export function browserShow(sessionId: string): Promise<void> {
+  return api?.browserShow(sessionId) ?? Promise.resolve()
+}
+
+/** 销毁 view（removeChildView + webContents.close）。无 IPC 时 no-op。 */
+export function browserDestroy(sessionId: string): Promise<void> {
+  return api?.browserDestroy(sessionId) ?? Promise.resolve()
+}
+
+/**
+ * 监听主进程推送的 browser 状态变化（url/isLoading/error）。
+ * 主进程 did-navigate / did-fail-load / did-start-loading 等事件触发时推送，
+ * BrowserPane 据此更新地址栏真实 URL（防钓鱼）+ loading/error 态。
+ * 返回取消订阅函数。无 IPC 时返回 no-op。
+ */
+export function onBrowserState(
+  callback: (state: {
+    sessionId: string
+    currentUrl: string
+    isLoading: boolean
+    error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+  }) => void,
+): () => void {
+  // onBrowserState 在 preload 暴露（Wave 2 加）；类型经 declare global ElectronAPI 对齐。
+  // 用可选链兜底旧 preload 未暴露的场景（mock/测试环境）。
+  return (api as { onBrowserState?: (cb: typeof callback) => () => void })?.onBrowserState?.(callback) ?? (() => {})
+}

@@ -53,6 +53,13 @@ export interface ElectronAPI {
   browserShow(sessionId: string): Promise<void>
   /** 销毁 view（removeChildView + webContents.destroy） */
   browserDestroy(sessionId: string): Promise<void>
+  /** 监听 browser 状态变化（url/isLoading/error，主进程 did-navigate 等事件推送），返回取消订阅函数 */
+  onBrowserState(callback: (state: {
+    sessionId: string
+    currentUrl: string
+    isLoading: boolean
+    error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+  }) => void): () => void
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -112,4 +119,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserHide: (sessionId: string) => ipcRenderer.invoke('browser:hide', sessionId),
   browserShow: (sessionId: string) => ipcRenderer.invoke('browser:show', sessionId),
   browserDestroy: (sessionId: string) => ipcRenderer.invoke('browser:destroy', sessionId),
+  onBrowserState: (callback: (state: {
+    sessionId: string
+    currentUrl: string
+    isLoading: boolean
+    error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+  }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: {
+      sessionId: string
+      currentUrl: string
+      isLoading: boolean
+      error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+    }) => callback(state)
+    ipcRenderer.on('browser:state', handler)
+    return () => ipcRenderer.removeListener('browser:state', handler)
+  },
 } satisfies ElectronAPI)
