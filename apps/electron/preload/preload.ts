@@ -25,8 +25,6 @@ export interface ElectronAPI {
   getWindows(): Promise<import('@xyz-agent/shared').WindowState[]>
   /** 聚焦指定窗口 */
   focusWindow(windowId: string): Promise<void>
-  /** 查找指定 session 所在的窗口，返回 { windowId } 或 null */
-  findSessionWindow(sessionId: string): Promise<{ windowId: string } | null>
   /** 监听窗口列表变化事件（创建/关闭/更新） */
   onWindowListUpdated(callback: () => void): () => void
   /** 打开目录选择对话框（defaultPath 失效时主进程自动回退到 ~） */
@@ -115,7 +113,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),
   getWindows: () => ipcRenderer.invoke('get-windows'),
   focusWindow: (windowId: string) => ipcRenderer.invoke('focus-window', windowId),
-  findSessionWindow: (sessionId: string) => ipcRenderer.invoke('find-session-window', sessionId),
   onWindowListUpdated: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('window-list-updated', handler)

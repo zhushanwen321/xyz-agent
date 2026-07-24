@@ -2,21 +2,17 @@
   SideDrawer —— workspace-body 级辅助视图容器，承载 Terminal/Browser/Git/Doc/Detail 五个 tab。
   Terminal/Browser 走 widget 订阅；Git tab 由 GitPanel.vue inject git 状态；Doc/Detail 各自独立。
 
-  形态（双模式，由 props.mode 决定，PanelContainer 按 panel.isDual 派生）：
-  · split（单 panel）：drawer 是 PanelContainer 的 flex 子项，与 Panel 各 flex-1 均分，并排占 workspace 一半；
-  · overlay（双 panel）：drawer 是 absolute 浮层（w-1/2、z-30），覆盖对侧 standby panel——
-    dual 时两个 panel 已占满 workspace，drawer 只能盖掉一个。
-  方向（props.direction，由 host panel 位置决定）：host=P1 → drawer 贴右（direction='right'）；host=P2 → 贴左。
-  split 模式下 direction 决定边框方向 + order（单 panel 恒 right，order 仅作防御）。
+  形态（v2：单 panel 恒 split 模式）：drawer 是 PanelContainer 的 flex 子项，与 Panel 各 flex-1 均分，
+  并排占 workspace 一半，贴右展开（border-l 分隔）。不再有 overlay 浮层模式（原双 panel 专属）。
 
-  状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked/direction/mode
-  props + emit close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
+  状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked props + emit
+  close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
   接入 useSessionEvents.onMessage，按 widgetKey 路由到 terminal/browser tab。
   Git tab 不走 widget——数据由 PanelContainer 经 GIT_STATUS_KEY provide，GitPanel 自行 inject，
   本通用容器不持有 git props（保持容器纯净，不污染通用 tab 范式）。
 -->
 <template>
-  <Transition :name="direction === 'left' ? 'drawer-slide-left' : 'drawer-slide-right'">
+  <Transition name="drawer-slide-right">
     <aside
       v-if="isOpen"
       :class="asideClass"
@@ -179,14 +175,6 @@ const props = defineProps<{
   isOpen: boolean
   activeTab: SideDrawerTab
   docked: boolean
-  /** 抽屉贴边方向（panel/spec.md v2）：host=P1→'right'（贴右），host=P2→'left'（贴左） */
-  direction: 'right' | 'left'
-  /**
-   * 布局模式（PanelContainer 按 panel.isDual 派生）：
-   * · 'split'（单 panel）：flex 子项，与 Panel 各占一半，并排不覆盖；
-   * · 'overlay'（双 panel）：absolute 浮层覆盖对侧 standby panel。
-   */
-  mode: 'split' | 'overlay'
   /** widget 订阅的 session 标识（#11 W3a）：为 null 不订阅 */
   sessionId: string | null
 }>()
@@ -240,30 +228,16 @@ const { browserUrl } = useSideDrawer()
 const browserUrlForRender = computed(() => browserUrl.value ?? '')
 
 /**
- * aside 容器 class（按 mode 切换定位策略）：
- * · overlay（双 panel）：absolute 浮层覆盖对侧——与原 v2 形态逐字一致，dual 行为零回归；
- * · split（单 panel）：flex 子项 flex-1，与 Panel 的 flex-1 各占 50% 并排，不覆盖。
- * direction 在 split 下决定边框方向 + order（单 panel 恒 right，order-first 仅防御性）。
+ * aside 容器 class（v2：单 panel 恒 split 模式）：
+ * flex 子项 flex-1，与 Panel 的 flex-1 各占 50% 并排，贴右展开（border-l 分隔）。
+ * 底色用 bg-surface（与 Panel 内容区一致——Panel section 透明继承 MainPanel 的 surface，
+ * drawer 同色与之并列为 main 内容区）。
  */
-const asideClass = computed<string[]>(() => {
-  const borderLeft = 'border-l border-border-strong'
-  const borderRight = 'border-r border-border-strong'
-  if (props.mode === 'overlay') {
-    // overlay（双 panel）：absolute 浮层覆盖对侧 standby panel，用 bg-elevated 表达浮起感
-    return [
-      'flex h-full flex-col bg-bg-elevated',
-      'absolute top-0 z-30 w-1/2 shadow-2xl',
-      props.direction === 'left' ? `left-0 ${borderRight}` : `right-0 ${borderLeft}`,
-    ]
-  }
-  // split（单 panel）：flex 子项，与 Panel 各占一半。底色用 bg-surface（与 Panel 内容区一致，
-  // 不浮起——此时 Panel section 透明继承 MainPanel 的 surface，drawer 同色与之并列为 main 内容区）
-  return [
-    'flex h-full flex-col bg-surface',
-    'relative min-w-0 flex-1',
-    props.direction === 'left' ? `order-first ${borderRight}` : borderLeft,
-  ]
-})
+const asideClass = computed<string[]>(() => [
+  'flex h-full flex-col bg-surface',
+  'relative min-w-0 flex-1',
+  'border-l border-border-strong',
+])
 
 interface TabMeta {
   key: SideDrawerTab
@@ -366,21 +340,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* 抽屉淡入/淡出（panel/spec.md v2）。
-   原 translateX 位移动画被 PanelContainer 的 overflow-hidden 裁掉（overlay 模式下 drawer 是 absolute 子元素，
-   溢出定位容器必须被裁以防止关闭按钮飘出窗口），改为纯 opacity 淡入淡出。
-   split 模式下 drawer 是 flex 子项不受 overflow-hidden 影响，但布局瞬时切换（Panel 宽度 100%↔50%）配合
-   内容 opacity 淡入已足够柔和，两种模式共用同一组 transition 类。
+   v2：单 panel 恒 split 模式（drawer 是 flex 子项），仅保留 drawer-slide-right。
+   内容 opacity 淡入足够柔和（布局瞬时切换配合 opacity 淡入）。
    escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时设 opacity）。 */
 .drawer-slide-right-enter-from,
-.drawer-slide-right-leave-to,
-.drawer-slide-left-enter-from,
-.drawer-slide-left-leave-to {
+.drawer-slide-right-leave-to {
   opacity: 0;
 }
 .drawer-slide-right-enter-active,
-.drawer-slide-right-leave-active,
-.drawer-slide-left-enter-active,
-.drawer-slide-left-leave-active {
+.drawer-slide-right-leave-active {
   transition: opacity var(--duration-slow) var(--ease);
 }
 </style>

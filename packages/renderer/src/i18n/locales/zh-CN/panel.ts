@@ -5,13 +5,10 @@ export default {
     toggleSidebarAria: '切换侧栏',
     back: '后退',
     forward: '前进',
-    closeSession: '关闭会话',
     workingDir: '工作目录',
     branch: '分支',
     backToMain: '返回主会话',
     gitStatus: 'Git 状态 · 打开侧栏',
-    split: '分屏 · 开第二会话',
-    newSession: '新建会话 · 替换待机侧',
     copySessionFile: '复制 session 文件路径',
   },
   composer: {

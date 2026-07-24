@@ -33,7 +33,7 @@
  *   app.whenReady:
  *     1. protocol.handle('local-file', 路径白名单校验)
  *     2. mainWindow = createWindow({windowId:'win-1'})
- *     3. windowManager.register('win-1', mainWindow, initialWindowState)
+ *     3. windowManager.register('win-1', mainWindow)
  *     4. shortcutRegistry.registerGlobal(mainWindow)
  *     5. if !mock: runtime.startAndNotify(mainWindow)
  *
@@ -60,7 +60,6 @@ import { createMainContext } from './context.js'
 import type { MainContext } from './interfaces.js'
 import { RuntimeSupervisor } from './supervisor/runtime-supervisor.js'
 import { WindowManager } from './window/window-manager.js'
-import { initialWindowState } from './window/panel-tree-utils.js'
 import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { BrowserViewManager } from './browser/browser-view-manager.js'
@@ -166,7 +165,7 @@ async function bootstrapMainWindow(): Promise<void> {
   const win = await createWindowFn({ windowId })
   win.on('closed', () => { ctx.mainWindow = null })
   ctx.mainWindow = win
-  ctx.windows.register(windowId, win, initialWindowState(windowId))
+  ctx.windows.register(windowId, win)
 
   // 注册全局快捷键
   shortcuts.registerGlobal(win)

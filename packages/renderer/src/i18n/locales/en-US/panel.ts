@@ -5,13 +5,10 @@ export default {
     toggleSidebarAria: 'Toggle sidebar',
     back: 'Back',
     forward: 'Forward',
-    closeSession: 'Close session',
     workingDir: 'Working directory',
     branch: 'Branch',
     backToMain: 'Back to main session',
     gitStatus: 'Git status · Open sidebar',
-    split: 'Split · Open second session',
-    newSession: 'New session · Replace standby',
     copySessionFile: 'Copy session file path',
   },
   composer: {

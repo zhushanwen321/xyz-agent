@@ -1,17 +1,15 @@
 /**
- * focusedSessionId 派生测试 —— panel focus 切换时 UI 焦点 session 跟随（核心 bug 回归）。
+ * focusedSessionId 派生测试 —— 单 panel 下 session 切换时 UI 焦点 session 跟随。
  *
- * 锁定：split panel 下切 panel focus（panel.setActive）时，focusedSessionId 从
- * activePanelId 派生，自动跟随。sidebar 高亮 / 文件树 / overview 均读 focusedSessionId，
- * 不再读 session.activeId（activeId 收敛为导航语义）。
+ * split 功能移除（单 panel 化）后，focusedSessionId 直接读 layout.value.sessionId
+ * （panel store 暴露的 focusedSessionId computed）。sidebar 高亮 / 文件树 / overview 均读
+ * focusedSessionId，不再读 session.activeId（activeId 收敛为导航语义）。
  *
- * bug 背景：此前 sidebar 高亮读 session.activeId，panel focus 切换只改 panel.activePanelId，
- * 不改 session.activeId → 高亮不动。引入 focusedSessionId（从 activePanelId 派生）修复。
+ * 历史 bug 背景：此前 sidebar 高亮读 session.activeId，loadSession 只改 panel layout，
+ * 不改 session.activeId → 高亮不动。引入 focusedSessionId（从 layout.value.sessionId 派生）修复。
  *
  * 覆盖：
  * - T1：单 panel，leaf.sessionId='s1' → focusedSessionId='s1'
- * - T2：split 双 panel，setActive 切焦点 → focusedSessionId 跟随（核心回归）
- * - T3：standby 空态（leaf.sessionId=null）→ focusedSessionId=null
  * - T4：focusedSession 按 id 查 session.list（FileView label/branch 数据源）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/focused-session-id.test.ts
@@ -52,7 +50,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-describe('focusedSessionId 派生（panel focus → UI 焦点 session）', () => {
+describe('focusedSessionId 派生（单 panel：session 切换 → UI 焦点 session）', () => {
   it('T1: 单 panel，leaf.sessionId=s1 → focusedSessionId=s1', () => {
     const panel = usePanelStore()
     seedSession(makeSummary('s1'))
@@ -61,45 +59,6 @@ describe('focusedSessionId 派生（panel focus → UI 焦点 session）', () =>
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebar())!
     expect(sidebar.focusedSessionId.value).toBe('s1')
-    scope.stop()
-  })
-
-  it('T2: split 双 panel，setActive 切焦点 → focusedSessionId 跟随（核心 bug 回归）', () => {
-    const panel = usePanelStore()
-    seedSession(makeSummary('s1'))
-    seedSession(makeSummary('s2'))
-    panel.loadSession(ROOT_PANEL_ID, 's1')
-    panel.split()
-    const [, right] = panel.panels
-    panel.loadSession(right.id, 's2')
-
-    const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
-    // 初始 active=left → focusedSessionId=s1
-    expect(sidebar.focusedSessionId.value).toBe('s1')
-    // 切焦点到右 panel → focusedSessionId=s2（修复前此处仍为 s1）
-    panel.setActive(right.id)
-    expect(sidebar.focusedSessionId.value).toBe('s2')
-    // 切回左 panel → focusedSessionId=s1
-    panel.setActive(ROOT_PANEL_ID)
-    expect(sidebar.focusedSessionId.value).toBe('s1')
-    scope.stop()
-  })
-
-  it('T3: standby 空态（leaf.sessionId=null）→ focusedSessionId=null', () => {
-    const panel = usePanelStore()
-    seedSession(makeSummary('s1'))
-    panel.loadSession(ROOT_PANEL_ID, 's1')
-    panel.split() // 右 panel 空（sessionId=null）
-    const [, right] = panel.panels
-
-    const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
-    // 初始 active=left(s1) → focusedSessionId=s1
-    expect(sidebar.focusedSessionId.value).toBe('s1')
-    // 切到空 standby panel → focusedSessionId=null（文件树显空态）
-    panel.setActive(right.id)
-    expect(sidebar.focusedSessionId.value).toBe(null)
     scope.stop()
   })
 

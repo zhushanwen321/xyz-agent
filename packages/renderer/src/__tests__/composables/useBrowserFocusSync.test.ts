@@ -7,7 +7,8 @@
  * - null sid（无 session）时不调 browserFocus
  *
  * mock 策略：vi.mock('@/lib/ipc') 捕获 browserFocus；vi.mock('@/stores/panel') 提供可控的
- * focusedSessionId computed。usePanelStore 返回的 panels/activePanelId 可直接 mutate 模拟切 session。
+ * focusedSessionId ref。composable 经 storeToRefs(panel) 读 focusedSessionId（单 panel 下直接读
+ * layout.value.sessionId）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useBrowserFocusSync.test.ts
  */
@@ -22,21 +23,14 @@ vi.mock('@/lib/ipc', () => ({
 }))
 
 // ── mock panel store：模拟 Pinia store 的 ref 自动 unwrap 行为 ──
-// composable 内部读 panel.panels（数组）+ panel.activePanelId（string|null），
-// 算 focusedSessionId = panels.find(p => p.id === activePanelId)?.sessionId。
-// Pinia store 把 state ref 挂在 store 实例上时自动 unwrap，composable 读 panel.xxx 得到的是值不是 ref。
-// mock 用 getter 模拟 unwrap：每次访问 panel.panels 返回 ref.value（响应式依赖追踪正常）。
-const panelsRef = ref<Array<{ id: string; sessionId: string }>>([])
-const activePanelIdRef = ref<string | null>(null)
+// composable 经 storeToRefs(panel) 读 focusedSessionId（panel store 暴露的 computed，
+// 单 panel 下直接读 layout.value.sessionId）。mock 提供可控的 focusedSessionId ref。
+const focusedSessionIdRef = ref<string | null>(null)
 
 vi.mock('@/stores/panel', () => ({
   usePanelStore: () => ({
-    get panels() {
-      return panelsRef.value
-    },
-    get activePanelId() {
-      return activePanelIdRef.value
-    },
+    // storeToRefs 读 ref/computed：返回真实 ref 让 watch 依赖追踪正常工作
+    focusedSessionId: focusedSessionIdRef,
   }),
 }))
 
@@ -53,8 +47,7 @@ beforeEach(() => {
   currentScope?.stop()
   currentScope = null
   vi.clearAllMocks()
-  panelsRef.value = []
-  activePanelIdRef.value = null
+  focusedSessionIdRef.value = null
 })
 
 afterEach(() => {
@@ -76,8 +69,7 @@ function setupFocusSync(): void {
 
 describe('useBrowserFocusSync（Wave 4）', () => {
   it('immediate: 首次挂载时已有 session → 立即调 browserFocus(sid)', async () => {
-    panelsRef.value = [{ id: 'panel-1', sessionId: 'sess-A' }]
-    activePanelIdRef.value = 'panel-1'
+    focusedSessionIdRef.value = 'sess-A'
 
     setupFocusSync()
     // watch immediate 回调是同步的，但 browserFocus 返回 Promise（void），flush 后断言
@@ -87,18 +79,14 @@ describe('useBrowserFocusSync（Wave 4）', () => {
   })
 
   it('focusedSessionId 变化 → 调 browserFocus(newSid)', async () => {
-    panelsRef.value = [
-      { id: 'panel-1', sessionId: 'sess-A' },
-      { id: 'panel-2', sessionId: 'sess-B' },
-    ]
-    activePanelIdRef.value = 'panel-1'
+    focusedSessionIdRef.value = 'sess-A'
 
     setupFocusSync()
     await Promise.resolve()
     expect(mockBrowserFocus).toHaveBeenCalledTimes(1)
 
-    // 切到 panel-2（sess-B）
-    activePanelIdRef.value = 'panel-2'
+    // 切到 sess-B
+    focusedSessionIdRef.value = 'sess-B'
     await Promise.resolve()
 
     expect(mockBrowserFocus).toHaveBeenCalledWith('sess-B')
@@ -106,15 +94,14 @@ describe('useBrowserFocusSync（Wave 4）', () => {
   })
 
   it('focusedSessionId 变 null（无 session）→ 不调 browserFocus', async () => {
-    panelsRef.value = [{ id: 'panel-1', sessionId: 'sess-A' }]
-    activePanelIdRef.value = 'panel-1'
+    focusedSessionIdRef.value = 'sess-A'
 
     setupFocusSync()
     await Promise.resolve()
     expect(mockBrowserFocus).toHaveBeenCalledTimes(1)
 
-    // 切到不存在的 panel（focusedSessionId 变 null）
-    activePanelIdRef.value = 'panel-nonexistent'
+    // focusedSessionId 变 null（无 session）
+    focusedSessionIdRef.value = null
     await Promise.resolve()
 
     // null sid 时 watch 回调跳过，不调 browserFocus

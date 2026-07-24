@@ -74,19 +74,17 @@ export interface IRuntimeSupervisor {
  * 对应 spec §4.2 M3「Window Manager」：窗口注册表 + 跨窗口 session 查询。
  *
  * [HISTORICAL] 不变量：
- * - 完整 PanelTree 结构是 Renderer 的权威，Main 只保留跨窗口查询所需投影
- * - findSessionBySessionId 递归遍历有 MAX_PANE_DEPTH 上限，防畸形 payload
+ * - 单 panel 投影（v2 移除 split 后简化），window-manager 内部构造初始 state
  * - 不直接创建 BrowserWindow（创建由 window-factory 负责）
  */
 export interface IWindowManager {
   generateId(): string
-  register(windowId: string, win: BrowserWindow, initialState: WindowState): void
+  register(windowId: string, win: BrowserWindow): void
   unregister(windowId: string): void
   get(windowId: string): BrowserWindow | undefined
   getAll(): WindowState[]
   focus(windowId: string): void
   close(windowId: string): void
-  findSessionBySessionId(sessionId: string): { windowId: string; paneId: string } | null
   setOnWindowListChanged(cb: () => void): void
   readonly windowCount: number
 }

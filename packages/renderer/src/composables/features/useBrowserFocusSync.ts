@@ -19,7 +19,8 @@
  * 调用方：Workspace.vue onMounted 调用一次。watch 生命周期跟随组件。
  * 无 IPC（web/mock）时 browserFocus 静默 no-op，不影响其他逻辑。
  */
-import { computed, watch } from 'vue'
+import { watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { usePanelStore } from '@/stores/panel'
 import { browserFocus } from '@/lib/ipc'
 
@@ -27,12 +28,10 @@ export function useBrowserFocusSync(): void {
   const panel = usePanelStore()
 
   /**
-   * 当前焦点 session（与 useSidebar.focusedSessionId 同源）。
-   * panel store 的 activePanelId → sessionId 是 UI 高亮的真相源。
+   * 当前焦点 session（store.focusedSessionId，UI 高亮的真相源）。
+   * v2 split 移除后直接读 store computed（此前 local computed 从 panels.find 派生，单 panel 下冗余）。
    */
-  const focusedSessionId = computed<string | null>(
-    () => panel.panels.find((p) => p.id === panel.activePanelId)?.sessionId ?? null,
-  )
+  const { focusedSessionId } = storeToRefs(panel)
 
   // 切 session 时通知主进程 swap visible view。
   // immediate: true 覆盖首次挂载（此时可能已有 session 聚焦，确保 view 状态正确）。
