@@ -192,7 +192,7 @@ const subagentLabel = computed(() => {
     return t('panel.overlay.agentCallId', { id: agentCallId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH) })
   }
   // subagent overlay
-  const record = subagentStore.getCurrentSubagent(props.panelId)
+  const record = props.sessionId ? subagentStore.getCurrentSubagent(props.panelId, props.sessionId) : null
   if (!record) return t('panel.overlay.subagent')
   return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
 })
@@ -264,8 +264,8 @@ watch(
   { immediate: true },
 )
 const overlaySessionFile = computed(() => {
-  if (subagentStore.isViewing(props.panelId)) {
-    return subagentStore.getCurrentSubagent(props.panelId)?.sessionFile ?? undefined
+  if (subagentStore.isViewing(props.panelId) && props.sessionId) {
+    return subagentStore.getCurrentSubagent(props.panelId, props.sessionId)?.sessionFile ?? undefined
   }
   if (viewingAgentCallId.value) {
     return agentCallOverlayFile.value || undefined

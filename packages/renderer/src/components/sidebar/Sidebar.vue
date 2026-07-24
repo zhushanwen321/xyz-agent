@@ -251,26 +251,35 @@ const fileCount = computed(() => {
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
 
-/** subagent tab 计数（当前 session 的 subagent 数量，读 store 共享列表） */
-const subagentCount = computed(() => subagentStore.records.length)
+/** subagent tab 计数（当前 session 的 subagent 数量，读 store 分区） */
+const subagentCount = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value.length)
 
 /** subagent running 态数量（badge 精确化：仅 running>0 亮蓝点） */
-const subagentRunningCount = computed(() => subagentStore.records.filter((r) => r.status === 'running').length)
+const subagentRunningCount = computed(
+  () => subagentStore.recordsOf(focusedSessionId.value ?? '').value.filter((r) => r.status === 'running').length,
+)
 
-/** subagent 列表（store records 的 computed 解包，供 template 直接用） */
-const subagentList = computed(() => subagentStore.records)
+/** subagent 列表（store records 分区的响应式视图解包，供 template 直接用） */
+const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
 
-/** workflow tab 计数（当前 session 的 workflow 数量，读 store 共享列表） */
-const workflowCount = computed(() => workflowStore.workflowCount())
+/** workflow tab 计数（当前 session 的 workflow 数量，读 store 分区） */
+const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)
 
 /** workflow running/paused 态数量（badge 精确化：仅活跃态>0 亮蓝点） */
-const workflowRunningCount = computed(() => workflowStore.records.filter((r) => r.status === 'running' || r.status === 'paused').length)
+const workflowRunningCount = computed(
+  () =>
+    workflowStore
+      .recordsOf(focusedSessionId.value ?? '')
+      .value.filter((r) => r.status === 'running' || r.status === 'paused').length,
+)
 
-/** workflow 列表（store records 的 computed 解包，供 template 直接用） */
-const workflowList = computed(() => workflowStore.records)
+/** workflow 列表（store records 分区的响应式视图解包，供 template 直接用） */
+const workflowList = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value)
 
 /** 当前查看的 workflow record（视图 2 详情态，null 时显示视图 1 列表） */
-const currentWorkflow = computed(() => workflowStore.getCurrentWorkflow(panelStore.activePanelId))
+const currentWorkflow = computed(() =>
+  focusedSessionId.value ? workflowStore.getCurrentWorkflow(panelStore.activePanelId, focusedSessionId.value) : null,
+)
 
 /** 状态点派生（D6）：useSessionDerivations 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {

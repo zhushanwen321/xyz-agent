@@ -175,6 +175,7 @@ export class EventInterpreter {
             // 对「handler 抛错」场景写 'done' 是错的；turn-end 事件本身携带 stopReason（types.ts L120）。
             this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
           } catch (finalizeErr) {
+            // best-effort: onTurnFinalize 本身就是 handle(ev) 抛错后的兜底，此处失败无更上层可传播，静默降级
             console.debug('[event-interpreter] onTurnFinalize fallback failed:', finalizeErr)
           }
         }

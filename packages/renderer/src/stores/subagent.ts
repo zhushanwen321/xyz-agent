@@ -13,7 +13,8 @@
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
  */
 import { defineStore } from 'pinia'
-import { getCurrentScope, onScopeDispose, ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
+import type { ComputedRef } from 'vue'
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -102,8 +103,11 @@ export type ChatEvictFn = (virtualId: string) => void
 
 export const useSubagentStore = defineStore('subagent', () => {
   // ── state ──
-  /** 共享 subagent 列表（Sidebar 管理，所有 panel 共享） */
-  const records = ref<SubagentRecord[]>([])
+  /**
+   * 按 sessionId 分区的 subagent 列表（ADR-0036 Map 分区派，同 command.ts 范式）。
+   * 切走不清、切回直接读 Map 分区；deleteSession 经 clearSession(sid) 精确释放。
+   */
+  const recordsBySession = ref<Map<string, SubagentRecord[]>>(new Map())
 
   /** 加载态（M1：loadSubagents 在途时 true） */
   const isLoading = ref(false)
@@ -136,6 +140,41 @@ export const useSubagentStore = defineStore('subagent', () => {
     })
   }
 
+  /**
+   * 响应式视图：指定 session 的 subagent 列表（供组件 computed 订阅，对齐 command.ts commandsOf）。
+   * 切会话时读不同分区，records 变化自动重算。
+   */
+  function recordsOf(sessionId: string): ComputedRef<SubagentRecord[]> {
+    return computed(() => recordsBySession.value.get(sessionId) ?? [])
+  }
+
+  /** 非响应式读：指定 session 的 subagent 列表（不写 Map，无则空数组，对齐 command.ts getCommands） */
+  function getRecordsBySession(sessionId: string): SubagentRecord[] {
+    return recordsBySession.value.get(sessionId) ?? []
+  }
+
+  /** 该 session 是否有 subagent 仍在 running（供 derivedStatus 计算 hasBackgroundWork） */
+  function hasRunning(sessionId: string): boolean {
+    return getRecordsBySession(sessionId).some((s) => s.status === 'running')
+  }
+
+  /**
+   * 写入指定 session 的 subagent 列表（不可变写，确保 Map 响应性触发）。
+   * @param sessionId 分区 key
+   * @param list runtime 推送 / RPC 拉取的 subagent 列表
+   */
+  function applyRecords(sessionId: string, list: SubagentRecord[]): void {
+    recordsBySession.value = new Map(recordsBySession.value).set(sessionId, list)
+  }
+
+  /** 清除指定 session 的 subagent 列表分区（deleteSession 调，防泄漏，ADR-0036 AC-8） */
+  function clearSession(sessionId: string): void {
+    if (!recordsBySession.value.has(sessionId)) return
+    const next = new Map(recordsBySession.value)
+    next.delete(sessionId)
+    recordsBySession.value = next
+  }
+
   // ── getters ──
   /** 本 panel 当前是否在查看 subagent 对话流 */
   function isViewing(panelId: string): boolean {
@@ -157,15 +196,16 @@ export const useSubagentStore = defineStore('subagent', () => {
     return sid ? subagentVirtualId(mainSessionId, sid) : null
   }
 
-  /** 本 panel 当前查看的 subagent 记录 */
-  function getCurrentSubagent(panelId: string): SubagentRecord | null {
+  /** 本 panel 当前查看的 subagent 记录（从 mainSessionId 分区查） */
+  function getCurrentSubagent(panelId: string, mainSessionId: string): SubagentRecord | null {
     const sid = getViewingSubagentId(panelId)
-    return sid ? records.value.find((s) => s.subagentId === sid) ?? null : null
+    if (!sid) return null
+    return getRecordsBySession(mainSessionId).find((s) => s.subagentId === sid) ?? null
   }
 
-  /** 指定 subagentId 是否仍在 running（读共享 records） */
-  function isRunning(subagentId: string): boolean {
-    return records.value.find((s) => s.subagentId === subagentId)?.status === 'running'
+  /** 指定主 session 名下的 subagent 是否仍在 running（读该 sid 分区，不全扫） */
+  function isRunning(mainSessionId: string, subagentId: string): boolean {
+    return getRecordsBySession(mainSessionId).find((s) => s.subagentId === subagentId)?.status === 'running'
   }
 
   // ── viewing 状态读写（内部）──
@@ -181,21 +221,17 @@ export const useSubagentStore = defineStore('subagent', () => {
 
   // ── actions ──
   /**
-   * 加载 session 的 subagent 列表（共享状态）。
+   * 加载 session 的 subagent 列表（写入该 sid 分区）。
    * 在 Sidebar 切到 Agents tab 或 session 切换时调用。
    */
   async function loadSubagents(sessionId: string): Promise<void> {
-    if (!sessionId) {
-      records.value = []
-      loadError.value = null
-      return
-    }
+    if (!sessionId) return // 空 sid 不写分区
     isLoading.value = true
     loadError.value = null
     try {
-      records.value = await sessionApi.getSubagents(sessionId)
+      applyRecords(sessionId, await sessionApi.getSubagents(sessionId))
     } catch (e) {
-      // M1：失败不清空 records，设 loadError
+      // M1：失败不覆盖现有分区，设 loadError
       const msg = e instanceof Error ? e.message : String(e)
       console.error('[subagent-store] loadSubagents failed:', e)
       loadError.value = msg
@@ -207,7 +243,11 @@ export const useSubagentStore = defineStore('subagent', () => {
   /**
    * 订阅 runtime 推送的 session.subagents 广播。
    * runtime 在 subagent 状态变化（发起/终态）时主动推送全量列表，
-   * 前端被动消费更新 records（驱动 sidebar badge 计数实时变化）。
+   * 前端被动消费更新该 session 分区（驱动 sidebar badge 计数 + working 态实时变化）。
+   *
+   * [RK1] payload.sessionId 优先：runtime broadcastSubagents 帧 payload 含 sessionId 字段
+   * （event-interpreter.ts:500），用它写对应分区（规则#7 推送链路隔离延伸，非焦点 session 终态推送也写分区）；
+   * payload 无 sessionId 回落闭包 sid。
    *
    * @param sessionId 当前焦点 session ID
    * @returns 取消订阅函数（切会话时调用，取消旧 session 的订阅）
@@ -215,18 +255,18 @@ export const useSubagentStore = defineStore('subagent', () => {
   function subscribeSubagentPush(sessionId: string): () => void {
     return events.on(sessionId, (msg) => {
       if (msg.type !== 'session.subagents') return
-      const payload = msg.payload as { subagents?: unknown }
-      // 运行时守卫：runtime 契约稳定但仍校验，避免字段漂移时静默覆盖 records。
+      const payload = msg.payload as { subagents?: unknown; sessionId?: string }
+      // 运行时守卫：runtime 契约稳定但仍校验，避免字段漂移时静默覆盖。
       if (Array.isArray(payload.subagents)) {
-        records.value = payload.subagents as SubagentRecord[]
+        applyRecords(payload.sessionId ?? sessionId, payload.subagents as SubagentRecord[])
       }
     })
   }
 
-  /** 清空 subagent 列表 + 退出所有 panel overlay + 停止所有 streaming */
+  /** 清空所有 subagent 分区 + 退出所有 panel overlay + 停止所有 streaming（全局重置场景用） */
   function clearSubagents(): void {
     for (const pid of panelStreamUnsub.keys()) stopStream(pid)
-    records.value = []
+    recordsBySession.value = new Map()
     panelViewingMap.value = new Map()
   }
 
@@ -322,7 +362,7 @@ export const useSubagentStore = defineStore('subagent', () => {
     await fetchAndInject(mainSessionId, subagentId, setMessages)
 
     // running 态启动 streaming（逐字增量，终态自动收口 + 拉完整历史）
-    const record = records.value.find((s) => s.subagentId === subagentId)
+    const record = getRecordsBySession(mainSessionId).find((s) => s.subagentId === subagentId)
     if (record?.status === 'running') {
       subscribeStream(panelId, mainSessionId, subagentId, virtualId, chatApplyDelta, chatFinalizeStream, setMessages)
     }
@@ -370,32 +410,31 @@ export const useSubagentStore = defineStore('subagent', () => {
   }
 
   /**
-   * 取消 running subagent（调 RPC + 乐观更新）。
-   * 成功后立即将 records 中对应项 status 改为 cancelled（不等 WS 推送，避免 UI 延迟）。
+   * 取消 running subagent（调 RPC + 乐观更新该 sid 分区）。
+   * 成功后立即将分区中对应项 status 改为 cancelled（不等 WS 推送，避免 UI 延迟）。
    * RPC 失败时不改 status（乐观更新回滚），error 向上抛由调用方 toast。
-   *
-   * [W3 / W-S7] 不可变写：此前 `record.status = 'cancelled'` 直接 mutation 数组内对象，
-   * 与 store 其余「取出 → 新数组 → set」的不可变风格不一致（且不保证响应式触发）。改为
-   * map 替换整个 record；回滚用保存的 prevRecords 整体恢复。
    */
   async function cancelSubagent(sessionId: string, subagentId: string): Promise<void> {
-    const prevRecords = records.value
+    const prevRecords = getRecordsBySession(sessionId)
     // 乐观更新（假设成功）：不可变 map 替换目标 record
-    records.value = prevRecords.map((s) =>
-      s.subagentId === subagentId ? { ...s, status: 'cancelled' as const } : s,
+    applyRecords(
+      sessionId,
+      prevRecords.map((s) =>
+        s.subagentId === subagentId ? { ...s, status: 'cancelled' as const } : s,
+      ),
     )
     try {
       await sessionApi.subagentAction(sessionId, 'cancel', subagentId)
     } catch (e) {
       // 回滚乐观更新：整体恢复 prevRecords
-      records.value = prevRecords
+      applyRecords(sessionId, prevRecords)
       throw e
     }
   }
 
   return {
     // state
-    records,
+    recordsBySession,
     isLoading,
     loadError,
     // getters
@@ -404,6 +443,12 @@ export const useSubagentStore = defineStore('subagent', () => {
     getActiveSubagentVirtualId,
     getCurrentSubagent,
     isRunning,
+    // per-session 分区读写（ADR-0036 Map 分区派）
+    recordsOf,
+    getRecordsBySession,
+    hasRunning,
+    applyRecords,
+    clearSession,
     // actions
     loadSubagents,
     subscribeSubagentPush,

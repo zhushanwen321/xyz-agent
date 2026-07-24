@@ -344,6 +344,18 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **修改位置**：`packages/runtime/src/services/git-service.ts` getStatus 的 status 命令。commit 用 `git diff --numstat HEAD`（不受此约束，numstat 只管 tracked 改动）。
 - **测试基线**：`git-service.test.ts` 的 `status 命令带 --untracked-files=all 展开未跟踪目录到单文件` 用例断言了命令参数。
 
+### 16. 禁止写死项目绝对路径（必须动态推导）[HISTORICAL]
+
+**runtime 代码禁止出现特定项目的绝对路径（如 `/Users/.../xyz-agent-workspace`）或对特定项目的硬编码假设。所有 workspace / bare repo / 数据目录路径必须从运行时上下文动态推导。**
+
+- **根因**：xyz-agent 是通用工具，用户会在任意 bare repo + worktree 结构的项目中使用（不只限 xyz-agent 自身）。写死 `xyz-agent-workspace` 等特定路径会导致其他项目（如 xyz-pi-extensions-workspace）功能失效。用户报告在 xyz-pi-extensions-workspace 执行「新建 worktree」失败，初看像写死路径，实际排查后发现 detector 正确动态查找 .bare，真正的 bug 是 spawn 权限（见下）——但「禁止写死路径」作为通用原则必须固化为规范。
+- **正确做法**：
+  - workspace 根 / bare repo 路径：用 `WorkspaceDetector.detect(currentCwd)` 从当前 cwd 向上逐级查找 `.bare`（`packages/runtime/src/services/worktree/workspace-detector.ts`）
+  - 数据目录：用 `getDataDir()` / `getConfigDir()`（`packages/shared/src/paths.ts`），禁止硬编码 `~/.xyz-agent`
+  - 路径白名单：用动态函数推导，禁止硬编码（见架构约定 #2）
+- **事故关联**（spawn 脚本权限）：`ShellRunner.execute` 原用 `spawn(scriptPath, args)` 直接 spawn 脚本，依赖文件 +x 权限位。git 跟踪的脚本默认 644（无 x 位）→ EACCES。修复为 `spawn('bash', [scriptPath, ...args])`（不依赖 +x）。这是独立 bug，但与「路径」无关——记在 `shell-runner.ts` 的 [HISTORICAL] 注释中。教训：执行外部脚本用 bash 包装，不依赖文件权限位。
+- **检查方法**：`grep -rn "xyz-agent-workspace\|/Users/zhushanwen" packages/runtime/src/` 应只在注释/示例中出现，不得在逻辑代码中出现硬编码绝对路径。
+
 ## 测试规范 [HISTORICAL]
 
 > **执行测试或设计测试计划前，先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层策略/mock 策略/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**（各页面组件的 MOCK/非MOCK 测试步骤 + Playwright E2E 调用链 + 每步期望输入输出 + 已知坑）。docs/testing/ 00 总览是入口篇。复用已有 testid 清单/调用链/fixture 数据/历史踩坑经验，不从零重新探索——这些文档记录了 mock 回显双匹配、thinking 收起态 v-if 时序、initApp 预填 cwd 等仅靠读组件代码无法发现的运行时行为。
@@ -520,6 +532,19 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 **[HISTORICAL] 背景**：handoff 2026-07-04 P1「pi 静默卡死」——坏 session 的 JSONL 只有 2 行、零 message，pi 子进程 0% CPU 不退出。runtime 发了 prompt 后 pi 发了什么事件（或什么都没发）无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。此条目把「日志必须落盘」固化为规范，避免再次因证据丢失而无法定位。实现见 commit（logger.ts + index.ts initLogger + rpc-client.ts pi stdout tee）。
 
 ## 跳过检查
+
+### cw v1 testRunner cwd 对 monorepo 失效 [HISTORICAL]
+
+cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vitest run`。本项目的 vitest 配置在 `packages/renderer/vitest.config.ts`（含 `@/` alias 等），根目录跑出大量「配置/alias 找不到」的假失败（test files 层面 200+ failed），gate `tests-all-pass` 永远不过——**即使本次改动零回归**。
+
+2026-07-23 事故：session-bg-work-status wave 的 renderer 目录内 vitest 是 1827 passed / 5 认知外失败，但 cw 在根目录跑出 160 passed / 32 failed（解析还受彩色输出干扰），test gate 卡死无法推进 exec-review。
+
+**临时对策**（coding-workflow 修复前）：wave test gate 的判定**以 `packages/renderer` 目录内的 `npx vitest run` 结果为准**，不用 cw gate 的数字。具体：
+1. `cd packages/renderer && npx vitest run` 拿真实 pass/fail
+2. 确认失败的测试是否在本次 wave 范围（看 plan.files）——范围外的预存失败需单独修，但不阻塞本 wave
+3. 若本 wave 范围内测试全绿，人工判定 test 阶段通过，推进 exec-review
+
+**根治方向**（待提 PR 到 coding-workflow）：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
 
 > **默认禁止跳过**（见上文「Lint / Git Hooks 问题处理原则 [MANDATORY]」）。以下变量仅供线上热修复等紧急场景，使用时必须在 commit message 说明原因。
 

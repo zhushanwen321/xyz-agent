@@ -85,7 +85,7 @@ export class SessionLifecycle {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before starting a session.', MODEL_NOT_CONFIGURED)
     }
 
-    const allExtPaths = await this.svc.getExtensionPaths()
+    const allExtPaths = await this.svc.getExtensionPaths(sessionCwd)
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -216,7 +216,7 @@ export class SessionLifecycle {
     })()
 
     const id = sessionId
-    const allExtPaths = await this.svc.getExtensionPaths()
+    const allExtPaths = await this.svc.getExtensionPaths(sessionCwd)
     const client = await this.pm.createSession(id, sessionCwd, {
       skillPaths: this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -316,7 +316,7 @@ export class SessionLifecycle {
 
     // 3. spawn 新 pi 进程（与 restore 同模式）
     const sessionCwd = existsSync(source.cwd) ? source.cwd : homedir()
-    const allExtPaths = await this.svc.getExtensionPaths()
+    const allExtPaths = await this.svc.getExtensionPaths(sessionCwd)
     const client = await this.pm.createSession(forkedId, sessionCwd, {
       skillPaths: this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,

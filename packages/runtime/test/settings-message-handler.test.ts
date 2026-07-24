@@ -57,6 +57,7 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     broadcastAgentList: vi.fn(),
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
+    broadcastExtensionDirs: vi.fn(),
   }
   const handler = new SettingsMessageHandler(ctx as unknown as ConstructorParameters<typeof SettingsMessageHandler>[0])
   return { ctx, replies, broadcasts, handler }

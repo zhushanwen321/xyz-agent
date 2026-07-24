@@ -24,9 +24,11 @@ import { recommendedExtensions } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
-import { isStrictlyUnder, isUnderOrEqual, extractRepoName } from '../utils/path-utils.js'
+import type { IConfigStore } from './ports/config.js'
+import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../utils/runtime-env.js'
+import { getExtensionsDir, getNpmDir, getTmpDir } from '../infra/pi/pi-paths.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
@@ -82,6 +84,17 @@ export interface ExtensionServiceOptions {
    * 经此 port 读写 settings.json，不再直接 readFileSync/writeFileSync（D17 收口）。
    */
   extensionSettings: IExtensionSettings
+  /**
+   * discovery.json SSOT 的访问 port（读 extensionDirs）。由 index.ts 注入（生产）。
+   * 可选：测试场景可不注入，getExtensionPaths 时 discovery 目录为空数组。
+   */
+  configStore?: IConfigStore
+  /** 用户安装的 extension 目录，默认 getExtensionsDir()（~/.xyz-agent/extensions） */
+  extensionsDir?: string
+  /** npm 安装目录，默认 getNpmDir()（~/.xyz-agent/npm） */
+  npmDir?: string
+  /** extension 安装临时目录，默认 getTmpDir()（~/.xyz-agent/tmp） */
+  tmpDir?: string
 }
 
 export class ExtensionService {
@@ -91,6 +104,11 @@ export class ExtensionService {
   private readonly extSettings: IExtensionSettings
   private readonly projectRoot: string
   private readonly packaged: boolean
+  private readonly extensionsDir: string
+  private readonly npmDir: string
+  private readonly tmpDir: string
+  /** discovery.json SSOT 访问 port（读 extensionDirs）。可选，测试可不注入。 */
+  private readonly configStore?: IConfigStore
 
   /** 文件型 extension 路径（如 xyz-agent-extension.js），打包/开发模式不同 */
   private extensionFilePath: string
@@ -116,6 +134,10 @@ export class ExtensionService {
     this.extSettings = options.extensionSettings
     this.projectRoot = options.projectRoot ?? process.cwd()
     this.packaged = options.packaged ?? isPackaged()
+    this.extensionsDir = options.extensionsDir ?? getExtensionsDir()
+    this.npmDir = options.npmDir ?? getNpmDir()
+    this.tmpDir = options.tmpDir ?? getTmpDir()
+    this.configStore = options.configStore
 
     // 文件型 extension 路径
     this.extensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged)
@@ -129,7 +151,7 @@ export class ExtensionService {
 
   private cleanupOrphanedTempDirs(): void {
     try {
-      const tmpDir = join(this.settingsDir, 'tmp')
+      const tmpDir = this.tmpDir
       if (!existsSync(tmpDir)) return
       const entries = readdirSync(tmpDir)
       const cutoff = Date.now() - ORPHAN_TEMP_MAX_AGE_MS
@@ -162,6 +184,33 @@ export class ExtensionService {
       .filter(p => p.length > 0)
       .map(p => p.startsWith('~') ? join(homedir(), p.slice(1)) : p)
       .map(p => resolve(this.projectRoot, p))
+  }
+
+  /**
+   * 读 discovery.json.extensionDirs 并 resolve 成存在的绝对路径数组。
+   *
+   * 与 SessionService.getSkillPaths 对称（cw-2026-07-21-scan-project-agents-skills FR-1）：
+   * 相对路径按 cwd resolve 成绝对路径再 existsSync 过滤，否则项目级 extension 目录会按
+   * runtime 进程 cwd（app.getAppPath/resourcesPath）解析 → 在该 cwd 下不存在被过滤掉。
+   * ~/xxx 家目录前缀先 expandHome 展开（否则 isAbsolute('~/...') false → resolve(cwd, '~/...') 错位）。
+   *
+   * configStore 未注入（测试场景）时返回空数组，等价于无 discovery 目录。
+   */
+  private resolveDiscoveryDirs(cwd?: string): string[] {
+    if (!this.configStore) return []
+    const base = cwd ?? this.projectRoot
+    const normalize = (p: string): string => {
+      const expanded = expandHome(p)
+      return isAbsolute(expanded) ? expanded : resolve(base, expanded)
+    }
+    return this.configStore.getExtensionDirs().filter((p) => {
+      const resolved = normalize(p)
+      if (existsSync(resolved)) {
+        return true
+      }
+      console.warn(`[extension-service] discovery extension dir not found, skipping: ${p} (resolved: ${resolved})`)
+      return false
+    }).map(normalize)
   }
 
   /**
@@ -234,9 +283,14 @@ export class ExtensionService {
   /**
    * 返回启用的 extension 路径列表（供 pi --extension 参数使用）。
    * 封装 ExtensionResolver.resolve() + 过滤禁用项 + 追加文件型 extension。
+   *
+   * @param cwd session cwd（相对路径 resolve 基准）。与 SessionService.getSkillPaths 对称：
+   *   discovery.json 中的相对 extension 目录按 session cwd 解析（而非 runtime 进程 cwd），
+   *   否则项目级 extension 目录会错位落到 app/resources 下被 existsSync 过滤掉。
    */
-  async getExtensionPaths(): Promise<string[]> {
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths())
+  async getExtensionPaths(cwd?: string): Promise<string[]> {
+    const discoveryDirs = this.resolveDiscoveryDirs(cwd)
+    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs)
     const { disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
 
@@ -285,7 +339,7 @@ export class ExtensionService {
       if (!isValidNpmPackageName(pkgName)) {
         throw new ExtensionInstallError('not_found', `Invalid npm package name: ${pkgName}`)
       }
-      const npmDir = join(this.settingsDir, 'npm')
+      const npmDir = this.npmDir
 
       // 确保 npm 目录有 package.json
       if (!existsSync(npmDir)) {
@@ -313,7 +367,7 @@ export class ExtensionService {
       // 先扫描已安装列表，按 name 查找 extension 的路径
       const installed = await this.scanExtensions()
       const target = installed.find((e) => e.name === name)
-      const thirdPartyDir = join(this.settingsDir, 'extensions')
+      const thirdPartyDir = this.extensionsDir
 
       // local-dir / git 安装的 extension 在 ~/.xyz-agent/pi/agent/extensions/ 下。
       // finishInstall 时只 cpSync 到此目录，未记录到 settings.json packages[]——
@@ -323,7 +377,7 @@ export class ExtensionService {
       }
 
       // npm 安装的 extension：从 settings packages[] 移除 + 删 node_modules
-      const npmDir = join(this.settingsDir, 'npm')
+      const npmDir = this.npmDir
       const source = `npm:${name}`
 
       // 从 settings packages[] 移除（经 port → pi-settings-store 互斥 RMW）
@@ -402,7 +456,7 @@ export class ExtensionService {
       }
 
       // 执行升级：npm install 最新版（复用 installExtension 的错误分类 + isValidPiExtension 验证）
-      const npmDir = join(this.settingsDir, 'npm')
+      const npmDir = this.npmDir
       await this.installAndValidate(name, npmDir, 'upgrade')
 
       // 从 node_modules/<name>/package.json 读取实际安装版本，
@@ -491,7 +545,7 @@ export class ExtensionService {
     }
 
     // Ensure tmp parent directory exists
-    const tmpParent = join(this.settingsDir, 'tmp')
+    const tmpParent = this.tmpDir
     mkdirSync(tmpParent, { recursive: true })
 
     // Create temp directory
@@ -530,7 +584,7 @@ export class ExtensionService {
    */
   async installGitRepository(url: string): Promise<{ tempDir: string; candidates: ExtensionInfo[] }> {
     // Ensure tmp parent directory exists
-    const tmpParent = join(this.settingsDir, 'tmp')
+    const tmpParent = this.tmpDir
     mkdirSync(tmpParent, { recursive: true })
 
     // Create temp directory
@@ -629,7 +683,7 @@ export class ExtensionService {
       }
     }
 
-    const extensionsDir = join(this.settingsDir, 'extensions')
+    const extensionsDir = this.extensionsDir
     mkdirSync(extensionsDir, { recursive: true })
 
     for (const dirName of selected) {

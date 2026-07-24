@@ -108,15 +108,33 @@ describe('FG5 groupTurns 回合分组', () => {
     expect(hasFailedTool(turns[0])).toBe(true)
   })
 
-  it('最后一条 assistant streaming → isWorking=true（其余 false）', () => {
+  it('最后一条 assistant streaming → isStreaming=true（其余 false）', () => {
     const turns = groupTurns([
       userMsg('u1', 'q1'),
       assistantMsg('a1', 'r1'),
       userMsg('u2', 'q2'),
       assistantMsg('a2', '正在', { status: 'streaming' }),
     ])
-    expect(turns[0].isWorking).toBe(false)
-    expect(turns[1].isWorking).toBe(true)
+    expect(turns[0].isStreaming).toBe(false)
+    expect(turns[1].isStreaming).toBe(true)
+  })
+
+  // CW wave session-active-ssot T4：forceWorking（subagent 虚拟 session 强制 streaming 态）
+  // 映射到最后一个 turn 的 isStreaming（重命名自 isWorking）。
+  it('toRenderItems forceWorking=true → 最后一个 turn isStreaming=true（subagent 强制态）', () => {
+    const items = toRenderItems(
+      [
+        userMsg('u1', 'q1'),
+        assistantMsg('a1', 'r1', { status: 'complete' }), // status complete，靠 forceWorking 强制
+      ],
+      /* forceWorking */ true,
+    )
+    const turn = items[0]
+    expect(turn.kind).toBe('turn')
+    if (turn.kind === 'turn') {
+      // forceWorking 让最后 turn 的 isStreaming=true，即便 status 非 streaming
+      expect(turn.turn.isStreaming).toBe(true)
+    }
   })
 
   it('首条 assistant 无前置 user → 自启回合（边缘情况）', () => {

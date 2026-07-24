@@ -52,36 +52,36 @@ function makeSubagentsMsg(sessionId: string, subagents: SubagentRecord[]): Serve
   } as ServerMessage
 }
 
-describe('E1: subscribeSubagentPush → records 自动更新', () => {
-  it('订阅后 dispatchSession 推送 → records 替换为推送内容', () => {
+describe('E1: subscribeSubagentPush → records 分区自动更新', () => {
+  it('订阅后 dispatchSession 推送 → 该 sid 分区替换为推送内容', () => {
     const store = useSubagentStore()
     const unsub = store.subscribeSubagentPush('session-1')
 
     const record = makeRecord()
     events.dispatchSession('session-1', makeSubagentsMsg('session-1', [record]))
 
-    expect(store.records).toHaveLength(1)
-    expect(store.records[0].subagentId).toBe('bg-1')
-    expect(store.records[0].status).toBe('running')
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-1')[0].subagentId).toBe('bg-1')
+    expect(store.getRecordsBySession('session-1')[0].status).toBe('running')
 
     unsub()
   })
 
-  it('Sidebar subagentCount computed 读 store.records.length = 1', () => {
+  it('Sidebar subagentCount computed 读 store.recordsOf(sid).length = 1', () => {
     const store = useSubagentStore()
     const unsub = store.subscribeSubagentPush('session-1')
 
     events.dispatchSession('session-1', makeSubagentsMsg('session-1', [makeRecord()]))
     unsub()
 
-    // subagentCount 是 Sidebar.vue 的 computed(() => store.records.length)
-    // 这里直接验 store.records.length，等价于 badge 计数
-    expect(store.records.length).toBe(1)
+    // subagentCount 是 Sidebar.vue 的 computed(() => store.recordsOf(focusedSessionId).length)
+    // 这里直接验 store.recordsOf(sid).value，等价于 badge 计数
+    expect(store.recordsOf('session-1').value.length).toBe(1)
   })
 })
 
-describe('E2: 切会话重订阅 → 旧 sessionId 推送不再影响 records', () => {
-  it('subscribeSubagentPush(session-B) 后，session-A 推送不覆盖 records', () => {
+describe('E2: 切会话重订阅 → 旧 sessionId 推送不再影响新 sid 分区', () => {
+  it('subscribeSubagentPush(session-B) 后，session-A 推送不覆盖 session-B 分区', () => {
     const store = useSubagentStore()
 
     // 先订阅 session-A
@@ -89,28 +89,27 @@ describe('E2: 切会话重订阅 → 旧 sessionId 推送不再影响 records', 
     events.dispatchSession('session-A', makeSubagentsMsg('session-A', [
       makeRecord({ subagentId: 'bg-a', agent: 'x' }),
     ]))
-    expect(store.records).toHaveLength(1)
-    expect(store.records[0].subagentId).toBe('bg-a')
+    expect(store.getRecordsBySession('session-A')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-A')[0].subagentId).toBe('bg-a')
 
-    // 切到 session-B（取消旧订阅 + 订阅新的）
+    // 切到 session-B（取消旧订阅 + 订阅新的）。per-session 分区下 A 分区保留，这里只验 B 独立。
     unsubA()
-    store.clearSubagents()
     const unsubB = store.subscribeSubagentPush('session-B')
 
     // session-B 首次推送
     events.dispatchSession('session-B', makeSubagentsMsg('session-B', [
       makeRecord({ subagentId: 'bg-b', agent: 'y' }),
     ]))
-    expect(store.records[0].subagentId).toBe('bg-b')
+    expect(store.getRecordsBySession('session-B')[0].subagentId).toBe('bg-b')
 
-    // session-A 再推送 → 不应影响（已取消订阅）
+    // session-A 再推送 → 不影响 session-B 分区（已取消订阅，dispatch 不到 handler）
     events.dispatchSession('session-A', makeSubagentsMsg('session-A', [
       makeRecord({ subagentId: 'bg-a2', agent: 'z' }),
     ]))
 
-    // records 仍是 session-B 的数据
-    expect(store.records).toHaveLength(1)
-    expect(store.records[0].subagentId).toBe('bg-b')
+    // session-B 分区仍是 session-B 的数据
+    expect(store.getRecordsBySession('session-B')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-B')[0].subagentId).toBe('bg-b')
 
     unsubB()
   })

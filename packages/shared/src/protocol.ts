@@ -45,7 +45,7 @@ export type ClientMessageType =
   | 'config.scanSessionSkills'
   | 'config.getGlobalSkills' | 'config.getProjectSkills'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
-  | 'config.setSkillDirs' | 'config.setAgentDirs'
+  | 'config.setSkillDirs' | 'config.setAgentDirs' | 'config.setExtensionDirs'
   | 'config.getSystemPrompt' | 'config.setSystemPrompt'
   | 'model.list' | 'model.switch' | 'session.setThinkingLevel'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
@@ -67,7 +67,7 @@ export type ClientMessageType =
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
-  | 'workspace.listRecent' | 'workspace.record'
+  | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare'
   | 'worktree.create'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
@@ -190,6 +190,7 @@ export interface ClientMessageMap {
   /** 目录级管道写入（ADR-0020 §5）：dirs 为有序数组，靠前覆盖靠后。写 discovery.json。 */
   'config.setSkillDirs': { dirs: string[] }
   'config.setAgentDirs': { dirs: string[] }
+  'config.setExtensionDirs': { dirs: string[] }
   'config.getSystemPrompt': Record<string, never>
   'config.setSystemPrompt': { config: SystemPromptConfig }
   'model.list': Record<string, never>
@@ -238,6 +239,8 @@ export interface ClientMessageMap {
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
+  /** workspace.detectBare：检测 cwd 是否位于 bare repo + worktree 结构（landing 态按 pendingCwd 驱动 isBare，W2）。 */
+  'workspace.detectBare': { cwd: string }
   /** worktree.create：在 bare repo + worktree 结构中创建隔离的工作目录。
    *  branch 必填；baseBranch 默认 'current'（继承当前分支），可选 'origin/main'（校验远端 ref 存在后使用）。
    *  workspaceHint 用于显式指定 workspace 根（检测 .bare 的起点 cwd），省略则用 process.cwd()。 */
@@ -310,7 +313,7 @@ export type ServerMessageType =
   | 'config.globalSkills' | 'config.projectSkills'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
-  | 'config.skillDirs' | 'config.agentDirs'
+  | 'config.skillDirs' | 'config.agentDirs' | 'config.extensionDirs'
   | 'config.systemPrompt'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
@@ -345,6 +348,7 @@ export type ServerMessageType =
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
   | 'git.status:result'
   | 'workspace.recentList'
+  | 'workspace.bareDetected'
   | 'worktree.created'
 
 /**
@@ -369,6 +373,7 @@ export interface ServerMessageMapBase {
   /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
   'config.skillDirs': { dirs: SkillDirConfig[] }
   'config.agentDirs': { dirs: SkillDirConfig[] }
+  'config.extensionDirs': { dirs: SkillDirConfig[] }
   'config.defaults': {
     defaultModel: string
     /** 默认模型变更来源，仅 broadcast 携带（reply 不带）。reply/broadcast 共用此类型，故 source 为 optional。 */
@@ -514,6 +519,8 @@ export interface ServerMessageMapBase {
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
+  /** workspace.bareDetected：workspace.detectBare 的 reply（isBare/wsRoot/barePath）。 */
+  'workspace.bareDetected': { isBare: boolean; wsRoot: string; barePath: string }
   /** worktree.created：worktree.create 的成功 reply（新 worktree 的 cwd 与分支名）。 */
   'worktree.created': { cwd: string; branch: string }
 
@@ -710,6 +717,7 @@ export interface ReplyPayloadMap {
   'plugin.config.set': ServerMessageMap['plugin:config']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
+  'workspace.detectBare': ServerMessageMap['workspace.bareDetected']
   'worktree.create': ServerMessageMap['worktree.created']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
@@ -719,6 +727,7 @@ export interface ReplyPayloadMap {
   'config.setAgent': void         // reply config.agentUpdated
   'config.setAgentDirs': void     // reply config.agentDirs
   'config.setDefaultModel': void  // reply config.defaults
+  'config.setExtensionDirs': void // reply config.extensionDirs
   'config.setProvider': void      // reply config.providerUpdated
   'config.setSkill': void         // reply config.skillUpdated
   'config.setSkillDirs': void     // reply config.skillDirs

@@ -61,7 +61,7 @@ function makeTurn(assistants: Message[]): MessageTurn {
       timestamp: Date.now(),
     },
     assistants,
-    isWorking: false,
+    isStreaming: false,
     hasFoldable: false,
   }
 }

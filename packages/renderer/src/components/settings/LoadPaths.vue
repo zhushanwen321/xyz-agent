@@ -105,6 +105,7 @@
     </div>
 
     <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-subtle">{{ t('settings.loadPaths.agentRestartHint') }}</p>
+    <p v-else-if="kind === 'extension'" class="mt-1.5 text-[11px] text-subtle">{{ t('settings.loadPaths.extensionLoadOrderHint') }}</p>
   </section>
 </template>
 
@@ -122,8 +123,8 @@ const props = defineProps<{
   forcedDirs: string[]
   /** 可选目录配置（来自 store，可勾选可拖排序） */
   dirs: SkillDirConfig[]
-  /** 资源类型：skill 即时生效，agent 需重开会话（ADR §理由） */
-  kind: 'skill' | 'agent'
+  /** 资源类型：skill 即时生效，agent 需重开会话，extension 新会话生效（ADR §理由） */
+  kind: 'skill' | 'agent' | 'extension'
   /** 操作禁用（扫描中等场景） */
   disabled?: boolean
 }>()

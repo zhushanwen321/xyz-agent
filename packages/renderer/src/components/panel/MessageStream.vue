@@ -50,6 +50,7 @@
             :turn="vi.item.turn"
             :session-id="sessionId"
             :can-edit="!!vi.item.turn.user && vi.idx === lastUserTurnIdx"
+            :is-session-active="isSessionActive"
             @edit-state-change="onEditStateChange(vi.idx, $event.editing)"
           />
           <BgNotifyCard v-else-if="vi.item.message.bgNotify" :message="vi.item.message" />
@@ -141,7 +142,7 @@ import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
 import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
 import { toRenderItems, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
-import { isSubagentVirtualId, extractSubagentId, useSubagentStore } from '@/stores/subagent'
+import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
@@ -152,6 +153,7 @@ import { extractGui } from '@xyz-agent/extension-protocol'
 import { type Message } from '@xyz-agent/shared'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
+import { useSessionActive } from '@/composables/panel/useSessionActive'
 
 const props = defineProps<{
   sessionId: string
@@ -176,26 +178,21 @@ const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
  *  插入持久化 system 消息（SystemNotice 渲染「已压缩上下文」），isCompacting 同时复位为 false。 */
 const isCompacting = computed(() => chat.isCompacting(props.sessionId))
 
-/**
- * dispatching 空窗期：已发送 prompt（pendingSend 命中本 session）但 message_start 未到。
- * 此时 MessageStream 内无 streaming assistant，用户看不到任何反馈。
- * 占位行给出即时「思考中…」提示，message_start 到达后 hasWorkingTurn 变 true 接管。
- */
+/** dispatching 空窗期：已发送 prompt 但 message_start 未到（无 streaming assistant，占位行给「思考中…」提示）。 */
 const isDispatching = computed(() => chat.isActive(props.sessionId) && !chat.isGenerating(props.sessionId))
-/** 最后一个 turn 是否正在 working（message_start 已到，有 streaming assistant） */
-const hasWorkingTurn = computed(() => lastRenderTurn.value?.isWorking ?? false)
+/** 最后一个 turn 是否正在流式生成（A 类流式语义，驱动 dispatching 占位显隐 + 滚动跟随）。 */
+const hasWorkingTurn = computed(() => lastRenderTurn.value?.isStreaming ?? false)
 
-/**
- * subagent 虚拟 session 且 subagent 仍在 running 时，强制最后一个 turn working。
- * subagent 消息读自 JSONL（status 恒 complete），但 subagent 可能仍在执行中——
- * forceWorking 让 trace 展开，视觉与主 agent streaming 态一致。
- * 读 subagentStore.records（共享列表），store getter isRunning 判断状态。
- */
+/** subagent 虚拟 session running 时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。 */
 const forceWorking = computed(() => {
   if (!isSubagentVirtualId(props.sessionId)) return false
-  const subagentId = extractSubagentId(props.sessionId)
-  return subagentStore.isRunning(subagentId)
+  return subagentStore.isRunning(extractMainSessionId(props.sessionId), extractSubagentId(props.sessionId))
 })
+
+/** session 级「对话进行中」信号（CW wave session-active-ssot T4）：驱动 Turn 的 sticky/折叠 disabled/
+ *  trace 展开/完成收起等「进行中」UI。逻辑提取至 useSessionActive composable（行数规范 + 复用）。
+ *  ask-user 期间（waiting 态）或 subagent 后台跑（working 态）都保持 true → 对话流不收起（M3 修复）。 */
+const isSessionActive = useSessionActive(computed(() => props.sessionId), forceWorking)
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。
  *  先用 filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0035，读 pi CustomMessage.display
@@ -393,7 +390,7 @@ watch(
     return last?.content.length ?? 0
   },
   () => {
-    if (lastRenderTurn.value?.isWorking) {
+    if (lastRenderTurn.value?.isStreaming) {
       scrollToBottom('auto')
     }
   },

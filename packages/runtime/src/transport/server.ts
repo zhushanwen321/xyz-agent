@@ -133,6 +133,7 @@ export class RuntimeServer implements IMessageBroker {
       broadcastAgentList: () => this.broker.broadcastAgentList(),
       broadcastSkillDirs: () => this.broker.broadcastSkillDirs(),
       broadcastAgentDirs: () => this.broker.broadcastAgentDirs(),
+      broadcastExtensionDirs: () => this.broker.broadcastExtensionDirs(),
     })
     this.sessionHandler = new SessionMessageHandler({
       ...messaging,

@@ -174,6 +174,9 @@ describe('ShellRunner', () => {
 
     const result = await promise
 
+    // 验证用 bash 执行脚本（非直接 spawn scriptPath 依赖 +x）。[HISTORICAL] 防 EACCES 回归
+    expect(spawnMock).toHaveBeenCalledWith('bash', ['/hooks/setup.sh', '/ws/new'], expect.anything())
+
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('line1')
     expect(result.stdout).toContain('line2')

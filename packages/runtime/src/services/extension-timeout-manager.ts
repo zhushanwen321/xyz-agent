@@ -24,7 +24,10 @@
  * 整链移除需协同改动且超出本 PR scope。待超时机制重新设计或确认废弃后统一清理。
  */
 
-/** 缓存的 pending UI 请求 */
+/**
+ * 缓存的 pending UI 请求（内部原始结构，未解包）。
+ * 存于 pendingRequests Map，cachePendingRequest 写入、removePendingRequest/clearForSession 清理。
+ */
 export interface PendingUIRequest {
   requestId: string
   sessionId: string
@@ -32,6 +35,13 @@ export interface PendingUIRequest {
   payload: Record<string, unknown>
   receivedAt: number
 }
+
+/**
+ * getPendingRequests 返回值类型：原始字段 + payload 解包到顶层（`{ ...r, ...r.payload }`）。
+ * payload 字段不固定（ask/confirm/select 各自不同），故解包部分用索引签名收纳——
+ * 消费方（renderer 经类型守卫收窄为 ExtensionUIRequest）按 method 取具体字段。
+ */
+export type PendingUIRequestResolved = PendingUIRequest & Record<string, unknown>
 
 /**
  * 历史 5min UI 超时常量（300_000ms）。交互式 method 已不再排定时器，
@@ -124,6 +134,9 @@ export class ExtensionTimeoutManager {
 
   /** Clear all pending timeouts for a session */
   clearForSession(sessionId: string): void {
+    // 清除缓存的 pending 请求（必须在 extensionSessionRequests 早退之前执行，
+    // 否则只 cachePendingRequest 而未 registerTimeout 的 session 会漏清 pending 缓存）
+    this.pendingRequests.delete(sessionId)
     const requestIds = this.extensionSessionRequests.get(sessionId)
     if (!requestIds) return
     for (const reqId of requestIds) {
@@ -135,8 +148,6 @@ export class ExtensionTimeoutManager {
       this.bridgeRequestIds.delete(reqId)
     }
     this.extensionSessionRequests.delete(sessionId)
-    // 清除缓存的 pending 请求
-    this.pendingRequests.delete(sessionId)
   }
 
   private trackSessionRequest(sessionId: string, requestId: string): void {
@@ -187,23 +198,14 @@ export class ExtensionTimeoutManager {
   }
 
   /**
-   * 获取指定 session 的所有 pending 请求（session 重新激活时调用）。
-   * 返回后清除缓存（避免重复推送）。
+   * 获取指定 session 的所有 pending 请求（非破坏性只读快照）。
+   *
+   * 用于方案2 的 session 级状态快照模型：pending UI 请求是 session 固有状态，
+   * 多次拉取都返回完整列表（与 session.commands 快照语义同构）。
+   * 移除时机由 removePendingRequest（respond 后）或 clearForSession（session 销毁）控制，
+   * 不由拉取动作控制。
    */
-  getAndClearPendingRequests(sessionId: string): PendingUIRequest[] {
-    const sessionCache = this.pendingRequests.get(sessionId)
-    if (!sessionCache || sessionCache.size === 0) return []
-    const requests = Array.from(sessionCache.values())
-    this.pendingRequests.delete(sessionId)
-    // 解包 payload 到顶层：renderer 的 ExtensionUIRequest 期望 title/message/options/askUser
-    // 在顶层（与 extension.ui_request 实时推送同构），pendingRequests 缓存时嵌套在 .payload
-    return requests.map(r => ({ ...r, ...r.payload }))
-  }
-
-  /**
-   * 获取指定 session 的所有 pending 请求（不清除缓存，用于查询）。
-   */
-  getPendingRequests(sessionId: string): PendingUIRequest[] {
+  getPendingRequests(sessionId: string): PendingUIRequestResolved[] {
     const sessionCache = this.pendingRequests.get(sessionId)
     if (!sessionCache || sessionCache.size === 0) return []
     const requests = Array.from(sessionCache.values())

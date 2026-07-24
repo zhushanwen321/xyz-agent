@@ -119,6 +119,12 @@ export function onAgentDirs(handler: (dirs: SkillDirConfig[]) => void): () => vo
   })
 }
 
+export function onExtensionDirs(handler: (dirs: SkillDirConfig[]) => void): () => void {
+  return events.onGlobalType('config.extensionDirs', (msg) => {
+    handler(msg.payload.dirs)
+  })
+}
+
 export function onDefaults(handler: (defaultModel: string) => void): () => void {
   return events.onGlobalType('config.defaults', (msg) => {
     handler(msg.payload.defaultModel)
@@ -136,6 +142,12 @@ export function setSkillDirs(dirs: string[]): Promise<void> {
 
 export function setAgentDirs(dirs: string[]): Promise<void> {
   return command('config.setAgentDirs', { dirs })
+}
+
+/** 覆盖 extension 加载路径（Phase 4 目录级管道），语义同 setSkillDirs/setAgentDirs。
+ *  reply 为 config.extensionDirs（广播），状态变更经 onExtensionDirs 订阅推回。 */
+export function setExtensionDirs(dirs: string[]): Promise<void> {
+  return command('config.setExtensionDirs', { dirs })
 }
 
 export function setProvider(providerId: string, data: SetProviderData): Promise<void> {

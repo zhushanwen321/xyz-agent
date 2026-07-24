@@ -35,9 +35,11 @@ import { useFileTree } from '@/composables/features/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
+import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
+import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
@@ -201,6 +203,12 @@ export function useSidebar() {
       console.warn('[useSidebar] getContext failed, context popover will be empty:', e)
     }
 
+    // pendingOpen 消费（FR-3）：后台 session 的 tasks 事件到达时若用户不在该 session，只置 pendingOpen
+    // 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开 tasks tab。
+    // 挂 selectSession 内部（与 commands/context 兜底同位置），不挂独立 watch(focusedSessionId)，
+    // 避免撞 Runtime broadcast 时序竞争。consumePendingOpen 内部已含幂等（消费后清标记）。
+    consumePendingOpen(id)
+
     // 文件树预加载：切 session 即拉取，使侧栏「文件」tab 计数（fileCount 读 store.getTree）
     // 立即更新——不依赖用户切到文件 tab 才触发 FileView 的 loadTree。loadTree 内部缓存复用
     // （已加载则 rehydrate 直接返回），FileView 挂载时再调会命中缓存，无重复请求。
@@ -334,6 +342,7 @@ export function useSidebar() {
     // agentCallId，且 streaming 订阅（subagentStore.panelStreamUnsub）泄漏。此处兜底清。
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
+    const extensionUIStore = useExtensionUIStore()
     if (boundPanel) {
       if (subagentStore.isViewing(boundPanel.id)) {
         // [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）
@@ -351,9 +360,14 @@ export function useSidebar() {
       }
     }
     session.removeFromList(id)
-    // 跨 store 清理（S3）：fileTree + tasks + chat store + WS 流式订阅 + 派生状态缓存
+    // 跨 store 清理（S3）：fileTree + tasks + subagent + workflow + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
     tasks.clearSession(id)
+    // ADR-0036 Map 分区派：释放 subagent/workflow store 的 per-session records 分区（防泄漏，AC-8）
+    subagentStore.clearSession(id)
+    workflowStore.clearSession(id)
+    // [CW session-active-ssot] 释放 extension UI pending 分区（防泄漏，与 subagent/workflow 同范式）
+    extensionUIStore.clearSession(id)
     // [M7 FR-5] evictSessionWithVirtual 在 disposeSession 之前：先按 mainSid 前缀扫 subagent 虚拟 key，
     // 再 dispose 主 session（dispose 后主记录已删，evict 无法反查）。D5 时序。
     const chatStoreForEvict = useChatStore()
@@ -467,9 +481,18 @@ export function useSidebar() {
       await loadSessions()
       // 2b) INV-6: 加载最近工作区记录（workspaceStore.load 必须在 presetCwd 前）。
       await workspaceStore.load()
-      // 3) 预填 cwd（G1.1「沿用最近 session 目录」做新任务，chip 所见即所得）：
-      //    W3: 改接 workspaceStore.defaultCwd（取代从 session.list 派生 resolveDefaultCwd）。
-      const recentCwd = workspaceStore.defaultCwd
+      // 3) 预填 cwd（G1.1「沿用最近 session 目录」做新任务，chip 所见即所得）。
+      //    W3: 数据源改为 session 级——取 sessionStore.list 中 lastActiveAt 最大者的 cwd
+      //    （session 的 lastActiveAt 是「上次活跃」真源，比 workspace record 更贴近用户心智）。
+      //    无 session 时回退 workspaceStore.defaultCwd（workspace 级兜底）。
+      const sessions = session.list
+      let recentCwd: string | undefined
+      if (sessions.length > 0) {
+        // 用 >= 取首个最大（稳定，与 reduce 从左到右 + RecentWorkspacesStore 稳定排序一致）
+        const latest = sessions.reduce((a, b) => (a.lastActiveAt >= b.lastActiveAt ? a : b))
+        recentCwd = latest.cwd
+      }
+      if (!recentCwd) recentCwd = workspaceStore.defaultCwd
       if (recentCwd) flow.presetCwd(recentCwd)
     } catch (e) {
       // L1：启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试

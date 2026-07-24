@@ -3,7 +3,7 @@
  *
  * 覆盖 execution-plan test-matrix T1.1-T1.8：
  * - T1.1: record 3 cwd → list 返 3 条倒序
- * - T1.2: 11 cwd → 淘汰最旧保 10（INV-2）
+ * - T1.2: 7 cwd → 淘汰最旧保 6（INV-2，W1 MAX_RECORDS 10→6）
  * - T1.3: 同 cwd 多次 → 不重复（INV-3）
  * - T1.4: cwd 空串静默跳过（INV-1 双层守卫）
  * - T1.5: 文件不存在首启 → list 返 [] 不抛
@@ -80,20 +80,20 @@ describe('RecentWorkspacesStore', () => {
     expect(list[2].label).toBe('a')
   })
 
-  // ── T1.2: 11 个 cwd → 淘汰最旧保 10（INV-2）──────────────────
+  // ── T1.2: MAX_RECORDS=6 后，7 个 cwd → 淘汰最旧保 6（INV-2，W1 改 10→6）──────────────────
 
-  it('T1.2: 11 cwd → evicts oldest, keeps 10 (INV-2)', () => {
-    for (let i = 1; i <= 11; i++) {
+  it('T1.2: 7 cwd → evicts oldest, keeps 6 (INV-2, W1 MAX_RECORDS 10→6)', () => {
+    for (let i = 1; i <= 7; i++) {
       store.record(`/project/dir-${i}`)
       vi.advanceTimersByTime(10)
     }
 
     const list = store.list()
-    expect(list).toHaveLength(10)
+    expect(list).toHaveLength(6)
     // 最旧的 dir-1 被淘汰
     expect(list.find(r => r.cwd === '/project/dir-1')).toBeUndefined()
-    // 最新的 dir-11 在首位
-    expect(list[0].cwd).toBe('/project/dir-11')
+    // 最新的 dir-7 在首位
+    expect(list[0].cwd).toBe('/project/dir-7')
   })
 
   // ── T1.3: 同 cwd 多次 → 不重复（INV-3）───────────────────────
@@ -253,5 +253,35 @@ describe('RecentWorkspacesStore', () => {
     // 5 秒周期触发
     vi.advanceTimersByTime(5000)
     expect(mockedAtomicWrite).toHaveBeenCalled()
+  })
+
+  // ── W1（MAX_RECORDS 改 6）：边界用例 ─────────────────────────
+
+  it('W1: 6 cwd → keeps all 6（恰达上限不淘汰）', () => {
+    for (let i = 1; i <= 6; i++) {
+      store.record(`/project/dir-${i}`)
+      vi.advanceTimersByTime(10)
+    }
+
+    const list = store.list()
+    expect(list).toHaveLength(6)
+    // 全部保留（dir-1..dir-6），无一淘汰
+    expect(list.find(r => r.cwd === '/project/dir-1')).toBeTruthy()
+    expect(list.find(r => r.cwd === '/project/dir-6')).toBeTruthy()
+  })
+
+  it('W1: 8 cwd → keeps 6（超过上限即淘汰最旧两个，INV-2）', () => {
+    for (let i = 1; i <= 8; i++) {
+      store.record(`/project/dir-${i}`)
+      vi.advanceTimersByTime(10)
+    }
+
+    const list = store.list()
+    expect(list).toHaveLength(6)
+    // 最旧的 dir-1、dir-2 被淘汰
+    expect(list.find(r => r.cwd === '/project/dir-1')).toBeUndefined()
+    expect(list.find(r => r.cwd === '/project/dir-2')).toBeUndefined()
+    // dir-3..dir-8 保留，dir-8 最新在首位
+    expect(list[0].cwd).toBe('/project/dir-8')
   })
 })

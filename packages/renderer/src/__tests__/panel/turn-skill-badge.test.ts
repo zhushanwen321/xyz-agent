@@ -38,7 +38,7 @@ function makeTurn(userOver: Partial<Message> = {}): MessageTurn {
       ...userOver,
     },
     assistants: [],
-    isWorking: false,
+    isStreaming: false,
     hasFoldable: false,
   }
 }

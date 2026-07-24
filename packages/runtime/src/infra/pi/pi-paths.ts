@@ -7,22 +7,54 @@
  * 目录结构：
  *   ~/.xyz-agent/                    ← xyz-agent 配置根目录
  *     config.json                    ← xyz-agent 自身配置
+ *     extensions/                    ← 用户安装的 extension（local/git + discovery 扫描根）
+ *     npm/                           ← npm 安装的 extension（node_modules 平铺布局）
+ *     tmp/                           ← extension 安装临时目录
+ *     skills/                        ← skill 强制目录（ADR-0020）
+ *     agents/                        ← agent 强制目录（ADR-0020）
  *     pi/                            ← xyz-pi 的根目录
  *       agent/                       ← xyz-pi 的 agent 目录
  *         models.json                ← Provider & Model 定义
- *         settings.json              ← xyz-pi 设置
- *         agents/                    ← Agent markdown 文件
- *         extensions/                ← bundled extensions
- *         skills/                    ← bundled skills
+ *         settings.json              ← xyz-pi 设置（pi 原生配置，不迁出）
+ *         disabled-packages.json     ← extension 启停状态（不迁出）
  *       sessions/                    ← Session jsonl 文件
  */
 
-import { getDataDir } from '@xyz-agent/shared/paths'
+import {
+  getDataDir as sharedGetDataDir,
+  getExtensionsDir as sharedGetExtensionsDir,
+  getNpmDir as sharedGetNpmDir,
+  getTmpDir as sharedGetTmpDir,
+} from '@xyz-agent/shared/paths'
 import { join } from 'node:path'
 
 /** xyz-agent 数据根目录（委托 shared SSOT，读 XYZ_AGENT_DATA_DIR，缺省 ~/.xyz-agent）。 */
 export function getConfigDir(): string {
-  return getDataDir()
+  return sharedGetDataDir()
+}
+
+/**
+ * 用户安装的 extension 目录（`<dataDir>/extensions`）。
+ * 委托 shared SSOT（@xyz-agent/shared/paths），原在 pi/agent/extensions/ 已迁出。
+ */
+export function getExtensionsDir(): string {
+  return sharedGetExtensionsDir()
+}
+
+/**
+ * npm 安装的 extension 目录（`<dataDir>/npm`）。
+ * 委托 shared SSOT，原在 pi/agent/npm/ 已迁出。
+ */
+export function getNpmDir(): string {
+  return sharedGetNpmDir()
+}
+
+/**
+ * extension 安装临时目录（`<dataDir>/tmp`）。
+ * 委托 shared SSOT，原在 pi/agent/tmp/ 已迁出。
+ */
+export function getTmpDir(): string {
+  return sharedGetTmpDir()
 }
 
 /** xyz-pi root: ~/.xyz-agent/pi/ */

@@ -32,7 +32,7 @@ export function useSubagentListSync(): void {
 
   /**
    * 切会话时：
-   * 1. clearSubagents 清空旧数据（消除残留窗口）
+   * 1. （不再 clearSubagents——ADR-0036 Map 分区派：切走不清，切回直接读分区）
    * 2. 订阅新 session 的 session.subagents 推送（旧订阅经 watch onCleanup 自动取消）
    * 3. 首拉 RPC 兜底（推送可能晚到，RPC 立即拿到当前列表）
    *
@@ -43,7 +43,6 @@ export function useSubagentListSync(): void {
   watch(
     () => focusedSessionId.value,
     (sid, _old, onCleanup) => {
-      subagentStore.clearSubagents()
       if (sid) {
         unsubPush = subagentStore.subscribeSubagentPush(sid)
         void subagentStore.loadSubagents(sid)

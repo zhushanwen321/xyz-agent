@@ -69,33 +69,36 @@ function makeRecord(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunReco
 }
 
 describe('workflow store', () => {
-  it('初始状态：records 空数组 + workflowCount=0', () => {
+  it('初始状态：records 分区空 + workflowCount=0', () => {
     const store = useWorkflowStore()
-    expect(store.records).toEqual([])
-    expect(store.workflowCount()).toBe(0)
+    expect(store.getRecordsBySession('sess-1')).toEqual([])
+    expect(store.workflowCount('sess-1')).toBe(0)
   })
 
-  it('loadWorkflows 成功写入 records', async () => {
+  it('loadWorkflows 成功写入该 sid 分区', async () => {
     const records = [makeRecord(), makeRecord({ runId: 'wf-test-002' })]
     vi.mocked(sessionApi.getWorkflows).mockResolvedValue(records)
 
     const store = useWorkflowStore()
     await store.loadWorkflows('sess-1')
 
-    expect(store.records).toHaveLength(2)
-    expect(store.workflowCount()).toBe(2)
+    expect(store.getRecordsBySession('sess-1')).toHaveLength(2)
+    expect(store.workflowCount('sess-1')).toBe(2)
   })
 
-  it('loadWorkflows 失败时 records 清空', async () => {
+  it('loadWorkflows 失败时不覆盖现有分区', async () => {
     vi.mocked(sessionApi.getWorkflows).mockRejectedValue(new Error('rpc error'))
 
     const store = useWorkflowStore()
+    store.applyRecords('sess-1', [makeRecord()])
     await store.loadWorkflows('sess-1')
 
-    expect(store.records).toEqual([])
+    // M1 契约：失败不覆盖现有分区数据，设 loadError
+    expect(store.getRecordsBySession('sess-1')).toHaveLength(1)
+    expect(store.loadError).toBe('rpc error')
   })
 
-  it('clearWorkflows 清空 records + 退出 viewing', () => {
+  it('clearWorkflows 清空所有分区 + 退出 viewing', () => {
     const store = useWorkflowStore()
     store.selectWorkflow('panel-1', 'wf-001')
     // selectWorkflow 只设侧边栏视图2，不触发 Panel overlay（isViewing 只认 agent-call）
@@ -103,18 +106,18 @@ describe('workflow store', () => {
 
     store.clearWorkflows()
 
-    expect(store.records).toEqual([])
+    expect(store.getRecordsBySession('sess-1')).toEqual([])
     expect(store.getViewingRunId('panel-1')).toBeNull()
   })
 
   it('selectWorkflow + getViewingRunId + getCurrentWorkflow 视图 2', () => {
     const store = useWorkflowStore()
-    store.records = [makeRecord({ runId: 'wf-001', scriptName: 'my-flow' })]
+    store.applyRecords('sess-1', [makeRecord({ runId: 'wf-001', scriptName: 'my-flow' })])
 
     store.selectWorkflow('panel-1', 'wf-001')
 
     expect(store.getViewingRunId('panel-1')).toBe('wf-001')
-    expect(store.getCurrentWorkflow('panel-1')?.scriptName).toBe('my-flow')
+    expect(store.getCurrentWorkflow('panel-1', 'sess-1')?.scriptName).toBe('my-flow')
     // selectWorkflow 是侧边栏视图2，不触发 Panel overlay
     expect(store.isViewing('panel-1')).toBe(false)
   })

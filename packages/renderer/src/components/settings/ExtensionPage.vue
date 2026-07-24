@@ -5,6 +5,17 @@
     → extensions prop 流入本页，无需本页自建订阅。
   -->
   <div class="flex flex-col gap-4">
+    <!-- 加载路径（Phase 4）：共享 LoadPaths 组件，kind=extension。
+         extension 的「优先级」语义因资源类型而异（tool 靠前生效、hook 全部执行），
+         故措辞用「加载顺序」而非优先级；新会话生效，无需重启提示。
+         不复用 SettingsResourcePage：extension 的实体列表模型与 skill/agent 不同（安装多步流、来源标签）。 -->
+    <LoadPaths
+      kind="extension"
+      :forced-dirs="forcedExtDirs"
+      :dirs="extensionDirs"
+      @update-dirs="onUpdateExtensionDirs"
+    />
+
     <!-- 推荐扩展区：快捷一键安装 builtin pi-extensions（SSOT = recommended-extensions.json）。
          onMounted 拉取 installed 状态；install 后 watch(extensions) 刷新。-->
     <section v-if="recommended.length" class="rounded-md border border-border bg-bg">
@@ -52,6 +63,7 @@
       <div class="flex items-center gap-2 p-3">
         <Input
           v-model="installInput"
+          data-testid="install-input"
           class="h-8 flex-1 text-[12px]"
           :placeholder="tabPlaceholder"
           @keyup.enter="onInstall"
@@ -202,23 +214,40 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { Trash2, Loader2, AlertCircle, Check, ArrowUpCircle } from '@lucide/vue'
-import type { ExtensionDiscoveredPayload, RecommendedExtension } from '@xyz-agent/shared'
+import type { ExtensionDiscoveredPayload, RecommendedExtension, SkillDirConfig } from '@xyz-agent/shared'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
+import LoadPaths from './LoadPaths.vue'
 import { extension as extensionApi } from '@/api'
 import { useSettingsStore, type ExtensionItem } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ extensions: ExtensionItem[] }>()
 const settingsStore = useSettingsStore()
-const { info: toastInfo } = useToast()
+const { extensionDirs } = storeToRefs(settingsStore)
+const { info: toastInfo, error: toastError } = useToast()
 const { t } = useI18n()
+
+// ── 加载路径配置（Phase 4，接 store.extensionDirs，回写 store.setExtensionDirs）──
+/** 强制目录（ADR-0020 §1.1 桥接层硬编码注入，UI 只读展示） */
+const forcedExtDirs = ['~/.xyz-agent/extensions', '.xyz-agent/extensions']
+
+/** 加载路径变更 → store 持久化（只写 enabled 路径）。拖拽即时性由 LoadPaths 本地状态保证。 */
+async function onUpdateExtensionDirs(dirs: SkillDirConfig[]): Promise<void> {
+  actionError.value = ''
+  try {
+    await settingsStore.setExtensionDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
+}
 
 /** toggle 中的扩展名集合（防双击：API 期间 disable Switch） */
 const toggling = ref<Set<string>>(new Set())
@@ -229,11 +258,7 @@ const tabs = [
   { id: 'git', label: 'Git URL' },
 ] as const
 
-/**
- * 推荐扩展列表（含已安装状态）。
- * onMounted 拉取；extensions prop 变化（install/uninstall 后 runtime 推 config.extensions）
- * 时重新拉取，确保 installed 状态及时更新。
- */
+/** 推荐扩展列表（含已安装状态）。onMounted 拉取；extensions prop 变化时重新拉取。 */
 const recommended = ref<Array<RecommendedExtension & { installed: boolean }>>([])
 /** 推荐扩展安装中（按包名 key，支持并发不同包；同包重复点击 disabled 防抖） */
 const installingRecommended = ref<Set<string>>(new Set())
@@ -282,17 +307,13 @@ const uninstallDialogOpen = computed({
     if (!open) confirmTarget.value = ''
   },
 })
-/** 动作错误（install/toggle/uninstall 失败时显示，非静默吞） */
+/** 动作错误 / 安装中 / 卸载中 / 升级中集合 */
 const actionError = ref('')
-/** 安装中（install/discover/finish 共用 loading） */
 const installing = ref(false)
-/** 卸载中 */
 const uninstalling = ref(false)
-/** 升级中的扩展名集合（支持并发不同扩展） */
 const upgrading = ref<Set<string>>(new Set())
-/** dir/git 安装发现的候选（多步第一步产物）；null 表示未进入候选选择阶段 */
+/** dir/git 候选（多步第一步产物）；null 表示未进入候选选择。selected = finishInstall 的选中集 */
 const discovered = ref<ExtensionDiscoveredPayload | null>(null)
-/** 候选多选（key = dirName，finishInstall 的 selected 语义） */
 const selected = ref<Set<string>>(new Set())
 
 const tabPlaceholder = computed(() => {

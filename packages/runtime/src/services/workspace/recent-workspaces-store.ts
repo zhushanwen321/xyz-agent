@@ -6,7 +6,7 @@
  *
  * 不变量：
  * - INV-1: cwd 非空串守卫（store 层兜底，service 层主守卫）
- * - INV-2: 最多保留 10 条，淘汰 lastUsedAt 最小者
+ * - INV-2: 最多保留 6 条，淘汰 lastUsedAt 最小者
  * - INV-3: 同 cwd 不重复，更新 lastUsedAt
  * - INV-4: 文件损坏返空，不抛
  * - INV-5: 路径从 configDir 动态推导，无硬编码
@@ -21,7 +21,7 @@ import { WriteBackCache } from '../../utils/json-store.js'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { isEnoent } from '../../utils/errors.js'
 
-const MAX_RECORDS = 10
+const MAX_RECORDS = 6
 const FLUSH_INTERVAL_MS = 5_000
 const FILE_NAME = 'recent-workspaces.json'
 const JSON_INDENT = 2
@@ -67,7 +67,7 @@ export class RecentWorkspacesStore {
   }
 
   /**
-   * 返回最近工作区列表，按 lastUsedAt 倒序，≤10 条。
+   * 返回最近工作区列表，按 lastUsedAt 倒序，≤6 条。
    */
   list(): RecentWorkspaceRecord[] {
     const keys = this.cache.keys(PARTITION_KEY)

@@ -76,8 +76,15 @@ beforeEach(() => {
     resolver: new ExtensionResolver({
       settingsDir,
       thirdPartyDir: join(settingsDir, 'extensions'),
+      // Phase 1 路径迁移：npmDir 已从 settingsDir 子树迁出，注入回 settingsDir/npm 避免触碰真实 dataDir。
+      npmDir: join(settingsDir, 'npm'),
     }),
     extensionSettings: new PiExtensionSettings(settingsDir),
+    // Phase 1 路径迁移：extensions/npm/tmp 已从 settingsDir 子树迁出到 dataDir 根层，
+    // 注入回 settingsDir 子目录让测试目录自洽（不依赖/污染真实 ~/.xyz-agent）。
+    extensionsDir: join(settingsDir, 'extensions'),
+    npmDir: join(settingsDir, 'npm'),
+    tmpDir: join(settingsDir, 'tmp'),
   })
 })
 

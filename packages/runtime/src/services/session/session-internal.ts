@@ -34,8 +34,8 @@ export interface ISessionServiceInternal {
   findScannedSession(sessionId: string): ScannedSession | undefined
   /** 收集有效的 skill 路径（pi-provider-store + 存在性过滤）。 */
   getSkillPaths(cwd: string): string[]
-  /** 收集有效的 extension 路径（经 ExtensionService）。 */
-  getExtensionPaths(): Promise<string[]>
+  /** 收集有效的 extension 路径（经 ExtensionService）。cwd 用于解析相对的 discovery extension 目录。 */
+  getExtensionPaths(cwd?: string): Promise<string[]>
   /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
   getReplaceSystemPrompt(): string | undefined
 

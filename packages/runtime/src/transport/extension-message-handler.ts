@@ -250,7 +250,7 @@ export class ExtensionMessageHandler {
         if (!sessionId) {
           return this.ctx.sendError(ws, 'invalid_payload', 'extension.getPendingRequests requires "sessionId"', msg.id)
         }
-        const pendingRequests = this.ctx.extensionTimeoutMgr.getAndClearPendingRequests(sessionId)
+        const pendingRequests = this.ctx.extensionTimeoutMgr.getPendingRequests(sessionId)
         return this.ctx.reply(ws, msg.id, 'extension.pendingRequests', { sessionId, requests: pendingRequests })
       }
     }

@@ -276,6 +276,47 @@ describe('useNewTaskFlow 状态机', () => {
     })
   })
 
+  describe('closeOverlay 幂等（worktree 成功回调重复调用回归）', () => {
+    // [HISTORICAL] 2026-07-24 事故：worktree 创建成功后 onWorktreeSuccess 先 selectWorkspace
+    // （已 transition('landing')）再 closeOverlay，加上 CreateWorktreeModal @close 又触发一次
+    // closeOverlay，叠加 landing→landing 非法转换 → state 被打回 idle → 用户在 landing 页提交时撞
+    // submitFirstMessage 的 `state !== 'landing'` guard 报「非 landing 态不可首发提交」。closeOverlay
+    // 幂等化后：非 overlay 态 noop，不再触发非法转换。本用例锁死该幂等性。
+    it('已处于 landing 态再 closeOverlay→noop（保持 landing，不抛错不回 idle）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      expect(flow.state.value).toBe('landing')
+      expect(() => flow.closeOverlay()).not.toThrow()
+      expect(flow.state.value).toBe('landing') // 关键：未被非法转换打回 idle
+    })
+
+    it('overlay 态 closeOverlay→正常回 landing', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openDirPopover()
+      expect(flow.state.value).toBe('dir-popover')
+      flow.closeOverlay()
+      expect(flow.state.value).toBe('landing')
+    })
+
+    it('worktree 成功路径（selectWorkspace 后重复 closeOverlay）→保持 landing 可首发提交', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      // 模拟 Landing.onWorktreeSuccess：openWorktreeModal→success 回调里 selectWorkspace + closeOverlay
+      flow.openCreateWorktree() // landing→worktree-modal
+      expect(flow.state.value).toBe('worktree-modal')
+      await flow.selectWorkspace('/ws/feat-x') // worktree-modal→landing（selectWorkspace 内 transition）
+      // success emit 后又 closeOverlay（冗余）+ @close 再 closeOverlay（第二次冗余）
+      expect(() => {
+        flow.closeOverlay()
+        flow.closeOverlay()
+      }).not.toThrow()
+      expect(flow.state.value).toBe('landing') // 幂等保 landing，未被非法转换打回 idle
+      // 提交 guard 不再误报
+      expect(flow.state.value).toBe('landing')
+    })
+  })
+
   describe('landing 态 branch 不可达（T4.4）', () => {
     it('landing 态 currentSession=null→gitInfo 恒 null→branch chip 隐藏 + openBranchPopover 守卫不可达', async () => {
       // 即便历史 session 是 git 目录，landing 态 currentSession=null → gitInfo 派生 null

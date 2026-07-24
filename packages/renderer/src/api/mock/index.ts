@@ -458,8 +458,10 @@ const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
 // fixtureSkillDirs/fixtureAgentDirs 是「预设候选 + enabled 状态」的 UI 视图，对齐 server.ts buildDirConfigs
 const PRESET_SKILL_DIRS = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills', '.agents/skills']
 const PRESET_AGENT_DIRS = ['~/.pi/agent/agents', '~/.claude/agents', '~/.agents/agents', '.agents/agents']
+const PRESET_EXTENSION_DIRS = ['~/.pi/agent/extensions', '~/.claude/extensions', '~/.agents/extensions', '.agents/extensions']
 let mockSkillDirPaths = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills'] // 启用的 skillDirs（有序 = 优先级）
 let mockAgentDirPaths = ['~/.agents/agents'] // 启用的 agentDirs
+let mockExtensionDirPaths: string[] = [] // 启用的 extensionDirs（Phase 4，默认空——仅强制目录生效）
 function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDirConfig[] {
   // ADR-0020 §1.1：discovery 数组顺序即优先级（靠前覆盖靠后）。
   // 顺序：启用的按 discovery 顺序（用户拖拽排序）→ 未启用的预设候选按固定顺序追加。
@@ -472,6 +474,7 @@ function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDir
 }
 const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_SKILL_DIRS, mockSkillDirPaths).map((d) => ({ ...d })))
 const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_AGENT_DIRS, mockAgentDirPaths).map((d) => ({ ...d })))
+const extensionDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_EXTENSION_DIRS, mockExtensionDirPaths).map((d) => ({ ...d })))
 
 /** 默认系统提示词配置（与 W7 system-prompt-page.test defaultConfig 同构）。 */
 function defaultSystemPromptConfig(): SystemPromptConfig {
@@ -503,6 +506,7 @@ export const config = {
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
   onSkillDirs: (h: (dirs: SkillDirConfig[]) => void) => skillDirsSub.subscribe(h),
   onAgentDirs: (h: (dirs: SkillDirConfig[]) => void) => agentDirsSub.subscribe(h),
+  onExtensionDirs: (h: (dirs: SkillDirConfig[]) => void) => extensionDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
   async setProvider(providerId: string, data: SetProviderData) {
     await sleep(TIMING.ack)
@@ -584,6 +588,12 @@ export const config = {
     mockAgentDirPaths = dirs
     agentDirsSub.broadcast(buildMockDirConfigs(PRESET_AGENT_DIRS, dirs).map((d) => ({ ...d })))
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
+  },
+  /** Phase 4 目录级管道写入：更新 mock extensionDirs + 广播目录配置（靠后端权威值推回） */
+  async setExtensionDirs(dirs: string[]) {
+    await sleep(TIMING.ack)
+    mockExtensionDirPaths = dirs
+    extensionDirsSub.broadcast(buildMockDirConfigs(PRESET_EXTENSION_DIRS, dirs).map((d) => ({ ...d })))
   },
   async setAgent(agent: AgentInfo) {
     await sleep(TIMING.ack)
@@ -812,5 +822,9 @@ export const workspace = {
   async record(_cwd: string): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
     // Mock record：模拟写入后返回最新列表（与 listRecent 一致，简化实现）
     return listRecentRecords()
+  },
+  // detectBare：mock 恒返非 bare（landing 态 isBare 演示由 real 轨驱动，mock 轨无需真实检测）
+  async detectBare(_cwd: string): Promise<{ isBare: boolean; wsRoot: string; barePath: string }> {
+    return { isBare: false, wsRoot: '', barePath: '' }
   },
 }

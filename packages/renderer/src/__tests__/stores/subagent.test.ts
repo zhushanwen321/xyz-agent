@@ -83,64 +83,82 @@ function makeChatMock() {
 }
 
 describe('subagent store — state 初值', () => {
-  it('records 初值为空数组', () => {
+  it('recordsBySession 初值为空 Map', () => {
     const store = useSubagentStore()
-    expect(store.records).toEqual([])
+    expect(store.getRecordsBySession('session-1')).toEqual([])
   })
 })
 
 describe('subagent store — loadSubagents', () => {
-  it('成功时写入 records', async () => {
+  it('成功时写入该 sid 分区', async () => {
     const records = [makeRecord(), makeRecord({ subagentId: 'bg-2', agent: 'worker' })]
     vi.mocked(sessionApi.getSubagents).mockResolvedValue(records)
 
     const store = useSubagentStore()
     await store.loadSubagents('session-1')
 
-    expect(store.records).toHaveLength(2)
-    expect(store.records[0].agent).toBe('reviewer')
+    expect(store.getRecordsBySession('session-1')).toHaveLength(2)
+    expect(store.getRecordsBySession('session-1')[0].agent).toBe('reviewer')
   })
 
-  it('失败时保留 records 并设 loadError（M1：失败不清空）', async () => {
+  it('失败时保留分区数据并设 loadError（M1：失败不覆盖）', async () => {
     vi.mocked(sessionApi.getSubagents).mockRejectedValue(new Error('network'))
 
     const store = useSubagentStore()
-    store.records = [makeRecord()] // 预置旧数据
+    store.applyRecords('session-1', [makeRecord()]) // 预置旧数据
     await store.loadSubagents('session-1')
 
-    // M1 契约：失败不清空 records（保留旧数据），设 loadError 供错误态展示
-    // 注意 store.records 经 pinia 响应式 unwrap，非同一引用，按内容 + 长度断言保留。
-    expect(store.records).toHaveLength(1)
-    expect(store.records[0].subagentId).toBe('bg-test-1-111')
+    // M1 契约：失败不覆盖现有分区数据，设 loadError 供错误态展示
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-1')[0].subagentId).toBe('bg-test-1-111')
     expect(store.loadError).toBe('network')
     expect(store.isLoading).toBe(false)
   })
 
-  it('sessionId 为空时 records 清空', async () => {
+  it('sessionId 为空时不写分区', async () => {
     const store = useSubagentStore()
-    store.records = [makeRecord()]
+    store.applyRecords('session-1', [makeRecord()])
     await store.loadSubagents('')
 
-    expect(store.records).toEqual([])
+    // 空 sid 不写分区（已有数据保留，不调 RPC）
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
     expect(sessionApi.getSubagents).not.toHaveBeenCalled()
   })
 })
 
 describe('subagent store — clearSubagents', () => {
-  it('清空 records + 退出所有 panel overlay', async () => {
+  it('清空所有分区 + 退出所有 panel overlay', async () => {
     vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
     const store = useSubagentStore()
     const chat = makeChatMock()
 
     // 预置：panel-A 正在看一个 subagent
-    store.records = [makeRecord({ status: 'done' })]
+    store.applyRecords('session-1', [makeRecord({ status: 'done' })])
     await store.selectSubagent('panel-A', 'session-1', 'bg-test-1-111', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
     expect(store.isViewing('panel-A')).toBe(true)
 
     store.clearSubagents()
 
-    expect(store.records).toEqual([])
+    expect(store.getRecordsBySession('session-1')).toEqual([])
     expect(store.isViewing('panel-A')).toBe(false)
+  })
+})
+
+describe('subagent store — clearSession (per-session 分区释放)', () => {
+  it('清除指定 sid 分区，不影响其他 sid', () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-a' })])
+    store.applyRecords('session-2', [makeRecord({ subagentId: 'bg-b' })])
+
+    store.clearSession('session-1')
+
+    expect(store.getRecordsBySession('session-1')).toEqual([])
+    expect(store.getRecordsBySession('session-2')).toHaveLength(1)
+  })
+
+  it('清除不存在的 sid 分区是 no-op', () => {
+    const store = useSubagentStore()
+    expect(() => store.clearSession('never')).not.toThrow()
   })
 })
 
@@ -177,38 +195,61 @@ describe('subagent store — per-panel getters', () => {
     expect(store.getActiveSubagentVirtualId('panel-A', 'session-1')).toBe('subagent:session-1:bg-1')
   })
 
-  it('getCurrentSubagent 从 records 查找当前查看的记录', async () => {
+  it('getCurrentSubagent 从 mainSession 分区查找当前查看的记录', async () => {
     vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
     const store = useSubagentStore()
     const chat = makeChatMock()
-    store.records = [makeRecord({ subagentId: 'bg-target', agent: 'worker' })]
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-target', agent: 'worker' })])
 
     await store.selectSubagent('panel-A', 'session-1', 'bg-target', chat.applySubagentStreamDelta, chat.finalizeSubagentStream, chat.setMessages)
 
-    const record = store.getCurrentSubagent('panel-A')
+    const record = store.getCurrentSubagent('panel-A', 'session-1')
     expect(record?.agent).toBe('worker')
-    expect(store.getCurrentSubagent('panel-B')).toBeNull()
+    expect(store.getCurrentSubagent('panel-B', 'session-1')).toBeNull()
   })
 })
 
 describe('subagent store — isRunning', () => {
   it('status=running 返回 true', () => {
     const store = useSubagentStore()
-    store.records = [makeRecord({ subagentId: 'bg-1', status: 'running' })]
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-1', status: 'running' })])
 
-    expect(store.isRunning('bg-1')).toBe(true)
+    expect(store.isRunning('session-1', 'bg-1')).toBe(true)
   })
 
   it('status=done 返回 false', () => {
     const store = useSubagentStore()
-    store.records = [makeRecord({ subagentId: 'bg-1', status: 'done' })]
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-1', status: 'done' })])
 
-    expect(store.isRunning('bg-1')).toBe(false)
+    expect(store.isRunning('session-1', 'bg-1')).toBe(false)
   })
 
   it('未知 subagentId 返回 false', () => {
     const store = useSubagentStore()
-    expect(store.isRunning('nonexistent')).toBe(false)
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-1' })])
+    expect(store.isRunning('session-1', 'nonexistent')).toBe(false)
+  })
+})
+
+describe('subagent store — hasRunning', () => {
+  it('分区存在 running → true', () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [
+      makeRecord({ subagentId: 'bg-1', status: 'done' }),
+      makeRecord({ subagentId: 'bg-2', status: 'running' }),
+    ])
+    expect(store.hasRunning('session-1')).toBe(true)
+  })
+
+  it('分区无 running → false', () => {
+    const store = useSubagentStore()
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-1', status: 'done' })])
+    expect(store.hasRunning('session-1')).toBe(false)
+  })
+
+  it('未知 sid → false', () => {
+    const store = useSubagentStore()
+    expect(store.hasRunning('never')).toBe(false)
   })
 })
 
@@ -260,28 +301,28 @@ describe('subagent store — backToMain', () => {
 })
 
 describe('subagent store — cancelSubagent', () => {
-  it('调 subagentAction RPC + 乐观更新 records status→cancelled', async () => {
+  it('调 subagentAction RPC + 乐观更新分区 status→cancelled', async () => {
     vi.mocked(sessionApi.subagentAction).mockResolvedValue(undefined)
     const store = useSubagentStore()
     // 预置一条 running subagent
-    store.records.push(makeRecord({ subagentId: 'bg-cancel-target', status: 'running' }))
-    expect(store.records[0].status).toBe('running')
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-cancel-target', status: 'running' })])
+    expect(store.getRecordsBySession('session-1')[0].status).toBe('running')
 
     await store.cancelSubagent('session-1', 'bg-cancel-target')
 
     // 调了 RPC
     expect(sessionApi.subagentAction).toHaveBeenCalledWith('session-1', 'cancel', 'bg-cancel-target')
     // 乐观更新：status 变 cancelled（不等 WS 推送）
-    expect(store.records.find(r => r.subagentId === 'bg-cancel-target')?.status).toBe('cancelled')
+    expect(store.getRecordsBySession('session-1').find(r => r.subagentId === 'bg-cancel-target')?.status).toBe('cancelled')
   })
 
   it('RPC 失败 → 不改 status（乐观更新回滚）', async () => {
     vi.mocked(sessionApi.subagentAction).mockRejectedValue(new Error('session not active'))
     const store = useSubagentStore()
-    store.records.push(makeRecord({ subagentId: 'bg-fail', status: 'running' }))
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-fail', status: 'running' })])
 
     await expect(store.cancelSubagent('session-1', 'bg-fail')).rejects.toThrow('session not active')
     // status 保持 running（回滚）
-    expect(store.records.find(r => r.subagentId === 'bg-fail')?.status).toBe('running')
+    expect(store.getRecordsBySession('session-1').find(r => r.subagentId === 'bg-fail')?.status).toBe('running')
   })
 })

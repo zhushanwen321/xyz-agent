@@ -52,11 +52,12 @@ vi.mock('@/stores/panel', () => ({
   usePanelStore: () => ({ panels: [{ id: 'root', sessionId: null }], activePanelId: 'root', isDual: false }),
 }))
 vi.mock('@/stores/subagent', () => ({
-  useSubagentStore: () => ({ records: [], isLoading: false, loadError: null }),
+  useSubagentStore: () => ({ recordsOf: () => ({ value: [] }), getRecordsBySession: () => [], hasRunning: () => false, isLoading: false, loadError: null }),
 }))
 vi.mock('@/stores/workflow', () => ({
   useWorkflowStore: () => ({
-    records: [], isLoading: false, loadError: null,
+    recordsOf: () => ({ value: [] }), getRecordsBySession: () => [], hasRunningOrPaused: () => false,
+    isLoading: false, loadError: null,
     workflowCount: () => 0, getCurrentWorkflow: () => null,
     selectWorkflow: vi.fn(), backToWorkflowList: vi.fn(),
     loadWorkflows: vi.fn(() => Promise.resolve()),

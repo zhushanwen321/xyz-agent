@@ -79,3 +79,22 @@ export const PRESET_AGENT_DIRS = [
   '~/.agents/agents',
   '.agents/agents',
 ] as const
+
+/**
+ * extension 加载路径预设候选（镜像 skill/agent 的两套：P1 pi 原生 + P2 xyz-agent）。
+ *
+ * P1 pi 原生扫描目录：
+ *   - ~/.pi/agent/extensions（user 级，pi 默认全局扫描）
+ *   - .pi/extensions（project 级，pi 默认项目扫描，受 trust 门控）
+ *
+ * P2 xyz-agent 强制目录结构：
+ *   - .xyz-agent/extensions（project 级；user 级 ~/.xyz-agent/extensions 是强制目录不在此列）
+ *
+ * 注意：extension 与 skill/agent 的目录语义不同——extension 是代码模块（注册 tool/hook/command），
+ * 而非数据资源。discovery 目录顺序仅影响加载顺序（对 hook 链执行顺序有意义），不等于统一优先级。
+ */
+export const PRESET_EXTENSION_DIRS = [
+  '~/.pi/agent/extensions',
+  '.pi/extensions',
+  '.xyz-agent/extensions',
+] as const

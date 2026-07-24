@@ -59,13 +59,13 @@ function makeRecord(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunReco
 describe('W1: workflow viewing 状态拆分 — selectWorkflow 不触发 Panel overlay', () => {
   it('selectWorkflow 后 isViewing=false（侧边栏视图2 ≠ Panel overlay）', () => {
     const store = useWorkflowStore()
-    store.records = [makeRecord()]
+    store.applyRecords('sess-main', [makeRecord()])
 
     store.selectWorkflow('panel-1', 'wf-001')
 
     // 侧边栏视图2 状态正确
     expect(store.getViewingRunId('panel-1')).toBe('wf-001')
-    expect(store.getCurrentWorkflow('panel-1')?.scriptName).toBe('my-flow')
+    expect(store.getCurrentWorkflow('panel-1', 'sess-main')?.scriptName).toBe('my-flow')
     // Panel overlay 不应被触发
     expect(store.isViewing('panel-1')).toBe(false)
   })
@@ -75,7 +75,7 @@ describe('W1: selectAgentCall 不覆盖 detailRunId（侧边栏保持停在 work
   it('先 selectWorkflow 再 selectAgentCall：getViewingRunId 保留', async () => {
     vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
     const store = useWorkflowStore()
-    store.records = [makeRecord()]
+    store.applyRecords('sess-main', [makeRecord()])
 
     store.selectWorkflow('panel-1', 'wf-001')
     await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
@@ -92,7 +92,7 @@ describe('W1: backFromAgentCall 只清 overlay，保留 detailRunId', () => {
   it('先 workflow-detail 再 agent-call，backFromAgentCall 后 runId 仍在', async () => {
     vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
     const store = useWorkflowStore()
-    store.records = [makeRecord()]
+    store.applyRecords('sess-main', [makeRecord()])
 
     store.selectWorkflow('panel-1', 'wf-001')
     await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())
@@ -110,7 +110,7 @@ describe('W1: backToWorkflowList 清 detailRunId，不影响 agent-call overlay'
   it('先 agent-call 再 backToWorkflowList：overlay 保留', async () => {
     vi.mocked(sessionApi.getAgentCallHistory).mockResolvedValue([])
     const store = useWorkflowStore()
-    store.records = [makeRecord()]
+    store.applyRecords('sess-main', [makeRecord()])
 
     store.selectWorkflow('panel-1', 'wf-001')
     await store.selectAgentCall('panel-1', 'sess-main', 'sess-agent-1', vi.fn())

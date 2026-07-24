@@ -24,6 +24,7 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   broadcastAgentList(): void
   broadcastSkillDirs(): void
   broadcastAgentDirs(): void
+  broadcastExtensionDirs(): void
 }
 
 export class SettingsMessageHandler {
@@ -141,6 +142,13 @@ export class SettingsMessageHandler {
         this.ctx.configService.upsertAgent(msg.payload.agent)
         this.ctx.reply(ws, msg.id, 'config.agentUpdated', { agent: msg.payload.agent, success: true })
         this.ctx.broadcastAgentList()
+        return true
+      }
+      case 'config.setExtensionDirs': {
+        // ADR-0020 §1 目录级管道：覆盖 discovery.json.extensionDirs（有序数组 = 优先级）
+        this.ctx.configService.setExtensionDirs(msg.payload.dirs)
+        this.ctx.reply(ws, msg.id, 'config.extensionDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
+        this.ctx.broadcastExtensionDirs()
         return true
       }
       case 'config.deleteAgent': {

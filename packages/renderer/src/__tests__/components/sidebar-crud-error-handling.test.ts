@@ -68,11 +68,13 @@ vi.mock('@/stores/panel', () => ({
   }),
 }))
 vi.mock('@/stores/subagent', () => ({
-  useSubagentStore: () => ({ records: [] }),
+  useSubagentStore: () => ({ recordsOf: () => ({ value: [] }), getRecordsBySession: () => [], hasRunning: () => false }),
 }))
 vi.mock('@/stores/workflow', () => ({
   useWorkflowStore: () => ({
-    records: [],
+    recordsOf: () => ({ value: [] }),
+    getRecordsBySession: () => [],
+    hasRunningOrPaused: () => false,
     workflowCount: () => 0,
     getCurrentWorkflow: () => null,
     selectWorkflow: vi.fn(),

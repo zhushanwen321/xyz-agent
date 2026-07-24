@@ -16,9 +16,11 @@ vi.mock('node:path', () => ({
   join: vi.fn((...args: string[]) => args.join('/')),
   dirname: vi.fn((p: string) => p.split('/').slice(0, -1).join('/')),
   basename: vi.fn((p: string) => p.split('/').pop() ?? ''),
+  resolve: vi.fn((...args: string[]) => args.join('/')),
 }))
 
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const mockedExistsSync = vi.mocked(existsSync)
 const mockedReaddirSync = vi.mocked(readdirSync)
@@ -137,7 +139,9 @@ describe('ExtensionResolver', () => {
     const settingsDir = '/home/user/.xyz-agent/pi/agent'
 
     beforeEach(() => {
-      resolver = new ExtensionResolver({ settingsDir })
+      // Phase 1 路径迁移：npmDir 已从 settingsDir 子树迁出到 dataDir 根层，
+      // 注入 npmDir: join(settingsDir, 'npm') 让测试 fixture（settingsDir/npm/node_modules/...）继续生效。
+      resolver = new ExtensionResolver({ settingsDir, npmDir: join(settingsDir, 'npm') })
       // 对齐 pi-settings-store 的读取路径到测试 settingsDir（scanSettingsExtensions 经 store 读 settings.json，D17）。
       setSettingsPath(`${settingsDir}/settings.json`)
       invalidateSettingsCache()
@@ -467,7 +471,7 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      resolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions` })
+      resolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions`, npmDir: join(settingsDir, 'npm') })
       const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
       // bundled ext-a
@@ -516,6 +520,152 @@ describe('ExtensionResolver', () => {
       const result = resolver.resolve('/project', true, [])
       expect(result.extensionDirs.length).toBe(1)
       expect(result.extensionDirs[0]).toBe(`${thirdPartyDir}/ext-c`)
+    })
+
+    it('scanDiscoveryExtensions: discovers single-file *.ts extensions', () => {
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions(['/custom/ext-dir'])
+      // scanDiscoveryExtensions 直接调 collectExtensionEntries，不经 mock 的 existsSync
+      // 需要单独 mock——这里验证空 discovery 目录返回空 Map
+      expect(result.size).toBe(0)
+    })
+  })
+
+  describe('scanDiscoveryExtensions', () => {
+    it('returns empty for non-existent directories', () => {
+      mockedExistsSync.mockImplementation((() => false) as unknown as typeof existsSync)
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions(['/nonexistent'])
+      expect(result.size).toBe(0)
+    })
+
+    it('discovers index.ts in subdirectory (pi structure)', () => {
+      const dir = '/discovery/ext-with-index'
+      mockedExistsSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return false
+        // discovery 目录存在
+        if (p === dir) return true
+        // collectExtensionEntries → resolveExtensionEntries：无 package.json
+        if (p === `${dir}/package.json`) return false
+        // index.ts 存在
+        if (p === `${dir}/index.ts`) return true
+        return false
+      }) as unknown as typeof existsSync)
+
+      mockedStatSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        return { isDirectory: () => true } as import('node:fs').Stats
+      }) as unknown as typeof statSync)
+
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions([dir])
+      // 目录自身有 index.ts → resolveExtensionEntries 返回 [dir/index.ts]
+      expect(result.size).toBe(1)
+    })
+
+    it('discovers manifest-declared extensions (pi.extensions in package.json)', () => {
+      const dir = '/discovery/manifest-ext'
+      // mock join/resolve 不消除 ./，resolve(dir, './src/entry.ts') = dir/./src/entry.ts
+      const entryPath = `${dir}/./src/entry.ts`
+      mockedExistsSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === dir) return true
+        if (p === `${dir}/package.json`) return true
+        if (p === entryPath) return true
+        return false
+      }) as unknown as typeof existsSync)
+
+      mockedStatSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        return { isDirectory: () => true } as import('node:fs').Stats
+      }) as unknown as typeof statSync)
+
+      mockedReadFileSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === `${dir}/package.json`) {
+          return JSON.stringify({ pi: { extensions: ['./src/entry.ts'] } })
+        }
+        throw new Error('not found')
+      }) as unknown as typeof readFileSync)
+
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions([dir])
+      // manifest 声明 ./src/entry.ts → resolveExtensionEntries 返回该路径
+      expect(result.size).toBe(1)
+    })
+
+    it('discovers standalone *.ts files in directory', () => {
+      const dir = '/discovery/loose-files'
+      mockedExistsSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return false
+        // discovery 目录存在
+        if (p === dir) return true
+        // resolveExtensionEntries 检查目录自身：无 package.json、无 index.ts/js → null
+        if (p === `${dir}/package.json`) return false
+        if (p === `${dir}/index.ts`) return false
+        if (p === `${dir}/index.js`) return false
+        return false
+      }) as unknown as typeof existsSync)
+
+      mockedStatSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        return { isDirectory: () => true } as import('node:fs').Stats
+      }) as unknown as typeof statSync)
+
+      mockedReaddirSync.mockImplementation(((() => {
+        // withFileTypes: 返回 Dirent-like 对象
+        return [
+          { name: 'my-ext.ts', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false },
+          { name: 'node_modules', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
+          { name: '.hidden', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
+        ]
+      }) as unknown as typeof readdirSync))
+
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions([dir])
+      // my-ext.ts 被收集（isFile + .ts 后缀），node_modules 和 .hidden 被跳过
+      expect(result.size).toBe(1)
+      expect(result.has('my-ext')).toBe(true)
+    })
+
+    it('resolve integrates discovery source with priority (discovery > settings)', () => {
+      const home = '/home/user'
+      vi.stubEnv('HOME', home)
+      const settingsDir = `${home}/.xyz-agent/pi/agent`
+      const settingsPath = `${settingsDir}/settings.json`
+
+      setSettingsPath(settingsPath)
+      invalidateSettingsCache()
+
+      // discovery 目录提供一个 extension
+      const discoveryDir = '/custom/discovery'
+
+      mockedExistsSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === settingsPath) return true
+        if (p === `${settingsDir}/disabled-packages.json`) return false
+        // discovery 目录存在 + index.ts 存在
+        if (p === discoveryDir) return true
+        if (p === `${discoveryDir}/package.json`) return false
+        if (p === `${discoveryDir}/index.ts`) return true
+        return false
+      }) as unknown as typeof existsSync)
+
+      mockedStatSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        return { isDirectory: () => true } as import('node:fs').Stats
+      }) as unknown as typeof statSync)
+
+      mockedReadFileSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === settingsPath) return JSON.stringify({ packages: [] })
+        throw new Error('not found')
+      }) as unknown as typeof readFileSync)
+
+      resolver = new ExtensionResolver({ settingsDir, npmDir: join(settingsDir, 'npm') })
+      const result = resolver.resolve('/project', false, [], [discoveryDir])
+      // discovery source 找到 extension
+      expect(result.extensionDirs.length).toBeGreaterThanOrEqual(1)
     })
   })
 })

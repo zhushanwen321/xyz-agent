@@ -1,10 +1,10 @@
 /**
- * W2 测试：selectSession 切换 session 后 subagent/workflow 列表数据正确刷新。
+ * W2 测试：selectSession 切换 session 后 subagent/workflow 列表按 per-session 分区刷新。
  *
  * 核心验证（行为结果，非 spy）：
- * - selectSession 后 subagentStore.records 被填充（不只是 loadSubagents 被调）
- * - selectSession 后 workflowStore.records 被填充
- * - 切到不同 session 后 records 内容变化（验证不是残留旧数据）
+ * - selectSession 后 subagentStore 该 sid 分区被填充（不只是 loadSubagents 被调）
+ * - selectSession 后 workflowStore 该 sid 分区被填充
+ * - 切到不同 session 后各分区独立（ADR-0036 Map 分区派：A 分区保留，B 分区新建）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/select-session-pull.test.ts
  */
@@ -62,44 +62,46 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('W2: selectSession 后 subagent/workflow 列表数据正确刷新', () => {
-  it('selectSession(sess-A) 后 subagentStore.records 含 session A 的数据', async () => {
+describe('W2: selectSession 后 subagent/workflow 列表按 per-session 分区刷新', () => {
+  it('selectSession(sess-A) 后 subagentStore sess-A 分区含 session A 的数据', async () => {
     const sidebar = useSidebar()
     const subagentStore = useSubagentStore()
 
     await sidebar.selectSession('sess-A')
 
-    expect(subagentStore.records).toHaveLength(1)
-    expect(subagentStore.records[0].subagentId).toBe('sub-A1')
-    expect(subagentStore.records[0].agent).toBe('reviewer')
+    expect(subagentStore.getRecordsBySession('sess-A')).toHaveLength(1)
+    expect(subagentStore.getRecordsBySession('sess-A')[0].subagentId).toBe('sub-A1')
+    expect(subagentStore.getRecordsBySession('sess-A')[0].agent).toBe('reviewer')
   })
 
-  it('selectSession(sess-A) 后 workflowStore.records 含 session A 的数据', async () => {
+  it('selectSession(sess-A) 后 workflowStore sess-A 分区含 session A 的数据', async () => {
     const sidebar = useSidebar()
     const workflowStore = useWorkflowStore()
 
     await sidebar.selectSession('sess-A')
 
-    expect(workflowStore.records).toHaveLength(1)
-    expect(workflowStore.records[0].runId).toBe('wf-A')
-    expect(workflowStore.records[0].scriptName).toBe('flow-a')
+    expect(workflowStore.getRecordsBySession('sess-A')).toHaveLength(1)
+    expect(workflowStore.getRecordsBySession('sess-A')[0].runId).toBe('wf-A')
+    expect(workflowStore.getRecordsBySession('sess-A')[0].scriptName).toBe('flow-a')
   })
 
-  it('切到 session B 后 records 内容变化（非残留旧数据）', async () => {
+  it('切到 session B 后各分区独立（ADR-0036：A 分区保留，B 分区新建）', async () => {
     const sidebar = useSidebar()
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
 
     await sidebar.selectSession('sess-A')
-    expect(subagentStore.records[0].subagentId).toBe('sub-A1')
-    expect(workflowStore.records[0].runId).toBe('wf-A')
+    expect(subagentStore.getRecordsBySession('sess-A')[0].subagentId).toBe('sub-A1')
+    expect(workflowStore.getRecordsBySession('sess-A')[0].runId).toBe('wf-A')
 
     await sidebar.selectSession('sess-B')
-    // subagent 数据已切换为 session B 的
-    expect(subagentStore.records[0].subagentId).toBe('sub-B1')
-    expect(subagentStore.records[0].agent).toBe('worker')
-    // workflow 数据已切换为 session B 的
-    expect(workflowStore.records[0].runId).toBe('wf-B')
-    expect(workflowStore.records[0].scriptName).toBe('flow-b')
+    // A 分区数据保留（切走不清，ADR-0036 正确范式）
+    expect(subagentStore.getRecordsBySession('sess-A')[0].subagentId).toBe('sub-A1')
+    expect(workflowStore.getRecordsBySession('sess-A')[0].runId).toBe('wf-A')
+    // B 分区写入 session B 的数据
+    expect(subagentStore.getRecordsBySession('sess-B')[0].subagentId).toBe('sub-B1')
+    expect(subagentStore.getRecordsBySession('sess-B')[0].agent).toBe('worker')
+    expect(workflowStore.getRecordsBySession('sess-B')[0].runId).toBe('wf-B')
+    expect(workflowStore.getRecordsBySession('sess-B')[0].scriptName).toBe('flow-b')
   })
 })

@@ -4,7 +4,7 @@
  *
  * 形态：popover 内容面板（锚定 + 宽度由本组件定 380px；向上展开由父级 PopoverContent side="top" 控制）。
  *
- * 数据流（container for data）：workspaceStore.records → RecentWorkspaceRecord[] top10。
+ * 数据流（container for data）：workspaceStore.records → RecentWorkspaceRecord[] top6。
  * 动作（presentational for actions，emit 单 payload 对象）：
  * - 选列表项 → emit('select', { cwd })（父接 useNewTaskFlow.selectWorkspace）
  * - 「打开文件夹」→ emit('open-dir-dialog')（父接 useNewTaskFlow.openDirDialog → OS 原生 dialog）
@@ -62,15 +62,20 @@ const ACTION_ITEM_COUNT = computed(() =>
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
 
+/** W1（MAX_RECORDS 10→6）：popover 列表展示上限，与 runtime RecentWorkspacesStore.MAX_RECORDS 对齐
+ *  双保险：即便 runtime 返超量也只显 6 项 */
+const MAX_DISPLAY = 6
+
 /** W3: 改接 workspaceStore.records（取代旧 session.list 派生） */
 const workspaces = computed<RecentWorkspaceRecord[]>(() => workspaceStore.records)
 
 /** 搜索即时过滤（无 debounce，list < 50 本地缓存，spec §3.2） */
 const filtered = computed<RecentWorkspaceRecord[]>(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return workspaces.value
+  // W1（MAX_RECORDS 10→6）：双保险，即便 runtime 返超量也只显 6 项
+  if (!q) return workspaces.value.slice(0, MAX_DISPLAY)
   // label 已是 cwd basename，是其全路径 cwd 的子串，单独按 cwd 匹配即可覆盖两者
-  return workspaces.value.filter((w) => w.cwd.toLowerCase().includes(q))
+  return workspaces.value.filter((w) => w.cwd.toLowerCase().includes(q)).slice(0, MAX_DISPLAY)
 })
 
 /** 空态：无最近工作区，或搜索无命中 */

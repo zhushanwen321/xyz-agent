@@ -7,7 +7,7 @@
     <div
       v-for="t in toasts"
       :key="t.id"
-      class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg"
+      class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg select-text"
       :class="toastClass(t.type)"
     >
       <!-- error icon: lucide alert-circle -->

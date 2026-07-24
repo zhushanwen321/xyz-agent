@@ -6,14 +6,14 @@
  * 两个 broadcast helper（目录变更后广播）。
  */
 import type { SkillDirConfig } from '@xyz-agent/shared'
-import { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS } from '@xyz-agent/shared'
+import { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '@xyz-agent/shared'
 import { existsSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { expandHome } from '../utils/path-utils.js'
 
-// Re-export 供历史调用方（消费 PRESET_SKILL_DIRS/PRESET_AGENT_DIRS 的模块）继续从此处 import，
+// Re-export 供历史调用方（消费 PRESET_SKILL_DIRS/PRESET_AGENT_DIRS/PRESET_EXTENSION_DIRS 的模块）继续从此处 import，
 // SSOT 已上提到 @xyz-agent/shared/constants（infra 与 services 共享，消除本地副本漂移）。
-export { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS }
+export { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS }
 
 /**
  * 把预设候选目录 + discovery 启用列表 组合成 UI 用的 SkillDirConfig[]。

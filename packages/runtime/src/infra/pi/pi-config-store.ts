@@ -37,6 +37,8 @@ import { getConfigDir, getPiAgentDir } from './pi-paths.js'
 import {
   getAgentDirs as getDiscoveryAgentDirs,
   setAgentDirs as setDiscoveryAgentDirs,
+  getExtensionDirs as getDiscoveryExtensionDirs,
+  setExtensionDirs as setDiscoveryExtensionDirs,
 } from './discovery-store.js'
 
 // ── IConfigStore 实现 ───────────────────────────────────────────
@@ -120,6 +122,16 @@ export class PiConfigStore implements IConfigStore {
 
   setAgentDirs(dirs: string[]): void {
     setDiscoveryAgentDirs(dirs)
+  }
+
+  // ── Extension dirs（discovery.json SSOT）──
+
+  getExtensionDirs(): string[] {
+    return getDiscoveryExtensionDirs()
+  }
+
+  setExtensionDirs(dirs: string[]): void {
+    setDiscoveryExtensionDirs(dirs)
   }
 
   // ── Agent files ──

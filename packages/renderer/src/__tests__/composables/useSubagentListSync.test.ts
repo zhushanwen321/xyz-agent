@@ -55,23 +55,25 @@ function setPanelSession(panel: ReturnType<typeof usePanelStore>, sessionId: str
   panel.loadSession(ROOT_PANEL_ID, sessionId)
 }
 
-describe('useSubagentListSync — 切会话触发 clearSubagents + 首拉', () => {
-  it('focusedSessionId 变化时 clearSubagents 被调用（清空旧数据）', async () => {
+describe('useSubagentListSync — 切会话首拉（不再 clearSubagents，切走不清）', () => {
+  it('focusedSessionId 变化时旧 session 分区保留（ADR-0036：切走不清）', async () => {
     const panel = usePanelStore()
     const subagentStore = useSubagentStore()
     // 先绑一个 session（immediate watch 会首拉），scope 停后再测切换
     setPanelSession(panel, 'session-init')
     const scope = activateSync()
+    // 等 immediate 的 loadSubagents('session-init') microtask flush 完，避免它后续 resolve 覆盖预置数据
+    await new Promise((r) => setTimeout(r, 0))
 
-    // 预置旧数据
-    subagentStore.records = [{ subagentId: 'old', agent: 'a', slug: 's', task: 't', status: 'done', sessionFile: null }]
-    expect(subagentStore.records).toHaveLength(1)
+    // 预置旧数据到 init 分区
+    subagentStore.applyRecords('session-init', [{ subagentId: 'old', agent: 'a', slug: 's', task: 't', status: 'done', sessionFile: null }])
+    expect(subagentStore.getRecordsBySession('session-init')).toHaveLength(1)
 
-    // 切会话 → clearSubagents 清空
+    // 切会话 → 旧分区保留（不再 clearSubagents）
     setPanelSession(panel, 'session-new')
     await nextTick()
 
-    expect(subagentStore.records).toEqual([])
+    expect(subagentStore.getRecordsBySession('session-init')).toHaveLength(1)
     scope.stop()
   })
 
