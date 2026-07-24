@@ -234,3 +234,18 @@ describe('useSideDrawer U9 (AC-9) 双 panel standby 无独立状态', () => {
     expect(useSideDrawer().activeTab.value).toBe('git')
   })
 })
+
+describe('useSideDrawer U10 (AC-10) sid 稳定下手动 open（回归 plain object init 失效 bug）', () => {
+  it('focus(A) 后不切 session，直接 open → isOpen 立即为 true', () => {
+    // 回归：init 工厂漏 reactive() 时，sid 稳定下 open() 的 mutate 不触发 computed 重算，
+    // isOpen 缓存旧值 false。修复后 reactive 容器使 mutate 正确传播。
+    focusSession('A')
+    const drawer = useSideDrawer()
+    expect(drawer.isOpen.value).toBe(false) // 缓存建立（模拟组件已渲染）
+
+    drawer.open('git') // 手动 toggle，sid 未变化
+
+    expect(drawer.isOpen.value).toBe(true) // 修复前为 false（bug）
+    expect(drawer.activeTab.value).toBe('git')
+  })
+})
