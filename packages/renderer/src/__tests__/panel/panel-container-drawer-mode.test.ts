@@ -22,9 +22,6 @@ vi.mock('@/composables/features/useGitStatus', () => ({
   GIT_STATUS_KEY: Symbol('git-status'),
   provideGitStatus: () => ({ indicator: { value: undefined }, state: { value: 'clean' }, lines: { value: [] } }),
 }))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ newSessionToStandby: vi.fn() }),
-}))
 vi.mock('@/composables/features/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
