@@ -52,22 +52,33 @@ export function useComposerInjection(
   }
 
   /**
-   * 执行 file chip 注入。
-   * lineRange 从 lineStart/lineEnd 组装（两者都有才传，否则 undefined 即 path-only）。
+   * 执行注入（file chip 或纯文本）。
+   * - 有 text → insertTextAtCursor（Phase 4 联动 1：TerminalView 选区「发给 AI」）
+   * - 有 path → insertFileChip（file chip + 可选行范围）
+   * path 与 text 互斥（store schema 保证），text 优先判断。
    */
   function applyInjection(req: {
-    path: string
+    path?: string
     lineStart?: number
     lineEnd?: number
+    text?: string
   }): void {
     const input = inputRef.value
     if (!input) return
     input.focus()
-    const lineRange =
-      req.lineStart !== undefined && req.lineEnd !== undefined
-        ? ([req.lineStart, req.lineEnd] as [number, number])
-        : undefined
-    input.insertFileChip(req.path, lineRange)
+    // text 注入（Phase 4 联动 1）
+    if (req.text !== undefined) {
+      input.insertTextAtCursor(req.text)
+      return
+    }
+    // file chip 注入（原有路径）
+    if (req.path !== undefined) {
+      const lineRange =
+        req.lineStart !== undefined && req.lineEnd !== undefined
+          ? ([req.lineStart, req.lineEnd] as [number, number])
+          : undefined
+      input.insertFileChip(req.path, lineRange)
+    }
   }
 
   /**

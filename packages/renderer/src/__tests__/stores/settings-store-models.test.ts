@@ -34,6 +34,10 @@ vi.mock('@/api', () => ({
     onDefaults: vi.fn(() => () => {}),
     // FR-4/FR-5 system prompt config：useSettings.init 会订阅 onSystemPrompt（PR #87 新增）
     onSystemPrompt: vi.fn(() => () => {}),
+    // Phase 6 terminal config：useSettings.init 会订阅 onTerminalConfig
+    onTerminalConfig: vi.fn(() => () => {}),
+    getTerminalConfig: vi.fn(async () => ({ config: { version: 1, shell: '', shellArgs: [], fontSize: 14, fontFamily: '', scrollback: 1000, cursorStyle: 'block' as const, bell: false }, corrupted: false })),
+    setTerminalConfig: vi.fn(async () => ({ config: { version: 1, shell: '', shellArgs: [], fontSize: 14, fontFamily: '', scrollback: 1000, cursorStyle: 'block' as const, bell: false }, corrupted: false })),
   },
   model: {
     onModels: vi.fn((cb: (models: ModelInfo[]) => void) => {

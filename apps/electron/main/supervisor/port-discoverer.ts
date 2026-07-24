@@ -1,166 +1,152 @@
 /**
  * 端口探测 + stale 进程清理。
- *
- * 对应 spec §4.2 M2 子职责「端口探测」。
- *
- * [HISTORICAL] 不变量：
- * - 端口范围：BASE_PORT..BASE_PORT+10（dev 偏移 +DEV_PORT_OFFSET）
- * - SAFE_KILL_NAMES 白名单：只 kill 进程名匹配 node/pi/tsx/electron/xyz-agent/bash/sh/zsh 的进程
- *   防止误杀无关服务（如占用同端口的数据库/nginx）
- * - kill 顺序：SIGTERM → 等 KILL_WAIT_MS(200ms) → SIGKILL
- * - macOS `ps -o comm=` 可能返回完整路径，正则用 `(?:^|[\/\\])basename$` 兼容
- *
- * 时序（findAvailablePort，单端口被占的清理路径）：
- * ```
- *   T0: isPortInUse(port) → true
- *   T1: killStaleProcessOnPort(port)
- *        ├─ lsof -n -P -i :PORT | grep LISTEN  → 取 PIDs
- *        ├─ for each pid: isSafeToKill(pid)?
- *        │    ├─ 是 → SIGTERM → setTimeout(KILL_WAIT_MS) → SIGKILL
- *        │    └─ 否 → warn 跳过
- *   T2: sleep(PORT_RETRY_MS=300ms) 等 kill 生效
- *   T3: isPortInUse(port) → 仍占用? 尝试下一端口 : 返回此端口
- * ```
- *
- * 依赖方向：port-discoverer → shared（BASE_PORT/MAX_PORT/DEV_PORT_OFFSET）+ node:child_process + health-checker
+ * Windows 仅使用 netstat/tasklist/taskkill；Unix 保留 lsof/ps/信号逻辑。
  */
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 import { isPortInUse } from './health-checker.js'
+import { terminateWindowsProcessTree } from './windows-process.js'
 
-/** 端口范围大小（BASE_PORT..BASE_PORT+10） */
 export const PORT_RANGE_SIZE = 10
-
-/** kill stale 后等待生效的时间 */
 export const PORT_RETRY_MS = 300
-
-/** SIGTERM 后等待转 SIGKILL 的时间 */
 export const KILL_WAIT_MS = 200
+export const SAFE_KILL_NAMES = /(?:^|[\/\\])(?:node|node\.exe|pi|pi\.exe|pi-windows-x64\.exe|tsx|tsx\.exe|electron|electron\.exe|xyz-agent|xyz-agent\.exe|bash|bash\.exe|sh|sh\.exe|zsh|zsh\.exe)$/i
 
-/**
- * 安全 kill 白名单：匹配路径分隔符后的 basename。
- * macOS `ps -o comm=` 可能返回完整路径，故用 `(?:^|[\/\\])` 锚定 basename。
- */
-export const SAFE_KILL_NAMES = /(?:^|[\/\\])(?:node|pi|tsx|electron|xyz-agent|bash|sh|zsh)$/i
-
-/**
- * 获取端口偏移（默认 0，dev 模式 +DEV_PORT_OFFSET），clamp 到 [0, MAX_PORT-BASE_PORT]。
- * 读 process.env.XYZ_AGENT_PORT_OFFSET。
- */
 export function getPortOffset(): number {
   const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
   return Math.max(0, Math.min(raw, MAX_PORT - BASE_PORT))
 }
 
-/**
- * 获取动态端口范围的起止：[BASE_PORT + offset, BASE_PORT + offset + PORT_RANGE_SIZE]。
- */
 export function getPortRange(): { start: number; end: number } {
   const offset = getPortOffset()
-  return {
-    start: BASE_PORT + offset,
-    end: BASE_PORT + offset + PORT_RANGE_SIZE,
+  return { start: BASE_PORT + offset, end: BASE_PORT + offset + PORT_RANGE_SIZE }
+}
+
+const NETSTAT_MIN_COLUMNS = 5
+
+export function parseWindowsListeningPids(output: string, port: number): number[] {
+  const pids = new Set<number>()
+  for (const rawLine of output.split(/\r?\n/)) {
+    const columns = rawLine.trim().split(/\s+/)
+    if (columns.length < NETSTAT_MIN_COLUMNS || columns[0].toUpperCase() !== 'TCP' || columns[3].toUpperCase() !== 'LISTENING') continue
+    const localAddress = columns[1]
+    const separator = localAddress.lastIndexOf(':')
+    if (separator < 0 || Number(localAddress.slice(separator + 1)) !== port) continue
+    const pid = Number(columns[4])
+    if (Number.isInteger(pid) && pid > 0) pids.add(pid)
+  }
+  return [...pids]
+}
+
+function getWindowsProcessName(pid: number): string {
+  try {
+    const output = execFileSync(
+      'tasklist.exe',
+      ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+    ).trim()
+    if (!output || output.startsWith('INFO:')) return ''
+    const match = output.match(/^"([^"]+)"/)
+    const name = match?.[1] ?? ''
+    return name.replace(/\s*\*32$/i, '')
+  } catch {
+    return ''
   }
 }
 
-/**
- * 检查进程名是否在安全 kill 列表中。
- * 用 `ps -p PID -o comm=` 取进程名，正则匹配 basename。
- *
- * @param pid 目标进程
- * @returns true=可安全 kill / false=不在白名单或查询失败
- */
-export function isSafeToKill(pid: number): boolean {
+export type PlatformProvider = () => NodeJS.Platform
+
+const getProcessPlatform: PlatformProvider = () => process.platform
+
+export function isSafeToKill(pid: number, platform: PlatformProvider = getProcessPlatform): boolean {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false
+  if (platform() === 'win32') return SAFE_KILL_NAMES.test(getWindowsProcessName(pid))
   try {
     const name = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, {
-      encoding: 'utf-8',
-      shell: '/bin/bash',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
-    if (!name) return false
-    return SAFE_KILL_NAMES.test(name)
+    return Boolean(name) && SAFE_KILL_NAMES.test(name)
   } catch {
-    // ps 查询失败（进程已退出）非关键，按「不可安全 kill」处理
     return false
   }
 }
 
-/**
- * 用 lsof 查找占用端口的进程并 kill（SIGTERM → 等 → SIGKILL）。
- * 只 kill 进程名匹配白名单的进程，防止误杀无关服务。
- *
- * @param port 被占用的端口
- */
-export function killStaleProcessOnPort(port: number): void {
+function getWindowsListeningPids(port: number): number[] {
   try {
-    // 注意：-sTCP:LISTEN 在 Linux 上不可用，用兼容方案
-    const output = execSync(`lsof -n -P -i :${port} 2>/dev/null | grep LISTEN | awk '{print $2}' || true`, {
-      encoding: 'utf-8',
-      shell: '/bin/bash',
-      stdio: ['pipe', 'pipe', 'pipe'],
+    const output = execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], {
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     })
-    for (const line of output.trim().split('\n')) {
-      const pid = Number(line.trim())
-      if (!Number.isNaN(pid) && pid > 0) {
-        if (!isSafeToKill(pid)) {
-          console.warn(`[runtime] Port ${port} occupied by PID ${pid} but process name not in allowlist, skipping kill`)
-          continue
-        }
-        console.log(`[runtime] Killing stale process ${pid} on port ${port}`)
-        try {
-          process.kill(pid, 'SIGTERM')
-        // eslint-disable-next-line taste/no-silent-catch -- 进程可能已退出，非关键错误
-        } catch {
-          // 进程可能已退出，非关键错误
-        }
-        // 等待后补 SIGKILL
-        setTimeout(() => {
-          try {
-            process.kill(pid, 'SIGKILL')
-          // eslint-disable-next-line taste/no-silent-catch
-          } catch {
-            // 已经死了，非关键错误
-          }
-        }, KILL_WAIT_MS)
-      }
-    }
-  // eslint-disable-next-line taste/no-silent-catch -- lsof 没找到进程，正常情况
-  } catch {
-    // lsof 没找到进程，正常情况，无需处理
+    return parseWindowsListeningPids(output, port)
+  } catch (error) {
+    console.warn(`[runtime] netstat failed while checking port ${port}:`, error instanceof Error ? error.message : String(error))
+    return []
   }
 }
 
-/**
- * 在动态端口范围内寻找可用端口。
- * 遇占用则尝试 kill stale，等 PORT_RETRY_MS 后重试。
- *
- * @returns 首个可用端口
- * @throws 整个范围都被占用且无法清理
- */
+function isWindowsPidListeningOnPort(pid: number, port: number): boolean {
+  try {
+    const output = execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], {
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    })
+    return parseWindowsListeningPids(output, port).includes(pid)
+  } catch {
+    return false
+  }
+}
+function getUnixListeningPids(port: number): number[] {
+  try {
+    const output = execSync(`lsof -n -P -i :${port} 2>/dev/null | grep LISTEN | awk '{print $2}' || true`, {
+      encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    return output.trim().split('\n').map(line => Number(line.trim())).filter(pid => Number.isInteger(pid) && pid > 0)
+  } catch {
+    return []
+  }
+}
+
+export function killStaleProcessOnPort(port: number, platform: PlatformProvider = getProcessPlatform): void {
+  const currentPlatform = platform()
+  const pids = currentPlatform === 'win32' ? getWindowsListeningPids(port) : getUnixListeningPids(port)
+  for (const pid of pids) {
+    if (!isSafeToKill(pid, () => currentPlatform)) {
+      console.warn(`[runtime] Port ${port} occupied by PID ${pid} but process name not in allowlist, skipping kill`)
+      continue
+    }
+    console.log(`[runtime] Killing stale process ${pid} on port ${port}`)
+    if (currentPlatform === 'win32') {
+      if (!isWindowsPidListeningOnPort(pid, port)) {
+        console.warn(`[runtime] Port ${port} PID ${pid} changed before kill, skipping`)
+        continue
+      }
+      terminateWindowsProcessTree(pid)
+      continue
+    }
+    // eslint-disable-next-line taste/no-silent-catch -- process may have exited after discovery
+    try { process.kill(pid, 'SIGTERM') } catch { /* process may have exited */ }
+    setTimeout(() => {
+      // eslint-disable-next-line taste/no-silent-catch -- process may have exited after SIGTERM
+      try { process.kill(pid, 'SIGKILL') } catch { /* process may have exited */ }
+    }, KILL_WAIT_MS)
+  }
+}
+
 export async function findAvailablePort(): Promise<number> {
   const { start, end } = getPortRange()
   let cleanedAny = false
   for (let port = start; port <= end; port++) {
-    const inUse = await isPortInUse(port)
-    if (!inUse) {
-      // 如果之前清理了其他端口，这里多等一下让 kill 生效
+    if (!await isPortInUse(port)) {
       if (cleanedAny) await sleep(PORT_RETRY_MS)
       return port
     }
-
-    // 端口被占用，尝试 kill stale
-    console.warn(`[runtime] Port ${port} in use, cleaning up stale process (may kill non-agent services if name matches)`)
+    console.warn(`[runtime] Port ${port} in use, cleaning up stale process`)
     killStaleProcessOnPort(port)
     cleanedAny = true
     await sleep(PORT_RETRY_MS)
-
-    const stillInUse = await isPortInUse(port)
-    if (!stillInUse) return port
+    if (!await isPortInUse(port)) return port
   }
   throw new Error(`No available port in range ${start}-${end}`)
 }
 
-/** ms 延迟 helper（避免重复定义） */
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise(resolve => setTimeout(resolve, ms))
 }

@@ -101,6 +101,18 @@
           <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
           <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
+          <!-- Phase 5 联动 2：bash 命令块「在终端运行」（非 running 态、有 sessionId 才显示） -->
+          <Button
+            v-if="isBash && !isRunning && sessionId"
+            variant="ghost"
+            size="icon"
+            data-testid="tool-run-in-terminal"
+            class="ml-auto size-5 shrink-0 rounded-sm p-0 text-subtle hover:text-accent"
+            :title="t('panel.terminal.runInTerminal')"
+            @click.stop="runInTerminal"
+          >
+            <TerminalIcon class="size-3" />
+          </Button>
         </div>
         <template v-if="toolExpanded">
           <!-- 补充细节条：失败错误摘要 + 行数/字符数 + 耗时。对齐 subagent 展开体信息架构 -->
@@ -134,7 +146,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
+import { Bot, Brain, ChevronRight, Check, Terminal as TerminalIcon, Wrench, XCircle } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
@@ -142,6 +154,9 @@ import { SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES } from '@xyz-agent/shared'
 import AnsiText from './gui/AnsiText.vue'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import { Button } from '@/components/ui/button'
+import { useRunInTerminal } from '@/composables/panel/useRunInTerminal'
+import { useToolMeta } from '@/composables/panel/useToolMeta'
 
 const { t } = useI18n()
 
@@ -189,64 +204,13 @@ const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
-/** 补充细节条 meta 项：耗时 + 工具特化信息（read/bash 的输出行数、read 字符数）。
- *  - 耗时：startTime→endTime，数据源已就绪。
- *  - 行数/字符数：pi 协议不返回文件元信息（exit code / fileSize 均无），前端从 output 文本自算。
- *    read 工具的 output 是文件内容，行数/字符数有统计意义；bash 的 output 是命令输出，行数有参考价值；
- *    edit/write 等 output 是简短确认（如 "done"），行数无意义不展示。
- *  exit code / 测试数等无法从 output 可靠提取（pi 不返回数值 exit code），不做。
- *  失败态首项（错误性质）用 danger 色强调。 */
-const OUTPUT_META_TOOLS = new Set(['read', 'bash', 'cat', 'glob', 'grep', 'list'])
-
-interface MetaItem {
-  /** 高亮态：failed 首项用 danger，普通信息用 info（蓝），其余默认 muted */
-  tone: 'danger' | 'info' | 'muted'
-  text: string
-}
-
-/** 错误摘要截断长度（细节条单行不撑爆） */
-const ERROR_SUMMARY_LIMIT = 40
-/** 字符数格式化阈值（>= 此值显示为 XK chars） */
-const CHAR_K_THRESHOLD = 1000
-
-const metaItems = computed<MetaItem[]>(() => {
-  const items: MetaItem[] = []
-  // 失败态首项：错误定性（从 error/output 首行提取一句话）
-  if (isFailed.value) {
-    const errText = (props.tool?.error ?? props.tool?.output ?? '').trim()
-    if (errText) {
-      const firstLine = errText.split('\n')[0].trim()
-      items.push({
-        tone: 'danger',
-        text: firstLine.length > ERROR_SUMMARY_LIMIT ? `${firstLine.slice(0, ERROR_SUMMARY_LIMIT)}…` : firstLine,
-      })
-    }
-  }
-  // 工具特化：行数/字符数（仅 read/bash 等输出有统计意义的工具）
-  const name = toolName.value
-  const output = props.tool?.output ?? ''
-  if (OUTPUT_META_TOOLS.has(name) && output.trim()) {
-    const lineCount = output.split('\n').length
-    items.push({ tone: 'muted', text: `${lineCount} 行` })
-    // read/cat 额外显示字符数（文件内容大小有参考价值）
-    if (name === 'read' || name === 'cat') {
-      items.push({ tone: 'muted', text: formatCharCount(output.length) })
-    }
-  }
-  // 耗时（末位）
-  const start = props.tool?.startTime
-  const end = props.tool?.endTime
-  if (typeof start === 'number' && typeof end === 'number' && end > start) {
-    items.push({ tone: 'muted', text: formatDuration(end - start) })
-  }
-  return items
+/** 补充细节条 meta 项（耗时 + 工具特化行数/字符数 + 失败错误摘要），逻辑拆到 useToolMeta */
+const { metaItems } = useToolMeta({
+  tool: computed(() => props.tool),
+  toolName,
+  isFailed,
+  formatDuration,
 })
-
-/** 字符数格式化：>= CHAR_K_THRESHOLD 显示为 XK chars，否则原值 + chars */
-function formatCharCount(n: number): string {
-  if (n >= CHAR_K_THRESHOLD) return `${(n / CHAR_K_THRESHOLD).toFixed(1)}K chars`
-  return `${n} chars`
-}
 
 /**
  * 从 tool.details.__gui__ 提取结构化渲染组件（extension GUI 协议，spec §9.1）。
@@ -299,6 +263,14 @@ const argPath = computed(() => {
   if (typeof input.pattern === 'string') return input.pattern
   if (Array.isArray(input.tasks)) return `${input.tasks.length} todos`
   return ''
+})
+
+// Phase 5 联动 2：bash 工具块「在终端运行」按钮（isBash + runInTerminal 从 useRunInTerminal 拆出）
+const { isBash, runInTerminal } = useRunInTerminal({
+  toolName,
+  argPath,
+  sessionId: computed(() => props.sessionId),
+  isRunning,
 })
 
 /* ── subagent（pi-subagents 扩展的 "subagent" tool）特殊渲染 ── */

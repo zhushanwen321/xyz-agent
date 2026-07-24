@@ -43,6 +43,7 @@ for i in $(seq 1 "$MAX_POLLS"); do
   # 获取最近的 Release workflow runs
   RUNS=$(gh run list --repo "$REPO" --workflow Release --limit 5 \
     --json databaseId,status,conclusion,headBranch,displayTitle 2>/dev/null || echo "[]")
+  if ! echo "$RUNS" | jq -e 'type == "array"' >/dev/null 2>&1; then RUNS='[]'; fi
 
   # 尝试匹配 tag 触发的 run（headBranch 可能是 tag 名或 refs/tags/...）
   RUN_ID=$(echo "$RUNS" | jq -r --arg tag "$TAG" \
@@ -98,11 +99,11 @@ if ! gh release view "$TAG" --repo "$REPO" &>/dev/null; then
   fatal "Release ${TAG} 未创建，CI 可能未完成 release 步骤"
 fi
 
-# 等待 assets 上传（至少 2 个：dmg + AppImage；Windows 构建已禁用，不产 exe）
+# 等待 assets 上传（至少 3 个：dmg + exe + AppImage）
 for i in $(seq 1 12); do
   ASSET_COUNT=$(gh release view "$TAG" --repo "$REPO" --json assets \
     --jq '.assets | length' 2>/dev/null || echo "0")
-  if [ "$ASSET_COUNT" -ge 2 ] 2>/dev/null; then
+  if [ "$ASSET_COUNT" -ge 3 ] 2>/dev/null; then
     log "产物已上传 (${ASSET_COUNT} 个)"
     break
   fi
@@ -127,14 +128,13 @@ echo ""
 
 ERRORS=0
 echo "$ASSETS" | grep -q "\.dmg$" || { err "缺少 macOS .dmg"; ERRORS=$((ERRORS + 1)); }
+echo "$ASSETS" | grep -q "\.exe$" || { err "缺少 Windows .exe"; ERRORS=$((ERRORS + 1)); }
 echo "$ASSETS" | grep -q "AppImage" || { err "缺少 Linux AppImage"; ERRORS=$((ERRORS + 1)); }
-# Windows 构建已禁用（runtime-manager 依赖 Unix 进程命令），不校验 .exe。
-# 重新启用 Windows 构建时（release.yml matrix 取消注释），恢复 .exe 校验。
 
 if [ "$ERRORS" -gt 0 ]; then
   echo ""
   fatal "产物不完整，缺少 ${ERRORS} 个平台的构建产物"
 fi
 
-log "验证通过：CI 成功，2 个平台产物完整（mac + linux）"
+log "验证通过：CI 成功，3 个平台产物完整（mac + win + linux）"
 log "下载链接: https://github.com/${REPO}/releases/tag/${TAG}"

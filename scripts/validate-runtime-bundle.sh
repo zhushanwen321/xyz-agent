@@ -87,18 +87,28 @@ else console.log('');
 ")
 
 MISSING=""
+NATIVE_SKIPPED=""
 for dep in $DEPS; do
-    if [ -n "$dep" ] && ! echo "$NO_EXTERNAL" | grep -qx "$dep"; then
-        MISSING="$MISSING $dep"
+    if [ -z "$dep" ]; then continue; fi
+    if echo "$NO_EXTERNAL" | grep -qx "$dep"; then continue; fi
+    # [HISTORICAL] native module（含 .node 二进制）必须保持 external，不能 bundle：
+    # bundle 后 __dirname 变 dist/runtime，node-gyp-build 找不到 prebuilds/*.node。
+    # 判定：dep 目录下有 binding.gyp / prebuilds 目录 / .node 文件。
+    DEP_DIR="$PROJECT_ROOT/node_modules/$dep"
+    if [ -f "$DEP_DIR/binding.gyp" ] || [ -d "$DEP_DIR/prebuilds" ] || find "$DEP_DIR" -name '*.node' 2>/dev/null | grep -q .; then
+        NATIVE_SKIPPED="$NATIVE_SKIPPED $dep"
+        continue
     fi
+    MISSING="$MISSING $dep"
 done
 
+[ -n "$NATIVE_SKIPPED" ] && echo -e "${GREEN}[OK] native module (external 正确，不打包):$NATIVE_SKIPPED${NC}"
 if [ -n "$MISSING" ]; then
     echo -e "${RED}[ERROR] 以下 runtime 依赖未在 tsup noExternal 中：$MISSING${NC}"
     echo -e "${YELLOW}[FIX] 编辑 $RUNTIME_DIR/tsup.config.ts，noExternal 追加:$MISSING${NC}"
     exit 1
 fi
-echo -e "${GREEN}[OK] 所有 runtime dependencies 已打包 (noExternal: $NO_EXTERNAL)${NC}"
+[ -z "$NATIVE_SKIPPED" ] && echo -e "${GREEN}[OK] 所有 runtime dependencies 已打包 (noExternal: $NO_EXTERNAL)${NC}"
 
 # ── 3. CJS 兼容性检查 ───────────────────────────────────────────────
 echo ""
@@ -130,11 +140,16 @@ echo ""
 echo -e "${BLUE}[4/6] 检查产物是否包含所有依赖...${NC}"
 
 for dep in $DEPS; do
-    if [ -n "$dep" ]; then
-        if ! grep -q "$dep" "$BUNDLE_PATH"; then
-            echo -e "${RED}[ERROR] 产物缺少依赖 $dep（noExternal 可能遗漏）${NC}"
-            exit 1
-        fi
+    if [ -z "$dep" ]; then continue; fi
+    # native module 保持 external，bundle 里是 require("dep") 而非打包源码；
+    # 且 runtime 源码当前可能还没 import 它（无 require 字样），grep 不到属正常。
+    DEP_DIR="$PROJECT_ROOT/node_modules/$dep"
+    if [ -f "$DEP_DIR/binding.gyp" ] || [ -d "$DEP_DIR/prebuilds" ] || find "$DEP_DIR" -name '*.node' 2>/dev/null | grep -q .; then
+        continue
+    fi
+    if ! grep -q "$dep" "$BUNDLE_PATH"; then
+        echo -e "${RED}[ERROR] 产物缺少依赖 $dep（noExternal 可能遗漏）${NC}"
+        exit 1
     fi
 done
 echo -e "${GREEN}[OK] 产物包含所有依赖${NC}"

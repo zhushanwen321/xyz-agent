@@ -22,6 +22,7 @@ import type {
   SubagentRecord,
   WorkflowRunRecord,
   SystemPromptConfig,
+  TerminalConfig,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -254,6 +255,11 @@ export interface IConfigService {
   setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string }
   /** 返回当前生效的替换提示词（replace.enabled && prompt 非空白时），否则 undefined。rpc-client spawn 时透传。 */
   getReplaceSystemPrompt(): string | undefined
+  // ── Terminal config（Phase 6 settings）──
+  /** 读取 terminal.json。损坏时 corrupted=true 且返回默认配置。 */
+  getTerminalConfig(): { config: TerminalConfig; corrupted: boolean }
+  /** 写入 terminal.json。校验失败返回 ok:false + error，不写盘。 */
+  setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string }
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

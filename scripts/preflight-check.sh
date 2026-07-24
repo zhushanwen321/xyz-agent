@@ -35,6 +35,19 @@ fi
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Git Bash on Windows 把 D:\foo 翻译成 /d/foo（POSIX 风格），但原生 Node.js 不识别
+# 这种路径（require 会返回 MODULE_NOT_FOUND）。Node 调用前必须把绝对路径转回 Windows 原生形态
+# （cygpath -w 在 Git Bash for Windows 自带；非 Windows 时为 no-op）。
+# 其它程序（ls/cp/git 等 Git Bash 内置命令）继续用 POSIX 风格路径不受影响。
+#
+# Windows 原生路径含反斜杠（D:\...），直接嵌入 JS 字符串字面量会被 V8 解析为转义序列
+# （\a 触发 SyntaxError）。需要再把反斜杠换成双反斜杠。
+if command -v cygpath >/dev/null 2>&1; then
+    to_native_path() { cygpath -w "$1" | sed 's/\\/\\\\/g'; }
+else
+    to_native_path() { echo "$1"; }
+fi
+
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BLUE}[Preflight Checks]${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -47,7 +60,7 @@ echo ""
 echo -e "${BLUE}[1/7] package.json fields...${NC}"
 
 # 检查 apps/electron/package.json（electron-builder 的工作目录）
-ELECTRON_PKG="$ELECTRON_DIR/package.json"
+ELECTRON_PKG="$(to_native_path "$ELECTRON_DIR/package.json")"
 node -e "
 const pkg = require('$ELECTRON_PKG');
 const required = ['name', 'version', 'main', 'description'];
@@ -99,29 +112,45 @@ echo -e "${BLUE}[3/7] tsup noExternal vs runtime dependencies...${NC}"
 
 RUNTIME_PKG="$PROJECT_ROOT/packages/runtime/package.json"
 RUNTIME_TSUP="$PROJECT_ROOT/packages/runtime/tsup.config.ts"
+RUNTIME_PKG_NATIVE="$(to_native_path "$RUNTIME_PKG")"
+RUNTIME_TSUP_NATIVE="$(to_native_path "$RUNTIME_TSUP")"
 
 if [ -f "$RUNTIME_PKG" ] && [ -f "$RUNTIME_TSUP" ]; then
-    DEPS=$(node -e "const p=require('$RUNTIME_PKG');console.log(Object.keys(p.dependencies||{}).join('\n'))")
+    DEPS=$(node -e "const p=require('$RUNTIME_PKG_NATIVE');console.log(Object.keys(p.dependencies||{}).join('\n'))")
     NO_EXT=$(node -e "
 const fs=require('fs');
-const content=fs.readFileSync('$RUNTIME_TSUP','utf-8');
+const content=fs.readFileSync('$RUNTIME_TSUP_NATIVE','utf-8');
 const match=content.match(/noExternal:\\s*\\[([^\\]]+)\\]/);
 if(match) console.log(match[1].split(/[,\n]/).map(s=>s.trim().replace(/['\"]/g,'')).filter(Boolean).join('\n'));
 else console.log('');
 ")
 
     MISSING=""
+    NATIVE_SKIPPED=""
     for dep in $DEPS; do
-        if [ -n "$dep" ] && ! echo "$NO_EXT" | grep -qx "$dep"; then
-            MISSING="$MISSING $dep"
+        if [ -z "$dep" ]; then continue; fi
+        if echo "$NO_EXT" | grep -qx "$dep"; then continue; fi
+        # [HISTORICAL] native module（含 .node 二进制）必须保持 external，不能 bundle 进 JS：
+        # native 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，
+        # bundle 后 __dirname 变 dist/runtime，找不到 prebuilds 导致运行时 Cannot find module。
+        # 判定标志：dep 目录下有 binding.gyp（node-gyp 项目）或 prebuilds 目录（prebuildify）或 .node 文件。
+        # tsup external 列表 + electron-builder asarUnpack 共同处理（见 §12 native module 约束）。
+        DEP_DIR="$PROJECT_ROOT/node_modules/$dep"
+        if [ -f "$DEP_DIR/binding.gyp" ] || [ -d "$DEP_DIR/prebuilds" ] || find "$DEP_DIR" -name '*.node' 2>/dev/null | grep -q .; then
+            NATIVE_SKIPPED="$NATIVE_SKIPPED $dep"
+            continue
         fi
+        MISSING="$MISSING $dep"
     done
 
+    if [ -n "$NATIVE_SKIPPED" ]; then
+        echo -e "  ${GREEN}✓ native module(external 正确):$NATIVE_SKIPPED${NC}"
+    fi
     if [ -n "$MISSING" ]; then
         echo -e "  ${RED}✗ noExternal 缺少依赖:$MISSING${NC}"
         echo -e "  ${YELLOW}FIX: 编辑 $RUNTIME_TSUP，noExternal 追加:$MISSING${NC}"
         FAILED=1
-    else
+    elif [ -z "$NATIVE_SKIPPED" ]; then
         echo -e "  ${GREEN}✓ noExternal 覆盖所有 runtime dependencies${NC}"
     fi
 else
@@ -133,8 +162,9 @@ echo ""
 echo -e "${BLUE}[4/7] electron-builder.yml structure...${NC}"
 
 EB_YML="$ELECTRON_DIR/electron-builder.yml"
+EB_YML_NATIVE="$(to_native_path "$EB_YML")"
 if [ -f "$EB_YML" ]; then
-    if node -e "const fs=require('fs');require('js-yaml').load(fs.readFileSync('$EB_YML','utf8'));console.log('ok')" 2>/dev/null; then
+    if node -e "const fs=require('fs');require('js-yaml').load(fs.readFileSync('$EB_YML_NATIVE','utf8'));console.log('ok')" 2>/dev/null; then
         echo -e "  ${GREEN}✓ YAML 语法正确${NC}"
     else
         echo -e "  ${YELLOW}⚠ YAML 解析跳过（js-yaml 未安装）${NC}"

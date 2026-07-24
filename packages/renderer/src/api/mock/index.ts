@@ -21,6 +21,7 @@ import type {
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
+  TerminalConfig,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -487,6 +488,22 @@ function defaultSystemPromptConfig(): SystemPromptConfig {
 // 系统提示词配置订阅（模拟 config.systemPrompt 广播；初始推默认配置，corrupted=false）。
 const systemPromptSub = makeMockSubscription(() => ({ config: defaultSystemPromptConfig(), corrupted: false }))
 
+/** 默认终端配置（Phase 6）。 */
+function defaultTerminalConfig(): TerminalConfig {
+  return {
+    version: 1,
+    shell: '',
+    shellArgs: [],
+    fontSize: 14,
+    fontFamily: '',
+    scrollback: 1000,
+    cursorStyle: 'block',
+    bell: false,
+  }
+}
+// 终端配置订阅（模拟 config.terminalConfig 广播；初始推默认配置，corrupted=false）。
+const terminalSub = makeMockSubscription(() => ({ config: defaultTerminalConfig(), corrupted: false }))
+
 export const config = {
   // 请求型：直接返 fixture 深拷贝（不依赖 sub）
   async listProviders() {
@@ -621,6 +638,20 @@ export const config = {
   },
   onSystemPrompt: (h: (config: SystemPromptConfig, corrupted: boolean) => void) =>
     systemPromptSub.subscribe((p) => h(p.config, p.corrupted)),
+  // ── 终端配置（Phase 6，与 real domains/config 同构）──
+  // mock 持内存默认配置；setTerminalConfig 广播 config.terminalConfig，与 runtime 行为一致。
+  async getTerminalConfig() {
+    await sleep(TIMING.ack)
+    return { config: defaultTerminalConfig(), corrupted: false }
+  },
+  async setTerminalConfig(cfg: TerminalConfig) {
+    await sleep(TIMING.ack)
+    const next = { config: cfg, corrupted: false }
+    terminalSub.broadcast(next)
+    return next
+  },
+  onTerminalConfig: (h: (config: TerminalConfig, corrupted: boolean) => void) =>
+    terminalSub.subscribe((p) => h(p.config, p.corrupted)),
 }
 
 /** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */

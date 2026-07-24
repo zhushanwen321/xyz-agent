@@ -134,6 +134,12 @@ export default {
     noTasks: 'No tasks',
     tasksHint: 'Shows after goal/todo created',
   },
+  terminal: {
+    clear: 'Clear',
+    kill: 'Kill terminal process',
+    sendToAI: 'Send to AI',
+    runInTerminal: 'Run in terminal',
+  },
   mermaid: {
     rendering: 'Rendering diagram…',
     zoomIn: 'Zoom in',

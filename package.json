@@ -8,6 +8,7 @@
     "build": "pnpm --filter @xyz-agent/electron build",
     "lint": "eslint .",
     "prepare": "bash .githooks/install-hooks.sh",
+    "postinstall": "bash scripts/fix-node-pty-permissions.sh",
     "build:e2e": "pnpm --filter @xyz-agent/electron build:e2e",
     "test:e2e": "playwright test",
     "changeset": "changeset",
@@ -31,6 +32,7 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "electron",
+      "node-pty",
       "vue-demi"
     ]
   }
