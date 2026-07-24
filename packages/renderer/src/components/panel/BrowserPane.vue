@@ -44,13 +44,22 @@
         <Button variant="ghost" size="icon" data-testid="browser-reload" class="size-7" :title="t('panel.browserPane.reload')" @click="reload">
           <RotateCw />
         </Button>
-        <!-- 地址栏：显示真实 URL（主进程 did-navigate 回填，防钓鱼）。-->
+        <!-- 地址栏：可输入导航 + 显示真实 URL（主进程 did-navigate 回填，防钓鱼）。
+             非编辑态显示真实 URL；点击/聚焦进入编辑态可输入新 URL，回车导航，Escape 回填放弃。-->
         <div
           class="mx-1 flex flex-1 items-center gap-1.5 rounded-full bg-bg-input px-3 py-1"
           data-testid="browser-urlbar"
         >
-          <Lock v-if="isSecure" class="size-3 text-success" />
-          <span class="truncate font-mono text-[11px] text-fg">{{ displayUrl || 'about:blank' }}</span>
+          <Lock v-if="isSecure" class="size-3 flex-shrink-0 text-success" />
+          <Input
+            v-model="urlInput"
+            class="h-6 flex-1 border-transparent bg-transparent px-1 font-mono text-[11px] text-fg focus-visible:border-transparent focus-visible:ring-0"
+            data-testid="browser-urlbar-input"
+            :placeholder="t('panel.browserPane.urlPlaceholder')"
+            @keydown.enter="onUrlEnter"
+            @keydown.escape="onUrlEscape"
+            @focus="onUrlFocus"
+          />
         </div>
         <!-- 复制链接 -->
         <Button
@@ -161,6 +170,7 @@ import {
   X,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   browserCreate,
   browserNavigate,
@@ -173,6 +183,7 @@ import {
   openExternal,
 } from '@/lib/ipc'
 import { useBrowserZoom } from '@/composables/features/useBrowserZoom'
+import { useUrlBar } from '@/composables/features/useUrlBar'
 
 /** 主进程推送的 browser 加载错误结构（与 BrowserViewState.error 对齐） */
 interface BrowserLoadError {
@@ -246,6 +257,14 @@ const loginRequired = computed<boolean>(() =>
 
 /** 是否 https（地址栏锁标） */
 const isSecure = computed(() => displayUrl.value.startsWith('https://'))
+
+// 地址栏编辑态管理（composable）：urlInput v-model + 聚焦/回车/Escape 处理。
+// 回车时补全协议前缀 + 触发 navigate + 设置 loading 态（导航反馈）。
+const { urlInput, onUrlFocus, onUrlEnter, onUrlEscape } = useUrlBar(displayUrl, (url) => {
+  isLoading.value = true
+  error.value = null
+  void browserNavigate(props.sessionId, url)
+})
 
 /**
  * 读取当前窗口的 windowId。

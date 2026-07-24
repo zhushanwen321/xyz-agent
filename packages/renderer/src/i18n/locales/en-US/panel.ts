@@ -143,6 +143,7 @@ export default {
     loadFailed: 'Failed to load page',
     retry: 'Retry',
     empty: 'Click a link in the conversation to open',
+    urlPlaceholder: 'Enter URL or search',
     copyUrl: 'Copy URL',
     copied: 'Copied',
     zoomIn: 'Zoom in',

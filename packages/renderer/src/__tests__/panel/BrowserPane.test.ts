@@ -89,8 +89,9 @@ describe('BrowserPane（Wave 2 + Wave 3）', () => {
   it('有 url 时显 loading 态（isLoading 初始 true）', () => {
     const wrapper = mountPane({ url: 'https://example.com' })
     expect(wrapper.find('[data-testid="browser-loading"]').exists()).toBe(true)
-    // 地址栏显示传入 url（防钓鱼：主进程 did-navigate 后回填真实 URL）
-    expect(wrapper.find('[data-testid="browser-urlbar"]').text()).toContain('https://example.com')
+    // 地址栏 input value 显示传入 url（防钓鱼：主进程 did-navigate 后回填真实 URL）
+    const urlInput = wrapper.find('[data-testid="browser-urlbar-input"]').element as HTMLInputElement
+    expect(urlInput.value).toContain('https://example.com')
     wrapper.unmount()
   })
 
@@ -187,6 +188,27 @@ describe('BrowserPane（Wave 5 导航 + 安全）', () => {
     })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="browser-login-wall"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('地址栏输入 URL 回车 → browserNavigate（补全 https://）', async () => {
+    const wrapper = mountPane({ url: 'https://example.com' })
+    mockBrowserNavigate.mockClear()
+    const input = wrapper.find('[data-testid="browser-urlbar-input"]')
+    await input.setValue('github.com')
+    await input.trigger('keydown', { key: 'Enter' })
+    // 裸域名补全 https:// 前缀
+    expect(mockBrowserNavigate).toHaveBeenCalledWith('sess-1', 'https://github.com')
+    wrapper.unmount()
+  })
+
+  it('地址栏输入完整 URL 回车 → browserNavigate（不重复补全）', async () => {
+    const wrapper = mountPane({ url: 'https://example.com' })
+    mockBrowserNavigate.mockClear()
+    const input = wrapper.find('[data-testid="browser-urlbar-input"]')
+    await input.setValue('http://foo.bar/baz')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(mockBrowserNavigate).toHaveBeenCalledWith('sess-1', 'http://foo.bar/baz')
     wrapper.unmount()
   })
 })

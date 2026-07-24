@@ -143,6 +143,7 @@ export default {
     loadFailed: '无法加载页面',
     retry: '重试',
     empty: '在对话中点击链接以打开',
+    urlPlaceholder: '输入网址或搜索',
     copyUrl: '复制链接',
     copied: '已复制',
     zoomIn: '放大',

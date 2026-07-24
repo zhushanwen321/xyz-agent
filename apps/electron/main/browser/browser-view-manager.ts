@@ -458,5 +458,23 @@ export class BrowserViewManager {
       state.error = { errorCode, errorDescription, validatedURL }
       notify()
     })
+    // dom-ready 注入 viewport meta：让网页按 WebContentsView 实际宽度渲染，不自适应 panel 尺寸。
+    // 无 viewport meta 的桌面网页默认按 980px layout viewport 渲染，在窄 panel 里内容溢出 + 不滚动。
+    // 注入 width=device-width 让 CSS viewport = view 物理宽度，网页自适应 + 内部滚动正常。
+    // 仅在页面无自带 viewport meta 时注入（有则尊重页面设定，不覆盖 responsive 设计）。
+    // 安全：insertBefore 只操作 head DOM，不执行任意 JS（contextIsolation 保护）。
+    wc.on('dom-ready', () => {
+      wc.executeJavaScript(
+        `(() => {
+          if (document.querySelector('meta[name="viewport"]')) return;
+          const m = document.createElement('meta');
+          m.name = 'viewport';
+          m.content = 'width=device-width, initial-scale=1';
+          document.head.appendChild(m);
+        })()`,
+      ).catch(() => {
+        /* dom-ready 注入可能因 CSP/导航中断失败，非关键路径（网页仍按默认宽度渲染） */
+      })
+    })
   }
 }
