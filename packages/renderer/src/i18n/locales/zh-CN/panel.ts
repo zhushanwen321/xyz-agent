@@ -134,6 +134,12 @@ export default {
     noTasks: '暂无任务',
     tasksHint: 'goal/todo 创建后显示',
   },
+  terminal: {
+    clear: '清屏',
+    kill: '终止终端进程',
+    sendToAI: '发给 AI',
+    runInTerminal: '在终端运行',
+  },
   mermaid: {
     rendering: '图表渲染中…',
     zoomIn: '放大',

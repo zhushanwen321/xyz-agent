@@ -21,8 +21,10 @@
  *   故 target=new 的匹配不依赖 sessionId=null，改用 Composer variant=landing 判定
  *   （见 useComposerInjection）。store 只做传输 + routeToLanding 改写。
  *
- * ## payload schema（FR-2/FR-8）
- * 不含 text 字段（注入内容仅 file chip，不注入选中文本——outOfScope）。
+ * ## payload schema（FR-2/FR-8 + Phase 4 联动 1）
+ * - path + lineStart/lineEnd：file chip 注入（DetailPane/DiffView 选区/文件引用）
+ * - text：纯文本注入（Phase 4 联动 1：TerminalView 选区「发给 AI」）
+ * path 和 text 互斥：有 path 走 insertFileChip，有 text 走 insertTextAtCursor（消费端 useComposerInjection 判断）。
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
@@ -32,13 +34,16 @@ export type InjectionTarget = 'current' | 'new'
 
 /**
  * 一次性注入请求 payload（消费侧读）。
- * 不含 text 字段：注入内容仅 file chip（path + 行范围），不注入选中文本（FR-8）。
+ * path 与 text 互斥：有 path 走 file chip，有 text 走纯文本插入。
  */
 export interface PendingInjection {
   target: InjectionTarget
-  path: string
+  /** file chip 路径（与 text 互斥）。有 path 走 insertFileChip。 */
+  path?: string
   lineStart?: number
   lineEnd?: number
+  /** 纯文本注入（Phase 4 联动 1：TerminalView 选区「发给 AI」）。与 path 互斥，有 text 走 insertTextAtCursor。 */
+  text?: string
   /** 过滤用 sessionId：current 时具体 id，new 时强制 null（落地 landing composer） */
   sessionId: string | null
   /** 时间戳：同内容重复注入靠 ts 变化触发 watch 引用变化 */
@@ -48,9 +53,12 @@ export interface PendingInjection {
 /** 写入侧 payload（不含 ts/sessionId 归一化，内部补） */
 export interface InjectionRequest {
   target: InjectionTarget
-  path: string
+  /** file chip 路径（与 text 互斥） */
+  path?: string
   lineStart?: number
   lineEnd?: number
+  /** 纯文本注入（与 path 互斥） */
+  text?: string
   /** current 时传具体 sessionId；new 时忽略（强制 null） */
   sessionId?: string | null
 }
