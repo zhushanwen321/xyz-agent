@@ -137,10 +137,12 @@ log "=== 阶段 5/6: 验证产物 ==="
 
 # 等待 assets 上传完成（release 创建后 assets 可能还在上传）
 for i in $(seq 1 6); do
+  ASSET_COUNT=$(gh release view "$BETA_TAG" --repo "$REPO" --json assets \
+    --jq '.assets | length' 2>/dev/null || echo "0")
+  [[ "$ASSET_COUNT" =~ ^[0-9]+$ ]] || ASSET_COUNT=0
   ASSETS=$(gh release view "$BETA_TAG" --repo "$REPO" --json assets \
     --jq '.assets[].name' 2>/dev/null || echo "")
-  ASSET_COUNT=$(echo "$ASSETS" | grep -c '.' || echo 0)
-  if [ "$ASSET_COUNT" -ge 2 ]; then
+  if [ "$ASSET_COUNT" -ge 3 ]; then
     break
   fi
   log "等待产物上传... ($i/6, 当前 $ASSET_COUNT 个)"
@@ -158,12 +160,11 @@ else
 
   MISSING=0
   echo "$ASSETS" | grep -q "\.dmg$" || { warn "缺少 macOS .dmg"; MISSING=1; }
-  # Windows build disabled — skip .exe check (see release.yml)
-  # echo "$ASSETS" | grep -q "\.exe$" || { warn "缺少 Windows .exe"; MISSING=1; }
+  echo "$ASSETS" | grep -q "\.exe$" || { warn "缺少 Windows .exe"; MISSING=1; }
   echo "$ASSETS" | grep -q "AppImage" || { warn "缺少 Linux AppImage"; MISSING=1; }
 
   if [ "$MISSING" -eq 0 ]; then
-    log "所有平台产物已生成 (dmg + AppImage)"
+    log "所有平台产物已生成 (dmg + exe + AppImage)"
   fi
 fi
 

@@ -3,7 +3,7 @@
 #
 # 检查项：
 # 1. 产物存在性（dmg/zip/exe/AppImage）
-# 2. macOS app 结构（Info.plist, main executable, asar, unpacked）
+# 2. macOS/Windows unpacked app 结构（main executable, asar, runtime, native resources）
 # 3. asar 内容正确性
 # 4. 产物大小合理性
 #
@@ -165,6 +165,47 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
 else
     echo ""
     echo -e "${YELLOW}[2/5] macOS 结构跳过（非 macOS 构建）${NC}"
+fi
+
+# ── Windows unpacked app structure ───────────────────────────────────
+if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
+    echo ""
+    echo -e "${BLUE}[2/5] Windows unpacked app structure...${NC}"
+    WIN_ROOT="$OUTPUT_DIR/win-unpacked"
+    WIN_RESOURCES="$WIN_ROOT/resources"
+    WIN_UNPACKED="$WIN_RESOURCES/app.asar.unpacked"
+
+    for required in \
+        "$WIN_ROOT/xyz-agent.exe" \
+        "$WIN_UNPACKED/dist/runtime/index.cjs" \
+        "$WIN_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
+        "$WIN_RESOURCES/pi/pi-windows-x64.exe" \
+        "$WIN_RESOURCES/xyz-agent-extension.js" \
+        "$WIN_RESOURCES/xyz-system-prompt-extension.js" \
+        "$WIN_RESOURCES/bin/xyz-settings"; do
+        if [ -f "$required" ]; then
+            echo -e "  ${GREEN}✓${NC} ${required#$WIN_ROOT/}"
+        else
+            echo -e "  ${RED}✗${NC} ${required#$WIN_ROOT/} 缺失"
+            FAILED=1
+        fi
+    done
+
+    WINDOWS_PTY_PREBUILDS="$WIN_UNPACKED/node_modules/node-pty/prebuilds/win32-x64"
+    WINDOWS_PTY_MISSING=0
+    for required_native in \
+        "$WINDOWS_PTY_PREBUILDS/conpty.node" \
+        "$WINDOWS_PTY_PREBUILDS/pty.node"; do
+        if [ -f "$required_native" ]; then
+            echo -e "  ${GREEN}✓${NC} node-pty Windows native: ${required_native#$WIN_ROOT/}"
+        else
+            echo -e "  ${RED}✗${NC} node-pty Windows native 缺失: ${required_native#$WIN_ROOT/}"
+            WINDOWS_PTY_MISSING=1
+        fi
+    done
+    if [ "$WINDOWS_PTY_MISSING" -ne 0 ]; then
+        FAILED=1
+    fi
 fi
 
 # ── 3. 产物大小合理性 ───────────────────────────────────────────────

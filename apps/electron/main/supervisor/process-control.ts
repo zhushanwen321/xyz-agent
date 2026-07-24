@@ -34,10 +34,9 @@
  *
  * 5. 进程树 kill 顺序：先杀后代（倒序：孙→子），再杀根。
  *
- * 6. TODO(Windows): 全部依赖 Unix 命令（pgrep/lsof/ps/SIGTERM/SIGKILL/bin/bash），
- *    Windows 不工作。需抽象 platform 层（详见 main 进程 CLAUDE.md）。
+ * 6. Windows 用 taskkill /PID /T /F 原子终止整棵进程树；Unix 保留上述信号时序。
  *
- * 依赖方向：process-control → node:child_process + safe-env + electron(app)
+ * 依赖方向：process-control → node:child_process + safe-env + windows-process + electron(app)
  */
 import { type ChildProcess, spawn, execFileSync } from 'node:child_process'
 import { createWriteStream, existsSync, mkdirSync, type WriteStream } from 'node:fs'
@@ -45,6 +44,7 @@ import path from 'node:path'
 import { app } from 'electron'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { buildSafeEnv } from './safe-env.js'
+import { terminateWindowsProcessTree } from './windows-process.js'
 
 /** stop() 默认超时：SIGTERM 后等待 exit，超时则 SIGKILL 进程树 */
 export const STOP_TIMEOUT_MS = 2000
@@ -150,12 +150,6 @@ export const SPAWN_ERROR_EXIT_CODE = -1
  * @throws runtime 入口文件不存在
  */
 export function spawnRuntimeProcess(port: number, onExit?: (code: number | null) => void): ChildProcess {
-  // Windows 显式拒绝：本模块全部依赖 Unix 命令（pgrep/SIGTERM/SIGKILL/bin/bash），
-  // 静默失败会让 runtime 子进程成僵尸（PPID 变 1、无人 kill）。显式 throw 让上层 fail-fast。
-  // TODO: 抽象 platform 层（见文件头 TODO(Windows)）。
-  if (process.platform === 'win32') {
-    throw new Error('runtime supervisor not yet supported on Windows (see TODO in process-control.ts)')
-  }
   // 根据打包状态选择 runtime 启动方式
   const projectRoot = app.getAppPath()
   let cmd: string
@@ -274,7 +268,7 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
  * @returns 后代 PID 数组（不含 parentPid 本身）
  */
 export function getDescendantPids(parentPid: number): number[] {
-  if (!parentPid || isNaN(parentPid)) return []
+  if (process.platform === 'win32' || !parentPid || isNaN(parentPid)) return []
   const result: number[] = []
   const queue = [parentPid]
   while (queue.length > 0) {
@@ -316,6 +310,10 @@ export function getDescendantPids(parentPid: number): number[] {
  * @param precomputedDescendants 可选预计算的后代 PID（避免重复查询）
  */
 export function killProcessTree(rootPid: number, precomputedDescendants?: number[]): void {
+  if (process.platform === 'win32') {
+    terminateWindowsProcessTree(rootPid)
+    return
+  }
   const pids = precomputedDescendants ?? getDescendantPids(rootPid)
   // 先杀后代（倒序：孙→子）
   for (const pid of pids.reverse()) {
@@ -347,6 +345,13 @@ export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_
       resolve()
       return
     }
+    if (process.platform === 'win32') {
+      // taskkill /T /F handles descendants atomically and is safe to repeat when the tree already exited.
+      terminateWindowsProcessTree(childPid)
+      void flushStderrSink().finally(resolve)
+      return
+    }
+
     let resolved = false
 
     // [HISTORICAL] 在发 SIGTERM 之前记录所有后代 PID
