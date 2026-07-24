@@ -15,6 +15,7 @@
  */
 import type { BrowserWindow } from 'electron'
 import type { WindowState } from '@xyz-agent/shared'
+import type { BrowserViewManager } from './browser/browser-view-manager.js'
 
 // ── M3 Process Supervisor ──────────────────────────────────────────
 
@@ -162,4 +163,6 @@ export interface IpcHandlerDeps {
   createWindow: CreateWindowFn
   /** 窗口管理器（桥接 handler 读窗口状态） */
   windowManager: IWindowManager
+  /** Browser view 管理器（drawer 嵌入式浏览器） */
+  browserViewManager: BrowserViewManager
 }

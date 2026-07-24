@@ -42,6 +42,17 @@ export interface ElectronAPI {
   windowToggleMaximize(): Promise<void>
   /** 关闭当前窗口 */
   windowClose(): Promise<void>
+  // ── Browser drawer（嵌入式浏览器）─────────────────────────────
+  /** 创建 WebContentsView 并 attach 到指定窗口（初始隐藏） */
+  browserCreate(sessionId: string, windowId: string): Promise<void>
+  /** 导航到指定 URL */
+  browserNavigate(sessionId: string, url: string): Promise<void>
+  /** 隐藏 view（keep-alive，不销毁） */
+  browserHide(sessionId: string): Promise<void>
+  /** 显示 view（恢复最近 rect） */
+  browserShow(sessionId: string): Promise<void>
+  /** 销毁 view（removeChildView + webContents.destroy） */
+  browserDestroy(sessionId: string): Promise<void>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -95,4 +106,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
+  // ── Browser drawer（嵌入式浏览器）─────────────────────────────
+  browserCreate: (sessionId: string, windowId: string) => ipcRenderer.invoke('browser:create', { sessionId, windowId }),
+  browserNavigate: (sessionId: string, url: string) => ipcRenderer.invoke('browser:navigate', { sessionId, url }),
+  browserHide: (sessionId: string) => ipcRenderer.invoke('browser:hide', sessionId),
+  browserShow: (sessionId: string) => ipcRenderer.invoke('browser:show', sessionId),
+  browserDestroy: (sessionId: string) => ipcRenderer.invoke('browser:destroy', sessionId),
 } satisfies ElectronAPI)

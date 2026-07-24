@@ -1,0 +1,312 @@
+/**
+ * BrowserViewManager 单元测试。
+ *
+ * 覆盖 Wave 1 核心生命周期：create / navigate / hide / show / destroy，
+ * 以及零信任 webPreferences、下载拦截、状态暂存、destroy 顺序等 [HISTORICAL] 不变量。
+ *
+ * Mock 策略：vi.hoisted 创建稳定引用（vi.mock factory 被 hoist，顶层 const 在
+ * factory 执行时尚处 TDZ），vi.mock('electron') 注入桩 WebContentsView + session，
+ * 用最小 IWindowManager 实现（FakeWindowManager）提供 BrowserWindow 形状。
+ *
+ * 运行：cd apps/electron/main && npx vitest run test/browser-view-manager.test.ts
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { IWindowManager } from '../interfaces.js'
+
+// ── electron mock（vi.hoisted 保证 factory 内可引用）─────────────
+type WcListener = (...args: unknown[]) => void
+
+// vi.hoisted：vi.mock factory 被 hoist 到文件顶部，顶层 const 在 factory 执行时
+// 尚处 TDZ，必须用 vi.hoisted 才能在 factory 内引用 createdViews / sessionOn。
+const hoisted = vi.hoisted(() => {
+  // 由 WebContentsView mock 写入，测试读取断言
+  const createdViews: Array<{
+    webPreferences: Record<string, unknown> | undefined
+    setBounds: ReturnType<typeof vi.fn>
+    getBounds: ReturnType<typeof vi.fn>
+    wc: {
+      url: string
+      destroyed: boolean
+      listeners: Map<string, WcListener[]>
+      loadURL(url: string): Promise<void>
+      on(event: string, listener: WcListener): void
+      isDestroyed(): boolean
+      close(): void
+      session: { on: ReturnType<typeof vi.fn> }
+    }
+  }> = []
+  const sessionOn = vi.fn()
+  // WebContentsView mock：用普通 function（可 new），内部构造 view + webContents 桩
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const WebContentsViewMock = function (this: any, options?: { webPreferences?: Record<string, unknown> }) {
+    const listeners = new Map<string, WcListener[]>()
+    const wc = {
+      url: '',
+      destroyed: false,
+      listeners,
+      loadURL(url: string) {
+        this.url = url
+        return Promise.resolve()
+      },
+      on(event: string, listener: WcListener) {
+        if (!this.listeners.has(event)) this.listeners.set(event, [])
+        this.listeners.get(event)!.push(listener)
+      },
+      isDestroyed() {
+        return this.destroyed
+      },
+      close() {
+        this.destroyed = true
+      },
+      session: { on: sessionOn },
+    }
+    const setBounds = vi.fn()
+    const getBounds = vi.fn(() => ({ x: 0, y: 0, width: 100, height: 100 }))
+    createdViews.push({ webPreferences: options?.webPreferences, setBounds, getBounds, wc })
+    this.setBounds = setBounds
+    this.getBounds = getBounds
+    this.webContents = wc
+  }
+  return { createdViews, sessionOn, WebContentsViewMock }
+})
+
+const createdViews = hoisted.createdViews
+const sessionOn = hoisted.sessionOn
+
+vi.mock('electron', () => ({
+  // vi.fn 包裹普通 function 使其既可 new 又能被 vi.mocked/spy
+  WebContentsView: vi.fn(hoisted.WebContentsViewMock as never),
+  session: { defaultSession: { on: hoisted.sessionOn } },
+}))
+
+import { BrowserViewManager } from '../browser/browser-view-manager.js'
+
+// ── FakeWindowManager（最小 IWindowManager 实现，仅满足测试所需 get）────
+function makeWindowManager(windowId: string, win: object): IWindowManager {
+  return {
+    get: (id: string) => (id === windowId ? (win as never) : undefined),
+  } as unknown as IWindowManager
+}
+
+// 标准窗口桩（含 contentView.addChildView / removeChildView / isDestroyed）
+function makeWindow(opts: { destroyed?: boolean } = {}) {
+  return {
+    isDestroyed: () => opts.destroyed ?? false,
+    contentView: {
+      addChildView: vi.fn(),
+      removeChildView: vi.fn(),
+    },
+  }
+}
+
+describe('BrowserViewManager', () => {
+  beforeEach(() => {
+    createdViews.length = 0
+    sessionOn.mockClear()
+  })
+
+  describe('create', () => {
+    it('创建 view 并 attach 到窗口（addChildView 被调用），初始 setBounds 隐藏', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1)
+      // 初始隐藏：setBounds 至少被调用一次（值为 {0,0,0,0}）
+      expect(createdViews[0].setBounds).toHaveBeenCalled()
+      const boundsCall = createdViews[0].setBounds.mock.calls[0][0]
+      expect(boundsCall).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+    })
+
+    it('零信任 webPreferences：contextIsolation/sandbox 开启，nodeIntegration 关闭', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      expect(createdViews[0].webPreferences).toEqual({
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      })
+    })
+
+    it('注册下载拦截 will-download（MANDATORY 安全默认）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      expect(createdViews[0].wc.session.on).toHaveBeenCalledWith('will-download', expect.any(Function))
+    })
+
+    it('sessionId 已存在时幂等（不重复创建）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      mgr.create('sess-1', 'win-1')
+
+      expect(createdViews).toHaveLength(1)
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1)
+    })
+
+    it('windowId 不存在时记录日志且不创建（不抛错）', () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
+      mgr.create('sess-1', 'nonexistent')
+
+      expect(createdViews).toHaveLength(0)
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('window not found'))
+      errSpy.mockRestore()
+    })
+
+    it('窗口已销毁时跳过 addChildView', () => {
+      const win = makeWindow({ destroyed: true })
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      expect(win.contentView.addChildView).not.toHaveBeenCalled()
+      // 但 view 仍被创建并跟踪（getState 可读）
+      expect(mgr.getState('sess-1')).not.toBeNull()
+      errSpy.mockRestore()
+    })
+  })
+
+  describe('navigate', () => {
+    it('调用 webContents.loadURL 并返回 resolved promise', async () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      await mgr.navigate('sess-1', 'https://example.com')
+      expect(createdViews[0].wc.url).toBe('https://example.com')
+    })
+
+    it('sessionId 不存在时 reject', async () => {
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
+      await expect(mgr.navigate('nope', 'https://example.com')).rejects.toThrow('session not found')
+    })
+
+    it('loadURL reject 时透传（调用方经 IPC 接住）', async () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      createdViews[0].wc.loadURL = vi.fn(() => Promise.reject(new Error('DNS fail')))
+
+      await expect(mgr.navigate('sess-1', 'https://nope.invalid')).rejects.toThrow('DNS fail')
+    })
+  })
+
+  describe('hide / show', () => {
+    it('hide 记录当前 rect 并 setBounds 隐藏；show 恢复 rect', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      // 模拟 view 当前在某个非零 rect
+      createdViews[0].getBounds.mockReturnValue({ x: 10, y: 10, width: 200, height: 300 })
+
+      mgr.hide('sess-1')
+      // hide 时 setBounds 为 {0,0,0,0}
+      const hideBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
+      expect(hideBoundsCall).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+
+      mgr.show('sess-1')
+      // show 恢复到 hide 前记录的 rect
+      const showBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
+      expect(showBoundsCall).toEqual({ x: 10, y: 10, width: 200, height: 300 })
+    })
+
+    it('hide/show 不存在的 session 幂等无操作', () => {
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
+      expect(() => mgr.hide('nope')).not.toThrow()
+      expect(() => mgr.show('nope')).not.toThrow()
+    })
+  })
+
+  describe('destroy', () => {
+    it('destroy 先 removeChildView 再 webContents.close（[HISTORICAL] 顺序）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      const view = createdViews[0]
+
+      mgr.destroy('sess-1')
+
+      expect(win.contentView.removeChildView).toHaveBeenCalledTimes(1)
+      // webContents.close 被调用（Electron 42 销毁 webContents 的正确 API）
+      expect(view.wc.destroyed).toBe(true)
+      // 之后 getState 返回 null
+      expect(mgr.getState('sess-1')).toBeNull()
+    })
+
+    it('destroy 幂等（再次调用不抛错）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      mgr.destroy('sess-1')
+      expect(() => mgr.destroy('sess-1')).not.toThrow()
+    })
+
+    it('窗口已销毁时跳过 removeChildView，但仍 close webContents', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      // 模拟 destroy 时窗口已关
+      win.isDestroyed = () => true
+      const view = createdViews[0]
+      mgr.destroy('sess-1')
+
+      expect(win.contentView.removeChildView).not.toHaveBeenCalled()
+      expect(view.wc.destroyed).toBe(true)
+    })
+  })
+
+  describe('状态暂存（webContents 事件 → state）', () => {
+    it('did-navigate 更新 currentUrl 并清空 error', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      // 先制造一个 error
+      createdViews[0].wc.listeners.get('did-fail-load')![0](undefined, -105, 'ERR_NAME_NOT_RESOLVED', 'https://x')
+      expect(mgr.getState('sess-1')!.error).not.toBeNull()
+
+      // did-navigate 清空 error 并设 currentUrl
+      createdViews[0].wc.listeners.get('did-navigate')![0](undefined, 'https://example.com', 200, 'OK')
+      const state = mgr.getState('sess-1')!
+      expect(state.currentUrl).toBe('https://example.com')
+      expect(state.error).toBeNull()
+    })
+
+    it('did-navigate-in-page 更新 currentUrl', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      createdViews[0].wc.listeners.get('did-navigate-in-page')![0](undefined, 'https://example.com/page#hash')
+      expect(mgr.getState('sess-1')!.currentUrl).toBe('https://example.com/page#hash')
+    })
+
+    it('did-fail-load 记录 error', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      createdViews[0].wc.listeners.get('did-fail-load')![0](undefined, -3, 'ERR_ABORTED', 'https://blocked')
+      const state = mgr.getState('sess-1')!
+      expect(state.error).toEqual({ errorCode: -3, errorDescription: 'ERR_ABORTED', validatedURL: 'https://blocked' })
+    })
+
+    it('did-start-loading / did-stop-loading 切换 isLoading', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      createdViews[0].wc.listeners.get('did-start-loading')![0]()
+      expect(mgr.getState('sess-1')!.isLoading).toBe(true)
+
+      createdViews[0].wc.listeners.get('did-stop-loading')![0]()
+      expect(mgr.getState('sess-1')!.isLoading).toBe(false)
+    })
+  })
+})

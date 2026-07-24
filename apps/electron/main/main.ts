@@ -63,6 +63,7 @@ import { WindowManager } from './window/window-manager.js'
 import { initialWindowState } from './window/panel-tree-utils.js'
 import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
+import { BrowserViewManager } from './browser/browser-view-manager.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
@@ -126,6 +127,8 @@ const runtime = new RuntimeSupervisor()
 const windows = new WindowManager()
 const shortcuts = new ShortcutRegistry()
 const ctx: MainContext = createMainContext({ runtime, windows, shortcuts, isDev })
+// Browser drawer 的 WebContentsView 管理器（依赖 windows Facade 取窗口引用）
+const browserViewManager = new BrowserViewManager(windows)
 
 /** createWindow 适配器：把 ctx.windows.generateId 注入 window-factory */
 const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
@@ -139,6 +142,7 @@ registerIpcHandlers({
   isDev,
   createWindow: createWindowFn,
   windowManager: ctx.windows,
+  browserViewManager,
 })
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
