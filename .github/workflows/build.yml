@@ -160,13 +160,14 @@ jobs:
           $psi.ArgumentList.Add((Resolve-Path $runtime).Path)
           $psi.ArgumentList.Add("--port=$port")
           $psi.UseShellExecute = $false
-          $psi.RedirectStandardError = $true
-          $psi.RedirectStandardOutput = $true
+          # 不重定向 stderr/stdout — GitHub Actions 没有 inherited console 概念，
+          # 直接让进程写到 CI 捕获流即可（避免管道满 buffer 阻塞 runtime，
+          # 也避开 PowerShell add_ErrorDataReceived 在无 runspace 的工作线程上崩）。
+          $psi.RedirectStandardError = $false
+          $psi.RedirectStandardOutput = $false
           $process = [System.Diagnostics.Process]::new()
           $process.StartInfo = $psi
           if (-not $process.Start()) { throw 'Failed to start Electron runtime' }
-          $process.BeginErrorReadLine()
-          $process.add_ErrorDataReceived({ param($sender, $event) if ($event.Data) { Write-Host "[runtime stderr] $($event.Data)" } })
           $ready = $false
           try {
             for ($i = 0; $i -lt 20; $i++) {
@@ -177,8 +178,10 @@ jobs:
             }
           } finally {
             if (-not $process.HasExited) {
-              & taskkill.exe /PID $process.Id /T /F 2>&1 | Write-Host
-              $process.WaitForExit(5000)
+              & taskkill.exe /PID $process.Id /T /F 2>&1 | Out-Host
+              if (-not $process.WaitForExit(5000)) {
+                Write-Host "Process did not exit after taskkill"
+              }
             }
           }
           if (-not $ready) { throw "Runtime smoke test failed — did not respond to /health" }
