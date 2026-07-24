@@ -40,6 +40,20 @@ function terminalError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
+/** 把 Error 序列化为 plain object，避免 logger 的 JSON.stringify 把 Error 实例变成 {}。
+ *  Error 的 message/stack 在原型链上（非 own-enumerable），JSON.stringify 丢掉它们，
+ *  导致 catch 块直接打印错误实例时日志只剩 {}，看不出真实错误。 */
+function serializeError(e: unknown): { message: string; stack?: string; code?: unknown } | { value: string } {
+  if (e instanceof Error) {
+    return {
+      message: e.message,
+      stack: e.stack,
+      ...('code' in e ? { code: (e as Error & { code: unknown }).code } : {}),
+    }
+  }
+  return { value: String(e) }
+}
+
 /** 生成唯一广播消息 id（高频 terminal.data 需单调递增，避免同毫秒碰撞）。 */
 let pushCounter = 0
 function nextPushId(): string {
@@ -74,14 +88,7 @@ export class TerminalService implements ITerminalService {
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      // 序列化 Error 关键属性为 plain object 再传 logger：直接传 Error 实例会被 JSON.stringify 成 {}，
-      // 丢失 message/stack/code（logger monkey-patch 了 console，走 JSON 序列化），
-      // 导致 spawn 失败时日志看不出真实原因（node-pty 的笼统 'posix_spawnp failed.' 难以诊断）。
-      const errInfo =
-        e instanceof Error
-          ? { message: e.message, stack: e.stack, ...('code' in e ? { code: (e as Error & { code: unknown }).code } : {}) }
-          : { value: String(e) }
-      console.error(`[terminal] spawn failed: sid=${sid} shell=${shell}`, errInfo)
+      console.error(`[terminal] spawn failed: sid=${sid} shell=${shell}`, serializeError(e))
       throw terminalError('spawn_failed', `Failed to spawn terminal: ${msg}`)
     }
 
@@ -122,7 +129,7 @@ export class TerminalService implements ITerminalService {
       proc.write(data)
     } catch (e) {
       // best-effort：进程已退出/管道关闭时 write 失败属预期竞态，onExit 回调会清理，不传播给调用方
-      console.error(`[terminal] write failed: sid=${sid}`, e)
+      console.error(`[terminal] write failed: sid=${sid}`, serializeError(e))
     }
   }
 
@@ -133,7 +140,7 @@ export class TerminalService implements ITerminalService {
       proc.resize(cols, rows)
     } catch (e) {
       // best-effort：进程已退出时 resize 抛错属预期竞态，下次 spawn 会重建，不传播
-      console.error(`[terminal] resize failed: sid=${sid}`, e)
+      console.error(`[terminal] resize failed: sid=${sid}`, serializeError(e))
     }
   }
 
@@ -144,7 +151,7 @@ export class TerminalService implements ITerminalService {
       proc.kill()
     } catch (e) {
       // best-effort：重复 kill 或进程已退出时抛错，onExit 回调幂等清理 ptyMap + 广播 terminal.exit
-      console.error(`[terminal] kill failed: sid=${sid}`, e)
+      console.error(`[terminal] kill failed: sid=${sid}`, serializeError(e))
     }
     // onExit 回调会清理 ptyMap + 广播 terminal.exit
   }
@@ -161,7 +168,7 @@ export class TerminalService implements ITerminalService {
       proc.kill()
     } catch (e) {
       // best-effort：进程已退出时 kill 抛错，紧接的 ptyMap.delete 会兜底清理，不阻塞 session 销毁
-      console.error(`[terminal] destroyPty kill failed: sid=${sid}`, e)
+      console.error(`[terminal] destroyPty kill failed: sid=${sid}`, serializeError(e))
     }
     this.ptyMap.delete(sid)
     // session 销毁不广播 terminal.exit（前端已在 session.deleted 清理分区）

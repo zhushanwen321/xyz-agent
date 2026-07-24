@@ -58,6 +58,18 @@ fi
 
 # ── Bug 2: patch helperPath 二次 asar 替换 guard（等价上游 PR #924）─────────
 # 目标文件：lib/unixTerminal.js。node-pty 升级若改了文件结构，匹配失败只 warn 不 fail。
+#
+# Bug 2 是 Unix-only：node-pty 在 win 走 windowsTerminal.js（不做 asar 替换），
+# unixTerminal.js 在 win 不被加载，此 patch 无需在 win 应用。
+# 跳过可彻底避免 win 上 perl 可用性不确定的问题（chmod 段在 win 上是 no-op，无需 guard）。
+OS_TYPE="$(uname -s 2>/dev/null || echo unknown)"
+case "$OS_TYPE" in
+  MINGW*|MSYS*|CYGWIN*)
+    # Windows：不需要 helperPath patch（unixTerminal.js 不被 win 加载）
+    exit 0
+    ;;
+esac
+
 UNIX_TERMINAL="$NODE_PTY_DIR/lib/unixTerminal.js"
 
 if [ ! -f "$UNIX_TERMINAL" ]; then
@@ -65,9 +77,14 @@ if [ ! -f "$UNIX_TERMINAL" ]; then
   exit 0
 fi
 
-# 幂等检测：已 patch 则跳过。patched 形态的特征行是 `if (helperPath.indexOf('app.asar.unpacked')`
-if grep -q "helperPath.indexOf('app.asar.unpacked')" "$UNIX_TERMINAL"; then
-  : # 已 patch，静默跳过
+# 幂等检测：两个 guard 标记都存在才算已 patch（防部分应用的半成品）。
+# patched 形态会在两行 replace 外各包一层 `if (helperPath.indexOf('...unpacked')`，
+# 故 `helperPath.indexOf(` 的出现次数 = 2 时才算完整 patch。
+# 注意：`grep -c` 无匹配时输出 0 但退出码 1，配 `|| true` 防止 set -e 中断；
+# 不能用 `|| echo 0`（会再追加一个 0，得到 "0\n0" 导致整数比较报错）。
+GUARD_COUNT=$(grep -c "helperPath.indexOf('" "$UNIX_TERMINAL" 2>/dev/null || true)
+if [ "$GUARD_COUNT" -ge 2 ]; then
+  : # 已 patch（两个 guard 都在），静默跳过
 else
   # 原始两行（精确匹配，无前导空格——顶层语句）：
   #   helperPath = helperPath.replace('app.asar', 'app.asar.unpacked');
@@ -81,8 +98,9 @@ else
      {if (helperPath.indexOf('"'"'node_modules.asar.unpacked'"'"') === -1) { helperPath = helperPath.replace('"'"'node_modules.asar'"'"', '"'"'node_modules.asar.unpacked'"'"'); }}sg;
   ' "$UNIX_TERMINAL")
 
-  # 验证 patch 生效：grep 到 guard 特征行 = 成功
-  if grep -q "helperPath.indexOf('app.asar.unpacked')" "$UNIX_TERMINAL"; then
+  # 验证 patch 生效：重新计数，两个 guard 都在才算成功
+  GUARD_COUNT_AFTER=$(grep -c "helperPath.indexOf('" "$UNIX_TERMINAL" 2>/dev/null || true)
+  if [ "$GUARD_COUNT_AFTER" -ge 2 ]; then
     echo "[fix-node-pty] patched helperPath double-replace guard (upstream #923/#924)"
   else
     # 匹配失败：node-pty 可能升级改了行格式。只 warn 不 fail（postinstall 不应阻断 install）。
