@@ -1,33 +1,42 @@
 /**
- * WorktreeService —— worktree 创建的领域编排实现（W1）。
+ * WorktreeService —— worktree 创建/列举的领域编排实现（W2 三态升级）。
  *
  * 🔒 三层架构：本类实现 services/ports/worktree-service.ts 的 IWorktreeService port。
- * 编排三步：(1) WorkspaceDetector 检测 .bare 结构 (2) IGitExecutor 跑 git worktree add
- * (3) IShellRunner 跑可选的 setup-worktree.sh（项目黑盒，不存在则跳过）。
+ * 编排：(1) WorkspaceDetector 检测三态 (2) IGitExecutor 跑 git worktree/branch 命令
+ * (3) IShellRunner 跑可选的 setup 脚本（项目黑盒，不存在则跳过）。
  *
- * 依赖全经构造函数注入（gitExecutor / shellRunner / gitInfoReader / fs），production 由
- * index.ts 传真实实现，测试传 mock。此模式让 WorktreeService 单测完全隔离 IO。
+ * 依赖全经构造函数注入（gitExecutor / shellRunner / gitInfoReader / configService / fs），
+ * production 由 index.ts 传真实实现，测试传 mock。此模式让 WorktreeService 单测完全隔离 IO。
  *
  * 错误对象用 `Object.assign(new Error(msg), { code, detail })` 扁平模式（非 class）——
  * 测试用 toMatchObject 断言 code/detail，详见 port 注释。
  *
- * 编排顺序与测试 WS-1~7 严格对齐：
- * 1. detect → isBareMode=false 抛 NOT_BARE_REPO（WS-2）
- * 2. 目录名 = branch.replace(/\//g,'-')，existsSync(newWtPath) 冲突检查（WS-3 WORKTREE_EXISTS）
- * 3. base 解析：origin/main 先 rev-parse 验证 ref 存在（WS-6 两次 gitExecutor 调用）
- * 4. git worktree add -b branch baseRef（WS-1/WS-7）
- * 5. setup 脚本 existsSync 检查：不存在跳过（WS-4），存在则 IShellRunner.execute（WS-5 SETUP_FAILED）
+ * 编排顺序与测试严格对齐：
+ * 1. detect → 三态判定（bare-workspace / plain-repo / not-repo）
+ * 2. create: bare-workspace 模式走现有逻辑；plain-repo 模式计算专用目录布局；not-repo 抛 NOT_GIT_REPO
+ * 3. listBranches: git branch --list + remote show origin + 读默认分支
+ * 4. list: git worktree list --porcelain 解析输出
  */
-import { join } from 'node:path'
-import { WorkspaceDetector } from './workspace-detector.js'
+import { join, basename } from 'node:path'
+import { createHash } from 'node:crypto'
+import {
+  WorkspaceDetector,
+  type FsLike,
+  type GitRevParser,
+  type WorkspaceDetectResult,
+} from './workspace-detector.js'
 import type { WorktreeErrorCode } from '@xyz-agent/shared'
 import type { IShellRunner } from '../ports/shell-runner.js'
 import type { IGitExecutor } from '../ports/git-executor.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
+import type { IConfigService } from '../../interfaces.js'
 import type {
   IWorktreeService,
   WorktreeCreateParams,
   WorktreeCreateResult,
+  WorktreeBranchListResult,
+  WorktreeListResult,
+  WorkspaceDetectResult as WorkspaceDetectResultPort,
 } from '../ports/worktree-service.js'
 
 /** WorktreeService 依赖（全注入，可 mock）。 */
@@ -35,6 +44,7 @@ export interface WorktreeServiceDeps {
   gitExecutor: IGitExecutor
   shellRunner: IShellRunner
   gitInfoReader: IGitInfoReader
+  configService: IConfigService
   /** node:fs 的 existsSync（测试用 vi.doMock 后传入） */
   fs: { existsSync: (path: string) => boolean }
 }
@@ -71,8 +81,44 @@ function worktreeError(code: WorktreeErrorCode, message: string, detail?: unknow
   return Object.assign(new Error(message), detail !== undefined ? { code, detail } : { code })
 }
 
+/** 为 plain-repo 模式计算 worktree 目录路径。 */
+function computePlainRepoWorktreeDir(
+  worktreeRootDir: string,
+  repoRoot: string,
+  branchDir: string,
+  fsExists: (path: string) => boolean,
+): string {
+  const repoName = basename(repoRoot)
+  const baseDir = join(worktreeRootDir, repoName, branchDir)
+
+  if (!fsExists(baseDir)) {
+    return baseDir
+  }
+
+  // 目标已存在：检查是否属于同一 repo（.git 文件内容可比对，但简单起见检查父级 repo 目录结构）
+  // 策略：追加 repo 路径短 hash 后缀避免冲突
+  const hash = createHash('md5').update(repoRoot).digest('hex').slice(0, 6)
+  return join(worktreeRootDir, `${repoName}-${hash}`, branchDir)
+}
+
 export class WorktreeService implements IWorktreeService {
   constructor(private deps: WorktreeServiceDeps) {}
+
+  /**
+   * 检测 cwd 所在仓库的三态模式（bare-workspace / plain-repo / not-repo）。
+   * 供 WorktreeMessageHandler 的 workspace.detect 调用。
+   */
+  async detect(cwd: string): Promise<WorkspaceDetectResultPort> {
+    const detector = this.createDetector()
+    const result = await detector.detect(cwd)
+    return {
+      mode: result.mode,
+      wsRoot: result.wsRoot,
+      barePath: result.barePath,
+      repoRoot: result.repoRoot,
+      defaultBranch: result.defaultBranch,
+    }
+  }
 
   async create(params: WorktreeCreateParams): Promise<WorktreeCreateResult> {
     const { branch, baseBranch = 'origin/main', workspaceHint } = params
@@ -82,20 +128,139 @@ export class WorktreeService implements IWorktreeService {
       throw worktreeError('INVALID_BRANCH', `非法分支名: ${branch}`)
     }
 
-    // 1. 检测 .bare workspace 结构（detectBare 内部复用 WorkspaceDetector）
-    const { isBareMode, wsRoot, barePath } = this.detectBare(workspaceHint)
+    // 1. 检测三态
+    const detector = this.createDetector()
+    const detection = await detector.detect(workspaceHint ?? process.cwd())
 
-    if (!isBareMode) {
-      throw worktreeError('NOT_BARE_REPO', '当前目录不在 .bare workspace 下，无法创建 worktree')
+    if (detection.mode === 'not-repo') {
+      throw worktreeError('NOT_GIT_REPO', '当前目录既不是 .bare workspace 也不是 git 仓库，无法创建 worktree')
     }
 
-    // 2. 目录名转换 + 冲突检查
+    // 2. 按模式分支处理
+    if (detection.mode === 'bare-workspace') {
+      return this.createBareWorktree(detection, branch, baseBranch, workspaceHint)
+    }
+
+    // mode === 'plain-repo'
+    return this.createPlainRepoWorktree(detection, branch, baseBranch, workspaceHint)
+  }
+
+  /**
+   * 列出 cwd 所在仓库的本地/远程分支。
+   * 供 WorktreeMessageHandler 的 worktree.listBranches 调用。
+   */
+  async listBranches(cwd: string): Promise<WorktreeBranchListResult> {
+    const detector = this.createDetector()
+    const detection = await detector.detect(cwd)
+
+    if (detection.mode === 'not-repo') {
+      throw worktreeError('NOT_GIT_REPO', '当前目录既不是 .bare workspace 也不是 git 仓库，无法列出分支')
+    }
+
+    const repoDir = detection.mode === 'bare-workspace' ? detection.barePath : detection.repoRoot
+    const defaultBranch = detection.defaultBranch || LOCAL_MAIN
+
+    // 获取本地分支
+    const localResult = await this.deps.gitExecutor.exec(repoDir, 'branch', [
+      '--list',
+      '--format=%(refname:short)',
+    ])
+    const local = localResult.exitCode === 0
+      ? localResult.stdout.split('\n').map(b => b.trim()).filter(Boolean)
+      : []
+
+    // 获取远程分支
+    const remoteResult = await this.deps.gitExecutor.exec(repoDir, 'branch', [
+      '--list',
+      '--remotes',
+      '--format=%(refname:short)',
+    ])
+    const remote = remoteResult.exitCode === 0
+      ? remoteResult.stdout.split('\n').map(b => b.trim()).filter(b => Boolean(b) && b.startsWith('origin/') && b !== 'origin/HEAD')
+      : []
+
+    return { local, remote, defaultBranch }
+  }
+
+  /**
+   * 列出 cwd 所在 workspace 的所有 worktree。
+   * 供 WorktreeMessageHandler 的 worktree.list 调用。
+   */
+  async list(cwd: string): Promise<WorktreeListResult> {
+    const detector = this.createDetector()
+    const detection = await detector.detect(cwd)
+
+    if (detection.mode === 'not-repo') {
+      throw worktreeError('NOT_GIT_REPO', '当前目录既不是 .bare workspace 也不是 git 仓库，无法列出 worktree')
+    }
+
+    const repoDir = detection.mode === 'bare-workspace' ? detection.barePath : detection.repoRoot
+
+    const result = await this.deps.gitExecutor.exec(repoDir, 'worktree', ['list', '--porcelain'])
+    if (result.exitCode !== 0) {
+      throw worktreeError(
+        'GIT_FAILED',
+        `git worktree list 失败: ${result.stderr}`,
+        { exitCode: result.exitCode, stderr: result.stderr },
+      )
+    }
+
+    return { items: this.parseWorktreePorcelain(result.stdout) }
+  }
+
+  // ── 私有方法 ─────────────────────────────────────────────────
+
+  /** 创建 WorkspaceDetector 实例（注入 fs + git 适配器）。 */
+  private createDetector(): WorkspaceDetector {
+    const fsAdapter: FsLike = {
+      statSync: (p: string) => {
+        if (this.deps.fs.existsSync(p)) return { isDirectory: () => true }
+        const e = new Error('not found') as NodeJS.ErrnoException
+        e.code = 'ENOENT'
+        throw e
+      },
+    }
+    const gitAdapter: GitRevParser = {
+      getRepoRoot: async (cwd: string) => {
+        const r = await this.deps.gitExecutor.exec(cwd, 'rev-parse', ['--show-toplevel'])
+        return r.exitCode === 0 ? r.stdout.trim() : null
+      },
+      getDefaultBranch: async (cwd: string) => {
+        // 先尝试 symbolic-ref（最准确），失败后 fallback 读 git config
+        const r = await this.deps.gitExecutor.exec(cwd, 'rev-parse', [
+          '--abbrev-ref', 'origin/HEAD',
+        ])
+        if (r.exitCode === 0) {
+          // 输出格式：origin/main → 去掉 origin/ 前缀
+          const ref = r.stdout.trim()
+          return ref.replace(/^origin\//, '')
+        }
+        // fallback: 尝试 main 或 master
+        for (const candidate of ['main', 'master']) {
+          const check = await this.deps.gitExecutor.exec(cwd, 'rev-parse', [
+            '--verify', `refs/heads/${candidate}`,
+          ])
+          if (check.exitCode === 0) return candidate
+        }
+        return null
+      },
+    }
+    return new WorkspaceDetector(fsAdapter, gitAdapter)
+  }
+
+  /** bare-workspace 模式下创建 worktree。 */
+  private async createBareWorktree(
+    detection: WorkspaceDetectResult,
+    branch: string,
+    baseBranch: string,
+    workspaceHint?: string,
+  ): Promise<WorktreeCreateResult> {
+    const { barePath, wsRoot } = detection
+
+    // 目录名转换 + 冲突检查
     const dirName = branch.replace(/\//g, '-')
     const newWtPath = join(wsRoot, dirName)
     if (this.deps.fs.existsSync(newWtPath)) {
-      // detail 同时带 cwd + dirName：前端可核对 dirName 是否与当前请求分支一致，
-      // 区分「同分支已存在」（可直接开始）与「另一分支名映射同目录碰撞」（不可直接开始，
-      // 否则切到错误 worktree）。feat/a 与 feat-a 映射同目录即此类碰撞。
       throw worktreeError(
         'WORKTREE_EXISTS',
         `worktree 目录已存在: ${newWtPath}`,
@@ -103,12 +268,10 @@ export class WorktreeService implements IWorktreeService {
       )
     }
 
-    // 3. base 解析
+    // base 解析
     const baseRef = await this.resolveBaseRef(barePath, baseBranch, workspaceHint)
 
-    // 4. git worktree add（exitCode 非 0 → 抛 GIT_FAILED + detail，避免静默吞 stderr 后跑 setup 到未创建目录）
-    // 参数顺序对齐 git-worktree(1) man page：`git worktree add [-b <branch>] <path> <commit-ish>`
-    // 选项 -b 在前，位置参数 path/commit-ish 在后。
+    // git worktree add
     const addResult = await this.deps.gitExecutor.exec(barePath, 'worktree', [
       'add', '-b', branch, newWtPath, baseRef,
     ])
@@ -120,13 +283,68 @@ export class WorktreeService implements IWorktreeService {
       )
     }
 
-    // 5. setup 脚本（可选，不存在跳过）
-    const setupScriptPath = join(barePath, 'custom-hooks', 'setup-worktree.sh')
+    // setup 脚本（可选，不存在跳过）
+    await this.runSetupScript(barePath, newWtPath)
+
+    return { cwd: newWtPath, branch }
+  }
+
+  /** plain-repo 模式下创建 worktree。 */
+  private async createPlainRepoWorktree(
+    detection: WorkspaceDetectResult,
+    branch: string,
+    baseBranch: string,
+    workspaceHint?: string,
+  ): Promise<WorktreeCreateResult> {
+    const { repoRoot } = detection
+
+    // 读取 worktreeRootDir 配置
+    const worktreeRootDir = this.deps.configService.getWorktreeRootDir()
+
+    // 目录名转换
+    const dirName = branch.replace(/\//g, '-')
+
+    // 计算目录布局 ~/worktrees/<repoName>/<branchDir>，处理同名 repo 冲突
+    const newWtPath = computePlainRepoWorktreeDir(
+      worktreeRootDir,
+      repoRoot,
+      dirName,
+      (p: string) => this.deps.fs.existsSync(p),
+    )
+
+    // base 解析
+    const baseRef = await this.resolveBaseRef(repoRoot, baseBranch, workspaceHint)
+
+    // git worktree add
+    const addResult = await this.deps.gitExecutor.exec(repoRoot, 'worktree', [
+      'add', '-b', branch, newWtPath, baseRef,
+    ])
+    if (addResult.exitCode !== 0) {
+      throw worktreeError(
+        'GIT_FAILED',
+        `git worktree add 失败: ${addResult.stderr}`,
+        { exitCode: addResult.exitCode, stderr: addResult.stderr },
+      )
+    }
+
+    // setup 脚本（可选，不存在跳过）—— plain-repo 模式检查 repoRoot 下的 custom-hooks
+    const setupScriptPath = join(repoRoot, '.bare', 'custom-hooks', 'setup-worktree.sh')
+    if (this.deps.fs.existsSync(setupScriptPath)) {
+      await this.runSetupScript(repoRoot, newWtPath)
+    }
+
+    return { cwd: newWtPath, branch }
+  }
+
+  /** 运行 setup 脚本（通用逻辑）。 */
+  private async runSetupScript(cwd: string, worktreePath: string): Promise<void> {
+    // setup 脚本路径：barePath/custom-hooks/setup-worktree.sh 或通过 configService 读取
+    const setupScriptPath = join(cwd, 'custom-hooks', 'setup-worktree.sh')
     if (this.deps.fs.existsSync(setupScriptPath)) {
       const result = await this.deps.shellRunner.execute({
         scriptPath: setupScriptPath,
-        args: [newWtPath],
-        cwd: newWtPath,
+        args: [worktreePath],
+        cwd: worktreePath,
         timeout: SETUP_TIMEOUT_MS,
       })
       if (result.exitCode !== 0) {
@@ -137,45 +355,78 @@ export class WorktreeService implements IWorktreeService {
         )
       }
     }
-
-    return { cwd: newWtPath, branch }
-  }
-
-  /**
-   * 检测 .bare workspace 结构（内部复用 WorkspaceDetector）。
-   * 把注入的 fs.existsSync 适配成 WorkspaceDetector 期望的 statSync 语义。
-   */
-  private detectBare(workspaceHint?: string) {
-    const detector = new WorkspaceDetector({
-      statSync: (p: string) => {
-        if (this.deps.fs.existsSync(p)) return { isDirectory: () => true }
-        const e = new Error('not found') as NodeJS.ErrnoException
-        e.code = 'ENOENT'
-        throw e
-      },
-    })
-    return detector.detect(workspaceHint ?? process.cwd())
   }
 
   /**
    * 解析 base ref。
    * - 'current'：用 gitInfoReader 读当前分支，读不到 fallback main
    * - 'origin/main'：用 gitExecutor rev-parse 验证远端 ref 存在，不存在 fallback 本地 main
-   *
-   * WS-6 期望：baseBranch='origin/main' 时 gitExecutor 第一次调用是 rev-parse（检查 ref），
-   * 第二次才是 worktree add。
+   * - 其他字符串：作为具体分支名，用 gitExecutor rev-parse 验证存在性
    */
   private async resolveBaseRef(
-    barePath: string,
-    baseBranch: 'current' | 'origin/main',
+    repoDir: string,
+    baseBranch: string,
     workspaceHint?: string,
   ): Promise<string> {
     if (baseBranch === 'current') {
       const info = this.deps.gitInfoReader.readGitInfo(workspaceHint ?? process.cwd())
       return info?.branch ?? LOCAL_MAIN
     }
-    // 'origin/main'：验证 ref 存在
-    const result = await this.deps.gitExecutor.exec(barePath, 'rev-parse', ['--verify', baseBranch])
+    // 验证 ref 存在
+    const result = await this.deps.gitExecutor.exec(repoDir, 'rev-parse', ['--verify', baseBranch])
     return result.exitCode === 0 ? baseBranch : LOCAL_MAIN
+  }
+
+  /**
+   * 解析 `git worktree list --porcelain` 输出。
+   *
+   * 格式（每条 worktree 之间空行分隔）：
+   * worktree /path/to/worktree
+   * HEAD abcdef1234567890
+   * branch refs/heads/main
+   *
+   * worktree /path/to/bare
+   * bare
+   */
+  private parseWorktreePorcelain(output: string): Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> {
+    const items: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> = []
+    const blocks = output.split('\n\n').filter(b => b.trim())
+
+    for (const block of blocks) {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
+      let path = ''
+      let branch = ''
+      let headSha = ''
+      let bare = false
+
+      for (const line of lines) {
+        if (line.startsWith('worktree ')) {
+          path = line.slice('worktree '.length)
+        } else if (line.startsWith('branch ')) {
+          branch = line.slice('branch '.length).replace(/^refs\/heads\//, '')
+        } else if (line.startsWith('HEAD ')) {
+          headSha = line.slice('HEAD '.length)
+        } else if (line === 'bare') {
+          bare = true
+        }
+      }
+
+      if (path) {
+        items.push({
+          path,
+          branch,
+          HEAD: false, // 先全部 false，最后只标记第一个非 bare 条目
+          bare,
+        })
+      }
+    }
+
+    // porcelain 输出的第一个 worktree 是当前 HEAD 指向的（bare 条目不算）
+    const firstNonBare = items.find(i => !i.bare)
+    if (firstNonBare) {
+      firstNonBare.HEAD = true
+    }
+
+    return items
   }
 }
