@@ -24,7 +24,10 @@
  * 整链移除需协同改动且超出本 PR scope。待超时机制重新设计或确认废弃后统一清理。
  */
 
-/** 缓存的 pending UI 请求 */
+/**
+ * 缓存的 pending UI 请求（内部原始结构，未解包）。
+ * 存于 pendingRequests Map，cachePendingRequest 写入、removePendingRequest/clearForSession 清理。
+ */
 export interface PendingUIRequest {
   requestId: string
   sessionId: string
@@ -32,6 +35,13 @@ export interface PendingUIRequest {
   payload: Record<string, unknown>
   receivedAt: number
 }
+
+/**
+ * getPendingRequests 返回值类型：原始字段 + payload 解包到顶层（`{ ...r, ...r.payload }`）。
+ * payload 字段不固定（ask/confirm/select 各自不同），故解包部分用索引签名收纳——
+ * 消费方（renderer 经类型守卫收窄为 ExtensionUIRequest）按 method 取具体字段。
+ */
+export type PendingUIRequestResolved = PendingUIRequest & Record<string, unknown>
 
 /**
  * 历史 5min UI 超时常量（300_000ms）。交互式 method 已不再排定时器，
@@ -195,7 +205,7 @@ export class ExtensionTimeoutManager {
    * 移除时机由 removePendingRequest（respond 后）或 clearForSession（session 销毁）控制，
    * 不由拉取动作控制。
    */
-  getPendingRequests(sessionId: string): PendingUIRequest[] {
+  getPendingRequests(sessionId: string): PendingUIRequestResolved[] {
     const sessionCache = this.pendingRequests.get(sessionId)
     if (!sessionCache || sessionCache.size === 0) return []
     const requests = Array.from(sessionCache.values())
