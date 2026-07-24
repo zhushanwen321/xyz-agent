@@ -29,8 +29,11 @@ export interface ElectronAPI {
   findSessionWindow(sessionId: string): Promise<{ windowId: string } | null>
   /** 监听窗口列表变化事件（创建/关闭/更新） */
   onWindowListUpdated(callback: () => void): () => void
-  /** 打开目录选择对话框 */
-  pickDirectory(options?: { title?: string }): Promise<{ canceled: boolean; path: string | null }>
+  /** 打开目录选择对话框（defaultPath 失效时主进程自动回退到 ~） */
+  pickDirectory(options?: { title?: string; defaultPath?: string }): Promise<{
+    canceled: boolean
+    path: string | null
+  }>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -84,7 +87,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('window-list-updated', handler)
     return () => ipcRenderer.removeListener('window-list-updated', handler)
   },
-  pickDirectory: (options?: { title?: string }) => ipcRenderer.invoke('pick-directory', options),
+  pickDirectory: (options?: { title?: string; defaultPath?: string }) =>
+    ipcRenderer.invoke('pick-directory', options),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)
