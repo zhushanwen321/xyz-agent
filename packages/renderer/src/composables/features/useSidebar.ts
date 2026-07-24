@@ -17,7 +17,7 @@
  * （核心粘合价值，deletion test 证明不可删）。
  */
 import { computed, onScopeDispose } from 'vue'
-import type { SessionGroup } from '@xyz-agent/shared'
+import type { PanelLeaf, SessionGroup } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
@@ -75,6 +75,37 @@ let hasConnectedBefore = false
 export function resetAppBootstrap(): void {
   appBootstrapped = false
   hasConnectedBefore = false
+}
+
+/**
+ * 清理 bound panel 上残留的 subagent overlay / agent call overlay viewing 状态。
+ *
+ * 从 deleteSession 主体提取（降 cyclomatic）：删 session 前该 panel 可能正停在 subagent
+ * overlay 或 agent call overlay，残留 viewing 指向已删 session 的 subagentId / agentCallId，
+ * 且 streaming 订阅（subagentStore.panelStreamUnsub）泄漏。此函数兜底清两个 overlay。
+ *
+ * [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）。
+ * 顺序与原内联块完全一致：先 subagent overlay 后 agent call overlay。
+ */
+function clearBoundPanelOverlays(
+  boundPanel: PanelLeaf,
+  id: string,
+  subagentStore: ReturnType<typeof useSubagentStore>,
+  workflowStore: ReturnType<typeof useWorkflowStore>,
+): void {
+  if (subagentStore.isViewing(boundPanel.id)) {
+    const viewingSubId = subagentStore.getViewingSubagentId(boundPanel.id)
+    const chatStore = useChatStore()
+    subagentStore.backToMain(
+      boundPanel.id,
+      id,
+      viewingSubId ?? undefined,
+      (sid) => chatStore.evictVirtualKey(sid),
+    )
+  }
+  if (workflowStore.isViewing(boundPanel.id)) {
+    workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId), id)
+  }
 }
 
 export function useSidebar() {
@@ -299,22 +330,7 @@ export function useSidebar() {
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
     const extensionUIStore = useExtensionUIStore()
-    if (boundPanel) {
-      if (subagentStore.isViewing(boundPanel.id)) {
-        // [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）
-        const viewingSubId = subagentStore.getViewingSubagentId(boundPanel.id)
-        const chatStore = useChatStore()
-        subagentStore.backToMain(
-          boundPanel.id,
-          id,
-          viewingSubId ?? undefined,
-          (sid) => chatStore.evictVirtualKey(sid),
-        )
-      }
-      if (workflowStore.isViewing(boundPanel.id)) {
-        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId), id)
-      }
-    }
+    if (boundPanel) clearBoundPanelOverlays(boundPanel, id, subagentStore, workflowStore)
     session.removeFromList(id)
     // 跨 store 清理（S3）：fileTree + tasks + subagent + workflow + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
