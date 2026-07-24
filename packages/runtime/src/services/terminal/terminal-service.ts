@@ -9,10 +9,9 @@
  * 3. write/resize/kill/attach：转发到对应 PTY（无 PTY 时 no-op）
  * 4. destroyPty：session 销毁时 kill + 清理
  *
- * shell 解析（Phase 6 前）：
- *   configService?.getTerminalShell?.()（Phase 6 注入，当前不存在此方法）
- *   → fallback process.env.SHELL → '/bin/bash'（win: 'powershell.exe'）
- * Phase 6 接入 configService 后，spawn 读 config 的 shell/shellArgs。
+ * shell 解析（Phase 6）：
+ *   config.terminal.json 的 shell 字段（deps.configService 注入）→ fallback $SHELL
+ *   → '/bin/bash'（win: 'powershell.exe'）。仅对新 spawn 的 PTY 生效。
  *
  * 错误模式：扁平 `Object.assign(new Error(msg), { code })`（仿 worktree-service），
  * code 为 TerminalErrorCode。write/resize/kill/attach 对不存在 sid 是 no-op（不抛错）。
@@ -27,6 +26,11 @@ import type { ITerminalService } from '../ports/terminal-service.js'
 export interface TerminalServiceDeps {
   /** 广播 ServerMessage 给所有连接（PTY 输出/退出/就绪信号）。由 server.broadcast 提供。 */
   broadcast: (msg: ServerMessage) => void
+  /**
+   * Phase 6：terminal 配置（shell/shellArgs 偏好）。可选——Phase 6 前的测试构造时不传，
+   * resolveShell 走环境变量 fallback。生产路径由 index.ts 注入（configService 同源）。
+   */
+  configService?: { getTerminalConfig(): { config: { shell: string; shellArgs: string[] }; corrupted: boolean } }
 }
 
 /** terminal 业务错误工厂（扁平模式，仿 worktreeError）。 */
@@ -155,18 +159,31 @@ export class TerminalService implements ITerminalService {
   }
 
   /**
-   * 解析 shell（Phase 6 前用环境变量 fallback）。
-   * Phase 6 注入 configService 后，优先读 config.getTerminalShell()。
+   * 解析 shell：优先 config.terminal.json 的 shell 字段，其次 $SHELL 环境变量，最后平台默认。
+   * 登录 shell（非 config 路径）加 -l（加载 ~/.zshrc / ~/.bash_profile，让别名/PATH 生效）。
    */
   private resolveShell(): { shell: string; shellArgs: string[] } {
-    // Phase 6 TODO: const cfg = this.configService?.getTerminalConfig?.(); if (cfg?.shell) return { shell: cfg.shell, shellArgs: cfg.shellArgs }
+    // Phase 6：读 terminal config（config 缺失或读取失败时 fallback 环境变量）。
+    // configService 可选——测试构造时不传，走环境变量 fallback。
+    try {
+      const cfg = this.deps.configService?.getTerminalConfig()
+      if (cfg && cfg.config.shell.trim() !== '') {
+        // config 提供 shell（用户显式设置）+ shellArgs（用户指定参数，原样透传不加 -l）
+        return { shell: cfg.config.shell, shellArgs: cfg.config.shellArgs }
+      }
+    } catch (e) {
+      // best-effort：config 读取失败（文件损坏/IO 错误）降级到 $SHELL 环境变量——不阻塞 PTY 启动
+      console.warn('[terminal] read terminal config failed, falling back to $SHELL', e)
+    }
     if (process.platform === 'win32') {
       return { shell: 'powershell.exe', shellArgs: [] }
     }
-    const shell = process.env.SHELL || '/bin/bash'
-    // 登录 shell 加 -l（加载 ~/.zshrc / ~/.bash_profile，让别名/PATH 生效）
-    const shellArgs = ['-l']
-    return { shell, shellArgs }
+    const shell = process.env.SHELL
+    if (shell && shell.trim() !== '') {
+      // 登录 shell 加 -l（加载 ~/.zshrc / ~/.bash_profile，让别名/PATH 生效）
+      return { shell, shellArgs: ['-l'] }
+    }
+    return { shell: '/bin/bash', shellArgs: ['-l'] }
   }
 
   /** 构造子进程 env（继承当前 env，确保 PATH 等可用）。 */

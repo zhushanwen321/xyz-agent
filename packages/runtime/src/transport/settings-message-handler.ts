@@ -212,6 +212,32 @@ export class SettingsMessageHandler {
         })
         return true
       }
+      case 'config.getTerminalConfig': {
+        // Phase 6：读取 terminal 配置。corrupted 透传给前端（提示用户文件已损坏并重置）。
+        const result = this.ctx.configService.getTerminalConfig()
+        this.ctx.reply(ws, msg.id, 'config.terminalConfig', {
+          config: result.config,
+          corrupted: result.corrupted,
+        })
+        return true
+      }
+      case 'config.setTerminalConfig': {
+        // Phase 6：写入 terminal 配置。失败（超范围等）按 D10 错误信封回复，不广播；
+        // 成功 reply + 广播 config.terminalConfig（corrupted=false）让所有 panel 同步。
+        const { config } = msg.payload
+        const result = this.ctx.configService.setTerminalConfig(config)
+        if (!result.ok) {
+          this.ctx.sendError(ws, 'set_terminal_config_failed', result.error ?? 'unknown error', msg.id)
+          return true
+        }
+        this.ctx.reply(ws, msg.id, 'config.terminalConfig', { config, corrupted: false })
+        this.ctx.broadcast({
+          type: 'config.terminalConfig',
+          id: this.ctx.nextPushId(),
+          payload: { config, corrupted: false },
+        })
+        return true
+      }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
         await this.ctx.modelService.setThinkingLevel(sid as string, level as string)

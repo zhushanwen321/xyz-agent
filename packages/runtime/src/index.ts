@@ -288,6 +288,7 @@ async function main(): Promise<void> {
   // Phase 6 接入 configService 读 shell 配置（当前用 $SHELL fallback）。
   const terminalService = new TerminalService({
     broadcast: (msg) => server.broadcast(msg),
+    configService,
   })
 
   // ── W5 ReloadOrchestrator：skill 变动 → 受影响 session pi reload（重扫 skill）────
