@@ -43,6 +43,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useExtensionNotify } from '@/composables/useExtensionUI'
 import { useBrowserFocusSync } from '@/composables/features/useBrowserFocusSync'
+import { useCloseShortcut } from '@/composables/features/useCloseShortcut'
 import PanelContainer from './PanelContainer.vue'
 import ExtensionUIDialog from '@/components/extension/ExtensionUIDialog.vue'
 
@@ -53,6 +54,8 @@ const flow = useNewTaskFlow()
 useExtensionNotify(focusedSessionId)
 // Browser drawer view swap：切 session 时通知主进程切换可见 WebContentsView（Wave 4 per-session 隔离）
 useBrowserFocusSync()
+// Cmd/Ctrl+W：drawer 打开时优先关 drawer，drawer 关时关窗口（before-input-event 拦截转发）
+useCloseShortcut()
 
 /** 是否有焦点 session（决定渲染 panel 还是空态，跟随 panel focus） */
 const hasSession = computed(() => focusedSessionId.value !== null)

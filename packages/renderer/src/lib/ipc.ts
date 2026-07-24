@@ -26,6 +26,15 @@ export function onRuntimePort(cb: (port: number) => void): () => void {
   return api?.onRuntimePort(cb) ?? (() => {})
 }
 
+/**
+ * 监听主进程快捷键事件（before-input-event 拦截后转发）。
+ * type 含 'standard' / 'focus'（globalShortcut）/'close'（before-input-event Cmd/Ctrl+W）。
+ * 返回取消订阅函数。无 IPC（web/mock）返回 no-op。
+ */
+export function onShortcut(cb: (type: string) => void): () => void {
+  return api?.onShortcut(cb) ?? (() => {})
+}
+
 /** 监听 runtime 启动失败事件，返回取消函数 */
 export function onRuntimeError(cb: (error: { message: string }) => void): () => void {
   return api?.onRuntimeError(cb) ?? (() => {})
