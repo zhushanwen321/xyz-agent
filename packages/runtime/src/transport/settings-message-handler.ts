@@ -244,6 +244,24 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'session.thinkingLevelSet', { sessionId: sid, level })
         return true
       }
+      case 'config.setWorktreeRootDir': {
+        this.ctx.configService.setWorktreeRootDir(msg.payload.dir)
+        this.ctx.reply(ws, msg.id, 'config.worktreeRootDir', { dir: this.ctx.configService.getWorktreeRootDir() })
+        return true
+      }
+      case 'config.getWorktreeRootDir': {
+        this.ctx.reply(ws, msg.id, 'config.worktreeRootDir', { dir: this.ctx.configService.getWorktreeRootDir() })
+        return true
+      }
+      case 'config.setSetupScript': {
+        this.ctx.configService.setSetupScript(msg.payload.script)
+        this.ctx.reply(ws, msg.id, 'config.setupScript', { script: this.ctx.configService.getSetupScript() })
+        return true
+      }
+      case 'config.getSetupScript': {
+        this.ctx.reply(ws, msg.id, 'config.setupScript', { script: this.ctx.configService.getSetupScript() })
+        return true
+      }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。
       // 这些 type 此前只是 `return true` 以避免 unknown_type，但工具审批的实际路径是
       // pi 的 extension_ui_request（method:'confirm'）→ extension.ui_request/ui_response 流

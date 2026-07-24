@@ -246,6 +246,32 @@ export class ConfigService implements IConfigService {
     this.saveAppConfig(config)
   }
 
+  // ── Worktree config（git-cwt-anywhere）──
+
+  getWorktreeRootDir(): string {
+    const config = this.loadAppConfig()
+    const val = config['worktreeRootDir']
+    return typeof val === 'string' ? val : '~/worktrees'
+  }
+
+  setWorktreeRootDir(dir: string): void {
+    const config = this.loadAppConfig()
+    config['worktreeRootDir'] = dir
+    this.saveAppConfig(config)
+  }
+
+  getSetupScript(): string {
+    const config = this.loadAppConfig()
+    const val = config['setupScript']
+    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+  }
+
+  setSetupScript(script: string): void {
+    const config = this.loadAppConfig()
+    config['setupScript'] = script
+    this.saveAppConfig(config)
+  }
+
   // ── Skill CRUD ─────────────────────────────────────────────────
 
   /**

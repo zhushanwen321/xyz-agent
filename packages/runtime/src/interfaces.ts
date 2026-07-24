@@ -260,6 +260,15 @@ export interface IConfigService {
   getTerminalConfig(): { config: TerminalConfig; corrupted: boolean }
   /** 写入 terminal.json。校验失败返回 ok:false + error，不写盘。 */
   setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string }
+  // ── Worktree config（git-cwt-anywhere）──
+  /** 读取 worktree 根目录（config.json.worktreeRootDir），默认 '~/worktrees'。 */
+  getWorktreeRootDir(): string
+  /** 写入 worktree 根目录到 config.json.worktreeRootDir。 */
+  setWorktreeRootDir(dir: string): void
+  /** 读取 setup 脚本路径（config.json.setupScript），默认 'custom-hooks/setup-worktree.sh'。 */
+  getSetupScript(): string
+  /** 写入 setup 脚本路径到 config.json.setupScript。 */
+  setSetupScript(script: string): void
 }
 
 // ── IExtensionService ──────────────────────────────────────────────
