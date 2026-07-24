@@ -30,14 +30,19 @@ const props = withDefaults(
     currentCwd: string | null
     /** 是否在 bare repo + worktree 结构下（true 才显示「新建 worktree…」动作项，W2 wave） */
     isBareWorkspace?: boolean
+    /** 是否为 git 仓库目录（bare-workspace 或 plain-repo 均为 true） */
+    isGitRepo?: boolean
+    /** 当前 cwd 所在 workspace 的已有 worktree 列表 */
+    worktreeItems?: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }>
   }>(),
-  { isBareWorkspace: false },
+  { isBareWorkspace: false, isGitRepo: false, worktreeItems: () => [] },
 )
 
 const emit = defineEmits<{
   (e: 'select', payload: { cwd: string }): void
   (e: 'open-dir-dialog'): void
   (e: 'create-worktree'): void
+  (e: 'select-worktree', payload: { path: string }): void
   (e: 'close'): void
 }>()
 
@@ -49,14 +54,14 @@ const { error: toastError } = useToast()
 // v1 暂未支持远程连接（i18n key: newTask.dirSelect.remoteNotSupported）
 /** 基础动作项数（打开文件夹 + 远程连接） */
 const BASE_ACTION_COUNT = 2
-/** bare repo 模式下新增的动作项数（新建 worktree） */
+/** git repo 模式下新增的动作项数（新建 worktree） */
 const WORKTREE_ACTION_COUNT = 1
 /**
  * 扁平化键盘导航的尾部动作项数。
- * 基础 2 项（打开文件夹 + 远程连接）；bare repo 下 +1（新建 worktree，插在两者之间）。
+ * 基础 2 项（打开文件夹 + 远程连接）；git repo 下 +1（新建 worktree，插在两者之间）。
  */
 const ACTION_ITEM_COUNT = computed(() =>
-  props.isBareWorkspace ? BASE_ACTION_COUNT + WORKTREE_ACTION_COUNT : BASE_ACTION_COUNT,
+  props.isGitRepo ? BASE_ACTION_COUNT + WORKTREE_ACTION_COUNT : BASE_ACTION_COUNT,
 )
 
 const search = ref('')
@@ -81,11 +86,23 @@ const filtered = computed<RecentWorkspaceRecord[]>(() => {
 /** 空态：无最近工作区，或搜索无命中 */
 const isEmpty = computed(() => filtered.value.length === 0)
 
-/** 尾部动作项扁平索引（键盘导航用）。DOM 顺序：open-dir → create-worktree（bare）→ remote */
-const openDirIdx = computed(() => filtered.value.length)
-const createWorktreeIdx = computed(() => filtered.value.length + 1)
+/** 已有 worktree 列表（来自 props，无需本地过滤） */
+const wtItems = computed(() => props.worktreeItems)
+
+/** worktree 区域是否为空态 */
+const isWtEmpty = computed(() => wtItems.value.length === 0)
+
+/**
+ * 扁平化索引基准：recent 列表 + worktree 列表 + 动作项。
+ * DOM 顺序：recent items → worktree items → open-dir → create-worktree（git repo）→ remote
+ */
+const recentEnd = computed(() => filtered.value.length)
+const wtStart = computed(() => recentEnd.value)
+const actionStart = computed(() => recentEnd.value + wtItems.value.length)
+const openDirIdx = computed(() => actionStart.value)
+const createWorktreeIdx = computed(() => actionStart.value + 1)
 const remoteIdx = computed(() =>
-  filtered.value.length + (props.isBareWorkspace ? BASE_ACTION_COUNT : WORKTREE_ACTION_COUNT),
+  actionStart.value + (props.isGitRepo ? BASE_ACTION_COUNT : WORKTREE_ACTION_COUNT),
 )
 
 /** basename 出现该次数即视为同名，需追加上级段名消歧 */
@@ -122,6 +139,10 @@ function selectWorkspace(ws: RecentWorkspaceRecord): void {
   emit('select', { cwd: ws.cwd })
 }
 
+function selectWorktree(path: string): void {
+  emit('select-worktree', { path })
+}
+
 function openFolder(): void {
   emit('open-dir-dialog')
 }
@@ -145,16 +166,23 @@ function activate(idx: number): void {
     selectWorkspace(filtered.value[idx])
     return
   }
-  const actionOffset = idx - listLen
-  // open-dir 永远是第 0 个动作项；remote 永远是最后一个；create-worktree 夹在中间（bare repo 下）。
+  // worktree 区域
+  const wtOffset = idx - wtStart.value
+  if (wtOffset >= 0 && wtOffset < wtItems.value.length) {
+    selectWorktree(wtItems.value[wtOffset].path)
+    return
+  }
+  // 动作项
+  const actionOffset = idx - actionStart.value
+  // open-dir 永远是第 0 个动作项；remote 永远是最后一个；create-worktree 夹在中间（git repo 下）。
   if (actionOffset === 0) openFolder()
-  else if (props.isBareWorkspace && actionOffset === 1) createWorktree()
+  else if (props.isGitRepo && actionOffset === 1) createWorktree()
   else remoteStub()
 }
 
 // 键盘导航收敛到 logic/useFlatListNav（与 BranchSelectPopover 共用）。
 const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
-  getTotal: () => filtered.value.length + ACTION_ITEM_COUNT.value,
+  getTotal: () => filtered.value.length + wtItems.value.length + ACTION_ITEM_COUNT.value,
   onActivate: activate,
   onEscape: () => emit('close'),
 })
@@ -205,6 +233,37 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         </span>
       </PopoverListItem>
 
+      <!-- 已有 worktree 区域（git repo 下显示） -->
+      <template v-if="isGitRepo">
+        <div class="px-3 pt-2 pb-1">
+          <span class="text-[11px] font-medium text-muted uppercase tracking-wider">{{ t('newTask.dirSelect.existingWorktrees') }}</span>
+        </div>
+        <!-- worktree 空态 -->
+        <div
+          v-if="isWtEmpty"
+          class="px-4 py-2 text-[12px] text-subtle"
+        >
+          {{ t('newTask.dirSelect.noWorktrees') }}
+        </div>
+        <!-- worktree 列表项 -->
+        <PopoverListItem
+          v-for="(wt, wi) in wtItems"
+          :key="wt.path"
+          test-id="worktree-item"
+          :active="isActiveItem(wtStart + wi)"
+          @click="selectWorktree(wt.path)"
+          @mouseenter="activeIndex = wtStart + wi"
+        >
+          <template #icon>
+            <GitFork class="shrink-0 text-subtle" />
+          </template>
+          <span class="flex min-w-0 flex-1 flex-col items-start">
+            <span class="truncate text-fg">{{ wt.branch }}{{ wt.HEAD ? ' (HEAD)' : '' }}</span>
+            <span class="truncate font-mono text-[11px] text-subtle">{{ wt.path }}</span>
+          </span>
+        </PopoverListItem>
+      </template>
+
       <!-- 分隔线 -->
       <div class="my-1 h-px bg-border" />
 
@@ -221,10 +280,10 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         {{ t('newTask.dirSelect.openFolder') }}
       </PopoverActionItem>
 
-      <!-- 动作项：新建 worktree（仅 bare repo + worktree 结构，W2 wave）。
-           accent-soft 底色 + accent 图标：区别于「打开文件夹」（中性），强调 bare repo 的推荐入口。 -->
+      <!-- 动作项：新建 worktree（git repo 下均显示，W2 wave）。
+           accent-soft 底色 + accent 图标：区别于「打开文件夹」（中性），强调 git repo 的推荐入口。 -->
       <PopoverActionItem
-        v-if="isBareWorkspace"
+        v-if="isGitRepo"
         test-id="action-create-worktree"
         class="bg-accent-soft"
         :active="isActiveItem(createWorktreeIdx)"

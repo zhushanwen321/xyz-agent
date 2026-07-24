@@ -43,7 +43,13 @@ export const setProvider = configDomain.setProvider
 /** worktree 专用目录配置 reply 类型。 */
 export type WorktreeRootDirReply = ServerMessageMap['config.worktreeRootDir']
 /** worktree 初始化脚本配置 reply 类型。 */
-export type SetupScriptReply = ServerMessageMap['config.setupScript']
+type SetupScriptReply = ServerMessageMap['config.setupScript']
+/** bare-workspace 初始化脚本配置 reply 类型。 */
+type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
+/** worktree 创建超时时间配置 reply 类型。 */
+type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
+/** 默认基分支配置 reply 类型。 */
+type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
 
 /** 设置 worktree 专用目录（持久化到 settings.json）。 */
 export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
@@ -63,6 +69,36 @@ export async function setSetupScript(script: string): Promise<SetupScriptReply> 
 /** 读取 worktree 初始化脚本配置。 */
 export async function getSetupScript(): Promise<SetupScriptReply> {
   return command('config.getSetupScript', {})
+}
+
+/** 设置 bare-workspace 初始化脚本（持久化到 settings.json）。 */
+export async function setBareSetupScript(script: string): Promise<BareSetupScriptReply> {
+  return command('config.setBareSetupScript', { script })
+}
+
+/** 读取 bare-workspace 初始化脚本配置。 */
+export async function getBareSetupScript(): Promise<BareSetupScriptReply> {
+  return command('config.getBareSetupScript', {})
+}
+
+/** 设置 worktree 创建超时时间（秒，持久化到 settings.json）。 */
+export async function setWorktreeTimeout(timeout: number): Promise<WorktreeTimeoutReply> {
+  return command('config.setTimeout', { timeout })
+}
+
+/** 读取 worktree 创建超时时间配置。 */
+export async function getWorktreeTimeout(): Promise<WorktreeTimeoutReply> {
+  return command('config.getTimeout', {})
+}
+
+/** 设置默认基分支（持久化到 settings.json）。 */
+export async function setDefaultBaseBranch(baseBranch: string): Promise<DefaultBaseBranchReply> {
+  return command('config.setDefaultBaseBranch', { baseBranch })
+}
+
+/** 读取默认基分支配置。 */
+export async function getDefaultBaseBranch(): Promise<DefaultBaseBranchReply> {
+  return command('config.getDefaultBaseBranch', {})
 }
 
 // ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──

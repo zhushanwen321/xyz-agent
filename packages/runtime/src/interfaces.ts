@@ -269,6 +269,18 @@ export interface IConfigService {
   getSetupScript(): string
   /** 写入 setup 脚本路径到 config.json.setupScript。 */
   setSetupScript(script: string): void
+  /** 读取 bare-workspace 初始化脚本路径（config.json.bareSetupScript），默认 'custom-hooks/setup-worktree.sh'。 */
+  getBareSetupScript(): string
+  /** 写入 bare-workspace 初始化脚本路径到 config.json.bareSetupScript。 */
+  setBareSetupScript(script: string): void
+  /** 读取 worktree 创建超时时间（config.json.worktreeTimeout），默认 60 秒。 */
+  getTimeout(): number
+  /** 写入 worktree 创建超时时间到 config.json.worktreeTimeout。 */
+  setTimeout(timeout: number): void
+  /** 读取默认基分支（config.json.defaultBaseBranch），默认 'origin/main'。 */
+  getDefaultBaseBranch(): string
+  /** 写入默认基分支到 config.json.defaultBaseBranch。 */
+  setDefaultBaseBranch(baseBranch: string): void
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

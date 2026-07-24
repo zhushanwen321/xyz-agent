@@ -112,6 +112,18 @@ const isWorktreeModalOpen = computed(() => flow.state.value === 'worktree-modal'
  */
 const isBareWorkspace = computed(() => flow.isBare?.value ?? flow.gitInfo.value?.isBare ?? false)
 
+/**
+ * 是否为 git 仓库目录（bare-workspace 或 plain-repo 均为 true）。
+ * 数据源：flow.mode（pendingCwd 驱动，workspace.detect 返回三态）。not-repo 时不显示「新建 worktree」。
+ */
+const isGitRepo = computed(() => {
+  const m = flow.mode?.value
+  return m === 'bare-workspace' || m === 'plain-repo'
+})
+
+/** 当前 cwd 所在 workspace 的已有 worktree 列表。 */
+const worktreeItems = computed(() => flow.worktreeItems?.value ?? [])
+
 function onSelectWorkspace(payload: { cwd: string }): void {
   flow.selectWorkspace(payload.cwd)
 }
@@ -128,6 +140,15 @@ function onConfirmDirtySwitch(payload: { name: string }): void {
  */
 function onWorktreeSuccess(cwd: string): void {
   flow.selectWorkspace(cwd)
+  flow.closeOverlay()
+}
+
+/**
+ * selectWorktree —— 选择已有 worktree，切换到该 worktree 的 cwd。
+ * 语义同 selectWorkspace（记 pendingCwd + 关 popover），路径来源为 worktree item.path。
+ */
+function onSelectWorktree(payload: { path: string }): void {
+  flow.selectWorkspace(payload.path)
   flow.closeOverlay()
 }
 /**
@@ -188,9 +209,12 @@ function onRetry(): void {
               <DirSelectPopover
                 :current-cwd="currentCwd ?? null"
                 :is-bare-workspace="isBareWorkspace"
+                :is-git-repo="isGitRepo"
+                :worktree-items="worktreeItems"
                 @select="onSelectWorkspace"
                 @open-dir-dialog="onOpenDirDialog"
                 @create-worktree="flow.openCreateWorktree()"
+                @select-worktree="onSelectWorktree"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>

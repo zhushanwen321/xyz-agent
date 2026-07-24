@@ -272,6 +272,42 @@ export class ConfigService implements IConfigService {
     this.saveAppConfig(config)
   }
 
+  getBareSetupScript(): string {
+    const config = this.loadAppConfig()
+    const val = config['bareSetupScript']
+    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+  }
+
+  setBareSetupScript(script: string): void {
+    const config = this.loadAppConfig()
+    config['bareSetupScript'] = script
+    this.saveAppConfig(config)
+  }
+
+  getTimeout(): number {
+    const config = this.loadAppConfig()
+    const val = config['worktreeTimeout']
+    return typeof val === 'number' ? val : 60
+  }
+
+  setTimeout(timeout: number): void {
+    const config = this.loadAppConfig()
+    config['worktreeTimeout'] = timeout
+    this.saveAppConfig(config)
+  }
+
+  getDefaultBaseBranch(): string {
+    const config = this.loadAppConfig()
+    const val = config['defaultBaseBranch']
+    return typeof val === 'string' ? val : 'origin/main'
+  }
+
+  setDefaultBaseBranch(baseBranch: string): void {
+    const config = this.loadAppConfig()
+    config['defaultBaseBranch'] = baseBranch
+    this.saveAppConfig(config)
+  }
+
   // ── Skill CRUD ─────────────────────────────────────────────────
 
   /**

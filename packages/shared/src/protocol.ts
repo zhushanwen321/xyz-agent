@@ -73,6 +73,9 @@ export type ClientMessageType =
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
   | 'config.setWorktreeRootDir' | 'config.getWorktreeRootDir'
   | 'config.setSetupScript' | 'config.getSetupScript'
+  | 'config.setBareSetupScript' | 'config.getBareSetupScript'
+  | 'config.setTimeout' | 'config.getTimeout'
+  | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -315,6 +318,18 @@ export interface ClientMessageMap {
   'config.setSetupScript': { script: string }
   /** config.getSetupScript：读取 worktree 初始化脚本配置（前端读取）。 */
   'config.getSetupScript': Record<string, never>
+  /** config.setBareSetupScript：设置 bare-workspace 初始化脚本配置（前端写入）。 */
+  'config.setBareSetupScript': { script: string }
+  /** config.getBareSetupScript：读取 bare-workspace 初始化脚本配置（前端读取）。 */
+  'config.getBareSetupScript': Record<string, never>
+  /** config.setTimeout：设置 worktree 创建超时时间（秒，前端写入）。 */
+  'config.setTimeout': { timeout: number }
+  /** config.getTimeout：读取 worktree 创建超时时间配置（前端读取）。 */
+  'config.getTimeout': Record<string, never>
+  /** config.setDefaultBaseBranch：设置默认基分支（前端写入）。 */
+  'config.setDefaultBaseBranch': { baseBranch: string }
+  /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
+  'config.getDefaultBaseBranch': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -424,6 +439,9 @@ export type ServerMessageType =
   | 'worktree.list:result'
   | 'config.worktreeRootDir'
   | 'config.setupScript'
+  | 'config.bareSetupScript'
+  | 'config.worktreeTimeout'
+  | 'config.defaultBaseBranch'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -623,6 +641,12 @@ export interface ServerMessageMapBase {
   'config.worktreeRootDir': { dir: string }
   /** config.setupScript：config.getSetupScript 的 reply。 */
   'config.setupScript': { script: string }
+  /** config.bareSetupScript：config.getBareSetupScript 的 reply。 */
+  'config.bareSetupScript': { script: string }
+  /** config.worktreeTimeout：config.getTimeout 的 reply。 */
+  'config.worktreeTimeout': { timeout: number }
+  /** config.defaultBaseBranch：config.getDefaultBaseBranch 的 reply。 */
+  'config.defaultBaseBranch': { baseBranch: string }
 
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
@@ -828,6 +852,12 @@ export interface ReplyPayloadMap {
   'config.getWorktreeRootDir': ServerMessageMap['config.worktreeRootDir']
   'config.setSetupScript': ServerMessageMap['config.setupScript']
   'config.getSetupScript': ServerMessageMap['config.setupScript']
+  'config.setBareSetupScript': ServerMessageMap['config.bareSetupScript']
+  'config.getBareSetupScript': ServerMessageMap['config.bareSetupScript']
+  'config.setTimeout': ServerMessageMap['config.worktreeTimeout']
+  'config.getTimeout': ServerMessageMap['config.worktreeTimeout']
+  'config.setDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
+  'config.getDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted

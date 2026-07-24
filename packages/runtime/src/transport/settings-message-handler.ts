@@ -262,6 +262,33 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.setupScript', { script: this.ctx.configService.getSetupScript() })
         return true
       }
+      case 'config.setBareSetupScript': {
+        this.ctx.configService.setBareSetupScript(msg.payload.script)
+        this.ctx.reply(ws, msg.id, 'config.bareSetupScript', { script: this.ctx.configService.getBareSetupScript() })
+        return true
+      }
+      case 'config.getBareSetupScript': {
+        this.ctx.reply(ws, msg.id, 'config.bareSetupScript', { script: this.ctx.configService.getBareSetupScript() })
+        return true
+      }
+      case 'config.setTimeout': {
+        this.ctx.configService.setTimeout(msg.payload.timeout)
+        this.ctx.reply(ws, msg.id, 'config.worktreeTimeout', { timeout: this.ctx.configService.getTimeout() })
+        return true
+      }
+      case 'config.getTimeout': {
+        this.ctx.reply(ws, msg.id, 'config.worktreeTimeout', { timeout: this.ctx.configService.getTimeout() })
+        return true
+      }
+      case 'config.setDefaultBaseBranch': {
+        this.ctx.configService.setDefaultBaseBranch(msg.payload.baseBranch)
+        this.ctx.reply(ws, msg.id, 'config.defaultBaseBranch', { baseBranch: this.ctx.configService.getDefaultBaseBranch() })
+        return true
+      }
+      case 'config.getDefaultBaseBranch': {
+        this.ctx.reply(ws, msg.id, 'config.defaultBaseBranch', { baseBranch: this.ctx.configService.getDefaultBaseBranch() })
+        return true
+      }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。
       // 这些 type 此前只是 `return true` 以避免 unknown_type，但工具审批的实际路径是
       // pi 的 extension_ui_request（method:'confirm'）→ extension.ui_request/ui_response 流
