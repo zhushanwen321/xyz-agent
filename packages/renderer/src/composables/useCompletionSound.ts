@@ -8,6 +8,22 @@
  * AudioContext lazy singleton + resume 处理 Electron autoplay 策略。
  */
 
+// ── 音频合成常量（音符频率 / 持续时间 / 增益包络）──
+/** 成功音：C5 音符频率（523.25Hz，简化为 523） */
+const SUCCESS_FREQ = 523
+/** 成功音持续时间（秒） */
+const SUCCESS_DURATION = 0.15
+/** 失败音起始频率：A3（220Hz） */
+const ERROR_FREQ_START = 220
+/** 失败音持续时间（秒） */
+const ERROR_DURATION = 0.3
+/** 失败音频率下滑终点：A2（110Hz），增加紧迫感 */
+const ERROR_FREQ_END = 110
+/** 音量包络起始增益（快速起音） */
+const GAIN_START = 0.3
+/** 音量包络衰减终点（接近静音，exponentialRampToValueAtTime 不能传 0） */
+const GAIN_END = 0.001
+
 let audioCtx: AudioContext | null = null
 
 function getAudioContext(): AudioContext {
@@ -44,10 +60,8 @@ function playTone(frequency: number, duration: number, type: OscillatorType = 's
   }
 
   // 音量包络：快速起 → 指数衰减
-  // eslint-disable-next-line no-magic-numbers -- 音频合成固有常量（gain / decay）
-  gainNode.gain.setValueAtTime(0.3, ctx.currentTime)
-  // eslint-disable-next-line no-magic-numbers
-  gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration)
+  gainNode.gain.setValueAtTime(GAIN_START, ctx.currentTime)
+  gainNode.gain.exponentialRampToValueAtTime(GAIN_END, ctx.currentTime + duration)
 
   oscillator.connect(gainNode)
   gainNode.connect(ctx.destination)
@@ -58,14 +72,12 @@ function playTone(frequency: number, duration: number, type: OscillatorType = 's
 
 /** 播放成功提示音：C5 (523Hz) 150ms */
 export function playSuccess(): void {
-  // eslint-disable-next-line no-magic-numbers -- 音频频率/持续时间固有常量
-  playTone(523, 0.15, 'sine')
+  playTone(SUCCESS_FREQ, SUCCESS_DURATION, 'sine')
 }
 
 /** 播放失败提示音：A3 (220Hz) 300ms，频率下滑到 A2 (110Hz) */
 export function playError(): void {
-  // eslint-disable-next-line no-magic-numbers -- 音频频率/持续时间固有常量
-  playTone(220, 0.3, 'sawtooth', 110)
+  playTone(ERROR_FREQ_START, ERROR_DURATION, 'sawtooth', ERROR_FREQ_END)
 }
 
 /**
