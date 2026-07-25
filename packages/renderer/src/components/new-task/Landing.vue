@@ -139,10 +139,6 @@ function onSelectWorkspace(payload: { cwd: string }): void {
 function onSelectBranch(payload: { name: string }): void {
   flow.selectBranch(payload.name)
 }
-function onConfirmDirtySwitch(payload: { name: string }): void {
-  flow.confirmDirtySwitch(payload.name)
-}
-
 /**
  * worktree 创建成功（CreateWorktreeModal emit success）：
  * 选定新 worktree 的 cwd（chip 回灌）+ 关 overlay 回 landing。
@@ -242,7 +238,6 @@ function onRetry(): void {
                 :current-branch="branch"
                 :worktree-items="worktreeItems"
                 @select="onSelectBranch"
-                @confirm-dirty-switch="onConfirmDirtySwitch"
                 @open-branch-modal="flow.openBranchModal()"
                 @select-worktree="onSelectWorktree"
                 @create-worktree="flow.openCreateWorktree()"

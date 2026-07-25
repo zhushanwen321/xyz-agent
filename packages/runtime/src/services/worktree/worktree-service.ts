@@ -187,7 +187,7 @@ export class WorktreeService implements IWorktreeService {
       '--format=%(refname:short)',
     ])
     const remote = remoteResult.exitCode === 0
-      ? remoteResult.stdout.split('\n').map(b => b.trim()).filter(b => Boolean(b) && b.startsWith('origin/') && b !== 'origin/HEAD')
+      ? remoteResult.stdout.split('\n').map(b => b.trim()).filter(b => Boolean(b) && !b.endsWith('/HEAD'))
       : []
 
     return { local, remote, defaultBranch }

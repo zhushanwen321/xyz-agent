@@ -26,8 +26,7 @@
  * 动作（presentational for actions，emit 单 payload 对象）：
  * 分支 tab：
  * - 选干净分支 → emit('select', { name })（父接 useNewTaskFlow.selectBranch）
- * - dirty 工作区选其它分支 → inline 二次确认条 → 确认 emit('confirm-dirty-switch', { name })
- *   （父接 useNewTaskFlow.confirmDirtySwitch，v1「留在工作区」不 stash，spec §3.3）
+
  * - 「创建并检出新分支」→ emit('open-branch-modal')（父接 useNewTaskFlow.openBranchModal）
  * - 「Git 图谱」→ v1 stub toast（spec §6 / issues #12 P3 延后）
  * Worktree tab：
@@ -39,7 +38,6 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitBranch, GitFork, Plus, GitGraph, TriangleAlert } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useToast } from '@/composables/useToast'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
@@ -70,7 +68,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'select', payload: { name: string }): void
-  (e: 'confirm-dirty-switch', payload: { name: string }): void
   (e: 'open-branch-modal'): void
   (e: 'select-worktree', payload: { path: string }): void
   (e: 'create-worktree'): void
@@ -83,8 +80,6 @@ const { error: toastError } = useToast()
 const statusError = ref<unknown>(null)
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
-/** dirty 二次确认条待确认的目标分支名（null = 无确认条） */
-const pendingDirtyBranch = ref<string | null>(null)
 onMounted(async () => {
   // 打开即 focus 搜索框（spec §3.3 键盘契约）
   nextTick(() => root.value?.querySelector('input')?.focus())
@@ -104,10 +99,6 @@ const allBranches = computed<string[]>(() => branches.value)
 const currentBranch = computed<string | undefined>(
   () => props.currentBranch ?? undefined,
 )
-/** dirty 判据：landing 态无 session 无法获取 dirty 状态，默认 false（不阻塞 checkout）。
- *  已建 session 场景的 dirty 二次确认由 useNewTaskBranch.selectBranch 内部处理。 */
-const dirtyCount = computed(() => 0)
-const isDirty = computed(() => false)
 
 /** unborn HEAD：是 git 仓库但无任何分支（无首次提交） */
 const isUnborn = computed(() => allBranches.value.length === 0)
@@ -126,22 +117,7 @@ function selectBranch(name: string): void {
     emit('close') // 已在当前分支，仅关 popover
     return
   }
-  // dirty 工作区切走 → inline 二次确认条（spec §3.3，不弹 modal）
-  if (isDirty.value) {
-    pendingDirtyBranch.value = name
-    return
-  }
   emit('select', { name })
-}
-
-function confirmDirtySwitch(): void {
-  const name = pendingDirtyBranch.value
-  pendingDirtyBranch.value = null
-  if (name) emit('confirm-dirty-switch', { name })
-}
-
-function cancelDirty(): void {
-  pendingDirtyBranch.value = null
 }
 
 function openBranchModal(): void {
@@ -265,17 +241,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           <template #icon>
             <GitBranch class="shrink-0 text-subtle" />
           </template>
-          <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-            <span class="truncate font-mono text-fg">{{ name }}</span>
-            <!-- 当前分支 dirty subline（spec §3.3 warning dot + mono 小字） -->
-            <span
-              v-if="name === currentBranch && isDirty"
-              class="flex items-center gap-1 text-[11px] text-warning"
-            >
-              <span class="size-1.5 shrink-0 rounded-full bg-warning" />
-              {{ t('newTask.branchSelect.dirtyChanges', { count: dirtyCount }) }}
-            </span>
-          </span>
+          <span class="truncate font-mono text-fg">{{ name }}</span>
         </PopoverListItem>
       </div>
       <!-- 列表滚动区结束；动作项不滚动，固定底部 -->
@@ -321,33 +287,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           {{ t('newTask.dirSelect.createWorktree') }}
         </PopoverActionItem>
 
-      <!-- dirty inline 二次确认条（spec §3.3，非 modal） -->
-      <div
-        v-if="pendingDirtyBranch"
-        data-testid="dirty-confirm"
-        class="flex flex-col gap-2 border-t border-warning/40 bg-warning-soft px-3 py-2.5 text-[12px] text-fg"
-      >
-        <p>
-          {{ t('newTask.branchSelect.dirtyWarning', { branch: pendingDirtyBranch, count: dirtyCount }) }}
-        </p>
-        <div class="flex justify-end gap-2">
-          <Button
-            data-testid="dirty-confirm-cancel"
-            variant="secondary"
-            class="h-7 px-2.5 text-[12px]"
-            @click="cancelDirty"
-          >
-            {{ t('common.cancel') }}
-          </Button>
-          <Button
-            data-testid="dirty-confirm-ok"
-            class="h-7 px-2.5 text-[12px]"
-            @click="confirmDirtySwitch"
-          >
-            {{ t('newTask.branchSelect.switchAway') }}
-          </Button>
-        </div>
-      </div>
+
     </div>
 
     <!-- ───── Worktree panel（bare-workspace 模式独占）───── -->
