@@ -25,6 +25,18 @@ export interface ProviderInfo {
     enabled?: boolean
   }>
   enabled?: boolean
+  /** Coding Plan 额度查询配置（可选；未配置 = 不查额度）。 */
+  quota?: {
+    /** 使用的 fetcher（匹配 QuotaPreset.fetcher / ProviderQuotaFetcher.id）。 */
+    fetcher: string
+    /** 是否启用额度查询。 */
+    enabled: boolean
+    /**
+     * cookie 类 provider 的 cookie 是否已写入 runtime（布尔态，明文不入前端）。
+     * api-key 类复用 ProviderInfo.apiKeySet，无需此字段。
+     */
+    cookieSet?: boolean
+  }
 }
 
 export interface ModelInfo {
