@@ -29,6 +29,13 @@ vi.mock('@/composables/features/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
 
+// 顶部静态 import：vitest 会把上面的 vi.mock 调用 hoist 到所有 import 之前，
+// 所以这里吃到的就是被 mock 后的 composable。
+// 用静态 import 的目的是把 PanelContainer 的重型 module graph 冷加载成本
+// 从「第一个 test 内执行（计入 5s testTimeout）」移到「文件 setup 阶段（不计入任何 test timeout）」，
+// 避免并发争用 CPU 时首个 test 偶发 timeout。
+import PanelContainer from '@/components/workspace/PanelContainer.vue'
+
 // SideDrawer stub：透传 mode 到 data-mode 属性，便于断言 PanelContainer 派发的值
 const SideDrawerStub = defineComponent({
   name: 'SideDrawer',
@@ -50,9 +57,7 @@ const PanelStub = defineComponent({
   template: '<div data-testid="panel" :data-panel-id="panelId" />',
 })
 
-async function mountContainer() {
-  // 动态 import 让 vi.mock 先生效
-  const PanelContainer = (await import('@/components/workspace/PanelContainer.vue')).default
+function mountContainer() {
   return mount(PanelContainer, {
     global: {
       stubs: { Panel: PanelStub, SideDrawer: SideDrawerStub },
@@ -65,23 +70,23 @@ beforeEach(() => {
 })
 
 describe('PanelContainer → SideDrawer mode 路由', () => {
-  it('单 panel（isDual=false）→ SideDrawer 收到 mode="split"', async () => {
+  it('单 panel（isDual=false）→ SideDrawer 收到 mode="split"', () => {
     const panel = usePanelStore()
     // 初始态即单 panel（layout.type==='panel'）
     expect(panel.isDual).toBe(false)
 
-    const wrapper = await mountContainer()
+    const wrapper = mountContainer()
     const drawer = wrapper.find('[data-testid="side-drawer"]')
     expect(drawer.exists()).toBe(true)
     expect(drawer.attributes('data-mode')).toBe('split')
   })
 
-  it('双 panel（isDual=true）→ SideDrawer 收到 mode="overlay"', async () => {
+  it('双 panel（isDual=true）→ SideDrawer 收到 mode="overlay"', () => {
     const panel = usePanelStore()
     panel.split()
     expect(panel.isDual).toBe(true)
 
-    const wrapper = await mountContainer()
+    const wrapper = mountContainer()
     const drawer = wrapper.find('[data-testid="side-drawer"]')
     expect(drawer.exists()).toBe(true)
     expect(drawer.attributes('data-mode')).toBe('overlay')
@@ -89,7 +94,7 @@ describe('PanelContainer → SideDrawer mode 路由', () => {
 
   it('split → overlay 随 panel split() 切换响应', async () => {
     const panel = usePanelStore()
-    const wrapper = await mountContainer()
+    const wrapper = mountContainer()
     expect(wrapper.find('[data-testid="side-drawer"]').attributes('data-mode')).toBe('split')
 
     panel.split()
@@ -97,16 +102,16 @@ describe('PanelContainer → SideDrawer mode 路由', () => {
     expect(wrapper.find('[data-testid="side-drawer"]').attributes('data-mode')).toBe('overlay')
   })
 
-  it('渲染 gate：单 panel mount 后 DOM 含 1 个 panel + 1 个 side-drawer', async () => {
-    const wrapper = await mountContainer()
+  it('渲染 gate：单 panel mount 后 DOM 含 1 个 panel + 1 个 side-drawer', () => {
+    const wrapper = mountContainer()
     expect(wrapper.findAll('[data-testid="panel"]')).toHaveLength(1)
     expect(wrapper.findAll('[data-testid="side-drawer"]')).toHaveLength(1)
   })
 
-  it('渲染 gate：dual panel mount 后 DOM 含 2 个 panel + 1 个 side-drawer', async () => {
+  it('渲染 gate：dual panel mount 后 DOM 含 2 个 panel + 1 个 side-drawer', () => {
     const panel = usePanelStore()
     panel.split()
-    const wrapper = await mountContainer()
+    const wrapper = mountContainer()
     expect(wrapper.findAll('[data-testid="panel"]')).toHaveLength(2)
     expect(wrapper.findAll('[data-testid="side-drawer"]')).toHaveLength(1)
   })

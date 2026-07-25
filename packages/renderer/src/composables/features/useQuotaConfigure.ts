@@ -25,6 +25,10 @@ export interface UseQuotaConfigureReturn {
   enabled: Ref<boolean>
   /** cookie 输入值（cookie 类 provider 专用） */
   cookieInput: Ref<string>
+  /** Coding Plan 专属 API Key 输入值（api-key 类，留空 = 复用 provider.apiKey） */
+  apiKeyInput: Ref<string>
+  /** 是否已配置专属 API Key（provider.quota.apiKeySet） */
+  apiKeyConfigured: Ref<boolean>
   /** 测试查询状态 */
   testStatus: Ref<QuotaTestStatus>
   /** 测试查询错误信息（testStatus='error' 时有值） */
@@ -50,6 +54,8 @@ export interface UseQuotaConfigureReturn {
   selectFetcher: (id: string) => Promise<void>
   /** 保存 cookie 并启用 */
   saveCookie: () => Promise<void>
+  /** 保存专属 API Key（api-key 类，空字符串 = 清除，复用 provider.apiKey） */
+  saveApiKey: () => Promise<void>
   /** 测试查询（触发 quota.fetch） */
   testQuery: () => Promise<void>
   /** 重置状态（provider 切换时调用） */
@@ -67,6 +73,8 @@ export function useQuotaConfigure(
   const enabled = ref(false)
   const fetcherId = ref<string | undefined>(undefined)
   const cookieInput = ref('')
+  const apiKeyInput = ref('')
+  const apiKeyConfigured = ref(false)
   const testStatus = ref<QuotaTestStatus>('idle')
   const testError = ref('')
   const quotaData = ref<NormalizedQuotaRow | null>(null)
@@ -114,6 +122,8 @@ export function useQuotaConfigure(
       // fetcherId 默认值：provider.quota.fetcher > 自动匹配的 preset.fetcher > undefined
       fetcherId.value = preset.value?.fetcher
       cookieInput.value = ''
+      apiKeyInput.value = ''
+      apiKeyConfigured.value = false
       testStatus.value = 'idle'
       testError.value = ''
       quotaData.value = null
@@ -125,6 +135,9 @@ export function useQuotaConfigure(
     fetcherId.value = p.quota.fetcher ?? preset.value?.fetcher
     // cookie 明文不入前端，只标记是否已配置
     cookieInput.value = p.quota.cookieSet ? '••••••••' : ''
+    // 专属 API Key 明文不入前端，只标记是否已配置（用于占位符提示）
+    apiKeyConfigured.value = p.quota.apiKeySet === true
+    apiKeyInput.value = ''
     // 如果已启用，尝试读缓存
     if (p.quota.enabled) {
       loadCached()
@@ -186,12 +199,17 @@ export function useQuotaConfigure(
     }
   }
 
-  /** 切换启用状态（api-key 类直接调 configure；cookie 类需先填 cookie） */
+  /**
+   * 切换启用状态（api-key 类直接调 configure；cookie 类需先填 cookie）。
+   * 乐观更新：立即翻转 enabled 让 Switch 视觉响应，RPC 失败再回滚。
+   * reka-ui Switch 是受控组件，异步更新 modelValue 会导致点击后视觉回弹。
+   */
   async function toggleEnabled(): Promise<void> {
     const p = providerRef.value
     if (!p) return
 
-    const newEnabled = !enabled.value
+    const prevEnabled = enabled.value
+    const newEnabled = !prevEnabled
 
     // cookie 类开启时需要先有 cookie 输入（基于当前 fetcherId 判断认证方式）
     if (isCookieAuth.value && newEnabled && !cookieInput.value.trim()) {
@@ -199,21 +217,26 @@ export function useQuotaConfigure(
       return
     }
 
+    // 乐观更新：立即翻转，Switch 视觉立即响应
+    enabled.value = newEnabled
     configuring.value = true
     configureError.value = ''
 
     try {
       const result = await quotaApi.configure(p.id, newEnabled, undefined, fetcherId.value)
       if (result.ok) {
-        enabled.value = newEnabled
         if (newEnabled) {
-          // 开启后自动测试一次
+          // 开启后自动测试一次（不阻塞 configuring 状态太久）
           await testQuery()
         }
       } else {
+        // RPC 失败：回滚
+        enabled.value = prevEnabled
         configureError.value = result.error || '配置失败'
       }
     } catch (e) {
+      // 异常：回滚
+      enabled.value = prevEnabled
       configureError.value = e instanceof Error ? e.message : '配置失败'
     } finally {
       configuring.value = false
@@ -250,6 +273,43 @@ export function useQuotaConfigure(
     }
   }
 
+  /**
+   * 保存专属 API Key（api-key 类 provider）。
+   * - 非空字符串 = 写入专属 key，后续查询优先用它
+   * - 空字符串 = 清除专属 key，fallback 到 provider.apiKey（上方填写的）
+   * 明文 key 不入前端状态，仅更新 apiKeyConfigured 标记。
+   */
+  async function saveApiKey(): Promise<void> {
+    const p = providerRef.value
+    if (!p) return
+
+    configuring.value = true
+    configureError.value = ''
+
+    try {
+      const apiKey = apiKeyInput.value.trim()
+      const result = await quotaApi.configure(
+        p.id,
+        enabled.value,
+        undefined,
+        fetcherId.value,
+        apiKey,
+      )
+      if (result.ok) {
+        apiKeyConfigured.value = apiKey.length > 0
+        apiKeyInput.value = ''
+        // 保存后自动测试（如果已启用）
+        if (enabled.value) await testQuery()
+      } else {
+        configureError.value = result.error || 'API Key 保存失败'
+      }
+    } catch (e) {
+      configureError.value = e instanceof Error ? e.message : 'API Key 保存失败'
+    } finally {
+      configuring.value = false
+    }
+  }
+
   /** 测试查询（触发 quota.refresh，绕过 throttle） */
   async function testQuery(): Promise<void> {
     const p = providerRef.value
@@ -281,6 +341,8 @@ export function useQuotaConfigure(
     enabled.value = false
     fetcherId.value = undefined
     cookieInput.value = ''
+    apiKeyInput.value = ''
+    apiKeyConfigured.value = false
     testStatus.value = 'idle'
     testError.value = ''
     quotaData.value = null
@@ -294,6 +356,8 @@ export function useQuotaConfigure(
     fetcherOptions,
     enabled,
     cookieInput,
+    apiKeyInput,
+    apiKeyConfigured,
     testStatus,
     testError,
     quotaData,
@@ -306,6 +370,7 @@ export function useQuotaConfigure(
     toggleEnabled,
     selectFetcher,
     saveCookie,
+    saveApiKey,
     testQuery,
     reset,
   }

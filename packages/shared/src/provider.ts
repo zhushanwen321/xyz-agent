@@ -39,6 +39,11 @@ export interface ProviderInfo {
      * api-key 类复用 ProviderInfo.apiKeySet，无需此字段。
      */
     cookieSet?: boolean
+    /**
+     * api-key 类 provider 是否有 Coding Plan 专属 API Key（明文存 secrets 目录，不写 models.json）。
+     * 未设置/false = 复用 ProviderInfo.apiKey（provider 的 API Key）。
+     */
+    apiKeySet?: boolean
   }
 }
 

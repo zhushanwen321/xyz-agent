@@ -28,6 +28,8 @@ export interface ConfigProviderConfig {
     enabled: boolean
     /** cookie 类 provider 的 cookie 是否已写入 secrets（布尔态）。 */
     cookieSet?: boolean
+    /** api-key 类 provider 是否有专属 API Key（明文存 secrets，未设置/false 复用 provider.apiKey）。 */
+    apiKeySet?: boolean
   }
 }
 

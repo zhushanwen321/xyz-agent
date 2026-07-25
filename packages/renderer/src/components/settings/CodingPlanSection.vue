@@ -47,7 +47,7 @@
       />
     </div>
 
-    <!-- API Key 类：凭证状态 + 操作按钮 -->
+    <!-- API Key 类：凭证状态 + 专属 API Key 输入（可选）+ 操作按钮 -->
     <template v-if="!isCookieAuth">
       <div class="flex items-center justify-between py-1">
         <span class="text-[11px] text-muted">{{ t('settings.providerEdit.quotaAuthMethod') }}</span>
@@ -56,6 +56,39 @@
           {{ t('settings.providerEdit.quotaCredentialOk') }}
         </span>
         <span v-else class="text-[11px] text-danger">{{ t('settings.providerEdit.quotaCredentialMissing') }}</span>
+      </div>
+
+      <!--
+        专属 API Key（可选）：适配 router/反代场景。
+        provider 的 baseUrl 可能指向本地 router，provider.apiKey 是 router 的 key，
+        而 Coding Plan 平台（bigmodel.cn 等）需要平台专属 key。
+        留空 = 复用上方填写的 provider API Key。
+      -->
+      <div class="mt-1.5">
+        <Label class="mb-1 block text-[10px] text-muted">
+          {{ t('settings.providerEdit.quotaApiKey') }}
+          <span class="normal-case text-subtle">{{ t('settings.providerEdit.quotaApiKeyHint') }}</span>
+        </Label>
+        <div class="flex gap-1.5">
+          <Input
+            :model-value="apiKeyInput"
+            type="password"
+            class="h-8 flex-1 font-mono text-[11px]"
+            :placeholder="apiKeyConfigured ? t('settings.providerEdit.quotaApiKeySetPlaceholder') : t('settings.providerEdit.quotaApiKeyPlaceholder')"
+            data-testid="quota-apikey-input"
+            @update:model-value="$emit('update:apiKeyInput', String($event ?? ''))"
+          />
+          <Button
+            variant="secondary"
+            class="gap-1 px-2 py-1 text-[11px] text-muted"
+            :disabled="configuring"
+            data-testid="quota-save-apikey-btn"
+            @click="$emit('saveApiKey')"
+          >
+            <Loader2 v-if="configuring" class="animate-spin" />
+            {{ t('settings.providerEdit.quotaSaveApiKey') }}
+          </Button>
+        </div>
       </div>
 
       <!-- 操作按钮（仅启用时显示） -->
@@ -186,6 +219,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
@@ -198,6 +232,10 @@ withDefaults(defineProps<{
   fetcherOptions?: Array<{ value: string; label: string }>
   enabled: boolean
   cookieInput: string
+  /** Coding Plan 专属 API Key 输入值（api-key 类，留空 = 复用 provider.apiKey） */
+  apiKeyInput?: string
+  /** 是否已配置专属 API Key（控制占位符提示） */
+  apiKeyConfigured?: boolean
   testStatus: QuotaTestStatus
   testErrorMsg: string
   quotaRow: NormalizedQuotaRow | null
@@ -212,6 +250,8 @@ withDefaults(defineProps<{
 }>(), {
   // fetcherId 默认 undefined（未选择任何类型）
   fetcherId: undefined,
+  apiKeyInput: '',
+  apiKeyConfigured: false,
   // 默认选项 = QUOTA_PRESETS（5 个内置类型），调用方一般无需传
   fetcherOptions: () => QUOTA_PRESETS.map((p) => ({ value: p.fetcher, label: p.label })),
 })
@@ -222,7 +262,10 @@ defineEmits<{
   toggleEnabled: []
   testQuery: []
   saveCookie: []
+  /** 保存专属 API Key（api-key 类） */
+  saveApiKey: []
   'update:cookieInput': [value: string]
+  'update:apiKeyInput': [value: string]
 }>()
 
 const { t } = useI18n()

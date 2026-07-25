@@ -102,7 +102,7 @@ export interface SetProviderData {
   }>
   enabled?: boolean
   /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
-  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
+  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean; apiKeySet?: boolean }
 }
 
 /** 系统提示词配置（FR-6）。文件：<dataDir>/system-prompt.json。
@@ -298,7 +298,7 @@ export interface ClientMessageMap {
   // Coding Plan 额度查询
   'quota.fetch': { providerId: string }
   'quota.getCached': { providerId: string }
-  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string }
+  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string }
   /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
   'quota.refresh': { providerId: string }
 }

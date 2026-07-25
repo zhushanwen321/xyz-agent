@@ -157,6 +157,8 @@
             :fetcher-options="quotaFetcherOptions"
             :enabled="quotaEnabled"
             :cookie-input="quotaCookieInput"
+            :api-key-input="quotaApiKeyInput"
+            :api-key-configured="quotaApiKeyConfigured"
             :test-status="quotaTestStatus"
             :test-error-msg="quotaTestError"
             :quota-row="quotaData"
@@ -164,7 +166,7 @@
             :is-cookie-auth="quotaIsCookieAuth"
             :configuring="quotaConfiguring"
             :configure-error-msg="quotaConfigureError"
-            :api-key-set="!!provider?.apiKeySet"
+            :api-key-set="!!provider?.apiKeySet || !!provider?.quota?.apiKeySet"
             :cookie-set="!!provider?.quota?.cookieSet"
             :help-url="quotaHelpUrl"
             :help-text="quotaHelpText"
@@ -172,7 +174,9 @@
             @toggle-enabled="quotaToggleEnabled"
             @test-query="quotaTestQuery"
             @save-cookie="quotaSaveCookie"
+            @save-api-key="quotaSaveApiKey"
             @update:cookie-input="quotaCookieInput = $event"
+            @update:api-key-input="quotaApiKeyInput = $event"
           />
 
           <!-- 操作按钮 -->
@@ -432,6 +436,8 @@ const {
   fetcherOptions: quotaFetcherOptions,
   enabled: quotaEnabled,
   cookieInput: quotaCookieInput,
+  apiKeyInput: quotaApiKeyInput,
+  apiKeyConfigured: quotaApiKeyConfigured,
   testStatus: quotaTestStatus,
   testError: quotaTestError,
   quotaData,
@@ -444,6 +450,7 @@ const {
   toggleEnabled: quotaToggleEnabled,
   selectFetcher: quotaSelectFetcher,
   saveCookie: quotaSaveCookie,
+  saveApiKey: quotaSaveApiKey,
   testQuery: quotaTestQuery,
 } = useQuotaConfigure(matchedPreset, toRef(props, 'provider'))
 

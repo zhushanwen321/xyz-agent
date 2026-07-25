@@ -11,7 +11,7 @@
  * 设计文档：docs/page-design/v3/coding-plan-quota/design.md §2.2.3
  */
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NormalizedQuotaRow, ProviderQuotaFetcher } from '@xyz-agent/shared'
 import { matchQuotaPreset } from '@xyz-agent/shared'
@@ -137,26 +137,36 @@ export class QuotaService {
 
   /**
    * 配置 provider 额度查询（Settings UI 调用）。
-   * - 持久化 fetcher/enabled/cookieSet 到 models.json 的 provider.quota
+   * - 持久化 fetcher/enabled/cookieSet/apiKeySet 到 models.json 的 provider.quota
    * - cookie 写入 secrets 目录（cookie 类 provider）
+   * - apiKey 写入 secrets 目录（api-key 类 provider，可选；不填 = 复用 provider.apiKey）
    *
    * @param fetcher - 用户手动选择的 fetcher id（可选）。未传时保留既有 fetcher 不变。
+   * @param apiKey - Coding Plan 专属 API Key（可选，api-key 类）。空字符串 = 清除专属 key，复用 provider.apiKey。
    */
   configure(
     providerId: string,
     enabled: boolean,
     cookie?: string,
     fetcher?: string,
+    apiKey?: string,
   ): QuotaConfigureResult {
-    // cookie 写入 secrets 目录（cookie 类 provider）
+    // 确保 secrets 目录存在
+    if (!existsSync(this.secretsDir)) {
+      try {
+        mkdirSync(this.secretsDir, { recursive: true })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        logger.warn('[quota] failed to create secrets dir', { providerId, error: msg })
+        return { ok: false, error: msg }
+      }
+    }
+
+    // cookie 写入 secrets（cookie 类）
     let cookieSet: boolean | undefined
     if (cookie !== undefined) {
       try {
-        if (!existsSync(this.secretsDir)) {
-          mkdirSync(this.secretsDir, { recursive: true })
-        }
-        const cookiePath = this.getCookiePath(providerId)
-        writeFileSync(cookiePath, cookie, 'utf-8')
+        writeFileSync(this.getCookiePath(providerId), cookie, 'utf-8')
         cookieSet = true
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -165,8 +175,41 @@ export class QuotaService {
       }
     }
 
-    // 持久化 quota 配置到 models.json（fetcher/enabled/cookieSet）
-    const persistOk = this.persistQuotaConfig(providerId, enabled, fetcher, cookieSet)
+    // Coding Plan 专属 API Key 写入 secrets（api-key 类，可选）
+    let apiKeySet: boolean | undefined
+    if (apiKey !== undefined) {
+      try {
+        const keyPath = this.getApiKeyPath(providerId)
+        if (apiKey) {
+          // 非空 = 写入专属 key
+          writeFileSync(keyPath, apiKey, 'utf-8')
+          apiKeySet = true
+        } else {
+          // 空字符串 = 清除专属 key，fallback 到 provider.apiKey
+          if (existsSync(keyPath)) {
+            try {
+              unlinkSync(keyPath)
+            } catch {
+              // 清理失败不阻断主流程（下次写入会覆盖）
+            }
+          }
+          apiKeySet = false
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        logger.warn('[quota] failed to write apiKey', { providerId, error: msg })
+        return { ok: false, error: msg }
+      }
+    }
+
+    // 持久化 quota 配置到 models.json（fetcher/enabled/cookieSet/apiKeySet）
+    const persistOk = this.persistQuotaConfig(
+      providerId,
+      enabled,
+      fetcher,
+      cookieSet,
+      apiKeySet,
+    )
     if (!persistOk) {
       return { ok: false, error: 'failed to persist quota config' }
     }
@@ -182,6 +225,7 @@ export class QuotaService {
     enabled: boolean,
     fetcher: string | undefined,
     cookieSet: boolean | undefined,
+    apiKeySet: boolean | undefined,
   ): boolean {
     const existing = getProviderConfig(providerId)
     if (!existing) {
@@ -196,6 +240,8 @@ export class QuotaService {
         enabled,
         // 保留既有 cookieSet，除非本次明确写入新 cookie
         cookieSet: cookieSet ?? existing.quota?.cookieSet,
+        // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
+        apiKeySet: apiKeySet ?? existing.quota?.apiKeySet,
       },
     })
     return true
@@ -270,20 +316,33 @@ export class QuotaService {
 
   /**
    * 获取凭证。
-   * - api-key：从 pi-provider-store 读取
+   * - api-key：优先读 Coding Plan 专属 API Key（secrets 目录），未设置时 fallback 到 provider.apiKey
    * - cookie：从 secrets 目录读取文件
+   *
+   * 支持自定义 API Key 是为了适配 router/反代场景：provider 的 baseUrl 指向本地 router，
+   * 但 provider.apiKey 是 router 的 key，而 Coding Plan 平台（如 bigmodel.cn）需要平台专属 key。
+   * 用户可为 Coding Plan 单独配置一个 API Key，不填则默认用上方的 provider API Key。
    */
   private getCredential(providerId: string, authType: 'api-key' | 'cookie'): string | null {
     if (authType === 'api-key') {
-      const key = getApiKeyForProvider(providerId)
-      return key ?? null
+      // 优先读 Coding Plan 专属 API Key（secrets 目录）
+      const quotaKey = this.readSecret(this.getApiKeyPath(providerId))
+      if (quotaKey) return quotaKey
+      // fallback：复用 provider 的 API Key
+      const providerKey = getApiKeyForProvider(providerId)
+      return providerKey ?? null
     }
 
     // cookie 类型：从 secrets 目录读取
+    return this.readSecret(this.getCookiePath(providerId))
+  }
+
+  /** 读 secret 文件（去空白），文件不存在/读取失败返回 null */
+  private readSecret(filePath: string): string | null {
     try {
-      const cookiePath = this.getCookiePath(providerId)
-      if (!existsSync(cookiePath)) return null
-      return readFileSync(cookiePath, 'utf-8').trim()
+      if (!existsSync(filePath)) return null
+      const val = readFileSync(filePath, 'utf-8').trim()
+      return val || null
     } catch {
       return null
     }
@@ -292,5 +351,10 @@ export class QuotaService {
   /** cookie 文件路径：`<dataDir>/secrets/<providerId>-cookie.txt` */
   private getCookiePath(providerId: string): string {
     return join(this.secretsDir, `${providerId}-cookie.txt`)
+  }
+
+  /** Coding Plan 专属 API Key 文件路径：`<dataDir>/secrets/<providerId>-apikey.txt` */
+  private getApiKeyPath(providerId: string): string {
+    return join(this.secretsDir, `${providerId}-apikey.txt`)
   }
 }

@@ -45,8 +45,8 @@ export class QuotaMessageHandler {
         return
       }
       case 'quota.configure': {
-        const { providerId, enabled, cookie, fetcher } = msg.payload
-        const result = this.ctx.quotaService.configure(providerId, enabled, cookie, fetcher)
+        const { providerId, enabled, cookie, fetcher, apiKey } = msg.payload
+        const result = this.ctx.quotaService.configure(providerId, enabled, cookie, fetcher, apiKey)
         this.ctx.reply(ws, msg.id, 'quota.configure:result', result)
         return
       }
