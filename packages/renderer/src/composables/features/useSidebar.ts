@@ -42,6 +42,7 @@ import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
+import { useHandoffActions } from '@/composables/features/useHandoffActions'
 // deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
 export { deriveStatus } from '@/composables/logic/sessionStatus'
 
@@ -419,6 +420,18 @@ export function useSidebar() {
     enterForkModeFromLastAssistant,
   } = useForkActions(focusedSessionId)
 
+  /**
+   * Handoff 操作（handoff / abortHandoff / handoffFromLastAssistant / enterHandoffModeFromLastAssistant）。
+   * 编排逻辑抽到 useHandoffActions（参照 useForkActions 范式），注入 focusedSessionId ref，
+   * 内部自行获取 chat store + api。handoff 逻辑与 fork 正交，独立 composable 职责内聚。
+   */
+  const {
+    handoff,
+    abortHandoff,
+    handoffFromLastAssistant,
+    enterHandoffModeFromLastAssistant,
+  } = useHandoffActions(focusedSessionId)
+
 
   /**
    * 加载 session 列表（W6 去全量预 hydrate）。
@@ -549,5 +562,9 @@ export function useSidebar() {
     forkSessionAsk,
     forkFromLastAssistant,
     enterForkModeFromLastAssistant,
+    handoff,
+    abortHandoff,
+    handoffFromLastAssistant,
+    enterHandoffModeFromLastAssistant,
   }
 }

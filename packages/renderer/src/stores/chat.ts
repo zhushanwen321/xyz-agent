@@ -50,6 +50,7 @@ import { normalizeContent } from '@xyz-agent/shared'
 import { dispatchMessageEvent } from './chat-message-effects'
 import { findLastAssistantIndex } from './chat-chunk-processor'
 import { createChangeSetController } from './chat-changeset'
+import { createHandoffController } from './chat-handoff'
 export type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
 import type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
 
@@ -240,12 +241,14 @@ function finalizeSubagentStreamImpl(
 function collectFinalizeCandidates(
   messages: { value: Map<string, Message[]> },
   compactingSessions: { value: Set<string> },
+  handingOffSessions: { value: Set<string> },
   retryStates: { value: Map<string, unknown> },
   queueStates: { value: Map<string, unknown> },
   pendingSend: { value: Set<string> },
 ): Set<string> {
   const candidateSids = new Set<string>(messages.value.keys())
   for (const sid of compactingSessions.value) candidateSids.add(sid)
+  for (const sid of handingOffSessions.value) candidateSids.add(sid)
   for (const sid of retryStates.value.keys()) candidateSids.add(sid)
   for (const sid of queueStates.value.keys()) candidateSids.add(sid)
   for (const sid of pendingSend.value) candidateSids.add(sid)
@@ -254,7 +257,7 @@ function collectFinalizeCandidates(
 
 /**
  * resetTransientStates 的 session 级独立瞬态清理（W3，模块作用域）。
- * 清 compacting / retry / queue（断连兜底：这些态在断连后无事件驱动清理）。
+ * 清 compacting / handingOff / retry / queue（断连兜底：这些态在断连后无事件驱动清理）。
  * 抽到模块作用域以控制 setup 函数行数（max-lines-per-function），store action 仅做 ref 委托。
  */
 function clearIndependentTransient(
@@ -262,8 +265,10 @@ function clearIndependentTransient(
   retryStates: { value: Map<string, unknown> },
   queueStates: { value: Map<string, unknown> },
   setCompacting: (sessionId: string, value: boolean) => void,
+  setHandingOff: (sessionId: string, value: boolean) => void,
 ): void {
   setCompacting(sessionId, false)
+  setHandingOff(sessionId, false)
   if (retryStates.value.has(sessionId)) {
     const next = new Map(retryStates.value)
     next.delete(sessionId)
@@ -273,6 +278,19 @@ function clearIndependentTransient(
     const next = new Map(queueStates.value)
     next.delete(sessionId)
     queueStates.value = next
+  }
+}
+
+/**
+ * per-session timer Map 清理 helper（模块作用域，控制 setup 行数）。
+ * 取出 timer → clearTimeout → delete。无 timer 时 no-op（幂等）。
+ * 复用于 clearPendingSendTimer / clearStreamingTimer（对称 chat-handoff.clearHandingOffTimer）。
+ */
+function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeout>>, sessionId: string): void {
+  const timer = timers.get(sessionId)
+  if (timer) {
+    clearTimeout(timer)
+    timers.delete(sessionId)
   }
 }
 
@@ -341,6 +359,14 @@ export const useChatStore = defineStore('chat', () => {
   const pendingSend = ref<Set<string>>(new Set())
   /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离） */
   const compactingSessions = ref<Set<string>>(new Set())
+  /**
+   * handingOff 瞬时态子域控制器（fast-handoff，ADR：对称 compactingSessions）。
+   * handingOffSessions ref + per-session 超时兜底 timer 内聚在 chat-handoff.ts；本 store
+   * 经 createHandoffController() 组合后原样透出公共 API（isHandingOff/setHandingOff 等），
+   * 行为与原内联实现零变化。设计选择见 chat-handoff.ts 顶部注释。
+   */
+  const handoff = createHandoffController()
+  const { handingOffSessions, isHandingOff, setHandingOff, clearHandingOffTimer } = handoff
   /** 按 sessionId 分区的自动重试态（W06-B，auto_retry_start/end） */
   const retryStates = ref<Map<string, RetryState>>(new Map())
   /** 按 sessionId 分区的消息队列态（W06-B，queue_update） */
@@ -371,6 +397,7 @@ export const useChatStore = defineStore('chat', () => {
   const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** pendingSend 空窗期 timer（按 sessionId 隔离） */
   const pendingSendTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  // handingOff 超时兜底 timer + HANDING_OFF_TIMEOUT_MS 阈值内聚在 createHandoffController（chat-handoff.ts）
 
   // ── 派生态（computed scan，D-005，零手动维护）──
 
@@ -420,8 +447,10 @@ export const useChatStore = defineStore('chat', () => {
     return messages.value.get(sessionId) ?? []
   }
 
-  /** W3 H3：session 是否在 LRU 豁免集（streaming/pending/compacting 不驱逐，AC-9） */
-  const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid)
+  /** W3 H3：session 是否在 LRU 豁免集（streaming/pending/compacting/handoff 不驱逐，AC-9）。
+   *  handingOff 并入（对称 compacting）：交接中 session 被 LRU 驱逐会清 messages，导致 UI
+   *  显示「正在交接…」但对话内容消失（reviewer M3 对称性缺口）。 */
+  const isLruExempt = (sid: string) => isGenerating(sid) || pendingSend.value.has(sid) || isCompacting(sid) || isHandingOff(sid)
   /** W3 H3：LRU recency 更新（AC-1 真 LRU），直接透传 lruTouch */
   const touchLru = lruTouch
   /**
@@ -652,10 +681,10 @@ export const useChatStore = defineStore('chat', () => {
    */
   function finalizeAllStreaming(reason: FinalizeReason): void {
     const candidateSids = collectFinalizeCandidates(
-      messages, compactingSessions, retryStates, queueStates, pendingSend,
+      messages, compactingSessions, handingOffSessions, retryStates, queueStates, pendingSend,
     )
     for (const sid of candidateSids) {
-      if (isGenerating(sid) || isCompacting(sid) || retryStates.value.has(sid) || queueStates.value.has(sid) || pendingSend.value.has(sid)) {
+      if (isGenerating(sid) || isCompacting(sid) || isHandingOff(sid) || retryStates.value.has(sid) || queueStates.value.has(sid) || pendingSend.value.has(sid)) {
         resetTransientStates(sid, reason)
       }
     }
@@ -679,7 +708,7 @@ export const useChatStore = defineStore('chat', () => {
     // 先走 finalizeSession 收口 streaming 实体 + 清 pendingSend + 清 timer（保留其幂等语义）
     finalizeSession(sessionId, reason)
     // 再清 session 级独立瞬态（断连兜底：这些态在断连后无事件驱动清理）
-    clearIndependentTransient(sessionId, retryStates, queueStates, setCompacting)
+    clearIndependentTransient(sessionId, retryStates, queueStates, setCompacting, setHandingOff)
   }
 
   // ── pendingSend 生命周期（useChat/effects 经 ctx/port 调）──
@@ -705,11 +734,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearPendingSendTimer(sessionId: string): void {
-    const timer = pendingSendTimers.get(sessionId)
-    if (timer) {
-      clearTimeout(timer)
-      pendingSendTimers.delete(sessionId)
-    }
+    clearSessionTimer(pendingSendTimers, sessionId)
   }
 
   // ── streaming timer（超时兜底）──
@@ -725,11 +750,7 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 取消超时 timer（finalizeSession / store dispose 调） */
   function clearStreamingTimer(sessionId: string): void {
-    const timer = streamingTimers.get(sessionId)
-    if (timer) {
-      clearTimeout(timer)
-      streamingTimers.delete(sessionId)
-    }
+    clearSessionTimer(streamingTimers, sessionId)
   }
 
   /**
@@ -755,10 +776,11 @@ export const useChatStore = defineStore('chat', () => {
   // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
   // 避免回调操作已废弃的 store 实例 ref + warn 噪音。
   onScopeDispose(() => {
-    for (const timer of pendingSendTimers.values()) clearTimeout(timer)
-    pendingSendTimers.clear()
-    for (const timer of streamingTimers.values()) clearTimeout(timer)
-    streamingTimers.clear()
+    for (const timers of [pendingSendTimers, streamingTimers]) {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+    }
+    handoff.clearAllTimers()
   })
 
   /**
@@ -775,18 +797,13 @@ export const useChatStore = defineStore('chat', () => {
     compactingSessions.value = next
   }
 
-  /**
-   * 追加 system 提示行。委托 appendSystemNoticeImpl（模块级，控制 setup 行数）。
-   * 与规则 #3「错误作为消息插入聊天流」一致：不用顶部 banner。
-   */
-  function appendSystemNotice(sessionId: string, text: string): void {
-    appendSystemNoticeImpl(messages, sessionId, text)
-  }
+  // isHandingOff / setHandingOff / clearHandingOffTimer 委托 createHandoffController（chat-handoff.ts）。
+
+  /** 追加 system 提示行（与规则 #3「错误作为消息插入聊天流」一致：不用顶部 banner）。委托 appendSystemNoticeImpl。 */
+  const appendSystemNotice = (sessionId: string, text: string): void => appendSystemNoticeImpl(messages, sessionId, text)
 
   /** 截断 session 消息到 messageId（编辑重发用）。委托 chat-mutations.truncateMessagesFrom。 */
-  function truncateFrom(sessionId: string, messageId: string, inclusive: boolean): void {
-    truncateMessagesFrom(messages, sessionId, messageId, inclusive)
-  }
+  const truncateFrom = (sessionId: string, messageId: string, inclusive: boolean): void => truncateMessagesFrom(messages, sessionId, messageId, inclusive)
 
   /**
    * 清理指定 session 的全部 per-session 状态（deleteSession 调用，S3）。
@@ -796,9 +813,9 @@ export const useChatStore = defineStore('chat', () => {
     disposeSessionImpl(
       sessionId,
       [messages, retryStates, queueStates],
-      [hydrated, pendingSend, compactingSessions, failedHistory],
+      [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory],
       changeSetStatuses,
-      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId)],
+      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearHandingOffTimer(sessionId)],
     )
     disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
@@ -807,6 +824,7 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     pendingSend,
     compactingSessions,
+    handingOffSessions,
     retryStates,
     queueStates,
     changeSetStatuses,
@@ -837,6 +855,8 @@ export const useChatStore = defineStore('chat', () => {
     markSessionError,
     isCompacting,
     setCompacting,
+    isHandingOff,
+    setHandingOff,
     appendSystemNotice,
     truncateFrom,
     applyFileChanges,

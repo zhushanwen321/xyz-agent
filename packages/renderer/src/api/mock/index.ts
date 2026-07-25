@@ -339,6 +339,16 @@ export const session = {
   async subagentAction(_sessionId: string, _action: string, _subagentId: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+
+  /** Mock handoff（fast-handoff：stub resolve 即可，E2E 走 runtime 真路径） */
+  async handoff(_sessionId: string, _focus?: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
+
+  /** Mock 取消 handoff（对称 handoff，stub resolve 即可） */
+  async abortHandoff(_sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
 }
 
 export const chat = {
