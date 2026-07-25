@@ -2,12 +2,12 @@
  * useCommandPopoverTrigger onAddSelect attach/image 分支单测（TC2/TC3，slice5 attach-dragdrop-menu）。
  *
  * 覆盖：
- * - TC2 attach: pickFile 返回 path → insertTextAtCursor(path)；canceled → 静默 return（不调）
+ * - TC2 attach: pickFile 返回 path → insertFileChip(path)；canceled → 静默 return（不调）
  * - TC3 image:  pickFile（带 image filters）返回 path → insertImageBadge(path, basename, basename)
  *               （磁盘已存在文件，fileName 与 displayName 同值）；canceled → 静默 return
  * - pickFile reject → catch 静默 return（不 throw）
  *
- * mock 策略：vi.mock('@/lib/ipc') 替换 pickFile；inputRef 用 spy 对象（insertTextAtCursor /
+ * mock 策略：vi.mock('@/lib/ipc') 替换 pickFile；inputRef 用 spy 对象（insertFileChip /
  * insertImageBadge / saveSelection / focus）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useCommandPopoverTrigger.attach.test.ts
@@ -24,10 +24,10 @@ vi.mock('@/lib/ipc', () => ({
 
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
 
-/** inputRef mock：spy insertTextAtCursor / insertImageBadge / saveSelection / focus */
+/** inputRef mock：spy insertFileChip / insertImageBadge / saveSelection / focus */
 function createInputMock() {
   return {
-    insertTextAtCursor: vi.fn(),
+    insertFileChip: vi.fn(),
     insertImageBadge: vi.fn(),
     saveSelection: vi.fn(),
     focus: vi.fn(),
@@ -56,7 +56,7 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     dispose?.()
   })
 
-  it('TC2: attach + pickFile 返回 path → insertTextAtCursor(path)', async () => {
+  it('TC2: attach + pickFile 返回 path → insertFileChip(path)', async () => {
     pickFileMock.mockResolvedValue({ canceled: false, path: '/x/y.txt' })
     const inputMock = createInputMock()
     const { result, dispose: d } = runWithScope(() =>
@@ -67,7 +67,8 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     // attach 无 filters：pickFile 以零参数调用（不传 filters options）
     expect(pickFileMock).toHaveBeenCalledTimes(1)
     expect(pickFileMock.mock.calls[0]).toHaveLength(0)
-    expect(inputMock.insertTextAtCursor).toHaveBeenCalledWith('/x/y.txt')
+    // attach 走 file chip（与 # 引用 / drawer 注入一致），不再插纯文本路径
+    expect(inputMock.insertFileChip).toHaveBeenCalledWith('/x/y.txt')
     expect(inputMock.insertImageBadge).not.toHaveBeenCalled()
   })
 
@@ -79,7 +80,7 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     )
     dispose = d
     await result.onAddSelect('attach')
-    expect(inputMock.insertTextAtCursor).not.toHaveBeenCalled()
+    expect(inputMock.insertFileChip).not.toHaveBeenCalled()
     expect(inputMock.insertImageBadge).not.toHaveBeenCalled()
   })
 
@@ -101,7 +102,7 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     // basename 取末段；磁盘已存在文件 fileName 与 displayName 同值；
     // M1：+菜单选的磁盘文件 needsMigrate=false（显式传 false，避免被 renameSync 误移走）
     expect(inputMock.insertImageBadge).toHaveBeenCalledWith('/tmp/cat.png', 'cat.png', 'cat.png', false)
-    expect(inputMock.insertTextAtCursor).not.toHaveBeenCalled()
+    expect(inputMock.insertFileChip).not.toHaveBeenCalled()
   })
 
   it('TC3: image + path 无分隔符 → basename 取整 path', async () => {
@@ -134,6 +135,6 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     )
     dispose = d
     await expect(result.onAddSelect('attach')).resolves.toBeUndefined()
-    expect(inputMock.insertTextAtCursor).not.toHaveBeenCalled()
+    expect(inputMock.insertFileChip).not.toHaveBeenCalled()
   })
 })

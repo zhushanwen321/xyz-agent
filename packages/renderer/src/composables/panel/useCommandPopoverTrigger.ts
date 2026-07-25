@@ -130,8 +130,9 @@ export function useCommandPopoverTrigger(
           // needsMigrate 显式传 false——若误传 true，renameSync 会把用户原文件移走（数据丢失）。
           inputRef.value?.insertImageBadge(result.path, name, name, false)
         } else {
-          // attach：任意文件，文本路径插入（与 Ctrl+V 路径文本通路一致，轻量）
-          inputRef.value?.insertTextAtCursor(result.path)
+          // attach：任意文件，走 file chip（与 # 文件引用 / drawer 注入一致产出绿色 badge）。
+          // file segment 全链路（DOM 解析 / segmentsToText / Turn 渲染）已支持，pi 收到裸 path 自己 read。
+          inputRef.value?.insertFileChip(result.path)
         }
       } catch (e) {
         // pickFile reject（IPC 异常 / 主进程崩溃）→ best-effort 降级：取消已是预期路径，
