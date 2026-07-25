@@ -78,6 +78,51 @@ describe('segmentsToText', () => {
       'src/foo.ts:L20',
     )
   })
+
+  it('image segment 序列化为 [图片: name] 占位', () => {
+    const segs: Segment[] = [
+      {
+        type: 'image',
+        path: '/var/folders/xx/T/screenshot-20260724-1530.png',
+        name: 'screenshot-20260724-1530.png',
+      },
+    ]
+    const result = segmentsToText(segs)
+    expect(result).toBe('[图片: screenshot-20260724-1530.png]')
+    // 不含 path 绝对路径（不暴露系统路径）
+    expect(result).not.toContain('/var/folders')
+    // 不含 base64 标记
+    expect(result).not.toMatch(/data:image/)
+  })
+
+  it('image + text 混合时中间补空格', () => {
+    const segs: Segment[] = [
+      { type: 'image', path: '/tmp/a.png', name: 'a.png' },
+      { type: 'text', text: '这张图怎么修' },
+    ]
+    expect(segmentsToText(segs)).toBe('[图片: a.png] 这张图怎么修')
+  })
+
+  it('连续多个 image segment 各自独立占位', () => {
+    const segs: Segment[] = [
+      { type: 'image', path: '/tmp/1.png', name: '1.png' },
+      { type: 'image', path: '/tmp/2.png', name: '2.png' },
+    ]
+    expect(segmentsToText(segs)).toBe('[图片: 1.png][图片: 2.png]')
+  })
+
+  it('image segment 不破坏既有 text/skill 序列化（回归）', () => {
+    // 混合 image 与既有类型，确认 image 的加入不影响 text/skill 的序列化。
+    // 补空格逻辑只在「当前段是 text && prev 段不是 text」时触发（segments.ts L52）。
+    // 这里 text 在前（首段，prev=null 不补空格）；image/skill 都不是 text，不触发补空格，
+    // 因此 image 与 skill 直接拼接，中间无空格。
+    const segs: Segment[] = [
+      { type: 'text', text: '看这张' },
+      { type: 'image', path: '/tmp/x.png', name: 'x.png' },
+      { type: 'skill', name: 'review' },
+    ]
+    expect(segmentsToText(segs)).toBe('看这张[图片: x.png]/skill:review')
+  })
 })
 
 describe('segmentsToPrompt', () => {
