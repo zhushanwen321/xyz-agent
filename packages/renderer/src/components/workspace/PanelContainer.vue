@@ -8,33 +8,49 @@
     贴右展开（direction='right'）。单 panel 下不再有 overlay 浮层模式。
     git 状态唯一数据源在此层 provide（按 panel 的 session），GitPanel 注入共享。
   -->
-  <div class="panel-container relative flex min-h-0 flex-1 overflow-hidden">
-    <Panel
-      :panel-id="leaf.id"
-      :session-id="leaf.sessionId"
-      :session-label="sessionLabelOf(leaf)"
-      :session-dir="sessionDirOf(leaf)"
-      :session-file="sessionFileOf(leaf)"
-      :git-branch="gitBranchOf(leaf)"
-      :git-indicator="gitIndicatorOf(leaf)"
-      :status="statusOf(leaf)"
-      @open-git="openDrawer('git')"
-      @toggle-drawer="toggleDrawer()"
-    />
+  <SplitterGroup
+    direction="horizontal"
+    auto-save-id="workspace-drawer-split"
+    class="panel-container relative min-h-0 flex-1 overflow-hidden"
+  >
+    <SplitterPanel id="main-panel" :order="1" :min-size="40" :default-size="50">
+      <Panel
+        :panel-id="leaf.id"
+        :session-id="leaf.sessionId"
+        :session-label="sessionLabelOf(leaf)"
+        :session-dir="sessionDirOf(leaf)"
+        :session-file="sessionFileOf(leaf)"
+        :git-branch="gitBranchOf(leaf)"
+        :git-indicator="gitIndicatorOf(leaf)"
+        :status="statusOf(leaf)"
+        @open-git="openDrawer('git')"
+        @toggle-drawer="toggleDrawer()"
+      />
+    </SplitterPanel>
 
     <!-- SideDrawer：workspace-body 级辅助视图容器。单实例，跟随 panel。
-         恒 mode='split'（flex 分栏各占一半），direction='right'（贴右）。
-         git 数据由本容器 provide，GitPanel inject。 -->
-    <SideDrawer
-      :is-open="drawerOpen"
-      :active-tab="drawerTab"
-      :docked="drawerDocked"
-      :session-id="panelSessionId"
-      @close="closeDrawer"
-      @set-tab="setDrawerTab"
-      @toggle-dock="toggleDrawerDock"
-    />
-  </div>
+         作为 SplitterPanel 子项，宽度可拖动调整（ResizeHandle），autoSaveId 持久化。
+         drawer 关闭时连同 ResizeHandle 一起卸载（v-if），Splitter 自动回单 panel。
+         SideDrawer 内部仍有自己的 aside v-if（Transition 动画），与外层 v-if 不冲突
+         （外层先判断，关闭时内层根本不挂载）。git 数据由本容器 provide，GitPanel inject。 -->
+    <template v-if="drawerOpen">
+      <SplitterResizeHandle
+        id="drawer-handle"
+        class="workspace-resize-handle relative w-px shrink-0 bg-border transition-colors duration-150 ease hover:bg-border-strong data-[state=drag]:bg-accent"
+      />
+      <SplitterPanel id="drawer-panel" :order="2" :min-size="20" :max-size="60" :default-size="50">
+        <SideDrawer
+          :is-open="drawerOpen"
+          :active-tab="drawerTab"
+          :docked="drawerDocked"
+          :session-id="panelSessionId"
+          @close="closeDrawer"
+          @set-tab="setDrawerTab"
+          @toggle-dock="toggleDrawerDock"
+        />
+      </SplitterPanel>
+    </template>
+  </SplitterGroup>
 </template>
 
 <script setup lang="ts">
@@ -48,6 +64,7 @@ import type { GitIndicator } from '@/composables/features/useGitStatus'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import Panel from '@/components/panel/Panel.vue'
 import SideDrawer from '@/components/panel/SideDrawer.vue'
+import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 
 const panel = usePanelStore()
 const session = useSessionStore()

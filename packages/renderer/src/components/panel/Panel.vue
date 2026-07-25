@@ -9,7 +9,7 @@
     改 ring-1（box-shadow 外发光，跟随 rounded-lg）+ 去竖条，4 边均匀且圆角覆盖。
   -->
   <section
-    class="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
+    class="relative flex min-w-0 flex-col overflow-hidden rounded-lg transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
     :class="panelStateClass"
     :style="panelStyle"
   >

@@ -229,14 +229,14 @@ const browserUrlForRender = computed(() => browserUrl.value ?? '')
 
 /**
  * aside 容器 class（v2：单 panel 恒 split 模式）：
- * flex 子项 flex-1，与 Panel 的 flex-1 各占 50% 并排，贴右展开（border-l 分隔）。
+ * drawer 作为 PanelContainer SplitterGroup 的 SplitterPanel 子项，尺寸由 SplitterPanel 接管
+ * （inline flexGrow），故此处不再 flex-1；左右分隔线交给 SplitterResizeHandle（workspace-resize-handle）。
  * 底色用 bg-surface（与 Panel 内容区一致——Panel section 透明继承 MainPanel 的 surface，
  * drawer 同色与之并列为 main 内容区）。
  */
 const asideClass = computed<string[]>(() => [
   'flex h-full flex-col bg-surface',
-  'relative min-w-0 flex-1',
-  'border-l border-border-strong',
+  'relative min-w-0',
 ])
 
 interface TabMeta {
