@@ -8,6 +8,7 @@ export type {
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
   TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
 } from './protocol'
+export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
   ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,

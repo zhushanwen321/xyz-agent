@@ -38,6 +38,7 @@ import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
+import { clearUnread } from '@/composables/useSessionMarkers'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
 
@@ -171,6 +172,8 @@ export function useSidebar() {
 
     await sessionApi.switchSession(id)
     session.activeId = id
+    // 清除未读标记：用户主动查看该 session，不再显示未读 badge
+    clearUnread(id)
     // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）
     chat.touchLru(id)
     syncSessionToPanel(id)

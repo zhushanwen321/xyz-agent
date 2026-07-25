@@ -14,12 +14,16 @@
 import { ref, watch } from 'vue'
 import { pickDirectory } from '@/lib/ipc'
 import { workspace as workspaceApi } from '@/api'
+import { worktreeApi } from '@/api/domains/worktree'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { transition, useNewTaskFlowState } from './useNewTaskFlowState'
+import type { WorktreeListReply } from '@/api/domains/worktree'
 
 /**
  * @param currentCwd 当前 flow 的 cwd（chip 回灌判定：cwd 未变则 noop 仅关 popover）
  */
+export type WorkspaceMode = 'bare-workspace' | 'plain-repo' | 'not-repo'
+
 export function useNewTaskDirSelect(
   currentCwd: () => string | null,
 ): {
@@ -28,6 +32,8 @@ export function useNewTaskDirSelect(
   openDirDialog: () => Promise<void>
   openWorktreeModal: () => void
   isBare: ReturnType<typeof ref<boolean>>
+  mode: ReturnType<typeof ref<WorkspaceMode>>
+  worktreeItems: ReturnType<typeof ref<WorktreeListReply['items']>>
 } {
   const { state, pendingCwd } = useNewTaskFlowState()
   const workspaceStore = useWorkspaceStore()
@@ -41,19 +47,35 @@ export function useNewTaskDirSelect(
    * 结果回填本 ref。pendingCwd=null 兜底 false（不调 RPC）。检测失败静默降级 false（不阻断选目录流程）。
    */
   const isBare = ref(false)
+  /** workspace 三态模式（bare-workspace / plain-repo / not-repo）。pendingCwd 驱动。 */
+  const mode = ref<WorkspaceMode>('not-repo')
+  /** 当前 cwd 所在 workspace 的已有 worktree 列表。pendingCwd 驱动。 */
+  const worktreeItems = ref<WorktreeListReply['items']>([])
+
   watch(
-    () => pendingCwd.value,
+    () => currentCwd(),
     async (cwd) => {
       if (!cwd) {
         isBare.value = false
+        mode.value = 'not-repo'
+        worktreeItems.value = []
         return
       }
-      try {
-        const r = await workspaceApi.detectBare(cwd)
-        isBare.value = r.isBare
-      } catch {
+      // 并行加载 workspace detect + worktree list（独立数据源用 allSettled）
+      const [detectResult, listResult] = await Promise.allSettled([
+        workspaceApi.detect(cwd),
+        worktreeApi.list(cwd),
+      ])
+      if (detectResult.status === 'fulfilled') {
+        mode.value = detectResult.value.mode
+        isBare.value = detectResult.value.mode === 'bare-workspace'
+      } else {
+        mode.value = 'not-repo'
         isBare.value = false
       }
+      // worktree.list 在非 bare repo 下可能失败（NOT_BARE_REPO），静默降级空列表
+      worktreeItems.value =
+        listResult.status === 'fulfilled' ? listResult.value.items : []
     },
     { immediate: true },
   )
@@ -134,5 +156,7 @@ export function useNewTaskDirSelect(
     openDirDialog,
     openWorktreeModal,
     isBare,
+    mode,
+    worktreeItems,
   }
 }

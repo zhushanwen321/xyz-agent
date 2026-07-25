@@ -21,6 +21,9 @@ export default {
     delete: 'Delete',
     deleteConfirm: 'Confirm delete?',
     forkFrom: 'forked from',
+    markDone: 'Mark done',
+    unmarkDone: 'Unmark done',
+    archived: 'Archived',
   },
   sessionList: {
     empty: 'No sessions',

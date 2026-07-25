@@ -1,13 +1,16 @@
 /**
- * Workspace 域 —— 最近工作区记录查询。
+ * Workspace 域 —— 最近工作区记录查询 + 仓库模式检测。
  *
  * 依赖方向：command（类型化原语，统一 pending.create + register + transport.send）。
  *
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（W3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
+import type { RecentWorkspaceRecord, ServerMessageMap } from '@xyz-agent/shared'
 import { command } from '../request'
+
+/** workspace.detect reply 类型（三态模式检测）。 */
+export type WorkspaceDetectReply = ServerMessageMap['workspace.detected']
 
 /**
  * 获取最近工作区记录（runtime workspace.listRecent → workspace.recentList reply）。
@@ -32,11 +35,26 @@ export async function record(cwd: string): Promise<RecentWorkspaceRecord[]> {
 }
 
 /**
- * 检测 cwd 是否位于 bare repo + worktree 结构（runtime workspace.detectBare → workspace.bareDetected reply）。
+ * 检测 cwd 所在 git 仓库模式（bare-workspace / plain-repo / not-repo）。
  *
- * landing 态按 pendingCwd 驱动 isBare：useNewTaskDirSelect watch pendingCwd 变化时调用，
- * 结果回填 isBare ref，取代旧 gitInfo.isBare 派生（延迟 create 架构下 landing 无 session → gitInfo 恒 null）。
+ * 返回三态 { mode, wsRoot, barePath, repoRoot, defaultBranch }。
+ * workspace.detectBare 为此接口的向后兼容别名（仅返 isBare/wsRoot/barePath）。
+ */
+export async function detect(cwd: string): Promise<WorkspaceDetectReply> {
+  return command('workspace.detect', { cwd })
+}
+
+/**
+ * 检测 cwd 是否位于 bare repo + worktree 结构（向后兼容别名）。
+ *
+ * 映射到 workspace.detect，提取 isBare/wsRoot/barePath 三个字段。
+ * 新代码应优先使用 detect() 获取完整三态信息。
  */
 export async function detectBare(cwd: string): Promise<{ isBare: boolean; wsRoot: string; barePath: string }> {
-  return command('workspace.detectBare', { cwd })
+  const result = await detect(cwd)
+  return {
+    isBare: result.mode === 'bare-workspace',
+    wsRoot: result.wsRoot,
+    barePath: result.barePath,
+  }
 }

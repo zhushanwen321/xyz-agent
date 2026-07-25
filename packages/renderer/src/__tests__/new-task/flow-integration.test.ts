@@ -71,6 +71,8 @@ vi.mock('@/api', () => ({
   // 给空返回避免 unhandled rejection
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
+  workspace: { detect: vi.fn().mockResolvedValue({ mode: 'not-repo', isBareMode: false, wsRoot: '', repoRoot: '' }) },
+  worktree: { list: vi.fn().mockResolvedValue([]) },
 }))
 vi.mock('@/lib/ipc', () => ({ pickDirectory: pickCtrl.pickDirectory }))
 // submitFirstMessage 终端调用 useChat.send；mock 掉避免拖入 chat 订阅机制（useChat 自有单测）

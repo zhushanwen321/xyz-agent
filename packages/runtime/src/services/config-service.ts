@@ -246,6 +246,77 @@ export class ConfigService implements IConfigService {
     this.saveAppConfig(config)
   }
 
+  // ── Worktree config（git-cwt-anywhere）──
+
+  getWorktreeRootDir(): string {
+    const config = this.loadAppConfig()
+    const val = config['worktreeRootDir']
+    return typeof val === 'string' ? val : '~/worktrees'
+  }
+
+  setWorktreeRootDir(dir: string): void {
+    if (!dir || !dir.trim()) {
+      throw new Error('worktreeRootDir cannot be empty')
+    }
+    const config = this.loadAppConfig()
+    config['worktreeRootDir'] = dir
+    this.saveAppConfig(config)
+  }
+
+  getSetupScript(): string {
+    const config = this.loadAppConfig()
+    const val = config['setupScript']
+    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+  }
+
+  setSetupScript(script: string): void {
+    if (script.includes('..')) {
+      throw new Error('setupScript path cannot contain ..')
+    }
+    const config = this.loadAppConfig()
+    config['setupScript'] = script
+    this.saveAppConfig(config)
+  }
+
+  getBareSetupScript(): string {
+    const config = this.loadAppConfig()
+    const val = config['bareSetupScript']
+    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+  }
+
+  setBareSetupScript(script: string): void {
+    const config = this.loadAppConfig()
+    config['bareSetupScript'] = script
+    this.saveAppConfig(config)
+  }
+
+  getTimeout(): number {
+    const config = this.loadAppConfig()
+    const val = config['worktreeTimeout']
+    return typeof val === 'number' ? val : 60
+  }
+
+  setTimeout(timeout: number): void {
+    if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 3600) {
+      throw new Error(`timeout must be a positive number in (0, 3600], got ${timeout}`)
+    }
+    const config = this.loadAppConfig()
+    config['worktreeTimeout'] = timeout
+    this.saveAppConfig(config)
+  }
+
+  getDefaultBaseBranch(): string {
+    const config = this.loadAppConfig()
+    const val = config['defaultBaseBranch']
+    return typeof val === 'string' ? val : 'origin/main'
+  }
+
+  setDefaultBaseBranch(baseBranch: string): void {
+    const config = this.loadAppConfig()
+    config['defaultBaseBranch'] = baseBranch
+    this.saveAppConfig(config)
+  }
+
   // ── Skill CRUD ─────────────────────────────────────────────────
 
   /**
