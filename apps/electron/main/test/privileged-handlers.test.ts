@@ -14,11 +14,12 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { homedir } from 'node:os'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
 import { getDataDir } from '@xyz-agent/shared/paths'
+import type { SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
 
 // 捕获注册的 handler（key=channel, value=handler fn），由 ipcMain.handle 桩写入
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -438,5 +439,180 @@ describe('migrate-session-image IPC handler', () => {
       sessionId: '',
       fileName: writeResult.fileName,
     })).rejects.toThrow('migrate-session-image requires non-empty sessionId')
+  })
+})
+
+describe('write/read-segments-metadata IPC handler', () => {
+  // 真实文件 I/O：复用 write-session-image 测试的 tmpdir 清理模式（afterEach rmSync）。
+  // 每个用例用独立 sessionId 子目录，互不干扰（getAttachmentsDir 按 sessionId 分区）。
+  const writtenDirs: string[] = []
+  afterEach(() => {
+    for (const d of writtenDirs.splice(0)) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }
+    }
+  })
+
+  beforeEach(() => {
+    handlers.clear()
+    vi.clearAllMocks()
+    registerPrivilegedHandlers({} as never)
+  })
+
+  /** 构造一条测试用 segments entry（含 text/image/file 段，覆盖实际 user message 形态） */
+  function makeEntry(clientUuid: string, timestamp = 1234567890): SegmentsMetadataEntry {
+    return {
+      clientUuid,
+      segments: [
+        { type: 'text', text: '看下这张图' },
+        {
+          type: 'image',
+          id: 'img-id-1',
+          path: '/tmp/foo.png',
+          fileName: 'foo.png',
+          displayName: 'foo.png',
+        },
+        { type: 'file', path: '/repo/src/index.ts', lineRange: [10, 20] },
+      ],
+      timestamp,
+    }
+  }
+
+  it('write 单条 → read 返回含该条（round-trip 保真）', async () => {
+    const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const sessionId = 'seg-test-write-read-single'
+    writtenDirs.push(join(getDataDir(), 'attachments', sessionId))
+
+    const entry = makeEntry('u-aaa')
+    await writeSegmentsMetadata({}, { sessionId, entry })
+
+    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    expect(file).not.toBeNull()
+    expect(file.version).toBe(1)
+    expect(file.entries).toHaveLength(1)
+    expect(file.entries[0]).toEqual(entry)
+  })
+
+  it('write 多条（不同 clientUuid）→ read 返回全部', async () => {
+    const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const sessionId = 'seg-test-write-multi'
+    writtenDirs.push(join(getDataDir(), 'attachments', sessionId))
+
+    const entry1 = makeEntry('u-1', 1000)
+    const entry2 = makeEntry('u-2', 2000)
+    const entry3 = makeEntry('u-3', 3000)
+    await writeSegmentsMetadata({}, { sessionId, entry: entry1 })
+    await writeSegmentsMetadata({}, { sessionId, entry: entry2 })
+    await writeSegmentsMetadata({}, { sessionId, entry: entry3 })
+
+    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    expect(file.entries).toHaveLength(3)
+    expect(file.entries.map((e) => e.clientUuid).sort()).toEqual(['u-1', 'u-2', 'u-3'])
+  })
+
+  it('write 同 clientUuid 两次（editAndResend 场景）→ 后者覆盖前者，不重复', async () => {
+    const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const sessionId = 'seg-test-edit-resend'
+    writtenDirs.push(join(getDataDir(), 'attachments', sessionId))
+
+    const v1 = makeEntry('u-overwrite', 1000)
+    const v2 = makeEntry('u-overwrite', 9999)
+    // 改 v2 的 segments 内容，验证覆盖的是后者而非前者
+    v2.segments = [{ type: 'text', text: 'edited' }]
+    await writeSegmentsMetadata({}, { sessionId, entry: v1 })
+    await writeSegmentsMetadata({}, { sessionId, entry: v2 })
+
+    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    expect(file.entries).toHaveLength(1)
+    expect(file.entries[0].timestamp).toBe(9999)
+    expect(file.entries[0].segments).toEqual([{ type: 'text', text: 'edited' }])
+  })
+
+  it('read 不存在的 session → null', async () => {
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const sessionId = 'seg-test-not-exist-' + Date.now()
+    const result = await readSegmentsMetadata({}, { sessionId })
+    expect(result).toBeNull()
+  })
+
+  it('write 时目录不存在 → 自动创建并写入', async () => {
+    const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const sessionId = 'seg-test-mkdir-' + Date.now()
+    const dir = join(getDataDir(), 'attachments', sessionId)
+    writtenDirs.push(dir)
+    // 目录不存在
+    expect(existsSync(dir)).toBe(false)
+
+    await writeSegmentsMetadata({}, { sessionId, entry: makeEntry('u-mkdir') })
+    // 目录 + segments.json 已创建
+    expect(existsSync(dir)).toBe(true)
+    expect(existsSync(join(dir, 'segments.json'))).toBe(true)
+    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    expect(file.entries).toHaveLength(1)
+  })
+
+  it('read 损坏的 segments.json → null（不抛错）', async () => {
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const sessionId = 'seg-test-corrupted-' + Date.now()
+    const dir = join(getDataDir(), 'attachments', sessionId)
+    writtenDirs.push(dir)
+    // 手动构造一个损坏的 segments.json
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'segments.json'), '{not valid json!!!', 'utf-8')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = await readSegmentsMetadata({}, { sessionId })
+    expect(result).toBeNull()
+    warnSpy.mockRestore()
+  })
+
+  it('write 到已损坏的 segments.json → 重置后写入成功（best-effort，不阻断）', async () => {
+    const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const sessionId = 'seg-test-write-corrupted-' + Date.now()
+    const dir = join(getDataDir(), 'attachments', sessionId)
+    writtenDirs.push(dir)
+    // 先构造损坏文件
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'segments.json'), '{corrupted!!!', 'utf-8')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // write 不抛（捕获了 parse 错误 → 重置为新文件 → 写入成功）
+    await writeSegmentsMetadata({}, { sessionId, entry: makeEntry('u-recover') })
+    warnSpy.mockRestore()
+
+    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    expect(file.entries).toHaveLength(1)
+    expect(file.entries[0].clientUuid).toBe('u-recover')
+  })
+
+  it('write 空 sessionId → throw requires non-empty sessionId', async () => {
+    const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(
+      writeSegmentsMetadata({}, { sessionId: '', entry: makeEntry('u-x') }),
+    ).rejects.toThrow('write-segments-metadata requires non-empty sessionId')
+    errSpy.mockRestore()
+  })
+
+  it('read 空 sessionId → null（不调 fs）', async () => {
+    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
+    const result = await readSegmentsMetadata({}, { sessionId: '' })
+    expect(result).toBeNull()
+  })
+
+  it('atomic 写：临时文件 .tmp 写完才 rename（写后 .tmp 不残留）', async () => {
+    const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
+    const sessionId = 'seg-test-atomic-' + Date.now()
+    const dir = join(getDataDir(), 'attachments', sessionId)
+    writtenDirs.push(dir)
+
+    await writeSegmentsMetadata({}, { sessionId, entry: makeEntry('u-atomic') })
+    // segments.json 存在，.tmp 不残留（已 rename 走）
+    expect(existsSync(join(dir, 'segments.json'))).toBe(true)
+    expect(existsSync(join(dir, 'segments.json.tmp'))).toBe(false)
   })
 })

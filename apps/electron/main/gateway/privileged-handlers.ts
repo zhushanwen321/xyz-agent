@@ -12,12 +12,13 @@
  * 依赖方向：privileged-handlers → electron(dialog/shell/BrowserWindow) + input-validators + interfaces
  */
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { IMAGE_LIMITS } from '@xyz-agent/shared'
+import type { SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import { isValidExternalUrl } from './input-validators.js'
 
@@ -200,6 +201,73 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
       } catch (err) {
         console.error('[ipc] write-session-image failed:', err)
         throw new Error('write-session-image failed')
+      }
+    },
+  )
+
+  // write-segments-metadata：追加/覆盖一条 segments 元数据到 <dataDir>/attachments/<sessionId>/segments.json。
+  // 与 write-session-image 同目录，复用 getAttachmentsDir。atomic 写（临时文件 + rename）防并发损坏。
+  // 同 clientUuid 重发（editAndResend 场景）→ 后者覆盖前者（按 clientUuid 去重）。
+  ipcMain.handle(
+    'write-segments-metadata',
+    async (
+      _event,
+      payload: { sessionId: string; entry: SegmentsMetadataEntry },
+    ): Promise<void> => {
+      const { sessionId, entry } = payload
+      if (!sessionId) throw new Error('write-segments-metadata requires non-empty sessionId')
+      try {
+        const dir = getAttachmentsDir(sessionId)
+        mkdirSync(dir, { recursive: true })
+        const filePath = join(dir, 'segments.json')
+        // 读已有（文件不存在 → 空）
+        let file: SegmentsMetadataFile = { version: 1, entries: [] }
+        if (existsSync(filePath)) {
+          try {
+            const raw = readFileSync(filePath, 'utf-8')
+            const parsed = JSON.parse(raw) as SegmentsMetadataFile
+            if (parsed && Array.isArray(parsed.entries)) file = parsed
+          } catch {
+            // 损坏的 segments.json → 重置（best-effort，不阻断写入）
+            console.warn('[ipc] segments.json malformed, resetting:', filePath)
+          }
+        }
+        // 按 clientUuid 去重：同 uuid 覆盖，新 uuid 追加
+        const idx = file.entries.findIndex((e) => e.clientUuid === entry.clientUuid)
+        if (idx >= 0) file.entries[idx] = entry
+        else file.entries.push(entry)
+        // atomic 写：临时文件 + rename
+        const tmpPath = filePath + '.tmp'
+        writeFileSync(tmpPath, JSON.stringify(file, null, 2), 'utf-8')
+        renameSync(tmpPath, filePath)
+      } catch (err) {
+        console.error('[ipc] write-segments-metadata failed:', err)
+        throw new Error('write-segments-metadata failed')
+      }
+    },
+  )
+
+  // read-segments-metadata：读 <dataDir>/attachments/<sessionId>/segments.json。
+  // 文件不存在/损坏 → 返回 null（调用方降级为 textToSegments）。
+  ipcMain.handle(
+    'read-segments-metadata',
+    async (
+      _event,
+      payload: { sessionId: string },
+    ): Promise<SegmentsMetadataFile | null> => {
+      const { sessionId } = payload
+      if (!sessionId) return null
+      try {
+        const dir = getAttachmentsDir(sessionId)
+        const filePath = join(dir, 'segments.json')
+        if (!existsSync(filePath)) return null
+        const raw = readFileSync(filePath, 'utf-8')
+        const parsed = JSON.parse(raw) as SegmentsMetadataFile
+        if (!parsed || !Array.isArray(parsed.entries)) return null
+        return parsed
+      } catch (err) {
+        console.warn('[ipc] read-segments-metadata failed (returning null):', err)
+        return null
       }
     },
   )
