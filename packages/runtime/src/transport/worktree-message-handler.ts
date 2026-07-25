@@ -49,9 +49,12 @@ export class WorktreeMessageHandler {
   async handleWorktreeMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'worktree.create': {
-        const { branch, baseBranch, workspaceHint } = msg.payload
+        const { branch, baseBranch, workspaceHint, locationMode } = msg.payload
+        if (typeof branch !== 'string' || !branch) {
+          return this.ctx.sendError(ws, 'worktree_failed', 'branch is required and must be a string', msg.id)
+        }
         try {
-          const result = await this.ctx.worktreeService.create({ branch, baseBranch, workspaceHint })
+          const result = await this.ctx.worktreeService.create({ branch, baseBranch, locationMode, workspaceHint })
           return this.ctx.reply(ws, msg.id, 'worktree.created', result)
         } catch (e) {
           return this.sendWorktreeError(ws, msg.id, e)
