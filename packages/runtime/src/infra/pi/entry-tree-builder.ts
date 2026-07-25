@@ -3,8 +3,9 @@ import type {
   PiSessionEntry,
   PiSessionMessageEntry,
   PiSessionCustomEntry,
+  PiHistoryMessage,
 } from './pi-protocol.js'
-import { convertSinglePiMessage } from './message-converter.js'
+import { convertPiHistory } from './message-converter.js'
 
 /**
  * entry-tree-builder —— 从 pi get_entries 返回的 entry 树重建 xyz-agent Message[]。
@@ -13,10 +14,12 @@ import { convertSinglePiMessage } from './message-converter.js'
  * 拿到完整 entry 树（含 message entry + custom entry），重建 Message[] 时按
  * userEntryId ↔ clientUuid 映射回填结构化 Segment[]（图片/文件/skill badge）。
  *
- * 与 convertPiHistory（消费 get_messages 扁平 message 列表）的区别：
- * - convertPiHistory：只看 message，无 entry 树信息，无法回填 badge（textToSegments 兜底纯文本）。
- * - rebuildHistoryFromEntries：用 custom entry "xyz.client-msg-id" 的 clientUuid 映射 +
- *   segments.json sidecar 的结构化 Segment[]，精确还原 composer 提交时的 badge 结构。
+ * 与 convertPiHistory（消费 get_messages 扁平 message 列表）的关系：
+ * - 复用 convertPiHistory 做 message→Message 翻译（含 toolResult 合并 / compactionSummary /
+ *   custom / branchSummary 系统消息处理），保证与 RPC/文件路径行为一致（规则 7.5）。
+ * - 额外能力：用 custom entry "xyz.client-msg-id" 的 clientUuid 映射 +
+ *   segments.json sidecar 的结构化 Segment[]，精确还原 composer 提交时的 badge 结构
+ *   （convertPiHistory 路径无 entry 树信息，只能用 textToSegments 兜底纯文本）。
  *
  * 🔒 归属（R1，三层架构）：infra/pi 层内部，消费 pi 协议类型（PiSessionEntry），
  * 产出 xyz-agent 内部类型（Message）。services 层调本函数，不直接碰 pi entry 类型。
@@ -54,18 +57,24 @@ const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'
 /**
  * 从 pi get_entries 返回的 entry 树重建 xyz-agent Message[]。
  *
- * 两遍遍历（顺序无关，custom entry 可在 message entry 前或后）：
+ * 三步（两遍扫 entry + 一遍回填）：
  *
- * 1. 第一遍建 clientUuidMap：扫所有 "xyz.client-msg-id" custom entry，
- *    data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
- *    data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）。
+ * 1. 第一遍扫 entries：
+ *    a) 建 clientUuidMap：扫所有 "xyz.client-msg-id" custom entry，
+ *       data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
+ *       data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）。
+ *    b) 从所有 message entry 提取 message 字段 + entryId（保持原始顺序，一一对应）。
  *
- * 2. 第二遍转 message entry + 回填 segments：
- *    - message entry → convertSinglePiMessage(message, { entryId }) 产出 Message（含 piEntryId）
- *    - user message 且 clientUuidMap[entry.id] 命中 → 查 segmentsMetadata[clientUuid]
- *      → 命中且非空：msg.content = segments（完整结构化 Segment[]，含 image badge）
- *      → 未命中：保持 convertSinglePiMessage 默认产出（textToSegments / parseSkillBlock）
- *    - 非 message entry（label/summary/其他 custom）→ 跳过（未来扩展点）
+ * 2. 整个 message 列表走 convertPiHistory（复用 toolResult 合并 + compactionSummary /
+ *    custom / branchSummary 系统消息处理），产出 Message[]。entryIds 与 messages 一一对应
+ *    传入，使产出的 user/assistant Message 带 piEntryId（从 entryIds[i] 取）。
+ *    ⚠️ 这是 C1 修复核心：之前直接调 convertSinglePiMessage 绕过了 convertPiHistory 的
+ *    toolResult/系统消息处理，导致重开 session 时工具输出 / 压缩记录 / bg-notify / 分支摘要
+ *    全部丢失（违反 AGENTS.md #7.5）。
+ *
+ * 3. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → 查 segmentsMetadata
+ *    → 命中且非空：msg.content = segments（完整结构化 Segment[]，含 image badge）
+ *    → 未命中：保持 convertPiHistory 默认产出（textToSegments / parseSkillBlock）
  *
  * 降级原则：映射缺失 / segmentsMetadata 缺失 / segments 为空 → 不阻断，保持默认产出。
  * 这保证即使 extension 未写入 custom entry 或 sidecar 丢失，历史仍可读（纯文本降级）。
@@ -77,8 +86,10 @@ export function rebuildHistoryFromEntries(
   entries: PiSessionEntry[],
   segmentsMetadata: SegmentsMetadataFile | null,
 ): RebuiltHistory {
-  // 1. 第一遍：建 clientUuidMap（userEntryId → clientUuid）
+  // 1. 第一遍：建 clientUuidMap + 从 message entry 提取 message 列表（顺序保留，带 entryId）
   const clientUuidMap = new Map<string, string>()
+  const messages: PiHistoryMessage[] = []
+  const entryIds: string[] = []
   for (const entry of entries) {
     if (entry.type === 'custom' && entry.customType === CLIENT_MSG_ID_TYPE) {
       const data = entry.data as Partial<ClientMsgIdData> | null | undefined
@@ -86,35 +97,29 @@ export function rebuildHistoryFromEntries(
       if (data && typeof data.clientUuid === 'string' && typeof data.userEntryId === 'string') {
         clientUuidMap.set(data.userEntryId, data.clientUuid)
       }
+      continue
     }
+    if (entry.type === 'message') {
+      const messageEntry = entry as PiSessionMessageEntry
+      messages.push(messageEntry.message)
+      entryIds.push(messageEntry.id)
+    }
+    // 非 message 非 xyz.client-msg-id entry（label/summary/其他 custom）→ 跳过（未来扩展点）
   }
 
-  // 2. 第二遍：转 message entry + 回填 segments
-  // segmentsMetadata → clientUuid → Segment[] 索引（避免每次线性查找）
+  // 2. 整个数组走 convertPiHistory（复用 toolResult 合并 + 系统消息完整处理，C1 修复核心）
+  const converted = convertPiHistory(messages, entryIds)
+
+  // 3. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → segmentsMetadata
   const segmentsByClientUuid = new Map<string, Segment[]>()
   if (segmentsMetadata) {
     for (const e of segmentsMetadata.entries) {
       segmentsByClientUuid.set(e.clientUuid, e.segments)
     }
   }
-
-  const messages: Message[] = []
-  for (const entry of entries) {
-    // 只处理 message entry；label/summary/其他 custom 当前跳过（未来扩展点）
-    if (entry.type !== 'message') continue
-
-    const messageEntry = entry as PiSessionMessageEntry
-    const msg = convertSinglePiMessage(messageEntry.message, { entryId: messageEntry.id })
-    // convertSinglePiMessage 对未知 role 返回 null（跳过）；message entry 的 role 正常是
-    // user/assistant/toolResult，toolResult 经 convertSinglePiMessage 内部判定 role!==user&&!==assistant → null。
-    // 故 toolResult message entry 在此被跳过（与 convertPiHistory 的 toolResult 合并逻辑不同——
-    // entry 树重建不合并 toolResult 到 assistant toolCall，那是 convertPiHistory 的职责；
-    // 本函数面向"回填 user message badge"场景，toolResult badge 无意义故跳过）。
-    if (!msg) continue
-
-    // user message 且有 clientUuid 映射 → 回填完整结构化 segments（含 image/file/skill badge）
-    if (msg.role === 'user' && messageEntry.id) {
-      const clientUuid = clientUuidMap.get(messageEntry.id)
+  for (const msg of converted) {
+    if (msg.role === 'user' && msg.piEntryId) {
+      const clientUuid = clientUuidMap.get(msg.piEntryId)
       if (clientUuid) {
         const segments = segmentsByClientUuid.get(clientUuid)
         // segments 非空才覆盖（空 segments 不覆盖默认产出，避免把有效 textToSegments 结果清空）
@@ -123,10 +128,9 @@ export function rebuildHistoryFromEntries(
         }
       }
     }
-    messages.push(msg)
   }
 
-  return { messages, clientUuidMap }
+  return { messages: converted, clientUuidMap }
 }
 
 // ── 类型 re-export（供 services 层按需引用，不直接碰 pi-protocol） ─────

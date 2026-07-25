@@ -28,7 +28,13 @@
 // 与 shared SegmentsMetadataEntry.clientUuid 严格一致（同 appendUser 返回值）：
 // extension 写入 custom entry 的 clientUuid = segments.json 的 clientUuid key，
 // entry-tree-builder 据此精确回填 segments（无前缀转换、无双 source of truth）。
-const TAG = /<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/
+//
+// m1 修复：拆两个正则。TAG_MATCH 非全局，用于 .match 提取第一个 uuid 捕获组（input hook
+// 只需首个 pending uuid）；TAG_STRIP 全局，用于 .replace 剥离所有残留标记（防并发/重试
+// 场景多个标记拼接在同一 prompt 末尾时只剥掉第一个）。两正则分离避免 g 标志的 lastIndex
+// 状态污染（String.match 与全局 exec 混用易踩坑）。
+const TAG_MATCH = /<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/
+const TAG_STRIP = /<!--xyz:msg:u-[0-9a-fA-F-]{36}-->/g
 const ENTRY_TYPE = 'xyz.client-msg-id'
 
 export default function (pi) {
@@ -42,11 +48,12 @@ export default function (pi) {
   pi.on('input', (event) => {
     try {
       if (event.source !== 'rpc') return { action: 'continue' }
-      const m = event.text && event.text.match(TAG)
+      const m = event.text && event.text.match(TAG_MATCH)
       if (!m) return { action: 'continue' }
       pendingClientUuid = m[1]
       // transform 后 LLM 看到的是剥离了标记的纯文本。
-      return { action: 'transform', text: event.text.replace(TAG, '').trimEnd() }
+      // TAG_STRIP 全局替换：防多个标记残留时只剥掉第一个（m1 修复）。
+      return { action: 'transform', text: event.text.replace(TAG_STRIP, '').trimEnd() }
     } catch (err) {
       // 吞错，不阻断主流程（pi runner 也会 try/catch，但显式兜底避免意外 return）。
       console.error('[xyz-client-msg-id-mapper] input hook error:', err)

@@ -177,12 +177,19 @@ export function convertSinglePiMessage(
  * user/assistant 单条转换委托 convertSinglePiMessage（抽出供 entry-tree-builder 复用），
  * toolResult/compactionSummary/custom/branchSummary 等特殊 role 仍在此处内联处理
  * （这些类型不是 message entry 的 message 字段，不进 convertSinglePiMessage）。
+ *
+ * @param raw pi history message 列表（get_messages 返回 / JSONL 读取 / entry 树提取）
+ * @param entryIds 可选，与 raw 一一对应的 entry id 列表（entry 树重建路径用）。
+ *   传时 user/assistant message 会带上 piEntryId（按 index 取 entryIds[i]）。
+ *   不传时行为不变（兼容 session-store.convertHistory / session-history 等 RPC/文件路径）。
+ *   toolResult/系统消息分支不消费 entryId（它们或合并到上一个 assistant，或不需回填）。
  */
-export function convertPiHistory(raw: unknown[]): Message[] {
+export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[] {
   const result: Message[] = []
   let lastAssistantWithToolCalls = -1
 
-  for (const item of raw) {
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i]
     const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
@@ -291,7 +298,11 @@ export function convertPiHistory(raw: unknown[]): Message[] {
     // user or assistant → 委托 convertSinglePiMessage（未知 role 在 helper 内 warn + 返回 null 跳过）。
     // 抽出后行为不变：toolResult/compactionSummary/custom/branchSummary 上面已 continue，
     // 此处只剩 user/assistant/未知 role，与 helper 的判定一致。
-    const msg = convertSinglePiMessage(m as PiHistoryMessage)
+    // entryIds 路径（entry 树重建）：按 index 取 entryId 传给 helper，填到 msg.piEntryId
+    // （供 rebuildHistoryFromEntries 回查 clientUuidMap + segmentsMetadata 回填 badge）。
+    // 不传 entryIds 时 entryId 为 undefined，helper 回退读 m.__entryId（文件路径注入），行为不变。
+    const entryId = entryIds?.[i]
+    const msg = convertSinglePiMessage(m as PiHistoryMessage, entryId !== undefined ? { entryId } : undefined)
     if (!msg) continue
     result.push(msg)
     if (msg.toolCalls && msg.toolCalls.length > 0) {

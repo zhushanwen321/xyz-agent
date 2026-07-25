@@ -12,7 +12,7 @@
  * 依赖方向：privileged-handlers → electron(dialog/shell/BrowserWindow) + input-validators + interfaces
  */
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -237,10 +237,18 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         if (idx >= 0) file.entries[idx] = entry
         else file.entries.push(entry)
         // atomic 写：临时文件 + rename。JSON_INDENT 提取常量避免 magic-numbers 规则。
+        // POSIX 同文件系统 rename 原子；Windows 上目标文件已存在时 renameSync 会抛
+        // EPERM/ENOTEMPTY（M5 修复）→ 先 unlink 目标再 rename 兜底（写窗口极短，可接受）。
         const JSON_INDENT = 2
         const tmpPath = filePath + '.tmp'
         writeFileSync(tmpPath, JSON.stringify(file, null, JSON_INDENT), 'utf-8')
-        renameSync(tmpPath, filePath)
+        try {
+          renameSync(tmpPath, filePath)
+        } catch {
+          // Windows: 目标已存在时 rename 失败，unlink 后重试
+          try { unlinkSync(filePath) } catch { /* 目标不存在，忽略 */ }
+          renameSync(tmpPath, filePath)
+        }
       } catch (err) {
         console.error('[ipc] write-segments-metadata failed:', err)
         throw new Error('write-segments-metadata failed')
