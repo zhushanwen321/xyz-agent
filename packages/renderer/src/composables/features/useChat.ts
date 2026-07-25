@@ -16,12 +16,70 @@ import { ref } from 'vue'
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { useSettingsStore } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
 import type { Segment } from '@xyz-agent/shared'
 import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
+import { fileBytesToBase64 } from '@/composables/panel/useImageAttachment'
+import { resolveSupportsVision } from '@/composables/panel/useModelCapabilities'
 
 const t = i18n.global.t
+
+/** message.send images 形状（对齐 shared protocol.ts:199，base64 不含 data: 前缀）。 */
+type SendImage = { data: string; mimeType: string }
+
+/**
+ * 从 segments 提取 image 段，并行读 local-file 文件转 base64，组装 message.send images。
+ *
+ * [feature:add-file-picture-attach slice6] 发送闭环：composer 的 image segment 在 send 时
+ * 读文件转 base64 填入 message.send images 字段。image 段的 path 是 slice4 write-tmp-image
+ * 落到 OS tmpdir 的绝对路径（拖拽/+菜单图片项则是用户磁盘原 path），均在 local-file 协议
+ * 白名单内（main.ts:188-194 allowedPrefixes 含 tmpdir/cwd/用户子目录）。
+ *
+ * 降级矩阵（C2 契约）：
+ * - 无 image 段 → 返回 undefined（不传 images 键，行为不变）
+ * - fetch 读失败（web/mock 无 protocol.handle / 文件删 / 白名单 403）→ Promise.allSettled
+ *   收集，rejected 项 console.warn 后跳过，不 throw 不阻断发送（AGENTS.md L411 allSettled 硬规则）
+ * - 全部失败 → 返回 undefined（退化为纯文本发送，文本 prompt 的 [图片:name] 占位仍发）
+ *
+ * base64 经 fileBytesToBase64（分块 btoa 防 stack 溢出），mimeType 取 blob.type 缺省 image/png。
+ *
+ * 导出供单测 mock fetch 验证（纯模块函数，不依赖 this）。
+ */
+export async function extractImages(
+  segments: Segment[],
+): Promise<SendImage[] | undefined> {
+  const imageSegs = segments.filter((s): s is Extract<Segment, { type: 'image' }> => s.type === 'image')
+  if (imageSegs.length === 0) return undefined
+
+  const results = await Promise.allSettled(
+    imageSegs.map(async (seg) => {
+      // local-file:// 协议由 main.ts:172 protocol.handle 注册（DetailPane 图片渲染既用同一路径）。
+      // encodeURIComponent 防 path 含特殊字符破坏 URL 解码（main.ts:173 decodeURIComponent 对称）。
+      const res = await fetch(`local-file:///${encodeURIComponent(seg.path)}`)
+      if (!res.ok) throw new Error(`local-file ${seg.path} ${res.status}`)
+      const blob = await res.blob()
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      return {
+        data: fileBytesToBase64(bytes),
+        mimeType: blob.type || 'image/png',
+      } satisfies SendImage
+    }),
+  )
+
+  const images: SendImage[] = []
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    if (r.status === 'fulfilled') {
+      images.push(r.value)
+    } else {
+      // 读失败的图跳过（不阻断发送）；文本 prompt 的 [图片:name] 占位仍发，LLM 知道用户贴了图。
+      console.warn(`[useChat] image 读取失败，已跳过: ${imageSegs[i].path}`, r.reason)
+    }
+  }
+  return images.length > 0 ? images : undefined
+}
 
 /**
  * 会话级流式订阅表（sessionId → 取消函数）。
@@ -157,6 +215,7 @@ export function ensureStreamSubscription(
 export function useChat() {
   const chat = useChatStore()
   const session = useSessionStore()
+  const settings = useSettingsStore()
 
   /**
    * 发送消息：appendUser → 确保会话级订阅 → api.send（ack 仅表示 pi 已接收）。
@@ -186,7 +245,19 @@ export function useChat() {
     ensureStreamSubscription(sid, chat, session)
     chat.addPendingSend(sid)
     try {
-      await chatApi.send(sid, promptText)
+      // [feature:add-file-picture-attach slice6] 发送闭环：提取 image segment 读文件转 base64
+      // 填入 message.send images 字段（独立通道，与 promptText 文本占位 [图片:name] 双投递）。
+      // extractImages 内部 allSettled 并行读，无 image 段返回 undefined（行为不变）。
+      const images = await extractImages(segments)
+      // vision 降级（should 优先级）：当前 model 不支持 image 输入时 console.warn 提示，
+      // 不阻断不剥离 images（runtime/pi 自然丢弃不支持的多模态，文本占位仍发）。
+      if (images && images.length > 0) {
+        const modelId = session.list.find((s) => s.id === sid)?.modelId ?? ''
+        if (!resolveSupportsVision(modelId, settings.providers)) {
+          console.warn('[useChat] 当前模型不支持图片输入，图片将被忽略')
+        }
+      }
+      await chatApi.send(sid, promptText, images)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；

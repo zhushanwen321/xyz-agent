@@ -22,7 +22,23 @@ export type HandleImagePasteResult =
   | { kind: 'text'; text: string }
   | { kind: 'noop' }
 
-/** File → base64（分块 btoa 防 stack 溢出，大图直接 btoa 二进制串会爆栈）。 */
+/**
+ * 字节数组 → base64（分块 btoa 防 stack 溢出，大图直接 btoa 二进制串会爆栈）。
+ *
+ * 从原 fileToBase64 抽出的公共工具：send 闭环的 extractImages 读 local-file 文件后
+ * 也要把 Uint8Array 转 base64（同一编码逻辑），抽公共函数 DRY 且单测覆盖一处。
+ */
+export function fileBytesToBase64(bytes: Uint8Array): string {
+  // 二进制字符串分块 btoa：每块 0x8000 字节（btoa 单次安全上限经验值），避免大图爆栈
+  let binary = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)))
+  }
+  return btoa(binary)
+}
+
+/** File → base64（委托 fileBytesToBase64 做 UTF-8 安全的分块编码）。 */
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -32,14 +48,7 @@ function fileToBase64(file: File): Promise<string> {
         reject(new Error('FileReader did not return ArrayBuffer'))
         return
       }
-      const bytes = new Uint8Array(buf)
-      // 二进制字符串分块 btoa：每块 0x8000 字节（btoa 单次安全上限经验值），避免大图爆栈
-      let binary = ''
-      const CHUNK = 0x8000
-      for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)))
-      }
-      resolve(btoa(binary))
+      resolve(fileBytesToBase64(new Uint8Array(buf)))
     }
     reader.onerror = () => reject(reader.error ?? new Error('FileReader error'))
     reader.readAsArrayBuffer(file)

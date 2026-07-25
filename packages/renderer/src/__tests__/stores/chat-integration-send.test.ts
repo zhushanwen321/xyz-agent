@@ -132,8 +132,8 @@ describe('T1.4 useChat.send 全链', () => {
     expect(msgs.some((m) => m.role === 'user' && normalizeContent(m.content) === 'hello')).toBe(true)
     // 2. addPendingSend：isActive=true（空窗期）
     expect(chat.isActive('s-fullchain')).toBe(true)
-    // 3. api.send 被调
-    expect(apiMock.send).toHaveBeenCalledWith('s-fullchain', 'hello')
+    // 3. api.send 被调（slice6 起 send 第三参数 images 对纯文本为 undefined）
+    expect(apiMock.send).toHaveBeenCalledWith('s-fullchain', 'hello', undefined)
     // 4. message_start 到达 → clearPendingSend
     emit({ type: 'message.message_start', payload: { sessionId: 's-fullchain', messageId: 'a1' } })
     // message_start 后 isGenerating=true（streaming entity 存在），isActive 仍 true
@@ -240,7 +240,8 @@ describe('T1.4/T1.5 send 全链 Composer DOM 断言（用户可见行为）', ()
     await wrapper.vm.$nextTick()
     wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', new KeyboardEvent('keydown', { key: 'Enter' }))
     await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick() // flush async send（含 reject + catch）
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick() // flush async send（slice6 起含 extractImages await，多一拍；含 reject + catch）
     // store 侧：pendingSend 已清，无 streaming → isActive=false（用户可重试）
     expect(chat.isActive('s-dom-fail')).toBe(false)
     await wrapper.vm.$nextTick()
