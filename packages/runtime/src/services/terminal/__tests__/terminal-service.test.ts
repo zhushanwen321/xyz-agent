@@ -6,7 +6,7 @@
  *
  * 运行：cd packages/runtime && npx vitest run src/services/terminal/__tests__/terminal-service.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── mock node-pty ─────────────────────────────────────────────────────────
@@ -79,6 +79,12 @@ function findMsg(msgs: ServerMessage[], type: string): ServerMessage | undefined
 beforeEach(() => {
   mockPtys.length = 0
   vi.clearAllMocks()
+})
+
+// 恢复 it 内 vi.spyOn 创建的 spy（如 console.error），避免污染后续测试。
+// 只影响 vi.spyOn，不动 vi.mock 模块工厂 / vi.fn。
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('TerminalService', () => {
@@ -180,5 +186,37 @@ describe('TerminalService', () => {
       code: 'spawn_failed',
       message: expect.stringContaining('shell not found'),
     })
+  })
+
+  it('TS-10: spawn 失败时 console.error 收到序列化后的 plain object（含 message/stack/code），非裸 Error 实例', async () => {
+    // 回归守卫：spawn catch 块用 serializeError(e) 把 Error 转成 plain object 再传给 console.error。
+    // 若有人改回裸 e，Error 实例经 logger 的 JSON.stringify 会变成 {}，日志看不出真实错误。
+    const { spawn } = await import('node-pty')
+    // 带 code 的 Error（模拟 node 系统错误，验证 code 透出）
+    const spawnErr = Object.assign(new Error('ENOENT: shell not found'), { code: 'ENOENT' })
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      throw spawnErr
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+
+    await expect(svc.spawn('s10', undefined, 80, 24)).rejects.toMatchObject({
+      code: 'spawn_failed',
+    })
+
+    expect(errorSpy).toHaveBeenCalled()
+    // console.error 第二个参数是 serializeError(e) 的返回值
+    const serialized = errorSpy.mock.calls[0]![1]
+    // 关键：不是裸 Error 实例（裸 Error 会被 logger JSON.stringify 成 {}）
+    expect(serialized).not.toBeInstanceOf(Error)
+    // 是含 message/stack/code 的 plain object
+    expect(serialized).toMatchObject({
+      message: 'ENOENT: shell not found',
+      stack: expect.any(String),
+      code: 'ENOENT',
+    })
+    // 模拟 logger 的 JSON.stringify：plain object 能正确序列化出 message（裸 Error 会变 {}）
+    expect(JSON.parse(JSON.stringify(serialized)).message).toBe('ENOENT: shell not found')
   })
 })
