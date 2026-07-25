@@ -150,6 +150,7 @@ async function onChangeRepo(): Promise<void> {
     repoPath.value = detectResult.mode === 'bare-workspace' ? detectResult.wsRoot : detectResult.repoRoot
     defaultBranch.value = detectResult.defaultBranch || 'main'
     baseBranch.value = `origin/${defaultBranch.value}`
+    if (cancelled.value) return
     branchesLoading.value = true
     try {
       const branches = await worktreeApi.listBranches(repoPath.value || result.path)
