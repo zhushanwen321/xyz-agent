@@ -335,7 +335,7 @@ describe('SessionService · dispatcher', () => {
     it('calls client.prompt with the user content on normal send', async () => {
       const client = setup.mountClient('sid-1')
       await setup.service.sendMessage('sid-1', 'hello pi')
-      expect(client.prompt).toHaveBeenCalledWith('hello pi')
+      expect(client.prompt).toHaveBeenCalledWith('hello pi', undefined)
     })
 
     it('does not call prompt when hook blocks, and broadcasts message.error with reason', async () => {
@@ -359,14 +359,14 @@ describe('SessionService · dispatcher', () => {
       const client = setup.mountClient('sid-1')
       setup.service.setSendMessageHook(async () => ({ blocked: false }))
       await setup.service.sendMessage('sid-1', 'go')
-      expect(client.prompt).toHaveBeenCalledWith('go')
+      expect(client.prompt).toHaveBeenCalledWith('go', undefined)
     })
 
     it('passes through when hook returns null', async () => {
       const client = setup.mountClient('sid-1')
       setup.service.setSendMessageHook(async () => null)
       await setup.service.sendMessage('sid-1', 'go')
-      expect(client.prompt).toHaveBeenCalledWith('go')
+      expect(client.prompt).toHaveBeenCalledWith('go', undefined)
     })
 
     it('broadcasts message.error and skips prompt when hook throws', async () => {

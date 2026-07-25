@@ -357,6 +357,7 @@ describe('RuntimeServer message.send with subagent field', () => {
   expect(sendMessageMock).toHaveBeenCalledWith(
     'sess-normal',
     'Hello, this is a regular chat message',
+    undefined,
   )
   })
 })

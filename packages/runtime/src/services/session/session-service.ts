@@ -274,7 +274,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return last.id as string
   }
 
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, images) }
   async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }

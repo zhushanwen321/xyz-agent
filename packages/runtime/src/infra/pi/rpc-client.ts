@@ -419,9 +419,18 @@ export class RpcClient implements IPiEngine {
    * Actual content arrives via onEvent() listeners as text_delta etc.
    *
    * Note: pi RPC protocol uses "message" field, not "content".
+   *
+   * images 是 shared 层图片附件形状（{data;base64;mimeType}，无 type 字段）。
+   * 此方法是 shared→pi ImageContent 的唯一组装点（AGENTS.md 规则 #5）：
+   * map 时补 `type:'image' as const`，pi 私有 type 字段不出 infra 层。
+   * images 为 undefined 或空数组时归一化为不传 images 键（避免 pi 收到空数组），
+   * 走与改动前完全一致的路径，零回归。
    */
-  prompt(content: string): Promise<PiMessage> {
-    return this.sendCommand('prompt', { message: content })
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>): Promise<PiMessage> {
+    const piImages = images && images.length > 0
+      ? images.map(i => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
+      : undefined
+    return this.sendCommand('prompt', piImages ? { message: content, images: piImages } : { message: content })
   }
 
   abort(): Promise<PiMessage> {

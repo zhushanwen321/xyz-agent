@@ -101,7 +101,14 @@ export interface PiSessionOptions {
  */
 export interface IPiEngine {
   // ── 命令通信 ──
-  prompt(content: string): Promise<PiMessage>
+  /**
+   * 发送用户消息。
+   *
+   * images 是 shared 层图片附件形状（{data;base64;mimeType}，无 pi 私有 type 字段）。
+   * 类型组装（补 type:'image'）下沉到 RpcClient 实现内部，本接口只暴露 shared 形状，
+   * 保持 pi 私有字段不出 infra 层（AGENTS.md 规则 #5）。undefined/空数组归一化为不传。
+   */
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>): Promise<PiMessage>
   abort(): Promise<PiMessage>
   steer(content: string): Promise<PiMessage>
   followUp(content: string): Promise<PiMessage>
