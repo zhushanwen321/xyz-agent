@@ -48,6 +48,8 @@ describe('TC6: insertImageBadge DOM 结构', () => {
     expect(chip.dataset.chipPath).toBe('/tmp/x.png')
     expect(chip.dataset.chipFileName).toBe('x-uuid.png')
     expect(chip.dataset.chipDisplayName).toBe('x.png')
+    // M1：needsMigrate 默认 false（省略第 4 参数）→ dataset 'false'（+菜单选的磁盘文件不迁移）
+    expect(chip.dataset.chipNeedsMigrate).toBe('false')
     // C3：chipId 是稳定唯一 uuid（crypto.randomUUID），同一文件附两次时 ContextChipsBar :key 用它区分
     expect(chip.dataset.chipId).toBeTruthy()
     expect(chip.dataset.chipId.length).toBeGreaterThan(0)
@@ -60,6 +62,14 @@ describe('TC6: insertImageBadge DOM 结构', () => {
     const spacer = chip.nextSibling
     expect(spacer?.nodeType).toBe(Node.TEXT_NODE)
     expect(spacer?.textContent).toBe('\u200B')
+  })
+
+  it('M1: insertImageBadge 第 4 参数 needsMigrate=true → dataset.chipNeedsMigrate="true"', () => {
+    const { el, chipCommands } = setupChipCommands()
+    // landing 态粘贴落 tmpdir 的图需迁移 → needsMigrate=true
+    chipCommands.insertImageBadge('/tmp/x.png', 'x-uuid.png', 'x.png', true)
+    const chip = el.querySelector('.image-chip') as HTMLElement
+    expect(chip.dataset.chipNeedsMigrate).toBe('true')
   })
 
   it('C3: 同一文件附两次 → 两个 chip 各有唯一 chipId（path 重复但 id 不冲突）', () => {
@@ -103,7 +113,8 @@ describe('TC7: getSegmentsFromEl image 分支', () => {
     expect(segments).toEqual([
       { type: 'text', text: 'hello' },
       // C3：image segment 含稳定唯一 id（chip.dataset.chipId 的 uuid）+ fileName/displayName
-      { type: 'image', id: expect.any(String), path: '/tmp/a.png', fileName: 'a-uuid.png', displayName: 'a.png' },
+      // M1：默认 needsMigrate=false（insertImageBadge 未传第 4 参数 → dataset 'false' → segment false）
+      { type: 'image', id: expect.any(String), path: '/tmp/a.png', fileName: 'a-uuid.png', displayName: 'a.png', needsMigrate: false },
       { type: 'text', text: 'world' },
     ])
     // chip-label 'a.png' 与 chip-x '×' 不出现在任何 text segment（rejectChipSubtree 生效）
@@ -112,5 +123,14 @@ describe('TC7: getSegmentsFromEl image 分支', () => {
       .map((s) => s.text)
       .join('')
     expect(textContent).not.toContain('×')
+  })
+
+  it('M1: getSegmentsFromEl 读 dataset.chipNeedsMigrate="true" → segment.needsMigrate=true', () => {
+    const { el, chipCommands } = setupChipCommands()
+    // landing 态 writeSessionImage 落 tmpdir 的图 → needsMigrate=true
+    chipCommands.insertImageBadge('/tmp/landing.png', 'landing.png', '截图.png', true)
+    const segments = getSegmentsFromEl(el)
+    expect(segments).toHaveLength(1)
+    expect(segments[0]).toMatchObject({ type: 'image', needsMigrate: true })
   })
 })

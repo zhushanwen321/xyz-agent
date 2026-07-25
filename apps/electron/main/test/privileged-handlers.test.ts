@@ -201,7 +201,7 @@ describe('write-session-image IPC handler (W3)', () => {
     registerPrivilegedHandlers({} as never)
   })
 
-  it('W3TC3: panel 态（sessionId 非空）→ 写 attachments/<sessionId>/ 返回 {path,fileName,displayName,id}', async () => {
+  it('W3TC3: panel 态（sessionId 非空）→ 写 attachments/<sessionId>/ 返回 {path,fileName,displayName,id,persisted:true}', async () => {
     const writeSessionImage = handlers.get('write-session-image')!
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
     const base64 = bytes.toString('base64')
@@ -210,7 +210,7 @@ describe('write-session-image IPC handler (W3)', () => {
       base64,
       mimeType: 'image/png',
       name: 'shot.png',
-    })) as { path: string; fileName: string; displayName: string; id: string }
+    })) as { path: string; fileName: string; displayName: string; id: string; persisted: boolean }
     writtenPaths.push(result.path)
     // path 在 <dataDir>/attachments/sess-panel-1/ 下
     const expectedDir = join(getDataDir(), 'attachments', 'sess-panel-1')
@@ -225,9 +225,11 @@ describe('write-session-image IPC handler (W3)', () => {
     expect(result.displayName).toBe('shot.png')
     // id 是 uuid 格式
     expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    // M1：sessionId 非空 → 落 attachments → persisted=true（不需迁移）
+    expect(result.persisted).toBe(true)
   })
 
-  it('W3TC4: landing 降级（sessionId 为空）→ 写 tmpdir 返回 {path,fileName,displayName,id}', async () => {
+  it('W3TC4: landing 降级（sessionId 为空）→ 写 tmpdir 返回 {path,fileName,displayName,id,persisted:false}', async () => {
     const writeSessionImage = handlers.get('write-session-image')!
     const bytes = Buffer.from([0x01])
     const result = (await writeSessionImage({}, {
@@ -235,13 +237,15 @@ describe('write-session-image IPC handler (W3)', () => {
       base64: bytes.toString('base64'),
       mimeType: 'image/png',
       name: 'x.png',
-    })) as { path: string; fileName: string; displayName: string; id: string }
+    })) as { path: string; fileName: string; displayName: string; id: string; persisted: boolean }
     writtenPaths.push(result.path)
     // path 在 tmpdir 下（降级路径）
     expect(result.path.startsWith(tmpdir())).toBe(true)
     expect(existsSync(result.path)).toBe(true)
     // id 是 uuid 格式
     expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    // M1：sessionId 空 → 落 tmpdir → persisted=false（session 创建后需迁移）
+    expect(result.persisted).toBe(false)
   })
 
   it('W3TC5: 非 image/* mimeType → throw「mimeType must start with image/」（ERR1）', async () => {

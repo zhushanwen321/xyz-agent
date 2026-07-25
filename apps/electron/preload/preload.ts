@@ -44,19 +44,20 @@ export interface ElectronAPI {
     path: string | null
   }>
   /**
-   * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id}。
+   * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id, persisted}。
    * Cmd+V/Ctrl+V 粘贴截图走此 IPC（renderer 读 blob → base64 → 落地文件）。
    * 主进程校验 mimeType image/* 前缀 + 20MB 上限，写失败 throw。
    * sessionId 为空时（landing 态）降级走 OS tmpdir。
    * - fileName：落地磁盘文件名（含 uuid 前缀，segment.fileName 用，extractImages 读文件用）
    * - displayName：用户可读名（badge/alt 显示，无 uuid 前缀）；粘贴截图无原文件名时为 截图-时间戳.ext
+   * - persisted：sessionId 非空 true（落 attachments 已持久化）；空 false（落 tmpdir，session 创建后需迁移）
    */
   writeSessionImage(payload: {
     sessionId: string
     base64: string
     mimeType: string
     name: string
-  }): Promise<{ path: string; fileName: string; displayName: string; id: string }>
+  }): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }>
   /**
    * 把 landing 态落在 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
    * session 创建后调用，解决 landing 粘图 path 仍指 tmpdir 的缺口（OS 会清理 tmpdir 导致丢图）。

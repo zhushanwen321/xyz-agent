@@ -25,9 +25,10 @@ import { writeSessionImage } from '@/lib/ipc'
 
 /** handleImagePaste 返回联合类型。
  *  badge 分支含 path（磁盘绝对路径，local-file:// 加载用）+ fileName（磁盘全名，含 uuid 前缀，
- *  日志/磁盘定位）+ displayName（用户可读名，badge label / 缩略图 alt 用）。 */
+ *  日志/磁盘定位）+ displayName（用户可读名，badge label / 缩略图 alt 用）。
+ *  needsMigrate：是否需要 tmpdir → attachments 迁移（landing 态 writeSessionImage 落 tmpdir 时 true）。 */
 export type HandleImagePasteResult =
-  | { kind: 'badge'; path: string; fileName: string; displayName: string }
+  | { kind: 'badge'; path: string; fileName: string; displayName: string; needsMigrate: boolean }
   | { kind: 'text'; text: string }
 
 /**
@@ -81,7 +82,7 @@ export async function handleImagePaste(
     return { kind: 'text', text: '[图片读取失败]' }
   }
 
-  let result: { path: string; fileName: string; displayName: string; id: string } | undefined
+  let result: { path: string; fileName: string; displayName: string; id: string; persisted: boolean } | undefined
   try {
     result = await writeSessionImage({
       sessionId: sessionId ?? '',
@@ -95,7 +96,8 @@ export async function handleImagePaste(
   }
   // 非 electron 环境（web/mock）：writeSessionImage 返回 undefined → 降级文本提示
   if (!result) return { kind: 'text', text: '[图片粘贴：需桌面环境]' }
-  return { kind: 'badge', path: result.path, fileName: result.fileName, displayName: result.displayName }
+  // needsMigrate：persisted=false（落 tmpdir 的 landing 态图）→ true（session 创建后需迁移到 attachments）
+  return { kind: 'badge', path: result.path, fileName: result.fileName, displayName: result.displayName, needsMigrate: !result.persisted }
 }
 
 /** composable 入口（保留 useXxx 范式，当前无实例状态，纯函数导出便于未来扩展） */

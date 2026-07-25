@@ -151,7 +151,7 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
     async (
       _event,
       payload: { sessionId: string; base64: string; mimeType: string; name: string },
-    ): Promise<{ path: string; fileName: string; displayName: string; id: string }> => {
+    ): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }> => {
       const { sessionId, base64, mimeType, name } = payload
       if (!mimeType.startsWith('image/')) {
         throw new Error('mimeType must start with image/')
@@ -194,7 +194,9 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         const displayName = isPlaceholder
           ? `截图-${formatTimestamp()}.${ext}`
           : `${sanitized}.${ext}`
-        return { path: fullPath, fileName: filename, displayName, id: randomUUID() }
+        // persisted：sessionId 非空 → 落 attachments（已持久化，不需要迁移）；空 → 落 tmpdir
+        //（landing 降级，session 创建后需迁移到 attachments）。调用方据 !persisted 标记 segment.needsMigrate。
+        return { path: fullPath, fileName: filename, displayName, id: randomUUID(), persisted: !!sessionId }
       } catch (err) {
         console.error('[ipc] write-session-image failed:', err)
         throw new Error('write-session-image failed')

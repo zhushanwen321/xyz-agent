@@ -84,19 +84,22 @@ export async function pickFile(
 }
 
 /**
- * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id}。
+ * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id, persisted}。
  * web/mock 环境无 preload → api 或 api.writeSessionImage 不存在 → 返回 undefined，
  * 让上层（useImageAttachment）降级为文本提示，不 throw。
  *
  * sessionId 为空时（landing 态）主进程降级走 OS tmpdir。主进程写失败会 throw
  * （经 ipcRenderer.invoke reject），调用方 catch 后降级。
+ *
+ * persisted：sessionId 非空 true（落 attachments 已持久化）；空 false（落 tmpdir，session 创建后需迁移）。
+ * 调用方据 !persisted 标记 segment.needsMigrate，避免后续用路径猜测误迁移用户磁盘文件。
  */
 export async function writeSessionImage(payload: {
   sessionId: string
   base64: string
   mimeType: string
   name: string
-}): Promise<{ path: string; fileName: string; displayName: string; id: string } | undefined> {
+}): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean } | undefined> {
   return api?.writeSessionImage?.(payload)
 }
 

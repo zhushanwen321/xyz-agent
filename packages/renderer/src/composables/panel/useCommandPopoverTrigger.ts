@@ -126,7 +126,9 @@ export function useCommandPopoverTrigger(
           // 与粘贴/拖拽通路（writeSessionImage 产出 uuid 前缀 fileName + 用户可读 displayName）不同，
           // 此处两字段同值（磁盘 basename）。
           const name = result.path.split(/[\\/]/).pop() || result.path
-          inputRef.value?.insertImageBadge(result.path, name, name)
+          // +菜单选的是用户磁盘已存在文件，不需要迁移（不是 landing 态 writeSessionImage 落 tmpdir 的临时文件）。
+          // needsMigrate 显式传 false——若误传 true，renameSync 会把用户原文件移走（数据丢失）。
+          inputRef.value?.insertImageBadge(result.path, name, name, false)
         } else {
           // attach：任意文件，文本路径插入（与 Ctrl+V 路径文本通路一致，轻量）
           inputRef.value?.insertTextAtCursor(result.path)

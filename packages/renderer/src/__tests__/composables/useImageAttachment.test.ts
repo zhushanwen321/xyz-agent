@@ -40,10 +40,10 @@ describe('useImageAttachment: handleImagePaste 降级矩阵', () => {
     writeSessionImageMock.mockReset()
   })
 
-  it('TC1: writeSessionImage 成功 → {kind:badge, path, fileName, displayName}', async () => {
-    writeSessionImageMock.mockResolvedValueOnce({ path: '/tmp/xyz-img-x.png', fileName: 'xyz-img-x.png', displayName: 'xyz-img-x.png', id: 'u1' })
+  it('TC1: writeSessionImage 成功（persisted=true）→ {kind:badge, ..., needsMigrate:false}', async () => {
+    writeSessionImageMock.mockResolvedValueOnce({ path: '/tmp/xyz-img-x.png', fileName: 'xyz-img-x.png', displayName: 'xyz-img-x.png', id: 'u1', persisted: true })
     const result = await handleImagePaste(makePngFile(), 'sess-1')
-    expect(result).toEqual({ kind: 'badge', path: '/tmp/xyz-img-x.png', fileName: 'xyz-img-x.png', displayName: 'xyz-img-x.png' })
+    expect(result).toEqual({ kind: 'badge', path: '/tmp/xyz-img-x.png', fileName: 'xyz-img-x.png', displayName: 'xyz-img-x.png', needsMigrate: false })
     // writeSessionImage 收到 base64 非空 + mimeType='image/png'
     expect(writeSessionImageMock).toHaveBeenCalledTimes(1)
     const payload = writeSessionImageMock.mock.calls[0][0]
@@ -52,15 +52,17 @@ describe('useImageAttachment: handleImagePaste 降级矩阵', () => {
   })
 
   it('W3TC9: sessionId 透传到 writeSessionImage payload', async () => {
-    writeSessionImageMock.mockResolvedValueOnce({ path: '/d/a.png', fileName: 'a.png', displayName: 'a.png', id: 'u1' })
+    writeSessionImageMock.mockResolvedValueOnce({ path: '/d/a.png', fileName: 'a.png', displayName: 'a.png', id: 'u1', persisted: true })
     await handleImagePaste(makePngFile(), 'sess-panel-9')
     expect(writeSessionImageMock.mock.calls[0][0].sessionId).toBe('sess-panel-9')
   })
 
-  it('sessionId=null（landing 态）→ payload.sessionId 为空字符串（IPC 内降级 tmpdir）', async () => {
-    writeSessionImageMock.mockResolvedValueOnce({ path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png', id: 'u1' })
-    await handleImagePaste(makePngFile(), null)
+  it('sessionId=null（landing 态）→ payload.sessionId 为空字符串（IPC 内降级 tmpdir）+ needsMigrate=true', async () => {
+    // persisted=false（落 tmpdir）→ needsMigrate=true（session 创建后需迁移到 attachments）
+    writeSessionImageMock.mockResolvedValueOnce({ path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png', id: 'u1', persisted: false })
+    const result = await handleImagePaste(makePngFile(), null)
     expect(writeSessionImageMock.mock.calls[0][0].sessionId).toBe('')
+    expect(result).toEqual({ kind: 'badge', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png', needsMigrate: true })
   })
 
   it('TC4: writeSessionImage reject → {kind:text, text:[图片粘贴失败]} 降级', async () => {

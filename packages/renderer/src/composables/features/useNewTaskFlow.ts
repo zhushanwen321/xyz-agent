@@ -53,22 +53,7 @@ export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTas
 export { resetNewTaskFlow } from '@/composables/new-task/useNewTaskFlowState'
 
 /**
- * 判断 path 是否「landing 态降级 tmpdir 落盘的临时文件」。
- *
- * writeSessionImage 在 sessionId 为空（landing 态）时降级走 OS tmpdir，path 不含 /attachments/ 段；
- * 持久化的图片则落在 <dataDir>/attachments/<sessionId>/ 下（path 含 /attachments/）。
- *
- * 跨平台稳健性：tmpdir 前缀跨平台不同（macOS /var/folders/...，Linux /tmp/...，Windows %TEMP%），
- * 硬编码前缀比较易漏。改用「不在 attachments 目录」反向判断——只要 path 不含 /attachments/ 段，
- * 就视为 tmpdir 临时文件（需要迁移）。Windows 的反斜杠路径在 renderer 经 preload 统一规范为正斜杠，
- * 但为稳妥起见同时检查正反斜杠两种分隔符。
- */
-function isTmpdirPath(p: string): boolean {
-  return !p.includes('/attachments/') && !p.includes('\\attachments\\')
-}
-
-/**
- * 把 tmpdir 图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+ * 把 landing 态落 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
  *
  * 单文件失败不阻断（OS 可能已清理 tmpdir / 非 electron 环境无 preload），用 Promise.allSettled
  * 收集结果，失败项 console.warn 后跳过。返回成功迁移的 Map<oldPath, newPath>，供调用方更新 segments.path。
@@ -207,7 +192,9 @@ export function useNewTaskFlow() {
    * 兜底为「无提示词」）。
    *
    * tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。
-   * session.create 成功后，扫描 segments 把 path 在 tmpdir 的 image move 到 attachments/<sessionId>/。
+   * session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
+   * 迁移判断用 segment.needsMigrate 字段（M1 修复），不猜路径——+菜单选的用户磁盘文件 needsMigrate
+   * 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
    * 迁移后再 chat.send——appendUser + extractImages 都用迁移后的 path，不需要额外的 store update。
    * 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
    * （extractImages 发送时 fetch 失败走 allSettled 跳过，文本占位 [图片 N] 仍发）。
@@ -288,18 +275,20 @@ export function useNewTaskFlow() {
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
       // tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。
-      // session.create 成功后，扫描 segments 把 path 在 tmpdir 的 image move 到 attachments/<sessionId>/。
+      // session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
+      // 迁移判断用 segment.needsMigrate 字段（M1 修复），不再猜路径——+菜单选的用户磁盘文件
+      // needsMigrate 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
       // 迁移后更新 segments.path（chat.send 的 appendUser + extractImages 都用更新后的 path），
       // 这样 store 里存的就是正确 path，不需要额外的 store update action。
       // 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
       // （extractImages 发送时 fetch 失败走 allSettled 跳过，文本占位 [图片 N] 仍发）。
       let finalSegments = segments
-      const tmpdirImages = segments.filter(
+      const needsMigrateImages = segments.filter(
         (s): s is Extract<Segment, { type: 'image' }> =>
-          s.type === 'image' && isTmpdirPath(s.path),
+          s.type === 'image' && s.needsMigrate === true,
       )
-      if (tmpdirImages.length > 0) {
-        const migrated = await migrateTmpdirImages(tmpdirImages, newSid)
+      if (needsMigrateImages.length > 0) {
+        const migrated = await migrateTmpdirImages(needsMigrateImages, newSid)
         // migrated 是 Map<oldPath, newPath>，更新 segments
         finalSegments = segments.map((s) => {
           if (s.type === 'image' && migrated.has(s.path)) {
@@ -307,9 +296,9 @@ export function useNewTaskFlow() {
           }
           return s
         })
-        if (migrated.size < tmpdirImages.length) {
+        if (migrated.size < needsMigrateImages.length) {
           // 部分迁移失败：toast 提示（不阻断发送）
-          toastWarning(t('composable.imageMigratePartialFailed', { count: tmpdirImages.length - migrated.size }))
+          toastWarning(t('composable.imageMigratePartialFailed', { count: needsMigrateImages.length - migrated.size }))
         }
       }
       await chat.send(newSid, finalSegments)

@@ -25,7 +25,7 @@ const CHIP_SPACER_ZWSP = '\u200B'
 
 /** ComposerInput 实例最小契约（insertImageBadge 经 defineExpose 暴露） */
 interface ComposerInputInstance {
-  insertImageBadge: (path: string, fileName: string, displayName: string) => void
+  insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
 }
 
 /**
@@ -65,9 +65,9 @@ export function useComposerDragDrop(
    * 非图片文件忽略。末尾复位 isDragOver + 刷新 chip 行。
    *
    * 占位回填（等价 useContenteditableInput.handleImagePasteEvent）：
-   * - 先 insertImageBadge(placeholderMark, placeholderMark, '拖入中…') 占位
+   * - 先 insertImageBadge(placeholderMark, placeholderMark, '拖入中…', false) 占位
    * - await handleImagePaste(file)
-   * - kind:'badge' → 回填占位 dataset.chipPath/chipFileName/chipDisplayName + label（占位不在则重插）
+   * - kind:'badge' → 回填占位 dataset.chipPath/chipFileName/chipDisplayName/chipNeedsMigrate + label（占位不在则重插）
    * - kind:'text'  → 移除占位 + 相邻 ZWSP spacer，insertText 降级文本
    */
   function onDrop(e: DragEvent): void {
@@ -81,8 +81,9 @@ export function useComposerDragDrop(
       const sid = sessionId.value
       for (const file of imageFiles) {
         const placeholderMark = `__drag_pending_${crypto.randomUUID()}__`
-        // 占位：path/fileName 用 placeholderMark（异步定位用），displayName 显「拖入中…」
-        inputRef.value?.insertImageBadge(placeholderMark, placeholderMark, '拖入中…')
+        // 占位：path/fileName 用 placeholderMark（异步定位用），displayName 显「拖入中…」。
+        // needsMigrate 传 false（占位无迁移语义），回填时按 result.needsMigrate 重设 dataset。
+        inputRef.value?.insertImageBadge(placeholderMark, placeholderMark, '拖入中…', false)
         const result = await handleImagePaste(file, sid)
         // 用 dataset 遍历定位占位（C2：path 含 CSS 特殊字符时 querySelector 选择器失效）
         const placeholder = composerBoxRef.value
@@ -93,10 +94,11 @@ export function useComposerDragDrop(
             placeholder.dataset.chipPath = result.path
             placeholder.dataset.chipFileName = result.fileName
             placeholder.dataset.chipDisplayName = result.displayName
+            placeholder.dataset.chipNeedsMigrate = result.needsMigrate ? 'true' : 'false'
             const label = placeholder.querySelector('.chip-label')
             if (label) label.textContent = result.displayName
           } else {
-            inputRef.value?.insertImageBadge(result.path, result.fileName, result.displayName)
+            inputRef.value?.insertImageBadge(result.path, result.fileName, result.displayName, result.needsMigrate)
           }
         } else if (result.kind === 'text') {
           if (placeholder) {

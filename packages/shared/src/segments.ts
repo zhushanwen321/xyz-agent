@@ -27,6 +27,11 @@
  *   - fileName：磁盘文件全名（含 uuid 前缀，如 `dbfdb3c8-...-image.png`），用于磁盘定位/日志
  *   - displayName：用户可读名（如 `截图-20260725-1530.png` 或 `照片.png`），用于 badge/
  *     占位/缩略图 alt 显示
+ *   - needsMigrate：是否需要 tmpdir → attachments 迁移。只有 landing 态 writeSessionImage
+ *     落 OS tmpdir 的图才标记 true（session 创建后需迁移到 attachments 持久化）。
+ *     +菜单选的用户磁盘文件、normal 态 writeSessionImage 落 attachments 的图，都不设
+ *     （undefined 等同 false）。迁移判断用此字段，不猜路径（避免把用户磁盘文件误当
+ *     tmpdir 文件被 renameSync 移走——数据丢失）。
  *   不进 pi prompt 文本（base64 走 message.send 的 images 字段），segmentsToText 产出
  *   匿名编号占位 [图片 N]（不暴露 fileName/displayName 给 LLM）。
  */
@@ -35,7 +40,7 @@ export type Segment =
   | { type: 'skill'; name: string; location?: string }
   | { type: 'file'; path: string; lineRange?: [number, number] }
   | { type: 'mention'; name: string }
-  | { type: 'image'; id: string; path: string; fileName: string; displayName: string }
+  | { type: 'image'; id: string; path: string; fileName: string; displayName: string; needsMigrate?: boolean }
 
 /**
  * Segment[] → 纯文本（归一化展示用 + pi prompt 序列化的唯一实现）。

@@ -381,7 +381,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     expect(flow.state.value).toBe('completed')
   })
 
-  it('tmpdir 迁移成功：image path 在 tmpdir → migrateSessionImage 后 path 更新为 attachments/<sid>/', async () => {
+  it('tmpdir 迁移成功：needsMigrate=true 的 image → migrateSessionImage 后 path 更新为 attachments/<sid>/', async () => {
     setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
     workspaceStoreMock.defaultCwd = '/repo'
     createCtrl.create.mockResolvedValue(mkSession({ id: 'mig-1', cwd: '/repo' }))
@@ -391,11 +391,12 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     migrateCtrl.migrateSessionImage.mockResolvedValue({ path: '/dataDir/attachments/mig-1/abc-image.png' })
     const segments: Segment[] = [
       { type: 'text', text: '看这张图' },
-      { type: 'image', id: 'i1', path: '/var/folders/xx/abc-image.png', fileName: 'abc-image.png', displayName: '照片.png' },
+      // M1：needsMigrate=true（landing 态 writeSessionImage 落 tmpdir 的图）。迁移判断用此字段，不猜路径。
+      { type: 'image', id: 'i1', path: '/var/folders/xx/abc-image.png', fileName: 'abc-image.png', displayName: '照片.png', needsMigrate: true },
     ]
     await flow.submitFirstMessage(segments)
 
-    // migrateSessionImage 被调一次（path 含 tmpdir 不含 /attachments/）
+    // migrateSessionImage 被调一次（needsMigrate=true 触发迁移）
     expect(migrateCtrl.migrateSessionImage).toHaveBeenCalledTimes(1)
     expect(migrateCtrl.migrateSessionImage).toHaveBeenCalledWith({
       fromPath: '/var/folders/xx/abc-image.png',
@@ -428,8 +429,9 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const segments: Segment[] = [
-      { type: 'image', id: 'i1', path: '/tmp/img1.png', fileName: 'img1.png', displayName: '1.png' },
-      { type: 'image', id: 'i2', path: '/tmp/img2.png', fileName: 'img2.png', displayName: '2.png' },
+      // M1：两张图都 needsMigrate=true（landing 态落 tmpdir）
+      { type: 'image', id: 'i1', path: '/tmp/img1.png', fileName: 'img1.png', displayName: '1.png', needsMigrate: true },
+      { type: 'image', id: 'i2', path: '/tmp/img2.png', fileName: 'img2.png', displayName: '2.png', needsMigrate: true },
     ]
     await flow.submitFirstMessage(segments)
 
@@ -448,7 +450,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     warnSpy.mockRestore()
   })
 
-  it('已持久化图片（path 含 /attachments/）→不触发迁移，原样发送', async () => {
+  it('已持久化图片（needsMigrate 不设）→不触发迁移，原样发送', async () => {
     setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
     workspaceStoreMock.defaultCwd = '/repo'
     createCtrl.create.mockResolvedValue(mkSession({ id: 'persist-1', cwd: '/repo' }))
@@ -457,13 +459,58 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
 
     const segments: Segment[] = [
       { type: 'text', text: '历史图' },
+      // M1：needsMigrate 不设（等同 false）。path 在 attachments 目录（normal 态 writeSessionImage 落地）
       { type: 'image', id: 'i1', path: '/dataDir/attachments/other-sess/x.png', fileName: 'x.png', displayName: 'x.png' },
     ]
     await flow.submitFirstMessage(segments)
 
-    // path 已在 attachments 目录 → 不调 migrateSessionImage
+    // needsMigrate 不为 true → 不调 migrateSessionImage
     expect(migrateCtrl.migrateSessionImage).not.toHaveBeenCalled()
     expect(chatMock.send).toHaveBeenCalledWith('persist-1', segments)
+  })
+
+  it('M3（+菜单用户磁盘文件）：path 非 tmpdir 非 attachments 且 needsMigrate=false → 不触发迁移，path 原样保留', async () => {
+    // 修复 M1 critical：+菜单选的用户磁盘文件（如 /Users/alice/Pictures/photo.png）needsMigrate 不设，
+    // 不应被 migrateSessionImage 的 renameSync 移走（数据丢失）。原 bug：isTmpdirPath 用路径猜测
+    // （!includes('/attachments/')）把用户磁盘路径误判为 tmpdir 文件并迁移。
+    setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
+    workspaceStoreMock.defaultCwd = '/repo'
+    createCtrl.create.mockResolvedValue(mkSession({ id: 'plus-menu-1', cwd: '/repo' }))
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+
+    const diskPath = '/Users/alice/Pictures/photo.png'
+    const segments: Segment[] = [
+      { type: 'text', text: '看这张磁盘图' },
+      // +菜单选的磁盘文件：needsMigrate 不设（undefined，等同 false）——模拟 useCommandPopoverTrigger 的 needsMigrate=false
+      { type: 'image', id: 'i1', path: diskPath, fileName: 'photo.png', displayName: 'photo.png', needsMigrate: false },
+    ]
+    await flow.submitFirstMessage(segments)
+
+    // needsMigrate=false（非 true）→ 不调 migrateSessionImage（用户磁盘文件不被移走）
+    expect(migrateCtrl.migrateSessionImage).not.toHaveBeenCalled()
+    // chat.send 收到原样 segments（path 未被改写）
+    const sentSegments = chatMock.send.mock.calls[0][1] as Segment[]
+    expect(sentSegments[1]).toMatchObject({ type: 'image', path: diskPath })
+  })
+
+  it('M3（+菜单用户磁盘文件，needsMigrate 不设）：undefined 等同 false → 不触发迁移', async () => {
+    // 覆盖 needsMigrate 可选字段省略的语义（undefined === false）。
+    setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
+    workspaceStoreMock.defaultCwd = '/repo'
+    createCtrl.create.mockResolvedValue(mkSession({ id: 'plus-menu-2', cwd: '/repo' }))
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+
+    const segments: Segment[] = [
+      // needsMigrate 字段完全省略（旧 segment 数据 / 历史消息回放）
+      { type: 'image', id: 'i1', path: '/Users/alice/Pictures/vacation.jpg', fileName: 'vacation.jpg', displayName: 'vacation.jpg' },
+    ]
+    await flow.submitFirstMessage(segments)
+
+    expect(migrateCtrl.migrateSessionImage).not.toHaveBeenCalled()
+    const sentSegments = chatMock.send.mock.calls[0][1] as Segment[]
+    expect(sentSegments[0]).toMatchObject({ type: 'image', path: '/Users/alice/Pictures/vacation.jpg' })
   })
 })
 

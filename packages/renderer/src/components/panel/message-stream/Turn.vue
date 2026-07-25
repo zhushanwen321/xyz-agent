@@ -317,6 +317,7 @@ import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
 import type { ThinkingBlock, ToolCall, Segment, Message } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
+import { rebuildSegmentsWithEditedText } from '@/lib/utils'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useCopy } from '@/composables/effects/useCopy'
@@ -535,11 +536,8 @@ async function submitEdit(): Promise<void> {
   editingUserId.value = null
   // 从原 user message 保留 image segments（编辑文本不改图：draftText 仅含 normalizeContent
   // 拍平的文本，image 段拍平为 [图片 N] 占位，编辑后需从原 content 重新挂回真实 image 段）。
-  const originalSegments = Array.isArray(user.content) ? user.content : []
-  const imageSegments = originalSegments.filter(
-    (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image',
-  )
-  const segments: Segment[] = [{ type: 'text', text }, ...imageSegments]
+  // M2：保持原 segment 顺序（rebuildSegmentsWithEditedText 实现见 lib/utils.ts）。
+  const segments = rebuildSegmentsWithEditedText(user.content, text)
   // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新 segments → 重新发送
   await editAndResend(props.sessionId, user.id, segments)
 }

@@ -223,8 +223,12 @@ export function useComposerChipCommands(
    *   写入 dataset.chipFileName 供 getSegmentsFromEl 重建 segment.fileName。
    * - displayName：用户可读名（如 `截图-20260725-1530.png`），用于 badge label 显示，
    *   写入 dataset.chipDisplayName 供 getSegmentsFromEl 重建 segment.displayName。
+   *
+   * needsMigrate：是否需要 tmpdir → attachments 迁移（landing 态 writeSessionImage 落 tmpdir 的图 true）。
+   * 写入 dataset.chipNeedsMigrate 供 getSegmentsFromEl 重建 segment.needsMigrate。+菜单选的用户磁盘文件
+   * needsMigrate 必须为 false（否则会被 renameSync 移走——数据丢失）。默认 false（省略参数等价 false）。
    */
-  function insertImageBadge(path: string, fileName: string, displayName: string): void {
+  function insertImageBadge(path: string, fileName: string, displayName: string, needsMigrate: boolean = false): void {
     const el = getEl()
     if (!el) return
     restoreSelection()
@@ -238,6 +242,8 @@ export function useComposerChipCommands(
     chip.dataset.chipPath = path
     chip.dataset.chipFileName = fileName
     chip.dataset.chipDisplayName = displayName
+    // needsMigrate 标志（M1：迁移判断用此字段而非猜路径，避免用户磁盘文件被误迁移）
+    chip.dataset.chipNeedsMigrate = needsMigrate ? 'true' : 'false'
     const label = document.createElement('span')
     label.className = 'chip-label'
     // 显示层用 displayName（用户可读），磁盘全名 fileName 对用户冗余且含 uuid 前缀不美观

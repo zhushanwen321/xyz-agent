@@ -33,13 +33,13 @@ function createInputMock() {
 
 /**
  * inputRef mock（DOM 感知版）：insertImageBadge 在 box 内插入真实 .image-chip span
- * （含 data-chip-path + .chip-label），模拟 useComposerChipCommands.insertImageBadge 的 DOM 结构，
- * 使占位 querySelector 能定位到、验证回填走 dataset（而非重插）路径。
+ * （含 data-chip-path + data-chip-needs-migrate + .chip-label），模拟 useComposerChipCommands.insertImageBadge
+ * 的 DOM 结构，使占位 querySelector 能定位到、验证回填走 dataset（而非重插）路径。
  */
 function createDomInputMock(box: HTMLElement) {
   const calls = vi.fn()
-  const insertImageBadge = (path: string, fileName: string, displayName: string) => {
-    calls(path, fileName, displayName)
+  const insertImageBadge = (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => {
+    calls(path, fileName, displayName, needsMigrate)
     const chip = document.createElement('span')
     chip.className = 'mention-chip image-chip'
     chip.contentEditable = 'false'
@@ -47,6 +47,7 @@ function createDomInputMock(box: HTMLElement) {
     chip.dataset.chipPath = path
     chip.dataset.chipFileName = fileName
     chip.dataset.chipDisplayName = displayName
+    chip.dataset.chipNeedsMigrate = needsMigrate ? 'true' : 'false'
     const label = document.createElement('span')
     label.className = 'chip-label'
     label.textContent = displayName
@@ -109,8 +110,8 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     expect(result.isDragOver.value).toBe(true)
   })
 
-  it('TC6: drop 图片 → insertImageBadge 占位 + 回填真实 path/fileName/displayName（走 dataset，不重插）；isDragOver 复位', async () => {
-    handleImagePasteMock.mockResolvedValue({ kind: 'badge', path: '/tmp/x.png', fileName: 'x-uuid.png', displayName: 'x.png' })
+  it('TC6: drop 图片 → insertImageBadge 占位(needsMigrate=false) + 回填真实 path/fileName/displayName/needsMigrate（走 dataset，不重插）；isDragOver 复位', async () => {
+    handleImagePasteMock.mockResolvedValue({ kind: 'badge', path: '/tmp/x.png', fileName: 'x-uuid.png', displayName: 'x.png', needsMigrate: true })
     const box = document.createElement('div')
     document.body.appendChild(box)
     // DOM 感知 insertImageBadge：在 box 内插真实 .image-chip，使占位 query 能定位 → 走 dataset 回填
@@ -131,15 +132,16 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     // 等异步 handleImagePaste 完成 + 回填
     await vi.waitFor(() => expect(handleImagePasteMock).toHaveBeenCalled())
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalled())
-    // 占位 badge 仅插入 1 次（回填走 dataset，不重插——因占位仍在 DOM）
+    // 占位 badge 仅插入 1 次（回填走 dataset，不重插——因占位仍在 DOM）；占位 needsMigrate=false（无迁移语义）
     expect(inputMock.__calls).toHaveBeenCalledTimes(1)
-    expect(inputMock.__calls).toHaveBeenCalledWith(expect.stringMatching(/^__drag_pending_/), expect.stringMatching(/^__drag_pending_/), '拖入中…')
-    // 回填后 chip 的 dataset.chipPath 变为真实 path，fileName/displayName 变为真实值
+    expect(inputMock.__calls).toHaveBeenCalledWith(expect.stringMatching(/^__drag_pending_/), expect.stringMatching(/^__drag_pending_/), '拖入中…', false)
+    // 回填后 chip 的 dataset.chipPath 变为真实 path，fileName/displayName/needsMigrate 变为真实值
     const chip = box.querySelector('.image-chip') as HTMLElement
     expect(chip).toBeTruthy()
     expect(chip.dataset.chipPath).toBe('/tmp/x.png')
     expect(chip.dataset.chipFileName).toBe('x-uuid.png')
     expect(chip.dataset.chipDisplayName).toBe('x.png')
+    expect(chip.dataset.chipNeedsMigrate).toBe('true')
     expect(chip.querySelector('.chip-label')?.textContent).toBe('x.png')
   })
 

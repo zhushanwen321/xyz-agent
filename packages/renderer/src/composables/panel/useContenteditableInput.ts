@@ -50,8 +50,10 @@ interface ContenteditableCallbacks {
    * onPaste 在 image blob 检测到后调它插占位 badge / 真实 badge。
    * fileName：磁盘全名（含 uuid 前缀，写 dataset.chipFileName）。
    * displayName：用户可读名（badge label 显示 + 写 dataset.chipDisplayName）。
+   * needsMigrate：是否需 tmpdir→attachments 迁移（landing 态 writeSessionImage 落 tmpdir 时 true，
+   * 写 dataset.chipNeedsMigrate）。占位 badge 传 false，回填时按 result.needsMigrate 重设。
    */
-  insertImageBadge: (path: string, fileName: string, displayName: string) => void
+  insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
   /**
    * 取当前会话 id（决定图片持久化目录）；landing 态返回 null。
    * 由 ComposerInput 据 props.sessionId 提供，handleImagePaste 透传给 writeSessionImage IPC。
@@ -335,6 +337,9 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
         path: chip.dataset.chipPath ?? '',
         fileName: chip.dataset.chipFileName ?? '',
         displayName: chip.dataset.chipDisplayName ?? '',
+        // M1：迁移判断用 needsMigrate 字段（landing 态 writeSessionImage 落 tmpdir 的图 true），
+        // 不再猜路径（避免用户磁盘文件被误当 tmpdir 文件移走——数据丢失）。
+        needsMigrate: chip.dataset.chipNeedsMigrate === 'true',
       })
       rejectChips.add(chip)
       continue
@@ -447,7 +452,7 @@ function handleImagePasteEvent(
   e: ClipboardEvent,
   deps: {
     getEl: () => HTMLDivElement | null
-    insertImageBadge: (path: string, fileName: string, displayName: string) => void
+    insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
     onInput: () => void
     getSessionId: () => string | null
   },
@@ -457,8 +462,9 @@ function handleImagePasteEvent(
   if (!file) return false
   // 占位 badge 唯一标记（crypto.randomUUID 无魔术数字，定位占位以便 await 后回填/移除）
   const placeholderMark = `__paste_pending_${crypto.randomUUID()}__`
-  // 占位用 placeholderMark 做 path + fileName（仅用于异步定位占位），displayName 显「粘贴中...」
-  deps.insertImageBadge(placeholderMark, placeholderMark, '粘贴中...')
+  // 占位用 placeholderMark 做 path + fileName（仅用于异步定位占位），displayName 显「粘贴中...」。
+  // needsMigrate 传 false（占位无迁移语义），回填时按 result.needsMigrate 重设 dataset。
+  deps.insertImageBadge(placeholderMark, placeholderMark, '粘贴中...', false)
   // sessionId 在 paste 触发时取一次（landing 态 null → IPC 内降级 tmpdir）
   const sessionId = deps.getSessionId()
   void (async () => {
@@ -468,15 +474,16 @@ function handleImagePasteEvent(
     const placeholder = el ? findImageChipEl(el, placeholderMark) : null
     if (result.kind === 'badge') {
       if (placeholder) {
-        // 回填真实 path/fileName/displayName（dataset + label）
+        // 回填真实 path/fileName/displayName/needsMigrate（dataset + label）
         placeholder.dataset.chipPath = result.path
         placeholder.dataset.chipFileName = result.fileName
         placeholder.dataset.chipDisplayName = result.displayName
+        placeholder.dataset.chipNeedsMigrate = result.needsMigrate ? 'true' : 'false'
         const label = placeholder.querySelector('.chip-label')
         if (label) label.textContent = result.displayName
       } else {
-        // 占位已不在 DOM（用户手快删了）→ 重插真实 badge
-        deps.insertImageBadge(result.path, result.fileName, result.displayName)
+        // 占位已不在 DOM（用户手快删了）→ 重插真实 badge（带 needsMigrate）
+        deps.insertImageBadge(result.path, result.fileName, result.displayName, result.needsMigrate)
       }
     } else if (result.kind === 'text') {
       // 降级：移除占位 badge + 相邻 ZWSP spacer，插降级文本

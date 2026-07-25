@@ -98,8 +98,9 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
       name: 'Images',
       extensions: expect.arrayContaining(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']),
     })
-    // basename 取末段；磁盘已存在文件 fileName 与 displayName 同值
-    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('/tmp/cat.png', 'cat.png', 'cat.png')
+    // basename 取末段；磁盘已存在文件 fileName 与 displayName 同值；
+    // M1：+菜单选的磁盘文件 needsMigrate=false（显式传 false，避免被 renameSync 误移走）
+    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('/tmp/cat.png', 'cat.png', 'cat.png', false)
     expect(inputMock.insertTextAtCursor).not.toHaveBeenCalled()
   })
 
@@ -111,7 +112,7 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     )
     dispose = d
     await result.onAddSelect('image')
-    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('plainfile.png', 'plainfile.png', 'plainfile.png')
+    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('plainfile.png', 'plainfile.png', 'plainfile.png', false)
   })
 
   it('TC3: image + pickFile canceled → 静默 return', async () => {
