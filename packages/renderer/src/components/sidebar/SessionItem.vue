@@ -14,14 +14,14 @@
     @click="emit('select', session.id)"
     @mouseleave="confirming = false"
   >
-    <!-- 状态指示：按 STATUS_ICON 渲染语义图标（方案 C 优化版 v3） -->
+    <!-- 状态指示：归档态优先显示 Archive icon（覆盖 derived status），否则按 STATUS_ICON 渲染 -->
     <div class="relative">
       <component
-        :is="ICON_COMPONENTS[iconConfig.icon]"
+        :is="markedDone ? Archive : ICON_COMPONENTS[iconConfig.icon]"
         data-testid="sidebar-session-icon"
-        :data-icon="iconConfig.icon"
+        :data-icon="markedDone ? 'archived' : iconConfig.icon"
         class="mt-[2px] size-[14px] shrink-0"
-        :class="[iconConfig.color, iconConfig.animation]"
+        :class="[markedDone ? 'text-subtle' : iconConfig.color, markedDone ? '' : iconConfig.animation]"
       />
       <!-- 未读 badge：6px accent 圆点，absolute 定位在状态图标左上角 -->
       <span
@@ -33,13 +33,12 @@
     <div class="min-w-0 flex-1">
       <div
         class="truncate text-[12px] leading-[1.35]"
-        :class="active ? 'text-accent' : 'text-fg'"
+        :class="[
+          active ? 'text-accent' : 'text-fg',
+          markedDone ? 'opacity-60' : '',
+        ]"
       >
         {{ session.label }}
-        <span
-          v-if="markedDone"
-          class="ml-1 text-[10px] text-subtle"
-        >{{ t('sidebar.sessionItem.archived') }}</span>
       </div>
       <div
         class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-subtle"

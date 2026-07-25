@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { computed, effect } from 'vue'
 import {
   markUnread,
   clearUnread,
@@ -7,6 +8,7 @@ import {
   isMarkedDone,
   clearAll,
   __registerCleanupForTest,
+  __resetCacheForTest,
 } from '../useSessionMarkers'
 import { triggerSessionCleanups, __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 
@@ -14,6 +16,7 @@ const STORAGE_KEY = 'xyz-agent:session-markers'
 
 beforeEach(() => {
   localStorage.clear()
+  __resetCacheForTest()
   __clearSessionCleanupRegistryForTest()
   __registerCleanupForTest()
 })
@@ -88,5 +91,30 @@ describe('useSessionMarkers', () => {
       newValue: newData,
     }))
     expect(isUnread('s1')).toBe(true)
+  })
+
+  it('[回归] isUnread/isMarkedDone 在 computed 中使用时响应式更新（cache.value 变化触发重算）', () => {
+    // 这是 SessionItem.vue 的真实用法：const unread = computed(() => isUnread(sid))
+    // 修复前 isUnread 读 ensureCache() 局部变量，不访问 cache.value，computed 不重算 → badge 不更新
+    const unread = computed(() => isUnread('s1'))
+    const done = computed(() => isMarkedDone('s1'))
+
+    expect(unread.value).toBe(false)
+    expect(done.value).toBe(false)
+
+    let unreadChanges = 0
+    let doneChanges = 0
+    effect(() => { void unread.value; unreadChanges++ })
+    effect(() => { void done.value; doneChanges++ })
+    const unreadBase = unreadChanges
+    const doneBase = doneChanges
+
+    markUnread('s1')
+    expect(unread.value).toBe(true)
+    expect(unreadChanges).toBeGreaterThan(unreadBase) // computed 重算
+
+    toggleMarkedDone('s1')
+    expect(done.value).toBe(true)
+    expect(doneChanges).toBeGreaterThan(doneBase) // computed 重算
   })
 })

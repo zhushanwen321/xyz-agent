@@ -41,11 +41,16 @@ function writeAll(data: Record<string, SessionMarker>): void {
   cache.value = new Map(Object.entries(data))
 }
 
-function ensureCache(): Map<string, SessionMarker> {
+/**
+ * 确保 cache 已从 localStorage hydrate。首次读取（cache 为空但 localStorage 有数据）时填充。
+ * 后续 writeAll 会同步更新 cache.value，读取直接命中。
+ * 查询函数（isUnread/isMarkedDone）调此函数保证首次读取正确，同时访问 cache.value
+ * 建立响应式依赖（markUnread/clearUnread 改 cache.value 时，依赖此函数结果的 computed 重算）。
+ */
+function ensureCache(): void {
   if (cache.value.size === 0 && localStorage.getItem(STORAGE_KEY)) {
     cache.value = new Map(Object.entries(readAll()))
   }
-  return cache.value
 }
 
 // ── 多窗口同步（storage event）──
@@ -91,8 +96,8 @@ export function clearUnread(sid: string): void {
 
 /** 查询 session 是否未读 */
 export function isUnread(sid: string): boolean {
-  const c = ensureCache()
-  return c.get(sid)?.unread ?? false
+  ensureCache()
+  return cache.value.get(sid)?.unread ?? false
 }
 
 /** 切换标记完成状态，内部自动清除同 sid 的 unread */
@@ -115,8 +120,8 @@ export function toggleMarkedDone(sid: string): void {
 
 /** 查询 session 是否已标记完成 */
 export function isMarkedDone(sid: string): boolean {
-  const c = ensureCache()
-  return c.get(sid)?.markedDone ?? false
+  ensureCache()
+  return cache.value.get(sid)?.markedDone ?? false
 }
 
 /** 清除 session 的所有标记（registerSessionCleanup 注册用） */
@@ -133,6 +138,11 @@ registerSessionCleanup(clearAll)
 /** 测试专用：重新注册 cleanup（__clearSessionCleanupRegistryForTest 后补注册）。 */
 export function __registerCleanupForTest(): void {
   registerSessionCleanup(clearAll)
+}
+
+/** 测试专用：重置内存缓存（localStorage.clear() 不同步模块级 cache，测试隔离用）。 */
+export function __resetCacheForTest(): void {
+  cache.value = new Map()
 }
 
 /**
