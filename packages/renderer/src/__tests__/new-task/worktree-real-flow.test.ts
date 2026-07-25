@@ -43,6 +43,7 @@ vi.mock('@/api', () => ({
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
   chat: { send: vi.fn().mockResolvedValue(undefined), streamSubscribe: (): (() => void) => () => {} },
+  workspace: { detect: vi.fn().mockResolvedValue({ mode: 'not-repo', isBareMode: false, wsRoot: '', repoRoot: '' }) },
 }))
 
 // ── workspaceStore mock：submitFirstMessage 兜底 cwd 用 defaultCwd ──
