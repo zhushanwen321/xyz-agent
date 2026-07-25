@@ -20,8 +20,8 @@ import { useSettingsStore } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import i18n from '@/i18n'
-import type { Segment } from '@xyz-agent/shared'
-import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
+import type { Message, Segment } from '@xyz-agent/shared'
+import { IMAGE_LIMITS, segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
 import { fileBytesToBase64 } from '@/composables/panel/useImageAttachment'
 import { resolveSupportsVision } from '@/composables/panel/useModelCapabilities'
 
@@ -81,6 +81,48 @@ export async function extractImages(
     }
   }
   return images.length > 0 ? images : undefined
+}
+
+/**
+ * 估算会话历史累积图片字节数（P2-c 层 2/3 阈值判断）。
+ *
+ * 遍历历史 messages 中 user message 的 image segment，fetchSize 注入并行拿字节数累加。
+ * 失败计入 failed 不 throw（ERR4：单个 fetch 失败不阻断估算，totalBytes 基于 partial）。
+ *
+ * fetchSize 注入签名 (path: string) => Promise<number>，生产实现用 fetch local-file://
+ * 拿 blob.size，测试 mock 直接返数字。
+ *
+ * 导出供单测 mock（纯模块函数，不依赖 this）。
+ */
+export async function estimateAccumulatedImageBytes(
+  messages: Message[],
+  fetchSize: (path: string) => Promise<number>,
+): Promise<{ totalBytes: number; counted: number; failed: number }> {
+  const imagePaths: string[] = []
+  for (const msg of messages) {
+    if (msg.role !== 'user') continue
+    const segments = Array.isArray(msg.content) ? msg.content : []
+    for (const seg of segments) {
+      if (seg.type === 'image') {
+        imagePaths.push(seg.path)
+      }
+    }
+  }
+  if (imagePaths.length === 0) return { totalBytes: 0, counted: 0, failed: 0 }
+
+  const results = await Promise.allSettled(imagePaths.map((p) => fetchSize(p)))
+  let totalBytes = 0
+  let counted = 0
+  let failed = 0
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      totalBytes += r.value
+      counted++
+    } else {
+      failed++
+    }
+  }
+  return { totalBytes, counted, failed }
 }
 
 /**
@@ -292,7 +334,45 @@ export function useChat() {
           }
         }
       }
-      await chatApi.send(sid, promptText, images)
+      // P2-c 层 2/3：会话级累积图片 size cap 防护。
+      // 层 2：累积超 warnThreshold → toast.warning 预警（不阻断）。
+      // 层 3：累积超 hardThreshold → 剥离当轮 images + toast.warning。
+      // estimateAccumulatedImageBytes 内部 allSettled 并行 fetchSize，失败不 throw（ERR4）。
+      let sendImages = images
+      if (images && images.length > 0) {
+        try {
+          // eslint-disable-next-line no-magic-numbers
+          const warnBytes = (settings.system.imageAccumulationWarnMB ?? IMAGE_LIMITS.ACCUMULATION_WARN_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
+          // eslint-disable-next-line no-magic-numbers
+          const hardBytes = (settings.system.imageAccumulationHardMB ?? IMAGE_LIMITS.ACCUMULATION_HARD_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
+          const historyMessages = chat.getMessages(sid)
+          const accumulated = await estimateAccumulatedImageBytes(
+            historyMessages,
+            async (path: string) => {
+              const res = await fetch(`local-file:///${encodeURIComponent(path)}`)
+              if (!res.ok) throw new Error(`local-file ${path} ${res.status}`)
+              const blob = await res.blob()
+              return blob.size
+            },
+          )
+          if (accumulated.totalBytes > hardBytes) {
+            // 层 3：剥离当轮 images（ERR6 ACCUMULATION_LIMIT_STRIP）
+            sendImages = undefined
+            // eslint-disable-next-line no-magic-numbers
+            const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
+            warning(t('panel.accumulationHardWarning', { size: sizeMB }))
+          } else if (accumulated.totalBytes > warnBytes) {
+            // 层 2：toast 预警（不阻断）
+            // eslint-disable-next-line no-magic-numbers
+            const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
+            warning(t('panel.accumulationWarnWarning', { size: sizeMB }))
+          }
+        } catch {
+          // 累积估算失败不阻断发送（与 extractImages 错误策略一致）
+          console.warn('[useChat] estimateAccumulatedImageBytes failed, skipping accumulation check')
+        }
+      }
+      await chatApi.send(sid, promptText, sendImages)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；

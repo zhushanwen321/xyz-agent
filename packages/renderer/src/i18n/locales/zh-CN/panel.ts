@@ -294,6 +294,8 @@ export default {
     taskFailed: '任务创建失败：{error}',
     sendFailed: '消息发送失败：{error}',
     visionNotSupportedWarning: '当前模型（{modelName}）不支持图片输入，{count} 张图片将被忽略，仅发送文本占位',
+    accumulationWarnWarning: '当前会话累积图片已达 {size}MB，接近上限',
+    accumulationHardWarning: '当前会话累积图片已超 {size}MB 上限，当轮图片已剥离，仅发送文本',
   },
   overlay: {
     subagent: '子代理',

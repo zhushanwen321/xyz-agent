@@ -17,6 +17,10 @@ export interface SystemSettings {
   themePreset: string
   /** 字体大小：small/medium/large，缺省按 medium（D17） */
   fontSize?: 'small' | 'medium' | 'large'
+  /** P2-c 累积图片警告阈值（MB），缺省 IMAGE_LIMITS.ACCUMULATION_WARN_BYTES_DEFAULT / 1MB */
+  imageAccumulationWarnMB?: number
+  /** P2-c 累积图片硬上限（MB），缺省 IMAGE_LIMITS.ACCUMULATION_HARD_BYTES_DEFAULT / 1MB */
+  imageAccumulationHardMB?: number
 }
 
 const SYSTEM_KEY = 'xyz-agent:system-settings'
