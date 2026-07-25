@@ -269,7 +269,7 @@
           >
             <GitFork class="size-3" />
             <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">⌘G</span>
+            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">{{ formatKbd('g') }}</span>
           </Button>
           <Button
             v-if="!isSubagentVirtualId(sessionId)"
@@ -282,7 +282,7 @@
           >
             <GitFork class="size-3.5 fill-current" />
             <span class="text-[11px]">{{ t('panel.message.forkAskLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">⌘⇧G</span>
+            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">{{ formatKbd('shift+g') }}</span>
           </Button>
         </div>
       </div>
@@ -315,6 +315,7 @@ import { useCopy } from '@/composables/effects/useCopy'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
@@ -357,6 +358,7 @@ const chat = useChatStore()
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 const { open: openDrawer } = useSideDrawer()
+const { formatKbd } = usePlatformShortcut()
 const { error: toastError } = useToast()
 const fileTreeStore = useFileTreeStore()
 

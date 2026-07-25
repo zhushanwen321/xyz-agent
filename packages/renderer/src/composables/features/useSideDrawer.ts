@@ -32,12 +32,14 @@ import { usePanelStore } from '@/stores/panel'
 
 export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail' | 'tasks'
 
-/** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab）/ 文件路径（Detail tab） */
+/** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab）/ 文件路径（Detail tab）/ URL（Browser tab） */
 export interface OpenDrawerOptions {
   /** Doc tab 当前展示的命令名（如 '/commit'），CommandDocPanel 据此 + commandStore/skills 解析文档 */
   commandName?: string
   /** Detail tab 打开后立即展示的文件路径（变更集卡点击文件行时传入，强制 diff 模式） */
   filePath?: string
+  /** Browser tab 打开后立即加载的 URL（点击 agent 输出的 http(s) 链接时传入） */
+  url?: string
 }
 
 /** per-session 控制态（ADR-0040 Map 分区） */
@@ -113,6 +115,12 @@ const selectedCommandName = ref<string | null>(null)
  * 用完即清空（消费后置 null），避免残留导致下次打开 detail tab 被旧值劫持。
  */
 const detailFilePath = ref<string | null>(null)
+/**
+ * Browser tab 打开时立即加载的 URL（点击 agent 输出的链接设置）。
+ * 由 useMarkdownInteractions 外链分支设置；SideDrawer/BrowserPane 据此触发导航。
+ * 用完即清空（消费后置 null），避免残留导致下次打开 browser tab 被旧值劫持。
+ */
+const browserUrl = ref<string | null>(null)
 
 /**
  * 重置 SideDrawer 状态（测试隔离用）。
@@ -128,6 +136,7 @@ export function resetSideDrawer(): void {
   pendingOpenMap.clear()
   selectedCommandName.value = null
   detailFilePath.value = null
+  browserUrl.value = null
 }
 
 /** 内部 open：操作当前 focusedSessionId 分区。tasks tab 强制 docked（仅当前分区） */
@@ -139,6 +148,7 @@ function openInternal(tab?: SideDrawerTab, opts?: OpenDrawerOptions): void {
   }
   if (opts?.commandName !== undefined) selectedCommandName.value = opts.commandName
   if (opts?.filePath !== undefined) detailFilePath.value = opts.filePath
+  if (opts?.url !== undefined) browserUrl.value = opts.url
   cur.isOpen = true
 }
 
@@ -181,6 +191,13 @@ export function useSideDrawer() {
     // 瞬时参数（不分区的模块级单例）
     selectedCommandName,
     detailFilePath,
+    browserUrl,
+    /** 消费 browserUrl：读取并清空（BrowserPane 挂载时调，取到非空值触发导航） */
+    consumeBrowserUrl(): string | null {
+      const url = browserUrl.value
+      browserUrl.value = null
+      return url
+    },
     open,
     close,
     toggle,

@@ -9,7 +9,8 @@
  *        - 唯一匹配 → selectFile(path) + drawer.open('detail')
  *        - 多匹配 → onAmbiguous 回调（调用方弹选择浮层）
  *        - 0 匹配（缓存过期/文件已删）→ 降级 selectFile(basename) 让 DetailPane 处理
- * - ③ 外链 a[href^=http(s)://] → openExternal（Electron file:// 下 target=_blank 不开系统浏览器）。
+ * - ③ 外链 a[href^=http(s)://] → drawer.open('browser', {url})（Wave 2：嵌入式 WebContentsView 加载，
+ *      地址栏显真实 URL 防钓鱼；Wave 5 保留 openExternal 作 BrowserPane 外链导出按钮降级出口）。
  *
  * 背景：v-html 渲染的节点 Vue 无法绑事件，统一在容器 @click 委托，由本 composable 按 target
  * 选择器分发。decodeBase64 解出 data-code/data-path 的原始内容。
@@ -23,7 +24,9 @@ import { useFileTree } from '@/composables/features/useFileTree'
 import { useFileSearch } from '@/composables/features/useFileSearch'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { findByBasename } from '@/lib/file-basename'
-import { openExternal } from '@/lib/ipc'
+// 注：openExternal（lib/ipc）从本 composable 移除——Wave 2 起 http(s) 外链主路径走 drawer browser tab。
+// Wave 5 的「BrowserPane 外链导出按钮」降级出口由 BrowserPane.vue 自行 import openExternal，
+// 本 composable 不再需要它（tsconfig noUnusedLocals: true，未用 import 会编译失败）。
 import { useSearchModal } from '@/composables/features/useSearchModal'
 import * as fileApi from '@/api/domains/file'
 import { useCodeblockCopy } from './useCodeblockCopy'
@@ -141,16 +144,16 @@ export function useMarkdownInteractions(opts: MarkdownInteractionsOptions = {}):
       return
     }
 
-    // ③ 外链 <a href="http(s)://">：Electron file:// 下 target=_blank 不会开系统浏览器，
-    //    走 lib/ipc.openExternal → electronAPI.openExternal IPC（main 侧 isValidExternalUrl 校验只放行 http(s)://）
+    // ③ 外链 <a href="http(s)://">：打开 browser drawer tab（嵌入式 WebContentsView 加载）。
+    //    Electron file:// 下 target=_blank 不会开系统浏览器；Wave 2 起主路径用 drawer browser
+    //    tab 嵌入式加载（防钓鱼：地址栏显真实 URL + 站内上下文）。Wave 5 会为 BrowserPane 外链
+    //    导出按钮保留 openExternal 作降级出口。
     const anchor = target.closest('a[href]') as HTMLAnchorElement | null
     if (anchor) {
       const href = anchor.getAttribute('href') ?? ''
       if (EXTERNAL_HREF_RE.test(href)) {
         e.preventDefault()
-        openExternal(href).catch(() => {
-          /* 打开失败静默：非关键路径 */
-        })
+        drawer.open('browser', { url: href })
       }
       // 非 http(s) 链接（如锚点）走默认行为
     }

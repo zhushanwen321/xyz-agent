@@ -30,7 +30,7 @@ export type {
 } from './provider'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
-  PanelLeaf, SplitNode, PanelTree, WindowState,
+  PanelLeaf, WindowState,
 } from './panel'
 export * from './extension'
 export * from './git'

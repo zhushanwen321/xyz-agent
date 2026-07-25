@@ -10,7 +10,8 @@
  *
  * 调用方：Sidebar.vue 在 onMounted 调用一次。watch 的生命周期跟随组件。
  */
-import { computed, watch } from 'vue'
+import { watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { usePanelStore } from '@/stores/panel'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useWorkflowStore } from '@/stores/workflow'
@@ -21,12 +22,10 @@ export function useWorkflowListSync(): void {
   const workflowStore = useWorkflowStore()
 
   /**
-   * 当前焦点 session（与 useSidebar.focusedSessionId 同源）。
-   * panel store 的 activePanelId → sessionId 是 UI 高亮的真相源。
+   * 当前焦点 session（store.focusedSessionId，UI 高亮的真相源）。
+   * v2 split 移除后直接读 store computed（此前 local computed 从 panels.find 派生，单 panel 下冗余）。
    */
-  const focusedSessionId = computed<string | null>(
-    () => panel.panels.find((p) => p.id === panel.activePanelId)?.sessionId ?? null,
-  )
+  const { focusedSessionId } = storeToRefs(panel)
 
   /** 当前 session 的推送订阅取消函数（切会话时取消旧订阅） */
   let unsubPush: (() => void) | null = null

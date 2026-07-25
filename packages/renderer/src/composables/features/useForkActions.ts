@@ -62,9 +62,8 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
       includeFrom: opts?.includeFrom,
     })
     session.appendSession(created)
-    // [W2 fast-fork] 后台 fork 不再 split/跳转：去掉 panel.split() + selectSession(standby)。
-    // fork 后留在原线，对话流经 session.forkNotice 广播插反馈行（FR-9/10），侧栏静默新增。
-    // openInStandby 选项保留为契约（调用方可能传入），但行为退化为「不切焦点」。
+    // [W2 fast-fork] 后台 fork 不切焦点：fork 后留在原线，对话流经 session.forkNotice 广播插反馈行
+    // （FR-9/10），侧栏静默新增。openInStandby 选项保留为契约（调用方可能传入），但行为退化为「不切焦点」。
     return created.id
   }
 

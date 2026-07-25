@@ -88,8 +88,6 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       sessionLabel: 'label',
       sessionDir: '/repo',
       status: DONE,
-      active: true,
-      isDual: false,
       ...overrides,
     },
     global: { stubs: panelStubs },
