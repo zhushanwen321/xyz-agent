@@ -246,7 +246,7 @@ const canGoForward = ref<boolean>(false)
 const copied = ref<boolean>(false)
 
 /** 缩放管理（Wave 5）：zoomFactor 状态 + Cmd+/-/0 快捷键 + 主进程 IPC 同步 */
-const { onZoomKeydown } = useBrowserZoom(toRef(props, 'sessionId'))
+const { onZoomKeydown, setZoomFromRemote } = useBrowserZoom(toRef(props, 'sessionId'))
 
 /** 登录墙检测（spec §4.2）：HTTP 401/403 errorCode → 显提示条。
  * did-fail-load 的 errorCode 对应 HTTP 状态码（-3=ABORTED 已在主进程过滤）。 */
@@ -367,7 +367,7 @@ onMounted(() => {
     }
   })
 
-  // 订阅状态推送（地址栏真实 URL 回填 + loading/error/canGoBack/canGoForward 态）。仅处理本 sessionId。
+  // 订阅状态推送（地址栏真实 URL 回填 + loading/error/canGoBack/canGoForward/zoomFactor 态）。仅处理本 sessionId。
   unsubscribe = onBrowserState((state) => {
     if (state.sessionId !== props.sessionId) return
     if (state.currentUrl) displayUrl.value = state.currentUrl
@@ -375,6 +375,8 @@ onMounted(() => {
     error.value = state.error
     canGoBack.value = state.canGoBack
     canGoForward.value = state.canGoForward
+    // 主进程 autoFit 后回推 zoomFactor，同步本地基准（用户 Cmd+/- 在此基准上微调）
+    if (typeof state.zoomFactor === 'number') setZoomFromRemote(state.zoomFactor)
   })
 })
 

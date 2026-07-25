@@ -42,6 +42,7 @@ const hoisted = vi.hoisted(() => {
       close(): void
       setZoomFactor(factor: number): void
       getZoomFactor(): number
+      executeJavaScript: ReturnType<typeof vi.fn>
       session: { on: ReturnType<typeof vi.fn> }
     }
   }> = []
@@ -84,6 +85,9 @@ const hoisted = vi.hoisted(() => {
       getZoomFactor() {
         return this.zoomFactor
       },
+      // executeJavaScript 默认 resolve undefined（模拟 viewport 注入成功但无 autoFit 数据）。
+      // autoFit 测试用例改写为返回 [scrollWidth, innerWidth] 数组触发缩放逻辑。
+      executeJavaScript: vi.fn(() => Promise.resolve(undefined)),
       session: { on: sessionOn },
     }
     const setBounds = vi.fn()
@@ -522,6 +526,114 @@ describe('BrowserViewManager', () => {
       const state = mgr.getState('sess-1')!
       expect(state.canGoBack).toBe(false)
       expect(state.canGoForward).toBe(false)
+    })
+  })
+
+  describe('autoFit 自动缩放（navigate 后 dom-ready 触发）', () => {
+    // 触发 dom-ready 并 flush 异步链（executeJavaScript 返回 Promise，.then 链需 await）
+    async function fireDomReady(wc: { listeners: Map<string, WcListener[]> }): Promise<void> {
+      wc.listeners.get('dom-ready')![0]()
+      // executeJavaScript 链：viewport 注入 .then → autoFit 读 dims .then → setZoomFactor。
+      // 需多轮 microtask flush（每个 .then 一轮）
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+
+    it('navigate 后 dom-ready：scrollWidth > innerWidth（溢出）→ setZoomFactor(viewW/scrollW)', async () => {
+      const win = makeWindow()
+      const onStateChange = vi.fn()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win), onStateChange)
+      mgr.create('sess-1', 'win-1')
+
+      // 第一次 executeJavaScript（viewport 注入）resolve undefined；第二次（读 dims）返回 [800, 600]
+      const wc = createdViews[0].wc
+      let callCount = 0
+      wc.executeJavaScript = vi.fn(() => {
+        callCount++
+        // 第一次返回 undefined（viewport 注入完成），第二次返回 [scrollWidth, innerWidth]
+        return Promise.resolve(callCount === 2 ? [800, 600] : undefined)
+      })
+
+      await mgr.navigate('sess-1', 'https://baidu.com') // 设 pendingAutoFit=true
+      await fireDomReady(wc)
+
+      // fitFactor = 600 / 800 = 0.75
+      expect(wc.zoomFactor).toBe(0.75)
+      // state.zoomFactor 同步 + onStateChange 推送（renderer 据此更新 useBrowserZoom 基准）
+      expect(mgr.getState('sess-1')!.zoomFactor).toBe(0.75)
+      expect(onStateChange).toHaveBeenLastCalledWith('sess-1', expect.objectContaining({ zoomFactor: 0.75 }))
+    })
+
+    it('navigate 后 dom-ready：scrollWidth <= innerWidth（不溢出）→ 不缩放', async () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      const wc = createdViews[0].wc
+      let callCount = 0
+      wc.executeJavaScript = vi.fn(() => {
+        callCount++
+        return Promise.resolve(callCount === 2 ? [600, 600] : undefined) // scrollWidth == innerWidth
+      })
+
+      await mgr.navigate('sess-1', 'https://example.com')
+      await fireDomReady(wc)
+
+      // 不溢出 → zoomFactor 保持默认 1
+      expect(wc.zoomFactor).toBe(1)
+      expect(mgr.getState('sess-1')!.zoomFactor).toBe(1)
+    })
+
+    it('未 navigate 直接触发 dom-ready（页内链接/后退前进）→ pendingAutoFit=false，不缩放', async () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      const wc = createdViews[0].wc
+      let callCount = 0
+      wc.executeJavaScript = vi.fn(() => {
+        callCount++
+        // 即使返回溢出数据，因 pendingAutoFit=false，第二次 executeJavaScript 不应被调用
+        return Promise.resolve(callCount === 2 ? [1000, 400] : undefined)
+      })
+
+      // 不调 navigate，直接触发 dom-ready（模拟页内链接跳转）
+      await fireDomReady(wc)
+
+      // executeJavaScript 只被调用 1 次（viewport 注入），第二次（autoFit 读 dims）因 pendingAutoFit=false 跳过
+      expect(callCount).toBe(1)
+      expect(wc.zoomFactor).toBe(1)
+    })
+
+    it('fitFactor 低于下限 0.5 时钳制到 0.5（保可读性，接受部分溢出）', async () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      const wc = createdViews[0].wc
+      let callCount = 0
+      wc.executeJavaScript = vi.fn(() => {
+        callCount++
+        // scrollWidth=2000, innerWidth=400 → fitFactor=0.2，应钳制到 0.5
+        return Promise.resolve(callCount === 2 ? [2000, 400] : undefined)
+      })
+
+      await mgr.navigate('sess-1', 'https://wide-page.com')
+      await fireDomReady(wc)
+
+      expect(wc.zoomFactor).toBe(0.5)
+    })
+
+    it('用户手动 setZoomFactor 后 state.zoomFactor 同步 + notify renderer', () => {
+      const onStateChange = vi.fn()
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win), onStateChange)
+      mgr.create('sess-1', 'win-1')
+
+      mgr.setZoomFactor('sess-1', 1.5)
+      expect(mgr.getState('sess-1')!.zoomFactor).toBe(1.5)
+      expect(onStateChange).toHaveBeenLastCalledWith('sess-1', expect.objectContaining({ zoomFactor: 1.5 }))
     })
   })
 })

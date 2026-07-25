@@ -186,6 +186,8 @@ export function onBrowserState(
     error: { errorCode: number; errorDescription: string; validatedURL: string } | null
     canGoBack: boolean
     canGoForward: boolean
+    /** 当前缩放因子（autoFit 后主进程回推，BrowserPane 转发给 useBrowserZoom.setZoomFromRemote） */
+    zoomFactor: number
   }) => void,
 ): () => void {
   // onBrowserState 在 preload 暴露（Wave 2 加）；类型经 declare global ElectronAPI 对齐。

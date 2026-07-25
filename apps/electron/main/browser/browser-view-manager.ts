@@ -54,6 +54,11 @@ const MAX_VIEWS = 3
  * 详见 did-fail-load handler 的 [HISTORICAL] 注释。 */
 const ERR_ABORTED = -3
 
+/** autoFit 缩放下限：低于此值文字不可读，宁可部分溢出也不再缩小（spec §4.3 可读性约束） */
+const AUTO_FIT_MIN = 0.5
+/** autoFit 缩放上限：只缩小不放大（不溢出的页面保持 100%，避免把响应式页面强制放大失真） */
+const AUTO_FIT_MAX = 1.0
+
 /** 暂存的 view 状态（W2 经 IPC 回传 renderer） */
 export interface BrowserViewState {
   /** 当前 URL（did-navigate / did-navigate-in-page 更新） */
@@ -66,6 +71,8 @@ export interface BrowserViewState {
   canGoBack: boolean
   /** 是否可前进 */
   canGoForward: boolean
+  /** 当前缩放因子（setZoomFactor 后同步经 onBrowserState 推 renderer，让 useBrowserZoom 基准一致） */
+  zoomFactor: number
 }
 
 /** 单个 sessionId 对应的托管条目 */
@@ -81,6 +88,10 @@ interface ManagedView {
   state: BrowserViewState
   /** 最近访问时间戳（Date.now()）。LRU 排序依据：create/focus 时更新，evictLRU 淘汰最小值。 */
   lastUsed: number
+  /** navigate() 后置 true，下次 dom-ready 时触发 autoFit 检测并清除。
+   *  仅 navigate（地址栏输入新 URL / agent 推链接）触发；页内链接 / 后退前进不经 navigate，不触发。
+   *  原因：用户在已缩放的页面上点页内链接属于「在当前布局内浏览」，不应被重新缩放打断。 */
+  pendingAutoFit: boolean
 }
 
 /**
@@ -168,10 +179,19 @@ export class BrowserViewManager {
       error: null,
       canGoBack: false,
       canGoForward: false,
+      zoomFactor: 1.0,
     }
     this.bindWebContentsEvents(view, state, sessionId)
 
-    this.views.set(sessionId, { view, windowId, lastRect: HIDDEN_RECT, isVisible: false, state, lastUsed: Date.now() })
+    this.views.set(sessionId, {
+      view,
+      windowId,
+      lastRect: HIDDEN_RECT,
+      isVisible: false,
+      state,
+      lastUsed: Date.now(),
+      pendingAutoFit: false,
+    })
   }
 
   /**
@@ -183,6 +203,9 @@ export class BrowserViewManager {
     if (!entry) {
       throw new Error(`[browser-view] navigate: session not found sessionId=${sessionId}`)
     }
+    // loadURL 前置 pendingAutoFit，确保随后的 dom-ready 能读到（loadURL → dom-ready 是同 tick 后异步触发）。
+    // 仅 navigate 触发 autoFit：用户在地址栏输入新 URL / agent 推链接 → 缩放；页内链接 / 后退前进不经过此方法。
+    entry.pendingAutoFit = true
     // loadURL 自身 reject 时（DNS 失败 / 非法 URL 等）抛出，调用方经 IPC 接住
     await entry.view.webContents.loadURL(url)
   }
@@ -371,6 +394,10 @@ export class BrowserViewManager {
    * 设置缩放因子（1.0=100%，1.25=125%，0.75=75%）。
    * sessionId 不存在或 webContents 已销毁时无操作。
    *
+   * 同步 state.zoomFactor + notify renderer（经 onBrowserState 通道）：用户手动 Cmd+/Cmd- 调用时
+   * renderer 本地已更新无需回推，但 autoFit 在主进程触发时 renderer 无感知，需 notify 让基准一致。
+   * notify 幂等，renderer 收到后调 setZoomFromRemote 更新本地 ref（不调 IPC 避免循环）。
+   *
    * [HISTORICAL] setZoomFactor 单位是因子（1.0=100%），不是百分比；负值会被 Chromium 忽略。
    */
   setZoomFactor(sessionId: string, factor: number): void {
@@ -379,6 +406,8 @@ export class BrowserViewManager {
     const wc = entry.view.webContents
     if (!wc.isDestroyed()) {
       wc.setZoomFactor(factor)
+      entry.state.zoomFactor = factor
+      this.onStateChange?.(sessionId, entry.state)
     }
   }
 
@@ -458,11 +487,16 @@ export class BrowserViewManager {
       state.error = { errorCode, errorDescription, validatedURL }
       notify()
     })
-    // dom-ready 注入 viewport meta：让网页按 WebContentsView 实际宽度渲染，不自适应 panel 尺寸。
-    // 无 viewport meta 的桌面网页默认按 980px layout viewport 渲染，在窄 panel 里内容溢出 + 不滚动。
-    // 注入 width=device-width 让 CSS viewport = view 物理宽度，网页自适应 + 内部滚动正常。
-    // 仅在页面无自带 viewport meta 时注入（有则尊重页面设定，不覆盖 responsive 设计）。
-    // 安全：insertBefore 只操作 head DOM，不执行任意 JS（contextIsolation 保护）。
+    // dom-ready：注入 viewport meta + autoFit 自动缩放（链式，保证 viewport reflow 完成后再读 scrollWidth）。
+    //
+    // viewport meta 注入：无 viewport meta 的桌面网页默认按 980px layout viewport 渲染，在窄 panel 里溢出 + 不滚动。
+    // 注入 width=device-width 让 CSS viewport = view 物理宽度，网页自适应 + 内部滚动正常。仅页面无自带 meta 时注入。
+    //
+    // autoFit（仅 navigate 触发，pendingAutoFit 标志控制）：检测 scrollWidth > innerWidth（横向溢出）→ 自动缩放到刚好容纳。
+    // 解决"固定宽度页面在窄 panel 里溢出"问题（如百度搜索框 width:535px 在 400px panel 里）。下限 0.5（可读性），只缩小不放大。
+    // 必须在 viewport 注入 .then 后执行：layout viewport 改变会让 scrollWidth 重算，提前读会得到错误值。
+    // 仅 navigate（地址栏输入/agent 推链接）触发；页内链接/后退前进不经 navigate，pendingAutoFit 保持 false，不触发（避免打断用户浏览）。
+    // 安全：executeJavaScript 在零信任页执行，只读 scrollWidth/innerWidth（无副作用），contextIsolation + sandbox 保护。
     wc.on('dom-ready', () => {
       wc.executeJavaScript(
         `(() => {
@@ -472,9 +506,28 @@ export class BrowserViewManager {
           m.content = 'width=device-width, initial-scale=1';
           document.head.appendChild(m);
         })()`,
-      ).catch(() => {
-        /* dom-ready 注入可能因 CSP/导航中断失败，非关键路径（网页仍按默认宽度渲染） */
-      })
+      )
+        .then(() => {
+          // viewport 注入完成（layout viewport 已更新），此时读 scrollWidth 准确。
+          // 仅 navigate 触发的首次加载执行 autoFit（pendingAutoFit 标志）。
+          const entry = this.views.get(sessionId)
+          if (!entry?.pendingAutoFit) return undefined
+          entry.pendingAutoFit = false
+          // 读 [scrollWidth, innerWidth]：scrollWidth = 内容实际宽度，innerWidth = view 物理宽度（layout viewport）
+          return wc.executeJavaScript('[document.documentElement.scrollWidth, window.innerWidth]')
+        })
+        .then((dims: unknown) => {
+          if (!Array.isArray(dims)) return // 上一步 return undefined（无 pendingAutoFit）或 executeJavaScript 返回非数组
+          const [scrollW, viewW] = dims as [number, number]
+          if (typeof scrollW !== 'number' || typeof viewW !== 'number') return
+          if (viewW === 0 || scrollW <= viewW) return // viewW=0（隐藏中）或无溢出 → 不缩放
+          // fitFactor = viewport / content，钳制到 [AUTO_FIT_MIN, AUTO_FIT_MAX]（只缩小不放大，下限保可读性）
+          const fit = Math.max(AUTO_FIT_MIN, Math.min(AUTO_FIT_MAX, viewW / scrollW))
+          this.setZoomFactor(sessionId, fit) // 内部更新 state.zoomFactor + notify renderer
+        })
+        .catch(() => {
+          /* viewport 注入或 autoFit 可能因 CSP/导航中断失败，非关键路径（网页仍按默认渲染，用户可手动 Cmd+-） */
+        })
     })
   }
 }

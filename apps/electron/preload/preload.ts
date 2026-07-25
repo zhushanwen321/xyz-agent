@@ -68,7 +68,7 @@ export interface ElectronAPI {
   browserGetZoom(sessionId: string): Promise<number>
   /** 读取 WebContentsView 内当前选区文本 + URL（二期扩展点，Wave 6 预留） */
   browserGetSelection(sessionId: string): Promise<{ text: string; url: string }>
-  /** 监听 browser 状态变化（url/isLoading/error/canGoBack/canGoForward，主进程 did-navigate 等事件推送），返回取消订阅函数 */
+  /** 监听 browser 状态变化（url/isLoading/error/canGoBack/canGoForward/zoomFactor，主进程 did-navigate 等事件推送），返回取消订阅函数 */
   onBrowserState(callback: (state: {
     sessionId: string
     currentUrl: string
@@ -76,6 +76,7 @@ export interface ElectronAPI {
     error: { errorCode: number; errorDescription: string; validatedURL: string } | null
     canGoBack: boolean
     canGoForward: boolean
+    zoomFactor: number
   }) => void): () => void
 }
 
@@ -151,6 +152,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     error: { errorCode: number; errorDescription: string; validatedURL: string } | null
     canGoBack: boolean
     canGoForward: boolean
+    zoomFactor: number
   }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: {
       sessionId: string
@@ -159,6 +161,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       error: { errorCode: number; errorDescription: string; validatedURL: string } | null
       canGoBack: boolean
       canGoForward: boolean
+      zoomFactor: number
     }) => callback(state)
     ipcRenderer.on('browser:state', handler)
     return () => ipcRenderer.removeListener('browser:state', handler)
