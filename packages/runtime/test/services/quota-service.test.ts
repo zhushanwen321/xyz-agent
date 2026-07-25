@@ -28,12 +28,14 @@ vi.mock('../../src/services/quota-providers/index.js', () => ({
   QUOTA_FETCHERS: mockFetchers,
 }))
 
-// ── mock pi-provider-store：模拟凭证读取 ──
+// ── mock pi-provider-store：模拟凭证读取 + quota 配置持久化 ──
 vi.mock('../../src/infra/pi/pi-provider-store.js', () => ({
   getApiKeyForProvider: vi.fn((providerId: string) => `key-for-${providerId}`),
+  getProviderConfig: vi.fn(() => undefined),
+  upsertProvider: vi.fn(() => ({})),
 }))
 
-import { getApiKeyForProvider } from '../../src/infra/pi/pi-provider-store.js'
+import { getApiKeyForProvider, getProviderConfig, upsertProvider } from '../../src/infra/pi/pi-provider-store.js'
 
 let tmpDir: string
 
@@ -41,6 +43,8 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'quota-svc-'))
   vi.clearAllMocks()
   vi.mocked(getApiKeyForProvider).mockImplementation((id: string) => `key-for-${id}`)
+  vi.mocked(getProviderConfig).mockImplementation(() => undefined)
+  vi.mocked(upsertProvider).mockImplementation(() => ({}))
   mockFetchQuota.mockReset()
 })
 
@@ -130,5 +134,122 @@ describe('QuotaService — 偏差 #C: refresh 绕过 throttle', () => {
 
     // fetch 第二次被 throttle 拦截
     expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('QuotaService — 手动选择 fetcher（任务 1）', () => {
+  it('quota.fetcher 手动指定时优先于 matchQuotaPreset', async () => {
+    // baseUrl 命中 zhipu preset，但用户手动指定用 kimi-coding fetcher
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({
+        baseUrl: 'https://bigmodel.cn',
+        name: '智谱 GLM',
+        quota: { fetcher: 'kimi-coding' },
+      }),
+    })
+    mockFetchQuota.mockResolvedValue({ label: 'kimi', wins: [] as never })
+
+    await svc.fetch('my-glm')
+
+    // 走手动指定的 kimi-coding，而非自动匹配的 zhipu
+    expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-my-glm')
+    // 验证用的是 kimi-coding fetcher（mockFetchers 里 kimi-coding 与 zhipu 共用同一个 mockFetchQuota，
+    // 无法直接区分，但能确认 fetcher 被调用 = 手动指定生效）
+  })
+
+  it('quota.fetcher 指定了一个不存在的 id 时 fallback 到 matchQuotaPreset', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({
+        baseUrl: 'https://bigmodel.cn',
+        quota: { fetcher: 'nonexistent-fetcher' },
+      }),
+    })
+    mockFetchQuota.mockResolvedValue({ label: 'zhipu', wins: [] as never })
+
+    await svc.fetch('my-glm')
+
+    // 手动指定的 id 不存在 → fallback 到自动匹配的 zhipu
+    expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+  })
+
+  it('quota.fetcher 手动指定后不再依赖 baseUrl/name（空 baseUrl 也能命中）', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({
+        baseUrl: 'https://my-reverse-proxy.example.com',
+        name: 'my-proxy',
+        quota: { fetcher: 'zhipu' },
+      }),
+    })
+    mockFetchQuota.mockResolvedValue({ label: 'zhipu', wins: [] as never })
+
+    await svc.fetch('my-proxy')
+
+    // baseUrl 是自建反代（不命中任何 preset），但手动指定了 zhipu → 仍命中
+    expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('QuotaService — configure 持久化（任务 4）', () => {
+  it('configure 持久化 fetcher/enabled 到 provider config', () => {
+    vi.mocked(getProviderConfig).mockImplementation(() => ({
+      name: 'test',
+      baseUrl: 'https://bigmodel.cn',
+      apiKey: 'k',
+    }))
+    const svc = new QuotaService({ dataDir: tmpDir })
+
+    const result = svc.configure('my-glm', true, undefined, 'zhipu')
+
+    expect(result.ok).toBe(true)
+    expect(upsertProvider).toHaveBeenCalledWith('my-glm', expect.objectContaining({
+      quota: expect.objectContaining({ fetcher: 'zhipu', enabled: true }),
+    }))
+  })
+
+  it('configure 未传 fetcher 时保留既有 quota.fetcher', () => {
+    vi.mocked(getProviderConfig).mockImplementation(() => ({
+      name: 'test',
+      quota: { fetcher: 'kimi-coding', enabled: false },
+    }))
+    const svc = new QuotaService({ dataDir: tmpDir })
+
+    svc.configure('my-glm', true)
+
+    expect(upsertProvider).toHaveBeenCalledWith('my-glm', expect.objectContaining({
+      quota: expect.objectContaining({ fetcher: 'kimi-coding', enabled: true }),
+    }))
+  })
+
+  it('configure provider 不存在时返回 ok=false', () => {
+    vi.mocked(getProviderConfig).mockImplementation(() => undefined)
+    const svc = new QuotaService({ dataDir: tmpDir })
+
+    const result = svc.configure('nonexistent', true, undefined, 'zhipu')
+
+    expect(result.ok).toBe(false)
+    expect(upsertProvider).not.toHaveBeenCalled()
+  })
+
+  it('configure cookie 类写入 cookie 文件 + 标记 cookieSet', () => {
+    vi.mocked(getProviderConfig).mockImplementation(() => ({
+      name: 'test',
+      baseUrl: 'https://xiaomimimo.com',
+    }))
+    const svc = new QuotaService({ dataDir: tmpDir })
+
+    const result = svc.configure('mimo-id', true, 'session=abc123', 'mimo')
+
+    expect(result.ok).toBe(true)
+    expect(upsertProvider).toHaveBeenCalledWith('mimo-id', expect.objectContaining({
+      quota: expect.objectContaining({
+        fetcher: 'mimo',
+        enabled: true,
+        cookieSet: true,
+      }),
+    }))
   })
 })

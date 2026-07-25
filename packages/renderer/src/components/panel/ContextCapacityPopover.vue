@@ -160,7 +160,7 @@
 import { computed, ref, toRef, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
-import { matchQuotaPreset } from '@xyz-agent/shared'
+import { matchQuotaPreset, QUOTA_PRESETS } from '@xyz-agent/shared'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
@@ -259,13 +259,17 @@ const matchedProviderId = computed<string | null>(() => {
   return provider
 })
 
-/** 匹配到的 quota preset 的显示名（用于 section label 的 tag）。 */
+/** 匹配到的 quota preset 的显示名（基于手动指定的 quota.fetcher，fallback 到自动匹配）。 */
 const matchedPresetLabel = computed<string | null>(() => {
   const pid = matchedProviderId.value
   if (!pid) return null
   const providerInfo = settingsStore.providers.find((p) => p.id === pid)
   if (!providerInfo) return null
-  const preset = matchQuotaPreset({ baseUrl: providerInfo.baseUrl, name: providerInfo.name })
+  // 优先用手动指定的 fetcher 查 label，fallback 到自动匹配
+  const manualFetcher = providerInfo.quota?.fetcher
+  const preset = manualFetcher
+    ? QUOTA_PRESETS.find((p) => p.fetcher === manualFetcher)
+    : matchQuotaPreset({ baseUrl: providerInfo.baseUrl, name: providerInfo.name })
   return preset?.label ?? null
 })
 

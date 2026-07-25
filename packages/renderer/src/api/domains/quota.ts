@@ -48,14 +48,15 @@ export async function refreshQuota(providerId: string): Promise<QuotaResult> {
 }
 
 /**
- * Settings 配置。启用/禁用 + 写 cookie（cookie 类 provider）。
+ * Settings 配置。启用/禁用 + 写 cookie（cookie 类 provider）+ 持久化 fetcher。
  * enabled=false 不删缓存。
  */
 export async function configure(
   providerId: string,
   enabled: boolean,
   cookie?: string,
+  fetcher?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const reply = await command('quota.configure', { providerId, enabled, cookie })
+  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher })
   return { ok: reply.ok, error: reply.error }
 }

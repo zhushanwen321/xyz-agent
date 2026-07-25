@@ -151,9 +151,10 @@
             </Button>
           </div>
 
-          <!-- Coding Plan 额度查询 Section（仅 provider 命中 QUOTA_PRESETS 时显示） -->
+          <!-- Coding Plan 额度查询 Section（始终显示：手动选择类型，不再依赖自动匹配） -->
           <CodingPlanSection
-            v-if="matchedPreset"
+            :fetcher-id="quotaFetcherId"
+            :fetcher-options="quotaFetcherOptions"
             :enabled="quotaEnabled"
             :cookie-input="quotaCookieInput"
             :test-status="quotaTestStatus"
@@ -165,8 +166,9 @@
             :configure-error-msg="quotaConfigureError"
             :api-key-set="!!provider?.apiKeySet"
             :cookie-set="!!provider?.quota?.cookieSet"
-            :help-url="matchedPreset.helpUrl"
-            :help-text="matchedPreset.helpText"
+            :help-url="quotaHelpUrl"
+            :help-text="quotaHelpText"
+            @select-fetcher="quotaSelectFetcher"
             @toggle-enabled="quotaToggleEnabled"
             @test-query="quotaTestQuery"
             @save-cookie="quotaSaveCookie"
@@ -416,13 +418,18 @@ const { info: toastInfo } = useToast()
 
 // ── Coding Plan 额度查询：自动关联 + 配置 ──
 
-/** 按 provider baseUrl/name 匹配内置预设，未命中返回 undefined（不显示 section） */
+/**
+ * 按 provider baseUrl/name 匹配内置预设，作为下拉框的自动推荐默认值。
+ * 不再控制 Section 是否显示（始终显示），仅用于计算 fetcherId 的默认值。
+ */
 const matchedPreset = computed(() => {
   const p = props.provider
   return matchQuotaPreset({ baseUrl: p?.baseUrl, name: p?.name })
 })
 
 const {
+  fetcherId: quotaFetcherId,
+  fetcherOptions: quotaFetcherOptions,
   enabled: quotaEnabled,
   cookieInput: quotaCookieInput,
   testStatus: quotaTestStatus,
@@ -430,9 +437,12 @@ const {
   quotaData,
   lastFetchAt: quotaLastFetchAt,
   isCookieAuth: quotaIsCookieAuth,
+  helpUrl: quotaHelpUrl,
+  helpText: quotaHelpText,
   configuring: quotaConfiguring,
   configureError: quotaConfigureError,
   toggleEnabled: quotaToggleEnabled,
+  selectFetcher: quotaSelectFetcher,
   saveCookie: quotaSaveCookie,
   testQuery: quotaTestQuery,
 } = useQuotaConfigure(matchedPreset, toRef(props, 'provider'))

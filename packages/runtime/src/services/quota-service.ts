@@ -11,13 +11,13 @@
  * 设计文档：docs/page-design/v3/coding-plan-quota/design.md §2.2.3
  */
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NormalizedQuotaRow, ProviderQuotaFetcher } from '@xyz-agent/shared'
 import { matchQuotaPreset } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
-import { getApiKeyForProvider } from '../infra/pi/pi-provider-store.js'
+import { getApiKeyForProvider, getProviderConfig, upsertProvider } from '../infra/pi/pi-provider-store.js'
 import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 
@@ -28,6 +28,10 @@ const THROTTLE_MS = 10_000
 export interface ProviderInfoLike {
   baseUrl?: string
   name?: string
+  /** 用户手动指定的 fetcher id（优先于 matchQuotaPreset）。 */
+  quota?: {
+    fetcher?: string
+  }
 }
 
 /** 从 providerId 解析 ProviderInfo（baseUrl/name）的回调。 */
@@ -133,13 +137,19 @@ export class QuotaService {
 
   /**
    * 配置 provider 额度查询（Settings UI 调用）。
-   * - cookie 写入 secrets 目录
-   * - enabled 状态存储在 ProviderInfo.quota（由前端 config.setProvider 处理）
+   * - 持久化 fetcher/enabled/cookieSet 到 models.json 的 provider.quota
+   * - cookie 写入 secrets 目录（cookie 类 provider）
+   *
+   * @param fetcher - 用户手动选择的 fetcher id（可选）。未传时保留既有 fetcher 不变。
    */
-  configure(providerId: string, enabled: boolean, cookie?: string): QuotaConfigureResult {
-    if (!enabled) return { ok: true }
-
-    // cookie 类 provider 需要写入 secrets 文件
+  configure(
+    providerId: string,
+    enabled: boolean,
+    cookie?: string,
+    fetcher?: string,
+  ): QuotaConfigureResult {
+    // cookie 写入 secrets 目录（cookie 类 provider）
+    let cookieSet: boolean | undefined
     if (cookie !== undefined) {
       try {
         if (!existsSync(this.secretsDir)) {
@@ -147,7 +157,7 @@ export class QuotaService {
         }
         const cookiePath = this.getCookiePath(providerId)
         writeFileSync(cookiePath, cookie, 'utf-8')
-        return { ok: true }
+        cookieSet = true
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         logger.warn('[quota] failed to write cookie', { providerId, error: msg })
@@ -155,7 +165,40 @@ export class QuotaService {
       }
     }
 
+    // 持久化 quota 配置到 models.json（fetcher/enabled/cookieSet）
+    const persistOk = this.persistQuotaConfig(providerId, enabled, fetcher, cookieSet)
+    if (!persistOk) {
+      return { ok: false, error: 'failed to persist quota config' }
+    }
     return { ok: true }
+  }
+
+  /**
+   * 持久化 quota 配置到 models.json 的 provider.quota。
+   * 复用 upsertProvider 的 spread 合并语义：只覆写 quota 字段，其他 provider 字段不动。
+   */
+  private persistQuotaConfig(
+    providerId: string,
+    enabled: boolean,
+    fetcher: string | undefined,
+    cookieSet: boolean | undefined,
+  ): boolean {
+    const existing = getProviderConfig(providerId)
+    if (!existing) {
+      logger.warn('[quota] provider not found, cannot persist quota', { providerId })
+      return false
+    }
+    const nextFetcher = fetcher ?? existing.quota?.fetcher
+    upsertProvider(providerId, {
+      ...existing,
+      quota: {
+        fetcher: nextFetcher,
+        enabled,
+        // 保留既有 cookieSet，除非本次明确写入新 cookie
+        cookieSet: cookieSet ?? existing.quota?.cookieSet,
+      },
+    })
+    return true
   }
 
   /**
@@ -197,15 +240,23 @@ export class QuotaService {
    * 根据 providerId 查找对应的 fetcher。
    *
    * 设计文档 §2.2.3：providerId 是用户在 settings 创建的 provider id（如 'my-zhipu'、'glm'），
-   * 不是 fetcher id（'zhipu'/'kimi-coding'）。先用 getProviderInfo 拿到 baseUrl/name，
-   * 再调 matchQuotaPreset 匹配 QUOTA_PRESETS 得到 preset.fetcher，最后从 QUOTA_FETCHERS 取 fetcher。
+   * 不是 fetcher id（'zhipu'/'kimi-coding'）。查找优先级：
    *
-   * fallback：当 getProviderInfo 未注入或返回空时，尝试直接按 providerId 查 fetchers
-   * （兼容 provider id 恰好等于 fetcher id 的场景）。
+   * 1. 用户手动指定的 quota.fetcher（直接按 id 查 QUOTA_FETCHERS）
+   * 2. 经 ProviderInfo 的 baseUrl/name 调 matchQuotaPreset 匹配 QUOTA_PRESETS 得到 preset.fetcher
+   * 3. fallback：直接按 providerId 查 fetchers（兼容 provider id 恰好等于 fetcher id 的场景）
    */
   private getFetcherForProvider(providerId: string): ProviderQuotaFetcher | null {
-    // 主路径：经 ProviderInfo 的 baseUrl/name 匹配 preset
     const info = this.getProviderInfo(providerId)
+
+    // 优先级 1：用户手动指定的 fetcher id（不再依赖 baseUrl/name 自动匹配，
+    // 适配自建反代、非标准 baseUrl 等自动匹配失败/猜错的场景）
+    if (info?.quota?.fetcher) {
+      const manual = QUOTA_FETCHERS.get(info.quota.fetcher)
+      if (manual) return manual
+    }
+
+    // 优先级 2：经 baseUrl/name 匹配 preset
     if (info) {
       const preset = matchQuotaPreset({ baseUrl: info.baseUrl, name: info.name })
       if (preset) {
@@ -213,7 +264,7 @@ export class QuotaService {
       }
     }
 
-    // fallback：直接按 providerId 查 fetchers（仅命中 provider id 恰好等于 fetcher id 的场景）
+    // 优先级 3：直接按 providerId 查 fetchers（仅命中 provider id 恰好等于 fetcher id 的场景）
     return QUOTA_FETCHERS.get(providerId) ?? null
   }
 

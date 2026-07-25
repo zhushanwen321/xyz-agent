@@ -328,13 +328,13 @@ async function main(): Promise<void> {
 
   // QuotaService：Coding Plan 额度查询（hover 触发 + 缓存 + log）。
   // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/refresh/configure 路由）。
-  // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name），用于 matchQuotaPreset
-  // 匹配 fetcher（设计文档 §2.2.3）。
+  // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name/quota.fetcher），
+  // quota.fetcher 优先于 matchQuotaPreset（设计文档 §2.2.3 + 手动选择 fetcher 需求）。
   const quotaService = new QuotaService({
     getProviderInfo: (providerId) => {
       const cfg = getProviderConfig(providerId)
       if (!cfg) return undefined
-      return { baseUrl: cfg.baseUrl, name: cfg.name }
+      return { baseUrl: cfg.baseUrl, name: cfg.name, quota: cfg.quota }
     },
   })
 

@@ -10,6 +10,29 @@
       {{ t('settings.providerEdit.quotaSection') }}
     </Label>
 
+    <!-- 类型选择下拉框（始终显示：手动指定 Coding Plan 类型，不再完全依赖自动匹配） -->
+    <div class="mb-2">
+      <Label class="mb-1 block text-[10px] text-muted">
+        {{ t('settings.providerEdit.quotaType') }}
+        <span class="normal-case text-subtle">{{ t('settings.providerEdit.quotaTypeHint') }}</span>
+      </Label>
+      <Select
+        :model-value="fetcherId"
+        @update:model-value="$emit('selectFetcher', String($event))"
+      >
+        <SelectTrigger class="h-8 text-[12px]" data-testid="quota-type-select">
+          <SelectValue :placeholder="t('settings.providerEdit.quotaTypePlaceholder')" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem
+            v-for="opt in fetcherOptions"
+            :key="opt.value"
+            :value="opt.value"
+          >{{ opt.label }}</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+
     <!-- 启用开关 -->
     <div class="flex items-center justify-between py-1.5">
       <span class="text-[12px] text-fg">
@@ -163,10 +186,16 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
+import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import type { QuotaTestStatus } from '@/composables/features/useQuotaConfigure'
 
-defineProps<{
+withDefaults(defineProps<{
+  /** 当前选中的 fetcher id（未选择 = undefined） */
+  fetcherId?: string
+  /** 下拉框选项列表（value=fetcher id, label=显示名）。默认 QUOTA_PRESETS。 */
+  fetcherOptions?: Array<{ value: string; label: string }>
   enabled: boolean
   cookieInput: string
   testStatus: QuotaTestStatus
@@ -180,9 +209,16 @@ defineProps<{
   cookieSet: boolean
   helpUrl?: string
   helpText?: string
-}>()
+}>(), {
+  // fetcherId 默认 undefined（未选择任何类型）
+  fetcherId: undefined,
+  // 默认选项 = QUOTA_PRESETS（5 个内置类型），调用方一般无需传
+  fetcherOptions: () => QUOTA_PRESETS.map((p) => ({ value: p.fetcher, label: p.label })),
+})
 
 defineEmits<{
+  /** 选择 fetcher 类型（父组件更新 quota.fetcher） */
+  selectFetcher: [value: string]
   toggleEnabled: []
   testQuery: []
   saveCookie: []

@@ -322,7 +322,8 @@ describe('useQuotaConfigure', () => {
     const quota = useQuotaConfigure(preset, provider)
     await quota.toggleEnabled()
 
-    expect(quotaApi.configure).toHaveBeenCalledWith('test-provider', true)
+    // configure 带 fetcherId（syncFromProvider 把 fetcherId 默认为 preset.fetcher='zhipu'）+ enabled
+    expect(quotaApi.configure).toHaveBeenCalledWith('test-provider', true, undefined, 'zhipu')
     expect(quota.enabled.value).toBe(true)
     // 开启后自动触发 testQuery（经 refreshQuota，绕过 throttle）
     expect(quotaApi.refreshQuota).toHaveBeenCalledWith('test-provider')
@@ -366,7 +367,8 @@ describe('useQuotaConfigure', () => {
     quota.cookieInput.value = 'sessionid=abc123'
     await quota.saveCookie()
 
-    expect(quotaApi.configure).toHaveBeenCalledWith('test-provider', true, 'sessionid=abc123')
+    // configure 带 cookie + fetcherId（mimoPreset → fetcherId='mimo'）
+    expect(quotaApi.configure).toHaveBeenCalledWith('test-provider', true, 'sessionid=abc123', 'mimo')
     expect(quota.enabled.value).toBe(true)
   })
 
@@ -410,5 +412,162 @@ describe('useQuotaConfigure', () => {
 
     const q2 = useQuotaConfigure(presetCookie, provider)
     expect(q2.isCookieAuth.value).toBe(true)
+  })
+})
+
+// ── 类型选择下拉框测试（任务 3b）──
+
+describe('CodingPlanSection — 类型选择下拉框', () => {
+  const baseSelectProps = {
+    fetcherId: undefined,
+    enabled: false,
+    cookieInput: '',
+    testStatus: 'idle' as const,
+    testErrorMsg: '',
+    quotaRow: null,
+    lastFetchAt: null,
+    isCookieAuth: false,
+    configuring: false,
+    configureErrorMsg: '',
+    apiKeySet: false,
+    cookieSet: false,
+  }
+
+  it('始终渲染类型下拉框（data-testid="quota-type-select"）', () => {
+    const wrapper = mount(CodingPlanSection, { props: baseSelectProps })
+
+    // 下拉框 trigger 始终存在（无 v-if 限制）
+    const select = wrapper.find('[data-testid="quota-type-select"]')
+    expect(select.exists()).toBe(true)
+  })
+
+  it('fetcherOptions 默认传入 QUOTA_PRESETS 的 5 项（zhipu/kimi-coding/minimax/mimo/opencode-go）', async () => {
+    // SelectContent 用 reka-ui teleport + 条件渲染，未打开时不挂载 SelectItem，
+    // 无法靠 findAllComponents 断言。改为验证 QUOTA_PRESETS（与组件默认 fetcherOptions 同源）
+    // 含 5 项，且组件 mount 成功（默认 fetcherOptions 生效未报错）。
+    const { QUOTA_PRESETS } = await import('@xyz-agent/shared')
+    const expectedValues = ['zhipu', 'kimi-coding', 'minimax', 'mimo', 'opencode-go']
+    expect(QUOTA_PRESETS.map((p) => p.fetcher)).toEqual(expectedValues)
+
+    const wrapper = mount(CodingPlanSection, { props: baseSelectProps })
+    expect(wrapper.find('[data-testid="quota-type-select"]').exists()).toBe(true)
+  })
+
+  it('选择下拉框后 emit selectFetcher 事件（trigger update:modelValue）', async () => {
+    const wrapper = mount(CodingPlanSection, { props: baseSelectProps })
+
+    // 模拟 Select 根组件 emit update:modelValue（用户选中某项）
+    // Select 组件监听 update:modelValue 转发为 selectFetcher emit
+    const selectComp = wrapper.findComponent({ name: 'SelectRoot' })
+    await selectComp.vm.$emit('update:modelValue', 'zhipu')
+
+    expect(wrapper.emitted('selectFetcher')).toBeTruthy()
+    expect(wrapper.emitted('selectFetcher')![0]).toEqual(['zhipu'])
+  })
+})
+
+// ── useQuotaConfigure fetcherId 初始化 + selectFetcher 测试（任务 3c）──
+
+describe('useQuotaConfigure — fetcherId 状态', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('fetcherId 初始值 = provider.quota.fetcher（手动指定优先）', async () => {
+    const provider = ref<ProviderInfo | null>(makeProvider({
+      quota: { fetcher: 'kimi-coding', enabled: false },
+    }))
+    const preset = ref<QuotaPreset | undefined>(zhipuPreset)
+
+    const quota = useQuotaConfigure(preset, provider)
+    await nextTick()
+
+    // 手动指定的 kimi-coding 优先于自动匹配的 zhipu
+    expect(quota.fetcherId.value).toBe('kimi-coding')
+  })
+
+  it('fetcherId 无手动指定时 fallback 到 matchedPreset.fetcher', async () => {
+    const provider = ref<ProviderInfo | null>(makeProvider({
+      // quota 存在但无 fetcher 字段
+      quota: { enabled: false },
+    }))
+    const preset = ref<QuotaPreset | undefined>(zhipuPreset)
+
+    const quota = useQuotaConfigure(preset, provider)
+    await nextTick()
+
+    // 无手动 fetcher → 用自动匹配的 zhipu
+    expect(quota.fetcherId.value).toBe('zhipu')
+  })
+
+  it('fetcherId 无 quota 配置时 fallback 到 matchedPreset.fetcher', async () => {
+    const provider = ref<ProviderInfo | null>(makeProvider())
+    const preset = ref<QuotaPreset | undefined>(zhipuPreset)
+
+    const quota = useQuotaConfigure(preset, provider)
+    await nextTick()
+
+    expect(quota.fetcherId.value).toBe('zhipu')
+  })
+
+  it('fetcherId 都没有时为 undefined', async () => {
+    const provider = ref<ProviderInfo | null>(makeProvider({ baseUrl: 'https://unknown.example.com', name: 'unknown' }))
+    const preset = ref<QuotaPreset | undefined>(undefined)
+
+    const quota = useQuotaConfigure(preset, provider)
+    await nextTick()
+
+    expect(quota.fetcherId.value).toBeUndefined()
+  })
+
+  it('fetcherOptions 返回 QUOTA_PRESETS 的 5 项', () => {
+    const provider = ref<ProviderInfo | null>(makeProvider())
+    const preset = ref<QuotaPreset | undefined>(zhipuPreset)
+
+    const quota = useQuotaConfigure(preset, provider)
+
+    expect(quota.fetcherOptions).toHaveLength(5)
+    expect(quota.fetcherOptions.map((o) => o.value)).toEqual(
+      ['zhipu', 'kimi-coding', 'minimax', 'mimo', 'opencode-go'],
+    )
+  })
+
+  it('selectFetcher 更新 fetcherId + 调 configure 持久化', async () => {
+    const provider = ref<ProviderInfo | null>(makeProvider())
+    const preset = ref<QuotaPreset | undefined>(zhipuPreset)
+
+    vi.mocked(quotaApi.configure).mockResolvedValue({ ok: true })
+
+    const quota = useQuotaConfigure(preset, provider)
+    await quota.selectFetcher('kimi-coding')
+
+    expect(quota.fetcherId.value).toBe('kimi-coding')
+    // configure 带 fetcher 参数持久化
+    expect(quotaApi.configure).toHaveBeenCalledWith('test-provider', false, undefined, 'kimi-coding')
+  })
+
+  it('selectFetcher 持久化失败时设置 configureError 但仍更新本地 fetcherId', async () => {
+    const provider = ref<ProviderInfo | null>(makeProvider())
+    const preset = ref<QuotaPreset | undefined>(zhipuPreset)
+
+    vi.mocked(quotaApi.configure).mockResolvedValue({ ok: false, error: '网络错误' })
+
+    const quota = useQuotaConfigure(preset, provider)
+    await quota.selectFetcher('kimi-coding')
+
+    expect(quota.fetcherId.value).toBe('kimi-coding')
+    expect(quota.configureError.value).toBe('网络错误')
+  })
+
+  it('isCookieAuth 基于选中的 fetcherId 计算（手动选 mimo 显示 cookie 区）', async () => {
+    const provider = ref<ProviderInfo | null>(makeProvider())
+    // preset 是 zhipu（api-key 类），但手动选 mimo（cookie 类）
+    const preset = ref<QuotaPreset | undefined>(zhipuPreset)
+
+    const quota = useQuotaConfigure(preset, provider)
+    expect(quota.isCookieAuth.value).toBe(false) // 初始 zhipu = api-key
+
+    await quota.selectFetcher('mimo')
+    expect(quota.isCookieAuth.value).toBe(true) // 切到 mimo = cookie
   })
 })

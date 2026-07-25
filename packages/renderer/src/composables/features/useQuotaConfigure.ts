@@ -9,6 +9,7 @@
  */
 import { ref, computed, watch, type Ref } from 'vue'
 import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo } from '@xyz-agent/shared'
+import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import * as quotaApi from '@/api/domains/quota'
 
 /** 测试查询状态 */
@@ -16,6 +17,10 @@ export type QuotaTestStatus = 'idle' | 'loading' | 'success' | 'error'
 
 /** composable 返回类型 */
 export interface UseQuotaConfigureReturn {
+  /** 当前选中的 fetcher id（未选择 = undefined） */
+  fetcherId: Ref<string | undefined>
+  /** 下拉框选项列表（QUOTA_PRESETS 映射） */
+  fetcherOptions: Array<{ value: string; label: string }>
   /** 是否启用额度查询（Switch 双向绑定） */
   enabled: Ref<boolean>
   /** cookie 输入值（cookie 类 provider 专用） */
@@ -30,6 +35,10 @@ export interface UseQuotaConfigureReturn {
   lastFetchAt: Ref<number | null>
   /** 当前 preset 是否为 cookie 类认证 */
   isCookieAuth: Ref<boolean>
+  /** 帮助链接（基于当前选中 fetcher） */
+  helpUrl: Ref<string | undefined>
+  /** 帮助文案（基于当前选中 fetcher） */
+  helpText: Ref<string | undefined>
   /** 是否正在保存配置 */
   configuring: Ref<boolean>
   /** 保存配置错误 */
@@ -37,6 +46,8 @@ export interface UseQuotaConfigureReturn {
 
   /** 切换启用状态 */
   toggleEnabled: () => Promise<void>
+  /** 选择 fetcher 类型（同步到本地 + 持久化 quota.fetcher） */
+  selectFetcher: (id: string) => Promise<void>
   /** 保存 cookie 并启用 */
   saveCookie: () => Promise<void>
   /** 测试查询（触发 quota.fetch） */
@@ -54,6 +65,7 @@ export function useQuotaConfigure(
   providerRef: Ref<ProviderInfo | null>,
 ): UseQuotaConfigureReturn {
   const enabled = ref(false)
+  const fetcherId = ref<string | undefined>(undefined)
   const cookieInput = ref('')
   const testStatus = ref<QuotaTestStatus>('idle')
   const testError = ref('')
@@ -62,13 +74,45 @@ export function useQuotaConfigure(
   const configuring = ref(false)
   const configureError = ref('')
 
-  const isCookieAuth = computed(() => preset.value?.auth === 'cookie')
+  /** 下拉框选项：QUOTA_PRESETS 映射为 { value, label } */
+  const fetcherOptions = QUOTA_PRESETS.map((p) => ({ value: p.fetcher, label: p.label }))
+
+  /**
+   * isCookieAuth：基于当前选中的 fetcherId 计算（而非 preset.auth）。
+   * 用户手动选了 cookie 类 fetcher（mimo/opencode-go）时显示 cookie 输入区。
+   * fetcherId 未选择时 fallback 到 preset.auth。
+   */
+  const isCookieAuth = computed(() => {
+    const fid = fetcherId.value
+    if (fid) {
+      const opt = QUOTA_PRESETS.find((p) => p.fetcher === fid)
+      return opt?.auth === 'cookie'
+    }
+    return preset.value?.auth === 'cookie'
+  })
+
+  /**
+   * 当前选中 fetcher 对应的预设（用于 helpUrl/helpText）。
+   * fetcherId 优先，未选时 fallback 到自动匹配的 preset。
+   */
+  const activePreset = computed<QuotaPreset | undefined>(() => {
+    const fid = fetcherId.value
+    if (fid) return QUOTA_PRESETS.find((p) => p.fetcher === fid)
+    return preset.value
+  })
+
+  /** 帮助链接（基于当前选中 fetcher）。 */
+  const helpUrl = computed<string | undefined>(() => activePreset.value?.helpUrl)
+  /** 帮助文案（基于当前选中 fetcher）。 */
+  const helpText = computed<string | undefined>(() => activePreset.value?.helpText)
 
   // ── 初始化：从 provider.quota 读取已保存的配置 ──
   function syncFromProvider(): void {
     const p = providerRef.value
     if (!p?.quota) {
       enabled.value = false
+      // fetcherId 默认值：provider.quota.fetcher > 自动匹配的 preset.fetcher > undefined
+      fetcherId.value = preset.value?.fetcher
       cookieInput.value = ''
       testStatus.value = 'idle'
       testError.value = ''
@@ -77,6 +121,8 @@ export function useQuotaConfigure(
       return
     }
     enabled.value = p.quota.enabled
+    // fetcherId 初始值：手动指定的 quota.fetcher 优先，未设置时 fallback 到自动匹配值
+    fetcherId.value = p.quota.fetcher ?? preset.value?.fetcher
     // cookie 明文不入前端，只标记是否已配置
     cookieInput.value = p.quota.cookieSet ? '••••••••' : ''
     // 如果已启用，尝试读缓存
@@ -107,24 +153,48 @@ export function useQuotaConfigure(
 
   // provider 变化时同步状态
   watch(providerRef, syncFromProvider, { immediate: true })
-  // preset 变化时重置（切换到不匹配的 provider 时清空）
+  // preset 变化时：若用户未手动指定 fetcherId，跟随自动匹配值更新默认。
+  // 不再 reset 全部状态——用户可能已手动选了 fetcher 或填了 cookie。
   watch(preset, (newPreset) => {
-    if (!newPreset) {
-      reset()
+    const p = providerRef.value
+    const manualFetcher = p?.quota?.fetcher
+    if (manualFetcher) {
+      // 已手动指定，保留
+      fetcherId.value = manualFetcher
+    } else {
+      fetcherId.value = newPreset?.fetcher
     }
   })
+
+  /** 选择 fetcher 类型（同步本地 fetcherId + 持久化到 quota.fetcher）。 */
+  async function selectFetcher(id: string): Promise<void> {
+    const p = providerRef.value
+    if (!p) return
+    fetcherId.value = id
+    configuring.value = true
+    configureError.value = ''
+    try {
+      // 持久化 fetcher（enabled 沿用当前值，未启用过则默认 false）
+      const result = await quotaApi.configure(p.id, enabled.value, undefined, id)
+      if (!result.ok) {
+        configureError.value = result.error || '保存类型失败'
+      }
+    } catch (e) {
+      configureError.value = e instanceof Error ? e.message : '保存类型失败'
+    } finally {
+      configuring.value = false
+    }
+  }
 
   /** 切换启用状态（api-key 类直接调 configure；cookie 类需先填 cookie） */
   async function toggleEnabled(): Promise<void> {
     const p = providerRef.value
-    const pr = preset.value
-    if (!p || !pr) return
+    if (!p) return
 
     const newEnabled = !enabled.value
 
-    // cookie 类关闭时直接调 configure
-    // cookie 类开启时需要先有 cookie 输入
-    if (pr.auth === 'cookie' && newEnabled && !cookieInput.value.trim()) {
+    // cookie 类开启时需要先有 cookie 输入（基于当前 fetcherId 判断认证方式）
+    if (isCookieAuth.value && newEnabled && !cookieInput.value.trim()) {
       configureError.value = '请先输入 Cookie'
       return
     }
@@ -133,7 +203,7 @@ export function useQuotaConfigure(
     configureError.value = ''
 
     try {
-      const result = await quotaApi.configure(p.id, newEnabled)
+      const result = await quotaApi.configure(p.id, newEnabled, undefined, fetcherId.value)
       if (result.ok) {
         enabled.value = newEnabled
         if (newEnabled) {
@@ -165,7 +235,7 @@ export function useQuotaConfigure(
     configureError.value = ''
 
     try {
-      const result = await quotaApi.configure(p.id, true, cookie)
+      const result = await quotaApi.configure(p.id, true, cookie, fetcherId.value)
       if (result.ok) {
         enabled.value = true
         // 保存后自动测试
@@ -209,6 +279,7 @@ export function useQuotaConfigure(
   /** 重置全部状态 */
   function reset(): void {
     enabled.value = false
+    fetcherId.value = undefined
     cookieInput.value = ''
     testStatus.value = 'idle'
     testError.value = ''
@@ -219,6 +290,8 @@ export function useQuotaConfigure(
   }
 
   return {
+    fetcherId,
+    fetcherOptions,
     enabled,
     cookieInput,
     testStatus,
@@ -226,9 +299,12 @@ export function useQuotaConfigure(
     quotaData,
     lastFetchAt,
     isCookieAuth,
+    helpUrl,
+    helpText,
     configuring,
     configureError,
     toggleEnabled,
+    selectFetcher,
     saveCookie,
     testQuery,
     reset,

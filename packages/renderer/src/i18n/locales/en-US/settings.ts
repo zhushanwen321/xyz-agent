@@ -156,6 +156,9 @@ export default {
     unsavedCancel: 'Keep editing',
     // Coding Plan 额度查询
     quotaSection: 'Coding Plan Quota',
+    quotaType: 'Type',
+    quotaTypePlaceholder: 'Not selected',
+    quotaTypeHint: 'Select the matching Coding Plan type',
     quotaEnable: 'Enable quota query',
     quotaEnableHint: 'Query 5h/week/month quota usage',
     quotaAuthMethod: 'Auth method',
