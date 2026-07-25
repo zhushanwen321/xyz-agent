@@ -296,7 +296,7 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
       expect(currentWrapper!.emitted('success')).toBeFalsy()
       vi.advanceTimersByTime(1)
       expect(currentWrapper!.emitted('success')).toHaveLength(1)
-      expect(currentWrapper!.emitted('success')![0]).toEqual(['/workspace/.worktrees/feat-x'])
+      expect(currentWrapper!.emitted('success')![0]).toEqual([{ cwd: '/workspace/.worktrees/feat-x' }])
     } finally {
       vi.useRealTimers()
     }
@@ -394,7 +394,7 @@ describe('CreateWorktreeModal 构建者视角（状态机）', () => {
     await $('[data-testid="worktree-use-existing-btn"]').trigger('click')
     await flushPromises()
     expect(currentWrapper!.emitted('use-existing')).toHaveLength(1)
-    expect(currentWrapper!.emitted('use-existing')![0]).toEqual(['/workspace/.worktrees/feat-x'])
+    expect(currentWrapper!.emitted('use-existing')![0]).toEqual([{ cwd: '/workspace/.worktrees/feat-x' }])
   })
 })
 
