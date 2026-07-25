@@ -1,0 +1,195 @@
+{
+  "split": [],
+  "testCases": [
+    {
+      "id": "TC1",
+      "status": "active",
+      "name": "extractImages：无 image segment 返回 undefined（行为不变）",
+      "scenario": "调 extractImages([{type:'text',text:'hello'}])，断言返回 undefined。测 text-only segment 不触发 fetch、不组 images。",
+      "input": "import { extractImages } from useChat 模块导出",
+      "expected": "extractImages(纯文本 segments) resolve undefined；global.fetch 未被调用",
+      "type": "unit"
+    },
+    {
+      "id": "TC2",
+      "status": "active",
+      "name": "extractImages：含 image segment，fetch 成功 → 返回 [{data;base64;mimeType}]",
+      "scenario": "mock global.fetch resolve Response{ok:true, blob:()=>Promise.resolve(new Blob([0x89,0x50,0x4e,0x47],{type:'image/png'}))}。调 extractImages([{type:'image',path:'/tmp/a.png',name:'a.png'}])，断言返回长度1数组，data===base64(0x89504e47 字节)，mimeType==='image/png'。验证 fetch 被以 `local-file:///${encodeURIComponent('/tmp/a.png')}` 调用。",
+      "input": "vi.spyOn(global,'fetch') + 合成 Response",
+      "expected": "返回 [{data: 正确base64, mimeType:'image/png'}]；fetch URL 含 encodeURIComponent path",
+      "type": "unit"
+    },
+    {
+      "id": "TC3",
+      "status": "active",
+      "name": "extractImages：多图并行 allSettled，部分失败只取成功的",
+      "scenario": "2 个 image segment。fetch 第1次 resolve ok（a.png），第2次 reject（b.png 读失败）。调 extractImages，断言返回长度1数组（只 a），console.warn 被以含 b.png 的消息调用，不 throw。",
+      "input": "vi.spyOn(global,'fetch').mockRejectedValueOnce... + spy console.warn",
+      "expected": "返回 [{a 的 base64}]；console.warn 调用1次含 b 路径；无 unhandled rejection",
+      "type": "unit"
+    },
+    {
+      "id": "TC4",
+      "status": "active",
+      "name": "extractImages：全部失败返回 undefined（降级纯文本发送）",
+      "scenario": "2 个 image segment，fetch 全 reject。断言 extractImages 返回 undefined（非空数组），console.warn 调用2次，不 throw。",
+      "input": "vi.spyOn(global,'fetch').mockRejectedValue(new Error('403'))",
+      "expected": "返回 undefined；console.warn 2次；无 throw",
+      "type": "unit"
+    },
+    {
+      "id": "TC5",
+      "status": "active",
+      "name": "chatApi.send：images undefined 时 payload 不含 images 键",
+      "scenario": "mock command（@/api/request）。调 send('s1','hi')（不传 images），断言 command('message.send', { sessionId:'s1', content:'hi' })（payload 无 images 键）。",
+      "input": "vi.mock('@/api/request') spy command",
+      "expected": "command 收到 {sessionId,content}，无 images 属性",
+      "type": "unit"
+    },
+    {
+      "id": "TC6",
+      "status": "active",
+      "name": "chatApi.send：传 images 时 payload 含 images 数组",
+      "scenario": "mock command。调 send('s1','hi', [{data:'BASE64',mimeType:'image/png'}])，断言 command('message.send', { sessionId:'s1', content:'hi', images:[{data:'BASE64',mimeType:'image/png'}] })。",
+      "input": "vi.mock command spy",
+      "expected": "command 收到 {sessionId, content, images:传入数组}",
+      "type": "unit"
+    },
+    {
+      "id": "TC7",
+      "status": "active",
+      "name": "useChat.send：含 image segment 时 chatApi.send 被以 images 调用",
+      "scenario": "mock extractImages（vi.mock useChat 模块的 extractImages）resolve [{data,mimeType}]，mock chatApi.send。调 useChat().send('s-img', [{type:'image',path:'/tmp/x.png',name:'x.png'}])。断言 chatApi.send 被以 ('s-img', promptText, images) 调用。",
+      "input": "vi.hoisted apiMock + mock extractImages",
+      "expected": "apiMock.send 调用参数含第3个 images 数组",
+      "type": "unit"
+    },
+    {
+      "id": "TC8",
+      "status": "active",
+      "name": "useChat.send：无 image 时 chatApi.send 第3参数 undefined（既有行为不变）",
+      "scenario": "mock chatApi.send。调 send('s-text', textToSegments('hi'))。断言 chatApi.send 被以 ('s-text','hi', undefined) 或两参数调用（images undefined），既有 useChat.test.ts 测试不受影响。",
+      "input": "textToSegments('hi')",
+      "expected": "apiMock.send 第3参数 undefined（行为不变）",
+      "type": "unit"
+    },
+    {
+      "id": "TC9",
+      "status": "active",
+      "name": "useModelCapabilities：input 含 image → supportsVision=true；不含/undefined → false",
+      "scenario": "setActivePinia + useSettingsStore().providers 注入 [{id:'p1', models:[{id:'m1', input:['text','image']}]}]。调 useModelCapabilities(computed(()=>'p1/m1'))，断言 supportsVision.value===true。换 input:['text'] 或 undefined → false。换不存在 modelId → false。",
+      "input": "createPinia + settingsStore.providers 赋值",
+      "expected": "input 含 image→true；不含/undefined/找不到→false",
+      "type": "unit"
+    },
+    {
+      "id": "TC10",
+      "status": "active",
+      "name": "vision 降级：不支持 vision 的模型 + 含图 → console.warn 调用",
+      "scenario": "mock extractImages resolve 非空 images，mock useModelCapabilities/supportsVision 返 false（或 settingsStore 注入 input:['text']），spy console.warn。调 send 含 image segment，断言 console.warn 被调用（含『不支持图片』），chatApi.send 仍被以 images 调用（不剥离）。",
+      "input": "settingsStore input:['text'] + mock extractImages",
+      "expected": "console.warn 调用1次；chatApi.send 第3参数仍是 images（不剥离）",
+      "type": "unit"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "status": "active",
+      "type": "impl",
+      "files": ["packages/renderer/src/api/domains/chat.ts"],
+      "steps": [
+        "send 签名加第三可选参数 images：export function send(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string }>): Promise<void>",
+        "实现：images 为 undefined 时 return command('message.send', { sessionId, content: text })；否则 command('message.send', { sessionId, content: text, images })",
+        "更新 JSDoc（send 函数上方注释）：说明 images 是 Cmd+V 富呈现通路的图片数据（base64 无 data: 前缀），undefined 时不传键（runtime rpc-client 已守卫空数组）"
+      ]
+    },
+    {
+      "id": "T2",
+      "status": "active",
+      "type": "impl",
+      "files": ["packages/renderer/src/composables/panel/useImageAttachment.ts"],
+      "steps": [
+        "把 fileToBase64 重构为导出的可复用工具：export function fileBytesToBase64(bytes: Uint8Array): string（分块 btoa CHUNK=0x8000，原 fileToBase64 内部逻辑）",
+        "fileToBase64 改为调 fileBytesToBase64（保持原行为，只是抽公共函数供 extractImages 复用）",
+        "保持 useImageAttachment 其他逻辑不变"
+      ]
+    },
+    {
+      "id": "T3",
+      "status": "active",
+      "type": "impl",
+      "files": ["packages/renderer/src/composables/panel/useModelCapabilities.ts"],
+      "steps": [
+        "新建文件。import { computed, type ComputedRef, type Ref } from 'vue'；import { useSettingsStore } from '@/stores/settings'",
+        "导出同步解析函数 export function resolveSupportsVision(modelId: string, providers: { id: string; models: Array<{ id: string; input?: Array<'text'|'image'> }> }[]): boolean —— split modelId 'providerId/modelId' → providers.find → models.find → Boolean(input?.includes('image'))；modelId 无 '/' 或找不到 → false",
+        "导出 composable export function useModelCapabilities(currentModelId: ComputedRef<string> | Ref<string>): { supportsVision: ComputedRef<boolean> } —— const settingsStore = useSettingsStore(); return { supportsVision: computed(() => resolveSupportsVision(currentModelId.value, settingsStore.providers)) }",
+        "JSDoc 说明：范式照搬 useThinkingLevelSync.ts:30-38（同一 providers 解析路径），ModelInfo 无 input 字段只能从 ProviderInfo 取"
+      ]
+    },
+    {
+      "id": "T4",
+      "status": "active",
+      "type": "impl",
+      "files": ["packages/renderer/src/composables/features/useChat.ts"],
+      "steps": [
+        "import { useModelCapabilities, resolveSupportsVision } from '@/composables/panel/useModelCapabilities'；import { fileBytesToBase64 } from '@/composables/panel/useImageAttachment'",
+        "新增模块顶层导出函数 export async function extractImages(segments: Segment[]): Promise<Array<{data:string;mimeType:string}> | undefined>：filter image segments；空返 undefined；否则 Promise.allSettled(imageSegs.map(async s => { const res = await fetch(`local-file:///${encodeURIComponent(s.path)}`); if(!res.ok) throw new Error(`local-file ${res.status}`); const blob = await res.blob(); const bytes = new Uint8Array(await blob.arrayBuffer()); return { data: fileBytesToBase64(bytes), mimeType: blob.type || 'image/png' } }))；rejected 项 console.warn(`[useChat] image 读取失败，已跳过: ${seg.path}`)；全失败/空结果返 undefined",
+        "send 内：appendUser → ensureStreamSubscription → addPendingSend 后，chatApi.send 前：const images = await extractImages(segments)",
+        "vision 降级：取当前 session modelId（const sessionStore = useSessionStore() 已在工厂内；const sid 作用域内 modelId = sessionStore.list.find(s=>s.id===sid)?.modelId ?? ''）；if (images && images.length>0 && !resolveSupportsVision(modelId, useSettingsStore().providers)) console.warn('[useChat] 当前模型不支持图片输入，图片将被忽略')",
+        "改 await chatApi.send(sid, promptText) → await chatApi.send(sid, promptText, images)",
+        "确认 import useSettingsStore（如未在）",
+        "steer/followUp/editAndResend 不改（不带 images，仅 send 新回合首轮带）"
+      ]
+    },
+    {
+      "id": "T5",
+      "status": "active",
+      "type": "test",
+      "files": [
+        "packages/renderer/src/__tests__/composables/features/useChat-send-images.test.ts",
+        "packages/renderer/src/__tests__/panel/useModelCapabilities.test.ts",
+        "packages/renderer/src/__tests__/api/chat-send-images.test.ts"
+      ],
+      "steps": [
+        "TC1-TC4 useChat-send-images.test.ts：mock global.fetch（vi.spyOn）+ 合成 Response/Blob，测 extractImages 4 场景（无图/成功/部分失败/全失败）",
+        "TC5-TC6 chat-send-images.test.ts：vi.mock request.command，测 chatApi.send images 透传（undefined 不传键 / 传入含键）",
+        "TC7-TC8 useChat-send-images.test.ts：扩展 useChat.test.ts 范式（vi.hoisted apiMock），mock extractImages，测 send 含图/无图时 chatApi.send 参数",
+        "TC9 useModelCapabilities.test.ts：setActivePinia + 注入 settingsStore.providers，测 supportsVision 真值表",
+        "TC10 useChat-send-images.test.ts：settingsStore input:['text'] + mock extractImages，spy console.warn 测降级"
+      ]
+    }
+  ],
+  "files": [
+    {"id": "F1", "status": "active", "path": "packages/renderer/src/api/domains/chat.ts", "action": "modify", "description": "send 加第三可选参数 images，undefined 不传键"},
+    {"id": "F2", "status": "active", "path": "packages/renderer/src/composables/panel/useImageAttachment.ts", "action": "modify", "description": "抽 fileBytesToBase64 导出供 extractImages 复用"},
+    {"id": "F3", "status": "active", "path": "packages/renderer/src/composables/panel/useModelCapabilities.ts", "action": "create", "description": "新建：resolveSupportsVision + useModelCapabilities（vision 能力解析）"},
+    {"id": "F4", "status": "active", "path": "packages/renderer/src/composables/features/useChat.ts", "action": "modify", "description": "extractImages 模块函数 + send 接 images 提取 + vision 降级 warn"},
+    {"id": "F5", "status": "active", "path": "packages/renderer/src/__tests__/composables/features/useChat-send-images.test.ts", "action": "create", "description": "TC1-4/7-8/10 extractImages + send images + 降级单测"},
+    {"id": "F6", "status": "active", "path": "packages/renderer/src/__tests__/panel/useModelCapabilities.test.ts", "action": "create", "description": "TC9 supportsVision 真值表单测"},
+    {"id": "F7", "status": "active", "path": "packages/renderer/src/__tests__/api/chat-send-images.test.ts", "action": "create", "description": "TC5-6 chatApi.send images 透传单测"}
+  ],
+  "contracts": [
+    {
+      "id": "C1",
+      "status": "active",
+      "name": "chatApi.send images 透传契约（renderer api ↔ shared protocol）",
+      "type": "api",
+      "definition": "// packages/renderer/src/api/domains/chat.ts\nexport function send(\n  sessionId: string,\n  text: string,\n  images?: Array<{ data: string; mimeType: string }>\n): Promise<void>\n// images undefined → command('message.send', { sessionId, content: text })\n// images 非空   → command('message.send', { sessionId, content: text, images })\n// images 形状对齐 shared protocol.ts:199（data=base64 无 data: 前缀）"
+    },
+    {
+      "id": "C2",
+      "status": "active",
+      "name": "extractImages 提取契约（useChat 模块函数）",
+      "type": "function",
+      "definition": "// useChat.ts 模块顶层导出\nexport async function extractImages(\n  segments: Segment[]\n): Promise<Array<{ data: string; mimeType: string }> | undefined>\n// 无 image segment → undefined\n// 有 image segment → allSettled 并行 fetch(local-file://)→base64；\n//   fulfilled 收集，rejected console.warn 跳过；全失败 → undefined\n// base64 经 fileBytesToBase64（分块 btoa 防 stack 溢出），无 data: 前缀\n// mimeType 取 blob.type，缺省 'image/png'"
+    },
+    {
+      "id": "C3",
+      "status": "active",
+      "name": "useModelCapabilities 契约（vision 能力解析）",
+      "type": "function",
+      "definition": "// resolveSupportsVision(modelId, providers): boolean\n//   modelId='providerId/modelId' → providers.find(p.id)→models.find(m.id)→input?.includes('image')\n//   无 '/' / 找不到 → false（保守降级）\n// useModelCapabilities(currentModelId): { supportsVision: ComputedRef<boolean> }\n//   = computed(() => resolveSupportsVision(currentModelId.value, settingsStore.providers))\n// 范式照搬 useThinkingLevelSync.ts:30-38"
+    }
+  ]
+}

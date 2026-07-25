@@ -1,0 +1,123 @@
+{
+  "techChoices": [
+    {
+      "id": "TC1",
+      "status": "active",
+      "area": "本地文件读 base64",
+      "choice": "复用已注册的 local-file:// 协议 + renderer 标准 fetch：fetch(`local-file:///${encodeURIComponent(path)`) → res.blob() → arrayBuffer() → 分块 btoa 转 base64。base64 不含 data: 前缀（对齐 message.send images 形状 {data;mimeType}）。mimeType 取 blob.type。",
+      "alternatives": [
+        "新增 read-tmp-image IPC（主进程 fs.readFile 返 base64 + preload 暴露）：重复 local-file handler 逻辑（同一白名单校验同一 tmpdir），且需改 main+preload 两处，扩大改动面",
+        "renderer 直接用 node fs（关 contextIsolation）：破坏 xyz-agent 安全模型（contextIsolation 是既有不变量）",
+        "fetch file://（不经 local-file 协议）：renderer 在 Electron 下 file:// 受限，local-file:// 才是已注册的受控读路径（main.ts:172 protocol.handle）"
+      ],
+      "rationale": "local-file:// 协议是 DetailPane.vue 图片渲染既用的同一条读路径（同一 protocol.handle handler + 同一 allowedPrefixes 白名单含 tmpdir()/cwd()/用户子目录）。image segment 的 path 是 slice4 write-tmp-image 落到 tmpdir 的绝对路径（拖拽/+菜单图片项则是用户磁盘原 path），均在白名单内。fetch 经 protocol.handle 走零新权限面，web/mock 环境无 protocol.handle → fetch reject → 读失败降级（跳过该图），与 IPC 方案降级语义等价但少改 2 文件。"
+    },
+    {
+      "id": "TC2",
+      "status": "active",
+      "area": "并发原语",
+      "choice": "Promise.allSettled 并行读所有 image segment。只取 status==='fulfilled' 结果组 images 数组；rejected 项 console.warn(失败 path) 后跳过，不 throw、不阻断发送。无 image 段 → images 为 undefined（不传 images 键，行为不变）。",
+      "alternatives": [
+        "Promise.all：一张坏图 reject 会 reject 整批，导致发送中断（违反「图片缺失不阻断对话」语义）",
+        "串行 for-await：多图时延迟叠加，无并发收益",
+        "读取失败时 toast 提示用户：should 优先级范围内不扩大交互面，console.warn 满足 taste-lint 可见性"
+      ],
+      "rationale": "AGENTS.md L411「独立数据源用 allSettled 不用 all」是硬规则 + .githooks taste-lint prefer-allsettled 强制。图片间无依赖适合并行；allSettled 保证部分失败不影响整批；文本 prompt 与 images 是独立通道（segmentsToText 产出 [图片:name] 占位 + images base64 双投递，shared/segments.ts:81-83 已注释），images 缺失只降级多模态不阻断对话。"
+    },
+    {
+      "id": "TC3",
+      "status": "active",
+      "area": "vision 能力解析",
+      "choice": "新建 useModelCapabilities.ts composable：从 settingsStore.providers（ProviderInfo[]，model 元素含 input?: Array<'text'|'image'>，provider.ts:18）按 currentModelId 解析 supportsVision（范式照搬 useThinkingLevelSync.ts:30-38：split providerId/modelId → providers.find → models.find → input?.includes('image')）。send() 提取非空 images 后，supportsVision.value===false → console.warn 降级提示，不阻断不剥离 images。",
+      "alternatives": [
+        "扩展 ModelInfo 类型加 input 字段 + 改 runtime aggregateModels/toModelInfo 透传：跨包改动（runtime model-service/model-mapper + shared provider 类型），远超本 slice 范围，且 vision 判断当前仅 console.warn 一处消费",
+        "ModelSelectPopover 标注 vision 支持（UI 层）：本期不做（feature 已有 TO3 同类「chip 骨架先行」取舍，避免扩大改动面），留 followup",
+        "不降级直接发 images：runtime/pi 自然丢弃不支持的多模态，但用户无任何反馈，违反 no-silent-failure 原则"
+      ],
+      "rationale": "ModelInfo 类型（provider.ts:30-42）确实无 input 字段（toModelInfo 不拷贝，model-mapper.ts:43 注释明确），只能从 ProviderInfo 取。useThinkingLevelSync 已验证 settingsStore.providers 解析路径稳定（同一 send 同 session 的 modelId 可复用）。新建 composable 比 inline 进 useChat 更内聚（可被 popover 未来复用）。"
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "IF1",
+      "status": "active",
+      "name": "chatApi.send 加 images 参数",
+      "signature": "send(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string }>): Promise<void>",
+      "contract": "// packages/renderer/src/api/domains/chat.ts\nexport function send(sessionId, text, images?) {\n  // images 为 undefined 时不传 images 键（runtime rpc-client 已守卫 images.length>0，rpc-client.ts:430）\n  return command('message.send', images ? { sessionId, content: text, images } : { sessionId, content: text })\n}\n// images 形状对齐 shared protocol message.send（protocol.ts:199）：{ data: base64不含data:前缀; mimeType }\n// consumer: useChat.send（唯一调用方）"
+    },
+    {
+      "id": "IF2",
+      "status": "active",
+      "name": "useChat.send 提取 image segments 转 images",
+      "signature": "send(sessionId: string, segments: Segment[]): Promise<void>",
+      "contract": "// packages/renderer/src/composables/features/useChat.ts send()\n// 1. promptText = segmentsToPrompt(segments)（含 [图片:name] 占位，不变）\n// 2. images = await extractImages(segments)：遍历 type==='image' 段，allSettled 并行 fetch(local-file://)→base64，fulfilled 收集，rejected 跳过+console.warn\n// 3. images.length===0 → images=undefined（不传）\n// 4. 调 chatApi.send(sid, promptText, images)\n// 5. supportsVision===false && images → console.warn('当前模型不支持图片，图片将被忽略')\n// extractImages 是纯模块函数（不依赖 this），便于单测 mock fetch"
+    },
+    {
+      "id": "IF3",
+      "status": "active",
+      "name": "useModelCapabilities composable",
+      "signature": "useModelCapabilities(currentModelId: ComputedRef<string> | Ref<string>): { supportsVision: ComputedRef<boolean> }",
+      "contract": "// packages/renderer/src/composables/panel/useModelCapabilities.ts (新建)\n// 从 useSettingsStore().providers 解析 currentModelId 对应 model 的 input 字段\n// split currentModelId: 'providerId/modelId' → providers.find(p.id===providerId)?.models.find(m.id===modelId)?.input\n// supportsVision = computed(() => Boolean(input?.includes('image')))\n// undefined/不含 image → false（保守降级）\n// 范式照搬 useThinkingLevelSync.ts:30-38（同一解析路径）\n// consumer: useChat.send（vision 降级提示）"
+    }
+  ],
+  "dataModels": [],
+  "errorSpecs": [
+    {
+      "id": "ERR1",
+      "status": "active",
+      "interfaceId": "IF2",
+      "scenario": "image segment 的 path 文件读失败：web/mock 环境（无 local-file protocol.handle）/ 文件已被清理（tmpdir 回收）/ 路径不在 local-file 白名单（403）",
+      "strategy": "Promise.allSettled 收集，rejected 项 console.warn(`[useChat] image 读取失败，已跳过: ${path}`) 后跳过该图，不 throw、不阻断发送。文本 prompt（含 [图片:name] 占位）照常发，images 数组只含成功读取的图。全部失败 → images=undefined，退化为纯文本发送。",
+      "errorCode": "IMAGE_READ_SKIP"
+    },
+    {
+      "id": "ERR2",
+      "status": "active",
+      "interfaceId": "IF2",
+      "scenario": "当前 model 不支持 vision（supportsVision===false）但 segments 含 image 段",
+      "strategy": "console.warn('[useChat] 当前模型不支持图片输入，图片将被忽略') 后继续发送（不剥离 images——runtime/pi 自然丢弃，文本占位仍发）。should 优先级：仅控制台提示不打断用户。不 toast（避免过度打扰）。",
+      "errorCode": "VISION_UNSUPPORTED_WARN"
+    },
+    {
+      "id": "ERR3",
+      "status": "active",
+      "interfaceId": "IF1",
+      "scenario": "chatApi.send 整体失败（WS 断连 / runtime error）",
+      "strategy": "沿用 send 既有 catch（useChat.ts:190-199）：清 pendingSend + toast(composable.sendFailed)，不 throw。images 参数不影响该错误处理路径（chatApi.send reject 仍在 catch 内消化）。",
+      "errorCode": "SEND_FAILED"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "decision": "image segment 读 base64 复用 local-file:// 协议 + fetch，不新增 IPC",
+      "rationale": "local-file:// 是 DetailPane.vue 图片渲染既用路径，同一 protocol.handle handler + 同一白名单（tmpdir/cwd/用户子目录），零新权限面。新增 IPC 会重复 handler 逻辑 + 改 main+preload 两处。",
+      "sourceClarification": "D1"
+    },
+    {
+      "id": "D2",
+      "decision": "多图并行用 Promise.allSettled，读失败跳过不阻断",
+      "rationale": "AGENTS.md L411 硬规则 + taste-lint prefer-allsettled。图片间无依赖，allSettled 保证部分失败不影响整批。文本 prompt 与 images 独立通道，images 缺失只降级多模态。",
+      "sourceClarification": "D2"
+    },
+    {
+      "id": "D3",
+      "decision": "vision 能力从 settingsStore.providers 解析（非 ModelInfo），新建 useModelCapabilities composable",
+      "rationale": "ModelInfo 类型无 input 字段（toModelInfo 不拷贝），只能从 ProviderInfo 取。useThinkingLevelSync 已验证该解析路径稳定。composable 比 inline 更内聚可复用。",
+      "sourceClarification": "D3"
+    },
+    {
+      "id": "D4",
+      "decision": "steer/followUp 活跃态不带 images（仅 send 新回合首轮带）",
+      "rationale": "images 直传只在首轮 prompt 建立多模态上下文有意义；steer 追加上下文不打断回合，followUp 追加轮不需重发图。editAndResend 入参纯文本无 image segment，不经提取。",
+      "sourceClarification": "D4"
+    }
+  ],
+  "split": [
+    {
+      "slug": "renderer-send-images-extract-impl",
+      "description": "单 wave 实现 renderer 发送闭环：useChat.send 提取 image segment（local-file fetch→base64，allSettled 并行）→ chatApi.send images 参数 → useModelCapabilities 新建（vision 降级 console.warn）。约 4 文件改动（全 renderer 包：useChat send 重构 + chat.ts send 签名 + useModelCapabilities 新建 + useChat 单测扩展）。无 image 段行为不变，无跨包改动（runtime/shared protocol 已由 slice2 全程透传就绪）。",
+      "dependsOn": []
+    }
+  ]
+}

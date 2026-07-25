@@ -1,0 +1,31 @@
+{
+  "execReviewJudgment": {
+    "readability": {
+      "score": 5,
+      "issues": []
+    },
+    "architecture": {
+      "score": 5,
+      "issues": []
+    },
+    "codeSmells": {
+      "items": [],
+      "severity": "low"
+    },
+    "layerSpecific": {
+      "testCodeQuality": {
+        "score": 5,
+        "issues": []
+      },
+      "mockFidelityNote": "测试 mock 保真度高。renderer 侧：useImageAttachment.test.ts 用 vi.mock('@/lib/ipc') 隔离主进程依赖，三态驱动（resolve 成功/reject 失败/resolve undefined 非 electron）覆盖三条路径；FileReader 用真实 jsdom 实现 + 手动构造 File/Blob 驱动（R2 预案的 vi.stub fallback 未需启用）。useComposerChipCommands.image.test.ts 复用既有 contenteditable jsdom + 手动构造 DOM 范式（照 slash/mention 测试），insertImageBadge/getSegmentsFromEl 纯函数式直接断言 DOM 结构。context-chips-bar.test.ts 用 @vue/test-utils mount 测 props 渲染 + emit remove。main 侧：privileged-handlers.test.ts 复用既有 vi.mock('electron') + handlers.get('write-tmp-image') 取 handler 直接调范式（照 pick-file），mock fs.writeFileSync + os.tmpdir 控制成功/失败。mock 点单一明确（lib/ipc 是 renderer 唯一适配点），无网络/无真实 IPC/无真实文件系统，纯单元可跑。"
+    },
+    "overallVerdict": "pass",
+    "followupActions": [
+      {
+        "description": "Ctrl+V 通路从 plan 的「路径文本」（clipboard image → tmpdir → 文本节点插入绝对路径）实现为「纯文本」语义：当前 useContenteditableInput.onPaste 的 ctrlKey 分支调 useImageAttachment 后，富呈现失败/纯文本意图时走 insertText 插入路径文本。需在 renderer-send-images-extract slice（发送时 segment→images）确认 Ctrl+V 产出的 text segment 与 pi TUI 兼容约定一致（path 是否需要特殊包裹）。属下游 slice 范围，不阻塞本 wave。",
+        "priority": "low",
+        "targetScope": "next-wave"
+      }
+    ]
+  }
+}

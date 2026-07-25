@@ -1,0 +1,11 @@
+{
+  "summary": "Slice「runtime-images-passthrough」交付完成。本 slice 是图片功能闭环的 runtime 透传段，把 message.send 的 images 字段从 transport 层透传到 pi RPC prompt.images。拆为 1 个 wave（runtime-images-passthrough-impl）覆盖 runtime 调用链全路径：session-message-handler 解构 → session-service facade 透传 → message-dispatcher sendMessage/sendPrompt 透传 → rpc-client.prompt 唯一组装点（补 pi 私有 type:'image'、空/undefined 归一化为不传）→ IPiEngine/ISessionService 接口签名同步。交付契约：rpc-client 为 shared→pi 唯一组装点（规则#5：pi 私有 type 字段不出 infra 层）、各层加可选 images? 参数（undefined 走原路径零回归）、空数组归一化为不传。验证：tsc --noEmit EXIT 0 + renderer vitest 1909 passed（含 runtime 测试 message-dispatcher-precheck/server-subagent/session-service），wave2 已 closed（9 artifact drift-check 全通过）。designReview 全部核心判断（necessity/sufficiency/alternatives + T1/T2 + R1/R2 + layerSpecific 6 项）逐项兑现，deliveryVerdict=delivered，无判错、无 drift。下游契约基准已建立：runtime images 透传链路就位，供后续 renderer slice（Cmd+V 组装 images 发送 / 图片渲染）和 pi 端验证消费对齐。",
+  "artifacts": [
+    { "kind": "code", "ref": "packages/runtime/src/infra/pi/rpc-client.ts", "note": "shared→pi 唯一组装点：prompt(images?) 补 type:'image' + 空/undefined 归一化（规则#5 pi 私有字段不出 infra）" },
+    { "kind": "code", "ref": "packages/runtime/src/services/session/message-dispatcher.ts", "note": "sendMessage + 私有 sendPrompt 透传 images? 给 client.prompt（IF2 契约）" },
+    { "kind": "code", "ref": "packages/runtime/src/services/session/session-service.ts", "note": "sendMessage facade 透传 images?（IF3 契约）" },
+    { "kind": "code", "ref": "packages/runtime/src/transport/session-message-handler.ts", "note": "message.send 解构 images 传给 sessionService.sendMessage（IF4 契约）" },
+    { "kind": "code", "ref": "packages/runtime/src/services/ports/pi-engine.ts", "note": "IPiEngine.prompt 接口签名同步加 images?（IF1 接口端契约）" },
+    { "kind": "code", "ref": "packages/runtime/src/interfaces.ts", "note": "ISessionService.sendMessage 接口签名同步加 images?（IF3 接口端契约）" }
+  ]
+}

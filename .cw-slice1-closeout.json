@@ -1,0 +1,20 @@
+{
+  "summary": "Slice「shared-segment-image-type」交付完成。本 slice 是整个附件功能的类型基础层，拆为 1 个 wave（extend-segment-and-protocol）覆盖 segments.ts + protocol.ts 两个文件的纯类型/协议扩展。交付内容：① segments.ts 新增 image Segment 判别联合 case（{type:'image';path:string;name:string}，path 存 tmpdir 绝对路径，name 存 basename 用于展示）+ segmentsToText image 分支（产出 [图片: {name}] 占位标记）；② protocol.ts 的 message.send 新增 images?: Array<{data:string;mimeType:string}> 可选字段（不带 type，由 runtime 适配层补 type:'image' 对齐 pi ImageContent）。验证：tsc EXIT 0 + vitest 214 passed（含 4 条 image 新增用例）+ verify-pi-image-rpc.cjs 确认占位与 images base64 并存不冲突。designReview 全部核心判断（necessity/sufficiency/alternatives + TO1/RK1）逐项兑现，无判错、无 drift。下游契约基准已建立：image Segment 的 path/name 字段定义与 message.send images 结构供 runtime-images-passthrough / renderer 系列下游 slice 消费对齐。",
+  "artifacts": [
+    {
+      "kind": "code",
+      "ref": "packages/shared/src/segments.ts",
+      "description": "image Segment 判别联合类型（{type:'image';path;name}）+ segmentsToText image 分支（[图片: {name}] 占位）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/shared/src/protocol.ts",
+      "description": "message.send 新增 images?: Array<{data:string;mimeType:string}> 可选字段"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/shared/src/__tests__/segments.test.ts",
+      "description": "image Segment 序列化 / segmentsToText 占位 / images 字段可选的 4 条测试用例"
+    }
+  ]
+}

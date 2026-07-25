@@ -1,0 +1,65 @@
+{
+  "summary": "Feature add-file-picture-attach 全量交付：为 composer 添加文件图片附件能力，打通 Cmd+V 富呈现粘贴（预览+badge+pi images 直传）/ Ctrl+V 路径文本粘贴（pi TUI 兼容）/ +按钮与拖拽附件入口三入口 + 发送闭环全链路。6 slice 按依赖拓扑拆分并全部 closed：slice1 shared-segment-image-type（Segment 联合扩展 image 类型 + 占位文本，协议基础先行）→ slice2 runtime-images-passthrough（runtime 层 images 透传 5 文件链路 + verify-pi-image-rpc.cjs 验证）+ slice3 main-pick-file-ipc（pick-file IPC 照搬 pick-directory 范式，独立并行）→ slice4 renderer-paste-dual-path（双通路粘贴 onPaste metaKey/ctrlKey 区分 + write-tmp-image IPC + useImageAttachment + ContextChipsBar props 化）→ slice5 renderer-attach-dragdrop-menu（+菜单 attach/image 项 + 拖拽复用 slice4 handleImagePaste）→ slice6 renderer-send-images-extract（send 闭环：extractImages 读 image segment 转 base64 填 message.send images + vision 降级 console.warn，复用 local-file 协议零新 IPC）。完整数据流：用户操作（粘贴/拖拽/+菜单）→ image segment（path 存 tmpdir/磁盘）→ send 提取 base64 → message.send images → runtime 透传 → pi prompt 多模态。关键架构决策：复用既有基础设施（local-file 协议/pick-file 范式/settingsStore.providers 解析）收敛改动面避免跨包扩类型；must/should 分级（vision 降级为 should console.warn 不阻断）保证主体可用；端到端验证脚本（verify-pi-image-rpc.cjs）早期建立为协议层背书。交付规模：跨 4 包（shared/runtime/main/renderer）约 30 文件，全部 slice/wave tsc+vitest 绿零回归。designReview 全部核心判断（necessity/sufficiency/alternatives + TO1-3 + RK1-3）逐项兑现，deliveryVerdict=delivered。outOfScope（@mention/图片编辑/截图快捷键/编辑器引用）明确排除留后续 feature。",
+  "artifacts": [
+    {
+      "kind": "spec",
+      "ref": ".cw-clarify-add-file-picture.json",
+      "note": "feature spec：8 FR（must7+should1）+ 7 AC + 3 UC + decisions DEC1-5 + outOfScope"
+    },
+    {
+      "kind": "plan",
+      "ref": ".cw-plan-add-file-picture.json",
+      "note": "feature plan：6 split（按依赖拓扑拆 slice）+ layerSpecific 6 字段"
+    },
+    {
+      "kind": "review-report",
+      "ref": ".cw-designreview-add-file-picture.json",
+      "note": "feature design-review：necessity/sufficiency/alternatives + TO1-3 + RK1-3 + layerSpecific"
+    },
+    {
+      "kind": "retrospect-report",
+      "ref": ".cw-feature-retrospect.json",
+      "note": "feature retrospect：9 reviewedItems（覆盖 designReview 全核心）+ deliveryVerdict=delivered + 6 childUnitIdsEvidence + 6 splitFulfillment"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/shared/src/segments.ts",
+      "note": "slice1：Segment 联合扩展 image 类型 + segmentsToText [图片:name] 占位（协议基础）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/runtime/src/infra/pi/rpc-client.ts",
+      "note": "slice2：prompt 加 images 参数 + 唯一组装 piImages 点（runtime 透传链路关键节点）"
+    },
+    {
+      "kind": "code",
+      "ref": "apps/electron/main/gateway/privileged-handlers.ts",
+      "note": "slice3/4：pick-file handler + write-tmp-image handler（main 层 IPC，照搬 pick-directory 范式）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/panel/useImageAttachment.ts",
+      "note": "slice4/6：图片粘贴核心 composable（blob→base64→writeTmpImage→segment）+ fileBytesToBase64 工具导出"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/features/useChat.ts",
+      "note": "slice6：extractImages 模块函数 + send 接 images 提取 + vision 降级 warn（发送闭环核心）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/panel/useModelCapabilities.ts",
+      "note": "slice6 新建：resolveSupportsVision + useModelCapabilities（vision 能力解析，范式照搬 useThinkingLevelSync）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/components/panel/Composer.vue",
+      "note": "slice5：composer-box 拖拽处理 + isDragOver 视觉反馈（attach 入口）"
+    },
+    {
+      "kind": "code",
+      "ref": "tools/verify-pi-image-rpc.cjs",
+      "note": "端到端验证脚本：验证 pi images RPC 在真实调用链路可用（glm-5.2 验证），为协议层背书"
+    }
+  ]
+}

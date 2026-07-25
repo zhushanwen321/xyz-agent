@@ -1,0 +1,87 @@
+{
+  "retrospectData": {
+    "reviewedItems": [
+      {
+        "itemId": "necessity",
+        "outcome": "fulfilled",
+        "note": "本 wave 是 slice6 唯一施工单元判断正确：5 个 task 把 10TC/3IF/3ERR 落地为可跑代码，chat.ts 协议层（send 加 images）+ useImageAttachment（抽 fileBytesToBase64）+ useModelCapabilities 新建（vision 解析）+ useChat send 编排（extractImages + 降级 warn）全部就位。无此 wave 则 image segment 停留在采集层（slice1-5 落地 path）从未投递给 pi，feature 多模态闭环断链。必要性判断无修正兑现。"
+      },
+      {
+        "itemId": "sufficiency",
+        "outcome": "fulfilled",
+        "note": "10 个 TC MECE 覆盖全 3 接口 + 3 错误规格无遗漏：TC1-4 extractImages 四路径 / TC5-6 chatApi.send 透传 / TC7-8 useChat.send 集成 / TC9 useModelCapabilities 真值表 / TC10 vision 降级。5 task 依赖链清晰（T1 chat.ts→T2 抽工具→T3 useModelCapabilities→T4 useChat send→T5 测试）无并行冲突无循环。8 文件（4 改 4 新建）与 task 映射。3 contracts 固化跨文件契约。designReview 指出无 gap 无 overlap，实现证实。"
+      },
+      {
+        "itemId": "alternatives",
+        "outcome": "fulfilled",
+        "note": "三个替代方案维持否决：方案A（vision 降级 inline 不建 composable）仍否决——useModelCapabilities 已建，composable 供未来 ModelSelectPopover 复用 + 单一真相源（委托 resolveSupportsVision）；方案B（extractImages 放独立文件）仍否决——仅 useChat.send 一处消费，模块顶层导出内聚可测；方案C（fileBytesToBase64 不抽）仍否决——DRY，两处复用同一分块 btoa。实现采纳方案验证为正确。"
+      },
+      {
+        "itemId": "TO1",
+        "outcome": "fulfilled",
+        "note": "fileBytesToBase64 抽到 useImageAttachment.ts 导出的 cost 兑现：useImageAttachment.ts 职责略扩含 base64 工具，但纯无状态函数内聚可接受。fileToBase64 改委托保持原行为，extractImages 复用零重复。cost 可接受。"
+      },
+      {
+        "itemId": "TO2",
+        "outcome": "fulfilled",
+        "note": "extractImages 放 useChat.ts 模块顶层导出的 cost 兑现：useChat.ts 增 ~45 行，但与 send 强耦合同属发送编排，模块顶层导出便于测试 import（TC1-4 直接测）。未过度抽象，内聚合理。"
+      },
+      {
+        "itemId": "TO3",
+        "outcome": "fulfilled",
+        "note": "vision 降级双形态（同步 resolveSupportsVision + composable）的 cost 兑现：两入口但 composable 内部委托同步函数（useModelCapabilities.ts computed(()=>resolveSupportsVision(...))），单一真相源无逻辑分叉。TC9 验证两者结果一致。"
+      },
+      {
+        "itemId": "R1",
+        "outcome": "fulfilled",
+        "note": "global.fetch 在 jsdom mock 风险已 mitigated：TC2-4 用 vi.spyOn(global,'fetch') 完全 mock 合成 Response，不依赖 jsdom 原生 fetch/protocol.handle。生产环境由 main.ts:172 protocol.handle 兜底（DetailPane 已验证）。mitigation（完全 mock fetch）按预案执行有效。"
+      },
+      {
+        "itemId": "R2",
+        "outcome": "fulfilled",
+        "note": "chatApi.send 签名变化破坏既有测试风险已 mitigated：第三参数可选，chat-integration-send.test.ts 2 处既有断言已同步适配（toHaveBeenCalledWith 含 undefined + DOM 失败测试补 nextTick）。useChat.test.ts 全量通过（用 toHaveBeenCalledTimes 不涉及参数精确匹配）。mitigation（test 阶段回归 useChat.test.ts 全量）有效。"
+      },
+      {
+        "itemId": "R3",
+        "outcome": "fulfilled",
+        "note": "extractImages 编码与 main.ts decodeURIComponent 不匹配风险未发生：renderer 拼 local-file:///${encodeURIComponent(path)}，main.ts:173 decodeURIComponent 对称解码，与 DetailPane.vue:314 同款范式（已验证图片渲染可用）。TC2 断言 URL 含 encodeURIComponent，编码一致。"
+      },
+      {
+        "itemId": "necessityMet",
+        "outcome": "fulfilled",
+        "note": "testJudgment.necessityMet 判断正确：10 个 TC 全部通过（renderer 全量 1960 passed），3 接口 IF1-IF3 必要性由实现证实——chat.ts 协议投递/useChat 提取编排/useModelCapabilities 降级缺一不可，发送闭环成立。"
+      },
+      {
+        "itemId": "sufficiencyMet",
+        "outcome": "fulfilled",
+        "note": "testJudgment.sufficiencyMet 判断正确：gapsConfirmed（5 task 全落地 8 文件）+ gapsNewlyFound（chat-integration-send 既有测试适配，contracts 不变的实现适配）+ overlapsConfirmed（3 层边界清晰）均验证。10 TC MECE 覆盖全 3 接口 + 3 ERR。"
+      },
+      {
+        "itemId": "alternativesReconsidered",
+        "outcome": "fulfilled",
+        "note": "testJudgment.alternativesReconsidered 判断正确：3 替代方案（vision inline/extractImages 独立文件/不抽 fileBytesToBase64）维持否决，实现采纳方案验证为正确，无需 reconsidered。"
+      },
+      {
+        "itemId": "readability",
+        "outcome": "fulfilled",
+        "note": "execReview.readability score=5 兑现：extractImages 纯模块函数 + 详细 JSDoc（降级矩阵/复用 local-file 说明）、useModelCapabilities 双形态委托单一真相源、send 内提取+降级逻辑注释清晰（slice6 标注）。无 readability issues。"
+      },
+      {
+        "itemId": "architecture",
+        "outcome": "fulfilled",
+        "note": "execReview.architecture score=5 兑现：3 层职责分明（chat.ts 无状态协议薄层 / useImageAttachment 工具 + useModelCapabilities 能力查询 / useChat feature 编排），依赖方向单向（useChat→chat.ts/useModelCapabilities/useImageAttachment），无循环。复用既有 local-file 协议 + settingsStore.providers 范式，零新跨包依赖。"
+      },
+      {
+        "itemId": "followup:ModelSelectPopover 标注 vision 支持的 model（designReview 明确推后的 should 优先级项）：useModelCapabilities composable 已就位，popover 渲染时调 useModelCapabilities(currentModelId).supportsVision 对支持的 model 显示 vision icon/badge。属独立 UI 增强，不影响发送闭环，可后续单 wave 做。",
+        "outcome": "partial",
+        "note": "followup 项确认：useModelCapabilities composable 已为本 followup 铺垫就位（resolveSupportsVision + useModelCapabilities 双形态），ModelSelectPopover 接入仅需渲染层调 composable 显示 vision 标记。本期不做（独立 UI 增强，不阻塞发送闭环），留后续 wave/ADR。优先级 low 合理。"
+      },
+      {
+        "itemId": "followup:大图发送的 loading 态：send 已有 pendingSend 占位气泡，但多图 base64 编码 + WS 传输在真实 Electron 环境读 tmpdir 大图可能有可感延迟（R1）。若实测延迟显著，可在 extractImages 期间加 loading 指示（如 composer 发送按钮转 loading）。本期 console.warn 降级 + 异步不阻塞 UI 主线程已够用，留观察。",
+        "outcome": "partial",
+        "note": "followup 项确认：本期 extractImages 异步不阻塞 UI 主线程（Promise）+ 分块 btoa 防 stack 溢出 + pendingSend 占位气泡已提供基本反馈。真实大图延迟需实测观察后决定是否加 loading 指示。留观察合理（无实测数据前不过度设计），优先级 low。"
+      }
+    ],
+    "lessonsLearned": "关键经验：1) 复用既有受控通道（local-file 协议）而非新增 IPC 是最小改动面原则的好实践——避免了 main+preload 两处重复 handler 逻辑，零新权限面。2) 改函数签名（加可选参数）时，既有测试的精确参数断言（toHaveBeenCalledWith）是隐性破坏点，需全局 grep 调用方 + 测试同步适配，比预期多 2 处调整。3) extractImages 设计为纯模块函数（依赖 global.fetch + console.warn）而非 composable 方法，使单测可 vi.spyOn(global,'fetch') 直接驱动，mock 点单一明确——纯函数导出是异步 IO 逻辑可测性的关键。4) vision 能力因 ModelInfo 类型不含 input 字段，只能从 ProviderInfo 取——useThinkingLevelSync 已验证的 providers 解析范式可直接复用，避免重新摸索路径。"
+  }
+}

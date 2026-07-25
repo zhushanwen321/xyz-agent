@@ -1,0 +1,55 @@
+{
+  "summary": "Slice6（renderer-send-images-extract）完成 feature:add-file-picture-attach 发送闭环，是 6-slice feature 的最后一个 slice。技术方案（3 接口 IF1-IF3 + 3 错误规格 ERR1-3 + 4 技术决策）由单 wave 全量落地：composer 的 image segment 在 send 时读文件转 base64 填入 message.send images 字段（extractImages 模块函数，Promise.allSettled 并行 fetch local-file://→base64，失败跳过不阻断，无图行为不变）+ vision 降级提示（useModelCapabilities 新建，从 settingsStore.providers 解析 input 含 image，不支持时 console.warn）。关键架构决策：复用已注册 local-file:// 协议读 tmpdir 文件零新 IPC，vision 能力从 ProviderInfo 取（ModelInfo 无 input 字段），steer/followUp 不带 images（首轮建立多模态上下文即可）。验证：vue-tsc 双 clean + renderer vitest 1960 passed + eslint 0 error，零回归。designReview 全部核心判断（necessity/sufficiency/alternatives + TO1-3 + R1-3）+ testJudgment + execReviewJudgment 逐项兑现，deliveryVerdict=delivered。至此 feature 完整链路打通：采集（slice1-5 粘贴/拖拽/+菜单→image segment path）→ 投递（slice6 send 提取→message.send images→runtime 透传→pi prompt 多模态）。",
+  "artifacts": [
+    {
+      "kind": "plan",
+      "ref": ".cw-slice6-plan.json",
+      "note": "slice6 技术方案：3 techChoices + 3 interfaces + 3 errorSpecs + 4 decisions + 1 split"
+    },
+    {
+      "kind": "review-report",
+      "ref": ".cw-slice6-dr.json",
+      "note": "slice6 design-review：necessity/sufficiency/alternatives + TO1-3 + R1-3 + layerSpecific 6 字段"
+    },
+    {
+      "kind": "retrospect-report",
+      "ref": ".cw-slice6-retrospect.json",
+      "note": "slice6 retrospect：19 reviewedItems（9 designReview + 10 TC）+ deliveryVerdict=delivered + splitFulfillment"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/features/useChat.ts",
+      "note": "extractImages 模块函数 + send 接 images 提取 + vision 降级 warn（slice6 核心改动）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/api/domains/chat.ts",
+      "note": "send 加 images 可选参数（IF1 协议投递点）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/panel/useModelCapabilities.ts",
+      "note": "新建：resolveSupportsVision + useModelCapabilities（IF3 vision 能力解析）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/panel/useImageAttachment.ts",
+      "note": "抽 fileBytesToBase64 导出供 extractImages 复用"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/renderer/src/__tests__/composables/features/useChat-send-images.test.ts",
+      "note": "TC1-4/7-8/10 extractImages + send images + vision 降级单测"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/renderer/src/__tests__/panel/useModelCapabilities.test.ts",
+      "note": "TC9 supportsVision 真值表单测"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/renderer/src/__tests__/api/chat-send-images.test.ts",
+      "note": "TC5-6 chatApi.send images 透传单测"
+    }
+  ]
+}
