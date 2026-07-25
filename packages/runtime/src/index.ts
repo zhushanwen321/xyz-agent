@@ -34,6 +34,7 @@ import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
 import { FileService } from './services/file-service.js'
+import { HandoffService } from './services/handoff-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
@@ -151,6 +152,11 @@ async function main(): Promise<void> {
   // the interpreter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
   //
+  // handoffService 同样经闭包惰性引用：onTurnFinalize 在此接线（session 创建时），
+  // 但 handoffService?.onTurnEnd 实际调用发生在每个 turn 结束时——那时 handoffService
+  // 必已初始化（下方 sessionService 之后即实例化）。`?.` 防御首次 turn 早于初始化的极端时序。
+  let handoffService: HandoffService | undefined
+  //
   // fileChangeDiff：infra 纯函数的 port 实现（无状态，全局单例复用）。
   const fileChangeDiff = new FileChangeDiffAdapter()
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
@@ -184,7 +190,17 @@ async function main(): Promise<void> {
       // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
       // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
-      onTurnFinalize: (sid, stopReason) => sessionService.handleTurnEndSideEffects(sid, stopReason),
+      onTurnFinalize: (sid, stopReason) => {
+        sessionService.handleTurnEndSideEffects(sid, stopReason)
+        // fast-handoff：pi 跑完 /skill:handoff 后在此触发文档提取 + 新建 session + 注入 + 广播。
+        // 非 handoff 触发的 turn-end（inflight 无条目）HandoffService.onTurnEnd 内部直接 return。
+        //
+        // onTurnEnd 是 async，但 EventInterpreter.handleTurnEnd 是同步热路径（不能 await 否则
+        // 阻塞整个 pi 事件循环）。故 handoff 编排异步进行，不阻塞 EventInterpreter——`void` 前缀
+        // 明确标注 fire-and-forget 语义。错误在 onTurnEnd 内部 try/catch 自处理（广播 message.error
+        // 反馈到源 session 对话流），finally 清理 inflight，无 unhandled rejection（onTurnEnd 无抛错逃逸路径）。
+        void handoffService?.onTurnEnd(sid, stopReason)
+      },
       onThinkingLevelChanged: (sid, level) => {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
@@ -230,6 +246,11 @@ async function main(): Promise<void> {
     new GitInfoReader(),
     workspaceService,
   )
+
+  // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
+  // + server（IMessageBroker 广播）+ pm（getClient 取源 session pi 句柄）。与 GitService/FileService 同模式
+  // （经 server.setServices 注入到 handler），但额外经 onTurnFinalize opt 接到 EventInterpreter（见上方闭包）。
+  handoffService = new HandoffService({ sessionService, broker: server, pm })
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
@@ -294,8 +315,12 @@ async function main(): Promise<void> {
     void reloadOrchestrator.onMessageComplete(sid)
   })
   // R3：session 删除（主动 delete / 进程异常退出）清 pendingReload 残留。
+  // C2：叠加 HandoffService.cancelInflight——session 删了 agent_end 永不触发，
+  // onTurnEnd 不会被调用，inflight 条目会泄漏。onSessionDelete 是单订阅钩子（setter 覆盖语义），
+  // 故在同一 handler 内追加 handoff 清理（保留原 clearPending 绑定，叠加而非替换）。
   sessionService.setOnSessionDelete((sid) => {
     reloadOrchestrator.clearPending(sid)
+    handoffService?.cancelInflight(sid)
   })
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
@@ -313,7 +338,7 @@ async function main(): Promise<void> {
     fs,
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, handoffService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

@@ -5,12 +5,15 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
+import type { HandoffService } from '../services/handoff-service.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
+  /** fast-handoff 编排层（session.handoff / session.abortHandoff 路由用）。可选：未注入时这两个 case 报 unsupported。 */
+  handoffService?: HandoffService
   nextPushId(): string
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void
@@ -24,6 +27,7 @@ export class SessionMessageHandler {
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.handoff', 'session.abortHandoff',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
@@ -73,6 +77,53 @@ export class SessionMessageHandler {
             return
           }
           throw e
+        }
+      }
+      case 'session.handoff': {
+        // handoff：触发源 session 的 pi 跑 /skill:handoff 生成文档。
+        // 文档产出完成后（agent_end）由 EventInterpreter.onTurnFinalize → HandoffService.onTurnEnd
+        // 收尾（新建空白 session + 注入包装后文档 + 广播 session.handoffComplete 跳转）。
+        // 此处只触发 + 回 message.status ack——完成经独立广播通道推回，前端不等 reply。
+        // 与 message.abort 同模式（reply ack，副作用经独立通道反馈）。
+        const { sessionId, focus } = msg.payload
+        const hs = this.ctx.handoffService
+        if (!hs) {
+          // handoffService 未注入（理论不可达——组合根必传），防御性报错。
+          return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
+        }
+        try {
+          await hs.runHandoff(sessionId, focus)
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
+        } catch (e) {
+          // L4: model 未配置时返回差异化 error code（与 session.create / session.fork 同模式），
+          // 前端据此引导去 Settings 配置，而非泛化的 handoff_failed 气泡。
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            return this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id, { sessionId })
+          }
+          // runHandoff 失败（session 不活跃 / 已有进行中 handoff / pi prompt 抛错）走 error envelope。
+          // 完成态错误（文档空 / 新建 session 失败）由 HandoffService.onTurnEnd 内部广播 message.error，不经此处。
+          const errMsg = toErrorMessage(e)
+          console.error('[runtime] session.handoff failed:', errMsg)
+          return this.ctx.sendError(ws, 'handoff_failed', errMsg, msg.id, { sessionId })
+        }
+      }
+      case 'session.abortHandoff': {
+        // abortHandoff：取消进行中的 handoff。委托 SessionService.abort 中断 pi turn，
+        // HandoffService.abort 设 inflight.aborted 标记，onTurnEnd 检测后跳过新建/注入。
+        // 无进行中 handoff 时 no-op（abort 内部 inflight 无条目直接 return）。
+        const { sessionId } = msg.payload
+        const hs = this.ctx.handoffService
+        if (!hs) {
+          return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
+        }
+        try {
+          await hs.abort(sessionId)
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'aborted' })
+        } catch (e) {
+          const errMsg = toErrorMessage(e)
+          console.error('[runtime] session.abortHandoff failed:', errMsg)
+          return this.ctx.sendError(ws, 'handoff_abort_failed', errMsg, msg.id, { sessionId })
         }
       }
       case 'session.delete': {

@@ -35,6 +35,7 @@ export interface CommandSourceInfo {
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
+  | 'session.handoff' | 'session.abortHandoff'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
@@ -149,6 +150,15 @@ export interface ClientMessageMap {
     includeFrom?: boolean
     label?: string
   }
+  // handoff：在源 session 触发 fast-handoff——runtime 让源 session 的 pi 跑 /skill:handoff
+  // 生成文档，agent_end 后取末条 assistant 文档 → xml 包装 → 新建空白 session 注入首条 → 广播跳转。
+  // 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
+  // focus 原样拼到 /skill:handoff 后作 args（pi 按首个空格切分）。
+  // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
+  'session.handoff': { sessionId: string; focus?: string }
+  // abortHandoff：取消进行中的 handoff。委托 SessionService.abort 中断 pi turn，
+  // onTurnEnd 检测 aborted 标记跳过新建/注入。无进行中 handoff 时 no-op。
+  'session.abortHandoff': { sessionId: string }
   // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
   'session.getSubagents': { sessionId: string }
   'session.getSubagentHistory': { sessionId: string; subagentId: string }
@@ -297,7 +307,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffComplete'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -541,6 +551,11 @@ export interface ServerMessageMapBase {
     branchName?: string
     preview?: string
   }
+  // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff）。
+  // 时机：源 session 的 pi 跑完 /skill:handoff → 取末条 assistant 文档 → xml 包装 →
+  // 新建空白 session 注入首条之后。前端据 newSessionId 跳转新 session，据 srcSessionId
+  // 在源 session 标记已交接（配合磁盘 handoff_marker → SessionSummary.handedOffTo）。
+  'session.handoffComplete': { srcSessionId: string; newSessionId: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
@@ -752,6 +767,11 @@ export interface ReplyPayloadMap {
   'model.switch': void            // reply model.switched（前端 model.ts register<void> 不读 payload）
   'session.compact': void         // reply session.compacted
   'session.delete': void          // reply session.deleted
+  // session.handoff：触发后 pi 异步跑 /skill:handoff，完成经 session.handoffComplete 独立广播通道推回。
+  // reply message.status ack（前端不读 payload，等 handoffComplete 广播跳转新 session）。
+  'session.handoff': void         // reply message.status
+  // session.abortHandoff：取消进行中 handoff，reply message.status ack（与 message.abort 同模式）。
+  'session.abortHandoff': void    // reply message.status
   'session.rename': void          // reply session.renamed
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone

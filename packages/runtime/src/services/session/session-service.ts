@@ -27,7 +27,7 @@ import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-histo
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
-import { parseSessionHeader } from '../../infra/pi/session-file-utils.js'
+import { parseSessionHeader, persistHandedOff } from '../../infra/pi/session-file-utils.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { isStrictlyUnder } from '../../utils/path-utils.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -724,6 +724,28 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   getSession(sessionId: string): IManagedSessionView | undefined { return this.sessions.get(sessionId) }
+
+  /**
+   * M3：标记源 session 已交接给新 session。
+   *
+   * 把 handedOffTo 的写入（内存 + 磁盘 handoff_marker）收归 SessionService（拥有 sessions Map
+   * 与 sessionFilePath），避免 handoff-service 直接改内部对象（srcSession.handedOffTo = newId）
+   * 绕过所有权——getSession 未来若返回防御性副本会让外部直接写入静默失效。
+   *
+   * 内存写：active session 的 handedOffTo（toSummary 透传到 SessionSummary，活跃态立即生效
+   * 不等 scanner 重扫）。磁盘写：append handoff_marker（scanner 读后填 SessionSummary.handedOffTo，
+   * 前端跳转/标记用）。session 不在 active map（已被删 / 纯 RPC 路径）时跳过内存写，
+   * 但 sessionFilePath 存在则仍写磁盘。
+   */
+  markHandedOff(srcSessionId: string, newSessionId: string): void {
+    const session = this.sessions.get(srcSessionId)
+    if (session) {
+      session.handedOffTo = newSessionId
+    }
+    if (session?.sessionFilePath) {
+      persistHandedOff(session.sessionFilePath, newSessionId)
+    }
+  }
   removeSessionEntry(sessionId: string): void {
     this.sessions.delete(sessionId)
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
