@@ -36,7 +36,7 @@
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GitBranch, GitFork, Plus, GitGraph, TriangleAlert } from '@lucide/vue'
+import { GitBranch, GitFork, Plus, GitGraph, TriangleAlert, Loader2 } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useToast } from '@/composables/useToast'
@@ -80,18 +80,19 @@ const { error: toastError } = useToast()
 const statusError = ref<unknown>(null)
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
+const branchesLoading = ref(true)
 onMounted(async () => {
   // 打开即 focus 搜索框（spec §3.3 键盘契约）
   nextTick(() => root.value?.querySelector('input')?.focus())
   // plain-repo 模式才拉分支列表（bare 模式不显示分支 tab）
-  if (props.mode !== 'plain-repo') return
+  if (props.mode !== 'plain-repo') { branchesLoading.value = false; return }
   try {
     const reply = await worktreeApi.listBranches(props.cwd)
     branches.value = reply.local
   } catch (e) {
     // 显错不崩
     statusError.value = e
-  }
+  } finally { branchesLoading.value = false }
 })
 
 const branches = ref<string[]>([])
@@ -212,6 +213,15 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       >
         <TriangleAlert class="size-4 shrink-0" />
         <span>{{ t('newTask.branchSelect.loadFailed') }}</span>
+      </div>
+
+      <!-- 加载中 → 不显示空态（防闪） -->
+      <div
+        v-else-if="branchesLoading"
+        data-testid="branches-loading"
+        class="flex items-center justify-center px-4 py-6"
+      >
+        <Loader2 class="size-4 animate-spin text-subtle" />
       </div>
 
       <!-- unborn HEAD 空态（T4.3） -->

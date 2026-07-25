@@ -154,12 +154,12 @@ describe('WorkspaceDetector.detectSync()', () => {
     expect(result.wsRoot).toBe('/project')
   })
 
-  it('not-repo：无 .bare（不走 git 回退）', () => {
+  it('plain-repo：无 .bare（不走 git 回退，返回 plain-repo 与 detect 一致）', () => {
     const fs = mockFs(new Set())
     const detector = new WorkspaceDetector(fs)
 
     const result = detector.detectSync('/tmp/random')
-    expect(result.mode).toBe('not-repo')
+    expect(result.mode).toBe('plain-repo')
     expect(result.isBareMode).toBe(false)
   })
 
