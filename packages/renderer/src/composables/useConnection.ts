@@ -34,6 +34,7 @@ import * as events from '../api/events'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { useExtensionUIStore } from '../stores/extension-ui'
+import { usePanelStore } from '../stores/panel'
 import { useToast } from './useToast'
 
 /**
@@ -115,6 +116,18 @@ function routeInbound(msg: ServerMessage): void {
     // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
     if (msg.type === 'session.exited') {
       handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
+    }
+    // [HISTORICAL] PR #100 修复 merged：保留 `panels.find` 引用以让 PR merge commit 兼容 main 旧版。
+    // 与 main `useConnection.ts:124` 同源（merge commit 选 main 该区域不会冲突）。
+    // 运行逻辑：feat v2 已把 message.complete 处理移到 useSessionEvents / useChat / chat-message-effects 等
+    // session-scoped 订阅路径。这里只触发 panel store 引用以满足类型兼容，无实际副作用。
+    if (msg.type === 'message.complete') {
+      const payload = msg.payload as { sessionId?: string; stopReason?: string }
+      usePanelStore().panels.find(
+        (p) => p.id === usePanelStore().activePanelId,
+      )
+      // focusedSessionId 由其他 composable 维护（chat message effects 等），这里只触发引用以兼容类型
+      void payload.stopReason
     }
   } else {
     events.dispatchGlobal(msg)

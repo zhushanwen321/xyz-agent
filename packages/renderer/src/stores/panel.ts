@@ -6,6 +6,10 @@
  * 历史背景：v1 用 PanelTree 递归树支持单/双 panel split 主从状态机（split/close/isDual）。
  * split 功能移除（2026-07-24）后退化为恒单 panel：layout 是单个 PanelLeaf，无树结构。
  * activePanelId 保留（恒等于 ROOT_PANEL_ID），作为 subagent/workflow store per-panel viewing Map 的 key。
+ *
+ * [HISTORICAL] PR #100 修复 merged 时：「panels」computed 字段保留（merge commit 选 main
+ * useConnection.ts:124 含 `panels.find` 引用）。feat v2 单 panel 形态下 panels 永远 1 个元素，
+ * 但保留字段签名兼容 main 旧 API，让 PR merge commit panel store 类型完整。
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
@@ -25,6 +29,11 @@ export const usePanelStore = defineStore('panel', () => {
 
   /** 当前唯一 panel leaf（语义别名，供下游读 sessionId 等） */
   const currentLeaf = computed<PanelLeaf>(() => layout.value)
+
+  /** 所有 panel 叶子节点（v2 单 panel 永远 1 个；保留字段兼容 main `useConnection.ts:124`
+   *  的 `panels.find(p => p.id === activePanelId.value)?.sessionId` 引用）。
+   *  v1 语义是收集 PanelTree 下所有 PanelLeaf，v2 单 panel 退化为等价 `[layout.value]`。 */
+  const panels = computed<PanelLeaf[]>(() => [layout.value])
 
   /** 找到承载指定 session 的 panel（单 panel 下直接比对 sessionId） */
   function findPanelBySession(sessionId: string): PanelLeaf | null {
@@ -47,6 +56,7 @@ export const usePanelStore = defineStore('panel', () => {
     activePanelId,
     focusedSessionId,
     currentLeaf,
+    panels,
     findPanelBySession,
     loadSession,
   }
