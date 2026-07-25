@@ -45,8 +45,12 @@ export interface WorktreeServiceDeps {
   shellRunner: IShellRunner
   gitInfoReader: IGitInfoReader
   configService: IConfigService
-  /** node:fs 的 existsSync（测试用 vi.doMock 后传入） */
-  fs: { existsSync: (path: string) => boolean }
+  /** node:fs 子集（测试用 vi.doMock 后传入） */
+  fs: {
+    existsSync: (path: string) => boolean
+    /** statSync 用于区分文件/目录（existsSync 无法区分）。ENOENT 时应抛 Error 并设 code='ENOENT'。 */
+    statSync: (path: string) => { isDirectory: () => boolean; isFile: () => boolean }
+  }
 }
 
 /** 主分支 fallback（origin/main ref 不存在时用本地 main）。 */
@@ -219,12 +223,7 @@ export class WorktreeService implements IWorktreeService {
   /** 创建 WorkspaceDetector 实例（注入 fs + git 适配器）。 */
   private createDetector(): WorkspaceDetector {
     const fsAdapter: FsLike = {
-      statSync: (p: string) => {
-        if (this.deps.fs.existsSync(p)) return { isDirectory: () => true }
-        const e = new Error('not found') as NodeJS.ErrnoException
-        e.code = 'ENOENT'
-        throw e
-      },
+      statSync: (p: string) => this.deps.fs.statSync(p),
     }
     const gitAdapter: GitRevParser = {
       getRepoRoot: async (cwd: string) => {

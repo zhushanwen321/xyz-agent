@@ -115,6 +115,15 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
 function mockFs(existingPaths = new Set<string>()) {
   return {
     existsSync: vi.fn((p: string) => existingPaths.has(p)),
+    statSync: vi.fn((p: string) => {
+      if (!existingPaths.has(p)) {
+        const e = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException
+        e.code = 'ENOENT'
+        throw e
+      }
+      // 测试中 existingPaths 里的路径默认当目录处理（.bare 等）
+      return { isDirectory: () => true, isFile: () => false }
+    }),
   }
 }
 
