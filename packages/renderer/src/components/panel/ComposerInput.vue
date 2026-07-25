@@ -31,12 +31,14 @@ import { onMounted, ref } from 'vue'
 import { findImageChipElById, useComposerChipCommands } from '@/composables/useComposerChipCommands'
 import { useContenteditableInput } from '@/composables/panel/useContenteditableInput'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     placeholder?: string
     disabled?: boolean
+    /** 当前会话 id（决定图片持久化目录）；landing 态为 null → IPC 内降级 tmpdir */
+    sessionId?: string | null
   }>(),
-  { placeholder: '', disabled: false },
+  { placeholder: '', disabled: false, sessionId: null },
 )
 
 const emit = defineEmits<{
@@ -87,6 +89,8 @@ const {
   handleBackspaceOnChip: () => handleBackspaceOnChip(),
   // insertImageBadge 经闭包转发，chip composable 声明后回填真实实现（同 handleBackspaceOnChip 范式）
   insertImageBadge: (path, name) => insertImageBadgeFn(path, name),
+  // sessionId 透传给 handleImagePaste（决定持久化目录；landing 态 undefined → null → IPC 降级 tmpdir）
+  getSessionId: () => props.sessionId ?? null,
 })
 
 // ============ 富文本 chip（§2e slash / §2d mention） ============

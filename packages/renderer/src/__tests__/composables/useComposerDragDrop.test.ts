@@ -23,6 +23,9 @@ vi.mock('@/composables/panel/useImageAttachment', () => ({
 
 import { useComposerDragDrop } from '@/composables/panel/useComposerDragDrop'
 
+/** sessionId ref（W3：useComposerDragDrop 新增第 4 参数，测试用固定 'test-sess'） */
+const sessionIdRef = ref<string | null>('test-sess')
+
 /** inputRef mock：spy insertImageBadge */
 function createInputMock() {
   return { insertImageBadge: vi.fn() }
@@ -97,7 +100,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn()),
+      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
     )
     dispose = d
     expect(result.isDragOver.value).toBe(false)
@@ -113,7 +116,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const inputMock = createDomInputMock(box)
     const onChanged = vi.fn()
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(inputMock) as never, ref(box), onChanged),
+      useComposerDragDrop(ref(inputMock) as never, ref(box), onChanged, sessionIdRef),
     )
     dispose = d
     // 先 dragover 置位 isDragOver
@@ -152,7 +155,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
       document.body.appendChild(box)
       const inputMock = createDomInputMock(box)
       const { result, dispose: d } = runWithScope(() =>
-        useComposerDragDrop(ref(inputMock) as never, ref(box), vi.fn()),
+        useComposerDragDrop(ref(inputMock) as never, ref(box), vi.fn(), sessionIdRef),
       )
       dispose = d
       const png = new File([new Uint8Array([0x89])], 'bad.png', { type: 'image/png' })
@@ -173,7 +176,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(inputMock), ref(box), vi.fn()),
+      useComposerDragDrop(ref(inputMock), ref(box), vi.fn(), sessionIdRef),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())
@@ -188,7 +191,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(inputMock), ref(box), vi.fn()),
+      useComposerDragDrop(ref(inputMock), ref(box), vi.fn(), sessionIdRef),
     )
     dispose = d
     result.onDrop(makeDropEvent([]))
@@ -201,7 +204,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     box.appendChild(child)
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn()),
+      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())
@@ -215,7 +218,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn()),
+      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())
@@ -228,7 +231,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const outside = document.createElement('div')
     document.body.append(box, outside)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn()),
+      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())

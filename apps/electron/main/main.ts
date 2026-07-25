@@ -177,8 +177,11 @@ app.whenReady().then(async () => {
     // 放宽成「能读 ~/.ssh」。白名单只含可信子集：
     //   - app.getAppPath()：当前 app 资源目录（dev 模式即项目根）
     //   - getDataDir()：xyz-agent 数据目录（动态推导，dev=~/.xyz-agent-dev，符合架构约定 #2）
+    //   - <getDataDir()>/attachments：会话级图片附件目录（write-session-image IPC 持久化路径，
+    //     按 sessionId 分区。放行整个 attachments 目录——全是用户自粘图片非敏感，安全粒度等同 tmpdir；
+    //     protocol handler 无状态拿不到 session 上下文，无法按 session 推导）
     //   - process.cwd()：当前项目工作目录（图片预览主要场景，cwd 通常是用户项目）
-    //   - os.tmpdir()：临时文件（导出/截图等）
+    //   - os.tmpdir()：临时文件（导出/截图等 + landing 态图片降级路径）
     //   - 特定用户子目录：~/Documents / ~/Desktop / ~/Downloads（用户内容常见位置，
     //     预览家目录下的普通文件）。绝不放行 ~ 本身（含 ~/.ssh、~/.aws 等敏感文件）。
     // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
@@ -188,6 +191,7 @@ app.whenReady().then(async () => {
     const allowedPrefixes = [
       app.getAppPath(),
       getDataDir(),
+      path.join(getDataDir(), 'attachments'),
       process.cwd(),
       tmpdir(),
       ...userContentSubdirs,

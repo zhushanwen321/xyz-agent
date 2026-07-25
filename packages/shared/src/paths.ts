@@ -91,3 +91,18 @@ export function getNpmDir(env: NodeJS.ProcessEnv = process.env): string {
 export function getTmpDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(getDataDir(env), 'tmp')
 }
+
+/**
+ * 会话级图片附件目录（`<dataDir>/attachments/<sessionId>`）。
+ *
+ * write-session-image IPC 把粘贴的图片落到此目录（持久化，区别于 OS tmpdir 的自动清理）。
+ * local-file:// 协议白名单放行整个 `<dataDir>/attachments/` 前缀，让历史消息缩略图能加载。
+ *
+ * 纯函数无副作用——不创建目录（mkdir recursive 在 IPC handler 内做），仅做路径推导。
+ *
+ * @param sessionId 会话 id（决定子目录分区）
+ * @param dataDir   可选数据根目录（测试注入）；缺省读 getDataDir()
+ */
+export function getAttachmentsDir(sessionId: string, dataDir?: string): string {
+  return join(dataDir ?? getDataDir(), 'attachments', sessionId)
+}

@@ -44,15 +44,17 @@ export interface ElectronAPI {
     path: string | null
   }>
   /**
-   * 把剪贴板图片（base64）写到 OS tmpdir，返回 {path, name}。
+   * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, name, id}。
    * Cmd+V/Ctrl+V 粘贴截图走此 IPC（renderer 读 blob → base64 → 落地文件）。
-   * 主进程校验 mimeType image/* 前缀，写失败 throw。
+   * 主进程校验 mimeType image/* 前缀 + 20MB 上限，写失败 throw。
+   * sessionId 为空时（landing 态）降级走 OS tmpdir。
    */
-  writeTmpImage(payload: {
+  writeSessionImage(payload: {
+    sessionId: string
     base64: string
     mimeType: string
-    suggestedName?: string
-  }): Promise<{ path: string; name: string }>
+    name: string
+  }): Promise<{ path: string; name: string; id: string }>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -113,8 +115,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     defaultPath?: string
     filters?: Array<{ name: string; extensions: string[] }>
   }) => ipcRenderer.invoke('pick-file', options),
-  writeTmpImage: (payload: { base64: string; mimeType: string; suggestedName?: string }) =>
-    ipcRenderer.invoke('write-tmp-image', payload),
+  writeSessionImage: (payload: { sessionId: string; base64: string; mimeType: string; name: string }) =>
+    ipcRenderer.invoke('write-session-image', payload),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)

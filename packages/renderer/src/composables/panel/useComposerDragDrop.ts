@@ -6,12 +6,13 @@
  *
  * 数据流：dragover → isDragOver=true（composer-box accent 边框反馈）；
  * drop → 遍历 dataTransfer.files，image/* 每项：插占位 badge「拖入中…」→
- * await handleImagePaste(file) → 回填真实 path/name（badge）/降级文本；
+ * await handleImagePaste(file, sessionId) → 回填真实 path/name（badge）/降级文本；
  * dragleave → relatedTarget contains 检查防子元素冒泡误触发 → 真正离开 box 才复位 isDragOver。
  *
- * 复用 slice4 链路（handleImagePaste：file→base64→writeTmpImage IPC→image segment），
+ * 复用 slice4 链路（handleImagePaste：file→base64→writeSessionImage IPC→image segment），
  * 占位回填范式等价 useContenteditableInput.handleImagePasteEvent（ClipboardEvent 私有函数，
- * DragEvent 不能复用故内联等价逻辑）。
+ * DragEvent 不能复用故内联等价逻辑）。sessionId 透传给 handleImagePaste（landing 态 null
+ * → IPC 内降级 tmpdir）。
  *
  * 不含：发送/steer/输入编辑（留 Composer.vue / 其他 composable）。
  */
@@ -31,11 +32,13 @@ interface ComposerInputInstance {
  * @param inputRef ComposerInput 实例 ref（insertImageBadge 经 defineExpose 暴露）
  * @param composerBoxRef composer-box div 模板 ref（查占位 badge 用）
  * @param onChanged drop 处理后回调（刷新 ContextChipsBar chip 行）
+ * @param sessionId  当前会话 id ref（决定图片持久化目录）；landing 态 value 为 null
  */
 export function useComposerDragDrop(
   inputRef: Ref<ComposerInputInstance | null>,
   composerBoxRef: Ref<HTMLElement | null>,
   onChanged: () => void,
+  sessionId: Ref<string | null>,
 ): {
   isDragOver: Ref<boolean>
   onDragOver: (e: DragEvent) => void
@@ -74,10 +77,12 @@ export function useComposerDragDrop(
     if (imageFiles.length === 0) return
     e.preventDefault() // 已在模板 .prevent，双保险
     void (async () => {
+      // sessionId 在 drop 触发时取一次（landing 态 null → IPC 内降级 tmpdir）
+      const sid = sessionId.value
       for (const file of imageFiles) {
         const placeholderMark = `__drag_pending_${crypto.randomUUID()}__`
         inputRef.value?.insertImageBadge(placeholderMark, '拖入中…')
-        const result = await handleImagePaste(file)
+        const result = await handleImagePaste(file, sid)
         // 用 dataset 遍历定位占位（C2：path 含 CSS 特殊字符时 querySelector 选择器失效）
         const placeholder = composerBoxRef.value
           ? findImageChipEl(composerBoxRef.value, placeholderMark)

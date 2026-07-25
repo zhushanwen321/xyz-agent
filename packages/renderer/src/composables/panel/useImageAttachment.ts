@@ -1,22 +1,26 @@
 /**
  * 图片粘贴附件处理（Cmd+V/Ctrl+V 统一通路）。
  *
- * 职责单一：把剪贴板 image blob 转成 base64，经 writeTmpImage IPC 落地到 OS tmpdir，
- * 返回联合结果（badge / text 降级）由调用方（useContenteditableInput.onPaste /
- * useComposerDragDrop.onDrop）决定如何写入 DOM——本 composable 不碰 DOM。
+ * 职责单一：把剪贴板 image blob 转成 base64，经 writeSessionImage IPC 落地到
+ * <getDataDir>/attachments/<sessionId>/（持久化），返回联合结果（badge / text 降级）
+ * 由调用方（useContenteditableInput.onPaste / useComposerDragDrop.onDrop）决定如何写入 DOM
+ * ——本 composable 不碰 DOM。
  *
  * 降级矩阵：
  * - base64 读取失败（FileReader.onerror）→ {kind:'text', text:'[图片读取失败]'}
- * - 非 electron 环境（writeTmpImage 返回 undefined）→ {kind:'text', text:'[图片粘贴：需桌面环境]'}
+ * - 非 electron 环境（writeSessionImage 返回 undefined）→ {kind:'text', text:'[图片粘贴：需桌面环境]'}
  * - IPC 写入失败（throw，含超大被拒）→ {kind:'text', text:'[图片粘贴失败]'}
  * - 成功 → {kind:'badge', path, name}，调用方调 insertImageBadge(path, name)
+ *
+ * sessionId：landing 态（session 延迟创建）为 null → IPC 内降级走 OS tmpdir
+ * （landing 粘图后通常立即发送，session 随即创建；丢失走 w2 降级 badge 兜底）。
  *
  * [HISTORICAL] 曾有 metaKey 区分（Cmd+V 富呈现 vs Ctrl+V 纯文本通路），onPaste 统一通路后
  * handleImagePaste 不再接受 metaKey——所有调用方都走富呈现，避免 Ctrl+V 截图静默丢弃。
  *
  * 依赖方向：useImageAttachment → lib/ipc（唯一 electronAPI 适配点）
  */
-import { writeTmpImage } from '@/lib/ipc'
+import { writeSessionImage } from '@/lib/ipc'
 
 /** handleImagePaste 返回联合类型 */
 export type HandleImagePasteResult =
@@ -59,10 +63,14 @@ function fileToBase64(file: File): Promise<string> {
 /**
  * 处理剪贴板图片粘贴（Cmd/Ctrl+V 统一通路，不区分按键）。
  *
- * @param blob 剪贴板取出的 image File（clipboardData.items[i].getAsFile()）或拖入的图片文件
+ * @param blob      剪贴板取出的 image File（clipboardData.items[i].getAsFile()）或拖入的图片文件
+ * @param sessionId 当前会话 id（决定持久化目录）；landing 态为 null → IPC 内降级 tmpdir
  * @returns 联合结果，调用方按 kind 决定写 badge / 降级文本
  */
-export async function handleImagePaste(blob: File): Promise<HandleImagePasteResult> {
+export async function handleImagePaste(
+  blob: File,
+  sessionId: string | null,
+): Promise<HandleImagePasteResult> {
   let base64: string
   try {
     base64 = await fileToBase64(blob)
@@ -70,18 +78,19 @@ export async function handleImagePaste(blob: File): Promise<HandleImagePasteResu
     return { kind: 'text', text: '[图片读取失败]' }
   }
 
-  let result: { path: string; name: string } | undefined
+  let result: { path: string; name: string; id: string } | undefined
   try {
-    result = await writeTmpImage({
+    result = await writeSessionImage({
+      sessionId: sessionId ?? '',
       base64,
       mimeType: blob.type,
-      suggestedName: blob.name || undefined,
+      name: blob.name || 'image',
     })
   } catch {
     // IPC 写入失败（磁盘满 / 权限 / 主进程 throw / 超大被拒）→ 降级文本提示
     return { kind: 'text', text: '[图片粘贴失败]' }
   }
-  // 非 electron 环境（web/mock）：writeTmpImage 返回 undefined → 降级文本提示
+  // 非 electron 环境（web/mock）：writeSessionImage 返回 undefined → 降级文本提示
   if (!result) return { kind: 'text', text: '[图片粘贴：需桌面环境]' }
   return { kind: 'badge', path: result.path, name: result.name }
 }

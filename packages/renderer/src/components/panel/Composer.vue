@@ -61,6 +61,7 @@
           ref="inputRef"
           :placeholder="placeholder"
           :disabled="isSending"
+          :session-id="sessionId"
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
@@ -261,7 +262,7 @@ const { attachedItems, refreshAttachedItems, onRemoveContextChip } = useComposer
 
 // composer-box 拖拽落位（拖入图片 → image segment，复用 slice4 handleImagePaste）——见 useComposerDragDrop
 const composerBoxRef = ref<HTMLElement | null>(null)
-const { isDragOver, onDragOver, onDragLeave, onDrop } = useComposerDragDrop(inputRef, composerBoxRef, refreshAttachedItems)
+const { isDragOver, onDragOver, onDragLeave, onDrop } = useComposerDragDrop(inputRef, composerBoxRef, refreshAttachedItems, sessionIdRef)
 
 /** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
 function clearInput(): void {

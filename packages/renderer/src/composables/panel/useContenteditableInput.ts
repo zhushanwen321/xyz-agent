@@ -50,6 +50,11 @@ interface ContenteditableCallbacks {
    * onPaste 在 image blob 检测到后调它插占位 badge / 真实 badge。
    */
   insertImageBadge: (path: string, name: string) => void
+  /**
+   * 取当前会话 id（决定图片持久化目录）；landing 态返回 null。
+   * 由 ComposerInput 据 props.sessionId 提供，handleImagePaste 透传给 writeSessionImage IPC。
+   */
+  getSessionId: () => string | null
 }
 
 /**
@@ -441,6 +446,7 @@ function handleImagePasteEvent(
     getEl: () => HTMLDivElement | null
     insertImageBadge: (path: string, name: string) => void
     onInput: () => void
+    getSessionId: () => string | null
   },
 ): boolean {
   const imageItem = pickClipboardImageItem(e)
@@ -449,8 +455,10 @@ function handleImagePasteEvent(
   // 占位 badge 唯一标记（crypto.randomUUID 无魔术数字，定位占位以便 await 后回填/移除）
   const placeholderMark = `__paste_pending_${crypto.randomUUID()}__`
   deps.insertImageBadge(placeholderMark, '粘贴中...')
+  // sessionId 在 paste 触发时取一次（landing 态 null → IPC 内降级 tmpdir）
+  const sessionId = deps.getSessionId()
   void (async () => {
-    const result = await handleImagePaste(file)
+    const result = await handleImagePaste(file, sessionId)
     const el = deps.getEl()
     // 用 dataset 遍历定位占位（C2：path 含 CSS 特殊字符时 querySelector 选择器失效）
     const placeholder = el ? findImageChipEl(el, placeholderMark) : null
@@ -527,6 +535,7 @@ export function useContenteditableInput(
     onKeydown: forwardKeydown,
     handleBackspaceOnChip,
     insertImageBadge,
+    getSessionId,
   } = callbacks
 
   /** IME 组合中（中文输入）：true 时 Enter 不拦截，交给浏览器 */
@@ -655,7 +664,7 @@ export function useContenteditableInput(
     // 统一富呈现通路：剪贴板含 image item → 异步存文件 + image badge。
     // Cmd+V 与 Ctrl+V 不再区分——xyz-agent 是 GUI（非 TUI），Mac Cmd+V 是肌肉记忆，
     // Ctrl+V 也走同一富呈现逻辑避免截图静默丢弃（剪贴板截图通常无 text/plain）。
-    if (handleImagePasteEvent(e, { getEl, insertImageBadge, onInput })) return
+    if (handleImagePasteEvent(e, { getEl, insertImageBadge, onInput, getSessionId })) return
     // 纯文本通路（剪贴板无 image item）：与改造前 byte-for-byte 一致（TC2 回归保护）。
     const text = e.clipboardData?.getData('text/plain') ?? ''
     // ponytail: execCommand 已废弃但 insertText 在 contenteditable 粘贴场景仍是首选简化方案

@@ -18,6 +18,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
+import { getDataDir } from '@xyz-agent/shared/paths'
 
 // 捕获注册的 handler（key=channel, value=handler fn），由 ipcMain.handle 桩写入
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -183,8 +184,8 @@ describe('pick-file IPC handler', () => {
   })
 })
 
-describe('write-tmp-image IPC handler (TC3)', () => {
-  // 真实 tmp 文件 I/O：write-tmp-image 写真实 tmpdir 文件，测试读回校验后清理。
+describe('write-session-image IPC handler (W3)', () => {
+  // 真实文件 I/O：write-session-image 写真实 attachments/tmpdir 文件，测试读回校验后清理。
   // 不 mock node:fs/os/path/crypto——这些模块 mock 会破坏同文件 pick-directory/pick-file 测试
   //（它们依赖真实 existsSync 的 ghost path 回退 + 真实 homedir）。
   const writtenPaths: string[] = []
@@ -200,97 +201,140 @@ describe('write-tmp-image IPC handler (TC3)', () => {
     registerPrivilegedHandlers({} as never)
   })
 
-  it('TC3: base64 + mimeType=image/png → 写 tmpdir 返回 {path,name}，文件名含 xyz-img 前缀', async () => {
-    const writeTmpImage = handlers.get('write-tmp-image')!
-    // 完整 base64（6 字节 → 8 字符，无填充歧义，可精确 round-trip）
+  it('W3TC3: panel 态（sessionId 非空）→ 写 attachments/<sessionId>/ 返回 {path,name,id}', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
-    const base64 = bytes.toString('base64') // 'iVBOBg0K'
-    const result = (await writeTmpImage({}, { base64, mimeType: 'image/png' })) as {
-      path: string
-      name: string
-    }
+    const base64 = bytes.toString('base64')
+    const result = (await writeSessionImage({}, {
+      sessionId: 'sess-panel-1',
+      base64,
+      mimeType: 'image/png',
+      name: 'shot.png',
+    })) as { path: string; name: string; id: string }
     writtenPaths.push(result.path)
-    // 返回 name 形如 xyz-img-<digits>-<alnum>.png
-    expect(result.name).toMatch(/^xyz-img-\d+-[a-z0-9]+\.png$/)
-    // path = join(tmpdir(), name)
-    expect(result.path).toBe(join(tmpdir(), result.name))
-    // 文件真实写入 + 内容 round-trip 还原原字节
+    // path 在 <dataDir>/attachments/sess-panel-1/ 下
+    const expectedDir = join(getDataDir(), 'attachments', 'sess-panel-1')
+    expect(result.path.startsWith(expectedDir)).toBe(true)
+    // 文件真实写入 + 内容 round-trip
     expect(existsSync(result.path)).toBe(true)
     const written = readFileSync(result.path)
     expect(Array.from(written)).toEqual(Array.from(bytes))
+    // name 是 uuid-shot.png 格式
+    expect(result.name).toMatch(/^[0-9a-f-]+-shot\.png$/)
+    // id 是 uuid 格式
+    expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   })
 
-  it('非 image/* mimeType → throw「invalid mimeType」（防借道写任意文件）', async () => {
-    const writeTmpImage = handlers.get('write-tmp-image')!
-    await expect(writeTmpImage({}, { base64: 'x', mimeType: 'text/plain' })).rejects.toThrow(
-      'invalid mimeType',
-    )
-  })
-
-  it('传入 suggestedName → 用作文件名（补 ext 若无）', async () => {
-    const writeTmpImage = handlers.get('write-tmp-image')!
+  it('W3TC4: landing 降级（sessionId 为空）→ 写 tmpdir 返回 {path,name,id}', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
     const bytes = Buffer.from([0x01])
-    const result = (await writeTmpImage({}, {
+    const result = (await writeSessionImage({}, {
+      sessionId: '',
       base64: bytes.toString('base64'),
-      mimeType: 'image/jpeg',
-      suggestedName: 'screenshot',
+      mimeType: 'image/png',
+      name: 'x.png',
+    })) as { path: string; name: string; id: string }
+    writtenPaths.push(result.path)
+    // path 在 tmpdir 下（降级路径）
+    expect(result.path.startsWith(tmpdir())).toBe(true)
+    expect(existsSync(result.path)).toBe(true)
+    // id 是 uuid 格式
+    expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  })
+
+  it('W3TC5: 非 image/* mimeType → throw「mimeType must start with image/」（ERR1）', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
+    await expect(writeSessionImage({}, {
+      sessionId: 's1',
+      base64: 'x',
+      mimeType: 'text/plain',
+      name: 'x',
+    })).rejects.toThrow('mimeType must start with image/')
+  })
+
+  it('W3TC6: 超过 20MB → throw「图片过大...20MB」（ERR2 ATTACH_TOO_LARGE）不写文件', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
+    const targetBytes = 21 * 1024 * 1024
+    const base64Len = Math.ceil((targetBytes * 4) / 3)
+    const oversizedBase64 = 'A'.repeat(base64Len)
+    await expect(writeSessionImage({}, {
+      sessionId: 's1',
+      base64: oversizedBase64,
+      mimeType: 'image/png',
+      name: 'big.png',
+    })).rejects.toThrow(/图片过大.*20MB/)
+  })
+
+  it('W3TC7: name 含路径分隔符 → sanitize 剥离，path 不逃逸 attachments 目录', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
+    const bytes = Buffer.from([0x01])
+    const result = (await writeSessionImage({}, {
+      sessionId: 's1',
+      base64: bytes.toString('base64'),
+      mimeType: 'image/png',
+      name: '../../etc/passwd.png',
+    })) as { path: string; name: string; id: string }
+    writtenPaths.push(result.path)
+    // path 不含穿越片段
+    expect(result.path).not.toContain('etc/passwd')
+    // path 仍在 attachments/s1 下
+    const expectedDir = join(getDataDir(), 'attachments', 's1')
+    expect(result.path.startsWith(expectedDir)).toBe(true)
+    expect(existsSync(result.path)).toBe(true)
+  })
+
+  it('W3TC8: 19MB（上限内）→ 正常写入不 throw', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
+    // 用 19MB（上限 20MB 内，留余量避开 base64 padding 估算误差）验证大图正常落地。
+    const targetBytes = 19 * 1024 * 1024
+    const bytes = Buffer.alloc(targetBytes, 0x01)
+    const result = (await writeSessionImage({}, {
+      sessionId: 's1',
+      base64: bytes.toString('base64'),
+      mimeType: 'image/png',
+      name: 'big.png',
     })) as { path: string; name: string }
     writtenPaths.push(result.path)
-    expect(result.name).toBe('screenshot.jpg')
+    expect(existsSync(result.path)).toBe(true)
   })
 
   it('mimeType=image/jpeg → ext=jpg', async () => {
-    const writeTmpImage = handlers.get('write-tmp-image')!
-    const result = (await writeTmpImage({}, {
+    const writeSessionImage = handlers.get('write-session-image')!
+    const result = (await writeSessionImage({}, {
+      sessionId: 's1',
       base64: Buffer.from([0x01]).toString('base64'),
       mimeType: 'image/jpeg',
+      name: 'pic',
     })) as { path: string; name: string }
     writtenPaths.push(result.path)
     expect(result.name.endsWith('.jpg')).toBe(true)
   })
 
-  it('写入失败 → throw「write-tmp-image failed」+ console.error（指向不存在父目录触发真实 fs 错误）', async () => {
-    const writeTmpImage = handlers.get('write-tmp-image')!
-    // 用一个绝对不存在的目录前缀作 suggestedName，join(tmpdir, '...') 仍合法但写不进去：
-    // 改用「目录穿越 + 非法文件名」更稳——此处用 suggestedName 含路径分隔符在多数 OS 写失败。
-    // 简化：直接断言 throw 路径——用一个超长文件名触发 ENAMETOOLONG。
+  it('name 为空 → sanitize 退化为 image 占位', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
+    const result = (await writeSessionImage({}, {
+      sessionId: 's1',
+      base64: Buffer.from([0x01]).toString('base64'),
+      mimeType: 'image/png',
+      name: '',
+    })) as { path: string; name: string }
+    writtenPaths.push(result.path)
+    expect(result.name).toMatch(/-image\.png$/)
+  })
+
+  it('写入失败 → throw「write-session-image failed」+ console.error（超长文件名触发 ENAMETOOLONG）', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
     const longName = 'a'.repeat(5000)
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(
-      writeTmpImage({}, {
+      writeSessionImage({}, {
+        sessionId: 's1',
         base64: Buffer.from([0x01]).toString('base64'),
         mimeType: 'image/png',
-        suggestedName: longName,
+        name: longName,
       }),
-    ).rejects.toThrow('write-tmp-image failed')
+    ).rejects.toThrow('write-session-image failed')
     expect(errSpy).toHaveBeenCalled()
     errSpy.mockRestore()
-  })
-
-  it('M1: 解码后超 20MB → throw「图片过大」不写文件（防超大输入撑爆内存/磁盘）', async () => {
-    const writeTmpImage = handlers.get('write-tmp-image')!
-    // 构造 base64 使解码字节数 > 20MB：21MB = 21*1024*1024 字节，base64 长度 ≈ 21MB*4/3
-    const targetBytes = 21 * 1024 * 1024
-    const base64Len = Math.ceil((targetBytes * 4) / 3)
-    const oversizedBase64 = 'A'.repeat(base64Len)
-    // 不应 console.error（M1 拒绝在 fs 写入之前，属校验层而非写入失败）
-    await expect(
-      writeTmpImage({}, { base64: oversizedBase64, mimeType: 'image/png' }),
-    ).rejects.toThrow('图片过大')
-  })
-
-  it('M1: 解码后接近 20MB（19MB，上限内）→ 正常写入', async () => {
-    const writeTmpImage = handlers.get('write-tmp-image')!
-    // 用 19MB（上限 20MB 内，留余量避开 base64 padding 估算误差）验证大图正常落地。
-    // 解码字节数估算 Math.ceil(base64.length*3/4) 对带 padding 的 base64 会高估 1-3 字节，
-    // 故用 19MB 而非恰好 20MB 避免边界抖动（拒绝判定语义是「明显超大」，非字节精确）。
-    const targetBytes = 19 * 1024 * 1024
-    const bytes = Buffer.alloc(targetBytes, 0x01)
-    const result = (await writeTmpImage({}, {
-      base64: bytes.toString('base64'),
-      mimeType: 'image/png',
-    })) as { path: string; name: string }
-    writtenPaths.push(result.path)
-    expect(existsSync(result.path)).toBe(true)
   })
 })

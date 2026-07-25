@@ -121,7 +121,7 @@ export function useCommandPopoverTrigger(
             : await pickFile()
         if (result.canceled || !result.path) return
         if (type === 'image') {
-          // image：文件已在磁盘，直接以原 path 建 image chip（不走 writeTmpImage，避免复制 + path 漂移）
+          // image：文件已在磁盘，直接以原 path 建 image chip（不走 writeSessionImage，避免复制 + path 漂移）
           const name = result.path.split(/[\\/]/).pop() || result.path
           inputRef.value?.insertImageBadge(result.path, name)
         } else {

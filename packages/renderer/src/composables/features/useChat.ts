@@ -34,9 +34,10 @@ type SendImage = { data: string; mimeType: string }
  * 从 segments 提取 image 段，并行读 local-file 文件转 base64，组装 message.send images。
  *
  * [feature:add-file-picture-attach slice6] 发送闭环：composer 的 image segment 在 send 时
- * 读文件转 base64 填入 message.send images 字段。image 段的 path 是 slice4 write-tmp-image
- * 落到 OS tmpdir 的绝对路径（拖拽/+菜单图片项则是用户磁盘原 path），均在 local-file 协议
- * 白名单内（main.ts:188-194 allowedPrefixes 含 tmpdir/cwd/用户子目录）。
+ * 读文件转 base64 填入 message.send images 字段。image 段的 path 是 write-session-image
+ * 落到 <getDataDir>/attachments/<sessionId>/ 的绝对路径（landing 态或拖拽/+菜单图片项可能是
+ * tmpdir / 用户磁盘原 path），均在 local-file 协议白名单内（main.ts allowedPrefixes 含
+ * attachments/tmpdir/cwd/用户子目录）。
  *
  * 降级矩阵（C2 契约）：
  * - 无 image 段 → 返回 undefined（不传 images 键，行为不变）

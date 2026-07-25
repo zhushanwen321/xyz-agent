@@ -12,15 +12,17 @@
  * 依赖方向：privileged-handlers → electron(dialog/shell/BrowserWindow) + input-validators + interfaces
  */
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomInt } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { IpcHandlerDeps } from '../interfaces.js'
+import { IMAGE_LIMITS } from '@xyz-agent/shared'
+import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import { isValidExternalUrl } from './input-validators.js'
 
 /**
- * 注册特权 IPC handler（open-external / pick-directory / pick-file / write-tmp-image）。
+ * 注册特权 IPC handler（open-external / pick-directory / pick-file / write-session-image）。
  *
  * @param deps 注入的依赖
  */
@@ -114,36 +116,43 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
     },
   )
 
-  // write-tmp-image：把剪贴板图片（base64）写到 OS tmpdir，返回绝对路径。
+  // write-session-image：把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化）。
   // Cmd+V/Ctrl+V 粘贴截图走此 handler：renderer 读剪贴板 image blob → base64 → 经此 IPC
   // 落地成文件，后续由 renderer 走富呈现 badge（Cmd/Ctrl+V 统一通路）。
   //
+  // 持久化 vs tmpdir：原 write-tmp-image 落 OS tmpdir（macOS 3 天未访问自动清理），重开 session
+  // 历史图片丢失。现落 <getDataDir>/attachments/<sessionId>/ 持久化（架构约定 #4 数据目录同策略）。
+  // landing 态（sessionId 为空字符串，session 延迟创建）降级走 tmpdir——session 尚未创建无 sessionId
+  // 可挂，landing 粘图后通常立即发送（session 随即创建），丢失窗口小且走 w2 降级 badge 兜底。
+  //
   // 安全：
   // - mimeType 必须以 image/ 开头（防借道写任意文件），且 base64 经 Buffer 解码。
-  // - 解码后大小上限 MAX_IMAGE_BYTES（20MB）：防超大输入撑爆内存/磁盘。base64 长度按 3/4 估算
-  //   解码字节数（误差仅尾部填充，足够拒超大输入）。超限 throw，让 renderer 的 invoke reject 被
-  //   catch，降级为 [图片粘贴失败] 文本提示。
+  // - 解码后大小上限 IMAGE_LIMITS.SINGLE_MAX_BYTES（20MB，SSOT）：防超大输入撑爆内存/磁盘。
+  //   base64 长度按 3/4 估算解码字节数（误差仅尾部填充，足够拒超大输入）。超限 throw，让 renderer
+  //   的 invoke reject 被 catch，降级为 [图片粘贴失败] 文本提示。
+  // - name 经 sanitize 剥离路径分隔符（/ \ :）和控制字符，防目录穿越。uuid 前缀保证唯一性。
+  //
   // 失败语义：与 pick-* 不同，此处 fs 写失败直接 throw（让 renderer 的 invoke reject 被
   // catch，降级为 [图片粘贴失败] 文本提示），而非返回 null——因为返回 null 与「未取到 blob」
   // 语义混淆，throw 让 renderer 明确区分「IPC 不可用」(undefined) vs 「写入失败」(catch)。
   ipcMain.handle(
-    'write-tmp-image',
+    'write-session-image',
     async (
       _event,
-      payload: { base64: string; mimeType: string; suggestedName?: string },
-    ): Promise<{ path: string; name: string }> => {
-      const { base64, mimeType, suggestedName } = payload
+      payload: { sessionId: string; base64: string; mimeType: string; name: string },
+    ): Promise<{ path: string; name: string; id: string }> => {
+      const { sessionId, base64, mimeType, name } = payload
       if (!mimeType.startsWith('image/')) {
-        throw new Error(`write-tmp-image: invalid mimeType ${mimeType}`)
+        throw new Error('mimeType must start with image/')
       }
-      // M1 大小上限：解码前按 base64 长度估算解码字节数（3/4 比例），超 20MB 拒绝。
+      // M1 大小上限：解码前按 base64 长度估算解码字节数（3/4 比例），超 SINGLE_MAX_BYTES 拒绝。
       // 估算仅尾部 padding 有 1-2 字节误差，对 20MB 量级拒绝判定无影响。
-      const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+      // eslint-disable-next-line no-magic-numbers
       const decodedBytes = Math.ceil((base64.length * 3) / 4)
-      if (decodedBytes > MAX_IMAGE_BYTES) {
-        throw new Error(
-          `图片过大（${Math.round(decodedBytes / 1024 / 1024)}MB），上限 20MB`,
-        )
+      if (decodedBytes > IMAGE_LIMITS.SINGLE_MAX_BYTES) {
+        // eslint-disable-next-line no-magic-numbers
+        const sizeMB = Math.round(decodedBytes / 1024 / 1024)
+        throw new Error(`图片过大（${sizeMB}MB），上限 20MB`)
       }
       // mimeType → ext 映射（覆盖常见剪贴板图类型）
       const extByMime: Record<string, string> = {
@@ -154,19 +163,23 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         'image/webp': 'webp',
       }
       const ext = extByMime[mimeType] ?? 'png'
+      // sanitize name：剥离路径分隔符（/ \ :）和控制字符防目录穿越，trim 首尾空白。
+      // 保留中英文/数字/点/连字符/下划线/空格（可读性）。空则退化为 'image' 占位。
+      // 剥离已有的同名扩展名（用户 name 可能含 .png，避免重拼接成 .png.png）。
+      const extRegExp = new RegExp(`\\.${ext}$`, 'i')
+      const sanitized = name.replace(/[/\\:\x00-\x1f]/g, '').trim().replace(extRegExp, '') || 'image'
       try {
-        // 文件名：suggestedName 优先（保留原始截图名），否则时间戳+随机数保证唯一
-        const name = suggestedName
-          ? suggestedName.includes('.')
-            ? suggestedName
-            : `${suggestedName}.${ext}`
-          : `xyz-img-${Date.now()}-${randomInt(0, 0xffffff).toString(36)}.${ext}`
-        const fullPath = join(tmpdir(), name)
+        // sessionId 非空 → <dataDir>/attachments/<sessionId>/（持久化）；空 → tmpdir（landing 降级）
+        const dir = sessionId ? getAttachmentsDir(sessionId) : tmpdir()
+        if (sessionId) mkdirSync(dir, { recursive: true })
+        // 文件名：uuid 前缀（唯一性主力）+ sanitize(name)（可读性辅助）+ 扩展名
+        const filename = `${randomUUID()}-${sanitized}.${ext}`
+        const fullPath = join(dir, filename)
         writeFileSync(fullPath, Buffer.from(base64, 'base64'))
-        return { path: fullPath, name }
+        return { path: fullPath, name: filename, id: randomUUID() }
       } catch (err) {
-        console.error('[ipc] write-tmp-image failed:', err)
-        throw new Error('write-tmp-image failed')
+        console.error('[ipc] write-session-image failed:', err)
+        throw new Error('write-session-image failed')
       }
     },
   )
