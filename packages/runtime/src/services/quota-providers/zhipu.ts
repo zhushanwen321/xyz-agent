@@ -10,7 +10,6 @@ import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
 import { INFINITE_WIN } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
-const PERCENT_SCALE = 100
 const SEC_PER_DAY = 86400
 const SEC_PER_HOUR = 3600
 const SEC_PER_MIN = 60

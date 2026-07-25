@@ -65,9 +65,9 @@ export const kimiFetcher: ProviderQuotaFetcher = {
       const winRemaining = Number(winDetail?.remaining ?? 0)
       const win5h = winLimit > 0
         ? {
-            pct: Math.round(((winLimit - winRemaining) / winLimit) * PERCENT_SCALE),
-            resetSec: winDetail?.resetTime ? isoResetRemaining(winDetail.resetTime) : null,
-          }
+          pct: Math.round(((winLimit - winRemaining) / winLimit) * PERCENT_SCALE),
+          resetSec: winDetail?.resetTime ? isoResetRemaining(winDetail.resetTime) : null,
+        }
         : INFINITE_WIN
 
       // 每日/周窗口（usage 字段）
@@ -75,9 +75,9 @@ export const kimiFetcher: ProviderQuotaFetcher = {
       const dailyUsed = Number(data?.usage?.used ?? 0)
       const winWk = dailyLimit > 0
         ? {
-            pct: Math.round((dailyUsed / dailyLimit) * PERCENT_SCALE),
-            resetSec: data?.usage?.resetTime ? isoResetRemaining(data.usage.resetTime) : null,
-          }
+          pct: Math.round((dailyUsed / dailyLimit) * PERCENT_SCALE),
+          resetSec: data?.usage?.resetTime ? isoResetRemaining(data.usage.resetTime) : null,
+        }
         : INFINITE_WIN
 
       return {

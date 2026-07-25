@@ -189,8 +189,10 @@ export class QuotaService {
           if (existsSync(keyPath)) {
             try {
               unlinkSync(keyPath)
-            } catch {
+            } catch (cleanupErr) {
               // 清理失败不阻断主流程（下次写入会覆盖）
+              const cleanupMsg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+              logger.debug('[quota] failed to remove api key file', { providerId, error: cleanupMsg })
             }
           }
           apiKeySet = false

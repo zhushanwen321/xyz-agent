@@ -15,6 +15,7 @@ import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { logger } from '../infra/logger.js'
 
 const CACHE_FILENAME = 'quota-cache.json'
+const CACHE_INDENT = 2
 
 export interface QuotaCacheEntry {
   data: NormalizedQuotaRow
@@ -74,7 +75,7 @@ export class QuotaCache {
 
       // 原子写：先写 .tmp，再 rename
       const tmpPath = `${this.filePath}.tmp`
-      writeFileSync(tmpPath, JSON.stringify(cache, null, 2), 'utf-8')
+      writeFileSync(tmpPath, JSON.stringify(cache, null, CACHE_INDENT), 'utf-8')
       renameSync(tmpPath, this.filePath)
     } catch (err) {
       // 失败不删除旧缓存，只 log（架构约定 #4 落盘）
@@ -84,7 +85,11 @@ export class QuotaCache {
       try {
         const tmpPath = `${this.filePath}.tmp`
         if (existsSync(tmpPath)) unlinkSync(tmpPath)
-      } catch { /* ignore cleanup error */ }
+      } catch (cleanupErr) {
+        // 清理失败不阻断主流程，仅 debug 记录
+        const cleanupMsg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+        logger.debug('[quota-cache] failed to cleanup tmp file', { error: cleanupMsg })
+      }
     }
   }
 }

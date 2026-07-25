@@ -13,6 +13,7 @@ import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
 
 const FETCH_TIMEOUT_MS = 8000
 const HTTP_OK = 200
+const HTTP_REDIRECT = 302
 
 interface WindowUsage {
   status: string
@@ -87,7 +88,7 @@ export const opencodeFetcher: ProviderQuotaFetcher = {
   /** 302 重定向 = cookie 过期 */
   isCredentialValid(response: unknown): boolean {
     if (response instanceof Response) {
-      return response.status !== 302
+      return response.status !== HTTP_REDIRECT
     }
     return true
   },
