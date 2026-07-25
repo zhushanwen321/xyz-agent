@@ -1,4 +1,59 @@
 /**
+ * FileContext —— file segment 的 inline 内容载体（P3 file inline 透传）。
+ *
+ * segmentsToPrompt 扩展签名接收 fileContexts Map（key=path），
+ * file 段有对应 FileContext 时输出 <file> 标签包裹内容，无则保持原 path 输出。
+ */
+export type FileContext = {
+  /** 文件绝对路径（segment.path） */
+  path: string
+  /** 文件内容（已按行范围提取 + 截断） */
+  content: string
+  /** 行范围（来自 file segment 的 lineRange，可选） */
+  lineRange?: [number, number]
+  /** 是否因超限截断（超 50KB 或 500 行） */
+  truncated: boolean
+  /** 原始字节大小（用于审计/日志） */
+  sizeBytes: number
+}
+
+/**
+ * 获取文件扩展名（含点号，小写）。不依赖 node:path（shared barrel 被 renderer 浏览器端 import）。
+ */
+function getExtname(p: string): string {
+  const lastDot = p.lastIndexOf('.')
+  const lastSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  // 点号在最后一个路径分隔符之后才是扩展名（否则是隐藏文件如 .gitignore）
+  if (lastDot > lastSlash && lastDot >= 0) return p.slice(lastDot).toLowerCase()
+  return ''
+}
+
+/** 小文本文件 inline 进 prompt 的字节上限（50KB） */
+// eslint-disable-next-line no-magic-numbers
+export const INLINE_TEXT_MAX_BYTES = 50 * 1024
+/** 小文本文件 inline 进 prompt 的行数上限 */
+export const INLINE_TEXT_MAX_LINES = 500
+/** 允许 inline 的文件扩展名白名单（大小写不敏感） */
+export const INLINE_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.vue', '.py', '.rb', '.go', '.rs',
+  '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.hpp', '.cs',
+  '.md', '.markdown', '.txt', '.json', '.yaml', '.yml', '.toml',
+  '.sh', '.bash', '.zsh', '.sql', '.html', '.css', '.scss',
+  '.xml', '.svg', '.ini', '.conf', '.env', '.gitignore',
+])
+
+/**
+ * 判断文件是否应 inline 进 prompt（IF3 纯函数）。
+ *
+ * 规则：扩展名在 INLINE_EXTENSIONS 白名单 AND sizeBytes <= INLINE_TEXT_MAX_BYTES(50KB)。
+ * 扩展名大小写不敏感（extname().toLowerCase()）。
+ */
+export function shouldInlineFile(path: string, sizeBytes: number): boolean {
+  const ext = getExtname(path)
+  return INLINE_EXTENSIONS.has(ext) && sizeBytes <= INLINE_TEXT_MAX_BYTES
+}
+
+/**
  * Segment —— user message content 的结构化模型（ADR-0037）。
  *
  * Message.content 从纯 string 重构为 `string | Segment[]`：
@@ -111,9 +166,69 @@ export function textToSegments(text: string): Segment[] {
  *
  * 基于 segmentsToText 但 trim 首尾空白（pi prompt 不需要尾随换行/空格）。
  * 语义分离：segmentsToText 保留原始格式（含末尾换行），segmentsToPrompt 做发送归一化。
+ *
+ * 可选 fileContexts 参数（IF1 扩展签名）：file 段有对应 FileContext 时
+ * 输出 <file path="..." lines?="s-e"> 包裹内容，无则保持原 path 输出（向后兼容）。
  */
-export function segmentsToPrompt(segments: Segment[]): string {
-  return segmentsToText(segments).trim()
+export function segmentsToPrompt(segments: Segment[], fileContexts?: Map<string, FileContext>): string {
+  if (!fileContexts || fileContexts.size === 0) return segmentsToText(segments).trim()
+
+  const parts: string[] = []
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const prev = i > 0 ? segments[i - 1] : null
+    switch (seg.type) {
+      case 'text':
+        if (prev && prev.type !== 'text' && seg.text && !seg.text.startsWith(' ')) {
+          parts.push(' ')
+        }
+        parts.push(seg.text)
+        break
+      case 'skill':
+        parts.push(`/skill:${seg.name}`)
+        break
+      case 'file': {
+        const ctx = fileContexts.get(seg.path)
+        if (ctx) {
+          // 有 fileContext → 输出 <file> 标签包裹内容（TC5 格式，pi file-processor.ts:77 同款）
+          let attrs = `path="${seg.path}"`
+          if (seg.lineRange) {
+            const [s0, e0] = seg.lineRange
+            const s = Math.max(1, s0)
+            const e = Math.max(s, e0)
+            attrs += s === e ? ` lines="${s}"` : ` lines="${s}-${e}"`
+          }
+          let content = ctx.content
+          if (ctx.truncated) {
+            // 截断注释：让 LLM 知道可调 read 工具读全文
+            const lineCount = ctx.content.split('\n').length
+            // eslint-disable-next-line no-magic-numbers
+            const sizeKB = ctx.sizeBytes > 0 ? Math.ceil(ctx.sizeBytes / 1024) : 0
+            content += `\n<!-- truncated: 共 ${sizeKB > 0 ? sizeKB + 'KB' : ''}，已截断至前 ${lineCount} 行 -->`
+          }
+          parts.push(`<file ${attrs}>\n${content}\n</file>`)
+        } else {
+          // 无 fileContext → 向后兼容，保持原 path 输出
+          let fileText = seg.path
+          if (seg.lineRange) {
+            const [s0, e0] = seg.lineRange
+            const s = Math.max(1, s0)
+            const e = Math.max(s, e0)
+            fileText += s === e ? `:L${s}` : `:L${s}-L${e}`
+          }
+          parts.push(fileText)
+        }
+        break
+      }
+      case 'mention':
+        parts.push(`@${seg.name}`)
+        break
+      case 'image':
+        parts.push(`[图片: ${seg.name}]`)
+        break
+    }
+  }
+  return parts.join('').trim()
 }
 
 /**

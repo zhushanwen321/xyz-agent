@@ -16,8 +16,8 @@ export type {
   BgNotifyRecord, BgNotifyDetails,
 } from './message'
 export { parseBgNotifyDetails } from './message'
-export type { Segment } from './segments'
-export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
+export type { Segment, FileContext } from './segments'
+export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent, shouldInlineFile, INLINE_TEXT_MAX_BYTES, INLINE_TEXT_MAX_LINES, INLINE_EXTENSIONS } from './segments'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
 } from './session'

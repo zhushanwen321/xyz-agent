@@ -13,15 +13,15 @@
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { computed, reactive, ref } from 'vue'
-import { chat as chatApi } from '@/api'
+import { chat as chatApi, file as fileApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSettingsStore } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import i18n from '@/i18n'
-import type { Message, Segment } from '@xyz-agent/shared'
-import { IMAGE_LIMITS, segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
+import type { Message, Segment, FileContext } from '@xyz-agent/shared'
+import { IMAGE_LIMITS, segmentsToPrompt, textToSegments, shouldInlineFile, INLINE_TEXT_MAX_LINES } from '@xyz-agent/shared'
 import { fileBytesToBase64 } from '@/composables/panel/useImageAttachment'
 import { resolveSupportsVision } from '@/composables/panel/useModelCapabilities'
 
@@ -81,6 +81,65 @@ export async function extractImages(
     }
   }
   return images.length > 0 ? images : undefined
+}
+
+/**
+ * 从 segments 提取 file 段，读文件内容并判断是否 inline 进 prompt（IF2）。
+ *
+ * filter type==='file' 的 segment，对每个 path 调 readFile，
+ * 按 shouldInlineFile 判断是否 inline（< 50KB + 白名单扩展名）。
+ * 超限截断（INLINE_TEXT_MAX_LINES 行）+ truncated:true。
+ * Promise.allSettled 并行，单个失败 console.warn 跳过不阻断（ERR3）。
+ *
+ * readFile 注入签名：(path: string) => Promise<{ content: string; sizeBytes: number }>。
+ * 生产实现用 fileApi.read(path, sessionId) + TextEncoder 计 sizeBytes。
+ * 测试 mock 直接返预设值。
+ *
+ * 导出供单测 mock（纯模块函数，不依赖 this）。
+ */
+export async function extractFileContexts(
+  segments: Segment[],
+  readFile: (path: string) => Promise<{ content: string; sizeBytes: number }>,
+): Promise<Map<string, FileContext>> {
+  const fileSegs = segments.filter((s): s is Extract<Segment, { type: 'file' }> => s.type === 'file')
+  if (fileSegs.length === 0) return new Map()
+
+  const results = await Promise.allSettled(
+    fileSegs.map(async (seg) => {
+      const { content, sizeBytes } = await readFile(seg.path)
+      if (!shouldInlineFile(seg.path, sizeBytes)) {
+        // 不满足 inline 条件（扩展名不在白名单或超 50KB）→ 跳过
+        return null
+      }
+      // 截断：超 INLINE_TEXT_MAX_LINES 行时截取前 N 行
+      let truncated = false
+      let finalContent = content
+      const lines = content.split('\n')
+      if (lines.length > INLINE_TEXT_MAX_LINES) {
+        finalContent = lines.slice(0, INLINE_TEXT_MAX_LINES).join('\n')
+        truncated = true
+      }
+      const ctx: FileContext = {
+        path: seg.path,
+        content: finalContent,
+        lineRange: seg.lineRange,
+        truncated,
+        sizeBytes,
+      }
+      return ctx
+    }),
+  )
+
+  const map = new Map<string, FileContext>()
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    if (r.status === 'fulfilled' && r.value !== null) {
+      map.set(r.value.path, r.value)
+    } else if (r.status === 'rejected') {
+      console.warn(`[useChat] file 读取失败，已跳过: ${fileSegs[i].path}`, r.reason)
+    }
+  }
+  return map
 }
 
 /**
@@ -298,8 +357,10 @@ export function useChat() {
   async function send(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
     if (segments.length === 0) return
-    const promptText = segmentsToPrompt(segments)
-    if (!promptText.trim()) return
+    // 初步检查：用无 fileContexts 的 segmentsToPrompt 判断非空（向后兼容）。
+    // 最终 promptText 在 extractFileContexts 完成后用 fileContexts 重新生成。
+    const promptTextCheck = segmentsToPrompt(segments)
+    if (!promptTextCheck.trim()) return
 
     // [B 策略 D-001] busy 时自动转 steer（追加上下文，不打断当前回合）
     if (chat.isActive(sid)) {
@@ -314,7 +375,21 @@ export function useChat() {
       // [feature:add-file-picture-attach slice6] 发送闭环：提取 image segment 读文件转 base64
       // 填入 message.send images 字段（独立通道，与 promptText 文本占位 [图片:name] 双投递）。
       // extractImages 内部 allSettled 并行读，无 image 段返回 undefined（行为不变）。
-      const images = await extractImages(segments)
+      //
+      // P3 file inline 透传：与 extractImages 并行调 extractFileContexts，
+      // 读 file segment 内容并判断是否 inline 进 prompt（ERR3：单个失败不阻断）。
+      const readFileForContext = async (path: string) => {
+        const { content } = await fileApi.read(path, sid)
+        return { content, sizeBytes: new TextEncoder().encode(content).byteLength }
+      }
+      const [imagesResult, fileContextsResult] = await Promise.allSettled([
+        extractImages(segments),
+        extractFileContexts(segments, readFileForContext),
+      ])
+      const images = imagesResult.status === 'fulfilled' ? imagesResult.value : undefined
+      const fileContexts = fileContextsResult.status === 'fulfilled' ? fileContextsResult.value : new Map<string, FileContext>()
+      // 用 fileContexts 重新生成 promptText（file 段有 fileContext 时输出 <file> 标签）
+      const promptText = segmentsToPrompt(segments, fileContexts)
       // vision 降级（should 优先级）：当前 model 不支持 image 输入时 toast 提示用户，
       // 不阻断不剥离 images（runtime/pi 自然丢弃不支持的多模态，文本占位仍发）。
       // per-session-model 去重：同 session 同 modelId 仅警告一次（切回/切走 model 可再次触发）。
