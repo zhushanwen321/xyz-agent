@@ -115,11 +115,8 @@ import SettingsResourcePage from './SettingsResourcePage.vue'
 import ExtensionPage from './ExtensionPage.vue'
 import SystemPage from './SystemPage.vue'
 import SystemPromptPage from './SystemPromptPage.vue'
-<<<<<<< HEAD
 import TerminalPage from './TerminalPage.vue'
-=======
 import WorktreePage from './WorktreePage.vue'
->>>>>>> baf8300b (feat: CreateWorktreeModal upgrade (T5) + Settings WorktreePage (T7))
 
 const menus = [
   { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings, descKey: 'settings.menu.providerDesc' },
