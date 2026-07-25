@@ -115,6 +115,18 @@ export interface IPiEngine {
   setModel(provider: string, modelId: string): Promise<PiMessage>
   setThinkingLevel(level: string): Promise<PiMessage>
   getHistory(): Promise<PiMessage>
+  /**
+   * 拉取 pi session 的完整 entry 树（get_entries RPC）。
+   *
+   * 与 getHistory（get_messages，只返回扁平 message 列表）不同：get_entries 返回全部 entry 类型
+   * （message/custom/label/compaction/branch_summary/...），含 parentId 树结构。
+   * entry-tree-builder.rebuildHistoryFromEntries 用 message entry + "xyz.client-msg-id" custom entry
+   * 重建结构化 Message[]（重开 session 时按 clientUuid ↔ userEntryId 映射回填 image/file badge）。
+   *
+   * since 可选：传 entry id 时返回该 entry 之后的 entry（增量拉取，pi 找不到 since id 会报错）。
+   * 返回的 PiMessage.data 已由 sendCommand 归一（data ?? payload），调用方按 GetEntriesResponse 断言。
+   */
+  getEntries(since?: string): Promise<PiMessage>
   getCommands(): Promise<PiCommandInfo[]>
   /** 查询 pi session 统计（含 contextUsage 上下文占用估算）。用于恢复 session 后拉取当前用量。 */
   getSessionStats(): Promise<PiSessionStats>

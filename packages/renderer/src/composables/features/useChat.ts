@@ -24,6 +24,7 @@ import type { Message, Segment } from '@xyz-agent/shared'
 import { IMAGE_LIMITS, segmentsToPrompt } from '@xyz-agent/shared'
 import { fileBytesToBase64 } from '@/composables/panel/useImageAttachment'
 import { resolveSupportsVision } from '@/composables/panel/useModelCapabilities'
+import { writeSegmentsMetadata } from '@/lib/ipc'
 
 const t = i18n.global.t
 
@@ -295,12 +296,16 @@ export function useChat() {
    *   2. segmentsToPrompt（trim 后的 pi prompt 文本）
    *   3. vision 降级 toast（per-session-model 去重）
    *   4. size cap 层 2/3（累积 bytes 超阈值预警 / 剥离）
-   *   5. chatApi.send(promptText, sendImages)
+   *   5. 写 segments.json sidecar（clientUuid 关联，重开时回填 badge）
+   *   6. chatApi.send(promptText + clientUuid 标记, sendImages)
    *
-   * @param sessionId  目标 session
-   * @param segments   结构化 segments（含 image/file/text/skill/mention）
+   * @param sessionId   目标 session
+   * @param segments    结构化 segments（含 image/file/text/skill/mention）
+   * @param clientUuid  调用方 appendUser 生成的 user message id（`u-<uuid>`），
+   *                    用作 segments.json 主键 + prompt 标记 uuid（建立 clientUuid ↔
+   *                    pi userEntryId 映射，extension input hook 剥标记后写 custom entry）
    */
-  async function submitSegments(sessionId: string, segments: Segment[]): Promise<void> {
+  async function submitSegments(sessionId: string, segments: Segment[], clientUuid: string): Promise<void> {
     // extractImages：image segment 读 local-file 文件转 base64（allSettled 不阻断，无图返 undefined）。
     // 删除 file inline 后不再并行读 file 内容，单调用即可。
     const images = await extractImages(segments)
@@ -362,7 +367,22 @@ export function useChat() {
         console.warn('[useChat] estimateAccumulatedImageBytes failed, skipping accumulation check')
       }
     }
-    await chatApi.send(sessionId, promptText, sendImages)
+    // 写 segments.json sidecar（重开 session 时回填 image/file badge 用）。
+    // 异步 fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只是降级为占位文本，非硬错误）。
+    // landing 态 session 尚未创建时（sessionId 为占位）不写——submitFirstMessage 在 session.create 后
+    // 调 chat.send，send 内部 appendUser 用已创建的 newSid，故 submitSegments 收到的 sessionId 恒有效。
+    if (sessionId) {
+      writeSegmentsMetadata({
+        sessionId,
+        entry: { clientUuid, segments, timestamp: Date.now() },
+      }).catch((e) => console.warn('[useChat] writeSegmentsMetadata failed:', e))
+    }
+    // 加 HTML 注释标记：pi extension 的 input hook 会剥离它（LLM 看不到），并建立
+    // clientUuid ↔ userEntryId 映射（重开时按映射回填 segments）。
+    // 标记格式严格：`<!--xyz:msg:<uuid>-->`，uuid 是 clientUuid 完整值（u-<uuid>），
+    // 与 extension TAG 正则（u-[0-9a-fA-F-]{36}）+ segments.json clientUuid key 严格一致。
+    const markedPromptText = `${promptText}\n<!--xyz:msg:${clientUuid}-->`
+    await chatApi.send(sessionId, markedPromptText, sendImages)
   }
 
   /**
@@ -389,11 +409,13 @@ export function useChat() {
       return
     }
 
-    chat.appendUser(sid, segments)
+    // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
+    // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
+    const clientUuid = chat.appendUser(sid, segments)
     ensureStreamSubscription(sid, chat, session)
     chat.addPendingSend(sid)
     try {
-      await submitSegments(sid, segments)
+      await submitSegments(sid, segments, clientUuid)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
@@ -528,11 +550,13 @@ export function useChat() {
     const promptTextCheck = segmentsToPrompt(segments)
     if (!promptTextCheck.trim() || chat.isActive(sessionId)) return
     chat.truncateFrom(sessionId, userMessageId, true)
-    chat.appendUser(sessionId, segments)
+    // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
+    // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
+    const clientUuid = chat.appendUser(sessionId, segments)
     ensureStreamSubscription(sessionId, chat, session)
     chat.addPendingSend(sessionId)
     try {
-      await submitSegments(sessionId, segments)
+      await submitSegments(sessionId, segments, clientUuid)
     } catch (e) {
       // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。

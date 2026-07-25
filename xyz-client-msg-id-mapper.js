@@ -5,7 +5,8 @@
  * （image path/displayName、file path/lineRange 等）。
  *
  * 机制（不改 pi 源码，纯 extension hook）：
- *  1. xyz-agent 发 prompt 时在文本末尾加 HTML 注释标记 `<!--xyz:msg:<uuid>-->`。
+ *  1. xyz-agent 发 prompt 时在文本末尾加 HTML 注释标记 `<!--xyz:msg:<uuid>-->`
+ *     （uuid 是 appendUser 生成的完整 user message id，形如 `u-<36hex>`）。
  *  2. `input` hook 拦截 source==='rpc' 的 prompt，剥离标记（LLM 看不到 transform 后的版本
  *     之外的内容），并把 uuid 记到 pendingClientUuid。
  *  3. user `message_end` 后下一个触发的 hook（message_start/turn_end/agent_end）读
@@ -23,7 +24,11 @@
  * pi 通过 `--extension <path>` 在 spawn 时加载。
  */
 
-const TAG = /<!--xyz:msg:([0-9a-fA-F-]{36})-->/
+// uuid = appendUser 生成的 user message id（`u-` + 36 字符 hex uuid，共 38 字符）。
+// 与 shared SegmentsMetadataEntry.clientUuid 严格一致（同 appendUser 返回值）：
+// extension 写入 custom entry 的 clientUuid = segments.json 的 clientUuid key，
+// entry-tree-builder 据此精确回填 segments（无前缀转换、无双 source of truth）。
+const TAG = /<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/
 const ENTRY_TYPE = 'xyz.client-msg-id'
 
 export default function (pi) {

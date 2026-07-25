@@ -136,7 +136,8 @@ describe('T1.4 useChat.send 全链', () => {
     // 2. addPendingSend：isActive=true（空窗期）
     expect(chat.isActive('s-fullchain')).toBe(true)
     // 3. api.send 被调（slice6 起 send 第三参数 images 对纯文本为 undefined）
-    expect(apiMock.send).toHaveBeenCalledWith('s-fullchain', 'hello', undefined)
+    // promptText 含 clientUuid 标记后缀（<!--xyz:msg:u-<uuid>-->，pi extension input hook 剥离 + 写 custom entry）
+    expect(apiMock.send).toHaveBeenCalledWith('s-fullchain', expect.stringMatching(/^hello\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/), undefined)
     // 4. message_start 到达 → clearPendingSend
     emit({ type: 'message.message_start', payload: { sessionId: 's-fullchain', messageId: 'a1' } })
     // message_start 后 isGenerating=true（streaming entity 存在），isActive 仍 true
@@ -170,7 +171,8 @@ describe('T5.1 editAndResend pendingSend 对称', () => {
     // 内部委托 submitSegments（走 extractImages + segmentsToPrompt + chatApi.send）。
     await editAndResend('s-edit', userMsg.id, textToSegments('edited text'))
     // api.send 被调（editAndResend 内部走 submitSegments → chatApi.send）
-    expect(apiMock.send).toHaveBeenCalledWith('s-edit', 'edited text', undefined)
+    // promptText 含 clientUuid 标记后缀（与 send 同通路）
+    expect(apiMock.send).toHaveBeenCalledWith('s-edit', expect.stringMatching(/^edited text\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/), undefined)
     // addPendingSend：isActive=true（空窗期）
     expect(chat.isActive('s-edit')).toBe(true)
   })

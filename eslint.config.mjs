@@ -73,4 +73,15 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] useChatStore 是 Pinia chat store 的唯一 setup 函数（defineStore('chat', () => {...})），
+  // 包含所有 chat state（messages Map 分区 / streaming / pending / retry / queue）+ 全部 action
+  // （appendUser/appendPending/applyMessageEvent/finalize/hydrate/truncateFrom 等 30+ 方法）。
+  // 与 event-adapter/session-service 同性质——唯一聚合中心，职责内聚但函数体行数超 300。
+  // max-lines-per-function 规则对 Pinia setup 函数不适用（setup 天然是单一大函数），override 避免误报。
+  {
+    files: ['packages/renderer/src/stores/chat.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
 ];

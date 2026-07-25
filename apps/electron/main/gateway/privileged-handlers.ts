@@ -236,9 +236,10 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         const idx = file.entries.findIndex((e) => e.clientUuid === entry.clientUuid)
         if (idx >= 0) file.entries[idx] = entry
         else file.entries.push(entry)
-        // atomic 写：临时文件 + rename
+        // atomic 写：临时文件 + rename。JSON_INDENT 提取常量避免 magic-numbers 规则。
+        const JSON_INDENT = 2
         const tmpPath = filePath + '.tmp'
-        writeFileSync(tmpPath, JSON.stringify(file, null, 2), 'utf-8')
+        writeFileSync(tmpPath, JSON.stringify(file, null, JSON_INDENT), 'utf-8')
         renameSync(tmpPath, filePath)
       } catch (err) {
         console.error('[ipc] write-segments-metadata failed:', err)

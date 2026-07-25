@@ -42,8 +42,10 @@ const TAG = '[MSGID-VERIFY]'
 const REPO_ROOT = path.resolve(__dirname, '..')
 const EXTENSION_PATH = path.resolve(REPO_ROOT, 'xyz-client-msg-id-mapper.js')
 
-// 唯一测试 uuid（满足 [0-9a-fA-F-]{36}，标准 UUID v4 格式）。
-const TEST_UUID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+// 唯一测试 uuid（clientUuid 格式 = u- + 标准 UUID v4，38 字符；extension TAG 正则 u-[0-9a-fA-F-]{36}）。
+// clientUuid 格式与 appendUser 生成的 message id 一致：`u-<uuid>`（38 字符）。
+// extension TAG 正则匹配此格式，verify 脚本的测试数据须对齐。
+const TEST_UUID = 'u-a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 const MARKER_FRAGMENT = '<!--xyz:msg:'
 const FULL_MARKER = `<!--xyz:msg:${TEST_UUID}-->`
 

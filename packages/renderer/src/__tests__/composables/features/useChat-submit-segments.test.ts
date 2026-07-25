@@ -54,6 +54,14 @@ vi.mock('@/api', () => ({
   session: {},
 }))
 
+// ── ipc mock：writeSegmentsMetadata 捕获 sidecar 写入（clientUuid + segments 回填用）──
+const ipcMock = vi.hoisted(() => ({
+  writeSegmentsMetadata: vi.fn(() => Promise.resolve()),
+}))
+vi.mock('@/lib/ipc', () => ({
+  writeSegmentsMetadata: ipcMock.writeSegmentsMetadata,
+}))
+
 // ── settingsStore mock：providers（vision 判定）+ system（累积阈值）可控 ──
 const settingsState = vi.hoisted(() => ({
   providers: [] as Array<{ id: string; models: Array<{ id: string; input?: Array<'text' | 'image'> }> }>,
@@ -95,6 +103,7 @@ beforeEach(() => {
   resetChatModuleState()
   vi.clearAllMocks()
   apiMock.holder.handler = null
+  ipcMock.writeSegmentsMetadata.mockResolvedValue(undefined)
   settingsState.providers = []
   settingsState.system.imageAccumulationWarnMB = undefined
   settingsState.system.imageAccumulationHardMB = undefined
@@ -117,7 +126,7 @@ function mockFetchImageOk(): void {
 // ── SS1: send(含 image) → submitSegments → chatApi.send 含 images ──
 
 describe('submitSegments 统一通路：send', () => {
-  it('SS1: send(含 image) → chatApi.send 含 images 数组 + promptText 含 [图片 1] 占位', async () => {
+  it('SS1: send(含 image) → chatApi.send 含 images 数组 + promptText 含 [图片 1] 占位 + clientUuid 标记', async () => {
     mockFetchImageOk()
     const { send } = useChat()
     await send('ss-send', [
@@ -130,10 +139,24 @@ describe('submitSegments 统一通路：send', () => {
     expect(call[0]).toBe('ss-send')
     // promptText 含匿名编号占位（不暴露 fileName/displayName 给 LLM）
     expect(call[1]).toContain('[图片 1]')
+    // promptText 末尾含 clientUuid 标记（pi extension input hook 剥离 + 写 custom entry）
+    // 标记格式严格：<!--xyz:msg:u-<uuid>-->，clientUuid 是 appendUser 生成的 message id
+    expect(call[1]).toMatch(/\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/)
     // 第三参数是 images 数组（submitSegments 提取后透传）
     expect(Array.isArray(call[2])).toBe(true)
     expect(call[2]).toHaveLength(1)
     expect(call[2][0].mimeType).toBe('image/png')
+
+    // writeSegmentsMetadata 被调（写 segments.json sidecar，clientUuid 关联回填用）
+    expect(ipcMock.writeSegmentsMetadata).toHaveBeenCalledTimes(1)
+    const sidecarCall = ipcMock.writeSegmentsMetadata.mock.calls[0]![0]
+    expect(sidecarCall.sessionId).toBe('ss-send')
+    expect(sidecarCall.entry.clientUuid).toMatch(/^u-[0-9a-fA-F-]{36}$/)
+    // sidecar 的 clientUuid 必须与 prompt 标记里的 uuid 一致（同一 user message 的映射键）
+    const markerUuid = (call[1] as string).match(/<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/)![1]
+    expect(sidecarCall.entry.clientUuid).toBe(markerUuid)
+    expect(sidecarCall.entry.segments).toHaveLength(2)
+    expect(sidecarCall.entry.timestamp).toBeTypeOf('number')
   })
 })
 
@@ -177,7 +200,9 @@ describe('submitSegments 统一通路：editAndResend', () => {
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     const call = apiMock.send.mock.calls[0]!
     expect(call[0]).toBe('ss-edit-text')
-    expect(call[1]).toBe('edited')
+    // promptText 含编辑后文本 + clientUuid 标记后缀（与 send 同通路）
+    expect(call[1]).toContain('edited')
+    expect(call[1]).toMatch(/\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/)
     // 无图 → 第三参数 undefined（行为不变）
     expect(call[2]).toBeUndefined()
   })

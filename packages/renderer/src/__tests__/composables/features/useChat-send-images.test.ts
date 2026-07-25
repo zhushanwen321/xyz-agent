@@ -170,7 +170,8 @@ describe('useChat.send images 透传（slice6 TC7-TC8）', () => {
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     const call = apiMock.send.mock.calls[0]!
     expect(call[0]).toBe('s-text')
-    expect(call[1]).toBe('hi')
+    // promptText 含 user message + clientUuid 标记后缀（pi extension input hook 剥离 + 写 custom entry）
+    expect(call[1]).toMatch(/^hi\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/)
     // 第三参数 undefined（无图行为不变）
     expect(call[2]).toBeUndefined()
   })
