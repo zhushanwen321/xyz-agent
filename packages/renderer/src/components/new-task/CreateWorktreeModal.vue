@@ -58,8 +58,8 @@ const locationMode = ref<LocationMode>('workspace')
 const phase = ref<ModalPhase>('form')
 const lastError = ref<WorktreeError | null>(null)
 const logExpanded = ref(false)
-let successTimer: ReturnType<typeof setTimeout> | null = null
-let cancelled = false
+const successTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const cancelled = ref(false)
 
 const pendingCwd = computed(() => flow.currentCwd.value)
 const currentBranch = computed(() => flow.gitInfo.value?.branch ?? 'main')
@@ -102,7 +102,7 @@ onMounted(async () => {
   if (!cwd) { repoDetectLoading.value = false; branchesLoading.value = false; return }
   try {
     const result = await detectWorkspace(cwd)
-    if (cancelled) return
+    if (cancelled.value) return
     repoMode.value = result.mode
     repoPath.value = result.mode === 'bare-workspace' ? result.wsRoot : result.repoRoot
     defaultBranch.value = result.defaultBranch || 'main'
@@ -115,7 +115,7 @@ onMounted(async () => {
   if (repoMode.value !== 'not-repo') {
     try {
       const branches = await worktreeApi.listBranches(repoCwd)
-      if (cancelled) return
+      if (cancelled.value) return
       remoteBranches.value = branches.remote
       localBranches.value = branches.local
       if (branches.defaultBranch) { defaultBranch.value = branches.defaultBranch; baseBranch.value = `origin/${branches.defaultBranch}` }
@@ -145,7 +145,7 @@ async function onChangeRepo(): Promise<void> {
     const result = await pickDirectory({ defaultPath: pendingCwd.value ?? undefined })
     if (result.canceled || !result.path) return
     const detectResult = await detectWorkspace(result.path)
-    if (cancelled) return
+    if (cancelled.value) return
     repoMode.value = detectResult.mode
     repoPath.value = detectResult.mode === 'bare-workspace' ? detectResult.wsRoot : detectResult.repoRoot
     defaultBranch.value = detectResult.defaultBranch || 'main'
@@ -153,7 +153,7 @@ async function onChangeRepo(): Promise<void> {
     branchesLoading.value = true
     try {
       const branches = await worktreeApi.listBranches(repoPath.value || result.path)
-      if (cancelled) return
+      if (cancelled.value) return
       remoteBranches.value = branches.remote; localBranches.value = branches.local
       if (branches.defaultBranch) { defaultBranch.value = branches.defaultBranch; baseBranch.value = `origin/${branches.defaultBranch}` }
     } catch (e) {
@@ -172,21 +172,21 @@ async function runCreate(branch: string, base: string): Promise<void> {
   phase.value = 'progress'; lastError.value = null; logExpanded.value = false
   try {
     const result = await worktreeApi.create({ branch, baseBranch: base, locationMode: locationMode.value, workspaceHint: repoPath.value || pendingCwd.value || undefined })
-    if (cancelled) return
+    if (cancelled.value) return
     phase.value = 'success'; scheduleSuccessEmit(result.cwd)
   } catch (e) {
-    if (cancelled) return
+    if (cancelled.value) return
     const err = (e as WorktreeError) ?? {}; lastError.value = err
     phase.value = err.code === 'WORKTREE_EXISTS' ? 'exists' : 'error'
   }
 }
-function scheduleSuccessEmit(cwd: string): void { clearSuccessTimer(); successTimer = setTimeout(() => { emit('success', { cwd }); emit('close') }, SUCCESS_EMIT_DELAY_MS) }
-function clearSuccessTimer(): void { if (successTimer != null) { clearTimeout(successTimer); successTimer = null } }
+function scheduleSuccessEmit(cwd: string): void { clearSuccessTimer(); successTimer.value = setTimeout(() => { emit('success', { cwd }); emit('close') }, SUCCESS_EMIT_DELAY_MS) }
+function clearSuccessTimer(): void { if (successTimer.value != null) { clearTimeout(successTimer.value); successTimer.value = null } }
 async function onRetry(): Promise<void> { await runCreate(trimmedName.value, baseBranch.value) }
 function onCleanup(): void { emit('close') }
 function onUseExisting(): void { const cwd = lastError.value?.cwd; if (cwd) emit('use-existing', { cwd }) }
 function onCancel(): void { emit('close') }
-onBeforeUnmount(() => { cancelled = true; clearSuccessTimer() })
+onBeforeUnmount(() => { cancelled.value = true; clearSuccessTimer() })
 </script>
 
 <template>

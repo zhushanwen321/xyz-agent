@@ -149,7 +149,7 @@ export class WorktreeService implements IWorktreeService {
 
     // 2. 按模式分支处理
     if (detection.mode === 'bare-workspace') {
-      return this.createBareWorktree(detection, branch, baseBranch, workspaceHint)
+      return this.createBareWorktree(detection, branch, baseBranch, locationMode, workspaceHint)
     }
 
     // mode === 'plain-repo'
@@ -259,6 +259,7 @@ export class WorktreeService implements IWorktreeService {
     detection: WorkspaceDetectResult,
     branch: string,
     baseBranch: string,
+    _locationMode?: 'workspace' | 'repo-dir' | 'dedicated-dir',
     workspaceHint?: string,
   ): Promise<WorktreeCreateResult> {
     const { barePath, wsRoot } = detection
