@@ -20,15 +20,17 @@
  * - skill: skill 命令段（/skill:xxx），含 name 和可选的 SKILL.md 文件路径
  * - file: 文件引用段（未来从 drawer/diff 选取追加到 composer），含路径和可选行范围
  * - mention: @mention 段（未来 @user 等），含 name
- * - image: 图片附件段（Cmd+V 粘贴的截图等），path 存 tmpdir 绝对路径，name 存 basename 用于展示。
- *   不进 pi prompt 文本（base64 走 message.send 的 images 字段），segmentsToText 产出占位。
+ * - image: 图片附件段（Cmd+V 粘贴的截图等），path 存 tmpdir 绝对路径，name 存 basename 用于展示，
+ *   id 是 composer chip 的稳定唯一标识（crypto.randomUUID），同一文件附两次时供 ContextChipsBar
+ *   :key 区分（path 会重复）。不进 pi prompt 文本（base64 走 message.send 的 images 字段），
+ *   segmentsToText 产出占位。
  */
 export type Segment =
   | { type: 'text'; text: string }
   | { type: 'skill'; name: string; location?: string }
   | { type: 'file'; path: string; lineRange?: [number, number] }
   | { type: 'mention'; name: string }
-  | { type: 'image'; path: string; name: string }
+  | { type: 'image'; id: string; path: string; name: string }
 
 /**
  * Segment[] → 纯文本（归一化展示用）。

@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useComposerChipCommands } from '@/composables/useComposerChipCommands'
+import { findImageChipElById, useComposerChipCommands } from '@/composables/useComposerChipCommands'
 import { useContenteditableInput } from '@/composables/panel/useContenteditableInput'
 
 withDefaults(
@@ -119,13 +119,14 @@ function focus(): void {
 }
 
 /**
- * 按 path 移除 image badge（ContextChipsBar × 删除回调用）。
- * 定位 [data-chip-path=path] 的 image-chip，连同相邻 ZWSP spacer 一并移除，触发 onInput 同步状态。
+ * 按 chipId 移除 image badge（ContextChipsBar × 删除回调用）。
+ * 用 dataset 遍历定位（C3：chipId 是稳定唯一 id，避免同一文件附两次时重复 path 冲突），
+ * 连同相邻 ZWSP spacer 一并移除，触发 onInput 同步状态。
  */
-function removeImageChip(path: string): void {
+function removeImageChip(chipId: string): void {
   const el = elRef.value
   if (!el) return
-  const chip = el.querySelector<HTMLSpanElement>(`.image-chip[data-chip-path="${path}"]`)
+  const chip = findImageChipElById(el, chipId)
   if (!chip) return
   const next = chip.nextSibling
   if (next && next.nodeType === Node.TEXT_NODE && next.textContent === '\u200B') {

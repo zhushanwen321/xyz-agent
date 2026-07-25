@@ -1,12 +1,13 @@
 /**
- * useImageAttachment 单测 —— Cmd+V 图片粘贴的三路径降级矩阵（C3 契约）。
+ * useImageAttachment 单测 —— Cmd/Ctrl+V 图片粘贴的降级矩阵。
  *
  * 覆盖：
  * - TC1: 成功 → {kind:'badge', path, name}（mock writeTmpImage resolve）
  * - TC4: writeTmpImage reject → {kind:'text', text:'[图片粘贴失败]'} 降级
  * - TC5: writeTmpImage resolve(undefined)（非 electron）→ {kind:'text', text:'[图片粘贴：需桌面环境]'}
- * - noop: metaKey=false → {kind:'noop'}
  * - 读 blob 失败 → {kind:'text', text:'[图片读取失败]'}
+ *
+ * [HISTORICAL] 曾有 metaKey=false → noop 分支（Ctrl+V 路径文本通路），onPaste 统一通路后移除。
  *
  * mock 策略：vi.mock('@/lib/ipc') 替换 writeTmpImage 三态；FileReader 用 jsdom 原生实现。
  *
@@ -39,7 +40,7 @@ describe('useImageAttachment: handleImagePaste 降级矩阵', () => {
 
   it('TC1: writeTmpImage 成功 → {kind:badge, path, name}', async () => {
     writeTmpImageMock.mockResolvedValueOnce({ path: '/tmp/xyz-img-x.png', name: 'xyz-img-x.png' })
-    const result = await handleImagePaste(makePngFile(), { metaKey: true })
+    const result = await handleImagePaste(makePngFile())
     expect(result).toEqual({ kind: 'badge', path: '/tmp/xyz-img-x.png', name: 'xyz-img-x.png' })
     // writeTmpImage 收到 base64 非空 + mimeType='image/png'
     expect(writeTmpImageMock).toHaveBeenCalledTimes(1)
@@ -51,22 +52,15 @@ describe('useImageAttachment: handleImagePaste 降级矩阵', () => {
   it('TC4: writeTmpImage reject → {kind:text, text:[图片粘贴失败]} 降级', async () => {
     writeTmpImageMock.mockRejectedValueOnce(new Error('write failed'))
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const result = await handleImagePaste(makePngFile(), { metaKey: true })
+    const result = await handleImagePaste(makePngFile())
     expect(result).toEqual({ kind: 'text', text: '[图片粘贴失败]' })
     errSpy.mockRestore()
   })
 
   it('TC5: writeTmpImage resolve(undefined)（非 electron）→ {kind:text, text:[图片粘贴：需桌面环境]}', async () => {
     writeTmpImageMock.mockResolvedValueOnce(undefined)
-    const result = await handleImagePaste(makePngFile(), { metaKey: true })
+    const result = await handleImagePaste(makePngFile())
     expect(result).toEqual({ kind: 'text', text: '[图片粘贴：需桌面环境]' })
-  })
-
-  it('metaKey=false → {kind:noop}（Ctrl+V 路径文本通路，onPaste 自行处理）', async () => {
-    const result = await handleImagePaste(makePngFile(), { metaKey: false })
-    expect(result).toEqual({ kind: 'noop' })
-    // noop 不应调 writeTmpImage
-    expect(writeTmpImageMock).not.toHaveBeenCalled()
   })
 
   it('读 blob 失败（FileReader.onerror）→ {kind:text, text:[图片读取失败]}', async () => {
@@ -85,7 +79,7 @@ describe('useImageAttachment: handleImagePaste 降级矩阵', () => {
     }
     globalThis.FileReader = FailReader as unknown as typeof FileReader
     try {
-      const result = await handleImagePaste(file, { metaKey: true })
+      const result = await handleImagePaste(file)
       expect(result).toEqual({ kind: 'text', text: '[图片读取失败]' })
     } finally {
       globalThis.FileReader = orig

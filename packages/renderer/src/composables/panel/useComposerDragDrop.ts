@@ -6,7 +6,7 @@
  *
  * 数据流：dragover → isDragOver=true（composer-box accent 边框反馈）；
  * drop → 遍历 dataTransfer.files，image/* 每项：插占位 badge「拖入中…」→
- * await handleImagePaste(file,{metaKey:true}) → 回填真实 path/name（badge）/降级文本；
+ * await handleImagePaste(file) → 回填真实 path/name（badge）/降级文本；
  * dragleave → relatedTarget contains 检查防子元素冒泡误触发 → 真正离开 box 才复位 isDragOver。
  *
  * 复用 slice4 链路（handleImagePaste：file→base64→writeTmpImage IPC→image segment），
@@ -17,6 +17,7 @@
  */
 import { ref, type Ref } from 'vue'
 import { handleImagePaste } from './useImageAttachment'
+import { findImageChipEl } from '../useComposerChipCommands'
 
 /** ZWSP spacer 文本（image-chip 后跟的零宽空格，移除占位 badge 时一并清，同 useContenteditableInput） */
 const CHIP_SPACER_ZWSP = '\u200B'
@@ -62,7 +63,7 @@ export function useComposerDragDrop(
    *
    * 占位回填（等价 useContenteditableInput.handleImagePasteEvent）：
    * - 先 insertImageBadge(placeholderMark, '拖入中…') 占位
-   * - await handleImagePaste(file, {metaKey:true})
+   * - await handleImagePaste(file)
    * - kind:'badge' → 回填占位 dataset.chipPath/chipName + label（占位不在则重插）
    * - kind:'text'  → 移除占位 + 相邻 ZWSP spacer，insertText 降级文本
    */
@@ -76,10 +77,11 @@ export function useComposerDragDrop(
       for (const file of imageFiles) {
         const placeholderMark = `__drag_pending_${crypto.randomUUID()}__`
         inputRef.value?.insertImageBadge(placeholderMark, '拖入中…')
-        const result = await handleImagePaste(file, { metaKey: true })
-        const placeholder = composerBoxRef.value?.querySelector<HTMLSpanElement>(
-          `.image-chip[data-chip-path="${placeholderMark}"]`,
-        )
+        const result = await handleImagePaste(file)
+        // 用 dataset 遍历定位占位（C2：path 含 CSS 特殊字符时 querySelector 选择器失效）
+        const placeholder = composerBoxRef.value
+          ? findImageChipEl(composerBoxRef.value, placeholderMark)
+          : null
         if (result.kind === 'badge') {
           if (placeholder) {
             placeholder.dataset.chipPath = result.path
@@ -99,7 +101,7 @@ export function useComposerDragDrop(
           }
           document.execCommand('insertText', false, result.text)
         }
-        // kind==='noop' 不会出现（metaKey=true 必走 badge/text 分支）
+        // handleImagePaste 仅返回 badge/text（已无 noop），两个分支都已处理
       }
       onChanged()
     })()

@@ -89,7 +89,7 @@ describe('extractImages（slice6 TC1-TC4）', () => {
     const fetchSpy = mockFetchOk(bytes)
     vi.spyOn(global, 'fetch', 'get').mockReturnValue(fetchSpy)
 
-    const segments: Segment[] = [{ type: 'image', path: '/tmp/a b.png', name: 'a b.png' }]
+    const segments: Segment[] = [{ type: 'image', id: 'img-1', path: '/tmp/a b.png', name: 'a b.png' }]
     const result = await extractImages(segments)
 
     expect(result).toHaveLength(1)
@@ -114,8 +114,8 @@ describe('extractImages（slice6 TC1-TC4）', () => {
     )
 
     const segments: Segment[] = [
-      { type: 'image', path: '/tmp/a.jpg', name: 'a.jpg' },
-      { type: 'image', path: '/tmp/b.jpg', name: 'b.jpg' },
+      { type: 'image', id: 'img-a', path: '/tmp/a.jpg', name: 'a.jpg' },
+      { type: 'image', id: 'img-b', path: '/tmp/b.jpg', name: 'b.jpg' },
     ]
     const result = await extractImages(segments)
 
@@ -133,8 +133,8 @@ describe('extractImages（slice6 TC1-TC4）', () => {
     )
 
     const segments: Segment[] = [
-      { type: 'image', path: '/tmp/a.png', name: 'a.png' },
-      { type: 'image', path: '/tmp/b.png', name: 'b.png' },
+      { type: 'image', id: 'img-a', path: '/tmp/a.png', name: 'a.png' },
+      { type: 'image', id: 'img-b', path: '/tmp/b.png', name: 'b.png' },
     ]
     const result = await extractImages(segments)
 
@@ -169,7 +169,7 @@ describe('useChat.send images 透传（slice6 TC7-TC8）', () => {
     const { send } = useChat()
     await send('s-img', [
       { type: 'text', text: 'look' },
-      { type: 'image', path: '/tmp/x.png', name: 'x.png' },
+      { type: 'image', id: 'img-x', path: '/tmp/x.png', name: 'x.png' },
     ])
 
     expect(apiMock.send).toHaveBeenCalledTimes(1)
@@ -205,7 +205,7 @@ describe('useChat.send vision 降级（slice6 TC10）', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const { send } = useChat()
-    await send('s-img', [{ type: 'image', path: '/tmp/x.png', name: 'x.png' }])
+    await send('s-img', [{ type: 'image', id: 'img-x', path: '/tmp/x.png', name: 'x.png' }])
 
     // vision 降级 warn 被调用（含「不支持图片」）
     const visionWarn = warnSpy.mock.calls.find((c) => String(c[0]).includes('不支持图片'))
@@ -234,7 +234,7 @@ describe('useChat.send vision 降级（slice6 TC10）', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const { send } = useChat()
-    await send('s-img2', [{ type: 'image', path: '/tmp/y.png', name: 'y.png' }])
+    await send('s-img2', [{ type: 'image', id: 'img-y', path: '/tmp/y.png', name: 'y.png' }])
 
     // 无 vision 降级 warn（extractImages 成功路径也不 warn）
     const visionWarn = warnSpy.mock.calls.find((c) => String(c[0]).includes('不支持图片'))

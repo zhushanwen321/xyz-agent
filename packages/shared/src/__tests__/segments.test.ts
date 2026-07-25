@@ -83,6 +83,7 @@ describe('segmentsToText', () => {
     const segs: Segment[] = [
       {
         type: 'image',
+        id: 'img-1',
         path: '/var/folders/xx/T/screenshot-20260724-1530.png',
         name: 'screenshot-20260724-1530.png',
       },
@@ -97,7 +98,7 @@ describe('segmentsToText', () => {
 
   it('image + text 混合时中间补空格', () => {
     const segs: Segment[] = [
-      { type: 'image', path: '/tmp/a.png', name: 'a.png' },
+      { type: 'image', id: 'img-a', path: '/tmp/a.png', name: 'a.png' },
       { type: 'text', text: '这张图怎么修' },
     ]
     expect(segmentsToText(segs)).toBe('[图片: a.png] 这张图怎么修')
@@ -105,8 +106,8 @@ describe('segmentsToText', () => {
 
   it('连续多个 image segment 各自独立占位', () => {
     const segs: Segment[] = [
-      { type: 'image', path: '/tmp/1.png', name: '1.png' },
-      { type: 'image', path: '/tmp/2.png', name: '2.png' },
+      { type: 'image', id: 'img-1', path: '/tmp/1.png', name: '1.png' },
+      { type: 'image', id: 'img-2', path: '/tmp/2.png', name: '2.png' },
     ]
     expect(segmentsToText(segs)).toBe('[图片: 1.png][图片: 2.png]')
   })
@@ -118,7 +119,7 @@ describe('segmentsToText', () => {
     // 因此 image 与 skill 直接拼接，中间无空格。
     const segs: Segment[] = [
       { type: 'text', text: '看这张' },
-      { type: 'image', path: '/tmp/x.png', name: 'x.png' },
+      { type: 'image', id: 'img-x', path: '/tmp/x.png', name: 'x.png' },
       { type: 'skill', name: 'review' },
     ]
     expect(segmentsToText(segs)).toBe('看这张[图片: x.png]/skill:review')

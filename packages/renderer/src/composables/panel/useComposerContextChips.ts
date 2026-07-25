@@ -5,8 +5,11 @@
  * 提取到 composable 以满足 Composer.vue <script setup> 行数上限（300 行）。
  *
  * 数据流：
- * - segments（image 段）→ attachedItems（{id=path, name, type:'image'}）→ ContextChipsBar :items
- * - ContextChipsBar @remove(id) → onRemoveContextChip → ComposerInput.removeImageChip(path) → refreshAttachedItems
+ * - segments（image 段）→ attachedItems（{id=segment.id, name, type:'image'}）→ ContextChipsBar :items
+ * - ContextChipsBar @remove(id) → onRemoveContextChip → ComposerInput.removeImageChip(chipId) → refreshAttachedItems
+ *
+ * [HISTORICAL] chip id 曾用 path，但同一文件附两次时 path 重复导致 Vue :key 冲突（删除不可靠）。
+ * C3 改用 segment.id（composer chip 的稳定唯一 uuid，crypto.randomUUID 生成）。
  *
  * segments 是 DOM 即时读取（非响应式），需在 input 变化 / chip 删除后主动调 refreshAttachedItems。
  */
@@ -19,7 +22,7 @@ import type { Segment } from '@xyz-agent/shared'
  */
 interface ComposerInputInstance {
   getSegments(): Segment[]
-  removeImageChip(path: string): void
+  removeImageChip(chipId: string): void
 }
 
 /**
@@ -33,11 +36,11 @@ export function useComposerContextChips(inputRef: Ref<ComposerInputInstance | nu
   function refreshAttachedItems(): void {
     const segs = inputRef.value?.getSegments() ?? []
     attachedItems.value = segs
-      .filter((s): s is { type: 'image'; path: string; name: string } => s.type === 'image')
-      .map((s) => ({ id: s.path, name: s.name, type: 'image' as const }))
+      .filter((s): s is { type: 'image'; id: string; path: string; name: string } => s.type === 'image')
+      .map((s) => ({ id: s.id, name: s.name, type: 'image' as const }))
   }
 
-  /** ContextChipsBar × 删除回调：定位 DOM 中 [data-chip-path=path] 的 image chip 移除并刷新 */
+  /** ContextChipsBar × 删除回调：用 chipId（segment.id）定位 DOM 中 image chip 移除并刷新 */
   function onRemoveContextChip(id: string): void {
     inputRef.value?.removeImageChip(id)
     refreshAttachedItems()

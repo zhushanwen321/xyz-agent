@@ -6,6 +6,35 @@ import i18n from '@/i18n'
 const t = i18n.global.t
 
 /**
+ * 在容器内按 chipPath 查找 image-chip 元素（dataset 遍历，路径含 CSS 特殊字符也安全）。
+ *
+ * [HISTORICAL] 曾用 el.querySelector(`.image-chip[data-chip-path="${path}"]`)，
+ * 但 path 含 `"` / `]` 等 CSS 特殊字符时选择器解析失败（删除失效 / 重复 badge）。
+ * 改为遍历所有 .image-chip 比对 dataset.chipPath，规避选择器转义。
+ *
+ * 用于异步回填场景（onPaste/onDrop 占位 badge 用唯一 placeholderMark 作 chipPath 定位回填）。
+ */
+export function findImageChipEl(el: HTMLElement, chipPath: string): HTMLElement | null {
+  const chips = el.querySelectorAll<HTMLElement>('.image-chip')
+  for (const chip of chips) {
+    if (chip.dataset.chipPath === chipPath) return chip
+  }
+  return null
+}
+
+/**
+ * 在容器内按 chipId 查找 image-chip 元素（C3：ContextChipsBar 删除回调用稳定唯一 id 定位）。
+ * chipId 是 crypto.randomUUID()（无 CSS 特殊字符），但仍用 dataset 遍历与 findImageChipEl 保持一致。
+ */
+export function findImageChipElById(el: HTMLElement, chipId: string): HTMLElement | null {
+  const chips = el.querySelectorAll<HTMLElement>('.image-chip')
+  for (const chip of chips) {
+    if (chip.dataset.chipId === chipId) return chip
+  }
+  return null
+}
+
+/**
  * Composer 富文本 chip 的 DOM 操作（slash 命令 chip / @·# mention chip）。
  * 从 ComposerInput 提取以满足 <script setup> 行数上限（CLAUDE.md）。
  *
@@ -181,13 +210,13 @@ export function useComposerChipCommands(
   }
 
   /**
-   * 插入图片 badge（Cmd+V 富呈现通路：截图粘贴后在光标处插 image chip）。
+   * 插入图片 badge（Cmd/Ctrl+V 富呈现通路：截图粘贴后在光标处插 image chip）。
    *
    * 与 insertFileChip 的区别：
    * - 样式带 .image-chip 修饰（紫色 reasoning 色，与 ContextChipsBar image 一致），复用 .mention-chip 基础样式（TO2）。
    * - dataset.chipType='image'（getSegmentsFromEl 依此重建 {type:image} segment，区别于 file 的 'file'）。
+   * - dataset.chipId = uuid（C3：唯一标识，同一文件附两次时 ContextChipsBar :key 用它避免重复 path 冲突）。
    * - 无行范围概念，label 直接显 basename。
-   * DOM schema 见 C2 契约。
    */
   function insertImageBadge(path: string, name: string): void {
     const el = getEl()
@@ -199,6 +228,7 @@ export function useComposerChipCommands(
     chip.contentEditable = 'false'
     // 结构化 dataset：getSegmentsFromEl 依此重建 {type:image} segment
     chip.dataset.chipType = 'image'
+    chip.dataset.chipId = crypto.randomUUID()
     chip.dataset.chipPath = path
     chip.dataset.chipName = name
     const label = document.createElement('span')

@@ -47,6 +47,9 @@ describe('TC6: insertImageBadge DOM 结构', () => {
     expect(chip.dataset.chipType).toBe('image')
     expect(chip.dataset.chipPath).toBe('/tmp/x.png')
     expect(chip.dataset.chipName).toBe('x.png')
+    // C3：chipId 是稳定唯一 uuid（crypto.randomUUID），同一文件附两次时 ContextChipsBar :key 用它区分
+    expect(chip.dataset.chipId).toBeTruthy()
+    expect(chip.dataset.chipId.length).toBeGreaterThan(0)
     // 子元素：chip-label（显 name）+ chip-x
     const label = chip.querySelector('.chip-label') as HTMLElement
     expect(label).toBeTruthy()
@@ -56,6 +59,19 @@ describe('TC6: insertImageBadge DOM 结构', () => {
     const spacer = chip.nextSibling
     expect(spacer?.nodeType).toBe(Node.TEXT_NODE)
     expect(spacer?.textContent).toBe('\u200B')
+  })
+
+  it('C3: 同一文件附两次 → 两个 chip 各有唯一 chipId（path 重复但 id 不冲突）', () => {
+    const { el, chipCommands } = setupChipCommands()
+    chipCommands.insertImageBadge('/tmp/dup.png', 'dup.png')
+    chipCommands.insertImageBadge('/tmp/dup.png', 'dup.png')
+
+    const chips = el.querySelectorAll<HTMLElement>('.image-chip')
+    expect(chips.length).toBe(2)
+    // path 相同（同一文件），id 必须不同（否则 ContextChipsBar :key 冲突）
+    expect(chips[0].dataset.chipPath).toBe('/tmp/dup.png')
+    expect(chips[1].dataset.chipPath).toBe('/tmp/dup.png')
+    expect(chips[0].dataset.chipId).not.toBe(chips[1].dataset.chipId)
   })
 
   it('onChanged 被调用', () => {
@@ -85,7 +101,8 @@ describe('TC7: getSegmentsFromEl image 分支', () => {
     const segments = getSegmentsFromEl(el)
     expect(segments).toEqual([
       { type: 'text', text: 'hello' },
-      { type: 'image', path: '/tmp/a.png', name: 'a.png' },
+      // C3：image segment 含稳定唯一 id（chip.dataset.chipId 的 uuid）
+      { type: 'image', id: expect.any(String), path: '/tmp/a.png', name: 'a.png' },
       { type: 'text', text: 'world' },
     ])
     // chip-label 'a.png' 与 chip-x '×' 不出现在任何 text segment（rejectChipSubtree 生效）
