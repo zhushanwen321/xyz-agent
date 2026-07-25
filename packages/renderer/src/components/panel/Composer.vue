@@ -66,7 +66,7 @@
         <AddMenuPopover @select="onAddSelect" />
         <span class="flex-1" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
-        <ContextCapacityPopover :session-id="sessionId ?? undefined" />
+        <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
         <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->

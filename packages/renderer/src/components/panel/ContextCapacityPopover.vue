@@ -165,7 +165,6 @@ import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
-import { useSessionStore } from '@/stores/session'
 import { useSettingsStore } from '@/stores/settings'
 import { useQuotaStore } from '@/stores/quota'
 import { useQuotaQuery } from '@/composables/features/useQuotaQuery'
@@ -191,12 +190,18 @@ const stats = ref<ContextStats>({
 const { t } = useI18n()
 
 const props = defineProps<{
-  /** session 通道订阅键（D8：context.update 带 sessionId，走 events.on(sessionId)） */
+  /** session 通道订阅键（context.update 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
+  /**
+   * 当前复合 modelId（"provider/modelId"），受控 prop，由 Composer 下发。
+   * landing 态由 Composer 经 useComposerModelThinking fallback 到 defaultModel。
+   * 用于推导 provider（split('/')[0]）查 quota——不在子组件内自查 sessionStore，
+   * 对齐 ModelSelectPopover/ThinkingLevelPopover 的受控范式。
+   */
+  modelId?: string
 }>()
 
 // ── stores ──
-const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
 const quotaStore = useQuotaStore()
 
@@ -238,19 +243,15 @@ onMessage(['context.update', 'session.state_changed'], (msg) => {
 // ── coding-plan 额度查询（w4 新增）──
 
 /**
- * 从当前 session 的 modelId 派生 providerId（复合串 "provider/modelId" → provider 部分），
+ * 从受控 modelId prop 派生 providerId（复合串 "provider/modelId" → provider 部分），
  * 然后匹配 quota preset，命中则启用 coding-plan 区。
  *
- * Landing 态（sessionId=undefined）：sessionStore 无 session 可查，fallback 到
- * settingsStore.defaultModel（"provider/modelId" 复合串，与 session.modelId 同格式）。
- * defaultModel 是 landing 态 composer 模型选择器的 SSOT（见 settings.ts:77-78），
- * 用它推导 provider 让 landing composer 也能显示已配置的 quota 用量。
+ * modelId 由 Composer 下发（受控），已在 Composer 层完成 session.modelId >
+ * flow.currentModel > defaultModel 的 fallback。本组件不在子组件内部自查 sessionStore，
+ * 对齐 ModelSelectPopover/ThinkingLevelPopover 的受控范式（推导上浮到 Composer/composable）。
  */
 const matchedProviderId = computed<string | null>(() => {
-  // 优先从 active session 取 modelId；landing 态 fallback 到 defaultModel
-  const sid = props.sessionId
-  const session = sid ? sessionStore.list.find((s) => s.id === sid) : undefined
-  const compositeModelId = session?.modelId ?? settingsStore.defaultModel
+  const compositeModelId = props.modelId
   if (!compositeModelId) return null
   const provider = compositeModelId.split('/')[0]
   if (!provider) return null

@@ -135,13 +135,12 @@ function pushContextUpdate(sid: string, data: { inputTokens: number; contextLimi
 describe('ContextCapacityPopover coding-plan 区', () => {
   describe('hover-enter 查询触发', () => {
     it('hover 按钮 + provider 命中 quota preset → 调 getCached + fetchQuota', async () => {
-      setupSession('s1', 'zhipu/glm-4')
       setupProviders([zhipuProvider])
       vi.mocked(quotaApi.getCached).mockResolvedValue({ data: mockQuotaRow, lastFetchAt: 1000 })
       vi.mocked(quotaApi.fetchQuota).mockResolvedValue({ data: mockQuotaRow, lastFetchAt: 2000 })
 
       const wrapper = mount(ContextCapacityPopover, {
-        props: { sessionId: 's1' },
+        props: { modelId: 'zhipu/glm-4' },
       })
       await flushPromises()
 
@@ -155,11 +154,10 @@ describe('ContextCapacityPopover coding-plan 区', () => {
     })
 
     it('provider 未配置 quota → 不调 quota API', async () => {
-      setupSession('s1', 'deepseek/v3')
       setupProviders([deepseekProvider])
 
       const wrapper = mount(ContextCapacityPopover, {
-        props: { sessionId: 's1' },
+        props: { modelId: 'deepseek/v3' },
       })
       await flushPromises()
 
@@ -176,11 +174,10 @@ describe('ContextCapacityPopover coding-plan 区', () => {
         ...zhipuProvider,
         quota: { fetcher: 'zhipu', enabled: false },
       }
-      setupSession('s1', 'zhipu/glm-4')
       setupProviders([disabledProvider])
 
       const wrapper = mount(ContextCapacityPopover, {
-        props: { sessionId: 's1' },
+        props: { modelId: 'zhipu/glm-4' },
       })
       await flushPromises()
 
@@ -191,7 +188,7 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       expect(quotaApi.getCached).not.toHaveBeenCalled()
     })
 
-    it('无 sessionId → 不调 quota API', async () => {
+    it('无 modelId → 不调 quota API（未确定模型时不查 quota）', async () => {
       setupProviders([zhipuProvider])
 
       const wrapper = mount(ContextCapacityPopover, {
@@ -206,17 +203,16 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       expect(quotaApi.getCached).not.toHaveBeenCalled()
     })
 
-    it('[landing] 无 sessionId 但 defaultModel 命中已启用 quota 的 provider → 用 defaultModel 推导 provider 并查 quota API', async () => {
+    it('[landing] sessionId=undefined 但 modelId 受控下发命中已启用 quota 的 provider → 查 quota API', async () => {
       // [HISTORICAL] 回归：landing composer（sessionId=undefined）之前永远显「未配置」，
-      // 因为 matchedProviderId 在无 sessionId 时直接返回 null。修复后 fallback 到
-      // settingsStore.defaultModel（landing 态 composer 模型选择器的 SSOT），
-      // 让 landing composer 也能显示已配置的 quota 用量。
+      // 因为旧实现只在有 sessionId 时自查 sessionStore 查 modelId。重构为受控范式后，
+      // Composer 直接下发 modelId（landing 态由 useComposerModelThinking fallback 到 defaultModel），
+      // 子组件不再自查 store。只要 modelId 命中已启用 quota 的 provider 即查。
       setupProviders([zhipuProvider])
-      const settingsStore = useSettingsStore()
-      settingsStore.defaultModel = 'zhipu/glm-4.6'
 
       const wrapper = mount(ContextCapacityPopover, {
-        props: {}, // sessionId=undefined（landing 态）
+        // landing 态：sessionId=undefined，但 modelId 受控下发
+        props: { modelId: 'zhipu/glm-4.6' },
       })
       await flushPromises()
 
@@ -224,36 +220,17 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       await btn.trigger('mouseenter')
       await flushPromises()
 
-      // landing 态有 defaultModel → 应该查 quota API（provider=zhipu）
       expect(quotaApi.getCached).toHaveBeenCalledWith('zhipu')
       expect(quotaApi.fetchQuota).toHaveBeenCalledWith('zhipu')
-    })
-
-    it('[landing] 无 sessionId 且 defaultModel 为空 → 不调 quota API', async () => {
-      setupProviders([zhipuProvider])
-      const settingsStore = useSettingsStore()
-      settingsStore.defaultModel = '' // 显式空
-
-      const wrapper = mount(ContextCapacityPopover, {
-        props: {},
-      })
-      await flushPromises()
-
-      const btn = wrapper.find('[title="上下文容量"]')
-      await btn.trigger('mouseenter')
-      await flushPromises()
-
-      expect(quotaApi.getCached).not.toHaveBeenCalled()
     })
   })
 
   describe('未配置态「配置」按钮（偏差 #D）', () => {
     it('未配置 provider 时 footer 渲染「配置」按钮（跳转 Settings）', async () => {
-      setupSession('s1', 'deepseek/v3')
       setupProviders([deepseekProvider])
 
       const wrapper = mount(ContextCapacityPopover, {
-        props: { sessionId: 's1' },
+        props: { modelId: 'deepseek/v3' },
         global: {
           provide: { openSettings: () => {} },
         },
@@ -276,7 +253,7 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       vi.mocked(quotaApi.fetchQuota).mockResolvedValue({ data: mockQuotaRow, lastFetchAt: 2000 })
 
       const wrapper = mount(ContextCapacityPopover, {
-        props: { sessionId: 's1' },
+        props: { modelId: 'zhipu/glm-4' },
       })
       await flushPromises()
 
@@ -292,7 +269,6 @@ describe('ContextCapacityPopover coding-plan 区', () => {
     })
 
     it('quota API 失败时仍保留旧缓存', async () => {
-      setupSession('s1', 'zhipu/glm-4')
       setupProviders([zhipuProvider])
       // 先预填旧缓存
       const quotaStore = useQuotaStore()
@@ -303,7 +279,7 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       vi.mocked(quotaApi.fetchQuota).mockRejectedValue(new Error('network'))
 
       const wrapper = mount(ContextCapacityPopover, {
-        props: { sessionId: 's1' },
+        props: { modelId: 'zhipu/glm-4' },
       })
       await flushPromises()
 
