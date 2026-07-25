@@ -255,6 +255,9 @@ export class ConfigService implements IConfigService {
   }
 
   setWorktreeRootDir(dir: string): void {
+    if (!dir || !dir.trim()) {
+      throw new Error('worktreeRootDir cannot be empty')
+    }
     const config = this.loadAppConfig()
     config['worktreeRootDir'] = dir
     this.saveAppConfig(config)
@@ -267,6 +270,9 @@ export class ConfigService implements IConfigService {
   }
 
   setSetupScript(script: string): void {
+    if (script.includes('..')) {
+      throw new Error('setupScript path cannot contain ..')
+    }
     const config = this.loadAppConfig()
     config['setupScript'] = script
     this.saveAppConfig(config)
@@ -291,6 +297,9 @@ export class ConfigService implements IConfigService {
   }
 
   setTimeout(timeout: number): void {
+    if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 3600) {
+      throw new Error(`timeout must be a positive number in (0, 3600], got ${timeout}`)
+    }
     const config = this.loadAppConfig()
     config['worktreeTimeout'] = timeout
     this.saveAppConfig(config)
