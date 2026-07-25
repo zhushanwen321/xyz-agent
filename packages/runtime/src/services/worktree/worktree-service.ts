@@ -127,7 +127,7 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async create(params: WorktreeCreateParams): Promise<WorktreeCreateResult> {
-    const { branch, baseBranch = 'origin/main', workspaceHint } = params
+    const { branch, baseBranch = 'origin/main', locationMode, workspaceHint } = params
 
     // 0. 分支名校验（安全边界，防 Windows 路径遍历）。前端校验只是 UX，runtime 必须独立校验。
     if (INVALID_BRANCH_REGEX.test(branch)) {
@@ -148,7 +148,7 @@ export class WorktreeService implements IWorktreeService {
     }
 
     // mode === 'plain-repo'
-    return this.createPlainRepoWorktree(detection, branch, baseBranch, workspaceHint)
+    return this.createPlainRepoWorktree(detection, branch, baseBranch, locationMode, workspaceHint)
   }
 
   /**
@@ -301,23 +301,37 @@ export class WorktreeService implements IWorktreeService {
     detection: WorkspaceDetectResult,
     branch: string,
     baseBranch: string,
+    locationMode?: 'workspace' | 'repo-dir' | 'dedicated-dir',
     workspaceHint?: string,
   ): Promise<WorktreeCreateResult> {
     const { repoRoot } = detection
 
-    // 读取 worktreeRootDir 配置
-    const worktreeRootDir = this.deps.configService.getWorktreeRootDir()
-
     // 目录名转换
     const dirName = branch.replace(/\//g, '-')
 
-    // 计算目录布局 ~/worktrees/<repoName>/<branchDir>，处理同名 repo 冲突
-    const newWtPath = computePlainRepoWorktreeDir(
-      worktreeRootDir,
-      repoRoot,
-      dirName,
-      (p: string) => this.deps.fs.existsSync(p),
-    )
+    let newWtPath: string
+
+    // 根据 locationMode 决定创建位置
+    if (locationMode === 'repo-dir') {
+      // repo-dir 模式：在仓库目录下创建（传统 git worktree 行为）
+      newWtPath = join(repoRoot, dirName)
+      if (this.deps.fs.existsSync(newWtPath)) {
+        throw worktreeError(
+          'WORKTREE_EXISTS',
+          `worktree 目录已存在: ${newWtPath}`,
+          { cwd: newWtPath, dirName },
+        )
+      }
+    } else {
+      // dedicated-dir 模式（默认）：在专用目录 ~/worktrees/<repoName>/<branchDir> 下创建
+      const worktreeRootDir = this.deps.configService.getWorktreeRootDir()
+      newWtPath = computePlainRepoWorktreeDir(
+        worktreeRootDir,
+        repoRoot,
+        dirName,
+        (p: string) => this.deps.fs.existsSync(p),
+      )
+    }
 
     // base 解析
     const baseRef = await this.resolveBaseRef(repoRoot, baseBranch, workspaceHint)

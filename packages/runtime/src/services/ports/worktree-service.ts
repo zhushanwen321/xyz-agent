@@ -33,6 +33,8 @@ export interface WorktreeCreateParams {
   branch: string
   /** 基分支：'current'（继承当前分支，默认）/ 'origin/main'（校验远端 ref 存在后使用）/ 任意分支名。 */
   baseBranch?: string
+  /** worktree 创建位置模式。省略时 bare 模式默认 'workspace'，plain-repo 默认 'dedicated-dir'。 */
+  locationMode?: 'workspace' | 'repo-dir' | 'dedicated-dir'
   /** workspace 检测起点 cwd（缺省用 process.cwd()）。前端发起时显式传入。 */
   workspaceHint?: string
 }
