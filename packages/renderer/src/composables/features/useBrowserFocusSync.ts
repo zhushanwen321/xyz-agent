@@ -40,6 +40,10 @@ export function useBrowserFocusSync(): void {
     () => focusedSessionId.value,
     (sid) => {
       if (sid) {
+        // [W6] debug log：观察 focus swap 触发频率，便于排查「切 session 不更新」类问题。
+        // 触发源覆盖 selectSession / ⌘[/⌘] / deleteSession 后自动聚焦三条路径，
+        // 高频场景（如快速连按 ⌘[）打日志便于复现。
+        console.debug('[browserFocusSync] swap to', sid)
         void browserFocus(sid)
       }
     },
