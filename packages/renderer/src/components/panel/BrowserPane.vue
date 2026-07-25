@@ -307,9 +307,6 @@ function pushRect(): void {
     width: Math.round(domRect.width),
     height: Math.round(domRect.height),
   }
-  // [临时诊断日志] 验证 Splitter @layout → CustomEvent → scheduleRectPush → pushRect 链路是否触发；
-  // 日志在 0 尺寸检查前打印，便于观察 rect=0（隐藏/未布局）场景。验证后删除。
-  console.log('[BrowserPane] pushRect', rect)
   // 跳过 0 尺寸（隐藏中/未布局），避免把 view 设成 0,0,0,0 等效隐藏
   if (rect.width === 0 || rect.height === 0) return
   void browserSetRect(props.sessionId, rect)

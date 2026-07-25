@@ -225,7 +225,14 @@ export class BrowserViewManager {
     if (!entry) return
     entry.lastRect = rect
     if (entry.isVisible) {
+      const prev = entry.view.getBounds()
       entry.view.setBounds(rect)
+      if (prev.x !== rect.x || prev.y !== rect.y || prev.width !== rect.width || prev.height !== rect.height) {
+        const win = this.windows.get(entry.windowId)
+        if (win && !win.isDestroyed()) {
+          win.contentView.addChildView(entry.view)
+        }
+      }
     }
   }
 
