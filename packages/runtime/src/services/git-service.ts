@@ -276,6 +276,18 @@ export class GitService implements IGitService {
   }
 
   /**
+   * 按 cwd 检出分支（landing 态无 session，plain-repo 模式切分支用）。
+   * 与 checkout(sessionId,name) 同语义，但 cwd 直接传入（不经 session 解析）。
+   * 用于 BranchSelectPopover plain-repo 模式 landing 态选分支。
+   */
+  async checkoutByCwd(cwd: string, name: string): Promise<void> {
+    const res = await this.execSafe(cwd, 'checkout', [name])
+    if (res.exitCode !== 0) {
+      throw new GitError('git_failed', res.stderr.trim() || `git checkout ${name} 失败`)
+    }
+  }
+
+  /**
    * 创建并检出分支（#7 创建分支 modal，§4.4）。
    *
    * 数据流：handler → createBranch(sessionId,name) → execSafe(cwd,'checkout',['-b',name]) →

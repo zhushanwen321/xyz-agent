@@ -34,13 +34,15 @@ export interface NewTaskBranchController {
 }
 
 /**
- * @param currentSessionId 当前 flow 绑定 session 的 id（无绑定→分支操作抛错守卫）
+ * @param currentSessionId 当前 flow 绑定 session 的 id（无绑定→分支操作走 cwd-based 路径）
  * @param gitInfo 当前 flow 的 git 派生（openBranchPopover 守卫：非 git 目录不可达）
+ * @param currentCwd 当前 flow 的 cwd（landing 态无 session 时，checkout 用此 cwd）
  * @param controller 父编排器注入的受控写入口（飞行标记 + 守卫失败回 idle）
  */
 export function useNewTaskBranch(
   currentSessionId: () => string | null,
   gitInfo: () => GitInfo | null,
+  currentCwd: () => string | null,
   controller: NewTaskBranchController,
 ): {
   isBranchCreating: ReturnType<typeof useNewTaskFlowState>['branchCreateInFlight']
@@ -85,11 +87,19 @@ export function useNewTaskBranch(
 
   /**
    * selectBranch —— 选干净分支直切（§4.3，#6）。
+   * - 已建 session：gitApi.checkout(sessionId, name)
+   * - landing 态（无 session）：gitApi.checkoutByCwd(cwd, name)（plain-repo 模式切分支）
    * checkout reject（冲突/分支不存在）→ 向上抛，state 留 branch-popover 显错（AC-6.4）；成功→landing。
    */
   async function selectBranch(name: string): Promise<void> {
-    if (!currentSessionId()) throw new Error('NewTaskFlow: 无绑定 session，无法切换分支')
-    await gitApi.checkout(currentSessionId()!, name) // reject 则留 branch-popover
+    const sid = currentSessionId()
+    if (sid) {
+      await gitApi.checkout(sid, name)
+    } else {
+      const cwd = currentCwd()
+      if (!cwd) throw new Error('NewTaskFlow: 无 cwd 也无 session，无法切换分支')
+      await gitApi.checkoutByCwd(cwd, name)
+    }
     transition('landing') // branch-popover→landing
   }
 
@@ -99,8 +109,14 @@ export function useNewTaskBranch(
    * 与 selectBranch 同语义（确认动作在组件 inline 条，composable 只执行切走）。
    */
   async function confirmDirtySwitch(name: string): Promise<void> {
-    if (!currentSessionId()) throw new Error('NewTaskFlow: 无绑定 session，无法切换分支')
-    await gitApi.checkout(currentSessionId()!, name)
+    const sid = currentSessionId()
+    if (sid) {
+      await gitApi.checkout(sid, name)
+    } else {
+      const cwd = currentCwd()
+      if (!cwd) throw new Error('NewTaskFlow: 无 cwd 也无 session，无法切换分支')
+      await gitApi.checkoutByCwd(cwd, name)
+    }
     transition('landing') // branch-popover→landing
   }
 

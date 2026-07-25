@@ -277,6 +277,7 @@ export function useNewTaskFlow() {
   const branch = useNewTaskBranch(
     () => currentSessionId.value,
     () => gitInfo.value,
+    () => currentCwd.value,
     {
       setBranchCreateInFlight: controller.setBranchCreateInFlight,
       transitionUnchecked: controller.transitionUnchecked,

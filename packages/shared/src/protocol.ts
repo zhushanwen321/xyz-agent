@@ -66,7 +66,7 @@ export type ClientMessageType =
   | 'file.tree' | 'file.tree.expand' | 'file.search'
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
-  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
+  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.checkoutCwd' | 'git.createBranch'
   | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare' | 'workspace.detect'
   | 'worktree.create' | 'worktree.listBranches' | 'worktree.list'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
@@ -274,6 +274,7 @@ export interface ClientMessageMap {
   'git.unstage': { sessionId: string; filePaths?: string[] }
   'git.commit': { sessionId: string; message?: string }
   'git.checkout': { sessionId: string; name: string }
+  'git.checkoutCwd': { cwd: string; name: string }
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
@@ -682,7 +683,7 @@ export interface ServerMessageMapBase {
   // status 是动作结果字面量（sent/rejected/steered/queued/aborted/staged/unstaged/committed/switched/branch_created），
   // CL10 决策不收窄死字面量，统一 string（ack 型 domain register<void> 不读 status 值）。
   // 见 session-message-handler.ts:175/180/186/198/211 + git-message-handler.ts:65/74/87/96/105。
-  'message.status': { sessionId: string; status: string }
+  'message.status': { sessionId?: string; status: string }
   // extension.discovered：installDir/installGit 的成功 reply（extension-message-handler.ts:162/176 reply { tempDir, candidates }）。
   // candidates 是发现的扩展候选列表（runtime ExtensionInfo[]，与 extension.ts ExtensionDiscoveredPayload 同构）。
   'extension.discovered': { tempDir: string; candidates: ExtensionInfo[] }
@@ -880,6 +881,7 @@ export interface ReplyPayloadMap {
   'extension.uninstall': void     // reply config.extensions
   'extension.upgrade': void       // reply config.extensions
   'git.checkout': void            // reply message.status
+  'git.checkoutCwd': void        // reply message.status
   'git.commit': void              // reply message.status
   'git.createBranch': void        // reply message.status
   'git.stage': void               // reply message.status

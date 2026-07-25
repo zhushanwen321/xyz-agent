@@ -383,6 +383,7 @@ export interface IGitService {
   unstage(sessionId: string, filePaths?: string[]): Promise<void>
   commit(sessionId: string, message?: string): Promise<void>
   checkout(sessionId: string, name: string): Promise<void>
+  checkoutByCwd(cwd: string, name: string): Promise<void>
   createBranch(sessionId: string, name: string): Promise<void>
 }
 

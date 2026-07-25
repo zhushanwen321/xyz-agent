@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, onMounted, watch } from 'vue'
 /**
  * Landing.vue —— 新建任务落地空态（#2，spec §3.1 / §4.5）。
  *
@@ -10,7 +11,7 @@
  * NFR④#2 AC-2.6：historyError=true → 显重试按钮，不永久卡住。
  * 首次启动延迟 create（AC-1.7）：currentCwd 为空 → directory chip 显「选择目录」空态。
  */
-import { computed } from 'vue'
+
 import { useI18n } from 'vue-i18n'
 import { Folder, GitFork, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -66,6 +67,23 @@ function onOpenDirDialog(): void {
 // （settingsStore 全局 skills + projectSkills），不再依赖公共 session pi 命令（W3 已移除公共 session）。
 const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId)
 const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
+
+/**
+ * landing 态 cwd 同步：若 flow.pendingCwd 为空但 props.currentCwd 有值（Panel 传入的 sessionDir /
+ * defaultCwd），同步给 flow。否则 dirSelect 的 watch currentCwd 不触发 → workspace.detect 不调 →
+ * mode 恒 'not-repo' → Git chip 不显示、分支列表不拉。
+ * 进入 landing 的路径（startFlow）会 presetCwd，但直接渲染 Landing（app 启动/空 session）未走 startFlow。
+ */
+onMounted(() => {
+  if (!flow.currentCwd.value && props.currentCwd) {
+    flow.presetCwd(props.currentCwd)
+  }
+})
+watch(() => props.currentCwd, (newCwd) => {
+  if (!flow.currentCwd.value && newCwd) {
+    flow.presetCwd(newCwd)
+  }
+})
 /**
  * 当前分支名（Git chip 显示）。flow.gitInfo 现已合并 landing 态数据源
  *（useNewTaskFlow 从 dirSelect.worktreeItems HEAD 项派生），无需组件层再查 worktreeItems。
@@ -216,7 +234,9 @@ function onRetry(): void {
             </PopoverTrigger>
             <PopoverContent side="top" class="w-[420px] p-0">
               <BranchSelectPopover
-                :session-id="sessionId"
+                :mode="flow.mode?.value === 'bare-workspace' ? 'bare-workspace' : 'plain-repo'"
+                :cwd="cwd ?? ''"
+                :current-branch="branch"
                 :worktree-items="worktreeItems"
                 @select="onSelectBranch"
                 @confirm-dirty-switch="onConfirmDirtySwitch"

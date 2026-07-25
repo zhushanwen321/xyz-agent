@@ -233,8 +233,9 @@ async function mountLanding(): Promise<ReturnType<typeof mount>> {
 
 /**
  * 打开 BranchSelectPopover（点 Git chip → state=branch-popover）。
- * IA 重构后：「新建 worktree」动作从 DirSelectPopover 迁至 BranchSelectPopover 的 Worktree tab。
- * Landing 内 Popover open 绑定 flow.state==='branch-popover'，故需切 state 触发渲染。
+ * IA 重构（spec §3.3）后：按 git 模式裁剪 panel，tab bar 删除。
+ * - bare-workspace 模式（flowMock 默认）：直接渲染 Worktree panel，含 action-create-worktree。
+ * - Landing 内 Popover open 绑定 flow.state==='branch-popover'，故需切 state 触发渲染。
  */
 async function openBranchPopover(wrapper: ReturnType<typeof mount>): Promise<void> {
   // 点 Git chip → flow.openBranchPopover()（mock 不真切 state，需测试手动切）
@@ -243,21 +244,12 @@ async function openBranchPopover(wrapper: ReturnType<typeof mount>): Promise<voi
   await flushPromises()
 }
 
-/**
- * 切到 BranchSelectPopover 的 Worktree tab（默认是分支 tab，「新建 worktree」在 Worktree tab）。
- */
-async function switchToWorktreeTab(wrapper: ReturnType<typeof mount>): Promise<void> {
-  await wrapper.find('[data-testid="git-tab-worktree"]').trigger('click')
-  await flushPromises()
-}
-
 describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 → 创建 → success → chip 切换）', () => {
   it('点击「新建 worktree」→ modal 出现 → 填分支名 → 创建成功 → 2s 后 modal 关闭 + chip 切到新 worktree', async () => {
     const wrapper = await mountLanding()
     await openBranchPopover(wrapper)
-    await switchToWorktreeTab(wrapper)
 
-    // Worktree tab 渲染且含「新建 worktree…」动作项（从 DirSelectPopover 迁入）
+    // bare-workspace 模式直接渲染 Worktree panel，含「新建 worktree…」动作项
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(true)
 
     // 点「新建 worktree…」→ 触发 openCreateWorktree → flow 切到 worktree-modal 态
@@ -309,7 +301,6 @@ describe('INT-2: 目录已存在（worktreeApi.create reject WORKTREE_EXISTS →
   it('reject WORKTREE_EXISTS → modal 转 exists 态 → 点「直接开始」→ chip 切到 existingCwd', async () => {
     const wrapper = await mountLanding()
     await openBranchPopover(wrapper)
-    await switchToWorktreeTab(wrapper)
 
     // 进 worktree-modal
     await wrapper.find('[data-testid="action-create-worktree"]').trigger('click')
@@ -350,7 +341,6 @@ describe('INT-3: 创建失败（worktreeApi.create reject SETUP_FAILED → error
   it('reject SETUP_FAILED → modal 转 error 态 → 显示退出码+stderr → 点重试 → 重新调 worktreeApi.create', async () => {
     const wrapper = await mountLanding()
     await openBranchPopover(wrapper)
-    await switchToWorktreeTab(wrapper)
 
     await wrapper.find('[data-testid="action-create-worktree"]').trigger('click')
     flowMock._state.value = 'worktree-modal'

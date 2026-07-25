@@ -100,18 +100,17 @@ describe('RF-1: 真实 flow — session.isBareWorkspace=true → gitInfo.isBare=
     expect(flow.gitInfo.value).not.toBeNull()
     expect(flow.gitInfo.value?.isBare).toBe(true)
 
-    // 真实组件渲染链路：IA 重构后「新建 worktree」动作从 DirSelectPopover 迁至
-    // BranchSelectPopover 的 Worktree tab。mount BranchSelectPopover（传真实 flow 派生的
-    // isBare/isGitRepo props，与 Landing.vue 同逻辑），切到 Worktree tab 后断言 action 可达。
+    // 真实组件渲染链路：IA 重构（spec §3.3）后按模式裁剪 panel，tab bar 删除。
+    // bare-workspace 模式直接渲染 Worktree panel（无 tab 切换），mount BranchSelectPopover
+    // 传 mode='bare-workspace'（与 Landing.vue `flow.mode?.value === 'bare-workspace'` 同逻辑），
+    // 断言 action-create-worktree 可达。
     const wrapper = mount(BranchSelectPopover, {
       props: {
-        sessionId: null,
-        isBareWorkspace: flow.gitInfo.value?.isBare ?? false,
-        isGitRepo: flow.gitInfo.value?.isBare ?? false,
+        mode: 'bare-workspace',
+        cwd: flow.currentCwd.value ?? '',
+        worktreeItems: flow.worktreeItems.value,
       },
     })
-    // 默认分支 tab → 切 Worktree tab → action-create-worktree 渲染
-    await wrapper.find('[data-testid="git-tab-worktree"]').trigger('click')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(true)
   })

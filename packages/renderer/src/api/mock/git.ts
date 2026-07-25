@@ -113,6 +113,10 @@ export const git = {
   async checkout(_sessionId: string, _name: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+  // 与 real api/domains/git.ts 同构：cwd-based checkout（landing 态无 session，plain-repo 切分支）
+  async checkoutByCwd(_cwd: string, _name: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
   // 与 real api/domains/git.ts 同构：创建并检出分支（#7）。mock 仅 ack，不模拟分支名/已存在失败
   async createBranch(_sessionId: string, _name: string): Promise<void> {
     await sleep(TIMING.ack)

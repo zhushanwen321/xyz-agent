@@ -25,6 +25,7 @@ const flowMock = vi.hoisted(() => ({
   // landing 态 session/cwd/branch 真源 computed refs（landing.vue 的 composerSid/cwd/branch 依赖）
   currentSessionId: { value: null as string | null },
   currentCwd: { value: null as string | null },
+  presetCwd: vi.fn(),
   gitInfo: { value: null as { branch: string } | null },
   // workspace.detect 三态（landing Git chip 可见性守卫）+ worktree 列表（branch 派生）
   mode: { value: 'not-repo' as string },

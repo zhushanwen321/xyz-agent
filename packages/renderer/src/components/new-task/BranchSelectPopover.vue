@@ -8,14 +8,20 @@
  *
  * 形态：popover 内容面板（宽度 420px；向上展开由父级 PopoverContent side="top" 控制）。
  *
- * 数据流（container for data，分支 tab）：onMounted → gitApi.status(sessionId) → GitStatusResult。
- * - unborn HEAD（T4.3 / AC-6.3）：isRepo=true 且 branches=[] → 空态引导首次 commit
- * - getStatus 失败（T4.6 / AC-6.4）：reject → 显错不崩
- * - 分支 100+（T4.9 / AC-6.9）：渲染上限 + 搜索过滤
+ * 数据流（container for data）：
+ * - 分支列表：onMounted → worktree.listBranches(cwd)（cwd 驱动，landing 态也可用）。
+ *   旧实现用 gitApi.status(sessionId)，landing 态无 session → 恒空。现统一用 cwd-based RPC。
+ * - 当前分支：currentBranch prop（父级从 gitInfo 派生，landing 态从 worktree HEAD 项派生）。
+ * - unborn HEAD：local 分支为空 → 空态引导首次 commit
+ * - listBranches 失败：reject → 显错不崩
+ * - 分支 100+：渲染上限 + 搜索过滤
  *
- * 数据流（Worktree tab）：worktreeItems 由父级注入。
- * 守卫说明：本组件在 git 仓库下打开（调用方 Landing 的 Git chip 用 `v-if="branch"` 守卫，
- * 非 git 目录不显 chip → 本组件不会被打开），故 Worktree tab 无需额外 isGitRepo 守卫。
+ * IA（按模式裁剪 tab，非默认 tab 切换）：
+ * - bare-workspace 模式：只渲染 Worktree tab（分支与 worktree 一一对应，切分支=切 worktree）。
+ *   点 worktree = 切目录（selectWorkspace）；创建 = 建 worktree（建分支+建目录）。
+ * - plain-repo 模式：只渲染分支 tab（N 分支共享 1 目录，切分支=git checkout）。
+ *   底部同时提供「创建分支」+「创建 worktree」。
+ * - 单 tab 时隐藏 tab bar（只有一个 tab 无需显示切换器）。
  *
  * 动作（presentational for actions，emit 单 payload 对象）：
  * 分支 tab：
@@ -29,21 +35,20 @@
  * - 「新建 worktree」→ emit('create-worktree')（父接 useNewTaskFlow.createWorktree）
  * - Esc → emit('close')
  */
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitBranch, GitFork, Plus, GitGraph, TriangleAlert } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
-import { git as gitApi } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
-import type { GitStatusResult } from '@xyz-agent/shared'
+import { worktreeApi } from '@/api/domains/worktree'
 
 /** T4.9 / AC-6.9：分支极多时渲染上限，超出靠搜索过滤（v1 限制渲染数，不引入虚拟滚动库） */
 const MAX_RENDER_BRANCHES = 50
-/** 分支 tab 尾部动作项数（创建并检出新分支 + Git 图谱） */
-const BRANCH_ACTION_COUNT = 2
+/** 分支 tab 尾部动作项数（创建并检出新分支 + Git 图谱 + 创建 worktree） */
+const BRANCH_ACTION_COUNT = 3
 /** Worktree tab 尾部动作项数（新建 worktree） */
 const WORKTREE_ACTION_COUNT = 1
 /** spec §6：Git 图谱 v1 stub（issues #12 P3） */
@@ -51,12 +56,16 @@ const WORKTREE_ACTION_COUNT = 1
 
 const props = withDefaults(
   defineProps<{
-    /** 当前 session id（拉取 git status 用） */
-    sessionId: string | null
+    /** cwd 所在 workspace 的 git 模式（决定渲染哪些 tab）。bare-workspace→只 Worktree tab；plain-repo→只分支 tab */
+    mode: 'bare-workspace' | 'plain-repo'
+    /** 当前 cwd（拉取分支列表用，cwd 驱动） */
+    cwd: string
+    /** 当前分支名（父级从 gitInfo 派生；landing 态从 worktree HEAD 项派生，已建 session 从 gitInfo.branch 派生） */
+    currentBranch?: string | null
     /** 当前 cwd 所在 workspace 的已有 worktree 列表（Worktree tab 数据源） */
     worktreeItems?: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }>
   }>(),
-  { worktreeItems: () => [] },
+  { currentBranch: null, worktreeItems: () => [] },
 )
 
 const emit = defineEmits<{
@@ -71,39 +80,37 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const { error: toastError } = useToast()
 
-const status = ref<GitStatusResult | null>(null)
 const statusError = ref<unknown>(null)
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
 /** dirty 二次确认条待确认的目标分支名（null = 无确认条） */
 const pendingDirtyBranch = ref<string | null>(null)
-/** 当前激活 tab（分支 / Worktree） */
-const activeTab = ref<'branch' | 'worktree'>('branch')
-
 onMounted(async () => {
-  if (!props.sessionId) return
   // 打开即 focus 搜索框（spec §3.3 键盘契约）
   nextTick(() => root.value?.querySelector('input')?.focus())
+  // plain-repo 模式才拉分支列表（bare 模式不显示分支 tab）
+  if (props.mode !== 'plain-repo') return
   try {
-    status.value = await gitApi.status(props.sessionId)
+    const reply = await worktreeApi.listBranches(props.cwd)
+    branches.value = reply.local
   } catch (e) {
-    // T4.6 / AC-6.4：显错不崩
+    // 显错不崩
     statusError.value = e
   }
 })
 
-const allBranches = computed<string[]>(() => status.value?.branches ?? [])
-const currentBranch = computed<string | undefined>(() => status.value?.branch)
-/** 当前工作区未提交文件数（dirty 判据，AC-6.2） */
-const dirtyCount = computed(
-  () => (status.value?.stagedCount ?? 0) + (status.value?.unstagedCount ?? 0),
+const branches = ref<string[]>([])
+const allBranches = computed<string[]>(() => branches.value)
+const currentBranch = computed<string | undefined>(
+  () => props.currentBranch ?? undefined,
 )
-const isDirty = computed(() => dirtyCount.value > 0)
+/** dirty 判据：landing 态无 session 无法获取 dirty 状态，默认 false（不阻塞 checkout）。
+ *  已建 session 场景的 dirty 二次确认由 useNewTaskBranch.selectBranch 内部处理。 */
+const dirtyCount = computed(() => 0)
+const isDirty = computed(() => false)
 
-/** unborn HEAD（T4.3）：是 git 仓库但无任何分支（无首次提交） */
-const isUnborn = computed(
-  () => status.value?.isRepo === true && allBranches.value.length === 0,
-)
+/** unborn HEAD：是 git 仓库但无任何分支（无首次提交） */
+const isUnborn = computed(() => allBranches.value.length === 0)
 
 /** 搜索过滤 + 渲染上限（T4.9） */
 const filtered = computed<string[]>(() => {
@@ -154,37 +161,39 @@ function createWorktree(): void {
 }
 
 /**
- * 扁平化激活（按 activeTab 路由）：
- * - 分支 tab：idx < branchesLen → selectBranch；尾部动作项顺序（创建分支 / Git 图谱）
- * - Worktree tab：idx < wtLen → selectWorktree(worktreeItems[idx].path)；idx === wtLen → createWorktree()
+ * 扁平化激活（按 mode 路由）：
+ * - bare-workspace：idx < wtLen → selectWorktree；idx === wtLen → createWorktree
+ * - plain-repo：idx < branchesLen → selectBranch；尾部（创建分支 / Git 图谱 / 创建 worktree）
  */
 function activate(idx: number): void {
-  if (activeTab.value === 'worktree') {
+  if (props.mode === 'bare-workspace') {
     const wtLen = props.worktreeItems.length
     if (idx < wtLen) selectWorktree(props.worktreeItems[idx].path)
     else if (idx === wtLen) createWorktree()
     return
   }
   const listLen = filtered.value.length
+  // 分支 panel 尾部动作项偏移（0=创建分支, 1=Git 图谱, 2=创建 worktree）
+  const OFFSET_CREATE_BRANCH = 0
+  const OFFSET_GIT_GRAPH = 1
+  const OFFSET_CREATE_WORKTREE = 2
   if (idx < listLen) selectBranch(filtered.value[idx])
-  else if (idx === listLen) openBranchModal()
-  else gitGraphStub()
+  else if (idx === listLen + OFFSET_CREATE_BRANCH) openBranchModal()
+  else if (idx === listLen + OFFSET_GIT_GRAPH) gitGraphStub()
+  else if (idx === listLen + OFFSET_CREATE_WORKTREE) createWorktree()
 }
 
 // 键盘导航收敛到 logic/useFlatListNav（与 DirSelectPopover 共用）。
 const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
   getTotal: () =>
-    activeTab.value === 'worktree'
+    props.mode === 'bare-workspace'
       ? props.worktreeItems.length + WORKTREE_ACTION_COUNT
       : filtered.value.length + BRANCH_ACTION_COUNT,
   onActivate: activate,
   onEscape: () => emit('close'),
 })
 
-// 切 tab 时重置 activeIndex 为 0，保证新 tab 第一个列表项预高亮。
-watch(activeTab, () => {
-  activeIndex.value = 0
-})
+// 模式不变（单 panel），无需 watch activeTab 重置 activeIndex
 </script>
 
 <template>
@@ -194,60 +203,10 @@ watch(activeTab, () => {
     class="w-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
     @keydown="onKeydown"
   >
-    <!-- Tab 栏（搜索框上方）：分支 / Worktree -->
-    <div class="flex gap-0 border-b border-border px-1">
-      <Button
-        variant="ghost"
-        data-testid="git-tab-branch"
-        :class="[
-          'relative h-auto items-center gap-1.5 rounded-none px-3.5 py-2.5 text-[12px] font-medium transition-colors',
-          activeTab === 'branch'
-            ? 'text-fg after:absolute after:left-1 after:right-1 after:bottom-[-1px] after:h-0.5 after:rounded-t-sm after:bg-accent'
-            : 'text-subtle hover:text-muted',
-        ]"
-        @click="activeTab = 'branch'"
-      >
-        <GitBranch
-          :class="['size-[13px]', activeTab === 'branch' ? 'opacity-100' : 'opacity-80']"
-        />
-        <span>{{ t('newTask.branchSelect.branchLabel') }}</span>
-        <span
-          :class="[
-            'min-w-4 rounded-md px-1.25 py-0.5 text-center text-[10px] font-semibold',
-            activeTab === 'branch'
-              ? 'bg-accent-soft text-accent'
-              : 'bg-surface-hover text-subtle',
-          ]"
-        >{{ allBranches.length }}</span>
-      </Button>
-      <Button
-        variant="ghost"
-        data-testid="git-tab-worktree"
-        :class="[
-          'relative h-auto items-center gap-1.5 rounded-none px-3.5 py-2.5 text-[12px] font-medium transition-colors',
-          activeTab === 'worktree'
-            ? 'text-fg after:absolute after:left-1 after:right-1 after:bottom-[-1px] after:h-0.5 after:rounded-t-sm after:bg-accent'
-            : 'text-subtle hover:text-muted',
-        ]"
-        @click="activeTab = 'worktree'"
-      >
-        <GitFork
-          :class="['size-[13px]', activeTab === 'worktree' ? 'opacity-100' : 'opacity-80']"
-        />
-        <span>{{ t('newTask.dirSelect.existingWorktrees') }}</span>
-        <span
-          :class="[
-            'min-w-4 rounded-md px-1.25 py-0.5 text-center text-[10px] font-semibold',
-            activeTab === 'worktree'
-              ? 'bg-accent-soft text-accent'
-              : 'bg-surface-hover text-subtle',
-          ]"
-        >{{ props.worktreeItems.length }}</span>
-      </Button>
-    </div>
+    <!-- Tab 栏隐藏：按模式裁剪后每模式只有一个 panel（bare→worktree，plain→branch），无需 tab 切换器 -->
 
-    <!-- ───── 分支 panel ───── -->
-    <div v-show="activeTab === 'branch'">
+    <!-- ───── 分支 panel（plain-repo 模式独占）───── -->
+    <div v-if="mode === 'plain-repo'">
       <!-- 搜索 input -->
       <div class="border-b border-border p-2">
         <Input
@@ -336,6 +295,19 @@ watch(activeTab, () => {
           </template>
           {{ t('newTask.branchSelect.gitGraph') }}
         </PopoverActionItem>
+
+        <!-- 动作项：创建 worktree（plain-repo 下与创建分支并列，隔离开发场景） -->
+        <PopoverActionItem
+          test-id="action-create-worktree"
+          :active="isActiveItem(filtered.length + 2)"
+          @click="createWorktree"
+          @mouseenter="activeIndex = filtered.length + 2"
+        >
+          <template #icon>
+            <GitFork class="shrink-0 text-subtle" />
+          </template>
+          {{ t('newTask.dirSelect.createWorktree') }}
+        </PopoverActionItem>
       </div>
 
       <!-- dirty inline 二次确认条（spec §3.3，非 modal） -->
@@ -367,8 +339,8 @@ watch(activeTab, () => {
       </div>
     </div>
 
-    <!-- ───── Worktree panel ───── -->
-    <div v-show="activeTab === 'worktree'">
+    <!-- ───── Worktree panel（bare-workspace 模式独占）───── -->
+    <div v-if="mode === 'bare-workspace'">
       <!-- 空态：无 worktree（新建 worktree 动作仍 accent 强调在底部） -->
       <div
         v-if="props.worktreeItems.length === 0"

@@ -53,7 +53,7 @@ export function useNewTaskDirSelect(
   const worktreeItems = ref<WorktreeListReply['items']>([])
 
   watch(
-    () => pendingCwd.value,
+    () => currentCwd(),
     async (cwd) => {
       if (!cwd) {
         isBare.value = false
