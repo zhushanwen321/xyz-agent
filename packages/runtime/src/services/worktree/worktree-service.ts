@@ -131,7 +131,8 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async create(params: WorktreeCreateParams): Promise<WorktreeCreateResult> {
-    const { branch, baseBranch = 'origin/main', locationMode, workspaceHint } = params
+    const { branch, baseBranch: rawBaseBranch, locationMode, workspaceHint } = params
+    const baseBranch = rawBaseBranch ?? this.deps.configService.getDefaultBaseBranch()
 
     // 0. 分支名校验（安全边界，防 Windows 路径遍历）。前端校验只是 UX，runtime 必须独立校验。
     if (INVALID_BRANCH_REGEX.test(branch)) {
