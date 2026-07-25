@@ -2,7 +2,9 @@
  * SideDrawer 组件级单测。
  *
  * 覆盖点（v2：单 panel 恒 split 模式，移除 overlay）：
- * - split 模式（单 panel）：aside 是 flex 子项（flex-1），贴右展开（border-l），
+ * - split 模式（单 panel）：aside 是 SplitterPanel 的内容容器（flex 列布局 + surface 底色），
+ *   尺寸由外层 SplitterPanel flexGrow 管理（aside 不再 flex-1），
+ *   左右分隔线由 SplitterResizeHandle 提供（aside 不再 border-l），
  *   不含 absolute/z-30/w-1/2/shadow-2xl 等 overlay 浮层 class
  * - 渲染 gate：isOpen=true + activeTab='git' → DOM 含 GitPanel 容器
  * - close 按钮点击 → emit close
@@ -53,11 +55,16 @@ beforeEach(() => {
 })
 
 describe('SideDrawer 单 panel split 布局', () => {
-  it('aside 是 flex 子项：含 flex-1 + relative + min-w-0', () => {
+  it('aside 是 SplitterPanel 内容容器：含 flex 列布局 + relative + min-w-0，不含 flex-1（尺寸归 SplitterPanel flexGrow）', () => {
     const cls = asideClassOf(mountDrawer())
-    expect(cls).toContain('flex-1')
+    expect(cls).toContain('flex')
+    expect(cls).toContain('h-full')
+    expect(cls).toContain('flex-col')
+    expect(cls).toContain('bg-surface')
     expect(cls).toContain('relative')
     expect(cls).toContain('min-w-0')
+    // aside 不再是 flex 子项——尺寸由外层 SplitterPanel flexGrow 接管
+    expect(cls).not.toContain('flex-1')
   })
 
   it('aside 不含 overlay 浮层 class（absolute/z-30/w-1/2/shadow-2xl）', () => {
@@ -68,9 +75,10 @@ describe('SideDrawer 单 panel split 布局', () => {
     expect(cls).not.toContain('shadow-2xl')
   })
 
-  it('贴右展开：含 border-l，不含 order-first', () => {
+  it('贴右展开：不含 border-l（分隔线归 SplitterResizeHandle），不含 order-first', () => {
     const cls = asideClassOf(mountDrawer())
-    expect(cls).toContain('border-l')
+    // aside 不再自绘 border-l——左右分隔线由 SplitterResizeHandle 提供
+    expect(cls).not.toContain('border-l')
     expect(cls).not.toContain('order-first')
   })
 })
