@@ -173,11 +173,11 @@ import {
   browserShow,
   browserBack,
   browserForward,
-  browserSetRect,
   onBrowserState,
   openExternal,
 } from '@/lib/ipc'
 import { useBrowserZoom } from '@/composables/features/useBrowserZoom'
+import { useBrowserRectSync } from '@/composables/features/useBrowserRectSync'
 import { useUrlBar } from '@/composables/features/useUrlBar'
 
 /** 主进程推送的 browser 加载错误结构（与 BrowserViewState.error 对齐） */
@@ -197,16 +197,17 @@ const COPY_FEEDBACK_MS = 2000
 const GUIDE_DISMISSED_KEY = 'xyz-browser-guide-dismissed'
 
 /** 首次使用引导（spec §4.6）：未关闭过则显示。localStorage 持久化跨 session 记住。
- * localStorage 读取用安全访问（隐私模式/iframe 可能抛 SecurityError，引导非关键功能，失败默认显示）。 */
-const showGuide = ref<boolean>(safeLocalStorage()?.getItem(GUIDE_DISMISSED_KEY) === null)
+ * [W5] initial=false，在 onMounted 中读 localStorage 同步：避开 SSR / 隐私模式 / iframe 下
+ * setup() 顶层调 safeLocalStorage 抛 SecurityError 时的默认显示问题。保守默认：不确定就隐藏。 */
+const showGuide = ref<boolean>(false)
 
-/** 关闭首次引导，持久化到 localStorage（下次不再显示） */
+/** 关闭首次引导，持久化到 localStorage */
 function dismissGuide(): void {
   showGuide.value = false
   safeLocalStorage()?.setItem(GUIDE_DISMISSED_KEY, '1')
 }
 
-/** 安全访问 localStorage（隐私模式/iframe 抛 SecurityError 时返回 null，调用方可选链兜底） */
+/** 安全访问 localStorage（隐私模式/iframe 抛 SecurityError 时返回 null） */
 function safeLocalStorage(): Storage | null {
   try {
     return window.localStorage
@@ -255,6 +256,9 @@ const isSecure = computed(() => displayUrl.value.startsWith('https://'))
 
 // 地址栏编辑态管理（composable）：urlInput v-model + 聚焦/回车/Escape 处理。
 // 回车时补全协议前缀 + 触发 navigate + 设置 loading 态（导航反馈）。
+// [HISTORICAL] PR #100 B1 第一层防御：useUrlBar 内部已集成危险协议拦截 + toast，
+// 命中黑名单时不 navigate、不退出编辑态（保用户输入便于修正）。
+// 主进程 handler + manager 还有第二/三层白名单 + 黑名单，三道防线独立函数。
 const { urlInput, onUrlFocus, onUrlEnter, onUrlEscape } = useUrlBar(displayUrl, (url) => {
   isLoading.value = true
   error.value = null
@@ -274,70 +278,16 @@ function getCurrentWindowId(): string {
   }
 }
 
-// ── rect 同步（Wave 3）──────────────────────────────────────────────
-// ResizeObserver 监听 viewport 尺寸变化（drawer 开合/模式切换），window resize 监听拖窗口
-// （元素尺寸可能不变但位置变）。rAF 合并同帧多次触发 + 时间节流下限（降到 ~30fps，避免高频 IPC 阻塞主进程）。
-
-/** rect 推送节流间隔（ms）。~30fps 足够视觉连续，避免 60fps 同步 IPC 阻塞主进程单线程 */
-const RECT_PUSH_THROTTLE_MS = 33
-/** 上次推 rect 的时间戳（时间节流） */
-let lastRectPushTs = 0
-/** 待推的 rAF id（null 表示无待执行帧） */
-let rectRafId: number | null = null
-/** viewport 尺寸监听器（onBeforeUnmount disconnect） */
-let resizeObserver: ResizeObserver | null = null
-
-/**
- * 算 viewport 元素的 rect 并推给主进程 setBounds。
- * [HISTORICAL] 不乘 devicePixelRatio——setBounds 用 DIP，与 CSS px 1:1。
- * 乘 dpr 在 retina 屏会导致 view 定位屏外 + 尺寸翻倍。
- */
-function pushRect(): void {
-  const el = viewportEl.value
-  if (!el) return
-  const domRect = el.getBoundingClientRect()
-  const rect = {
-    x: Math.round(domRect.x),
-    y: Math.round(domRect.y),
-    width: Math.round(domRect.width),
-    height: Math.round(domRect.height),
-  }
-  // 跳过 0 尺寸（隐藏中/未布局），避免把 view 设成 0,0,0,0 等效隐藏
-  if (rect.width === 0 || rect.height === 0) return
-  void browserSetRect(props.sessionId, rect)
-}
-
-/**
- * 节流推 rect：rAF 合并同帧 + 33ms 时间下限。
- * 拖窗口 resize 每秒可触发 60 次，不加时间下限会让同步 IPC 阻塞主进程。
- * 节流窗口内的最后一次变化用 setTimeout 兜底，避免丢失。
- */
-function scheduleRectPush(): void {
-  const now = Date.now()
-  if (now - lastRectPushTs < RECT_PUSH_THROTTLE_MS) {
-    // 节流窗口内：setTimeout 兜底，保证窗口结束后再推一次（避免最后一次 resize 丢失）
-    window.setTimeout(() => {
-      if (rectRafId !== null) return // 已有 rAF 在路上，让它推
-      rectRafId = requestAnimationFrame(() => {
-        rectRafId = null
-        lastRectPushTs = Date.now()
-        pushRect()
-      })
-    }, RECT_PUSH_THROTTLE_MS - (now - lastRectPushTs))
-    return
-  }
-  if (rectRafId !== null) return // 已有待执行 rAF
-  rectRafId = requestAnimationFrame(() => {
-    rectRafId = null
-    lastRectPushTs = Date.now()
-    pushRect()
-  })
-}
+// rect 同步（Wave 3）：ResizeObserver + window resize + Splitter CustomEvent → 节流推主进程
+const { pushRect, dispose: disposeRectSync } = useBrowserRectSync(viewportEl, () => props.sessionId)
 
 /** onBrowserState 取消订阅函数（onBeforeUnmount 调） */
 let unsubscribe: (() => void) | null = null
 
 onMounted(() => {
+  // [W5] 同步引导状态（避开 SSR / 隐私模式 / iframe 场景 setup() 顶层调 localStorage 报 SecurityError）
+  showGuide.value = safeLocalStorage()?.getItem(GUIDE_DISMISSED_KEY) === null
+
   const windowId = getCurrentWindowId()
   // [W4] windowId 缺失 fail-fast：避免推 windowId='' 到主进程主则 windows.get('') 失败
   // （PR #100 W1 静默吞错误）。运行时缺失说明调用路径异常。
@@ -348,16 +298,6 @@ onMounted(() => {
   // 创建 WebContentsView（attach 到主窗口，初始隐藏）。幂等：已存在则主进程复用。
   void browserCreate(props.sessionId, windowId)
 
-  // rect 同步：ResizeObserver 监听 viewport 尺寸变化（drawer 开合/模式切换）
-  if (viewportEl.value) {
-    resizeObserver = new ResizeObserver(() => scheduleRectPush())
-    resizeObserver.observe(viewportEl.value)
-  }
-  // window resize（拖窗口，高频）：ResizeObserver 不一定捕获（元素尺寸可能不变但位置变）
-  window.addEventListener('resize', scheduleRectPush)
-  // Splitter @layout → PanelContainer 派发的 CustomEvent（drawer 宽度拖动调整）。
-  // RO 在 SplitterPanel overflow:hidden + reka-ui 高频拖动下触发不可靠，此为补充路径。复用 scheduleRectPush 节流。
-  window.addEventListener('xyz:splitter-layout', scheduleRectPush)
   // 缩放快捷键（Cmd/Ctrl +/-/0）
   window.addEventListener('keydown', onZoomKeydown)
 
@@ -387,16 +327,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   // hide（keep-alive，不 destroy）：切 tab/关 drawer 时隐藏 WebContentsView，下次打开复用。
   void browserHide(props.sessionId)
-  // 清理 rect 同步
-  resizeObserver?.disconnect()
-  resizeObserver = null
-  window.removeEventListener('resize', scheduleRectPush)
-  window.removeEventListener('xyz:splitter-layout', scheduleRectPush)
+  // 清理 rect 同步 + 缩放快捷键
+  disposeRectSync()
   window.removeEventListener('keydown', onZoomKeydown)
-  if (rectRafId !== null) {
-    cancelAnimationFrame(rectRafId)
-    rectRafId = null
-  }
   unsubscribe?.()
   unsubscribe = null
 })
