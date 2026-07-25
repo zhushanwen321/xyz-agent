@@ -406,6 +406,37 @@ describe('BrowserViewManager', () => {
       const showBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
       expect(showBoundsCall).toEqual({ x: 0, y: 0, width: 0, height: 0 })
     })
+
+    it('PR #100 W2：create 调 addChildView 1 次，setRect 不重复 addChildView（仅 setBounds）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+
+      // create 调一次 addChildView
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1)
+
+      // 推多次 setRect：visible 态只 setBounds，不重复 addChildView
+      mgr.show('sess-1') // visible=true
+      mgr.setRect('sess-1', { x: 5, y: 5, width: 100, height: 100 })
+      mgr.setRect('sess-1', { x: 10, y: 10, width: 200, height: 200 })
+      mgr.setRect('sess-1', { x: 20, y: 20, width: 300, height: 300 })
+
+      // addChildView 仍仅 1 次（create 那次）
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1)
+      // setBounds 被多次调（visible 态）
+      expect(createdViews[0].setBounds.mock.calls.length).toBeGreaterThan(1)
+    })
+
+    it('PR #100 W2：hide 态 setRect 不调 addChildView（防御性，防隐藏中意外重显）', () => {
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1)
+
+      // 不调 show（保持 hide 态）→ setRect 不应触发 addChildView
+      mgr.setRect('sess-1', { x: 5, y: 5, width: 100, height: 100 })
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('destroy', () => {

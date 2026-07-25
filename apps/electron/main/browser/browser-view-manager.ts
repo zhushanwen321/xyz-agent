@@ -85,6 +85,10 @@ interface ManagedView {
   /** 当前是否可见。create=false，show=true，hide=false。
    *  setRect 始终更新 lastRect，但仅当 isVisible 才 setBounds（防止隐藏中 resize 把 view 意外重显） */
   isVisible: boolean
+  /** view 是否已 attach 到 window.contentView。create 后置 true，destroy 后无需重置（entry 已 delete）。
+   *  setRect 不再 attach（[HISTORICAL] PR #100 W2 修复：view 在 create 已 attach，重复 addChildView
+   *  会破坏视图树；destroy 仅在 isAttached=true 时 removeChildView）。hide/show 不改 isAttached（keep-alive 复用）。 */
+  isAttached: boolean
   /** webContents 状态投影 */
   state: BrowserViewState
   /** 最近访问时间戳（Date.now()）。LRU 排序依据：create/focus 时更新，evictLRU 淘汰最小值。 */
@@ -191,6 +195,7 @@ export class BrowserViewManager {
       windowId,
       lastRect: HIDDEN_RECT,
       isVisible: false,
+      isAttached: !win.isDestroyed(),
       state,
       lastUsed: Date.now(),
       pendingAutoFit: false,
@@ -228,6 +233,10 @@ export class BrowserViewManager {
    * [HISTORICAL] rect 坐标系：bounds 单位是 DIP，与 CSS px 1:1，**不乘 devicePixelRatio**。
    * renderer 的 getBoundingClientRect() 返回 CSS px，直接透传（retina dpr=2 误乘会定位屏外+尺寸翻倍）。
    *
+   * [HISTORICAL] PR #100 W2 修复：setRect 不再调 addChildView。view 已在 create 时 attach 到
+   * contentView，重复 addChildView 会破坏视图树。attach 是 create 一次性的副作用，destroy 才
+   * removeChildView（按 isAttached 标志判断）。Rect 变化只调 setBounds 即可。
+   *
    * 行为：始终更新 lastRect（hide 态也记，show 时恢复最新）；
    * 仅当 isVisible 时 setBounds（隐藏中收到 resize 不会把 view 意外重显——防御性）。
    * 幂等：sessionId 不存在时无操作。
@@ -242,14 +251,7 @@ export class BrowserViewManager {
     }
     entry.lastRect = rect
     if (entry.isVisible) {
-      const prev = entry.view.getBounds()
       entry.view.setBounds(rect)
-      if (prev.x !== rect.x || prev.y !== rect.y || prev.width !== rect.width || prev.height !== rect.height) {
-        const win = this.windows.get(entry.windowId)
-        if (win && !win.isDestroyed()) {
-          win.contentView.addChildView(entry.view)
-        }
-      }
     }
   }
 
@@ -301,10 +303,10 @@ export class BrowserViewManager {
       console.warn(`[browser-view] destroy: session not found sessionId=${sessionId}`)
       return
     }
-    const { view, windowId } = entry
+    const { view, windowId, isAttached } = entry
     const win = this.windows.get(windowId)
     // 窗口未销毁才摘下 view；窗口已关则跳过（view 会随窗口一起释放）
-    if (win && !win.isDestroyed()) {
+    if (isAttached && win && !win.isDestroyed()) {
       win.contentView.removeChildView(view)
     }
     // webContents.close() 释放 webContents（防内存泄漏）。
