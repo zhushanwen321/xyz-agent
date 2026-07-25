@@ -26,6 +26,7 @@ import {
   type WorkspaceDetectResult,
 } from './workspace-detector.js'
 import type { WorktreeErrorCode } from '@xyz-agent/shared'
+import { INVALID_BRANCH_REGEX } from '@xyz-agent/shared'
 import type { IShellRunner } from '../ports/shell-runner.js'
 import type { IGitExecutor } from '../ports/git-executor.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -57,7 +58,7 @@ export interface WorktreeServiceDeps {
 const LOCAL_MAIN = 'main'
 
 /**
- * 非法分支名规则（与前端 CreateWorktreeModal.INVALID_BRANCH_REGEX 一致 + 反斜杠）。
+ * 非法分支名规则（SSOT: @xyz-agent/shared INVALID_BRANCH_REGEX，前端 + runtime 共用）。
  * runtime 是安全边界，前端校验只是 UX——此处必须独立校验防 Windows 路径遍历
  * （branch=`..\\..\\evil` → dirName 保留反斜杠 → join 解析到 wsRoot 外）。
  *
@@ -70,7 +71,6 @@ const LOCAL_MAIN = 'main'
  * - `\/$`：以 / 结尾（git refname 禁止）
  * - `\.lock$`：.lock 后缀（git refname 保留）
  */
-const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
 
 /**
  * 构造 WorktreeService 扁平错误（code 类型编译时校验为 WorktreeErrorCode）。

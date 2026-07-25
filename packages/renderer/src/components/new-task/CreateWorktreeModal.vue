@@ -18,6 +18,7 @@ import { worktreeApi } from '@/api/domains/worktree'
 import { detect as detectWorkspace } from '@/api/domains/workspace'
 import { pickDirectory } from '@/lib/ipc'
 import type { WorktreeErrorCode } from '@xyz-agent/shared'
+import { INVALID_BRANCH_REGEX } from '@xyz-agent/shared'
 
 interface WorktreeError { code?: WorktreeErrorCode; message?: string; cwd?: string; exitCode?: number; stderr?: string }
 type ModalPhase = 'form' | 'progress' | 'success' | 'error' | 'exists'
@@ -26,7 +27,6 @@ type LocationMode = 'workspace' | 'repo-dir' | 'dedicated-dir'
 interface BranchItem { name: string; group: 'quick' | 'remote' | 'local' }
 
 const SUCCESS_EMIT_DELAY_MS = 2000
-const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
 
 const props = defineProps<{ initialBranch?: string }>()
 const emit = defineEmits<{
