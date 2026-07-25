@@ -67,6 +67,8 @@ export function xyToGitStatus(xy: string): GitFileStatus['status'] {
   if (x === 'A') return 'added'
   if (x === 'D' || y === 'D') return 'deleted'
   if (x === 'R' || x === 'C') return 'renamed'
+  // T 类型变更（file type changed，如 regular file → symlink）
+  if (x === 'T' || y === 'T') return 'modified'
   return 'modified'
 }
 

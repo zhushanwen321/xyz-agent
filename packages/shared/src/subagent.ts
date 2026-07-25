@@ -93,6 +93,8 @@ export function normalizeSubagentStatus(status: string | undefined): SubagentSta
     case 'active':
       return 'running'
     default:
+      // 未知状态：pi 扩展可能新增了未映射的状态，warn 一次便于排查
+      console.warn(`[normalizeSubagentStatus] unknown status: ${JSON.stringify(status)}, falling back to 'running'`)
       return 'running'
   }
 }

@@ -77,6 +77,7 @@
               <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
               <SystemPromptPage v-else-if="activeMenu === 'system-prompt'" />
               <TerminalPage v-else-if="activeMenu === 'terminal'" />
+              <WorktreePage v-else-if="activeMenu === 'worktree'" />
             </div>
           </ScrollArea>
         </div>
@@ -94,7 +95,7 @@
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, X } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, X } from '@lucide/vue'
 import {
   Dialog,
   DialogContent,
@@ -115,6 +116,7 @@ import ExtensionPage from './ExtensionPage.vue'
 import SystemPage from './SystemPage.vue'
 import SystemPromptPage from './SystemPromptPage.vue'
 import TerminalPage from './TerminalPage.vue'
+import WorktreePage from './WorktreePage.vue'
 
 const menus = [
   { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings, descKey: 'settings.menu.providerDesc' },
@@ -123,6 +125,7 @@ const menus = [
   { id: 'extension', labelKey: 'settings.menu.extension', icon: Blocks, descKey: 'settings.menu.extensionDesc' },
   { id: 'system-prompt', labelKey: 'settings.menu.systemPrompt', icon: ScrollText, descKey: 'settings.menu.systemPromptDesc' },
   { id: 'terminal', labelKey: 'settings.menu.terminal', icon: TerminalSquare, descKey: 'settings.menu.terminalDesc' },
+  { id: 'worktree', labelKey: 'settings.menu.worktree', icon: GitBranch, descKey: 'settings.menu.worktreeDesc' },
   { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal, descKey: 'settings.menu.systemDesc' },
 ] as const
 

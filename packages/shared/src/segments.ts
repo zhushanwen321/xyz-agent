@@ -43,6 +43,10 @@ export function segmentsToText(segments: Segment[]): string {
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const prev = i > 0 ? segments[i - 1] : null
+    // chip→chip / chip→text 边界补空格（skill→file / file→mention / skill→text 等）
+    if (prev && prev.type !== 'text' && seg.type !== 'text') {
+      parts.push(' ')
+    }
     switch (seg.type) {
       case 'text':
         // 前一个 segment 是 chip 类（skill/file/mention）且当前 text 不以空格开头时，补空格

@@ -78,7 +78,7 @@ const ALLOWED: Record<NewTaskFlowState, NewTaskFlowState[]> = {
   idle: ['landing'],
   landing: ['dir-popover', 'branch-popover', 'worktree-modal', 'completed', 'cancelled'],
   'dir-popover': ['landing', 'dir-dialog', 'cancelled'],
-  'branch-popover': ['landing', 'branch-modal', 'cancelled'],
+  'branch-popover': ['landing', 'branch-modal', 'worktree-modal', 'cancelled'],
   'dir-dialog': ['landing', 'dir-popover', 'cancelled'],
   'branch-modal': ['landing', 'cancelled'],
   'worktree-modal': ['landing', 'cancelled'],
