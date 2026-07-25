@@ -116,6 +116,9 @@ export class ExtensionService {
   /** 第二个文件型 extension 路径（xyz-system-prompt-extension.js），链式位置在 extensionFilePath 之后 */
   private systemPromptExtensionFilePath: string
 
+  /** 第三个文件型 extension 路径（xyz-client-msg-id-mapper.js），建立 clientUuid↔userEntryId 映射 */
+  private clientMsgIdMapperFilePath: string
+
   /** npm install 串行锁——多个扩展共享同一 --prefix 目录（~/.xyz-agent/pi/agent/npm/），
    * npm 不支持对同一 prefix 的并发安装，并发会损坏 node_modules。
    * 所有写操作（install/uninstall/upgrade/autoUpgrade）走此锁串行化。 */
@@ -143,6 +146,8 @@ export class ExtensionService {
     this.extensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged)
     // 第二个文件型 extension 路径（system-prompt 扩展，链式位置在 agent extension 之后）
     this.systemPromptExtensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged, 'xyz-system-prompt-extension.js')
+    // 第三个 builtin：client-msg-id-mapper（input hook 剥标记 + appendEntry 写映射，重开 session 回填 badge）
+    this.clientMsgIdMapperFilePath = getExtensionFilePath(this.projectRoot, this.packaged, 'xyz-client-msg-id-mapper.js')
 
     // Cleanup orphaned temp directories from previous crashes (>24h old)
     // Defer to next tick to avoid blocking constructor
@@ -316,6 +321,11 @@ export class ExtensionService {
     // spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
     if (existsSync(this.systemPromptExtensionFilePath)) {
       filtered.push(this.systemPromptExtensionFilePath)
+    }
+    // 追加第三个文件型 extension（client-msg-id-mapper，input hook 剥标记 + appendEntry 写映射）。
+    // 位置无关（不参与 system prompt 链式快照），追加在最后保持稳定顺序。
+    if (existsSync(this.clientMsgIdMapperFilePath)) {
+      filtered.push(this.clientMsgIdMapperFilePath)
     }
 
     return filtered

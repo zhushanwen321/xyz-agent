@@ -55,6 +55,10 @@ function systemPromptExtensionPath(): string {
   return join(tmpRoot, 'xyz-system-prompt-extension.js')
 }
 
+function clientMsgIdMapperPath(): string {
+  return join(tmpRoot, 'xyz-client-msg-id-mapper.js')
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   tmpRoot = mkdtempSync(join(tmpdir(), 'ext-system-prompt-'))
@@ -119,5 +123,30 @@ describe('ExtensionService.getExtensionPaths system-prompt extension', () => {
 
     expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(true)
     expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(false)
+  })
+})
+
+describe('ExtensionService.getExtensionPaths client-msg-id-mapper extension', () => {
+  it('xyz-client-msg-id-mapper.js 存在时，结果包含它且位于 system-prompt 之后', async () => {
+    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
+    writeFileSync(systemPromptExtensionPath(), '// system-prompt', 'utf-8')
+    writeFileSync(clientMsgIdMapperPath(), '// client-msg-id-mapper', 'utf-8')
+
+    const paths = await service.getExtensionPaths()
+
+    expect(paths.some(p => p.endsWith('xyz-client-msg-id-mapper.js'))).toBe(true)
+    // 位于 system-prompt 之后（追加顺序：agent → system-prompt → client-msg-id-mapper）
+    const systemIdx = paths.findIndex(p => p.endsWith('xyz-system-prompt-extension.js'))
+    const mapperIdx = paths.findIndex(p => p.endsWith('xyz-client-msg-id-mapper.js'))
+    expect(mapperIdx).toBeGreaterThan(systemIdx)
+  })
+
+  it('xyz-client-msg-id-mapper.js 不存在时，结果不包含它', async () => {
+    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
+    expect(existsSync(clientMsgIdMapperPath())).toBe(false)
+
+    const paths = await service.getExtensionPaths()
+
+    expect(paths.some(p => p.endsWith('xyz-client-msg-id-mapper.js'))).toBe(false)
   })
 })
