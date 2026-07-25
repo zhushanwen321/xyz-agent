@@ -193,7 +193,10 @@ export interface ClientMessageMap {
   // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
   // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
   'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
-  'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
+  // message.send：images 是 Cmd+V 富呈现通路的图片数据（base64，不含 data: 前缀）。
+  // runtime 适配层（rpc-client）补 type:'image' 组装成 pi 的 ImageContent。
+  // 不带 type 字段（type 是 pi 私有，runtime 适配层负责补）。
+  'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string }; images?: Array<{ data: string; mimeType: string }> }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
