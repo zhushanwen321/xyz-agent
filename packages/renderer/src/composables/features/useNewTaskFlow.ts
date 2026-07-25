@@ -45,7 +45,6 @@ import {
 } from '@/composables/new-task/useNewTaskFlowState'
 import { useNewTaskBranch } from '@/composables/new-task/useNewTaskBranch'
 import { useNewTaskDirSelect } from '@/composables/new-task/useNewTaskDirSelect'
-import { useNewTaskWorktree } from '@/composables/new-task/useNewTaskWorktree'
 
 // 重导出供既有 import 消费（types + reset 原从本模块导入，保持非破坏）
 export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTaskFlowState'
@@ -93,6 +92,7 @@ export function useNewTaskFlow() {
 
   // 选目录子 composable（需在 gitInfo 前创建：gitInfo landing 态 fallback 读 dirSelect.mode/worktreeItems）
   const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
+
 
   /**
    * gitInfo（UC-7 chip 可见性 + openBranchPopover 守卫派生）。
@@ -283,11 +283,6 @@ export function useNewTaskFlow() {
       transitionUnchecked: controller.transitionUnchecked,
     },
   )
-  const worktree = useNewTaskWorktree(
-    () => currentCwd.value,
-    () => gitInfo.value,
-  )
-
   /**
    * 任意 overlay→landing（Esc/点外）。同一时刻只一层（AC-3.9）。幂等：仅当前处于 overlay 态
    * 才转换，否则 noop——避免重复调用导致 landing→landing 非法转换（state 被打回 idle）。
@@ -346,8 +341,7 @@ export function useNewTaskFlow() {
     isBare: dirSelect.isBare,
     mode: dirSelect.mode,
     worktreeItems: dirSelect.worktreeItems,
-    createWorktree: worktree.createWorktree,
-    startCreateWorktree: worktree.startCreateWorktree,
+
     closeOverlay,
     cancelFlow,
     reenterFlow,
