@@ -11,6 +11,7 @@
       active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover',
       isDead ? 'opacity-50' : '',
     ]"
+    :aria-label="ariaLabel"
     @click="emit('select', session.id)"
     @mouseleave="confirming = false"
   >
@@ -206,6 +207,15 @@ const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 // ── 未读 + 标记完成状态 ──
 const unread = computed(() => isUnread(props.session.id))
 const markedDone = computed(() => isMarkedDone(props.session.id))
+
+/** 无障碍 label：归档态把归档语义拼进 label，让屏幕阅读器读出「已归档: <名称>」。
+ *  背景是归档态移除了可见的「已归档」文字（改用 opacity-60 降权），opacity 不影响 a11y，
+ *  故在此补回语义。 */
+const ariaLabel = computed(() =>
+  markedDone.value
+    ? `${t('sidebar.sessionItem.archived')}: ${props.session.label}`
+    : props.session.label,
+)
 
 function onMarkDone(): void {
   toggleMarkedDone(props.session.id)

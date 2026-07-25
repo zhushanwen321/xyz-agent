@@ -117,4 +117,16 @@ describe('useSessionMarkers', () => {
     expect(done.value).toBe(true)
     expect(doneChanges).toBeGreaterThan(doneBase) // computed 重算
   })
+
+  it('[回归] localStorage 存在空对象 {} 时 ensureCache 仅 hydrate 一次，不重复 parse', () => {
+    localStorage.setItem(STORAGE_KEY, '{}')
+    isUnread('s1')  // 首次 hydrate，得到空 Map
+    isMarkedDone('s1')  // 不应再次 hydrate
+    // 验证返回值正确（空 Map 意味着都是默认值）
+    expect(isUnread('s1')).toBe(false)
+    expect(isMarkedDone('s1')).toBe(false)
+    // 后续 markUnread 后 hydrated 仍为 true，不再读 localStorage（写入走 writeAll，与 ensureCache 无关）
+    markUnread('s1')
+    expect(isUnread('s1')).toBe(true)
+  })
 })

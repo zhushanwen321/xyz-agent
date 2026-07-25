@@ -399,7 +399,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 ### 核心规则
 
 1. **禁止原生 HTML 表单元素** — 必须使用 xyz-ui 组件（Button/Input/Select/Dialog 等）
-2. **禁止 Emoji** — 使用 inline `<svg>` 或 lucide-vue-next 图标
+2. **禁止 Emoji** — 使用 inline `<svg>` 或 @lucide/vue 图标
 3. **样式统一 Tailwind 类（三层结构）**
    - **Design tokens**（`style.css`）：只放 `:root` / `[data-theme]` 的 CSS 变量和 base reset，不放组件样式
    - **Template class**（组件模板）：组件样式统一使用 Tailwind 工具类（`class="flex items-center gap-2 ..."`），不在 `style.css` 或 `<style scoped>` 中写组件样式

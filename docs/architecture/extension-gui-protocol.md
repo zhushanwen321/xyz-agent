@@ -1055,7 +1055,7 @@ xyz-agent 已有 3 个结构化渲染范例，协议新增组件必须对齐其 
 | Tailwind 工具类内联 | 全部 | `flex flex-wrap items-center gap-x-3` |
 | CSS 变量语义色 | BgNotifyCard | `text-danger`、`text-success`、`text-info`、`text-reasoning` |
 | `color-mix` 状态淡底 | BgNotifyCard | `bg-[color-mix(in_oklch,var(--danger)_5%,transparent)]` |
-| lucide-vue-next 图标 | BgNotifyCard / Block.vue | `size-3`（12px）尺寸约定 |
+| @lucide/vue 图标 | BgNotifyCard / Block.vue | `size-3`（12px）尺寸约定 |
 | `font-mono` 等宽小字 | Block.vue stats 行 | `text-[11px]` 或 `text-[12px]` |
 | 卡片形态 | BgNotifyCard / ChangeSetCard | `rounded-md border px-3 py-2` |
 

@@ -98,13 +98,6 @@ export function connect(url: string): void {
       (s) => { state.value = s },
       (msg) => { messageHandler?.(msg) },
     )
-    // E2E/mock 测试辅助：暴露消息注入函数，测试可通过 window.__mockInject(msg)
-    // 注入任意 ServerMessage，完整走 routeInbound 链路（而非绕过 ws-client 直接 dispatch）。
-    // 仅 mock 模式生效，生产构建（VITE_MOCK!=true）不挂载。
-    if (typeof window !== 'undefined') {
-      ;(window as unknown as { __mockInject?: (msg: ServerMessage) => void }).__mockInject =
-        (msg) => messageHandler?.(msg)
-    }
     return
   }
 

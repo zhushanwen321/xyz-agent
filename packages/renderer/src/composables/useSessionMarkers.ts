@@ -22,6 +22,9 @@ const STORAGE_KEY = 'xyz-agent:session-markers'
 
 // ── 内存缓存（避免每次 isUnread 都 parse JSON）──
 const cache = shallowRef<Map<string, SessionMarker>>(new Map())
+// 是否已尝试从 localStorage hydrate。禁止用 cache.value.size===0 推断「是否已 hydrate」——
+// localStorage 存空对象 {} 时 new Map 是空 Map，size===0 恒成立，会导致每次查询都重新 parse。
+let hydrated = false
 
 // ── localStorage 读写 ──
 
@@ -42,15 +45,15 @@ function writeAll(data: Record<string, SessionMarker>): void {
 }
 
 /**
- * 确保 cache 已从 localStorage hydrate。首次读取（cache 为空但 localStorage 有数据）时填充。
- * 后续 writeAll 会同步更新 cache.value，读取直接命中。
+ * 确保 cache 已从 localStorage hydrate。首次调用（无论 localStorage 为空还是有数据）hydrate 一次，
+ * 之后不再重复。后续 writeAll 会同步更新 cache.value，读取直接命中。
  * 查询函数（isUnread/isMarkedDone）调此函数保证首次读取正确，同时访问 cache.value
  * 建立响应式依赖（markUnread/clearUnread 改 cache.value 时，依赖此函数结果的 computed 重算）。
  */
 function ensureCache(): void {
-  if (cache.value.size === 0 && localStorage.getItem(STORAGE_KEY)) {
-    cache.value = new Map(Object.entries(readAll()))
-  }
+  if (hydrated) return
+  hydrated = true
+  cache.value = new Map(Object.entries(readAll()))
 }
 
 // ── 多窗口同步（storage event）──
@@ -140,9 +143,10 @@ export function __registerCleanupForTest(): void {
   registerSessionCleanup(clearAll)
 }
 
-/** 测试专用：重置内存缓存（localStorage.clear() 不同步模块级 cache，测试隔离用）。 */
+/** 测试专用：重置内存缓存与 hydrated flag（localStorage.clear() 不同步模块级 cache，测试隔离用）。 */
 export function __resetCacheForTest(): void {
   cache.value = new Map()
+  hydrated = false
 }
 
 /**
