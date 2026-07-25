@@ -66,6 +66,24 @@ export async function pickDirectory(
 }
 
 /**
+ * 选择文件（OS 原生文件选择器，+菜单「附件 / 图片」入口用）。
+ * web/mock 环境无 preload → 返回 canceled，让上层（onAddSelect）静默 return。
+ *
+ * @param options.defaultPath 候选初始目录（主进程 existsSync 守卫，失效回退 ~）
+ * @param options.filters    文件类型过滤（如 [{name:'Images', extensions:['png','jpg',...]}]）
+ */
+export async function pickFile(
+  options?: {
+    title?: string
+    defaultPath?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+  },
+): Promise<{ canceled: boolean; path: string | null }> {
+  if (!api?.pickFile) return { canceled: true, path: null }
+  return api.pickFile(options)
+}
+
+/**
  * 把剪贴板图片（base64）写到 OS tmpdir，返回 {path, name}（Cmd+V/Ctrl+V 粘贴截图用）。
  * web/mock 环境无 preload → api 或 api.writeTmpImage 不存在 → 返回 undefined，
  * 让上层（useImageAttachment）降级为文本提示，不 throw。

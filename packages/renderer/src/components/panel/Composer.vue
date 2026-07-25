@@ -25,7 +25,15 @@
       :query="cmdType === 'file' ? fileQuery : slashQuery"
       @select="onCmdSelect"
     >
-      <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass" data-testid="composer-box">
+      <div
+        ref="composerBoxRef"
+        class="composer-box relative rounded-lg border bg-bg-input"
+        :class="boxClass"
+        data-testid="composer-box"
+        @dragover.prevent="onDragOver"
+        @dragleave.prevent="onDragLeave"
+        @drop.prevent="onDrop"
+      >
         <!-- Fork 模式标识 chip（FR-13）：顶部 accent chip 提示「将发到新分支 · 与主线隔离」+ × 退出 -->
         <div
           v-if="fork.forkMode.value"
@@ -140,6 +148,8 @@ import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
 import { useComposerContextChips } from '@/composables/panel/useComposerContextChips'
+import { useComposerDragDrop } from '@/composables/panel/useComposerDragDrop'
+import { useComposerBoxClass } from '@/composables/panel/useComposerBoxClass'
 
 const props = withDefaults(
   defineProps<{
@@ -249,6 +259,10 @@ function onInputChange(text: string): void {
 // 顶部「已附上下文」chip 行（ContextChipsBar 数据源 + × 删除回调）——见 useComposerContextChips
 const { attachedItems, refreshAttachedItems, onRemoveContextChip } = useComposerContextChips(inputRef)
 
+// composer-box 拖拽落位（拖入图片 → image segment，复用 slice4 handleImagePaste）——见 useComposerDragDrop
+const composerBoxRef = ref<HTMLElement | null>(null)
+const { isDragOver, onDragOver, onDragLeave, onDrop } = useComposerDragDrop(inputRef, composerBoxRef, refreshAttachedItems)
+
 /** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
 function clearInput(): void {
   draft.value = ''
@@ -276,16 +290,8 @@ const hasInput = computed(() => draft.value.trim().length > 0)
  *  landing 态（sessionId 可能为公共 session id 或 null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
 const canSend = computed(() => hasInput.value && !isActive.value && !isSending.value && !isCompacting.value)
 
-/** composer-box class：fork 模式（accent 边 + ring glow）/ S6 流式（steer 呼吸 ring）/ S2 输入中（中性 ring） */
-const boxClass = computed(() => [
-  fork.forkBoxClass.value
-    || (isActive.value
-      ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
-      : hasInput.value
-        ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
-        : ''),
-  isSending.value && 'opacity-[0.55]',
-])
+/** composer-box class：fork / 拖拽悬停 / S6 流式 / S2 输入中 优先级派生（见 useComposerBoxClass） */
+const boxClass = useComposerBoxClass(fork.forkBoxClass, isDragOver, isActive, hasInput, isSending)
 
 const placeholder = computed(() =>
   fork.forkPlaceholder.value

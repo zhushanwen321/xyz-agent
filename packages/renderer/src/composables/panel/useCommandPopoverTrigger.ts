@@ -14,8 +14,12 @@
  */
 import { ref, watch, type Ref } from 'vue'
 import { useCommandStore } from '@/stores/command'
+import { pickFile } from '@/lib/ipc'
 import type ComposerInput from '@/components/panel/ComposerInput.vue'
 import type CommandPopover from '@/components/panel/CommandPopover.vue'
+
+/** + 菜单「附件」项的图片类型过滤扩展名（「图片」入口 pickFile filters 用） */
+const IMAGE_FILTER_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
 
 export function useCommandPopoverTrigger(
   inputRef: Ref<InstanceType<typeof ComposerInput> | null>,
@@ -28,7 +32,7 @@ export function useCommandPopoverTrigger(
   commandPopoverRef: Ref<InstanceType<typeof CommandPopover> | null>
   onSlashTrigger: (payload: { query: string } | null) => void
   onFileTrigger: (payload: { query: string } | null) => void
-  onAddSelect: (type: 'attach' | 'slash') => void
+  onAddSelect: (type: 'attach' | 'image' | 'slash') => Promise<void>
   onCmdSelect: (payload: { type: 'file' | 'slash'; name: string; icon?: string; description?: string }) => void
 } {
   const commandStore = useCommandStore()
@@ -99,11 +103,39 @@ export function useCommandPopoverTrigger(
     }
   }
 
-  /** + 菜单选择：打开命令浮层（slash）。slashTriggerActive 不设 true——
-   *  +菜单路径的浮层不受后续 slash-trigger:null 影响（防用户敲普通键误关）。
-   *  attach 暂为 TODO（附件功能单独开任务）；file 已移除入口（# 改走 inline 触发）。 */
-  function onAddSelect(type: 'attach' | 'slash'): void {
-    if (type === 'attach') return // TODO: 附件上传（附件功能单独开任务）
+  /** + 菜单选择：
+   *  - attach（任意文件）：调 pickFile IPC（无 filters），选中后插文本路径到输入区。canceled 静默 return。
+   *  - image（图片）：调 pickFile IPC（带 image filters），选中后以磁盘 path 插 image chip。
+   *  - slash：打开命令浮层（slashTriggerActive 不设 true——+菜单路径的浮层不受后续 slash-trigger:null 影响）。
+   *
+   *  pickFile 降级（web/mock 无 preload）→ {canceled:true, path:null}，onAddSelect 视同取消 return（不 throw）。
+   *  pickFile 异常（reject）→ try/catch 降级：记 warn 后 return（取消已是预期路径，不 toast / 不重抛）。
+   *  file 入口已移除（# 改走 inline 触发）。 */
+  async function onAddSelect(type: 'attach' | 'image' | 'slash'): Promise<void> {
+    if (type === 'attach' || type === 'image') {
+      inputRef.value?.focus()
+      try {
+        const result =
+          type === 'image'
+            ? await pickFile({ filters: [{ name: 'Images', extensions: IMAGE_FILTER_EXTENSIONS }] })
+            : await pickFile()
+        if (result.canceled || !result.path) return
+        if (type === 'image') {
+          // image：文件已在磁盘，直接以原 path 建 image chip（不走 writeTmpImage，避免复制 + path 漂移）
+          const name = result.path.split(/[\\/]/).pop() || result.path
+          inputRef.value?.insertImageBadge(result.path, name)
+        } else {
+          // attach：任意文件，文本路径插入（与 Ctrl+V 路径文本通路一致，轻量）
+          inputRef.value?.insertTextAtCursor(result.path)
+        }
+      } catch (e) {
+        // pickFile reject（IPC 异常 / 主进程崩溃）→ best-effort 降级：取消已是预期路径，
+        // 不 toast、不重抛（用户点 + 菜单选文件失败不应阻断 composer 其他操作）。仅记 warn 便于排查。
+        console.warn('[onAddSelect] pickFile IPC failed', e)
+      }
+      return
+    }
+    // slash
     inputRef.value?.saveSelection()
     inputRef.value?.focus()
     cmdType.value = 'slash'

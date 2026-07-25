@@ -27,6 +27,7 @@ export default {
     inputHint: 'Describe what you want AI to do, or # file, / command…',
     addContent: 'Add content (attachment / command)',
     attach: 'Attachment',
+    image: 'Image',
     command: 'Command',
     forkHint: 'Fork from this reply to ask anything (⏎ fork & send, Esc to exit)',
     forkChip: 'Sends to a new branch · isolated from main line',
