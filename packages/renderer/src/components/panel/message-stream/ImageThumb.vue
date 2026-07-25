@@ -48,7 +48,7 @@ const failed = ref(false)
  * 图片 URL：local-file:// 协议 + encodeURIComponent 编码路径（处理中文/空格）。
  * main.ts 的 protocol.handle('local-file') 拦截并 decodeURIComponent 还原。
  */
-const thumbSrc = computed(() => 'local-file://' + encodeURIComponent(props.path))
+const thumbSrc = computed(() => 'local-file:///' + encodeURIComponent(props.path))
 
 /** img onerror：白名单 403 / 文件损坏 → 标记失败降级 badge */
 function onError(): void {

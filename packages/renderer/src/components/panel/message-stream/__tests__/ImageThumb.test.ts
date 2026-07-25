@@ -45,7 +45,7 @@ describe('ImageThumb（W2TC1-3）', () => {
     const img = wrapper.find('img')
     expect(img.exists()).toBe(true)
     // src 含 encodeURIComponent('/tmp/foo.png') 后的编码串
-    expect(img.attributes('src')).toBe('local-file://' + encodeURIComponent('/tmp/foo.png'))
+    expect(img.attributes('src')).toBe('local-file:///' + encodeURIComponent('/tmp/foo.png'))
     expect(img.attributes('src')).toContain('foo.png')
     // 正常态不渲染降级 badge
     expect(wrapper.find('.image-fallback-badge').exists()).toBe(false)
