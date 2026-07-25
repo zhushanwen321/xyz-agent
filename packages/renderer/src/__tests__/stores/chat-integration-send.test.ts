@@ -43,6 +43,9 @@ vi.mock('@/api', () => ({
     steer: apiMock.steer,
     followUp: apiMock.followUp,
   },
+  file: {
+    read: vi.fn(() => Promise.resolve({ content: '', truncated: false })),
+  },
   session: {},
 }))
 
@@ -242,6 +245,7 @@ describe('T1.4/T1.5 send 全链 Composer DOM 断言（用户可见行为）', ()
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick() // flush async send（slice6 起含 extractImages await，多一拍；含 reject + catch）
+    await wrapper.vm.$nextTick() // w5: Promise.allSettled(extractImages, extractFileContexts) 多一拍
     // store 侧：pendingSend 已清，无 streaming → isActive=false（用户可重试）
     expect(chat.isActive('s-dom-fail')).toBe(false)
     await wrapper.vm.$nextTick()
