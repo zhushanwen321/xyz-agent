@@ -69,8 +69,6 @@ const LOCAL_MAIN = 'main'
  * - `\\`：反斜杠（Windows 路径遍历防护，git refname 同样禁止）
  * - `\/$`：以 / 结尾（git refname 禁止）
  * - `\.lock$`：.lock 后缀（git refname 保留）
- *
- * 控制字符（\x00-\x1f\x7f）git refname 同样禁止，但 npm 分支名极少含，暂不挡（git 兜底拒绝）。
  */
 const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
 
@@ -82,7 +80,7 @@ function worktreeError(code: WorktreeErrorCode, message: string, detail?: unknow
   return Object.assign(new Error(message), detail !== undefined ? { code, detail } : { code })
 }
 
-/** 展开 ~ 前缀到 $HOME（路径字符串预处理，path.join 不展开 ~）。 */
+/** 展开 ~ 前缀到 $HOME（路径字符串预处理，path.join 不展开 ~）。不处理 ~user/ 格式（仅支持当前用户的 ~）。 */
 function expandHome(p: string): string {
   if (p === '~') return process.env['HOME'] ?? p
   if (p.startsWith('~/')) return join(process.env['HOME'] ?? '', p.slice(2))
