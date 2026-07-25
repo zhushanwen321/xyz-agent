@@ -845,6 +845,19 @@ function listRecentRecords(): import('@xyz-agent/shared').RecentWorkspaceRecord[
   ]
 }
 
+// Mock quota domain（w4 coding-plan 额度查询）
+export const quota = {
+  async getCached(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async fetchQuota(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async configure(_providerId: string, _enabled: boolean, _cookie?: string) {
+    return { ok: true }
+  },
+}
+
 export const workspace = {
   async listRecent(): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
     return listRecentRecords()

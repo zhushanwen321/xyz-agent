@@ -151,6 +151,28 @@
             </Button>
           </div>
 
+          <!-- Coding Plan 额度查询 Section（仅 provider 命中 QUOTA_PRESETS 时显示） -->
+          <CodingPlanSection
+            v-if="matchedPreset"
+            :enabled="quotaEnabled"
+            :cookie-input="quotaCookieInput"
+            :test-status="quotaTestStatus"
+            :test-error-msg="quotaTestError"
+            :quota-row="quotaData"
+            :last-fetch-at="quotaLastFetchAt"
+            :is-cookie-auth="quotaIsCookieAuth"
+            :configuring="quotaConfiguring"
+            :configure-error-msg="quotaConfigureError"
+            :api-key-set="!!provider?.apiKeySet"
+            :cookie-set="!!provider?.quota?.cookieSet"
+            :help-url="matchedPreset.helpUrl"
+            :help-text="matchedPreset.helpText"
+            @toggle-enabled="quotaToggleEnabled"
+            @test-query="quotaTestQuery"
+            @save-cookie="quotaSaveCookie"
+            @update:cookie-input="quotaCookieInput = $event"
+          />
+
           <!-- 操作按钮 -->
           <div class="flex flex-wrap gap-2">
             <Button
@@ -356,12 +378,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, toRef } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { computed, toRef } from 'vue'
 import {
   Eye, EyeOff, Loader2, Wifi, RefreshCw, CheckCircle2, AlertCircle,
   X, FileText, ImageIcon, Trash2,
 } from '@lucide/vue'
+import { matchQuotaPreset } from '@xyz-agent/shared'
 import { Dialog, DialogContent, DialogTitle, DialogDescription, ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -375,6 +399,8 @@ import {
   THINKING_STRATEGIES,
   type ThinkingStrategy,
 } from '@/composables/features/useProviderEdit'
+import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
+import CodingPlanSection from '@/components/settings/CodingPlanSection.vue'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ open: boolean; provider: ProviderInfo | null }>()
@@ -387,6 +413,29 @@ const ctxOptions = CONTEXT_OPTIONS
 const thinkingStrategies = THINKING_STRATEGIES
 
 const { info: toastInfo } = useToast()
+
+// ── Coding Plan 额度查询：自动关联 + 配置 ──
+
+/** 按 provider baseUrl/name 匹配内置预设，未命中返回 undefined（不显示 section） */
+const matchedPreset = computed(() => {
+  const p = props.provider
+  return matchQuotaPreset({ baseUrl: p?.baseUrl, name: p?.name })
+})
+
+const {
+  enabled: quotaEnabled,
+  cookieInput: quotaCookieInput,
+  testStatus: quotaTestStatus,
+  testError: quotaTestError,
+  quotaData,
+  lastFetchAt: quotaLastFetchAt,
+  isCookieAuth: quotaIsCookieAuth,
+  configuring: quotaConfiguring,
+  configureError: quotaConfigureError,
+  toggleEnabled: quotaToggleEnabled,
+  saveCookie: quotaSaveCookie,
+  testQuery: quotaTestQuery,
+} = useQuotaConfigure(matchedPreset, toRef(props, 'provider'))
 
 // 业务编排全在 composable：本组件只做 props/emit + 调用（受控表单，F1 拆分）
 const {

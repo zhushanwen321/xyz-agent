@@ -154,6 +154,21 @@ export default {
     unsavedDesc: '确定关闭？未保存的改动将丢失。',
     unsavedConfirm: '确认关闭',
     unsavedCancel: '继续编辑',
+    // Coding Plan 额度查询
+    quotaSection: 'Coding Plan 额度查询',
+    quotaEnable: '启用额度查询',
+    quotaEnableHint: '查询 5h/周/月 配额使用',
+    quotaAuthMethod: '认证方式',
+    quotaCredentialOk: 'API Key 已配置',
+    quotaCredentialMissing: 'API Key 未设置',
+    quotaTestQuery: '测试查询',
+    quotaTestSuccess: '查询成功',
+    quotaTestFail: '查询失败，请检查凭证',
+    quotaCookieSet: '已配置',
+    quotaCookieNotSet: '未配置',
+    quotaCookiePlaceholder: '在此粘贴 cookie 字符串',
+    quotaSaveCookie: '保存 Cookie',
+    quotaUpdateCookie: '更新 Cookie',
   },
   // ── Extension 页（ExtensionPage）──
   extension: {

@@ -1,12 +1,19 @@
 <template>
   <!--
-    §2a 上下文容量 popover（draft-composer-states §2a）。
+    §2a 上下文容量 popover + coding-plan 额度（draft-composer-states §2a + merged-card）。
     hover 触发，按钮文字始终显当前用量摘要（6.9万 · 6.9%），浮层给完整容量。
     用量分档：<70% accent · 70–90% warning · >90% danger（bar）。
     缓存命中：≥50% success · <50% warning。
+
+    coding-plan 区（w4 新增）：
+    - divider + section label + provider tag
+    - 3 窗口行（4 列 grid：label | bar | pct | reset）
+    - ∞ 窗口（pct=null）整行隐藏
+    - 未配置 provider：只保留容量区，footer 显配置提示
+    - hover-enter 触发 quota 查询（先 cached 后 fetch）
   -->
   <HoverCard>
-    <HoverCardTrigger>
+    <HoverCardTrigger as-child>
       <Button
         variant="ghost"
         :class="
@@ -16,6 +23,7 @@
           )
         "
         :title="t('panel.context.capacity')"
+        @mouseenter="onHoverEnter"
       >
         <span class="tabular-nums">{{ hasUsage ? usedDisplay : '—' }}</span>
         <template v-if="hasPercent">
@@ -24,7 +32,10 @@
         </template>
       </Button>
     </HoverCardTrigger>
-    <HoverCardContent side="top" class="w-[260px] p-0">
+    <HoverCardContent
+      side="top"
+      class="w-[260px] p-0"
+    >
       <!-- head -->
       <div
         class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
@@ -60,6 +71,78 @@
           >{{ stats.cacheHit != null ? `${stats.cacheHit}%` : '—' }}</span>
         </div>
       </div>
+
+      <!-- coding-plan 区（仅 provider 命中 quota preset 时显示） -->
+      <template v-if="matchedProviderId">
+        <div class="mx-2.5 h-px bg-border" />
+        <div class="px-2.5 pt-2">
+          <!-- section label + provider tag -->
+          <div class="flex items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.06em] text-subtle">
+            <span>Coding Plan</span>
+            <span
+              v-if="matchedPresetLabel"
+              :class="cn(
+                'rounded-sm px-1 py-px text-[9px] font-semibold tracking-[0.03em]',
+                quotaDanger ? 'bg-danger-soft text-danger' : quotaWarning ? 'bg-warning-soft text-warning' : 'bg-accent-soft text-accent',
+              )"
+            >{{ matchedPresetLabel }}</span>
+          </div>
+
+          <!-- 3 窗口行（4 列 grid） -->
+          <template v-if="quotaRow">
+            <div
+              v-for="(win, idx) in visibleWindows"
+              :key="idx"
+              class="grid items-center py-0.5"
+              style="grid-template-columns: 32px 1fr 32px 52px; column-gap: 8px; font-size: 11px; line-height: 1.4;"
+            >
+              <span class="font-sans text-[10.5px] text-muted">{{ windowLabels[win.idx] }}</span>
+              <div class="relative h-1 overflow-hidden rounded-full bg-surface-2">
+                <div
+                  :class="cn('h-full rounded-full transition-all', win.pct >= DANGER_THRESHOLD ? 'bg-danger' : win.pct >= HIGH_THRESHOLD ? 'bg-warning' : 'bg-gradient-to-r from-accent to-accent-hover')"
+                  :style="{ width: `${win.pct}%` }"
+                />
+              </div>
+              <span
+                :class="cn(
+                  'text-right font-semibold tabular-nums',
+                  win.pct >= DANGER_THRESHOLD ? 'text-danger' : win.pct >= HIGH_THRESHOLD ? 'text-warning' : 'text-fg',
+                )"
+              >{{ win.pct }}%</span>
+              <span class="truncate text-right font-mono text-[9.5px] tabular-nums text-subtle">
+                {{ formatReset(win.resetSec) }}
+              </span>
+            </div>
+          </template>
+
+          <!-- 无数据时的占位 -->
+          <div v-else class="py-1.5 text-center text-[10.5px] text-subtle">
+            {{ quotaStore.isPending(matchedProviderId) ? '查询中...' : '暂无额度数据' }}
+          </div>
+        </div>
+      </template>
+
+      <!-- footer -->
+      <div class="flex items-center justify-between border-t border-border px-2.5 py-1.5 font-mono text-[10px] text-subtle">
+        <span v-if="matchedProviderId && lastFetchAt">
+          {{ formatLastFetch(lastFetchAt) }}
+        </span>
+        <span v-else-if="matchedProviderId">
+          无 Coding Plan 数据
+        </span>
+        <span v-else>
+          {{ t('panel.context.capacity') }}
+        </span>
+        <Button
+          v-if="matchedProviderId"
+          variant="secondary"
+          class="h-5 rounded-sm px-1.5 font-mono text-[9.5px]"
+          :disabled="quotaStore.isPending(matchedProviderId)"
+          @click.stop="onRefresh"
+        >
+          {{ quotaStore.isPending(matchedProviderId) ? '...' : '刷新' }}
+        </Button>
+      </div>
     </HoverCardContent>
   </HoverCard>
 </template>
@@ -67,10 +150,16 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { NormalizedQuotaRow } from '@xyz-agent/shared'
+import { matchQuotaPreset } from '@xyz-agent/shared'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
+import { useSessionStore } from '@/stores/session'
+import { useSettingsStore } from '@/stores/settings'
+import { useQuotaStore } from '@/stores/quota'
+import { useQuotaQuery } from '@/composables/features/useQuotaQuery'
 
 interface ContextStats {
   used: number
@@ -96,6 +185,13 @@ const props = defineProps<{
   /** session 通道订阅键（D8：context.update 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
 }>()
+
+// ── stores ──
+const sessionStore = useSessionStore()
+const settingsStore = useSettingsStore()
+const quotaStore = useQuotaStore()
+
+// ── session 事件订阅（context.update + session.state_changed）──
 
 /**
  * 订阅 context.update + session.state_changed（D8：session 通道）。
@@ -126,9 +222,135 @@ onMessage(['context.update', 'session.state_changed'], (msg) => {
   }
 })
 
+// ── coding-plan 额度查询（w4 新增）──
+
+/**
+ * 从当前 session 的 modelId 派生 providerId（复合串 "provider/modelId" → provider 部分），
+ * 然后匹配 quota preset，命中则启用 coding-plan 区。
+ */
+const matchedProviderId = computed<string | null>(() => {
+  const sid = props.sessionId
+  if (!sid) return null
+  const session = sessionStore.list.find((s) => s.id === sid)
+  if (!session?.modelId) return null
+  const provider = session.modelId.split('/')[0]
+  if (!provider) return null
+
+  // 在 settingsStore.providers 中找到该 provider
+  const providerInfo = settingsStore.providers.find((p) => p.id === provider)
+  if (!providerInfo) return null
+
+  // 检查是否有 quota 配置且已启用
+  if (!providerInfo.quota?.enabled) return null
+
+  return provider
+})
+
+/** 匹配到的 quota preset 的显示名（用于 section label 的 tag）。 */
+const matchedPresetLabel = computed<string | null>(() => {
+  const pid = matchedProviderId.value
+  if (!pid) return null
+  const providerInfo = settingsStore.providers.find((p) => p.id === pid)
+  if (!providerInfo) return null
+  const preset = matchQuotaPreset({ baseUrl: providerInfo.baseUrl, name: providerInfo.name })
+  return preset?.label ?? null
+})
+
+/** useQuotaQuery 控制器（hover-enter 查询逻辑）。 */
+const { data: quotaData, lastFetchAt, onHoverEnter: queryOnHoverEnter } = useQuotaQuery(matchedProviderId)
+
+/** 额度数据（NormalizedQuotaRow | null）。 */
+const quotaRow = computed<NormalizedQuotaRow | null>(() => quotaData.value)
+
+// ── 窗口标签 ──
+const WINDOW_LABELS = ['5h', '本周', '本月'] as const
+const windowLabels: readonly string[] = WINDOW_LABELS
+
+// ── 分档阈值（复用现有规则）──
+const HIGH_THRESHOLD = 70
+const DANGER_THRESHOLD = 90
+
+/**
+ * 过滤 ∞ 窗口（pct=null 整行隐藏），返回可见窗口列表。
+ * 每项带原始索引（idx）和 pct（非 null，已确认）。
+ */
+interface VisibleWindow {
+  idx: number
+  pct: number
+  resetSec: number | null
+}
+
+const visibleWindows = computed<VisibleWindow[]>(() => {
+  const row = quotaRow.value
+  if (!row) return []
+  return row.wins
+    .map((w, i) => (w.pct != null ? { idx: i, pct: w.pct, resetSec: w.resetSec } : null))
+    .filter((w): w is VisibleWindow => w != null)
+})
+
+/** 是否有高用量窗口（>=70%）。 */
+const quotaWarning = computed(() => visibleWindows.value.some((w) => w.pct >= HIGH_THRESHOLD && w.pct < DANGER_THRESHOLD))
+const quotaDanger = computed(() => visibleWindows.value.some((w) => w.pct >= DANGER_THRESHOLD))
+
+// ── 时间格式化 ──
+
+/** 格式化剩余秒数为人类可读文案。
+ * null → "--"；≥86400 → "Xd Yh"；≥3600 → "Xh Ym"；≥60 → "Xm"；<60 → "<1m"。
+ */
+const SEC_PER_DAY = 86400
+const SEC_PER_HOUR = 3600
+const SEC_PER_MIN = 60
+function formatReset(sec: number | null): string {
+  if (sec == null) return '--'
+  if (sec <= 0) return '--'
+  const d = Math.floor(sec / SEC_PER_DAY)
+  const h = Math.floor((sec % SEC_PER_DAY) / SEC_PER_HOUR)
+  const m = Math.floor((sec % SEC_PER_HOUR) / SEC_PER_MIN)
+  if (d > 0) return `剩${d}d${h}h`
+  if (h > 0) return `剩${h}h${m}m`
+  if (m > 0) return `剩${m}m`
+  return '<1m'
+}
+
+/** 格式化 lastFetchAt 为相对时间。 */
+const MS_PER_SEC = 1000
+const MIN_PER_HOUR = 60
+const HOUR_PER_DAY = 24
+function formatLastFetch(ts: number): string {
+  const sec = Math.floor((Date.now() - ts) / MS_PER_SEC)
+  if (sec < SEC_PER_MIN) return '刚刚更新'
+  const m = Math.floor(sec / SEC_PER_MIN)
+  if (m < MIN_PER_HOUR) return `${m} 分钟前更新`
+  const h = Math.floor(m / MIN_PER_HOUR)
+  if (h < HOUR_PER_DAY) return `${h} 小时前更新`
+  const d = Math.floor(h / HOUR_PER_DAY)
+  return `${d} 天前更新`
+}
+
+// ── hover-enter 查询触发 ──
+
+/**
+ * hover 进入浮层时触发查询。
+ * 流程：先 getCached 即时填充 → 再 fetch 触发查询。
+ * 并发保护由 quotaStore.pending Set + useQuotaQuery 保证。
+ */
+function onHoverEnter(): void {
+  if (matchedProviderId.value) {
+    // fire-and-forget：查询结果写入 store，组件通过 computed 自动响应式刷新
+    void queryOnHoverEnter()
+  }
+}
+
+/** 刷新按钮点击。 */
+function onRefresh(): void {
+  if (matchedProviderId.value) {
+    void queryOnHoverEnter()
+  }
+}
+
+// ── 现有容量区计算（保持不变）──
+
 // 阈值常量（避免 magic number）
-const HIGH_THRESHOLD = 70 // >70% warning（按钮 + 条）
-const DANGER_THRESHOLD = 90 // >90% 条转 danger
 const CACHE_LOW_THRESHOLD = 50 // <50% 缓存命中转 warning
 
 /**

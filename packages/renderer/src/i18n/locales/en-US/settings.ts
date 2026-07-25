@@ -154,6 +154,21 @@ export default {
     unsavedDesc: 'Close anyway? Unsaved changes will be lost.',
     unsavedConfirm: 'Close anyway',
     unsavedCancel: 'Keep editing',
+    // Coding Plan 额度查询
+    quotaSection: 'Coding Plan Quota',
+    quotaEnable: 'Enable quota query',
+    quotaEnableHint: 'Query 5h/week/month quota usage',
+    quotaAuthMethod: 'Auth method',
+    quotaCredentialOk: 'API Key configured',
+    quotaCredentialMissing: 'API Key not set',
+    quotaTestQuery: 'Test query',
+    quotaTestSuccess: 'Query successful',
+    quotaTestFail: 'Query failed, please check credentials',
+    quotaCookieSet: 'Configured',
+    quotaCookieNotSet: 'Not configured',
+    quotaCookiePlaceholder: 'Paste cookie string here',
+    quotaSaveCookie: 'Save Cookie',
+    quotaUpdateCookie: 'Update Cookie',
   },
   // ── Extension page (ExtensionPage) ──
   extension: {
