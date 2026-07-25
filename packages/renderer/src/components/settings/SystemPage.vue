@@ -60,6 +60,15 @@
             </SelectContent>
           </Select>
         </div>
+        <!-- 后台完成提示音 -->
+        <div class="flex items-center justify-between border-t border-border px-4 py-3">
+          <Label class="text-[12px] text-fg">{{ t('settings.system.completionSound') }}</Label>
+          <Switch
+            data-testid="setting-completion-sound"
+            :checked="system.completionSound ?? true"
+            @update:checked="emit('update', { completionSound: $event })"
+          />
+        </div>
       </div>
     </div>
 
@@ -157,6 +166,7 @@ import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { useCommandStore } from '@/stores/command'
 import type { SystemSettings } from '@/stores/settings'
 

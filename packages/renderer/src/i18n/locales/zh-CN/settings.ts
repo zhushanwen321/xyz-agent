@@ -204,6 +204,7 @@ export default {
     fontSmall: '小',
     fontMedium: '中',
     fontLarge: '大',
+    completionSound: '后台完成提示音',
     shortcutTitle: '快捷键',
     shortcutName: '命令',
     shortcutKey: '快捷键',

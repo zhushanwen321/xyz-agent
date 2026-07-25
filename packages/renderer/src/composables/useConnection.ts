@@ -33,8 +33,10 @@ import * as pending from '../api/pending'
 import * as events from '../api/events'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
+import { usePanelStore } from '../stores/panel'
 import { useExtensionUIStore } from '../stores/extension-ui'
 import { useToast } from './useToast'
+import { handleCompletion } from './useCompletionNotify'
 
 /**
  * 处理 session.exited 事件（pi 进程异常退出）。
@@ -115,6 +117,14 @@ function routeInbound(msg: ServerMessage): void {
     // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
     if (msg.type === 'session.exited') {
       handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
+    }
+    // message.complete：后台完成时提示音 + 未读标记
+    if (msg.type === 'message.complete') {
+      const payload = msg.payload as { sessionId?: string; stopReason?: string }
+      const focusedSid = usePanelStore().panels.find(
+        (p) => p.id === usePanelStore().activePanelId,
+      )?.sessionId ?? null
+      handleCompletion(sid, payload.stopReason ?? 'stop', focusedSid)
     }
   } else {
     events.dispatchGlobal(msg)
