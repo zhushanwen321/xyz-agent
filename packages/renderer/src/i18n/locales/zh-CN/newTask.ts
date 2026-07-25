@@ -73,5 +73,6 @@ export default {
     dirSelectorFailed: '无法打开目录选择器：{reason}',
     selectDir: '选择目录',
     retryHistory: '重试加载历史',
+    gitRepo: 'Git 仓库',
   },
 }

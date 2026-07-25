@@ -423,6 +423,37 @@ describe('WorktreeService.list()', () => {
     expect(result.items[1]).toMatchObject({ bare: false, branch: 'feat-x', HEAD: true })
   })
 
+  it('HEAD 标记匹配 currentCwd 所在 worktree（子目录场景），不依赖输出顺序', async () => {
+    // [HISTORICAL] 旧实现标记「第一个非 bare」，但 git worktree list 输出顺序是主 worktree
+    // 在前，用户在 feat-x 时 HEAD 被错标到 main。必须按 path 匹配 currentCwd（含子目录）。
+    const porcelain = [
+      'worktree /project/main',
+      'HEAD abc123',
+      'branch refs/heads/main',
+      '',
+      'worktree /project/feat-x',
+      'HEAD def456',
+      'branch refs/heads/feat-x',
+      '',
+    ].join('\n')
+
+    const deps = createDeps({
+      mode: 'bare-workspace',
+      existingPaths: new Set(['/project/.bare']),
+      gitOverrides: {
+        execResults: new Map([
+          ['worktree list --porcelain', { stdout: porcelain, stderr: '', exitCode: 0 }],
+        ]),
+      },
+    })
+    const service = new WorktreeService(deps)
+
+    // currentCwd 是 feat-x worktree 的子目录（packages/renderer）
+    const result = await service.list('/project/feat-x/packages/renderer')
+    expect(result.items[0]).toMatchObject({ path: '/project/main', HEAD: false })
+    expect(result.items[1]).toMatchObject({ path: '/project/feat-x', branch: 'feat-x', HEAD: true })
+  })
+
   it('not-repo 模式抛 NOT_GIT_REPO', async () => {
     const deps = createDeps({
       mode: 'not-repo',

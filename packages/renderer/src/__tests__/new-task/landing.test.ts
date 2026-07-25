@@ -26,6 +26,9 @@ const flowMock = vi.hoisted(() => ({
   currentSessionId: { value: null as string | null },
   currentCwd: { value: null as string | null },
   gitInfo: { value: null as { branch: string } | null },
+  // workspace.detect 三态（landing Git chip 可见性守卫）+ worktree 列表（branch 派生）
+  mode: { value: 'not-repo' as string },
+  worktreeItems: { value: [] as Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> },
   openDirPopover: vi.fn(),
   openBranchPopover: vi.fn(),
   closeOverlay: vi.fn(),
@@ -50,6 +53,10 @@ vi.mock('@/composables/useToast', () => ({
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  // 默认 git 场景（多数测试是 git repo + branch）；非 git 测试单独设 mode='not-repo'
+  flowMock.mode.value = 'plain-repo'
+  flowMock.gitInfo.value = null
+  flowMock.worktreeItems.value = []
 })
 
 const DONE = 'done' as DerivedStatus
@@ -166,6 +173,7 @@ describe('Landing 组件（presentational）', () => {
   })
 
   it('gitBranch 为空 → branch chip 隐藏（UC-7 非 git 目录，AC-2.2）', () => {
+    flowMock.mode.value = 'not-repo'
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/plain' },
       global: { stubs: landingStubs },

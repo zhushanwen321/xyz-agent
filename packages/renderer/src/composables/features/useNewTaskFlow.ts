@@ -91,17 +91,28 @@ export function useNewTaskFlow() {
     () => currentSession.value?.modelId ?? pendingModel.value,
   )
 
+  // 选目录子 composable（需在 gitInfo 前创建：gitInfo landing 态 fallback 读 dirSelect.mode/worktreeItems）
+  const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
+
   /**
-   * gitInfo（UC-7 chip 可见性派生）：从当前 flow 绑定 session 的 gitBranch 派生。
-   * 统一延迟 create 后 landing 态无 session → null → branch chip 隐藏（分支切换需已建 session）。
-   *
-   * R1：isBare 从 session.isBareWorkspace 派生（runtime WorkspaceDetector 检测，经
-   * SessionSummary 透出）。Landing.vue 据此渲染 DirSelectPopover「新建 worktree…」动作项。
+   * gitInfo（UC-7 chip 可见性 + openBranchPopover 守卫派生）。
+   * 数据源优先级：
+   * 1. session 态（已建 session）：currentSession.gitBranch / isBareWorkspace
+   * 2. landing 态（无 session，延迟 create）：dirSelect 的 mode + worktreeItems HEAD 项
+   *    —— landing 态无 session，旧实现只从 session 派生导致恒 null，branch chip 永不显示、
+   *       openBranchPopover 守卫必抛错。改为合并 landing 态数据源。
    */
   const gitInfo: ComputedRef<GitInfo | null> = computed(() => {
     const s = currentSession.value
-    if (!s?.gitBranch) return null
-    return { branch: s.gitBranch, isRepo: true, isBare: s.isBareWorkspace ?? false }
+    if (s?.gitBranch) {
+      return { branch: s.gitBranch, isRepo: true, isBare: s.isBareWorkspace ?? false }
+    }
+    // landing 态 fallback：从 dirSelect 的 pendingCwd 驱动数据派生
+    if (dirSelect.mode.value !== 'not-repo') {
+      const head = dirSelect.worktreeItems.value?.find(w => w.HEAD)
+      return { branch: head?.branch ?? '', isRepo: true, isBare: dirSelect.isBare.value }
+    }
+    return null
   })
 
   /**
@@ -271,7 +282,6 @@ export function useNewTaskFlow() {
       transitionUnchecked: controller.transitionUnchecked,
     },
   )
-  const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
   const worktree = useNewTaskWorktree(
     () => currentCwd.value,
     () => gitInfo.value,

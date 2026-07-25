@@ -73,5 +73,6 @@ export default {
     dirSelectorFailed: 'Failed to open directory selector: {reason}',
     selectDir: 'Select directory',
     retryHistory: 'Retry loading history',
+    gitRepo: 'Git repo',
   },
 }

@@ -211,7 +211,7 @@ export class WorktreeService implements IWorktreeService {
       )
     }
 
-    return { items: this.parseWorktreePorcelain(result.stdout) }
+    return { items: this.parseWorktreePorcelain(result.stdout, cwd) }
   }
 
   // ── 私有方法 ─────────────────────────────────────────────────
@@ -397,7 +397,7 @@ export class WorktreeService implements IWorktreeService {
    * worktree /path/to/bare
    * bare
    */
-  private parseWorktreePorcelain(output: string): Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> {
+  private parseWorktreePorcelain(output: string, currentCwd?: string): Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> {
     const items: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> = []
     const blocks = output.split('\n\n').filter(b => b.trim())
 
@@ -405,7 +405,6 @@ export class WorktreeService implements IWorktreeService {
       const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
       let path = ''
       let branch = ''
-      let headSha = ''
       let bare = false
 
       for (const line of lines) {
@@ -414,7 +413,7 @@ export class WorktreeService implements IWorktreeService {
         } else if (line.startsWith('branch ')) {
           branch = line.slice('branch '.length).replace(/^refs\/heads\//, '')
         } else if (line.startsWith('HEAD ')) {
-          headSha = line.slice('HEAD '.length)
+          // HEAD sha 本处不用（HEAD 标记由下方 currentCwd path 匹配决定）
         } else if (line === 'bare') {
           bare = true
         }
@@ -424,16 +423,29 @@ export class WorktreeService implements IWorktreeService {
         items.push({
           path,
           branch,
-          HEAD: false, // 先全部 false，最后只标记第一个非 bare 条目
+          HEAD: false,
           bare,
         })
       }
     }
 
-    // porcelain 输出的第一个 worktree 是当前 HEAD 指向的（bare 条目不算）
-    const firstNonBare = items.find(i => !i.bare)
-    if (firstNonBare) {
-      firstNonBare.HEAD = true
+    // HEAD=true 标记当前 cwd 所在的 worktree（path 与 currentCwd 相同）。
+    // [HISTORICAL] 旧实现标记「第一个非 bare」——但 git worktree list 输出顺序是主 worktree
+    // 在前（通常 main），不是当前 cwd 所在。用户在 feat-x worktree 时 HEAD 被错标到 main，
+    // 导致 Landing Git chip 显示错误的分支名（或空）。必须按 path 精确匹配当前 cwd。
+    if (currentCwd) {
+      // currentCwd 可能是 worktree 根或其子目录（如 .../wt/packages/renderer），
+      // worktree.path 是 worktree 根。精确相等或以 path+分隔符开头都算「当前 worktree」。
+      // 用 path + '/' 前缀避免 /foo 匹配 /foobar。
+      const current = items.find(i =>
+        i.path === currentCwd || currentCwd.startsWith(i.path + '/'),
+      )
+      if (current) current.HEAD = true
+    }
+    // currentCwd 未提供（向后兼容）：fallback 到第一个非 bare（旧逻辑，不推荐依赖）
+    if (!items.some(i => i.HEAD)) {
+      const firstNonBare = items.find(i => !i.bare)
+      if (firstNonBare) firstNonBare.HEAD = true
     }
 
     return items

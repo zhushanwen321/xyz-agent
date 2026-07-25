@@ -65,6 +65,38 @@ bash scripts/postbuild-validate.sh         # 打包后验证
 bash scripts/validate-runtime-bundle.sh
 ```
 
+## 前端调试（Playwright 连 dev app）
+
+`pnpm dev` 启动后，Electron 开 `--remote-debugging-port=9222`。用 browser-automation skill 的 Playwright 脚本连接，可截图/DOM 快照/点击/填表/执行 JS，**不抢焦点**（连接已有进程，非新开）。
+
+```bash
+PW="/Users/zhushanwen/.agents/skills/browser-automation/scripts/pw.js"
+EP="http://localhost:9222"
+
+# 确认 dev app 在 9222（dev Electron 的 renderer）
+lsof -i :9222 2>/dev/null
+node $PW $EP list-pages
+
+# 截图
+node $PW $EP screenshot -o /tmp/debug.png
+
+# DOM 快照（可交互元素）
+node $PW $EP snapshot
+
+# 执行 JS（查状态/读 DOM）
+node $PW $EP evaluate "document.querySelector('[data-testid=chip-branch]')?.textContent"
+
+# 点击/填表
+node $PW $EP click "[data-testid=chip-branch]"
+node $PW $EP fill "input[name=x]" "value"
+```
+
+**注意多个 xyz-agent 实例**：打包版 `/Applications/xyz-agent.app` 也可能同时在跑（占 3210 端口）。dev 实例的 renderer 在 9222、runtime 在 3310（tsx 跑 `packages/runtime/src/index.ts`）。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）。
+
+**runtime 代码改动不热重载**：dev runtime 用 `tsx`（非 `tsx watch`）运行，改 runtime 源码后**必须重启 dev**（`pnpm dev` 重跑）才生效。renderer 走 vite HMR 自动热重载。
+
+完整命令参考：[browser-automation skill](file:///Users/zhushanwen/.agents/skills/browser-automation/SKILL.md)
+
 ## 关键规则（违反必出 bug）
 
 ### 1. emit 只传单个 payload 对象

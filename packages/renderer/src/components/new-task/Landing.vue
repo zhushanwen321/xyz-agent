@@ -66,7 +66,13 @@ function onOpenDirDialog(): void {
 // （settingsStore 全局 skills + projectSkills），不再依赖公共 session pi 命令（W3 已移除公共 session）。
 const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId)
 const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
+/**
+ * 当前分支名（Git chip 显示）。flow.gitInfo 现已合并 landing 态数据源
+ *（useNewTaskFlow 从 dirSelect.worktreeItems HEAD 项派生），无需组件层再查 worktreeItems。
+ */
 const branch = computed(() => flow.gitInfo.value?.branch ?? props.gitBranch ?? null)
+/** 是否为 git 仓库目录（Git chip 可见性守卫，pendingCwd 驱动的 workspace.detect 三态）。 */
+const isGitRepo = computed(() => flow.mode?.value !== 'not-repo')
 
 /** directory chip 文案：有 cwd 显示目录名，否则首次启动空态（AC-1.7） */
 const dirLabel = computed(() => {
@@ -196,8 +202,8 @@ function onRetry(): void {
               />
             </PopoverContent>
           </Popover>
-          <span v-if="branch" aria-hidden="true" class="h-3.5 w-px bg-border" />
-          <Popover v-if="branch" v-model:open="isBranchOpen">
+          <span v-if="isGitRepo" aria-hidden="true" class="h-3.5 w-px bg-border" />
+          <Popover v-if="isGitRepo" v-model:open="isBranchOpen">
             <PopoverTrigger as-child>
               <Button
                 data-testid="chip-branch"
@@ -205,7 +211,7 @@ function onRetry(): void {
                 class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
               >
                 <GitFork class="shrink-0" />
-                <span class="font-mono">{{ branch }}</span>
+                <span class="font-mono">{{ branch || t('newTask.landing.gitRepo') }}</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent side="top" class="w-[420px] p-0">
