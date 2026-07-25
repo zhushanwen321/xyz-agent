@@ -102,9 +102,12 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     scanAgents: vi.fn(() => []),
     getPiAgentDir: vi.fn(() => '/home/user/.pi/agent'),
     getConfigDir: vi.fn(() => '/home/user/.xyz-agent'),
-    getSystemPromptConfig: vi.fn(() => ({ config: { replace: { enabled: false, prompt: '' } }, corrupted: false })),
+    getSystemPromptConfig: vi.fn(() => ({ config: { version: 1, replace: { enabled: false, prompt: '' }, append: { enabled: false, prompt: '' } }, corrupted: false })),
     setSystemPromptConfig: vi.fn(() => ({ ok: true })),
     getReplaceSystemPrompt: vi.fn(() => undefined),
+    // Terminal config stubs
+    getTerminalConfig: vi.fn(() => ({ config: { version: 1, shell: '/bin/zsh', shellArgs: [], fontSize: 14, fontFamily: 'monospace', scrollback: 1000, cursorStyle: 'block' as const, bell: false }, corrupted: false })),
+    setTerminalConfig: vi.fn(() => ({ ok: true })),
   }
 }
 
