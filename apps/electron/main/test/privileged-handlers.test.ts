@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { homedir } from 'node:os'
+import { BrowserWindow } from 'electron'
 
 // 捕获注册的 handler（key=channel, value=handler fn），由 ipcMain.handle 桩写入
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -100,5 +101,81 @@ describe('W7: pick-directory IPC try/catch 一致性', () => {
       {},
       expect.objectContaining({ defaultPath: homedir() }),
     )
+  })
+})
+
+describe('pick-file IPC handler', () => {
+  beforeEach(() => {
+    handlers.clear()
+    vi.clearAllMocks()
+    registerPrivilegedHandlers({} as never)
+  })
+
+  it('dialog 正常返回选中文件 → handler 返回 {canceled:false, path}', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/my/file.png'] })
+    const pickFile = handlers.get('pick-file')!
+    const result = await pickFile({}, {})
+    expect(result).toEqual({ canceled: false, path: '/my/file.png' })
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ properties: ['openFile'] }),
+    )
+  })
+
+  it('dialog 抛异常 → handler 返回 {canceled:true, path:null} 不 reject', async () => {
+    dialogMock.showOpenDialog.mockRejectedValueOnce(new Error('dialog crash'))
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const pickFile = handlers.get('pick-file')!
+    const result = await pickFile({}, {})
+    expect(result).toEqual({ canceled: true, path: null })
+    expect(errSpy).toHaveBeenCalled()
+    errSpy.mockRestore()
+  })
+
+  it('用户取消 → handler 返回 {canceled:true, path:null}', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
+    const pickFile = handlers.get('pick-file')!
+    const result = await pickFile({}, {})
+    expect(result).toEqual({ canceled: true, path: null })
+  })
+
+  it('传入 filters → dialog 收到 filters 且 properties 含 openFile', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/picked.png'] })
+    const pickFile = handlers.get('pick-file')!
+    const filters = [{ name: '图片', extensions: ['png', 'jpg'] }]
+    await pickFile({}, { filters })
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ properties: ['openFile'], filters }),
+    )
+  })
+
+  it('传入存在的 defaultPath → dialog 用该路径作为初始位置', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/picked'] })
+    const pickFile = handlers.get('pick-file')!
+    await pickFile({}, { defaultPath: process.cwd() })
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ defaultPath: process.cwd() }),
+    )
+  })
+
+  it('传入已删除的 defaultPath → 回退到 homedir', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/picked'] })
+    const pickFile = handlers.get('pick-file')!
+    const ghostPath = '/this/path/definitely/does/not/exist/xyz-12345'
+    await pickFile({}, { defaultPath: ghostPath })
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ defaultPath: homedir() }),
+    )
+  })
+
+  it('无聚焦窗口 → handler 返回 {canceled:true, path:null} 不调 dialog', async () => {
+    vi.mocked(BrowserWindow.getFocusedWindow).mockReturnValueOnce(null)
+    const pickFile = handlers.get('pick-file')!
+    const result = await pickFile({}, {})
+    expect(result).toEqual({ canceled: true, path: null })
+    expect(dialogMock.showOpenDialog).not.toHaveBeenCalled()
   })
 })

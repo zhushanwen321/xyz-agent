@@ -34,6 +34,15 @@ export interface ElectronAPI {
     canceled: boolean
     path: string | null
   }>
+  /** 打开文件选择对话框（filters 控制文件类型过滤，defaultPath 失效时主进程自动回退到 ~） */
+  pickFile(options?: {
+    title?: string
+    defaultPath?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+  }): Promise<{
+    canceled: boolean
+    path: string | null
+  }>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -89,6 +98,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   pickDirectory: (options?: { title?: string; defaultPath?: string }) =>
     ipcRenderer.invoke('pick-directory', options),
+  pickFile: (options?: {
+    title?: string
+    defaultPath?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+  }) => ipcRenderer.invoke('pick-file', options),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)

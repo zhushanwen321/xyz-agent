@@ -7,6 +7,7 @@
  * [HISTORICAL] 不变量：
  * - openExternal 校验 http/https（isValidExternalUrl）
  * - pickDirectory 用 BrowserWindow.getFocusedWindow()（无聚焦窗口返回 canceled）
+ * - pickFile 同范式：getFocusedWindow 降级 + defaultPath homedir 兜底 + try/catch 返回 canceled
  *
  * 依赖方向：privileged-handlers → electron(dialog/shell/BrowserWindow) + input-validators + interfaces
  */
@@ -17,7 +18,7 @@ import type { IpcHandlerDeps } from '../interfaces.js'
 import { isValidExternalUrl } from './input-validators.js'
 
 /**
- * 注册特权 IPC handler（open-external / pick-directory）。
+ * 注册特权 IPC handler（open-external / pick-directory / pick-file）。
  *
  * @param deps 注入的依赖
  */
@@ -67,6 +68,45 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         return { canceled: false, path: result.filePaths[0] }
       } catch (err) {
         console.error('[ipc] pick-directory failed:', err)
+        return { canceled: true, path: null }
+      }
+    },
+  )
+
+  // pick-file：用聚焦窗口打开文件选择器（无聚焦窗口返回 canceled）。
+  // [W7] 风格对齐 pick-directory：dialog 抛异常时 console.error + 返回 {canceled:true, path:null}，
+  // 而非依赖 ipcMain.handle 的 invoke rejection 兜底。降级目标对称：无聚焦窗口 / dialog 崩溃都返回 canceled。
+  //
+  // [HISTORICAL] defaultPath 兜底到 homedir（与 pick-directory 同一不变量）：
+  // 省略 defaultPath 时 macOS 原生文件选择器会用 OS 记忆的上次位置；若该位置已被删除，
+  // Finder 会回退到 Documents（非预期，用户期望回退到 ~）。由渲染端传入候选 defaultPath，
+  // 主进程 existsSync 守卫——存在则用，否则降级 homedir。
+  //
+  // filters 透传：渲染端传入 Electron 原生 FileFilter[]（{name, extensions}），主进程不转换
+  // 直接传给 dialog，让渲染端决定业务类型（图片/文档/视频），IPC 保持薄通道语义。
+  ipcMain.handle(
+    'pick-file',
+    async (
+      _event,
+      options?: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> },
+    ) => {
+      const focusedWin = BrowserWindow.getFocusedWindow()
+      if (!focusedWin) return { canceled: true, path: null }
+      try {
+        const fallbackPath =
+          options?.defaultPath && existsSync(options.defaultPath) ? options.defaultPath : homedir()
+        const result = await dialog.showOpenDialog(focusedWin, {
+          properties: ['openFile'],
+          title: options?.title ?? '选择文件',
+          defaultPath: fallbackPath,
+          filters: options?.filters,
+        })
+        if (result.canceled || result.filePaths.length === 0) {
+          return { canceled: true, path: null }
+        }
+        return { canceled: false, path: result.filePaths[0] }
+      } catch (err) {
+        console.error('[ipc] pick-file failed:', err)
         return { canceled: true, path: null }
       }
     },
