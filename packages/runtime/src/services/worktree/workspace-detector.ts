@@ -185,8 +185,9 @@ export class WorkspaceDetector {
       dir = parent
     }
     // 不走阶段 2（git），同步场景只关心 bare 非 bare
+    // 返回 'plain-repo' 而非 'not-repo' 以与 detect() 语义一致（detect 对非 bare 仓库也返回 plain-repo）
     return {
-      mode: 'not-repo',
+      mode: 'plain-repo',
       wsRoot: '',
       barePath: '',
       repoRoot: '',
