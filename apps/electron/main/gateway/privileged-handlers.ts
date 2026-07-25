@@ -12,13 +12,15 @@
  * 依赖方向：privileged-handlers → electron(dialog/shell/BrowserWindow) + input-validators + interfaces
  */
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
-import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { randomInt } from 'node:crypto'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { isValidExternalUrl } from './input-validators.js'
 
 /**
- * 注册特权 IPC handler（open-external / pick-directory / pick-file）。
+ * 注册特权 IPC handler（open-external / pick-directory / pick-file / write-tmp-image）。
  *
  * @param deps 注入的依赖
  */
@@ -108,6 +110,50 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
       } catch (err) {
         console.error('[ipc] pick-file failed:', err)
         return { canceled: true, path: null }
+      }
+    },
+  )
+
+  // write-tmp-image：把剪贴板图片（base64）写到 OS tmpdir，返回绝对路径。
+  // Cmd+V/Ctrl+V 粘贴截图走此 handler：renderer 读剪贴板 image blob → base64 → 经此 IPC
+  // 落地成文件，后续由 renderer 决定走富呈现 badge（Cmd+V）或字面路径文本（Ctrl+V）。
+  //
+  // 安全：mimeType 必须以 image/ 开头（防借道写任意文件），且 base64 经 Buffer 解码。
+  // 失败语义：与 pick-* 不同，此处 fs 写失败直接 throw（让 renderer 的 invoke reject 被
+  // catch，降级为 [图片粘贴失败] 文本提示），而非返回 null——因为返回 null 与「未取到 blob」
+  // 语义混淆，throw 让 renderer 明确区分「IPC 不可用」(undefined) vs 「写入失败」(catch)。
+  ipcMain.handle(
+    'write-tmp-image',
+    async (
+      _event,
+      payload: { base64: string; mimeType: string; suggestedName?: string },
+    ): Promise<{ path: string; name: string }> => {
+      const { base64, mimeType, suggestedName } = payload
+      if (!mimeType.startsWith('image/')) {
+        throw new Error(`write-tmp-image: invalid mimeType ${mimeType}`)
+      }
+      // mimeType → ext 映射（覆盖常见剪贴板图类型）
+      const extByMime: Record<string, string> = {
+        'image/png': 'png',
+        'image/jpeg': 'jpg',
+        'image/jpg': 'jpg',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+      }
+      const ext = extByMime[mimeType] ?? 'png'
+      try {
+        // 文件名：suggestedName 优先（保留原始截图名），否则时间戳+随机数保证唯一
+        const name = suggestedName
+          ? suggestedName.includes('.')
+            ? suggestedName
+            : `${suggestedName}.${ext}`
+          : `xyz-img-${Date.now()}-${randomInt(0, 0xffffff).toString(36)}.${ext}`
+        const fullPath = join(tmpdir(), name)
+        writeFileSync(fullPath, Buffer.from(base64, 'base64'))
+        return { path: fullPath, name }
+      } catch (err) {
+        console.error('[ipc] write-tmp-image failed:', err)
+        throw new Error('write-tmp-image failed')
       }
     },
   )

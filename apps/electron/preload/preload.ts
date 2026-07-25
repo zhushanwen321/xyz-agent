@@ -43,6 +43,16 @@ export interface ElectronAPI {
     canceled: boolean
     path: string | null
   }>
+  /**
+   * 把剪贴板图片（base64）写到 OS tmpdir，返回 {path, name}。
+   * Cmd+V/Ctrl+V 粘贴截图走此 IPC（renderer 读 blob → base64 → 落地文件）。
+   * 主进程校验 mimeType image/* 前缀，写失败 throw。
+   */
+  writeTmpImage(payload: {
+    base64: string
+    mimeType: string
+    suggestedName?: string
+  }): Promise<{ path: string; name: string }>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -103,6 +113,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     defaultPath?: string
     filters?: Array<{ name: string; extensions: string[] }>
   }) => ipcRenderer.invoke('pick-file', options),
+  writeTmpImage: (payload: { base64: string; mimeType: string; suggestedName?: string }) =>
+    ipcRenderer.invoke('write-tmp-image', payload),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)

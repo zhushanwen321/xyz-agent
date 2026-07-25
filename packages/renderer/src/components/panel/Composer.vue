@@ -46,8 +46,8 @@
         </div>
         <!-- 顶部元信息行 slot（landing 态：directory/branch chip；panel 态留空） -->
         <slot name="meta-row" />
-        <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
-        <ContextChipsBar />
+        <!-- 已附上下文 chip 行（§2f）。W4：从 segments 派生 image chips，× 删除定位 DOM 节点移除 -->
+        <ContextChipsBar :items="attachedItems" @remove="onRemoveContextChip" />
         <!-- 输入区：contenteditable 富文本（draft §1/§2e，支持 slash chip 与 @/# mention 内联） -->
         <ComposerInput
           ref="inputRef"
@@ -139,6 +139,7 @@ import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverT
 import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
+import { useComposerContextChips } from '@/composables/panel/useComposerContextChips'
 
 const props = withDefaults(
   defineProps<{
@@ -237,12 +238,16 @@ const isSending = ref(false)
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
 const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
 
-/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断） */
+/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断）+ 刷新 image chips */
 function onInputChange(text: string): void {
   draft.value = text
+  refreshAttachedItems()
   // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
   resetBrowsing()
 }
+
+// 顶部「已附上下文」chip 行（ContextChipsBar 数据源 + × 删除回调）——见 useComposerContextChips
+const { attachedItems, refreshAttachedItems, onRemoveContextChip } = useComposerContextChips(inputRef)
 
 /** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
 function clearInput(): void {
@@ -271,12 +276,7 @@ const hasInput = computed(() => draft.value.trim().length > 0)
  *  landing 态（sessionId 可能为公共 session id 或 null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
 const canSend = computed(() => hasInput.value && !isActive.value && !isSending.value && !isCompacting.value)
 
-/**
- * composer-box class（draft）：
- * - fork 模式：accent 边 + 3px ring glow + accent 底（forkBoxClass）
- * - S6 流式中/派发空窗期：accent 蓝 steer 呼吸 ring
- * - S2 普通输入中：中性聚焦 ring
- */
+/** composer-box class：fork 模式（accent 边 + ring glow）/ S6 流式（steer 呼吸 ring）/ S2 输入中（中性 ring） */
 const boxClass = computed(() => [
   fork.forkBoxClass.value
     || (isActive.value
@@ -293,13 +293,12 @@ const placeholder = computed(() =>
 )
 
 /**
- * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。分支优先级：
- * 1. fork 模式 → forkSessionAsk（fork 新分支 + content 作首条 user），详见 useComposerForkMode。
- * 2. landing 态 → submitFirstMessage（延迟 create session 后再发）。用 variant 而非 sessionId 判定：
- *    landing 态 sessionId 可能是公共 session id（供 CommandPopover 显示 pi 命令），非真实工作 session。
- * 3. /compact slash chip（操作型前缀）→ 专用 compact RPC（#6），不发 prompt 给 pi。
- *    检测：'/compact'（纯 chip）或 '/compact <指令>'（chip + 附加文本 → customInstructions），
- *    与 pi TUI interactive-mode.ts:2656 解析对齐。必须在此拦截：pi RPC 不解析 builtin slash。
+ * 发送：S2 → S5（sending）→ S6（streaming）→ 完成。分支优先级：
+ * 1. fork 模式 → forkSessionAsk（详见 useComposerForkMode）。
+ * 2. landing 态 → submitFirstMessage（延迟 create session；用 variant 而非 sessionId 判定，
+ *    landing 态 sessionId 可能是公共 id 非真实 session）。
+ * 3. /compact slash chip → 专用 compact RPC（#6），不发 prompt 给 pi。检测 '/compact' 或
+ *    '/compact <指令>'，与 pi TUI interactive-mode.ts:2656 对齐。必须在此拦截：pi RPC 不解析 builtin slash。
  * 4. 普通发送 → useChat.send。
  */
 async function onSend(): Promise<void> {

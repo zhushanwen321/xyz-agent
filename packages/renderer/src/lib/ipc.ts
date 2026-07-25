@@ -65,6 +65,21 @@ export async function pickDirectory(
   return api.pickDirectory(options)
 }
 
+/**
+ * 把剪贴板图片（base64）写到 OS tmpdir，返回 {path, name}（Cmd+V/Ctrl+V 粘贴截图用）。
+ * web/mock 环境无 preload → api 或 api.writeTmpImage 不存在 → 返回 undefined，
+ * 让上层（useImageAttachment）降级为文本提示，不 throw。
+ *
+ * 主进程写失败会 throw（经 ipcRenderer.invoke reject），调用方 catch 后降级。
+ */
+export async function writeTmpImage(payload: {
+  base64: string
+  mimeType: string
+  suggestedName?: string
+}): Promise<{ path: string; name: string } | undefined> {
+  return api?.writeTmpImage?.(payload)
+}
+
 /** win/linux 自绘 traffic light 点击：最小化窗口（mac 系统圆点不走此处） */
 export function windowMinimize(): Promise<void> {
   return api?.windowMinimize() ?? Promise.resolve()

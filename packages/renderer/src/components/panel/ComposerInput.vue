@@ -59,6 +59,7 @@ const isFocused = ref(false)
 // 解耦：handleBackspaceOnChip 仅在运行期（onKeydown 触发）被调，setup 期可暂留占位再后赋值，
 // 故先声明本 composable，把 handleBackspaceOnChip 经 forwardRef 后赋，再声明 chip composable。
 let handleBackspaceOnChip: () => boolean = () => false
+let insertImageBadgeFn: (path: string, name: string) => void = () => {}
 const {
   composing,
   isEmpty,
@@ -84,6 +85,8 @@ const {
   onEnterKeydown: (e) => emit('keydown', e),
   onKeydown: (e) => emit('keydown', e),
   handleBackspaceOnChip: () => handleBackspaceOnChip(),
+  // insertImageBadge 经闭包转发，chip composable 声明后回填真实实现（同 handleBackspaceOnChip 范式）
+  insertImageBadge: (path, name) => insertImageBadgeFn(path, name),
 })
 
 // ============ 富文本 chip（§2e slash / §2d mention） ============
@@ -95,8 +98,10 @@ const chipCommands = useComposerChipCommands(elRef, {
 const insertSlashChip = chipCommands.insertSlashChip
 const insertMentionChip = chipCommands.insertMentionChip
 const insertFileChip = chipCommands.insertFileChip
-// 后赋值：补回上面 forward 占位（setup 同步执行完毕，onKeydown 运行期读到真实实现）
+const insertImageBadge = chipCommands.insertImageBadge
+// 后赋值：补回上面 forward 占位（setup 同步执行完毕，onPaste 运行期读到真实实现）
 handleBackspaceOnChip = chipCommands.handleBackspaceOnChip
+insertImageBadgeFn = chipCommands.insertImageBadge
 
 /** blur：清聚焦态（隐藏光标 + 末尾不再闪），并保存选区供命令浮层后恢复光标 */
 function onBlur(): void {
@@ -113,6 +118,23 @@ function focus(): void {
   elRef.value?.focus()
 }
 
+/**
+ * 按 path 移除 image badge（ContextChipsBar × 删除回调用）。
+ * 定位 [data-chip-path=path] 的 image-chip，连同相邻 ZWSP spacer 一并移除，触发 onInput 同步状态。
+ */
+function removeImageChip(path: string): void {
+  const el = elRef.value
+  if (!el) return
+  const chip = el.querySelector<HTMLSpanElement>(`.image-chip[data-chip-path="${path}"]`)
+  if (!chip) return
+  const next = chip.nextSibling
+  if (next && next.nodeType === Node.TEXT_NODE && next.textContent === '\u200B') {
+    next.remove()
+  }
+  chip.remove()
+  onInput()
+}
+
 defineExpose({
   clear,
   focus,
@@ -123,6 +145,8 @@ defineExpose({
   insertSlashChip,
   insertMentionChip,
   insertFileChip,
+  insertImageBadge,
+  removeImageChip,
   clearSlashQueryText,
   clearHashQueryText,
   saveSelection,
@@ -204,5 +228,11 @@ onMounted(() => {
 .composer-input :deep(.mention-chip.mention-file) {
   color: var(--success);
   background: var(--success-soft);
+}
+/* 图片 badge（Cmd+V 富呈现通路）：复用 .mention-chip 基础样式 + .image-chip 紫色修饰，
+   覆盖 mention-file 的绿色，与 ContextChipsBar image chip（text-reasoning）视觉一致（TO2）。 */
+.composer-input :deep(.mention-chip.image-chip) {
+  color: var(--reasoning);
+  background: var(--reasoning-soft);
 }
 </style>

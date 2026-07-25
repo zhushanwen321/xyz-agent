@@ -181,6 +181,47 @@ export function useComposerChipCommands(
   }
 
   /**
+   * 插入图片 badge（Cmd+V 富呈现通路：截图粘贴后在光标处插 image chip）。
+   *
+   * 与 insertFileChip 的区别：
+   * - 样式带 .image-chip 修饰（紫色 reasoning 色，与 ContextChipsBar image 一致），复用 .mention-chip 基础样式（TO2）。
+   * - dataset.chipType='image'（getSegmentsFromEl 依此重建 {type:image} segment，区别于 file 的 'file'）。
+   * - 无行范围概念，label 直接显 basename。
+   * DOM schema 见 C2 契约。
+   */
+  function insertImageBadge(path: string, name: string): void {
+    const el = getEl()
+    if (!el) return
+    restoreSelection()
+    el.focus()
+    const chip = document.createElement('span')
+    chip.className = 'mention-chip mention-file image-chip'
+    chip.contentEditable = 'false'
+    // 结构化 dataset：getSegmentsFromEl 依此重建 {type:image} segment
+    chip.dataset.chipType = 'image'
+    chip.dataset.chipPath = path
+    chip.dataset.chipName = name
+    const label = document.createElement('span')
+    label.className = 'chip-label'
+    label.textContent = name
+    chip.appendChild(label)
+    chip.appendChild(makeXButton(chip))
+    // 插入光标处（同 file chip，非最前）
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) {
+      el.appendChild(chip)
+    } else {
+      const range = sel.getRangeAt(0)
+      range.deleteContents()
+      range.insertNode(chip)
+    }
+    const spacer = document.createTextNode('\u200B')
+    chip.after(spacer)
+    placeCursorAfter(spacer)
+    onChanged()
+  }
+
+  /**
    * 插入 @ mention 内联 chip（§2d：蓝名，插在当前光标位置）。
    *
    * # file 引用已迁移到 insertFileChip（结构化，ADR-0034）。本方法只保留 @ 分支——
@@ -244,7 +285,7 @@ export function useComposerChipCommands(
     }
     if (prev && prev.nodeType === Node.ELEMENT_NODE) {
       const ep = prev as HTMLElement
-      if (ep.classList.contains('slash-chip') || ep.classList.contains('mention-chip')) {
+      if (ep.classList.contains('slash-chip') || ep.classList.contains('mention-chip') || ep.classList.contains('image-chip')) {
         removeChipNode(ep)
         return true
       }
@@ -252,5 +293,5 @@ export function useComposerChipCommands(
     return false
   }
 
-  return { insertSlashChip, insertMentionChip, insertFileChip, handleBackspaceOnChip }
+  return { insertSlashChip, insertMentionChip, insertFileChip, insertImageBadge, handleBackspaceOnChip }
 }
