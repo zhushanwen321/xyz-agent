@@ -1,6 +1,6 @@
 {
   "testRunner": {
-    "command": "npx vitest run",
+    "command": "npx vitest run src/__tests__/composables/use-quota-query.test.ts src/__tests__/panel/context-capacity-quota.test.ts src/__tests__/settings/coding-plan-section.test.ts src/__tests__/stores/quota-store.test.ts",
     "cwd": "packages/renderer"
   }
 }
