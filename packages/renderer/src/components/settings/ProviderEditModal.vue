@@ -363,8 +363,8 @@
       <div class="flex items-center gap-2 border-t border-border px-5 py-3.5">
         <span v-if="actionError" class="flex-1 text-[12px] text-danger">{{ actionError }}</span>
         <span v-else class="flex-1" />
-        <Button variant="ghost" @click="requestClose">{{ t('settings.providerEdit.cancel') }}</Button>
-        <Button :disabled="saving" @click="onSave">
+        <Button variant="ghost" data-testid="provider-cancel-btn" @click="requestClose">{{ t('settings.providerEdit.cancel') }}</Button>
+        <Button data-testid="provider-save-btn" :disabled="saving" @click="onSave">
           {{ saving ? t('settings.providerEdit.saving') : t('settings.providerEdit.save') }}
         </Button>
       </div>
