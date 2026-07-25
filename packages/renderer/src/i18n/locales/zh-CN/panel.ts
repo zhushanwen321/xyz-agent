@@ -293,6 +293,7 @@ export default {
     selectSession: '选择左侧会话开始',
     taskFailed: '任务创建失败：{error}',
     sendFailed: '消息发送失败：{error}',
+    visionNotSupportedWarning: '当前模型（{modelName}）不支持图片输入，{count} 张图片将被忽略，仅发送文本占位',
   },
   overlay: {
     subagent: '子代理',

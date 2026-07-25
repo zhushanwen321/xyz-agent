@@ -56,8 +56,24 @@ vi.mock('@/stores/settings', () => ({
   useSettingsStore: () => ({ providers: settingsState.providers }),
 }))
 
+// ── i18n mock：测试环境 i18n.global.t 不解析（vue-i18n composition 模式需 setup）。
+// stub vision 降级文案，让 toast 内容可断言。
+vi.mock('@/i18n', () => ({
+  default: {
+    global: {
+      t: (key: string, args?: Record<string, unknown>) => {
+        if (key === 'panel.visionNotSupportedWarning' && args) {
+          return `不支持图片 model=${String(args.modelName)} count=${String(args.count)}`
+        }
+        return key
+      },
+    },
+  },
+}))
+
 import { useChatStore } from '@/stores/chat'
 import { useChat, resetChatModuleState, extractImages } from '@/composables/features/useChat'
+import { useToast } from '@/composables/useToast'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -65,6 +81,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   apiMock.holder.handler = null
   settingsState.providers = []
+  // 清空全局 toasts（useToast 模块级单例，跨用例共享）
+  const { toasts } = useToast()
+  toasts.value = []
 })
 
 /** 合成 local-file fetch Response（ok=true，blob 含给定字节）。 */
@@ -185,7 +204,7 @@ describe('useChat.send images 透传（slice6 TC7-TC8）', () => {
 })
 
 describe('useChat.send vision 降级（slice6 TC10）', () => {
-  it('TC10 不支持 vision + 含图 → console.warn 调用，images 仍透传（不剥离）', async () => {
+  it('TC10 不支持 vision + 含图 → toast.warning 调用，images 仍透传（不剥离）', async () => {
     // providers: 当前模型 input 仅 text（不支持 vision）
     settingsState.providers = [{ id: 'p1', models: [{ id: 'm1', input: ['text'] }] }]
     // session.list 注入 modelId='p1/m1'（send 按 sid 取 modelId）
@@ -202,21 +221,21 @@ describe('useChat.send vision 降级（slice6 TC10）', () => {
         blob: () => Promise.resolve(new Blob([bytes.slice()], { type: 'image/png' })),
       }) as unknown as typeof fetch,
     )
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const { send } = useChat()
     await send('s-img', [{ type: 'image', id: 'img-x', path: '/tmp/x.png', name: 'x.png' }])
 
-    // vision 降级 warn 被调用（含「不支持图片」）
-    const visionWarn = warnSpy.mock.calls.find((c) => String(c[0]).includes('不支持图片'))
-    expect(visionWarn).toBeTruthy()
+    // vision 降级 toast（W1：console.warn → toast.warning，用户可见）
+    const { toasts } = useToast()
+    const visionToast = toasts.value.find((tt) => tt.type === 'warning' && tt.message.includes('不支持图片'))
+    expect(visionToast).toBeTruthy()
     // images 仍透传（不剥离）—— chatApi.send 第3参数是非空数组
     const call = apiMock.send.mock.calls[0]!
     expect(Array.isArray(call[2])).toBe(true)
     expect(call[2]).toHaveLength(1)
   })
 
-  it('TC10b 支持 vision + 含图 → 无 vision 降级 warn，images 正常透传', async () => {
+  it('TC10b 支持 vision + 含图 → 无 vision 降级 toast，images 正常透传', async () => {
     settingsState.providers = [{ id: 'p1', models: [{ id: 'm1', input: ['text', 'image'] }] }]
     const { useSessionStore } = await import('@/stores/session')
     const sessionStore = useSessionStore()
@@ -231,14 +250,14 @@ describe('useChat.send vision 降级（slice6 TC10）', () => {
         blob: () => Promise.resolve(new Blob([bytes.slice()], { type: 'image/png' })),
       }) as unknown as typeof fetch,
     )
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const { send } = useChat()
     await send('s-img2', [{ type: 'image', id: 'img-y', path: '/tmp/y.png', name: 'y.png' }])
 
-    // 无 vision 降级 warn（extractImages 成功路径也不 warn）
-    const visionWarn = warnSpy.mock.calls.find((c) => String(c[0]).includes('不支持图片'))
-    expect(visionWarn).toBeUndefined()
+    // 无 vision 降级 toast（支持 vision 不触发降级）
+    const { toasts } = useToast()
+    const visionToast = toasts.value.find((tt) => tt.type === 'warning' && tt.message.includes('不支持图片'))
+    expect(visionToast).toBeUndefined()
     // images 透传
     const call = apiMock.send.mock.calls[0]!
     expect(Array.isArray(call[2])).toBe(true)

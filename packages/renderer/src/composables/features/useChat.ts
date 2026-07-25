@@ -12,12 +12,13 @@
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
-import { ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSettingsStore } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
+import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import i18n from '@/i18n'
 import type { Segment } from '@xyz-agent/shared'
 import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
@@ -216,6 +217,28 @@ export function useChat() {
   const chat = useChatStore()
   const session = useSessionStore()
   const settings = useSettingsStore()
+  const { warning } = useToast()
+
+  /**
+   * per-session-model vision 降级去重表（W1 vision-toast）。
+   *
+   * 为什么放 useChat setup 内而非模块顶层：useSessionScopedState 的 onScopeDispose 注册
+   * 需 active effect scope（<script setup> 提供）。sid ref 取 session.activeId 仅满足构造签名——
+   * 实际去重用 updateFor(sendSid, ...)（send 显式入参 sid，与 WS handler 捕获订阅 sid 同范式，
+   * 见 useSessionScopedState.ts:168-183 updateFor 设计动机），不读 activeId（避免 standby panel 串扰）。
+   *
+   * init 必须返回 reactive 容器（useSessionScopedState 响应式契约 L20-23），否则 mutate 不触发下游。
+   * models: Set<string> 记录本 session 已警告过的 modelId，切 session 自然分区（Map 隔离）。
+   *
+   * sid ref 用 computed(() => session.activeId) 包装而非 storeToRefs(session).activeId：
+   * computed 对 null/未初始化 store 安全（Sidebar 测试 mock session store 为 plain object，
+   * storeToRefs 读 mock 的 $state.effect 会抛 TypeError）。实际去重不读 activeId（见上），
+   * 这里仅满足构造签名。
+   */
+  const warnedModels = useSessionScopedState(
+    computed(() => session.activeId),
+    () => reactive({ models: new Set<string>() }),
+  )
 
   /**
    * 发送消息：appendUser → 确保会话级订阅 → api.send（ack 仅表示 pi 已接收）。
@@ -249,12 +272,23 @@ export function useChat() {
       // 填入 message.send images 字段（独立通道，与 promptText 文本占位 [图片:name] 双投递）。
       // extractImages 内部 allSettled 并行读，无 image 段返回 undefined（行为不变）。
       const images = await extractImages(segments)
-      // vision 降级（should 优先级）：当前 model 不支持 image 输入时 console.warn 提示，
+      // vision 降级（should 优先级）：当前 model 不支持 image 输入时 toast 提示用户，
       // 不阻断不剥离 images（runtime/pi 自然丢弃不支持的多模态，文本占位仍发）。
+      // per-session-model 去重：同 session 同 modelId 仅警告一次（切回/切走 model 可再次触发）。
       if (images && images.length > 0) {
         const modelId = session.list.find((s) => s.id === sid)?.modelId ?? ''
-        if (!resolveSupportsVision(modelId, settings.providers)) {
-          console.warn('[useChat] 当前模型不支持图片输入，图片将被忽略')
+        if (modelId && !resolveSupportsVision(modelId, settings.providers)) {
+          // updateFor 内原子 check+add（闭包捕获 sid，与 WS handler 同范式，防 standby 串扰）。
+          let alreadyWarned = true
+          warnedModels.updateFor(sid, (s) => {
+            if (!s.models.has(modelId)) {
+              s.models.add(modelId)
+              alreadyWarned = false
+            }
+          })
+          if (!alreadyWarned) {
+            warning(t('panel.visionNotSupportedWarning', { modelName: modelId, count: images.length }))
+          }
         }
       }
       await chatApi.send(sid, promptText, images)

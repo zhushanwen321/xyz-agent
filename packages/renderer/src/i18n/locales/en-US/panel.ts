@@ -293,6 +293,7 @@ export default {
     selectSession: 'Select a session from the left',
     taskFailed: 'Task creation failed: {error}',
     sendFailed: 'Failed to send message: {error}',
+    visionNotSupportedWarning: 'Current model ({modelName}) does not support image input. {count} image(s) will be omitted, only text placeholder sent',
   },
   overlay: {
     subagent: 'Subagent',
