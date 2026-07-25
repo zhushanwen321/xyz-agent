@@ -12,6 +12,7 @@
     direction="horizontal"
     auto-save-id="workspace-drawer-split"
     class="panel-container relative min-h-0 flex-1 overflow-hidden"
+    @layout="onSplitterLayout"
   >
     <SplitterPanel id="main-panel" :order="1" :min-size="40" :default-size="50">
       <Panel
@@ -119,5 +120,15 @@ const git = provideGitStatus(() => panelSessionId.value)
  */
 function gitIndicatorOf(_l: PanelLeaf): GitIndicator | undefined {
   return git.indicator.value
+}
+
+/**
+ * Splitter layout 变化（拖动 ResizeHandle / panel 条件渲染挂卸 / group 尺寸变化）时，
+ * 经 window CustomEvent 通知 BrowserPane 重算 viewport rect 并推给主进程 WebContentsView setBounds。
+ * 补充 BrowserPane 内 ResizeObserver 在 SplitterPanel overflow:hidden 容器 + reka-ui 高频拖动下
+ * 触发不可靠的缺口（RO 双保险，不替换）。事件名带 xyz 前缀防冲突。
+ */
+function onSplitterLayout() {
+  window.dispatchEvent(new CustomEvent('xyz:splitter-layout'))
 }
 </script>

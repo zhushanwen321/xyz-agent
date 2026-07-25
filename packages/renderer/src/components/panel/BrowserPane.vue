@@ -307,6 +307,9 @@ function pushRect(): void {
     width: Math.round(domRect.width),
     height: Math.round(domRect.height),
   }
+  // [临时诊断日志] 验证 Splitter @layout → CustomEvent → scheduleRectPush → pushRect 链路是否触发；
+  // 日志在 0 尺寸检查前打印，便于观察 rect=0（隐藏/未布局）场景。验证后删除。
+  console.log('[BrowserPane] pushRect', rect)
   // 跳过 0 尺寸（隐藏中/未布局），避免把 view 设成 0,0,0,0 等效隐藏
   if (rect.width === 0 || rect.height === 0) return
   void browserSetRect(props.sessionId, rect)
@@ -354,6 +357,9 @@ onMounted(() => {
   }
   // window resize（拖窗口，高频）：ResizeObserver 不一定捕获（元素尺寸可能不变但位置变）
   window.addEventListener('resize', scheduleRectPush)
+  // Splitter @layout → PanelContainer 派发的 CustomEvent（drawer 宽度拖动调整）。
+  // RO 在 SplitterPanel overflow:hidden + reka-ui 高频拖动下触发不可靠，此为补充路径。复用 scheduleRectPush 节流。
+  window.addEventListener('xyz:splitter-layout', scheduleRectPush)
   // 缩放快捷键（Cmd/Ctrl +/-/0）
   window.addEventListener('keydown', onZoomKeydown)
 
@@ -387,6 +393,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   window.removeEventListener('resize', scheduleRectPush)
+  window.removeEventListener('xyz:splitter-layout', scheduleRectPush)
   window.removeEventListener('keydown', onZoomKeydown)
   if (rectRafId !== null) {
     cancelAnimationFrame(rectRafId)
