@@ -24,9 +24,12 @@ import { isValidExternalUrl } from './input-validators.js'
 /** 生成 YYYYMMDD-HHMM 时间戳（displayName 用，本地时区） */
 function formatTimestamp(): string {
   const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  // eslint-disable-next-line no-magic-numbers
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+  // padStart 目标宽度（月份/日期/时/分都是 2 位）；getMonth 从 0 计数需 +1。
+  // 提取为具名常量避免 magic-numbers 规则（规则对常量赋值处不报，仅对内联使用处报）。
+  const PAD_WIDTH = 2
+  const JANUARY_OFFSET = 1
+  const pad = (n: number) => String(n).padStart(PAD_WIDTH, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + JANUARY_OFFSET)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
 }
 
 /**
