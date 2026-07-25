@@ -1,6 +1,8 @@
 export default {
   branchSelect: {
     gitNotSupported: 'v1 暂未支持 Git 图谱',
+    titleBareWorkspace: 'Worktree',
+    titlePlainRepo: '分支',
     searchPlaceholder: '搜索分支',
     loadFailed: '加载分支失败，请重试',
     noBranch: '无分支 · 引导首次 commit',

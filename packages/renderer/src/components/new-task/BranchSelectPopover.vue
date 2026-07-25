@@ -156,6 +156,13 @@ function selectWorktree(path: string): void {
   emit('select-worktree', { path })
 }
 
+/** 取路径的末尾目录名作为 worktree 显示名（用户只关心目录名，完整路径太长）。 */
+function worktreeName(path: string): string {
+  const trimmed = path.replace(/\/+$/, '')
+  const slashIdx = trimmed.lastIndexOf('/')
+  return slashIdx >= 0 ? trimmed.slice(slashIdx + 1) : trimmed
+}
+
 function createWorktree(): void {
   emit('create-worktree')
 }
@@ -207,6 +214,11 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
 
     <!-- ───── 分支 panel（plain-repo 模式独占）───── -->
     <div v-if="mode === 'plain-repo'">
+      <!-- 顶部标题栏（模式标注） -->
+      <div class="flex items-center justify-between border-b border-border px-3 py-2">
+        <span class="text-[12px] font-medium text-fg">{{ t('newTask.branchSelect.titlePlainRepo') }}</span>
+        <span class="rounded-md bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold text-subtle">{{ allBranches.length }}</span>
+      </div>
       <!-- 搜索 input -->
       <div class="border-b border-border p-2">
         <Input
@@ -236,13 +248,11 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <p class="text-[12px] text-muted">{{ t('newTask.branchSelect.noBranch') }}</p>
       </div>
 
-      <!-- 分支列表 -->
-      <div v-else class="py-1">
-        <div class="flex items-center justify-between px-3 py-1 text-[11px] text-subtle">
-          <span>{{ t('newTask.branchSelect.branchLabel') }}</span>
-          <span>{{ allBranches.length }}</span>
-        </div>
-
+      <!-- 分支列表（最多 6 项可见，超出滚动） -->
+      <div
+        v-else
+        class="max-h-[228px] overflow-y-auto py-1"
+      >
         <PopoverListItem
           v-for="(name, i) in filtered"
           :key="name"
@@ -267,10 +277,12 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
             </span>
           </span>
         </PopoverListItem>
+      </div>
+      <!-- 列表滚动区结束；动作项不滚动，固定底部 -->
 
-        <div class="my-1 h-px bg-border" />
+      <div class="my-1 h-px bg-border" />
 
-        <!-- 动作项：创建并检出新分支 -->
+      <!-- 动作项：创建并检出新分支 -->
         <PopoverActionItem
           test-id="action-create-branch"
           :active="isActiveItem(filtered.length)"
@@ -308,7 +320,6 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           </template>
           {{ t('newTask.dirSelect.createWorktree') }}
         </PopoverActionItem>
-      </div>
 
       <!-- dirty inline 二次确认条（spec §3.3，非 modal） -->
       <div
@@ -341,6 +352,11 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
 
     <!-- ───── Worktree panel（bare-workspace 模式独占）───── -->
     <div v-if="mode === 'bare-workspace'">
+      <!-- 顶部标题栏（模式标注） -->
+      <div class="flex items-center justify-between border-b border-border px-3 py-2">
+        <span class="text-[12px] font-medium text-fg">{{ t('newTask.branchSelect.titleBareWorkspace') }}</span>
+        <span class="rounded-md bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold text-subtle">{{ props.worktreeItems.length }}</span>
+      </div>
       <!-- 空态：无 worktree（新建 worktree 动作仍 accent 强调在底部） -->
       <div
         v-if="props.worktreeItems.length === 0"
@@ -351,10 +367,10 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         <p class="text-[12px] text-muted">{{ t('newTask.dirSelect.noWorktrees') }}</p>
       </div>
 
-      <!-- worktree 列表（GitFork + 分支名 + mono 路径副标题 + HEAD 徽章，风格与 DirSelectPopover 一致） -->
+      <!-- worktree 列表（最多 6 项可见，超出滚动；仅显目录名，不显完整路径） -->
       <div
         v-else
-        class="py-1"
+        class="max-h-[228px] overflow-y-auto py-1"
       >
         <PopoverListItem
           v-for="(wt, wi) in props.worktreeItems"
@@ -368,15 +384,12 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           <template #icon>
             <GitFork class="shrink-0 text-subtle" />
           </template>
-          <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-            <span class="flex items-center gap-1.5 truncate text-fg">
-              <span class="truncate">{{ wt.branch }}</span>
-              <span
-                v-if="wt.HEAD"
-                class="rounded bg-accent-soft px-1 py-px font-mono text-[10px] font-semibold text-accent"
-              >HEAD</span>
-            </span>
-            <span class="truncate font-mono text-[11px] text-subtle">{{ wt.path }}</span>
+          <span class="flex min-w-0 flex-1 items-center gap-1.5 truncate text-fg">
+            <span class="truncate">{{ worktreeName(wt.path) }}</span>
+            <span
+              v-if="wt.HEAD"
+              class="rounded bg-accent-soft px-1 py-px font-mono text-[10px] font-semibold text-accent"
+            >HEAD</span>
           </span>
         </PopoverListItem>
       </div>

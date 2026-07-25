@@ -1,6 +1,8 @@
 export default {
   branchSelect: {
     gitNotSupported: 'Git graph not supported in v1',
+    titleBareWorkspace: 'Worktree',
+    titlePlainRepo: 'Branches',
     searchPlaceholder: 'Search branches',
     loadFailed: 'Failed to load branches, please retry',
     noBranch: 'No branches · Guide first commit',

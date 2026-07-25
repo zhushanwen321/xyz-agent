@@ -69,13 +69,16 @@ const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionI
 const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
 
 /**
- * landing 态 cwd 同步：若 flow.pendingCwd 为空但 props.currentCwd 有值（Panel 传入的 sessionDir /
- * defaultCwd），同步给 flow。否则 dirSelect 的 watch currentCwd 不触发 → workspace.detect 不调 →
- * mode 恒 'not-repo' → Git chip 不显示、分支列表不拉。
- * 进入 landing 的路径（startFlow）会 presetCwd，但直接渲染 Landing（app 启动/空 session）未走 startFlow。
+ * landing 态进入保障 + cwd 同步：
+ * app 启动 / 空 session 时 Panel 因 !sessionId 渲染 Landing，但 flow.state 可能还是 idle
+ * （未走 startFlow）→ presetCwd 不执行（要求 state=landing）→ cwd 未同步 → mode 恒 not-repo →
+ * Git chip 不显示 + 点 chip 时 idle→branch-popover 非法转换报错。
+ * startFlow 幂等（已 landing 不翻 state，只刷新 cwd），idle 态调它会 idle→landing + presetCwd。
  */
 onMounted(() => {
-  if (!flow.currentCwd.value && props.currentCwd) {
+  if (flow.state.value !== 'landing') {
+    flow.startFlow(props.currentCwd ?? undefined)
+  } else if (!flow.currentCwd.value && props.currentCwd) {
     flow.presetCwd(props.currentCwd)
   }
 })
@@ -232,7 +235,7 @@ function onRetry(): void {
                 <span class="font-mono">{{ branch || t('newTask.landing.gitRepo') }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" class="w-[420px] p-0">
+            <PopoverContent side="top" :avoid-collisions="false" class="w-[420px] p-0">
               <BranchSelectPopover
                 :mode="flow.mode?.value === 'bare-workspace' ? 'bare-workspace' : 'plain-repo'"
                 :cwd="cwd ?? ''"
