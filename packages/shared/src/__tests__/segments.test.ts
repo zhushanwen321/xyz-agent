@@ -79,37 +79,42 @@ describe('segmentsToText', () => {
     )
   })
 
-  it('image segment 序列化为 [图片: name] 占位', () => {
+  it('image segment 序列化为 [图片 N] 匿名编号占位', () => {
     const segs: Segment[] = [
       {
         type: 'image',
         id: 'img-1',
-        path: '/var/folders/xx/T/screenshot-20260724-1530.png',
-        name: 'screenshot-20260724-1530.png',
+        path: '/var/folders/xx/T/dbfdb3c8-image.png',
+        fileName: 'dbfdb3c8-image.png',
+        displayName: 'screenshot-20260724-1530.png',
       },
     ]
     const result = segmentsToText(segs)
-    expect(result).toBe('[图片: screenshot-20260724-1530.png]')
+    expect(result).toBe('[图片 1]')
     // 不含 path 绝对路径（不暴露系统路径）
     expect(result).not.toContain('/var/folders')
+    // 不含 fileName（磁盘全名不暴露给 LLM）
+    expect(result).not.toContain('dbfdb3c8')
+    // 不含 displayName（用户可读名不污染 LLM 上下文）
+    expect(result).not.toContain('screenshot-20260724')
     // 不含 base64 标记
     expect(result).not.toMatch(/data:image/)
   })
 
   it('image + text 混合时中间补空格', () => {
     const segs: Segment[] = [
-      { type: 'image', id: 'img-a', path: '/tmp/a.png', name: 'a.png' },
+      { type: 'image', id: 'img-a', path: '/tmp/a.png', fileName: 'a.png', displayName: 'a.png' },
       { type: 'text', text: '这张图怎么修' },
     ]
-    expect(segmentsToText(segs)).toBe('[图片: a.png] 这张图怎么修')
+    expect(segmentsToText(segs)).toBe('[图片 1] 这张图怎么修')
   })
 
-  it('连续多个 image segment 各自独立占位', () => {
+  it('连续多个 image segment 编号递增', () => {
     const segs: Segment[] = [
-      { type: 'image', id: 'img-1', path: '/tmp/1.png', name: '1.png' },
-      { type: 'image', id: 'img-2', path: '/tmp/2.png', name: '2.png' },
+      { type: 'image', id: 'img-1', path: '/tmp/1.png', fileName: '1.png', displayName: '1.png' },
+      { type: 'image', id: 'img-2', path: '/tmp/2.png', fileName: '2.png', displayName: '2.png' },
     ]
-    expect(segmentsToText(segs)).toBe('[图片: 1.png][图片: 2.png]')
+    expect(segmentsToText(segs)).toBe('[图片 1][图片 2]')
   })
 
   it('image segment 不破坏既有 text/skill 序列化（回归）', () => {
@@ -119,10 +124,10 @@ describe('segmentsToText', () => {
     // 因此 image 与 skill 直接拼接，中间无空格。
     const segs: Segment[] = [
       { type: 'text', text: '看这张' },
-      { type: 'image', id: 'img-x', path: '/tmp/x.png', name: 'x.png' },
+      { type: 'image', id: 'img-x', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png' },
       { type: 'skill', name: 'review' },
     ]
-    expect(segmentsToText(segs)).toBe('看这张[图片: x.png]/skill:review')
+    expect(segmentsToText(segs)).toBe('看这张[图片 1]/skill:review')
   })
 })
 

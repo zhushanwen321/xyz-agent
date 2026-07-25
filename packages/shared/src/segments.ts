@@ -1,59 +1,4 @@
 /**
- * FileContext —— file segment 的 inline 内容载体（P3 file inline 透传）。
- *
- * segmentsToPrompt 扩展签名接收 fileContexts Map（key=path），
- * file 段有对应 FileContext 时输出 <file> 标签包裹内容，无则保持原 path 输出。
- */
-export type FileContext = {
-  /** 文件绝对路径（segment.path） */
-  path: string
-  /** 文件内容（已按行范围提取 + 截断） */
-  content: string
-  /** 行范围（来自 file segment 的 lineRange，可选） */
-  lineRange?: [number, number]
-  /** 是否因超限截断（超 50KB 或 500 行） */
-  truncated: boolean
-  /** 原始字节大小（用于审计/日志） */
-  sizeBytes: number
-}
-
-/**
- * 获取文件扩展名（含点号，小写）。不依赖 node:path（shared barrel 被 renderer 浏览器端 import）。
- */
-function getExtname(p: string): string {
-  const lastDot = p.lastIndexOf('.')
-  const lastSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
-  // 点号在最后一个路径分隔符之后才是扩展名（否则是隐藏文件如 .gitignore）
-  if (lastDot > lastSlash && lastDot >= 0) return p.slice(lastDot).toLowerCase()
-  return ''
-}
-
-/** 小文本文件 inline 进 prompt 的字节上限（50KB） */
-// eslint-disable-next-line no-magic-numbers
-export const INLINE_TEXT_MAX_BYTES = 50 * 1024
-/** 小文本文件 inline 进 prompt 的行数上限 */
-export const INLINE_TEXT_MAX_LINES = 500
-/** 允许 inline 的文件扩展名白名单（大小写不敏感） */
-export const INLINE_EXTENSIONS: ReadonlySet<string> = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.vue', '.py', '.rb', '.go', '.rs',
-  '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.hpp', '.cs',
-  '.md', '.markdown', '.txt', '.json', '.yaml', '.yml', '.toml',
-  '.sh', '.bash', '.zsh', '.sql', '.html', '.css', '.scss',
-  '.xml', '.svg', '.ini', '.conf', '.env', '.gitignore',
-])
-
-/**
- * 判断文件是否应 inline 进 prompt（IF3 纯函数）。
- *
- * 规则：扩展名在 INLINE_EXTENSIONS 白名单 AND sizeBytes <= INLINE_TEXT_MAX_BYTES(50KB)。
- * 扩展名大小写不敏感（extname().toLowerCase()）。
- */
-export function shouldInlineFile(path: string, sizeBytes: number): boolean {
-  const ext = getExtname(path)
-  return INLINE_EXTENSIONS.has(ext) && sizeBytes <= INLINE_TEXT_MAX_BYTES
-}
-
-/**
  * Segment —— user message content 的结构化模型（ADR-0037）。
  *
  * Message.content 从纯 string 重构为 `string | Segment[]`：
@@ -75,31 +20,39 @@ export function shouldInlineFile(path: string, sizeBytes: number): boolean {
  * - skill: skill 命令段（/skill:xxx），含 name 和可选的 SKILL.md 文件路径
  * - file: 文件引用段（未来从 drawer/diff 选取追加到 composer），含路径和可选行范围
  * - mention: @mention 段（未来 @user 等），含 name
- * - image: 图片附件段（Cmd+V 粘贴的截图等），path 存 tmpdir 绝对路径，name 存 basename 用于展示，
- *   id 是 composer chip 的稳定唯一标识（crypto.randomUUID），同一文件附两次时供 ContextChipsBar
- *   :key 区分（path 会重复）。不进 pi prompt 文本（base64 走 message.send 的 images 字段），
- *   segmentsToText 产出占位。
+ * - image: 图片附件段（Cmd+V 粘贴的截图等）：
+ *   - id：composer chip 的稳定唯一标识（crypto.randomUUID），同一文件附两次时供
+ *     ContextChipsBar :key 区分（path 会重复）
+ *   - path：磁盘绝对路径（tmpdir 下落盘文件），不变
+ *   - fileName：磁盘文件全名（含 uuid 前缀，如 `dbfdb3c8-...-image.png`），用于磁盘定位/日志
+ *   - displayName：用户可读名（如 `截图-20260725-1530.png` 或 `照片.png`），用于 badge/
+ *     占位/缩略图 alt 显示
+ *   不进 pi prompt 文本（base64 走 message.send 的 images 字段），segmentsToText 产出
+ *   匿名编号占位 [图片 N]（不暴露 fileName/displayName 给 LLM）。
  */
 export type Segment =
   | { type: 'text'; text: string }
   | { type: 'skill'; name: string; location?: string }
   | { type: 'file'; path: string; lineRange?: [number, number] }
   | { type: 'mention'; name: string }
-  | { type: 'image'; id: string; path: string; name: string }
+  | { type: 'image'; id: string; path: string; fileName: string; displayName: string }
 
 /**
- * Segment[] → 纯文本（归一化展示用）。
+ * Segment[] → 纯文本（归一化展示用 + pi prompt 序列化的唯一实现）。
  *
- * skill → `/skill:name`，file → `path`，mention → `@name`，text → 原文。
+ * skill → `/skill:name`，file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
+ * text → 原文，image → 匿名编号占位 `[图片 N]`。
  * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug）。
  *
- * 注意：与 segmentsToPrompt 当前实现相同，但语义分离——
- * 未来若 pi prompt 格式与展示格式需要不同处理（如 file 段发 pi 需包 <file> 标签），
- * 只改 segmentsToPrompt 不影响显示。
+ * 收敛说明：原本 segmentsToPrompt 与 segmentsToText 分两份实现，因为 file inline 需要
+ * fileContexts Map 才分开。删除 file inline 后，所有 segment 序列化收敛到本函数一处，
+ * segmentsToPrompt 仅是 trim 包装。展示格式（含末尾换行）与 pi prompt 格式（trim）的差异
+ * 由调用方决定是否 trim，不再分两份逻辑。
  */
 export function segmentsToText(segments: Segment[]): string {
   if (segments.length === 0) return ''
   const parts: string[] = []
+  let imageCounter = 0
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const prev = i > 0 ? segments[i - 1] : null
@@ -133,12 +86,15 @@ export function segmentsToText(segments: Segment[]): string {
         parts.push(`@${seg.name}`)
         break
       case 'image':
-        // image 段产出占位文本（不产出 path/base64）。
-        // - path 是 tmpdir 绝对路径，不进展示文本（暴露系统路径无意义）。
-        // - base64 走 message.send 的 images 字段（独立通道），不进 segmentsToText。
-        // - 占位 [图片: name] 作为上下文锚点：LLM 同时收到此文本占位 + images base64，
-        //   知道用户贴了图且能引用它。verify-pi-image-rpc.cjs 已验证带 images 的 prompt 正常。
-        parts.push(`[图片: ${seg.name}]`)
+        // 匿名编号占位（不暴露 fileName/displayName 给 LLM）。
+        // - fileName 是磁盘全名（含 uuid 前缀），暴露给 LLM 无意义且会被当文件名找
+        // - displayName 是用户可读名，也不该污染 LLM 上下文
+        // - path 是 tmpdir 绝对路径，不进展示文本（暴露系统路径无意义）
+        // - base64 走 message.send 的 images 字段（独立通道），不进 segmentsToText
+        // - [图片 N] 作为 LLM 可引用的锚点：编号从 1 递增，与 base64 images 数组顺序一致，
+        //   verify-pi-image-rpc.cjs 已验证带 images 的 prompt 正常。
+        imageCounter += 1
+        parts.push(`[图片 ${imageCounter}]`)
         break
     }
   }
@@ -164,71 +120,12 @@ export function textToSegments(text: string): Segment[] {
 /**
  * Segment[] → pi prompt 字符串（pi 边界序列化）。
  *
- * 基于 segmentsToText 但 trim 首尾空白（pi prompt 不需要尾随换行/空格）。
+ * 删除 file inline 后，所有 segment 序列化逻辑收敛到 segmentsToText 一处，
+ * 本函数只是 trim 包装：pi prompt 不需要首尾空白（尾随换行/空格）。
  * 语义分离：segmentsToText 保留原始格式（含末尾换行），segmentsToPrompt 做发送归一化。
- *
- * 可选 fileContexts 参数（IF1 扩展签名）：file 段有对应 FileContext 时
- * 输出 <file path="..." lines?="s-e"> 包裹内容，无则保持原 path 输出（向后兼容）。
  */
-export function segmentsToPrompt(segments: Segment[], fileContexts?: Map<string, FileContext>): string {
-  if (!fileContexts || fileContexts.size === 0) return segmentsToText(segments).trim()
-
-  const parts: string[] = []
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i]
-    const prev = i > 0 ? segments[i - 1] : null
-    switch (seg.type) {
-      case 'text':
-        if (prev && prev.type !== 'text' && seg.text && !seg.text.startsWith(' ')) {
-          parts.push(' ')
-        }
-        parts.push(seg.text)
-        break
-      case 'skill':
-        parts.push(`/skill:${seg.name}`)
-        break
-      case 'file': {
-        const ctx = fileContexts.get(seg.path)
-        if (ctx) {
-          // 有 fileContext → 输出 <file> 标签包裹内容（TC5 格式，pi file-processor.ts:77 同款）
-          let attrs = `path="${seg.path}"`
-          if (seg.lineRange) {
-            const [s0, e0] = seg.lineRange
-            const s = Math.max(1, s0)
-            const e = Math.max(s, e0)
-            attrs += s === e ? ` lines="${s}"` : ` lines="${s}-${e}"`
-          }
-          let content = ctx.content
-          if (ctx.truncated) {
-            // 截断注释：让 LLM 知道可调 read 工具读全文
-            const lineCount = ctx.content.split('\n').length
-            // eslint-disable-next-line no-magic-numbers
-            const sizeKB = ctx.sizeBytes > 0 ? Math.ceil(ctx.sizeBytes / 1024) : 0
-            content += `\n<!-- truncated: 共 ${sizeKB > 0 ? sizeKB + 'KB' : ''}，已截断至前 ${lineCount} 行 -->`
-          }
-          parts.push(`<file ${attrs}>\n${content}\n</file>`)
-        } else {
-          // 无 fileContext → 向后兼容，保持原 path 输出
-          let fileText = seg.path
-          if (seg.lineRange) {
-            const [s0, e0] = seg.lineRange
-            const s = Math.max(1, s0)
-            const e = Math.max(s, e0)
-            fileText += s === e ? `:L${s}` : `:L${s}-L${e}`
-          }
-          parts.push(fileText)
-        }
-        break
-      }
-      case 'mention':
-        parts.push(`@${seg.name}`)
-        break
-      case 'image':
-        parts.push(`[图片: ${seg.name}]`)
-        break
-    }
-  }
-  return parts.join('').trim()
+export function segmentsToPrompt(segments: Segment[]): string {
+  return segmentsToText(segments).trim()
 }
 
 /**
