@@ -131,7 +131,7 @@
           无 Coding Plan 数据
         </span>
         <span v-else>
-          {{ t('panel.context.capacity') }}
+          {{ t('panel.context.noCodingPlan') }}
         </span>
         <Button
           v-if="matchedProviderId"
@@ -142,13 +142,22 @@
         >
           {{ quotaStore.isPending(matchedProviderId) ? '...' : '刷新' }}
         </Button>
+        <!-- 未配置态：显示「配置」按钮跳转 Settings（偏差 #D） -->
+        <Button
+          v-else
+          variant="secondary"
+          class="h-5 rounded-sm px-1.5 font-mono text-[9.5px]"
+          @click.stop="openSettings"
+        >
+          {{ t('panel.context.configureCodingPlan') }}
+        </Button>
       </div>
     </HoverCardContent>
   </HoverCard>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
+import { computed, ref, toRef, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { matchQuotaPreset } from '@xyz-agent/shared'
@@ -190,6 +199,10 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
 const quotaStore = useQuotaStore()
+
+// Settings 模态框打开（AppShell 经 provide('openSettings') 注入；未提供时 no-op）。
+// 未配置态「配置 Coding Plan」按钮跳转 Settings → Provider 页（偏差 #D）。
+const openSettings = inject<() => void>('openSettings', () => {})
 
 // ── session 事件订阅（context.update + session.state_changed）──
 

@@ -30,9 +30,20 @@ export async function getCached(providerId: string): Promise<QuotaResult> {
  * hover 触发主动查询。成功更新缓存 + 返回最新值。
  * 失败时 runtime 返回旧缓存值（ok=true + 旧 data），不抛错。
  * 并发保护：同 provider pending 期间复用 Promise（runtime 侧）。
+ * 注意：带 10s throttle，10s 内重复 fetch 直接返回缓存。测试查询请用 refreshQuota。
  */
 export async function fetchQuota(providerId: string): Promise<QuotaResult> {
   const reply = await command('quota.fetch', { providerId })
+  return { data: reply.data, lastFetchAt: reply.lastFetchAt }
+}
+
+/**
+ * 强制刷新额度（绕过 throttle）。Settings 测试查询按钮专用。
+ * 仍走 pending 并发保护（同 provider pending 期间复用 Promise）。
+ * 失败时 runtime 返回旧缓存值（ok=true + 旧 data），不抛错。
+ */
+export async function refreshQuota(providerId: string): Promise<QuotaResult> {
+  const reply = await command('quota.refresh', { providerId })
   return { data: reply.data, lastFetchAt: reply.lastFetchAt }
 }
 

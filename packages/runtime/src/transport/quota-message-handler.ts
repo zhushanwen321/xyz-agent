@@ -21,7 +21,7 @@ export class QuotaMessageHandler {
   constructor(private ctx: QuotaHandlerContext) {}
 
   /** D1: 本 handler 认领的 ClientMessageType 清单。 */
-  readonly handles: ClientMessageType[] = ['quota.fetch', 'quota.getCached', 'quota.configure']
+  readonly handles: ClientMessageType[] = ['quota.fetch', 'quota.getCached', 'quota.configure', 'quota.refresh']
 
   async handleQuotaMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
@@ -29,6 +29,13 @@ export class QuotaMessageHandler {
         const { providerId } = msg.payload
         const result = await this.ctx.quotaService.fetch(providerId)
         this.ctx.reply(ws, msg.id, 'quota.fetch:result', result)
+        return
+      }
+      case 'quota.refresh': {
+        const { providerId } = msg.payload
+        // 强制刷新（绕过 throttle），用于 Settings 测试查询
+        const result = await this.ctx.quotaService.refresh(providerId)
+        this.ctx.reply(ws, msg.id, 'quota.refresh:result', result)
         return
       }
       case 'quota.getCached': {

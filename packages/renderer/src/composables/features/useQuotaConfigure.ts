@@ -180,7 +180,7 @@ export function useQuotaConfigure(
     }
   }
 
-  /** 测试查询（触发 quota.fetch） */
+  /** 测试查询（触发 quota.refresh，绕过 throttle） */
   async function testQuery(): Promise<void> {
     const p = providerRef.value
     if (!p) return
@@ -189,13 +189,14 @@ export function useQuotaConfigure(
     testError.value = ''
 
     try {
-      const result = await quotaApi.fetchQuota(p.id)
+      // 用 refresh 绕过 10s throttle，确保测试查询每次都发真实请求（设计 §2.2.5）
+      const result = await quotaApi.refreshQuota(p.id)
       if (result.data) {
         quotaData.value = result.data
         lastFetchAt.value = result.lastFetchAt
         testStatus.value = 'success'
       } else {
-        // fetch 返回 null data = 凭证缺失或查询失败
+        // refresh 返回 null data = 凭证缺失或查询失败
         testStatus.value = 'error'
         testError.value = '查询失败，请检查凭证是否有效'
       }

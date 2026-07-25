@@ -8,7 +8,7 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -327,8 +327,16 @@ async function main(): Promise<void> {
   })
 
   // QuotaService：Coding Plan 额度查询（hover 触发 + 缓存 + log）。
-  // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/configure 路由）。
-  const quotaService = new QuotaService()
+  // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/refresh/configure 路由）。
+  // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name），用于 matchQuotaPreset
+  // 匹配 fetcher（设计文档 §2.2.3）。
+  const quotaService = new QuotaService({
+    getProviderInfo: (providerId) => {
+      const cfg = getProviderConfig(providerId)
+      if (!cfg) return undefined
+      return { baseUrl: cfg.baseUrl, name: cfg.name }
+    },
+  })
 
   server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService)
 

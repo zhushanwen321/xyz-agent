@@ -20,6 +20,7 @@ import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo } from '@xyz-agent/s
 // ── Mock quota API ──
 vi.mock('@/api/domains/quota', () => ({
   fetchQuota: vi.fn(),
+  refreshQuota: vi.fn(),
   getCached: vi.fn(),
   configure: vi.fn(),
 }))
@@ -313,7 +314,7 @@ describe('useQuotaConfigure', () => {
     const preset = ref<QuotaPreset | undefined>(zhipuPreset)
 
     vi.mocked(quotaApi.configure).mockResolvedValue({ ok: true })
-    vi.mocked(quotaApi.fetchQuota).mockResolvedValue({
+    vi.mocked(quotaApi.refreshQuota).mockResolvedValue({
       data: mockQuotaRow,
       lastFetchAt: Date.now(),
     })
@@ -323,8 +324,8 @@ describe('useQuotaConfigure', () => {
 
     expect(quotaApi.configure).toHaveBeenCalledWith('test-provider', true)
     expect(quota.enabled.value).toBe(true)
-    // 开启后自动触发 testQuery
-    expect(quotaApi.fetchQuota).toHaveBeenCalledWith('test-provider')
+    // 开启后自动触发 testQuery（经 refreshQuota，绕过 throttle）
+    expect(quotaApi.refreshQuota).toHaveBeenCalledWith('test-provider')
   })
 
   it('toggleEnabled 失败时保留原状态', async () => {
@@ -356,7 +357,7 @@ describe('useQuotaConfigure', () => {
     const preset = ref<QuotaPreset | undefined>(mimoPreset)
 
     vi.mocked(quotaApi.configure).mockResolvedValue({ ok: true })
-    vi.mocked(quotaApi.fetchQuota).mockResolvedValue({
+    vi.mocked(quotaApi.refreshQuota).mockResolvedValue({
       data: mockQuotaRow,
       lastFetchAt: Date.now(),
     })
@@ -369,11 +370,11 @@ describe('useQuotaConfigure', () => {
     expect(quota.enabled.value).toBe(true)
   })
 
-  it('testQuery 成功更新 quotaData', async () => {
+  it('testQuery 成功更新 quotaData（经 refreshQuota 绕过 throttle）', async () => {
     const provider = ref<ProviderInfo | null>(makeProvider())
     const preset = ref<QuotaPreset | undefined>(zhipuPreset)
 
-    vi.mocked(quotaApi.fetchQuota).mockResolvedValue({
+    vi.mocked(quotaApi.refreshQuota).mockResolvedValue({
       data: mockQuotaRow,
       lastFetchAt: Date.now(),
     })
@@ -383,13 +384,14 @@ describe('useQuotaConfigure', () => {
 
     expect(quota.testStatus.value).toBe('success')
     expect(quota.quotaData.value).toEqual(mockQuotaRow)
+    expect(quotaApi.refreshQuota).toHaveBeenCalledWith('test-provider')
   })
 
   it('testQuery 失败设置 error 状态', async () => {
     const provider = ref<ProviderInfo | null>(makeProvider())
     const preset = ref<QuotaPreset | undefined>(zhipuPreset)
 
-    vi.mocked(quotaApi.fetchQuota).mockResolvedValue({ data: null, lastFetchAt: null })
+    vi.mocked(quotaApi.refreshQuota).mockResolvedValue({ data: null, lastFetchAt: null })
 
     const quota = useQuotaConfigure(preset, provider)
     await quota.testQuery()

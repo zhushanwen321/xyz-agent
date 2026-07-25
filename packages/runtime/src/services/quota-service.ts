@@ -14,14 +14,24 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NormalizedQuotaRow, ProviderQuotaFetcher } from '@xyz-agent/shared'
-import { QUOTA_PRESETS } from '@xyz-agent/shared'
+import { matchQuotaPreset } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
 import { getApiKeyForProvider } from '../infra/pi/pi-provider-store.js'
+import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 
 /** 最小查询间隔（毫秒） */
 const THROTTLE_MS = 10_000
+
+/** ProviderInfo 的最小子集（matchQuotaPreset 只需 baseUrl/name）。 */
+export interface ProviderInfoLike {
+  baseUrl?: string
+  name?: string
+}
+
+/** 从 providerId 解析 ProviderInfo（baseUrl/name）的回调。 */
+export type ProviderInfoResolver = (providerId: string) => ProviderInfoLike | undefined
 
 export interface QuotaFetchResult {
   data: NormalizedQuotaRow | null
@@ -33,6 +43,16 @@ export interface QuotaConfigureResult {
   error?: string
 }
 
+export interface QuotaServiceOptions {
+  /** 数据目录（默认 getDataDir()）。 */
+  dataDir?: string
+  /**
+   * 从 providerId 解析 ProviderInfo（baseUrl/name），用于 matchQuotaPreset 匹配 fetcher。
+   * 默认实现返回 undefined（无法匹配，仅当 providerId 恰好等于 fetcher id 时命中）。
+   */
+  getProviderInfo?: ProviderInfoResolver
+}
+
 export class QuotaService {
   private cache: QuotaCache
   /** providerId → pending Promise（并发保护） */
@@ -41,11 +61,17 @@ export class QuotaService {
   private lastFetchTime: Map<string, number> = new Map()
   /** cookie 文件目录 */
   private secretsDir: string
+  /** 从 providerId 解析 ProviderInfo 的回调 */
+  private getProviderInfo: ProviderInfoResolver
 
-  constructor(dataDir?: string) {
-    const dir = dataDir ?? getDataDir()
+  constructor(options: QuotaServiceOptions | string = {}) {
+    // 兼容旧签名：直接传 dataDir 字符串
+    const dir = typeof options === 'string' ? options : (options.dataDir ?? getDataDir())
     this.cache = new QuotaCache(dir)
     this.secretsDir = join(dir, 'secrets')
+    this.getProviderInfo = typeof options === 'object' && options.getProviderInfo
+      ? options.getProviderInfo
+      : () => undefined
   }
 
   /**
@@ -55,15 +81,35 @@ export class QuotaService {
    * - 失败降级：返回旧缓存 + log
    */
   async fetch(providerId: string): Promise<QuotaFetchResult> {
+    return this.runFetch(providerId, { force: false })
+  }
+
+  /**
+   * 强制查询额度（Settings 测试查询按钮）。
+   * - 与 fetch 逻辑相同，但**绕过 throttle**（不检查 lastFetchTime）
+   * - 仍走 pending 并发保护（避免同 provider 并发请求）
+   * - 失败降级：返回旧缓存 + log
+   */
+  async refresh(providerId: string): Promise<QuotaFetchResult> {
+    return this.runFetch(providerId, { force: true })
+  }
+
+  /**
+   * fetch/refresh 共用实现。
+   * @param force - true 时绕过 throttle（refresh 用）；false 时检查 10s 最小间隔（fetch 用）
+   */
+  private async runFetch(providerId: string, opts: { force: boolean }): Promise<QuotaFetchResult> {
     // 并发保护：pending 期间复用 Promise
     const existing = this.pending.get(providerId)
     if (existing) return existing
 
-    // throttle：10s 内重复 fetch 直接返回缓存
-    const lastTime = this.lastFetchTime.get(providerId) ?? 0
-    const elapsed = Date.now() - lastTime
-    if (elapsed < THROTTLE_MS) {
-      return this.getCached(providerId)
+    // throttle：非 force 模式下，10s 内重复 fetch 直接返回缓存
+    if (!opts.force) {
+      const lastTime = this.lastFetchTime.get(providerId) ?? 0
+      const elapsed = Date.now() - lastTime
+      if (elapsed < THROTTLE_MS) {
+        return this.getCached(providerId)
+      }
     }
 
     const promise = this.doFetch(providerId)
@@ -104,7 +150,7 @@ export class QuotaService {
         return { ok: true }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        console.warn('[quota] failed to write cookie:', { providerId, error: msg })
+        logger.warn('[quota] failed to write cookie', { providerId, error: msg })
         return { ok: false, error: msg }
       }
     }
@@ -137,29 +183,37 @@ export class QuotaService {
       }
 
       // 查询失败（返回 null），降级返回旧缓存
-      console.warn('[quota] fetch returned null', { providerId })
+      logger.warn('[quota] fetch returned null', { providerId })
       return this.getCached(providerId)
     } catch (err) {
       // 异常降级：返回旧缓存 + log
       const msg = err instanceof Error ? err.message : String(err)
-      console.warn('[quota] fetch failed', { providerId, error: msg })
+      logger.warn('[quota] fetch failed', { providerId, error: msg })
       return this.getCached(providerId)
     }
   }
 
   /**
    * 根据 providerId 查找对应的 fetcher。
-   * 先从 QUOTA_PRESETS 找 fetcher id，再从 QUOTA_FETCHERS 取 fetcher。
+   *
+   * 设计文档 §2.2.3：providerId 是用户在 settings 创建的 provider id（如 'my-zhipu'、'glm'），
+   * 不是 fetcher id（'zhipu'/'kimi-coding'）。先用 getProviderInfo 拿到 baseUrl/name，
+   * 再调 matchQuotaPreset 匹配 QUOTA_PRESETS 得到 preset.fetcher，最后从 QUOTA_FETCHERS 取 fetcher。
+   *
+   * fallback：当 getProviderInfo 未注入或返回空时，尝试直接按 providerId 查 fetchers
+   * （兼容 provider id 恰好等于 fetcher id 的场景）。
    */
   private getFetcherForProvider(providerId: string): ProviderQuotaFetcher | null {
-    // 从 presets 找 fetcher id（providerId 作为 preset 的 fetcher id 直接匹配）
-    // 或者从 preset 的 match 规则匹配
-    const preset = QUOTA_PRESETS.find((p) => p.fetcher === providerId)
-    if (preset) {
-      return QUOTA_FETCHERS.get(preset.fetcher) ?? null
+    // 主路径：经 ProviderInfo 的 baseUrl/name 匹配 preset
+    const info = this.getProviderInfo(providerId)
+    if (info) {
+      const preset = matchQuotaPreset({ baseUrl: info.baseUrl, name: info.name })
+      if (preset) {
+        return QUOTA_FETCHERS.get(preset.fetcher) ?? null
+      }
     }
 
-    // fallback：直接从 fetchers 查找
+    // fallback：直接按 providerId 查 fetchers（仅命中 provider id 恰好等于 fetcher id 的场景）
     return QUOTA_FETCHERS.get(providerId) ?? null
   }
 

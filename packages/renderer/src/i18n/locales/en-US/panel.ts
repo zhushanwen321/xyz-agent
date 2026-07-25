@@ -106,6 +106,8 @@ export default {
     usageRate: 'Usage rate',
     cacheHit: 'Cache hit',
     unknown: 'Unknown',
+    noCodingPlan: 'No Coding Plan',
+    configureCodingPlan: 'Configure',
   },
   sideDrawer: {
     title: 'Side drawer',

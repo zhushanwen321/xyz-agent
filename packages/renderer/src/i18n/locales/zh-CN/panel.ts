@@ -106,6 +106,8 @@ export default {
     usageRate: '使用率',
     cacheHit: '缓存命中',
     unknown: '未知',
+    noCodingPlan: '无 Coding Plan',
+    configureCodingPlan: '配置',
   },
   sideDrawer: {
     title: '侧边抽屉',

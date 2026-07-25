@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
+import { logger } from '../infra/logger.js'
 
 const CACHE_FILENAME = 'quota-cache.json'
 
@@ -76,8 +77,9 @@ export class QuotaCache {
       writeFileSync(tmpPath, JSON.stringify(cache, null, 2), 'utf-8')
       renameSync(tmpPath, this.filePath)
     } catch (err) {
-      // 失败不删除旧缓存，只 log
-      console.warn('[quota-cache] failed to write cache:', err)
+      // 失败不删除旧缓存，只 log（架构约定 #4 落盘）
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.warn('[quota-cache] failed to write cache', { error: msg })
       // 清理可能残留的 .tmp 文件
       try {
         const tmpPath = `${this.filePath}.tmp`

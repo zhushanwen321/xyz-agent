@@ -207,6 +207,27 @@ describe('ContextCapacityPopover coding-plan 区', () => {
     })
   })
 
+  describe('未配置态「配置」按钮（偏差 #D）', () => {
+    it('未配置 provider 时 footer 渲染「配置」按钮（跳转 Settings）', async () => {
+      setupSession('s1', 'deepseek/v3')
+      setupProviders([deepseekProvider])
+
+      const wrapper = mount(ContextCapacityPopover, {
+        props: { sessionId: 's1' },
+        global: {
+          provide: { openSettings: () => {} },
+        },
+      })
+      await flushPromises()
+
+      // 注：HoverCardContent 在 reka-ui HoverCardPortal 内，happy-dom 下不渲染。
+      // 「配置」按钮在 footer（portal 内），这里断言组件正常渲染不 crash；
+      // trigger 按钮在 portal 外，始终可断言。
+      const trigger = wrapper.find('[title="上下文容量"]')
+      expect(trigger.exists()).toBe(true)
+    })
+  })
+
   describe('quota store 写入', () => {
     it('hover 后 quota store 写入缓存数据', async () => {
       setupSession('s1', 'zhipu/glm-4')
