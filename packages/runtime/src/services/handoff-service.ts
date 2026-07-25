@@ -136,23 +136,24 @@ export class HandoffService {
       const newSession = await this.opts.sessionService.create(srcCwd, `handoff from ${srcLabel}`)
       const newId = newSession.id
 
-      // 注入首条消息（wrapped 文档作 user message，驱动新 agent 立即执行文档里的下一项）
-      await this.opts.sessionService.sendMessage(newId, wrapped)
-
       // 标记源 session 已交接（内存 handedOffTo + 磁盘 handoff_marker）。
       // M3：经 SessionService.markHandedOff 收口（拥有 sessions Map + sessionFilePath），
       // 不直接改 srcSession.handedOffTo 绕过所有权——getSession 若返回防御性副本会让直接写入失效。
       // toSummary 透传 handedOffTo → 活跃态立即生效；磁盘 marker → scanner 重扫后回填。
       this.opts.sessionService.markHandedOff(sessionId, newId)
 
-      // 广播完成，前端据 newSessionId 跳转新 session、据 srcSessionId 标记源 session 已交接
+      // 广播完成（payload 带 wrapped doc）。发送职责归位 renderer——前端收到后 ensureStreamSubscription
+      // 再 chatApi.send(doc)，避免 runtime 早 send 导致的时序竞争（sendMessage 在 pi ack 即 resolve，
+      // 早于前端订阅建立，pi 流式 message.* 事件被 events.dispatchSession 静默丢弃）。
+      // 对齐 fork-ask（useForkActions.ts:109-113 send 前先建订阅）。doc 是 wrapWithXmlTag 包装后的
+      // 完整文档，前端直接 send 不需再处理。
       this.opts.broker.broadcast({
         type: 'session.handoffComplete',
         id: `handoff_${Date.now()}`,
-        payload: { srcSessionId: sessionId, newSessionId: newId },
+        payload: { srcSessionId: sessionId, newSessionId: newId, doc: wrapped },
       })
     } catch (e) {
-      // 编排失败（create/sendMessage 抛错），广播错误反馈到源 session 对话流。
+      // 编排失败（create 抛错），广播错误反馈到源 session 对话流。
       // 不让异常逃逸到 EventInterpreter（否则被其 per-event catch 吞掉，用户无感知）。
       const msg = e instanceof Error ? e.message : String(e)
       this.broadcastHandoffError(sessionId, `handoff 失败: ${msg}`)

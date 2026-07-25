@@ -553,9 +553,12 @@ export interface ServerMessageMapBase {
   }
   // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff）。
   // 时机：源 session 的 pi 跑完 /skill:handoff → 取末条 assistant 文档 → xml 包装 →
-  // 新建空白 session 注入首条之后。前端据 newSessionId 跳转新 session，据 srcSessionId
+  // 新建空白 session 之后。前端据 newSessionId 跳转新 session，据 srcSessionId
   // 在源 session 标记已交接（配合磁盘 handoff_marker → SessionSummary.handedOffTo）。
-  'session.handoffComplete': { srcSessionId: string; newSessionId: string }
+  // doc：xml 包装后的 handoff 文档。发送职责归位 renderer——前端收到后 ensureStreamSubscription
+  // 再 chatApi.send(doc)，避免 runtime 早 send 导致的时序竞争（pi 流式事件早于前端订阅被丢）。
+  // 对齐 fork-ask 模式（useForkActions.ts:109-113）。
+  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。

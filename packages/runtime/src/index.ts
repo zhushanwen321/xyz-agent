@@ -155,7 +155,10 @@ async function main(): Promise<void> {
   // handoffService 同样经闭包惰性引用：onTurnFinalize 在此接线（session 创建时），
   // 但 handoffService?.onTurnEnd 实际调用发生在每个 turn 结束时——那时 handoffService
   // 必已初始化（下方 sessionService 之后即实例化）。`?.` 防御首次 turn 早于初始化的极端时序。
-  let handoffService: HandoffService | undefined
+  //
+  // TDZ（temporal dead zone）前向引用：与上方 sessionService 同模式——L202 闭包引用 handoffService
+  // 在其声明（下方 const）之前，但闭包仅在 createAdapter 被调用（session 创建期，晚于 main 执行完）
+  // 时执行，那时 handoffService 已赋值。const 不会触发 TDZ ReferenceError（访问点不在 main 同步流）。
   //
   // fileChangeDiff：infra 纯函数的 port 实现（无状态，全局单例复用）。
   const fileChangeDiff = new FileChangeDiffAdapter()
@@ -250,7 +253,7 @@ async function main(): Promise<void> {
   // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
   // + server（IMessageBroker 广播）+ pm（getClient 取源 session pi 句柄）。与 GitService/FileService 同模式
   // （经 server.setServices 注入到 handler），但额外经 onTurnFinalize opt 接到 EventInterpreter（见上方闭包）。
-  handoffService = new HandoffService({ sessionService, broker: server, pm })
+  const handoffService = new HandoffService({ sessionService, broker: server, pm })
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)

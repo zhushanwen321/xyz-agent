@@ -329,8 +329,9 @@ export class ExtensionResolver implements IExtensionResolver {
           }
         }
       }
-    } catch {
-      // 目录读取失败，静默跳过（与 pi 一致）
+    } catch (e) {
+      // 目录读取失败：warn 记录后跳过（对齐 pi 的静默跳过语义，但满足 taste/no-silent-catch 至少记录）
+      console.warn('[extension-resolver] resolveExtensionEntries readdir failed:', e)
     }
     return entries
   }
@@ -358,8 +359,9 @@ export class ExtensionResolver implements IExtensionResolver {
           }
           if (resolved.length > 0) return resolved
         }
-      } catch {
-        // package.json 解析失败，继续尝试 index.ts/index.js
+      } catch (e) {
+        // package.json 解析失败：warn 记录后继续降级尝试 index.ts/index.js
+        console.warn('[extension-resolver] package.json parse failed, falling back to index.ts/js:', e)
       }
     }
 

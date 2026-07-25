@@ -114,19 +114,28 @@ describe('HandoffService.runHandoff + onTurnEnd (TC3 完整编排成功路径)',
 
     // create(srcCwd, handoff from srcLabel)
     expect(opts.sessionService.create).toHaveBeenCalledWith('/proj', 'handoff from src')
-    // sendMessage(newId, <含 # doc 的 wrapped>)
-    expect(opts.sessionService.sendMessage).toHaveBeenCalledWith('new-1', expect.stringContaining('# doc'))
-    expect(opts.sessionService.sendMessage).toHaveBeenCalledWith(
-      'new-1',
-      expect.stringContaining('<handoff_document'),
-    )
+    // 方案 2：runtime 不再 sendMessage（发送职责归位 renderer），改为广播 payload 带 doc
+    expect(opts.sessionService.sendMessage).not.toHaveBeenCalled()
     // markHandedOff(srcId, newId)
     expect(opts.sessionService.markHandedOff).toHaveBeenCalledWith('src-1', 'new-1')
-    // broadcast session.handoffComplete
+    // broadcast session.handoffComplete，payload 带 doc（wrapped xml 文档）
     expect(opts.broker.broadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'session.handoffComplete',
-        payload: { srcSessionId: 'src-1', newSessionId: 'new-1' },
+        payload: expect.objectContaining({
+          srcSessionId: 'src-1',
+          newSessionId: 'new-1',
+          doc: expect.stringContaining('# doc'),
+        }),
+      }),
+    )
+    // doc 含 xml tag 包装
+    expect(opts.broker.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'session.handoffComplete',
+        payload: expect.objectContaining({
+          doc: expect.stringContaining('<handoff_document'),
+        }),
       }),
     )
 
