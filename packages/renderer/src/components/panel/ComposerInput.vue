@@ -61,7 +61,7 @@ const isFocused = ref(false)
 // 解耦：handleBackspaceOnChip 仅在运行期（onKeydown 触发）被调，setup 期可暂留占位再后赋值，
 // 故先声明本 composable，把 handleBackspaceOnChip 经 forwardRef 后赋，再声明 chip composable。
 let handleBackspaceOnChip: () => boolean = () => false
-let insertImageBadgeFn: (path: string, name: string) => void = () => {}
+let insertImageBadgeFn: (path: string, fileName: string, displayName: string) => void = () => {}
 const {
   composing,
   isEmpty,
@@ -88,7 +88,7 @@ const {
   onKeydown: (e) => emit('keydown', e),
   handleBackspaceOnChip: () => handleBackspaceOnChip(),
   // insertImageBadge 经闭包转发，chip composable 声明后回填真实实现（同 handleBackspaceOnChip 范式）
-  insertImageBadge: (path, name) => insertImageBadgeFn(path, name),
+  insertImageBadge: (path, fileName, displayName) => insertImageBadgeFn(path, fileName, displayName),
   // sessionId 透传给 handleImagePaste（决定持久化目录；landing 态 undefined → null → IPC 降级 tmpdir）
   getSessionId: () => props.sessionId ?? null,
 })

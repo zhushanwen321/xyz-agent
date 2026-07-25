@@ -100,7 +100,7 @@
           <ImageThumb
             v-else-if="seg.type === 'image'"
             :path="seg.path"
-            :name="seg.name"
+            :display-name="seg.displayName"
           />
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
@@ -533,8 +533,15 @@ async function submitEdit(): Promise<void> {
   const text = draftText.value.trim()
   if (!text) return
   editingUserId.value = null
-  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新文本 → 重新发送
-  await editAndResend(props.sessionId, user.id, text)
+  // 从原 user message 保留 image segments（编辑文本不改图：draftText 仅含 normalizeContent
+  // 拍平的文本，image 段拍平为 [图片 N] 占位，编辑后需从原 content 重新挂回真实 image 段）。
+  const originalSegments = Array.isArray(user.content) ? user.content : []
+  const imageSegments = originalSegments.filter(
+    (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image',
+  )
+  const segments: Segment[] = [{ type: 'text', text }, ...imageSegments]
+  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新 segments → 重新发送
+  await editAndResend(props.sessionId, user.id, segments)
 }
 
 /* ── fork 入口（FR-6,7,8,11）：每条 assistant 可 fork，无需确认弹窗 ── */

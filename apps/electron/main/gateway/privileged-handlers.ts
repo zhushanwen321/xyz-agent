@@ -12,7 +12,7 @@
  * 依赖方向：privileged-handlers → electron(dialog/shell/BrowserWindow) + input-validators + interfaces
  */
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -20,6 +20,14 @@ import type { IpcHandlerDeps } from '../interfaces.js'
 import { IMAGE_LIMITS } from '@xyz-agent/shared'
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import { isValidExternalUrl } from './input-validators.js'
+
+/** 生成 YYYYMMDD-HHMM 时间戳（displayName 用，本地时区） */
+function formatTimestamp(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  // eslint-disable-next-line no-magic-numbers
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+}
 
 /**
  * 注册特权 IPC handler（open-external / pick-directory / pick-file / write-session-image）。
@@ -140,7 +148,7 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
     async (
       _event,
       payload: { sessionId: string; base64: string; mimeType: string; name: string },
-    ): Promise<{ path: string; name: string; id: string }> => {
+    ): Promise<{ path: string; fileName: string; displayName: string; id: string }> => {
       const { sessionId, base64, mimeType, name } = payload
       if (!mimeType.startsWith('image/')) {
         throw new Error('mimeType must start with image/')
@@ -176,10 +184,52 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         const filename = `${randomUUID()}-${sanitized}.${ext}`
         const fullPath = join(dir, filename)
         writeFileSync(fullPath, Buffer.from(base64, 'base64'))
-        return { path: fullPath, name: filename, id: randomUUID() }
+        // displayName: 用户可读名（badge/alt 显示），不含 uuid 前缀。
+        // - name 经 sanitize 非空（用户拖拽/+菜单选文件时有原文件名）→ 用 sanitized + .ext
+        // - name 退化（sanitized 为 'image'，说明是粘贴截图无原文件名）→ 用 截图-时间戳.ext
+        const isPlaceholder = sanitized === 'image'
+        const displayName = isPlaceholder
+          ? `截图-${formatTimestamp()}.${ext}`
+          : `${sanitized}.${ext}`
+        return { path: fullPath, fileName: filename, displayName, id: randomUUID() }
       } catch (err) {
         console.error('[ipc] write-session-image failed:', err)
         throw new Error('write-session-image failed')
+      }
+    },
+  )
+
+  // migrate-session-image：landing 态图片落 tmpdir 后，session.create 成功时迁移到 attachments 持久化目录。
+  // 解决「landing 粘图 → tmpdir → session 创建 → path 仍指 tmpdir → 重开 session 几天后图丢」的缺口。
+  // 调用时机：useNewTaskFlow.submitFirstMessage 在 sessionApi.create 成功后，扫描 segments 找 image
+  // segment，对 path 在 tmpdir 的调此 IPC。
+  //
+  // 行为：
+  // - 把 fromPath 文件 move（rename）到 <dataDir>/attachments/<sessionId>/<fileName>
+  // - 返回 { path: newPath }（调用方据此更新 segment.path）
+  //
+  // 失败语义：fromPath 不存在（OS 已清理 tmpdir）/ move 失败 → throw，让 renderer 的 invoke reject
+  // 被 catch，走降级（保留原 tmpdir path，toast 提示迁移失败，extractImages 发送时 fetch 失败跳过）。
+  ipcMain.handle(
+    'migrate-session-image',
+    async (
+      _event,
+      payload: { fromPath: string; sessionId: string; fileName: string },
+    ): Promise<{ path: string }> => {
+      const { fromPath, sessionId, fileName } = payload
+      if (!sessionId) throw new Error('migrate-session-image requires non-empty sessionId')
+      if (!existsSync(fromPath)) {
+        throw new Error(`source file not found: ${fromPath}`)
+      }
+      try {
+        const dir = getAttachmentsDir(sessionId)
+        mkdirSync(dir, { recursive: true })
+        const newPath = join(dir, fileName)
+        renameSync(fromPath, newPath)
+        return { path: newPath }
+      } catch (err) {
+        console.error('[ipc] migrate-session-image failed:', err)
+        throw new Error('migrate-session-image failed')
       }
     },
   )

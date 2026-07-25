@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - W2TC1：正常 path → 渲染 img，src 含编码后 path
- * - W2TC2：img error 事件 → 降级绿色 badge，含 name 文本
+ * - W2TC2：img error 事件 → 降级绿色 badge，含 displayName 文本
  * - W2TC3：空 path → 不渲染 img，直接降级 badge
  * - W2TC4：Turn 传入无 image 的 segments → 既无 img 也无 fallback badge（回归保护）
  * - W2TC5：Turn 传入 3 个 image segment → 渲染 3 个缩略图/badge
@@ -39,7 +39,7 @@ beforeEach(() => setActivePinia(createPinia()))
 describe('ImageThumb（W2TC1-3）', () => {
   it('W2TC1: 正常 path 渲染 img，src 含编码后 path', () => {
     const wrapper = mount(ImageThumb, {
-      props: { path: '/tmp/foo.png', name: 'foo.png' },
+      props: { path: '/tmp/foo.png', displayName: 'foo.png' },
     })
 
     const img = wrapper.find('img')
@@ -51,9 +51,9 @@ describe('ImageThumb（W2TC1-3）', () => {
     expect(wrapper.find('.image-fallback-badge').exists()).toBe(false)
   })
 
-  it('W2TC2: img error → 降级绿色 badge，含 name 文本', async () => {
+  it('W2TC2: img error → 降级绿色 badge，含 displayName 文本', async () => {
     const wrapper = mount(ImageThumb, {
-      props: { path: '/nonexistent/missing.png', name: 'missing.png' },
+      props: { path: '/nonexistent/missing.png', displayName: 'missing.png' },
     })
 
     expect(wrapper.find('img').exists()).toBe(true)
@@ -67,7 +67,7 @@ describe('ImageThumb（W2TC1-3）', () => {
 
   it('W2TC3: 空 path → 不渲染 img，直接降级 badge', () => {
     const wrapper = mount(ImageThumb, {
-      props: { path: '', name: 'empty.png' },
+      props: { path: '', displayName: 'empty.png' },
     })
 
     expect(wrapper.find('img').exists()).toBe(false)
@@ -113,9 +113,9 @@ describe('Turn image segment 集成（W2TC4-5）', () => {
 
   it('W2TC5: 3 个 image segment → 渲染 3 个缩略图/badge', () => {
     const turn = makeTurn([
-      { type: 'image', id: 'img1', path: '/tmp/a.png', name: 'a.png' },
-      { type: 'image', id: 'img2', path: '/tmp/b.png', name: 'b.png' },
-      { type: 'image', id: 'img3', path: '', name: 'c.png' },
+      { type: 'image', id: 'img1', path: '/tmp/a.png', fileName: 'a.png', displayName: 'a.png' },
+      { type: 'image', id: 'img2', path: '/tmp/b.png', fileName: 'b.png', displayName: 'b.png' },
+      { type: 'image', id: 'img3', path: '', fileName: 'c.png', displayName: 'c.png' },
     ])
     const wrapper = mountTurn(turn)
 

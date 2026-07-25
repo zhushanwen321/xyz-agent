@@ -201,7 +201,7 @@ describe('write-session-image IPC handler (W3)', () => {
     registerPrivilegedHandlers({} as never)
   })
 
-  it('W3TC3: panel 态（sessionId 非空）→ 写 attachments/<sessionId>/ 返回 {path,name,id}', async () => {
+  it('W3TC3: panel 态（sessionId 非空）→ 写 attachments/<sessionId>/ 返回 {path,fileName,displayName,id}', async () => {
     const writeSessionImage = handlers.get('write-session-image')!
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
     const base64 = bytes.toString('base64')
@@ -210,7 +210,7 @@ describe('write-session-image IPC handler (W3)', () => {
       base64,
       mimeType: 'image/png',
       name: 'shot.png',
-    })) as { path: string; name: string; id: string }
+    })) as { path: string; fileName: string; displayName: string; id: string }
     writtenPaths.push(result.path)
     // path 在 <dataDir>/attachments/sess-panel-1/ 下
     const expectedDir = join(getDataDir(), 'attachments', 'sess-panel-1')
@@ -219,13 +219,15 @@ describe('write-session-image IPC handler (W3)', () => {
     expect(existsSync(result.path)).toBe(true)
     const written = readFileSync(result.path)
     expect(Array.from(written)).toEqual(Array.from(bytes))
-    // name 是 uuid-shot.png 格式
-    expect(result.name).toMatch(/^[0-9a-f-]+-shot\.png$/)
+    // fileName 是 uuid-shot.png 格式（含 uuid 前缀）
+    expect(result.fileName).toMatch(/^[0-9a-f-]+-shot\.png$/)
+    // displayName 用 sanitized basename（无 uuid 前缀），用户传 'shot.png' → 'shot.png'
+    expect(result.displayName).toBe('shot.png')
     // id 是 uuid 格式
     expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   })
 
-  it('W3TC4: landing 降级（sessionId 为空）→ 写 tmpdir 返回 {path,name,id}', async () => {
+  it('W3TC4: landing 降级（sessionId 为空）→ 写 tmpdir 返回 {path,fileName,displayName,id}', async () => {
     const writeSessionImage = handlers.get('write-session-image')!
     const bytes = Buffer.from([0x01])
     const result = (await writeSessionImage({}, {
@@ -233,7 +235,7 @@ describe('write-session-image IPC handler (W3)', () => {
       base64: bytes.toString('base64'),
       mimeType: 'image/png',
       name: 'x.png',
-    })) as { path: string; name: string; id: string }
+    })) as { path: string; fileName: string; displayName: string; id: string }
     writtenPaths.push(result.path)
     // path 在 tmpdir 下（降级路径）
     expect(result.path.startsWith(tmpdir())).toBe(true)
@@ -273,7 +275,7 @@ describe('write-session-image IPC handler (W3)', () => {
       base64: bytes.toString('base64'),
       mimeType: 'image/png',
       name: '../../etc/passwd.png',
-    })) as { path: string; name: string; id: string }
+    })) as { path: string; fileName: string; displayName: string; id: string }
     writtenPaths.push(result.path)
     // path 不含穿越片段
     expect(result.path).not.toContain('etc/passwd')
@@ -293,7 +295,7 @@ describe('write-session-image IPC handler (W3)', () => {
       base64: bytes.toString('base64'),
       mimeType: 'image/png',
       name: 'big.png',
-    })) as { path: string; name: string }
+    })) as { path: string; fileName: string; displayName: string }
     writtenPaths.push(result.path)
     expect(existsSync(result.path)).toBe(true)
   })
@@ -305,21 +307,40 @@ describe('write-session-image IPC handler (W3)', () => {
       base64: Buffer.from([0x01]).toString('base64'),
       mimeType: 'image/jpeg',
       name: 'pic',
-    })) as { path: string; name: string }
+    })) as { path: string; fileName: string; displayName: string }
     writtenPaths.push(result.path)
-    expect(result.name.endsWith('.jpg')).toBe(true)
+    expect(result.fileName.endsWith('.jpg')).toBe(true)
+    expect(result.displayName.endsWith('.jpg')).toBe(true)
   })
 
-  it('name 为空 → sanitize 退化为 image 占位', async () => {
+  it('拖拽/+菜单（name 非空）→ displayName 用原 basename（sanitized + .ext）', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
+    const result = (await writeSessionImage({}, {
+      sessionId: 's1',
+      base64: Buffer.from([0x01]).toString('base64'),
+      mimeType: 'image/png',
+      name: 'photo.png',
+    })) as { path: string; fileName: string; displayName: string }
+    writtenPaths.push(result.path)
+    // displayName 用 sanitized basename，无 uuid 前缀
+    expect(result.displayName).toBe('photo.png')
+    // fileName 含 uuid 前缀
+    expect(result.fileName).toMatch(/^[0-9a-f-]+-photo\.png$/)
+  })
+
+  it('粘贴截图（name 为空，sanitized 退化 image）→ displayName 形如 截图-YYYYMMDD-HHMM.png', async () => {
     const writeSessionImage = handlers.get('write-session-image')!
     const result = (await writeSessionImage({}, {
       sessionId: 's1',
       base64: Buffer.from([0x01]).toString('base64'),
       mimeType: 'image/png',
       name: '',
-    })) as { path: string; name: string }
+    })) as { path: string; fileName: string; displayName: string }
     writtenPaths.push(result.path)
-    expect(result.name).toMatch(/-image\.png$/)
+    // fileName 仍是 uuid-image.png 形式（uuid 前缀 + 占位 basename）
+    expect(result.fileName).toMatch(/^[0-9a-f-]+-image\.png$/)
+    // displayName 走截图-时间戳 分支（正则校验，不硬编码时间）
+    expect(result.displayName).toMatch(/^截图-\d{8}-\d{4}\.png$/)
   })
 
   it('写入失败 → throw「write-session-image failed」+ console.error（超长文件名触发 ENAMETOOLONG）', async () => {
@@ -336,5 +357,82 @@ describe('write-session-image IPC handler (W3)', () => {
     ).rejects.toThrow('write-session-image failed')
     expect(errSpy).toHaveBeenCalled()
     errSpy.mockRestore()
+  })
+})
+
+describe('migrate-session-image IPC handler', () => {
+  // 真实文件 I/O：migrate 把 tmpdir 文件 move 到 attachments 目录。
+  const writtenPaths: string[] = []
+  afterEach(() => {
+    for (const p of writtenPaths.splice(0)) {
+      try { rmSync(p) } catch { /* 忽略清理失败 */ }
+    }
+  })
+
+  beforeEach(() => {
+    handlers.clear()
+    vi.clearAllMocks()
+    registerPrivilegedHandlers({} as never)
+  })
+
+  it('happy path: landing 写 tmpdir 后 migrate 到 attachments/<sessionId>/，原 tmpdir 文件已 move', async () => {
+    const writeSessionImage = handlers.get('write-session-image')!
+    const migrateSessionImage = handlers.get('migrate-session-image')!
+    // 1. landing 态先写 tmpdir（sessionId 为空）
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+    const writeResult = (await writeSessionImage({}, {
+      sessionId: '',
+      base64: bytes.toString('base64'),
+      mimeType: 'image/png',
+      name: 'shot.png',
+    })) as { path: string; fileName: string; displayName: string; id: string }
+    writtenPaths.push(writeResult.path)
+    const tmpPath = writeResult.path
+    expect(existsSync(tmpPath)).toBe(true)
+    // 2. session 创建后 migrate 到真实 sessionId
+    const migrateResult = (await migrateSessionImage({}, {
+      fromPath: tmpPath,
+      sessionId: 'sess-real-1',
+      fileName: writeResult.fileName,
+    })) as { path: string }
+    writtenPaths.push(migrateResult.path)
+    // 新 path 在 attachments 目录下
+    const expectedDir = join(getDataDir(), 'attachments', 'sess-real-1')
+    expect(migrateResult.path.startsWith(expectedDir)).toBe(true)
+    expect(migrateResult.path.endsWith(writeResult.fileName)).toBe(true)
+    // 新文件存在 + 内容 round-trip
+    expect(existsSync(migrateResult.path)).toBe(true)
+    expect(Array.from(readFileSync(migrateResult.path))).toEqual(Array.from(bytes))
+    // 原 tmpdir 文件已被 move（不存在）—— rename 是 move 不是 copy
+    expect(existsSync(tmpPath)).toBe(false)
+  })
+
+  it('fromPath 不存在 → invoke reject（throw），可被 catch 降级', async () => {
+    const migrateSessionImage = handlers.get('migrate-session-image')!
+    const ghostPath = join(tmpdir(), 'definitely-not-exist-' + Date.now() + '.png')
+    expect(existsSync(ghostPath)).toBe(false)
+    await expect(migrateSessionImage({}, {
+      fromPath: ghostPath,
+      sessionId: 'sess-1',
+      fileName: 'x.png',
+    })).rejects.toThrow(/source file not found/)
+  })
+
+  it('sessionId 为空 → throw requires non-empty sessionId', async () => {
+    const migrateSessionImage = handlers.get('migrate-session-image')!
+    // 先写一个 tmpdir 文件让 fromPath 真实存在，验证空 sessionId 早于 fs 检查就 throw
+    const writeSessionImage = handlers.get('write-session-image')!
+    const writeResult = (await writeSessionImage({}, {
+      sessionId: '',
+      base64: Buffer.from([0x01]).toString('base64'),
+      mimeType: 'image/png',
+      name: 'x.png',
+    })) as { path: string; fileName: string }
+    writtenPaths.push(writeResult.path)
+    await expect(migrateSessionImage({}, {
+      fromPath: writeResult.path,
+      sessionId: '',
+      fileName: writeResult.fileName,
+    })).rejects.toThrow('migrate-session-image requires non-empty sessionId')
   })
 })

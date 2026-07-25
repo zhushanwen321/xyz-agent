@@ -313,10 +313,13 @@ async function onSend(): Promise<void> {
   const text = draft.value
   if (await fork.handleForkSend(text)) return
   if (props.variant === 'landing') {
+    // 先快照 segments（clearInput 会清空 DOM，必须在清空前提取）——与 normal 态一致。
+    // landing 态 image/skill/file segment 都需完整传递到 submitFirstMessage，丢段会导致丢图。
+    const segments = inputRef.value?.getSegments() ?? []
     clearInput()
     isSending.value = true
     try {
-      await flow.submitFirstMessage(text, localThinkingLevel.value)
+      await flow.submitFirstMessage(segments, localThinkingLevel.value)
     } catch (e) {
       restoreInput(text)
       const msg = e instanceof Error ? e.message : String(e)

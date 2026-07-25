@@ -10,7 +10,8 @@
  * - base64 读取失败（FileReader.onerror）→ {kind:'text', text:'[图片读取失败]'}
  * - 非 electron 环境（writeSessionImage 返回 undefined）→ {kind:'text', text:'[图片粘贴：需桌面环境]'}
  * - IPC 写入失败（throw，含超大被拒）→ {kind:'text', text:'[图片粘贴失败]'}
- * - 成功 → {kind:'badge', path, name}，调用方调 insertImageBadge(path, name)
+ * - 成功 → {kind:'badge', path, fileName, displayName}，调用方调
+ *   insertImageBadge(path, fileName, displayName)（fileName 磁盘全名，displayName 用户可读名）
  *
  * sessionId：landing 态（session 延迟创建）为 null → IPC 内降级走 OS tmpdir
  * （landing 粘图后通常立即发送，session 随即创建；丢失走 w2 降级 badge 兜底）。
@@ -22,9 +23,11 @@
  */
 import { writeSessionImage } from '@/lib/ipc'
 
-/** handleImagePaste 返回联合类型 */
+/** handleImagePaste 返回联合类型。
+ *  badge 分支含 path（磁盘绝对路径，local-file:// 加载用）+ fileName（磁盘全名，含 uuid 前缀，
+ *  日志/磁盘定位）+ displayName（用户可读名，badge label / 缩略图 alt 用）。 */
 export type HandleImagePasteResult =
-  | { kind: 'badge'; path: string; name: string }
+  | { kind: 'badge'; path: string; fileName: string; displayName: string }
   | { kind: 'text'; text: string }
 
 /**
@@ -78,7 +81,7 @@ export async function handleImagePaste(
     return { kind: 'text', text: '[图片读取失败]' }
   }
 
-  let result: { path: string; name: string; id: string } | undefined
+  let result: { path: string; fileName: string; displayName: string; id: string } | undefined
   try {
     result = await writeSessionImage({
       sessionId: sessionId ?? '',
@@ -92,7 +95,7 @@ export async function handleImagePaste(
   }
   // 非 electron 环境（web/mock）：writeSessionImage 返回 undefined → 降级文本提示
   if (!result) return { kind: 'text', text: '[图片粘贴：需桌面环境]' }
-  return { kind: 'badge', path: result.path, name: result.name }
+  return { kind: 'badge', path: result.path, fileName: result.fileName, displayName: result.displayName }
 }
 
 /** composable 入口（保留 useXxx 范式，当前无实例状态，纯函数导出便于未来扩展） */

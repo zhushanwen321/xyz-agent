@@ -13,15 +13,15 @@
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { computed, reactive, ref } from 'vue'
-import { chat as chatApi, file as fileApi } from '@/api'
+import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSettingsStore } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import i18n from '@/i18n'
-import type { Message, Segment, FileContext } from '@xyz-agent/shared'
-import { IMAGE_LIMITS, segmentsToPrompt, textToSegments, shouldInlineFile, INLINE_TEXT_MAX_LINES } from '@xyz-agent/shared'
+import type { Message, Segment } from '@xyz-agent/shared'
+import { IMAGE_LIMITS, segmentsToPrompt } from '@xyz-agent/shared'
 import { fileBytesToBase64 } from '@/composables/panel/useImageAttachment'
 import { resolveSupportsVision } from '@/composables/panel/useModelCapabilities'
 
@@ -81,65 +81,6 @@ export async function extractImages(
     }
   }
   return images.length > 0 ? images : undefined
-}
-
-/**
- * 从 segments 提取 file 段，读文件内容并判断是否 inline 进 prompt（IF2）。
- *
- * filter type==='file' 的 segment，对每个 path 调 readFile，
- * 按 shouldInlineFile 判断是否 inline（< 50KB + 白名单扩展名）。
- * 超限截断（INLINE_TEXT_MAX_LINES 行）+ truncated:true。
- * Promise.allSettled 并行，单个失败 console.warn 跳过不阻断（ERR3）。
- *
- * readFile 注入签名：(path: string) => Promise<{ content: string; sizeBytes: number }>。
- * 生产实现用 fileApi.read(path, sessionId) + TextEncoder 计 sizeBytes。
- * 测试 mock 直接返预设值。
- *
- * 导出供单测 mock（纯模块函数，不依赖 this）。
- */
-export async function extractFileContexts(
-  segments: Segment[],
-  readFile: (path: string) => Promise<{ content: string; sizeBytes: number }>,
-): Promise<Map<string, FileContext>> {
-  const fileSegs = segments.filter((s): s is Extract<Segment, { type: 'file' }> => s.type === 'file')
-  if (fileSegs.length === 0) return new Map()
-
-  const results = await Promise.allSettled(
-    fileSegs.map(async (seg) => {
-      const { content, sizeBytes } = await readFile(seg.path)
-      if (!shouldInlineFile(seg.path, sizeBytes)) {
-        // 不满足 inline 条件（扩展名不在白名单或超 50KB）→ 跳过
-        return null
-      }
-      // 截断：超 INLINE_TEXT_MAX_LINES 行时截取前 N 行
-      let truncated = false
-      let finalContent = content
-      const lines = content.split('\n')
-      if (lines.length > INLINE_TEXT_MAX_LINES) {
-        finalContent = lines.slice(0, INLINE_TEXT_MAX_LINES).join('\n')
-        truncated = true
-      }
-      const ctx: FileContext = {
-        path: seg.path,
-        content: finalContent,
-        lineRange: seg.lineRange,
-        truncated,
-        sizeBytes,
-      }
-      return ctx
-    }),
-  )
-
-  const map = new Map<string, FileContext>()
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i]
-    if (r.status === 'fulfilled' && r.value !== null) {
-      map.set(r.value.path, r.value)
-    } else if (r.status === 'rejected') {
-      console.warn(`[useChat] file 读取失败，已跳过: ${fileSegs[i].path}`, r.reason)
-    }
-  }
-  return map
 }
 
 /**
@@ -343,7 +284,89 @@ export function useChat() {
   )
 
   /**
-   * 发送消息：appendUser → 确保会话级订阅 → api.send（ack 仅表示 pi 已接收）。
+   * 统一发送编排器：把 segments 转成 promptText + images 并发送。
+   *
+   * 三条发送通路（send / editAndResend / 后续 landing）共享此逻辑，消除
+   * 「landing/editAndResend 绕过 extractImages / size cap / vision toast」的分裂。
+   *
+   * 调用方负责：appendUser / truncateFrom / pendingSend 等状态机编排
+   * （submitSegments 只管「提取 + 发送」核心步骤）：
+   *   1. extractImages（image segment → base64，allSettled 不阻断）
+   *   2. segmentsToPrompt（trim 后的 pi prompt 文本）
+   *   3. vision 降级 toast（per-session-model 去重）
+   *   4. size cap 层 2/3（累积 bytes 超阈值预警 / 剥离）
+   *   5. chatApi.send(promptText, sendImages)
+   *
+   * @param sessionId  目标 session
+   * @param segments   结构化 segments（含 image/file/text/skill/mention）
+   */
+  async function submitSegments(sessionId: string, segments: Segment[]): Promise<void> {
+    // extractImages：image segment 读 local-file 文件转 base64（allSettled 不阻断，无图返 undefined）。
+    // 删除 file inline 后不再并行读 file 内容，单调用即可。
+    const images = await extractImages(segments)
+    const promptText = segmentsToPrompt(segments)
+    // vision 降级（should 优先级）：当前 model 不支持 image 输入时 toast 提示用户，
+    // 不阻断不剥离 images（runtime/pi 自然丢弃不支持的多模态，文本占位仍发）。
+    // per-session-model 去重：同 session 同 modelId 仅警告一次（切回/切走 model 可再次触发）。
+    if (images && images.length > 0) {
+      const modelId = session.list.find((s) => s.id === sessionId)?.modelId ?? ''
+      if (modelId && !resolveSupportsVision(modelId, settings.providers)) {
+        // updateFor 内原子 check+add（闭包捕获 sessionId，与 WS handler 同范式，防 standby 串扰）。
+        let alreadyWarned = true
+        warnedModels.updateFor(sessionId, (s) => {
+          if (!s.models.has(modelId)) {
+            s.models.add(modelId)
+            alreadyWarned = false
+          }
+        })
+        if (!alreadyWarned) {
+          warning(t('panel.visionNotSupportedWarning', { modelName: modelId, count: images.length }))
+        }
+      }
+    }
+    // P2-c 层 2/3：会话级累积图片 size cap 防护。
+    // 层 2：累积超 warnThreshold → toast.warning 预警（不阻断）。
+    // 层 3：累积超 hardThreshold → 剥离当轮 images + toast.warning。
+    // estimateAccumulatedImageBytes 内部 allSettled 并行 fetchSize，失败不 throw（ERR4）。
+    let sendImages = images
+    if (images && images.length > 0) {
+      try {
+        // eslint-disable-next-line no-magic-numbers
+        const warnBytes = (settings.system.imageAccumulationWarnMB ?? IMAGE_LIMITS.ACCUMULATION_WARN_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
+        // eslint-disable-next-line no-magic-numbers
+        const hardBytes = (settings.system.imageAccumulationHardMB ?? IMAGE_LIMITS.ACCUMULATION_HARD_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
+        const historyMessages = chat.getMessages(sessionId)
+        const accumulated = await estimateAccumulatedImageBytes(
+          historyMessages,
+          async (path: string) => {
+            const res = await fetch(`local-file:///${encodeURIComponent(path)}`)
+            if (!res.ok) throw new Error(`local-file ${path} ${res.status}`)
+            const blob = await res.blob()
+            return blob.size
+          },
+        )
+        if (accumulated.totalBytes > hardBytes) {
+          // 层 3：剥离当轮 images（ERR6 ACCUMULATION_LIMIT_STRIP）
+          sendImages = undefined
+          // eslint-disable-next-line no-magic-numbers
+          const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
+          warning(t('panel.accumulationHardWarning', { size: sizeMB }))
+        } else if (accumulated.totalBytes > warnBytes) {
+          // 层 2：toast 预警（不阻断）
+          // eslint-disable-next-line no-magic-numbers
+          const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
+          warning(t('panel.accumulationWarnWarning', { size: sizeMB }))
+        }
+      } catch {
+        // 累积估算失败不阻断发送（与 extractImages 错误策略一致）
+        console.warn('[useChat] estimateAccumulatedImageBytes failed, skipping accumulation check')
+      }
+    }
+    await chatApi.send(sessionId, promptText, sendImages)
+  }
+
+  /**
+   * 发送消息：appendUser → 确保会话级订阅 → submitSegments（提取 + api.send）。
    *
    * 流式状态由会话级订阅的事件驱动（message_start→true，complete/error→false），
    * 不依赖 send() 的 resolve 时机——避免 ack 早于首个 chunk 导致订阅被提前拆除。
@@ -357,8 +380,6 @@ export function useChat() {
   async function send(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
     if (segments.length === 0) return
-    // 初步检查：用无 fileContexts 的 segmentsToPrompt 判断非空（向后兼容）。
-    // 最终 promptText 在 extractFileContexts 完成后用 fileContexts 重新生成。
     const promptTextCheck = segmentsToPrompt(segments)
     if (!promptTextCheck.trim()) return
 
@@ -372,82 +393,7 @@ export function useChat() {
     ensureStreamSubscription(sid, chat, session)
     chat.addPendingSend(sid)
     try {
-      // [feature:add-file-picture-attach slice6] 发送闭环：提取 image segment 读文件转 base64
-      // 填入 message.send images 字段（独立通道，与 promptText 文本占位 [图片:name] 双投递）。
-      // extractImages 内部 allSettled 并行读，无 image 段返回 undefined（行为不变）。
-      //
-      // P3 file inline 透传：与 extractImages 并行调 extractFileContexts，
-      // 读 file segment 内容并判断是否 inline 进 prompt（ERR3：单个失败不阻断）。
-      const readFileForContext = async (path: string) => {
-        const { content } = await fileApi.read(path, sid)
-        return { content, sizeBytes: new TextEncoder().encode(content).byteLength }
-      }
-      const [imagesResult, fileContextsResult] = await Promise.allSettled([
-        extractImages(segments),
-        extractFileContexts(segments, readFileForContext),
-      ])
-      const images = imagesResult.status === 'fulfilled' ? imagesResult.value : undefined
-      const fileContexts = fileContextsResult.status === 'fulfilled' ? fileContextsResult.value : new Map<string, FileContext>()
-      // 用 fileContexts 重新生成 promptText（file 段有 fileContext 时输出 <file> 标签）
-      const promptText = segmentsToPrompt(segments, fileContexts)
-      // vision 降级（should 优先级）：当前 model 不支持 image 输入时 toast 提示用户，
-      // 不阻断不剥离 images（runtime/pi 自然丢弃不支持的多模态，文本占位仍发）。
-      // per-session-model 去重：同 session 同 modelId 仅警告一次（切回/切走 model 可再次触发）。
-      if (images && images.length > 0) {
-        const modelId = session.list.find((s) => s.id === sid)?.modelId ?? ''
-        if (modelId && !resolveSupportsVision(modelId, settings.providers)) {
-          // updateFor 内原子 check+add（闭包捕获 sid，与 WS handler 同范式，防 standby 串扰）。
-          let alreadyWarned = true
-          warnedModels.updateFor(sid, (s) => {
-            if (!s.models.has(modelId)) {
-              s.models.add(modelId)
-              alreadyWarned = false
-            }
-          })
-          if (!alreadyWarned) {
-            warning(t('panel.visionNotSupportedWarning', { modelName: modelId, count: images.length }))
-          }
-        }
-      }
-      // P2-c 层 2/3：会话级累积图片 size cap 防护。
-      // 层 2：累积超 warnThreshold → toast.warning 预警（不阻断）。
-      // 层 3：累积超 hardThreshold → 剥离当轮 images + toast.warning。
-      // estimateAccumulatedImageBytes 内部 allSettled 并行 fetchSize，失败不 throw（ERR4）。
-      let sendImages = images
-      if (images && images.length > 0) {
-        try {
-          // eslint-disable-next-line no-magic-numbers
-          const warnBytes = (settings.system.imageAccumulationWarnMB ?? IMAGE_LIMITS.ACCUMULATION_WARN_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
-          // eslint-disable-next-line no-magic-numbers
-          const hardBytes = (settings.system.imageAccumulationHardMB ?? IMAGE_LIMITS.ACCUMULATION_HARD_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
-          const historyMessages = chat.getMessages(sid)
-          const accumulated = await estimateAccumulatedImageBytes(
-            historyMessages,
-            async (path: string) => {
-              const res = await fetch(`local-file:///${encodeURIComponent(path)}`)
-              if (!res.ok) throw new Error(`local-file ${path} ${res.status}`)
-              const blob = await res.blob()
-              return blob.size
-            },
-          )
-          if (accumulated.totalBytes > hardBytes) {
-            // 层 3：剥离当轮 images（ERR6 ACCUMULATION_LIMIT_STRIP）
-            sendImages = undefined
-            // eslint-disable-next-line no-magic-numbers
-            const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
-            warning(t('panel.accumulationHardWarning', { size: sizeMB }))
-          } else if (accumulated.totalBytes > warnBytes) {
-            // 层 2：toast 预警（不阻断）
-            // eslint-disable-next-line no-magic-numbers
-            const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
-            warning(t('panel.accumulationWarnWarning', { size: sizeMB }))
-          }
-        } catch {
-          // 累积估算失败不阻断发送（与 extractImages 错误策略一致）
-          console.warn('[useChat] estimateAccumulatedImageBytes failed, skipping accumulation check')
-        }
-      }
-      await chatApi.send(sid, promptText, sendImages)
+      await submitSegments(sid, segments)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
@@ -563,25 +509,30 @@ export function useChat() {
 
   /**
    * 编辑 user 消息并重新发送（原地替换语义，非 fork）：
-   * 截断该 user 消息（含）及其后所有 → appendUser 新文本 → 走 send 流式。
+   * 截断该 user 消息（含）及其后所有 → appendUser 新 segments → 走 submitSegments 流式。
    *
    * 与 fork 的区别：fork 复制到新 session 保留原 session；editAndResend 在当前 session
    * 原地替换（删旧 user + 其后 assistant，重新发送）。UI 层用 canEdit 守卫仅最后一条 user 可编辑，
    * 避免删除中间 user 导致其后对话丢失。
    *
+   * 签名变更（阶段 3a）：从 `(sessionId, userMessageId, text: string)` 改为
+   * `(sessionId, userMessageId, segments: Segment[])`。调用方（Turn.vue submitEdit）
+   * 负责构造 segments——从原 user message 保留 image segments + 编辑后的 text segment。
+   *
+   * 委托 submitSegments：消除原 editAndResend 用 `chatApi.send(trimmed)` 绕过
+   * extractImages / size cap / vision toast 的分裂（image segment 编辑后不再丢失）。
+   *
    * 显式接收 sessionId：编辑可发生在非 active 的 standby panel，不能依赖全局 activeId。
    */
-  async function editAndResend(sessionId: string, userMessageId: string, text: string): Promise<void> {
-    const trimmed = text.trim()
-    if (!trimmed || chat.isActive(sessionId)) return
-    // 编辑来自 textarea 纯文本，转 Segment[] 保持 user message content 类型一致（ADR-0037）
-    const segments = textToSegments(trimmed)
+  async function editAndResend(sessionId: string, userMessageId: string, segments: Segment[]): Promise<void> {
+    const promptTextCheck = segmentsToPrompt(segments)
+    if (!promptTextCheck.trim() || chat.isActive(sessionId)) return
     chat.truncateFrom(sessionId, userMessageId, true)
     chat.appendUser(sessionId, segments)
     ensureStreamSubscription(sessionId, chat, session)
     chat.addPendingSend(sessionId)
     try {
-      await chatApi.send(sessionId, trimmed)
+      await submitSegments(sessionId, segments)
     } catch (e) {
       // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。

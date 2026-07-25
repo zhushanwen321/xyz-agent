@@ -108,7 +108,7 @@ describe('extractImages（slice6 TC1-TC4）', () => {
     const fetchSpy = mockFetchOk(bytes)
     vi.spyOn(global, 'fetch', 'get').mockReturnValue(fetchSpy)
 
-    const segments: Segment[] = [{ type: 'image', id: 'img-1', path: '/tmp/a b.png', name: 'a b.png' }]
+    const segments: Segment[] = [{ type: 'image', id: 'img-1', path: '/tmp/a b.png', fileName: 'a b.png', displayName: 'a b.png' }]
     const result = await extractImages(segments)
 
     expect(result).toHaveLength(1)
@@ -133,8 +133,8 @@ describe('extractImages（slice6 TC1-TC4）', () => {
     )
 
     const segments: Segment[] = [
-      { type: 'image', id: 'img-a', path: '/tmp/a.jpg', name: 'a.jpg' },
-      { type: 'image', id: 'img-b', path: '/tmp/b.jpg', name: 'b.jpg' },
+      { type: 'image', id: 'img-a', path: '/tmp/a.jpg', fileName: 'a.jpg', displayName: 'a.jpg' },
+      { type: 'image', id: 'img-b', path: '/tmp/b.jpg', fileName: 'b.jpg', displayName: 'b.jpg' },
     ]
     const result = await extractImages(segments)
 
@@ -152,8 +152,8 @@ describe('extractImages（slice6 TC1-TC4）', () => {
     )
 
     const segments: Segment[] = [
-      { type: 'image', id: 'img-a', path: '/tmp/a.png', name: 'a.png' },
-      { type: 'image', id: 'img-b', path: '/tmp/b.png', name: 'b.png' },
+      { type: 'image', id: 'img-a', path: '/tmp/a.png', fileName: 'a.png', displayName: 'a.png' },
+      { type: 'image', id: 'img-b', path: '/tmp/b.png', fileName: 'b.png', displayName: 'b.png' },
     ]
     const result = await extractImages(segments)
 
@@ -188,14 +188,14 @@ describe('useChat.send images 透传（slice6 TC7-TC8）', () => {
     const { send } = useChat()
     await send('s-img', [
       { type: 'text', text: 'look' },
-      { type: 'image', id: 'img-x', path: '/tmp/x.png', name: 'x.png' },
+      { type: 'image', id: 'img-x', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png' },
     ])
 
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     const call = apiMock.send.mock.calls[0]!
     expect(call[0]).toBe('s-img')
-    // promptText 含 [图片: x.png] 占位
-    expect(call[1]).toContain('[图片: x.png]')
+    // promptText 含 [图片 1] 匿名编号占位（不暴露 fileName/displayName 给 LLM）
+    expect(call[1]).toContain('[图片 1]')
     // 第三参数是 images 数组（长度1）
     expect(Array.isArray(call[2])).toBe(true)
     expect(call[2]).toHaveLength(1)
@@ -223,7 +223,7 @@ describe('useChat.send vision 降级（slice6 TC10）', () => {
     )
 
     const { send } = useChat()
-    await send('s-img', [{ type: 'image', id: 'img-x', path: '/tmp/x.png', name: 'x.png' }])
+    await send('s-img', [{ type: 'image', id: 'img-x', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png' }])
 
     // vision 降级 toast（W1：console.warn → toast.warning，用户可见）
     const { toasts } = useToast()
@@ -252,7 +252,7 @@ describe('useChat.send vision 降级（slice6 TC10）', () => {
     )
 
     const { send } = useChat()
-    await send('s-img2', [{ type: 'image', id: 'img-y', path: '/tmp/y.png', name: 'y.png' }])
+    await send('s-img2', [{ type: 'image', id: 'img-y', path: '/tmp/y.png', fileName: 'y.png', displayName: 'y.png' }])
 
     // 无 vision 降级 toast（支持 vision 不触发降级）
     const { toasts } = useToast()

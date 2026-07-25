@@ -48,8 +48,10 @@ interface ContenteditableCallbacks {
   /**
    * 插入图片 badge（Cmd/Ctrl+V 富呈现通路）。由 useComposerChipCommands.insertImageBadge 提供。
    * onPaste 在 image blob 检测到后调它插占位 badge / 真实 badge。
+   * fileName：磁盘全名（含 uuid 前缀，写 dataset.chipFileName）。
+   * displayName：用户可读名（badge label 显示 + 写 dataset.chipDisplayName）。
    */
-  insertImageBadge: (path: string, name: string) => void
+  insertImageBadge: (path: string, fileName: string, displayName: string) => void
   /**
    * 取当前会话 id（决定图片持久化目录）；landing 态返回 null。
    * 由 ComposerInput 据 props.sessionId 提供，handleImagePaste 透传给 writeSessionImage IPC。
@@ -331,7 +333,8 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
         type: 'image',
         id: chip.dataset.chipId ?? '',
         path: chip.dataset.chipPath ?? '',
-        name: chip.dataset.chipName ?? '',
+        fileName: chip.dataset.chipFileName ?? '',
+        displayName: chip.dataset.chipDisplayName ?? '',
       })
       rejectChips.add(chip)
       continue
@@ -444,7 +447,7 @@ function handleImagePasteEvent(
   e: ClipboardEvent,
   deps: {
     getEl: () => HTMLDivElement | null
-    insertImageBadge: (path: string, name: string) => void
+    insertImageBadge: (path: string, fileName: string, displayName: string) => void
     onInput: () => void
     getSessionId: () => string | null
   },
@@ -454,7 +457,8 @@ function handleImagePasteEvent(
   if (!file) return false
   // 占位 badge 唯一标记（crypto.randomUUID 无魔术数字，定位占位以便 await 后回填/移除）
   const placeholderMark = `__paste_pending_${crypto.randomUUID()}__`
-  deps.insertImageBadge(placeholderMark, '粘贴中...')
+  // 占位用 placeholderMark 做 path + fileName（仅用于异步定位占位），displayName 显「粘贴中...」
+  deps.insertImageBadge(placeholderMark, placeholderMark, '粘贴中...')
   // sessionId 在 paste 触发时取一次（landing 态 null → IPC 内降级 tmpdir）
   const sessionId = deps.getSessionId()
   void (async () => {
@@ -464,14 +468,15 @@ function handleImagePasteEvent(
     const placeholder = el ? findImageChipEl(el, placeholderMark) : null
     if (result.kind === 'badge') {
       if (placeholder) {
-        // 回填真实 path/name（dataset + label）
+        // 回填真实 path/fileName/displayName（dataset + label）
         placeholder.dataset.chipPath = result.path
-        placeholder.dataset.chipName = result.name
+        placeholder.dataset.chipFileName = result.fileName
+        placeholder.dataset.chipDisplayName = result.displayName
         const label = placeholder.querySelector('.chip-label')
-        if (label) label.textContent = result.name
+        if (label) label.textContent = result.displayName
       } else {
         // 占位已不在 DOM（用户手快删了）→ 重插真实 badge
-        deps.insertImageBadge(result.path, result.name)
+        deps.insertImageBadge(result.path, result.fileName, result.displayName)
       }
     } else if (result.kind === 'text') {
       // 降级：移除占位 badge + 相邻 ZWSP spacer，插降级文本

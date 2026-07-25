@@ -25,7 +25,7 @@ const CHIP_SPACER_ZWSP = '\u200B'
 
 /** ComposerInput 实例最小契约（insertImageBadge 经 defineExpose 暴露） */
 interface ComposerInputInstance {
-  insertImageBadge: (path: string, name: string) => void
+  insertImageBadge: (path: string, fileName: string, displayName: string) => void
 }
 
 /**
@@ -65,9 +65,9 @@ export function useComposerDragDrop(
    * 非图片文件忽略。末尾复位 isDragOver + 刷新 chip 行。
    *
    * 占位回填（等价 useContenteditableInput.handleImagePasteEvent）：
-   * - 先 insertImageBadge(placeholderMark, '拖入中…') 占位
+   * - 先 insertImageBadge(placeholderMark, placeholderMark, '拖入中…') 占位
    * - await handleImagePaste(file)
-   * - kind:'badge' → 回填占位 dataset.chipPath/chipName + label（占位不在则重插）
+   * - kind:'badge' → 回填占位 dataset.chipPath/chipFileName/chipDisplayName + label（占位不在则重插）
    * - kind:'text'  → 移除占位 + 相邻 ZWSP spacer，insertText 降级文本
    */
   function onDrop(e: DragEvent): void {
@@ -81,7 +81,8 @@ export function useComposerDragDrop(
       const sid = sessionId.value
       for (const file of imageFiles) {
         const placeholderMark = `__drag_pending_${crypto.randomUUID()}__`
-        inputRef.value?.insertImageBadge(placeholderMark, '拖入中…')
+        // 占位：path/fileName 用 placeholderMark（异步定位用），displayName 显「拖入中…」
+        inputRef.value?.insertImageBadge(placeholderMark, placeholderMark, '拖入中…')
         const result = await handleImagePaste(file, sid)
         // 用 dataset 遍历定位占位（C2：path 含 CSS 特殊字符时 querySelector 选择器失效）
         const placeholder = composerBoxRef.value
@@ -90,11 +91,12 @@ export function useComposerDragDrop(
         if (result.kind === 'badge') {
           if (placeholder) {
             placeholder.dataset.chipPath = result.path
-            placeholder.dataset.chipName = result.name
+            placeholder.dataset.chipFileName = result.fileName
+            placeholder.dataset.chipDisplayName = result.displayName
             const label = placeholder.querySelector('.chip-label')
-            if (label) label.textContent = result.name
+            if (label) label.textContent = result.displayName
           } else {
-            inputRef.value?.insertImageBadge(result.path, result.name)
+            inputRef.value?.insertImageBadge(result.path, result.fileName, result.displayName)
           }
         } else if (result.kind === 'text') {
           if (placeholder) {

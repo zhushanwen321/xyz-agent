@@ -84,7 +84,7 @@ export async function pickFile(
 }
 
 /**
- * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, name, id}。
+ * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id}。
  * web/mock 环境无 preload → api 或 api.writeSessionImage 不存在 → 返回 undefined，
  * 让上层（useImageAttachment）降级为文本提示，不 throw。
  *
@@ -96,8 +96,23 @@ export async function writeSessionImage(payload: {
   base64: string
   mimeType: string
   name: string
-}): Promise<{ path: string; name: string; id: string } | undefined> {
+}): Promise<{ path: string; fileName: string; displayName: string; id: string } | undefined> {
   return api?.writeSessionImage?.(payload)
+}
+
+/**
+ * 把 landing 态落在 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+ * session 创建后调用，解决 landing 粘图 path 仍指 tmpdir 的缺口。
+ *
+ * web/mock 环境无 preload → 返回 undefined，调用方（useNewTaskFlow）降级（保留原 path 不迁移）。
+ * 主进程 move 失败（文件已被 OS 清理等）会 throw，调用方 catch 后降级 + toast。
+ */
+export async function migrateSessionImage(payload: {
+  fromPath: string
+  sessionId: string
+  fileName: string
+}): Promise<{ path: string } | undefined> {
+  return api?.migrateSessionImage?.(payload)
 }
 
 /** win/linux 自绘 traffic light 点击：最小化窗口（mac 系统圆点不走此处） */

@@ -10,7 +10,7 @@
     <img
       v-if="!failed && path"
       :src="thumbSrc"
-      :alt="name"
+      :alt="displayName"
       class="image-thumb mr-1 max-w-[120px] max-h-[80px] rounded-md border border-[var(--border-subtle)] object-cover align-middle"
       @error="onError"
     />
@@ -22,7 +22,7 @@
       style="vertical-align: middle"
     >
       <ImageIcon class="size-[12px] shrink-0" />
-      <span class="chip-label">{{ name }}</span>
+      <span class="chip-label">{{ displayName }}</span>
     </span>
   </span>
 </template>
@@ -34,11 +34,11 @@ import { Image as ImageIcon } from '@lucide/vue'
 /**
  * image segment 缩略图 props。
  * - path：图片 tmpdir 绝对路径（local-file:// 协议加载用）。
- * - name：basename（降级 badge 展示用，img 的 alt）。
+ * - displayName：用户可读名（降级 badge 展示用 + img 的 alt；与 Segment image.displayName 对齐）。
  */
 const props = defineProps<{
   path: string
-  name: string
+  displayName: string
 }>()
 
 /** 图片加载失败标志（onerror 置 true 走降级 badge）。path 变化时重置。 */

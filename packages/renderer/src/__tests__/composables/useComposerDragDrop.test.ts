@@ -38,17 +38,18 @@ function createInputMock() {
  */
 function createDomInputMock(box: HTMLElement) {
   const calls = vi.fn()
-  const insertImageBadge = (path: string, name: string) => {
-    calls(path, name)
+  const insertImageBadge = (path: string, fileName: string, displayName: string) => {
+    calls(path, fileName, displayName)
     const chip = document.createElement('span')
     chip.className = 'mention-chip image-chip'
     chip.contentEditable = 'false'
     chip.dataset.chipType = 'image'
     chip.dataset.chipPath = path
-    chip.dataset.chipName = name
+    chip.dataset.chipFileName = fileName
+    chip.dataset.chipDisplayName = displayName
     const label = document.createElement('span')
     label.className = 'chip-label'
-    label.textContent = name
+    label.textContent = displayName
     chip.appendChild(label)
     box.appendChild(chip)
     // 后跟 ZWSP spacer（同 useContenteditableInput 范式，移除占位时一并清）
@@ -108,8 +109,8 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     expect(result.isDragOver.value).toBe(true)
   })
 
-  it('TC6: drop 图片 → insertImageBadge 占位 + 回填真实 path/name（走 dataset，不重插）；isDragOver 复位', async () => {
-    handleImagePasteMock.mockResolvedValue({ kind: 'badge', path: '/tmp/x.png', name: 'x.png' })
+  it('TC6: drop 图片 → insertImageBadge 占位 + 回填真实 path/fileName/displayName（走 dataset，不重插）；isDragOver 复位', async () => {
+    handleImagePasteMock.mockResolvedValue({ kind: 'badge', path: '/tmp/x.png', fileName: 'x-uuid.png', displayName: 'x.png' })
     const box = document.createElement('div')
     document.body.appendChild(box)
     // DOM 感知 insertImageBadge：在 box 内插真实 .image-chip，使占位 query 能定位 → 走 dataset 回填
@@ -132,12 +133,13 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalled())
     // 占位 badge 仅插入 1 次（回填走 dataset，不重插——因占位仍在 DOM）
     expect(inputMock.__calls).toHaveBeenCalledTimes(1)
-    expect(inputMock.__calls).toHaveBeenCalledWith(expect.stringMatching(/^__drag_pending_/), '拖入中…')
-    // 回填后 chip 的 dataset.chipPath 变为真实 path，label 变为真实 name
+    expect(inputMock.__calls).toHaveBeenCalledWith(expect.stringMatching(/^__drag_pending_/), expect.stringMatching(/^__drag_pending_/), '拖入中…')
+    // 回填后 chip 的 dataset.chipPath 变为真实 path，fileName/displayName 变为真实值
     const chip = box.querySelector('.image-chip') as HTMLElement
     expect(chip).toBeTruthy()
     expect(chip.dataset.chipPath).toBe('/tmp/x.png')
-    expect(chip.dataset.chipName).toBe('x.png')
+    expect(chip.dataset.chipFileName).toBe('x-uuid.png')
+    expect(chip.dataset.chipDisplayName).toBe('x.png')
     expect(chip.querySelector('.chip-label')?.textContent).toBe('x.png')
   })
 

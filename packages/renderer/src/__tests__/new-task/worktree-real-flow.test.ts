@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { textToSegments } from '@xyz-agent/shared'
 import type { SessionSummary, RecentWorkspaceRecord } from '@xyz-agent/shared'
 
 // ── api mock：session.create 控制返回的 SessionSummary（含 isBareWorkspace）──
@@ -90,7 +91,7 @@ describe('RF-1: 真实 flow — session.isBareWorkspace=true → gitInfo.isBare=
 
     const flow = useNewTaskFlow()
     await flow.startFlow()
-    await flow.submitFirstMessage('bare workspace')
+    await flow.submitFirstMessage(textToSegments('bare workspace'))
 
     // 真实数据链路断言（非 mock 注入）：gitInfo.isBare 从 session.isBareWorkspace 派生
     expect(flow.gitInfo.value).not.toBeNull()
@@ -114,7 +115,7 @@ describe('RF-2: 真实 flow — session.isBareWorkspace=false → gitInfo.isBare
 
     const flow = useNewTaskFlow()
     await flow.startFlow()
-    await flow.submitFirstMessage('normal repo')
+    await flow.submitFirstMessage(textToSegments('normal repo'))
 
     expect(flow.gitInfo.value?.isBare).toBe(false)
 
@@ -131,7 +132,7 @@ describe('RF-2: 真实 flow — session.isBareWorkspace=false → gitInfo.isBare
 
     const flow = useNewTaskFlow()
     await flow.startFlow()
-    await flow.submitFirstMessage('no bare field')
+    await flow.submitFirstMessage(textToSegments('no bare field'))
 
     expect(flow.gitInfo.value?.isBare).toBe(false)
 

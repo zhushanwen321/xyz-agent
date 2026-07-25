@@ -122,8 +122,11 @@ export function useCommandPopoverTrigger(
         if (result.canceled || !result.path) return
         if (type === 'image') {
           // image：文件已在磁盘，直接以原 path 建 image chip（不走 writeSessionImage，避免复制 + path 漂移）
+          // 磁盘已存在文件的 fileName 与 displayName 相同（basename，无 uuid 前缀）：
+          // 与粘贴/拖拽通路（writeSessionImage 产出 uuid 前缀 fileName + 用户可读 displayName）不同，
+          // 此处两字段同值（磁盘 basename）。
           const name = result.path.split(/[\\/]/).pop() || result.path
-          inputRef.value?.insertImageBadge(result.path, name)
+          inputRef.value?.insertImageBadge(result.path, name, name)
         } else {
           // attach：任意文件，文本路径插入（与 Ctrl+V 路径文本通路一致，轻量）
           inputRef.value?.insertTextAtCursor(result.path)

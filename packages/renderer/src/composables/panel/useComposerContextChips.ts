@@ -32,12 +32,16 @@ export function useComposerContextChips(inputRef: Ref<ComposerInputInstance | nu
   /** ContextChipsBar 数据源：从 segments 派生的 image chips */
   const attachedItems = ref<Array<{ id: string; name: string; type: 'image' }>>([])
 
-  /** 从输入区 segments 刷新 image chips（input 变化 / chip 删除后调） */
+  /** 从输入区 segments 刷新 image chips（input 变化 / chip 删除后调）。
+   *  attachedItems 内部字段名保持 `name`（ContextChipsBar 消费），值从 segment.displayName
+   *  派生（用户可读名）；segment 的 fileName（磁盘全名）对 chip 行展示无意义，不暴露。 */
   function refreshAttachedItems(): void {
     const segs = inputRef.value?.getSegments() ?? []
     attachedItems.value = segs
-      .filter((s): s is { type: 'image'; id: string; path: string; name: string } => s.type === 'image')
-      .map((s) => ({ id: s.id, name: s.name, type: 'image' as const }))
+      .filter(
+        (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image',
+      )
+      .map((s) => ({ id: s.id, name: s.displayName, type: 'image' as const }))
   }
 
   /** ContextChipsBar × 删除回调：用 chipId（segment.id）定位 DOM 中 image chip 移除并刷新 */

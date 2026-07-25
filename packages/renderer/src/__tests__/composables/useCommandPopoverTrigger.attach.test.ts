@@ -3,8 +3,8 @@
  *
  * 覆盖：
  * - TC2 attach: pickFile 返回 path → insertTextAtCursor(path)；canceled → 静默 return（不调）
- * - TC3 image:  pickFile（带 image filters）返回 path → insertImageBadge(path, basename)；
- *               canceled → 静默 return
+ * - TC3 image:  pickFile（带 image filters）返回 path → insertImageBadge(path, basename, basename)
+ *               （磁盘已存在文件，fileName 与 displayName 同值）；canceled → 静默 return
  * - pickFile reject → catch 静默 return（不 throw）
  *
  * mock 策略：vi.mock('@/lib/ipc') 替换 pickFile；inputRef 用 spy 对象（insertTextAtCursor /
@@ -83,7 +83,7 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     expect(inputMock.insertImageBadge).not.toHaveBeenCalled()
   })
 
-  it('TC3: image + pickFile 返回 path → insertImageBadge(path, basename)，filters 含 Images', async () => {
+  it('TC3: image + pickFile 返回 path → insertImageBadge(path, basename, basename)，filters 含 Images', async () => {
     pickFileMock.mockResolvedValue({ canceled: false, path: '/tmp/cat.png' })
     const inputMock = createInputMock()
     const { result, dispose: d } = runWithScope(() =>
@@ -98,8 +98,8 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
       name: 'Images',
       extensions: expect.arrayContaining(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']),
     })
-    // basename 取末段
-    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('/tmp/cat.png', 'cat.png')
+    // basename 取末段；磁盘已存在文件 fileName 与 displayName 同值
+    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('/tmp/cat.png', 'cat.png', 'cat.png')
     expect(inputMock.insertTextAtCursor).not.toHaveBeenCalled()
   })
 
@@ -111,7 +111,7 @@ describe('useCommandPopoverTrigger onAddSelect attach/image（TC2/TC3）', () =>
     )
     dispose = d
     await result.onAddSelect('image')
-    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('plainfile.png', 'plainfile.png')
+    expect(inputMock.insertImageBadge).toHaveBeenCalledWith('plainfile.png', 'plainfile.png', 'plainfile.png')
   })
 
   it('TC3: image + pickFile canceled → 静默 return', async () => {

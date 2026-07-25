@@ -2,8 +2,8 @@
  * insertImageBadge + getSegmentsFromEl image 分支单测（TC6/TC7）。
  *
  * 覆盖：
- * - TC6: insertImageBadge(path, name) 创建 .image-chip span + dataset + chip-label + chip-x + ZWSP spacer + 光标定位
- * - TC7: getSegmentsFromEl 解析 image-chip → {type:image,path,name}，跳子树（label/x 文本不污染）
+ * - TC6: insertImageBadge(path, fileName, displayName) 创建 .image-chip span + dataset + chip-label + chip-x + ZWSP spacer + 光标定位
+ * - TC7: getSegmentsFromEl 解析 image-chip → {type:image,path,fileName,displayName}，跳子树（label/x 文本不污染）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useComposerChipCommands.image.test.ts
  */
@@ -35,7 +35,7 @@ describe('TC6: insertImageBadge DOM 结构', () => {
 
   it('创建 .image-chip span + dataset + label + x + ZWSP spacer', () => {
     const { el, chipCommands } = setupChipCommands()
-    chipCommands.insertImageBadge('/tmp/x.png', 'x.png')
+    chipCommands.insertImageBadge('/tmp/x.png', 'x-uuid.png', 'x.png')
 
     const chip = el.querySelector('.image-chip') as HTMLElement
     expect(chip).toBeTruthy()
@@ -43,14 +43,15 @@ describe('TC6: insertImageBadge DOM 结构', () => {
     expect(chip.classList.contains('mention-chip')).toBe(true)
     expect(chip.classList.contains('image-chip')).toBe(true)
     expect(chip.contentEditable).toBe('false')
-    // C2 DOM schema：dataset 结构化标记
+    // C2 DOM schema：dataset 结构化标记（fileName 磁盘全名 + displayName 用户可读名）
     expect(chip.dataset.chipType).toBe('image')
     expect(chip.dataset.chipPath).toBe('/tmp/x.png')
-    expect(chip.dataset.chipName).toBe('x.png')
+    expect(chip.dataset.chipFileName).toBe('x-uuid.png')
+    expect(chip.dataset.chipDisplayName).toBe('x.png')
     // C3：chipId 是稳定唯一 uuid（crypto.randomUUID），同一文件附两次时 ContextChipsBar :key 用它区分
     expect(chip.dataset.chipId).toBeTruthy()
     expect(chip.dataset.chipId.length).toBeGreaterThan(0)
-    // 子元素：chip-label（显 name）+ chip-x
+    // 子元素：chip-label（显 displayName 用户可读名）+ chip-x
     const label = chip.querySelector('.chip-label') as HTMLElement
     expect(label).toBeTruthy()
     expect(label.textContent).toBe('x.png')
@@ -63,8 +64,8 @@ describe('TC6: insertImageBadge DOM 结构', () => {
 
   it('C3: 同一文件附两次 → 两个 chip 各有唯一 chipId（path 重复但 id 不冲突）', () => {
     const { el, chipCommands } = setupChipCommands()
-    chipCommands.insertImageBadge('/tmp/dup.png', 'dup.png')
-    chipCommands.insertImageBadge('/tmp/dup.png', 'dup.png')
+    chipCommands.insertImageBadge('/tmp/dup.png', 'dup.png', 'dup.png')
+    chipCommands.insertImageBadge('/tmp/dup.png', 'dup.png', 'dup.png')
 
     const chips = el.querySelectorAll<HTMLElement>('.image-chip')
     expect(chips.length).toBe(2)
@@ -81,7 +82,7 @@ describe('TC6: insertImageBadge DOM 结构', () => {
     const el = document.createElement('div')
     document.body.appendChild(el)
     const cc = useComposerChipCommands(ref(el) as never, { onChanged, restoreSelection: vi.fn() })
-    cc.insertImageBadge('/tmp/a.png', 'a.png')
+    cc.insertImageBadge('/tmp/a.png', 'a.png', 'a.png')
     expect(onChanged).toHaveBeenCalled()
   })
 })
@@ -94,15 +95,15 @@ describe('TC7: getSegmentsFromEl image 分支', () => {
   it('解析 [text][image-chip][text] → 3 段，image chip 子树文本不污染', () => {
     const { el, chipCommands } = setupChipCommands()
     el.textContent = 'hello'
-    chipCommands.insertImageBadge('/tmp/a.png', 'a.png')
+    chipCommands.insertImageBadge('/tmp/a.png', 'a-uuid.png', 'a.png')
     // chip 后追加文本
     el.querySelector('.image-chip')?.after(document.createTextNode('world'))
 
     const segments = getSegmentsFromEl(el)
     expect(segments).toEqual([
       { type: 'text', text: 'hello' },
-      // C3：image segment 含稳定唯一 id（chip.dataset.chipId 的 uuid）
-      { type: 'image', id: expect.any(String), path: '/tmp/a.png', name: 'a.png' },
+      // C3：image segment 含稳定唯一 id（chip.dataset.chipId 的 uuid）+ fileName/displayName
+      { type: 'image', id: expect.any(String), path: '/tmp/a.png', fileName: 'a-uuid.png', displayName: 'a.png' },
       { type: 'text', text: 'world' },
     ])
     // chip-label 'a.png' 与 chip-x '×' 不出现在任何 text segment（rejectChipSubtree 生效）

@@ -216,9 +216,15 @@ export function useComposerChipCommands(
    * - 样式带 .image-chip 修饰（紫色 reasoning 色，与 ContextChipsBar image 一致），复用 .mention-chip 基础样式（TO2）。
    * - dataset.chipType='image'（getSegmentsFromEl 依此重建 {type:image} segment，区别于 file 的 'file'）。
    * - dataset.chipId = uuid（C3：唯一标识，同一文件附两次时 ContextChipsBar :key 用它避免重复 path 冲突）。
-   * - 无行范围概念，label 直接显 basename。
+   * - 无行范围概念，label 显 displayName（用户可读名）。
+   *
+   * fileName vs displayName（与 shared Segment image 段对齐）：
+   * - fileName：磁盘文件全名（含 uuid 前缀，如 `dbfdb3c8-...-image.png`），用于磁盘定位/日志，
+   *   写入 dataset.chipFileName 供 getSegmentsFromEl 重建 segment.fileName。
+   * - displayName：用户可读名（如 `截图-20260725-1530.png`），用于 badge label 显示，
+   *   写入 dataset.chipDisplayName 供 getSegmentsFromEl 重建 segment.displayName。
    */
-  function insertImageBadge(path: string, name: string): void {
+  function insertImageBadge(path: string, fileName: string, displayName: string): void {
     const el = getEl()
     if (!el) return
     restoreSelection()
@@ -230,10 +236,12 @@ export function useComposerChipCommands(
     chip.dataset.chipType = 'image'
     chip.dataset.chipId = crypto.randomUUID()
     chip.dataset.chipPath = path
-    chip.dataset.chipName = name
+    chip.dataset.chipFileName = fileName
+    chip.dataset.chipDisplayName = displayName
     const label = document.createElement('span')
     label.className = 'chip-label'
-    label.textContent = name
+    // 显示层用 displayName（用户可读），磁盘全名 fileName 对用户冗余且含 uuid 前缀不美观
+    label.textContent = displayName
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
     // 插入光标处（同 file chip，非最前）
