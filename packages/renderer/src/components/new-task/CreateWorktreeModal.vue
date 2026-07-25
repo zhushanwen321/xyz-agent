@@ -17,8 +17,9 @@ import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { worktreeApi } from '@/api/domains/worktree'
 import { detect as detectWorkspace } from '@/api/domains/workspace'
 import { pickDirectory } from '@/lib/ipc'
+import type { WorktreeErrorCode } from '@xyz-agent/shared'
 
-interface WorktreeError { code?: string; message?: string; cwd?: string; exitCode?: number; stderr?: string }
+interface WorktreeError { code?: WorktreeErrorCode; message?: string; cwd?: string; exitCode?: number; stderr?: string }
 type ModalPhase = 'form' | 'progress' | 'success' | 'error' | 'exists'
 type RepoMode = 'bare-workspace' | 'plain-repo' | 'not-repo'
 type LocationMode = 'workspace' | 'repo-dir' | 'dedicated-dir'
