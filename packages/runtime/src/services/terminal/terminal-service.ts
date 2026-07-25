@@ -223,6 +223,17 @@ export class TerminalService implements ITerminalService {
     }
     // TERM 让终端应用（vim/htop）正确渲染
     env.TERM = env.TERM || 'xterm-256color'
+
+    // [HISTORICAL] 清除 Electron sidecar 内部变量，避免污染用户 terminal。
+    // runtime 进程是 Electron 主进程用 ELECTRON_RUN_AS_NODE=1 spawn 出来的 sidecar（打包模式，
+    // 见 process-control.ts:202-205），该变量会随 process.env 继承到 terminal shell。
+    // 用户在 terminal 里跑 `electron .` / `npm run dev` 等命令时，Electron 会因该变量退化为
+    // 纯 Node 运行，require('electron').app 为 undefined → 'Cannot read properties of
+    // undefined (reading isPackaged)' 崩溃。terminal 是给用户跑命令的，不是 sidecar 下游，
+    // 必须切断这类 Electron 实现细节变量的继承。
+    delete env.ELECTRON_RUN_AS_NODE
+    delete env.ELECTRON_NO_ASAR
+    delete env.ELECTRON_OVERRIDE_DIST_PATH
     return env
   }
 }

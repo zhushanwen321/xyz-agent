@@ -219,4 +219,36 @@ describe('TerminalService', () => {
     // 模拟 logger 的 JSON.stringify：plain object 能正确序列化出 message（裸 Error 会变 {}）
     expect(JSON.parse(JSON.stringify(serialized)).message).toBe('ENOENT: shell not found')
   })
+
+  it('TS-11: spawn env 清除 ELECTRON_RUN_AS_NODE 等 sidecar 内部变量（防 terminal 用户跑 electron 命令崩溃）', async () => {
+    // [HISTORICAL] 回归：runtime sidecar 的 process.env 含 ELECTRON_RUN_AS_NODE=1（打包模式
+    // 由 Electron 主进程注入，见 process-control.ts:202-205）。buildEnv 若原样透传到 terminal shell，
+    // 用户在 terminal 跑 `electron .` / `npm run dev` 时 Electron 退化为纯 Node，
+    // require('electron').app 为 undefined → 'Cannot read properties of undefined (reading isPackaged)' 崩溃。
+    // 修复：buildEnv 必须显式 delete 这些变量。
+    const prev = { ...process.env }
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    process.env.ELECTRON_NO_ASAR = '1'
+    process.env.ELECTRON_OVERRIDE_DIST_PATH = '/some/path'
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s11', undefined, 80, 24)
+      const { spawn } = await import('node-pty')
+      // node-pty.spawn(file, args, options) → options.env
+      const opts = vi.mocked(spawn).mock.calls[0]![2] as { env: Record<string, string> }
+      expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+      expect(opts.env.ELECTRON_NO_ASAR).toBeUndefined()
+      expect(opts.env.ELECTRON_OVERRIDE_DIST_PATH).toBeUndefined()
+      // 正常 env 仍应保留（验证不是整个 env 被清空）
+      expect(opts.env.TERM).toBe('xterm-256color')
+      expect(opts.env.PATH).toBe(process.env.PATH)
+    } finally {
+      // 还原 process.env，避免污染后续测试
+      for (const k of ['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ASAR', 'ELECTRON_OVERRIDE_DIST_PATH']) {
+        if (k in prev) process.env[k] = prev[k]!
+        else delete process.env[k]
+      }
+    }
+  })
 })
