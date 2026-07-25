@@ -116,9 +116,13 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
 
   // write-tmp-image：把剪贴板图片（base64）写到 OS tmpdir，返回绝对路径。
   // Cmd+V/Ctrl+V 粘贴截图走此 handler：renderer 读剪贴板 image blob → base64 → 经此 IPC
-  // 落地成文件，后续由 renderer 决定走富呈现 badge（Cmd+V）或字面路径文本（Ctrl+V）。
+  // 落地成文件，后续由 renderer 走富呈现 badge（Cmd/Ctrl+V 统一通路）。
   //
-  // 安全：mimeType 必须以 image/ 开头（防借道写任意文件），且 base64 经 Buffer 解码。
+  // 安全：
+  // - mimeType 必须以 image/ 开头（防借道写任意文件），且 base64 经 Buffer 解码。
+  // - 解码后大小上限 MAX_IMAGE_BYTES（20MB）：防超大输入撑爆内存/磁盘。base64 长度按 3/4 估算
+  //   解码字节数（误差仅尾部填充，足够拒超大输入）。超限 throw，让 renderer 的 invoke reject 被
+  //   catch，降级为 [图片粘贴失败] 文本提示。
   // 失败语义：与 pick-* 不同，此处 fs 写失败直接 throw（让 renderer 的 invoke reject 被
   // catch，降级为 [图片粘贴失败] 文本提示），而非返回 null——因为返回 null 与「未取到 blob」
   // 语义混淆，throw 让 renderer 明确区分「IPC 不可用」(undefined) vs 「写入失败」(catch)。
@@ -131,6 +135,15 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
       const { base64, mimeType, suggestedName } = payload
       if (!mimeType.startsWith('image/')) {
         throw new Error(`write-tmp-image: invalid mimeType ${mimeType}`)
+      }
+      // M1 大小上限：解码前按 base64 长度估算解码字节数（3/4 比例），超 20MB 拒绝。
+      // 估算仅尾部 padding 有 1-2 字节误差，对 20MB 量级拒绝判定无影响。
+      const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+      const decodedBytes = Math.ceil((base64.length * 3) / 4)
+      if (decodedBytes > MAX_IMAGE_BYTES) {
+        throw new Error(
+          `图片过大（${Math.round(decodedBytes / 1024 / 1024)}MB），上限 20MB`,
+        )
       }
       // mimeType → ext 映射（覆盖常见剪贴板图类型）
       const extByMime: Record<string, string> = {

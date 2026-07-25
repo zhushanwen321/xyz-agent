@@ -266,4 +266,31 @@ describe('write-tmp-image IPC handler (TC3)', () => {
     expect(errSpy).toHaveBeenCalled()
     errSpy.mockRestore()
   })
+
+  it('M1: 解码后超 20MB → throw「图片过大」不写文件（防超大输入撑爆内存/磁盘）', async () => {
+    const writeTmpImage = handlers.get('write-tmp-image')!
+    // 构造 base64 使解码字节数 > 20MB：21MB = 21*1024*1024 字节，base64 长度 ≈ 21MB*4/3
+    const targetBytes = 21 * 1024 * 1024
+    const base64Len = Math.ceil((targetBytes * 4) / 3)
+    const oversizedBase64 = 'A'.repeat(base64Len)
+    // 不应 console.error（M1 拒绝在 fs 写入之前，属校验层而非写入失败）
+    await expect(
+      writeTmpImage({}, { base64: oversizedBase64, mimeType: 'image/png' }),
+    ).rejects.toThrow('图片过大')
+  })
+
+  it('M1: 解码后接近 20MB（19MB，上限内）→ 正常写入', async () => {
+    const writeTmpImage = handlers.get('write-tmp-image')!
+    // 用 19MB（上限 20MB 内，留余量避开 base64 padding 估算误差）验证大图正常落地。
+    // 解码字节数估算 Math.ceil(base64.length*3/4) 对带 padding 的 base64 会高估 1-3 字节，
+    // 故用 19MB 而非恰好 20MB 避免边界抖动（拒绝判定语义是「明显超大」，非字节精确）。
+    const targetBytes = 19 * 1024 * 1024
+    const bytes = Buffer.alloc(targetBytes, 0x01)
+    const result = (await writeTmpImage({}, {
+      base64: bytes.toString('base64'),
+      mimeType: 'image/png',
+    })) as { path: string; name: string }
+    writtenPaths.push(result.path)
+    expect(existsSync(result.path)).toBe(true)
+  })
 })
