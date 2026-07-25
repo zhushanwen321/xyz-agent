@@ -19,21 +19,25 @@ import { useNoticeStack } from '@/composables/panel/useNoticeStack'
 
 /**
  * compaction notice 占位高度。
- * 强绑定 DOM：模板 isCompacting 块（`flex items-center gap-2 py-1`，含 `size-3` spinner
+ * 强绑定 DOM：模板 isCompacting 块（`flex items-center gap-2 pt-2.5 pb-5`，含 `size-3` spinner
  *   + `text-[11px] leading-snug` 文本 + 两条 `h-px` 分隔线）。
- *   实际高度 ≈ py-1(4px*2) + max(spinner 12px, text≈16px) ≈ 24px；常量 28 略大，给 dispatching
- *   占位避让留 4px 余量。改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
+ *   实际高度 = pt-2.5(10px) + 内容 max(spinner 12px, text≈16px) + pb-5(20px) = 46px。
+ *   pb-5 撑出到 composer 的间距（notice 是 absolute 子元素参与 scrollEl scrollHeight，
+ *   底部 padding 让块变高 → scrollHeight 增大 → 滚到底时 notice 内容到视口底部的距离
+ *   = 到 composer 的间距，对齐末条 turn 的 pb-5 视觉）。
+ *   改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
  *
  * dispatching 占位高度也复用此值（dispatching 文本块尺寸同量级）。
  */
-export const COMPACTING_NOTICE_HEIGHT = 28
+export const COMPACTING_NOTICE_HEIGHT = 46
 
 /**
  * handoff notice 占位高度（强绑定 DOM，与 COMPACTING_NOTICE_HEIGHT 同结构：spinner + 文本 + 分隔线）。
- * 实际高度 ≈ py-1 + max(spinner 12px, text≈16px) ≈ 24px；常量 28 与 compacting 对齐。
- * 改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
+ * 实际高度 = pt-2.5(10px) + 内容 max(spinner 12px, text≈16px) + pb-5(20px) = 46px；
+ *   pb-5 撑出到 composer 的间距，与 COMPACTING_NOTICE_HEIGHT 同结构对齐。常量 46 与 compacting 一致。
+ *   改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
  */
-export const HANDOFF_NOTICE_HEIGHT = 28
+export const HANDOFF_NOTICE_HEIGHT = 46
 
 /** 容器侧响应式依赖（getter/ComputedRef 注入，避免本 composable 反向依赖虚拟滚动/状态计算） */
 export interface MessageStreamNoticesDeps {

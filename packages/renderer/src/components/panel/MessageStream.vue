@@ -71,7 +71,7 @@
       <div
         v-if="isCompacting"
         ref="compactingNoticeEl"
-        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 py-1"
+        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 pt-2.5 pb-5"
         :style="{ top: totalHeight + topOffset + 'px' }"
       >
         <span class="h-px flex-1 bg-border" />
@@ -85,7 +85,7 @@
            非虚拟化，absolute 定位到列表末尾 + topOffset + compacting 占位高度。 -->
       <div
         v-if="isHandingOff"
-        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 py-1"
+        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 pt-2.5 pb-5"
         :style="{ top: handoffNoticeTop + 'px' }"
       >
         <span class="h-px flex-1 bg-border" />
@@ -153,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -176,6 +176,7 @@ import { type Message } from '@xyz-agent/shared'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
+import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
@@ -388,35 +389,17 @@ watch(
 )
 
 /**
- * 首次挂载强制滚到底（force=true 绕过 guard）。
- * MessageStream 经 v-if 条件挂载，首次挂载时 sessionId 已是目标值，session watch 不触发
- * （watch 监听变化，挂载不算变化）；不显式滚则停在 scrollTop=0（最上方）。
- * 异步渲染导致的 scrollHeight 抖动由 ResizeObserver 兜底，此处只做首次定位 + 校准 showJumpButton。
+ * 滚动触发编排（消息/notice 变化 → scrollToBottom）：首次挂载滚到底、消息条数变化、
+ * 流式 text 追加、notice（压缩中/正在交接）显隐四类触发，下沉到 useMessageStreamScroll
+ * （script setup ≤300 行规范 + 单一变化轴复用）。切换 session 的滚动留在下方（依赖 virtualList + settling）。
  */
-onMounted(() => {
-  scrollToBottom('auto', true)
+useMessageStreamScroll({
+  currentMessages,
+  lastRenderTurn,
+  isCompacting,
+  isHandingOff,
+  scrollToBottom,
 })
-
-watch(
-  () => currentMessages.value.length,
-  () => {
-    scrollToBottom('auto')
-  },
-)
-
-// streaming 中 text 追加也触发滚动（按最后一条消息 content 长度）
-watch(
-  () => {
-    const list = currentMessages.value
-    const last = list[list.length - 1]
-    return last?.content.length ?? 0
-  },
-  () => {
-    if (lastRenderTurn.value?.isStreaming) {
-      scrollToBottom('auto')
-    }
-  },
-)
 
 // 切换 session → 重置虚拟列表高度缓存（不同 session 键语义不同，复用致错位，SR10/INVAR-8）
 //   + 强制滚到底（展示最新内容，不受 guard）
