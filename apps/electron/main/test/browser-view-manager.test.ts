@@ -179,13 +179,13 @@ describe('BrowserViewManager', () => {
     })
 
     it('windowId 不存在时记录日志且不创建（不抛错）', () => {
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
       mgr.create('sess-1', 'nonexistent')
 
       expect(createdViews).toHaveLength(0)
-      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('window not found'))
-      errSpy.mockRestore()
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('window not found'))
+      warnSpy.mockRestore()
     })
 
     it('窗口已销毁时跳过 addChildView', () => {
@@ -249,6 +249,42 @@ describe('BrowserViewManager', () => {
       const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
       expect(() => mgr.hide('nope')).not.toThrow()
       expect(() => mgr.show('nope')).not.toThrow()
+    })
+  })
+
+  describe('失败路径日志（PR #100 W1）', () => {
+    it('setRect / hide / show / destroy 对不存在 session 走 console.warn，不再静默', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
+      mgr.setRect('nope', { x: 0, y: 0, width: 10, height: 10 })
+      mgr.hide('nope')
+      mgr.show('nope')
+      mgr.destroy('nope')
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('setRect: session not found'))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('hide: session not found'))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('show: session not found'))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('destroy: session not found'))
+      warnSpy.mockRestore()
+    })
+
+    it('focus target 不存在时走 console.debug（spec 允许的 LRU 淘汰场景）', () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', makeWindow()))
+      mgr.focus('never-created')
+      expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('focus: target not found'))
+      debugSpy.mockRestore()
+    })
+
+    it('focus target 存在时静默（现有场景无 DEBUG 噪声）', () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
+      const win = makeWindow()
+      const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+      mgr.create('sess-1', 'win-1')
+      debugSpy.mockClear()
+      mgr.focus('sess-1')
+      expect(debugSpy).not.toHaveBeenCalled()
+      debugSpy.mockRestore()
     })
   })
 

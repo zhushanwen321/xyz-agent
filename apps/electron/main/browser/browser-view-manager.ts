@@ -146,7 +146,9 @@ export class BrowserViewManager {
 
     const win = this.windows.get(windowId)
     if (!win) {
-      console.error(`[browser-view] create: window not found windowId=${windowId} sessionId=${sessionId}`)
+      // [W1] 降级 error → warn：windowId 找不到通常意味着 renderer 启动时 URL 注入 windowId 为空（W4 防护），
+      // 或窗口已被销毁。是预期失败路径而非异常，不应 spam error 级别。
+      console.warn(`[browser-view] create: window not found windowId=${windowId} sessionId=${sessionId}`)
       return
     }
 
@@ -222,7 +224,12 @@ export class BrowserViewManager {
    */
   setRect(sessionId: string, rect: Rectangle): void {
     const entry = this.views.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      // [W1] 静默失败改为 console.warn：renderer setRect 推过来但 view 池无 entry。常见 LRU 淘汰后
+      // 短窗口内 BrowserPane 还在 resize observer 触发最后一次推。下次 mount 会 create+show 重建。
+      console.warn(`[browser-view] setRect: session not found sessionId=${sessionId}`)
+      return
+    }
     entry.lastRect = rect
     if (entry.isVisible) {
       const prev = entry.view.getBounds()
@@ -243,7 +250,12 @@ export class BrowserViewManager {
    */
   hide(sessionId: string): void {
     const entry = this.views.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      // [W1] 静默失败改为 console.warn：onBeforeUnmount 调 hide 但 view 已被 LRU 淘汰/窗口已关。
+      // 不会引发 UI 错误（view 反正不可见），但留日志便于排查。
+      console.warn(`[browser-view] hide: session not found sessionId=${sessionId}`)
+      return
+    }
     // 记录当前可见 rect（若已隐藏，getBounds 返回 HIDDEN_RECT，无副作用）
     entry.lastRect = entry.view.getBounds()
     entry.isVisible = false
@@ -257,7 +269,12 @@ export class BrowserViewManager {
    */
   show(sessionId: string): void {
     const entry = this.views.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      // [W1] 静默失败改为 console.warn：BrowserPane mount 时序竞争（useBrowserFocusSync 已推 focus 但 view 池无）。
+      // 不报错，让 renderer 后续 create+show 重建流程正常推进。
+      console.warn(`[browser-view] show: session not found sessionId=${sessionId}`)
+      return
+    }
     entry.isVisible = true
     entry.view.setBounds(entry.lastRect)
   }
@@ -268,7 +285,12 @@ export class BrowserViewManager {
    */
   destroy(sessionId: string): void {
     const entry = this.views.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      // [W1] 静默失败改为 console.warn：deleteSession → destroy 但 view 已被 LRU 淘汰或根本没创建。
+      // 幂等无副作用，但日志便于排查"为什么 destroy 没生效"。
+      console.warn(`[browser-view] destroy: session not found sessionId=${sessionId}`)
+      return
+    }
     const { view, windowId } = entry
     const win = this.windows.get(windowId)
     // 窗口未销毁才摘下 view；窗口已关则跳过（view 会随窗口一起释放）
@@ -332,8 +354,11 @@ export class BrowserViewManager {
       target.lastUsed = Date.now()
       target.isVisible = true
       target.view.setBounds(target.lastRect)
+      return
     }
-    // target 不存在时不报错——renderer 侧 BrowserPane onMounted 会 create + show 重建
+    // [W1] target 不存在：常见于 LRU 淘汰后切回 / BrowserPane 还没 mount。spec 允许此静默路径
+    // （renderer 后续 create+show 重建），但留 debug 日志便于排查首次切 session 时的时序问题。
+    console.debug(`[browser-view] focus: target not found sessionId=${sessionId} (LRU evict or pending create)`)
   }
 
   /**
