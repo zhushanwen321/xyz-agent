@@ -30,8 +30,8 @@ const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
 const props = defineProps<{ initialBranch?: string }>()
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'success', cwd: string): void
-  (e: 'use-existing', cwd: string): void
+  (e: 'success', payload: { cwd: string }): void
+  (e: 'use-existing', payload: { cwd: string }): void
 }>()
 
 const { t } = useI18n()
@@ -180,11 +180,11 @@ async function runCreate(branch: string, base: string): Promise<void> {
     phase.value = err.code === 'WORKTREE_EXISTS' ? 'exists' : 'error'
   }
 }
-function scheduleSuccessEmit(cwd: string): void { clearSuccessTimer(); successTimer = setTimeout(() => { emit('success', cwd); emit('close') }, SUCCESS_EMIT_DELAY_MS) }
+function scheduleSuccessEmit(cwd: string): void { clearSuccessTimer(); successTimer = setTimeout(() => { emit('success', { cwd }); emit('close') }, SUCCESS_EMIT_DELAY_MS) }
 function clearSuccessTimer(): void { if (successTimer != null) { clearTimeout(successTimer); successTimer = null } }
 async function onRetry(): Promise<void> { await runCreate(trimmedName.value, baseBranch.value) }
 function onCleanup(): void { emit('close') }
-function onUseExisting(): void { const cwd = lastError.value?.cwd; if (cwd) emit('use-existing', cwd) }
+function onUseExisting(): void { const cwd = lastError.value?.cwd; if (cwd) emit('use-existing', { cwd }) }
 function onCancel(): void { emit('close') }
 onBeforeUnmount(() => { cancelled = true; clearSuccessTimer() })
 </script>

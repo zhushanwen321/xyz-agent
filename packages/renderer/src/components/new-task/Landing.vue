@@ -147,8 +147,8 @@ function onConfirmDirtySwitch(payload: { name: string }): void {
  * worktree 创建成功（CreateWorktreeModal emit success）：
  * 选定新 worktree 的 cwd（chip 回灌）+ 关 overlay 回 landing。
  */
-function onWorktreeSuccess(cwd: string): void {
-  flow.selectWorkspace(cwd)
+function onWorktreeSuccess(payload: { cwd: string }): void {
+  flow.selectWorkspace(payload.cwd)
   flow.closeOverlay()
 }
 
@@ -164,8 +164,8 @@ function onSelectWorktree(payload: { path: string }): void {
  * exists 态「直接开始」（CreateWorktreeModal emit use-existing）：
  * 用已存在 worktree 的 cwd + 关 overlay。语义同 onWorktreeSuccess，独立函数保语义清晰。
  */
-function onWorktreeUseExisting(cwd: string): void {
-  flow.selectWorkspace(cwd)
+function onWorktreeUseExisting(payload: { cwd: string }): void {
+  flow.selectWorkspace(payload.cwd)
   flow.closeOverlay()
 }
 function onRetry(): void {

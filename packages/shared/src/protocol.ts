@@ -929,3 +929,44 @@ export interface ReplyPayloadMap {
  * 领域 DTO（ExtensionInfo / GitStatusResult / PluginInfo / StatusBarItem …）已下沉到
  * extension.ts / git.ts / plugin.ts，本文件顶部 import 引用，ServerMessageMapBase 照常引用。
  */
+
+// ── 运行时类型守卫 ─────────────────────────────────────────────
+
+/** 运行时检查值是否为 Message（含必需字段 id/role/content/status/timestamp）。 */
+export function isMessage(value: unknown): value is Message {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    (v.role === 'user' || v.role === 'assistant' || v.role === 'system') &&
+    (typeof v.content === 'string' || Array.isArray(v.content)) &&
+    (v.status === 'streaming' || v.status === 'complete' || v.status === 'error' || v.status === 'pending') &&
+    typeof v.timestamp === 'number'
+  )
+}
+
+/** 运行时检查值是否为 SessionSummary（含必需字段 id/label/cwd/status/modelId）。 */
+export function isSessionSummary(value: unknown): value is SessionSummary {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    typeof v.label === 'string' &&
+    typeof v.cwd === 'string' &&
+    typeof v.status === 'string' &&
+    typeof v.modelId === 'string'
+  )
+}
+
+/** 运行时检查值是否为 SubagentRecord（含必需字段 subagentId/agent/slug/task/status）。 */
+export function isSubagentRecord(value: unknown): value is SubagentRecord {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.subagentId === 'string' &&
+    typeof v.agent === 'string' &&
+    typeof v.slug === 'string' &&
+    typeof v.task === 'string' &&
+    typeof v.status === 'string'
+  )
+}
