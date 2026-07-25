@@ -205,6 +205,46 @@ describe('ContextCapacityPopover coding-plan 区', () => {
 
       expect(quotaApi.getCached).not.toHaveBeenCalled()
     })
+
+    it('[landing] 无 sessionId 但 defaultModel 命中已启用 quota 的 provider → 用 defaultModel 推导 provider 并查 quota API', async () => {
+      // [HISTORICAL] 回归：landing composer（sessionId=undefined）之前永远显「未配置」，
+      // 因为 matchedProviderId 在无 sessionId 时直接返回 null。修复后 fallback 到
+      // settingsStore.defaultModel（landing 态 composer 模型选择器的 SSOT），
+      // 让 landing composer 也能显示已配置的 quota 用量。
+      setupProviders([zhipuProvider])
+      const settingsStore = useSettingsStore()
+      settingsStore.defaultModel = 'zhipu/glm-4.6'
+
+      const wrapper = mount(ContextCapacityPopover, {
+        props: {}, // sessionId=undefined（landing 态）
+      })
+      await flushPromises()
+
+      const btn = wrapper.find('[title="上下文容量"]')
+      await btn.trigger('mouseenter')
+      await flushPromises()
+
+      // landing 态有 defaultModel → 应该查 quota API（provider=zhipu）
+      expect(quotaApi.getCached).toHaveBeenCalledWith('zhipu')
+      expect(quotaApi.fetchQuota).toHaveBeenCalledWith('zhipu')
+    })
+
+    it('[landing] 无 sessionId 且 defaultModel 为空 → 不调 quota API', async () => {
+      setupProviders([zhipuProvider])
+      const settingsStore = useSettingsStore()
+      settingsStore.defaultModel = '' // 显式空
+
+      const wrapper = mount(ContextCapacityPopover, {
+        props: {},
+      })
+      await flushPromises()
+
+      const btn = wrapper.find('[title="上下文容量"]')
+      await btn.trigger('mouseenter')
+      await flushPromises()
+
+      expect(quotaApi.getCached).not.toHaveBeenCalled()
+    })
   })
 
   describe('未配置态「配置」按钮（偏差 #D）', () => {

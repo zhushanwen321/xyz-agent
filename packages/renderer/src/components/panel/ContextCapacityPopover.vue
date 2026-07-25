@@ -240,13 +240,19 @@ onMessage(['context.update', 'session.state_changed'], (msg) => {
 /**
  * 从当前 session 的 modelId 派生 providerId（复合串 "provider/modelId" → provider 部分），
  * 然后匹配 quota preset，命中则启用 coding-plan 区。
+ *
+ * Landing 态（sessionId=undefined）：sessionStore 无 session 可查，fallback 到
+ * settingsStore.defaultModel（"provider/modelId" 复合串，与 session.modelId 同格式）。
+ * defaultModel 是 landing 态 composer 模型选择器的 SSOT（见 settings.ts:77-78），
+ * 用它推导 provider 让 landing composer 也能显示已配置的 quota 用量。
  */
 const matchedProviderId = computed<string | null>(() => {
+  // 优先从 active session 取 modelId；landing 态 fallback 到 defaultModel
   const sid = props.sessionId
-  if (!sid) return null
-  const session = sessionStore.list.find((s) => s.id === sid)
-  if (!session?.modelId) return null
-  const provider = session.modelId.split('/')[0]
+  const session = sid ? sessionStore.list.find((s) => s.id === sid) : undefined
+  const compositeModelId = session?.modelId ?? settingsStore.defaultModel
+  if (!compositeModelId) return null
+  const provider = compositeModelId.split('/')[0]
   if (!provider) return null
 
   // 在 settingsStore.providers 中找到该 provider
