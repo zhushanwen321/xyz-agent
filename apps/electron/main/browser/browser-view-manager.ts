@@ -41,6 +41,7 @@
 import { WebContentsView } from 'electron'
 import type { Rectangle } from 'electron'
 import type { IWindowManager } from '../interfaces.js'
+import { isAllowedNavigateUrl, isDangerousScheme } from '../gateway/url-scheme-validators.js'
 
 /** 隐藏占位 rect（0,0,0,0） */
 const HIDDEN_RECT: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
@@ -198,12 +199,21 @@ export class BrowserViewManager {
 
   /**
    * 导航到指定 URL。
-   * @throws sessionId 不存在或 loadURL 失败时抛出
+   * @throws sessionId 不存在 / scheme 不安全 / loadURL 失败时抛出
    */
   async navigate(sessionId: string, url: string): Promise<void> {
     const entry = this.views.get(sessionId)
     if (!entry) {
       throw new Error(`[browser-view] navigate: session not found sessionId=${sessionId}`)
+    }
+    // [HISTORICAL] PR #100 B1 双层防御：handler 已校验 scheme（白名单 + 黑名单），
+    // manager 再校验一次——handler 是第一道，manager 是第二道。renderer 端 useUrlBar
+    // 也有黑名单（用户即时反馈）。三道防线独立函数 + 独立 fail point，任一失效下一道兜底。
+    if (isDangerousScheme(url)) {
+      throw new Error(`[browser-view] navigate: rejected dangerous scheme: ${url.slice(0, 64)}`)
+    }
+    if (!isAllowedNavigateUrl(url)) {
+      throw new Error(`[browser-view] navigate: only http(s) URLs are allowed: ${url.slice(0, 64)}`)
     }
     // loadURL 前置 pendingAutoFit，确保随后的 dom-ready 能读到（loadURL → dom-ready 是同 tick 后异步触发）。
     // 仅 navigate 触发 autoFit：用户在地址栏输入新 URL / agent 推链接 → 缩放；页内链接 / 后退前进不经过此方法。

@@ -17,6 +17,7 @@
 import { ipcMain } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { BrowserViewManager } from '../browser/browser-view-manager.js'
+import { isAllowedNavigateUrl, isDangerousScheme } from './url-scheme-validators.js'
 
 /**
  * 注册 browser drawer IPC handler。
@@ -34,7 +35,17 @@ export function registerBrowserHandlers(
   })
 
   // 导航（loadURL 失败时 invoke reject）
+  // [HISTORICAL] PR #100 B1 双层防御：handler 入口先校验 scheme（白名单），拒危险协议。
+  // 渲染端 useUrlBar 也有黑名单（用户即时反馈），但 renderer 可被 XSS/console 绕过，
+  // 主进程必须有第二层（白名单策略，独立于渲染端的黑名单，独立函数便于单测）。
+  // scheme 校验失败时 invoke reject 带明确 reason，renderer .catch 接住后 toast。
   ipcMain.handle('browser:navigate', async (_event, { sessionId, url }: { sessionId: string; url: string }) => {
+    if (isDangerousScheme(url)) {
+      throw new Error(`[browser:navigate] rejected dangerous scheme: ${url.slice(0, 64)}`)
+    }
+    if (!isAllowedNavigateUrl(url)) {
+      throw new Error(`[browser:navigate] only http(s) URLs are allowed: ${url.slice(0, 64)}`)
+    }
     await manager.navigate(sessionId, url)
   })
 

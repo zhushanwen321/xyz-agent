@@ -224,6 +224,71 @@ describe('BrowserViewManager', () => {
 
       await expect(mgr.navigate('sess-1', 'https://nope.invalid')).rejects.toThrow('DNS fail')
     })
+
+    describe('scheme guard (PR #100 B1 defense-in-depth)', () => {
+      it('javascript: 协议被拒（manager 第二层防御）', async () => {
+        const win = makeWindow()
+        const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+        mgr.create('sess-1', 'win-1')
+        const loadURLSpy = vi.spyOn(createdViews[0].wc, 'loadURL')
+
+        await expect(mgr.navigate('sess-1', 'javascript:alert(1)')).rejects.toThrow(/dangerous scheme/)
+        // loadURL 未被调用（scheme 校验在 loadURL 之前）
+        expect(loadURLSpy).not.toHaveBeenCalled()
+      })
+
+      it('data: 协议被拒', async () => {
+        const win = makeWindow()
+        const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+        mgr.create('sess-1', 'win-1')
+
+        await expect(mgr.navigate('sess-1', 'data:text/html,<script>1</script>')).rejects.toThrow(/dangerous scheme/)
+      })
+
+      it('file:///etc/passwd 协议被拒', async () => {
+        const win = makeWindow()
+        const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+        mgr.create('sess-1', 'win-1')
+
+        await expect(mgr.navigate('sess-1', 'file:///etc/passwd')).rejects.toThrow(/dangerous scheme/)
+      })
+
+      it('blob: 协议被拒', async () => {
+        const win = makeWindow()
+        const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+        mgr.create('sess-1', 'win-1')
+
+        await expect(mgr.navigate('sess-1', 'blob:https://example.com/abc')).rejects.toThrow(/dangerous scheme/)
+      })
+
+      it('裸域名被拒（不是 http/https 白名单）', async () => {
+        const win = makeWindow()
+        const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+        mgr.create('sess-1', 'win-1')
+
+        await expect(mgr.navigate('sess-1', 'example.com')).rejects.toThrow(/only http\(s\) URLs/)
+      })
+
+      it('大小写不敏感（JavaScript: 大小写变体被拒）', async () => {
+        const win = makeWindow()
+        const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+        mgr.create('sess-1', 'win-1')
+
+        await expect(mgr.navigate('sess-1', 'JavaScript:alert(1)')).rejects.toThrow(/dangerous scheme/)
+      })
+
+      it('scheme 校验失败时 pendingAutoFit 不置 true（loadURL 未触发）', async () => {
+        const win = makeWindow()
+        const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
+        mgr.create('sess-1', 'win-1')
+        const loadURLSpy = vi.spyOn(createdViews[0].wc, 'loadURL')
+
+        await expect(mgr.navigate('sess-1', 'file:///etc/passwd')).rejects.toThrow(/dangerous scheme/)
+        // pendingAutoFit 保持 false：下次 dom-ready 不会误触发 autoFit 缩放
+        // 间接验证：navigate 后 webContents.loadURL 调用次数 = 0
+        expect(loadURLSpy).not.toHaveBeenCalled()
+      })
+    })
   })
 
   describe('hide / show', () => {
