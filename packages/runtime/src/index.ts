@@ -34,6 +34,7 @@ import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
 import { TerminalService } from './services/terminal/terminal-service.js'
+import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
@@ -325,7 +326,11 @@ async function main(): Promise<void> {
     fs,
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService)
+  // QuotaService：Coding Plan 额度查询（hover 触发 + 缓存 + log）。
+  // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/configure 路由）。
+  const quotaService = new QuotaService()
+
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

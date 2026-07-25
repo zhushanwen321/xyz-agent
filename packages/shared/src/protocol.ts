@@ -71,6 +71,7 @@ export type ClientMessageType =
   | 'worktree.create'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
+  | 'quota.fetch' | 'quota.getCached' | 'quota.configure'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -292,6 +293,10 @@ export interface ClientMessageMap {
   'terminal.attach': { sessionId: string }
   'config.getTerminalConfig': Record<string, never>
   'config.setTerminalConfig': { config: TerminalConfig }
+  // Coding Plan 额度查询
+  'quota.fetch': { providerId: string }
+  'quota.getCached': { providerId: string }
+  'quota.configure': { providerId: string; enabled: boolean; cookie?: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -395,6 +400,7 @@ export type ServerMessageType =
   | 'worktree.created'
   | 'terminal.data' | 'terminal.exit' | 'terminal.alive' | 'terminal.ack'
   | 'config.terminalConfig'
+  | 'quota.fetch:result' | 'quota.getCached:result' | 'quota.configure:result'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -578,6 +584,10 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
+  // Coding Plan 额度查询
+  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.configure:result': { ok: boolean; error?: string }
 
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
@@ -776,6 +786,9 @@ export interface ReplyPayloadMap {
   'worktree.create': ServerMessageMap['worktree.created']
   'config.getTerminalConfig': ServerMessageMap['config.terminalConfig']
   'config.setTerminalConfig': ServerMessageMap['config.terminalConfig']
+  'quota.fetch': ServerMessageMap['quota.fetch:result']
+  'quota.getCached': ServerMessageMap['quota.getCached:result']
+  'quota.configure': ServerMessageMap['quota.configure:result']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted
