@@ -94,6 +94,14 @@
             <FileText class="size-[12px] shrink-0" />
             <span>{{ fileBasename(seg.path) }}{{ formatLineRange(seg.lineRange) }}</span>
           </span>
+          <!-- image segment → ImageThumb 缩略图（local-file:// 直载，加载失败降级绿色 badge）。
+               独立子组件：避免 Turn.vue template 超 400 行上限。AGENTS.md #7.5：send 后图片在
+               user 气泡内持续可见（对话流状态可重开恢复）。 -->
+          <ImageThumb
+            v-else-if="seg.type === 'image'"
+            :path="seg.path"
+            :name="seg.name"
+          />
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
         <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
@@ -324,6 +332,7 @@ import { useToast } from '@/composables/useToast'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
+import ImageThumb from './ImageThumb.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const props = withDefaults(
