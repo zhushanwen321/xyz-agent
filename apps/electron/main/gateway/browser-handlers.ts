@@ -17,7 +17,7 @@
 import { ipcMain } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { BrowserViewManager } from '../browser/browser-view-manager.js'
-import { isAllowedNavigateUrl, isDangerousScheme } from './url-scheme-validators.js'
+import { URL_PREVIEW_MAX_LENGTH, isAllowedNavigateUrl, isDangerousScheme } from './url-scheme-validators.js'
 
 /**
  * 注册 browser drawer IPC handler。
@@ -41,10 +41,10 @@ export function registerBrowserHandlers(
   // scheme 校验失败时 invoke reject 带明确 reason，renderer .catch 接住后 toast。
   ipcMain.handle('browser:navigate', async (_event, { sessionId, url }: { sessionId: string; url: string }) => {
     if (isDangerousScheme(url)) {
-      throw new Error(`[browser:navigate] rejected dangerous scheme: ${url.slice(0, 64)}`)
+      throw new Error(`[browser:navigate] rejected dangerous scheme: ${url.slice(0, URL_PREVIEW_MAX_LENGTH)}`)
     }
     if (!isAllowedNavigateUrl(url)) {
-      throw new Error(`[browser:navigate] only http(s) URLs are allowed: ${url.slice(0, 64)}`)
+      throw new Error(`[browser:navigate] only http(s) URLs are allowed: ${url.slice(0, URL_PREVIEW_MAX_LENGTH)}`)
     }
     await manager.navigate(sessionId, url)
   })

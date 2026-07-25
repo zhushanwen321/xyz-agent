@@ -17,6 +17,9 @@
  * 依赖方向：无下游（纯函数）
  */
 
+/** 错误日志中 URL 的最大显示长度（防止超长 URL 刷屏，保留足够前缀便于定位） */
+export const URL_PREVIEW_MAX_LENGTH = 64
+
 /** 危险协议黑名单（命中即拒）。
  *  - javascript: / vbscript: —— 脚本执行，XSS 钓鱼
  *  - data: —— base64 payload，可绕过 https 信任指示
