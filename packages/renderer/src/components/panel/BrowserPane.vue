@@ -145,15 +145,10 @@
 <script setup lang="ts">
 /**
  * BrowserPane 脚本：生命周期 + rect 同步 + 状态订阅。
- *
- * 流程：
- * - onMounted：browserCreate → 注册 ResizeObserver + window resize → nextTick：pushRect（更新 lastRect）
- *   → 若 url：browserNavigate + browserShow（show setBounds(lastRect) 定位到正确位置）→ 订阅 onBrowserState
- * - onBeforeUnmount：browserHide（keep-alive，不 destroy）+ 清理 rect 同步监听 + 取消订阅
- * - pushRect：getBoundingClientRect()（CSS px）→ browserSetRect（[HISTORICAL] 不乘 dpr）
- * - onBrowserState：更新 displayUrl（真实 URL，防钓鱼）+ isLoading + error
- * - windowId：从 URLSearchParams(window.location.search).get('windowId') 读（主窗口 URL 是 ?windowId=win-1，
- *   由 window-factory 注入）。项目无现成 getCurrentWindowId 工具，用 URLSearchParams 最简。
+ * 流程：onMounted → browserCreate + ResizeObserver + window resize → nextTick：pushRect → 若 url：navigate + show → 订阅 onBrowserState
+ * onBeforeUnmount → browserHide + 清理监听 + 取消订阅
+ * pushRect 用 getBoundingClientRect()（CSS px，[HISTORICAL] 不乘 dpr）；onBrowserState 更新 displayUrl（防钓鱼）+ loading/error
+ * windowId 从 URLSearchParams(window.location.search).get('windowId') 读（window-factory 注入）
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -344,6 +339,12 @@ let unsubscribe: (() => void) | null = null
 
 onMounted(() => {
   const windowId = getCurrentWindowId()
+  // [W4] windowId 缺失 fail-fast：避免推 windowId='' 到主进程主则 windows.get('') 失败
+  // （PR #100 W1 静默吞错误）。运行时缺失说明调用路径异常。
+  if (!windowId) {
+    console.warn('[browser-pane] windowId missing from URL query, skip browserCreate')
+    return
+  }
   // 创建 WebContentsView（attach 到主窗口，初始隐藏）。幂等：已存在则主进程复用。
   void browserCreate(props.sessionId, windowId)
 

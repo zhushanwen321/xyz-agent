@@ -18,7 +18,7 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/BrowserPane.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -63,12 +63,33 @@ function mountPane(props: { sessionId?: string; url?: string } = {}) {
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  // [W4] 模拟 window-factory 注入的 windowId。jsdom 默认 window.location.search 为空，
+  // 如不设置，BrowserPane.vue:onMounted 的 W4 fail-fast 会跳过 browserCreate，
+  // 打破现有测试断言。为不破坏现有契约，pre-注入一个默认 windowId。
+  // 缺 windowId 场景由专属测试负责。
+  window.history.replaceState({}, '', '/?windowId=win-1')
+})
+
+afterEach(() => {
+  // 还原 location.search，避免跨测试串扰
+  window.history.replaceState({}, '', '/')
 })
 
 describe('BrowserPane（Wave 2 + Wave 3）', () => {
   it('mount 后渲染 [data-testid=browser-pane] 根节点', () => {
     const wrapper = mountPane({ url: 'https://example.com' })
     expect(wrapper.find('[data-testid="browser-pane"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('windowId 缺失 fail-fast（PR #100 W4）：不调 browserCreate，不拋错', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 清除 beforeEach 注入的 windowId
+    window.history.replaceState({}, '', '/')
+    const wrapper = mountPane({ url: 'https://example.com' })
+    expect(mockBrowserCreate).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('windowId missing'))
+    warnSpy.mockRestore()
     wrapper.unmount()
   })
 
