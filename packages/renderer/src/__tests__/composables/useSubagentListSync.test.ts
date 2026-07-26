@@ -1,12 +1,11 @@
 /**
- * useSubagentListSync 单测 —— subagent 列表的响应式同步。
+ * useSubagentListSync 单测 —— subagent 列表首拉 RPC 的响应式同步。
  *
- * 新设计（runtime push 取代 activityKey 轮询）：
- * - focusedSessionId 变化（切会话）→ clearSubagents + subscribeSubagentPush + 首拉 RPC 兜底
+ * 职责（修复后）：
+ * - focusedSessionId 变化（切会话）→ loadSubagents 首拉 RPC（不再 clearSubagents，切走不清）
  * - subagents tab 激活 → loadSubagents 首拉
- * - runtime 主动推送 session.subagents → store 被动消费（subscribeSubagentPush 订阅）
- *
- * activityKey 实时刷新 watch 已删除（被 runtime push 取代）。
+ * - runtime 主动推送 session.subagents（含终态）由 useConnection.routeInbound 兜底统一消费，
+ *   不再 per-focus 订阅，故本 composable 不测订阅行为，只测首拉 RPC。
  *
  * 运行：npx vitest run src/__tests__/composables/useSubagentListSync.test.ts
  */
