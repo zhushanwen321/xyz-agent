@@ -197,6 +197,10 @@ export function useNewTaskFlow() {
    * - 无绑定 session（未选目录直接输入发送，用 workspaceStore.defaultCwd 兑底 create）→ create 后发送
    * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
    *
+   * bash 首发（composer-bash-execute）：landing 态输入 !/!! 前缀时，Composer 提取 bashCommand
+   * 传入，session 创建 + panel 载入流程不变，仅发送阶段改调 chat.sendBash（不走 LLM turn，
+   * 不经 segments 提取）。segments 仍作为 session label 来源 + 非空校验。
+   *
    * segments 来自 Composer DOM 快照（getSegments），含 text / skill / file / mention / image 段。
    * landing 态可能纯图（含 image 但无 text），用户只贴图不写字也允许发送——入参校验只要求 segments
    * 非空，不强制 text 段存在。session label 从首段 text 段取（无 text 段时 deriveSessionLabel('')
@@ -214,7 +218,7 @@ export function useNewTaskFlow() {
    * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
    * 用 runtime 默认。
    */
-  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string): Promise<void> {
+  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string, bashCommand?: { command: string; excludeFromContext: boolean }): Promise<void> {
     // segments 不能为空；含 text 段时提取首段文本作 session label
     const firstTextSeg = segments.find((s): s is Extract<Segment, { type: 'text' }> => s.type === 'text')
     const trimmed = firstTextSeg?.text?.trim() ?? ''
@@ -315,7 +319,13 @@ export function useNewTaskFlow() {
           toastWarning(t('composable.imageMigratePartialFailed', { count: needsMigrateImages.length - migrated.size }))
         }
       }
-      await chat.send(newSid, finalSegments)
+      // 发送阶段：bash 首发（landing 态 !/!! 前缀）走 sendBash，否则普通 send
+      // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于上面的 tmpdir 迁移流程（bash 无图片段，无副作用）
+      if (bashCommand) {
+        await chat.sendBash(newSid, bashCommand.command, bashCommand.excludeFromContext)
+      } else {
+        await chat.send(newSid, finalSegments)
+      }
       transition('completed') // landing→completed（首发成功，终态）
     } finally {
       controller.setCreateInFlight(false)

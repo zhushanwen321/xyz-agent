@@ -350,7 +350,7 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isBashMode,
 })
 
-/** 发送分流（优先级）：fork > handoff > landing > bash(!/!!) > /compact > send */
+/** 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
   const canHandoffSend = handoff.handoffMode.value && !isBusy.value
@@ -361,13 +361,15 @@ async function onSend(): Promise<void> {
   if (props.variant === 'landing') {
     // 先快照 segments（clearInput 会清空 DOM）；landing 态 sessionId 可能是公共 id，用 variant 判定
     const segments = inputRef.value?.getSegments() ?? []
+    // landing 态 bash 分流：提取 !/!! 前缀（null=空命令不提交；undefined=非 bash 走普通首发）
+    const bashCommand = composerBash.extractBashCommand(text)
+    if (bashCommand === null) return
     clearInput()
     isSending.value = true
     try {
-      await flow.submitFirstMessage(segments, localThinkingLevel.value)
+      await flow.submitFirstMessage(segments, localThinkingLevel.value, bashCommand)
     } catch (e) {
-      // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
-      // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
+      // W8：恢复 text + image/skill/file chip（restoreSegments 详见 useComposerRestore）
       restoreSegments(segments)
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('panel.panel.taskFailed', { error: msg }))
@@ -394,9 +396,7 @@ async function onSend(): Promise<void> {
   try {
     await send(props.sessionId!, segments)
   } catch (e) {
-    // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免输入丢失。
-    // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
-    // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
+    // 发送失败恢复草稿（restoreSegments 同 W8）
     restoreSegments(segments)
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('panel.panel.sendFailed', { error: msg }))

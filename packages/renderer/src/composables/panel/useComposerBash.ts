@@ -32,6 +32,11 @@ export interface UseComposerBash {
   /** bash 模式（draft 以 `!` 开头）—— 供 useComposerModeVisual 视觉派生 */
   isBashMode: ComputedRef<boolean>
   /**
+   * 从文本提取 bashCommand（landing 态首发用）。命中 !/!! 前缀返回 {command, excludeFromContext}；
+   * 空命令（! 或 !! 后无内容）返回 null（调用方不提交，保持 bash 模式）；非 bash 前缀返回 undefined。
+   */
+  extractBashCommand: (text: string) => { command: string; excludeFromContext: boolean } | null | undefined
+  /**
    * 尝试 bash 分流。命中 `!`/`!!` 前缀时执行 bash 并返回 true（调用方 return）；
    * 否则返回 false（调用方继续走 compact / send 分支）。
    *
@@ -44,6 +49,21 @@ export function useComposerBash(opts: ComposerBashOptions): UseComposerBash {
   const { sendBash } = useChat()
 
   const isBashMode = computed(() => opts.draft.value.trimStart().startsWith('!'))
+
+  /**
+   * 从文本提取 bashCommand。返回值三态：
+   * - undefined：非 bash 前缀（调用方走普通发送）
+   * - null：空命令（! 或 !! 后无内容，调用方不提交，保持 bash 模式）
+   * - {command, excludeFromContext}：有效 bash 命令
+   */
+  function extractBashCommand(text: string): { command: string; excludeFromContext: boolean } | null | undefined {
+    const trimmed = text.trim()
+    if (!trimmed.startsWith('!')) return undefined
+    const isExcluded = trimmed.startsWith('!!')
+    const cmd = trimmed.slice(isExcluded ? BANG_DOUBLE : BANG_SINGLE).trim()
+    if (!cmd) return null
+    return { command: cmd, excludeFromContext: isExcluded }
+  }
 
   async function trySendBash(rawText: string): Promise<boolean> {
     const trimmed = rawText.trim()
@@ -70,5 +90,5 @@ export function useComposerBash(opts: ComposerBashOptions): UseComposerBash {
     return true
   }
 
-  return { isBashMode, trySendBash }
+  return { isBashMode, extractBashCommand, trySendBash }
 }
