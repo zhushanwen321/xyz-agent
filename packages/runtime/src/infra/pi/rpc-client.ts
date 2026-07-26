@@ -56,15 +56,16 @@ export interface RpcClientOptions {
   systemPrompt?: string
   /**
    * 工具白名单（替换语义，映射 pi `--tools <comma-joined>`，附录 A.1）。
-   * 非空时以逗号连接 push，只启用列出的工具。与 excludeTools/noTools 互斥由调用方保证。
+   * 非空时以逗号连接 push，只启用列出的工具。与 excludeTools/noTools 互斥；
+   * 同时出现多个时 rpc-client 按 noTools > tools > excludeTools 优先级取一个并 warn（W-RT-6）。
    */
   tools?: string[]
   /**
    * 工具黑名单（叠加语义，映射 pi `--exclude-tools <comma-joined>`，附录 A.1）。
-   * 在 pi 默认启用集合之上排除列出的工具。
+   * 在 pi 默认启用集合之上排除列出的工具。与 tools/noTools 互斥（见 tools 注释的优先级）。
    */
   excludeTools?: string[]
-  /** 禁用所有工具（built-in + extension + custom），映射 pi `--no-tools`。 */
+  /** 禁用所有工具（built-in + extension + custom），映射 pi `--no-tools`。与 tools/excludeTools 互斥。 */
   noTools?: boolean
   /** 禁用所有 skill，映射 pi `--no-skills`。调用方同时需清空 skillPaths。 */
   noSkills?: boolean
@@ -163,14 +164,24 @@ export class RpcClient implements IPiEngine {
     // Preset 启动参数（设计文档 §2.5 / 附录 A）：6 个字段映射到 pi CLI args。
     // tools/excludeTools 用逗号连接（pi 单参数多值语义）；开关类 push 单 flag；
     // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level）。
-    if (this.options.tools?.length) {
-      args.push('--tools', this.options.tools.join(','))
+    // W-RT-6：tools/excludeTools/noTools 三者互斥，按优先级 noTools > tools > excludeTools 取一个，
+    // 同时出现多个时 warn（不抛错，避免运行时炸），保持单写者语义清晰。
+    const hasTools = !!this.options.tools?.length
+    const hasExcludeTools = !!this.options.excludeTools?.length
+    const hasNoTools = !!this.options.noTools
+    if (
+      (hasNoTools && hasTools)
+      || (hasNoTools && hasExcludeTools)
+      || (hasTools && hasExcludeTools)
+    ) {
+      console.warn('[rpc] conflicting tool options detected, using priority: noTools > tools > excludeTools')
     }
-    if (this.options.excludeTools?.length) {
-      args.push('--exclude-tools', this.options.excludeTools.join(','))
-    }
-    if (this.options.noTools) {
+    if (hasNoTools) {
       args.push('--no-tools')
+    } else if (hasTools) {
+      args.push('--tools', this.options.tools!.join(','))
+    } else if (hasExcludeTools) {
+      args.push('--exclude-tools', this.options.excludeTools!.join(','))
     }
     if (this.options.noSkills) {
       args.push('--no-skills')

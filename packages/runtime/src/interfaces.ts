@@ -77,6 +77,16 @@ export interface SessionCreateOptions {
   hidden?: boolean
   /** Launch preset id（设计文档 §4.1），绑定到新 session 并解析为 pi 启动参数。 */
   presetId?: string
+  /**
+   * Landing Model Chip 传入值，覆盖 preset.modelOverride。
+   * 优先级（设计文档 §5.2）：Landing Chip > preset.modelOverride > 全局默认。
+   */
+  modelOverride?: string
+  /**
+   * Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel。
+   * 优先级（设计文档 §5.2）：Landing Chip > preset.thinkingLevel > 全局默认。
+   */
+  thinkingOverride?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */

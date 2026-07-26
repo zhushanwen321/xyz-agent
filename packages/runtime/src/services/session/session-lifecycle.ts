@@ -18,6 +18,7 @@ import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView } from './types.js'
+import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
@@ -54,6 +55,15 @@ export function stripSessionEndEntries(jsonlContent: string): string {
   return kept.length > 0 ? kept.join('\n') + '\n' : ''
 }
 
+/**
+ * thinkingLevel 合法值集合（S-RT-5）。
+ *
+ * 与 shared ThinkingLevel 类型对齐（pi CLI --thinking 参数值域，附录 A.4）。
+ * 用 readonly 数组做运行时校验：lifecycle 透传 thinkingOverride 到 pi 前先校验，
+ * 非法值 warn 后忽略（不传给 pi，避免 pi 报错或行为异常）。
+ */
+const VALID_THINKING_LEVELS: readonly string[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+
 export class SessionLifecycle {
   constructor(
     private readonly svc: ISessionServiceInternal,
@@ -69,6 +79,59 @@ export class SessionLifecycle {
    */
   private async safeDestroy(id: string): Promise<void> {
     await this.pm.destroySession(id).catch(() => {})
+  }
+
+  /**
+   * 构建 create/restoreSession/forkSession 三处共用的 preset + override client options 子集（S-RT-4）。
+   *
+   * 三处原先用完全相同的 spread 模式（toolArgs/flags/modelOverride/thinkingOverride 条件 spread），
+   * 抽 helper 消除重复，保证三处 preset 字段映射逻辑完全一致（避免一处改动另两处漏改）。
+   *
+   * 输入：
+   *  - resolution：PresetService.resolve 的结果（可能 undefined → 返回空对象，仅 override 生效）。
+   *  - modelOverride / thinkingOverride：Landing Chip 传入值，覆盖 preset 的同名字段（C-RL-6 优先级）。
+   *
+   * 输出：PiSessionOptions 的子集（preset 相关字段），调用方再与 skillPaths/extensionPaths/systemPrompt
+   * 等基础字段合并 spread 进 createSession。返回的子集字段都是可选的，undefined 字段不出现（条件 spread）。
+   *
+   * S-RT-5：thinkingOverride 校验合法值，非法值 warn 后忽略（不透传给 pi）。
+   */
+  private buildPresetClientOptions(
+    resolution: PresetResolution | undefined,
+    modelOverride: string | undefined,
+    thinkingOverride: string | undefined,
+  ): {
+    tools?: string[]
+    excludeTools?: string[]
+    noTools?: boolean
+    noSkills?: boolean
+    noContextFiles?: boolean
+    model?: string
+    thinkingLevel?: ThinkingLevel
+  } {
+    // C-RL-6 优先级（设计文档 §5.2）：Landing 传入 > preset 字段。
+    // model 不校验值域（provider/modelId 形式自由，pi 报错由用户感知）。
+    const effectiveModel = modelOverride ?? resolution?.modelOverride
+    // S-RT-5：thinkingLevel 校验合法值。Landing 传入与 preset 字段都可能是非法值
+    //（如前端未约束 / preset JSON 手改），透传给 pi 会触发 pi 报错或静默忽略，统一在此拦截。
+    const rawThinking = thinkingOverride ?? resolution?.thinkingLevel
+    const effectiveThinking = rawThinking && VALID_THINKING_LEVELS.includes(rawThinking)
+      ? rawThinking
+      : undefined
+    if (rawThinking && !VALID_THINKING_LEVELS.includes(rawThinking)) {
+      console.warn(`[lifecycle] invalid thinking level: ${rawThinking}, ignored`)
+    }
+
+    return {
+      // preset 字段（resolution 存在时才设，条件 spread 避免 undefined 覆盖默认）
+      ...(resolution?.toolArgs.tools && { tools: resolution.toolArgs.tools }),
+      ...(resolution?.toolArgs.excludeTools && { excludeTools: resolution.toolArgs.excludeTools }),
+      ...(resolution?.toolArgs.noTools && { noTools: true }),
+      ...(resolution?.flags.noSkills && { noSkills: true }),
+      ...(resolution?.flags.noContextFiles && { noContextFiles: true }),
+      ...(effectiveModel && { model: effectiveModel }),
+      ...(effectiveThinking && { thinkingLevel: effectiveThinking as ThinkingLevel }),
+    }
   }
 
   async create(cwd?: string, label?: string, options?: {
@@ -101,22 +164,16 @@ export class SessionLifecycle {
     const resolution = presetId ? await this.svc.getLaunchPresetOptions(presetId, sessionCwd) : undefined
 
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // C-RL-6 优先级（设计文档 §5.2）：Landing 传入 > preset 字段 > 全局默认（RpcClient.start 的 getDefaultModel）。
-    // model/thinkingLevel 用 ?? 链：landingOverride ?? resolution 字段 ?? 不设（undefined 由 RpcClient 兜底）。
-    const modelOverride = options?.modelOverride ?? resolution?.modelOverride
-    const thinkingOverride = options?.thinkingOverride ?? resolution?.thinkingLevel
+    // preset + override 字段经 buildPresetClientOptions 统一构建（S-RT-4 消除三处重复），
+    // 含 C-RL-6 优先级（Landing 传入 > preset 字段）与 thinkingLevel 合法值校验（S-RT-5）。
+    const presetClientOptions = this.buildPresetClientOptions(
+      resolution, options?.modelOverride, options?.thinkingOverride,
+    )
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
-      // preset 字段（resolution 存在时才设，条件 spread 避免 undefined 覆盖默认）
-      ...(resolution?.toolArgs.tools && { tools: resolution.toolArgs.tools }),
-      ...(resolution?.toolArgs.excludeTools && { excludeTools: resolution.toolArgs.excludeTools }),
-      ...(resolution?.toolArgs.noTools && { noTools: true }),
-      ...(resolution?.flags.noSkills && { noSkills: true }),
-      ...(resolution?.flags.noContextFiles && { noContextFiles: true }),
-      ...(modelOverride && { model: modelOverride }),
-      ...(thinkingOverride && { thinkingLevel: thinkingOverride as ThinkingLevel }),
+      ...presetClientOptions,
     })
 
     // 从 pi 获取真实 session ID
@@ -166,8 +223,14 @@ export class SessionLifecycle {
     // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
     // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
     // 时 persistPresetBinding 内部 existsSync 守卫跳过（ES-RL-1，wave2 实现）。
-    if (presetId && session.sessionFilePath) {
-      this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
+    // W-RT-4：sidecar 跳过时内存态兜底——patch session 对象的 launchPresetId 字段
+    //（ManagedSession 实例可扩展），fork 在 active 期经 getSession(srcId)?.launchPresetId
+    // 读到（W-RT-5），避免拿不到 preset。toSummary 透传此字段到 SessionSummary。
+    if (presetId) {
+      ;(session as { launchPresetId?: string }).launchPresetId = presetId
+      if (session.sessionFilePath) {
+        this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
+      }
     }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
     // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
@@ -259,19 +322,13 @@ export class SessionLifecycle {
     const presetId = target.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
     const resolution = await this.svc.getLaunchPresetOptions(presetId, sessionCwd)
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    const modelOverride = resolution?.modelOverride
-    const thinkingOverride = resolution?.thinkingLevel
+    // restore 不接收 Landing Chip override（无用户交互），只透传 preset 自身的 model/thinking。
+    const presetClientOptions = this.buildPresetClientOptions(resolution, undefined, undefined)
     const client = await this.pm.createSession(id, sessionCwd, {
       skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
-      ...(resolution?.toolArgs.tools && { tools: resolution.toolArgs.tools }),
-      ...(resolution?.toolArgs.excludeTools && { excludeTools: resolution.toolArgs.excludeTools }),
-      ...(resolution?.toolArgs.noTools && { noTools: true }),
-      ...(resolution?.flags.noSkills && { noSkills: true }),
-      ...(resolution?.flags.noContextFiles && { noContextFiles: true }),
-      ...(modelOverride && { model: modelOverride }),
-      ...(thinkingOverride && { thinkingLevel: thinkingOverride as ThinkingLevel }),
+      ...presetClientOptions,
     })
 
     try {
@@ -314,6 +371,8 @@ export class SessionLifecycle {
     // 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
     // fire-and-forget：拉取失败不阻塞 session 恢复。
     void this.svc.fetchAndBroadcastContext(id)
+    // W-RT-4：恢复后 session 变 active，patch 内存态 launchPresetId（与 sidecar 并列兜底）。
+    ;(session as { launchPresetId?: string }).launchPresetId = presetId
     return this.svc.toSummary(session)
   }
 
@@ -366,25 +425,24 @@ export class SessionLifecycle {
     )
 
     // 3. spawn 新 pi 进程（与 restore 同模式）
-    // fork 继承源 session 的 preset（设计文档 §4.5）：从 source.launchPresetId 读源 preset，
-    // undefined 时（源是历史 session 无 sidecar）用 'builtin:full' 兜底（FR-10）。
+    // fork 继承源 session 的 preset（设计文档 §4.5）。
+    // W-RT-5：优先读 active 源 session 的内存态 launchPresetId（pi 延迟写入窗口下
+    // sidecar 未写时，内存态兜底——getSession 返回 ManagedSession 实例，as 读 launchPresetId 字段），
+    // 再 fallback 到扫描结果的 sidecar 值（source.launchPresetId），
+    // 最后兜底 'builtin:full'（FR-10，历史 session 无 sidecar）。
     const sessionCwd = existsSync(source.cwd) ? source.cwd : homedir()
-    const forkPresetId = source.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
+    const forkPresetId = (this.svc.getSession(srcSessionId) as { launchPresetId?: string } | undefined)?.launchPresetId
+      ?? source.launchPresetId
+      ?? BUILTIN_PRESET_IDS.FULL
     const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    const forkModelOverride = forkResolution?.modelOverride
-    const forkThinkingOverride = forkResolution?.thinkingLevel
+    // fork 继承源 preset 的全部字段（设计文档 §4.5），不接收 Landing Chip override。
+    const presetClientOptions = this.buildPresetClientOptions(forkResolution, undefined, undefined)
     const client = await this.pm.createSession(forkedId, sessionCwd, {
       skillPaths: forkResolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
-      ...(forkResolution?.toolArgs.tools && { tools: forkResolution.toolArgs.tools }),
-      ...(forkResolution?.toolArgs.excludeTools && { excludeTools: forkResolution.toolArgs.excludeTools }),
-      ...(forkResolution?.toolArgs.noTools && { noTools: true }),
-      ...(forkResolution?.flags.noSkills && { noSkills: true }),
-      ...(forkResolution?.flags.noContextFiles && { noContextFiles: true }),
-      ...(forkModelOverride && { model: forkModelOverride }),
-      ...(forkThinkingOverride && { thinkingLevel: forkThinkingOverride as ThinkingLevel }),
+      ...presetClientOptions,
     })
 
     try {
@@ -437,6 +495,8 @@ export class SessionLifecycle {
     }
 
     void this.svc.fetchAndBroadcastContext(forkedId)
+    // W-RT-4：fork 出的新 session 变 active，patch 内存态 launchPresetId（继承源 preset）。
+    ;(session as { launchPresetId?: string }).launchPresetId = forkPresetId
     return this.svc.toSummary(session)
   }
 }
