@@ -18,6 +18,7 @@
  */
 import { preset as presetApi } from '@/api'
 import { usePresetStore } from '@/stores/preset'
+import type { PiLaunchPreset } from '@xyz-agent/shared'
 
 /**
  * preset 域编排 composable。
@@ -67,8 +68,60 @@ export function usePiPresets() {
     await presetApi.setDefault(presetId)
   }
 
+  /**
+   * 创建自定义预设。
+   *
+   * 乐观更新：立即 upsert 到 store（UI 即时显示），随后发 RPC 持久化。
+   * RPC 失败时回滚（removePreset），调用方 catch 后 toast。
+   */
+  async function create(preset: PiLaunchPreset): Promise<void> {
+    store.upsertPreset(preset)
+    try {
+      await presetApi.create(preset)
+    } catch (e) {
+      store.removePreset(preset.id)
+      throw e
+    }
+  }
+
+  /**
+   * 更新预设（含内置预设的可编辑字段）。
+   *
+   * 乐观更新：立即 upsert 到 store，随后发 RPC 持久化。
+   * RPC 失败时全量刷新回滚（内置预设保护等复杂场景，loadPresets 更可靠）。
+   */
+  async function update(preset: PiLaunchPreset): Promise<void> {
+    store.upsertPreset(preset)
+    try {
+      await presetApi.update(preset)
+    } catch (e) {
+      await loadPresets()
+      throw e
+    }
+  }
+
+  /**
+   * 删除自定义预设（内置不可删）。
+   *
+   * 乐观更新：备份 → 立即 removePreset，随后发 RPC 持久化。
+   * RPC 失败时回滚（upsertPreset 备份），调用方 catch 后 toast。
+   */
+  async function remove(presetId: string): Promise<void> {
+    const backup = store.presets.find((p) => p.id === presetId)
+    store.removePreset(presetId)
+    try {
+      await presetApi.remove(presetId)
+    } catch (e) {
+      if (backup) store.upsertPreset(backup)
+      throw e
+    }
+  }
+
   return {
     loadPresets,
     setDefault,
+    create,
+    update,
+    remove,
   }
 }

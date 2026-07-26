@@ -80,6 +80,7 @@ export type ClientMessageType =
   | 'config.setTimeout' | 'config.getTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
+  | 'preset.create' | 'preset.update' | 'preset.delete'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -363,6 +364,11 @@ export interface ClientMessageMap {
   'preset.list': Record<string, never>
   'preset.getDefault': Record<string, never>
   'preset.setDefault': { presetId: string }
+  // preset CRUD（本 slice 新增）：preset.create 创建自定义预设；preset.update 更新预设（含内置预设用户编辑）；
+  // preset.delete 删除自定义预设（内置不可删，runtime PresetGuardError 拦截）。
+  'preset.create': { preset: PiLaunchPreset }
+  'preset.update': { preset: PiLaunchPreset }
+  'preset.delete': { presetId: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -916,6 +922,10 @@ export interface ReplyPayloadMap {
   'preset.list': { presets: PiLaunchPreset[] }
   'preset.getDefault': { presetId: string }
   'preset.setDefault': void
+  // preset CRUD（本 slice 新增）：create/update 返回 { preset }（payload 消费型），delete ack 型。
+  'preset.create': { preset: PiLaunchPreset }
+  'preset.update': { preset: PiLaunchPreset }
+  'preset.delete': void
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted

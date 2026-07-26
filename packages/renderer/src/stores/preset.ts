@@ -52,6 +52,21 @@ export const usePresetStore = defineStore('preset', () => {
     selectedPresetId.value = id
   }
 
+  /** 乐观更新：upsert 预设（按 id 匹配替换，不存在则 push）。 */
+  function upsertPreset(preset: PiLaunchPreset): void {
+    const idx = presets.value.findIndex((p) => p.id === preset.id)
+    if (idx >= 0) {
+      presets.value = [...presets.value.slice(0, idx), preset, ...presets.value.slice(idx + 1)]
+    } else {
+      presets.value = [...presets.value, preset]
+    }
+  }
+
+  /** 乐观更新：移除预设（按 id 过滤）。 */
+  function removePreset(presetId: string): void {
+    presets.value = presets.value.filter((p) => p.id !== presetId)
+  }
+
   return {
     // state
     presets,
@@ -61,5 +76,7 @@ export const usePresetStore = defineStore('preset', () => {
     setPresets,
     setDefaultPresetId,
     selectPreset,
+    upsertPreset,
+    removePreset,
   }
 })

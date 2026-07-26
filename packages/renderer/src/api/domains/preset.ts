@@ -42,3 +42,31 @@ export async function getDefault(): Promise<string> {
 export function setDefault(presetId: string): Promise<void> {
   return command('preset.setDefault', { presetId })
 }
+
+/**
+ * 创建自定义预设。
+ * reply payload 是 { preset }（runtime 可能补全 id/order 等字段），解包 .preset。
+ * runtime PresetService.savePreset 写入 pi-presets.json。
+ */
+export async function create(preset: PiLaunchPreset): Promise<PiLaunchPreset> {
+  const reply = await command('preset.create', { preset })
+  return reply.preset
+}
+
+/**
+ * 更新预设（含内置预设的用户可编辑字段，如 toolMode/extensionMode 等）。
+ * reply payload 是 { preset }，解包 .preset。
+ * 内置预设的 name/id/builtin 字段不可改（runtime PresetGuardError 拦截）。
+ */
+export async function update(preset: PiLaunchPreset): Promise<PiLaunchPreset> {
+  const reply = await command('preset.update', { preset })
+  return reply.preset
+}
+
+/**
+ * 删除自定义预设（内置预设不可删，runtime PresetGuardError 拦截）。
+ * ack 型（reply void）。
+ */
+export function remove(presetId: string): Promise<void> {
+  return command('preset.delete', { presetId })
+}
