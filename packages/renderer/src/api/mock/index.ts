@@ -874,4 +874,8 @@ export const workspace = {
   async detectBare(_cwd: string): Promise<{ isBare: boolean; wsRoot: string; barePath: string }> {
     return { isBare: false, wsRoot: '', barePath: '' }
   },
+  // detect：mock 恒返 not-repo（三态检测，real 轨驱动）
+  async detect(_cwd: string): Promise<import('@xyz-agent/shared').ServerMessageMap['workspace.detected']> {
+    return { mode: 'not-repo', wsRoot: '', barePath: '', repoRoot: '', defaultBranch: '' }
+  },
 }

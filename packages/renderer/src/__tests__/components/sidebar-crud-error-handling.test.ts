@@ -62,9 +62,12 @@ vi.mock('@/stores/fileTree', () => ({
 }))
 vi.mock('@/stores/panel', () => ({
   usePanelStore: () => ({
-    panels: [{ id: 'root', sessionId: null }],
-    activePanelId: 'root',
-    isDual: false,
+    currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
+    activePanelId: 'panel-root',
+    focusedSessionId: { value: null },
+    layout: { value: { type: 'panel', id: 'panel-root', sessionId: null } },
+    findPanelBySession: () => null,
+    loadSession: vi.fn(),
   }),
 }))
 vi.mock('@/stores/subagent', () => ({

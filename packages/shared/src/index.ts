@@ -8,6 +8,7 @@ export type {
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
   TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
 } from './protocol'
+export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
   ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,
@@ -29,7 +30,7 @@ export type {
 } from './provider'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
-  PanelLeaf, SplitNode, PanelTree, WindowState,
+  PanelLeaf, WindowState,
 } from './panel'
 export * from './extension'
 export * from './git'

@@ -124,6 +124,25 @@ export async function createWindow(
     )
   })
 
+  // Cmd/Ctrl+W 拦截：drawer 打开时优先关 drawer，而非关窗口。
+  // before-input-event 在 Electron 默认菜单 accelerator（role:'close'）之前触发，
+  // event.preventDefault() 可阻止默认的关窗口行为，让 renderer 决定关 drawer 还是关窗口。
+  // renderer 收到 'shortcut' type='close' 后：drawer 开则关 drawer + 回传 consumed，
+  // drawer 关则不 consumed（让默认关窗口行为继续）——但 before-input-event 是同步的，
+  // 无法等 renderer 异步回传。故此处统一 preventDefault，由 renderer 决定：
+  //   - drawer 开 → 关 drawer（不关窗口）
+  //   - drawer 关 → 调 windowClose() IPC 主动关窗口
+  // 跨平台：mac=metaKey(w)，win/linux=controlKey(w)。CmdOrCtrl 在 before-input-event 里
+  // 需手动判断（event.input.modifiers 含 'control' 或 'meta'）。
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.key.toLowerCase() === 'w' && (input.control || input.meta)) {
+      event.preventDefault()
+      if (!win.isDestroyed()) {
+        win.webContents.send('shortcut', 'close')
+      }
+    }
+  })
+
   // E2E 是一类部署形态（已构建产物 + mock 注入），架构正确归位是独立分支而非 hack isDev：
   //   - 跳过 Vite dev server 轮询（E2E 不起 dev server，否则 waitForVite 30s 超时）
   //   - 加载构建产物 index.html（与 prod 同源，验证真实渲染链路）

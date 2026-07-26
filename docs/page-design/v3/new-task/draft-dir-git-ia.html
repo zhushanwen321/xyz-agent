@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Landing chip 行 IA 重构 — 目录 chip + Git chip</title>
+<style>
+/* ════════════════════════════════════════════════════════════
+   shared-style.css 原样粘贴（v3 冷蓝暗色 tokens + 组件类）
+   ════════════════════════════════════════════════════════════ */
+/* ── v3 tokens ── */
+:root {
+  --bg: #1a1b1f;
+  --surface: #272830;
+  --surface-2: #2e2f38;
+  --surface-hover: #363740;
+  --bg-elevated: #313239;
+  --bg-input: #1e1f24;
+  --fg: #f7f8fc;
+  --muted: #a8a8b5;
+  --subtle: #82828f;
+  --border: rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.15);
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-ring: rgba(79,142,247,0.30);
+  --success: #22c55e;
+  --warning: #f5a524;
+  --danger: #ef4444;
+  --info: #38bdf8;
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --radius-sm: 3px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --duration-slow: 320ms;
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --warning-soft: color-mix(in oklch, var(--warning) 12%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  padding: 48px 0 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ── layout ── */
+.demo-container { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 32px; }
+.demo-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--subtle); margin-bottom: 12px; padding-left: 2px;
+}
+.scenario-banner { text-align: center; padding: 8px 16px; font-size: 11px; color: var(--muted); letter-spacing: 0.03em; }
+.scenario-banner strong { color: var(--accent); font-weight: 600; }
+
+/* ── chip bar ── */
+.landing-chips { display: flex; align-items: center; gap: 8px; padding: 16px 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
+  border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--muted); font-size: 12px; cursor: pointer;
+  transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease);
+  user-select: none; position: relative;
+}
+.chip:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--fg); }
+.chip svg { width: 14px; height: 14px; opacity: 0.7; }
+.chip.active { background: var(--accent-soft); border-color: var(--accent-ring); color: var(--accent); }
+.chip.active svg { opacity: 1; }
+
+/* ── popover ── */
+.popover-anchor { position: relative; display: inline-block; }
+.popover {
+  position: absolute; top: calc(100% + 6px); left: 0; width: 280px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow-2); z-index: 50; overflow: hidden; display: none;
+  animation: pop-in var(--duration) var(--ease) both;
+}
+.popover.show { display: block; }
+@keyframes pop-in { from { opacity:0; transform:translateY(-4px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+.popover-section { padding: 4px; }
+.popover-section + .popover-section { border-top: 1px solid var(--border); }
+.popover-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  border-radius: var(--radius-sm); color: var(--fg); font-size: 13px; cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+.popover-item:hover { background: var(--surface-hover); }
+.popover-item svg { width: 15px; height: 15px; color: var(--muted); flex-shrink: 0; }
+.popover-item .item-label { flex: 1; min-width: 0; }
+.popover-item .item-sub { font-size: 11px; color: var(--subtle); margin-top: 1px; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popover-item .item-badge {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px;
+  background: var(--accent-soft); color: var(--accent); font-weight: 500; flex-shrink: 0;
+}
+.popover-item .item-badge.green { background: var(--success-soft); color: var(--success); }
+.popover-group-label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--subtle); padding: 6px 8px 3px; }
+.popover-item.action-item { color: var(--accent); font-weight: 500; }
+.popover-item.action-item svg { color: var(--accent); }
+.popover-item.disabled { color: var(--subtle); cursor: default; pointer-events: none; }
+.popover-item.disabled svg { opacity: 0.4; }
+
+/* ── modal ── */
+.modal {
+  width: 560px; max-width: calc(100vw - 32px); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2); animation: modal-in var(--duration-slow) var(--ease) both; position: relative;
+}
+@keyframes modal-in { from { opacity:0; transform:translateY(-8px) scale(0.98); } to { opacity:1; transform:translateY(0) scale(1); } }
+.modal-header { padding: 20px 20px 0; }
+.modal-title { font-size: 15px; font-weight: 600; color: var(--fg); }
+.modal-desc { font-size: 12px; color: var(--subtle); margin-top: 3px; }
+.modal-body { padding: 16px 20px 20px; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
+.modal-close {
+  position: absolute; top: 14px; right: 14px; width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); background: transparent; border: none;
+  color: var(--subtle); cursor: pointer; transition: background var(--duration-fast), color var(--duration-fast);
+}
+.modal-close:hover { background: var(--surface-hover); color: var(--fg); }
+
+/* ── form controls ── */
+.field { margin-bottom: 14px; }
+.field-label { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 5px; }
+.input {
+  width: 100%; height: 32px; padding: 0 10px; background: var(--bg-input);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--fg); font-size: 13px; font-family: var(--font-sans); outline: none;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+.input:focus { border-color: var(--accent); box-shadow: var(--shadow-glow); }
+.input-hint { font-size: 11px; margin-top: 4px; color: var(--subtle); }
+
+/* ── location selector (new) ── */
+.location-options { display: flex; flex-direction: column; gap: 4px; }
+.location-option {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: pointer; transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+.location-option:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.location-option.selected { border-color: var(--accent-ring); background: var(--accent-soft); }
+.location-option .radio-dot {
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong);
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  transition: border-color var(--duration-fast);
+}
+.location-option.selected .radio-dot { border-color: var(--accent); }
+.location-option.selected .radio-dot::after {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+.location-option .loc-info { flex: 1; min-width: 0; }
+.location-option .loc-label { font-size: 12px; font-weight: 500; color: var(--fg); display: flex; align-items: center; gap: 6px; }
+.location-option .loc-path {
+  font-size: 11px; color: var(--subtle); font-family: var(--font-mono);
+  margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.location-option .loc-badge {
+  font-size: 9px; padding: 2px 5px; border-radius: 3px;
+  background: var(--accent-soft); color: var(--accent); font-weight: 600; white-space: nowrap;
+}
+.location-option .loc-badge.plain { background: var(--info-soft); color: var(--info); }
+.location-option .loc-badge.recommended { background: var(--success-soft); color: var(--success); }
+
+/* ── combobox ── */
+.combobox { position: relative; }
+.combobox-trigger {
+  width: 100%; height: 32px; padding: 0 10px; background: var(--bg-input);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--fg); font-size: 13px; font-family: var(--font-sans); cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast); outline: none;
+}
+.combobox-trigger:focus { border-color: var(--accent); box-shadow: var(--shadow-glow); }
+.combobox-trigger svg.chevron {
+  margin-left: auto; width: 14px; height: 14px; color: var(--subtle);
+  transition: transform var(--duration-fast);
+}
+.combobox-trigger.open svg.chevron { transform: rotate(180deg); }
+.combobox-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow-2); z-index: 60; max-height: 200px; overflow-y: auto;
+  display: none; animation: pop-in var(--duration) var(--ease) both;
+}
+.combobox-menu.show { display: block; }
+.combobox-group-label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--subtle); padding: 6px 10px 2px; }
+.combobox-option {
+  padding: 6px 10px; font-size: 12px; color: var(--fg); cursor: pointer;
+  display: flex; align-items: center; gap: 6px; transition: background var(--duration-fast);
+}
+.combobox-option:hover { background: var(--surface-hover); }
+.combobox-option.selected { color: var(--accent); background: var(--accent-soft); }
+.combobox-option .ref { font-family: var(--font-mono); font-size: 11.5px; }
+.combobox-option .tag {
+  font-size: 9px; padding: 1px 4px; border-radius: 3px;
+  background: var(--surface-hover); color: var(--subtle); margin-left: auto;
+}
+.combobox-option .tag.default { background: var(--success-soft); color: var(--success); }
+.combobox-option .tag.current { background: var(--accent-soft); color: var(--accent); }
+
+/* ── buttons ── */
+.btn {
+  height: 30px; padding: 0 14px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 500; font-family: var(--font-sans);
+  border: 1px solid var(--border); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background var(--duration-fast), border-color var(--duration-fast), color var(--duration-fast); outline: none;
+}
+.btn:focus-visible { box-shadow: var(--shadow-glow); }
+.btn-secondary { background: var(--surface-2); color: var(--muted); }
+.btn-secondary:hover { background: var(--surface-hover); color: var(--fg); border-color: var(--border-strong); }
+.btn-primary { background: var(--accent); color: #fff; border-color: transparent; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { background: var(--surface-2); color: var(--subtle); cursor: default; }
+.btn-ghost { background: transparent; color: var(--subtle); border-color: transparent; }
+.btn-ghost:hover { background: var(--surface-hover); color: var(--fg); }
+.btn svg { width: 14px; height: 14px; }
+
+/* ── progress ── */
+.progress-bar { height: 3px; background: var(--surface-2); border-radius: 2px; overflow: hidden; margin-bottom: 16px; }
+.progress-bar-fill { width: 33%; height: 100%; background: var(--accent); border-radius: 2px; animation: progress-slide 1.8s var(--ease) infinite; }
+@keyframes progress-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+.step-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; color: var(--fg); }
+.step-row svg { width: 15px; height: 15px; flex-shrink: 0; }
+.step-row.running svg { color: var(--accent); animation: spin 0.8s linear infinite; }
+.step-row.done svg { color: var(--success); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.log-toggle { font-size: 12px; color: var(--subtle); display: flex; align-items: center; gap: 4px; cursor: pointer; padding: 4px 0; background: none; border: none; font-family: var(--font-sans); }
+.log-toggle:hover { color: var(--fg); }
+.log-toggle svg { width: 13px; height: 13px; }
+
+/* ── success / error / exists ── */
+.success-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
+.success-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--success-soft); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.success-icon svg { width: 18px; height: 18px; color: var(--success); }
+.success-title { font-size: 14px; font-weight: 600; color: var(--fg); }
+.success-desc { font-size: 12px; color: var(--subtle); margin-top: 2px; }
+.error-row { display: flex; align-items: flex-start; gap: 10px; }
+.error-icon { width: 16px; height: 16px; color: var(--danger); margin-top: 2px; flex-shrink: 0; }
+.error-title { font-size: 13px; font-weight: 500; color: var(--fg); }
+.error-meta { font-size: 11px; color: var(--subtle); margin-top: 2px; }
+.stderr-box { margin-top: 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; font-family: var(--font-mono); font-size: 11px; color: var(--danger); max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
+.error-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; }
+.exists-notice { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.exists-notice svg { width: 15px; height: 15px; color: var(--warning); flex-shrink: 0; margin-top: 1px; }
+.exists-notice p { font-size: 13px; color: var(--fg); line-height: 1.5; }
+
+/* ── settings panel ── */
+.settings-panel {
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  overflow: hidden; animation: modal-in var(--duration-slow) var(--ease) both;
+}
+.settings-nav { display: flex; border-bottom: 1px solid var(--border); padding: 0 4px; }
+.settings-nav-item {
+  padding: 10px 14px; font-size: 12px; color: var(--subtle); cursor: pointer;
+  border-bottom: 2px solid transparent; transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+.settings-nav-item:hover { color: var(--muted); }
+.settings-nav-item.active { color: var(--fg); border-bottom-color: var(--accent); }
+.settings-body { padding: 24px; }
+.settings-section { margin-bottom: 28px; }
+.settings-section:last-child { margin-bottom: 0; }
+.settings-section-title {
+  font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 4px;
+}
+.settings-section-desc { font-size: 12px; color: var(--subtle); margin-bottom: 14px; }
+.settings-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.settings-row:last-child { margin-bottom: 0; }
+.settings-row-label { width: 160px; flex-shrink: 0; }
+.settings-row-label .label-main { font-size: 13px; font-weight: 500; color: var(--fg); }
+.settings-row-label .label-hint { font-size: 11px; color: var(--subtle); margin-top: 2px; }
+.settings-row-control { flex: 1; min-width: 0; }
+.settings-hint { font-size: 11px; color: var(--subtle); margin-top: 5px; }
+.settings-hint code { font-family: var(--font-mono); font-size: 10.5px; color: var(--accent); }
+.settings-divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+/* ── reusable input in settings ── */
+.setting-input-group { display: flex; gap: 6px; }
+.setting-input-group .input { flex: 1; }
+.setting-input-group .btn { height: 32px; }
+
+/* ── repo selector (modal) ── */
+.repo-selector {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--fg); transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+.repo-selector.clickable { cursor: pointer; }
+.repo-selector.clickable:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.repo-path { font-family: var(--font-mono); font-size: 12px; }
+.repo-mode-badge {
+  font-size: 9px; padding: 2px 6px; border-radius: 3px; flex-shrink: 0;
+  background: var(--accent-soft); color: var(--accent); font-weight: 600;
+}
+.repo-change-btn {
+  font-size: 11px; color: var(--accent); cursor: pointer; flex-shrink: 0;
+  padding: 2px 6px; border-radius: 3px; transition: background var(--duration-fast);
+}
+.repo-change-btn:hover { background: var(--accent-soft); }
+</style>
+
+<style>
+/* ════════════════════════════════════════════════════════════
+   追加样式：场景结构 + Git tabs + 目录/Git popover 变体
+   ════════════════════════════════════════════════════════════ */
+
+body { padding-top: 56px; }
+
+/* 场景容器：标题 + chip 行（chip 行在场景底部，popover 朝上） */
+.scenario {
+  width: 100%; max-width: 640px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+.scenario-head {
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;
+}
+.scenario-title {
+  font-size: 14px; font-weight: 600; color: var(--fg);
+  display: flex; align-items: center; gap: 8px;
+}
+.scenario-title .tag {
+  font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 3px;
+  background: var(--accent-soft); color: var(--accent); letter-spacing: 0.03em;
+}
+.scenario-title .tag.plain { background: var(--info-soft); color: var(--info); }
+.scenario-title .tag.nongit { background: var(--warning-soft); color: var(--warning); }
+.scenario-meta {
+  font-size: 11px; font-family: var(--font-mono); color: var(--subtle);
+  display: flex; flex-wrap: wrap; gap: 12px; margin-top: 2px;
+}
+.scenario-meta span { display: inline-flex; align-items: center; gap: 4px; }
+.scenario-meta .k { color: var(--subtle); }
+.scenario-meta .v { color: var(--muted); }
+
+/* landing chip 行：位于场景底部，给上方留 popover 空间 */
+.landing-stage {
+  margin-top: 220px; /* popover 向上展开的预留高度 */
+  padding: 16px 0 4px;
+  border-top: 1px dashed var(--border);
+}
+.landing-chips { padding: 0; }
+.chip-sep {
+  width: 1px; height: 16px; background: var(--border-strong);
+  margin: 0 2px; flex-shrink: 0;
+}
+.chip .chip-label { font-size: 12px; font-weight: 500; }
+.chip .chip-ref { font-family: var(--font-mono); font-size: 11.5px; }
+
+/* popover 锚点：相对定位 */
+.popover-anchor { position: relative; display: inline-block; }
+
+/* 目录 popover：320px，朝上展开 */
+.dir-popover {
+  position: absolute; bottom: calc(100% + 8px); left: 0; width: 320px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-2);
+  z-index: 50; overflow: hidden; display: none;
+  animation: pop-up var(--duration) var(--ease) both;
+}
+.dir-popover.show { display: block; }
+@keyframes pop-up {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Git popover：420px，朝上展开 */
+.git-popover {
+  position: absolute; bottom: calc(100% + 8px); left: 0; width: 420px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-2);
+  z-index: 50; overflow: hidden; display: none;
+  animation: pop-up var(--duration) var(--ease) both;
+}
+.git-popover.show { display: block; }
+
+/* popover 内搜索框（Git 用） */
+.popover-search {
+  padding: 8px; border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.popover-search .input { height: 30px; padding-left: 32px; }
+.popover-search .search-icon {
+  position: absolute; left: 17px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--subtle); pointer-events: none;
+}
+
+/* popover 滚动区 */
+.popover-list {
+  max-height: 280px; overflow-y: auto; padding: 4px;
+}
+.popover-list::-webkit-scrollbar { width: 8px; }
+.popover-list::-webkit-scrollbar-thumb { background: var(--surface-hover); border-radius: 4px; }
+.popover-list::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Git tabs ── */
+.git-tabs {
+  display: flex; border-bottom: 1px solid var(--border);
+  padding: 0 4px;
+}
+.git-tab {
+  position: relative; padding: 10px 14px; font-size: 12px; font-weight: 500;
+  color: var(--subtle); cursor: pointer; user-select: none;
+  border: none; background: transparent; font-family: var(--font-sans);
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: color var(--duration-fast) var(--ease);
+}
+.git-tab:hover { color: var(--muted); }
+.git-tab.active { color: var(--fg); }
+.git-tab.active::after {
+  content: ''; position: absolute; left: 4px; right: 4px; bottom: -1px;
+  height: 2px; background: var(--accent); border-radius: 2px 2px 0 0;
+}
+.git-tab .count {
+  font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 8px;
+  background: var(--surface-hover); color: var(--subtle); min-width: 16px;
+  text-align: center;
+}
+.git-tab.active .count { background: var(--accent-soft); color: var(--accent); }
+.git-tab svg { width: 13px; height: 13px; opacity: 0.8; }
+.git-tab.active svg { opacity: 1; }
+
+/* tab panel */
+.git-tab-panel { display: none; }
+.git-tab-panel.show { display: block; }
+
+/* worktree 列表项：复用 popover-item，分支名 + mono 路径副标题 */
+.popover-item.wt-item {
+  flex-direction: column; align-items: stretch; gap: 2px; padding: 7px 8px;
+}
+.wt-item .wt-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.wt-item .wt-branch {
+  flex: 1; min-width: 0; font-size: 13px; color: var(--fg);
+  display: flex; align-items: center; gap: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wt-item .wt-branch svg { width: 13px; height: 13px; color: var(--accent); flex-shrink: 0; }
+.wt-item .wt-path {
+  font-size: 11px; color: var(--subtle); font-family: var(--font-mono);
+  padding-left: 21px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 徽章：HEAD / 当前 / 默认 */
+.item-badge.mono { font-family: var(--font-mono); font-weight: 600; }
+.item-badge.head { background: var(--success-soft); color: var(--success); }
+.item-badge.current { background: var(--accent-soft); color: var(--accent); }
+.item-badge.default { background: var(--success-soft); color: var(--success); }
+
+/* 空态 */
+.empty-state {
+  padding: 28px 16px; text-align: center;
+}
+.empty-state .empty-icon {
+  width: 32px; height: 32px; margin: 0 auto 10px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--surface-hover); color: var(--subtle);
+}
+.empty-state .empty-icon svg { width: 16px; height: 16px; }
+.empty-state .empty-title { font-size: 13px; color: var(--muted); font-weight: 500; }
+.empty-state .empty-desc { font-size: 11px; color: var(--subtle); margin-top: 4px; }
+
+/* popover 底部动作区（accent 强调） */
+.popover-actions {
+  padding: 6px; border-top: 1px solid var(--border);
+}
+
+/* flash 提示（模拟动作结果） */
+.flash {
+  position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(20px);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); padding: 10px 16px; font-size: 12px;
+  color: var(--fg); box-shadow: var(--shadow-2); z-index: 200;
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--duration), transform var(--duration);
+  display: flex; align-items: center; gap: 8px; max-width: 90vw;
+}
+.flash.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.flash svg { width: 14px; height: 14px; color: var(--success); flex-shrink: 0; }
+
+/* demo 顶部说明 */
+.demo-intro {
+  width: 100%; max-width: 640px; padding: 0 4px 8px;
+  font-size: 12px; color: var(--subtle); line-height: 1.6;
+}
+.demo-intro strong { color: var(--muted); font-weight: 600; }
+.demo-intro code {
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--surface-2); padding: 1px 5px; border-radius: 3px; color: var(--accent);
+}
+</style>
+</head>
+<body>
+
+<div class="demo-intro">
+  <strong>Landing chip 行 IA 重构</strong> — 目录 chip（纯文件系统）+ Git chip（分支/Worktree tab）。
+  点击任意 chip 展开 popover；场景 3 非 git 目录只有目录 chip。Esc 或点击外部关闭。
+</div>
+
+<div class="demo-container">
+
+  <!-- ════════ 场景 1：bare-workspace ════════ -->
+  <section class="scenario" data-scenario="bare">
+    <div class="scenario-head">
+      <div class="scenario-title">场景 1 · bare-workspace<span class="tag">有 worktree</span></div>
+      <div class="scenario-meta">
+        <span><span class="k">cwd:</span><span class="v">~/Code/xyz-agent-workspace/feat-git-cwt-anywhere-support</span></span>
+        <span><span class="k">branch:</span><span class="v">feat-git-cwt-anywhere-support</span></span>
+        <span><span class="k">worktrees:</span><span class="v">3</span></span>
+      </div>
+    </div>
+
+    <div class="landing-stage">
+      <div class="landing-chips">
+        <!-- 目录 chip -->
+        <div class="popover-anchor">
+          <div class="chip dir-chip" data-chip="dir" data-scenario="bare">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+            <span class="chip-label">xyz-agent-workspace</span>
+          </div>
+          <!-- 目录 popover -->
+          <div class="dir-popover" data-popover="dir" data-scenario="bare">
+            <div class="popover-section">
+              <div class="popover-group-label">最近工作区</div>
+              <div class="popover-list">
+                <div class="popover-item" data-action="select" data-value="chat_project" data-flash="已切换工作区 chat_project">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">chat_project</div>
+                </div>
+                <div class="popover-item" data-action="select" data-value="xyz-ui" data-flash="已切换工作区 xyz-ui">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">xyz-ui</div>
+                </div>
+                <div class="popover-item" data-action="select" data-value="useful-dev-tools" data-flash="已切换工作区 useful-dev-tools">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">useful-dev-tools</div>
+                </div>
+                <div class="popover-item" data-action="select" data-value="dag-executor-ws" data-flash="已切换工作区 dag-executor-ws">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">dag-executor-ws</div>
+                </div>
+              </div>
+            </div>
+            <div class="popover-actions">
+              <div class="popover-item action-item" data-action="custom" data-flash="已打开文件夹选择器（系统 dialog）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>
+                <div class="item-label">打开文件夹…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chip-sep"></div>
+
+        <!-- Git chip -->
+        <div class="popover-anchor">
+          <div class="chip git-chip" data-chip="git" data-scenario="bare">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 2.5-6 5.5"/></svg>
+            <span class="chip-ref">feat-git-cwt-anywhere-support</span>
+          </div>
+          <!-- Git popover -->
+          <div class="git-popover" data-popover="git" data-scenario="bare">
+            <!-- tabs -->
+            <div class="git-tabs">
+              <button class="git-tab active" data-tab="branch" data-scenario="bare">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                分支<span class="count">6</span>
+              </button>
+              <button class="git-tab" data-tab="worktree" data-scenario="bare">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 7.5 10.5 15"/><path d="M16.5 7.5 13.5 15"/></svg>
+                Worktree<span class="count">3</span>
+              </button>
+            </div>
+
+            <!-- 分支 panel -->
+            <div class="git-tab-panel show" data-panel="branch" data-scenario="bare">
+              <div class="popover-search">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input class="input git-filter" type="text" placeholder="过滤分支…" data-filter="branch" data-scenario="bare">
+              </div>
+              <div class="popover-list branch-list" data-list="branch" data-scenario="bare">
+                <div class="popover-group-label">本地</div>
+                <div class="popover-item branch-row" data-action="select" data-value="main" data-flash="已切换到 main">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">main</span></div>
+                  <span class="item-badge head mono">HEAD</span>
+                  <span class="item-badge default">默认</span>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="fix-046" data-flash="已切换到 fix-046">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">fix-046</span></div>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="feat-git-cwt-anywhere-support" data-flash="已在 feat-git-cwt-anywhere-support（当前分支）">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">feat-git-cwt-anywhere-support</span></div>
+                  <span class="item-badge current">当前</span>
+                </div>
+                <div class="popover-group-label">远程</div>
+                <div class="popover-item branch-row" data-action="select" data-value="origin/main" data-flash="已切换到 origin/main">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">origin/main</span></div>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="origin/develop" data-flash="已切换到 origin/develop">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">origin/develop</span></div>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="origin/release/v3" data-flash="已切换到 origin/release/v3">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">origin/release/v3</span></div>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="origin/feat/worktree-anywhere" data-flash="已切换到 origin/feat/worktree-anywhere">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">origin/feat/worktree-anywhere</span></div>
+                </div>
+              </div>
+              <div class="popover-actions">
+                <div class="popover-item action-item" data-action="custom" data-flash="已打开「创建并检出新分支」对话框">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/><path d="M15 6h6M18 3v6"/></svg>
+                  <div class="item-label">创建并检出新分支…</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Worktree panel -->
+            <div class="git-tab-panel" data-panel="worktree" data-scenario="bare">
+              <div class="popover-list">
+                <div class="popover-item wt-item" data-action="select" data-value="main" data-flash="已切换 worktree → main（~/Code/xyz-agent-workspace/main）">
+                  <div class="wt-row">
+                    <div class="wt-branch">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                      main
+                    </div>
+                    <span class="item-badge head mono">HEAD</span>
+                  </div>
+                  <div class="wt-path">~/Code/xyz-agent-workspace/main</div>
+                </div>
+                <div class="popover-item wt-item" data-action="select" data-value="fix-046-problems" data-flash="已切换 worktree → fix-046-problems">
+                  <div class="wt-row">
+                    <div class="wt-branch">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                      fix-046-problems
+                    </div>
+                  </div>
+                  <div class="wt-path">~/Code/xyz-agent-workspace/fix-046-problems</div>
+                </div>
+                <div class="popover-item wt-item" data-action="select" data-value="feat-git-cwt-anywhere-support" data-flash="已在当前 worktree（feat-git-cwt-anywhere-support）">
+                  <div class="wt-row">
+                    <div class="wt-branch">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                      feat-git-cwt-anywhere-support
+                    </div>
+                    <span class="item-badge current">当前</span>
+                  </div>
+                  <div class="wt-path">~/Code/xyz-agent-workspace/feat-git-cwt-anywhere-support</div>
+                </div>
+              </div>
+              <div class="popover-actions">
+                <div class="popover-item action-item" data-action="custom" data-flash="已打开「新建 worktree」对话框">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 7.5 10.5 15"/><path d="M16.5 7.5 13.5 15"/><path d="M18 3v3M16.5 4.5h3"/></svg>
+                  <div class="item-label">新建 worktree…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ 场景 2：plain-repo ════════ -->
+  <section class="scenario" data-scenario="plain">
+    <div class="scenario-head">
+      <div class="scenario-title">场景 2 · plain-repo<span class="tag plain">普通 git 仓库</span></div>
+      <div class="scenario-meta">
+        <span><span class="k">cwd:</span><span class="v">~/Code/awesome-app</span></span>
+        <span><span class="k">branch:</span><span class="v">feat/auth</span></span>
+        <span><span class="k">worktrees:</span><span class="v">0</span></span>
+      </div>
+    </div>
+
+    <div class="landing-stage">
+      <div class="landing-chips">
+        <!-- 目录 chip -->
+        <div class="popover-anchor">
+          <div class="chip dir-chip" data-chip="dir" data-scenario="plain">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+            <span class="chip-label">awesome-app</span>
+          </div>
+          <div class="dir-popover" data-popover="dir" data-scenario="plain">
+            <div class="popover-section">
+              <div class="popover-group-label">最近工作区</div>
+              <div class="popover-list">
+                <div class="popover-item" data-action="select" data-value="xyz-agent-ws" data-flash="已切换工作区 xyz-agent-ws">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">xyz-agent-ws</div>
+                </div>
+                <div class="popover-item" data-action="select" data-value="chat_project" data-flash="已切换工作区 chat_project">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">chat_project</div>
+                </div>
+                <div class="popover-item" data-action="select" data-value="xyz-ui" data-flash="已切换工作区 xyz-ui">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">xyz-ui</div>
+                </div>
+              </div>
+            </div>
+            <div class="popover-actions">
+              <div class="popover-item action-item" data-action="custom" data-flash="已打开文件夹选择器（系统 dialog）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>
+                <div class="item-label">打开文件夹…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chip-sep"></div>
+
+        <!-- Git chip -->
+        <div class="popover-anchor">
+          <div class="chip git-chip" data-chip="git" data-scenario="plain">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 2.5-6 5.5"/></svg>
+            <span class="chip-ref">feat/auth</span>
+          </div>
+          <div class="git-popover" data-popover="git" data-scenario="plain">
+            <div class="git-tabs">
+              <button class="git-tab active" data-tab="branch" data-scenario="plain">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                分支<span class="count">5</span>
+              </button>
+              <button class="git-tab" data-tab="worktree" data-scenario="plain">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 7.5 10.5 15"/><path d="M16.5 7.5 13.5 15"/></svg>
+                Worktree<span class="count">0</span>
+              </button>
+            </div>
+
+            <div class="git-tab-panel show" data-panel="branch" data-scenario="plain">
+              <div class="popover-search">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input class="input git-filter" type="text" placeholder="过滤分支…" data-filter="branch" data-scenario="plain">
+              </div>
+              <div class="popover-list branch-list" data-list="branch" data-scenario="plain">
+                <div class="popover-group-label">本地</div>
+                <div class="popover-item branch-row" data-action="select" data-value="main" data-flash="已切换到 main">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">main</span></div>
+                  <span class="item-badge default">默认</span>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="feat/auth" data-flash="已在 feat/auth（当前分支）">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">feat/auth</span></div>
+                  <span class="item-badge current">当前</span>
+                </div>
+                <div class="popover-group-label">远程</div>
+                <div class="popover-item branch-row" data-action="select" data-value="origin/main" data-flash="已切换到 origin/main">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">origin/main</span></div>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="origin/develop" data-flash="已切换到 origin/develop">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">origin/develop</span></div>
+                </div>
+                <div class="popover-item branch-row" data-action="select" data-value="origin/feat/auth" data-flash="已切换到 origin/feat/auth">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+                  <div class="item-label"><span class="ref" style="font-family:var(--font-mono);font-size:12.5px">origin/feat/auth</span></div>
+                </div>
+              </div>
+              <div class="popover-actions">
+                <div class="popover-item action-item" data-action="custom" data-flash="已打开「创建并检出新分支」对话框">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/><path d="M15 6h6M18 3v6"/></svg>
+                  <div class="item-label">创建并检出新分支…</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="git-tab-panel" data-panel="worktree" data-scenario="plain">
+              <div class="empty-state">
+                <div class="empty-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 7.5 10.5 15"/><path d="M16.5 7.5 13.5 15"/></svg>
+                </div>
+                <div class="empty-title">当前仓库无 worktree</div>
+                <div class="empty-desc">awesome-app 是普通 git 仓库，尚未创建任何 worktree</div>
+              </div>
+              <div class="popover-actions">
+                <div class="popover-item action-item" data-action="custom" data-flash="已打开「新建 worktree」对话框">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 7.5 10.5 15"/><path d="M16.5 7.5 13.5 15"/><path d="M18 3v3M16.5 4.5h3"/></svg>
+                  <div class="item-label">新建 worktree…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ 场景 3：非 git 目录 ════════ -->
+  <section class="scenario" data-scenario="nongit">
+    <div class="scenario-head">
+      <div class="scenario-title">场景 3 · 非 git 目录<span class="tag nongit">无 Git chip</span></div>
+      <div class="scenario-meta">
+        <span><span class="k">cwd:</span><span class="v">~/Notes/notes</span></span>
+        <span><span class="k">branch:</span><span class="v" style="color:var(--subtle)">—</span></span>
+        <span><span class="k">git:</span><span class="v" style="color:var(--subtle)">未初始化</span></span>
+      </div>
+    </div>
+
+    <div class="landing-stage">
+      <div class="landing-chips">
+        <!-- 只有目录 chip -->
+        <div class="popover-anchor">
+          <div class="chip dir-chip" data-chip="dir" data-scenario="nongit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+            <span class="chip-label">notes</span>
+          </div>
+          <div class="dir-popover" data-popover="dir" data-scenario="nongit">
+            <div class="popover-section">
+              <div class="popover-group-label">最近工作区</div>
+              <div class="popover-list">
+                <div class="popover-item" data-action="select" data-value="xyz-agent-ws" data-flash="已切换工作区 xyz-agent-ws">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">xyz-agent-ws</div>
+                </div>
+                <div class="popover-item" data-action="select" data-value="chat_project" data-flash="已切换工作区 chat_project">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                  <div class="item-label">chat_project</div>
+                </div>
+              </div>
+            </div>
+            <div class="popover-actions">
+              <div class="popover-item action-item" data-action="custom" data-flash="已打开文件夹选择器（系统 dialog）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>
+                <div class="item-label">打开文件夹…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 无 chip-sep，无 Git chip -->
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- flash 提示 -->
+<div class="flash" id="flash">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  <span id="flash-text">已切换</span>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // 当前打开的 popover 状态：{ type: 'dir'|'git', scenario, anchor, popoverEl, chipEl }
+  var openState = null;
+  var flashTimer = null;
+  var activeListIndex = -1; // 键盘导航索引（当前可见 panel 的 popover-list）
+
+  // ── flash 提示 ──
+  function showFlash(message) {
+    var flash = document.getElementById('flash');
+    var text = document.getElementById('flash-text');
+    text.textContent = message;
+    flash.classList.add('show');
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(function () { flash.classList.remove('show'); }, 2200);
+  }
+
+  // ── 关闭当前 popover ──
+  function closePopover() {
+    if (!openState) return;
+    openState.popoverEl.classList.remove('show');
+    openState.chipEl.classList.remove('active');
+    openState = null;
+    activeListIndex = -1;
+  }
+
+  // ── 打开指定 popover ──
+  function openPopover(type, scenario) {
+    closePopover();
+    var chipEl = document.querySelector('.chip[data-chip="' + type + '"][data-scenario="' + scenario + '"]');
+    var popoverEl = document.querySelector('[data-popover="' + type + '"][data-scenario="' + scenario + '"]');
+    if (!chipEl || !popoverEl) return;
+    chipEl.classList.add('active');
+    popoverEl.classList.add('show');
+
+    // Git popover 默认显示 branch tab，重置 worktree tab
+    if (type === 'git') {
+      activateTab(scenario, 'branch', /*skipFocus*/ false);
+    } else {
+      // 目录 popover 打开时，聚焦第一个可选项
+      focusListIndex(popoverEl.querySelector('.popover-list'), 0);
+    }
+
+    openState = { type: type, scenario: scenario, chipEl: chipEl, popoverEl: popoverEl };
+  }
+
+  // ── chip toggle 入口（注意：禁止用 togglePopover 作为函数名 — 与原生 Popover API 冲突）──
+  function toggleDirPopover(scenario) {
+    if (openState && openState.type === 'dir' && openState.scenario === scenario) {
+      closePopover();
+    } else {
+      openPopover('dir', scenario);
+    }
+  }
+  function toggleGitPopover(scenario) {
+    if (openState && openState.type === 'git' && openState.scenario === scenario) {
+      closePopover();
+    } else {
+      openPopover('git', scenario);
+    }
+  }
+
+  // ── Git tab 切换 ──
+  function activateTab(scenario, tabName, skipFocus) {
+    var tabs = document.querySelectorAll('.git-tab[data-scenario="' + scenario + '"]');
+    var panels = document.querySelectorAll('.git-tab-panel[data-scenario="' + scenario + '"]');
+    tabs.forEach(function (t) {
+      t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
+    });
+    panels.forEach(function (p) {
+      var match = p.getAttribute('data-panel') === tabName;
+      p.classList.toggle('show', match);
+      if (match) {
+        // 重置该 panel 的搜索框
+        var filter = p.querySelector('.git-filter');
+        if (filter) filter.value = '';
+        applyFilter(scenario, tabName, '');
+        // 重置键盘导航
+        var list = p.querySelector('.popover-list');
+        if (list) {
+          var firstSelectable = list.querySelector('.popover-item');
+          focusListIndex(list, firstSelectable ? 0 : -1);
+          if (!skipFocus && filter) {
+            // 不自动聚焦 search，避免页面滚动；保持视觉静默
+          }
+        }
+      }
+    });
+  }
+
+  // ── 搜索过滤（按当前 tab 的列表）──
+  function applyFilter(scenario, tabName, query) {
+    var panel = document.querySelector('.git-tab-panel[data-panel="' + tabName + '"][data-scenario="' + scenario + '"]');
+    if (!panel) return;
+    var q = query.trim().toLowerCase();
+    // 分支列表：过滤 popover-item.branch-row 和 group label
+    if (tabName === 'branch') {
+      var items = panel.querySelectorAll('.branch-row');
+      var labels = panel.querySelectorAll('.popover-group-label');
+      items.forEach(function (item) {
+        var text = item.textContent.toLowerCase();
+        item.style.display = q && text.indexOf(q) === -1 ? 'none' : '';
+      });
+      // 隐藏空组的 label
+      labels.forEach(function (label) {
+        var next = label.nextElementSibling;
+        // 收集该组下所有 item 直到下一个 label
+        var hasVisible = false;
+        var node = next;
+        while (node && !node.classList.contains('popover-group-label') && !node.classList.contains('popover-actions')) {
+          if (node.classList.contains('branch-row') && node.style.display !== 'none') {
+            hasVisible = true;
+            break;
+          }
+          node = node.nextElementSibling;
+        }
+        label.style.display = q && !hasVisible ? 'none' : '';
+      });
+    }
+    // worktree tab 不提供过滤（项目数通常很少）
+    activeListIndex = -1;
+  }
+
+  // ── 列表项选中（回灌 chip 文案 + 关 popover）──
+  function selectListItem(item) {
+    var flash = item.getAttribute('data-flash');
+    if (flash) showFlash(flash);
+    closePopover();
+  }
+
+  // ── 键盘导航：聚焦列表项 ──
+  function getVisibleListItems() {
+    if (!openState) return [];
+    var panel;
+    if (openState.type === 'dir') {
+      var list = openState.popoverEl.querySelector('.popover-list');
+      return list ? Array.prototype.slice.call(list.querySelectorAll('.popover-item')) : [];
+    }
+    // git popover：当前 show 的 panel
+    panel = openState.popoverEl.querySelector('.git-tab-panel.show');
+    if (!panel) return [];
+    var list2 = panel.querySelector('.popover-list');
+    if (!list2) return [];
+    return Array.prototype.slice.call(list2.querySelectorAll('.popover-item')).filter(function (el) {
+      return el.style.display !== 'none';
+    });
+  }
+
+  function focusListIndex(listEl, idx) {
+    if (!listEl) return;
+    var items = Array.prototype.slice.call(listEl.querySelectorAll('.popover-item')).filter(function (el) {
+      return el.style.display !== 'none';
+    });
+    items.forEach(function (el) { el.style.background = ''; });
+    if (idx >= 0 && idx < items.length) {
+      items[idx].style.background = 'var(--accent-soft)';
+      items[idx].scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function moveActive(delta) {
+    var items = getVisibleListItems();
+    if (items.length === 0) return;
+    // 当前 activeListIndex 基于当前 panel；若 -1 则从 0/末尾起步
+    var base = activeListIndex;
+    if (base < 0) base = delta > 0 ? -1 : items.length;
+    var next = base + delta;
+    if (next < 0) next = items.length - 1;
+    if (next >= items.length) next = 0;
+    activeListIndex = next;
+    items.forEach(function (el) { el.style.background = ''; });
+    items[next].style.background = 'var(--accent-soft)';
+    items[next].scrollIntoView({ block: 'nearest' });
+  }
+
+  function activateActive() {
+    var items = getVisibleListItems();
+    if (activeListIndex >= 0 && activeListIndex < items.length) {
+      selectListItem(items[activeListIndex]);
+      return true;
+    }
+    return false;
+  }
+
+  // ── 事件绑定 ──
+  document.addEventListener('click', function (e) {
+    // chip 点击
+    var chip = e.target.closest('.chip[data-chip]');
+    if (chip) {
+      e.stopPropagation();
+      var scenario = chip.getAttribute('data-scenario');
+      var type = chip.getAttribute('data-chip');
+      if (type === 'dir') toggleDirPopover(scenario);
+      else toggleGitPopover(scenario);
+      return;
+    }
+
+    // git tab 点击
+    var tab = e.target.closest('.git-tab');
+    if (tab) {
+      e.stopPropagation();
+      activateTab(tab.getAttribute('data-scenario'), tab.getAttribute('data-tab'), false);
+      return;
+    }
+
+    // popover 内列表项 / 动作项点击
+    var item = e.target.closest('.popover-item');
+    if (item) {
+      e.stopPropagation();
+      selectListItem(item);
+      return;
+    }
+
+    // 点击 popover 外部 → 关闭
+    if (openState) {
+      var pop = e.target.closest('.dir-popover, .git-popover');
+      if (!pop) closePopover();
+    }
+  });
+
+  // 搜索框输入
+  document.addEventListener('input', function (e) {
+    var filter = e.target.closest('.git-filter');
+    if (!filter) return;
+    var scenario = filter.getAttribute('data-scenario');
+    var tabName = filter.getAttribute('data-filter');
+    applyFilter(scenario, tabName, filter.value);
+  });
+
+  // 键盘：Esc 关闭、↑↓ 导航、Enter 激活
+  document.addEventListener('keydown', function (e) {
+    if (!openState) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closePopover();
+      return;
+    }
+    // 在搜索框内时不劫持 ↑↓（让用户正常编辑），但 Enter 仍可激活
+    var inFilter = e.target.tagName === 'INPUT';
+    if (e.key === 'ArrowDown') {
+      if (inFilter) return;
+      e.preventDefault();
+      moveActive(1);
+    } else if (e.key === 'ArrowUp') {
+      if (inFilter) return;
+      e.preventDefault();
+      moveActive(-1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activateActive()) return;
+      // 无选中项时，若在搜索框，激活第一个可见项
+      var items = getVisibleListItems();
+      if (items.length > 0) selectListItem(items[0]);
+    }
+  });
+})();
+</script>
+</body>
+</html>

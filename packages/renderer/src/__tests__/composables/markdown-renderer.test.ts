@@ -181,7 +181,7 @@ describe('MarkdownRenderer（segments 模式）', () => {
     expect(btn.classes()).toContain('is-copied')
   })
 
-  it('U13: 点外链 → openExternal', async () => {
+  it('U13: 点外链 → drawer.open(browser, {url})（Wave 2：嵌入式 browser tab）', async () => {
     mockRenderSegments.mockResolvedValue([
       { type: 'text', content: '<a href="https://example.com">link</a>' },
     ] as MarkdownSegment[])
@@ -189,7 +189,10 @@ describe('MarkdownRenderer（segments 模式）', () => {
     await nextTick()
     await nextTick()
     await wrapper.find('a[href="https://example.com"]').trigger('click')
-    expect(mockOpenExternal).toHaveBeenCalledWith('https://example.com')
+    // Wave 2：http(s) 外链主路径走 drawer browser tab（不再调 openExternal）。
+    // openExternal 降级出口由 BrowserPane 外链导出按钮承担（Wave 5）。
+    expect(mockDrawerOpen).toHaveBeenCalledWith('browser', { url: 'https://example.com' })
+    expect(mockOpenExternal).not.toHaveBeenCalled()
   })
 
   it('U14: 点文件路径 → selectFile + drawer.open(detail)', async () => {

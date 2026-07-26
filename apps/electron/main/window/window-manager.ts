@@ -4,17 +4,16 @@
  * 对应 spec §4.2 M2/M3「Window Manager」：窗口注册表 + 跨窗口 session 查询。
  *
  * [HISTORICAL] 不变量：
- * - Main 只保留跨窗口查询所需的 WindowState 投影（完整 PanelTree 由 Renderer 推送，Main 不解析内部）
+ * - Main 只保留单 panel 投影（v2 移除 split 后简化），window-manager 内部构造初始 state
  * - 不直接创建 BrowserWindow（创建委托 window-factory）
  * - fullscreen 状态变化通过 webContents.send 通知 renderer
  * - onWindowListChanged 回调：窗口 close 时触发，用于广播 window-list-updated
  *
- * 依赖方向：window-manager → interfaces + panel-tree-utils + electron
+ * 依赖方向：window-manager → interfaces + electron
  */
 import { BrowserWindow } from 'electron'
 import type { WindowState } from '@xyz-agent/shared'
 import type { IWindowManager } from '../interfaces.js'
-import { findPanelBySessionId } from './panel-tree-utils.js'
 
 /** 内部托管的窗口条目 */
 interface ManagedWindow {
@@ -29,8 +28,7 @@ interface ManagedWindow {
  * 使用方法：
  * ```ts
  * const wm = new WindowManager()
- * wm.register('win-1', win, initialWindowState('win-1'))
- * wm.findSessionBySessionId(sid)
+ * wm.register('win-1', win)
  * ```
  */
 export class WindowManager implements IWindowManager {
@@ -49,8 +47,8 @@ export class WindowManager implements IWindowManager {
   }
 
   /** 注册窗口 + 绑定 fullscreen/closed 事件 */
-  register(windowId: string, win: BrowserWindow, initialState: WindowState): void {
-    this.windows.set(windowId, { windowId, win, state: initialState })
+  register(windowId: string, win: BrowserWindow): void {
+    this.windows.set(windowId, { windowId, win, state: this.createInitialState(windowId) })
 
     // Notify renderer when macOS fullscreen state changes
     win.on('enter-full-screen', () => {
@@ -102,18 +100,14 @@ export class WindowManager implements IWindowManager {
     return this.windows.size
   }
 
-  /**
-   * 在所有窗口的 panel 树中查找已绑定指定 sessionId 的窗口。
-   * 委托给纯函数 findPanelBySessionId（panel-tree-utils）。
-   *
-   * [HISTORICAL] 返回字段名 paneId 是接口契约（interfaces.ts），值是 panel leaf id。
-   * renderer window domain 透传此字段，改名需同步 renderer 侧，本次不动。
-   */
-  findSessionBySessionId(sessionId: string): { windowId: string; paneId: string } | null {
-    for (const { windowId, state } of this.windows.values()) {
-      const panelId = findPanelBySessionId(state.panelTree, sessionId)
-      if (panelId) return { windowId, paneId: panelId }
+  /** 构造窗口初始 WindowState（单 panel 空叶子） */
+  private createInitialState(windowId: string): WindowState {
+    const panelId = `panel-${windowId}`
+    return {
+      windowId,
+      panel: { type: 'panel', id: panelId, sessionId: null },
+      focusedPanelId: panelId,
+      sessionIds: [],
     }
-    return null
   }
 }

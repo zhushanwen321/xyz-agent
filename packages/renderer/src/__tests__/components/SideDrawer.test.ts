@@ -61,6 +61,12 @@ vi.mock('@/composables/features/useSessionEvents', () => ({
 vi.mock('@/components/panel/GitPanel.vue', () => ({ default: { template: '<div data-testid="git-stub" />' } }))
 vi.mock('@/components/panel/CommandDocPanel.vue', () => ({ default: { template: '<div data-testid="doc-stub" />' } }))
 vi.mock('@/components/panel/DetailPane.vue', () => ({ default: { template: '<div data-testid="detail-stub" />' } }))
+// Wave 2：browser tab 显 BrowserPane（嵌入式 WebContentsView），stub 掉避免引入 lib/ipc / lucide 依赖。
+// browserLines widget 缓冲仍在（drawerState 内），但 Wave 2 browser tab 永远显 BrowserPane 覆盖 widget 通路
+// （Wave 5 做「url 消费后回落 widget」）。
+vi.mock('@/components/panel/BrowserPane.vue', () => ({
+  default: { template: '<div data-testid="browser-pane-stub" />' },
+}))
 vi.mock('@/components/message-stream/GuiComponentRenderer.vue', () => ({
   default: { template: '<div data-testid="gui-renderer-stub" />' },
 }))
@@ -199,9 +205,12 @@ describe('W4 SideDrawer AC-4: widget 缓冲 per-session 隔离', () => {
     await wrapper.setProps({ sessionId: SID_A })
     await flushPromises()
 
-    // browser tab：应显示 b-content
+    // 切到 browser tab：Wave 5 AC-18 起，无 browserUrl 时回落 widget 通路（extension 推的
+    // browser widget 显示）。b-content 应在 DOM（widget 回落），BrowserPane 不渲染（无 url）。
+    // 注：terminal tab 自 origin/main Phase 3 起渲染 TerminalView（PTY），不再消费 widget 数据。
     await wrapper.setProps({ activeTab: 'browser' })
     await nextTick()
+    expect(wrapper.find('[data-testid="browser-pane-stub"]').exists()).toBe(false)
     const browserCodes = wrapper.findAll('code')
     expect(browserCodes.some((c) => c.text() === 'b-content')).toBe(true)
 

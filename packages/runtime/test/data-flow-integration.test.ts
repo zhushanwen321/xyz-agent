@@ -18,6 +18,18 @@ import { WebSocket } from 'ws'
 
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
+import {
+  createMockSessionServiceClass,
+  createMockConfigServiceClass,
+  createMockModelServiceClass,
+  createMockProcessManagerClass,
+  createMockSkillScannerModule,
+  createMockAgentScannerModule,
+  mockPiProviderStoreModule,
+  mockSessionFileUtilsModule,
+  mockPiPathsModule,
+  createMockTrashModule,
+} from './helpers/service-mocks.js'
 
 // IGitInfoReader 桩：这些集成测试 mock 了整个 SessionService（构造参数不被使用），
 // 仅需满足构造签名（port 化后第 10 个参数）。
@@ -29,109 +41,57 @@ const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 const mockSendExtensionUiResponse = vi.fn()
 const mockSendRaw = vi.fn()
 
-vi.mock('../src/services/session/session-service.js', () => {
+// getRpcClient 返回的 mock client 引用了文件级 mockSendCommand / mockSendExtensionUiResponse /
+// mockSendRaw（测试需断言），因此 getRpcClientImpl 在文件内定义、传给工厂。
+function getRpcClientImpl() {
   return {
-    SessionService: class MockSessionService {
-      sendMessage = vi.fn().mockResolvedValue(undefined)
-      sendSubagentMessage = vi.fn().mockResolvedValue(undefined)
-      listPersistedSessions = vi.fn().mockReturnValue([])
-      getSummary = vi.fn().mockReturnValue(undefined)
-      getHistory = vi.fn().mockResolvedValue([])
-      create = vi.fn().mockResolvedValue({ id: 'test-session-id', cwd: '/tmp', status: 'active' })
-      delete = vi.fn().mockResolvedValue(undefined)
-      destroyAll = vi.fn().mockResolvedValue(undefined)
-      clear = vi.fn().mockResolvedValue(undefined)
-      renameSession = vi.fn().mockResolvedValue(undefined)
-      restoreSession = vi.fn().mockResolvedValue({ id: 'test-session-id', cwd: '/tmp', status: 'active' })
-      hasActiveSession = vi.fn().mockReturnValue(true)
-      compact = vi.fn().mockResolvedValue(undefined)
-      abort = vi.fn().mockResolvedValue(undefined)
-      switchModel = vi.fn().mockResolvedValue(undefined)
-      getRpcClient = vi.fn().mockReturnValue({
-        sendCommand: mockSendCommand,
-        sendExtensionUiResponse: mockSendExtensionUiResponse,
-        sendRaw: mockSendRaw,
-        onEvent: vi.fn().mockReturnValue(() => {}),
-        onExit: vi.fn(),
-        exited: false,
-        kill: vi.fn(),
-        start: vi.fn(),
-      })
-    },
+    sendCommand: mockSendCommand,
+    sendExtensionUiResponse: mockSendExtensionUiResponse,
+    sendRaw: mockSendRaw,
+    onEvent: vi.fn().mockReturnValue(() => {}),
+    onExit: vi.fn(),
+    exited: false,
+    kill: vi.fn(),
+    start: vi.fn(),
   }
-})
+}
+
+vi.mock('../src/services/session/session-service.js', () => ({
+  SessionService: createMockSessionServiceClass({ getRpcClientImpl }),
+}))
 
 vi.mock('../src/services/config-service.js', () => ({
-  ConfigService: class MockConfigService {
-    listProviders = vi.fn().mockReturnValue([])
-    setProvider = vi.fn()
-    deleteProvider = vi.fn().mockReturnValue({ removed: true })
-    getProvider = vi.fn().mockReturnValue(undefined)
-    updateToolPermissions = vi.fn()
-    loadSkills = vi.fn().mockReturnValue([])
-    saveSkills = vi.fn()
-    loadAgents = vi.fn().mockReturnValue([])
-    saveAgents = vi.fn()
-    scanSkills = vi.fn().mockReturnValue([])
-    scanAgents = vi.fn().mockReturnValue([])
-  },
+  ConfigService: createMockConfigServiceClass(),
 }))
 
 vi.mock('../src/services/model-service.js', () => ({
-  ModelService: class MockModelService {
-    aggregateModels = vi.fn().mockReturnValue([])
-    discoverModelsFromApi = vi.fn().mockResolvedValue([])
-  },
+  ModelService: createMockModelServiceClass(),
 }))
 
 vi.mock('../src/infra/pi/process-manager.js', () => ({
-  ProcessManager: class MockProcessManager {
-    createSession = vi.fn()
-    destroySession = vi.fn().mockResolvedValue(undefined)
-    getClient = vi.fn()
-    hasClient = vi.fn().mockReturnValue(false)
-    destroyAll = vi.fn().mockResolvedValue(undefined)
-    onSessionExit = vi.fn()
-    rekey = vi.fn()
-    getSessionIdByClient = vi.fn()
-  },
+  ProcessManager: createMockProcessManagerClass(),
 }))
 
 // EventAdapter 使用真实实例 — 不 mock
 
-vi.mock('../src/services/scanners/skill-scanner.js', () => ({
-  scanSkills: vi.fn().mockReturnValue([]),
-}))
-
-vi.mock('../src/services/scanners/agent-scanner.js', () => ({
-  scanAgents: vi.fn().mockReturnValue([]),
-}))
+vi.mock('../src/services/scanners/skill-scanner.js', () => createMockSkillScannerModule())
+vi.mock('../src/services/scanners/agent-scanner.js', () => createMockAgentScannerModule())
 
 // pi-config-bridge 已拆分：model/settings → pi-provider-store，session 扫描 → session-file-utils，
 // 路径 → pi-paths。按实际 import 来源 mock 各符号（其余实现保留原模块）。
-vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
-  return {
-    ...actual,
-    getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-    getSkillPaths: () => [],
-    readModels: () => ({ providers: {} }),
-    readSettings: () => ({}),
-    refreshAll: () => {},
-  }
-})
-vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
-  return { ...actual, scanPiSessions: () => [] }
-})
-vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
-  return { ...actual, getSessionsDir: () => '/mock/sessions' }
-})
+// 注意：vi.mock 第二参数必须是内联箭头（不能直接传导入的函数引用或其调用结果——
+// hoist 时 imports 尚未初始化会触发 TDZ）。箭头 body 在模块首次 import 时执行，此时安全。
+vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) =>
+  mockPiProviderStoreModule(await importOriginal<Record<string, unknown>>()),
+)
+vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) =>
+  mockSessionFileUtilsModule(await importOriginal<Record<string, unknown>>()),
+)
+vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) =>
+  mockPiPathsModule(await importOriginal<Record<string, unknown>>()),
+)
 
-vi.mock('../src/infra/system/trash.js', () => ({
-  trash: vi.fn(),
-}))
+vi.mock('../src/infra/system/trash.js', () => createMockTrashModule())
 
 // ── Imports (mock 之后) ───────────────────────────────────────────
 

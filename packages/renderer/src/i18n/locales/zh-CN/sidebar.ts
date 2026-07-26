@@ -21,6 +21,9 @@ export default {
     delete: '删除',
     deleteConfirm: '确认删除？',
     forkFrom: 'fork 自',
+    markDone: '标记完成',
+    unmarkDone: '取消标记',
+    archived: '已归档',
   },
   sessionList: {
     empty: '暂无会话',

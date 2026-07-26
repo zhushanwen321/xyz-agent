@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, onMounted, watch } from 'vue'
 /**
  * Landing.vue —— 新建任务落地空态（#2，spec §3.1 / §4.5）。
  *
@@ -10,9 +11,9 @@
  * NFR④#2 AC-2.6：historyError=true → 显重试按钮，不永久卡住。
  * 首次启动延迟 create（AC-1.7）：currentCwd 为空 → directory chip 显「选择目录」空态。
  */
-import { computed } from 'vue'
+
 import { useI18n } from 'vue-i18n'
-import { Folder, GitBranch, RefreshCw } from '@lucide/vue'
+import { Folder, GitFork, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import DirSelectPopover from './DirSelectPopover.vue'
@@ -66,7 +67,33 @@ function onOpenDirDialog(): void {
 // （settingsStore 全局 skills + projectSkills），不再依赖公共 session pi 命令（W3 已移除公共 session）。
 const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId)
 const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
+
+/**
+ * landing 态进入保障 + cwd 同步：
+ * app 启动 / 空 session 时 Panel 因 !sessionId 渲染 Landing，但 flow.state 可能还是 idle
+ * （未走 startFlow）→ presetCwd 不执行（要求 state=landing）→ cwd 未同步 → mode 恒 not-repo →
+ * Git chip 不显示 + 点 chip 时 idle→branch-popover 非法转换报错。
+ * startFlow 幂等（已 landing 不翻 state，只刷新 cwd），idle 态调它会 idle→landing + presetCwd。
+ */
+onMounted(() => {
+  if (flow.state.value !== 'landing') {
+    flow.startFlow(props.currentCwd ?? undefined)
+  } else if (!flow.currentCwd.value && props.currentCwd) {
+    flow.presetCwd(props.currentCwd)
+  }
+})
+watch(() => props.currentCwd, (newCwd) => {
+  if (!flow.currentCwd.value && newCwd) {
+    flow.presetCwd(newCwd)
+  }
+})
+/**
+ * 当前分支名（Git chip 显示）。flow.gitInfo 现已合并 landing 态数据源
+ *（useNewTaskFlow 从 dirSelect.worktreeItems HEAD 项派生），无需组件层再查 worktreeItems。
+ */
 const branch = computed(() => flow.gitInfo.value?.branch ?? props.gitBranch ?? null)
+/** 是否为 git 仓库目录（Git chip 可见性守卫，pendingCwd 驱动的 workspace.detect 三态）。 */
+const isGitRepo = computed(() => flow.mode?.value !== 'not-repo')
 
 /** directory chip 文案：有 cwd 显示目录名，否则首次启动空态（AC-1.7） */
 const dirLabel = computed(() => {
@@ -99,18 +126,12 @@ const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
 
 /**
  * 创建 worktree modal 渲染绑定（W2 wave）：state===worktree-modal 时挂载 CreateWorktreeModal。
- * DirSelectPopover 点「新建 worktree…」→ flow.openCreateWorktree → state=worktree-modal。
+ * BranchSelectPopover Worktree tab 点「新建 worktree…」→ flow.openCreateWorktree → state=worktree-modal。
  */
 const isWorktreeModalOpen = computed(() => flow.state.value === 'worktree-modal')
 
-/**
- * 是否在 bare repo + worktree 结构下。
- * 数据源优先级：
- * 1. flow.isBare（pendingCwd 驱动，landing 态主源，W2）——watch pendingCwd 调 workspace.detectBare
- * 2. flow.gitInfo.isBare（session 态 fallback，runtime 经 session.isBareWorkspace 透出）
- * 延迟 create 架构下 landing 无 session → gitInfo 恒 null，必须靠 pendingCwd 驱动才能显示「新建 worktree」。
- */
-const isBareWorkspace = computed(() => flow.isBare?.value ?? flow.gitInfo.value?.isBare ?? false)
+/** 当前 cwd 所在 workspace 的已有 worktree 列表（BranchSelectPopover Worktree tab 数据源）。 */
+const worktreeItems = computed(() => flow.worktreeItems?.value ?? [])
 
 function onSelectWorkspace(payload: { cwd: string }): void {
   flow.selectWorkspace(payload.cwd)
@@ -118,24 +139,25 @@ function onSelectWorkspace(payload: { cwd: string }): void {
 function onSelectBranch(payload: { name: string }): void {
   flow.selectBranch(payload.name)
 }
-function onConfirmDirtySwitch(payload: { name: string }): void {
-  flow.confirmDirtySwitch(payload.name)
-}
-
 /**
  * worktree 创建成功（CreateWorktreeModal emit success）：
  * 选定新 worktree 的 cwd（chip 回灌）+ 关 overlay 回 landing。
  */
-function onWorktreeSuccess(cwd: string): void {
-  flow.selectWorkspace(cwd)
+/**
+ * worktree 创建成功 / exists 态「直接开始」（CreateWorktreeModal emit success / use-existing）：
+ * 选定 worktree 的 cwd（chip 回灌）+ 关 overlay 回 landing。
+ */
+function onWorktreeActivated(payload: { cwd: string }): void {
+  flow.selectWorkspace(payload.cwd)
   flow.closeOverlay()
 }
+
 /**
- * exists 态「直接开始」（CreateWorktreeModal emit use-existing）：
- * 用已存在 worktree 的 cwd + 关 overlay。语义同 onWorktreeSuccess，独立函数保语义清晰。
+ * selectWorktree —— 选择已有 worktree，切换到该 worktree 的 cwd。
+ * 语义同 selectWorkspace（记 pendingCwd + 关 popover），路径来源为 worktree item.path。
  */
-function onWorktreeUseExisting(cwd: string): void {
-  flow.selectWorkspace(cwd)
+function onSelectWorktree(payload: { path: string }): void {
+  flow.selectWorkspace(payload.path)
   flow.closeOverlay()
 }
 function onRetry(): void {
@@ -184,35 +206,37 @@ function onRetry(): void {
                 <span class="font-mono">{{ dirLabel }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" class="w-[380px] p-0">
+            <PopoverContent side="top" class="w-[320px] p-0">
               <DirSelectPopover
                 :current-cwd="currentCwd ?? null"
-                :is-bare-workspace="isBareWorkspace"
                 @select="onSelectWorkspace"
                 @open-dir-dialog="onOpenDirDialog"
-                @create-worktree="flow.openCreateWorktree()"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>
           </Popover>
-          <span v-if="branch" aria-hidden="true" class="h-3.5 w-px bg-border" />
-          <Popover v-if="branch" v-model:open="isBranchOpen">
+          <span v-if="isGitRepo" aria-hidden="true" class="h-3.5 w-px bg-border" />
+          <Popover v-if="isGitRepo" v-model:open="isBranchOpen">
             <PopoverTrigger as-child>
               <Button
                 data-testid="chip-branch"
                 variant="ghost"
                 class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
               >
-                <GitBranch class="shrink-0" />
-                <span class="font-mono">{{ branch }}</span>
+                <GitFork class="shrink-0" />
+                <span class="font-mono">{{ branch || t('newTask.landing.gitRepo') }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" class="w-[420px] p-0">
+            <PopoverContent side="top" :avoid-collisions="false" class="w-[420px] p-0">
               <BranchSelectPopover
-                :session-id="sessionId"
+                :mode="flow.mode?.value === 'bare-workspace' ? 'bare-workspace' : 'plain-repo'"
+                :cwd="cwd ?? ''"
+                :current-branch="branch"
+                :worktree-items="worktreeItems"
                 @select="onSelectBranch"
-                @confirm-dirty-switch="onConfirmDirtySwitch"
                 @open-branch-modal="flow.openBranchModal()"
+                @select-worktree="onSelectWorktree"
+                @create-worktree="flow.openCreateWorktree()"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>
@@ -224,13 +248,13 @@ function onRetry(): void {
     <!-- 创建分支 modal（#7）：BranchSelectPopover emit open-branch-modal → openBranchModal → state=branch-modal → 渲染。modal 内 Esc/提交失败留 modal（D-7）。 -->
     <CreateBranchModal v-if="isBranchModalOpen" />
 
-    <!-- 创建 worktree modal（W2 wave）：DirSelectPopover emit create-worktree → openCreateWorktree →
+    <!-- 创建 worktree modal（W2 wave）：BranchSelectPopover emit create-worktree → openCreateWorktree →
          state=worktree-modal → 渲染。modal 内五态自管，success/use-existing → selectWorkspace + closeOverlay。 -->
     <CreateWorktreeModal
       v-if="isWorktreeModalOpen"
       @close="flow.closeOverlay()"
-      @success="onWorktreeSuccess"
-      @use-existing="onWorktreeUseExisting"
+      @success="onWorktreeActivated"
+      @use-existing="onWorktreeActivated"
     />
   </div>
 </template>

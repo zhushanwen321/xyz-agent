@@ -45,6 +45,8 @@ vi.mock('@/api', () => ({
   // （fire-and-forget，补 mock 避免 unhandled rejection）
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
+  workspace: { detect: vi.fn().mockResolvedValue({ mode: 'not-repo', isBareMode: false, wsRoot: '', repoRoot: '' }) },
+  worktree: { list: vi.fn().mockResolvedValue([]) },
 }))
 
 // W3: mock workspaceStore 让 initApp 能正确预填 cwd

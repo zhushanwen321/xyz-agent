@@ -1,481 +1,377 @@
 <script setup lang="ts">
 /**
- * CreateWorktreeModal.vue —— 创建 worktree modal（W2 wave，spec §3.6 / §4.4）。
+ * CreateWorktreeModal.vue —— 创建 worktree modal（T5 升级版）。
  *
- * 五态状态机（内部自管，与 flow.state 解耦——组件由父级按 state==='worktree-modal' 挂载）：
- *   form → progress → success / error / exists
- *
- * 数据流：
- * - form：分支名输入（实时校验 git ref 规则）+ base 选择（current / origin/main，默认 main）+
- *         目录名预览（/ → -）。点创建 → progress。
- * - progress：调 worktreeApi.create → 成功转 success；失败按 code 转 error / exists。
- * - success：显示成功提示，2s 后 emit('success', cwd) + emit('close')。
- * - error（SETUP_FAILED / GIT_FAILED / NOT_BARE_REPO）：显示失败步骤 + stderr + 重试/清理。
- * - exists（WORKTREE_EXISTS）：显示「已存在」+ 直接开始（用已存在 worktree 的 cwd）。
- *
- * emits：
- * - close：取消/关闭（form 态点取消、success 2s 后、progress 不可关闭）
- * - success(cwd)：创建成功后 emit（父接 flow.selectWorkspace + flow.closeOverlay）
- * - use-existing(cwd)：exists 态点「直接开始」emit
- *
- * 依赖：useNewTaskFlow（gitInfo.branch 回灌 base current 文案）、worktreeApi（RPC）。
+ * 五态状态机（内部自管）：form → progress → success / error / exists
+ * T5：Git 仓库选择器 + base branch 可搜索 combobox + 创建位置 radio + workspaceHint/locationMode 透传。
  */
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Loader2, Check, AlertTriangle, ChevronDown, ChevronRight } from '@lucide/vue'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Loader2, Check, AlertTriangle, ChevronDown, ChevronRight, GitBranch, Folder, FolderOpen } from '@lucide/vue'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { worktreeApi } from '@/api/domains/worktree'
+import { detect as detectWorkspace } from '@/api/domains/workspace'
+import { pickDirectory } from '@/lib/ipc'
+import type { WorktreeErrorCode } from '@xyz-agent/shared'
+import { INVALID_BRANCH_REGEX } from '@xyz-agent/shared'
 
-/** 兼容 DeepReadonly Ref 形态的 flow（测试 mock 注入 readonly ref，生产为 ComputedRef） */
-interface FlowLike {
-  gitInfo: { value: { branch: string } | null }
-}
-
-/** worktreeApi.create 失败错误（envelope 透传 code/detail） */
-interface WorktreeError {
-  code?: string
-  message?: string
-  cwd?: string
-  exitCode?: number
-  stderr?: string
-}
-
-/** 五态 */
+interface WorktreeError { code?: WorktreeErrorCode; message?: string; cwd?: string; exitCode?: number; stderr?: string }
 type ModalPhase = 'form' | 'progress' | 'success' | 'error' | 'exists'
+type RepoMode = 'bare-workspace' | 'plain-repo' | 'not-repo'
+type LocationMode = 'workspace' | 'repo-dir' | 'dedicated-dir'
+interface BranchItem { name: string; group: 'quick' | 'remote' | 'local' }
 
-/** progress 态步骤定义（MVP：create 是 await 到全部完成，步骤只展示不联调状态） */
-interface ProgressStep {
-  testid: string
-  label: string
-}
-
-/** success 态 emit success 前的延迟（让用户看到成功提示） */
 const SUCCESS_EMIT_DELAY_MS = 2000
 
-/** 分支名非法字符/形态规则（与 runtime WorktreeService.INVALID_BRANCH_REGEX 完全一致）：
- *  对齐 git check-ref-format 规则——含 .. / 空白 / ~ ^ : ? * [ ] @ { } / 反斜杠 /
- *  以 . 或 - 开头 / 以 / 或 .lock 结尾。
- *  runtime 是安全边界（必拒），前端是 UX 校验（早拒减少无效 RPC），两者必须保持一致
- *  （任一侧漏判都会让另一侧独自暴露规则漂移）。 */
-const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/
-
-/** base 分支默认值（D3 决策：origin/main） */
-const DEFAULT_BASE = 'origin/main' as const
-
-const props = defineProps<{
-  /** 初始分支名（可选，回灌用） */
-  initialBranch?: string
-}>()
-
+const props = defineProps<{ initialBranch?: string }>()
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'success', cwd: string): void
-  (e: 'use-existing', cwd: string): void
+  (e: 'success', payload: { cwd: string }): void
+  (e: 'use-existing', payload: { cwd: string }): void
 }>()
 
 const { t } = useI18n()
-const flow = useNewTaskFlow() as unknown as FlowLike
+const flow = useNewTaskFlow()
 
-// ── form 态 ──
+// ── 仓库检测 ──
+const repoMode = ref<RepoMode>('not-repo')
+const repoPath = ref('')
+const repoDetectLoading = ref(true)
+const defaultBranch = ref('main')
+const remoteBranches = ref<string[]>([])
+const localBranches = ref<string[]>([])
+const branchesLoading = ref(true)
+
+// ── form ──
 const branchName = ref(props.initialBranch ?? '')
-const baseBranch = ref<'current' | 'origin/main'>(DEFAULT_BASE)
+const baseBranch = ref('')
+const basePopoverOpen = ref(false)
+const baseSearch = ref('')
 const inputRef = ref<InstanceType<typeof Input> | null>(null)
+const locationMode = ref<LocationMode>('workspace')
 
 // ── 状态机 ──
 const phase = ref<ModalPhase>('form')
-/** worktreeApi.create 失败错误对象（error/exists 态展示用） */
 const lastError = ref<WorktreeError | null>(null)
-/** progress 实时输出折叠开关 */
 const logExpanded = ref(false)
+const successTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const cancelled = ref(false)
 
-/** 成功态 2s 后 emit 的定时器句柄（卸载/重置时清理） */
-let successTimer: ReturnType<typeof setTimeout> | null = null
-
-/** 组件卸载标志：progress 态 unmount 后 in-flight create Promise / successTimer 回调
- * 不再 mutate phase / emit，避免对已卸载组件副作用（W3）。 */
-let cancelled = false
-
-const trimmedName = computed(() => branchName.value.trim())
-
-/** 分支名是否合法（非空 + 不匹配非法正则） */
-const isBranchValid = computed(() => {
-  const n = trimmedName.value
-  return n.length > 0 && !INVALID_BRANCH_REGEX.test(n)
-})
-
-/** 输入了内容但不合法 → 显格式错误（空时靠 placeholder 引导） */
-const showFormatError = computed(() => branchName.value.length > 0 && !isBranchValid.value)
-
-/** 创建按钮可点：form 态 + 分支名合法 + 非创建中 */
-const canSubmit = computed(() => phase.value === 'form' && isBranchValid.value)
-
-/** 目录名预览：分支名 / → -（与 runtime 派生规则一致） */
-const dirPreview = computed(() => {
-  const n = trimmedName.value
-  if (!n) return ''
-  return n.replace(/\//g, '-')
-})
-
-/** 当前分支名（base current 文案 + workspaceHint 兜底） */
+const pendingCwd = computed(() => flow.currentCwd.value)
 const currentBranch = computed(() => flow.gitInfo.value?.branch ?? 'main')
+const trimmedName = computed(() => branchName.value.trim())
+const isBranchValid = computed(() => { const n = trimmedName.value; return n.length > 0 && !INVALID_BRANCH_REGEX.test(n) })
+const showFormatError = computed(() => branchName.value.length > 0 && !isBranchValid.value)
+const canSubmit = computed(() => phase.value === 'form' && isBranchValid.value && baseBranch.value.length > 0)
+const dirPreview = computed(() => { const n = trimmedName.value; return n ? n.replace(/\//g, '-') : '' })
+const isBareMode = computed(() => repoMode.value === 'bare-workspace')
+const isPlainRepoMode = computed(() => repoMode.value === 'plain-repo')
+const isNotRepoMode = computed(() => repoMode.value === 'not-repo')
+const dedicatedDirPreview = computed(() => `~/worktrees/${dirPreview.value || '...'}`)
 
-/** progress 态步骤列表（3 步：创建分支 / 检出目录 / 运行 setup 脚本） */
-const progressSteps = computed<ProgressStep[]>(() => [
+const allBranchItems = computed<BranchItem[]>(() => {
+  const items: BranchItem[] = [{ name: currentBranch.value, group: 'quick' }]
+  for (const b of remoteBranches.value) items.push({ name: b, group: 'remote' })
+  for (const b of localBranches.value) { if (b !== currentBranch.value) items.push({ name: b, group: 'local' }) }
+  return items
+})
+const filteredBranchItems = computed(() => {
+  const q = baseSearch.value.trim().toLowerCase()
+  return q ? allBranchItems.value.filter((i) => i.name.toLowerCase().includes(q)) : allBranchItems.value
+})
+const baseDisplayLabel = computed(() => baseBranch.value || t('newTask.createWorktree.baseSearchPlaceholder'))
+const progressSteps = computed(() => [
   { testid: 'worktree-step-0', label: t('newTask.createWorktree.stepCreateBranch') },
   { testid: 'worktree-step-1', label: t('newTask.createWorktree.stepCheckoutDir') },
   { testid: 'worktree-step-2', label: t('newTask.createWorktree.stepRunSetup') },
 ])
 
-// Dialog open 永远 true（组件挂载即开，父级按 state==='worktree-modal' 控制挂载，
-// Dialog 内只管自身 open=true；:open 直接绑字面量，避免常量 computed 误导）。
-
-/** Dialog open 变化：open 永远 true，reka-ui Dialog 仍可能在 mount 时触发 open=true 的
- * update:open，故 `if (v) return` 防御性保留；progress 态不可关闭（D4 决策），其他态 false → emit close。 */
-function onOpenChange(v: boolean): void {
-  if (v) return
-  // progress 态：忽略外部关闭（防止误点遮罩中断创建）
-  if (phase.value === 'progress') return
-  emit('close')
+/** 按分组过滤（模板 v-for 用） */
+function groupItems(group: BranchItem['group']): BranchItem[] {
+  return filteredBranchItems.value.filter((i) => i.group === group)
 }
 
-/** 选 base：segmented 点击 */
-function selectBase(b: 'current' | 'origin/main'): void {
-  baseBranch.value = b
-}
-
-/** 提交创建：form → progress → 调 worktreeApi.create → success/error/exists */
-async function submitCreate(): Promise<void> {
-  if (!canSubmit.value) return
-  await runCreate(trimmedName.value, baseBranch.value)
-}
-
-/**
- * 调 worktreeApi.create 并按结果切态。
- * 重试也走此路径（用上次提交的 branch + baseBranch）。
- */
-async function runCreate(branch: string, base: 'current' | 'origin/main'): Promise<void> {
-  phase.value = 'progress'
-  lastError.value = null
-  logExpanded.value = false
+// ── 仓库检测 + 分支加载 ──
+onMounted(async () => {
+  nextTick(() => { const el = inputRef.value?.$el as HTMLInputElement | undefined; el?.focus() })
+  const cwd = pendingCwd.value
+  if (!cwd) { repoDetectLoading.value = false; branchesLoading.value = false; return }
   try {
-    const result = await worktreeApi.create({
-      branch,
-      baseBranch: base,
-    })
-    // 卸载后不再 mutate phase / 不 schedule（避免对已卸载组件副作用）
-    if (cancelled) return
-    // 成功 → success 态，2s 后 emit success + close
-    phase.value = 'success'
-    scheduleSuccessEmit(result.cwd)
+    const result = await detectWorkspace(cwd)
+    if (cancelled.value) return
+    repoMode.value = result.mode
+    repoPath.value = result.mode === 'bare-workspace' ? result.wsRoot : result.repoRoot
+    defaultBranch.value = result.defaultBranch || 'main'
+    baseBranch.value = `origin/${defaultBranch.value}`
+    locationMode.value = result.mode === 'bare-workspace' ? 'workspace' : 'dedicated-dir'
+  } catch {
+    repoMode.value = 'not-repo'
+  } finally { repoDetectLoading.value = false }
+  const repoCwd = repoPath.value || cwd
+  if (repoMode.value !== 'not-repo') {
+    try {
+      const branches = await worktreeApi.listBranches(repoCwd)
+      if (cancelled.value) return
+      remoteBranches.value = branches.remote
+      localBranches.value = branches.local
+      if (branches.defaultBranch) { defaultBranch.value = branches.defaultBranch; baseBranch.value = `origin/${branches.defaultBranch}` }
+    } catch (e) {
+      // best-effort: 分支加载失败不阻断，用 workspace.detect 的 defaultBranch 兜底
+      console.warn('[CreateWorktreeModal] listBranches failed, falling back to workspace.detect defaultBranch:', e)
+    } finally { branchesLoading.value = false }
+  } else { branchesLoading.value = false }
+})
+
+// ── Dialog ──
+function onOpenChange(v: boolean): void { if (v || phase.value === 'progress') return; emit('close') }
+
+// ── base combobox ──
+function selectBaseBranch(name: string): void { baseBranch.value = name; basePopoverOpen.value = false; baseSearch.value = '' }
+function onBasePopoverOpenChange(open: boolean): void {
+  basePopoverOpen.value = open
+  if (open) nextTick(() => { (document.querySelector('[data-testid="worktree-base-search"]') as HTMLInputElement)?.focus() })
+}
+
+// ── 创建位置 ──
+function selectLocation(mode: LocationMode): void { locationMode.value = mode }
+
+// ── 仓库更换（plain-repo） ──
+async function onChangeRepo(): Promise<void> {
+  try {
+    const result = await pickDirectory({ defaultPath: pendingCwd.value ?? undefined })
+    if (result.canceled || !result.path) return
+    const detectResult = await detectWorkspace(result.path)
+    if (cancelled.value) return
+    repoMode.value = detectResult.mode
+    repoPath.value = detectResult.mode === 'bare-workspace' ? detectResult.wsRoot : detectResult.repoRoot
+    defaultBranch.value = detectResult.defaultBranch || 'main'
+    baseBranch.value = `origin/${defaultBranch.value}`
+    if (cancelled.value) return
+    branchesLoading.value = true
+    try {
+      const branches = await worktreeApi.listBranches(repoPath.value || result.path)
+      if (cancelled.value) return
+      remoteBranches.value = branches.remote; localBranches.value = branches.local
+      if (branches.defaultBranch) { defaultBranch.value = branches.defaultBranch; baseBranch.value = `origin/${branches.defaultBranch}` }
+    } catch (e) {
+      // best-effort: 分支加载失败不阻断
+      console.warn('[CreateWorktreeModal] listBranches failed after repo change:', e)
+    } finally { branchesLoading.value = false }
   } catch (e) {
-    if (cancelled) return
-    const err = (e as WorktreeError) ?? {}
-    lastError.value = err
-    if (err.code === 'WORKTREE_EXISTS') {
-      phase.value = 'exists'
-    } else {
-      phase.value = 'error'
-    }
+    // best-effort: pickDirectory 失败静默降级，用户可重试
+    console.warn('[CreateWorktreeModal] onChangeRepo failed:', e)
   }
 }
 
-/** 安排 success 态 2s 后 emit success + close（CM-6 时序契约） */
-function scheduleSuccessEmit(cwd: string): void {
-  clearSuccessTimer()
-  successTimer = setTimeout(() => {
-    emit('success', cwd)
-    emit('close')
-  }, SUCCESS_EMIT_DELAY_MS)
-}
-
-function clearSuccessTimer(): void {
-  if (successTimer != null) {
-    clearTimeout(successTimer)
-    successTimer = null
+// ── 提交创建 ──
+async function submitCreate(): Promise<void> { if (canSubmit.value) await runCreate(trimmedName.value, baseBranch.value) }
+async function runCreate(branch: string, base: string): Promise<void> {
+  phase.value = 'progress'; lastError.value = null; logExpanded.value = false
+  try {
+    const result = await worktreeApi.create({ branch, baseBranch: base, locationMode: locationMode.value, workspaceHint: repoPath.value || pendingCwd.value || undefined })
+    if (cancelled.value) return
+    phase.value = 'success'; scheduleSuccessEmit(result.cwd)
+  } catch (e) {
+    if (cancelled.value) return
+    const err = (e as WorktreeError) ?? {}; lastError.value = err
+    phase.value = err.code === 'WORKTREE_EXISTS' ? 'exists' : 'error'
   }
 }
-
-/** error 态重试：用上次提交参数重新调 create */
-async function onRetry(): Promise<void> {
-  // 用当前表单值（用户可能改过分支名，但典型场景是同分支重试）
-  await runCreate(trimmedName.value, baseBranch.value)
-}
-
-/** error 态「关闭」：emit close（MVP 不清理 worktree 目录——SETUP_FAILED 时 git worktree add
- * 可能已建目录，但本按钮只关 modal；下次同分支创建会走 WORKTREE_EXISTS → exists 态「直接开始」复用）。 */
-function onCleanup(): void {
-  emit('close')
-}
-
-/** exists 态「直接开始」：emit use-existing(已存在 cwd)。
- *  注：exists 态唯一入口是 runCreate catch 且 code === 'WORKTREE_EXISTS'，此时 lastError.cwd 必有值
- *  （routeInbound 把 detail.{cwd,dirName} 展开到 Error 上）；不再 fallback successCwd（success 态不会进 exists）。 */
-function onUseExisting(): void {
-  const cwd = lastError.value?.cwd
-  if (cwd) emit('use-existing', cwd)
-}
-
-/** 取消（form 态） */
-function onCancel(): void {
-  emit('close')
-}
-
-onMounted(() => {
-  // form 态打开即 focus input（Dialog teleport 后 nextTick 取 $el）
-  nextTick(() => {
-    const el = inputRef.value?.$el as HTMLInputElement | undefined
-    el?.focus()
-  })
-})
-
-onBeforeUnmount(() => {
-  cancelled = true
-  clearSuccessTimer()
-})
+function scheduleSuccessEmit(cwd: string): void { clearSuccessTimer(); successTimer.value = setTimeout(() => { emit('success', { cwd }); emit('close') }, SUCCESS_EMIT_DELAY_MS) }
+function clearSuccessTimer(): void { if (successTimer.value != null) { clearTimeout(successTimer.value); successTimer.value = null } }
+async function onRetry(): Promise<void> { await runCreate(trimmedName.value, baseBranch.value) }
+function onCleanup(): void { emit('close') }
+function onUseExisting(): void { const cwd = lastError.value?.cwd; if (cwd) emit('use-existing', { cwd }) }
+function onCancel(): void { emit('close') }
+onBeforeUnmount(() => { cancelled.value = true; clearSuccessTimer() })
 </script>
 
 <template>
   <Dialog :open="true" @update:open="onOpenChange">
-    <DialogContent
-      data-testid="create-worktree-modal"
-      class="sm:max-w-[560px]"
-      :hide-close="phase === 'progress'"
-    >
+    <DialogContent data-testid="create-worktree-modal" class="sm:max-w-[560px]" :hide-close="phase === 'progress'">
       <DialogHeader>
         <DialogTitle>{{ t('newTask.createWorktree.title') }}</DialogTitle>
-        <DialogDescription>
-          {{ t('newTask.createWorktree.desc') }}
-        </DialogDescription>
+        <DialogDescription>{{ t('newTask.createWorktree.desc') }}</DialogDescription>
       </DialogHeader>
 
-      <!-- ── form 态：分支名 + base + 预览 + 创建/取消 ── -->
+      <!-- ── form 态 ── -->
       <div v-if="phase === 'form'" class="mt-2 space-y-4">
+        <!-- Git 仓库选择器 -->
+        <div class="space-y-1.5">
+          <Label>{{ t('newTask.createWorktree.repoLabel') }}</Label>
+          <div v-if="repoDetectLoading" data-testid="repo-loading" class="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+            <Loader2 class="size-4 animate-spin text-subtle" /><span class="text-[13px] text-subtle">...</span>
+          </div>
+          <div v-else-if="isBareMode" data-testid="repo-bare" class="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+            <Folder class="size-4 shrink-0 text-subtle" />
+            <span class="flex-1 truncate font-mono text-[13px] text-fg">{{ repoPath }}</span>
+            <span data-testid="repo-bare-badge" class="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">{{ t('newTask.createWorktree.repoBareBadge') }}</span>
+          </div>
+          <div v-else-if="isPlainRepoMode" data-testid="repo-plain" class="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+            <FolderOpen class="size-4 shrink-0 text-subtle" />
+            <span class="flex-1 truncate font-mono text-[13px] text-fg">{{ repoPath }}</span>
+            <Button type="button" variant="ghost" data-testid="repo-change-btn" class="h-auto shrink-0 px-2 py-0.5 text-[12px] text-accent hover:text-accent" @click="onChangeRepo">{{ t('newTask.createWorktree.repoChange') }}</Button>
+          </div>
+          <div v-else data-testid="repo-not-repo" class="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 opacity-60">
+            <AlertTriangle class="size-4 shrink-0 text-warning" />
+            <span class="text-[13px] text-muted">{{ t('newTask.createWorktree.repoNotRepo') }}</span>
+          </div>
+        </div>
+
+        <!-- 分支名 -->
         <div class="space-y-1.5">
           <Label for="worktree-branch-input">{{ t('newTask.createWorktree.branchLabel') }}</Label>
-          <Input
-            id="worktree-branch-input"
-            ref="inputRef"
-            v-model="branchName"
-            data-testid="worktree-branch-input"
-            :placeholder="t('newTask.createWorktree.branchPlaceholder')"
-            autocomplete="off"
-            :class="showFormatError ? '!border-destructive' : ''"
-          />
-          <p
-            v-if="showFormatError"
-            data-testid="worktree-branch-error"
-            class="text-[12px] text-danger"
-          >
-            {{ t('newTask.createWorktree.branchValidation') }}
-          </p>
+          <Input id="worktree-branch-input" ref="inputRef" v-model="branchName" data-testid="worktree-branch-input" :placeholder="t('newTask.createWorktree.branchPlaceholder')" autocomplete="off" :class="showFormatError ? '!border-destructive' : ''" :disabled="isNotRepoMode" />
+          <p v-if="showFormatError" data-testid="worktree-branch-error" class="text-[12px] text-danger">{{ t('newTask.createWorktree.branchValidation') }}</p>
         </div>
 
-        <!-- 目录名预览（/ → -） -->
+        <!-- 目录名预览 -->
         <div class="space-y-1">
           <p class="text-[12px] text-subtle">{{ t('newTask.createWorktree.dirPreviewLabel') }}</p>
-          <p
-            data-testid="worktree-dir-preview"
-            class="rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[13px] text-fg"
-          >
-            {{ dirPreview || '—' }}
-          </p>
+          <p data-testid="worktree-dir-preview" class="rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[13px] text-fg">{{ dirPreview || '—' }}</p>
         </div>
 
-        <!-- base 分支 segmented（默认 origin/main） -->
+        <!-- base 分支可搜索 combobox -->
         <div class="space-y-1">
           <p class="text-[12px] text-subtle">{{ t('newTask.createWorktree.baseLabel') }}</p>
-          <div class="inline-flex rounded-md border border-border p-0.5">
+          <Popover :open="basePopoverOpen" @update:open="onBasePopoverOpenChange">
+            <PopoverTrigger as-child>
+              <Button type="button" variant="ghost" data-testid="worktree-base-trigger" class="h-auto w-full justify-between rounded-md border border-border bg-surface-2 px-3 py-2 text-left text-[13px] text-fg hover:bg-surface-hover" :disabled="isNotRepoMode || branchesLoading">
+                <span class="flex items-center gap-2 truncate"><GitBranch class="size-3.5 shrink-0 text-subtle" /><span class="truncate">{{ baseDisplayLabel }}</span></span>
+                <ChevronDown class="size-3.5 shrink-0 text-subtle" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent class="w-[var(--reka-popover-trigger-width)] p-0" align="start">
+              <div class="border-b border-border p-2">
+                <Input v-model="baseSearch" data-testid="worktree-base-search" :placeholder="t('newTask.createWorktree.baseSearchPlaceholder')" class="h-8 bg-surface-2 text-[13px]" />
+              </div>
+              <div class="max-h-60 overflow-y-auto py-1">
+                <template v-for="(group, gIdx) in (['quick', 'remote', 'local'] as const)" :key="group">
+                  <div v-if="groupItems(group).length > 0" :class="gIdx > 0 ? 'mt-1 border-t border-border' : ''" class="px-3 py-1 text-[11px] text-subtle">
+                    {{ group === 'quick' ? t('newTask.createWorktree.baseGroupQuick') : group === 'remote' ? t('newTask.createWorktree.baseGroupRemote') : t('newTask.createWorktree.baseGroupLocal') }}
+                  </div>
+                  <Button v-for="item in groupItems(group)" :key="`${group}-${item.name}`" type="button" variant="ghost" data-testid="worktree-base-item" :data-branch="item.name" class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-surface-hover" :class="baseBranch === item.name ? 'bg-accent/10 text-accent' : 'text-fg'" @click="selectBaseBranch(item.name)">
+                    <span class="flex-1 truncate font-mono">{{ item.name }}</span>
+                    <Check v-if="baseBranch === item.name" class="size-3.5 shrink-0 text-accent" />
+                  </Button>
+                </template>
+                <div v-if="filteredBranchItems.length === 0" class="px-3 py-4 text-center text-[12px] text-muted">—</div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        <!-- 创建位置 radio（用 Button + aria-pressed 表达单选；不用原生 <input type="radio">） -->
+        <div class="space-y-1">
+          <p class="text-[12px] text-subtle">{{ t('newTask.createWorktree.locationLabel') }}</p>
+          <div v-if="isBareMode" class="space-y-1">
             <Button
+              type="button"
               variant="ghost"
-              data-testid="worktree-base-current"
-              :aria-checked="baseBranch === 'current'"
-              :class="[
-                'h-auto rounded px-3 py-1 text-[12px]',
-                baseBranch === 'current'
-                  ? 'bg-accent text-white hover:bg-accent selected active checked'
-                  : 'text-muted hover:bg-surface-hover',
-              ]"
-              @click="selectBase('current')"
+              data-testid="location-workspace"
+              role="radio"
+              :aria-checked="locationMode === 'workspace'"
+              class="flex h-auto w-full cursor-pointer items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors hover:bg-transparent"
+              :class="locationMode === 'workspace' ? 'border-accent bg-accent/5 text-fg hover:bg-accent/5' : 'border-border bg-surface-2 text-fg hover:bg-surface-2'"
+              @click="selectLocation('workspace')"
             >
-              {{ t('newTask.createWorktree.baseCurrent', { branch: currentBranch }) }}
+              <span class="size-3.5 shrink-0 rounded-full border" :class="locationMode === 'workspace' ? 'border-accent bg-accent' : 'border-border'" />
+              <span class="text-[13px]">{{ t('newTask.createWorktree.locationWorkspace') }}</span>
+            </Button>
+          </div>
+          <div v-else-if="isPlainRepoMode" class="space-y-1">
+            <Button
+              type="button"
+              variant="ghost"
+              data-testid="location-repo-dir"
+              role="radio"
+              :aria-checked="locationMode === 'repo-dir'"
+              class="flex h-auto w-full cursor-pointer items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors hover:bg-transparent"
+              :class="locationMode === 'repo-dir' ? 'border-accent bg-accent/5 text-fg hover:bg-accent/5' : 'border-border bg-surface-2 text-fg hover:bg-surface-2'"
+              @click="selectLocation('repo-dir')"
+            >
+              <span class="size-3.5 shrink-0 rounded-full border" :class="locationMode === 'repo-dir' ? 'border-accent bg-accent' : 'border-border'" />
+              <span class="text-[13px]">{{ t('newTask.createWorktree.locationRepoDir') }}</span>
             </Button>
             <Button
+              type="button"
               variant="ghost"
-              data-testid="worktree-base-main"
-              :aria-checked="baseBranch === 'origin/main'"
-              :class="[
-                'h-auto rounded px-3 py-1 text-[12px]',
-                baseBranch === 'origin/main'
-                  ? 'bg-accent text-white hover:bg-accent selected active checked'
-                  : 'text-muted hover:bg-surface-hover',
-              ]"
-              @click="selectBase('origin/main')"
+              data-testid="location-dedicated-dir"
+              role="radio"
+              :aria-checked="locationMode === 'dedicated-dir'"
+              class="flex h-auto w-full cursor-pointer items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors hover:bg-transparent"
+              :class="locationMode === 'dedicated-dir' ? 'border-accent bg-accent/5 text-fg hover:bg-accent/5' : 'border-border bg-surface-2 text-fg hover:bg-surface-2'"
+              @click="selectLocation('dedicated-dir')"
             >
-              {{ t('newTask.createWorktree.baseMain') }}
+              <span class="size-3.5 shrink-0 rounded-full border" :class="locationMode === 'dedicated-dir' ? 'border-accent bg-accent' : 'border-border'" />
+              <span class="flex-1 text-left text-[13px]">{{ t('newTask.createWorktree.locationDedicatedDir', { dir: dedicatedDirPreview }) }}</span>
+              <span data-testid="location-recommended-badge" class="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">{{ t('newTask.createWorktree.locationRecommended') }}</span>
             </Button>
           </div>
         </div>
 
         <div class="flex justify-end gap-2 pt-1">
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="worktree-cancel-btn"
-            @click="onCancel"
-          >
-            {{ t('newTask.createWorktree.cancelBtn') }}
-          </Button>
-          <Button
-            type="button"
-            data-testid="worktree-create-btn"
-            :disabled="!canSubmit"
-            @click="submitCreate"
-          >
-            {{ t('newTask.createWorktree.createBtn') }}
-          </Button>
+          <Button type="button" variant="secondary" data-testid="worktree-cancel-btn" @click="onCancel">{{ t('newTask.createWorktree.cancelBtn') }}</Button>
+          <Button type="button" data-testid="worktree-create-btn" :disabled="!canSubmit" @click="submitCreate">{{ t('newTask.createWorktree.createBtn') }}</Button>
         </div>
       </div>
 
-      <!-- ── progress 态：loading bar + 3 步 + log toggle（无关闭 X） ── -->
+      <!-- ── progress 态 ── -->
       <div v-else-if="phase === 'progress'" class="mt-2 space-y-3">
-        <!-- 顶部 loading bar -->
-        <div
-          data-testid="worktree-loading-bar"
-          class="h-1 w-full overflow-hidden rounded-full bg-surface-2"
-        >
-          <div class="h-full w-1/3 animate-pulse rounded-full bg-accent"></div>
-        </div>
-
-        <!-- 3 步列表（MVP：create 是 await 到完成，无法实时联调每步状态，统一显进行中） -->
+        <div data-testid="worktree-loading-bar" class="h-1 w-full overflow-hidden rounded-full bg-surface-2"><div class="h-full w-1/3 animate-pulse rounded-full bg-accent"></div></div>
         <ul class="space-y-2">
-          <li
-            v-for="(step, idx) in progressSteps"
-            :key="step.testid"
-            :data-testid="step.testid"
-            class="flex items-center gap-2 text-[13px]"
-          >
-            <Loader2 class="size-4 animate-spin text-accent" />
-            <span class="text-fg">{{ step.label }}</span>
-            <span v-if="idx === progressSteps.length - 1" class="ml-auto text-[11px] text-subtle">
-              ...
-            </span>
+          <li v-for="(step, idx) in progressSteps" :key="step.testid" :data-testid="step.testid" class="flex items-center gap-2 text-[13px]">
+            <Loader2 class="size-4 animate-spin text-accent" /><span class="text-fg">{{ step.label }}</span>
+            <span v-if="idx === progressSteps.length - 1" class="ml-auto text-[11px] text-subtle">...</span>
           </li>
         </ul>
-
-        <!-- 实时输出折叠开关（MVP：占位 UI，输出源待 runtime stream 接通） -->
-        <Button
-          variant="ghost"
-          data-testid="worktree-log-toggle"
-          class="h-auto w-full justify-start gap-1 rounded px-1 py-0.5 text-[12px] text-subtle"
-          @click="logExpanded = !logExpanded"
-        >
-          <ChevronDown v-if="logExpanded" class="size-3.5" />
-          <ChevronRight v-else class="size-3.5" />
+        <Button variant="ghost" data-testid="worktree-log-toggle" class="h-auto w-full justify-start gap-1 rounded px-1 py-0.5 text-[12px] text-subtle" @click="logExpanded = !logExpanded">
+          <ChevronDown v-if="logExpanded" class="size-3.5" /><ChevronRight v-else class="size-3.5" />
           {{ t('newTask.createWorktree.showLog') }}
         </Button>
       </div>
 
-      <!-- ── success 态：成功图标 + 提示 ── -->
+      <!-- ── success 态 ── -->
       <div v-else-if="phase === 'success'" data-testid="worktree-success" class="mt-2 space-y-3">
         <div class="flex items-center gap-3">
-          <div class="flex size-9 items-center justify-center rounded-full bg-accent-soft">
-            <Check class="size-5 text-accent" />
-          </div>
+          <div class="flex size-9 items-center justify-center rounded-full bg-accent-soft"><Check class="size-5 text-accent" /></div>
           <div class="space-y-0.5">
-            <p class="text-[14px] font-medium text-fg">
-              {{ t('newTask.createWorktree.successTitle') }}
-            </p>
+            <p class="text-[14px] font-medium text-fg">{{ t('newTask.createWorktree.successTitle') }}</p>
             <p class="text-[12px] text-subtle">{{ t('newTask.createWorktree.successDesc') }}</p>
           </div>
         </div>
       </div>
 
-      <!-- ── error 态：失败步骤 + stderr + 重试/清理 ── -->
+      <!-- ── error 态 ── -->
       <div v-else-if="phase === 'error'" class="mt-2 space-y-3">
         <div class="flex items-start gap-2">
           <AlertTriangle class="mt-0.5 size-4 shrink-0 text-danger" />
           <div data-testid="worktree-step-failed" class="min-w-0 flex-1 space-y-1">
-            <p class="text-[13px] font-medium text-fg">
-              {{ t('newTask.createWorktree.failedStep') }}
-            </p>
-            <p v-if="lastError?.code" class="text-[11px] text-subtle">
-              code: {{ lastError.code }}
-              <template v-if="lastError.exitCode != null"> · exit {{ lastError.exitCode }}</template>
-            </p>
+            <p class="text-[13px] font-medium text-fg">{{ t('newTask.createWorktree.failedStep') }}</p>
+            <p v-if="lastError?.code" class="text-[11px] text-subtle">code: {{ lastError.code }}<template v-if="lastError.exitCode != null"> · exit {{ lastError.exitCode }}</template></p>
           </div>
         </div>
-
-        <!-- 错误输出（stderr） -->
-        <pre
-          v-if="lastError?.stderr"
-          data-testid="worktree-error-output"
-          class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 font-mono text-[11px] text-fg"
-          >{{ lastError.stderr }}</pre
-        >
-        <pre
-          v-else
-          data-testid="worktree-error-output"
-          class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 font-mono text-[11px] text-fg"
-          >{{ lastError?.message ?? '' }}</pre
-        >
-
+        <pre v-if="lastError?.stderr" data-testid="worktree-error-output" class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 font-mono text-[11px] text-fg">{{ lastError.stderr }}</pre>
+        <pre v-else data-testid="worktree-error-output" class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 font-mono text-[11px] text-fg">{{ lastError?.message ?? '' }}</pre>
         <div class="flex justify-end gap-2 pt-1">
-          <Button
-            type="button"
-            variant="ghost"
-            data-testid="worktree-cleanup-btn"
-            @click="onCleanup"
-          >
-            {{ t('newTask.createWorktree.cleanupBtn') }}
-          </Button>
-          <Button
-            type="button"
-            variant="default"
-            data-testid="worktree-retry-btn"
-            class="primary"
-            @click="onRetry"
-          >
-            {{ t('newTask.createWorktree.retryBtn') }}
-          </Button>
+          <Button type="button" variant="ghost" data-testid="worktree-cleanup-btn" @click="onCleanup">{{ t('newTask.createWorktree.cleanupBtn') }}</Button>
+          <Button type="button" variant="default" data-testid="worktree-retry-btn" class="primary" @click="onRetry">{{ t('newTask.createWorktree.retryBtn') }}</Button>
         </div>
       </div>
 
-      <!-- ── exists 态：已存在提示 + 直接开始 ── -->
+      <!-- ── exists 态 ── -->
       <div v-else-if="phase === 'exists'" class="mt-2 space-y-3">
-        <div
-          data-testid="worktree-exists-notice"
-          class="flex items-start gap-2 rounded-md border border-border bg-surface-2 p-3"
-        >
-          <AlertTriangle class="mt-0.5 size-4 shrink-0 text-warning" />
-          <p class="text-[13px] text-fg">{{ t('newTask.createWorktree.existsNotice') }}</p>
+        <div data-testid="worktree-exists-notice" class="flex items-start gap-2 rounded-md border border-border bg-surface-2 p-3">
+          <AlertTriangle class="mt-0.5 size-4 shrink-0 text-warning" /><p class="text-[13px] text-fg">{{ t('newTask.createWorktree.existsNotice') }}</p>
         </div>
         <div class="flex justify-end gap-2 pt-1">
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="worktree-cancel-btn"
-            @click="onCancel"
-          >
-            {{ t('newTask.createWorktree.cancelBtn') }}
-          </Button>
-          <Button
-            type="button"
-            variant="default"
-            data-testid="worktree-use-existing-btn"
-            @click="onUseExisting"
-          >
-            {{ t('newTask.createWorktree.useExistingBtn') }}
-          </Button>
+          <Button type="button" variant="secondary" data-testid="worktree-cancel-btn" @click="onCancel">{{ t('newTask.createWorktree.cancelBtn') }}</Button>
+          <Button type="button" variant="default" data-testid="worktree-use-existing-btn" @click="onUseExisting">{{ t('newTask.createWorktree.useExistingBtn') }}</Button>
         </div>
       </div>
     </DialogContent>

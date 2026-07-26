@@ -49,7 +49,14 @@ vi.mock('@/stores/fileTree', () => ({
   useFileTreeStore: () => ({ fileCount: 0, getTree: () => null, getNodeState: () => 'idle', setNodeState: vi.fn() }),
 }))
 vi.mock('@/stores/panel', () => ({
-  usePanelStore: () => ({ panels: [{ id: 'root', sessionId: null }], activePanelId: 'root', isDual: false }),
+  usePanelStore: () => ({
+    currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
+    activePanelId: 'panel-root',
+    focusedSessionId: { value: null },
+    layout: { value: { type: 'panel', id: 'panel-root', sessionId: null } },
+    findPanelBySession: () => null,
+    loadSession: vi.fn(),
+  }),
 }))
 vi.mock('@/stores/subagent', () => ({
   useSubagentStore: () => ({ recordsOf: () => ({ value: [] }), getRecordsBySession: () => [], hasRunning: () => false, isLoading: false, loadError: null }),

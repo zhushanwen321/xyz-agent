@@ -315,14 +315,15 @@ async function main(): Promise<void> {
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }
 
-  // WorktreeService：编排 .bare workspace 下 worktree 创建（git worktree add + setup-worktree.sh）。
+  // WorktreeService：编排 worktree 创建（bare-workspace / plain-repo 两种模式）。
   // 依赖全注入：GitExecutor（git 子命令）/ ShellRunner（setup 脚本，用 child_process.spawn）/
-  // GitInfoReader（当前分支查询）/ fs（existsSync，检测 .bare 与目录冲突）。
+  // GitInfoReader（当前分支查询）/ ConfigService（worktreeRootDir 配置）/ fs（existsSync，检测 .bare 与目录冲突）。
   // 经 server.setServices 注入到 WorktreeMessageHandler（worktree.create 路由）。
   const worktreeService = new WorktreeService({
     gitExecutor: new GitExecutor(),
     shellRunner: new ShellRunner({ spawn }),
     gitInfoReader: new GitInfoReader(),
+    configService,
     fs,
   })
 

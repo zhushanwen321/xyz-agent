@@ -51,9 +51,6 @@ function mountPanel(sessionId: string | null) {
       sessionLabel: sessionId ?? '',
       sessionDir: '/repo',
       status: 'done' as never,
-      active: true,
-      isDual: false,
-      isFirstPanel: true,
     },
     global: { stubs: panelStubs },
   })

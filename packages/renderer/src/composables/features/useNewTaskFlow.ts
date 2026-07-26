@@ -45,7 +45,6 @@ import {
 } from '@/composables/new-task/useNewTaskFlowState'
 import { useNewTaskBranch } from '@/composables/new-task/useNewTaskBranch'
 import { useNewTaskDirSelect } from '@/composables/new-task/useNewTaskDirSelect'
-import { useNewTaskWorktree } from '@/composables/new-task/useNewTaskWorktree'
 
 // 重导出供既有 import 消费（types + reset 原从本模块导入，保持非破坏）
 export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTaskFlowState'
@@ -91,17 +90,29 @@ export function useNewTaskFlow() {
     () => currentSession.value?.modelId ?? pendingModel.value,
   )
 
+  // 选目录子 composable（需在 gitInfo 前创建：gitInfo landing 态 fallback 读 dirSelect.mode/worktreeItems）
+  const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
+
+
   /**
-   * gitInfo（UC-7 chip 可见性派生）：从当前 flow 绑定 session 的 gitBranch 派生。
-   * 统一延迟 create 后 landing 态无 session → null → branch chip 隐藏（分支切换需已建 session）。
-   *
-   * R1：isBare 从 session.isBareWorkspace 派生（runtime WorkspaceDetector 检测，经
-   * SessionSummary 透出）。Landing.vue 据此渲染 DirSelectPopover「新建 worktree…」动作项。
+   * gitInfo（UC-7 chip 可见性 + openBranchPopover 守卫派生）。
+   * 数据源优先级：
+   * 1. session 态（已建 session）：currentSession.gitBranch / isBareWorkspace
+   * 2. landing 态（无 session，延迟 create）：dirSelect 的 mode + worktreeItems HEAD 项
+   *    —— landing 态无 session，旧实现只从 session 派生导致恒 null，branch chip 永不显示、
+   *       openBranchPopover 守卫必抛错。改为合并 landing 态数据源。
    */
   const gitInfo: ComputedRef<GitInfo | null> = computed(() => {
     const s = currentSession.value
-    if (!s?.gitBranch) return null
-    return { branch: s.gitBranch, isRepo: true, isBare: s.isBareWorkspace ?? false }
+    if (s?.gitBranch) {
+      return { branch: s.gitBranch, isRepo: true, isBare: s.isBareWorkspace ?? false }
+    }
+    // landing 态 fallback：从 dirSelect 的 pendingCwd 驱动数据派生
+    if (dirSelect.mode.value !== 'not-repo') {
+      const head = dirSelect.worktreeItems.value?.find(w => w.HEAD)
+      return { branch: head?.branch ?? '', isRepo: true, isBare: dirSelect.isBare.value }
+    }
+    return null
   })
 
   /**
@@ -266,17 +277,12 @@ export function useNewTaskFlow() {
   const branch = useNewTaskBranch(
     () => currentSessionId.value,
     () => gitInfo.value,
+    () => currentCwd.value,
     {
       setBranchCreateInFlight: controller.setBranchCreateInFlight,
       transitionUnchecked: controller.transitionUnchecked,
     },
   )
-  const dirSelect = useNewTaskDirSelect(() => currentCwd.value)
-  const worktree = useNewTaskWorktree(
-    () => currentCwd.value,
-    () => gitInfo.value,
-  )
-
   /**
    * 任意 overlay→landing（Esc/点外）。同一时刻只一层（AC-3.9）。幂等：仅当前处于 overlay 态
    * 才转换，否则 noop——避免重复调用导致 landing→landing 非法转换（state 被打回 idle）。
@@ -333,8 +339,9 @@ export function useNewTaskFlow() {
     submitCreateBranch: branch.submitCreateBranch,
     openCreateWorktree: dirSelect.openWorktreeModal,
     isBare: dirSelect.isBare,
-    createWorktree: worktree.createWorktree,
-    startCreateWorktree: worktree.startCreateWorktree,
+    mode: dirSelect.mode,
+    worktreeItems: dirSelect.worktreeItems,
+
     closeOverlay,
     cancelFlow,
     reenterFlow,

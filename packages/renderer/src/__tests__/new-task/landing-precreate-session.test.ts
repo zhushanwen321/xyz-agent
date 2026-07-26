@@ -38,7 +38,7 @@ vi.mock('@/api', () => ({
   // submitFirstMessage → useFileTree.loadTree 调 fileApi.tree/gitApi.status（Promise.allSettled）；给空返回避免 unhandled rejection
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
-  workspace: { record: vi.fn().mockResolvedValue([]), listRecent: vi.fn().mockResolvedValue([]) },
+  workspace: { record: vi.fn().mockResolvedValue([]), listRecent: vi.fn().mockResolvedValue([]), detect: vi.fn().mockResolvedValue({ mode: 'not-repo', isBareMode: false, wsRoot: '', repoRoot: '' }) },
 }))
 
 // mock useChat.send（submitFirstMessage 会调）

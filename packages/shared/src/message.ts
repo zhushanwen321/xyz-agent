@@ -120,6 +120,9 @@ export type BgNotifyDetails = BgNotifyRecord | { batch: true; items: BgNotifyRec
  */
 export function parseBgNotifyDetails(details: unknown): BgNotifyDetails | null {
   if (!details || typeof details !== 'object') return null
+  // as 安全性：上方 typeof check 已排除 null/primitive，此处 details 一定是 object。
+  // Record<string, unknown> 比 object 更窄（可索引），用于后续属性访问。
+  // 每个字段读取都做 typeof 收窄（string/number/boolean），不信任运行时形状。
   const d = details as Record<string, unknown>
   // 批量形态
   if (d.batch === true && Array.isArray(d.items)) {

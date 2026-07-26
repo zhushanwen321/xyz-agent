@@ -10,6 +10,8 @@
  */
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
+import { command } from '../request'
+import type { ServerMessageMap } from '@xyz-agent/shared'
 
 export interface SystemSettings {
   locale: 'zh-CN' | 'en-US'
@@ -17,10 +19,12 @@ export interface SystemSettings {
   themePreset: string
   /** 字体大小：small/medium/large，缺省按 medium（D17） */
   fontSize?: 'small' | 'medium' | 'large'
+  /** 后台完成提示音开关 */
+  completionSound?: boolean
 }
 
 const SYSTEM_KEY = 'xyz-agent:system-settings'
-const DEFAULT_SYSTEM: SystemSettings = { locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue', fontSize: 'medium' }
+const DEFAULT_SYSTEM: SystemSettings = { locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue', fontSize: 'medium', completionSound: true }
 
 // ── 订阅（转发 config / extension 域）──
 export const onProviders = configDomain.onProviders
@@ -34,6 +38,68 @@ export const listProviders = configDomain.listProviders
 
 // ── 动作 ──
 export const setProvider = configDomain.setProvider
+
+// ── Worktree 配置（config.setWorktreeRootDir / config.getWorktreeRootDir）──
+/** worktree 专用目录配置 reply 类型。 */
+export type WorktreeRootDirReply = ServerMessageMap['config.worktreeRootDir']
+/** worktree 初始化脚本配置 reply 类型。 */
+type SetupScriptReply = ServerMessageMap['config.setupScript']
+/** bare-workspace 初始化脚本配置 reply 类型。 */
+type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
+/** worktree 创建超时时间配置 reply 类型。 */
+type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
+/** 默认基分支配置 reply 类型。 */
+type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
+
+/** 设置 worktree 专用目录（持久化到 settings.json）。 */
+export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
+  return command('config.setWorktreeRootDir', { dir })
+}
+
+/** 读取 worktree 专用目录配置。 */
+export async function getWorktreeRootDir(): Promise<WorktreeRootDirReply> {
+  return command('config.getWorktreeRootDir', {})
+}
+
+/** 设置 worktree 初始化脚本（持久化到 settings.json）。 */
+export async function setSetupScript(script: string): Promise<SetupScriptReply> {
+  return command('config.setSetupScript', { script })
+}
+
+/** 读取 worktree 初始化脚本配置。 */
+export async function getSetupScript(): Promise<SetupScriptReply> {
+  return command('config.getSetupScript', {})
+}
+
+/** 设置 bare-workspace 初始化脚本（持久化到 settings.json）。 */
+export async function setBareSetupScript(script: string): Promise<BareSetupScriptReply> {
+  return command('config.setBareSetupScript', { script })
+}
+
+/** 读取 bare-workspace 初始化脚本配置。 */
+export async function getBareSetupScript(): Promise<BareSetupScriptReply> {
+  return command('config.getBareSetupScript', {})
+}
+
+/** 设置 worktree 创建超时时间（秒，持久化到 settings.json）。 */
+export async function setWorktreeTimeout(timeout: number): Promise<WorktreeTimeoutReply> {
+  return command('config.setTimeout', { timeout })
+}
+
+/** 读取 worktree 创建超时时间配置。 */
+export async function getWorktreeTimeout(): Promise<WorktreeTimeoutReply> {
+  return command('config.getTimeout', {})
+}
+
+/** 设置默认基分支（持久化到 settings.json）。 */
+export async function setDefaultBaseBranch(baseBranch: string): Promise<DefaultBaseBranchReply> {
+  return command('config.setDefaultBaseBranch', { baseBranch })
+}
+
+/** 读取默认基分支配置。 */
+export async function getDefaultBaseBranch(): Promise<DefaultBaseBranchReply> {
+  return command('config.getDefaultBaseBranch', {})
+}
 
 // ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──
 export function getSystem(): Promise<SystemSettings> {

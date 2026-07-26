@@ -3,7 +3,7 @@
  *
  * 覆盖 U7-U11：
  * - U7  首屏冒烟：streaming/pending 态每条 assistant 有 fork 后台 + fork 提问按钮
- * - U8  forkSession 不再调 panel.split + selectSession（后台 fork 不切焦点）
+ * - U8  forkSession 后台 fork 不切焦点（activeId 不变，W2 fast-fork）
  * - U9  forkSessionAsk send 失败自动回滚（sessionApi.remove + removeFromList）
  * - U10 ForkNotice 反馈行 transient 渲染 + 查看降级（sessionDeleted 时纯文本不可点）
  * - U11 ForkConfirmModal 已删除（文件不存在 + Turn.vue 无 import）
@@ -133,14 +133,15 @@ describe('U7 首屏冒烟：streaming 态每条 assistant 有 fork 后台 + fork
   })
 })
 
-// ── U8：forkSession 不调 panel.split + selectSession ──────────────────────
-describe('U8：forkSession 后台 fork 不切焦点（不调 panel.split + selectSession）', () => {
-  it('fork 后台后焦点留在原 session（不切换面板）', async () => {
-    // 直接对真实 useSidebar 行为做断言：forkSession 内部不应再调 panel.split。
+// ── U8：forkSession 后台 fork 不切焦点（W2 fast-fork） ──────────────────────
+// 历史背景：v1 forkSession 内部调 panel.split() 把 fork 切到 standby panel（切焦点）。
+// v2 移除 split 后退化：openInStandby 选项保留为契约但行为恒为「不切焦点」（useForkActions.ts）。
+describe('U8：forkSession 后台 fork 不切焦点（不切 activeId）', () => {
+  it('fork 后台后焦点留在原 session（不切焦点）', async () => {
+    // 直接对真实 useSidebar 行为做断言：forkSession 后 activeId 应保持不变。
     const { useSidebar } = await import('@/composables/features/useSidebar')
     const sidebar = useSidebar()
 
-    const panelStore = (await import('@/stores/panel')).usePanelStore()
     const sessionStore = (await import('@/stores/session')).useSessionStore()
     const sessionApi = (await import('@/api')).session
 
@@ -158,14 +159,11 @@ describe('U8：forkSession 后台 fork 不切焦点（不调 panel.split + selec
     vi.spyOn(sessionApi, 'getCommands' as never).mockResolvedValue({ commands: [] } as never)
     vi.spyOn(sessionApi, 'getContext' as never).mockResolvedValue({} as never)
 
-    const splitSpy = vi.spyOn(panelStore, 'split')
     const beforeActive = sessionStore.activeId
 
     await sidebar.forkSession(sid, 'm1', { includeFrom: true, openInStandby: true })
 
-    // 红灯：当前实现 openInStandby 会 panel.split()（useSidebar.ts:466）→ splitSpy 被调
-    expect(splitSpy).not.toHaveBeenCalled()
-    // activeId 不应变（不切焦点）
+    // activeId 不应变（后台 fork 不切焦点，W2 fast-fork）
     expect(sessionStore.activeId).toBe(beforeActive)
   })
 })

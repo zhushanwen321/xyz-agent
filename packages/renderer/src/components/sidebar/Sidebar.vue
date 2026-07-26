@@ -29,7 +29,7 @@
         >
           <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('n') }}</kbd>
         </Button>
         <Button
           variant="ghost"
@@ -38,7 +38,7 @@
         >
           <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ K</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('k') }}</kbd>
         </Button>
       </nav>
 
@@ -207,10 +207,12 @@ import { useSidebarSubagentActions } from '@/composables/features/useSidebarSuba
 import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import * as events from '@/api/events'
 
 const { t } = useI18n()
 const searchModal = useSearchModal()
+const { formatKbd } = usePlatformShortcut()
 const { isOpen } = searchModal
 const navigation = useNavigationStore()
 const session = useSessionStore()

@@ -80,30 +80,6 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
     expect(focusedSessionId.value).toBe('s1')
   }, 10_000)
 
-  /**
-   * S16：split panel 切焦点时 Overview 卡片高亮跟随 focusedSessionId（非 session.activeId）。
-   * focusedSessionId = panel.activePanelId 绑定的 session；session.activeId 是导航/启动语义，
-   * 与高亮解耦（useSidebar §focusedSessionId 注释）。双 panel 各载不同 session 后切 active panel，
-   * focusedSessionId 应切到目标 panel 的 session，即使 activeId 不变。
-   */
-  it('S16 split panel 切焦点 → focusedSessionId 跟随 active panel（与 activeId 解耦）', async () => {
-    const panel = usePanelStore()
-    const { focusedSessionId } = useSidebar()
-    // 单 panel 默认载 s1（focusedSessionId=s1）
-    panel.loadSession(panel.activePanelId, 's1')
-    expect(focusedSessionId.value).toBe('s1')
-    // split 成双 panel，右 panel 载 s2，并把 active 焦点切到右 panel
-    panel.split()
-    const [left, right] = panel.panels
-    panel.loadSession(right.id, 's2')
-    panel.setActive(right.id)
-    // active panel=right → focusedSessionId=s2（Overview 右侧卡片高亮）
-    expect(focusedSessionId.value).toBe('s2')
-    // 切回 left panel 焦点 → focusedSessionId=s1
-    panel.setActive(left.id)
-    expect(focusedSessionId.value).toBe('s1')
-  })
-
   it('sessionDigest：s1 fixture 末条 assistant 摘要 + 回合计数', async () => {
     const { selectSession } = useSidebar()
     const { sessionDigest } = useSessionDerivations()

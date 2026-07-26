@@ -70,6 +70,20 @@ pnpm --filter @xyz-agent/frontend run typecheck
 pnpm run lint
 ```
 
+### 调试 dev app（Playwright 连 9222）
+
+`pnpm dev` 启动后 Electron 开 `--remote-debugging-port=9222`。用 [browser-automation skill](file:///Users/zhushanwen/.agents/skills/browser-automation/SKILL.md) 的 Playwright 脚本连接，可截图/DOM 快照/点击/执行 JS，不抢焦点：
+
+```bash
+PW="$HOME/.agents/skills/browser-automation/scripts/pw.js"
+node $PW http://localhost:9222 list-pages        # 确认连接
+node $PW http://localhost:9222 screenshot -o /tmp/debug.png   # 截图
+node $PW http://localhost:9222 snapshot                     # DOM 快照
+node $PW http://localhost:9222 evaluate "document.title"     # 执行 JS
+```
+
+> runtime 源码改动不热重载（tsx 非 watch），改 runtime 后需重启 `pnpm dev`。renderer 走 vite HMR 自动生效。详见 [AGENTS.md「前端调试」](AGENTS.md)。
+
 ### 环境变量
 
 | 变量 | 作用 | 默认值 |
