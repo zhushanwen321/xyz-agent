@@ -36,50 +36,12 @@
     </div>
 
     <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
-         subagent（pi-subagents 的 "subagent" tool）用独立样式：紫色 Subagent 行，sync 模式滚动进度。
+         subagent（pi-subagents 的 "subagent" tool）渲染委托给 BlockSubagent（独立样式：紫色 Bot 图标，
+         sync 模式滚动进度）——subagent 逻辑已抽离到 BlockSubagent.vue。
          HIDDEN_TOOL_NAMES（todo/goal_control 等状态管理类 tool）直接跳过——状态由 SideDrawer Tasks tab 展示。 -->
     <div v-else-if="!isHidden" class="trace-tool">
-      <!-- ── subagent 块：独立样式（紫色，Bot 图标，与思考块同语义族）── -->
-      <div v-if="isSubagent" class="trace-subagent">
-        <div
-          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
-          :class="subagentHeaderColor"
-          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
-          @click="toggleTool"
-        >
-          <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
-          <Bot class="size-3 shrink-0" />
-          <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.subagent') }}</span>
-          <span class="shrink-0 normal-case tracking-normal text-neutral-mid">{{ subagentAgent || subagentHeaderLabel }}</span>
-          <span v-if="subagentTask" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ subagentTaskPreview }}</span>
-          <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
-          <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
-            <span class="size-[6px] shrink-0 rounded-full bg-reasoning animate-working-pulse" />
-            <span class="truncate">{{ subagentLiveInfo || t('panel.message.running') }}</span>
-          </span>
-          <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-success" />
-          <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-neutral-dim whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
-        </div>
-        <template v-if="toolExpanded">
-          <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
-          <div v-if="subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-neutral-mid">
-            <span v-if="subagentProgressDetail.toolCount != null" class="text-info">{{ t('panel.subagent.toolCount', { count: subagentProgressDetail.toolCount }) }}</span>
-            <span v-if="subagentProgressDetail.turnCount != null">turn {{ subagentProgressDetail.turnCount }}</span>
-            <span v-if="subagentProgressDetail.tokens != null">{{ formatTokens(subagentProgressDetail.tokens) }}</span>
-            <span v-if="subagentProgressDetail.durationMs != null">{{ formatDuration(subagentProgressDetail.durationMs) }}</span>
-            <span v-if="subagentProgressDetail.currentTool" class="truncate text-reasoning">→ {{ subagentProgressDetail.currentTool }}</span>
-          </div>
-          <!-- 最终输出 -->
-          <div
-            v-if="result"
-            class="mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap"
-            :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-neutral-mid'"
-          >
-            <span>{{ result }}</span>
-          </div>
-        </template>
-      </div>
+      <!-- ── subagent 块：委托 BlockSubagent（独立样式，紫色 Bot 图标）── -->
+      <BlockSubagent v-if="isSubagent" :tool="tool!" :session-id="sessionId" />
 
       <!-- ── 普通 tool 块：1 行收起（header 含 toolName+argPath 摘要+状态），点击展开详情 ── -->
       <div v-else>
@@ -146,7 +108,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, Brain, ChevronRight, Check, Terminal as TerminalIcon, Wrench, XCircle } from '@lucide/vue'
+import { Brain, ChevronRight, Check, Terminal as TerminalIcon, Wrench, XCircle } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
@@ -154,6 +116,7 @@ import { SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES } from '@xyz-agent/shared'
 import AnsiText from './gui/AnsiText.vue'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import BlockSubagent from './BlockSubagent.vue'
 import { Button } from '@/components/ui/button'
 import { useRunInTerminal } from '@/composables/panel/useRunInTerminal'
 import { useToolMeta } from '@/composables/panel/useToolMeta'
@@ -204,6 +167,19 @@ const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
+
+/** 时长格式化阈值（普通 tool 的 meta 耗时格式化用；subagent 的 formatTokens/formatDuration 已随 BlockSubagent 迁出，
+ *  formatDuration 因 useToolMeta 仍需保留，各保留一份避免跨组件耦合，W3 改视觉时若需统一再抽 util）。 */
+const MS_PER_SECOND = 1000
+const MS_PER_MINUTE = 60000
+
+/** 格式化时长（ms→s/min）。接受 unknown（meta 字段类型宽松） */
+function formatDuration(ms: unknown): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return ''
+  if (ms >= MS_PER_MINUTE) return `${(ms / MS_PER_MINUTE).toFixed(1)}min`
+  if (ms >= MS_PER_SECOND) return `${(ms / MS_PER_SECOND).toFixed(0)}s`
+  return `${ms}ms`
+}
 /** 补充细节条 meta 项（耗时 + 工具特化行数/字符数 + 失败错误摘要），逻辑拆到 useToolMeta */
 const { metaItems } = useToolMeta({
   tool: computed(() => props.tool),
@@ -273,131 +249,17 @@ const { isBash, runInTerminal } = useRunInTerminal({
   isRunning,
 })
 
-/* ── subagent（pi-subagents 扩展的 "subagent" tool）特殊渲染 ── */
+/* ── subagent（pi-subagents 扩展的 "subagent" tool）路由：渲染委托 BlockSubagent ── */
 const isSubagent = computed(() => SUBAGENT_TOOL_NAMES.has(toolName.value))
 
 /** 状态管理类 tool（todo/goal_control）：对话流完全不渲染（v-else-if=!isHidden 跳过）。
  *  其状态变化由 SideDrawer Tasks tab 展示。仅影响渲染层，数据仍完整存储。 */
 const isHidden = computed(() => !isSubagent.value && HIDDEN_TOOL_NAMES.has(toolName.value))
 
-/** subagent input 的 agent / task（single 模式）。
- *  parallel(chain 模式 input 有 tasks/chain 数组，P1 取首项摘要，P2 再完善。 */
-const subagentAgent = computed(() => {
-  const input = props.tool?.input as Record<string, unknown> | undefined
-  if (!input) return ''
-  if (typeof input.agent === 'string') return input.agent
-  // parallel/chain：取数组首项 agent 名 + 数量
-  const arr = Array.isArray(input.tasks) ? input.tasks : Array.isArray(input.chain) ? input.chain : null
-  if (arr && arr.length > 0) {
-    const first = arr[0] as Record<string, unknown> | undefined
-    const firstName = first && typeof first.agent === 'string' ? first.agent : ''
-    return arr.length > 1
-      ? t('panel.subagent.multiSummary', { first: firstName, count: arr.length })
-      : firstName
-  }
-  return ''
-})
-
-const subagentTask = computed(() => {
-  const input = props.tool?.input as Record<string, unknown> | undefined
-  if (!input) return ''
-  if (typeof input.task === 'string') return input.task
-  const arr = Array.isArray(input.tasks) ? input.tasks : Array.isArray(input.chain) ? input.chain : null
-  if (arr && arr.length > 0) {
-    const first = arr[0] as Record<string, unknown> | undefined
-    return first && typeof first.task === 'string' ? first.task : ''
-  }
-  return ''
-})
-
-/** task 描述截断长度（header 单行不撑爆） */
-const TASK_PREVIEW_LIMIT = 48
-
-/** header 行 task 预览（截断，避免过长 task 描述撑爆 1 行） */
-const subagentTaskPreview = computed(() => {
-  const t = subagentTask.value.trim()
-  if (t.length <= TASK_PREVIEW_LIMIT) return t
-  return `${t.slice(0, TASK_PREVIEW_LIMIT)}…`
-})
-
-/** parallel/chain 无 agent 名时的兜底标签 */
-const subagentHeaderLabel = computed(() => {
-  const input = props.tool?.input as Record<string, unknown> | undefined
-  if (Array.isArray(input?.tasks) || Array.isArray(input?.chain)) return t('panel.message.multiSubagent')
-  return ''
-})
-
-/** progress 快照（单一 computed，liveInfo 与展开体详情共用，避免重复提取）。
- *  数据源：ToolCall.detail（chat-message-effects tool_call_update 写入的 AgentProgress 快照）。
- *  pi-subagents 推送的 partialResult 是 { details: { progress: AgentProgress[] } }，
- *  event-adapter 提取后存入 detail。取 progress[0]（single 模式首项）。 */
-const subagentProgressDetail = computed(() => extractProgressSnapshot(props.tool?.detail))
-
-/**
- * sync 模式运行中的实时进度文本（滚动更新，header 单行展示）。
- * 从 subagentProgressDetail 提取当前工具/turn/tokens 拼接，每次 update 快照刷新滚动。
- */
-const subagentLiveInfo = computed(() => {
-  if (!isRunning.value) return ''
-  const progress = subagentProgressDetail.value
-  if (!progress) return ''
-  const parts: string[] = []
-  if (progress.currentTool) {
-    parts.push(`${progress.currentTool}`)
-  }
-  if (progress.turnCount != null) parts.push(`turn ${progress.turnCount}`)
-  if (progress.tokens != null) parts.push(formatTokens(progress.tokens))
-  return parts.join(' · ')
-})
-
-/** 从 detail 提取 AgentProgress 快照。
- *  detail 可能形态：{ progress: AgentProgress[] }（pi-subagents partialResult.details）
- *  或直接是 AgentProgress 对象（其他 extension 推送形态），防御性两种都试。 */
-function extractProgressSnapshot(detail: unknown): Record<string, unknown> | null {
-  if (!detail || typeof detail !== 'object') return null
-  const d = detail as Record<string, unknown>
-  // 形态 1：{ progress: [...] } —— pi-subagents 的 partialResult.details.progress 数组
-  if (Array.isArray(d.progress) && d.progress.length > 0) {
-    return d.progress[0] as Record<string, unknown>
-  }
-  // 形态 2：直接是 AgentProgress（含 currentTool/turnCount/tokens 等字段）
-  if ('currentTool' in d || 'turnCount' in d || 'tokens' in d || 'toolCount' in d) {
-    return d
-  }
-  return null
-}
-
-/** token / 时长格式化阈值 */
-const TOKEN_K = 1000
-const TOKEN_M = 1000000
-const MS_PER_SECOND = 1000
-const MS_PER_MINUTE = 60000
-
-/** 格式化 token 数（1000→1k，1000000→1M）。接受 unknown（progress 快照字段类型宽松） */
-function formatTokens(n: unknown): string {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return ''
-  if (n >= TOKEN_M) return `${(n / TOKEN_M).toFixed(1)}M tokens`
-  if (n >= TOKEN_K) return `${(n / TOKEN_K).toFixed(1)}k tokens`
-  return `${n} tokens`
-}
-
-/** 格式化时长（ms→s/min）。接受 unknown（progress 快照字段类型宽松） */
-function formatDuration(ms: unknown): string {
-  if (typeof ms !== 'number' || !Number.isFinite(ms)) return ''
-  if (ms >= MS_PER_MINUTE) return `${(ms / MS_PER_MINUTE).toFixed(1)}min`
-  if (ms >= MS_PER_SECOND) return `${(ms / MS_PER_SECOND).toFixed(0)}s`
-  return `${ms}ms`
-}
-
-/** subagent header 颜色：failed→danger，其余→reasoning(紫) */
-const subagentHeaderColor = computed(() => {
-  if (isFailed.value) return 'text-danger'
-  return 'text-reasoning'
-})
-
 const blockClass = computed(() => {
   if (props.type !== 'tool') return ''
   // 失败 tool / 失败 subagent：整块红框（draft trace-tool.failed）。
+  // subagent failed 时 tool 路由给 BlockSubagent，但红框仍作用在外层 trace-blk 根 div（保持抽离前 DOM）。W3 将删红框分支（ES5）。
   if (!isFailed.value) return ''
   return 'my-1 rounded-lg border border-danger bg-danger-soft px-3'
 })
