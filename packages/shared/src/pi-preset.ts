@@ -129,3 +129,18 @@ export const DEFAULT_PRESETS: PiLaunchPreset[] = [
     extensionMode: 'all',
   },
 ]
+
+/**
+ * pi-presets.json 的持久化形状（~/.xyz-agent/pi-presets.json）。
+ *
+ * 存：用户自定义预设 + 内置预设的用户编辑副本（builtin 字段仍 true）+ 默认预设 id。
+ * 位置由 getDataDir() 推导（设计文档 §1.4）。前后端共享形状故放 shared。
+ */
+export interface PiPresetsFile {
+  /** 用户自定义预设 + 内置预设的用户编辑副本（builtin 字段仍 true） */
+  presets: PiLaunchPreset[]
+  /** 用户设置的「设为默认」preset id，全局生效（设计文档 §5.3）。缺省 'builtin:full'。 */
+  defaultPresetId?: string
+  /** schema 版本，便于未来迁移 */
+  version: 1
+}
