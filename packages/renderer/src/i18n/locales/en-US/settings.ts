@@ -325,9 +325,9 @@ export default {
     advancedJsonHint: 'Advanced (edit json)',
     presetLabel: 'Domestic model presets',
     preset: {
-      deepseek: { label: 'DeepSeek', hint: 'DeepSeek-V3.x/V4: thinking={type} + reasoning_effort, must echo reasoning_content' },
-      glm: { label: 'GLM (z.ai)', hint: 'Zhipu GLM-4.5+/5.x: thinking={type}, no reasoning_effort support' },
-      kimiK2: { label: 'Kimi K2.x', hint: 'Moonshot K2.5/K2.6: thinking={type}, no reasoning_effort support' },
+      deepseek: { label: 'DeepSeek', hint: 'DeepSeek-V3.x/V4: thinking param (type=enabled/disabled) + reasoning_effort, must echo reasoning_content' },
+      glm: { label: 'GLM (z.ai)', hint: 'Zhipu GLM-4.5+/5.x: thinking param (type=enabled/disabled), no reasoning_effort support' },
+      kimiK2: { label: 'Kimi K2.x', hint: 'Moonshot K2.5/K2.6: thinking param (type=enabled/disabled), no reasoning_effort support' },
       kimiK3: { label: 'Kimi K3', hint: 'Kimi K3: reasoning_effort (low/high/max), thinking always on' },
       mimo: { label: 'MiMo', hint: 'Xiaomi MiMo: chat_template_kwargs.enable_thinking, off/high two levels' },
       minimax: { label: 'MiniMax', hint: 'MiniMax M3: via anthropic API, thinking.type=adaptive' },
@@ -371,7 +371,7 @@ export default {
       supportsStore: { label: 'Supports store field', hint: 'Whether to send the store field in the request body.' },
       requiresToolResultName: { label: 'Tool result needs name', hint: 'Enable when tool result messages must include a name field.' },
       requiresAssistantAfterToolResult: { label: 'Insert assistant after tool result', hint: 'Enable when an empty assistant message must be inserted before the user message after a tool result.' },
-      requiresThinkingAsText: { label: 'Thinking as plain text', hint: 'Replay thinking blocks as <thinking> text.' },
+      requiresThinkingAsText: { label: 'Thinking as plain text', hint: 'Replay thinking blocks as plain text with thinking tags.' },
       requiresReasoningContentOnAssistantMessages: { label: 'Assistant carries reasoning_content', hint: 'When reasoning is enabled, all replayed assistant messages carry an empty reasoning_content (DeepSeek needs this).' },
       supportsStrictMode: { label: 'Tool strict field', hint: 'Include a strict field in tool definitions.' },
       cacheControlFormat: {
@@ -384,7 +384,7 @@ export default {
       zaiToolStream: { label: 'zai tool stream', hint: 'Whether z.ai supports the top-level tool_stream:true for streaming tool calls.' },
       openRouterRouting: { label: 'OpenRouter routing', hint: 'OpenRouter routing preference (advanced; edit json for full fields).' },
       vercelGatewayRouting: { label: 'Vercel Gateway routing', hint: 'Vercel AI Gateway routing config (only/order; advanced).' },
-      chatTemplateKwargs: { label: 'chat_template_kwargs', hint: 'chat_template_kwargs sent when thinkingFormat=chat-template. Use { "$var": "thinking.enabled" } or { "$var": "thinking.effort" } for pi-controlled thinking values. Edit json directly for full config.' },
+      chatTemplateKwargs: { label: 'chat_template_kwargs', hint: 'chat_template_kwargs sent when thinkingFormat=chat-template. Use $var:thinking.enabled or $var:thinking.effort for pi-controlled thinking values. Edit json directly for full config.' },
     },
     // anthropic-messages fields
     anthropic: {

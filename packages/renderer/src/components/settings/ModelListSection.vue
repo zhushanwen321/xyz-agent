@@ -159,7 +159,7 @@
              用 :model-value + @update:model-value 显式写法（与同模板的 inject 变更模式一致）。 -->
         <div v-if="isCompatExpanded(m.id)" class="border-t border-border bg-surface-2 px-5">
           <CompatEditor
-            :api="m.api"
+            :api="resolveApi(m.api)"
             :model-value="m.compat"
             @update:model-value="m.compat = $event"
           />
@@ -218,6 +218,8 @@ interface ModelListDeps {
   expandedCompat: Set<string>
   /** 切换某 model 的 compat 编辑器展开 */
   toggleCompatExpand: (modelId: string) => void
+  /** provider 级 api（model 级 api 缺失时的回退，用于 compat 字段集判断） */
+  providerApi: string
 }
 
 const deps = inject<ModelListDeps>('modelListDeps')!
@@ -228,10 +230,13 @@ const { t } = useI18n()
 const ctxOptions = CONTEXT_OPTIONS
 const thinkingStrategies = THINKING_STRATEGIES
 
-// deps.localModels / deps.expandedCompat 是 ref（useProviderEdit return 的状态）。Vue 模板对
-// setup 顶层 ref 自动解包，但对 inject 对象的嵌套 ref 不解包——模板里 deps.localModels.length
-// 拿到的是 ref 本体（.length=undefined，导致「暂无模型」永远显示）。用 computed 显式解包，
-// 模板用 localModels / isCompatExpanded 间接读。
+// deps.localModels / deps.expandedCompat / deps.providerApi 是 ref/computed（useProviderEdit return
+// 的状态或 form.api 的 computed）。Vue 模板对 setup 顶层 ref 自动解包，但对 inject 对象的嵌套
+// ref 不解包——模板里 deps.localModels.length 拿到的是 ref 本体（.length=undefined，导致「暂无
+// 模型」永远显示）。用 computed 显式解包，模板用 localModels / isCompatExpanded / providerApi 读。
 const localModels = computed(() => unref(deps.localModels))
+const providerApi = computed(() => unref(deps.providerApi) as string | undefined)
 const isCompatExpanded = (modelId: string): boolean => unref(deps.expandedCompat).has(modelId)
+/** model 级 api 优先，缺失回退 provider 级 api（compat 字段集 + 预设按钮按此过滤） */
+const resolveApi = (modelApi?: string): string | undefined => modelApi || providerApi.value
 </script>

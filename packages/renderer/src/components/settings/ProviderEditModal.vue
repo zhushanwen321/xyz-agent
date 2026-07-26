@@ -354,6 +354,8 @@ provide('modelListDeps', {
   removeModel,
   expandedCompat,
   toggleCompatExpand,
+  // provider 级 api：model 级 api 缺失时的回退（compat 字段集 + 预设按钮按 api 类型过滤）
+  providerApi: computed(() => form.api),
 })
 
 // ── D13：取消/关闭统一入口，有未保存改动时二次确认 ──

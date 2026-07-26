@@ -325,9 +325,9 @@ export default {
     advancedJsonHint: '高级（手改 json）',
     presetLabel: '国产模型预设',
     preset: {
-      deepseek: { label: 'DeepSeek', hint: 'DeepSeek-V3.x/V4：thinking={type} + reasoning_effort，需回传 reasoning_content' },
-      glm: { label: 'GLM (z.ai)', hint: '智谱 GLM-4.5+/5.x：thinking={type}，不支持 reasoning_effort' },
-      kimiK2: { label: 'Kimi K2.x', hint: '月之暗面 K2.5/K2.6：thinking={type}，不支持 reasoning_effort' },
+      deepseek: { label: 'DeepSeek', hint: 'DeepSeek-V3.x/V4：thinking 参数（type=enabled/disabled）+ reasoning_effort，需回传 reasoning_content' },
+      glm: { label: 'GLM (z.ai)', hint: '智谱 GLM-4.5+/5.x：thinking 参数（type=enabled/disabled），不支持 reasoning_effort' },
+      kimiK2: { label: 'Kimi K2.x', hint: '月之暗面 K2.5/K2.6：thinking 参数（type=enabled/disabled），不支持 reasoning_effort' },
       kimiK3: { label: 'Kimi K3', hint: 'Kimi K3：reasoning_effort（low/high/max），强制 thinking 常开' },
       mimo: { label: 'MiMo', hint: '小米 MiMo：chat_template_kwargs.enable_thinking，off/high 两档' },
       minimax: { label: 'MiniMax', hint: 'MiniMax M3：走 anthropic API，thinking.type=adaptive' },
@@ -371,7 +371,7 @@ export default {
       supportsStore: { label: '支持 store 字段', hint: '是否在请求体发送 store 字段。' },
       requiresToolResultName: { label: 'tool result 需带 name', hint: '工具结果消息必须包含 name 字段时开启。' },
       requiresAssistantAfterToolResult: { label: 'tool result 后插 assistant', hint: '工具结果后的用户消息前需插入空 assistant 消息时开启。' },
-      requiresThinkingAsText: { label: 'thinking 转纯文本', hint: '回放时把 thinking 块转成 <thinking> 文本。' },
+      requiresThinkingAsText: { label: 'thinking 转纯文本', hint: '回放时把 thinking 块转成 thinking 标签的纯文本。' },
       requiresReasoningContentOnAssistantMessages: { label: 'assistant 带 reasoning_content', hint: '启用 reasoning 时所有回放 assistant 消息带空 reasoning_content（DeepSeek 需要）。' },
       supportsStrictMode: { label: '工具 strict 字段', hint: '工具定义中包含 strict 字段。' },
       cacheControlFormat: {
@@ -384,7 +384,7 @@ export default {
       zaiToolStream: { label: 'zai tool stream', hint: 'z.ai 是否支持顶层 tool_stream:true 流式 tool call。' },
       openRouterRouting: { label: 'OpenRouter 路由', hint: 'OpenRouter 路由偏好（高级，建议手改 json 配置完整字段）。' },
       vercelGatewayRouting: { label: 'Vercel Gateway 路由', hint: 'Vercel AI Gateway 路由配置（only/order，高级）。' },
-      chatTemplateKwargs: { label: 'chat_template_kwargs', hint: 'thinkingFormat=chat-template 时发给服务器的 chat_template_kwargs。用 { "$var": "thinking.enabled" } 或 { "$var": "thinking.effort" } 表示 pi 控制的思考值。建议手改 json 配置完整字段。' },
+      chatTemplateKwargs: { label: 'chat_template_kwargs', hint: 'thinkingFormat=chat-template 时发给服务器的 chat_template_kwargs。用 $var:thinking.enabled 或 $var:thinking.effort 表示 pi 控制的思考值。建议手改 json 配置完整字段。' },
     },
     // anthropic-messages 字段
     anthropic: {
