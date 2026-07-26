@@ -283,7 +283,7 @@ function onSubmit(): void {
         <p
           v-if="activeQuestion.context"
           data-testid="ask-user-context"
-          class="rounded bg-[var(--reasoning-soft)] px-2.5 py-1.5 text-[12px] leading-1.5 text-text-neutral-mid"
+          class="rounded bg-[var(--reasoning-soft)] px-2.5 py-1.5 text-[12px] leading-1.5 text-neutral-mid"
         >
           {{ activeQuestion.context }}
         </p>

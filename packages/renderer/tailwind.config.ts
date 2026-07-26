@@ -97,9 +97,9 @@ export default {
           '100%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0)' },
         },
         'pulse-warn': {
-          '0%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0.5)' },
-          '70%': { 'box-shadow': '0 0 0 5px rgba(245, 165, 36, 0)' },
-          '100%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0)' },
+          '0%': { 'box-shadow': '0 0 0 0 rgba(176, 138, 62, 0.5)' },
+          '70%': { 'box-shadow': '0 0 0 5px rgba(176, 138, 62, 0)' },
+          '100%': { 'box-shadow': '0 0 0 0 rgba(176, 138, 62, 0)' },
         },
         // Composer S6 流式态呼吸 ring（steer 提交引导）
         'steer-breathe': {
