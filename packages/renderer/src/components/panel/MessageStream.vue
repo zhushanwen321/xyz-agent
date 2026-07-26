@@ -185,6 +185,7 @@ import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
 import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
+import { useStreamingPin } from '@/composables/panel/useStreamingPin'
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
@@ -263,7 +264,7 @@ const virtualList = useVirtualTurnList({
   estimatedHeight: () => ESTIMATED_TURN_HEIGHT,
   buffer: () => VIRTUAL_BUFFER_TURNS,
 })
-const { totalHeight, visibleRange, offsetOf } = virtualList
+const { totalHeight, visibleRange, offsetOf, pinStreaming } = virtualList
 
 /**
  * load-more 按钮占的顶部预留高度：显示 load-more 且有 turns 时为 LOAD_MORE_RESERVED_HEIGHT，
@@ -362,6 +363,13 @@ const lastUserTurnIdx = computed(() => {
 function onEditStateChange(idx: number, editing: boolean): void {
   virtualList.pinEditing(editing ? idx : -1)
 }
+
+/**
+ * streaming 钉扎（W3，对齐 editing 钉扎 SR5）：共存场景（streaming + bash）下 streaming turn
+ * 不能滚出视口顶部（RO 会断开高度不更新）。watch 最后一个 turn 的 isStreaming 驱动 pinStreaming，
+ * 逻辑封装在 useStreamingPin（行数规范 + 复用），详见该 composable 头注释。
+ */
+useStreamingPin({ items: renderItems, pinStreaming })
 
 /**
  * auto-scroll：stickToBottom guard —— 非贴底时不强制拉回。
