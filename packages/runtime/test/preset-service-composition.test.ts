@@ -148,7 +148,10 @@ describe('SessionService · wave 3 PresetService 注入', () => {
     expect(afterInjection!.toolArgs).toEqual({}) // builtin:full toolMode=all
   })
 
-  it('w3-tc3: 未知 presetId 返 undefined（presetService.getPreset 找不到）', async () => {
+  it('w3-tc3: 未知 presetId fallback 到 builtin:full（wave 改动：不再返 undefined）', async () => {
+    // wave 改动：getLaunchPresetOptions 找不到 preset 时 fallback 到 builtin:full（设计 §4.3），
+    // 避免 restoreSession 拿到失效 presetId 时退到无 tool/thinking args 的旧行为。
+    // builtin:full 永在（DEFAULT_PRESETS 保证），故 fallback 必命中。
     const presetService = new PresetService(
       makeFakeConfigStore(tmpDir) as unknown as ConstructorParameters<typeof PresetService>[0],
       makeFakeExtensionService([], []) as unknown as ConstructorParameters<typeof PresetService>[1],
@@ -156,7 +159,10 @@ describe('SessionService · wave 3 PresetService 注入', () => {
     sessionService.setPresetService(presetService)
 
     const result = await sessionService.getLaunchPresetOptions('nonexistent-id', '/cwd')
-    expect(result).toBeUndefined()
+    // fallback 到 builtin:full：返回非 undefined，且 toolArgs/flags 与 builtin:full 一致
+    expect(result).toBeDefined()
+    expect(result!.toolArgs).toEqual({}) // builtin:full toolMode=all
+    expect(result!.flags).toEqual({ noSkills: false, noContextFiles: false })
   })
 
   it('w3-tc4: builtin:full 经 getLaunchPresetOptions 返回完整 PresetResolution 形状', async () => {
@@ -178,7 +184,10 @@ describe('SessionService · wave 3 PresetService 注入', () => {
     ])
     expect(result!.toolArgs).toEqual({})
     expect(result!.flags).toEqual({ noSkills: false, noContextFiles: false })
-    expect(result!.skillPaths).toEqual([])
+    // B1 修复：builtin:full 的 noSkills 是 undefined（falsy），resolveSkillPaths 返 undefined
+    // 让 session-lifecycle 的 `resolution?.skillPaths ?? getSkillPaths(cwd)` 触发 ?? fallback
+    // 到现有 getSkillPaths 结果（设计 §2.2）。若返 [] 则 fallback 永不触发、所有 skill 失效。
+    expect(result!.skillPaths).toBeUndefined()
     expect(result!.modelOverride).toBeUndefined()
     expect(result!.thinkingLevel).toBeUndefined()
   })

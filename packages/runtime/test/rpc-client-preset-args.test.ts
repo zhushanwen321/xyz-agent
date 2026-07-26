@@ -45,9 +45,16 @@ vi.mock('node:readline', () => ({
   }),
 }))
 
-vi.mock('@xyz-agent/shared', () => ({
-  ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM'],
-}))
+// W-TR-2：用 importOriginal spread 保留 actual 符号（DEFAULT_PRESETS/BUILTIN_PRESET_IDS/
+// ThinkingLevel 等只读常量类型用 actual；仅覆盖 ENV_WHITELIST_PREFIXES 这一个可变环境白名单，
+// 避免 spawn 时把真实环境的几十个变量扫进 pi args 污染断言）。与同文件 pi-paths mock 模式对齐。
+vi.mock('@xyz-agent/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/shared')>()
+  return {
+    ...actual,
+    ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM'],
+  }
+})
 
 vi.mock('@xyz-agent/shared/paths', () => ({
   getDataDir: () => '/mock/home/.xyz-agent',

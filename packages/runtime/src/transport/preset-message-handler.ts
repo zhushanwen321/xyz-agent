@@ -14,6 +14,8 @@
  *
  * 错误处理：PresetService.savePreset/deletePreset 抛 PresetGuardError 时，
  * handler 捕获后发 error envelope（code='preset_guard_error'），前端 toast 展示。
+ * S-TR-4：importPresets 的格式错误（JSON 畸形 / 顶层非对象 / 无合法 preset）用独立 code
+ * 'preset_import_format_error'（guard 是 builtin 保护语义，格式错误不算 guard 违规）。
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage } from '@xyz-agent/shared'
@@ -41,6 +43,23 @@ const PRESET_HANDLES = [
   'preset.export',
   'preset.import',
 ] as const
+
+/**
+ * importPresets 格式错误的特征消息（S-TR-4）。
+ *
+ * preset-service.importPresets 在三种场景抛普通 Error（非 PresetGuardError）：
+ *   - JSON 畸形：'Invalid JSON format'
+ *   - 顶层非对象：'Import file must be a JSON object'
+ *   - 无合法 preset：'No valid presets found in import file'
+ * 这些是用户提供的导入文件问题，不属于 builtin 保护（guard）范畴，handler 据消息文本识别后
+ * 用独立的 'preset_import_format_error' code（前端可据 code 给出「文件格式错误」针对性提示，
+ * 而非笼统的 guard 违规 toast）。匹配失败（未知 Error）仍回退 'preset_guard_error' 兜底。
+ */
+const PRESET_IMPORT_FORMAT_ERROR_MESSAGES = new Set([
+  'Invalid JSON format',
+  'Import file must be a JSON object',
+  'No valid presets found in import file',
+])
 
 export class PresetMessageHandler {
   constructor(private ctx: PresetHandlerContext) {}
@@ -74,30 +93,37 @@ export class PresetMessageHandler {
         case 'preset.setDefault': {
           const { presetId } = msg.payload
           this.ctx.presetService.setDefaultPresetId(presetId)
+          // S-TR-1：preset.setDefault 在 ReplyPayloadMap 登记为 void（ack 型，domain register<void> 不读 reply），
+          // 但 reply() 的 payload 形参类型用的是 ServerMessageMap[T]（server-push 映射，此处为
+          // { presetId: string }），不是 ReplyPayloadMap。故仍须传一个对象占位（{} as Record<string, never>
+          // 可赋值给任意 Record），domain 侧 register<void> 不解构 payload，传什么都被忽略。
           this.ctx.reply(ws, msg.id, 'preset.setDefault', {} as Record<string, never>)
           return true
         }
 
         case 'preset.create': {
           const { preset } = msg.payload
+          // W-TR-1：savePreset 返 void，不再二次调 getPreset（避免触发第二次 loadPresetsFile）。
+          // 直接用传入的 preset reply——runtime 可能 merge DEFAULT 字段（builtin preset 的
+          // id/builtin/order/name 会被保护为 DEFAULT 值），前端如需精确形状应以 preset.list 重新拉取为准。
           this.ctx.presetService.savePreset(preset)
-          // 返回保存后的预设（可能被 runtime 补全 id/order 等字段）
-          const saved = this.ctx.presetService.getPreset(preset.id)
-          this.ctx.reply(ws, msg.id, 'preset.create', { preset: saved ?? preset })
+          this.ctx.reply(ws, msg.id, 'preset.create', { preset })
           return true
         }
 
         case 'preset.update': {
           const { preset } = msg.payload
+          // W-TR-1：同 preset.create，不再二次调 getPreset，直接用传入 preset reply。
           this.ctx.presetService.savePreset(preset)
-          const saved = this.ctx.presetService.getPreset(preset.id)
-          this.ctx.reply(ws, msg.id, 'preset.update', { preset: saved ?? preset })
+          this.ctx.reply(ws, msg.id, 'preset.update', { preset })
           return true
         }
 
         case 'preset.delete': {
           const { presetId } = msg.payload
           this.ctx.presetService.deletePreset(presetId)
+          // S-TR-1：preset.delete 在 ReplyPayloadMap 为 void（ack 型），但 reply() 用 ServerMessageMap[T]
+          // 占位对象（同 setDefault 注释）。domain register<void> 忽略 payload。
           this.ctx.reply(ws, msg.id, 'preset.delete', {} as Record<string, never>)
           return true
         }
@@ -107,6 +133,8 @@ export class PresetMessageHandler {
         case 'preset.recordUsage': {
           const { presetId } = msg.payload
           this.ctx.presetService.recordUsage(presetId)
+          // S-TR-1：preset.recordUsage 在 ReplyPayloadMap 为 void（ack 型），reply() 用 ServerMessageMap[T]
+          // 占位对象（同 setDefault 注释）。
           this.ctx.reply(ws, msg.id, 'preset.recordUsage', {} as Record<string, never>)
           return true
         }
@@ -129,6 +157,8 @@ export class PresetMessageHandler {
         case 'preset.setCwdDefault': {
           const { cwd, presetId } = msg.payload
           this.ctx.presetService.setCwdDefaultPresetId(cwd, presetId)
+          // S-TR-1：preset.setCwdDefault 在 ReplyPayloadMap 为 void（ack 型），reply() 用 ServerMessageMap[T]
+          // 占位对象（同 setDefault 注释）。
           this.ctx.reply(ws, msg.id, 'preset.setCwdDefault', {} as Record<string, never>)
           return true
         }
@@ -159,7 +189,13 @@ export class PresetMessageHandler {
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      const code = (e as Error & { code?: string }).code ?? 'preset_guard_error'
+      // S-TR-4：优先透传 Error 自带 code（如 PresetGuardError 未来带 code）。
+      // 其次区分 importPresets 的格式错误（S-TR-4）：消息命中 PRESET_IMPORT_FORMAT_ERROR_MESSAGES
+      // 时用独立的 'preset_import_format_error' code（guard 是 builtin 保护语义，格式错误不算 guard 违规）。
+      // 其余无 code 的 Error 回退 'preset_guard_error' 兜底（保持向后兼容）。
+      const explicitCode = (e as Error & { code?: string }).code
+      const code = explicitCode
+        ?? (message && PRESET_IMPORT_FORMAT_ERROR_MESSAGES.has(message) ? 'preset_import_format_error' : 'preset_guard_error')
       this.ctx.sendError(ws, code, message, msg.id)
       return true
     }

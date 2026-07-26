@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { WebSocket } from 'ws'
-import type { PiLaunchPreset } from '@xyz-agent/shared'
+import type { ClientMessage, PiLaunchPreset } from '@xyz-agent/shared'
 import { PresetMessageHandler } from '../src/transport/preset-message-handler.js'
 import { PresetGuardError } from '../src/services/preset-service.js'
 
@@ -132,46 +132,42 @@ describe('PresetMessageHandler', () => {
   })
 
   describe('preset.setDefault', () => {
-    it('调用 setDefaultPresetId 并 reply ack', async () => {
+    it('调用 setDefaultPresetId 并 reply ack（S-TR-1：ack 型 reply 占位对象）', async () => {
       const msg = { type: 'preset.setDefault' as const, id: 'req-3', payload: { presetId: 'custom:test-uuid' } }
       const result = await handler.handlePresetMessage(msg, ws)
       expect(result).toBe(true)
       expect(ctx.mock.setDefaultPresetId).toHaveBeenCalledWith('custom:test-uuid')
+      // S-TR-1：reply() 用 ServerMessageMap[T] 占位对象（domain register<void> 忽略 payload）
       expect(ctx.reply).toHaveBeenCalledWith(ws, 'req-3', 'preset.setDefault', expect.any(Object))
     })
   })
 
   describe('preset.create', () => {
-    it('调用 savePreset 并 reply { preset }', async () => {
+    it('调用 savePreset 并 reply { preset }（W-TR-1：直接用传入 preset，不再二次 getPreset）', async () => {
       const msg = { type: 'preset.create' as const, id: 'req-4', payload: { preset: customPreset } }
       const result = await handler.handlePresetMessage(msg, ws)
       expect(result).toBe(true)
       expect(ctx.mock.savePreset).toHaveBeenCalledWith(customPreset)
-      expect(ctx.mock.getPreset).toHaveBeenCalledWith('custom:test-uuid')
+      // W-TR-1：handler 不再调 getPreset（避免二次 loadPresetsFile），直接用传入 preset reply。
+      expect(ctx.mock.getPreset).not.toHaveBeenCalled()
       expect(ctx.reply).toHaveBeenCalledWith(ws, 'req-4', 'preset.create', { preset: customPreset })
-    })
-
-    it('getPreset 返回 undefined 时用传入 preset 兜底', async () => {
-      ctx.mock.getPreset.mockReturnValueOnce(undefined)
-      const msg = { type: 'preset.create' as const, id: 'req-4b', payload: { preset: customPreset } }
-      await handler.handlePresetMessage(msg, ws)
-      expect(ctx.reply).toHaveBeenCalledWith(ws, 'req-4b', 'preset.create', { preset: customPreset })
     })
   })
 
   describe('preset.update', () => {
-    it('调用 savePreset 并 reply { preset }', async () => {
+    it('调用 savePreset 并 reply { preset }（W-TR-1：直接用传入 preset）', async () => {
       const updated = { ...customPreset, name: '新名称' }
       const msg = { type: 'preset.update' as const, id: 'req-5', payload: { preset: updated } }
       const result = await handler.handlePresetMessage(msg, ws)
       expect(result).toBe(true)
       expect(ctx.mock.savePreset).toHaveBeenCalledWith(updated)
-      expect(ctx.reply).toHaveBeenCalledWith(ws, 'req-5', 'preset.update', { preset: customPreset })
+      // W-TR-1：用传入的 updated（含改名）reply，不是 getPreset 返回的旧值。
+      expect(ctx.reply).toHaveBeenCalledWith(ws, 'req-5', 'preset.update', { preset: updated })
     })
   })
 
   describe('preset.delete', () => {
-    it('调用 deletePreset 并 reply ack', async () => {
+    it('调用 deletePreset 并 reply ack（S-TR-1：ack 型 reply 占位对象）', async () => {
       const msg = { type: 'preset.delete' as const, id: 'req-6', payload: { presetId: 'custom:test-uuid' } }
       const result = await handler.handlePresetMessage(msg, ws)
       expect(result).toBe(true)
@@ -183,7 +179,7 @@ describe('PresetMessageHandler', () => {
   // ── FR-14/FR-15/FR-13 测试 ──
 
   describe('preset.recordUsage (FR-14)', () => {
-    it('调用 recordUsage 并 reply ack', async () => {
+    it('调用 recordUsage 并 reply ack（S-TR-1：ack 型 reply 占位对象）', async () => {
       const msg = { type: 'preset.recordUsage' as const, id: 'req-7', payload: { presetId: 'builtin:full' } }
       const result = await handler.handlePresetMessage(msg, ws)
       expect(result).toBe(true)
@@ -271,6 +267,47 @@ describe('PresetMessageHandler', () => {
       const msg = { type: 'preset.delete' as const, id: 'err-3', payload: { presetId: 'custom:x' } }
       await handler.handlePresetMessage(msg, ws)
       expect(ctx.sendError).toHaveBeenCalledWith(ws, 'CUSTOM_CODE', 'custom error', 'err-3')
+    })
+
+    // S-TR-4：importPresets 的格式错误用独立 code 'preset_import_format_error'，
+    // 不混用 guard code（guard 是 builtin 保护语义，格式错误不算 guard 违规）。
+    // 覆盖 preset-service.importPresets 抛的三种格式错误消息。
+    it.each([
+      'Invalid JSON format',
+      'Import file must be a JSON object',
+      'No valid presets found in import file',
+    ])('importPresets 格式错误（%s）→ code=preset_import_format_error', async (errMsg) => {
+      ctx.mock.importPresets.mockImplementationOnce(() => { throw new Error(errMsg) })
+      const msg = { type: 'preset.import' as const, id: 'err-imp', payload: { json: 'bad' } }
+      const result = await handler.handlePresetMessage(msg, ws)
+      expect(result).toBe(true)
+      expect(ctx.sendError).toHaveBeenCalledWith(ws, 'preset_import_format_error', errMsg, 'err-imp')
+    })
+  })
+
+  // S-TR-2：参数化覆盖每个 handle 类型——发一条 msg 断言 result===true 且 reply 被调，
+  // 避免 handles 清单与实际路由脱节（新增 handle 类型但 switch 漏 case 时此处会失败）。
+  describe('S-TR-2：每个 handle 类型都能被认领并 reply', () => {
+    const cases: Array<{ type: string; payload: Record<string, unknown>; setup?: () => void }> = [
+      { type: 'preset.list', payload: {} },
+      { type: 'preset.getDefault', payload: {} },
+      { type: 'preset.setDefault', payload: { presetId: 'builtin:full' } },
+      { type: 'preset.create', payload: { preset: customPreset } },
+      { type: 'preset.update', payload: { preset: customPreset } },
+      { type: 'preset.delete', payload: { presetId: 'custom:test-uuid' } },
+      { type: 'preset.recordUsage', payload: { presetId: 'builtin:full' } },
+      { type: 'preset.getUsage', payload: {} },
+      { type: 'preset.getCwdDefault', payload: { cwd: '/x' } },
+      { type: 'preset.setCwdDefault', payload: { cwd: '/x', presetId: 'builtin:full' } },
+      { type: 'preset.getCwdDefaults', payload: {} },
+      { type: 'preset.export', payload: {} },
+      { type: 'preset.import', payload: { json: '{}' } },
+    ]
+    it.each(cases)('$type → result===true 且 reply 被调', async ({ type, payload }) => {
+      const msg = { type, id: `s-tr-2-${type}`, payload } as unknown as ClientMessage
+      const result = await handler.handlePresetMessage(msg, ws)
+      expect(result).toBe(true)
+      expect(ctx.reply).toHaveBeenCalled()
     })
   })
 })
