@@ -240,29 +240,6 @@ export const useSubagentStore = defineStore('subagent', () => {
     }
   }
 
-  /**
-   * 订阅 runtime 推送的 session.subagents 广播。
-   * runtime 在 subagent 状态变化（发起/终态）时主动推送全量列表，
-   * 前端被动消费更新该 session 分区（驱动 sidebar badge 计数 + working 态实时变化）。
-   *
-   * [RK1] payload.sessionId 优先：runtime broadcastSubagents 帧 payload 含 sessionId 字段
-   * （event-interpreter.ts:500），用它写对应分区（规则#7 推送链路隔离延伸，非焦点 session 终态推送也写分区）；
-   * payload 无 sessionId 回落闭包 sid。
-   *
-   * @param sessionId 当前焦点 session ID
-   * @returns 取消订阅函数（切会话时调用，取消旧 session 的订阅）
-   */
-  function subscribeSubagentPush(sessionId: string): () => void {
-    return events.on(sessionId, (msg) => {
-      if (msg.type !== 'session.subagents') return
-      const payload = msg.payload as { subagents?: unknown; sessionId?: string }
-      // 运行时守卫：runtime 契约稳定但仍校验，避免字段漂移时静默覆盖。
-      if (Array.isArray(payload.subagents)) {
-        applyRecords(payload.sessionId ?? sessionId, payload.subagents as SubagentRecord[])
-      }
-    })
-  }
-
   /** 清空所有 subagent 分区 + 退出所有 panel overlay + 停止所有 streaming（全局重置场景用） */
   function clearSubagents(): void {
     for (const pid of panelStreamUnsub.keys()) stopStream(pid)
@@ -451,7 +428,6 @@ export const useSubagentStore = defineStore('subagent', () => {
     clearSession,
     // actions
     loadSubagents,
-    subscribeSubagentPush,
     clearSubagents,
     selectSubagent,
     backToMain,

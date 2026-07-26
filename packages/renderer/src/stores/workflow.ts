@@ -24,7 +24,6 @@ import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { WorkflowRunRecord, Message } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
-import * as events from '@/api/events'
 
 /** 虚拟 session ID 前缀（agent call 对话流） */
 const AGENTCALL_PREFIX = 'agentcall:'
@@ -83,9 +82,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   /**
    * [W3-3] sid → running 信号延迟重试的 setTimeout id 映射。
-   * subscribeWorkflowPush 的 unsub 仅移除 WS 事件监听，不 clearTimeout。切 session 时若有在途
-   * setTimeout，500ms 后仍会触发 loadWorkflows(旧sid)，用旧 session 列表覆盖新 session。
-   * unsub 时经此 Map clearTimeout 并 delete。
+   * triggerWorkflowReload 对 running 信号调度 500ms 后的兜底 loadWorkflows，用此 Map 去重——
+   * 同 sid 多次 running 信号只保留最后一次的重试 timer，旧 timer clearTimeout。store dispose
+   * 时经 onScopeDispose 全部 clearTimeout，防 HMR 后操作已废弃的 store。
    */
   const workflowReloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -197,47 +196,32 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const RUNNING_RETRY_MS = 500
 
   /**
-   * 订阅 runtime 推送的 session.workflowUpdate 广播。
-   * runtime 在 workflow 发起/结束时刻推送增量信号，前端收到后触发 loadWorkflows RPC 拉取完整列表。
+   * workflow 增量信号处理：立即拉一次全量 + running 信号延迟重试。
+   *
+   * runtime 在 workflow 发起/结束时刻推送 session.workflowUpdate 增量信号，前端收到后触发
+   * loadWorkflows RPC 拉取完整列表。由 useConnection.routeInbound 在所有 session（含非活跃）
+   * 无条件兜底调用——不能只依赖 per-focus 订阅（切走即退订 → 终态丢弃 → 侧栏卡 running）。
    *
    * running 信号特殊处理：workflow tool-call-end 触发 running 信号时，主 session JSONL 的
    * workflow-state-link 可能刚 append 还未 flush（pi 延迟写入时序）。延迟 RUNNING_RETRY_MS 再拉一次兜底。
    *
-   * [W3 / W-S5] 资源/状态一致性修复：此前 `let focusedSessionId` 是 store 级单例闭包变量，
-   * 多次调用 subscribeWorkflowPush（A→B）会互相覆盖——A 的回调 / setTimeout 重试读到的
-   * focusedSessionId 已是 B 的值，`if (focusedSessionId === sid)` 守卫误判使 A 的 running 重试被吞。
-   * 改为函数内局部 const 捕获 sessionId，每次调用各自独立。
-   *
-   * @param sessionId 当前焦点 session ID
-   * @returns 取消订阅函数（切会话时调用，取消旧 session 的订阅）
+   * @param sessionId 信号归属的 session ID
+   * @param status 信号里的 workflow status（'running' 触发延迟重试，其他只拉一次）
    */
-  function subscribeWorkflowPush(sessionId: string): () => void {
+  function triggerWorkflowReload(sessionId: string, status: string): void {
     const sid = sessionId
-    const off = events.on(sessionId, (msg) => {
-      if (msg.type !== 'session.workflowUpdate') return
-      // 增量信号 → 重新拉取完整列表
-      void loadWorkflows(sid)
-      // running 信号延迟重试：workflow-state-link 可能刚写入，首次拉取为空
-      const payload = msg.payload as { update?: { status?: string } }
-      if (payload.update?.status === 'running') {
-        // W3-3：用模块级 Map 跟踪 timer，去重 + 允许 unsub 时 clearTimeout（防切 session 后旧 timer 触发 loadWorkflows(旧sid)）
-        const existing = workflowReloadTimers.get(sid)
-        if (existing) clearTimeout(existing)
-        const timer = setTimeout(() => {
-          workflowReloadTimers.delete(sid)
-          void loadWorkflows(sid)
-        }, RUNNING_RETRY_MS)
-        workflowReloadTimers.set(sid, timer)
-      }
-    })
-    // unsub：移除 WS 事件监听 + 清在途的 running 重试 timer（防 500ms 后 loadWorkflows(旧sid) 覆盖新 session）
-    return () => {
-      off()
-      const t = workflowReloadTimers.get(sid)
-      if (t) {
-        clearTimeout(t)
+    // 增量信号 → 立即拉取完整列表
+    void loadWorkflows(sid)
+    // running 信号延迟重试：workflow-state-link 可能刚写入，首次拉取为空
+    if (status === 'running') {
+      // W3-3：用模块级 Map 跟踪 timer，去重（同 sid 多次 running 信号只保留最后一次的重试）
+      const existing = workflowReloadTimers.get(sid)
+      if (existing) clearTimeout(existing)
+      const timer = setTimeout(() => {
         workflowReloadTimers.delete(sid)
-      }
+        void loadWorkflows(sid)
+      }, RUNNING_RETRY_MS)
+      workflowReloadTimers.set(sid, timer)
     }
   }
 
@@ -367,7 +351,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     clearSession,
     // actions
     loadWorkflows,
-    subscribeWorkflowPush,
+    triggerWorkflowReload,
     clearWorkflows,
     selectWorkflow,
     selectAgentCall,
