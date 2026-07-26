@@ -189,6 +189,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useCommandStore } from '@/stores/command'
+import { usePresetStore } from '@/stores/preset'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useChat } from '@/composables/features/useChat'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
@@ -408,6 +409,10 @@ const keymap: KeymapEntry[] = [
   { key: 'k', action: () => { searchModal.toggle() } },
   { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
   { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
+  // FR-16：⌘⇧P 打开启动预设选择 Popover（与 useAppCommands 注册的 open-preset-select 同源）。
+  // commandId 让 shortcutOverrides 生效（设置页可重录）；shift 守卫确保仅 ⌘⇧P 触发，避免 ⌘P 误命中。
+  // 默认无 override 时走 fallback：mod + 'p' + shift；fallback 的默认 shortcut 在 useAppCommands 声明为 'shift+p'。
+  { key: 'p', shift: true, commandId: 'open-preset-select', action: () => { usePresetStore().requestOpen() } },
   // FR-16 fork 快捷键：⌘G 从末条 assistant 后台 fork（留在原线）；⌘⇧G 进 composer fork 模式。
   // shift 守卫（keydown handler 内）区分同 key 的 shift/非 shift 项，避免 ⌘G 误命中 ⌘⇧G。
   // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。

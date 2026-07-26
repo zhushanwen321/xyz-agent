@@ -17,6 +17,7 @@ import type { IPiEngine } from '../ports/pi-engine.js'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { SessionOutcome } from '../ports/session.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
+import type { PresetResolution } from '../preset-service.js'
 
 export interface ISessionServiceInternal {
   // ── lifecycle 使用的共享 helper ──
@@ -38,6 +39,12 @@ export interface ISessionServiceInternal {
   getExtensionPaths(cwd?: string): Promise<string[]>
   /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
   getReplaceSystemPrompt(): string | undefined
+  /**
+   * 按 launch presetId 解析 pi 启动参数（委托 PresetService.resolve）。
+   * 返回 undefined 时调用方 fallback 到现有 getExtensionPaths/getSkillPaths。
+   * 见 SessionService.getLaunchPresetOptions 实现注释 + pi-launch-presets 设计文档 §8.1。
+   */
+  getLaunchPresetOptions(presetId: string, cwd: string): Promise<PresetResolution | undefined>
 
   // ── dispatcher 使用 ──
   /** 确保会话活跃，必要时自动 restore。 */

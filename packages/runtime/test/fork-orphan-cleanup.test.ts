@@ -101,6 +101,9 @@ function makeLifecycle(opts: MakeOpts = {}) {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
+    // forkSession 调 getLaunchPresetOptions 解析 preset（session-lifecycle L373）。
+    // 返回 undefined = 走 fallback（getExtensionPaths/getSkillPaths），不影响 fork 清理逻辑。
+    getLaunchPresetOptions: vi.fn(async () => undefined),
     findScannedSession: vi.fn(() => ({
       id: 'src', filePath: '/fake/src.jsonl', cwd: tmpdir(), name: 'src',
       lastModified: 1, timestamp: '', size: 0,
@@ -122,7 +125,12 @@ function makeLifecycle(opts: MakeOpts = {}) {
     getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })),
   } as unknown as IConfigStore
 
-  const sessionStore = { refreshAll: vi.fn() } as unknown as ISessionStore
+  const sessionStore = {
+    refreshAll: vi.fn(),
+    // forkSession/create 调 persistPresetBinding 写 .preset.json sidecar（session-lifecycle L170/L411）。
+    // fork 清理测试不验证 sidecar 内容，noop 即可。
+    persistPresetBinding: vi.fn(),
+  } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
   const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)

@@ -8,6 +8,8 @@
  * 跨服务 facade 契约。本文件是 pi 引擎 / 进程池接口的唯一权威定义点。
  */
 
+import type { ThinkingLevel } from '@xyz-agent/shared'
+
 /**
  * pi 任意 JSON 响应的逃生类型。
  *
@@ -88,6 +90,18 @@ export interface PiSessionOptions {
   /** 替换 pi 核心系统提示词（透传到 RpcClientOptions.systemPrompt → --system-prompt CLI）。 */
   systemPrompt?: string
   piCommand?: string
+  /** 工具白名单（替换语义），透传到 RpcClientOptions.tools → --tools。 */
+  tools?: string[]
+  /** 工具黑名单（叠加语义），透传到 RpcClientOptions.excludeTools → --exclude-tools。 */
+  excludeTools?: string[]
+  /** 禁用所有工具，透传到 RpcClientOptions.noTools → --no-tools。 */
+  noTools?: boolean
+  /** 禁用所有 skill，透传到 RpcClientOptions.noSkills → --no-skills。 */
+  noSkills?: boolean
+  /** 禁用 context files，透传到 RpcClientOptions.noContextFiles → --no-context-files。 */
+  noContextFiles?: boolean
+  /** 覆盖思考级别，透传到 RpcClientOptions.thinkingLevel → --thinking。 */
+  thinkingLevel?: ThinkingLevel
 }
 
 /**

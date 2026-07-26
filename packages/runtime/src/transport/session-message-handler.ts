@@ -38,7 +38,15 @@ export class SessionMessageHandler {
     switch (msg.type) {
       case 'session.create': {
         try {
-          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
+          // B3：透传 modelOverride / thinkingOverride（Landing Chip 覆盖值，设计文档 §5.2）。
+          // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
+          // 之前只透传了 hidden/presetId，覆盖值在 transport 层被丢弃，导致 Landing Chip 选型不生效。
+          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, {
+            hidden: msg.payload.hidden,
+            presetId: msg.payload.presetId,
+            modelOverride: msg.payload.modelOverride,
+            thinkingOverride: msg.payload.thinkingOverride,
+          })
           this.ctx.reply(ws, msg.id, 'session.created', { session })
           return this.ctx.broadcastSessionList()
         } catch (e) {

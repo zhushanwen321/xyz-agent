@@ -365,6 +365,9 @@ async function onSend(): Promise<void> {
     clearInput()
     isSending.value = true
     try {
+      // B6 修复：preset 透传走 NewTaskFlow.pendingPreset（PresetSelectChip emit select →
+      // Landing.onPresetSelect → flow.setPendingPreset），不在此读 store.selectedPresetId（已删除
+      // 第二真源）。submitFirstMessage 内部用 pendingPreset.value 透传 sessionApi.create。
       await flow.submitFirstMessage(segments, localThinkingLevel.value)
     } catch (e) {
       // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，

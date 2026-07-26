@@ -23,6 +23,7 @@ import * as realFile from './domains/file'
 import * as realComposer from './domains/composer'
 import * as realWorkspace from './domains/workspace'
 import * as realQuota from './domains/quota'
+import * as realPreset from './domains/preset'
 import * as mockApi from './mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
@@ -42,6 +43,9 @@ export const file = isMock ? mockApi.file : realFile
 export const composer = isMock ? mockApi.composer : realComposer
 export const workspace = isMock ? mockApi.workspace : realWorkspace
 export const quota = isMock ? mockApi.quota : realQuota
+// preset：pi 启动预设域（pi-launch-presets wave1）。mock 轨走 mockApi.preset 占位（空列表 + 默认 id），
+// real 轨走真实 RPC（preset.list/getDefault/setDefault）。
+export const preset = isMock ? mockApi.preset : realPreset
 // search（⌘K 全局搜索）编排归 useSearch composable（D-026，#5）：mock 轨走 mockApi.search fixture，
 // real 轨走真实 3 源聚合（命令/file/session domain）。本门面不再导出 search（useSearch 内部判 VITE_MOCK）。
 

@@ -23,12 +23,14 @@ export async function list(): Promise<SessionGroup[]> {
 /**
  * 创建新 session（#1 cwd 透传，位置参数 create(cwd?, label?)，issues #1 方案 A）。
  * cwd=undefined → payload 不含 cwd 键（runtime 回退 process.cwd()，AC-1.2 回归）。
+ * presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1），透传给 runtime。
  * reply envelope 是 { session }，解包 .session。
  */
-export async function create(cwd?: string, label?: string): Promise<SessionSummary> {
-  const payload: { cwd?: string; label?: string } = {}
+export async function create(cwd?: string, label?: string, presetId?: string): Promise<SessionSummary> {
+  const payload: { cwd?: string; label?: string; presetId?: string } = {}
   if (cwd !== undefined) payload.cwd = cwd
   if (label !== undefined) payload.label = label
+  if (presetId !== undefined) payload.presetId = presetId
   const reply = await command('session.create', payload)
   return reply.session
 }
