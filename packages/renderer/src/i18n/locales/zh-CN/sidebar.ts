@@ -16,6 +16,14 @@ export default {
   deleteSessionFailed: '删除会话失败：{msg}',
   renameFailed: '重命名失败：{msg}',
   retry: '重试',
+  update: {
+    newVersion: '新版本可用',
+    downloading: '下载中 {percent}%',
+    replacing: '替换中',
+    restarting: '即将重启',
+    error: '升级失败',
+    goToDownload: '前往下载',
+  },
   sessionItem: {
     rename: '重命名',
     delete: '删除',

@@ -84,3 +84,4 @@ export {
   DEFAULT_PRESETS,
   isPiLaunchPreset,
 } from './pi-preset'
+export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState } from './update'

@@ -12,7 +12,8 @@
  * （forkSession / handoff 真源在此）；本 composable 只做 Turn 行级 handler 的薄 wrapper
  * （调 useSidebar 的编排 + 错误 toast），不含跨 api 编排逻辑。
  */
-import type { ComputedRef } from 'vue'
+import type { ComputedRef, Ref } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message } from '@xyz-agent/shared'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -41,6 +42,10 @@ export function useTurnActions(deps: TurnActionsDeps): {
   onFork: (msg: Message) => Promise<void>
   /** fork 提问：从指定 assistant 进 composer fork 模式（发 signal） */
   onForkAsk: (msg: Message) => void
+  /** fork 后台（防重复 wrapper）：内部管理 isForking 状态 */
+  handleFork: (msg: Message) => Promise<void>
+  /** fork 操作进行中（按钮 disabled 守卫） */
+  isForking: Ref<boolean>
   /** handoff 后台：从末条 assistant 打包文档到新 session（pi 跑 /skill:handoff） */
   onHandoff: () => Promise<void>
   /** handoff 备注：进 composer handoff 模式（发 signal，可附 focus 说明） */
@@ -99,11 +104,25 @@ export function useTurnActions(deps: TurnActionsDeps): {
   /**
    * handoff 备注（fast-handoff）：进入 composer handoff 模式（对称 onForkAsk）。
    * 经 useHandoffModeChannel 发 signal，Composer 监听后调自身 enterHandoffMode（聚焦输入框等用户键入 focus）。
+   *
+   * @param msg 保留签名对称性，handoff 无 fromMessageId（pi 自取末条）
    */
   function onHandoffAsk(msg: Message): void {
     if (!msg) return
     triggerEnterHandoffMode(sessionId.value)
   }
 
-  return { onFork, onForkAsk, onHandoff, onHandoffAsk }
+  /** [m3] fork 操作防重复（参照 isHandingOff，防 forkSession RPC 重入） */
+  const isForking = ref(false)
+  async function handleFork(msg: Message): Promise<void> {
+    if (isForking.value) return
+    isForking.value = true
+    try {
+      await onFork(msg)
+    } finally {
+      isForking.value = false
+    }
+  }
+
+  return { onFork, onForkAsk, handleFork, isForking, onHandoff, onHandoffAsk }
 }

@@ -18,6 +18,8 @@
           <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
           <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
         </div>
+        <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
+        <UpdateButton class="ml-auto" />
       </div>
 
       <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
@@ -193,6 +195,7 @@ import { useChat } from '@/composables/features/useChat'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
+import UpdateButton from './UpdateButton.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
@@ -205,6 +208,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
 import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
+import { useAppUpdate } from '@/composables/features/useAppUpdate'
 import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -373,6 +377,14 @@ onMounted(() => {
   useSubagentListSync()
   useWorkflowListSync()
 })
+
+/**
+ * 启动 30s 自动升级检测（w4：useAppUpdate.initAutoCheck，UpdateButton 消费检测到的状态）。
+ * 在 setup 顶层同步调用（非 onMounted）：initAutoCheck 内部用 setTimeout 延迟 30s，不需等 DOM 挂载；
+ * onScopeDispose（initAutoCheck 内注册的清理）必须在活跃 effect scope 内同步绑定，
+ * 放 onMounted 回调内虽能工作（onMounted 在组件 scope 内同步跑）但脆弱且注释误导，故提到 setup 顶层。
+ */
+useAppUpdate().initAutoCheck()
 
 /**
  * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。

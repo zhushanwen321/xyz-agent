@@ -47,7 +47,7 @@ files:
 # dist/runtime 必须在 files 中存在，然后 asarUnpack 会把它从 asar
 # 中剔除到 app.asar.unpacked/ 目录。如果 files 排除了 dist/runtime，
 # 这里只会静默失败，产物中不会有 app.asar.unpacked/dist/runtime/。
-# 检查：scripts/preflight-check.sh [5/7] asarUnpack vs files consistency
+# 检查：scripts/preflight-check.sh [6/8] asarUnpack vs files consistency
 asarUnpack:
   - "dist/runtime/**/*"
   # node-pty native binary（prebuilds/<platform>/pty.node + spawn-helper）
@@ -97,6 +97,9 @@ mac:
         - arm64
   category: public.app-category.developer-tools
   minimumSystemVersion: 12.0.0
+  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
+  # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
+  artifactName: xyz-agent-mac-arm64.${ext}
 
 win:
   target:
@@ -106,12 +109,14 @@ win:
     - target: zip
       arch:
         - x64
-  artifactName: ${productName}-${version}-setup-${arch}.${ext}
+  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
+  # nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
+  artifactName: xyz-agent-setup-${arch}.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: ${productName}-${version}-setup-${arch}.${ext}
+  artifactName: xyz-agent-setup-${arch}.${ext}
 
 linux:
   target:
@@ -122,7 +127,11 @@ linux:
       arch:
         - x64
   category: Development
-  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
+  # ${arch} 由 electron-builder 按 target ext 解析（getArtifactArchName）：
+  # AppImage(x64) -> x86_64，deb(x64) -> amd64，${ext} 解析为 AppImage / deb。
+  # 产物：xyz-agent-x86_64.AppImage 和 xyz-agent-amd64.deb。
+  artifactName: xyz-agent-${arch}.${ext}
 
 # 本地构建时 electron-builder 需要至少一个 publish provider
 # 否则 updateInfoBuilder 会因 channel === null 崩溃

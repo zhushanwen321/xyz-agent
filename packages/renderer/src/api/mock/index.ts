@@ -342,7 +342,7 @@ export const session = {
   },
 
   /** Mock handoff（fast-handoff：stub resolve 即可，E2E 走 runtime 真路径） */
-  async handoff(_sessionId: string, _focus?: string): Promise<void> {
+  async handoff(_sessionId: string, _reply?: string): Promise<void> {
     await sleep(TIMING.ack)
   },
 

@@ -56,10 +56,10 @@
           <BgNotifyCard v-else-if="vi.item.message.bgNotify" :message="vi.item.message" />
           <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
           <div
-            v-else-if="getGuiComponent(vi.item.message)"
+            v-else-if="extractGuiComponent(vi.item.message)"
             class="py-1 pl-1 font-mono text-[12px] leading-snug text-fg"
           >
-            <GuiComponentRenderer :component="getGuiComponent(vi.item.message)!" />
+            <GuiComponentRenderer :component="extractGuiComponent(vi.item.message)!" />
           </div>
           <SystemNotice v-else :message="vi.item.message" />
         </div>
@@ -149,6 +149,18 @@
         <ChevronDown class="size-4" />
       </Button>
     </Transition>
+
+    <!-- TurnRail（w4 wave IF4）：右侧导航 rail，hover 弹出 turn 列表 + viewport indicator。
+         纯展示组件，展开态/activeTurnIndex/事件全路由到此层（useTurnExpansion 与 Turn.vue 共享）。 -->
+    <TurnRail
+      :turns="railTurns"
+      :active-turn-index="activeTurnIndex"
+      :session-active="isSessionActive"
+      :panel-right-edge="panelRightEdge"
+      :expanded-turns="expandedTurns"
+      @jump="onJump"
+      @toggle="onToggle"
+    />
   </div>
 </template>
 
@@ -170,14 +182,14 @@ import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
+import TurnRail from './message-stream/TurnRail.vue'
 import ForkNotice from './ForkNotice.vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
-import { extractGui } from '@xyz-agent/extension-protocol'
-import { type Message } from '@xyz-agent/shared'
+import { extractGuiComponent } from '@/composables/logic/guiComponent'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
 import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
+import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
@@ -329,15 +341,6 @@ const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkN
     injectedBaseTop: forkNoticeBaseTop,
   })
 
-/**
- * 从 system 消息的 details.__gui__ 提取结构化渲染组件（extension GUI 协议 E5）。
- * customStart 把含 __gui__ 的 details 存进 system 消息；无 __gui__ 返回 undefined，
- * 由模板落回 SystemNotice 纯文本兜底。封装为函数避免模板里重复调用 extractGui。
- */
-function getGuiComponent(message: Message): GuiComponent | undefined {
-  return extractGui(message.details)?.component
-}
-
 /** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话） */
 const lastUserTurnIdx = computed(() => {
   for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
@@ -366,6 +369,18 @@ const { scrollEl, contentEl, stickToBottom, showJumpButton, onScroll, scrollToBo
 // session 切换 settling 窗口（详见 useSettlingGuard）：settling 期间 delta watch 跳过施加，让 scrollToBottom 贴底
 const { settling, startSettling } = useSettlingGuard()
 
+/* ── TurnRail（w4 wave IF4）：状态 + 事件路由下沉 useMessageStreamRail（script ≤300 行规范）。
+     rail 内部调 useTurnExpansion（与 Turn.vue 各自 per-instance Map，w1 既定设计）；
+     railTurns 派生自 renderItems。 ── */
+const rail = useMessageStreamRail({
+  sessionId: computed(() => props.sessionId),
+  renderItems,
+  scrollEl,
+  offsetOf,
+  topOffset,
+})
+const { railTurns, activeTurnIndex, panelRightEdge, expandedTurns, onJump, onToggle } = rail
+
 /**
  * provide stick guard pause/resume 给 Turn.vue（trace 折叠 transition 期间暂停 onScroll 误判）。
  * Turn.vue inject 后在 <Transition> 的 @before-leave / @leave-done 时调用。
@@ -376,10 +391,12 @@ provideStickGuard({ pause: pauseStickGuard, resume: resumeStickGuard })
  * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），
  * virtualList.onScrollUpdate 把 DOM scrollTop/clientHeight 同步进响应式 ref 驱动
  * visibleRange 失效重算（纯滚动场景下窗口跟随收敛，修复 liveComputed 假 computed 的 BLOCKER）。
+ * 同时更新 activeTurnIndex（rail viewport indicator 跟随滚动位置）。
  */
 function handleScroll(): void {
   onScroll()
   virtualList.onScrollUpdate()
+  rail.updateActiveTurnIndex()
 }
 
 /**
