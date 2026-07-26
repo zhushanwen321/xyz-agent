@@ -34,6 +34,12 @@ export const usePresetStore = defineStore('preset', () => {
    * startFlow 时重置为 ''（与 pendingCwd/pendingModel 范式对齐）。
    */
   const selectedPresetId = ref('')
+  /**
+   * Popover 打开请求计数器（FR-16 键盘快捷键）。
+   * 键盘快捷键 Cmd+Shift+P 递增此值，PresetSelectChip watch 到变化后打开 Popover。
+   * 用计数器而非 boolean，保证连续按两次也能触发（值变化 → watch 触发）。
+   */
+  const openRequest = ref(0)
 
   // ── Actions（纯写入；RPC 编排 + 订阅生命周期在 usePiPresets composable）──
 
@@ -67,16 +73,23 @@ export const usePresetStore = defineStore('preset', () => {
     presets.value = presets.value.filter((p) => p.id !== presetId)
   }
 
+  /** FR-16：请求打开 PresetSelectChip Popover（键盘快捷键触发）。 */
+  function requestOpen(): void {
+    openRequest.value += 1
+  }
+
   return {
     // state
     presets,
     defaultPresetId,
     selectedPresetId,
+    openRequest,
     // actions（纯写入）
     setPresets,
     setDefaultPresetId,
     selectPreset,
     upsertPreset,
     removePreset,
+    requestOpen,
   }
 })

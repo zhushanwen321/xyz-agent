@@ -238,12 +238,17 @@ export class ExtensionService {
       let version = ''
       let description = ''
 
+      let tools: string[] | undefined
       try {
         const raw = readFileSync(pkgJsonPath, 'utf-8')
-        const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string }
+        const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string; pi?: { tools?: string[] } }
         name = pkg.name ?? name
         version = pkg.version ?? ''
         description = pkg.description ?? ''
+        // FR-11：从 package.json pi.tools 读取扩展提供的工具列表
+        if (Array.isArray(pkg.pi?.tools)) {
+          tools = pkg.pi.tools.filter((t): t is string => typeof t === 'string')
+        }
       } catch (e) {
         log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${toErrorMessage(e)}`)
       }
@@ -263,6 +268,7 @@ export class ExtensionService {
         enabled: !isDisabled,
         source: isUserInstalled ? 'user-installed' : 'built-in',
         autoUpgrade: isAutoUpgrade,
+        ...(tools && { tools }),
       })
     }
 

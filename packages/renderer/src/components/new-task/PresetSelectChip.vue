@@ -17,7 +17,7 @@
  *
  * emit select：landing 态用户选定预设变化时通知父组件（wave3 session.create 透传链路用）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, ChevronDown, Lock, SlidersHorizontal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -100,6 +100,14 @@ onMounted(async () => {
     store.selectPreset(store.defaultPresetId)
     emit('select', { presetId: store.defaultPresetId })
   }
+})
+
+// FR-16：键盘快捷键 Cmd+Shift+P → 打开 PresetSelectChip Popover
+// store.openRequest 由 useAppCommands 的快捷键 action 递增，watch 到变化后打开。
+watch(() => store.openRequest, async () => {
+  if (!isLanding.value) return
+  await nextTick()
+  open.value = true
 })
 
 /**
