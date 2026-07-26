@@ -13,7 +13,8 @@ import { basename, join } from 'node:path'
 import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import type { SessionSummary } from '@xyz-agent/shared'
+import type { SessionSummary, ThinkingLevel } from '@xyz-agent/shared'
+import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView } from './types.js'
@@ -70,7 +71,15 @@ export class SessionLifecycle {
     await this.pm.destroySession(id).catch(() => {})
   }
 
-  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> {
+  async create(cwd?: string, label?: string, options?: {
+    hidden?: boolean
+    /** Launch preset id（设计文档 §5，绑定到新 session 并解析为 pi 启动参数）。 */
+    presetId?: string
+    /** Landing Model Chip 传入值，覆盖 preset.modelOverride（C-RL-6 优先级）。 */
+    modelOverride?: string
+    /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
+    thinkingOverride?: string
+  }): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const requestedCwd = cwd ?? process.cwd()
     // INV-7: cwd 可能已被删除（worktree 清理/手动删目录），降级 homedir（与 restoreSession 对称）。
@@ -85,11 +94,29 @@ export class SessionLifecycle {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before starting a session.', MODEL_NOT_CONFIGURED)
     }
 
-    const allExtPaths = await this.svc.getExtensionPaths(sessionCwd)
+    // Preset 解析（设计文档 §5/§8.1）：presetId 存在时委托 PresetService.resolve，
+    // 返回 PresetResolution 供 options 映射；undefined（presetService 未注入/preset 被删）
+    // 时 fallback 现有 svc.getExtensionPaths/getSkillPaths 逻辑。
+    const presetId = options?.presetId
+    const resolution = presetId ? await this.svc.getLaunchPresetOptions(presetId, sessionCwd) : undefined
+
+    const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
+    // C-RL-6 优先级（设计文档 §5.2）：Landing 传入 > preset 字段 > 全局默认（RpcClient.start 的 getDefaultModel）。
+    // model/thinkingLevel 用 ?? 链：landingOverride ?? resolution 字段 ?? 不设（undefined 由 RpcClient 兜底）。
+    const modelOverride = options?.modelOverride ?? resolution?.modelOverride
+    const thinkingOverride = options?.thinkingOverride ?? resolution?.thinkingLevel
     const client = await this.pm.createSession(tempId, sessionCwd, {
-      skillPaths: this.svc.getSkillPaths(sessionCwd),
+      skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
+      // preset 字段（resolution 存在时才设，条件 spread 避免 undefined 覆盖默认）
+      ...(resolution?.toolArgs.tools && { tools: resolution.toolArgs.tools }),
+      ...(resolution?.toolArgs.excludeTools && { excludeTools: resolution.toolArgs.excludeTools }),
+      ...(resolution?.toolArgs.noTools && { noTools: true }),
+      ...(resolution?.flags.noSkills && { noSkills: true }),
+      ...(resolution?.flags.noContextFiles && { noContextFiles: true }),
+      ...(modelOverride && { model: modelOverride }),
+      ...(thinkingOverride && { thinkingLevel: thinkingOverride as ThinkingLevel }),
     })
 
     // 从 pi 获取真实 session ID
@@ -136,6 +163,12 @@ export class SessionLifecycle {
     // 现在依赖 SessionScanner.listAll 的合并机制：active session 从内存 Map（this.sessions）读，
     // 即使磁盘无文件也显示（restart 后内存清空，但此时未 flush 的 session 本就无内容，丢失合理）。
     this.sessionStore.refreshAll()
+    // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
+    // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
+    // 时 persistPresetBinding 内部 existsSync 守卫跳过（ES-RL-1，wave2 实现）。
+    if (presetId && session.sessionFilePath) {
+      this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
+    }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
     // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
     // lifecycle 层不再关心 cwd 是否降级。
@@ -178,6 +211,8 @@ export class SessionLifecycle {
         await this.sessionStore.trash(session.sessionFilePath)
         // 清理 sidecar（删除失败不阻塞主流程）
         try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
+        // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
+        try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
         // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
         this.sessionStore.invalidateMetaCache(session.sessionFilePath)
       }
@@ -187,6 +222,8 @@ export class SessionLifecycle {
       if (existsSync(target.filePath)) await this.sessionStore.trash(target.filePath)
       // 清理 sidecar（删除失败不阻塞主流程）
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
+      // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
+      try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
       // W-Runtime4：清理 sessionMetaCache 中的 stale 条目（避免无界增长）
       this.sessionStore.invalidateMetaCache(target.filePath)
     }
@@ -216,11 +253,25 @@ export class SessionLifecycle {
     })()
 
     const id = sessionId
-    const allExtPaths = await this.svc.getExtensionPaths(sessionCwd)
+    // preset 是 launch 配置不是终态（设计文档 §4.5），restore 后仍属同一 preset，
+    // .preset.json sidecar 不清理。target.launchPresetId undefined 时（历史 session 无 sidecar）
+    // 用 'builtin:full' 兜底（FR-10）。
+    const presetId = target.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
+    const resolution = await this.svc.getLaunchPresetOptions(presetId, sessionCwd)
+    const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
+    const modelOverride = resolution?.modelOverride
+    const thinkingOverride = resolution?.thinkingLevel
     const client = await this.pm.createSession(id, sessionCwd, {
-      skillPaths: this.svc.getSkillPaths(sessionCwd),
+      skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
+      ...(resolution?.toolArgs.tools && { tools: resolution.toolArgs.tools }),
+      ...(resolution?.toolArgs.excludeTools && { excludeTools: resolution.toolArgs.excludeTools }),
+      ...(resolution?.toolArgs.noTools && { noTools: true }),
+      ...(resolution?.flags.noSkills && { noSkills: true }),
+      ...(resolution?.flags.noContextFiles && { noContextFiles: true }),
+      ...(modelOverride && { model: modelOverride }),
+      ...(thinkingOverride && { thinkingLevel: thinkingOverride as ThinkingLevel }),
     })
 
     try {
@@ -315,12 +366,25 @@ export class SessionLifecycle {
     )
 
     // 3. spawn 新 pi 进程（与 restore 同模式）
+    // fork 继承源 session 的 preset（设计文档 §4.5）：从 source.launchPresetId 读源 preset，
+    // undefined 时（源是历史 session 无 sidecar）用 'builtin:full' 兜底（FR-10）。
     const sessionCwd = existsSync(source.cwd) ? source.cwd : homedir()
-    const allExtPaths = await this.svc.getExtensionPaths(sessionCwd)
+    const forkPresetId = source.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
+    const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
+    const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
+    const forkModelOverride = forkResolution?.modelOverride
+    const forkThinkingOverride = forkResolution?.thinkingLevel
     const client = await this.pm.createSession(forkedId, sessionCwd, {
-      skillPaths: this.svc.getSkillPaths(sessionCwd),
+      skillPaths: forkResolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
       systemPrompt: this.svc.getReplaceSystemPrompt(),
+      ...(forkResolution?.toolArgs.tools && { tools: forkResolution.toolArgs.tools }),
+      ...(forkResolution?.toolArgs.excludeTools && { excludeTools: forkResolution.toolArgs.excludeTools }),
+      ...(forkResolution?.toolArgs.noTools && { noTools: true }),
+      ...(forkResolution?.flags.noSkills && { noSkills: true }),
+      ...(forkResolution?.flags.noContextFiles && { noContextFiles: true }),
+      ...(forkModelOverride && { model: forkModelOverride }),
+      ...(forkThinkingOverride && { thinkingLevel: forkThinkingOverride as ThinkingLevel }),
     })
 
     try {
@@ -342,6 +406,9 @@ export class SessionLifecycle {
       // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，session 的终态 sidecar
       //（done/stopped）已被删 → 终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
       try { unlinkSync(forkedFilePath + '.meta.json') } catch { void 0 }
+      // 写 preset 绑定到 forkedFilePath 的 sidecar（设计文档 §4.5）。
+      // fork 继承源 preset，forkedFilePath 是新文件（已写出），existsSync 守卫会通过。
+      this.sessionStore.persistPresetBinding(forkedFilePath, forkPresetId)
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
