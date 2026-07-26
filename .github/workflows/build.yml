@@ -203,6 +203,15 @@ jobs:
         working-directory: apps/electron
         run: find dist/builder-output -type f 2>/dev/null || echo 'No output directory'
 
+      - name: Generate sha256 manifest
+        shell: bash
+        run: bash scripts/generate-manifest.sh apps/electron/dist/builder-output
+
+      - name: Ad-hoc sign mac app
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: bash scripts/sign-mac-adhoc.sh
+
       - name: Upload artifacts
         if: inputs.upload-artifacts
         uses: actions/upload-artifact@v4
@@ -214,5 +223,6 @@ jobs:
             apps/electron/dist/builder-output/*.exe
             apps/electron/dist/builder-output/*.AppImage
             apps/electron/dist/builder-output/*.deb
+            apps/electron/dist/builder-output/manifest.json
           retention-days: 7
           if-no-files-found: error
