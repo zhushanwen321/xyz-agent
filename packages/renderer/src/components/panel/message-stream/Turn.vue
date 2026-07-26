@@ -192,20 +192,22 @@
            块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
            - streaming 态：所有块按时序展开，trace 末尾追加独立光标行（永远在最后一行）
            - complete 态：末位 assistant 的 text 块跳过（已在底部 summary），其余按时序 -->
-      <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-        <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-          <Block
-            v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]"
-            :key="`${assistant.id}-${blk.kind}-${bIdx}`"
-            :type="blk.kind"
-            :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
-            :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
-            :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
-            :working="sessionActive"
-            :session-id="sessionId"
-          />
-        </template>
-      </div>
+      <Transition :css="false" @before-leave="onTraceBeforeLeave" @leave="onTraceLeave" @enter="onTraceEnter">
+        <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
+          <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
+            <Block
+              v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]"
+              :key="`${assistant.id}-${blk.kind}-${bIdx}`"
+              :type="blk.kind"
+              :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
+              :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
+              :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
+              :working="sessionActive"
+              :session-id="sessionId"
+            />
+          </template>
+        </div>
+      </Transition>
 
       <!-- hr 已移入上方 turn-meta sticky wrapper（working/完成态共用，避免 streaming 时双线） -->
 
@@ -350,6 +352,7 @@ import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { useTurnActions } from '@/composables/panel/useTurnActions'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
+import { useStickGuard, useTraceTransition } from '@/composables/effects/useStickGuard'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -512,6 +515,18 @@ const { elapsed } = useTurnElapsed(
     expanded.value = false
   },
 )
+
+/**
+ * stickToBottom 守卫暂停 + trace 折叠 transition hooks。
+ *
+ * 背景：对话完成时 trace 折叠，浏览器 clamp scrollTop 大幅减小被 onScroll 误判为用户上滑 →
+ * stickToBottom 翻 false → scrollToBottom 被 guard 拦截 → 界面停中间。transition 期间暂停该
+ * 误判分支（wheel 上滑仍立即翻 false，纯用户信号优先）。
+ *
+ * useStickGuard inject MessageStream provide 的 pause/resume（优雅降级：非 MessageStream 环境返回 null）。
+ * useTraceTransition 封装三个 height 过渡 JS hooks（提取至 composable，行数规范）。详见 composable 注释。
+ */
+const { onTraceBeforeLeave, onTraceLeave, onTraceEnter } = useTraceTransition(useStickGuard())
 
 /** 变更集卡（W10）：最后一条 assistant 的 fileChanges + store 里的变更集状态 */
 const changeSetFileChanges = computed(() => lastAssistant.value?.fileChanges ?? [])

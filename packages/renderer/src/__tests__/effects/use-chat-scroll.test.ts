@@ -19,6 +19,7 @@
  * - U35：onScroll scrollTop 明显减小 → stickToBottom=false（scrollbar/键盘兜底）
  * - U36：程序性 scrollToBottom 后 onScroll（异步增长 distance>阈值）→ 保持 true（核心回归）
  * - U37：showJumpButton === !stickToBottom 任意翻转后校验（computed 不变量）
+ * - U38-U40：stickGuard 暂停机制（pause/resume 跳过 scrollTop 减小误判，不影响贴底恢复/wheel）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/effects/use-chat-scroll.test.ts
  */
@@ -351,6 +352,96 @@ describe('useChatScroll · 锚定判定（wheel + scrollTop 方向）', () => {
     // 再次上滑
     el.dispatchEvent(wheelEvent(-100))
     expect(showJumpButton.value).toBe(!stickToBottom.value)
+  })
+})
+
+/**
+ * stickGuard 暂停机制（fix-finish-scroll L3）。
+ *
+ * 背景：对话完成时 trace 块 CSS transition 收缩高度，浏览器 clamp scrollTop 大幅减小，
+ * onScroll 的「scrollTop 减小→false」分支误判为用户上滑 → stickToBottom 翻 false →
+ * 后续 scrollToBottom 被 guard 拦截 → 界面停中间。
+ *
+ * 修复：pauseStickGuard() / resumeStickGuard()（trace transition JS hooks 调用）暂停期间
+ * onScroll 跳过「scrollTop 减小→false」分支。暂停只针对该分支，不影响：
+ * - 「distance≤40→true」贴底恢复（无歧义，应保留）
+ * - onWheel deltaY<0（纯用户信号优先级最高，暂停期间仍翻 false）
+ *
+ * 覆盖：
+ * - U38：pause 后 scrollTop 明显减小 → stickToBottom 保持 true（原行为会翻 false）；
+ *        resume 后同样减小 → 翻 false（确认暂停是临时的，resume 后机制恢复）
+ * - U39：pause 不影响贴底恢复（distance≤40 → true）
+ * - U40：pause 不影响 wheel 上滑（deltaY<0 → false，用户信号优先）
+ */
+describe('useChatScroll · stickGuard 暂停机制', () => {
+  beforeEach(() => {
+    HTMLElement.prototype.scrollTo = vi.fn()
+  })
+
+  // U38：暂停期间 onScroll 的「scrollTop 减小→false」分支被跳过；resume 后恢复。
+  // 关键不变量：暂停是临时的，resume 后同样幅度的 scrollTop 减小应再次翻 false。
+  it('U38: pauseStickGuard 后 scrollTop 明显减小不翻 false；resumeStickGuard 后恢复翻 false', () => {
+    const { scrollEl, onScroll, stickToBottom, pauseStickGuard, resumeStickGuard } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    // 先滚到底：scrollTop=500，lastScrollTop 更新为 500（distance=0 贴底）
+    setScroll(el, 1000, 500, 500)
+    onScroll()
+    expect(stickToBottom.value).toBe(true)
+
+    // 暂停守卫（模拟 trace transition 期间）
+    pauseStickGuard()
+    // scrollTop 从 500 减到 100（减小 400 > SCROLL_UP_DELTA=10），原行为会翻 false
+    setScroll(el, 1000, 500, 100)
+    onScroll()
+    // 暂停期间：不翻 false（这正是修复目标——防程序性 clamp 误判）
+    expect(stickToBottom.value).toBe(true)
+
+    // resume：暂停是临时的，恢复后同样幅度的减小应翻 false
+    resumeStickGuard()
+    // lastScrollTop 在上次 onScroll 已更新为 100，再从 100 减到 50（减小 50 > 10）
+    setScroll(el, 1000, 500, 50)
+    onScroll()
+    expect(stickToBottom.value).toBe(false)
+  })
+
+  // U39：暂停只针对「scrollTop 减小→false」分支，「distance≤40→true」贴底恢复保留。
+  // 理由：贴底恢复方向无歧义（不论程序性还是用户），暂停期间也应允许回贴底。
+  it('U39: pauseStickGuard 不影响 distance≤40 贴底恢复（onScroll 仍翻 true）', () => {
+    const { scrollEl, onScroll, stickToBottom, unreadBelow, pauseStickGuard } = useChatScroll()
+    const el = document.createElement('div')
+    scrollEl.value = el
+    // 初始非贴底：scrollTop=100，distance=400
+    setScroll(el, 1000, 500, 100)
+    onScroll()
+    // 模拟之前因新内容到达置 unreadBelow
+    unreadBelow.value = true
+
+    // 暂停守卫
+    pauseStickGuard()
+    // 滚回贴底：distance = 1000-500-500 = 0 ≤ 40
+    setScroll(el, 1000, 500, 500)
+    onScroll()
+    // 暂停期间贴底恢复仍生效：stickToBottom=true、unreadBelow 清零
+    expect(stickToBottom.value).toBe(true)
+    expect(unreadBelow.value).toBe(false)
+  })
+
+  // U40：暂停不影响 wheel 上滑（纯用户信号优先级最高）。
+  // 理由：用户主动滚轮上滑是确定信号，即使 trace transition 期间也应尊重（暂停只针对
+  // onScroll 的程序性 clamp 误判分支）。
+  it('U40: pauseStickGuard 不影响 wheel 上滑（deltaY<0 → stickToBottom=false）', async () => {
+    const { scrollEl, stickToBottom, pauseStickGuard } = useChatScroll()
+    const el = document.createElement('div')
+    await bindScroll(scrollEl, el)
+    expect(stickToBottom.value).toBe(true)
+
+    // 暂停守卫
+    pauseStickGuard()
+    // 用户滚轮上滑
+    el.dispatchEvent(wheelEvent(-1))
+    // 暂停不影响 wheel：仍翻 false（用户信号优先）
+    expect(stickToBottom.value).toBe(false)
   })
 })
 

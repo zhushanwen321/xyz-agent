@@ -163,6 +163,7 @@ import { useSettlingGuard } from '@/composables/effects/useSettlingGuard'
 import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
 import { provideTurnResizeRegistry } from '@/composables/effects/useResizeReport'
+import { provideStickGuard } from '@/composables/effects/useStickGuard'
 import { toRenderItems, filterDisplayableMessages, renderKey } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
 import Turn from './message-stream/Turn.vue'
@@ -361,9 +362,15 @@ function onEditStateChange(idx: number, editing: boolean): void {
  * contentEl 绑定内容 wrapper，供 useChatScroll 的 ResizeObserver 观察异步渲染抖动。
  * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
  */
-const { scrollEl, contentEl, stickToBottom, showJumpButton, onScroll, scrollToBottom } = useChatScroll()
+const { scrollEl, contentEl, stickToBottom, showJumpButton, onScroll, scrollToBottom, pauseStickGuard, resumeStickGuard } = useChatScroll()
 // session 切换 settling 窗口（详见 useSettlingGuard）：settling 期间 delta watch 跳过施加，让 scrollToBottom 贴底
 const { settling, startSettling } = useSettlingGuard()
+
+/**
+ * provide stick guard pause/resume 给 Turn.vue（trace 折叠 transition 期间暂停 onScroll 误判）。
+ * Turn.vue inject 后在 <Transition> 的 @before-leave / @leave-done 时调用。
+ */
+provideStickGuard({ pause: pauseStickGuard, resume: resumeStickGuard })
 
 /**
  * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），
@@ -398,6 +405,7 @@ useMessageStreamScroll({
   lastRenderTurn,
   isCompacting,
   isHandingOff,
+  isSessionActive,
   scrollToBottom,
 })
 
