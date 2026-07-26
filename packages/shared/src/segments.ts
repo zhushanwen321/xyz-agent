@@ -21,6 +21,7 @@
  * - file: 文件引用段（未来从 drawer/diff 选取追加到 composer），含路径和可选行范围
  * - mention: @mention 段（未来 @user 等），含 name
  * - image: 图片附件段（Cmd+V 粘贴的截图等）：
+ * - handoff: 交接来源标记段（fast-handoff 产出），含 sourceLabel（来源 session 名称）：
  *   - id：composer chip 的稳定唯一标识（crypto.randomUUID），同一文件附两次时供
  *     ContextChipsBar :key 区分（path 会重复）
  *   - path：磁盘绝对路径（tmpdir 下落盘文件），不变
@@ -41,12 +42,14 @@ export type Segment =
   | { type: 'file'; path: string; lineRange?: [number, number] }
   | { type: 'mention'; name: string }
   | { type: 'image'; id: string; path: string; fileName: string; displayName: string; needsMigrate?: boolean }
+  | { type: 'handoff'; sourceLabel: string }
 
 /**
  * Segment[] → 纯文本（归一化展示用 + pi prompt 序列化的唯一实现）。
  *
  * skill → `/skill:name`，file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
- * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读）。
+ * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读），
+ * handoff → `[handoff from sourceLabel]`（来源标记，文档内容在 text segment 中）。
  * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug）。
  * image 后紧跟 text 不补空格（image 产出的 `\n${path}\n` 已有换行分隔，再补空格会污染行首）。
  *
@@ -110,6 +113,11 @@ export function segmentsToText(segments: Segment[]): string {
         // vision 模型不需要锚点），且会被 LLM 当文件名瞎找。
         // 图片持久化在 <dataDir>/attachments/<sessionId>/（非 pi TUI 的 /tmp），切换 session 不丢。
         parts.push(`\n${seg.path}\n`)
+        break
+      case 'handoff':
+        // handoff badge 来源标记：sourceLabel 标识交接来源 session，pi 看到纯文本标记。
+        // 文档内容在同一条消息的 text segment 中，此处只输出来源标记供 LLM 识别上下文。
+        parts.push(`[handoff from ${seg.sourceLabel}]`)
         break
     }
   }

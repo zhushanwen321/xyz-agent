@@ -179,3 +179,32 @@ describe('normalizeContent', () => {
     expect(normalizeContent([])).toBe('')
   })
 })
+
+describe('handoff segment', () => {
+  it('handoff segment 序列化为 [handoff from sourceLabel]', () => {
+    const segs: Segment[] = [{ type: 'handoff', sourceLabel: 'my-session' }]
+    expect(segmentsToText(segs)).toBe('[handoff from my-session]')
+  })
+
+  it('handoff + text 混合时，handoff 标记后紧跟 text 补空格', () => {
+    const segs: Segment[] = [
+      { type: 'handoff', sourceLabel: 'src-session' },
+      { type: 'text', text: '请继续完成以下任务' },
+    ]
+    expect(segmentsToText(segs)).toBe('[handoff from src-session] 请继续完成以下任务')
+  })
+
+  it('handoff segment 空 sourceLabel 不抛错', () => {
+    const segs: Segment[] = [{ type: 'handoff', sourceLabel: '' }]
+    expect(segmentsToText(segs)).toBe('[handoff from ]')
+  })
+
+  it('handoff + skill 混合不补空格（两者都是 chip 类但 handoff 已有 ] 分隔）', () => {
+    const segs: Segment[] = [
+      { type: 'handoff', sourceLabel: 'old-session' },
+      { type: 'skill', name: 'review' },
+    ]
+    // handoff 结尾是 ]，skill 开头是 /，非 text→非 text 边界补空格
+    expect(segmentsToText(segs)).toBe('[handoff from old-session] /skill:review')
+  })
+})

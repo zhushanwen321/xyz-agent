@@ -102,6 +102,18 @@
             :path="seg.path"
             :display-name="seg.displayName"
           />
+          <!-- handoff badge：紫色（复用 --reasoning token，与 skill 同族），展示来源 session 名称。
+               handoff 是 runtime 编排产出的结构化片段，非用户手动输入。 -->
+          <span
+            v-else-if="seg.type === 'handoff'"
+            class="mr-1 inline-flex items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning"
+            style="vertical-align: middle"
+            :data-testid="`msg-handoff-badge-${i}`"
+            :title="`handoff from ${seg.sourceLabel}`"
+          >
+            <ArrowRightLeft class="size-[12px] shrink-0" />
+            <span>{{ seg.sourceLabel }}</span>
+          </span>
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
         <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
@@ -341,7 +353,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Upload, Wrench } from '@lucide/vue'
+import { ArrowRight, ArrowRightLeft, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Upload, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
