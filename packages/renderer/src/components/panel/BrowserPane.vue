@@ -324,9 +324,11 @@ onMounted(() => {
   })
 })
 
-onBeforeUnmount(() => {
+onBeforeUnmount(async () => {
   // hide（keep-alive，不 destroy）：切 tab/关 drawer 时隐藏 WebContentsView，下次打开复用。
-  void browserHide(props.sessionId)
+  // [HISTORICAL] 修复浏览器页面残留问题：确保 hide 完成后再卸载组件。
+  // 原实现用 void browserHide（异步但不等待），如果组件卸载太快，hide 可能没来得及执行。
+  await browserHide(props.sessionId)
   // 清理 rect 同步 + 缩放快捷键
   disposeRectSync()
   window.removeEventListener('keydown', onZoomKeydown)

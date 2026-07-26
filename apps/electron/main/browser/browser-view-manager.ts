@@ -140,9 +140,11 @@ export class BrowserViewManager {
     // 复用即重新访问，更新 lastUsed 提升 LRU 优先级（防最近用的 session 被淘汰）。
     const existing = this.views.get(sessionId)
     if (existing) {
+      console.log(`[browser-view] create: reuse existing sessionId=${sessionId}, windowId=${windowId}`)
       existing.lastUsed = Date.now()
       return
     }
+    console.log(`[browser-view] create: new sessionId=${sessionId}, windowId=${windowId}, poolSize=${this.views.size}`)
 
     // 新建前 LRU 淘汰：池满（>=MAX_VIEWS）时淘汰 lastUsed 最旧的 entry。
     if (this.views.size >= MAX_VIEWS) {
@@ -256,38 +258,64 @@ export class BrowserViewManager {
   }
 
   /**
-   * 隐藏 view（setBounds {0,0,0,0}，keep-alive 不销毁）。
-   * 记录当前 getBounds 到 lastRect（show 时恢复）。isVisible 置 false。
+   * 隐藏 view：从 contentView 移除 + setBounds {0,0,0,0} + isVisible=false。
+   * keep-alive 语义：view 对象还在 Map 中，webContents 不销毁，show 时重新挂载。
    * 幂等：sessionId 不存在时无操作。
+   *
+   * [HISTORICAL] 修复浏览器页面残留问题：原实现只调 setBounds({0,0,0,0})，view 仍然
+   * attach 在 contentView 树上。多次 session 切换后，如果状态管理出错，view 会意外显示。
+   * 新实现 hide 时彻底移除 view（removeChildView），show 时再 addChildView 重新挂载。
    */
   hide(sessionId: string): void {
     const entry = this.views.get(sessionId)
     if (!entry) {
-      // [W1] 静默失败改为 console.warn：onBeforeUnmount 调 hide 但 view 已被 LRU 淘汰/窗口已关。
-      // 不会引发 UI 错误（view 反正不可见），但留日志便于排查。
       console.warn(`[browser-view] hide: session not found sessionId=${sessionId}`)
       return
     }
     // 记录当前可见 rect（若已隐藏，getBounds 返回 HIDDEN_RECT，无副作用）
     entry.lastRect = entry.view.getBounds()
     entry.isVisible = false
+    
+    // 从 contentView 移除 view（防止 view 残留在屏幕上）
+    const win = this.windows.get(entry.windowId)
+    if (entry.isAttached && win && !win.isDestroyed()) {
+      win.contentView.removeChildView(entry.view)
+      entry.isAttached = false
+      console.log(`[browser-view] hide: removed from contentView sessionId=${sessionId}, lastRect=`, entry.lastRect)
+    } else {
+      console.log(`[browser-view] hide: sessionId=${sessionId}, lastRect=`, entry.lastRect, `(not attached or window destroyed)`)
+    }
+    
+    // 保留 setBounds(HIDDEN_RECT) 作为防御性措施
     entry.view.setBounds(HIDDEN_RECT)
   }
 
   /**
-   * 显示 view（恢复最近 rect）。isVisible 置 true。
+   * 显示 view：重新挂载到 contentView + 恢复最近 rect + isVisible=true。
    * show 前若 setRect 推过真实 rect，lastRect 即真实值；否则为 HIDDEN_RECT。
    * 幂等：sessionId 不存在时无操作。
+   *
+   * [HISTORICAL] 与 hide 配对：hide 时 removeChildView，show 时 addChildView 重新挂载。
    */
   show(sessionId: string): void {
     const entry = this.views.get(sessionId)
     if (!entry) {
-      // [W1] 静默失败改为 console.warn：BrowserPane mount 时序竞争（useBrowserFocusSync 已推 focus 但 view 池无）。
-      // 不报错，让 renderer 后续 create+show 重建流程正常推进。
       console.warn(`[browser-view] show: session not found sessionId=${sessionId}`)
       return
     }
+    
     entry.isVisible = true
+    
+    // 重新挂载到 contentView
+    const win = this.windows.get(entry.windowId)
+    if (!entry.isAttached && win && !win.isDestroyed()) {
+      win.contentView.addChildView(entry.view)
+      entry.isAttached = true
+      console.log(`[browser-view] show: added to contentView sessionId=${sessionId}, lastRect=`, entry.lastRect)
+    } else {
+      console.log(`[browser-view] show: sessionId=${sessionId}, lastRect=`, entry.lastRect, `(already attached or window destroyed)`)
+    }
+    
     entry.view.setBounds(entry.lastRect)
   }
 
@@ -334,7 +362,7 @@ export class BrowserViewManager {
       }
     }
     if (oldestKey) {
-      console.log(`[browser-view] LRU evict: ${oldestKey} (pool size ${this.views.size})`)
+      console.log(`[browser-view] LRU evict: sessionId=${oldestKey}, lastUsed=${oldestTs}, poolSize=${this.views.size}`)
       this.destroy(oldestKey)
     }
   }
@@ -353,23 +381,38 @@ export class BrowserViewManager {
    */
   focus(sessionId: string): void {
     const target = this.views.get(sessionId)
+    console.log(`[browser-view] focus: sessionId=${sessionId}, target exists=${!!target}, views=`, 
+      Array.from(this.views.entries()).map(([sid, e]) => ({ sid, isVisible: e.isVisible, isAttached: e.isAttached })))
+    
     // 隐藏所有当前可见的 entry（除 target 外）
     for (const [sid, entry] of this.views) {
       if (sid === sessionId) continue
       if (entry.isVisible) {
         entry.isVisible = false
+        // 从 contentView 移除
+        const win = this.windows.get(entry.windowId)
+        if (entry.isAttached && win && !win.isDestroyed()) {
+          win.contentView.removeChildView(entry.view)
+          entry.isAttached = false
+        }
         entry.view.setBounds(HIDDEN_RECT)
       }
     }
+    
     // 显示 target（若存在）
     if (target) {
       target.lastUsed = Date.now()
       target.isVisible = true
+      // 重新挂载到 contentView
+      const win = this.windows.get(target.windowId)
+      if (!target.isAttached && win && !win.isDestroyed()) {
+        win.contentView.addChildView(target.view)
+        target.isAttached = true
+      }
       target.view.setBounds(target.lastRect)
       return
     }
-    // [W1] target 不存在：常见于 LRU 淘汰后切回 / BrowserPane 还没 mount。spec 允许此静默路径
-    // （renderer 后续 create+show 重建），但留 debug 日志便于排查首次切 session 时的时序问题。
+    
     console.debug(`[browser-view] focus: target not found sessionId=${sessionId} (LRU evict or pending create)`)
   }
 
