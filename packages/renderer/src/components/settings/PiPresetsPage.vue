@@ -16,6 +16,18 @@
       </Button>
     </div>
 
+    <!-- 加载失败提示（S-RN-7：消费 loadError 错误态） -->
+    <div
+      v-if="loadError"
+      class="flex items-center gap-2 rounded-sm border border-border bg-surface px-3 py-2 text-[12px] text-danger"
+    >
+      <AlertCircle class="size-3.5 shrink-0" />
+      <span class="flex-1">{{ loadError }}</span>
+      <Button variant="ghost" size="dense" class="rounded-sm text-[11px]" @click="retryLoad">
+        {{ t('common.retry') }}
+      </Button>
+    </div>
+
     <!-- 空态 -->
     <div v-if="!presets.length" class="py-8 text-center text-[12px] text-muted">
       {{ t('settings.preset.empty') }}
@@ -84,6 +96,9 @@
       <div class="border-t border-border px-3 py-3">
         <div class="flex flex-col gap-3">
           <!-- 名称 + ID（内置 disabled） -->
+          <!-- 受控写法（:model-value + @update:model-value）有意为之：配合 debounce
+               控制字段更新的 flush 时机（onFieldChange → debouncedUpdate 400ms）。
+               改 v-model 会失去 debounce 能力（每次 keystroke 立即触发 RPC）。 -->
           <div class="grid grid-cols-2 gap-3">
             <div>
               <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
@@ -108,7 +123,7 @@
               />
             </div>
           </div>
-          <!-- 描述 -->
+          <!-- 描述（受控写法 + debounce，同 name 字段，见上文注释） -->
           <div>
             <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
               {{ t('settings.preset.description') }}
@@ -151,7 +166,8 @@
 import { computed, ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Plus, Star, Trash2, RotateCcw } from '@lucide/vue'
+import { useDebounceFn } from '@vueuse/core'
+import { Plus, Star, Trash2, RotateCcw, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -166,8 +182,15 @@ import PresetModeSection from './PresetModeSection.vue'
 const { t } = useI18n()
 const { info: toastInfo, error: toastError } = useToast()
 const store = usePresetStore()
-const { presets, defaultPresetId } = storeToRefs(store)
+const { presets, defaultPresetId, loadError } = storeToRefs(store)
 const { loadPresets, setDefault, create, update, remove } = usePiPresets()
+
+/** 字段编辑（name/description）的 debounce 延迟——W-RN-2 节流 RPC 频率。 */
+const FIELD_UPDATE_DEBOUNCE_MS = 400
+/** base36 进制基数（Math.toString 参数，标准 JS 写法）。 */
+const BASE36_RADIX = 36
+/** Math.random() 输出 '0.xxx'，slice 跳过前 2 字符（'0.'）取余下随机串。 */
+const RANDOM_PREFIX_LEN = 2
 
 // 删除确认
 const confirmDeleteId = ref('')
@@ -189,6 +212,15 @@ onMounted(() => {
   if (!presets.value.length) loadPresets()
 })
 
+/** 重试加载预设（S-RN-7：loadError 态下的手动重试入口）。 */
+async function retryLoad() {
+  try {
+    await loadPresets()
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
+}
+
 /** 设为默认预设 */
 async function onSetDefault(presetId: string) {
   try {
@@ -201,7 +233,10 @@ async function onSetDefault(presetId: string) {
 
 /** 新建自定义预设 */
 async function onCreate() {
-  const id = `custom:${crypto.randomUUID()}`
+  // crypto.randomUUID 在非安全上下文（HTTP / 旧环境）可能不可用，用 Date+random 兜底
+  const uuid = crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(BASE36_RADIX).slice(RANDOM_PREFIX_LEN)}`
+  const id = `custom:${uuid}`
   const newPreset: PiLaunchPreset = {
     id,
     name: t('settings.preset.newPresetName'),
@@ -218,15 +253,33 @@ async function onCreate() {
   }
 }
 
-/** 字段变更（name/description）→ 乐观更新 */
-async function onFieldChange(preset: PiLaunchPreset, field: 'name' | 'description', value: string) {
+/**
+ * 字段变更（name/description）→ 乐观更新。
+ *
+ * W-RN-2：每次 keystroke 不直接调 update RPC，先 debounce 400ms 聚合连续输入。
+ * 同一输入框的连续 keystroke 共享一个 debounce timer（人类一次只编辑一个字段），
+ * 最后一次输入的 preset 镜像被 flush 发 RPC。
+ * update 内部已乐观 upsert + reply 回写（W-RN-3），这里只负责节流 RPC 频率。
+ *
+ * debounce 而非「失焦/Enter flush」：编辑器场景用户期望静默自动保存（无需手动
+ * 失焦/回车），debounce 是更符合直觉的折中。
+ */
+const updateFieldDebounced = useDebounceFn(
+  async (preset: PiLaunchPreset) => {
+    try {
+      await update(preset)
+    } catch (e) {
+      toastError(e instanceof Error ? e.message : String(e))
+    }
+  },
+  FIELD_UPDATE_DEBOUNCE_MS,
+)
+
+/** 字段变更（name/description）入口：构造乐观镜像并交 debounce 节流。 */
+function onFieldChange(preset: PiLaunchPreset, field: 'name' | 'description', value: string) {
   if (preset.builtin) return
   const updated = { ...preset, [field]: value || undefined }
-  try {
-    await update(updated)
-  } catch (e) {
-    toastError(e instanceof Error ? e.message : String(e))
-  }
+  void updateFieldDebounced(updated)
 }
 
 /** 恢复内置预设到出厂设置 */

@@ -15,11 +15,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { PiLaunchPreset } from '@xyz-agent/shared'
 
-// mock preset 域（捕获 list/getDefault/setDefault 调用 + 可控返回值）
+// mock preset 域（捕获 list/getDefault/setDefault/create/update/remove 调用 + 可控返回值）
 const presetApiMock = vi.hoisted(() => ({
   list: vi.fn(),
   getDefault: vi.fn(),
   setDefault: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  remove: vi.fn(),
 }))
 vi.mock('@/api', () => ({
   preset: presetApiMock,
@@ -38,6 +41,9 @@ beforeEach(() => {
   presetApiMock.list.mockReset()
   presetApiMock.getDefault.mockReset()
   presetApiMock.setDefault.mockReset()
+  presetApiMock.create.mockReset()
+  presetApiMock.update.mockReset()
+  presetApiMock.remove.mockReset()
 })
 
 describe('usePiPresets.loadPresets（TC-4）', () => {
@@ -91,5 +97,104 @@ describe('usePiPresets.setDefault（TC-5）', () => {
 
     expect(store.defaultPresetId).toBe('builtin:readonly')
     expect(presetApiMock.setDefault).toHaveBeenCalledWith('builtin:readonly')
+  })
+})
+
+describe('usePiPresets.create（W-RN-3 reply 回写）', () => {
+  it('create(preset) → 乐观 upsert + RPC reply 回写 store（runtime 补全字段）', async () => {
+    const input: PiLaunchPreset = {
+      id: 'custom:abc',
+      name: '新预设',
+      builtin: false,
+      order: 99,
+      toolMode: 'all',
+      extensionMode: 'all',
+    }
+    // runtime reply 补全 order（99 → 3）
+    const saved: PiLaunchPreset = { ...input, order: 3 }
+    presetApiMock.create.mockResolvedValueOnce(saved)
+
+    const store = usePresetStore()
+    const { create } = usePiPresets()
+    const result = await create(input)
+
+    // 调用了 RPC
+    expect(presetApiMock.create).toHaveBeenCalledWith(input)
+    // 返回值是 reply（不是输入）
+    expect(result).toEqual(saved)
+    // store 里是 runtime 规范化后的 order=3（reply 回写覆盖乐观镜像）
+    expect(store.presets).toHaveLength(1)
+    expect(store.presets[0]!.order).toBe(3)
+  })
+
+  it('create RPC 失败 → 移除乐观插入的预设 + throw', async () => {
+    const input: PiLaunchPreset = {
+      id: 'custom:fail',
+      name: '失败预设',
+      builtin: false,
+      order: 0,
+      toolMode: 'all',
+      extensionMode: 'all',
+    }
+    presetApiMock.create.mockRejectedValueOnce(new Error('rpc failed'))
+
+    const store = usePresetStore()
+    const { create } = usePiPresets()
+    await expect(create(input)).rejects.toThrow('rpc failed')
+
+    // 失败回滚：store 里没有该预设
+    expect(store.presets.find((p) => p.id === 'custom:fail')).toBeUndefined()
+  })
+})
+
+describe('usePiPresets.update（W-RN-3 reply 回写）', () => {
+  it('update(preset) → 乐观 upsert + RPC reply 回写 store', async () => {
+    const original: PiLaunchPreset = {
+      id: 'builtin:full',
+      name: '全工具模式',
+      builtin: true,
+      order: 0,
+      toolMode: 'all',
+      extensionMode: 'all',
+    }
+    const store = usePresetStore()
+    store.setPresets([original])
+    const input: PiLaunchPreset = { ...original, toolMode: 'denylist', deniedTools: ['bash'] }
+    // runtime reply（PresetGuard 规范化后的权威态）
+    const saved: PiLaunchPreset = { ...input, deniedTools: ['bash', 'edit'] }
+    presetApiMock.update.mockResolvedValueOnce(saved)
+
+    const { update } = usePiPresets()
+    const result = await update(input)
+
+    expect(presetApiMock.update).toHaveBeenCalledWith(input)
+    expect(result).toEqual(saved)
+    // store 里是 reply 的权威态
+    expect(store.presets[0]!.deniedTools).toEqual(['bash', 'edit'])
+  })
+
+  it('update RPC 失败 → loadPresets 全量刷新回滚 + throw', async () => {
+    const original: PiLaunchPreset = {
+      id: 'builtin:full',
+      name: '全工具模式',
+      builtin: true,
+      order: 0,
+      toolMode: 'all',
+      extensionMode: 'all',
+    }
+    const store = usePresetStore()
+    store.setPresets([original])
+    // 失败后 loadPresets 全量刷新（list 返回原值）
+    presetApiMock.update.mockRejectedValueOnce(new Error('rpc failed'))
+    presetApiMock.list.mockResolvedValueOnce([original])
+    presetApiMock.getDefault.mockResolvedValueOnce('builtin:full')
+
+    const { update } = usePiPresets()
+    const input: PiLaunchPreset = { ...original, toolMode: 'denylist' }
+    await expect(update(input)).rejects.toThrow('rpc failed')
+
+    // loadPresets 回滚：toolMode 恢复为原值
+    expect(store.presets[0]!.toolMode).toBe('all')
+    expect(presetApiMock.list).toHaveBeenCalledTimes(1)
   })
 })

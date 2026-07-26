@@ -36,7 +36,7 @@ vi.mock('@/api/pending', () => ({
   register: pendingMock.register,
 }))
 
-import { list, getDefault, setDefault } from '@/api/domains/preset'
+import { list, getDefault, setDefault, create, update, remove } from '@/api/domains/preset'
 
 beforeEach(() => {
   transportMock.sent.length = 0
@@ -84,6 +84,67 @@ describe('presetApi.setDefault（TC-1/TC-2）', () => {
     expect(transportMock.send).toHaveBeenCalledTimes(1)
     expect(transportMock.sent[0]!.type).toBe('preset.setDefault')
     expect(transportMock.sent[0]!.payload).toEqual({ presetId: 'builtin:readonly' })
+    expect(result).toBeUndefined()
+  })
+})
+
+describe('presetApi.create（W-RN-3 reply 解包）', () => {
+  it('create(preset) → payload type=preset.create + { preset }，解包 reply.preset 返回 PiLaunchPreset', async () => {
+    const input: PiLaunchPreset = {
+      id: 'custom:abc',
+      name: '我的预设',
+      builtin: false,
+      order: 5,
+      toolMode: 'all',
+      extensionMode: 'all',
+    }
+    // runtime 可能补全字段（reply 是权威态）
+    const saved: PiLaunchPreset = { ...input, order: 3, description: '由 runtime 补全' }
+    pendingMock.register.mockResolvedValueOnce({ preset: saved })
+
+    const result = await create(input)
+
+    expect(transportMock.send).toHaveBeenCalledTimes(1)
+    expect(transportMock.sent[0]!.type).toBe('preset.create')
+    expect(transportMock.sent[0]!.payload).toEqual({ preset: input })
+    // 解包 reply.preset（含 runtime 补全字段）
+    expect(result).toEqual(saved)
+    expect(result.order).toBe(3)
+  })
+})
+
+describe('presetApi.update（W-RN-3 reply 解包）', () => {
+  it('update(preset) → payload type=preset.update + { preset }，解包 reply.preset 返回 PiLaunchPreset', async () => {
+    const input: PiLaunchPreset = {
+      id: 'builtin:full',
+      name: '全工具模式',
+      builtin: true,
+      order: 0,
+      toolMode: 'denylist',
+      deniedTools: ['bash'],
+      extensionMode: 'all',
+    }
+    const saved: PiLaunchPreset = { ...input, deniedTools: ['bash', 'edit'] }
+    pendingMock.register.mockResolvedValueOnce({ preset: saved })
+
+    const result = await update(input)
+
+    expect(transportMock.send).toHaveBeenCalledTimes(1)
+    expect(transportMock.sent[0]!.type).toBe('preset.update')
+    expect(transportMock.sent[0]!.payload).toEqual({ preset: input })
+    expect(result).toEqual(saved)
+  })
+})
+
+describe('presetApi.remove', () => {
+  it('remove(id) → payload type=preset.delete + { presetId }，ack 型返回 void', async () => {
+    pendingMock.register.mockResolvedValueOnce(undefined)
+
+    const result = await remove('custom:abc')
+
+    expect(transportMock.send).toHaveBeenCalledTimes(1)
+    expect(transportMock.sent[0]!.type).toBe('preset.delete')
+    expect(transportMock.sent[0]!.payload).toEqual({ presetId: 'custom:abc' })
     expect(result).toBeUndefined()
   })
 })

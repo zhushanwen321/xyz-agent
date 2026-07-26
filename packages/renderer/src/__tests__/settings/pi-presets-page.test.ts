@@ -201,6 +201,64 @@ describe('PiPresetsPage 恢复内置预设', () => {
   })
 })
 
+describe('PiPresetsPage 字段输入 debounce（W-RN-2）', () => {
+  it('字段输入不立即触发 update RPC（走 useDebounceFn 节流）', async () => {
+    const store = usePresetStore()
+    store.setPresets([customPreset()])
+
+    wrapper = mount(PiPresetsPage)
+    await flushPromises()
+
+    presetMock.update.mockClear()
+    // 模拟用户在 name 字段输入（setValue 触发 input 事件 → Input 组件 emit update:modelValue）
+    const nameInput = wrapper.findAll('input')[0]!
+    await nameInput.setValue('新名称')
+    await flushPromises()
+
+    // flushPromises 只刷新微任务队列，不推进 setTimeout——debounce 窗口（400ms）
+    // 内 update 不会被调用。验证 onFieldChange 走了 debounce 而非直接同步 update。
+    // useDebounceFn 节流正确性由其自身（成熟库函数）保证。
+    expect(presetMock.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('PiPresetsPage 加载失败提示（S-RN-7）', () => {
+  it('store.loadError 有值时显示错误提示 + 重试按钮', async () => {
+    const store = usePresetStore()
+    store.setPresets([customPreset()])
+    store.setLoadError('runtime 不可用')
+
+    wrapper = mount(PiPresetsPage)
+    await flushPromises()
+
+    // 错误提示渲染
+    expect(wrapper.text()).toContain('runtime 不可用')
+    // 重试按钮存在（common.retry = 重试）
+    const retryBtn = wrapper.findAll('button').find((b) => b.text().includes('重试'))
+    expect(retryBtn).toBeTruthy()
+  })
+
+  it('点击重试 → loadPresets 被调用', async () => {
+    const store = usePresetStore()
+    store.setPresets([customPreset()])
+    store.setLoadError('runtime 不可用')
+
+    wrapper = mount(PiPresetsPage)
+    await flushPromises()
+
+    presetMock.list.mockResolvedValueOnce([customPreset()])
+    presetMock.getDefault.mockResolvedValueOnce('builtin:full')
+
+    const retryBtn = wrapper.findAll('button').find((b) => b.text().includes('重试'))
+    expect(retryBtn).toBeTruthy()
+    await retryBtn!.trigger('click')
+    await flushPromises()
+
+    // loadPresets 触发了 list RPC
+    expect(presetMock.list).toHaveBeenCalled()
+  })
+})
+
 describe('PiPresetsPage 设为默认', () => {
   it('点击设为默认 → preset.setDefault 被调用', async () => {
     const store = usePresetStore()
