@@ -643,6 +643,7 @@ export const useChatStore = defineStore('chat', () => {
         clearPendingSend,
         armStreamingTimer,
         armBashTimer,
+        clearBashTimer,
         markPendingDelivered,
       },
       sessionId,
@@ -666,6 +667,31 @@ export const useChatStore = defineStore('chat', () => {
     clearPendingSend(sessionId)
     // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
     if (import.meta.env.DEV && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
+  }
+
+  /**
+   * [W1 timer-decouple] bash timer 专用收口（C2 回归防护）。
+   *
+   * L1 放宽 bash↔streaming 并发后，bash 与 assistant turn 可能共存。原 bash timer 到期
+   * 调 finalizeSession('timeout') 会把正在 streaming 的 assistant turn 一并收口（C2 回归）。
+   * 此函数只把 streaming bash 消息推到 error 态（cancelled=true），**不**清 streaming timer、
+   * **不**清 pendingSend、**不**调 finalizeSession——bash timer 不应碰 streaming 域。
+   *
+   * 幂等：无 streaming bash 消息时 no-op（与 bashResultEffect/markBashError 的 findLastIndex 一致）。
+   */
+  function finalizeBashOnly(sessionId: string): void {
+    const prev = messages.value.get(sessionId) ?? []
+    // findLastIndex：与 bashResultEffect/markBashError 一致，从后搜 streaming bash 消息。
+    const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
+    if (reversedIdx === -1) return
+    const realIdx = prev.length - 1 - reversedIdx
+    const next = prev.map((m, i) => i === realIdx ? {
+      ...m,
+      status: 'error' as const,
+      bashExecution: { ...m.bashExecution!, cancelled: true },
+      error: 'timeout',
+    } : m)
+    commitMessages(messages, sessionId, next)
   }
 
   /**
@@ -739,7 +765,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // ── timer（streaming + bash）：从 chat-timers.ts 提取，闭包注入 finalizeSession ──
-  const { armStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers } = initTimers(finalizeSession, STREAMING_TIMEOUT_MS)
+  const { armStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers } = initTimers(finalizeSession, finalizeBashOnly, STREAMING_TIMEOUT_MS)
 
   /**
    * session 级错误统一入口：追加 error assistant 消息 + finalizeSession。
@@ -840,6 +866,7 @@ export const useChatStore = defineStore('chat', () => {
     clearPendingSend,
     armStreamingTimer,
     armBashTimer,
+    clearBashTimer,
     markSessionError,
     isCompacting,
     setCompacting,

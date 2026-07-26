@@ -51,7 +51,7 @@ export const bashStartEffect: MessageEffectHandler = (ctx: MessageEffectContext,
  * [S6] 用 findLastIndex + 单点替换替代 prev.map() 全遍历（bash 消息通常在末尾）。
  */
 export const bashResultEffect: MessageEffectHandler = (ctx: MessageEffectContext, sid: string, payload: Payload) => {
-  const { messages } = ctx
+  const { messages, clearBashTimer } = ctx
   const prev = messages.value.get(sid) ?? []
   // [S6] findLastIndex 优化：bash 消息在末尾，从后往前搜索更快
   const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
@@ -71,6 +71,9 @@ export const bashResultEffect: MessageEffectHandler = (ctx: MessageEffectContext
   }
   const next = prev.map((m, i) => i === realIdx ? updated : m)
   commitMessages(messages, sid, next)
+  // [W3 遗留 bug] bash 已终态，必须清 bash 超时 timer，否则 300s 后 timer 回调会再次
+  // 触发 finalizeBashOnly 误改这条已 complete 的消息。
+  clearBashTimer(sid)
 }
 
 /** 供 messageEffects 表展开的类型化入口 */
@@ -86,7 +89,12 @@ export const bashEffects: Partial<Record<ServerMessage['type'], MessageEffectHan
  *
  * 导出为独立函数（非 effect handler），由 useChat 直接调用。
  */
-export function markBashError(messages: MessagesRef, sessionId: string, errorText: string): void {
+export function markBashError(
+  messages: MessagesRef,
+  sessionId: string,
+  errorText: string,
+  clearBashTimer?: (sid: string) => void,
+): void {
   const prev = messages.value.get(sessionId) ?? []
   const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
   if (reversedIdx === -1) return
@@ -98,4 +106,6 @@ export function markBashError(messages: MessagesRef, sessionId: string, errorTex
     bashExecution: { ...m.bashExecution!, cancelled: true },
   } : m)
   commitMessages(messages, sessionId, next)
+  // [W3 遗留 bug] bash 已 error 态，清 bash 超时 timer 防 300s 后误触发（与 bashResultEffect 一致）。
+  clearBashTimer?.(sessionId)
 }

@@ -121,6 +121,8 @@ export interface MessageEffectContext {
   armStreamingTimer: (sessionId: string) => void
   /** bashStartEffect 挂载 bash 专用超时 timer（防 bash RPC 卡死永久 streaming）。 */
   armBashTimer: (sessionId: string) => void
+  /** bashResultEffect/markBashError 终态时清 bash 超时 timer（防 300s 后误触发，W3 遗留 bug）。 */
+  clearBashTimer: (sessionId: string) => void
   /** queue_update 投递信号 */
   markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
 }

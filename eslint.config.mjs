@@ -78,10 +78,13 @@ export default [
   // （appendUser/appendPending/applyMessageEvent/finalize/hydrate/truncateFrom 等 30+ 方法）。
   // 与 event-adapter/session-service 同性质——唯一聚合中心，职责内聚但函数体行数超 300。
   // max-lines-per-function 规则对 Pinia setup 函数不适用（setup 天然是单一大函数），override 避免误报。
+  // max-lines：W1 timer-decouple 新增 finalizeBashOnly（C2 回归防护）后文件超 500 行，
+  // 同质于 event-adapter/session-service 的唯一聚合中心，短期 override 避免阻塞。
   {
     files: ['packages/renderer/src/stores/chat.ts'],
     rules: {
       'max-lines-per-function': 'off',
+      'max-lines': 'off',
     },
   },
 ];

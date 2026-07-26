@@ -372,7 +372,7 @@ export function useChat() {
       // [W2] RPC 失败时 bashResult 广播不会到达，bash 消息永久卡在 streaming。
       // 主动找到 streaming bash 消息并标记为 error 态兜底。
       const msg = e instanceof Error ? e.message : String(e)
-      markBashError({ value: chat.messages }, sid, msg)
+      markBashError({ value: chat.messages }, sid, msg, chat.clearBashTimer)
       const { error } = useToast()
       error(t('composable.stopFailed', { msg }))
     }

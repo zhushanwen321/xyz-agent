@@ -2,7 +2,13 @@
  * Per-session 超时 timer 管理（streaming + bash）。
  *
  * 从 chat.ts 提取以控制文件行数（max-lines 500 上限）。
- * 通过 initTimers() 闭包注入 finalizeSession 依赖，避免循环 import。
+ * 通过 initTimers() 闭包注入 finalizeSession / finalizeBashOnly 依赖，避免循环 import。
+ *
+ * [W1 timer-decouple] bash timer 与 streaming timer 收口域解耦（C2 回归防护）：
+ * - streaming timer 到期 → finalizeSession（收口整个 session 的 streaming 实体 + timer，正确语义）
+ * - bash timer 到期 → finalizeBashOnly（只收口 streaming bash 消息，不跨域误杀正在
+ *   streaming 的 assistant turn）。L1 放宽 bash↔streaming 并发后，共存期间 bash timer
+ *   到期若调 finalizeSession 会把正在生成的 assistant turn 一并收口（C2 回归）。
  */
 import type { FinalizeReason } from './chat-store-types'
 
@@ -19,10 +25,11 @@ function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeout>>, s
 
 /**
  * 初始化 timer 模块。在 chat.ts setup 阶段调用一次，返回 timer 操作函数。
- * 闭包捕获 finalizeSession 函数，不暴露到模块外部。
+ * 闭包捕获 finalizeSession / finalizeBashOnly 函数，不暴露到模块外部。
  */
 export function initTimers(
   finalizeSession: (sessionId: string, reason: FinalizeReason, errorText?: string) => void,
+  finalizeBashOnly: (sessionId: string) => void,
   streamingTimeoutMs: number,
 ) {
   const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -50,7 +57,9 @@ export function initTimers(
   function armBashTimer(sessionId: string): void {
     clearSessionTimer(bashTimers, sessionId)
     bashTimers.set(sessionId, setTimeout(() => {
-      finalizeSession(sessionId, 'timeout')
+      // [W1] 不调 finalizeSession：bash timer 到期只收口 bash 消息，不跨域误杀共存
+      // 中的 assistant turn streaming（C2 回归防护）。
+      finalizeBashOnly(sessionId)
       bashTimers.delete(sessionId)
     }, BASH_TIMEOUT_MS))
   }
