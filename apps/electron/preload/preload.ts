@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -86,6 +86,19 @@ export interface ElectronAPI {
    * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
    */
   checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null>
+  // ── 自动升级执行（w3）──────────────────────────────────────────
+  /**
+   * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
+   * @param release checkForUpdate 返回的最新版本信息
+   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+   */
+  performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }>
+  /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
+  onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
+  /** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数 */
+  onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string }) => void): () => void
+  /** 不支持当前平台时，打开备用下载页（release 页面） */
+  openUpdateFallbackUrl(url: string): Promise<void>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -177,4 +190,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 自动升级检测 ──────────────────────────────────────────────
   checkForUpdate: (opts?: { force?: boolean }) =>
     ipcRenderer.invoke('update:check', { force: opts?.force }),
+  // ── 自动升级执行（w3）──────────────────────────────────────
+  performUpdate: (release: LatestReleaseInfo) =>
+    ipcRenderer.invoke('update:perform', { release }),
+  onUpdateProgress: (callback: (payload: { stage: UpdateStage; percent: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: UpdateStage; percent: number }) => callback(payload)
+    ipcRenderer.on('update:progress', handler)
+    return () => ipcRenderer.removeListener('update:progress', handler)
+  },
+  onUpdateError: (callback: (payload: { stage: string; message: string; errorCode?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string; errorCode?: string }) => callback(payload)
+    ipcRenderer.on('update:error', handler)
+    return () => ipcRenderer.removeListener('update:error', handler)
+  },
+  openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
 } satisfies ElectronAPI)

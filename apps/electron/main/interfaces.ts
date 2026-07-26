@@ -16,6 +16,7 @@
 import type { BrowserWindow } from 'electron'
 import type { WindowState, LatestReleaseInfo } from '@xyz-agent/shared'
 import type { BrowserViewManager } from './browser/browser-view-manager.js'
+import type { IUpdateOrchestrator } from './update/orchestrator.js'
 
 // ── M3 Process Supervisor ──────────────────────────────────────────
 
@@ -194,4 +195,6 @@ export interface IpcHandlerDeps {
   browserViewManager: BrowserViewManager
   /** Release 检测器（自动升级；可选，未注入时 update:check 返回 null） */
   releaseChecker?: IReleaseChecker
+  /** 升级编排器（自动升级执行后端；可选，未注入时 update:perform 抛错） */
+  updateOrchestrator?: IUpdateOrchestrator
 }
