@@ -83,76 +83,101 @@
       <div
         v-for="(m, i) in deps.localModels"
         :key="m.id"
-        class="flex items-center border-b border-border px-5 py-2 text-[12px]"
+        class="border-b border-border"
       >
-        <span class="flex-1 truncate font-mono text-fg">{{ m.id }}</span>
-        <!-- 输入类型 icon 按钮 -->
-        <div class="flex w-14 items-center justify-center gap-1">
+        <!-- 横向行（原列内容）-->
+        <div class="flex items-center px-5 py-2 text-[12px]">
+          <span class="flex-1 truncate font-mono text-fg">{{ m.id }}</span>
+          <!-- 输入类型 icon 按钮 -->
+          <div class="flex w-14 items-center justify-center gap-1">
+            <Button
+              variant="ghost"
+              class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
+              :class="m.input?.includes('text') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
+              :title="t('settings.providerEdit.textInputTitle')"
+              @click.stop="deps.toggleInput(m, 'text')"
+            ><FileText /></Button>
+            <Button
+              variant="ghost"
+              class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
+              :class="m.input?.includes('image') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
+              :title="t('settings.providerEdit.imageInputTitle')"
+              @click.stop="deps.toggleInput(m, 'image')"
+            ><ImageIcon /></Button>
+          </div>
+          <!-- 上下文（弹出 select） -->
+          <div class="flex w-[80px] justify-center">
+            <Select
+              :model-value="m.contextWindow"
+              @update:model-value="deps.updateCtx(m, $event as number)"
+            >
+              <SelectTrigger class="h-7 w-[72px] px-1.5 py-0 text-[11px]">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="o in ctxOptions" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <!-- 思考策略（弹出 select） -->
+          <div class="flex w-24 justify-center">
+            <Select
+              :model-value="deps.getStrategyFromMap(m.thinkingLevelMap)"
+              @update:model-value="deps.pickStrategy(m, $event as ThinkingStrategy)"
+            >
+              <SelectTrigger class="h-7 w-[88px] px-1.5 py-0 text-[11px]">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ t(s.labelKey) }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <!-- compat 编辑器展开按钮 -->
           <Button
             variant="ghost"
-            class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
-            :class="m.input?.includes('text') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
-            :title="t('settings.providerEdit.textInputTitle')"
-            @click.stop="deps.toggleInput(m, 'text')"
-          ><FileText /></Button>
+            class="size-5 w-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-accent [&_svg]:size-3"
+            :class="isCompatExpanded(m.id) ? 'text-accent' : ''"
+            :aria-label="t('settings.compat.title')"
+            :title="t('settings.compat.title')"
+            @click.stop="deps.toggleCompatExpand(m.id)"
+          >
+            <Settings2 />
+          </Button>
+          <!-- 移除 -->
           <Button
             variant="ghost"
-            class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
-            :class="m.input?.includes('image') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
-            :title="t('settings.providerEdit.imageInputTitle')"
-            @click.stop="deps.toggleInput(m, 'image')"
-          ><ImageIcon /></Button>
-        </div>
-        <!-- 上下文（弹出 select） -->
-        <div class="flex w-[80px] justify-center">
-          <Select
-            :model-value="m.contextWindow"
-            @update:model-value="deps.updateCtx(m, $event as number)"
+            class="size-5 w-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-danger [&_svg]:size-3"
+            :aria-label="t('settings.providerEdit.removeModel')"
+            @click.stop="deps.removeModel(i)"
           >
-            <SelectTrigger class="h-7 w-[72px] px-1.5 py-0 text-[11px]">
-              <SelectValue placeholder="—" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="o in ctxOptions" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
-            </SelectContent>
-          </Select>
+            <X />
+          </Button>
         </div>
-        <!-- 思考策略（弹出 select） -->
-        <div class="flex w-24 justify-center">
-          <Select
-            :model-value="deps.getStrategyFromMap(m.thinkingLevelMap)"
-            @update:model-value="deps.pickStrategy(m, $event as ThinkingStrategy)"
-          >
-            <SelectTrigger class="h-7 w-[88px] px-1.5 py-0 text-[11px]">
-              <SelectValue placeholder="—" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ t(s.labelKey) }}</SelectItem>
-            </SelectContent>
-          </Select>
+        <!-- compat 编辑区（展开时显示）。v-model 绑 m.compat：localModels 经 provide/inject
+             注入，是同一 reactive 引用，改 m.compat 反应回 useProviderEdit，save 时透传。
+             用 :model-value + @update:model-value 显式写法（与同模板的 inject 变更模式一致）。 -->
+        <div v-if="isCompatExpanded(m.id)" class="border-t border-border bg-surface-2 px-5">
+          <CompatEditor
+            :api="m.api"
+            :model-value="m.compat"
+            @update:model-value="m.compat = $event"
+          />
         </div>
-        <!-- 移除 -->
-        <Button
-          variant="ghost"
-          class="size-5 w-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-danger [&_svg]:size-3"
-          :aria-label="t('settings.providerEdit.removeModel')"
-          @click.stop="deps.removeModel(i)"
-        >
-          <X />
-        </Button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { inject } from 'vue'
+import { inject, unref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FileText, ImageIcon, X } from '@lucide/vue'
+import { FileText, ImageIcon, X, Settings2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import CompatEditor from './CompatEditor.vue'
 import {
   CONTEXT_OPTIONS,
   THINKING_STRATEGIES,
@@ -189,6 +214,10 @@ interface ModelListDeps {
   pickStrategy: (m: LocalModel, strategy: ThinkingStrategy) => void
   getStrategyFromMap: (map?: Record<string, string | null>) => ThinkingStrategy
   removeModel: (index: number) => void
+  /** 展开了 compat 编辑器的 model id 集合 */
+  expandedCompat: Set<string>
+  /** 切换某 model 的 compat 编辑器展开 */
+  toggleCompatExpand: (modelId: string) => void
 }
 
 const deps = inject<ModelListDeps>('modelListDeps')!
@@ -198,4 +227,9 @@ const { t } = useI18n()
 // 模板常量（composable 导出的纯数据）
 const ctxOptions = CONTEXT_OPTIONS
 const thinkingStrategies = THINKING_STRATEGIES
+
+// deps.expandedCompat 是 ref<Set>（useProviderEdit return 的状态）。Vue 模板对 setup 顶层 ref
+// 自动解包，但对 inject 对象的嵌套 ref 不解包——模板里 deps.expandedCompat.has() 拿到的是 ref
+// 本体（无 .has 方法）。用 unref 显式解包，模板调 isCompatExpanded(id) 间接读 Set。
+const isCompatExpanded = (modelId: string): boolean => unref(deps.expandedCompat).has(modelId)
 </script>

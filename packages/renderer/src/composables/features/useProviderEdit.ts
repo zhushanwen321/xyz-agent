@@ -29,6 +29,8 @@ export interface LocalModel {
   contextWindow?: number
   input?: Array<'text' | 'image'>
   thinkingLevelMap?: Record<string, string | null>
+  /** model 级 compat 覆盖（OpenAI/Anthropic 兼容性配置，透传到 runtime setProvider）。 */
+  compat?: Record<string, unknown>
   /** model 级启停透传（省略时 runtime 默认 true） */
   enabled?: boolean
 }
@@ -228,6 +230,16 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   /** 动作错误（保存/测试/发现失败时显示在底栏，非静默吞） */
   const actionError = ref('')
 
+  /** 展开了 compat 编辑器的 model id 集合（手风琴态） */
+  const expandedCompat = ref<Set<string>>(new Set())
+  /** 切换某 model 的 compat 编辑器展开/收起 */
+  function toggleCompatExpand(modelId: string): void {
+    const next = new Set(expandedCompat.value)
+    if (next.has(modelId)) next.delete(modelId)
+    else next.add(modelId)
+    expandedCompat.value = next
+  }
+
   // ── provider 同步：打开/切换 provider 时重置编辑态 ──
 
   watch(
@@ -249,6 +261,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         showAddModel.value = false
         actionError.value = ''
         localModels.value = p.models.map((m) => ({ ...m }))
+        expandedCompat.value = new Set()
       } else {
         // 新增模式：重置为初始空状态（providerRef 变 null 时触发，避免残留上次编辑数据）
         form.name = ''
@@ -264,6 +277,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         showAddModel.value = false
         actionError.value = ''
         localModels.value = []
+        expandedCompat.value = new Set()
       }
       // 记录初始快照（isDirty 对比基线）。重置后立即捕获，确保用户首次输入才变 dirty。
       captureSnapshot()
@@ -375,6 +389,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
           contextWindow: m.contextWindow,
           input: m.input,
           thinkingLevelMap: m.thinkingLevelMap,
+          compat: m.compat,
           enabled: m.enabled,
         })),
       })
@@ -515,6 +530,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     showAddModel,
     saving,
     actionError,
+    /** 展开了 compat 编辑器的 model id 集合（手风琴态） */
+    expandedCompat,
     /** form 相对打开时快照是否有变更（D13 取消确认 + W3 过期快照刷新用） */
     isDirty,
     // 纯函数 helper
@@ -532,6 +549,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     pickStrategy,
     addModel,
     removeModel,
+    /** 切换某 model 的 compat 编辑器展开/收起 */
+    toggleCompatExpand,
     // headers CRUD（W3 D7）
     addHeader,
     removeHeader,

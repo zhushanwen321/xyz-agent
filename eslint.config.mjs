@@ -84,4 +84,14 @@ export default [
       'max-lines-per-function': 'off',
     },
   },
+  // [HISTORICAL] useProviderEdit 是 Provider 编辑弹窗的唯一 composable 工厂（同 chat.ts 性质），
+  // 承载 form/localModels/headerRows 状态 + test/discover/save 编排 + 模型/headers CRUD +
+  // compat 编辑器展开态 + isDirty 快照 + 过期刷新 watch。职责内聚但函数体超 300 行。
+  // 与 chat.ts setup 同理：唯一聚合中心，max-lines-per-function 规则不适用，override 避免误报。
+  {
+    files: ['packages/renderer/src/composables/features/useProviderEdit.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
 ];

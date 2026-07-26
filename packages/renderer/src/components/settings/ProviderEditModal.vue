@@ -323,6 +323,7 @@ const {
   saving,
   actionError,
   isDirty,
+  expandedCompat,
   getStrategyFromMap,
   testConnection,
   autoDiscover,
@@ -334,6 +335,7 @@ const {
   pickStrategy,
   addModel,
   removeModel,
+  toggleCompatExpand,
   // W3 D7：headers CRUD
   addHeader,
   removeHeader,
@@ -350,6 +352,8 @@ provide('modelListDeps', {
   pickStrategy,
   getStrategyFromMap,
   removeModel,
+  expandedCompat,
+  toggleCompatExpand,
 })
 
 // ── D13：取消/关闭统一入口，有未保存改动时二次确认 ──
