@@ -323,6 +323,15 @@ export default {
     unset: 'Unset (use default)',
     noEssential: 'This API type usually needs no compat config',
     advancedJsonHint: 'Advanced (edit json)',
+    presetLabel: 'Domestic model presets',
+    preset: {
+      deepseek: { label: 'DeepSeek', hint: 'DeepSeek-V3.x/V4: thinking={type} + reasoning_effort, must echo reasoning_content' },
+      glm: { label: 'GLM (z.ai)', hint: 'Zhipu GLM-4.5+/5.x: thinking={type}, no reasoning_effort support' },
+      kimiK2: { label: 'Kimi K2.x', hint: 'Moonshot K2.5/K2.6: thinking={type}, no reasoning_effort support' },
+      kimiK3: { label: 'Kimi K3', hint: 'Kimi K3: reasoning_effort (low/high/max), thinking always on' },
+      mimo: { label: 'MiMo', hint: 'Xiaomi MiMo: chat_template_kwargs.enable_thinking, off/high two levels' },
+      minimax: { label: 'MiniMax', hint: 'MiniMax M3: via anthropic API, thinking.type=adaptive' },
+    },
     // thinkingFormat (shared across api types, under compat.thinkingFormat.options)
     thinkingFormat: {
       label: 'Thinking format',

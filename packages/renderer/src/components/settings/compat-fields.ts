@@ -281,3 +281,78 @@ export function getCompatFields(api?: string): CompatFieldMeta[] {
   // 默认 openai-completions（最常用，Ollama/vLLM 等）
   return OPENAI_COMPAT_FIELDS
 }
+
+// ── 国产模型 compat 预设（一键配置）──
+// 数据来源：各模型官方 API 文档 + pi 生产配置交叉验证（2026-07 调研）。
+// 国产 API 共性：全部不认 developer 角色 → supportsDeveloperRole: false 是统一默认。
+
+export interface CompatPreset {
+  /** 预设 id（i18n key 后缀，完整 key = settings.compat.preset.<id>） */
+  id: string
+  /** 适用此预设的 api 类型（预设只在该 api 下显示） */
+  api: 'openai-completions' | 'anthropic-messages' | 'openai-responses'
+  /** 一键填入的 compat 配置（整体替换当前 compat） */
+  compat: Record<string, unknown>
+}
+
+export const COMPAT_PRESETS: CompatPreset[] = [
+  {
+    id: 'deepseek',
+    api: 'openai-completions',
+    compat: {
+      thinkingFormat: 'deepseek',
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+      requiresReasoningContentOnAssistantMessages: true,
+    },
+  },
+  {
+    id: 'glm',
+    api: 'openai-completions',
+    compat: {
+      thinkingFormat: 'zai',
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+    },
+  },
+  {
+    id: 'kimiK2',
+    api: 'openai-completions',
+    compat: {
+      thinkingFormat: 'deepseek',
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+    },
+  },
+  {
+    id: 'kimiK3',
+    api: 'openai-completions',
+    compat: {
+      thinkingFormat: 'openai',
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+    },
+  },
+  {
+    id: 'mimo',
+    api: 'openai-completions',
+    compat: {
+      thinkingFormat: 'qwen-chat-template',
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+    },
+  },
+  {
+    id: 'minimax',
+    api: 'anthropic-messages',
+    compat: {
+      forceAdaptiveThinking: true,
+    },
+  },
+]
+
+/** 按 api 类型过滤预设（预设只在对应 api 下显示） */
+export function getPresetsForApi(api?: string): CompatPreset[] {
+  if (!api) return []
+  return COMPAT_PRESETS.filter(p => p.api === api)
+}

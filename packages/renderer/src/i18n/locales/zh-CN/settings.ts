@@ -323,6 +323,15 @@ export default {
     unset: '未设置（用默认）',
     noEssential: '此 API 类型通常无需配置 compat',
     advancedJsonHint: '高级（手改 json）',
+    presetLabel: '国产模型预设',
+    preset: {
+      deepseek: { label: 'DeepSeek', hint: 'DeepSeek-V3.x/V4：thinking={type} + reasoning_effort，需回传 reasoning_content' },
+      glm: { label: 'GLM (z.ai)', hint: '智谱 GLM-4.5+/5.x：thinking={type}，不支持 reasoning_effort' },
+      kimiK2: { label: 'Kimi K2.x', hint: '月之暗面 K2.5/K2.6：thinking={type}，不支持 reasoning_effort' },
+      kimiK3: { label: 'Kimi K3', hint: 'Kimi K3：reasoning_effort（low/high/max），强制 thinking 常开' },
+      mimo: { label: 'MiMo', hint: '小米 MiMo：chat_template_kwargs.enable_thinking，off/high 两档' },
+      minimax: { label: 'MiniMax', hint: 'MiniMax M3：走 anthropic API，thinking.type=adaptive' },
+    },
     // thinkingFormat（所有 api 共用，放 compat.thinkingFormat.options）
     thinkingFormat: {
       label: '思考格式',

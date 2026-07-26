@@ -6,6 +6,22 @@
     单字段渲染抽到 CompatField.vue，本组件只负责分组、折叠、清空等编排。
   -->
   <div class="compat-editor flex flex-col gap-3 py-2">
+    <!-- 国产模型预设（一键配置）：按 api 类型过滤显示 -->
+    <div v-if="presets.length" class="flex flex-wrap items-center gap-1.5 border-b border-border pb-2">
+      <span class="text-[10px] uppercase tracking-wider text-subtle">{{ t('settings.compat.presetLabel') }}</span>
+      <Button
+        v-for="p in presets"
+        :key="p.id"
+        variant="ghost"
+        size="sm"
+        class="h-6 rounded-sm border border-border px-2 text-[10px] text-fg hover:border-accent hover:bg-accent-soft hover:text-accent"
+        :title="t(`settings.compat.preset.${p.id}.hint`)"
+        @click="applyPreset(p)"
+      >
+        {{ t(`settings.compat.preset.${p.id}.label`) }}
+      </Button>
+    </div>
+
     <!-- 无字段兜底（理论上不会触发，所有 api 类型都有字段）-->
     <p v-if="!essentialFields.length && !advancedFields.length" class="text-[11px] text-muted">
       {{ t('settings.compat.noEssential') }}
@@ -62,7 +78,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { getCompatFields } from './compat-fields'
+import { getCompatFields, getPresetsForApi } from './compat-fields'
 import CompatField from './CompatField.vue'
 
 /**
@@ -87,6 +103,9 @@ const allFields = computed(() => getCompatFields(props.api))
 const essentialFields = computed(() => allFields.value.filter(f => f.group === 'essential'))
 const advancedFields = computed(() => allFields.value.filter(f => f.group === 'advanced'))
 
+/** 当前 api 类型可用的预设（无预设时返回空，按钮行整体隐藏）。 */
+const presets = computed(() => getPresetsForApi(props.api))
+
 /** 是否有任意已配置字段（驱动「清除所有」按钮显隐）。 */
 const hasValue = computed(() => props.modelValue !== undefined && Object.keys(props.modelValue).length > 0)
 
@@ -105,5 +124,10 @@ function setValue(field: string, value: unknown): void {
 /** 清空 compat：emit undefined。 */
 function clearAll(): void {
   emit('update:modelValue', undefined)
+}
+
+/** 应用预设：整体替换 compat（emit 预设的 compat 对象）。 */
+function applyPreset(preset: { compat: Record<string, unknown> }): void {
+  emit('update:modelValue', { ...preset.compat })
 }
 </script>
