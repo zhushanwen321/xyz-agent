@@ -16,7 +16,7 @@
  * 模块级单例（非 pinia store）：通道无持久化需求、无派生计算、仅一个 signal ref，
  * 用 composable + 模块级 ref 比 store 更轻量（与 useForkModeChannel 模式一致）。
  */
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 
 /** handoff 模式进入请求信号（id 递增确保每次都是新值，watch 不去重） */
 interface HandoffEnterRequest {
@@ -26,17 +26,15 @@ interface HandoffEnterRequest {
   srcSessionId: string
 }
 
+/** 模块级自增 id（仅用于生成递增 id，确保每次请求是新的 ref 值，watch 不去重） */
+let nextId = 0
 /** 模块级单例 signal（跨组件树共享，同 useForkModeChannel 模式） */
-let current: HandoffEnterRequest | null = null
 const signal = ref<HandoffEnterRequest | null>(null)
 
 /** Sidebar/全局快捷键侧调用：请求 Composer 进入 handoff 模式（从指定 session 的末条 assistant） */
 function triggerEnterHandoffMode(srcSessionId: string): void {
-  current = {
-    id: current ? current.id + 1 : 1,
-    srcSessionId,
-  }
-  signal.value = current
+  nextId += 1
+  signal.value = { id: nextId, srcSessionId }
 }
 
 /**
@@ -44,7 +42,7 @@ function triggerEnterHandoffMode(srcSessionId: string): void {
  * Sidebar 侧直接 import triggerEnterHandoffMode 调用（无需走 composable 实例化）。
  */
 export function useHandoffModeChannel(): {
-  signal: typeof signal
+  signal: Ref<HandoffEnterRequest | null>
   } {
   return { signal }
 }
