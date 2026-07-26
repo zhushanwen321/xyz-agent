@@ -11,21 +11,33 @@
       active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover',
       isDead ? 'opacity-50' : '',
     ]"
+    :aria-label="ariaLabel"
     @click="emit('select', session.id)"
     @mouseleave="confirming = false"
   >
-    <!-- 状态指示：按 STATUS_ICON 渲染语义图标（方案 C 优化版 v3） -->
-    <component
-      :is="ICON_COMPONENTS[iconConfig.icon]"
-      data-testid="sidebar-session-icon"
-      :data-icon="iconConfig.icon"
-      class="mt-[2px] size-[14px] shrink-0"
-      :class="[iconConfig.color, iconConfig.animation]"
-    />
+    <!-- 状态指示：归档态优先显示 Archive icon（覆盖 derived status），否则按 STATUS_ICON 渲染 -->
+    <div class="relative">
+      <component
+        :is="markedDone ? Archive : ICON_COMPONENTS[iconConfig.icon]"
+        data-testid="sidebar-session-icon"
+        :data-icon="markedDone ? 'archived' : iconConfig.icon"
+        class="mt-[2px] size-[14px] shrink-0"
+        :class="[markedDone ? 'text-subtle' : iconConfig.color, markedDone ? '' : iconConfig.animation]"
+      />
+      <!-- 未读 badge：6px accent 圆点，absolute 定位在状态图标左上角 -->
+      <span
+        v-if="unread"
+        data-testid="session-unread-badge"
+        class="absolute -left-0.5 -top-0.5 size-[6px] rounded-full bg-accent"
+      />
+    </div>
     <div class="min-w-0 flex-1">
       <div
         class="truncate text-[12px] leading-[1.35]"
-        :class="active ? 'text-accent' : 'text-fg'"
+        :class="[
+          active ? 'text-accent' : 'text-fg',
+          markedDone ? 'opacity-60' : '',
+        ]"
       >
         {{ session.label }}
       </div>
@@ -51,6 +63,18 @@
       class="absolute top-0.5 right-1 gap-1"
       :class="confirming ? 'flex' : 'flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'"
     >
+      <Button
+        v-if="!confirming"
+        variant="ghost"
+        size="icon"
+        data-testid="mark-done-btn"
+        class="size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
+        :class="markedDone ? 'border-accent bg-accent/10 text-success' : ''"
+        :title="markedDone ? t('sidebar.sessionItem.unmarkDone') : t('sidebar.sessionItem.markDone')"
+        @click.stop="onMarkDone"
+      >
+        <Archive class="size-[13px]" :class="markedDone ? 'fill-current' : ''" />
+      </Button>
       <Button
         v-if="!confirming"
         variant="ghost"
@@ -81,12 +105,13 @@
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle } from '@lucide/vue'
+import { Check, Pencil, Trash2, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle, Archive } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 import { STATUS_ICON } from '@/composables/logic/sessionStatus'
 import { dirNameOf } from '@/composables/logic/path'
+import { isUnread, isMarkedDone, toggleMarkedDone } from '@/composables/useSessionMarkers'
 
 /** lucide 图标名 → 组件映射（用于 STATUS_ICON 的动态组件渲染） */
 const ICON_COMPONENTS: Record<string, unknown> = {
@@ -178,5 +203,22 @@ const dirName = computed(() => dirNameOf(props.session.cwd))
 
 /** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
+
+// ── 未读 + 标记完成状态 ──
+const unread = computed(() => isUnread(props.session.id))
+const markedDone = computed(() => isMarkedDone(props.session.id))
+
+/** 无障碍 label：归档态把归档语义拼进 label，让屏幕阅读器读出「已归档: <名称>」。
+ *  背景是归档态移除了可见的「已归档」文字（改用 opacity-60 降权），opacity 不影响 a11y，
+ *  故在此补回语义。 */
+const ariaLabel = computed(() =>
+  markedDone.value
+    ? `${t('sidebar.sessionItem.archived')}: ${props.session.label}`
+    : props.session.label,
+)
+
+function onMarkDone(): void {
+  toggleMarkedDone(props.session.id)
+}
 </script>
 

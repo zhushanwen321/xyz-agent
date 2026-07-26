@@ -1,0 +1,254 @@
+/**
+ * TerminalService 单元测试（Phase 2 V2.1）。
+ *
+ * mock 策略：vi.mock('node-pty') 模拟 IPty（EventEmitter 模拟 onData/onExit + write/resize/kill）。
+ * 断言 broadcast 收到的 ServerMessage 类型和 payload。
+ *
+ * 运行：cd packages/runtime && npx vitest run src/services/terminal/__tests__/terminal-service.test.ts
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { ServerMessage } from '@xyz-agent/shared'
+
+// ── mock node-pty ─────────────────────────────────────────────────────────
+// vi.mock 工厂被 hoisting 提升到文件顶，不能直接引用模块级变量。
+// 用 vi.hoisted 创建跨工厂/测试共享的容器（vitest 标准范式）。
+const { mockPtys, createMockPty } = vi.hoisted(() => {
+  // IPty 的 onData/onExit 是 IEvent<T>（(listener) => IDisposable），非 EventEmitter。
+  // mock 实现：维护 listener 列表，emit 时遍历调用。
+  interface MockPty {
+    onData: (listener: (data: string) => void) => { dispose: () => void }
+    onExit: (listener: (e: { exitCode: number; signal?: number }) => void) => { dispose: () => void }
+    write: (data: string) => void
+    resize: (cols: number, rows: number) => void
+    kill: () => void
+    pid: number
+    __emitData: (data: string) => void
+    __emitExit: (exitCode: number) => void
+  }
+  const mockPtys: MockPty[] = []
+  function createMockPty(): MockPty {
+    const dataListeners: Array<(data: string) => void> = []
+    const exitListeners: Array<(e: { exitCode: number; signal?: number }) => void> = []
+    return {
+      onData: (listener) => {
+        dataListeners.push(listener)
+        return { dispose: () => { const i = dataListeners.indexOf(listener); if (i >= 0) dataListeners.splice(i, 1) } }
+      },
+      onExit: (listener) => {
+        exitListeners.push(listener)
+        return { dispose: () => { const i = exitListeners.indexOf(listener); if (i >= 0) exitListeners.splice(i, 1) } }
+      },
+      write: () => {},
+      resize: () => {},
+      kill: () => {},
+      pid: Math.floor(Math.random() * 100000),
+      __emitData: (data: string) => { for (const l of dataListeners) l(data) },
+      __emitExit: (exitCode: number) => { for (const l of exitListeners) l({ exitCode }) },
+    }
+  }
+  return { mockPtys, createMockPty }
+})
+
+vi.mock('node-pty', () => ({
+  spawn: vi.fn(() => {
+    const pty = createMockPty()
+    // 用 vi.fn 包装让测试能 toHaveBeenCalled 断言
+    pty.write = vi.fn()
+    pty.resize = vi.fn()
+    pty.kill = vi.fn()
+    mockPtys.push(pty)
+    return pty
+  }),
+}))
+
+// import 必须在 vi.mock 之后
+const { TerminalService } = await import('../terminal-service.js')
+
+/** 收集 broadcast 收到的消息。 */
+function createBroadcastCollector() {
+  const messages: ServerMessage[] = []
+  const broadcast = (msg: ServerMessage) => messages.push(msg)
+  return { messages, broadcast }
+}
+
+/** 从消息列表找指定 type。 */
+function findMsg(msgs: ServerMessage[], type: string): ServerMessage | undefined {
+  return msgs.find((m) => m.type === type)
+}
+
+beforeEach(() => {
+  mockPtys.length = 0
+  vi.clearAllMocks()
+})
+
+// 恢复 it 内 vi.spyOn 创建的 spy（如 console.error），避免污染后续测试。
+// 只影响 vi.spyOn，不动 vi.mock 模块工厂 / vi.fn。
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('TerminalService', () => {
+  it('TS-1: spawn 后广播 terminal.alive，ptyMap 持有 sid', async () => {
+    const { messages, broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s1', '/tmp', 80, 24)
+    const alive = findMsg(messages, 'terminal.alive')
+    expect(alive).toBeDefined()
+    expect((alive!.payload as { sessionId: string }).sessionId).toBe('s1')
+    // write 能找到 PTY（间接证明 ptyMap 持有）
+    svc.write('s1', 'echo hi\n')
+    expect(mockPtys[0]!.write).toHaveBeenCalledWith('echo hi\n')
+  })
+
+  it('TS-2: write 转发到 pty.write', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s2', undefined, 80, 24)
+    svc.write('s2', 'ls -la')
+    expect(mockPtys.at(-1)!.write).toHaveBeenCalledWith('ls -la')
+  })
+
+  it('TS-3: resize 转发到 pty.resize', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s3', undefined, 80, 24)
+    svc.resize('s3', 120, 40)
+    expect(mockPtys.at(-1)!.resize).toHaveBeenCalledWith(120, 40)
+  })
+
+  it('TS-4: PTY onData 触发 terminal.data 广播（含 sessionId + data）', async () => {
+    const { messages, broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s4', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('hello world\r\n')
+    const dataMsg = findMsg(messages, 'terminal.data')
+    expect(dataMsg).toBeDefined()
+    expect((dataMsg!.payload as { sessionId: string; data: string })).toMatchObject({
+      sessionId: 's4',
+      data: 'hello world\r\n',
+    })
+  })
+
+  it('TS-5: PTY onExit 触发 terminal.exit 广播 + 清理 ptyMap', async () => {
+    const { messages, broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s5', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitExit(42)
+    const exitMsg = findMsg(messages, 'terminal.exit')
+    expect(exitMsg).toBeDefined()
+    expect((exitMsg!.payload as { exitCode: number }).exitCode).toBe(42)
+    // 清理后 write 不再转发（ptyMap 已删）
+    svc.write('s5', 'should be no-op')
+    expect(pty.write).not.toHaveBeenCalledWith('should be no-op')
+  })
+
+  it('TS-6: destroyPty 调 pty.kill + 清 ptyMap', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s6', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    svc.destroyPty('s6')
+    expect(pty.kill).toHaveBeenCalled()
+    // 清理后 write no-op
+    svc.write('s6', 'x')
+    expect(pty.write).not.toHaveBeenCalledWith('x')
+  })
+
+  it('TS-7: kill 不存在的 sid 是 no-op（不抛错）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    expect(() => svc.kill('nonexistent')).not.toThrow()
+    expect(() => svc.write('nonexistent', 'x')).not.toThrow()
+    expect(() => svc.resize('nonexistent', 80, 24)).not.toThrow()
+    expect(() => svc.destroyPty('nonexistent')).not.toThrow()
+  })
+
+  it('TS-8: spawn 幂等（同 sid 重复 spawn 不新建 PTY）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s8', undefined, 80, 24)
+    await svc.spawn('s8', undefined, 80, 24)
+    // node-pty.spawn 应只被调一次
+    const { spawn } = await import('node-pty')
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('TS-9: spawn 失败抛 spawn_failed 错误（含 code）', async () => {
+    const { spawn } = await import('node-pty')
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      throw new Error('ENOENT: shell not found')
+    })
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await expect(svc.spawn('s9', undefined, 80, 24)).rejects.toMatchObject({
+      code: 'spawn_failed',
+      message: expect.stringContaining('shell not found'),
+    })
+  })
+
+  it('TS-10: spawn 失败时 console.error 收到序列化后的 plain object（含 message/stack/code），非裸 Error 实例', async () => {
+    // 回归守卫：spawn catch 块用 serializeError(e) 把 Error 转成 plain object 再传给 console.error。
+    // 若有人改回裸 e，Error 实例经 logger 的 JSON.stringify 会变成 {}，日志看不出真实错误。
+    const { spawn } = await import('node-pty')
+    // 带 code 的 Error（模拟 node 系统错误，验证 code 透出）
+    const spawnErr = Object.assign(new Error('ENOENT: shell not found'), { code: 'ENOENT' })
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      throw spawnErr
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+
+    await expect(svc.spawn('s10', undefined, 80, 24)).rejects.toMatchObject({
+      code: 'spawn_failed',
+    })
+
+    expect(errorSpy).toHaveBeenCalled()
+    // console.error 第二个参数是 serializeError(e) 的返回值
+    const serialized = errorSpy.mock.calls[0]![1]
+    // 关键：不是裸 Error 实例（裸 Error 会被 logger JSON.stringify 成 {}）
+    expect(serialized).not.toBeInstanceOf(Error)
+    // 是含 message/stack/code 的 plain object
+    expect(serialized).toMatchObject({
+      message: 'ENOENT: shell not found',
+      stack: expect.any(String),
+      code: 'ENOENT',
+    })
+    // 模拟 logger 的 JSON.stringify：plain object 能正确序列化出 message（裸 Error 会变 {}）
+    expect(JSON.parse(JSON.stringify(serialized)).message).toBe('ENOENT: shell not found')
+  })
+
+  it('TS-11: spawn env 清除 ELECTRON_RUN_AS_NODE 等 sidecar 内部变量（防 terminal 用户跑 electron 命令崩溃）', async () => {
+    // [HISTORICAL] 回归：runtime sidecar 的 process.env 含 ELECTRON_RUN_AS_NODE=1（打包模式
+    // 由 Electron 主进程注入，见 process-control.ts:202-205）。buildEnv 若原样透传到 terminal shell，
+    // 用户在 terminal 跑 `electron .` / `npm run dev` 时 Electron 退化为纯 Node，
+    // require('electron').app 为 undefined → 'Cannot read properties of undefined (reading isPackaged)' 崩溃。
+    // 修复：buildEnv 必须显式 delete 这些变量。
+    const prev = { ...process.env }
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    process.env.ELECTRON_NO_ASAR = '1'
+    process.env.ELECTRON_OVERRIDE_DIST_PATH = '/some/path'
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s11', undefined, 80, 24)
+      const { spawn } = await import('node-pty')
+      // node-pty.spawn(file, args, options) → options.env
+      const opts = vi.mocked(spawn).mock.calls[0]![2] as { env: Record<string, string> }
+      expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+      expect(opts.env.ELECTRON_NO_ASAR).toBeUndefined()
+      expect(opts.env.ELECTRON_OVERRIDE_DIST_PATH).toBeUndefined()
+      // 正常 env 仍应保留（验证不是整个 env 被清空）
+      expect(opts.env.TERM).toBe('xterm-256color')
+      expect(opts.env.PATH).toBe(process.env.PATH)
+    } finally {
+      // 还原 process.env，避免污染后续测试
+      for (const k of ['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ASAR', 'ELECTRON_OVERRIDE_DIST_PATH']) {
+        if (k in prev) process.env[k] = prev[k]!
+        else delete process.env[k]
+      }
+    }
+  })
+})

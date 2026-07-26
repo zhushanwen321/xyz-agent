@@ -21,6 +21,7 @@ import type {
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
+  TerminalConfig,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -497,6 +498,22 @@ function defaultSystemPromptConfig(): SystemPromptConfig {
 // 系统提示词配置订阅（模拟 config.systemPrompt 广播；初始推默认配置，corrupted=false）。
 const systemPromptSub = makeMockSubscription(() => ({ config: defaultSystemPromptConfig(), corrupted: false }))
 
+/** 默认终端配置（Phase 6）。 */
+function defaultTerminalConfig(): TerminalConfig {
+  return {
+    version: 1,
+    shell: '',
+    shellArgs: [],
+    fontSize: 14,
+    fontFamily: '',
+    scrollback: 1000,
+    cursorStyle: 'block',
+    bell: false,
+  }
+}
+// 终端配置订阅（模拟 config.terminalConfig 广播；初始推默认配置，corrupted=false）。
+const terminalSub = makeMockSubscription(() => ({ config: defaultTerminalConfig(), corrupted: false }))
+
 export const config = {
   // 请求型：直接返 fixture 深拷贝（不依赖 sub）
   async listProviders() {
@@ -631,6 +648,20 @@ export const config = {
   },
   onSystemPrompt: (h: (config: SystemPromptConfig, corrupted: boolean) => void) =>
     systemPromptSub.subscribe((p) => h(p.config, p.corrupted)),
+  // ── 终端配置（Phase 6，与 real domains/config 同构）──
+  // mock 持内存默认配置；setTerminalConfig 广播 config.terminalConfig，与 runtime 行为一致。
+  async getTerminalConfig() {
+    await sleep(TIMING.ack)
+    return { config: defaultTerminalConfig(), corrupted: false }
+  },
+  async setTerminalConfig(cfg: TerminalConfig) {
+    await sleep(TIMING.ack)
+    const next = { config: cfg, corrupted: false }
+    terminalSub.broadcast(next)
+    return next
+  },
+  onTerminalConfig: (h: (config: TerminalConfig, corrupted: boolean) => void) =>
+    terminalSub.subscribe((p) => h(p.config, p.corrupted)),
 }
 
 /** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */
@@ -824,6 +855,22 @@ function listRecentRecords(): import('@xyz-agent/shared').RecentWorkspaceRecord[
   ]
 }
 
+// Mock quota domain（w4 coding-plan 额度查询）
+export const quota = {
+  async getCached(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async fetchQuota(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async refreshQuota(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async configure(_providerId: string, _enabled: boolean, _cookie?: string, _fetcher?: string, _apiKey?: string) {
+    return { ok: true }
+  },
+}
+
 export const workspace = {
   async listRecent(): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
     return listRecentRecords()
@@ -836,5 +883,9 @@ export const workspace = {
   // detectBare：mock 恒返非 bare（landing 态 isBare 演示由 real 轨驱动，mock 轨无需真实检测）
   async detectBare(_cwd: string): Promise<{ isBare: boolean; wsRoot: string; barePath: string }> {
     return { isBare: false, wsRoot: '', barePath: '' }
+  },
+  // detect：mock 恒返 not-repo（三态检测，real 轨驱动）
+  async detect(_cwd: string): Promise<import('@xyz-agent/shared').ServerMessageMap['workspace.detected']> {
+    return { mode: 'not-repo', wsRoot: '', barePath: '', repoRoot: '', defaultBranch: '' }
   },
 }

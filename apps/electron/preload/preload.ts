@@ -25,8 +25,6 @@ export interface ElectronAPI {
   getWindows(): Promise<import('@xyz-agent/shared').WindowState[]>
   /** 聚焦指定窗口 */
   focusWindow(windowId: string): Promise<void>
-  /** 查找指定 session 所在的窗口，返回 { windowId } 或 null */
-  findSessionWindow(sessionId: string): Promise<{ windowId: string } | null>
   /** 监听窗口列表变化事件（创建/关闭/更新） */
   onWindowListUpdated(callback: () => void): () => void
   /** 打开目录选择对话框（defaultPath 失效时主进程自动回退到 ~） */
@@ -45,6 +43,41 @@ export interface ElectronAPI {
   windowToggleMaximize(): Promise<void>
   /** 关闭当前窗口 */
   windowClose(): Promise<void>
+  // ── Browser drawer（嵌入式浏览器）─────────────────────────────
+  /** 创建 WebContentsView 并 attach 到指定窗口（初始隐藏） */
+  browserCreate(sessionId: string, windowId: string): Promise<void>
+  /** 导航到指定 URL */
+  browserNavigate(sessionId: string, url: string): Promise<void>
+  /** 隐藏 view（keep-alive，不销毁） */
+  browserHide(sessionId: string): Promise<void>
+  /** 显示 view（恢复最近 rect） */
+  browserShow(sessionId: string): Promise<void>
+  /** 切换可见 view 到指定 session（Wave 4：隐藏其他可见 view，显示 target；用于切 session 时 swap） */
+  browserFocus(sessionId: string): Promise<void>
+  /** 设置 view 位置/尺寸（CSS px = DIP，不乘 dpr；renderer 经 getBoundingClientRect 推送） */
+  browserSetRect(sessionId: string, rect: { x: number; y: number; width: number; height: number }): Promise<void>
+  /** 销毁 view（removeChildView + webContents.destroy） */
+  browserDestroy(sessionId: string): Promise<void>
+  /** 后退（Wave 5 历史；sessionId 不存在或无法后退时无操作） */
+  browserBack(sessionId: string): Promise<void>
+  /** 前进（Wave 5 历史；sessionId 不存在或无法前进时无操作） */
+  browserForward(sessionId: string): Promise<void>
+  /** 设置缩放因子（1.0=100%；Wave 5） */
+  browserSetZoom(sessionId: string, factor: number): Promise<void>
+  /** 读取当前缩放因子（Wave 5；sessionId 不存在返回 1.0） */
+  browserGetZoom(sessionId: string): Promise<number>
+  /** 读取 WebContentsView 内当前选区文本 + URL（二期扩展点，Wave 6 预留） */
+  browserGetSelection(sessionId: string): Promise<{ text: string; url: string }>
+  /** 监听 browser 状态变化（url/isLoading/error/canGoBack/canGoForward/zoomFactor，主进程 did-navigate 等事件推送），返回取消订阅函数 */
+  onBrowserState(callback: (state: {
+    sessionId: string
+    currentUrl: string
+    isLoading: boolean
+    error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+    canGoBack: boolean
+    canGoForward: boolean
+    zoomFactor: number
+  }) => void): () => void
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -81,7 +114,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),
   getWindows: () => ipcRenderer.invoke('get-windows'),
   focusWindow: (windowId: string) => ipcRenderer.invoke('focus-window', windowId),
-  findSessionWindow: (sessionId: string) => ipcRenderer.invoke('find-session-window', sessionId),
   onWindowListUpdated: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('window-list-updated', handler)
@@ -99,4 +131,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
+  // ── Browser drawer（嵌入式浏览器）─────────────────────────────
+  browserCreate: (sessionId: string, windowId: string) => ipcRenderer.invoke('browser:create', { sessionId, windowId }),
+  browserNavigate: (sessionId: string, url: string) => ipcRenderer.invoke('browser:navigate', { sessionId, url }),
+  browserHide: (sessionId: string) => ipcRenderer.invoke('browser:hide', sessionId),
+  browserShow: (sessionId: string) => ipcRenderer.invoke('browser:show', sessionId),
+  browserFocus: (sessionId: string) => ipcRenderer.invoke('browser:focus', sessionId),
+  browserSetRect: (sessionId: string, rect: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke('browser:set-rect', { sessionId, rect }),
+  browserDestroy: (sessionId: string) => ipcRenderer.invoke('browser:destroy', sessionId),
+  browserBack: (sessionId: string) => ipcRenderer.invoke('browser:back', sessionId),
+  browserForward: (sessionId: string) => ipcRenderer.invoke('browser:forward', sessionId),
+  browserSetZoom: (sessionId: string, factor: number) => ipcRenderer.invoke('browser:set-zoom', { sessionId, factor }),
+  browserGetZoom: (sessionId: string) => ipcRenderer.invoke('browser:get-zoom', sessionId),
+  browserGetSelection: (sessionId: string) => ipcRenderer.invoke('browser:get-selection', sessionId),
+  onBrowserState: (callback: (state: {
+    sessionId: string
+    currentUrl: string
+    isLoading: boolean
+    error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+    canGoBack: boolean
+    canGoForward: boolean
+    zoomFactor: number
+  }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: {
+      sessionId: string
+      currentUrl: string
+      isLoading: boolean
+      error: { errorCode: number; errorDescription: string; validatedURL: string } | null
+      canGoBack: boolean
+      canGoForward: boolean
+      zoomFactor: number
+    }) => callback(state)
+    ipcRenderer.on('browser:state', handler)
+    return () => ipcRenderer.removeListener('browser:state', handler)
+  },
 } satisfies ElectronAPI)

@@ -53,7 +53,7 @@ describe('W5: health-checker 改用 HTTP /health 探活', () => {
 
   // ── HC2：checkHealthEndpoint 走 HTTP /health（非 createConnection）─
   it('HC2: checkHealthEndpoint 调用 fetch http://127.0.0.1:{port}/health', async () => {
-    const fetchSpy = vi.fn(async () =>
+    const fetchSpy = vi.fn<(input: unknown) => Promise<Response>>(async () =>
       new Response(JSON.stringify({ status: 'ok' }), { status: 200 }),
     )
     globalThis.fetch = fetchSpy as typeof globalThis.fetch
@@ -62,7 +62,8 @@ describe('W5: health-checker 改用 HTTP /health 探活', () => {
 
     // 关键断言：必须 fetch http://127.0.0.1:7799/health（W5：HTTP，非 TCP）
     expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const calledUrl = String(fetchSpy.mock.calls[0]![0])
+    const firstCall = fetchSpy.mock.calls[0]
+    const calledUrl = firstCall ? String(firstCall[0]) : ''
     expect(calledUrl).toBe('http://127.0.0.1:7799/health')
   })
 

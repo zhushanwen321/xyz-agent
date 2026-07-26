@@ -1,6 +1,6 @@
 {
   "name": "xyz-agent",
-  "version": "0.8.6",
+  "version": "0.8.13",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "pnpm --filter @xyz-agent/electron build",
     "lint": "eslint .",
     "prepare": "bash .githooks/install-hooks.sh",
+    "postinstall": "bash scripts/fix-node-pty-permissions.sh",
     "build:e2e": "pnpm --filter @xyz-agent/electron build:e2e",
     "test:e2e": "playwright test",
     "changeset": "changeset",
@@ -16,7 +17,6 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.0",
-    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
     "eslint": "^10.3.0",
     "eslint-plugin-vue": "^10.9.1",
@@ -31,6 +31,7 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "electron",
+      "node-pty",
       "vue-demi"
     ]
   }

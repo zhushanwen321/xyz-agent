@@ -33,7 +33,7 @@
  *   app.whenReady:
  *     1. protocol.handle('local-file', 路径白名单校验)
  *     2. mainWindow = createWindow({windowId:'win-1'})
- *     3. windowManager.register('win-1', mainWindow, initialWindowState)
+ *     3. windowManager.register('win-1', mainWindow)
  *     4. shortcutRegistry.registerGlobal(mainWindow)
  *     5. if !mock: runtime.startAndNotify(mainWindow)
  *
@@ -60,9 +60,9 @@ import { createMainContext } from './context.js'
 import type { MainContext } from './interfaces.js'
 import { RuntimeSupervisor } from './supervisor/runtime-supervisor.js'
 import { WindowManager } from './window/window-manager.js'
-import { initialWindowState } from './window/panel-tree-utils.js'
 import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
+import { BrowserViewManager } from './browser/browser-view-manager.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
@@ -126,6 +126,16 @@ const runtime = new RuntimeSupervisor()
 const windows = new WindowManager()
 const shortcuts = new ShortcutRegistry()
 const ctx: MainContext = createMainContext({ runtime, windows, shortcuts, isDev })
+// Browser drawer 的 WebContentsView 管理器（依赖 windows Facade 取窗口引用）。
+// W2：注入 onStateChange 回调，webContents 事件触发时把 state 推给主窗口 renderer（BrowserPane），
+// 用于地址栏回填真实 URL（防钓鱼）+ loading/error 态切换。win 在 ctx.mainWindow 设置后才有值，
+// 故此处读 ctx.mainWindow（bootstrap 后非 null）。
+const browserViewManager = new BrowserViewManager(windows, (sid, state) => {
+  const win = ctx.mainWindow
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('browser:state', { sessionId: sid, ...state })
+  }
+})
 
 /** createWindow 适配器：把 ctx.windows.generateId 注入 window-factory */
 const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
@@ -139,6 +149,7 @@ registerIpcHandlers({
   isDev,
   createWindow: createWindowFn,
   windowManager: ctx.windows,
+  browserViewManager,
 })
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
@@ -154,7 +165,7 @@ async function bootstrapMainWindow(): Promise<void> {
   const win = await createWindowFn({ windowId })
   win.on('closed', () => { ctx.mainWindow = null })
   ctx.mainWindow = win
-  ctx.windows.register(windowId, win, initialWindowState(windowId))
+  ctx.windows.register(windowId, win)
 
   // 注册全局快捷键
   shortcuts.registerGlobal(win)

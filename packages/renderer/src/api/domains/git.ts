@@ -55,6 +55,14 @@ export function checkout(sessionId: string, name: string): Promise<void> {
 }
 
 /**
+ * 按 cwd 检出分支（landing 态无 session，plain-repo 模式切分支用）。
+ * 与 checkout(sessionId,name) 同语义，但不经 session 解析，直接对 cwd 跑 git checkout。
+ */
+export function checkoutByCwd(cwd: string, name: string): Promise<void> {
+  return command('git.checkoutCwd', { cwd, name })
+}
+
+/**
  * 创建并检出分支（#7 创建分支 modal）。ack 复用 'message.status' {status:'branch_created'}。
  * 分支名非法/已存在/超时→runtime GitError→Promise reject（调用方留 modal 显错，D-7）。
  */

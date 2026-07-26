@@ -2,21 +2,17 @@
   SideDrawer —— workspace-body 级辅助视图容器，承载 Terminal/Browser/Git/Doc/Detail 五个 tab。
   Terminal/Browser 走 widget 订阅；Git tab 由 GitPanel.vue inject git 状态；Doc/Detail 各自独立。
 
-  形态（双模式，由 props.mode 决定，PanelContainer 按 panel.isDual 派生）：
-  · split（单 panel）：drawer 是 PanelContainer 的 flex 子项，与 Panel 各 flex-1 均分，并排占 workspace 一半；
-  · overlay（双 panel）：drawer 是 absolute 浮层（w-1/2、z-30），覆盖对侧 standby panel——
-    dual 时两个 panel 已占满 workspace，drawer 只能盖掉一个。
-  方向（props.direction，由 host panel 位置决定）：host=P1 → drawer 贴右（direction='right'）；host=P2 → 贴左。
-  split 模式下 direction 决定边框方向 + order（单 panel 恒 right，order 仅作防御）。
+  形态（v2：单 panel 恒 split 模式）：drawer 是 PanelContainer 的 flex 子项，与 Panel 各 flex-1 均分，
+  并排占 workspace 一半，贴右展开（border-l 分隔）。不再有 overlay 浮层模式（原双 panel 专属）。
 
-  状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked/direction/mode
-  props + emit close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
+  状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked props + emit
+  close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
   接入 useSessionEvents.onMessage，按 widgetKey 路由到 terminal/browser tab。
   Git tab 不走 widget——数据由 PanelContainer 经 GIT_STATUS_KEY provide，GitPanel 自行 inject，
   本通用容器不持有 git props（保持容器纯净，不污染通用 tab 范式）。
 -->
 <template>
-  <Transition :name="direction === 'left' ? 'drawer-slide-left' : 'drawer-slide-right'">
+  <Transition name="drawer-slide-right">
     <aside
       v-if="isOpen"
       :class="asideClass"
@@ -57,12 +53,22 @@
         >
           <X class="size-3" />
         </Button>
+        <!-- AC-13：drawer 打开期间 agent 新消息角标（脉动蓝点 + 计数，非侵入式） -->
+        <div
+          v-if="unreadCount > 0"
+          class="flex items-center gap-0.5 rounded-full bg-accent px-1.5 py-0.5"
+          data-testid="drawer-unread-badge"
+          :title="t('panel.sideDrawer.unreadMessages', { count: unreadCount })"
+        >
+          <span class="size-1.5 animate-pulse rounded-full bg-fg" />
+          <span class="font-mono text-[10px] text-fg">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+        </div>
       </header>
 
       <!-- 内容区：Git / Terminal / Browser。
            Git tab → GitPanel（inject GIT_STATUS_KEY，自取 git 全量状态；非 git 仓库组件内自隐藏走空态）。
-           Terminal/Browser → widget 订阅（#11 W3a），按 widgetKey 路由（mapWidgetKeyToTab），
-           未匹配 widgetKey 走 fallback。空态：widget 未推送或 session 未连接。 -->
+           Terminal tab → TerminalView（PTY 优先，交互式终端；决策 4-B，widget 死路径保留为非 terminal tab fallback）。
+           Browser → widget 订阅（#11 W3a），按 widgetKey 路由（mapWidgetKeyToTab）。 -->
       <div class="min-h-0 flex-1 overflow-auto">
         <!-- Git tab：全量 git 状态 + 暂存/提交（非 git 仓库 GitPanel 内自隐藏，此处显空态） -->
         <GitPanel v-if="activeTab === 'git'" />
@@ -70,8 +76,20 @@
         <CommandDocPanel v-else-if="activeTab === 'doc'" :session-id="sessionId" />
         <!-- Detail tab：文件预览（#6，useDetailPane watch selectedPath 自动加载，禁 v-html） -->
         <DetailPane v-else-if="activeTab === 'detail'" :session-id="sessionId" />
+        <!-- Browser tab：嵌入式浏览器（WebContentsView，#browser-drawer Wave 2 + Wave 5）。
+             Wave 5 AC-18 widget 回落：有 browserUrl（刚点链接）时显 BrowserPane 导航；
+             无 browserUrl 时回落到 widget 通路（extension 推的 browser/preview widget 显示）。
+             已加载的网页由主进程 view keep-alive 保留，重新点链接时 BrowserPane remount 恢复。-->
+        <BrowserPane
+          v-else-if="activeTab === 'browser' && browserUrl"
+          :session-id="sessionId ?? ''"
+          :url="browserUrlForRender"
+        />
         <!-- Tasks tab：goal 卡片 + todo 列表（tasks store 按 sessionId 分区，只读渲染） -->
         <TasksPanel v-else-if="activeTab === 'tasks'" :session-id="sessionId" />
+        <!-- Terminal tab：PTY 优先渲染交互式终端（TerminalView 内管 PTY 生命周期 + scrollback 回放）。
+             widget 死路径（extension:widget 推 terminal 关键词）经查证 0 命中，PTY 接管后不再触发。 -->
+        <TerminalView v-else-if="activeTab === 'terminal'" :session-id="sessionId" />
         <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
         <div
           v-else-if="activeGuiComponent"
@@ -134,35 +152,29 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, FileText, Pin, PinOff, X, CheckSquare } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import GitPanel from './GitPanel.vue'
 import CommandDocPanel from './CommandDocPanel.vue'
 import DetailPane from './DetailPane.vue'
+import BrowserPane from './BrowserPane.vue'
 import TasksPanel from './TasksPanel.vue'
+import TerminalView from './TerminalView.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import AnsiText from './message-stream/gui/AnsiText.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
-import { useSessionEvents } from '@/composables/features/useSessionEvents'
-import { useSessionScopedState } from '@/composables/useSessionScopedState'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useDrawerWidgetBuffers } from '@/composables/features/useDrawerWidgetBuffers'
 import { useTasksStore } from '@/stores/tasks'
+import { useChatStore } from '@/stores/chat'
 
 const props = defineProps<{
   isOpen: boolean
   activeTab: SideDrawerTab
   docked: boolean
-  /** 抽屉贴边方向（panel/spec.md v2）：host=P1→'right'（贴右），host=P2→'left'（贴左） */
-  direction: 'right' | 'left'
-  /**
-   * 布局模式（PanelContainer 按 panel.isDual 派生）：
-   * · 'split'（单 panel）：flex 子项，与 Panel 各占一半，并排不覆盖；
-   * · 'overlay'（双 panel）：absolute 浮层覆盖对侧 standby panel。
-   */
-  mode: 'split' | 'overlay'
   /** widget 订阅的 session 标识（#11 W3a）：为 null 不订阅 */
   sessionId: string | null
 }>()
@@ -176,32 +188,56 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const tasksStore = useTasksStore()
+const chatStore = useChatStore()
+
+// ── AC-13：drawer 打开期间 agent 新消息感知 ──────────────────────────────
+// drawer 打开时对话流被遮挡，agent 新消息需非侵入式感知（spec §4.5）。
+// 机制：drawer isOpen 时 watch 当前 session 消息数增长，累加 unreadCount；
+// 用户关 drawer（回对话流）或切回 chat 相关操作时清零。
+const unreadCount = ref(0)
+watch(
+  () => [props.isOpen, props.sessionId] as const,
+  ([open, sid], [wasOpen]) => {
+    // drawer 关闭时清零（用户回到对话流，角标无意义）
+    if (wasOpen && !open) {
+      unreadCount.value = 0
+    }
+    // 切 session 时清零（per-session 计数，不跨 session 累加）
+    if (sid !== prevSid) {
+      unreadCount.value = 0
+      prevSid = sid
+    }
+  },
+)
+let prevSid = props.sessionId
+// 消息数增长时（drawer 打开期间 agent 新消息到达）→ 累加计数
+watch(
+  () => (props.sessionId ? chatStore.getMessages(props.sessionId).length : 0),
+  (newLen, oldLen) => {
+    if (props.isOpen && props.sessionId && newLen > oldLen) {
+      unreadCount.value += newLen - oldLen
+    }
+  },
+)
+
+// useSideDrawer 暴露的 browserUrl（点击 agent 链接时设置，模块级单例 ref）。
+// browser tab 传给 BrowserPane 触发导航。为空（null）时传空字符串让 BrowserPane 显空态。
+// 注：useSideDrawer 的 isOpen/activeTab 等控制态由本组件 props 接收（父组件管理），
+// 此处只取 browserUrl 瞬时参数。
+const { browserUrl } = useSideDrawer()
+const browserUrlForRender = computed(() => browserUrl.value ?? '')
 
 /**
- * aside 容器 class（按 mode 切换定位策略）：
- * · overlay（双 panel）：absolute 浮层覆盖对侧——与原 v2 形态逐字一致，dual 行为零回归；
- * · split（单 panel）：flex 子项 flex-1，与 Panel 的 flex-1 各占 50% 并排，不覆盖。
- * direction 在 split 下决定边框方向 + order（单 panel 恒 right，order-first 仅防御性）。
+ * aside 容器 class（v2：单 panel 恒 split 模式）：
+ * drawer 作为 PanelContainer SplitterGroup 的 SplitterPanel 子项，尺寸由 SplitterPanel 接管
+ * （inline flexGrow），故此处不再 flex-1；左右分隔线交给 SplitterResizeHandle（workspace-resize-handle）。
+ * 底色用 bg-surface（与 Panel 内容区一致——Panel section 透明继承 MainPanel 的 surface，
+ * drawer 同色与之并列为 main 内容区）。
  */
-const asideClass = computed<string[]>(() => {
-  const borderLeft = 'border-l border-border-strong'
-  const borderRight = 'border-r border-border-strong'
-  if (props.mode === 'overlay') {
-    // overlay（双 panel）：absolute 浮层覆盖对侧 standby panel，用 bg-elevated 表达浮起感
-    return [
-      'flex h-full flex-col bg-bg-elevated',
-      'absolute top-0 z-30 w-1/2 shadow-2xl',
-      props.direction === 'left' ? `left-0 ${borderRight}` : `right-0 ${borderLeft}`,
-    ]
-  }
-  // split（单 panel）：flex 子项，与 Panel 各占一半。底色用 bg-surface（与 Panel 内容区一致，
-  // 不浮起——此时 Panel section 透明继承 MainPanel 的 surface，drawer 同色与之并列为 main 内容区）
-  return [
-    'flex h-full flex-col bg-surface',
-    'relative min-w-0 flex-1',
-    props.direction === 'left' ? `order-first ${borderRight}` : borderLeft,
-  ]
-})
+const asideClass = computed<string[]>(() => [
+  'flex h-full flex-col bg-surface',
+  'relative min-w-0',
+])
 
 interface TabMeta {
   key: SideDrawerTab
@@ -267,146 +303,14 @@ const tabs = computed<TabMeta[]>(() => {
 const activeTabMeta = computed(() => tabs.value.find((tab) => tab.key === props.activeTab) ?? tabs.value[0])
 
 /**
- * widget/status 缓冲的 per-session 状态结构（ADR-0036 W4：Map 分区派）。
- * 五个原组件级 ref/reactive（terminalLines/browserLines/unknownWidget/guiWidgetsByTab/statusMap）
- * 收进一个 reactive 对象，经 useSessionScopedState 按 sessionId 分区。
- *
- * reactive 容器必要性（W2 经验）：init 工厂必须返回 reactive 容器，模板里读 state.xxx +
- * handler 里 mutate state.xxx 才能被响应式追踪——plain object 的 mutate 不触发下游 computed。
- *
- * init 必须返回全新实例：每 sid 独立分区，切回恢复不残留旧 session 数据。
+ * widget/status 缓冲 + extension 事件订阅编排已抽到 useDrawerWidgetBuffers（关注点分离 +
+ * `<script setup>` 行数控制）。composable 内部按 ADR-0036 W4 Map 分区派管理 per-session 状态，
+ * onMessage handler 调 updateFor(sid) 写订阅时 sid 分区（M1 竞态修复）。本组件只消费四个 computed。
  */
-interface DrawerBuffers {
-  /** widget 缓冲：按 tab 存最新 lines（runtime 每次推全量） */
-  terminalLines: string[]
-  browserLines: string[]
-  /** 未匹配 tab 的 widgetKey fallback：存最后一个未知 widget 的 {key, lines}，默认路由到 terminal 显示 */
-  unknownWidget: { key: string; lines: string[] } | null
-  /**
-   * 结构化 GUI widget 缓冲（extension:widgetGui，spec §9.1）。
-   * 按 tab 路由聚合：widgetKey 经 mapWidgetKeyToTab 归一化到 terminal/browser，未匹配归 terminal。
-   * 同 tab 的结构化组件覆盖纯文本 lines：activeGuiComponent 命中时优先用 GuiComponentRenderer 渲染，
-   * 保留交互/着色能力；纯文本 lines 作兜底。
-   */
-  guiWidgetsByTab: Map<SideDrawerTab, GuiComponent>
-  /** extension status 缓冲：statusKey → 最新 {text, textRaw}（runtime 推送全量替换，与 widget 同语义） */
-  statusMap: Map<string, { text: string; textRaw?: string }>
-}
-
-const drawerState = useSessionScopedState(
+const { activeGuiComponent, activeLines, activeLinesMeta, statusEntries } = useDrawerWidgetBuffers(
   toRef(props, 'sessionId'),
-  () => reactive<DrawerBuffers>({
-    terminalLines: [],
-    browserLines: [],
-    unknownWidget: null,
-    guiWidgetsByTab: new Map(),
-    statusMap: new Map(),
-  }),
+  toRef(props, 'activeTab'),
 )
-
-/** 当前 active tab 的结构化组件（命中时优先于纯文本 lines 渲染） */
-const activeGuiComponent = computed<GuiComponent | undefined>(() =>
-  drawerState.current.value.guiWidgetsByTab.get(props.activeTab),
-)
-
-const activeLines = computed<string[]>(() => {
-  const buf = drawerState.current.value
-  if (props.activeTab === 'browser') return buf.browserLines
-  return buf.terminalLines.length ? buf.terminalLines : buf.unknownWidget?.lines ?? []
-})
-
-/** active 内容的元信息（用于 fallback 标记） */
-const activeLinesMeta = computed(() => {
-  const buf = drawerState.current.value
-  if (props.activeTab === 'browser') return { unknown: false, key: '' }
-  if (buf.terminalLines.length) return { unknown: false, key: '' }
-  if (buf.unknownWidget) return { unknown: true, key: buf.unknownWidget.key }
-  return { unknown: false, key: '' }
-})
-
-/**
- * widgetKey → tab 路由启发式（NFR Prototype 1 枚举对齐前的过渡方案）。
- * runtime 推送的 widgetKey 为 extension 自定义字符串，归一化后匹配常见关键词。
- * 未命中 → null（调用方走 fallback）。
- */
-function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
-  const k = key.toLowerCase()
-  if (k.includes('terminal') || k.includes('shell') || k.includes('console') || k.includes('bash')) {
-    return 'terminal'
-  }
-  if (k.includes('browser') || k === 'web' || k.startsWith('webview') || k.includes('preview')) {
-    return 'browser'
-  }
-  return null
-}
-
-const statusEntries = computed(() =>
-  Array.from(drawerState.current.value.statusMap.entries()).map(([statusKey, v]) => ({
-    statusKey,
-    text: v.text,
-    textRaw: v.textRaw,
-  })),
-)
-
-/** widget 缓冲行数上限（NFR Issue #11 性能：前端最多保留 1000 行，超出截断保留尾部最新） */
-const WIDGET_MAX_LINES = 1000
-
-/** 保留最新尾部 WIDGET_MAX_LINES 行（前端缓冲上限，截断保留尾部最新） */
-function truncateLines(lines: string[]): string[] {
-  if (lines.length <= WIDGET_MAX_LINES) return lines
-  return lines.slice(lines.length - WIDGET_MAX_LINES)
-}
-
-/**
- * widget/status 订阅编排（#11 W3a）：订阅时机、sessionId 切换重订、卸载退订归 useSessionEvents
- * （features 层，session 通道）。本组件只保留 widget 缓冲逻辑（tab 路由 + lines 截断 + status 聚合）。
- *
- * sessionId 切换无需手动清缓冲——drawerState 经 useSessionScopedState 分区，切 sid 切分区，
- * 切回原 sid 自动恢复缓冲（AC-4）。
- */
-const onMessage = useSessionEvents(toRef(props, 'sessionId'))
-// extension:widget：按 widgetKey 路由到 terminal/browser tab，未匹配走 fallback
-// handler 收到第二参数 sid（订阅时捕获的消息所属 session），调 updateFor(sid) 写入该 sid 分区——
-// 即使 watch flush:pre 异步退订窗口内有旧 sid 迟到消息，也只写旧 sid 分区，不污染新 sid（M1 竞态修复）
-onMessage('extension:widget', (msg, sid) => {
-  const payload = msg.payload
-  const lines = truncateLines(payload.lines)
-  const tab = mapWidgetKeyToTab(payload.widgetKey)
-  drawerState.updateFor(sid, (buf) => {
-    if (tab === 'terminal') buf.terminalLines = lines
-    else if (tab === 'browser') buf.browserLines = lines
-    else buf.unknownWidget = { key: payload.widgetKey, lines }
-  })
-})
-// extension:widgetGui（spec §9.1）：结构化 GUI 组件，按 widgetKey 路由到 tab，覆盖纯文本 lines。
-// gui === null 表示清除（guiSetWidget(key, undefined) → event-adapter 发 gui:null），
-// 删 guiWidgetsByTab 条目 + 清对应 tab 的纯文本 lines。
-// 未匹配 tab 的 widgetKey 归 terminal（与 extension:widget fallback 语义一致：unknownWidget 默认显 terminal）
-//
-// 注：drawerState 是 useSessionScopedState reactive 容器，buf.guiWidgetsByTab / buf.statusMap
-// 都是 reactive Map。Vue 3 reactive 对 Map 有 collection handlers——.set()/.delete() 本身就触发
-// 依赖了该 Map 的下游 computed 重算，**无需重新赋值 Map 字段**（旧 ref<Map> 实现才需要 reassign）。
-onMessage('extension:widgetGui', (msg, sid) => {
-  const payload = msg.payload
-  const tab = mapWidgetKeyToTab(payload.widgetKey) ?? 'terminal'
-  drawerState.updateFor(sid, (buf) => {
-    if (payload.gui === null) {
-      // 清除：删结构化组件 + 纯文本 lines（guiSetWidget(key, undefined) 语义）
-      buf.guiWidgetsByTab.delete(tab)
-      if (tab === 'terminal') buf.terminalLines = []
-      else if (tab === 'browser') buf.browserLines = []
-      return
-    }
-    buf.guiWidgetsByTab.set(tab, payload.gui as GuiComponent)
-  })
-})
-// extension:status：statusKey 维度聚合，同 key 覆盖（透传 textRaw 供 AnsiText 着色）
-onMessage('extension:status', (msg, sid) => {
-  const payload = msg.payload
-  drawerState.updateFor(sid, (buf) => {
-    buf.statusMap.set(payload.statusKey, { text: payload.text, textRaw: payload.textRaw })
-  })
-})
 /**
  * ESC 关闭抽屉（panel/spec.md：抽屉是浮层，ESC 收起）。
  * 仅在 isOpen 时挂监听，避免抽屉关闭后仍抢全局 keydown（如 composer 输入态）。
@@ -436,21 +340,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* 抽屉淡入/淡出（panel/spec.md v2）。
-   原 translateX 位移动画被 PanelContainer 的 overflow-hidden 裁掉（overlay 模式下 drawer 是 absolute 子元素，
-   溢出定位容器必须被裁以防止关闭按钮飘出窗口），改为纯 opacity 淡入淡出。
-   split 模式下 drawer 是 flex 子项不受 overflow-hidden 影响，但布局瞬时切换（Panel 宽度 100%↔50%）配合
-   内容 opacity 淡入已足够柔和，两种模式共用同一组 transition 类。
+   v2：单 panel 恒 split 模式（drawer 是 flex 子项），仅保留 drawer-slide-right。
+   内容 opacity 淡入足够柔和（布局瞬时切换配合 opacity 淡入）。
    escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时设 opacity）。 */
 .drawer-slide-right-enter-from,
-.drawer-slide-right-leave-to,
-.drawer-slide-left-enter-from,
-.drawer-slide-left-leave-to {
+.drawer-slide-right-leave-to {
   opacity: 0;
 }
 .drawer-slide-right-enter-active,
-.drawer-slide-right-leave-active,
-.drawer-slide-left-enter-active,
-.drawer-slide-left-leave-active {
+.drawer-slide-right-leave-active {
   transition: opacity var(--duration-slow) var(--ease);
 }
 </style>

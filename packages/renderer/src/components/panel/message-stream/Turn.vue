@@ -269,7 +269,7 @@
           >
             <GitFork class="size-3" />
             <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">⌘G</span>
+            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">{{ formatKbd('g') }}</span>
           </Button>
           <Button
             v-if="!isSubagentVirtualId(sessionId)"
@@ -282,7 +282,7 @@
           >
             <GitFork class="size-3.5 fill-current" />
             <span class="text-[11px]">{{ t('panel.message.forkAskLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">⌘⇧G</span>
+            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">{{ formatKbd('shift+g') }}</span>
           </Button>
           <!-- handoff 按钮组（fast-handoff）：与 fork 同组，用 as-sep 分隔。
                handoff 后台（Upload 线性）：从末条 assistant 打包文档到新 session，完成后跳转。
@@ -344,6 +344,7 @@ import { useCopy } from '@/composables/effects/useCopy'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
@@ -393,6 +394,7 @@ const { onFork, onForkAsk, onHandoff, onHandoffAsk } = useTurnActions({
   lastAssistant,
 })
 const { open: openDrawer } = useSideDrawer()
+const { formatKbd } = usePlatformShortcut()
 const fileTreeStore = useFileTreeStore()
 
 /** [m2] 本 session 是否正在交接（防 handoff 按钮重复点击触发第二次 api 调用；fork 按钮不加 disabled）。 */

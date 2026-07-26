@@ -165,9 +165,10 @@ describe('AC1：用户主动滚动期间 scrollAdjustDelta 不施加', () => {
     await nextTick()
     await nextTick() // flush:'post' watch 在 DOM flush 后触发
 
-    // 核心断言（AC1）：scrollTop 未被 delta 施加（用户上滑后视口不向上跳）
-    // 修复前：delta=+200 会被施加，scrollTop 变成 1200；修复后：guard 跳过，保持 1000
-    expect(scrollEl.scrollTop).toBe(beforeTop)
+    // 核心断言（AC1）：[fix-scroll-jump] guard 翻转后，非贴底态 delta 正常施加（视口中段内容稳定）。
+    // 旧断言（旧 guard 跳过非贴底 delta）：expect(scrollEl.scrollTop).toBe(beforeTop)
+    // 新断言（新 guard 施加非贴底 delta）：scrollTop += 200
+    expect(scrollEl.scrollTop).toBe(beforeTop + 200)
     wrapper.unmount()
   })
 })
@@ -216,8 +217,8 @@ describe('AC2：delta 清零不残留', () => {
 // ────────────────────────────────────────────────────────────────
 // AC3：贴底态（stickToBottom=true）补偿行为不变
 // ────────────────────────────────────────────────────────────────
-describe('AC3：贴底态补偿行为不变', () => {
-  it('stickToBottom=true 时视口上方 turn 实测化，scrollTop 按 delta 正常补偿', async () => {
+describe('AC3：贴底态 delta 不施加（guard 翻转后）', () => {
+  it('stickToBottom=true 时视口上方 turn 实测化，delta 不施加（由 scrollToBottom 主导）', async () => {
     const chat = useChatStore()
     chat.hydrate('s3', makeHistory(10))
     const wrapper = mountStream('s3')
@@ -236,10 +237,39 @@ describe('AC3：贴底态补偿行为不变', () => {
     await nextTick()
     await nextTick()
 
-    // 核心断言（AC3）：贴底态补偿正常施加，scrollTop 应被改变（+= delta=200）
-    // 修复后贴底分支保留 scrollEl.scrollTop += delta，beforeTop(1400) → 1600
-    expect(scrollEl.scrollTop).not.toBe(beforeTop)
-    expect(scrollEl.scrollTop).toBe(beforeTop + 200)
+    // 核心断言（AC3）：[fix-scroll-jump] 贴底态 delta 不施加，scrollTop 保持不变。
+    // 旧断言（保护了错误行为）：expect(scrollEl.scrollTop).toBe(beforeTop + 200)
+    // 新断言（guard 翻转后）：贴底态由 scrollToBottom 统一跟随到底，delta 补偿不参与。
+    expect(scrollEl.scrollTop).toBe(beforeTop)
+    wrapper.unmount()
+  })
+})
+
+describe('AC3b：负 delta 贴底态不跳变（核心 bug 回归）', () => {
+  it('stickToBottom=true 时负 delta（trace 收起）不把 scrollTop 往上拉', async () => {
+    const chat = useChatStore()
+    chat.hydrate('s3b', makeHistory(10))
+    const wrapper = mountStream('s3b')
+    await nextTick()
+
+    const scrollEl = getScrollEl(wrapper)
+    // 贴底态：scrollHeight=2000, clientHeight=600, scrollTop=1400（distance=0 <= 40）
+    setScroll(scrollEl, 2000, 600, 1400)
+    await flushRaf()
+    await nextTick()
+
+    const beforeTop = scrollEl.scrollTop
+    // 视口上方 turn（u1）高度从 200→60（delta=-140，模拟 trace 收起）
+    if (!injectedRegistry) {
+      throw new Error('registry 未注入（Turn stub 未挂载或 provide 链路断）')
+    }
+    injectedRegistry.reportHeight('u1', 60)
+    await flushRaf()
+    await nextTick()
+    await nextTick()
+
+    // 核心断言：负 delta 不被施加，scrollTop 不被往上拉（修复前会跳到 1260）
+    expect(scrollEl.scrollTop).toBe(beforeTop)
     wrapper.unmount()
   })
 })
@@ -325,9 +355,10 @@ describe('TC4：非切换场景 settling 已 false 时正常补偿施加', () =>
     await nextTick()
     await nextTick() // flush:'post' watch
 
-    // 核心断言（TC4）：settling 已 false，贴底态正 delta 正常施加。
-    // 证明 settling guard 不影响正常补偿路径（只对 session 切换窗口生效）。
-    expect(scrollEl.scrollTop).toBe(beforeTop + 200)
+    // 核心断言（TC4）：[fix-scroll-jump] guard 翻转后，贴底态 delta 跳过（由 scrollToBottom 主导）。
+    // 旧断言（旧 guard 施加贴底 delta）：expect(scrollEl.scrollTop).toBe(beforeTop + 200)
+    // 新断言（新 guard 跳过贴底 delta）：scrollTop 不变
+    expect(scrollEl.scrollTop).toBe(beforeTop)
     wrapper.unmount()
   })
 })
@@ -357,8 +388,10 @@ describe('TC5：用户上滑脱离锚定后 delta 不施加（ba26c322 guard 回
     await nextTick()
     await nextTick() // flush:'post' watch
 
-    // 核心断言（TC5）：stickToBottom=false（用户上滑）时 delta 不施加（与 settling guard 独立并存）。
-    expect(scrollEl.scrollTop).toBe(beforeTop)
+    // 核心断言（TC5）：[fix-scroll-jump] guard 翻转后，非贴底态 delta 正常施加（视口中段内容稳定）。
+    // 旧断言（旧 guard 跳过非贴底 delta）：expect(scrollEl.scrollTop).toBe(beforeTop)
+    // 新断言（新 guard 施加非贴底 delta）：scrollTop += 200
+    expect(scrollEl.scrollTop).toBe(beforeTop + 200)
     wrapper.unmount()
   })
 })

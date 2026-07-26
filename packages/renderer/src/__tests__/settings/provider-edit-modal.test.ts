@@ -131,6 +131,15 @@ function queryBodyButtonIncludes(text: string): HTMLButtonElement | null {
     .find((b) => (b.textContent ?? '').includes(text)) ?? null
 }
 
+/**
+ * 按 data-testid 精确定位 button 元素（document.body，含 teleport）。
+ * 选用 testid 而非文案子串：弹窗内可能存在多个文案相近的按钮（如 CodingPlanSection
+ * 的「保存专属 API Key」与底栏「保存」），子串匹配会误中。testid 是结构契约，抗污染。
+ */
+function queryBodyButtonByTestId(testid: string): HTMLButtonElement | null {
+  return document.body.querySelector<HTMLButtonElement>(`button[data-testid="${testid}"]`)
+}
+
 describe('W4 D12: 保存成功 toast 反馈', () => {
   it('onSave 成功后 toastInfo("已保存") 并 emit close', async () => {
     const { toasts } = useToast()
@@ -145,8 +154,8 @@ describe('W4 D12: 保存成功 toast 反馈', () => {
     nameInput!.value = 'NewProvider'
     nameInput!.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
-    // 点保存
-    const saveBtn = queryBodyButtonIncludes('保存')
+    // 点保存（底栏 provider-save-btn；不能用文案子串，会误中 CodingPlanSection 的「保存专属 API Key」）
+    const saveBtn = queryBodyButtonByTestId('provider-save-btn')
     expect(saveBtn).toBeTruthy()
     saveBtn!.click()
     await flushPromises()
@@ -299,8 +308,8 @@ describe('W4 D15a/D15b: addModel / save 前端校验', () => {
       attachTo: document.body,
     })
     await flushPromises()
-    // 不填 name 直接点保存
-    const saveBtn = queryBodyButtonIncludes('保存')
+    // 不填 name 直接点保存（底栏 provider-save-btn）
+    const saveBtn = queryBodyButtonByTestId('provider-save-btn')
     expect(saveBtn).toBeTruthy()
     saveBtn!.click()
     await flushPromises()
@@ -373,9 +382,8 @@ describe('W3 D7: headers/authHeader 编辑回填 + 保存回写', () => {
     valueInput.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
 
-    // 点保存
-    const saveBtn = Array.from(document.body.querySelectorAll('button'))
-      .find((b) => b.textContent?.includes('保存') && !b.textContent?.includes('保存中')) as HTMLButtonElement
+    // 点保存（底栏 provider-save-btn；不能用文案子串，会误中 CodingPlanSection 的「保存专属 API Key」）
+    const saveBtn = queryBodyButtonByTestId('provider-save-btn') as HTMLButtonElement
     expect(saveBtn).toBeTruthy()
     saveBtn!.click()
     await flushPromises()

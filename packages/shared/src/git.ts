@@ -37,3 +37,18 @@ export interface GitFileStatus {
   /** 删除行数（numstat per-file）。tracked 改动文件有值；untracked/二进制/unmerged 为 undefined。 */
   deletions?: number
 }
+
+/**
+ * 非法分支名正则（前端 UX 校验 + runtime 安全边界共用 SSOT）。
+ *
+ * 规则（与 git check-ref-format 一致 + 反斜杠防护）：
+ * - `^\.`：以点开头（.git）
+ * - `^-`：以连字符开头
+ * - `\.\.`：连续双点（路径遍历）
+ * - `[~^:?*\[\]@{}]`：git refname 禁止字符
+ * - `\s`：空白字符
+ * - `\\`：反斜杠（Windows 路径遍历防护）
+ * - `/$`：以斜杠结尾
+ * - `\.lock$`：.lock 后缀（git refname 保留）
+ */
+export const INVALID_BRANCH_REGEX = /(^\.|^-|\.\.|[~^:?*\[\]@{}]|\s|\\|\/$|\.lock$)/

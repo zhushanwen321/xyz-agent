@@ -8,7 +8,7 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -33,6 +33,8 @@ import { GitExecutor } from './infra/git-executor.js'
 import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
+import { TerminalService } from './services/terminal/terminal-service.js'
+import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
 import { HandoffService } from './services/handoff-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
@@ -314,6 +316,15 @@ async function main(): Promise<void> {
     sessionService,
   })
 
+  // TerminalService：drawer 集成终端的 PTY 生命周期管理（node-pty spawn + per-session 映射）。
+  // 声明在生命周期挂钩之前（session 销毁回调引用它，TDZ 要求先声明）。
+  // 依赖：broker.broadcast（PTY 输出/退出/就绪广播）+ broker.nextPushId（广播消息 id）。
+  // Phase 6 接入 configService 读 shell 配置（当前用 $SHELL fallback）。
+  const terminalService = new TerminalService({
+    broadcast: (msg) => server.broadcast(msg),
+    configService,
+  })
+
   // ── W5 ReloadOrchestrator：skill 变动 → 受影响 session pi reload（重扫 skill）────
   // 依赖 sessionService 窄接口（isSessionIdle/promptReload/hasSession），故在 skillRegistry 之后构造。
   // 绑定两条链路：
@@ -330,8 +341,10 @@ async function main(): Promise<void> {
   // C2：叠加 HandoffService.cancelInflight——session 删了 agent_end 永不触发，
   // onTurnEnd 不会被调用，inflight 条目会泄漏。onSessionDelete 是单订阅钩子（setter 覆盖语义），
   // 故在同一 handler 内追加 handoff 清理（保留原 clearPending 绑定，叠加而非替换）。
+  // Terminal：同步销毁该 session 绑定的 PTY（kill 进程 + 清 ptyMap）。
   sessionService.setOnSessionDelete((sid) => {
     reloadOrchestrator.clearPending(sid)
+    terminalService.destroyPty(sid)
     handoffService?.cancelInflight(sid)
   })
 
@@ -339,18 +352,31 @@ async function main(): Promise<void> {
   const piVersion = await pm.getPiVersion()
   const appInfo = { appVersion: getAppVersion(), piVersion }
 
-  // WorktreeService：编排 .bare workspace 下 worktree 创建（git worktree add + setup-worktree.sh）。
+  // WorktreeService：编排 worktree 创建（bare-workspace / plain-repo 两种模式）。
   // 依赖全注入：GitExecutor（git 子命令）/ ShellRunner（setup 脚本，用 child_process.spawn）/
-  // GitInfoReader（当前分支查询）/ fs（existsSync，检测 .bare 与目录冲突）。
+  // GitInfoReader（当前分支查询）/ ConfigService（worktreeRootDir 配置）/ fs（existsSync，检测 .bare 与目录冲突）。
   // 经 server.setServices 注入到 WorktreeMessageHandler（worktree.create 路由）。
   const worktreeService = new WorktreeService({
     gitExecutor: new GitExecutor(),
     shellRunner: new ShellRunner({ spawn }),
     gitInfoReader: new GitInfoReader(),
+    configService,
     fs,
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, handoffService)
+  // QuotaService：Coding Plan 额度查询（hover 触发 + 缓存 + log）。
+  // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/refresh/configure 路由）。
+  // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name/quota.fetcher），
+  // quota.fetcher 优先于 matchQuotaPreset（设计文档 §2.2.3 + 手动选择 fetcher 需求）。
+  const quotaService = new QuotaService({
+    getProviderInfo: (providerId) => {
+      const cfg = getProviderConfig(providerId)
+      if (!cfg) return undefined
+      return { baseUrl: cfg.baseUrl, name: cfg.name, quota: cfg.quota }
+    },
+  })
+
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

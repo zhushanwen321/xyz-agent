@@ -207,6 +207,7 @@ import { Switch } from '@/components/ui/switch'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
+import { useQuotaStore } from '@/stores/quota'
 import ProviderEditModal from './ProviderEditModal.vue'
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
@@ -312,6 +313,8 @@ async function confirmDelete() {
     if (settingsStore.defaultModel.startsWith(`${target.id}/`)) {
       settingsStore.defaultModel = ''
     }
+    // 清除该 provider 的额度缓存（provider 已删除，缓存失效）
+    useQuotaStore().clearCache(target.id)
     deleteTarget.value = null
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)

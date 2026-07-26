@@ -47,6 +47,6 @@ export class WorkspaceService {
    * landing 态由 useNewTaskDirSelect watch pendingCwd 主动调用。
    */
   detectBare(cwd: string): WorkspaceDetectResult {
-    return this.detector.detect(cwd)
+    return this.detector.detectSync(cwd)
   }
 }

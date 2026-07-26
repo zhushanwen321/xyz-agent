@@ -195,6 +195,27 @@ function formatArgs(args: unknown[]): string {
   }).join(' ')
 }
 
+// ── 显式 logger 导出（架构约定 #4 落盘）──────────────────────────────
+//
+// 除 monkey-patch console 外，提供显式 logger 对象供「不依赖 console patch」的场景使用。
+// 内部调 writeLogEntry，与 patched console 同源（同文件/同级别/同轮转）。
+// 未 initLogger 时为 no-op（单元测试不依赖文件系统）。
+
+export const logger = {
+  debug(message: string, meta?: Record<string, unknown>): void {
+    writeLogEntry('debug', message, meta)
+  },
+  info(message: string, meta?: Record<string, unknown>): void {
+    writeLogEntry('info', message, meta)
+  },
+  warn(message: string, meta?: Record<string, unknown>): void {
+    writeLogEntry('warn', message, meta)
+  },
+  error(message: string, meta?: Record<string, unknown>): void {
+    writeLogEntry('error', message, meta)
+  },
+}
+
 // ── pi session 日志（pi stdout JSONL 原始流落盘）────────────────────
 
 export interface PiSessionLog {

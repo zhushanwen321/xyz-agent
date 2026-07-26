@@ -46,6 +46,8 @@ vi.mock('@/api', () => ({
   extension: { scan: vi.fn().mockResolvedValue(undefined) },
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
+  workspace: { detect: vi.fn().mockResolvedValue({ mode: 'not-repo', isBareMode: false, wsRoot: '', repoRoot: '' }) },
+  worktree: { list: vi.fn().mockResolvedValue([]) },
 }))
 
 // workspaceStore mock（W3 改后 defaultCwd 仅作兜底）

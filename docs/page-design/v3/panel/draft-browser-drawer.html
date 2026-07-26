@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Browser Drawer · 方案对比（设计探索）</title>
+<style>
+  :root {
+    /* zcode 冷蓝 token —— 引自 design-tokens.md，值不改动 */
+    --bg:#1a1b1f; --surface:#272830; --surface-2:#2e2f38; --surface-hover:#363740;
+    --bg-elevated:#313239; --bg-input:#1e1f24;
+    --fg:#f7f8fc; --muted:#a8a8b5; --subtle:#82828f;
+    --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.15);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff;
+    --accent-soft:color-mix(in oklch, var(--accent) 12%, transparent);
+    --accent-ring:rgba(79,142,247,0.30);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --success-soft:color-mix(in oklch, var(--success) 12%, transparent);
+    --danger-soft:color-mix(in oklch, var(--danger) 12%, transparent);
+    --warning-soft:color-mix(in oklch, var(--warning) 12%, transparent);
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-1:0 0 0 1px rgba(0,0,0,0.2);
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --shadow-glow:0 0 0 3px rgba(79,142,247,0.25);
+    --shadow-float:0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px var(--border-strong);
+    --ease:cubic-bezier(0.4,0,0.2,1); --ease-out:cubic-bezier(0.16,1,0.3,1);
+    --dur-fast:120ms; --dur:200ms; --dur-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,-apple-system,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--fg);
+    font:14px/1.6 var(--font-sans);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  body{padding:48px 40px 120px;max-width:1320px;margin:0 auto}
+
+  /* ===== 文档头部 ===== */
+  .doc-head{margin-bottom:48px}
+  .doc-head h1{font-size:28px;font-weight:600;letter-spacing:-0.015em;margin-bottom:10px}
+  .doc-head .lede{font-size:15px;color:var(--muted);max-width:72ch;line-height:1.65}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .meta-pill{font:500 11px/1 var(--font-mono);padding:5px 10px;border-radius:999px;
+    background:var(--surface);border:1px solid var(--border);color:var(--muted);letter-spacing:0.02em}
+  .meta-pill.accent{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+
+  /* ===== 章节通用 ===== */
+  section{margin-top:72px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .sec-num{font:600 12px/1 var(--font-mono);color:var(--accent);letter-spacing:0.08em;flex-shrink:0}
+  .sec-head h2{font-size:20px;font-weight:600;letter-spacing:-0.01em}
+  .sec-lede{font-size:13.5px;color:var(--muted);max-width:68ch;margin-bottom:28px;line-height:1.65}
+
+  .note{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.65;margin:20px 0;
+    display:flex;gap:12px;align-items:flex-start}
+  .note svg{width:16px;height:16px;flex-shrink:0;margin-top:2px;color:var(--info)}
+  .note.warn svg{color:var(--warning)}
+  .note.danger svg{color:var(--danger)}
+  .note strong{color:var(--fg);font-weight:600}
+  .note code{font:500 12px/1 var(--font-mono);background:var(--bg-input);padding:2px 6px;border-radius:4px;color:var(--fg)}
+
+  /* ===== §1 三方案并排对比（window-mock × 3） ===== */
+  .compare-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  @media(max-width:1080px){.compare-grid{grid-template-columns:1fr}}
+
+  .plan-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+    overflow:hidden;display:flex;flex-direction:column}
+  .plan-card.recommended{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .plan-head{padding:16px 18px 14px;border-bottom:1px solid var(--border)}
+  .plan-tag{font:600 10px/1 var(--font-mono);letter-spacing:0.06em;padding:4px 8px;border-radius:999px;
+    display:inline-block;margin-bottom:10px}
+  .plan-tag.rec{background:var(--accent);color:#fff}
+  .plan-tag.fast{background:var(--warning-soft);color:var(--warning)}
+  .plan-tag.fail{background:var(--danger-soft);color:var(--danger)}
+  .plan-head h3{font-size:15px;font-weight:600;margin-bottom:4px}
+  .plan-head .sub{font-size:12px;color:var(--subtle)}
+
+  .plan-mock{padding:14px;background:#0a0a0b}
+  .plan-mock .window-mock{width:100%;aspect-ratio:16/11;background:var(--bg);border-radius:8px;
+    box-shadow:var(--shadow-1);overflow:hidden;position:relative;display:flex}
+  .plan-mock .tl{position:absolute;top:8px;left:8px;display:flex;gap:5px;z-index:5}
+  .plan-mock .tl span{width:7px;height:7px;border-radius:50%}
+  .plan-mock .tl .r{background:#ff5f57}.plan-mock .tl .y{background:#febc2e}.plan-mock .tl .g{background:#28c840}
+  .plan-mock .mini-aside{width:18%;background:var(--bg);padding-top:24px;display:flex;flex-direction:column;align-items:center;gap:5px}
+  .plan-mock .mini-aside i{width:14px;height:14px;border-radius:3px;background:var(--surface-hover)}
+  .plan-mock .mini-aside i.on{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .plan-mock .mini-main{flex:1;margin:6px;background:var(--surface);border-radius:5px;display:flex;overflow:hidden}
+  /* drawer 缩略 */
+  .mini-drawer{width:50%;background:var(--bg-elevated);border-left:1px solid var(--border-strong);
+    display:flex;flex-direction:column;position:relative}
+  .mini-drawer .nav{height:14px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 4px;gap:3px;background:var(--surface-2)}
+  .mini-drawer .nav i{width:7px;height:7px;border-radius:2px;background:var(--surface-hover)}
+  .mini-drawer .urlbar{height:11px;margin:3px;background:var(--bg-input);border-radius:2px;display:flex;align-items:center;padding:0 3px}
+  .mini-drawer .urlbar i{width:5px;height:5px;border-radius:50%;background:var(--subtle)}
+  .mini-drawer .viewport{flex:1;margin:3px;border-radius:2px;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}
+
+  /* iframe 拒绝嵌入的报错态 */
+  .vp-blocked{background:repeating-linear-gradient(45deg,var(--surface-2),var(--surface-2) 6px,var(--surface) 6px,var(--surface) 12px);
+    color:var(--danger);font-size:8px;font-family:var(--font-mono);text-align:center;padding:4px;line-height:1.3}
+  /* webview / WCV 正常加载 */
+  .vp-loaded{background:linear-gradient(180deg,var(--surface-hover) 0%,var(--surface) 100%);position:relative}
+  .vp-loaded::before{content:'';position:absolute;top:8%;left:8%;right:8%;height:6px;background:var(--accent);border-radius:1px;opacity:0.6}
+  .vp-loaded::after{content:'';position:absolute;top:24%;left:8%;right:30%;height:3px;background:var(--surface-hover);border-radius:1px;
+    box-shadow:0 5px 0 var(--surface-hover),0 10px 0 var(--surface-hover)}
+
+  .plan-verdict{padding:12px 16px;border-top:1px solid var(--border);font-size:11.5px;line-height:1.5;
+    display:flex;flex-direction:column;gap:5px}
+  .plan-verdict .vrow{display:flex;gap:8px;align-items:flex-start}
+  .plan-verdict .ico{width:13px;height:13px;flex-shrink:0;margin-top:1px}
+  .plan-verdict .ok{color:var(--success)}
+  .plan-verdict .bad{color:var(--danger)}
+  .plan-verdict .meh{color:var(--warning)}
+  .plan-verdict span{color:var(--muted)}
+
+  /* ===== §2 关键维度对比表 ===== */
+  .matrix{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+  .matrix table{width:100%;border-collapse:collapse;font-size:13px}
+  .matrix th,.matrix td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+  .matrix thead th{background:var(--surface-2);font-size:11px;font-weight:600;color:var(--muted);
+    text-transform:uppercase;letter-spacing:0.06em;font-family:var(--font-mono)}
+  .matrix tbody tr:last-child td{border-bottom:none}
+  .matrix tbody tr:hover{background:var(--surface-hover)}
+  .matrix .dim{font-weight:600;color:var(--fg);width:22%}
+  .matrix .dim small{display:block;font-weight:400;color:var(--subtle);font-size:11px;margin-top:2px}
+  .matrix .cell{color:var(--muted);width:26%}
+  .matrix .cell.rec{background:var(--accent-soft);color:var(--fg)}
+  .badge-sm{display:inline-flex;align-items:center;gap:4px;font:500 10px/1 var(--font-mono);
+    padding:3px 7px;border-radius:999px;letter-spacing:0.02em}
+  .badge-sm.ok{background:var(--success-soft);color:var(--success)}
+  .badge-sm.bad{background:var(--danger-soft);color:var(--danger)}
+  .badge-sm.meh{background:var(--warning-soft);color:var(--warning)}
+
+  /* ===== §3 推荐方案交互原型（可切换） ===== */
+  .proto-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+  .proto-controls{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;gap:18px;align-items:center;flex-wrap:wrap;
+    background:var(--surface-2)}
+  .ctrl-group{display:flex;align-items:center;gap:8px}
+  .ctrl-label{font:500 11px/1 var(--font-mono);color:var(--subtle);letter-spacing:0.06em;text-transform:uppercase}
+  .seg{display:inline-flex;background:var(--bg-input);border-radius:var(--radius);padding:2px;gap:2px}
+  .seg button{font:500 12px/1 var(--font-sans);padding:6px 12px;border:none;background:transparent;
+    color:var(--muted);border-radius:6px;cursor:pointer;transition:all var(--dur-fast) var(--ease);white-space:nowrap}
+  .seg button:hover{color:var(--fg)}
+  .seg button.on{background:var(--accent);color:#fff}
+
+  .proto-stage{padding:20px;background:#0a0a0b;display:flex;justify-content:center}
+  .proto-stage .window-mock{width:min(1100px,100%);aspect-ratio:16/9;background:var(--bg);border-radius:10px;
+    box-shadow:var(--shadow-2);overflow:hidden;position:relative;display:flex}
+  .proto-stage .tl{position:absolute;top:14px;left:16px;display:flex;gap:7px;z-index:50}
+  .proto-stage .tl span{width:11px;height:11px;border-radius:50%}
+  .proto-stage .tl .r{background:#ff5f57}.proto-stage .tl .y{background:#febc2e}.proto-stage .tl .g{background:#28c840}
+
+  .proto-aside{width:8%;padding-top:44px;display:flex;flex-direction:column;align-items:center;gap:6px}
+  .proto-aside .ai{width:28px;height:28px;border-radius:var(--radius);display:grid;place-items:center;color:var(--subtle)}
+  .proto-aside .ai.on{background:var(--accent-soft);color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .proto-aside .ai svg{width:16px;height:16px}
+
+  .proto-main{flex:1;margin:10px 8px 10px 10px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .proto-main .p-head{height:30px;display:flex;align-items:center;gap:6px;padding:0 12px;
+    border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--muted)}
+  .proto-main .p-head .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+  .proto-main .p-body{flex:1;padding:14px;display:flex;flex-direction:column;gap:8px;overflow:hidden;position:relative}
+  /* 触发源：消息里的链接 */
+  .proto-main .msg{font-size:11px;color:var(--muted);line-height:1.6}
+  .proto-main .msg a{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent-ring);cursor:pointer}
+  .proto-main .msg a:hover{background:var(--accent-soft)}
+  .trigger-hint{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;
+    font:500 10px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:5px 10px;
+    border-radius:999px;letter-spacing:0.04em;display:flex;align-items:center;gap:5px}
+
+  /* ---- drawer 主体 ---- */
+  .proto-drawer{width:50%;background:var(--bg-elevated);display:flex;flex-direction:column;position:absolute;top:0;bottom:0;
+    box-shadow:var(--shadow-float);transition:transform var(--dur-slow) var(--ease-out);z-index:40}
+  .proto-drawer.right{right:0;border-left:1px solid var(--border-strong)}
+  .proto-drawer.left{left:0;border-right:1px solid var(--border-strong)}
+
+  /* browser chrome（导航栏 + 地址栏） */
+  .browser-chrome{flex-shrink:0;border-bottom:1px solid var(--border)}
+  .browser-tabs{height:30px;display:flex;align-items:center;padding:0 6px;gap:2px;background:var(--surface-2)}
+  .b-tab{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:6px 6px 0 0;font-size:11px;color:var(--muted);
+    cursor:pointer;max-width:140px}
+  .b-tab.on{background:var(--bg-elevated);color:var(--fg)}
+  .b-tab .favicon{width:10px;height:10px;border-radius:2px;background:var(--accent);flex-shrink:0}
+  .b-tab .fx{width:8px;height:8px;border-radius:2px;background:var(--subtle);flex-shrink:0}
+  .b-tab .x{width:12px;height:12px;border-radius:50%;display:grid;place-items:center;color:var(--subtle);margin-left:2px}
+  .b-tab .x:hover{background:var(--surface-hover);color:var(--fg)}
+  .b-add{width:22px;height:22px;border-radius:var(--radius-sm);display:grid;place-items:center;color:var(--subtle);cursor:pointer}
+  .b-add:hover{background:var(--surface-hover);color:var(--fg)}
+
+  .browser-toolbar{height:38px;display:flex;align-items:center;gap:4px;padding:0 8px;background:var(--bg-elevated)}
+  .nav-btn{width:28px;height:28px;border-radius:var(--radius-sm);display:grid;place-items:center;color:var(--muted);cursor:pointer;
+    transition:all var(--dur-fast) var(--ease)}
+  .nav-btn:hover:not(.dis){background:var(--surface-hover);color:var(--fg)}
+  .nav-btn.dis{opacity:0.35;cursor:not-allowed}
+  .nav-btn svg{width:14px;height:14px}
+  .url-bar{flex:1;height:28px;background:var(--bg-input);border:1px solid var(--border);border-radius:999px;
+    display:flex;align-items:center;gap:7px;padding:0 12px;margin:0 6px;font-size:11.5px;color:var(--fg);
+    font-family:var(--font-mono)}
+  .url-bar.secure svg{color:var(--success)}
+  .url-bar .lock{width:11px;height:11px;color:var(--subtle)}
+  .url-bar .lock.sec{color:var(--success)}
+  .url-bar .path{color:var(--subtle)}
+  .ext-btn{width:28px;height:28px;border-radius:var(--radius-sm);display:grid;place-items:center;color:var(--muted);cursor:pointer}
+  .ext-btn:hover{background:var(--surface-hover);color:var(--fg)}
+  .ext-btn svg{width:14px;height:14px}
+
+  /* browser viewport */
+  .browser-vp{flex:1;position:relative;overflow:hidden;background:#fff}
+  .vp-content{position:absolute;inset:0;display:flex;flex-direction:column}
+  /* 加载态 */
+  .vp-loading{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:5}
+  .vp-loading .spinner{width:26px;height:26px;border:2.5px solid var(--surface-hover);border-top-color:var(--accent);border-radius:50%;
+    animation:spin 0.8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .vp-loading .txt{font-size:12px;color:var(--muted);font-family:var(--font-mono)}
+  .vp-loading .progress{width:160px;height:2px;background:var(--surface-hover);border-radius:1px;overflow:hidden}
+  .vp-loading .progress i{display:block;height:100%;width:40%;background:var(--accent);border-radius:1px;
+    animation:slide 1.2s var(--ease) infinite}
+  @keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+
+  /* 模拟网页内容（极简占位，非真实渲染） */
+  .fake-page{flex:1;background:#fff;color:#1a1a1a;padding:24px 28px;font-family:-apple-system,sans-serif;overflow:auto}
+  .fake-page .fp-nav{height:14px;background:#f0f0f0;border-radius:3px;margin-bottom:18px;display:flex;align-items:center;padding:0 8px;gap:6px}
+  .fake-page .fp-nav i{width:8px;height:8px;border-radius:2px;background:#ddd}
+  .fake-page h1{font-size:18px;font-weight:700;margin-bottom:8px;color:#111}
+  .fake-page .fp-meta{font-size:10px;color:#888;margin-bottom:16px}
+  .fake-page .fp-line{height:7px;background:#eaeaea;border-radius:2px;margin-bottom:7px}
+  .fake-page .fp-line.w70{width:70%}.fake-page .fp-line.w90{width:90%}.fake-page .fp-line.w50{width:50%}
+  .fake-page .fp-box{margin-top:16px;height:60px;background:linear-gradient(135deg,#f5f5f5,#eaeaea);border-radius:4px}
+  .fake-page .fp-code{margin-top:14px;background:#1a1a1f;color:#e8e8ea;padding:10px 12px;border-radius:4px;
+    font:9px/1.5 var(--font-mono);overflow:hidden}
+
+  /* 空态 */
+  .vp-empty{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+  .vp-empty .ico{width:42px;height:42px;color:var(--subtle)}
+  .vp-empty .t{font-size:13px;color:var(--muted)}
+  .vp-empty .s{font-size:11px;color:var(--subtle);max-width:240px;text-align:center;line-height:1.5}
+
+  /* 拒绝嵌入态（iframe 专属，这里作对照展示） */
+  .vp-refused{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px}
+  .vp-refused .ico{width:38px;height:38px;color:var(--danger)}
+  .vp-refused .t{font-size:13px;color:var(--fg);font-weight:600}
+  .vp-refused .s{font-size:11px;color:var(--muted);text-align:center;max-width:260px;line-height:1.55}
+  .vp-refused code{font:500 10px/1.3 var(--font-mono);background:var(--bg-input);padding:4px 8px;border-radius:4px;color:var(--warning);margin-top:4px}
+
+  /* 状态栏 */
+  .browser-status{height:22px;border-top:1px solid var(--border);background:var(--surface-2);display:flex;align-items:center;
+    padding:0 12px;font-size:10px;color:var(--subtle);font-family:var(--font-mono);gap:8px}
+  .browser-status .target{color:var(--accent)}
+
+  /* ===== §4 触发流程时序 ===== */
+  .flow{display:flex;align-items:stretch;gap:0;margin-top:8px;flex-wrap:wrap}
+  .flow-step{flex:1;min-width:160px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px 16px;position:relative}
+  .flow-step + .flow-step{margin-left:14px}
+  .flow-step + .flow-step::before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);
+    width:14px;height:1px;background:var(--border-strong)}
+  .flow-step + .flow-step::after{content:'';position:absolute;left:-5px;top:50%;transform:translateY(-50%) rotate(45deg);
+    width:6px;height:6px;border-top:1px solid var(--border-strong);border-right:1px solid var(--border-strong)}
+  .flow-step .n{font:600 10px/1 var(--font-mono);color:var(--accent);letter-spacing:0.06em;margin-bottom:6px}
+  .flow-step h4{font-size:13px;font-weight:600;margin-bottom:4px}
+  .flow-step p{font-size:11.5px;color:var(--muted);line-height:1.5}
+  .flow-step code{font:500 10.5px/1.3 var(--font-mono);color:var(--info);background:rgba(56,189,248,0.1);padding:1px 5px;border-radius:3px}
+
+  /* 布局变体指示器 */
+  .mode-pill{position:absolute;top:8px;right:8px;font:600 9px/1 var(--font-mono);padding:4px 8px;border-radius:999px;
+    letter-spacing:0.04em;z-index:60}
+  .mode-pill.split{background:var(--accent-soft);color:var(--accent)}
+  .mode-pill.overlay{background:var(--warning-soft);color:var(--warning)}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.001ms !important;transition-duration:0.001ms !important}
+  }
+</style>
+</head>
+<body>
+
+<div class="doc-head">
+  <h1>Drawer 集成 Browser · 方案对比</h1>
+  <p class="lede">在 SideDrawer 的 browser tab 内嵌入真实网页浏览器，让 agent 输出的链接在应用内打开。本稿并排对比三种嵌入式技术路径的真实渲染差异，并提供推荐方案（WebContentsView）的交互原型。</p>
+  <div class="meta">
+    <span class="meta-pill accent">L2 · panel/drawer</span>
+    <span class="meta-pill">SideDrawerTab: browser</span>
+    <span class="meta-pill">Electron 42</span>
+    <span class="meta-pill">v3 冷蓝暗色</span>
+    <span class="meta-pill">设计探索 · 未实装</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- §1 三方案渲染能力对比 -->
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">§1</span>
+    <h2>三种方案，加载同一个 URL 的差异</h2>
+  </div>
+  <p class="sec-lede">同样在 drawer 内尝试加载 <code style="font-family:var(--font-mono);color:var(--info)">https://github.com</code> 这种典型站点。iframe 受目标站 X-Frame-Options / CSP frame-ancestors 限制，多数现代站点会拒绝嵌入；webview tag 和 WebContentsView 都是独立 webContents，不受此限。</p>
+
+  <div class="compare-grid">
+
+    <!-- A. iframe -->
+    <div class="plan-card">
+      <div class="plan-head">
+        <span class="plan-tag fail">方案 A · 已排除</span>
+        <h3>iframe</h3>
+        <div class="sub">HTML 原生标签，最轻量</div>
+      </div>
+      <div class="plan-mock">
+        <div class="window-mock">
+          <div class="tl"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="mini-aside"><i></i><i></i><i class="on"></i><i></i></div>
+          <div class="mini-main">
+            <div class="mini-drawer">
+              <div class="nav"><i></i><i></i><i></i></div>
+              <div class="urlbar"><i></i></div>
+              <div class="viewport">
+                <div class="vp-blocked">refused<br>to connect</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="plan-verdict">
+        <div class="vrow"><svg class="ico bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg><span>Google / GitHub / 登录站点全部打不开</span></div>
+        <div class="vrow"><svg class="ico bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg><span>跨源，拿不到 electronAPI</span></div>
+        <div class="vrow"><svg class="ico meh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg><span>仅适合自托管 / 同源页</span></div>
+      </div>
+    </div>
+
+    <!-- B. webview tag -->
+    <div class="plan-card">
+      <div class="plan-head">
+        <span class="plan-tag fast">方案 B · 务实快速</span>
+        <h3>&lt;webview&gt; tag</h3>
+        <div class="sub">Electron 声明式嵌入，跟随 DOM</div>
+      </div>
+      <div class="plan-mock">
+        <div class="window-mock">
+          <div class="tl"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="mini-aside"><i></i><i></i><i class="on"></i><i></i></div>
+          <div class="mini-main">
+            <div class="mini-drawer">
+              <div class="nav"><i></i><i></i><i></i></div>
+              <div class="urlbar"><i></i></div>
+              <div class="viewport"><div class="vp-loaded"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="plan-verdict">
+        <div class="vrow"><svg class="ico ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg><span>任意 URL 正常加载</span></div>
+        <div class="vrow"><svg class="ico ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg><span>跟随 DOM，drawer 布局零同步</span></div>
+        <div class="vrow"><svg class="ico meh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg><span>Electron discouraged（42 仍可用）</span></div>
+      </div>
+    </div>
+
+    <!-- C. WebContentsView -->
+    <div class="plan-card recommended">
+      <div class="plan-head">
+        <span class="plan-tag rec">方案 C · 推荐</span>
+        <h3>WebContentsView</h3>
+        <div class="sub">主进程 native view，Electron 30+ 推荐</div>
+      </div>
+      <div class="plan-mock">
+        <div class="window-mock">
+          <div class="tl"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="mini-aside"><i></i><i></i><i class="on"></i><i></i></div>
+          <div class="mini-main">
+            <div class="mini-drawer">
+              <div class="nav"><i></i><i></i><i></i></div>
+              <div class="urlbar"><i></i></div>
+              <div class="viewport"><div class="vp-loaded"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="plan-verdict">
+        <div class="vrow"><svg class="ico ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg><span>任意 URL 正常加载</span></div>
+        <div class="vrow"><svg class="ico ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg><span>可独立 preload，主进程完全可控</span></div>
+        <div class="vrow"><svg class="ico meh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><span>需手动 setBounds 同步 drawer rect</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note danger">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+    <div><strong>iframe 不是"取舍"，是硬伤。</strong>它无法加载 agent 最可能给出的链接类型（搜索结果、文档站、GitHub、任何登录页）。<code>X-Frame-Options: DENY</code> 和 <code>frame-ancestors 'none'</code> 是目标站设置、本应用无法绕过。实用率会极低。</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- §2 关键维度对比表 -->
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">§2</span>
+    <h2>关键维度逐项对比</h2>
+  </div>
+  <p class="sec-lede">除渲染能力外，三条路径在安全模型、布局同步成本、Electron 长期维护上有实质差异。下表标出推荐项。</p>
+
+  <div class="matrix">
+    <table>
+      <thead>
+        <tr>
+          <th>维度</th>
+          <th>A. iframe</th>
+          <th>B. webview tag</th>
+          <th>C. WebContentsView</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="dim">URL 加载范围<small>能否打开 Google/GitHub 等</small></td>
+          <td class="cell"><span class="badge-sm bad">受限</span><br><span style="font-size:11.5px">X-Frame-Options / CSP 拦截</span></td>
+          <td class="cell"><span class="badge-sm ok">任意</span><br><span style="font-size:11.5px">独立 webContents</span></td>
+          <td class="cell rec"><span class="badge-sm ok">任意</span><br><span style="font-size:11.5px">独立 webContents</span></td>
+        </tr>
+        <tr>
+          <td class="dim">drawer 布局同步<small>开合/折叠/resize</small></td>
+          <td class="cell"><span class="badge-sm ok">零成本</span><br><span style="font-size:11.5px">跟随 DOM 流</span></td>
+          <td class="cell"><span class="badge-sm ok">零成本</span><br><span style="font-size:11.5px">跟随 DOM 流</span></td>
+          <td class="cell rec"><span class="badge-sm meh">需同步</span><br><span style="font-size:11.5px">主进程 setBounds，resize 节流</span></td>
+        </tr>
+        <tr>
+          <td class="dim">electronAPI 注入<small>嵌入页能否调用主进程</small></td>
+          <td class="cell"><span class="badge-sm bad">不可</span><br><span style="font-size:11.5px">跨源 contextBridge 不穿透</span></td>
+          <td class="cell"><span class="badge-sm meh">可配</span><br><span style="font-size:11.5px">webview preload 属性</span></td>
+          <td class="cell rec"><span class="badge-sm ok">独立 preload</span><br><span style="font-size:11.5px">完整可控</span></td>
+        </tr>
+        <tr>
+          <td class="dim">Electron 官方态度<small>API 稳定性</small></td>
+          <td class="cell"><span class="badge-sm ok">稳定</span><br><span style="font-size:11.5px">Web 标准</span></td>
+          <td class="cell"><span class="badge-sm bad">discouraged</span><br><span style="font-size:11.5px">仍可用，升级风险高</span></td>
+          <td class="cell rec"><span class="badge-sm ok">推荐</span><br><span style="font-size:11.5px">30+ 现代方式</span></td>
+        </tr>
+        <tr>
+          <td class="dim">多 tab / 多实例<small>同时开多个网页</small></td>
+          <td class="cell"><span class="badge-sm meh">可以</span><br><span style="font-size:11.5px">多 iframe，性能差</span></td>
+          <td class="cell"><span class="badge-sm meh">可以</span><br><span style="font-size:11.5px">每实例独立进程</span></td>
+          <td class="cell rec"><span class="badge-sm ok">view 池</span><br><span style="font-size:11.5px">主进程统一管理</span></td>
+        </tr>
+        <tr>
+          <td class="dim">集成工作量<small>主进程改动量</small></td>
+          <td class="cell"><span class="badge-sm ok">最小</span><br><span style="font-size:11.5px">加个 iframe 标签</span></td>
+          <td class="cell"><span class="badge-sm meh">中</span><br><span style="font-size:11.5px">开 webviewTag + 安全校验</span></td>
+          <td class="cell rec"><span class="badge-sm bad">大</span><br><span style="font-size:11.5px">view 生命周期 + IPC + rect 同步</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+    <div><strong>取舍核心：</strong>WebContentsView 的工作量在"一次性开发 + 持续的 rect 同步"，但换来的是长期稳定的 API 表面和完整的主进程控制权。对一个要打包分发、长期维护的桌面应用，webview tag 的 discouraged 不是文档措辞问题，是升级路径上的真实风险。建议 WebContentsView 作终态，webview tag 仅作快速验证体验的过渡。</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- §3 推荐方案交互原型 -->
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">§3</span>
+    <h2>推荐方案交互原型（WebContentsView）</h2>
+  </div>
+  <p class="sec-lede">用控制条切换 drawer 模式、browser 状态，观察布局表现。地址栏、加载态、安全指示、空态都按 v3 冷蓝暗色系统绘制。</p>
+
+  <div class="proto-wrap">
+    <div class="proto-controls">
+      <div class="ctrl-group">
+        <span class="ctrl-label">模式</span>
+        <div class="seg" id="seg-mode">
+          <button class="on" data-v="split">split（单 panel 收窄）</button>
+          <button data-v="overlay">overlay（双 panel 覆盖）</button>
+        </div>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">方向</span>
+        <div class="seg" id="seg-dir">
+          <button class="on" data-v="right">right</button>
+          <button data-v="left">left</button>
+        </div>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">状态</span>
+        <div class="seg" id="seg-state">
+          <button data-v="empty">空态</button>
+          <button class="on" data-v="loaded">已加载</button>
+          <button data-v="loading">加载中</button>
+          <button data-v="refused">拒绝嵌入(对照)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="proto-stage">
+      <div class="window-mock">
+        <div class="tl"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+
+        <div class="proto-aside">
+          <div class="ai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/></svg></div>
+          <div class="ai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></div>
+          <div class="ai on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></div>
+          <div class="ai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg></div>
+        </div>
+
+        <div class="proto-main">
+          <div class="p-head">
+            <span class="dot"></span>
+            <span>feat-integration-browser</span>
+          </div>
+          <div class="p-body">
+            <div class="msg"><strong style="color:var(--fg)">assistant</strong> · 已找到相关文档，参考这个链接：<br><a id="trigger-link">https://github.com/electron/electron/blob/main/docs/api/web-contents-view.md</a></div>
+            <div class="msg" style="color:var(--subtle)">点击上方链接，在右侧 drawer browser 内打开（而非系统浏览器）。</div>
+            <div class="trigger-hint">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+              点击链接触发
+            </div>
+          </div>
+        </div>
+
+        <!-- drawer 容器，位置由 JS 控制 -->
+        <div class="proto-drawer right" id="proto-drawer">
+          <span class="mode-pill split" id="mode-pill">split</span>
+          <!-- browser chrome -->
+          <div class="browser-chrome">
+            <div class="browser-tabs">
+              <div class="b-tab on">
+                <span class="favicon"></span>
+                <span>web-contents-view.md</span>
+                <span class="x"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+              </div>
+              <div class="b-tab">
+                <span class="fx"></span>
+                <span>docs.electron.app</span>
+                <span class="x"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+              </div>
+              <div class="b-add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></div>
+            </div>
+            <div class="browser-toolbar">
+              <div class="nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></div>
+              <div class="nav-btn dis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+              <div class="nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></div>
+              <div class="nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1018 0 9 9 0 00-18 0z"/><path d="M12 7v5l3 2"/></svg></div>
+              <div class="url-bar secure">
+                <svg class="lock sec" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                <span>github.com</span><span class="path">/electron/electron/blob/main/docs/...</span>
+              </div>
+              <div class="ext-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3h7a2 2 0 012 2v14a2 2 0 01-2 2h-7M16 12H3M9 7l-6 5 6 5"/></svg></div>
+              <div class="ext-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></div>
+            </div>
+          </div>
+          <!-- viewport 状态由 JS 切换 -->
+          <div class="browser-vp" id="browser-vp">
+            <!-- 内容动态注入 -->
+          </div>
+          <!-- status bar -->
+          <div class="browser-status">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>WebContentsView · 独立进程</span>
+            <span style="margin-left:auto;color:var(--subtle)">主进程 attach · rect 由 renderer 推送</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg>
+    <div><strong>必须保留的导航栏元素：</strong>地址栏（防钓鱼，<code>did-navigate</code> 事件回填真实 URL）、安全锁指示（https）、back/forward/reload、外链导出按钮（回退系统浏览器）。agent 给的 URL 用户要能看清目标站点，这是 <code>openExternal</code> 直接跳系统浏览器所不具备的可信度层。</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- §4 触发流程 -->
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">§4</span>
+    <h2>触发流程：从点击链接到 drawer 打开</h2>
+  </div>
+  <p class="sec-lede">MVP 触发源是"用户点击 agent 输出的链接"。整条链路只有一处拦截点改动，不需要动任何消息渲染组件。</p>
+
+  <div class="flow">
+    <div class="flow-step">
+      <div class="n">STEP 1</div>
+      <h4>用户点击链接</h4>
+      <p>agent 消息里的 <code>&lt;a href&gt;</code>，所有消息渲染点统一委托。</p>
+    </div>
+    <div class="flow-step">
+      <div class="n">STEP 2</div>
+      <h4>MarkdownRenderer 拦截</h4>
+      <p><code>useMarkdownInteractions.ts</code> 的 <code>onClick</code> 委托捕获，preventDefault。</p>
+    </div>
+    <div class="flow-step">
+      <div class="n">STEP 3</div>
+      <h4>drawer.open</h4>
+      <p>调 <code>drawer.open('browser', { url })</code>，替代原 <code>openExternal</code>。</p>
+    </div>
+    <div class="flow-step">
+      <div class="n">STEP 4</div>
+      <h4>BrowserPane 挂载</h4>
+      <p>SideDrawer 切到 browser tab，渲染 <code>&lt;BrowserPane :url&gt;</code>。</p>
+    </div>
+    <div class="flow-step">
+      <div class="n">STEP 5</div>
+      <h4>IPC → 主进程</h4>
+      <p><code>browser:navigate</code> IPC，主进程 BrowserViewManager 加载 URL。</p>
+    </div>
+    <div class="flow-step">
+      <div class="n">STEP 6</div>
+      <h4>WebContentsView 加载</h4>
+      <p>view attach 到窗口，rect 由 renderer 推送，导航事件回传前端。</p>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+    <div><strong>需保留 openExternal 作降级：</strong>非 http(s) 协议、view 加载失败、或用户显式选"在系统浏览器打开"时，回退原链路。<code>openExternal</code> 完整保留，不删除。</div>
+  </div>
+</section>
+
+<script>
+  // ===== §3 交互原型状态机 =====
+  const drawer = document.getElementById('proto-drawer');
+  const vp = document.getElementById('browser-vp');
+  const modePill = document.getElementById('mode-pill');
+  const main = document.querySelector('.proto-main');
+  let state = { mode:'split', dir:'right', vp:'loaded' };
+
+  function bindSeg(id, key, onChange){
+    document.querySelectorAll('#'+id+' button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+        state[key] = b.dataset.v;
+        onChange();
+      });
+    });
+  }
+
+  function renderLayout(){
+    // drawer 方向
+    drawer.classList.remove('right','left');
+    drawer.classList.add(state.dir);
+    // split vs overlay：split 时 main 收窄到 50%；overlay 时 drawer 覆盖，main 保持
+    if(state.mode === 'split'){
+      main.style.flex = '0 0 calc(50% - 10px)';
+      main.style.opacity = '1';
+      modePill.textContent = 'split';
+      modePill.className = 'mode-pill split';
+    } else {
+      main.style.flex = '1';
+      main.style.opacity = '0.45';
+      modePill.textContent = 'overlay';
+      modePill.className = 'mode-pill overlay';
+    }
+  }
+
+  function renderVp(){
+    vp.innerHTML = '';
+    const url = 'github.com/electron/electron/blob/main/docs/api/web-contents-view.md';
+    if(state.vp === 'empty'){
+      vp.innerHTML = `<div class="vp-empty">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+        <div class="t">在对话中点击链接以打开</div>
+        <div class="s">agent 输出的 http(s) 链接会在此 drawer 内加载，而非跳转系统浏览器。</div>
+      </div>`;
+    } else if(state.vp === 'loading'){
+      vp.innerHTML = `<div class="vp-loading">
+        <div class="spinner"></div>
+        <div class="txt">${url}</div>
+        <div class="progress"><i></i></div>
+      </div>`;
+    } else if(state.vp === 'refused'){
+      vp.innerHTML = `<div class="vp-refused">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+        <div class="t">目标站拒绝嵌入</div>
+        <div class="s">此为 <strong>iframe</strong> 方案的典型表现：目标站设置 X-Frame-Options: DENY 或 CSP frame-ancestors。WebContentsView / webview 不受此限。</div>
+        <code>Refused to display in a frame</code>
+      </div>`;
+    } else {
+      // loaded —— 模拟网页内容（极简占位）
+      vp.innerHTML = `<div class="vp-content">
+        <div class="fake-page">
+          <div class="fp-nav"><i></i><i></i><i></i><i style="margin-left:auto"></i></div>
+          <h1>WebContentsView</h1>
+          <div class="fp-meta">electron · main process · 实时模拟渲染（demo 占位）</div>
+          <div class="fp-line w90"></div>
+          <div class="fp-line w70"></div>
+          <div class="fp-line w90"></div>
+          <div class="fp-line w50"></div>
+          <div class="fp-line w70"></div>
+          <div class="fp-box"></div>
+          <div class="fp-code">const view = new WebContentsView({\n  webPreferences: { preload, contextIsolation:true }\n})\nwin.contentView.addChildView(view)\nview.setBounds({ x, y, width, height })</div>
+        </div>
+      </div>`;
+    }
+  }
+
+  bindSeg('seg-mode', 'mode', renderLayout);
+  bindSeg('seg-dir', 'dir', renderLayout);
+  bindSeg('seg-state', 'vp', renderVp);
+  // 触发链接点击 → 加载态 → 已加载
+  const trigger = document.getElementById('trigger-link');
+  if(trigger){
+    trigger.addEventListener('click', ()=>{
+      state.vp = 'loading';
+      document.querySelectorAll('#seg-state button').forEach(b=>b.classList.toggle('on', b.dataset.v==='loading'));
+      renderVp();
+      setTimeout(()=>{
+        state.vp = 'loaded';
+        document.querySelectorAll('#seg-state button').forEach(b=>b.classList.toggle('on', b.dataset.v==='loaded'));
+        renderVp();
+      }, 1400);
+    });
+  }
+
+  renderLayout();
+  renderVp();
+</script>
+
+</body>
+</html>

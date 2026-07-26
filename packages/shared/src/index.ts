@@ -6,7 +6,9 @@ export type {
   SystemPromptConfig,
   CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
+  TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
 } from './protocol'
+export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
   ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,
@@ -28,7 +30,7 @@ export type {
 } from './provider'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
-  PanelLeaf, SplitNode, PanelTree, WindowState,
+  PanelLeaf, WindowState,
 } from './panel'
 export * from './extension'
 export * from './git'
@@ -47,6 +49,15 @@ export * from './ignore-parser'
 export * from './git-status-parser'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { SubagentRecord, SubagentStatus } from './subagent'
+// Coding Plan 额度查询类型
+export type {
+  QuotaWindow,
+  QuotaWins,
+  NormalizedQuotaRow,
+  ProviderQuotaFetcher,
+} from './quota-types'
+export type { QuotaPreset } from './quota-presets'
+export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 export { normalizeSubagentStatus } from './subagent'
 export type {
   WorkflowRunStatus,

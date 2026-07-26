@@ -27,7 +27,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref, readonly } from 'vue'
+import { ref, readonly, computed } from 'vue'
 import type { Ref, DeepReadonly } from 'vue'
 
 // ── worktreeApi mock：控制 create 的 resolve/reject（INT-1/2/3 的核心驱动）──
@@ -35,11 +35,26 @@ import type { Ref, DeepReadonly } from 'vue'
 // reject 时抛带 code+stderr 的错误（模拟 runtime 的 WorktreeError）。
 const worktreeCtrl = vi.hoisted(() => ({
   create: vi.fn(),
+  listBranches: vi.fn(),
 }))
 vi.mock('@/api/domains/worktree', () => ({
   worktreeApi: {
     create: worktreeCtrl.create,
+    listBranches: worktreeCtrl.listBranches,
   },
+}))
+
+// ── workspace.detect mock：CreateWorktreeModal onMounted 调用 ──
+const workspaceDetectMock = vi.hoisted(() => ({
+  detect: vi.fn(),
+}))
+vi.mock('@/api/domains/workspace', () => ({
+  detect: workspaceDetectMock.detect,
+}))
+
+// ── pickDirectory mock：CreateWorktreeModal onChangeRepo 调用 ──
+vi.mock('@/lib/ipc', () => ({
+  pickDirectory: vi.fn().mockResolvedValue({ canceled: true, path: '' }),
 }))
 
 // ── useNewTaskFlow mock：控制 state/gitInfo/selectWorkspace/currentCwd 等 ──
@@ -73,6 +88,8 @@ import Landing from '@/components/new-task/Landing.vue'
 const flowState: Ref<string> = ref('landing')
 const flowCurrentCwd: Ref<string | null> = ref(null)
 const flowGitInfo: Ref<{ branch: string; isRepo: boolean; isBare?: boolean } | null> = ref(null)
+const flowMode: Ref<'bare-workspace' | 'plain-repo' | 'not-repo'> = ref('bare-workspace')
+const flowWorktreeItems: Ref<Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }>> = ref([])
 const flowSelectWorkspace = vi.fn<(cwd: string) => void>()
 const flowOpenDirPopover = vi.fn<() => void>()
 const flowCloseOverlay = vi.fn<() => void>()
@@ -88,6 +105,9 @@ const flowMock = {
   currentCwd: readonly(flowCurrentCwd) as DeepReadonly<Ref<string | null>>,
   currentModel: readonly(ref(null)) as DeepReadonly<Ref<string | null>>,
   gitInfo: readonly(flowGitInfo) as DeepReadonly<Ref<typeof flowGitInfo.value>>,
+  mode: readonly(flowMode) as DeepReadonly<Ref<typeof flowMode.value>>,
+  worktreeItems: readonly(flowWorktreeItems) as DeepReadonly<Ref<typeof flowWorktreeItems.value>>,
+  isBare: computed(() => flowMode.value === 'bare-workspace'),
   isInflight: readonly(ref(false)) as DeepReadonly<Ref<boolean>>,
   isBranchCreating: readonly(ref(false)) as DeepReadonly<Ref<boolean>>,
   isOverlay: readonly(ref(false)) as DeepReadonly<Ref<boolean>>,
@@ -125,8 +145,8 @@ function has(selector: string): boolean {
 /**
  * stubs：Composer 渲染 meta-row slot（让 chip 进 DOM 可查），避免拖入真实 Composer 重依赖；
  * Popover/PopoverTrigger/PopoverContent 无条件渲染 slot——reka-ui Popover 在 happy-dom 下
- * 依赖 teleport + 实际布局计算，测试环境会渲染空 teleport，故 stub 掉让 DirSelectPopover（真实组件）
- * 直接进 DOM（参考 landing.test.ts w3Stubs 同模式）。DirSelectPopover 不 stub：要验证真实动作项渲染。
+ * 依赖 teleport + 实际布局计算，测试环境会渲染空 teleport，故 stub 掉让 BranchSelectPopover（真实组件）
+ * 直接进 DOM（参考 landing.test.ts w3Stubs 同模式）。BranchSelectPopover 不 stub：要验证真实动作项渲染。
  */
 const landingStubs = {
   Composer: { template: '<div data-testid="composer-stub"><slot name="meta-row" /></div>' },
@@ -141,10 +161,14 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.useFakeTimers()
   vi.clearAllMocks()
-  // 重置 flow 态：landing / 空 cwd / bare repo gitInfo
+  // 重置 flow 态：landing / 预置 cwd='/ws'（与 workspace.detect mock 返回 wsRoot 对齐）/
+  // bare repo gitInfo。cwd 必须非 null——CreateWorktreeModal onMounted 看到空 cwd 立即 return，
+  // baseBranch 永远空，canSubmit 永远 false，按钮 disabled → worktreeApi.create 永远不被调。
   flowMock._state.value = 'landing'
-  flowMock._currentCwd.value = null
+  flowMock._currentCwd.value = '/ws'
   flowMock._gitInfo.value = { branch: 'main', isRepo: true, isBare: true }
+  flowMode.value = 'bare-workspace'
+  flowWorktreeItems.value = []
   // 重置 workspaceStore mock
   workspaceStoreMock.records = []
   workspaceStoreMock.defaultCwd = undefined
@@ -153,6 +177,22 @@ beforeEach(() => {
   worktreeCtrl.create.mockResolvedValue({
     cwd: '/ws/feat-new-thing',
     branch: 'feat-new-thing',
+  })
+  // 重置 worktreeApi.listBranches：默认返回分支列表
+  worktreeCtrl.listBranches.mockReset()
+  worktreeCtrl.listBranches.mockResolvedValue({
+    local: ['main', 'feat-x'],
+    remote: ['origin/main', 'origin/develop'],
+    defaultBranch: 'main',
+  })
+  // 重置 workspace.detect：默认返回 bare-workspace 模式
+  workspaceDetectMock.detect.mockReset()
+  workspaceDetectMock.detect.mockResolvedValue({
+    mode: 'bare-workspace',
+    wsRoot: '/ws',
+    barePath: '/ws/.bare',
+    repoRoot: '/ws',
+    defaultBranch: 'main',
   })
   // 重置 flow worktree 动作
   flowOpenCreateWorktree.mockReset()
@@ -182,7 +222,8 @@ afterEach(() => {
 /** mount Landing（mock isBareWorkspace=true 经 gitInfo 注入） */
 async function mountLanding(): Promise<ReturnType<typeof mount>> {
   currentWrapper = mount(Landing, {
-    props: { sessionId: null, currentCwd: null, gitBranch: null },
+    // gitBranch='main' 让 Git chip 渲染（UC-7 守卫：空 branch 不显 chip）
+    props: { sessionId: null, currentCwd: '/ws', gitBranch: 'main' },
     global: { stubs: landingStubs },
     attachTo: document.body,
   })
@@ -191,22 +232,24 @@ async function mountLanding(): Promise<ReturnType<typeof mount>> {
 }
 
 /**
- * 打开 DirSelectPopover（点 directory chip）。
- * Landing 内 Popover open 绑定 flow.state==='dir-popover'，故需切 state 触发渲染。
+ * 打开 BranchSelectPopover（点 Git chip → state=branch-popover）。
+ * IA 重构（spec §3.3）后：按 git 模式裁剪 panel，tab bar 删除。
+ * - bare-workspace 模式（flowMock 默认）：直接渲染 Worktree panel，含 action-create-worktree。
+ * - Landing 内 Popover open 绑定 flow.state==='branch-popover'，故需切 state 触发渲染。
  */
-async function openDirPopover(wrapper: ReturnType<typeof mount>): Promise<void> {
-  // 点 chip → flow.openDirPopover()（mock 不真切 state，需测试手动切）
-  await wrapper.find('[data-testid="chip-directory"]').trigger('click')
-  flowMock._state.value = 'dir-popover'
+async function openBranchPopover(wrapper: ReturnType<typeof mount>): Promise<void> {
+  // 点 Git chip → flow.openBranchPopover()（mock 不真切 state，需测试手动切）
+  await wrapper.find('[data-testid="chip-branch"]').trigger('click')
+  flowMock._state.value = 'branch-popover'
   await flushPromises()
 }
 
 describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 → 创建 → success → chip 切换）', () => {
   it('点击「新建 worktree」→ modal 出现 → 填分支名 → 创建成功 → 2s 后 modal 关闭 + chip 切到新 worktree', async () => {
     const wrapper = await mountLanding()
-    await openDirPopover(wrapper)
+    await openBranchPopover(wrapper)
 
-    // popover 渲染且含「新建 worktree…」动作项（bare repo 下显示）
+    // bare-workspace 模式直接渲染 Worktree panel，含「新建 worktree…」动作项
     expect(wrapper.find('[data-testid="action-create-worktree"]').exists()).toBe(true)
 
     // 点「新建 worktree…」→ 触发 openCreateWorktree → flow 切到 worktree-modal 态
@@ -231,10 +274,14 @@ describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 �
     await $('[data-testid="worktree-create-btn"]').trigger('click')
     await flushPromises()
 
-    // 创建中：worktreeApi.create 被调（progress 态）。baseBranch 默认 origin/main（D3 决策）。
+    // 创建中：worktreeApi.create 被调（progress 态）。
+    // baseBranch 默认 origin/main（D3 决策），locationMode 默认 'workspace'（bare 模式），
+    // workspaceHint 透传 repoPath（workspace detect 后的 wsRoot='/ws'）。
     expect(worktreeCtrl.create).toHaveBeenCalledWith({
       branch: 'feat-new-thing',
       baseBranch: 'origin/main',
+      locationMode: 'workspace',
+      workspaceHint: '/ws',
     })
     // success 态显示（modal 仍在，等 2s 自动关）
     expect(has('[data-testid="worktree-success"]')).toBe(true)
@@ -253,7 +300,7 @@ describe('INT-1: 完整成功流程（Landing → popover → modal → 填表 �
 describe('INT-2: 目录已存在（worktreeApi.create reject WORKTREE_EXISTS → exists 态 → 直接开始）', () => {
   it('reject WORKTREE_EXISTS → modal 转 exists 态 → 点「直接开始」→ chip 切到 existingCwd', async () => {
     const wrapper = await mountLanding()
-    await openDirPopover(wrapper)
+    await openBranchPopover(wrapper)
 
     // 进 worktree-modal
     await wrapper.find('[data-testid="action-create-worktree"]').trigger('click')
@@ -293,7 +340,7 @@ describe('INT-2: 目录已存在（worktreeApi.create reject WORKTREE_EXISTS →
 describe('INT-3: 创建失败（worktreeApi.create reject SETUP_FAILED → error 态 → 重试）', () => {
   it('reject SETUP_FAILED → modal 转 error 态 → 显示退出码+stderr → 点重试 → 重新调 worktreeApi.create', async () => {
     const wrapper = await mountLanding()
-    await openDirPopover(wrapper)
+    await openBranchPopover(wrapper)
 
     await wrapper.find('[data-testid="action-create-worktree"]').trigger('click')
     flowMock._state.value = 'worktree-modal'
@@ -332,11 +379,14 @@ describe('INT-3: 创建失败（worktreeApi.create reject SETUP_FAILED → error
     await $('[data-testid="worktree-retry-btn"]').trigger('click')
     await flushPromises()
 
-    // worktreeApi.create 被再次调用（重试）。baseBranch 默认 origin/main（D3 决策）。
+    // worktreeApi.create 被再次调用（重试）。baseBranch 默认 origin/main（D3 决策），
+    // locationMode/workspaceHint 同 INT-1。
     expect(worktreeCtrl.create).toHaveBeenCalledTimes(2)
     expect(worktreeCtrl.create).toHaveBeenLastCalledWith({
       branch: 'feat-fail',
       baseBranch: 'origin/main',
+      locationMode: 'workspace',
+      workspaceHint: '/ws',
     })
 
     // 重试成功 → 进 success 态

@@ -7,17 +7,13 @@
  * 「新建 worktree…」入口。
  *
  * W2 解法：isBare 改由 pendingCwd 驱动——useNewTaskDirSelect 新增 isBare ref，
- * watch pendingCwd 变化时调 workspace.detectBare(cwd)（runtime WorkspaceDetector 检测
- * .bare 命中），结果回填 isBare。Landing.vue 改读 composable 的 isBare（而非 gitInfo）。
- *
- * 红灯原因（实现未写，TDD 红灯合理）：
- * 1. useNewTaskDirSelect 未 export isBare ref → 解构 isBare 为 undefined → .value 报错
- * 2. 未 import/watch workspace.detectBare → mock 的 detectBare 不被调
+ * watch pendingCwd 变化时调 workspace.detect(cwd)（runtime WorkspaceDetector 检测
+ * 三态），结果回填 isBare（mode === 'bare-workspace'）。Landing.vue 改读 composable 的 isBare（而非 gitInfo）。
  *
  * 用例（LB-1/2/3）：
- * - LB-1: pendingCwd='/bare/ws' 且 detectBare 返 isBare:true → isBare.value === true
- * - LB-2: pendingCwd='/normal' 且 detectBare 返 isBare:false → isBare.value === false
- * - LB-3: pendingCwd=null → 不调 detectBare，isBare.value === false（兜底）
+ * - LB-1: pendingCwd='/bare/ws' 且 detect 返 mode:'bare-workspace' → isBare.value === true
+ * - LB-2: pendingCwd='/normal' 且 detect 返 mode:'plain-repo' → isBare.value === false
+ * - LB-3: pendingCwd=null → 不调 detect，isBare.value === false（兜底）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/new-task/landing-isbare-pending-cwd.test.ts
  */
@@ -41,8 +37,9 @@ vi.mock('@/lib/ipc', () => ({
   pickDirectory: vi.fn().mockResolvedValue({ canceled: true, path: '' }),
 }))
 
-// mock workspace API 域：detectBare 是 W2 新增（当前未实现，mock 给可控返回）
+// mock workspace API 域：detect 是 W2 新增的三态检测
 const workspaceApiMock = vi.hoisted(() => ({
+  detect: vi.fn<(cwd: string) => Promise<{ mode: 'bare-workspace' | 'plain-repo' | 'not-repo'; wsRoot: string; barePath: string; repoRoot: string; defaultBranch: string }>>(),
   detectBare: vi.fn<(cwd: string) => Promise<{ isBare: boolean; wsRoot: string; barePath: string }>>(),
 }))
 
@@ -54,10 +51,20 @@ vi.mock('@/api', async () => {
       ...(actual.workspace as object),
       listRecent: vi.fn().mockResolvedValue([]),
       record: vi.fn().mockResolvedValue([]),
+      detect: workspaceApiMock.detect,
       detectBare: workspaceApiMock.detectBare,
     },
   }
 })
+
+// mock worktreeApi.list（useNewTaskDirSelect 会调）
+vi.mock('@/api/domains/worktree', () => ({
+  worktreeApi: {
+    list: vi.fn().mockResolvedValue({ items: [] }),
+    listBranches: vi.fn().mockResolvedValue({ local: [], remote: [], defaultBranch: 'main' }),
+    create: vi.fn(),
+  },
+}))
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -68,7 +75,7 @@ beforeEach(() => {
 })
 
 describe('useNewTaskDirSelect — isBare 由 pendingCwd 驱动（W2）', () => {
-  it('LB-1: pendingCwd 指向 bare workspace 且 detectBare 返 isBare:true → isBare.value===true', async () => {
+  it('LB-1: pendingCwd 指向 bare workspace 且 detect 返 mode:bare-workspace → isBare.value===true', async () => {
     const { resetNewTaskFlow } = await import('@/composables/features/useNewTaskFlow')
     const { useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
     resetNewTaskFlow()
@@ -77,28 +84,28 @@ describe('useNewTaskDirSelect — isBare 由 pendingCwd 驱动（W2）', () => {
     const { useNewTaskDirSelect } = await import('@/composables/new-task/useNewTaskDirSelect')
     const dirSelect = useNewTaskDirSelect(() => pendingCwd.value)
 
-    // isBare 是 W2 新增的 export，实现未写时为 undefined → 此处解构失败/报错（红灯信号）
     const isBare = (dirSelect as { isBare?: { value: boolean } }).isBare
     expect(isBare, 'useNewTaskDirSelect 应 export isBare ref').toBeDefined()
 
-    workspaceApiMock.detectBare.mockResolvedValue({
-      isBare: true,
+    workspaceApiMock.detect.mockResolvedValue({
+      mode: 'bare-workspace',
       wsRoot: '/code/xyz-agent-workspace',
       barePath: '/code/xyz-agent-workspace/.bare',
+      repoRoot: '/code/xyz-agent-workspace',
+      defaultBranch: 'main',
     })
 
-    // pendingCwd 变化触发 watch → 调 detectBare → 回填 isBare
+    // pendingCwd 变化触发 watch → 调 detect → 回填 isBare
     pendingCwd.value = '/code/xyz-agent-workspace/fix-x'
-    // 等待 watch（flush:post 或 pre）+ async detectBare resolve
     await vi.waitFor(() => {
-      expect(workspaceApiMock.detectBare).toHaveBeenCalledWith('/code/xyz-agent-workspace/fix-x')
+      expect(workspaceApiMock.detect).toHaveBeenCalledWith('/code/xyz-agent-workspace/fix-x')
     })
     await vi.waitFor(() => {
       expect(isBare!.value).toBe(true)
     })
   })
 
-  it('LB-2: pendingCwd 普通目录且 detectBare 返 isBare:false → isBare.value===false', async () => {
+  it('LB-2: pendingCwd 普通目录且 detect 返 mode:plain-repo → isBare.value===false', async () => {
     const { resetNewTaskFlow } = await import('@/composables/features/useNewTaskFlow')
     const { useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
     resetNewTaskFlow()
@@ -109,18 +116,24 @@ describe('useNewTaskDirSelect — isBare 由 pendingCwd 驱动（W2）', () => {
     const isBare = (dirSelect as { isBare?: { value: boolean } }).isBare
     expect(isBare, 'useNewTaskDirSelect 应 export isBare ref').toBeDefined()
 
-    workspaceApiMock.detectBare.mockResolvedValue({ isBare: false, wsRoot: '', barePath: '' })
+    workspaceApiMock.detect.mockResolvedValue({
+      mode: 'plain-repo',
+      wsRoot: '',
+      barePath: '',
+      repoRoot: '/normal/project',
+      defaultBranch: 'main',
+    })
 
     pendingCwd.value = '/normal/project'
     await vi.waitFor(() => {
-      expect(workspaceApiMock.detectBare).toHaveBeenCalledWith('/normal/project')
+      expect(workspaceApiMock.detect).toHaveBeenCalledWith('/normal/project')
     })
     await vi.waitFor(() => {
       expect(isBare!.value).toBe(false)
     })
   })
 
-  it('LB-3: pendingCwd=null → 不调 detectBare，isBare.value===false（兜底）', async () => {
+  it('LB-3: pendingCwd=null → 不调 detect，isBare.value===false（兜底）', async () => {
     const { resetNewTaskFlow } = await import('@/composables/features/useNewTaskFlow')
     const { useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
     resetNewTaskFlow()
@@ -131,12 +144,11 @@ describe('useNewTaskDirSelect — isBare 由 pendingCwd 驱动（W2）', () => {
     const isBare = (dirSelect as { isBare?: { value: boolean } }).isBare
     expect(isBare, 'useNewTaskDirSelect 应 export isBare ref').toBeDefined()
 
-    // pendingCwd 保持 null（resetNewTaskFlow 已置 null），watch 不应触发 detectBare
+    // pendingCwd 保持 null（resetNewTaskFlow 已置 null），watch 不应触发 detect
     pendingCwd.value = null
-    // 让可能的 watch flush 跑完
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(workspaceApiMock.detectBare).not.toHaveBeenCalled()
+    expect(workspaceApiMock.detect).not.toHaveBeenCalled()
     expect(isBare!.value).toBe(false)
   })
 })

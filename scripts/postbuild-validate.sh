@@ -3,7 +3,7 @@
 #
 # 检查项：
 # 1. 产物存在性（dmg/zip/exe/AppImage）
-# 2. macOS app 结构（Info.plist, main executable, asar, unpacked）
+# 2. macOS/Windows unpacked app 结构（main executable, asar, runtime, native resources）
 # 3. asar 内容正确性
 # 4. 产物大小合理性
 #
@@ -119,6 +119,28 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             FAILED=1
         fi
 
+        # node-pty helperPath guard — 防 postinstall patch 静默失效
+        # scripts/fix-node-pty-permissions.sh 给 node-pty lib/unixTerminal.js 加
+        # helperPath 二次 asar 替换 guard（等价上游 PR #924）。该 patch 用 grep
+        # 匹配源文件，node-pty 升级若改了行格式则匹配失败——patch 脚本只 warn 不
+        # fail（postinstall 不应阻断 install），patch 静默未应用，打包后终端重新
+        # 坏掉但 CI 无感知。此处检查产物 unixTerminal.js 含 guard 标记，捕获此类
+        # 静默回归。整个 node-pty 被 asarUnpack，runtime 实际加载的就是 unpacked
+        # 这份（app.asar 内的副本不会被加载），故只查 app.asar.unpacked 副本。
+        UNIX_TERMINAL_IN_APP="$APP_PATH/Contents/Resources/app.asar.unpacked/node_modules/node-pty/lib/unixTerminal.js"
+        if [ -f "$UNIX_TERMINAL_IN_APP" ]; then
+            echo -e "  ℹ  node-pty helperPath guard..."
+            if grep -q "helperPath.indexOf('app.asar.unpacked')" "$UNIX_TERMINAL_IN_APP"; then
+                echo -e "  ${GREEN}✓${NC} unixTerminal.js 含 helperPath guard（postinstall patch 生效）"
+            else
+                echo -e "  ${RED}✗${NC} unixTerminal.js 缺 helperPath guard — postinstall patch 可能未应用（node-pty 升级？）"
+                FAILED=1
+            fi
+        else
+            echo -e "  ${RED}✗${NC} app.asar.unpacked/node_modules/node-pty/lib/unixTerminal.js 缺失（无法验证 helperPath guard）"
+            FAILED=1
+        fi
+
         # extraResources (pi binary)
         if [ -d "$APP_PATH/Contents/Resources/pi" ]; then
             echo -e "  ${GREEN}✓${NC} pi binary in Resources"
@@ -165,6 +187,47 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
 else
     echo ""
     echo -e "${YELLOW}[2/5] macOS 结构跳过（非 macOS 构建）${NC}"
+fi
+
+# ── Windows unpacked app structure ───────────────────────────────────
+if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
+    echo ""
+    echo -e "${BLUE}[2/5] Windows unpacked app structure...${NC}"
+    WIN_ROOT="$OUTPUT_DIR/win-unpacked"
+    WIN_RESOURCES="$WIN_ROOT/resources"
+    WIN_UNPACKED="$WIN_RESOURCES/app.asar.unpacked"
+
+    for required in \
+        "$WIN_ROOT/xyz-agent.exe" \
+        "$WIN_UNPACKED/dist/runtime/index.cjs" \
+        "$WIN_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
+        "$WIN_RESOURCES/pi/pi-windows-x64.exe" \
+        "$WIN_RESOURCES/xyz-agent-extension.js" \
+        "$WIN_RESOURCES/xyz-system-prompt-extension.js" \
+        "$WIN_RESOURCES/bin/xyz-settings"; do
+        if [ -f "$required" ]; then
+            echo -e "  ${GREEN}✓${NC} ${required#$WIN_ROOT/}"
+        else
+            echo -e "  ${RED}✗${NC} ${required#$WIN_ROOT/} 缺失"
+            FAILED=1
+        fi
+    done
+
+    WINDOWS_PTY_PREBUILDS="$WIN_UNPACKED/node_modules/node-pty/prebuilds/win32-x64"
+    WINDOWS_PTY_MISSING=0
+    for required_native in \
+        "$WINDOWS_PTY_PREBUILDS/conpty.node" \
+        "$WINDOWS_PTY_PREBUILDS/pty.node"; do
+        if [ -f "$required_native" ]; then
+            echo -e "  ${GREEN}✓${NC} node-pty Windows native: ${required_native#$WIN_ROOT/}"
+        else
+            echo -e "  ${RED}✗${NC} node-pty Windows native 缺失: ${required_native#$WIN_ROOT/}"
+            WINDOWS_PTY_MISSING=1
+        fi
+    done
+    if [ "$WINDOWS_PTY_MISSING" -ne 0 ]; then
+        FAILED=1
+    fi
 fi
 
 # ── 3. 产物大小合理性 ───────────────────────────────────────────────
