@@ -1,9 +1,8 @@
 <template>
   <!--
     + 添加内容 popover（draft-composer-states §1 ①）。
-    click 触发，两路：附件 / / 命令。
-    # 文件已移除入口——改走输入区敲 # 的 inline 触发（§2d，见 CommandPopover file 分支）。
-    附件暂为 TODO（附件功能单独开任务，涉及系统文件对话框 + pi 对接）。
+    click 触发，三路：附件（任意文件）/ 图片 / / 命令。
+    attach / image 均调 pickFile IPC（附件无 filters / 图片带 image filters）；# 文件改走输入区敲 # 的 inline 触发。
   -->
   <Popover v-model:open="open">
     <PopoverTriggerButton
@@ -34,11 +33,11 @@
 import { markRaw, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { Paperclip, Plus, Slash } from '@lucide/vue'
+import { Paperclip, Plus, Slash, Image as ImageIcon } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTriggerButton } from '@/components/ui/popover'
 
-type AddType = 'attach' | 'slash'
+type AddType = 'attach' | 'image' | 'slash'
 
 interface AddItem {
   type: AddType
@@ -56,6 +55,7 @@ const open = ref(false)
 
 const ITEMS: AddItem[] = [
   { type: 'attach', label: t('panel.composer.attach'), icon: markRaw(Paperclip) },
+  { type: 'image', label: t('panel.composer.image'), icon: markRaw(ImageIcon) },
   { type: 'slash', label: t('panel.composer.command'), hint: '/', icon: markRaw(Slash) },
 ]
 

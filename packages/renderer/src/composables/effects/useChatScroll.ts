@@ -130,6 +130,29 @@ export function useChatScroll() {
     }
   }
 
+  /**
+   * stickToBottom 守卫暂停标记（trace 折叠 transition 期间置 true）。
+   *
+   * 背景 [HISTORICAL]：对话完成时 trace 块 CSS transition 收缩高度，浏览器 clamp
+   * scrollTop 大幅减小，onScroll 的「scrollTop 减小→false」分支误判为用户上滑 →
+   * stickToBottom 翻 false → 后续 scrollToBottom 全被 guard 拦截 → 界面停中间。
+   *
+   * 暂停机制：transition 期间 pauseStickGuard()，onScroll 跳过「scrollTop 减小→false」
+   * 分支（仍保留「distance≤40→true」贴底恢复分支）。done 回调 resumeStickGuard()。
+   *
+   * 不影响 wheel：用户滚轮上滑（deltaY<0）仍立即翻 false——纯用户信号优先级最高，
+   * 暂停只针对 onScroll 的程序性 clamp 误判。
+   */
+  let stickGuardPaused = false
+  /** 暂停 onScroll 的「scrollTop 减小→false」判定（程序性高度变化期间调用） */
+  function pauseStickGuard(): void {
+    stickGuardPaused = true
+  }
+  /** 恢复 onScroll 的「scrollTop 减小→false」判定（程序性高度变化结束后调用） */
+  function resumeStickGuard(): void {
+    stickGuardPaused = false
+  }
+
   // INVAR-M4-5: 取消 pending rAF，防止卸载后 flushScroll 对已卸载 el 调 scrollTo。
   // 公共 onScopeDispose（独立于上方 RO 分支）：RO 不存在（如 happy-dom 单测）时也要清 rafId，
   // 否则 scrollToBottom 已调度的 rAF 在 scope dispose 后仍 flush 会报错。
@@ -145,6 +168,8 @@ export function useChatScroll() {
       const resolvers = pendingResolvers
       pendingResolvers = []
       resolvers.forEach((r) => r())
+      // 守卫兜底：防 transition 期间组件卸载致 resumeStickGuard 永不调用
+      stickGuardPaused = false
     })
   }
 
@@ -164,7 +189,9 @@ export function useChatScroll() {
     if (distance <= BOTTOM_THRESHOLD) {
       stickToBottom.value = true
       unreadBelow.value = false
-    } else if (el.scrollTop < lastScrollTop - SCROLL_UP_DELTA) {
+    } else if (!stickGuardPaused && el.scrollTop < lastScrollTop - SCROLL_UP_DELTA) {
+      // 「scrollTop 减小→false」分支：暂停期间跳过（trace 折叠 transition 的程序性 clamp
+      // 不应误判为用户上滑）。wheel 上滑不受影响（onWheel 独立判定，纯用户信号优先）。
       stickToBottom.value = false
     }
     lastScrollTop = el.scrollTop
@@ -227,5 +254,15 @@ export function useChatScroll() {
     return p
   }
 
-  return { scrollEl, contentEl, stickToBottom, unreadBelow, showJumpButton, onScroll, scrollToBottom }
+  return {
+    scrollEl,
+    contentEl,
+    stickToBottom,
+    unreadBelow,
+    showJumpButton,
+    onScroll,
+    scrollToBottom,
+    pauseStickGuard,
+    resumeStickGuard,
+  }
 }

@@ -419,9 +419,18 @@ export class RpcClient implements IPiEngine {
    * Actual content arrives via onEvent() listeners as text_delta etc.
    *
    * Note: pi RPC protocol uses "message" field, not "content".
+   *
+   * images 是 shared 层图片附件形状（{data;base64;mimeType}，无 type 字段）。
+   * 此方法是 shared→pi ImageContent 的唯一组装点（AGENTS.md 规则 #5）：
+   * map 时补 `type:'image' as const`，pi 私有 type 字段不出 infra 层。
+   * images 为 undefined 或空数组时归一化为不传 images 键（避免 pi 收到空数组），
+   * 走与改动前完全一致的路径，零回归。
    */
-  prompt(content: string): Promise<PiMessage> {
-    return this.sendCommand('prompt', { message: content })
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>): Promise<PiMessage> {
+    const piImages = images && images.length > 0
+      ? images.map(i => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
+      : undefined
+    return this.sendCommand('prompt', piImages ? { message: content, images: piImages } : { message: content })
   }
 
   abort(): Promise<PiMessage> {
@@ -446,6 +455,20 @@ export class RpcClient implements IPiEngine {
 
   getHistory(): Promise<PiMessage> {
     return this.sendCommand('get_messages')
+  }
+
+  /**
+   * 拉取 pi session 的完整 entry 树（get_entries RPC）。
+   *
+   * 与 getHistory（get_messages，只返回扁平 message 列表）不同：get_entries 返回全部 entry 类型
+   * （message/custom/label/compaction/branch_summary/...），含 parentId 树结构。
+   * entry-tree-builder 用 message entry + "xyz.client-msg-id" custom entry 重建结构化 Message[]。
+   *
+   * since 可选：传 entry id 时返回该 entry 之后的 entry（增量拉取，pi 找不到 since id 会报错）。
+   * 返回的 PiMessage.data 已由 sendCommand 归一（data ?? payload），调用方按 GetEntriesResponse 断言。
+   */
+  getEntries(since?: string): Promise<PiMessage> {
+    return this.sendCommand('get_entries', since !== undefined ? { since } : {})
   }
 
   async compact(customInstructions?: string): Promise<PiCompactionResult> {

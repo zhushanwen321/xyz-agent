@@ -1,0 +1,29 @@
+{
+  "clarifications": [
+    {
+      "question": "Cmd+V（富呈现）与 Ctrl+V（路径文本）在 paste 事件层如何精确区分？依据是什么？",
+      "resolution": "在 onPaste(e: ClipboardEvent) 内读 e.metaKey（mac Cmd）/ e.ctrlKey（win/linux Ctrl）区分。约定：metaKey===true 走富呈现通路（image blob→存 tmpdir→image badge + 进 images 字段），ctrlKey===true 且非 metaKey 走纯路径文本通路（getData('text/plain') 插文本，与现有 onPaste 行为一致）。依据：macOS 系统级 Cmd+V 是富粘贴习惯，Windows/Linux Ctrl+V 是路径粘贴习惯；paste 事件在触发瞬间键盘修饰键状态反映在 e.metaKey/e.ctrlKey，可靠且无竞态。若两者同时为 true（罕见，部分键盘映射）按 metaKey 优先（富呈现）。",
+      "type": "research"
+    },
+    {
+      "question": "renderer 读剪贴板图片用什么 API？Electron clipboard API 在 renderer 是否可用，还是必须走主进程 IPC？",
+      "resolution": "不用 Electron clipboard API。用标准 Web Clipboard API：在 paste 事件里读 e.clipboardData.items，遍历找 kind==='file' && type.startsWith('image/')，调 item.getAsFile() 拿 File/Blob 对象，再用 FileReader/arrayBuffer 转 base64。理由：(1) 标准化、可在 web/mock 环境测试（jsdom + 自造 ClipboardEvent）；(2) paste 事件天然携带剪贴板快照，不需要额外的异步 clipboard.readImage()；(3) Electron renderer 有 contextIsolation，clipboard 模块不在 renderer 直接可用，走它反而要 IPC。注意：主动读取（非 paste 触发，如点按钮粘贴）才需要 clipboard.readImage IPC，本 slice 范围仅 paste 触发，不需要该 IPC。",
+      "type": "research"
+    },
+    {
+      "question": "图片 blob 转 base64 后如何存到 tmpdir 产生 path？现有 IPC 没有 writeFile/tmpdir 能力（main slice 只加了 pick-file 读文件，没有写文件 IPC）。本 slice 是否需要新增 IPC？",
+      "resolution": "需要新增一个写 tmpdir 图片的 IPC：write-tmp-image。renderer 把 {base64, mimeType, suggestedName} 通过 ipcRenderer.invoke('write-tmp-image', ...) 发给主进程；主进程在 os.tmpdir() 下生成唯一文件名（如 xyz-img-<timestamp>-<rand>.png），fs.writeFileSync 写 base64 解码后的 buffer，返回 {path, name}。理由：(1) renderer 在 contextIsolation + sandbox 下没有 node fs，无法直接写文件系统；(2) tmpdir 路径必须由主进程产出（跨平台 os.tmpdir()），renderer 拿不到；(3) 现有 pick-file 是只读 dialog，不能复用。本 slice 范围扩展为含此新 IPC（main 层 2 文件：privileged-handlers.ts 加 handler + preload.ts 加 writeTmpImage 方法 + ElectronAPI 接口；renderer 层 lib/ipc.ts 加 writeTmpImage 封装）。后续 dragdrop/attach-button 复用此 IPC。",
+      "type": "research"
+    },
+    {
+      "question": "image badge（contenteditable 内联）与 ContextChipsBar 的 image chip（输入区上方徽章）是什么关系？是否重复？数据源如何同步？",
+      "resolution": "两者是同一个 image attachment 的两个呈现层，不重复：(1) image badge = contenteditable 内的 .image-chip span（dataset.chipType=image, chipPath, chipName），随光标位置插入，发送时由 getSegmentsFromEl 重建 {type:image} segment，是发送数据的载体（segment 进 message.content）；(2) ContextChipsBar image chip = 输入区上方的徽章行，纯展示当前已附图片的 name + 删除入口，不进发送文本。同步方式：ContextChipsBar 的 items 由 composer 状态派生——本 slice 让 ContextChipsBar 接受 props（或读 composer store）的 attachedImages 列表，每当 image badge 增删时 composer 重新计算 segments 里的 image 段并推给 ContextChipsBar。本 slice 先做 image badge（发送链路必需），ContextChipsBar 接真实数据源（替换当前 items=[]）作为配套展示。",
+      "type": "research"
+    },
+    {
+      "question": "Ctrl+V 路径文本通路（非图片）的行为是否与现有 onPaste 完全一致？有无需要改的边界？",
+      "resolution": "完全一致，不改。Ctrl+V（ctrlKey 且非 metaKey）走现有逻辑：e.preventDefault() + getData('text/plain') + document.execCommand('insertText')。边界：若剪贴板同时含图片和文本（如某些应用复制时带缩略图），Ctrl+V 一律取 text/plain 忽略图片，保持路径粘贴语义纯净。Cmd+V 时若剪贴板无 image item（只有纯文本），fallback 到纯文本插入（不报错，不强制图片），保证 Cmd+V 文本粘贴仍可用。",
+      "type": "research"
+    }
+  ]
+}

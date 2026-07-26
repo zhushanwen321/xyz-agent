@@ -240,8 +240,11 @@ describe('TerminalService', () => {
       expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
       expect(opts.env.ELECTRON_NO_ASAR).toBeUndefined()
       expect(opts.env.ELECTRON_OVERRIDE_DIST_PATH).toBeUndefined()
-      // 正常 env 仍应保留（验证不是整个 env 被清空）
-      expect(opts.env.TERM).toBe('xterm-256color')
+      // 正常 env 仍应保留（验证不是整个 env 被清空）。
+      // TERM 契约（buildEnv:225）：保留 process.env.TERM（若有），否则 fallback 到 xterm-256color。
+      // 测试环境可能 TERM=dumb（非 TTY），不能硬编码 xterm-256color——按契约断言。
+      const expectedTerm = prev.TERM || 'xterm-256color'
+      expect(opts.env.TERM).toBe(expectedTerm)
       expect(opts.env.PATH).toBe(process.env.PATH)
     } finally {
       // 还原 process.env，避免污染后续测试

@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { textToSegments } from '@xyz-agent/shared'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 
 const apiMock = vi.hoisted(() => ({
@@ -130,7 +131,7 @@ describe('Landing 选目录延迟 create（不预建 session）', () => {
     await pickDir(flow, '/picked') // 只记 pendingCwd
     expect(apiMock.create).not.toHaveBeenCalled()
 
-    await flow.submitFirstMessage('hello')
+    await flow.submitFirstMessage(textToSegments('hello'))
 
     // 首发提交才 create，用 pendingCwd（/picked）而非 resolveDefaultCwd（/elsewhere）；label='hello'（≤10 原文）
     expect(apiMock.create).toHaveBeenCalledTimes(1)

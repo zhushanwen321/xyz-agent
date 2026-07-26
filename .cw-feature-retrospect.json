@@ -1,0 +1,117 @@
+{
+  "retrospectData": {
+    "reviewedItems": [
+      {
+        "itemId": "necessity",
+        "outcome": "fulfilled",
+        "note": "feature design-review necessity：为 composer 添加文件图片附件能力的必要性由 6 slice 全交付证实。Cmd+V 富呈现粘贴（预览+badge+pi images 直传）/ Ctrl+V 路径文本（pi TUI 兼容）/ +按钮与拖拽附件入口三入口 + 发送闭环全链路打通。对照业界（Cursor 移除 +按钮被骂反证三入口是底线），feature 定位正确。"
+      },
+      {
+        "itemId": "sufficiency",
+        "outcome": "fulfilled",
+        "note": "feature design-review sufficiency：spec MECE（8 FR must7+should1 + 7 AC + 3 UC，outOfScope 明确排除 @mention/图片编辑/截图快捷键等 6 项）判断正确。6 slice split 按依赖拓扑（shared 协议基础→runtime 透传/main IPC→renderer paste 核心→renderer attach 其他入口→renderer send 闭环）覆盖所有 must FR 无遗漏无重叠，layerSpecific.sliceSpecCoverageNote 的 split→FR 映射（shared→FR5+FR6, runtime→FR6, main→FR3, paste→FR1+FR2+FR8, attach→FR3+FR4, send→FR1+FR7）全兑现。"
+      },
+      {
+        "itemId": "alternatives",
+        "outcome": "fulfilled",
+        "note": "feature design-review alternatives：方案1 MVP（仅 +菜单+粘贴，base64 塞 prompt 文本）被否（base64 塞 prompt 是技术债，Cursor 反证三入口是底线）、方案3（含截图快捷键+@currentFile）被否（截图快捷键侵入系统快捷键，@currentFile 需 Monaco 基础设施）判断正确。方案2（当前 6 slice）是业界对标+架构正确平衡点，全交付验证。"
+      },
+      {
+        "itemId": "TO1",
+        "outcome": "fulfilled",
+        "note": "feature tradeoff TO1：Cmd+V 走 images 结构化直传而非路径文本——slice6 发送闭环兑现：extractImages 读 image segment 文件转 base64 填 message.send images 字段，pi 收到结构化 images（非 prompt 文本）。verify-pi-image-rpc.cjs 已验证带 images 的 prompt 正常。决策正确。"
+      },
+      {
+        "itemId": "TO2",
+        "outcome": "fulfilled",
+        "note": "feature tradeoff TO2：保留 Ctrl+V pi TUI 路径文本双通路而非统一 images——slice4 双通路（metaKey 富呈现/ctrlKey 纯文本）兑现，Ctrl+V 插路径文本保持 pi TUI 兼容。两条通路共存，决策正确。"
+      },
+      {
+        "itemId": "TO3",
+        "outcome": "fulfilled",
+        "note": "feature tradeoff TO3：@mention 本期不实现仅保留 chip 骨架——全 6 slice 未涉及 @mention（outOfScope 明确排除），Segment 联合保留 mention 类型供未来扩展。决策正确，范围收窄合理。"
+      },
+      {
+        "itemId": "RK1",
+        "outcome": "fulfilled",
+        "note": "feature risk RK1（medium）：pi 在真实调用链路下 images 可能因某层未透传丢失——slice2 runtime-images-passthrough 全程透传链路（message-handler 解构/session-service facade/message-dispatcher/rpc-client prompt 组装/IPiEngine+ISessionService 接口）+ verify-pi-image-rpc.cjs 验证带 images prompt 正常。风险未 materialized，链路完整。"
+      },
+      {
+        "itemId": "RK2",
+        "outcome": "fulfilled",
+        "note": "feature risk RK2（low）：Cmd+V/Ctrl+V 在 Electron contenteditable 下区分按键可能受平台/输入法影响——slice4 onPaste 读 e.metaKey/e.ctrlKey 区分，paste 事件触发瞬间修饰键状态可靠无竞态。slice4 测试覆盖双通路，风险未 materialized。"
+      },
+      {
+        "itemId": "RK3",
+        "outcome": "fulfilled",
+        "note": "feature risk RK3（low）：大图 base64 撑爆 WS 消息或 pi prompt——slice4 fileToBase64 分块 btoa 防 stack 溢出 + slice6 extractImages 复用同一编码 + send 异步不阻塞 UI。未观察到 WS 爆破（runtime rpc-client 已守卫空数组 + images 是独立字段非 prompt 文本）。风险 mitigated，留 slice6 followup 观察大图 loading 态。"
+      }
+    ],
+    "lessonsLearned": "feature 层经验：1) 分层依赖拓扑拆 slice（shared 协议基础先行→runtime/main 并行→renderer 两波→send 闭环收尾）是正确的依赖管理——每层可独立验证，shared 类型基础先行使后续 slice 无返工。2) 跨包协议扩展（slice1 shared Segment + slice2 runtime 透传）先于 UI 施工（slice4-6）是架构正确顺序——先打通投递管道再做采集与发送，避免 UI 做完无法投递的悬空状态。3) 复用既有基础设施是 feature 级关键决策——local-file 协议读 tmpdir（slice6 发送读取复用 DetailPane 渲染路径）、pick-file IPC 范式（slice3/5 复用 pick-directory）、settingsStore.providers 解析（slice6 vision 复用 useThinkingLevelSync 范式）——每处复用都收敛了改动面，避免新增 IPC/扩类型。4) must/should 分级（FR7 vision 降级为 should）让核心通路优先交付，should 项降级 console.warn 而非阻断，保证 feature 主体可用。5) verify-pi-image-rpc.cjs 这类端到端验证脚本在 feature 早期建立（验证 glm-5.2 images RPC 可用）为后续 slice 提供了技术可行性背书，降低了协议层风险。6) PlanningRetrospectData 的 reviewedItems 需覆盖 feature designReviewJudgment 全部核心项（necessity/sufficiency/alternatives + TO1-3 + RK1-3），是 feature 级对自身设计判断的完整回溯。",
+    "deliveryVerdict": "delivered",
+    "childUnitIdsEvidence": [
+      {
+        "childId": "slice:add-file-picture-attach::shared-segment-image-type",
+        "status": "closed",
+        "closeoutEvidenceSummary": "slice1：Segment 联合扩展 image 类型（{type:'image';path;name}）+ segmentsToText 产出 [图片:name] 占位（base64 走 message.send images 独立通道）。shared 协议基础先行，为后续 slice 提供类型基础。"
+      },
+      {
+        "childId": "slice:add-file-picture-attach::runtime-images-passthrough",
+        "status": "closed",
+        "closeoutEvidenceSummary": "slice2：runtime 层 images 透传链路全程打通——message-handler 解构透传/session-service facade+接口/message-dispatcher sendMessage+sendPrompt/rpc-client prompt 组装/IPiEngine+ISessionService 接口签名。可选 images 参数 + rpc-client 唯一组装点，零行为变化。verify-pi-image-rpc.cjs 验证带 images prompt 正常。"
+      },
+      {
+        "childId": "slice:add-file-picture-attach::main-pick-file-ipc",
+        "status": "closed",
+        "closeoutEvidenceSummary": "slice3：pick-file IPC 实现——privileged-handlers.ts 新增 pick-file handler（dialog.showOpenDialog properties:['openFile']+filters 透传，三重降级照搬 pick-directory）+ preload/preload.ts 暴露 pickFile（ElectronAPI 接口+contextBridge 实现）。照搬 pick-directory 范式。"
+      },
+      {
+        "childId": "slice:add-file-picture-attach::renderer-paste-dual-path",
+        "status": "closed",
+        "closeoutEvidenceSummary": "slice4：renderer 双通路粘贴全链路——onPaste 区分 Cmd/Ctrl+检测 image blob（useContenteditableInput）+ 新建 useImageAttachment composable（blob→base64→writeTmpImage IPC→path）+ 新增 write-tmp-image IPC（main+preload+lib/ipc）+ useComposerChipCommands insertImageBadge+getSegmentsFromEl image 分支 + ComposerInput.vue .image-badge 样式 + ContextChipsBar props/emit。约 7 文件。"
+      },
+      {
+        "childId": "slice:add-file-picture-attach::renderer-attach-dragdrop-menu",
+        "status": "closed",
+        "closeoutEvidenceSummary": "slice5：renderer attach+dragdrop——lib/ipc pickFile 封装 + useCommandPopoverTrigger onAddSelect attach/image 分支接通 pickFile + AddMenuPopover 激活 attach 项+新增 image 项 + Composer.vue 拖拽处理（useComposerDragDrop 复用 slice4 handleImagePaste）+ isDragOver 视觉反馈 + i18n。21 新测试。"
+      },
+      {
+        "childId": "slice:add-file-picture-attach::renderer-send-images-extract",
+        "status": "closed",
+        "closeoutEvidenceSummary": "slice6：renderer 发送闭环——useChat.send extractImages 提取 image segment（local-file fetch→base64，allSettled 并行）+ chatApi.send images 参数 + useModelCapabilities 新建（vision 降级 console.warn）+ useImageAttachment 抽 fileBytesToBase64。8 文件，26 新测试（全量 1960 绿），commit 74b07275。feature 发送闭环至此打通。"
+      }
+    ],
+    "splitFulfillment": [
+      {
+        "splitSlug": "shared-segment-image-type",
+        "verdict": "delivered",
+        "note": "slice1 已 closed，Segment image 类型扩展 + segmentsToText 占位全兑现，为后续 slice 提供类型基础。"
+      },
+      {
+        "splitSlug": "runtime-images-passthrough",
+        "verdict": "delivered",
+        "note": "slice2 已 closed，runtime 层 images 透传链路全程打通（5 文件），verify-pi-image-rpc.cjs 验证。依赖 shared（slice1）已先行。"
+      },
+      {
+        "splitSlug": "main-pick-file-ipc",
+        "verdict": "delivered",
+        "note": "slice3 已 closed，pick-file IPC 全链路（main handler+preload 暴露）兑现，照搬 pick-directory 范式。独立可并行。"
+      },
+      {
+        "splitSlug": "renderer-paste-dual-path",
+        "verdict": "delivered",
+        "note": "slice4 已 closed，renderer 双通路粘贴（Cmd+V 富呈现/Ctrl+V 纯文本）+ write-tmp-image IPC + useImageAttachment + ContextChipsBar props 化全兑现。依赖 runtime（slice2）已就绪。"
+      },
+      {
+        "splitSlug": "renderer-attach-dragdrop-menu",
+        "verdict": "delivered",
+        "note": "slice5 已 closed，+菜单 attach/image 项 + 拖拽处理 + pickFile IPC 适配全兑现，复用 slice4 handleImagePaste 链路。依赖 paste（slice4）已就绪。"
+      },
+      {
+        "splitSlug": "renderer-send-images-extract",
+        "verdict": "delivered",
+        "note": "slice6 已 closed，send 提取 image segment 转 base64 填 message.send images + vision 降级全兑现。feature 发送闭环收尾，依赖前 5 slice 全 closed。"
+      }
+    ]
+  }
+}

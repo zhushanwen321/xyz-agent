@@ -1,0 +1,57 @@
+{
+  "retrospectData": {
+    "deliveryVerdict": "delivered",
+    "childUnitIdsEvidence": [
+      {
+        "childId": "wave:add-file-picture-attach::main-pick-file-ipc::pick-file-ipc-impl",
+        "status": "closed",
+        "closeoutEvidenceSummary": "Wave 已 closeout：完成 Electron 主进程 pick-file IPC，2 个源文件改动（privileged-handlers.ts 新增 ipcMain.handle('pick-file') handler 照搬 pick-directory 降级范式 + filters 透传 / preload/preload.ts 暴露 pickFile ElectronAPI 接口 + contextBridge 实现）+ 1 测试文件（7 个 pick-file 测试用例）。验证 tsc --noEmit EXIT 0 + apps/electron/main vitest 13 passed（pick-file 7 + pick-directory 6）+ renderer vitest 1909 passed 无回归，3 个 artifact 全部 drift-check 通过。designReview 核心 judgment（necessity/sufficiency/alternatives + T1/T2 + R1/R2）逐项兑现，零回归。"
+      }
+    ],
+    "splitFulfillment": [
+      {
+        "splitSlug": "pick-file-ipc-impl",
+        "verdict": "delivered",
+        "note": "唯一 split，契约全兑现：① privileged-handlers.ts 新增 pick-file handler（properties:['openFile'] + filters 透传 + 三重降级照搬 pick-directory：getFocusedWindow/defaultPath homedir 兜底/try-catch）② preload/preload.ts 暴露 pickFile（ElectronAPI 接口 + contextBridge 实现，channel 'pick-file' 对齐）③ filters 用 Electron 原生 FileFilter 透传不抽象（IPC 薄通道，业务类型下沉 renderer）。单 wave 覆盖 pick-file IPC 全链路，原子可测。"
+      }
+    ],
+    "reviewedItems": [
+      {
+        "itemId": "necessity",
+        "outcome": "fulfilled",
+        "note": "主进程需补 pick-file IPC 的判断正确：renderer 沙箱无法直接调原生 dialog.showOpenDialog，必须经 ipcRenderer.invoke→ipcMain.handle 桥接主进程 OS 能力。wave 实现后 composer + 菜单附件入口可经 window.electronAPI.pickFile 获取本地文件路径，attach-by-file 功能闭环起点打通。必要性判断无修正兑现。"
+      },
+      {
+        "itemId": "sufficiency",
+        "outcome": "fulfilled",
+        "note": "2 个 IF（IF1 主进程 handler + IF2 preload 暴露）MECE 覆盖 pick-file IPC 全链路：renderer window.electronAPI.pickFile → ipcRenderer.invoke('pick-file') → ipcMain.handle('pick-file') → dialog.showOpenDialog，从 renderer 调用到 OS dialog 无断点。designReview 指出无 gap 无 overlap，wave 实现证实——3 个文件（2 源 + 1 测试）1:1 映射职责。"
+      },
+      {
+        "itemId": "alternatives",
+        "outcome": "fulfilled",
+        "note": "两个替代方案维持否决：方案一（合并 pick-file 进 pick-directory 加 mode 参数）仍违反单一职责且 ipcMain.handle 按 channel 名注册天然 1:1 适合独立 channel；方案二（主进程固定 filters 写死图片类型）仍耦合业务类型限制复用。wave 实现采纳独立 channel + 照搬 pick-directory 降级范式 + filters renderer 传入，验证为最小侵入方案。"
+      },
+      {
+        "itemId": "T1",
+        "outcome": "fulfilled",
+        "note": "pick-file 用独立 channel 的决策兑现：新增独立 ipcMain.handle 注册块与 pick-directory 有结构相似代码（降级范式同构），但 properties 不同（['openFile'] vs ['openDirectory']）、filters 仅 pick-file 有，非完全复制。pick-directory 6 测试全 pass 未受影响，独立性验证。cost（相似代码）是 W7 风格一致性的好处，可接受。"
+      },
+      {
+        "itemId": "T2",
+        "outcome": "fulfilled",
+        "note": "filters 用 Electron 原生 FileFilter 透传的决策兑现：filters 类型在 IF1 handler 签名和 IF2 preload 接口两处重复声明（未抽别名），但类型形态稳定（Electron FileFilter 不会频繁变），代价轻微如预期。tsc satisfies ElectronAPI 保证两处一致。"
+      },
+      {
+        "itemId": "R1",
+        "outcome": "fulfilled",
+        "note": "ElectronAPI 接口与 contextBridge 实现不同步的风险未发生：preload/preload.ts 两处（接口声明 + contextBridge 实现）成对添加 pickFile，channel 名 'pick-file' 对齐。tsc --noEmit EXIT 0 证实 satisfies ElectronAPI 类型匹配。mitigation（成对修改 + tsc 编译捕获）有效。"
+      },
+      {
+        "itemId": "R2",
+        "outcome": "fulfilled",
+        "note": "filters extensions 隐式契约的风险在本 slice 范围内未发生：主进程纯透传 filters 不做内容校验（保持 IPC 薄通道语义），filters 正确性由 renderer attach 入口负责（后续 renderer slice 范围）。wave TC4 验证 filters 原样透传。mitigation（C1 契约明确 extensions 约定 + 失败模式可见可纠正）有效。"
+      }
+    ],
+    "lessonsLearned": "照搬同文件已验证范式（pick-directory）是独立小改动 slice 的高效策略：降级逻辑（无聚焦窗口/defaultPath 兜底/异常 try-catch）已有测试覆盖，pick-file 直接复用仅改 properties + 加 filters 透传，零设计成本零回归风险。filters 用 Electron 原生类型透传（不抽象）保持 IPC 薄通道语义，让主进程 pick-file 通用化——未来 attach 入口接不同文件类型无需改主进程，业务类型决策下沉 renderer。slice 拆单 wave 适配此类 2 文件独立 IPC 改动，无需过度拆分。"
+  }
+}

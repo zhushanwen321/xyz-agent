@@ -1,0 +1,117 @@
+{
+  "retrospectData": {
+    "reviewedItems": [
+      {
+        "itemId": "necessity",
+        "outcome": "fulfilled",
+        "note": "design-review necessity：发送闭环必要性判断正确。slice6 是 feature 最后一个 slice，前 5 个 slice 把图片从粘贴/拖拽/+菜单落地成 image segment（path 存 tmpdir/磁盘），但 send() 至今只发 segmentsToPrompt 文本占位未投递 base64——多模态上下文从未真正建立。3 接口（IF1 chatApi.send 加 images / IF2 useChat.send 提取 / IF3 useModelCapabilities 新建）均 materialized 且不可省。feature 整体图片附件只完成采集未完成投递的判断由本 slice 兑现。"
+      },
+      {
+        "itemId": "sufficiency",
+        "outcome": "fulfilled",
+        "note": "design-review sufficiency：3 接口 MECE 正交判断正确。IF1（chat.ts 协议层）/IF2（useChat 编排层）/IF3（useModelCapabilities 能力查询层）分属不同文件不同职责层无重叠。错误规格 ERR1-3 覆盖 IF2 读取失败/IF2 vision 降级/IF1 send 失败三条独立路径无遗漏。runtime/shared protocol 已由 slice2 全程就绪，本 slice 无跨包依赖缺口判断正确。"
+      },
+      {
+        "itemId": "alternatives",
+        "outcome": "fulfilled",
+        "note": "design-review alternatives：3 备选（vision inline/extractImages 下沉 chatApi/阻断发送报错）均合理否决。wave 阶段备选进一步细化（fileBytesToBase64 抽 vs 不抽 / extractImages 独立文件 vs 模块导出 / 双形态 vs 单形态），实现采纳方案验证为正确。"
+      },
+      {
+        "itemId": "TO1",
+        "outcome": "fulfilled",
+        "note": "design-review tradeoff TO1：读 base64 复用 local-file:// fetch 而非新增 IPC 的 cost 兑现——web/mock 测试环境需 mock fetch（但降级路径 reject 天然可测），实际 TC2-4 vi.spyOn(global,'fetch') 完全 mock 验证成功/部分失败/全失败三路径，cost 可控。"
+      },
+      {
+        "itemId": "TO2",
+        "outcome": "fulfilled",
+        "note": "design-review tradeoff TO2：vision 降级仅 console.warn 不 toast 的 cost 兑现——用户控制台外感知不到降级，但 runtime/pi 本就丢弃不支持的多模态功能上无差异。TC10 验证 warn 调用 + images 不剥离，cost 可接受。"
+      },
+      {
+        "itemId": "TO3",
+        "outcome": "fulfilled",
+        "note": "design-review tradeoff TO3：steer/followUp 不带 images 的 cost 兑现——追加轮贴图不以 images 投递（仅文本占位），属可接受低频边界。实现确认首轮 prompt 携带 images 即建立多模态上下文，pi 后续轮复用。"
+      },
+      {
+        "itemId": "R1",
+        "outcome": "fulfilled",
+        "note": "design-review risk R1：local-file fetch 读大图阻塞 send 风险——send 已 async 不阻塞 UI 主线程，分块 btoa 防 stack 溢出。mitigation 有效，未观察到显著延迟（留 followup 观察大图 loading 态）。"
+      },
+      {
+        "itemId": "R2",
+        "outcome": "fulfilled",
+        "note": "design-review risk R2：currentModelId 解析失败误判降级风险——解析失败保守降级 false（与 useThinkingLevelSync 同范式），最坏后果多发一次 console.warn，images 仍正常投递不剥离，功能不受损。TC9 验证找不到/无斜杠/空 providers 均返 false。"
+      },
+      {
+        "itemId": "R3",
+        "outcome": "fulfilled",
+        "note": "design-review risk R3：chatApi.send 签名变化破坏既有调用/测试风险——第三参数可选，既有调用零行为变化。test 阶段回归发现 chat-integration-send.test.ts 2 处既有断言需适配（toHaveBeenCalledWith 含 undefined + DOM 测试补 nextTick），已正确修复。mitigation（test 阶段全量回归）有效。"
+      },
+      {
+        "itemId": "TC1",
+        "outcome": "fulfilled",
+        "note": "wave testJudgment 覆盖：TC1 extractImages 无图返 undefined（行为不变）全绿。"
+      },
+      {
+        "itemId": "TC2",
+        "outcome": "fulfilled",
+        "note": "TC2 extractImages 成功转 base64（URL 含 encodeURIComponent path）全绿。"
+      },
+      {
+        "itemId": "TC3",
+        "outcome": "fulfilled",
+        "note": "TC3 多图 allSettled 部分失败只取成功 + console.warn 跳过全绿。"
+      },
+      {
+        "itemId": "TC4",
+        "outcome": "fulfilled",
+        "note": "TC4 全失败返 undefined 降级纯文本全绿。"
+      },
+      {
+        "itemId": "TC5",
+        "outcome": "fulfilled",
+        "note": "TC5 chatApi.send images undefined 不传键全绿。"
+      },
+      {
+        "itemId": "TC6",
+        "outcome": "fulfilled",
+        "note": "TC6 chatApi.send 传 images payload 含键全绿。"
+      },
+      {
+        "itemId": "TC7",
+        "outcome": "fulfilled",
+        "note": "TC7 useChat.send 含图 chatApi.send 带 images 全绿。"
+      },
+      {
+        "itemId": "TC8",
+        "outcome": "fulfilled",
+        "note": "TC8 useChat.send 无图第三参 undefined 既有行为不变全绿。"
+      },
+      {
+        "itemId": "TC9",
+        "outcome": "fulfilled",
+        "note": "TC9 useModelCapabilities supportsVision 真值表（8 子用例）全绿。"
+      },
+      {
+        "itemId": "TC10",
+        "outcome": "fulfilled",
+        "note": "TC10 vision 降级 console.warn + images 不剥离全绿。"
+      }
+    ],
+    "lessonsLearned": "slice 层经验：1) 技术方案层（slice）与施工层（wave）的接口契约（IF1-3）拆分粒度恰到好处——slice 定义 3 接口 + 3 错误规格，wave 直接照抄实现 + 补 10 TC，无需回头改 slice plan，说明 slice 的 MECE 拆分质量高。2) 复用既有受控通道（local-file 协议 + settingsStore.providers 范式）是 slice 技术选型的关键正确决策——避免了跨包改动（新增 IPC / 扩 ModelInfo 类型），把改动面收敛在 renderer 单包 8 文件。3) slice 的 R3（签名变化破坏既有测试）在 wave test 阶段才暴露具体破坏点（chat-integration-send 2 处），说明 design-review 阶段识别风险正确但精确破坏点需 test 阶段回归确认——test 阶段全量回归是不可省的防线。4) PlanningRetrospectData 的 reviewedItems 需同时覆盖 slice designReview 项 + 子 wave testJudgment/execReviewJudgment 项（necessityMet/sufficiencyMet/alternativesReconsidered/readability/architecture/followup），是验收侧对子层判断的显式回溯。",
+    "deliveryVerdict": "delivered",
+    "childUnitIdsEvidence": [
+      {
+        "childId": "wave:add-file-picture-attach::renderer-send-images-extract::renderer-send-images-extract-impl",
+        "status": "closed",
+        "closeoutEvidenceSummary": "单 wave 实现 renderer 发送闭环：useChat.send extractImages 提取 image segment（local-file fetch→base64，allSettled 并行）+ chatApi.send images 参数 + useModelCapabilities 新建（vision 降级 console.warn）+ useImageAttachment 抽 fileBytesToBase64。8 文件（4 改 4 新建），26 新测试（全量 1960 绿，vue-tsc clean），commit 74b07275，全 9 步流程 closed。"
+      }
+    ],
+    "splitFulfillment": [
+      {
+        "splitSlug": "renderer-send-images-extract-impl",
+        "verdict": "delivered",
+        "note": "唯一 split 的 wave 已 closed，覆盖全部 3 接口（IF1-IF3）+ 3 错误规格（ERR1-ERR3）+ 10 TC。split 拆解合理（单 wave 充分，无需进一步拆分）。"
+      }
+    ]
+  }
+}

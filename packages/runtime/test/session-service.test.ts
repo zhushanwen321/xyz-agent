@@ -58,6 +58,9 @@ const mocks = vi.hoisted(() => ({
   patchSessionCwdMock: vi.fn(() => true),
   trashMock: vi.fn(),
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
+  // entry-tree-builder.rebuildHistoryFromEntries mock：默认 identity-ish（返 entries 当 messages），
+  // 单测按需 mockReturnValueOnce 控制重建结果。与 convertPiHistoryMock 同范式（隔离重建逻辑）。
+  rebuildHistoryFromEntriesMock: vi.fn((entries: unknown[]) => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() })),
   getHistoryFromFileMock: vi.fn().mockResolvedValue([]),
   getHistoryFromFilePathMock: vi.fn().mockResolvedValue([]),
   getHistoryTailFromFileMock: vi.fn().mockResolvedValue({ messages: [], truncated: false }),
@@ -98,6 +101,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
 
 vi.mock('../src/infra/system/trash.js', () => ({ trash: mocks.trashMock }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: mocks.convertPiHistoryMock }))
+vi.mock('../src/infra/pi/entry-tree-builder.js', () => ({ rebuildHistoryFromEntries: mocks.rebuildHistoryFromEntriesMock }))
 vi.mock('../src/services/session-history.js', () => ({
   getHistoryFromFile: mocks.getHistoryFromFileMock,
   getHistoryFromFilePath: mocks.getHistoryFromFilePathMock,
@@ -130,6 +134,8 @@ interface MockClient {
   compact: MockInstance<() => Promise<unknown>>
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
+  /** get_entries RPC mock（entry 树重建路径）。默认空 entries（触发 fallback 尾读）。 */
+  getEntries: MockInstance<(since?: string) => Promise<unknown>>
   sendCommand: MockInstance<SendCommandFn>
   /** 切换 pi session 文件（W2 收口：替代 sendCommand('switch_session')）。 */
   switchSession: MockInstance<(sessionPath: string) => Promise<void>>
@@ -158,6 +164,8 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     compact: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     clear: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     getHistory: vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: { messages: [] } }),
+    // 默认空 entries → getHistory 走 fallback 尾读（与旧 getHistory 空 messages 行为一致）
+    getEntries: vi.fn<(since?: string) => Promise<unknown>>().mockResolvedValue({ data: { entries: [], leafId: null } }),
     sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
     switchSession: vi.fn<(sessionPath: string) => Promise<void>>().mockResolvedValue(undefined),
     getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({}),
@@ -182,6 +190,7 @@ function resetMockState(): void {
   mockScannedSessions.length = 0
   mocks.defaultModel.value = { provider: 'test-provider', modelId: 'test-model' }
   mocks.convertPiHistoryMock.mockImplementation((raw: unknown) => raw)
+  mocks.rebuildHistoryFromEntriesMock.mockImplementation((entries: unknown[]) => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() }))
   mocks.getHistoryFromFileMock.mockResolvedValue([])
 }
 
@@ -335,7 +344,7 @@ describe('SessionService · dispatcher', () => {
     it('calls client.prompt with the user content on normal send', async () => {
       const client = setup.mountClient('sid-1')
       await setup.service.sendMessage('sid-1', 'hello pi')
-      expect(client.prompt).toHaveBeenCalledWith('hello pi')
+      expect(client.prompt).toHaveBeenCalledWith('hello pi', undefined)
     })
 
     it('does not call prompt when hook blocks, and broadcasts message.error with reason', async () => {
@@ -359,14 +368,14 @@ describe('SessionService · dispatcher', () => {
       const client = setup.mountClient('sid-1')
       setup.service.setSendMessageHook(async () => ({ blocked: false }))
       await setup.service.sendMessage('sid-1', 'go')
-      expect(client.prompt).toHaveBeenCalledWith('go')
+      expect(client.prompt).toHaveBeenCalledWith('go', undefined)
     })
 
     it('passes through when hook returns null', async () => {
       const client = setup.mountClient('sid-1')
       setup.service.setSendMessageHook(async () => null)
       await setup.service.sendMessage('sid-1', 'go')
-      expect(client.prompt).toHaveBeenCalledWith('go')
+      expect(client.prompt).toHaveBeenCalledWith('go', undefined)
     })
 
     it('broadcasts message.error and skips prompt when hook throws', async () => {
@@ -1090,42 +1099,43 @@ describe('SessionService · Facade', () => {
   })
 
   describe('getHistory', () => {
-    it('converts pi history via message-converter when rpc returns messages', async () => {
-      const fakeMsgs = [{ role: 'user', content: 'hi' }]
+    it('rebuilds history via entry-tree-builder when getEntries returns entries', async () => {
+      const fakeEntries = [{ type: 'message', id: 'e1', message: { role: 'user', content: 'hi' } }]
       const client = setup.mountClient('sid-hist')
-      client.getHistory.mockResolvedValueOnce({ data: { messages: fakeMsgs } })
-      mocks.convertPiHistoryMock.mockReturnValueOnce(['converted' as unknown as Message])
+      client.getEntries.mockResolvedValueOnce({ data: { entries: fakeEntries, leafId: 'e1' } })
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: ['rebuilt' as unknown as Message], clientUuidMap: new Map() })
       const result = await setup.service.getHistory('sid-hist')
-      expect(mocks.convertPiHistoryMock).toHaveBeenCalledWith(fakeMsgs)
-      // RPC 路径返回 { messages, truncated: false }（全量不截断）
-      expect(result).toEqual({ messages: ['converted'], truncated: false })
+      // rebuildHistoryFromEntries 收到原始 entries（getEntries 路径，取代旧 get_messages + convertPiHistory）
+      expect(mocks.rebuildHistoryFromEntriesMock).toHaveBeenCalledWith(fakeEntries, null)
+      // getEntries 路径返回 { messages, truncated: false }（全量不截断）
+      expect(result).toEqual({ messages: ['rebuilt'], truncated: false })
     })
 
-    it('falls back to file read when rpc returns empty and session is idle', async () => {
+    it('falls back to file read when getEntries returns empty and session is idle', async () => {
       const { id } = await setup.seedSession()
       const client = setup.clientMap.get(id)!
-      client.getHistory.mockResolvedValueOnce({ data: { messages: [] } })
-      // idle session RPC 空 → fallback 走 getHistoryTailFromFile（尾读，返回 {messages, truncated}）
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: null } })
+      // idle session getEntries 空 → fallback 走 getHistoryTailFromFile（尾读，返回 {messages, truncated}）
       mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [{ role: 'user', content: 'f' } as unknown as Message], truncated: false })
       const result = await setup.service.getHistory(id)
       expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())
       expect(result.messages.length).toBe(1)
     })
 
-    it('returns empty array when rpc empty and session is generating', async () => {
+    it('returns empty array when getEntries empty and session is generating', async () => {
       const { id, client } = await setup.seedSession()
       // 进入 generating：发一条消息
       await setup.service.sendMessage(id, 'x')
-      client.getHistory.mockResolvedValueOnce({ data: { messages: [] } })
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: null } })
       const result = await setup.service.getHistory(id)
-      // generating session RPC 空 → 直接返回空（不走 fallback 尾读）
+      // generating session getEntries 空 → 直接返回空（不走 fallback 尾读）
       expect(result).toEqual({ messages: [], truncated: false })
       expect(mocks.getHistoryTailFromFileMock).not.toHaveBeenCalled()
     })
 
-    it('falls back to file read when rpc throws', async () => {
+    it('falls back to file read when getEntries throws', async () => {
       const { id, client } = await setup.seedSession()
-      client.getHistory.mockRejectedValueOnce(new Error('rpc boom'))
+      client.getEntries.mockRejectedValueOnce(new Error('rpc boom'))
       mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false })
       await setup.service.getHistory(id)
       expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())

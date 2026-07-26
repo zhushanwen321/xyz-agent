@@ -1,0 +1,24 @@
+{
+  "retrospectData": {
+    "reviewedItems": [
+      { "itemId": "necessity", "outcome": "fulfilled", "note": "runtime 调用链必须逐层透传 images 的判断正确：pi rpc-mode.ts 已支持 prompt.images 但 runtime 各层丢弃 images 字段，实现后前端图片附件方能到达 pi。必要性判断无修正兑现。" },
+      { "itemId": "sufficiency", "outcome": "fulfilled", "note": "6 个改动点 MECE 覆盖 handler→session-service→dispatcher→IPiEngine/ISessionService→rpc-client 全链路，唯一 gap（sendSubagentMessage 范围外）按 CL2 决议保持。无重叠无遗漏。" },
+      { "itemId": "alternatives", "outcome": "fulfilled", "note": "三个替代方案维持否决：跳层违反分层、复用 pi type 违反规则#5、改 sendCommand 违反通用原语语义。实现采纳逐层透传+rpc-client 唯一组装，验证为最小侵入方案。" },
+      { "itemId": "TR1", "outcome": "fulfilled", "note": "images 参数设为可选（undefined 走原路径）的 cost 兑现：类型 Array<{data;mimeType}> 在 6 处签名重复，未抽别名。代价如预期且可接受（shared 已定义形状，跨包别名增耦合）。" },
+      { "itemId": "TR2", "outcome": "fulfilled", "note": "空数组归一化为不传的 cost 兑现：rpc-client 多一个 length 判定，TC3 验证空数组走与 undefined 相同的安全路径。防御边界条件生效，代价极小。" },
+      { "itemId": "R1", "outcome": "fulfilled", "note": "接口签名与实现不同步的风险未发生：pi-engine.ts+interfaces.ts 两处接口同步点均已加 images?: 参数，RpcClient implements IPiEngine 类型匹配，tsc EXIT 0 证实无漂移。mitigation（tsc 编译捕获）有效。" },
+      { "itemId": "R2", "outcome": "fulfilled", "note": "pi 多模态行为依赖 pi 侧的风险在本 wave 范围内未发生：组装逻辑严格按 PiImageContentBlock 映射，字段名 images 对齐 message.send payload，pi rpc-mode.ts 已转发 command.images。端到端渲染验证属后续 wave/renderer 段，本 wave 透传链路无缺陷。" },
+      { "itemId": "necessityMet", "outcome": "fulfilled", "note": "3 个 testCase 全 pass（renderer vitest 1909 passed 含 runtime 测试 + tsc EXIT 0），必要性达成。" },
+      { "itemId": "sufficiencyMet", "outcome": "fulfilled", "note": "无新增需处理 gap，overlaps 确认无重叠，MECE 覆盖 images 取值域。" },
+      { "itemId": "alternativesReconsidered", "outcome": "fulfilled", "note": "替代方案维持否决，无需 reconsidered。" },
+      { "itemId": "readability", "outcome": "fulfilled", "note": "5 分：每个改动点都有详尽注释解释 images 透传语义、rpc-client 唯一组装点、归一化逻辑，符合既有代码风格。" },
+      { "itemId": "architecture", "outcome": "fulfilled", "note": "5 分：分层清晰（transport→service→infra），pi 私有 type 字段不出 infra 层，符合 AGENTS.md 规则#5，逐层透传职责单一。" },
+      { "itemId": "followup:后续若需更高置信度，可为 rpc-client.prompt 的 images 组装逻辑补独立单测：mock sendCommand 捕获 params，断言 TC2（params.images[0] === {type:'image',data,mimeType}）/ TC3（params 不含 images 键）。当前依赖现有 mock + tsc，功能正确但断言精度低于 designReview mockStrategyNote 的预期。", "outcome": "fulfilled", "note": "跟进项有效：记入 next-wave 提醒后续为 rpc-client 组装逻辑补独立单测，提升断言精度至 designReview mockStrategyNote 预期。当前覆盖率可用（现有 mock + tsc），非阻塞。" }
+    ],
+    "lessonsLearned": "1. cw.config.json 配 testRunner.cwd=packages/renderer 后 test gate 跑 renderer vitest（214 files / 1909 passed）全绿，runtime 测试（在 renderer vitest 配置覆盖范围内）随同通过，monorepo testRunner cwd 问题在本项目已通过配置解决（AGENTS.md 记录的根目录假失败问题不再出现）。2. 接口签名同步是可选参数透传链路的关键风险点（R1）：RpcClient implements IPiEngine 要求接口与实现同步，漏改接口 tsc 立即报错——把接口同步点（pi-engine.ts/interfaces.ts）显式列入 plan.tasks 比靠记忆可靠。3. 可选参数 images? 追加到签名末尾的向后兼容策略（TR1）验证有效：switchModel/workflowAction/subagentAction 等不传 images 的调用点零改动，只有 message.send 主路径传 images，零回归。4. rpc-client 唯一组装点收敛 pi 私有 type:'image' 字段是规则#5 的正确落地，后续若 pi 字段名/结构变更仅改一处。",
+    "wrongJudgments": [],
+    "badTradeoffs": [],
+    "missedGaps": [],
+    "processIssues": []
+  }
+}

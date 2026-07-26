@@ -74,7 +74,7 @@ export default {
     confirm: '确认',
     validationRequired: '请输入名称',
     validationMaxLength: '名称不能超过 {max} 个字符',
-    validationPattern: '仅允许中文、英文、数字、空格、横杠和下划线',
+    validationPattern: '不允许换行符，最大 {max} 个字符',
   },
   subagentList: {
     loading: '加载后台任务…',

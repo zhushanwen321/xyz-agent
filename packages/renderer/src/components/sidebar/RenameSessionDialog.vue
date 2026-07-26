@@ -81,7 +81,7 @@ const schema = computed(() => toTypedSchema(
     label: z.string()
       .min(1, t('sidebar.renameDialog.validationRequired'))
       .max(MAX_LABEL_LENGTH, t('sidebar.renameDialog.validationMaxLength', { max: MAX_LABEL_LENGTH }))
-      .regex(/^[a-zA-Z0-9\u4e00-\u9fa5_\- ]+$/, t('sidebar.renameDialog.validationPattern')),
+      .regex(/^[^\r\n]+$/, t('sidebar.renameDialog.validationPattern', { max: MAX_LABEL_LENGTH })),
   }),
 ))
 

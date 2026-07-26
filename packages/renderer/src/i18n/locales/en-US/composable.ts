@@ -14,6 +14,7 @@ export default {
   allExisted: 'All already existed',
   discoverFailed: 'Discovery failed',
   dirNotExist: 'Directory {dir} no longer exists, switched to home directory',
+  imageMigratePartialFailed: '{count} image(s) failed to migrate (temp file may be cleaned), will try original path',
   loadFailed: 'Load failed',
   contextCompacted: 'Context compacted',
   branched: 'Branched',

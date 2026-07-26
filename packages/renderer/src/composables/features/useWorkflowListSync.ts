@@ -1,12 +1,12 @@
 /**
  * useWorkflowListSync —— workflow 列表的响应式同步（features 层跨 store 编排）。
  *
- * 职责：封装「workflow 列表何时该刷新」的完整决策。
- * 两个触发源：
- * 1. focusedSessionId 变化（切会话）→ clearWorkflows 先清空 + 首拉 RPC
+ * 职责：封装「workflow 列表何时该首拉」的决策。两个触发源：
+ * 1. focusedSessionId 变化（切会话）→ loadWorkflows 首拉 RPC
  * 2. workflows tab 激活 + focusedSessionId 变化 → loadWorkflows 首拉 RPC
  *
- * 实时推送（session.workflows 增量信号 → loadWorkflows RPC 拉取）在 W3 加入。
+ * 状态更新（含非活跃 session 的 workflow 终态增量信号）走 useConnection.routeInbound 兜底
+ * （session.workflowUpdate → workflowStore.triggerWorkflowReload），不在此订阅。本 composable 只负责首拉 RPC。
  *
  * 调用方：Sidebar.vue 在 onMounted 调用一次。watch 的生命周期跟随组件。
  */
@@ -27,29 +27,15 @@ export function useWorkflowListSync(): void {
    */
   const { focusedSessionId } = storeToRefs(panel)
 
-  /** 当前 session 的推送订阅取消函数（切会话时取消旧订阅） */
-  let unsubPush: (() => void) | null = null
-
   /**
-   * 切会话时：
-   * 1. （不再 clearWorkflows——ADR-0036 Map 分区派：切走不清，切回直接读分区）
-   * 2. 订阅新 session 的 session.workflowUpdate 推送（旧订阅经 watch onCleanup 自动取消）
-   * 3. 首拉 RPC 兜底（推送可能晚到，RPC 立即拿到当前列表）
-   *
-   * [W3 / W-S1] 资源泄漏修复：改用 watch 回调第三参 onCleanup 注册旧订阅的取消。
-   * onCleanup 在 watch 重新执行（切会话）或组件卸载时自动调用——此前闭包 let 变量
-   * unsubPush 在卸载时无人调 events.off，导致 WS 订阅泄漏。
+   * 切会话时首拉 RPC 兜底（推送可能晚到，RPC 立即拿到当前列表）。
+   * 实时增量信号（session.workflowUpdate）由 routeInbound 兜底统一处理，不再 per-focus 订阅。
    */
   watch(
     () => focusedSessionId.value,
-    (sid, _old, onCleanup) => {
+    (sid) => {
       if (sid) {
-        unsubPush = workflowStore.subscribeWorkflowPush(sid)
         void workflowStore.loadWorkflows(sid)
-        onCleanup(() => {
-          unsubPush?.()
-          unsubPush = null
-        })
       }
     },
     { immediate: true },

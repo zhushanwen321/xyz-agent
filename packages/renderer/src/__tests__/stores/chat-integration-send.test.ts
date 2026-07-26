@@ -43,6 +43,9 @@ vi.mock('@/api', () => ({
     steer: apiMock.steer,
     followUp: apiMock.followUp,
   },
+  file: {
+    read: vi.fn(() => Promise.resolve({ content: '', truncated: false })),
+  },
   session: {},
 }))
 
@@ -132,8 +135,9 @@ describe('T1.4 useChat.send 全链', () => {
     expect(msgs.some((m) => m.role === 'user' && normalizeContent(m.content) === 'hello')).toBe(true)
     // 2. addPendingSend：isActive=true（空窗期）
     expect(chat.isActive('s-fullchain')).toBe(true)
-    // 3. api.send 被调
-    expect(apiMock.send).toHaveBeenCalledWith('s-fullchain', 'hello')
+    // 3. api.send 被调（图片走路径模式，send 第二参数 promptText，无 images 通道）
+    // promptText 含 clientUuid 标记后缀（<!--xyz:msg:u-<uuid>-->，pi extension input hook 剥离 + 写 custom entry）
+    expect(apiMock.send).toHaveBeenCalledWith('s-fullchain', expect.stringMatching(/^hello\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/))
     // 4. message_start 到达 → clearPendingSend
     emit({ type: 'message.message_start', payload: { sessionId: 's-fullchain', messageId: 'a1' } })
     // message_start 后 isGenerating=true（streaming entity 存在），isActive 仍 true
@@ -163,9 +167,12 @@ describe('T5.1 editAndResend pendingSend 对称', () => {
     chat.appendUser('s-edit', textToSegments('原问题'))
     const userMsg = chat.getMessages('s-edit').find((m) => m.role === 'user')!
     const { editAndResend } = useChat()
-    await editAndResend('s-edit', userMsg.id, 'edited text')
-    // api.send 被调（editAndResend 内部走 chatApi.send 骨架）
-    expect(apiMock.send).toHaveBeenCalledWith('s-edit', 'edited text')
+    // 阶段 3a：editAndResend 签名从 (sid, id, text: string) 改为 (sid, id, segments: Segment[])，
+    // 内部委托 submitSegments（走 segmentsToPrompt + chatApi.send）。
+    await editAndResend('s-edit', userMsg.id, textToSegments('edited text'))
+    // api.send 被调（editAndResend 内部走 submitSegments → chatApi.send）
+    // promptText 含 clientUuid 标记后缀（与 send 同通路）
+    expect(apiMock.send).toHaveBeenCalledWith('s-edit', expect.stringMatching(/^edited text\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/))
     // addPendingSend：isActive=true（空窗期）
     expect(chat.isActive('s-edit')).toBe(true)
   })
@@ -179,7 +186,7 @@ describe('T5.1 editAndResend pendingSend 对称', () => {
     apiMock.send.mockRejectedValueOnce(new Error('ws disconnected'))
     const { editAndResend } = useChat()
     // [W2] editAndResend 失败不再 throw（与 steer/followUp/abort 对齐）
-    await expect(editAndResend('s-edit-fail', userMsg.id, 'text')).resolves.toBeUndefined()
+    await expect(editAndResend('s-edit-fail', userMsg.id, textToSegments('text'))).resolves.toBeUndefined()
     // 失败后 pendingSend 被清（isActive=false，无 streaming）
     expect(chat.isActive('s-edit-fail')).toBe(false)
   })
@@ -192,7 +199,7 @@ describe('T5.1 editAndResend pendingSend 对称', () => {
     expect(chat.isActive('s-edit-busy')).toBe(true)
     const { editAndResend } = useChat()
     // busy 时早退，不 throw，不调 send
-    await expect(editAndResend('s-edit-busy', 'msg-id', 'text')).resolves.toBeUndefined()
+    await expect(editAndResend('s-edit-busy', 'msg-id', textToSegments('text'))).resolves.toBeUndefined()
     expect(apiMock.send).not.toHaveBeenCalled()
   })
 })
@@ -240,7 +247,8 @@ describe('T1.4/T1.5 send 全链 Composer DOM 断言（用户可见行为）', ()
     await wrapper.vm.$nextTick()
     wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', new KeyboardEvent('keydown', { key: 'Enter' }))
     await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick() // flush async send（含 reject + catch）
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick() // flush async send（submitSegments await chatApi.send；含 reject + catch）
     // store 侧：pendingSend 已清，无 streaming → isActive=false（用户可重试）
     expect(chat.isActive('s-dom-fail')).toBe(false)
     await wrapper.vm.$nextTick()

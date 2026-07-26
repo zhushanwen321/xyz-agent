@@ -1,0 +1,8 @@
+{
+  "summary": "Wave 1 完成 Segment 类型扩展与 message.send 协议扩展。segments.ts 新增 image Segment 类型（{type:'image';path;name}）+ segmentsToText image 分支（产出 [图片: name] 占位）。protocol.ts message.send 新增 images 可选字段。验证：tsc EXIT 0 + vitest 214 passed。",
+  "artifacts": [
+    { "kind": "code", "ref": "packages/shared/src/segments.ts", "description": "image Segment 类型 + segmentsToText image case" },
+    { "kind": "code", "ref": "packages/shared/src/protocol.ts", "description": "message.send images 字段" },
+    { "kind": "test", "ref": "packages/shared/src/__tests__/segments.test.ts", "description": "4 条 image 测试用例" }
+  ]
+}

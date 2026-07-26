@@ -94,6 +94,14 @@
             <FileText class="size-[12px] shrink-0" />
             <span>{{ fileBasename(seg.path) }}{{ formatLineRange(seg.lineRange) }}</span>
           </span>
+          <!-- image segment → ImageThumb 缩略图（local-file:// 直载，加载失败降级绿色 badge）。
+               独立子组件：避免 Turn.vue template 超 400 行上限。AGENTS.md #7.5：send 后图片在
+               user 气泡内持续可见（对话流状态可重开恢复）。 -->
+          <ImageThumb
+            v-else-if="seg.type === 'image'"
+            :path="seg.path"
+            :display-name="seg.displayName"
+          />
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
         <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
@@ -160,7 +168,7 @@
             : 'cursor-pointer hover:text-fg',
         ]"
         :disabled="sessionActive || !turn.hasFoldable"
-        @click="expanded = !expanded"
+        @click="toggle(props.turn.index)"
       >
         <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
         <Loader2 v-if="isStreaming" class="size-3 shrink-0 animate-spin text-accent" />
@@ -172,7 +180,7 @@
         <ChevronRight
           v-if="turn.hasFoldable && !sessionActive"
           class="chev size-[9px] text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
-          :class="expanded ? 'rotate-90 text-accent' : ''"
+          :class="isExpanded(props.turn.index) ? 'rotate-90 text-accent' : ''"
         />
         <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-reasoning-soft px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-reasoning">
           <Brain class="size-2.5" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
@@ -192,20 +200,31 @@
            块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
            - streaming 态：所有块按时序展开，trace 末尾追加独立光标行（永远在最后一行）
            - complete 态：末位 assistant 的 text 块跳过（已在底部 summary），其余按时序 -->
-      <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-        <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-          <Block
-            v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]"
-            :key="`${assistant.id}-${blk.kind}-${bIdx}`"
-            :type="blk.kind"
-            :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
-            :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
-            :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
-            :working="sessionActive"
-            :session-id="sessionId"
-          />
-        </template>
-      </div>
+      <Transition :css="false" @before-leave="onTraceBeforeLeave" @leave="onTraceLeave" @enter="onTraceEnter">
+        <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
+          <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
+            <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${blk.type}-${bIdx}`">
+              <!-- single 块：原 Block 渲染（与改造前逻辑一致，ref 取 blk.block.ref） -->
+              <Block
+                v-if="blk.kind === 'single'"
+                :type="blk.block.kind"
+                :content="blk.block.kind === 'text' ? (blk.block.ref as string) : blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).content : undefined"
+                :tool="blk.block.kind === 'tool' ? (blk.block.ref as ToolCall) : undefined"
+                :collapsed="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).collapsed : undefined"
+                :working="sessionActive"
+                :session-id="sessionId"
+              />
+              <!-- merged 卡片（w2）：连续同类 thinking/tool 折叠成可展开卡，渲染逻辑下沉 MergedBlockCard。 -->
+              <MergedBlockCard
+                v-else
+                :blk="blk"
+                :working="sessionActive"
+                :session-id="sessionId"
+              />
+            </template>
+          </template>
+        </div>
+      </Transition>
 
       <!-- hr 已移入上方 turn-meta sticky wrapper（working/完成态共用，避免 streaming 时双线） -->
 
@@ -334,10 +353,12 @@ import { useI18n } from 'vue-i18n'
 import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Upload, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
+import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
+import { mergeConsecutiveBlocks, type MergedBlock } from '@/composables/logic/mergeBlocks'
 import type { ThinkingBlock, ToolCall, Segment } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
+import { rebuildSegmentsWithEditedText } from '@/lib/utils'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useCopy } from '@/composables/effects/useCopy'
@@ -349,10 +370,14 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { useTurnActions } from '@/composables/panel/useTurnActions'
+import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
+import { useStickGuard, useTraceTransition } from '@/composables/effects/useStickGuard'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
+import ImageThumb from './ImageThumb.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import MergedBlockCard from './MergedBlockCard.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -493,9 +518,14 @@ const pendingLabel = computed(() => (isSteerMode.value ? t('panel.queue.steerLab
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
 
+/**
+ * 折叠态接入 w1 useTurnExpansion（per-session 隔离 Map）。
+ * 删除本地 expanded ref：折叠态由 composable 统一管（rail toggle / expandAll / collapseAll 共享）。
+ * isExpanded 读 reactive Map 建立响应式依赖，toggle/collapse mutate 时下游失效重算。
+ */
+const { isExpanded, toggle, collapse } = useTurnExpansion(computed(() => props.sessionId))
 /** 对话进行中（含 ask-user）或手动 expanded 时展开 trace（B 类：sessionActive 驱动） */
-const expanded = ref(false)
-const showTrace = computed(() => sessionActive.value || expanded.value)
+const showTrace = computed(() => sessionActive.value || isExpanded(props.turn.index))
 
 /**
  * 工作耗时 live 计时（提取至 useTurnElapsed composable，纯计时关注点）。
@@ -509,9 +539,21 @@ const { elapsed } = useTurnElapsed(
   () => isStreaming.value,
   () => sessionActive.value,
   () => {
-    expanded.value = false
+    collapse(props.turn.index)
   },
 )
+
+/**
+ * stickToBottom 守卫暂停 + trace 折叠 transition hooks。
+ *
+ * 背景：对话完成时 trace 折叠，浏览器 clamp scrollTop 大幅减小被 onScroll 误判为用户上滑 →
+ * stickToBottom 翻 false → scrollToBottom 被 guard 拦截 → 界面停中间。transition 期间暂停该
+ * 误判分支（wheel 上滑仍立即翻 false，纯用户信号优先）。
+ *
+ * useStickGuard inject MessageStream provide 的 pause/resume（优雅降级：非 MessageStream 环境返回 null）。
+ * useTraceTransition 封装三个 height 过渡 JS hooks（提取至 composable，行数规范）。详见 composable 注释。
+ */
+const { onTraceBeforeLeave, onTraceLeave, onTraceEnter } = useTraceTransition(useStickGuard())
 
 /** 变更集卡（W10）：最后一条 assistant 的 fileChanges + store 里的变更集状态 */
 const changeSetFileChanges = computed(() => lastAssistant.value?.fileChanges ?? [])
@@ -558,8 +600,12 @@ async function submitEdit(): Promise<void> {
   const text = draftText.value.trim()
   if (!text) return
   editingUserId.value = null
-  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新文本 → 重新发送
-  await editAndResend(props.sessionId, user.id, text)
+  // 从原 user message 保留 image segments（编辑文本不改图：draftText 仅含 normalizeContent
+  // 拍平的文本，image 段拍平为 [图片 N] 占位，编辑后需从原 content 重新挂回真实 image 段）。
+  // M2：保持原 segment 顺序（rebuildSegmentsWithEditedText 实现见 lib/utils.ts）。
+  const segments = rebuildSegmentsWithEditedText(user.content, text)
+  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新 segments → 重新发送
+  await editAndResend(props.sessionId, user.id, segments)
 }
 
 /* ── fork / handoff 入口（FR-6,7,8,11 / fast-handoff）：handler 下沉 useTurnActions ── */
@@ -582,19 +628,19 @@ const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
 
 /**
  * trace 内每个 assistant 的有序块（缓存，避免 v-for 内每次 render 重算）。
- * - 末位 assistant：始终跳过 text 块（text 在底部 summary 位渲染，streaming 带 cursor / complete 终态），
- *   trace 只保留 thinking/tool 过程。
- * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留）。
+ * - 末位 assistant：先 filter 掉 text 块（text 在底部 summary 位渲染，TR-w4-2：filter 在 merge 之前，
+ *   避免 text 被并入 merged 组后再过滤破坏时序），再 mergeConsecutiveBlocks 折叠连续同类块。
+ * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留），同样 merge 连续 thinking/tool。
  * 消除停止时 text 从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
  * streaming 时每 token 触发 re-render，computed 缓存避免对每个 assistant 重跑 expandAssistantBlocks。
  */
-const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
+const traceBlocksByAssistant = computed<MergedBlock[][]>(() => {
   return props.turn.assistants.map((a, i) => {
     const blocks = expandAssistantBlocks(a)
-    if (i === lastAssistantIdx.value) {
-      return blocks.filter((b) => b.kind !== 'text')
-    }
-    return blocks
+    const filtered = i === lastAssistantIdx.value
+      ? blocks.filter((b) => b.kind !== 'text')
+      : blocks
+    return mergeConsecutiveBlocks(filtered)
   })
 })
 </script>

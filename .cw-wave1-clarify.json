@@ -1,0 +1,19 @@
+{
+  "clarifications": [
+    {
+      "question": "image Segment 的 path 和 name 字段谁负责填充？wave 是否处理生成逻辑？",
+      "resolution": "本 wave 只定义类型，不处理生成逻辑。path/name 的填充由下游 renderer-paste-dual-path slice 的 wave 负责（粘贴时生成 tmpdir 文件路径 + basename）。本 wave 的 segmentsToText 分支读 seg.name 产出占位，seg.path 不进文本。",
+      "type": "research"
+    },
+    {
+      "question": "segmentsToText 对 image 段产出占位是否会影响 segmentsToPrompt（pi 边界序列化）？",
+      "resolution": "会。segmentsToPrompt 复用 segmentsToText().trim()（segments.ts:103）。image 占位 [图片: {name}] 会进 pi prompt 文本。这是有意的：LLM 同时收到文本占位（知道用户贴了图）+ images base64（实际图数据），两者不冲突。verify-pi-image-rpc.cjs 已验证带 images 的 prompt 正常。占位不污染——它是上下文锚点。",
+      "type": "research"
+    },
+    {
+      "question": "message.send 的 images 字段是 message.send 独有，还是 message.steer/follow_up 也要加？",
+      "resolution": "本 wave 只加 message.send。steer/follow_up 暂不加（用户 steer 时通常不附图，且 pi rpc-types.ts:23-24 的 steer/follow_up 虽然支持 images 但非本期需求）。后续如需 steer 附图再扩展（append-only，向后兼容）。",
+      "type": "research"
+    }
+  ]
+}
