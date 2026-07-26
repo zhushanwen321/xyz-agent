@@ -9,7 +9,7 @@
   -->
   <Dialog :open="open" @update:open="requestClose">
     <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
-    <DialogContent hide-close class="flex max-w-[780px] flex-col overflow-hidden p-0">
+    <DialogContent hide-close class="flex max-h-[85vh] max-w-[780px] flex-col overflow-hidden p-0">
       <!-- 标题栏。DialogTitle/DialogDescription 给 reka-ui a11y context（视觉用自绘 span） -->
       <div class="flex items-center justify-between border-b border-border px-5 py-4">
         <DialogTitle class="text-[15px] font-semibold text-fg">{{ provider ? t('settings.providerEdit.editTitle') : t('settings.providerEdit.addTitle') }}</DialogTitle>
