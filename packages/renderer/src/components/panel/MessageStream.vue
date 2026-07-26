@@ -16,7 +16,7 @@
          contentEl 在空会话时 height=0（totalHeight=0），若空态放其内部 absolute inset-0 会随之塌陷。 -->
     <div v-if="renderItems.length === 0" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
       <Sparkles class="size-6 text-accent opacity-70" />
-      <p class="text-[13px] text-muted">{{ t('panel.message.startConversation') }}</p>
+      <p class="text-[13px] text-neutral-mid">{{ t('panel.message.startConversation') }}</p>
     </div>
     <!-- contentEl：虚拟滚动 spacer，高度=totalHeight+topOffset 撑出滚动条。
          useChatScroll 的 ResizeObserver 观测它（totalHeight 变化→末项增高→触发 scrollToBottom）。
@@ -57,7 +57,7 @@
           <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
           <div
             v-else-if="getGuiComponent(vi.item.message)"
-            class="py-1 pl-1 font-mono text-[12px] leading-snug text-fg"
+            class="py-1 pl-1 font-mono text-[12px] leading-snug text-neutral-fg"
           >
             <GuiComponentRenderer :component="getGuiComponent(vi.item.message)!" />
           </div>
@@ -75,8 +75,8 @@
         :style="{ top: totalHeight + topOffset + 'px' }"
       >
         <span class="h-px flex-1 bg-border" />
-        <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
-        <span class="min-w-0 truncate text-[11px] leading-snug text-muted">{{ t('panel.message.compressing') }}</span>
+        <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
+        <span class="min-w-0 truncate text-[11px] leading-snug text-neutral-mid">{{ t('panel.message.compressing') }}</span>
         <span class="h-px flex-1 bg-border" />
       </div>
 
@@ -89,12 +89,12 @@
         :style="{ top: handoffNoticeTop + 'px' }"
       >
         <span class="h-px flex-1 bg-border" />
-        <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
-        <span class="min-w-0 truncate text-[11px] leading-snug text-muted">{{ t('panel.message.handing') }}</span>
+        <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
+        <span class="min-w-0 truncate text-[11px] leading-snug text-neutral-mid">{{ t('panel.message.handing') }}</span>
         <Button
           variant="ghost"
           size="sm"
-          class="h-auto p-0 text-[11px] text-muted hover:text-fg"
+          class="h-auto p-0 text-[11px] text-neutral-mid hover:text-neutral-fg"
           data-testid="handoff-cancel-btn"
           @click="onAbortHandoff"
         >{{ t('panel.message.cancel') }}</Button>
@@ -105,7 +105,7 @@
            top 计入 compacting + handoff 占位高度，避免与上方瞬时块重叠。 -->
       <div
         v-if="isDispatching && !hasWorkingTurn"
-        class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[12px] text-muted"
+        class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[12px] text-neutral-mid"
         :style="{ top: dispatchingTop + 'px' }"
       >
         <Loader2 class="size-3 animate-spin text-accent" />
@@ -450,7 +450,7 @@ watch(
   background: var(--border-strong);
   border-radius: 4px;
 }
-.message-stream::-webkit-scrollbar-thumb:hover { background: var(--subtle); }
+.message-stream::-webkit-scrollbar-thumb:hover { background: var(--neutral-dim); }
 
 /* 回到底部浮层过渡 */
 .fade-enter-active, .fade-leave-active { transition: opacity var(--duration-fast, 150ms) ease; }

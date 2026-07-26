@@ -10,27 +10,27 @@
     这把「交互即时性」与「状态持久化」彻底解耦。
   -->
   <section>
-    <h3 class="mb-2 text-[12px] font-medium text-fg">{{ t('settings.loadPaths.title') }}</h3>
+    <h3 class="mb-2 text-[12px] font-medium text-neutral-fg">{{ t('settings.loadPaths.title') }}</h3>
 
     <!-- 强制目录（ADR-0020 §1.1 层 1-2，桥接层硬编码注入，不可关不可拖）-->
     <div class="mb-2 rounded-md border border-border bg-bg">
-      <div class="px-3 py-2 text-[11px] text-muted">{{ t('settings.loadPaths.forcedDirs') }}</div>
+      <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.forcedDirs') }}</div>
       <div
         v-for="dir in forcedDirs"
         :key="dir"
         class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px]"
       >
-        <span class="size-4 shrink-0 rounded bg-surface-hover text-center text-[10px] leading-4 text-subtle">
+        <span class="size-4 shrink-0 rounded bg-surface-hover text-center text-[10px] leading-4 text-neutral-dim">
           &#10003;
         </span>
-        <span class="font-mono text-fg opacity-60">{{ dir }}</span>
-        <span class="ml-auto text-[10px] text-subtle">{{ t('settings.loadPaths.forced') }}</span>
+        <span class="font-mono text-neutral-fg opacity-60">{{ dir }}</span>
+        <span class="ml-auto text-[10px] text-neutral-dim">{{ t('settings.loadPaths.forced') }}</span>
       </div>
     </div>
 
     <!-- 可选目录（ADR-0020 §1.1 层 3，可勾选可拖排序）-->
     <div class="rounded-md border border-border bg-bg">
-      <div class="px-3 py-2 text-[11px] text-muted">{{ t('settings.loadPaths.optionalDirs') }}</div>
+      <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.optionalDirs') }}</div>
       <div
         v-for="(dir, index) in localDirs"
         :key="dir.path"
@@ -48,7 +48,7 @@
         @dragend="onDragEnd"
       >
         <GripVertical
-          class="size-4 shrink-0 cursor-grab text-subtle hover:text-fg active:cursor-grabbing"
+          class="size-4 shrink-0 cursor-grab text-neutral-dim hover:text-neutral-fg active:cursor-grabbing"
           :class="{ 'cursor-not-allowed opacity-40': disabled }"
           :aria-label="t('settings.loadPaths.dragSort')"
         />
@@ -59,11 +59,11 @@
           :aria-label="t('settings.loadPaths.enableDir', { path: dir.path })"
           @update:model-value="onToggle(index, $event)"
         />
-        <span class="font-mono text-fg">{{ dir.path }}</span>
+        <span class="font-mono text-neutral-fg">{{ dir.path }}</span>
         <Button
           variant="ghost"
           data-testid="remove-path-btn"
-          class="ml-auto size-6 shrink-0 p-0 text-subtle hover:bg-surface-hover hover:text-danger"
+          class="ml-auto size-6 shrink-0 p-0 text-neutral-dim hover:bg-surface-hover hover:text-danger"
           :class="{ 'cursor-not-allowed opacity-40': disabled }"
           :disabled="disabled"
           :aria-label="t('settings.loadPaths.removeDir', { path: dir.path })"
@@ -104,8 +104,8 @@
       </div>
     </div>
 
-    <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-subtle">{{ t('settings.loadPaths.agentRestartHint') }}</p>
-    <p v-else-if="kind === 'extension'" class="mt-1.5 text-[11px] text-subtle">{{ t('settings.loadPaths.extensionLoadOrderHint') }}</p>
+    <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-neutral-dim">{{ t('settings.loadPaths.agentRestartHint') }}</p>
+    <p v-else-if="kind === 'extension'" class="mt-1.5 text-[11px] text-neutral-dim">{{ t('settings.loadPaths.extensionLoadOrderHint') }}</p>
   </section>
 </template>
 

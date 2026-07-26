@@ -21,9 +21,17 @@ export default {
           hover: 'var(--surface-hover)',
           2: 'var(--surface-2)',
         },
-        fg: 'var(--fg)',
-        muted: 'var(--muted)',
-        subtle: 'var(--subtle)',
+        fg: 'var(--neutral-fg)',
+        muted: 'var(--neutral-mid)',
+        subtle: 'var(--neutral-dim)',
+        neutral: {
+          fg: 'var(--neutral-fg)',
+          mid: 'var(--neutral-mid)',
+          dim: 'var(--neutral-dim)',
+          faint: 'var(--neutral-faint)',
+          ico: 'var(--neutral-ico)',
+          'ico-hover': 'var(--neutral-ico-hover)',
+        },
         border: 'var(--border)',
         'border-strong': 'var(--border-strong)',
         accent: {
@@ -34,7 +42,7 @@ export default {
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
         success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
-        warning: { DEFAULT: 'var(--warning)', soft: 'var(--warning-soft)' },
+        warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },
         danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
         info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
         // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
@@ -80,7 +88,7 @@ export default {
         2: 'var(--shadow-2)',
         glow: 'var(--shadow-glow)',
       },
-      // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warning）。
+      // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warn）。
       // 原两组件各自 scoped 定义同一份 keyframes，收敛到 SSOT 避免漂移。
       keyframes: {
         'pulse-accent': {

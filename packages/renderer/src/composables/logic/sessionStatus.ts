@@ -25,10 +25,10 @@ export const DOT_CLASS: Record<DerivedStatus, string> = {
   pending: 'bg-accent',
   compacting: 'bg-accent',
   working: 'bg-accent',
-  waiting: 'bg-warning',
-  retrying: 'bg-warning',
+  waiting: 'bg-warn',
+  retrying: 'bg-warn',
   done: 'bg-success',
-  stopped: 'bg-subtle opacity-50',
+  stopped: 'bg-neutral-dim opacity-50',
   error: 'bg-danger',
 }
 
@@ -46,10 +46,10 @@ export const STATUS_ICON: Record<
   pending: { icon: 'ArrowUpCircle', color: 'text-accent', animation: 'animate-bounce-small' },
   compacting: { icon: 'Hourglass', color: 'text-accent', animation: 'animate-spin' },
   working: { icon: 'RefreshCw', color: 'text-accent', animation: 'animate-spin' },
-  waiting: { icon: 'Wrench', color: 'text-warning', animation: 'animate-wiggle' },
-  retrying: { icon: 'Zap', color: 'text-warning', animation: 'animate-pulse-strong' },
+  waiting: { icon: 'Wrench', color: 'text-warn', animation: 'animate-wiggle' },
+  retrying: { icon: 'Zap', color: 'text-warn', animation: 'animate-pulse-strong' },
   done: { icon: 'CheckCircle2', color: 'text-success', animation: '' },
-  stopped: { icon: 'Ban', color: 'text-muted', animation: '' },
+  stopped: { icon: 'Ban', color: 'text-neutral-mid', animation: '' },
   error: { icon: 'AlertCircle', color: 'text-danger', animation: '' },
 }
 
@@ -76,7 +76,7 @@ export function shouldShowSpinner(status: DerivedStatus): boolean {
 /** spinner 图标色（streaming/working→accent 蓝，waiting→warning 橙） */
 export const SPINNER_TEXT_CLASS: Record<'streaming' | 'waiting' | 'working', string> = {
   streaming: 'text-accent',
-  waiting: 'text-warning',
+  waiting: 'text-warn',
   working: 'text-accent',
 }
 

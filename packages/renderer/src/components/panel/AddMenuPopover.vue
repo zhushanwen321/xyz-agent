@@ -18,12 +18,12 @@
         v-for="item in items"
         :key="item.type"
         variant="ghost"
-        class="flex w-full items-center justify-start gap-2.5 rounded-sm px-2.5 py-1.5 text-[12px] text-muted transition-colors hover:bg-surface-hover hover:text-fg"
+        class="flex w-full items-center justify-start gap-2.5 rounded-sm px-2.5 py-1.5 text-[12px] text-neutral-mid transition-colors hover:bg-surface-hover hover:text-neutral-fg"
         @click="onSelect(item.type)"
       >
-        <component :is="item.icon" class="size-3.5 shrink-0 text-subtle" />
+        <component :is="item.icon" class="size-3.5 shrink-0 text-neutral-dim" />
         <span class="flex-1 text-left">{{ item.label }}</span>
-        <span v-if="item.hint" class="font-mono text-[10px] text-subtle">{{ item.hint }}</span>
+        <span v-if="item.hint" class="font-mono text-[10px] text-neutral-dim">{{ item.hint }}</span>
       </Button>
     </PopoverContent>
   </Popover>

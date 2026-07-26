@@ -7,7 +7,7 @@
   -->
   <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
     <div class="flex items-center justify-between border-b border-border px-5 py-3">
-      <span class="text-[13px] font-semibold text-fg">{{ t('settings.providerEdit.modelList') }}</span>
+      <span class="text-[13px] font-semibold text-neutral-fg">{{ t('settings.providerEdit.modelList') }}</span>
       <Button variant="ghost" class="h-auto p-0 text-[11px] text-accent hover:bg-transparent hover:underline" @click="$emit('update:showAddModel', !showAddModel)">
         {{ showAddModel ? t('settings.providerEdit.collapse') : t('settings.providerEdit.manualAdd') }}
       </Button>
@@ -18,22 +18,22 @@
       <!-- 第 1 行：模型名称（占满）+ 输入类型分段 -->
       <div class="flex items-end gap-3">
         <div class="min-w-0 flex-1">
-          <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.modelNameLabel') }}</Label>
+          <Label class="mb-1 block text-[10px] text-neutral-mid">{{ t('settings.providerEdit.modelNameLabel') }}</Label>
           <Input v-model="deps.newModel.name" :placeholder="t('settings.providerEdit.modelNamePlaceholder')" class="h-8 text-[12px]" />
         </div>
         <div>
-          <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.inputTypeLabel') }}</Label>
+          <Label class="mb-1 block text-[10px] text-neutral-mid">{{ t('settings.providerEdit.inputTypeLabel') }}</Label>
           <div class="flex h-8 gap-0.5 rounded-md border border-border bg-surface-2 p-0.5">
             <Button
               variant="ghost"
               class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-              :class="deps.newModel.inputTypes.includes('text') ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
+              :class="deps.newModel.inputTypes.includes('text') ? 'bg-accent-soft text-accent' : 'text-neutral-mid hover:text-neutral-fg'"
               @click="deps.toggleNewInput('text')"
             ><FileText /> {{ t('settings.providerEdit.inputText') }}</Button>
             <Button
               variant="ghost"
               class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-              :class="deps.newModel.inputTypes.includes('image') ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
+              :class="deps.newModel.inputTypes.includes('image') ? 'bg-accent-soft text-accent' : 'text-neutral-mid hover:text-neutral-fg'"
               @click="deps.toggleNewInput('image')"
             ><ImageIcon /> {{ t('settings.providerEdit.inputImage') }}</Button>
           </div>
@@ -42,7 +42,7 @@
       <!-- 第 2 行：上下文 + 思考 + 添加 -->
       <div class="mt-3 flex items-end gap-3">
         <div>
-          <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.contextLabel') }}</Label>
+          <Label class="mb-1 block text-[10px] text-neutral-mid">{{ t('settings.providerEdit.contextLabel') }}</Label>
           <Select v-model="deps.newModel.contextWindow">
             <SelectTrigger class="h-8 w-[110px] px-2 text-[11px]">
               <SelectValue />
@@ -53,7 +53,7 @@
           </Select>
         </div>
         <div>
-          <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.thinkingLabel') }}</Label>
+          <Label class="mb-1 block text-[10px] text-neutral-mid">{{ t('settings.providerEdit.thinkingLabel') }}</Label>
           <Select v-model="deps.newModel.thinking">
             <SelectTrigger class="h-8 w-[130px] px-1.5 py-0 text-[11px]">
               <SelectValue />
@@ -69,10 +69,10 @@
 
     <!-- 模型列表 -->
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <div v-if="!deps.localModels.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.providerEdit.noModels') }}</div>
+      <div v-if="!deps.localModels.length" class="py-8 text-center text-[12px] text-neutral-mid">{{ t('settings.providerEdit.noModels') }}</div>
 
       <!-- 表头。非名称列统一 text-center，与下方行 value 单元格对齐方式一致。 -->
-      <div v-if="deps.localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] uppercase tracking-wider text-subtle">
+      <div v-if="deps.localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] uppercase tracking-wider text-neutral-dim">
         <span class="flex-1 text-left">{{ t('settings.providerEdit.modelLabel') }}</span>
         <span class="w-14">{{ t('settings.providerEdit.headInput') }}</span>
         <span class="w-[80px]">{{ t('settings.providerEdit.headContext') }}</span>
@@ -85,20 +85,20 @@
         :key="m.id"
         class="flex items-center border-b border-border px-5 py-2 text-[12px]"
       >
-        <span class="flex-1 truncate font-mono text-fg">{{ m.id }}</span>
+        <span class="flex-1 truncate font-mono text-neutral-fg">{{ m.id }}</span>
         <!-- 输入类型 icon 按钮 -->
         <div class="flex w-14 items-center justify-center gap-1">
           <Button
             variant="ghost"
             class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
-            :class="m.input?.includes('text') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
+            :class="m.input?.includes('text') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-neutral-dim opacity-60 hover:opacity-100'"
             :title="t('settings.providerEdit.textInputTitle')"
             @click.stop="deps.toggleInput(m, 'text')"
           ><FileText /></Button>
           <Button
             variant="ghost"
             class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
-            :class="m.input?.includes('image') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
+            :class="m.input?.includes('image') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-neutral-dim opacity-60 hover:opacity-100'"
             :title="t('settings.providerEdit.imageInputTitle')"
             @click.stop="deps.toggleInput(m, 'image')"
           ><ImageIcon /></Button>
@@ -134,7 +134,7 @@
         <!-- 移除 -->
         <Button
           variant="ghost"
-          class="size-5 w-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-danger [&_svg]:size-3"
+          class="size-5 w-8 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-transparent hover:text-danger [&_svg]:size-3"
           :aria-label="t('settings.providerEdit.removeModel')"
           @click.stop="deps.removeModel(i)"
         >

@@ -19,8 +19,8 @@
     <section>
       <!-- 来源 tab 过滤 -->
       <div class="mb-2 flex items-center gap-2">
-        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.resource.discovered', { label }) }}</h3>
-        <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ filteredItems.length }}</span>
+        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.resource.discovered', { label }) }}</h3>
+        <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim">{{ filteredItems.length }}</span>
         <Button
           variant="secondary"
           class="ml-1 gap-1.5 rounded-sm px-2 py-0.5 text-[11px] [&_svg]:size-3"
@@ -36,7 +36,7 @@
             v-for="tab in sourceTabs"
             :key="tab.id"
             class="h-auto rounded-sm px-2 py-0.5 text-[11px]"
-            :class="activeSource === tab.id ? 'bg-surface-hover text-fg' : 'text-muted hover:text-fg'"
+            :class="activeSource === tab.id ? 'bg-surface-hover text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
             @click="activeSource = tab.id"
           >{{ t(tab.labelKey) }}</Button>
         </div>
@@ -44,11 +44,11 @@
 
       <p v-if="actionError" class="mb-2 text-[11px] text-danger">{{ actionError }}</p>
 
-      <div v-if="!filteredItems.length" class="py-8 text-center text-[12px] text-muted">{{ t(activeSource === 'all' ? 'settings.resource.notFound' : 'settings.resource.notFoundInSource', { label }) }}</div>
+      <div v-if="!filteredItems.length" class="py-8 text-center text-[12px] text-neutral-mid">{{ t(activeSource === 'all' ? 'settings.resource.notFound' : 'settings.resource.notFoundInSource', { label }) }}</div>
 
       <!-- ADR §5：只读预览，无开关无 CRUD。来源 badge 链 + effective 标生效。 -->
       <div v-for="item in filteredItems" :key="item.id" class="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
-        <span class="flex-1 truncate text-[12px] font-medium text-fg">{{ item.name }}</span>
+        <span class="flex-1 truncate text-[12px] font-medium text-neutral-fg">{{ item.name }}</span>
         <!-- 来源 badge 链（多来源时展开，第一个标生效） -->
         <span
           v-for="(src, i) in itemSources(item)"
@@ -60,7 +60,7 @@
         <!-- 单来源无 badge 链时，直接标 source + 生效 -->
         <span v-if="!itemSources(item).length" class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="sourceBadgeClass(itemSource(item))">{{ itemSource(item) }}</span>
         <span v-if="item.effective && !itemSources(item).length" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.resource.effective') }}</span>
-        <span class="max-w-[200px] truncate text-[11px] text-subtle" :title="item.description">{{ item.description }}</span>
+        <span class="max-w-[200px] truncate text-[11px] text-neutral-dim" :title="item.description">{{ item.description }}</span>
       </div>
     </section>
   </div>
@@ -175,10 +175,10 @@ async function onScan(): Promise<void> {
 function sourceBadgeClass(source: string): string {
   const map: Record<string, string> = {
     pi: 'bg-accent-soft text-accent',
-    claude: 'bg-warning-soft text-warning',
+    claude: 'bg-warn-soft text-warn',
     agents: 'bg-success-soft text-success',
     piinstall: 'bg-info-soft text-info',
   }
-  return map[source] ?? 'bg-surface text-muted'
+  return map[source] ?? 'bg-surface text-neutral-mid'
 }
 </script>

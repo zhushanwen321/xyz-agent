@@ -43,7 +43,7 @@
       <AlertCircle class="size-8 text-danger opacity-60" />
       <div class="space-y-1">
         <p class="text-sm text-text">{{ t('panel.panel.sessionDead') }}</p>
-        <p class="text-xs text-subtle">{{ t('panel.panel.sessionDeadHint') }}</p>
+        <p class="text-xs text-neutral-dim">{{ t('panel.panel.sessionDeadHint') }}</p>
       </div>
       <Button variant="default" size="sm" @click="onReviveSession">
         <RotateCcw class="mr-1.5 size-3.5" />
@@ -57,8 +57,8 @@
       v-else-if="isViewingSubagent"
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
-      <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.message.noAgentCall') }}</p>
+      <MessageSquare class="size-6 text-neutral-dim opacity-40" />
+      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.message.noAgentCall') }}</p>
     </div>
     <Landing
       v-else-if="!isSessionActive && isLandingView"
@@ -72,12 +72,12 @@
       v-else-if="!isSessionActive && sessionId"
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
-      <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.panel.startConversation') }}</p>
+      <MessageSquare class="size-6 text-neutral-dim opacity-40" />
+      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.panel.startConversation') }}</p>
     </div>
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
-      <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">{{ t('panel.panel.selectSession') }}</p>
+      <MessageSquare class="size-6 text-neutral-dim opacity-40" />
+      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.panel.selectSession') }}</p>
     </div>
 
     <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。

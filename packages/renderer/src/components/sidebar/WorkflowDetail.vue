@@ -11,17 +11,17 @@
       <Button
         variant="ghost"
         size="icon"
-        class="size-5 shrink-0 text-subtle hover:text-fg"
+        class="size-5 shrink-0 text-neutral-dim hover:text-neutral-fg"
         :title="t('sidebar.workflowDetail.backToList')"
         data-testid="workflow-detail-back"
         @click="emit('back')"
       >
         <ChevronLeft class="size-4" />
       </Button>
-      <span class="min-w-0 flex-1 truncate text-[12px] font-medium text-fg">
+      <span class="min-w-0 flex-1 truncate text-[12px] font-medium text-neutral-fg">
         {{ workflow.scriptName }}
       </span>
-      <span v-if="workflow.slug" class="shrink-0 font-mono text-[10px] text-muted">
+      <span v-if="workflow.slug" class="shrink-0 font-mono text-[10px] text-neutral-mid">
         {{ workflow.slug }}
       </span>
       <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort。
@@ -30,7 +30,7 @@
         <Button
           variant="ghost"
           size="icon"
-          class="size-5 text-subtle hover:text-fg"
+          class="size-5 text-neutral-dim hover:text-neutral-fg"
           :title="workflow.status === 'running' ? t('sidebar.workflowDetail.pause') : t('sidebar.workflowDetail.resume')"
           @click="emit('action', { action: workflow.status === 'running' ? 'pause' : 'resume', runId: workflow.runId })"
         >
@@ -42,8 +42,8 @@
           size="icon"
           :data-testid="aborting ? 'workflow-detail-abort-confirm' : 'workflow-detail-abort'"
           :class="aborting
-            ? 'size-5 border border-danger bg-danger text-fg'
-            : 'size-5 text-subtle hover:text-danger'"
+            ? 'size-5 border border-danger bg-danger text-neutral-fg'
+            : 'size-5 text-neutral-dim hover:text-danger'"
           :title="aborting ? t('sidebar.workflowDetail.terminateConfirm') : t('sidebar.workflowDetail.terminate')"
           @click="onAbortClick"
         >
@@ -69,10 +69,10 @@
               class="size-1.5 shrink-0 rounded-full"
               :class="phaseDotClass(group.phaseStatus)"
             />
-            <span class="text-[10px] font-medium uppercase tracking-wide text-subtle">
+            <span class="text-[10px] font-medium uppercase tracking-wide text-neutral-dim">
               {{ group.phase }}
             </span>
-            <span class="text-[10px] text-subtle opacity-60">
+            <span class="text-[10px] text-neutral-dim opacity-60">
               {{ t('sidebar.workflowDetail.agentsLabel', { count: group.calls.length }) }}
             </span>
           </div>
@@ -97,13 +97,13 @@
               class="size-1.5 shrink-0 rounded-full"
               :class="callDotClass(call.status)"
             />
-            <span class="min-w-0 flex-1 truncate text-[11px] font-medium leading-[1.3] text-fg">
+            <span class="min-w-0 flex-1 truncate text-[11px] font-medium leading-[1.3] text-neutral-fg">
               {{ call.agent }}
             </span>
           </div>
 
           <!-- 摘要 -->
-          <div class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[10px] text-subtle">
+          <div class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[10px] text-neutral-dim">
             <span v-if="call.model">{{ call.model === 'default' ? t('sidebar.workflowDetail.modelDefault') : call.model }}</span>
             <span v-if="call.inputTokens !== undefined">· {{ formatTokens(call.inputTokens, t('sidebar.workflowDetail.tokenInUnit')) }}</span>
             <span v-if="call.outputTokens !== undefined">· {{ formatTokens(call.outputTokens, t('sidebar.workflowDetail.tokenOutUnit')) }}</span>
@@ -191,7 +191,7 @@ function phaseDotClass(status: 'completed' | 'running' | 'pending'): string {
   switch (status) {
     case 'completed': return 'bg-success'
     case 'running': return 'bg-accent'
-    default: return 'bg-subtle opacity-40'
+    default: return 'bg-neutral-dim opacity-40'
   }
 }
 
@@ -200,7 +200,7 @@ function callDotClass(status: WorkflowAgentCall['status']): string {
     case 'completed': return 'bg-success'
     case 'failed': return 'bg-danger'
     case 'running': return 'bg-accent'
-    default: return 'bg-subtle opacity-40'
+    default: return 'bg-neutral-dim opacity-40'
   }
 }
 

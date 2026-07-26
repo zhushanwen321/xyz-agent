@@ -22,7 +22,7 @@
       >
         <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
         <div class="mt-1.5 flex items-center justify-between px-1">
-          <span class="text-[11px] text-subtle">{{ t('panel.message.editAfterReplace') }}</span>
+          <span class="text-[11px] text-neutral-dim">{{ t('panel.message.editAfterReplace') }}</span>
           <div class="flex gap-1.5">
             <Button variant="ghost" size="sm" class="h-7" @click="cancelEdit">{{ t('panel.message.cancel') }}</Button>
             <Button variant="default" size="sm" class="h-7 gap-1" :disabled="!draftText.trim()" @click="submitEdit">
@@ -39,7 +39,7 @@
            虚线边框（1px，对齐设计稿）+ 脉冲圆点 + WHO 标 + 配色（steer 蓝 / followUp 青），投递后转普通气泡。 -->
       <div
         v-else-if="isPendingUser"
-        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-dashed px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
+        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-dashed px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-neutral-fg whitespace-pre-wrap"
         :class="pendingBubbleClass"
       >
         <span class="mb-1 flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-wider"
@@ -52,7 +52,7 @@
       </div>
       <div
         v-else
-        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
+        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-neutral-fg"
       >
         <!-- user 气泡内容：遍历 content Segment[] 渲染 badge + 文本（ADR-0037）。
              skill segment → 紫色 badge（star icon + skill 名），点击打开 drawer Doc tab；
@@ -116,7 +116,7 @@
         <Button
           variant="ghost"
           size="icon"
-          class="size-6 text-subtle hover:text-fg"
+          class="size-6 text-neutral-dim hover:text-neutral-fg"
           :title="t('panel.message.copy')"
           @click="copy(normalizeContent(turn.user.content), userCopyKey)"
         >
@@ -127,7 +127,7 @@
           v-if="canEdit && !isSessionEditable"
           variant="ghost"
           size="icon"
-          class="size-6 text-subtle hover:text-fg"
+          class="size-6 text-neutral-dim hover:text-neutral-fg"
           :title="t('panel.message.editReplace')"
           @click="startEdit"
         >
@@ -164,8 +164,8 @@
         class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
         :class="[
           !turn.hasFoldable
-            ? 'cursor-default hover:text-muted'
-            : 'cursor-pointer hover:text-fg',
+            ? 'cursor-default hover:text-neutral-mid'
+            : 'cursor-pointer hover:text-neutral-fg',
         ]"
         :disabled="sessionActive || !turn.hasFoldable"
         @click="expanded = !expanded"
@@ -173,13 +173,13 @@
         <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
         <Loader2 v-if="isStreaming" class="size-3 shrink-0 animate-spin text-accent" />
         <span class="text-[12px] font-medium">
-          <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-muted'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
-          <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
+          <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-neutral-mid'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
+          <span class="elapsed font-mono font-medium tracking-[0.01em] text-neutral-fg">{{ elapsed }}</span>
         </span>
         <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
         <ChevronRight
           v-if="turn.hasFoldable && !sessionActive"
-          class="chev size-[9px] text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
+          class="chev size-[9px] text-neutral-dim transition-transform duration-[var(--duration)] ease-[var(--ease)]"
           :class="expanded ? 'rotate-90 text-accent' : ''"
         />
         <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-reasoning-soft px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-reasoning">
@@ -227,7 +227,7 @@
       <div
         v-if="summaryText"
         class="turn-summary pt-3 text-[13.5px] leading-7 transition-colors duration-200"
-        :class="isStreaming ? 'text-muted' : 'text-fg'"
+        :class="isStreaming ? 'text-neutral-mid' : 'text-neutral-fg'"
       >
         <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
         <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
@@ -244,7 +244,7 @@
           <Button
             variant="ghost"
             size="icon"
-            class="size-6 text-subtle hover:text-fg"
+            class="size-6 text-neutral-dim hover:text-neutral-fg"
             :title="t('panel.message.copy')"
             @click="copy(summaryText, aiCopyKey)"
           >
@@ -254,7 +254,7 @@
           <Button
             variant="ghost"
             size="icon"
-            class="relative size-6 text-subtle hover:text-fg"
+            class="relative size-6 text-neutral-dim hover:text-neutral-fg"
             :title="t('panel.message.copyMarkdown')"
             @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
           >
@@ -279,7 +279,7 @@
           >
             <GitFork class="size-3" />
             <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">{{ formatKbd('g') }}</span>
+            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
           </Button>
           <Button
             v-if="!isSubagentVirtualId(sessionId)"
@@ -302,7 +302,7 @@
             v-if="!isSubagentVirtualId(sessionId)"
             variant="ghost"
             size="icon"
-            class="handoff-btn size-6 text-subtle hover:bg-accent-soft hover:text-accent"
+            class="handoff-btn size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
             data-testid="handoff-btn"
             :disabled="isHandingOff"
             :title="t('panel.message.handoff')"
@@ -314,7 +314,7 @@
             v-if="!isSubagentVirtualId(sessionId)"
             variant="ghost"
             size="icon"
-            class="handoff-ask-btn relative size-6 text-subtle hover:bg-accent-soft hover:text-accent"
+            class="handoff-ask-btn relative size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
             data-testid="handoff-ask-btn"
             :disabled="isHandingOff"
             :title="t('panel.message.handoffAsk')"

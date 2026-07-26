@@ -257,7 +257,7 @@ onScopeDispose(() => {
   font-weight: 600;
   line-height: 1.3;
   margin: 1em 0 0.5em;
-  color: var(--fg);
+  color: var(--neutral-fg);
 }
 .md-render :deep(h1) { font-size: 1.3em; }
 .md-render :deep(h2) { font-size: 1.18em; }
@@ -295,14 +295,14 @@ onScopeDispose(() => {
 }
 /* 编号颜色与正文一致（旧 --subtle 让编号变灰，与正文 fg 脱节） */
 .md-render :deep(li)::marker {
-  color: var(--fg);
+  color: var(--neutral-fg);
 }
 
 .md-render :deep(blockquote) {
   border-left: 2px solid var(--border-strong);
   padding-left: 0.85em;
   margin: 0.6em 0;
-  color: var(--muted);
+  color: var(--neutral-mid);
 }
 
 .md-render :deep(a) {
@@ -355,7 +355,7 @@ onScopeDispose(() => {
 .md-render :deep(.md-codeblock__lang) {
   font-family: var(--font-mono);
   font-size: 0.72em;
-  color: var(--subtle);
+  color: var(--neutral-dim);
   text-transform: lowercase;
   letter-spacing: 0.02em;
 }
@@ -371,11 +371,11 @@ onScopeDispose(() => {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  color: var(--muted);
+  color: var(--neutral-mid);
   transition: color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
 }
 .md-render :deep(.md-codeblock__copy:hover) {
-  color: var(--fg);
+  color: var(--neutral-fg);
   background: var(--surface-hover);
 }
 /* 复制 icon：默认 Copy（用 inline SVG mask），已复制态用 .is-copied 切换为 Check。
@@ -437,7 +437,7 @@ onScopeDispose(() => {
 .md-render :deep(th) {
   background: var(--surface-2);
   font-weight: 600;
-  color: var(--fg);
+  color: var(--neutral-fg);
 }
 
 .md-render :deep(hr) {
@@ -478,17 +478,17 @@ onScopeDispose(() => {
   color: var(--reasoning);
 }
 .md-render--thinking :deep(li)::marker {
-  color: var(--subtle);
+  color: var(--neutral-dim);
 }
 .md-render--thinking :deep(blockquote) {
-  color: var(--subtle);
+  color: var(--neutral-dim);
   border-left-color: var(--border-strong);
 }
 .md-render--thinking :deep(blockquote) p {
-  color: var(--subtle);
+  color: var(--neutral-dim);
 }
 .md-render--thinking :deep(strong) {
-  color: var(--fg);
+  color: var(--neutral-fg);
   font-weight: 600;
 }
 </style>

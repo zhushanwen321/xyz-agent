@@ -21,17 +21,17 @@
         <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="thinkingExpanded ? 'rotate-90' : ''" />
         <Brain class="size-3 shrink-0" />
         <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.thinkingBlock') }}</span>
-        <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-muted">· {{ previewText }}</span>
+        <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-neutral-mid">· {{ previewText }}</span>
       </div>
       <!-- text-[12px] 对齐 tool 详情字号；去 italic（md 结构+全局 italic 可读性差，由 thinking variant 降级样式表达次要语义） -->
-      <div v-if="thinkingExpanded" class="trace-think-body mt-1 text-[12px] leading-relaxed text-muted">
+      <div v-if="thinkingExpanded" class="trace-think-body mt-1 text-[12px] leading-relaxed text-neutral-mid">
         <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
       </div>
     </div>
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
          streaming 光标已移到 Turn.vue trace 末尾（保证永远在最后一行，不受 contentBlocks 时序影响）。 -->
-    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12px] leading-relaxed text-muted">
+    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12px] leading-relaxed text-neutral-mid">
       <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
     </div>
 
@@ -50,8 +50,8 @@
           <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
           <Bot class="size-3 shrink-0" />
           <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.subagent') }}</span>
-          <span class="shrink-0 normal-case tracking-normal text-muted">{{ subagentAgent || subagentHeaderLabel }}</span>
-          <span v-if="subagentTask" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ subagentTaskPreview }}</span>
+          <span class="shrink-0 normal-case tracking-normal text-neutral-mid">{{ subagentAgent || subagentHeaderLabel }}</span>
+          <span v-if="subagentTask" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ subagentTaskPreview }}</span>
           <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
           <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
             <span class="size-[6px] shrink-0 rounded-full bg-reasoning animate-working-pulse" />
@@ -59,11 +59,11 @@
           </span>
           <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-neutral-dim whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
         </div>
         <template v-if="toolExpanded">
           <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
-          <div v-if="subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted">
+          <div v-if="subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-neutral-mid">
             <span v-if="subagentProgressDetail.toolCount != null" class="text-info">{{ t('panel.subagent.toolCount', { count: subagentProgressDetail.toolCount }) }}</span>
             <span v-if="subagentProgressDetail.turnCount != null">turn {{ subagentProgressDetail.turnCount }}</span>
             <span v-if="subagentProgressDetail.tokens != null">{{ formatTokens(subagentProgressDetail.tokens) }}</span>
@@ -74,7 +74,7 @@
           <div
             v-if="result"
             class="mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap"
-            :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-muted'"
+            :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-neutral-mid'"
           >
             <span>{{ result }}</span>
           </div>
@@ -86,28 +86,28 @@
         <div
           data-testid="tool-block-header"
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
-          :class="isFailed ? 'text-danger' : isUnfinished ? 'text-subtle' : 'text-info'"
+          :class="isFailed ? 'text-danger' : isUnfinished ? 'text-neutral-dim' : 'text-info'"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
           <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
           <Wrench class="size-3 shrink-0" />
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
-          <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-subtle truncate">· {{ argPath }}</span>
+          <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ argPath }}</span>
           <!-- 状态指示：running 脉冲点 / completed Check 图标 / failed XCircle 图标 -->
           <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-0.5 normal-case tracking-normal whitespace-nowrap text-accent">
             <span class="size-[6px] shrink-0 rounded-full bg-accent animate-working-pulse" />{{ t('panel.message.inProgress') }}
           </span>
           <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-success" />
           <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-subtle whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
+          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-neutral-dim whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
           <!-- Phase 5 联动 2：bash 命令块「在终端运行」（非 running 态、有 sessionId 才显示） -->
           <Button
             v-if="isBash && !isRunning && sessionId"
             variant="ghost"
             size="icon"
             data-testid="tool-run-in-terminal"
-            class="ml-auto size-5 shrink-0 rounded-sm p-0 text-subtle hover:text-accent"
+            class="ml-auto size-5 shrink-0 rounded-sm p-0 text-neutral-dim hover:text-accent"
             :title="t('panel.terminal.runInTerminal')"
             @click.stop="runInTerminal"
           >
@@ -123,7 +123,7 @@
               :class="{
                 'text-danger font-semibold': item.tone === 'danger',
                 'text-info': item.tone === 'info',
-                'text-muted': item.tone === 'muted',
+                'text-neutral-mid': item.tone === 'muted',
               }"
             >{{ item.text }}</span>
           </div>
@@ -131,7 +131,7 @@
           <div
             v-if="result"
             class="mt-1 font-mono text-[12px] leading-snug whitespace-pre-wrap"
-            :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-muted'"
+            :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-neutral-mid'"
           >
             <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
             <AnsiText v-else-if="outputRaw" :content="outputRaw" />

@@ -193,8 +193,8 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     <div v-if="mode === 'plain-repo'">
       <!-- 顶部标题栏（模式标注） -->
       <div class="flex items-center justify-between border-b border-border px-3 py-2">
-        <span class="text-[12px] font-medium text-fg">{{ t('newTask.branchSelect.titlePlainRepo') }}</span>
-        <span class="rounded-md bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold text-subtle">{{ allBranches.length }}</span>
+        <span class="text-[12px] font-medium text-neutral-fg">{{ t('newTask.branchSelect.titlePlainRepo') }}</span>
+        <span class="rounded-md bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold text-neutral-dim">{{ allBranches.length }}</span>
       </div>
       <!-- 搜索 input -->
       <div class="border-b border-border p-2">
@@ -221,7 +221,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         data-testid="branches-loading"
         class="flex items-center justify-center px-4 py-6"
       >
-        <Loader2 class="size-4 animate-spin text-subtle" />
+        <Loader2 class="size-4 animate-spin text-neutral-dim" />
       </div>
 
       <!-- unborn HEAD 空态（T4.3） -->
@@ -230,8 +230,8 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         data-testid="empty-state"
         class="flex flex-col items-center gap-2 px-4 py-6 text-center"
       >
-        <GitBranch class="size-5 text-subtle" />
-        <p class="text-[12px] text-muted">{{ t('newTask.branchSelect.noBranch') }}</p>
+        <GitBranch class="size-5 text-neutral-dim" />
+        <p class="text-[12px] text-neutral-mid">{{ t('newTask.branchSelect.noBranch') }}</p>
       </div>
 
       <!-- 分支列表（最多 6 项可见，超出滚动） -->
@@ -249,9 +249,9 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           @mouseenter="activeIndex = i"
         >
           <template #icon>
-            <GitBranch class="shrink-0 text-subtle" />
+            <GitBranch class="shrink-0 text-neutral-dim" />
           </template>
-          <span class="truncate font-mono text-fg">{{ name }}</span>
+          <span class="truncate font-mono text-neutral-fg">{{ name }}</span>
         </PopoverListItem>
       </div>
       <!-- 列表滚动区结束；动作项不滚动，固定底部 -->
@@ -266,7 +266,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           @mouseenter="activeIndex = filtered.length"
         >
           <template #icon>
-            <Plus class="shrink-0 text-subtle" />
+            <Plus class="shrink-0 text-neutral-dim" />
           </template>
           {{ t('newTask.branchSelect.createAndCheckout') }}
         </PopoverActionItem>
@@ -279,7 +279,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           @mouseenter="activeIndex = filtered.length + 1"
         >
           <template #icon>
-            <GitGraph class="shrink-0 text-subtle" />
+            <GitGraph class="shrink-0 text-neutral-dim" />
           </template>
           {{ t('newTask.branchSelect.gitGraph') }}
         </PopoverActionItem>
@@ -292,7 +292,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           @mouseenter="activeIndex = filtered.length + 2"
         >
           <template #icon>
-            <GitFork class="shrink-0 text-subtle" />
+            <GitFork class="shrink-0 text-neutral-dim" />
           </template>
           {{ t('newTask.dirSelect.createWorktree') }}
         </PopoverActionItem>
@@ -304,8 +304,8 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     <div v-if="mode === 'bare-workspace'">
       <!-- 顶部标题栏（模式标注） -->
       <div class="flex items-center justify-between border-b border-border px-3 py-2">
-        <span class="text-[12px] font-medium text-fg">{{ t('newTask.branchSelect.titleBareWorkspace') }}</span>
-        <span class="rounded-md bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold text-subtle">{{ props.worktreeItems.length }}</span>
+        <span class="text-[12px] font-medium text-neutral-fg">{{ t('newTask.branchSelect.titleBareWorkspace') }}</span>
+        <span class="rounded-md bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold text-neutral-dim">{{ props.worktreeItems.length }}</span>
       </div>
       <!-- 空态：无 worktree（新建 worktree 动作仍 accent 强调在底部） -->
       <div
@@ -313,8 +313,8 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         data-testid="wt-empty-state"
         class="flex flex-col items-center gap-2 px-4 py-6 text-center"
       >
-        <GitFork class="size-5 text-subtle" />
-        <p class="text-[12px] text-muted">{{ t('newTask.dirSelect.noWorktrees') }}</p>
+        <GitFork class="size-5 text-neutral-dim" />
+        <p class="text-[12px] text-neutral-mid">{{ t('newTask.dirSelect.noWorktrees') }}</p>
       </div>
 
       <!-- worktree 列表（最多 6 项可见，超出滚动；仅显目录名，不显完整路径） -->
@@ -332,9 +332,9 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           @mouseenter="activeIndex = wi"
         >
           <template #icon>
-            <GitFork class="shrink-0 text-subtle" />
+            <GitFork class="shrink-0 text-neutral-dim" />
           </template>
-          <span class="flex min-w-0 flex-1 items-center gap-1.5 truncate text-fg">
+          <span class="flex min-w-0 flex-1 items-center gap-1.5 truncate text-neutral-fg">
             <span class="truncate">{{ worktreeName(wt.path) }}</span>
             <span
               v-if="wt.HEAD"

@@ -59,7 +59,7 @@ const depthPadding = () => ({ paddingLeft: `${currentDepth() * INDENT_PX}px` })
             :class="statusClass(item.status)"
           />
         </span>
-        <span class="text-muted">{{ item.label }}</span>
+        <span class="text-neutral-mid">{{ item.label }}</span>
         <span
           v-if="item.status"
           class="list-tree__status text-[10px]"

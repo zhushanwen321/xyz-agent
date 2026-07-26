@@ -30,7 +30,7 @@ const resolvedSeverity = computed<'ok' | 'warn' | 'danger'>(() => {
 })
 
 const fillClass = computed(() => {
-  const map = { ok: 'bg-success', warn: 'bg-warning', danger: 'bg-danger' } as const
+  const map = { ok: 'bg-success', warn: 'bg-warn', danger: 'bg-danger' } as const
   return map[resolvedSeverity.value]
 })
 </script>
@@ -38,9 +38,9 @@ const fillClass = computed(() => {
 <template>
   <div class="progress-bar flex flex-col gap-1.5 font-mono text-[12px]" data-testid="gui-progress-bar">
     <div class="flex items-center justify-between">
-      <span v-if="label" class="text-muted">{{ label }}</span>
-      <span class="font-medium tabular-nums text-fg">
-        {{ current }}<span class="text-subtle"> / {{ total }}{{ unit ? ` ${unit}` : '' }}</span>
+      <span v-if="label" class="text-neutral-mid">{{ label }}</span>
+      <span class="font-medium tabular-nums text-neutral-fg">
+        {{ current }}<span class="text-neutral-dim"> / {{ total }}{{ unit ? ` ${unit}` : '' }}</span>
       </span>
     </div>
     <div class="progress-bar__track h-1.5 overflow-hidden rounded-sm bg-bg-input">

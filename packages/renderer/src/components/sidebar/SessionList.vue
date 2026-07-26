@@ -15,11 +15,11 @@
         <!-- 组标题：cwd 末段（长路径只显末段防溢出，与 SessionItem.dirName 同一信息原子）。
              sticky 贴顶用 bg-bg 不透明（侧边栏底色透明融合 bg，header 同色遮住滚过的 item 文字） -->
         <div class="sticky top-0 z-[1] flex items-center gap-1.5 bg-bg px-2 pb-0.5 pt-2">
-          <Folder class="size-[11px] shrink-0 text-subtle" />
-          <span class="truncate text-[10px] font-medium uppercase tracking-wide text-subtle">
+          <Folder class="size-[11px] shrink-0 text-neutral-dim" />
+          <span class="truncate text-[10px] font-medium uppercase tracking-wide text-neutral-dim">
             {{ dirNameOf(g.cwd) }}
           </span>
-          <span class="font-mono text-[10px] text-subtle opacity-60">{{ g.sessions.length }}</span>
+          <span class="font-mono text-[10px] text-neutral-dim opacity-60">{{ g.sessions.length }}</span>
         </div>
         <!-- 每条 session 渲染 SessionItem；当前激活 session 下方紧跟其分支小列表
              （spec §2 层③ 方案3：仅当前 session 展开自己的分支，不破坏其他 session 扁平结构）。
@@ -50,11 +50,11 @@
       v-if="totalCount === 0"
       class="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center"
     >
-      <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.sessionList.empty') }}</p>
+      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.sessionList.empty') }}</p>
       <Button
         variant="ghost"
         size="sm"
-        class="h-7 gap-1.5 rounded-md px-2 text-[11px] text-muted hover:bg-surface-hover hover:text-fg"
+        class="h-7 gap-1.5 rounded-md px-2 text-[11px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         @click="emit('newSession')"
       >
         <Plus class="size-[14px]" />

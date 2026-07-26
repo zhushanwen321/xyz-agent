@@ -8,15 +8,15 @@
     <!-- Section 1：普通 git 仓库 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.worktree.sectionPlainRepo') }}</h3>
-        <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.worktree.sectionPlainRepoDesc') }}</p>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionPlainRepo') }}</h3>
+        <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionPlainRepoDesc') }}</p>
       </div>
       <div class="border-t border-border">
         <!-- 专用目录 -->
         <div class="flex items-center justify-between px-4 py-3">
           <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-fg">{{ t('settings.worktree.worktreeRootDir') }}</Label>
-            <span class="text-[10px] text-muted">{{ t('settings.worktree.worktreeRootDirHint') }}</span>
+            <Label class="text-[12px] text-neutral-fg">{{ t('settings.worktree.worktreeRootDir') }}</Label>
+            <span class="text-[10px] text-neutral-mid">{{ t('settings.worktree.worktreeRootDirHint') }}</span>
           </div>
           <div class="flex items-center gap-2">
             <Input
@@ -38,8 +38,8 @@
         <!-- 初始化脚本 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
           <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-fg">{{ t('settings.worktree.setupScript') }}</Label>
-            <span class="text-[10px] text-muted">{{ t('settings.worktree.setupScriptHint') }}</span>
+            <Label class="text-[12px] text-neutral-fg">{{ t('settings.worktree.setupScript') }}</Label>
+            <span class="text-[10px] text-neutral-mid">{{ t('settings.worktree.setupScriptHint') }}</span>
           </div>
           <Input
             v-model="setupScript"
@@ -54,15 +54,15 @@
     <!-- Section 2：bare-workspace -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.worktree.sectionBareWorkspace') }}</h3>
-        <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.worktree.sectionBareWorkspaceDesc') }}</p>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionBareWorkspace') }}</h3>
+        <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionBareWorkspaceDesc') }}</p>
       </div>
       <div class="border-t border-border">
         <!-- 初始化脚本 -->
         <div class="flex items-center justify-between px-4 py-3">
           <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-fg">{{ t('settings.worktree.bareSetupScript') }}</Label>
-            <span class="text-[10px] text-muted">{{ t('settings.worktree.bareSetupScriptHint') }}</span>
+            <Label class="text-[12px] text-neutral-fg">{{ t('settings.worktree.bareSetupScript') }}</Label>
+            <span class="text-[10px] text-neutral-mid">{{ t('settings.worktree.bareSetupScriptHint') }}</span>
           </div>
           <Input
             v-model="bareSetupScript"
@@ -74,8 +74,8 @@
         <!-- 超时时间 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
           <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-fg">{{ t('settings.worktree.timeout') }}</Label>
-            <span class="text-[10px] text-muted">{{ t('settings.worktree.timeoutHint') }}</span>
+            <Label class="text-[12px] text-neutral-fg">{{ t('settings.worktree.timeout') }}</Label>
+            <span class="text-[10px] text-neutral-mid">{{ t('settings.worktree.timeoutHint') }}</span>
           </div>
           <Input
             v-model.number="timeout"
@@ -92,15 +92,15 @@
     <!-- Section 3：通用 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.worktree.sectionGeneral') }}</h3>
-        <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.worktree.sectionGeneralDesc') }}</p>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionGeneral') }}</h3>
+        <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionGeneralDesc') }}</p>
       </div>
       <div class="border-t border-border">
         <!-- 默认基分支 -->
         <div class="flex items-center justify-between px-4 py-3">
           <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-fg">{{ t('settings.worktree.defaultBaseBranch') }}</Label>
-            <span class="text-[10px] text-muted">{{ t('settings.worktree.defaultBaseBranchHint') }}</span>
+            <Label class="text-[12px] text-neutral-fg">{{ t('settings.worktree.defaultBaseBranch') }}</Label>
+            <span class="text-[10px] text-neutral-mid">{{ t('settings.worktree.defaultBaseBranchHint') }}</span>
           </div>
           <Input
             v-model="defaultBaseBranch"

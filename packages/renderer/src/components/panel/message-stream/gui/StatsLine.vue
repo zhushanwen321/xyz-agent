@@ -11,8 +11,8 @@ defineProps<{
 }>()
 
 const valueClass = (severity?: StatItem['severity']) => {
-  if (!severity) return 'text-fg'
-  const map = { ok: 'text-success', warn: 'text-warning', danger: 'text-danger' } as const
+  if (!severity) return 'text-neutral-fg'
+  const map = { ok: 'text-success', warn: 'text-warn', danger: 'text-danger' } as const
   return map[severity]
 }
 </script>
@@ -25,7 +25,7 @@ const valueClass = (severity?: StatItem['severity']) => {
       class="stats-line__item flex items-center gap-1 px-3 first:pl-0"
       :class="{ 'border-l border-border': i > 0 }"
     >
-      <span v-if="item.label" class="stats-line__label text-subtle">{{ item.label }}</span>
+      <span v-if="item.label" class="stats-line__label text-neutral-dim">{{ item.label }}</span>
       <span class="stats-line__value font-medium tabular-nums" :class="valueClass(item.severity)">
         {{ item.value }}
       </span>

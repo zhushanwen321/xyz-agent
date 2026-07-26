@@ -31,10 +31,10 @@
     <!-- 空状态 -->
     <div v-if="!providers.length" class="flex flex-col items-center gap-2 py-16 text-center">
       <div class="grid size-16 place-items-center rounded-full border-2 border-dashed border-border-strong">
-        <Settings class="size-7 text-subtle" />
+        <Settings class="size-7 text-neutral-dim" />
       </div>
-      <p class="text-[14px] font-medium text-fg">{{ t('settings.provider.emptyTitle') }}</p>
-      <p class="text-[12px] text-muted">{{ t('settings.provider.emptyDesc') }}</p>
+      <p class="text-[14px] font-medium text-neutral-fg">{{ t('settings.provider.emptyTitle') }}</p>
+      <p class="text-[12px] text-neutral-mid">{{ t('settings.provider.emptyDesc') }}</p>
     </div>
 
     <!-- 实体列表 -->
@@ -55,7 +55,7 @@
 
         <!-- 供应商名称（点击展开/收起） -->
         <span
-          class="flex-1 cursor-pointer truncate text-[13px] font-medium text-fg"
+          class="flex-1 cursor-pointer truncate text-[13px] font-medium text-neutral-fg"
           @click="toggleExpand(p.id)"
         >{{ p.name }}</span>
 
@@ -68,12 +68,12 @@
           class="h-auto shrink-0 rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent hover:bg-accent-soft"
         >{{ t('settings.provider.defaultPill') }}</Button>
 
-        <span class="shrink-0 text-[11px] text-subtle">{{ t('settings.provider.modelsCount', { count: p.models.length }) }}</span>
+        <span class="shrink-0 text-[11px] text-neutral-dim">{{ t('settings.provider.modelsCount', { count: p.models.length }) }}</span>
 
         <!-- 编辑 + 删除按钮 -->
         <Button
           variant="ghost"
-          class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-[13px]"
+          class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
           :title="t('settings.provider.editTitle')"
           @click.stop="openEdit(p)"
         >
@@ -81,7 +81,7 @@
         </Button>
         <Button
           variant="ghost"
-          class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger [&_svg]:size-[13px]"
+          class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger [&_svg]:size-[13px]"
           :title="t('settings.provider.deleteTitle')"
           @click.stop="deleteTarget = p"
         >
@@ -93,17 +93,17 @@
       <div v-if="expanded.has(p.id)" class="border-t border-border">
         <!-- 凭据与连接 -->
         <div class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 px-4 py-3 text-[12px]">
-          <span class="text-muted">{{ t('settings.provider.apiType') }}</span>
-          <span class="font-mono text-fg">{{ p.api ?? '-' }}</span>
-          <span class="text-muted">{{ t('settings.provider.baseUrl') }}</span>
-          <span class="font-mono text-fg">{{ p.baseUrl ?? '-' }}</span>
-          <span class="text-muted">{{ t('settings.provider.apiKey') }}</span>
-          <span class="text-fg">{{ p.apiKeySet ? t('settings.provider.apiKeyConfigured') : t('settings.provider.apiKeyNotConfigured') }}</span>
+          <span class="text-neutral-mid">{{ t('settings.provider.apiType') }}</span>
+          <span class="font-mono text-neutral-fg">{{ p.api ?? '-' }}</span>
+          <span class="text-neutral-mid">{{ t('settings.provider.baseUrl') }}</span>
+          <span class="font-mono text-neutral-fg">{{ p.baseUrl ?? '-' }}</span>
+          <span class="text-neutral-mid">{{ t('settings.provider.apiKey') }}</span>
+          <span class="text-neutral-fg">{{ p.apiKeySet ? t('settings.provider.apiKeyConfigured') : t('settings.provider.apiKeyNotConfigured') }}</span>
         </div>
 
         <!-- 模型清单表格 -->
         <div v-if="p.models.length" class="border-t border-border px-4 py-3">
-          <p class="mb-2 text-[11px] uppercase tracking-wider text-muted">{{ t('settings.provider.modelList') }}</p>
+          <p class="mb-2 text-[11px] uppercase tracking-wider text-neutral-mid">{{ t('settings.provider.modelList') }}</p>
           <Table class="text-[12px]">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
@@ -117,21 +117,21 @@
             </TableHeader>
             <TableBody>
               <TableRow v-for="m in p.models" :key="m.id">
-                <TableCell class="py-2 font-mono text-fg">{{ m.id }}</TableCell>
+                <TableCell class="py-2 font-mono text-neutral-fg">{{ m.id }}</TableCell>
                 <!-- 输入类型 icon -->
                 <TableCell class="py-2 text-center">
                   <div class="flex justify-center gap-0.5">
                     <FileText
                       class="size-3"
-                      :class="m.input?.includes('text') ? 'text-info' : 'text-subtle opacity-30'"
+                      :class="m.input?.includes('text') ? 'text-info' : 'text-neutral-dim opacity-30'"
                     />
                     <ImageIcon
                       class="size-3"
-                      :class="m.input?.includes('image') ? 'text-info' : 'text-subtle opacity-30'"
+                      :class="m.input?.includes('image') ? 'text-info' : 'text-neutral-dim opacity-30'"
                     />
                   </div>
                 </TableCell>
-                <TableCell class="py-2 text-right tabular-nums text-subtle">{{ formatCtx(m.contextWindow) }}</TableCell>
+                <TableCell class="py-2 text-right tabular-nums text-neutral-dim">{{ formatCtx(m.contextWindow) }}</TableCell>
                 <TableCell class="py-2 text-right">
                   <!-- thinking 仅展示，编辑入口在 ProviderEditModal 行内 Select（pickStrategy）。
                        列表页此 pill 不可点击（删除原空函数 cycleThinking）。 -->
@@ -161,7 +161,7 @@
                   <Button
                     v-if="!(p.id + '/' + m.id === defaultModel)"
                     variant="secondary"
-                    class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-subtle hover:border-info hover:text-info"
+                    class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-neutral-dim hover:border-info hover:text-info"
                     @click.stop="setDefaultModel(p.id, m.id)"
                   >{{ t('settings.provider.setDefault') }}</Button>
                   <span v-else class="rounded-sm bg-info-soft px-1.5 py-0.5 text-[10px] text-info">{{ t('settings.provider.defaultModel') }}</span>
@@ -410,11 +410,11 @@ function thinkingPillClass(m: { thinkingLevelMap?: Record<string, string | null>
   const kind = thinkingKind(m)
   if (kind === 'all') return 'bg-info-soft text-info'
   if (kind === 'hightop') return 'bg-accent-soft text-accent'
-  return 'bg-surface text-muted'
+  return 'bg-surface text-neutral-mid'
 }
 
 function statusDot(status: ProviderInfo['status']): string {
-  const map = { connected: 'bg-success', not_configured: 'bg-subtle', error: 'bg-danger' }
+  const map = { connected: 'bg-success', not_configured: 'bg-neutral-dim', error: 'bg-danger' }
   return map[status]
 }
 </script>

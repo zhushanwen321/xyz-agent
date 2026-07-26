@@ -104,7 +104,7 @@
           v-if="isActive"
           variant="ghost"
           size="icon"
-          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
+          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-neutral-mid hover:bg-danger-soft hover:text-danger"
           :title="t('panel.composer.stop')"
           @click="onAbort"
         >
@@ -112,7 +112,7 @@
         </Button>
         <div
           v-else-if="isCompacting"
-          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-surface-hover text-muted"
+          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-surface-hover text-neutral-mid"
           :title="t('panel.composer.compacting')"
         >
           <Loader2 class="size-4 animate-spin" />
@@ -128,7 +128,7 @@
           v-else
           variant="default"
           size="icon"
-          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
+          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSend"
           :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : handoff.handoffMode.value ? t('panel.composer.handoffSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"

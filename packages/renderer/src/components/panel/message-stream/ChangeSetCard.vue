@@ -14,10 +14,10 @@
       data-testid="change-set-header"
       @click="toggleCollapsed"
     >
-      <ChevronRight class="size-3 shrink-0 text-muted transition-transform" :class="collapsed ? '' : 'rotate-90'" />
+      <ChevronRight class="size-3 shrink-0 text-neutral-mid transition-transform" :class="collapsed ? '' : 'rotate-90'" />
       <FileEdit class="size-3.5 shrink-0 text-info" />
-      <span class="text-[12px] font-medium text-fg">{{ t('panel.changeset.title') }}</span>
-      <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ fileChanges.length }}</span>
+      <span class="text-[12px] font-medium text-neutral-fg">{{ t('panel.changeset.title') }}</span>
+      <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim">{{ fileChanges.length }}</span>
       <!-- 状态 badge -->
       <span class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="statusClass">{{ statusLabel }}</span>
       <!-- 行数汇总 -->
@@ -38,8 +38,8 @@
         @click="onClickFile(c.filePath)"
       >
         <span class="shrink-0 rounded-sm px-1 py-0.5 font-mono text-[10px] font-semibold" :class="changeBadgeClass(c.status)">{{ changeLabel(c.status) }}</span>
-        <span class="flex-1 truncate font-mono text-fg">{{ c.filePath }}</span>
-        <ExternalLink class="size-3 shrink-0 text-subtle opacity-0 transition-opacity group-hover/cs-file:opacity-100 group-focus-within/cs-file:opacity-100" />
+        <span class="flex-1 truncate font-mono text-neutral-fg">{{ c.filePath }}</span>
+        <ExternalLink class="size-3 shrink-0 text-neutral-dim opacity-0 transition-opacity group-hover/cs-file:opacity-100 group-focus-within/cs-file:opacity-100" />
         <span v-if="c.addLines !== undefined || c.delLines !== undefined" class="shrink-0 flex items-center gap-1 text-[10px] tabular-nums">
           <span v-if="c.addLines !== undefined" class="text-success">+{{ c.addLines }}</span>
           <span v-if="c.delLines !== undefined" class="text-danger">-{{ c.delLines }}</span>
@@ -95,9 +95,9 @@ function resolveStatusClass(status: ChangeSetStatus | undefined): string {
   switch (status) {
     case 'accumulating': return 'bg-accent-soft text-accent'
     case 'ready': return 'bg-info-soft text-info'
-    case 'partially-reviewed': return 'bg-warning-soft text-warning'
+    case 'partially-reviewed': return 'bg-warn-soft text-warn'
     case 'resolved': return 'bg-success-soft text-success'
-    case 'superseded': return 'bg-surface text-subtle'
+    case 'superseded': return 'bg-surface text-neutral-dim'
     default: return 'bg-info-soft text-info'
   }
 }
