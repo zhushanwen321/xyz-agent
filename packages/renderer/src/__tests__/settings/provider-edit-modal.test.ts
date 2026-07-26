@@ -318,6 +318,26 @@ describe('W4 D15a/D15b: addModel / save 前端校验', () => {
   })
 })
 
+// ── 编辑模式模型回填（观察者视角回归测试）──
+// 背景：ModelListSection 经 provide/inject 拿到 useProviderEdit 的 localModels（ref）。
+// inject 对象的嵌套 ref 在模板里不自动解包，导致 v-if="!deps.localModels.length" 永远为 true，
+// 编辑弹窗永远显示「暂无模型」——即使 provider 有 models。此测覆盖该回归。
+describe('编辑模式打开后模型清单回填可见（inject ref 解包回归）', () => {
+  it('编辑含模型的 provider → 模型清单区域显示 model id，不显示「暂无模型」', async () => {
+    wrapper = mount(ProviderEditModal, {
+      props: { open: true, provider: providerFixture() },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // providerFixture 含 1 个 model: claude-sonnet-4-5
+    // 观察者视角断言：model id 在 DOM 里可见
+    const bodyText = document.body.textContent ?? ''
+    expect(bodyText).toContain('claude-sonnet-4-5')
+    expect(bodyText).not.toContain('暂无模型')
+  })
+})
+
 // ── W3 · D7: headers/authHeader 编辑回填 + 保存回写 ──
 //
 // 背景：ProviderInfo 有 headers?: Record<string,string> 和 authHeader?: boolean（provider.ts:9-10），

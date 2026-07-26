@@ -69,10 +69,10 @@
 
     <!-- 模型列表 -->
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <div v-if="!deps.localModels.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.providerEdit.noModels') }}</div>
+      <div v-if="!localModels.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.providerEdit.noModels') }}</div>
 
       <!-- 表头。非名称列统一 text-center，与下方行 value 单元格对齐方式一致。 -->
-      <div v-if="deps.localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] uppercase tracking-wider text-subtle">
+      <div v-if="localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] uppercase tracking-wider text-subtle">
         <span class="flex-1 text-left">{{ t('settings.providerEdit.modelLabel') }}</span>
         <span class="w-14">{{ t('settings.providerEdit.headInput') }}</span>
         <span class="w-[80px]">{{ t('settings.providerEdit.headContext') }}</span>
@@ -81,7 +81,7 @@
       </div>
 
       <div
-        v-for="(m, i) in deps.localModels"
+        v-for="(m, i) in localModels"
         :key="m.id"
         class="border-b border-border"
       >
@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { inject, unref } from 'vue'
+import { inject, unref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, ImageIcon, X, Settings2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -228,8 +228,10 @@ const { t } = useI18n()
 const ctxOptions = CONTEXT_OPTIONS
 const thinkingStrategies = THINKING_STRATEGIES
 
-// deps.expandedCompat 是 ref<Set>（useProviderEdit return 的状态）。Vue 模板对 setup 顶层 ref
-// 自动解包，但对 inject 对象的嵌套 ref 不解包——模板里 deps.expandedCompat.has() 拿到的是 ref
-// 本体（无 .has 方法）。用 unref 显式解包，模板调 isCompatExpanded(id) 间接读 Set。
+// deps.localModels / deps.expandedCompat 是 ref（useProviderEdit return 的状态）。Vue 模板对
+// setup 顶层 ref 自动解包，但对 inject 对象的嵌套 ref 不解包——模板里 deps.localModels.length
+// 拿到的是 ref 本体（.length=undefined，导致「暂无模型」永远显示）。用 computed 显式解包，
+// 模板用 localModels / isCompatExpanded 间接读。
+const localModels = computed(() => unref(deps.localModels))
 const isCompatExpanded = (modelId: string): boolean => unref(deps.expandedCompat).has(modelId)
 </script>
