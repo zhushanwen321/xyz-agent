@@ -54,6 +54,12 @@
             @edit-state-change="onEditStateChange(vi.idx, $event.editing)"
           />
           <BgNotifyCard v-else-if="vi.item.message.bgNotify" :message="vi.item.message" />
+          <!-- bash 执行结果气泡（composer-bash-execute W3）：role:'system' + bashExecution -->
+          <BashOutputBlock
+            v-else-if="vi.item.message.bashExecution"
+            :message="vi.item.message"
+            :session-id="sessionId"
+          />
           <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
           <div
             v-else-if="getGuiComponent(vi.item.message)"
@@ -169,6 +175,7 @@ import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubage
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
+import BashOutputBlock from './message-stream/BashOutputBlock.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
 import ForkNotice from './ForkNotice.vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'

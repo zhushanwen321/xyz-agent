@@ -51,6 +51,7 @@ import {
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
 import { commitMessages } from './chat-mutations'
 import { truncateToolCall } from '@/utils/truncate-tool-output'
+import { bashStartEffect, bashResultEffect } from './chat-bash-effects'
 import { useTasksStore } from './tasks'
 import { isTodoItem } from './tasks-readers'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
@@ -132,7 +133,7 @@ export interface MessageEffectContext {
  * Record<string, unknown> 占位（未收紧），handler 内用 readString 等安全窄化，
  * 与原 applyChunk 完全一致（不引入 any）。
  */
-type MessageEffectHandler = (
+export type MessageEffectHandler = (
   ctx: MessageEffectContext,
   sessionId: string,
   payload: Record<string, unknown>,
@@ -548,6 +549,10 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     next[idx] = { ...next[idx], toolCalls }
     commitMessages(messages, sid, next)
   },
+
+  // ── Bash 执行（composer-bash-execute W3）── 提取到 chat-bash-effects.ts（避免本文件超 ESLint max-lines）
+  'message.bashStart': bashStartEffect,
+  'message.bashResult': bashResultEffect,
 
   // ── pi CustomMessage 注入（扩展向对话流注入结构化通知）──
   'message.customStart': (ctx, sid, payload) => {

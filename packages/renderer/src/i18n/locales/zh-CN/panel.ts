@@ -83,6 +83,10 @@ export default {
     branchCreatedNoFrom: '已创建分支',
     thinkCount: '思考 ×{count}',
     toolCount: '工具 ×{count}',
+    bashCancelled: '已取消',
+    bashNoOutput: '（无输出）',
+    bashNoContext: '不进上下文',
+    bashCancel: '取消',
   },
   git: {
     title: 'Git',

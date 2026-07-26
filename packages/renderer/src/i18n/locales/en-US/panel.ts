@@ -83,6 +83,10 @@ export default {
     branchCreatedNoFrom: 'Branch created',
     thinkCount: 'Think ×{count}',
     toolCount: 'Tool ×{count}',
+    bashCancelled: 'cancelled',
+    bashNoOutput: '(no output)',
+    bashNoContext: 'no context',
+    bashCancel: 'Cancel',
   },
   git: {
     title: 'Git',
