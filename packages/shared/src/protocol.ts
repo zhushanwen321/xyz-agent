@@ -12,7 +12,7 @@ import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
-import type { PiLaunchPreset, PresetUsageEntry } from './pi-preset'
+import type { PiLaunchPreset, PresetUsageEntry, ThinkingLevel } from './pi-preset'
 
 // ── Client → Runtime message types
 
@@ -166,7 +166,19 @@ export interface ClientMessageMap {
   // hidden:true 创建隐藏 session（公共 session），不进 sidebar 列表，仅供内部使用。
   // presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1）。runtime 写入 .preset.json sidecar，
   // restoreSession 据此重建 pi args。可选——省略时 runtime 用默认预设。透传链路见 wave3。
-  'session.create': { cwd?: string; label?: string; hidden?: boolean; presetId?: string }
+  // modelOverride / thinkingOverride：Landing Model/Thinking Chip 的覆盖值（设计文档 §5.2）。
+  // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
+  //   - modelOverride：模型 ID 字符串（如 'anthropic/claude-sonnet-4'），覆盖 preset.modelOverride
+  //   - thinkingOverride：ThinkingLevel 值（'off'|'minimal'|'low'|'medium'|'high'|'xhigh'），覆盖 preset.thinkingLevel
+  // 两者均可选——省略时按 preset 字段或全局默认回退。
+  'session.create': {
+    cwd?: string
+    label?: string
+    hidden?: boolean
+    presetId?: string
+    modelOverride?: string
+    thinkingOverride?: ThinkingLevel
+  }
   'session.delete': { sessionId: string }
   'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
@@ -379,7 +391,10 @@ export interface ClientMessageMap {
   'preset.getCwdDefault': { cwd: string }
   'preset.setCwdDefault': { cwd: string; presetId: string }
   'preset.getCwdDefaults': Record<string, never>
-  // FR-13：预设导入/导出（前端传 JSON 字符串，runtime 解析/生成）
+  // FR-13：预设导入/导出（前端传 JSON 字符串，runtime 解析/生成）。
+  // json 是 `JSON.stringify(PresetExportPayload)` 的结果——只含 presets/defaultPresetId/version
+  // 三字段，故意排除 usage/perCwdDefaults（runtime 本地状态，不随预设分享）。
+  // 见 pi-preset.ts 的 PresetExportPayload 类型。
   'preset.export': Record<string, never>
   'preset.import': { json: string }
 }
@@ -711,6 +726,33 @@ export interface ServerMessageMapBase {
   /** config.defaultBaseBranch：config.getDefaultBaseBranch 的 reply。 */
   'config.defaultBaseBranch': { baseBranch: string }
 
+  // ── preset 域 reply（设计文档 pi-launch-presets.md，runtime PresetMessageHandler reply）──
+  // 仅登记 payload 消费型 reply（domain 读 reply 字段）。
+  // ack 型（setDefault/delete/recordUsage/setCwdDefault）刻意不登记——runtime 回 {} 空对象，
+  // 留作 Record<string, unknown> 占位（与 ServerMessageMapBase 收录原则一致：「未消费/协议待定」走占位）。
+  // preset.list：preset.list 的 reply（payload 消费型，domain 读 presets 列表）。
+  'preset.list': { presets: PiLaunchPreset[] }
+  // preset.getDefault：preset.getDefault 的 reply。presetId 始终是 string——
+  // runtime getDefaultPresetId() 在未配置时兜底返回 'builtin:full'（设计文档 §5.3）。
+  'preset.getDefault': { presetId: string }
+  // preset.create：preset.create 的 reply（回显创建后的预设，含 runtime 规范化结果）。
+  'preset.create': { preset: PiLaunchPreset }
+  // preset.update：preset.update 的 reply（回显更新后的预设）。
+  'preset.update': { preset: PiLaunchPreset }
+  // preset.getUsage：preset.getUsage 的 reply（FR-14）。key=presetId, value=PresetUsageEntry。
+  'preset.getUsage': { usage: Record<string, PresetUsageEntry> }
+  // preset.getCwdDefault：preset.getCwdDefault 的 reply（FR-15）。presetId 始终是 string——
+  // runtime getCwdDefaultPresetId(cwd) 在未配置时兜底返回 'builtin:full'。
+  'preset.getCwdDefault': { presetId: string }
+  // preset.getCwdDefaults：preset.getCwdDefaults 的 reply（FR-15）。key=cwd 绝对路径, value=presetId。
+  'preset.getCwdDefaults': { defaults: Record<string, string> }
+  // preset.export：preset.export 的 reply（FR-13）。json 是 `JSON.stringify(PresetExportPayload)`
+  //   的结果——只含 presets/defaultPresetId/version 三字段，排除 usage/perCwdDefaults。
+  //   见 pi-preset.ts 的 PresetExportPayload 类型。
+  'preset.export': { json: string }
+  // preset.import：preset.import 的 reply（FR-13）。count = 成功导入的预设数量。
+  'preset.import': { count: number }
+
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
   // session 是 SessionSummary（session-message-handler.ts:36/56 reply { session }）。
@@ -934,24 +976,26 @@ export interface ReplyPayloadMap {
   'config.setDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
   'config.getDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
   // preset 域（设计文档 pi-launch-presets.md）：runtime PresetMessageHandler reply。
-  //  - preset.list → reply { presets }（payload 消费型，domain 读 presets 列表）
-  //  - preset.getDefault → reply { presetId }（payload 消费型，domain 读默认预设 id）
-  //  - preset.setDefault → ack 型（domain register<void>，默认预设变更无独立广播通道）
-  'preset.list': { presets: PiLaunchPreset[] }
-  'preset.getDefault': { presetId: string }
+  // 全部引用 ServerMessageMapBase 中登记的精确 payload 形状（W-SH-1 收紧，SSOT）。
+  //  - preset.list / getDefault / getUsage / getCwdDefault / getCwdDefaults / export / import
+  //    → payload 消费型（domain 读 reply 字段）
+  //  - preset.setDefault / delete / recordUsage / setCwdDefault
+  //    → ack 型（domain register<void>，默认预设/cwd 默认变更无独立广播通道）
+  'preset.list': ServerMessageMap['preset.list']
+  'preset.getDefault': ServerMessageMap['preset.getDefault']
   'preset.setDefault': void
-  // preset CRUD（本 slice 新增）：create/update 返回 { preset }（payload 消费型），delete ack 型。
-  'preset.create': { preset: PiLaunchPreset }
-  'preset.update': { preset: PiLaunchPreset }
+  // preset CRUD：create/update 返回 { preset }（payload 消费型），delete ack 型。
+  'preset.create': ServerMessageMap['preset.create']
+  'preset.update': ServerMessageMap['preset.update']
   'preset.delete': void
-  // FR-14/FR-15/FR-13 新增 reply
+  // FR-14/FR-15/FR-13 reply（payload 消费型 vs ack 型）
   'preset.recordUsage': void
-  'preset.getUsage': { usage: Record<string, PresetUsageEntry> }
-  'preset.getCwdDefault': { presetId: string }
+  'preset.getUsage': ServerMessageMap['preset.getUsage']
+  'preset.getCwdDefault': ServerMessageMap['preset.getCwdDefault']
   'preset.setCwdDefault': void
-  'preset.getCwdDefaults': { defaults: Record<string, string> }
-  'preset.export': { json: string }
-  'preset.import': { count: number }
+  'preset.getCwdDefaults': ServerMessageMap['preset.getCwdDefaults']
+  'preset.export': ServerMessageMap['preset.export']
+  'preset.import': ServerMessageMap['preset.import']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted

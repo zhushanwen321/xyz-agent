@@ -35,6 +35,9 @@ export const BUILTIN_TOOLS = ['read', 'write', 'bash', 'edit', 'grep', 'find', '
  * 它们不在 ExtensionService.scanExtensions() 返回值里（仅在 getExtensionPaths 追加），
  * 因此对用户不可见、不可 exclude、不受 extensionMode 影响——见设计文档 §2.3。
  * 必须与 extension-service.ts 的 builtinExts 数组完全一致。
+ *
+ * 消费方：extension-service.ts 的 builtinExts（Subagent C 打通）。
+ * 本 shared 层仅声明标识，runtime 消费由 Wave 2 的 Subagent C 处理。
  */
 export const BUILTIN_EXTENSION_FILES = [
   'xyz-agent-extension.js',
@@ -135,9 +138,17 @@ export const DEFAULT_PRESETS: PiLaunchPreset[] = [
  * 每个 preset id 对应一条，记录使用次数和最后使用时间。
  */
 export interface PresetUsageEntry {
-  /** 使用次数（session 创建时 +1） */
+  /**
+   * 使用次数（session 创建时 +1）。
+   *
+   * @remarks count >= 0
+   */
   count: number
-  /** 最后使用时间（Unix ms） */
+  /**
+   * 最后使用时间。
+   *
+   * @remarks Unix timestamp (ms)
+   */
   lastUsed: number
 }
 
@@ -158,4 +169,56 @@ export interface PiPresetsFile {
   perCwdDefaults?: Record<string, string>
   /** schema 版本，便于未来迁移 */
   version: 1
+}
+
+/**
+ * 预设导出 payload（FR-13 导入/导出）。
+ *
+ * runtime exportPresets 只序列化 presets/defaultPresetId/version 三字段，
+ * **故意排除 usage/perCwdDefaults**（这两项是 runtime 本地状态，不随预设分享）。
+ * 与 PiPresetsFile 区别：PiPresetsFile 是磁盘全量持久化形状，PresetExportPayload 是
+ * 分享用精简形状。
+ *
+ * protocol.ts 中 `preset.export` reply 与 `preset.import` payload 的 json 字段
+ * 是 `JSON.stringify(PresetExportPayload)` 的结果。
+ */
+export interface PresetExportPayload {
+  /** 导出的预设列表（内置 + 自定义） */
+  presets: PiLaunchPreset[]
+  /** 默认预设 id（可选，导出时若用户选择包含默认设置） */
+  defaultPresetId?: string
+  /** schema 版本（与 PiPresetsFile.version 对齐，当前为 1） */
+  version: number
+}
+
+// ── 运行时类型守卫 ─────────────────────────────────────────────
+
+/** ToolMode 合法值集合（isPiLaunchPreset 校验用）。 */
+const TOOL_MODES: readonly ToolMode[] = ['all', 'allowlist', 'denylist', 'none']
+
+/** ExtensionMode 合法值集合（isPiLaunchPreset 校验用）。 */
+const EXTENSION_MODES: readonly ExtensionMode[] = ['all', 'allowlist', 'denylist', 'none']
+
+/**
+ * 运行时检查值是否为 PiLaunchPreset（含必需字段 id/name/builtin/order/toolMode/extensionMode）。
+ *
+ * 校验 6 个必填字段的类型 + toolMode/extensionMode 的字面量约束。
+ * 可选字段（description/allowedTools/deniedTools/modelOverride/thinkingLevel 等）不强制校验——
+ * 消费方按需在取用时再 narrow（与 isMessage/isSessionSummary 同策略，只保证必填字段契约）。
+ *
+ * 参考 protocol.ts 的 isMessage / isSessionSummary 写法。
+ */
+export function isPiLaunchPreset(value: unknown): value is PiLaunchPreset {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    typeof v.name === 'string' &&
+    typeof v.builtin === 'boolean' &&
+    typeof v.order === 'number' &&
+    typeof v.toolMode === 'string' &&
+    (TOOL_MODES as readonly string[]).includes(v.toolMode) &&
+    typeof v.extensionMode === 'string' &&
+    (EXTENSION_MODES as readonly string[]).includes(v.extensionMode)
+  )
 }

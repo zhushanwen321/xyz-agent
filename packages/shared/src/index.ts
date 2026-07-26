@@ -66,4 +66,21 @@ export type {
   WorkflowAgentCall,
   WorkflowRunRecord,
 } from './workflow'
-export * from './pi-preset'
+// pi-preset 用具名导出（S-SH-3）：避免 export * 导致的命名冲突与 tree-shaking 不友好。
+// 所有 type / const / 运行时守卫均显式列出，新增导出时同步在此登记。
+export type {
+  ToolMode,
+  ExtensionMode,
+  ThinkingLevel,
+  PiLaunchPreset,
+  PresetUsageEntry,
+  PiPresetsFile,
+  PresetExportPayload,
+} from './pi-preset'
+export {
+  BUILTIN_TOOLS,
+  BUILTIN_EXTENSION_FILES,
+  BUILTIN_PRESET_IDS,
+  DEFAULT_PRESETS,
+  isPiLaunchPreset,
+} from './pi-preset'
