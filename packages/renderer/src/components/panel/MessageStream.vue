@@ -149,6 +149,19 @@
         <ChevronDown class="size-4" />
       </Button>
     </Transition>
+
+    <!-- TurnRail（w4 wave IF4）：右侧导航 rail，hover 弹出 turn 列表 + viewport indicator。
+         纯展示组件，展开态/activeTurnIndex/事件全路由到此层（useTurnExpansion 与 Turn.vue 共享）。 -->
+    <TurnRail
+      :turns="railTurns"
+      :active-turn-index="activeTurnIndex"
+      :session-active="isSessionActive"
+      :panel-right-edge="panelRightEdge"
+      @jump="onJump"
+      @toggle="onToggle"
+      @expand-all="onExpandAll"
+      @collapse-all="onCollapseAll"
+    />
   </div>
 </template>
 
@@ -169,6 +182,7 @@ import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
+import TurnRail from './message-stream/TurnRail.vue'
 import ForkNotice from './ForkNotice.vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
@@ -177,6 +191,7 @@ import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
 import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
+import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
@@ -365,14 +380,28 @@ const { scrollEl, contentEl, stickToBottom, showJumpButton, onScroll, scrollToBo
 // session 切换 settling 窗口（详见 useSettlingGuard）：settling 期间 delta watch 跳过施加，让 scrollToBottom 贴底
 const { settling, startSettling } = useSettlingGuard()
 
+/* ── TurnRail（w4 wave IF4）：状态 + 事件路由下沉 useMessageStreamRail（script ≤300 行规范）。
+     rail 内部调 useTurnExpansion（与 Turn.vue 各自 per-instance Map，w1 既定设计）；
+     railTurns 派生自 renderItems。 ── */
+const rail = useMessageStreamRail({
+  sessionId: computed(() => props.sessionId),
+  renderItems,
+  scrollEl,
+  offsetOf,
+  topOffset,
+})
+const { railTurns, activeTurnIndex, panelRightEdge, onJump, onToggle, onExpandAll, onCollapseAll } = rail
+
 /**
  * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），
  * virtualList.onScrollUpdate 把 DOM scrollTop/clientHeight 同步进响应式 ref 驱动
  * visibleRange 失效重算（纯滚动场景下窗口跟随收敛，修复 liveComputed 假 computed 的 BLOCKER）。
+ * 同时更新 activeTurnIndex（rail viewport indicator 跟随滚动位置）。
  */
 function handleScroll(): void {
   onScroll()
   virtualList.onScrollUpdate()
+  rail.updateActiveTurnIndex()
 }
 
 /**
