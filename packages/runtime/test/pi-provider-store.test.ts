@@ -27,6 +27,7 @@ import {
   type PiProviderConfig,
 } from '../src/infra/pi/pi-provider-store.js'
 import { setSettingsPath } from '../src/infra/pi/pi-settings-store.js'
+import { setDiscoveryPath } from '../src/infra/pi/discovery-store.js'
 
 const mkdtempP = promisify(mkdtemp)
 const rmP = promisify(rm)
@@ -38,6 +39,12 @@ beforeEach(async () => {
   mkdirSync(join(tmpDir, 'pi', 'agent'), { recursive: true })
   setModelsPath(join(tmpDir, 'pi', 'agent', 'models.json'))
   setSettingsPath(join(tmpDir, 'pi', 'agent', 'settings.json'))
+  // [HISTORICAL] discovery.json 也必须隔离，否则 setSkillPaths 写真实路径污染用户数据。
+  // 2026-07-26 事故：本用例 skillPaths round-trip 调 setSkillPaths([tmpDir/skills-a, ...])，
+  // 但 beforeEach 漏了 setDiscoveryPath，导致 discovery-store 模块级变量绑定的真实路径
+  // (~/.xyz-agent/pi/agent/discovery.json) 被写成 tmp 路径；afterEach rm(tmpDir) 后路径失效，
+  // 用户重启 app 发现 skill 扫描路径「凭空消失」。
+  setDiscoveryPath(join(tmpDir, 'pi', 'agent', 'discovery.json'))
   refreshModels()
 })
 
