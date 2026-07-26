@@ -15,6 +15,7 @@
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
 import { getPiAgentDir, getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
+import { canonicalizePath } from '../../utils/path-utils.js'
 import { readSettings } from '../pi/pi-settings-store.js'
 import { readDisabledPackages as readDisabledPackagesFromStore } from '../pi/pi-extension-settings.js'
 import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
@@ -272,12 +273,14 @@ export class ExtensionResolver implements IExtensionResolver {
       }
       const entries = this.collectExtensionEntries(dir)
       for (const entryPath of entries) {
-        // 用入口路径的父目录名（子目录形式）或文件名（单文件形式）做 dedup key
+        // dedup key 用 canonicalPath（对齐 Pi 原生 collectAutoExtensionEntries 按路径去重语义）。
+        // [HISTORICAL] 此前用 normalizeExtName(name) 做同源内部 key，导致所有 index.ts 入口
+        // 共享 key 'index'，跨目录的 stock-tools/kelly-tools/llm-router-session 等被静默丢弃。
+        // canonicalPath 天然唯一，从结构上消除任意同名入口碰撞。
         const isFile = entryPath.endsWith('.ts') || entryPath.endsWith('.js')
-        const name = isFile ? basename(entryPath).replace(/\.(ts|js)$/, '') : basename(dirname(entryPath))
-        const extName = this.normalizeExtName(name)
-        if (!result.has(extName)) {
-          result.set(extName, isFile ? entryPath : dirname(entryPath))
+        const key = canonicalizePath(entryPath)
+        if (!result.has(key)) {
+          result.set(key, isFile ? entryPath : dirname(entryPath))
         }
       }
     }
