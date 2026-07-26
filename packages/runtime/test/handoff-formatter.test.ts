@@ -68,6 +68,25 @@ describe('wrapWithXmlTag (TC1/TC2 纯函数)', () => {
     expect(out).toContain('file="pa&amp;th&quot;with&lt;spec&gt;ials"')
   })
 
+  it('SUGGESTION 2：source 含换行 \\n \\r 时被转义为 &#10; &#13;（防破坏 xml 属性边界）', () => {
+    // session label 含换行时，不转义会让属性值跨行（属性引号边界被切断），且 xml parser
+    // 规范化属性 CR/CRLF/LF → LF 致 round-trip 不可逆。
+    const out = wrapWithXmlTag('doc', 'multi\nline\rlabel')
+    // source 属性应含 &#10;（\n）和 &#13;（\r），原换行不应在属性值里出现
+    expect(out).toContain('source="multi&#10;line&#13;label"')
+    // 原始换行不应出现在开标签里
+    const openTag = out.slice(0, out.indexOf('>'))
+    expect(openTag).not.toContain('\n')
+    expect(openTag).not.toContain('\r')
+  })
+
+  it('SUGGESTION 2：filePath 含换行时也被转义', () => {
+    const out = wrapWithXmlTag('doc', 'src', 'path/with\nnewline')
+    expect(out).toContain('file="path/with&#10;newline"')
+    const openTag = out.slice(0, out.indexOf('>'))
+    expect(openTag).not.toContain('\n')
+  })
+
   it('TC2 action 后缀文案精确匹配', () => {
     const out = wrapWithXmlTag('doc', 'src')
     expect(out.endsWith(ACTION_SUFFIX)).toBe(true)

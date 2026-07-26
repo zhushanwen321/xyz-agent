@@ -10,8 +10,8 @@
  *
  * 完成判定：pi 无 skill 专属完成事件，靠 EventInterpreter 的 onTurnFinalize opt
  * 回调（经组合根 index.ts 接线到 onTurnEnd）确认 /skill:handoff 跑完。文档内容
- * 从 agent_end 后的末条 assistant 取（降级 getHistory），不监听 file-write tool_call
- * （文件名不可预知）。
+ * 从 agent_end 后的末条 assistant 取（BLOCKER 1：tail 读 pi JSONL 文件，降级 getHistory），
+ * 不监听 file-write tool_call（文件名不可预知）。
  *
  * 编排链路全异步（runHandoff 触发 → onTurnEnd 收尾），失败/取消经两条独立通道：
  *   - 取消（abortHandoff）：inflight.aborted 标记 + 委托 SessionService.abort 中断 pi turn
@@ -21,12 +21,18 @@ import type { IMessageBroker } from '../interfaces.js'
 import type { IProcessManager } from './ports/pi-engine.js'
 import type { SessionService } from './session/session-service.js'
 import { normalizeContent } from '@xyz-agent/shared'
+import type { Segment } from '@xyz-agent/shared'
 import { wrapWithXmlTag } from './handoff-formatter.js'
+import { readTailBytes } from '../utils/jsonl.js'
 
-/** 进行中的 handoff 状态（per-session，同一 session 不可并发 handoff）。 */
+/**
+ * 进行中的 handoff 状态（per-session，同一 session 不可并发 handoff）。
+ *
+ * SUGGESTION 1：原含 startedAt / focus 字段但均未被 read（startedAt 仅 set，focus 仅 set——
+ * runHandoff 拼命令用的是入参 focus 而非 inflight.focus）。删除死字段，仅保留 aborted
+ * （abort() set → onTurnEnd line ~107 消费）。
+ */
 interface HandoffInProgress {
-  startedAt: number
-  focus?: string
   /** 用户取消标记。onTurnEnd 检测后跳过新建/注入（只清理 inflight）。 */
   aborted?: boolean
 }
@@ -35,7 +41,30 @@ interface HandoffServiceOpts {
   sessionService: SessionService
   broker: IMessageBroker
   pm: IProcessManager
+  /**
+   * 广播 session 列表（与 session-message-handler 的 create/fork/delete/rename 一致）。
+   *
+   * BLOCKER 2：runHandoff 创建新 session 后只广播 session.handoffComplete，若 WS 在该
+   * 完成窗口断开重连，session.handoffComplete 推送丢失 → 侧栏永远收不到新 session。
+   * broadcastSessionList 是标准恢复机制（renderer 重连时 sendInitialState 也用它）。
+   */
+  broadcastSessionList: () => void
+  /**
+   * push id 生成器（与 broker 其他广播点一致，避免 Date.now() 碰撞）。
+   * WARNING nextPushId：handoffComplete / message.error 原用 Date.now() 可能碰撞，
+   * 且与其他广播点 nextPushId() 不一致。
+   */
+  nextPushId: () => string
 }
+
+/** SUGGESTION 3：focus（来自客户端 payload.focus，trust boundary 外）截断阈值。 */
+const FOCUS_MAX_LENGTH = 500
+/**
+ * BLOCKER 1：extractHandoffDoc 尾读窗口大小（256KB，覆盖最近若干 turn，长 session 不全读）。
+ * 与 session-history.ts 的 TAIL_WINDOW 同量级（256KB 起步），handoff 文档总在 turn 末尾，256KB 充裕。
+ */
+// eslint-disable-next-line no-magic-numbers -- 256KB tail window，与 session-history.ts TAIL_WINDOW 对齐
+const HANDOFF_DOC_TAIL_BYTES = 256 * 1024
 
 export class HandoffService {
   /** per-session 进行中状态。同一 session 不可并发 handoff（runHandoff 守卫拒绝）。 */
@@ -60,7 +89,7 @@ export class HandoffService {
     }
     // 标记进行中（在 prompt 之前 set，保证 onTurnEnd 回调时 inflight 已有条目——
     // 否则 agent_end 早于 set 完成时 onTurnEnd 会误判为非 handoff turn 而忽略）。
-    this.inflight.set(srcSessionId, { startedAt: Date.now(), focus })
+    this.inflight.set(srcSessionId, {})
 
     const client = this.opts.pm.getClient(srcSessionId)
     if (!client) {
@@ -77,8 +106,10 @@ export class HandoffService {
       this.inflight.delete(srcSessionId)
       return
     }
-    // focus 原样拼接到 skill 命令后（pi 按首个空格切分作 args，透传到 handoff skill 的 focus 参数）。
-    const cmd = focus ? `/skill:handoff ${focus}` : '/skill:handoff'
+    // SUGGESTION 3：focus 来自客户端 payload.focus（trust boundary 外），sanitize 后拼到 pi 命令——
+    // 去换行（防注入额外行）+ 截断（防超长 prompt）。pi 按首个空格切分作 args 透传到 handoff skill。
+    const safeFocus = focus ? sanitizeFocus(focus) : ''
+    const cmd = safeFocus ? `/skill:handoff ${safeFocus}` : '/skill:handoff'
     // client.prompt 抛错时 inflight 残留——但 onTurnEnd 永不触发（pi turn 没跑起来），
     // 故在此 catch 清理，避免泄漏 + 让 handler 走 error envelope。
     try {
@@ -106,6 +137,13 @@ export class HandoffService {
     try {
       if (stopReason === 'aborted' || inflight.aborted) {
         return  // 用户取消，不执行新建/注入
+      }
+      // WARNING 3：pi 跑 /skill:handoff 以 stopReason='error' 结束（model error / skill 失败）。
+      // 继续往下走可能取到 partial/error 的末条 assistant 当文档注入——按失败处理广播错误，
+      // 跳过编排（与 'aborted' 并列分支）。参考空文档分支（broadcastHandoffError）模式。
+      if (stopReason === 'error') {
+        this.broadcastHandoffError(sessionId, 'handoff 失败：pi 报错')
+        return
       }
 
       // 取文档：pi 跑完 /skill:handoff 后末条 assistant 即文档内容。
@@ -147,10 +185,20 @@ export class HandoffService {
       // 早于前端订阅建立，pi 流式 message.* 事件被 events.dispatchSession 静默丢弃）。
       // 对齐 fork-ask（useForkActions.ts:109-113 send 前先建订阅）。doc 是 wrapWithXmlTag 包装后的
       // 完整文档，前端直接 send 不需再处理。
+      //
+      // BLOCKER 2：先 broadcastSessionList 再 handoffComplete——session 级 broadcast 在创建流程
+      // 内部发出会早于 renderer 订阅；session.handoffComplete 是 session 级消息（按 srcSessionId 路由），
+      // 若 WS 在 handoff 完成窗口断开重连则丢失（无订阅者）。broadcastSessionList 是标准恢复机制
+      // （与 session.create/fork/delete/rename 一致，session-message-handler.ts:43/71/134/228）。
+      this.opts.broadcastSessionList()
+      // WARNING 1：payload 加 sessionId（与 message.error 一致，message.error 在 line ~226 已含 sessionId）。
+      // renderer useConnection.ts:123-124 对每条缺 sessionId 的 session.* 消息打 console.warn。
+      // 保留 srcSessionId / newSessionId 不变（renderer 已依赖）。sessionId 用 srcSessionId 让路由命中源 panel。
+      // WARNING nextPushId：用 nextPushId()（与 broker 其他广播点一致），避免 Date.now() 碰撞。
       this.opts.broker.broadcast({
         type: 'session.handoffComplete',
-        id: `handoff_${Date.now()}`,
-        payload: { srcSessionId: sessionId, newSessionId: newId, doc: wrapped },
+        id: this.opts.nextPushId(),
+        payload: { sessionId, srcSessionId: sessionId, newSessionId: newId, doc: wrapped },
       })
     } catch (e) {
       // 编排失败（create 抛错），广播错误反馈到源 session 对话流。
@@ -192,23 +240,50 @@ export class HandoffService {
 
   /**
    * 从 agent_end 后的对话流提取 handoff 文档。
-   * getHistory 取末条 assistant.content（normalizeContent 拍平 string | Segment[] 联合类型）。
-   * 末条 assistant 即 /skill:handoff 的产出（pi turn 内最后一条 assistant 消息）。
+   *
+   * BLOCKER 1：原依赖 sessionService.getHistory()（走 pi RPC，agent_end 时 pi 可能尚未把
+   * 最终 turn flush 到内存 history——RPC 返回空且因 isGenerating 守卫不回退文件尾读）→
+   * 取不到末条 assistant → 误报「文档为空」。改为直接 tail 读 session JSONL 文件
+   * （pi 持久化文件已落盘——pi agent_end 即意味着该 turn 已 _persist），从尾部倒序找
+   * 最后一条 type='message' && role='assistant' 的 entry。fs 失败 / 无 sessionFilePath /
+   * 无匹配 entry 时 fallback 调 getHistory() 作兜底（保留原行为作为最后手段）。
    *
    * @returns 文档字符串；无 assistant 消息（skill 未产出）返回 undefined
    */
   private async extractHandoffDoc(sessionId: string): Promise<string | undefined> {
-    const { messages } = await this.opts.sessionService.getHistory(sessionId)
-    if (!messages || messages.length === 0) return undefined
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i]
-      if (msg.role === 'assistant') {
-        // content 可能是 string（assistant 热路径）或 Segment[]（少数情况），统一归一为纯文本
-        const content = normalizeContent(msg.content)
-        return content || undefined
+    // 从 active session 视图拿 sessionFilePath（pi 落盘的 JSONL 路径）。
+    const session = this.opts.sessionService.getSession(sessionId)
+    const filePath = session?.sessionFilePath
+    if (filePath) {
+      try {
+        const doc = readLastAssistantFromJsonlFile(filePath)
+        if (doc !== undefined) return doc
+        // 尾窗口未命中（极长 session 且 handoff turn 早被挤出 256KB 窗口）——继续走兜底。
+      } catch (e) {
+        // fs 失败（EACCES 等）——继续走 getHistory 兜底，并记录日志便于诊断。
+        console.warn(`[handoff] extractHandoffDoc tail read failed for ${filePath}, falling back to getHistory:`, e)
       }
     }
-    return undefined
+    // 兜底：保留原 getHistory 行为（pi RPC + 文件 tail fallback）。其 isGenerating 守卫
+    // 不可靠（agent_end 时序），故只作最后手段。
+    try {
+      const { messages } = await this.opts.sessionService.getHistory(sessionId)
+      if (!messages || messages.length === 0) return undefined
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]
+        if (m.role === 'assistant') {
+          // content 可能是 string（assistant 热路径）或 Segment[]（少数情况），统一归一为纯文本
+          const content = normalizeContent(m.content)
+          return content || undefined
+        }
+      }
+      return undefined
+    } catch (e) {
+      // getHistory 也失败（pi RPC broken / 无 client / 文件被删）——记录后返回 undefined，
+      // onTurnEnd 上层据此广播「文档为空」错误反馈。
+      console.warn(`[handoff] extractHandoffDoc getHistory fallback failed for ${sessionId}:`, e)
+      return undefined
+    }
   }
 
   /**
@@ -220,10 +295,61 @@ export class HandoffService {
    * 错误只能经 server-push 通道反馈到对话流让用户看到。
    */
   private broadcastHandoffError(sessionId: string, errorMsg: string): void {
+    // WARNING nextPushId：用 nextPushId()（与 broker 其他广播点一致），避免 Date.now() 碰撞。
     this.opts.broker.broadcast({
       type: 'message.error',
-      id: `handoff_err_${Date.now()}`,
+      id: this.opts.nextPushId(),
       payload: { sessionId, message: errorMsg },
     })
   }
+}
+
+/**
+ * BLOCKER 1：tail 读 pi JSONL 文件，倒序找最后一条 type='message' && role='assistant' &&
+ * content 非空的 entry，返回归一化后的文本。
+ *
+ * pi JSONL entry 结构见 session-history.ts 的 mapEntriesToPiMessages：
+ *   { type: 'message', id: ..., message: { role: 'assistant', content: string | Segment[], ... } }
+ * content 可能是 string（热路径）或 Segment[]（少数情况），用 normalizeContent 拍平。
+ *
+ * 用 readTailBytes 做 256KB 尾读（长 session 不全读）。返回值：
+ *   - undefined：尾窗口内无匹配 assistant entry（调用方继续走 getHistory 兜底）
+ *   - string：归一化后的文档文本
+ */
+function readLastAssistantFromJsonlFile(filePath: string): string | undefined {
+  const entries = readTailBytes(filePath, HANDOFF_DOC_TAIL_BYTES)
+  if (entries === null) return undefined  // 文件不存在 / 不可读
+  // 倒序找最后一条 assistant message entry（content 非空）
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (typeof entry !== 'object' || entry === null) continue
+    const e = entry as Record<string, unknown>
+    if (e.type !== 'message') continue
+    const message = e.message
+    if (typeof message !== 'object' || message === null) continue
+    const m = message as Record<string, unknown>
+    if (m.role !== 'assistant') continue
+    // content 类型可能是 string | Segment[]（联合），交给 normalizeContent 处理。
+    // Segment 类型见 shared/segments.ts；此处在 JSONL 边界，类型不可静态保证，
+    // 按运行时形状收窄到 normalizeContent 接受的联合类型。
+    const raw = m.content
+    const content = typeof raw === 'string'
+      ? normalizeContent(raw)
+      : Array.isArray(raw)
+        ? normalizeContent(raw as Segment[])
+        : ''
+    if (content) return content
+  }
+  return undefined
+}
+
+/**
+ * SUGGESTION 3：sanitize 客户端传入的 focus（trust boundary 外）。
+ *
+ * - 去换行（CR/LF → 空格）：防注入额外行，破坏 /skill:handoff args 切分
+ * - 截断到 FOCUS_MAX_LENGTH 字符：防超长 prompt（DoS + 上下文污染）
+ * - trim：去首尾空白
+ */
+function sanitizeFocus(focus: string): string {
+  return focus.replace(/[\r\n]/g, ' ').trim().slice(0, FOCUS_MAX_LENGTH)
 }

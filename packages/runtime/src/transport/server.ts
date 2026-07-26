@@ -222,6 +222,12 @@ export class RuntimeServer implements IMessageBroker {
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     this.broker.sendError(ws, code, message, id, details)
   }
+  /**
+   * fast-handoff（BLOCKER 2 / WARNING nextPushId）：暴露 broker 的 broadcast helper / push id 生成器，
+   * 供 index.ts 注入到 HandoffService（与 session-message-handler 的 create/fork/delete/rename 一致）。
+   */
+  broadcastSessionList(): void { this.broker.broadcastSessionList() }
+  nextPushId(): string { return this.broker.nextPushId() }
 
   // ── Message routing ───────────────────────────────────────────
 

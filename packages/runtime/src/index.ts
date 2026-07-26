@@ -152,15 +152,15 @@ async function main(): Promise<void> {
   // the interpreter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
   //
-  // handoffService 同样经闭包惰性引用：onTurnFinalize 在此接线（session 创建时），
-  // 但 handoffService?.onTurnEnd 实际调用发生在每个 turn 结束时——那时 handoffService
-  // 必已初始化（下方 sessionService 之后即实例化）。`?.` 防御首次 turn 早于初始化的极端时序。
+  // WARNING TDZ：显式声明 handoffService（在下方实例化），让 onTurnFinalize 闭包内引用意图明确，
+  // 不依赖 TDZ + `?.` 掩盖潜在 bug。原 const handoffService 声明在下方 L256，闭包 L205 引用之靠
+  // const 的 TDZ 安全性（闭包执行晚于 main 流，那时已赋值）。改成 let 提前声明后，TS / reader 都能
+  // 看清前向引用意图。
   //
-  // TDZ（temporal dead zone）前向引用：与上方 sessionService 同模式——L202 闭包引用 handoffService
-  // 在其声明（下方 const）之前，但闭包仅在 createAdapter 被调用（session 创建期，晚于 main 执行完）
-  // 时执行，那时 handoffService 已赋值。const 不会触发 TDZ ReferenceError（访问点不在 main 同步流）。
-  //
-  // fileChangeDiff：infra 纯函数的 port 实现（无状态，全局单例复用）。
+  // TDZ 前向引用：onTurnFinalize 闭包（在下方 createAdapter 内）引用本变量，但实际赋值在下方
+  // new HandoffService(...) 处。声明与首次赋值分离是刻意的——此处 let 而非 const，让意图明确。
+  // eslint-disable-next-line prefer-const -- TDZ 前向引用（见上注释），首次赋值在下方 HandoffService 实例化处
+  let handoffService: HandoffService | undefined
   const fileChangeDiff = new FileChangeDiffAdapter()
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
@@ -253,7 +253,16 @@ async function main(): Promise<void> {
   // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
   // + server（IMessageBroker 广播）+ pm（getClient 取源 session pi 句柄）。与 GitService/FileService 同模式
   // （经 server.setServices 注入到 handler），但额外经 onTurnFinalize opt 接到 EventInterpreter（见上方闭包）。
-  const handoffService = new HandoffService({ sessionService, broker: server, pm })
+  //
+  // BLOCKER 2 / WARNING nextPushId：注入 broadcastSessionList + nextPushId（来自 broker），
+  // 与 session-message-handler 的 create/fork/delete/rename 一致。
+  handoffService = new HandoffService({
+    sessionService,
+    broker: server,
+    pm,
+    broadcastSessionList: () => server.broadcastSessionList(),
+    nextPushId: () => server.nextPushId(),
+  })
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)

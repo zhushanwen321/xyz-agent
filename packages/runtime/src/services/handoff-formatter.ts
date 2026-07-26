@@ -13,6 +13,10 @@
 /**
  * 转义 xml 属性值：& " < >（含换行的 session label 会破坏 xml 属性引号边界，必须转义）。
  * 单引号不需转义（属性用双引号包裹）。顺序敏感：& 必须先转义（否则后续转义产生的 &quot; 等会被二次转义）。
+ *
+ * SUGGESTION 2：注释原声称处理换行但实现未转义 \n / \r——补全（\n → &#10;，\r → &#13;）。
+ * 换行在 xml 属性值中会破坏属性引号边界（属性值应单行），且 parser 规范化属性时
+ * CR/CRLF/LF → LF，导致 round-trip 不可逆。转义后属性值单行无歧义。
  */
 function escapeXmlAttr(s: string): string {
   return s
@@ -20,6 +24,8 @@ function escapeXmlAttr(s: string): string {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/\n/g, '&#10;')
+    .replace(/\r/g, '&#13;')
 }
 
 /**
