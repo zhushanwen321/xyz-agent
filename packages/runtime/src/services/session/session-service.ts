@@ -10,7 +10,7 @@
  *
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, isAbsolute, resolve } from 'node:path'
 import { expandHome } from '../../utils/path-utils.js'
@@ -398,11 +398,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (client) {
       try {
         const result = await client.getEntries() as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+        // leafId 是 session 当前叶子 entry id（branch 后指向新叶子）。当前 getHistory 全量拉取不消费它，
+        // 保留供未来增量拉取（getEntries(since=leafId)）或 branch 历史完整性判断用。
         const entries = result.data?.entries ?? []
         if (entries.length > 0) {
           // 读 segments.json sidecar（runtime 直接读文件，不经 IPC——IPC 是 renderer→main，runtime 是独立进程）。
           // 文件缺失/损坏 → null（rebuildHistoryFromEntries 全降级为占位文本，非硬错误）。
-          const segmentsMetadata = readSegmentsMetadataFile(sessionId)
+          const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
           const rebuilt = rebuildHistoryFromEntries(entries, segmentsMetadata)
           // entry 树重建返回全量历史（get_entries 不截断），truncated=false
           return { messages: rebuilt.messages, truncated: false }
@@ -980,13 +982,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
  * （不持 electron app 句柄），不能走 IPC。runtime 直接读 <dataDir>/attachments/<sessionId>/segments.json。
  *
  * 文件缺失/损坏（JSON parse 失败 / entries 非数组）→ 返回 null（rebuildHistoryFromEntries 据此
- * 全降级为占位文本，非硬错误）。同步读：sidecar 是小文件（每条 user message 一条 entry），不阻塞事件循环。
+ * 全降级为占位文本，非硬错误）。异步读：与周围 getEntries RPC / readFile 一致，sidecar 是小文件
+ * （每条 user message 一条 entry）但统一走异步避免事件循环阻塞。
  */
-function readSegmentsMetadataFile(sessionId: string): SegmentsMetadataFile | null {
+async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMetadataFile | null> {
   try {
     const filePath = join(getAttachmentsDir(sessionId), 'segments.json')
     if (!existsSync(filePath)) return null
-    const raw = readFileSync(filePath, 'utf-8')
+    const raw = await readFile(filePath, 'utf-8')
     const parsed = JSON.parse(raw) as SegmentsMetadataFile
     if (!parsed || !Array.isArray(parsed.entries)) return null
     return parsed

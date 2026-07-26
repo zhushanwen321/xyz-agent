@@ -84,11 +84,16 @@ export async function handleImagePaste(
 
   let result: { path: string; fileName: string; displayName: string; id: string; persisted: boolean } | undefined
   try {
+    // sanitize name（defense in depth，与 main 进程 privileged-handlers.ts 的清理对称）：
+    // 剥离路径分隔符 + 控制字符，防恶意/异常 blob.name（如 ../etc/passwd）穿越。
+    // renderer 是第一个信任边界，提前清理；main 进程会再 sanitize 一次，双层防护。
+    const rawName = blob.name || 'image'
+    const sanitizedName = rawName.replace(/[/\\:\x00-\x1f]/g, '').trim() || 'image'
     result = await writeSessionImage({
       sessionId: sessionId ?? '',
       base64,
       mimeType: blob.type,
-      name: blob.name || 'image',
+      name: sanitizedName,
     })
   } catch {
     // IPC 写入失败（磁盘满 / 权限 / 主进程 throw / 超大被拒）→ 降级文本提示

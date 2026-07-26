@@ -100,9 +100,23 @@ export function getTmpDir(env: NodeJS.ProcessEnv = process.env): string {
  *
  * 纯函数无副作用——不创建目录（mkdir recursive 在 IPC handler 内做），仅做路径推导。
  *
- * @param sessionId 会话 id（决定子目录分区）
+ * **路径穿越防护**：sessionId 必须匹配 `^[A-Za-z0-9_-]+$`，否则 throw（防 `../` 逃逸
+ * attachments/ 写到任意位置）。合法 sessionId 来源均满足此格式：
+ * - pi 的 uuidv7（如 `019f9bd8-ee50-779d-a912-4a661683cf69`）
+ * - xyz-agent store 的 `u-<uuid>`（如 `u-a1b2c3d4-e5f6-7890-abcd-ef1234567890`）
+ *
+ * 此校验是纵深防御——即便渲染层 XSS 传入恶意 sessionId，也不会写到 attachments 之外。
+ *
+ * @param sessionId 会话 id（决定子目录分区，必须匹配 `^[A-Za-z0-9_-]+$`）
  * @param dataDir   可选数据根目录（测试注入）；缺省读 getDataDir()
+ * @throws Error 当 sessionId 含路径分隔符或非法字符（含 `/` `\` `..` `;` 等）
  */
 export function getAttachmentsDir(sessionId: string, dataDir?: string): string {
+  // 校验 sessionId 字符集防路径穿越：只允许字母/数字/连字符/下划线
+  //（uuidv7 的 `019f9bd8-...` 和 xyz-agent 的 `u-<uuid>` 格式都满足）。
+  // 拒绝 / \ .. 等路径分隔符（攻击载荷 `../../../etc` 在 join 后会逃逸 attachments/）。
+  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+    throw new Error(`invalid sessionId (path traversal blocked): ${sessionId}`)
+  }
   return join(dataDir ?? getDataDir(), 'attachments', sessionId)
 }

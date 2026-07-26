@@ -14,13 +14,28 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { IMAGE_LIMITS } from '@xyz-agent/shared'
 import type { SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import { isValidExternalUrl } from './input-validators.js'
+
+/**
+ * 判断 path 是否严格在 prefix 目录之下（不含 prefix 本身，防 escape）。
+ *
+ * 词法判定（不解析 symlink）：path.relative(prefix, path) 规范化后，
+ * 结果非空串 / 不以 `..` 开头 / 不跨盘符（Windows）→ 视为在 prefix 下。
+ * 用于 migrate-session-image 的 fromPath 白名单守门（防渲染层 XSS 借 move 外泄敏感文件）。
+ *
+ * 与 runtime/src/utils/path-utils.ts 的 isStrictlyUnder 等价，但 main 进程不依赖 runtime 内部，
+ * 故在此内联（纵深防御，校验逻辑极简）。
+ */
+function isUnderPrefix(p: string, prefix: string): boolean {
+  const rel = relative(resolve(prefix), resolve(p))
+  return rel !== '' && !rel.startsWith('..') && !resolve(prefix, rel).startsWith('..')
+}
 
 /** 生成 YYYYMMDD-HHMM 时间戳（displayName 用，本地时区） */
 function formatTimestamp(): string {
@@ -245,9 +260,17 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         try {
           renameSync(tmpPath, filePath)
         } catch {
-          // Windows: 目标已存在时 rename 失败，unlink 后重试
+          // Windows: 目标已存在时 rename 失败，unlink 后重试。
+          // eslint-disable-next-line taste/no-silent-catch -- 目标不存在属预期（首次写入），忽略 enoent 是正确的；非 enoent 错误也无法在此恢复（后续 rename 会抛）
           try { unlinkSync(filePath) } catch { /* 目标不存在，忽略 */ }
-          renameSync(tmpPath, filePath)
+          try {
+            renameSync(tmpPath, filePath)
+          } catch (retryErr) {
+            // 第二次仍失败：清理残留 tmpPath 避免累积，抛出错误让调用方感知。
+            // eslint-disable-next-line taste/no-silent-catch -- tmpPath 可能已被 rename 消费（并发竞争），unlink 失败时无需清理；retryErr 才是要抛的真错误
+            try { unlinkSync(tmpPath) } catch { /* tmpPath 可能已被 rename 消费，忽略 */ }
+            throw retryErr
+          }
         }
       } catch (err) {
         console.error('[ipc] write-segments-metadata failed:', err)
@@ -256,30 +279,9 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
     },
   )
 
-  // read-segments-metadata：读 <dataDir>/attachments/<sessionId>/segments.json。
-  // 文件不存在/损坏 → 返回 null（调用方降级为 textToSegments）。
-  ipcMain.handle(
-    'read-segments-metadata',
-    async (
-      _event,
-      payload: { sessionId: string },
-    ): Promise<SegmentsMetadataFile | null> => {
-      const { sessionId } = payload
-      if (!sessionId) return null
-      try {
-        const dir = getAttachmentsDir(sessionId)
-        const filePath = join(dir, 'segments.json')
-        if (!existsSync(filePath)) return null
-        const raw = readFileSync(filePath, 'utf-8')
-        const parsed = JSON.parse(raw) as SegmentsMetadataFile
-        if (!parsed || !Array.isArray(parsed.entries)) return null
-        return parsed
-      } catch (err) {
-        console.warn('[ipc] read-segments-metadata failed (returning null):', err)
-        return null
-      }
-    },
-  )
+  // read-segments-metadata 已删除（W6）：renderer 重开回填走 runtime 直接读文件
+  //（session-service.ts 的 readSegmentsMetadataFile），不经 IPC。preload 暴露与 renderer
+  // 包装也已同步删除，此 handler 无消费点。保留 write-segments-metadata（renderer 发送时写）。
 
   // migrate-session-image：landing 态图片落 tmpdir 后，session.create 成功时迁移到 attachments 持久化目录。
   // 解决「landing 粘图 → tmpdir → session 创建 → path 仍指 tmpdir → 重开 session 几天后图丢」的缺口。
@@ -304,9 +306,20 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
         throw new Error(`source file not found: ${fromPath}`)
       }
       try {
+        // getAttachmentsDir 内已校验 sessionId 字符集（防路径穿越）
         const dir = getAttachmentsDir(sessionId)
         mkdirSync(dir, { recursive: true })
-        const newPath = join(dir, fileName)
+        // sanitize fileName：复用 write-session-image 的清理逻辑（剥离 / \ : + 控制字符）。
+        // 防 fileName 含 ../ 逃逸 attachments 目录（与 write-session-image 对称）。
+        const sanitized = fileName.replace(/[/\\:\x00-\x1f]/g, '').trim() || 'image'
+        const newPath = join(dir, sanitized)
+        // fromPath 白名单：只允许从 OS tmpdir 或目标 session 的 attachments 目录迁移。
+        // 防渲染层 XSS 把任意敏感文件（如 ~/.ssh/id_rsa）move 到 attachments 后经 local-file 外泄。
+        const allowedSources = [tmpdir(), dir]
+        const resolvedFrom = resolve(fromPath)
+        if (!allowedSources.some((prefix) => isUnderPrefix(resolvedFrom, prefix))) {
+          throw new Error(`migrate-session-image fromPath outside allowed sources: ${fromPath}`)
+        }
         renameSync(fromPath, newPath)
         return { path: newPath }
       } catch (err) {

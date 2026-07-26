@@ -48,6 +48,7 @@ export type Segment =
  * skill → `/skill:name`，file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
  * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读）。
  * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug）。
+ * image 后紧跟 text 不补空格（image 产出的 `\n${path}\n` 已有换行分隔，再补空格会污染行首）。
  *
  * 收敛说明：原本 segmentsToPrompt 与 segmentsToText 分两份实现，因为 file inline 需要
  * fileContexts Map 才分开。删除 file inline 后，所有 segment 序列化收敛到本函数一处，
@@ -62,8 +63,16 @@ export function segmentsToText(segments: Segment[]): string {
     const prev = i > 0 ? segments[i - 1] : null
     switch (seg.type) {
       case 'text':
-        // 前一个 segment 是 chip 类（skill/file/mention）且当前 text 不以空格开头时，补空格
-        if (prev && prev.type !== 'text' && seg.text && !seg.text.startsWith(' ')) {
+        // 前一个 segment 是 chip 类（skill/file/mention）且当前 text 不以空格开头时，补空格分隔。
+        // 但 image 段例外——image 产出 `\n${path}\n`（前后已有换行），紧跟的 text 不需要再补空格，
+        // 否则产出 `\n/path\n 文本`（行首空格污染 pi prompt）。
+        if (
+          prev &&
+          prev.type !== 'text' &&
+          prev.type !== 'image' && // image 已有 \n 分隔，不补空格
+          seg.text &&
+          !seg.text.startsWith(' ')
+        ) {
           parts.push(' ')
         }
         parts.push(seg.text)

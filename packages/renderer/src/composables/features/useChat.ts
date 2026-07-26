@@ -173,14 +173,22 @@ export function useChat() {
    * 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
    * LLM 自己调 read 工具读（vision/非 vision 模型都能处理）。不再传 images base64 字段。
    *
-   * @param sessionId   目标 session
-   * @param segments    结构化 segments（含 image/file/text/skill/mention）
-   * @param clientUuid  调用方 appendUser 生成的 user message id（`u-<uuid>`），
-   *                    用作 segments.json 主键 + prompt 标记 uuid（建立 clientUuid ↔
-   *                    pi userEntryId 映射，extension input hook 剥标记后写 custom entry）
+   * @param sessionId           目标 session
+   * @param segments            结构化 segments（含 image/file/text/skill/mention）
+   * @param clientUuid          调用方 appendUser 生成的 user message id（`u-<uuid>`），
+   *                            用作 segments.json 主键 + prompt 标记 uuid（建立 clientUuid ↔
+   *                            pi userEntryId 映射，extension input hook 剥标记后写 custom entry）
+   * @param precomputedPromptText 调用方已算过的 segmentsToPrompt(segments)（trim 后非空）。
+   *                            send/editAndResend 各有空检查 trim 校验（segmentsToPrompt 一次），
+   *                            传入复用避免 submitSegments 内部再算一遍（S4 修复，热路径去重）。
    */
-  async function submitSegments(sessionId: string, segments: Segment[], clientUuid: string): Promise<void> {
-    const promptText = segmentsToPrompt(segments)
+  async function submitSegments(
+    sessionId: string,
+    segments: Segment[],
+    clientUuid: string,
+    precomputedPromptText?: string,
+  ): Promise<void> {
+    const promptText = precomputedPromptText ?? segmentsToPrompt(segments)
     // 写 segments.json sidecar（重开 session 时回填 image/file badge 用）。
     // 异步 fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只是降级为占位文本，非硬错误）。
     // landing 态 session 尚未创建时（sessionId 为占位）不写——submitFirstMessage 在 session.create 后
@@ -216,8 +224,8 @@ export function useChat() {
   async function send(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
     if (segments.length === 0) return
-    const promptTextCheck = segmentsToPrompt(segments)
-    if (!promptTextCheck.trim()) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim()) return
 
     // [B 策略 D-001] busy 时自动转 steer（追加上下文，不打断当前回合）
     if (chat.isActive(sid)) {
@@ -231,7 +239,8 @@ export function useChat() {
     ensureStreamSubscription(sid, chat, session)
     chat.addPendingSend(sid)
     try {
-      await submitSegments(sid, segments, clientUuid)
+      // S4：复用上面算过的 promptText，避免 submitSegments 内部再调一次 segmentsToPrompt。
+      await submitSegments(sid, segments, clientUuid, promptText)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
@@ -361,10 +370,14 @@ export function useChat() {
    * 经 segmentsToText 产出裸路径进 prompt 文本（不丢）。
    *
    * 显式接收 sessionId：编辑可发生在非 active 的 standby panel，不能依赖全局 activeId。
+   *
+   * 孤立 sidecar 条目：editAndResend 写新 clientUuid 条目，旧消息（truncateFrom 截断的）
+   * 的 sidecar 条目残留。不影响功能（重开按 piEntryId→clientUuid 精确匹配，孤立条目不引用），
+   * 占少量磁盘（~200B/条）。完整清理随 session 删除/压缩统一治理（YAGNI，不在本函数做）。
    */
   async function editAndResend(sessionId: string, userMessageId: string, segments: Segment[]): Promise<void> {
-    const promptTextCheck = segmentsToPrompt(segments)
-    if (!promptTextCheck.trim() || chat.isActive(sessionId)) return
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim() || chat.isActive(sessionId)) return
     chat.truncateFrom(sessionId, userMessageId, true)
     // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
     // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
@@ -372,7 +385,8 @@ export function useChat() {
     ensureStreamSubscription(sessionId, chat, session)
     chat.addPendingSend(sessionId)
     try {
-      await submitSegments(sessionId, segments, clientUuid)
+      // S4：复用上面算过的 promptText，避免 submitSegments 内部再调一次 segmentsToPrompt。
+      await submitSegments(sessionId, segments, clientUuid, promptText)
     } catch (e) {
       // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。

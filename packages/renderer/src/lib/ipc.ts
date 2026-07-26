@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
+import type { SegmentsMetadataEntry } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -122,21 +122,15 @@ export async function migrateSessionImage(payload: {
 /**
  * 追加/覆盖一条 segments 元数据到 sidecar（<dataDir>/attachments/<sessionId>/segments.json）。
  * web/mock 环境无 preload → api 或方法不存在 → 返回 undefined（调用方降级）。
+ *
+ * 注意：只保留 write 通路。read sidecar 由 runtime 直接读文件（session-service.ts
+ * readSegmentsMetadataFile），不经 IPC，故无 readSegmentsMetadata 包装（W6 清理）。
  */
 export async function writeSegmentsMetadata(payload: {
   sessionId: string
   entry: SegmentsMetadataEntry
 }): Promise<void | undefined> {
   return api?.writeSegmentsMetadata?.(payload)
-}
-
-/**
- * 读 segments sidecar。文件不存在/损坏 → null。
- */
-export async function readSegmentsMetadata(payload: {
-  sessionId: string
-}): Promise<SegmentsMetadataFile | null | undefined> {
-  return api?.readSegmentsMetadata?.(payload)
 }
 
 /** win/linux 自绘 traffic light 点击：最小化窗口（mac 系统圆点不走此处） */

@@ -330,6 +330,15 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
         (node as HTMLElement).dataset?.chipType === 'image')
     ) {
       const chip = node as HTMLElement
+      // W2 修复：跳过粘贴/拖入占位符（path 仍是 __paste_pending_<uuid>__ / __drag_pending_<uuid>__）。
+      // 占位符在 await handleImagePaste 完成前是临时态，path 无效。若用户在此窗口期按 Enter 发送，
+      // 占位符不应进 segments（否则 segmentsToPrompt 产出无效路径污染 pi prompt）。
+      // 占位符 chip 留在 DOM（rejectChips.add 让它不进 text），但不进 segments——发送时被静默丢弃。
+      const chipPath = chip.dataset.chipPath ?? ''
+      if (/^__(?:paste|drag)_pending_[0-9a-f-]+__$/.test(chipPath)) {
+        rejectChips.add(chip)
+        continue
+      }
       flushText()
       segments.push({
         type: 'image',

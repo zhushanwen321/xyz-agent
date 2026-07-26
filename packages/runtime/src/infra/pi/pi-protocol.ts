@@ -631,12 +631,6 @@ export interface PiSessionBranchSummaryEntry extends PiSessionEntryBase {
 }
 
 /**
- * @deprecated 别名，保留向后兼容。等价于 PiSessionCompactionEntry。
- * 新代码用 PiSessionCompactionEntry / PiSessionBranchSummaryEntry 替代（精确字面量 type）。
- */
-export type PiSessionSummaryEntry = PiSessionCompactionEntry | PiSessionBranchSummaryEntry
-
-/**
  * get_entries RPC 请求（对应 pi rpc-types.ts:63 `{ type: "get_entries"; since?: string }`）。
  *
  * since 可选：传 entry id 时返回该 entry 之后的所有 entry（增量拉取，pi rpc-mode.ts:614-620

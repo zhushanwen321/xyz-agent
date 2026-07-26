@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
+import type { SegmentsMetadataEntry } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -78,11 +78,6 @@ export interface ElectronAPI {
     sessionId: string
     entry: SegmentsMetadataEntry
   }): Promise<void>
-  /**
-   * 读 segments sidecar（<dataDir>/attachments/<sessionId>/segments.json）。
-   * 文件不存在/损坏 → null（调用方降级为 textToSegments）。
-   */
-  readSegmentsMetadata(payload: { sessionId: string }): Promise<SegmentsMetadataFile | null>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -149,8 +144,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('migrate-session-image', payload),
   writeSegmentsMetadata: (payload: { sessionId: string; entry: SegmentsMetadataEntry }) =>
     ipcRenderer.invoke('write-segments-metadata', payload),
-  readSegmentsMetadata: (payload: { sessionId: string }) =>
-    ipcRenderer.invoke('read-segments-metadata', payload),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)

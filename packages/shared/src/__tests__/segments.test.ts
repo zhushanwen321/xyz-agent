@@ -97,13 +97,23 @@ describe('segmentsToText', () => {
     expect(result).not.toContain('[图片')
   })
 
-  it('image + text 混合时，image 裸路径独占一行 + text 紧随', () => {
+  it('image + text 混合时，image 裸路径独占一行 + text 紧随（不补空格，image 的 \\n 已分隔）', () => {
     const segs: Segment[] = [
       { type: 'image', id: 'img-a', path: '/tmp/a.png', fileName: 'a.png', displayName: 'a.png' },
       { type: 'text', text: '这张图怎么修' },
     ]
-    // image 前后补 \n，text 紧接 image 的尾 \n（text 段紧跟在非 text 段后会补空格分隔）
-    expect(segmentsToText(segs)).toBe('\n/tmp/a.png\n 这张图怎么修')
+    // image 前后补 \n，text 紧接 image 的尾 \n（image 段自带 \n 分隔，紧跟的 text 不补空格，
+    // 否则产出 `\n/tmp/a.png\n 这张图怎么修` 行首空格污染 pi prompt）
+    expect(segmentsToText(segs)).toBe('\n/tmp/a.png\n这张图怎么修')
+  })
+
+  it('skill 后紧跟 text 仍补空格（与 image 区分，skill 无 \\n 分隔）', () => {
+    const segs: Segment[] = [
+      { type: 'skill', name: 'review' },
+      { type: 'text', text: '这段代码' },
+    ]
+    // skill 无 \n 自分隔，text 紧跟 skill 时仍需补空格，否则产出 `/skill:review这段代码` 粘连
+    expect(segmentsToText(segs)).toBe('/skill:review 这段代码')
   })
 
   it('连续多个 image segment：每个路径独占一行（无编号递增）', () => {

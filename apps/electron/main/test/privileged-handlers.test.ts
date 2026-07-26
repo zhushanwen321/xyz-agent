@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { homedir } from 'node:os'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { BrowserWindow } from 'electron'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
@@ -440,11 +440,77 @@ describe('migrate-session-image IPC handler', () => {
       fileName: writeResult.fileName,
     })).rejects.toThrow('migrate-session-image requires non-empty sessionId')
   })
+
+  it('B1: fromPath 在白名单外（home 目录）→ throw，不 move 文件（防任意文件移动）', async () => {
+    const migrateSessionImage = handlers.get('migrate-session-image')!
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // 在 home 下造一个文件，尝试迁移（不应被允许——home 既非 tmpdir 也非 attachments）
+    const evilFile = join(homedir(), '.xyz-agent-test-evil-' + Date.now() + '.txt')
+    writeFileSync(evilFile, 'secret')
+    writtenPaths.push(evilFile)
+    expect(existsSync(evilFile)).toBe(true)
+    await expect(migrateSessionImage({}, {
+      fromPath: evilFile,
+      sessionId: 'sess-b1',
+      fileName: 'leaked.txt',
+    })).rejects.toThrow('migrate-session-image failed')
+    // 原文件仍在原位（未被 move）
+    expect(existsSync(evilFile)).toBe(true)
+    // 目标 attachments 目录下没有 leaked.txt
+    expect(existsSync(join(getDataDir(), 'attachments', 'sess-b1', 'leaked.txt'))).toBe(false)
+    errSpy.mockRestore()
+  })
+
+  it('B1: fileName 含路径分隔符 → sanitize 剥离，newPath 落在 attachments/<sid>/ 下不穿越', async () => {
+    const migrateSessionImage = handlers.get('migrate-session-image')!
+    // 先在 tmpdir 造一个 fromPath（合法来源）
+    const bytes = Buffer.from([0x01, 0x02])
+    const fromPath = join(tmpdir(), 'xyz-test-migrate-' + Date.now() + '.png')
+    writeFileSync(fromPath, bytes)
+    writtenPaths.push(fromPath)
+    // fileName 含穿越片段
+    const result = (await migrateSessionImage({}, {
+      fromPath,
+      sessionId: 'sess-sanitize',
+      fileName: '../../../etc/foo.png',
+    })) as { path: string }
+    writtenPaths.push(result.path)
+    // newPath 落在 attachments/sess-sanitize/ 下（starts with 守门，穿越后不会满足）
+    const expectedDir = join(getDataDir(), 'attachments', 'sess-sanitize')
+    expect(result.path.startsWith(expectedDir)).toBe(true)
+    // 路径分隔符被剥离——结果路径相对 expectedDir 只剩一个扁平文件名（不含任何 / 或 \ 段）
+    const rel = relative(expectedDir, result.path)
+    expect(rel).not.toMatch(/[\\/]/)
+    // 文件已 move 到 newPath，内容 round-trip
+    expect(existsSync(result.path)).toBe(true)
+    expect(Array.from(readFileSync(result.path))).toEqual(Array.from(bytes))
+    expect(existsSync(fromPath)).toBe(false)
+  })
+
+  it('B1: sessionId 含 ../ → throw（getAttachmentsDir 校验防路径穿越）', async () => {
+    const migrateSessionImage = handlers.get('migrate-session-image')!
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // 在 tmpdir 造合法来源文件（绕过 fromPath 白名单，专门测 sessionId 校验）
+    const fromPath = join(tmpdir(), 'xyz-test-migrate-sid-' + Date.now() + '.png')
+    writeFileSync(fromPath, Buffer.from([0x01]))
+    writtenPaths.push(fromPath)
+    await expect(migrateSessionImage({}, {
+      fromPath,
+      sessionId: '../etc',
+      fileName: 'x.png',
+    })).rejects.toThrow('migrate-session-image failed')
+    // 原文件未被 move
+    expect(existsSync(fromPath)).toBe(true)
+    errSpy.mockRestore()
+  })
 })
 
-describe('write/read-segments-metadata IPC handler', () => {
+describe('write-segments-metadata IPC handler', () => {
   // 真实文件 I/O：复用 write-session-image 测试的 tmpdir 清理模式（afterEach rmSync）。
   // 每个用例用独立 sessionId 子目录，互不干扰（getAttachmentsDir 按 sessionId 分区）。
+  //
+  // 注意：read-segments-metadata handler 已删除（W6），原 round-trip 校验改用 readFileSync
+  // 直接读 segments.json 验证落地内容（不再经 IPC read）。
   const writtenDirs: string[] = []
   afterEach(() => {
     for (const d of writtenDirs.splice(0)) {
@@ -477,25 +543,29 @@ describe('write/read-segments-metadata IPC handler', () => {
     }
   }
 
-  it('write 单条 → read 返回含该条（round-trip 保真）', async () => {
+  /** 读 segments.json 并 parse（替代已删的 read-segments-metadata IPC，纯测试辅助） */
+  function readSidecar(sessionId: string): SegmentsMetadataFile {
+    const dir = join(getDataDir(), 'attachments', sessionId)
+    const raw = readFileSync(join(dir, 'segments.json'), 'utf-8')
+    return JSON.parse(raw) as SegmentsMetadataFile
+  }
+
+  it('write 单条 → 落地 segments.json 含该条（round-trip 保真）', async () => {
     const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
     const sessionId = 'seg-test-write-read-single'
     writtenDirs.push(join(getDataDir(), 'attachments', sessionId))
 
     const entry = makeEntry('u-aaa')
     await writeSegmentsMetadata({}, { sessionId, entry })
 
-    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
-    expect(file).not.toBeNull()
+    const file = readSidecar(sessionId)
     expect(file.version).toBe(1)
     expect(file.entries).toHaveLength(1)
     expect(file.entries[0]).toEqual(entry)
   })
 
-  it('write 多条（不同 clientUuid）→ read 返回全部', async () => {
+  it('write 多条（不同 clientUuid）→ 落地含全部', async () => {
     const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
     const sessionId = 'seg-test-write-multi'
     writtenDirs.push(join(getDataDir(), 'attachments', sessionId))
 
@@ -506,14 +576,13 @@ describe('write/read-segments-metadata IPC handler', () => {
     await writeSegmentsMetadata({}, { sessionId, entry: entry2 })
     await writeSegmentsMetadata({}, { sessionId, entry: entry3 })
 
-    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    const file = readSidecar(sessionId)
     expect(file.entries).toHaveLength(3)
     expect(file.entries.map((e) => e.clientUuid).sort()).toEqual(['u-1', 'u-2', 'u-3'])
   })
 
   it('write 同 clientUuid 两次（editAndResend 场景）→ 后者覆盖前者，不重复', async () => {
     const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
     const sessionId = 'seg-test-edit-resend'
     writtenDirs.push(join(getDataDir(), 'attachments', sessionId))
 
@@ -524,22 +593,14 @@ describe('write/read-segments-metadata IPC handler', () => {
     await writeSegmentsMetadata({}, { sessionId, entry: v1 })
     await writeSegmentsMetadata({}, { sessionId, entry: v2 })
 
-    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    const file = readSidecar(sessionId)
     expect(file.entries).toHaveLength(1)
     expect(file.entries[0].timestamp).toBe(9999)
     expect(file.entries[0].segments).toEqual([{ type: 'text', text: 'edited' }])
   })
 
-  it('read 不存在的 session → null', async () => {
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
-    const sessionId = 'seg-test-not-exist-' + Date.now()
-    const result = await readSegmentsMetadata({}, { sessionId })
-    expect(result).toBeNull()
-  })
-
   it('write 时目录不存在 → 自动创建并写入', async () => {
     const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
     const sessionId = 'seg-test-mkdir-' + Date.now()
     const dir = join(getDataDir(), 'attachments', sessionId)
     writtenDirs.push(dir)
@@ -550,28 +611,12 @@ describe('write/read-segments-metadata IPC handler', () => {
     // 目录 + segments.json 已创建
     expect(existsSync(dir)).toBe(true)
     expect(existsSync(join(dir, 'segments.json'))).toBe(true)
-    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    const file = readSidecar(sessionId)
     expect(file.entries).toHaveLength(1)
-  })
-
-  it('read 损坏的 segments.json → null（不抛错）', async () => {
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
-    const sessionId = 'seg-test-corrupted-' + Date.now()
-    const dir = join(getDataDir(), 'attachments', sessionId)
-    writtenDirs.push(dir)
-    // 手动构造一个损坏的 segments.json
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'segments.json'), '{not valid json!!!', 'utf-8')
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const result = await readSegmentsMetadata({}, { sessionId })
-    expect(result).toBeNull()
-    warnSpy.mockRestore()
   })
 
   it('write 到已损坏的 segments.json → 重置后写入成功（best-effort，不阻断）', async () => {
     const writeSegmentsMetadata = handlers.get('write-segments-metadata')!
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
     const sessionId = 'seg-test-write-corrupted-' + Date.now()
     const dir = join(getDataDir(), 'attachments', sessionId)
     writtenDirs.push(dir)
@@ -584,7 +629,7 @@ describe('write/read-segments-metadata IPC handler', () => {
     await writeSegmentsMetadata({}, { sessionId, entry: makeEntry('u-recover') })
     warnSpy.mockRestore()
 
-    const file = (await readSegmentsMetadata({}, { sessionId })) as SegmentsMetadataFile
+    const file = readSidecar(sessionId)
     expect(file.entries).toHaveLength(1)
     expect(file.entries[0].clientUuid).toBe('u-recover')
   })
@@ -596,12 +641,6 @@ describe('write/read-segments-metadata IPC handler', () => {
       writeSegmentsMetadata({}, { sessionId: '', entry: makeEntry('u-x') }),
     ).rejects.toThrow('write-segments-metadata requires non-empty sessionId')
     errSpy.mockRestore()
-  })
-
-  it('read 空 sessionId → null（不调 fs）', async () => {
-    const readSegmentsMetadata = handlers.get('read-segments-metadata')!
-    const result = await readSegmentsMetadata({}, { sessionId: '' })
-    expect(result).toBeNull()
   })
 
   it('atomic 写：临时文件 .tmp 写完才 rename（写后 .tmp 不残留）', async () => {

@@ -2,7 +2,6 @@ import type { Message, Segment, SegmentsMetadataFile } from '@xyz-agent/shared'
 import type {
   PiSessionEntry,
   PiSessionMessageEntry,
-  PiSessionCustomEntry,
   PiHistoryMessage,
 } from './pi-protocol.js'
 import { convertPiHistory } from './message-converter.js'
@@ -95,6 +94,16 @@ export function rebuildHistoryFromEntries(
       const data = entry.data as Partial<ClientMsgIdData> | null | undefined
       // 防御：data 可能是任意形状（pi 不校验 custom entry data），字段类型不对就跳过
       if (data && typeof data.clientUuid === 'string' && typeof data.userEntryId === 'string') {
+        // W3：同一 userEntryId 被写多条 custom entry 时（extension 重试/重发场景），
+        // 后写覆盖前写。设计上每条 user message 只写一条，概率低；但冲突时记录 warn
+        // 让问题可见（不阻断——错配只会导致 badge 回填到错误 user message，非崩溃）。
+        const existing = clientUuidMap.get(data.userEntryId)
+        if (existing !== undefined && existing !== data.clientUuid) {
+          console.warn(
+            `[entry-tree-builder] clientUuidMap conflict for userEntryId=${data.userEntryId}: ` +
+            `existing=${existing}, new=${data.clientUuid} (later wins)`,
+          )
+        }
         clientUuidMap.set(data.userEntryId, data.clientUuid)
       }
       continue
@@ -132,8 +141,3 @@ export function rebuildHistoryFromEntries(
 
   return { messages: converted, clientUuidMap }
 }
-
-// ── 类型 re-export（供 services 层按需引用，不直接碰 pi-protocol） ─────
-// PiSessionCustomEntry 此处 re-export 仅为消费侧断言 custom entry data 时可选引用；
-// 当前无消费点（重建逻辑封装在本文件内），保留以备 services 层未来直接读 custom entry。
-export type { PiSessionCustomEntry }

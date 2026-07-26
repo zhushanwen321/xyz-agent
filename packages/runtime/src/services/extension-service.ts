@@ -313,19 +313,23 @@ export class ExtensionService {
       return !disabledSet.has(`npm:${pkgName}`)
     })
 
-    // 追加文件型 extension
-    if (existsSync(this.extensionFilePath)) {
-      filtered.push(this.extensionFilePath)
-    }
-    // 追加第二个文件型 extension（system-prompt 扩展，必须在 agent extension 之后：
-    // spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
-    if (existsSync(this.systemPromptExtensionFilePath)) {
-      filtered.push(this.systemPromptExtensionFilePath)
-    }
-    // 追加第三个文件型 extension（client-msg-id-mapper，input hook 剥标记 + appendEntry 写映射）。
-    // 位置无关（不参与 system prompt 链式快照），追加在最后保持稳定顺序。
-    if (existsSync(this.clientMsgIdMapperFilePath)) {
-      filtered.push(this.clientMsgIdMapperFilePath)
+    // builtin extension：existsSync 为 false 时 warn（防 dev 模式路径漂移静默失效，
+    // 正是本次 PR 修复的 monorepo 重构遗留 bug 的温床）。与 getSkillPaths L703 同模式。
+    const builtinExts: Array<{ path: string; name: string }> = [
+      // 追加顺序有意义：system-prompt 扩展必须在 agent extension 之后
+      // （spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
+      { path: this.extensionFilePath, name: 'xyz-agent-extension.js' },
+      { path: this.systemPromptExtensionFilePath, name: 'xyz-system-prompt-extension.js' },
+      // client-msg-id-mapper：input hook 剥标记 + appendEntry 写映射。
+      // 位置无关（不参与 system prompt 链式快照），追加在最后保持稳定顺序。
+      { path: this.clientMsgIdMapperFilePath, name: 'xyz-client-msg-id-mapper.js' },
+    ]
+    for (const ext of builtinExts) {
+      if (existsSync(ext.path)) {
+        filtered.push(ext.path)
+      } else {
+        log.warn(`builtin extension not found, skipping: ${ext.name} (path: ${ext.path})`)
+      }
     }
 
     return filtered

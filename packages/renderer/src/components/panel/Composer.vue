@@ -151,6 +151,7 @@ import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
 import { useComposerContextChips } from '@/composables/panel/useComposerContextChips'
 import { useComposerDragDrop } from '@/composables/panel/useComposerDragDrop'
 import { useComposerBoxClass } from '@/composables/panel/useComposerBoxClass'
+import { useComposerRestore } from '@/composables/panel/useComposerRestore'
 
 const props = withDefaults(
   defineProps<{
@@ -264,18 +265,13 @@ const { attachedItems, refreshAttachedItems, onRemoveContextChip } = useComposer
 const composerBoxRef = ref<HTMLElement | null>(null)
 const { isDragOver, onDragOver, onDragLeave, onDrop } = useComposerDragDrop(inputRef, composerBoxRef, refreshAttachedItems, sessionIdRef)
 
-/** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
-function clearInput(): void {
-  draft.value = ''
-  if (props.sessionId) drafts.delete(props.sessionId)
-  inputRef.value?.clear()
-}
-
-/** 发送失败恢复草稿到输入区 */
-function restoreInput(text: string): void {
-  draft.value = text
-  inputRef.value?.setText(text)
-}
+// 发送后清空 / 失败恢复（clearInput / restoreInput / restoreSegments）——见 useComposerRestore
+const { clearInput, restoreInput, restoreSegments } = useComposerRestore({
+  draft,
+  inputRef,
+  drafts,
+  sessionId: sessionIdRef,
+})
 
 // Fork 提问模式（FR-13/14/15）：forkMode 状态真源 + 跨组件触发通道 + fork 发送/Esc/视觉派生
 // —— 见 useComposerForkMode。发送/清空等副作用经 deps 注入（保持 fork 状态真源单一）。
@@ -321,7 +317,9 @@ async function onSend(): Promise<void> {
     try {
       await flow.submitFirstMessage(segments, localThinkingLevel.value)
     } catch (e) {
-      restoreInput(text)
+      // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
+      // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
+      restoreSegments(segments)
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('panel.panel.taskFailed', { error: msg }))
     } finally {
@@ -346,7 +344,9 @@ async function onSend(): Promise<void> {
     await send(props.sessionId!, segments)
   } catch (e) {
     // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免输入丢失。
-    restoreInput(text)
+    // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
+    // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
+    restoreSegments(segments)
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('panel.panel.sendFailed', { error: msg }))
   } finally {

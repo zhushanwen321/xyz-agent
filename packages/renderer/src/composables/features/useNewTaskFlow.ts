@@ -292,7 +292,10 @@ export function useNewTaskFlow() {
         // migrated 是 Map<oldPath, newPath>，更新 segments
         finalSegments = segments.map((s) => {
           if (s.type === 'image' && migrated.has(s.path)) {
-            return { ...s, path: migrated.get(s.path)! }
+            // 迁移成功：更新 path + 重置 needsMigrate=false。
+            // 不重置会导致 store 中 needsMigrate 过期（文件已在 attachments，
+            // 不再需要迁移），后续 editAndResend 重发会保留该 flag 误导（S5 修复）。
+            return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
           }
           return s
         })

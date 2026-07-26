@@ -133,4 +133,40 @@ describe('TC7: getSegmentsFromEl image 分支', () => {
     expect(segments).toHaveLength(1)
     expect(segments[0]).toMatchObject({ type: 'image', needsMigrate: true })
   })
+
+  it('W2: getSegmentsFromEl 跳过 __paste_pending_ / __drag_pending_ 占位符（防占位进 pi prompt）', () => {
+    // 场景：用户粘图/拖图时插了占位 badge（path=__paste_pending_<uuid>__），
+    // 在 await handleImagePaste 完成前按 Enter 发送——占位符 path 无效，不应进 segments。
+    // 这里同时构造 paste 与 drag 两种占位 + 1 个真实 image + text，断言占位被静默丢弃。
+    const { el, chipCommands } = setupChipCommands()
+    el.textContent = '前'
+    // 占位 badge：path/fileName 用 __paste_pending_<uuid>__ / __drag_pending_<uuid>__
+    chipCommands.insertImageBadge(
+      '__paste_pending_11111111-1111-1111-1111-111111111111__',
+      '__paste_pending_11111111-1111-1111-1111-111111111111__',
+      '粘贴中...',
+    )
+    chipCommands.insertImageBadge(
+      '__drag_pending_22222222-2222-2222-2222-222222222222__',
+      '__drag_pending_22222222-2222-2222-2222-222222222222__',
+      '拖入中…',
+    )
+    // 真实 image badge（已回填的真实 path）
+    chipCommands.insertImageBadge('/tmp/real.png', 'real.png', 'real.png')
+    // 末尾追加文本
+    el.querySelector('.image-chip:nth-last-of-type(1)')?.after(document.createTextNode('后'))
+
+    const segments = getSegmentsFromEl(el)
+    // 占位符被丢弃：只剩「前」text + 真实 image + 「后」text，无任何 pending path
+    expect(segments).toEqual([
+      { type: 'text', text: '前' },
+      expect.objectContaining({ type: 'image', path: '/tmp/real.png' }),
+      { type: 'text', text: '后' },
+    ])
+    // 关键断言：没有任何 segment 的 path 形如 __paste_pending_ / __drag_pending_
+    const allPaths = segments
+      .filter((s): s is { type: 'image'; path: string } => s.type === 'image')
+      .map((s) => s.path)
+    expect(allPaths.some((p) => /__(?:paste|drag)_pending_/.test(p))).toBe(false)
+  })
 })
