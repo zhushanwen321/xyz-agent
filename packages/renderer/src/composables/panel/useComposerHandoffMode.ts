@@ -5,7 +5,7 @@
  * - handoffMode 状态真源：是否处于「从末条 assistant 交接」的备注模式
  * - handoffSource：记录 handoff 来源（srcSessionId = handoff 出发的 session）
  * - enterHandoffMode / exitHandoffMode：进入（记来源 + 聚焦输入框 + 互斥退出 fork 模式）/ 退出（复位状态）
- * - 跨组件触发通道：watch useHandoffModeChannel 的 signal（Sidebar ⌘H 请求），命中本 session 时 enterHandoffMode
+ * - 跨组件触发通道：watch useHandoffModeChannel 的 signal（Sidebar ⌘J 请求），命中本 session 时 enterHandoffMode
  * - handoffBoxClass / handoffPlaceholder：handoff 模式派生的 class 与 placeholder 文案
  * - handleHandoffEsc：Esc 退出（清空输入 + exitHandoffMode），返回是否已消费
  * - handleHandoffSend：handoff 模式发送（调 handoff(srcId, text) + 退出），返回是否已消费
@@ -83,7 +83,7 @@ export function useComposerHandoffMode(
     handoffSource.value = null
   }
 
-  // 跨组件触发通道：Sidebar 全局快捷键（⌘H → enterHandoffModeFromLastAssistant）经 signal
+  // 跨组件触发通道：Sidebar 全局快捷键（⌘J → enterHandoffModeFromLastAssistant）经 signal
   // 请求 Composer 进 handoff 模式。Composer 仍是 handoffMode 状态真源。
   const { signal: handoffEnterSignal } = useHandoffModeChannel()
   watch(handoffEnterSignal, (req) => {

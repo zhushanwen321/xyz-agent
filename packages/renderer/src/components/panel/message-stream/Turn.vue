@@ -296,7 +296,7 @@
             data-testid="handoff-btn"
             :disabled="isHandingOff"
             :title="t('panel.message.handoff')"
-            @click="onHandoff(lastAssistant)"
+            @click="onHandoff()"
           >
             <Upload class="size-3" />
           </Button>
@@ -382,8 +382,16 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const chat = useChatStore()
 const { editAndResend } = useChat()
+/** 最后一条 assistant（收尾 summary + MD 复制 + fork/handoff 的目标消息；useTurnActions 守卫用） */
+const lastAssistant = computed(() => {
+  const as = props.turn.assistants
+  return as[as.length - 1] ?? null
+})
 /** fork/handoff hover action handler（后台 fork / fork 提问 / 后台 handoff / handoff 备注）下沉 useTurnActions。 */
-const { onFork, onForkAsk, onHandoff, onHandoffAsk } = useTurnActions(computed(() => props.sessionId))
+const { onFork, onForkAsk, onHandoff, onHandoffAsk } = useTurnActions({
+  sessionId: computed(() => props.sessionId),
+  lastAssistant,
+})
 const { open: openDrawer } = useSideDrawer()
 const fileTreeStore = useFileTreeStore()
 
@@ -502,12 +510,6 @@ const { elapsed } = useTurnElapsed(
     expanded.value = false
   },
 )
-
-/** 最后一条 assistant（收尾 summary + MD 复制 + fork 的目标消息） */
-const lastAssistant = computed(() => {
-  const as = props.turn.assistants
-  return as[as.length - 1] ?? null
-})
 
 /** 变更集卡（W10）：最后一条 assistant 的 fileChanges + store 里的变更集状态 */
 const changeSetFileChanges = computed(() => lastAssistant.value?.fileChanges ?? [])

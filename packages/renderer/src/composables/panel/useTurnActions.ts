@@ -20,22 +20,33 @@ import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
 import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
 import { useToast } from '@/composables/useToast'
 
+/** Turn 操作 handler 依赖（传 ComputedRef 而非裸值：handler 调用时读当前响应式值） */
+interface TurnActionsDeps {
+  /** Turn 所在 session（fork/handoff 源，双 panel standby 场景不能依赖全局 activeId） */
+  sessionId: ComputedRef<string>
+  /**
+   * 末条 assistant（存在性守卫用）。handoff 不接收 msg 参数——pi 在 /skill:handoff 内部
+   * 自取末条 assistant 打包，无需 messageId 锚点；前端仍需保证「有 assistant 可交接」才触发。
+   */
+  lastAssistant: ComputedRef<Message | null>
+}
+
 /**
  * Turn 操作 handler composable。
  *
- * @param sessionId Turn 所在 session（fork/handoff 源，双 panel standby 场景不能依赖全局 activeId）。
- *   传 ComputedRef 而非裸 string：Turn.vue 的 props.sessionId 是响应式的，handler 调用时读当前值。
+ * sessionId / lastAssistant 通过 deps 注入（ComputedRef，handler 调用时读当前响应式值）。
  */
-export function useTurnActions(sessionId: ComputedRef<string>): {
+export function useTurnActions(deps: TurnActionsDeps): {
   /** fork 后台：从指定 assistant 空白 fork，留在原线（includeFrom=true） */
   onFork: (msg: Message) => Promise<void>
   /** fork 提问：从指定 assistant 进 composer fork 模式（发 signal） */
   onForkAsk: (msg: Message) => void
   /** handoff 后台：从末条 assistant 打包文档到新 session（pi 跑 /skill:handoff） */
-  onHandoff: (msg: Message) => Promise<void>
+  onHandoff: () => Promise<void>
   /** handoff 备注：进 composer handoff 模式（发 signal，可附 focus 说明） */
   onHandoffAsk: (msg: Message) => void
 } {
+  const { sessionId, lastAssistant } = deps
   const { t } = useI18n()
   const { error: toastError } = useToast()
   const { forkSession, handoff: handoffAction } = useSidebar()
@@ -69,10 +80,14 @@ export function useTurnActions(sessionId: ComputedRef<string>): {
   /**
    * handoff 后台（fast-handoff）：从末条 assistant 打包文档到新 session（pi 跑 /skill:handoff）。
    * 完成经 session.handoffComplete 广播 → useHandoffEffect 跳转新 session。
-   * 失败时 toast 反馈（与 onFork 对称）。msg 仅作存在性守卫（pi 自取末条 assistant，无 messageId 锚点）。
+   * 失败时 toast 反馈（与 onFork 对称）。
+   *
+   * 不接收 msg 参数：pi 在 /skill:handoff 内部自取末条 assistant，无 messageId 锚点（与 onFork 用 msg.id 不对称）。
+   * 保留「有 assistant 可交接」存在性守卫，但改读注入的 lastAssistant（模板按钮已 v-if="lastAssistant"，
+   * 此守卫作防御性兜底——防止非模板路径/测试无 assistant 时触发）。重复点击由按钮 disabled=isHandingOff 防护。
    */
-  async function onHandoff(msg: Message): Promise<void> {
-    if (!msg) return
+  async function onHandoff(): Promise<void> {
+    if (!lastAssistant.value) return
     try {
       await handoffAction(sessionId.value)
     } catch (e) {

@@ -1,5 +1,5 @@
 import { onMounted, watch, type ComputedRef } from 'vue'
-import type { Message } from '@xyz-agent/shared'
+import { normalizeContent, type Message } from '@xyz-agent/shared'
 
 interface MessageStreamScrollDeps {
   currentMessages: ComputedRef<Message[]>
@@ -37,12 +37,15 @@ export function useMessageStreamScroll(deps: MessageStreamScrollDeps): void {
     },
   )
 
-  // streaming 中 text 追加也触发滚动（按最后一条消息 content 长度）
+  // streaming 中 text 追加也触发滚动（按最后一条消息归一化后的文本长度）。
+  // content 是 string | Segment[]：.length 对 string 是字符数、对 Segment[] 是元素数，语义不一致；
+  // 用 normalizeContent 统一取纯文本长度，类型安全且对 token 级追加仍敏感。
   watch(
     () => {
       const list = deps.currentMessages.value
       const last = list[list.length - 1]
-      return last?.content.length ?? 0
+      if (!last) return 0
+      return normalizeContent(last.content).length
     },
     () => {
       if (deps.lastRenderTurn.value?.isStreaming) {

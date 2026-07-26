@@ -159,6 +159,7 @@ import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
 import { useComposerHandoffMode } from '@/composables/panel/useComposerHandoffMode'
+import { useComposerModeVisual } from '@/composables/panel/useComposerModeVisual'
 
 const props = withDefaults(
   defineProps<{
@@ -179,6 +180,11 @@ const isActive = computed(() => {
   if (!props.sessionId) return false
   return chatStore.isActive(props.sessionId)
 })
+
+// handoff 编排真源：setup 同步取一次（对齐 fork 模式 useComposerForkMode.ts:61）。不能在 deps.handoff
+// 闭包内「发送时才调」useSidebar()——handleHandoffSend 是 async，闭包在 await 后微任务里调 useSidebar()
+// 无 active effect scope → onScopeDispose 不注册 → session.list 订阅 refCount 泄漏（违反 CLAUDE.md 规则 #2）。
+const { handoff: handoffAction } = useSidebar()
 
 // 模型 + 思考等级状态（含 landing 态延迟 apply）—— 见 useComposerModelThinking
 const {
@@ -279,49 +285,43 @@ const fork = useComposerForkMode(sessionIdRef, {
   restoreInput,
 })
 
-// Handoff 模式（fast-handoff）—— 见 useComposerHandoffMode。与 fork 互斥。
+// Handoff 模式（fast-handoff）—— 见 useComposerHandoffMode。与 fork 互斥。复用上方 setup 顶部同步取到的 handoffAction。
 const handoff = useComposerHandoffMode(sessionIdRef, {
   inputRef,
   setSending: (value) => { isSending.value = value },
   clearInput,
   restoreInput,
   exitForkMode: fork.exitForkMode,
-  handoff: (srcSessionId, focus) => useSidebar().handoff(srcSessionId, focus),
+  handoff: (srcSessionId, focus) => handoffAction(srcSessionId, focus),
 })
-// 互斥：fork 翻 true 时退出 handoff（fork composable 不感知 handoff）
+// 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
+// ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。
 watch(() => fork.forkMode.value, (isFork) => {
   if (isFork && handoff.handoffMode.value) handoff.exitHandoffMode()
 })
 
 const hasInput = computed(() => draft.value.trim().length > 0)
-/** 可发送：有输入且非活跃（流式/派发）非 sending 非 compacting */
-const canSend = computed(() => hasInput.value && !isActive.value && !isSending.value && !isCompacting.value)
+/** 忙时（流式/派发/发送中/压缩中）—— canSend 与 canHandoffSend 共用，避免重复守卫 */
+const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
+const canSend = computed(() => hasInput.value && !isBusy.value)
 
-/** composer-box class：fork/handoff 模式 > 流式 steer 呼吸 > 普通聚焦 ring */
-const boxClass = computed(() => [
-  fork.forkBoxClass.value
-    || handoff.handoffBoxClass.value
-    || (isActive.value
-      ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
-      : hasInput.value
-        ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
-        : ''),
-  isSending.value && 'opacity-[0.55]',
-])
-
-const placeholder = computed(() =>
-  fork.forkPlaceholder.value
-    ?? handoff.handoffPlaceholder.value
-    ?? (isActive.value ? t('panel.composer.steerHint') : t('panel.composer.inputHint')),
-)
+// composer-box 视觉派生（boxClass / placeholder 三级链：fork > handoff > 默认）—— 见 useComposerModeVisual
+const { boxClass, placeholder } = useComposerModeVisual({
+  forkBoxClass: fork.forkBoxClass,
+  handoffBoxClass: handoff.handoffBoxClass,
+  forkPlaceholder: fork.forkPlaceholder,
+  handoffPlaceholder: handoff.handoffPlaceholder,
+  isActive,
+  hasInput,
+  isSending,
+})
 
 /** 发送。分支优先级：fork → handoff → landing → /compact → 普通 send。 */
 async function onSend(): Promise<void> {
-  // handoff 模式允许空输入；其余模式要求 hasInput。忙时（流式/发送/压缩）一律拦截。
-  const canHandoffSend = handoff.handoffMode.value && !isActive.value && !isSending.value && !isCompacting.value
+  // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
+  const canHandoffSend = handoff.handoffMode.value && !isBusy.value
   if (!canSend.value && !canHandoffSend) return
   const text = draft.value
-  // 模式发送：同步守卫模式开关再 await，避免非模式态 microtask 延迟正常 send。
   if (fork.forkMode.value && await fork.handleForkSend(text)) return
   if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
   if (props.variant === 'landing') {
@@ -402,16 +402,13 @@ function onKeydown(e: KeyboardEvent): void {
   if (fork.handleForkEsc(e)) return // Fork 模式 Esc 退出（仅 composer 聚焦时到达，不与全局 Esc 冲突）
   if (handoff.handleHandoffEsc(e)) return // Handoff 模式 Esc 退出（对称 fork，互斥下不会同时活跃）
   // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
-  if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+  const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+  if (bareArrow && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
     e.preventDefault()
-    if (inputRef.value?.moveCaretVertical('up') === 'moved') return
-    handleArrowUp()
-    return
-  }
-  if (e.key === 'ArrowDown' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
-    e.preventDefault()
-    if (inputRef.value?.moveCaretVertical('down') === 'moved') return
-    handleArrowDown()
+    const dir = e.key === 'ArrowUp' ? 'up' : 'down'
+    if (inputRef.value?.moveCaretVertical(dir) === 'moved') return
+    if (dir === 'up') handleArrowUp()
+    else handleArrowDown()
     return
   }
   if (e.key !== 'Enter' || e.shiftKey) return
