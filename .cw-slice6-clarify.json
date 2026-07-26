@@ -1,0 +1,24 @@
+{
+  "clarifications": [
+    {
+      "question": "send() 提取 image segment 后如何读文件转 base64？renderer 在 contextIsolation 下无 node fs，已有能力能否复用，需不需要新增 IPC？",
+      "resolution": "不新增 IPC，复用已注册的 local-file:// 协议（apps/electron/main/main.ts:172 protocol.handle('local-file')）+ renderer 标准 fetch。image segment 的 path 是 slice4 write-tmp-image IPC 写到 os.tmpdir() 的绝对路径（拖拽/+菜单图片项则是用户磁盘原 path），均在 local-file 白名单内（allowedPrefixes 含 tmpdir()/process.cwd()/~/Documents|Desktop|Downloads，main.ts:188-194）。读取：fetch(`local-file:///${encodeURIComponent(path)`) → blob() → arrayBuffer() → 复用 useImageAttachment 同款分块 btoa 转 base64（大图防爆栈）。base64 不含 data: 前缀（对齐 message.send images 形状 {data;mimeType}，shared/protocol.ts:199）。mimeType 从 blob.type 取（粘贴图恒为 image/*）。理由：(1) local-file 协议是 DetailPane.vue 图片渲染既用的同一条读路径（main.ts:172），fetch 经同一 protocol.handle 走同一白名单校验，零新权限面；(2) 新增 read-tmp-image IPC 会重复 local-file handler 逻辑且需改 main+preload 两处，违背最小改动；(3) web/mock 环境 fetch local-file:// 会 reject（无 protocol.handle），走降级（读失败的图跳过，见下条）。",
+      "type": "research"
+    },
+    {
+      "question": "多张图片并行读取用什么并发原语？读失败的图如何处理？AGENTS.md 规则约束是什么？",
+      "resolution": "用 Promise.allSettled 并行（AGENTS.md L411「独立数据源用 allSettled 不用 all」+ .githooks taste-lint prefer-allsettled 规则）。对 segments 里所有 type==='image' 段，各起一个 fetch→base64 的 promise，allSettled 等全部 settle。结果收集：只取 status==='fulfilled' 的；rejected（文件被删/非白名单/web 环境）静默跳过该图（console.warn 标记哪张失败，不 throw、不阻断发送——文本 prompt 照常发，LLM 仍能从 segmentsToText 产出的 [图片: name] 占位文本知道用户贴了图）。无 image 段时 images 数组为空 → 不传 images（chatApi.send 行为不变，不组 undefined/空数组进 message.send，runtime rpc-client 已做 images.length>0 守卫 rpc-client.ts:430）。理由：图片间无依赖适合并行；allSettled 保证一张坏图不拖垮整批发送；文本 prompt 与 images 是独立通道（segmentsToText 占位 + images base64 双投递，shared/segments.ts:81-83 已注释此设计），images 缺失只降级多模态不阻断对话。",
+      "type": "research"
+    },
+    {
+      "question": "vision 降级提示（should 优先级）如何判断当前 model 是否支持 vision？model 能力信息从哪取？ModelInfo 没有 input 字段。",
+      "resolution": "从 settingsStore.providers（ProviderInfo[]，含每个 model 的 input?: Array<'text'|'image'>，shared/provider.ts:18）按 currentModelId 解析，范式照搬 useThinkingLevelSync.ts:30-38（split providerId/modelId → providers.find → models.find）。新建 useModelCapabilities.ts composable：export useModelCapabilities(currentModelId) 返回 { supportsVision: ComputedRef<boolean> }，解析 input?.includes('image')（undefined/不含 → false）。send() 提取到非空 images 后，若 supportsVision.value===false → console.warn(\"当前模型不支持图片，图片将被忽略\")（should 优先级：仅控制台提示，不 toast、不阻断、不剥离 images——runtime/pi 会自然丢弃，文本占位仍发）。理由：(1) ModelInfo 类型（provider.ts:30-42）确实无 input 字段（toModelInfo 不拷贝它，model-mapper.ts:43 注释明确），只能从 ProviderInfo 取；(2) useThinkingLevelSync 已验证 settingsStore.providers 解析路径稳定（同一 send 同 session 的 modelId 可复用）；(3) console.warn 满足 taste-lint no-silent-catch 的「可见性」要求又不打扰用户。ModelSelectPopover 标注 vision 支持（可选 should）本期不做——避免扩大改动面，feature 已有 TO3「chip 骨架」先行的同类取舍。",
+      "type": "research"
+    },
+    {
+      "question": "send 的签名如何改？images 参数在 chatApi.send 和 runtime 协议层的形状是什么？steer/followUp 是否也带 images？",
+      "resolution": "chatApi.send 签名加第三个可选参数 images：send(sessionId, text, images?: Array<{data;mimeType}>)，command('message.send', { sessionId, content: text, images }) —— images 为 undefined 时不加该键（或 runtime 侧已守卫空数组，protocol.ts:199 images? 可选）。shared 协议 message.send payload 已定义 images?: Array<{data;mimeType}>（protocol.ts:199，slice2/runtime-images-passthrough 已全程透传到 pi rpc-client prompt）。useChat.send 内部组装：先 segmentsToPrompt 得 promptText（含 [图片:name] 占位）+ 并行读图得 images 数组，再调 chatApi.send(sid, promptText, images)。steer/followUp 本期不带 images：steer 是追加上下文（不打断当前回合，图片可省，文本占位已足够锚定）；followUp 非活跃时退化为 send（走 send 的 images 提取），活跃时纯文本追加。editAndResend 入参是纯文本（无 image segment），不经 images 提取。理由：images 直传只在首次 send（新回合首轮 prompt）有意义，pi 在首轮 prompt 携带 images 即建立多模态上下文；steer/followUp 追加轮不需要重发图。",
+      "type": "research"
+    }
+  ]
+}

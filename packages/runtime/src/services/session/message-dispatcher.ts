@@ -38,8 +38,8 @@ export class MessageDispatcher {
    * 调用方（session-message-handler）必须据此走 error envelope（带请求 id）让 renderer
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.sendPrompt(sessionId, content, () => content)
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.sendPrompt(sessionId, content, () => content, images)
   }
 
   /** 构造 subagent 隐藏标记并发送 prompt(hook 审核用户原文,marker 仅发给 pi)。 */
@@ -56,11 +56,14 @@ export class MessageDispatcher {
    * @param sessionId   会话 id
    * @param hookContent hook 审核的文本(用户原文,不含 marker)
    * @param buildPrompt 返回实际发给 pi 的文本(subagent 时含 marker 前缀)
+   * @param images      shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
+   *                    仅 sendMessage 主路径传入；sendSubagentMessage 不传（范围外）。
    */
   private async sendPrompt(
     sessionId: string,
     hookContent: string,
     buildPrompt: () => string,
+    images?: Array<{ data: string; mimeType: string }>,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
@@ -116,7 +119,7 @@ export class MessageDispatcher {
     // ── 发送 prompt + 错误广播 ──
     const promptText = buildPrompt()
     try {
-      await client.prompt(promptText)
+      await client.prompt(promptText, images)
     } catch (e) {
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)

@@ -228,10 +228,10 @@ export class SessionMessageHandler {
         return this.ctx.broadcastSessionList()
       }
       case 'message.send': {
-        const { sessionId, content, subagent } = msg.payload
+        const { sessionId, content, subagent, images } = msg.payload
         const result = subagent
           ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
-          : await this.ctx.sessionService.sendMessage(sessionId, content)
+          : await this.ctx.sessionService.sendMessage(sessionId, content, images)
         // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
         // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
         // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。

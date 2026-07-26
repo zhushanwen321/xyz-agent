@@ -66,7 +66,7 @@ export default {
     confirm: 'Confirm',
     validationRequired: 'Name is required',
     validationMaxLength: 'Name cannot exceed {max} characters',
-    validationPattern: 'Only Chinese, English, numbers, spaces, hyphens and underscores are allowed',
+    validationPattern: 'Newlines not allowed, max {max} characters',
   },
   subagentList: {
     loading: 'Loading background tasks…',

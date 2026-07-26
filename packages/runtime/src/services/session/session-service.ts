@@ -14,7 +14,12 @@ import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, isAbsolute, resolve } from 'node:path'
 import { expandHome } from '../../utils/path-utils.js'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, SegmentsMetadataFile } from '@xyz-agent/shared'
+// paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
+// Node 端从子路径 import
+import { getAttachmentsDir } from '@xyz-agent/shared/paths'
+import type { PiSessionEntry } from '../../infra/pi/pi-protocol.js'
+import { rebuildHistoryFromEntries } from '../../infra/pi/entry-tree-builder.js'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import type {
@@ -274,7 +279,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return last.id as string
   }
 
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, images) }
   async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }
@@ -377,26 +382,42 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /**
    * 拉取 session 历史。
-   * 优先 RPC（pi client.getHistory，返回全量不截断）；RPC 空/失败 fallback 文件尾读。
+   *
+   * 优先走 pi get_entries RPC + entry 树重建（rebuildHistoryFromEntries）：从完整 entry 树
+   * （含 message + custom entry）重建 Message[]，按 clientUuid ↔ userEntryId 映射回填
+   * 结构化 Segment[]（image/file/skill badge，读 segments.json sidecar）。
+   *
+   * 与原 get_messages 路径的区别：get_messages 只返回扁平 message 列表，无 custom entry，
+   * 无法回填 badge（降级为占位文本）。get_entries 含 custom entry，可精确还原 badge。
+   *
+   * 降级链：get_entries 空/失败 → fallback 文件尾读（getHistoryTailFromFile）。
    * 返回 { messages, truncated }——truncated=true 表示文件尾读截断了早期 turn（N1）。
    */
   async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
-        const result = await client.getHistory() as { data?: { messages?: unknown[] } }
-        const raw = result.data?.messages ?? []
-        // RPC 路径返回全量历史（pi get_messages 不截断），truncated=false
-        if (raw.length > 0) return { messages: this.sessionStore.convertHistory(raw), truncated: false }
-        // RPC 返回空时,仅闲置 session fallback 到磁盘尾读
+        const result = await client.getEntries() as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+        // leafId 是 session 当前叶子 entry id（branch 后指向新叶子）。当前 getHistory 全量拉取不消费它，
+        // 保留供未来增量拉取（getEntries(since=leafId)）或 branch 历史完整性判断用。
+        const entries = result.data?.entries ?? []
+        if (entries.length > 0) {
+          // 读 segments.json sidecar（runtime 直接读文件，不经 IPC——IPC 是 renderer→main，runtime 是独立进程）。
+          // 文件缺失/损坏 → null（rebuildHistoryFromEntries 全降级为占位文本，非硬错误）。
+          const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
+          const rebuilt = rebuildHistoryFromEntries(entries, segmentsMetadata)
+          // entry 树重建返回全量历史（get_entries 不截断），truncated=false
+          return { messages: rebuilt.messages, truncated: false }
+        }
+        // entries 空 → 仅闲置 session fallback 到磁盘尾读
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
-          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to tail read`)
+          console.warn(`[session-service] getHistory via getEntries returned empty for idle session ${sessionId}, falling back to tail read`)
           return await getHistoryTailFromFile(sessionId, this.sessionStore)
         }
         return { messages: [], truncated: false }
       } catch (e) {
-        console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to tail read`)
+        console.warn(`[session-service] getHistory via getEntries failed: ${toErrorMessage(e)}, falling back to tail read`)
         return await getHistoryTailFromFile(sessionId, this.sessionStore)
       }
     }
@@ -976,6 +997,29 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     } catch (e) {
       console.warn('[session-service] fetchAndBroadcastContext failed:', e)
     }
+  }
+}
+
+/**
+ * 读 segments.json sidecar（runtime 直接读文件，不经 IPC）。
+ *
+ * IPC 的 writeSegmentsMetadata / readSegmentsMetadata 是 renderer→main 通道，runtime 是独立 Node 进程
+ * （不持 electron app 句柄），不能走 IPC。runtime 直接读 <dataDir>/attachments/<sessionId>/segments.json。
+ *
+ * 文件缺失/损坏（JSON parse 失败 / entries 非数组）→ 返回 null（rebuildHistoryFromEntries 据此
+ * 全降级为占位文本，非硬错误）。异步读：与周围 getEntries RPC / readFile 一致，sidecar 是小文件
+ * （每条 user message 一条 entry）但统一走异步避免事件循环阻塞。
+ */
+async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMetadataFile | null> {
+  try {
+    const filePath = join(getAttachmentsDir(sessionId), 'segments.json')
+    if (!existsSync(filePath)) return null
+    const raw = await readFile(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as SegmentsMetadataFile
+    if (!parsed || !Array.isArray(parsed.entries)) return null
+    return parsed
+  } catch {
+    return null
   }
 }
 

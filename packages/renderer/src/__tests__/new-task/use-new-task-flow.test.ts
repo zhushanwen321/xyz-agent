@@ -22,6 +22,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { textToSegments } from '@xyz-agent/shared'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 
 const apiMock = vi.hoisted(() => ({
@@ -136,7 +137,7 @@ describe('useNewTaskFlow 状态机', () => {
       workspaceStoreMock.defaultCwd = '/repo'
       const flow = useNewTaskFlow()
       await flow.startFlow()
-      await flow.submitFirstMessage('一二三四五六七八九十十一') // 11 字
+      await flow.submitFirstMessage(textToSegments('一二三四五六七八九十十一')) // 11 字
       expect(apiMock.create).toHaveBeenCalledTimes(1)
       // cwd 兑底用最近 session 的 /repo；label 截断为前 10 字 + 省略号
       expect(apiMock.create).toHaveBeenCalledWith('/repo', '一二三四五六七八九十…')
@@ -148,7 +149,7 @@ describe('useNewTaskFlow 状态机', () => {
       workspaceStoreMock.defaultCwd = '/repo'
       const flow = useNewTaskFlow()
       await flow.startFlow()
-      await flow.submitFirstMessage('修 bug') // 4 字
+      await flow.submitFirstMessage(textToSegments('修 bug')) // 4 字
       expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug')
     })
 
@@ -158,7 +159,7 @@ describe('useNewTaskFlow 状态机', () => {
       await flow.startFlow()
       flow.openDirPopover() // landing→dir-popover（selectWorkspace 须从 dir-popover 调用）
       await flow.selectWorkspace('/custom/path') // dir-popover→landing，记 pendingCwd
-      await flow.submitFirstMessage('hello world!')
+      await flow.submitFirstMessage(textToSegments('hello world!'))
       expect(apiMock.create).toHaveBeenCalledWith('/custom/path', 'hello worl…')
     })
   })
@@ -178,7 +179,7 @@ describe('useNewTaskFlow 状态机', () => {
       workspaceStoreMock.defaultCwd = '/gone'
       const flow = useNewTaskFlow()
       await flow.startFlow()
-      await flow.submitFirstMessage('hello')
+      await flow.submitFirstMessage(textToSegments('hello'))
       // create 用兑底 cwd 调用
       expect(apiMock.create).toHaveBeenCalledWith('/gone', expect.any(String))
       // toast 触发一次，文案含「已不存在」+ 原 cwd
@@ -193,7 +194,7 @@ describe('useNewTaskFlow 状态机', () => {
       workspaceStoreMock.defaultCwd = '/repo'
       const flow = useNewTaskFlow()
       await flow.startFlow()
-      await flow.submitFirstMessage('hello')
+      await flow.submitFirstMessage(textToSegments('hello'))
       expect(toastMock.error).not.toHaveBeenCalled()
     })
 
@@ -203,7 +204,7 @@ describe('useNewTaskFlow 状态机', () => {
       workspaceStoreMock.defaultCwd = undefined
       const flow = useNewTaskFlow()
       await flow.startFlow()
-      await flow.submitFirstMessage('hello')
+      await flow.submitFirstMessage(textToSegments('hello'))
       expect(toastMock.error).not.toHaveBeenCalled()
     })
   })
@@ -444,7 +445,7 @@ describe('useNewTaskFlow 状态机', () => {
       const flow = useNewTaskFlow()
       await flow.startFlow()
       // submitFirstMessage create + bindCurrentSession(bare session)
-      await flow.submitFirstMessage('bare workspace test')
+      await flow.submitFirstMessage(textToSegments('bare workspace test'))
 
       // 真实数据链路：gitInfo.isBare 从 session.isBareWorkspace 派生（非 mock 注入）
       expect(flow.gitInfo.value).not.toBeNull()
@@ -470,7 +471,7 @@ describe('useNewTaskFlow 状态机', () => {
       workspaceStoreMock.defaultCwd = '/repo'
       const flow = useNewTaskFlow()
       await flow.startFlow()
-      await flow.submitFirstMessage('normal repo test')
+      await flow.submitFirstMessage(textToSegments('normal repo test'))
 
       expect(flow.gitInfo.value?.isBare).toBe(false)
     })
@@ -491,7 +492,7 @@ describe('useNewTaskFlow 状态机', () => {
       workspaceStoreMock.defaultCwd = '/repo'
       const flow = useNewTaskFlow()
       await flow.startFlow()
-      await flow.submitFirstMessage('no bare field test')
+      await flow.submitFirstMessage(textToSegments('no bare field test'))
 
       expect(flow.gitInfo.value?.isBare).toBe(false)
     })

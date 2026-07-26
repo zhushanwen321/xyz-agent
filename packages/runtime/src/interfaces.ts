@@ -82,7 +82,14 @@ export interface ISessionService {
   create(cwd?: string, label?: string, options?: SessionCreateOptions): Promise<SessionSummary>
   delete(sessionId: string): Promise<void>
   renameSession(sessionId: string, newName: string): Promise<void>
-  sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }>
+  /**
+   * 发送用户消息。
+   *
+   * images 透传给 pi prompt（message.send 的 images 字段，shared 形状 {data;base64;mimeType}）。
+   * 类型组装（补 pi 私有 type:'image'）在 infra 层 RpcClient 内完成，本接口只暴露 shared 形状。
+   * undefined 时不传 images，走原路径。
+   */
+  sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>
   sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }>
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>

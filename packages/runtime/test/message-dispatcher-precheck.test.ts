@@ -85,7 +85,7 @@ describe('MessageDispatcher D-009 预检（busy → send.rejected）', () => {
   it('isGenerating=false → 正常调 pi.prompt + 不广播 send.rejected', async () => {
     const { dispatcher, promptFn, broadcasts } = makeMocks({ isGenerating: false })
     await dispatcher.sendMessage('s1', 'hello')
-    expect(promptFn).toHaveBeenCalledWith('hello')
+    expect(promptFn).toHaveBeenCalledWith('hello', undefined)
     const rejected = broadcasts.find((m) => m.type === 'send.rejected')
     expect(rejected).toBeUndefined()
   })
@@ -128,7 +128,7 @@ describe('MessageDispatcher 错误路径', () => {
     // 不该向上抛
     const result = await dispatcher.sendMessage('s1', 'hello')
     // pi.prompt 仍被调用（record 失败不阻断发消息主流程）
-    expect(promptFn).toHaveBeenCalledWith('hello')
+    expect(promptFn).toHaveBeenCalledWith('hello', undefined)
     // isGenerating 保持 true（prompt 成功，record 副作用失败不影响状态机）
     expect(session.isGenerating).toBe(true)
     // 正常返回（非 blocked）

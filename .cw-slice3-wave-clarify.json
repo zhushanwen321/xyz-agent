@@ -1,0 +1,22 @@
+{
+  "clarifications": [
+    {
+      "id": "C1",
+      "question": "pick-file handler 插入位置在 pick-directory handler 之后（line 73 之后、窗口控制 handler 之前）还是文件末尾？注释风格如何对齐？",
+      "resolution": "插入在 pick-directory handler 之后（privileged-handlers.ts:73 的 ipcMain.handle('pick-directory',...) 闭合括号之后、line 75 窗口控制注释之前）。理由：pick-file 与 pick-directory 是同范式兄弟（都是 dialog.showOpenDialog + getFocusedWindow 降级），物理相邻便于对照维护。注释风格照搬 pick-directory：顶部块注释说明降级目标（无聚焦窗口/dialog 崩溃都返回 canceled）+ defaultPath 兜底 homedir 的 [HISTORICAL] 不变量说明，仅 properties 改为 ['openFile'] 并新增 filters 透传说明。",
+      "type": "research"
+    },
+    {
+      "id": "C2",
+      "question": "preload/preload.ts 的 ElectronAPI 接口声明和 contextBridge 实现的插入位置？pickFile 放在 pickDirectory 紧邻处还是其他位置？",
+      "resolution": "ElectronAPI 接口声明放在 pickDirectory 声明之后（line 33-36 pickDirectory 之后）、openExternal 之前；contextBridge 实现放在 pickDirectory 实现之后（line 90-91 pickDirectory 之后）、openExternal 之前。理由：pickFile 与 pickDirectory 语义相邻（都是文件系统选择器），物理相邻便于对照，且 interface 与实现两处都紧邻 pickDirectory 保持对称。channel 名 'pick-file' 与主进程 handler 对齐。",
+      "type": "research"
+    },
+    {
+      "id": "C3",
+      "question": "filters 透传给 dialog.showOpenDialog 时，options.filters 为 undefined 如何处理？Electron dialog 对 filters undefined 的默认行为是什么？",
+      "resolution": "options.filters 为 undefined 时不传 filters 键给 dialog.showOpenDialog（让 Electron 用默认——显示所有文件）。实现：dialog.showOpenDialog 的 options 对象只在 options?.filters 非空时包含 filters 字段，或直接透传 filters: options?.filters（undefined 时 Electron 视为不过滤，行为等价）。采用直接透传 filters: options?.filters 更简洁——Electron dialog API 对 undefined filters 的处理是显示所有文件（文档保证），无需主进程额外守卫。这样 handler 逻辑与 pick-directory 同构，仅多一个 filters 字段透传。",
+      "type": "grilling"
+    }
+  ]
+}

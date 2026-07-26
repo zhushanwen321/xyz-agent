@@ -24,6 +24,7 @@ export default {
     inputHint: '描述你想让 AI 做什么，或 # 文件、/ 命令…',
     addContent: '添加内容（附件 / 命令）',
     attach: '附件',
+    image: '图片',
     command: '命令',
     forkHint: '想从这条回复 fork 提问什么？（⏎ fork 并发送，Esc 退出）',
     forkChip: '将发到新分支 · 与主线隔离',

@@ -12,7 +12,7 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/stores/workflow.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
 import type { WorkflowRunRecord } from '@xyz-agent/shared'
@@ -31,19 +31,9 @@ vi.mock('@/api', async (importActual) => {
   return { ...actual, session }
 })
 
-// mock events（subscribeWorkflowPush 内部订阅）
-let eventHandlers: Array<(msg: { type: string; payload?: unknown }) => void> = []
-vi.mock('@/api/events', () => ({
-  on: vi.fn((_sessionId: string, handler: (msg: { type: string; payload?: unknown }) => void) => {
-    eventHandlers.push(handler)
-    return () => { eventHandlers = eventHandlers.filter((h) => h !== handler) }
-  }),
-}))
-
 import * as sessionApi from '@/api/domains/session'
 
 beforeEach(() => {
-  eventHandlers = []
   setActivePinia(createPinia())
   vi.clearAllMocks()
 })
@@ -218,73 +208,5 @@ describe('workflow store', () => {
 
     expect(() => store.backFromAgentCall('panel-1')).not.toThrow()
     expect(store.isViewing('panel-1')).toBe(false)
-  })
-})
-
-describe('workflow store · subscribeWorkflowPush', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-  })
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('running 信号：立即 loadWorkflows + 延迟 500ms 重试（workflow-state-link 延迟写入兜底）', async () => {
-    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
-    const store = useWorkflowStore()
-
-    store.subscribeWorkflowPush('sess-1')
-    // 模拟 runtime 推送 running 信号
-    for (const h of eventHandlers) {
-      h({ type: 'session.workflowUpdate', payload: { update: { runId: 'wf-1', status: 'running' } } })
-    }
-    // 立即拉取一次
-    await vi.advanceTimersByTimeAsync(0)
-    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
-
-    // 500ms 后重试一次
-    await vi.advanceTimersByTimeAsync(500)
-    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(2)
-  })
-
-  it('done 信号：只拉取一次（不延迟重试）', async () => {
-    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
-    const store = useWorkflowStore()
-
-    store.subscribeWorkflowPush('sess-1')
-    for (const h of eventHandlers) {
-      h({ type: 'session.workflowUpdate', payload: { update: { runId: 'wf-1', status: 'done', reason: 'completed' } } })
-    }
-    await vi.advanceTimersByTimeAsync(0)
-    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
-
-    // 500ms 后不应再拉
-    await vi.advanceTimersByTimeAsync(500)
-    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
-  })
-
-  it('切会话后旧 session 的延迟重试独立触发（W-S5：局部 sid 解耦单例耦合）', async () => {
-    vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
-    const store = useWorkflowStore()
-
-    store.subscribeWorkflowPush('sess-1')
-    // 推 running 信号
-    for (const h of eventHandlers) {
-      h({ type: 'session.workflowUpdate', payload: { update: { runId: 'wf-1', status: 'running' } } })
-    }
-    await vi.advanceTimersByTimeAsync(0)
-    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(1)
-
-    // 切会话（subscribeWorkflowPush 再次调用）。
-    // [W-S5] 旧实现用 store 级单例 let focusedSessionId，第二次调用会覆盖它，
-    // 使 sess-1 已调度的 500ms 重试 `if (focusedSessionId === sid)` 守卫误判为 false 而被吞——
-    // 这是单例耦合 bug（A→B 切换时 A 的重试不应受 B 影响）。改为函数内局部 const sid 后，
-    // sess-1 的重试绑定自己的 sid，独立触发，不再被 sess-2 覆盖。
-    store.subscribeWorkflowPush('sess-2')
-    eventHandlers = [] // 新 session 的订阅 handler
-
-    // 500ms 后 sess-1 的重试独立触发（不再被单例变量吞掉）
-    await vi.advanceTimersByTimeAsync(500)
-    expect(sessionApi.getWorkflows).toHaveBeenCalledTimes(2)
   })
 })

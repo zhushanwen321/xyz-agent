@@ -1,0 +1,72 @@
+{
+  "retrospectData": {
+    "deliveryVerdict": "delivered",
+    "childUnitIdsEvidence": [
+      {
+        "childId": "wave:add-file-picture-attach::renderer-paste-dual-path::paste-dual-path-impl",
+        "status": "closed",
+        "closeoutEvidenceSummary": "Wave 已 closeout：完成 renderer 双通路图片粘贴，15 个文件改动（IPC 三层 main privileged-handlers + preload + lib/ipc / renderer 双通路 useContenteditableInput onPaste + useImageAttachment composable / DOM 呈现 useComposerChipCommands insertImageBadge+getSegmentsFromEl / 组件改造 ContextChipsBar props/emit + ComposerInput 派生 + Composer 持有 + useComposerContextChips 派生）。验证 tsc/vue-tsc 无新错误 + renderer vitest 1920 passed + apps/electron/main vitest 102 passed，15 个 artifact 全部 drift-check 通过。designReview 核心 judgment（necessity/sufficiency/alternatives + TO1/TO2/TO3 + R1/R2/R3/R4）逐项兑现，R1 ContextChipsBar 父组件归属 execute 阶段读代码确认修正，零回归。"
+      }
+    ],
+    "splitFulfillment": [
+      {
+        "splitSlug": "paste-dual-path-impl",
+        "verdict": "delivered",
+        "note": "唯一 split（单 wave），契约全兑现：① Cmd+V 富呈现（clipboard image → write-tmp-image IPC → useImageAttachment → insertImageBadge badge → ContextChipsBar chip → image Segment → base64 经 pi images 直传）② Ctrl+V 纯文本（clipboard image → tmpdir → 路径文本，pi TUI 兼容）③ write-tmp-image IPC 三层（main handler + preload + lib/ipc，复用 pick-file 范式，dragdrop/attach 可复用基础设施）④ ContextChipsBar 从 local ref 改 props/emit 单向数据流。9 个 TC 全覆盖（renderer 1920 + electron 102 passed），端到端可验。"
+      }
+    ],
+    "reviewedItems": [
+      {
+        "itemId": "necessity",
+        "outcome": "fulfilled",
+        "note": "本 slice 是附件功能核心 UX 闭环的判断正确：renderer 双通路粘贴就位后，shared 的 image Segment 类型、runtime 的 images 透传、main 的 pick-file IPC 都有了消费方。Cmd+V 富呈现 + Ctrl+V 路径文本双行为已区分实现（metaKey/ctrlKey 分支）。现有 onPaste 从纯文本剥离扩展为双通路。必要性判断无修正兑现。"
+      },
+      {
+        "itemId": "sufficiency",
+        "outcome": "fulfilled",
+        "note": "5 个 techChoice 覆盖完整链路无遗漏无重叠：TC1 读剪贴板 → TC2 区分通路 → TC3 存 tmpdir → TC4 插 badge → TC5 ContextChipsBar 同步。4 个 interface 切分清晰（IF1 IPC/IF2 useImageAttachment/IF3 insertImageBadge/IF4 ContextChipsBar props）。与上下游 slice 边界明确（上游 shared/runtime/main 已完成，下游 renderer-send-images-extract 独立）。designReview 指出无 gap 无 overlap，wave 实现证实。"
+      },
+      {
+        "itemId": "alternatives",
+        "outcome": "fulfilled",
+        "note": "三个替代方案维持否决：合并单 wave（不分 slice）仍否决——需 slice 层固化契约下游 wave 照抄；navigator.clipboard.read() 仍否决——兼容性差需权限；ContextChipsBar 直接读 store 仍否决——破坏单一真相。实现采纳 Web Clipboard paste 事件 + slice 固化契约 + ContextChipsBar props/emit，验证为标准化可测方案。"
+      },
+      {
+        "itemId": "TO1",
+        "outcome": "fulfilled",
+        "note": "用 Web Clipboard API（paste 事件）而非 Electron clipboard.readImage() IPC 的决策兑现：onPaste 走 paste 事件读 clipboardData，标准化可测无 IPC 往返。cost（只能响应 paste 事件）如预期——本 slice 范围只覆盖 paste，dragdrop/attach-button 是独立 slice。"
+      },
+      {
+        "itemId": "TO2",
+        "outcome": "fulfilled",
+        "note": "新增 write-tmp-image IPC 在主进程写 tmpdir 的决策兑现：renderer sandbox 无 node fs，必须主进程写。cost（main 层 2 文件改动）如预期——复用 pick-file 范式成本低，该 IPC 成为后续 slice 基础设施。"
+      },
+      {
+        "itemId": "TO3",
+        "outcome": "fulfilled",
+        "note": "ContextChipsBar 改 props/emit 而非读 store 的决策兑现：保持纯展示组件单向数据流易测。cost（父组件维护 computed 派生 + 监听 remove 少量胶水代码）如预期——新建 useComposerContextChips composable 封装派生逻辑。"
+      },
+      {
+        "itemId": "R1",
+        "outcome": "fulfilled",
+        "note": "document.execCommand('insertText') 已废弃风险在本 slice 范围内未发生：既有纯文本路径不改（非本 slice 引入），富呈现路径走 insertImageBadge 手动 DOM 不依赖 execCommand。mitigation（独立技术债不阻塞本 slice）有效。"
+      },
+      {
+        "itemId": "R2",
+        "outcome": "fulfilled",
+        "note": "image badge dataset.chipPath 存绝对路径信息泄露风险未发生：chip 是 contentEditable=false 展示元素不会被编辑，getSegmentsFromEl 只读 dataset 不外传 DOM，ContextChipsBar 只显 name 不显 path。mitigation（chip 不可编辑 + tmpdir 非敏感）有效。"
+      },
+      {
+        "itemId": "R3",
+        "outcome": "fulfilled",
+        "note": "base64 转换超大图片 call stack 溢出风险未发生：useImageAttachment 用分块 btoa 累加（ERR4 预案落地），实际截图通常 <2MB 现代引擎可处理。mitigation（分块 fallback + onerror 降级）有效。"
+      },
+      {
+        "itemId": "R4",
+        "outcome": "fulfilled",
+        "note": "write-tmp-image 写的文件无清理机制 tmpdir 累积风险在本 slice 范围内可接受：os.tmpdir() 系统定期清理，图片通常小，发送后 pi 消费 base64 即可。mitigation（主动清理属独立 slice 不阻塞）有效。"
+      }
+    ],
+    "lessonsLearned": "slice 层固化契约（5TC/4IF/3DM/5ERR）让下游单 wave 照抄实现是高效策略：write-tmp-image 的 payload/return 类型和 image badge 的 dataset schema 在 slice designReview 固化后，wave 实现照契约填代码即可，无需重新设计。renderer 双通路粘贴的关键设计是「通路决策前置」（onPaste 第一步同步读 metaKey/ctrlKey 决定富呈现/纯文本），避免异步 IPC 返回后再分支的竞态。ContextChipsBar 从 local ref 改 props/emit 是单向数据流正确化，但需在 wave execute 阶段读代码确认父组件归属（本 slice R1 在 wave 层发现父组件是 Composer 非 ComposerInput，属实现位置偏差但 contracts 不变）——slice designReview 标风险并预留 mitigation 是有效预案。write-tmp-image IPC 复用 pick-file 范式（三层 main+preload+lib/ipc）让该 IPC 成为 dragdrop/attach-button slice 的可复用基础设施，避免重复设计。"
+  }
+}

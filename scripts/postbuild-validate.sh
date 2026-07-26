@@ -173,6 +173,14 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} xyz-system-prompt-extension.js 缺失（检查 electron-builder.yml from 路径）"
             FAILED=1
         fi
+        # extraResources: xyz-client-msg-id-mapper.js（input hook 剥标记 + appendEntry 写映射）
+        # 客户端 message 元数据映射框架，重开 session 回填 badge。同前两个 extension 模式校验。
+        if [ -f "$APP_PATH/Contents/Resources/xyz-client-msg-id-mapper.js" ]; then
+            echo -e "  ${GREEN}✓${NC} xyz-client-msg-id-mapper.js in Resources"
+        else
+            echo -e "  ${RED}✗${NC} xyz-client-msg-id-mapper.js 缺失（检查 electron-builder.yml from 路径）"
+            FAILED=1
+        fi
         # extraResources: bin/xyz-settings CLI（tsup 打包的 cli.cjs，pi Skill 引用）
         # 与两个 extension.js 同模式校验（electron-builder from 错误只警告不失败）。
         if [ -f "$APP_PATH/Contents/Resources/bin/xyz-settings" ]; then
@@ -204,6 +212,7 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
         "$WIN_RESOURCES/pi/pi-windows-x64.exe" \
         "$WIN_RESOURCES/xyz-agent-extension.js" \
         "$WIN_RESOURCES/xyz-system-prompt-extension.js" \
+        "$WIN_RESOURCES/xyz-client-msg-id-mapper.js" \
         "$WIN_RESOURCES/bin/xyz-settings"; do
         if [ -f "$required" ]; then
             echo -e "  ${GREEN}✓${NC} ${required#$WIN_ROOT/}"

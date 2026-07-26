@@ -26,12 +26,13 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
-import { textToSegments } from '@xyz-agent/shared'
+import type { Segment } from '@xyz-agent/shared'
 import { useModel } from '@/composables/features/useModel'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
+import { migrateSessionImage } from '@/lib/ipc'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -50,6 +51,40 @@ import { useNewTaskDirSelect } from '@/composables/new-task/useNewTaskDirSelect'
 export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTaskFlowState'
 export { resetNewTaskFlow } from '@/composables/new-task/useNewTaskFlowState'
 
+/**
+ * 把 landing 态落 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+ *
+ * 单文件失败不阻断（OS 可能已清理 tmpdir / 非 electron 环境无 preload），用 Promise.allSettled
+ * 收集结果，失败项 console.warn 后跳过。返回成功迁移的 Map<oldPath, newPath>，供调用方更新 segments.path。
+ *
+ * migrateSessionImage 在 web/mock 环境返回 undefined（非 reject），不进 migrated；调用方据此保留原 path。
+ */
+async function migrateTmpdirImages(
+  images: Array<Extract<Segment, { type: 'image' }>>,
+  sessionId: string,
+): Promise<Map<string, string>> {
+  const migrated = new Map<string, string>()
+  const results = await Promise.allSettled(
+    images.map(async (img) => {
+      const result = await migrateSessionImage({
+        fromPath: img.path,
+        sessionId,
+        fileName: img.fileName,
+      })
+      if (result?.path) {
+        migrated.set(img.path, result.path)
+      }
+    }),
+  )
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+       
+      console.warn(`[useNewTaskFlow] image migrate failed: ${images[i].path}`, r.reason)
+    }
+  })
+  return migrated
+}
+
 export function useNewTaskFlow() {
   const session = useSessionStore()
   const commandStore = useCommandStore()
@@ -57,7 +92,7 @@ export function useNewTaskFlow() {
   const panel = usePanelStore()
   const navigation = useNavigationStore()
   const chat = useChat()
-  const { error: toastError } = useToast()
+  const { error: toastError, warning: toastWarning } = useToast()
   // 模型切换 + 思考等级设置的 RPC + 乐观更新编排（features 层，ADR-0028）。
   // landing 态 apply 逻辑统一走此 composable，消除原先与 useComposerModelThinking 的重复。
   const { switchModel, setThinkingLevel } = useModel()
@@ -162,13 +197,30 @@ export function useNewTaskFlow() {
    * - 无绑定 session（未选目录直接输入发送，用 workspaceStore.defaultCwd 兑底 create）→ create 后发送
    * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
    *
+   * segments 来自 Composer DOM 快照（getSegments），含 text / skill / file / mention / image 段。
+   * landing 态可能纯图（含 image 但无 text），用户只贴图不写字也允许发送——入参校验只要求 segments
+   * 非空，不强制 text 段存在。session label 从首段 text 段取（无 text 段时 deriveSessionLabel('')
+   * 兜底为「无提示词」）。
+   *
+   * tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。
+   * session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
+   * 迁移判断用 segment.needsMigrate 字段（M1 修复），不猜路径——+菜单选的用户磁盘文件 needsMigrate
+   * 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
+   * 迁移后再 chat.send——appendUser 用迁移后的 path，segmentsToText 也产出迁移后的 path，不需要额外的 store update。
+   * 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
+   * （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
+   *
    * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
    * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
    * 用 runtime 默认。
    */
-  async function submitFirstMessage(text: string, thinkingLevel?: string): Promise<void> {
-    const trimmed = text.trim()
-    if (!trimmed) return
+  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string): Promise<void> {
+    // segments 不能为空；含 text 段时提取首段文本作 session label
+    const firstTextSeg = segments.find((s): s is Extract<Segment, { type: 'text' }> => s.type === 'text')
+    const trimmed = firstTextSeg?.text?.trim() ?? ''
+    // 含图片/文件/skill 等非 text 段但无文本也允许发送（用户可能只贴图不写字）
+    const hasOnlyNonText = segments.some((s) => s.type !== 'text')
+    if (!trimmed && !hasOnlyNonText) return
     if (state.value !== 'landing') {
       throw new Error('NewTaskFlow: 非 landing 态不可首发提交')
     }
@@ -233,8 +285,37 @@ export function useNewTaskFlow() {
       void useWorkflowStore().loadWorkflows(newSid)
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
-      // landing 态 text 来自 draft 纯文本，转 Segment[] 保持类型一致（ADR-0037）
-      await chat.send(newSid, textToSegments(trimmed))
+      // tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。
+      // session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
+      // 迁移判断用 segment.needsMigrate 字段（M1 修复），不再猜路径——+菜单选的用户磁盘文件
+      // needsMigrate 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
+      // 迁移后更新 segments.path（chat.send 的 appendUser 用更新后的 path，segmentsToText 也产出更新后的 path），
+      // 这样 store 里存的就是正确 path，不需要额外的 store update action。
+      // 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
+      // （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
+      let finalSegments = segments
+      const needsMigrateImages = segments.filter(
+        (s): s is Extract<Segment, { type: 'image' }> =>
+          s.type === 'image' && s.needsMigrate === true,
+      )
+      if (needsMigrateImages.length > 0) {
+        const migrated = await migrateTmpdirImages(needsMigrateImages, newSid)
+        // migrated 是 Map<oldPath, newPath>，更新 segments
+        finalSegments = segments.map((s) => {
+          if (s.type === 'image' && migrated.has(s.path)) {
+            // 迁移成功：更新 path + 重置 needsMigrate=false。
+            // 不重置会导致 store 中 needsMigrate 过期（文件已在 attachments，
+            // 不再需要迁移），后续 editAndResend 重发会保留该 flag 误导（S5 修复）。
+            return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
+          }
+          return s
+        })
+        if (migrated.size < needsMigrateImages.length) {
+          // 部分迁移失败：toast 提示（不阻断发送）
+          toastWarning(t('composable.imageMigratePartialFailed', { count: needsMigrateImages.length - migrated.size }))
+        }
+      }
+      await chat.send(newSid, finalSegments)
       transition('completed') // landing→completed（首发成功，终态）
     } finally {
       controller.setCreateInFlight(false)

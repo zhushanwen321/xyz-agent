@@ -1,0 +1,32 @@
+{
+  "clarifications": [
+    {
+      "id": "C1",
+      "status": "active",
+      "question": "rpc-client.prompt 的 images 参数应该用 shared 的 {data;mimeType} 形态还是 pi 的 ImageContent（含 type:'image'）？谁负责补 type 字段？",
+      "resolution": "rpc-client.prompt 接收 shared 的 {data;mimeType} 形态（不带 type），内部组装成 pi 的 PiImageContentBlock（补 type:'image'）再传给 sendCommand。依据 AGENTS.md 规则#5「pi 适配层不信任外部格式」——EventAdapter/rpc-client 是 pi 协议的唯一适配点，业务层（dispatcher/session-service/handler）只见 shared 的 {data;mimeType}，不接触 pi 私有的 type 字段。这样 shared/protocol.ts 的 message.send.images 不带 type 的设计（已在前一 slice 落地）得到兑现。",
+      "type": "research"
+    },
+    {
+      "id": "C2",
+      "status": "active",
+      "question": "dispatcher.sendMessage / session-service facade / message-handler 各层透传 images 的签名如何扩展？用可选参数还是包装对象？",
+      "resolution": "每层加可选 images 参数，类型统一为 shared 的 Array<{data:string; mimeType:string}>（与 message.send payload 一致）。具体：dispatcher.sendMessage(sessionId, content, images?) → session-service.sendMessage(sessionId, content, images?) → handler 从 msg.payload 解构 images 透传。sendPrompt 骨架也加可选 images?，最终在 rpc-client.prompt(text, images?) 调用点组装。runtime 内部各层都不碰 type 字段，直到 rpc-client 才补 type:'image'。用可选参数（非包装对象）是因为 images 与 content 是正交维度，且向后兼容（不传走原路径）。",
+      "type": "grilling"
+    },
+    {
+      "id": "C3",
+      "status": "active",
+      "question": "images 为 undefined（不传）时的行为是否与现状完全一致？images 为空数组 [] 时如何处理？",
+      "resolution": "undefined（不传）时所有层走原路径，零行为变化、零回归风险——sendCommand 只发 {message}，与现状逐字一致。空数组 [] 时：rpc-client 组装出空 images 数组，按防御原则应等价于不传（pi prompt RPC 不带 images 字段），避免给 pi 发一个无意义的空 images 数组。即 rpc-client 内部判断：images 为 undefined 或长度为 0 时，sendCommand 的 params 只含 {message}，不带 images 键。",
+      "type": "grilling"
+    },
+    {
+      "id": "C4",
+      "status": "active",
+      "question": "透传链路涉及哪些文件？sendSubagentMessage 是否也需要透传 images？",
+      "resolution": "主链路 5 个改动点：(1) message-handler message.send case 解构 images 透传；(2) session-service facade sendMessage 加 images?；(3) message-dispatcher sendMessage + sendPrompt 骨架加 images?；(4) rpc-client prompt 加 images? 并组装 PiImageContentBlock；(5) IPiEngine 接口（pi-engine.ts）与 ISessionService facade 接口（interfaces.ts）的 prompt/sendMessage 签名同步加 images? 以保持类型契约一致。sendSubagentMessage 本 slice 不透传 images——subagent 是 agent 间调用通路，当前无图片附件需求，保持现状避免范围蔓延（若后续需要再单独 slice 处理）。",
+      "type": "research"
+    }
+  ]
+}

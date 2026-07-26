@@ -1,0 +1,88 @@
+{
+  "split": [
+    {
+      "slug": "pick-file-ipc-impl",
+      "description": "单 wave 实现 pick-file IPC：privileged-handlers.ts 新增 pick-file handler（dialog.showOpenDialog properties:['openFile']，支持 options.filters/title/defaultPath，defaultPath 兜底 homedir，无聚焦窗口 + dialog 异常降级 {canceled:true, path:null}）+ preload/preload.ts 暴露 pickFile 方法（ElectronAPI 接口 + contextBridge 实现 + ipcRenderer.invoke('pick-file', options)）。照搬 pick-directory 范式，2 个文件改动。",
+      "dependsOn": [],
+      "inheritedItemIds": [
+        "TC1",
+        "TC2",
+        "IF1",
+        "IF2",
+        "DM1",
+        "ERR1",
+        "ERR2",
+        "ERR3"
+      ]
+    }
+  ],
+  "techChoices": [
+    {
+      "id": "TC1",
+      "status": "active",
+      "area": "pick-file handler 的降级范式复用策略",
+      "choice": "pick-file handler 照搬 pick-directory 的三重降级范式：(1) BrowserWindow.getFocusedWindow() 返回 null → 直接返回 {canceled:true, path:null}；(2) defaultPath 用 existsSync 守卫，失效降级 homedir()；(3) try/catch 包裹 dialog.showOpenDialog，异常时 console.error + 返回 {canceled:true, path:null}（W7 风格一致性）。唯一差异是 properties 从 ['openDirectory'] 改为 ['openFile']，并透传 options.filters。",
+      "alternatives": [
+        "新建独立降级逻辑（不复用 pick-directory 范式）——否决，因 pick-directory 的三个降级（无聚焦窗口/defaultPath 兜底/异常兜底）是已验证的不变量（有 privileged-handlers.test.ts 6 测试覆盖），重新设计引入未验证风险且破坏文件内风格一致性",
+        "把 pick-file 合并进 pick-directory 的同一 handler（加 mode 参数区分文件/目录）——否决，因混用 channel 会引入分支逻辑（properties 按 mode 切换），且 ipcMain.handle 按 channel 名注册天然适合 1:1 映射，独立 channel 'pick-file' 更清晰"
+      ],
+      "rationale": "对照 alternatives：方案一（新建降级）重造已验证逻辑、引入回归风险且破坏 W7 风格一致性；方案二（合并 handler）让单一 handler 承担两种 dialog 形态的分支，违反单一职责。选照搬 pick-directory 范式零设计成本、零回归风险，且 pick-directory 的测试范式（vi.mock('electron') 捕获 handler）可直接复用到 pick-file 的测试。"
+    },
+    {
+      "id": "TC2",
+      "status": "active",
+      "area": "filters 参数的形态选择（Electron 原生 vs 抽象）",
+      "choice": "options.filters 形态直接复用 Electron dialog API 的 FileFilter 类型 Array<{name: string; extensions: string[]}>，不做抽象。主进程不感知业务类型（图片/所有文件），纯透传 filters 给 dialog.showOpenDialog。renderer 传入业务相关 filters（如图片附件入口传 [{name:'图片', extensions:['png','jpg','jpeg','gif','webp']}, {name:'所有文件', extensions:['*']}]）。filters 为可选，undefined 时 dialog 默认显示所有文件。",
+      "alternatives": [
+        "主进程固定 filters（如写死图片类型）——否决，因本 slice 是通用 pick-file IPC，不应耦合具体业务类型（附件入口未来可能接文档/视频等），主进程透传 filters 让 renderer 决定语义更解耦",
+        "抽象一层自定义 FilterType（{label, globs}）再映射到 Electron FileFilter——否决，因 Electron FileFilter 的语义（name 是下拉显示名，extensions 是无点扩展名数组）与 OS 原生 dialog 逐字一致，抽象会丢失原生语义且无跨平台收益（Electron 已是跨平台抽象层）"
+      ],
+      "rationale": "对照 alternatives：方案一（主进程固定 filters）让 IPC 耦合业务类型，限制复用性；方案二（抽象 FilterType）是多余的抽象层，Electron API 本身已是平台抽象，再抽象增加心智成本且映射无损失收益。选 Electron 原生 FileFilter 透传，零转换、renderer 直接传业务 filters、主进程不感知业务语义，符合「IPC 是薄通道」的设计原则。"
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "IF1",
+      "status": "active",
+      "name": "ipcMain.handle('pick-file') 主进程 handler",
+      "signature": "ipcMain.handle('pick-file', async (_event, options?: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string | null }>)",
+      "contract": "在 privileged-handlers.ts:73（pick-directory handler 之后）新增 pick-file handler。options 形态：title（dialog 标题，默认 '选择文件'）/defaultPath（候选初始路径，existsSync 守卫失效降级 homedir）/filters（Electron FileFilter[]，透传给 dialog，undefined 时 dialog 默认所有文件）。dialog.showOpenDialog(focusedWin, { properties:['openFile'], title:options?.title ?? '选择文件', defaultPath:fallbackPath, filters:options?.filters })。返回结构与 pick-directory 对称：canceled=true（含无聚焦窗口/dialog 异常/用户取消/空 filePaths）时 path=null，否则 path=result.filePaths[0]。"
+    },
+    {
+      "id": "IF2",
+      "status": "active",
+      "name": "ElectronAPI.pickFile + contextBridge 暴露（preload）",
+      "signature": "pickFile(options?: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }): Promise<{ canceled: boolean; path: string | null }>",
+      "contract": "在 preload/preload.ts 两处同步新增：(1) ElectronAPI 接口（约 line 37 pickDirectory 声明后）加 pickFile 方法声明，签名与主进程 options/返回结构一致；(2) contextBridge.exposeInMainWorld('electronAPI', {...}) 实现（约 line 91 pickDirectory 实现后）加 pickFile: (options?) => ipcRenderer.invoke('pick-file', options)。channel 名 'pick-file' 与 IF1 对齐。renderer 通过 window.electronAPI.pickFile(options) 调用，返回 Promise<{canceled, path}>。"
+    }
+  ],
+  "dataModels": [
+    {
+      "id": "DM1",
+      "status": "active",
+      "name": "pick-file options 与返回结构",
+      "shape": "{ options?: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> } } → { canceled: boolean; path: string | null }",
+      "rationale": "options 三字段对齐 pick-directory（title/defaultPath）+ 新增 filters（Electron FileFilter 原生形态，TC2 决议）。返回结构 {canceled, path} 与 pick-directory 逐字对称（C1 决议），renderer 消费范式统一。filters 的 {name, extensions} 是 Electron dialog API 的 FileFilter 类型，extensions 是无点扩展名数组（如 ['png','jpg']）或 ['*'] 表示所有，主进程不转换直接透传。path 为单个文件绝对路径（单选，C3 决议）。"
+    }
+  ],
+  "errorSpecs": [
+    {
+      "id": "ERR1",
+      "status": "active",
+      "condition": "无聚焦窗口（BrowserWindow.getFocusedWindow() 返回 null）",
+      "behavior": "handler 直接返回 {canceled: true, path: null}，不调用 dialog.showOpenDialog。与 pick-directory 同一降级路径（privileged-handlers.ts:52-53）。不视为错误，是预期的多窗口安全降级。"
+    },
+    {
+      "id": "ERR2",
+      "status": "active",
+      "condition": "dialog.showOpenDialog 抛异常或用户取消（result.canceled=true 或 filePaths 为空）",
+      "behavior": "try/catch 包裹：异常时 console.error('[ipc] pick-file failed:', err) + 返回 {canceled:true, path:null}（W7 风格一致性，不依赖 ipcMain.handle 的 invoke rejection 兜底）；用户取消时 result.canceled||filePaths.length===0 → 返回 {canceled:true, path:null}。两种情况都返回 canceled 降级，renderer 统一处理。"
+    },
+    {
+      "id": "ERR3",
+      "status": "active",
+      "condition": "options.defaultPath 指向已删除/不存在的路径",
+      "behavior": "existsSync(defaultPath) 守卫：存在则用 options.defaultPath，不存在降级 homedir()。避免 macOS dialog 把已删除目录原样传入触发 OS 的 Documents 回退（与 pick-directory 同一 [HISTORICAL] 不变量，privileged-handlers.ts:55-58）。不能把已删除路径原样传给 dialog，否则丢失「回退到 ~」的语义。"
+    }
+  ]
+}

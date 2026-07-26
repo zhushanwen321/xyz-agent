@@ -1,0 +1,59 @@
+{
+  "designReviewJudgment": {
+    "necessity": "必要。本 slice 是 6-slice feature 的发送闭环：前 5 个 slice 把图片从粘贴/拖拽/菜单落地成 image segment（path 存 tmpdir/磁盘），但 send() 至今只发 segmentsToPrompt 文本占位，未把图片 base64 填入 message.send.images——多模态上下文从未真正建立。不改则 feature 整体「图片附件」只完成采集未完成投递，AC（图片随消息发送给 vision 模型）无法兑现。3 个接口（chatApi.send 加 images / useChat.send 提取 / useModelCapabilities 新建）均不可省：IF1 是协议投递点、IF2 是提取逻辑、IF3 是降级体验。无镀金：steer/followUp 不带 images 是有意收窄（首轮 prompt 建立上下文即可），ModelSelectPopover vision 标注明确推后。",
+    "sufficiency": {
+      "gaps": [],
+      "overlaps": [],
+      "meceNote": "3 接口 MECE 正交：IF1（chat.ts 协议层：send 签名 + payload 组装）、IF2（useChat 编排层：send 提取+并行+降级）、IF3（useModelCapabilities 能力查询层：vision 判定）。三者分属不同文件不同职责层（api 编排 / feature 编排 / 能力查询），无重叠。错误规格 ERR1-3 分别覆盖 IF2 读取失败、IF2 vision 降级、IF1 send 失败，三条错误路径独立无遗漏。runtime/shared 层 protocol（message.send images 字段 + rpc-client 透传）已由 slice2 全程就绪，本 slice 无跨包依赖缺口。"
+    },
+    "alternatives": "曾考虑：方案A「不新建 useModelCapabilities，vision 判定 inline 进 useChat.send」——否决：inline 不可复用（ModelSelectPopover 未来 vision 标注需同一判定），且 send 函数已偏长（170-200 行），再加 provider 解析降低可读性。方案B「images 提取下沉到 chatApi.send 内部（send 只传 segments）」——否决：chat.ts 是无状态协议薄层（只组 payload 调 command），base64 提取是异步 IO 属 useChat 编排层职责，下沉会让 chat.ts 依赖 settingsStore+fetch，破坏 api 域纯净性（chat.ts 当前 0 业务依赖）。方案C「全部图读失败时阻断发送 + toast 报错」——否决：违反「图片缺失不阻断对话」语义（文本 prompt 独立通道），用户体验更差。当前方案（composable 独立 + 提取留 useChat + 降级不阻断）是职责分层与最小改动面的平衡点。",
+    "tradeoffs": [
+      {
+        "id": "TO1",
+        "decision": "读 base64 复用 local-file:// fetch 而非新增 read-tmp-image IPC",
+        "reason": "local-file 协议是 DetailPane 图片渲染既用路径，零新权限面；新增 IPC 重复 handler 逻辑 + 改 main+preload 两处。",
+        "cost": "web/mock 测试环境无 protocol.handle，fetch local-file:// reject，需 mock fetch 才能测读取成功路径（但降级路径 reject 天然可测）。"
+      },
+      {
+        "id": "TO2",
+        "decision": "vision 降级仅 console.warn 不 toast、不阻断",
+        "reason": "should 优先级范围内不扩大交互面；console.warn 满足 taste-lint no-silent-catch 可见性要求。",
+        "cost": "用户在控制台外感知不到降级（但 runtime/pi 本就丢弃不支持的多模态，功能上无差异，仅缺主动告知）。"
+      },
+      {
+        "id": "TO3",
+        "decision": "steer/followUp 活跃态不带 images（仅 send 新回合首轮带）",
+        "reason": "首轮 prompt 携带 images 即建立多模态上下文，pi 后续轮复用该上下文；steer 追加 / followUp 追加轮不需重发图。",
+        "cost": "若用户在 steer/followUp 追加时新贴图，该图不会以 images 投递（仅文本占位）。属可接受边界（追加轮贴图是低频场景，且文本占位已锚定）。"
+      }
+    ],
+    "risks": [
+      {
+        "id": "R1",
+        "item": "local-file:// fetch 在真实 Electron 环境读 tmpdir 大图可能慢（base64 编码 + WS 传输），阻塞 send 流程",
+        "severity": "low",
+        "mitigation": "send 已是 async，fetch+base64 在 await 链内不阻塞 UI 主线程（Promise 异步）。大图编码用分块 btoa（复用 useImageAttachment 防 stack 溢出范式）。若实测延迟显著，后续可加 loading 态（本期 send 已有 pendingSend 占位气泡）。"
+      },
+      {
+        "id": "R2",
+        "item": "currentModelId 解析失败（格式非 providerId/modelId / provider 未加载）导致 supportsVision 恒 false，vision 模型也被误判降级",
+        "severity": "low",
+        "mitigation": "解析失败保守降级为 false（与 useThinkingLevelSync 同范式：找不到 map 返 undefined）。最坏后果是多发一次 console.warn，images 仍正常投递（不剥离），功能不受损。currentModelId 来自 session/flow，格式稳定（sessionState.modelId || flow.currentModel || defaultModel，均有 provider/model 分隔）。"
+      },
+      {
+        "id": "R3",
+        "item": "改 chatApi.send 签名（加第三参数）可能影响既有调用方或测试断言",
+        "severity": "medium",
+        "mitigation": "第三参数可选，既有无 images 调用零行为变化（images undefined 不传键）。全局 grep chatApi.send / chat.send 调用方确认仅 useChat 4 处（send/steer/followUp/editAndResend）+ 测试 mock，images 默认 undefined 不破坏既有 toHaveBeenCalledWith 断言（除非显式断言精确参数数量，需逐测核对）。test 阶段回归 useChat.test.ts 全量。"
+      }
+    ],
+    "layerSpecific": {
+      "techChoiceRationale": "3 个技术选型理由充分：TC1（local-file fetch）对比了 IPC/node fs/file:// 三备选，选最小权限面方案；TC2（allSettled）对比 all/串行/toast，选硬规则合规方案；TC3（useModelCapabilities composable）对比了扩 ModelInfo/UI 标注/不降级，选最小跨包改动方案。每个 rationale 都对比 alternatives 说明。",
+      "interfaceContractNote": "3 接口契约设计合理：IF1（chatApi.send images 可选参数）输入约束清晰（images undefined 不传键）、形状对齐 protocol.ts:199；IF2（useChat.send 提取）副作用明确（fetch IO + console.warn）；IF3（useModelCapabilities）返回 ComputedRef 响应式，输入约束 currentModelId 格式。错误码 IMAGE_READ_SKIP/VISION_UNSUPPORTED_WARN/SEND_FAILED 覆盖三条独立错误路径。",
+      "dataModelSoundness": "无新数据模型。images 形状复用 shared protocol 既有定义（{data;base64;mimeType}），零新类型。image segment 复用 slice1 既有 Segment.image 判别（{type:'image';path;name}）。",
+      "errorCoverage": "3 个错误规格覆盖全部接口错误路径：ERR1 覆盖 IF2 读取失败（web/文件删/白名单 403 三子场景统一 allSettled 跳过）；ERR2 覆盖 IF2 vision 降级；ERR3 覆盖 IF1 send 失败（沿用既有 catch）。IF3（useModelCapabilities）无独立错误规格——解析失败保守降级 false，无 throw 路径（与 useThinkingLevelSync 同构，已验证稳定）。",
+      "testabilityNote": "可测性强。extractImages 设计为纯模块函数（不依赖 this，仅依赖全局 fetch + console.warn），可 vi.spyOn(global,'fetch') mock local-file 响应 + 断言 base64 输出。useModelCapabilities 可 setActivePinia + 注入 settingsStore.providers 后断言 supportsVision。chatApi.send images 透传可 mock command 断言 payload 含/不含 images 键。useChat.send 集成路径已有 useChat.test.ts 范式（vi.hoisted apiMock），扩展加 images 断言。降级路径（fetch reject / vision false）天然可测。mock 点充分。",
+      "crossWaveContractNote": "本 slice 单 wave（renderer-send-images-extract-impl），无跨 wave 接口协调。与上游 slice 的契约衔接：消费 slice1 的 Segment.image 类型（path/name 字段）、slice4 的 write-tmp-image/tmpdir path 产物、slice2 的 message.send images 协议透传链路（已全程就绪）。下游无依赖（feature 最后一个 slice）。"
+    }
+  }
+}

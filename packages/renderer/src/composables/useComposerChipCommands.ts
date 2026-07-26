@@ -6,6 +6,35 @@ import i18n from '@/i18n'
 const t = i18n.global.t
 
 /**
+ * 在容器内按 chipPath 查找 image-chip 元素（dataset 遍历，路径含 CSS 特殊字符也安全）。
+ *
+ * [HISTORICAL] 曾用 el.querySelector(`.image-chip[data-chip-path="${path}"]`)，
+ * 但 path 含 `"` / `]` 等 CSS 特殊字符时选择器解析失败（删除失效 / 重复 badge）。
+ * 改为遍历所有 .image-chip 比对 dataset.chipPath，规避选择器转义。
+ *
+ * 用于异步回填场景（onPaste/onDrop 占位 badge 用唯一 placeholderMark 作 chipPath 定位回填）。
+ */
+export function findImageChipEl(el: HTMLElement, chipPath: string): HTMLElement | null {
+  const chips = el.querySelectorAll<HTMLElement>('.image-chip')
+  for (const chip of chips) {
+    if (chip.dataset.chipPath === chipPath) return chip
+  }
+  return null
+}
+
+/**
+ * 在容器内按 chipId 查找 image-chip 元素（C3：ContextChipsBar 删除回调用稳定唯一 id 定位）。
+ * chipId 是 crypto.randomUUID()（无 CSS 特殊字符），但仍用 dataset 遍历与 findImageChipEl 保持一致。
+ */
+export function findImageChipElById(el: HTMLElement, chipId: string): HTMLElement | null {
+  const chips = el.querySelectorAll<HTMLElement>('.image-chip')
+  for (const chip of chips) {
+    if (chip.dataset.chipId === chipId) return chip
+  }
+  return null
+}
+
+/**
  * Composer 富文本 chip 的 DOM 操作（slash 命令 chip / @·# mention chip）。
  * 从 ComposerInput 提取以满足 <script setup> 行数上限（CLAUDE.md）。
  *
@@ -181,6 +210,62 @@ export function useComposerChipCommands(
   }
 
   /**
+   * 插入图片 badge（Cmd/Ctrl+V 富呈现通路：截图粘贴后在光标处插 image chip）。
+   *
+   * 与 insertFileChip 的区别：
+   * - 样式带 .image-chip 修饰（紫色 reasoning 色，与 ContextChipsBar image 一致），复用 .mention-chip 基础样式（TO2）。
+   * - dataset.chipType='image'（getSegmentsFromEl 依此重建 {type:image} segment，区别于 file 的 'file'）。
+   * - dataset.chipId = uuid（C3：唯一标识，同一文件附两次时 ContextChipsBar :key 用它避免重复 path 冲突）。
+   * - 无行范围概念，label 显 displayName（用户可读名）。
+   *
+   * fileName vs displayName（与 shared Segment image 段对齐）：
+   * - fileName：磁盘文件全名（含 uuid 前缀，如 `dbfdb3c8-...-image.png`），用于磁盘定位/日志，
+   *   写入 dataset.chipFileName 供 getSegmentsFromEl 重建 segment.fileName。
+   * - displayName：用户可读名（如 `截图-20260725-1530.png`），用于 badge label 显示，
+   *   写入 dataset.chipDisplayName 供 getSegmentsFromEl 重建 segment.displayName。
+   *
+   * needsMigrate：是否需要 tmpdir → attachments 迁移（landing 态 writeSessionImage 落 tmpdir 的图 true）。
+   * 写入 dataset.chipNeedsMigrate 供 getSegmentsFromEl 重建 segment.needsMigrate。+菜单选的用户磁盘文件
+   * needsMigrate 必须为 false（否则会被 renameSync 移走——数据丢失）。默认 false（省略参数等价 false）。
+   */
+  function insertImageBadge(path: string, fileName: string, displayName: string, needsMigrate: boolean = false): void {
+    const el = getEl()
+    if (!el) return
+    restoreSelection()
+    el.focus()
+    const chip = document.createElement('span')
+    chip.className = 'mention-chip mention-file image-chip'
+    chip.contentEditable = 'false'
+    // 结构化 dataset：getSegmentsFromEl 依此重建 {type:image} segment
+    chip.dataset.chipType = 'image'
+    chip.dataset.chipId = crypto.randomUUID()
+    chip.dataset.chipPath = path
+    chip.dataset.chipFileName = fileName
+    chip.dataset.chipDisplayName = displayName
+    // needsMigrate 标志（M1：迁移判断用此字段而非猜路径，避免用户磁盘文件被误迁移）
+    chip.dataset.chipNeedsMigrate = needsMigrate ? 'true' : 'false'
+    const label = document.createElement('span')
+    label.className = 'chip-label'
+    // 显示层用 displayName（用户可读），磁盘全名 fileName 对用户冗余且含 uuid 前缀不美观
+    label.textContent = displayName
+    chip.appendChild(label)
+    chip.appendChild(makeXButton(chip))
+    // 插入光标处（同 file chip，非最前）
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) {
+      el.appendChild(chip)
+    } else {
+      const range = sel.getRangeAt(0)
+      range.deleteContents()
+      range.insertNode(chip)
+    }
+    const spacer = document.createTextNode('\u200B')
+    chip.after(spacer)
+    placeCursorAfter(spacer)
+    onChanged()
+  }
+
+  /**
    * 插入 @ mention 内联 chip（§2d：蓝名，插在当前光标位置）。
    *
    * # file 引用已迁移到 insertFileChip（结构化，ADR-0034）。本方法只保留 @ 分支——
@@ -244,7 +329,7 @@ export function useComposerChipCommands(
     }
     if (prev && prev.nodeType === Node.ELEMENT_NODE) {
       const ep = prev as HTMLElement
-      if (ep.classList.contains('slash-chip') || ep.classList.contains('mention-chip')) {
+      if (ep.classList.contains('slash-chip') || ep.classList.contains('mention-chip') || ep.classList.contains('image-chip')) {
         removeChipNode(ep)
         return true
       }
@@ -252,5 +337,5 @@ export function useComposerChipCommands(
     return false
   }
 
-  return { insertSlashChip, insertMentionChip, insertFileChip, handleBackspaceOnChip }
+  return { insertSlashChip, insertMentionChip, insertFileChip, insertImageBadge, handleBackspaceOnChip }
 }
