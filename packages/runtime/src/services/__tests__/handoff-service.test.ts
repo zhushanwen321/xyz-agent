@@ -120,7 +120,7 @@ describe('HandoffService', () => {
 
   it('TC4: concurrent handoff rejected', async () => {
     // Use a deferred promise to keep first call inflight
-    let resolveFirst!: (v: { messages: Message[]; truncated: boolean }) => void
+    let resolveFirst!: (v: { messages: Message[]; truncated: false }) => void
     const firstBlocker = new Promise<{ messages: Message[]; truncated: false }>((resolve) => { resolveFirst = resolve })
     vi.mocked(sessionService.getHistory).mockReturnValueOnce(firstBlocker)
 

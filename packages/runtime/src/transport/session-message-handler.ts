@@ -83,14 +83,14 @@ export class SessionMessageHandler {
         // handoff：runtime 直接从对话历史组装文档（同步编排）。
         // 流程：getHistory → assembleHandoffDoc → create 新 session → 注入文档 → 广播。
         // 不再调用 pi skill，不需要 agent_end / onTurnEnd 回调。
-        const { sessionId, focus } = msg.payload
+        const { sessionId, reply } = msg.payload
         const hs = this.ctx.handoffService
         if (!hs) {
           // handoffService 未注入（理论不可达——组合根必传），防御性报错。
           return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
         }
         try {
-          await hs.runHandoff(sessionId, focus)
+          await hs.runHandoff(sessionId, reply)
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
         } catch (e) {
           // L4: model 未配置时返回差异化 error code（与 session.create / session.fork 同模式），
