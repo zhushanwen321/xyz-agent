@@ -102,6 +102,9 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     scanAgents: vi.fn(() => []),
     // 迁移源检测 stub（W1，worktree 测试不涉及）
     detectSources: vi.fn(() => []),
+    // 迁移 provider 导入 stub（W2，worktree 测试不涉及）
+    previewImportProviders: vi.fn(() => ({ error: { code: 'SOURCE_NOT_INSTALLED', message: 'not installed' } })),
+    applyImportProviders: vi.fn(() => ({ error: { code: 'PREVIEW_EXPIRED', message: 'expired' } })),
     getPiAgentDir: vi.fn(() => '/home/user/.pi/agent'),
     getConfigDir: vi.fn(() => '/home/user/.xyz-agent'),
     getSystemPromptConfig: vi.fn(() => ({ config: { version: 1, replace: { enabled: false, prompt: '' }, append: { enabled: false, prompt: '' } }, corrupted: false })),

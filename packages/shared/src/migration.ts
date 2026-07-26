@@ -35,3 +35,78 @@ export interface SourceDetectResult {
   /** provider 数量（W1 不实现，留 undefined）。W2/W3 填充。 */
   providerCount?: number
 }
+
+// ══ W2（cw-2026-07-26-migration-other-agents）—— Provider 导入预览/结果 DTO ══
+//
+// 安全红线（与 W1 一致）：这些 DTO 全部脱敏，**绝不**包含 apiKey 明文。
+// 解析阶段提取的 apiKey 明文只活在 runtime 进程内存（preview-cache），不出 runtime；
+// 前端只能看到 apiKeyExtracted 布尔（提示用户「key 已提取」），拿不到 key 值。
+//
+// 数据流（DM1 安全红线）：
+//   Step1 previewImportProviders(source)
+//     runtime 读源配置(Mock) → ParsedProvider[](含 apiKey 明文)
+//     → 存 PreviewCache(importId + 5min TTL)
+//     → 返回脱敏 ProviderImportPreview(只 apiKeyExtracted:boolean，无 key 值)
+//   Step2 applyImportProviders(importId, selectedIds)
+//     → 从缓存取完整配置 → 剥离 _ 前缀元数据 → 逐个 upsertProvider
+//     → apply 后立即删缓存 → 返回 ProviderImportResult
+
+/**
+ * Provider 导入预览的单个条目（脱敏，不含 apiKey 值）。
+ *
+ * - id/name：源里的 provider 标识（导入后作为 xyz-agent models.json 的 provider id）。
+ * - protocol：pi api 终值（anthropic-messages / openai-completions / ...），前端展示用。
+ * - modelCount：解析出的 model 数量。
+ * - apiKeyExtracted：源里是否成功提取到 apiKey 明文。false 时导入后 provider.apiKey 为空，
+ *   需用户手动填（前端据此提示）。
+ * - conflict：与现有 models.json provider id 的冲突。'duplicate-id' = 已存在同名 provider。
+ * - warnings：解析期警告（如「env_key 未设置」「key 加密无法提取」），前端逐条展示。
+ */
+export interface ProviderPreviewItem {
+  id: string
+  name: string
+  /** pi api 终值（anthropic-messages / openai-completions / ...）。 */
+  protocol: string
+  modelCount: number
+  /** 源里是否成功提取到 apiKey 明文（脱敏：只有布尔，无 key 值）。 */
+  apiKeyExtracted: boolean
+  conflict: 'none' | 'duplicate-id'
+  warnings: string[]
+}
+
+/**
+ * Step1 preview 的返回（脱敏）。
+ *
+ * 前端据此渲染导入预览列表（含冲突标记 + 警告），用户勾选后发 Step2 applyImportProviders。
+ * importId 在外层（reply envelope / WS payload）传递，不在此结构内。
+ */
+export interface ProviderImportPreview {
+  source: ProviderSource
+  providers: ProviderPreviewItem[]
+}
+
+/**
+ * 单个 provider 的导入结果条目。
+ *
+ * - status 'imported'：成功 upsert 到 models.json。
+ * - status 'skipped'：因冲突（duplicate-id）跳过，未写入。
+ * - status 'failed'：upsertProvider 抛异常，reason 含错误信息。
+ */
+export interface ProviderImportedItem {
+  id: string
+  name: string
+  status: 'imported' | 'skipped' | 'failed'
+  reason?: string
+}
+
+/**
+ * Step2 apply 的返回。
+ *
+ * - imported：每个选中 provider 的结果条目（含 imported/skipped/failed 三态）。
+ * - failedCount：status='failed' 的条目数（便于前端 toast 统计）。
+ */
+export interface ProviderImportResult {
+  source: ProviderSource
+  imported: ProviderImportedItem[]
+  failedCount: number
+}

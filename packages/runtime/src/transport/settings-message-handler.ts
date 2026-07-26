@@ -136,6 +136,25 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.sourcesDetected', { sources })
         return true
       }
+      case 'config.previewImportProviders': {
+        // W2 迁移：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
+        // result 可能是 { importId, preview }（成功）或 { error }（源未安装等），reply 原样转发。
+        // 前端按有无 error 字段判断成败。无广播（按需 RPC，apply 后才广播 provider 列表）。
+        const result = this.ctx.configService.previewImportProviders(msg.payload.source)
+        this.ctx.reply(ws, msg.id, 'config.providersPreviewed', result)
+        return true
+      }
+      case 'config.applyImportProviders': {
+        // W2 迁移：Step2 应用导入（写 models.json）。result 可能是 { result }（成功）或 { error }（缓存过期等）。
+        // apply 成功后广播 provider 列表（与 setProvider/deleteProvider 对称，让所有 panel 同步新增的 provider）。
+        const result = this.ctx.configService.applyImportProviders(msg.payload.importId, msg.payload.selectedIds)
+        this.ctx.reply(ws, msg.id, 'config.providersImported', result)
+        // 仅成功时广播（result 有 result 字段 = 成功；有 error 字段 = 失败，不广播）
+        if ('result' in result) {
+          this.ctx.broadcastProviderList()
+        }
+        return true
+      }
       case 'config.setAgentDirs': {
         // ADR-0020 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
         this.ctx.configService.setAgentDirs(msg.payload.dirs)

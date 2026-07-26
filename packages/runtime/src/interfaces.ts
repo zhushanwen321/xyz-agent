@@ -17,6 +17,9 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
   SourceDetectResult,
+  ProviderSource,
+  ProviderImportPreview,
+  ProviderImportResult,
   PluginInfo,
   GitStatusResult,
   FileNode,
@@ -278,6 +281,28 @@ export interface IConfigService {
    * 只读检测，不读文件内容；返回每个源的安装状态 + 资源计数。
    */
   detectSources(): SourceDetectResult[]
+  /**
+   * W2 迁移：预览从其他 agent 源导入的 provider 列表（脱敏，不含 apiKey 值）。
+   *
+   * 安全红线（DM1）：返回的 ProviderImportPreview 只含 apiKeyExtracted 布尔，**不含 apiKey 明文**。
+   * 完整配置（含 apiKey 明文）暂存在 runtime 内存缓存（5min TTL），由 applyImportProviders 消费。
+   *
+   * @param source 迁移源（pi/zcode/codex/claude）。
+   * @returns 成功 { importId, preview }；源未安装 { error: { code: 'SOURCE_NOT_INSTALLED', message } }。
+   *          importId 供 applyImportProviders 第二步使用。
+   */
+  previewImportProviders(source: ProviderSource): { importId: string; preview: ProviderImportPreview } | { error: { code: string; message: string } }
+  /**
+   * W2 迁移：应用导入（写入 models.json）。从缓存取完整配置 → 剥离 _ 元数据 → 逐个 upsertProvider。
+   *
+   * apply 成功后立即删缓存（一次性，防 importId 复用）。apply 时再次查冲突（preview 后 models.json 可能被改），
+   * 同名 provider 标 skipped（不覆写）。
+   *
+   * @param importId previewImportProviders 返回的 importId。
+   * @param selectedIds 用户勾选导入的 provider id 列表（对应源里的 provider 名）。
+   * @returns 成功 { result }；缓存过期/不存在 { error: { code: 'PREVIEW_EXPIRED', message } }。
+   */
+  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } }
   /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */

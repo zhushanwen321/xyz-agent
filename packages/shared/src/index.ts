@@ -86,4 +86,12 @@ export {
 } from './pi-preset'
 export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState } from './update'
 // 迁移功能（从其他 agent 迁移配置）类型
-export type { ProviderSource, AgentSource, SourceDetectResult } from './migration'
+export type {
+  ProviderSource,
+  AgentSource,
+  SourceDetectResult,
+  ProviderPreviewItem,
+  ProviderImportPreview,
+  ProviderImportedItem,
+  ProviderImportResult,
+} from './migration'

@@ -20,6 +20,9 @@ import {
   type SystemPromptConfig,
   type TerminalConfig,
   type SourceDetectResult,
+  type ProviderSource,
+  type ProviderImportPreview,
+  type ProviderImportResult,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -35,6 +38,7 @@ import { scanAgents } from './scanners/agent-scanner.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 import { getConfigDir } from '../infra/pi/pi-paths.js'
 import { detectSources as detectSourcesImpl } from './migration/index.js'
+import { previewImport as previewImportImpl, applyImport as applyImportImpl } from './migration/index.js'
 
 // ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
@@ -580,6 +584,20 @@ export class ConfigService implements IConfigService {
   // 返回每个源的安装状态 + 资源计数（不读文件内容）。详见 services/migration/source-detector.ts。
   detectSources(): SourceDetectResult[] {
     return detectSourcesImpl(process.env.HOME || homedir())
+  }
+
+  // ── Provider 导入（W2，cw-2026-07-26-migration-other-agents）──
+  // preview→apply 两步数据流 + 内存缓存。安全红线（DM1）：apiKey 明文不进前端。
+  // preview 返回脱敏数据（只 apiKeyExtracted 布尔），完整配置暂存 preview-cache（5min TTL）。
+  // 实现委托 services/migration/provider-importer（与 detectSources 同模式：纯函数 + 直接读 pi-provider-store，
+  // 对齐 quota-service 的 provider 级直访先例，不经 IConfigStore port）。
+
+  previewImportProviders(source: ProviderSource): { importId: string; preview: ProviderImportPreview } | { error: { code: string; message: string } } {
+    return previewImportImpl(source, process.env.HOME || homedir())
+  }
+
+  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } } {
+    return applyImportImpl(importId, selectedIds)
   }
 
   // ── System prompt config（FR-6/FR-7，ADR-0038）──

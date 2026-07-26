@@ -1,0 +1,196 @@
+<script setup lang="ts">
+/**
+ * Provider 导入预览对话框（W2 · cw-2026-07-26-migration-other-agents）。
+ *
+ * 展示 previewImportProviders 返回的脱敏 provider 列表（含冲突/key 缺失/警告），
+ * 用户勾选后 emit('confirm', selectedIds) 给父组件驱动 applyImportProviders。
+ *
+ * 设计：
+ * - selected 用 Set<id>：默认勾选 conflict='none' 的项，冲突项默认不勾。
+ * - watch(preview) 重置 selected（每次新 preview 进来都重新初始化默认勾选）。
+ * - 冲突项 Checkbox 禁用（已存在同名，导入必然 skipped）。
+ * - apiKeyExtracted=false 显示 key 警告图标；warnings 非空可用 details 展开。
+ *
+ * 复用 xyz-ui 的 Dialog/Checkbox/Button，禁止原生 form 元素。
+ */
+import { ref, watch, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { KeyRound, AlertTriangle, Loader2 } from '@lucide/vue'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@/components/ui/button'
+import type { ProviderImportPreview } from '@xyz-agent/shared'
+
+const props = defineProps<{
+  /** 受控开关（配合 v-model:open） */
+  open: boolean
+  /** preview 缓存 id（父透传，confirm 时父用此 id 调 apply） */
+  importId?: string
+  /** 预览数据（null 时按 loading/error 态处理） */
+  preview?: ProviderImportPreview | null
+  /** 加载中（preview 拉取中） */
+  loading?: boolean
+  /** 内联错误（preview/apply 失败时显示，允许重试） */
+  error?: string
+}>()
+
+const emit = defineEmits<{
+  'update:open': [value: boolean]
+  /** 用户确认导入，把选中的 provider id 传给父组件 */
+  'confirm': [selectedIds: string[]]
+}>()
+
+const { t } = useI18n()
+
+/** 选中的 provider id 集合（默认勾选 conflict='none' 的项） */
+const selected = ref<Set<string>>(new Set())
+
+/**
+ * 初始化 selected：preview 变化时，把 conflict='none' 的项全部加入（默认勾选），
+ * 冲突项（duplicate-id）默认不勾。立即触发（preview 由空 → 有数据时初始化默认勾选）。
+ */
+watch(
+  () => props.preview,
+  (pv) => {
+    const next = new Set<string>()
+    if (pv) {
+      for (const p of pv.providers) {
+        if (p.conflict === 'none') next.add(p.id)
+      }
+    }
+    selected.value = next
+  },
+  { immediate: true },
+)
+
+function onToggle(id: string, value: string | boolean): void {
+  const checked = value === true
+  const next = new Set(selected.value)
+  if (checked) next.add(id)
+  else next.delete(id)
+  selected.value = next
+}
+
+// ── 统计（底部摘要）──
+const statImportable = computed(() => props.preview?.providers.filter((p) => p.conflict === 'none').length ?? 0)
+const statConflict = computed(() => props.preview?.providers.filter((p) => p.conflict === 'duplicate-id').length ?? 0)
+const statKeyMissing = computed(() => props.preview?.providers.filter((p) => !p.apiKeyExtracted).length ?? 0)
+
+/** 是否有可确认的勾选（≥1 选中且非 applying） */
+const canConfirm = computed(() => selected.value.size > 0 && !props.loading)
+
+function onCancel(): void {
+  emit('update:open', false)
+}
+
+function onConfirm(): void {
+  if (!canConfirm.value) return
+  emit('confirm', Array.from(selected.value))
+}
+
+function sourceLabel(source: string): string {
+  return t(`settings.loadPaths.sourceLabels.${source}`)
+}
+</script>
+
+<template>
+  <Dialog :open="open" @update:open="emit('update:open', $event)">
+    <DialogContent hide-close class="max-w-[520px]">
+      <DialogHeader>
+        <DialogTitle>{{ t('settings.provider.importPreview.title', { source: preview ? sourceLabel(preview.source) : '' }) }}</DialogTitle>
+        <DialogDescription>{{ t('settings.provider.importPreview.title', { source: preview ? sourceLabel(preview.source) : '' }) }}</DialogDescription>
+      </DialogHeader>
+
+      <!-- 加载中 -->
+      <div v-if="loading" class="flex items-center gap-2 py-8 text-[12px] text-muted">
+        <Loader2 class="size-4 animate-spin" />
+        {{ t('settings.loadPaths.importFromAgents.loading') }}
+      </div>
+
+      <!-- 内联错误（允许重试：保持对话框开） -->
+      <div
+        v-else-if="error"
+        data-testid="preview-error"
+        class="flex items-center gap-1.5 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-[12px] text-danger"
+      >
+        <AlertTriangle class="size-4 shrink-0" />
+        <span class="truncate">{{ error }}</span>
+      </div>
+
+      <!-- provider 列表 -->
+      <div v-else-if="preview && preview.providers.length" class="flex flex-col gap-1.5">
+        <div
+          v-for="p in preview.providers"
+          :key="p.id"
+          data-testid="preview-provider-item"
+          class="rounded-md border border-border bg-bg px-3 py-2 text-[12px]"
+          :class="{ 'opacity-70': p.conflict === 'duplicate-id' }"
+        >
+          <div class="flex items-center gap-2">
+            <Checkbox
+              :model-value="selected.has(p.id)"
+              :disabled="p.conflict === 'duplicate-id' || loading"
+              :aria-label="p.name"
+              @update:model-value="onToggle(p.id, $event)"
+            />
+            <span class="font-mono text-fg">{{ p.id }}</span>
+            <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-muted">{{ p.protocol }}</span>
+            <span class="text-subtle">{{ t('settings.provider.modelsCount', { count: p.modelCount }) }}</span>
+
+            <!-- API Key 未提取警告 -->
+            <span
+              v-if="!p.apiKeyExtracted"
+              data-testid="key-warning"
+              class="flex items-center gap-0.5 text-warning"
+              :title="t('settings.provider.importPreview.keyNotExtracted')"
+            >
+              <KeyRound class="size-3.5" />
+            </span>
+
+            <!-- 冲突标记 -->
+            <span
+              v-if="p.conflict === 'duplicate-id'"
+              data-testid="conflict-badge"
+              class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] text-warning"
+            >
+              {{ t('settings.provider.importPreview.conflict') }}
+            </span>
+          </div>
+
+          <!-- 警告（可展开）：warnings 非空时显示 -->
+          <details v-if="p.warnings.length" class="mt-1 pl-6">
+            <summary class="cursor-pointer text-[11px] text-muted hover:text-fg">
+              {{ t('settings.provider.importPreview.warnings') }} ({{ p.warnings.length }})
+            </summary>
+            <ul class="mt-1 list-disc pl-4 text-[11px] text-warning">
+              <li v-for="(w, i) in p.warnings" :key="i">{{ w }}</li>
+            </ul>
+          </details>
+        </div>
+
+        <!-- 底部统计 -->
+        <div class="flex flex-wrap gap-3 pt-1 text-[11px] text-muted">
+          <span>{{ t('settings.provider.importPreview.statImportable', { count: statImportable }) }}</span>
+          <span>{{ t('settings.provider.importPreview.statConflict', { count: statConflict }) }}</span>
+          <span>{{ t('settings.provider.importPreview.statKeyMissing', { count: statKeyMissing }) }}</span>
+        </div>
+      </div>
+
+      <!-- 空列表 -->
+      <div v-else class="py-8 text-center text-[12px] text-muted">
+        {{ t('settings.providerEdit.noModels') }}
+      </div>
+
+      <!-- 底部按钮 -->
+      <div class="flex justify-end gap-2 pt-2">
+        <Button variant="ghost" :disabled="loading" @click="onCancel">
+          {{ t('settings.provider.importPreview.cancel') }}
+        </Button>
+        <Button data-testid="confirm-import-btn" :disabled="!canConfirm" @click="onConfirm">
+          <Loader2 v-if="loading" class="size-4 animate-spin" />
+          {{ t('settings.provider.importPreview.confirm') }}
+        </Button>
+      </div>
+    </DialogContent>
+  </Dialog>
+</template>

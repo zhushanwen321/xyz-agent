@@ -22,6 +22,7 @@ import type {
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
+  ProviderSource, ProviderImportPreview, ProviderImportResult,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -709,6 +710,16 @@ export const config = {
   async detectSources() {
     await sleep(TIMING.ack)
     return []
+  },
+  /** W2：预览导入 provider。mock 返回空 preview（无源配置可解析），importId 为空占位 */
+  async previewImportProviders(_source: ProviderSource): Promise<{ importId: string; preview: ProviderImportPreview }> {
+    await sleep(TIMING.ack)
+    return { importId: '', preview: { source: _source, providers: [] } }
+  },
+  /** W2：应用导入。mock 返回空结果（无 provider 可导入） */
+  async applyImportProviders(_importId: string, _selectedIds: string[]): Promise<{ result: ProviderImportResult }> {
+    await sleep(TIMING.ack)
+    return { result: { source: 'pi' as ProviderSource, imported: [], failedCount: 0 } }
   },
   /** ADR-0020 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
   async setAgentDirs(dirs: string[]) {

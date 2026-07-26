@@ -14,6 +14,11 @@ import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
 import type { PiLaunchPreset, PresetUsageEntry, ThinkingLevel } from './pi-preset'
 import type { SourceDetectResult } from './migration'
+import type {
+  ProviderSource,
+  ProviderImportPreview,
+  ProviderImportResult,
+} from './migration'
 
 // ── Client → Runtime message types
 
@@ -89,6 +94,9 @@ export type ClientMessageType =
   // 迁移：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
   // 只读检测，不读文件内容（安全）。reply config.sourcesDetected。
   | 'config.detectSources'
+  // 迁移 W2：Provider 导入两步流。Step1 preview（脱敏，apiKey 不进前端）→ Step2 apply（写 models.json）。
+  // reply config.providersPreviewed / config.providersImported。
+  | 'config.previewImportProviders' | 'config.applyImportProviders'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -409,6 +417,16 @@ export interface ClientMessageMap {
   'preset.import': { json: string }
   /** config.detectSources：检测本机其他 agent 的 skill/agent 配置目录（无参数，只读检测）。 */
   'config.detectSources': Record<string, never>
+  /**
+   * config.previewImportProviders：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
+   * source 是迁移源（pi/zcode/codex/claude）。
+   */
+  'config.previewImportProviders': { source: ProviderSource }
+  /**
+   * config.applyImportProviders：Step2 应用导入（写 models.json）。
+   * importId 来自 Step1 preview 的 reply；selectedIds 是用户勾选的 provider id 列表。
+   */
+  'config.applyImportProviders': { importId: string; selectedIds: string[] }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -529,6 +547,8 @@ export type ServerMessageType =
   | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
   | 'preset.export' | 'preset.import'
   | 'config.sourcesDetected'
+  // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
+  | 'config.providersPreviewed' | 'config.providersImported'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -840,6 +860,19 @@ export interface ServerMessageMapBase {
   // config.sourcesDetected：detectSources reply（settings-message-handler.ts reply { sources }）。
   // sources 是本机其他 agent（Claude/Codex/Pi/ZCode）skill/agent 目录的检测结果（只读，不读文件内容）。
   'config.sourcesDetected': { sources: SourceDetectResult[] }
+  // config.providersPreviewed：previewImportProviders reply（W2 迁移）。
+  // 成功 { importId, preview }（preview 脱敏，只含 apiKeyExtracted 布尔，无 apiKey 值）；
+  // 失败 { error: { code, message } }（如 SOURCE_NOT_INSTALLED）。
+  // importId 供 applyImportProviders 第二步使用。前端按有无 error 字段判断成败。
+  'config.providersPreviewed':
+    | { importId: string; preview: ProviderImportPreview }
+    | { error: { code: string; message: string } }
+  // config.providersImported：applyImportProviders reply（W2 迁移）。
+  // 成功 { result }（含 imported/skipped/failed 三态条目 + failedCount）；
+  // 失败 { error: { code, message } }（如 PREVIEW_EXPIRED）。前端按有无 error 字段判断成败。
+  'config.providersImported':
+    | { result: ProviderImportResult }
+    | { error: { code: string; message: string } }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -945,6 +978,9 @@ export interface ReplyPayloadMap {
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
   'config.detectSources': ServerMessageMap['config.sourcesDetected']
+  // W2 迁移：provider 导入两步流 reply（payload 消费型，前端读 importId/preview/result/error）。
+  'config.previewImportProviders': ServerMessageMap['config.providersPreviewed']
+  'config.applyImportProviders': ServerMessageMap['config.providersImported']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
   'config.getProjectSkills': ServerMessageMap['config.projectSkills']

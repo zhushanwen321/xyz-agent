@@ -99,6 +99,24 @@ export default {
     deleteConfirmTitle: '删除 {name}？',
     deleteConfirmDesc: '将移除其下所有模型配置。此操作不可撤销。',
     deleteConfirmBtn: '确认删除',
+    // ── 从其他 Agent 导入 Provider（W2）──
+    importFromAgents: '从其他 Agent 导入',
+    importPreview: {
+      title: '从 {source} 导入 Provider',
+      confirm: '导入选中',
+      cancel: '取消',
+      keyNotExtracted: 'API Key 未提取',
+      conflict: '已存在同名',
+      statImportable: '{count} 个可导入',
+      statConflict: '{count} 个冲突',
+      statKeyMissing: '{count} 个 key 未提取',
+      warnings: '警告',
+    },
+    importToast: {
+      success: '导入 {count} 个 provider',
+      failed: '{count} 个导入失败',
+      partialKeyMissing: '部分 provider 需手动补 API Key',
+    },
   },
   // ── Provider 编辑弹窗（ProviderEditModal）──
   providerEdit: {

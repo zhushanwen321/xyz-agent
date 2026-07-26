@@ -99,6 +99,24 @@ export default {
     deleteConfirmTitle: 'Delete {name}?',
     deleteConfirmDesc: 'All model configurations under it will be removed. This cannot be undone.',
     deleteConfirmBtn: 'Confirm delete',
+    // ── Import Providers from other Agents (W2) ──
+    importFromAgents: 'Import from Agents',
+    importPreview: {
+      title: 'Import Providers from {source}',
+      confirm: 'Import selected',
+      cancel: 'Cancel',
+      keyNotExtracted: 'API Key not extracted',
+      conflict: 'Duplicate name exists',
+      statImportable: '{count} importable',
+      statConflict: '{count} conflict',
+      statKeyMissing: '{count} key missing',
+      warnings: 'Warnings',
+    },
+    importToast: {
+      success: 'Imported {count} providers',
+      failed: '{count} failed to import',
+      partialKeyMissing: 'Some providers need manual API Key',
+    },
   },
   // ── Provider edit dialog (ProviderEditModal) ──
   providerEdit: {
