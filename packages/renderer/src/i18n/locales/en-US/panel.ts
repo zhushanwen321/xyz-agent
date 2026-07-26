@@ -34,6 +34,7 @@ export default {
     handoffChip: 'Hand off to a new session · packs last reply doc',
     handoffSend: 'Hand off & send',
     handoffExit: 'Exit handoff mode',
+    bashPlaceholder: 'Run bash command… (!! prefix excludes from context)',
   },
   message: {
     copy: 'Copy',

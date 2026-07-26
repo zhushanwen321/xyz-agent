@@ -403,6 +403,46 @@ export const chat = {
     await sleep(TIMING.ack)
   },
 
+  // bash 执行（composer-bash-execute）：mock 模式只 ack + 广播 bashStart/bashResult 终态，
+  // 不模拟真实 shell 输出（与 send 的 mock 策略一致——只驱动 UI 状态机，不验证业务逻辑）。
+  async bash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<void> {
+    await sleep(TIMING.ack)
+    emit(sessionId, {
+      type: 'message.bashStart',
+      payload: { sessionId, command, excludeFromContext: !!excludeFromContext, timestamp: Date.now() },
+    })
+    emit(sessionId, {
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command,
+        output: `(mock) ${command}`,
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+        excludeFromContext: !!excludeFromContext,
+        timestamp: Date.now(),
+      },
+    })
+  },
+
+  async abortBash(sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    emit(sessionId, {
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command: '',
+        output: '',
+        exitCode: null,
+        cancelled: true,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: Date.now(),
+      },
+    })
+  },
+
   /**
    * steer：ack 后推 queue_update（steering 入队），延迟后模拟 drain（pi 投递：splice 移除 + emit）。
    * 入队 → QueueBubble 渲染 + pending 气泡；drain → 前端 pending→complete。

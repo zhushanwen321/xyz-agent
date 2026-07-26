@@ -173,6 +173,7 @@ import { useComposerRestore } from '@/composables/panel/useComposerRestore'
 import { useComposerSubmit } from '@/composables/panel/useComposerSubmit'
 import { useComposerHandoffMode } from '@/composables/panel/useComposerHandoffMode'
 import { useComposerModeVisual } from '@/composables/panel/useComposerModeVisual'
+import { useComposerBash } from '@/composables/panel/useComposerBash'
 
 const props = withDefaults(
   defineProps<{
@@ -320,6 +321,13 @@ watch(() => fork.forkMode.value, (isFork) => {
 
 const hasInput = computed(() => draft.value.trim().length > 0)
 
+// bash 命令模式（composer-bash-execute）：isBashMode + trySendBash 分流提取到 useComposerBash
+const composerBash = useComposerBash({
+  draft, clearInput, restoreInput, isSending,
+  sessionId: () => props.sessionId,
+})
+const isBashMode = composerBash.isBashMode
+
 // 提交动作（steer / followUp / abort）—— 见 useComposerSubmit。onSend 留组件内（fork/landing/compact 分支多）
 const { onSteer, onFollowUp, onAbort } = useComposerSubmit({
   hasInput, isActive, draft, inputRef, sessionIdRef,
@@ -330,7 +338,7 @@ const { onSteer, onFollowUp, onAbort } = useComposerSubmit({
 const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
 const canSend = computed(() => hasInput.value && !isBusy.value)
 
-// composer-box 视觉派生（boxClass / placeholder 三级链：fork > handoff > 默认）—— 见 useComposerModeVisual
+// composer-box 视觉派生（boxClass / placeholder 四级链：fork > handoff > bash > 默认）—— 见 useComposerModeVisual
 const { boxClass, placeholder } = useComposerModeVisual({
   forkBoxClass: fork.forkBoxClass,
   handoffBoxClass: handoff.handoffBoxClass,
@@ -339,18 +347,10 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isActive,
   hasInput,
   isSending,
+  isBashMode,
 })
 
-/**
- * 发送：S2 → S5（sending）→ S6（streaming）→ 完成。分支优先级：
- * 1. fork 模式 → forkSessionAsk（详见 useComposerForkMode）。
- * 2. handoff 模式 → handleHandoffSend（详见 useComposerHandoffMode，与 fork 互斥）。
- * 3. landing 态 → submitFirstMessage（延迟 create session；用 variant 而非 sessionId 判定，
- *    landing 态 sessionId 可能是公共 id 非真实 session）。
- * 4. /compact slash chip → 专用 compact RPC（#6），不发 prompt 给 pi。检测 '/compact' 或
- *    '/compact <指令>'，与 pi TUI interactive-mode.ts:2656 对齐。必须在此拦截：pi RPC 不解析 builtin slash。
- * 5. 普通发送 → useChat.send。
- */
+/** 发送分流（优先级）：fork > handoff > landing > bash(!/!!) > /compact > send */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
   const canHandoffSend = handoff.handoffMode.value && !isBusy.value
@@ -359,8 +359,7 @@ async function onSend(): Promise<void> {
   if (fork.forkMode.value && await fork.handleForkSend(text)) return
   if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
   if (props.variant === 'landing') {
-    // 先快照 segments（clearInput 会清空 DOM，必须在清空前提取）——与 normal 态一致。
-    // landing 态 image/skill/file segment 都需完整传递到 submitFirstMessage，丢段会导致丢图。
+    // 先快照 segments（clearInput 会清空 DOM）；landing 态 sessionId 可能是公共 id，用 variant 判定
     const segments = inputRef.value?.getSegments() ?? []
     clearInput()
     isSending.value = true
@@ -378,6 +377,8 @@ async function onSend(): Promise<void> {
     return
   }
   const trimmed = text.trim()
+  // bash 分流（!/!! 前缀，见 useComposerBash）：必须在 fork/handoff/landing 后、/compact 前
+  if (await composerBash.trySendBash(text)) return
   if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
     const customInstructions = trimmed.startsWith('/compact ')
       ? trimmed.slice('/compact '.length).trim() || undefined

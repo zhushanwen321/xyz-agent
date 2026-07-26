@@ -334,6 +334,47 @@ export function useChat() {
   }
 
   /**
+   * 直接执行 bash 命令（composer-bash-execute，不经 LLM turn）。
+   *
+   * `!`/`!!` 前缀的 shell 文本原样透传，不走 segment 提取 / segmentsToPrompt / appendUser。
+   * bash 不阻塞 active 态：与 AI turn 正交（pi bash RPC 独立执行，不抢占 LLM 回合）。
+   * 实时反馈 + 结果由 message.bashStart / message.bashResult 广播驱动（runtime 负责，经
+   * 会话级订阅的 applyMessageEvent 消费），故此处仅确保订阅存在 + 发 RPC。
+   *
+   * 错误处理与 abort/compact 对齐：toast + 不 throw（消费侧 Composer.onSend 已有 try/catch，
+   * throw 只会变 unhandled rejection）。
+   *
+   * 显式接收 sessionId：per-panel 隔离，不读全局 activeId。
+   */
+  async function sendBash(sessionId: string, command: string, excludeFromContext: boolean): Promise<void> {
+    const sid = sessionId
+    ensureStreamSubscription(sid, chat, session)
+    try {
+      await chatApi.bash(sid, command, excludeFromContext)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(t('composable.bashFailed', { msg }))
+    }
+  }
+
+  /**
+   * 取消进行中的 bash 执行（调 pi abort_bash）。
+   *
+   * 错误处理与 abort 对齐：toast + 不 throw。
+   */
+  async function abortBash(sessionId: string): Promise<void> {
+    const sid = sessionId
+    try {
+      await chatApi.abortBash(sid)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(t('composable.stopFailed', { msg }))
+    }
+  }
+
+  /**
    * 压缩上下文（#6）：确保会话级订阅（消费 session.compacting/compacted）→ 调 api.compact。
    *
    * 错误反馈（§4.4 异常路径）：session 不存在 / pi 错误 → sendError（pending reject）→
@@ -465,5 +506,5 @@ export function useChat() {
     chat.disposeSession(sessionId)
   }
 
-  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, hasMoreHistory, setHistoryTruncated, disposeSession }
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, hasMoreHistory, setHistoryTruncated, disposeSession, sendBash, abortBash }
 }

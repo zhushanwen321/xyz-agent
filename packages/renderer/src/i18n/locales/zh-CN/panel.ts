@@ -34,6 +34,7 @@ export default {
     handoffChip: '将交接到新 session · 打包末条回复文档',
     handoffSend: '交接并发送',
     handoffExit: '退出交接模式',
+    bashPlaceholder: '运行 bash 命令…（!! 前缀排除出上下文）',
   },
   message: {
     copy: '复制',
