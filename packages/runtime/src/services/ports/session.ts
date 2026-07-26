@@ -23,6 +23,8 @@ export interface ScannedSessionMeta {
   forkEntryId?: string
   /** handoff 目标 session id（FR-5，与 infra/pi/session-file-utils 版本对齐）。 */
   handedOffTo?: string
+  /** launch preset 绑定（从 .preset.json sidecar 读，与 infra/pi/session-file-utils 版本对齐）。 */
+  launchPresetId?: string
 }
 
 /** session 终态类型（W4，ADR 0036）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */
