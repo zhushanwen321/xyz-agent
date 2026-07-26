@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings — Pi 启动参数预设</title>
+<style>
+  :root {
+    --bg: #1a1b1f;
+    --surface: #272830;
+    --surface-hover: #2e2f3a;
+    --text: #f7f8fc;
+    --text-secondary: #a8a8b5;
+    --accent: #4f8ef7;
+    --accent-hover: #6ba0f9;
+    --border: rgba(255,255,255,0.08);
+    --border-focus: rgba(79,142,247,0.5);
+    --danger: #ef4444;
+    --danger-hover: #f87171;
+    --radius-sm: 3px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --font: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+
+  .settings-container {
+    width: 100%;
+    max-width: 720px;
+  }
+
+  /* ── Page Header ── */
+  .page-header {
+    margin-bottom: 24px;
+  }
+  .page-header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .page-header p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  /* ── Preset Chips Row ── */
+  .preset-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+    align-items: center;
+  }
+  .preset-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+  }
+  .preset-chip:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+    border-color: rgba(255,255,255,0.14);
+  }
+  .preset-chip.active {
+    background: rgba(79,142,247,0.12);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .preset-chip .chip-icon {
+    font-size: 14px;
+    line-height: 1;
+  }
+  .preset-chip .builtin-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+    opacity: 0.4;
+    flex-shrink: 0;
+  }
+  .preset-chip.active .builtin-dot {
+    background: var(--accent);
+    opacity: 0.6;
+  }
+  .chip-add {
+    border-style: dashed;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+  .chip-add:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* ── Form Card ── */
+  .form-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+  }
+
+  /* ── Form Fields ── */
+  .field-group {
+    margin-bottom: 20px;
+  }
+  .field-group:last-child {
+    margin-bottom: 0;
+  }
+  .field-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .field-input {
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: var(--font);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .field-input:focus {
+    border-color: var(--border-focus);
+  }
+  .field-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .field-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+  }
+
+  /* ── Radio Group ── */
+  .radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .radio-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .radio-option:hover {
+    background: var(--surface-hover);
+    border-color: rgba(255,255,255,0.14);
+  }
+  .radio-option.active {
+    background: rgba(79,142,247,0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .radio-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s;
+  }
+  .radio-option.active .radio-dot {
+    border-color: var(--accent);
+  }
+  .radio-dot::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    transform: scale(0);
+    transition: transform 0.15s;
+  }
+  .radio-option.active .radio-dot::after {
+    transform: scale(1);
+  }
+
+  /* ── Tool Checkbox Grid ── */
+  .tool-section {
+    margin-top: 12px;
+    padding: 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .tool-section-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+  }
+  .tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 6px;
+  }
+  .tool-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--text-secondary);
+    transition: all 0.12s;
+    user-select: none;
+  }
+  .tool-checkbox:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
+  .tool-checkbox.checked {
+    color: var(--accent);
+  }
+  .check-box {
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.12s;
+  }
+  .tool-checkbox.checked .check-box {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .check-box svg {
+    width: 10px;
+    height: 10px;
+    stroke: var(--bg);
+    stroke-width: 3;
+    fill: none;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .tool-checkbox.checked .check-box svg {
+    opacity: 1;
+  }
+
+  /* ── Tool Group Divider ── */
+  .tool-group-divider {
+    grid-column: 1 / -1;
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 6px 0 2px;
+  }
+  .tool-group-label {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    color: var(--text-secondary);
+    opacity: 0.7;
+    padding-top: 4px;
+  }
+
+  /* ── Extension Checkbox ── */
+  .ext-section {
+    margin-top: 12px;
+    padding: 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .ext-section-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+  }
+  .ext-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 6px;
+  }
+  .ext-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+    transition: all 0.12s;
+    user-select: none;
+  }
+  .ext-checkbox:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
+  .ext-checkbox.checked {
+    color: var(--accent);
+  }
+  .ext-checkbox .ext-info {
+    display: flex;
+    flex-direction: column;
+  }
+  .ext-checkbox .ext-name {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .ext-checkbox .ext-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+    opacity: 0.7;
+  }
+
+  /* ── Select ── */
+  .field-select {
+    width: 100%;
+    padding: 8px 32px 8px 12px;
+    font-size: 13px;
+    font-family: var(--font);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    outline: none;
+    appearance: none;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a8a8b5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    transition: border-color 0.15s;
+  }
+  .field-select:focus {
+    border-color: var(--border-focus);
+  }
+  .field-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* ── Advanced Options ── */
+  .section-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 20px 0;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+  }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    cursor: pointer;
+    user-select: none;
+  }
+  .checkbox-row:hover .check-box {
+    border-color: rgba(255,255,255,0.2);
+  }
+  .checkbox-label {
+    font-size: 13px;
+    color: var(--text);
+  }
+  .checkbox-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 1px;
+  }
+
+  /* ── Footer Actions ── */
+  .form-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .btn {
+    padding: 7px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--danger);
+    border-color: transparent;
+  }
+  .btn-ghost:hover {
+    background: rgba(239,68,68,0.08);
+    color: var(--danger-hover);
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+  .btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 10px 18px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: var(--radius-md);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.25s ease;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 560px) {
+    .radio-group { flex-direction: column; }
+    .tool-grid { grid-template-columns: repeat(2, 1fr); }
+    .preset-chips { gap: 6px; }
+    .preset-chip { padding: 5px 10px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="settings-container">
+  <!-- Page Header -->
+  <div class="page-header">
+    <h1>Pi 启动参数预设</h1>
+    <p>配置不同场景的 Pi 启动参数，新建 Session 时选择预设</p>
+  </div>
+
+  <!-- Preset Chips -->
+  <div class="preset-chips" id="presetChips">
+    <div class="preset-chip active" data-id="builtin:full" onclick="selectPreset('builtin:full')">
+      <span class="builtin-dot"></span>
+      <span>全工具模式</span>
+    </div>
+    <div class="preset-chip" data-id="builtin:orchestrator" onclick="selectPreset('builtin:orchestrator')">
+      <span class="builtin-dot"></span>
+      <span>Orchestrator</span>
+    </div>
+    <div class="preset-chip" data-id="builtin:readonly" onclick="selectPreset('builtin:readonly')">
+      <span class="builtin-dot"></span>
+      <span>只读模式</span>
+    </div>
+    <div class="preset-chip chip-add" onclick="addPreset()">+ 新建</div>
+  </div>
+
+  <!-- Form Card -->
+  <div class="form-card" id="formCard">
+    <!-- Name -->
+    <div class="field-group">
+      <label class="field-label">预设名称</label>
+      <input class="field-input" id="presetName" type="text" value="全工具模式" disabled>
+    </div>
+
+    <!-- Description -->
+    <div class="field-group">
+      <label class="field-label">描述</label>
+      <input class="field-input" id="presetDesc" type="text" value="所有工具可用，适合大部分任务" placeholder="简短描述预设用途">
+    </div>
+
+    <!-- Tool Mode -->
+    <div class="field-group">
+      <label class="field-label">工具模式</label>
+      <div class="radio-group" id="toolModeGroup">
+        <div class="radio-option active" data-mode="all" onclick="setToolMode('all')">
+          <span class="radio-dot"></span>
+          <span>全部工具</span>
+        </div>
+        <div class="radio-option" data-mode="allowlist" onclick="setToolMode('allowlist')">
+          <span class="radio-dot"></span>
+          <span>白名单</span>
+        </div>
+        <div class="radio-option" data-mode="denylist" onclick="setToolMode('denylist')">
+          <span class="radio-dot"></span>
+          <span>黑名单</span>
+        </div>
+        <div class="radio-option" data-mode="none" onclick="setToolMode('none')">
+          <span class="radio-dot"></span>
+          <span>无工具</span>
+        </div>
+      </div>
+
+      <!-- Tool Checkboxes (hidden by default for 'all' mode) -->
+      <div class="tool-section" id="toolSection" style="display:none">
+        <div class="tool-section-label" id="toolSectionLabel">禁用以下工具：</div>
+        <div class="tool-grid" id="toolGrid"></div>
+      </div>
+    </div>
+
+    <!-- Extension Mode -->
+    <div class="field-group">
+      <label class="field-label">Extension 模式</label>
+      <div class="radio-group" id="extModeGroup">
+        <div class="radio-option active" data-mode="all" onclick="setExtMode('all')">
+          <span class="radio-dot"></span>
+          <span>全部</span>
+        </div>
+        <div class="radio-option" data-mode="allowlist" onclick="setExtMode('allowlist')">
+          <span class="radio-dot"></span>
+          <span>白名单</span>
+        </div>
+        <div class="radio-option" data-mode="denylist" onclick="setExtMode('denylist')">
+          <span class="radio-dot"></span>
+          <span>黑名单</span>
+        </div>
+        <div class="radio-option" data-mode="none" onclick="setExtMode('none')">
+          <span class="radio-dot"></span>
+          <span>无扩展</span>
+        </div>
+      </div>
+
+      <!-- Extension Checkboxes (hidden by default for 'all' mode) -->
+      <div class="ext-section" id="extSection" style="display:none">
+        <div class="ext-section-label" id="extSectionLabel">禁用以下扩展：</div>
+        <div class="ext-grid" id="extGrid"></div>
+      </div>
+    </div>
+
+    <!-- Model Override -->
+    <div class="field-group">
+      <label class="field-label">模型覆盖</label>
+      <select class="field-select" id="modelSelect">
+        <option value="">使用全局默认</option>
+        <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
+        <option value="anthropic/claude-opus-4">Claude Opus 4</option>
+        <option value="openai/gpt-4.1">GPT-4.1</option>
+        <option value="openai/o3">o3</option>
+        <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+      </select>
+    </div>
+
+    <!-- Thinking Level -->
+    <div class="field-group">
+      <label class="field-label">思考等级</label>
+      <select class="field-select" id="thinkingSelect">
+        <option value="">使用全局默认</option>
+        <option value="off">Off</option>
+        <option value="minimal">Minimal</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="xhigh">XHigh</option>
+      </select>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- Advanced Options -->
+    <div class="section-title">高级选项</div>
+    <div id="advancedOptions">
+      <div class="checkbox-row" onclick="toggleCheck(this)">
+        <div class="check-box"><svg viewBox="0 0 12 12"><polyline points="2 6 5 9 10 3"/></svg></div>
+        <div>
+          <div class="checkbox-label">禁用所有扩展</div>
+          <div class="checkbox-desc">不加载任何 Pi 扩展</div>
+        </div>
+      </div>
+      <div class="checkbox-row" onclick="toggleCheck(this)">
+        <div class="check-box"><svg viewBox="0 0 12 12"><polyline points="2 6 5 9 10 3"/></svg></div>
+        <div>
+          <div class="checkbox-label">禁用所有 Skill</div>
+          <div class="checkbox-desc">不加载任何 Skill 文件</div>
+        </div>
+      </div>
+      <div class="checkbox-row" onclick="toggleCheck(this)">
+        <div class="check-box"><svg viewBox="0 0 12 12"><polyline points="2 6 5 9 10 3"/></svg></div>
+        <div>
+          <div class="checkbox-label">禁用 Context Files</div>
+          <div class="checkbox-desc">不读取 AGENTS.md / CLAUDE.md</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="form-footer">
+      <button class="btn btn-ghost" id="deleteBtn" onclick="deletePreset()" style="visibility:hidden">删除预设</button>
+      <button class="btn btn-primary" onclick="savePreset()">保存更改</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Data ──
+const TOOL_GROUPS = {
+  enabled: { label: '', tools: ['read', 'write', 'bash', 'edit'] },
+  disabled: { label: '只读工具（默认禁用）', tools: ['grep', 'find', 'ls'] },
+};
+const ALL_TOOLS = [...TOOL_GROUPS.enabled.tools, ...TOOL_GROUPS.disabled.tools];
+
+const EXTENSIONS = [
+  { name: 'pi-goal', description: '目标管理扩展', tools: ['goal_control'] },
+  { name: 'pi-todo', description: '任务列表扩展', tools: ['todo'] },
+  { name: 'pi-subagents', description: '子 Agent 管理', tools: ['subagent'] },
+  { name: 'pi-workflow', description: '工作流引擎', tools: ['workflow'] },
+  { name: 'pi-structured-output', description: '结构化输出', tools: ['structured_output'] },
+];
+const ICONS = {
+  'builtin:full': { icon: '🔧', name: '全工具模式' },
+  'builtin:orchestrator': { icon: '🎯', name: 'Orchestrator' },
+  'builtin:readonly': { icon: '👁', name: '只读模式' },
+};
+
+const presets = {
+  'builtin:full': {
+    id: 'builtin:full', name: '全工具模式', builtin: true,
+    description: '所有工具可用，适合大部分任务',
+    toolMode: 'all', allowedTools: [], deniedTools: [],
+    extensionMode: 'all', allowedExtensions: [], deniedExtensions: [],
+    modelOverride: '', thinkingLevel: '',
+    noExtensions: false, noSkills: false, noContextFiles: false,
+  },
+  'builtin:orchestrator': {
+    id: 'builtin:orchestrator', name: 'Orchestrator', builtin: true,
+    description: '主 Agent 只做协调，实际执行由 SubAgent 完成，extensionMode 设为 all（Orchestrator 通常需要 subagent/workflow 扩展）',
+    toolMode: 'denylist', allowedTools: [], deniedTools: ['read', 'write', 'bash', 'edit'],
+    extensionMode: 'all', allowedExtensions: [], deniedExtensions: [],
+    modelOverride: '', thinkingLevel: '',
+    noExtensions: false, noSkills: false, noContextFiles: false,
+  },
+  'builtin:readonly': {
+    id: 'builtin:readonly', name: '只读模式', builtin: true,
+    description: '只能查看代码，适合 Code Review',
+    toolMode: 'allowlist', allowedTools: ['read', 'grep', 'find', 'ls'], deniedTools: [],
+    extensionMode: 'none', allowedExtensions: [], deniedExtensions: [],
+    modelOverride: '', thinkingLevel: '',
+    noExtensions: false, noSkills: false, noContextFiles: false,
+  },
+};
+
+let customCounter = 0;
+let currentId = 'builtin:full';
+
+// ── Render ──
+function renderToolGrid() {
+  const preset = presets[currentId];
+  const grid = document.getElementById('toolGrid');
+  grid.innerHTML = '';
+  Object.entries(TOOL_GROUPS).forEach(([key, group]) => {
+    // Add divider and label for disabled group
+    if (key === 'disabled') {
+      const hr = document.createElement('hr');
+      hr.className = 'tool-group-divider';
+      grid.appendChild(hr);
+      if (group.label) {
+        const lbl = document.createElement('div');
+        lbl.className = 'tool-group-label';
+        lbl.textContent = group.label;
+        grid.appendChild(lbl);
+      }
+    }
+    group.tools.forEach(tool => {
+      const isChecked =
+        preset.toolMode === 'allowlist' ? preset.allowedTools.includes(tool) :
+        preset.toolMode === 'denylist' ? preset.deniedTools.includes(tool) :
+        false;
+      const div = document.createElement('div');
+      div.className = 'tool-checkbox' + (isChecked ? ' checked' : '');
+      div.innerHTML = `<div class="check-box"><svg viewBox="0 0 12 12"><polyline points="2 6 5 9 10 3"/></svg></div><span>${tool}</span>`;
+      div.addEventListener('click', () => toggleTool(tool));
+      grid.appendChild(div);
+    });
+  });
+}
+
+function renderExtGrid() {
+  const preset = presets[currentId];
+  const grid = document.getElementById('extGrid');
+  grid.innerHTML = '';
+  EXTENSIONS.forEach(ext => {
+    const isChecked =
+      preset.extensionMode === 'allowlist' ? preset.allowedExtensions.includes(ext.name) :
+      preset.extensionMode === 'denylist' ? preset.deniedExtensions.includes(ext.name) :
+      false;
+    const div = document.createElement('div');
+    div.className = 'ext-checkbox' + (isChecked ? ' checked' : '');
+    div.innerHTML = `<div class="check-box"><svg viewBox="0 0 12 12"><polyline points="2 6 5 9 10 3"/></svg></div><div class="ext-info"><span class="ext-name">${ext.name}</span><span class="ext-desc">${ext.description}</span></div>`;
+    div.addEventListener('click', () => toggleExt(ext.name));
+    grid.appendChild(div);
+  });
+}
+
+function renderForm() {
+  const preset = presets[currentId];
+  document.getElementById('presetName').value = preset.name;
+  document.getElementById('presetName').disabled = preset.builtin;
+  document.getElementById('presetDesc').value = preset.description || '';
+  document.getElementById('presetDesc').disabled = false;
+  document.getElementById('modelSelect').value = preset.modelOverride || '';
+  document.getElementById('thinkingSelect').value = preset.thinkingLevel || '';
+
+  // tool mode radio
+  document.querySelectorAll('#toolModeGroup .radio-option').forEach(el => {
+    el.classList.toggle('active', el.dataset.mode === preset.toolMode);
+  });
+
+  // tool section visibility
+  const showTools = preset.toolMode === 'allowlist' || preset.toolMode === 'denylist';
+  const toolSection = document.getElementById('toolSection');
+  toolSection.style.display = showTools ? 'block' : 'none';
+  if (showTools) {
+    document.getElementById('toolSectionLabel').textContent =
+      preset.toolMode === 'allowlist' ? '允许以下工具：' : '禁用以下工具：';
+    renderToolGrid();
+  }
+
+  // extension mode radio
+  document.querySelectorAll('#extModeGroup .radio-option').forEach(el => {
+    el.classList.toggle('active', el.dataset.mode === preset.extensionMode);
+  });
+
+  // extension section visibility
+  const showExts = preset.extensionMode === 'allowlist' || preset.extensionMode === 'denylist';
+  const extSection = document.getElementById('extSection');
+  extSection.style.display = showExts ? 'block' : 'none';
+  if (showExts) {
+    document.getElementById('extSectionLabel').textContent =
+      preset.extensionMode === 'allowlist' ? '允许以下扩展：' : '禁用以下扩展：';
+    renderExtGrid();
+  }
+
+  // advanced checkboxes
+  const opts = document.querySelectorAll('#advancedOptions .checkbox-row');
+  const vals = [preset.noExtensions, preset.noSkills, preset.noContextFiles];
+  opts.forEach((row, i) => row.classList.toggle('checked', !!vals[i]));
+
+  // delete button
+  document.getElementById('deleteBtn').style.visibility = preset.builtin ? 'hidden' : 'visible';
+}
+
+function renderChips() {
+  const container = document.getElementById('presetChips');
+  const addBtn = container.querySelector('.chip-add');
+  // remove all chips except add button
+  Array.from(container.children).forEach(c => { if (c !== addBtn) c.remove(); });
+
+  Object.values(presets).forEach(p => {
+    const chip = document.createElement('div');
+    chip.className = 'preset-chip' + (p.id === currentId ? ' active' : '');
+    chip.dataset.id = p.id;
+    chip.onclick = () => selectPreset(p.id);
+    chip.innerHTML = `<span class="builtin-dot"></span><span>${p.name}</span>`;
+    container.insertBefore(chip, addBtn);
+  });
+}
+
+// ── Actions ──
+function selectPreset(id) {
+  currentId = id;
+  renderChips();
+  renderForm();
+}
+
+function setToolMode(mode) {
+  presets[currentId].toolMode = mode;
+  // when switching to allowlist/denylist, initialize tool lists if empty
+  if (mode === 'allowlist' && presets[currentId].allowedTools.length === 0) {
+    presets[currentId].allowedTools = [...ALL_TOOLS];
+  }
+  if (mode === 'denylist' && presets[currentId].deniedTools.length === 0) {
+    presets[currentId].deniedTools = [];
+  }
+  renderForm();
+}
+
+function toggleTool(tool) {
+  const preset = presets[currentId];
+  if (preset.toolMode === 'allowlist') {
+    const idx = preset.allowedTools.indexOf(tool);
+    idx >= 0 ? preset.allowedTools.splice(idx, 1) : preset.allowedTools.push(tool);
+  } else if (preset.toolMode === 'denylist') {
+    const idx = preset.deniedTools.indexOf(tool);
+    idx >= 0 ? preset.deniedTools.splice(idx, 1) : preset.deniedTools.push(tool);
+  }
+  renderToolGrid();
+}
+
+function setExtMode(mode) {
+  presets[currentId].extensionMode = mode;
+  if (mode === 'allowlist' && presets[currentId].allowedExtensions.length === 0) {
+    presets[currentId].allowedExtensions = EXTENSIONS.map(e => e.name);
+  }
+  if (mode === 'denylist' && presets[currentId].deniedExtensions.length === 0) {
+    presets[currentId].deniedExtensions = [];
+  }
+  renderForm();
+}
+
+function toggleExt(name) {
+  const preset = presets[currentId];
+  if (preset.extensionMode === 'allowlist') {
+    const idx = preset.allowedExtensions.indexOf(name);
+    idx >= 0 ? preset.allowedExtensions.splice(idx, 1) : preset.allowedExtensions.push(name);
+  } else if (preset.extensionMode === 'denylist') {
+    const idx = preset.deniedExtensions.indexOf(name);
+    idx >= 0 ? preset.deniedExtensions.splice(idx, 1) : preset.deniedExtensions.push(name);
+  }
+  renderExtGrid();
+}
+
+function toggleCheck(row) {
+  row.classList.toggle('checked');
+  const preset = presets[currentId];
+  const rows = document.querySelectorAll('#advancedOptions .checkbox-row');
+  preset.noExtensions = rows[0].classList.contains('checked');
+  preset.noSkills = rows[1].classList.contains('checked');
+  preset.noContextFiles = rows[2].classList.contains('checked');
+}
+
+function addPreset() {
+  customCounter++;
+  const id = 'custom:' + customCounter;
+  presets[id] = {
+    id, name: '自定义预设 ' + customCounter, builtin: false,
+    description: '',
+    toolMode: 'all', allowedTools: [], deniedTools: [],
+    extensionMode: 'all', allowedExtensions: [], deniedExtensions: [],
+    modelOverride: '', thinkingLevel: '',
+    noExtensions: false, noSkills: false, noContextFiles: false,
+  };
+  selectPreset(id);
+  showToast('已创建自定义预设');
+}
+
+function deletePreset() {
+  const preset = presets[currentId];
+  if (preset.builtin) return;
+  if (!confirm(`确定删除预设「${preset.name}」？`)) return;
+  delete presets[currentId];
+  currentId = 'builtin:full';
+  renderChips();
+  renderForm();
+  showToast('预设已删除');
+}
+
+function savePreset() {
+  const preset = presets[currentId];
+  preset.name = document.getElementById('presetName').value;
+  preset.description = document.getElementById('presetDesc').value;
+  preset.modelOverride = document.getElementById('modelSelect').value;
+  preset.thinkingLevel = document.getElementById('thinkingSelect').value;
+  renderChips();
+  showToast('已保存');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ── Init ──
+renderForm();
+</script>
+
+</body>
+</html>
