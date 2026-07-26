@@ -66,3 +66,4 @@ export type {
   WorkflowAgentCall,
   WorkflowRunRecord,
 } from './workflow'
+export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState } from './update'

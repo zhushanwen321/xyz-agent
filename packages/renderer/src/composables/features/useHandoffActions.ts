@@ -29,18 +29,18 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
   const chat = useChatStore()
 
   /**
-   * 触发 handoff：让源 session 的 pi 跑 /skill:handoff（取末条 assistant 文档 → xml 包装 → 新空白 session）。
-   * focus 原样拼到 /skill:handoff 后作 args（描述新 session 的重点）。
+   * 触发 handoff：让源 session 的 pi 跑 /skill:handoff（取末条 assistant 文档 → 新空白 session）。
+   * reply 原样拼到 /skill:handoff 后作 args（用户备注）。
    * 置 handingOff=true 给 UI 即时反馈；完成由 useHandoffEffect 订阅 session.handoffComplete 复位 + 跳转。
    * 失败时复位 handingOff + rethrow（调用方决定 toast 反馈，参照 forkSession 的 rethrow 模式）。
    *
    * @param srcSessionId 源 session（取末条 assistant 文档）
-   * @param focus 可选重点说明（拼到 /skill:handoff 后作 args）
+   * @param reply 可选用户备注（拼到 /skill:handoff 后作 args）
    */
-  async function handoff(srcSessionId: string, focus?: string): Promise<void> {
+  async function handoff(srcSessionId: string, reply?: string): Promise<void> {
     chat.setHandingOff(srcSessionId, true)
     try {
-      await sessionApi.handoff(srcSessionId, focus)
+      await sessionApi.handoff(srcSessionId, reply)
     } catch (e) {
       // 触发失败 → 复位 handingOff（等不到 handoffComplete 广播），避免 UI 卡「正在交接」
       chat.setHandingOff(srcSessionId, false)
