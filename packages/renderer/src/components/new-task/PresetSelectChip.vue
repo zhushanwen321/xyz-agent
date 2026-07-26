@@ -10,12 +10,20 @@
  * 3. 历史 session（sessionId!=null + launchPresetId undefined）：Lock 图标 + 「全工具模式」+
  *    HoverCard tooltip 加注「（历史 session，未记录预设）」。
  *
- * 数据流：onMounted 调 usePiPresets().loadPresets() 拉预设列表 + 默认预设写 store。
- * 组件直接读 preset store（presets/defaultPresetId）——store 是数据态 SSOT，selectedPresetId 是交互态留本地。
+ * 数据流（B6 修复）：onMounted 调 usePiPresets().loadPresets() 拉预设列表 + 默认预设写 store
+ * （presets/defaultPresetId/loadError）。选中态用本地 ref selectedPresetId（仅回显），透传走
+ * emit('select') → 父组件（Landing.vue）调 flow.setPendingPreset → submitFirstMessage 透传。
+ * 不再读写 store.selectedPresetId（已删除第二真源）。
+ *
+ * emit select 的契约：**仅在用户真实点击预设项时 emit**（onSelectPreset），onMounted 回显默认
+ * 预设**不 emit**——避免把「默认回显」伪装成「用户选择」污染透传链路（透传源是 NewTaskFlow.pendingPreset，
+ * 用户没选时不写，submitFirstMessage 用 undefined → runtime 走默认）。
+ *
+ * 加载错误态（S-RN-2）：loadPresets rejected 时 store.loadError 写入错误消息，本组件区分
+ * 「未加载（presets=[] + loadError=null）」与「加载失败（presets=[] + loadError 有值）」，
+ * 不再因 RPC 永久 reject 卡「加载中…」。
  *
  * 范式参考：ThinkingLevelPopover.vue（Popover+TriggerButton+Content + Button+Check RadioGroup 语义）。
- *
- * emit select：landing 态用户选定预设变化时通知父组件（wave3 session.create 透传链路用）。
  */
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -36,7 +44,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** landing 态用户选定预设变化（wave3 session.create 透传用，单参数对象） */
+  /** landing 态用户真实点击选定预设变化（session.create 透传用，单参数对象） */
   select: [{ presetId: string }]
 }>()
 
@@ -47,8 +55,9 @@ const { loadPresets, setDefault } = usePiPresets()
 /** Popover 展开态（仅 landing 态用） */
 const open = ref(false)
 /**
- * landing 态用户本次选定的预设 id（交互态，不放 store）。
- * 初值 '' —— onMounted loadPresets 完成后设为 store.defaultPresetId（回显全局默认）。
+ * landing 态触发按钮回显的预设 id（纯本地交互态，不放 store——B6：store 不再持有 selectedPresetId）。
+ * 初值 '' —— onMounted loadPresets 完成后设为 store.defaultPresetId（仅回显，不 emit）。
+ * 用户真实点击 onSelectPreset 时才 emit select 给父组件透传。
  */
 const selectedPresetId = ref('')
 
@@ -68,12 +77,26 @@ const lockedPresetName = computed(() => {
   return store.presets.find((p) => p.id === id)?.name ?? id ?? ''
 })
 
-/** landing 态触发按钮显示的预设名（selectedPresetId 查名，找不到用 id 兜底） */
+/**
+ * landing 态触发按钮显示的预设名。
+ * - 未加载（selectedPresetId 空 + 无 loadError）→ loadingPresets「加载中…」
+ * - 加载失败（selectedPresetId 空 + loadError 有值）→ 仍显 loadingPresets（i18n key 不可改，
+ *   popover 内空态行区分错误），避免 trigger 文案与 i18n SSOT 脱节。
+ * - 有选中 → 查名兜底 id。
+ */
 const selectedPresetName = computed(() => {
   const id = selectedPresetId.value
   if (!id) return t('newTask.presetSelect.loadingPresets')
   return store.presets.find((p) => p.id === id)?.name ?? id
 })
+
+/**
+ * popover 列表区空态文案（S-RN-2）：
+ * - loadError 有值 → 复用 noPresets（i18n key 不可改；错误详情已在 usePiPresets console.warn）
+ * - 无错误 + 列表空 → noPresets「暂无预设」
+ * 二者用同一 key 因 i18n 文件不在本任务可改范围；区分点在 loadError 本身（可观测 + 可重试扩展）。
+ */
+const emptyHint = computed(() => t('newTask.presetSelect.noPresets'))
 
 /** 锁定态 tooltip 文案（已创建态 + 历史态分别拼接） */
 const lockedTooltip = computed(() => {
@@ -90,15 +113,16 @@ const isDefaultChecked = computed(() => {
   return selectedPresetId.value === store.defaultPresetId
 })
 
-// onMounted 拉预设数据 + 回显默认预设（landing 态）
+// onMounted 拉预设数据 + 回显默认预设（landing 态）。
+// B6 修复：**只回显本地选中态，不 emit select**——避免把「默认回显」伪装成「用户选择」
+// 污染透传链路。用户没选时 NewTaskFlow.pendingPreset 保持 null，submitFirstMessage 传
+// undefined → runtime 用默认，与「显式选了默认预设」语义区分清晰。
 onMounted(async () => {
   if (!isLanding.value) return // 锁定/历史态无需拉数据（只读展示，预设名从 launchPresetId 查）
   await loadPresets()
-  // loadPresets 后回显全局默认预设（landing 态 chip 所见即默认）
+  // loadPresets 后回显全局默认预设（landing 态 chip 所见即默认，纯视觉一致性）
   if (store.defaultPresetId && !selectedPresetId.value) {
     selectedPresetId.value = store.defaultPresetId
-    store.selectPreset(store.defaultPresetId)
-    emit('select', { presetId: store.defaultPresetId })
   }
 })
 
@@ -111,12 +135,12 @@ watch(() => store.openRequest, async () => {
 })
 
 /**
- * landing 态选预设（RadioGroup 语义：单选 + 立即选中）。
- * 同步写 store.selectedPresetId（Composer onSend 时读取透传 session.create）。
+ * landing 态用户真实点击选预设（RadioGroup 语义：单选 + 立即选中）。
+ * B6：仅此处 emit select——透传源是 NewTaskFlow.pendingPreset（父组件 Landing.vue 接收写入），
+ * 不再读写 store.selectedPresetId（已删除）。本地 selectedPresetId 只管 trigger 回显。
  */
 function onSelectPreset(preset: PiLaunchPreset): void {
   selectedPresetId.value = preset.id
-  store.selectPreset(preset.id)
   emit('select', { presetId: preset.id })
 }
 
@@ -134,9 +158,8 @@ async function onToggleDefault(checked: boolean | string): Promise<void> {
 // store.defaultPresetId 变化时（外部 setDefault），同步 selectedPresetId 若用户未主动选过
 watch(() => store.defaultPresetId, (newDefault) => {
   if (isLanding.value && newDefault && !open.value) {
-    // 仅在 Popover 未展开时回显（避免用户正在选时被覆盖）
+    // 仅在 Popover 未展开时回显（避免用户正在选时被覆盖）。纯本地回显，不 emit。
     selectedPresetId.value = newDefault
-    store.selectPreset(newDefault)
   }
 })
 </script>
@@ -160,15 +183,15 @@ watch(() => store.defaultPresetId, (newDefault) => {
       </Button>
     </PopoverTrigger>
     <PopoverContent side="top" class="w-[320px] p-0">
-      <!-- head -->
+      <!-- head（W-RN-1：bg-white/[0.015] → bg-surface-2 语义类，与 PopoverContent 的 bg-bg-elevated 区分头/体层级） -->
       <div
-        class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+        class="flex items-center justify-between border-b border-border bg-surface-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>
       <!-- 预设列表（Button + Check 实现 RadioGroup 语义，ui 无 RadioGroup） -->
       <div v-if="store.presets.length === 0" class="px-2.5 py-3 text-[12px] text-subtle">
-        {{ t('newTask.presetSelect.noPresets') }}
+        {{ emptyHint }}
       </div>
       <Button
         v-for="preset in store.presets"

@@ -4,12 +4,18 @@
  * 设计文档：docs/design/pi-launch-presets.md
  *
  * 职责（与其他 store 同构，纯状态容器铁律）：
- * - 持有 presets（预设列表）+ defaultPresetId（全局默认预设 id）两份 state。
- * - setPresets / setDefaultPresetId：纯写入 actions，由 composable（usePiPresets）喂数据。
+ * - 持有 presets（预设列表）+ defaultPresetId（全局默认预设 id）+ loadError（加载错误态）三份 state。
+ * - setPresets / setDefaultPresetId / setLoadError / clearLoadError：纯写入 actions，
+ *   由 composable（usePiPresets）喂数据。
  *
  * 不职责（已下沉到 usePiPresets composable）：
  * - 不 import @/api（订阅 / RPC 编排归 features 层 composable）。
  * - 不挂订阅（preset 域无 server-push 广播，按需 load）。
+ *
+ * 不持有「landing 态选中预设 id」：选中态透传链路（B6 修复）已统一走 NewTaskFlow.pendingPreset
+ * （PresetSelectChip emit select → Landing.onPresetSelect → flow.setPendingPreset →
+ * submitFirstMessage 透传 sessionApi.create）。不再用 store.selectedPresetId 作第二真源，
+ * 避免「默认回显」与「用户选择」混在一起伪装透传源。PresetSelectChip 用本地 ref 管回显态。
  *
  * 依赖方向（stores 间禁止互相 import；跨域协调由 composables/features 做）：
  * - 无外部依赖（仅 vue ref + shared 类型）。
@@ -29,11 +35,12 @@ export const usePresetStore = defineStore('preset', () => {
    */
   const defaultPresetId = ref('')
   /**
-   * Landing 态用户当前选中的预设 id（session.create 透传用）。
-   * PresetSelectChip 选中时写入，Composer onSend 时读取传给 session.create。
-   * startFlow 时重置为 ''（与 pendingCwd/pendingModel 范式对齐）。
+   * 加载错误态（S-RN-2）。
+   * loadPresets 任一 RPC rejected 时由 usePiPresets 写入错误消息（Error.message）；
+   * 成功时清为 null。让 PresetSelectChip 区分「未加载（presets=[] + loadError=null）」
+   * 与「加载失败（presets=[] + loadError=字符串）」，不再永久卡「加载中…」。
    */
-  const selectedPresetId = ref('')
+  const loadError = ref<string | null>(null)
   /**
    * Popover 打开请求计数器（FR-16 键盘快捷键）。
    * 键盘快捷键 Cmd+Shift+P 递增此值，PresetSelectChip watch 到变化后打开 Popover。
@@ -53,9 +60,9 @@ export const usePresetStore = defineStore('preset', () => {
     defaultPresetId.value = id
   }
 
-  /** Landing 态选中预设（PresetSelectChip emit select 时调用）。 */
-  function selectPreset(id: string): void {
-    selectedPresetId.value = id
+  /** 写加载错误态（usePiPresets.loadPresets rejected 分支用）。 */
+  function setLoadError(message: string | null): void {
+    loadError.value = message
   }
 
   /** 乐观更新：upsert 预设（按 id 匹配替换，不存在则 push）。 */
@@ -82,12 +89,12 @@ export const usePresetStore = defineStore('preset', () => {
     // state
     presets,
     defaultPresetId,
-    selectedPresetId,
+    loadError,
     openRequest,
     // actions（纯写入）
     setPresets,
     setDefaultPresetId,
-    selectPreset,
+    setLoadError,
     upsertPreset,
     removePreset,
     requestOpen,

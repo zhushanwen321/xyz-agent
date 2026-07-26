@@ -221,8 +221,14 @@ export function useNewTaskFlow() {
    * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
    * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
    * 用 runtime 默认。
+   *
+   * presetId（preset 透传）：landing 态用户在 PresetSelectChip 选定的预设。
+   * 透传链路（B6 修复）：PresetSelectChip emit select → Landing.vue onPresetSelect →
+   * flow.setPendingPreset 写 pendingPreset；这里 submitFirstMessage create session 时读
+   * pendingPreset.value 透传 sessionApi.create。Composer onSend 不再直接读 store.selectedPresetId，
+   * 统一走 flow 单一真源（与 pendingCwd/pendingModel 范式一致）。
    */
-  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string, presetId?: string): Promise<void> {
+  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string): Promise<void> {
     // segments 不能为空；含 text 段时提取首段文本作 session label
     const firstTextSeg = segments.find((s): s is Extract<Segment, { type: 'text' }> => s.type === 'text')
     const trimmed = firstTextSeg?.text?.trim() ?? ''
@@ -240,7 +246,9 @@ export function useNewTaskFlow() {
         const cwd = pendingCwd.value ?? workspaceStore.defaultCwd
         // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
         const label = deriveSessionLabel(trimmed)
-        const created = await sessionApi.create(cwd, label, presetId ?? pendingPreset.value ?? undefined)
+        // preset 透传（B6）：pendingPreset 由 Landing.vue 接 PresetSelectChip @select
+        // → flow.setPendingPreset 写入；startFlow 时清为 null（不残留到下次 landing）。
+        const created = await sessionApi.create(cwd, label, pendingPreset.value ?? undefined)
         // INV-7: runtime create 内部可能因 cwd 失效降级 homedir，比对 session.cwd
         // 与请求 cwd 不一致则 toast 通知用户（D-008 选中失效 cwd 降级）。
         if (cwd && created.cwd !== cwd) {
