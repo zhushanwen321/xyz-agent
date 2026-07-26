@@ -102,6 +102,18 @@
             :path="seg.path"
             :display-name="seg.displayName"
           />
+          <!-- handoff badge：紫色（复用 --reasoning token，与 skill 同族），展示来源 session 名称。
+               handoff 是 runtime 编排产出的结构化片段，非用户手动输入。 -->
+          <span
+            v-else-if="seg.type === 'handoff'"
+            class="mr-1 inline-flex items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning"
+            style="vertical-align: middle"
+            :data-testid="`msg-handoff-badge-${i}`"
+            :title="`handoff from ${seg.sourceLabel}`"
+          >
+            <ArrowRightLeft class="size-[12px] shrink-0" />
+            <span>{{ seg.sourceLabel }}</span>
+          </span>
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
         <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
@@ -283,8 +295,9 @@
             size="sm"
             class="fork-btn h-6 gap-1 px-1.5 text-accent hover:bg-accent-soft hover:text-accent-hover"
             data-testid="fork-background-btn"
+            :disabled="isForking"
             :title="t('panel.message.forkBackground')"
-            @click="onFork(lastAssistant)"
+            @click="handleFork(lastAssistant)"
           >
             <GitFork class="size-3" />
             <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
@@ -296,6 +309,7 @@
             size="sm"
             class="fork-ask-btn h-6 gap-1 bg-accent-soft px-1.5 font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
             data-testid="fork-ask-btn"
+            :disabled="isForking"
             :title="t('panel.message.forkAsk')"
             @click="onForkAsk(lastAssistant)"
           >
@@ -350,7 +364,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Upload, Wrench } from '@lucide/vue'
+import { ArrowRight, ArrowRightLeft, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Upload, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
@@ -414,10 +428,11 @@ const lastAssistant = computed(() => {
   return as[as.length - 1] ?? null
 })
 /** fork/handoff hover action handler（后台 fork / fork 提问 / 后台 handoff / handoff 备注）下沉 useTurnActions。 */
-const { onFork, onForkAsk, onHandoff, onHandoffAsk } = useTurnActions({
+const { onForkAsk, handleFork, isForking, onHandoff, onHandoffAsk } = useTurnActions({
   sessionId: computed(() => props.sessionId),
   lastAssistant,
 })
+
 const { open: openDrawer } = useSideDrawer()
 const { formatKbd } = usePlatformShortcut()
 const fileTreeStore = useFileTreeStore()

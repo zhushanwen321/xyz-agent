@@ -23,8 +23,7 @@
  * （对齐 bindForkNoticeEffect 范式：返回 void，不返回 off）。
  */
 import { onScopeDispose } from 'vue'
-import type { ServerMessage } from '@xyz-agent/shared'
-import { textToSegments } from '@xyz-agent/shared'
+import type { ServerMessage, Segment } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
@@ -47,7 +46,7 @@ export function bindHandoffEffect(): void {
 
   const off = events.onGlobalType('session.handoffComplete', (msg) => {
     const payload = (msg as ServerMessage<'session.handoffComplete'>).payload
-    const { srcSessionId, newSessionId, doc } = payload
+    const { srcSessionId, newSessionId, doc, reply, sourceLabel } = payload
     // 复位源 session 的 handingOff 态（消除「正在交接…」反馈，与 setHandingOff(false) 对称）
     chat.setHandingOff(srcSessionId, false)
     // runtime handoff 新建 session 但不广播 config.sessions → 主动刷新列表让新 session 进侧栏 + 可被 selectSession 命中。
@@ -72,17 +71,22 @@ export function bindHandoffEffect(): void {
         // 不会误清已有内容。catch 的 disposeSession 会清 hydrated（chat.ts:816 disposeSessionImpl 的
         // setRefs 范围含 hydrated Set）。
         chat.hydrate(newSessionId, [])
-        // 注入文档作首条 user message（doc 是 runtime wrapWithXmlTag 包装的完整 xml 文档）。
-        // appendUser 接 Segment[]（ADR-0037），用 textToSegments 转换；chatApi.send 接 string，直接传 doc。
-        // appendUser + addPendingSend 对齐正常 send 路径（让用户消息显示 + pending 态填空窗），
-        // 然后调 chatApi.send（绕过 useChat().send 的 busy→steer 路由——新 session 不 busy）。
-        // 直接用 chatApi.send 而非 useChat().send：与 fork-ask 同理由（useForkActions.ts:84-87
-        // 注释——后者 try/catch 吞错仅 toast，此处需捕获做反馈）。
-        const segments = textToSegments(doc)
+        // 注入文档作首条 user message（doc 是纯文本 handoff 文档）。
+        // W3: 用 Segment[] 构造含 handoff badge 的结构化 user message。
+        // sourceLabel 存在时加 handoff badge segment，否则退化为纯 text。
+        // chatApi.send 接 string，拼接 doc + reply 作完整 prompt。
+        // docToSend 提取为独立变量，避免三元表达式在 segments 和 send 两处重复。
+        const docToSend = reply ? `${doc}\n\n---\n${reply}` : doc
+        const segments: Segment[] = sourceLabel
+          ? [
+            { type: 'handoff', sourceLabel },
+            { type: 'text', text: docToSend },
+          ]
+          : [{ type: 'text', text: docToSend }]
         chat.appendUser(newSessionId, segments)
         chat.addPendingSend(newSessionId)
         try {
-          await chatApi.send(newSessionId, doc)
+          await chatApi.send(newSessionId, docToSend)
         } catch {
           // [M1] send 失败回滚：runtime 已 create newSession（pi 进程已 spawn + markHandedOff 已执行），
           // 必须清理 runtime 侧的孤立 newSession，对齐 fork-ask（useForkActions.ts:120-124）。

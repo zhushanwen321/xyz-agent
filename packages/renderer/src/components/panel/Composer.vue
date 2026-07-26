@@ -310,7 +310,7 @@ const handoff = useComposerHandoffMode(sessionIdRef, {
   clearInput,
   restoreInput,
   exitForkMode: fork.exitForkMode,
-  handoff: (srcSessionId, focus) => handoffAction(srcSessionId, focus),
+  handoff: (srcSessionId, reply) => handoffAction(srcSessionId, reply),
 })
 // 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
 // ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。
