@@ -143,7 +143,7 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean }>
+    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
     enabled?: boolean
     /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
     quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
@@ -185,6 +185,15 @@ export class ConfigService implements IConfigService {
         if (typeof m.api === 'string') model.api = m.api
         if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
         if (typeof m.enabled === 'boolean') model.enabled = m.enabled
+        // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
+        // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
+        if (m.compat !== undefined && typeof m.compat === 'object') {
+          model.compat = m.compat
+        } else if (m.compat === undefined && base.compat) {
+          // 前端 clearAll 发 undefined → 删除盘上已有的 compat（对齐 thinkingLevelMap undefined 分支），
+          // 否则 base spread 会保留旧 compat，导致「清除所有 compat」按钮失效。
+          delete model.compat
+        }
         return model as unknown as ConfigModelDefinition
       })
     }
