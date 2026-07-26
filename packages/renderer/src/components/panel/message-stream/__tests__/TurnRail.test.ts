@@ -72,13 +72,13 @@ describe('TurnRail (IF4)', () => {
     expect(wrapper.find('[data-testid="turn-rail"]').exists()).toBe(false)
   })
 
-  it('TC-w3-2: 3 turns → 渲染 3 个 rail-node，每个含 dot + 摘要 + chev', () => {
+  it('TC-w3-2: 3 turns → 渲染 3 个 rail-node，每个含 dot + 摘要 + toggle', () => {
     const wrapper = mount(TurnRail, { props: defaultProps() })
     const nodes = wrapper.findAll('[data-testid="rail-node"]')
     expect(nodes).toHaveLength(3)
     for (const node of nodes) {
       expect(node.find('[data-testid="rail-dot"]').exists()).toBe(true)
-      expect(node.find('[data-testid="rail-chev"]').exists()).toBe(true)
+      expect(node.find('[data-testid="rail-toggle"]').exists()).toBe(true)
       // 摘要文本应非空（默认 fixture 用 "turn N"）
       expect(node.text().length).toBeGreaterThan(0)
     }
@@ -87,40 +87,33 @@ describe('TurnRail (IF4)', () => {
   it('TC-w3-3: 点 rail-node[1] 文本区 → emit jump(1)，不 emit toggle', async () => {
     const wrapper = mount(TurnRail, { props: defaultProps() })
     const nodes = wrapper.findAll('[data-testid="rail-node"]')
-    // 点节点本身（文本区，非 chev）—— trigger click on the node div
+    // 点节点本身（文本区，非 toggle）—— trigger click on the node div
     await nodes[1].trigger('click')
     expect(wrapper.emitted('jump')).toBeTruthy()
     expect(wrapper.emitted('jump')![0]).toEqual([1])
     expect(wrapper.emitted('toggle')).toBeFalsy()
   })
 
-  it('TC-w3-4: 点 rail-node[1] 的 chev → emit toggle(1)，不 emit jump（stopPropagation）', async () => {
+  it('TC-w3-4: 点 rail-node[1] 的 toggle → emit toggle(1)，不 emit jump（stopPropagation）', async () => {
     const wrapper = mount(TurnRail, { props: defaultProps() })
-    const chevs = wrapper.findAll('[data-testid="rail-chev"]')
-    await chevs[1].trigger('click')
+    const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
+    await toggles[1].trigger('click')
     expect(wrapper.emitted('toggle')).toBeTruthy()
     expect(wrapper.emitted('toggle')![0]).toEqual([1])
-    // chev click 用 .stop 阻断冒泡，不应触发 rail-node 的 jump
+    // toggle click 用 .stop 阻断冒泡，不应触发 rail-node 的 jump
     expect(wrapper.emitted('jump')).toBeFalsy()
   })
 
-  it('TC-w3-5: sessionActive=true → 所有 rail-chev 禁用', () => {
+  it('TC-w3-5: sessionActive=true → 所有 rail-toggle 禁用', () => {
     const wrapper = mount(TurnRail, { props: defaultProps({ sessionActive: true }) })
-    const chevs = wrapper.findAll('[data-testid="rail-chev"]')
-    for (const chev of chevs) {
+    const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
+    expect(toggles).toHaveLength(3)
+    for (const toggle of toggles) {
       // Button disabled 渲染为 button[disabled] 或 component 属性
-      const button = chev.element as HTMLElement
+      const button = toggle.element as HTMLElement
       // vue test-utils + Button.vue：disabled 属性会反映到 DOM
       expect(button.hasAttribute('disabled') || (button as HTMLButtonElement).disabled).toBe(true)
     }
-  })
-
-  it('TC-w3-6: 点 rail-fold-all → emit collapseAll；点 rail-unfold-all → emit expandAll', async () => {
-    const wrapper = mount(TurnRail, { props: defaultProps() })
-    await wrapper.find('[data-testid="rail-fold-all"]').trigger('click')
-    expect(wrapper.emitted('collapseAll')).toBeTruthy()
-    await wrapper.find('[data-testid="rail-unfold-all"]').trigger('click')
-    expect(wrapper.emitted('expandAll')).toBeTruthy()
   })
 
   it('TC-w3-7: activeTurnIndex=1 → rail-node[1] 含 active 类，rail-node[0] 不含', () => {
@@ -150,5 +143,42 @@ describe('TurnRail (IF4)', () => {
     // active turn → active 类
     expect(dots[2].classes()).toContain('active')
     expect(dots[2].classes()).toContain('bg-accent')
+  })
+
+  it('TC-w3-9: toggle 默认 opacity-0（hover 浮出）；非 active 节点非 hover 时隐藏', () => {
+    const wrapper = mount(TurnRail, { props: defaultProps({ activeTurnIndex: 0 }) })
+    const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
+    expect(toggles).toHaveLength(3)
+    // idx=1 非 active：toggle 含 opacity-0 class（默认隐藏，hover 才浮出）
+    expect(toggles[1].classes()).toContain('opacity-0')
+  })
+
+  it('TC-w3-10: active 节点的 toggle 常驻可见（!opacity-100，非 hover 也能看到）', () => {
+    const wrapper = mount(TurnRail, { props: defaultProps({ activeTurnIndex: 1 }) })
+    const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
+    // idx=1 是 active：toggle 含 !opacity-100（常驻可见，用户决策）
+    expect(toggles[1].classes()).toContain('!opacity-100')
+    // idx=0 非 active：仍是 opacity-0
+    expect(toggles[0].classes()).toContain('opacity-0')
+  })
+
+  it('TC-w3-11: expandedTurns 含 turn index 1 时，idx=1 的 toggle data-expanded=true，其余 false', () => {
+    const wrapper = mount(TurnRail, {
+      props: defaultProps({ expandedTurns: new Set([1]) }),
+    })
+    const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
+    // turns fixture：makeRailTurn(0/1/2) → turn.index = 0/1/2
+    // expandedTurns={1} → idx=1 展开态（ChevronUp），idx=0/2 折叠态（ChevronDown）
+    expect(toggles[0].attributes('data-expanded')).toBe('false')
+    expect(toggles[1].attributes('data-expanded')).toBe('true')
+    expect(toggles[2].attributes('data-expanded')).toBe('false')
+  })
+
+  it('TC-w3-12: 未传 expandedTurns 时，所有 toggle data-expanded=false（默认折叠态）', () => {
+    const wrapper = mount(TurnRail, { props: defaultProps() })
+    const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
+    for (const toggle of toggles) {
+      expect(toggle.attributes('data-expanded')).toBe('false')
+    }
   })
 })

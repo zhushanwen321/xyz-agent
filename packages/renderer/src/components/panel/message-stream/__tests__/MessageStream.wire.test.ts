@@ -246,8 +246,8 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     return { rail, wrapper }
   }
 
-  /** mount TurnRail smoke test（验 props 契约：MessageStream 传给 TurnRail 的 4 个 props + 4 个 emit） */
-  it('TC-w4-3: TurnRail 接受 MessageStream 传入的 props 契约（turns/activeTurnIndex/sessionActive/panelRightEdge）', () => {
+  /** mount TurnRail smoke test（验 props 契约：MessageStream 传给 TurnRail 的 5 个 props + 4 个 emit） */
+  it('TC-w4-3: TurnRail 接受 MessageStream 传入的 props 契约（turns/activeTurnIndex/sessionActive/panelRightEdge/expandedTurns）', () => {
     const turns = makeRenderItems().map((i) => (i.kind === 'turn' ? i.turn : null)).filter(Boolean) as MessageTurn[]
     const wrapper = mount(TurnRail, {
       props: {
@@ -255,12 +255,29 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
         activeTurnIndex: 1,
         sessionActive: false,
         panelRightEdge: 800,
+        expandedTurns: new Set([2]),
       },
     })
     expect(wrapper.find('[data-testid="turn-rail"]').exists()).toBe(true)
     // 验 rail 接受所有 props 不报错（MessageStream 传相同 shape）
     expect(wrapper.findAll('[data-testid="rail-node"]')).toHaveLength(3)
     expect(wrapper.props('panelRightEdge')).toBe(800)
+    // expandedTurns prop 透传（toggle 图标方向依据）
+    expect(wrapper.props('expandedTurns')).toEqual(new Set([2]))
+  })
+
+  it('TC-w4-3b: useMessageStreamRail.expandedTurns 从 store 派生当前 session 已展开的 turn index', () => {
+    const { rail, wrapper } = mountRail()
+    // 初始无展开 → 空 Set
+    expect(rail.expandedTurns.value.size).toBe(0)
+    // onToggle(0) 翻转 railTurns[0].index=1 → store 记录 index=1 展开
+    rail.onToggle(0)
+    expect(rail.expandedTurns.value.has(1)).toBe(true)
+    expect(rail.expandedTurns.value.size).toBe(1)
+    // 再 onToggle(0) 翻回 → index=1 折叠，expandedTurns 不含 1
+    rail.onToggle(0)
+    expect(rail.expandedTurns.value.has(1)).toBe(false)
+    wrapper.unmount()
   })
 
   it('TC-w4-4: onToggle(idx) → useTurnExpansion.toggle 翻转（rail 下标 → MessageTurn.index 映射正确）', () => {
@@ -278,14 +295,6 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     expect(() => rail.onToggle(0)).not.toThrow()
     // 边界：onToggle 越界不抛错（railTurns[99] 不存在 → turnIdx undefined → no-op）
     expect(() => rail.onToggle(99)).not.toThrow()
-    wrapper.unmount()
-  })
-
-  it('TC-w4-5: onExpandAll/onCollapseAll → 用 railTurns 全部 MessageTurn.index（不抛错）', () => {
-    const { rail, wrapper } = mountRail()
-    // expandAll/collapseAll 用 railTurns.map(t => t.index) = [1,2,3]，调用 useTurnExpansion 不抛错
-    expect(() => rail.onExpandAll()).not.toThrow()
-    expect(() => rail.onCollapseAll()).not.toThrow()
     wrapper.unmount()
   })
 

@@ -157,10 +157,9 @@
       :active-turn-index="activeTurnIndex"
       :session-active="isSessionActive"
       :panel-right-edge="panelRightEdge"
+      :expanded-turns="expandedTurns"
       @jump="onJump"
       @toggle="onToggle"
-      @expand-all="onExpandAll"
-      @collapse-all="onCollapseAll"
     />
   </div>
 </template>
@@ -390,7 +389,7 @@ const rail = useMessageStreamRail({
   offsetOf,
   topOffset,
 })
-const { railTurns, activeTurnIndex, panelRightEdge, onJump, onToggle, onExpandAll, onCollapseAll } = rail
+const { railTurns, activeTurnIndex, panelRightEdge, expandedTurns, onJump, onToggle } = rail
 
 /**
  * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），

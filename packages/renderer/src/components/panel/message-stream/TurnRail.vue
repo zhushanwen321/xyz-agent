@@ -18,11 +18,11 @@
   <div
     v-if="turns.length > 0"
     data-testid="turn-rail"
-    class="turn-rail group fixed bottom-20 top-1/2 z-20 w-1.5 -translate-y-1/2 transition-[width] duration-[var(--duration)] ease-[var(--ease)] hover:w-56"
+    class="turn-rail group fixed top-1/2 z-20 h-[340px] w-1.5 -translate-y-1/2 transition-[width] duration-[var(--duration)] ease-[var(--ease)] hover:w-56 before:absolute before:-left-1.5 before:top-0 before:bottom-0 before:w-3 before:content-['']"
     :style="railStyle"
   >
-    <!-- 常驻窄条 spine：未 hover 时唯一可见区域 -->
-    <div class="rail-spine absolute bottom-0 left-0 top-0 w-1.5 rounded-full bg-muted/30" />
+    <!-- 常驻窄条 spine：未 hover 时唯一可见区域。bg-surface-hover 保证在 bg 上明确可见（L1 入口可发现性）。 -->
+    <div class="rail-spine absolute bottom-0 left-0 top-0 w-1.5 rounded-full bg-surface-hover" />
 
     <!-- viewport indicator：标记当前 turn 在窄条上的纵向位置（mini-map 高亮） -->
     <div
@@ -30,41 +30,19 @@
       :style="viewportStyle"
     />
 
-    <!-- hover 展开浮层（常驻 DOM，靠 group-hover 切换可见性，避免 SSR/动画抖动） -->
+    <!-- hover 展开浮层（常驻 DOM，靠 group-hover 切换可见性，避免 SSR/动画抖动）。
+         区分度：bg-bg-elevated（浮起面板语义，与画布 bg 亮度差 Δ17）+ ring 硬边界（不依赖阴影方向）。
+         去掉 backdrop-blur（不透明底上零效果）。 -->
     <div
-      class="rail-panel absolute bottom-0 left-3 right-0 top-0 translate-x-2 rounded-lg bg-surface p-2 opacity-0 shadow-lg backdrop-blur pointer-events-none transition-all group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto"
+      class="rail-panel absolute bottom-0 left-3 right-0 top-0 translate-x-2 rounded-lg bg-bg-elevated p-2 opacity-0 shadow-2 ring-1 ring-border-strong pointer-events-none transition-all group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto"
     >
-      <!-- 工具栏：折叠全部 / 展开全部 -->
-      <div class="rail-tools mb-1 flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          class="h-6 w-6"
-          data-testid="rail-fold-all"
-          :title="t('panel.message.railFoldAll')"
-          @click="emit('collapseAll')"
-        >
-          <ChevronsDownUp class="size-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="h-6 w-6"
-          data-testid="rail-unfold-all"
-          :title="t('panel.message.railUnfoldAll')"
-          @click="emit('expandAll')"
-        >
-          <ChevronsUpDown class="size-3" />
-        </Button>
-      </div>
-
-      <!-- 节点列表（最多铺满 rail 浮层，超出靠浮层自身高度滚动） -->
+      <!-- 节点列表（铺满 rail 浮层，超出靠浮层自身高度滚动） -->
       <div class="rail-list flex max-h-full flex-col gap-0.5 overflow-y-auto">
         <div
           v-for="(turn, idx) in turns"
           :key="turn.index ?? idx"
           data-testid="rail-node"
-          class="rail-node flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 transition-colors hover:bg-surface-hover"
+          class="group/rail-node rail-node relative flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 transition-colors hover:bg-surface-hover"
           :class="idx === activeTurnIndex ? 'active bg-accent-soft ring-1 ring-inset ring-accent-ring' : ''"
           @click="emit('jump', idx)"
         >
@@ -74,20 +52,25 @@
             class="rail-dot size-2 shrink-0 rounded-full"
             :class="dotClass(turn, idx)"
           />
-          <!-- 摘要文本（截断，溢出隐藏） -->
-          <span class="flex-1 truncate text-[11px] leading-tight text-fg">
+          <!-- 摘要文本（截断，溢出隐藏）。pr-6 给 toggle 按钮让位（absolute right-1） -->
+          <span class="flex-1 truncate pr-6 text-[11px] leading-tight text-fg">
             {{ summarizeTurnForRail(turn) || ' ' }}
           </span>
-          <!-- 跳转 chevron：active 节点 rotate-90 表「当前位置」，sessionActive 时禁用 -->
+          <!-- 折展 toggle 按钮：hover/focus 浮出（渐进披露），active 节点常驻可见（用户决策）。
+               图标语义：ChevronDown=折叠态（向下展开）/ ChevronUp=展开态（向上收起），直观不混语义。
+               「当前位置」标记不再借用 chevron 方向，由节点底色 bg-accent-soft + ring 独立承担。 -->
           <Button
             variant="ghost"
             size="icon"
-            class="h-5 w-5 shrink-0"
-            data-testid="rail-chev"
+            class="absolute right-1 h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover/rail-node:opacity-100 group-focus-within/rail-node:opacity-100"
+            :class="idx === activeTurnIndex ? '!opacity-100' : ''"
+            data-testid="rail-toggle"
+            :data-expanded="isExpanded(idx)"
             :disabled="sessionActive"
             @click.stop="emit('toggle', idx)"
           >
-            <ChevronRight class="size-3" :class="{ 'rotate-90': idx === activeTurnIndex }" />
+            <ChevronUp v-if="isExpanded(idx)" class="size-3" />
+            <ChevronDown v-else class="size-3" />
           </Button>
         </div>
       </div>
@@ -101,36 +84,42 @@
  * 用 computed 缓存 style 对象避免每次 render 重算字符串。
  */
 import { computed } from 'vue'
-import { ChevronsDownUp, ChevronsUpDown, ChevronRight } from '@lucide/vue'
+import { ChevronDown, ChevronUp } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { hasFailedTool } from '@/composables/logic/messageTurns'
 import { summarizeTurnForRail } from '@/composables/logic/summarizeTurn'
-import { useI18n } from 'vue-i18n'
-
-const { t } = useI18n()
 
 const props = defineProps<{
   /** 全部 turns（rail 节点列表数据源） */
   turns: MessageTurn[]
-  /** 当前激活 turn 的下标（viewport 位置 + 节点高亮 + chevron 方向依据） */
+  /** 当前激活 turn 的下标（viewport 位置 + 节点高亮依据） */
   activeTurnIndex: number
-  /** 会话是否进行中（true 时禁用所有 chevron，避免 streaming 中 toggle 展开态） */
+  /** 会话是否进行中（true 时禁用所有 toggle，避免 streaming 中 toggle 展开态） */
   sessionActive: boolean
   /** 面板右边缘 px（可选）：未传时 rail 贴视口右侧 8px */
   panelRightEdge?: number
+  /** 已展开的 turn index 集合（toggle 图标方向依据：展开=ChevronUp / 折叠=ChevronDown） */
+  expandedTurns?: Set<number>
 }>()
 
 const emit = defineEmits<{
   /** 点击节点文本区 → 跳转到该 turn */
   jump: [turnIndex: number]
-  /** 点击节点 chevron → 切换该 turn 的展开态 */
+  /** 点击节点 toggle → 切换该 turn 的展开态 */
   toggle: [turnIndex: number]
-  /** 工具栏折叠全部 */
-  collapseAll: []
-  /** 工具栏展开全部 */
-  expandAll: []
 }>()
+
+/**
+ * 查询指定 turn（按 railTurns 下标）是否处于展开态。
+ * toggle 图标据此切 ChevronUp（展开）/ ChevronDown（折叠）。
+ * expandedTurns 缺省时视为全折叠（默认折叠态，符合「默认极简」原则）。
+ */
+function isExpanded(idx: number): boolean {
+  if (!props.expandedTurns) return false
+  const turnIdx = props.turns[idx]?.index
+  return turnIdx != null && props.expandedTurns.has(turnIdx)
+}
 
 /**
  * rail 横向定位：根据 panelRightEdge 算 right 偏移。

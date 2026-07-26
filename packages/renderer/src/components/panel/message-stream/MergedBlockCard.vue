@@ -41,6 +41,7 @@
         :collapsed="item.kind === 'thinking' ? (item.ref as ThinkingBlock).collapsed : undefined"
         :working="working"
         :session-id="sessionId"
+        :force-expand="true"
       />
     </div>
   </div>

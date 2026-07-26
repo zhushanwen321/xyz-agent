@@ -16,6 +16,7 @@
 import { computed, onMounted, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue'
 import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
+import { useTurnExpansionStore } from '@/stores/turn-expansion'
 
 /** useMessageStreamRail 依赖（由 MessageStream.vue 注入，避免重复读取 store/props）。 */
 export interface UseMessageStreamRailDeps {
@@ -34,21 +35,46 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   railTurns: ComputedRef<MessageTurn[]>
   activeTurnIndex: Ref<number>
   panelRightEdge: Ref<number>
+  /** 当前 session 已展开的 turn index 集合（TurnRail toggle 图标方向依据） */
+  expandedTurns: ComputedRef<Set<number>>
   updateActiveTurnIndex: () => void
   onJump: (idx: number) => void
   onToggle: (idx: number) => void
-  onExpandAll: () => void
-  onCollapseAll: () => void
 } {
   const { sessionId, renderItems, scrollEl, offsetOf, topOffset } = deps
 
   /** rail 状态接入 useTurnExpansion（与 Turn.vue 共享同一 session Map）。 */
-  const { toggle, expandAll, collapseAll } = useTurnExpansion(sessionId)
+  const { toggle } = useTurnExpansion(sessionId)
 
   /** rail 节点数据源：renderItems 中所有 turn（rail 列表渲染 + jump/toggle 索引空间）。 */
   const railTurns = computed<MessageTurn[]>(() =>
     renderItems.value.filter((item) => item.kind === 'turn').map((item) => item.turn),
   )
+
+  /**
+   * 派生当前 session 已展开的 turn index 集合（TurnRail toggle 图标方向依据）。
+   *
+   * 响应式追踪关键：用 store.isExpanded(sid, idx) 逐个查 railTurns 的 index，
+   * 不直接遍历 store.partitions.entries()。原因：
+   * - 外层 partitions 是 plain Map（非响应式），直接 .get(sid) 不建立依赖，
+   *   分区首次创建（toggle 触发）后 computed 不会失效重跑
+   * - store.isExpanded 内部调 getPartition（惰性创建分区）+ 读 reactive Map.get(idx)，
+   *   每次 get 都建立对内层 reactive Map 的精确依赖，toggle/expand/collapse mutate 时正确失效
+   *
+   * 与 Turn.vue 读 isExpanded 的追踪链路一致（同一 store 同一分区同一 idx 依赖）。
+   */
+  const store = useTurnExpansionStore()
+  const expandedTurns = computed<Set<number>>(() => {
+    const sid = sessionId.value
+    if (!sid) return new Set()
+    const expanded = new Set<number>()
+    for (const turn of railTurns.value) {
+      if (store.isExpanded(sid, turn.index)) {
+        expanded.add(turn.index)
+      }
+    }
+    return expanded
+  })
 
   /** 当前激活 turn 在 railTurns 中的下标（viewport indicator 位置 + active 节点高亮）。 */
   const activeTurnIndex = ref(0)
@@ -99,16 +125,6 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
     if (turnIdx != null) toggle(turnIdx)
   }
 
-  /** rail unfold-all：批量展开全部 rail turns（用 MessageTurn.index 作 key） */
-  function onExpandAll(): void {
-    expandAll(railTurns.value.map((t) => t.index))
-  }
-
-  /** rail fold-all：批量折叠全部 rail turns（用 MessageTurn.index 作 key） */
-  function onCollapseAll(): void {
-    collapseAll(railTurns.value.map((t) => t.index))
-  }
-
   /**
    * panelRightEdge 跟踪：ResizeObserver 监听 panel 根 section 宽度变化 + window resize 兜底。
    * rail 用此值横向定位（贴面板左侧），窗口缩放时 rail 跟随重定位。onScopeDispose 清理防泄漏。
@@ -137,10 +153,9 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
     railTurns,
     activeTurnIndex,
     panelRightEdge,
+    expandedTurns,
     updateActiveTurnIndex,
     onJump,
     onToggle,
-    onExpandAll,
-    onCollapseAll,
   }
 }
