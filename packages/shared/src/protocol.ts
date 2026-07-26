@@ -482,6 +482,8 @@ export type ServerMessageType =
   | 'config.bareSetupScript'
   | 'config.worktreeTimeout'
   | 'config.defaultBaseBranch'
+  | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
+  | 'preset.create' | 'preset.update' | 'preset.delete'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
