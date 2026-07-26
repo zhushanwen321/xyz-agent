@@ -13,7 +13,7 @@
  * 组合根（packages/runtime/src/index.ts）构造，SessionService 加 setPresetService setter
  * （参考 setConfigService session-service.ts L187-189）。
  */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -28,6 +28,23 @@ import { atomicWrite } from '../utils/fs-utils.js'
 
 /** JSON 序列化缩进（与 config-service.ts 共用约定）。 */
 const JSON_INDENT = 2
+
+/**
+ * ToolMode 合法枚举白名单（W-RT-1）。
+ *
+ * shared 层 pi-preset.ts 的 TOOL_MODES 未导出（私有），此处本地定义副本保持模块自洽。
+ * 用于 coercePreset 校验脏数据（如导入文件里 toolMode: "DROP TABLE"），不在白名单
+ * 的 preset 被丢弃（防御性，与 loadPresetsFile 容错范式一致）。
+ */
+const VALID_TOOL_MODES = ['all', 'allowlist', 'denylist', 'none'] as const
+
+/**
+ * ExtensionMode 合法枚举白名单（W-RT-1）。
+ *
+ * shared 层 pi-preset.ts 的 EXTENSION_MODES 未导出（私有），此处本地定义副本。
+ * 用途同 VALID_TOOL_MODES。
+ */
+const VALID_EXTENSION_MODES = ['all', 'allowlist', 'denylist', 'none'] as const
 
 /**
  * 生成 atomicWrite 的唯一 tmp 后缀（时间戳 + 随机串），避免并发写入撞固定 .tmp 文件。
@@ -60,8 +77,16 @@ export class PresetGuardError extends Error {
 export interface PresetResolution {
   /** builtin 永远前置 + extensionMode 过滤的用户 extension 路径（设计 §2.3/§2.4） */
   extensionPaths: string[]
-  /** noSkills=true 时空数组，否则现有 getSkillPaths(cwd) 结果（设计 §2.2） */
-  skillPaths: string[]
+  /**
+   * noSkills=true 时空数组（清空所有 skill）；否则 undefined（B1 修复）。
+   *
+   * undefined 语义：让 session-lifecycle 的 `resolution?.skillPaths ?? getSkillPaths(cwd)`
+   * 触发 `??` fallback 到现有 getSkillPaths 结果（设计 §2.2）。
+   *
+   * ⚠️ 不能用 []（truthy）表示「不覆盖」——那样 `??` 永远不 fallback，所有用 presetId
+   * 启动的 session 都会拿到空 skillPaths，所有 skill 失效（BLOCKER B1 根因）。
+   */
+  skillPaths: string[] | undefined
   /** 工具相关 args（all/allowlist/denylist/none 四模式，设计 §2.5） */
   toolArgs: { tools?: string[]; excludeTools?: string[]; noTools?: boolean }
   /** 其他 args（noSkills 映射 --no-skills，noContextFiles 映射 --no-context-files） */
@@ -78,6 +103,21 @@ export interface PresetResolution {
  * 设计文档 §8.1 API。本 wave 实现 CRUD，resolve 留给 wave2。
  */
 export class PresetService {
+  /**
+   * S-RT-2：pi-presets.json 的 mtime 缓存（参考 session-file-utils.ts sessionMetaCache 模式）。
+   *
+   * 动机：getPreset → getAllPresets → readFileSync + JSON.parse 每次都做真实 IO。
+   * 频繁 session 创建（每个 create() 触发 getLaunchPresetOptions → getPreset）时多次读盘。
+   *
+   * 策略：缓存键为 (mtimeMs, size)（INVAR-cache-2 SR4 模式，同 ms 内并发 append mtimeMs
+   * 不变但 size 变 → miss 消除竞态）。读取时 statSync，键匹配则用缓存值，否则读盘 + 更新缓存。
+   * savePresetsFile 写盘后立即 invalidate（写后必然 size/mtime 变，下次读会 miss 重读——
+   * 但 invalidate 让本次已知新值可直接用，避免一次冗余重读）。
+   *
+   * 缓存值是已 parse + coerce 的 PiPresetsFile（含默认骨架兜底），命中时直接返回，跳过 JSON.parse。
+   */
+  private presetFileCache: { mtimeMs: number; size: number; file: PiPresetsFile } | undefined
+
   constructor(
     private readonly configStore: IConfigStore,
     // extensionService 本 wave 不用，但 wave2 的 resolve 依赖它（getBuiltinExtensionPaths/scanExtensions）。
@@ -97,15 +137,42 @@ export class PresetService {
   }
 
   /**
-   * 加载 pi-presets.json（容错）。
+   * 加载 pi-presets.json（容错，S-RT-2：带 mtime 缓存）。
    *
    * 容错策略（与 config-service.loadAppConfig L216-232 对齐）：
    *   - 文件不存在 → 空骨架兜底（presets: []）
    *   - JSON 畸形 → 空骨架兜底 + console.warn（不抛错）
    *   - 顶层非对象/presets 非数组 → 空骨架兜底 + console.warn
+   *
+   * 缓存：statSync 拿 (mtimeMs, size)，命中缓存键则直接返回缓存 file（跳过 readFileSync + JSON.parse）；
+   * miss 或 stat 失败则读盘解析并更新缓存。返回的 PiPresetsFile 是深拷贝，避免调用方 mutation 污染缓存。
    */
   private loadPresetsFile(): PiPresetsFile {
     const path = this.piPresetsPath()
+    // S-RT-2：先 stat 查缓存（与 session-file-utils.scanSessionMeta 同模式）
+    let stat
+    try {
+      stat = statSync(path)
+    } catch {
+      // 文件不存在/不可读：清 stale 缓存（INVAR-cache-4 模式），返回空骨架兜底
+      this.presetFileCache = undefined
+      return { presets: [], version: 1 }
+    }
+    const cached = this.presetFileCache
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+      // 命中：返回深拷贝（调用方会 mutate file 对象，不能返回缓存引用）
+      return clonePresetsFile(cached.file)
+    }
+    // miss：读盘 + 解析 + 更新缓存
+    const file = this.parsePresetsFileFromDisk(path)
+    this.presetFileCache = { mtimeMs: stat.mtimeMs, size: stat.size, file }
+    return clonePresetsFile(file)
+  }
+
+  /**
+   * 从磁盘读取并解析 pi-presets.json（容错，S-RT-2 抽出以便 loadPresetsFile 复用）。
+   */
+  private parsePresetsFileFromDisk(path: string): PiPresetsFile {
     if (!existsSync(path)) {
       return { presets: [], version: 1 }
     }
@@ -113,7 +180,7 @@ export class PresetService {
     try {
       raw = JSON.parse(readFileSync(path, 'utf-8'))
     } catch (e) {
-      console.warn(`[preset-service] pi-presets.json is not valid JSON, ignoring: ${String(e)}`)
+      console.warn(`[preset-service] pi-presets.json is not valid JSON, ignoring: ${stringifyError(e)}`)
       return { presets: [], version: 1 }
     }
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -123,30 +190,45 @@ export class PresetService {
     const obj = raw as Record<string, unknown>
     const presets = Array.isArray(obj['presets']) ? obj['presets'] as unknown[] : []
     // 逐项类型守卫：只接受形似 PiLaunchPreset 的对象，丢弃畸形项（防御性，不抛错）。
+    // W-RT-1：coercePreset 内含 toolMode/extensionMode 枚举白名单校验。
     const validPresets: PiLaunchPreset[] = []
     for (const p of presets) {
       const typed = coercePreset(p)
       if (typed) validPresets.push(typed)
     }
+    // 透传 usage/perCwdDefaults（FR-14/FR-15 的持久化字段，load 容错不做强类型守卫，
+    // 与 defaultPresetId 同策略：只校验顶层存在性，值合法性由消费方在使用时兜底）
+    const usage = (typeof obj['usage'] === 'object' && obj['usage'] !== null && !Array.isArray(obj['usage']))
+      ? obj['usage'] as Record<string, unknown>
+      : undefined
+    const perCwdDefaults = (typeof obj['perCwdDefaults'] === 'object' && obj['perCwdDefaults'] !== null && !Array.isArray(obj['perCwdDefaults']))
+      ? obj['perCwdDefaults'] as Record<string, unknown>
+      : undefined
     const defaultPresetId = typeof obj['defaultPresetId'] === 'string' ? obj['defaultPresetId'] as string : undefined
     return {
       presets: validPresets,
       defaultPresetId,
+      // usage/perCwdDefaults 用 as 保持 PiPresetsFile 兼容（值是 Record<string, PresetUsageEntry|string>，
+      // 已知字段类型不安全但与原实现一致——load 容错不抛错，消费方信任读到的形状）
+      usage: usage as PiPresetsFile['usage'],
+      perCwdDefaults: perCwdDefaults as PiPresetsFile['perCwdDefaults'],
       version: 1,
     }
   }
 
   /**
    * 保存 pi-presets.json（atomicWrite + 唯一 tmp 后缀，与 config-service.saveAppConfig 同模式）。
+   *
+   * S-RT-2：写盘后立即 invalidate 缓存（写后 mtime/size 必变，但显式清避免下一次读的 stat 比对冗余，
+   * 且防止 atomicWrite 的 tmp rename 时序下读到旧 mtime 的极端竞态——下次 loadPresetsFile 会重新 stat + 读盘）。
    */
   private savePresetsFile(file: PiPresetsFile): void {
     const cd = this.configStore.getConfigDir()
     if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
-    atomicWrite(
-      this.piPresetsPath(),
-      JSON.stringify(file, null, JSON_INDENT),
-      uniqueTmpSuffix(),
-    )
+    const path = this.piPresetsPath()
+    atomicWrite(path, JSON.stringify(file, null, JSON_INDENT), uniqueTmpSuffix())
+    // S-RT-2：写盘后失效缓存。下次 loadPresetsFile 会重新 stat + 读盘拿到新内容。
+    this.presetFileCache = undefined
   }
 
   // ── 合并逻辑（参考 mergeSystemPromptConfig L573-596 字段级合并范式）──
@@ -203,9 +285,28 @@ export class PresetService {
 
   /**
    * 获取默认预设 ID（pi-presets.json 的 defaultPresetId，缺省 BUILTIN_PRESET_IDS.FULL）。
+   *
+   * W-RT-3：校验 defaultPresetId 是否存在于 merge 后的 preset 列表（DEFAULT + 用户自定义）。
+   * 不存在（指向已删 preset / 历史脏数据）→ 回退 BUILTIN_PRESET_IDS.FULL，避免 Landing 拿到僵尸 id
+   * 导致 getLaunchPresetOptions 返回 undefined（无 preset 配置，静默降级到默认 args）。
    */
   getDefaultPresetId(): string {
-    return this.loadPresetsFile().defaultPresetId ?? BUILTIN_PRESET_IDS.FULL
+    const file = this.loadPresetsFile()
+    return this.resolveDefaultPresetId(file)
+  }
+
+  /**
+   * 计算「有效」默认 preset id（W-RT-3 抽出，getDefaultPresetId + getCwdDefaultPresetId 共用）。
+   *
+   * 校验：defaultPresetId 非空且存在于 merge 后的 presets 列表（含 DEFAULT 兜底，builtin:full 总存在）。
+   * 不存在 → 回退 BUILTIN_PRESET_IDS.FULL。
+   */
+  private resolveDefaultPresetId(file: PiPresetsFile): string {
+    const candidate = file.defaultPresetId
+    if (!candidate) return BUILTIN_PRESET_IDS.FULL
+    // 校验存在性：在 merge 后的 presets 里查（DEFAULT_PRESETS 兜底，builtin:full 永远存在）
+    const allIds = new Set(this.mergePresets(file.presets).map(p => p.id))
+    return allIds.has(candidate) ? candidate : BUILTIN_PRESET_IDS.FULL
   }
 
   /** 设为默认（写 defaultPresetId 字段）。 */
@@ -258,6 +359,11 @@ export class PresetService {
   /**
    * 删除预设。内置 preset 抛 PresetGuardError（设计文档 §3.4 不可删）。
    * 自定义 preset 不存在时 no-op（不抛错）。
+   *
+   * W-RT-2：删除后清理对被删 preset 的引用：
+   *   - 若 file.defaultPresetId === presetId → 清空（回退到 BUILTIN_PRESET_IDS.FULL，下次 getDefaultPresetId 兜底）
+   *   - file.perCwdDefaults 中 value === presetId 的条目全部删除（避免僵尸 cwd 映射）
+   * 避免 Landing / restoreSession 拿到僵尸 id（getLaunchPresetOptions 拿不到 preset 返回 undefined）。
    */
   deletePreset(presetId: string): void {
     if (DEFAULT_PRESETS.some(p => p.id === presetId)) {
@@ -266,8 +372,29 @@ export class PresetService {
     const file = this.loadPresetsFile()
     const before = file.presets.length
     file.presets = file.presets.filter(p => p.id !== presetId)
-    // 无变更也允许 save（no-op 语义，保持简单）—— 仅当确实有删除时才写盘
-    if (file.presets.length !== before) {
+    let changed = file.presets.length !== before
+
+    // W-RT-2：清理 defaultPresetId 指向被删 preset 的引用
+    if (file.defaultPresetId === presetId) {
+      file.defaultPresetId = undefined
+      changed = true
+    }
+    // W-RT-2：清理 perCwdDefaults 中指向被删 preset 的条目
+    if (file.perCwdDefaults) {
+      const cwdKeys = Object.keys(file.perCwdDefaults)
+      for (const cwd of cwdKeys) {
+        if (file.perCwdDefaults[cwd] === presetId) {
+          delete file.perCwdDefaults[cwd]
+          changed = true
+        }
+      }
+      // 全删空后置 undefined，保持磁盘形状干净（避免序列化出空对象 {}）
+      if (Object.keys(file.perCwdDefaults).length === 0) {
+        file.perCwdDefaults = undefined
+      }
+    }
+    // 仅当确实有变更时才写盘（no-op 时不触发 IO + cache invalidate）
+    if (changed) {
       this.savePresetsFile(file)
     }
   }
@@ -302,9 +429,20 @@ export class PresetService {
    * 获取 cwd 对应的默认预设 id。
    * 优先级：perCwdDefaults[cwd] > global defaultPresetId > 'builtin:full'。
    */
+  /**
+   * 获取 cwd 对应的默认预设 id。
+   * 优先级：perCwdDefaults[cwd] > global defaultPresetId > 'builtin:full'。
+   *
+   * W-RT-3：每一级都校验 id 存在性（perCwd / global 都可能指向已删 preset），不存在则向下一级 fallback，
+   * 最终兜底 BUILTIN_PRESET_IDS.FULL（builtin:full 永远存在于 DEFAULT_PRESETS）。
+   */
   getCwdDefaultPresetId(cwd: string): string {
     const file = this.loadPresetsFile()
-    return file.perCwdDefaults?.[cwd] ?? file.defaultPresetId ?? BUILTIN_PRESET_IDS.FULL
+    const allIds = new Set(this.mergePresets(file.presets).map(p => p.id))
+    const perCwd = file.perCwdDefaults?.[cwd]
+    if (perCwd && allIds.has(perCwd)) return perCwd
+    // perCwd 不存在/僵尸 → 回退 global default（再校验一次存在性）
+    return this.resolveDefaultPresetId(file)
   }
 
   /** 设置 cwd 对应的默认预设。presetId 为空串时删除该 cwd 的覆盖（回退全局默认）。 */
@@ -431,18 +569,29 @@ export class PresetService {
       case 'none':
         selected = []
         break
+      // W-RT-1 兜底：coercePreset 已白名单校验，理论上走不到 default；
+      // 但防御性兜底（脏数据绕过 coerce / 未来新增枚举值未同步）按 'all' 处理，
+      // 与「不传 flag 用默认」语义一致，避免落空返回 undefined 导致 NaN spread。
+      default:
+        selected = userExts.filter(e => e.enabled).map(e => e.path)
+        break
     }
     return [...builtinPaths, ...selected]
   }
 
   /**
-   * 解析 skillPaths（设计文档 §2.2）。
+   * 解析 skillPaths（设计文档 §2.2，B1 修复）。
    *
-   * noSkills=true 返 []（清空）；noSkills=false 也返 []（含义「不覆盖」，
-   * wave3 session-lifecycle 看 flags.noSkills=false 时用现有 getSkillPaths 兜底）。
+   * 返回值语义：
+   *   - noSkills=true → 返 []（清空所有 skill；session-lifecycle 用此空数组，不 fallback）
+   *   - noSkills=false/undefined → 返 undefined（「不覆盖」语义；session-lifecycle 的
+   *     `resolution?.skillPaths ?? getSkillPaths(cwd)` 触发 ?? fallback 到现有 getSkillPaths）
+   *
+   * ⚠️ BLOCKER B1：原实现两个分支都返 []（truthy），导致 `?? getSkillPaths` 永远不触发，
+   * 所有用 presetId 启动的 session 都拿到空 skillPaths，所有 skill 失效。
    */
-  private resolveSkillPaths(preset: PiLaunchPreset): string[] {
-    return preset.noSkills === true ? [] : []
+  private resolveSkillPaths(preset: PiLaunchPreset): string[] | undefined {
+    return preset.noSkills === true ? [] : undefined
   }
 
   /**
@@ -463,6 +612,11 @@ export class PresetService {
         return { excludeTools: preset.deniedTools ?? [] }
       case 'none':
         return { noTools: true }
+      // W-RT-1 兜底：coercePreset 已白名单校验，理论上走不到 default；
+      // 防御性兜底（脏数据绕过 coerce）按 'all' 处理（不传任何工具 flag，用 pi 默认），
+      // 保证函数有返回值，避免 TS「函数缺少返回语句」与运行时 undefined。
+      default:
+        return {}
     }
   }
 }
@@ -474,17 +628,26 @@ export class PresetService {
  * 不通过返回 undefined（loadPresetsFile 会丢弃）。
  *
  * 必须有 id(string) + name(string) + builtin(boolean) + order(number) + toolMode + extensionMode。
+ *
+ * W-RT-1：额外校验 toolMode/extensionMode 必须在枚举白名单内（VALID_TOOL_MODES /
+ * VALID_EXTENSION_MODES）。脏数据（如导入文件里 toolMode: "DROP TABLE"）不在白名单 →
+ * 返回 undefined，preset 被丢弃，避免 resolveToolArgs/resolveExtensionPaths 的 switch 落空。
  */
 function coercePreset(raw: unknown): PiLaunchPreset | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
   const r = raw as Record<string, unknown>
+  const toolMode = r['toolMode']
+  const extensionMode = r['extensionMode']
   if (
     typeof r['id'] !== 'string' ||
     typeof r['name'] !== 'string' ||
     typeof r['builtin'] !== 'boolean' ||
     typeof r['order'] !== 'number' ||
-    typeof r['toolMode'] !== 'string' ||
-    typeof r['extensionMode'] !== 'string'
+    typeof toolMode !== 'string' ||
+    typeof extensionMode !== 'string' ||
+    // W-RT-1：枚举白名单校验——脏数据（非合法 mode 值）丢弃
+    !(VALID_TOOL_MODES as readonly string[]).includes(toolMode) ||
+    !(VALID_EXTENSION_MODES as readonly string[]).includes(extensionMode)
   ) {
     return undefined
   }
@@ -501,4 +664,24 @@ function upsertById(presets: PiLaunchPreset[], preset: PiLaunchPreset): void {
   } else {
     presets.push(preset)
   }
+}
+
+/**
+ * 深拷贝 PiPresetsFile（S-RT-2）。
+ *
+ * loadPresetsFile 命中缓存时不能直接返回缓存引用——调用方（savePreset/deletePreset/
+ * setDefaultPresetId 等）会 mutate file 对象（push/filter/赋值），返回引用会污染缓存。
+ * 用 structuredClone 做完整深拷贝（PiLaunchPreset 是纯数据，无函数/循环引用，安全）。
+ */
+function clonePresetsFile(file: PiPresetsFile): PiPresetsFile {
+  return structuredClone(file)
+}
+
+/**
+ * 把 Error/unknown 转为字符串（容错 warn 日志用）。
+ * 避免直接 String(e) 把对象输出成 [object Object]。
+ */
+function stringifyError(e: unknown): string {
+  if (e instanceof Error) return e.message
+  return String(e)
 }

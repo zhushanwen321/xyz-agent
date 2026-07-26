@@ -53,9 +53,33 @@ vi.mock('../src/infra/pi/pi-paths.js', () => ({
 import {
   persistPresetBinding,
   readPresetBinding,
+  presetSidecarPath,
   scanPiSessions,
   _resetSessionMetaCacheForTest,
 } from '../src/infra/pi/session-file-utils.js'
+
+describe('presetSidecarPath helper · S-RT-3', () => {
+  it('S-RT-3: presetSidecarPath 在 filePath 后追加 .preset.json 后缀', () => {
+    expect(presetSidecarPath('/tmp/sessions/abc.jsonl')).toBe('/tmp/sessions/abc.jsonl.preset.json')
+  })
+
+  it('S-RT-3: persistPresetBinding 写入的路径等于 presetSidecarPath(filePath)', () => {
+    const tmp = realFs.mkdtempSync(join(tmpdir(), 'sidecar-path-'))
+    try {
+      const filePath = join(tmp, 's9.jsonl')
+      realFs.writeFileSync(filePath,
+        JSON.stringify({ type: 'session', id: 's9', cwd: '/p', timestamp: '2025-01-01T00:00:00Z' }) + '\n',
+        'utf-8',
+      )
+      persistPresetBinding(filePath, 'builtin:full')
+      // 验证写入的 sidecar 路径就是 helper 计算的路径
+      expect(realFs.existsSync(presetSidecarPath(filePath))).toBe(true)
+      expect(readPresetBinding(filePath)).toBe('builtin:full')
+    } finally {
+      realFs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('preset sidecar IO', () => {
   let tmpDir: string

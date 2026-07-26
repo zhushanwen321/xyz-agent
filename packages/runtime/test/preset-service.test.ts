@@ -8,7 +8,7 @@
  * （wave1 用空占位；wave2 注入固定 scanExtensions/getBuiltinExtensionPaths 返回值）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync as statSyncInternal, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -394,11 +394,234 @@ describe('PresetService · wave 2 resolve', () => {
       '/cwd',
     )
     expect(result.flags).toEqual({ noSkills: true, noContextFiles: true })
-    expect(result.skillPaths).toEqual([]) // noSkills=true 清空
+    expect(result.skillPaths).toEqual([]) // noSkills=true 清空（B1：返 [] 真清空）
     expect(result.modelOverride).toBe('anthropic/x')
     expect(result.thinkingLevel).toBe('high')
   })
+
+  // ── B1 修复验证：resolveSkillPaths 在 noSkills=false/undefined 时返 undefined ──
+
+  it('B1: resolve noSkills 未设 → skillPaths 为 undefined（让 lifecycle ?? fallback 到 getSkillPaths）', async () => {
+    const result = await svcWithMock.resolve(makePreset({}), '/cwd')
+    // 关键断言：undefined 而非 []。[] 是 truthy，会让 lifecycle 的 ?? fallback 失效，
+    // 所有用 presetId 启动的 session 拿到空 skillPaths，所有 skill 失效（BLOCKER 根因）。
+    expect(result.skillPaths).toBeUndefined()
+    expect(result.flags.noSkills).toBe(false) // noSkills 默认 false
+  })
+
+  it('B1: resolve noSkills=false → skillPaths 仍为 undefined', async () => {
+    const result = await svcWithMock.resolve(makePreset({ noSkills: false }), '/cwd')
+    expect(result.skillPaths).toBeUndefined()
+    expect(result.flags.noSkills).toBe(false)
+  })
 })
+
+// ── PR #117 review fixes: W-RT-1 / W-RT-2 / W-RT-3 / S-RT-2 ──────────
+
+describe('PresetService · PR #117 review fixes', () => {
+  // ── W-RT-1: coercePreset 枚举白名单校验 ──
+
+  it('W-RT-1: getAllPresets 丢弃 toolMode 非法枚举值的脏数据 preset', () => {
+    writeFile({
+      version: 1,
+      presets: [
+        // 合法自定义 preset（应保留）
+        { id: 'uuid-ok', name: 'ok', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+        // 脏数据：toolMode 非法（不在 all/allowlist/denylist/none）
+        { id: 'uuid-bad-tool', name: 'bad', builtin: false, order: 2, toolMode: 'DROP TABLE' as PiLaunchPreset['toolMode'], extensionMode: 'all' },
+        // 脏数据：extensionMode 非法
+        { id: 'uuid-bad-ext', name: 'bad', builtin: false, order: 3, toolMode: 'all', extensionMode: 'HACKED' as PiLaunchPreset['extensionMode'] },
+      ],
+    })
+
+    const all = presetService.getAllPresets()
+    // 3 个 DEFAULT + 1 个合法自定义 = 4 个；2 个脏数据被丢弃
+    expect(all).toHaveLength(DEFAULT_PRESETS.length + 1)
+    expect(all.find(p => p.id === 'uuid-ok')).toBeDefined()
+    expect(all.find(p => p.id === 'uuid-bad-tool')).toBeUndefined()
+    expect(all.find(p => p.id === 'uuid-bad-ext')).toBeUndefined()
+  })
+
+  it('W-RT-1: importPresets 丢弃 toolMode/extensionMode 非法的 preset（导入脏数据防御）', () => {
+    const dirtyJson = JSON.stringify({
+      version: 1,
+      presets: [
+        { id: 'imp-ok', name: 'ok', builtin: false, order: 5, toolMode: 'allowlist', extensionMode: 'none' },
+        { id: 'imp-bad', name: 'bad', builtin: false, order: 6, toolMode: 'EVIL', extensionMode: 'all' },
+      ],
+    })
+    const count = presetService.importPresets(dirtyJson)
+    // 只导入合法的 1 个
+    expect(count).toBe(1)
+    expect(presetService.getPreset('imp-ok')).toBeDefined()
+    expect(presetService.getPreset('imp-bad')).toBeUndefined()
+  })
+
+  // ── W-RT-2: deletePreset 清理 defaultPresetId / perCwdDefaults ──
+
+  it('W-RT-2: deletePreset 清理指向被删 preset 的 defaultPresetId', () => {
+    writeFile({
+      version: 1,
+      defaultPresetId: 'uuid-default',
+      presets: [
+        { id: 'uuid-default', name: 'to-be-deleted', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+      ],
+    })
+    expect(presetService.getDefaultPresetId()).toBe('uuid-default')
+
+    presetService.deletePreset('uuid-default')
+
+    // defaultPresetId 被清空 → getDefaultPresetId 回退 builtin:full（W-RT-3 校验存在性兜底）
+    expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
+    const onDisk = readFile()
+    expect(onDisk!.defaultPresetId).toBeUndefined()
+  })
+
+  it('W-RT-2: deletePreset 清理 perCwdDefaults 中指向被删 preset 的条目', () => {
+    writeFile({
+      version: 1,
+      perCwdDefaults: {
+        '/cwd-a': 'uuid-del',
+        '/cwd-b': 'uuid-keep',
+      },
+      presets: [
+        { id: 'uuid-del', name: 'a', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+        { id: 'uuid-keep', name: 'b', builtin: false, order: 2, toolMode: 'all', extensionMode: 'all' },
+      ],
+    })
+
+    presetService.deletePreset('uuid-del')
+
+    const onDisk = readFile()
+    // /cwd-a 被清理，/cwd-b 保留
+    expect(onDisk!.perCwdDefaults).toEqual({ '/cwd-b': 'uuid-keep' })
+  })
+
+  it('W-RT-2: deletePreset 不存在的 preset 是 no-op（不抛错、不写盘）', () => {
+    writeFile({
+      version: 1,
+      defaultPresetId: BUILTIN_PRESET_IDS.FULL,
+      presets: [
+        { id: 'uuid-x', name: 'x', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+      ],
+    })
+    const beforeStat = statSyncOptional(piPresetsPath())
+
+    expect(() => presetService.deletePreset('nonexistent')).not.toThrow()
+
+    // 文件未变（no-op 不写盘）
+    const afterStat = statSyncOptional(piPresetsPath())
+    expect(afterStat?.mtimeMs).toBe(beforeStat?.mtimeMs)
+    const onDisk = readFile()
+    expect(onDisk!.presets).toHaveLength(1)
+  })
+
+  // ── W-RT-3: defaultPresetId 存在性校验 ──
+
+  it('W-RT-3: getDefaultPresetId 指向已删 preset 时回退 builtin:full', () => {
+    // defaultPresetId 指向一个不在 presets 列表里的「僵尸」id（手工构造脏文件）
+    writeFile({
+      version: 1,
+      defaultPresetId: 'uuid-zombie',
+      presets: [],
+    })
+    expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
+  })
+
+  it('W-RT-3: getCwdDefaultPresetId perCwd 指向僵尸 → 回退 global default → 再回退 builtin:full', () => {
+    writeFile({
+      version: 1,
+      defaultPresetId: 'uuid-also-zombie',
+      perCwdDefaults: {
+        '/cwd-zombie': 'uuid-percwd-zombie',
+      },
+      presets: [],
+    })
+    // perCwd 僵尸 → global default 也是僵尸 → 最终兜底 builtin:full
+    expect(presetService.getCwdDefaultPresetId('/cwd-zombie')).toBe(BUILTIN_PRESET_IDS.FULL)
+  })
+
+  it('W-RT-3: getCwdDefaultPresetId perCwd 合法时优先用 perCwd', () => {
+    writeFile({
+      version: 1,
+      defaultPresetId: BUILTIN_PRESET_IDS.ORCHESTRATOR,
+      perCwdDefaults: {
+        '/cwd-a': BUILTIN_PRESET_IDS.READONLY,
+      },
+      presets: [],
+    })
+    expect(presetService.getCwdDefaultPresetId('/cwd-a')).toBe(BUILTIN_PRESET_IDS.READONLY)
+    // 未覆盖的 cwd 回退 global default（orchestrator 存在于 DEFAULT，合法）
+    expect(presetService.getCwdDefaultPresetId('/cwd-b')).toBe(BUILTIN_PRESET_IDS.ORCHESTRATOR)
+  })
+
+  // ── S-RT-2: mtime 缓存 ──
+
+  it('S-RT-2: getPreset 重复调用命中缓存（文件未变不重复读盘）', () => {
+    writeFile({
+      version: 1,
+      presets: [
+        { id: 'uuid-cache', name: 'cache-test', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+      ],
+    })
+    // 第一次读：miss → 读盘 + 填缓存
+    expect(presetService.getPreset('uuid-cache')).toBeDefined()
+    // 第二次/第三次：命中缓存（mtime/size 未变）→ 直接返回缓存值
+    expect(presetService.getPreset('uuid-cache')).toBeDefined()
+    expect(presetService.getAllPresets().find(p => p.id === 'uuid-cache')).toBeDefined()
+  })
+
+  it('S-RT-2: savePreset 后缓存失效，下次读拿到新值', () => {
+    writeFile({
+      version: 1,
+      presets: [
+        { id: 'uuid-invalidate', name: 'before', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+      ],
+    })
+    expect(presetService.getPreset('uuid-invalidate')!.name).toBe('before')
+
+    // savePreset 改 name → 内部 invalidate 缓存
+    presetService.savePreset({
+      id: 'uuid-invalidate',
+      name: 'after',
+      builtin: false,
+      order: 1,
+      toolMode: 'all',
+      extensionMode: 'all',
+    })
+
+    // 下次读拿到新值（缓存已失效，重新读盘）
+    expect(presetService.getPreset('uuid-invalidate')!.name).toBe('after')
+  })
+
+  it('S-RT-2: 缓存返回的是深拷贝，调用方 mutation 不污染缓存', () => {
+    writeFile({
+      version: 1,
+      presets: [
+        { id: 'uuid-clone', name: 'original', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+      ],
+    })
+    // 第一次读拿到对象，故意 mutate
+    const first = presetService.getPreset('uuid-clone')!
+    first.name = 'mutated'
+    // 注意：getPreset 返回的是 getAllPresets().find()，每次都 new 对象，但底层 loadPresetsFile
+    // 命中缓存返回的是 clonePresetsFile 的拷贝，所以 mutate 不影响缓存内部 file。
+
+    // 第二次读应仍是原值（缓存未被污染）
+    const second = presetService.getPreset('uuid-clone')!
+    expect(second.name).toBe('original')
+  })
+})
+
+/** stat 文件，不存在返回 undefined（测试辅助）。 */
+function statSyncOptional(path: string): { mtimeMs: number; size: number } | undefined {
+  try {
+    const s = statSyncInternal(path)
+    return { mtimeMs: s.mtimeMs, size: s.size }
+  } catch {
+    return undefined
+  }
+}
 
 describe('ExtensionService.getBuiltinExtensionPaths · wave 2 提取', () => {
   // w2-tc1 + w2-tc2：用真实 ExtensionService 验证 getBuiltinExtensionPaths 提取后行为不变。

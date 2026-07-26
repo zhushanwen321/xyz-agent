@@ -113,6 +113,22 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
 }
 
 /**
+ * 计算 session preset sidecar 路径（S-RT-3）。
+ *
+ * 统一管理 `<sessionFile>.preset.json` 的路径拼接（原 persistPresetBinding/readPresetBinding
+ * 各自硬编码 `filePath + '.preset.json'`）。提取为 helper 后：
+ *   - 单点维护后缀（未来若改命名规则只改这里）
+ *   - 调用方语义清晰（presetSidecarPath(filePath) 比 filePath + '.preset.json' 更自解释）
+ *
+ * 注意：与 `.meta.json`（session 终态 sidecar）并列但独立，由 metaSidecarPath 风格的
+ * 专用 helper 各自管理（meta sidecar 当前内联在 persistSessionEnd/extractSessionOutcome，
+ * 属 session-lifecycle 范围，本文件不重构）。
+ */
+export function presetSidecarPath(filePath: string): string {
+  return filePath + '.preset.json'
+}
+
+/**
  * 将 launch preset 绑定持久化到 sidecar `.preset.json`（设计文档 §4）。
  *
  * session create 成功后调用，记录该 session 启动时使用的 preset id。与 `.meta.json`
@@ -124,7 +140,7 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
  * 也经 SessionScanner.listAll 合并内存 Map 显示，preset 绑定丢失仅影响 fork/restore 的
  * preset 继承，不阻断主流程。
  *
- * @param filePath session JSONL 绝对路径（sidecar = filePath + '.preset.json'）
+ * @param filePath session JSONL 绝对路径（sidecar = presetSidecarPath(filePath)）
  * @param presetId launch preset id（如 'builtin:full'）
  */
 export function persistPresetBinding(filePath: string, presetId: string): void {
@@ -136,7 +152,8 @@ export function persistPresetBinding(filePath: string, presetId: string): void {
   const binding = { presetId, version: 1 as const }
   try {
     // 原子写（tmpfile + rename）：与 persistSessionEnd 一致，防止并发读读到半写的 sidecar。
-    atomicWrite(filePath + '.preset.json', JSON.stringify(binding), `preset-${Date.now()}`)
+    // S-RT-3：路径经 presetSidecarPath helper 统一拼接。
+    atomicWrite(presetSidecarPath(filePath), JSON.stringify(binding), `preset-${Date.now()}`)
     // sidecar 写入后主动失效 sessionMetaCache（与 persistSessionEnd L108 一致）：
     // 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
     sessionMetaCache.delete(filePath)
@@ -156,7 +173,8 @@ export function persistPresetBinding(filePath: string, presetId: string): void {
  * @returns presetId 字符串；sidecar 不存在/损坏/presetId 非字符串 → undefined
  */
 export function readPresetBinding(filePath: string): string | undefined {
-  const sidecarPath = filePath + '.preset.json'
+  // S-RT-3：路径经 presetSidecarPath helper 统一拼接。
+  const sidecarPath = presetSidecarPath(filePath)
   try {
     const raw = readFileSync(sidecarPath, 'utf-8')
     const binding = JSON.parse(raw)
