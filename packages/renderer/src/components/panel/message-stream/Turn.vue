@@ -286,8 +286,9 @@
             size="sm"
             class="fork-btn h-6 gap-1 px-1.5 text-accent hover:bg-accent-soft hover:text-accent-hover"
             data-testid="fork-background-btn"
+            :disabled="isForking"
             :title="t('panel.message.forkBackground')"
-            @click="onFork(lastAssistant)"
+            @click="handleFork(lastAssistant)"
           >
             <GitFork class="size-3" />
             <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
@@ -299,6 +300,7 @@
             size="sm"
             class="fork-ask-btn h-6 gap-1 bg-accent-soft px-1.5 font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
             data-testid="fork-ask-btn"
+            :disabled="isForking"
             :title="t('panel.message.forkAsk')"
             @click="onForkAsk(lastAssistant)"
           >
@@ -414,10 +416,11 @@ const lastAssistant = computed(() => {
   return as[as.length - 1] ?? null
 })
 /** fork/handoff hover action handler（后台 fork / fork 提问 / 后台 handoff / handoff 备注）下沉 useTurnActions。 */
-const { onFork, onForkAsk, onHandoff, onHandoffAsk } = useTurnActions({
+const { onForkAsk, handleFork, isForking, onHandoff, onHandoffAsk } = useTurnActions({
   sessionId: computed(() => props.sessionId),
   lastAssistant,
 })
+
 const { open: openDrawer } = useSideDrawer()
 const { formatKbd } = usePlatformShortcut()
 const fileTreeStore = useFileTreeStore()

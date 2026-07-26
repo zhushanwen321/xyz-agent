@@ -154,9 +154,7 @@ async function main(): Promise<void> {
   // the interpreter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
   //
-  // handoffService 在下方实例化，经 server.setServices 注入到 handler。
-  // eslint-disable-next-line prefer-const -- 声明在前，实例化在后
-  let handoffService: HandoffService | undefined
+
   const fileChangeDiff = new FileChangeDiffAdapter()
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
@@ -244,7 +242,8 @@ async function main(): Promise<void> {
   //
   // BLOCKER 2 / WARNING nextPushId：注入 broadcastSessionList + nextPushId（来自 broker），
   // 与 session-message-handler 的 create/fork/delete/rename 一致。
-  handoffService = new HandoffService({
+  // handoffService 经 server.setServices 注入到 handler（session-message-handler.ts）。
+  const handoffService = new HandoffService({
     sessionService,
     broker: server,
     broadcastSessionList: () => server.broadcastSessionList(),

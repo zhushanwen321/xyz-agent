@@ -5,10 +5,10 @@
  * 不再依赖 pi skill / onTurnEnd / abort / cancelInflight。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { HandoffService } from '../handoff-service.js'
+import { HandoffService, REPLY_MAX_LENGTH, MAX_MESSAGES, MSG_TRUNCATE_LENGTH } from '../handoff-service.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import type { SessionService } from '../session/session-service.js'
-import type { Message } from '@xyz-agent/shared'
+import type { Message, Segment } from '@xyz-agent/shared'
 
 function createMockSessionService(overrides: Partial<SessionService> = {}): SessionService {
   return {
@@ -144,5 +144,73 @@ describe('HandoffService', () => {
     vi.mocked(sessionService.getSession).mockReturnValue(undefined)
 
     await expect(service.runHandoff('src-id')).rejects.toThrow('handoff: source session not found')
+  })
+
+  it('TC6: reply 截断 — 超长 reply 被截断到 REPLY_MAX_LENGTH', async () => {
+    const messages = [makeMessage('user', 'test')]
+    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
+    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
+    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
+
+    const longReply = 'x'.repeat(6000)
+    await service.runHandoff('src-id', longReply)
+
+    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { reply: string | undefined } }
+    expect(call.payload.reply).toBeDefined()
+    expect(call.payload.reply!.length).toBe(REPLY_MAX_LENGTH)
+  })
+
+  it('TC7: 单条消息截断 — 超长 content 带 truncated 后缀', async () => {
+    const longContent = 'a'.repeat(3000)
+    const messages = [makeMessage('user', longContent)]
+    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
+    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
+    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
+
+    await service.runHandoff('src-id')
+
+    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { doc: string } }
+    expect(call.payload.doc).toContain('a'.repeat(MSG_TRUNCATE_LENGTH) + '...[truncated]')
+    // 截断后不应包含完整 3000 字符
+    expect(call.payload.doc).not.toContain('a'.repeat(3001))
+  })
+
+  it('TC8: MAX_MESSAGES 限制 — 30 条消息只取最后 20 条', async () => {
+    const messages = Array.from({ length: 30 }, (_, i) => makeMessage('user', `msg-${i}`))
+    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
+    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
+    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
+
+    await service.runHandoff('src-id')
+
+    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { doc: string } }
+    // 应包含 msg-10（第 20 条从后数，索引 10）到 msg-29
+    expect(call.payload.doc).toContain('msg-10')
+    expect(call.payload.doc).toContain('msg-29')
+    // 不应包含 msg-9（被 MAX_MESSAGES 裁掉的前 10 条）
+    expect(call.payload.doc).not.toContain('msg-9')
+    expect(call.payload.doc).not.toContain('msg-0')
+  })
+
+  it('TC9: Segment[] content 正确提取文本', async () => {
+    const segContent: Segment[] = [
+      { type: 'text', text: 'hello ' } as Segment,
+      { type: 'text', text: 'world' } as Segment,
+    ]
+    const msg: Message = {
+      id: 'msg-seg',
+      role: 'user',
+      content: segContent,
+      status: 'done' as const,
+    } as unknown as Message
+
+    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages: [msg], truncated: false })
+    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
+    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
+
+    await service.runHandoff('src-id')
+
+    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { doc: string } }
+    expect(call.payload.doc).toContain('hello world')
   })
 })

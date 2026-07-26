@@ -75,13 +75,14 @@ export function bindHandoffEffect(): void {
         // W3: 用 Segment[] 构造含 handoff badge 的结构化 user message。
         // sourceLabel 存在时加 handoff badge segment，否则退化为纯 text。
         // chatApi.send 接 string，拼接 doc + reply 作完整 prompt。
+        // docToSend 提取为独立变量，避免三元表达式在 segments 和 send 两处重复。
+        const docToSend = reply ? `${doc}\n\n---\n${reply}` : doc
         const segments: Segment[] = sourceLabel
           ? [
             { type: 'handoff', sourceLabel },
-            { type: 'text', text: reply ? `${doc}\n\n---\n${reply}` : doc },
+            { type: 'text', text: docToSend },
           ]
-          : [{ type: 'text', text: reply ? `${doc}\n\n---\n${reply}` : doc }]
-        const docToSend = reply ? `${doc}\n\n---\n${reply}` : doc
+          : [{ type: 'text', text: docToSend }]
         chat.appendUser(newSessionId, segments)
         chat.addPendingSend(newSessionId)
         try {

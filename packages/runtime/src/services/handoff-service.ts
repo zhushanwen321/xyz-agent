@@ -15,6 +15,7 @@
 import type { IMessageBroker } from '../interfaces.js'
 import type { SessionService } from './session/session-service.js'
 import type { Message } from '@xyz-agent/shared'
+import { normalizeContent } from '@xyz-agent/shared'
 
 interface HandoffServiceOpts {
   sessionService: SessionService
@@ -34,11 +35,11 @@ interface HandoffServiceOpts {
 }
 
 /** reply 截断阈值（来自客户端 payload，trust boundary 外）。 */
-const REPLY_MAX_LENGTH = 5000
+export const REPLY_MAX_LENGTH = 5000
 /** 组装文档时保留的最大消息条数。 */
-const MAX_MESSAGES = 20
+export const MAX_MESSAGES = 20
 /** 单条消息内容截断阈值。 */
-const MSG_TRUNCATE_LENGTH = 2000
+export const MSG_TRUNCATE_LENGTH = 2000
 
 export class HandoffService {
   /** per-session 进行中状态。同一 session 不可并发 handoff。 */
@@ -120,8 +121,8 @@ export class HandoffService {
     lines.push('')
 
     for (const msg of recent) {
-      const roleLabel = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : msg.role
-      const content = extractTextContent(msg)
+      const roleLabel = mapRoleLabel(msg.role)
+      const content = normalizeContent(msg.content)
       if (!content) continue
       const truncated = content.length > MSG_TRUNCATE_LENGTH
         ? content.slice(0, MSG_TRUNCATE_LENGTH) + '...[truncated]'
@@ -136,20 +137,16 @@ export class HandoffService {
 }
 
 /**
- * 从 Message.content 提取纯文本。
- * content 可能是 string 或 Segment[]（结构化片段），统一提取文本部分。
+ * 角色标签显式映射：覆盖 pi 协议已知 role，未知 role 降级为 'Other'。
  */
-function extractTextContent(msg: Message): string {
-  if (typeof msg.content === 'string') return msg.content
-  if (!Array.isArray(msg.content)) return ''
-  return msg.content
-    .map((seg) => {
-      if (typeof seg === 'string') return seg
-      if (seg && typeof seg === 'object' && 'text' in seg) return (seg as { text: string }).text
-      return ''
-    })
-    .filter(Boolean)
-    .join('')
+function mapRoleLabel(role: string): string {
+  const map: Record<string, string> = {
+    user: 'User',
+    assistant: 'Assistant',
+    toolResult: 'Tool Result',
+    compactionSummary: 'Compacted',
+  }
+  return map[role] ?? 'Other'
 }
 
 /**

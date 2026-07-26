@@ -80,11 +80,9 @@ export class SessionMessageHandler {
         }
       }
       case 'session.handoff': {
-        // handoff：触发源 session 的 pi 跑 /skill:handoff 生成文档。
-        // 文档产出完成后（agent_end）由 EventInterpreter.onTurnFinalize → HandoffService.onTurnEnd
-        // 收尾（新建空白 session + 注入包装后文档 + 广播 session.handoffComplete 跳转）。
-        // 此处只触发 + 回 message.status ack——完成经独立广播通道推回，前端不等 reply。
-        // 与 message.abort 同模式（reply ack，副作用经独立通道反馈）。
+        // handoff：runtime 直接从对话历史组装文档（同步编排）。
+        // 流程：getHistory → assembleHandoffDoc → create 新 session → 注入文档 → 广播。
+        // 不再调用 pi skill，不需要 agent_end / onTurnEnd 回调。
         const { sessionId, focus } = msg.payload
         const hs = this.ctx.handoffService
         if (!hs) {
@@ -101,8 +99,8 @@ export class SessionMessageHandler {
           if (code === MODEL_NOT_CONFIGURED) {
             return this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id, { sessionId })
           }
-          // runHandoff 失败（session 不活跃 / 已有进行中 handoff / pi prompt 抛错）走 error envelope。
-          // 完成态错误（文档空 / 新建 session 失败）由 HandoffService.onTurnEnd 内部广播 message.error，不经此处。
+          // runHandoff 失败（历史为空 / session 不存在 / 已有进行中 handoff）走 error envelope。
+          // 所有错误路径统一走此处的 sendError，不再有 onTurnEnd 内部广播路径。
           const errMsg = toErrorMessage(e)
           console.error('[runtime] session.handoff failed:', errMsg)
           return this.ctx.sendError(ws, 'handoff_failed', errMsg, msg.id, { sessionId })

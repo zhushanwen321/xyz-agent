@@ -21,6 +21,23 @@ import { useToast } from '@/composables/useToast'
 import { useHandoffModeChannel } from '@/composables/panel/useHandoffModeChannel'
 import type ComposerInput from '@/components/panel/ComposerInput.vue'
 
+/** useComposerHandoffMode 返回类型（从函数内联类型提取为命名 interface，便于复用 + 阅读） */
+export interface ComposerHandoffModeReturn {
+  handoffMode: Ref<boolean>
+  /** { value: boolean } 包装对象，给 defineExpose 用（不被 Vue 解包） */
+  handoffModeRef: { readonly value: boolean }
+  enterHandoffMode: (srcSessionId: string) => void
+  exitHandoffMode: () => void
+  /** handoff 模式 composer-box class（accent 边 + glow + accent-soft 底）；非 handoff 模式返回空串 */
+  handoffBoxClass: ComputedRef<string>
+  /** handoff 模式 placeholder 文案；非 handoff 模式返回 null */
+  handoffPlaceholder: ComputedRef<string | null>
+  /** Esc 处理：handoff 模式下清空输入 + 退出，返回 true 表示已消费；否则返回 false */
+  handleHandoffEsc: (e: KeyboardEvent) => boolean
+  /** handoff 模式发送：调 handoff(srcId, text) + exitHandoffMode，返回 true 表示已消费；否则返回 false */
+  handleHandoffSend: (text: string) => Promise<boolean>
+}
+
 /** handoff 发送副作用依赖（由 Composer 注入，避免重复持有 draft/isSending 真源） */
 interface HandoffDeps {
   /** ComposerInput 实例 ref：enterHandoffMode 聚焦输入框用 */
@@ -44,21 +61,7 @@ interface HandoffDeps {
 export function useComposerHandoffMode(
   sessionId: ComputedRef<string | null>,
   deps: HandoffDeps,
-): {
-  handoffMode: Ref<boolean>
-  /** { value: boolean } 包装对象，给 defineExpose 用（不被 Vue 解包） */
-  handoffModeRef: { readonly value: boolean }
-  enterHandoffMode: (srcSessionId: string) => void
-  exitHandoffMode: () => void
-  /** handoff 模式 composer-box class（accent 边 + glow + accent-soft 底）；非 handoff 模式返回空串 */
-  handoffBoxClass: ComputedRef<string>
-  /** handoff 模式 placeholder 文案；非 handoff 模式返回 null */
-  handoffPlaceholder: ComputedRef<string | null>
-  /** Esc 处理：handoff 模式下清空输入 + 退出，返回 true 表示已消费；否则返回 false */
-  handleHandoffEsc: (e: KeyboardEvent) => boolean
-  /** handoff 模式发送：调 handoff(srcId, text) + exitHandoffMode，返回 true 表示已消费；否则返回 false */
-  handleHandoffSend: (text: string) => Promise<boolean>
-  } {
+): ComposerHandoffModeReturn {
   const { t } = useI18n()
   const { error: toastError } = useToast()
   // handoff 编排经 deps 注入（Composer 从 useSidebar 取，避免本 composable 重复实例化 useSidebar）。

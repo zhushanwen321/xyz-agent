@@ -178,6 +178,19 @@ describe('normalizeContent', () => {
   it('空 Segment[] 返回空字符串', () => {
     expect(normalizeContent([])).toBe('')
   })
+
+  it('含 handoff segment 的 Segment[] 归一化正确', () => {
+    const segs: Segment[] = [
+      { type: 'handoff', sourceLabel: 'old-session' },
+      { type: 'text', text: '请继续完成任务' },
+    ]
+    expect(normalizeContent(segs)).toBe('[handoff from old-session] 请继续完成任务')
+  })
+
+  it('纯 handoff segment（无 text）归一化正确', () => {
+    const segs: Segment[] = [{ type: 'handoff', sourceLabel: 'src-abc' }]
+    expect(normalizeContent(segs)).toBe('[handoff from src-abc]')
+  })
 })
 
 describe('handoff segment', () => {

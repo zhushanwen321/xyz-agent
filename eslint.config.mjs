@@ -84,4 +84,14 @@ export default [
       'max-lines-per-function': 'off',
     },
   },
+  // [HISTORICAL] Turn.vue 是 message-stream 单回合展示的唯一组件：user 气泡（编辑态+展示态+
+  // badge 渲染）+ assistant 区（turn-meta/trace/fork-row/summary）+ hover actions。
+  // 模板结构（350+ 行）与 script setup（300 行）职责内聚，拆分子组件需传递 15+ props/
+  // slots，收益不抵成本。useTurnActions 已提取 handler 层，剩余为模板渲染逻辑。
+  {
+    files: ['packages/renderer/src/components/panel/message-stream/Turn.vue'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
 ];

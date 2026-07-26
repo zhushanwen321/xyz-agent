@@ -64,8 +64,10 @@ export function segmentsToText(segments: Segment[]): string {
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const prev = i > 0 ? segments[i - 1] : null
-    // chip→chip / chip→text 边界补空格（skill→file / file→mention / skill→text 等）
-    if (prev && prev.type !== 'text' && seg.type !== 'text') {
+    // chip→chip / chip→text 边界补空格（skill→file / file→mention / skill→text 等）。
+    // image 段例外——image 产出 `\n${path}\n`（前后已有换行），不需要再补空格。
+    // handoff 结尾是 ]，紧接其他 chip 类时仍需补空格（与 skill 同理）。
+    if (prev && prev.type !== 'text' && prev.type !== 'image' && seg.type !== 'text' && seg.type !== 'image') {
       parts.push(' ')
     }
     switch (seg.type) {
