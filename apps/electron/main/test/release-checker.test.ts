@@ -323,4 +323,73 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
     // 垃圾数据：拒绝
     expect(result!.assets.linuxX64Deb?.sha256).toBeUndefined()
   })
+
+  // ── W2TC2d：prerelease-test skill 的 beta release 不触发升级提示 ───
+  //
+  // **API 行为假设**：GitHub `/releases/latest` 端点天然排除 prerelease（GitHub 官方语义）。
+  // 三重防御是 defense-in-depth：即使 API 行为变化（如未来某天 /releases/latest 返回 prerelease），
+  // 防御层 b（prerelease 字段）+ c（tag 正则）仍会拦截。本测试覆盖 b+c 层对真实 beta/dev/rc 格式的拦截。
+  describe('W2TC2d: prerelease-test skill 的 beta release 不触发升级提示', () => {
+    it('beta release（v0.8.15-beta + prerelease=true）→ 返回 null', async () => {
+      // 真实 beta release 完整模拟：prerelease-test.sh 生成 v0.8.15-beta 格式 tag（含 '-'），
+      // release.yml 的 `prerelease: ${{ contains(github.ref, '-') }}` 据此把 tag 标为 prerelease=true。
+      // 防御层 b（prerelease 字段）最先拦截；即便 b 失效，层 c 的 STRICT_VERSION_RE 也会拒绝 '0.8.15-beta'。
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(makeReleaseJson({ tag_name: 'v0.8.15-beta', prerelease: true })),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).toBeNull()
+    })
+
+    it('dev npm prerelease（v0.8.15-dev.0 + prerelease=true）→ 返回 null', async () => {
+      // npm-prerelease skill 用 -dev.N 后缀（如 0.8.15-dev.0）。npm prerelease 正常不发 GitHub Release，
+      // 但万一某天有人手动 tag 了，防御层 b（prerelease 字段）拦截；层 c 的正则也会拒绝（'dev.0' 非纯数字）。
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(makeReleaseJson({ tag_name: 'v0.8.15-dev.0', prerelease: true })),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).toBeNull()
+    })
+
+    it('rc 格式（v0.8.15-rc.1，带点号）→ 返回 null', async () => {
+      // rc release 常见格式 v0.8.15-rc.1（带点号）。此处 prerelease 未设（默认 false）以独立验证层 c：
+      // STRICT_VERSION_RE（/^\d+\.\d+\.\d+}$/）必须拒绝 '0.8.15-rc.1'（含 '-rc.1' 后缀）。
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(makeReleaseJson({ tag_name: 'v0.8.15-rc.1' })),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).toBeNull()
+    })
+
+    it('alpha 格式（v0.8.15-alpha.2）→ 返回 null', async () => {
+      // alpha prerelease 格式 v0.8.15-alpha.2。prerelease 未设（默认 false）以独立验证层 c：
+      // STRICT_VERSION_RE 拒绝 '0.8.15-alpha.2'（含 '-alpha.2' 后缀，非纯 3 位数字）。
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(makeReleaseJson({ tag_name: 'v0.8.15-alpha.2' })),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).toBeNull()
+    })
+
+    it('反向：纯数字 stable（v0.8.15 + prerelease=false）→ 返回非 null（防御不过严）', async () => {
+      // 反向用例：确保三重防御不会误伤正常 stable 版本。v0.8.15 strip 'v' 后为 '0.8.15'，
+      // 通过 STRICT_VERSION_RE；prerelease=false/draft=false 字段校验通过；0.8.15 > 0.8.14 版本比较通过。
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(makeReleaseJson({ tag_name: 'v0.8.15', prerelease: false })),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).not.toBeNull()
+      expect(result!.version).toBe('0.8.15')
+    })
+  })
 })
