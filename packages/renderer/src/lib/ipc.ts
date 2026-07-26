@@ -3,11 +3,11 @@
  *
  * web/mock 环境（无 preload）electronAPI 为 undefined，方法优雅降级。
  * 这是 renderer 对 electronAPI 的唯一适配点（spec §4 R1）：端口发现 +
- * 全屏态监听 + 窗口控制（mac/win/linux traffic light 相关）。
+ * 全屏态监听 + 窗口控制（mac/win/linux traffic light 相关）+ 自动升级。
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { SegmentsMetadataEntry } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -261,4 +261,44 @@ export function onBrowserState(
   // onBrowserState 在 preload 暴露（Wave 2 加）；类型经 declare global ElectronAPI 对齐。
   // 用可选链兜底旧 preload 未暴露的场景（mock/测试环境）。
   return (api as { onBrowserState?: (cb: typeof callback) => () => void })?.onBrowserState?.(callback) ?? (() => {})
+}
+
+// ── 自动升级（w4 update-frontend）───────────────────────────────────────
+// Wave 2/3：renderer → main 五个 IPC 封装（check/perform/progress/error/fallback）。
+// checkForUpdate 返回 LatestReleaseInfo | null（无新版/失败/未注入返回 null）。
+// performUpdate 触发完整流程（下载→校验→替换→重启），triggerRestart=true 表示即将重启。
+// onUpdateProgress/onUpdateError 订阅主进程推送，返回取消订阅函数。
+// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe / null / {triggerRestart:false}。
+
+/**
+ * 检测最新可用版本。
+ * @param opts.force 强制刷新缓存（默认走 1h 缓存）
+ * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
+ */
+export function checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null> {
+  return api?.checkForUpdate(opts) ?? Promise.resolve(null)
+}
+
+/**
+ * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
+ * @param release checkForUpdate 返回的最新版本信息
+ * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+ */
+export function performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }> {
+  return api?.performUpdate(release) ?? Promise.resolve({ triggerRestart: false })
+}
+
+/** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数。无 IPC 返回 no-op */
+export function onUpdateProgress(cb: (p: { stage: UpdateStage; percent: number }) => void): () => void {
+  return api?.onUpdateProgress(cb) ?? (() => {})
+}
+
+/** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数。无 IPC 返回 no-op */
+export function onUpdateError(cb: (e: { stage: string; message: string; errorCode?: string }) => void): () => void {
+  return api?.onUpdateError(cb) ?? (() => {})
+}
+
+/** 不支持当前平台时，打开备用下载页（release 页面）。无 IPC 时 no-op */
+export function openUpdateFallbackUrl(url: string): Promise<void> {
+  return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
 }
