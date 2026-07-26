@@ -150,8 +150,6 @@ export class PresetMessageHandler {
         case 'preset.import': {
           const { json } = msg.payload
           const count = this.ctx.presetService.importPresets(json)
-          // 导入后广播最新预设列表
-          const presets = this.ctx.presetService.getAllPresets()
           this.ctx.reply(ws, msg.id, 'preset.import', { count })
           return true
         }
