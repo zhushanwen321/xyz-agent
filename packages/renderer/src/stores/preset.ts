@@ -1,0 +1,52 @@
+/**
+ * Preset store —— pi 启动预设的「纯状态容器」。
+ *
+ * 设计文档：docs/design/pi-launch-presets.md
+ *
+ * 职责（与其他 store 同构，纯状态容器铁律）：
+ * - 持有 presets（预设列表）+ defaultPresetId（全局默认预设 id）两份 state。
+ * - setPresets / setDefaultPresetId：纯写入 actions，由 composable（usePiPresets）喂数据。
+ *
+ * 不职责（已下沉到 usePiPresets composable）：
+ * - 不 import @/api（订阅 / RPC 编排归 features 层 composable）。
+ * - 不挂订阅（preset 域无 server-push 广播，按需 load）。
+ *
+ * 依赖方向（stores 间禁止互相 import；跨域协调由 composables/features 做）：
+ * - 无外部依赖（仅 vue ref + shared 类型）。
+ */
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import type { PiLaunchPreset } from '@xyz-agent/shared'
+
+export const usePresetStore = defineStore('preset', () => {
+  // ── State ──
+  /** 全部预设列表（内置 + 自定义）。loadPresets 后填充，初值 []。 */
+  const presets = ref<PiLaunchPreset[]>([])
+  /**
+   * 全局默认预设 id（设计文档 §5.3，存 pi-presets.json defaultPresetId）。
+   * loadPresets 时从 preset.getDefault RPC 拉取填充；初值 ''（未加载）。
+   * 缺省 'builtin:full'（runtime 在无配置时返回全工具模式）。
+   */
+  const defaultPresetId = ref('')
+
+  // ── Actions（纯写入；RPC 编排 + 订阅生命周期在 usePiPresets composable）──
+
+  /** 覆盖预设列表（loadPresets 拉到数据后写）。 */
+  function setPresets(list: PiLaunchPreset[]): void {
+    presets.value = list
+  }
+
+  /** 覆盖全局默认预设 id（loadPresets 拉到 / setDefault 乐观更新后写）。 */
+  function setDefaultPresetId(id: string): void {
+    defaultPresetId.value = id
+  }
+
+  return {
+    // state
+    presets,
+    defaultPresetId,
+    // actions（纯写入）
+    setPresets,
+    setDefaultPresetId,
+  }
+})

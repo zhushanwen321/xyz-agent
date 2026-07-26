@@ -12,6 +12,7 @@ import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
+import type { PiLaunchPreset } from './pi-preset'
 
 // ── Client → Runtime message types
 
@@ -78,6 +79,7 @@ export type ClientMessageType =
   | 'config.setBareSetupScript' | 'config.getBareSetupScript'
   | 'config.setTimeout' | 'config.getTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
+  | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -158,7 +160,9 @@ export type TerminalEnvelopeCode = TerminalErrorCode | TerminalUnknownErrorCode
 export interface ClientMessageMap {
   'ping': Record<string, never>
   // hidden:true 创建隐藏 session（公共 session），不进 sidebar 列表，仅供内部使用。
-  'session.create': { cwd?: string; label?: string; hidden?: boolean }
+  // presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1）。runtime 写入 .preset.json sidecar，
+  // restoreSession 据此重建 pi args。可选——省略时 runtime 用默认预设。透传链路见 wave3。
+  'session.create': { cwd?: string; label?: string; hidden?: boolean; presetId?: string }
   'session.delete': { sessionId: string }
   'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
@@ -353,6 +357,12 @@ export interface ClientMessageMap {
   'config.setDefaultBaseBranch': { baseBranch: string }
   /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
   'config.getDefaultBaseBranch': Record<string, never>
+  // pi 启动预设域（设计文档 pi-launch-presets.md）。
+  // preset.list：列出全部预设（内置 + 自定义）；preset.getDefault：读全局默认预设 id；
+  // preset.setDefault：设全局默认预设（写入 pi-presets.json）。均按需 RPC，无 server-push 广播。
+  'preset.list': Record<string, never>
+  'preset.getDefault': Record<string, never>
+  'preset.setDefault': { presetId: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -899,6 +909,13 @@ export interface ReplyPayloadMap {
   'config.getTimeout': ServerMessageMap['config.worktreeTimeout']
   'config.setDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
   'config.getDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
+  // preset 域（设计文档 pi-launch-presets.md）：runtime PresetMessageHandler reply。
+  //  - preset.list → reply { presets }（payload 消费型，domain 读 presets 列表）
+  //  - preset.getDefault → reply { presetId }（payload 消费型，domain 读默认预设 id）
+  //  - preset.setDefault → ack 型（domain register<void>，默认预设变更无独立广播通道）
+  'preset.list': { presets: PiLaunchPreset[] }
+  'preset.getDefault': { presetId: string }
+  'preset.setDefault': void
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted

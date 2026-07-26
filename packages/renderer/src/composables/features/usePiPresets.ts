@@ -1,0 +1,74 @@
+/**
+ * usePiPresets —— pi 启动预设域编排 composable（features 层）。
+ *
+ * 设计文档：docs/design/pi-launch-presets.md
+ *
+ * 职责（编排，与 useSettings 同构——features 层是跨 api + stores 的唯一合法层）：
+ * - loadPresets：并行拉 preset.list + preset.getDefault RPC，写 store（presets + defaultPresetId）。
+ * - setDefault：乐观更新 store.defaultPresetId + 调 preset.setDefault RPC。
+ *
+ * 不职责：
+ * - 不持状态本身（状态在 preset store，本 composable 只做「RPC 拉取 → store 写入」的接线）。
+ * - 不挂常驻订阅（preset 域无 server-push 广播，preset.* 不在 ServerMessageType）。组件
+ *   （PresetSelectChip）onMounted 调 loadPresets 按需拉取，无 onScopeDispose 订阅清理。
+ *
+ * 依赖方向：
+ * - 读 @/api（preset 域 RPC：list / getDefault / setDefault）。
+ * - 写 preset store（presets / defaultPresetId）。
+ */
+import { preset as presetApi } from '@/api'
+import { usePresetStore } from '@/stores/preset'
+
+/**
+ * preset 域编排 composable。
+ *
+ * 返回 loadPresets（拉数据写 store）+ setDefault（乐观更新 + RPC）。
+ * 状态读取直接用 usePresetStore()（各消费方按需 storeToRefs / 直读）。
+ *
+ * 无 init/dispose（无订阅），与 useSettings 的常驻订阅模式不同——preset 数据变更频率低
+ * （设置默认预设是低频操作），按需 load + 乐观更新足够，无需常驻订阅。
+ */
+export function usePiPresets() {
+  const store = usePresetStore()
+
+  /**
+   * 拉取预设列表 + 全局默认预设 id，写入 store。
+   *
+   * list 与 getDefault 是两个独立 RPC（无数据依赖），用 Promise.allSettled 并行：
+   * - 任一失败不阻断另一个（getDefault 失败 → defaultPresetId 保持 '' 由 chip 兜底；
+   *   list 失败 → presets 保持 [] 由 chip 兜底空态）。
+   * - allSettled 而非 all：独立数据源用 allSettled 不用 all（前端规范）。
+   */
+  async function loadPresets(): Promise<void> {
+    const results = await Promise.allSettled([
+      presetApi.list(),
+      presetApi.getDefault(),
+    ])
+    if (results[0].status === 'fulfilled') {
+      store.setPresets(results[0].value)
+    }
+    if (results[1].status === 'fulfilled') {
+      store.setDefaultPresetId(results[1].value)
+    }
+  }
+
+  /**
+   * 设置全局默认预设。
+   *
+   * 乐观更新：立即写 store.defaultPresetId（UI 即时响应），随后发 RPC 持久化。
+   * RPC 失败时由调用方（chip）决定是否 toast 提示——本编排层不 toast（保持与
+   * store.setSkillDirs 同模式：只发请求 + 让广播/乐观更新覆盖）。
+   * preset 域无广播，故 RPC 失败时本地 state 与后端可能短暂不一致——preset 设置是
+   * 低频操作且单点写入（仅 setDefault 一个入口），不一致风险可接受；如需严格一致，
+   * 调用方可在 RPC 失败时重调 loadPresets 刷新。
+   */
+  async function setDefault(presetId: string): Promise<void> {
+    store.setDefaultPresetId(presetId)
+    await presetApi.setDefault(presetId)
+  }
+
+  return {
+    loadPresets,
+    setDefault,
+  }
+}
