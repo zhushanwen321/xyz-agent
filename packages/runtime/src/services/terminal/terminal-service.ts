@@ -225,6 +225,7 @@ export class TerminalService implements ITerminalService {
     env.TERM = env.TERM || 'xterm-256color'
 
     // [HISTORICAL] 清除 Electron sidecar 内部变量，避免污染用户 terminal。
+    // ⚠️ 此修复与 quota 功能无关，是顺带修复的 terminal env 污染 bug（PR #105 一同提交）。
     // runtime 进程是 Electron 主进程用 ELECTRON_RUN_AS_NODE=1 spawn 出来的 sidecar（打包模式，
     // 见 process-control.ts:202-205），该变量会随 process.env 继承到 terminal shell。
     // 用户在 terminal 里跑 `electron .` / `npm run dev` 等命令时，Electron 会因该变量退化为

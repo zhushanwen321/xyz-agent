@@ -62,4 +62,58 @@ describe('matchQuotaPreset', () => {
     const result = matchQuotaPreset({ baseUrl: 'https://bigmodel.cn', name: 'kimi' })
     expect(result?.fetcher).toBe('zhipu')
   })
+
+  // [W2] 负向用例：防止 namePattern 作为子串误匹配用户自建 provider
+  it('name 含 zai 子串但不匹配 zhipu（lazyai）', () => {
+    const result = matchQuotaPreset({ name: 'lazyai' })
+    expect(result).toBeUndefined()
+  })
+
+  it('name 含 zai 子串但不匹配 zhipu（mozaitest）', () => {
+    const result = matchQuotaPreset({ name: 'mozaitest' })
+    expect(result).toBeUndefined()
+  })
+
+  it('name 含 mimo 子串但不匹配 mimo（mimosa）', () => {
+    const result = matchQuotaPreset({ name: 'mimosa' })
+    expect(result).toBeUndefined()
+  })
+
+  it('name 含 kimi 子串但不匹配 kimi（kimito）', () => {
+    const result = matchQuotaPreset({ name: 'kimito' })
+    expect(result).toBeUndefined()
+  })
+
+  it('name 含 minimax 子串但不匹配 minimax（minimaxified）', () => {
+    const result = matchQuotaPreset({ name: 'minimaxified' })
+    expect(result).toBeUndefined()
+  })
+
+  it('name 含 opencode 子串但不匹配 opencode-go（opencodejs）', () => {
+    const result = matchQuotaPreset({ name: 'opencodejs' })
+    expect(result).toBeUndefined()
+  })
+
+  // [W2] 大小写归一化：baseUrl 大写也应命中（修复后 toLowerCase 归一化）
+  it('baseUrl 大写也匹配 zhipu', () => {
+    const result = matchQuotaPreset({ baseUrl: 'HTTPS://BIGMODEL.CN/api' })
+    expect(result?.fetcher).toBe('zhipu')
+  })
+
+  // [W2] trailing slash 应命中
+  it('baseUrl 带 trailing slash 也匹配 zhipu', () => {
+    const result = matchQuotaPreset({ baseUrl: 'https://bigmodel.cn/' })
+    expect(result?.fetcher).toBe('zhipu')
+  })
+
+  // [W2] namePattern 多关键字边界：zhipu 的 'zhipu|glm|\bzai\b' 应命中独立 'zai' token
+  it('name 为独立 zai token 匹配 zhipu', () => {
+    const result = matchQuotaPreset({ name: 'zai' })
+    expect(result?.fetcher).toBe('zhipu')
+  })
+
+  it('name 含独立 glm token 匹配 zhipu（如 my-glm-service）', () => {
+    const result = matchQuotaPreset({ name: 'my-glm-service' })
+    expect(result?.fetcher).toBe('zhipu')
+  })
 })
