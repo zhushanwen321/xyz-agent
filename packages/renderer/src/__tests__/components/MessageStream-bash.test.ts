@@ -12,6 +12,7 @@ import { useChatStore } from '@/stores/chat'
 import MessageStream from '@/components/panel/MessageStream.vue'
 import BashOutputBlock from '@/components/panel/message-stream/BashOutputBlock.vue'
 import type { Message } from '@xyz-agent/shared'
+import { defineComponent, h } from 'vue'
 
 // happy-dom 不提供 ResizeObserver
 class NoopResizeObserver {
@@ -70,5 +71,111 @@ describe('MessageStream bashExecution 路由', () => {
     expect(block.exists()).toBe(true)
     // SystemNotice stub 不应出现（bash 消息走 BashOutputBlock 分支）
     expect(wrapper.find('[data-testid="system-notice-stub"]').exists()).toBe(false)
+  })
+})
+
+/**
+ * W5 共存场景集成测试（bash-align-pi-tui-w4::w5-tests-regression W5T1）。
+ *
+ * 背景：w2 放开 bash↔streaming 并发后，共存场景下 bash 消息 append 到 messages 末尾，
+ * streaming assistant turn 变成倒数第二项。w3 单测了 useVirtualTurnList 的 pinStreaming
+ * 算法（W3T1-T3），但未集成测 MessageStream——本用例补这条缺口。
+ *
+ * 验证（mount 后）：
+ * - streaming assistant turn 的 DOM 节点存在（在窗口内、未被虚拟列表卸载）
+ * - bash 消息 DOM 存在（BashOutputBlock 真组件渲染）
+ * - bash DOM 在 streaming turn DOM 之后（DOM 顺序与 renderItems 一致）
+ *
+ * 钉扎算法的单元覆盖已由 use-virtual-turn-list.test.ts W3T1-T3 保证；happy-dom 无真实
+ * 滚动/视口，本用例聚焦「mount 后共存双挂载 + 顺序正确」（spec 允许的降级断言）。
+ */
+// 共存测试的 Turn stub：渲染带 turn index testid 的 div，便于断言 DOM 存在 + 顺序。
+// 用 defineComponent 而非 template 字符串：props.turn 是对象，模板字符串取不到字段。
+const TurnStub = defineComponent({
+  name: 'Turn',
+  props: { turn: { type: Object, required: true } },
+  setup(props) {
+    return () => h('div', { 'data-testid': `turn-stub-${props.turn.index}` })
+  },
+})
+
+const coexistStubs = {
+  Turn: TurnStub,
+  SystemNotice: { name: 'SystemNotice', template: '<div data-testid="system-notice-stub" />' },
+  BgNotifyCard: { name: 'BgNotifyCard', template: '<div />' },
+  GuiComponentRenderer: { name: 'GuiComponentRenderer', template: '<div />' },
+  ForkNotice: { name: 'ForkNotice', template: '<div />' },
+}
+
+describe('MessageStream 共存钉扎（W5T1，streaming turn + bash 消息双挂载）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('ResizeObserver', NoopResizeObserver)
+    HTMLElement.prototype.scrollTo = vi.fn()
+  })
+
+  it('W5T1: 共存场景 mount → streaming turn DOM + bash DOM 双挂载，bash 在 streaming turn 之后', async () => {
+    const chat = useChatStore()
+    const sid = 'sess-coexist'
+    // 1) streaming assistant turn：user + status:'streaming' 的 assistant（最后一条 assistant
+    //    为 streaming → messageTurns 把 turn.isStreaming 置 true → useStreamingPin 驱动 pinStreaming）
+    const userMsg: Message = {
+      id: 'u-coexist',
+      role: 'user',
+      content: 'run the tests',
+      status: 'complete',
+      timestamp: 100,
+    } as Message
+    const streamingAssistant: Message = {
+      id: 'a-coexist',
+      role: 'assistant',
+      content: 'running...',
+      status: 'streaming',
+      timestamp: 101,
+    } as Message
+    // 2) streaming bash system msg：composer 直接执行 bash，与 streaming turn 并发
+    //    （w2 放开并发；bash 是元信息 system 消息排在 streaming turn 之后）
+    const streamingBash: Message = {
+      id: 'bash-coexist',
+      role: 'system',
+      content: '',
+      status: 'streaming',
+      bashExecution: {
+        command: 'npm test',
+        output: '',
+        exitCode: null,
+        cancelled: false,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: 102,
+      },
+      timestamp: 102,
+    } as Message
+    // hydrate 注入共存消息序列：[user, streaming assistant, streaming bash]
+    chat.hydrate(sid, [userMsg, streamingAssistant, streamingBash])
+
+    const wrapper = mount(MessageStream, {
+      props: { sessionId: sid },
+      global: { stubs: coexistStubs },
+      attachTo: document.body,
+    })
+    // 等 mount 后 watch（scrollEl / useStreamingPin）副作用落地
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // streaming assistant turn 的 DOM 节点存在（在 visibleRange 内、未被虚拟列表卸载）
+    const turnEl = wrapper.find('[data-testid="turn-stub-1"]')
+    expect(turnEl.exists()).toBe(true)
+
+    // bash 消息 DOM 存在（BashOutputBlock 真组件渲染，未被 stub）
+    const bashBlock = wrapper.findComponent(BashOutputBlock)
+    expect(bashBlock.exists()).toBe(true)
+    const bashEl = bashBlock.element as HTMLElement
+
+    // DOM 顺序：bash 在 streaming turn 之后（renderItems 顺序 = messages 顺序）
+    // 用 compareDocumentPosition：bashEl 包含 turnEl 时 NODE_PRECEDING=2 成立（bash 在 turn 之前）
+    const relation = turnEl.element.compareDocumentPosition(bashEl)
+    // 期望 bash 在 turn 之后 → turn 在 bash 之前 → relation 含 Node.DOCUMENT_POSITION_FOLLOWING (4)
+    expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
