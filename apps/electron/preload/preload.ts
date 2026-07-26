@@ -1,5 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
+import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -78,6 +79,13 @@ export interface ElectronAPI {
     canGoForward: boolean
     zoomFactor: number
   }) => void): () => void
+  // ── 自动升级检测 ──────────────────────────────────────────────
+  /**
+   * 检测最新可用版本。
+   * @param opts.force 强制刷新缓存（默认走 1h 缓存）
+   * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
+   */
+  checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -166,4 +174,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('browser:state', handler)
     return () => ipcRenderer.removeListener('browser:state', handler)
   },
+  // ── 自动升级检测 ──────────────────────────────────────────────
+  checkForUpdate: (opts?: { force?: boolean }) =>
+    ipcRenderer.invoke('update:check', { force: opts?.force }),
 } satisfies ElectronAPI)

@@ -14,7 +14,7 @@
  * @see docs/architecture/design.md §4.2 M1–M5
  */
 import type { BrowserWindow } from 'electron'
-import type { WindowState } from '@xyz-agent/shared'
+import type { WindowState, LatestReleaseInfo } from '@xyz-agent/shared'
 import type { BrowserViewManager } from './browser/browser-view-manager.js'
 
 // ── M3 Process Supervisor ──────────────────────────────────────────
@@ -142,6 +142,35 @@ export interface WindowOptions {
   sessionId?: string
 }
 
+// ── Release Checker ────────────────────────────────────────────────
+
+/**
+ * Release 检测器 Facade（自动升级检测后端）。
+ *
+ * 对应 slice auto-update-and-install：调 GitHub /releases/latest API 检测新版，
+ * 三重 prerelease 过滤后用 compare-versions 比较，按平台分流 asset。
+ *
+ * [HISTORICAL] 不变量：
+ * - 失败一律返回 null（不抛、不缓存失败），调用方降级为「无新版」
+ * - 1h 缓存命中时直接返回，不再次 fetch
+ * - force=true 绕过缓存强制刷新
+ * - sha256 来自 GitHub asset.digest（服务端算好），缺失留 undefined；
+ *   不读 manifest.json（w1 的 manifest 有多平台合并 bug 不可信）
+ */
+export interface IReleaseChecker {
+  /**
+   * 检测最新可用版本。
+   *
+   * @param currentVersion 当前版本号（如 '0.8.14'，无前导 v）
+   * @param opts.force 强制刷新缓存
+   * @returns 有新版返回 LatestReleaseInfo，无新版/失败返回 null
+   */
+  checkForLatestRelease(
+    currentVersion: string,
+    opts?: { force?: boolean },
+  ): Promise<LatestReleaseInfo | null>
+}
+
 // ── Gateway 依赖契约 ───────────────────────────────────────────────
 
 /**
@@ -163,4 +192,6 @@ export interface IpcHandlerDeps {
   windowManager: IWindowManager
   /** Browser view 管理器（drawer 嵌入式浏览器） */
   browserViewManager: BrowserViewManager
+  /** Release 检测器（自动升级；可选，未注入时 update:check 返回 null） */
+  releaseChecker?: IReleaseChecker
 }

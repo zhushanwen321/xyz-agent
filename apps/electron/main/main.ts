@@ -63,6 +63,7 @@ import { WindowManager } from './window/window-manager.js'
 import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { BrowserViewManager } from './browser/browser-view-manager.js'
+import { ReleaseChecker } from './release-checker.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
@@ -143,6 +144,8 @@ const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
     .then(({ win }) => win)
 
 // ── 注册 IPC ─────────────────────────────────────────────────────
+// Release 检测器（自动升级检测后端）：1h 缓存 GitHub /releases/latest
+const releaseChecker = new ReleaseChecker()
 registerIpcHandlers({
   getMainWindow: () => ctx.mainWindow,
   runtime: ctx.runtime,
@@ -150,6 +153,7 @@ registerIpcHandlers({
   createWindow: createWindowFn,
   windowManager: ctx.windows,
   browserViewManager,
+  releaseChecker,
 })
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
