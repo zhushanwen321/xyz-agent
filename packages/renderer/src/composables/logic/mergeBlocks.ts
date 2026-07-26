@@ -5,6 +5,7 @@
  * merged 块，压缩视觉噪声（draft-message-stream w2）。text 块是最终输出，永远独立；
  * 失败 tool 需单独醒目展示，断开合并链让用户一眼看到错误位置。
  */
+import type { ToolCall } from '@xyz-agent/shared'
 import type { OrderedBlock } from './messageTurns'
 
 /** 未参与合并的独立块（text、失败 tool、孤立单个 thinking/tool）。 */
@@ -32,9 +33,11 @@ export type MergedBlock = MergedBlockSingle | MergedBlockGroup
  * 失败块独立输出，不参与任何合并（错误需醒目单独展示，不应被埋进折叠组里）。
  */
 function isFailedTool(block: OrderedBlock): boolean {
-  // text（ref:string）和 thinking 直接跳过；仅 tool 需查 status
+  // text（ref:string）和 thinking 直接跳过；仅 tool 需查 status。
+  // 用 ToolCall 精确断言（kind==='tool' 后 ref 收窄为 ToolCall，含 status: ToolCallStatus，
+  // 'error' 是其字面量成员），避免宽 { status?: string } 断言丢失类型契约。
   if (block.kind !== 'tool') return false
-  const ref = block.ref as { status?: string }
+  const ref = block.ref as ToolCall
   return ref.status === 'error'
 }
 

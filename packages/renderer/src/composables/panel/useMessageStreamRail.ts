@@ -18,6 +18,14 @@ import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
 
+/**
+ * 空集合单例（expandedTurns 的 null-sid / 无展开分支复用）。
+ * 复用同一引用避免每次响应式触发 new Set()，减少下游（TurnRail 经 props 接收）
+ * 因 Set 引用变更触发的无谓重渲染（W3 性能优化）。
+ * frozen 保证不被外部 mutate 污染——expandedTurns 的契约是只读 Set。
+ */
+const EMPTY_SET: ReadonlySet<number> = Object.freeze(new Set<number>()) as ReadonlySet<number>
+
 /** useMessageStreamRail 依赖（由 MessageStream.vue 注入，避免重复读取 store/props）。 */
 export interface UseMessageStreamRailDeps {
   sessionId: ComputedRef<string>
@@ -35,8 +43,9 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   railTurns: ComputedRef<MessageTurn[]>
   activeTurnIndex: Ref<number>
   panelRightEdge: Ref<number>
-  /** 当前 session 已展开的 turn index 集合（TurnRail toggle 图标方向依据） */
-  expandedTurns: ComputedRef<Set<number>>
+  /** 当前 session 已展开的 turn index 集合（TurnRail toggle 图标方向依据）。
+   *  ReadonlySet：消费方只读（TurnRail 用 .has 查询），空态复用 EMPTY_SET 单例（W3）。 */
+  expandedTurns: ComputedRef<ReadonlySet<number>>
   updateActiveTurnIndex: () => void
   onJump: (idx: number) => void
   onToggle: (idx: number) => void
@@ -56,24 +65,26 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
    *
    * 响应式追踪关键：用 store.isExpanded(sid, idx) 逐个查 railTurns 的 index，
    * 不直接遍历 store.partitions.entries()。原因：
-   * - 外层 partitions 是 plain Map（非响应式），直接 .get(sid) 不建立依赖，
-   *   分区首次创建（toggle 触发）后 computed 不会失效重跑
-   * - store.isExpanded 内部调 getPartition（惰性创建分区）+ 读 reactive Map.get(idx)，
-   *   每次 get 都建立对内层 reactive Map 的精确依赖，toggle/expand/collapse mutate 时正确失效
+   * - 外层 partitions 是 plain Map（非响应式），遍历/读它都不建立依赖；
+   *   真正的依赖通过内层 reactive Map.get(idx) 建立（store.isExpanded 内部走 getPartition
+   *   惰性创建分区 + 读 reactive Map.get(idx)），故必须逐个查 isExpanded 才能让
+   *   toggle/expand/collapse mutate 时正确失效。
+   * - 直接读 entries() 还会把 partition 误当响应式源，但 partition 引用本身不变（只 mutate 内容），
+   *   不会触发 computed 重算——必须通过 get(idx) 建立 per-key 依赖。
    *
    * 与 Turn.vue 读 isExpanded 的追踪链路一致（同一 store 同一分区同一 idx 依赖）。
    */
   const store = useTurnExpansionStore()
-  const expandedTurns = computed<Set<number>>(() => {
+  const expandedTurns = computed<ReadonlySet<number>>(() => {
     const sid = sessionId.value
-    if (!sid) return new Set()
+    if (!sid) return EMPTY_SET
     const expanded = new Set<number>()
     for (const turn of railTurns.value) {
       if (store.isExpanded(sid, turn.index)) {
         expanded.add(turn.index)
       }
     }
-    return expanded
+    return expanded.size === 0 ? EMPTY_SET : expanded
   })
 
   /** 当前激活 turn 在 railTurns 中的下标（viewport indicator 位置 + active 节点高亮）。 */
@@ -100,21 +111,16 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   /**
    * rail jump：滚动到对应 turn 的 absolute offset（+ topOffset 预留 load-more 空间）。
    * idx 是 railTurns 数组下标，需映射回 renderItems 下标（系统提示行穿插使两者不一致）。
+   * railTurns[idx] 已持有目标 turn 对象，直接用引用相等 findIndex（无需 O(n) 累计 turnCount）。
    */
   function onJump(idx: number): void {
     if (!scrollEl.value) return
-    // 扫描 renderItems 跳过 system 项累计 turn 数，定位 railTurns[idx] 对应的 renderItems 下标。
-    let turnCount = 0
-    let renderIdx = 0
-    for (let i = 0; i < renderItems.value.length; i += 1) {
-      if (renderItems.value[i].kind === 'turn') {
-        if (turnCount === idx) {
-          renderIdx = i
-          break
-        }
-        turnCount += 1
-      }
-    }
+    const targetTurn = railTurns.value[idx]
+    if (!targetTurn) return
+    const renderIdx = renderItems.value.findIndex(
+      (item) => item.kind === 'turn' && item.turn === targetTurn,
+    )
+    if (renderIdx < 0) return
     scrollEl.value.scrollTop = offsetOf(renderIdx) + topOffset.value
   }
 

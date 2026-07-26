@@ -94,14 +94,16 @@ export function stripMarkdown(text: string): string {
 }
 
 /**
- * 截断到 maxChars 字符（中文字符算 1），超长加省略号。
+ * 截断到 maxChars 个 Unicode 码点（中文/emoji 均算 1），超长加省略号。
+ * 省略号本身占 1 码点，所以总码点数上限是 maxChars。
  *
- * 用 Array.from 按 Unicode 码点切片 ——
- * emoji / CJK 组合字符按单码点计（避免 substring 切到代理对中间产乱码）。
- * 注意省略号本身占 1 字符，所以总长度上限是 maxChars。
+ * 用 Array.from 按 Unicode 码点切片 —— emoji / CJK 组合字符按单码点计
+ * （避免 substring 切到代理对中间产乱码）。
+ *
+ * 注意：maxChars 语义统一为「码点数」(code point)，而非 UTF-16 code unit (.length)。
+ * 这避免了对含 emoji/扩展 CJK 的文本用 .length 提前返回、与码点切片判断不一致的歧义。
  */
 export function truncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text
   const chars = Array.from(text)
   if (chars.length <= maxChars) return text
   return chars.slice(0, Math.max(0, maxChars - ELLIPSIS.length)).join('') + ELLIPSIS

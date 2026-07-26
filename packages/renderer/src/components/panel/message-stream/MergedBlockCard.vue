@@ -8,7 +8,7 @@
     expanded 态本地管理（merged 卡是 trace 内次级折叠，与 turn 级 rail toggle 语义不同）。
   -->
   <div
-    class="merged-card my-1 cursor-pointer rounded-md border-l-2 px-2 py-1 transition-colors"
+    class="merged-card my-1 rounded-md border-l-2 px-2 py-1 transition-colors"
     :class="[
       blk.type === 'tool'
         ? 'border-info bg-info-soft hover:bg-info-soft'
@@ -18,13 +18,13 @@
     tabindex="0"
     data-testid="merged-block-card"
     :aria-expanded="expanded"
-    @click="expanded = !expanded"
-    @keydown.enter.prevent="expanded = !expanded"
-    @keydown.space.prevent="expanded = !expanded"
   >
     <div
-      class="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em]"
+      class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em]"
       :class="blk.type === 'tool' ? 'text-info' : 'text-reasoning'"
+      @click="expanded = !expanded"
+      @keydown.enter.prevent="expanded = !expanded"
+      @keydown.space.prevent="expanded = !expanded"
     >
       <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="expanded ? 'rotate-90' : ''" />
       <component :is="blk.type === 'tool' ? Wrench : Brain" class="size-3 shrink-0" />
@@ -34,7 +34,7 @@
     <div v-if="expanded" class="mt-1 flex flex-col gap-0.5">
       <Block
         v-for="(item, iIdx) in blk.items"
-        :key="iIdx"
+        :key="`${blk.type}-${iIdx}`"
         :type="item.kind"
         :content="item.kind === 'thinking' ? (item.ref as ThinkingBlock).content : undefined"
         :tool="item.kind === 'tool' ? (item.ref as ToolCall) : undefined"
@@ -52,7 +52,7 @@
  * script：本地 expanded 态 + 汇总文案（i18n tool/thinking 按 items 数）。
  * 无副作用，纯展示 + 本地折叠态。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Brain, ChevronRight, Wrench } from '@lucide/vue'
 import type { MergedBlockGroup } from '@/composables/logic/mergeBlocks'
@@ -70,8 +70,14 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-/** 本地展开态（merged 卡次级折叠，不进 useTurnExpansion） */
-const expanded = ref(false)
+/** 本地展开态（merged 卡次级折叠，不进 useTurnExpansion）。working 时默认展开，流式可见。 */
+const expanded = ref(props.working)
+watch(
+  () => props.working,
+  (w) => {
+    if (w) expanded.value = true
+  },
+)
 
 /** 汇总文案：tool 用 mergedTools i18n，thinking 用 mergedThoughts */
 const summary = computed(() =>

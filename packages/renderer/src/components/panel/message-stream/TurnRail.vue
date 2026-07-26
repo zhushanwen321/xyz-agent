@@ -39,7 +39,7 @@
       <div class="rail-list flex max-h-full flex-col gap-0.5 overflow-y-auto">
         <div
           v-for="(turn, idx) in turns"
-          :key="turn.index ?? idx"
+          :key="turn.index"
           data-testid="rail-node"
           class="group/rail-node rail-node relative flex cursor-pointer flex-col gap-0.5 rounded px-1.5 py-1 transition-colors hover:bg-surface-hover"
           :class="idx === activeTurnIndex ? 'active bg-accent-soft ring-1 ring-inset ring-accent-ring' : ''"
@@ -78,11 +78,11 @@
             class="absolute right-1 top-1/2 h-5 w-5 shrink-0 -translate-y-1/2 opacity-0 transition-opacity group-hover/rail-node:opacity-100 group-focus-within/rail-node:opacity-100"
             :class="idx === activeTurnIndex ? '!opacity-100' : ''"
             data-testid="rail-toggle"
-            :data-expanded="isExpanded(idx)"
+            :data-expanded="isTurnExpanded(idx)"
             :disabled="sessionActive"
             @click.stop="emit('toggle', idx)"
           >
-            <ChevronUp v-if="isExpanded(idx)" class="size-3" />
+            <ChevronUp v-if="isTurnExpanded(idx)" class="size-3" />
             <ChevronDown v-else class="size-3" />
           </Button>
         </div>
@@ -115,8 +115,10 @@ const props = defineProps<{
   sessionActive: boolean
   /** 面板右边缘 px（可选）：未传时 rail 贴视口右侧 8px */
   panelRightEdge?: number
-  /** 已展开的 turn index 集合（toggle 图标方向依据：展开=ChevronUp / 折叠=ChevronDown） */
-  expandedTurns?: Set<number>
+  /** 已展开的 turn index 集合（toggle 图标方向依据：展开=ChevronUp / 折叠=ChevronDown）。
+   *  ReadonlySet：消费方只读（.has 查询），生产端 useMessageStreamRail 复用 EMPTY_SET 单例
+   *  避免热路径无谓 new Set（W3 性能优化）。 */
+  expandedTurns?: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
@@ -127,8 +129,7 @@ const emit = defineEmits<{
 }>()
 
 /**
- * 查询指定 turn（按 railTurns 下标）是否处于展开态。
- * toggle 图标据此切 ChevronUp（展开）/ ChevronDown（折叠）。
+ * 查询指定 turn（按 railTurns 下标）是否处于用户态展开（由 expandedTurns prop 决定）。
  * expandedTurns 缺省时视为全折叠（默认折叠态，符合「默认极简」原则）。
  */
 function isExpanded(idx: number): boolean {
@@ -138,8 +139,20 @@ function isExpanded(idx: number): boolean {
 }
 
 /**
+ * 查询指定 turn 的「实际渲染展开态」（toggle 图标 + data-expanded 依据）。
+ * = 用户态展开 OR sessionActive 时的激活节点强制展开。
+ *
+ * sessionActive 时 trace 由父组件强制展开（不看 expandedTurns），激活节点必然展开，
+ * toggle 此时禁用但图标方向需保持准确（ChevronUp=已展开），否则会出现「点不动的 ChevronDown」
+ * 语义错误。非激活节点仍看 isExpanded（sessionActive 不强制展开非激活节点）。
+ */
+function isTurnExpanded(idx: number): boolean {
+  return (props.sessionActive && idx === props.activeTurnIndex) || isExpanded(idx)
+}
+
+/**
  * rail 横向定位：根据 panelRightEdge 算 right 偏移。
- * panelRightEdge 给定时 → 贴面板左侧（避免压住面板内容）；
+ * panelRightEdge 给定时 → 贴面板右侧（内缩 8px，与「右侧导航 rail」语义一致）；
  * 缺省 → 贴视口右侧 8px（CSS fallback 路径，用于独立预览/无 panel 场景）。
  */
 const railStyle = computed(() => ({
@@ -171,6 +184,10 @@ const viewportStyle = computed(() => {
  *
  * 优先级：failed > active > ok —— 失败优先于进行中（失败信息更需要被注意到，
  * 即便 turn 正在 streaming，过往的失败也要标记）。
+ *
+ * 保持普通函数形式（非 computed）：依赖循环变量 turn + idx，要转 computed 需引入
+ * 按 turns/activeTurnIndex/sessionActive 映射的 computed 数组，复杂度收益不成正比。
+ * 开销可接受——调用次数 = rail 节点数（≤ turns 数，通常 <20），每次仅字符串拼接。
  */
 function agentIconClass(turn: MessageTurn, idx: number): string {
   if (hasFailedTool(turn)) return 'text-danger'

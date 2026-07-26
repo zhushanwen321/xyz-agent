@@ -30,11 +30,10 @@ export type TurnExpansionPartition = Map<number, boolean>
 
 export const useTurnExpansionStore = defineStore('turn-expansion', () => {
   // 外层 plain Map（非响应式）：sessionId → 内层 reactive Map<turnIdx, boolean>。
-  // 关键：外层故意非响应式。分区在「读 isExpanded 时惰性创建」（见 getPartition 的注释），
-  // 这样 expand(idx) 第一次调用时 partition 已存在（effect 首跑读 isExpanded 已创建），
-  // expand 只 mutate 内层 reactive Map 的 idx → 单次 effect 失效重跑（TC-w1-7/w1-9 契约：
-  // 一次 expand 对应一次 effect 重跑，不双触发）。若外层也 reactive，expand 第一次调用
-  // 会同时触发「外层 Map 新增 key」+「内层 idx set」两个响应式通知，effect 重跑两次。
+  // 关键：外层故意非响应式，避免分区集合变更（新增/删除 session key）触发无谓的全局通知
+  // （set/delete 一个 plain Map key 不发任何响应式信号，无需担心「分区新增」语义引起失效）。
+  // 精确的 per-idx 依赖通过内层 reactive Map 建立：effect 读 partition.get(idx) 时收集依赖，
+  // partition.set(idx, ...) 时精确通知该 idx 的订阅者（TC-w1-7/w1-9：一次 expand 一次重跑）。
   const partitions = new Map<string, TurnExpansionPartition>()
 
   /**
@@ -105,14 +104,30 @@ export const useTurnExpansionStore = defineStore('turn-expansion', () => {
     return idxs.some((i) => p.get(i) === true)
   }
 
-  /** session 销毁时清分区（注册到模块级 cleanup registry，由 triggerSessionCleanups 编排） */
+  /**
+   * session 销毁时清分区（注册到模块级 cleanup registry，由 triggerSessionCleanups 编排）。
+   *
+   * 先 partition.clear() 再 partitions.delete(sid)：
+   * - clear() 触发 reactive Map 的 key 变更通知，让所有订阅该 partition 的 effect 失效重算
+   *   （对齐 useSessionScopedState 的 version ref bump 机制，ADR-0036 对称性）
+   * - delete() 再把分区从外层 Map 移除，释放内存（partition 引用断开）
+   * session 销毁时该 session 的 UI 也卸载，影响有限，但保留通知路径避免设计 debt。
+   */
   function clearSession(sid: string): void {
+    const p = partitions.get(sid)
+    if (p) {
+      // 触发所有订阅该 partition 的 effect 失效（reactive Map.clear 对已建立过依赖的 key 都会通知）
+      p.clear()
+    }
     partitions.delete(sid)
   }
 
   // 注册到模块级 cleanup registry（session 销毁编排，与 useSessionScopedState 实例同列）。
-  // 不反注册：store 与 Pinia app 同生命周期，模块级 registry 在 app 卸载前一直有效。
-  registerSessionCleanup(clearSession)
+  // 保存反注册句柄：Pinia store setup 函数每 Pinia 实例只跑一次，生产环境无 HMR/反复建
+  // store 的问题；但测试/HMR/createPinia 反复调用会往模块级 registry 塞废弃闭包，
+  // 故暴露 $unregisterCleanup 给测试/HMR 在卸载 Pinia 时反注册（与 useSessionScopedState
+  // 的 onScopeDispose 反注册保持对称，符合 ADR-0036 cleanup 机制）。
+  let unregisterCleanup: (() => void) | null = registerSessionCleanup(clearSession)
 
   return {
     partitions,
@@ -124,5 +139,10 @@ export const useTurnExpansionStore = defineStore('turn-expansion', () => {
     collapseAll,
     hasAnyExpanded,
     clearSession,
+    /** 反注册 cleanup（测试/HMR/卸载 Pinia 实例时调，避免模块级 registry 累积废弃闭包）。 */
+    $unregisterCleanup: () => {
+      unregisterCleanup?.()
+      unregisterCleanup = null
+    },
   }
 })

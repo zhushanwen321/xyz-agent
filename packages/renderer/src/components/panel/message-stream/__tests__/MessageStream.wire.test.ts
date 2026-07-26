@@ -1,43 +1,46 @@
 /**
- * w4 wave 接线层测试（TC-w4-1 到 TC-w4-8）。
+ * w4 wave 接线层测试（实际用例：TC-w4-1/2/3/3b/4/6/7/8/9）。
  *
  * 覆盖：Turn.vue 接入 useTurnExpansion（w1）+ mergeConsecutiveBlocks（w2）+ merged 卡片渲染，
  *       MessageStream.vue 挂载 TurnRail（w3）+ 事件路由。
  *
- * 优先策略（任务指引「务实优先」）：
+ * 策略（任务指引「务实优先」）：
  * - TC-w4-1/2/7/8：mount Turn.vue + 真实 useTurnExpansion（无 mock，验端到端接线）
- * - TC-w4-3：mount TurnRail.vue smoke test（验 MessageStream template 已引用 TurnRail 组件 + props 契约）
- * - TC-w4-4/5/6：useMessageStreamRail composable 单元测试（验事件路由 handler → useTurnExpansion，rail 下标→MessageTurn.index 映射）。
- *   降级原因：mount MessageStream.vue 需 mock 完整 chat store 基础设施（useLoadMoreHistory.checkHasMore
- *   等重依赖），mock 成本远超收益。事件路由逻辑全在 useMessageStreamRail composable，单元测它等价覆盖
- *   MessageStream 的 rail 接线（MessageStream 只是 import + 解构 + 绑 template）。
+ * - TC-w4-3：mount TurnRail.vue smoke test（TurnRail props 契约：5 props + 2 emit）
+ * - TC-w4-3b/4/6：useMessageStreamRail composable 单元测试（验事件路由 handler → useTurnExpansion，
+ *   rail 下标→MessageTurn.index 映射）
+ * - TC-w4-9：mount MessageStream.vue 首屏冒烟（验 MessageStream 模板真的引用 TurnRail + emit 接线）。
+ *   真实 mount：仅 mock useChat/useSidebar（store 副作用隔离），用 chat store setMessages 注入
+ *   消息让 renderItems/railTurns 非空，TurnRail v-if turns.length>0 命中渲染。
  *
  * 运行：cd packages/renderer && npx vitest run src/components/panel/message-stream/__tests__/MessageStream.wire.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, ref, defineComponent, h } from 'vue'
+import { computed, nextTick, ref, defineComponent, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import Turn from '../Turn.vue'
 import TurnRail from '../TurnRail.vue'
+import MessageStream from '../../MessageStream.vue'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
+import { useTurnExpansionStore } from '@/stores/turn-expansion'
+import { useChatStore } from '@/stores/chat'
 import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
-// mock 重依赖 composable（只测组件接线，不测 store 副作用）
+// mock 重依赖 composable（只测组件接线，不测 store 副作用）。
+// useChat mock 需含 loadMoreHistory/hasMoreHistory：useLoadMoreHistory 经 useChat 读这俩，
+// MessageStream 挂载时 useLoadMoreHistory 会立即调 hasMoreHistory（computed）。
 vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn() }),
+  useChat: () => ({
+    editAndResend: vi.fn(),
+    loadMoreHistory: vi.fn(),
+    hasMoreHistory: () => false,
+  }),
+  resetChatModuleState: vi.fn(),
 }))
 vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn() }),
-}))
-
-// mock 重依赖 composable（只测组件接线，不测 store 副作用）
-vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn() }),
+  useSidebar: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
 }))
 
 /** 构造 toolCall（status 可指定，默认 completed） */
@@ -126,16 +129,44 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
   })
 
   it('TC-w4-2: 完成态自动收起（isSessionActive true→false 触发 useTurnElapsed.onComplete → collapse）', async () => {
-    // 初始：对话进行中（isSessionActive=true）→ trace 强制展开
-    const wrapper = mountTurn({
-      turn: makeTurn({ isStreaming: false }),
-      isSessionActive: true,
+    // 关键：先让 isExpanded=true（手动展开），才能区分两条路径——
+    //   showTrace = sessionActive || isExpanded(idx)。
+    //   若不预先展开，sessionActive true→false 时 showTrace 直接 false，与 onComplete 是否调用无关，
+    //   测试无法捕捉 onComplete 回归（即使把 onComplete 改 no-op 测试仍过）。
+    //   预先 isExpanded=true 后：onComplete 正确触发 collapse → isExpanded 转 false → showTrace=false；
+    //   若 onComplete 未触发 → isExpanded 仍 true → showTrace=false||true=true（trace 仍在，测试能捕捉）。
+    //
+    // sessionActive=true 时 turn-meta button :disabled（Turn.vue L162），无法用点击触发 toggle，
+    // 故直接用 store.expand 写入（Turn.vue 的 isExpanded 读同一 store，per-instance useTurnExpansion
+    // 共享同一 Pinia store 分区）。
+    //
+    // pinia 实例必须与 mountTurn 用同一个：mountTurn 的 global.plugins:[createPinia()] 会建独立
+    // pinia，故本测自建 pinia 实例，先 expand 再把它传给 mount（绕过 mountTurn 的默认 pinia）。
+    const sessionId = 'sess-w4-2'
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useTurnExpansionStore()
+    store.expand(sessionId, 1) // makeTurn() 默认 index=1
+    const wrapper = mount(Turn, {
+      props: {
+        turn: makeTurn({ isStreaming: false }),
+        sessionId,
+        isSessionActive: true,
+      },
+      global: {
+        plugins: [pinia],
+        stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
+      },
     })
+    // sessionActive=true → showTrace = true || true = true（trace 可见）
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // 对话结束：isSessionActive true→false → onComplete → collapse(turn.index)
+    // 对话结束：isSessionActive true→false → useTurnElapsed watch 触发 onComplete → collapse(1)
+    //   → isExpanded(1) 变 false → showTrace = false || false = false → trace 消失
     await wrapper.setProps({ isSessionActive: false })
-    // sessionActive 已 false + collapse 让 isExpanded=false → showTrace=false → trace 消失
     expect(wrapper.find('.trace').exists()).toBe(false)
+    // 回归守卫：collapse 确实被调用（isExpanded 已被 onComplete 路径复位为 false）。
+    // 若 onComplete 被改成 no-op，此处仍为 true，测试会失败（捕捉回归）。
+    expect(store.isExpanded(sessionId, 1)).toBe(false)
   })
 
   it('TC-w4-7: useTurnExpansion per-session 隔离 —— 两个 Turn（不同 sessionId）展开态互不影响', async () => {
@@ -186,21 +217,23 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     expect(mergedCards[0].text()).toContain('3 个同类操作')
     // 默认折叠（items 列表不显示）—— trace-blk 在卡片外是 0 个（全合并了）
     expect(wrapper.findAll('.trace > * .trace-blk')).toHaveLength(0)
-    // 点击 merged 卡片 → 展开 items（3 个 Block）
-    await mergedCards[0].trigger('click')
+    // 点击 merged 卡片的 header（含 @click 的 .cursor-pointer 子元素，非根 .merged-card）
+    // → toggle expanded → 展开 items（3 个 Block）
+    // 注：MergedBlockCard 把 @click 绑在 header 子 div 上（非根元素），故需精确定位 header 触发，
+    //   不能 mergedCards[0].trigger('click')（根元素 click 不冒泡到子元素 handler）。
+    await mergedCards[0].find('.cursor-pointer').trigger('click')
     const items = mergedCards[0].findAll('.trace-blk')
     expect(items).toHaveLength(3)
   })
 })
 
 /* ──────────────────────────────────────────────────────────────
- * TC-w4-3：TurnRail（w3）props 契约 smoke test（验 MessageStream 接线所需契约成立）
- * TC-w4-4/5/6：useMessageStreamRail composable 单元测试（验事件路由 → useTurnExpansion，rail 下标→MessageTurn.index 映射）
+ * TC-w4-3：TurnRail（w3）props 契约 smoke test（TurnRail props 契约：5 props + 2 emit）
+ * TC-w4-3b/4/6：useMessageStreamRail composable 单元测试（验事件路由 → useTurnExpansion，rail 下标→MessageTurn.index 映射）
  *
- * 降级说明：MessageStream.vue 整体 mount 需 mock chat store 重依赖（checkHasMore 等），
- * mock 成本高。事件路由逻辑全在 useMessageStreamRail composable，单元测它等价覆盖 rail 接线。
- * MessageStream.vue 的接线（import TurnRail + 解构 rail + 绑 template）由 vue-tsc 类型检查 +
- * TurnRail props 契约测试共同保证。
+ * MessageStream.vue 整体 mount 的真接线性由 TC-w4-9（见文末 describe）覆盖：仅 mock useChat/
+ * useSidebar（store 副作用隔离），用 chat store setMessages 注入消息让 railTurns 非空，
+ * 断言 TurnRail 在 DOM 渲染 + jump/toggle emit 经 MessageStream 路由到 rail composable。
  * ────────────────────────────────────────────────────────────── */
 describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRail 事件路由）', () => {
   /** 构造 3 个 turn 的 renderItems（rail 索引空间 = 3 turns） */
@@ -308,6 +341,88 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     // onJump(2) → renderItems 下标 2 → scrollTop = 2*100 + 10
     rail.onJump(2)
     expect(scrollEl.scrollTop).toBe(210)
+    wrapper.unmount()
+  })
+})
+
+/* ──────────────────────────────────────────────────────────────
+ * TC-w4-9：mount MessageStream.vue 首屏冒烟（验真接线）
+ *
+ * 反回归目标：若有人从 MessageStream.vue 模板删掉 <TurnRail> 标签、删掉 rail.onJump/onToggle
+ * 绑定、或重命名 emit，本测直接失败（区别于上面 composable/props 契约测试——它们不 mount
+ * MessageStream.vue，删 <TurnRail> 标签后仍全绿）。
+ *
+ * 真实 mount 可行性：MessageStream.vue 的重依赖（useChat/useSidebar）已 mock；
+ * useChat mock 补 loadMoreHistory/hasMoreHistory（useLoadMoreHistory 经 useChat 读这俩）。
+ * 用 chat store setMessages 注入消息让 renderItems/railTurns 非空，TurnRail v-if 命中渲染。
+ * attachTo: document.body 让 scrollEl 真挂 DOM（useChatScroll 的 watch(scrollEl) + onScrollUpdate
+ * 需 DOM 测量；不 attach 的话 scrollEl 在 happy-dom 空间里 clientHeight=0，虚拟化窗口为空）。
+ * ────────────────────────────────────────────────────────────── */
+describe('MessageStream.vue 首屏冒烟（mount 真组件，验 TurnRail 接线）', () => {
+  /** 构造 2 turn 的消息序列（user/assistant 交替）让 toRenderItems 产出 2 个 turn。 */
+  function makeStreamMessages(): Message[] {
+    return [
+      { id: 'u1', role: 'user', content: 'first turn', status: 'complete', timestamp: 1 } as Message,
+      { id: 'a1', role: 'assistant', content: 'first reply', status: 'complete', timestamp: 2 } as Message,
+      { id: 'u2', role: 'user', content: 'second turn', status: 'complete', timestamp: 3 } as Message,
+      { id: 'a2', role: 'assistant', content: 'second reply', status: 'complete', timestamp: 4 } as Message,
+    ]
+  }
+
+  it('TC-w4-9: mount MessageStream 渲染 TurnRail（DOM 含 [data-testid=turn-rail] + rail-node）', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const chat = useChatStore()
+    chat.setMessages('sess-mount', makeStreamMessages())
+
+    const wrapper = mount(MessageStream, {
+      props: { sessionId: 'sess-mount' },
+      attachTo: document.body,
+      global: { plugins: [pinia] },
+    })
+    // 等 watch(scrollEl) immediate 回调 + onScrollUpdate + computed 链路稳定
+    await nextTick()
+    await nextTick()
+
+    // 真接线断言 1：MessageStream 模板里的 <TurnRail> 标签确实渲染到 DOM（v-if turns.length>0 命中）
+    expect(wrapper.find('[data-testid="turn-rail"]').exists()).toBe(true)
+    // 真接线断言 2：rail-node 数 = 消息里的 turn 数（2 turn）
+    expect(wrapper.findAll('[data-testid="rail-node"]')).toHaveLength(2)
+
+    wrapper.unmount()
+  })
+
+  it('TC-w4-9b: mount MessageStream 后 TurnRail emit jump/toggle 经模板 @jump/@toggle 路由（验 emit 接线）', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const chat = useChatStore()
+    chat.setMessages('sess-mount-emit', makeStreamMessages())
+
+    const wrapper = mount(MessageStream, {
+      props: { sessionId: 'sess-mount-emit' },
+      attachTo: document.body,
+      global: { plugins: [pinia] },
+    })
+    await nextTick()
+    await nextTick()
+
+    // 找到 MessageStream 内部渲染的 TurnRail 子组件（真接线：MessageStream import + template 引用）
+    const turnRail = wrapper.findComponent(TurnRail)
+    expect(turnRail.exists()).toBe(true)
+
+    // emit jump(0) → MessageStream 模板 @jump="onJump" 路由到 rail.onJump（不抛错即接线成立）
+    turnRail.vm.$emit('jump', 0)
+    await nextTick()
+    // emit toggle(0) → MessageStream 模板 @toggle="onToggle" 路由到 rail.onToggle → useTurnExpansion.toggle(1)
+    //   railTurns[0].index=1（首条 user 开启 turnSeq=1）→ store 分区记 index=1 展开态
+    turnRail.vm.$emit('toggle', 0)
+    await nextTick()
+
+    // 真接线断言：toggle 经 MessageStream 路由到 useTurnExpansion（store isExpanded(1) 翻为 true）。
+    // 若 MessageStream 模板删了 @toggle 绑定或 onToggle 改名，store 不变 → 此处 false，测试失败。
+    const store = useTurnExpansionStore()
+    expect(store.isExpanded('sess-mount-emit', 1)).toBe(true)
+
     wrapper.unmount()
   })
 })

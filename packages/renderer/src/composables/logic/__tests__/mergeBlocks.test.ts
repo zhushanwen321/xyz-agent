@@ -139,6 +139,16 @@ describe('mergeConsecutiveBlocks (w2 wave IF2)', () => {
     expect(result[3]).toEqual({ kind: 'single', type: 'thinking', block: thinkB })
   })
 
+  it('TC-w2-11: 连续两个失败 tool 各自独立 single，不合并', () => {
+    // reviewer B S2 边界：失败 tool 是合并断点，连续两个失败也不应相互合并
+    const failA = makeTool('read', 'error')
+    const failB = makeTool('edit', 'error')
+    const result = mergeConsecutiveBlocks([failA, failB])
+    expect(result).toHaveLength(2)
+    expect(result[0]).toEqual({ kind: 'single', type: 'tool', block: failA })
+    expect(result[1]).toEqual({ kind: 'single', type: 'tool', block: failB })
+  })
+
   it('TC-w2-10: 副作用——输入数组 length 与元素引用不变', () => {
     const a = makeTool('read')
     const b = makeTool('edit')

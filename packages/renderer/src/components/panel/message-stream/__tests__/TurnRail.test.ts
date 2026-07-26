@@ -1,5 +1,5 @@
 /**
- * TurnRail 组件测试（TC-w3-1 到 TC-w3-8，w3 wave）。
+ * TurnRail 组件测试（TC-w3-1 到 TC-w3-16，w3 wave，共 15 用例，编号缺 TC-w3-6）。
  *
  * 覆盖 IF4 契约：
  * - 渲染：turns=[] 不渲染；否则每个 turn 一个 rail-node 含 dot+摘要+chev
@@ -173,6 +173,8 @@ describe('TurnRail (IF4)', () => {
   })
 
   it('TC-w3-9: toggle 默认 opacity-0（hover 浮出）；非 active 节点非 hover 时隐藏', () => {
+    // 注：hover 浮出行为由 Tailwind group-hover 编译时保证，happy-dom 无法触发真实 hover。
+    // 本用例只验静态 class 存在，hover 视觉转换需 E2E/视觉回归补充。
     const wrapper = mount(TurnRail, { props: defaultProps({ activeTurnIndex: 0 }) })
     const toggles = wrapper.findAll('[data-testid="rail-toggle"]')
     expect(toggles).toHaveLength(3)
