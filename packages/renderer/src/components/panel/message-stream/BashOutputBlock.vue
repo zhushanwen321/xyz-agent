@@ -7,11 +7,17 @@
     - bashStart 创建 streaming 态 system 消息（loading，显示 spinner + 取消按钮）
     - bashResult 锢定该消息更新为 complete 态（显示 output + exitCode 标签）
 
-    视觉定位：卡片式（带边框 + 浅底），区别于普通 system 提示行（SystemNotice 弱化样式）。
-    与 toolCall 互斥（bash 不走工具链，不挂 assistant turn）。
+    视觉定位：极简风（无边框/无浅底，对齐 trace block 的 trace-blk py-2 样式），
+    与普通 system 提示行（SystemNotice）区分靠 header 的 command + exit 标签等语义标识，
+    不再靠卡片背景。与 toolCall 互斥（bash 不走工具链，不挂 assistant turn）。
+
+    W4：注册 useResizeReport 上报实测高度——bash 长输出真实高度常达 280-300px，远超
+    useVirtualTurnList 的 ESTIMATED_TURN_HEIGHT=200 估算值，不接 RO 会令后续 item offset 算错
+    → 视觉重叠。key 必须带 s- 前缀（与 itemKey 的 system 项格式一致，详见 script 注释）。
   -->
   <div
-    class="bash-output-block flex flex-col gap-1.5 rounded-md border border-border bg-surface-hover/40 px-3 py-2"
+    ref="rootEl"
+    class="bash-output-block flex flex-col gap-1.5 py-2"
     data-testid="bash-output-block"
   >
     <!-- 头部行：command 文本 + 状态标签（+ no context 标记 + 取消按钮） -->
@@ -50,10 +56,10 @@
       </div>
     </div>
 
-    <!-- 输出区：complete 态才显示 -->
+    <!-- 输出区：complete 态才显示。极简风（去 rounded-sm/bg-surface-2/50），保留 max-h + overflow-y-auto（长输出滚动） -->
     <div
       v-if="!isStreaming && hasOutput"
-      class="max-h-[var(--bash-output-max-height)] overflow-y-auto rounded-sm bg-surface-2/50 px-2 py-1 font-mono text-[11px] leading-relaxed text-muted"
+      class="max-h-[var(--bash-output-max-height)] overflow-y-auto px-2 py-1 font-mono text-[11px] leading-relaxed text-muted"
       data-testid="bash-output"
     >
       <pre class="whitespace-pre-wrap break-all font-mono">{{ bash?.output }}</pre>
@@ -67,11 +73,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChat } from '@/composables/features/useChat'
+import { useResizeReport } from '@/composables/effects/useResizeReport'
 import type { Message } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -82,6 +89,16 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const { abortBash } = useChat()
+
+/** BashOutputBlock 根元素 ref，供 useResizeReport observe 测高 */
+const rootEl = ref<HTMLElement | null>(null)
+
+// 注册 RO 上报实测高度给虚拟滚动。
+// 注意 key 必须是 `s-${id}`：useVirtualTurnList 的 itemKey 对 system 项（bashExecution 是 system 消息）
+// 用 s- 前缀（`s-${message.id}`）。若上报不带前缀，高度写不进 heights Map → 仍走 200px 估算
+// → 长输出（真实 280-300px）后续 item offset 算错 → 视觉重叠。非虚拟列表环境下 useResizeReport
+// inject 拿不到 registry 会优雅降级 no-op，不抛错。
+useResizeReport(rootEl, () => `s-${props.message.id}`)
 
 const bash = computed(() => props.message.bashExecution)
 const isStreaming = computed(() => props.message.status === 'streaming')

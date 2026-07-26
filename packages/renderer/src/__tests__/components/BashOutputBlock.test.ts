@@ -1,5 +1,5 @@
 /**
- * BashOutputBlock 组件测试（composer-bash-execute W3 TK8）。
+ * BashOutputBlock 组件测试（composer-bash-execute W3 TK8 + W4 RO 上报 + 视觉降级）。
  *
  * 验证：
  * - complete 态 exit 0 → command + output + 「exit 0」success 标签
@@ -8,6 +8,9 @@
  * - excludeFromContext=true → no context 标记
  * - cancelled=true → 「cancelled」标签
  * - output='' → 「(no output)」
+ * - W4T1：注册 useResizeReport 且 RO 回调上报的 key 是 `s-${message.id}`（带 s- 前缀，
+ *   与 useVirtualTurnList itemKey 的 system 项格式一致）
+ * - W4T2：视觉对齐 trace block 极简风（根 div 无 border/rounded-md/bg-surface-hover，有 py-2）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/components/BashOutputBlock.test.ts
  */
@@ -15,6 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Message } from '@xyz-agent/shared'
+import { TURN_RESIZE_REGISTRY_KEY } from '@/composables/effects/useResizeReport'
 
 // Mock useChat.abortBash（BashOutputBlock 取消按钮的唯一外部依赖）
 const mockAbortBash = vi.fn()
@@ -160,5 +164,89 @@ describe('BashOutputBlock', () => {
     // 输出区不渲染（无 output），空输出提示渲染
     expect(wrapper.find('[data-testid="bash-output"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="bash-output-empty"]').exists()).toBe(true)
+  })
+})
+
+// ── W4：RO 上报 + 视觉降级 ──────────────────────────────────────────
+//
+// useResizeReport 通过 provide(TURN_RESIZE_REGISTRY_KEY) inject 拿 registry；
+// 测试需 provide 一个 mock registry（含 reportHeight spy）。
+// happy-dom 不提供 ResizeObserver，需 stub 一个能记录 observe 的最小实现，
+// 测试可拿到实例后手动触发回调以验证 key。
+
+describe('BashOutputBlock W4 — RO 上报 + 视觉降级', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockAbortBash.mockReset()
+  })
+
+  function mountWithRegistry(message: Message, reportHeight: (key: string, h: number) => void) {
+    return mount(BashOutputBlock, {
+      props: { message, sessionId: 'sess-1' },
+      global: {
+        plugins: [],
+        provide: {
+          [TURN_RESIZE_REGISTRY_KEY as symbol]: { reportHeight },
+        },
+      },
+    })
+  }
+
+  it('W4T1: RO 回调触发后 reportHeight 被调用且第一参数 = `s-${message.id}`（带 s- 前缀，匹配 itemKey system 格式）', async () => {
+    // 用构造器 spy：拦截 new ResizeObserver，记录回调与元素，手动 trigger 高度
+    const captured: Array<{ cb: (entries: ResizeObserverEntry[]) => void; el: HTMLElement | null }> = []
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: (entries: ResizeObserverEntry[]) => void) {
+        captured.push({ cb, el: null })
+      }
+      observe(el: HTMLElement): void {
+        captured[captured.length - 1]!.el = el
+      }
+      unobserve(): void { /* noop */ }
+      disconnect(): void { /* noop */ }
+    })
+
+    const reportHeight = vi.fn()
+    const msg = makeMessage({ id: 'bash-789' })
+    const wrapper = mountWithRegistry(msg, reportHeight)
+
+    // 等待 watch immediate 触发 observe
+    await wrapper.vm.$nextTick()
+
+    expect(captured.length).toBeGreaterThanOrEqual(1)
+    const ro = captured[0]!
+    expect(ro.el).not.toBeNull()
+    const el = ro.el as HTMLElement
+    // 模拟浏览器 RO 高度回调（borderBoxSize[0].blockSize 路径，280px 模拟长输出真实高度）
+    ro.cb([{
+      target: el,
+      borderBoxSize: [{ blockSize: 280 } as ResizeObserverSize],
+      contentRect: {} as DOMRectReadOnly,
+    }] as unknown as ResizeObserverEntry[])
+
+    expect(reportHeight).toHaveBeenCalledTimes(1)
+    // ⚠️ key 必须带 s- 前缀：与 useVirtualTurnList itemKey 的 system 项格式 `s-${id}` 一致，
+    // 否则高度写不进 heights Map → 仍走 200px 估算 → 长输出 item offset 算错 → 视觉重叠
+    expect(reportHeight).toHaveBeenCalledWith('s-bash-789', 280)
+    wrapper.unmount()
+  })
+
+  it('W4T1b: 未 provide registry（非虚拟列表环境）→ useResizeReport 优雅降级，不抛错', () => {
+    // 不 provide registry（如纯展示场景）→ useResizeReport inject 拿到 null → no-op
+    expect(() => mountBlock(makeMessage())).not.toThrow()
+  })
+
+  it('W4T2: 根 div 无 border / rounded-md / bg-surface-hover class（对齐 trace block 极简风）', () => {
+    const wrapper = mountBlock(makeMessage())
+    const root = wrapper.find('[data-testid="bash-output-block"]')
+    expect(root.exists()).toBe(true)
+    const classes = root.classes()
+    // FR-5：去卡片样式（无边框、无圆角、无浅底）
+    expect(classes).not.toContain('border')
+    expect(classes).not.toContain('border-border')
+    expect(classes).not.toContain('rounded-md')
+    expect(classes.some((c) => c.startsWith('bg-surface-hover'))).toBe(false)
+    // 极简风保留 py-2（与 Block.vue trace-blk py-2 一致）
+    expect(classes).toContain('py-2')
   })
 })
