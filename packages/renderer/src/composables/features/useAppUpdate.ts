@@ -8,8 +8,12 @@
  * - 订阅 onUpdateProgress（stage + percent）/ onUpdateError（错误 SSOT），onScopeDispose 退订
  * - initAutoCheck：30s 后自动检测一次（应用启动后延迟避开冷启动高峰）
  *
- * 单例范式：module-level state（全应用共享）+ listening flag 防重复订阅，
+ * 单例范式：module-level state（全应用共享）+ refCount 引用计数管理订阅生命周期，
  * 对齐 usePlatformChrome.ts:34-52。UpdateButton 与 Sidebar 都读同一份 state。
+ *
+ * 订阅引用计数：每个消费者调 useAppUpdate() 时 refCount++，最后一个消费者 dispose 时才退订，
+ * 避免「Sidebar 先于 UpdateButton 卸载→ listening=false 但 UpdateButton 仍在用 state → 进度/错误事件丢失」
+ * 的多消费者竞争（旧 listening flag 只由首个调用者的 onScopeDispose 守护，有缺口）。
  *
  * 错误双通路去重：onUpdateError 为 SSOT（已收到则设 errorHandled=true），
  * performUpdate 的 catch 仅在 !errorHandled 时兜底置 error（避免覆盖更精确的 onUpdateError 信息）。
@@ -50,19 +54,25 @@ const state = reactive({
   releaseNotesHtml: '',
 })
 
-/** 防重复订阅（与 usePlatformChrome listening flag 同范式） */
-let listening = false
+/**
+ * 订阅引用计数：每个消费者调 useAppUpdate() 时 ++，最后一个 dispose 时才退订。
+ * 解决多消费者竞争：Sidebar 与 UpdateButton 各自的 onScopeDispose 独立守护，
+ * 任何一个先卸载只减计数，不影响仍存活的消费者继续接收进度/错误事件。
+ */
+let refCount = 0
 
 /** errorHandled flag：onUpdateError 已处理错误后置 true，performUpdate catch 据此去重兜底 */
 let errorHandled = false
 
 /**
- * 订阅 main 进程的进度 + 错误推送（单例保护，仅在首次调用时订阅）。
- * onScopeDispose 退订：随调用 useAppUpdate 的组件作用域卸载而清理。
+ * 订阅 main 进程的进度 + 错误推送（引用计数管理生命周期）。
+ * 首个消费者订阅，后续消费者只增计数；最后一个消费者 dispose 时退订。
+ * onScopeDispose 注册在每个调用 useAppUpdate 的组件作用域上，随该作用域卸载而清理。
  */
 function subscribeProgress(): void {
-  if (listening) return
-  listening = true
+  refCount++
+  if (refCount !== 1) return  // 已有订阅，只增计数
+  // 首次订阅
   const offProgress = onUpdateProgress((p) => {
     // stage 映射 state：downloading/verifying/replacing（restarting 由 performUpdate resolve 后置）
     if (p.stage === 'downloading' || p.stage === 'verifying' || p.stage === 'replacing') {
@@ -81,9 +91,11 @@ function subscribeProgress(): void {
     errorHandled = true
   })
   onScopeDispose(() => {
-    offProgress()
-    offError()
-    listening = false
+    refCount--
+    if (refCount === 0) {
+      offProgress()
+      offError()
+    }
   })
 }
 
@@ -91,26 +103,41 @@ function subscribeProgress(): void {
  * 检测最新版本。命中新版 → state='available' + latestRelease 填充 + 异步渲染 releaseNotes；
  * 无新版/失败 → state='idle'。
  *
+ * 请求令牌（renderToken）：用户快速连续点击检测时，旧请求的 ipc 返回/releaseNotes 渲染可能
+ * 在状态已变后才 resolve，会覆盖更新（正确）的状态。用递增令牌丢弃陈旧解析：每次进入本次调用
+ * 递增 renderToken，await 后若令牌已变（说明期间又发了新 checkForUpdate）则丢弃本次结果。
+ *
  * @param force true 强制刷新缓存（默认走 1h 缓存）
  */
+let renderToken = 0
+
 async function checkForUpdate(force = false): Promise<void> {
   state.state = 'checking'
+  const myToken = ++renderToken
   try {
     const info = await ipcCheckForUpdate({ force })
+    // 防陈旧：若期间又发了新 checkForUpdate，丢弃本次结果
+    if (myToken !== renderToken) return
     if (info) {
       state.latestRelease = info
       state.state = 'available'
-      // releaseNotes 异步渲染（markdown-it + shiki WASM 首次加载），不阻塞 UI
+      // releaseNotes 异步渲染（markdown-it + shiki WASM 首次加载），不阻塞 UI；
+      // 防陈旧：渲染期间若又发了新 checkForUpdate，丢弃本次 html（避免覆盖更新版本的信息）
       void renderMarkdown(info.releaseNotes).then((html) => {
+        if (myToken !== renderToken) return  // 丢弃陈旧解析
         state.releaseNotesHtml = html
       })
     } else {
       state.state = 'idle'
     }
   } catch (e) {
-    // 检测失败：落回 idle（检测失败不算升级流程错误，不打 error 态）
+    // 防陈旧：丢弃陈旧的失败结果
+    if (myToken !== renderToken) return
+    // 检测失败不算升级流程错误（不打 error 态）。
+    // 不设 errorMessage：idle 态 UpdateButton 隐藏，设了也看不到，且会残留到下次。
+    // 失败信息仅 console.warn 便于诊断。
     state.state = 'idle'
-    state.errorMessage = e instanceof Error ? e.message : String(e)
+    console.warn('[useAppUpdate] checkForUpdate failed:', e)
   }
 }
 
@@ -157,7 +184,8 @@ async function openFallbackUrl(): Promise<void> {
 
 /**
  * 启动 30s 自动检测（应用启动后延迟检测，避开冷启动高峰）。
- * 必须在带生命周期的组件（Sidebar）setup 内调用；onScopeDispose 清理定时器避免泄漏。
+ * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
+ * 内部用 setTimeout 延迟 30s，不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
  */
 function initAutoCheck(): void {
   const timer = setTimeout(() => {
@@ -168,7 +196,8 @@ function initAutoCheck(): void {
 
 /**
  * useAppUpdate：返回单例 state + 操作方法。
- * 必须在组件 setup 内调用（subscribeProgress/initAutoCheck 依赖 onScopeDispose）。
+ * 必须在活跃 effect scope 内调用（subscribeProgress/initAutoCheck 依赖 onScopeDispose），
+ * 通常在组件 setup 顶层同步调用。
  */
 export function useAppUpdate() {
   subscribeProgress()
@@ -184,6 +213,7 @@ export function useAppUpdate() {
 /**
  * 重置单例 state（仅供测试使用）。
  * module-level state 跨测试会残留，需在 beforeEach 显式重置以保证用例隔离。
+ * refCount/renderToken/errorHandled 一并重置（module-level 闭包变量同样跨用例残留）。
  */
 export function _resetForTest(): void {
   state.state = 'idle'
@@ -192,4 +222,6 @@ export function _resetForTest(): void {
   state.percent = 0
   state.releaseNotesHtml = ''
   errorHandled = false
+  refCount = 0
+  renderToken = 0
 }

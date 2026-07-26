@@ -369,15 +369,21 @@ async function onConfirmRename(payload: { sessionId: string; label: string }): P
 }
 
 /** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本
- *  + 启动 subagent 列表同步（watch 生命周期跟随 Sidebar 组件）
- *  + 启动 30s 自动升级检测（w4：useAppUpdate.initAutoCheck，UpdateButton 消费检测到的状态） */
+ *  + 启动 subagent 列表同步（watch 生命周期跟随 Sidebar 组件） */
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
   useSubagentListSync()
   useWorkflowListSync()
-  useAppUpdate().initAutoCheck()
 })
+
+/**
+ * 启动 30s 自动升级检测（w4：useAppUpdate.initAutoCheck，UpdateButton 消费检测到的状态）。
+ * 在 setup 顶层同步调用（非 onMounted）：initAutoCheck 内部用 setTimeout 延迟 30s，不需等 DOM 挂载；
+ * onScopeDispose（initAutoCheck 内注册的清理）必须在活跃 effect scope 内同步绑定，
+ * 放 onMounted 回调内虽能工作（onMounted 在组件 scope 内同步跑）但脆弱且注释误导，故提到 setup 顶层。
+ */
+useAppUpdate().initAutoCheck()
 
 /**
  * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。

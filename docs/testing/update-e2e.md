@@ -29,21 +29,14 @@
 
 ## 触发机制说明
 
-`useAppUpdate` 是 module-level 单例，外部脚本无法直接访问其 `checkForUpdate`。
-脚本 `scripts/dev-mock-update-e2e.mjs` 按两条路径触发检测：
+`useAppUpdate` 是 module-level 单例，外部脚本无法直接访问其 `checkForUpdate`，
+脚本 `scripts/dev-mock-update-e2e.mjs` 因此不尝试手动触发，而是直接等
+**35s** 让 `Sidebar` 的 `initAutoCheck`（`AUTO_CHECK_DELAY_MS = 30_000`）
+自动跑一次 + 5s 渲染 buffer。
 
-1. **手动触发（优先）**：若 dev app 在 `window` 上挂了 `__testTriggerUpdate` 钩子，
-   直接调用，立即检测（mock 立即返回，无需等 30s）。
-2. **降级等待自动触发**：未找到钩子时，等 35s 让 `Sidebar` 的 `initAutoCheck`
-   （`AUTO_CHECK_DELAY_MS = 30_000`）自动跑一次。
-
-若需在 dev app 中暴露钩子以加速验证，可在 `Sidebar.vue` setup 末尾加：
-```ts
-// dev-only 测试钩子（P2 半 E2E 用，prod 构建因 import.meta.env.DEV=false 被 tree-shake）
-if (import.meta.env.DEV) {
-  window.__testTriggerUpdate = () => useAppUpdate().checkForUpdate(true)
-}
-```
+> 历史说明（已废弃）：早期文档建议在 `Sidebar.vue` 挂 `window.__testTriggerUpdate`
+> 钩子做「手动触发」，但该钩子从未在源码挂载，脚本永远走不到该路径，故已移除脚本里的
+> 钩子探测逻辑与本文档的挂载建议。验证耐心点等 35s 即可。
 
 ## 限制
 

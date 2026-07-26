@@ -42,9 +42,11 @@ const MOCK_RELEASE: LatestReleaseInfo = {
   assets: {
     // macArm64Zip 是必须的（MacUpdater 走此 asset）；指向不存在的 URL，
     // performUpdate 下载时会失败——但 P2 不走到这步（只验证检测 + UI）。
+    // downloadUrl 用合法的 GitHub URL（即使 404），以便通过 validateRelease
+    // 白名单校验（update:perform handler 在 performUpdate 前会校验 payload）。
     macArm64Zip: {
       name: 'xyz-agent-mac-arm64.zip',
-      downloadUrl: 'http://localhost:0/never-exists.zip',
+      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v999.999.999/xyz-agent-mac-arm64.zip',
       size: 0,
       sha256: 'a'.repeat(64),
     },

@@ -55,6 +55,12 @@ export class MacUpdater implements PlatformUpdater {
     // 推导 .app bundle 路径：execPath = .../xyz-agent.app/Contents/MacOS/xyz-agent
     // dirname×3 = .../xyz-agent.app
     const appBundle = path.dirname(path.dirname(path.dirname(process.execPath)))
+    // 布局守卫：dirname×3 假设标准 .app/Contents/MacOS/<binary> 布局。若 execPath 不符
+    // （如开发期改了 cwd、或将来改成非 .app 打包），appBundle 不以 .app 结尾，后续
+    // unzip/unlink 会破坏意外路径。提前 fail-fast 比静默写错更安全。
+    if (!appBundle.endsWith('.app')) {
+      throw new UpdateError(`unexpected app bundle path (not .app): ${appBundle}`, 'replacing')
+    }
     // toLowerCase：GitHub digest 可能返回大写 hex，而 updater.sh 的 `shasum -a 256`
     // 输出小写。注入前统一小写，避免 [ "$ACTUAL" != "$SHA256" ] 字符串比较大写 vs 小写
     // 误判为不匹配（导致正确下载被错误回滚）。download-asset.ts 的下载期校验已小写化。
@@ -108,9 +114,14 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
     if (!appImage) {
       throw new UpdateUnsupportedError('deb package does not support self-update', release.htmlUrl)
     }
+    // toLowerCase + 缺失抛 UpdateError：与 mac 路径一致。linux updater 脚本里
+    // sha256sum 输出小写，统一小写避免字符串比较大小写误判。
+    const sha256 = release.assets.linuxX64AppImage?.sha256?.toLowerCase()
+    if (!sha256) throw new UpdateError('linux asset missing sha256', 'verifying')
     const script = buildLinuxUpdaterScript({
       appImagePath: appImage,
       newFilePath: downloadedFilePath,
+      sha256,
       logPath: LINUX_UPDATER_LOG_PATH,
       resultPath: path.join(UPDATE_DIR, 'update-result.json'),
       targetVersion: release.version,

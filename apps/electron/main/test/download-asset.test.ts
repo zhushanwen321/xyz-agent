@@ -127,6 +127,24 @@ describe('W3: download-asset (W3TC1-3)', () => {
     })).rejects.toThrow(/size mismatch/)
   })
 
+  // ── W3TC3c：sha256 缺失 + size=0 → 抛 UpdateIntegrityError（BLOCKER 4 回归）
+  //    旧实现 `else if (asset.size && asset.size > 0)` 在 size=0 时跳过校验，
+  //    攻击者可让下载文件被任意篡改而无校验拦截。修复后二者全缺则拒绝。
+  it('W3TC3c: sha256 undefined + size=0 → 抛 UpdateIntegrityError（拒绝无校验）', async () => {
+    globalThis.fetch = vi.fn(async () => makeContentResponse(TEST_CONTENT)) as unknown as typeof globalThis.fetch
+
+    await expect(downloadAsset({
+      name: 'no-check.zip',
+      downloadUrl: 'https://example.com/no-check.zip',
+      size: 0, // size=0（被旧实现当作「无 size」跳过）
+      // sha256 缺失
+    })).rejects.toThrow(/no integrity check available/)
+
+    // 最终文件不应存在（校验失败被清理）
+    const finalPath = path.join(TMP_DATA_DIR, 'update', 'no-check.zip')
+    expect(existsSync(finalPath)).toBe(false)
+  })
+
   // ── 进度回调 ────────────────────────────────────────────────────
   it('W3TC1b: onProgress 回调被调用（百分比 0-100）', async () => {
     globalThis.fetch = vi.fn(async () => makeContentResponse(TEST_CONTENT)) as unknown as typeof globalThis.fetch

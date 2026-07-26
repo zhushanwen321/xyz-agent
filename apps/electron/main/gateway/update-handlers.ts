@@ -20,6 +20,7 @@ import { app, ipcMain } from 'electron'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError, UpdateUnsupportedError } from '../update/types.js'
+import { validateRelease } from '../update/validate-release.js'
 
 /**
  * 注册自动升级 IPC handler（update:check + update:perform）。
@@ -47,6 +48,11 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       throw new Error('updateOrchestrator not configured')
     }
     try {
+      // [SECURITY] 校验 renderer payload：防 SSRF（downloadUrl 白名单 GitHub 域名）+
+      // 路径遍历（name 严格字符集）+ shell 注入（name/version/sha256 严格格式）。
+      // 必须在 performUpdate 前执行——orchestrator 内部会把 name 拼进下载路径、
+      // 可能 spawn bash 脚本，未校验的输入可触发任意代码执行。
+      validateRelease(payload.release)
       const result = await deps.updateOrchestrator.performUpdate(payload.release, {
         onProgress: (stage, percent) => {
           const win = deps.getMainWindow()

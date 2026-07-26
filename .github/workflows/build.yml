@@ -112,6 +112,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: pnpm --filter @xyz-agent/electron run build
 
+      # macOS 专属：在 mac runner 上跑 main 进程测试。
+      # 动机：ci.yml 的 test job 在 ubuntu 跑 test:main，updater-script-integration.test.ts
+      # 里 mac happy-path / sha mismatch / unzip-fail 回滚用例用 it.skipIf(!IS_MAC) 跳过
+      # （.app bundle 语义是 mac 特有，ubuntu 跑不了）。这些用例必须在 mac CI 上真正执行，
+      # 否则「detached bash 升级脚本」最关键的决策树（sha 校验 + 备份 + 回滚）永远没回归覆盖。
+      - name: Run main tests (macOS)
+        if: matrix.platform == 'mac'
+        run: pnpm --filter @xyz-agent/electron run test:main
+
       - name: Postbuild validation
         shell: bash
         run: bash scripts/postbuild-validate.sh --ci
@@ -205,7 +214,9 @@ jobs:
 
       - name: Generate sha256 manifest
         shell: bash
-        run: bash scripts/generate-manifest.sh apps/electron/dist/builder-output
+        run: bash scripts/generate-manifest.sh apps/electron/dist/builder-output --platform ${{ matrix.platform }}
+        # --platform <mac|win|linux>：输出 manifest-<platform>.json（三平台并行构建各自命名，
+        # 避免 release.yml 的 download-artifact merge-multiple 同名覆盖。release.yml 用 jq 合并）。
 
       - name: Ad-hoc sign mac app
         if: matrix.platform == 'mac'
@@ -223,6 +234,6 @@ jobs:
             apps/electron/dist/builder-output/*.exe
             apps/electron/dist/builder-output/*.AppImage
             apps/electron/dist/builder-output/*.deb
-            apps/electron/dist/builder-output/manifest.json
+            apps/electron/dist/builder-output/manifest-*.json
           retention-days: 7
           if-no-files-found: error

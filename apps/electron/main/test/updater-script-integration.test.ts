@@ -144,14 +144,26 @@ function writeScriptToTmp(script: string, name = 'updater.sh'): string {
  * 真实执行 bash 脚本，返回 { status, stdout, stderr }。
  * 用 shell:false 直接调 bash 避免 PATH 问题；用 /bin/bash（macOS 自带 3.x 也能跑，
  * 但环境装了 brew bash 5.x，PATH 里更优先）。
+ *
+ * timeout：15s 硬上限。脚本正常 1-2s 完成（含内置 sleep 1）；若 pgrep 误匹配真实
+ * xyz-agent 进程会卡满 30s × N 次轮询，挂死整个 vitest run。15s 足够覆盖正常路径，
+ * 又能在误匹配时快速失败暴露问题（命中 SIGTERM 时抛错，失败原因清晰）。
  */
+const BASH_TIMEOUT_MS = 15_000
+
 function runBash(scriptPath: string): { status: number | null; stdout: string; stderr: string } {
   const r = spawnSync('bash', [scriptPath], {
     cwd: tmpDir,
     encoding: 'utf8',
-    // 不设 timeout——脚本应在 1-2s 内完成（含内置 sleep 1）。如挂起说明 pgrep 误匹配，
-    // 由 hasCommand / 唯一假进程名规避；不在这里硬超时以保持失败原因清晰。
+    timeout: BASH_TIMEOUT_MS, // 防止 pgrep 误匹配导致轮询卡死（脚本应 1-2s 完成）
   })
+  // 超时（SIGTERM）明确抛错——避免被当成「正常 exit」误判为通过（假绿）。
+  if (r.signal === 'SIGTERM') {
+    throw new Error(
+      `bash 脚本超时（${BASH_TIMEOUT_MS}ms），可能 pgrep 误匹配真实进程：${scriptPath}\n` +
+        `stdout: ${r.stdout ?? ''}\nstderr: ${r.stderr ?? ''}`,
+    )
+  }
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 
@@ -219,6 +231,7 @@ describe('updater-script integration: bash 语法检查', () => {
     const script = buildLinuxUpdaterScript({
       appImagePath: path.join(tmpDir, 'x.appimage'),
       newFilePath: path.join(tmpDir, 'y.appimage'),
+      sha256: 'a'.repeat(64),
       logPath: path.join(tmpDir, 'l.log'),
       resultPath: path.join(tmpDir, 'r.json'),
       targetVersion: '0.9.0-int',
@@ -276,8 +289,9 @@ echo '{"status":"sha-ok"}' > "${args.resultPath}"
 `
   }
 
-  it('sha 匹配 → exit 0、result.json 写入 sha-ok', () => {
-    if (!HAS_SHASUM) return
+  // shasum 缺失（CI ubuntu 无该命令的极端环境）时 it.skipIf 明确标记 skipped，
+  // 避免早 return 被 vitest 计入 passed（假绿）。HAS_SHASUM 在 mac/linux 标配为 true。
+  it.skipIf(!HAS_SHASUM)('sha 匹配 → exit 0、result.json 写入 sha-ok', () => {
     // 准备任意文件 + 计算真实 sha
     const payload = path.join(tmpDir, 'payload.bin')
     writeFileSync(payload, 'hello updater integration test')
@@ -299,8 +313,7 @@ echo '{"status":"sha-ok"}' > "${args.resultPath}"
     expect(readFileSync(resultPath, 'utf8')).toContain('sha-ok')
   })
 
-  it('sha 不匹配 → exit 1、result.json status=failed、log 含 ROLLBACK: sha mismatch', () => {
-    if (!HAS_SHASUM) return
+  it.skipIf(!HAS_SHASUM)('sha 不匹配 → exit 1、result.json status=failed、log 含 ROLLBACK: sha mismatch', () => {
     const payload = path.join(tmpDir, 'payload.bin')
     writeFileSync(payload, 'tampered content')
     const wrongSha = '0'.repeat(64) // 故意错的 64 位 hex
@@ -335,16 +348,11 @@ describe('updater-script integration: mac 端到端', () => {
     // happy path 需要 zip + unzip 都可用；缺任一则 it.skipIf 自动跳过
   })
 
-  it(
+  it.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)(
     'happy path：sha 匹配 + unzip 成功 → exit 0、新 .app 就位、status=done、.old 已清理',
     () => {
       // 仅 mac 有 unzip + xattr/codesign 守卫的完整路径；linux CI 上 unzip 可能也存在，
-      // 但 .app bundle 语义是 mac 特有 → 限定 mac 跑。
-      if (!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM) {
-        console.warn('[skip] 非 mac 或缺 zip/unzip/shasum，跳过 mac happy path')
-        return
-      }
-
+      // 但 .app bundle 语义是 mac 特有 → 限定 mac 跑。skip 条件见 it.skipIf（vitest 明确标 skipped）。
       const { zipPath, sha256, appBundleName } = buildMinimalAppZip()
       const vars = makeMacVars({ zipPath, sha256, appBundleName })
       // 预先放一个「旧 .app」（被备份成 .old 然后被新 .app 覆盖；最终 .old 被清理）
@@ -382,14 +390,9 @@ describe('updater-script integration: mac 端到端', () => {
     },
   )
 
-  it(
+  it.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)(
     'sha mismatch 回滚：exit 1、旧 .app 完好（不应被破坏）、status=failed',
     () => {
-      if (!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM) {
-        console.warn('[skip] 非 mac 或缺 zip/unzip/shasum')
-        return
-      }
-
       const { zipPath, appBundleName } = buildMinimalAppZip()
       const wrongSha = '0'.repeat(64) // 故意错的 sha
       const vars = makeMacVars({ zipPath, sha256: wrongSha, appBundleName })
@@ -419,14 +422,9 @@ describe('updater-script integration: mac 端到端', () => {
     },
   )
 
-  it(
+  it.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)(
     'unzip 失败回滚：损坏 zip → exit 1、.old 恢复旧 .app、status=failed、error=unzip failed',
     () => {
-      if (!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM) {
-        console.warn('[skip] 非 mac 或缺 zip/unzip/shasum')
-        return
-      }
-
       // 构造「sha 对、但内容不是合法 zip」的伪 zip：先真打个 zip 拿正确 sha，
       // 然后把 zip 内容替换成垃圾（sha 也跟着变 → 我们重算 sha 让校验段通过）。
       // 这样校验段过、解压段炸 → 触发 unzip 失败回滚分支。
@@ -479,15 +477,22 @@ describe('updater-script integration: linux mv 备份/回滚', () => {
     // 压掉等 app 退出的固定 sleep（同 mac 处理），加速
     script = script.replace(/^sleep 1$/m, 'true  # skip sleep 1')
     // 关键：去掉等 app 退出的 pgrep 轮询段。
-    // 原因（重要）：linux 模板里 pgrep -f "xyz-agent" 是写死的（不像 mac 用 {{APP_NAME}}），
-    // 而本开发环境装着真 xyz-agent app，pgrep -f "xyz-agent" 会命中真实进程 → 卡满 30s 轮询。
-    // mac 测试已经通过唯一假 appName 验证了「等 app 退出」逻辑；
-    // linux body 测试聚焦的是 mv 备份/回滚/chmod 决策树（这才是 linux updater 的核心），
+    // 原因（重要）：linux 模板里 pgrep 用精确 {{APP_IMAGE_PATH}} + grep -v 自身 PID，
+    // 但本开发环境装着真 xyz-agent AppImage（路径可能巧合命中），且 body 测试聚焦的是
+    // mv 备份/回滚/chmod 决策树（这才是 linux updater 的核心，mac 测试已覆盖 sha 校验逻辑），
     // 故执行前把整段 pgrep 循环换成单行 no-op。这是测试夹具变换，不是改源码语义。
-    // 模板里循环段形如 `for i in $(seq 1 60); do ... pgrep -f "xyz-agent" ... done`
     script = script.replace(
       /for i in \$\(seq 1 60\); do[\s\S]*?done\n/s,
       'echo "[test] skip pgrep wait loop (would match real xyz-agent in dev env)"\n',
+    )
+    // 去掉 sha256 校验段（# sha256 校验 ... 到 exit 1 fi）。
+    // 原因：本测试聚焦 mv 备份/回滚决策树；sha 校验语义已由 mac 集成测试覆盖（mac 用
+    // shasum，linux 用 sha256sum，逻辑结构一致）。若保留，happy path 需算真实 sha，
+    // mv-fail 用例（newFilePath 不存在）会在 sha 段先 exit 1 → 测不到 mv 回滚分支。
+    // 测试夹具变换，不改源码。
+    script = script.replace(
+      /\n# sha256 校验[\s\S]*?\nfi\n/s,
+      '\necho "[test] skip sha check (covered by mac integration suite)"\n',
     )
     return script
   }
@@ -496,6 +501,8 @@ describe('updater-script integration: linux mv 备份/回滚', () => {
     return {
       appImagePath: path.join(tmpDir, 'xyz-agent-x86_64.AppImage'),
       newFilePath: path.join(tmpDir, 'update', 'xyz-agent-x86_64.AppImage'),
+      // sha 在 body 测试里被剥离（见 buildLinuxBodyScript），填任意 64 hex 占位满足类型
+      sha256: 'a'.repeat(64),
       logPath: path.join(tmpDir, 'updater-linux.log'),
       resultPath: path.join(tmpDir, 'update-result.json'),
       targetVersion: '0.9.0-int',

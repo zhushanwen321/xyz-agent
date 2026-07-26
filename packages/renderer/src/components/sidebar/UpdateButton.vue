@@ -26,8 +26,14 @@
       </HoverCardTrigger>
       <HoverCardContent side="top" class="max-h-[320px] w-[320px] overflow-auto p-3 text-[12px] text-fg">
         <div class="mb-1.5 text-[11px] font-semibold text-accent">{{ t('sidebar.update.newVersion') }}</div>
+        <!--
+          不复用 MarkdownRenderer 组件：该组件位于 panel/message-stream 下，强依赖 fileSearch/fileTree/
+          sideDrawer/AmbiguousFilePopover/MermaidRenderer 等 panel 上下文（sessionId 在此无值，文件路径识别/
+          代码复制交互无意义且会拖入 shiki WASM）。HoverCard 内 release note 是只读展示，复制/链接交互非必需；
+          如需交互可后续抽取一个轻量只读 MarkdownView 组件再迁移。排版用浏览器默认样式。
+        -->
         <!-- eslint-disable-next-line vue/no-v-html -- release note 经 markdown-it 渲染（html:false 默认禁裸 HTML + scheme 白名单过滤），与 MarkdownRenderer 同论证 XSS-safe。受控注入点。 -->
-        <div class="md-content" data-testid="update-release-notes" v-html="state.releaseNotesHtml" />
+        <div data-testid="update-release-notes" v-html="state.releaseNotesHtml" />
       </HoverCardContent>
     </HoverCard>
 
@@ -40,7 +46,14 @@
       <Loader2 class="size-3 animate-spin" />
       <span class="tabular-nums">{{ t('sidebar.update.downloading', { percent: state.percent }) }}</span>
       <!-- 进度条（与 ContextCapacityPopover.vue:42-47 同范式：div 拼，bg-surface-2 容器 + bg-accent 子条） -->
-      <span class="h-1 w-10 overflow-hidden rounded-full bg-surface-2">
+      <span
+        class="h-1 w-10 overflow-hidden rounded-full bg-surface-2"
+        role="progressbar"
+        :aria-valuenow="state.percent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-label="t('sidebar.update.downloading', { percent: state.percent })"
+      >
         <span
           class="block h-full rounded-full bg-accent transition-all"
           :style="{ width: `${state.percent}%` }"

@@ -8,11 +8,9 @@
  *
  * 流程：
  *   1. 连接 9222 端口的 dev Electron renderer（connectOverCDP，对策 1 不抢焦点）
- *   2. 选 URL 含 localhost:1420 的 page（vite dev server，AGENTS.md §9）
+ *   2. 选 URL 以 http://localhost:1420/ 开头的 page（vite dev server，AGENTS.md §9）
  *   3. 等 sidebar 加载完成
- *   4. 手动触发 useAppUpdate().checkForUpdate（不等 30s 自动触发）——
- *      通过 evaluate 注入的 window.__testTriggerUpdate 调用。
- *      若该入口不存在（dev app 未暴露），降级为等 35s 让 initAutoCheck 自动跑。
+ *   4. 等 35s 让 Sidebar 的 initAutoCheck（AUTO_CHECK_DELAY_MS = 30_000）自动跑一次。
  *   5. 断言 [data-testid="update-button"] 出现（available 态）
  *   6. hover [data-testid="update-available"] → 等 release note 浮层渲染
  *   7. 截图保存到 /tmp/dev-update-e2e-*.png（全页面 + 浮层区域）
@@ -26,10 +24,13 @@ import { chromium } from 'playwright'
 
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT ?? 'http://localhost:9222'
 const SCREENSHOT_DIR = '/tmp'
-const VITE_URL_SUBSTRING = 'localhost:1420' // AGENTS.md §9：renderer 经 vite dev server 加载
-// 手动触发超时：useAppUpdate.checkForUpdate 走 IPC（mock 立即返回）+ markdown 渲染（shiki WASM 首次约 1-2s）
-const MANUAL_TRIGGER_TIMEOUT_MS = 15_000
-// 自动触发降级等待：initAutoCheck 30s + 渲染 buffer 5s
+// AGENTS.md §9：renderer 经 vite dev server 加载，固定 http://localhost:1420/。
+// 用 startsWith 而非 includes 做严格匹配——避免误连到 URL 里「碰巧含 localhost:1420 子串」
+// 的非 dev 实例（如别的应用挂了带该子串的 page），降低脚本误操作风险。
+const VITE_URL_PREFIX = 'http://localhost:1420/'
+// 渲染等待超时：DOM 挂载 / markdown 渲染（shiki WASM 首次约 1-2s）的上限
+const RENDER_TIMEOUT_MS = 15_000
+// 自动触发等待：initAutoCheck 30s + 渲染 buffer 5s
 const AUTO_CHECK_WAIT_MS = 35_000
 
 /** 简单 pass/fail 日志，累计断言结果用于最终汇总。 */
@@ -53,61 +54,20 @@ function exitCode() {
 
 /**
  * 找到 vite dev server 的 page（renderer）。
- * Electron 主进程自身也有 page，但 URL 不含 localhost:1420——必须按 URL 过滤。
+ * Electron 主进程自身也有 page，但 URL 不以 http://localhost:1420/ 开头——必须严格按 URL 前缀过滤。
+ * 连接后再次断言 URL，防止 CDP 在选 page 与首次操作之间 page 已跳转走（如被关掉或导航到 about:blank）。
  */
 async function findRendererPage(browser) {
   const pages = browser.contexts().flatMap((c) => c.pages())
-  const renderer = pages.find((p) => p.url().includes(VITE_URL_SUBSTRING))
+  const renderer = pages.find((p) => p.url().startsWith(VITE_URL_PREFIX))
   if (!renderer) {
     throw new Error(
-      `未找到 URL 含 "${VITE_URL_SUBSTRING}" 的 page。` +
+      `未找到 URL 以 "${VITE_URL_PREFIX}" 开头的 page。` +
         `现有 page URL：${pages.map((p) => p.url()).join(', ') || '(空)'}。` +
         `确认 dev app 已起来且 vite dev server 正常监听 1420。`,
     )
   }
   return renderer
-}
-
-/**
- * 手动触发 useAppUpdate().checkForUpdate。
- *
- * 渲染进程里 useAppUpdate 是 module-level 单例，无法直接从外部访问。
- * 此函数尝试两条路径：
- *   1. window.__testTriggerUpdate（dev app 若暴露的测试钩子，最可靠）
- *   2. 直接调 preload 暴露的 window.xyz.checkForUpdate（更新 main 缓存，但需配合 Vue 刷新——
- *      此路径只验证 IPC 通，状态机刷新靠自动触发）
- *
- * 返回 true 表示已成功触发；false 表示需降级到等自动触发。
- */
-async function tryManualTrigger(page) {
-  // 路径 1：测试钩子（若 dev app 在 window 上挂了 __testTriggerUpdate）
-  const hasHook = await page.evaluate(() => typeof window.__testTriggerUpdate === 'function')
-  if (hasHook) {
-    console.log('  发现 window.__testTriggerUpdate 钩子，调用以触发检测')
-    await page.evaluate(async () => {
-      await window.__testTriggerUpdate()
-    })
-    return true
-  }
-
-  // 路径 2：直接通过 Vue app 实例访问组件树（Vue3 dev 模式 app.config.globalProperties）
-  // 多数 dev app 不暴露，此处尝试一次，失败则返回 false 让上层降级。
-  console.log('  未发现 __testTriggerUpdate 钩子，尝试通过 Vue devtools 入口...')
-  const triggered = await page.evaluate(() => {
-    // Vue3 dev build 会在带 __vue_app__ 的根元素挂 app 实例
-    const root = document.querySelector('#app')
-    if (!root || !root.__vue_app__) return false
-    const app = root.__vue_app__
-    // useAppUpdate 是 composable，其 state 是 module-level 单例——
-    // 无法经 app 实例直接拿，但可经 Pinia/globalProperties 尝试（项目未挂则 false）
-    const tryFn = app.config?.globalProperties?.$testTriggerUpdate
-    if (typeof tryFn === 'function') {
-      tryFn()
-      return true
-    }
-    return false
-  })
-  return triggered
 }
 
 async function main() {
@@ -134,31 +94,31 @@ async function main() {
     step(3, '等待 sidebar 挂载（UpdateButton 容器）')
     // sidebar 是左固定栏，应用挂载后立即可见。等 #app 出现即可。
     try {
-      await page.waitForSelector('#app', { timeout: MANUAL_TRIGGER_TIMEOUT_MS })
+      await page.waitForSelector('#app', { timeout: RENDER_TIMEOUT_MS })
       pass('#app 已挂载')
     } catch (err) {
       fail('等待 #app 挂载超时（dev app 可能未正常加载）', err)
       process.exit(exitCode())
     }
 
-    step(4, '触发 checkForUpdate（手动优先，降级等自动）')
-    const manuallyTriggered = await tryManualTrigger(page).catch((err) => {
-      console.log(`  手动触发评估出错（降级到自动）：${err.message}`)
-      return false
-    })
-    if (manuallyTriggered) {
-      pass('已手动触发 checkForUpdate')
-    } else {
-      console.log(`  未找到手动触发入口，降级：等 ${AUTO_CHECK_WAIT_MS / 1000}s 让 initAutoCheck 自动跑`)
-      await page.waitForTimeout(AUTO_CHECK_WAIT_MS)
-      pass('自动触发等待完成（initAutoCheck 30s + buffer）')
+    // 连接后断言 page URL 仍是 vite dev server——防止 CDP 在选 page 与首次操作之间
+    // page 已被导航走或关闭（如 dev 热重载期间短暂 about:blank）。
+    if (!page.url().startsWith(VITE_URL_PREFIX)) {
+      throw new Error(`page URL 已偏离 vite dev server，当前：${page.url()}（期望前缀 ${VITE_URL_PREFIX}）`)
     }
+
+    step(4, `等 ${AUTO_CHECK_WAIT_MS / 1000}s 让 initAutoCheck 自动触发`)
+    // useAppUpdate 是 module-level 单例，外部脚本无法直接访问 checkForUpdate；
+    // 原先的 window.__testTriggerUpdate 钩子从未在源码挂载（永远走不到），故移除该路径，
+    // 直接等 Sidebar.initAutoCheck（AUTO_CHECK_DELAY_MS = 30_000）自动跑一次 + 渲染 buffer 5s。
+    await page.waitForTimeout(AUTO_CHECK_WAIT_MS)
+    pass('自动触发等待完成（initAutoCheck 30s + buffer）')
 
     step(5, '断言 update-button 可见（state=available）')
     try {
       // available 态会渲染 data-testid="update-available"（hover trigger 按钮）
       await page.waitForSelector('[data-testid="update-available"]', {
-        timeout: MANUAL_TRIGGER_TIMEOUT_MS,
+        timeout: RENDER_TIMEOUT_MS,
       })
       pass('update-button visible (state=available)')
     } catch (err) {
@@ -173,7 +133,7 @@ async function main() {
       // HoverCardContent 由 radix-like 机制异步挂载，等带 testid 的容器
       try {
         await page.waitForSelector('[data-testid="update-release-notes"]', {
-          timeout: MANUAL_TRIGGER_TIMEOUT_MS,
+          timeout: RENDER_TIMEOUT_MS,
         })
         pass('release note 浮层已渲染')
       } catch (err) {

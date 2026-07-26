@@ -26,7 +26,11 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
 fi
 
 echo "[sign-mac-adhoc] Signing $APP_PATH (ad-hoc)..."
-if codesign --force --deep --sign - "$APP_PATH" 2>&1; then
+# 不用 --deep：codesign --deep 自 macOS 13 起弃用（且对 ad-hoc 签名无实际增益）。
+# 对 .app 顶层签名通常足够：electron-builder 在 build 时已对 helper 进程（Renderer GPU Helper 等）
+# 单独签名，本脚本只是 best-effort 给顶层 .app 加 ad-hoc 签名降低「无法验证开发者」弹窗概率，
+# 不需要递归重签内部已签名的 helper（重签反而可能破坏其签名结构）。本场景 hack 方案风险低。
+if codesign --force --sign - "$APP_PATH" 2>&1; then
   echo "[sign-mac-adhoc] OK, verifying..."
   codesign -dv --verbose=0 "$APP_PATH" 2>&1 || true
 else

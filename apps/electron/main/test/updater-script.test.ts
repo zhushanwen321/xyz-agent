@@ -32,6 +32,7 @@ const MAC_VARS = {
 const LINUX_VARS = {
   appImagePath: '/home/test/xyz-agent-x86_64.AppImage',
   newFilePath: '/home/test/.xyz-agent/update/xyz-agent-x86_64.AppImage',
+  sha256: 'a'.repeat(64),
   logPath: '/home/test/.xyz-agent/update/updater-linux.log',
   resultPath: '/home/test/.xyz-agent/update/update-result.json',
   targetVersion: '0.9.0',
@@ -43,6 +44,8 @@ describe('W3: updater-script (W3TC4)', () => {
     const script = buildUpdaterScript(MAC_VARS)
 
     // 关键片段（守护脚本正确性）
+    // 注意：不再含 codesign——未签名发布场景下 ad-hoc 重签无意义（CI 产物本就无
+    // Developer ID），xattr -cr 清 quarantine 已足够；--deep 在 macOS 13+ 已弃用。
     const expectedFragments = [
       'pgrep -f',                  // 等 app 退出
       'shasum -a 256',             // sha256 二次校验
@@ -53,7 +56,6 @@ describe('W3: updater-script (W3TC4)', () => {
       'ROLLBACK: unzip failed',    // 解压失败回滚
       'xattr -cr',                 // 清 quarantine
       'command -v',                // 工具存在守卫
-      'codesign --force --deep',   // 重签名
       'open -n',                   // 重启
       'update-result.json',        // result 文件路径已替换进去
       'status":"done"',            // 成功标记

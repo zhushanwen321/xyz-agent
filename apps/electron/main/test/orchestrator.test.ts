@@ -127,37 +127,44 @@ describe('W3: orchestrator (W3TC8-9)', () => {
 
   // ── W3TC8b：win spawn-installer 流程 ───────────────────────────
   it('W3TC8b: win spawn-installer 流程 → orchestrator spawn installer + triggerRestart=true', async () => {
-    setPlatform('win32')
-    // 改 WIN_RELEASE：需要 win asset
-    const winRelease: LatestReleaseInfo = {
-      ...MAC_RELEASE,
-      assets: {
-        winX64Exe: { name: 'setup.exe', downloadUrl: 'https://x/setup.exe', size: 2000 },
-      },
-    }
-    downloadMocks.downloadAsset.mockResolvedValue({ filePath: 'C:/tmp/setup.exe' })
-    const installerRef: UpdateScriptRef = {
-      kind: 'spawn-installer',
-      installerPath: 'C:/tmp/setup.exe',
-      args: ['/S', '--updated', '/D=C:/app'],
-    }
-    platformMocks.createPlatformUpdater.mockReturnValue({
-      prepareUpdate: vi.fn(() => installerRef),
-    })
+    // win spawn 延迟 1.5s（给 handler 的 app.quit 留时间避免文件锁冲突），用 fake timers 推进
+    vi.useFakeTimers()
+    try {
+      setPlatform('win32')
+      // 改 WIN_RELEASE：需要 win asset
+      const winRelease: LatestReleaseInfo = {
+        ...MAC_RELEASE,
+        assets: {
+          winX64Exe: { name: 'setup.exe', downloadUrl: 'https://x/setup.exe', size: 2000 },
+        },
+      }
+      downloadMocks.downloadAsset.mockResolvedValue({ filePath: 'C:/tmp/setup.exe' })
+      const installerRef: UpdateScriptRef = {
+        kind: 'spawn-installer',
+        installerPath: 'C:/tmp/setup.exe',
+        args: ['/S', '--updated', '/D=C:/app'],
+      }
+      platformMocks.createPlatformUpdater.mockReturnValue({
+        prepareUpdate: vi.fn(() => installerRef),
+      })
 
-    const { performUpdate } = await loadModule()
-    const result = await performUpdate(winRelease, { onProgress: vi.fn() })
+      const { performUpdate } = await loadModule()
+      const result = await performUpdate(winRelease, { onProgress: vi.fn() })
 
-    expect(result).toEqual({ triggerRestart: true })
-    // downloadAsset 传入了 win asset
-    const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
-    expect(downloadArg.name).toBe('setup.exe')
-    // orchestrator spawn 了 NSIS installer（detached）
-    expect(childProcessMocks.spawn).toHaveBeenCalledTimes(1)
-    const [exe, args, opts] = childProcessMocks.spawn.mock.calls[0]
-    expect(exe).toBe('C:/tmp/setup.exe')
-    expect(args).toEqual(['/S', '--updated', '/D=C:/app'])
-    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+      expect(result).toEqual({ triggerRestart: true })
+      // downloadAsset 传入了 win asset
+      const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
+      expect(downloadArg.name).toBe('setup.exe')
+      // 推进 1.5s 延迟：触发 spawn NSIS installer（detached）
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(childProcessMocks.spawn).toHaveBeenCalledTimes(1)
+      const [exe, args, opts] = childProcessMocks.spawn.mock.calls[0]
+      expect(exe).toBe('C:/tmp/setup.exe')
+      expect(args).toEqual(['/S', '--updated', '/D=C:/app'])
+      expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   // ── W3TC9：linux deb 抛 UpdateUnsupportedError ─────────────────

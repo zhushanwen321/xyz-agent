@@ -47,7 +47,15 @@ import type { IReleaseChecker } from '../interfaces.js'
 import type { IUpdateOrchestrator } from '../update/orchestrator.js'
 import { UpdateError, UpdateUnsupportedError } from '../update/types.js'
 
-/** LatestReleaseInfo 测试 fixture */
+/**
+ * LatestReleaseInfo 测试 fixture。
+ *
+ * [SECURITY] 必须通过 validateRelease 校验（update:perform handler 在 performUpdate
+ * 前会校验 payload）：
+ * - version 严格 3 段数字
+ * - downloadUrl 必须是 GitHub 域名（github.com / objects.githubusercontent.com）的 https
+ * - sha256 若存在必须是 64 位 hex（这里用全 'a'）
+ */
 const FIXTURE: LatestReleaseInfo = {
   version: '0.9.0',
   tagName: 'v0.9.0',
@@ -57,9 +65,9 @@ const FIXTURE: LatestReleaseInfo = {
   assets: {
     macArm64Zip: {
       name: 'xyz-agent-mac-arm64.zip',
-      downloadUrl: 'https://example.com/mac.zip',
+      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-mac-arm64.zip',
       size: 1000,
-      sha256: 'abc123',
+      sha256: 'a'.repeat(64),
     },
   },
 }

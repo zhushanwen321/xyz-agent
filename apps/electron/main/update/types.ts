@@ -19,13 +19,11 @@ import type { UpdateStage } from '@xyz-agent/shared'
  * orchestrator 根据 kind 决定如何触发替换：
  * - detached-script：mac/linux，prepareUpdate 内已 spawn detached bash，orchestrator 只需返回 triggerRestart
  * - spawn-installer：win，orchestrator 负责 spawn NSIS installer（/S 静默）
- * - sync-replace：保留位（当前未用，linux AppImage 已走 detached-script）
  * - unsupported：平台不支持自更新（如 deb），前端应跳 fallbackUrl
  */
 export type UpdateScriptRef =
   | { kind: 'detached-script'; scriptPath: string }
   | { kind: 'spawn-installer'; installerPath: string; args: string[] }
-  | { kind: 'sync-replace'; newFilePath: string; targetPath: string }
   | { kind: 'unsupported'; reason: string; fallbackUrl: string }
 
 /**

@@ -227,8 +227,10 @@ if [ -f "$EB_YML" ]; then
     fi
 
     # 致命：files 必须显式包含 dist/runtime，否则 asarUnpack 无文件可 unpack
-    # electron-builder 的 files 和 asarUnpack 是 AND 关系
-    if grep -v '^[[:space:]]*#' "$EB_YML" | grep -qE '^\s*-\s+dist/runtime/'; then
+    # electron-builder 的 files 和 asarUnpack 是 AND 关系。
+    # "? 匹配可选的左双引号——同时支持 `- dist/runtime/**/*` 与 `- "dist/runtime/**/*"`
+    # 两种 YAML 引号形式（之前只匹配无引号写法，导致用引号包裹的合法配置被误判缺失）。
+    if grep -v '^[[:space:]]*#' "$EB_YML" | grep -qE '^[[:space:]]*-[[:space:]]+"?dist/runtime/'; then
         echo -e "  ${GREEN}✓ files 显式包含 dist/runtime${NC}"
     else
         echo -e "  ${RED}✗ FATAL: files 未显式包含 dist/runtime，asarUnpack 将静默失败${NC}"

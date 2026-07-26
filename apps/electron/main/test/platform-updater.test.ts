@@ -82,6 +82,7 @@ const LINUX_RELEASE = {
       name: 'xyz-agent-x86_64.AppImage',
       downloadUrl: 'https://example.com/appimage',
       size: 3000,
+      sha256: 'a'.repeat(64),
     },
   },
 }

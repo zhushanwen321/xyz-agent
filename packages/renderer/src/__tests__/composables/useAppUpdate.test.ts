@@ -17,6 +17,7 @@
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useAppUpdate.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+// vi.waitFor 在 vitest ^4.1.6 可用（见 packages/renderer/package.json），替代固定双 Promise.resolve flush
 import { effectScope } from 'vue'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
@@ -98,9 +99,11 @@ describe('useAppUpdate', () => {
       result = useAppUpdate()
     })
     await result!.checkForUpdate()
-    // renderMarkdown 异步，flush 后 releaseNotesHtml 应填充
-    await Promise.resolve()
-    await Promise.resolve()
+    // renderMarkdown 异步，用 waitFor 等 releaseNotesHtml 填充（比固定两次 Promise.resolve flush 稳健，
+    // 不依赖具体微任务调度次数）
+    await vi.waitFor(() => {
+      expect(result!.state.releaseNotesHtml).toBe('<h2>新特性</h2>')
+    })
 
     expect(result!.state.state).toBe('available')
     expect(result!.state.latestRelease?.version).toBe('0.9.0')

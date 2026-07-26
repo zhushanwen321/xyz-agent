@@ -9,7 +9,8 @@
  *   2. 流式写到 `<UPDATE_DIR>/<name>.downloading`（mkdirSync recursive）
  *   3. 下载完成后读文件算 sha256（createHash）
  *   4. asset.sha256 存在则校验，不匹配抛 UpdateIntegrityError
- *   5. asset.sha256 缺失则降级：size 存在校验 size，size 也缺失跳过
+ *   5. asset.sha256 缺失则降级：size 存在校验 size，size 也缺失抛 UpdateIntegrityError
+ *      （正常 release 必有 sha256 或非零 size，二者全缺视为可疑，拒绝）
  *   6. rename .downloading 到最终文件名，返回 { filePath }
  *
  * [HISTORICAL] 不变量：
@@ -30,8 +31,15 @@ import type { ReleaseAsset } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
 import { UpdateIntegrityError } from './types.js'
 
-/** 下载超时 watchdog：覆盖 fetch + 流式传输全过程（AbortController） */
-const DOWNLOAD_TIMEOUT_MS = 60_000
+/**
+ * 下载超时 watchdog：覆盖 fetch + 流式传输全过程。
+ *
+ * 5 分钟覆盖慢速网络下的 100MB+ Electron 产物（理论 2Mbps 下需 ~7min，但实际
+ * GitHub CDN 通常更快）。若用户网络极慢，超时后清理半下载文件，用户可重试。
+ * 旧的 60s 对 100MB+ 产物太短，慢速网络下会误杀正常下载。
+ */
+const DOWNLOAD_TIMEOUT_MS = 300_000
+const PROGRESS_MAX = 100
 
 /**
  * 下载单个 asset 并校验完整性。
@@ -61,6 +69,9 @@ export async function downloadAsset(
   try {
     response = await fetch(asset.downloadUrl, { signal: controller.signal })
     if (!response.ok) {
+      // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
+      // 但显式 cancel 更确定，避免连接挂在 keep-alive 池）。
+      await response.body?.cancel().catch(() => {})
       throw new UpdateIntegrityError(`download failed: HTTP ${response.status}`)
     }
     if (!response.body) {
@@ -77,8 +88,12 @@ export async function downloadAsset(
       await new Promise<void>((resolve, reject) => {
         nodeStream.on('data', (chunk: Buffer) => {
           downloaded += chunk.length
+          // [NOTE] total=0（chunked 传输无 content-length）时不报进度：
+          // onProgress 签名是 0-100 百分比，无总量时无法计算百分比；
+          // 前端 useAppUpdate 的 state.percent 期望 0-100，传负值会 UI 异常。
+          // 设计权衡：chunked 时进度条不动（但下载会完成），优于 UI 异常。
           if (onProgress && total > 0) {
-            const percent = Math.min(100, Math.round((downloaded / total) * 100))
+            const percent = Math.min(PROGRESS_MAX, Math.round((downloaded / total) * PROGRESS_MAX))
             onProgress(percent)
           }
         })
@@ -88,8 +103,10 @@ export async function downloadAsset(
         nodeStream.on('error', reject)
       })
     } catch (err) {
+      // [LEAK FIX] destroy writeStream 释放底层 fd，避免错误路径泄漏文件描述符。
+      writeStream.destroy()
       // 清理半下载文件
-      try { unlinkSync(tempPath) } catch { /* ignore */ }
+      try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
       throw err
     }
   } finally {
@@ -97,11 +114,14 @@ export async function downloadAsset(
     clearTimeout(timer)
   }
 
-  // 4. 校验：sha256 优先，缺失降级 size，再缺失跳过
+  // 4. 校验：sha256 优先，缺失降级 size，再缺失拒绝
+  //    [BLOCKER 4] 旧实现 `else if (asset.size && asset.size > 0)`：若 size=0 且无 sha256，
+  //    完全跳过校验——攻击者可让下载文件被任意篡改而无校验拦截。改为：
+  //    sha256 和非零 size 至少有一个，否则拒绝（正常 release 必有其一）。
   if (asset.sha256) {
     const actualSha = await hashFileSha256(tempPath)
     if (actualSha !== asset.sha256.toLowerCase()) {
-      try { unlinkSync(tempPath) } catch { /* ignore */ }
+      try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] sha256 mismatch cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
       throw new UpdateIntegrityError(
         `sha256 mismatch: expected ${asset.sha256}, got ${actualSha}`,
       )
@@ -109,13 +129,18 @@ export async function downloadAsset(
   } else if (asset.size && asset.size > 0) {
     const actualSize = statSync(tempPath).size
     if (actualSize !== asset.size) {
-      try { unlinkSync(tempPath) } catch { /* ignore */ }
+      try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] size mismatch cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
       throw new UpdateIntegrityError(
         `size mismatch: expected ${asset.size}, got ${actualSize}`,
       )
     }
+  } else {
+    // sha256 和有效 size 都缺失：拒绝（不应出现于正常 release）
+    try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] no integrity cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+    throw new UpdateIntegrityError(
+      `no integrity check available (sha256 and size both missing) for ${asset.name}`,
+    )
   }
-  // sha256 和 size 都缺失：跳过校验（降级，不阻塞流程）
 
   // 5. rename .downloading → 最终文件名
   renameSync(tempPath, finalPath)
