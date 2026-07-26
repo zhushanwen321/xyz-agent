@@ -1,11 +1,16 @@
 /**
- * MessageDispatcher bash 执行链路测试（composer-bash-execute W1）。
+ * MessageDispatcher bash 执行链路测试（composer-bash-execute W1 + W2 并发放宽）。
  *
  * 锁定：
  * - T4: sendBash busy 时（isBashRunning=true）→ 广播 send.rejected{reason:'busy'} + 不调 client.bash + 返回 {blocked:true, rejected:true}
+ * - T4c: sendBash isCompacting=true → 同样 reject（bash↔compact 互斥仍保留）
+ * - T4b(w2): sendBash isGenerating=true → 允许并发（不再 reject）→ 正常 bashStart + client.bash + bashResult。
+ *           W2 起放宽：bash 与 AI streaming 并发（对齐 pi-tui，pi _pendingBashMessages 对 RPC 透明回放）。
+ *           仅保留 bash↔bash（T4）/ bash↔compacting（T4c）互斥。
  * - T5: sendBash 正常 → 广播 message.bashStart → client.bash resolve → 广播 message.bashResult（完整字段）+ finally isBashRunning 复位 false
  * - T6: sendBash client.bash reject → 广播 message.error + finally isBashRunning 复位 + 返回 {blocked:true}
- * - T7: sendMessage 双向互斥（isBashRunning=true 时 sendMessage → 广播 send.rejected + 不调 client.prompt）—— G1 修复
+ * - T7: sendMessage 互斥（isBashRunning=true 时 sendMessage → 广播 send.rejected + 不调 client.prompt）—— G1 修复
+ *       注意：sendMessage 预检本期不放宽（spec OQ-1），isGenerating/isBashRunning/isCompacting 三者仍互斥。
  * - T8: abortBash → client.abortBash() 调用 + 广播 message.bashResult{cancelled:true} + isBashRunning 复位
  *
  * mock 模式参考 test/message-dispatcher-precheck.test.ts（makeMocks/makeMockSession），
@@ -122,16 +127,8 @@ describe('MessageDispatcher sendBash —— busy 预检（T4）', () => {
     expect(result).toEqual({ blocked: true, rejected: true })
   })
 
-  it('T4b: isGenerating=true → 广播 send.rejected{reason:"busy"} + 不调 client.bash + 返回 {blocked:true, rejected:true}', async () => {
-    const { dispatcher, bashFn, broadcasts } = makeMocks({ isGenerating: true })
-    const result = await dispatcher.sendBash('s1', 'echo hi', false)
-
-    expect(bashFn).not.toHaveBeenCalled()
-    const rejected = broadcasts.find((m) => m.type === 'send.rejected')
-    expect(rejected).toBeDefined()
-    expect(rejected!.payload).toMatchObject({ sessionId: 's1', reason: 'busy' })
-    expect(result).toEqual({ blocked: true, rejected: true })
-  })
+  // 注意：原 T4b（isGenerating → reject）已反转 → 移至下方
+  // describe('MessageDispatcher sendBash —— 并发放宽（w2, 对齐 pi-tui）') 块（W2 放宽 bash↔streaming 并发）。
 
   it('T4c: isCompacting=true → 广播 send.rejected{reason:"busy"} + 不调 client.bash + 返回 {blocked:true, rejected:true}', async () => {
     const { dispatcher, bashFn, broadcasts } = makeMocks({ isCompacting: true })
@@ -142,6 +139,47 @@ describe('MessageDispatcher sendBash —— busy 预检（T4）', () => {
     expect(rejected).toBeDefined()
     expect(rejected!.payload).toMatchObject({ sessionId: 's1', reason: 'busy' })
     expect(result).toEqual({ blocked: true, rejected: true })
+  })
+})
+
+describe('MessageDispatcher sendBash —— 并发放宽（w2, 对齐 pi-tui）', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  // W2 起放宽 bash↔streaming 并发：sendBash 预检移除 isGenerating。
+  // 原因（spec C1）：pi 把 bash RPC 排入 _pendingBashMessages，待当前 turn 结束后按 JSONL 顺序回放，
+  // 对 RPC 透明——runtime 侧无需排队等待。对齐 pi-tui（允许 streaming 时发 bash）。
+  // 与 T5 正常路径一致：bashStart 广播 + client.bash 调用 + bashResult 广播 + isBashRunning 复位。
+  it('T4b(w2): isGenerating=true → 允许并发（不 reject）→ 广播 message.bashStart → 调 client.bash → bashResult → isBashRunning 复位', async () => {
+    const bashResult: PiBashResult = { output: 'ok', exitCode: 0, cancelled: false, truncated: false }
+    const { dispatcher, bashFn, broadcasts, session } = makeMocks({ isGenerating: true, bashResult })
+
+    const result = await dispatcher.sendBash('s1', 'echo hi', false)
+
+    // 不广播 send.rejected（W2 放宽：isGenerating 不再阻塞 bash）
+    const rejected = broadcasts.find((m) => m.type === 'send.rejected')
+    expect(rejected).toBeUndefined()
+    // 调 client.bash（与 T5 正常路径一致）
+    expect(bashFn).toHaveBeenCalledWith('echo hi', false)
+    // 广播 message.bashStart
+    const start = findBashStart(broadcasts)
+    expect(start).toBeDefined()
+    expect(start!.payload).toMatchObject({ sessionId: 's1', command: 'echo hi', excludeFromContext: false })
+    // 广播 message.bashResult
+    const end = findBashResult(broadcasts)
+    expect(end).toBeDefined()
+    expect(end!.payload).toMatchObject({
+      sessionId: 's1',
+      command: 'echo hi',
+      output: 'ok',
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      excludeFromContext: false,
+    })
+    // finally isBashRunning 复位
+    expect(session.isBashRunning).toBe(false)
+    // 正常返回
+    expect(result).toEqual({ blocked: false })
   })
 })
 

@@ -200,8 +200,12 @@ export class MessageDispatcher {
   /**
    * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
    *
-   * 与 sendMessage 共享 ensureActive + busy 互斥骨架，但不走 sendPrompt（bash 不调 client.prompt，
-   * 不需 BeforeSend hook、不需图片附件、不触发 isGenerating 流式态）。
+   * 与 sendMessage 共享 ensureActive 骨架，但 busy 预检语义不同（W2 起）：
+   * sendBash 仅 bash↔bash / bash↔compacting 互斥，允许 AI streaming（isGenerating）期间执行 bash，
+   * 对齐 pi-tui——pi 把 bash RPC 排入 _pendingBashMessages 待当前 turn 结束后按 JSONL 顺序回放，
+   * 对 RPC 透明。sendMessage 仍保留 isGenerating 三者互斥（spec OQ-1：本期不放宽 prompt 路径）。
+   *
+   * 不走 sendPrompt（bash 不调 client.prompt，不需 BeforeSend hook、不需图片附件、不触发 isGenerating 流式态）。
    *
    * 生命周期：bashStart 广播（开始）→ pi bash RPC → bashResult 广播（终态）。
    * 返回 { blocked: true } 表示被预检拒绝（send.rejected 已广播）或执行失败（message.error 已广播），
@@ -226,10 +230,19 @@ export class MessageDispatcher {
       throw e
     }
 
-    // ── busy 预检（与 sendPrompt 对称：三者互斥）──
+    // ── busy 预检（W2: bash↔streaming 放宽并发，对齐 pi-tui）──
+    // 语义变化（w2）：bash 不再与 AI streaming（isGenerating）互斥，允许 streaming 期间执行 bash。
+    // 原因（spec C1）：pi 把 bash RPC 排入 _pendingBashMessages，待当前 turn 结束后按 JSONL
+    // 顺序回放——对 RPC 透明，runtime 侧无需排队等待。对齐 pi-tui 行为（pi-tui 允许 streaming 时发 bash）。
+    // 保留的互斥（仍 reject）：
+    // - isBashRunning：bash↔bash 互斥——pi 单 bash slot，并发会乱序。
+    // - isCompacting：bash↔compact 互斥——compact 重写上下文，期间 bash 会读到半压缩状态。
+    // 注意：sendMessage（sendPrompt）预检仍保留 isGenerating/isBashRunning/isCompacting 三者互斥，
+    // 本期不放宽（spec OQ-1）——pi prompt 在 isStreaming 时强制要求 streamingBehavior 参数，
+    // sendMessage 预检拒 isGenerating 是安全网。
     const activeSession = this.svc.getSessionByClient(client)
     if (activeSession) {
-      if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
+      if (activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] sendBash preemptive reject (busy), sid=${sessionId}`)
         this.broker.broadcast({
           type: 'send.rejected',
