@@ -5,12 +5,7 @@
     用量分档：<70% accent · 70–90% warning · >90% danger（bar）。
     缓存命中：≥50% success · <50% warning。
 
-    coding-plan 区（w4 新增）：
-    - divider + section label + provider tag
-    - 3 窗口行（4 列 grid：label | bar | pct | reset）
-    - ∞ 窗口（pct=null）整行隐藏
-    - 未配置 provider：只保留容量区，footer 显配置提示
-    - hover-enter 触发 quota 查询（先 cached 后 fetch）
+    coding-plan 区：逻辑在 useQuotaDisplay composable，本组件纯展示。
   -->
   <HoverCard>
     <HoverCardTrigger as-child>
@@ -88,8 +83,13 @@
             >{{ matchedPresetLabel }}</span>
           </div>
 
+          <!-- 查询失败提示（B2：区分「从未查询」vs「查询失败」） -->
+          <div v-if="error" class="py-1.5 text-center text-[10.5px] text-danger">
+            {{ t('panel.context.queryFailed', { error }) }}
+          </div>
+
           <!-- 3 窗口行（4 列 grid） -->
-          <template v-if="quotaRow">
+          <template v-else-if="quotaRow">
             <div
               v-for="(win, idx) in visibleWindows"
               :key="idx"
@@ -117,7 +117,7 @@
 
           <!-- 无数据时的占位 -->
           <div v-else class="py-1.5 text-center text-[10.5px] text-subtle">
-            {{ quotaStore.isPending(matchedProviderId) ? '查询中...' : '暂无额度数据' }}
+            {{ isPending ? t('panel.context.quotaQuerying') : t('panel.context.noQuotaData') }}
           </div>
         </div>
       </template>
@@ -128,7 +128,7 @@
           {{ formatLastFetch(lastFetchAt) }}
         </span>
         <span v-else-if="matchedProviderId">
-          无 Coding Plan 数据
+          {{ t('panel.context.noCodingPlanData') }}
         </span>
         <span v-else>
           {{ t('panel.context.noCodingPlan') }}
@@ -137,10 +137,10 @@
           v-if="matchedProviderId"
           variant="secondary"
           class="h-5 rounded-sm px-1.5 font-mono text-[9.5px]"
-          :disabled="quotaStore.isPending(matchedProviderId)"
+          :disabled="refreshing"
           @click.stop="onRefresh"
         >
-          {{ quotaStore.isPending(matchedProviderId) ? '...' : '刷新' }}
+          {{ refreshing ? t('panel.context.refreshing') : t('panel.context.refresh') }}
         </Button>
         <!-- 未配置态：显示「配置」按钮跳转 Settings（偏差 #D） -->
         <Button
@@ -157,17 +157,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRef, inject } from 'vue'
+import { ref, computed, toRef, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { NormalizedQuotaRow } from '@xyz-agent/shared'
-import { matchQuotaPreset, QUOTA_PRESETS } from '@xyz-agent/shared'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
-import { useSettingsStore } from '@/stores/settings'
 import { useQuotaStore } from '@/stores/quota'
-import { useQuotaQuery } from '@/composables/features/useQuotaQuery'
+import { useQuotaDisplay } from '@/composables/features/useQuotaDisplay'
+import * as quotaApi from '@/api/domains/quota'
 
 interface ContextStats {
   used: number
@@ -201,8 +199,6 @@ const props = defineProps<{
   modelId?: string
 }>()
 
-// ── stores ──
-const settingsStore = useSettingsStore()
 const quotaStore = useQuotaStore()
 
 // Settings 模态框打开（AppShell 经 provide('openSettings') 注入；未提供时 no-op）。
@@ -210,25 +206,10 @@ const quotaStore = useQuotaStore()
 const openSettings = inject<() => void>('openSettings', () => {})
 
 // ── session 事件订阅（context.update + session.state_changed）──
-
-/**
- * 订阅 context.update + session.state_changed（D8：session 通道）。
- * 字段映射（D9）：used←inputTokens / total←contextLimit / percent←usagePercent。
- * cacheHit / modelId 无来源，保持占位。sessionId 变化时重订。
- *
- * 显隐策略：hasUsage（used>0）控制按钮可见——agent 跑过即显示用量；
- * hasPercent（total>0）控制百分比/进度条——provider 配了 contextWindow 才显示百分比，
- * 否则只显「已用 X 万」不带百分比（contextLimit=0 不再隐藏整个组件）。
- *
- * session.state_changed：模型切换后 runtime 推送（含按新 contextWindow 重算的用量），
- * 使用量随模型切换立即刷新，无需等下一次 agent_end。
- *
- * 订阅编排（重订 / 退订）归 useSessionEvents（features 层），本组件只声明 type 白名单 + handler。
- */
+// 字段映射（D9）：used←inputTokens / total←contextLimit / percent←usagePercent。
+// cacheHit / modelId 无来源，保持占位。sessionId 变化时重订。
 const onMessage = useSessionEvents(toRef(props, 'sessionId'))
 onMessage(['context.update', 'session.state_changed'], (msg) => {
-  // 多 type handler：payload 仍为联合宽类型（context.update 与 session.state_changed 结构不同，
-  // 无法静态收窄为单一类型），按契约窄断言取共用三字段（见 protocol.ts ServerMessageMap）
   const { inputTokens, contextLimit, usagePercent } = msg.payload as {
     sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number
   }
@@ -240,149 +221,59 @@ onMessage(['context.update', 'session.state_changed'], (msg) => {
   }
 })
 
-// ── coding-plan 额度查询（w4 新增）──
+// ── coding-plan 额度展示（逻辑抽到 useQuotaDisplay）──
+const {
+  matchedProviderId,
+  matchedPresetLabel,
+  quotaRow,
+  lastFetchAt,
+  error,
+  isPending,
+  visibleWindows,
+  quotaWarning,
+  quotaDanger,
+  windowLabels,
+  formatReset,
+  formatLastFetch,
+  onHoverEnter,
+} = useQuotaDisplay(toRef(props, 'modelId'))
 
-/**
- * 从受控 modelId prop 派生 providerId（复合串 "provider/modelId" → provider 部分），
- * 然后匹配 quota preset，命中则启用 coding-plan 区。
- *
- * modelId 由 Composer 下发（受控），已在 Composer 层完成 session.modelId >
- * flow.currentModel > defaultModel 的 fallback。本组件不在子组件内部自查 sessionStore，
- * 对齐 ModelSelectPopover/ThinkingLevelPopover 的受控范式（推导上浮到 Composer/composable）。
- */
-const matchedProviderId = computed<string | null>(() => {
-  const compositeModelId = props.modelId
-  if (!compositeModelId) return null
-  const provider = compositeModelId.split('/')[0]
-  if (!provider) return null
-
-  // 在 settingsStore.providers 中找到该 provider
-  const providerInfo = settingsStore.providers.find((p) => p.id === provider)
-  if (!providerInfo) return null
-
-  // 检查是否有 quota 配置且已启用
-  if (!providerInfo.quota?.enabled) return null
-
-  return provider
-})
-
-/** 匹配到的 quota preset 的显示名（基于手动指定的 quota.fetcher，fallback 到自动匹配）。 */
-const matchedPresetLabel = computed<string | null>(() => {
-  const pid = matchedProviderId.value
-  if (!pid) return null
-  const providerInfo = settingsStore.providers.find((p) => p.id === pid)
-  if (!providerInfo) return null
-  // 优先用手动指定的 fetcher 查 label，fallback 到自动匹配
-  const manualFetcher = providerInfo.quota?.fetcher
-  const preset = manualFetcher
-    ? QUOTA_PRESETS.find((p) => p.fetcher === manualFetcher)
-    : matchQuotaPreset({ baseUrl: providerInfo.baseUrl, name: providerInfo.name })
-  return preset?.label ?? null
-})
-
-/** useQuotaQuery 控制器（hover-enter 查询逻辑）。 */
-const { data: quotaData, lastFetchAt, onHoverEnter: queryOnHoverEnter } = useQuotaQuery(matchedProviderId)
-
-/** 额度数据（NormalizedQuotaRow | null）。 */
-const quotaRow = computed<NormalizedQuotaRow | null>(() => quotaData.value)
-
-// ── 窗口标签 ──
-const WINDOW_LABELS = ['5h', '本周', '本月'] as const
-const windowLabels: readonly string[] = WINDOW_LABELS
-
-// ── 分档阈值（复用现有规则）──
+// 阈值常量（与 useQuotaDisplay 一致，模板分档用）
 const HIGH_THRESHOLD = 70
 const DANGER_THRESHOLD = 90
 
-/**
- * 过滤 ∞ 窗口（pct=null 整行隐藏），返回可见窗口列表。
- * 每项带原始索引（idx）和 pct（非 null，已确认）。
- */
-interface VisibleWindow {
-  idx: number
-  pct: number
-  resetSec: number | null
-}
-
-const visibleWindows = computed<VisibleWindow[]>(() => {
-  const row = quotaRow.value
-  if (!row) return []
-  return row.wins
-    .map((w, i) => (w.pct != null ? { idx: i, pct: w.pct, resetSec: w.resetSec } : null))
-    .filter((w): w is VisibleWindow => w != null)
-})
-
-/** 是否有高用量窗口（>=70%）。 */
-const quotaWarning = computed(() => visibleWindows.value.some((w) => w.pct >= HIGH_THRESHOLD && w.pct < DANGER_THRESHOLD))
-const quotaDanger = computed(() => visibleWindows.value.some((w) => w.pct >= DANGER_THRESHOLD))
-
-// ── 时间格式化 ──
-
-/** 格式化剩余秒数为人类可读文案。
- * null → "--"；≥86400 → "Xd Yh"；≥3600 → "Xh Ym"；≥60 → "Xm"；<60 → "<1m"。
- */
-const SEC_PER_DAY = 86400
-const SEC_PER_HOUR = 3600
-const SEC_PER_MIN = 60
-function formatReset(sec: number | null): string {
-  if (sec == null) return '--'
-  if (sec <= 0) return '--'
-  const d = Math.floor(sec / SEC_PER_DAY)
-  const h = Math.floor((sec % SEC_PER_DAY) / SEC_PER_HOUR)
-  const m = Math.floor((sec % SEC_PER_HOUR) / SEC_PER_MIN)
-  if (d > 0) return `剩${d}d${h}h`
-  if (h > 0) return `剩${h}h${m}m`
-  if (m > 0) return `剩${m}m`
-  return '<1m'
-}
-
-/** 格式化 lastFetchAt 为相对时间。 */
-const MS_PER_SEC = 1000
-const MIN_PER_HOUR = 60
-const HOUR_PER_DAY = 24
-function formatLastFetch(ts: number): string {
-  const sec = Math.floor((Date.now() - ts) / MS_PER_SEC)
-  if (sec < SEC_PER_MIN) return '刚刚更新'
-  const m = Math.floor(sec / SEC_PER_MIN)
-  if (m < MIN_PER_HOUR) return `${m} 分钟前更新`
-  const h = Math.floor(m / MIN_PER_HOUR)
-  if (h < HOUR_PER_DAY) return `${h} 小时前更新`
-  const d = Math.floor(h / HOUR_PER_DAY)
-  return `${d} 天前更新`
-}
-
-// ── hover-enter 查询触发 ──
+/** 刷新中（refreshQuota 路径独立于 hover-enter 的 isPending）。 */
+const refreshing = ref(false)
 
 /**
- * hover 进入浮层时触发查询。
- * 流程：先 getCached 即时填充 → 再 fetch 触发查询。
- * 并发保护由 quotaStore.pending Set + useQuotaQuery 保证。
+ * 刷新按钮点击（W1：改用 refreshQuota 绕过 10s throttle）。
+ * 不走 onHoverEnter→fetchQuota（受 throttle，10s 内刷新拿缓存）。
  */
-function onHoverEnter(): void {
-  if (matchedProviderId.value) {
-    // fire-and-forget：查询结果写入 store，组件通过 computed 自动响应式刷新
-    void queryOnHoverEnter()
-  }
-}
-
-/** 刷新按钮点击。 */
-function onRefresh(): void {
-  if (matchedProviderId.value) {
-    void queryOnHoverEnter()
+async function onRefresh(): Promise<void> {
+  const pid = matchedProviderId.value
+  if (!pid) return
+  refreshing.value = true
+  try {
+    // refreshQuota 失败时 runtime 返回旧缓存（ok=true + 旧 data），不抛错；
+    // 异常时写 error 让 UI 显失败提示（与 useQuotaQuery 一致）
+    const result = await quotaApi.refreshQuota(pid)
+    quotaStore.setCache(pid, result.data, result.lastFetchAt)
+  } catch (e) {
+    quotaStore.setError(pid, e instanceof Error ? e.message : String(e))
+  } finally {
+    refreshing.value = false
   }
 }
 
 // ── 现有容量区计算（保持不变）──
 
-// 阈值常量（避免 magic number）
 const CACHE_LOW_THRESHOLD = 50 // <50% 缓存命中转 warning
-
-/**
- * token 数 → 「K/M」格式：<K_THRESHOLD 显原数；≥K_THRESHOLD 显 K（1 位小数，整数去 .0）；≥M_THRESHOLD 显 M。
- * 820 → 820 · 69000 → 69K · 1630000 → 1.6M
- */
 const K_THRESHOLD = 1000
 const M_THRESHOLD = 1_000_000
+
+/**
+ * token 数 → 「K/M」格式：<K_THRESHOLD 显原数；≥K_THRESHOLD 显 K；≥M_THRESHOLD 显 M。
+ */
 function formatTokens(n: number): string {
   if (n < K_THRESHOLD) return String(n)
   if (n < M_THRESHOLD) {
@@ -396,9 +287,7 @@ function formatTokens(n: number): string {
 const usedDisplay = computed(() => formatTokens(stats.value.used))
 const totalDisplay = computed(() => formatTokens(stats.value.total))
 
-/** 是否已有 usage 数据（收到过 context.update，agent 跑过即 true）；推送前隐藏整个组件 */
 const hasUsage = computed(() => stats.value.used > 0)
-/** 是否能算百分比（provider 配了 contextWindow）；否则只显已用量不显百分比 */
 const hasPercent = computed(() => stats.value.total > 0)
 
 const isHigh = computed(() => stats.value.percent > HIGH_THRESHOLD)
@@ -415,4 +304,5 @@ const cacheHitClass = computed(() => {
   if (hit == null) return 'text-subtle'
   return hit < CACHE_LOW_THRESHOLD ? 'text-warning' : 'text-success'
 })
+
 </script>

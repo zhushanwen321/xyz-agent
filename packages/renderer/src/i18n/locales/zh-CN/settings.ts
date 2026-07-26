@@ -177,6 +177,17 @@ export default {
     quotaCookiePlaceholder: '在此粘贴 cookie 字符串',
     quotaSaveCookie: '保存 Cookie',
     quotaUpdateCookie: '更新 Cookie',
+    // 三窗口标签 + 时间格式化（CodingPlanSection 内联额度预览）
+    quotaWindow5h: '5h',
+    quotaWindowWeek: '本周',
+    quotaWindowMonth: '本月',
+    quotaTimeAgoSeconds: '{n}秒前',
+    quotaTimeAgoMinutes: '{n}分钟前',
+    quotaTimeAgoHours: '{n}小时前',
+    quotaTimeAgoDays: '{n}天前',
+    quotaResetEmpty: '--',
+    quotaResetDays: '{d}d{h}h',
+    quotaResetHours: '{h}h{m}m',
   },
   // ── Extension 页（ExtensionPage）──
   extension: {

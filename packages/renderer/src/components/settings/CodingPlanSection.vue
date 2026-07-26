@@ -162,7 +162,7 @@
       </div>
     </template>
 
-    <!-- 测试查询成功 + 内联额度预览 -->
+    <!-- 测试查询成功 + 内联额度预览（3 窗口行） -->
     <div v-if="testStatus === 'success' && quotaRow" class="mt-2" data-testid="quota-result">
       <div class="flex items-center gap-1.5 text-[11px] text-success">
         <CheckCircle2 class="size-3" />
@@ -171,11 +171,11 @@
       </div>
       <div class="mt-2 rounded-sm border border-border bg-bg-input p-2.5">
         <div
-          v-for="(win, idx) in quotaRow.wins"
+          v-for="(win, idx) in visibleWindows"
           :key="idx"
           class="flex items-center justify-between py-0.5 text-[11px]"
         >
-          <span class="font-mono text-[10px] uppercase tracking-wide text-muted">{{ WINDOW_LABELS[idx] }}</span>
+          <span class="font-mono text-[10px] uppercase tracking-wide text-muted">{{ windowLabels[idx] }}</span>
           <span v-if="win.pct !== null" class="font-semibold tabular-nums text-fg">
             {{ Math.round(win.pct) }}%
             <span v-if="win.resetSec !== null" class="ml-1 font-normal text-subtle">· {{ formatResetSec(win.resetSec) }}</span>
@@ -213,6 +213,7 @@
  * - 所有状态由父组件 useQuotaConfigure 管理，本组件纯展示
  * - 事件转发：toggleEnabled / testQuery / saveCookie / update:cookieInput
  */
+import { computed } from 'vue'
 import { Loader2, RefreshCw, CheckCircle2, AlertCircle, ExternalLink } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
@@ -225,7 +226,7 @@ import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import type { QuotaTestStatus } from '@/composables/features/useQuotaConfigure'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   /** 当前选中的 fetcher id（未选择 = undefined） */
   fetcherId?: string
   /** 下拉框选项列表（value=fetcher id, label=显示名）。默认 QUOTA_PRESETS。 */
@@ -270,39 +271,60 @@ defineEmits<{
 
 const { t } = useI18n()
 
-/** 三窗口标签（与 QuotaWins 顺序对齐：5h / 本周 / 本月） */
-const WINDOW_LABELS = ['5h', '本周', '本月'] as const
-
-// 时间单位常量
+// ── 时间换算常量 ──
 const MS_PER_SEC = 1000
 const SEC_PER_MIN = 60
 const MIN_PER_HOUR = 60
 const HOUR_PER_DAY = 24
 const SEC_PER_HOUR = SEC_PER_MIN * MIN_PER_HOUR
 
-/** 格式化时间戳为相对时间（如 '2 分钟前'） */
+/** 三窗口标签（i18n 化，与 QuotaWins 顺序对齐：5h / 本周 / 本月）。 */
+const windowLabels = [
+  t('settings.providerEdit.quotaWindow5h'),
+  t('settings.providerEdit.quotaWindowWeek'),
+  t('settings.providerEdit.quotaWindowMonth'),
+]
+
+/** 可见窗口项（过滤 pct=null 的 ∞ 窗口）。 */
+interface VisibleWindow {
+  idx: number
+  pct: number | null
+  resetSec: number | null
+}
+
+const visibleWindows = computed<VisibleWindow[]>(() => {
+  const row = props.quotaRow
+  if (!row) return []
+  return row.wins.map((w, i) => ({ idx: i, pct: w.pct, resetSec: w.resetSec }))
+})
+
+/** 格式化时间戳为相对时间（i18n 化）。 */
 function formatTimeAgo(ts: number): string {
   const diff = Date.now() - ts
   const sec = Math.floor(diff / MS_PER_SEC)
-  if (sec < SEC_PER_MIN) return `${sec}秒前`
+  if (sec < SEC_PER_MIN) return t('settings.providerEdit.quotaTimeAgoSeconds', { n: sec })
   const min = Math.floor(sec / SEC_PER_MIN)
-  if (min < MIN_PER_HOUR) return `${min}分钟前`
+  if (min < MIN_PER_HOUR) return t('settings.providerEdit.quotaTimeAgoMinutes', { n: min })
   const hr = Math.floor(min / MIN_PER_HOUR)
-  if (hr < HOUR_PER_DAY) return `${hr}小时前`
+  if (hr < HOUR_PER_DAY) return t('settings.providerEdit.quotaTimeAgoHours', { n: hr })
   const day = Math.floor(hr / HOUR_PER_DAY)
-  return `${day}天前`
+  return t('settings.providerEdit.quotaTimeAgoDays', { n: day })
 }
 
-/** 格式化剩余秒数为紧凑时间（如 '1h23m' / '3d12h'） */
+/** 格式化剩余秒数为紧凑时间（i18n 化，如 '1h23m' / '3d12h'）。 */
 function formatResetSec(sec: number): string {
-  if (sec <= 0) return '--'
+  if (sec <= 0) return t('settings.providerEdit.quotaResetEmpty')
   const h = Math.floor(sec / SEC_PER_HOUR)
   if (h >= HOUR_PER_DAY) {
     const d = Math.floor(h / HOUR_PER_DAY)
     const rh = h % HOUR_PER_DAY
-    return rh > 0 ? `${d}d${rh}h` : `${d}d`
+    return rh > 0
+      ? t('settings.providerEdit.quotaResetDays', { d, h: rh })
+      : t('settings.providerEdit.quotaResetDays', { d, h: 0 })
   }
   const m = Math.floor((sec % SEC_PER_HOUR) / SEC_PER_MIN)
-  return m > 0 ? `${h}h${m}m` : `${h}h`
+  return m > 0
+    ? t('settings.providerEdit.quotaResetHours', { h, m })
+    : t('settings.providerEdit.quotaResetHours', { h, m: 0 })
 }
 </script>

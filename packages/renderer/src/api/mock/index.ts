@@ -856,7 +856,7 @@ export const quota = {
   async refreshQuota(_providerId: string) {
     return { data: null, lastFetchAt: null }
   },
-  async configure(_providerId: string, _enabled: boolean, _cookie?: string) {
+  async configure(_providerId: string, _enabled: boolean, _cookie?: string, _fetcher?: string, _apiKey?: string) {
     return { ok: true }
   },
 }

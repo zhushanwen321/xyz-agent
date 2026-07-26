@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref, nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 import CodingPlanSection from '@/components/settings/CodingPlanSection.vue'
 import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
 import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo } from '@xyz-agent/shared'
@@ -278,6 +279,7 @@ describe('CodingPlanSection', () => {
 
 describe('useQuotaConfigure', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.clearAllMocks()
   })
 
@@ -546,16 +548,19 @@ describe('useQuotaConfigure — fetcherId 状态', () => {
     expect(quotaApi.configure).toHaveBeenCalledWith('test-provider', false, undefined, 'kimi-coding')
   })
 
-  it('selectFetcher 持久化失败时设置 configureError 但仍更新本地 fetcherId', async () => {
+  it('selectFetcher 持久化失败时回滚 fetcherId + 设置 configureError', async () => {
     const provider = ref<ProviderInfo | null>(makeProvider())
     const preset = ref<QuotaPreset | undefined>(zhipuPreset)
 
     vi.mocked(quotaApi.configure).mockResolvedValue({ ok: false, error: '网络错误' })
 
     const quota = useQuotaConfigure(preset, provider)
+    // 初始 fetcherId = zhipu（preset.fetcher），selectFetcher 失败后应回滚到该值
+    const prevFetcherId = quota.fetcherId.value
     await quota.selectFetcher('kimi-coding')
 
-    expect(quota.fetcherId.value).toBe('kimi-coding')
+    // W3：RPC 失败回滚 fetcherId（与 toggleEnabled 的回滚模式一致）
+    expect(quota.fetcherId.value).toBe(prevFetcherId)
     expect(quota.configureError.value).toBe('网络错误')
   })
 
@@ -567,6 +572,8 @@ describe('useQuotaConfigure — fetcherId 状态', () => {
     const quota = useQuotaConfigure(preset, provider)
     expect(quota.isCookieAuth.value).toBe(false) // 初始 zhipu = api-key
 
+    // selectFetcher 成功时 fetcherId 更新为 mimo
+    vi.mocked(quotaApi.configure).mockResolvedValue({ ok: true })
     await quota.selectFetcher('mimo')
     expect(quota.isCookieAuth.value).toBe(true) // 切到 mimo = cookie
   })

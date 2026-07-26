@@ -11,6 +11,7 @@ import { ref, computed, watch, type Ref } from 'vue'
 import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import * as quotaApi from '@/api/domains/quota'
+import { useQuotaStore } from '@/stores/quota'
 
 /** 测试查询状态 */
 export type QuotaTestStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -70,6 +71,7 @@ export function useQuotaConfigure(
   preset: Ref<QuotaPreset | undefined>,
   providerRef: Ref<ProviderInfo | null>,
 ): UseQuotaConfigureReturn {
+  const quotaStore = useQuotaStore()
   const enabled = ref(false)
   const fetcherId = ref<string | undefined>(undefined)
   const cookieInput = ref('')
@@ -183,6 +185,8 @@ export function useQuotaConfigure(
   async function selectFetcher(id: string): Promise<void> {
     const p = providerRef.value
     if (!p) return
+    // 保存旧值用于失败回滚（参照 toggleEnabled 的乐观更新回滚模式）
+    const prevFetcherId = fetcherId.value
     fetcherId.value = id
     configuring.value = true
     configureError.value = ''
@@ -190,9 +194,13 @@ export function useQuotaConfigure(
       // 持久化 fetcher（enabled 沿用当前值，未启用过则默认 false）
       const result = await quotaApi.configure(p.id, enabled.value, undefined, id)
       if (!result.ok) {
+        // RPC 失败：回滚 fetcherId
+        fetcherId.value = prevFetcherId
         configureError.value = result.error || '保存类型失败'
       }
     } catch (e) {
+      // 异常：回滚 fetcherId
+      fetcherId.value = prevFetcherId
       configureError.value = e instanceof Error ? e.message : '保存类型失败'
     } finally {
       configuring.value = false
@@ -228,6 +236,9 @@ export function useQuotaConfigure(
         if (newEnabled) {
           // 开启后自动测试一次（不阻塞 configuring 状态太久）
           await testQuery()
+        } else {
+          // 关闭额度查询：清除缓存（避免 popover 显示过期数据，clearCache 此前无调用方）
+          quotaStore.clearCache(p.id)
         }
       } else {
         // RPC 失败：回滚
@@ -297,6 +308,10 @@ export function useQuotaConfigure(
       )
       if (result.ok) {
         apiKeyConfigured.value = apiKey.length > 0
+        // 清除专属 API Key（apiKey 空串）后，旧缓存可能失效（凭证已变），清除让下次查询重拉
+        if (apiKey.length === 0) {
+          quotaStore.clearCache(p.id)
+        }
         apiKeyInput.value = ''
         // 保存后自动测试（如果已启用）
         if (enabled.value) await testQuery()

@@ -177,6 +177,17 @@ export default {
     quotaCookiePlaceholder: 'Paste cookie string here',
     quotaSaveCookie: 'Save Cookie',
     quotaUpdateCookie: 'Update Cookie',
+    // window labels + time formatting (CodingPlanSection inline quota preview)
+    quotaWindow5h: '5h',
+    quotaWindowWeek: 'This week',
+    quotaWindowMonth: 'This month',
+    quotaTimeAgoSeconds: '{n}s ago',
+    quotaTimeAgoMinutes: '{n} min ago',
+    quotaTimeAgoHours: '{n} hr ago',
+    quotaTimeAgoDays: '{n} days ago',
+    quotaResetEmpty: '--',
+    quotaResetDays: '{d}d{h}h',
+    quotaResetHours: '{h}h{m}m',
   },
   // ── Extension page (ExtensionPage) ──
   extension: {

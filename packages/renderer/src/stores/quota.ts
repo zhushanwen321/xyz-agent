@@ -18,6 +18,8 @@ export interface QuotaCacheEntry {
   data: NormalizedQuotaRow | null
   /** 最后一次成功查询的 Unix 毫秒时间戳。null = 从未查询。 */
   lastFetchAt: number | null
+  /** 最后一次查询的错误信息。null = 无错误（成功或从未查询）。非空 = 上次查询失败。 */
+  error: string | null
 }
 
 export const useQuotaStore = defineStore('quota', () => {
@@ -33,10 +35,23 @@ export const useQuotaStore = defineStore('quota', () => {
 
   /**
    * 更新指定 provider 的额度缓存。
-   * 成功查询后调用，写入 data + lastFetchAt。
+   * 成功查询后调用，写入 data + lastFetchAt，清空 error。
    */
   function setCache(providerId: string, data: NormalizedQuotaRow | null, lastFetchAt: number | null): void {
-    byProvider.set(providerId, { data, lastFetchAt })
+    byProvider.set(providerId, { data, lastFetchAt, error: null })
+  }
+
+  /**
+   * 标记 provider 上次查询失败（保留旧 data，写入 error）。
+   * useQuotaQuery 的 fetchQuota rejected 时调用。
+   */
+  function setError(providerId: string, error: string): void {
+    const prev = byProvider.get(providerId)
+    byProvider.set(providerId, {
+      data: prev?.data ?? null,
+      lastFetchAt: prev?.lastFetchAt ?? null,
+      error,
+    })
   }
 
   /**
@@ -88,6 +103,7 @@ export const useQuotaStore = defineStore('quota', () => {
     pending,
     // actions
     setCache,
+    setError,
     markPending,
     unmarkPending,
     getEntry,
