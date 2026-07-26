@@ -75,6 +75,8 @@ export interface SessionCreateOptions {
    * 用于 landing 态命令源等内部场景。
    */
   hidden?: boolean
+  /** Launch preset id（设计文档 §4.1），绑定到新 session 并解析为 pi 启动参数。 */
+  presetId?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */

@@ -97,15 +97,18 @@ onMounted(async () => {
   // loadPresets 后回显全局默认预设（landing 态 chip 所见即默认）
   if (store.defaultPresetId && !selectedPresetId.value) {
     selectedPresetId.value = store.defaultPresetId
+    store.selectPreset(store.defaultPresetId)
     emit('select', { presetId: store.defaultPresetId })
   }
 })
 
 /**
  * landing 态选预设（RadioGroup 语义：单选 + 立即选中）。
+ * 同步写 store.selectedPresetId（Composer onSend 时读取透传 session.create）。
  */
 function onSelectPreset(preset: PiLaunchPreset): void {
   selectedPresetId.value = preset.id
+  store.selectPreset(preset.id)
   emit('select', { presetId: preset.id })
 }
 
@@ -125,6 +128,7 @@ watch(() => store.defaultPresetId, (newDefault) => {
   if (isLanding.value && newDefault && !open.value) {
     // 仅在 Popover 未展开时回显（避免用户正在选时被覆盖）
     selectedPresetId.value = newDefault
+    store.selectPreset(newDefault)
   }
 })
 </script>

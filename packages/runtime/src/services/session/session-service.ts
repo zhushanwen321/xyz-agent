@@ -218,7 +218,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
-  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
+  async create(cwd?: string, label?: string, options?: { hidden?: boolean; presetId?: string }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }

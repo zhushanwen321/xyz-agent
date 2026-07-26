@@ -28,6 +28,12 @@ export const usePresetStore = defineStore('preset', () => {
    * 缺省 'builtin:full'（runtime 在无配置时返回全工具模式）。
    */
   const defaultPresetId = ref('')
+  /**
+   * Landing 态用户当前选中的预设 id（session.create 透传用）。
+   * PresetSelectChip 选中时写入，Composer onSend 时读取传给 session.create。
+   * startFlow 时重置为 ''（与 pendingCwd/pendingModel 范式对齐）。
+   */
+  const selectedPresetId = ref('')
 
   // ── Actions（纯写入；RPC 编排 + 订阅生命周期在 usePiPresets composable）──
 
@@ -41,12 +47,19 @@ export const usePresetStore = defineStore('preset', () => {
     defaultPresetId.value = id
   }
 
+  /** Landing 态选中预设（PresetSelectChip emit select 时调用）。 */
+  function selectPreset(id: string): void {
+    selectedPresetId.value = id
+  }
+
   return {
     // state
     presets,
     defaultPresetId,
+    selectedPresetId,
     // actions（纯写入）
     setPresets,
     setDefaultPresetId,
+    selectPreset,
   }
 })

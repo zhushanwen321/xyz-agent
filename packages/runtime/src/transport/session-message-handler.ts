@@ -38,7 +38,7 @@ export class SessionMessageHandler {
     switch (msg.type) {
       case 'session.create': {
         try {
-          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
+          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden, presetId: msg.payload.presetId })
           this.ctx.reply(ws, msg.id, 'session.created', { session })
           return this.ctx.broadcastSessionList()
         } catch (e) {

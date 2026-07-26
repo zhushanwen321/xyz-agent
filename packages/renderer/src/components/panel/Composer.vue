@@ -161,6 +161,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/useProjectSkills'
 import { useChatStore } from '@/stores/chat'
+import { usePresetStore } from '@/stores/preset'
 import { useToast } from '@/composables/useToast'
 import { useComposerModelThinking } from '@/composables/panel/useComposerModelThinking'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
@@ -184,6 +185,7 @@ const props = withDefaults(
 
 const { t } = useI18n()
 const chatStore = useChatStore()
+const presetStore = usePresetStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
@@ -365,7 +367,7 @@ async function onSend(): Promise<void> {
     clearInput()
     isSending.value = true
     try {
-      await flow.submitFirstMessage(segments, localThinkingLevel.value)
+      await flow.submitFirstMessage(segments, localThinkingLevel.value, presetStore.selectedPresetId || undefined)
     } catch (e) {
       // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
       // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
