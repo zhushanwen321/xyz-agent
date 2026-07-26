@@ -20,6 +20,7 @@ import DirSelectPopover from './DirSelectPopover.vue'
 import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
 import CreateWorktreeModal from './CreateWorktreeModal.vue'
+import PresetSelectChip from './PresetSelectChip.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useToast } from '@/composables/useToast'
@@ -241,6 +242,11 @@ function onRetry(): void {
               />
             </PopoverContent>
           </Popover>
+          <span aria-hidden="true" class="h-3.5 w-px bg-border" />
+          <PresetSelectChip
+            :session-id="composerSid"
+            :launch-preset-id="flow.currentSession.value?.launchPresetId"
+          />
         </div>
       </template>
     </Composer>
