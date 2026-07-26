@@ -60,14 +60,12 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
     if (!credential) return null
 
     try {
+      // 仅需 Authorization header 即可查询 Coding Plan 额度（参考 glm-quota-line 开源实现 +
+      // quotio issue #75）。无需 org/project header——额度归属由 API key 本身绑定。
       const resp = await fetch('https://bigmodel.cn/api/monitor/usage/quota/limit', {
         headers: {
           accept: 'application/json, text/plain, */*',
           authorization: credential,
-          'bigmodel-organization': 'org-8F82302F73594F44B2bdCc5A57BCfD1f',
-          'bigmodel-project': 'proj_8E86D38C8211410Baa4852408071D1F2',
-          referer: 'https://bigmodel.cn/usercenter/glm-coding/usage',
-          'user-agent': 'Mozilla/5.0',
         },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
