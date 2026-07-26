@@ -304,6 +304,11 @@ export interface IExtensionService {
   setAutoUpgrade(name: string, autoUpgrade: boolean): Promise<void>
   /** 启用的 extension 路径列表（供 pi --extension 参数）。cwd 用于解析相对的 discovery extension 目录。 */
   getExtensionPaths(cwd?: string): Promise<string[]>
+  /**
+   * builtin 文件型 extension 路径（existsSync 过滤后），永远注入不受 preset.extensionMode 影响。
+   * 设计文档 §2.3：供 PresetService.resolveExtensionPaths 复用。
+   */
+  getBuiltinExtensionPaths(): string[]
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>
   installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>

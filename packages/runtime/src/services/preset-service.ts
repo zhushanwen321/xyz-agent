@@ -271,6 +271,105 @@ export class PresetService {
       this.savePresetsFile(file)
     }
   }
+
+  // ── resolve（设计文档 §8.1，wave2 实现）──
+
+  /**
+   * 根据 preset + cwd 解析为 RpcClientOptions 的扩展字段。
+   *
+   * 设计文档 §8.1：返回值供 session-lifecycle 覆盖现有 getExtensionPaths/getSkillPaths 结果。
+   * - extensionPaths：builtin 永远前置 + extensionMode 过滤的用户 extension（§2.3/§2.4）
+   * - skillPaths：noSkills=true 时空数组；否则空数组（wave3 session-lifecycle 用 flags.noSkills
+   *   决定是否用现有 getSkillPaths 兜底——PresetService 不跨域依赖 ConfigService，见 wave2 设计 t1）
+   * - toolArgs：toolMode 4 模式映射（§2.5）
+   * - flags：noSkills/noContextFiles 透传
+   * - modelOverride/thinkingLevel：透传（受 Landing Chip 覆盖，§5.2 由 wave3 处理）
+   */
+  async resolve(preset: PiLaunchPreset, cwd: string): Promise<PresetResolution> {
+    const extensionPaths = await this.resolveExtensionPaths(preset, cwd)
+    return {
+      extensionPaths,
+      skillPaths: this.resolveSkillPaths(preset),
+      toolArgs: this.resolveToolArgs(preset),
+      flags: {
+        noSkills: preset.noSkills ?? false,
+        noContextFiles: preset.noContextFiles ?? false,
+      },
+      modelOverride: preset.modelOverride,
+      thinkingLevel: preset.thinkingLevel,
+    }
+  }
+
+  /**
+   * 解析 extensionPaths（设计文档 §2.3/§2.4）。
+   *
+   * builtin 永远前置（不受 extensionMode 影响），用户 extension 按 mode 过滤：
+   *   - all: 全部 enabled
+   *   - allowlist: enabled && name in preset.allowedExtensions
+   *   - denylist: enabled && name not in preset.deniedExtensions（pi 无原生 denylist → runtime 端过滤）
+   *   - none: 空（builtin 仍前置）
+   */
+  private async resolveExtensionPaths(preset: PiLaunchPreset, cwd: string): Promise<string[]> {
+    void cwd // 当前实现未用 cwd（scanExtensions 不带 cwd）；保留参数对齐设计 §8.1 签名
+    const builtinPaths = this.extensionService.getBuiltinExtensionPaths()
+    const userExts = await this.extensionService.scanExtensions()
+
+    let selected: string[]
+    switch (preset.extensionMode) {
+      case 'all':
+        selected = userExts.filter(e => e.enabled).map(e => e.path)
+        break
+      case 'allowlist': {
+        const allowed = preset.allowedExtensions ?? []
+        selected = userExts
+          .filter(e => e.enabled && allowed.includes(e.name))
+          .map(e => e.path)
+        break
+      }
+      case 'denylist': {
+        const denied = preset.deniedExtensions ?? []
+        selected = userExts
+          .filter(e => e.enabled && !denied.includes(e.name))
+          .map(e => e.path)
+        break
+      }
+      case 'none':
+        selected = []
+        break
+    }
+    return [...builtinPaths, ...selected]
+  }
+
+  /**
+   * 解析 skillPaths（设计文档 §2.2）。
+   *
+   * noSkills=true 返 []（清空）；noSkills=false 也返 []（含义「不覆盖」，
+   * wave3 session-lifecycle 看 flags.noSkills=false 时用现有 getSkillPaths 兜底）。
+   */
+  private resolveSkillPaths(preset: PiLaunchPreset): string[] {
+    return preset.noSkills === true ? [] : []
+  }
+
+  /**
+   * 解析 toolArgs（设计文档 §2.5）。
+   *
+   *   - all: {}（不传工具 flag，用 pi 默认）
+   *   - allowlist: { tools: allowedTools }（替换语义 --tools）
+   *   - denylist: { excludeTools: deniedTools }（叠加语义 --exclude-tools）
+   *   - none: { noTools: true }（--no-tools）
+   */
+  private resolveToolArgs(preset: PiLaunchPreset): PresetResolution['toolArgs'] {
+    switch (preset.toolMode) {
+      case 'all':
+        return {}
+      case 'allowlist':
+        return { tools: preset.allowedTools ?? [] }
+      case 'denylist':
+        return { excludeTools: preset.deniedTools ?? [] }
+      case 'none':
+        return { noTools: true }
+    }
+  }
 }
 
 // ── 内部 helpers ──────────────────────────────────────────────────
