@@ -193,6 +193,9 @@ const HTTP_UNAUTHORIZED = 401
 const HTTP_FORBIDDEN = 403
 /** 复制成功反馈显示时长（ms） */
 const COPY_FEEDBACK_MS = 2000
+/** 登录墙检测（spec §4.2）：HTTP 401/403 errorCode → 显提示条。
+ * did-fail-load 的 errorCode 对应 HTTP 状态码（-3=ABORTED 已在主进程过滤）。 */
+const LOGIN_ERROR_CODES = new Set([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN])
 /** localStorage key：首次使用引导是否已关闭 */
 const GUIDE_DISMISSED_KEY = 'xyz-browser-guide-dismissed'
 
@@ -240,13 +243,12 @@ const canGoBack = ref<boolean>(false)
 const canGoForward = ref<boolean>(false)
 /** 复制成功反馈（点复制后 2s 内显 Check icon） */
 const copied = ref<boolean>(false)
+/** copyUrl 的 setTimeout ID（onBeforeUnmount 清理） */
+const copyTimerId = ref<number | null>(null)
 
 /** 缩放管理（Wave 5）：zoomFactor 状态 + Cmd+/-/0 快捷键 + 主进程 IPC 同步 */
 const { onZoomKeydown, setZoomFromRemote } = useBrowserZoom(toRef(props, 'sessionId'))
 
-/** 登录墙检测（spec §4.2）：HTTP 401/403 errorCode → 显提示条。
- * did-fail-load 的 errorCode 对应 HTTP 状态码（-3=ABORTED 已在主进程过滤）。 */
-const LOGIN_ERROR_CODES = new Set([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN])
 const loginRequired = computed<boolean>(() =>
   error.value !== null && LOGIN_ERROR_CODES.has(error.value.errorCode),
 )
@@ -262,7 +264,10 @@ const isSecure = computed(() => displayUrl.value.startsWith('https://'))
 const { urlInput, onUrlFocus, onUrlEnter, onUrlEscape } = useUrlBar(displayUrl, (url) => {
   isLoading.value = true
   error.value = null
-  void browserNavigate(props.sessionId, url)
+  void browserNavigate(props.sessionId, url).catch(() => {
+    // 保底重置 loading：主进程 onBrowserState 也会推送 did-fail-load 错误态
+    isLoading.value = false
+  })
 })
 
 /**
@@ -324,11 +329,16 @@ onMounted(() => {
   })
 })
 
-onBeforeUnmount(async () => {
+onBeforeUnmount(() => {
   // hide（keep-alive，不 destroy）：切 tab/关 drawer 时隐藏 WebContentsView，下次打开复用。
-  // [HISTORICAL] 修复浏览器页面残留问题：确保 hide 完成后再卸载组件。
-  // 原实现用 void browserHide（异步但不等待），如果组件卸载太快，hide 可能没来得及执行。
-  await browserHide(props.sessionId)
+  // fire-and-forget：Vue 3 生命周期钩子不支持 async/await，主进程 hide 是幂等的，
+  // 卸载完成后 IPC 消息仍会正常送达主进程执行隐藏。
+  void browserHide(props.sessionId)
+  // 清理定时器
+  if (copyTimerId.value) {
+    clearTimeout(copyTimerId.value)
+    copyTimerId.value = null
+  }
   // 清理 rect 同步 + 缩放快捷键
   disposeRectSync()
   window.removeEventListener('keydown', onZoomKeydown)
@@ -353,8 +363,9 @@ function copyUrl(): void {
   if (!target) return
   navigator.clipboard.writeText(target).then(() => {
     copied.value = true
-    window.setTimeout(() => {
+    copyTimerId.value = window.setTimeout(() => {
       copied.value = false
+      copyTimerId.value = null
     }, COPY_FEEDBACK_MS)
   }).catch(() => {
     /* 剪贴板失败静默：非关键路径，不阻塞 UI */

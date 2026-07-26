@@ -53,6 +53,7 @@ const MAX_VIEWS = 3
 
 /** Chromium net 错误码：ABORTED（-3）。重定向过程中旧请求被新导航抢占时触发，非真错误，需过滤。
  * 详见 did-fail-load handler 的 [HISTORICAL] 注释。 */
+// https://source.chromium.org/chromium/chromium/src/+/main:net/base/net_error_list.h;l=40
 const ERR_ABORTED = -3
 
 /** autoFit 缩放下限：低于此值文字不可读，宁可部分溢出也不再缩小（spec §4.3 可读性约束） */
@@ -171,16 +172,6 @@ export class BrowserViewManager {
     // 初始隐藏（drawer 显示前不可见）
     view.setBounds(HIDDEN_RECT)
 
-    // attach 到目标窗口
-    if (!win.isDestroyed()) {
-      win.contentView.addChildView(view)
-    }
-
-    // 下载拦截（MANDATORY）：嵌入页禁止触发宿主下载
-    view.webContents.session.on('will-download', (event) => {
-      event.preventDefault()
-    })
-
     // 状态暂存（W2 经 IPC 回传 renderer）
     const state: BrowserViewState = {
       currentUrl: '',
@@ -192,16 +183,25 @@ export class BrowserViewManager {
     }
     this.bindWebContentsEvents(view, state, sessionId)
 
-    this.views.set(sessionId, {
+    // attach 到目标窗口
+    const entry: ManagedView = {
       view,
       windowId,
       lastRect: HIDDEN_RECT,
       isVisible: false,
-      isAttached: !win.isDestroyed(),
+      isAttached: false,
       state,
       lastUsed: Date.now(),
       pendingAutoFit: false,
+    }
+    this._attachView(entry)
+
+    // 下载拦截（MANDATORY）：嵌入页禁止触发宿主下载
+    view.webContents.session.on('will-download', (event) => {
+      event.preventDefault()
     })
+
+    this.views.set(sessionId, entry)
   }
 
   /**
@@ -217,10 +217,10 @@ export class BrowserViewManager {
     // manager 再校验一次——handler 是第一道，manager 是第二道。renderer 端 useUrlBar
     // 也有黑名单（用户即时反馈）。三道防线独立函数 + 独立 fail point，任一失效下一道兜底。
     if (isDangerousScheme(url)) {
-      throw new Error(`[browser-view] navigate: rejected dangerous scheme: ${url.slice(0, URL_PREVIEW_MAX_LENGTH)}`)
+      throw new Error(`[browser-view] navigate: rejected dangerous scheme: ${url.slice(0, URL_PREVIEW_MAX_LENGTH)}${url.length > URL_PREVIEW_MAX_LENGTH ? '...' : ''}`)
     }
     if (!isAllowedNavigateUrl(url)) {
-      throw new Error(`[browser-view] navigate: only http(s) URLs are allowed: ${url.slice(0, URL_PREVIEW_MAX_LENGTH)}`)
+      throw new Error(`[browser-view] navigate: only http(s) URLs are allowed: ${url.slice(0, URL_PREVIEW_MAX_LENGTH)}${url.length > URL_PREVIEW_MAX_LENGTH ? '...' : ''}`)
     }
     // loadURL 前置 pendingAutoFit，确保随后的 dom-ready 能读到（loadURL → dom-ready 是同 tick 后异步触发）。
     // 仅 navigate 触发 autoFit：用户在地址栏输入新 URL / agent 推链接 → 缩放；页内链接 / 后退前进不经过此方法。
@@ -272,22 +272,8 @@ export class BrowserViewManager {
       console.warn(`[browser-view] hide: session not found sessionId=${sessionId}`)
       return
     }
-    // 记录当前可见 rect（若已隐藏，getBounds 返回 HIDDEN_RECT，无副作用）
-    entry.lastRect = entry.view.getBounds()
-    entry.isVisible = false
-    
-    // 从 contentView 移除 view（防止 view 残留在屏幕上）
-    const win = this.windows.get(entry.windowId)
-    if (entry.isAttached && win && !win.isDestroyed()) {
-      win.contentView.removeChildView(entry.view)
-      entry.isAttached = false
-      console.log(`[browser-view] hide: removed from contentView sessionId=${sessionId}, lastRect=`, entry.lastRect)
-    } else {
-      console.log(`[browser-view] hide: sessionId=${sessionId}, lastRect=`, entry.lastRect, `(not attached or window destroyed)`)
-    }
-    
-    // 保留 setBounds(HIDDEN_RECT) 作为防御性措施
-    entry.view.setBounds(HIDDEN_RECT)
+    console.log(`[browser-view] hide: sessionId=${sessionId}, lastRect=${JSON.stringify(entry.lastRect)}`)
+    this._hideEntry(entry)
   }
 
   /**
@@ -303,20 +289,8 @@ export class BrowserViewManager {
       console.warn(`[browser-view] show: session not found sessionId=${sessionId}`)
       return
     }
-    
-    entry.isVisible = true
-    
-    // 重新挂载到 contentView
-    const win = this.windows.get(entry.windowId)
-    if (!entry.isAttached && win && !win.isDestroyed()) {
-      win.contentView.addChildView(entry.view)
-      entry.isAttached = true
-      console.log(`[browser-view] show: added to contentView sessionId=${sessionId}, lastRect=`, entry.lastRect)
-    } else {
-      console.log(`[browser-view] show: sessionId=${sessionId}, lastRect=`, entry.lastRect, `(already attached or window destroyed)`)
-    }
-    
-    entry.view.setBounds(entry.lastRect)
+    console.log(`[browser-view] show: sessionId=${sessionId}, lastRect=`, entry.lastRect)
+    this._showEntry(entry, entry.lastRect)
   }
 
   /**
@@ -331,12 +305,9 @@ export class BrowserViewManager {
       console.warn(`[browser-view] destroy: session not found sessionId=${sessionId}`)
       return
     }
-    const { view, windowId, isAttached } = entry
-    const win = this.windows.get(windowId)
-    // 窗口未销毁才摘下 view；窗口已关则跳过（view 会随窗口一起释放）
-    if (isAttached && win && !win.isDestroyed()) {
-      win.contentView.removeChildView(view)
-    }
+    const { view } = entry
+    // 从 contentView 摘下 + webContents.close 释放
+    this._detachView(entry)
     // webContents.close() 释放 webContents（防内存泄漏）。
     // [HISTORICAL] Electron 42 的 WebContents 无 destroy()，close() 是正确的销毁 API
     // （文档：成功 close 后 webContents 被销毁，emit destroyed 事件）。
@@ -352,6 +323,7 @@ export class BrowserViewManager {
    * 策略：Map 保持插入顺序，遍历找最小 lastUsed 的 key（不用额外链表，3 个 entry 遍历开销可忽略）。
    */
   private evictLRU(): void {
+    if (this.views.size === 0) return
     if (this.views.size < MAX_VIEWS) return
     let oldestKey: string | null = null
     let oldestTs = Infinity
@@ -365,6 +337,52 @@ export class BrowserViewManager {
       console.log(`[browser-view] LRU evict: sessionId=${oldestKey}, lastUsed=${oldestTs}, poolSize=${this.views.size}`)
       this.destroy(oldestKey)
     }
+  }
+
+  /**
+   * 从 contentView 摘除 view（内部方法）。
+   * 前置守卫：仅 isAttached=true 且窗口未销毁时操作。
+   */
+  private _detachView(entry: ManagedView): void {
+    if (!entry.isAttached) return
+    const win = this.windows.get(entry.windowId)
+    if (win && !win.isDestroyed()) {
+      win.contentView.removeChildView(entry.view)
+    }
+    entry.isAttached = false
+  }
+
+  /**
+   * 挂载 view 到 contentView（内部方法）。
+   * 前置守卫：仅 isAttached=false 且窗口未销毁时操作。
+   */
+  private _attachView(entry: ManagedView): void {
+    if (entry.isAttached) return
+    const win = this.windows.get(entry.windowId)
+    if (win && !win.isDestroyed()) {
+      win.contentView.addChildView(entry.view)
+    }
+    entry.isAttached = true
+  }
+
+  /**
+   * 隐藏 entry：从 contentView 移除 + setBounds HIDDEN_RECT + isVisible=false。
+   * hide() / focus() 统一复用。
+   */
+  private _hideEntry(entry: ManagedView): void {
+    entry.isVisible = false
+    this._detachView(entry)
+    entry.view.setBounds(HIDDEN_RECT)
+  }
+
+  /**
+   * 显示 entry：重新挂载到 contentView + setBounds 指定 rect + isVisible=true。
+   * show() / focus() 统一复用。
+   */
+  private _showEntry(entry: ManagedView, rect: Rectangle): void {
+    entry.isVisible = true
+    this._attachView(entry)
+    entry.view.setBounds(rect)
   }
 
   /**
@@ -388,28 +406,14 @@ export class BrowserViewManager {
     for (const [sid, entry] of this.views) {
       if (sid === sessionId) continue
       if (entry.isVisible) {
-        entry.isVisible = false
-        // 从 contentView 移除
-        const win = this.windows.get(entry.windowId)
-        if (entry.isAttached && win && !win.isDestroyed()) {
-          win.contentView.removeChildView(entry.view)
-          entry.isAttached = false
-        }
-        entry.view.setBounds(HIDDEN_RECT)
+        this._hideEntry(entry)
       }
     }
     
     // 显示 target（若存在）
     if (target) {
       target.lastUsed = Date.now()
-      target.isVisible = true
-      // 重新挂载到 contentView
-      const win = this.windows.get(target.windowId)
-      if (!target.isAttached && win && !win.isDestroyed()) {
-        win.contentView.addChildView(target.view)
-        target.isAttached = true
-      }
-      target.view.setBounds(target.lastRect)
+      this._showEntry(target, target.lastRect)
       return
     }
     
@@ -585,6 +589,7 @@ export class BrowserViewManager {
     // 仅 navigate（地址栏输入/agent 推链接）触发；页内链接/后退前进不经 navigate，pendingAutoFit 保持 false，不触发（避免打断用户浏览）。
     // 安全：executeJavaScript 在零信任页执行，只读 scrollWidth/innerWidth（无副作用），contextIsolation + sandbox 保护。
     wc.on('dom-ready', () => {
+      if (wc.isDestroyed()) return
       wc.executeJavaScript(
         `(() => {
           if (document.querySelector('meta[name="viewport"]')) return;
