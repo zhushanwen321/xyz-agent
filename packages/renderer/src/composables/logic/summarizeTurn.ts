@@ -14,6 +14,7 @@
  */
 import { normalizeContent } from '@xyz-agent/shared'
 import type { MessageTurn } from './messageTurns'
+import { countThinking, countToolCalls } from './messageTurns'
 
 /** rail 节点摘要最大字符数（中文算 1，超出加省略号）。draft spec 限定单行，20 字够识别回合。 */
 const MAX_CHARS = 20
@@ -54,7 +55,7 @@ export function summarizeTurnForRail(turn: MessageTurn): string {
  * 实现用顺序正则替换（非一次性大正则）——可读 + 单步易测，
  * 顺序也有依赖：图片/链接要先于通用中括号去标记，否则会把 alt/url拆散。
  */
-function stripMarkdown(text: string): string {
+export function stripMarkdown(text: string): string {
   let s = text
   // 代码块（``` 含语言标记）整块去标记，保留块内内容
   s = s.replace(/```[\s\S]*?```/g, (m) => m.replace(/```[^\n]*\n?/g, '').replace(/```/g, ''))
@@ -99,9 +100,47 @@ function stripMarkdown(text: string): string {
  * emoji / CJK 组合字符按单码点计（避免 substring 切到代理对中间产乱码）。
  * 注意省略号本身占 1 字符，所以总长度上限是 maxChars。
  */
-function truncate(text: string, maxChars: number): string {
+export function truncate(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
   const chars = Array.from(text)
   if (chars.length <= maxChars) return text
   return chars.slice(0, Math.max(0, maxChars - ELLIPSIS.length)).join('') + ELLIPSIS
+}
+
+/**
+ * 分隔符（fallback 计数拼接用，与 Turn.vue badge「N thoughts · M tools」同构）。
+ * 注意：thoughts/tools 词不走 i18n，与 Turn.vue L177/180 badge 保持一致
+ *（badge 也是硬编码英文 + count）；未来统一本地化时再改。
+ */
+const COUNT_SEP = ' · '
+
+/**
+ * 从 turn.assistants 派生 agent 行的一行摘要（rail 节点第二行）。
+ *
+ * 优先级链（每步都有 why）：
+ * 1. content 非空：取首个 normalizeContent 后 trim 非空的 assistant content，
+ *    stripMarkdown + truncate。pi agent-loop 每 turn 通常仅末条 emit 文本回复，
+ *    取首个非空即可（不 concat，避免半截话拼接）。
+ * 2. fallback 计数：用 countThinking/countToolCalls 拼「N thoughts · M tools」。
+ *    纯工具 turn / 纯 thinking turn 常无 content，计数是唯一可读摘要。
+ * 3. 全空（无 content + 无 thinking + 无 toolCalls）：返回空串。
+ *    由调用方决定显占位（如「进行中…」）还是省略行。
+ *
+ * 依赖：countThinking/countToolCalls 聚合 turn.assistants（messageTurns.ts 纯函数）。
+ */
+export function summarizeAssistantForRail(turn: MessageTurn): string {
+  // 1. 找首个非空 content
+  for (const m of turn.assistants) {
+    const text = normalizeContent(m.content).trim()
+    if (text) {
+      return truncate(stripMarkdown(text), MAX_CHARS)
+    }
+  }
+  // 2. fallback 计数
+  const thoughts = countThinking(turn)
+  const tools = countToolCalls(turn)
+  const parts: string[] = []
+  if (thoughts > 0) parts.push(`${thoughts} thoughts`)
+  if (tools > 0) parts.push(`${tools} tools`)
+  return parts.join(COUNT_SEP)
 }

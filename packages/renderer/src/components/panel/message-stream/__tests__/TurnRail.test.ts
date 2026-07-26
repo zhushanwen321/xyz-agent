@@ -20,8 +20,46 @@ import type { Message } from '@xyz-agent/shared'
  */
 function makeRailTurn(
   idx: number,
-  opts: { userText?: string; failed?: boolean; userNull?: boolean } = {},
+  opts: {
+    userText?: string
+    failed?: boolean
+    userNull?: boolean
+    /** assistant content（默认 '...'，置 '' 测空 content fallback 计数） */
+    assistantContent?: string
+    /** thinking 块数量（测 fallback 计数 N thoughts） */
+    thinkingCount?: number
+    /** toolCall 数量（测 fallback 计数 M tools；failed=true 时叠加 1 个失败 tool） */
+    toolCount?: number
+  } = {},
 ): MessageTurn {
+  // thinking 块数组（每块 content 非空）
+  const thinking = opts.thinkingCount
+    ? Array.from({ length: opts.thinkingCount }, (_, i) => ({
+        id: `th${idx}-${i}`,
+        content: `thinking ${i}`,
+        collapsed: true,
+      }))
+    : undefined
+  // toolCalls 数组（含 failed flag 时追加一个 error tool）
+  const baseTools = opts.toolCount
+    ? Array.from({ length: opts.toolCount }, (_, i) => ({
+        id: `tc${idx}-${i}`,
+        toolName: 'read',
+        input: { path: `f${i}.ts` },
+        status: 'done' as const,
+        startTime: 0,
+      }))
+    : []
+  const failTool = opts.failed
+    ? [{
+        id: `tc${idx}-fail`,
+        toolName: 'fail',
+        input: {},
+        status: 'error' as const,
+        startTime: 0,
+      }]
+    : []
+  const toolCalls = [...baseTools, ...failTool]
   return {
     index: idx,
     user: opts.userNull
@@ -36,23 +74,14 @@ function makeRailTurn(
       {
         id: `a${idx}`,
         role: 'assistant',
-        content: '...',
+        content: opts.assistantContent ?? '...',
         status: 'done',
-        toolCalls: opts.failed
-          ? [
-              {
-                id: `t${idx}`,
-                toolName: 'fail',
-                input: {},
-                status: 'error',
-                startTime: 0,
-              },
-            ]
-          : [],
+        thinking,
+        toolCalls,
       } as Message,
     ],
     isStreaming: false,
-    hasFoldable: opts.failed ?? false,
+    hasFoldable: opts.failed ?? (toolCalls.length > 0) || (thinking !== undefined),
   } as MessageTurn
 }
 
@@ -72,12 +101,12 @@ describe('TurnRail (IF4)', () => {
     expect(wrapper.find('[data-testid="turn-rail"]').exists()).toBe(false)
   })
 
-  it('TC-w3-2: 3 turns → 渲染 3 个 rail-node，每个含 dot + 摘要 + toggle', () => {
+  it('TC-w3-2: 3 turns → 渲染 3 个 rail-node，每个含 agent-icon + 摘要 + toggle', () => {
     const wrapper = mount(TurnRail, { props: defaultProps() })
     const nodes = wrapper.findAll('[data-testid="rail-node"]')
     expect(nodes).toHaveLength(3)
     for (const node of nodes) {
-      expect(node.find('[data-testid="rail-dot"]').exists()).toBe(true)
+      expect(node.find('[data-testid="rail-agent-icon"]').exists()).toBe(true)
       expect(node.find('[data-testid="rail-toggle"]').exists()).toBe(true)
       // 摘要文本应非空（默认 fixture 用 "turn N"）
       expect(node.text().length).toBeGreaterThan(0)
@@ -123,8 +152,8 @@ describe('TurnRail (IF4)', () => {
     expect(nodes[0].classes()).not.toContain('active')
   })
 
-  it('TC-w3-8: dot 状态反映 turn（done=ok 绿 / failed=fail 红 / active=active 蓝）', () => {
-    // turn0: done（无失败）→ ok；turn1: failed → fail；turn2: active（sessionActive + 当前激活）→ active
+  it('TC-w3-8: agent-icon 颜色反映状态（done=text-muted / failed=text-danger / active=text-accent 脉冲）', () => {
+    // turn0: done（无失败）→ muted；turn1: failed → danger；turn2: active（sessionActive + 当前激活）→ accent 脉冲
     const turns = [
       makeRailTurn(0, { failed: false }),
       makeRailTurn(1, { failed: true }),
@@ -133,16 +162,14 @@ describe('TurnRail (IF4)', () => {
     const wrapper = mount(TurnRail, {
       props: defaultProps({ turns, activeTurnIndex: 2, sessionActive: true }),
     })
-    const dots = wrapper.findAll('[data-testid="rail-dot"]')
-    // done turn → ok 类
-    expect(dots[0].classes()).toContain('ok')
-    expect(dots[0].classes()).toContain('bg-success')
-    // failed turn → fail 类
-    expect(dots[1].classes()).toContain('fail')
-    expect(dots[1].classes()).toContain('bg-danger')
-    // active turn → active 类
-    expect(dots[2].classes()).toContain('active')
-    expect(dots[2].classes()).toContain('bg-accent')
+    const icons = wrapper.findAll('[data-testid="rail-agent-icon"]')
+    // done turn → text-muted（完成态中性灰）
+    expect(icons[0].classes()).toContain('text-muted')
+    // failed turn → text-danger（红）
+    expect(icons[1].classes()).toContain('text-danger')
+    // active turn → text-accent + 脉冲（进行中信号）
+    expect(icons[2].classes()).toContain('text-accent')
+    expect(icons[2].classes()).toContain('animate-pulse-accent')
   })
 
   it('TC-w3-9: toggle 默认 opacity-0（hover 浮出）；非 active 节点非 hover 时隐藏', () => {
@@ -180,5 +207,50 @@ describe('TurnRail (IF4)', () => {
     for (const toggle of toggles) {
       expect(toggle.attributes('data-expanded')).toBe('false')
     }
+  })
+
+  it('TC-w3-13: 节点含两行——user 行（User 图标）+ agent 行（Bot 图标）', () => {
+    const wrapper = mount(TurnRail, { props: defaultProps() })
+    const node = wrapper.findAll('[data-testid="rail-node"]')[0]
+    // 两行 div（user 行 + agent 行），flex-col 垂直排列
+    const rows = node.findAll(':scope > div')
+    expect(rows).toHaveLength(2)
+    // user 行含 User 图标（lucide 渲染为 svg，class 含 lucide-user）
+    expect(rows[0].find('svg').exists()).toBe(true)
+    // agent 行含 Bot 图标 + rail-agent-icon testid
+    const agentIcon = node.find('[data-testid="rail-agent-icon"]')
+    expect(agentIcon.exists()).toBe(true)
+    expect(agentIcon.element.tagName.toLowerCase()).toBe('svg')
+  })
+
+  it('TC-w3-14: 无 user turn（首条 assistant）→ user 行不渲染，只显 agent 行', () => {
+    const turns = [makeRailTurn(0, { userNull: true, assistantContent: '这是 assistant 回复' })]
+    const wrapper = mount(TurnRail, { props: defaultProps({ turns }) })
+    const node = wrapper.findAll('[data-testid="rail-node"]')[0]
+    const rows = node.findAll(':scope > div')
+    // 只有一行（agent 行），user 行被 v-if="turn.user" 省略
+    expect(rows).toHaveLength(1)
+    expect(node.find('[data-testid="rail-agent-icon"]').exists()).toBe(true)
+  })
+
+  it('TC-w3-15: agent 摘要文本优先——assistant 有 content 时显示 content 截断', () => {
+    const turns = [makeRailTurn(0, { assistantContent: '修复了 Block.vue 的折叠状态同步问题' })]
+    const wrapper = mount(TurnRail, { props: defaultProps({ turns }) })
+    const node = wrapper.findAll('[data-testid="rail-node"]')[0]
+    // agent 行（第二行）文本应含 assistant content 内容
+    const rows = node.findAll(':scope > div')
+    const agentRowText = rows[1].text()
+    expect(agentRowText).toContain('修复了 Block.vue')
+  })
+
+  it('TC-w3-16: agent 摘要 fallback 计数——空 content + thinking/tools 时显示 N thoughts · M tools', () => {
+    const turns = [makeRailTurn(0, { assistantContent: '', thinkingCount: 2, toolCount: 3 })]
+    const wrapper = mount(TurnRail, { props: defaultProps({ turns }) })
+    const node = wrapper.findAll('[data-testid="rail-node"]')[0]
+    const rows = node.findAll(':scope > div')
+    const agentRowText = rows[1].text()
+    // fallback 计数：2 thoughts · 3 tools
+    expect(agentRowText).toContain('2 thoughts')
+    expect(agentRowText).toContain('3 tools')
   })
 })

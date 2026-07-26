@@ -4,15 +4,14 @@
     功能：
     - 常驻右侧窄条，hover 弹出全 turn 列表浮层（mini-map + 快速跳转）
     - 窄条上有 viewport indicator 标记当前 turn 在窄条上的纵向位置
-    - 浮层内每个节点：状态点（失败红 / 进行中蓝脉冲 / 完成绿）+ 摘要文本 + 跳转 chevron
-    - 工具栏：折叠全部 / 展开全部（emit 给父组件统一控展开态）
+    - 浮层内每个节点两行：user 行（User 图标 + user 文本）+ agent 行（Bot 图标 + agent 摘要）
+    - 状态融入 Bot 图标颜色（失败红 / 进行中蓝脉冲 / 完成灰），不再用独立状态点
+    - toggle 按钮 hover 浮出（渐进披露），active 节点常驻可见，垂直居中于节点右侧
 
     设计约束：
-    - 纯展示组件，turns/activeTurnIndex/sessionActive 全由父组件传入
-    - 不内管 expanded 状态（IF4 契约未含 expanded prop）——
-      chevron 统一右指，active 节点 rotate-90（▼）仅表「当前位置」而非展开态
+    - 纯展示组件，turns/activeTurnIndex/sessionActive/expandedTurns 全由父组件传入
     - 用 xyz-ui Button，禁止原生 button（项目硬规范，pre-commit 检查）
-    - 用 @lucide/vue 图标，禁止 emoji
+    - 用 @lucide/vue 图标（User/Bot/ChevronDown/ChevronUp），禁止 emoji
     - 用 Tailwind 语义类 / CSS var，禁止硬编码颜色
   -->
   <div
@@ -42,27 +41,41 @@
           v-for="(turn, idx) in turns"
           :key="turn.index ?? idx"
           data-testid="rail-node"
-          class="group/rail-node rail-node relative flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 transition-colors hover:bg-surface-hover"
+          class="group/rail-node rail-node relative flex cursor-pointer flex-col gap-0.5 rounded px-1.5 py-1 transition-colors hover:bg-surface-hover"
           :class="idx === activeTurnIndex ? 'active bg-accent-soft ring-1 ring-inset ring-accent-ring' : ''"
           @click="emit('jump', idx)"
         >
-          <!-- 状态点：失败红 / 进行中蓝脉冲 / 完成绿 -->
-          <span
-            data-testid="rail-dot"
-            class="rail-dot size-2 shrink-0 rounded-full"
-            :class="dotClass(turn, idx)"
-          />
-          <!-- 摘要文本（截断，溢出隐藏）。pr-6 给 toggle 按钮让位（absolute right-1） -->
-          <span class="flex-1 truncate pr-6 text-[11px] leading-tight text-fg">
-            {{ summarizeTurnForRail(turn) || ' ' }}
-          </span>
+          <!-- user 行：User 图标 + user 文本（无 user 时整行省略，首条 assistant 边缘 turn） -->
+          <div v-if="turn.user" class="flex min-w-0 items-center gap-1.5">
+            <User class="size-3 shrink-0 text-muted" />
+            <span class="flex-1 truncate pr-6 text-[11px] leading-tight text-fg">
+              {{ summarizeTurnForRail(turn) || ' ' }}
+            </span>
+          </div>
+          <!-- agent 行：Bot 图标（状态色）+ agent 摘要。
+               状态融入图标：失败=红 / 进行中=蓝脉冲 / 完成=灰（不抢视觉）。
+               agent 摘要文本优先（content 截断），空则 fallback 计数（N thoughts · M tools），
+               全空显「进行中…」占位（含 assistant=[] 的 pending turn）。 -->
+          <div class="flex min-w-0 items-center gap-1.5">
+            <Bot
+              data-testid="rail-agent-icon"
+              class="size-3 shrink-0 transition-colors"
+              :class="agentIconClass(turn, idx)"
+            />
+            <span
+              class="flex-1 truncate pr-6 text-[11px] leading-tight"
+              :class="hasFailedTool(turn) ? 'text-danger' : 'text-muted'"
+            >
+              {{ summarizeAssistantForRail(turn) || t('panel.message.railInProgress') }}
+            </span>
+          </div>
           <!-- 折展 toggle 按钮：hover/focus 浮出（渐进披露），active 节点常驻可见（用户决策）。
                图标语义：ChevronDown=折叠态（向下展开）/ ChevronUp=展开态（向上收起），直观不混语义。
                「当前位置」标记不再借用 chevron 方向，由节点底色 bg-accent-soft + ring 独立承担。 -->
           <Button
             variant="ghost"
             size="icon"
-            class="absolute right-1 h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover/rail-node:opacity-100 group-focus-within/rail-node:opacity-100"
+            class="absolute right-1 top-1/2 h-5 w-5 shrink-0 -translate-y-1/2 opacity-0 transition-opacity group-hover/rail-node:opacity-100 group-focus-within/rail-node:opacity-100"
             :class="idx === activeTurnIndex ? '!opacity-100' : ''"
             data-testid="rail-toggle"
             :data-expanded="isExpanded(idx)"
@@ -84,11 +97,14 @@
  * 用 computed 缓存 style 对象避免每次 render 重算字符串。
  */
 import { computed } from 'vue'
-import { ChevronDown, ChevronUp } from '@lucide/vue'
+import { Bot, ChevronDown, ChevronUp, User } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { hasFailedTool } from '@/composables/logic/messageTurns'
-import { summarizeTurnForRail } from '@/composables/logic/summarizeTurn'
+import { summarizeTurnForRail, summarizeAssistantForRail } from '@/composables/logic/summarizeTurn'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 全部 turns（rail 节点列表数据源） */
@@ -148,17 +164,17 @@ const viewportStyle = computed(() => {
 })
 
 /**
- * 状态点 class 计算（与 dotClassFor 一致的语义，输出 Tailwind 语义类）：
- * - failed（hasFailedTool）→ bg-danger（红色，最显眼的告警色，drives user 复查）
- * - active（sessionActive 且当前激活）→ bg-accent + animate-pulse-accent（蓝脉冲，进行中信号）
- * - 其余 → bg-success（绿，完成态）
+ * agent 行 Bot 图标的着色 class（状态融入图标，替代原独立状态点）：
+ * - failed（hasFailedTool）→ text-danger（红，最显眼的告警色，drives user 复查）
+ * - active（sessionActive 且当前激活）→ text-accent + animate-pulse-accent（蓝脉冲，进行中信号）
+ * - 其余 → text-muted（完成态，中性灰，不抢视觉，区别于 user 行的 text-fg）
  *
  * 优先级：failed > active > ok —— 失败优先于进行中（失败信息更需要被注意到，
  * 即便 turn 正在 streaming，过往的失败也要标记）。
  */
-function dotClass(turn: MessageTurn, idx: number): string {
-  if (hasFailedTool(turn)) return 'fail bg-danger'
-  if (props.sessionActive && idx === props.activeTurnIndex) return 'active bg-accent animate-pulse-accent'
-  return 'ok bg-success'
+function agentIconClass(turn: MessageTurn, idx: number): string {
+  if (hasFailedTool(turn)) return 'text-danger'
+  if (props.sessionActive && idx === props.activeTurnIndex) return 'text-accent animate-pulse-accent'
+  return 'text-muted'
 }
 </script>
