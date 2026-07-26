@@ -22,6 +22,16 @@ import type { IPiEngine, IProcessManager, PiBashResult } from '../services/ports
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 
+/** bash 相关广播消息的类型收窄（ServerMessage 是泛型 interface 非 union，find 无法自动收窄 payload） */
+type BashStartMsg = ServerMessage<'message.bashStart'>
+type BashResultMsg = ServerMessage<'message.bashResult'>
+function findBashStart(b: ServerMessage[]): BashStartMsg | undefined {
+  return b.find((m) => m.type === 'message.bashStart') as BashStartMsg | undefined
+}
+function findBashResult(b: ServerMessage[]): BashResultMsg | undefined {
+  return b.find((m) => m.type === 'message.bashResult') as BashResultMsg | undefined
+}
+
 function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManagedSessionView {
   return {
     id: 's1',
@@ -122,7 +132,7 @@ describe('MessageDispatcher sendBash —— 正常路径（T5）', () => {
     expect(bashFn).toHaveBeenCalledWith('ls -la', false)
 
     // bashStart 广播
-    const start = broadcasts.find((m) => m.type === 'message.bashStart')
+    const start = findBashStart(broadcasts)
     expect(start).toBeDefined()
     expect(start!.payload).toMatchObject({
       sessionId: 's1',
@@ -132,7 +142,7 @@ describe('MessageDispatcher sendBash —— 正常路径（T5）', () => {
     expect(typeof start!.payload.timestamp).toBe('number')
 
     // bashResult 广播（完整字段）
-    const end = broadcasts.find((m) => m.type === 'message.bashResult')
+    const end = findBashResult(broadcasts)
     expect(end).toBeDefined()
     expect(end!.payload).toMatchObject({
       sessionId: 's1',
@@ -154,8 +164,8 @@ describe('MessageDispatcher sendBash —— 正常路径（T5）', () => {
   it('T5b: excludeFromContext=true 透传到 bashStart/bashResult', async () => {
     const { dispatcher, broadcasts } = makeMocks()
     await dispatcher.sendBash('s1', 'pwd', true)
-    const start = broadcasts.find((m) => m.type === 'message.bashStart')
-    const end = broadcasts.find((m) => m.type === 'message.bashResult')
+    const start = findBashStart(broadcasts)
+    const end = findBashResult(broadcasts)
     expect(start!.payload.excludeFromContext).toBe(true)
     expect(end!.payload.excludeFromContext).toBe(true)
   })
@@ -164,7 +174,7 @@ describe('MessageDispatcher sendBash —— 正常路径（T5）', () => {
     const bashResult: PiBashResult = { output: '', exitCode: undefined, cancelled: false, truncated: false }
     const { dispatcher, broadcasts } = makeMocks({ bashResult })
     await dispatcher.sendBash('s1', 'x')
-    const end = broadcasts.find((m) => m.type === 'message.bashResult')
+    const end = findBashResult(broadcasts)
     expect(end!.payload.exitCode).toBeNull()
   })
 })
@@ -185,7 +195,7 @@ describe('MessageDispatcher sendBash —— 错误路径（T6）', () => {
     // 返回 blocked（无 rejected 字段——执行失败非预检拒绝）
     expect(result).toEqual({ blocked: true })
     // 不广播 bashResult 终态（错误路径）
-    const end = broadcasts.find((m) => m.type === 'message.bashResult')
+    const end = findBashResult(broadcasts)
     expect(end).toBeUndefined()
   })
 })
@@ -220,7 +230,7 @@ describe('MessageDispatcher abortBash（T8）', () => {
     // client.abortBash 被调
     expect(abortBashFn).toHaveBeenCalledTimes(1)
     // 兑底广播 message.bashResult{cancelled:true}
-    const end = broadcasts.find((m) => m.type === 'message.bashResult')
+    const end = findBashResult(broadcasts)
     expect(end).toBeDefined()
     expect(end!.payload).toMatchObject({
       sessionId: 's1',
@@ -240,7 +250,7 @@ describe('MessageDispatcher abortBash（T8）', () => {
     await expect(dispatcher.abortBash('s1')).resolves.toBeUndefined()
 
     // 兑底终态仍广播
-    const end = broadcasts.find((m) => m.type === 'message.bashResult')
+    const end = findBashResult(broadcasts)
     expect(end).toBeDefined()
     expect(end!.payload.cancelled).toBe(true)
     // isBashRunning 仍复位

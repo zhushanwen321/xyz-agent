@@ -295,16 +295,17 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
       continue
     }
 
-    // bashExecution：pi bash 执行记录（composer-bash-execute W1）。
+    // bashExecution：pi bash 执行记录（composer-bash-execute）。
     // pi get_messages 返回 role:'bashExecution'（与 message entry 平级的顶层 entry 类型），
-    // 转成带 bashExecution 字段的 user 消息（前端渲染为 BashResult 气泡）。
+    // 转成带 bashExecution 字段的 system 消息——bash 是元信息非用户输入（W3 WC5 决策），
+    // 与实时路径（message.bashResult effect 创建 system 消息）统一走 BashOutputBlock 渲染。
     // exitCode undefined → null（与 dispatcher 广播 bashResult 时 `?? null` 对称，防 JSON 丢值）。
     // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 bash 执行记录经此分支还原。
     if (m.role === 'bashExecution') {
       const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number }
       result.push({
         id: crypto.randomUUID(),
-        role: 'user',
+        role: 'system',
         content: '',
         status: 'complete',
         bashExecution: {

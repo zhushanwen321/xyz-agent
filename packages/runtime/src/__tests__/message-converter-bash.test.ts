@@ -2,12 +2,12 @@
  * message-converter bashExecution 分支测试（composer-bash-execute W1）。
  *
  * 锁定 convertPiHistory 的 bashExecution 分支：
- * - role:'bashExecution' → 转成 role:'user' + bashExecution 字段的 Message
+ * - role:'bashExecution' → 转成 role:'system' + bashExecution 字段的 Message（W3 WC5：bash 是元信息非用户输入）
  * - exitCode undefined → null（防 JSON 丢值，与 dispatcher 广播时 ?? null 对称）
  * - excludeFromContext 透传（!! 归一为 boolean）
  *
  * 对应 AGENTS.md 规则 7.5 持久化链路：重开 session 时 bash 执行记录经此分支还原为
- * 带 bashExecution 字段的 user 消息，前端渲染为 BashResult 气泡。
+ * 带 bashExecution 字段的 system 消息，前端统一走 BashOutputBlock 渲染（与实时 effect 路径一致）。
  *
  * 运行：npx vitest run src/__tests__/message-converter-bash.test.ts
  */
@@ -28,7 +28,7 @@ interface PiBashExecutionEntry {
 
 describe('convertPiHistory —— bashExecution 分支（W1 持久化链路）', () => {
   // T9: 完整字段映射
-  it('T9: bashExecution entry → 1 条 user Message，bashExecution 字段完整映射', () => {
+  it('T9: bashExecution entry → 1 条 system Message，bashExecution 字段完整映射', () => {
     const entry: PiBashExecutionEntry = {
       role: 'bashExecution',
       command: 'ls',
@@ -43,7 +43,7 @@ describe('convertPiHistory —— bashExecution 分支（W1 持久化链路）',
 
     expect(messages).toHaveLength(1)
     const msg = messages[0]
-    expect(msg.role).toBe('user')
+    expect(msg.role).toBe('system')
     expect(msg.content).toBe('')
     expect(msg.status).toBe('complete')
     // bashExecution 完整字段
@@ -126,8 +126,8 @@ describe('convertPiHistory —— bashExecution 分支（W1 持久化链路）',
     ])
 
     expect(messages).toHaveLength(2)
-    // 第一条：bashExecution user 消息
-    expect(messages[0].role).toBe('user')
+    // 第一条：bashExecution system 消息（W3 WC5：bash 是元信息非用户输入）
+    expect(messages[0].role).toBe('system')
     expect(messages[0].bashExecution).toBeDefined()
     expect(messages[0].bashExecution!.command).toBe('echo hi')
     // 第二条：普通 user 文本消息，无 bashExecution

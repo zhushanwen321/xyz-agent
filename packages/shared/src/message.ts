@@ -258,9 +258,9 @@ export interface Message {
   display?: boolean
   /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
   bgNotify?: BgNotifyDetails
-  /** Bash 执行结果（composer-bash-execute W1）。仅 user 消息有值：composer 直接执行 bash
-   *  （不经 LLM turn），结果经 message.bashResult 广播 + 持久化分支（converter）还原为
-   *  带 bashExecution 的 user 消息。与 toolCall 互斥（bash 不走工具链）。 */
+  /** Bash 执行结果（composer-bash-execute）。system 消息有值：实时经 message.bashResult
+   *  effect 创建 system 消息，历史经 converter 还原为 system 消息，统一走 BashOutputBlock 渲染。
+   *  与 toolCall 互斥（bash 不走工具链）。 */
   bashExecution?: BashExecutionData
   /** pi CustomMessage details 原始字段（含 __gui__ 结构化渲染数据）。
    *  前端检测 details.__gui__ 路由到 GuiComponentRenderer。 */
