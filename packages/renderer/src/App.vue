@@ -41,6 +41,7 @@ import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
+import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 
 // 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
 const { t } = useI18n()
@@ -53,6 +54,9 @@ const { onConnected } = useSidebar()
 // useForkBranchNotify diff 分支状态 → 状态变化反馈行）。App setup 是全局 effect 作用域，
 // onScopeDispose 随 App 卸载退订（单实例，与 events.onGlobalType 范式一致）。
 bindForkNoticeEffect()
+// fast-handoff：订阅 session.handoffComplete 广播 → 复位源 session handingOff 态 + 刷新列表 + 跳转新 session。
+// 与 bindForkNoticeEffect 同范式（effect 层订阅，非 useChat switch）。onScopeDispose 随 App 卸载退订。
+bindHandoffEffect()
 onMounted(() => { void init() })
 // [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
 // - 首次 connected → initApp（内部含 workspaceStore.load + presetCwd）

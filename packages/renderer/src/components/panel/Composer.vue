@@ -44,6 +44,24 @@
             <X class="size-3" />
           </Button>
         </div>
+        <!-- Handoff 模式标识 chip（fast-handoff）：顶部 accent chip 提示「将交接到新 session」+ × 退出 -->
+        <div
+          v-if="handoff.handoffMode.value"
+          class="composer-mode-chip mx-2.5 mt-2 flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--accent)]"
+          data-testid="composer-handoff-chip"
+        >
+          <Upload class="size-3" />
+          <span class="flex-1">{{ t('panel.composer.handoffChip') }}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-4 rounded-sm p-0 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
+            :title="t('panel.composer.handoffExit')"
+            @click="handoff.exitHandoffMode"
+          >
+            <X class="size-3" />
+          </Button>
+        </div>
         <!-- 顶部元信息行 slot（landing 态：directory/branch chip；panel 态留空） -->
         <slot name="meta-row" />
         <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
@@ -103,7 +121,7 @@
           size="icon"
           class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
           :disabled="!canSend"
-          :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
+          :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : handoff.handoffMode.value ? t('panel.composer.handoffSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
@@ -118,7 +136,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, Loader2, Square, X, GitFork } from '@lucide/vue'
+import { ArrowUp, Loader2, Square, X, GitFork, Upload } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
 import AddMenuPopover from './AddMenuPopover.vue'
@@ -130,6 +148,7 @@ import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
 import { useChat } from '@/composables/features/useChat'
+import { useSidebar } from '@/composables/features/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/useProjectSkills'
 import { useChatStore } from '@/stores/chat'
@@ -139,6 +158,8 @@ import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverT
 import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
+import { useComposerHandoffMode } from '@/composables/panel/useComposerHandoffMode'
+import { useComposerModeVisual } from '@/composables/panel/useComposerModeVisual'
 
 const props = withDefaults(
   defineProps<{
@@ -155,11 +176,15 @@ const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
 const { projectSkills: landingProjectSkills } = useProjectSkills(flow.currentCwd) // W3 ADR-0038：landing 当前 cwd 项目 skill
 const { globalSkills: landingGlobalSkills } = useGlobalSkills() // W4 FR-5：landing 全局 skill
-/** 合并活跃态：流式中（isGenerating）或派发空窗期——消除 ack 到达但 message_start 未到的空窗期 */
 const isActive = computed(() => {
   if (!props.sessionId) return false
   return chatStore.isActive(props.sessionId)
 })
+
+// handoff 编排真源：setup 同步取一次（对齐 fork 模式 useComposerForkMode.ts:61）。不能在 deps.handoff
+// 闭包内「发送时才调」useSidebar()——handleHandoffSend 是 async，闭包在 await 后微任务里调 useSidebar()
+// 无 active effect scope → onScopeDispose 不注册 → session.list 订阅 refCount 泄漏（违反 CLAUDE.md 规则 #2）。
+const { handoff: handoffAction } = useSidebar()
 
 // 模型 + 思考等级状态（含 landing 态延迟 apply）—— 见 useComposerModelThinking
 const {
@@ -178,8 +203,7 @@ const draft = ref('')
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 
-// 命令浮层触发态机（slash/file 浮层触发 + CommandPopover 联动 + pendingSlash 注入）
-// —— 见 useCommandPopoverTrigger。inputRef 先声明，composable 内部回调按需调其方法。
+// 命令浮层触发态机 —— 见 useCommandPopoverTrigger
 const sessionIdRef = computed(() => props.sessionId)
 const {
   cmdOpen,
@@ -195,8 +219,7 @@ const {
 // drawer 选区/文件引用注入消费（跨组件树一次性消息通道）
 useComposerInjection(inputRef, sessionIdRef, computed(() => props.variant))
 
-// 输入历史导航（↑/↓ 翻阅已发送消息，shell 风格）——见 useComposerHistory。
-// sessionId null（landing 态无真实 session）时 history 为空。
+// 输入历史导航（↑/↓ shell 风格）—— 见 useComposerHistory
 const { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing } = useComposerHistory(
   sessionIdRef,
   {
@@ -206,18 +229,18 @@ const { handleArrowUp, handleArrowDown, resetBrowsing, isBrowsing } = useCompose
   },
 )
 
-// FR4: per-session 草稿存储（内存，不持久化到磁盘）
+// FR4: per-session 草稿存储（内存不持久化）；session 切换时保存旧/恢复新草稿
 const drafts = new Map<string, string>()
-// FR4: session 切换时保存旧 session 草稿，恢复新 session 草稿
 watch(
   () => props.sessionId,
   (newId, oldId) => {
     if (oldId) {
-      // browsing 态下 getText() 返回历史条目，应保存用户实际输入的 savedDraft
+      // browsing 态 getText() 返回历史条目，存用户实际输入
       drafts.set(oldId, isBrowsing.value ? (draft.value || '') : (inputRef.value?.getText() ?? ''))
     }
-    // FR-15：切 session 自动退出 fork 模式，避免 fork 来源（srcSessionId）残留指向错误 session。
+    // 切 session 退出 fork/handoff 模式，避免来源残留指向错误 session
     if (fork.forkMode.value) fork.exitForkMode()
+    if (handoff.handoffMode.value) handoff.exitHandoffMode()
     resetBrowsing()
     if (newId) {
       const saved = drafts.get(newId)
@@ -232,19 +255,16 @@ watch(
   },
 )
 
-/** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
 const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
 
-/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断） */
+/** ComposerInput input 事件 → 维护 draft */
 function onInputChange(text: string): void {
   draft.value = text
-  // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
-  resetBrowsing()
+  resetBrowsing() // 用户修改内容，重置历史浏览态
 }
 
-/** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
 function clearInput(): void {
   draft.value = ''
   if (props.sessionId) drafts.delete(props.sessionId)
@@ -257,8 +277,7 @@ function restoreInput(text: string): void {
   inputRef.value?.setText(text)
 }
 
-// Fork 提问模式（FR-13/14/15）：forkMode 状态真源 + 跨组件触发通道 + fork 发送/Esc/视觉派生
-// —— 见 useComposerForkMode。发送/清空等副作用经 deps 注入（保持 fork 状态真源单一）。
+// Fork 提问模式（FR-13/14/15）—— 见 useComposerForkMode
 const fork = useComposerForkMode(sessionIdRef, {
   inputRef,
   setSending: (value) => { isSending.value = value },
@@ -266,46 +285,45 @@ const fork = useComposerForkMode(sessionIdRef, {
   restoreInput,
 })
 
+// Handoff 模式（fast-handoff）—— 见 useComposerHandoffMode。与 fork 互斥。复用上方 setup 顶部同步取到的 handoffAction。
+const handoff = useComposerHandoffMode(sessionIdRef, {
+  inputRef,
+  setSending: (value) => { isSending.value = value },
+  clearInput,
+  restoreInput,
+  exitForkMode: fork.exitForkMode,
+  handoff: (srcSessionId, focus) => handoffAction(srcSessionId, focus),
+})
+// 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
+// ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。
+watch(() => fork.forkMode.value, (isFork) => {
+  if (isFork && handoff.handoffMode.value) handoff.exitHandoffMode()
+})
+
 const hasInput = computed(() => draft.value.trim().length > 0)
-/** 可发送：有输入且非活跃（流式/派发）非 sending 非 compacting。
- *  landing 态（sessionId 可能为公共 session id 或 null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
-const canSend = computed(() => hasInput.value && !isActive.value && !isSending.value && !isCompacting.value)
+/** 忙时（流式/派发/发送中/压缩中）—— canSend 与 canHandoffSend 共用，避免重复守卫 */
+const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
+const canSend = computed(() => hasInput.value && !isBusy.value)
 
-/**
- * composer-box class（draft）：
- * - fork 模式：accent 边 + 3px ring glow + accent 底（forkBoxClass）
- * - S6 流式中/派发空窗期：accent 蓝 steer 呼吸 ring
- * - S2 普通输入中：中性聚焦 ring
- */
-const boxClass = computed(() => [
-  fork.forkBoxClass.value
-    || (isActive.value
-      ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
-      : hasInput.value
-        ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
-        : ''),
-  isSending.value && 'opacity-[0.55]',
-])
+// composer-box 视觉派生（boxClass / placeholder 三级链：fork > handoff > 默认）—— 见 useComposerModeVisual
+const { boxClass, placeholder } = useComposerModeVisual({
+  forkBoxClass: fork.forkBoxClass,
+  handoffBoxClass: handoff.handoffBoxClass,
+  forkPlaceholder: fork.forkPlaceholder,
+  handoffPlaceholder: handoff.handoffPlaceholder,
+  isActive,
+  hasInput,
+  isSending,
+})
 
-const placeholder = computed(() =>
-  fork.forkPlaceholder.value
-    ?? (isActive.value ? t('panel.composer.steerHint') : t('panel.composer.inputHint')),
-)
-
-/**
- * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。分支优先级：
- * 1. fork 模式 → forkSessionAsk（fork 新分支 + content 作首条 user），详见 useComposerForkMode。
- * 2. landing 态 → submitFirstMessage（延迟 create session 后再发）。用 variant 而非 sessionId 判定：
- *    landing 态 sessionId 可能是公共 session id（供 CommandPopover 显示 pi 命令），非真实工作 session。
- * 3. /compact slash chip（操作型前缀）→ 专用 compact RPC（#6），不发 prompt 给 pi。
- *    检测：'/compact'（纯 chip）或 '/compact <指令>'（chip + 附加文本 → customInstructions），
- *    与 pi TUI interactive-mode.ts:2656 解析对齐。必须在此拦截：pi RPC 不解析 builtin slash。
- * 4. 普通发送 → useChat.send。
- */
+/** 发送。分支优先级：fork → handoff → landing → /compact → 普通 send。 */
 async function onSend(): Promise<void> {
-  if (!canSend.value) return
+  // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
+  const canHandoffSend = handoff.handoffMode.value && !isBusy.value
+  if (!canSend.value && !canHandoffSend) return
   const text = draft.value
-  if (await fork.handleForkSend(text)) return
+  if (fork.forkMode.value && await fork.handleForkSend(text)) return
+  if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
   if (props.variant === 'landing') {
     clearInput()
     isSending.value = true
@@ -329,14 +347,14 @@ async function onSend(): Promise<void> {
     await compact(props.sessionId!, customInstructions)
     return
   }
-  // 先快照 segments（clearInput 会清空 DOM，必须在清空前提取，否则 getSegments 返回 []）。
+  // segments 先快照（clearInput 会清空 DOM）
   const segments = inputRef.value?.getSegments() ?? []
   clearInput()
   isSending.value = true
   try {
     await send(props.sessionId!, segments)
   } catch (e) {
-    // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免输入丢失。
+    // 发送失败恢复草稿，避免输入丢失
     restoreInput(text)
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('panel.panel.sendFailed', { error: msg }))
@@ -345,23 +363,21 @@ async function onSend(): Promise<void> {
   }
 }
 
-/** 追加 steer：活跃态（流式/派发）有输入时 ⏎ 触发 */
+/** 追加 steer：活跃态有输入时 ⏎ 触发。segments 先快照（clearInput 会清空 DOM） */
 async function onSteer(): Promise<void> {
   if (!hasInput.value || !isActive.value) return
-  // submit 内部会 clearInput（清空 DOM），必须在调 submit 之前快照 segments，否则 getSegments 返回 []。
   const segments = inputRef.value?.getSegments() ?? []
   await submit(draft.value, () => steer(props.sessionId!, segments))
 }
 
-/** 追加 follow-up：S6 有输入时 Alt+⏎ 触发；非流式则退化为普通发送 */
+/** 追加 follow-up：Alt+⏎ 触发；非流式退化为普通发送 */
 async function onFollowUp(): Promise<void> {
   if (!hasInput.value) return
-  // submit 内部会 clearInput（清空 DOM），必须在调 submit 之前快照 segments，否则 getSegments 返回 []。
   const segments = inputRef.value?.getSegments() ?? []
   await submit(draft.value, () => followUp(props.sessionId!, segments))
 }
 
-/** 公共提交：清空输入 → 调用 sender → 失败时恢复草稿 */
+/** 公共提交：清空输入 → sender → 失败恢复草稿 */
 async function submit(text: string, sender: () => Promise<void>): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed) return
@@ -379,23 +395,20 @@ async function onAbort(): Promise<void> {
   await abort(props.sessionId!)
 }
 
-/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层。
- *  ↑/↓ 翻历史（三阶段模型：先视觉行移动，到边缘才翻历史，spec FR1）。 */
+/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
   if (fork.handleForkEsc(e)) return // Fork 模式 Esc 退出（仅 composer 聚焦时到达，不与全局 Esc 冲突）
+  if (handoff.handleHandoffEsc(e)) return // Handoff 模式 Esc 退出（对称 fork，互斥下不会同时活跃）
   // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
-  if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+  const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+  if (bareArrow && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
     e.preventDefault()
-    if (inputRef.value?.moveCaretVertical('up') === 'moved') return
-    handleArrowUp()
-    return
-  }
-  if (e.key === 'ArrowDown' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
-    e.preventDefault()
-    if (inputRef.value?.moveCaretVertical('down') === 'moved') return
-    handleArrowDown()
+    const dir = e.key === 'ArrowUp' ? 'up' : 'down'
+    if (inputRef.value?.moveCaretVertical(dir) === 'moved') return
+    if (dir === 'up') handleArrowUp()
+    else handleArrowDown()
     return
   }
   if (e.key !== 'Enter' || e.shiftKey) return
@@ -409,12 +422,14 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-// Fork 模式 API 暴露：测试与跨组件触发通道需经组件实例访问 forkMode 状态 + enter/exit 方法。
-// forkModeRef 是 { value } 包装对象（非 ref 不被 defineExpose 解包），对齐 vm.forkMode.value 契约。
+// Fork/Handoff 模式 API 暴露：modeRef 是 {value} 包装对象（非 ref 不被 defineExpose 解包）
 defineExpose({
   forkMode: fork.forkModeRef,
   enterForkMode: fork.enterForkMode,
   exitForkMode: fork.exitForkMode,
+  handoffMode: handoff.handoffModeRef,
+  enterHandoffMode: handoff.enterHandoffMode,
+  exitHandoffMode: handoff.exitHandoffMode,
 })
 </script>
 

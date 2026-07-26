@@ -222,7 +222,7 @@ const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
 const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -401,6 +401,9 @@ const keymap: KeymapEntry[] = [
   // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。
   { key: 'g', action: () => { void forkFromLastAssistant() } },
   { key: 'g', shift: true, action: () => { void enterForkModeFromLastAssistant() } },
+  // fast-handoff 快捷键：⌘J 从末条 assistant 打包文档到新 session（完成后跳转新 session）。
+  // 用 ⌘J 而非 ⌘H：macOS 系统保留 ⌘H 为「Hide Application」，OS 先拦截 renderer 拦不住。
+  { key: 'j', action: () => { void handoffFromLastAssistant() } },
 ]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。

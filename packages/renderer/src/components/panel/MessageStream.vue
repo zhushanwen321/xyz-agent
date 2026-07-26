@@ -71,7 +71,7 @@
       <div
         v-if="isCompacting"
         ref="compactingNoticeEl"
-        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 py-1"
+        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 pt-2.5 pb-5"
         :style="{ top: totalHeight + topOffset + 'px' }"
       >
         <span class="h-px flex-1 bg-border" />
@@ -80,11 +80,33 @@
         <span class="h-px flex-1 bg-border" />
       </div>
 
-      <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + topOffset） -->
+      <!-- 正在交接提示（fast-handoff 瞬时态）：isHandingOff=true 时显示在压缩中块之后。
+           完成经 session.handoffComplete 广播跳转新 session，isHandingOff 同步复位。
+           非虚拟化，absolute 定位到列表末尾 + topOffset + compacting 占位高度。 -->
+      <div
+        v-if="isHandingOff"
+        class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 pt-2.5 pb-5"
+        :style="{ top: handoffNoticeTop + 'px' }"
+      >
+        <span class="h-px flex-1 bg-border" />
+        <Loader2 class="size-3 shrink-0 animate-spin text-muted" />
+        <span class="min-w-0 truncate text-[11px] leading-snug text-muted">{{ t('panel.message.handing') }}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-auto p-0 text-[11px] text-muted hover:text-fg"
+          data-testid="handoff-cancel-btn"
+          @click="onAbortHandoff"
+        >{{ t('panel.message.cancel') }}</Button>
+        <span class="h-px flex-1 bg-border" />
+      </div>
+
+      <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + topOffset）。
+           top 计入 compacting + handoff 占位高度，避免与上方瞬时块重叠。 -->
       <div
         v-if="isDispatching && !hasWorkingTurn"
         class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[12px] text-muted"
-        :style="{ top: (isCompacting ? totalHeight + COMPACTING_NOTICE_HEIGHT : totalHeight) + topOffset + 'px' }"
+        :style="{ top: dispatchingTop + 'px' }"
       >
         <Loader2 class="size-3 animate-spin text-accent" />
         <span>{{ t('panel.message.dispatching') }}</span>
@@ -131,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -154,6 +176,12 @@ import { type Message } from '@xyz-agent/shared'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
+import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
+import {
+  useMessageStreamNotices,
+  COMPACTING_NOTICE_HEIGHT,
+  HANDOFF_NOTICE_HEIGHT,
+} from '@/composables/panel/useMessageStreamNotices'
 
 const props = defineProps<{
   sessionId: string
@@ -173,16 +201,6 @@ const { loadingMore, showLoadMore, handleLoadMore } = useLoadMoreHistory(() => p
  */
 const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
 
-/** 当前 session 是否正在压缩（session.compacting → true，compacted → false）。
- *  驱动消息流末尾的「--- 压缩中 ---」瞬时提示。完成后 dispatcher 广播 message.compactionSummary，
- *  插入持久化 system 消息（SystemNotice 渲染「已压缩上下文」），isCompacting 同时复位为 false。 */
-const isCompacting = computed(() => chat.isCompacting(props.sessionId))
-
-/** dispatching 空窗期：已发送 prompt 但 message_start 未到（无 streaming assistant，占位行给「思考中…」提示）。 */
-const isDispatching = computed(() => chat.isActive(props.sessionId) && !chat.isGenerating(props.sessionId))
-/** 最后一个 turn 是否正在流式生成（A 类流式语义，驱动 dispatching 占位显隐 + 滚动跟随）。 */
-const hasWorkingTurn = computed(() => lastRenderTurn.value?.isStreaming ?? false)
-
 /** subagent 虚拟 session running 时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。 */
 const forceWorking = computed(() => {
   if (!isSubagentVirtualId(props.sessionId)) return false
@@ -201,22 +219,24 @@ const renderItems = computed(() =>
   toRenderItems(filterDisplayableMessages(currentMessages.value), forceWorking.value),
 )
 
+/** 渲染项里最后一个 turn（streaming 滚动判定 + hasWorkingTurn 派生用）。 */
+const lastRenderTurn = computed(() => {
+  for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
+    const item = renderItems.value[i]
+    if (item.kind === 'turn') return item.turn
+  }
+  return null
+})
+
 /**
  * 虚拟滚动（W3）：窗口化渲染，视口外 turn 不挂载，长对话 DOM 从 O(N) 降到 O(视口可见)。
- * items getter 返回完整 renderItems（含 turn + system），composable 内部统一处理。
- * 高度缓存键用首消息 id（turn）/ s-message.id（system），非 t-index（防 truncateFrom 张冠李戴）。
- * 前置依赖 M4（scrollToBottom rAF trailing 节流 + INVAR-M4-2 延迟求值守卫）已落地。
+ * items getter 返回完整 renderItems（含 turn + system）；高度缓存键用首消息 id（防 truncateFrom 张冠李戴）。
+ * ── 像素常量与 DOM 强绑定（B2）──
+ * 高度常量直接参与 absolute 定位 top，依赖模板对应 DOM 块真实高度；改 padding/字号/icon 必须同步，
+ * 否则定位静默漂移（dev-only assertConstantHeights 见下方会实测对比并 console.warn）。
+ * COMPACTING_NOTICE_HEIGHT / HANDOFF_NOTICE_HEIGHT 已下沉到 useMessageStreamNotices。
  */
-/**
- * ── 像素常量与 DOM 强绑定（B2）──────────────────────────────────────────
- * 下面三个高度常量直接参与 absolute 定位 top 计算，依赖模板对应 DOM 块的真实高度。
- * 改任何一方的 padding/字号/icon size 都必须同步另一方，否则定位会静默漂移。
- * dev-only assertConstantHeights（见下方）会实测对比并在不匹配时 console.warn。
- */
-/**
- * 虚拟滚动估算高度（未实测 turn 的初始高度，经验值）。
- * 与定位无关——只在 ResizeObserver 上报实测值之前作 fallback，上报后即被替换。
- */
+/** 虚拟滚动估算高度（未实测 turn 的初始高度经验值；ResizeObserver 上报实测值后即被替换）。 */
 const ESTIMATED_TURN_HEIGHT = 200
 /** 虚拟滚动上下 buffer turn 数（快速滚动时预渲染视口外的 turn，防白屏） */
 const VIRTUAL_BUFFER_TURNS = 2
@@ -228,14 +248,6 @@ const VIRTUAL_BUFFER_TURNS = 2
  *   若改 Button size / py-* / icon size，必须重测并同步此常量（dev 断言会提醒）。
  */
 const LOAD_MORE_RESERVED_HEIGHT = 44
-/**
- * compaction notice 占位高度。
- * 强绑定 DOM：模板 isCompacting 块（`flex items-center gap-2 py-1`，含 `size-3` spinner
- *   + `text-[11px] leading-snug` 文本 + 两条 `h-px` 分隔线）。
- *   实际高度 ≈ py-1(4px*2) + max(spinner 12px, text≈16px) ≈ 24px；常量 28 略大，给 dispatching
- *   占位避让留 4px 余量。改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
- */
-const COMPACTING_NOTICE_HEIGHT = 28
 
 const virtualList = useVirtualTurnList({
   items: () => renderItems.value,
@@ -281,11 +293,28 @@ provideTurnResizeRegistry({
 })
 
 /**
- * ForkNotice 反馈行（transient，RV1）：feed 消费 + 定位 + 交互已封装进 useForkNoticeStream。
- * bindForkNoticeEffect（App.vue）订阅 session.forkNotice 广播并按 srcSessionId 路由入 feed，
- * 本 composable 读自身 session 的通知并在对话流末尾定位渲染。不进 chat store（transient）。
- * 定位依赖以 ComputedRef 注入（totalHeight/topOffset/isCompacting 等，容器侧计算结果）。
+ * 末尾瞬时块（compacting/handoff/dispatching）的状态 computed + 垂直堆叠定位 + 取消 handler
+ * 聚合到 useMessageStreamNotices（M2 + fast-handoff）。内部委托 useNoticeStack 做堆叠计算，
+ * 消除占位叠加的三处重复计算（reviewer m4）。顺序（自上而下）：compacting → handoff → dispatching → fork 行。
  */
+const {
+  isCompacting,
+  isHandingOff,
+  isDispatching,
+  hasWorkingTurn,
+  handoffNoticeTop,
+  dispatchingTop,
+  forkNoticeBaseTop,
+  onAbortHandoff,
+} = useMessageStreamNotices({
+  sessionId: computed(() => props.sessionId),
+  totalHeight,
+  topOffset,
+  hasWorkingTurn: () => lastRenderTurn.value?.isStreaming ?? false,
+})
+
+/** ForkNotice 反馈行（transient，RV1）：feed 消费 + 定位 + 交互封装在 useForkNoticeStream。
+ *  [M2] 注入 useMessageStreamNotices 的 forkNoticeBaseTop（消除占位叠加重复计算）。 */
 const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
   useForkNoticeStream(() => props.sessionId, {
     totalHeight,
@@ -294,6 +323,9 @@ const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkN
     isDispatching,
     hasWorkingTurn,
     compactNoticeHeight: COMPACTING_NOTICE_HEIGHT,
+    isHandingOff,
+    handoffNoticeHeight: HANDOFF_NOTICE_HEIGHT,
+    injectedBaseTop: forkNoticeBaseTop,
   })
 
 /**
@@ -322,15 +354,6 @@ const lastUserTurnIdx = computed(() => {
 function onEditStateChange(idx: number, editing: boolean): void {
   virtualList.pinEditing(editing ? idx : -1)
 }
-
-/** 渲染项里最后一个 turn（streaming 滚动判定用） */
-const lastRenderTurn = computed(() => {
-  for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
-    const item = renderItems.value[i]
-    if (item.kind === 'turn') return item.turn
-  }
-  return null
-})
 
 /**
  * auto-scroll：stickToBottom guard —— 非贴底时不强制拉回。
@@ -366,35 +389,17 @@ watch(
 )
 
 /**
- * 首次挂载强制滚到底（force=true 绕过 guard）。
- * MessageStream 经 v-if 条件挂载，首次挂载时 sessionId 已是目标值，session watch 不触发
- * （watch 监听变化，挂载不算变化）；不显式滚则停在 scrollTop=0（最上方）。
- * 异步渲染导致的 scrollHeight 抖动由 ResizeObserver 兜底，此处只做首次定位 + 校准 showJumpButton。
+ * 滚动触发编排（消息/notice 变化 → scrollToBottom）：首次挂载滚到底、消息条数变化、
+ * 流式 text 追加、notice（压缩中/正在交接）显隐四类触发，下沉到 useMessageStreamScroll
+ * （script setup ≤300 行规范 + 单一变化轴复用）。切换 session 的滚动留在下方（依赖 virtualList + settling）。
  */
-onMounted(() => {
-  scrollToBottom('auto', true)
+useMessageStreamScroll({
+  currentMessages,
+  lastRenderTurn,
+  isCompacting,
+  isHandingOff,
+  scrollToBottom,
 })
-
-watch(
-  () => currentMessages.value.length,
-  () => {
-    scrollToBottom('auto')
-  },
-)
-
-// streaming 中 text 追加也触发滚动（按最后一条消息 content 长度）
-watch(
-  () => {
-    const list = currentMessages.value
-    const last = list[list.length - 1]
-    return last?.content.length ?? 0
-  },
-  () => {
-    if (lastRenderTurn.value?.isStreaming) {
-      scrollToBottom('auto')
-    }
-  },
-)
 
 // 切换 session → 重置虚拟列表高度缓存（不同 session 键语义不同，复用致错位，SR10/INVAR-8）
 //   + 强制滚到底（展示最新内容，不受 guard）

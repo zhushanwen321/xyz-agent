@@ -41,6 +41,7 @@ import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { clearUnread } from '@/composables/useSessionMarkers'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
+import { useHandoffActions } from '@/composables/features/useHandoffActions'
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
 // useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），
@@ -394,6 +395,18 @@ export function useSidebar() {
     enterForkModeFromLastAssistant,
   } = useForkActions(focusedSessionId)
 
+  /**
+   * Handoff 操作（handoff / abortHandoff / handoffFromLastAssistant / enterHandoffModeFromLastAssistant）。
+   * 编排逻辑抽到 useHandoffActions（参照 useForkActions 范式），注入 focusedSessionId ref，
+   * 内部自行获取 chat store + api。handoff 逻辑与 fork 正交，独立 composable 职责内聚。
+   */
+  const {
+    handoff,
+    abortHandoff,
+    handoffFromLastAssistant,
+    enterHandoffModeFromLastAssistant,
+  } = useHandoffActions(focusedSessionId)
+
 
   /**
    * 加载 session 列表（W6 去全量预 hydrate）。
@@ -523,5 +536,9 @@ export function useSidebar() {
     forkSessionAsk,
     forkFromLastAssistant,
     enterForkModeFromLastAssistant,
+    handoff,
+    abortHandoff,
+    handoffFromLastAssistant,
+    enterHandoffModeFromLastAssistant,
   }
 }

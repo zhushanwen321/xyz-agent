@@ -36,6 +36,7 @@ import { WorktreeService } from './services/worktree/worktree-service.js'
 import { TerminalService } from './services/terminal/terminal-service.js'
 import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
+import { HandoffService } from './services/handoff-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
@@ -153,7 +154,15 @@ async function main(): Promise<void> {
   // the interpreter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
   //
-  // fileChangeDiff：infra 纯函数的 port 实现（无状态，全局单例复用）。
+  // WARNING TDZ：显式声明 handoffService（在下方实例化），让 onTurnFinalize 闭包内引用意图明确，
+  // 不依赖 TDZ + `?.` 掩盖潜在 bug。原 const handoffService 声明在下方 L256，闭包 L205 引用之靠
+  // const 的 TDZ 安全性（闭包执行晚于 main 流，那时已赋值）。改成 let 提前声明后，TS / reader 都能
+  // 看清前向引用意图。
+  //
+  // TDZ 前向引用：onTurnFinalize 闭包（在下方 createAdapter 内）引用本变量，但实际赋值在下方
+  // new HandoffService(...) 处。声明与首次赋值分离是刻意的——此处 let 而非 const，让意图明确。
+  // eslint-disable-next-line prefer-const -- TDZ 前向引用（见上注释），首次赋值在下方 HandoffService 实例化处
+  let handoffService: HandoffService | undefined
   const fileChangeDiff = new FileChangeDiffAdapter()
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
@@ -186,7 +195,17 @@ async function main(): Promise<void> {
       // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
       // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
-      onTurnFinalize: (sid, stopReason) => sessionService.handleTurnEndSideEffects(sid, stopReason),
+      onTurnFinalize: (sid, stopReason) => {
+        sessionService.handleTurnEndSideEffects(sid, stopReason)
+        // fast-handoff：pi 跑完 /skill:handoff 后在此触发文档提取 + 新建 session + 注入 + 广播。
+        // 非 handoff 触发的 turn-end（inflight 无条目）HandoffService.onTurnEnd 内部直接 return。
+        //
+        // onTurnEnd 是 async，但 EventInterpreter.handleTurnEnd 是同步热路径（不能 await 否则
+        // 阻塞整个 pi 事件循环）。故 handoff 编排异步进行，不阻塞 EventInterpreter——`void` 前缀
+        // 明确标注 fire-and-forget 语义。错误在 onTurnEnd 内部 try/catch 自处理（广播 message.error
+        // 反馈到源 session 对话流），finally 清理 inflight，无 unhandled rejection（onTurnEnd 无抛错逃逸路径）。
+        void handoffService?.onTurnEnd(sid, stopReason)
+      },
       onThinkingLevelChanged: (sid, level) => {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
@@ -232,6 +251,20 @@ async function main(): Promise<void> {
     new GitInfoReader(),
     workspaceService,
   )
+
+  // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
+  // + server（IMessageBroker 广播）+ pm（getClient 取源 session pi 句柄）。与 GitService/FileService 同模式
+  // （经 server.setServices 注入到 handler），但额外经 onTurnFinalize opt 接到 EventInterpreter（见上方闭包）。
+  //
+  // BLOCKER 2 / WARNING nextPushId：注入 broadcastSessionList + nextPushId（来自 broker），
+  // 与 session-message-handler 的 create/fork/delete/rename 一致。
+  handoffService = new HandoffService({
+    sessionService,
+    broker: server,
+    pm,
+    broadcastSessionList: () => server.broadcastSessionList(),
+    nextPushId: () => server.nextPushId(),
+  })
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
@@ -305,10 +338,14 @@ async function main(): Promise<void> {
     void reloadOrchestrator.onMessageComplete(sid)
   })
   // R3：session 删除（主动 delete / 进程异常退出）清 pendingReload 残留。
+  // C2：叠加 HandoffService.cancelInflight——session 删了 agent_end 永不触发，
+  // onTurnEnd 不会被调用，inflight 条目会泄漏。onSessionDelete 是单订阅钩子（setter 覆盖语义），
+  // 故在同一 handler 内追加 handoff 清理（保留原 clearPending 绑定，叠加而非替换）。
   // Terminal：同步销毁该 session 绑定的 PTY（kill 进程 + 清 ptyMap）。
   sessionService.setOnSessionDelete((sid) => {
     reloadOrchestrator.clearPending(sid)
     terminalService.destroyPty(sid)
+    handoffService?.cancelInflight(sid)
   })
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
@@ -339,7 +376,7 @@ async function main(): Promise<void> {
     },
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

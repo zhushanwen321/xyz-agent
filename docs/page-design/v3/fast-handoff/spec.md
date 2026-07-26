@@ -1,8 +1,105 @@
 # Fast Handoff · 一键交接到新 session（设计单元 spec）
 
-> 层级 **L2 跨区联动 + Extension** · 痛点3 主线 · 共享痛点2 的三件套架构
-> 配套 draft：待做（交互形态：一个"handoff 并新开"按钮 + loading + 自动跳转到新 session）
-> 上游规范：`../fast-merge/spec.md`（痛点2，三件套架构）、`../../design-tokens.md`（冷蓝暗色 SSOT）
+> 层级 **L2 跨区联动** · 痛点3 主线
+> 配套 draft：`draft-fast-handoff.html`（2026-07-24 完成，5 场景可交互 demo）
+> 上游规范：`../../design-tokens.md`（冷蓝暗色 SSOT）、`~/.agents/skills/handoff/SKILL.md`（handoff skill 提示词来源）
+
+---
+
+## ⚠️ 设计修订 2026-07-24（以本节为准，以下 §0-§4 旧设计已 DEPRECATED）
+
+> **核心裁决推翻**：原方案「structured-output 三件套强制 JSON schema」被废弃。改用 **handoff skill 自由格式文档 + xml tag 包装注入**。
+> 旧设计（§0-§4 的 extension/setActiveTools/schema/Ajv 校验）保留在下文作历史追溯，标注 DEPRECATED，**不要按旧设计实现**。
+> 实现以下文「修订后方案」为准。
+
+### 修订原因
+
+用户（2026-07-24 设计评审）决定：不追求格式强稳定，改用 handoff skill 现有提示词（自由格式文档），用 xml tag 包装边界保证可识别即可。理由：大幅简化架构（不需 extension、不需打包、不需 schema 校验），格式不稳定用 xml tag + action-oriented 注入弥补。
+
+### 修订后方案（实现以此为准）
+
+**生成**：当前 session 的 pi 进程跑 `/skill:handoff`（提示词 = `~/.agents/skills/handoff/SKILL.md`），agent 产出自由格式 markdown 文档字符串。**不需要 xyz-handoff-extension.js、不需要 setActiveTools 三件套、不需要 structured-output schema 校验。**
+
+**包装**：runtime 拿到文档字符串后，用 `<handoff_document>` xml tag 包装边界，追加 action-oriented 指令，注入新 session 作首条消息：
+
+```
+<handoff_document source="源 session 名" created="时间戳" file="/tmp/handoff-xxx.md">
+[agent 跑 handoff skill 产出的自由格式文档]
+</handoff_document>
+
+立即执行文档里尚未完成的下一项。遇到卡点或 blocked 项时停下问我。完成每一步后继续下一项。
+```
+
+**新建 + 注入**：runtime 层 handoff-service 持有 SessionService，`create(srcCwd)` 新建空白 session → `sendMessage(newId, wrappedDoc)` 注入首条 → `broadcast({type:'session.handoffComplete'})` 通知前端跳转。
+
+### 已确认的设计决策（2026-07-24 用户拍板）
+
+| # | 决策 | 选择 |
+|---|------|------|
+| 1 | handoff 入口位置 | **per-turn hover action 区**（非 PanelHeader）。且**仅在最后一条 assistant 消息**出现，中间消息不显示（与 fork 不同，fork 可从任意消息分叉，handoff 是"到此为止交接"无交接点概念） |
+| 2 | handoff-ask 模式 | **支持**。镜像 fork-ask：点「handoff 备注」按钮 → composer 进 handoff 模式 → 输入交接备注（作为 handoff skill 的 focus 参数）→ 发送 = 生成 + 新 session + 注入 |
+| 3 | 新 session 是否立即执行 | **是**。注入后 action-oriented 指令驱动新 agent 立即干活，不停在"我了解了" |
+| 4 | handoff 提示词来源 | 用现有 handoff skill 的 SKILL.md 提示词（不新造 structured-output 三件套） |
+| 5 | 文档格式 | 自由格式 markdown（agent 产出），**xml tag 包装**边界（runtime 注入时加，非 agent 生成） |
+
+### turn 尾部 action 行设计（2026-07-24 定稿）
+
+**图标化方案**（用户选定，详见 `draft-fast-handoff.html` 场景 01）：
+
+末条 assistant 的 hover action 行结构：
+```
+[复制] [复制MD] │ [fork后台] [fork提问] │ [handoff] [handoff备注]
+```
+- **所有按钮 icon-only**（24×24 命中区，14px 图标），文字标签 + 快捷键收到 hover tooltip（原生 title）
+- **默认态全 subtle 灰**（6 个安静图标不刺眼，不割裂），hover 才出 accent-soft 底 + accent-hover 字
+- **分组**靠 as-sep 分隔线：copy 组 / fork 组 / handoff 组
+- **图标形态区分主次**：fork 后台=线性 GitFork，fork 提问=实心 GitFork，handoff=实心 Upload，handoff 备注=实心 Upload + 右上角小圆点徽章
+
+### 待实现链路（修订后，简化版）
+
+```
+前端末条 assistant hover action 「handoff」按钮（Turn.vue）
+  → sessionApi.handoff(srcSessionId, { focus?: string })    [renderer API，发 ClientMessage]
+  → ClientMessage 'session.handoff'
+  → session-message-handler.ts 新 case                     [runtime WS 路由]
+  → handoffService.runHandoff(srcSessionId, focus?)         [runtime 层服务]
+      ├─ client.prompt("/skill:handoff" + (focus? " "+focus : ""))  [触发 pi handoff skill]
+      ├─ 监听 handoff skill 完成（pi agent_end / 产出文档）          [pi → runtime]
+      ├─ wrapWithXmlTag(doc, srcName)                               [runtime 包装]
+      ├─ this.svc.create(srcCwd, label)                             [新建空白 session]
+      ├─ this.svc.sendMessage(newId, wrappedDoc)                    [注入首条]
+      ├─ persistHandedOff(srcSessionFile, newId)                    [源 session 标记]
+      └─ broker.broadcast({type:'session.handoffComplete'})         [通知前端跳转]
+  → 前端收到 session.handoffComplete → 跳转新 session
+```
+
+**handoff-ask 模式**：镜像 useComposerForkMode，composer 进 handoff 模式（accent 边 + mode chip），输入 focus 文本后发送，走同一 runHandoff(srcSessionId, focus)。
+
+### 仍需实现时确认的点
+
+1. **handoff skill 完成信号**：pi 跑 `/skill:handoff` 后如何判定文档产出完成？（agent_end 事件？还是 skill 有特定完成标志？）——需查 pi skill 执行机制
+2. **文档内容获取**：handoff skill 把文档写到 OS 临时目录（SKILL.md 要求），runtime 如何拿到文档内容？（读文件？还是从 pi 对话流提取？）——skill 产出路径需明确
+3. **源 session 污染**：handoff skill 执行过程（thinking + 文档正文）会留在源 session 对话流。倾向方案 A（前端 MergeBlock 折叠灰显标注"handoff 生成过程"，spec §9）
+4. **protocol.ts 硬缺口**：仍需加 `session.handoffComplete` 到 ServerMessageType 联合（见 §7.3，此点不变）
+
+### demo 场景索引（`draft-fast-handoff.html`）
+
+| 场景 | 展示 |
+|------|------|
+| 01 入口 | 末条 assistant 的图标化 action 行（handoff 只在末条，中间消息无） |
+| 02 handoff 备注 | composer 进 handoff 模式（accent 边 + glow + mode chip） |
+| 03 生成中 | "正在交接"瞬时提示（对标"压缩中"，带取消按钮） |
+| 04 完成 | HandoffNotice 反馈行 + 源 session 标记"已交接" |
+| 05 新 session | xml tag 包装的交接文档 + action-oriented 指令区 + agent 立即接手 |
+
+---
+
+## ⬇️ 以下为旧设计（DEPRECATED 2026-07-24，保留作历史追溯，勿按此实现）
+
+> 原 §0-§4 基于 structured-output 三件套架构。因 2026-07-24 设计修订（见上方）改为 handoff skill 方案，以下内容不再有效。
+> 其中 §5 Key States（状态机）、§6 视觉规范、§7 实现锚点（除三件套部分）、§8-§12 的非架构内容仍有参考价值，但涉及 extension/schema/三件套的细节均以修订后方案为准。
+
+
 
 ## 0. 背景与问题
 
