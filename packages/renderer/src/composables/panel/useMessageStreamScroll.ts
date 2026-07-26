@@ -11,6 +11,12 @@ interface MessageStreamScrollDeps {
   lastRenderTurn: ComputedRef<{ isStreaming: boolean } | null>
   isCompacting: ComputedRef<boolean>
   isHandingOff: ComputedRef<boolean>
+  /**
+   * session 级「对话进行中」信号（含 ask-user waiting / subagent working 等非 streaming 态）。
+   * 驱动完成滚动 watch：true→false（对话真正结束）时触发一次 scrollToBottom。
+   * 与 trace 自动折叠（useTurnElapsed.onComplete）同源，保证滚动与折叠同步。
+   */
+  isSessionActive: ComputedRef<boolean>
   scrollToBottom: (behavior: 'auto' | 'smooth', force?: boolean) => void
 }
 
@@ -18,7 +24,7 @@ interface MessageStreamScrollDeps {
  * useMessageStreamScroll —— MessageStream 的滚动触发编排（消息/notice 变化 → scrollToBottom）。
  *
  * 从 MessageStream.vue 拆出（vue_rules_checker.py 的 script setup ≤300 行规范）。
- * 聚合三类触发滚动：消息条数变化、流式文本追加、notice（压缩中/正在交接）显隐。
+ * 聚合四类触发滚动：消息条数变化、流式文本追加、notice（压缩中/正在交接）显隐、对话完成。
  * 挂载时初始滚到底 + 切换 session 的滚动不在本 composable（后者涉及 virtualList.resetSession + settling）。
  *
  * 受 stickToBottom guard 保护（scrollToBottom 默认 force=false）：用户上滑脱离锚定时不强行拉回。
@@ -63,6 +69,22 @@ export function useMessageStreamScroll(deps: MessageStreamScrollDeps): void {
     () => deps.isCompacting.value || deps.isHandingOff.value,
     (show) => {
       if (show) deps.scrollToBottom('auto')
+    },
+  )
+
+  // 对话完成（isSessionActive true→false）触发一次 scrollToBottom。
+  //
+  // 背景：完成时 trace 自动折叠（useTurnElapsed.onComplete 驱动 expanded=false）导致末尾 turn
+  // 高度骤减，浏览器 clamp scrollTop + ResizeObserver 异步触发 scrollToBottom 有时间窗，期间界面
+  // 停中间。此处与 trace 折叠同源（都看 isSessionActive）显式补一次 scrollToBottom，消除空窗期。
+  //
+  // 不用 force=true：尊重用户上滑意图（stickToBottom=false 时 guard 拦截，视口不动）。配合
+  // useChatScroll 的 pauseStickGuard（trace 折叠 transition 期间暂停 onScroll 误判），贴底态下能
+  // 正确执行到底。ask-user/subagent 期间 isSessionActive 保持 true，不会误触发。
+  watch(
+    () => deps.isSessionActive.value,
+    (nw, old) => {
+      if (old && !nw) deps.scrollToBottom('auto')
     },
   )
 }
