@@ -331,7 +331,7 @@ export class ExtensionResolver implements IExtensionResolver {
       }
     } catch (e) {
       // 目录读取失败：warn 记录后跳过（对齐 pi 的静默跳过语义，但满足 taste/no-silent-catch 至少记录）
-      console.warn('[extension-resolver] resolveExtensionEntries readdir failed:', e)
+      log.warn('[extension-resolver] collectExtensionEntries readdir failed:', e)
     }
     return entries
   }
@@ -361,7 +361,7 @@ export class ExtensionResolver implements IExtensionResolver {
         }
       } catch (e) {
         // package.json 解析失败：warn 记录后继续降级尝试 index.ts/index.js
-        console.warn('[extension-resolver] package.json parse failed, falling back to index.ts/js:', e)
+        log.warn('[extension-resolver] resolveExtensionEntries package.json parse failed, falling back to index.ts/js:', e)
       }
     }
 

@@ -732,10 +732,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 与 sessionFilePath），避免 handoff-service 直接改内部对象（srcSession.handedOffTo = newId）
    * 绕过所有权——getSession 未来若返回防御性副本会让外部直接写入静默失效。
    *
-   * 内存写：active session 的 handedOffTo（toSummary 透传到 SessionSummary，活跃态立即生效
-   * 不等 scanner 重扫）。磁盘写：append handoff_marker（scanner 读后填 SessionSummary.handedOffTo，
-   * 前端跳转/标记用）。session 不在 active map（已被删 / 纯 RPC 路径）时跳过内存写，
-   * 但 sessionFilePath 存在则仍写磁盘。
+   * 仅处理 active session（sessions Map 命中）：内存写 handedOffTo（toSummary 透传到
+   * SessionSummary，活跃态立即生效不等 scanner 重扫）+ 磁盘写 handoff_marker（scanner
+   * 读后填 SessionSummary.handedOffTo，前端跳转/标记用）。
+   *
+   * handoff 编排保证源 session 在交接时仍 active（由前端触发跳转前 pi turn 已结束、进程未退出），
+   * 故非 active 路径（已被删 / 纯 RPC）按 no-op 处理。若未来需支持非 active 源 session 交接，
+   * 此处应通过 findScannedSession(srcSessionId)?.filePath 解析路径后补写磁盘。
    */
   markHandedOff(srcSessionId: string, newSessionId: string): void {
     const session = this.sessions.get(srcSessionId)

@@ -75,6 +75,12 @@ export interface ISessionServiceInternal {
   getSession(sessionId: string): IManagedSessionView | undefined
   /** 从 Map 删除条目（仅删条目，不 detach adapter / 不 destroy 进程）。 */
   removeSessionEntry(sessionId: string): void
+  /**
+   * M3：标记源 session 已交接给新 session（内存写 handedOffTo + 磁盘写 handoff_marker）。
+   * HandoffService 经此接口写交接态，而非直接改具体类内部对象（依赖倒置 + 所有权收口）。
+   * 仅 active session 生效；非 active 源 session 按 no-op 处理（见具体类 docstring）。
+   */
+  markHandedOff(srcSessionId: string, newSessionId: string): void
 
   // ── scanner 使用 ──
   /** 当前活跃会话的 summary 列表（已含 git 信息）。 */
