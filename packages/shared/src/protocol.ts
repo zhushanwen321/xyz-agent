@@ -71,6 +71,7 @@ export type ClientMessageType =
   | 'worktree.create' | 'worktree.listBranches' | 'worktree.list'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
+  | 'quota.fetch' | 'quota.getCached' | 'quota.configure' | 'quota.refresh'
   | 'config.setWorktreeRootDir' | 'config.getWorktreeRootDir'
   | 'config.setSetupScript' | 'config.getSetupScript'
   | 'config.setBareSetupScript' | 'config.getBareSetupScript'
@@ -105,6 +106,8 @@ export interface SetProviderData {
     enabled?: boolean
   }>
   enabled?: boolean
+  /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
+  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean; apiKeySet?: boolean }
 }
 
 /** 系统提示词配置（FR-6）。文件：<dataDir>/system-prompt.json。
@@ -311,6 +314,12 @@ export interface ClientMessageMap {
   'terminal.attach': { sessionId: string }
   'config.getTerminalConfig': Record<string, never>
   'config.setTerminalConfig': { config: TerminalConfig }
+  // Coding Plan 额度查询
+  'quota.fetch': { providerId: string }
+  'quota.getCached': { providerId: string }
+  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string }
+  /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
+  'quota.refresh': { providerId: string }
   /** config.setWorktreeRootDir：设置 worktree 专用目录配置（前端写入）。 */
   'config.setWorktreeRootDir': { dir: string }
   /** config.getWorktreeRootDir：读取 worktree 专用目录配置（前端读取）。 */
@@ -436,6 +445,7 @@ export type ServerMessageType =
   | 'worktree.created'
   | 'terminal.data' | 'terminal.exit' | 'terminal.alive' | 'terminal.ack'
   | 'config.terminalConfig'
+  | 'quota.fetch:result' | 'quota.getCached:result' | 'quota.configure:result' | 'quota.refresh:result'
   | 'worktree.branches'
   | 'worktree.list:result'
   | 'config.worktreeRootDir'
@@ -634,6 +644,11 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
+  // Coding Plan 额度查询
+  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.configure:result': { ok: boolean; error?: string }
+  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
   /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
   'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
   /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */
@@ -847,6 +862,10 @@ export interface ReplyPayloadMap {
   'worktree.create': ServerMessageMap['worktree.created']
   'config.getTerminalConfig': ServerMessageMap['config.terminalConfig']
   'config.setTerminalConfig': ServerMessageMap['config.terminalConfig']
+  'quota.fetch': ServerMessageMap['quota.fetch:result']
+  'quota.getCached': ServerMessageMap['quota.getCached:result']
+  'quota.configure': ServerMessageMap['quota.configure:result']
+  'quota.refresh': ServerMessageMap['quota.refresh:result']
   'worktree.listBranches': ServerMessageMap['worktree.branches']
   'worktree.list': ServerMessageMap['worktree.list:result']
   'config.setWorktreeRootDir': ServerMessageMap['config.worktreeRootDir']

@@ -49,6 +49,15 @@ export * from './ignore-parser'
 export * from './git-status-parser'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { SubagentRecord, SubagentStatus } from './subagent'
+// Coding Plan 额度查询类型
+export type {
+  QuotaWindow,
+  QuotaWins,
+  NormalizedQuotaRow,
+  ProviderQuotaFetcher,
+} from './quota-types'
+export type { QuotaPreset } from './quota-presets'
+export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 export { normalizeSubagentStatus } from './subagent'
 export type {
   WorkflowRunStatus,
