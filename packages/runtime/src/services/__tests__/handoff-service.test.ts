@@ -32,7 +32,7 @@ function makeMessage(role: 'user' | 'assistant', content: string): Message {
     role,
     content,
     status: 'done' as const,
-  } as Message
+  } as unknown as Message
 }
 
 describe('HandoffService', () => {
@@ -45,8 +45,8 @@ describe('HandoffService', () => {
   beforeEach(() => {
     sessionService = createMockSessionService()
     broker = createMockBroker()
-    broadcastSessionList = vi.fn()
-    nextPushId = vi.fn(() => 'push-123')
+    broadcastSessionList = vi.fn() as unknown as () => void
+    nextPushId = vi.fn(() => 'push-123') as unknown as () => string
     service = new HandoffService({ sessionService, broker, broadcastSessionList, nextPushId })
   })
 
