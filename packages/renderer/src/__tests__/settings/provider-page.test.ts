@@ -226,7 +226,7 @@ describe('ProviderPage W1 robustness', () => {
     expect(err.text()).toContain('网络错误')
   })
 
-  it('U2: thinking pill 为 disabled 展示态（cycleThinking 死按钮已删除）', async () => {
+  it('U2: thinking pill 可点击打开编辑弹窗（修问题 2：model 行需有编辑入口）', async () => {
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
@@ -239,8 +239,13 @@ describe('ProviderPage W1 robustness', () => {
 
     const pill = wrapper.find('[data-testid="thinking-pill"]')
     expect(pill.exists()).toBe(true)
-    // disabled 属性存在（值 '' 或空串，关键是 attributes('disabled') 非 undefined）
-    expect(pill.attributes('disabled')).toBeDefined()
+    // pill 现在可点击（不再 disabled），点击触发 openEdit 打开编辑弹窗。
+    // 修问题 2：原 disabled pill 让用户误以为「不能编辑」，现改为点击进编辑弹窗。
+    expect(pill.attributes('disabled')).toBeUndefined()
+    expect(pill.attributes('title')).toBeDefined()
+    // 同时 model 行新增独立铅笔编辑按钮（data-testid="model-edit-btn"）
+    const editBtn = wrapper.find('[data-testid="model-edit-btn"]')
+    expect(editBtn.exists()).toBe(true)
   })
 
   it('D14: 删除 defaultModel 归属 provider → 前端清空 defaultModel', async () => {
