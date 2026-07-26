@@ -29,7 +29,7 @@
         >
           <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('n') }}</kbd>
         </Button>
         <Button
           variant="ghost"
@@ -38,7 +38,7 @@
         >
           <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ K</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('k') }}</kbd>
         </Button>
       </nav>
 
@@ -207,10 +207,12 @@ import { useSidebarSubagentActions } from '@/composables/features/useSidebarSuba
 import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import * as events from '@/api/events'
 
 const { t } = useI18n()
 const searchModal = useSearchModal()
+const { formatKbd } = usePlatformShortcut()
 const { isOpen } = searchModal
 const navigation = useNavigationStore()
 const session = useSessionStore()
@@ -220,7 +222,7 @@ const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
 const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -399,6 +401,9 @@ const keymap: KeymapEntry[] = [
   // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。
   { key: 'g', action: () => { void forkFromLastAssistant() } },
   { key: 'g', shift: true, action: () => { void enterForkModeFromLastAssistant() } },
+  // fast-handoff 快捷键：⌘J 从末条 assistant 打包文档到新 session（完成后跳转新 session）。
+  // 用 ⌘J 而非 ⌘H：macOS 系统保留 ⌘H 为「Hide Application」，OS 先拦截 renderer 拦不住。
+  { key: 'j', action: () => { void handoffFromLastAssistant() } },
 ]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。

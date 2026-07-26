@@ -33,8 +33,13 @@ import * as pending from '../api/pending'
 import * as events from '../api/events'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
+import { usePanelStore } from '../stores/panel'
 import { useExtensionUIStore } from '../stores/extension-ui'
+import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
+import type { SubagentRecord } from '@xyz-agent/shared'
 import { useToast } from './useToast'
+import { handleCompletion } from './useCompletionNotify'
 
 /**
  * 处理 session.exited 事件（pi 进程异常退出）。
@@ -115,6 +120,29 @@ function routeInbound(msg: ServerMessage): void {
     // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
     if (msg.type === 'session.exited') {
       handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
+    }
+    // message.complete：后台完成时提示音 + 未读标记
+    if (msg.type === 'message.complete') {
+      const payload = msg.payload as { sessionId?: string; stopReason?: string }
+      const focusedSid = usePanelStore().panels.find(
+        (p) => p.id === usePanelStore().activePanelId,
+      )?.sessionId ?? null
+      handleCompletion(sid, payload.stopReason ?? 'stop', focusedSid)
+    }
+    // session.subagents 兜底：subagent 终态推送必须在所有 session 生效（含非活跃），
+    // 不能只依赖 per-focus 订阅（切走即退订 → 终态丢弃 → 侧栏卡 running）。
+    // 仿 session.exited / message.complete：dispatchSession 之后无条件 applyRecords。
+    if (msg.type === 'session.subagents') {
+      const payload = msg.payload as { subagents?: SubagentRecord[] }
+      if (Array.isArray(payload.subagents)) {
+        useSubagentStore().applyRecords(sid, payload.subagents)
+      }
+    }
+    // session.workflowUpdate 兜底：workflow 增量信号触发 loadWorkflows + running 延迟重试，
+    // 同样在所有 session（含非活跃）生效，不依赖 per-focus 订阅。
+    if (msg.type === 'session.workflowUpdate') {
+      const payload = msg.payload as { update?: { status?: string } }
+      useWorkflowStore().triggerWorkflowReload(sid, payload.update?.status ?? 'unknown')
     }
   } else {
     events.dispatchGlobal(msg)

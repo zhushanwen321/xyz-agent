@@ -51,6 +51,8 @@ vi.mock('@/api', () => ({
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
   chat: { send: apiMock.chatSend, streamSubscribe: apiMock.streamSubscribe },
+  workspace: { detect: vi.fn().mockResolvedValue({ mode: 'not-repo', isBareMode: false, wsRoot: '', repoRoot: '' }) },
+  worktree: { list: vi.fn().mockResolvedValue([]) },
 }))
 
 // W3: mock workspaceStore 让 submitFirstMessage 能取到 defaultCwd

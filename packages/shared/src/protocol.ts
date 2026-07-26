@@ -35,6 +35,7 @@ export interface CommandSourceInfo {
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
+  | 'session.handoff' | 'session.abortHandoff'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
@@ -66,11 +67,17 @@ export type ClientMessageType =
   | 'file.tree' | 'file.tree.expand' | 'file.search'
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
-  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
-  | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare'
-  | 'worktree.create'
+  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.checkoutCwd' | 'git.createBranch'
+  | 'workspace.listRecent' | 'workspace.record' | 'workspace.detectBare' | 'workspace.detect'
+  | 'worktree.create' | 'worktree.listBranches' | 'worktree.list'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
+  | 'quota.fetch' | 'quota.getCached' | 'quota.configure' | 'quota.refresh'
+  | 'config.setWorktreeRootDir' | 'config.getWorktreeRootDir'
+  | 'config.setSetupScript' | 'config.getSetupScript'
+  | 'config.setBareSetupScript' | 'config.getBareSetupScript'
+  | 'config.setTimeout' | 'config.getTimeout'
+  | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -100,6 +107,8 @@ export interface SetProviderData {
     enabled?: boolean
   }>
   enabled?: boolean
+  /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
+  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean; apiKeySet?: boolean }
 }
 
 /** 系统提示词配置（FR-6）。文件：<dataDir>/system-prompt.json。
@@ -182,6 +191,15 @@ export interface ClientMessageMap {
     includeFrom?: boolean
     label?: string
   }
+  // handoff：在源 session 触发 fast-handoff——runtime 让源 session 的 pi 跑 /skill:handoff
+  // 生成文档，agent_end 后取末条 assistant 文档 → xml 包装 → 新建空白 session 注入首条 → 广播跳转。
+  // 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
+  // focus 原样拼到 /skill:handoff 后作 args（pi 按首个空格切分）。
+  // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
+  'session.handoff': { sessionId: string; focus?: string }
+  // abortHandoff：取消进行中的 handoff。委托 SessionService.abort 中断 pi turn，
+  // onTurnEnd 检测 aborted 标记跳过新建/注入。无进行中 handoff 时 no-op。
+  'session.abortHandoff': { sessionId: string }
   // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
   'session.getSubagents': { sessionId: string }
   'session.getSubagentHistory': { sessionId: string; subagentId: string }
@@ -272,17 +290,31 @@ export interface ClientMessageMap {
   'git.unstage': { sessionId: string; filePaths?: string[] }
   'git.commit': { sessionId: string; message?: string }
   'git.checkout': { sessionId: string; name: string }
+  'git.checkoutCwd': { cwd: string; name: string }
   'git.createBranch': { sessionId: string; name: string }
   'workspace.listRecent': Record<string, never>
   'workspace.record': { cwd: string }
-  /** workspace.detectBare：检测 cwd 是否位于 bare repo + worktree 结构（landing 态按 pendingCwd 驱动 isBare，W2）。 */
+  /** workspace.detectBare：向后兼容别名，等价于 workspace.detect。 */
   'workspace.detectBare': { cwd: string }
+  /** workspace.detect：检测 cwd 所在 git 仓库模式（bare-workspace / plain-repo / not-repo）。
+   *  返回三态 { mode, wsRoot, barePath, repoRoot, defaultBranch }。
+   *  workspace.detectBare 为此接口的向后兼容别名。 */
+  'workspace.detect': { cwd: string }
+  /** worktree.listBranches：列出 cwd 所在仓库的本地和远程分支。 */
+  'worktree.listBranches': { cwd: string }
+  /** worktree.list：列出 cwd 所在 workspace 的所有 worktree。 */
+  'worktree.list': { cwd: string }
   /** worktree.create：在 bare repo + worktree 结构中创建隔离的工作目录。
-   *  branch 必填；baseBranch 默认 'current'（继承当前分支），可选 'origin/main'（校验远端 ref 存在后使用）。
+   *  branch 必填；baseBranch 默认 'current'（继承当前分支），可为任意分支名（runtime 验证存在性）。
+   *  locationMode 控制 worktree 创建位置：'workspace'（workspace 根，bare 模式默认）、
+   *  'repo-dir'（.bare 同级 repo 子目录）、'dedicated-dir'（用户指定的专用目录）。
    *  workspaceHint 用于显式指定 workspace 根（检测 .bare 的起点 cwd），省略则用 process.cwd()。 */
   'worktree.create': {
     branch: string
-    baseBranch?: 'current' | 'origin/main'
+    /** 基础分支。'current' 为特殊值（继承当前分支），其余为具体分支名（runtime 验证存在性）。 */
+    baseBranch?: string
+    /** worktree 创建位置模式。省略时 bare 模式默认 'workspace'。 */
+    locationMode?: 'workspace' | 'repo-dir' | 'dedicated-dir'
     workspaceHint?: string
   }
   // terminal.*：drawer 集成终端的 PTY 控制（Phase 2 runtime service）。
@@ -295,6 +327,32 @@ export interface ClientMessageMap {
   'terminal.attach': { sessionId: string }
   'config.getTerminalConfig': Record<string, never>
   'config.setTerminalConfig': { config: TerminalConfig }
+  // Coding Plan 额度查询
+  'quota.fetch': { providerId: string }
+  'quota.getCached': { providerId: string }
+  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string }
+  /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
+  'quota.refresh': { providerId: string }
+  /** config.setWorktreeRootDir：设置 worktree 专用目录配置（前端写入）。 */
+  'config.setWorktreeRootDir': { dir: string }
+  /** config.getWorktreeRootDir：读取 worktree 专用目录配置（前端读取）。 */
+  'config.getWorktreeRootDir': Record<string, never>
+  /** config.setSetupScript：设置 worktree 初始化脚本配置（前端写入）。 */
+  'config.setSetupScript': { script: string }
+  /** config.getSetupScript：读取 worktree 初始化脚本配置（前端读取）。 */
+  'config.getSetupScript': Record<string, never>
+  /** config.setBareSetupScript：设置 bare-workspace 初始化脚本配置（前端写入）。 */
+  'config.setBareSetupScript': { script: string }
+  /** config.getBareSetupScript：读取 bare-workspace 初始化脚本配置（前端读取）。 */
+  'config.getBareSetupScript': Record<string, never>
+  /** config.setTimeout：设置 worktree 创建超时时间（秒，前端写入）。 */
+  'config.setTimeout': { timeout: number }
+  /** config.getTimeout：读取 worktree 创建超时时间配置（前端读取）。 */
+  'config.getTimeout': Record<string, never>
+  /** config.setDefaultBaseBranch：设置默认基分支（前端写入）。 */
+  'config.setDefaultBaseBranch': { baseBranch: string }
+  /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
+  'config.getDefaultBaseBranch': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -331,6 +389,7 @@ export type DefaultModelSource =
  * 新增错误码必须在此登记，编译器强制两端同步（防止 runtime 改码 renderer switch 静默失效）。
  */
 export type WorktreeErrorCode =
+  | 'NOT_GIT_REPO'      // cwd 不在 git 仓库内（git rev-parse 失败）
   | 'NOT_BARE_REPO'     // 当前 cwd 非 .bare workspace（WorkspaceDetector 未命中）
   | 'WORKTREE_EXISTS'   // 目标 worktree 目录已存在（detail: string = 已存在 cwd）
   | 'SETUP_FAILED'      // .bare/custom-hooks/setup-worktree.sh 失败（detail: {exitCode, stderr}）
@@ -343,7 +402,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffComplete'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -395,9 +454,18 @@ export type ServerMessageType =
   | 'git.status:result'
   | 'workspace.recentList'
   | 'workspace.bareDetected'
+  | 'workspace.detected'
   | 'worktree.created'
   | 'terminal.data' | 'terminal.exit' | 'terminal.alive' | 'terminal.ack'
   | 'config.terminalConfig'
+  | 'quota.fetch:result' | 'quota.getCached:result' | 'quota.configure:result' | 'quota.refresh:result'
+  | 'worktree.branches'
+  | 'worktree.list:result'
+  | 'config.worktreeRootDir'
+  | 'config.setupScript'
+  | 'config.bareSetupScript'
+  | 'config.worktreeTimeout'
+  | 'config.defaultBaseBranch'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -567,8 +635,16 @@ export interface ServerMessageMapBase {
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
-  /** workspace.bareDetected：workspace.detectBare 的 reply（isBare/wsRoot/barePath）。 */
+  /** workspace.bareDetected：workspace.detectBare 的向后兼容 reply（isBare/wsRoot/barePath）。 */
   'workspace.bareDetected': { isBare: boolean; wsRoot: string; barePath: string }
+  /** workspace.detected：workspace.detect 的三态 reply。 */
+  'workspace.detected': {
+    mode: 'bare-workspace' | 'plain-repo' | 'not-repo'
+    wsRoot: string
+    barePath: string
+    repoRoot: string
+    defaultBranch: string
+  }
   /** worktree.created：worktree.create 的成功 reply（新 worktree 的 cwd 与分支名）。 */
   'worktree.created': { cwd: string; branch: string }
   // terminal.data：PTY 输出流（高频广播，按 sessionId 路由到对应 panel 的 scrollback buffer）。
@@ -581,6 +657,25 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
+  // Coding Plan 额度查询
+  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.configure:result': { ok: boolean; error?: string }
+  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
+  'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
+  /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */
+  'worktree.list:result': { items: Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> }
+  /** config.worktreeRootDir：config.getWorktreeRootDir 的 reply。 */
+  'config.worktreeRootDir': { dir: string }
+  /** config.setupScript：config.getSetupScript 的 reply。 */
+  'config.setupScript': { script: string }
+  /** config.bareSetupScript：config.getBareSetupScript 的 reply。 */
+  'config.bareSetupScript': { script: string }
+  /** config.worktreeTimeout：config.getTimeout 的 reply。 */
+  'config.worktreeTimeout': { timeout: number }
+  /** config.defaultBaseBranch：config.getDefaultBaseBranch 的 reply。 */
+  'config.defaultBaseBranch': { baseBranch: string }
 
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
@@ -599,6 +694,14 @@ export interface ServerMessageMapBase {
     branchName?: string
     preview?: string
   }
+  // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff）。
+  // 时机：源 session 的 pi 跑完 /skill:handoff → 取末条 assistant 文档 → xml 包装 →
+  // 新建空白 session 之后。前端据 newSessionId 跳转新 session，据 srcSessionId
+  // 在源 session 标记已交接（配合磁盘 handoff_marker → SessionSummary.handedOffTo）。
+  // doc：xml 包装后的 handoff 文档。发送职责归位 renderer——前端收到后 ensureStreamSubscription
+  // 再 chatApi.send(doc)，避免 runtime 早 send 导致的时序竞争（pi 流式事件早于前端订阅被丢）。
+  // 对齐 fork-ask 模式（useForkActions.ts:109-113）。
+  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
@@ -616,7 +719,7 @@ export interface ServerMessageMapBase {
   // status 是动作结果字面量（sent/rejected/steered/queued/aborted/staged/unstaged/committed/switched/branch_created），
   // CL10 决策不收窄死字面量，统一 string（ack 型 domain register<void> 不读 status 值）。
   // 见 session-message-handler.ts:175/180/186/198/211 + git-message-handler.ts:65/74/87/96/105。
-  'message.status': { sessionId: string; status: string }
+  'message.status': { sessionId?: string; status: string }
   // extension.discovered：installDir/installGit 的成功 reply（extension-message-handler.ts:162/176 reply { tempDir, candidates }）。
   // candidates 是发现的扩展候选列表（runtime ExtensionInfo[]，与 extension.ts ExtensionDiscoveredPayload 同构）。
   'extension.discovered': { tempDir: string; candidates: ExtensionInfo[] }
@@ -775,10 +878,27 @@ export interface ReplyPayloadMap {
   'plugin.config.set': ServerMessageMap['plugin:config']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
-  'workspace.detectBare': ServerMessageMap['workspace.bareDetected']
+  'workspace.detectBare': ServerMessageMap['workspace.detected']
+  'workspace.detect': ServerMessageMap['workspace.detected']
   'worktree.create': ServerMessageMap['worktree.created']
   'config.getTerminalConfig': ServerMessageMap['config.terminalConfig']
   'config.setTerminalConfig': ServerMessageMap['config.terminalConfig']
+  'quota.fetch': ServerMessageMap['quota.fetch:result']
+  'quota.getCached': ServerMessageMap['quota.getCached:result']
+  'quota.configure': ServerMessageMap['quota.configure:result']
+  'quota.refresh': ServerMessageMap['quota.refresh:result']
+  'worktree.listBranches': ServerMessageMap['worktree.branches']
+  'worktree.list': ServerMessageMap['worktree.list:result']
+  'config.setWorktreeRootDir': ServerMessageMap['config.worktreeRootDir']
+  'config.getWorktreeRootDir': ServerMessageMap['config.worktreeRootDir']
+  'config.setSetupScript': ServerMessageMap['config.setupScript']
+  'config.getSetupScript': ServerMessageMap['config.setupScript']
+  'config.setBareSetupScript': ServerMessageMap['config.bareSetupScript']
+  'config.getBareSetupScript': ServerMessageMap['config.bareSetupScript']
+  'config.setTimeout': ServerMessageMap['config.worktreeTimeout']
+  'config.getTimeout': ServerMessageMap['config.worktreeTimeout']
+  'config.setDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
+  'config.getDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted
@@ -801,6 +921,7 @@ export interface ReplyPayloadMap {
   'extension.uninstall': void     // reply config.extensions
   'extension.upgrade': void       // reply config.extensions
   'git.checkout': void            // reply message.status
+  'git.checkoutCwd': void        // reply message.status
   'git.commit': void              // reply message.status
   'git.createBranch': void        // reply message.status
   'git.stage': void               // reply message.status
@@ -812,6 +933,11 @@ export interface ReplyPayloadMap {
   'model.switch': void            // reply model.switched（前端 model.ts register<void> 不读 payload）
   'session.compact': void         // reply session.compacted
   'session.delete': void          // reply session.deleted
+  // session.handoff：触发后 pi 异步跑 /skill:handoff，完成经 session.handoffComplete 独立广播通道推回。
+  // reply message.status ack（前端不读 payload，等 handoffComplete 广播跳转新 session）。
+  'session.handoff': void         // reply message.status
+  // session.abortHandoff：取消进行中 handoff，reply message.status ack（与 message.abort 同模式）。
+  'session.abortHandoff': void    // reply message.status
   'session.rename': void          // reply session.renamed
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone
@@ -848,3 +974,44 @@ export interface ReplyPayloadMap {
  * 领域 DTO（ExtensionInfo / GitStatusResult / PluginInfo / StatusBarItem …）已下沉到
  * extension.ts / git.ts / plugin.ts，本文件顶部 import 引用，ServerMessageMapBase 照常引用。
  */
+
+// ── 运行时类型守卫 ─────────────────────────────────────────────
+
+/** 运行时检查值是否为 Message（含必需字段 id/role/content/status/timestamp）。 */
+export function isMessage(value: unknown): value is Message {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    (v.role === 'user' || v.role === 'assistant' || v.role === 'system') &&
+    (typeof v.content === 'string' || Array.isArray(v.content)) &&
+    (v.status === 'streaming' || v.status === 'complete' || v.status === 'error' || v.status === 'pending') &&
+    typeof v.timestamp === 'number'
+  )
+}
+
+/** 运行时检查值是否为 SessionSummary（含必需字段 id/label/cwd/status/modelId）。 */
+export function isSessionSummary(value: unknown): value is SessionSummary {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    typeof v.label === 'string' &&
+    typeof v.cwd === 'string' &&
+    typeof v.status === 'string' &&
+    typeof v.modelId === 'string'
+  )
+}
+
+/** 运行时检查值是否为 SubagentRecord（含必需字段 subagentId/agent/slug/task/status）。 */
+export function isSubagentRecord(value: unknown): value is SubagentRecord {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.subagentId === 'string' &&
+    typeof v.agent === 'string' &&
+    typeof v.slug === 'string' &&
+    typeof v.task === 'string' &&
+    typeof v.status === 'string'
+  )
+}

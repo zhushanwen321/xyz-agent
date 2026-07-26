@@ -267,6 +267,27 @@ export interface IConfigService {
   getTerminalConfig(): { config: TerminalConfig; corrupted: boolean }
   /** 写入 terminal.json。校验失败返回 ok:false + error，不写盘。 */
   setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string }
+  // ── Worktree config（git-cwt-anywhere）──
+  /** 读取 worktree 根目录（config.json.worktreeRootDir），默认 '~/worktrees'。 */
+  getWorktreeRootDir(): string
+  /** 写入 worktree 根目录到 config.json.worktreeRootDir。 */
+  setWorktreeRootDir(dir: string): void
+  /** 读取 setup 脚本路径（config.json.setupScript），默认 'custom-hooks/setup-worktree.sh'。 */
+  getSetupScript(): string
+  /** 写入 setup 脚本路径到 config.json.setupScript。 */
+  setSetupScript(script: string): void
+  /** 读取 bare-workspace 初始化脚本路径（config.json.bareSetupScript），默认 'custom-hooks/setup-worktree.sh'。 */
+  getBareSetupScript(): string
+  /** 写入 bare-workspace 初始化脚本路径到 config.json.bareSetupScript。 */
+  setBareSetupScript(script: string): void
+  /** 读取 worktree 创建超时时间（config.json.worktreeTimeout），默认 60 秒。 */
+  getTimeout(): number
+  /** 写入 worktree 创建超时时间到 config.json.worktreeTimeout。 */
+  setTimeout(timeout: number): void
+  /** 读取默认基分支（config.json.defaultBaseBranch），默认 'origin/main'。 */
+  getDefaultBaseBranch(): string
+  /** 写入默认基分支到 config.json.defaultBaseBranch。 */
+  setDefaultBaseBranch(baseBranch: string): void
 }
 
 // ── IExtensionService ──────────────────────────────────────────────
@@ -369,6 +390,7 @@ export interface IGitService {
   unstage(sessionId: string, filePaths?: string[]): Promise<void>
   commit(sessionId: string, message?: string): Promise<void>
   checkout(sessionId: string, name: string): Promise<void>
+  checkoutByCwd(cwd: string, name: string): Promise<void>
   createBranch(sessionId: string, name: string): Promise<void>
 }
 

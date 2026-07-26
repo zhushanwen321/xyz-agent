@@ -340,6 +340,16 @@ export const session = {
   async subagentAction(_sessionId: string, _action: string, _subagentId: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+
+  /** Mock handoff（fast-handoff：stub resolve 即可，E2E 走 runtime 真路径） */
+  async handoff(_sessionId: string, _focus?: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
+
+  /** Mock 取消 handoff（对称 handoff，stub resolve 即可） */
+  async abortHandoff(_sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
 }
 
 export const chat = {
@@ -845,6 +855,22 @@ function listRecentRecords(): import('@xyz-agent/shared').RecentWorkspaceRecord[
   ]
 }
 
+// Mock quota domain（w4 coding-plan 额度查询）
+export const quota = {
+  async getCached(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async fetchQuota(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async refreshQuota(_providerId: string) {
+    return { data: null, lastFetchAt: null }
+  },
+  async configure(_providerId: string, _enabled: boolean, _cookie?: string, _fetcher?: string, _apiKey?: string) {
+    return { ok: true }
+  },
+}
+
 export const workspace = {
   async listRecent(): Promise<import('@xyz-agent/shared').RecentWorkspaceRecord[]> {
     return listRecentRecords()
@@ -857,5 +883,9 @@ export const workspace = {
   // detectBare：mock 恒返非 bare（landing 态 isBare 演示由 real 轨驱动，mock 轨无需真实检测）
   async detectBare(_cwd: string): Promise<{ isBare: boolean; wsRoot: string; barePath: string }> {
     return { isBare: false, wsRoot: '', barePath: '' }
+  },
+  // detect：mock 恒返 not-repo（三态检测，real 轨驱动）
+  async detect(_cwd: string): Promise<import('@xyz-agent/shared').ServerMessageMap['workspace.detected']> {
+    return { mode: 'not-repo', wsRoot: '', barePath: '', repoRoot: '', defaultBranch: '' }
   },
 }

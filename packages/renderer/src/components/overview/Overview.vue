@@ -25,7 +25,7 @@
       >
         <Plus class="size-[15px] text-subtle" />
         <span>{{ t('overview.newSession') }}</span>
-        <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
+        <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('n') }}</kbd>
       </Button>
     </header>
 
@@ -71,9 +71,11 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import SessionCard from './SessionCard.vue'
 
 const { t } = useI18n()
+const { formatKbd } = usePlatformShortcut()
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const { selectSession, newSession, focusedSessionId } = useSidebar()

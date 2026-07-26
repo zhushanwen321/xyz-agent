@@ -119,6 +119,28 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             FAILED=1
         fi
 
+        # node-pty helperPath guard — 防 postinstall patch 静默失效
+        # scripts/fix-node-pty-permissions.sh 给 node-pty lib/unixTerminal.js 加
+        # helperPath 二次 asar 替换 guard（等价上游 PR #924）。该 patch 用 grep
+        # 匹配源文件，node-pty 升级若改了行格式则匹配失败——patch 脚本只 warn 不
+        # fail（postinstall 不应阻断 install），patch 静默未应用，打包后终端重新
+        # 坏掉但 CI 无感知。此处检查产物 unixTerminal.js 含 guard 标记，捕获此类
+        # 静默回归。整个 node-pty 被 asarUnpack，runtime 实际加载的就是 unpacked
+        # 这份（app.asar 内的副本不会被加载），故只查 app.asar.unpacked 副本。
+        UNIX_TERMINAL_IN_APP="$APP_PATH/Contents/Resources/app.asar.unpacked/node_modules/node-pty/lib/unixTerminal.js"
+        if [ -f "$UNIX_TERMINAL_IN_APP" ]; then
+            echo -e "  ℹ  node-pty helperPath guard..."
+            if grep -q "helperPath.indexOf('app.asar.unpacked')" "$UNIX_TERMINAL_IN_APP"; then
+                echo -e "  ${GREEN}✓${NC} unixTerminal.js 含 helperPath guard（postinstall patch 生效）"
+            else
+                echo -e "  ${RED}✗${NC} unixTerminal.js 缺 helperPath guard — postinstall patch 可能未应用（node-pty 升级？）"
+                FAILED=1
+            fi
+        else
+            echo -e "  ${RED}✗${NC} app.asar.unpacked/node_modules/node-pty/lib/unixTerminal.js 缺失（无法验证 helperPath guard）"
+            FAILED=1
+        fi
+
         # extraResources (pi binary)
         if [ -d "$APP_PATH/Contents/Resources/pi" ]; then
             echo -e "  ${GREEN}✓${NC} pi binary in Resources"

@@ -170,3 +170,22 @@ export function subagentAction(
 ): Promise<void> {
   return command('session.subagentAction', { sessionId, action, subagentId })
 }
+
+/**
+ * 触发 fast-handoff（痛点3，FR-fast-handoff）。
+ * runtime 让源 session 的 pi 跑 /skill:handoff：取末条 assistant 文档 → xml 包装 → 注入新空白 session。
+ * 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
+ * focus 原样拼到 /skill:handoff 后作 args。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
+ * reply 是 message.status ack（前端不读 payload，等广播）。
+ */
+export function handoff(sessionId: string, focus?: string): Promise<void> {
+  return command('session.handoff', { sessionId, focus })
+}
+
+/**
+ * 取消进行中的 handoff（对称 abortHandoff 委托 SessionService.abort 中断 pi turn）。
+ * 无进行中 handoff 时 no-op。reply message.status ack。
+ */
+export function abortHandoff(sessionId: string): Promise<void> {
+  return command('session.abortHandoff', { sessionId })
+}

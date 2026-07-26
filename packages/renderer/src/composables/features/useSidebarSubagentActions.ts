@@ -22,7 +22,7 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
 
   /** 选中 subagent → active panel overlay 视图（chatStore streaming 回调注入） */
   async function onSelectSubagent(subagentId: string): Promise<void> {
-    const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
+    const activePanel = panelStore.currentLeaf
     if (!activePanel?.sessionId) return
     const chat = useChatStore()
     try {
@@ -75,7 +75,7 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
       toastError(t('sidebar.agentCallFailed'))
       return
     }
-    const activePanel = panelStore.panels.find((p) => p.id === panelStore.activePanelId)
+    const activePanel = panelStore.currentLeaf
     if (!activePanel?.sessionId) return
     const chat = useChatStore()
     try {

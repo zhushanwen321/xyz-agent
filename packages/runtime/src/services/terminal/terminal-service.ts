@@ -40,6 +40,20 @@ function terminalError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
+/** 把 Error 序列化为 plain object，避免 logger 的 JSON.stringify 把 Error 实例变成 {}。
+ *  Error 的 message/stack 在原型链上（非 own-enumerable），JSON.stringify 丢掉它们，
+ *  导致 catch 块直接打印错误实例时日志只剩 {}，看不出真实错误。 */
+function serializeError(e: unknown): { message: string; stack?: string; code?: unknown } | { value: string } {
+  if (e instanceof Error) {
+    return {
+      message: e.message,
+      stack: e.stack,
+      ...('code' in e ? { code: (e as Error & { code: unknown }).code } : {}),
+    }
+  }
+  return { value: String(e) }
+}
+
 /** 生成唯一广播消息 id（高频 terminal.data 需单调递增，避免同毫秒碰撞）。 */
 let pushCounter = 0
 function nextPushId(): string {
@@ -74,7 +88,7 @@ export class TerminalService implements ITerminalService {
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      console.error(`[terminal] spawn failed: sid=${sid} shell=${shell}`, e)
+      console.error(`[terminal] spawn failed: sid=${sid} shell=${shell}`, serializeError(e))
       throw terminalError('spawn_failed', `Failed to spawn terminal: ${msg}`)
     }
 
@@ -115,7 +129,7 @@ export class TerminalService implements ITerminalService {
       proc.write(data)
     } catch (e) {
       // best-effort：进程已退出/管道关闭时 write 失败属预期竞态，onExit 回调会清理，不传播给调用方
-      console.error(`[terminal] write failed: sid=${sid}`, e)
+      console.error(`[terminal] write failed: sid=${sid}`, serializeError(e))
     }
   }
 
@@ -126,7 +140,7 @@ export class TerminalService implements ITerminalService {
       proc.resize(cols, rows)
     } catch (e) {
       // best-effort：进程已退出时 resize 抛错属预期竞态，下次 spawn 会重建，不传播
-      console.error(`[terminal] resize failed: sid=${sid}`, e)
+      console.error(`[terminal] resize failed: sid=${sid}`, serializeError(e))
     }
   }
 
@@ -137,7 +151,7 @@ export class TerminalService implements ITerminalService {
       proc.kill()
     } catch (e) {
       // best-effort：重复 kill 或进程已退出时抛错，onExit 回调幂等清理 ptyMap + 广播 terminal.exit
-      console.error(`[terminal] kill failed: sid=${sid}`, e)
+      console.error(`[terminal] kill failed: sid=${sid}`, serializeError(e))
     }
     // onExit 回调会清理 ptyMap + 广播 terminal.exit
   }
@@ -154,7 +168,7 @@ export class TerminalService implements ITerminalService {
       proc.kill()
     } catch (e) {
       // best-effort：进程已退出时 kill 抛错，紧接的 ptyMap.delete 会兜底清理，不阻塞 session 销毁
-      console.error(`[terminal] destroyPty kill failed: sid=${sid}`, e)
+      console.error(`[terminal] destroyPty kill failed: sid=${sid}`, serializeError(e))
     }
     this.ptyMap.delete(sid)
     // session 销毁不广播 terminal.exit（前端已在 session.deleted 清理分区）
@@ -209,6 +223,18 @@ export class TerminalService implements ITerminalService {
     }
     // TERM 让终端应用（vim/htop）正确渲染
     env.TERM = env.TERM || 'xterm-256color'
+
+    // [HISTORICAL] 清除 Electron sidecar 内部变量，避免污染用户 terminal。
+    // ⚠️ 此修复与 quota 功能无关，是顺带修复的 terminal env 污染 bug（PR #105 一同提交）。
+    // runtime 进程是 Electron 主进程用 ELECTRON_RUN_AS_NODE=1 spawn 出来的 sidecar（打包模式，
+    // 见 process-control.ts:202-205），该变量会随 process.env 继承到 terminal shell。
+    // 用户在 terminal 里跑 `electron .` / `npm run dev` 等命令时，Electron 会因该变量退化为
+    // 纯 Node 运行，require('electron').app 为 undefined → 'Cannot read properties of
+    // undefined (reading isPackaged)' 崩溃。terminal 是给用户跑命令的，不是 sidecar 下游，
+    // 必须切断这类 Electron 实现细节变量的继承。
+    delete env.ELECTRON_RUN_AS_NODE
+    delete env.ELECTRON_NO_ASAR
+    delete env.ELECTRON_OVERRIDE_DIST_PATH
     return env
   }
 }

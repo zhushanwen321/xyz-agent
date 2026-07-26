@@ -3,17 +3,15 @@
     容器组件 · Panel（panel/spec.md 5 zone 编排，承载一个 Session）。
     自上而下：① panel-header → ② message-stream → ③ progress-zone → ④ composer（companion 带）。
     git 状态移入 SideDrawer git tab（原底部 zone ⑤ 摘牌，panel/spec.md），入口为 header 右侧 git 按钮。
-    激活标识（workspace/spec.md）：rounded-lg + ring-1 accent + bg-elevated 浮起；非激活 opacity 0.5。
-    点击 panel body 切 active（主从焦点，非按钮区域）。
+    v2：移除 split 后单 panel 恒 active，无主从视觉态（section 透明继承 MainPanel surface）。
     [HISTORICAL] 原「左 2px 竖条 + inset box-shadow ring」双叠加导致激活 panel 左边 3px、其余边 1px，
     边框厚度不均；inset shadow 在直角 section 上不跟随外层 MainPanel 圆角，圆角处露 bg。
     改 ring-1（box-shadow 外发光，跟随 rounded-lg）+ 去竖条，4 边均匀且圆角覆盖。
   -->
   <section
-    class="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
+    class="relative flex min-w-0 h-full flex-col overflow-hidden rounded-lg transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
     :class="panelStateClass"
     :style="panelStyle"
-    @mousedown="onPanelMouseDown"
   >
     <PanelHeader
       :session-label="sessionLabel"
@@ -22,15 +20,9 @@
       :git-branch="gitBranch"
       :git-indicator="gitIndicator"
       :status="status"
-      :active="active"
-      :is-dual="isDual"
-      :is-first-panel="isFirstPanel"
       :viewing-subagent="isViewingSubagent"
       :subagent-label="subagentLabel"
       :overlay-session-file="overlaySessionFile"
-      @split="emit('split')"
-      @new-session="emit('new-session')"
-      @close="emit('close')"
       @open-git="emit('openGit')"
       @toggle-drawer="emit('toggleDrawer')"
       @back="onSubagentBack"
@@ -149,30 +141,14 @@ const props = defineProps<{
   /** git 脏状态指示（PanelContainer 统一提供，透传给 PanelHeader；hasRepo=false 不渲染 git 按钮） */
   gitIndicator?: GitIndicator
   status: DerivedStatus
-  active: boolean
-  isDual: boolean
-  /** 是否为 P1（panel.panels[0]，DFS 顺序即 split 的 left）—— 折叠态 chrome 仅 P1 落 header */
-  isFirstPanel: boolean
 }>()
 
 const emit = defineEmits<{
-  activate: [panelId: string]
-  split: []
-  'new-session': []
-  close: []
   /** 打开 SideDrawer git tab（PanelContainer 统一渲染抽屉，事件上抛） */
   openGit: []
   /** 切换 SideDrawer 开关（PanelContainer 统一渲染抽屉，事件上抛） */
   toggleDrawer: []
 }>()
-
-/** 点击 panel body 切 active（双 panel 主从焦点）；点 header 按钮不误切（按钮自身 stopPropagation） */
-function onPanelMouseDown(e: MouseEvent): void {
-  if (!props.isDual || props.active) return
-  // 按钮点击由 reka-ui/Button 内部处理，这里检查最近 button 祖先避免误切
-  if ((e.target as HTMLElement).closest('button')) return
-  emit('activate', props.panelId)
-}
 
 const { t } = useI18n()
 const chat = useChatStore()
@@ -375,41 +351,15 @@ async function onReviveSession(): Promise<void> {
   }
 }
 
-/** 激活标识（对齐 draft-dual-panel.html SSOT）。
- *  层级语义：MainPanel(main) 是唯一 float-panel（bg-surface + border + shadow + radius）。
- *  Panel section 是它的内容区，底色按 panel 数量切两种语义——
- *  · 单 panel：section 透明，直接继承 MainPanel 的 surface（section 即 main 内容区，不再独立浮起）。
- *  · 双 panel：section 各自浮起（draft-dual-panel .panel 模型）——
- *    active → bg-elevated 微亮 + ring-1 accent-ring + opacity 1（焦点浮起）；
- *    standby → bg-surface + opacity 0.5 hover 回升 0.78（退后，设计稿明确写 opacity 表达主从）。
- *  SideDrawer 是 workspace-body 级 absolute 浮层（w-1/2，覆盖对侧），不参与 panel 的 flex 布局——
- *  panel 始终 flex-1 均分（单 panel 撑满、双 panel 各半），与 drawer 完全解耦，避免收窄态引发宽度异常。 */
-const panelStateClass = computed(() => {
-  if (props.active && props.isDual) {
-    // active：ring 表达焦点（底色走 panelStyle 的 --panel-bg）
-    return 'opacity-100 ring-1 ring-[var(--accent-ring)]'
-  }
-  if (!props.active && props.isDual) {
-    return 'opacity-70 hover:opacity-90'
-  }
-  // 单 panel：无 ring、满 opacity（底色透明继承 MainPanel）
-  return ''
-})
+/** 激活标识（v2：单 panel 恒 active，无主从视觉态）。
+ *  层级语义：MainPanel 是唯一 float-panel（bg-surface + border + shadow + radius）。
+ *  Panel section 是它的内容区，单 panel 下 section 透明继承 MainPanel 的 surface。
+ *  SideDrawer 是 workspace-body 级 flex 子项（与 Panel 各占一半并排）。 */
+const panelStateClass = computed(() => '')
 
 /**
  * Panel 底色 + --panel-bg CSS 变量（供子组件如 sticky turn-meta 消费，保证浮层底色与所在 panel 一致）。
- * 单 panel：不设 background（透明继承 MainPanel 的 bg-surface），--panel-bg=surface 供子组件浮层对齐。
- * 双 active：background=bg-elevated，--panel-bg=bg-elevated。
- * 双 standby：background=bg-surface，--panel-bg=surface。
+ * 单 panel：透明继承 MainPanel 的 bg-surface，--panel-bg=surface 供子组件浮层对齐。
  */
-const panelStyle = computed(() => {
-  if (props.active && props.isDual) {
-    return { background: 'var(--bg-elevated)', '--panel-bg': 'var(--bg-elevated)' }
-  }
-  if (!props.active && props.isDual) {
-    return { background: 'var(--surface)', '--panel-bg': 'var(--surface)' }
-  }
-  // 单 panel：透明继承，--panel-bg 指向 surface（与 MainPanel 一致）
-  return { '--panel-bg': 'var(--surface)' }
-})
+const panelStyle = computed(() => ({ '--panel-bg': 'var(--surface)' }))
 </script>

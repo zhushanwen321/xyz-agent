@@ -2,7 +2,7 @@
  * 桥接 IPC handler（纯转发，无副作用）。
  *
  * 对应 spec §4.2 M4「桥接 handler」：getRuntimePort / getRuntimePortOffset /
- * getWindows / focusWindow / findSessionWindow / createWindow。
+ * getWindows / focusWindow / createWindow。
  * 只读 Main 内部状态或委托给 windowManager/runtime，无 OS 副作用。
  *
  * [HISTORICAL] 不变量：
@@ -14,7 +14,6 @@
  */
 import { ipcMain, BrowserWindow } from 'electron'
 import type { IpcHandlerDeps } from '../interfaces.js'
-import { initialWindowState } from '../window/panel-tree-utils.js'
 
 /**
  * 注册桥接 IPC handler（runtime port / 窗口管理系列）。
@@ -36,7 +35,7 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('create-window', async (_event, options?: { sessionId?: string }) => {
     const windowId = deps.windowManager.generateId()
     const win = await deps.createWindow({ windowId, sessionId: options?.sessionId })
-    deps.windowManager.register(windowId, win, initialWindowState(windowId))
+    deps.windowManager.register(windowId, win)
     // 通知所有已存在窗口：窗口列表变化
     broadcastWindowList()
     return { windowId }
@@ -48,10 +47,6 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle('focus-window', (_event, windowId: string) => {
     deps.windowManager.focus(windowId)
-  })
-
-  ipcMain.handle('find-session-window', (_event, sessionId: string) => {
-    return deps.windowManager.findSessionBySessionId(sessionId)
   })
 
   // 窗口列表变化回调：create/close 时触发广播

@@ -36,7 +36,7 @@ export class GitMessageHandler {
   constructor(private ctx: GitHandlerContext) {}
 
   /** D1: 本 handler 认领的 ClientMessageType 清单。 */
-  readonly handles: ClientMessageType[] = ['git.status', 'git.diff', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout', 'git.createBranch']
+  readonly handles: ClientMessageType[] = ['git.status', 'git.diff', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout', 'git.checkoutCwd', 'git.createBranch']
 
   async handleGitMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
@@ -98,6 +98,16 @@ export class GitMessageHandler {
           return this.sendGitError(ws, msg.id, sessionId, e)
         }
       }
+      case 'git.checkoutCwd': {
+        const { cwd, name } = msg.payload
+        try {
+          await this.ctx.gitService.checkoutByCwd(cwd, name)
+          return this.ctx.reply(ws, msg.id, 'message.status', { status: 'switched' })
+        } catch (e) {
+          // 无 session 的 cwd-based checkout，error 不带 sessionId（landing 态无绑定 session）
+          return this.sendGitError(ws, msg.id, undefined, e)
+        }
+      }
       case 'git.createBranch': {
         const { sessionId, name } = msg.payload
         try {
@@ -116,7 +126,7 @@ export class GitMessageHandler {
    * - 其它 → 'git_failed' + toErrorMessage
    * sessionId 透传 details（matched 与 fallback 两分支都带）。
    */
-  private sendGitError(ws: WsType, id: string | undefined, sessionId: string, e: unknown): void {
-    sendHandlerError(this.ctx, ws, GitError, 'git_failed', e, id, { sessionId })
+  private sendGitError(ws: WsType, id: string | undefined, sessionId: string | undefined, e: unknown): void {
+    sendHandlerError(this.ctx, ws, GitError, 'git_failed', e, id, sessionId ? { sessionId } : undefined)
   }
 }

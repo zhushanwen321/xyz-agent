@@ -132,6 +132,9 @@ export class ConfigService implements IConfigService {
       })),
       // W2：从 config.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 provider）
       enabled: config.enabled !== false,
+      // Coding Plan 额度查询配置：透传 quota（fetcher/enabled/cookieSet）到 ProviderInfo，
+      // 供 Settings UI 显示状态 + ContextCapacityPopover 判断是否显示额度区
+      quota: config.quota,
     }))
   }
 
@@ -142,6 +145,8 @@ export class ConfigService implements IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean }>
     enabled?: boolean
+    /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
+    quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
   }): { newDefault?: { provider: string; modelId: string } } {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
     // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
@@ -152,6 +157,8 @@ export class ConfigService implements IConfigService {
     if (data.name !== undefined) merged.name = data.name as string
     // W2：provider 级 enabled 透传到合并结果（data 类型已声明 enabled，原合并逻辑漏处理）
     if (data.enabled !== undefined) merged.enabled = data.enabled
+    // Coding Plan 额度查询：整体覆写 quota（fetcher/enabled/cookieSet 三字段一起持久化）
+    if (data.quota !== undefined) merged.quota = data.quota
     if (data.models !== undefined) {
       const rawModels = data.models as Array<Record<string, unknown>>
       const existingModels = (existing.models ?? []) as ConfigModelDefinition[]
@@ -243,6 +250,77 @@ export class ConfigService implements IConfigService {
   updateToolPermissions(permissions: Record<string, string>): void {
     const config = this.loadAppConfig()
     config['toolPermissions'] = permissions
+    this.saveAppConfig(config)
+  }
+
+  // ── Worktree config（git-cwt-anywhere）──
+
+  getWorktreeRootDir(): string {
+    const config = this.loadAppConfig()
+    const val = config['worktreeRootDir']
+    return typeof val === 'string' ? val : '~/worktrees'
+  }
+
+  setWorktreeRootDir(dir: string): void {
+    if (!dir || !dir.trim()) {
+      throw new Error('worktreeRootDir cannot be empty')
+    }
+    const config = this.loadAppConfig()
+    config['worktreeRootDir'] = dir
+    this.saveAppConfig(config)
+  }
+
+  getSetupScript(): string {
+    const config = this.loadAppConfig()
+    const val = config['setupScript']
+    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+  }
+
+  setSetupScript(script: string): void {
+    if (script.includes('..')) {
+      throw new Error('setupScript path cannot contain ..')
+    }
+    const config = this.loadAppConfig()
+    config['setupScript'] = script
+    this.saveAppConfig(config)
+  }
+
+  getBareSetupScript(): string {
+    const config = this.loadAppConfig()
+    const val = config['bareSetupScript']
+    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+  }
+
+  setBareSetupScript(script: string): void {
+    const config = this.loadAppConfig()
+    config['bareSetupScript'] = script
+    this.saveAppConfig(config)
+  }
+
+  getTimeout(): number {
+    const config = this.loadAppConfig()
+    const val = config['worktreeTimeout']
+    return typeof val === 'number' ? val : 60
+  }
+
+  setTimeout(timeout: number): void {
+    if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 3600) {
+      throw new Error(`timeout must be a positive number in (0, 3600], got ${timeout}`)
+    }
+    const config = this.loadAppConfig()
+    config['worktreeTimeout'] = timeout
+    this.saveAppConfig(config)
+  }
+
+  getDefaultBaseBranch(): string {
+    const config = this.loadAppConfig()
+    const val = config['defaultBaseBranch']
+    return typeof val === 'string' ? val : 'origin/main'
+  }
+
+  setDefaultBaseBranch(baseBranch: string): void {
+    const config = this.loadAppConfig()
+    config['defaultBaseBranch'] = baseBranch
     this.saveAppConfig(config)
   }
 

@@ -28,10 +28,13 @@ import { FileMessageHandler } from './file-message-handler.js'
 import { WorkspaceMessageHandler } from './workspace-message-handler.js'
 import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import { TerminalMessageHandler } from './terminal-message-handler.js'
+import { QuotaMessageHandler } from './quota-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
+import type { HandoffService } from '../services/handoff-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
+import type { QuotaService } from '../services/quota-service.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 export class RuntimeServer implements IMessageBroker {
@@ -46,6 +49,8 @@ export class RuntimeServer implements IMessageBroker {
   private pluginService!: IPluginService
   private gitService?: GitService
   private fileService?: FileService
+  /** fast-handoff 编排层（session.handoff / session.abortHandoff 路由用）。 */
+  private handoffService?: HandoffService
   /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
   private skillRegistry?: SkillRegistry
 
@@ -64,6 +69,7 @@ export class RuntimeServer implements IMessageBroker {
   private workspaceMessageHandler!: WorkspaceMessageHandler
   private worktreeMessageHandler?: WorktreeMessageHandler
   private terminalMessageHandler?: TerminalMessageHandler
+  private quotaMessageHandler!: QuotaMessageHandler
 
   /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
@@ -85,9 +91,10 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService): void {
     this.gitService = git
     this.fileService = file
+    this.handoffService = handoff
     this.sessionService = session
     this.configService = config
     this.modelService = model
@@ -141,6 +148,7 @@ export class RuntimeServer implements IMessageBroker {
     this.sessionHandler = new SessionMessageHandler({
       ...messaging,
       sessionService: this.sessionService,
+      handoffService: this.handoffService,
       nextPushId: () => this.broker.nextPushId(),
       broadcastSessionList: () => this.broker.broadcastSessionList(),
       clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),
@@ -197,6 +205,12 @@ export class RuntimeServer implements IMessageBroker {
         terminalService: terminal,
       })
     }
+    if (quota) {
+      this.quotaMessageHandler = new QuotaMessageHandler({
+        ...messaging,
+        quotaService: quota,
+      })
+    }
 
     // ── Build the central dispatch table (D1) ───────────────────────
     // ping 内联（无对应 handler）；file.read 已迁入 fileMessageHandler（W2）；settings 走兜底（见 handleMessage）。
@@ -207,6 +221,7 @@ export class RuntimeServer implements IMessageBroker {
     const workspaceHandler = this.workspaceMessageHandler
     const worktreeHandler = this.worktreeMessageHandler
     const terminalHandler = this.terminalMessageHandler
+    const quotaHandler = this.quotaMessageHandler
     this.routes = new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
@@ -218,6 +233,7 @@ export class RuntimeServer implements IMessageBroker {
       ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
       ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
       ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
+      ...(quotaHandler ? quotaHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => quotaHandler.handleQuotaMessage(msg, ws)] as const) : []),
     ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
   }
 
@@ -228,6 +244,12 @@ export class RuntimeServer implements IMessageBroker {
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     this.broker.sendError(ws, code, message, id, details)
   }
+  /**
+   * fast-handoff（BLOCKER 2 / WARNING nextPushId）：暴露 broker 的 broadcast helper / push id 生成器，
+   * 供 index.ts 注入到 HandoffService（与 session-message-handler 的 create/fork/delete/rename 一致）。
+   */
+  broadcastSessionList(): void { this.broker.broadcastSessionList() }
+  nextPushId(): string { return this.broker.nextPushId() }
 
   // ── Message routing ───────────────────────────────────────────
 

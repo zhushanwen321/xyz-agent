@@ -15,11 +15,9 @@
  * 派生纯函数 deriveStatus 下沉到 composables/logic/sessionStatus.ts（与 DOT_CLASS 同源 5 态 SSOT）。
  * 本 composable 保留 session CRUD + panel/nav 同步 + hydrate + 命令时序 + 文件树预触发 + initApp
  * （核心粘合价值，deletion test 证明不可删）。
- *
- * deriveStatus 仍从此处 re-export（向后兼容：历史上有调用方直接从 useSidebar import 该纯函数）。
  */
 import { computed, onScopeDispose } from 'vue'
-import type { SessionGroup } from '@xyz-agent/shared'
+import type { PanelLeaf, SessionGroup } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
@@ -40,10 +38,10 @@ import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
+import { clearUnread } from '@/composables/useSessionMarkers'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
-// deriveStatus 纯函数 re-export（向后兼容：旧调用方直接从 useSidebar import）
-export { deriveStatus } from '@/composables/logic/sessionStatus'
+import { useHandoffActions } from '@/composables/features/useHandoffActions'
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
 // useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），
@@ -81,6 +79,37 @@ export function resetAppBootstrap(): void {
   hasConnectedBefore = false
 }
 
+/**
+ * 清理 bound panel 上残留的 subagent overlay / agent call overlay viewing 状态。
+ *
+ * 从 deleteSession 主体提取（降 cyclomatic）：删 session 前该 panel 可能正停在 subagent
+ * overlay 或 agent call overlay，残留 viewing 指向已删 session 的 subagentId / agentCallId，
+ * 且 streaming 订阅（subagentStore.panelStreamUnsub）泄漏。此函数兜底清两个 overlay。
+ *
+ * [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）。
+ * 顺序与原内联块完全一致：先 subagent overlay 后 agent call overlay。
+ */
+function clearBoundPanelOverlays(
+  boundPanel: PanelLeaf,
+  id: string,
+  subagentStore: ReturnType<typeof useSubagentStore>,
+  workflowStore: ReturnType<typeof useWorkflowStore>,
+): void {
+  if (subagentStore.isViewing(boundPanel.id)) {
+    const viewingSubId = subagentStore.getViewingSubagentId(boundPanel.id)
+    const chatStore = useChatStore()
+    subagentStore.backToMain(
+      boundPanel.id,
+      id,
+      viewingSubId ?? undefined,
+      (sid) => chatStore.evictVirtualKey(sid),
+    )
+  }
+  if (workflowStore.isViewing(boundPanel.id)) {
+    workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId), id)
+  }
+}
+
 export function useSidebar() {
   const navigation = useNavigationStore()
   const session = useSessionStore()
@@ -93,13 +122,11 @@ export function useSidebar() {
 
   /**
    * 当前焦点 panel 绑定的 session（UI 高亮 SSOT）。
-   * 从 panel.activePanelId 派生——切 panel focus 时自动跟随，驱动 sidebar 高亮 / 文件树 / overview。
+   * 直接读 store.focusedSessionId（v2 split 移除后单 panel，此前 local computed 从 panels.find 派生，冗余）。
    * 与 session.activeId 解耦：activeId 收敛为导航/启动语义，不再驱动 UI 高亮。
-   * 双 panel standby 空态（leaf.sessionId=null）→ 返回 null（文件树显空态占位）。
+   * 空 panel（sessionId=null）→ 返回 null（文件树显空态占位）。
    */
-  const focusedSessionId = computed<string | null>(
-    () => panel.panels.find((p) => p.id === panel.activePanelId)?.sessionId ?? null,
-  )
+  const focusedSessionId = computed<string | null>(() => panel.focusedSessionId)
 
   /** 焦点 session 的 summary（FileView label/branch 用）；找不到则 null */
   const focusedSession = computed(
@@ -119,19 +146,14 @@ export function useSidebar() {
 
   /**
    * 同步 session 到 panel（sidebar 选 session 与 ⌘[/⌘] 导航共用）。
-   * session 已在某 panel 则只切焦点，否则载入 active panel（单 panel 默认根节点）。
-   * 幂等：同 sessionId 重复调用无副作用（findPanelBySession 命中→setActive，loadSession 同值不变）。
+   * 单 panel 下直接载入唯一 panel（v2 split 移除后无 findPanelBySession 切焦点分支）。
+   * 幂等：同 sessionId 重复调用，loadSession 同值不变。
    *
    * 编排点在 features 层而非组件 watch——避免「空态时不渲染→watch 不注册→loadSession 不触发」
    * 的初始化时序死锁（原 PanelContainer watch bug，W05 发现）。
    */
   function syncSessionToPanel(sessionId: string): void {
-    const existing = panel.findPanelBySession(sessionId)
-    if (existing) {
-      panel.setActive(existing.id)
-    } else {
-      panel.loadSession(panel.activePanelId, sessionId)
-    }
+    panel.loadSession(panel.activePanelId, sessionId)
   }
 
   /**
@@ -139,29 +161,23 @@ export function useSidebar() {
    * 首次进入该 session 时拉取历史注入 chat store（UC-2 切换可见块类型，G2-006）。
    * switchSession 失败（mock id 不存在）抛错，UI 层捕获；不更新 activeId。
    *
-   * opts.panelId：强制载入指定 panel（而非默认的 active/sync 路径），用于「新建会话替换待机侧」——
-   * 载入待机 panel 并 setActive 聚焦，active 侧 session 不动（panel/spec.md 状态与交互）。
-   *
    * NewTaskFlow 联动（#3 AC-3.10）：flow 活跃时（landing/overlay）切 session → cancelFlow，
    * 让 flow 退到 cancelled（overlay 自动关 + state 不残留 landing）。
    * landing 态覆盖：initApp/点新建后停在 landing，此时点侧栏历史会话须 cancelFlow，
    * 否则 state 残留 landing → isLandingView 仍 true → composer 被误抑制（new-task 渲染撕裂）。
    */
-  async function selectSession(id: string, opts?: { panelId?: string }): Promise<void> {
+  async function selectSession(id: string): Promise<void> {
     // flow 活跃（landing/overlay）时切 session → cancelled（AC-3.10，避免 overlay 卡死 + landing 残留）
     const flow = useNewTaskFlow()
     if (flow.isActive.value) flow.cancelFlow()
 
     await sessionApi.switchSession(id)
     session.activeId = id
+    // 清除未读标记：用户主动查看该 session，不再显示未读 badge
+    clearUnread(id)
     // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）
     chat.touchLru(id)
-    if (opts?.panelId) {
-      panel.loadSession(opts.panelId, id)
-      panel.setActive(opts.panelId)
-    } else {
-      syncSessionToPanel(id)
-    }
+    syncSessionToPanel(id)
     navigation.push({ view: 'chat', sessionId: id })
     // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
     // getHistory 失败 → 标记 failedHistory，landing 显重试出口（AC-2.6），不永久卡住
@@ -226,14 +242,11 @@ export function useSidebar() {
     void subagentStore.loadSubagents(id)
     void workflowStore.loadWorkflows(id)
 
-    // [lru-panel-exempt-fix] evictIfNeeded 前刷新所有 panel 绑定 session 的 LRU recency。
-    // panel 绑定 session（含 standby 侧）是用户当前可见的活跃 session，刷新其 recency 确保不被误驱逐。
-    // 保护随 panel 解绑自然衰减（close/unbind 后不再 touch → 回到正常 LRU 候选）。
+    // [lru-panel-exempt-fix] evictIfNeeded 前刷新 panel 绑定 session 的 LRU recency。
+    // panel 绑定 session 是用户当前可见的活跃 session，刷新其 recency 确保不被误驱逐。
     // 不改 isLruExempt（chat.ts:424）：evictSessionWithVirtual 与 evictIfNeeded 共用同一 isExempt，
     // 若加 panel 检查会让 deleteSession 流程中被删 session（必然还绑定 panel）被 exempt 拦截 → 内存泄漏。
-    for (const p of panel.panels) {
-      if (p.sessionId) chat.touchLru(p.sessionId)
-    }
+    if (panel.currentLeaf.sessionId) chat.touchLru(panel.currentLeaf.sessionId)
     // W3 H3：切 session 后触发 LRU 驱逐（保留最近 8 个 + streaming/pending/compacting 豁免）。
     // panel 绑定 session 由上方 touchLru 刷新保护，非 panel 绑定的最旧 session 按序驱逐。
     chat.evictIfNeeded()
@@ -289,27 +302,6 @@ export function useSidebar() {
   }
 
   /**
-   * 新建会话到待机侧（双 panel，panel/spec.md「替换待机侧为新 session 并聚焦」）：
-   * 复用 newSession 的 startFlow 流程，但通过 selectSession(panelId) 把新 session 载入非 active panel
-   * 并聚焦——active 侧 session 保持不变。单 panel 时回退到载入唯一 panel。首次启动延迟 create 时 no-op。
-   */
-  async function newSessionToStandby(): Promise<void> {
-    if (newTaskInFlight) return
-    newTaskInFlight = true
-    try {
-      const flow = useNewTaskFlow()
-      await flow.startFlow()
-      const created = flow.currentSession.value
-      if (!created) return // 首次启动延迟 create
-      // startFlow 已 appendSession + activeId；载入待机 panel 并聚焦
-      const standby = panel.panels.find((p) => p.id !== panel.activePanelId)
-      await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
-    } finally {
-      newTaskInFlight = false
-    }
-  }
-
-  /**
    * 重命名 session（API + 乐观更新 store）。
    * 编排点在 features 层：跨 api + store 的唯一合法层。
    */
@@ -333,8 +325,7 @@ export function useSidebar() {
   async function deleteSession(id: string): Promise<void> {
     await sessionApi.remove(id)
     const wasActive = session.activeId === id
-    // 删除的 session 若承载在某 panel（split 模式下 standby panel 可能 focused 非 activeId），
-    // 清空该 panel 绑定，避免 panel 残留指向已删 session 的悬空引用。
+    // 删除的 session 若绑定到 panel，清空 panel 绑定，避免悬空引用指向已删 session。
     const boundPanel = panel.findPanelBySession(id)
     if (boundPanel) panel.loadSession(boundPanel.id, null)
     // [W3 / W-S6] 清 per-panel viewing 状态：删除 session 前该 panel 可能正停在
@@ -343,22 +334,7 @@ export function useSidebar() {
     const subagentStore = useSubagentStore()
     const workflowStore = useWorkflowStore()
     const extensionUIStore = useExtensionUIStore()
-    if (boundPanel) {
-      if (subagentStore.isViewing(boundPanel.id)) {
-        // [M7] backToMain 立即清 messages + tombstone（传 mainSessionId/chatEvict）
-        const viewingSubId = subagentStore.getViewingSubagentId(boundPanel.id)
-        const chatStore = useChatStore()
-        subagentStore.backToMain(
-          boundPanel.id,
-          id,
-          viewingSubId ?? undefined,
-          (sid) => chatStore.evictVirtualKey(sid),
-        )
-      }
-      if (workflowStore.isViewing(boundPanel.id)) {
-        workflowStore.backFromAgentCall(boundPanel.id, (acsId) => useChatStore().evictVirtualKey(acsId), id)
-      }
-    }
+    if (boundPanel) clearBoundPanelOverlays(boundPanel, id, subagentStore, workflowStore)
     session.removeFromList(id)
     // 跨 store 清理（S3）：fileTree + tasks + subagent + workflow + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
@@ -418,6 +394,18 @@ export function useSidebar() {
     forkFromLastAssistant,
     enterForkModeFromLastAssistant,
   } = useForkActions(focusedSessionId)
+
+  /**
+   * Handoff 操作（handoff / abortHandoff / handoffFromLastAssistant / enterHandoffModeFromLastAssistant）。
+   * 编排逻辑抽到 useHandoffActions（参照 useForkActions 范式），注入 focusedSessionId ref，
+   * 内部自行获取 chat store + api。handoff 逻辑与 fork 正交，独立 composable 职责内聚。
+   */
+  const {
+    handoff,
+    abortHandoff,
+    handoffFromLastAssistant,
+    enterHandoffModeFromLastAssistant,
+  } = useHandoffActions(focusedSessionId)
 
 
   /**
@@ -535,7 +523,6 @@ export function useSidebar() {
     focusedSession,
     selectSession,
     newSession,
-    newSessionToStandby,
     retryHistory,
     goOverview,
     loadSessions,
@@ -549,5 +536,9 @@ export function useSidebar() {
     forkSessionAsk,
     forkFromLastAssistant,
     enterForkModeFromLastAssistant,
+    handoff,
+    abortHandoff,
+    handoffFromLastAssistant,
+    enterHandoffModeFromLastAssistant,
   }
 }

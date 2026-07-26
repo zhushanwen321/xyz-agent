@@ -200,20 +200,22 @@
            块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
            - streaming 态：所有块按时序展开，trace 末尾追加独立光标行（永远在最后一行）
            - complete 态：末位 assistant 的 text 块跳过（已在底部 summary），其余按时序 -->
-      <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-        <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-          <Block
-            v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]"
-            :key="`${assistant.id}-${blk.kind}-${bIdx}`"
-            :type="blk.kind"
-            :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
-            :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
-            :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
-            :working="sessionActive"
-            :session-id="sessionId"
-          />
-        </template>
-      </div>
+      <Transition :css="false" @before-leave="onTraceBeforeLeave" @leave="onTraceLeave" @enter="onTraceEnter">
+        <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
+          <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
+            <Block
+              v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]"
+              :key="`${assistant.id}-${blk.kind}-${bIdx}`"
+              :type="blk.kind"
+              :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
+              :tool="blk.kind === 'tool' ? (blk.ref as ToolCall) : undefined"
+              :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
+              :working="sessionActive"
+              :session-id="sessionId"
+            />
+          </template>
+        </div>
+      </Transition>
 
       <!-- hr 已移入上方 turn-meta sticky wrapper（working/完成态共用，避免 streaming 时双线） -->
 
@@ -277,7 +279,7 @@
           >
             <GitFork class="size-3" />
             <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">⌘G</span>
+            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">{{ formatKbd('g') }}</span>
           </Button>
           <Button
             v-if="!isSubagentVirtualId(sessionId)"
@@ -290,7 +292,36 @@
           >
             <GitFork class="size-3.5 fill-current" />
             <span class="text-[11px]">{{ t('panel.message.forkAskLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">⌘⇧G</span>
+            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">{{ formatKbd('shift+g') }}</span>
+          </Button>
+          <!-- handoff 按钮组（fast-handoff）：与 fork 同组，用 as-sep 分隔。
+               handoff 后台（Upload 线性）：从末条 assistant 打包文档到新 session，完成后跳转。
+               handoff 备注（Upload 实心 + accent 圆点徽章）：进 composer handoff 模式，可附 focus 说明。 -->
+          <span v-if="!isSubagentVirtualId(sessionId)" class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
+          <Button
+            v-if="!isSubagentVirtualId(sessionId)"
+            variant="ghost"
+            size="icon"
+            class="handoff-btn size-6 text-subtle hover:bg-accent-soft hover:text-accent"
+            data-testid="handoff-btn"
+            :disabled="isHandingOff"
+            :title="t('panel.message.handoff')"
+            @click="onHandoff()"
+          >
+            <Upload class="size-3" />
+          </Button>
+          <Button
+            v-if="!isSubagentVirtualId(sessionId)"
+            variant="ghost"
+            size="icon"
+            class="handoff-ask-btn relative size-6 text-subtle hover:bg-accent-soft hover:text-accent"
+            data-testid="handoff-ask-btn"
+            :disabled="isHandingOff"
+            :title="t('panel.message.handoffAsk')"
+            @click="onHandoffAsk(lastAssistant)"
+          >
+            <Upload class="size-3.5 fill-current" />
+            <span class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-accent" />
           </Button>
         </div>
       </div>
@@ -310,12 +341,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Wrench } from '@lucide/vue'
+import { ArrowRight, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Upload, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
-import type { ThinkingBlock, ToolCall, Segment, Message } from '@xyz-agent/shared'
+import type { ThinkingBlock, ToolCall, Segment } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
 import { rebuildSegmentsWithEditedText } from '@/lib/utils'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
@@ -324,13 +355,13 @@ import { useCopy } from '@/composables/effects/useCopy'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useSidebar } from '@/composables/features/useSidebar'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
-import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
-import { useToast } from '@/composables/useToast'
+import { useTurnActions } from '@/composables/panel/useTurnActions'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
+import { useStickGuard, useTraceTransition } from '@/composables/effects/useStickGuard'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
 import ImageThumb from './ImageThumb.vue'
@@ -365,10 +396,22 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const chat = useChatStore()
 const { editAndResend } = useChat()
-const { forkSession } = useSidebar()
+/** 最后一条 assistant（收尾 summary + MD 复制 + fork/handoff 的目标消息；useTurnActions 守卫用） */
+const lastAssistant = computed(() => {
+  const as = props.turn.assistants
+  return as[as.length - 1] ?? null
+})
+/** fork/handoff hover action handler（后台 fork / fork 提问 / 后台 handoff / handoff 备注）下沉 useTurnActions。 */
+const { onFork, onForkAsk, onHandoff, onHandoffAsk } = useTurnActions({
+  sessionId: computed(() => props.sessionId),
+  lastAssistant,
+})
 const { open: openDrawer } = useSideDrawer()
-const { error: toastError } = useToast()
+const { formatKbd } = usePlatformShortcut()
 const fileTreeStore = useFileTreeStore()
+
+/** [m2] 本 session 是否正在交接（防 handoff 按钮重复点击触发第二次 api 调用；fork 按钮不加 disabled）。 */
+const isHandingOff = computed(() => chat.isHandingOff(props.sessionId))
 
 /**
  * 虚拟滚动高度测量（W4）：rootEl + ResizeObserver 上报自身高度给 useVirtualTurnList。
@@ -483,11 +526,17 @@ const { elapsed } = useTurnElapsed(
   },
 )
 
-/** 最后一条 assistant（收尾 summary + MD 复制 + fork 的目标消息） */
-const lastAssistant = computed(() => {
-  const as = props.turn.assistants
-  return as[as.length - 1] ?? null
-})
+/**
+ * stickToBottom 守卫暂停 + trace 折叠 transition hooks。
+ *
+ * 背景：对话完成时 trace 折叠，浏览器 clamp scrollTop 大幅减小被 onScroll 误判为用户上滑 →
+ * stickToBottom 翻 false → scrollToBottom 被 guard 拦截 → 界面停中间。transition 期间暂停该
+ * 误判分支（wheel 上滑仍立即翻 false，纯用户信号优先）。
+ *
+ * useStickGuard inject MessageStream provide 的 pause/resume（优雅降级：非 MessageStream 环境返回 null）。
+ * useTraceTransition 封装三个 height 过渡 JS hooks（提取至 composable，行数规范）。详见 composable 注释。
+ */
+const { onTraceBeforeLeave, onTraceLeave, onTraceEnter } = useTraceTransition(useStickGuard())
 
 /** 变更集卡（W10）：最后一条 assistant 的 fileChanges + store 里的变更集状态 */
 const changeSetFileChanges = computed(() => lastAssistant.value?.fileChanges ?? [])
@@ -542,33 +591,7 @@ async function submitEdit(): Promise<void> {
   await editAndResend(props.sessionId, user.id, segments)
 }
 
-/* ── fork 入口（FR-6,7,8,11）：每条 assistant 可 fork，无需确认弹窗 ── */
-
-/**
- * fork 后台（低频）：从指定 assistant 处空白 fork，留在原线（useSidebar.forkSession 已不 split）。
- * includeFrom=true：保留到该 assistant（含）。反馈行由 session.forkNotice 广播驱动渲染。
- * 失败时 toast 反馈（与 fork-ask 路径对称），避免静默 unhandled rejection。
- */
-async function onFork(msg: Message): Promise<void> {
-  if (!msg) return
-  try {
-    await forkSession(props.sessionId, msg.id, { includeFrom: true, openInStandby: false })
-  } catch (e) {
-    const error = e instanceof Error ? e.message : String(e)
-    toastError(t('panel.message.forkFailed', { error }))
-  }
-}
-
-/**
- * fork 提问（高频）：从指定 assistant 处进入 composer fork 模式（spec §2 层②）。
- * 经 useForkModeChannel 发 signal，Composer 监听后调自身 enterForkMode（聚焦输入框等用户键入），
- * 用户输入完成后由 Composer 的 fork 模式发送路径调 forkSessionAsk（fork + 把 content 作首条 user）。
- * 不在此处直接 fork——fork 点的选择权交回 composer（与末条 assistant 快捷键 ⌘⇧G 同路径）。
- */
-function onForkAsk(msg: Message): void {
-  if (!msg) return
-  triggerEnterForkMode(props.sessionId, msg.id)
-}
+/* ── fork / handoff 入口（FR-6,7,8,11 / fast-handoff）：handler 下沉 useTurnActions ── */
 
 /**
  * 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠，作回合焦点）。

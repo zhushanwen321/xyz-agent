@@ -59,6 +59,23 @@ export interface PiProviderConfig {
   authHeader?: boolean
   models?: PiModelDefinition[]
   modelOverrides?: Record<string, Record<string, unknown>>
+  /**
+   * Coding Plan 额度查询配置（可选）。
+   * 持久化在 models.json 的 provider 级，listProviders 映射到 ProviderInfo.quota。
+   */
+  quota?: {
+    /** 用户手动指定的 fetcher id（省略时 QuotaService 自动按 baseUrl/name 匹配）。 */
+    fetcher?: string
+    /** 是否启用额度查询。 */
+    enabled: boolean
+    /** cookie 类 provider 的 cookie 是否已写入 secrets（布尔态，明文不入 models.json）。 */
+    cookieSet?: boolean
+    /**
+     * api-key 类 provider 是否有 Coding Plan 专属 API Key（明文存 secrets，不写 models.json）。
+     * 未设置/false = 复用 provider.apiKey。
+     */
+    apiKeySet?: boolean
+  }
 }
 
 export interface PiModelsConfig {

@@ -20,7 +20,7 @@ description: >-
 
 ⚠️ **关键**：第一个参数是 **feature worktree 目录名**（如 `feat-new-feature`），不是 `main`。脚本会自动检测 `$WS_ROOT/main` 用于 bump/tag/push。传 `main` 会导致阶段 7 删除 main worktree。
 
-⚠️ **cwd 隔离**：Pi bash 工具的 cwd 不跨调用保持。所有阶段脚本必须在 **workspace root** 或 **main worktree** 内执行，不能在 feature worktree 内（阶段 7 会删除它）。
+⚠️ **cwd 隔离**：bash 工具的 cwd 按调用持久，不随脚本内部 `cd` 改变（脚本在子进程 cd，退出回到调用前）。所有阶段脚本必须在 **workspace root** 或 **main worktree** 内执行，不能在 feature worktree 内（阶段 7 会删除它）。每个阶段命令前若不确定 cwd，显式 `cd $WS_ROOT` 或 `cd $WS_ROOT/main`。详见阶段 7 的 [HISTORICAL] 说明。
 
 ```bash
 cd /Users/zhushanwen/Code/xyz-agent-workspace
@@ -170,7 +170,16 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 
 门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
 
-⚠️ **cwd 隔离**：bash 工具的 cwd 在调用间持久。脚本内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但只在子 shell 生效，脚本退出后调用方 cwd 不变。若 cwd 在待删 worktree 内，脚本删除目录后后续 bash 命令将报 ENOENT。**执行前先 `cd $WS_ROOT`**。
+⚠️ **cwd 隔离 [HISTORICAL]**：`remove-worktree.sh` 内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但**脚本退出后 bash 工具的 cwd 不变**——bash 工具自身维护的 cwd 是按调用持久、不随脚本内部 `cd` 改变的（脚本在子进程里 cd，退出即回到调用前 cwd）。
+
+调用前 cwd 默认是 session 启动时的工作目录（通常是 feature worktree 内）。若不显式 `cd $WS_ROOT`，脚本删掉 feature worktree 目录后，后续 bash 命令的 cwd 指向已删除目录 → ENOENT。
+
+**自动化执行阶段 7 前必须显式 `cd $WS_ROOT`**（手动终端执行则脚本内部的 cd 足够，因为终端 shell 的 cwd 会跟随 cd）。这与 AGENTS.md §8「multi-workspace cwd 不跨调用持久」是同一类陷阱的延伸——bash 工具假设单 cwd 项目，脚本内 cd 对调用方不可见。
+
+```bash
+cd $WS_ROOT  # 必须在调用 remove-worktree.sh 前显式 cd
+bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --skip-sync
+```
 
 ## AI 操作步骤
 

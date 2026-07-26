@@ -6,7 +6,7 @@
  *
  * 运行：cd packages/runtime && npx vitest run src/services/terminal/__tests__/terminal-service.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── mock node-pty ─────────────────────────────────────────────────────────
@@ -79,6 +79,12 @@ function findMsg(msgs: ServerMessage[], type: string): ServerMessage | undefined
 beforeEach(() => {
   mockPtys.length = 0
   vi.clearAllMocks()
+})
+
+// 恢复 it 内 vi.spyOn 创建的 spy（如 console.error），避免污染后续测试。
+// 只影响 vi.spyOn，不动 vi.mock 模块工厂 / vi.fn。
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('TerminalService', () => {
@@ -180,5 +186,72 @@ describe('TerminalService', () => {
       code: 'spawn_failed',
       message: expect.stringContaining('shell not found'),
     })
+  })
+
+  it('TS-10: spawn 失败时 console.error 收到序列化后的 plain object（含 message/stack/code），非裸 Error 实例', async () => {
+    // 回归守卫：spawn catch 块用 serializeError(e) 把 Error 转成 plain object 再传给 console.error。
+    // 若有人改回裸 e，Error 实例经 logger 的 JSON.stringify 会变成 {}，日志看不出真实错误。
+    const { spawn } = await import('node-pty')
+    // 带 code 的 Error（模拟 node 系统错误，验证 code 透出）
+    const spawnErr = Object.assign(new Error('ENOENT: shell not found'), { code: 'ENOENT' })
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      throw spawnErr
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+
+    await expect(svc.spawn('s10', undefined, 80, 24)).rejects.toMatchObject({
+      code: 'spawn_failed',
+    })
+
+    expect(errorSpy).toHaveBeenCalled()
+    // console.error 第二个参数是 serializeError(e) 的返回值
+    const serialized = errorSpy.mock.calls[0]![1]
+    // 关键：不是裸 Error 实例（裸 Error 会被 logger JSON.stringify 成 {}）
+    expect(serialized).not.toBeInstanceOf(Error)
+    // 是含 message/stack/code 的 plain object
+    expect(serialized).toMatchObject({
+      message: 'ENOENT: shell not found',
+      stack: expect.any(String),
+      code: 'ENOENT',
+    })
+    // 模拟 logger 的 JSON.stringify：plain object 能正确序列化出 message（裸 Error 会变 {}）
+    expect(JSON.parse(JSON.stringify(serialized)).message).toBe('ENOENT: shell not found')
+  })
+
+  it('TS-11: spawn env 清除 ELECTRON_RUN_AS_NODE 等 sidecar 内部变量（防 terminal 用户跑 electron 命令崩溃）', async () => {
+    // [HISTORICAL] 回归：runtime sidecar 的 process.env 含 ELECTRON_RUN_AS_NODE=1（打包模式
+    // 由 Electron 主进程注入，见 process-control.ts:202-205）。buildEnv 若原样透传到 terminal shell，
+    // 用户在 terminal 跑 `electron .` / `npm run dev` 时 Electron 退化为纯 Node，
+    // require('electron').app 为 undefined → 'Cannot read properties of undefined (reading isPackaged)' 崩溃。
+    // 修复：buildEnv 必须显式 delete 这些变量。
+    const prev = { ...process.env }
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    process.env.ELECTRON_NO_ASAR = '1'
+    process.env.ELECTRON_OVERRIDE_DIST_PATH = '/some/path'
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s11', undefined, 80, 24)
+      const { spawn } = await import('node-pty')
+      // node-pty.spawn(file, args, options) → options.env
+      const opts = vi.mocked(spawn).mock.calls[0]![2] as { env: Record<string, string> }
+      expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+      expect(opts.env.ELECTRON_NO_ASAR).toBeUndefined()
+      expect(opts.env.ELECTRON_OVERRIDE_DIST_PATH).toBeUndefined()
+      // 正常 env 仍应保留（验证不是整个 env 被清空）。
+      // TERM 契约（buildEnv:225）：保留 process.env.TERM（若有），否则 fallback 到 xterm-256color。
+      // 测试环境可能 TERM=dumb（非 TTY），不能硬编码 xterm-256color——按契约断言。
+      const expectedTerm = prev.TERM || 'xterm-256color'
+      expect(opts.env.TERM).toBe(expectedTerm)
+      expect(opts.env.PATH).toBe(process.env.PATH)
+    } finally {
+      // 还原 process.env，避免污染后续测试
+      for (const k of ['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ASAR', 'ELECTRON_OVERRIDE_DIST_PATH']) {
+        if (k in prev) process.env[k] = prev[k]!
+        else delete process.env[k]
+      }
+    }
   })
 })
