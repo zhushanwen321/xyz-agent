@@ -283,6 +283,7 @@ export default {
     'new-session': 'New session',
     'toggle-sidebar': 'Toggle sidebar',
     'go-overview': 'Overview',
+    'open-preset-select': 'Open launch preset',
   },
   // ── Preset page (PiPresetsPage) ──
   preset: {
