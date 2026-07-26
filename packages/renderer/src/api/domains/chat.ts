@@ -39,9 +39,23 @@ export async function getFullHistory(sessionId: string): Promise<Message[]> {
   return reply.messages
 }
 
-/** 发送消息（mock 不模拟失败，D7） */
-export function send(sessionId: string, text: string): Promise<void> {
-  return command('message.send', { sessionId, content: text })
+/**
+ * 发送消息（mock 不模拟失败，D7）。
+ *
+ * images 是 Cmd+V 富呈现通路的图片数据（base64，不含 data: 前缀），形状对齐
+ * shared protocol message.send（protocol.ts:199 images?: Array<{data;mimeType}>）。
+ * runtime rpc-client 已守卫空数组（rpc-client.ts:430 images.length>0 才组 piImages），
+ * 故此处 images 为 undefined 时直接不传 images 键（保持既有 payload 形态不变）。
+ */
+export function send(
+  sessionId: string,
+  text: string,
+  images?: Array<{ data: string; mimeType: string }>,
+): Promise<void> {
+  return command(
+    'message.send',
+    images ? { sessionId, content: text, images } : { sessionId, content: text },
+  )
 }
 
 /** 追加 steer（当前回合工具调用结束后、下次 LLM 调用前投递） */

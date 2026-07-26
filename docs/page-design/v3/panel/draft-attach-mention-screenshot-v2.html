@@ -1,0 +1,1587 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>xyz-agent Composer · 文件与图片传递（v2 · 视觉 SSOT）</title>
+<style>
+  /* ============================================================
+     design tokens（冷蓝暗色，项目真身）—— 沿用 v1，保证视觉一致
+     ============================================================ */
+  :root {
+    --bg: #1a1b1f;
+    --bg-input: #1e1f24;
+    --surface: #272830;
+    --surface-2: #2e2f38;
+    --surface-hover: #363740;
+    --bg-elevated: #313239;
+    --fg: #f7f8fc;
+    --muted: #a8a8b5;
+    --subtle: #82828f;
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.15);
+    --accent: #4f8ef7;
+    --accent-hover: #6ba3ff;
+    --accent-soft: color-mix(in oklch, #4f8ef7 12%, transparent);
+    --success: #22c55e;
+    --success-soft: color-mix(in oklch, #22c55e 12%, transparent);
+    --danger: #ef4444;
+    --danger-soft: color-mix(in oklch, #ef4444 12%, transparent);
+    --warning: #f5a524;
+    --warning-soft: color-mix(in oklch, #f5a524 12%, transparent);
+    --info: #38bdf8;
+    --reasoning: #a78bfa;
+    --reasoning-soft: color-mix(in oklch, #a78bfa 12%, transparent);
+    --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --radius-sm: 3px;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+    --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+    --ease: cubic-bezier(0.4,0,0.2,1);
+    --duration: 200ms;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 400 14px/1.6 var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body { padding: 40px 24px 96px; }
+
+  /* ============================================================
+     页面骨架
+     ============================================================ */
+  .page { max-width: 920px; margin: 0 auto; }
+
+  .page-head { margin-bottom: 16px; }
+  .crumbs {
+    font: 500 11px/1 var(--font-mono); color: var(--subtle);
+    letter-spacing: 0.04em; margin-bottom: 12px;
+  }
+  .crumbs b { color: var(--accent); font-weight: 600; }
+  .page-head h1 {
+    font: 600 24px/1.3 var(--font-sans); color: var(--fg);
+    letter-spacing: -0.01em; margin-bottom: 10px;
+  }
+  .page-head .lede {
+    color: var(--muted); font-size: 13px; line-height: 1.65; max-width: 78ch;
+  }
+  .page-head .lede b { color: var(--fg); }
+  .page-head .lede code {
+    font: 500 11.5px/1 var(--font-mono); color: var(--accent);
+    background: var(--surface-2); padding: 2px 5px; border-radius: 3px;
+  }
+
+  /* ============================================================
+     区块标题
+     ============================================================ */
+  .section { margin-top: 56px; }
+  .section-head {
+    display: flex; align-items: flex-start; gap: 12px;
+    margin-bottom: 6px; flex-wrap: wrap;
+  }
+  .section-num {
+    font: 700 11px/1 var(--font-mono); color: var(--accent);
+    background: var(--accent-soft); padding: 5px 8px; border-radius: var(--radius-sm);
+    letter-spacing: 0.06em; flex-shrink: 0; margin-top: 1px;
+  }
+  .section-num.core { color: var(--success); background: var(--success-soft); }
+  .section-num.new { color: var(--reasoning); background: var(--reasoning-soft); }
+  .section-title {
+    font: 600 17px/1.35 var(--font-sans); color: var(--fg); letter-spacing: -0.005em;
+  }
+  .section-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font: 600 10px/1 var(--font-mono); letter-spacing: 0.06em;
+    padding: 5px 8px; border-radius: 999px; flex-shrink: 0; margin-top: 1px;
+  }
+  .section-tag.implemented { color: var(--success); background: var(--success-soft); }
+  .section-tag.reserved { color: var(--muted); background: var(--surface-2); }
+  .section-tag.core { color: var(--success); background: var(--success-soft); }
+  .section-tag.info { color: var(--accent); background: var(--accent-soft); }
+  .section-tag.new { color: var(--reasoning); background: var(--reasoning-soft); }
+  .section-desc {
+    color: var(--muted); font-size: 13px; line-height: 1.6;
+    margin: 8px 0 20px; max-width: 78ch;
+  }
+  .section-desc b { color: var(--fg); }
+  .section-desc code {
+    font: 500 11.5px/1 var(--font-mono); color: var(--accent);
+    background: var(--surface-2); padding: 2px 5px; border-radius: 3px;
+  }
+
+  /* ============================================================
+     区块 1：三前缀语义卡片
+     ============================================================ */
+  .prefix-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  }
+  @media (max-width: 720px) { .prefix-grid { grid-template-columns: 1fr; } }
+  .prefix-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .prefix-card .pc-head {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .prefix-card .pc-glyph {
+    font: 700 22px/1 var(--font-mono);
+    width: 38px; height: 38px; border-radius: var(--radius);
+    display: grid; place-items: center; flex-shrink: 0;
+  }
+  .prefix-card .pc-glyph.slash { color: var(--reasoning); background: var(--reasoning-soft); }
+  .prefix-card .pc-glyph.hash { color: var(--success); background: var(--success-soft); }
+  .prefix-card .pc-glyph.at { color: var(--accent); background: var(--accent-soft); }
+  .prefix-card .pc-title {
+    font: 600 14px/1.3 var(--font-sans); color: var(--fg);
+  }
+  .prefix-card .pc-status {
+    font: 600 10px/1 var(--font-mono); letter-spacing: 0.04em;
+    padding: 3px 6px; border-radius: 999px; margin-top: 2px;
+    display: inline-block; width: fit-content;
+  }
+  .prefix-card .pc-status.done { color: var(--success); background: var(--success-soft); }
+  .prefix-card .pc-status.reserved { color: var(--muted); background: var(--surface-2); }
+  .prefix-card .pc-desc {
+    font: 400 12.5px/1.55 var(--font-sans); color: var(--muted);
+  }
+  .prefix-card .pc-desc code {
+    font: 500 11px/1 var(--font-mono); color: var(--accent);
+    background: var(--surface-2); padding: 2px 4px; border-radius: 3px;
+  }
+  .prefix-card .pc-meta {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 2px;
+    font: 500 11px/1.4 var(--font-sans); color: var(--subtle);
+  }
+  .prefix-card .pc-chip-sample {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 6px; border-radius: var(--radius-sm);
+    font: 500 11px/1.4 var(--font-sans);
+  }
+  .prefix-card .pc-chip-sample.slash { background: var(--reasoning-soft); color: var(--reasoning); }
+  .prefix-card .pc-chip-sample.hash { background: var(--success-soft); color: var(--success); }
+  .prefix-card .pc-chip-sample.at { background: var(--surface-2); color: var(--muted); }
+  .prefix-card .pc-chip-sample svg { width: 11px; height: 11px; }
+
+  /* ============================================================
+     demo 舞台（深一点，模拟 panel composer 区上下文）
+     ============================================================ */
+  .stage {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  .stage-label {
+    font: 500 10px/1 var(--font-mono); color: var(--subtle);
+    letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 14px;
+  }
+
+  /* demo 辅助按钮（模拟粘贴等） */
+  .demo-aux {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+  }
+  .demo-aux button {
+    font: 500 11px/1 var(--font-sans); color: var(--muted);
+    background: var(--surface-2); border: 1px solid var(--border-strong);
+    padding: 6px 10px; border-radius: var(--radius-sm);
+    cursor: pointer; transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .demo-aux button:hover { background: var(--surface-hover); color: var(--fg); }
+  .demo-aux button svg { width: 12px; height: 12px; color: var(--subtle); }
+  .demo-aux button:hover svg { color: var(--muted); }
+  .demo-aux button.primary { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 35%, transparent); }
+  .demo-aux button.primary:hover { background: var(--accent-soft); }
+  .demo-aux button.primary svg { color: var(--accent); }
+
+  /* ============================================================
+     composer 原语（精确复刻 spec）—— 沿用 v1
+     ============================================================ */
+  .composer-box {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    position: relative;
+    width: 100%;
+    max-width: 560px;
+    transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
+  }
+  .composer-box.focus {
+    border-color: var(--border-strong);
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.04);
+  }
+  .composer-box.dragover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow);
+  }
+  .composer-box.dragover .drop-hint { display: flex; }
+
+  /* ContextChipsBar（输入区上方，空则不渲染） */
+  .chips-bar {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 14px 0;
+  }
+  .chips-bar:empty { display: none; }
+  .chip {
+    display: inline-flex; align-items: center; max-width: 180px; gap: 4px;
+    padding: 2px 6px; border-radius: var(--radius-sm);
+    background: var(--surface-2); font: 500 11px/1.4 var(--font-sans); color: var(--muted);
+  }
+  .chip.img { color: var(--reasoning); }
+  .chip .chip-ic { width: 12px; height: 12px; flex-shrink: 0; color: var(--subtle); }
+  .chip.img .chip-ic { color: var(--reasoning); }
+  .chip .chip-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 10.5px;
+  }
+  .chip .chip-thumb {
+    width: 18px; height: 18px; border-radius: 2px; flex-shrink: 0;
+    background-size: cover; background-position: center;
+    background-color: var(--surface-hover);
+  }
+  .chip .chip-x {
+    width: 16px; height: 16px; flex-shrink: 0; cursor: pointer;
+    display: grid; place-items: center; border-radius: var(--radius-sm);
+    color: var(--subtle); transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+    margin-left: 2px;
+  }
+  .chip .chip-x svg { width: 11px; height: 11px; }
+  .chip .chip-x:hover { background: var(--danger-soft); color: var(--danger); }
+
+  /* 缩略图预览行 */
+  .thumb-bar {
+    display: flex; gap: 8px; padding: 8px 14px 0; flex-wrap: wrap;
+  }
+  .thumb-bar:empty { display: none; }
+  .thumb {
+    width: 56px; height: 56px; border-radius: var(--radius-sm);
+    background: var(--surface-2); border: 1px solid var(--border-strong);
+    background-size: cover; background-position: center;
+    position: relative; flex-shrink: 0; overflow: hidden;
+  }
+  .thumb .thumb-x {
+    position: absolute; top: 2px; right: 2px;
+    width: 16px; height: 16px; border-radius: var(--radius-sm);
+    background: rgba(0,0,0,0.55); color: var(--fg);
+    display: grid; place-items: center; cursor: pointer;
+    opacity: 0; transition: opacity var(--duration) var(--ease);
+  }
+  .thumb .thumb-x svg { width: 11px; height: 11px; }
+  .thumb:hover .thumb-x { opacity: 1; }
+
+  /* 输入区 */
+  .composer-input-wrap { position: relative; }
+  .composer-input {
+    min-height: 60px; max-height: 120px; overflow-y: auto;
+    padding: 11px 14px 4px;
+    font: 400 13px/1.55 var(--font-sans); color: var(--fg);
+    background: transparent; outline: none;
+    white-space: pre-wrap; word-break: break-word;
+    -webkit-user-select: text; user-select: text;
+  }
+  .composer-input[contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder); color: var(--subtle); pointer-events: none;
+  }
+
+  /* 内联 chip（在输入流里） */
+  .inline-chip {
+    display: inline-flex; align-items: center; gap: 3px; margin-right: 4px;
+    padding: 1px 6px; border-radius: var(--radius-sm);
+    font: 500 12px/1.4 var(--font-sans);
+    vertical-align: middle; user-select: none; cursor: default;
+  }
+  .inline-chip.slash { background: var(--reasoning-soft); color: var(--reasoning); }
+  .inline-chip.mention-at { padding: 1px 4px; background: var(--accent-soft); color: var(--accent); }
+  .inline-chip.mention-file { padding: 1px 4px; background: var(--success-soft); color: var(--success); }
+  .inline-chip .ic-svg { width: 12px; height: 12px; }
+  .inline-chip .ic-x {
+    font-size: 13px; opacity: 0.5; cursor: pointer; line-height: 1; margin-left: 1px;
+    transition: opacity var(--duration) var(--ease), color var(--duration) var(--ease);
+  }
+  .inline-chip .ic-x:hover { opacity: 1; color: var(--danger); }
+
+  /* image 内联 badge（光标处）: reasoning 色 + 图片图标 + displayName + x 删除 */
+  .image-badge {
+    display: inline-flex; align-items: center; max-width: 220px; gap: 4px;
+    margin-right: 4px;
+    padding: 1px 6px; border-radius: var(--radius-sm);
+    background: var(--reasoning-soft); color: var(--reasoning);
+    font: 500 12px/1.4 var(--font-sans);
+    vertical-align: middle; user-select: none; cursor: default;
+  }
+  .image-badge .ib-ic { width: 12px; height: 12px; flex-shrink: 0; }
+  .image-badge .ib-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--font-mono); font-size: 11px;
+  }
+  .image-badge .ib-x {
+    width: 14px; height: 14px; flex-shrink: 0; cursor: pointer;
+    display: grid; place-items: center; border-radius: var(--radius-sm);
+    color: var(--reasoning); opacity: 0.55; line-height: 1; font-size: 13px;
+    transition: opacity var(--duration) var(--ease), background var(--duration) var(--ease), color var(--duration) var(--ease);
+    margin-left: 1px;
+  }
+  .image-badge .ib-x:hover { opacity: 1; background: var(--danger-soft); color: var(--danger); }
+  /* badge 对比态：旧方案（fileName uuid）标红边框 */
+  .image-badge.deprecated {
+    background: var(--danger-soft); color: var(--danger);
+    border: 1px dashed var(--danger);
+  }
+  .image-badge.deprecated .ib-x { color: var(--danger); }
+
+  /* 工具条 */
+  .composer-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px 8px; margin-top: 4px;
+  }
+  .c-insert {
+    width: 28px; height: 28px; border-radius: var(--radius-sm);
+    border: 0; background: transparent; color: var(--muted);
+    cursor: pointer; display: grid; place-items: center; flex-shrink: 0;
+    transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+  }
+  .c-insert:hover { background: var(--surface-hover); color: var(--fg); }
+  .c-insert svg { width: 16px; height: 16px; }
+  .c-insert.active { background: var(--surface-hover); color: var(--fg); }
+  .bar-spacer { flex: 1; }
+  .c-send {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 0; background: var(--accent); color: #fff;
+    cursor: pointer; display: grid; place-items: center; flex-shrink: 0;
+    transition: background var(--duration) var(--ease);
+  }
+  .c-send:hover { background: var(--accent-hover); }
+  .c-send svg { width: 16px; height: 16px; }
+  .c-send:disabled { background: transparent; color: var(--subtle); cursor: default; opacity: 0.5; }
+
+  /* 拖拽提示（默认隐藏） */
+  .drop-hint {
+    display: none; position: absolute; inset: 0;
+    align-items: center; justify-content: center;
+    background: color-mix(in oklch, var(--accent) 8%, transparent);
+    border-radius: var(--radius-lg); pointer-events: none;
+    font: 600 13px/1 var(--font-sans); color: var(--accent);
+    letter-spacing: 0.02em;
+  }
+
+  /* ============================================================
+     Popover 基类 + 变体
+     ============================================================ */
+  .popover {
+    position: absolute; z-index: 20;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-2);
+    transform-origin: bottom left;
+    animation: pop-in var(--duration) var(--ease);
+  }
+  @keyframes pop-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* + 菜单（AddMenuPopover） */
+  .add-menu {
+    width: 208px; padding: 4px;
+    border-radius: var(--radius);
+    bottom: calc(100% + 6px); left: 6px;
+  }
+  .add-menu-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px; border-radius: var(--radius-sm);
+    font: 500 12px/1.4 var(--font-sans); color: var(--muted);
+    cursor: pointer; transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+  }
+  .add-menu-item:hover { background: var(--surface-hover); color: var(--fg); }
+  .add-menu-item svg { width: 14px; height: 14px; color: var(--subtle); flex-shrink: 0; }
+  .add-menu-item:hover svg { color: var(--muted); }
+  .add-menu-item .hint {
+    margin-left: auto; font: 500 10px/1 var(--font-mono); color: var(--subtle);
+  }
+
+  /* CommandPopover（/ 或 # 触发） */
+  .cmd-pop {
+    width: 100%; max-width: 560px; max-height: 180px; overflow-y: auto;
+    padding: 4px 0; border-radius: var(--radius);
+    bottom: calc(100% + 4px); left: -1px;
+  }
+  .cmd-pop-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px;
+    font: 500 12px/1.4 var(--font-sans); color: var(--muted);
+    cursor: pointer; transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+  }
+  .cmd-pop-item:hover { background: var(--surface-hover); color: var(--fg); }
+  .cmd-pop-item.active { background: var(--accent-soft); color: var(--accent); }
+  .cmd-pop-item .ci-ic { width: 15px; height: 15px; flex-shrink: 0; color: var(--subtle); }
+  .cmd-pop-item.active .ci-ic { color: var(--accent); }
+  .cmd-pop-item.file .ci-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+  .cmd-pop-item.file .ci-basename {
+    font: 500 12px/1.3 var(--font-mono); color: inherit;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cmd-pop-item.file .ci-dir {
+    font: 400 10px/1.2 var(--font-mono); color: var(--subtle);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cmd-pop-item.active.file .ci-dir { color: color-mix(in oklch, var(--accent) 60%, var(--subtle)); }
+  .cmd-pop-item.slash .ci-name {
+    font: 500 12px/1 var(--font-mono); color: inherit;
+  }
+  .cmd-pop-item.slash .ci-desc {
+    margin-left: auto; font: 400 11px/1 var(--font-sans); color: var(--subtle);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ============================================================
+     §03 时序图卡片（编号列表，规避 CJK 等宽对齐问题）
+     ============================================================ */
+  .seq-card {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+    margin-bottom: 16px;
+  }
+  .seq-title {
+    font: 600 12px/1 var(--font-mono); color: var(--accent);
+    letter-spacing: 0.04em; text-transform: uppercase;
+    margin-bottom: 14px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .seq-list {
+    list-style: none; counter-reset: seq;
+    display: flex; flex-direction: column; gap: 8px;
+    margin: 0; padding: 0;
+  }
+  .seq-list li {
+    counter-increment: seq;
+    position: relative;
+    padding-left: 34px;
+    font: 400 13px/1.5 var(--font-sans); color: var(--muted);
+  }
+  .seq-list li::before {
+    content: counter(seq) ".";
+    position: absolute; left: 0; top: 0;
+    font: 600 12px/1.5 var(--font-mono); color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 6px; border-radius: var(--radius-sm);
+    min-width: 24px; text-align: center;
+  }
+  .seq-list li::after {
+    /* 步骤间下行箭头（除最后一条） */
+    content: "↓";
+    position: absolute; left: 11px; top: 22px;
+    font: 600 12px/1 var(--font-mono); color: var(--subtle);
+  }
+  .seq-list li:last-child::after { content: ""; }
+  .seq-list li .seq-step {
+    display: block; color: var(--fg); font-weight: 500;
+  }
+  .seq-list li .seq-path {
+    display: block; margin-top: 3px;
+    font: 500 11.5px/1.4 var(--font-mono); color: var(--reasoning);
+    background: var(--reasoning-soft); padding: 2px 6px;
+    border-radius: var(--radius-sm); width: fit-content;
+  }
+  .seq-list li .seq-note {
+    display: block; margin-top: 3px;
+    font: 400 11px/1.4 var(--font-mono); color: var(--subtle);
+  }
+  .seq-list li .seq-ok {
+    font: 500 11.5px/1.4 var(--font-mono); color: var(--success);
+    background: var(--success-soft); padding: 2px 6px;
+    border-radius: var(--radius-sm);
+  }
+  .seq-arrow {
+    color: var(--muted); margin: 0 4px; font-weight: 600;
+  }
+  /* 降级块 */
+  .seq-fallback {
+    margin-top: 16px; padding: 12px 14px;
+    background: var(--warning-soft);
+    border: 1px solid color-mix(in oklch, var(--warning) 25%, transparent);
+    border-radius: var(--radius);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .seq-fallback-title {
+    display: flex; align-items: center; gap: 6px;
+    font: 600 12px/1.4 var(--font-sans); color: var(--warning);
+  }
+  .seq-fallback-title svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .seq-fallback-flow {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+    font: 500 11.5px/1.4 var(--font-mono); color: var(--muted);
+  }
+  .seq-fallback-flow span:not(.seq-arrow) {
+    background: var(--surface); padding: 2px 6px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* ============================================================
+     §04 / §06 消息卡片（user 气泡）
+     ============================================================ */
+  .msg-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  }
+  @media (max-width: 980px) { .msg-grid { grid-template-columns: 1fr; } }
+  .msg-grid.two { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 720px) { .msg-grid.two { grid-template-columns: 1fr; } }
+
+  .msg-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .msg-card .msg-label {
+    font: 600 10px/1 var(--font-mono); color: var(--subtle);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .msg-card .msg-label.before { color: var(--muted); }
+  .msg-card .msg-label.during { color: var(--warning); }
+  .msg-card .msg-label.after { color: var(--success); }
+
+  /* user 气泡 */
+  .user-bubble {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font: 400 13px/1.55 var(--font-sans); color: var(--fg);
+  }
+  .user-bubble .ub-text {
+    display: block; margin-bottom: 4px;
+  }
+  .user-bubble .ub-text:last-child { margin-bottom: 0; }
+
+  /* 历史消息 image 缩略图（正常态） */
+  .img-thumb {
+    display: inline-block;
+    width: 120px; height: 80px;
+    border-radius: var(--radius-sm);
+    background-size: cover; background-position: center;
+    border: 1px solid var(--border-strong);
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  /* 历史消息 image 降级 badge（绿色，与 file badge 同色系） */
+  .img-fallback {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 6px; border-radius: var(--radius-sm);
+    background: var(--success-soft); color: var(--success);
+    font: 500 12px/1.4 var(--font-sans);
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  .img-fallback svg { width: 12px; height: 12px; }
+  .img-fallback .if-name {
+    font-family: var(--font-mono); font-size: 11px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 140px;
+  }
+
+  /* 编辑态 textarea 模拟 */
+  .edit-area {
+    background: var(--bg-input);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    min-height: 70px;
+    font: 400 13px/1.55 var(--font-sans); color: var(--fg);
+    outline: none;
+  }
+  .edit-area:focus { border-color: var(--accent); }
+  .edit-hint {
+    font: 400 11px/1.4 var(--font-sans); color: var(--subtle);
+  }
+  .edit-actions {
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  .edit-actions button {
+    font: 500 11px/1 var(--font-sans);
+    padding: 6px 12px; border-radius: var(--radius-sm);
+    cursor: pointer; border: 1px solid var(--border-strong);
+    background: var(--surface-2); color: var(--muted);
+    transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+  }
+  .edit-actions button:hover { background: var(--surface-hover); color: var(--fg); }
+  .edit-actions button.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .edit-actions button.primary:hover { background: var(--accent-hover); }
+
+  /* 保留原图标记（编辑态下方） */
+  .kept-imgs {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 8px 10px;
+    background: var(--success-soft);
+    border: 1px solid color-mix(in oklch, var(--success) 25%, transparent);
+    border-radius: var(--radius-sm);
+    font: 500 11px/1.4 var(--font-sans); color: var(--success);
+  }
+  .kept-imgs svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+  /* ============================================================
+     §05 三字段语义说明（impl-list 复用 v1）
+     ============================================================ */
+  .impl-list {
+    list-style: none; display: flex; flex-direction: column; gap: 10px;
+  }
+  .impl-list li {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 14px;
+  }
+  .impl-list li .il-label {
+    font: 600 11px/1.3 var(--font-mono); color: var(--accent);
+    background: var(--accent-soft); padding: 4px 8px; border-radius: var(--radius-sm);
+    flex-shrink: 0; min-width: 92px; text-align: center;
+    letter-spacing: 0.02em;
+  }
+  .impl-list li .il-label.reasoning { color: var(--reasoning); background: var(--reasoning-soft); }
+  .impl-list li .il-label.success { color: var(--success); background: var(--success-soft); }
+  .impl-list li .il-label.file { color: var(--accent); background: var(--accent-soft); }
+  .impl-list li .il-body {
+    font: 400 12.5px/1.6 var(--font-sans); color: var(--muted); flex: 1;
+  }
+  .impl-list li .il-body b { color: var(--fg); font-weight: 500; }
+  .impl-list li .il-body code {
+    font: 500 11.5px/1 var(--font-mono); color: var(--accent);
+    background: var(--surface-2); padding: 2px 5px; border-radius: 3px;
+  }
+  .impl-list li .il-body code.reasoning { color: var(--reasoning); }
+  .impl-list li .il-body code.success { color: var(--success); }
+
+  /* 三入口说明卡（§02） */
+  .entry-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin-top: 16px;
+  }
+  @media (max-width: 720px) { .entry-grid { grid-template-columns: 1fr; } }
+  .entry-card {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .entry-card .ec-head {
+    display: flex; align-items: center; gap: 8px;
+    font: 600 12px/1.3 var(--font-sans); color: var(--fg);
+  }
+  .entry-card .ec-head svg { width: 14px; height: 14px; color: var(--accent); }
+  .entry-card .ec-desc {
+    font: 400 11.5px/1.5 var(--font-sans); color: var(--muted);
+  }
+  .entry-card .ec-desc code {
+    font: 500 10.5px/1 var(--font-mono); color: var(--accent);
+    background: var(--surface); padding: 2px 4px; border-radius: 3px;
+  }
+
+  .page-foot {
+    margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border);
+    font: 400 11px/1.6 var(--font-mono); color: var(--subtle); letter-spacing: 0.02em;
+  }
+
+  /* reduced motion 降级 */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ============================================================
+       页头
+       ============================================================ -->
+  <header class="page-head">
+    <div class="crumbs">panel · composer · <b>文件与图片传递（v2 · 视觉 SSOT）</b></div>
+    <h1>xyz-agent Composer · 文件与图片传递（v2）</h1>
+    <p class="lede">
+      本 demo 是 composer「文件 / 图片传递」功能的<b>视觉 SSOT</b>，替代已归档的 v1（方案 2 定稿原型）。v1 的多个核心决策已被代码推翻：<b>Ctrl+V 路径文本通路已删除</b>（粘贴统一为富呈现，避免截图静默丢弃）；<b>图片不再存 tmpdir</b>，改为 <code>&lt;dataDir&gt;/attachments/&lt;sessionId&gt;/</code> 持久化 + landing tmpdir 迁移；<b>badge 显示 displayName</b>（用户可读）而非 fileName（uuid 磁盘全名）。下方 6 区块覆盖三前缀语义、附件三入口、landing 迁移时序、编辑带图、displayName vs fileName、历史图片渲染。
+    </p>
+  </header>
+
+  <!-- ============================================================
+       §01 三前缀语义（沿用 v1，微调）
+       ============================================================ -->
+  <section class="section" data-section="prefixes">
+    <div class="section-head">
+      <span class="section-num">01</span>
+      <span class="section-title">三前缀语义</span>
+      <span class="section-tag info">信息说明</span>
+    </div>
+    <p class="section-desc">
+      输入框内三个前缀符的最终语义。<code>/</code> 与 <code>#</code> 已实现并复用现有浮层逻辑，<code>@</code> 当前是<b>预留状态</b>，不实现触发，只保留 chip 渲染骨架。重点：<code>#</code> 文件引用现在<b>只插路径 chip，由 pi 自主 read</b>，renderer 不再 inline 文件内容。
+    </p>
+
+    <div class="prefix-grid">
+      <!-- / 斜杠命令 -->
+      <div class="prefix-card">
+        <div class="pc-head">
+          <span class="pc-glyph slash">/</span>
+          <div>
+            <div class="pc-title">斜杠命令</div>
+            <span class="pc-status done">已实现</span>
+          </div>
+        </div>
+        <p class="pc-desc">
+          pi 基础命令 + extension 命令 + skill。行首或空格后敲 <code>/</code> 触发命令浮层，方向键选择，回车确认插入 chip。
+        </p>
+        <div class="pc-meta">
+          <span class="pc-chip-sample slash">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-6l-4-9H6m0 0L2 12l4 9h6m0 0 4-9"/></svg>
+            /fix
+          </span>
+          <span>chip 色：reasoning 紫</span>
+        </div>
+      </div>
+
+      <!-- # 文件引用 -->
+      <div class="prefix-card">
+        <div class="pc-head">
+          <span class="pc-glyph hash">#</span>
+          <div>
+            <div class="pc-title">文件路径引用</div>
+            <span class="pc-status done">已实现</span>
+          </div>
+        </div>
+        <p class="pc-desc">
+          工作区文件路径，支持行范围 <code>#src/foo.ts:42-58</code>。敲 <code>#</code> 触发文件浮层，模糊匹配 basename 与目录。<b>只插 chip 路径，pi 自主 read</b>——renderer 不再 inline 文件内容。
+        </p>
+        <div class="pc-meta">
+          <span class="pc-chip-sample hash">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>
+            #composer.vue
+          </span>
+          <span>chip 色：success 绿</span>
+        </div>
+      </div>
+
+      <!-- @ 预留 -->
+      <div class="prefix-card">
+        <div class="pc-head">
+          <span class="pc-glyph at">@</span>
+          <div>
+            <div class="pc-title">@ 预留</div>
+            <span class="pc-status reserved">预留</span>
+          </div>
+        </div>
+        <p class="pc-desc">
+          暂未定义语义。候选方向：session / diff / subagent 引用，待需求明确后再定。当前<b>不实现触发</b>，仅保留 chip 渲染骨架（<code>.inline-chip.mention-at</code>）。
+        </p>
+        <div class="pc-meta">
+          <span class="pc-chip-sample at">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>
+            @待定义
+          </span>
+          <span>chip 色：accent 灰蓝</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       §02 附件三入口（统一富呈现通路）
+       ============================================================ -->
+  <section class="section" data-section="attach">
+    <div class="section-head">
+      <span class="section-num">02</span>
+      <span class="section-title">附件三入口（统一富呈现通路）</span>
+      <span class="section-tag implemented">已实现</span>
+    </div>
+    <p class="section-desc">
+      composer-box 整框支持<b>拖拽</b>（dragover 边框变 accent 蓝 + 松开提示），<code>+</code> 菜单含<b>附件 / 图片 / 斜杠命令</b>三项，<b>粘贴</b>走统一通路。<b>三入口统一走富呈现通路</b>：图片经 <code>writeSessionImage</code> 落 <code>attachments/&lt;sid&gt;/</code> → ContextChipsBar 缩略图 chip + 光标处 image badge → 发送时 <code>extractImages</code> 读文件转 base64 经 <code>message.send.images</code> 直传 pi。v1 的「Cmd+V 富呈现 vs Ctrl+V 路径文本」双通路对比<b>已废弃</b>——Ctrl+V 截图曾静默丢弃，现统一为富呈现。
+    </p>
+
+    <div class="stage">
+      <div class="stage-label">可交互 demo · 拖文件到此 / 点 + / 粘贴</div>
+
+      <div class="composer-box" data-cb="attach" tabindex="-1">
+        <!-- ContextChipsBar（预设图片缩略图 chip + 文件 chip，由 JS 注入） -->
+        <div class="chips-bar" data-chips="attach"></div>
+
+        <!-- 输入区 -->
+        <div class="composer-input-wrap">
+          <div class="composer-input" contenteditable="true" data-input="attach"
+               data-placeholder="输入消息，拖入文件，或粘贴截图…"></div>
+          <!-- + 菜单 -->
+          <div class="popover add-menu" data-menu="attach" hidden>
+            <div class="add-menu-item" data-add="attach" data-type="file">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              <span>附件</span>
+              <span class="hint">文件</span>
+            </div>
+            <div class="add-menu-item" data-add="attach" data-type="image">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+              <span>图片</span>
+              <span class="hint">截图 / PNG</span>
+            </div>
+            <div class="add-menu-item" data-add="attach" data-type="slash">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-6l-4-9H6m0 0L2 12l4 9h6m0 0 4-9"/></svg>
+              <span>斜杠命令</span>
+              <span class="hint">/</span>
+            </div>
+          </div>
+          <!-- 命令浮层 -->
+          <div class="popover cmd-pop" data-cmd="attach" hidden></div>
+        </div>
+
+        <!-- 工具条 -->
+        <div class="composer-bar">
+          <button class="c-insert" data-plus="attach" title="添加内容">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <div class="bar-spacer"></div>
+          <button class="c-send" data-send="attach" title="发送">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2z"/></svg>
+          </button>
+        </div>
+
+        <!-- 拖拽提示 -->
+        <div class="drop-hint">松开添加附件</div>
+      </div>
+
+      <div class="demo-aux">
+        <button class="primary" data-aux="attach" data-action="paste">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          模拟粘贴截图（Cmd/Ctrl+V 统一通路）
+        </button>
+      </div>
+    </div>
+
+    <!-- 三入口说明 -->
+    <div class="entry-grid">
+      <div class="entry-card">
+        <div class="ec-head">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          + 菜单
+        </div>
+        <p class="ec-desc">
+          点 <code>+</code> 展开菜单，选「附件」走 <code>pickFile</code> 选磁盘文件，选「图片」走 <code>writeSessionImage</code> 落地。统一富呈现通路。
+        </p>
+      </div>
+      <div class="entry-card">
+        <div class="ec-head">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          拖拽
+        </div>
+        <p class="ec-desc">
+          整个 composer-box 支持 dragover/drop，dragover 时边框变 accent 蓝 + 显示「松开添加附件」提示。图片走 <code>writeSessionImage</code>，文件走路径引用。
+        </p>
+      </div>
+      <div class="entry-card">
+        <div class="ec-head">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          粘贴（统一）
+        </div>
+        <p class="ec-desc">
+          <b>Cmd+V 与 Ctrl+V 统一通路</b>（不区分按键）。剪贴板 image blob → base64 → <code>writeSessionImage</code> → badge。v1 的 Ctrl+V 路径文本通路<b>已删除</b>。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       §03 landing 态粘贴 + tmpdir 迁移时序（全新）
+       ============================================================ -->
+  <section class="section" data-section="landing-migrate">
+    <div class="section-head">
+      <span class="section-num new">03</span>
+      <span class="section-title">landing 态粘贴 + tmpdir 迁移时序</span>
+      <span class="section-tag new">新增（v1 盲区）</span>
+    </div>
+    <p class="section-desc">
+      landing 态（session 延迟创建，尚未拿到 sessionId）粘贴图片是 v1 demo 的盲区。<code>writeSessionImage</code> 在 <code>sessionId</code> 为空时降级落 OS tmpdir，发送时 <code>submitFirstMessage</code> 创建 session 后需把 tmpdir 图片<b>迁移</b>到 <code>attachments/&lt;sid&gt;/</code> 持久化目录，否则 macOS 3 天清理 tmpdir 后重开 session 历史图丢失。
+    </p>
+
+    <div class="seq-card">
+      <div class="seq-title">landing 态（session 未创建）</div>
+      <ol class="seq-list">
+        <li><span class="seq-step">用户粘贴图片</span></li>
+        <li>
+          <span class="seq-step">writeSessionImage(sessionId='') → 落 OS tmpdir</span>
+          <span class="seq-path">path = /var/folders/xxx/uuid-image.png</span>
+        </li>
+        <li><span class="seq-step">用户输入文字 + 点发送</span></li>
+        <li><span class="seq-step">Composer.onSend 快照 segments（含 image segment）</span></li>
+        <li><span class="seq-step">submitFirstMessage(segments)</span></li>
+        <li><span class="seq-step">sessionApi.create() → session 创建，拿到 sessionId</span></li>
+        <li>
+          <span class="seq-step">扫描 segments，找 path 在 tmpdir 的 image</span>
+          <span class="seq-note">isTmpdirPath = path 不含 /attachments/ 段</span>
+        </li>
+        <li>
+          <span class="seq-step">migrateSessionImage(fromPath, sessionId, fileName)</span>
+          <span class="seq-path">tmpdir/uuid-image.png</span>
+          <span class="seq-arrow">→</span>
+          <span class="seq-ok">attachments/&lt;sid&gt;/uuid-image.png</span>
+        </li>
+        <li><span class="seq-step">更新 segments.path 为 attachments 路径</span></li>
+        <li>
+          <span class="seq-step">chat.send(sid, finalSegments)</span>
+          <span class="seq-note">appendUser + extractImages 都用迁移后的 path</span>
+        </li>
+      </ol>
+      <div class="seq-fallback">
+        <div class="seq-fallback-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+          降级：tmpdir 文件已被 OS 清理
+        </div>
+        <div class="seq-fallback-flow">
+          <span>migrate reject</span>
+          <span class="seq-arrow">→</span>
+          <span>Promise.allSettled 跳过</span>
+          <span class="seq-arrow">→</span>
+          <span>toast 提示</span>
+          <span class="seq-arrow">→</span>
+          <span>文本占位 [图片 N] 仍发</span>
+        </div>
+      </div>
+    </div>
+
+    <p class="section-desc" style="margin-top: 4px;">
+      <b>为什么需要迁移：</b>macOS 对 tmpdir（<code>/var/folders/...</code>）的清理策略是「3 天未访问自动删除」。若 landing 粘图后图片留在 tmpdir，用户重开 session（几天后）时历史消息的图片 path 已失效，<code>local-file://</code> 加载 404 → 降级 badge 兜底（见 §06）。迁移到 <code>attachments/&lt;sid&gt;/</code> 后，图片随 session 持久化，重开仍可加载。<b>单文件迁移失败不阻断发送</b>（<code>Promise.allSettled</code> 跳过 + toast 提示），文本占位 <code>[图片 N]</code> 仍正常发出。
+    </p>
+  </section>
+
+  <!-- ============================================================
+       §04 编辑消息带图（全新）
+       ============================================================ -->
+  <section class="section" data-section="edit-with-image">
+    <div class="section-head">
+      <span class="section-num new">04</span>
+      <span class="section-title">编辑消息带图</span>
+      <span class="section-tag new">新增</span>
+    </div>
+    <p class="section-desc">
+      统一通路后，编辑历史 user 消息可<b>保留原图</b>。<code>editAndResend</code> 签名从 <code>(sid, msgId, text)</code> 改为 <code>(sid, msgId, segments)</code>——调用方从原 user message 保留 image segments + 编辑后的 text segment 组装 segments，委托 <code>submitSegments</code>（不再绕过 <code>extractImages</code>）。<b>编辑文本不改图</b>：textarea 只编辑文字，image segments 从原 message 自动保留。
+    </p>
+
+    <div class="msg-grid">
+      <!-- 编辑前 -->
+      <div class="msg-card">
+        <div class="msg-label before">编辑前 · 原 user 消息</div>
+        <div class="user-bubble">
+          <span class="ub-text">这个报错怎么修？</span>
+          <span class="img-thumb" style="background-image:url('https://picsum.photos/seed/edit-before/240/160')"></span>
+          <span class="ub-text" style="font-size:11px;color:var(--subtle);font-family:var(--font-mono);">截图-20260725-1530.png</span>
+        </div>
+        <div class="edit-hint">含 1 个 image segment + 1 个 text segment。点「编辑」进入编辑态。</div>
+      </div>
+
+      <!-- 编辑中 -->
+      <div class="msg-card">
+        <div class="msg-label during">编辑中 · textarea（只编辑文字）</div>
+        <div class="edit-area" contenteditable="true">这个报错怎么修？我看是空指针。</div>
+        <div class="kept-imgs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          保留原图：截图-20260725-1530.png（不在 textarea 内，从原 message 重建）
+        </div>
+        <div class="edit-actions">
+          <button>取消</button>
+          <button class="primary" data-edit-submit>提交</button>
+        </div>
+      </div>
+
+      <!-- 编辑后 -->
+      <div class="msg-card">
+        <div class="msg-label after">编辑后 · 重新发送</div>
+        <div class="user-bubble">
+          <span class="ub-text">这个报错怎么修？我看是空指针。</span>
+          <span class="img-thumb" style="background-image:url('https://picsum.photos/seed/edit-after/240/160')"></span>
+          <span class="ub-text" style="font-size:11px;color:var(--subtle);font-family:var(--font-mono);">截图-20260725-1530.png</span>
+        </div>
+        <div class="edit-hint">文字已改，<b style="color:var(--success);">原图保留</b>。image segments 从原 message 重建，与编辑后 text 合并，走 submitSegments → extractImages 正常提取 base64。</div>
+      </div>
+    </div>
+
+    <p class="section-desc" style="margin-top: 16px;">
+      <b>关键改动：</b>统一通路前，<code>editAndResend</code> 用 <code>chatApi.send(trimmed)</code> 绕过 <code>extractImages</code>，编辑后图片丢失。现统一走 <code>submitSegments</code>，image segment 编辑后不再丢失，<code>extractImages</code> / size cap / vision toast 的分裂消除。
+    </p>
+  </section>
+
+  <!-- ============================================================
+       §05 displayName vs fileName（全新）
+       ============================================================ -->
+  <section class="section" data-section="display-name">
+    <div class="section-head">
+      <span class="section-num new">05</span>
+      <span class="section-title">displayName vs fileName</span>
+      <span class="section-tag new">新增</span>
+    </div>
+    <p class="section-desc">
+      image segment 有三个字段，语义分离。<b>badge 显示 displayName</b>（用户可读），<b>不显示 fileName</b>（uuid 前缀，对用户冗余且不美观）。v1 demo 的 badge 显示 <code>screenshot-时间戳.png</code>（可读），但代码实际一度显示 <code>uuid-image.png</code>（不可读），本次方案拆分 displayName vs fileName 后 badge 确实显示 displayName。
+    </p>
+
+    <!-- 对比展示 -->
+    <div class="stage" style="padding:20px;">
+      <div class="stage-label">badge 显示对比</div>
+      <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center; padding:8px 0;">
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <span class="image-badge deprecated">
+            <svg class="ib-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            <span class="ib-name">dbfdb3c8-bc70-4eb4-8308-e259a0d5f0b4-image.png</span>
+            <span class="ib-x">×</span>
+          </span>
+          <span style="font:500 11px/1 var(--font-sans); color:var(--danger);">❌ 旧：fileName 混用（uuid 前缀，不可读）</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <span class="image-badge">
+            <svg class="ib-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            <span class="ib-name">截图-20260725-1530.png</span>
+            <span class="ib-x">×</span>
+          </span>
+          <span style="font:500 11px/1 var(--font-sans); color:var(--success);">✅ 新：displayName 显示（可读）</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 三字段语义 -->
+    <ul class="impl-list" style="margin-top:20px;">
+      <li>
+        <span class="il-label file">fileName</span>
+        <span class="il-body">
+          <b>磁盘全名</b>（含 uuid 前缀，用于磁盘定位 / 日志）。格式 <code>{uuid}-{sanitized}.{ext}</code>，如 <code class="reasoning">dbfdb3c8-...-image.png</code>。uuid 前缀保证唯一性，sanitized 为剥离路径分隔符后的用户名。
+        </span>
+      </li>
+      <li>
+        <span class="il-label reasoning">displayName</span>
+        <span class="il-body">
+          <b>用户可读名</b>（badge label / 缩略图 alt 显示）。不含 uuid 前缀。生成规则见下方。
+        </span>
+      </li>
+      <li>
+        <span class="il-label success">path</span>
+        <span class="il-body">
+          <b>绝对路径</b>（磁盘 IO 用）。<code class="reasoning">&lt;dataDir&gt;/attachments/&lt;sid&gt;/&lt;fileName&gt;</code> 或 landing 态 tmpdir 路径。<code>extractImages</code> 读此 path 转 base64，<code>local-file://</code> 加载也用此 path。
+        </span>
+      </li>
+    </ul>
+
+    <p class="section-desc" style="margin-top:16px;">
+      <b>displayName 生成规则</b>（<code>writeSessionImage</code> 主进程侧）：
+    </p>
+    <ul class="impl-list">
+      <li>
+        <span class="il-label reasoning">粘贴截图</span>
+        <span class="il-body">
+          剪贴板无原文件名（<code>blob.name</code> 为空）→ sanitized 退化为 <code>'image'</code> 占位 → displayName 用 <code class="reasoning">截图-YYYYMMDD-HHMM.ext</code>（本地时区时间戳）。
+        </span>
+      </li>
+      <li>
+        <span class="il-label file">拖拽 / +菜单</span>
+        <span class="il-body">
+          有原文件名（<code>blob.name</code> 非空）→ sanitized basename（剥离 <code>/ \ :</code> 与控制字符防目录穿越，去重扩展名）→ displayName 用 <code class="reasoning">{sanitized}.{ext}</code>。
+        </span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- ============================================================
+       §06 历史消息图片缩略图 + 降级 badge（全新）
+       ============================================================ -->
+  <section class="section" data-section="history-image">
+    <div class="section-head">
+      <span class="section-num new">06</span>
+      <span class="section-title">历史消息图片缩略图 + 降级 badge</span>
+      <span class="section-tag new">新增</span>
+    </div>
+    <p class="section-desc">
+      历史消息中的 image segment 由 <code>&lt;ImageThumb&gt;</code> 组件渲染。<code>local-file://</code> 协议白名单含整个 <code>&lt;dataDir&gt;/attachments/</code> 前缀，重开 session 历史图仍可加载。path 失效时（tmpdir 被清理 / 文件损坏 / 白名单 403）<code>img onerror</code> 触发降级 badge 兜底。v1 demo 无历史渲染，本区块补全。
+    </p>
+
+    <div class="msg-grid two">
+      <!-- 正常态 -->
+      <div class="msg-card">
+        <div class="msg-label" style="color:var(--success);">正常态 · local-file:// 加载成功</div>
+        <div class="user-bubble">
+          <span class="ub-text">这是昨天那个 UI 截图，帮我看下布局问题</span>
+          <span class="img-thumb" style="background-image:url('https://picsum.photos/seed/history-ok/240/160')" title="截图-20260724-1030.png"></span>
+        </div>
+        <div class="edit-hint">
+          <code style="font:500 10.5px/1 var(--font-mono); color:var(--accent); background:var(--surface-2); padding:2px 4px; border-radius:3px;">&lt;ImageThumb&gt;</code> 渲染 <code style="font:500 10.5px/1 var(--font-mono); color:var(--accent); background:var(--surface-2); padding:2px 4px; border-radius:3px;">120×80</code> object-cover 缩略图，<code style="font:500 10.5px/1 var(--font-mono); color:var(--accent); background:var(--surface-2); padding:2px 4px; border-radius:3px;">alt=displayName</code>。path 在 attachments 目录 → 白名单放行 → 加载成功。
+        </div>
+      </div>
+
+      <!-- 降级态 -->
+      <div class="msg-card">
+        <div class="msg-label" style="color:var(--warning);">降级态 · path 失效（onerror 兜底）</div>
+        <div class="user-bubble">
+          <span class="ub-text">这是上周那个截图</span>
+          <span class="img-fallback">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            <span class="if-name">截图-20260718-0945.png</span>
+          </span>
+        </div>
+        <div class="edit-hint">
+          path 失效（tmpdir 已清理 / 迁移失败保留 tmpdir path / 文件损坏）→ <code style="font:500 10.5px/1 var(--font-mono); color:var(--accent); background:var(--surface-2); padding:2px 4px; border-radius:3px;">img onerror</code> → 绿色 badge「图标 + displayName」兜底，与 file badge 同色系，保持 user 气泡内视觉一致。
+        </div>
+      </div>
+    </div>
+
+    <p class="section-desc" style="margin-top:16px;">
+      <b>协议白名单：</b><code>local-file://</code> 由 main 进程 <code>protocol.handle</code> 注册，<code>allowedPrefixes</code> 含 <code>&lt;dataDir&gt;/attachments/</code>。重开 session 时历史 image segment 的 path 指向 attachments 目录 → 白名单放行 → 缩略图正常加载。landing 态未迁移成功的图片 path 仍指 tmpdir，重开后可能失效 → 降级 badge。
+    </p>
+  </section>
+
+  <footer class="page-foot">
+    xyz-agent composer · 文件与图片传递 · v2 视觉 SSOT · 统一富呈现通路 / attachments 持久化 / displayName 显示 / 历史缩略图降级 · 单文件 demo · v1 已归档至 archive/
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+   共享数据：假命令 + 假文件
+   ============================================================ */
+const SLASH_COMMANDS = [
+  { name: '/fix',      desc: '修复当前文件问题' },
+  { name: '/explain',  desc: '解释选中代码' },
+  { name: '/test',     desc: '生成测试用例' },
+  { name: '/refactor', desc: '重构并保持行为' },
+];
+const FILES = [
+  { basename: 'AuthService.ts',     dir: 'src/services/auth/' },
+  { basename: 'composer.vue',       dir: 'src/components/panel/' },
+  { basename: 'useMention.ts',      dir: 'src/composables/' },
+  { basename: 'tokens.css',         dir: 'src/styles/' },
+];
+
+/* SVG 内联片段（复用） */
+const SVG = {
+  slash:  '<svg class="ic-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-6l-4-9H6m0 0L2 12l4 9h6m0 0 4-9"/></svg>',
+  hash:   '<svg class="ic-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>',
+  file:   '<svg class="chip-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+  image:  '<svg class="chip-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>',
+  x:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+};
+
+/* ============================================================
+   §02 附件 composer（完整能力：+ 菜单 / 拖拽 / 粘贴 / # / 触发）
+   ============================================================ */
+function initFullComposer(id) {
+  const box      = document.querySelector(`.composer-box[data-cb="${id}"]`);
+  const input    = document.querySelector(`.composer-input[data-input="${id}"]`);
+  const plusBtn  = document.querySelector(`.c-insert[data-plus="${id}"]`);
+  const menu     = document.querySelector(`.add-menu[data-menu="${id}"]`);
+  const cmdPop   = document.querySelector(`.cmd-pop[data-cmd="${id}"]`);
+  const chipsBar = document.querySelector(`.chips-bar[data-chips="${id}"]`);
+
+  const state = {
+    cmdOpen: null,
+    activeIdx: 0,
+    query: '',
+    chipSeq: 0,
+  };
+
+  /* ---------- chip 增删 ---------- */
+  function addChip({ name, isImage, thumbUrl }) {
+    state.chipSeq += 1;
+    const chipId = `chip-${id}-${state.chipSeq}`;
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (isImage ? ' img' : '');
+    chip.dataset.chipId = chipId;
+    const thumbHtml = (isImage && thumbUrl)
+      ? `<span class="chip-thumb" style="background-image:url('${thumbUrl}')"></span>`
+      : (isImage ? SVG.image : SVG.file);
+    chip.innerHTML =
+      thumbHtml +
+      `<span class="chip-name">${escapeHtml(name)}</span>` +
+      `<span class="chip-x" data-chip-x="${chipId}">${SVG.x}</span>`;
+    chipsBar.appendChild(chip);
+  }
+
+  /* ---------- + 菜单 ---------- */
+  plusBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !menu.hidden;
+    closeAll();
+    if (!isOpen) { menu.hidden = false; plusBtn.classList.add('active'); }
+  });
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.add-menu-item');
+    if (!item) return;
+    const type = item.dataset.type;
+    menu.hidden = true; plusBtn.classList.remove('active');
+    if (type === 'file')        addChip({ name: pickName(false), isImage: false });
+    else if (type === 'image')  addChip({ name: genScreenshotName(), isImage: true, thumbUrl: thumbUrlFor('add-' + Date.now()) });
+    else if (type === 'slash')  { insertText('/'); openCmd('slash'); }
+    input.focus();
+  });
+
+  /* ---------- 输入框：聚焦态 + / # 触发 ---------- */
+  input.addEventListener('focus', () => box.classList.add('focus'));
+  input.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (!document.activeElement || !box.contains(document.activeElement)) {
+        box.classList.remove('focus');
+      }
+    }, 120);
+  });
+
+  input.addEventListener('input', () => { detectTrigger(); });
+  input.addEventListener('keydown', (e) => {
+    if (state.cmdOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveActive(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); moveActive(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); selectActive(); }
+      else if (e.key === 'Escape') { e.preventDefault(); closeCmd(); }
+    }
+  });
+
+  function detectTrigger() {
+    const text = input.textContent;
+    const caret = getCaretCharIndex();
+    const before = text.slice(0, caret);
+    const m = before.match(/(^|\s)(\/|#)([^#\n]*)$/);
+    if (m) {
+      openCmd(m[2] === '/' ? 'slash' : 'hash', m[3]);
+    } else {
+      closeCmd();
+    }
+  }
+
+  function openCmd(kind, query = '') {
+    state.cmdOpen = kind; state.query = query; state.activeIdx = 0;
+    renderCmd();
+  }
+  function closeCmd() { state.cmdOpen = null; cmdPop.hidden = true; }
+  function renderCmd() {
+    const kind = state.cmdOpen;
+    if (!kind) { cmdPop.hidden = true; return; }
+    const src = kind === 'slash' ? SLASH_COMMANDS : FILES;
+    const q = state.query.toLowerCase();
+    const list = src.filter(it => {
+      const hay = kind === 'slash' ? (it.name + it.desc) : (it.basename + it.dir);
+      return !q || hay.toLowerCase().includes(q);
+    });
+    if (list.length === 0) { cmdPop.hidden = true; return; }
+    state.activeIdx = Math.min(state.activeIdx, list.length - 1);
+    cmdPop.hidden = false;
+    cmdPop.innerHTML = list.map((it, i) => {
+      const active = i === state.activeIdx ? ' active' : '';
+      if (kind === 'slash') {
+        return `<div class="cmd-pop-item slash${active}" data-idx="${i}">
+          ${SVG.slash}
+          <span class="ci-name">${escapeHtml(it.name)}</span>
+          <span class="ci-desc">${escapeHtml(it.desc)}</span>
+        </div>`;
+      } else {
+        return `<div class="cmd-pop-item file${active}" data-idx="${i}">
+          ${SVG.hash}
+          <span class="ci-text">
+            <span class="ci-basename">${escapeHtml(it.basename)}</span>
+            <span class="ci-dir">${escapeHtml(it.dir)}</span>
+          </span>
+        </div>`;
+      }
+    }).join('');
+    cmdPop.querySelectorAll('.cmd-pop-item').forEach(el => {
+      el.addEventListener('mouseenter', () => {
+        state.activeIdx = parseInt(el.dataset.idx, 10);
+        cmdPop.querySelectorAll('.cmd-pop-item').forEach(x => x.classList.remove('active'));
+        el.classList.add('active');
+      });
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        state.activeIdx = parseInt(el.dataset.idx, 10);
+        selectActive();
+      });
+    });
+  }
+  function moveActive(delta) {
+    const kind = state.cmdOpen;
+    if (!kind) return;
+    const src = kind === 'slash' ? SLASH_COMMANDS : FILES;
+    const q = state.query.toLowerCase();
+    const list = src.filter(it => {
+      const hay = kind === 'slash' ? (it.name + it.desc) : (it.basename + it.dir);
+      return !q || hay.toLowerCase().includes(q);
+    });
+    if (list.length === 0) return;
+    state.activeIdx = (state.activeIdx + delta + list.length) % list.length;
+    renderCmd();
+  }
+  function selectActive() {
+    const kind = state.cmdOpen;
+    if (!kind) return;
+    const src = kind === 'slash' ? SLASH_COMMANDS : FILES;
+    const q = state.query.toLowerCase();
+    const list = src.filter(it => {
+      const hay = kind === 'slash' ? (it.name + it.desc) : (it.basename + it.dir);
+      return !q || hay.toLowerCase().includes(q);
+    });
+    const chosen = list[state.activeIdx];
+    closeCmd();
+    if (!chosen) return;
+    stripTrigger();
+    if (kind === 'slash') {
+      insertInlineChip('slash', chosen.name, SVG.slash);
+    } else {
+      insertInlineChip('mention-file', '#' + chosen.basename, SVG.hash);
+    }
+    input.focus();
+  }
+  function stripTrigger() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    const offset = range.startOffset;
+    const text = node.data;
+    const m = text.slice(0, offset).match(/(^|\s)(\/|#)([^#\n]*)$/);
+    if (!m) return;
+    const cutStart = offset - (m[0].length - m[1].length);
+    node.data = text.slice(0, cutStart) + text.slice(offset);
+    const r = document.createRange();
+    r.setStart(node, cutStart);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
+  /* 在光标处插入内联 chip */
+  function insertInlineChip(cls, label, iconSvg) {
+    const sel = window.getSelection();
+    let range;
+    if (sel.rangeCount) range = sel.getRangeAt(0);
+    else { range = document.createRange(); range.selectNodeContents(input); range.collapse(false); }
+    range.deleteContents();
+
+    const chip = document.createElement('span');
+    chip.className = 'inline-chip ' + cls;
+    chip.contentEditable = 'false';
+    chip.innerHTML = iconSvg + `<span>${escapeHtml(label)}</span>` +
+      `<span class="ic-x" contenteditable="false">×</span>`;
+    chip.querySelector('.ic-x').addEventListener('click', (e) => {
+      e.preventDefault(); chip.remove(); input.focus();
+    });
+
+    const space = document.createTextNode('\u00A0');
+    range.insertNode(space);
+    range.insertNode(chip);
+    const after = document.createRange();
+    after.setStartAfter(space);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+  }
+
+  function insertText(t) {
+    const sel = window.getSelection();
+    let range;
+    if (sel.rangeCount && input.contains(sel.anchorNode)) range = sel.getRangeAt(0);
+    else { range = document.createRange(); range.selectNodeContents(input); range.collapse(false); sel.removeAllRanges(); sel.addRange(range); }
+    range.deleteContents();
+    const node = document.createTextNode(t);
+    range.insertNode(node);
+    const after = document.createRange();
+    after.setStartAfter(node);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+    detectTrigger();
+  }
+
+  /* 模拟粘贴（统一通路）：缩略图 chip + 光标处 image badge */
+  function doPaste() {
+    input.focus();
+    focusEnd();
+    const name = genScreenshotName();
+    const thumbUrl = thumbUrlFor('paste-' + Date.now());
+
+    // 1) ContextChipsBar 加图片缩略图 chip
+    state.chipSeq += 1;
+    const chipId = `chip-${id}-paste-${state.chipSeq}`;
+    const chip = document.createElement('span');
+    chip.className = 'chip img';
+    chip.dataset.chipId = chipId;
+    chip.innerHTML =
+      `<span class="chip-thumb" style="background-image:url('${thumbUrl}')"></span>` +
+      `<span class="chip-name">${escapeHtml(name)}</span>` +
+      `<span class="chip-x" data-chip-x="${chipId}">${SVG.x}</span>`;
+    chipsBar.appendChild(chip);
+
+    // 2) 光标处插 image badge（displayName）
+    insertImageBadge(name);
+  }
+
+  /* 在光标处插 image badge */
+  function insertImageBadge(name) {
+    const sel = window.getSelection();
+    let range;
+    if (sel.rangeCount) range = sel.getRangeAt(0);
+    else { range = document.createRange(); range.selectNodeContents(input); range.collapse(false); }
+    range.deleteContents();
+
+    const badge = document.createElement('span');
+    badge.className = 'image-badge';
+    badge.contentEditable = 'false';
+    badge.innerHTML =
+      '<svg class="ib-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>' +
+      `<span class="ib-name">${escapeHtml(name)}</span>` +
+      '<span class="ib-x" contenteditable="false">×</span>';
+    badge.querySelector('.ib-x').addEventListener('click', (e) => {
+      e.preventDefault(); badge.remove(); input.focus();
+    });
+
+    const space = document.createTextNode('\u00A0');
+    range.insertNode(space);
+    range.insertNode(badge);
+    const after = document.createRange();
+    after.setStartAfter(space);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+  }
+
+  function focusEnd() {
+    input.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(input);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  /* chips 删除（事件委托） */
+  chipsBar.addEventListener('click', (e) => {
+    const x = e.target.closest('[data-chip-x]');
+    if (!x) return;
+    const chip = x.closest('.chip');
+    if (chip) chip.remove();
+  });
+
+  /* 拖拽 */
+  if (box.querySelector('.drop-hint')) {
+    box.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('dragover'); });
+    box.addEventListener('dragleave', (e) => {
+      if (!box.contains(e.relatedTarget)) box.classList.remove('dragover');
+    });
+    box.addEventListener('drop', (e) => {
+      e.preventDefault();
+      box.classList.remove('dragover');
+      handleDrop(e.dataTransfer);
+    });
+  }
+  function handleDrop(dt) {
+    const files = dt && dt.files ? Array.from(dt.files) : [];
+    if (files.length) {
+      files.forEach(f => {
+        const isImg = f.type.startsWith('image/');
+        addChip({ name: isImg ? genScreenshotName() : f.name, isImage: isImg, thumbUrl: isImg ? URL.createObjectURL(f) : null });
+      });
+    } else {
+      // 模拟拖入
+      addChip({ name: 'dropped-file.ts', isImage: false });
+    }
+  }
+
+  function closeAll() {
+    menu.hidden = true;
+    plusBtn.classList.remove('active');
+    closeCmd();
+  }
+  document.addEventListener('mousedown', (e) => {
+    if (!box.contains(e.target)) {
+      menu.hidden = true;
+      plusBtn.classList.remove('active');
+      if (!cmdPop.contains(e.target)) closeCmd();
+    }
+  });
+
+  /* ---------- helpers ---------- */
+  function pickName(isImg) {
+    if (isImg) return genScreenshotName();
+    const names = ['AuthService.ts', 'useMention.ts', 'tokens.css', 'index.vue'];
+    return names[Math.floor(Math.random()*names.length)];
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function getCaretCharIndex() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return input.textContent.length;
+    const range = sel.getRangeAt(0);
+    const pre = range.cloneRange();
+    pre.selectNodeContents(input);
+    pre.setEnd(range.endContainer, range.endOffset);
+    return pre.toString().length;
+  }
+
+  /* 绑定 demo-aux 粘贴按钮 */
+  const auxBtns = document.querySelectorAll(`.demo-aux button[data-aux="${id}"]`);
+  auxBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      if (action === 'paste') doPaste();
+    });
+  });
+
+  /* 暴露给外部预设 */
+  return { addChip, input, box };
+}
+
+/* ============================================================
+   全局 helpers
+   ============================================================ */
+function thumbUrlFor(seed) {
+  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/120/120`;
+}
+/* 生成截图 displayName：截图-YYYYMMDD-HHMM.png（对齐主进程 formatTimestamp） */
+function genScreenshotName() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate())
+              + '-' + pad(d.getHours()) + pad(d.getMinutes());
+  return `截图-${stamp}.png`;
+}
+
+/* ============================================================
+   §04 编辑提交按钮（纯视觉反馈）
+   ============================================================ */
+function initEditSubmit() {
+  const btn = document.querySelector('[data-edit-submit]');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const original = btn.textContent;
+    btn.textContent = '已提交 ✓';
+    btn.style.background = 'var(--success)';
+    btn.style.borderColor = 'var(--success)';
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.style.background = '';
+      btn.style.borderColor = '';
+    }, 1500);
+  });
+}
+
+/* ============================================================
+   初始化
+   ============================================================ */
+// §02 附件 demo（完整能力）
+const attach = initFullComposer('attach');
+// 预设：1 个图片缩略图 chip（displayName）+ 1 个文件 chip
+attach.addChip({ name: '截图-20260725-1530.png', isImage: true, thumbUrl: thumbUrlFor('preset-attach-img') });
+attach.addChip({ name: 'composer.vue', isImage: false });
+
+// §04 编辑提交按钮
+initEditSubmit();
+</script>
+</body>
+</html>

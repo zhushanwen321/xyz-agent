@@ -1,0 +1,20 @@
+{
+  "summary": "Wave 完成 Electron 主进程 pick-file IPC 落地。新增 ipcMain.handle('pick-file') handler（privileged-handlers.ts，照搬 pick-directory 降级范式：getFocusedWindow 降级 + defaultPath existsSync 守卫 homedir 兜底 + try/catch console.error 降级，差异是 properties:['openFile'] + 透传 options.filters）+ preload/preload.ts 暴露 window.electronAPI.pickFile（ElectronAPI 接口声明 + contextBridge 实现，channel 'pick-file' 对齐）+ 7 个 pick-file 测试用例（正常/异常/取消/filters/defaultPath/无聚焦窗口）。filters 用 Electron 原生 FileFilter 透传不抽象，IPC 保持薄通道语义（业务类型决策下沉 renderer）。验证：tsc --noEmit EXIT 0 + apps/electron/main vitest 13 passed（pick-file 7 + pick-directory 6）+ renderer vitest 1909 passed 无回归。designReview 全部核心判断（necessity/sufficiency/alternatives + TR1/TR2 + R1/R2）逐项兑现，无判错、无 drift。为 composer + 菜单附件入口提供文件选择能力。",
+  "artifacts": [
+    {
+      "kind": "code",
+      "ref": "apps/electron/main/gateway/privileged-handlers.ts",
+      "note": "新增 ipcMain.handle('pick-file') handler：dialog.showOpenDialog properties:['openFile'] + filters 透传 + defaultPath homedir 兜底 + getFocusedWindow/异常降级返回 {canceled:true,path:null}（IF1 契约）"
+    },
+    {
+      "kind": "code",
+      "ref": "apps/electron/preload/preload.ts",
+      "note": "ElectronAPI 接口 + contextBridge 实现各加 pickFile(options?) => ipcRenderer.invoke('pick-file', options)（IF2 契约，channel 对齐主进程）"
+    },
+    {
+      "kind": "test",
+      "ref": "apps/electron/main/test/privileged-handlers.test.ts",
+      "note": "新增 pick-file handler 7 测试用例：正常返回/异常降级/取消/filters 透传/defaultPath 存在失效/无聚焦窗口（TC1-TC6 + TC7 tsc 类型一致性）"
+    }
+  ]
+}

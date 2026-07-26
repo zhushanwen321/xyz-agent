@@ -116,6 +116,9 @@ export class ExtensionService {
   /** 第二个文件型 extension 路径（xyz-system-prompt-extension.js），链式位置在 extensionFilePath 之后 */
   private systemPromptExtensionFilePath: string
 
+  /** 第三个文件型 extension 路径（xyz-client-msg-id-mapper.js），建立 clientUuid↔userEntryId 映射 */
+  private clientMsgIdMapperFilePath: string
+
   /** npm install 串行锁——多个扩展共享同一 --prefix 目录（~/.xyz-agent/pi/agent/npm/），
    * npm 不支持对同一 prefix 的并发安装，并发会损坏 node_modules。
    * 所有写操作（install/uninstall/upgrade/autoUpgrade）走此锁串行化。 */
@@ -143,6 +146,8 @@ export class ExtensionService {
     this.extensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged)
     // 第二个文件型 extension 路径（system-prompt 扩展，链式位置在 agent extension 之后）
     this.systemPromptExtensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged, 'xyz-system-prompt-extension.js')
+    // 第三个 builtin：client-msg-id-mapper（input hook 剥标记 + appendEntry 写映射，重开 session 回填 badge）
+    this.clientMsgIdMapperFilePath = getExtensionFilePath(this.projectRoot, this.packaged, 'xyz-client-msg-id-mapper.js')
 
     // Cleanup orphaned temp directories from previous crashes (>24h old)
     // Defer to next tick to avoid blocking constructor
@@ -308,14 +313,23 @@ export class ExtensionService {
       return !disabledSet.has(`npm:${pkgName}`)
     })
 
-    // 追加文件型 extension
-    if (existsSync(this.extensionFilePath)) {
-      filtered.push(this.extensionFilePath)
-    }
-    // 追加第二个文件型 extension（system-prompt 扩展，必须在 agent extension 之后：
-    // spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
-    if (existsSync(this.systemPromptExtensionFilePath)) {
-      filtered.push(this.systemPromptExtensionFilePath)
+    // builtin extension：existsSync 为 false 时 warn（防 dev 模式路径漂移静默失效，
+    // 正是本次 PR 修复的 monorepo 重构遗留 bug 的温床）。与 getSkillPaths L703 同模式。
+    const builtinExts: Array<{ path: string; name: string }> = [
+      // 追加顺序有意义：system-prompt 扩展必须在 agent extension 之后
+      // （spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
+      { path: this.extensionFilePath, name: 'xyz-agent-extension.js' },
+      { path: this.systemPromptExtensionFilePath, name: 'xyz-system-prompt-extension.js' },
+      // client-msg-id-mapper：input hook 剥标记 + appendEntry 写映射。
+      // 位置无关（不参与 system prompt 链式快照），追加在最后保持稳定顺序。
+      { path: this.clientMsgIdMapperFilePath, name: 'xyz-client-msg-id-mapper.js' },
+    ]
+    for (const ext of builtinExts) {
+      if (existsSync(ext.path)) {
+        filtered.push(ext.path)
+      } else {
+        log.warn(`builtin extension not found, skipping: ${ext.name} (path: ${ext.path})`)
+      }
     }
 
     return filtered

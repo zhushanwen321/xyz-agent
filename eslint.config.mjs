@@ -62,4 +62,26 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] useContenteditableInput.ts 是 composer 富文本输入的唯一聚合点：
+  // 视觉行移动（getClientRects+caretRangeFromPoint）+ segments 解析（getSegmentsFromEl）
+  // + 草稿/光标/IME/粘贴事件处理 + Cmd+V 双通路图片粘贴。各职责共享 savedRange/preferredX
+  // 闭包与 contenteditable DOM 语义，强行拆分会破坏闭包封装或引入跨模块状态同步。
+  // 行数在 wave4（双通路粘贴）后超 500，短期 max-lines override 避免阻塞。
+  {
+    files: ['packages/renderer/src/composables/panel/useContenteditableInput.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] useChatStore 是 Pinia chat store 的唯一 setup 函数（defineStore('chat', () => {...})），
+  // 包含所有 chat state（messages Map 分区 / streaming / pending / retry / queue）+ 全部 action
+  // （appendUser/appendPending/applyMessageEvent/finalize/hydrate/truncateFrom 等 30+ 方法）。
+  // 与 event-adapter/session-service 同性质——唯一聚合中心，职责内聚但函数体行数超 300。
+  // max-lines-per-function 规则对 Pinia setup 函数不适用（setup 天然是单一大函数），override 避免误报。
+  {
+    files: ['packages/renderer/src/stores/chat.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
 ];

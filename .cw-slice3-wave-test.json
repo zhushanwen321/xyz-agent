@@ -1,0 +1,41 @@
+{
+  "testJudgment": {
+    "necessityMet": "是。7 个 testCase 全部通过：TC1（正常返回选中文件）/ TC2（dialog 异常降级）/ TC3（用户取消降级）/ TC4（filters 透传）/ TC5（defaultPath 存在/失效 homedir 降级）/ TC6（无聚焦窗口降级）/ TC7（preload 类型一致性）由 apps/electron/main vitest 13 passed（含 pick-file 7 测试 + pick-directory 6 测试）覆盖；类型一致性由 tsc --noEmit EXIT 0 覆盖；renderer 无回归由 packages/renderer vitest 1909 passed（214 文件）覆盖。designReview 的必要性判断（主进程需补 pick-file IPC 桥接 OS dialog，renderer 沙箱无法直接选文件）已由实现证实——ipcMain.handle('pick-file') 注册 + preload pickFile 暴露就位，renderer 可经 window.electronAPI.pickFile 调用文件选择。",
+    "sufficiencyMet": {
+      "gapsConfirmed": [
+        "designReview 的唯一 gap（无 gap）与实现一致：2 个实现文件（privileged-handlers.ts + preload/preload.ts）+ 1 测试文件覆盖 pick-file IPC 全链路，从 channel 注册到 renderer API 就位无断点"
+      ],
+      "gapsNewlyFound": [],
+      "overlapsConfirmed": [
+        "3 个改动点职责无重叠：F1 主进程 handler 负责 OS dialog + 三重降级，F2 preload 桥接负责 channel invoke + 类型声明，F3 测试验证 F1 行为。与 pick-directory 独立 channel 无功能交叉"
+      ],
+      "overlapsNewlyFound": [],
+      "note": "7 个 testCase 覆盖 handler 全部分支 + preload 类型一致性。TC1-TC6 覆盖 handler 行为（正常/异常/取消/filters/defaultPath/无聚焦窗口），TC7 覆盖 preload satisfies ElectronAPI 类型匹配。三者降级路径（TC2/TC3/TC6）合起来覆盖 {canceled:true,path:null} 的全部触发条件。"
+    },
+    "alternativesReconsidered": "designReview 的两个替代方案维持否决：方案一（合并 pick-file 进 pick-directory 加 mode 参数）仍违反单一职责（单一 handler 承担两种 dialog 形态分支），且 ipcMain.handle 按 channel 名注册天然 1:1 适合独立 channel；方案二（主进程固定 filters 写死图片类型）仍耦合业务类型限制复用（附件入口未来可能接文档/视频）。实现采纳独立 channel + 照搬 pick-directory 降级范式 + filters renderer 传入，无需 reconsidered。",
+    "tradeoffCostRealized": [
+      {
+        "tradeoffRef": "TR1",
+        "costRealized": true,
+        "note": "预期 cost 兑现：pick-file handler 新增独立 ipcMain.handle 注册块（约 30 行含注释），与 pick-directory 有结构相似代码（defaultPath 兜底 + try/catch 降级 + 返回 {canceled,path}）。实测相似性是同文件同范式的好处（W7 风格一致性），非冗余——两者 properties 不同（['openFile'] vs ['openDirectory']）、filters 仅 pick-file 有，pick-directory 测试 6 个全部 pass 未受影响。"
+      },
+      {
+        "tradeoffRef": "TR2",
+        "costRealized": true,
+        "note": "预期 cost 兑现：filters 类型 Array<{name:string;extensions:string[]}> 在 F1 handler 签名和 F2 preload 接口两处重复声明（未抽别名）。实测确实两处重复，但类型形态稳定（Electron FileFilter 不会频繁变），代价轻微如预期。tsc satisfies ElectronAPI 保证两处类型一致。"
+      }
+    ],
+    "riskOutcome": [
+      {
+        "riskRef": "R1",
+        "outcome": "not-materialized",
+        "note": "ElectronAPI 接口与 contextBridge 实现不同步的风险未发生：preload/preload.ts 的接口声明（pickFile 方法）和 contextBridge 实现（pickFile: (options) => ipcRenderer.invoke('pick-file', options)）两处成对添加，channel 名 'pick-file' 对齐。tsc --noEmit EXIT 0（TC7）证实 satisfies ElectronAPI 类型匹配——若漏改任一处，编译会立即失败。"
+      },
+      {
+        "riskRef": "R2",
+        "outcome": "not-materialized",
+        "note": "filters extensions 隐式契约（无点小写扩展名）的风险在本 wave 范围内未发生：主进程纯透传 filters 给 dialog，不做内容校验（保持 IPC 薄通道语义）。filters 正确性由 renderer attach 入口负责（本 wave 范围外）。TC4 验证 filters 原样透传给 dialog.showOpenDialog 的 options，主进程不转换。失败模式是 dialog 不显示文件非崩溃，用户可见可纠正。"
+      }
+    ]
+  }
+}

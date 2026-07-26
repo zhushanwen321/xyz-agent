@@ -75,6 +75,10 @@ extraResources:
   # 同 xyz-agent-extension.js，源文件在 repo root，from 需上两级。
   - from: ../../xyz-system-prompt-extension.js
     to: xyz-system-prompt-extension.js
+  # xyz-client-msg-id-mapper.js（input hook 剥 prompt 标记 + appendEntry 写 clientUuid↔userEntryId 映射）
+  # 客户端 message 元数据映射框架：重开 session 时按映射回填 image/file badge。同前两个 extension 模式。
+  - from: ../../xyz-client-msg-id-mapper.js
+    to: xyz-client-msg-id-mapper.js
   # xyz-settings CLI（从 tsup 打包的 cli.cjs）
   # packaged app 中位置：resources/bin/xyz-settings
   # pi Skill 通过绝对路径引用此文件

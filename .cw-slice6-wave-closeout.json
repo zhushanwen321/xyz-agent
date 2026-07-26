@@ -1,0 +1,45 @@
+{
+  "summary": "Wave 完成 renderer 发送闭环（feature:add-file-picture-attach slice6 最后一个施工单元），把 composer 的 image segment 在 send 时读文件转 base64 填入 message.send images 字段 + vision 降级提示。实现 8 个文件（4 改 4 新建）：chat.ts send 加第三可选参数 images（undefined 不传键，对齐 protocol.ts:199）；useImageAttachment 抽 fileBytesToBase64 导出供复用（DRY）；useModelCapabilities 新建（resolveSupportsVision 同步函数 + useModelCapabilities composable，范式照搬 useThinkingLevelSync，ModelInfo 无 input 字段只能从 ProviderInfo 取）；useChat send 内 extractImages 模块函数（Promise.allSettled 并行 fetch local-file:// 转 base64，失败跳过不阻断，无图返回 undefined 行为不变）+ vision 降级 console.warn。关键设计：复用已注册的 local-file:// 协议（DetailPane 图片渲染既用路径）读 tmpdir 文件，零新 IPC，零跨包改动（runtime/shared protocol 已由 slice2 全程透传就绪）。steer/followUp 不带 images（仅 send 新回合首轮建立多模态上下文）。验证：vue-tsc typecheck + typecheck:test 双 clean，renderer vitest 全量 1960 passed（223 files，含新增 3 测试文件 26 用例），eslint 0 error，零回归。designReview 全部核心判断（necessity/sufficiency/alternatives + TO1-3 + R1-3）逐项兑现，testJudgment + execReviewJudgment 全覆盖。feature 6-slice 发送闭环至此打通：粘贴/拖拽/+菜单采集（slice1-5）→ send 提取投递（slice6）。",
+  "artifacts": [
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/api/domains/chat.ts",
+      "note": "send 加第三可选参数 images?: Array<{data;mimeType}>，undefined 不传 images 键（IF1 契约，runtime rpc-client 已守卫空数组）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/panel/useImageAttachment.ts",
+      "note": "抽 fileBytesToBase64(bytes) 导出（分块 btoa 防 stack 溢出），fileToBase64 改委托，extractImages 复用同一编码逻辑（T2/TO1 DRY）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/panel/useModelCapabilities.ts",
+      "note": "新建：resolveSupportsVision(modelId,providers) 同步函数 + useModelCapabilities(currentModelId) composable 返 ComputedRef（IF3 契约，范式照搬 useThinkingLevelSync.ts:30-38 providers 解析）"
+    },
+    {
+      "kind": "code",
+      "ref": "packages/renderer/src/composables/features/useChat.ts",
+      "note": "extractImages 模块导出函数（allSettled 并行 fetch local-file://→base64，失败 console.warn 跳过不阻断）+ send 接 images 提取 + vision 降级 warn（IF2 契约 + ERR1/ERR2）"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/renderer/src/__tests__/api/chat-send-images.test.ts",
+      "note": "TC5-6 chatApi.send images 透传单测（undefined 不传键 / 非空含键）"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/renderer/src/__tests__/panel/useModelCapabilities.test.ts",
+      "note": "TC9 useModelCapabilities supportsVision 真值表（8 用例：含 image/仅 text/undefined/找不到/无斜杠/空/响应式）"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/renderer/src/__tests__/composables/features/useChat-send-images.test.ts",
+      "note": "TC1-4 extractImages（无图/成功/部分失败/全失败）+ TC7-8 send 含图/无图 + TC10/10b vision 降级/支持"
+    },
+    {
+      "kind": "test",
+      "ref": "packages/renderer/src/__tests__/stores/chat-integration-send.test.ts",
+      "note": "既有测试适配 send 第三参数变化（toHaveBeenCalledWith 含 undefined + DOM 失败测试补 nextTick）"
+    }
+  ]
+}

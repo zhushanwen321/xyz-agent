@@ -25,7 +25,15 @@
       :query="cmdType === 'file' ? fileQuery : slashQuery"
       @select="onCmdSelect"
     >
-      <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass" data-testid="composer-box">
+      <div
+        ref="composerBoxRef"
+        class="composer-box relative rounded-lg border bg-bg-input"
+        :class="boxClass"
+        data-testid="composer-box"
+        @dragover.prevent="onDragOver"
+        @dragleave.prevent="onDragLeave"
+        @drop.prevent="onDrop"
+      >
         <!-- Fork 模式标识 chip（FR-13）：顶部 accent chip 提示「将发到新分支 · 与主线隔离」+ × 退出 -->
         <div
           v-if="fork.forkMode.value"
@@ -64,13 +72,14 @@
         </div>
         <!-- 顶部元信息行 slot（landing 态：directory/branch chip；panel 态留空） -->
         <slot name="meta-row" />
-        <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
-        <ContextChipsBar />
+        <!-- 已附上下文 chip 行（§2f）。W4：从 segments 派生 image chips，× 删除定位 DOM 节点移除 -->
+        <ContextChipsBar :items="attachedItems" @remove="onRemoveContextChip" />
         <!-- 输入区：contenteditable 富文本（draft §1/§2e，支持 slash chip 与 @/# mention 内联） -->
         <ComposerInput
           ref="inputRef"
           :placeholder="placeholder"
           :disabled="isSending"
+          :session-id="sessionId"
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
@@ -158,6 +167,10 @@ import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverT
 import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
+import { useComposerContextChips } from '@/composables/panel/useComposerContextChips'
+import { useComposerDragDrop } from '@/composables/panel/useComposerDragDrop'
+import { useComposerRestore } from '@/composables/panel/useComposerRestore'
+import { useComposerSubmit } from '@/composables/panel/useComposerSubmit'
 import { useComposerHandoffMode } from '@/composables/panel/useComposerHandoffMode'
 import { useComposerModeVisual } from '@/composables/panel/useComposerModeVisual'
 
@@ -259,23 +272,28 @@ const isSending = ref(false)
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
 const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
 
-/** ComposerInput input 事件 → 维护 draft */
+/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断）+ 刷新 image chips */
 function onInputChange(text: string): void {
   draft.value = text
-  resetBrowsing() // 用户修改内容，重置历史浏览态
+  refreshAttachedItems()
+  // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
+  resetBrowsing()
 }
 
-function clearInput(): void {
-  draft.value = ''
-  if (props.sessionId) drafts.delete(props.sessionId)
-  inputRef.value?.clear()
-}
+// 顶部「已附上下文」chip 行（ContextChipsBar 数据源 + × 删除回调）——见 useComposerContextChips
+const { attachedItems, refreshAttachedItems, onRemoveContextChip } = useComposerContextChips(inputRef)
 
-/** 发送失败恢复草稿到输入区 */
-function restoreInput(text: string): void {
-  draft.value = text
-  inputRef.value?.setText(text)
-}
+// composer-box 拖拽落位（拖入图片 → image segment，复用 slice4 handleImagePaste）——见 useComposerDragDrop
+const composerBoxRef = ref<HTMLElement | null>(null)
+const { onDragOver, onDragLeave, onDrop } = useComposerDragDrop(inputRef, composerBoxRef, refreshAttachedItems, sessionIdRef)
+
+// 发送后清空 / 失败恢复（clearInput / restoreInput / restoreSegments）——见 useComposerRestore
+const { clearInput, restoreInput, restoreSegments } = useComposerRestore({
+  draft,
+  inputRef,
+  drafts,
+  sessionId: sessionIdRef,
+})
 
 // Fork 提问模式（FR-13/14/15）—— 见 useComposerForkMode
 const fork = useComposerForkMode(sessionIdRef, {
@@ -301,6 +319,13 @@ watch(() => fork.forkMode.value, (isFork) => {
 })
 
 const hasInput = computed(() => draft.value.trim().length > 0)
+
+// 提交动作（steer / followUp / abort）—— 见 useComposerSubmit。onSend 留组件内（fork/landing/compact 分支多）
+const { onSteer, onFollowUp, onAbort } = useComposerSubmit({
+  hasInput, isActive, draft, inputRef, sessionIdRef,
+  clearInput, restoreInput, steer, followUp, abort,
+})
+
 /** 忙时（流式/派发/发送中/压缩中）—— canSend 与 canHandoffSend 共用，避免重复守卫 */
 const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
 const canSend = computed(() => hasInput.value && !isBusy.value)
@@ -316,7 +341,16 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isSending,
 })
 
-/** 发送。分支优先级：fork → handoff → landing → /compact → 普通 send。 */
+/**
+ * 发送：S2 → S5（sending）→ S6（streaming）→ 完成。分支优先级：
+ * 1. fork 模式 → forkSessionAsk（详见 useComposerForkMode）。
+ * 2. handoff 模式 → handleHandoffSend（详见 useComposerHandoffMode，与 fork 互斥）。
+ * 3. landing 态 → submitFirstMessage（延迟 create session；用 variant 而非 sessionId 判定，
+ *    landing 态 sessionId 可能是公共 id 非真实 session）。
+ * 4. /compact slash chip → 专用 compact RPC（#6），不发 prompt 给 pi。检测 '/compact' 或
+ *    '/compact <指令>'，与 pi TUI interactive-mode.ts:2656 对齐。必须在此拦截：pi RPC 不解析 builtin slash。
+ * 5. 普通发送 → useChat.send。
+ */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
   const canHandoffSend = handoff.handoffMode.value && !isBusy.value
@@ -325,12 +359,17 @@ async function onSend(): Promise<void> {
   if (fork.forkMode.value && await fork.handleForkSend(text)) return
   if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
   if (props.variant === 'landing') {
+    // 先快照 segments（clearInput 会清空 DOM，必须在清空前提取）——与 normal 态一致。
+    // landing 态 image/skill/file segment 都需完整传递到 submitFirstMessage，丢段会导致丢图。
+    const segments = inputRef.value?.getSegments() ?? []
     clearInput()
     isSending.value = true
     try {
-      await flow.submitFirstMessage(text, localThinkingLevel.value)
+      await flow.submitFirstMessage(segments, localThinkingLevel.value)
     } catch (e) {
-      restoreInput(text)
+      // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
+      // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
+      restoreSegments(segments)
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('panel.panel.taskFailed', { error: msg }))
     } finally {
@@ -354,45 +393,15 @@ async function onSend(): Promise<void> {
   try {
     await send(props.sessionId!, segments)
   } catch (e) {
-    // 发送失败恢复草稿，避免输入丢失
-    restoreInput(text)
+    // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免输入丢失。
+    // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
+    // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
+    restoreSegments(segments)
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('panel.panel.sendFailed', { error: msg }))
   } finally {
     isSending.value = false
   }
-}
-
-/** 追加 steer：活跃态有输入时 ⏎ 触发。segments 先快照（clearInput 会清空 DOM） */
-async function onSteer(): Promise<void> {
-  if (!hasInput.value || !isActive.value) return
-  const segments = inputRef.value?.getSegments() ?? []
-  await submit(draft.value, () => steer(props.sessionId!, segments))
-}
-
-/** 追加 follow-up：Alt+⏎ 触发；非流式退化为普通发送 */
-async function onFollowUp(): Promise<void> {
-  if (!hasInput.value) return
-  const segments = inputRef.value?.getSegments() ?? []
-  await submit(draft.value, () => followUp(props.sessionId!, segments))
-}
-
-/** 公共提交：清空输入 → sender → 失败恢复草稿 */
-async function submit(text: string, sender: () => Promise<void>): Promise<void> {
-  const trimmed = text.trim()
-  if (!trimmed) return
-  clearInput()
-  try {
-    await sender()
-  } catch (e) {
-    restoreInput(text)
-    throw e
-  }
-}
-
-/** 停止（S6）：调 abort（G-025 流转 DEFERRED，方法存在） */
-async function onAbort(): Promise<void> {
-  await abort(props.sessionId!)
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */

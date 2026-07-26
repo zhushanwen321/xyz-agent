@@ -1,0 +1,25 @@
+{
+  "execReviewJudgment": {
+    "readability": {
+      "score": 5,
+      "issues": []
+    },
+    "architecture": {
+      "score": 5,
+      "issues": []
+    },
+    "codeSmells": {
+      "items": [],
+      "severity": "low"
+    },
+    "layerSpecific": {
+      "testCodeQuality": {
+        "score": 5,
+        "issues": []
+      },
+      "mockFidelityNote": "测试复用 privileged-handlers.test.ts 已验证的 mock 范式（vi.mock('electron') 注入 ipcMain.handle 捕获 handler 到 handlers Map + dialogMock.showOpenDialog 控制返回 + BrowserWindow.getFocusedWindow mock 控制聚焦窗口）。pick-file 测试与 pick-directory 共享同一 mock 设置，新增 handlers.get('pick-file') 取新 handler。dialog.showOpenDialog 的 options 用 expect.objectContaining({ properties:['openFile'], filters, defaultPath }) 精确断言透传正确性（TC1/TC4/TC5），返回值形状用 toEqual 断言（TC1/TC2/TC3/TC6）。TC6（无聚焦窗口）直接 mockReturnValueOnce(null) 验证不调 dialog。mock 保真度高——handler 逻辑全部经 mock 覆盖，无未测路径。"
+    },
+    "overallVerdict": "pass",
+    "followupActions": []
+  }
+}

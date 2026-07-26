@@ -515,19 +515,21 @@ export const useChatStore = defineStore('chat', () => {
     prependHistoryMut(messages, sessionId, truncateToolOutputBatch(fullHistory.map((m) => ({ ...m }))))
   }
 
-  /** 追加 user 消息（构造完整 Message，立即 complete）。content 为 Segment[]（ADR-0037） */
-  function appendUser(sessionId: string, segments: Segment[]): void {
+  /** 追加 user 消息（Segment[]，ADR-0037）。返回 id：useChat 用作 clientUuid 建立重开回填映射。 */
+  function appendUser(sessionId: string, segments: Segment[]): string {
     const prev = messages.value.get(sessionId) ?? []
+    const id = `u-${crypto.randomUUID()}`
     commitMessages(messages, sessionId, [
       ...prev,
       {
-        id: `u-${crypto.randomUUID()}`,
+        id,
         role: 'user',
         content: segments,
         status: 'complete',
         timestamp: Date.now(),
       },
     ])
+    return id
   }
 
   /**

@@ -14,6 +14,7 @@ export default {
   allExisted: '均已存在',
   discoverFailed: '发现失败',
   dirNotExist: '目录 {dir} 已不存在，已切换到主目录',
+  imageMigratePartialFailed: '{count} 张图片迁移失败（临时文件可能已清理），将尝试用原路径发送',
   loadFailed: '加载失败',
   contextCompacted: '上下文已压缩',
   branched: '已分支',

@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { textToSegments } from '@xyz-agent/shared'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 vi.mock('@/api/domains/session', () => ({
@@ -93,7 +94,7 @@ describe('W2 (F2): submitFirstMessage 新建 session 后 subagent/workflow 数�
     const flow = useNewTaskFlow()
     const subagentStore = useSubagentStore()
 
-    await flow.submitFirstMessage('hello')
+    await flow.submitFirstMessage(textToSegments('hello'))
 
     expect(subagentStore.getRecordsBySession('sess-new-001')).toHaveLength(1)
     expect(subagentStore.getRecordsBySession('sess-new-001')[0].subagentId).toBe('sub-new-1')
@@ -105,7 +106,7 @@ describe('W2 (F2): submitFirstMessage 新建 session 后 subagent/workflow 数�
     const flow = useNewTaskFlow()
     const workflowStore = useWorkflowStore()
 
-    await flow.submitFirstMessage('hello')
+    await flow.submitFirstMessage(textToSegments('hello'))
 
     expect(workflowStore.getRecordsBySession('sess-new-001')).toHaveLength(1)
     expect(workflowStore.getRecordsBySession('sess-new-001')[0].runId).toBe('wf-new-1')
@@ -117,7 +118,7 @@ describe('W2 (F2): submitFirstMessage 新建 session 后 subagent/workflow 数�
     const flow = useNewTaskFlow()
     const fileTreeStore = useFileTreeStore()
 
-    await flow.submitFirstMessage('hello')
+    await flow.submitFirstMessage(textToSegments('hello'))
 
     // loadTree 是 fire-and-forget（void），submitFirstMessage resolve 时可能未完成。
     // 用 waitFor 等 microtask flush 后 store 分桶出现。

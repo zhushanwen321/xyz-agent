@@ -94,6 +94,14 @@
             <FileText class="size-[12px] shrink-0" />
             <span>{{ fileBasename(seg.path) }}{{ formatLineRange(seg.lineRange) }}</span>
           </span>
+          <!-- image segment → ImageThumb 缩略图（local-file:// 直载，加载失败降级绿色 badge）。
+               独立子组件：避免 Turn.vue template 超 400 行上限。AGENTS.md #7.5：send 后图片在
+               user 气泡内持续可见（对话流状态可重开恢复）。 -->
+          <ImageThumb
+            v-else-if="seg.type === 'image'"
+            :path="seg.path"
+            :display-name="seg.displayName"
+          />
           <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
         </template>
         <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
@@ -340,6 +348,7 @@ import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
 import type { ThinkingBlock, ToolCall, Segment } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
+import { rebuildSegmentsWithEditedText } from '@/lib/utils'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useCopy } from '@/composables/effects/useCopy'
@@ -355,6 +364,7 @@ import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { useStickGuard, useTraceTransition } from '@/composables/effects/useStickGuard'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
+import ImageThumb from './ImageThumb.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const props = withDefaults(
@@ -573,8 +583,12 @@ async function submitEdit(): Promise<void> {
   const text = draftText.value.trim()
   if (!text) return
   editingUserId.value = null
-  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新文本 → 重新发送
-  await editAndResend(props.sessionId, user.id, text)
+  // 从原 user message 保留 image segments（编辑文本不改图：draftText 仅含 normalizeContent
+  // 拍平的文本，image 段拍平为 [图片 N] 占位，编辑后需从原 content 重新挂回真实 image 段）。
+  // M2：保持原 segment 顺序（rebuildSegmentsWithEditedText 实现见 lib/utils.ts）。
+  const segments = rebuildSegmentsWithEditedText(user.content, text)
+  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新 segments → 重新发送
+  await editAndResend(props.sessionId, user.id, segments)
 }
 
 /* ── fork / handoff 入口（FR-6,7,8,11 / fast-handoff）：handler 下沉 useTurnActions ── */
