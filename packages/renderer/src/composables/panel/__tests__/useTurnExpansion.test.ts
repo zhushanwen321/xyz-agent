@@ -117,4 +117,59 @@ describe('useTurnExpansion (w1 wave IF1)', () => {
 
     scope.stop() // 清理 effect
   })
+
+  describe('TC-w1-8 hasAnyExpanded（IF1 公开方法）', () => {
+    it('全折叠时 hasAnyExpanded([0,1,2]) 返回 false', () => {
+      const sid = ref<string | null>('s1')
+      const { hasAnyExpanded } = useTurnExpansion(sid)
+      expect(hasAnyExpanded([0, 1, 2])).toBe(false)
+    })
+
+    it('部分展开（expand(1) 后）hasAnyExpanded([0,1,2]) 返回 true', () => {
+      const sid = ref<string | null>('s1')
+      const { expand, hasAnyExpanded } = useTurnExpansion(sid)
+      expand(1)
+      expect(hasAnyExpanded([0, 1, 2])).toBe(true)
+    })
+
+    it('空数组 hasAnyExpanded([]) 返回 false', () => {
+      const sid = ref<string | null>('s1')
+      const { hasAnyExpanded } = useTurnExpansion(sid)
+      expect(hasAnyExpanded([])).toBe(false)
+    })
+
+    it('展开的 turnIndex 不在传入数组时不受其他 idx 影响（expand(5) 后 hasAnyExpanded([0,1]) 仍 false）', () => {
+      const sid = ref<string | null>('s1')
+      const { expand, hasAnyExpanded } = useTurnExpansion(sid)
+      expand(5)
+      expect(hasAnyExpanded([0, 1])).toBe(false)
+    })
+  })
+
+  it('TC-w1-9 响应式：collapse（false↔true 来回切）effect 持续重跑', () => {
+    const sid = ref<string | null>('s1')
+    const { isExpanded, expand, collapse } = useTurnExpansion(sid)
+
+    let runCount = 0
+    const scope = effectScope()
+    scope.run(() => {
+      effect(() => {
+        // 读 isExpanded 建立对 reactive 容器中该 key 的响应式依赖
+        void isExpanded(0)
+        runCount++
+      })
+    })
+
+    expect(runCount).toBe(1) // 首次跑建立依赖
+
+    expand(0) // mutate reactive 容器（false→true），effect 失效重跑
+    expect(runCount).toBe(2)
+    expect(isExpanded(0)).toBe(true)
+
+    collapse(0) // 再次 mutate（true→false，赋值不 delete），effect 应再次失效重跑
+    expect(runCount).toBe(3)
+    expect(isExpanded(0)).toBe(false)
+
+    scope.stop() // 清理 effect
+  })
 })
