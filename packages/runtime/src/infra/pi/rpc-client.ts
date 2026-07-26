@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
-import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
+import { ENV_WHITELIST_PREFIXES, type ThinkingLevel } from '@xyz-agent/shared'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
@@ -54,6 +54,24 @@ export interface RpcClientOptions {
   sessionId?: string
   /** 替换 pi 核心系统提示词（走 --system-prompt CLI，仅新建会话生效）。空白时不传。 */
   systemPrompt?: string
+  /**
+   * 工具白名单（替换语义，映射 pi `--tools <comma-joined>`，附录 A.1）。
+   * 非空时以逗号连接 push，只启用列出的工具。与 excludeTools/noTools 互斥由调用方保证。
+   */
+  tools?: string[]
+  /**
+   * 工具黑名单（叠加语义，映射 pi `--exclude-tools <comma-joined>`，附录 A.1）。
+   * 在 pi 默认启用集合之上排除列出的工具。
+   */
+  excludeTools?: string[]
+  /** 禁用所有工具（built-in + extension + custom），映射 pi `--no-tools`。 */
+  noTools?: boolean
+  /** 禁用所有 skill，映射 pi `--no-skills`。调用方同时需清空 skillPaths。 */
+  noSkills?: boolean
+  /** 禁用 context files（AGENTS.md/CLAUDE.md 自动发现），映射 pi `--no-context-files`。 */
+  noContextFiles?: boolean
+  /** 覆盖思考级别，映射 pi `--thinking <level>`（注意：非 --thinking-level，附录 A.4）。 */
+  thinkingLevel?: ThinkingLevel
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -141,6 +159,27 @@ export class RpcClient implements IPiEngine {
       for (const extPath of this.options.extensionPaths) {
         args.push('--extension', extPath)
       }
+    }
+    // Preset 启动参数（设计文档 §2.5 / 附录 A）：6 个字段映射到 pi CLI args。
+    // tools/excludeTools 用逗号连接（pi 单参数多值语义）；开关类 push 单 flag；
+    // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level）。
+    if (this.options.tools?.length) {
+      args.push('--tools', this.options.tools.join(','))
+    }
+    if (this.options.excludeTools?.length) {
+      args.push('--exclude-tools', this.options.excludeTools.join(','))
+    }
+    if (this.options.noTools) {
+      args.push('--no-tools')
+    }
+    if (this.options.noSkills) {
+      args.push('--no-skills')
+    }
+    if (this.options.noContextFiles) {
+      args.push('--no-context-files')
+    }
+    if (this.options.thinkingLevel) {
+      args.push('--thinking', this.options.thinkingLevel)
     }
 
     // 使用 pi 的 sessions 目录
