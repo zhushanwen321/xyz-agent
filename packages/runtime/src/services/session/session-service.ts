@@ -284,6 +284,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
+  async sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
+  }
+  async abortBash(sessionId: string): Promise<void> { return this.dispatcher.abortBash(sessionId) }
   async steerMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.steerMessage(sessionId, content) }
   async followUpMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.followUpMessage(sessionId, content) }
   async compact(sessionId: string, customInstructions?: string): Promise<void> { return this.dispatcher.compact(sessionId, customInstructions) }
@@ -822,7 +826,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
-      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false,
+      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false,
       adapter, sessionFilePath,
       hidden,
       parentSession,

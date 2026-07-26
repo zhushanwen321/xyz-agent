@@ -74,6 +74,24 @@ export interface BranchSummary {
 }
 
 /**
+ * Bash 执行结果（composer-bash-execute W1，对应 message.bashResult）。
+ *
+ * composer 直接执行 bash 命令（不经 LLM agent turn），结果进对话流渲染为 BashResult 气泡。
+ * exitCode 用 number | null：pi 返回 number|undefined，shared 统一转 null 防 JSON 丢值
+ * （undefined 在 JSON.stringify 会丢字段，前端读到就是 undefined 而非 null）。
+ */
+export interface BashExecutionData {
+  command: string
+  output: string
+  exitCode: number | null
+  cancelled: boolean
+  truncated: boolean
+  /** 是否排除出 LLM 上下文（透传自 message.bash 请求，pi bash excludeFromContext 参数） */
+  excludeFromContext?: boolean
+  timestamp: number
+}
+
+/**
  * Background subagent 完成通知的单条记录。
  *
  * 对应 pi-subagents 扩展 notifier.ts 的 BgNotifyRecord，经 customType:"subagent-bg-notify"
@@ -240,6 +258,10 @@ export interface Message {
   display?: boolean
   /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
   bgNotify?: BgNotifyDetails
+  /** Bash 执行结果（composer-bash-execute W1）。仅 user 消息有值：composer 直接执行 bash
+   *  （不经 LLM turn），结果经 message.bashResult 广播 + 持久化分支（converter）还原为
+   *  带 bashExecution 的 user 消息。与 toolCall 互斥（bash 不走工具链）。 */
+  bashExecution?: BashExecutionData
   /** pi CustomMessage details 原始字段（含 __gui__ 结构化渲染数据）。
    *  前端检测 details.__gui__ 路由到 GuiComponentRenderer。 */
   details?: Record<string, unknown>

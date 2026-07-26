@@ -35,6 +35,7 @@ function makeMockSession(isGenerating: boolean): IManagedSessionView {
     inputTokens: 0,
     isGenerating,
     isCompacting: false,
+    isBashRunning: false,
     labelPersisted: false,
   }
 }

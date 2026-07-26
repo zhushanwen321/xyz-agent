@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine, PiSessionStats, PiCompactionResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
@@ -474,6 +474,24 @@ export class RpcClient implements IPiEngine {
   async compact(customInstructions?: string): Promise<PiCompactionResult> {
     const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
     return msg.data as unknown as PiCompactionResult
+  }
+
+  /**
+   * 直接执行 bash 命令（pi bash RPC）。
+   *
+   * excludeFromContext 透传规则：undefined 时不传该键（走 pi 默认），显式 true/false 时透传。
+   * bash 可能长跑，复用 COMPACT_TIMEOUT_MS（300s）避免误超时。
+   * 返回值归一为 PiBashResult（sendCommand 已归一 data ?? payload，此处按结构断言）。
+   */
+  async bash(command: string, excludeFromContext?: boolean): Promise<PiBashResult> {
+    const args = excludeFromContext !== undefined ? { command, excludeFromContext } : { command }
+    const msg = await this.sendCommand('bash', args, COMPACT_TIMEOUT_MS)
+    return msg.data as unknown as PiBashResult
+  }
+
+  /** 取消进行中的 bash 执行（pi abort_bash 命令）。 */
+  abortBash(): Promise<PiMessage> {
+    return this.sendCommand('abort_bash')
   }
 
   /**

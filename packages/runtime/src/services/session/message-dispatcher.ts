@@ -93,7 +93,8 @@ export class MessageDispatcher {
     if (activeSession) {
       // [D-009 预检] busy 时拒绝（send.rejected 广播，不调 pi.prompt）
       // [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
-      if (activeSession.isGenerating || activeSession.isCompacting) {
+      // [composer-bash-execute W1] 加 isBashRunning：bash 执行中 prompt 会与 bash 竞态，双向互斥。
+      if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
         this.broker.broadcast({
           type: 'send.rejected',
@@ -196,6 +197,117 @@ export class MessageDispatcher {
     })
   }
 
+  /**
+   * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
+   *
+   * 与 sendMessage 共享 ensureActive + busy 互斥骨架，但不走 sendPrompt（bash 不调 client.prompt，
+   * 不需 BeforeSend hook、不需图片附件、不触发 isGenerating 流式态）。
+   *
+   * 生命周期：bashStart 广播（开始）→ pi bash RPC → bashResult 广播（终态）。
+   * 返回 { blocked: true } 表示被预检拒绝（send.rejected 已广播）或执行失败（message.error 已广播），
+   * 调用方（session-message-handler）据此走对应 ack 路径，与 sendMessage 的返回语义对称。
+   */
+  async sendBash(
+    sessionId: string,
+    command: string,
+    excludeFromContext?: boolean,
+  ): Promise<{ blocked: boolean; rejected?: boolean }> {
+    // ── ensureActive(必要时 restore)──
+    let client: IPiEngine
+    try {
+      client = await this.svc.ensureActive(sessionId)
+    } catch (e) {
+      const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
+      console.error(`[message-dispatcher] sendBash: ${errMsg}`)
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: errMsg },
+      })
+      throw e
+    }
+
+    // ── busy 预检（与 sendPrompt 对称：三者互斥）──
+    const activeSession = this.svc.getSessionByClient(client)
+    if (activeSession) {
+      if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
+        console.warn(`[message-dispatcher] sendBash preemptive reject (busy), sid=${sessionId}`)
+        this.broker.broadcast({
+          type: 'send.rejected',
+          payload: { sessionId, reason: 'busy', message: 'Agent 正在处理' },
+        })
+        return { blocked: true, rejected: true }
+      }
+      activeSession.isBashRunning = true
+    }
+
+    // ── bashStart 广播（实时反馈，与 bashResult 终态对称）──
+    const excludeFlag = !!excludeFromContext
+    this.broker.broadcast({
+      type: 'message.bashStart',
+      payload: { sessionId, command, excludeFromContext: excludeFlag, timestamp: Date.now() },
+    })
+
+    // ── 调 pi bash + 广播终态 ──
+    try {
+      const result = await client.bash(command, excludeFromContext)
+      this.broker.broadcast({
+        type: 'message.bashResult',
+        payload: {
+          sessionId,
+          command,
+          output: result.output,
+          exitCode: result.exitCode ?? null,
+          cancelled: result.cancelled,
+          truncated: result.truncated,
+          excludeFromContext: excludeFlag,
+          timestamp: Date.now(),
+        },
+      })
+    } catch (e) {
+      const errMsg = toErrorMessage(e)
+      console.error(`[message-dispatcher] sendBash failed: sessionId=${sessionId}`, errMsg)
+      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
+      return { blocked: true }
+    } finally {
+      if (activeSession) activeSession.isBashRunning = false
+    }
+    return { blocked: false }
+  }
+
+  /**
+   * 取消进行中的 bash 执行（pi abort_bash）。
+   *
+   * 与 abort() 对称：失败不 throw（console.error 兑底），finally 兑底广播 bashResult{cancelled:true}
+   * 终态——与 abort 广播 message.complete{aborted} 对称，前端据 bashResult 收口 isBashRunning 态。
+   */
+  async abortBash(sessionId: string): Promise<void> {
+    const client = this.getClientOrThrow(sessionId, 'abortBash')
+    const activeSession = this.svc.getSessionByClient(client)
+    try {
+      await client.abortBash()
+    } catch (e) {
+      // 与 abort() 的错误兑底一致：不 throw，避免请求级 envelope 双重报错。
+      console.error(`[message-dispatcher] abortBash failed: sessionId=${sessionId}`, toErrorMessage(e))
+    } finally {
+      if (activeSession) activeSession.isBashRunning = false
+    }
+    // 兑底终态：无论 pi 是否响应 abort_bash，都广播 cancelled=true 的 bashResult。
+    // pi 卡死时不发任何事件，靠这条让前端 isBashRunning 复位（与 abort 广播 message.complete 同理）。
+    this.broker.broadcast({
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command: '',
+        output: '',
+        exitCode: null,
+        cancelled: true,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: Date.now(),
+      },
+    })
+  }
+
   async steerMessage(sessionId: string, content: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'steer')
     await client.steer(content)
@@ -210,12 +322,12 @@ export class MessageDispatcher {
    * D8: abort/steer/followUp 共享的「getClient → 空抛」骨架（此前 3 处逐行平行，只差方法名）。
    * @param op 调用方方法名，仅用于构造诊断串。
    */
-  private getClientOrThrow(sessionId: string, op: 'abort' | 'steer' | 'followUp'): IPiEngine {
+  private getClientOrThrow(sessionId: string, op: 'abort' | 'steer' | 'followUp' | 'abortBash'): IPiEngine {
     const client = this.pm.getClient(sessionId)
     if (!client) {
       // abort 的历史报错串是 "Session X not found"（无前缀），steer/followUp 带 [message-dispatcher] 前缀。
       // 保持原样以免破坏依赖报错文本的测试。
-      throw op === 'abort'
+      throw op === 'abort' || op === 'abortBash'
         ? new Error(`Session ${sessionId} not found`)
         : new Error(`[message-dispatcher] ${op}: session ${sessionId} not active`)
     }

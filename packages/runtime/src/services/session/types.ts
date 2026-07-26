@@ -43,6 +43,14 @@ export interface IManagedSessionView {
    * 与 isGenerating 对称：不进 toSummary（前端状态摘要只看 isGenerating 推 active/idle）。
    */
   isCompacting: boolean
+  /**
+   * bash 执行进行中标记（composer-bash-execute W1）。
+   *
+   * composer 直接执行 bash（pi bash RPC，不经 LLM turn）期间置 true，与 isGenerating/isCompacting
+   * 三者互斥（任一为 true 时 sendPrompt/sendBash 都拒）。用 try/finally 置位，finally 复位。
+   * 不进 toSummary（前端状态摘要只看 isGenerating 推 active/idle，bash 执行不改变 active/idle 态）。
+   */
+  isBashRunning: boolean
   thinkingLevel?: string
   sessionFilePath?: string
   /**
