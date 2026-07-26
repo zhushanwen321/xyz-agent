@@ -46,6 +46,7 @@ import { SessionScanner } from './session-scanner.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
+import { PresetService, type PresetResolution } from '../preset-service.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
@@ -100,6 +101,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 未注入时 getReplaceSystemPrompt 返回 undefined（pi 走默认系统提示词）。
    */
   private configService: IConfigService | null = null
+  /**
+   * PresetService 引用（组合根注入）。getLaunchPresetOptions 委托用——
+   * spawn pi 时按用户选定的 launch preset 构建 extension/skill/tool args。
+   * 经 setter 注入（同 setConfigService 模式），未注入时 getLaunchPresetOptions
+   * 返回 undefined（调用方 session-lifecycle fallback 到现有 getExtensionPaths/getSkillPaths）。
+   * 见 pi-launch-presets 设计文档 §8.1。
+   */
+  private presetService: PresetService | null = null
   /**
    * W5：message.complete 广播回调（组合根注入 ReloadOrchestrator.onMessageComplete）。
    * 经 setter 注入（同 setModelContextWindowResolver 模式），避免构造参数环
@@ -186,6 +195,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    */
   setConfigService(configService: IConfigService): void {
     this.configService = configService
+  }
+
+  /**
+   * 注入 PresetService（组合根在所有服务构造后调用）。
+   * getLaunchPresetOptions 委托用——spawn pi 时按 launch preset 构建 args。
+   * 与 setConfigService 同模式（setter 注入，避免破坏现有测试构造点）。
+   */
+  setPresetService(presetService: PresetService): void {
+    this.presetService = presetService
   }
 
   /** W5：注入 message.complete 回调（组合根绑 ReloadOrchestrator.onMessageComplete）。 */
@@ -719,6 +737,24 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
   getReplaceSystemPrompt(): string | undefined {
     return this.configService?.getReplaceSystemPrompt()
+  }
+
+  /**
+   * 按 launch presetId 解析 pi 启动参数（委托 PresetService.resolve）。
+   *
+   * 供 session-lifecycle 的 create/restoreSession/forkSession 调用（runtime-lifecycle-integration slice）。
+   * 返回 undefined 的两种情况（调用方 fallback 到现有逻辑）：
+   *   - presetService 未注入（组合根未构造，理论上不会发生）
+   *   - presetId 找不到（历史 session 无 preset binding，或 preset 被删）
+   *
+   * 设计文档 §8.1 + §4.3：session-lifecycle 拿到 PresetResolution 后覆盖现有
+   * getExtensionPaths/getSkillPaths 结果，并追加 toolArgs/flags 到 pi args。
+   */
+  async getLaunchPresetOptions(presetId: string, cwd: string): Promise<PresetResolution | undefined> {
+    if (!this.presetService) return undefined
+    const preset = this.presetService.getPreset(presetId)
+    if (!preset) return undefined
+    return this.presetService.resolve(preset, cwd)
   }
 
   findScannedSession(sessionId: string): ScannedSession | undefined {
