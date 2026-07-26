@@ -18,6 +18,8 @@
           <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
           <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
         </div>
+        <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
+        <UpdateButton class="ml-auto" />
       </div>
 
       <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
@@ -192,6 +194,7 @@ import { useChat } from '@/composables/features/useChat'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
+import UpdateButton from './UpdateButton.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
@@ -204,6 +207,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
 import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
+import { useAppUpdate } from '@/composables/features/useAppUpdate'
 import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -365,12 +369,14 @@ async function onConfirmRename(payload: { sessionId: string; label: string }): P
 }
 
 /** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api）+ 订阅 pi 版本
- *  + 启动 subagent 列表同步（watch 生命周期跟随 Sidebar 组件） */
+ *  + 启动 subagent 列表同步（watch 生命周期跟随 Sidebar 组件）
+ *  + 启动 30s 自动升级检测（w4：useAppUpdate.initAutoCheck，UpdateButton 消费检测到的状态） */
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
   useSubagentListSync()
   useWorkflowListSync()
+  useAppUpdate().initAutoCheck()
 })
 
 /**
