@@ -72,6 +72,7 @@ export default {
     compressing: 'Compacting',
     loadMore: 'Load more history',
     dispatching: 'Thinking…',
+    railInProgress: 'in progress…',
     startConversation: 'Start a conversation, or select a session from the left',
     scrollToBottom: 'Scroll to bottom',
     noAgentCall: 'No conversation records for this agent call',
@@ -82,6 +83,8 @@ export default {
     branchCreatedNoFrom: 'Branch created',
     thinkCount: 'Think ×{count}',
     toolCount: 'Tool ×{count}',
+    mergedTools: '{n} similar actions',
+    mergedThoughts: '{n} thoughts',
   },
   git: {
     title: 'Git',
