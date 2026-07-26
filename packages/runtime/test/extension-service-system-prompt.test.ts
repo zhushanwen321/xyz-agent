@@ -47,6 +47,12 @@ let projectRoot: string
 let settingsDir: string
 let service: ExtensionService
 
+/**
+ * 3 个 builtin extension 文件位于 repo root（= tmpRoot，模拟真实仓库根目录），
+ * dev 模式 projectRoot = `<repo>/apps/electron`（见 process-control.ts:154 app.getAppPath()），
+ * getExtensionFilePath dev 分支从 projectRoot/../.. 解析回 repo root（见 runtime-env.ts [HISTORICAL] 注释）。
+ * 故这里把文件放在 tmpRoot、projectRoot 设为 tmpRoot/apps/electron 以对齐真实 dev 场景。
+ */
 function agentExtensionPath(): string {
   return join(tmpRoot, 'xyz-agent-extension.js')
 }
@@ -62,7 +68,7 @@ function clientMsgIdMapperPath(): string {
 beforeEach(() => {
   vi.clearAllMocks()
   tmpRoot = mkdtempSync(join(tmpdir(), 'ext-system-prompt-'))
-  projectRoot = join(tmpRoot, 'project')
+  projectRoot = join(tmpRoot, 'apps', 'electron')
   settingsDir = join(tmpRoot, 'settings')
   mkdirSync(projectRoot, { recursive: true })
   mkdirSync(settingsDir, { recursive: true })
