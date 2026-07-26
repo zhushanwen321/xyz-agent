@@ -38,15 +38,15 @@ function makeMessage(role: 'user' | 'assistant', content: string): Message {
 describe('HandoffService', () => {
   let sessionService: ReturnType<typeof createMockSessionService>
   let broker: ReturnType<typeof createMockBroker>
-  let broadcastSessionList: ReturnType<typeof vi.fn>
-  let nextPushId: ReturnType<typeof vi.fn>
+  let broadcastSessionList: () => void
+  let nextPushId: () => string
   let service: HandoffService
 
   beforeEach(() => {
     sessionService = createMockSessionService()
     broker = createMockBroker()
-    broadcastSessionList = vi.fn() as unknown as () => void
-    nextPushId = vi.fn(() => 'push-123') as unknown as () => string
+    broadcastSessionList = vi.fn()
+    nextPushId = vi.fn(() => 'push-123')
     service = new HandoffService({ sessionService, broker, broadcastSessionList, nextPushId })
   })
 
