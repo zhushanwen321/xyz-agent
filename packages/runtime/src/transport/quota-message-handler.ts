@@ -27,12 +27,21 @@ export class QuotaMessageHandler {
     switch (msg.type) {
       case 'quota.fetch': {
         const { providerId } = msg.payload
+        // [W3] 防御 undefined/非 string providerId，避免下游 quotaService.fetch(undefined) 静默返回缓存
+        if (!providerId || typeof providerId !== 'string') {
+          this.ctx.sendError(ws, 'invalid_payload', 'providerId required', msg.id)
+          return
+        }
         const result = await this.ctx.quotaService.fetch(providerId)
         this.ctx.reply(ws, msg.id, 'quota.fetch:result', result)
         return
       }
       case 'quota.refresh': {
         const { providerId } = msg.payload
+        if (!providerId || typeof providerId !== 'string') {
+          this.ctx.sendError(ws, 'invalid_payload', 'providerId required', msg.id)
+          return
+        }
         // 强制刷新（绕过 throttle），用于 Settings 测试查询
         const result = await this.ctx.quotaService.refresh(providerId)
         this.ctx.reply(ws, msg.id, 'quota.refresh:result', result)
@@ -40,12 +49,20 @@ export class QuotaMessageHandler {
       }
       case 'quota.getCached': {
         const { providerId } = msg.payload
+        if (!providerId || typeof providerId !== 'string') {
+          this.ctx.sendError(ws, 'invalid_payload', 'providerId required', msg.id)
+          return
+        }
         const result = this.ctx.quotaService.getCached(providerId)
         this.ctx.reply(ws, msg.id, 'quota.getCached:result', result)
         return
       }
       case 'quota.configure': {
         const { providerId, enabled, cookie, fetcher, apiKey } = msg.payload
+        if (!providerId || typeof providerId !== 'string') {
+          this.ctx.sendError(ws, 'invalid_payload', 'providerId required', msg.id)
+          return
+        }
         const result = this.ctx.quotaService.configure(providerId, enabled, cookie, fetcher, apiKey)
         this.ctx.reply(ws, msg.id, 'quota.configure:result', result)
         return

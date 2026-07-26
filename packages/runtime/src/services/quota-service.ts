@@ -11,7 +11,7 @@
  * 设计文档：docs/page-design/v3/coding-plan-quota/design.md §2.2.3
  */
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NormalizedQuotaRow, ProviderQuotaFetcher } from '@xyz-agent/shared'
 import { matchQuotaPreset } from '@xyz-agent/shared'
@@ -23,6 +23,11 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 
 /** 最小查询间隔（毫秒） */
 const THROTTLE_MS = 10_000
+
+/** secret 文件权限：仅属主可读写（W4） */
+const SECRET_FILE_MODE = 0o600
+/** secrets 目录权限：仅属主可读写执行（W4） */
+const SECRET_DIR_MODE = 0o700
 
 /** ProviderInfo 的最小子集（matchQuotaPreset 只需 baseUrl/name）。 */
 export interface ProviderInfoLike {
@@ -104,7 +109,11 @@ export class QuotaService {
    */
   private async runFetch(providerId: string, opts: { force: boolean }): Promise<QuotaFetchResult> {
     // 并发保护：pending 期间复用 Promise
-    const existing = this.pending.get(providerId)
+    // [W7] pending key 带 force 维度：refresh（force）和 fetch（normal）互不复用 ——
+    // 否则 refresh 命中 fetch 的 pending 会返回非 force 结果（force 语义被吞）。
+    // 同 force 维度内仍去重（同 provider 并发 force 或并发 normal 复用）。
+    const pendingKey = this.pendingKey(providerId, opts.force)
+    const existing = this.pending.get(pendingKey)
     if (existing) return existing
 
     // throttle：非 force 模式下，10s 内重复 fetch 直接返回缓存
@@ -116,14 +125,22 @@ export class QuotaService {
       }
     }
 
-    const promise = this.doFetch(providerId)
-    this.pending.set(providerId, promise)
+    const promise = this.doFetch(providerId, opts.force)
+    this.pending.set(pendingKey, promise)
 
     try {
       return await promise
     } finally {
-      this.pending.delete(providerId)
+      this.pending.delete(pendingKey)
     }
+  }
+
+  /**
+   * [W7] 构造 pending Map 的 key，带 force 维度区分 fetch/refresh。
+   * `${providerId}:${force?'force':'normal'}` —— 同 force 去重，跨 force 隔离。
+   */
+  private pendingKey(providerId: string, force: boolean): string {
+    return `${providerId}:${force ? 'force' : 'normal'}`
   }
 
   /**
@@ -152,13 +169,18 @@ export class QuotaService {
     apiKey?: string,
   ): QuotaConfigureResult {
     // 确保 secrets 目录存在
+    // [W4] 临时清零 umask 保证 mode 0o700 不被进程 umask 过滤（mkdirSync 的 mode 受 umask 影响）。
+    // 文件级 mode 0o600 同理在写入时设置。恢复原 umask 以免影响调用方其他 IO。
     if (!existsSync(this.secretsDir)) {
+      const prevUmask = process.umask(0)
       try {
-        mkdirSync(this.secretsDir, { recursive: true })
+        mkdirSync(this.secretsDir, { recursive: true, mode: SECRET_DIR_MODE })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         logger.warn('[quota] failed to create secrets dir', { providerId, error: msg })
         return { ok: false, error: msg }
+      } finally {
+        process.umask(prevUmask)
       }
     }
 
@@ -166,7 +188,7 @@ export class QuotaService {
     let cookieSet: boolean | undefined
     if (cookie !== undefined) {
       try {
-        writeFileSync(this.getCookiePath(providerId), cookie, 'utf-8')
+        this.writeSecretFile(this.getCookiePath(providerId), cookie)
         cookieSet = true
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -182,7 +204,7 @@ export class QuotaService {
         const keyPath = this.getApiKeyPath(providerId)
         if (apiKey) {
           // 非空 = 写入专属 key
-          writeFileSync(keyPath, apiKey, 'utf-8')
+          this.writeSecretFile(keyPath, apiKey)
           apiKeySet = true
         } else {
           // 空字符串 = 清除专属 key，fallback 到 provider.apiKey
@@ -251,9 +273,15 @@ export class QuotaService {
 
   /**
    * 实际执行查询（内部方法）。
+   *
+   * [W5] throttle 计时只在非 force 路径更新：refresh（force=true）不应更新 lastFetchTime，
+   * 否则 refresh 后 10s 内的 hover fetch 会被错误拦截（refresh 绕过 throttle，但不能「污染」
+   * 后续 fetch 的 throttle 判定）。force 调用不重置计时器，保持 fetch 路径的 throttle 语义独立。
    */
-  private async doFetch(providerId: string): Promise<QuotaFetchResult> {
-    this.lastFetchTime.set(providerId, Date.now())
+  private async doFetch(providerId: string, force: boolean): Promise<QuotaFetchResult> {
+    if (!force) {
+      this.lastFetchTime.set(providerId, Date.now())
+    }
 
     const fetcher = this.getFetcherForProvider(providerId)
     if (!fetcher) return this.getCached(providerId)
@@ -345,8 +373,29 @@ export class QuotaService {
       if (!existsSync(filePath)) return null
       const val = readFileSync(filePath, 'utf-8').trim()
       return val || null
-    } catch {
+    } catch (err) {
+      // 读取失败不阻断流程（返回 null fallback），但必须 log（架构约定 #4 落盘，禁止静默 catch）
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.debug('[quota] failed to read secret file', { filePath, error: msg })
       return null
+    }
+  }
+
+  /**
+   * [W4] 写入 secret 文件并设 0o600 权限。
+   *
+   * cookie/apiKey 是敏感凭证，文件权限应为 0600（仅属主可读写）。
+   * writeFileSync 的 mode 选项仅在创建新文件时生效且被 umask 过滤，故临时清零 umask +
+   * 用 chmodSync 后置强制设权限（已存在文件覆盖内容后 mode 不变，也需后置设）。
+   */
+  private writeSecretFile(filePath: string, content: string): void {
+    const prevUmask = process.umask(0)
+    try {
+      writeFileSync(filePath, content, { encoding: 'utf-8', mode: SECRET_FILE_MODE })
+      // mode 选项对新文件且 umask=0 时已生效；chmodSync 后置保证已存在文件被覆盖后权限正确
+      chmodSync(filePath, SECRET_FILE_MODE)
+    } finally {
+      process.umask(prevUmask)
     }
   }
 

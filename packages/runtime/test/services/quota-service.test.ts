@@ -8,7 +8,7 @@
  * 运行：cd packages/runtime && npx vitest run test/services/quota-service.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QuotaService } from '../../src/services/quota-service.js'
@@ -251,5 +251,200 @@ describe('QuotaService — configure 持久化（任务 4）', () => {
         cookieSet: true,
       }),
     }))
+  })
+})
+
+// ── [S4] code review 补充测试：健壮性回归防护（W5/W7/W6/getCredential fallback/apiKey 清除）──
+
+describe('QuotaService — W5: refresh 不污染 fetch 的 throttle', () => {
+  it('refresh 不更新 lastFetchTime（force 路径不污染后续 fetch 的 throttle 判定）', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+    mockFetchQuota.mockResolvedValue({ label: 'zhipu', wins: [] as never })
+
+    // 先 refresh（force）：不更新 lastFetchTime
+    await svc.refresh('zhipu')
+    // 紧接着 fetch：若 refresh 污染了 lastFetchTime，此刻 elapsed≈0 < 10s 会被拦 → 调 1 次
+    // W5 修复后 refresh 不设 lastFetchTime → fetch 不被拦，正常发 → 调 2 次
+    await svc.fetch('zhipu')
+
+    expect(mockFetchQuota).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('QuotaService — W7: refresh 与 fetch pending 互不复用', () => {
+  it('refresh 命中并发 fetch 的 pending 时不会返回非 force 结果（pending key 带 force 维度）', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+
+    // 用一个可手动 resolve 的 promise 模拟「fetch 先发起、未 resolve 时 refresh 并发到达」
+    let resolveFetch!: (v: { label: string; wins: never[] }) => void
+    mockFetchQuota.mockReturnValueOnce(
+      new Promise((r) => {
+        resolveFetch = r as typeof resolveFetch
+      }),
+    )
+    mockFetchQuota.mockResolvedValue({ label: 'zhipu-force', wins: [] as never })
+
+    // fetch（normal）先发起，进入 pending（key=zhipu:normal），尚未 resolve
+    const fetchP = svc.fetch('zhipu')
+    // refresh（force）并发达，pending key=zhipu:force ≠ zhipu:normal → 不复用，独立发第二个请求
+    const refreshP = svc.refresh('zhipu')
+
+    // 两个 pending 各自发起了一次 fetcher 调用（互不复用 = W7 修复后的行为）
+    expect(mockFetchQuota).toHaveBeenCalledTimes(2)
+
+    resolveFetch({ label: 'zhipu-normal', wins: [] as never })
+    await Promise.all([fetchP, refreshP])
+  })
+})
+
+describe('QuotaService — getCredential fallback: api-key 类无专属 key 时用 provider.apiKey', () => {
+  it('secrets 目录无专属 API Key 文件时，fallback 到 provider.apiKey', async () => {
+    // secrets 目录未写入任何 <id>-apikey.txt → getCredential 应 fallback 到 provider.apiKey
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+    // provider.apiKey 由 getApiKeyForProvider mock 提供（key-for-<id>）
+    vi.mocked(getApiKeyForProvider).mockImplementation((id: string) => `provider-key-${id}`)
+    mockFetchQuota.mockResolvedValue({ label: 'zhipu', wins: [] as never })
+
+    await svc.fetch('glm-id')
+
+    // 无专属 key → fallback 用 provider.apiKey（'provider-key-glm-id'）
+    expect(mockFetchQuota).toHaveBeenCalledWith('provider-key-glm-id')
+  })
+
+  it('secrets 目录有专属 API Key 文件时优先用专属 key（不 fallback）', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+    // 先写入专属 key 文件
+    svc.configure('glm-id', true, undefined, 'zhipu', 'quota-exclusive-key')
+    mockFetchQuota.mockResolvedValue({ label: 'zhipu', wins: [] as never })
+
+    await svc.fetch('glm-id')
+
+    // 有专属 key → 用专属 key（'quota-exclusive-key'），不走 fallback
+    expect(mockFetchQuota).toHaveBeenCalledWith('quota-exclusive-key')
+  })
+})
+
+describe('QuotaService — W4 + apiKey 清除路径', () => {
+  it('configure 传 apiKey="" 时删除专属 key 文件 + 标记 apiKeySet=false', () => {
+    vi.mocked(getProviderConfig).mockImplementation(() => ({
+      name: 'test',
+      baseUrl: 'https://bigmodel.cn',
+      quota: { fetcher: 'zhipu', enabled: true, apiKeySet: true },
+    }))
+    const svc = new QuotaService({ dataDir: tmpDir })
+
+    // 先写入专属 key，再清除
+    svc.configure('glm-id', true, undefined, 'zhipu', 'some-key')
+    const keyPath = join(tmpDir, 'secrets', 'glm-id-apikey.txt')
+    expect(existsSync(keyPath)).toBe(true)
+
+    // 清除：传 apiKey=''
+    const result = svc.configure('glm-id', true, undefined, 'zhipu', '')
+
+    expect(result.ok).toBe(true)
+    expect(existsSync(keyPath)).toBe(false)
+    expect(upsertProvider).toHaveBeenLastCalledWith('glm-id', expect.objectContaining({
+      quota: expect.objectContaining({ apiKeySet: false }),
+    }))
+  })
+
+  it('configure 写入的 secret 文件权限为 0o600（仅属主可读写）', () => {
+    vi.mocked(getProviderConfig).mockImplementation(() => ({
+      name: 'test',
+      baseUrl: 'https://bigmodel.cn',
+    }))
+    const svc = new QuotaService({ dataDir: tmpDir })
+
+    svc.configure('glm-id', true, 'cookie-val', undefined, undefined)
+
+    const cookiePath = join(tmpDir, 'secrets', 'glm-id-cookie.txt')
+    const mode = statSync(cookiePath).mode & 0o777
+    expect(mode).toBe(0o600)
+  })
+})
+
+describe('QuotaService — W6: 不同 providerId 并发 update 不丢数据', () => {
+  it('并发 fetch 两个不同 provider 后，两者缓存都在（写串行化不丢）', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: (id) =>
+        id === 'p-a'
+          ? { baseUrl: 'https://bigmodel.cn' }
+          : id === 'p-b'
+            ? { name: 'Zhipu BigModel' }
+            : undefined,
+    })
+
+    mockFetchQuota.mockImplementation(async () => ({
+      label: 'zhipu',
+      wins: [
+        { pct: 10, resetSec: 100 },
+        { pct: null, resetSec: null },
+        { pct: null, resetSec: null },
+      ] as never,
+    }))
+
+    // 并发 fetch 两个 provider → cache.update 内部串到写链，互不覆盖
+    await Promise.all([svc.fetch('p-a'), svc.fetch('p-b')])
+
+    // 等一拍让 writeChain flush（update 外层同步返回，内部 writeChain 异步链 flush）
+    await new Promise((r) => setImmediate(r))
+
+    const a = svc.getCached('p-a')
+    const b = svc.getCached('p-b')
+    // 两个 provider 缓存都应存在（若 update 无串行化，后写者会覆盖前者的整文件快照 → 丢一个）
+    expect(a.data).not.toBeNull()
+    expect(b.data).not.toBeNull()
+  })
+})
+
+describe('QuotaService — fetcher 抛异常时降级返回旧缓存 [S4]', () => {
+  it('fetcher 抛异常时 doFetch 降级返回旧缓存（不 reject）', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+
+    // 预置旧缓存：先成功 fetch 一次
+    mockFetchQuota.mockResolvedValueOnce({
+      label: 'zhipu',
+      wins: [{ pct: 30, resetSec: 50 }, { pct: null, resetSec: null }, { pct: null, resetSec: null }] as never,
+    })
+    await svc.fetch('glm-id')
+    await new Promise((r) => setImmediate(r)) // 等 writeChain flush
+
+    // 第二次 fetch：fetcher 抛异常
+    mockFetchQuota.mockRejectedValueOnce(new Error('network down'))
+    const result = await svc.fetch('glm-id')
+
+    // 不 reject，降级返回旧缓存（pct=30）
+    expect(result.data).not.toBeNull()
+    expect(result.data?.label).toBe('zhipu')
+    expect(result.data?.wins[0]?.pct).toBe(30)
+  })
+
+  it('fetcher 抛异常且无旧缓存时返回 null（降级空）', async () => {
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+    mockFetchQuota.mockRejectedValue(new Error('always fails'))
+
+    const result = await svc.fetch('glm-id')
+
+    expect(result.data).toBeNull()
+    expect(result.lastFetchAt).toBeNull()
   })
 })

@@ -10,6 +10,7 @@
 
 import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
 import { INFINITE_WIN } from './types.js'
+import { logger } from '../../infra/logger.js'
 
 const FETCH_TIMEOUT_MS = 5000
 const PERCENT_SCALE = 100
@@ -60,7 +61,10 @@ export const mimoFetcher: ProviderQuotaFetcher = {
         label: 'MiMo Coding',
         wins: [INFINITE_WIN, INFINITE_WIN, { pct: monthPct, resetSec: null }],
       }
-    } catch {
+    } catch (err) {
+      // 查询失败降级返回 null（调用方返回旧缓存），但必须 log（架构约定 #4 落盘，禁止静默 catch）
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.debug('[quota:mimo] fetch failed', { error: msg })
       return null
     }
   },

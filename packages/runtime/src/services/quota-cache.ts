@@ -10,7 +10,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { logger } from '../infra/logger.js'
 
@@ -44,7 +44,10 @@ export class QuotaCache {
         return { providers: {} }
       }
       return parsed
-    } catch {
+    } catch (err) {
+      // 读取失败不阻断流程（返回空缓存），但必须 log（架构约定 #4 落盘，禁止静默 catch）
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.debug('[quota-cache] failed to read cache file', { error: msg })
       return { providers: {} }
     }
   }
@@ -56,10 +59,36 @@ export class QuotaCache {
   }
 
   /**
-   * 更新单个 provider 的缓存（原子写）。
+   * 写入串行化链（基于 Promise 的简单 mutex）。
+   *
+   * [W6] 不同 providerId 的并发 update 是 read(整文件)→modify(内存合并)→write(rename)，
+   * 不串行化会丢数据（A 读 → B 读 → A 写 → B 写覆盖 A）。所有 update 串到同一条链上，
+   * 保证「读-改-写」原子性。read 不需要锁（并发读无副作用）。
+   */
+  private writeChain: Promise<void> = Promise.resolve()
+
+  /**
+   * 更新单个 provider 的缓存（原子写 + 串行化）。
    * 读取现有缓存 → 合并 → .tmp → rename。
    */
   update(providerId: string, data: NormalizedQuotaRow): void {
+    // doUpdate 是同步方法（内部 try/catch 已吞掉所有错误，不会 throw），
+    // 用 Promise.resolve().then(run) 把每次同步调用串到微任务队列，保证「读-改-写」互不交错。
+    const run = () => {
+      try {
+        this.doUpdate(providerId, data)
+      } catch (err) {
+        // doUpdate 内部已 log 具体写入错误，此处仅防链中断（同步 doUpdate 理论不抛，
+        // 但若 throw 需吞掉避免 unhandled rejection 中断 writeChain）
+        const msg = err instanceof Error ? err.message : String(err)
+        logger.debug('[quota-cache] writeChain caught unexpected error', { providerId, error: msg })
+      }
+    }
+    this.writeChain = this.writeChain.then(run, run)
+  }
+
+  /** update 的实际实现（私有）。已串行化，调用方通过 update 入口。 */
+  private doUpdate(providerId: string, data: NormalizedQuotaRow): void {
     try {
       const cache = this.read()
       cache.providers[providerId] = {
@@ -67,8 +96,9 @@ export class QuotaCache {
         lastFetchAt: Date.now(),
       }
 
-      // 确保目录存在
-      const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'))
+      // [W1] 目录推导用 dirname()，修复 Windows 路径分隔符 bug：
+      // 旧 substring(0, lastIndexOf('/')) 在 Windows（\ 分隔）下 lastIndexOf('/') 返回 -1 → 空串 → mkdirSync('') EINVAL
+      const dir = dirname(this.filePath)
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true })
       }
