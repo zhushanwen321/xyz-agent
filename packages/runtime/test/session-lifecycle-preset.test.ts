@@ -73,7 +73,7 @@ function makeMocks(opts: {
     prompt: vi.fn(async () => ({})),
   } as unknown as IPiEngine
 
-  const createSessionMock = vi.fn(async () => client)
+  const createSessionMock = vi.fn(async (_id: string, _cwd: string, _options?: Record<string, unknown>) => client)
   const pm = {
     createSession: createSessionMock,
     rekey: vi.fn(),
@@ -142,7 +142,7 @@ describe('session-lifecycle preset integration', () => {
 
     expect(svc.getLaunchPresetOptions).toHaveBeenCalledWith('builtin:readonly', '/repo')
     expect(createSessionMock).toHaveBeenCalledTimes(1)
-    const opts = createSessionMock.mock.calls[0][2]
+    const opts = createSessionMock.mock.calls[0]![2]!
     expect(opts.tools).toEqual(['read', 'grep'])
     expect(opts.noSkills).toBe(true)
     expect(opts.noContextFiles).toBe(true)
@@ -159,7 +159,7 @@ describe('session-lifecycle preset integration', () => {
 
     expect(svc.getLaunchPresetOptions).not.toHaveBeenCalled()
     expect(persistPresetBindingFn).not.toHaveBeenCalled()
-    const opts = createSessionMock.mock.calls[0][2]
+    const opts = createSessionMock.mock.calls[0]![2]!
     expect(opts.extensionPaths).toEqual(['/default/ext'])
     expect(opts.skillPaths).toEqual(['/default/skill'])
     // 不含 preset 字段
@@ -180,7 +180,7 @@ describe('session-lifecycle preset integration', () => {
       thinkingOverride: 'high',
     })
 
-    const opts = createSessionMock.mock.calls[0][2]
+    const opts = createSessionMock.mock.calls[0]![2]!
     // Landing 传入赢过 preset 字段
     expect(opts.model).toBe('landing-model')
     expect(opts.thinkingLevel).toBe('high')
@@ -194,7 +194,7 @@ describe('session-lifecycle preset integration', () => {
     await lifecycle.create('/repo', 'label', { presetId: 'deleted-preset' })
 
     expect(svc.getLaunchPresetOptions).toHaveBeenCalledWith('deleted-preset', '/repo')
-    const opts = createSessionMock.mock.calls[0][2]
+    const opts = createSessionMock.mock.calls[0]![2]!
     // fallback 到 svc 默认
     expect(opts.extensionPaths).toEqual(['/default/ext'])
     expect(opts.skillPaths).toEqual(['/default/skill'])
@@ -220,7 +220,7 @@ describe('session-lifecycle preset integration', () => {
     await lifecycle.restoreSession('s1')
 
     expect(svc.getLaunchPresetOptions).toHaveBeenCalledWith('builtin:readonly', '/repo')
-    const opts = createSessionMock.mock.calls[0][2]
+    const opts = createSessionMock.mock.calls[0]![2]!
     expect(opts.excludeTools).toEqual(['bash'])
     // .preset.json sidecar 不被 unlink（preset 是 launch 配置不是终态）
     const presetUnlinks = unlinkMock.mock.calls.filter(c => String(c[0]).endsWith('.preset.json'))
@@ -254,7 +254,7 @@ describe('session-lifecycle preset integration', () => {
     await lifecycle.forkSession('src', 'entry1', false, 'forked')
 
     expect(svc.getLaunchPresetOptions).toHaveBeenCalledWith('builtin:readonly', '/repo')
-    const opts = createSessionMock.mock.calls[0][2]
+    const opts = createSessionMock.mock.calls[0]![2]!
     expect(opts.noTools).toBe(true)
     // forkedFilePath 写新 sidecar
     expect(persistPresetBindingFn).toHaveBeenCalledWith('/tmp/forked.jsonl', 'builtin:readonly')
