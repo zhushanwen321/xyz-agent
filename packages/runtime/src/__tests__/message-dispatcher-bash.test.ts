@@ -53,6 +53,7 @@ function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManaged
 interface MockOpts {
   isBashRunning?: boolean
   isGenerating?: boolean
+  isCompacting?: boolean
   bashResult?: PiBashResult
   bashError?: Error
   promptError?: Error
@@ -63,16 +64,19 @@ function makeMocks(opts: MockOpts = {}) {
   const session = makeMockSession({
     isBashRunning: opts.isBashRunning ?? false,
     isGenerating: opts.isGenerating ?? false,
+    isCompacting: opts.isCompacting ?? false,
   })
 
-  const bashFn = opts.bashError
-    ? vi.fn(async () => { throw opts.bashError! })
-    : vi.fn(async () => (opts.bashResult ?? {
-        output: 'ok',
-        exitCode: 0,
-        cancelled: false,
-        truncated: false,
-      }) as PiBashResult)
+  const bashFn = opts.bashResult
+    ? vi.fn(async () => opts.bashResult!)
+    : opts.bashError
+      ? vi.fn(async () => { throw opts.bashError! })
+      : vi.fn(async () => ({
+          output: 'ok',
+          exitCode: 0,
+          cancelled: false,
+          truncated: false,
+        }) as PiBashResult)
 
   const abortBashFn = opts.abortBashError
     ? vi.fn(async () => { throw opts.abortBashError! })
@@ -115,6 +119,28 @@ describe('MessageDispatcher sendBash —— busy 预检（T4）', () => {
     expect(rejected).toBeDefined()
     expect(rejected!.payload).toMatchObject({ sessionId: 's1', reason: 'busy' })
     // 返回值
+    expect(result).toEqual({ blocked: true, rejected: true })
+  })
+
+  it('T4b: isGenerating=true → 广播 send.rejected{reason:"busy"} + 不调 client.bash + 返回 {blocked:true, rejected:true}', async () => {
+    const { dispatcher, bashFn, broadcasts } = makeMocks({ isGenerating: true })
+    const result = await dispatcher.sendBash('s1', 'echo hi', false)
+
+    expect(bashFn).not.toHaveBeenCalled()
+    const rejected = broadcasts.find((m) => m.type === 'send.rejected')
+    expect(rejected).toBeDefined()
+    expect(rejected!.payload).toMatchObject({ sessionId: 's1', reason: 'busy' })
+    expect(result).toEqual({ blocked: true, rejected: true })
+  })
+
+  it('T4c: isCompacting=true → 广播 send.rejected{reason:"busy"} + 不调 client.bash + 返回 {blocked:true, rejected:true}', async () => {
+    const { dispatcher, bashFn, broadcasts } = makeMocks({ isCompacting: true })
+    const result = await dispatcher.sendBash('s1', 'echo hi', false)
+
+    expect(bashFn).not.toHaveBeenCalled()
+    const rejected = broadcasts.find((m) => m.type === 'send.rejected')
+    expect(rejected).toBeDefined()
+    expect(rejected!.payload).toMatchObject({ sessionId: 's1', reason: 'busy' })
     expect(result).toEqual({ blocked: true, rejected: true })
   })
 })
@@ -244,7 +270,7 @@ describe('MessageDispatcher abortBash（T8）', () => {
   })
 
   it('T8b: client.abortBash 抛异常 → 不向上抛 + 仍广播 message.bashResult{cancelled:true}（兑底终态）', async () => {
-    const { dispatcher, broadcasts, session } = makeMocks({ abortBashError: new Error('rpc dead') })
+    const { dispatcher, broadcasts, session } = makeMocks({ isBashRunning: true, abortBashError: new Error('rpc dead') })
 
     // 不该 throw
     await expect(dispatcher.abortBash('s1')).resolves.toBeUndefined()

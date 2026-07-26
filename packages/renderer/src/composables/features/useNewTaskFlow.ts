@@ -217,6 +217,11 @@ export function useNewTaskFlow() {
    * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
    * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
    * 用 runtime 默认。
+   *
+   * @param segments 结构化 segments（含 text/image/skill/file/mention 段）
+   * @param thinkingLevel 可选思考等级（landing 态 Composer 选定值）
+   * @param bashCommand [S10] bash 命令参数。仅当 extractBashCommand.type === 'command' 时传入，
+   *   undefined = 非 bash 走普通 send。调用方控制流保证此契约（Composer.vue 按 type 分支）。
    */
   async function submitFirstMessage(segments: Segment[], thinkingLevel?: string, bashCommand?: { command: string; excludeFromContext: boolean }): Promise<void> {
     // segments 不能为空；含 text 段时提取首段文本作 session label

@@ -29,6 +29,10 @@ function mapEntriesToPiMessages(entries: unknown[]): unknown[] {
         (e as { type?: string }).type === 'compaction' ||
         (e as { type?: string }).type === 'custom_message' ||
         (e as { type?: string }).type === 'branch_summary'
+        // [HISTORICAL] bashExecution entries 以 type:'message' + message.role:'bashExecution' 存储在 JSONL 中。
+        // convertPiHistory 处理 role:'bashExecution'。若 pi 未来改为独立顶层 entry 类型
+        // （如 type: 'bash_execution'），在此添加对应过滤条件：
+        // || (e as { type?: string }).type === 'bash_execution'
       ))
     .map((e) => {
       if (e.type === 'compaction') {

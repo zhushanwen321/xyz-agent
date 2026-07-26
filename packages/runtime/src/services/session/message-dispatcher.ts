@@ -261,6 +261,7 @@ export class MessageDispatcher {
           truncated: result.truncated,
           excludeFromContext: excludeFlag,
           timestamp: Date.now(),
+          ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
         },
       })
     } catch (e) {
@@ -283,6 +284,10 @@ export class MessageDispatcher {
   async abortBash(sessionId: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'abortBash')
     const activeSession = this.svc.getSessionByClient(client)
+    // [W1] 守卫：当前没有 bash 在运行时短路返回，避免无条件广播 bashResult{cancelled:true}
+    // 与 abort() 不需要守卫不同——abort 的 isGenerating 可能在 pi 卡死时残留，必须强制终态；
+    // 而 isBashRunning 仅在 sendBash 显式置 true，用户对同一 session 重复 abortBash 时应静默跳过。
+    if (!activeSession?.isBashRunning) return
     try {
       await client.abortBash()
     } catch (e) {

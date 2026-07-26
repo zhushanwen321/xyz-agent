@@ -89,6 +89,8 @@ export interface BashExecutionData {
   /** 是否排除出 LLM 上下文（透传自 message.bash 请求，pi bash excludeFromContext 参数） */
   excludeFromContext?: boolean
   timestamp: number
+  /** pi truncated 时的完整输出文件路径（前端按需读取全文，避免大输出撑爆 WS 帧） */
+  fullOutputPath?: string
 }
 
 /**

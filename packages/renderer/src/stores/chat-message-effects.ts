@@ -119,6 +119,8 @@ export interface MessageEffectContext {
   clearPendingSend: (sessionId: string) => void
   /** message_start 挂载 streaming 超时兜底 timer（防 complete 永不到的 pi 静默卡死）。 */
   armStreamingTimer: (sessionId: string) => void
+  /** bashStartEffect 挂载 bash 专用超时 timer（防 bash RPC 卡死永久 streaming）。 */
+  armBashTimer: (sessionId: string) => void
   /** queue_update 投递信号 */
   markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
 }

@@ -15,6 +15,17 @@ import { useChat } from '@/composables/features/useChat'
 const BANG_SINGLE = 1
 const BANG_DOUBLE = 2
 
+/**
+ * [W5] bash 命令提取结果的 discriminated union，替代 undefined|null|object 三态。
+ * - not-bash：非 bash 前缀（调用方走普通发送）
+ * - empty：空命令（! 或 !! 后无内容，调用方不提交，保持 bash 模式）
+ * - command：有效 bash 命令
+ */
+export type BashCommandExtract =
+  | { type: 'not-bash' }
+  | { type: 'empty' }
+  | { type: 'command'; command: string; excludeFromContext: boolean }
+
 export interface ComposerBashOptions {
   /** draft 文本（双向：trySendBash 失败时 restoreInput 写回） */
   draft: Ref<string>
@@ -32,10 +43,10 @@ export interface UseComposerBash {
   /** bash 模式（draft 以 `!` 开头）—— 供 useComposerModeVisual 视觉派生 */
   isBashMode: ComputedRef<boolean>
   /**
-   * 从文本提取 bashCommand（landing 态首发用）。命中 !/!! 前缀返回 {command, excludeFromContext}；
-   * 空命令（! 或 !! 后无内容）返回 null（调用方不提交，保持 bash 模式）；非 bash 前缀返回 undefined。
+   * [W5] 从文本提取 bashCommand（discriminated union）。landing 态首发用。
+   * 调用方按 `.type` 分支处理：`'empty'` → 不提交；`'command'` → 传给 submitFirstMessage。
    */
-  extractBashCommand: (text: string) => { command: string; excludeFromContext: boolean } | null | undefined
+  extractBashCommand: (text: string) => BashCommandExtract
   /**
    * 尝试 bash 分流。命中 `!`/`!!` 前缀时执行 bash 并返回 true（调用方 return）；
    * 否则返回 false（调用方继续走 compact / send 分支）。
@@ -51,18 +62,16 @@ export function useComposerBash(opts: ComposerBashOptions): UseComposerBash {
   const isBashMode = computed(() => opts.draft.value.trimStart().startsWith('!'))
 
   /**
-   * 从文本提取 bashCommand。返回值三态：
-   * - undefined：非 bash 前缀（调用方走普通发送）
-   * - null：空命令（! 或 !! 后无内容，调用方不提交，保持 bash 模式）
-   * - {command, excludeFromContext}：有效 bash 命令
+   * [W5] 从文本提取 bashCommand（discriminated union）。
+   * 替代原 undefined|null|object 三态，调用方按 .type 分支处理。
    */
-  function extractBashCommand(text: string): { command: string; excludeFromContext: boolean } | null | undefined {
+  function extractBashCommand(text: string): BashCommandExtract {
     const trimmed = text.trim()
-    if (!trimmed.startsWith('!')) return undefined
+    if (!trimmed.startsWith('!')) return { type: 'not-bash' }
     const isExcluded = trimmed.startsWith('!!')
     const cmd = trimmed.slice(isExcluded ? BANG_DOUBLE : BANG_SINGLE).trim()
-    if (!cmd) return null
-    return { command: cmd, excludeFromContext: isExcluded }
+    if (!cmd) return { type: 'empty' }
+    return { type: 'command', command: cmd, excludeFromContext: isExcluded }
   }
 
   async function trySendBash(rawText: string): Promise<boolean> {
@@ -81,8 +90,10 @@ export function useComposerBash(opts: ComposerBashOptions): UseComposerBash {
     opts.isSending.value = true
     try {
       await sendBash(sid, cmd, isExcluded)
-    } catch {
-      // sendBash 内部已 toast（与 send 同策略），此处恢复草稿避免输入丢失
+    } catch (e) {
+      // [W4] sendBash 内部已 toast（与 send 同策略），此处恢复草稿避免输入丢失。
+      // 非预期异常（TypeError 等）也记录日志，避免用户无反馈。
+      console.warn('[useComposerBash] trySendBash failed:', e)
       opts.restoreInput(rawText)
     } finally {
       opts.isSending.value = false

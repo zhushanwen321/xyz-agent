@@ -21,6 +21,7 @@ import i18n from '@/i18n'
 import type { Segment } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import { writeSegmentsMetadata } from '@/lib/ipc'
+import { markBashError } from '@/stores/chat-bash-effects'
 
 const t = i18n.global.t
 
@@ -368,7 +369,10 @@ export function useChat() {
     try {
       await chatApi.abortBash(sid)
     } catch (e) {
+      // [W2] RPC 失败时 bashResult 广播不会到达，bash 消息永久卡在 streaming。
+      // 主动找到 streaming bash 消息并标记为 error 态兜底。
       const msg = e instanceof Error ? e.message : String(e)
+      markBashError({ value: chat.messages }, sid, msg)
       const { error } = useToast()
       error(t('composable.stopFailed', { msg }))
     }

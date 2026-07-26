@@ -104,7 +104,7 @@
           v-if="isActive"
           variant="ghost"
           size="icon"
-          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
+          class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
           :title="t('panel.composer.stop')"
           @click="onAbort"
         >
@@ -112,14 +112,14 @@
         </Button>
         <div
           v-else-if="isCompacting"
-          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-surface-hover text-muted"
+          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-surface-hover text-muted"
           :title="t('panel.composer.compacting')"
         >
           <Loader2 class="size-4 animate-spin" />
         </div>
         <div
           v-else-if="isSending"
-          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-[var(--accent)] text-white"
+          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-[var(--accent)] text-white"
           :title="t('panel.composer.sending')"
         >
           <Loader2 class="size-4 animate-spin" />
@@ -128,7 +128,7 @@
           v-else
           variant="default"
           size="icon"
-          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
+          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
           :disabled="!canSend"
           :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : handoff.handoffMode.value ? t('panel.composer.handoffSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
@@ -349,8 +349,7 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isSending,
   isBashMode,
 })
-
-/** 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send */
+/** 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。script setup ~300行接近上限，新增模式优先提取 composable。 */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
   const canHandoffSend = handoff.handoffMode.value && !isBusy.value
@@ -361,12 +360,13 @@ async function onSend(): Promise<void> {
   if (props.variant === 'landing') {
     // 先快照 segments（clearInput 会清空 DOM）；landing 态 sessionId 可能是公共 id，用 variant 判定
     const segments = inputRef.value?.getSegments() ?? []
-    // landing 态 bash 分流：提取 !/!! 前缀（null=空命令不提交；undefined=非 bash 走普通首发）
-    const bashCommand = composerBash.extractBashCommand(text)
-    if (bashCommand === null) return
+    // landing 态 bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
+    const bashExtract = composerBash.extractBashCommand(text)
+    if (bashExtract.type === 'empty') return
     clearInput()
     isSending.value = true
     try {
+      const bashCommand = bashExtract.type === 'command' ? bashExtract : undefined
       await flow.submitFirstMessage(segments, localThinkingLevel.value, bashCommand)
     } catch (e) {
       // W8：恢复 text + image/skill/file chip（restoreSegments 详见 useComposerRestore）

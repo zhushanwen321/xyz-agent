@@ -797,6 +797,8 @@ export interface ServerMessageMapBase {
     truncated: boolean
     excludeFromContext: boolean
     timestamp: number
+    /** pi truncated 时的完整输出文件路径（前端按需读取全文） */
+    fullOutputPath?: string
   }
   // pi CustomMessage 注入（扩展经 pi.sendMessage 向对话流注入结构化通知，如 subagent-bg-notify）。
   // event-adapter 把 pi message_start{role:'custom', customType, content, details} 翻译为此帧。

@@ -87,6 +87,7 @@ export default {
     bashNoOutput: '（无输出）',
     bashNoContext: '不进上下文',
     bashCancel: '取消',
+    bashUnknownCommand: '(未知命令)',
   },
   git: {
     title: 'Git',

@@ -190,7 +190,7 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
 
   for (let i = 0; i < raw.length; i++) {
     const item = raw[i]
-    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number } | { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number }
+    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number } | { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
@@ -302,12 +302,13 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
     // exitCode undefined → null（与 dispatcher 广播 bashResult 时 `?? null` 对称，防 JSON 丢值）。
     // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 bash 执行记录经此分支还原。
     if (m.role === 'bashExecution') {
-      const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number }
+      const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
       result.push({
         id: crypto.randomUUID(),
         role: 'system',
         content: '',
         status: 'complete',
+        timestamp: bm.timestamp,
         bashExecution: {
           command: bm.command,
           output: bm.output,
@@ -316,8 +317,9 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
           truncated: bm.truncated,
           excludeFromContext: !!bm.excludeFromContext,
           timestamp: bm.timestamp,
+          ...(bm.fullOutputPath !== undefined && { fullOutputPath: bm.fullOutputPath }),
         },
-      } as Message)
+      } satisfies Message)
       continue
     }
 

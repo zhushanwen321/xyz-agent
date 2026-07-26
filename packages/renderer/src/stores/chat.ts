@@ -27,6 +27,7 @@
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './chat-mutations'
+import { initTimers } from './chat-timers'
 import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
 import {
   LRU_MAX_SESSIONS,
@@ -393,8 +394,6 @@ export const useChatStore = defineStore('chat', () => {
   const STREAMING_TIMEOUT_MS = readStreamingTimeoutMs()
   /** pendingSend 空窗期 timer 阈值（D-015/F4，接管 dispatchingTimer 30s 语义） */
   const PENDING_SEND_TIMEOUT_MS = 30_000
-  /** streaming 超时 timer（per-session 跟踪，按 sessionId 隔离） */
-  const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** pendingSend 空窗期 timer（按 sessionId 隔离） */
   const pendingSendTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // handingOff 超时兜底 timer + HANDING_OFF_TIMEOUT_MS 阈值内聚在 createHandoffController（chat-handoff.ts）
@@ -643,6 +642,7 @@ export const useChatStore = defineStore('chat', () => {
         finalizeSession,
         clearPendingSend,
         armStreamingTimer,
+        armBashTimer,
         markPendingDelivered,
       },
       sessionId,
@@ -662,9 +662,8 @@ export const useChatStore = defineStore('chat', () => {
    */
   function finalizeSession(sessionId: string, reason: FinalizeReason, errorText?: string): void {
     finalizeMessagesImpl(messages, sessionId, reason, errorText)
-    // 清 pendingSend + timer
+    // 清 pendingSend + timer（streaming + bash 独立 timer）
     clearPendingSend(sessionId)
-    clearStreamingTimer(sessionId)
     // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
     if (import.meta.env.DEV && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
   }
@@ -739,21 +738,8 @@ export const useChatStore = defineStore('chat', () => {
     clearSessionTimer(pendingSendTimers, sessionId)
   }
 
-  // ── streaming timer（超时兜底）──
-
-  /** message_start 挂载超时兜底（防 message.complete 永不到）。callback 调 finalizeSession('timeout')。 */
-  function armStreamingTimer(sessionId: string): void {
-    clearStreamingTimer(sessionId)
-    streamingTimers.set(sessionId, setTimeout(() => {
-      finalizeSession(sessionId, 'timeout')
-      streamingTimers.delete(sessionId)
-    }, STREAMING_TIMEOUT_MS))
-  }
-
-  /** 取消超时 timer（finalizeSession / store dispose 调） */
-  function clearStreamingTimer(sessionId: string): void {
-    clearSessionTimer(streamingTimers, sessionId)
-  }
+  // ── timer（streaming + bash）：从 chat-timers.ts 提取，闭包注入 finalizeSession ──
+  const { armStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers } = initTimers(finalizeSession, STREAMING_TIMEOUT_MS)
 
   /**
    * session 级错误统一入口：追加 error assistant 消息 + finalizeSession。
@@ -778,10 +764,9 @@ export const useChatStore = defineStore('chat', () => {
   // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
   // 避免回调操作已废弃的 store 实例 ref + warn 噪音。
   onScopeDispose(() => {
-    for (const timers of [pendingSendTimers, streamingTimers]) {
-      for (const timer of timers.values()) clearTimeout(timer)
-      timers.clear()
-    }
+    for (const timer of pendingSendTimers.values()) clearTimeout(timer)
+    pendingSendTimers.clear()
+    disposeAllTimers()
     handoff.clearAllTimers()
   })
 
@@ -817,7 +802,7 @@ export const useChatStore = defineStore('chat', () => {
       [messages, retryStates, queueStates],
       [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory],
       changeSetStatuses,
-      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearHandingOffTimer(sessionId)],
+      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearBashTimer(sessionId), () => clearHandingOffTimer(sessionId)],
     )
     disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
@@ -854,6 +839,7 @@ export const useChatStore = defineStore('chat', () => {
     addPendingSend,
     clearPendingSend,
     armStreamingTimer,
+    armBashTimer,
     markSessionError,
     isCompacting,
     setCompacting,

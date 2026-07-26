@@ -13,7 +13,7 @@ const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
 function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
   const safe: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix) || key === prefix)) {
+    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix))) {
       safe[key] = value
     }
   }
@@ -486,7 +486,13 @@ export class RpcClient implements IPiEngine {
   async bash(command: string, excludeFromContext?: boolean): Promise<PiBashResult> {
     const args = excludeFromContext !== undefined ? { command, excludeFromContext } : { command }
     const msg = await this.sendCommand('bash', args, COMPACT_TIMEOUT_MS)
-    return msg.data as unknown as PiBashResult
+    // [W6] shape guard：pi 返回 malformed 数据时 fallback，避免下游因 undefined 字段崩溃
+    const data = msg.data as Record<string, unknown> | undefined
+    if (typeof data !== 'object' || data === null || !('output' in data)) {
+      console.warn('[rpc] bash: malformed PiBashResult from pi, using fallback. data=', msg.data)
+      return { output: '', exitCode: 1, cancelled: false, truncated: false }
+    }
+    return data as unknown as PiBashResult
   }
 
   /** 取消进行中的 bash 执行（pi abort_bash 命令）。 */
