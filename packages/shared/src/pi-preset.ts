@@ -131,6 +131,17 @@ export const DEFAULT_PRESETS: PiLaunchPreset[] = [
 ]
 
 /**
+ * 预设使用统计条目（FR-14）。
+ * 每个 preset id 对应一条，记录使用次数和最后使用时间。
+ */
+export interface PresetUsageEntry {
+  /** 使用次数（session 创建时 +1） */
+  count: number
+  /** 最后使用时间（Unix ms） */
+  lastUsed: number
+}
+
+/**
  * pi-presets.json 的持久化形状（~/.xyz-agent/pi-presets.json）。
  *
  * 存：用户自定义预设 + 内置预设的用户编辑副本（builtin 字段仍 true）+ 默认预设 id。
@@ -141,6 +152,10 @@ export interface PiPresetsFile {
   presets: PiLaunchPreset[]
   /** 用户设置的「设为默认」preset id，全局生效（设计文档 §5.3）。缺省 'builtin:full'。 */
   defaultPresetId?: string
+  /** 预设使用统计（FR-14）：key=presetId, value=使用次数+最后使用时间 */
+  usage?: Record<string, PresetUsageEntry>
+  /** per-cwd 默认预设映射（FR-15）：key=cwd 绝对路径, value=presetId */
+  perCwdDefaults?: Record<string, string>
   /** schema 版本，便于未来迁移 */
   version: 1
 }

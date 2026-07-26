@@ -272,6 +272,101 @@ export class PresetService {
     }
   }
 
+  // ── FR-14：预设使用统计 ──────────────────────────────────────
+
+  /**
+   * 记录一次预设使用（session 创建时调用）。
+   * 原子操作：load → mutate → save，无并发保护（单用户桌面应用，写冲突概率极低）。
+   */
+  recordUsage(presetId: string): void {
+    const file = this.loadPresetsFile()
+    if (!file.usage) file.usage = {}
+    const entry = file.usage[presetId]
+    if (entry) {
+      entry.count += 1
+      entry.lastUsed = Date.now()
+    } else {
+      file.usage[presetId] = { count: 1, lastUsed: Date.now() }
+    }
+    this.savePresetsFile(file)
+  }
+
+  /** 获取全部预设使用统计（供前端展示排序）。 */
+  getUsage(): Record<string, import('@xyz-agent/shared').PresetUsageEntry> {
+    return this.loadPresetsFile().usage ?? {}
+  }
+
+  // ── FR-15：per-cwd 默认预设 ──────────────────────────────────
+
+  /**
+   * 获取 cwd 对应的默认预设 id。
+   * 优先级：perCwdDefaults[cwd] > global defaultPresetId > 'builtin:full'。
+   */
+  getCwdDefaultPresetId(cwd: string): string {
+    const file = this.loadPresetsFile()
+    return file.perCwdDefaults?.[cwd] ?? file.defaultPresetId ?? BUILTIN_PRESET_IDS.FULL
+  }
+
+  /** 设置 cwd 对应的默认预设。presetId 为空串时删除该 cwd 的覆盖（回退全局默认）。 */
+  setCwdDefaultPresetId(cwd: string, presetId: string): void {
+    const file = this.loadPresetsFile()
+    if (!file.perCwdDefaults) file.perCwdDefaults = {}
+    if (presetId) {
+      file.perCwdDefaults[cwd] = presetId
+    } else {
+      delete file.perCwdDefaults[cwd]
+    }
+    this.savePresetsFile(file)
+  }
+
+  /** 获取全部 per-cwd 默认映射（供前端展示）。 */
+  getCwdDefaults(): Record<string, string> {
+    return this.loadPresetsFile().perCwdDefaults ?? {}
+  }
+
+  // ── FR-13：预设导入/导出 ─────────────────────────────────────
+
+  /**
+   * 导出全部预设为 JSON 字符串（前端通过 electronAPI 文件对话框保存）。
+   * 导出格式：{ presets, defaultPresetId, version }（不含 usage/perCwdDefaults，避免跨机器泄漏）。
+   */
+  exportPresets(): string {
+    const file = this.loadPresetsFile()
+    return JSON.stringify({ presets: file.presets, defaultPresetId: file.defaultPresetId, version: 1 }, null, JSON_INDENT)
+  }
+
+  /**
+   * 从 JSON 字符串导入预设（合并策略：自定义预设追加，内置预设字段级合并）。
+   * 返回导入的预设数量。格式校验失败抛 Error。
+   */
+  importPresets(json: string): number {
+    let raw: unknown
+    try {
+      raw = JSON.parse(json)
+    } catch {
+      throw new Error('Invalid JSON format')
+    }
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new Error('Import file must be a JSON object')
+    }
+    const obj = raw as Record<string, unknown>
+    const importedRaw = Array.isArray(obj['presets']) ? obj['presets'] as unknown[] : []
+    const imported: PiLaunchPreset[] = []
+    for (const p of importedRaw) {
+      const typed = coercePreset(p)
+      if (typed) imported.push(typed)
+    }
+    if (!imported.length) {
+      throw new Error('No valid presets found in import file')
+    }
+    // 合并：load → mergePresets(imported) → save
+    const file = this.loadPresetsFile()
+    const merged = this.mergePresets([...file.presets, ...imported])
+    file.presets = merged
+    this.savePresetsFile(file)
+    return imported.length
+  }
+
   // ── resolve（设计文档 §8.1，wave2 实现）──
 
   /**

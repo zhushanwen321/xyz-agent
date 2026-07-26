@@ -3,13 +3,11 @@
  *
  * 设计文档：docs/design/pi-launch-presets.md（§8.1 API）
  *
- * 处理 6 个 preset.* 消息类型：
- * - preset.list：列出全部预设（内置 + 自定义）
- * - preset.getDefault：读全局默认预设 id
- * - preset.setDefault：设全局默认预设
- * - preset.create：创建自定义预设
- * - preset.update：更新预设（含内置预设的可编辑字段）
- * - preset.delete：删除自定义预设（内置不可删）
+ * 处理 preset.* 消息类型（6 CRUD + 7 Phase 2 增强）：
+ * - preset.list / getDefault / setDefault / create / update / delete（CRUD）
+ * - preset.recordUsage / getUsage（FR-14 使用统计）
+ * - preset.getCwdDefault / setCwdDefault / getCwdDefaults（FR-15 per-cwd 默认）
+ * - preset.export / import（FR-13 导入/导出）
  *
  * 与 SettingsMessageHandler 对称（独立 handler，非 SettingsMessageHandler 内部 case）。
  * 职责单一：只做消息→PresetService 调用→reply，不含领域计算。
@@ -35,6 +33,13 @@ const PRESET_HANDLES = [
   'preset.create',
   'preset.update',
   'preset.delete',
+  'preset.recordUsage',
+  'preset.getUsage',
+  'preset.getCwdDefault',
+  'preset.setCwdDefault',
+  'preset.getCwdDefaults',
+  'preset.export',
+  'preset.import',
 ] as const
 
 export class PresetMessageHandler {
@@ -94,6 +99,60 @@ export class PresetMessageHandler {
           const { presetId } = msg.payload
           this.ctx.presetService.deletePreset(presetId)
           this.ctx.reply(ws, msg.id, 'preset.delete', {} as Record<string, never>)
+          return true
+        }
+
+        // ── FR-14：使用统计 ──
+
+        case 'preset.recordUsage': {
+          const { presetId } = msg.payload
+          this.ctx.presetService.recordUsage(presetId)
+          this.ctx.reply(ws, msg.id, 'preset.recordUsage', {} as Record<string, never>)
+          return true
+        }
+
+        case 'preset.getUsage': {
+          const usage = this.ctx.presetService.getUsage()
+          this.ctx.reply(ws, msg.id, 'preset.getUsage', { usage })
+          return true
+        }
+
+        // ── FR-15：per-cwd 默认预设 ──
+
+        case 'preset.getCwdDefault': {
+          const { cwd } = msg.payload
+          const presetId = this.ctx.presetService.getCwdDefaultPresetId(cwd)
+          this.ctx.reply(ws, msg.id, 'preset.getCwdDefault', { presetId })
+          return true
+        }
+
+        case 'preset.setCwdDefault': {
+          const { cwd, presetId } = msg.payload
+          this.ctx.presetService.setCwdDefaultPresetId(cwd, presetId)
+          this.ctx.reply(ws, msg.id, 'preset.setCwdDefault', {} as Record<string, never>)
+          return true
+        }
+
+        case 'preset.getCwdDefaults': {
+          const defaults = this.ctx.presetService.getCwdDefaults()
+          this.ctx.reply(ws, msg.id, 'preset.getCwdDefaults', { defaults })
+          return true
+        }
+
+        // ── FR-13：导入/导出 ──
+
+        case 'preset.export': {
+          const json = this.ctx.presetService.exportPresets()
+          this.ctx.reply(ws, msg.id, 'preset.export', { json })
+          return true
+        }
+
+        case 'preset.import': {
+          const { json } = msg.payload
+          const count = this.ctx.presetService.importPresets(json)
+          // 导入后广播最新预设列表
+          const presets = this.ctx.presetService.getAllPresets()
+          this.ctx.reply(ws, msg.id, 'preset.import', { count })
           return true
         }
 

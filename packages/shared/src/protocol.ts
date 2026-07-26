@@ -12,7 +12,7 @@ import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
-import type { PiLaunchPreset } from './pi-preset'
+import type { PiLaunchPreset, PresetUsageEntry } from './pi-preset'
 
 // ── Client → Runtime message types
 
@@ -81,6 +81,9 @@ export type ClientMessageType =
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
+  | 'preset.recordUsage' | 'preset.getUsage'
+  | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
+  | 'preset.export' | 'preset.import'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -369,6 +372,16 @@ export interface ClientMessageMap {
   'preset.create': { preset: PiLaunchPreset }
   'preset.update': { preset: PiLaunchPreset }
   'preset.delete': { presetId: string }
+  // FR-14：预设使用统计（session 创建时 runtime 调 recordUsage，前端调 getUsage 拉排序数据）
+  'preset.recordUsage': { presetId: string }
+  'preset.getUsage': Record<string, never>
+  // FR-15：per-cwd 默认预设（前端调 getCwdDefault/setCwdDefault/getCwdDefaults）
+  'preset.getCwdDefault': { cwd: string }
+  'preset.setCwdDefault': { cwd: string; presetId: string }
+  'preset.getCwdDefaults': Record<string, never>
+  // FR-13：预设导入/导出（前端传 JSON 字符串，runtime 解析/生成）
+  'preset.export': Record<string, never>
+  'preset.import': { json: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -484,6 +497,9 @@ export type ServerMessageType =
   | 'config.defaultBaseBranch'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
+  | 'preset.recordUsage' | 'preset.getUsage'
+  | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
+  | 'preset.export' | 'preset.import'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -928,6 +944,14 @@ export interface ReplyPayloadMap {
   'preset.create': { preset: PiLaunchPreset }
   'preset.update': { preset: PiLaunchPreset }
   'preset.delete': void
+  // FR-14/FR-15/FR-13 新增 reply
+  'preset.recordUsage': void
+  'preset.getUsage': { usage: Record<string, PresetUsageEntry> }
+  'preset.getCwdDefault': { presetId: string }
+  'preset.setCwdDefault': void
+  'preset.getCwdDefaults': { defaults: Record<string, string> }
+  'preset.export': { json: string }
+  'preset.import': { count: number }
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted
