@@ -20,6 +20,7 @@ import type {
   SkillDirConfig,
   SystemPromptConfig,
   TerminalConfig,
+  SourceDetectResult,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -71,6 +72,16 @@ export async function getProjectSkills(cwd: string): Promise<SkillInfo[]> {
 export async function scanAgents(sources: string[]): Promise<ScannedAgentInfo[]> {
   const reply = await command('config.scanAgents', { sources })
   return reply.agents
+}
+
+/**
+ * 检测本机已安装的源 agent（W1：skill/agent 维度，cw-2026-07-26-migration-other-agents）。
+ * 只读检测——后端仅统计文件数量，不读取文件内容（不提取 API key、不解析配置正文）。
+ * reply config.sourcesDetected 形状 `{ sources: SourceDetectResult[] }`。
+ */
+export async function detectSources(): Promise<SourceDetectResult[]> {
+  const reply = await command('config.detectSources', {})
+  return reply.sources
 }
 
 /** discoverModels 的响应载荷（config.discoveredModels reply，settings-message-handler） */

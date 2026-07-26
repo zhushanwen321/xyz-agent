@@ -702,6 +702,14 @@ export const config = {
     await sleep(TIMING.ack)
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
   },
+  /**
+   * W1（cw-2026-07-26-migration-other-agents）：检测本机其他 agent 的 skill/agent 目录。
+   * mock 返回空数组（无真实文件系统扫描）；UI 在 mock 模式下显示「未检测到候选」空态。
+   */
+  async detectSources() {
+    await sleep(TIMING.ack)
+    return []
+  },
   /** ADR-0020 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
   async setAgentDirs(dirs: string[]) {
     await sleep(TIMING.ack)

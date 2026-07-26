@@ -282,6 +282,24 @@ export default {
     enableDir: '启用目录 {path}',
     removeDir: '删除目录 {path}',
     pathExists: '路径已存在',
+    // ── 从其他 Agent 导入（SourceImportSection，W1）──
+    importFromAgents: {
+      title: '从其他 Agent 导入',
+      loading: '检测中...',
+      detectError: '检测失败',
+      notInstalled: '未安装',
+      sharedPoolActive: '已通过共享池生效',
+      importSelected: '导入选中',
+      skillCount: '{count} 个 skill',
+      agentCount: '{count} 个 agent',
+      agentOnlyClaudeHint: 'Agent 导入仅支持 Claude Code',
+    },
+    sourceLabels: {
+      claude: 'Claude Code',
+      codex: 'Codex',
+      pi: 'Pi',
+      zcode: 'ZCode',
+    },
   },
   // ── 命令名（useAppCommands，用于快捷键展示）──
   command: {

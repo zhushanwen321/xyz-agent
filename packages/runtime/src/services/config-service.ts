@@ -7,6 +7,7 @@
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import {
@@ -18,6 +19,7 @@ import {
   type ScannedAgentInfo,
   type SystemPromptConfig,
   type TerminalConfig,
+  type SourceDetectResult,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -32,6 +34,7 @@ import {
 import { scanAgents } from './scanners/agent-scanner.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 import { getConfigDir } from '../infra/pi/pi-paths.js'
+import { detectSources as detectSourcesImpl } from './migration/index.js'
 
 // ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
@@ -570,6 +573,13 @@ export class ConfigService implements IConfigService {
 
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[] {
     return scanAgents(sources, existingIds)
+  }
+
+  // ── 迁移源检测（W1，cw-2026-07-26-migration-other-agents）──
+  // 只读检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录，
+  // 返回每个源的安装状态 + 资源计数（不读文件内容）。详见 services/migration/source-detector.ts。
+  detectSources(): SourceDetectResult[] {
+    return detectSourcesImpl(process.env.HOME || homedir())
   }
 
   // ── System prompt config（FR-6/FR-7，ADR-0038）──

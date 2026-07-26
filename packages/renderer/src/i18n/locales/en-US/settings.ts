@@ -282,6 +282,24 @@ export default {
     enableDir: 'Enable directory {path}',
     removeDir: 'Remove directory {path}',
     pathExists: 'Path already exists',
+    // ── Import from other Agents (SourceImportSection, W1) ──
+    importFromAgents: {
+      title: 'Import from other Agents',
+      loading: 'Detecting...',
+      detectError: 'Detection failed',
+      notInstalled: 'Not installed',
+      sharedPoolActive: 'Active via shared pool',
+      importSelected: 'Import selected',
+      skillCount: '{count} skills',
+      agentCount: '{count} agents',
+      agentOnlyClaudeHint: 'Agent import supports Claude Code only',
+    },
+    sourceLabels: {
+      claude: 'Claude Code',
+      codex: 'Codex',
+      pi: 'Pi',
+      zcode: 'ZCode',
+    },
   },
   // ── Command names (useAppCommands, for shortcut display) ──
   command: {

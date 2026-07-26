@@ -129,6 +129,13 @@ export class SettingsMessageHandler {
         this.ctx.broadcastAgentList()
         return true
       }
+      case 'config.detectSources': {
+        // W1 迁移功能：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
+        // 只读检测（不读文件内容），reply 检测结果数组。无副作用，无需广播。
+        const sources = this.ctx.configService.detectSources()
+        this.ctx.reply(ws, msg.id, 'config.sourcesDetected', { sources })
+        return true
+      }
       case 'config.setAgentDirs': {
         // ADR-0020 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
         this.ctx.configService.setAgentDirs(msg.payload.dirs)

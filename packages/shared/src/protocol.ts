@@ -13,6 +13,7 @@ import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
 import type { PiLaunchPreset, PresetUsageEntry, ThinkingLevel } from './pi-preset'
+import type { SourceDetectResult } from './migration'
 
 // ── Client → Runtime message types
 
@@ -85,6 +86,9 @@ export type ClientMessageType =
   | 'preset.recordUsage' | 'preset.getUsage'
   | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
   | 'preset.export' | 'preset.import'
+  // 迁移：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
+  // 只读检测，不读文件内容（安全）。reply config.sourcesDetected。
+  | 'config.detectSources'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -403,6 +407,8 @@ export interface ClientMessageMap {
   // 见 pi-preset.ts 的 PresetExportPayload 类型。
   'preset.export': Record<string, never>
   'preset.import': { json: string }
+  /** config.detectSources：检测本机其他 agent 的 skill/agent 配置目录（无参数，只读检测）。 */
+  'config.detectSources': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -522,6 +528,7 @@ export type ServerMessageType =
   | 'preset.recordUsage' | 'preset.getUsage'
   | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
   | 'preset.export' | 'preset.import'
+  | 'config.sourcesDetected'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -830,6 +837,9 @@ export interface ServerMessageMapBase {
   // config.scannedAgents：scanAgents reply（settings-message-handler.ts:99 reply { agents, success: true }）。
   // agents 是扫描发现结果，形状为 ScannedAgentInfo（含 sourceType/alreadyImported），非已加载的 AgentInfo。
   'config.scannedAgents': { agents: ScannedAgentInfo[]; success: boolean }
+  // config.sourcesDetected：detectSources reply（settings-message-handler.ts reply { sources }）。
+  // sources 是本机其他 agent（Claude/Codex/Pi/ZCode）skill/agent 目录的检测结果（只读，不读文件内容）。
+  'config.sourcesDetected': { sources: SourceDetectResult[] }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -934,6 +944,7 @@ export interface ReplyPayloadMap {
   'config.getProviders': ServerMessageMap['config.providers']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
+  'config.detectSources': ServerMessageMap['config.sourcesDetected']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
   'config.getProjectSkills': ServerMessageMap['config.projectSkills']

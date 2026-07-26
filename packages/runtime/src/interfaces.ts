@@ -16,6 +16,7 @@ import type {
   AgentInfo,
   ScannedSkillInfo,
   ScannedAgentInfo,
+  SourceDetectResult,
   PluginInfo,
   GitStatusResult,
   FileNode,
@@ -272,6 +273,11 @@ export interface IConfigService {
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
+  /**
+   * 检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录（W1 迁移功能）。
+   * 只读检测，不读文件内容；返回每个源的安装状态 + 资源计数。
+   */
+  detectSources(): SourceDetectResult[]
   /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */

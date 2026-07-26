@@ -100,6 +100,8 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     deleteAgent: vi.fn(),
     scanSkills: vi.fn(() => []),
     scanAgents: vi.fn(() => []),
+    // 迁移源检测 stub（W1，worktree 测试不涉及）
+    detectSources: vi.fn(() => []),
     getPiAgentDir: vi.fn(() => '/home/user/.pi/agent'),
     getConfigDir: vi.fn(() => '/home/user/.xyz-agent'),
     getSystemPromptConfig: vi.fn(() => ({ config: { version: 1, replace: { enabled: false, prompt: '' }, append: { enabled: false, prompt: '' } }, corrupted: false })),
