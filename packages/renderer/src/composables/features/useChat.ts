@@ -12,119 +12,17 @@
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
-import { computed, reactive, ref } from 'vue'
+import { ref } from 'vue'
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useSettingsStore } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
-import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import i18n from '@/i18n'
-import type { Message, Segment } from '@xyz-agent/shared'
-import { IMAGE_LIMITS, segmentsToPrompt } from '@xyz-agent/shared'
-import { fileBytesToBase64 } from '@/composables/panel/useImageAttachment'
-import { resolveSupportsVision } from '@/composables/panel/useModelCapabilities'
+import type { Segment } from '@xyz-agent/shared'
+import { segmentsToPrompt } from '@xyz-agent/shared'
 import { writeSegmentsMetadata } from '@/lib/ipc'
 
 const t = i18n.global.t
-
-/** message.send images 形状（对齐 shared protocol.ts:199，base64 不含 data: 前缀）。 */
-type SendImage = { data: string; mimeType: string }
-
-/**
- * 从 segments 提取 image 段，并行读 local-file 文件转 base64，组装 message.send images。
- *
- * [feature:add-file-picture-attach slice6] 发送闭环：composer 的 image segment 在 send 时
- * 读文件转 base64 填入 message.send images 字段。image 段的 path 是 write-session-image
- * 落到 <getDataDir>/attachments/<sessionId>/ 的绝对路径（landing 态或拖拽/+菜单图片项可能是
- * tmpdir / 用户磁盘原 path），均在 local-file 协议白名单内（main.ts allowedPrefixes 含
- * attachments/tmpdir/cwd/用户子目录）。
- *
- * 降级矩阵（C2 契约）：
- * - 无 image 段 → 返回 undefined（不传 images 键，行为不变）
- * - fetch 读失败（web/mock 无 protocol.handle / 文件删 / 白名单 403）→ Promise.allSettled
- *   收集，rejected 项 console.warn 后跳过，不 throw 不阻断发送（AGENTS.md L411 allSettled 硬规则）
- * - 全部失败 → 返回 undefined（退化为纯文本发送，文本 prompt 的 [图片:name] 占位仍发）
- *
- * base64 经 fileBytesToBase64（分块 btoa 防 stack 溢出），mimeType 取 blob.type 缺省 image/png。
- *
- * 导出供单测 mock fetch 验证（纯模块函数，不依赖 this）。
- */
-export async function extractImages(
-  segments: Segment[],
-): Promise<SendImage[] | undefined> {
-  const imageSegs = segments.filter((s): s is Extract<Segment, { type: 'image' }> => s.type === 'image')
-  if (imageSegs.length === 0) return undefined
-
-  const results = await Promise.allSettled(
-    imageSegs.map(async (seg) => {
-      // local-file:// 协议由 main.ts:172 protocol.handle 注册（DetailPane 图片渲染既用同一路径）。
-      // encodeURIComponent 防 path 含特殊字符破坏 URL 解码（main.ts:173 decodeURIComponent 对称）。
-      const res = await fetch(`local-file:///${encodeURIComponent(seg.path)}`)
-      if (!res.ok) throw new Error(`local-file ${seg.path} ${res.status}`)
-      const blob = await res.blob()
-      const bytes = new Uint8Array(await blob.arrayBuffer())
-      return {
-        data: fileBytesToBase64(bytes),
-        mimeType: blob.type || 'image/png',
-      } satisfies SendImage
-    }),
-  )
-
-  const images: SendImage[] = []
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i]
-    if (r.status === 'fulfilled') {
-      images.push(r.value)
-    } else {
-      // 读失败的图跳过（不阻断发送）；文本 prompt 的 [图片:name] 占位仍发，LLM 知道用户贴了图。
-      console.warn(`[useChat] image 读取失败，已跳过: ${imageSegs[i].path}`, r.reason)
-    }
-  }
-  return images.length > 0 ? images : undefined
-}
-
-/**
- * 估算会话历史累积图片字节数（P2-c 层 2/3 阈值判断）。
- *
- * 遍历历史 messages 中 user message 的 image segment，fetchSize 注入并行拿字节数累加。
- * 失败计入 failed 不 throw（ERR4：单个 fetch 失败不阻断估算，totalBytes 基于 partial）。
- *
- * fetchSize 注入签名 (path: string) => Promise<number>，生产实现用 fetch local-file://
- * 拿 blob.size，测试 mock 直接返数字。
- *
- * 导出供单测 mock（纯模块函数，不依赖 this）。
- */
-export async function estimateAccumulatedImageBytes(
-  messages: Message[],
-  fetchSize: (path: string) => Promise<number>,
-): Promise<{ totalBytes: number; counted: number; failed: number }> {
-  const imagePaths: string[] = []
-  for (const msg of messages) {
-    if (msg.role !== 'user') continue
-    const segments = Array.isArray(msg.content) ? msg.content : []
-    for (const seg of segments) {
-      if (seg.type === 'image') {
-        imagePaths.push(seg.path)
-      }
-    }
-  }
-  if (imagePaths.length === 0) return { totalBytes: 0, counted: 0, failed: 0 }
-
-  const results = await Promise.allSettled(imagePaths.map((p) => fetchSize(p)))
-  let totalBytes = 0
-  let counted = 0
-  let failed = 0
-  for (const r of results) {
-    if (r.status === 'fulfilled') {
-      totalBytes += r.value
-      counted++
-    } else {
-      failed++
-    }
-  }
-  return { totalBytes, counted, failed }
-}
 
 /**
  * 会话级流式订阅表（sessionId → 取消函数）。
@@ -260,44 +158,20 @@ export function ensureStreamSubscription(
 export function useChat() {
   const chat = useChatStore()
   const session = useSessionStore()
-  const settings = useSettingsStore()
-  const { warning } = useToast()
 
   /**
-   * per-session-model vision 降级去重表（W1 vision-toast）。
+   * 统一发送编排器：把 segments 转成 promptText 并发送。
    *
-   * 为什么放 useChat setup 内而非模块顶层：useSessionScopedState 的 onScopeDispose 注册
-   * 需 active effect scope（<script setup> 提供）。sid ref 取 session.activeId 仅满足构造签名——
-   * 实际去重用 updateFor(sendSid, ...)（send 显式入参 sid，与 WS handler 捕获订阅 sid 同范式，
-   * 见 useSessionScopedState.ts:168-183 updateFor 设计动机），不读 activeId（避免 standby panel 串扰）。
-   *
-   * init 必须返回 reactive 容器（useSessionScopedState 响应式契约 L20-23），否则 mutate 不触发下游。
-   * models: Set<string> 记录本 session 已警告过的 modelId，切 session 自然分区（Map 隔离）。
-   *
-   * sid ref 用 computed(() => session.activeId) 包装而非 storeToRefs(session).activeId：
-   * computed 对 null/未初始化 store 安全（Sidebar 测试 mock session store 为 plain object，
-   * storeToRefs 读 mock 的 $state.effect 会抛 TypeError）。实际去重不读 activeId（见上），
-   * 这里仅满足构造签名。
-   */
-  const warnedModels = useSessionScopedState(
-    computed(() => session.activeId),
-    () => reactive({ models: new Set<string>() }),
-  )
-
-  /**
-   * 统一发送编排器：把 segments 转成 promptText + images 并发送。
-   *
-   * 三条发送通路（send / editAndResend / 后续 landing）共享此逻辑，消除
-   * 「landing/editAndResend 绕过 extractImages / size cap / vision toast」的分裂。
+   * 三条发送通路（send / editAndResend / 后续 landing）共享此逻辑。
    *
    * 调用方负责：appendUser / truncateFrom / pendingSend 等状态机编排
-   * （submitSegments 只管「提取 + 发送」核心步骤）：
-   *   1. extractImages（image segment → base64，allSettled 不阻断）
-   *   2. segmentsToPrompt（trim 后的 pi prompt 文本）
-   *   3. vision 降级 toast（per-session-model 去重）
-   *   4. size cap 层 2/3（累积 bytes 超阈值预警 / 剥离）
-   *   5. 写 segments.json sidecar（clientUuid 关联，重开时回填 badge）
-   *   6. chatApi.send(promptText + clientUuid 标记, sendImages)
+   * （submitSegments 只管「文本化 + 发送」核心步骤）：
+   *   1. segmentsToPrompt（trim 后的 pi prompt 文本，image 段产出裸路径）
+   *   2. 写 segments.json sidecar（clientUuid 关联，重开时回填 badge）
+   *   3. chatApi.send(promptText + clientUuid 标记)
+   *
+   * 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
+   * LLM 自己调 read 工具读（vision/非 vision 模型都能处理）。不再传 images base64 字段。
    *
    * @param sessionId   目标 session
    * @param segments    结构化 segments（含 image/file/text/skill/mention）
@@ -306,67 +180,7 @@ export function useChat() {
    *                    pi userEntryId 映射，extension input hook 剥标记后写 custom entry）
    */
   async function submitSegments(sessionId: string, segments: Segment[], clientUuid: string): Promise<void> {
-    // extractImages：image segment 读 local-file 文件转 base64（allSettled 不阻断，无图返 undefined）。
-    // 删除 file inline 后不再并行读 file 内容，单调用即可。
-    const images = await extractImages(segments)
     const promptText = segmentsToPrompt(segments)
-    // vision 降级（should 优先级）：当前 model 不支持 image 输入时 toast 提示用户，
-    // 不阻断不剥离 images（runtime/pi 自然丢弃不支持的多模态，文本占位仍发）。
-    // per-session-model 去重：同 session 同 modelId 仅警告一次（切回/切走 model 可再次触发）。
-    if (images && images.length > 0) {
-      const modelId = session.list.find((s) => s.id === sessionId)?.modelId ?? ''
-      if (modelId && !resolveSupportsVision(modelId, settings.providers)) {
-        // updateFor 内原子 check+add（闭包捕获 sessionId，与 WS handler 同范式，防 standby 串扰）。
-        let alreadyWarned = true
-        warnedModels.updateFor(sessionId, (s) => {
-          if (!s.models.has(modelId)) {
-            s.models.add(modelId)
-            alreadyWarned = false
-          }
-        })
-        if (!alreadyWarned) {
-          warning(t('panel.visionNotSupportedWarning', { modelName: modelId, count: images.length }))
-        }
-      }
-    }
-    // P2-c 层 2/3：会话级累积图片 size cap 防护。
-    // 层 2：累积超 warnThreshold → toast.warning 预警（不阻断）。
-    // 层 3：累积超 hardThreshold → 剥离当轮 images + toast.warning。
-    // estimateAccumulatedImageBytes 内部 allSettled 并行 fetchSize，失败不 throw（ERR4）。
-    let sendImages = images
-    if (images && images.length > 0) {
-      try {
-        // eslint-disable-next-line no-magic-numbers
-        const warnBytes = (settings.system.imageAccumulationWarnMB ?? IMAGE_LIMITS.ACCUMULATION_WARN_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
-        // eslint-disable-next-line no-magic-numbers
-        const hardBytes = (settings.system.imageAccumulationHardMB ?? IMAGE_LIMITS.ACCUMULATION_HARD_BYTES_DEFAULT / (1024 * 1024)) * 1024 * 1024
-        const historyMessages = chat.getMessages(sessionId)
-        const accumulated = await estimateAccumulatedImageBytes(
-          historyMessages,
-          async (path: string) => {
-            const res = await fetch(`local-file:///${encodeURIComponent(path)}`)
-            if (!res.ok) throw new Error(`local-file ${path} ${res.status}`)
-            const blob = await res.blob()
-            return blob.size
-          },
-        )
-        if (accumulated.totalBytes > hardBytes) {
-          // 层 3：剥离当轮 images（ERR6 ACCUMULATION_LIMIT_STRIP）
-          sendImages = undefined
-          // eslint-disable-next-line no-magic-numbers
-          const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
-          warning(t('panel.accumulationHardWarning', { size: sizeMB }))
-        } else if (accumulated.totalBytes > warnBytes) {
-          // 层 2：toast 预警（不阻断）
-          // eslint-disable-next-line no-magic-numbers
-          const sizeMB = Math.round(accumulated.totalBytes / (1024 * 1024))
-          warning(t('panel.accumulationWarnWarning', { size: sizeMB }))
-        }
-      } catch {
-        // 累积估算失败不阻断发送（与 extractImages 错误策略一致）
-        console.warn('[useChat] estimateAccumulatedImageBytes failed, skipping accumulation check')
-      }
-    }
     // 写 segments.json sidecar（重开 session 时回填 image/file badge 用）。
     // 异步 fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只是降级为占位文本，非硬错误）。
     // landing 态 session 尚未创建时（sessionId 为占位）不写——submitFirstMessage 在 session.create 后
@@ -382,7 +196,9 @@ export function useChat() {
     // 标记格式严格：`<!--xyz:msg:<uuid>-->`，uuid 是 clientUuid 完整值（u-<uuid>），
     // 与 extension TAG 正则（u-[0-9a-fA-F-]{36}）+ segments.json clientUuid key 严格一致。
     const markedPromptText = `${promptText}\n<!--xyz:msg:${clientUuid}-->`
-    await chatApi.send(sessionId, markedPromptText, sendImages)
+    // 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
+    // LLM 自己调 read 工具读。不再传 images base64 字段。
+    await chatApi.send(sessionId, markedPromptText)
   }
 
   /**
@@ -541,8 +357,8 @@ export function useChat() {
    * `(sessionId, userMessageId, segments: Segment[])`。调用方（Turn.vue submitEdit）
    * 负责构造 segments——从原 user message 保留 image segments + 编辑后的 text segment。
    *
-   * 委托 submitSegments：消除原 editAndResend 用 `chatApi.send(trimmed)` 绕过
-   * extractImages / size cap / vision toast 的分裂（image segment 编辑后不再丢失）。
+   * 委托 submitSegments：与 send 同通路（segmentsToPrompt + chatApi.send），image 段
+   * 经 segmentsToText 产出裸路径进 prompt 文本（不丢）。
    *
    * 显式接收 sessionId：编辑可发生在非 active 的 standby panel，不能依赖全局 activeId。
    */

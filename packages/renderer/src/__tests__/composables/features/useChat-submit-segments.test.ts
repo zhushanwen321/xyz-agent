@@ -1,19 +1,15 @@
 /**
  * useChat submitSegments 统一编排器单测（阶段 3a：renderer composables 层重构）。
  *
- * 覆盖核心交付：submitSegments 是 send / editAndResend 共享的「提取 + 发送」编排器，
- * 消除「editAndResend 绕过 extractImages / size cap / vision toast」的分裂。
+ * 覆盖核心交付：submitSegments 是 send / editAndResend 共享的「文本化 + 发送」编排器。
  *
  * 关键测试用例：
- * - SS1: send(含 image) → chatApi.send 含 images 参数 + promptText 含 [图片 N] 占位
- * - SS2: editAndResend(含 image) → 委托 submitSegments → extractImages 被调（不再绕过）
- *        → chatApi.send 含 images（修复原 editAndResend 用 chatApi.send(trimmed) 绕过的 bug）
- * - SS3: editAndResend(text-only) → chatApi.send 第三参数 undefined（行为与 send 对齐）
- * - SS4: editAndResend 含图 + vision 降级 → toast 触发（统一通路继承 send 的降级）
- * - SS5: editAndResend 含图 + 累积超 hard 阈值 → images 剥离（统一通路继承 size cap 层 3）
+ * - SS1: send(含 image) → chatApi.send 不含 images（路径模式，路径在 promptText 里）
+ * - SS2: editAndResend(含 image) → 委托 submitSegments → 路径进 promptText（不丢）
+ * - SS3: editAndResend(text-only) → chatApi.send 第二参数 promptText（行为与 send 对齐）
  *
- * mock 策略：复用 useChat-send-images.test.ts / useChat-accumulation.test.ts 范式
- * （vi.hoisted apiMock + vi.mock settingsStore + i18n mock + mock fetch 控制 extractImages / 累积估算）。
+ * 图片走路径模式（对齐 pi TUI）：image segment 的裸路径由 segmentsToText 产出进 promptText，
+ * LLM 自己调 read 工具读。不再走 base64 message.send.images 通道。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/features/useChat-submit-segments.test.ts
  */
@@ -21,7 +17,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
 
-// ── api mock（chatApi.send/steer/streamSubscribe 等，复用 useChat-send-images.test.ts 范式）──
+// ── api mock（chatApi.send/steer/streamSubscribe 等）──
 const apiMock = vi.hoisted(() => {
   const holder: { handler: ((msg: ServerMessage) => void) | null } = { handler: null }
   return {
@@ -62,41 +58,8 @@ vi.mock('@/lib/ipc', () => ({
   writeSegmentsMetadata: ipcMock.writeSegmentsMetadata,
 }))
 
-// ── settingsStore mock：providers（vision 判定）+ system（累积阈值）可控 ──
-const settingsState = vi.hoisted(() => ({
-  providers: [] as Array<{ id: string; models: Array<{ id: string; input?: Array<'text' | 'image'> }> }>,
-  system: {
-    imageAccumulationWarnMB: undefined as number | undefined,
-    imageAccumulationHardMB: undefined as number | undefined,
-  },
-}))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({
-    providers: settingsState.providers,
-    system: settingsState.system,
-  }),
-}))
-
-// ── i18n mock：stub 降级文案，让 toast 内容可断言 ──
-vi.mock('@/i18n', () => ({
-  default: {
-    global: {
-      t: (key: string, args?: Record<string, unknown>) => {
-        if (key === 'panel.visionNotSupportedWarning' && args) {
-          return `不支持图片 model=${String(args.modelName)} count=${String(args.count)}`
-        }
-        if (key === 'panel.accumulationHardWarning' && args) {
-          return `accumulation hard size=${String(args.size)}MB`
-        }
-        return key
-      },
-    },
-  },
-}))
-
 import { useChatStore } from '@/stores/chat'
 import { useChat, resetChatModuleState } from '@/composables/features/useChat'
-import { useToast } from '@/composables/useToast'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -104,30 +67,12 @@ beforeEach(() => {
   vi.clearAllMocks()
   apiMock.holder.handler = null
   ipcMock.writeSegmentsMetadata.mockResolvedValue(undefined)
-  settingsState.providers = []
-  settingsState.system.imageAccumulationWarnMB = undefined
-  settingsState.system.imageAccumulationHardMB = undefined
-  // 清空全局 toasts（useToast 模块级单例，跨用例共享）
-  const { toasts } = useToast()
-  toasts.value = []
 })
 
-/** mock global.fetch 让 extractImages 成功读图（返回小 PNG bytes）。 */
-function mockFetchImageOk(): void {
-  const bytes = new Uint8Array([0x89, 0x50])
-  vi.spyOn(global, 'fetch', 'get').mockReturnValue(
-    vi.fn().mockResolvedValue({
-      ok: true,
-      blob: () => Promise.resolve(new Blob([bytes.slice()], { type: 'image/png' })),
-    }) as unknown as typeof fetch,
-  )
-}
-
-// ── SS1: send(含 image) → submitSegments → chatApi.send 含 images ──
+// ── SS1: send(含 image) → submitSegments → chatApi.send 路径模式 ──
 
 describe('submitSegments 统一通路：send', () => {
-  it('SS1: send(含 image) → chatApi.send 含 images 数组 + promptText 含 [图片 1] 占位 + clientUuid 标记', async () => {
-    mockFetchImageOk()
+  it('SS1: send(含 image) → chatApi.send 仅两参（sessionId, promptText），promptText 含裸路径 + clientUuid 标记', async () => {
     const { send } = useChat()
     await send('ss-send', [
       { type: 'text', text: 'look' },
@@ -137,15 +82,15 @@ describe('submitSegments 统一通路：send', () => {
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     const call = apiMock.send.mock.calls[0]!
     expect(call[0]).toBe('ss-send')
-    // promptText 含匿名编号占位（不暴露 fileName/displayName 给 LLM）
-    expect(call[1]).toContain('[图片 1]')
+    // promptText 含裸路径（图片走路径模式，对齐 pi TUI）
+    expect(call[1]).toContain('/tmp/x.png')
+    // 不含匿名占位 [图片 N]（已弃用）
+    expect(call[1]).not.toContain('[图片')
     // promptText 末尾含 clientUuid 标记（pi extension input hook 剥离 + 写 custom entry）
     // 标记格式严格：<!--xyz:msg:u-<uuid>-->，clientUuid 是 appendUser 生成的 message id
     expect(call[1]).toMatch(/\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/)
-    // 第三参数是 images 数组（submitSegments 提取后透传）
-    expect(Array.isArray(call[2])).toBe(true)
-    expect(call[2]).toHaveLength(1)
-    expect(call[2][0].mimeType).toBe('image/png')
+    // 不再传 images 第三参数（路径模式，路径在 promptText 里）
+    expect(call[2]).toBeUndefined()
 
     // writeSegmentsMetadata 被调（写 segments.json sidecar，clientUuid 关联回填用）
     expect(ipcMock.writeSegmentsMetadata).toHaveBeenCalledTimes(1)
@@ -160,11 +105,10 @@ describe('submitSegments 统一通路：send', () => {
   })
 })
 
-// ── SS2/SS3: editAndResend 委托 submitSegments（修复绕过 bug）──
+// ── SS2/SS3: editAndResend 委托 submitSegments ──
 
 describe('submitSegments 统一通路：editAndResend', () => {
-  it('SS2: editAndResend(含 image) → 委托 submitSegments → chatApi.send 含 images（不再绕过）', async () => {
-    mockFetchImageOk()
+  it('SS2: editAndResend(含 image) → 委托 submitSegments → chatApi.send 路径进 promptText（不丢）', async () => {
     const chat = useChatStore()
     // 先注入原 user message（供 truncateFrom 操作）
     chat.appendUser('ss-edit', [{ type: 'text', text: '原问题' }])
@@ -180,16 +124,14 @@ describe('submitSegments 统一通路：editAndResend', () => {
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     const call = apiMock.send.mock.calls[0]!
     expect(call[0]).toBe('ss-edit')
-    // promptText 含编辑后文本 + 匿名编号占位
+    // promptText 含编辑后文本 + 裸路径
     expect(call[1]).toContain('edited text')
-    expect(call[1]).toContain('[图片 1]')
-    // 关键断言：第三参数是 images 数组（原 bug：editAndResend 用 chatApi.send(trimmed) 绕过提取，images 丢失）
-    expect(Array.isArray(call[2])).toBe(true)
-    expect(call[2]).toHaveLength(1)
-    expect(call[2][0].mimeType).toBe('image/png')
+    expect(call[1]).toContain('/tmp/edit.png')
+    // 关键断言：不再传 images 第三参数（路径模式，路径在 promptText 里）
+    expect(call[2]).toBeUndefined()
   })
 
-  it('SS3: editAndResend(text-only) → chatApi.send 第三参数 undefined（与 send 对齐）', async () => {
+  it('SS3: editAndResend(text-only) → chatApi.send 第二参数 promptText（与 send 对齐）', async () => {
     const chat = useChatStore()
     chat.appendUser('ss-edit-text', [{ type: 'text', text: '原问题' }])
     const userMsg = chat.getMessages('ss-edit-text').find((m) => m.role === 'user')!
@@ -208,91 +150,5 @@ describe('submitSegments 统一通路：editAndResend', () => {
   })
 })
 
-// ── SS4/SS5: 统一通路继承 send 的 vision 降级 + size cap ──
-
-describe('submitSegments 统一通路：editAndResend 继承 send 的降级策略', () => {
-  it('SS4: editAndResend 含图 + 不支持 vision → toast.warning 触发（统一通路继承 vision 降级）', async () => {
-    mockFetchImageOk()
-    // providers: 当前模型 input 仅 text（不支持 vision）
-    settingsState.providers = [{ id: 'p1', models: [{ id: 'm1', input: ['text'] }] }]
-    const { useSessionStore } = await import('@/stores/session')
-    const sessionStore = useSessionStore()
-    sessionStore.setGroups([
-      { id: 'g1', label: 'G', sessions: [{ id: 'ss-edit-vision', label: 's', modelId: 'p1/m1' } as never] },
-    ] as never)
-
-    const chat = useChatStore()
-    chat.appendUser('ss-edit-vision', [{ type: 'text', text: '原问题' }])
-    const userMsg = chat.getMessages('ss-edit-vision').find((m) => m.role === 'user')!
-
-    const { editAndResend } = useChat()
-    await editAndResend('ss-edit-vision', userMsg.id, [
-      { type: 'image', id: 'img-v', path: '/tmp/v.png', fileName: 'v-uuid.png', displayName: 'v.png' },
-    ])
-
-    // vision 降级 toast 触发（原 bug：editAndResend 绕过 submitSegments 时无此降级）
-    const { toasts } = useToast()
-    const visionToast = toasts.value.find((tt) => tt.type === 'warning' && tt.message.includes('不支持图片'))
-    expect(visionToast).toBeTruthy()
-    // images 仍透传（vision 降级不剥离）
-    const call = apiMock.send.mock.calls[0]!
-    expect(Array.isArray(call[2])).toBe(true)
-    expect(call[2]).toHaveLength(1)
-  })
-
-  it('SS5: editAndResend 含图 + 累积超 hard 阈值 → images 剥离（统一通路继承 size cap 层 3）', async () => {
-    settingsState.system.imageAccumulationWarnMB = 10
-    settingsState.system.imageAccumulationHardMB = 20
-
-    // 预置历史消息：模拟累积 22MB（超 hard 阈值 20MB）
-    const chat = useChatStore()
-    chat.setMessages('ss-edit-cap', [
-      {
-        id: 'hist-1', role: 'user', content: [
-          { type: 'image', id: 'img-h1', path: '/big.png', fileName: 'big.png', displayName: 'big.png' },
-        ], status: 'complete', timestamp: 0,
-      },
-    ])
-
-    // mock fetch：累积估算 fetchSize 返 22MB（读历史图），extractImages fetch 返小图（当轮）
-    const twentyTwoMB = 22 * 1024 * 1024
-    const smallBytes = new Uint8Array([0x89, 0x50])
-    vi.spyOn(global, 'fetch', 'get').mockReturnValue(
-      vi.fn().mockImplementation((url: string) => {
-        if (url.includes('big.png')) {
-          return Promise.resolve({
-            ok: true,
-            blob: () => Promise.resolve(new Blob([new ArrayBuffer(twentyTwoMB)])),
-          })
-        }
-        return Promise.resolve({
-          ok: true,
-          blob: () => Promise.resolve(new Blob([smallBytes.slice()], { type: 'image/png' })),
-        })
-      }) as unknown as typeof fetch,
-    )
-
-    chat.appendUser('ss-edit-cap', [{ type: 'text', text: '原问题' }])
-    const userMsg = chat.getMessages('ss-edit-cap').find((m) => m.role === 'user' && m.id !== 'hist-1')!
-
-    const { editAndResend } = useChat()
-    await editAndResend('ss-edit-cap', userMsg.id, [
-      { type: 'image', id: 'img-new', path: '/new.png', fileName: 'new.png', displayName: 'new.png' },
-    ])
-
-    // send 正常完成
-    expect(apiMock.send).toHaveBeenCalledTimes(1)
-    // 第三参数 undefined（层 3 剥离 images，统一通路继承 size cap）
-    const call = apiMock.send.mock.calls[0]!
-    expect(call[2]).toBeUndefined()
-    // accumulation hard toast 触发
-    const { toasts } = useToast()
-    const hardToast = toasts.value.find(
-      (tt) => tt.type === 'warning' && tt.message.includes('accumulation hard'),
-    )
-    expect(hardToast).toBeTruthy()
-  })
-})
-
-// 引用 useChatStore 避免 ts unused（与 useChat-send-images.test.ts 对齐）
+// 引用 useChatStore 避免 ts unused
 void useChatStore

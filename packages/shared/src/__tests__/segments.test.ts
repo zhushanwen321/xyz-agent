@@ -79,7 +79,7 @@ describe('segmentsToText', () => {
     )
   })
 
-  it('image segment 序列化为 [图片 N] 匿名编号占位', () => {
+  it('image segment 序列化为裸路径独占一行（对齐 pi TUI）', () => {
     const segs: Segment[] = [
       {
         type: 'image',
@@ -90,44 +90,41 @@ describe('segmentsToText', () => {
       },
     ]
     const result = segmentsToText(segs)
-    expect(result).toBe('[图片 1]')
-    // 不含 path 绝对路径（不暴露系统路径）
-    expect(result).not.toContain('/var/folders')
-    // 不含 fileName（磁盘全名不暴露给 LLM）
-    expect(result).not.toContain('dbfdb3c8')
-    // 不含 displayName（用户可读名不污染 LLM 上下文）
-    expect(result).not.toContain('screenshot-20260724')
-    // 不含 base64 标记
+    expect(result).toBe('\n/var/folders/xx/T/dbfdb3c8-image.png\n')
+    // 不含 base64 标记（图片走路径模式，不走 base64）
     expect(result).not.toMatch(/data:image/)
+    // 不含 [图片 N] 匿名占位
+    expect(result).not.toContain('[图片')
   })
 
-  it('image + text 混合时中间补空格', () => {
+  it('image + text 混合时，image 裸路径独占一行 + text 紧随', () => {
     const segs: Segment[] = [
       { type: 'image', id: 'img-a', path: '/tmp/a.png', fileName: 'a.png', displayName: 'a.png' },
       { type: 'text', text: '这张图怎么修' },
     ]
-    expect(segmentsToText(segs)).toBe('[图片 1] 这张图怎么修')
+    // image 前后补 \n，text 紧接 image 的尾 \n（text 段紧跟在非 text 段后会补空格分隔）
+    expect(segmentsToText(segs)).toBe('\n/tmp/a.png\n 这张图怎么修')
   })
 
-  it('连续多个 image segment 编号递增', () => {
+  it('连续多个 image segment：每个路径独占一行（无编号递增）', () => {
     const segs: Segment[] = [
       { type: 'image', id: 'img-1', path: '/tmp/1.png', fileName: '1.png', displayName: '1.png' },
       { type: 'image', id: 'img-2', path: '/tmp/2.png', fileName: '2.png', displayName: '2.png' },
     ]
-    expect(segmentsToText(segs)).toBe('[图片 1][图片 2]')
+    expect(segmentsToText(segs)).toBe('\n/tmp/1.png\n\n/tmp/2.png\n')
   })
 
   it('image segment 不破坏既有 text/skill 序列化（回归）', () => {
     // 混合 image 与既有类型，确认 image 的加入不影响 text/skill 的序列化。
-    // 补空格逻辑只在「当前段是 text && prev 段不是 text」时触发（segments.ts L52）。
-    // 这里 text 在前（首段，prev=null 不补空格）；image/skill 都不是 text，不触发补空格，
-    // 因此 image 与 skill 直接拼接，中间无空格。
+    // 补空格逻辑只在「当前段是 text && prev 段不是 text」时触发。
+    // 这里 text 在前（首段，prev=null 不补空格）；image 独占一行（\n 包裹）；
+    // skill 紧跟 image（非 text 段，不触发补空格）。
     const segs: Segment[] = [
       { type: 'text', text: '看这张' },
       { type: 'image', id: 'img-x', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png' },
       { type: 'skill', name: 'review' },
     ]
-    expect(segmentsToText(segs)).toBe('看这张[图片 1]/skill:review')
+    expect(segmentsToText(segs)).toBe('看这张\n/tmp/x.png\n/skill:review')
   })
 })
 

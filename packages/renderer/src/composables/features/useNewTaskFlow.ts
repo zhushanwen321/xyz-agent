@@ -195,9 +195,9 @@ export function useNewTaskFlow() {
    * session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
    * 迁移判断用 segment.needsMigrate 字段（M1 修复），不猜路径——+菜单选的用户磁盘文件 needsMigrate
    * 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
-   * 迁移后再 chat.send——appendUser + extractImages 都用迁移后的 path，不需要额外的 store update。
+   * 迁移后再 chat.send——appendUser 用迁移后的 path，segmentsToText 也产出迁移后的 path，不需要额外的 store update。
    * 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
-   * （extractImages 发送时 fetch 失败走 allSettled 跳过，文本占位 [图片 N] 仍发）。
+   * （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
    *
    * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
    * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
@@ -278,10 +278,10 @@ export function useNewTaskFlow() {
       // session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
       // 迁移判断用 segment.needsMigrate 字段（M1 修复），不再猜路径——+菜单选的用户磁盘文件
       // needsMigrate 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
-      // 迁移后更新 segments.path（chat.send 的 appendUser + extractImages 都用更新后的 path），
+      // 迁移后更新 segments.path（chat.send 的 appendUser 用更新后的 path，segmentsToText 也产出更新后的 path），
       // 这样 store 里存的就是正确 path，不需要额外的 store update action。
       // 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
-      // （extractImages 发送时 fetch 失败走 allSettled 跳过，文本占位 [图片 N] 仍发）。
+      // （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
       let finalSegments = segments
       const needsMigrateImages = segments.filter(
         (s): s is Extract<Segment, { type: 'image' }> =>

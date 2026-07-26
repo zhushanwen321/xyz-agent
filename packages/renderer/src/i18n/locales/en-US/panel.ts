@@ -293,9 +293,6 @@ export default {
     selectSession: 'Select a session from the left',
     taskFailed: 'Task creation failed: {error}',
     sendFailed: 'Failed to send message: {error}',
-    visionNotSupportedWarning: 'Current model ({modelName}) does not support image input. {count} image(s) will be omitted, only text placeholder sent',
-    accumulationWarnWarning: 'Accumulated images in this session reached {size}MB, approaching limit',
-    accumulationHardWarning: 'Accumulated images exceeded {size}MB limit. Current turn images stripped, text only',
   },
   overlay: {
     subagent: 'Subagent',

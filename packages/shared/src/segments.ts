@@ -32,8 +32,8 @@
  *     +菜单选的用户磁盘文件、normal 态 writeSessionImage 落 attachments 的图，都不设
  *     （undefined 等同 false）。迁移判断用此字段，不猜路径（避免把用户磁盘文件误当
  *     tmpdir 文件被 renameSync 移走——数据丢失）。
- *   不进 pi prompt 文本（base64 走 message.send 的 images 字段），segmentsToText 产出
- *   匿名编号占位 [图片 N]（不暴露 fileName/displayName 给 LLM）。
+ *   segmentsToText 把 path 裸路径插进 prompt 文本（对齐 pi TUI），LLM 自己调 read 工具
+ *   读路径（vision/非 vision 模型都能处理）。不走 base64 message.send.images 通道。
  */
 export type Segment =
   | { type: 'text'; text: string }
@@ -46,7 +46,7 @@ export type Segment =
  * Segment[] → 纯文本（归一化展示用 + pi prompt 序列化的唯一实现）。
  *
  * skill → `/skill:name`，file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
- * text → 原文，image → 匿名编号占位 `[图片 N]`。
+ * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读）。
  * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug）。
  *
  * 收敛说明：原本 segmentsToPrompt 与 segmentsToText 分两份实现，因为 file inline 需要
@@ -57,7 +57,6 @@ export type Segment =
 export function segmentsToText(segments: Segment[]): string {
   if (segments.length === 0) return ''
   const parts: string[] = []
-  let imageCounter = 0
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const prev = i > 0 ? segments[i - 1] : null
@@ -91,15 +90,13 @@ export function segmentsToText(segments: Segment[]): string {
         parts.push(`@${seg.name}`)
         break
       case 'image':
-        // 匿名编号占位（不暴露 fileName/displayName 给 LLM）。
-        // - fileName 是磁盘全名（含 uuid 前缀），暴露给 LLM 无意义且会被当文件名找
-        // - displayName 是用户可读名，也不该污染 LLM 上下文
-        // - path 是 tmpdir 绝对路径，不进展示文本（暴露系统路径无意义）
-        // - base64 走 message.send 的 images 字段（独立通道），不进 segmentsToText
-        // - [图片 N] 作为 LLM 可引用的锚点：编号从 1 递增，与 base64 images 数组顺序一致，
-        //   verify-pi-image-rpc.cjs 已验证带 images 的 prompt 正常。
-        imageCounter += 1
-        parts.push(`[图片 ${imageCounter}]`)
+        // 对齐 pi TUI 粘贴行为：裸路径进 prompt 文本，LLM 自己调 read 工具读。
+        // 与 pi TUI（insertTextAtCursor 裸路径粘在光标处）的细微差异：xyz-agent 让每个图片
+        // 路径独占一行（前后补换行），LLM 更易解析路径边界，多图时每行一个。
+        // 不再用 [图片 N] 匿名占位——该占位对 LLM 无意义（非 vision 模型看不到图，
+        // vision 模型不需要锚点），且会被 LLM 当文件名瞎找。
+        // 图片持久化在 <dataDir>/attachments/<sessionId>/（非 pi TUI 的 /tmp），切换 session 不丢。
+        parts.push(`\n${seg.path}\n`)
         break
     }
   }

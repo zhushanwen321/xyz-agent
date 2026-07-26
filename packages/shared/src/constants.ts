@@ -60,18 +60,11 @@ export const SYSTEM_PROMPT_MAX_LENGTH = 16000 as const
  * 图片附件相关上限（SSOT）。
  *
  * write-session-image IPC 校验单图大小用 SINGLE_MAX_BYTES（防超大输入撑爆内存/磁盘）。
- * 累积相关阈值（ACCUMULATION_*）由 w4 size-cap wave 消费，w3 先定义常量占位（w4 settings 覆盖逻辑读这里）。
  */
 export const IMAGE_LIMITS = {
   /** 单图上限（write-session-image IPC 校验，base64 解码字节数 <= 此值才接受） */
   // eslint-disable-next-line no-magic-numbers
   SINGLE_MAX_BYTES: 20 * 1024 * 1024,
-  /** 累积警告阈值默认值（可被 settings.imageAccumulationWarnMB 覆盖，w4 消费） */
-  // eslint-disable-next-line no-magic-numbers
-  ACCUMULATION_WARN_BYTES_DEFAULT: 15 * 1024 * 1024,
-  /** 累积硬上限默认值（可被 settings.imageAccumulationHardMB 覆盖，w4 消费） */
-  // eslint-disable-next-line no-magic-numbers
-  ACCUMULATION_HARD_BYTES_DEFAULT: 20 * 1024 * 1024,
 } as const
 
 /**
