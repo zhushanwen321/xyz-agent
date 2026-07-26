@@ -71,6 +71,8 @@ export default {
     compressing: '压缩中',
     loadMore: '加载更多历史',
     dispatching: '思考中…',
+    railFoldAll: '折叠全部',
+    railUnfoldAll: '展开全部',
     startConversation: '开始对话，或从左侧选择一个会话',
     scrollToBottom: '回到底部',
     noAgentCall: '该 agent call 暂无对话记录',
