@@ -12,7 +12,7 @@ import type { MessageHandlerContext } from './message-context.js'
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
-  /** fast-handoff 编排层（session.handoff / session.abortHandoff 路由用）。可选：未注入时这两个 case 报 unsupported。 */
+  /** fast-handoff 编排层（session.handoff 路由用）。可选：未注入时该 case 报 unsupported。 */
   handoffService?: HandoffService
   nextPushId(): string
   broadcastSessionList(): void
@@ -27,7 +27,7 @@ export class SessionMessageHandler {
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
-    'session.handoff', 'session.abortHandoff',
+    'session.handoff',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',

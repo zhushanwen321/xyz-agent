@@ -34,7 +34,7 @@ interface HandoffDeps {
   /** 互斥：进入 handoff 模式时退出 fork 模式（forkSource 残留指向错误 session） */
   exitForkMode: () => void
   /** handoff 编排（features 层跨 api + stores）：handleHandoffSend 调用触发 /skill:handoff */
-  handoff: (srcSessionId: string, focus?: string) => Promise<void>
+  handoff: (srcSessionId: string, reply?: string) => Promise<void>
 }
 
 /**
@@ -118,21 +118,21 @@ export function useComposerHandoffMode(
 
   /**
    * handoff 模式发送：调 handoff(srcSessionId, text)（pi 跑 /skill:handoff 打包末条 assistant 文档到新 session）。
-   * focus=text 拼到 /skill:handoff 后作 args（描述新 session 重点）。
+   * reply=text 拼到 /skill:handoff 后作 args（用户备注）。
    * 成功后退出 handoff 模式（等 session.handoffComplete 广播跳转）；
    * 失败时 restoreInput 保草稿 + toast 反馈。
-   * @param text 当前 draft（作 handoff focus 备注）
+   * @param text 当前 draft（作 handoff reply 备注）
    * @returns true 表示已消费（onSend 开头短路，不走普通 send 流程）；非 handoff 模式返回 false
    */
   async function handleHandoffSend(text: string): Promise<boolean> {
     if (!handoffMode.value || !handoffSource.value) return false
     const { srcSessionId } = handoffSource.value
-    // focus 备注可选：空文本也允许（pi 跑 /skill:handoff 无 args）。空则 undefined 不传 focus。
-    const focus = text.trim() || undefined
+    // reply 备注可选：空文本也允许（pi 跑 /skill:handoff 无 args）。空则 undefined 不传 reply。
+    const reply = text.trim() || undefined
     deps.clearInput()
     deps.setSending(true)
     try {
-      await handoffAction(srcSessionId, focus)
+      await handoffAction(srcSessionId, reply)
     } catch (e) {
       // handoff 触发失败 → restoreInput 保草稿（与 fork handleForkSend 对称）
       deps.restoreInput(text)

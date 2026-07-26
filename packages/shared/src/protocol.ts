@@ -192,11 +192,11 @@ export interface ClientMessageMap {
     label?: string
   }
   // handoff：在源 session 触发 fast-handoff——runtime 让源 session 的 pi 跑 /skill:handoff
-  // 生成文档，agent_end 后取末条 assistant 文档 → xml 包装 → 新建空白 session 注入首条 → 广播跳转。
+  // 生成文档，agent_end 后取末条 assistant 文档 → 新建空白 session 注入首条 → 广播跳转。
   // 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
-  // focus 原样拼到 /skill:handoff 后作 args（pi 按首个空格切分）。
+  // reply 原样拼到 /skill:handoff 后作 args（用户备注）。
   // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
-  'session.handoff': { sessionId: string; focus?: string }
+  'session.handoff': { sessionId: string; reply?: string }
   // abortHandoff：取消进行中的 handoff。委托 SessionService.abort 中断 pi turn，
   // onTurnEnd 检测 aborted 标记跳过新建/注入。无进行中 handoff 时 no-op。
   'session.abortHandoff': { sessionId: string }
@@ -698,10 +698,12 @@ export interface ServerMessageMapBase {
   // 时机：源 session 的 pi 跑完 /skill:handoff → 取末条 assistant 文档 → xml 包装 →
   // 新建空白 session 之后。前端据 newSessionId 跳转新 session，据 srcSessionId
   // 在源 session 标记已交接（配合磁盘 handoff_marker → SessionSummary.handedOffTo）。
-  // doc：xml 包装后的 handoff 文档。发送职责归位 renderer——前端收到后 ensureStreamSubscription
+  // doc：纯文本 handoff 文档（不再 xml 包装）。发送职责归位 renderer——前端收到后 ensureStreamSubscription
   // 再 chatApi.send(doc)，避免 runtime 早 send 导致的时序竞争（pi 流式事件早于前端订阅被丢）。
+  // reply：用户在 composer handoff 模式下键入的备注文本（可选）。
+  // sourceLabel：交接来源 session 名称（可选，前端用于构造 handoff badge segment）。
   // 对齐 fork-ask 模式（useForkActions.ts:109-113）。
-  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string }
+  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string; reply?: string; sourceLabel?: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
