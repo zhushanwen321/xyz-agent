@@ -116,6 +116,11 @@ export default {
           '0%, 50%': { opacity: '1' },
           '51%, 100%': { opacity: '0' },
         },
+        // message-stream trace 块 running 态双环 loader（Demo H，普通 tool/subagent/workflow 共用）。
+        // 1.4s 线性旋转，prefers-reduced-motion 由 style.css 全局 @media reduce 兜底。
+        'loader-spin': {
+          to: { transform: 'rotate(360deg)' },
+        },
         // session status icons（方案 C 优化版 v3）
         wiggle: {
           '0%, 100%': { transform: 'rotate(-6deg)' },
@@ -142,6 +147,7 @@ export default {
         'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
         'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
+        'loader-spin': 'loader-spin 1.4s linear infinite',
         'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
         wiggle: 'wiggle 1.2s ease-in-out infinite',
         'pulse-strong': 'pulse-strong 1.4s ease-in-out infinite',

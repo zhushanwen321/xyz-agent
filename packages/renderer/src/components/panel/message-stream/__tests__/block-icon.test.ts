@@ -4,7 +4,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/components/panel/message-stream/__tests__/block-icon.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { Brain, Bot, Wrench, XCircle, ChevronRight } from '@lucide/vue'
+import { Lightbulb, BookOpen, Terminal, Pencil, Wrench, Users, ListChecks, AlertTriangle, ArrowRight } from '@lucide/vue'
 import { getBlockIcon, BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from '@/components/panel/message-stream/block-icon'
 
 describe('W2TC6: block-icon.ts', () => {
@@ -44,20 +44,28 @@ describe('W2TC6: block-icon.ts', () => {
     expect(getBlockIcon('read', 'end_not_received', false, false)).toBe('tool-read')
   })
 
-  it('BLOCK_ICON_LUCIDE: W2 用现状图标（subagent=Bot, thinking=Brain, failed=XCircle）', () => {
-    // W2 阶段映射值是现状图标（W3 才改为 H 最终 lightbulb/users 等）
-    expect(BLOCK_ICON_LUCIDE.subagent).toBe(Bot)
-    expect(BLOCK_ICON_LUCIDE.thinking).toBe(Brain)
-    expect(BLOCK_ICON_LUCIDE.failed).toBe(XCircle)
-    expect(BLOCK_ICON_LUCIDE['tool-read']).toBe(Wrench) // W3 换 BookOpen
-    expect(BLOCK_ICON_LUCIDE['tool-bash']).toBe(Wrench) // W3 换 Terminal
-    expect(BLOCK_ICON_LUCIDE['tool-edit']).toBe(Wrench) // W3 换 Pencil
+  it('BLOCK_ICON_LUCIDE: H 最终图标（subagent=Users, thinking=Lightbulb, failed=AlertTriangle 等）', () => {
+    // W3 Demo H 最终映射值
+    expect(BLOCK_ICON_LUCIDE.subagent).toBe(Users)
+    expect(BLOCK_ICON_LUCIDE.thinking).toBe(Lightbulb)
+    expect(BLOCK_ICON_LUCIDE.failed).toBe(AlertTriangle)
+    expect(BLOCK_ICON_LUCIDE['tool-read']).toBe(BookOpen)
+    expect(BLOCK_ICON_LUCIDE['tool-bash']).toBe(Terminal)
+    expect(BLOCK_ICON_LUCIDE['tool-edit']).toBe(Pencil)
     expect(BLOCK_ICON_LUCIDE['tool-other']).toBe(Wrench)
-    expect(BLOCK_ICON_LUCIDE.workflow).toBe(Wrench) // W3 换 ListChecks
-    expect(BLOCK_ICON_LUCIDE.text).toBe(ChevronRight) // W3 保持或换 ArrowRight
+    expect(BLOCK_ICON_LUCIDE.workflow).toBe(ListChecks)
+    expect(BLOCK_ICON_LUCIDE.text).toBe(ArrowRight)
   })
 
-  it('RUNNING_LOADER_SVG: W2 占位空串（W3 填双环 loader）', () => {
-    expect(RUNNING_LOADER_SVG).toBe('')
+  it('RUNNING_LOADER_SVG: W3 填双环 loader（含 svg + circle，外环 r=10 + 内实心 r=3）', () => {
+    // W3 Demo H 双环 loader：非空串，含 svg 标签 + 两个 circle
+    expect(RUNNING_LOADER_SVG).not.toBe('')
+    expect(RUNNING_LOADER_SVG).toContain('<svg')
+    expect(RUNNING_LOADER_SVG).toContain('circle')
+    // 外环 r=10 + 内点 r=3
+    expect(RUNNING_LOADER_SVG).toContain('r="10"')
+    expect(RUNNING_LOADER_SVG).toContain('r="3"')
+    // stroke-width 1.7 对齐 Demo H
+    expect(RUNNING_LOADER_SVG).toContain('stroke-width="1.7"')
   })
 })

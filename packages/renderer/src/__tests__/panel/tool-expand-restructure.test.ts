@@ -82,7 +82,7 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
     expect(wrapper.text()).toContain('file content here')
   })
 
-  it('失败 tool 展开后 error 仍直显（红框 + 错误文本，不因重构丢失）', async () => {
+  it('失败 tool 展开后 error 仍直显（错误文本可见，无鲜红框——Demo H 去鲜红）', async () => {
     const wrapper = mount(Block, {
       props: {
         type: 'tool',
@@ -92,8 +92,9 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
     })
     // 失败强制展开（无需点击）
     expect(wrapper.text()).toContain('old_string not found')
-    // 红框仍在
-    expect(wrapper.find('.border-danger').exists()).toBe(true)
+    // Demo H：鲜红框已删（无 border-danger / bg-danger-soft）
+    expect(wrapper.find('.border-danger').exists()).toBe(false)
+    expect(wrapper.find('.bg-danger-soft').exists()).toBe(false)
     // 无重复 toolName(args) 行
     expect(wrapper.text()).not.toMatch(/edit\s*\(src\/App\.vue\)/)
   })
@@ -168,7 +169,7 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
     expect(text).toContain('500ms')
   })
 
-  it('read 失败时细节条首项是错误摘要（danger 色）', async () => {
+  it('read 失败时细节条首项是错误摘要（中性灰加粗，Demo H 去鲜红）', async () => {
     const wrapper = mount(Block, {
       props: {
         type: 'tool',
@@ -186,7 +187,8 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
     const text = wrapper.text()
     // 错误摘要首行可见
     expect(text).toContain('File not found: src/missing.ts')
-    // danger 色 span 存在
-    expect(wrapper.find('.text-danger.font-semibold').exists()).toBe(true)
+    // Demo H：错误摘要中性灰加粗（text-neutral-mid font-semibold），无鲜红 text-danger
+    expect(wrapper.find('.text-neutral-mid.font-semibold').exists()).toBe(true)
+    expect(wrapper.find('.text-danger').exists()).toBe(false)
   })
 })

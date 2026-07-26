@@ -1,27 +1,26 @@
 <template>
   <!--
-    展示组件 · trace 块（message-stream 折叠区内的单个块）。
-    draft-message-stream §4：thinking(紫斜体) / tool_call(青色 mono) / 中间 output text(下划线行)。
-    - thinking：header 可点击 toggle，长块独立再折叠，默认收起。
-    - tool：默认 1 行收起（streaming/running 也收起，header 含 toolName+argPath 摘要+状态指示），
-            点击展开详情。仅 failed 强制展开（错误须直视）。
-    - subagent（pi-subagents 的 "subagent" tool）：独立样式（紫色 Bot 图标），sync 模式 header
-            滚动显示当前工具/turn/tokens（从 detail progress 快照提取），async 模式显派发/完成/失败态。
-    - tool 失败：整块红框（danger 边 + 淡红底）。
-    审批按钮 DEFERRED（G-018），v1 不渲染。
+    展示组件 · trace 块（message-stream 折叠区内的单个块）。Demo H 视觉：灰阶 + SVG ICON +
+    唯一 accent 蓝（running）+ failed hover muted 暖橙。
+    - thinking：lightbulb ICON + header 可点击 toggle，长块独立再折叠（本地折叠态）。
+    - tool：默认 1 行收起（streaming/running 也收起），点击展开详情。仅 failed 强制展开。
+    - workflow：list-checks ICON + WORKFLOW. prefix + 状态动词 + workflow 名，详情区走 list-tree GUI / 文本。
+    - subagent：渲染委托给 BlockSubagent（users ICON + SUBAGENT. prefix + 去卡片化）。
+    - failed：无鲜红全展开（红框已删），改中性灰默认 + hover 染 warn，错误摘要进 body 文本。
+    审批按钮 DEFERRED（G-018），v1 不渲染。failed 救生按钮不做（agent 自处理，design.md 决策 3）。
   -->
   <div class="trace-blk py-2" :class="blockClass">
     <!-- thinking 块：header 可点击 toggle，长 reasoning 独立再折叠（本地折叠态，由 collapsed prop 初始化） -->
     <div v-if="type === 'thinking'" class="trace-think">
       <div
-        class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning transition-colors hover:text-[var(--reasoning)]"
+        class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[12.5px] font-medium text-neutral-mid transition-colors hover:text-neutral-fg"
         :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
         @click="toggleThinking"
       >
-        <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="thinkingExpanded ? 'rotate-90' : ''" />
-        <Brain class="size-3 shrink-0" />
+        <ChevronRight class="size-2.5 shrink-0 transition-transform text-neutral-dim" :class="thinkingExpanded ? 'rotate-90' : ''" />
+        <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
         <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.thinkingBlock') }}</span>
-        <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-neutral-mid">· {{ previewText }}</span>
+        <span v-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-neutral-dim">· {{ previewText }}</span>
       </div>
       <!-- text-[12px] 对齐 tool 详情字号；去 italic（md 结构+全局 italic 可读性差，由 thinking variant 降级样式表达次要语义） -->
       <div v-if="thinkingExpanded" class="trace-think-body mt-1 text-[12px] leading-relaxed text-neutral-mid">
@@ -36,32 +35,58 @@
     </div>
 
     <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
-         subagent（pi-subagents 的 "subagent" tool）渲染委托给 BlockSubagent（独立样式：紫色 Bot 图标，
-         sync 模式滚动进度）——subagent 逻辑已抽离到 BlockSubagent.vue。
+         subagent（pi-subagents 的 "subagent" tool）渲染委托给 BlockSubagent（独立样式：users ICON +
+         SUBAGENT. prefix + 去卡片化）——subagent 逻辑已抽离到 BlockSubagent.vue。
+         workflow（pi-workflow 的 "workflow" tool）：list-checks ICON + WORKFLOW. prefix + list-tree GUI。
          HIDDEN_TOOL_NAMES（todo/goal_control 等状态管理类 tool）直接跳过——状态由 SideDrawer Tasks tab 展示。 -->
     <div v-else-if="!isHidden" class="trace-tool">
-      <!-- ── subagent 块：委托 BlockSubagent（独立样式，紫色 Bot 图标）── -->
+      <!-- ── subagent 块：委托 BlockSubagent ── -->
       <BlockSubagent v-if="isSubagent" :tool="tool!" :session-id="sessionId" />
+
+      <!-- ── workflow 块：list-checks ICON + WORKFLOW. prefix + 状态动词 + workflow 名 ── -->
+      <div v-else-if="isWorkflow" class="trace-workflow" data-testid="workflow-block">
+        <div
+          data-testid="tool-block-header"
+          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium text-neutral-fg transition-opacity hover:opacity-80"
+          :class="workflowStatusClass"
+          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
+          @click="toggleTool"
+        >
+          <ChevronRight class="size-2.5 shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90' : ''" />
+          <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
+          <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
+          <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
+          <span class="workflow-tag shrink-0 whitespace-nowrap uppercase tracking-[0.08em] font-semibold text-[12px] text-neutral-fg font-mono">{{ t('panel.message.workflow') }}</span>
+          <span class="shrink-0 whitespace-nowrap">{{ workflowStatusText }}</span>
+          <span class="min-w-0 truncate text-neutral-dim">· {{ workflowName }}</span>
+        </div>
+        <template v-if="toolExpanded">
+          <!-- workflow 详情区 3 态：① __gui__→GuiComponentRenderer（list-tree）；② output 文本→AnsiText/纯文本；③ 都无→只 header -->
+          <div v-if="result" class="mt-1 pl-0.5 text-[12px] leading-snug text-neutral-mid">
+            <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
+            <AnsiText v-else-if="outputRaw" :content="outputRaw" />
+            <span v-else class="whitespace-pre-wrap">{{ result }}</span>
+          </div>
+        </template>
+      </div>
 
       <!-- ── 普通 tool 块：1 行收起（header 含 toolName+argPath 摘要+状态），点击展开详情 ── -->
       <div v-else>
         <div
           data-testid="tool-block-header"
-          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
-          :class="isFailed ? 'text-danger' : isUnfinished ? 'text-neutral-dim' : 'text-info'"
+          class="tool-header flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[12.5px] font-medium transition-opacity hover:opacity-80"
+          :class="toolStatusClass"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
-          <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
-          <Wrench class="size-3 shrink-0" />
+          <ChevronRight class="size-2.5 shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90' : ''" />
+          <!-- running 态 loader（双环 + accent），其余走 BLOCK_ICON_LUCIDE[iconKind] -->
+          <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
+          <component :is="headerBlockIcon" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
           <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ argPath }}</span>
-          <!-- 状态指示：running 脉冲点 / completed Check 图标 / failed XCircle 图标 -->
-          <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-0.5 normal-case tracking-normal whitespace-nowrap text-accent">
-            <span class="size-[6px] shrink-0 rounded-full bg-accent animate-working-pulse" />{{ t('panel.message.inProgress') }}
-          </span>
-          <Check v-else-if="!isFailed && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-success" />
-          <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
+          <!-- 状态指示：completed 显 Check（中性），failed 由 AlertTriangle 表达不重复，running 由 loader 表达 -->
+          <Check v-if="!isFailed && !isRunning && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
           <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-neutral-dim whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
           <!-- Phase 5 联动 2：bash 命令块「在终端运行」（非 running 态、有 sessionId 才显示） -->
           <Button
@@ -83,17 +108,17 @@
               v-for="(item, idx) in metaItems"
               :key="idx"
               :class="{
-                'text-danger font-semibold': item.tone === 'danger',
-                'text-info': item.tone === 'info',
-                'text-neutral-mid': item.tone === 'muted',
+                'text-neutral-mid font-semibold': item.tone === 'danger',
+                'text-neutral-mid': item.tone === 'info',
+                'text-neutral-dim': item.tone === 'muted',
               }"
             >{{ item.text }}</span>
           </div>
-          <!-- 结果区：无 Check/XCircle 图标（header 状态指示已覆盖） -->
+          <!-- 结果区：failed 默认中性灰（border-l-2 border-neutral-faint），hover 染 warn；其余中性 mid -->
           <div
             v-if="result"
-            class="mt-1 font-mono text-[12px] leading-snug whitespace-pre-wrap"
-            :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-neutral-mid'"
+            class="tool-result mt-1 font-mono text-[12px] leading-snug whitespace-pre-wrap border-l-2 pl-2"
+            :class="isFailed ? 'border-neutral-faint text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'border-neutral-faint text-neutral-mid'"
           >
             <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
             <AnsiText v-else-if="outputRaw" :content="outputRaw" />
@@ -108,15 +133,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Brain, ChevronRight, Check, Terminal as TerminalIcon, Wrench, XCircle } from '@lucide/vue'
+import { Check, Terminal as TerminalIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
-import { SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import AnsiText from './gui/AnsiText.vue'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import BlockSubagent from './BlockSubagent.vue'
+import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG, getBlockIcon } from './block-icon'
+import { formatDuration } from './format-utils'
 import { Button } from '@/components/ui/button'
 import { useRunInTerminal } from '@/composables/panel/useRunInTerminal'
 import { useToolMeta } from '@/composables/panel/useToolMeta'
@@ -168,24 +195,52 @@ const result = computed(() => props.tool?.output)
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
 
-/** 时长格式化阈值（普通 tool 的 meta 耗时格式化用；subagent 的 formatTokens/formatDuration 已随 BlockSubagent 迁出，
- *  formatDuration 因 useToolMeta 仍需保留，各保留一份避免跨组件耦合，W3 改视觉时若需统一再抽 util）。 */
-const MS_PER_SECOND = 1000
-const MS_PER_MINUTE = 60000
-
-/** 格式化时长（ms→s/min）。接受 unknown（meta 字段类型宽松） */
-function formatDuration(ms: unknown): string {
-  if (typeof ms !== 'number' || !Number.isFinite(ms)) return ''
-  if (ms >= MS_PER_MINUTE) return `${(ms / MS_PER_MINUTE).toFixed(1)}min`
-  if (ms >= MS_PER_SECOND) return `${(ms / MS_PER_SECOND).toFixed(0)}s`
-  return `${ms}ms`
-}
 /** 补充细节条 meta 项（耗时 + 工具特化行数/字符数 + 失败错误摘要），逻辑拆到 useToolMeta */
 const { metaItems } = useToolMeta({
   tool: computed(() => props.tool),
   toolName,
   isFailed,
   formatDuration,
+})
+
+/* ── 块类型路由：subagent / workflow / hidden ── */
+const isSubagent = computed(() => SUBAGENT_TOOL_NAMES.has(toolName.value))
+const isWorkflow = computed(() => WORKFLOW_TOOL_NAMES.has(toolName.value))
+/** 状态管理类 tool（todo/goal_control）：对话流完全不渲染（v-else-if=!isHidden 跳过）。
+ *  其状态变化由 SideDrawer Tasks tab 展示。仅影响渲染层，数据仍完整存储。 */
+const isHidden = computed(() => !isSubagent.value && HIDDEN_TOOL_NAMES.has(toolName.value))
+
+/** 普通 tool header 的块类型 ICON（running 用 loader，其余走 BLOCK_ICON_LUCIDE） */
+const headerBlockIcon = computed(() => {
+  const kind = getBlockIcon(toolName.value, props.tool?.status ?? 'completed', false, false)
+  // running 态走模板的 loader 分支（v-if isRunning），不走此 computed
+  return kind === 'running' ? BLOCK_ICON_LUCIDE['tool-other'] : BLOCK_ICON_LUCIDE[kind]
+})
+
+/** 普通 tool header 状态色：running 染 accent，failed/unfinished 中性灰，completed 中性 */
+const toolStatusClass = computed(() => {
+  if (isRunning.value) return 'text-accent'
+  if (isFailed.value) return 'text-neutral-mid'
+  if (isUnfinished.value) return 'text-neutral-dim'
+  return 'text-neutral-fg'
+})
+
+/** workflow 状态动词（Done/Running/Failed）+ header 色 */
+const workflowStatusText = computed(() => {
+  if (isRunning.value) return t('panel.message.workflowRunning')
+  if (isFailed.value) return t('panel.message.workflowFailed')
+  return t('panel.message.workflowDone')
+})
+const workflowStatusClass = computed(() => {
+  if (isRunning.value) return 'text-accent'
+  return ''
+})
+
+/** workflow 名（从 input.name 提取，pi-workflow 的 workflow tool input 含 name 字段） */
+const workflowName = computed(() => {
+  const input = props.tool?.input as Record<string, unknown> | undefined
+  if (input && typeof input.name === 'string') return input.name
+  return toolName.value
 })
 
 /**
@@ -249,18 +304,23 @@ const { isBash, runInTerminal } = useRunInTerminal({
   isRunning,
 })
 
-/* ── subagent（pi-subagents 扩展的 "subagent" tool）路由：渲染委托 BlockSubagent ── */
-const isSubagent = computed(() => SUBAGENT_TOOL_NAMES.has(toolName.value))
-
-/** 状态管理类 tool（todo/goal_control）：对话流完全不渲染（v-else-if=!isHidden 跳过）。
- *  其状态变化由 SideDrawer Tasks tab 展示。仅影响渲染层，数据仍完整存储。 */
-const isHidden = computed(() => !isSubagent.value && HIDDEN_TOOL_NAMES.has(toolName.value))
-
-const blockClass = computed(() => {
-  if (props.type !== 'tool') return ''
-  // 失败 tool / 失败 subagent：整块红框（draft trace-tool.failed）。
-  // subagent failed 时 tool 路由给 BlockSubagent，但红框仍作用在外层 trace-blk 根 div（保持抽离前 DOM）。W3 将删红框分支（ES5）。
-  if (!isFailed.value) return ''
-  return 'my-1 rounded-lg border border-danger bg-danger-soft px-3'
-})
+/** Demo H：failed 红框已删（blockClass 不再返回 border-danger/bg-danger-soft）。
+ *  failed 块改中性灰默认 + hover 染 warn（scoped .tool-header / .tool-result hover 处理）。
+ *  保留 blockClass 钩子以备未来整体块级视觉（如 running 高亮条），当前返回空串。 */
+const blockClass = computed(() => '')
 </script>
+
+<style scoped>
+/* Demo H 去卡片化：workflow-tag ::after accent 蓝点。
+   Tailwind 无法表达 ::after content，走 scoped style（三层结构 escape hatch）。 */
+.workflow-tag::after {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 5px;
+  vertical-align: middle;
+}
+</style>

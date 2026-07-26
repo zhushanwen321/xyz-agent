@@ -278,29 +278,29 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
 
 /* ─────────────────────── 方案 a：mount Block，改 props.tool.status ─────────────────────── */
 describe('方案 a: mount Block 组件 — 翻转 props.tool.status', () => {
-  it('running→completed：脉冲点消失，Check 图标出现', async () => {
+  it('running→completed：双环 loader 消失，Check 图标出现', async () => {
     const tool = makeTool({ status: 'running' })
     const wrapper = mount(Block, {
       props: { type: 'tool', tool, sessionId: 's1' },
     })
 
-    // running 态：脉冲点存在
-    expect(wrapper.findAll('.animate-working-pulse').length).toBeGreaterThan(0)
+    // running 态：双环 loader 存在（Demo H，替代旧脉冲点）
+    expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
     expect(wrapper.find('svg.lucide-check').exists()).toBe(false)
 
-    // 翻转 status → completed（且有 output，满足 Block.vue:100 `!isFailed && !isUnfinished && result`）
+    // 翻转 status → completed（且有 output，满足 Block.vue `!isFailed && !isRunning && !isUnfinished && result`）
     // 注意：result = props.tool.output，需要 output 才会显示 Check（否则走 noResult 分支）
     await wrapper.setProps({ tool: { ...tool, status: 'completed', output: 'file content' } })
 
-    // 断言：脉冲消失，Check 出现
-    expect(wrapper.findAll('.animate-working-pulse')).toHaveLength(0)
+    // 断言：loader 消失，Check 出现
+    expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
     expect(wrapper.find('svg.lucide-check').exists()).toBe(true)
   })
 })
 
 /* ─────────────────────── 方案 b：mount Turn，改 turn prop 内 tool ─────────────────────── */
 describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0].status', () => {
-  it('running→completed：Turn 内 Block 脉冲消失，Check 出现', async () => {
+  it('running→completed：Turn 内 Block 双环 loader 消失，Check 出现', async () => {
     const tool = makeTool({ status: 'running' })
     const assistant = makeAssistantWithTool(tool)
     const turn = makeTurn(assistant, /* isStreaming */ false)
@@ -315,8 +315,8 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()
 
-    // running 态断言：脉冲点存在
-    expect(wrapper.findAll('.animate-working-pulse').length).toBeGreaterThan(0)
+    // running 态断言：双环 loader 存在（Demo H，Block running 态）
+    expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
 
     // 翻转 status：构造新的 turn prop（不可变更新，模拟 store commitMessages 路径）
     const tool2: ToolCall = { ...tool, status: 'completed', output: 'file content' }
@@ -325,8 +325,8 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
     await wrapper.setProps({ turn: turn2 })
     await nextTick()
 
-    // 断言：脉冲消失，Check 出现
-    expect(wrapper.findAll('.animate-working-pulse')).toHaveLength(0)
+    // 断言：loader 消失，Check 出现
+    expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
     // 至少有一个 Check 图标（assistant 区复制按钮也有 Check，但 tool 块的 Check 在 trace 内）
     expect(wrapper.findAll('svg.lucide-check').length).toBeGreaterThan(0)
   })
@@ -348,7 +348,7 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
     })
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()
-    expect(wrapper.findAll('.animate-working-pulse').length).toBeGreaterThan(0)
+    expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
 
     // 不可变替换（与方案 b 同）
     const tool2: ToolCall = { ...tool, status: 'completed', output: 'done' }
@@ -356,7 +356,7 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
     await wrapper.setProps({ turn: { ...turn, assistants: [a2] } })
     await nextTick()
 
-    expect(wrapper.findAll('.animate-working-pulse')).toHaveLength(0)
+    expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
   })
 })
 

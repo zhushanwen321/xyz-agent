@@ -122,30 +122,32 @@ describe('Block working 态 · tool 块', () => {
     expect(wrapper.text()).toContain('done')
   })
 
-  it('U7: working=false running 默认 1 行收起，header 含「进行中」脉冲指示', () => {
+  it('U7: working=false running 默认 1 行收起，header 含双环 loader 指示（Demo H）', () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'running', output: undefined }), working: false },
     })
-    // header 行含工具名 + 参数 + 进行中指示（1 行即可观察进度）
+    // header 行含工具名 + 参数 + 双环 loader（1 行即可观察进度）
     expect(wrapper.text()).toContain('edit')
     expect(wrapper.text()).toContain('src/App.vue')
-    expect(wrapper.text()).toContain('进行中')
+    // Demo H：running 态双环 loader（animate-loader-spin + text-accent），无旧脉冲点
+    expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
+    expect(wrapper.find('.animate-working-pulse').exists()).toBe(false)
     // 详情区默认收起（running 不再强制展开）
     // output undefined 不会渲染 result 区，验证 argPath 详情行不在 DOM（mt-1.font-mono 是展开体）
     const detailLines = wrapper.findAll('.mt-1.font-mono')
     expect(detailLines.length).toBe(0)
   })
 
-  it('U8: 失败 tool 整块红框 + 强制展开（header XCircle 图标 + error output 直显）', () => {
+  it('U8: 失败 tool 强制展开 + error output 直显（Demo H：无鲜红框，AlertTriangle ICON）', () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'error', output: 'command failed' }), working: false },
     })
-    // 红框容器（danger 边框 class，blockClass 给整块加红框）
-    const failedBlock = wrapper.find('.border-danger')
-    expect(failedBlock.exists()).toBe(true)
-    // header 含 XCircle 图标（失败指示，lucide 渲染为 svg）
-    const xcircleIcon = wrapper.find('[data-lucide="x-circle"], svg')
-    expect(xcircleIcon.exists()).toBe(true)
+    // Demo H：鲜红框已删（无 border-danger / bg-danger-soft）
+    expect(wrapper.find('.border-danger').exists()).toBe(false)
+    expect(wrapper.find('.bg-danger-soft').exists()).toBe(false)
+    // header 含 svg 图标（AlertTriangle ICON，lucide 渲染为 svg）
+    const alertIcon = wrapper.find('[data-lucide="alert-triangle"], svg')
+    expect(alertIcon.exists()).toBe(true)
     // error output 强制展开（失败态强制可见，不可收起）
     expect(wrapper.text()).toContain('command failed')
   })

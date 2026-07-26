@@ -256,6 +256,11 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
             selector_group = '\n'.join(lines[max(0, i - 6):i])
             if RE_VUE_TRANSITION_CLASS.search(selector_group):
                 continue
+            # [HISTORICAL] pseudo-element 选择器（::before/::after/::placeholder 等）是合法
+            # escape hatch——Tailwind 无法表达 ::after { content: ... }。符合 AGENTS.md
+            # 三层结构的 escape hatch 定义。
+            if '::' in line:
+                continue
             issues.append(f"  [第{i}行] 禁止编写自定义 CSS（特殊动画除外）")
             issues.append("    请使用 Tailwind 工具类替代")
             exit_code = 2

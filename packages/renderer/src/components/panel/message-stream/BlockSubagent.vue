@@ -1,46 +1,47 @@
 <template>
   <!--
     subagent 块（pi-subagents 的 "subagent" tool）：从 Block.vue 抽离，承载 subagent 渲染。
-    draft-message-stream §4：紫色 Bot 图标 + agent 名 + task 预览，sync 模式 header 滚动进度。
-    - failed 红框由外层 Block.vue 的 blockClass 作用在 trace-blk 根 div 上（保持抽离前 DOM 一致），
-      本组件根 div 仅承载 trace-subagent 内容，不重复加红框。
-    W2 纯结构抽离：所有 class 与抽离前 Block.vue 原样一致（零视觉变化），W3 再改视觉。
+    Demo H 视觉：去卡片化（users ICON + SUBAGENT. prefix + 左缩进 14px + 底部 dashed 分割），
+    running 用双环 loader（accent 蓝，去 reasoning 紫），failed hover 才显 warn 暖橙。
+    - 用户可见断言：header 含 users ICON + 'subagent' prefix（CSS 大写 SUBAGENT.）+ agent 名 + task 预览。
+    - sync 模式 header 滚动进度（currentTool/turn/tokens）。
+    - failed：错误摘要进 body 文本（中性灰 border-l），hover 染 warn（不再鲜红）。
   -->
-  <div class="trace-subagent">
+  <div class="trace-subagent pl-[14px] border-b border-dashed border-border pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
-      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
+      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
       :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
       @click="toggleTool"
     >
-      <ChevronRight class="size-2.5 shrink-0 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
-      <Bot class="size-3 shrink-0" />
-      <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.subagent') }}</span>
-      <span class="shrink-0 normal-case tracking-normal text-neutral-mid">{{ subagentAgent || subagentHeaderLabel }}</span>
-      <span v-if="subagentTask" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ subagentTaskPreview }}</span>
+      <ChevronRight class="size-2.5 shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90' : ''" />
+      <!-- running 态 loader（双环 + accent），其余走 users ICON -->
+      <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
+      <component :is="BLOCK_ICON_LUCIDE.subagent" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
+      <span class="subagent-tag shrink-0 whitespace-nowrap uppercase tracking-[0.08em] font-semibold text-[12px] text-neutral-fg font-mono">subagent</span>
+      <span class="shrink-0 whitespace-nowrap text-neutral-mid">{{ subagentAgent || subagentHeaderLabel }}</span>
+      <span v-if="subagentTask" class="min-w-0 truncate text-neutral-dim">· {{ subagentTaskPreview }}</span>
       <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->
-      <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 normal-case tracking-normal whitespace-nowrap text-reasoning">
-        <span class="size-[6px] shrink-0 rounded-full bg-reasoning animate-working-pulse" />
+      <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-accent">
         <span class="truncate">{{ subagentLiveInfo || t('panel.message.running') }}</span>
       </span>
-      <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-success" />
-      <XCircle v-else-if="isFailed" class="ml-0.5 size-3 shrink-0 text-danger" />
-      <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-neutral-dim whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
+      <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
+      <span v-else-if="isUnfinished" class="ml-0.5 whitespace-nowrap text-neutral-dim">{{ t('panel.message.noResult') }}</span>
     </div>
     <template v-if="toolExpanded">
       <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
       <div v-if="subagentProgressDetail" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-neutral-mid">
-        <span v-if="subagentProgressDetail.toolCount != null" class="text-info">{{ t('panel.subagent.toolCount', { count: subagentProgressDetail.toolCount }) }}</span>
+        <span v-if="subagentProgressDetail.toolCount != null" class="text-neutral-fg">{{ t('panel.subagent.toolCount', { count: subagentProgressDetail.toolCount }) }}</span>
         <span v-if="subagentProgressDetail.turnCount != null">turn {{ subagentProgressDetail.turnCount }}</span>
         <span v-if="subagentProgressDetail.tokens != null">{{ formatTokens(subagentProgressDetail.tokens) }}</span>
         <span v-if="subagentProgressDetail.durationMs != null">{{ formatDuration(subagentProgressDetail.durationMs) }}</span>
-        <span v-if="subagentProgressDetail.currentTool" class="truncate text-reasoning">→ {{ subagentProgressDetail.currentTool }}</span>
+        <span v-if="subagentProgressDetail.currentTool" class="truncate text-neutral-mid">→ {{ subagentProgressDetail.currentTool }}</span>
       </div>
-      <!-- 最终输出 -->
+      <!-- 最终输出：failed 默认中性灰（border-l-2 border-neutral-faint），hover 染 warn；其余中性 mid -->
       <div
         v-if="result"
-        class="mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap"
-        :class="isFailed ? 'border-l-2 border-danger pl-2 text-danger' : 'text-neutral-mid'"
+        class="subagent-result mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap border-l-2 pl-2"
+        :class="isFailed ? 'border-neutral-faint text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'border-neutral-faint text-neutral-mid'"
       >
         <span>{{ result }}</span>
       </div>
@@ -51,8 +52,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, ChevronRight, Check, XCircle } from '@lucide/vue'
+import { ChevronRight, Check } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
+import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
+import { formatTokens, formatDuration } from './format-utils'
 
 const { t } = useI18n()
 
@@ -151,7 +154,7 @@ const subagentLiveInfo = computed(() => {
 })
 
 /** 从 detail 提取 AgentProgress 快照。
- *  detail 可能形态：{ progress: AgentProgress[] }（pi-subagents partialResult.details）
+ *  detail 可能形态：{ progress: AgentProgress[] }（pi-subagents partialResult.details.progress 数组）
  *  或直接是 AgentProgress 对象（其他 extension 推送形态），防御性两种都试。 */
 function extractProgressSnapshot(detail: unknown): Record<string, unknown> | null {
   if (!detail || typeof detail !== 'object') return null
@@ -167,32 +170,26 @@ function extractProgressSnapshot(detail: unknown): Record<string, unknown> | nul
   return null
 }
 
-/** token / 时长格式化阈值 */
-const TOKEN_K = 1000
-const TOKEN_M = 1000000
-const MS_PER_SECOND = 1000
-const MS_PER_MINUTE = 60000
-
-/** 格式化 token 数（1000→1k，1000000→1M）。接受 unknown（progress 快照字段类型宽松） */
-function formatTokens(n: unknown): string {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return ''
-  if (n >= TOKEN_M) return `${(n / TOKEN_M).toFixed(1)}M tokens`
-  if (n >= TOKEN_K) return `${(n / TOKEN_K).toFixed(1)}k tokens`
-  return `${n} tokens`
-}
-
-/** 格式化时长（ms→s/min）。接受 unknown（progress 快照字段类型宽松） */
-function formatDuration(ms: unknown): string {
-  if (typeof ms !== 'number' || !Number.isFinite(ms)) return ''
-  if (ms >= MS_PER_MINUTE) return `${(ms / MS_PER_MINUTE).toFixed(1)}min`
-  if (ms >= MS_PER_SECOND) return `${(ms / MS_PER_SECOND).toFixed(0)}s`
-  return `${ms}ms`
-}
-
-/** subagent header 颜色：failed→danger，其余→reasoning(紫) */
+/** Demo H：subagent header 色——failed 改中性灰（hover 染 warn，由 subagent-block hover 处理），
+ *  其余中性 fg（去 reasoning 紫）。running 由 loader + accent 文案表达，header 整体仍中性。 */
 const subagentHeaderColor = computed(() => {
-  if (isFailed.value) return 'text-danger'
-  return 'text-reasoning'
+  if (isFailed.value) return 'text-neutral-mid'
+  return 'text-neutral-fg'
 })
-
 </script>
+
+<style scoped>
+/* Demo H 去卡片化：subagent-tag ::after accent 蓝点。
+   Tailwind 无法表达 ::after content，走 scoped style（三层结构 escape hatch）。
+   源码写小写 subagent，渲染自动大写 SUBAGENT（CSS text-transform）。 */
+.subagent-tag::after {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 5px;
+  vertical-align: middle;
+}
+</style>
