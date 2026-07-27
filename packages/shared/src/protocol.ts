@@ -494,6 +494,7 @@ export type ServerMessageType =
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
   | 'config.skillDirs' | 'config.agentDirs' | 'config.extensionDirs'
+  | 'config.skillCacheInvalidated'
   | 'config.systemPrompt'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
@@ -568,6 +569,12 @@ export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
   'config.providers': { providers: ProviderInfo[] }
   'config.skills': { skills: SkillInfo[] }
+  /**
+   * skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
+   * 与 config.skills 区分：config.skills 推全量列表给 settingsStore；本 type 推失效信号给 landing composable。
+   * scope='global' 时 cwd 缺省（所有 panel 刷全局）；scope='project' 时 cwd 携带变更的项目根（前端按 cwd 路由）。
+   */
+  'config.skillCacheInvalidated': { scope: 'global' | 'project'; cwd?: string }
   'config.agents': { agents: AgentInfo[] }
   /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
   'config.skillDirs': { dirs: SkillDirConfig[] }
