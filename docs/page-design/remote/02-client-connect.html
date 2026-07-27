@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>客户端连接入口 · remote demos</title>
+<style>
+  :root{
+    --bg:#1a1b1f; --surface:#272830; --surface-2:#2e2f38; --surface-hover:#363740;
+    --bg-input:#1e1f24; --bg-elevated:#313239;
+    --fg:#f7f8fc; --muted:#a8a8b5; --subtle:#82828f;
+    --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.15);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:color-mix(in oklch,var(--accent) 12%,transparent);
+    --accent-ring:rgba(79,142,247,0.30);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4); --shadow-glow:0 0 0 3px rgba(79,142,247,0.25);
+    --shadow-modal:0 0 0 1px rgba(0,0,0,0.3),0 24px 70px rgba(0,0,0,0.55);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration:200ms; --duration-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:820px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+
+  /* ===== 桌面 window-mock ===== */
+  .window-mock{position:relative;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);margin-top:14px}
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:#fc6155} .dot-yellow{background:#fdb40a} .dot-green{background:#34c84a}
+  .app-shell{display:flex;height:560px;padding:12px;gap:12px}
+  .main-panel{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;position:relative}
+
+  /* ===== 欢迎屏（landing）===== */
+  .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 24px;background:var(--bg);position:relative}
+  .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
+    font:600 180px/1 var(--font-sans);color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;user-select:none;pointer-events:none}
+  .welcome{position:relative;z-index:1;width:100%;max-width:480px;display:flex;flex-direction:column;align-items:center}
+  .welcome .logo{width:56px;height:56px;border-radius:14px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:24px;font-weight:700;margin-bottom:18px;
+    box-shadow:0 8px 24px rgba(79,142,247,0.3)}
+  .welcome h3{font-size:22px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px;text-align:center}
+  .welcome .sub{color:var(--muted);font-size:13px;margin-bottom:28px;text-align:center}
+
+  /* ===== 粘贴框 ===== */
+  .paste-box{width:100%;background:var(--bg-input);border:1px solid var(--border-strong);
+    border-radius:var(--radius-lg);padding:16px;margin-bottom:14px;transition:all var(--duration) var(--ease)}
+  .paste-box.detected{border-color:var(--success);box-shadow:0 0 0 3px color-mix(in oklch,var(--success) 18%,transparent)}
+  .paste-box .pb-label{font-size:11px;color:var(--subtle);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px;font-weight:600}
+  .paste-box textarea{width:100%;min-height:64px;background:transparent;border:0;outline:0;
+    color:var(--fg);font:13px/1.5 var(--font-mono);resize:none;padding:0}
+  .paste-box textarea::placeholder{color:var(--subtle)}
+  .paste-box .pb-hint{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--success);margin-top:10px;font-weight:500}
+  .paste-box .pb-hint svg{width:13px;height:13px;stroke:var(--success);fill:none;stroke-width:2.5}
+
+  /* 分割线 OR */
+  .or-divider{display:flex;align-items:center;gap:12px;width:100%;margin:8px 0 14px}
+  .or-divider .ln{flex:1;height:1px;background:var(--border)}
+  .or-divider span{font:500 11px/1 var(--font-mono);color:var(--subtle);letter-spacing:0.1em}
+
+  /* 手动输入 */
+  .manual-fields{width:100%;display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field label{font-size:11px;color:var(--muted);font-weight:500;padding-left:2px}
+  .field input{width:100%;height:38px;background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius);padding:0 12px;color:var(--fg);font:13px/1 var(--font-mono);outline:0}
+  .field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,142,247,0.15)}
+
+  /* 按钮 */
+  .btn{height:38px;padding:0 18px;border:0;border-radius:var(--radius);
+    font:600 13px/1 var(--font-sans);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    transition:all var(--duration) var(--ease)}
+  .btn-primary{background:var(--accent);color:#fff;width:100%}
+  .btn-primary:hover{background:var(--accent-hover)}
+  .btn-primary:disabled{background:var(--surface-hover);color:var(--subtle);cursor:not-allowed}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  .btn-ghost:hover{background:var(--surface-hover);color:var(--fg)}
+  .btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+
+  /* 连接状态 */
+  .conn-status{display:flex;align-items:center;gap:8px;padding:10px 14px;
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    font-size:12px;color:var(--muted);margin-top:12px}
+  .conn-status .dot{width:8px;height:8px;border-radius:50%;background:var(--success)}
+  .conn-status.connecting .dot{background:var(--warning);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:0.3}}
+
+  /* ===== 手机 mock ===== */
+  .phone-row{display:flex;gap:24px;flex-wrap:wrap;margin-top:14px}
+  .phone{width:280px;flex-shrink:0}
+  .phone-frame{background:#0d0d0f;border-radius:36px;padding:12px;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);
+    position:relative}
+  .phone-notch{position:absolute;top:18px;left:50%;transform:translateX(-50%);
+    width:90px;height:22px;background:#0d0d0f;border-radius:14px;z-index:10}
+  .phone-screen{background:var(--bg);border-radius:26px;overflow:hidden;
+    height:520px;display:flex;flex-direction:column;position:relative}
+  .phone-status{display:flex;justify-content:space-between;align-items:center;
+    padding:14px 22px 6px;font-size:12px;font-weight:600;color:var(--fg)}
+  .phone-status .icons{display:flex;gap:4px;align-items:center}
+  .phone-status .icons svg{width:14px;height:14px;fill:var(--fg)}
+  .phone-content{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:24px;overflow-y:auto}
+  .phone-title{font-size:11px;color:var(--subtle);text-align:center;margin-top:6px;letter-spacing:0.02em}
+
+  /* 扫码视图 */
+  .scan-view{width:100%;display:flex;flex-direction:column;align-items:center;gap:16px}
+  .scan-frame{width:180px;height:180px;border-radius:var(--radius-lg);background:#000;
+    border:2px solid var(--accent);position:relative;overflow:hidden;
+    box-shadow:0 0 0 4px rgba(79,142,247,0.15)}
+  .scan-frame::before,.scan-frame::after{content:'';position:absolute;width:24px;height:24px;
+    border:3px solid var(--accent);border-radius:4px}
+  .scan-frame::before{top:8px;left:8px;border-right:0;border-bottom:0}
+  .scan-frame::after{bottom:8px;right:8px;border-left:0;border-top:0}
+  .scan-line{position:absolute;left:0;right:0;height:2px;background:var(--accent);
+    box-shadow:0 0 12px var(--accent);top:50%;animation:scan 2s linear infinite}
+  @keyframes scan{0%,100%{top:20%}50%{top:80%}}
+  .scan-frame .qr-fake{position:absolute;inset:18px;background:
+    repeating-linear-gradient(0deg,#222 0,#222 4px,transparent 4px,transparent 8px),
+    repeating-linear-gradient(90deg,#222 0,#222 4px,transparent 4px,transparent 8px);
+    opacity:0.5}
+
+  /* 微信转发场景 */
+  .wechat-msg{width:100%;background:var(--surface);border-radius:var(--radius);padding:12px;margin-top:8px}
+  .wechat-msg .wc-sender{font-size:11px;color:var(--success);font-weight:600;margin-bottom:4px}
+  .wechat-msg .wc-bubble{background:var(--surface-2);border-radius:var(--radius);padding:8px 10px;
+    font:11px/1.5 var(--font-mono);color:var(--accent);word-break:break-all}
+  .wechat-msg .wc-time{font-size:10px;color:var(--subtle);margin-top:4px;text-align:right}
+
+  /* tabs */
+  .phone-tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px}
+  .phone-tab{flex:1;padding:10px;text-align:center;font:500 12px/1 var(--font-sans);
+    color:var(--muted);background:transparent;border:0;cursor:pointer;
+    border-bottom:2px solid transparent;margin-bottom:-1px}
+  .phone-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+</style>
+</head>
+<body>
+
+<h1>客户端连接入口</h1>
+<p class="lede">三种客户端形态的首连体验：<b>手机/电脑浏览器地址栏直粘</b>（推荐最短路径）、<b>桌面 APP 欢迎屏</b>（剪贴板探测）、<b>手机 APP 扫码/微信转发</b>。统一规则：复制服务端输出的连接字符串，浏览器粘贴地址栏 / APP 粘贴框 / 扫码即可连接。详见 <code>§6.4</code>。</p>
+<div class="meta">
+  <span>客户端：<b>3 种形态</b></span>
+  <span>核心交互：<b>地址栏直粘 / 粘贴框 / 扫码</b></span>
+  <span>最短路径：<b>浏览器地址栏粘贴 HTTP URL</b></span>
+  <span>剪贴板探测：<b>仅未连接时 · 不自动连接</b></span>
+</div>
+
+<h2><span class="num">A</span>手机/电脑浏览器 · 地址栏直接粘贴（最短路径 · 推荐）</h2>
+<p class="lede">服务端终端复制 <code>http://&lt;host&gt;:3210/#token=...</code>，<b>直接粘到浏览器地址栏</b>（手机先装 Tailscale 加入 tailnet）。浏览器打开 Web 端，JS 从 hash 读 token、从 host 推 WS 地址，自动连接。无需装 APP、无需手动填。</p>
+
+<div class="phone-row" style="margin-top:14px">
+  <!-- 手机：地址栏直粘 -->
+  <div class="phone">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="phone-status">
+          <span>9:41</span>
+          <div class="icons">
+            <svg viewBox="0 0 24 24"><path d="M2 8h20v12H2z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M12 5C7 5 2.7 7 0 10l12 12L24 10c-2.7-3-7-5-12-5z"/></svg>
+            <svg viewBox="0 0 24 24"><rect x="2" y="6" width="18" height="12" rx="2"/><rect x="22" y="9" width="2" height="6"/></svg>
+          </div>
+        </div>
+        <div class="phone-content">
+          <!-- 浏览器地址栏 -->
+          <div style="width:100%;background:var(--surface);border:1px solid var(--border-strong);border-radius:999px;padding:7px 12px;display:flex;align-items:center;gap:6px;margin-bottom:14px">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--success)" stroke-width="2"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M5 7l2 2 4-4"/></svg>
+            <span style="font:11px/1 var(--font-mono);color:var(--fg);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">myserver.tail-7c3a.ts.net:3210</span>
+          </div>
+          <!-- Web 端加载完成 -->
+          <div style="width:100%;background:var(--surface);border-radius:var(--radius-lg);padding:16px;border:1px solid var(--border)">
+            <div style="text-align:center;margin-bottom:12px">
+              <div style="width:40px;height:40px;border-radius:10px;background:var(--accent);display:inline-grid;place-items:center;color:#fff;font-size:18px;font-weight:700;margin-bottom:8px">z</div>
+              <div style="font-size:14px;font-weight:600">xyz-agent</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">已识别连接信息</div>
+            </div>
+            <div style="background:var(--bg-input);border-radius:var(--radius);padding:9px 11px;font:10px/1.5 var(--font-mono);color:var(--muted);margin-bottom:12px">
+              <div>URL: <span style="color:var(--accent)">ws://myserver.tail-7c3a.ts.net:3210</span></div>
+              <div>Token: <span style="color:var(--success)">a3f8...（来自 hash）</span></div>
+            </div>
+            <button style="width:100%;background:var(--accent);color:#fff;border:0;padding:9px;border-radius:var(--radius);font:600 12px/1 var(--font-sans)">连接</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="phone-title">手机浏览器 · 地址栏直粘 HTTP URL</div>
+  </div>
+
+  <!-- 文字说明 -->
+  <div style="flex:1;min-width:280px;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:0 8px">
+    <div style="background:var(--surface);border-left:2px solid var(--success);border-radius:var(--radius);padding:12px 14px">
+      <div style="font-size:13px;font-weight:600;color:var(--success);margin-bottom:6px">最短路径 · 3 步</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.8">
+        1. 服务端终端复制 <code style="font-size:10px">http://...#token=...</code><br>
+        2. 手机装 Tailscale + 浏览器地址栏粘贴<br>
+        3. Web 端自动识别 → 点「连接」
+      </div>
+    </div>
+    <div style="background:var(--surface);border-left:2px solid var(--accent);border-radius:var(--radius);padding:12px 14px">
+      <div style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:6px">为什么用 hash fragment</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        <code style="font-size:10px">#token=...</code> 不发给服务器、不进 access log、不被 Referer 泄露。JS 读 hash 拿 token，从 <code style="font-size:10px">location.host</code> 推 WS 地址（同源，无需额外配置）。
+      </div>
+    </div>
+    <div style="background:var(--surface);border-left:2px solid var(--muted);border-radius:var(--radius);padding:12px 14px">
+      <div style="font-size:13px;font-weight:600;color:var(--fg);margin-bottom:6px">后续访问</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        连接成功后 token 存 localStorage，下次直接访问 <code style="font-size:10px">http://host:3210/</code>（书签即可，不用再带 token）。
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2><span class="num">B</span>桌面 APP · 欢迎屏（剪贴板探测）</h2>
+<p class="lede">首次打开 APP 显示欢迎屏。用户从服务端终端复制 <code>http://.../#token=...</code> 或 <code>xyz-agent://...</code> 链接后，APP 启动/窗口聚焦时探测剪贴板，命中格式自动填充并提示「检测到连接信息，点击连接」。</p>
+<div class="window-mock">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="main-panel">
+      <div class="landing">
+        <div class="watermark">z</div>
+        <div class="welcome">
+          <div class="logo">z</div>
+          <h3>连接到 xyz-agent 服务器</h3>
+          <p class="sub">复制服务端输出的连接信息，下方自动填充</p>
+
+          <div class="paste-box detected">
+            <div class="pb-label">粘贴连接信息</div>
+            <textarea readonly>http://myserver.tail-7c3a.ts.net:3210/#token=a3f8b2c1d4e5...</textarea>
+            <div class="pb-hint">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+              检测到连接信息 · 浏览器直达 · Tailscale
+            </div>
+          </div>
+
+          <div class="or-divider"><div class="ln"></div><span>或手动填写</span><div class="ln"></div></div>
+
+          <div class="manual-fields">
+            <div class="field">
+              <label>服务器 URL</label>
+              <input value="ws://myserver.tail-7c3a.ts.net:3210" readonly>
+            </div>
+            <div class="field">
+              <label>Token</label>
+              <input value="a3f8b2c1d4e5f6a7b8c9d0e1f2a3b4c5" readonly>
+            </div>
+          </div>
+
+          <button class="btn btn-primary">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+            连接服务器
+          </button>
+
+          <div class="conn-status connecting">
+            <span class="dot"></span>
+            正在连接 ws://myserver.tail-7c3a.ts.net:3210 ...
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="note"><b>剪贴板探测安全约束</b>：(1) 只在「未连接」状态探测；(2) 探测到后<b>不自动连接</b>，必须用户点「连接」确认（防恶意剪贴板自动触发）；(3) 解析失败静默忽略。窗口聚焦（<code>focus</code> / <code>visibilitychange</code>）时重新探测——适配「在服务端 SSH 里复制 → 切回 APP」的工作流。</div>
+
+<h2><span class="num">C</span>Web 网页端 · 粘贴框（兜底 · token 失效或跨源场景）</h2>
+<p class="lede">如果直接访问 Web 端 URL 但 <code>#token</code> 缺失/失效（或 Web 与 WS 跨源部署），首屏提供「粘贴连接信息」输入框。支持粘贴 [1] HTTP URL / [2] deep link / [3] 多行 URL+Token 三种格式。</p>
+<div class="window-mock">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell" style="height:480px">
+    <div class="main-panel">
+      <div class="landing">
+        <div class="welcome" style="max-width:440px">
+          <div class="logo">z</div>
+          <h3>xyz-agent Web</h3>
+          <p class="sub">浏览器客户端 · 粘贴服务端给的连接信息即可开始</p>
+
+          <div class="paste-box" style="margin-top:4px">
+            <div class="pb-label">粘贴连接信息（支持 HTTP URL / deep link / 多行）</div>
+            <textarea placeholder="例：http://host:3210/#token=...
+或：xyz-agent://connect?url=...
+或
+URL: wss://xyz.example.com
+Token: a3f8b2c1..."></textarea>
+          </div>
+
+          <button class="btn btn-primary" style="margin-top:6px">解析并连接</button>
+          <button class="btn btn-ghost" style="margin-top:8px">手动填写 URL + Token</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="note"><b>Web 端解析容错</b>：粘贴 <code>xyz-agent://connect?...</code> → 解析出 url+token；粘贴 <code>ws://...</code> 单行 → 自动填 URL，提示粘 token；粘贴「URL: ws://... Token: ...」多行 → 正则解析两行。三种格式都支持，对用户复制行为容错。</div>
+
+<h2><span class="num">D</span>手机 APP · 三条路径（装了 APP 的场景）</h2>
+<p class="lede">手机 APP（Capacitor）首连有三条路径：<b>扫码</b>（默认扫 [1] HTTP URL，APP 内 WebView 打开；或扫 [2] deep link，唤起原生）、<b>微信收 URL → 复制 → 打开 APP</b>（剪贴板探测）、<b>deep link</b>（点 <code>xyz-agent://</code> 唤起）。<b>没装 APP 的用户直接走 A 场景（浏览器地址栏直粘）</b>。</p>
+
+<div class="phone-row">
+  <!-- 手机 1：扫码 -->
+  <div class="phone">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="phone-status">
+          <span>9:41</span>
+          <div class="icons">
+            <svg viewBox="0 0 24 24"><path d="M2 8h20v12H2z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M12 5C7 5 2.7 7 0 10l12 12L24 10c-2.7-3-7-5-12-5z"/></svg>
+            <svg viewBox="0 0 24 24"><rect x="2" y="6" width="18" height="12" rx="2"/><rect x="22" y="9" width="2" height="6"/></svg>
+          </div>
+        </div>
+        <div class="phone-content">
+          <div class="scan-view">
+            <div style="font-size:15px;font-weight:600">扫码连接</div>
+            <div style="font-size:12px;color:var(--muted);text-align:center">对准服务端终端输出的二维码</div>
+            <div class="scan-frame">
+              <div class="qr-fake"></div>
+              <div class="scan-line"></div>
+            </div>
+            <button class="btn btn-ghost" style="font-size:12px;height:32px;padding:0 14px">从相册选择</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="phone-title">路径 1 · 扫码（默认扫 [1] HTTP URL · APP 内打开）</div>
+  </div>
+
+  <!-- 手机 2：微信转发 -->
+  <div class="phone">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="phone-status">
+          <span>9:41</span>
+          <div class="icons">
+            <svg viewBox="0 0 24 24"><path d="M2 8h20v12H2z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M12 5C7 5 2.7 7 0 10l12 12L24 10c-2.7-3-7-5-12-5z"/></svg>
+            <svg viewBox="0 0 24 24"><rect x="2" y="6" width="18" height="12" rx="2"/><rect x="22" y="9" width="2" height="6"/></svg>
+          </div>
+        </div>
+        <div class="phone-content">
+          <div style="font-size:13px;color:var(--success);font-weight:600;align-self:flex-start;margin-left:8px">微信</div>
+          <div class="wechat-msg">
+            <div class="wc-sender">文件传输助手</div>
+            <div class="wc-bubble">http://myserver.tail-7c3a.ts.net:3210/#token=a3f8b2c1d4e5...</div>
+            <div class="wc-time">9:40</div>
+          </div>
+          <div style="flex:1"></div>
+          <div style="background:var(--accent);color:#fff;padding:8px 14px;border-radius:18px;font-size:12px;font-weight:600;margin-bottom:8px">
+            ✓ 已复制 · 打开 xyz-agent APP
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="phone-title">路径 2 · 微信转发 → 复制 → 打开 APP</div>
+  </div>
+
+  <!-- 手机 3：APP 检测到剪贴板 -->
+  <div class="phone">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="phone-status">
+          <span>9:41</span>
+          <div class="icons">
+            <svg viewBox="0 0 24 24"><path d="M2 8h20v12H2z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M12 5C7 5 2.7 7 0 10l12 12L24 10c-2.7-3-7-5-12-5z"/></svg>
+            <svg viewBox="0 0 24 24"><rect x="2" y="6" width="18" height="12" rx="2"/><rect x="22" y="9" width="2" height="6"/></svg>
+          </div>
+        </div>
+        <div class="phone-content">
+          <div style="width:100%">
+            <div style="text-align:center;margin-bottom:16px">
+              <div style="width:48px;height:48px;border-radius:12px;background:var(--accent);display:inline-grid;place-items:center;color:#fff;font-size:20px;font-weight:700;margin-bottom:10px">z</div>
+              <div style="font-size:15px;font-weight:600">xyz-agent</div>
+            </div>
+            <!-- 检测弹窗 -->
+            <div style="background:var(--surface);border:1px solid var(--success);border-radius:var(--radius-lg);padding:14px;box-shadow:var(--shadow-2)">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                <span style="font-size:13px;font-weight:600;color:var(--success)">检测到连接信息</span>
+              </div>
+              <div style="font:11px/1.5 var(--font-mono);color:var(--accent);background:var(--bg-input);padding:8px;border-radius:var(--radius-sm);word-break:break-all;margin-bottom:12px">http://myserver.tail-7c3a.ts.net:3210</div>
+              <button class="btn btn-primary" style="height:34px;font-size:12px">连接</button>
+              <button class="btn btn-ghost" style="width:100%;height:30px;font-size:11px;margin-top:6px">忽略</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="phone-title">路径 3 · APP 回前台检测剪贴板（Clipboard API）</div>
+  </div>
+</div>
+<div class="note"><b>三条路径覆盖不同场景</b>：扫码适合面对面（服务器终端就在眼前）；微信转发适合远程（PC 复制→微信文件传输助手→手机复制）；deep link（未画）适合 APP 已装时点链接直接唤起。<b>剪贴板探测只在 <code>appStateChange</code> 回前台时触发</b>，不在后台轮询（省电 + 隐私）。</div>
+
+<hr>
+<h2><span class="num">补充</span>连接后的状态显示</h2>
+<p class="lede">连接成功后，APP/Web 状态栏或 sidebar 底部显示当前连接信息，便于确认和切换：</p>
+<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px">
+  <!-- 已连接 Tailscale -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;min-width:280px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--success)"></span>
+      <span style="font-size:13px;font-weight:600">已连接</span>
+    </div>
+    <div style="font:11px/1.5 var(--font-mono);color:var(--muted)">
+      <div>模式：<span style="color:var(--accent)">远程 · Tailscale</span></div>
+      <div>服务器：<span style="color:var(--fg)">myserver.tail-7c3a.ts.net</span></div>
+      <div>延迟：<span style="color:var(--success)">45ms</span> · pi 空闲</div>
+    </div>
+  </div>
+  <!-- 切换/断开按钮 -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;min-width:200px;display:flex;flex-direction:column;gap:8px;justify-content:center">
+    <button class="btn btn-ghost" style="width:100%">切换服务器</button>
+    <button class="btn btn-ghost" style="width:100%;color:var(--danger);border-color:color-mix(in oklch,var(--danger) 30%,transparent)">断开连接</button>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>远程连接入口 · popover 动作 → modal · remote demos</title>
+<style>
+  /* token 与 draft-directory-select.html 完全一致（zcode 冷蓝） */
+  :root{
+    --bg:#1a1b1f; --surface:#272830; --surface-2:#2e2f38; --surface-hover:#363740;
+    --bg-input:#1e1f24; --bg-elevated:#313239;
+    --fg:#f7f8fc; --muted:#a8a8b5; --subtle:#82828f;
+    --text-primary:#f7f8fc; --text-secondary:#a8a8b5; --text-tertiary:#82828f;
+    --bg-hover:#363740;
+    --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.15);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:color-mix(in oklch,var(--accent) 12%,transparent);
+    --accent-ring:rgba(79,142,247,0.30);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-1:0 0 0 1px rgba(0,0,0,0.2);
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --shadow-modal:0 0 0 1px rgba(0,0,0,0.3),0 24px 70px rgba(0,0,0,0.55);
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --duration-fast:120ms; --duration:200ms; --duration-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  h3{font-size:14px;font-weight:600;margin:24px 0 8px;letter-spacing:-0.01em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:820px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+  .note.warn{border-left-color:var(--warning)}
+  .note.warn b{color:var(--warning)}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+
+  /* ===== window-mock（与 directory-select 同源） ===== */
+  .window-mock{position:relative;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);margin-top:14px}
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:#fc6155} .dot-yellow{background:#fdb40a} .dot-green{background:#34c84a}
+  .app-shell{display:flex;height:680px;padding:12px;gap:12px}
+  .aside-region{width:200px;flex-shrink:0;padding-top:52px;padding-left:2px;display:flex;flex-direction:column}
+  .a-logo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:0 8px 14px}
+  .a-logo .a-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0}
+  .a-nav{display:flex;flex-direction:column;gap:1px;padding:0 4px}
+  .a-item{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);
+    padding:6px 8px;border-radius:6px;cursor:pointer}
+  .a-item.active{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .a-item svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .main-panel{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 24px 64px;position:relative;overflow:visible;background:var(--bg)}
+  .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
+    font:600 220px/1 var(--font-sans);color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;user-select:none;pointer-events:none}
+  .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
+    margin:0 0 28px;text-align:center;position:relative;z-index:1}
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;padding:10px 0 0}
+  .composer-box{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-lg);
+    position:relative;overflow:hidden;transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease)}
+  .composer-box.focus{border-color:var(--border-strong);box-shadow:0 0 0 2px rgba(255,255,255,0.04)}
+  .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:1px solid transparent;border-radius:var(--radius);
+    color:var(--text-secondary);font:500 12px/1 var(--font-sans);cursor:pointer;max-width:200px}
+  .chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .chip.open{background:var(--surface-2);color:var(--text-primary);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .chip .ch-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+  .chip .ch-chev{color:var(--text-tertiary);width:11px;height:11px}
+  .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
+  .composer-area{width:100%;min-height:40px;max-height:120px;overflow-y:auto;border:0;outline:0;
+    background:transparent;color:var(--text-primary);font:13px/1.55 var(--font-sans);
+    padding:11px 13px 4px;white-space:pre-wrap;word-break:break-word}
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px;flex-wrap:nowrap}
+
+  /* ===== Directory Popover（入口，与 directory-select.html §1 一致） ===== */
+  .ds-popover{position:absolute;width:380px;background:var(--surface-2);
+    border:1px solid var(--border-strong);border-radius:var(--radius);
+    box-shadow:0 0 0 1px rgba(0,0,0,0.3),0 16px 48px rgba(0,0,0,0.6);
+    overflow:visible;z-index:50;left:50%;transform:translateX(-50%);bottom:calc(100% - 26px)}
+  .ds-popover::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);
+    width:8px;height:8px;background:var(--surface-2);
+    border-right:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong)}
+  .ds-search{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid var(--border)}
+  .ds-search svg{width:15px;height:15px;color:var(--muted);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5}
+  .ds-search input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:13px/1.4 var(--font-sans)}
+  .ds-list{max-height:280px;overflow-y:auto;padding:4px 0}
+  .ds-group-label{padding:8px 13px 3px;font:500 10px/1 var(--font-mono);
+    color:var(--subtle);text-transform:uppercase;letter-spacing:0.08em}
+  .ds-row{display:flex;align-items:center;gap:9px;padding:7px 13px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease);position:relative}
+  .ds-row:hover{background:var(--surface-hover)}
+  .ds-row .ds-ic{width:15px;height:15px;color:var(--muted);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .ds-row .ds-name{flex:1;font-size:13px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ds-row.ds-action .ds-ic{color:var(--subtle)}
+  .ds-sep{height:1px;background:var(--border);margin:4px 0}
+
+  /* 远程连接动作项的高亮态（区别于普通动作） */
+  .ds-row.ds-action.remote{color:var(--accent)}
+  .ds-row.ds-action.remote .ds-ic{color:var(--accent)}
+  .ds-row.ds-action.remote:hover{background:var(--accent-soft)}
+  .ds-row.ds-action.remote .badge{font:500 10px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:3px 7px;border-radius:999px;letter-spacing:0.02em;margin-left:auto}
+  .ds-row.ds-action.remote .arrow{color:var(--accent);font-size:14px;margin-left:4px}
+
+  /* ===== 模糊背景 + Modal（点击「远程连接」后展开） ===== */
+  .stage{position:relative}
+  .stage.blurred .landing{filter:blur(2px) brightness(0.6);transition:filter var(--duration-slow) var(--ease)}
+  .backdrop{position:absolute;inset:0;background:rgba(7,7,9,0.55);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:200;display:flex;align-items:center;justify-content:center}
+  .modal{position:relative;background:var(--surface);border:1px solid var(--border-strong);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-modal);z-index:201;
+    display:flex;flex-direction:column;overflow:hidden}
+  .modal-remote{width:520px;max-width:90vw;max-height:85vh}
+
+  /* Modal header */
+  .m-hdr{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid var(--border)}
+  .m-hdr .m-hdr-ic{width:32px;height:32px;border-radius:var(--radius);
+    background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;flex-shrink:0}
+  .m-hdr .m-hdr-ic svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .m-hdr .m-hdr-text{flex:1;min-width:0}
+  .m-hdr .m-hdr-text .t1{font-size:15px;font-weight:600;color:var(--fg);letter-spacing:-0.01em}
+  .m-hdr .m-hdr-text .t2{font-size:12px;color:var(--muted);margin-top:2px}
+  .m-hdr .m-close{width:28px;height:28px;border:0;background:transparent;color:var(--subtle);
+    border-radius:var(--radius-sm);display:grid;place-items:center;cursor:pointer}
+  .m-hdr .m-close:hover{background:var(--surface-hover);color:var(--fg)}
+  .m-hdr .m-close svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+
+  /* Modal body */
+  .m-body{flex:1;overflow-y:auto;padding:20px}
+
+  /* tabs: 粘贴 / 手动 / 已保存 */
+  .m-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:-20px -20px 18px;padding:0 16px}
+  .m-tab{padding:11px 14px;font:600 12.5px/1 var(--font-sans);color:var(--muted);
+    background:transparent;border:0;cursor:pointer;position:relative;margin-bottom:-1px;
+    border-bottom:2px solid transparent;transition:all var(--duration) var(--ease)}
+  .m-tab.active{color:var(--fg);border-bottom-color:var(--accent)}
+  .m-tab:hover:not(.active){color:var(--fg)}
+  .m-tab .tab-count{font:500 10px/1 var(--font-mono);color:var(--subtle);margin-left:4px}
+
+  .tab-pane{display:none}
+  .tab-pane.active{display:block}
+
+  /* 粘贴框（核心） */
+  .paste-area{background:var(--bg-input);border:1px solid var(--border-strong);
+    border-radius:var(--radius);padding:14px;transition:all var(--duration) var(--ease);position:relative}
+  .paste-area.detected{border-color:var(--success);box-shadow:0 0 0 3px color-mix(in oklch,var(--success) 18%,transparent)}
+  .paste-area .pa-label{display:flex;align-items:center;gap:6px;font:600 11px/1 var(--font-mono);
+    color:var(--subtle);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:10px}
+  .paste-area textarea{width:100%;min-height:90px;background:transparent;border:0;outline:0;
+    color:var(--fg);font:13px/1.5 var(--font-mono);resize:vertical;padding:0}
+  .paste-area textarea::placeholder{color:var(--subtle);line-height:1.6}
+  .paste-area .pa-detect{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;
+    border-top:1px solid var(--border);font-size:12px;color:var(--success);font-weight:500}
+  .paste-area .pa-detect svg{width:14px;height:14px;stroke:var(--success);fill:none;stroke-width:2.5;flex-shrink:0}
+  .paste-area .pa-detect .pa-detect-detail{color:var(--muted);font:11px/1.4 var(--font-mono);margin-left:auto}
+
+  /* 已解析字段预览 */
+  .parsed-preview{margin-top:14px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--radius);padding:12px 14px}
+  .parsed-preview .pp-label{font:500 11px/1 var(--font-mono);color:var(--subtle);
+    letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px}
+  .parsed-preview .pp-row{display:flex;align-items:center;gap:8px;font:12px/1.4 var(--font-mono);margin:4px 0}
+  .parsed-preview .pp-row .k{color:var(--subtle);min-width:42px}
+  .parsed-preview .pp-row .v{color:var(--fg);word-break:break-all;flex:1}
+  .parsed-preview .pp-row .v.url{color:var(--accent)}
+
+  /* 手动输入字段 */
+  .field{margin-bottom:14px}
+  .field label{display:flex;align-items:center;justify-content:space-between;
+    font:500 12px/1 var(--font-sans);color:var(--muted);margin-bottom:6px}
+  .field label .f-hint{font:11px/1 var(--font-mono);color:var(--subtle)}
+  .field input{width:100%;height:38px;background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius);padding:0 12px;color:var(--fg);font:13px/1 var(--font-mono);outline:0;
+    transition:all var(--duration) var(--ease)}
+  .field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,142,247,0.15)}
+  .field input::placeholder{color:var(--subtle)}
+  .field-row{display:flex;gap:12px}
+  .field-row .field{flex:1}
+  .field-row .field:nth-child(2){flex:0 0 120px}
+
+  /* 已保存服务器列表 */
+  .saved-list{display:flex;flex-direction:column;gap:8px}
+  .saved-item{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;transition:all var(--duration) var(--ease)}
+  .saved-item:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+  .saved-item.active{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .saved-item .si-ic{width:32px;height:32px;border-radius:var(--radius);background:var(--accent-soft);
+    color:var(--accent);display:grid;place-items:center;flex-shrink:0}
+  .saved-item .si-ic svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .saved-item .si-info{flex:1;min-width:0}
+  .saved-item .si-info .si-name{font-size:13px;font-weight:600;color:var(--fg);margin-bottom:2px}
+  .saved-item .si-info .si-url{font:11px/1.4 var(--font-mono);color:var(--muted);word-break:break-all}
+  .saved-item .si-status{display:flex;align-items:center;gap:5px;font:500 11px/1 var(--font-mono);
+    padding:4px 8px;border-radius:999px;flex-shrink:0}
+  .saved-item .si-status.online{color:var(--success);background:color-mix(in oklch,var(--success) 12%,transparent)}
+  .saved-item .si-status.offline{color:var(--subtle);background:var(--surface)}
+  .saved-item .si-status .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .saved-item .si-del{width:24px;height:24px;border:0;background:transparent;color:var(--subtle);
+    border-radius:var(--radius-sm);display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity var(--duration) var(--ease)}
+  .saved-item:hover .si-del{opacity:1}
+  .saved-item .si-del:hover{background:var(--surface);color:var(--danger)}
+  .saved-item .si-del svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .saved-empty{text-align:center;padding:32px 16px;color:var(--subtle);font-size:13px}
+
+  /* Modal footer */
+  .m-ftr{display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid var(--border);background:var(--bg-elevated)}
+  .m-ftr .m-ftr-info{flex:1;font:11px/1.5 var(--font-mono);color:var(--subtle)}
+  .m-ftr .m-ftr-info b{color:var(--muted)}
+  .btn{height:34px;padding:0 16px;border:0;border-radius:var(--radius);
+    font:600 13px/1 var(--font-sans);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    transition:all var(--duration) var(--ease)}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:var(--accent-hover)}
+  .btn-primary:disabled{background:var(--surface-hover);color:var(--subtle);cursor:not-allowed}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  .btn-ghost:hover{background:var(--surface-hover);color:var(--fg)}
+  .btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2}
+
+  /* 连接中态 */
+  .conn-progress{display:flex;align-items:center;gap:10px;padding:14px;background:var(--surface-2);
+    border:1px solid var(--accent);border-radius:var(--radius);margin-top:14px}
+  .conn-progress .spinner{width:16px;height:16px;border:2px solid var(--accent-soft);
+    border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .conn-progress .cp-text{font-size:12px;color:var(--muted)}
+  .conn-progress .cp-text b{color:var(--fg)}
+
+  /* 帮助提示 */
+  .helper-box{margin-top:14px;padding:11px 13px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--radius);font:11px/1.6 var(--font-mono);color:var(--muted)}
+  .helper-box b{color:var(--fg)}
+  .helper-box code{font-size:10px}
+
+  /* 标注 */
+  .anno{position:absolute;font:500 10px/1.2 var(--font-mono);padding:3px 6px;border-radius:3px;
+    pointer-events:none;z-index:60;white-space:nowrap;letter-spacing:0.02em}
+  .anno.a{color:var(--accent);background:rgba(79,142,247,0.08);border:1px solid var(--accent)}
+  .anno.w{color:var(--warning);background:rgba(245,165,36,0.08);border:1px solid var(--warning)}
+  .anno.m{color:var(--muted);background:rgba(138,138,149,0.08);border:1px solid var(--muted)}
+
+  /* 视图切换 */
+  .view-tabs{display:flex;gap:6px;margin-top:16px;border-bottom:1px solid var(--border)}
+  .view-tab{padding:10px 16px;font:500 13px/1 var(--font-sans);color:var(--muted);
+    background:transparent;border:0;cursor:pointer;border-radius:var(--radius) var(--radius) 0 0;
+    border:1px solid transparent;border-bottom:0;position:relative;margin-bottom:-1px}
+  .view-tab.active{color:var(--fg);background:var(--surface);border-color:var(--border) var(--border) var(--surface)}
+  .view-tab:hover:not(.active){color:var(--fg);background:var(--surface-hover)}
+  .view-pane{display:none}
+  .view-pane.active{display:block}
+</style>
+</head>
+<body>
+
+<!-- 共享 SVG symbol -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/><path d="M8 6.5v3M6.5 8h3"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 16 16"><path d="M5 12.5a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.6-0.5 2.5 2.5 0 0 1 0.4 5H5z"/></symbol>
+    <symbol id="i-server" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="4.5" rx="1"/><rect x="2" y="9" width="12" height="4.5" rx="1"/><circle cx="4.5" cy="4.75" r="0.6" fill="currentColor"/><circle cx="4.5" cy="11.25" r="0.6" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="3.5" cy="3" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><path d="M3.5 4.5v7M3.5 8h4a3 3 0 0 0 3-3V3.5"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 16 16"><rect x="4" y="3" width="8" height="11" rx="1"/><path d="M6 1.5h4v2H6z"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="0.5"/><rect x="9" y="2" width="5" height="5" rx="0.5"/><rect x="2" y="9" width="5" height="5" rx="0.5"/><rect x="9.5" y="9.5" width="1.5" height="1.5"/><rect x="12" y="9.5" width="2" height="2"/><rect x="9.5" y="12" width="2" height="2"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4h10M6 4V2.5h4V4M5 4l.5 9h5L11 4"/></symbol>
+    <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.5 9.5a3 3 0 0 0 4.24 0l2.12-2.12a3 3 0 0 0-4.24-4.24L7.27 4.5M9.5 6.5a3 3 0 0 0-4.24 0L3.14 8.62a3 3 0 0 0 4.24 4.24L8.73 11.5"/></symbol>
+  </defs>
+</svg>
+
+<h1>远程连接入口 · directory popover → modal</h1>
+<p class="lede">
+  把现有 directory popover 的「<b>远程连接</b>」动作项（当前 <code>draft-directory-select.html</code> 标注 v1 stub）实化：点击后展开 modal，支持<b>粘贴引导字符串</b> / <b>手动填写</b> / <b>已保存服务器列表</b> 三种连接方式。
+  入口位置不变（composer 顶 directory chip → popover → 「远程连接」动作），承接 <code>02-client-connect.html</code> 的连接逻辑，落地到 directory 选择流程内。
+</p>
+<div class="meta">
+  <span>入口 <b>directory chip → popover → 远程连接动作</b></span>
+  <span>形态 <b>居中 modal · 520px 宽</b></span>
+  <span>承接 <b>02-client-connect.html 的粘贴/手动逻辑</b></span>
+  <span>对齐方案 <b>§6.2 引导字符串 + §6.4 客户端连接流程</b></span>
+</div>
+
+<div class="view-tabs">
+  <button class="view-tab active" data-v="entry">A · 入口：popover 上的「远程连接」按钮</button>
+  <button class="view-tab" data-v="paste">B · modal 粘贴态（检测到连接信息）</button>
+  <button class="view-tab" data-v="manual">C · modal 手动填写</button>
+  <button class="view-tab" data-v="saved">D · modal 已保存服务器</button>
+  <button class="view-tab" data-v="connecting">E · 连接中 + 成功</button>
+</div>
+
+<!-- ============ 视图 A：popover 入口 ============ -->
+<div class="view-pane active" data-v="entry">
+  <h2><span class="num">A</span>Directory popover · 「远程连接」动作项</h2>
+  <p class="lede">点 composer 顶部 directory chip 弹出的 popover（与 <code>draft-directory-select.html §1</code> 一致），底部「远程连接」是入口。当前 stub 实化为：点击 → 关闭 popover → 打开「远程连接」modal。</p>
+
+  <div class="window-mock">
+    <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+    <div class="app-shell">
+      <div class="aside-region">
+        <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+        <div class="a-nav">
+          <div class="a-item active"><svg viewBox="0 0 16 16"><use href="#i-new"/></svg>新建任务</div>
+          <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg>搜索</div>
+        </div>
+      </div>
+      <div class="main-panel">
+        <div class="landing">
+          <span class="watermark">xyz</span>
+          <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+          <div class="composer">
+            <!-- popover（与 directory-select.html §1 一致，远程连接项实化） -->
+            <div class="ds-popover">
+              <span class="anno a" style="right:-12px;top:8px;transform:translateX(100%)">实化入口</span>
+              <div class="ds-search">
+                <svg viewBox="0 0 16 16"><use href="#i-search"/></svg>
+                <input placeholder="搜索工作区" readonly />
+                <span style="font:10px/1 var(--font-mono);color:var(--subtle);background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px">Esc</span>
+              </div>
+              <div class="ds-list">
+                <div class="ds-group-label">最近工作区 · 3</div>
+                <div class="ds-row">
+                  <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                  <div style="flex:1;min-width:0"><div class="ds-name">feat-system-prompt-loader</div></div>
+                </div>
+                <div class="ds-row">
+                  <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder"/></svg>
+                  <div style="flex:1;min-width:0"><div class="ds-name">refactor-arch-render-runtime</div></div>
+                </div>
+                <div class="ds-sep"></div>
+                <div class="ds-row ds-action">
+                  <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-folder-plus"/></svg>
+                  <div style="flex:1;min-width:0"><div class="ds-name">打开文件夹</div></div>
+                </div>
+                <!-- 远程连接：实化高亮 -->
+                <div class="ds-row ds-action remote" style="background:var(--accent-soft)">
+                  <svg class="ds-ic" viewBox="0 0 16 16"><use href="#i-cloud"/></svg>
+                  <div style="flex:1;min-width:0"><div class="ds-name">远程连接</div></div>
+                  <span class="badge">NEW</span>
+                  <span class="arrow">→</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-box focus">
+              <div class="meta-row">
+                <button class="chip open">
+                  <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+                  <span class="ch-name">选择工作区</span>
+                  <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+                </button>
+                <div class="meta-sep"></div>
+                <button class="chip">
+                  <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                  <span class="ch-name">选择分支</span>
+                  <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+                </button>
+              </div>
+              <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>改动点（最小侵入）</b>：现有 <code>draft-directory-select.html</code> 已预留「远程连接」动作项（标 v1 stub），本方案只把它的点击行为从 toast「v1 暂未支持」改为「关闭 popover + 打开 modal」。<b>视觉强化</b>：远程连接项用 <code>var(--accent-soft)</code> 底 + accent 图标 + NEW 角标，区别于普通 folder 列表项，引导新用户发现。
+  </div>
+</div>
+
+<!-- ============ 视图 B：modal 粘贴态 ============ -->
+<div class="view-pane" data-v="paste">
+  <h2><span class="num">B</span>Modal · 粘贴引导字符串（检测到连接信息）</h2>
+  <p class="lede">默认 tab。用户从服务端终端复制 <code>xyz-agent://connect?...</code> 或 URL+Token 文本，粘贴到框内自动解析。命中 deep link 时高亮提示并展示解析出的字段。</p>
+
+  <div class="window-mock stage blurred">
+    <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+    <div class="app-shell">
+      <div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz-agent</div></div>
+      <div class="main-panel">
+        <div class="landing">
+          <span class="watermark">xyz</span>
+          <h2 class="greeting">上午好呀</h2>
+        </div>
+      </div>
+    </div>
+    <!-- Modal -->
+    <div class="backdrop">
+      <div class="modal modal-remote">
+        <div class="m-hdr">
+          <div class="m-hdr-ic"><svg viewBox="0 0 16 16"><use href="#i-cloud"/></svg></div>
+          <div class="m-hdr-text">
+            <div class="t1">连接到远程服务器</div>
+            <div class="t2">连接后选择服务器上的项目目录开始工作</div>
+          </div>
+          <button class="m-close"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+        </div>
+
+        <div class="m-body">
+          <div class="m-tabs">
+            <button class="m-tab active">粘贴连接信息</button>
+            <button class="m-tab">手动填写</button>
+            <button class="m-tab">已保存 <span class="tab-count">2</span></button>
+          </div>
+
+          <div class="tab-pane active">
+            <div class="paste-area detected">
+              <div class="pa-label">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-clipboard"/></svg>
+                粘贴服务端输出的连接信息
+              </div>
+              <textarea readonly>xyz-agent://connect?url=ws%3A%2F%2Fmyserver.tail-7c3a.ts.net%3A3210&token=a3f8b2c1d4e5f6a7b8c9d0e1f2a3b4c5</textarea>
+              <div class="pa-detect">
+                <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                <span>已识别 · 引导字符串（deep link）</span>
+                <span class="pa-detect-detail">Tailscale · myserver.tail-7c3a.ts.net</span>
+              </div>
+            </div>
+
+            <!-- 解析预览 -->
+            <div class="parsed-preview">
+              <div class="pp-label">解析结果</div>
+              <div class="pp-row">
+                <span class="k">URL</span>
+                <span class="v url">ws://myserver.tail-7c3a.ts.net:3210</span>
+              </div>
+              <div class="pp-row">
+                <span class="k">Token</span>
+                <span class="v">a3f8b2c1d4e5f6a7b8c9d0e1f2a3b4c5</span>
+              </div>
+              <div class="pp-row">
+                <span class="k">网络</span>
+                <span class="v" style="color:var(--success)">Tailscale（plain WS · WireGuard 加密）</span>
+              </div>
+            </div>
+
+            <div class="helper-box">
+              <b>连接信息从哪来？</b><br>
+              在服务器上运行 <code>xyz-agent-runtime</code>，终端会输出三行可复制内容：[1] APP 一键连接（deep link）、[2] URL+Token、[3] QR 码。复制任一粘贴到此框。详见 <code>01-server-bootstrap.html</code>。
+            </div>
+          </div>
+        </div>
+
+        <div class="m-ftr">
+          <div class="m-ftr-info">连接后将切换到 <b>远程模式</b>，pi 运行在 <b>myserver.tail-7c3a.ts.net</b></div>
+          <button class="btn btn-ghost">取消</button>
+          <button class="btn btn-primary">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+            连接
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>粘贴框解析容错</b>：支持三种格式自动识别——① <code>xyz-agent://connect?...</code> deep link；② 单行 <code>ws://...</code> 或 <code>wss://...</code>（自动填 URL，提示粘 token）；③ 多行 <code>URL: ws://... Token: ...</code>（正则解析两行）。解析成功显示绿色检测态 + 字段预览，解析失败显示橙色提示「未识别格式，请改用手动填写」。
+  </div>
+</div>
+
+<!-- ============ 视图 C：手动填写 ============ -->
+<div class="view-pane" data-v="manual">
+  <h2><span class="num">C</span>Modal · 手动填写</h2>
+  <p class="lede">第二 tab。用户分别填 URL 和 Token，适合 deep link 解析失败、或只拿到 URL+Token 文本的情况。设备名可选（默认从系统取）。</p>
+
+  <div class="window-mock stage blurred">
+    <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+    <div class="app-shell">
+      <div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz-agent</div></div>
+      <div class="main-panel"><div class="landing"><span class="watermark">xyz</span></div></div>
+    </div>
+    <div class="backdrop">
+      <div class="modal modal-remote">
+        <div class="m-hdr">
+          <div class="m-hdr-ic"><svg viewBox="0 0 16 16"><use href="#i-cloud"/></svg></div>
+          <div class="m-hdr-text">
+            <div class="t1">连接到远程服务器</div>
+            <div class="t2">连接后选择服务器上的项目目录开始工作</div>
+          </div>
+          <button class="m-close"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+        </div>
+
+        <div class="m-body">
+          <div class="m-tabs">
+            <button class="m-tab">粘贴连接信息</button>
+            <button class="m-tab active">手动填写</button>
+            <button class="m-tab">已保存 <span class="tab-count">2</span></button>
+          </div>
+
+          <div class="tab-pane active">
+            <div class="field">
+              <label>服务器 URL <span class="f-hint">ws:// 或 wss://</span></label>
+              <input value="ws://myserver.tail-7c3a.ts.net:3210" placeholder="ws://host:port 或 wss://domain">
+            </div>
+            <div class="field">
+              <label>Token <span class="f-hint">服务端首启输出</span></label>
+              <input value="a3f8b2c1d4e5f6a7b8c9d0e1f2a3b4c5" placeholder="32 字节 hex">
+            </div>
+            <div class="field">
+              <label>设备名 <span class="f-hint">可选 · 其他设备看到的标识</span></label>
+              <input value="MacBook Pro" placeholder="MacBook Pro / iPhone 等">
+            </div>
+
+            <div class="helper-box">
+              <b>URL 格式提示</b>：Tailscale 用 <code>ws://&lt;host&gt;.ts.net:3210</code>（WireGuard 加密，无需 HTTPS）；公网反代用 <code>wss://domain</code>（标准 443 端口省略）；局域网用 <code>ws://192.168.x.x:3210</code>。
+            </div>
+          </div>
+        </div>
+
+        <div class="m-ftr">
+          <div class="m-ftr-info">连接后将切换到 <b>远程模式</b></div>
+          <button class="btn btn-ghost">取消</button>
+          <button class="btn btn-primary">连接</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 视图 D：已保存服务器 ============ -->
+<div class="view-pane" data-v="saved">
+  <h2><span class="num">D</span>Modal · 已保存服务器</h2>
+  <p class="lede">第三 tab。成功连接过的服务器自动保存（含 URL、Token、设备名、名称），下次直接点列表项重连。支持在线状态指示、重命名、删除。</p>
+
+  <div class="window-mock stage blurred">
+    <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+    <div class="app-shell">
+      <div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz-agent</div></div>
+      <div class="main-panel"><div class="landing"><span class="watermark">xyz</span></div></div>
+    </div>
+    <div class="backdrop">
+      <div class="modal modal-remote">
+        <div class="m-hdr">
+          <div class="m-hdr-ic"><svg viewBox="0 0 16 16"><use href="#i-cloud"/></svg></div>
+          <div class="m-hdr-text">
+            <div class="t1">连接到远程服务器</div>
+            <div class="t2">选择已保存的服务器，或新建连接</div>
+          </div>
+          <button class="m-close"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
+        </div>
+
+        <div class="m-body">
+          <div class="m-tabs">
+            <button class="m-tab">粘贴连接信息</button>
+            <button class="m-tab">手动填写</button>
+            <button class="m-tab active">已保存 <span class="tab-count">2</span></button>
+          </div>
+
+          <div class="tab-pane active">
+            <div class="saved-list">
+              <div class="saved-item active">
+                <div class="si-ic"><svg viewBox="0 0 16 16"><use href="#i-server"/></svg></div>
+                <div class="si-info">
+                  <div class="si-name">家用 NAS</div>
+                  <div class="si-url">ws://myserver.tail-7c3a.ts.net:3210 · Tailscale</div>
+                </div>
+                <div class="si-status online"><span class="dot"></span>在线</div>
+                <button class="si-del"><svg viewBox="0 0 16 16"><use href="#i-trash"/></svg></button>
+              </div>
+
+              <div class="saved-item">
+                <div class="si-ic"><svg viewBox="0 0 16 16"><use href="#i-server"/></svg></div>
+                <div class="si-info">
+                  <div class="si-name">公司 VPS</div>
+                  <div class="si-url">wss://xyz.example.com · 公网反代</div>
+                </div>
+                <div class="si-status offline"><span class="dot"></span>离线</div>
+                <button class="si-del"><svg viewBox="0 0 16 16"><use href="#i-trash"/></svg></button>
+              </div>
+            </div>
+
+            <button class="btn btn-ghost" style="width:100%;margin-top:14px">
+              <svg viewBox="0 0 24 24" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              添加新服务器
+            </button>
+
+            <div class="helper-box">
+              <b>在线状态检测</b>：进入此 tab 时对每个已保存服务器做 TCP probe（连端口），实时显示在线/离线。离线项点击会重试连接。<b>Token 安全</b>：保存在 Keychain（Mac）/ Credential Manager（Win），不明文落盘。
+            </div>
+          </div>
+        </div>
+
+        <div class="m-ftr">
+          <div class="m-ftr-info">连接 <b>家用 NAS</b> · 上次访问 2 小时前</div>
+          <button class="btn btn-ghost">取消</button>
+          <button class="btn btn-primary">连接</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 视图 E：连接中 + 成功 ============ -->
+<div class="view-pane" data-v="connecting">
+  <h2><span class="num">E</span>连接中 → 成功（关闭 modal，进入远程会话）</h2>
+  <p class="lede">点「连接」后 modal 内显示连接进度（WS 握手 + token 认证 + 拉取 initial state）。成功后关闭 modal，directory chip 自动更新为远程服务器的项目目录，composer 保持 focus。</p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:14px">
+    <!-- 连接中 -->
+    <div>
+      <h3 style="margin-top:0">连接中</h3>
+      <div class="window-mock stage blurred">
+        <div class="app-shell" style="height:380px">
+          <div class="aside-region"></div>
+          <div class="main-panel"><div class="landing"><span class="watermark">xyz</span></div></div>
+        </div>
+        <div class="backdrop">
+          <div class="modal modal-remote" style="width:420px">
+            <div class="m-hdr">
+              <div class="m-hdr-ic"><svg viewBox="0 0 16 16"><use href="#i-cloud"/></svg></div>
+              <div class="m-hdr-text"><div class="t1">连接中</div><div class="t2">myserver.tail-7c3a.ts.net:3210</div></div>
+            </div>
+            <div class="m-body">
+              <div class="conn-progress">
+                <div class="spinner"></div>
+                <div class="cp-text">正在验证 token + 拉取会话列表...<br><b>ws://myserver.tail-7c3a.ts.net:3210</b></div>
+              </div>
+            </div>
+            <div class="m-ftr">
+              <div class="m-ftr-info">WS 握手 ✓ · token 认证 ✓ · 拉 initial state ...</div>
+              <button class="btn btn-ghost">取消</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 连接成功 -->
+    <div>
+      <h3 style="margin-top:0">连接成功（modal 关闭后）</h3>
+      <div class="window-mock">
+        <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+        <div class="app-shell" style="height:380px">
+          <div class="aside-region">
+            <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+          </div>
+          <div class="main-panel">
+            <div class="landing" style="padding-top:60px">
+              <span class="watermark">xyz</span>
+              <h2 class="greeting" style="font-size:18px">已连接 · 家用 NAS</h2>
+              <!-- 连接成功状态条 -->
+              <div style="background:color-mix(in oklch,var(--success) 12%,transparent);border:1px solid color-mix(in oklch,var(--success) 30%,transparent);
+                border-radius:var(--radius);padding:10px 14px;margin-bottom:18px;display:flex;align-items:center;gap:10px;font-size:12px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                <span style="color:var(--success);font-weight:600">远程模式</span>
+                <span style="color:var(--muted);font-family:var(--font-mono)">myserver.tail-7c3a.ts.net:3210 · 延迟 45ms</span>
+              </div>
+              <div class="composer" style="max-width:600px">
+                <div class="composer-box focus">
+                  <div class="meta-row">
+                    <button class="chip open">
+                      <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+                      <span class="ch-name">~/projects/xyz-agent</span>
+                      <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+                    </button>
+                    <div class="meta-sep"></div>
+                    <button class="chip branch-chip">
+                      <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                      <span class="ch-name">feat-remote-use</span>
+                      <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+                    </button>
+                  </div>
+                  <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么..."></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>连接成功后的状态变化</b>：① directory chip 自动填入服务器上的项目目录（如 <code>~/projects/xyz-agent</code>），用户可再点 chip 在<b>服务器的</b>目录树里切换（走 <code>dir.list</code> RPC）；② landing 顶部显示绿色「远程模式」状态条；③ composer 保持 focus 不打断输入。<b>失败态</b>：token 错误显示红色提示可重试，网络不通显示「检查 Tailscale 是否连接 / 服务器是否在线」。
+  </div>
+</div>
+
+<hr>
+<h2><span class="num">流程</span>完整路径与状态机</h2>
+<p class="lede">从 directory chip 到远程连接成功的完整交互路径：</p>
+
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px;margin-top:14px;font:12.5px/1.7 var(--font-mono);color:var(--muted)">
+  <div><span style="color:var(--accent)">①</span> composer 顶 directory chip（空态「选择工作区」）</div>
+  <div>　<span style="color:var(--subtle)">↓ 点击</span></div>
+  <div><span style="color:var(--accent)">②</span> directory popover（搜索 + 最近 + 动作）</div>
+  <div>　<span style="color:var(--subtle)">↓ 点「远程连接」动作（v1 stub 实化）</span></div>
+  <div><span style="color:var(--accent)">③</span> 关闭 popover，打开「远程连接」modal（landing 模糊背景）</div>
+  <div>　<span style="color:var(--subtle)">↓ modal 内三 tab：粘贴 / 手动 / 已保存</span></div>
+  <div><span style="color:var(--accent)">④</span> 粘贴引导字符串 → 解析 URL+Token（或手动填，或选已保存）</div>
+  <div>　<span style="color:var(--subtle)">↓ 点「连接」</span></div>
+  <div><span style="color:var(--accent)">⑤</span> WS 握手 + token 认证 + initial state（modal 内进度）</div>
+  <div>　<span style="color:var(--success)">↓ 成功</span>　<span style="color:var(--danger)">↓ 失败</span></div>
+  <div><span style="color:var(--success)">⑥a</span> 关闭 modal，chip 填入远程目录，显示「远程模式」状态条</div>
+  <div><span style="color:var(--danger)">⑥b</span> modal 内显示错误，可重试 / 切换 tab / 取消</div>
+</div>
+
+<script>
+  // 视图切换
+  document.querySelectorAll('.view-tab').forEach(t=>{
+    t.addEventListener('click',()=>{
+      document.querySelectorAll('.view-tab').forEach(x=>x.classList.remove('active'));
+      document.querySelectorAll('.view-pane').forEach(x=>x.classList.remove('active'));
+      t.classList.add('active');
+      document.querySelector(`.view-pane[data-v="${t.dataset.v}"]`).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
