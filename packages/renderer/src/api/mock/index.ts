@@ -22,7 +22,7 @@ import type {
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
-  ProviderSource, ProviderImportPreview, ProviderImportResult,
+  ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -711,15 +711,36 @@ export const config = {
     await sleep(TIMING.ack)
     return []
   },
-  /** W2：预览导入 provider。mock 返回空 preview（无源配置可解析），importId 为空占位 */
-  async previewImportProviders(_source: ProviderSource): Promise<{ importId: string; preview: ProviderImportPreview }> {
+  /** W2：预览导入 provider。mock 返回示例 preview，让 preview→apply 演示链路完整可见。 */
+  async previewImportProviders(source: ProviderSource): Promise<{ importId: string; preview: ProviderImportPreview }> {
     await sleep(TIMING.ack)
-    return { importId: '', preview: { source: _source, providers: [] } }
+    const preview: ProviderImportPreview = {
+      source,
+      providers: [{
+        id: 'demo-provider',
+        name: 'Demo Provider',
+        protocol: 'openai-completions',
+        modelCount: 1,
+        apiKeyExtracted: true,
+        conflict: 'none',
+        warnings: [],
+      }],
+    }
+    return { importId: 'mock-import-id', preview }
   },
-  /** W2：应用导入。mock 返回空结果（无 provider 可导入） */
+  /** W2：应用导入。mock 触发广播让前端演示看到列表刷新（模拟 runtime apply 后 broadcastProviderList）。 */
   async applyImportProviders(_importId: string, _selectedIds: string[]): Promise<{ result: ProviderImportResult }> {
     await sleep(TIMING.ack)
-    return { result: { source: 'pi' as ProviderSource, imported: [], failedCount: 0 } }
+    // mock 演示：追加一个示例导入 provider 让列表刷新可见
+    const mockImported: ProviderImportedItem = {
+      id: 'imported-demo',
+      name: 'Imported Demo',
+      status: 'imported',
+    }
+    // 这里不真的改 fixtureProviders（mock preview 返回空，无真实 selectedIds 对应），
+    // 但触发广播让前端演示看到列表刷新（模拟 runtime apply 后 broadcastProviderList）
+    broadcastProviders()
+    return { result: { source: 'pi' as ProviderSource, imported: [mockImported], failedCount: 0 } }
   },
   /** ADR-0020 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
   async setAgentDirs(dirs: string[]) {

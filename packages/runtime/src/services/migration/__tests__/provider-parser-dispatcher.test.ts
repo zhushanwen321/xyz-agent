@@ -127,4 +127,25 @@ describe('parseProviders dispatcher', () => {
       expect(out).toBeNull()
     }
   })
+
+  // ── B1：parser 抛异常时 dispatcher 转为 { providers: [], parseError }，不中断调用方 ──
+  it('B1: 解析器抛异常 → dispatcher 兜底返回 { providers: [], parseError }，不向上抛', () => {
+    vi.mocked(parsePiProviders).mockImplementation(() => {
+      throw new Error('unexpected parser crash')
+    })
+
+    const out = parseProviders('pi', '/home/test')
+
+    expect(out).not.toBeNull()
+    expect(out!.providers).toEqual([])
+    expect(out!.parseError).toMatch(/failed to parse pi/)
+    expect(out!.parseError).toContain('unexpected parser crash')
+  })
+
+  // ── B1b：未知 source → null（与「源未安装」同处理）────────────────
+  it('B1b: 未知 source（编译期 union 之外）→ 返回 null', () => {
+    // 用 as any 模拟运行时非法 source（WS 异常 payload 场景）
+    const out = parseProviders('unknown' as never, '/home/test')
+    expect(out).toBeNull()
+  })
 })

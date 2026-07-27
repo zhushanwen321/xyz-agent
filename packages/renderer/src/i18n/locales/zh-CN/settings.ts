@@ -103,6 +103,7 @@ export default {
     importFromAgents: '从其他 Agent 导入',
     importPreview: {
       title: '从 {source} 导入 Provider',
+      description: '勾选要导入的 provider，冲突项会跳过',
       confirm: '导入选中',
       cancel: '取消',
       keyNotExtracted: 'API Key 未提取',
@@ -111,6 +112,10 @@ export default {
       statConflict: '{count} 个冲突',
       statKeyMissing: '{count} 个 key 未提取',
       warnings: '警告',
+      // B2/W7：源配置解析期致命错误横幅（preview?.parseError 触发，不阻断已解析 providers 导入）
+      parseError: '源配置解析出错（部分 provider 可能仍可导入）：{message}',
+      // B2/W7：顶层警告（preview?.warnings 数组，顶部展示「N 个 provider 因协议不支持被丢弃」等）
+      topWarnings: '{count} 个 provider 因协议不支持等原因被跳过',
     },
     importToast: {
       success: '导入 {count} 个 provider',

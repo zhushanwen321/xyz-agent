@@ -26,13 +26,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-/** 4 个可导入的源 agent（与 ProviderSource 对齐） */
-const SOURCES: ReadonlyArray<{ id: ProviderSource; label: string }> = [
-  { id: 'pi', label: 'Pi' },
-  { id: 'zcode', label: 'ZCode' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude', label: 'Claude Code' },
-]
+/** 4 个可导入的源 agent（与 ProviderSource 对齐）。label 走 i18n（settings.loadPaths.sourceLabels.<id>），避免硬编码重复。 */
+const SOURCES: ReadonlyArray<ProviderSource> = ['pi', 'zcode', 'codex', 'claude']
 
 /** Popover 受控开关：选中后立即关闭 */
 const open = ref(false)
@@ -56,11 +51,11 @@ function onSelect(source: ProviderSource): void {
     <PopoverContent>
       <PopoverActionItem
         v-for="s in SOURCES"
-        :key="s.id"
-        :test-id="`import-source-${s.id}`"
-        @click="onSelect(s.id)"
+        :key="s"
+        :test-id="`import-source-${s}`"
+        @click="onSelect(s)"
       >
-        {{ s.label }}
+        {{ t('settings.loadPaths.sourceLabels.' + s) }}
       </PopoverActionItem>
     </PopoverContent>
   </Popover>

@@ -103,6 +103,7 @@ export default {
     importFromAgents: 'Import from Agents',
     importPreview: {
       title: 'Import Providers from {source}',
+      description: 'Select providers to import; duplicates will be skipped',
       confirm: 'Import selected',
       cancel: 'Cancel',
       keyNotExtracted: 'API Key not extracted',
@@ -111,6 +112,10 @@ export default {
       statConflict: '{count} conflict',
       statKeyMissing: '{count} key missing',
       warnings: 'Warnings',
+      // B2/W7: source config parse-time fatal error banner (preview?.parseError; does not block import of parsed providers)
+      parseError: 'Source config parse error (some providers may still be importable): {message}',
+      // B2/W7: top-level warnings (preview?.warnings array; shows "N providers skipped due to unsupported protocol")
+      topWarnings: '{count} provider(s) skipped due to unsupported protocol or other reasons',
     },
     importToast: {
       success: 'Imported {count} providers',

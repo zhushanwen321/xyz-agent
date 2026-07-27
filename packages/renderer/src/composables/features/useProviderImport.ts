@@ -8,11 +8,15 @@
  *   onImportSelect(source)
  *     → config.previewImportProviders(source)
  *     → 成功：存 importId + importPreview，转入 'previewing'
- *     → 失败：toast 报错，回 'idle'
+ *     → 失败（envelope error 或 transport reject）：toast 报错，回 'idle'
  *   onImportConfirm(selectedIds)
  *     → config.applyImportProviders(importId, selectedIds)
  *     → 成功：toast 导入/跳过/失败统计 + key 缺失提示，复位 idle
- *     → 失败：保持 'previewing' 允许重试
+ *     → 失败（envelope error 或 transport reject）：保持 'previewing' 允许重试
+ *
+ * 注意：config.previewImportProviders/applyImportProviders 在 transport 层（请求超时、
+ * WebSocket 断连 pending.rejectAll、传输发送失败）会 reject Promise，故两个 async 函数
+ * 都用 try/catch 包裹 await，避免 importState 卡死在 'loading-preview'/'applying'。
  *
  * 依赖方向：@xyz-agent/shared 类型 + @/api(config) + useToast + i18n。
  */
@@ -36,22 +40,30 @@ export function useProviderImport() {
   const importPreview = ref<ProviderImportPreview | null>(null)
   const importError = ref('')
 
-  /** 选中源 agent → 拉 preview */
+  /** 选中源 agent → 拉 preview（transport reject 时回 idle + toast） */
   async function onImportSelect(source: ProviderSource): Promise<void> {
     importSource.value = source
     importState.value = 'loading-preview'
     importError.value = ''
-    const result = await config.previewImportProviders(source)
-    if ('error' in result) {
-      importError.value = result.error.message
+    try {
+      const result = await config.previewImportProviders(source)
+      if ('error' in result) {
+        importError.value = result.error.message
+        importState.value = 'idle'
+        toastError(result.error.message)
+        return
+      }
+      importId.value = result.importId
+      importPreview.value = result.preview
+      importError.value = ''
+      importState.value = 'previewing'
+    } catch (e) {
+      // transport 层 reject（请求超时 / WebSocket 断连 pending.rejectAll / 传输发送失败）
+      const msg = e instanceof Error ? e.message : String(e)
+      importError.value = msg
       importState.value = 'idle'
-      toastError(result.error.message)
-      return
+      toastError(msg)
     }
-    importId.value = result.importId
-    importPreview.value = result.preview
-    importError.value = ''
-    importState.value = 'previewing'
   }
 
   /** 确认导入 → apply（失败保持对话框开允许重试） */
@@ -59,26 +71,35 @@ export function useProviderImport() {
     if (!importId.value) return
     importState.value = 'applying'
     importError.value = ''
-    const result = await config.applyImportProviders(importId.value, selectedIds)
-    if ('error' in result) {
-      importError.value = result.error.message
+    try {
+      const result = await config.applyImportProviders(importId.value, selectedIds)
+      if ('error' in result) {
+        importError.value = result.error.message
+        importState.value = 'previewing'
+        return
+      }
+      const { imported, failedCount } = result.result
+      const ok = imported.filter((i) => i.status === 'imported').length
+      toastInfo(t('settings.provider.importToast.success', { count: ok }))
+      if (failedCount > 0) {
+        toastError(t('settings.provider.importToast.failed', { count: failedCount }))
+      }
+      // 若有 key 未提取的导入项，额外提示需手动补
+      const keyMissing = importPreview.value?.providers.some(
+        (p) => selectedIds.includes(p.id) && !p.apiKeyExtracted,
+      )
+      if (keyMissing) {
+        toastInfo(t('settings.provider.importToast.partialKeyMissing'))
+      }
+      resetImportState()
+    } catch (e) {
+      // transport 层 reject（请求超时 / WebSocket 断连 pending.rejectAll / 传输发送失败）：
+      // 回 previewing 保留对话框允许重试 + toast
+      const msg = e instanceof Error ? e.message : String(e)
+      importError.value = msg
       importState.value = 'previewing'
-      return
+      toastError(msg)
     }
-    const { imported, failedCount } = result.result
-    const ok = imported.filter((i) => i.status === 'imported').length
-    toastInfo(t('settings.provider.importToast.success', { count: ok }))
-    if (failedCount > 0) {
-      toastError(t('settings.provider.importToast.failed', { count: failedCount }))
-    }
-    // 若有 key 未提取的导入项，额外提示需手动补
-    const keyMissing = importPreview.value?.providers.some(
-      (p) => selectedIds.includes(p.id) && !p.apiKeyExtracted,
-    )
-    if (keyMissing) {
-      toastInfo(t('settings.provider.importToast.partialKeyMissing'))
-    }
-    resetImportState()
   }
 
   /** 预览弹窗开关受控：关闭（非 applying）时复位导入态 */

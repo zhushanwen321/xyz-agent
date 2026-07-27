@@ -22,7 +22,7 @@ interface ZcodeModelDef {
   name?: string
   reasoning?: { enabled?: boolean; variants?: string[]; defaultVariant?: string }
   limit?: { context?: number; output?: number }
-  modalities?: { input?: string[]; output?: string[] }
+  modalities?: { input?: Array<'text' | 'image'>; output?: string[] }
 }
 
 interface ZcodeProviderEntry {
@@ -30,7 +30,6 @@ interface ZcodeProviderEntry {
   /** 'anthropic' | 'openai' | 'openai-compatible' | 其他 */
   kind?: string
   enabled?: boolean
-  source?: string
   options?: { apiKey?: string; baseURL?: string }
   models?: Record<string, ZcodeModelDef>
 }
@@ -67,7 +66,8 @@ export function parseZcodeProviders(homeDir: string): ParseResult | null {
 
   let config: ZcodeConfigJson
   try {
-    config = JSON.parse(readFileSync(configPath, 'utf8')) as ZcodeConfigJson
+    // B1：JSON.parse('null') 成功返回 null，需用 ?? {} 兜底（否则下方 .provider 崩）
+    config = (JSON.parse(readFileSync(configPath, 'utf8')) as ZcodeConfigJson | null) ?? {}
   } catch (e) {
     return {
       providers: [],
@@ -76,52 +76,77 @@ export function parseZcodeProviders(homeDir: string): ParseResult | null {
   }
 
   const providers: ParsedProvider[] = []
-  for (const [id, entry] of Object.entries(config.provider ?? {})) {
-    const warnings: string[] = []
+  // S5：顶层 warnings 收集器——丢弃的 provider（未知 kind / 坏条目）的提示进 topWarnings
+  const topWarnings: string[] = []
+  for (const [id, entryRaw] of Object.entries(config.provider ?? {})) {
+    // B1：单条目 try/catch，单个坏条目（null/非对象）不中断整体解析
+    try {
+      // B1：null/非对象条目显式跳过（?? {} 仅防 crash，但空对象会走 unknown kind 路径污染 warnings）
+      if (entryRaw === null || typeof entryRaw !== 'object') {
+        topWarnings.push(`provider ${id} skipped due to malformed entry: not an object (${entryRaw === null ? 'null' : typeof entryRaw})`)
+        continue
+      }
+      const entry = (entryRaw as ZcodeProviderEntry) ?? {}
+      const warnings: string[] = []
 
-    // kind 映射到 pi 协议
-    let api: string
-    if (entry.kind === 'anthropic') {
-      api = 'anthropic-messages'
-    } else if (entry.kind && entry.kind.startsWith('openai')) {
-      // openai / openai-compatible 都映射到 openai-completions。
-      // 注：openai-compatible 可能实际是 responses 协议，但无法从 kind 区分，默认 completions + warning。
-      api = 'openai-completions'
-      warnings.push(`kind=${entry.kind} mapped to openai-completions, verify if responses protocol is needed`)
-    } else {
-      // 未知 kind 跳过（避免产出无法路由的 provider）
-      warnings.push(`provider ${id}: unknown kind ${entry.kind ?? '(undefined)'}, skipped`)
-      continue
-    }
+      // kind 映射到 pi 协议
+      let api: string
+      if (entry.kind === 'anthropic') {
+        api = 'anthropic-messages'
+      } else if (entry.kind && entry.kind.startsWith('openai')) {
+        // openai / openai-compatible 都映射到 openai-completions。
+        // 注：openai-compatible 可能实际是 responses 协议，但无法从 kind 区分，默认 completions + warning。
+        api = 'openai-completions'
+        warnings.push(`kind=${entry.kind} mapped to openai-completions, verify if responses protocol is needed`)
+      } else {
+        // 未知 kind 跳过（避免产出无法路由的 provider）
+        // S5：warning 进 topWarnings（原局部 warnings + continue 会丢字符串，用户无感知）
+        topWarnings.push(`provider ${id}: unknown kind ${entry.kind ?? '(undefined)'}, skipped`)
+        continue
+      }
 
-    // key 提取：只 config.json 明文（不读 credentials.json）
-    const apiKey = entry.options?.apiKey
-    const apiKeyExtracted = !!apiKey
+      // key 提取：只 config.json 明文（不读 credentials.json）
+      const apiKey = entry.options?.apiKey
+      const apiKeyExtracted = !!apiKey
 
-    // models 转换：ZCode model def → PiModelDefinition（for...of 风格，与同文件 line 79 一致）
-    const models: PiModelDefinition[] = []
-    for (const [modelId, m] of Object.entries(entry.models ?? {})) {
-      models.push({
-        id: modelId,
-        name: m.name ?? modelId,
-        contextWindow: m.limit?.context,
-        maxTokens: m.limit?.output,
-        reasoning: m.reasoning?.enabled,
-        thinkingLevelMap: inferThinkingLevelMap(m.reasoning),
+      // models 转换：ZCode model def → PiModelDefinition（for...of 风格，与同文件一致）
+      const models: PiModelDefinition[] = []
+      for (const [modelId, mRaw] of Object.entries(entry.models ?? {})) {
+        // B1：model 条目 null/非对象用 ?? {} 兜底
+        const m = (mRaw as ZcodeModelDef | null) ?? {}
+        models.push({
+          id: modelId,
+          name: m.name ?? modelId,
+          contextWindow: m.limit?.context,
+          maxTokens: m.limit?.output,
+          reasoning: m.reasoning?.enabled,
+          thinkingLevelMap: inferThinkingLevelMap(m.reasoning),
+          // S8：modalities.input 映射到 PiModelDefinition.input（直传 ['text','image'] 数组）
+          input: m.modalities?.input,
+        })
+      }
+
+      providers.push({
+        name: entry.name ?? id,
+        api,
+        baseUrl: entry.options?.baseURL,
+        apiKey,
+        // S7：传播 enabled 字段（ZCode 禁用的 provider 导入后保持禁用；undefined 原样透传）
+        enabled: entry.enabled,
+        models,
+        _sourceName: id,
+        _apiKeyExtracted: apiKeyExtracted,
+        _warnings: warnings,
       })
+    } catch (e) {
+      topWarnings.push(
+        `provider ${id} skipped due to malformed entry: ${e instanceof Error ? e.message : String(e)}`,
+      )
     }
-
-    providers.push({
-      name: entry.name ?? id,
-      api,
-      baseUrl: entry.options?.baseURL,
-      apiKey,
-      models,
-      _sourceName: id,
-      _apiKeyExtracted: apiKeyExtracted,
-      _warnings: warnings,
-    })
   }
 
-  return { providers }
+  return {
+    providers,
+    warnings: topWarnings.length > 0 ? topWarnings : undefined,
+  }
 }

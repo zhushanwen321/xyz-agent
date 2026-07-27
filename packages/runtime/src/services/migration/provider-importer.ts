@@ -15,7 +15,7 @@
  *     consumePreview(importId) 取完整配置（过期则 PREVIEW_EXPIRED）
  *     → apply 时再次查冲突（preview 后 models.json 可能被改）
  *     → 逐个 upsertProvider（剥离 _ 前缀元数据）
- *     → apply 后立即 deletePreview（一次性，防 importId 复用）
+ *     → 全成功才删缓存（一次性）；部分失败保留缓存供重试（W4/W5）
  *     → 返回 ProviderImportResult（imported/skipped/failed 三态条目 + failedCount）
  *
  * provider id 语义：_sourceName 是源里的 provider 名（如 Pi 的 'deepseek-router'），
@@ -97,21 +97,44 @@ export function previewImport(
   // 日志只记 id/source/count（不记 apiKey，DM1）
   console.log(`[provider-importer] preview source=${source} importId=${importId} providerCount=${items.length}`)
 
-  return { importId, preview: { source, providers: items } }
+  return {
+    importId,
+    preview: {
+      source,
+      providers: items,
+      // B2：透出 parseError 和顶层 warnings（即使 providers 非空，parseError 也可能存在——
+      // 部分损坏场景）。ProviderImportPreview 的 parseError/warnings 是可选字段（shared SSOT）。
+      ...(parsed.parseError ? { parseError: parsed.parseError } : {}),
+      ...(parsed.warnings?.length ? { warnings: parsed.warnings } : {}),
+    },
+  }
 }
 
 /**
  * Step2：应用导入（写入 models.json）。
  *
- * 从缓存取完整配置 → apply 时再次查冲突 → 逐个 upsertProvider（剥离 _ 元数据）→ 删缓存。
+ * 从缓存取完整配置 → apply 时再次查冲突 → 逐个 upsertProvider（剥离 _ 元数据）→ 全成功才删缓存。
+ *
+ * W1：入口加输入校验（防 WS 异常 payload 导致 crash）。
+ * W4/W5：部分失败保留缓存供用户重试（重试时 conflict 检测会让已导入的 skipped）；全成功才删。
+ * S6：selectedIds 中既未 imported 也未 skipped/failed 的 id（不在 preview 里的）补一条 failed 条目。
  *
  * @param importId Step1 previewImport 返回的 importId。
  * @param selectedIds 用户勾选导入的 provider id 列表（对应 _sourceName）。
- * @returns 成功 { result }；缓存过期/不存在 { error: { code: 'PREVIEW_EXPIRED' } }。
+ * @returns 成功 { result }；缓存过期/不存在 { error: { code: 'PREVIEW_EXPIRED' } }；
+ *          入参非法 { error: { code: 'INVALID_REQUEST' } }。
  *
  * 安全：upsertProvider 写入的 config 不含 _ 前缀元数据（对象解构剥离）；apiKey 明文从缓存透传。
  */
 export function applyImport(importId: string, selectedIds: string[]): ApplyImportSuccess | ImportError {
+  // W1：输入校验（防 WS 异常 payload 导致 crash）
+  if (typeof importId !== 'string' || !importId.trim()) {
+    return { error: { code: 'INVALID_REQUEST', message: 'importId is required' } }
+  }
+  if (!Array.isArray(selectedIds) || !selectedIds.every((id) => typeof id === 'string')) {
+    return { error: { code: 'INVALID_REQUEST', message: 'selectedIds must be a string array' } }
+  }
+
   const entry = consumePreview(importId)
   if (!entry) {
     return { error: { code: 'PREVIEW_EXPIRED', message: '预览已过期或不存在，请重新检测' } }
@@ -148,8 +171,21 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
     }
   }
 
-  // apply 后立即删缓存（一次性，防 importId 复用）
-  deletePreview(importId)
+  // S6：selectedIds 中不在 imported 条目里的 id（既没 imported 也没 skipped/failed，
+  // 即不在 preview 里的）补一条 failed 条目，让用户有反馈
+  const handledIds = new Set(imported.map((i) => i.id))
+  for (const id of selectedIds) {
+    if (!handledIds.has(id)) {
+      imported.push({ id, name: id, status: 'failed', reason: 'not found in preview' })
+      failedCount++
+    }
+  }
+
+  // W4/W5：全成功才删缓存（一次性）；部分失败保留缓存供用户重试
+  // （重试时 conflict 检测会让已导入的 skipped，未导入的可继续尝试）
+  if (failedCount === 0) {
+    deletePreview(importId)
+  }
 
   // 日志只记 id/source/status/count（不记 apiKey，DM1）
   const importedCount = imported.filter((i) => i.status === 'imported').length

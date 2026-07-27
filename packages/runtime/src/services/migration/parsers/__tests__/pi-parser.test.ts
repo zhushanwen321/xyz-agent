@@ -95,6 +95,9 @@ describe('parsePiProviders', () => {
     expect(result!.providers).toHaveLength(0)
     // gemini 被丢弃不产生 parseError（parseError 只在整体性错误）
     expect(result!.parseError).toBeUndefined()
+    // S5：丢弃的 provider 通过顶层 warnings 暴露给用户
+    expect(result!.warnings).toBeDefined()
+    expect(result!.warnings!.some((w) => w.includes('google-generative-ai') && w.includes('not supported'))).toBe(true)
   })
 
   // ── T7：models.json JSON 损坏 → parseError ─────────────────────────
@@ -166,5 +169,63 @@ describe('parsePiProviders', () => {
     expect(result).not.toBeNull()
     expect(result!.providers).toHaveLength(0)
     expect(result!.parseError).toMatch(/models\.json not found/)
+  })
+
+  // ── B1：models.json 整体 null（JSON.parse('null')）→ 不 crash，providers=[] ──
+  it('B1: models.json 内容为 null（JSON.parse 成功返回 null）→ 不 crash，providers=[]', () => {
+    writePiAgentFile('models.json', 'null')
+
+    const result = parsePiProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(0)
+    // 整体 null 不进 parseError（已被 ?? {} 兜底），仅产出空 providers
+    expect(result!.parseError).toBeUndefined()
+  })
+
+  // ── B1：单个 entry 为 null → 不中断，其他 provider 正常解析，坏条目进 topWarnings ──
+  it('B1: providers 含 null/非对象条目 → 坏条目跳过进 warnings，其他 provider 正常解析', () => {
+    const config = {
+      providers: {
+        bad: null,
+        good: {
+          name: 'Good',
+          api: 'openai-completions',
+          apiKey: 'sk-good',
+          models: [{ id: 'm', name: 'm' }],
+        },
+      },
+    }
+    writePiAgentFile('models.json', JSON.stringify(config))
+
+    const result = parsePiProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    expect(result!.providers[0]._sourceName).toBe('good')
+    // 坏条目进 topWarnings（不在 per-provider _warnings，因为是丢弃项）
+    expect(result!.warnings).toBeDefined()
+    expect(result!.warnings!.some((w) => w.includes('provider bad') && w.includes('malformed'))).toBe(true)
+  })
+
+  // ── S5：未知协议 → providers=[] 且 topWarnings 含 unknown protocol ──
+  it('S5: 只有未知协议 provider → providers=[]，warnings 含 unknown protocol', () => {
+    const config = {
+      providers: {
+        weird: {
+          name: 'Weird',
+          api: 'some-unknown-protocol',
+          models: [{ id: 'm', name: 'm' }],
+        },
+      },
+    }
+    writePiAgentFile('models.json', JSON.stringify(config))
+
+    const result = parsePiProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(0)
+    expect(result!.warnings).toBeDefined()
+    expect(result!.warnings!.some((w) => w.includes('unknown protocol some-unknown-protocol'))).toBe(true)
   })
 })

@@ -44,7 +44,8 @@ export function parseClaudeProviders(homeDir: string): ParseResult | null {
 
   let settings: ClaudeSettings
   try {
-    settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as ClaudeSettings
+    // B1：JSON.parse('null') 成功返回 null，需用 ?? {} 兜底（否则 settings.env 崩）
+    settings = ((JSON.parse(readFileSync(settingsPath, 'utf8')) as ClaudeSettings | null) ?? {}) as ClaudeSettings
   } catch (e) {
     return {
       providers: [],

@@ -46,10 +46,14 @@ export interface ParsedProvider extends PiProviderConfig {
  *
  * - providers：解析出的 provider 列表（含 apiKey 明文 + _ 元数据）。
  * - parseError：解析期致命错误（如文件格式损坏）。有 parseError 时 providers 可能为空或部分。
+ * - warnings：顶层警告（如「N 个 provider 因协议不支持被丢弃」「provider X 因格式错误跳过」），
+ *   preview 阶段整体展示给用户，与 per-provider `_warnings`（单 provider 维度）区分。
  */
 export interface ParseResult {
   providers: ParsedProvider[]
   parseError?: string
+  /** 顶层警告（如「N 个 provider 因协议不支持被丢弃」），preview 阶段展示给用户。 */
+  warnings?: string[]
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -91,15 +95,26 @@ export function parseClaudeProviders(homeDir: string): ParseResult | null {
 /**
  * 解析器 dispatcher：按 source 路由到对应的解析器。
  *
+ * B1：try/catch 兜底——任何 parser 抛异常都转为 `{ providers: [], parseError }` 而非中断
+ * 调用方（preview/apply）。未知 source 返回 null（与「源未安装」同处理，前端显示提示）。
+ *
  * @param source 迁移源（pi/zcode/codex/claude）。
  * @param homeDir 用户主目录（绝对路径）。
  * @returns 解析结果；源目录不存在返回 null（前端据此显示「源未安装」）。
  */
 export function parseProviders(source: ProviderSource, homeDir: string): ParseResult | null {
-  switch (source) {
-    case 'pi': return parsePiProviders(homeDir)
-    case 'zcode': return parseZcodeProviders(homeDir)
-    case 'codex': return parseCodexProviders(homeDir)
-    case 'claude': return parseClaudeProviders(homeDir)
+  try {
+    switch (source) {
+      case 'pi': return parsePiProviders(homeDir)
+      case 'zcode': return parseZcodeProviders(homeDir)
+      case 'codex': return parseCodexProviders(homeDir)
+      case 'claude': return parseClaudeProviders(homeDir)
+      default: return null // 未知 source 返回 null（与「源未安装」同处理，前端显示提示）
+    }
+  } catch (e) {
+    return {
+      providers: [],
+      parseError: `failed to parse ${source}: ${e instanceof Error ? e.message : String(e)}`,
+    }
   }
 }

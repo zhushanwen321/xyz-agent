@@ -189,4 +189,70 @@ wire_api = "weird"
     expect(provider.api).toBe('openai-completions')
     expect(provider._warnings.some((w) => w.includes('unknown wire_api'))).toBe(true)
   })
+
+  // ── B1：单个 model_providers entry 为非对象（toml 表值为非表）──
+  //       无法在 TOML 表达「entry=null」（TOML 表的值只能是标量/表/数组），
+  //       这里改测：TOML 损坏但能解析（如空表）—— 空表视为 mp={}，wire_api 缺失 → defaulted warning
+  it('B1: model_providers.<id> 为空表（mp={}）→ 不 crash，defaulted to openai-completions', () => {
+    const toml = `model = "gpt-5.5"
+[model_providers.empty]
+`
+    writeCodexConfig(toml)
+
+    const result = parseCodexProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    expect(result!.providers[0].api).toBe('openai-completions')
+    expect(result!.providers[0]._warnings.some((w) => w.includes('unknown wire_api'))).toBe(true)
+  })
+
+  // ── W3：auth.json 损坏 → 每个 provider 的 _warnings 含 auth 解析失败提示 ──
+  it('W3: auth.json 损坏 → 每个 codex provider 的 _warnings 含 auth.json parse failed 提示', () => {
+    const toml = `model = "gpt-5.5"
+[model_providers.openai-default]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+[model_providers.custom]
+name = "Router"
+base_url = "http://x/v1"
+env_key = "ROUTER_KEY"
+wire_api = "responses"
+`
+    const configPath = writeCodexConfig(toml)
+    writeFileSync(join(home, '.codex', 'auth.json'), '{ broken')
+    vi.stubEnv('ROUTER_KEY', 'sk-fake-test')
+    expect(existsSync(configPath)).toBe(true)
+
+    const result = parseCodexProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(2)
+    // 每个 provider 的 _warnings 含 auth.json parse failed 提示
+    for (const p of result!.providers) {
+      expect(p._warnings.some((w) => w.includes('auth.json parse failed') && w.includes('OPENAI key fallback unavailable'))).toBe(true)
+    }
+  })
+
+  // ── B1：auth.json 内容为 null（JSON.parse('null') 成功）→ 不 crash，回退不可用 ──
+  it('B1: auth.json 内容为 null → 不 crash，无 OPENAI_API_KEY 回退（authData={}）', () => {
+    const toml = `model = "gpt-5.5"
+[model_providers.openai-default]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+`
+    writeCodexConfig(toml)
+    // auth.json 内容为字面 null（JSON.parse 成功返回 null，曾导致 authData.OPENAI_API_KEY 崩）
+    writeFileSync(join(home, '.codex', 'auth.json'), 'null')
+
+    const result = parseCodexProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    // null auth.json：未崩溃，apiKeyExtracted=false（无回退 key）
+    expect(result!.providers[0]._apiKeyExtracted).toBe(false)
+    expect(result!.providers[0].apiKey).toBeUndefined()
+  })
 })

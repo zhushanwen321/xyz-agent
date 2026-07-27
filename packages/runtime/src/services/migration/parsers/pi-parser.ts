@@ -54,7 +54,8 @@ export function parsePiProviders(homeDir: string): ParseResult | null {
 
   let modelsConfig: PiModelsConfig
   try {
-    modelsConfig = JSON.parse(readFileSync(modelsPath, 'utf8')) as PiModelsConfig
+    // B1：JSON.parse('null') 成功返回 null，需用 ?? {} 兜底（否则下方 .providers 崩）
+    modelsConfig = ((JSON.parse(readFileSync(modelsPath, 'utf8')) as PiModelsConfig | null) ?? {}) as PiModelsConfig
   } catch (e) {
     return {
       providers: [],
@@ -68,7 +69,8 @@ export function parsePiProviders(homeDir: string): ParseResult | null {
   const authWarnings: string[] = []
   if (existsSync(authPath)) {
     try {
-      authData = JSON.parse(readFileSync(authPath, 'utf8')) as PiAuthJson
+      // B1：auth.json 为 null 时也用 ?? {} 兜底（JSON.parse('null') 成功返回 null）
+      authData = (JSON.parse(readFileSync(authPath, 'utf8')) as PiAuthJson | null) ?? {}
     } catch {
       // auth 解析失败不阻断 models.json 的解析，仅记全局 warning（挂到每个 provider 上）
       authWarnings.push('auth.json parse failed, apiKey from auth.json unavailable for this run')
@@ -76,43 +78,56 @@ export function parsePiProviders(homeDir: string): ParseResult | null {
   }
 
   const providers: ParsedProvider[] = []
+  // S5：顶层 warnings 收集器——丢弃的 provider（google-generative-ai / 未知协议 / 坏条目）
+  // 的提示进 topWarnings，preview 阶段整体展示给用户（区别于 per-provider `_warnings`）。
+  const topWarnings: string[] = []
   const providerEntries = modelsConfig.providers ?? {}
 
-  for (const [providerId, config] of Object.entries(providerEntries)) {
-    const warnings: string[] = [...authWarnings]
+  for (const [providerId, configRaw] of Object.entries(providerEntries)) {
+    // B1：单条目 try/catch，单个坏条目（null/非对象）不中断整体解析
+    try {
+      // B1：null/非对象条目显式跳过（?? {} 仅防 crash，但空对象会作为无 api 的 provider 污染列表）
+      if (configRaw === null || typeof configRaw !== 'object') {
+        topWarnings.push(`provider ${providerId} skipped due to malformed entry: not an object (${configRaw === null ? 'null' : typeof configRaw})`)
+        continue
+      }
+      const config = (configRaw as PiProviderConfig) ?? {}
+      const warnings: string[] = [...authWarnings]
 
-    // 协议映射：google-generative-ai 丢弃
-    if (config.api === 'google-generative-ai') {
-      warnings.push(`provider ${providerId}: protocol google-generative-ai not supported, skipped`)
-      // 仍加入 providers 列表，但标记为不支持？不——丢弃（spec：丢弃）。
-      // 但 ParsedProvider 没有 skipped 字段，丢弃就是不 push。
-      // 为保留 warning 信息（前端提示用户有 provider 被丢弃），改为：push 一个占位 provider。
-      // 重新看 spec：spec 明确「丢弃」，且 warnings 只展示给保留的 provider。
-      // 这里遵循 spec：丢弃，不 push。warning 信息通过全局 parseError 暴露？不——
-      // parseError 只在整体性错误。单个 provider 丢弃不进 parseError。
-      // 结论：丢弃，静默不 push（前端只看到保留的 provider，符合预期）。
-      continue
+      // 协议映射：google-generative-ai 丢弃（S5：warning 进 topWarnings 而非局部变量，
+      // 否则 continue 后字符串随局部 warnings 被丢弃，用户无感知）
+      if (config.api === 'google-generative-ai') {
+        topWarnings.push(`provider ${providerId}: protocol google-generative-ai not supported, skipped`)
+        continue
+      }
+
+      // api 必须是 pi 终值，其余丢弃（S5：同样进 topWarnings）
+      if (config.api && !PI_SUPPORTED_PROTOCOLS.has(config.api)) {
+        topWarnings.push(`provider ${providerId}: unknown protocol ${config.api}, skipped`)
+        continue
+      }
+
+      // auth.json 合并：若 authData 有对应 key 则填入（优先于 models.json 的 apiKey）
+      const authEntry = authData[providerId]
+      const apiKey = authEntry?.key ?? config.apiKey
+      const apiKeyExtracted = !!apiKey
+
+      providers.push({
+        ...config,
+        apiKey,
+        _sourceName: providerId,
+        _apiKeyExtracted: apiKeyExtracted,
+        _warnings: warnings,
+      })
+    } catch (e) {
+      topWarnings.push(
+        `provider ${providerId} skipped due to malformed entry: ${e instanceof Error ? e.message : String(e)}`,
+      )
     }
-
-    // api 必须是 pi 终值，其余丢弃
-    if (config.api && !PI_SUPPORTED_PROTOCOLS.has(config.api)) {
-      warnings.push(`provider ${providerId}: unknown protocol ${config.api}, skipped`)
-      continue
-    }
-
-    // auth.json 合并：若 authData 有对应 key 则填入（优先于 models.json 的 apiKey）
-    const authEntry = authData[providerId]
-    const apiKey = authEntry?.key ?? config.apiKey
-    const apiKeyExtracted = !!apiKey
-
-    providers.push({
-      ...(config as PiProviderConfig),
-      apiKey,
-      _sourceName: providerId,
-      _apiKeyExtracted: apiKeyExtracted,
-      _warnings: warnings,
-    })
   }
 
-  return { providers }
+  return {
+    providers,
+    warnings: topWarnings.length > 0 ? topWarnings : undefined,
+  }
 }

@@ -9,13 +9,14 @@
  * - selected 用 Set<id>：默认勾选 conflict='none' 的项，冲突项默认不勾。
  * - watch(preview) 重置 selected（每次新 preview 进来都重新初始化默认勾选）。
  * - 冲突项 Checkbox 禁用（已存在同名，导入必然 skipped）。
- * - apiKeyExtracted=false 显示 key 警告图标；warnings 非空可用 details 展开。
+ * - apiKeyExtracted=false 显示 key 警告图标；warnings 非空用 div toggle 展开。
  *
  * 复用 xyz-ui 的 Dialog/Checkbox/Button，禁止原生 form 元素。
  */
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { KeyRound, AlertTriangle, Loader2 } from '@lucide/vue'
+import type { CheckboxCheckedState as CheckedState } from 'reka-ui'
+import { KeyRound, AlertTriangle, Loader2, ChevronRight, ChevronDown } from '@lucide/vue'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
@@ -63,12 +64,23 @@ watch(
   { immediate: true },
 )
 
-function onToggle(id: string, value: string | boolean): void {
+function onToggle(id: string, value: CheckedState): void {
   const checked = value === true
   const next = new Set(selected.value)
   if (checked) next.add(id)
   else next.delete(id)
   selected.value = next
+}
+
+// ── warnings 折叠（按 provider id 索引）：用 div toggle 替代原生 <details>，
+//    遵循禁原生交互元素规范（参考 MermaidRenderer.vue 的失败态源码折叠）。──
+const expandedWarnings = ref<Set<string>>(new Set())
+
+function toggleWarnings(id: string): void {
+  const next = new Set(expandedWarnings.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedWarnings.value = next
 }
 
 // ── 统计（底部摘要）──
@@ -98,7 +110,7 @@ function sourceLabel(source: string): string {
     <DialogContent hide-close class="max-w-[520px]">
       <DialogHeader>
         <DialogTitle>{{ t('settings.provider.importPreview.title', { source: preview ? sourceLabel(preview.source) : '' }) }}</DialogTitle>
-        <DialogDescription>{{ t('settings.provider.importPreview.title', { source: preview ? sourceLabel(preview.source) : '' }) }}</DialogDescription>
+        <DialogDescription>{{ t('settings.provider.importPreview.description') }}</DialogDescription>
       </DialogHeader>
 
       <!-- 加载中 -->
@@ -117,8 +129,36 @@ function sourceLabel(source: string): string {
         <span class="truncate">{{ error }}</span>
       </div>
 
-      <!-- provider 列表 -->
-      <div v-else-if="preview && preview.providers.length" class="flex flex-col gap-1.5">
+      <template v-else-if="preview">
+        <!-- B2：源配置解析错误横幅（部分损坏场景，providers 可能仍非空可导入） -->
+        <div
+          v-if="preview.parseError"
+          data-testid="preview-parse-error"
+          class="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+        >
+          <AlertTriangle class="size-4 shrink-0 mt-0.5" />
+          <span>{{ t('settings.provider.importPreview.parseError', { message: preview.parseError }) }}</span>
+        </div>
+
+        <!-- S5：顶层丢弃警告横幅（如「N 个 provider 因协议不支持被跳过」） -->
+        <div
+          v-if="preview.warnings?.length"
+          data-testid="preview-top-warnings"
+          class="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+        >
+          <AlertTriangle class="size-4 shrink-0 mt-0.5" />
+          <ul class="flex flex-col gap-0.5">
+            <li v-for="(w, i) in preview.warnings" :key="i">{{ w }}</li>
+          </ul>
+        </div>
+
+        <!-- 空列表（无 parseError 也无 providers） -->
+        <div v-if="!preview.providers.length" class="py-8 text-center text-[12px] text-muted">
+          {{ t('settings.providerEdit.noModels') }}
+        </div>
+
+        <!-- provider 列表 -->
+        <div v-else class="flex flex-col gap-1.5">
         <div
           v-for="p in preview.providers"
           :key="p.id"
@@ -157,15 +197,22 @@ function sourceLabel(source: string): string {
             </span>
           </div>
 
-          <!-- 警告（可展开）：warnings 非空时显示 -->
-          <details v-if="p.warnings.length" class="mt-1 pl-6">
-            <summary class="cursor-pointer text-[11px] text-muted hover:text-fg">
+          <!-- 警告（可展开）：用 div toggle 替代原生 <details>，遵循禁原生交互元素规范 -->
+          <div v-if="p.warnings.length" class="mt-1 pl-6">
+            <Button
+              variant="ghost"
+              size="dense"
+              data-testid="warnings-toggle"
+              class="h-5 px-1 text-[11px] text-muted hover:text-fg"
+              @click="toggleWarnings(p.id)"
+            >
+              <component :is="expandedWarnings.has(p.id) ? ChevronDown : ChevronRight" class="size-3" />
               {{ t('settings.provider.importPreview.warnings') }} ({{ p.warnings.length }})
-            </summary>
-            <ul class="mt-1 list-disc pl-4 text-[11px] text-warning">
+            </Button>
+            <ul v-if="expandedWarnings.has(p.id)" class="mt-1 list-disc pl-4 text-[11px] text-warning">
               <li v-for="(w, i) in p.warnings" :key="i">{{ w }}</li>
             </ul>
-          </details>
+          </div>
         </div>
 
         <!-- 底部统计 -->
@@ -174,12 +221,8 @@ function sourceLabel(source: string): string {
           <span>{{ t('settings.provider.importPreview.statConflict', { count: statConflict }) }}</span>
           <span>{{ t('settings.provider.importPreview.statKeyMissing', { count: statKeyMissing }) }}</span>
         </div>
-      </div>
-
-      <!-- 空列表 -->
-      <div v-else class="py-8 text-center text-[12px] text-muted">
-        {{ t('settings.providerEdit.noModels') }}
-      </div>
+        </div>
+      </template>
 
       <!-- 底部按钮 -->
       <div class="flex justify-end gap-2 pt-2">
@@ -187,7 +230,6 @@ function sourceLabel(source: string): string {
           {{ t('settings.provider.importPreview.cancel') }}
         </Button>
         <Button data-testid="confirm-import-btn" :disabled="!canConfirm" @click="onConfirm">
-          <Loader2 v-if="loading" class="size-4 animate-spin" />
           {{ t('settings.provider.importPreview.confirm') }}
         </Button>
       </div>

@@ -8,8 +8,16 @@
  *   - provider-importer：previewImport + applyImport 两步数据流（IF2/IF3）
  *
  * 安全红线（DM1）：API key 明文不进前端。preview 返回脱敏数据，完整配置只活在 preview-cache。
+ *
+ * S8：preview-cache 不用 `export *`（避免 `_resetCacheForTest` 经 barrel 泄漏到生产）。
+ * 测试文件直接 `from './preview-cache.js'` 引入 `_resetCacheForTest`。
  */
 export * from './source-detector.js'
-export * from './preview-cache.js'
 export * from './provider-parser.js'
 export * from './provider-importer.js'
+export {
+  createPreview,
+  consumePreview,
+  deletePreview,
+  type PreviewCacheEntry,
+} from './preview-cache.js'

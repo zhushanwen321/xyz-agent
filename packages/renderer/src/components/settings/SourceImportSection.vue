@@ -5,7 +5,7 @@
     一键追加到 discovery 列表，免去用户手输绝对路径。
 
     - kind='skill'：显示全部 4 源（取 skillCount）
-    - kind='agent'：只显示 claude（取 agentCount，其余源无标准 agent 目录）
+    - kind='agent'：只显示 claude（优先取 agentCount，未提供时回退 skillCount）
     - kind='extension'：W1 不处理（显示提示，无候选）
     共享池检测：候选 dir 与 existingDirs normalize 后相等 → 标「已通过共享池生效」，默认不勾选。
   -->
@@ -76,6 +76,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { CheckboxCheckedState as CheckedState } from 'reka-ui'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { config } from '@/api'
@@ -113,7 +114,7 @@ onMounted(async () => {
 })
 
 // ── 候选过滤 ──
-// kind='skill' 全部 4 源；kind='agent' 仅 claude（取 agentCount）；extension 本 wave 不处理。
+// kind='skill' 全部 4 源；kind='agent' 仅 claude（取 agentCount，未提供时回退 skillCount）；extension 本 wave 不处理。
 const candidates = computed<SourceDetectResult[]>(() => {
   if (props.kind === 'skill') {
     return detectedSources.value
@@ -132,7 +133,7 @@ const hasInstalledCandidate = computed(() =>
 // 用 Set<source> 而非 Set<dir>：source 唯一标识一行候选，避免 dir 冲突。
 const selected = ref<Set<ProviderSource | AgentSource>>(new Set())
 
-function onToggle(source: ProviderSource | AgentSource, value: string | boolean): void {
+function onToggle(source: ProviderSource | AgentSource, value: CheckedState): void {
   const checked = value === true
   const next = new Set(selected.value)
   if (checked) next.add(source)

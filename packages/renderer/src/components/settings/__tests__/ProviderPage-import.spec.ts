@@ -4,10 +4,15 @@
  * 覆盖：
  * - T10：mount ProviderPage（空 providers），断言 import-providers-menu 渲染
  * - T10b：点击菜单项 → previewImportProviders 被调 + 对话框打开
+ * - T10c：完整 apply 流程（选源 → 预览 → 勾选默认项 → 确认 → applyImportProviders 被调 → 对话框关闭 + success toast）
+ * - T10d：preview transport reject（Promise.reject）→ importState 回 idle，菜单按钮重新可点
+ * - T10e：apply transport reject（Promise.reject）→ importState 回 previewing，对话框仍开允许重试
+ * - T10f：apply envelope error（{ error: {...} }）→ importState 回 previewing，对话框仍开 + error 区域显示
  *
  * mock 策略：
  *  - vi.mock('@/api') 把 config 门面替成可控 mock（listProviders 空数组 + previewImportProviders fixture）
  *  - createPinia + setActivePinia 让 useSettingsStore/useQuotaStore 正常初始化
+ *  - useToast 是模块级单例，通过 useToast() 取 toasts.value 断言
  *
  * 运行：cd packages/renderer && npx vitest run src/components/settings/__tests__/ProviderPage-import.spec.ts
  */
@@ -16,7 +21,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ProviderImportPreview } from '@xyz-agent/shared'
 
-/** preview fixture（1 个正常 provider） */
+/** preview fixture（1 个正常 provider，conflict='none' → 默认勾选） */
 const PREVIEW: ProviderImportPreview = {
   source: 'claude',
   providers: [
@@ -41,13 +46,29 @@ vi.mock('@/api', () => ({
 }))
 
 import ProviderPage from '@/components/settings/ProviderPage.vue'
+import { useToast } from '@/composables/useToast'
 
 let wrapper: ReturnType<typeof mount> | null = null
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  configMock.previewImportProviders.mockClear()
-  configMock.applyImportProviders.mockClear()
+  // 清空全局 toasts（useToast 模块级单例，跨用例共享）
+  useToast().toasts.value = []
+  configMock.previewImportProviders.mockReset()
+  configMock.applyImportProviders.mockReset()
+  // 恢复默认成功返回值（mockReset 清空了实现）
+  configMock.previewImportProviders.mockImplementation(() =>
+    Promise.resolve({ importId: 'imp-1', preview: PREVIEW }),
+  )
+  configMock.applyImportProviders.mockImplementation(() =>
+    Promise.resolve({
+      result: {
+        source: 'claude',
+        imported: [{ id: 'openai', name: 'OpenAI', status: 'imported' }],
+        failedCount: 0,
+      },
+    }),
+  )
 })
 
 afterEach(() => {
@@ -55,6 +76,20 @@ afterEach(() => {
   wrapper = null
   document.body.innerHTML = ''
 })
+
+/**
+ * 辅助：展开 import-providers-menu 并点击 claude 源项，触发 preview 流程。
+ * 调用前需已 mount + flushPromises。
+ */
+async function selectClaudeSource(): Promise<void> {
+  const trigger = wrapper!.find('[data-testid="import-providers-menu"]')
+  await trigger.trigger('click')
+  await flushPromises()
+  const claudeItem = document.querySelector('[data-testid="import-source-claude"]') as HTMLElement | null
+  expect(claudeItem).toBeTruthy()
+  claudeItem!.click()
+  await flushPromises()
+}
 
 describe('ProviderPage 导入入口', () => {
   it('T10: 空 providers 时 import-providers-menu 渲染', async () => {
@@ -72,21 +107,105 @@ describe('ProviderPage 导入入口', () => {
     })
     await flushPromises()
 
-    // 点菜单 trigger 展开 popover
-    const trigger = wrapper.find('[data-testid="import-providers-menu"]')
-    await trigger.trigger('click')
-    await flushPromises()
-
-    // 点 claude 源项
-    const claudeItem = document.querySelector('[data-testid="import-source-claude"]') as HTMLElement | null
-    expect(claudeItem).toBeTruthy()
-    claudeItem!.click()
-    await flushPromises()
+    await selectClaudeSource()
 
     // previewImportProviders 以 'claude' 被调
     expect(configMock.previewImportProviders).toHaveBeenCalledWith('claude')
     // 对话框渲染：preview-provider-item（fixture 1 项）
     const items = document.querySelectorAll('[data-testid="preview-provider-item"]')
     expect(items.length).toBe(1)
+  })
+
+  it('T10c: 完整 apply 流程 — 勾选默认项 → 确认 → applyImportProviders 被调 → 对话框关闭 + success toast', async () => {
+    wrapper = mount(ProviderPage, {
+      props: { providers: [] },
+    })
+    await flushPromises()
+
+    await selectClaudeSource()
+
+    // 默认勾选 conflict='none' 的 openai，直接点确认
+    const confirmBtn = document.body.querySelector('[data-testid="confirm-import-btn"]') as HTMLElement | null
+    expect(confirmBtn).toBeTruthy()
+    confirmBtn!.click()
+    await flushPromises()
+
+    // applyImportProviders 以 ('imp-1', ['openai']) 被调
+    expect(configMock.applyImportProviders).toHaveBeenCalledWith('imp-1', ['openai'])
+    // 对话框内容消失（importState 回 idle → open=false）
+    expect(document.querySelectorAll('[data-testid="preview-provider-item"]').length).toBe(0)
+    // success toast 渲染（导入 1 个）
+    const toasts = useToast().toasts.value
+    expect(toasts.some((t) => t.type === 'info' && t.message.includes('1'))).toBe(true)
+  })
+
+  it('T10d: preview transport reject (Promise.reject) → importState 回 idle，菜单按钮重新可点', async () => {
+    configMock.previewImportProviders.mockImplementationOnce(() =>
+      Promise.reject(new Error('timeout')),
+    )
+
+    wrapper = mount(ProviderPage, {
+      props: { providers: [] },
+    })
+    await flushPromises()
+
+    await selectClaudeSource()
+
+    // reject 被 catch：importState 回 idle，对话框未渲染
+    expect(document.querySelectorAll('[data-testid="preview-provider-item"]').length).toBe(0)
+    // error toast 渲染
+    const toasts = useToast().toasts.value
+    expect(toasts.some((t) => t.type === 'error' && t.message === 'timeout')).toBe(true)
+  })
+
+  it('T10e: apply transport reject (Promise.reject) → importState 回 previewing，对话框仍开允许重试', async () => {
+    configMock.applyImportProviders.mockImplementationOnce(() =>
+      Promise.reject(new Error('ws closed')),
+    )
+
+    wrapper = mount(ProviderPage, {
+      props: { providers: [] },
+    })
+    await flushPromises()
+
+    await selectClaudeSource()
+
+    const confirmBtn = document.body.querySelector('[data-testid="confirm-import-btn"]') as HTMLElement | null
+    expect(confirmBtn).toBeTruthy()
+    confirmBtn!.click()
+    await flushPromises()
+
+    // reject 被 catch：importState 回 previewing（非 idle），对话框仍开。
+    // 错误内联区域渲染（DialogContent 走 Teleport，preview-error 在 body 即证明 dialog open）
+    const errorEl = document.body.querySelector('[data-testid="preview-error"]')
+    expect(errorEl).toBeTruthy()
+    expect(errorEl!.textContent).toContain('ws closed')
+    // error toast 渲染
+    const toasts = useToast().toasts.value
+    expect(toasts.some((t) => t.type === 'error' && t.message === 'ws closed')).toBe(true)
+  })
+
+  it('T10f: apply envelope error ({ error: {...} }) → importState 回 previewing，对话框仍开 + error 区域显示', async () => {
+    configMock.applyImportProviders.mockImplementationOnce(() =>
+      Promise.resolve({ error: { code: 'PREVIEW_EXPIRED', message: 'preview 已过期，请重新检测' } }),
+    )
+
+    wrapper = mount(ProviderPage, {
+      props: { providers: [] },
+    })
+    await flushPromises()
+
+    await selectClaudeSource()
+
+    const confirmBtn = document.body.querySelector('[data-testid="confirm-import-btn"]') as HTMLElement | null
+    expect(confirmBtn).toBeTruthy()
+    confirmBtn!.click()
+    await flushPromises()
+
+    // envelope error：importState 回 previewing（非 idle），对话框仍开。
+    // 错误内联区域渲染含消息（DialogContent 走 Teleport，preview-error 在 body 即证明 dialog open）
+    const errorEl = document.body.querySelector('[data-testid="preview-error"]')
+    expect(errorEl).toBeTruthy()
+    expect(errorEl!.textContent).toContain('preview 已过期')
   })
 })

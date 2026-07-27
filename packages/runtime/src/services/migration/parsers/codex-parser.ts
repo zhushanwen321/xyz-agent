@@ -67,7 +67,8 @@ export function parseCodexProviders(homeDir: string): ParseResult | null {
 
   let config: CodexConfig
   try {
-    config = TOML.parse(readFileSync(configPath, 'utf8')) as unknown as CodexConfig
+    // B1：TOML.parse 一般返回对象，但为防御性编程，用 ?? {} 兜底
+    config = (TOML.parse(readFileSync(configPath, 'utf8')) as unknown as CodexConfig | null) ?? {}
   } catch (e) {
     return {
       providers: [],
@@ -77,10 +78,14 @@ export function parseCodexProviders(homeDir: string): ParseResult | null {
 
   // 读 auth.json（可选，可能不存在；解析失败不阻断整体解析）
   let authData: CodexAuthJson = {}
+  // W3：auth.json 解析失败时收集 warning，附加到每个保留的 codex provider 的 _warnings
+  // （模仿 pi-parser 对同类失败的处理；与 logger.warn 并存，前端可见）
+  let authParseWarning: string | undefined
   const authPath = join(codexDir, 'auth.json')
   if (existsSync(authPath)) {
     try {
-      authData = JSON.parse(readFileSync(authPath, 'utf8')) as CodexAuthJson
+      // B1：JSON.parse('null') 成功返回 null，需用 ?? {} 兜底（否则 authData.OPENAI_API_KEY 崩）
+      authData = (JSON.parse(readFileSync(authPath, 'utf8')) as CodexAuthJson | null) ?? {}
     } catch (e) {
       // auth.json 解析失败不阻断 config.toml 解析（auth 仅作 openai provider 的 key 回退）。
       // 安全红线（DM1/ES5）：只记错误消息本身（JSON parse error 是语法错误，不含 key 内容），
@@ -88,64 +93,86 @@ export function parseCodexProviders(homeDir: string): ParseResult | null {
       logger.warn('[migration:codex] auth.json parse failed, skipping', {
         error: e instanceof Error ? e.message : String(e),
       })
+      authParseWarning = 'auth.json parse failed, OPENAI key fallback unavailable'
     }
   }
 
   const topModel = config.model // 顶层单 model 字段
   const providers: ParsedProvider[] = []
+  // S5：顶层 warnings 收集器——坏条目的提示进 topWarnings
+  const topWarnings: string[] = []
 
-  for (const [id, mp] of Object.entries(config.model_providers ?? {})) {
-    const warnings: string[] = []
-
-    // wire_api 映射到 pi 终值协议
-    let api: string
-    if (mp.wire_api === 'responses') {
-      api = 'openai-responses'
-    } else if (mp.wire_api === 'chat') {
-      api = 'openai-completions'
-      warnings.push('wire_api=chat is deprecated, mapped to openai-completions')
-    } else {
-      api = 'openai-completions'
-      warnings.push(`unknown wire_api ${mp.wire_api ?? '(undefined)'}, defaulted to openai-completions`)
-    }
-
-    // env_key 解析：只从 process.env 静态查（不执行任何脚本）
-    let apiKey: string | undefined
-    let apiKeyExtracted = false
-    if (mp.env_key) {
-      const envValue = process.env[mp.env_key]
-      if (envValue) {
-        apiKey = envValue
-        apiKeyExtracted = true
-      } else {
-        warnings.push(`env_key ${mp.env_key} not set in environment, apiKey not extracted`)
+  for (const [id, mpRaw] of Object.entries(config.model_providers ?? {})) {
+    // B1：单条目 try/catch，单个坏条目（null/非对象）不中断整体解析
+    try {
+      // B1：null/非对象条目显式跳过（?? {} 仅防 crash，但空对象会走 unknown wire_api 路径污染 warnings）
+      if (mpRaw === null || typeof mpRaw !== 'object') {
+        topWarnings.push(`provider ${id} skipped due to malformed entry: not an object (${mpRaw === null ? 'null' : typeof mpRaw})`)
+        continue
       }
-    }
-    // auth.json 的 OPENAI_API_KEY 作为默认 openai provider 的 key（id 含 'openai' 且无 env_key 提取到值）
-    if (!apiKey && id.toLowerCase().includes('openai') && authData.OPENAI_API_KEY) {
-      apiKey = authData.OPENAI_API_KEY
-      apiKeyExtracted = true
-    }
+      const mp = (mpRaw as CodexModelProvider) ?? {}
+      const warnings: string[] = []
 
-    // 占位 model：Codex config 只暴露顶层单 model 字段，model 列表不完整
-    const models: PiModelDefinition[] = []
-    if (topModel) {
-      models.push({ id: topModel, name: topModel })
-      warnings.push('Codex model list incomplete (only top-level model field), please add models manually')
-    }
+      // W3：auth.json 解析失败时把 warning 附加到每个保留的 provider
+      if (authParseWarning) warnings.push(authParseWarning)
 
-    providers.push({
-      name: mp.name ?? id,
-      api,
-      baseUrl: mp.base_url,
-      apiKey,
-      headers: mp.http_headers,
-      models,
-      _sourceName: id,
-      _apiKeyExtracted: apiKeyExtracted,
-      _warnings: warnings,
-    })
+      // wire_api 映射到 pi 终值协议
+      let api: string
+      if (mp.wire_api === 'responses') {
+        api = 'openai-responses'
+      } else if (mp.wire_api === 'chat') {
+        api = 'openai-completions'
+        warnings.push('wire_api=chat is deprecated, mapped to openai-completions')
+      } else {
+        api = 'openai-completions'
+        warnings.push(`unknown wire_api ${mp.wire_api ?? '(undefined)'}, defaulted to openai-completions`)
+      }
+
+      // env_key 解析：只从 process.env 静态查（不执行任何脚本）
+      let apiKey: string | undefined
+      let apiKeyExtracted = false
+      if (mp.env_key) {
+        const envValue = process.env[mp.env_key]
+        if (envValue) {
+          apiKey = envValue
+          apiKeyExtracted = true
+        } else {
+          warnings.push(`env_key ${mp.env_key} not set in environment, apiKey not extracted`)
+        }
+      }
+      // auth.json 的 OPENAI_API_KEY 作为默认 openai provider 的 key（id 含 'openai' 且无 env_key 提取到值）
+      if (!apiKey && id.toLowerCase().includes('openai') && authData.OPENAI_API_KEY) {
+        apiKey = authData.OPENAI_API_KEY
+        apiKeyExtracted = true
+      }
+
+      // 占位 model：Codex config 只暴露顶层单 model 字段，model 列表不完整
+      const models: PiModelDefinition[] = []
+      if (topModel) {
+        models.push({ id: topModel, name: topModel })
+        warnings.push('Codex model list incomplete (only top-level model field), please add models manually')
+      }
+
+      providers.push({
+        name: mp.name ?? id,
+        api,
+        baseUrl: mp.base_url,
+        apiKey,
+        headers: mp.http_headers,
+        models,
+        _sourceName: id,
+        _apiKeyExtracted: apiKeyExtracted,
+        _warnings: warnings,
+      })
+    } catch (e) {
+      topWarnings.push(
+        `provider ${id} skipped due to malformed entry: ${e instanceof Error ? e.message : String(e)}`,
+      )
+    }
   }
 
-  return { providers }
+  return {
+    providers,
+    warnings: topWarnings.length > 0 ? topWarnings : undefined,
+  }
 }

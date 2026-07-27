@@ -6,6 +6,8 @@
  *   → 断言 3 个 preview-provider-item；含 key-warning；含 conflict-badge；
  *   正常项 Checkbox checked，冲突项 Checkbox 不 checked 且 disabled
  * - T12：勾选 2 项后点 confirm-import-btn → emit('confirm') 含勾选的 id
+ * - T12c：warnings 折叠交互（用 div toggle 替代原生 <details>）——初始 <ul> 不渲染，点击 toggle 后渲染
+ * - T12d：error 态显示——props 传 error → [data-testid="preview-error"] 渲染含消息
  *
  * 注意：DialogContent 走 DialogPortal/Teleport 渲染到 document.body，
  * 故断言用 document.body.querySelectorAll 而非 wrapper.findAll。
@@ -115,5 +117,42 @@ describe('ProviderImportPreviewDialog', () => {
     confirmBtn.click()
     await flushPromises()
     expect(wrapper!.emitted('confirm')).toBeFalsy()
+  })
+
+  it('T12c: warnings 默认折叠（无 <ul>），点 warnings-toggle 后展开渲染 <ul>', async () => {
+    wrapper = mount(ProviderImportPreviewDialog, {
+      props: { open: true, importId: 'imp-1', preview: FIXTURE },
+    })
+    await flushPromises()
+
+    // azure 项含 1 条 warning（FIXTURE 中唯一带 warnings 的项）
+    const toggle = document.body.querySelector('[data-testid="warnings-toggle"]') as HTMLElement | null
+    expect(toggle).toBeTruthy()
+    // 初始折叠：无 warnings <ul>
+    const providerItems = document.body.querySelectorAll('[data-testid="preview-provider-item"]')
+    const azureItem = providerItems[1]
+    expect(azureItem.querySelector('ul')).toBeNull()
+
+    // 点击 toggle 展开
+    toggle!.click()
+    await flushPromises()
+
+    // 展开后：<ul> 渲染，含 1 个 warning <li>
+    const azureItemAfter = document.body.querySelectorAll('[data-testid="preview-provider-item"]')[1]
+    const ul = azureItemAfter.querySelector('ul')
+    expect(ul).toBeTruthy()
+    expect(ul!.querySelectorAll('li')).toHaveLength(1)
+    expect(ul!.textContent).toContain('env_key 未设置')
+  })
+
+  it('T12d: error 态——props 传 error → [data-testid="preview-error"] 渲染含消息', async () => {
+    wrapper = mount(ProviderImportPreviewDialog, {
+      props: { open: true, importId: 'imp-1', preview: FIXTURE, error: 'preview 已过期，请重新检测' },
+    })
+    await flushPromises()
+
+    const errorEl = document.body.querySelector('[data-testid="preview-error"]')
+    expect(errorEl).toBeTruthy()
+    expect(errorEl!.textContent).toContain('preview 已过期')
   })
 })

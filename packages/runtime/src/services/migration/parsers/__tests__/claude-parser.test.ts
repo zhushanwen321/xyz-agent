@@ -122,4 +122,17 @@ describe('parseClaudeProviders', () => {
     expect(provider.baseUrl).toBeUndefined()
     expect(provider.models![0].id).toBe('claude-sonnet-4-5')
   })
+
+  // ── B1：settings.json 内容为 null（JSON.parse('null') 成功）→ 不 crash ──
+  it('B1: settings.json 内容为 null → 不 crash，仍产出 1 个占位 provider（用默认 model）', () => {
+    writeClaudeSettings('null')
+
+    const result = parseClaudeProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    const provider = result!.providers[0]
+    expect(provider.models![0].id).toBe('claude-default')
+    expect(provider.baseUrl).toBeUndefined()
+  })
 })

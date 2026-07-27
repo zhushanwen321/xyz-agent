@@ -94,7 +94,7 @@ describe('parseZcodeProviders', () => {
   })
 
   // ── T6：未知 kind → 该 provider 跳过 ───────────────────────────────
-  it('T6: 未知 kind 的 provider 被跳过（不进结果）', () => {
+  it('T6: 未知 kind 的 provider 被跳过（不进结果），warning 进顶层 warnings', () => {
     const config = {
       provider: {
         weird: {
@@ -119,6 +119,9 @@ describe('parseZcodeProviders', () => {
     // weird 跳过，只剩 anthropic1
     expect(result!.providers).toHaveLength(1)
     expect(result!.providers[0]._sourceName).toBe('anthropic1')
+    // S5：未知 kind 的 warning 进顶层 warnings（不再被 continue 丢弃）
+    expect(result!.warnings).toBeDefined()
+    expect(result!.warnings!.some((w) => w.includes('provider weird') && w.includes('unknown kind'))).toBe(true)
   })
 
   // ── T7：kind 缺失 → 跳过 ───────────────────────────────────────────
@@ -138,5 +141,88 @@ describe('parseZcodeProviders', () => {
 
     expect(result).not.toBeNull()
     expect(result!.providers).toHaveLength(0)
+  })
+
+  // ── B1：单个 entry 为 null → 不中断，其他 provider 正常解析，坏条目进 topWarnings ──
+  it('B1: provider 含 null/非对象条目 → 坏条目跳过进 warnings，其他 provider 正常解析', () => {
+    const config = {
+      provider: {
+        bad: null,
+        good: {
+          name: 'Good',
+          kind: 'anthropic',
+          options: { apiKey: 'sk-good' },
+          models: { m: { name: 'M' } },
+        },
+      },
+    }
+    writeZcodeConfig(JSON.stringify(config))
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    expect(result!.providers[0]._sourceName).toBe('good')
+    expect(result!.warnings).toBeDefined()
+    expect(result!.warnings!.some((w) => w.includes('provider bad') && w.includes('malformed'))).toBe(true)
+  })
+
+  // ── B1：config.json 整体 null → 不 crash，providers=[] ─────────────
+  it('B1: config.json 内容为 null → 不 crash，providers=[]', () => {
+    writeZcodeConfig('null')
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(0)
+    expect(result!.parseError).toBeUndefined()
+  })
+
+  // ── S7：enabled 字段传播 ───────────────────────────────────────────
+  it('S7: ZCode provider 的 enabled=false 传播到 ParsedProvider.enabled', () => {
+    const config = {
+      provider: {
+        disabled: {
+          name: 'Disabled',
+          kind: 'anthropic',
+          enabled: false,
+          options: { apiKey: 'sk-fake' },
+          models: { m: { name: 'M' } },
+        },
+      },
+    }
+    writeZcodeConfig(JSON.stringify(config))
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    expect(result!.providers[0].enabled).toBe(false)
+  })
+
+  // ── S8：modalities.input 映射到 PiModelDefinition.input ────────────
+  it('S8: model 的 modalities.input 数组直传到 PiModelDefinition.input', () => {
+    const config = {
+      provider: {
+        bigmodel: {
+          name: 'BigModel',
+          kind: 'anthropic',
+          options: { apiKey: 'sk-fake' },
+          models: {
+            'glm-4.6': {
+              name: 'GLM-4.6',
+              modalities: { input: ['text', 'image'], output: ['text'] },
+            },
+          },
+        },
+      },
+    }
+    writeZcodeConfig(JSON.stringify(config))
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    const model = result!.providers[0].models![0]
+    expect(model.input).toEqual(['text', 'image'])
   })
 })

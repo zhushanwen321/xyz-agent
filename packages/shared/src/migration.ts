@@ -83,6 +83,16 @@ export interface ProviderPreviewItem {
 export interface ProviderImportPreview {
   source: ProviderSource
   providers: ProviderPreviewItem[]
+  /**
+   * 源配置解析期致命错误（如文件格式损坏）。即使 providers 部分解析成功，此字段也可能存在。
+   * 前端据此显示警告横幅（不阻断已解析 providers 的导入）。
+   */
+  parseError?: string
+  /**
+   * 顶层警告（如「N 个 provider 因协议不支持被丢弃」），与 per-provider warnings 区分。
+   * 前端在预览顶部展示。
+   */
+  warnings?: string[]
 }
 
 /**

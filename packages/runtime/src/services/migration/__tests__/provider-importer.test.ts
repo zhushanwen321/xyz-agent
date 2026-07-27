@@ -214,4 +214,116 @@ describe('provider-importer', () => {
     expect(out.result.imported).toHaveLength(1)
     expect(out.result.imported[0].id).toBe('A')
   })
+
+  // ── B2：parseError 透出到 preview.parseError ───────────────────
+  it('B2: parsed 含 parseError → previewImport 返回的 preview 含 parseError', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      parseError: 'cannot parse models.json: unexpected token',
+    })
+
+    const out = previewImport('pi')
+
+    expect('importId' in out).toBe(true)
+    if ('preview' in out) {
+      expect(out.preview.parseError).toContain('cannot parse models.json')
+    }
+  })
+
+  // ── B2b：parsed 含顶层 warnings → preview.warnings 透出 ─────────
+  it('B2b: parsed 含顶层 warnings → previewImport 返回的 preview.warnings 透出', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [fp({ _sourceName: 'A' })],
+      warnings: ['provider X: protocol google-generative-ai not supported, skipped'],
+    })
+
+    const out = previewImport('pi')
+
+    expect('importId' in out).toBe(true)
+    if ('preview' in out) {
+      expect(out.preview.warnings).toBeDefined()
+      expect(out.preview.warnings!.some((w) => w.includes('google-generative-ai'))).toBe(true)
+    }
+  })
+
+  // ── W4/W5：部分失败时缓存不被删除（failedCount > 0 仍可重试）─────
+  it('W4/W5: applyImport 部分失败 → 缓存保留，再次 apply 同 importId 仍可取到', () => {
+    vi.mocked(parseProviders).mockReturnValue(
+      result([fp({ _sourceName: 'A' }), fp({ _sourceName: 'B' })]),
+    )
+    // A 失败，B 成功
+    vi.mocked(upsertProvider).mockImplementation((id: string) => {
+      if (id === 'A') throw new Error('write failed for A')
+      return {}
+    })
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+
+    // 第一次 apply：A 失败 → failedCount=1 → 缓存不删
+    const first = applyImport(prev.importId, ['A', 'B'])
+    expect('result' in first).toBe(true)
+    if ('result' in first) {
+      expect(first.result.failedCount).toBe(1)
+    }
+
+    // 第二次 apply 同 importId：仍可取到（缓存未被删）→ 不应返回 PREVIEW_EXPIRED
+    // 让 upsertProvider 在第二次都对 A 仍失败（保持 mock），B 现在冲突？不——
+    // existingIds 此时含 B（已导入）。设为含 B，第二次 B 应 skipped，A 仍 failed。
+    vi.mocked(getProviderNames).mockReturnValue(['B'])
+    const second = applyImport(prev.importId, ['A', 'B'])
+    expect('result' in second).toBe(true) // 关键：不是 PREVIEW_EXPIRED，缓存仍在
+  })
+
+  // ── S6：selectedIds 含不存在 id → 返回 failed 条目 + failedCount 计数 ──
+  it('S6: selectedIds 含 preview 中不存在的 id → 返回 failed 条目 reason=not found in preview', () => {
+    vi.mocked(parseProviders).mockReturnValue(result([fp({ _sourceName: 'A' })]))
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+
+    const out = applyImport(prev.importId, ['A', 'ghost'])
+    if (!('result' in out)) throw new Error('apply should succeed')
+
+    const byId = Object.fromEntries(out.result.imported.map((i) => [i.id, i]))
+    expect(byId.A.status).toBe('imported')
+    expect(byId.ghost.status).toBe('failed')
+    expect(byId.ghost.reason).toContain('not found in preview')
+    expect(out.result.failedCount).toBe(1)
+  })
+
+  // ── W1：applyImport 入参非法 → INVALID_REQUEST ─────────────────
+  it('W1: applyImport importId 为空字符串 → INVALID_REQUEST', () => {
+    const out = applyImport('', ['A'])
+    expect('error' in out).toBe(true)
+    if ('error' in out) {
+      expect(out.error.code).toBe('INVALID_REQUEST')
+      expect(out.error.message).toContain('importId')
+    }
+  })
+
+  it('W1: applyImport importId 非字符串 → INVALID_REQUEST', () => {
+    const out = applyImport(123 as unknown as string, ['A'])
+    expect('error' in out).toBe(true)
+    if ('error' in out) {
+      expect(out.error.code).toBe('INVALID_REQUEST')
+    }
+  })
+
+  it('W1: applyImport selectedIds 非数组 → INVALID_REQUEST', () => {
+    const out = applyImport('some-id', 'not-an-array' as unknown as string[])
+    expect('error' in out).toBe(true)
+    if ('error' in out) {
+      expect(out.error.code).toBe('INVALID_REQUEST')
+      expect(out.error.message).toContain('selectedIds')
+    }
+  })
+
+  it('W1: applyImport selectedIds 含非字符串元素 → INVALID_REQUEST', () => {
+    const out = applyImport('some-id', ['A', 123] as unknown as string[])
+    expect('error' in out).toBe(true)
+    if ('error' in out) {
+      expect(out.error.code).toBe('INVALID_REQUEST')
+    }
+  })
 })
