@@ -5,7 +5,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
-import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
+import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_LIMIT_REACHED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
@@ -42,6 +42,11 @@ export class SessionMessageHandler {
           const code = (e as Error & { code?: string }).code
           if (code === MODEL_NOT_CONFIGURED) {
             this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          // W1-T6: session 数量超上限时返回 session_limit_reached，前端引导关闭旧 session。
+          if (code === SESSION_LIMIT_REACHED) {
+            this.ctx.sendError(ws, SESSION_LIMIT_REACHED, toErrorMessage(e), msg.id)
             return
           }
           throw e

@@ -38,9 +38,10 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
-import { toErrorMessage, isEnoent } from '../../utils/errors.js'
+import { toErrorMessage, isEnoent, errorWithCode, SESSION_LIMIT_REACHED } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
+import { MAX_SESSIONS } from '../../constants.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
@@ -195,7 +196,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
-  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
+  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> {
+    // W1-T6: session 数量上限保护。在 lifecycle.create（含 model 检查/spawn）前快速失败，
+    // 避免资源已分配才发现超限。抛 SESSION_LIMIT_REACHED，handler 据此回差异化 error code。
+    if (this.sessions.size >= MAX_SESSIONS) {
+      throw errorWithCode(`max ${MAX_SESSIONS} sessions reached`, SESSION_LIMIT_REACHED)
+    }
+    return this.lifecycle.create(cwd, label, options)
+  }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }

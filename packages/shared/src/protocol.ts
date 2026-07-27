@@ -76,6 +76,7 @@ export type ClientMessageType =
   | 'config.setBareSetupScript' | 'config.getBareSetupScript'
   | 'config.setTimeout' | 'config.getTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
+  | 'auth' | 'file.signUrl'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -331,6 +332,10 @@ export interface ClientMessageMap {
   'config.setDefaultBaseBranch': { baseBranch: string }
   /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
   'config.getDefaultBaseBranch': Record<string, never>
+  /** auth：客户端首次连接携带 token + clientId 完成认证（wave1 远程化）。 */
+  auth: { token: string; clientId: string; deviceName?: string; lastSeq?: number }
+  /** file.signUrl：请求一个临时可访问的文件签名 URL（wave1 远程化预留）。 */
+  'file.signUrl': { path: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -443,6 +448,7 @@ export type ServerMessageType =
   | 'config.bareSetupScript'
   | 'config.worktreeTimeout'
   | 'config.defaultBaseBranch'
+  | 'auth.ok' | 'file.signUrl:result'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -744,6 +750,10 @@ export interface ServerMessageMapBase {
     details?: Record<string, unknown>
     display?: boolean
   }
+  /** auth.ok：客户端认证通过后服务端回复（wave1 远程化），含服务端版本 + 已确认 clientId。 */
+  'auth.ok': { serverVersion: string; clientId: string }
+  /** file.signUrl:result：file.signUrl 请求的回复，含临时可访问 URL + 过期时间戳（ms）。 */
+  'file.signUrl:result': { url: string; expiresAt: number }
 }
 
 /**
@@ -904,6 +914,9 @@ export interface ReplyPayloadMap {
   'terminal.resize': ServerMessageMap['terminal.ack']
   'terminal.spawn': ServerMessageMap['terminal.ack']
   'terminal.write': ServerMessageMap['terminal.ack']
+  // wave1 远程化：auth 回 auth.ok；file.signUrl 回 file.signUrl:result。
+  'auth': ServerMessageMap['auth.ok']
+  'file.signUrl': ServerMessageMap['file.signUrl:result']
 }
 
 /**

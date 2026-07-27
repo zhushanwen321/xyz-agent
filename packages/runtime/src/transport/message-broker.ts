@@ -16,11 +16,11 @@ import type { ServerMessage, ServerMessageMap, ServerMessageType } from '@xyz-ag
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
 import type { ErrorDetails } from './message-context.js'
-import { WS_OPEN } from './connection-manager.js'
+import { WS_OPEN, type ConnectionCtx } from './connection-manager.js'
 
-/** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Set）。 */
+/** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Map<clientId, ConnectionCtx>）。 */
 export interface ClientPool {
-  readonly clients: Set<WsType>
+  readonly clients: Map<string, ConnectionCtx>
 }
 
 /**
@@ -73,7 +73,8 @@ export class ServerMessageBroker implements IMessageBroker {
       console.error('[broadcast] payload serialization failed — entire broadcast dropped for all clients:', e)
       return
     }
-    for (const ws of this.pool.clients) {
+    for (const ctx of this.pool.clients.values()) {
+      const ws = ctx.ws
       // M6: 单 client send 失败不中断其余 client 广播。
       // TOCTOU：readyState 检查与 ws.send 间连接可能已关闭，ws.send 抛错，
       // 无 try-catch 会中断整个 for 循环，导致其余 client 收不到消息。

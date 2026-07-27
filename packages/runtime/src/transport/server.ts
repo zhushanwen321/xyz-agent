@@ -17,6 +17,7 @@ import type { FileService } from '../services/file-service.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ConnectionManager } from './connection-manager.js'
+import type { ConnectionManagerOptions } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
@@ -74,15 +75,16 @@ export class RuntimeServer implements IMessageBroker {
    */
   private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown>
 
-  constructor(port: number, projectRoot?: string) {
+  constructor(port: number, projectRoot?: string, connOpts?: ConnectionManagerOptions) {
     this.projectRoot = projectRoot ?? process.cwd()
     // ConnectionManager 注入回调：连接建立 → broker 推送 initial state；
     // 消息到达 → server.handleMessage 路由；解析/兜底错误 → broker.sendError。
+    // connOpts 透传 host/tokenManager/serverVersion；缺省时 ConnectionManager 内部解析默认值。
     this.conn = new ConnectionManager(port, {
       onConnect: (ws) => this.broker.sendInitialState(ws),
       onMessage: (msg, ws) => this.handleMessage(msg, ws),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
-    })
+    }, connOpts ?? {})
   }
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService): void {

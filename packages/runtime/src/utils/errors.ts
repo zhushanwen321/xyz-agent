@@ -55,3 +55,6 @@ export function errorWithCode(message: string, code: string | number): Error & {
 
 /** session 创建/恢复/fork 时 model 未配置的错误码（前端据此引导用户去 Settings 配置） */
 export const MODEL_NOT_CONFIGURED = 'MODEL_NOT_CONFIGURED'
+
+/** session 数量达到 MAX_SESSIONS 上限的错误码（wave1 远程化，前端据此提示用户关闭旧 session） */
+export const SESSION_LIMIT_REACHED = 'session_limit_reached'

@@ -1,4 +1,5 @@
 import { RuntimeServer } from './transport/server.js'
+import { createTokenManager } from './transport/token.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
@@ -41,12 +42,15 @@ import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-st
 import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 
-function parseArgs(): { port: number; projectRoot?: string } {
+function parseArgs(): { port: number; projectRoot?: string; host: string; tokenFile?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
   const portOffset = Math.max(0, Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, MAX_PORT - BASE_PORT))
   let port = BASE_PORT + portOffset
   let projectRoot: string | undefined
+  // wave1 远程化：host 默认 127.0.0.1（Electron 零回归），远程部署经 --host/env 传 0.0.0.0。
+  let host = process.env.XYZ_AGENT_HOST ?? '127.0.0.1'
+  let tokenFile: string | undefined = process.env.XYZ_AGENT_TOKEN_FILE
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
       const parsed = parseInt(args[i + 1], 10)
@@ -66,14 +70,28 @@ function parseArgs(): { port: number; projectRoot?: string } {
       projectRoot = args[i + 1]
     } else if (args[i].startsWith('--project-root=')) {
       projectRoot = args[i].split('=')[1]
+    } else if (args[i] === '--host' && i + 1 < args.length) {
+      host = args[i + 1]
+    } else if (args[i].startsWith('--host=')) {
+      host = args[i].split('=')[1]
+    } else if (args[i] === '--token-file' && i + 1 < args.length) {
+      tokenFile = args[i + 1]
+    } else if (args[i].startsWith('--token-file=')) {
+      tokenFile = args[i].split('=')[1]
     }
   }
-  return { port, projectRoot }
+  return { port, projectRoot, host, tokenFile }
 }
 
-async function main(): Promise<void> {
-  const { port, projectRoot } = parseArgs()
+async function main(opts?: { host?: string; port?: number; tokenFile?: string }): Promise<void> {
+  const parsed = parseArgs()
+  // opts（外部编程式调用）优先于 parseArgs（CLI/env），无参时完全走 parseArgs 默认（Electron 零回归）。
+  const port = opts?.port ?? parsed.port
+  const host = opts?.host ?? parsed.host
+  const tokenFile = opts?.tokenFile ?? parsed.tokenFile
+  const { projectRoot } = parsed
   const effectiveRoot = projectRoot ?? process.cwd()
+  const tokenManager = createTokenManager({ tokenFile })
 
   // 日志持久化（架构约定 #4）：组合根最早期初始化 + monkey-patch console。
   // 必须在所有 service 创建前（runtime 内 ~140 处裸 console.log 经 patch 自动落盘）。
@@ -86,7 +104,9 @@ async function main(): Promise<void> {
   const pm = new ProcessManager(effectiveRoot)
 
   // Transport layer
-  const server = new RuntimeServer(port, projectRoot)
+  // wave1 远程化：host/tokenManager 注入 ConnectionManager。serverVersion 用 appVersion
+  // （auth.ok 回复携带），在 appInfo 探测前先用 getAppVersion()，后续无更新需求（版本不变）。
+  const server = new RuntimeServer(port, projectRoot, { host, tokenManager, serverVersion: getAppVersion() })
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
 

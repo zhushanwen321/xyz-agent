@@ -16,8 +16,22 @@
 import { describe, it, expect, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import type { ClientPool, BrokerServices, ServerMessageBroker as BrokerType } from '../src/transport/message-broker.js'
+import type { ConnectionCtx } from '../src/transport/connection-manager.js'
 
 // ── Mock ws 工厂 ───────────────────────────────────────────────────
+
+/**
+ * 由一组 ws 构造 ClientPool（Map<clientId, ConnectionCtx>）。
+ * wave1 远程化后连接池由 Set<ws> 改为 Map<clientId, ConnectionCtx>，本 helper 给每个 ws
+ * 包一层最小 ConnectionCtx（clientId 用索引占位），让 broadcast 测试聚焦 ws.send 行为。
+ */
+function poolOf(...wss: WebSocket[]): ClientPool {
+  const clients = new Map<string, ConnectionCtx>()
+  wss.forEach((ws, i) => {
+    clients.set(`client-${i}`, { ws, clientId: `client-${i}`, deviceName: '', connectedAt: 0 })
+  })
+  return { clients }
+}
 
 /** 构造一个 mock ws：readyState=OPEN，send 为 vi.fn（可配置抛错）。 */
 function makeMockWs(opts: { throws?: boolean } = {}): WebSocket {
@@ -58,7 +72,7 @@ describe('ServerMessageBroker W3 M6 (broadcast try-catch)', () => {
     const ws1 = makeMockWs({ throws: true })
     const ws2 = makeMockWs()
     const ws3 = makeMockWs()
-    const pool: ClientPool = { clients: new Set([ws1, ws2, ws3]) }
+    const pool = poolOf(ws1, ws2, ws3)
 
     const broker = new ServerMessageBroker(pool, mockServices)
     const msg = { type: 'session.list', id: 'push_1', payload: { groups: [] } } as unknown as Parameters<BrokerType['broadcast']>[0]
@@ -83,7 +97,7 @@ describe('ServerMessageBroker W3 M6 (broadcast try-catch)', () => {
 
     const ws1 = makeMockWs({ throws: true })
     const ws2 = makeMockWs({ throws: true })
-    const pool: ClientPool = { clients: new Set([ws1, ws2]) }
+    const pool = poolOf(ws1, ws2)
 
     const broker = new ServerMessageBroker(pool, mockServices)
     const msg = { type: 'session.list', id: 'push_1', payload: { groups: [] } } as unknown as Parameters<BrokerType['broadcast']>[0]
@@ -116,7 +130,7 @@ describe('ServerMessageBroker L6 (broadcast 单次 stringify)', () => {
     const ws1 = makeMockWs()
     const ws2 = makeMockWs()
     const ws3 = makeMockWs()
-    const pool: ClientPool = { clients: new Set([ws1, ws2, ws3]) }
+    const pool = poolOf(ws1, ws2, ws3)
 
     const broker = new ServerMessageBroker(pool, mockServices)
     const msg = { type: 'session.list', id: 'push_l6', payload: { groups: [] } } as unknown as Parameters<BrokerType['broadcast']>[0]
@@ -135,7 +149,7 @@ describe('ServerMessageBroker L6 (broadcast 单次 stringify)', () => {
     const stringifySpy = vi.spyOn(JSON, 'stringify')
 
     const ws1 = makeMockWs()
-    const pool: ClientPool = { clients: new Set([ws1]) }
+    const pool = poolOf(ws1)
 
     const broker = new ServerMessageBroker(pool, mockServices)
     const msg = { type: 'app.info', id: 'push_l6b', payload: { appVersion: '1.0.0', piVersion: '0.80.3' } } as unknown as Parameters<BrokerType['broadcast']>[0]
@@ -151,7 +165,7 @@ describe('ServerMessageBroker L6 (broadcast 单次 stringify)', () => {
 
     const ws1 = makeMockWs()
     const ws2 = makeMockWs()
-    const pool: ClientPool = { clients: new Set([ws1, ws2]) }
+    const pool = poolOf(ws1, ws2)
 
     const broker = new ServerMessageBroker(pool, mockServices)
     // 含 Unicode 字符，验证序列化结果一致性（不是每客户端独立序列化导致潜在差异）
