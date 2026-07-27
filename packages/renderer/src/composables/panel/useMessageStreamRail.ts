@@ -14,6 +14,7 @@
  * 提取至此（composables/panel 既有范式）：MessageStream.vue script setup ≤300 行规范 + rail 关注点单一可复用。
  */
 import { computed, onMounted, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue'
+import type { VirtualizerHandle } from 'virtua/vue'
 import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
@@ -37,6 +38,9 @@ export interface UseMessageStreamRailDeps {
   offsetOf: (idx: number) => number
   /** 顶部预留高度（load-more 占位），rail jump top = offsetOf(idx) + topOffset。 */
   topOffset: ComputedRef<number>
+  /** [cw wave w2] virtua VirtualizerHandle ref（双轨：有则走 virtua API，无则走 scrollEl+offsetOf 旧路径）。
+   *  w2 由 MessageStream.vue 不传（仍走旧路径），w3 切换到 virtua 后传入。 */
+  vlistRef?: Ref<VirtualizerHandle | null>
 }
 
 export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
@@ -96,8 +100,16 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   /**
    * 按 scrollTop 比例推算当前激活 turn 下标。
    * railTurns 为空时跳过（模板 v-if turns.length>0 守卫，但 computed ref 仍需防除零）。
+   *
+   * [cw wave w2] 双轨：有 vlistRef 时走 virtua findItemIndex(scrollOffset) 精确定位当前项，
+   * 无则走旧路径（scrollTop 比例推算）。w3 切换到 virtua 后用精确路径，比例推算仅在旧路径保留。
    */
   function updateActiveTurnIndex(): void {
+    const v = deps.vlistRef?.value
+    if (v) {
+      activeTurnIndex.value = v.findItemIndex(v.scrollOffset)
+      return
+    }
     const el = scrollEl.value
     if (!el || railTurns.value.length === 0) return
     const max = el.scrollHeight - el.clientHeight || 1
@@ -112,15 +124,23 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
    * rail jump：滚动到对应 turn 的 absolute offset（+ topOffset 预留 load-more 空间）。
    * idx 是 railTurns 数组下标，需映射回 renderItems 下标（系统提示行穿插使两者不一致）。
    * railTurns[idx] 已持有目标 turn 对象，直接用引用相等 findIndex（无需 O(n) 累计 turnCount）。
+   *
+   * [cw wave w2] 双轨：有 vlistRef 时走 virtua scrollToIndex(renderIdx, {align:'start'})，
+   * 无则走旧路径（scrollEl.scrollTop = offsetOf(renderIdx) + topOffset）。
    */
   function onJump(idx: number): void {
-    if (!scrollEl.value) return
     const targetTurn = railTurns.value[idx]
     if (!targetTurn) return
     const renderIdx = renderItems.value.findIndex(
       (item) => item.kind === 'turn' && item.turn === targetTurn,
     )
     if (renderIdx < 0) return
+    const v = deps.vlistRef?.value
+    if (v) {
+      v.scrollToIndex(renderIdx, { align: 'start' })
+      return
+    }
+    if (!scrollEl.value) return
     scrollEl.value.scrollTop = offsetOf(renderIdx) + topOffset.value
   }
 

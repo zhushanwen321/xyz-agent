@@ -56,28 +56,41 @@ function systemItem(id: string): RenderItem {
  * 喂给 useStreamingPin，返回控制句柄 + 收集的 pinStreaming 调用序列。
  *
  * pinStreaming 用 vi.fn 收集所有调用，便于断言「挂载时立即施加」「切换后重钉」等顺序。
+ *
+ * [cw wave w2] 扩展：可选 editingTurnIdx（virtua pinnedIndexes 用例需要），返回 pinnedIndexes
+ * （useStreamingPin 从 void 改为返回 { pinnedIndexes }）。现有不传 editingTurnIdx 的用例不受影响
+ * （setup 仍返回新字段，旧用例不读它即可）。
  */
-function setup(opts: { items: RenderItem[]; sessionId?: string }) {
+function setup(opts: {
+  items: RenderItem[]
+  sessionId?: string
+  editingTurnIdx?: ReturnType<typeof ref<number>>
+}) {
   const itemsRef = ref(opts.items)
   // 用 ref（非 shallowRef）：测试通过赋值新数组替换整体（identity 变）触发响应式，
   // 模拟生产 renderItems 真 computed 重建（currentMessages 变 → renderItems 重算即新引用）。
   const sessionIdRef = ref(opts.sessionId ?? 'sess-A')
+  // editingTurnIdx：外部传入 ref（测试可动态改值触发 pinnedIndexes 重算）；默认不传（undefined）
+  const editingTurnIdxRef = opts.editingTurnIdx
 
   const pinCalls: Array<{ idx: number; at: string }> = []
   const pinStreaming = vi.fn((idx: number) => {
     pinCalls.push({ idx, at: `call-${pinCalls.length}` })
   })
 
+  let pinnedIndexes: ReturnType<typeof useStreamingPin>['pinnedIndexes'] | undefined
   const scope = effectScope()
   scope.run(() => {
-    useStreamingPin({
+    const ret = useStreamingPin({
       items: computed(() => itemsRef.value),
       pinStreaming,
       sessionId: () => sessionIdRef.value,
+      editingTurnIdx: editingTurnIdxRef,
     })
+    pinnedIndexes = ret.pinnedIndexes
   })
 
-  return { scope, itemsRef, sessionIdRef, pinStreaming, pinCalls }
+  return { scope, itemsRef, sessionIdRef, pinStreaming, pinCalls, pinnedIndexes }
 }
 
 // ── M3-1：挂载时已 streaming → immediate 施加 pin ────────────────────
@@ -259,5 +272,90 @@ describe('useStreamingPin · 回归：streaming 变化与释放', () => {
   it('空 items（无 turn）→ pinStreaming(-1)，不崩', async () => {
     const { pinStreaming } = setup({ items: [] })
     expect(pinStreaming).toHaveBeenLastCalledWith(-1)
+  })
+})
+
+// ── W2TC4-W2TC6: pinnedIndexes virtua 路径（多项钉扎输出） ──────────────
+
+describe('useStreamingPin · W2TC4-W2TC6: pinnedIndexes virtua 路径', () => {
+  it('W2TC5: streaming lastTurnIdx=5 + editingTurnIdx=2 → pinnedIndexes=[5,2]', () => {
+    // 6 个 turn，末 turn（idx=5）streaming
+    const items = [
+      turnItem(1, 'k0', false),
+      turnItem(2, 'k1', false),
+      turnItem(3, 'k2', false),
+      turnItem(4, 'k3', false),
+      turnItem(5, 'k4', false),
+      turnItem(6, 'k5', true),
+    ]
+    const editingTurnIdx = ref(2)
+    const { pinnedIndexes } = setup({ items, editingTurnIdx })
+
+    expect(pinnedIndexes!.value).toEqual([5, 2])
+  })
+
+  it('W2TC5: 非 streaming → pinnedIndexes 只含 editingTurnIdx=[2]', () => {
+    // 末 turn 非 streaming → streamingTurnIdx=-1；只剩 editingTurnIdx=2
+    const items = [turnItem(1, 'k1', false), turnItem(2, 'k2', false), turnItem(3, 'k3', false)]
+    const editingTurnIdx = ref(2)
+    const { pinnedIndexes } = setup({ items, editingTurnIdx })
+
+    expect(pinnedIndexes!.value).toEqual([2])
+  })
+
+  it('W2TC6: streaming turn idx === editingTurnIdx → 去重 [3]', () => {
+    // 末 turn idx=2 streaming，editingTurnIdx 也=2 → 去重后 [2]
+    const items = [turnItem(1, 'k1', false), turnItem(2, 'k2', false), turnItem(3, 'k3', true)]
+    const editingTurnIdx = ref(2)
+    const { pinnedIndexes } = setup({ items, editingTurnIdx })
+
+    expect(pinnedIndexes!.value).toEqual([2])
+  })
+
+  it('W2TC6: 全 -1（无 streaming + 无 editing）→ pinnedIndexes=[]', () => {
+    const items = [turnItem(1, 'k1', false), turnItem(2, 'k2', false)]
+    const editingTurnIdx = ref(-1)
+    const { pinnedIndexes } = setup({ items, editingTurnIdx })
+
+    expect(pinnedIndexes!.value).toEqual([])
+  })
+
+  it('W2TC6: 不传 editingTurnIdx + 非 streaming → pinnedIndexes=[]（仅 streaming 驱动）', () => {
+    const items = [turnItem(1, 'k1', false), turnItem(2, 'k2', false)]
+    const { pinnedIndexes } = setup({ items })
+
+    expect(pinnedIndexes!.value).toEqual([])
+  })
+
+  it('W2TC6: 不传 editingTurnIdx + streaming → pinnedIndexes=[lastTurnIdx]', () => {
+    const items = [turnItem(1, 'k1', false), turnItem(2, 'k2', true)]
+    const { pinnedIndexes } = setup({ items })
+
+    expect(pinnedIndexes!.value).toEqual([1])
+  })
+
+  it('W2TC5: editingTurnIdx 动态变化 → pinnedIndexes 响应式重算', async () => {
+    const items = [turnItem(1, 'k1', false), turnItem(2, 'k2', false), turnItem(3, 'k3', false)]
+    const editingTurnIdx = ref(-1)
+    const { pinnedIndexes } = setup({ items, editingTurnIdx })
+
+    expect(pinnedIndexes!.value).toEqual([])
+
+    editingTurnIdx.value = 1
+    await nextTick()
+    expect(pinnedIndexes!.value).toEqual([1])
+
+    editingTurnIdx.value = -1
+    await nextTick()
+    expect(pinnedIndexes!.value).toEqual([])
+  })
+
+  it('W2TC4 回归: 传 editingTurnIdx 后 pinStreaming 仍被调用（旧路径不破坏）', () => {
+    const items = [turnItem(1, 'k1', false), turnItem(2, 'k2', true)]
+    const editingTurnIdx = ref(0)
+    const { pinStreaming } = setup({ items, editingTurnIdx })
+
+    // immediate 回调仍施加 pinStreaming(1)（lastTurnIdx=1）
+    expect(pinStreaming).toHaveBeenLastCalledWith(1)
   })
 })

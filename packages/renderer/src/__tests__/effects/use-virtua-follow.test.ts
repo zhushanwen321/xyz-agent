@@ -22,45 +22,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, type Ref } from 'vue'
 import type { VirtualizerHandle } from 'virtua/vue'
 import { useVirtuaFollow } from '@/composables/effects/useVirtuaFollow'
-
-/**
- * mock 工厂（contract W1CO2）：造一个满足 VirtualizerHandle 接口的 mock 对象。
- * 默认 scrollSize=1000 / scrollOffset=500 / viewportSize=500（distance = 1000-500-500 = 0，
- * 即默认贴底）；其余方法为 vi.fn()，可被断言。
- */
-function createMockVlist(
-  overrides?: Partial<{
-    scrollSize: number
-    scrollOffset: number
-    viewportSize: number
-    scrollToIndex: ReturnType<typeof vi.fn>
-    getItemOffset: ReturnType<typeof vi.fn>
-    getItemSize: ReturnType<typeof vi.fn>
-    findItemIndex: ReturnType<typeof vi.fn>
-  }>,
-): VirtualizerHandle {
-  const scrollSize = overrides?.scrollSize ?? 1000
-  const scrollOffset = overrides?.scrollOffset ?? 500
-  const viewportSize = overrides?.viewportSize ?? 500
-  return {
-    scrollSize,
-    scrollOffset,
-    viewportSize,
-    cache: {} as unknown as VirtualizerHandle['cache'],
-    scrollToIndex: overrides?.scrollToIndex ?? vi.fn(),
-    getItemOffset: overrides?.getItemOffset ?? vi.fn(),
-    getItemSize: overrides?.getItemSize ?? vi.fn(),
-    findItemIndex:
-      overrides?.findItemIndex ??
-      vi.fn((offset: number) => {
-        // 默认：把 offset 当作末尾位置，返回一个稳定的 last index（mock 5 项数据 → last=4）
-        return offset >= scrollSize ? 4 : 2
-      }),
-    // 额外 API（VirtualizerHandle 接口要求实现）
-    scrollTo: vi.fn(),
-    scrollBy: vi.fn(),
-  } satisfies VirtualizerHandle
-}
+// createMockVlist 共享工厂（w2 提取至此，避免与 rail-virtua 测试重复定义）
+import { createMockVlist } from './_virtua-mock-helper'
 
 describe('useVirtuaFollow (cw wave w1 W1TC1-W1TC9)', () => {
   let vlistRef: Ref<VirtualizerHandle | null>

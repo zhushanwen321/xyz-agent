@@ -43,8 +43,12 @@ export const HANDOFF_NOTICE_HEIGHT = 46
 export interface MessageStreamNoticesDeps {
   /** 当前 session id（响应式，状态查询键） */
   sessionId: ComputedRef<string>
-  /** 虚拟列表总高度（renderItems 末项底部） */
-  totalHeight: ComputedRef<number>
+  /** 虚拟列表总高度（renderItems 末项底部）。
+   *  [cw wave w2] 改可选：virtua 路径下用 vlistBottom 替代，w3 切换后 totalHeight 不再传入。 */
+  totalHeight?: ComputedRef<number>
+  /** [cw wave w2] virtua 末项底部绝对 px（vlist.scrollSize），优先于 totalHeight。
+   *  w2 由 MessageStream.vue 不传（仍走 totalHeight），w3 切换到 virtua 后传入。 */
+  vlistBottom?: ComputedRef<number>
   /** load-more 预留顶部偏移（所有 abs 子项 top 基线） */
   topOffset: ComputedRef<number>
   /** 最后一个 turn 是否正在流式生成（dispatching 占位条件之一 + 滚动跟随）。
@@ -91,9 +95,11 @@ export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
   /** 容器传入的 hasWorkingTurn getter 包成 ComputedRef（useNoticeStack 需要 ComputedRef 依赖）。 */
   const hasWorkingTurn = computed(() => deps.hasWorkingTurn())
 
-  /** 末尾瞬时块的垂直堆叠定位（M2，委托 useNoticeStack）：消除占位叠加的重复计算。 */
+  /** 末尾瞬时块的垂直堆叠定位（M2，委托 useNoticeStack）：消除占位叠加的重复计算。
+   *  [cw wave w2] 透传 vlistBottom（如有）：virtua 路径下 useNoticeStack 用 vlistBottom 替代 totalHeight。 */
   const { handoffNoticeTop, dispatchingTop, forkNoticeBaseTop } = useNoticeStack({
     totalHeight: deps.totalHeight,
+    vlistBottom: deps.vlistBottom,
     topOffset: deps.topOffset,
     isCompacting,
     isDispatching,

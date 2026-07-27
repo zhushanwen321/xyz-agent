@@ -20,8 +20,12 @@ import { computed, type ComputedRef } from 'vue'
 
 /** 容器侧定位依赖（getter 注入，避免本 composable 反向依赖虚拟滚动/状态计算） */
 export interface NoticeStackDeps {
-  /** 虚拟列表总高度（renderItems 末项底部） */
-  totalHeight: ComputedRef<number>
+  /** 虚拟列表总高度（renderItems 末项底部）。
+   *  [cw wave w2] 改可选：virtua 路径下用 vlistBottom 替代（末项底部的绝对 px），w3 切换后 totalHeight 不再传入。 */
+  totalHeight?: ComputedRef<number>
+  /** [cw wave w2] virtua 末项底部绝对 px（vlist.scrollSize），优先于 totalHeight。
+   *  w2 由 useMessageStreamNotices 不传（仍走 totalHeight），w3 切换到 virtua 后传入。 */
+  vlistBottom?: ComputedRef<number>
   /** load-more 预留顶部偏移（所有 abs 子项 top 基线） */
   topOffset: ComputedRef<number>
   /** 是否正在压缩（compacting notice 占位高度参与基线计算） */
@@ -54,9 +58,24 @@ export function useNoticeStack(deps: NoticeStackDeps): {
    *  useForkNoticeStream 据此按 FORK_NOTICE_HEIGHT 垂直堆叠多条通知。 */
   forkNoticeBaseTop: ComputedRef<number>
 } {
+  /**
+   * [cw wave w2] 解析末项底部基线 px：优先 vlistBottom（virtua scrollSize），次选 totalHeight（旧路径）。
+   * 双轨兼容：w2 仅传 totalHeight 走旧路径；w3 切换后传 vlistBottom 走 virtua 路径；两者都无时 fallback 0。
+   */
+  function resolveBase(): number {
+    if (deps.vlistBottom) return deps.vlistBottom.value
+    if (deps.totalHeight) return deps.totalHeight.value
+    if (import.meta.env && import.meta.env.DEV) {
+      console.warn(
+        '[useNoticeStack] totalHeight 和 vlistBottom 都未提供，fallback 0（w3 切换后应至少传其一）',
+      )
+    }
+    return 0
+  }
+
   /** 列表末尾 + topOffset + compacting 占位（handoff 块的基线） */
   const handoffNoticeTop = computed(() => {
-    let top = deps.totalHeight.value + deps.topOffset.value
+    let top = resolveBase() + deps.topOffset.value
     if (deps.isCompacting.value) top += deps.compactNoticeHeight
     return top
   })
