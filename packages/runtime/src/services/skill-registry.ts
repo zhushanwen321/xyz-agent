@@ -156,10 +156,18 @@ export class SkillRegistry {
     // close 旧 watcher（await 避免 fd 抖动，新旧 watcher 短暂并发）
     await this.globalWatcher?.close().catch(() => {})
     this.globalWatcher = null
-    // 重扫缓存
-    this.globalCache = await this.scanFn('')
-    // 重挂 watcher（读最新 configStore，新路径纳入视野）
-    this.setupGlobalWatcher()
+    try {
+      // 重扫缓存（可能抛错——scanFn 失败时保留旧 globalCache，不让缓存变空）
+      this.globalCache = await this.scanFn('')
+    } catch (e) {
+      // scanFn 失败：不刷新缓存（保留旧值），但要保证 watcher 仍挂上（否则文件变动监不到，
+      // 整个全局监听链断开，只有再次改 settings 或重启才能恢复）。
+      console.error('[skill-registry] rebuildGlobal scanFn failed, keeping stale globalCache and reattaching watcher:', e)
+    } finally {
+      // 无论 scanFn 成败，重挂 watcher（读最新 configStore，新路径纳入视野）——
+      // 兜底重建监听，避免 scanFn 异常导致全局 watcher 永久断链。
+      this.setupGlobalWatcher()
+    }
     // 通知上游（触发 onChange → 广播 config.skillCacheInvalidated + reloadOrchestrator）
     await this.notifyGlobalChange()
   }
@@ -199,6 +207,11 @@ export class SkillRegistry {
 
     const p = (async () => {
       const skills = await this.scanFn(cwd)
+      // 防竞态守卫：scanFn 在途期间可能被 invalidateAllProjects 清空 projectInFlight + projectCache。
+      // 此时已清出的旧扫描结果不应写回缓存（否则与 invalidateAllProjects 后新配置的 watcher 范围发散），
+      // 也不应挂 watcher（invalidateAllProjects 已 close 所有 project watcher，新 watcher 由下次
+      // getProjectSkills 用新 configStore 重建）。getProjectSkills 发起方仍拿到本次 scan 结果。
+      if (!this.projectInFlight.has(cwd)) return skills
       this.projectCache.set(cwd, skills)
       // 挂项目 watcher：watch 范围 = scan 范围（SSOT），只 watch 实际存在的项目 skill 子目录
       // （.xyz-agent/skills、discovery 相对路径 resolve 后），不递归 watch 整个 cwd。
@@ -226,11 +239,25 @@ export class SkillRegistry {
    * 不发广播——由调用方显式 broadcastSkillCacheInvalidated('project')。
    */
   invalidateAllProjects(): void {
+    // close 所有 project watcher
     for (const watcher of this.projectWatchers.values()) {
       watcher.close().catch(() => {})
     }
     this.projectWatchers.clear()
     this.projectCache.clear()
+    // 清 in-flight：避免在途 getProjectSkills Promise resolve 后把旧扫描结果写回已清空的缓存。
+    // 竞态：invalidate 后 in-flight 完成会 projectCache.set 旧值 + setupProjectWatcher(新 dirs)，
+    // 导致缓存（旧扫描）与 watcher（新目录）发散。清 Map 后 getProjectSkills 的 finally 守卫
+    // 检测到 key 已不存在，跳过写回（in-flight 完成时 finally delete 不存在的 key 无副作用）。
+    this.projectInFlight.clear()
+    // 清 project 级 debounce timer：避免 pending 重扫在 dispose 后写回陈旧缓存。
+    // 仅清 project 级（cwd key），保留 GLOBAL_KEY 的 timer（global 由 rebuildGlobal 独立处理）。
+    for (const [key, timer] of this.debounceTimers.entries()) {
+      if (key !== GLOBAL_KEY) {
+        clearTimeout(timer)
+        this.debounceTimers.delete(key)
+      }
+    }
   }
 
   /**

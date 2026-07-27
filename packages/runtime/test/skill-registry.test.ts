@@ -14,6 +14,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
+import type { SkillInfo } from '@xyz-agent/shared'
 
 vi.mock('chokidar', () => ({
   // 默认实现：返回带 close 的 EventEmitter；U5 用 mockReturnValueOnce 覆盖为测试持有的实例
@@ -338,6 +339,48 @@ describe('skillRegistry (W2 rebuild)', () => {
     }
   })
 
+  it('TC2b: rebuildGlobal scanFn 失败时 watcher 仍挂上 + globalCache 保留旧值（兜底防断链）', async () => {
+    const chokidar = await import('chokidar')
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    // 准备一个真实存在的全局 skill 目录（让 setupGlobalWatcher 真正挂 watcher）
+    const dir = mkdtempSync(join(tmpdir(), 'skill-w2-tc2b-'))
+    const skill1 = { id: 'skill-1', name: 'Skill One' }
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => ['sid-tc2b'] } as never,
+      // initGlobal 返回 [skill1]；rebuildGlobal 第二次调用（index=1）抛错
+      _scanFn: vi.fn()
+        .mockResolvedValueOnce([skill1])
+        .mockRejectedValueOnce(new Error('scan boom')),
+    } as never)
+    const onChangeSpy = vi.fn()
+    reg.onChange(onChangeSpy)
+    try {
+      // initGlobal 成功，globalCache = [skill1]
+      await reg.initGlobal()
+      expect(reg.getGlobalSkills()).toEqual([skill1])
+      const watchCountAfterInit = vi.mocked(chokidar.watch).mock.calls.length
+
+      // rebuildGlobal 时 scanFn 抛错
+      await reg.rebuildGlobal()
+
+      // 核心 1：watcher 仍挂上（setupGlobalWatcher 在 finally 执行）——
+      // 新 watch 调用产生，证明监听链未断
+      expect(vi.mocked(chokidar.watch).mock.calls.length).toBeGreaterThan(watchCountAfterInit)
+      // 核心 2：globalCache 仍为旧值 [skill1]（未被空值覆盖，scanFn 失败保留旧值）
+      expect(reg.getGlobalSkills()).toEqual([skill1])
+      // 核心 3：notifyGlobalChange 仍被调用（上游仍收到变更事件）
+      expect(onChangeSpy).toHaveBeenCalledWith({
+        scope: 'global',
+        affectedSessionIds: ['sid-tc2b'],
+      })
+    } finally {
+      reg.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('TC3: invalidateAllProjects 清空 projectCache + close 所有 project watcher', async () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const cwdA = mkdtempSync(join(tmpdir(), 'skill-w2-tc3-a-'))
@@ -381,6 +424,53 @@ describe('skillRegistry (W2 rebuild)', () => {
     }
   })
 
+  it('TC3b: invalidateAllProjects 清空 projectInFlight + project debounce timers（防竞态写回陈旧缓存）', async () => {
+    const chokidar = await import('chokidar')
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    // 用「分阶段 scanFn」模拟竞态：第一次调用挂起（in-flight），第二次（invalidate 后重扫）立即返回 []。
+    let resolveFirstScan!: (v: SkillInfo[]) => void
+    const firstScan = new Promise<SkillInfo[]>((r) => { resolveFirstScan = r })
+    const staleSkills: SkillInfo[] = [{ id: 'stale', name: 'Stale' } as SkillInfo]
+    let scanCallCount = 0
+    const scanFn = vi.fn((_root: string): Promise<SkillInfo[]> => {
+      scanCallCount++
+      return scanCallCount === 1 ? firstScan : Promise.resolve([])
+    })
+    const cwd = mkdtempSync(join(tmpdir(), 'skill-w2-tc3b-'))
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => [] } as never,
+      _scanFn: scanFn,
+    } as never)
+    try {
+      // 1. 发起 getProjectSkills（in-flight，scanFn 未 resolve）
+      const p = reg.getProjectSkills(cwd)
+      // 让 (async)() 进入 await scanFn
+      await Promise.resolve()
+      // 2. 调 invalidateAllProjects：清 projectCache + projectWatchers + projectInFlight + project debounce
+      reg.invalidateAllProjects()
+      // 3. resolveScan 传「陈旧 skill 列表」——模拟旧配置扫描结果
+      resolveFirstScan(staleSkills)
+      await p
+
+      // 核心 1：in-flight 完成后旧结果（staleSkills）写不回缓存——
+      // invalidateAllProjects 清了 projectInFlight，getProjectSkills 的守卫检测到 key 已不存在，跳过 set。
+      // 重新 getProjectSkills 触发新一次 scanFn（返回 []），缓存值应为空而非 staleSkills。
+      const skillsAfter = await reg.getProjectSkills(cwd)
+      expect(skillsAfter).toEqual([])
+      // scanFn 被调用两次（首次 in-flight + invalidate 后重扫），证明缓存被清后确实重扫了
+      expect(scanFn).toHaveBeenCalledTimes(2)
+
+      // 核心 2：in-flight 期间不应再挂 watcher（守卫跳过 setupProjectWatcher）——
+      // invalidateAllProjects 后 watch 调用次数应为 0（首次 in-flight 守卫跳过 + 重扫时项目无 skill 目录 dirs 为空）
+      expect(chokidar.watch).not.toHaveBeenCalled()
+    } finally {
+      reg.dispose()
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('TC4: onChange 收到 SkillChangeEvent 对象（global scope 带 affectedSessionIds / project scope 带 cwd）', async () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const cwd = '/proj-tc4'
@@ -403,5 +493,39 @@ describe('skillRegistry (W2 rebuild)', () => {
     // 项目变动：scope='project'，cwd 携带，affectedSessionIds=cwd 匹配的活跃 session
     await reg.notifyProjectChange(cwd)
     expect(events[1]).toMatchObject({ scope: 'project', cwd, affectedSessionIds: ['sid-1'] })
+  })
+
+  it('TC4b: rebuildGlobal 触发 onChange 广播 global scope（index.ts onChange 连线的等效验证）', async () => {
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const dir = mkdtempSync(join(tmpdir(), 'skill-w2-tc4b-'))
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      // 真实 sessionService：返回活跃 session 列表（rebuildGlobal → notifyGlobalChange 会读它）
+      sessionService: { getActiveSessionIds: () => ['sid-g1', 'sid-g2'] } as never,
+      _scanFn: vi.fn().mockResolvedValue([]),
+    } as never)
+    const events: Array<{ scope: string; cwd?: string; affectedSessionIds: string[] }> = []
+    reg.onChange((event) => events.push(event))
+    try {
+      await reg.initGlobal()
+      events.length = 0 // 清掉 initGlobal 的副作用事件（initGlobal 不调 notifyGlobalChange，防御性清空）
+
+      // 调 rebuildGlobal：内部 notifyGlobalChange → onChange 回调收到 { scope:'global', affectedSessionIds:[...] }
+      await reg.rebuildGlobal()
+
+      // 核心断言：global scope 广播链路通畅——rebuildGlobal 触发 onChange({scope:'global', ...})
+      // （index.ts 用此回调调 server.broadcastSkillCacheInvalidated('global')；本 TC 用真 SkillRegistry
+      // 验证 onChange 回调能被 rebuildGlobal 触发并携带 global scope，填补 TC5 只覆盖 project scope 的缺口）
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({
+        scope: 'global',
+        affectedSessionIds: ['sid-g1', 'sid-g2'],
+      })
+      expect(events[0].cwd).toBeUndefined()
+    } finally {
+      reg.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
