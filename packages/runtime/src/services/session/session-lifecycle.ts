@@ -13,7 +13,7 @@ import { basename, join } from 'node:path'
 import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import type { SessionSummary } from '@xyz-agent/shared'
+import type { SessionSummary, BatchDeleteResult } from '@xyz-agent/shared'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 import type { IManagedSessionView } from './types.js'
@@ -191,6 +191,35 @@ export class SessionLifecycle {
       this.sessionStore.invalidateMetaCache(target.filePath)
     }
     this.sessionStore.refreshAll()
+  }
+
+  /**
+   * 批量删除指定 cwd（folder）下所有 session。
+   *
+   * best-effort 策略：单个 session 删除失败不中断循环，聚合 deleted/failed 返回。
+   * 查询合并 active（getActiveSummaries）+ persisted（scanSessions）去重，
+   * 覆盖 active 但 JSONL 未 flush 的边界场景（AGENTS.md 关键规则 #6）。
+   * 不调广播——广播由 caller（session-message-handler）控制。
+   */
+  async deleteByCwd(cwd: string): Promise<BatchDeleteResult> {
+    const cwdSessions = new Set<string>()
+    for (const s of this.svc.getActiveSummaries()) {
+      if (s.cwd === cwd) cwdSessions.add(s.id)
+    }
+    for (const s of this.sessionStore.scanSessions()) {
+      if (s.cwd === cwd) cwdSessions.add(s.id)
+    }
+    const deleted: string[] = []
+    const failed: Array<{ sessionId: string; error: string }> = []
+    for (const id of cwdSessions) {
+      try {
+        await this.delete(id)
+        deleted.push(id)
+      } catch (e) {
+        failed.push({ sessionId: id, error: (e as Error).message })
+      }
+    }
+    return { cwd, deleted, failed }
   }
 
   /** 从持久化文件恢复 session。 */

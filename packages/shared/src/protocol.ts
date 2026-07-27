@@ -33,7 +33,7 @@ export interface CommandSourceInfo {
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
+  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.handoff' | 'session.abortHandoff'
   | 'session.getSubagents' | 'session.getSubagentHistory'
@@ -152,6 +152,17 @@ export type TerminalUnknownErrorCode = 'terminal_failed'
 /** envelope code 字段的完整联合（业务码 + 兜底） */
 export type TerminalEnvelopeCode = TerminalErrorCode | TerminalUnknownErrorCode
 
+/**
+ * folder 维度批量删除结果（session.deleteByCwd 的 reply payload）。
+ * 用 `type =` 而非 `interface` —— 与 GitStatusResult 同理：interface 无隐式索引签名，
+ * mock 用 `Record<string, unknown>` 接收 reply payload 时会报 TS2345（见 git.ts 注释）。
+ */
+export type BatchDeleteResult = {
+  cwd: string
+  deleted: string[]
+  failed: Array<{ sessionId: string; error: string }>
+}
+
 // ── ClientMessage discriminated union ───────────────────────────
 
 /** 每个 type 对应的 payload 类型映射 */
@@ -160,6 +171,8 @@ export interface ClientMessageMap {
   // hidden:true 创建隐藏 session（公共 session），不进 sidebar 列表，仅供内部使用。
   'session.create': { cwd?: string; label?: string; hidden?: boolean }
   'session.delete': { sessionId: string }
+  // session.deleteByCwd：批量删除指定 cwd（folder）下所有 session（folder 维度清理）。
+  'session.deleteByCwd': { cwd: string }
   'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
   'session.history': { sessionId: string }
@@ -398,7 +411,7 @@ export type WorktreeUnknownErrorCode = 'worktree_failed'
 export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
-  | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
+  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffComplete'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
@@ -680,6 +693,9 @@ export interface ServerMessageMapBase {
   'session.created': { session: SessionSummary }
   // session.deleted：session.delete reply（session-message-handler.ts:72 reply { sessionId: delSid }）。
   'session.deleted': { sessionId: string }
+  // session.deletedByCwd：session.deleteByCwd reply（session-message-handler.ts reply BatchDeleteResult，
+  // 含 deleted/failed 聚合列表，前端据此 toast 部分失败）。
+  'session.deletedByCwd': BatchDeleteResult
   // session.renamed：session.rename reply（session-message-handler.ts:162 reply { sessionId, name }）。
   'session.renamed': { sessionId: string; name: string }
   // session.forkNotice：session.fork 成功后的广播（FR-12 修订 PR2），通知 srcSession 所在 panel
@@ -930,6 +946,7 @@ export interface ReplyPayloadMap {
   'model.switch': void            // reply model.switched（前端 model.ts register<void> 不读 payload）
   'session.compact': void         // reply session.compacted
   'session.delete': void          // reply session.deleted
+  'session.deleteByCwd': BatchDeleteResult // reply session.deletedByCwd（前端读 deleted/failed 列表）
   // session.handoff：触发后 pi 异步跑 /skill:handoff，完成经 session.handoffComplete 独立广播通道推回。
   // reply message.status ack（前端不读 payload，等 handoffComplete 广播跳转新 session）。
   'session.handoff': void         // reply message.status

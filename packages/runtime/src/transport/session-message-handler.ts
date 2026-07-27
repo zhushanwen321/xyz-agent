@@ -26,7 +26,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'session.handoff', 'session.abortHandoff',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
@@ -131,6 +131,14 @@ export class SessionMessageHandler {
         this.ctx.clearExtensionTimeoutsForSession(delSid)
         await this.ctx.sessionService.delete(delSid)
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
+        return this.ctx.broadcastSessionList()
+      }
+      case 'session.deleteByCwd': {
+        const result = await this.ctx.sessionService.deleteByCwd(msg.payload.cwd)
+        for (const id of result.deleted) {
+          this.ctx.clearExtensionTimeoutsForSession(id)
+        }
+        this.ctx.reply(ws, msg.id, 'session.deletedByCwd', result)
         return this.ctx.broadcastSessionList()
       }
       case 'config.sessions':

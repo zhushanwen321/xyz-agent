@@ -23,6 +23,7 @@ import type {
   WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
+  BatchDeleteResult,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -81,6 +82,7 @@ export interface SessionCreateOptions {
 export interface ISessionService {
   create(cwd?: string, label?: string, options?: SessionCreateOptions): Promise<SessionSummary>
   delete(sessionId: string): Promise<void>
+  deleteByCwd(cwd: string): Promise<BatchDeleteResult>
   renameSession(sessionId: string, newName: string): Promise<void>
   sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }>
   sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }>
