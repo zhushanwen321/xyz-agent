@@ -13,36 +13,37 @@
     <!-- thinking 块：header 可点击 toggle，长 reasoning 独立再折叠（本地折叠态，由 collapsed prop 初始化） -->
     <div v-if="type === 'thinking'" class="trace-think">
       <!--
-        inline 布局：label+icon 与内容在同一 inline 格式上下文，内容不换行。
-        展开时 body 用 inline-block 参与 inline 格式化，文本从 icon 右侧自然续行。
+        flex 两段式（P0-2 方案 B）：header 独占一行（chevron + icon + label + 收起态 preview），
+        展开体作为 block 在下一行渲染（pl-6 与 icon 对齐）。与 tool/subagent/workflow 展开体一致，
+        避免 MarkdownRenderer 输出 <p> block 元素进 inline-block 容器导致强制换行。
       -->
       <div
-        class="min-w-0 cursor-pointer select-none text-[12.5px] font-medium text-neutral-mid transition-colors hover:text-neutral-fg"
+        class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[12.5px] font-medium text-neutral-mid transition-colors hover:text-neutral-fg"
         :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
         @click="toggleThinking"
       >
-        <ChevronRight class="mr-1.5 inline size-3 align-baseline transition-transform text-neutral-mid" :class="thinkingExpanded ? 'rotate-90' : ''" />
-        <component :is="BLOCK_ICON_LUCIDE.thinking" class="mr-1.5 inline size-[13px] align-baseline text-neutral-ico hover:text-neutral-ico-hover" />
-        <span class="align-baseline">{{ t('panel.message.thinkingBlock') }}</span>
-        <!-- 收起态：inline 预览摘要 -->
-        <span v-if="!thinkingExpanded" class="ml-0.5 align-baseline text-neutral-dim">· {{ previewText }}</span>
-        <!-- 展开态：inline-block body（与 label 同行，文本自然续行），含 copy 按钮 -->
-        <span v-if="thinkingExpanded" class="group/think relative ml-1 inline-block align-baseline text-[12px] leading-relaxed">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/think:opacity-100"
-            :title="t('panel.message.copy')"
-            @click.stop="content && copy(content, `thinking-${thinkingId ?? 'block'}`)"
-          >
-            <Check v-if="copied === `thinking-${thinkingId ?? 'block'}`" class="size-3 text-success" />
-            <CopyIcon v-else class="size-3" />
-          </Button>
-          <span class="inline-block pl-6 select-text text-neutral-mid">
-            <MarkdownRenderer v-if="!working" :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
-            <span v-else>{{ previewText }}</span>
-          </span>
-        </span>
+        <ChevronRight class="size-[14px] shrink-0 transition-transform text-neutral-dim" :class="thinkingExpanded ? 'rotate-90 text-accent' : ''" />
+        <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
+        <span class="shrink-0">{{ t('panel.message.thinkingBlock') }}</span>
+        <!-- 收起态：preview 跟在 label 后（truncate 避免长 preview 撑爆） -->
+        <span v-if="!thinkingExpanded" class="min-w-0 truncate text-neutral-dim">· {{ previewText }}</span>
+      </div>
+      <!-- 展开态：block 在下一行，pl-6 与 icon 右侧对齐；copy 按钮在左上角（hover 显） -->
+      <div v-if="thinkingExpanded" class="group/think relative mt-1 text-[12px] leading-relaxed">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/think:opacity-100"
+          :title="t('panel.message.copy')"
+          @click.stop="content && copy(content, `thinking-${thinkingId ?? 'block'}`)"
+        >
+          <Check v-if="copied === `thinking-${thinkingId ?? 'block'}`" class="size-3 text-success" />
+          <CopyIcon v-else class="size-3" />
+        </Button>
+        <div class="pl-6 select-text text-neutral-mid">
+          <MarkdownRenderer v-if="!working" :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
+          <span v-else>{{ previewText }}</span>
+        </div>
       </div>
     </div>
 
@@ -70,7 +71,7 @@
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
-          <ChevronRight class="size-3 shrink-0 transition-transform text-neutral-mid" :class="toolExpanded ? 'rotate-90' : ''" />
+          <ChevronRight class="size-[14px] shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90 text-accent' : ''" />
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
@@ -109,7 +110,7 @@
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
-          <ChevronRight class="size-3 shrink-0 transition-transform text-neutral-mid" :class="toolExpanded ? 'rotate-90' : ''" />
+          <ChevronRight class="size-[14px] shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90 text-accent' : ''" />
           <!-- running 态 loader（双环 + accent），其余走 BLOCK_ICON_LUCIDE[iconKind] -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="headerBlockIcon" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
@@ -143,18 +144,31 @@
               }"
             >{{ item.text }}</span>
           </div>
-          <!-- 结果区：copy 按钮在左上角（border-l 旁），hover 显示 -->
+          <!-- 结果区：左上角 action 组（copy 始终在；failed+bash 时加「在终端运行」recovery），hover 显示 -->
           <div v-if="result" class="group/result relative mt-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
-              :title="t('panel.message.copy')"
-              @click.stop="copy(result, `tool-${tool!.id}`)"
-            >
-              <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
-              <CopyIcon v-else class="size-3" />
-            </Button>
+            <div class="absolute top-0 left-0 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/result:opacity-100">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-5 rounded-sm text-neutral-dim hover:text-neutral-fg"
+                :title="t('panel.message.copy')"
+                @click.stop="copy(result, `tool-${tool!.id}`)"
+              >
+                <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
+                <CopyIcon v-else class="size-3" />
+              </Button>
+              <Button
+                v-if="isFailed && isBash && sessionId"
+                variant="ghost"
+                size="icon"
+                data-testid="tool-failed-run-in-terminal"
+                class="size-5 rounded-sm text-neutral-dim hover:text-warn"
+                :title="t('panel.terminal.runInTerminal')"
+                @click.stop="runInTerminal"
+              >
+                <TerminalIcon class="size-3" />
+              </Button>
+            </div>
             <div
               class="tool-result font-mono text-[12px] leading-snug whitespace-pre-wrap border-l-2 border-neutral-faint pl-6 select-text"
               :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"

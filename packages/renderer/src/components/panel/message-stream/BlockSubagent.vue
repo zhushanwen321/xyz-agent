@@ -9,12 +9,12 @@
   -->
   <div class="trace-subagent border-b border-dashed border-border pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
-      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium transition-opacity hover:opacity-80"
+      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13.5px] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
       :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
       @click="toggleTool"
     >
-      <ChevronRight class="size-3 shrink-0 transition-transform text-neutral-mid" :class="toolExpanded ? 'rotate-90' : ''" />
+      <ChevronRight class="size-[14px] shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90 text-accent' : ''" />
       <!-- running 态 loader（双环 + accent），其余走 users ICON -->
       <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
       <component :is="BLOCK_ICON_LUCIDE.subagent" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
@@ -46,7 +46,8 @@
         <Button
           variant="ghost"
           size="icon"
-          class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+          class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity group-hover/result:opacity-100"
+          :class="isFailed ? 'hover:text-warn' : 'hover:text-neutral-fg'"
           :title="t('panel.message.copy')"
           @click.stop="copy(result, `subagent-${tool.id}`)"
         >
