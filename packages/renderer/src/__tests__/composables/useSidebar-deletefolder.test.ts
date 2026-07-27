@@ -18,9 +18,20 @@ import { effectScope } from 'vue'
 import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 
 // ── mock fileTree store：捕获 clearSession（cleanupSessionState 副作用）──
+// selectSession 会经 useFileTree.loadTree 深度连锁（getTree/setNodeState/fileApi.tree...），
+// 用宽松 mock 避免打地鼠——loadTree 由 useFileTree composable 调用，store 侧只 stub clearSession + getTree。
 const clearSessionMock = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/fileTree', () => ({
-  useFileTreeStore: () => ({ clearSession: clearSessionMock }),
+  useFileTreeStore: () =>
+    new Proxy(
+      { clearSession: clearSessionMock, getTree: () => null },
+      { get: (t, p) => (p in t ? t[p as keyof typeof t] : () => {}) },
+    ),
+}))
+
+// ── mock useFileTree composable：selectSession 连锁调 loadTree，stub 为 no-op ──
+vi.mock('@/composables/features/useFileTree', () => ({
+  useFileTree: () => ({ loadTree: () => Promise.resolve() }),
 }))
 
 // ── mock useChat composable：捕获 disposeSession（cleanupSessionState 副作用）──
@@ -44,6 +55,11 @@ vi.mock('@/api', () => ({
     remove: vi.fn(() => Promise.resolve()),
     removeByCwd: removeByCwdMock,
     getCommands: vi.fn(() => Promise.resolve({ commands: [] })),
+    // selectSession 真实连锁会调这些——补 mock 避免 unhandled rejection（新用例走 selectSession(s3.id) 分支）
+    getContext: vi.fn(() => Promise.resolve({})),
+    getSubagents: vi.fn(() => Promise.resolve([])),
+    getWorkflows: vi.fn(() => Promise.resolve([])),
+    getAgentCallHistory: vi.fn(() => Promise.resolve([])),
   },
 }))
 
@@ -103,6 +119,36 @@ describe('useSidebar.deleteFolder 全成功（W2TC2）', () => {
     expect(useChatDisposeMock).toHaveBeenCalledWith('s2')
     // wasActiveInFolder=true（s2 是 active 且在 folder 内）→ 回退（list 已空 → push chat）
     expect(pushSpy).toHaveBeenCalledWith({ view: 'chat' })
+
+    scope.stop()
+  })
+
+  it('wasActiveInFolder=true 且删除后有剩余 session → selectSession(next.id)（非 push chat 空态分支）', async () => {
+    const scope = effectScope()
+    const sidebar = scope.run(() => useSidebar())!
+    // folder('/p') 下 2 session（s1 + active 的 s2），另一 cwd 有 s3（删除后仍留存）
+    const session = useSessionStore()
+    session.setGroups([
+      { cwd: '/p', sessions: [makeSummary('s1', '/p'), makeSummary('s2', '/p')] },
+      { cwd: '/other', sessions: [makeSummary('s3', '/other')] },
+    ])
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's2')
+    session.activeId = 's2'
+
+    removeByCwdMock.mockResolvedValueOnce({ cwd: '/p', deleted: ['s1', 's2'], failed: [] })
+
+    const res = await sidebar.deleteFolder('/p')
+
+    expect(res).toEqual({ cwd: '/p', deleted: ['s1', 's2'], failed: [] })
+    // cleanupSessionState 对 s1/s2 各调一次
+    expect(clearSessionMock).toHaveBeenCalledWith('s1')
+    expect(clearSessionMock).toHaveBeenCalledWith('s2')
+    // s3 未删，不被清理
+    expect(clearSessionMock).not.toHaveBeenCalledWith('s3')
+    // wasActiveInFolder=true → list 非空（s3 留存）→ selectSession(s3.id) 分支
+    //（cleanupSessionState 内 removeFromList 已把 activeId 重置，selectSession 切到 s3）
+    expect(switchSessionMock).toHaveBeenCalledWith('s3')
 
     scope.stop()
   })

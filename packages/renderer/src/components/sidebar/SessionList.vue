@@ -30,15 +30,15 @@
               variant="ghost"
               size="icon"
               :class="folderConfirmingCwd === g.cwd
-                ? 'size-[18px] rounded-sm border border-danger bg-danger text-fg'
-                : 'size-[18px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
+                ? 'size-[22px] rounded-sm border border-danger bg-danger text-fg'
+                : 'size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
               :title="folderConfirmingCwd === g.cwd
                 ? t('sidebar.sessionList.deleteFolderConfirm')
                 : t('sidebar.sessionItem.delete')"
               @click.stop="onFolderRemoveClick(g.cwd)"
             >
-              <Check v-if="folderConfirmingCwd === g.cwd" class="size-[11px]" />
-              <Trash2 v-else class="size-[11px]" />
+              <Check v-if="folderConfirmingCwd === g.cwd" class="size-[13px]" />
+              <Trash2 v-else class="size-[13px]" />
             </Button>
           </div>
         </div>

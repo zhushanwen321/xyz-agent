@@ -303,7 +303,11 @@ export const session = {
     const targets = fixtureSessions.filter((s) => s.cwd === cwd)
     const deleted: string[] = []
     for (const s of targets) {
-      fixtureSessions.splice(fixtureSessions.findIndex((x) => x.id === s.id), 1)
+      // 与 remove() 一致：findIndex 守卫 idx===-1，避免 splice(-1) 误删末尾元素。
+      // targets 是 filter 快照（迭代安全），splice 在原 fixtureSessions 上原地删。
+      const idx = fixtureSessions.findIndex((x) => x.id === s.id)
+      if (idx === -1) continue
+      fixtureSessions.splice(idx, 1)
       delete fixtureMessages[s.id]
       deleted.push(s.id)
     }
