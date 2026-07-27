@@ -7,7 +7,7 @@
   <div class="flex flex-col gap-3">
     <!-- page-header -->
     <div class="flex items-center justify-between">
-      <span />
+      <ProviderImportMenu :disabled="importState !== 'idle'" @select="onImportSelect" />
       <Button
         class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
         @click="openAdd"
@@ -218,6 +218,17 @@
     >
       <p v-if="actionError" class="pt-2 text-[12px] text-danger">{{ actionError }}</p>
     </ConfirmDialog>
+
+    <!-- 导入预览弹窗（W2）：open 派生自 importState（previewing/applying 时开） -->
+    <ProviderImportPreviewDialog
+      :open="importState === 'previewing' || importState === 'applying'"
+      :import-id="importId ?? undefined"
+      :preview="importPreview"
+      :loading="importState === 'applying'"
+      :error="importError"
+      @update:open="onPreviewDialogToggle"
+      @confirm="onImportConfirm"
+    />
   </div>
 </template>
 
@@ -233,11 +244,24 @@ import type { ProviderInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
 import { useQuotaStore } from '@/stores/quota'
+import { useProviderImport } from '@/composables/features/useProviderImport'
 import ProviderEditModal from './ProviderEditModal.vue'
+import ProviderImportMenu from './ProviderImportMenu.vue'
+import ProviderImportPreviewDialog from './ProviderImportPreviewDialog.vue'
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 
 const { t } = useI18n()
+// 导入流程状态机（W2）抽到 composable，组件只持有展示态
+const {
+  importState,
+  importId,
+  importPreview,
+  importError,
+  onImportSelect,
+  onImportConfirm,
+  onPreviewDialogToggle,
+} = useProviderImport()
 
 /** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */
 const toggling = ref<Set<string>>(new Set())

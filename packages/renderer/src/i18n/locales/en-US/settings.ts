@@ -99,6 +99,29 @@ export default {
     deleteConfirmTitle: 'Delete {name}?',
     deleteConfirmDesc: 'All model configurations under it will be removed. This cannot be undone.',
     deleteConfirmBtn: 'Confirm delete',
+    // ── Import Providers from other Agents (W2) ──
+    importFromAgents: 'Import from Agents',
+    importPreview: {
+      title: 'Import Providers from {source}',
+      description: 'Select providers to import; duplicates will be skipped',
+      confirm: 'Import selected',
+      cancel: 'Cancel',
+      keyNotExtracted: 'API Key not extracted',
+      conflict: 'Duplicate name exists',
+      statImportable: '{count} importable',
+      statConflict: '{count} conflict',
+      statKeyMissing: '{count} key missing',
+      warnings: 'Warnings',
+      // B2/W7: source config parse-time fatal error banner (preview?.parseError; does not block import of parsed providers)
+      parseError: 'Source config parse error (some providers may still be importable): {message}',
+      // B2/W7: top-level warnings (preview?.warnings array; shows "N providers skipped due to unsupported protocol")
+      topWarnings: '{count} provider(s) skipped due to unsupported protocol or other reasons',
+    },
+    importToast: {
+      success: 'Imported {count} providers',
+      failed: '{count} failed to import',
+      partialKeyMissing: 'Some providers need manual API Key',
+    },
   },
   // ── Provider edit dialog (ProviderEditModal) ──
   providerEdit: {
@@ -282,6 +305,24 @@ export default {
     enableDir: 'Enable directory {path}',
     removeDir: 'Remove directory {path}',
     pathExists: 'Path already exists',
+    // ── Import from other Agents (SourceImportSection, W1) ──
+    importFromAgents: {
+      title: 'Import from other Agents',
+      loading: 'Detecting...',
+      detectError: 'Detection failed',
+      notInstalled: 'Not installed',
+      sharedPoolActive: 'Active via shared pool',
+      importSelected: 'Import selected',
+      skillCount: '{count} skills',
+      agentCount: '{count} agents',
+      agentOnlyClaudeHint: 'Agent import supports Claude Code only',
+    },
+    sourceLabels: {
+      claude: 'Claude Code',
+      codex: 'Codex',
+      pi: 'Pi',
+      zcode: 'ZCode',
+    },
   },
   // ── Command names (useAppCommands, for shortcut display) ──
   command: {

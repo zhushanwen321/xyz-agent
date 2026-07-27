@@ -99,6 +99,29 @@ export default {
     deleteConfirmTitle: '删除 {name}？',
     deleteConfirmDesc: '将移除其下所有模型配置。此操作不可撤销。',
     deleteConfirmBtn: '确认删除',
+    // ── 从其他 Agent 导入 Provider（W2）──
+    importFromAgents: '从其他 Agent 导入',
+    importPreview: {
+      title: '从 {source} 导入 Provider',
+      description: '勾选要导入的 provider，冲突项会跳过',
+      confirm: '导入选中',
+      cancel: '取消',
+      keyNotExtracted: 'API Key 未提取',
+      conflict: '已存在同名',
+      statImportable: '{count} 个可导入',
+      statConflict: '{count} 个冲突',
+      statKeyMissing: '{count} 个 key 未提取',
+      warnings: '警告',
+      // B2/W7：源配置解析期致命错误横幅（preview?.parseError 触发，不阻断已解析 providers 导入）
+      parseError: '源配置解析出错（部分 provider 可能仍可导入）：{message}',
+      // B2/W7：顶层警告（preview?.warnings 数组，顶部展示「N 个 provider 因协议不支持被丢弃」等）
+      topWarnings: '{count} 个 provider 因协议不支持等原因被跳过',
+    },
+    importToast: {
+      success: '导入 {count} 个 provider',
+      failed: '{count} 个导入失败',
+      partialKeyMissing: '部分 provider 需手动补 API Key',
+    },
   },
   // ── Provider 编辑弹窗（ProviderEditModal）──
   providerEdit: {
@@ -282,6 +305,24 @@ export default {
     enableDir: '启用目录 {path}',
     removeDir: '删除目录 {path}',
     pathExists: '路径已存在',
+    // ── 从其他 Agent 导入（SourceImportSection，W1）──
+    importFromAgents: {
+      title: '从其他 Agent 导入',
+      loading: '检测中...',
+      detectError: '检测失败',
+      notInstalled: '未安装',
+      sharedPoolActive: '已通过共享池生效',
+      importSelected: '导入选中',
+      skillCount: '{count} 个 skill',
+      agentCount: '{count} 个 agent',
+      agentOnlyClaudeHint: 'Agent 导入仅支持 Claude Code',
+    },
+    sourceLabels: {
+      claude: 'Claude Code',
+      codex: 'Codex',
+      pi: 'Pi',
+      zcode: 'ZCode',
+    },
   },
   // ── 命令名（useAppCommands，用于快捷键展示）──
   command: {
