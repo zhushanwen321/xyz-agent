@@ -23,6 +23,8 @@
     <!-- 头部行：command 文本 + 状态标签（+ no context 标记 + 取消按钮） -->
     <div class="flex items-start justify-between gap-2">
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
+        <!-- S9：Terminal 图标前缀增强 shell prompt 语义（与项目其他 lucide 图标风格一致） -->
+        <Terminal class="size-3 shrink-0 text-muted" />
         <span class="min-w-0 flex-1 truncate font-mono text-[11px] leading-snug text-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
         <span
           v-if="bash?.excludeFromContext"
@@ -34,6 +36,12 @@
         <span v-if="isStreaming" class="flex items-center gap-1 text-[11px] leading-none text-muted">
           <Loader2 class="size-3 animate-spin" />
         </span>
+        <!-- W5：error==='timeout'（finalizeBashOnly 置位）优先于 cancelled，显示「超时」与「已取消」区分 -->
+        <span
+          v-else-if="isTimeout"
+          class="font-mono text-[11px] leading-none text-muted"
+          data-testid="bash-status-tag"
+        >{{ t('panel.message.bashTimeout') }}</span>
         <span
           v-else-if="isCancelled"
           class="font-mono text-[11px] leading-none text-muted"
@@ -56,13 +64,23 @@
       </div>
     </div>
 
-    <!-- 输出区：complete 态才显示。极简风（去 rounded-sm/bg-surface-2/50），保留 max-h + overflow-y-auto（长输出滚动） -->
+    <!--
+      输出区：complete 态才显示。极简风（去 rounded-sm/bg-surface-2/50），保留 max-h + overflow-auto
+      （长输出双向滚动）。S8：pre 用 whitespace-pre（非 break-all）保留宽表格/ASCII art 对齐，
+      超宽内容（如 base64）走横向滚动条——bash 输出更常见的是表格/对齐文本，保留对齐更重要。
+    -->
     <div
       v-if="!isStreaming && hasOutput"
-      class="max-h-[var(--bash-output-max-height)] overflow-y-auto px-2 py-1 font-mono text-[11px] leading-relaxed text-muted"
+      class="max-h-[var(--bash-output-max-height)] overflow-auto px-2 py-1 font-mono text-[11px] leading-relaxed text-muted"
       data-testid="bash-output"
     >
-      <pre class="whitespace-pre-wrap break-all font-mono">{{ bash?.output }}</pre>
+      <pre class="whitespace-pre font-mono">{{ bash?.output }}</pre>
+      <!-- W4：消费 truncated 字段——pi 对超长输出截断时返回 truncated:true，显示截断标记（前端只显示，不自行截断） -->
+      <div
+        v-if="bash?.truncated"
+        class="mt-1 text-[10px] italic leading-none text-muted"
+        data-testid="bash-output-truncated"
+      >{{ t('panel.message.bashOutputTruncated') }}</div>
     </div>
     <p
       v-else-if="!isStreaming && !hasOutput"
@@ -75,7 +93,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Loader2 } from '@lucide/vue'
+import { Loader2, Terminal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChat } from '@/composables/features/useChat'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
@@ -102,12 +120,15 @@ useResizeReport(rootEl, () => `s-${props.message.id}`)
 
 const bash = computed(() => props.message.bashExecution)
 const isStreaming = computed(() => props.message.status === 'streaming')
+// W5：error==='timeout'（finalizeBashOnly 超时收口置位）优先于 cancelled——超时与主动取消视觉需区分。
+// 模板优先级：isTimeout > isCancelled > 正常 exit 标签。
+const isTimeout = computed(() => props.message.error === 'timeout')
 const isCancelled = computed(() => bash.value?.cancelled === true)
 const hasOutput = computed(() => !!bash.value?.output)
 
-/** exitCode 标签颜色：cancelled 走 muted；exit 0 绿；exit N(>0) 红 */
+/** exitCode 标签颜色：timeout/cancelled 走 muted；exit 0 绿；exit N(>0) 红 */
 const exitCodeClass = computed(() => {
-  if (isCancelled.value) return 'text-muted'
+  if (isTimeout.value || isCancelled.value) return 'text-muted'
   const code = bash.value?.exitCode
   if (code === 0) return 'text-success'
   return 'text-danger'

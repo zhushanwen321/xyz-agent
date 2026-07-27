@@ -84,6 +84,8 @@ export default {
     thinkCount: 'Think ×{count}',
     toolCount: 'Tool ×{count}',
     bashCancelled: 'cancelled',
+    bashTimeout: 'timeout',
+    bashOutputTruncated: 'Output truncated',
     bashNoOutput: '(no output)',
     bashNoContext: 'no context',
     bashCancel: 'Cancel',

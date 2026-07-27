@@ -84,6 +84,8 @@ export default {
     thinkCount: '思考 ×{count}',
     toolCount: '工具 ×{count}',
     bashCancelled: '已取消',
+    bashTimeout: '已超时',
+    bashOutputTruncated: '输出已截断',
     bashNoOutput: '（无输出）',
     bashNoContext: '不进上下文',
     bashCancel: '取消',

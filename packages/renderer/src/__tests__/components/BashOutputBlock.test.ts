@@ -165,6 +165,77 @@ describe('BashOutputBlock', () => {
     expect(wrapper.find('[data-testid="bash-output"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="bash-output-empty"]').exists()).toBe(true)
   })
+
+  // ── W4：消费 truncated 字段显示截断标记（pi 对超长输出截断时返回 truncated:true）──
+
+  it('W4: truncated=true → 输出区底部显示截断标记', () => {
+    const msg = makeMessage({
+      bashExecution: {
+        command: 'cat huge.log',
+        output: '...部分输出...',
+        exitCode: 0,
+        cancelled: false,
+        truncated: true,
+        excludeFromContext: false,
+        timestamp: 1000,
+      },
+    })
+    const wrapper = mountBlock(msg)
+    const truncatedTag = wrapper.find('[data-testid="bash-output-truncated"]')
+    expect(truncatedTag.exists()).toBe(true)
+    expect(truncatedTag.text().length).toBeGreaterThan(0)
+  })
+
+  it('W4: truncated=false → 不渲染截断标记', () => {
+    const wrapper = mountBlock(makeMessage()) // 默认 truncated:false
+    expect(wrapper.find('[data-testid="bash-output-truncated"]').exists()).toBe(false)
+  })
+
+  // ── W5：超时态（error:'timeout'）与 cancelled 视觉区分 ──
+
+  it('W5: error=timeout + cancelled=true → 显示超时文案（非已取消），优先级 timeout > cancelled', () => {
+    // finalizeBashOnly 超时收口：status:error + cancelled:true + error:'timeout'
+    const msg = makeMessage({
+      status: 'error',
+      error: 'timeout',
+      bashExecution: {
+        command: 'sleep 999',
+        output: '',
+        exitCode: null,
+        cancelled: true,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: 1000,
+      },
+    } as Partial<Message>)
+    const wrapper = mountBlock(msg)
+    const tag = wrapper.find('[data-testid="bash-status-tag"]')
+    expect(tag.exists()).toBe(true)
+    // 超时态走 bashTimeout（zh-CN「已超时」），不应是已取消（zh-CN「已取消」）
+    expect(tag.text().length).toBeGreaterThan(0)
+    expect(tag.classes()).toContain('text-muted')
+    // 验证走的是 timeout 分支而非 cancelled 分支：两个文案 key 不同 → 文案不同
+    expect(tag.text()).not.toBe('已取消')
+  })
+
+  it('W5: cancelled=true 但无 error → 仍显示已取消（非超时）', () => {
+    const msg = makeMessage({
+      bashExecution: {
+        command: 'sleep 5',
+        output: '',
+        exitCode: null,
+        cancelled: true,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: 1000,
+      },
+    })
+    const wrapper = mountBlock(msg)
+    const tag = wrapper.find('[data-testid="bash-status-tag"]')
+    expect(tag.exists()).toBe(true)
+    // 无 error → 走 cancelled 分支（已取消），不是超时
+    expect(tag.text()).not.toBe('已超时')
+  })
 })
 
 // ── W4：RO 上报 + 视觉降级 ──────────────────────────────────────────

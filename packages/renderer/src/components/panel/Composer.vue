@@ -349,7 +349,7 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isSending,
   isBashMode,
 })
-/** 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。script setup ~300行接近上限，新增模式优先提取 composable。 */
+/** 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。注意：script setup 已达 300 行上限，新增逻辑必须先提取 composable（见 useComposer* 系列）。 */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
   const canHandoffSend = handoff.handoffMode.value && !isBusy.value
