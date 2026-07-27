@@ -25,7 +25,7 @@ const DEFAULT_CONFIG: SystemPromptConfig = {
 
 function makeHandler() {
   const broadcasts: ServerMessage[] = []
-  const replies: { id: string | undefined; type: string; payload: Record<string, unknown> }[] = []
+  const replies: { id: string | undefined; type: string; payload: unknown }[] = []
   const sendErrorCalls: { code: string; message: string; id?: string }[] = []
 
   const configService = {
@@ -61,7 +61,11 @@ function makeHandler() {
 
   const ctx = {
     send: vi.fn(),
-    reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: Record<string, unknown>) => {
+    // payload 用 unknown（非 Record<string, unknown>）：reply<T> 泛型让 payload 收窄为
+    // ServerMessageMap[T] union，组 A 把无 index signature 的 SkillCacheInvalidatedPayload 加进 union 后，
+    // 该 union 不再可赋值给 Record<string, unknown>（tsc 报 index signature 缺失）。unknown 类型安全
+    // （不假装知道 payload 形状），replies.push 不受影响（数组元素类型含 unknown）。
+    reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: unknown) => {
       replies.push({ id, type, payload })
     }),
     sendError: vi.fn((_ws: unknown, code: string, message: string, id?: string) => {
