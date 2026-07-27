@@ -302,3 +302,25 @@ export function onUpdateError(cb: (e: { stage: string; message: string; errorCod
 export function openUpdateFallbackUrl(url: string): Promise<void> {
   return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
 }
+
+// ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）─────────
+// main 侧 sound-handlers.ts 处理平台分发。win 返 wav base64 由 renderer 用 new Audio() 播。
+// 无 IPC（web/mock）时 listSystemSounds 返回空清单，playSystemSound 静默 no-op。
+
+/** 当前平台可用系统提示音（main existsSync 过滤后的精选清单）。无 IPC 返回空 sounds。 */
+export async function listSystemSounds(): Promise<{
+  platform: string
+  sounds: Array<{ id: string; name: string }>
+}> {
+  return api?.listSystemSounds?.() ?? { platform: '', sounds: [] }
+}
+
+/**
+ * 按名字播放系统提示音。mac/linux 由 main spawn 播；win 返回 wav base64 由调用方播。
+ * name 为空或未知时 main 侧静默 resolve。失败静默（提示音失败不阻塞对话流）。
+ */
+export async function playSystemSound(
+  name: string,
+): Promise<{ audioData?: string; mimeType?: string }> {
+  return api?.playSystemSound?.(name) ?? {}
+}
