@@ -19,7 +19,7 @@ import { watch, type FSWatcher } from 'chokidar'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { SkillInfo } from '@xyz-agent/shared'
+import type { SkillCacheScope, SkillInfo } from '@xyz-agent/shared'
 import { resolveGlobalSkillDirs, resolveProjectSkillDirs } from './skill-dirs.js'
 import type { IConfigStore } from './ports/config.js'
 
@@ -36,6 +36,19 @@ export interface SkillRegistryConfigStore {
   getSkillPaths(): string[]
   /** pi agent 配置目录（~/.xyz-agent/pi/agent）。 */
   getPiAgentDir(): string
+}
+
+/**
+ * skill 变更事件（onChange 回调参数）。
+ * scope='global' 时 cwd 缺省（全局变动影响所有）；scope='project' 时 cwd 携带变更的项目根。
+ * affectedSessionIds：受影响的活跃 session（reloadOrchestrator 用，按 cwd 过滤后的子集）。
+ */
+export interface SkillChangeEvent {
+  scope: SkillCacheScope
+  /** scope='project' 时携带，表示哪个 cwd 的 skill 变动。global 变动无 cwd。 */
+  cwd?: string
+  /** 受影响的活跃 session 列表（reloadOrchestrator 用）。global=全部活跃；project=cwd 匹配的活跃。 */
+  affectedSessionIds: string[]
 }
 
 /** sessionService 的窄接口：查活跃 session 列表 + 按 sid 查 cwd（项目 skill 变更定位受影响 session）。 */
@@ -71,6 +84,46 @@ const GLOBAL_KEY = '__global__'
 const WATCH_IGNORED = /(^|[\/\\])(node_modules|dist|build|\.git|\.next|coverage|out)([\/\\]|$)/
 
 /**
+ * chokidar 轮询间隔（ms）。chokidar v4 移除了 fsevents 绑定，macOS fs.watch 对新子目录创建
+ * 不可靠（nodejs/node#52601），故全局+项目 watcher 都用 usePolling。
+ *
+ * 1500ms 是权衡"变更检测延迟"与"stat 开销"的折中值——skill 目录通常条目数 < 50，
+ * 单轮 stat 开销可忽略；W1/W4 已把 watch 范围收窄到几个 skill 容器目录。
+ * TODO: 若未来 skill discovery 引入大量第三方目录，需重测负载并调整此值。
+ */
+const WATCH_POLL_INTERVAL_MS = 1500
+
+/**
+ * chokidar watcher 配置（全局 + 项目级共用）。
+ *
+ * usePolling:true 的根因（2026-07-27 端到端验收发现的预存 bug）：
+ * chokidar v4（2024-09）移除了内置的 native fsevents 绑定（Changelog v4: "remove glob support
+ * and bundled fsevents"），macOS 上退化为纯 Node fs.watch（基于 FSEvents stream，但 chokidar 不再
+ * 用原生绑定做 reliable 事件归并）。结果是 fs.watch 在 macOS 上对「已 watch 目录下新建子目录 /
+ * 新文件」事件**不可靠**——存在 nodejs/node#52601 描述的启动竞态（fs.watch 返回后到真正开始监听
+ * 之间有不确定延迟，窗口期内创建的事件被吞），且 FSEvents 的事件 coalescing 也会丢事件。
+ *
+ * 实测复现：在已扫描的 skill 目录下 `mkdir new-skill && echo body > new-skill/SKILL.md`，
+ * 连续 5 次运行 watcher 的 'all' 事件触发率 ~40%（flaky），landing 浮层长期不刷新。
+ *
+ * 根因修复：在这些 watcher 上启用 usePolling:true（chokidar README 明确推荐的 macOS 可靠监听方式，
+ * 也即 fs.watchFile stat-polling 后端）。由于 W1/W4 已把 watch 范围收窄到几个 skill 容器目录
+ * （resolveGlobalSkillDirs / resolveProjectSkillDirs，浅层、条目少），stat 轮询开销可忽略，
+ * 不会重蹈 2026-07-22 EMFILE 事故（那是 watch 整个 home 目录十万文件导致 fd 耗尽；
+ * usePolling 用 stat 不占 fd，反而更安全）。轮询间隔 WATCH_POLL_INTERVAL_MS 调到 1500ms 平衡实时性与开销。
+ *
+ * 场景1（settings 改路径 → rebuildGlobal → 刷新）不依赖 watcher，不受影响继续工作。
+ */
+const WATCH_OPTIONS = {
+  ignored: WATCH_IGNORED,
+  ignoreInitial: true,
+  persistent: true,
+  usePolling: true,
+  interval: WATCH_POLL_INTERVAL_MS,
+  binaryInterval: WATCH_POLL_INTERVAL_MS,
+} as const
+
+/**
  * watcher 连续同类错误熔断阈值：达到则 close 该 watcher。背景：chokidar 遇 EMFILE 会自动重试 watch，
  * 但 fd 已耗尽时重试必再失败 → 死循环刷屏（2026-07-22 事故中 10899 次，撑账 2.9MB stderr）。
  * 熔断后停止重试，释放该 watcher 占用的句柄，让 pi spawn 等关键操作能拿到 fd。
@@ -97,9 +150,16 @@ export class SkillRegistry {
    */
   private readonly projectInFlight = new Map<string, Promise<SkillInfo[]>>()
   private globalWatcher: FSWatcher | null = null
-  private readonly changeHandlers = new Set<(affectedSessionIds: string[]) => void>()
+  private readonly changeHandlers = new Set<(event: SkillChangeEvent) => void>()
   private readonly debounceTimers = new Map<string, NodeJS.Timeout>()
   private readonly scanFn: SkillScanFn
+  /**
+   * 进行中的 rebuildGlobal Promise，并发去重（用户快速连触 setSkillDirs 时共享同一个 Promise）。
+   * 避免交错执行产生冗余 scanFn + 被 close 的 watcher + 双重广播。
+   */
+  private rebuildInFlight: Promise<void> | null = null
+  /** 是否已 dispose。置 true 后 getProjectSkills/rebuildGlobal 直接 return，防止 dispose 后 in-flight 写回。 */
+  private disposed = false
 
   constructor(private readonly options: SkillRegistryOptions) {
     this.scanFn = options._scanFn ?? this.defaultScanFn.bind(this)
@@ -111,21 +171,68 @@ export class SkillRegistry {
    */
   async initGlobal(): Promise<void> {
     this.globalCache = await this.scanFn('')
-    // watch 范围 = scan 范围（SSOT）：只 watch 实际存在的全局 skill 目录，不递归 watch 整个父目录。
+    this.setupGlobalWatcher()
+  }
+
+  /**
+   * 挂全局 watcher（initGlobal 启动期 + rebuildGlobal 重建共用）。
+   * watch 范围 = scan 范围（SSOT）：只 watch 实际存在的全局 skill 目录。
+   */
+  private setupGlobalWatcher(): void {
     const dirs = resolveGlobalSkillDirs(this.options.configStore, this.options.configDir).filter(d => existsSync(d))
-    if (dirs.length > 0) {
-      // 幂等防护：若已存在 globalWatcher（重试逻辑/测试重复调用），先 close 旧的避免泄漏。
-      this.globalWatcher?.close().catch(() => {})
-      this.globalWatcher = watch(dirs, {
-        ignored: WATCH_IGNORED,
-        ignoreInitial: true,
-        persistent: true,
-      })
-      this.setupWatcher(this.globalWatcher, 'global', GLOBAL_KEY, async () => {
-        this.globalCache = await this.scanFn('')
-        await this.notifyGlobalChange()
-      })
+    if (dirs.length === 0) return
+    // 幂等防护：若已存在 globalWatcher（重试/重建），先 close 旧的避免泄漏。
+    this.globalWatcher?.close().catch(() => {})
+    this.globalWatcher = watch(dirs, WATCH_OPTIONS)
+    this.setupWatcher(this.globalWatcher, 'global', GLOBAL_KEY, async () => {
+      this.globalCache = await this.scanFn('')
+      await this.notifyGlobalChange()
+    })
+  }
+
+  /**
+   * 重建全局 watcher + 重扫 globalCache（settings 改 skill 扫描路径后调用）。
+   * close 旧 watcher → 重扫缓存 → 用新目录列表重挂 watcher（新路径纳入视野）→ 通知上游。
+   *
+   * 并发去重：用户快速连触 setSkillDirs 时，多个 rebuildGlobal 共享同一个 in-flight Promise，
+   * 避免交错执行产生冗余 scanFn + 被 close 的 watcher + 双重广播。
+   */
+  async rebuildGlobal(): Promise<void> {
+    if (this.disposed) return
+    // 并发去重：复用进行中的 rebuild（快速连触 setSkillDirs 时共享同一个 Promise）
+    if (this.rebuildInFlight) return this.rebuildInFlight
+    // 清掉 GLOBAL_KEY pending debounce（避免 rebuild 后又被旧 timer 触发冗余重扫）：
+    // 全局 skill 文件变动会排队 GLOBAL_KEY timer，rebuildGlobal 立即重扫+通知后，原 timer 到点
+    // 会再触发一次 scanFn + notify（冗余），故此处先清掉。
+    const globalTimer = this.debounceTimers.get(GLOBAL_KEY)
+    if (globalTimer) {
+      clearTimeout(globalTimer)
+      this.debounceTimers.delete(GLOBAL_KEY)
     }
+    this.rebuildInFlight = (async () => {
+      try {
+        // close 旧 watcher（await 避免 fd 抖动，新旧 watcher 短暂并发）
+        await this.globalWatcher?.close().catch(() => {})
+        this.globalWatcher = null
+        try {
+          // 重扫缓存（可能抛错——scanFn 失败时保留旧 globalCache，不让缓存变空）
+          this.globalCache = await this.scanFn('')
+        } catch (e) {
+          // scanFn 失败：不刷新缓存（保留旧值），但要保证 watcher 仍挂上（否则文件变动监不到，
+          // 整个全局监听链断开，只有再次改 settings 或重启才能恢复）。
+          console.error('[skill-registry] rebuildGlobal scanFn failed, keeping stale globalCache and reattaching watcher:', e)
+        } finally {
+          // 无论 scanFn 成败，重挂 watcher（读最新 configStore，新路径纳入视野）——
+          // 兜底重建监听，避免 scanFn 异常导致全局 watcher 永久断链。
+          this.setupGlobalWatcher()
+        }
+        // 通知上游（触发 onChange → 广播 config.skillCacheInvalidated + reloadOrchestrator）
+        await this.notifyGlobalChange()
+      } finally {
+        this.rebuildInFlight = null
+      }
+    })()
+    return this.rebuildInFlight
   }
 
   /** 当前全局 skill 缓存（启动期扫描结果，watcher 变动后自动刷新）。 */
@@ -146,6 +253,7 @@ export class SkillRegistry {
    * 异步补挂 watcher + 重扫刷新缓存（不阻塞当前返回，刷新完经 notifyProjectChange 通知上游）。
    */
   getProjectSkills(cwd: string): Promise<SkillInfo[]> {
+    if (this.disposed) return Promise.resolve([])
     const cached = this.projectCache.get(cwd)
     if (cached) {
       // W3：补查首次扫描时不存在、后来用户创建的 skill 目录。检测到则异步补挂 watcher + 重扫缓存，
@@ -163,6 +271,10 @@ export class SkillRegistry {
 
     const p = (async () => {
       const skills = await this.scanFn(cwd)
+      // invalidate 后不应由 in-flight 路径写回缓存（缓存重建交由下次 getProjectSkills 触发）。
+      // 注意：scanFn 读的是当前 configStore，in-flight 完成的结果本身并不"陈旧"，只是缓存状态由
+      // invalidate 流程接管，in-flight 写回会与该流程竞态。
+      if (!this.projectInFlight.has(cwd)) return skills
       this.projectCache.set(cwd, skills)
       // 挂项目 watcher：watch 范围 = scan 范围（SSOT），只 watch 实际存在的项目 skill 子目录
       // （.xyz-agent/skills、discovery 相对路径 resolve 后），不递归 watch 整个 cwd。
@@ -184,15 +296,39 @@ export class SkillRegistry {
   }
 
   /**
+   * 清空所有项目级缓存 + close 所有 project watcher（settings 改 skill 相对路径后调用）。
+   * 下次 getProjectSkills(cwd) 会重扫重建。setSkillDirs 改了相对路径配置，所有已缓存 cwd 都可能受影响，
+   * 故清整个 projectCache（保守策略，skill 扫描快，O(N) 重扫可接受）。
+   * 不发广播——由调用方显式 broadcastSkillCacheInvalidated('project')。
+   */
+  invalidateAllProjects(): void {
+    // close 所有 project watcher
+    for (const watcher of this.projectWatchers.values()) {
+      watcher.close().catch(() => {})
+    }
+    this.projectWatchers.clear()
+    this.projectCache.clear()
+    // 清 in-flight：避免在途 getProjectSkills Promise resolve 后把旧扫描结果写回已清空的缓存。
+    // 竞态：invalidate 后 in-flight 完成会 projectCache.set 旧值 + setupProjectWatcher(新 dirs)，
+    // 导致缓存（旧扫描）与 watcher（新目录）发散。清 Map 后 getProjectSkills 的 finally 守卫
+    // 检测到 key 已不存在，跳过写回（in-flight 完成时 finally delete 不存在的 key 无副作用）。
+    this.projectInFlight.clear()
+    // 清 project 级 debounce timer：避免 pending 重扫在 dispose 后写回陈旧缓存。
+    // 仅清 project 级（cwd key），保留 GLOBAL_KEY 的 timer（global 由 rebuildGlobal 独立处理）。
+    for (const [key, timer] of this.debounceTimers.entries()) {
+      if (key !== GLOBAL_KEY) {
+        clearTimeout(timer)
+        this.debounceTimers.delete(key)
+      }
+    }
+  }
+
+  /**
    * 挂项目 watcher（getProjectSkills 首次挂载与 refreshProjectWatcher 补挂共用，避免重复代码）。
    * watch 范围 = scan 范围（SSOT）：只 watch 传入的实际存在项目 skill 子目录。
    */
   private setupProjectWatcher(cwd: string, dirs: string[]): void {
-    const watcher = watch(dirs, {
-      ignored: WATCH_IGNORED,
-      ignoreInitial: true,
-      persistent: true,
-    })
+    const watcher = watch(dirs, WATCH_OPTIONS)
     this.setupWatcher(watcher, `project:${cwd}`, cwd, async () => {
       this.projectCache.set(cwd, await this.scanFn(cwd))
       await this.notifyProjectChange(cwd)
@@ -214,9 +350,9 @@ export class SkillRegistry {
 
   /**
    * 注册 skill 变更回调。返回 unsubscribe 函数（组件卸载时调，防泄漏）。
-   * 回调参数 affectedSessionIds：全局变动传所有活跃 session；项目变动传 cwd 匹配的 session。
+   * 回调参数 SkillChangeEvent：全局变动 scope='global'（cwd 缺省）；项目变动 scope='project'（带 cwd）。
    */
-  onChange(handler: (affectedSessionIds: string[]) => void): () => void {
+  onChange(handler: (event: SkillChangeEvent) => void): () => void {
     this.changeHandlers.add(handler)
     return () => {
       this.changeHandlers.delete(handler)
@@ -230,7 +366,7 @@ export class SkillRegistry {
   async notifyGlobalChange(): Promise<void> {
     const ids = this.options.sessionService.getActiveSessionIds()
     for (const handler of this.changeHandlers) {
-      handler(ids)
+      handler({ scope: 'global', affectedSessionIds: ids })
     }
   }
 
@@ -240,11 +376,9 @@ export class SkillRegistry {
   async notifyProjectChange(cwd: string): Promise<void> {
     const allIds = this.options.sessionService.getActiveSessionIds()
     const getSessionCwd = this.options.sessionService.getSessionCwd
-    const affected = getSessionCwd
-      ? allIds.filter(sid => getSessionCwd(sid) === cwd)
-      : allIds
+    const affected = getSessionCwd ? allIds.filter(sid => getSessionCwd(sid) === cwd) : allIds
     for (const handler of this.changeHandlers) {
-      handler(affected)
+      handler({ scope: 'project', cwd, affectedSessionIds: affected })
     }
   }
 
@@ -253,8 +387,18 @@ export class SkillRegistry {
     return this.notifyGlobalChange()
   }
 
-  /** 关闭所有 watcher（全局 + 项目级）。shutdown / 测试清理时调。 */
+  /**
+   * 关闭所有 watcher + 清缓存与 in-flight 状态（全局 + 项目级）。shutdown / 测试清理时调。
+   *
+   * W-dispose：必须清 projectInFlight——竞态场景下 getProjectSkills 进入 in-flight await scanFn →
+   * 期间调 dispose → scanFn resolve → 守卫 projectInFlight.has(cwd) 仍 true → 走 projectCache.set +
+   * setupProjectWatcher → 新建 watcher 加入已清空的 projectWatchers，无人 close（泄漏）。清 Map 后
+   * in-flight 的 finally 守卫检测到 key 已不存在，跳过写回（与 invalidateAllProjects 对称）。
+   * 同时清 changeHandlers（防 stale 引用回调）、projectCache/globalCache（释放内存），并置 disposed
+   * 标志——后续 getProjectSkills/rebuildGlobal 入口直接 return，杜绝 dispose 后 in-flight 写回。
+   */
   dispose(): void {
+    this.disposed = true
     for (const timer of this.debounceTimers.values()) {
       clearTimeout(timer)
     }
@@ -265,6 +409,11 @@ export class SkillRegistry {
       watcher.close().catch(() => {})
     }
     this.projectWatchers.clear()
+    this.projectInFlight.clear()
+    this.rebuildInFlight = null
+    this.changeHandlers.clear()
+    this.projectCache.clear()
+    this.globalCache = []
   }
 
   /**

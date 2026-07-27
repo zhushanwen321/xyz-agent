@@ -8,7 +8,7 @@
  * 注：mock 模式下不走本域（api/index 切到 mock 门面）。
  */
 import type { Message, ServerMessage } from '@xyz-agent/shared'
-import { command } from '../request'
+import { command as sendCommand } from '../request'
 import * as events from '../events'
 
 /** compact 超时（ms）：对齐 runtime rpc-client COMPACT_TIMEOUT_MS，大上下文压缩需数分钟 */
@@ -26,7 +26,7 @@ export interface HistoryResult {
  * historyTruncated=true 表示文件尾读截断了早期 turn（前端据此显隐「加载更多」）。
  */
 export async function getHistory(sessionId: string): Promise<HistoryResult> {
-  const reply = await command('session.history', { sessionId })
+  const reply = await sendCommand('session.history', { sessionId })
   return { messages: reply.messages, historyTruncated: reply.historyTruncated }
 }
 
@@ -35,23 +35,37 @@ export async function getHistory(sessionId: string): Promise<HistoryResult> {
  * 走 session.getFullHistory → runtime getFullHistory（全量文件读取，非尾读）。
  */
 export async function getFullHistory(sessionId: string): Promise<Message[]> {
-  const reply = await command('session.getFullHistory', { sessionId })
+  const reply = await sendCommand('session.getFullHistory', { sessionId })
   return reply.messages
 }
 
-/** 发送消息（mock 不模拟失败，D7） */
-export function send(sessionId: string, text: string): Promise<void> {
-  return command('message.send', { sessionId, content: text })
+/**
+ * 发送消息（mock 不模拟失败，D7）。
+ *
+ * images 是 Cmd+V 富呈现通路的图片数据（base64，不含 data: 前缀），形状对齐
+ * shared protocol message.send（protocol.ts:199 images?: Array<{data;mimeType}>）。
+ * runtime rpc-client 已守卫空数组（rpc-client.ts:430 images.length>0 才组 piImages），
+ * 故此处 images 为 undefined 时直接不传 images 键（保持既有 payload 形态不变）。
+ */
+export function send(
+  sessionId: string,
+  text: string,
+  images?: Array<{ data: string; mimeType: string }>,
+): Promise<void> {
+  return sendCommand(
+    'message.send',
+    images ? { sessionId, content: text, images } : { sessionId, content: text },
+  )
 }
 
 /** 追加 steer（当前回合工具调用结束后、下次 LLM 调用前投递） */
 export function steer(sessionId: string, text: string): Promise<void> {
-  return command('message.steer', { sessionId, content: text })
+  return sendCommand('message.steer', { sessionId, content: text })
 }
 
 /** 追加 follow-up（当前回合结束后开新轮） */
 export function followUp(sessionId: string, text: string): Promise<void> {
-  return command('message.follow_up', { sessionId, content: text })
+  return sendCommand('message.follow_up', { sessionId, content: text })
 }
 
 /**
@@ -63,12 +77,37 @@ export function followUp(sessionId: string, text: string): Promise<void> {
  * 默认 65s 超时会在大 session 压缩时误 reject。
  */
 export function compact(sessionId: string, customInstructions?: string): Promise<void> {
-  return command('session.compact', { sessionId, customInstructions }, COMPACT_TIMEOUT_MS)
+  return sendCommand('session.compact', { sessionId, customInstructions }, COMPACT_TIMEOUT_MS)
 }
 
 /** 中断当前回合（DEFERRED 流转，§9 G-025） */
 export function abort(sessionId: string): Promise<void> {
-  return command('message.abort', { sessionId })
+  return sendCommand('message.abort', { sessionId })
+}
+
+/**
+ * 直接执行 bash 命令（composer-bash-execute，不经 LLM turn）。
+ *
+ * `!`/`!!` 前缀输入的 shell 文本原样透传 pi bash RPC，结果经 message.bashStart/
+ * message.bashResult 广播回对话流（不走 segment 提取 / segmentsToPrompt）。
+ *
+ * excludeFromContext 为 undefined 时只传 {sessionId, command}（与 send 的 images 空数组
+ * 归一模式对称，避免 runtime 收到无意义的 excludeFromContext:false 键）。
+ */
+export function bash(
+  sessionId: string,
+  command: string,
+  excludeFromContext?: boolean,
+): Promise<void> {
+  return sendCommand(
+    'message.bash',
+    excludeFromContext !== undefined ? { sessionId, command, excludeFromContext } : { sessionId, command },
+  )
+}
+
+/** 取消进行中的 bash 执行（调 pi abort_bash） */
+export function abortBash(sessionId: string): Promise<void> {
+  return sendCommand('message.abortBash', { sessionId })
 }
 
 /**

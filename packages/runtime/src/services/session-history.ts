@@ -29,6 +29,17 @@ function mapEntriesToPiMessages(entries: unknown[]): unknown[] {
         (e as { type?: string }).type === 'compaction' ||
         (e as { type?: string }).type === 'custom_message' ||
         (e as { type?: string }).type === 'branch_summary'
+        // [W2 已验证] bashExecution entries 以 type:'message' + message.role:'bashExecution' 存储。
+        // 验证来源：pi fork 源码（pi-mono-workspace/main/packages/coding-agent/src/）——
+        //   - core/agent-session.ts:2650 recordBashResult 构造 {role:"bashExecution", ...} message
+        //   - core/session-manager.ts:976 appendMessage 把 message 包成 SessionMessageEntry {type:"message", message}
+        //   - core/messages.ts:29 BashExecutionMessage 定义 role:"bashExecution"
+        // 因此 bashExecution 走上面的 `type === 'message' && 'message' in e` 通用分支透传：
+        //   map 时取 e.message（含 role:"bashExecution" + command/output/...），convertPiHistory
+        //   的 m.role === 'bashExecution' 分支（message-converter.ts:304）正确还原。
+        // filter 无需为 bashExecution 加单独条件。若 pi 未来改为独立顶层 entry 类型
+        // （如 type: 'bash_execution'），在此添加对应过滤条件 + map 分支转 role:'bashExecution'：
+        //   || (e as { type?: string }).type === 'bash_execution'
       ))
     .map((e) => {
       if (e.type === 'compaction') {

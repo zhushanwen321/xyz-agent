@@ -1,0 +1,112 @@
+{
+  "techChoices": [
+    {
+      "id": "TC1",
+      "status": "active",
+      "area": "pi 适配层格式转换策略",
+      "choice": "rpc-client.prompt 作为 shared→pi 格式的唯一组装点：接收 shared 的 {data;mimeType}（不带 type），内部 map 成 PiImageContentBlock（补 type:'image'），再传入 sendCommand('prompt', {message, images})。runtime 其余各层（handler/dispatcher/session-service）只见 shared 形态，零接触 pi 私有字段。",
+      "alternatives": [
+        "在各层都直接传 PiImageContentBlock（带 type:'image'）——违反 AGENTS.md 规则#5「pi 适配层不信任外部格式」，让业务层耦合 pi 私有协议，pi 协议升级会波及 dispatcher/handler",
+        "在 message-handler 入口就组装 PiImageContentBlock——更违反分层，handler 直接 import pi-protocol.ts（infra/ 层类型禁止外泄到 transport/）"
+      ],
+      "rationale": "对照 alternatives：方案一让业务层耦合 pi 私有 type 字段，pi 升级（如 type 改名或新增 dimensions 字段）会波及 4 个文件而非 1 个；方案二更糟，handler 直接 import infra/pi/pi-protocol.ts，违反 R1 三层架构「services/transport 不得 import pi-protocol」。选 rpc-client 作为唯一组装点符合规则#5，且 shared/protocol.ts 的 message.send.images 已刻意不带 type（前一 slice 注释「type 是 pi 私有，runtime 适配层负责补」），本设计兑现该注释。"
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "IF1",
+      "status": "active",
+      "name": "IPiEngine.prompt / RpcClient.prompt",
+      "signature": "prompt(content: string, images?: Array<{ data: string; mimeType: string }>): Promise<PiMessage>",
+      "contract": "rpc-client.ts:423 与 ports/pi-engine.ts:104 的 prompt 签名同步加可选 images 参数。images 形态为 shared 的 {data;base64 不含 data: 前缀; mimeType}（与 message.send payload 逐字一致）。rpc-client 内部：images 为 undefined 或长度 0 时 sendCommand params 仅含 {message}（与现状逐字一致，零回归）；非空时 images.map(i => ({type:'image', data:i.data, mimeType:i.mimeType})) 组装成 PiImageContentBlock[]，sendCommand('prompt', {message: content, images})。返回值不变（PiMessage）。sendSubagentMessage 不加 images（本 slice 范围外）。"
+    },
+    {
+      "id": "IF2",
+      "status": "active",
+      "name": "MessageDispatcher.sendMessage / sendPrompt",
+      "signature": "sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>",
+      "contract": "message-dispatcher.ts:41 sendMessage 加可选 images?，透传给 sendPrompt 骨架（骨架签名同步加 images?）。骨架内部第 119 行 client.prompt(promptText) 改为 client.prompt(promptText, images)。images 不参与 BeforeSend hook（hook 只审文本）、不参与 ensureActive、不参与 busy 预检——纯透传到 rpc-client。返回值 {blocked, rejected?} 不变。sendSubagentMessage 不加 images。"
+    },
+    {
+      "id": "IF3",
+      "status": "active",
+      "name": "SessionService.sendMessage (facade + interface)",
+      "signature": "sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>",
+      "contract": "session-service.ts:277 facade 实现加 images? 透传给 dispatcher.sendMessage；interfaces.ts:85 ISessionService 接口签名同步加 images? 以保持契约一致。images 纯透传，facade 不组装、不校验。sendSubagentMessage（facade line 278 + interface line 86）本 slice 不加 images。"
+    },
+    {
+      "id": "IF4",
+      "status": "active",
+      "name": "session-message-handler message.send 解构透传",
+      "signature": "case 'message.send': const { sessionId, content, subagent, images } = msg.payload; ... sendMessage(sessionId, content, images)",
+      "contract": "session-message-handler.ts:179-183 message.send case 解构新增 images（来自 message.send payload，shared/protocol.ts:199 已定义 images?: Array<{data;mimeType}>）。非 subagent 分支 sendMessage(sessionId, content, images) 透传；subagent 分支不透传（sendSubagentMessage 不加 images）。result 处理（rejected/blocked/reply）完全不变。images 缺省（payload 不带 images）时解构得 undefined，sendMessage 第三参 undefined 走原路径。"
+    }
+  ],
+  "dataModels": [
+    {
+      "id": "DM1",
+      "status": "active",
+      "name": "shared ImageData → pi PiImageContentBlock 转换",
+      "format": "typescript",
+      "definition": "// shared 形态（message.send payload、各层透传用，不带 type）\n// 已存在于 shared/protocol.ts:199（前一 slice 落地）\ntype SharedImage = { data: string; mimeType: string }\n\n// pi 形态（仅 rpc-client 内部组装，infra/pi/pi-protocol.ts:331）\ninterface PiImageContentBlock { type: 'image'; data: string; mimeType: string }\n\n// rpc-client.prompt 内部转换（唯一组装点）\nconst piImages = images && images.length > 0\n  ? images.map(i => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))\n  : undefined\nconst params: Record<string, unknown> = { message: content }\nif (piImages) params.images = piImages\nreturn this.sendCommand('prompt', params)",
+      "notes": "data 是 base64 字符串（不含 data:image/png;base64, 前缀，与 shared/protocol.ts 注释一致）。转换是无损 1:1 映射，仅补 type 字段。piImages 为 undefined 时 params 不含 images 键——sendCommand('prompt', {message}) 与现状逐字一致。"
+    }
+  ],
+  "errorSpecs": [
+    {
+      "id": "ERR1",
+      "status": "active",
+      "interfaceId": "IF1",
+      "scenario": "images 为 undefined（payload 不带 images 字段，正常文本消息）",
+      "strategy": "rpc-client 判 images 为 undefined → params 仅 {message}，sendCommand('prompt',{message})，与现状逐字一致，零行为变化。所有透传层第三参 undefined 自然透传，无需特殊处理。"
+    },
+    {
+      "id": "ERR2",
+      "status": "active",
+      "interfaceId": "IF1",
+      "scenario": "images 为空数组 []（前端误传空数组）",
+      "strategy": "rpc-client 判 images.length === 0 → 等价 undefined，params 仅 {message}，不给 pi 发无意义的空 images 数组。防御性归一化，避免 pi 端对空数组的未定义行为。判断条件统一为 `images && images.length > 0`（同时覆盖 undefined 和 []）。"
+    },
+    {
+      "id": "ERR3",
+      "status": "active",
+      "interfaceId": "IF1",
+      "scenario": "rpc-client sendCommand('prompt',{message,images}) 后 pi 返回 success:false（pi 拒绝 images，如格式错误、过大）",
+      "strategy": "复用 sendCommand 现有 success 检查（rpc-client.ts 内部已实现，AGENTS.md 规则#5「sendCommand 必须检查 success 字段」）——sendCommand 在 success:false 时抛错，被 dispatcher.sendPrompt 第 120 行 catch 捕获，广播 message.error 气泡并返回 {blocked:true}。本 slice 不新增错误处理路径，完全复用现有 prompt 失败的错误传播链。"
+    }
+  ],
+  "split": [
+    {
+      "slug": "runtime-images-passthrough-impl",
+      "description": "单 wave 实现 runtime 层 images 透传链路：5 个文件改动（message-handler 解构透传 / session-service facade + 接口 / message-dispatcher sendMessage+sendPrompt / rpc-client prompt 组装 / IPiEngine+ISessionService 接口签名同步）。所有改动为加可选 images 参数 + rpc-client 唯一组装点，零行为变化（undefined 走原路径）。",
+      "dependsOn": [],
+      "inheritedItemIds": ["TC1", "IF1", "IF2", "IF3", "IF4", "DM1", "ERR1", "ERR2", "ERR3"]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "C1",
+      "decision": "rpc-client.prompt 接收 shared {data;mimeType}，内部组装 PiImageContentBlock（补 type:'image'），是唯一组装点",
+      "rationale": "AGENTS.md 规则#5 pi 适配层不信任外部格式，shared/protocol.ts message.send.images 已刻意不带 type。",
+      "sourceClarification": "C1"
+    },
+    {
+      "id": "C2",
+      "decision": "各层加可选 images 参数（类型 shared Array<{data;mimeType}>），向后兼容",
+      "rationale": "images 与 content 正交，可选参数比包装对象改动更小、更易向后兼容。",
+      "sourceClarification": "C2"
+    },
+    {
+      "id": "C3",
+      "decision": "images undefined 或空数组 [] 均等价于不传，rpc-client 内部 `images && images.length>0` 判断",
+      "rationale": "空数组防御性归一化为不传，避免给 pi 发无意义空 images。",
+      "sourceClarification": "C3"
+    },
+    {
+      "id": "C4",
+      "decision": "5 个文件改动，sendSubagentMessage 本 slice 不透传 images",
+      "rationale": "subagent 是 agent 间调用通路无图片需求，避免范围蔓延。",
+      "sourceClarification": "C4"
+    }
+  ]
+}

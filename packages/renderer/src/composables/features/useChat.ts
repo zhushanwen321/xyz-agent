@@ -13,13 +13,16 @@
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
 import type { Segment } from '@xyz-agent/shared'
-import { segmentsToPrompt, textToSegments } from '@xyz-agent/shared'
+import { segmentsToPrompt } from '@xyz-agent/shared'
+import { writeSegmentsMetadata } from '@/lib/ipc'
+import { markBashError } from '@/stores/chat-bash-effects'
 
 const t = i18n.global.t
 
@@ -159,7 +162,57 @@ export function useChat() {
   const session = useSessionStore()
 
   /**
-   * 发送消息：appendUser → 确保会话级订阅 → api.send（ack 仅表示 pi 已接收）。
+   * 统一发送编排器：把 segments 转成 promptText 并发送。
+   *
+   * 三条发送通路（send / editAndResend / 后续 landing）共享此逻辑。
+   *
+   * 调用方负责：appendUser / truncateFrom / pendingSend 等状态机编排
+   * （submitSegments 只管「文本化 + 发送」核心步骤）：
+   *   1. segmentsToPrompt（trim 后的 pi prompt 文本，image 段产出裸路径）
+   *   2. 写 segments.json sidecar（clientUuid 关联，重开时回填 badge）
+   *   3. chatApi.send(promptText + clientUuid 标记)
+   *
+   * 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
+   * LLM 自己调 read 工具读（vision/非 vision 模型都能处理）。不再传 images base64 字段。
+   *
+   * @param sessionId           目标 session
+   * @param segments            结构化 segments（含 image/file/text/skill/mention）
+   * @param clientUuid          调用方 appendUser 生成的 user message id（`u-<uuid>`），
+   *                            用作 segments.json 主键 + prompt 标记 uuid（建立 clientUuid ↔
+   *                            pi userEntryId 映射，extension input hook 剥标记后写 custom entry）
+   * @param precomputedPromptText 调用方已算过的 segmentsToPrompt(segments)（trim 后非空）。
+   *                            send/editAndResend 各有空检查 trim 校验（segmentsToPrompt 一次），
+   *                            传入复用避免 submitSegments 内部再算一遍（S4 修复，热路径去重）。
+   */
+  async function submitSegments(
+    sessionId: string,
+    segments: Segment[],
+    clientUuid: string,
+    precomputedPromptText?: string,
+  ): Promise<void> {
+    const promptText = precomputedPromptText ?? segmentsToPrompt(segments)
+    // 写 segments.json sidecar（重开 session 时回填 image/file badge 用）。
+    // 异步 fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只是降级为占位文本，非硬错误）。
+    // landing 态 session 尚未创建时（sessionId 为占位）不写——submitFirstMessage 在 session.create 后
+    // 调 chat.send，send 内部 appendUser 用已创建的 newSid，故 submitSegments 收到的 sessionId 恒有效。
+    if (sessionId) {
+      writeSegmentsMetadata({
+        sessionId,
+        entry: { clientUuid, segments, timestamp: Date.now() },
+      }).catch((e) => console.warn('[useChat] writeSegmentsMetadata failed:', e))
+    }
+    // 加 HTML 注释标记：pi extension 的 input hook 会剥离它（LLM 看不到），并建立
+    // clientUuid ↔ userEntryId 映射（重开时按映射回填 segments）。
+    // 标记格式严格：`<!--xyz:msg:<uuid>-->`，uuid 是 clientUuid 完整值（u-<uuid>），
+    // 与 extension TAG 正则（u-[0-9a-fA-F-]{36}）+ segments.json clientUuid key 严格一致。
+    const markedPromptText = `${promptText}\n<!--xyz:msg:${clientUuid}-->`
+    // 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
+    // LLM 自己调 read 工具读。不再传 images base64 字段。
+    await chatApi.send(sessionId, markedPromptText)
+  }
+
+  /**
+   * 发送消息：appendUser → 确保会话级订阅 → submitSegments（提取 + api.send）。
    *
    * 流式状态由会话级订阅的事件驱动（message_start→true，complete/error→false），
    * 不依赖 send() 的 resolve 时机——避免 ack 早于首个 chunk 导致订阅被提前拆除。
@@ -182,11 +235,14 @@ export function useChat() {
       return
     }
 
-    chat.appendUser(sid, segments)
+    // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
+    // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
+    const clientUuid = chat.appendUser(sid, segments)
     ensureStreamSubscription(sid, chat, session)
     chat.addPendingSend(sid)
     try {
-      await chatApi.send(sid, promptText)
+      // S4：复用上面算过的 promptText，避免 submitSegments 内部再调一次 segmentsToPrompt。
+      await submitSegments(sid, segments, clientUuid, promptText)
     } catch (e) {
       // [W2] 错误处理策略与 steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Composer.onSend 已有 try/catch+toast 防御，此处不 throw 后 Composer 的 catch 不再触发；
@@ -280,6 +336,55 @@ export function useChat() {
   }
 
   /**
+   * 直接执行 bash 命令（composer-bash-execute，不经 LLM turn）。
+   *
+   * `!`/`!!` 前缀的 shell 文本原样透传，不走 segment 提取 / segmentsToPrompt / appendUser。
+   * bash 不阻塞 active 态：与 AI turn 正交（pi bash RPC 独立执行，不抢占 LLM 回合）。
+   * 实时反馈 + 结果由 message.bashStart / message.bashResult 广播驱动（runtime 负责，经
+   * 会话级订阅的 applyMessageEvent 消费），故此处仅确保订阅存在 + 发 RPC。
+   *
+   * 错误处理与 abort/compact 对齐：toast + 不 throw（消费侧 Composer.onSend 已有 try/catch，
+   * throw 只会变 unhandled rejection）。
+   *
+   * 显式接收 sessionId：per-panel 隔离，不读全局 activeId。
+   */
+  async function sendBash(sessionId: string, command: string, excludeFromContext: boolean): Promise<void> {
+    const sid = sessionId
+    ensureStreamSubscription(sid, chat, session)
+    try {
+      await chatApi.bash(sid, command, excludeFromContext)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const { error } = useToast()
+      error(t('composable.bashFailed', { msg }))
+    }
+  }
+
+  /**
+   * 取消进行中的 bash 执行（调 pi abort_bash）。
+   *
+   * 错误处理与 abort 对齐：toast + 不 throw。
+   */
+  async function abortBash(sessionId: string): Promise<void> {
+    const sid = sessionId
+    try {
+      await chatApi.abortBash(sid)
+    } catch (e) {
+      // [W2] RPC 失败时 bashResult 广播不会到达，bash 消息永久卡在 streaming。
+      // 主动找到 streaming bash 消息并标记为 error 态兜底。
+      // [B2 PR#116 review] 必须用 storeToRefs(chat).messages 拿 store 真正的 shallowRef：
+      // chat.messages 经 Pinia setup store 访问时自动解包为 Map（非 ref），`{ value: chat.messages }`
+      // 构造的 plain wrapper 让 markBashError 内部的 messages.value 赋值只改写临时对象的 .value，
+      // store 真正的 shallowRef 永远不更新（catch 形同虚设）。storeToRefs 返回真 ref，写回才生效。
+      const msg = e instanceof Error ? e.message : String(e)
+      const { messages: messagesRef } = storeToRefs(chat)
+      markBashError(messagesRef, sid, msg, chat.clearBashTimer)
+      const { error } = useToast()
+      error(t('composable.stopFailed', { msg }))
+    }
+  }
+
+  /**
    * 压缩上下文（#6）：确保会话级订阅（消费 session.compacting/compacted）→ 调 api.compact。
    *
    * 错误反馈（§4.4 异常路径）：session 不存在 / pi 错误 → sendError（pending reject）→
@@ -302,25 +407,37 @@ export function useChat() {
 
   /**
    * 编辑 user 消息并重新发送（原地替换语义，非 fork）：
-   * 截断该 user 消息（含）及其后所有 → appendUser 新文本 → 走 send 流式。
+   * 截断该 user 消息（含）及其后所有 → appendUser 新 segments → 走 submitSegments 流式。
    *
    * 与 fork 的区别：fork 复制到新 session 保留原 session；editAndResend 在当前 session
    * 原地替换（删旧 user + 其后 assistant，重新发送）。UI 层用 canEdit 守卫仅最后一条 user 可编辑，
    * 避免删除中间 user 导致其后对话丢失。
    *
+   * 签名变更（阶段 3a）：从 `(sessionId, userMessageId, text: string)` 改为
+   * `(sessionId, userMessageId, segments: Segment[])`。调用方（Turn.vue submitEdit）
+   * 负责构造 segments——从原 user message 保留 image segments + 编辑后的 text segment。
+   *
+   * 委托 submitSegments：与 send 同通路（segmentsToPrompt + chatApi.send），image 段
+   * 经 segmentsToText 产出裸路径进 prompt 文本（不丢）。
+   *
    * 显式接收 sessionId：编辑可发生在非 active 的 standby panel，不能依赖全局 activeId。
+   *
+   * 孤立 sidecar 条目：editAndResend 写新 clientUuid 条目，旧消息（truncateFrom 截断的）
+   * 的 sidecar 条目残留。不影响功能（重开按 piEntryId→clientUuid 精确匹配，孤立条目不引用），
+   * 占少量磁盘（~200B/条）。完整清理随 session 删除/压缩统一治理（YAGNI，不在本函数做）。
    */
-  async function editAndResend(sessionId: string, userMessageId: string, text: string): Promise<void> {
-    const trimmed = text.trim()
-    if (!trimmed || chat.isActive(sessionId)) return
-    // 编辑来自 textarea 纯文本，转 Segment[] 保持 user message content 类型一致（ADR-0037）
-    const segments = textToSegments(trimmed)
+  async function editAndResend(sessionId: string, userMessageId: string, segments: Segment[]): Promise<void> {
+    const promptText = segmentsToPrompt(segments)
+    if (!promptText.trim() || chat.isActive(sessionId)) return
     chat.truncateFrom(sessionId, userMessageId, true)
-    chat.appendUser(sessionId, segments)
+    // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
+    // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
+    const clientUuid = chat.appendUser(sessionId, segments)
     ensureStreamSubscription(sessionId, chat, session)
     chat.addPendingSend(sessionId)
     try {
-      await chatApi.send(sessionId, trimmed)
+      // S4：复用上面算过的 promptText，避免 submitSegments 内部再调一次 segmentsToPrompt。
+      await submitSegments(sessionId, segments, clientUuid, promptText)
     } catch (e) {
       // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。
@@ -399,5 +516,5 @@ export function useChat() {
     chat.disposeSession(sessionId)
   }
 
-  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, hasMoreHistory, setHistoryTruncated, disposeSession }
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory, loadMoreHistory, hasMoreHistory, setHistoryTruncated, disposeSession, sendBash, abortBash }
 }

@@ -25,7 +25,15 @@
       :query="cmdType === 'file' ? fileQuery : slashQuery"
       @select="onCmdSelect"
     >
-      <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass" data-testid="composer-box">
+      <div
+        ref="composerBoxRef"
+        class="composer-box relative rounded-lg border bg-bg-input"
+        :class="boxClass"
+        data-testid="composer-box"
+        @dragover.prevent="onDragOver"
+        @dragleave.prevent="onDragLeave"
+        @drop.prevent="onDrop"
+      >
         <!-- Fork 模式标识 chip（FR-13）：顶部 accent chip 提示「将发到新分支 · 与主线隔离」+ × 退出 -->
         <div
           v-if="fork.forkMode.value"
@@ -64,13 +72,14 @@
         </div>
         <!-- 顶部元信息行 slot（landing 态：directory/branch chip；panel 态留空） -->
         <slot name="meta-row" />
-        <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
-        <ContextChipsBar />
+        <!-- 已附上下文 chip 行（§2f）。W4：从 segments 派生 image chips，× 删除定位 DOM 节点移除 -->
+        <ContextChipsBar :items="attachedItems" @remove="onRemoveContextChip" />
         <!-- 输入区：contenteditable 富文本（draft §1/§2e，支持 slash chip 与 @/# mention 内联） -->
         <ComposerInput
           ref="inputRef"
           :placeholder="placeholder"
           :disabled="isSending"
+          :session-id="sessionId"
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
@@ -95,7 +104,7 @@
           v-if="isActive"
           variant="ghost"
           size="icon"
-          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
+          class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
           :title="t('panel.composer.stop')"
           @click="onAbort"
         >
@@ -103,14 +112,14 @@
         </Button>
         <div
           v-else-if="isCompacting"
-          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-surface-hover text-muted"
+          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-surface-hover text-muted"
           :title="t('panel.composer.compacting')"
         >
           <Loader2 class="size-4 animate-spin" />
         </div>
         <div
           v-else-if="isSending"
-          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-[var(--accent)] text-white"
+          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-[var(--accent)] text-white"
           :title="t('panel.composer.sending')"
         >
           <Loader2 class="size-4 animate-spin" />
@@ -119,7 +128,7 @@
           v-else
           variant="default"
           size="icon"
-          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
+          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
           :disabled="!canSend"
           :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : handoff.handoffMode.value ? t('panel.composer.handoffSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
@@ -158,8 +167,13 @@ import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverT
 import { useComposerInjection } from '@/composables/panel/useComposerInjection'
 import { useComposerHistory } from '@/composables/panel/useComposerHistory'
 import { useComposerForkMode } from '@/composables/panel/useComposerForkMode'
+import { useComposerContextChips } from '@/composables/panel/useComposerContextChips'
+import { useComposerDragDrop } from '@/composables/panel/useComposerDragDrop'
+import { useComposerRestore } from '@/composables/panel/useComposerRestore'
+import { useComposerSubmit } from '@/composables/panel/useComposerSubmit'
 import { useComposerHandoffMode } from '@/composables/panel/useComposerHandoffMode'
 import { useComposerModeVisual } from '@/composables/panel/useComposerModeVisual'
+import { useComposerBash } from '@/composables/panel/useComposerBash'
 
 const props = withDefaults(
   defineProps<{
@@ -200,10 +214,8 @@ const {
 const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(props.sessionId) : undefined))
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
 const draft = ref('')
-/** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 
-// 命令浮层触发态机 —— 见 useCommandPopoverTrigger
 const sessionIdRef = computed(() => props.sessionId)
 const {
   cmdOpen,
@@ -259,23 +271,28 @@ const isSending = ref(false)
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
 const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
 
-/** ComposerInput input 事件 → 维护 draft */
+/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断）+ 刷新 image chips */
 function onInputChange(text: string): void {
   draft.value = text
-  resetBrowsing() // 用户修改内容，重置历史浏览态
+  refreshAttachedItems()
+  // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
+  resetBrowsing()
 }
 
-function clearInput(): void {
-  draft.value = ''
-  if (props.sessionId) drafts.delete(props.sessionId)
-  inputRef.value?.clear()
-}
+// 顶部「已附上下文」chip 行（ContextChipsBar 数据源 + × 删除回调）——见 useComposerContextChips
+const { attachedItems, refreshAttachedItems, onRemoveContextChip } = useComposerContextChips(inputRef)
 
-/** 发送失败恢复草稿到输入区 */
-function restoreInput(text: string): void {
-  draft.value = text
-  inputRef.value?.setText(text)
-}
+// composer-box 拖拽落位（拖入图片 → image segment，复用 slice4 handleImagePaste）——见 useComposerDragDrop
+const composerBoxRef = ref<HTMLElement | null>(null)
+const { onDragOver, onDragLeave, onDrop } = useComposerDragDrop(inputRef, composerBoxRef, refreshAttachedItems, sessionIdRef)
+
+// 发送后清空 / 失败恢复（clearInput / restoreInput / restoreSegments）——见 useComposerRestore
+const { clearInput, restoreInput, restoreSegments } = useComposerRestore({
+  draft,
+  inputRef,
+  drafts,
+  sessionId: sessionIdRef,
+})
 
 // Fork 提问模式（FR-13/14/15）—— 见 useComposerForkMode
 const fork = useComposerForkMode(sessionIdRef, {
@@ -292,7 +309,7 @@ const handoff = useComposerHandoffMode(sessionIdRef, {
   clearInput,
   restoreInput,
   exitForkMode: fork.exitForkMode,
-  handoff: (srcSessionId, focus) => handoffAction(srcSessionId, focus),
+  handoff: (srcSessionId, reply) => handoffAction(srcSessionId, reply),
 })
 // 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
 // ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。
@@ -301,11 +318,25 @@ watch(() => fork.forkMode.value, (isFork) => {
 })
 
 const hasInput = computed(() => draft.value.trim().length > 0)
+
+// bash 命令模式（composer-bash-execute）：isBashMode + trySendBash 分流提取到 useComposerBash
+const composerBash = useComposerBash({
+  draft, clearInput, isSending,
+  sessionId: () => props.sessionId,
+})
+const isBashMode = composerBash.isBashMode
+
+// 提交动作（steer / followUp / abort）—— 见 useComposerSubmit。onSend 留组件内（fork/landing/compact 分支多）
+const { onSteer, onFollowUp, onAbort } = useComposerSubmit({
+  hasInput, isActive, draft, inputRef, sessionIdRef,
+  clearInput, restoreInput, steer, followUp, abort,
+})
+
 /** 忙时（流式/派发/发送中/压缩中）—— canSend 与 canHandoffSend 共用，避免重复守卫 */
 const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
 const canSend = computed(() => hasInput.value && !isBusy.value)
 
-// composer-box 视觉派生（boxClass / placeholder 三级链：fork > handoff > 默认）—— 见 useComposerModeVisual
+// composer-box 视觉派生（boxClass / placeholder 四级链：fork > handoff > bash > 默认）—— 见 useComposerModeVisual
 const { boxClass, placeholder } = useComposerModeVisual({
   forkBoxClass: fork.forkBoxClass,
   handoffBoxClass: handoff.handoffBoxClass,
@@ -314,9 +345,13 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isActive,
   hasInput,
   isSending,
+  isBashMode,
 })
-
-/** 发送。分支优先级：fork → handoff → landing → /compact → 普通 send。 */
+/**
+ * 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。
+ * landing 与 active 两条路径合并：landing 走 submitFirstMessage，active 走 trySendBash / /compact / send。
+ * 失败均 restoreSegments 回滚草稿（W8）。
+ */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
   const canHandoffSend = handoff.handoffMode.value && !isBusy.value
@@ -324,20 +359,27 @@ async function onSend(): Promise<void> {
   const text = draft.value
   if (fork.forkMode.value && await fork.handleForkSend(text)) return
   if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
+  const segments = inputRef.value?.getSegments() ?? [] // 先快照（clearInput 会清空 DOM）
   if (props.variant === 'landing') {
+    // landing bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
+    const bashExtract = composerBash.extractBashCommand(text)
+    if (bashExtract.type === 'empty') return
     clearInput()
     isSending.value = true
     try {
-      await flow.submitFirstMessage(text, localThinkingLevel.value)
+      // B6：preset 透传走 flow.pendingPreset，不在此读 store 第二真源
+      const bashCommand = bashExtract.type === 'command' ? bashExtract : undefined
+      await flow.submitFirstMessage(segments, localThinkingLevel.value, bashCommand)
     } catch (e) {
-      restoreInput(text)
-      const msg = e instanceof Error ? e.message : String(e)
-      toastError(t('panel.panel.taskFailed', { error: msg }))
+      restoreSegments(segments)
+      toastError(t('panel.panel.taskFailed', { error: e instanceof Error ? e.message : String(e) }))
     } finally {
       isSending.value = false
     }
     return
   }
+  // active 态：bash 分流（!/!! 前缀，必须在 /compact 前）+ /compact + 普通发送
+  if (await composerBash.trySendBash(text)) return
   const trimmed = text.trim()
   if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
     const customInstructions = trimmed.startsWith('/compact ')
@@ -347,52 +389,16 @@ async function onSend(): Promise<void> {
     await compact(props.sessionId!, customInstructions)
     return
   }
-  // segments 先快照（clearInput 会清空 DOM）
-  const segments = inputRef.value?.getSegments() ?? []
   clearInput()
   isSending.value = true
   try {
     await send(props.sessionId!, segments)
   } catch (e) {
-    // 发送失败恢复草稿，避免输入丢失
-    restoreInput(text)
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('panel.panel.sendFailed', { error: msg }))
+    restoreSegments(segments)
+    toastError(t('panel.panel.sendFailed', { error: e instanceof Error ? e.message : String(e) }))
   } finally {
     isSending.value = false
   }
-}
-
-/** 追加 steer：活跃态有输入时 ⏎ 触发。segments 先快照（clearInput 会清空 DOM） */
-async function onSteer(): Promise<void> {
-  if (!hasInput.value || !isActive.value) return
-  const segments = inputRef.value?.getSegments() ?? []
-  await submit(draft.value, () => steer(props.sessionId!, segments))
-}
-
-/** 追加 follow-up：Alt+⏎ 触发；非流式退化为普通发送 */
-async function onFollowUp(): Promise<void> {
-  if (!hasInput.value) return
-  const segments = inputRef.value?.getSegments() ?? []
-  await submit(draft.value, () => followUp(props.sessionId!, segments))
-}
-
-/** 公共提交：清空输入 → sender → 失败恢复草稿 */
-async function submit(text: string, sender: () => Promise<void>): Promise<void> {
-  const trimmed = text.trim()
-  if (!trimmed) return
-  clearInput()
-  try {
-    await sender()
-  } catch (e) {
-    restoreInput(text)
-    throw e
-  }
-}
-
-/** 停止（S6）：调 abort（G-025 流转 DEFERRED，方法存在） */
-async function onAbort(): Promise<void> {
-  await abort(props.sessionId!)
 }
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */

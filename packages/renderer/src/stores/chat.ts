@@ -27,6 +27,7 @@
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './chat-mutations'
+import { initTimers } from './chat-timers'
 import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
 import {
   LRU_MAX_SESSIONS,
@@ -48,6 +49,7 @@ import type {
 } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
 import { dispatchMessageEvent } from './chat-message-effects'
+import { findLastStreamingBashIndex } from './chat-bash-effects'
 import { findLastAssistantIndex } from './chat-chunk-processor'
 import { createChangeSetController } from './chat-changeset'
 import { createHandoffController } from './chat-handoff'
@@ -310,6 +312,12 @@ function finalizeMessagesImpl(
   const prev = messages.value.get(sessionId)
   if (!prev) return
   const next = prev.map((m) => {
+    // [M1 PR#116 review] 跳过 bash 消息：bash 消息（role:'system' + bashExecution）的生命周期
+    // 由 finalizeBashOnly / bashResultEffect / markBashError 独立管理（W1 timer-decouple 解耦）。
+    // 若此处统一翻终态，L1 放宽 bash↔assistant 并发后，assistant error → finalizeSession('error')
+    // 会把共存中的 streaming bash 一并翻成 error，bashResult 到达时找不到 streaming bash →
+    // 真实结果被丢弃。与 W1 的 finalizeBashOnly 解耦对称。
+    if (m.bashExecution) return m
     const isStreaming = m.status === 'streaming'
     // toolCall 统一收口（无论 message 是否还 streaming；[W4] 收敛到此处单一路径，
     // 避免 message.complete 局部 finalizeToolCalls 与此两套映射漂移）。
@@ -393,8 +401,6 @@ export const useChatStore = defineStore('chat', () => {
   const STREAMING_TIMEOUT_MS = readStreamingTimeoutMs()
   /** pendingSend 空窗期 timer 阈值（D-015/F4，接管 dispatchingTimer 30s 语义） */
   const PENDING_SEND_TIMEOUT_MS = 30_000
-  /** streaming 超时 timer（per-session 跟踪，按 sessionId 隔离） */
-  const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** pendingSend 空窗期 timer（按 sessionId 隔离） */
   const pendingSendTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // handingOff 超时兜底 timer + HANDING_OFF_TIMEOUT_MS 阈值内聚在 createHandoffController（chat-handoff.ts）
@@ -402,19 +408,26 @@ export const useChatStore = defineStore('chat', () => {
   // ── 派生态（computed scan，D-005，零手动维护）──
 
   /**
-   * 当前所有含 streaming 消息的 session 集合（W2，ADR 0035）。
+   * 当前所有含 streaming assistant 消息的 session 集合（W2，ADR 0035）。
    *
    * computed 派生 Set——单一真相源，物理不可撕裂（任何 messages 写入路径自动覆盖，
    * 含 13+ 处写入点 + 3 个边界点 truncateFrom/disposeSession/hydrate）。messages 变化时
    * 全量扫一次并缓存，服务所有 isGenerating 查询，消除"每个消费点重复 O(n) 扫描"。
    *
    * shallowRef 下依赖 messages.value 的整体替换（commitMessages 已保证），computed 正确重算。
+   *
+   * [B1 PR#116 review] 仅扫 `m.role === 'assistant' && m.status === 'streaming'`。
+   * bashStartEffect 创建的 bash 消息是 `role:'system', status:'streaming'`——纯 bash 执行
+   * 期间若计入此集合，isGenerating(sid)===true → isActive(sid)===true，用户发普通消息会被错误
+   * 路由到 steer，Composer isBusy 为真，停止按钮按 assistant abort 动作而非 abortBash，
+   * 与「bash 不阻塞」核心承诺矛盾。bash 消息的生命周期由 finalizeBashOnly / bashResultEffect /
+   * markBashError 独立管理（不依赖此 isGenerating 派生）。
    */
   const streamingSessionIds = computed(() => {
     const ids = new Set<string>()
     for (const [sid, msgs] of messages.value) {
       for (const m of msgs) {
-        if (m.status === 'streaming') {
+        if (m.role === 'assistant' && m.status === 'streaming') {
           ids.add(sid)
           break
         }
@@ -424,10 +437,13 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   /**
-   * 指定 session 是否有 streaming 实体（派生，无 setter）。
-   * 不变式：`isGenerating(sid) ≡ ∃ m ∈ messages[sid], m.status === 'streaming'`
+   * 指定 session 是否有 streaming assistant 实体（派生，无 setter）。
+   * 不变式：`isGenerating(sid) ≡ ∃ m ∈ messages[sid], m.role === 'assistant' && m.status === 'streaming'`
    * W2：改用 streamingSessionIds computed 的 O(1) has 查询（ADR 0035），
    * 取代每次调用 O(n) list.some 扫描。不变式逻辑完全相同，仅加缓存层。
+   *
+   * [B1] 仅反映 assistant streaming——bash 消息（role:'system'）不计入，确保纯 bash 执行
+   * 期间 isGenerating 为 false，与「bash 不阻塞」承诺一致。
    */
   function isGenerating(sessionId: string): boolean {
     return streamingSessionIds.value.has(sessionId)
@@ -515,19 +531,21 @@ export const useChatStore = defineStore('chat', () => {
     prependHistoryMut(messages, sessionId, truncateToolOutputBatch(fullHistory.map((m) => ({ ...m }))))
   }
 
-  /** 追加 user 消息（构造完整 Message，立即 complete）。content 为 Segment[]（ADR-0037） */
-  function appendUser(sessionId: string, segments: Segment[]): void {
+  /** 追加 user 消息（Segment[]，ADR-0037）。返回 id：useChat 用作 clientUuid 建立重开回填映射。 */
+  function appendUser(sessionId: string, segments: Segment[]): string {
     const prev = messages.value.get(sessionId) ?? []
+    const id = `u-${crypto.randomUUID()}`
     commitMessages(messages, sessionId, [
       ...prev,
       {
-        id: `u-${crypto.randomUUID()}`,
+        id,
         role: 'user',
         content: segments,
         status: 'complete',
         timestamp: Date.now(),
       },
     ])
+    return id
   }
 
   /**
@@ -641,6 +659,8 @@ export const useChatStore = defineStore('chat', () => {
         finalizeSession,
         clearPendingSend,
         armStreamingTimer,
+        armBashTimer,
+        clearBashTimer,
         markPendingDelivered,
       },
       sessionId,
@@ -660,11 +680,39 @@ export const useChatStore = defineStore('chat', () => {
    */
   function finalizeSession(sessionId: string, reason: FinalizeReason, errorText?: string): void {
     finalizeMessagesImpl(messages, sessionId, reason, errorText)
-    // 清 pendingSend + timer
+    // 清 pendingSend + streaming timer（bash timer 不清：W1 timer-decouple 解耦，bash timer 由
+    // bashResultEffect/markBashError/finalizeBashOnly 独立清，不应被 assistant 收口误清）。
+    // [M2 PR#116 review] clearStreamingTimer 此前被误删：正常 message.complete 路径不再清
+    // streaming timer，10min 后 timer 仍会触发 finalizeSession('timeout')，造成已 complete 的
+    // turn 被二次收口（幂等无功能损害，但浪费一次 finalize 调用 + DEV warn 噪音）。
     clearPendingSend(sessionId)
     clearStreamingTimer(sessionId)
     // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
     if (import.meta.env.DEV && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
+  }
+
+  /**
+   * [W1 timer-decouple] bash timer 专用收口（C2 回归防护）。
+   *
+   * L1 放宽 bash↔streaming 并发后，bash 与 assistant turn 可能共存。原 bash timer 到期
+   * 调 finalizeSession('timeout') 会把正在 streaming 的 assistant turn 一并收口（C2 回归）。
+   * 此函数只把 streaming bash 消息推到 error 态（cancelled=true），**不**清 streaming timer、
+   * **不**清 pendingSend、**不**调 finalizeSession——bash timer 不应碰 streaming 域。
+   *
+   * 幂等：无 streaming bash 消息时 no-op（与 bashResultEffect/markBashError 的 findLastIndex 一致）。
+   */
+  function finalizeBashOnly(sessionId: string): void {
+    const prev = messages.value.get(sessionId) ?? []
+    // [S7] 复用 findLastStreamingBashIndex，与 bashResultEffect/markBashError 一致。
+    const realIdx = findLastStreamingBashIndex(prev, sessionId)
+    if (realIdx === -1) return
+    const next = prev.map((m, i) => i === realIdx ? {
+      ...m,
+      status: 'error' as const,
+      bashExecution: { ...m.bashExecution!, cancelled: true },
+      error: 'timeout',
+    } : m)
+    commitMessages(messages, sessionId, next)
   }
 
   /**
@@ -737,21 +785,8 @@ export const useChatStore = defineStore('chat', () => {
     clearSessionTimer(pendingSendTimers, sessionId)
   }
 
-  // ── streaming timer（超时兜底）──
-
-  /** message_start 挂载超时兜底（防 message.complete 永不到）。callback 调 finalizeSession('timeout')。 */
-  function armStreamingTimer(sessionId: string): void {
-    clearStreamingTimer(sessionId)
-    streamingTimers.set(sessionId, setTimeout(() => {
-      finalizeSession(sessionId, 'timeout')
-      streamingTimers.delete(sessionId)
-    }, STREAMING_TIMEOUT_MS))
-  }
-
-  /** 取消超时 timer（finalizeSession / store dispose 调） */
-  function clearStreamingTimer(sessionId: string): void {
-    clearSessionTimer(streamingTimers, sessionId)
-  }
+  // ── timer（streaming + bash）：从 chat-timers.ts 提取，闭包注入 finalizeSession ──
+  const { armStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers } = initTimers(finalizeSession, finalizeBashOnly, STREAMING_TIMEOUT_MS)
 
   /**
    * session 级错误统一入口：追加 error assistant 消息 + finalizeSession。
@@ -776,10 +811,9 @@ export const useChatStore = defineStore('chat', () => {
   // store 作用域销毁时（HMR 热替换 / $dispose / 测试 teardown）清理 timer，
   // 避免回调操作已废弃的 store 实例 ref + warn 噪音。
   onScopeDispose(() => {
-    for (const timers of [pendingSendTimers, streamingTimers]) {
-      for (const timer of timers.values()) clearTimeout(timer)
-      timers.clear()
-    }
+    for (const timer of pendingSendTimers.values()) clearTimeout(timer)
+    pendingSendTimers.clear()
+    disposeAllTimers()
     handoff.clearAllTimers()
   })
 
@@ -815,7 +849,7 @@ export const useChatStore = defineStore('chat', () => {
       [messages, retryStates, queueStates],
       [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory],
       changeSetStatuses,
-      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearHandingOffTimer(sessionId)],
+      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearBashTimer(sessionId), () => clearHandingOffTimer(sessionId)],
     )
     disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
@@ -852,6 +886,8 @@ export const useChatStore = defineStore('chat', () => {
     addPendingSend,
     clearPendingSend,
     armStreamingTimer,
+    armBashTimer,
+    clearBashTimer,
     markSessionError,
     isCompacting,
     setCompacting,

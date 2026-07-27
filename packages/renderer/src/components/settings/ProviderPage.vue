@@ -7,7 +7,7 @@
   <div class="flex flex-col gap-3">
     <!-- page-header -->
     <div class="flex items-center justify-between">
-      <span />
+      <ProviderImportMenu :disabled="importState !== 'idle'" @select="onImportSelect" />
       <Button
         class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
         @click="openAdd"
@@ -40,7 +40,7 @@
     <!-- 实体列表 -->
     <div v-for="p in providers" :key="p.id" class="overflow-hidden rounded-md border border-border bg-bg">
       <!-- 行头 -->
-      <div class="flex items-center gap-3 px-4 py-3">
+      <div class="flex min-w-0 items-center gap-3 px-4 py-3">
         <span class="size-[7px] shrink-0 rounded-full" :class="statusDot(p.status)" />
 
         <!-- 启用开关（名称左侧）：Switch 原语。乐观更新——点击立即改 store，API 失败回滚。 -->
@@ -102,22 +102,35 @@
         </div>
 
         <!-- 模型清单表格 -->
-        <div v-if="p.models.length" class="border-t border-border px-4 py-3">
+        <div v-if="p.models.length" class="overflow-x-auto border-t border-border px-4 py-3">
           <p class="mb-2 text-[11px] uppercase tracking-wider text-muted">{{ t('settings.provider.modelList') }}</p>
-          <Table class="text-[12px]">
+          <Table class="w-full table-fixed text-[12px]">
+            <colgroup>
+              <col class="w-[32%]" />
+              <col class="w-[10%]" />
+              <col class="w-[11%]" />
+              <col class="w-[14%]" />
+              <col class="w-[11%]" />
+              <col class="w-[15%]" />
+              <!-- 编辑列：7% 在窄视口下 <40px 会让 Pencil 按钮溢出/换行，故加 min-width（col 不支持 Tailwind class，用 inline style） -->
+              <col class="w-[7%]" style="min-width: 40px" />
+            </colgroup>
             <TableHeader>
               <TableRow class="hover:bg-transparent">
-                <TableHead class="pb-1.5">{{ t('settings.provider.colModel') }}</TableHead>
+                <TableHead class="max-w-0 pb-1.5">{{ t('settings.provider.colModel') }}</TableHead>
                 <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colInput') }}</TableHead>
                 <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colContext') }}</TableHead>
                 <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colThinking') }}</TableHead>
                 <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colEnabled') }}</TableHead>
                 <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colDefault') }}</TableHead>
+                <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colEdit') }}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <TableRow v-for="m in p.models" :key="m.id">
-                <TableCell class="py-2 font-mono text-fg">{{ m.id }}</TableCell>
+                <TableCell class="max-w-0 py-2 font-mono text-fg">
+                  <span class="block truncate" :title="m.id">{{ m.id }}</span>
+                </TableCell>
                 <!-- 输入类型 icon -->
                 <TableCell class="py-2 text-center">
                   <div class="flex justify-center gap-0.5">
@@ -133,15 +146,14 @@
                 </TableCell>
                 <TableCell class="py-2 text-right tabular-nums text-subtle">{{ formatCtx(m.contextWindow) }}</TableCell>
                 <TableCell class="py-2 text-right">
-                  <!-- thinking 仅展示，编辑入口在 ProviderEditModal 行内 Select（pickStrategy）。
-                       列表页此 pill 不可点击（删除原空函数 cycleThinking）。 -->
+                  <!-- thinking 仅展示。点击「编辑」打开弹窗修改思考策略、compat 等完整字段。 -->
                   <Button
                     variant="ghost"
                     data-testid="thinking-pill"
-                    disabled
                     :title="t('settings.provider.thinkingEditHint')"
-                    class="h-auto cursor-default rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:bg-transparent"
+                    class="h-auto cursor-pointer rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:opacity-80"
                     :class="thinkingPillClass(m)"
+                    @click.stop="openEdit(p)"
                   >{{ thinkingLabel(m) }}</Button>
                 </TableCell>
                 <!-- model 级 enabled 开关（D6）：乐观改 store + config.setProvider 持久化。
@@ -165,6 +177,19 @@
                     @click.stop="setDefaultModel(p.id, m.id)"
                   >{{ t('settings.provider.setDefault') }}</Button>
                   <span v-else class="rounded-sm bg-info-soft px-1.5 py-0.5 text-[10px] text-info">{{ t('settings.provider.defaultModel') }}</span>
+                </TableCell>
+                <!-- 编辑入口（修问题 2）：打开 ProviderEditModal 编辑此 model 的完整字段（思考策略/compat 等）。
+                     ProviderPage 是只读概览页，编辑统一走弹窗，避免列表-编辑分层混乱。 -->
+                <TableCell class="py-2 text-center">
+                  <Button
+                    variant="ghost"
+                    data-testid="model-edit-btn"
+                    class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-[13px]"
+                    :title="t('settings.provider.editModelTitle')"
+                    @click.stop="openEdit(p)"
+                  >
+                    <Pencil />
+                  </Button>
                 </TableCell>
               </TableRow>
             </TableBody>
@@ -193,6 +218,17 @@
     >
       <p v-if="actionError" class="pt-2 text-[12px] text-danger">{{ actionError }}</p>
     </ConfirmDialog>
+
+    <!-- 导入预览弹窗（W2）：open 派生自 importState（previewing/applying 时开） -->
+    <ProviderImportPreviewDialog
+      :open="importState === 'previewing' || importState === 'applying'"
+      :import-id="importId ?? undefined"
+      :preview="importPreview"
+      :loading="importState === 'applying'"
+      :error="importError"
+      @update:open="onPreviewDialogToggle"
+      @confirm="onImportConfirm"
+    />
   </div>
 </template>
 
@@ -208,11 +244,24 @@ import type { ProviderInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
 import { useQuotaStore } from '@/stores/quota'
+import { useProviderImport } from '@/composables/features/useProviderImport'
 import ProviderEditModal from './ProviderEditModal.vue'
+import ProviderImportMenu from './ProviderImportMenu.vue'
+import ProviderImportPreviewDialog from './ProviderImportPreviewDialog.vue'
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 
 const { t } = useI18n()
+// 导入流程状态机（W2）抽到 composable，组件只持有展示态
+const {
+  importState,
+  importId,
+  importPreview,
+  importError,
+  onImportSelect,
+  onImportConfirm,
+  onPreviewDialogToggle,
+} = useProviderImport()
 
 /** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */
 const toggling = ref<Set<string>>(new Set())
@@ -358,6 +407,7 @@ async function onToggleModelEnabled(
         contextWindow: m.contextWindow,
         input: m.input,
         thinkingLevelMap: m.thinkingLevelMap,
+        compat: m.compat,
         enabled: m.enabled,
       }))
       : props.providers.find((x) => x.id === providerId)?.models.map((m) => ({
@@ -368,6 +418,7 @@ async function onToggleModelEnabled(
         contextWindow: m.contextWindow,
         input: m.input,
         thinkingLevelMap: m.thinkingLevelMap,
+        compat: m.compat,
         enabled: m.id === modelId ? enabled : (m.enabled ?? true),
       })) ?? []
     await config.setProvider(providerId, { models: modelsToSend })

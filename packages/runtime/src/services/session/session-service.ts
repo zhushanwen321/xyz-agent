@@ -14,9 +14,13 @@ import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, isAbsolute, resolve } from 'node:path'
 import { expandHome } from '../../utils/path-utils.js'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, BatchDeleteResult } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
+import { getAttachmentsDir } from '@xyz-agent/shared/paths'
+import type { PiSessionEntry } from '../../infra/pi/pi-protocol.js'
+import { rebuildHistoryFromEntries } from '../../infra/pi/entry-tree-builder.js'
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService, IConfigService,
@@ -41,10 +45,23 @@ import { SessionScanner } from './session-scanner.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
+import { PresetService, type PresetResolution } from '../preset-service.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
   adapter: IEventAdapter
+  /**
+   * launch preset id 的内存态持有（W-RT-4，设计文档 §4.2）。
+   *
+   * session 活跃期间 .preset.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
+   *（persistPresetBinding 的 existsSync 守卫跳过），此时内存态兜底持有 presetId，
+   * 供 forkSession 在 active 期读源 session preset（W-RT-5）。
+   *
+   * 不放 IManagedSessionView（types.ts 非 slice 范围）：session-lifecycle 经
+   * svc.getSession(id) 拿到 ManagedSession 实例后，as 转换读写此字段（patch 模式，
+   * 见 lifecycle W-RT-4/5 实现注释）。toSummary 一并透传到 SessionSummary.launchPresetId。
+   */
+  launchPresetId?: string
 }
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
@@ -95,6 +112,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 未注入时 getReplaceSystemPrompt 返回 undefined（pi 走默认系统提示词）。
    */
   private configService: IConfigService | null = null
+  /**
+   * PresetService 引用（组合根注入）。getLaunchPresetOptions 委托用——
+   * spawn pi 时按用户选定的 launch preset 构建 extension/skill/tool args。
+   * 经 setter 注入（同 setConfigService 模式），未注入时 getLaunchPresetOptions
+   * 返回 undefined（调用方 session-lifecycle fallback 到现有 getExtensionPaths/getSkillPaths）。
+   * 见 pi-launch-presets 设计文档 §8.1。
+   */
+  private presetService: PresetService | null = null
   /**
    * W5：message.complete 广播回调（组合根注入 ReloadOrchestrator.onMessageComplete）。
    * 经 setter 注入（同 setModelContextWindowResolver 模式），避免构造参数环
@@ -183,6 +208,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.configService = configService
   }
 
+  /**
+   * 注入 PresetService（组合根在所有服务构造后调用）。
+   * getLaunchPresetOptions 委托用——spawn pi 时按 launch preset 构建 args。
+   * 与 setConfigService 同模式（setter 注入，避免破坏现有测试构造点）。
+   */
+  setPresetService(presetService: PresetService): void {
+    this.presetService = presetService
+  }
+
   /** W5：注入 message.complete 回调（组合根绑 ReloadOrchestrator.onMessageComplete）。 */
   setOnMessageComplete(handler: (sessionId: string) => void): void {
     this.onMessageComplete = handler
@@ -195,7 +229,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
-  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
+  async create(cwd?: string, label?: string, options?: {
+    hidden?: boolean
+    presetId?: string
+    /** Landing Model Chip 传入值，覆盖 preset.modelOverride（设计文档 §5.2 优先级）。 */
+    modelOverride?: string
+    /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（设计文档 §5.2 优先级）。 */
+    thinkingOverride?: string
+  }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> { return this.lifecycle.deleteByCwd(cwd) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
@@ -275,11 +316,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return last.id as string
   }
 
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, images) }
   async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
+  async sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
+  }
+  async abortBash(sessionId: string): Promise<void> { return this.dispatcher.abortBash(sessionId) }
   async steerMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.steerMessage(sessionId, content) }
   async followUpMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.followUpMessage(sessionId, content) }
   async compact(sessionId: string, customInstructions?: string): Promise<void> { return this.dispatcher.compact(sessionId, customInstructions) }
@@ -378,26 +423,42 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /**
    * 拉取 session 历史。
-   * 优先 RPC（pi client.getHistory，返回全量不截断）；RPC 空/失败 fallback 文件尾读。
+   *
+   * 优先走 pi get_entries RPC + entry 树重建（rebuildHistoryFromEntries）：从完整 entry 树
+   * （含 message + custom entry）重建 Message[]，按 clientUuid ↔ userEntryId 映射回填
+   * 结构化 Segment[]（image/file/skill badge，读 segments.json sidecar）。
+   *
+   * 与原 get_messages 路径的区别：get_messages 只返回扁平 message 列表，无 custom entry，
+   * 无法回填 badge（降级为占位文本）。get_entries 含 custom entry，可精确还原 badge。
+   *
+   * 降级链：get_entries 空/失败 → fallback 文件尾读（getHistoryTailFromFile）。
    * 返回 { messages, truncated }——truncated=true 表示文件尾读截断了早期 turn（N1）。
    */
   async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
-        const result = await client.getHistory() as { data?: { messages?: unknown[] } }
-        const raw = result.data?.messages ?? []
-        // RPC 路径返回全量历史（pi get_messages 不截断），truncated=false
-        if (raw.length > 0) return { messages: this.sessionStore.convertHistory(raw), truncated: false }
-        // RPC 返回空时,仅闲置 session fallback 到磁盘尾读
+        const result = await client.getEntries() as { data?: { entries?: PiSessionEntry[]; leafId?: string | null } }
+        // leafId 是 session 当前叶子 entry id（branch 后指向新叶子）。当前 getHistory 全量拉取不消费它，
+        // 保留供未来增量拉取（getEntries(since=leafId)）或 branch 历史完整性判断用。
+        const entries = result.data?.entries ?? []
+        if (entries.length > 0) {
+          // 读 segments.json sidecar（runtime 直接读文件，不经 IPC——IPC 是 renderer→main，runtime 是独立进程）。
+          // 文件缺失/损坏 → null（rebuildHistoryFromEntries 全降级为占位文本，非硬错误）。
+          const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
+          const rebuilt = rebuildHistoryFromEntries(entries, segmentsMetadata)
+          // entry 树重建返回全量历史（get_entries 不截断），truncated=false
+          return { messages: rebuilt.messages, truncated: false }
+        }
+        // entries 空 → 仅闲置 session fallback 到磁盘尾读
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
-          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to tail read`)
+          console.warn(`[session-service] getHistory via getEntries returned empty for idle session ${sessionId}, falling back to tail read`)
           return await getHistoryTailFromFile(sessionId, this.sessionStore)
         }
         return { messages: [], truncated: false }
       } catch (e) {
-        console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to tail read`)
+        console.warn(`[session-service] getHistory via getEntries failed: ${toErrorMessage(e)}, falling back to tail read`)
         return await getHistoryTailFromFile(sessionId, this.sessionStore)
       }
     }
@@ -701,6 +762,31 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.configService?.getReplaceSystemPrompt()
   }
 
+  /**
+   * 按 launch presetId 解析 pi 启动参数（委托 PresetService.resolve）。
+   *
+   * 供 session-lifecycle 的 create/restoreSession/forkSession 调用（runtime-lifecycle-integration slice）。
+   * 返回 undefined 仅当 presetService 未注入（组合根未构造，理论上不会发生）。
+   *
+   * 找不到指定 preset 时 fallback 到 builtin:full（设计文档 §4.3 runtime 锁定）：
+   * preset 被删 / 历史 session 的 presetId 失效时，用全工具模式兜底而非放弃 preset 解析。
+   * builtin:full 永在（DEFAULT_PRESETS 保证），故理论上不会二次 fallback 失败。
+   *
+   * 设计文档 §8.1 + §4.3：session-lifecycle 拿到 PresetResolution 后覆盖现有
+   * getExtensionPaths/getSkillPaths 结果，并追加 toolArgs/flags 到 pi args。
+   */
+  async getLaunchPresetOptions(presetId: string, cwd: string): Promise<PresetResolution | undefined> {
+    if (!this.presetService) return undefined
+    let preset = this.presetService.getPreset(presetId)
+    if (!preset) {
+      // 找不到 preset 时 fallback 到 builtin:full（设计文档 §4.3）。
+      // 避免返回 undefined 让 session-lifecycle 退到无 tool/thinking args 的旧行为。
+      preset = this.presetService.getPreset(BUILTIN_PRESET_IDS.FULL)
+      if (!preset) return undefined  // 理论上不会发生（builtin 永在）
+    }
+    return this.presetService.resolve(preset, cwd)
+  }
+
   findScannedSession(sessionId: string): ScannedSession | undefined {
     return this.sessionStore.scanSessions().find(s => s.id === sessionId)
   }
@@ -721,6 +807,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       forkEntryId: s.forkEntryId,
       handedOffTo: s.handedOffTo,
       sessionFile: s.sessionFilePath,
+      // W-RT-4/§4.2：active session 的 launchPresetId 透传到 summary（内存态与 sidecar 并列）。
+      // ManagedSession 实例携带此字段；普通 IManagedSessionView 无此字段时为 undefined（安全）。
+      launchPresetId: (s as ManagedSession).launchPresetId,
     }
   }
 
@@ -802,7 +891,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
-      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false,
+      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
       adapter, sessionFilePath,
       hidden,
       parentSession,
@@ -977,6 +1066,29 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     } catch (e) {
       console.warn('[session-service] fetchAndBroadcastContext failed:', e)
     }
+  }
+}
+
+/**
+ * 读 segments.json sidecar（runtime 直接读文件，不经 IPC）。
+ *
+ * IPC 的 writeSegmentsMetadata / readSegmentsMetadata 是 renderer→main 通道，runtime 是独立 Node 进程
+ * （不持 electron app 句柄），不能走 IPC。runtime 直接读 <dataDir>/attachments/<sessionId>/segments.json。
+ *
+ * 文件缺失/损坏（JSON parse 失败 / entries 非数组）→ 返回 null（rebuildHistoryFromEntries 据此
+ * 全降级为占位文本，非硬错误）。异步读：与周围 getEntries RPC / readFile 一致，sidecar 是小文件
+ * （每条 user message 一条 entry）但统一走异步避免事件循环阻塞。
+ */
+async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMetadataFile | null> {
+  try {
+    const filePath = join(getAttachmentsDir(sessionId), 'segments.json')
+    if (!existsSync(filePath)) return null
+    const raw = await readFile(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as SegmentsMetadataFile
+    if (!parsed || !Array.isArray(parsed.entries)) return null
+    return parsed
+  } catch {
+    return null
   }
 }
 

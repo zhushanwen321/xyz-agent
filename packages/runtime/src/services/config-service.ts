@@ -7,6 +7,7 @@
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import {
@@ -18,10 +19,15 @@ import {
   type ScannedAgentInfo,
   type SystemPromptConfig,
   type TerminalConfig,
+  type SourceDetectResult,
+  type ProviderSource,
+  type ProviderImportPreview,
+  type ProviderImportResult,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
 import { atomicWrite } from '../utils/fs-utils.js'
+import { extractFrontmatter, extractDescription } from '../utils/frontmatter.js'
 import { expandHome } from '../utils/path-utils.js'
 import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
 import {
@@ -31,17 +37,26 @@ import {
 import { scanAgents } from './scanners/agent-scanner.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 import { getConfigDir } from '../infra/pi/pi-paths.js'
+import { detectSources as detectSourcesImpl } from './migration/index.js'
+import { previewImport as previewImportImpl, applyImport as applyImportImpl } from './migration/index.js'
 import {
-  uniqueTmpSuffix,
-  parseAgentMd,
-  isValidThinkingLevelMap,
+  getWorktreeRootDir as getWorktreeRootDirImpl,
+  setWorktreeRootDir as setWorktreeRootDirImpl,
+  getSetupScript as getSetupScriptImpl,
+  setSetupScript as setSetupScriptImpl,
+  getBareSetupScript as getBareSetupScriptImpl,
+  setBareSetupScript as setBareSetupScriptImpl,
+  getTimeout as getTimeoutImpl,
+  setTimeout as setTimeoutImpl,
+  getDefaultBaseBranch as getDefaultBaseBranchImpl,
+  setDefaultBaseBranch as setDefaultBaseBranchImpl,
+} from './worktree-config-helper.js'
+import {
   defaultSystemPromptConfig,
   mergeSystemPromptConfig,
-  validateSystemPromptConfig,
   defaultTerminalConfig,
   mergeTerminalConfig,
-  validateTerminalConfig,
-} from './config-service-helpers.js'
+} from './config-merge-helpers.js'
 
 // ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
@@ -66,13 +81,39 @@ const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
 /** JSON 序列化缩进（saveAppConfig / setSystemPromptConfig 的 atomicWrite 共用）。 */
 const JSON_INDENT = 2
 
+/** Terminal config 校验范围（setTerminalConfig 写入期校验，与 TerminalPage 前端一致） */
+const FONT_SIZE_MIN = 6
+const FONT_SIZE_MAX = 72
+const SCROLLBACK_MAX = 100000
+
 /**
- * Worktree setup 脚本超时（秒）。
- * - DEFAULT_TIMEOUT_SEC：getTimeout 未配置时的缺省（setup 脚本一般很快，60s 足够）。
- * - MAX_TIMEOUT_SEC：setTimeout 上限（1 小时，防止误填天文数字写盘）。
+ * 生成 atomicWrite 的唯一 tmp 后缀（时间戳 + 随机串），避免并发写入撞固定 .tmp 文件。
+ * saveAppConfig / setSystemPromptConfig 共用。
  */
-const DEFAULT_WORKTREE_TIMEOUT_SEC = 60
-const MAX_WORKTREE_TIMEOUT_SEC = 3600
+function uniqueTmpSuffix(): string {
+  // eslint-disable-next-line no-magic-numbers -- base36 radix + slice 掉 "0." 前缀（惯用唯一串生成）
+  return `${Date.now()}_${Math.random().toString(36).slice(2)}`
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+/** Extract name and description from agent markdown frontmatter. */
+function parseAgentMd(content: string): { name: string; description: string } {
+  const { frontmatter } = extractFrontmatter(content)
+  // name 是简单单行键值，inline 提取（不进通用 helper——name 是 agent 专属字段）
+  let name = ''
+  for (const fl of frontmatter.split('\n')) {
+    if (fl.startsWith('name:')) name = fl.slice('name:'.length).trim()
+  }
+  const description = extractDescription(frontmatter)
+  return { name, description }
+}
+
+/** Runtime type guard for thinkingLevelMap values. */
+function isValidThinkingLevelMap(v: unknown): v is Record<string, string | null> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  return Object.values(v as Record<string, unknown>).every(val => val === null || typeof val === 'string')
+}
 
 // ── Service ─────────────────────────────────────────────────────
 
@@ -127,7 +168,7 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean }>
+    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
     enabled?: boolean
     /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
     quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
@@ -169,6 +210,28 @@ export class ConfigService implements IConfigService {
         if (typeof m.api === 'string') model.api = m.api
         if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
         if (typeof m.enabled === 'boolean') model.enabled = m.enabled
+        // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
+        // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
+        // 类型守卫对齐 isValidThinkingLevelMap：必须排除 null（typeof null === 'object'）
+        // 与数组（typeof [] === 'object'），否则下游遍历 null 会崩或把数组当对象写入。
+        if (m.compat != null && typeof m.compat === 'object' && !Array.isArray(m.compat)) {
+          // sanitize compat（守卫通过后、赋值前）：
+          // - 剔除 __proto__/prototype/constructor 防 prototype pollution（compat 类型是
+          //   Record<string, unknown> 前向兼容扩展点，不能假定 key 安全）
+          // - 剔除 undefined value（避免 JSON 序列化丢 key 造成困惑）
+          // 不做 key 白名单：compat schema 未稳定，白名单会限制前向扩展。
+          const sanitized: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(m.compat)) {
+            if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue
+            if (v === undefined) continue
+            sanitized[k] = v
+          }
+          model.compat = sanitized
+        } else if (m.compat === undefined && base.compat) {
+          // 前端 clearAll 发 undefined → 删除盘上已有的 compat（对齐 thinkingLevelMap undefined 分支），
+          // 否则 base spread 会保留旧 compat，导致「清除所有 compat」按钮失效。
+          delete model.compat
+        }
         return model as unknown as ConfigModelDefinition
       })
     }
@@ -238,74 +301,54 @@ export class ConfigService implements IConfigService {
   }
 
   // ── Worktree config（git-cwt-anywhere）──
+  // 委托 worktree-config-helper（控 max-lines 500；签名 / 行为不变，对外零感知）。
+  // loadAppConfig / saveAppConfig 仍为 private，通过 appConfig() 暴露 accessors 注入。
+
+  private appConfig(): { load(): Record<string, unknown>; save(config: Record<string, unknown>): void } {
+    return {
+      load: () => this.loadAppConfig(),
+      save: c => this.saveAppConfig(c),
+    }
+  }
 
   getWorktreeRootDir(): string {
-    const config = this.loadAppConfig()
-    const val = config['worktreeRootDir']
-    return typeof val === 'string' ? val : '~/worktrees'
+    return getWorktreeRootDirImpl(this.appConfig())
   }
 
   setWorktreeRootDir(dir: string): void {
-    if (!dir || !dir.trim()) {
-      throw new Error('worktreeRootDir cannot be empty')
-    }
-    const config = this.loadAppConfig()
-    config['worktreeRootDir'] = dir
-    this.saveAppConfig(config)
+    setWorktreeRootDirImpl(this.appConfig(), dir)
   }
 
   getSetupScript(): string {
-    const config = this.loadAppConfig()
-    const val = config['setupScript']
-    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+    return getSetupScriptImpl(this.appConfig())
   }
 
   setSetupScript(script: string): void {
-    if (script.includes('..')) {
-      throw new Error('setupScript path cannot contain ..')
-    }
-    const config = this.loadAppConfig()
-    config['setupScript'] = script
-    this.saveAppConfig(config)
+    setSetupScriptImpl(this.appConfig(), script)
   }
 
   getBareSetupScript(): string {
-    const config = this.loadAppConfig()
-    const val = config['bareSetupScript']
-    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+    return getBareSetupScriptImpl(this.appConfig())
   }
 
   setBareSetupScript(script: string): void {
-    const config = this.loadAppConfig()
-    config['bareSetupScript'] = script
-    this.saveAppConfig(config)
+    setBareSetupScriptImpl(this.appConfig(), script)
   }
 
   getTimeout(): number {
-    const config = this.loadAppConfig()
-    const val = config['worktreeTimeout']
-    return typeof val === 'number' ? val : DEFAULT_WORKTREE_TIMEOUT_SEC
+    return getTimeoutImpl(this.appConfig())
   }
 
   setTimeout(timeout: number): void {
-    if (!Number.isFinite(timeout) || timeout <= 0 || timeout > MAX_WORKTREE_TIMEOUT_SEC) {
-      throw new Error(`timeout must be a positive number in (0, ${MAX_WORKTREE_TIMEOUT_SEC}], got ${timeout}`)
-    }
-    const config = this.loadAppConfig()
-    config['worktreeTimeout'] = timeout
-    this.saveAppConfig(config)
+    setTimeoutImpl(this.appConfig(), timeout)
   }
 
   getDefaultBaseBranch(): string {
-    const config = this.loadAppConfig()
-    const val = config['defaultBaseBranch']
-    return typeof val === 'string' ? val : 'origin/main'
+    return getDefaultBaseBranchImpl(this.appConfig())
   }
 
   setDefaultBaseBranch(baseBranch: string): void {
-    const config = this.loadAppConfig()
-    config['defaultBaseBranch'] = baseBranch
-    this.saveAppConfig(config)
+    setDefaultBaseBranchImpl(this.appConfig(), baseBranch)
   }
 
   // ── Skill CRUD ─────────────────────────────────────────────────
@@ -534,10 +577,31 @@ export class ConfigService implements IConfigService {
     return scanAgents(sources, existingIds)
   }
 
+  // ── 迁移源检测（W1，cw-2026-07-26-migration-other-agents）──
+  // 只读检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录，
+  // 返回每个源的安装状态 + 资源计数（不读文件内容）。详见 services/migration/source-detector.ts。
+  detectSources(): SourceDetectResult[] {
+    return detectSourcesImpl(process.env.HOME || homedir())
+  }
+
+  // ── Provider 导入（W2，cw-2026-07-26-migration-other-agents）──
+  // preview→apply 两步数据流 + 内存缓存。安全红线（DM1）：apiKey 明文不进前端。
+  // preview 返回脱敏数据（只 apiKeyExtracted 布尔），完整配置暂存 preview-cache（5min TTL）。
+  // 实现委托 services/migration/provider-importer（与 detectSources 同模式：纯函数 + 直接读 pi-provider-store，
+  // 对齐 quota-service 的 provider 级直访先例，不经 IConfigStore port）。
+
+  previewImportProviders(source: ProviderSource): { importId: string; preview: ProviderImportPreview } | { error: { code: string; message: string } } {
+    return previewImportImpl(source, process.env.HOME || homedir())
+  }
+
+  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } } {
+    return applyImportImpl(importId, selectedIds)
+  }
+
   // ── System prompt config（FR-6/FR-7，ADR-0038）──
   // 独立文件 system-prompt.json（不复用 config.json）：replace/append 两段提示词配置，
   // 插件读此文件热生效（replace 启动期注入、append 每轮 before_agent_start 注入）。
-  // 默认值 / 合并 / 校验纯逻辑见 config-service-helpers.ts。
+  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
 
   private systemPromptPath(): string {
     return join(this.configStore.getConfigDir(), 'system-prompt.json')
@@ -558,8 +622,20 @@ export class ConfigService implements IConfigService {
   }
 
   setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string } {
-    const error = validateSystemPromptConfig(config)
-    if (error) return { ok: false, error }
+    if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+      return {
+        ok: false,
+        error: `replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
+      }
+    }
+    // append 同样校验长度：append 虽不走 argv（无 Windows 32k 限制），但无上限会导致
+    // 每轮拼进 systemPrompt 的 token 失控。复用同一上限保持双卡 UX 一致。
+    if (config.append.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
+      return {
+        ok: false,
+        error: `append prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
+      }
+    }
     const cd = this.configStore.getConfigDir()
     if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
     // 用唯一 tmp 后缀避免并发 setSystemPromptConfig 撞固定 .tmp 文件
@@ -593,7 +669,7 @@ export class ConfigService implements IConfigService {
   // ── Terminal config（Phase 6 settings）──
   // 独立文件 terminal.json（不复用 config.json）：shell/字体/scrollback 等终端偏好。
   // 仅对新 spawn 的 PTY 生效（已启动的 PTY 不动态切换 shell），由 TerminalService.resolveShell 读取。
-  // 默认值 / 合并 / 校验纯逻辑见 config-service-helpers.ts。
+  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
 
   private terminalPath(): string {
     return join(this.configStore.getConfigDir(), 'terminal.json')
@@ -615,8 +691,16 @@ export class ConfigService implements IConfigService {
 
   setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string } {
     // 校验数值字段的合理范围（防异常值写盘后破坏 xterm 渲染或终端启动）
-    const error = validateTerminalConfig(config)
-    if (error) return { ok: false, error }
+    if (!Number.isFinite(config.fontSize) || config.fontSize < FONT_SIZE_MIN || config.fontSize > FONT_SIZE_MAX) {
+      return { ok: false, error: `fontSize out of range (${FONT_SIZE_MIN}-${FONT_SIZE_MAX}): ${config.fontSize}` }
+    }
+    if (!Number.isFinite(config.scrollback) || config.scrollback < 0 || config.scrollback > SCROLLBACK_MAX) {
+      return { ok: false, error: `scrollback out of range (0-${SCROLLBACK_MAX}): ${config.scrollback}` }
+    }
+    const validCursorStyles: TerminalConfig['cursorStyle'][] = ['block', 'underline', 'bar']
+    if (!validCursorStyles.includes(config.cursorStyle)) {
+      return { ok: false, error: `invalid cursorStyle: ${config.cursorStyle}` }
+    }
     const cd = this.configStore.getConfigDir()
     if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
     // 用唯一 tmp 后缀避免并发 setTerminalConfig 撞固定 .tmp 文件（同 setSystemPromptConfig）

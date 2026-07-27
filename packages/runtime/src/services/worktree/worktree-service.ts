@@ -57,14 +57,11 @@ export interface WorktreeServiceDeps {
 /** 主分支 fallback（origin/main ref 不存在时用本地 main）。 */
 const LOCAL_MAIN = 'main'
 
-/**
- * 冲突回避 hash 后缀长度：plain-repo 模式下目标目录已存在且疑似同 repo 的旧 worktree 时，
- * 用 repoRoot 的 md5 短 hash 拼到 repoName 后（<repoName>-<hash>）避免目录名撞车。
- * 6 位 hex = 16^6 ≈ 1600 万组合，单机 repo 数量级足够去重。
- */
-const HASH_SUFFIX_LENGTH = 6
-
-/** 秒→毫秒换算因子（configService.getTimeout() 返回秒，shellRunner.execute timeout 入参用毫秒）。 */
+/** '~/…' 前缀的展开：slice 起始位置跳过 '~' 后与 $HOME 拼接。 */
+const HOME_PREFIX_SLICE_START = 2
+/** 目录名去重后缀的短 hash 长度（md5 前 N 位 hex，足以区分同 repo 冲突）。 */
+const DIR_HASH_SUFFIX_LENGTH = 6
+/** 秒 → 毫秒换算系数（setup 脚本 timeout 从秒读到毫秒）。 */
 const MS_PER_SECOND = 1000
 
 /**
@@ -93,7 +90,7 @@ function worktreeError(code: WorktreeErrorCode, message: string, detail?: unknow
 /** 展开 ~ 前缀到 $HOME（路径字符串预处理，path.join 不展开 ~）。不处理 ~user/ 格式（仅支持当前用户的 ~）。 */
 function expandHome(p: string): string {
   if (p === '~') return process.env['HOME'] ?? p
-  if (p.startsWith('~/')) return join(process.env['HOME'] ?? '', p.slice('~/'.length))
+  if (p.startsWith('~/')) return join(process.env['HOME'] ?? '', p.slice(HOME_PREFIX_SLICE_START))
   return p
 }
 
@@ -115,7 +112,7 @@ function computePlainRepoWorktreeDir(
 
   // 目标已存在：检查是否属于同一 repo（.git 文件内容可比对，但简单起见检查父级 repo 目录结构）
   // 策略：追加 repo 路径短 hash 后缀避免冲突
-  const hash = createHash('md5').update(repoRoot).digest('hex').slice(0, HASH_SUFFIX_LENGTH)
+  const hash = createHash('md5').update(repoRoot).digest('hex').slice(0, DIR_HASH_SUFFIX_LENGTH)
   return join(expandedRoot, `${repoName}-${hash}`, branchDir)
 }
 

@@ -20,22 +20,43 @@
  * - skill: skill 命令段（/skill:xxx），含 name 和可选的 SKILL.md 文件路径
  * - file: 文件引用段（未来从 drawer/diff 选取追加到 composer），含路径和可选行范围
  * - mention: @mention 段（未来 @user 等），含 name
+ * - image: 图片附件段（Cmd+V 粘贴的截图等）：
+ * - handoff: 交接来源标记段（fast-handoff 产出），含 sourceLabel（来源 session 名称）：
+ *   - id：composer chip 的稳定唯一标识（crypto.randomUUID），同一文件附两次时供
+ *     ContextChipsBar :key 区分（path 会重复）
+ *   - path：磁盘绝对路径（tmpdir 下落盘文件），不变
+ *   - fileName：磁盘文件全名（含 uuid 前缀，如 `dbfdb3c8-...-image.png`），用于磁盘定位/日志
+ *   - displayName：用户可读名（如 `截图-20260725-1530.png` 或 `照片.png`），用于 badge/
+ *     占位/缩略图 alt 显示
+ *   - needsMigrate：是否需要 tmpdir → attachments 迁移。只有 landing 态 writeSessionImage
+ *     落 OS tmpdir 的图才标记 true（session 创建后需迁移到 attachments 持久化）。
+ *     +菜单选的用户磁盘文件、normal 态 writeSessionImage 落 attachments 的图，都不设
+ *     （undefined 等同 false）。迁移判断用此字段，不猜路径（避免把用户磁盘文件误当
+ *     tmpdir 文件被 renameSync 移走——数据丢失）。
+ *   segmentsToText 把 path 裸路径插进 prompt 文本（对齐 pi TUI），LLM 自己调 read 工具
+ *   读路径（vision/非 vision 模型都能处理）。不走 base64 message.send.images 通道。
  */
 export type Segment =
   | { type: 'text'; text: string }
   | { type: 'skill'; name: string; location?: string }
   | { type: 'file'; path: string; lineRange?: [number, number] }
   | { type: 'mention'; name: string }
+  | { type: 'image'; id: string; path: string; fileName: string; displayName: string; needsMigrate?: boolean }
+  | { type: 'handoff'; sourceLabel: string }
 
 /**
- * Segment[] → 纯文本（归一化展示用）。
+ * Segment[] → 纯文本（归一化展示用 + pi prompt 序列化的唯一实现）。
  *
- * skill → `/skill:name`，file → `path`，mention → `@name`，text → 原文。
+ * skill → `/skill:name`，file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
+ * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读），
+ * handoff → `[handoff from sourceLabel]`（来源标记，文档内容在 text segment 中）。
  * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug）。
+ * image 后紧跟 text 不补空格（image 产出的 `\n${path}\n` 已有换行分隔，再补空格会污染行首）。
  *
- * 注意：与 segmentsToPrompt 当前实现相同，但语义分离——
- * 未来若 pi prompt 格式与展示格式需要不同处理（如 file 段发 pi 需包 <file> 标签），
- * 只改 segmentsToPrompt 不影响显示。
+ * 收敛说明：原本 segmentsToPrompt 与 segmentsToText 分两份实现，因为 file inline 需要
+ * fileContexts Map 才分开。删除 file inline 后，所有 segment 序列化收敛到本函数一处，
+ * segmentsToPrompt 仅是 trim 包装。展示格式（含末尾换行）与 pi prompt 格式（trim）的差异
+ * 由调用方决定是否 trim，不再分两份逻辑。
  */
 export function segmentsToText(segments: Segment[]): string {
   if (segments.length === 0) return ''
@@ -43,14 +64,24 @@ export function segmentsToText(segments: Segment[]): string {
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const prev = i > 0 ? segments[i - 1] : null
-    // chip→chip / chip→text 边界补空格（skill→file / file→mention / skill→text 等）
-    if (prev && prev.type !== 'text' && seg.type !== 'text') {
+    // chip→chip / chip→text 边界补空格（skill→file / file→mention / skill→text 等）。
+    // image 段例外——image 产出 `\n${path}\n`（前后已有换行），不需要再补空格。
+    // handoff 结尾是 ]，紧接其他 chip 类时仍需补空格（与 skill 同理）。
+    if (prev && prev.type !== 'text' && prev.type !== 'image' && seg.type !== 'text' && seg.type !== 'image') {
       parts.push(' ')
     }
     switch (seg.type) {
       case 'text':
-        // 前一个 segment 是 chip 类（skill/file/mention）且当前 text 不以空格开头时，补空格
-        if (prev && prev.type !== 'text' && seg.text && !seg.text.startsWith(' ')) {
+        // 前一个 segment 是 chip 类（skill/file/mention）且当前 text 不以空格开头时，补空格分隔。
+        // 但 image 段例外——image 产出 `\n${path}\n`（前后已有换行），紧跟的 text 不需要再补空格，
+        // 否则产出 `\n/path\n 文本`（行首空格污染 pi prompt）。
+        if (
+          prev &&
+          prev.type !== 'text' &&
+          prev.type !== 'image' && // image 已有 \n 分隔，不补空格
+          seg.text &&
+          !seg.text.startsWith(' ')
+        ) {
           parts.push(' ')
         }
         parts.push(seg.text)
@@ -76,6 +107,20 @@ export function segmentsToText(segments: Segment[]): string {
       case 'mention':
         parts.push(`@${seg.name}`)
         break
+      case 'image':
+        // 对齐 pi TUI 粘贴行为：裸路径进 prompt 文本，LLM 自己调 read 工具读。
+        // 与 pi TUI（insertTextAtCursor 裸路径粘在光标处）的细微差异：xyz-agent 让每个图片
+        // 路径独占一行（前后补换行），LLM 更易解析路径边界，多图时每行一个。
+        // 不再用 [图片 N] 匿名占位——该占位对 LLM 无意义（非 vision 模型看不到图，
+        // vision 模型不需要锚点），且会被 LLM 当文件名瞎找。
+        // 图片持久化在 <dataDir>/attachments/<sessionId>/（非 pi TUI 的 /tmp），切换 session 不丢。
+        parts.push(`\n${seg.path}\n`)
+        break
+      case 'handoff':
+        // handoff badge 来源标记：sourceLabel 标识交接来源 session，pi 看到纯文本标记。
+        // 文档内容在同一条消息的 text segment 中，此处只输出来源标记供 LLM 识别上下文。
+        parts.push(`[handoff from ${seg.sourceLabel}]`)
+        break
     }
   }
   return parts.join('')
@@ -100,7 +145,8 @@ export function textToSegments(text: string): Segment[] {
 /**
  * Segment[] → pi prompt 字符串（pi 边界序列化）。
  *
- * 基于 segmentsToText 但 trim 首尾空白（pi prompt 不需要尾随换行/空格）。
+ * 删除 file inline 后，所有 segment 序列化逻辑收敛到 segmentsToText 一处，
+ * 本函数只是 trim 包装：pi prompt 不需要首尾空白（尾随换行/空格）。
  * 语义分离：segmentsToText 保留原始格式（含末尾换行），segmentsToPrompt 做发送归一化。
  */
 export function segmentsToPrompt(segments: Segment[]): string {

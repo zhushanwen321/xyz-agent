@@ -8,6 +8,7 @@
  * - 估算→实测视口锚定（防视口上方 turn 测量后用户所见内容跳，SR4/INVAR-2）
  * - 末项钉扎（防流式末项滚出视口不挂载 RO 不上报高度停估算 sticky-bottom 失准，SR3/INVAR-10）
  * - editing 钉扎（防 lastUserTurn 滚出视口 draftText 丢失，SR5）
+ * - streaming 钉扎（防共存期间 streaming turn 滚出视口 RO 断开高度不更新，SR5 同款）
  * - 空态（防 renderItems 空 totalHeight NaN/负值，SR12/INVAR-9）
  * - session 切换重置（防不同 session heights 残留错位，SR10/INVAR-8）
  *
@@ -269,6 +270,56 @@ describe('useVirtualTurnList · editing 钉扎（SR5）', () => {
     state.pinEditing(15)
     await nextTick()
     // startIndex 不能超过 15（否则 turn 15 滚出视口卸载 draftText 丢失）
+    expect(state.visibleRange.value.startIndex).toBeLessThanOrEqual(15)
+  })
+})
+
+// ── streaming 钉扎（W3，SR5 同款） ───────────────────────────────────
+
+describe('useVirtualTurnList · streaming 钉扎（W3，防共存期间 RO 断开）', () => {
+  it('W3T1: pinStreaming(idx) 后 startIndex 抬升超过 idx 时被钉回 idx', async () => {
+    // 20 turn 各 200px（totalHeight=4000），scrollTop=3800（近底，无钉扎时 startIndex 落在末段 18）。
+    // 共存场景：streaming turn（idx=15）后还排着 bash system item，用户上滚时
+    // 二分查找会把 startIndex 推到 idx 之后 → streaming turn 滚出视口 RO 断开。
+    // pinStreaming 应把 startIndex 钉回不超过 15。
+    const items = makeItems(20)
+    const { state } = await setup({ items, scrollTop: 3800, viewportHeight: 600, buffer: 1 })
+    state.pinStreaming(15)
+    await nextTick()
+    expect(state.visibleRange.value.startIndex).toBeLessThanOrEqual(15)
+  })
+
+  it('W3T2: pinStreaming(-1) 后无钉扎——startIndex 可自由抬升超过原 idx', async () => {
+    // 同样 scrollTop=3800：钉扎时 startIndex<=15，释放后 startIndex 落在末段（> 15）。
+    // 双向对照证明 pinStreaming(-1) 真正解除了约束（非残留钉扎）。
+    const items = makeItems(20)
+    const { state } = await setup({ items, scrollTop: 3800, viewportHeight: 600, buffer: 1 })
+    // 先钉扎：startIndex 被钉回 <= 15
+    state.pinStreaming(15)
+    await nextTick()
+    expect(state.visibleRange.value.startIndex).toBeLessThanOrEqual(15)
+    // 释放：二分查找自由推 startIndex 到末段（18），不再受 15 约束
+    state.pinStreaming(-1)
+    await nextTick()
+    expect(state.visibleRange.value.startIndex).toBeGreaterThan(15)
+  })
+
+  it('W3T3: resetSession 后 streaming 钉扎清零（-1）——startIndex 不再被钉', async () => {
+    // pinStreaming(15) 后 resetSession，streamingPinIndex 应归 -1。
+    // 间接验证：resetSession 重置 scrollTop=0（SR10/TC2）→ startIndex=0；再 pinStreaming(15)
+    // 仍能钉住（证明 reset 真清零了旧值，非残留卡死）。
+    const items = makeItems(20)
+    const { state } = await setup({ items, scrollTop: 3800, viewportHeight: 600, buffer: 1 })
+    state.pinStreaming(15)
+    await nextTick()
+    expect(state.visibleRange.value.startIndex).toBeLessThanOrEqual(15)
+    state.resetSession()
+    await nextTick()
+    // resetSession 重置 scrollTop=0 → startIndex=0；streamingPinIndex 也归 -1
+    expect(state.visibleRange.value.startIndex).toBe(0)
+    // 再次 pinStreaming(15) 仍能生效（证明 reset 真清零，非残留）
+    state.pinStreaming(15)
+    await nextTick()
     expect(state.visibleRange.value.startIndex).toBeLessThanOrEqual(15)
   })
 })

@@ -1,5 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
+import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -32,6 +33,49 @@ export interface ElectronAPI {
     canceled: boolean
     path: string | null
   }>
+  /** 打开文件选择对话框（filters 控制文件类型过滤，defaultPath 失效时主进程自动回退到 ~） */
+  pickFile(options?: {
+    title?: string
+    defaultPath?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+  }): Promise<{
+    canceled: boolean
+    path: string | null
+  }>
+  /**
+   * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id, persisted}。
+   * Cmd+V/Ctrl+V 粘贴截图走此 IPC（renderer 读 blob → base64 → 落地文件）。
+   * 主进程校验 mimeType image/* 前缀 + 20MB 上限，写失败 throw。
+   * sessionId 为空时（landing 态）降级走 OS tmpdir。
+   * - fileName：落地磁盘文件名（含 uuid 前缀，segment.fileName 用，extractImages 读文件用）
+   * - displayName：用户可读名（badge/alt 显示，无 uuid 前缀）；粘贴截图无原文件名时为 截图-时间戳.ext
+   * - persisted：sessionId 非空 true（落 attachments 已持久化）；空 false（落 tmpdir，session 创建后需迁移）
+   */
+  writeSessionImage(payload: {
+    sessionId: string
+    base64: string
+    mimeType: string
+    name: string
+  }): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }>
+  /**
+   * 把 landing 态落在 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+   * session 创建后调用，解决 landing 粘图 path 仍指 tmpdir 的缺口（OS 会清理 tmpdir 导致丢图）。
+   * fromPath 不存在（OS 已清理）或 move 失败会 throw，调用方 catch 后降级。
+   */
+  migrateSessionImage(payload: {
+    fromPath: string
+    sessionId: string
+    fileName: string
+  }): Promise<{ path: string }>
+  /**
+   * 追加/覆盖一条 segments 元数据到 sidecar（<dataDir>/attachments/<sessionId>/segments.json）。
+   * 发送 user message 时调用，把完整 Segment[]（含 image/file 私有元信息）落盘，重开 session 时回填。
+   * 同 clientUuid 重发（editAndResend）→ 后者覆盖前者。主进程 atomic 写（tmp + rename）。
+   */
+  writeSegmentsMetadata(payload: {
+    sessionId: string
+    entry: SegmentsMetadataEntry
+  }): Promise<void>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -78,6 +122,26 @@ export interface ElectronAPI {
     canGoForward: boolean
     zoomFactor: number
   }) => void): () => void
+  // ── 自动升级检测 ──────────────────────────────────────────────
+  /**
+   * 检测最新可用版本。
+   * @param opts.force 强制刷新缓存（默认走 1h 缓存）
+   * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
+   */
+  checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null>
+  // ── 自动升级执行（w3）──────────────────────────────────────────
+  /**
+   * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
+   * @param release checkForUpdate 返回的最新版本信息
+   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+   */
+  performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }>
+  /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
+  onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
+  /** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数 */
+  onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string }) => void): () => void
+  /** 不支持当前平台时，打开备用下载页（release 页面） */
+  openUpdateFallbackUrl(url: string): Promise<void>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -121,6 +185,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   pickDirectory: (options?: { title?: string; defaultPath?: string }) =>
     ipcRenderer.invoke('pick-directory', options),
+  pickFile: (options?: {
+    title?: string
+    defaultPath?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+  }) => ipcRenderer.invoke('pick-file', options),
+  writeSessionImage: (payload: { sessionId: string; base64: string; mimeType: string; name: string }) =>
+    ipcRenderer.invoke('write-session-image', payload),
+  migrateSessionImage: (payload: { fromPath: string; sessionId: string; fileName: string }) =>
+    ipcRenderer.invoke('migrate-session-image', payload),
+  writeSegmentsMetadata: (payload: { sessionId: string; entry: SegmentsMetadataEntry }) =>
+    ipcRenderer.invoke('write-segments-metadata', payload),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)
@@ -166,4 +241,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('browser:state', handler)
     return () => ipcRenderer.removeListener('browser:state', handler)
   },
+  // ── 自动升级检测 ──────────────────────────────────────────────
+  checkForUpdate: (opts?: { force?: boolean }) =>
+    ipcRenderer.invoke('update:check', { force: opts?.force }),
+  // ── 自动升级执行（w3）──────────────────────────────────────
+  performUpdate: (release: LatestReleaseInfo) =>
+    ipcRenderer.invoke('update:perform', { release }),
+  onUpdateProgress: (callback: (payload: { stage: UpdateStage; percent: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: UpdateStage; percent: number }) => callback(payload)
+    ipcRenderer.on('update:progress', handler)
+    return () => ipcRenderer.removeListener('update:progress', handler)
+  },
+  onUpdateError: (callback: (payload: { stage: string; message: string; errorCode?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string; errorCode?: string }) => callback(payload)
+    ipcRenderer.on('update:error', handler)
+    return () => ipcRenderer.removeListener('update:error', handler)
+  },
+  openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
 } satisfies ElectronAPI)

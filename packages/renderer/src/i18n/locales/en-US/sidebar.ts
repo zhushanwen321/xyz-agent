@@ -20,6 +20,14 @@ export default {
   deleteFolderPartialFailed: '{count} session failed to delete: {error} | {count} sessions failed to delete: {error}',
   renameFailed: 'Rename failed: {msg}',
   retry: 'Retry',
+  update: {
+    newVersion: 'New version available',
+    downloading: 'Downloading {percent}%',
+    replacing: 'Replacing',
+    restarting: 'Restarting',
+    error: 'Update failed',
+    goToDownload: 'Go to download',
+  },
   sessionItem: {
     rename: 'Rename',
     delete: 'Delete',
@@ -71,7 +79,7 @@ export default {
     confirm: 'Confirm',
     validationRequired: 'Name is required',
     validationMaxLength: 'Name cannot exceed {max} characters',
-    validationPattern: 'Only Chinese, English, numbers, spaces, hyphens and underscores are allowed',
+    validationPattern: 'Newlines not allowed, max {max} characters',
   },
   subagentList: {
     loading: 'Loading background tasks…',

@@ -65,18 +65,132 @@ function extractHistoryFileChanges(toolCalls: ToolCall[]): FileChange[] {
 }
 
 /**
+ * 转换单条 pi message 为 xyz-agent Message（从 convertPiHistory 抽出，供 entry-tree-builder 复用）。
+ *
+ * 仅处理 user/assistant message（toolResult/compactionSummary/custom/branchSummary 等特殊 role
+ * 仍由 convertPiHistory 内部分支处理——这些类型不是 message entry 的 message 字段，不进本 helper）。
+ *
+ * @param m pi history message（user/assistant/toolResult 任一，但只有 user/assistant 产出 Message）
+ * @param options 可选上下文：
+ *   - entryId：从 entry 树重建时传入，填到 msg.piEntryId（替代从 __entryId 读，entry-tree-builder 路径用）
+ * @returns user/assistant → Message；未知 role → null（调用方跳过）
+ */
+export function convertSinglePiMessage(
+  m: PiHistoryMessage,
+  options?: { entryId?: string },
+): Message | null {
+  // W11：显式拒绝未知 role，避免把任何非 user 也非已处理特殊类型的 entry 默认归入 assistant
+  // （旧实现 `m.role === 'user' ? 'user' : 'assistant'` 把未知 role 当 assistant，掩盖数据异常）。
+  if (m.role !== 'user' && m.role !== 'assistant') {
+    console.warn(`[message-converter] unknown role: ${String(m.role)}, skipping`)
+    return null
+  }
+  const parts = Array.isArray(m.content)
+    ? m.content
+    : [{ type: 'text' as const, text: m.content != null ? String(m.content) : '' }]
+  let textContent = ''
+  const thinking: ThinkingBlock[] = []
+  const toolCalls: ToolCall[] = []
+  const contentBlocks: import('@xyz-agent/shared').ContentBlock[] = []
+
+  for (const part of parts) {
+    if (part.type === 'text') {
+      textContent += part.text ?? ''
+      // text 块按真实到达顺序 push（首次遇到时 push 一次，多次 text part 只累加不重复 push）。
+      if (!contentBlocks.some((b) => b.type === 'text')) {
+        contentBlocks.push({ type: 'text', refId: 'text' })
+      }
+    } else if (part.type === 'thinking') {
+      const thkId = crypto.randomUUID()
+      thinking.push({
+        id: thkId,
+        content: part.thinking ?? '',
+        collapsed: true,
+      })
+      contentBlocks.push({ type: 'thinking', refId: thkId })
+    } else if (part.type === 'toolCall' || part.type === 'tool_use') {
+      const tcId = part.id ?? crypto.randomUUID()
+      toolCalls.push({
+        id: tcId,
+        toolName: part.name ?? '',
+        input: part.arguments ?? {},
+        status: 'completed',
+        startTime: m.timestamp ?? Date.now(),
+      })
+      contentBlocks.push({ type: 'toolCall', refId: tcId })
+    }
+  }
+
+  // piEntryId 解析：options.entryId 优先（entry-tree-builder 路径），
+  // 否则回退读 m.__entryId（convertPiHistory 文件路径，session-history 注入）。
+  const resolvedEntryId = options?.entryId
+    ?? ('__entryId' in m && typeof (m as { __entryId?: unknown }).__entryId === 'string'
+      ? (m as { __entryId: string }).__entryId
+      : undefined)
+
+  const msg: Message = {
+    id: crypto.randomUUID(),
+    role: m.role === 'user' ? 'user' : 'assistant',
+    content: textContent,
+    status: 'complete',
+    // 文件路径读取时 session-history 注入的 pi entry id（fork 定位截断点用）。
+    // RPC 路径无此字段，fork 时 fallback 读 JSONL 按 timestamp 匹配。
+    ...(resolvedEntryId !== undefined && { piEntryId: resolvedEntryId }),
+    ...(thinking.length > 0 && { thinking }),
+    ...(toolCalls.length > 0 && { toolCalls }),
+    ...(contentBlocks.length > 0 && { contentBlocks }),
+    // [W6 #9 G5] 历史路径还原 fileChanges（write/edit 工具提取，AC-9.1/9.3）
+    ...(m.role === 'assistant' && toolCalls.length > 0 && (() => {
+      const fc = extractHistoryFileChanges(toolCalls)
+      return fc.length > 0 ? { fileChanges: fc } : {}
+    })()),
+    // Extract usage from pi assistant messages (input/output token counts)
+    ...(() => {
+      if (m.role !== 'assistant') return {}
+      const u = (m as { usage?: { input?: number; output?: number } }).usage
+      return u ? { usage: { inputTokens: u.input ?? 0, outputTokens: u.output ?? 0 } } : {}
+    })(),
+    timestamp: m.timestamp ?? Date.now(),
+  }
+
+  // For user messages, parse <skill> blocks injected by pi backend.
+  // content 统一为 Segment[]：有 skill 标签时拆出 skill segment + 后续 user text，
+  // 无 skill 标签时用 textToSegments 包成纯 text segment。
+  if (m.role === 'user' && textContent) {
+    const parsed = parseSkillBlock(textContent)
+    if (parsed) {
+      msg.content = parsed
+    } else {
+      msg.content = textToSegments(textContent)
+    }
+  }
+  return msg
+}
+
+/**
  * Convert pi message list into frontend Message[], merging toolResult
  * entries into their parent assistant message's matching toolCall.
  *
  * 签名收 unknown[]：pi 的历史结构（PiHistoryMessage/PiHistoryToolResult）是 pi 协议类型，
  * 只在此 infra 文件内部断言，不暴露给 service。service 传 RPC/文件读到的原始 JSON 即可。
+ *
+ * user/assistant 单条转换委托 convertSinglePiMessage（抽出供 entry-tree-builder 复用），
+ * toolResult/compactionSummary/custom/branchSummary 等特殊 role 仍在此处内联处理
+ * （这些类型不是 message entry 的 message 字段，不进 convertSinglePiMessage）。
+ *
+ * @param raw pi history message 列表（get_messages 返回 / JSONL 读取 / entry 树提取）
+ * @param entryIds 可选，与 raw 一一对应的 entry id 列表（entry 树重建路径用）。
+ *   传时 user/assistant message 会带上 piEntryId（按 index 取 entryIds[i]）。
+ *   不传时行为不变（兼容 session-store.convertHistory / session-history 等 RPC/文件路径）。
+ *   toolResult/系统消息分支不消费 entryId（它们或合并到上一个 assistant，或不需回填）。
  */
-export function convertPiHistory(raw: unknown[]): Message[] {
+export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[] {
   const result: Message[] = []
   let lastAssistantWithToolCalls = -1
 
-  for (const item of raw) {
-    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i]
+    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number } | { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
@@ -181,89 +295,48 @@ export function convertPiHistory(raw: unknown[]): Message[] {
       continue
     }
 
-    // user or assistant
-    // W11：显式拒绝未知 role，避免把任何非 user 也非已处理特殊类型的 entry 默认归入 assistant
-    // （旧实现 `m.role === 'user' ? 'user' : 'assistant'` 把未知 role 当 assistant，掩盖数据异常）。
-    // 已处理：toolResult / compactionSummary / custom / branchSummary（上面各分支 continue）。
-    if (m.role !== 'user' && m.role !== 'assistant') {
-      console.warn(`[message-converter] unknown role: ${String(m.role)}, skipping`)
+    // bashExecution：pi bash 执行记录（composer-bash-execute）。
+    // pi get_messages 返回 role:'bashExecution'（与 message entry 平级的顶层 entry 类型），
+    // 转成带 bashExecution 字段的 system 消息——bash 是元信息非用户输入（W3 WC5 决策），
+    // 与实时路径（message.bashResult effect 创建 system 消息）统一走 BashOutputBlock 渲染。
+    // exitCode undefined → null（与 dispatcher 广播 bashResult 时 `?? null` 对称，防 JSON 丢值）。
+    // [S3] timestamp `?? Date.now()` 兜底，与 compactionSummary/branchSummary/custom 分支对齐
+    // （pi 理论上必填 timestamp，但 malformed 时缺字段会让 timestamp=undefined→前端 NaN）。
+    // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 bash 执行记录经此分支还原。
+    if (m.role === 'bashExecution') {
+      const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp?: number; fullOutputPath?: string }
+      const ts = bm.timestamp ?? Date.now()
+      result.push({
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: '',
+        status: 'complete',
+        timestamp: ts,
+        bashExecution: {
+          command: bm.command,
+          output: bm.output,
+          exitCode: bm.exitCode ?? null,
+          cancelled: bm.cancelled,
+          truncated: bm.truncated,
+          excludeFromContext: !!bm.excludeFromContext,
+          timestamp: ts,
+          ...(bm.fullOutputPath !== undefined && { fullOutputPath: bm.fullOutputPath }),
+        },
+      } satisfies Message)
       continue
     }
-    const parts = Array.isArray(m.content)
-      ? m.content
-      : [{ type: 'text' as const, text: m.content != null ? String(m.content) : '' }]
-    let textContent = ''
-    const thinking: ThinkingBlock[] = []
-    const toolCalls: ToolCall[] = []
-    const contentBlocks: import('@xyz-agent/shared').ContentBlock[] = []
 
-    for (const part of parts) {
-      if (part.type === 'text') {
-        textContent += part.text ?? ''
-        // text 块按真实到达顺序 push（首次遇到时 push 一次，多次 text part 只累加不重复 push）。
-        if (!contentBlocks.some((b) => b.type === 'text')) {
-          contentBlocks.push({ type: 'text', refId: 'text' })
-        }
-      } else if (part.type === 'thinking') {
-        const thkId = crypto.randomUUID()
-        thinking.push({
-          id: thkId,
-          content: part.thinking ?? '',
-          collapsed: true,
-        })
-        contentBlocks.push({ type: 'thinking', refId: thkId })
-      } else if (part.type === 'toolCall' || part.type === 'tool_use') {
-        const tcId = part.id ?? crypto.randomUUID()
-        toolCalls.push({
-          id: tcId,
-          toolName: part.name ?? '',
-          input: part.arguments ?? {},
-          status: 'completed',
-          startTime: m.timestamp ?? Date.now(),
-        })
-        contentBlocks.push({ type: 'toolCall', refId: tcId })
-      }
-    }
-
-    const msg: Message = {
-      id: crypto.randomUUID(),
-      role: m.role === 'user' ? 'user' : 'assistant',
-      content: textContent,
-      status: 'complete',
-      // 文件路径读取时 session-history 注入的 pi entry id（fork 定位截断点用）。
-      // RPC 路径无此字段，fork 时 fallback 读 JSONL 按 timestamp 匹配。
-      ...('__entryId' in m && typeof (m as { __entryId?: unknown }).__entryId === 'string'
-        && { piEntryId: (m as { __entryId: string }).__entryId }),
-      ...(thinking.length > 0 && { thinking }),
-      ...(toolCalls.length > 0 && { toolCalls }),
-      ...(contentBlocks.length > 0 && { contentBlocks }),
-      // [W6 #9 G5] 历史路径还原 fileChanges（write/edit 工具提取，AC-9.1/9.3）
-      ...(m.role === 'assistant' && toolCalls.length > 0 && (() => {
-        const fc = extractHistoryFileChanges(toolCalls)
-        return fc.length > 0 ? { fileChanges: fc } : {}
-      })()),
-      // Extract usage from pi assistant messages (input/output token counts)
-      ...(() => {
-        if (m.role !== 'assistant') return {}
-        const u = (m as { usage?: { input?: number; output?: number } }).usage
-        return u ? { usage: { inputTokens: u.input ?? 0, outputTokens: u.output ?? 0 } } : {}
-      })(),
-      timestamp: m.timestamp ?? Date.now(),
-    }
-
-    // For user messages, parse <skill> blocks injected by pi backend.
-    // content 统一为 Segment[]：有 skill 标签时拆出 skill segment + 后续 user text，
-    // 无 skill 标签时用 textToSegments 包成纯 text segment。
-    if (m.role === 'user' && textContent) {
-      const parsed = parseSkillBlock(textContent)
-      if (parsed) {
-        msg.content = parsed
-      } else {
-        msg.content = textToSegments(textContent)
-      }
-    }
+    // user or assistant → 委托 convertSinglePiMessage（未知 role 在 helper 内 warn + 返回 null 跳过）。
+    // 抽出后行为不变：toolResult/compactionSummary/custom/branchSummary 上面已 continue，
+    // 此处只剩 user/assistant/未知 role，与 helper 的判定一致。
+    // entryIds 路径（entry 树重建）：按 index 取 entryId 传给 helper，填到 msg.piEntryId
+    // （供 rebuildHistoryFromEntries 回查 clientUuidMap + segmentsMetadata 回填 badge）。
+    // 不传 entryIds 时 entryId 为 undefined，helper 回退读 m.__entryId（文件路径注入），行为不变。
+    const entryId = entryIds?.[i]
+    const msg = convertSinglePiMessage(m as PiHistoryMessage, entryId !== undefined ? { entryId } : undefined)
+    if (!msg) continue
     result.push(msg)
-    if (toolCalls.length > 0) {
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
       lastAssistantWithToolCalls = result.length - 1
     }
   }

@@ -11,7 +11,7 @@
  *   这些直接改 DOM 的操作必须收口在此 composable 内：因为 savedRange 闭包在此，
  *   组件层无法触达，任何整框 textContent 写入后都要 savedRange = null 否则 restoreSelection
  *   会恢复一个指向已被清空/替换节点的 stale Range（回归 bug：addRange 静默失败或光标错位）。
- * - onInput / onKeydown / onCompositionEnd / onPaste：输入事件处理（IME 守卫、Shift+Enter 换行、Enter 委派发送、纯文本粘贴）。
+ * - onInput / onKeydown / onCompositionEnd / onPaste：输入事件处理（IME 守卫、Shift+Enter 换行、Enter 委派发送、Cmd/Ctrl+V 统一富呈现粘贴）。
  * - onCompositionStart（由模板 @compositionstart="composing = true" 直绑，此处仅暴露 composing ref）。
  *
  * 不含：chip 的 DOM 创建/删除（在 useComposerChipCommands）、模板结构、props/emits 声明。
@@ -25,6 +25,8 @@
 import { ref, type Ref } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 import { segmentsToText } from '@xyz-agent/shared'
+import { handleImagePaste } from './useImageAttachment'
+import { findImageChipEl } from '../useComposerChipCommands'
 
 /** 输入区触发事件回调（ComposerInput 通过 emit 转发） */
 interface ContenteditableCallbacks {
@@ -43,6 +45,20 @@ interface ContenteditableCallbacks {
    * 返回 true 表示已处理（调用方 preventDefault）。由 useComposerChipCommands 提供。
    */
   handleBackspaceOnChip: () => boolean
+  /**
+   * 插入图片 badge（Cmd/Ctrl+V 富呈现通路）。由 useComposerChipCommands.insertImageBadge 提供。
+   * onPaste 在 image blob 检测到后调它插占位 badge / 真实 badge。
+   * fileName：磁盘全名（含 uuid 前缀，写 dataset.chipFileName）。
+   * displayName：用户可读名（badge label 显示 + 写 dataset.chipDisplayName）。
+   * needsMigrate：是否需 tmpdir→attachments 迁移（landing 态 writeSessionImage 落 tmpdir 时 true，
+   * 写 dataset.chipNeedsMigrate）。占位 badge 传 false，回填时按 result.needsMigrate 重设。
+   */
+  insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
+  /**
+   * 取当前会话 id（决定图片持久化目录）；landing 态返回 null。
+   * 由 ComposerInput 据 props.sessionId 提供，handleImagePaste 透传给 writeSessionImage IPC。
+   */
+  getSessionId: () => string | null
 }
 
 /**
@@ -303,6 +319,41 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
       continue
     }
 
+    // image-chip 元素（结构化 image segment，Cmd/Ctrl+V 富呈现通路）：
+    // 带 .mention-file + .image-chip 双 class，靠 dataset.chipType='image' 区分（image vs file 互斥）。
+    // 必须在 mention-file 分支前判：image-chip 也含 mention-file class，否则会被吞进 file 分支。
+    // 跳子树（rejectChipSubtree）——chip-label 'a.png' / chip-x '×' 不污染 text segment。
+    // id（C3）：唯一标识同一文件附多次的场景，ContextChipsBar :key 用它避免重复 path 冲突。
+    if (
+      node.nodeType === Node.ELEMENT_NODE &&
+      ((node as Element).classList?.contains('image-chip') ||
+        (node as HTMLElement).dataset?.chipType === 'image')
+    ) {
+      const chip = node as HTMLElement
+      // W2 修复：跳过粘贴/拖入占位符（path 仍是 __paste_pending_<uuid>__ / __drag_pending_<uuid>__）。
+      // 占位符在 await handleImagePaste 完成前是临时态，path 无效。若用户在此窗口期按 Enter 发送，
+      // 占位符不应进 segments（否则 segmentsToPrompt 产出无效路径污染 pi prompt）。
+      // 占位符 chip 留在 DOM（rejectChips.add 让它不进 text），但不进 segments——发送时被静默丢弃。
+      const chipPath = chip.dataset.chipPath ?? ''
+      if (/^__(?:paste|drag)_pending_[0-9a-f-]+__$/.test(chipPath)) {
+        rejectChips.add(chip)
+        continue
+      }
+      flushText()
+      segments.push({
+        type: 'image',
+        id: chip.dataset.chipId ?? '',
+        path: chip.dataset.chipPath ?? '',
+        fileName: chip.dataset.chipFileName ?? '',
+        displayName: chip.dataset.chipDisplayName ?? '',
+        // M1：迁移判断用 needsMigrate 字段（landing 态 writeSessionImage 落 tmpdir 的图 true），
+        // 不再猜路径（避免用户磁盘文件被误当 tmpdir 文件移走——数据丢失）。
+        needsMigrate: chip.dataset.chipNeedsMigrate === 'true',
+      })
+      rejectChips.add(chip)
+      continue
+    }
+
     // mention-file 元素（结构化 file chip，ADR-0034）：产出 file segment，跳过子树。
     // 旧 mention-file 无 dataset 时 chipType 为 undefined → 仍产出 file segment（path 从 chipPath 取，
     // 无 chipPath 时从 textContent 去 # 前缀兜底，向后兼容）。
@@ -378,6 +429,89 @@ function getCaretLineRect(range: Range): DOMRect | null {
 }
 
 /**
+ * [HISTORICAL] 曾有 readPasteMetaKey（读 ClipboardEvent.metaKey）区分 Cmd 富呈现 vs Ctrl 纯文本通路。
+ * ClipboardEvent 类型未声明 metaKey，但粘贴由 Cmd/Ctrl+V 键盘触发，浏览器把修饰键挂到实例上
+ * （Chrome/Firefox 实测，lib.dom.d.ts 漏声明）。
+ * onPaste 统一 Cmd/Ctrl+V 走富呈现通路后该判定已删除（xyz-agent 是 GUI，Mac Cmd+V 是肌肉记忆，
+ * Ctrl+V 也走同一逻辑避免截图静默丢弃）。
+ */
+/** Cmd/Ctrl+V 富呈现通路：从剪贴板取出第一个 image item，无则返回 null。 */
+function pickClipboardImageItem(e: ClipboardEvent): DataTransferItem | null {
+  const items = e.clipboardData?.items
+  if (!items) return null
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (it.kind === 'file' && it.type.startsWith('image/')) return it
+  }
+  return null
+}
+
+/** ZWSP spacer 文本（image-chip 后跟的零宽空格，移除占位 badge 时一并清） */
+const CHIP_SPACER_ZWSP = '\u200B'
+
+/**
+ * Cmd/Ctrl+V 富呈现通路处理（模块级，避免 useContenteditableInput 超 500 行 lint 上限）。
+ *
+ * 异步间隙（TO1）：先插占位 badge「粘贴中...」，await handleImagePaste 后回填真实 path/name；
+ * 失败（IPC throw / 非 electron undefined / 读 blob 失败 → kind:'text'）移除占位 + insertText 降级。
+ *
+ * @returns true 表示已接管（走 image 通路），false 表示无 image item（onPaste 回退纯文本通路）
+ */
+function handleImagePasteEvent(
+  e: ClipboardEvent,
+  deps: {
+    getEl: () => HTMLDivElement | null
+    insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
+    onInput: () => void
+    getSessionId: () => string | null
+  },
+): boolean {
+  const imageItem = pickClipboardImageItem(e)
+  const file = imageItem?.getAsFile()
+  if (!file) return false
+  // 占位 badge 唯一标记（crypto.randomUUID 无魔术数字，定位占位以便 await 后回填/移除）
+  const placeholderMark = `__paste_pending_${crypto.randomUUID()}__`
+  // 占位用 placeholderMark 做 path + fileName（仅用于异步定位占位），displayName 显「粘贴中...」。
+  // needsMigrate 传 false（占位无迁移语义），回填时按 result.needsMigrate 重设 dataset。
+  deps.insertImageBadge(placeholderMark, placeholderMark, '粘贴中...', false)
+  // sessionId 在 paste 触发时取一次（landing 态 null → IPC 内降级 tmpdir）
+  const sessionId = deps.getSessionId()
+  void (async () => {
+    const result = await handleImagePaste(file, sessionId)
+    const el = deps.getEl()
+    // 用 dataset 遍历定位占位（C2：path 含 CSS 特殊字符时 querySelector 选择器失效）
+    const placeholder = el ? findImageChipEl(el, placeholderMark) : null
+    if (result.kind === 'badge') {
+      if (placeholder) {
+        // 回填真实 path/fileName/displayName/needsMigrate（dataset + label）
+        placeholder.dataset.chipPath = result.path
+        placeholder.dataset.chipFileName = result.fileName
+        placeholder.dataset.chipDisplayName = result.displayName
+        placeholder.dataset.chipNeedsMigrate = result.needsMigrate ? 'true' : 'false'
+        const label = placeholder.querySelector('.chip-label')
+        if (label) label.textContent = result.displayName
+      } else {
+        // 占位已不在 DOM（用户手快删了）→ 重插真实 badge（带 needsMigrate）
+        deps.insertImageBadge(result.path, result.fileName, result.displayName, result.needsMigrate)
+      }
+    } else if (result.kind === 'text') {
+      // 降级：移除占位 badge + 相邻 ZWSP spacer，插降级文本
+      if (placeholder) {
+        const next = placeholder.nextSibling
+        if (next && next.nodeType === Node.TEXT_NODE && next.textContent === CHIP_SPACER_ZWSP) {
+          next.remove()
+        }
+        placeholder.remove()
+      }
+      document.execCommand('insertText', false, result.text)
+    }
+    // handleImagePaste 仅返回 badge/text（已无 noop），两个分支都已处理
+    deps.onInput()
+  })()
+  return true
+}
+
+/**
  * @param elRef contenteditable 根元素 ref
  * @param callbacks 触发事件 + Backspace-chip 删除委派
  */
@@ -421,6 +555,8 @@ export function useContenteditableInput(
     onEnterKeydown,
     onKeydown: forwardKeydown,
     handleBackspaceOnChip,
+    insertImageBadge,
+    getSessionId,
   } = callbacks
 
   /** IME 组合中（中文输入）：true 时 Enter 不拦截，交给浏览器 */
@@ -546,6 +682,11 @@ export function useContenteditableInput(
   function onPaste(e: ClipboardEvent): void {
     // 只允许纯文本，剥离富文本/样式，保持 contenteditable 内容纯净
     e.preventDefault()
+    // 统一富呈现通路：剪贴板含 image item → 异步存文件 + image badge。
+    // Cmd+V 与 Ctrl+V 不再区分——xyz-agent 是 GUI（非 TUI），Mac Cmd+V 是肌肉记忆，
+    // Ctrl+V 也走同一富呈现逻辑避免截图静默丢弃（剪贴板截图通常无 text/plain）。
+    if (handleImagePasteEvent(e, { getEl, insertImageBadge, onInput, getSessionId })) return
+    // 纯文本通路（剪贴板无 image item）：与改造前 byte-for-byte 一致（TC2 回归保护）。
     const text = e.clipboardData?.getData('text/plain') ?? ''
     // ponytail: execCommand 已废弃但 insertText 在 contenteditable 粘贴场景仍是首选简化方案
     document.execCommand('insertText', false, text)

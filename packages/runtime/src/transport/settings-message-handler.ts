@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ProviderSource, SkillCacheScope } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -21,6 +21,7 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
   broadcastProviderList(): void
   broadcastSkillList(): void
+  broadcastSkillCacheInvalidated(scope: SkillCacheScope, cwd?: string): void
   broadcastAgentList(): void
   broadcastSkillDirs(): void
   broadcastAgentDirs(): void
@@ -103,9 +104,32 @@ export class SettingsMessageHandler {
         // ADR-0020 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
         this.ctx.configService.setSkillDirs(msg.payload.dirs)
         this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
-        // 目录变更 → skill 列表重算 + 目录配置广播
-        this.ctx.broadcastSkillList()
+        // 触发 SkillRegistry 重建（close 旧 watcher → 重扫 globalCache → 重挂 watcher 含新路径）+ 清 projectCache。
+        // rebuildGlobal 内部 notifyGlobalChange → onChange → 广播 config.skillCacheInvalidated('global') + reloadOrchestrator。
+        // 显式广播 ('project')——让前端 useProjectSkills 也失效重拉。
+        //
+        // Promise 链语义（W1 修正：原 `.then` 内 invalidate+broadcast 在 rebuild reject 时被整段跳过，
+        // 与下方「失败不阻塞后续 invalidate/broadcast」注释不符——原写法 broadcast 在 `.then` 里，
+        // reject 时前端收不到 project 失效信号、useProjectSkills 仍展示陈旧缓存）：
+        //   - 成功：invalidateAllProjects（清 projectCache，globalCache 已由 rebuild 重扫）+ broadcast('project')
+        //   - 失败：仅 broadcast('project')（让前端至少重拉一次；projectCache 暂不清——rebuild 失败时
+        //     globalCache 可能损坏，invalidateAllProjects 此时意义不大且 reloadOrchestrator 可能已在处理错误，
+        //     等下次成功 rebuild 再清；用户重试 settings 操作可恢复）。
+        // broadcast 总是执行（无论 rebuild 成败都通知前端 project 失效），invalidate 只在成功时。
+        // best-effort：失败只记日志，不阻塞 WS 消息处理（reply/broadcastSkillDirs 已立即返回）。
+        void this.ctx.skillRegistry.rebuildGlobal()
+          .then(() => {
+            this.ctx.skillRegistry.invalidateAllProjects()
+            this.ctx.broadcastSkillCacheInvalidated('project')
+          })
+          .catch((e: unknown) => {
+            console.error('[settings-handler] skillRegistry.rebuildGlobal failed after setSkillDirs:', e)
+            // rebuild 失败也广播失效，让前端至少重拉一次（projectCache 未清，前端拉到旧值——
+            // 但比完全不通知好，用户重试 settings 操作可恢复）。
+            this.ctx.broadcastSkillCacheInvalidated('project')
+          })
         this.ctx.broadcastSkillDirs()
+        this.ctx.broadcastSkillList()
         return true
       }
       case 'config.setSkill': {
@@ -127,6 +151,47 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.scannedAgents', { agents: this.ctx.configService.scanAgents(msg.payload.sources, existingIds), success: true })
         // 修裂缝①：扫描后广播最新 agent 列表
         this.ctx.broadcastAgentList()
+        return true
+      }
+      case 'config.detectSources': {
+        // W1 迁移功能：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
+        // 只读检测（不读文件内容），reply 检测结果数组。无副作用，无需广播。
+        const sources = this.ctx.configService.detectSources()
+        this.ctx.reply(ws, msg.id, 'config.sourcesDetected', { sources })
+        return true
+      }
+      case 'config.previewImportProviders': {
+        // W2 迁移：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
+        // result 可能是 { importId, preview }（成功）或 { error }（源未安装等），reply 原样转发。
+        // 前端按有无 error 字段判断成败。无广播（按需 RPC，apply 后才广播 provider 列表）。
+        // W1：payload 字段校验——source 必须是已知 ProviderSource，否则 sendError。
+        const source = msg.payload?.source
+        const VALID_SOURCES: ProviderSource[] = ['pi', 'zcode', 'codex', 'claude']
+        if (typeof source !== 'string' || !VALID_SOURCES.includes(source as ProviderSource)) {
+          this.ctx.sendError(ws, 'invalid_payload', 'config.previewImportProviders requires a valid "source" (pi|zcode|codex|claude)', msg.id)
+          return true
+        }
+        const result = this.ctx.configService.previewImportProviders(source as ProviderSource)
+        this.ctx.reply(ws, msg.id, 'config.providersPreviewed', result)
+        return true
+      }
+      case 'config.applyImportProviders': {
+        // W2 迁移：Step2 应用导入（写 models.json）。result 可能是 { result }（成功）或 { error }（缓存过期等）。
+        // apply 成功后广播 provider 列表（与 setProvider/deleteProvider 对称，让所有 panel 同步新增的 provider）。
+        // W1：payload 字段校验——importId 必须是字符串，selectedIds 必须是字符串数组，否则 sendError。
+        const importId = msg.payload?.importId
+        const selectedIds = msg.payload?.selectedIds
+        if (typeof importId !== 'string' || !importId.trim() ||
+            !Array.isArray(selectedIds) || !selectedIds.every((id: unknown) => typeof id === 'string')) {
+          this.ctx.sendError(ws, 'invalid_payload', 'config.applyImportProviders requires a non-empty "importId" string and "selectedIds" string array', msg.id)
+          return true
+        }
+        const result = this.ctx.configService.applyImportProviders(importId, selectedIds as string[])
+        this.ctx.reply(ws, msg.id, 'config.providersImported', result)
+        // 仅成功时广播（result 有 result 字段 = 成功；有 error 字段 = 失败，不广播）
+        if ('result' in result) {
+          this.ctx.broadcastProviderList()
+        }
         return true
       }
       case 'config.setAgentDirs': {

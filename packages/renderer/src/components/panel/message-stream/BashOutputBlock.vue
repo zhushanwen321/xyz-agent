@@ -1,0 +1,140 @@
+<template>
+  <!--
+    展示组件 · bash 执行结果（composer-bash-execute W3）。
+    渲染 role:'system' + bashExecution 的消息：composer 直接执行的 bash 命令结果气泡。
+
+    生命周期：
+    - bashStart 创建 streaming 态 system 消息（loading，显示 spinner + 取消按钮）
+    - bashResult 锢定该消息更新为 complete 态（显示 output + exitCode 标签）
+
+    视觉定位：极简风（无边框/无浅底，对齐 trace block 的 trace-blk py-2 样式），
+    与普通 system 提示行（SystemNotice）区分靠 header 的 command + exit 标签等语义标识，
+    不再靠卡片背景。与 toolCall 互斥（bash 不走工具链，不挂 assistant turn）。
+
+    W4：注册 useResizeReport 上报实测高度——bash 长输出真实高度常达 280-300px，远超
+    useVirtualTurnList 的 ESTIMATED_TURN_HEIGHT=200 估算值，不接 RO 会令后续 item offset 算错
+    → 视觉重叠。key 必须带 s- 前缀（与 itemKey 的 system 项格式一致，详见 script 注释）。
+  -->
+  <div
+    ref="rootEl"
+    class="bash-output-block flex flex-col gap-1.5 py-2"
+    data-testid="bash-output-block"
+  >
+    <!-- 头部行：command 文本 + 状态标签（+ no context 标记 + 取消按钮） -->
+    <div class="flex items-start justify-between gap-2">
+      <div class="flex min-w-0 flex-1 items-center gap-1.5">
+        <!-- S9：Terminal 图标前缀增强 shell prompt 语义（与项目其他 lucide 图标风格一致） -->
+        <Terminal class="size-3 shrink-0 text-muted" />
+        <span class="min-w-0 flex-1 truncate font-mono text-[11px] leading-snug text-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
+        <span
+          v-if="bash?.excludeFromContext"
+          class="shrink-0 rounded-sm border border-border px-1 py-0.5 text-[10px] leading-none text-muted"
+          data-testid="bash-no-context-tag"
+        >{{ t('panel.message.bashNoContext') }}</span>
+      </div>
+      <div class="flex shrink-0 items-center gap-1.5">
+        <span v-if="isStreaming" class="flex items-center gap-1 text-[11px] leading-none text-muted">
+          <Loader2 class="size-3 animate-spin" />
+        </span>
+        <!-- W5：error==='timeout'（finalizeBashOnly 置位）优先于 cancelled，显示「超时」与「已取消」区分 -->
+        <span
+          v-else-if="isTimeout"
+          class="font-mono text-[11px] leading-none text-muted"
+          data-testid="bash-status-tag"
+        >{{ t('panel.message.bashTimeout') }}</span>
+        <span
+          v-else-if="isCancelled"
+          class="font-mono text-[11px] leading-none text-muted"
+          data-testid="bash-status-tag"
+        >{{ t('panel.message.bashCancelled') }}</span>
+        <span
+          v-else
+          class="font-mono text-[11px] leading-none"
+          :class="exitCodeClass"
+          data-testid="bash-status-tag"
+        >exit {{ bash?.exitCode }}</span>
+        <Button
+          v-if="isStreaming"
+          variant="ghost"
+          size="sm"
+          class="h-auto p-0 text-[11px] text-muted hover:text-fg"
+          data-testid="bash-cancel-btn"
+          @click="onCancel"
+        >{{ t('panel.message.bashCancel') }}</Button>
+      </div>
+    </div>
+
+    <!--
+      输出区：complete 态才显示。极简风（去 rounded-sm/bg-surface-2/50），保留 max-h + overflow-auto
+      （长输出双向滚动）。S8：pre 用 whitespace-pre（非 break-all）保留宽表格/ASCII art 对齐，
+      超宽内容（如 base64）走横向滚动条——bash 输出更常见的是表格/对齐文本，保留对齐更重要。
+    -->
+    <div
+      v-if="!isStreaming && hasOutput"
+      class="max-h-[var(--bash-output-max-height)] overflow-auto px-2 py-1 font-mono text-[11px] leading-relaxed text-muted"
+      data-testid="bash-output"
+    >
+      <pre class="whitespace-pre font-mono">{{ bash?.output }}</pre>
+      <!-- W4：消费 truncated 字段——pi 对超长输出截断时返回 truncated:true，显示截断标记（前端只显示，不自行截断） -->
+      <div
+        v-if="bash?.truncated"
+        class="mt-1 text-[10px] italic leading-none text-muted"
+        data-testid="bash-output-truncated"
+      >{{ t('panel.message.bashOutputTruncated') }}</div>
+    </div>
+    <p
+      v-else-if="!isStreaming && !hasOutput"
+      class="text-[11px] leading-snug text-muted"
+      data-testid="bash-output-empty"
+    >{{ t('panel.message.bashNoOutput') }}</p>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Loader2, Terminal } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { useChat } from '@/composables/features/useChat'
+import { useResizeReport } from '@/composables/effects/useResizeReport'
+import type { Message } from '@xyz-agent/shared'
+
+const props = defineProps<{
+  message: Message
+  /** 当前 session id（取消按钮调 abortBash 用） */
+  sessionId: string
+}>()
+
+const { t } = useI18n()
+const { abortBash } = useChat()
+
+/** BashOutputBlock 根元素 ref，供 useResizeReport observe 测高 */
+const rootEl = ref<HTMLElement | null>(null)
+
+// 注册 RO 上报实测高度给虚拟滚动。
+// 注意 key 必须是 `s-${id}`：useVirtualTurnList 的 itemKey 对 system 项（bashExecution 是 system 消息）
+// 用 s- 前缀（`s-${message.id}`）。若上报不带前缀，高度写不进 heights Map → 仍走 200px 估算
+// → 长输出（真实 280-300px）后续 item offset 算错 → 视觉重叠。非虚拟列表环境下 useResizeReport
+// inject 拿不到 registry 会优雅降级 no-op，不抛错。
+useResizeReport(rootEl, () => `s-${props.message.id}`)
+
+const bash = computed(() => props.message.bashExecution)
+const isStreaming = computed(() => props.message.status === 'streaming')
+// W5：error==='timeout'（finalizeBashOnly 超时收口置位）优先于 cancelled——超时与主动取消视觉需区分。
+// 模板优先级：isTimeout > isCancelled > 正常 exit 标签。
+const isTimeout = computed(() => props.message.error === 'timeout')
+const isCancelled = computed(() => bash.value?.cancelled === true)
+const hasOutput = computed(() => !!bash.value?.output)
+
+/** exitCode 标签颜色：timeout/cancelled 走 muted；exit 0 绿；exit N(>0) 红 */
+const exitCodeClass = computed(() => {
+  if (isTimeout.value || isCancelled.value) return 'text-muted'
+  const code = bash.value?.exitCode
+  if (code === 0) return 'text-success'
+  return 'text-danger'
+})
+
+function onCancel(): void {
+  abortBash(props.sessionId)
+}
+</script>

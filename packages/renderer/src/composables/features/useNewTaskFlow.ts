@@ -15,7 +15,7 @@
  * + composables/features(useChat/useModel) + composables/new-task/*（子 composable）。
  * 不直接 import transport（经 api/domains）。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -26,12 +26,13 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/useChat'
-import { textToSegments } from '@xyz-agent/shared'
+import type { Segment } from '@xyz-agent/shared'
 import { useModel } from '@/composables/features/useModel'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
+import { migrateSessionImage } from '@/lib/ipc'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -50,6 +51,40 @@ import { useNewTaskDirSelect } from '@/composables/new-task/useNewTaskDirSelect'
 export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTaskFlowState'
 export { resetNewTaskFlow } from '@/composables/new-task/useNewTaskFlowState'
 
+/**
+ * 把 landing 态落 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+ *
+ * 单文件失败不阻断（OS 可能已清理 tmpdir / 非 electron 环境无 preload），用 Promise.allSettled
+ * 收集结果，失败项 console.warn 后跳过。返回成功迁移的 Map<oldPath, newPath>，供调用方更新 segments.path。
+ *
+ * migrateSessionImage 在 web/mock 环境返回 undefined（非 reject），不进 migrated；调用方据此保留原 path。
+ */
+async function migrateTmpdirImages(
+  images: Array<Extract<Segment, { type: 'image' }>>,
+  sessionId: string,
+): Promise<Map<string, string>> {
+  const migrated = new Map<string, string>()
+  const results = await Promise.allSettled(
+    images.map(async (img) => {
+      const result = await migrateSessionImage({
+        fromPath: img.path,
+        sessionId,
+        fileName: img.fileName,
+      })
+      if (result?.path) {
+        migrated.set(img.path, result.path)
+      }
+    }),
+  )
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+       
+      console.warn(`[useNewTaskFlow] image migrate failed: ${images[i].path}`, r.reason)
+    }
+  })
+  return migrated
+}
+
 export function useNewTaskFlow() {
   const session = useSessionStore()
   const commandStore = useCommandStore()
@@ -57,7 +92,7 @@ export function useNewTaskFlow() {
   const panel = usePanelStore()
   const navigation = useNavigationStore()
   const chat = useChat()
-  const { error: toastError } = useToast()
+  const { error: toastError, warning: toastWarning } = useToast()
   // 模型切换 + 思考等级设置的 RPC + 乐观更新编排（features 层，ADR-0028）。
   // landing 态 apply 逻辑统一走此 composable，消除原先与 useComposerModelThinking 的重复。
   const { switchModel, setThinkingLevel } = useModel()
@@ -69,6 +104,13 @@ export function useNewTaskFlow() {
     pendingModel,
     createInFlight,
   } = useNewTaskFlowState()
+
+  /**
+   * Landing 态用户选定的预设 id（session.create 透传用）。
+   * 对齐 pendingCwd/pendingModel 范式：landing 态记录选定值，submitFirstMessage 时透传。
+   * startFlow 时重置为 null。PresetSelectChip 通过 setPendingPreset 写入。
+   */
+  const pendingPreset = ref<string | null>(null)
 
   // 受控写入口 controller（父编排器独占）：setter 不再模块级 export，杜绝子 composable /
   // 组件越权 import 调用。本编排器独占后，按需把具体 setter 作为参数下发给子 composable。
@@ -148,6 +190,7 @@ export function useNewTaskFlow() {
     // 进 landing：预设 cwd（有则 chip 所见即所得，无则空 chip 态）
     pendingCwd.value = presetCwd ?? null
     pendingModel.value = null
+    pendingPreset.value = null
     controller.bindCurrentSession(null)
     // 强制不变量：landing 态无 session 绑定。清 activeId + active panel leaf.sessionId，
     // 让 Panel 的 sessionId prop 变 null → 渲染落到 Landing（而非旧会话 MessageStream）。
@@ -162,13 +205,45 @@ export function useNewTaskFlow() {
    * - 无绑定 session（未选目录直接输入发送，用 workspaceStore.defaultCwd 兑底 create）→ create 后发送
    * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
    *
+   * bash 首发（composer-bash-execute）：landing 态输入 !/!! 前缀时，Composer 提取 bashCommand
+   * 传入，session 创建 + panel 载入流程不变，仅发送阶段改调 chat.sendBash（不走 LLM turn，
+   * 不经 segments 提取）。segments 仍作为 session label 来源 + 非空校验。
+   *
+   * segments 来自 Composer DOM 快照（getSegments），含 text / skill / file / mention / image 段。
+   * landing 态可能纯图（含 image 但无 text），用户只贴图不写字也允许发送——入参校验只要求 segments
+   * 非空，不强制 text 段存在。session label 从首段 text 段取（无 text 段时 deriveSessionLabel('')
+   * 兜底为「无提示词」）。
+   *
+   * tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。
+   * session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
+   * 迁移判断用 segment.needsMigrate 字段（M1 修复），不猜路径——+菜单选的用户磁盘文件 needsMigrate
+   * 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
+   * 迁移后再 chat.send——appendUser 用迁移后的 path，segmentsToText 也产出迁移后的 path，不需要额外的 store update。
+   * 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
+   * （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
+   *
    * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
    * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
    * 用 runtime 默认。
+   *
+   * @param segments 结构化 segments（含 text/image/skill/file/mention 段）
+   * @param thinkingLevel 可选思考等级（landing 态 Composer 选定值）
+   * @param bashCommand [S10] bash 命令参数。仅当 extractBashCommand.type === 'command' 时传入，
+   *   undefined = 非 bash 走普通 send。调用方控制流保证此契约（Composer.vue 按 type 分支）。
+   *
+   * presetId（preset 透传）：landing 态用户在 PresetSelectChip 选定的预设。
+   * 透传链路（B6 修复）：PresetSelectChip emit select → Landing.vue onPresetSelect →
+   * flow.setPendingPreset 写 pendingPreset；这里 submitFirstMessage create session 时读
+   * pendingPreset.value 透传 sessionApi.create。Composer onSend 不再直接读 store.selectedPresetId，
+   * 统一走 flow 单一真源（与 pendingCwd/pendingModel 范式一致）。
    */
-  async function submitFirstMessage(text: string, thinkingLevel?: string): Promise<void> {
-    const trimmed = text.trim()
-    if (!trimmed) return
+  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string, bashCommand?: { command: string; excludeFromContext: boolean }): Promise<void> {
+    // segments 不能为空；含 text 段时提取首段文本作 session label
+    const firstTextSeg = segments.find((s): s is Extract<Segment, { type: 'text' }> => s.type === 'text')
+    const trimmed = firstTextSeg?.text?.trim() ?? ''
+    // 含图片/文件/skill 等非 text 段但无文本也允许发送（用户可能只贴图不写字）
+    const hasOnlyNonText = segments.some((s) => s.type !== 'text')
+    if (!trimmed && !hasOnlyNonText) return
     if (state.value !== 'landing') {
       throw new Error('NewTaskFlow: 非 landing 态不可首发提交')
     }
@@ -178,9 +253,14 @@ export function useNewTaskFlow() {
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
         const cwd = pendingCwd.value ?? workspaceStore.defaultCwd
-        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
-        const label = deriveSessionLabel(trimmed)
-        const created = await sessionApi.create(cwd, label)
+        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)。
+        // [S5 PR#116 review] bash 首发（!cmd/!!cmd）时用 command 部分（去 !/!! 前缀）作 label
+        // 来源，避免 session 名带 `!` 前缀（「!ls」体验不佳）。bashCommand.command 已是去前缀后的纯命令。
+        const labelSource = bashCommand ? bashCommand.command : trimmed
+        const label = deriveSessionLabel(labelSource)
+        // preset 透传（B6）：pendingPreset 由 Landing.vue 接 PresetSelectChip @select
+        // → flow.setPendingPreset 写入；startFlow 时清为 null（不残留到下次 landing）。
+        const created = await sessionApi.create(cwd, label, pendingPreset.value ?? undefined)
         // INV-7: runtime create 内部可能因 cwd 失效降级 homedir，比对 session.cwd
         // 与请求 cwd 不一致则 toast 通知用户（D-008 选中失效 cwd 降级）。
         if (cwd && created.cwd !== cwd) {
@@ -233,8 +313,43 @@ export function useNewTaskFlow() {
       void useWorkflowStore().loadWorkflows(newSid)
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
-      // landing 态 text 来自 draft 纯文本，转 Segment[] 保持类型一致（ADR-0037）
-      await chat.send(newSid, textToSegments(trimmed))
+      // tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。
+      // session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
+      // 迁移判断用 segment.needsMigrate 字段（M1 修复），不再猜路径——+菜单选的用户磁盘文件
+      // needsMigrate 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
+      // 迁移后更新 segments.path（chat.send 的 appendUser 用更新后的 path，segmentsToText 也产出更新后的 path），
+      // 这样 store 里存的就是正确 path，不需要额外的 store update action。
+      // 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
+      // （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
+      let finalSegments = segments
+      const needsMigrateImages = segments.filter(
+        (s): s is Extract<Segment, { type: 'image' }> =>
+          s.type === 'image' && s.needsMigrate === true,
+      )
+      if (needsMigrateImages.length > 0) {
+        const migrated = await migrateTmpdirImages(needsMigrateImages, newSid)
+        // migrated 是 Map<oldPath, newPath>，更新 segments
+        finalSegments = segments.map((s) => {
+          if (s.type === 'image' && migrated.has(s.path)) {
+            // 迁移成功：更新 path + 重置 needsMigrate=false。
+            // 不重置会导致 store 中 needsMigrate 过期（文件已在 attachments，
+            // 不再需要迁移），后续 editAndResend 重发会保留该 flag 误导（S5 修复）。
+            return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
+          }
+          return s
+        })
+        if (migrated.size < needsMigrateImages.length) {
+          // 部分迁移失败：toast 提示（不阻断发送）
+          toastWarning(t('composable.imageMigratePartialFailed', { count: needsMigrateImages.length - migrated.size }))
+        }
+      }
+      // 发送阶段：bash 首发（landing 态 !/!! 前缀）走 sendBash，否则普通 send
+      // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于上面的 tmpdir 迁移流程（bash 无图片段，无副作用）
+      if (bashCommand) {
+        await chat.sendBash(newSid, bashCommand.command, bashCommand.excludeFromContext)
+      } else {
+        await chat.send(newSid, finalSegments)
+      }
       transition('completed') // landing→completed（首发成功，终态）
     } finally {
       controller.setCreateInFlight(false)
@@ -269,6 +384,18 @@ export function useNewTaskFlow() {
   function setPendingModel(model: string): void {
     if (state.value !== 'landing') return
     pendingModel.value = model
+  }
+
+  /**
+   * setPendingPreset —— landing 态记录用户选定但尚未透传的预设 id。
+   *
+   * 对齐 pendingCwd/pendingModel 范式。PresetSelectChip emit select 时调用，
+   * submitFirstMessage create session 时透传给 sessionApi.create。
+   * 守卫：仅 landing 态生效。
+   */
+  function setPendingPreset(presetId: string): void {
+    if (state.value !== 'landing') return
+    pendingPreset.value = presetId
   }
 
   // ── compose 子 composable（分支 + 选目录）── 传 computed 值的 getter，解耦于父内部 ──
@@ -329,6 +456,7 @@ export function useNewTaskFlow() {
     submitFirstMessage,
     presetCwd,
     setPendingModel,
+    setPendingPreset,
     openDirPopover: dirSelect.openDirPopover,
     openBranchPopover: branch.openBranchPopover,
     selectWorkspace: dirSelect.selectWorkspace,

@@ -63,6 +63,10 @@ import { WindowManager } from './window/window-manager.js'
 import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { BrowserViewManager } from './browser/browser-view-manager.js'
+import { ReleaseChecker } from './release-checker.js'
+import { MockReleaseChecker, DEV_MOCK_UPDATE_ENABLED } from './dev/mock-release-checker.js'
+import { updateOrchestrator } from './update/orchestrator.js'
+import { maybeRollbackInterruptedUpdate } from './update/update-self-healer.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
@@ -143,6 +147,13 @@ const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
     .then(({ win }) => win)
 
 // ── 注册 IPC ─────────────────────────────────────────────────────
+// Release 检测器（自动升级检测后端）：1h 缓存 GitHub /releases/latest
+// dev mock 注入（XYZ_DEV_MOCK_UPDATE=1）：P2 半 E2E 验证用。
+// 返回伪造 LatestReleaseInfo，让前端 UpdateButton 显示「可升级」态供 Playwright 截图。
+// isDev && 双重保护：prod 构建即使环境变量被误设也不会用 mock（MockReleaseChecker 永不实例化）。
+const releaseChecker = isDev && DEV_MOCK_UPDATE_ENABLED
+  ? new MockReleaseChecker()
+  : new ReleaseChecker()
 registerIpcHandlers({
   getMainWindow: () => ctx.mainWindow,
   runtime: ctx.runtime,
@@ -150,6 +161,8 @@ registerIpcHandlers({
   createWindow: createWindowFn,
   windowManager: ctx.windows,
   browserViewManager,
+  releaseChecker,
+  updateOrchestrator,
 })
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
@@ -188,8 +201,11 @@ app.whenReady().then(async () => {
     // 放宽成「能读 ~/.ssh」。白名单只含可信子集：
     //   - app.getAppPath()：当前 app 资源目录（dev 模式即项目根）
     //   - getDataDir()：xyz-agent 数据目录（动态推导，dev=~/.xyz-agent-dev，符合架构约定 #2）
+    //   - <getDataDir()>/attachments：会话级图片附件目录（write-session-image IPC 持久化路径，
+    //     按 sessionId 分区。放行整个 attachments 目录——全是用户自粘图片非敏感，安全粒度等同 tmpdir；
+    //     protocol handler 无状态拿不到 session 上下文，无法按 session 推导）
     //   - process.cwd()：当前项目工作目录（图片预览主要场景，cwd 通常是用户项目）
-    //   - os.tmpdir()：临时文件（导出/截图等）
+    //   - os.tmpdir()：临时文件（导出/截图等 + landing 态图片降级路径）
     //   - 特定用户子目录：~/Documents / ~/Desktop / ~/Downloads（用户内容常见位置，
     //     预览家目录下的普通文件）。绝不放行 ~ 本身（含 ~/.ssh、~/.aws 等敏感文件）。
     // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
@@ -199,6 +215,7 @@ app.whenReady().then(async () => {
     const allowedPrefixes = [
       app.getAppPath(),
       getDataDir(),
+      path.join(getDataDir(), 'attachments'),
       process.cwd(),
       tmpdir(),
       ...userContentSubdirs,
@@ -210,6 +227,10 @@ app.whenReady().then(async () => {
     }
     return net.fetch(`file://${resolved}`)
   })
+
+  // W3：启动自愈——检测上次中断的升级并回滚，必须在 bootstrapMainWindow 之前
+  // （确保 .app bundle 已恢复到可用态再创建窗口，避免加载半截 app 崩溃）
+  await maybeRollbackInterruptedUpdate()
 
   await bootstrapMainWindow()
 })

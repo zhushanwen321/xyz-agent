@@ -153,3 +153,10 @@
 - `--muted`：v3=次级文字色（#a8a8b5，2026-07-09 提亮后）；shadcn=背景色。维持 v3。副作用：`bg-muted`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
 
 两项冲突是 shadcn 命名与 v3 命名的根本不兼容，纯 token 别名无法消除；维持 v3 语义保证 W01 零回归，副作用可接受。若未来要 ghost hover 中性化，需在 button variant 改用 `hover:bg-surface-hover`（改组件，非 token 层）。
+
+## 组件尺寸（composer-bash-execute W3）
+
+| Token | 值 | 用途 |
+|-------|-----|------|
+| `--bash-output-max-height` | `240px` | BashOutputBlock 输出区最大高度 |
+| `--composer-btn-size` | `30px` | Composer 发送/停止按钮尺寸 |

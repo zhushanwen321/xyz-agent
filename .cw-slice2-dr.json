@@ -1,0 +1,51 @@
+{
+  "designReviewJudgment": {
+    "necessity": "必要。feature:add-file-picture-attach 的第 2 slice，负责把 message.send 的 images 字段从 transport 层透传到 pi RPC 的 prompt.images。前 1 slice（shared-segment-image-type）仅落地了类型基础（Segment.image 类型 + message.send.images payload 字段定义），但 runtime 层调用链（handler→facade→dispatcher→rpc-client）全链路仍只传 content，images 字段虽在 payload 定义却无人读取、无人透传——不打通此链路则前一 slice 的协议字段是死字段，Cmd+V 图片无法到达 pi。本 slice 是图片功能闭环的必经一环。",
+    "sufficiency": {
+      "gaps": [
+        "未见 gap。链路 5 个改动点（IF1-IF4 + 接口签名同步）已覆盖 handler 解构、facade 透传、dispatcher 骨架、rpc-client 组装、接口契约同步全路径，从 WS payload 到 pi sendCommand 无断点。"
+      ],
+      "overlaps": [
+        "未见 overlap。IF1（rpc-client 组装）是唯一组装点，IF2/IF3/IF4 纯透传不组装，职责单一无重复。接口签名同步（IF1 含 ports/pi-engine.ts、IF3 含 interfaces.ts）是同一契约的两端，非重复。"
+      ],
+      "meceNote": "MECE。按调用链自上而下切分：transport（IF4 handler）→ service facade（IF3 session-service）→ service dispatcher（IF2 dispatcher+骨架）→ infra 适配（IF1 rpc-client 组装）。每层一个 IF，组装职责收敛到 IF1 单点，透传职责分散在 IF2/IF3/IF4。数据模型 DM1 描述 IF1 的转换细节，错误规格 ERR1-3 描述 IF1 的边界条件，均挂在 rpc-client（组装点）上而非透传层——因透传层无新错误路径。5 个文件与 4 个 IF 的映射：IF1→rpc-client.ts+pi-engine.ts，IF2→message-dispatcher.ts，IF3→session-service.ts+interfaces.ts，IF4→session-message-handler.ts。"
+    },
+    "alternatives": "考虑过两个替代方案。(1) 各层直接传 PiImageContentBlock（带 type:'image'）而非 shared 形态——否决，因违反 AGENTS.md 规则#5「pi 适配层不信任外部格式」，业务层会耦合 pi 私有 type 字段，pi 协议升级波及面从 1 文件扩到 4 文件。(2) 不改现有 sendMessage/sendPrompt 签名，新增独立 sendImages 方法——否决，因会破坏 message.send 单次调用的原子性（content 与 images 需作为一个 prompt 发给 pi，分两方法无法保证时序与原子性），且增加 dispatcher 路径分支复杂度。当前方案（每层加可选 images 参数 + rpc-client 唯一组装）改动最小、向后兼容、职责清晰。",
+    "tradeoffs": [
+      {
+        "id": "T1",
+        "decision": "images 作为可选参数追加到现有签名末尾，而非包装成 {content, images} 对象",
+        "reason": "向后兼容（不传走原路径）、改动最小（不破坏现有调用方）、与 message.send payload 形态一致（payload 本身 content 与 images 平级）。",
+        "cost": "若未来 prompt 需第 4、5 个正交维度（如 audio/video），可选参数列表会膨胀，届时需重构为 options 对象。本 slice 只加 1 个参数，成本可接受。"
+      },
+      {
+        "id": "T2",
+        "decision": "rpc-client 内部把空数组 [] 归一化为不传（undefined）",
+        "reason": "防御性归一化，避免给 pi 发无意义空 images 数组触发 pi 端未定义行为。",
+        "cost": "轻微：多一个 length 判断。但换来对 pi 行为的确定性（空数组等价不传），值得。"
+      }
+    ],
+    "risks": [
+      {
+        "id": "R1",
+        "item": "接口签名与实现不同步导致编译错误或类型漂移——IPiEngine（pi-engine.ts）和 ISessionService（interfaces.ts）是契约，若只改实现类忘改接口，TS 编译可能因 structural typing 漏过或调用方类型不符。",
+        "severity": "low",
+        "mitigation": "本 slice 显式把接口签名同步列入 IF1/IF3 契约，wave 阶段改实现时同步改接口，且 tsc 编译会捕获不一致。改动小、链路短，风险可控。"
+      },
+      {
+        "id": "R2",
+        "item": "sendCommand('prompt', {message, images}) 的 params 类型是 Record<string, unknown>，images 键名/结构若与 pi 实际期望不符（pi 端 prompt RPC 是否真的接受 images 字段、字段名是否真是 images），runtime 侧无静态校验。",
+        "severity": "medium",
+        "mitigation": "pi prompt RPC 的 images 契约依赖 pi 进程实际行为验证——本 slice 是透传 slice，组装逻辑严格按 PiImageContentBlock（pi-protocol.ts:331 已定义 type/data/mimeType 三字段）映射，字段名 images 对齐 message.send payload。wave 阶段需用真实 Cmd+V 图片端到端验证 pi 是否接受；若 pi 字段名不同，仅改 rpc-client 一处（组装点收敛的好处）。"
+      }
+    ],
+    "layerSpecific": {
+      "techChoiceRationale": "TC1 选 rpc-client 为唯一组装点，alternatives 对比充分：方案一（各层带 type）违反规则#5 且耦合面 4 文件，方案二（handler 组装）违反 R1 三层架构禁止 transport import infra/pi。选定方案让 pi 私有 type 字段不出 infra/ 层，符合架构约束，且兑现 shared/protocol.ts 前一 slice 的注释承诺。rationale 明确对比了升级波及面（1 vs 4 文件）。",
+      "interfaceContractNote": "4 个 IF 覆盖全链路且签名精确到行号（rpc-client.ts:423、dispatcher.ts:41/119、session-service.ts:277、interfaces.ts:85、pi-engine.ts:104、handler.ts:179-183）。每个 IF 明确：输入形态（shared {data;mimeType}）、输出/返回不变、images 在该层是否参与逻辑（hook/ensureActive/busy 预检均不参与，纯透传）。返回值 {blocked,rejected?} 全链路不变。sendSubagentMessage 明确排除（范围外）。",
+      "dataModelSoundness": "DM1 是 shared→pi 的 1:1 无损映射，仅补 type:'image' 字段。data（base64 不含前缀）和 mimeType 直接透传无转换损失。PiImageContentBlock 三字段（type/data/mimeType）来自 pi-protocol.ts:331 权威定义，非臆造。piImages 为 undefined 时 params 不含 images 键的归一化逻辑明确，保证零回归。无类型冲突或归一化歧义。",
+      "errorCoverage": "ERR1-3 覆盖 IF1（rpc-client 组装点）的三种边界：undefined（正常文本，走原路径）、空数组（防御归一化）、pi 拒绝（复用 sendCommand success 检查 + 现有 message.error 传播链）。透传层（IF2/3/4）无需独立错误规格——它们不新增错误路径，images 跟随 content 走原有 ensureActive/busy/hook 失败路径。错误处理零新增链路，完全复用现有。",
+      "testabilityNote": "可测性强。rpc-client 组装点可单测：mock sendCommand，断言 images 非空时 params.images 是 [{type:'image',data,mimeType}]、为空时 params 不含 images 键。透传层可单测：mock 下游，断言 images 参数逐层透传不丢失不变形。回归测试：undefined 时 sendCommand 参数与改动前快照逐字一致。依赖注入点已有（sendCommand 是实例方法、dispatcher.svc.ensureActive 注入），mock 点充分。",
+      "crossWaveContractNote": "本 slice 拆 1 个 wave（runtime-images-passthrough-impl），单 wave 无跨 wave 契约协调。与前一 slice（shared-segment-image-type）的契约对接点明确：消费 shared/protocol.ts:199 的 message.send.images 字段定义和 Segment.image 类型，本 slice 不改 shared 层（纯消费）。与后续可能的 slice（如 renderer 侧 Cmd+V 组装 images、pi 端验证）的边界清晰：本 slice 只到 rpc-client sendCommand，下游 pi 行为验证属 wave 阶段。"
+    }
+  }
+}

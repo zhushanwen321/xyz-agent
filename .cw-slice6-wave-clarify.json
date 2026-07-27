@@ -1,0 +1,19 @@
+{
+  "clarifications": [
+    {
+      "question": "extractImages 作为纯模块函数放哪？如何 mock fetch 测试？base64 编码复用什么？",
+      "resolution": "extractImages 定义在 useChat.ts 模块顶层（与 streamSubscriptions/resetChatModuleState 同层），导出供测试 import。签名：async function extractImages(segments: Segment[]): Promise<Array<{data:string;mimeType:string}> | undefined>。实现：imageSegs = segments.filter(s=>s.type==='image')；若空返 undefined。否则 allSettled(imageSegs.map(async s => { const res = await fetch(`local-file:///${encodeURIComponent(s.path)}`); if(!res.ok) throw new Error(`local-file ${s.path} ${res.status}`); const blob = await res.blob(); const buf = new Uint8Array(await blob.arrayBuffer()); const base64 = bytesToBase64(buf); return { data: base64, mimeType: blob.type || 'image/png' } }))。bytesToBase64 复用 useImageAttachment 的分块 btoa 范式（CHUNK=0x8000 防 stack 溢出）——抽到 useImageAttachment.ts 导出 fileBytesToBase64（或新建共享工具），避免重复。rejected 项 console.warn 后跳过。测试：vi.spyOn(global,'fetch') mock Response（{ok:true, blob:()=>Promise.resolve(new Blob([bytes],{type:'image/png'}))}），断言返回 images 含正确 base64；mock fetch reject 测降级返 undefined 或部分数组。web/mock 环境（jsdom）无真 local-file protocol，全靠 mock fetch。",
+      "type": "research"
+    },
+    {
+      "question": "useChat.send 如何最小改动接 extractImages + supportsVision？send 当前是 async，内部已有 chatApi.send(sid, promptText)。具体插入点和顺序？",
+      "resolution": "send 内（useChat.ts:188-189 附近）改动：现状 `await chatApi.send(sid, promptText)`。改为：先 `const images = await extractImages(segments)`（在 chatApi.send 之前），再 `if (images && images.length > 0 && !supportsVision.value) console.warn('[useChat] 当前模型不支持图片输入，图片将被忽略')`，最后 `await chatApi.send(sid, promptText, images)`。supportsVision 通过 useModelCapabilities 获取——useChat() 工厂内调 const { supportsVision } = useModelCapabilities(currentModelId)，currentModelId 用 session modelId（需从 useChat 内已有上下文取，或传参）。注意：images undefined 时 chatApi.send 第三参数 undefined，内部不组 images 键（IF1 契约）。extractImages 在 ensureStreamSubscription/chat.appendUser/chat.addPendingSend 之前还是之后？应在这些 store 操作之后、chatApi.send 之前——store 操作是同步 UI 反馈（用户气泡立即显示），extractImages 异步读图期间 UI 已反馈，最后发送。顺序：appendUser → ensureStreamSubscription → addPendingSend → images=await extractImages → [vision warn] → await chatApi.send(sid, promptText, images)。",
+      "type": "research"
+    },
+    {
+      "question": "useChat() 工厂如何拿到 currentModelId？send 显式接 sessionId，但 modelId 从哪来？useModelCapabilities 需要响应式 currentModelId。",
+      "resolution": "useChat() 已 import useSessionStore（useChat.ts:18）。currentModelId 来源：sessionStore 的当前 session modelId。但 send 接收的是 sessionId 参数（per-panel），需按 sessionId 取该 session 的 modelId。查 sessionStore 是否有 getById/getModel(sessionId)。若 sessionStore 有 sessions Map 且每 session 含 modelId，则 const modelId = computed(() => sessionStore.getSessionModelId(sid))——但 send 的 sid 是参数非响应式。简化：useModelCapabilities 接受 ComputedRef<string>|Ref<string>，而 send 内 sid 是运行时字符串。方案：useChat.send 内直接同步解析 vision（非响应式）：function resolveSupportsVision(modelId: string): boolean { 解析 settingsStore.providers }，send 内 const modelId = sessionStore.resolveModelId(sid) || '' 后调 resolveSupportsVision(modelId)。useModelCapabilities composable 仍建（供 ModelSelectPopover 未来用，返回 ComputedRef），但 useChat.send 用同步 resolveSupportsVision 函数（composable 内部也调它）。这样 send 不依赖响应式（发送是瞬时动作，取当下 modelId 快照即可）。",
+      "type": "research"
+    }
+  ]
+}

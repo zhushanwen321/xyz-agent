@@ -1,0 +1,63 @@
+{
+  "designReviewJudgment": {
+    "necessity": "本 wave 是 slice4 的唯一施工单元，把 5TC/4IF/3DM/5ERR 落地为可跑代码。7 个 task 覆盖 IPC 三层（main+preload+lib/ipc）、2 个 renderer composable（useImageAttachment 新建、useContenteditableInput 改造）、1 个 chip command 扩展、2 个组件改造（ContextChipsBar props 化 + ComposerInput 派生）、4 个测试文件。无此 wave 则 slice4 的 write-tmp-image IPC 契约、image badge DOM schema、双通路 onPaste 逻辑都停留在纸面，renderer 无法消费已完成的 shared/runtime/main 三 slice。必须施工。",
+    "sufficiency": {
+      "gaps": [],
+      "overlaps": [],
+      "meceNote": "9 个 testCases 覆盖全部路径无遗漏：TC1 Cmd+V 富呈现成功、TC2 Ctrl+V 纯文本回归、TC3 IPC 成功、TC4 IPC 失败降级、TC5 非 electron 降级、TC6 insertImageBadge DOM、TC7 getSegmentsFromEl image 分支、TC8 ContextChipsBar props/emit、TC9 既有 chip 回归。7 个 task 依赖链清晰（T1 IPC→T2 lib/ipc→T3 useImageAttachment→T4 insertImageBadge→T5 onPaste+getSegments→T6 组件→T7 测试），无并行冲突无循环依赖。13 个 files 与 task 一一映射（每个改动文件都有对应 task step）。4 个 contracts 精确固化跨文件契约（IPC 三层签名、DOM schema、返回联合类型、props/emit）。与 slice4 的 17 个 inheritedItemIds 完全承接。"
+    },
+    "alternatives": "考虑过拆成 2 个 wave（main-ipc / renderer-paste）但否决：write-tmp-image IPC 是 renderer useImageAttachment 的直接依赖，拆开会导致中间状态 renderer 测不了（IPC 未上线则全部降级路径），且 slice4 已定义单 split。考虑过把 ContextChipsBar 接数据源放后续 slice，但它是 image badge 的配套展示（Q4 明确两层呈现），同 wave 做保证数据流闭环可端到端验证。测试文件位置照既有目录约定（__tests__/composables、__tests__/panel、main/test）。",
+    "tradeoffs": [
+      {
+        "id": "TO1",
+        "decision": "onPaste 用占位 badge 处理异步间隙（先插「粘贴中...」→await IPC→更新为真实 path/name），而非阻塞或 loading 遮罩",
+        "reason": "占位 badge 给用户即时反馈、复用 chip DOM 体系、无需额外 loading 组件",
+        "cost": "占位 badge 需写「插入+更新」两步逻辑（比直接 await 后插多一步），且失败时要移除占位换文本（T5 step3）。但用户体验显著优于无反馈的空白等待。"
+      },
+      {
+        "id": "TO2",
+        "decision": "image-chip 复用 .mention-chip class + 新增 .image-chip 修饰，而非独立样式体系",
+        "reason": "复用既有绿/圆角/inline-flex 基础样式减少 CSS 重复，与 mention-file 同模式（mention-chip mention-file 双 class）",
+        "cost": "image-chip 视觉与 mention 较接近（仅 text-reasoning 紫色区分），若设计要求更强区分需后续调样式——但本 wave 功能优先，视觉微调不阻塞。"
+      },
+      {
+        "id": "TO3",
+        "decision": "ContextChipsBar 的 image id 用 tmpdir path（而非独立 uuid）",
+        "reason": "path 在 write-tmp-image 保证唯一（时间戳+随机数），且删除时需用 path 定位 DOM（querySelector[data-chip-path]），id=path 免去额外映射",
+        "cost": "极端边界同一 path 出现两次（基本不可能）会删首个匹配——但随机文件名碰撞概率极低，可接受。"
+      }
+    ],
+    "risks": [
+      {
+        "id": "R1",
+        "item": "ComposerInput.vue 与 ContextChipsBar.vue 的父子关系未最终确认（T6 step2 标记需读代码确认谁持有 segments 计算权）",
+        "severity": "medium",
+        "mitigation": "execute 阶段先读 ComposerInput.vue 模板确认 ContextChipsBar 引用位置；若 ContextChipsBar 在更上层（Composer.vue），则 attachedItems 派生 + remove 处理放该层。不影响 contracts（props/emit 契约不变），只影响 T6 实现位置。已在 T6 step2 显式标注「读代码确认」。"
+      },
+      {
+        "id": "R2",
+        "item": "jsdom 的 FileReader.readAsArrayBuffer 可能不完整（影响 TC1/TC4/TC5 单测）",
+        "severity": "low",
+        "mitigation": "TC 中已声明「FileReader 用真实 jsdom 或 vi.stub」。若 jsdom 不支持，用 vi.stub('FileReader', {readAsArrayBuffer:(f,onload)=>onload({target:{result:arrayBuffer}})}) 手动驱动。useImageAttachment 的 FileReader 依赖在 T3 实现时确认 jsdom 支持度。"
+      },
+      {
+        "id": "R3",
+        "item": "onPaste 改 async 后，Vue 事件绑定 @paste=\"onPaste\" 对 async handler 的兼容性（返回 Promise 被忽略）",
+        "severity": "low",
+        "mitigation": "Vue 的 @paste 不关心返回值（事件处理无需 await），async onPaste 内部自我驱动即可。preventDefault 在 async 体内第一步同步执行（事件循环未让出前已调），不丢失默认行为阻止。既有 useComposerForkMode/useContenteditableInput 已有异步模式参考。"
+      },
+      {
+        "id": "R4",
+        "item": "handleBackspaceOnChip 当前判断 classList 含 slash-chip/mention-chip，image-chip 带 mention-chip class 已覆盖，但若未来 image-chip 去掉 mention-chip class 会漏删",
+        "severity": "low",
+        "mitigation": "T4 step2 已声明「保持 mention-chip 判断或显式加 image-chip」。实现时在 classList 检查里补 image-chip 显式判断（双保险），即使样式调整也不影响删除。"
+      }
+    ],
+    "layerSpecific": {
+      "testCaseCoverageNote": "9 个 TC 覆盖全部 7 task 的产出 + 全部 5 ERR 降级路径 + 关键回归。映射：T1→TC3，T2→TC3/TC5（lib/ipc 降级），T3→TC1/TC4/TC5，T4→TC6/TC9，T5→TC1/TC2/TC7/TC9，T6→TC8，T7→全部测试落地。ERR1→TC4，ERR2→TC5，ERR3→TC2/TC9，ERR4→TC4（onerror 路径），ERR5→TC6（el null 边界）。每个 IF 都有对应 TC 验证（IF1→TC3、IF2→TC1/4/5、IF3→TC6/7、IF4→TC8）。覆盖率充分，无 happy-path-only。",
+      "boundaryConditionNote": "边界覆盖：空 clipboardData（TC3 无 image）、非 image mimeType（ERR mimeType 校验）、超大图 base64 溢出（T3 分块 btoa）、el 不存在（ERR5/TC6 前置）、sel 无 range（T4 fallback append）、web/mock 无 api（TC5）、fs 写失败（TC4）、同 path 碰撞（TO3 极低概率）。未覆盖但可接受：tmpdir 不存在（os.tmpdir 保证存在）、并发粘贴（用户操作基本串行）。关键边界（异步间隙、降级三态、DOM 子树跳过）均有显式 TC。",
+      "mockStrategyNote": "mock 点单一明确：lib/ipc.ts 的 writeTmpImage 导出（renderer 对 electronAPI 唯一适配点）。vi.mock('@/lib/ipc') 隔离主进程依赖，三态（resolve 成功/reject 失败/resolve undefined 非 electron）驱动三条路径。主进程侧 privileged-handlers.test.ts 直接测 ipcMain.handle 注册的函数（照 pick-file 范式 mock fs/os）。FileReader 走 jsdom 真实实现或 vi.stub。contenteditable DOM 用 jsdom + 手动构造（既有 useComposerChipCommands.test 范式）。无网络/无真实 IPC/无真实文件系统，纯单元可跑。",
+      "tddRedReadinessNote": "TDD 就绪：每个 TC 的 input/expected 明确可先写红测。TC6/TC7/TC8 是纯函数式（insertImageBadge/getSegmentsFromEl/ContextChipsBar mount）可直接 TDD。TC1/TC4/TC5 依赖 mock lib/ipc，mock 桩就绪即可红。TC3 主进程 handler 单测照既有 privileged-handlers.test 范式（handlers.get 拿函数直接调）。contracts（C1-C4）固化了签名，测试可据 contract 先写断言。执行顺序建议：T1+T2（IPC 基座）→T3（useImageAttachment + TC1/4/5）→T4（insertImageBadge + TC6）→T5（onPaste + getSegments + TC2/TC7/TC9）→T6（组件 + TC8）→T7 补齐测试。"
+    }
+  }
+}

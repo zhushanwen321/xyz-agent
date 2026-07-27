@@ -62,4 +62,58 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] useContenteditableInput.ts 是 composer 富文本输入的唯一聚合点：
+  // 视觉行移动（getClientRects+caretRangeFromPoint）+ segments 解析（getSegmentsFromEl）
+  // + 草稿/光标/IME/粘贴事件处理 + Cmd+V 双通路图片粘贴。各职责共享 savedRange/preferredX
+  // 闭包与 contenteditable DOM 语义，强行拆分会破坏闭包封装或引入跨模块状态同步。
+  // 行数在 wave4（双通路粘贴）后超 500，短期 max-lines override 避免阻塞。
+  {
+    files: ['packages/renderer/src/composables/panel/useContenteditableInput.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] Turn.vue 是 message-stream 的唯一 turn 聚合组件：user 气泡（含 image segment
+  // 缩略图）+ assistant summary + trace 区（merged/single 双分支 + Transition 动画）+ streaming
+  // 光标 + fork/复制 等操作行。conversation-density slice（merged 卡片）与 main 的 image-attach
+  // + trace Transition 合并后行数超 500（template ≤400 / script setup ≤300 均合规，仅总行数超标）。
+  // 拆分需先理清 user/summary/trace/action 四块的职责边界，属独立重构任务。短期 override 避免阻塞。
+  //
+  // [HISTORICAL·模板结构角度] 同文件还有一处历史 override（原 PR #112 补充）：Turn.vue 也是单回合
+  // 展示的唯一组件，模板结构（350+ 行）与 script setup（300 行）职责内聚，拆分子组件需传递 15+
+  // props/slots，收益不抵成本。useTurnActions 已提取 handler 层，剩余为模板渲染逻辑。
+  // 该条与上方 conversation-density 角度的说明规则相同（max-lines: off），原为两处独立 override 块，
+  // 现合并为一处（ESLint 合并规则使其功能无碍，合并仅为消除冗余），保留两段决策注释供追溯。
+  {
+    files: ['packages/renderer/src/components/panel/message-stream/Turn.vue'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] useChatStore 是 Pinia chat store 的唯一 setup 函数（defineStore('chat', () => {...})），
+  // 包含所有 chat state（messages Map 分区 / streaming / pending / retry / queue）+ 全部 action
+  // （appendUser/appendPending/applyMessageEvent/finalize/hydrate/truncateFrom 等 30+ 方法）。
+  // 与 event-adapter/session-service 同性质——唯一聚合中心，职责内聚但函数体行数超 300。
+  // max-lines-per-function 规则对 Pinia setup 函数不适用（setup 天然是单一大函数），override 避免误报。
+  // max-lines：chat.ts 作为消息流核心 store 承载多种消息类型处理（assistant 流式 + bash 执行 +
+  // subagent + compaction/branch + retry/queue + LRU + handoff + changeset），职责内聚但行数超 500
+  // （当前 ~900 行，main 分支基线已 872 行）。同质于 event-adapter/session-service 的唯一聚合中心，
+  // 短期 max-lines override 避免阻塞，长期应拆分为 chat-core + chat-effects 子模块。
+  {
+    files: ['packages/renderer/src/stores/chat.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] useProviderEdit 是 Provider 编辑弹窗的唯一 composable 工厂（同 chat.ts 性质），
+  // 承载 form/localModels/headerRows 状态 + test/discover/save 编排 + 模型/headers CRUD +
+  // compat 编辑器展开态 + isDirty 快照 + 过期刷新 watch。职责内聚但函数体超 300 行。
+  // 与 chat.ts setup 同理：唯一聚合中心，max-lines-per-function 规则不适用，override 避免误报。
+  {
+    files: ['packages/renderer/src/composables/features/useProviderEdit.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
 ];

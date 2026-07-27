@@ -1,0 +1,19 @@
+{
+  "clarifications": [
+    {
+      "question": "image Segment 的 path 字段存绝对路径还是相对路径？",
+      "resolution": "存绝对路径（tmpdir 文件路径，如 /var/folders/xx/T/screenshot-xxx.png）。理由：pi 的 read 工具按绝对路径读文件；renderer 的 local-file:// 协议也用绝对路径；与 # 文件引用（相对工作区路径）不同——# 引用工作区内文件用相对路径，image 是 tmpdir 临时文件必须用绝对路径。name 字段存 basename（如 screenshot-xxx.png）用于 badge 显示。",
+      "type": "research"
+    },
+    {
+      "question": "segmentsToText 对 image 段产出什么文本？",
+      "resolution": "产出占位标记 [图片: {name}]。理由：image 段不进 pi prompt 文本（base64 走独立 images 通道），但 segmentsToText 用于展示归一化（如复制消息文本、历史回读），需要有可读占位让用户知道这里曾有一张图。不发 pi 的场景（如纯展示）不会因缺占位而困惑。注意：pi 边界的 segmentsToPrompt 复用 segmentsToText 然后 trim，占位标记会进 pi prompt 文本作为上下文提示，但实际图片数据走 images 字段——LLM 同时收到文本占位和图片 base64，不冲突。",
+      "type": "research"
+    },
+    {
+      "question": "message.send 的 images 字段结构与 pi ImageContent 如何对齐？",
+      "resolution": "message.send 的 images 字段结构 = Array<{data:string; mimeType:string}>（不带 type 字段）。runtime 的 rpc-client 组装时补上 type:'image' 成 pi 的 ImageContent（{type:'image';data; mimeType}）。理由：renderer 不需要知道 pi 内部类型（type 字段是 pi 私有），保持 message.send 协议层简洁；runtime 作为 pi 适配层负责补 type 字段（符合 AGENTS.md 规则#5「pi 适配层不信任外部格式」，runtime 是唯一适配点）。",
+      "type": "research"
+    }
+  ]
+}

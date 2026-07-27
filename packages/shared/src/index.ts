@@ -8,6 +8,7 @@ export type {
   CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
   TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
+  SkillCacheScope, SkillCacheInvalidatedPayload,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {
@@ -20,6 +21,7 @@ export type {
 export { parseBgNotifyDetails } from './message'
 export type { Segment } from './segments'
 export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
+export type { SegmentsMetadataFile, SegmentsMetadataEntry } from './message-metadata'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
 } from './session'
@@ -36,7 +38,7 @@ export type {
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES, WORKFLOW_TOOL_NAMES, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS } from './constants'
 export type { ProviderApiType } from './constants'
 export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi-default-prompt'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
@@ -66,3 +68,32 @@ export type {
   WorkflowAgentCall,
   WorkflowRunRecord,
 } from './workflow'
+// pi-preset 用具名导出（S-SH-3）：避免 export * 导致的命名冲突与 tree-shaking 不友好。
+// 所有 type / const / 运行时守卫均显式列出，新增导出时同步在此登记。
+export type {
+  ToolMode,
+  ExtensionMode,
+  ThinkingLevel,
+  PiLaunchPreset,
+  PresetUsageEntry,
+  PiPresetsFile,
+  PresetExportPayload,
+} from './pi-preset'
+export {
+  BUILTIN_TOOLS,
+  BUILTIN_EXTENSION_FILES,
+  BUILTIN_PRESET_IDS,
+  DEFAULT_PRESETS,
+  isPiLaunchPreset,
+} from './pi-preset'
+export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState } from './update'
+// 迁移功能（从其他 agent 迁移配置）类型
+export type {
+  ProviderSource,
+  AgentSource,
+  SourceDetectResult,
+  ProviderPreviewItem,
+  ProviderImportPreview,
+  ProviderImportedItem,
+  ProviderImportResult,
+} from './migration'
