@@ -24,9 +24,10 @@ description: "Trace code call chains from entry points (HTTP routes, WebSocket m
 ## Quick Start
 
 ```bash
-# 脚本位于 skill 目录的 scripts/ 下，通过 --project 指定目标项目
+# 脚本位于项目 skill 目录的 scripts/ 下，通过 --project 指定目标项目
 # 首次使用自动 build graph.db + 启动 watch 后台监听
-SKILL_DIR="~/.pi/agent/skills/code-link"
+# SKILL_DIR 是本 skill 所在目录（项目内 .agents/skills/code-link，已自包含）
+SKILL_DIR=".agents/skills/code-link"
 python3 "$SKILL_DIR/scripts/code_link.py" --project /path/to/project --entry "/api/task/runs"
 python3 "$SKILL_DIR/scripts/code_link.py" --project /path/to/project --entry "session.create"
 python3 "$SKILL_DIR/scripts/code_link.py" --project /path/to/project --entry "TaskRunService.cancel_run" --bridge backend
