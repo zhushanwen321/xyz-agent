@@ -90,8 +90,28 @@ export async function performUpdate(
     // 2. 写 update-result.json status='replacing'（self-healer 启动时检测中断）
     //    replacing 标记是 self-healer 检测中断的关键信号，写入失败必须中止升级
     //    （否则崩溃后 self-healer 无法识别需要回滚）。这里不 catch，让异常上抛。
-    mkdirSync(UPDATE_DIR, { recursive: true })
-    writeUpdateResult('replacing', release.version)
+    try {
+      mkdirSync(UPDATE_DIR, { recursive: true })
+      writeUpdateResult('replacing', release.version)
+    } catch (writeErr) {
+      // 权限错误分类
+      if (writeErr instanceof Error && (writeErr.message.includes('EACCES') || writeErr.message.includes('permission'))) {
+        throw new UpdateError(
+          'permission denied when writing update status',
+          'replacing',
+          'UPDATE_PERMISSION_DENIED',
+        )
+      }
+      // 磁盘空间不足
+      if (writeErr instanceof Error && (writeErr.message.includes('ENOSPC') || writeErr.message.includes('disk space'))) {
+        throw new UpdateError(
+          'insufficient disk space for update status file',
+          'downloading',
+          'UPDATE_DISK_SPACE',
+        )
+      }
+      throw writeErr
+    }
 
     // 3. 下载 + 校验（downloadAsset 内部已校验 sha256/size）
     opts.onProgress('downloading', 0)
@@ -101,7 +121,20 @@ export async function performUpdate(
     // 4. 平台分发（生成脚本 + 触发替换）
     opts.onProgress('replacing', 0)
     const updater = createPlatformUpdater()
-    const ref = updater.prepareUpdate(filePath, release)
+    let ref: UpdateScriptRef
+    try {
+      ref = updater.prepareUpdate(filePath, release)
+    } catch (prepErr) {
+      // 权限错误分类
+      if (prepErr instanceof Error && (prepErr.message.includes('EACCES') || prepErr.message.includes('permission'))) {
+        throw new UpdateError(
+          'permission denied during update preparation',
+          'replacing',
+          'UPDATE_PERMISSION_DENIED',
+        )
+      }
+      throw prepErr
+    }
     opts.onProgress('replacing', PROGRESS_COMPLETE)
 
     // 5. 据 ref.kind 决定返回值

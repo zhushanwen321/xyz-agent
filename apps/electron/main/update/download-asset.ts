@@ -29,7 +29,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
-import { UpdateIntegrityError } from './types.js'
+import { UpdateError, UpdateIntegrityError } from './types.js'
 
 /**
  * 断点续传状态接口。
@@ -131,15 +131,49 @@ export async function downloadAsset(
       console.log('[download] using proxy:', proxyConfig)
     }
     
-    response = await fetch(asset.downloadUrl, fetchOptions)
+    // 执行 fetch，捕获网络错误并分类
+    try {
+      response = await fetch(asset.downloadUrl, fetchOptions)
+    } catch (fetchErr) {
+      // 网络错误分类：区分超时、连接失败、代理错误
+      if (fetchErr instanceof Error) {
+        if (fetchErr.name === 'AbortError') {
+          throw new UpdateError(
+            `download timeout after ${DOWNLOAD_TIMEOUT_MS / 1000}s`,
+            'downloading',
+            'UPDATE_NETWORK_TIMEOUT',
+          )
+        }
+        if (fetchErr.message.includes('ECONNREFUSED') || fetchErr.message.includes('ENOTFOUND') ||
+            fetchErr.message.includes('ECONNRESET') || fetchErr.message.includes('ETIMEDOUT')) {
+          throw new UpdateError(
+            `network connection failed: ${fetchErr.message}`,
+            'downloading',
+            'UPDATE_NETWORK_FAILED',
+          )
+        }
+        if (fetchErr.message.includes('proxy') || fetchErr.message.includes('ECONNABORTED')) {
+          throw new UpdateError(
+            `proxy error: ${fetchErr.message}`,
+            'downloading',
+            'UPDATE_PROXY_ERROR',
+          )
+        }
+      }
+      throw new UpdateError(
+        `download failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+        'downloading',
+        'UPDATE_NETWORK_FAILED',
+      )
+    }
     if (!response.ok) {
       // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
       // 但显式 cancel 更确定，避免连接挂在 keep-alive 池）。
       await response.body?.cancel().catch(() => {})
-      throw new UpdateIntegrityError(`download failed: HTTP ${response.status}`)
+      throw new UpdateError(`download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
     }
     if (!response.body) {
-      throw new UpdateIntegrityError('download failed: empty response body')
+      throw new UpdateError('download failed: empty response body', 'downloading', 'UPDATE_NETWORK_FAILED')
     }
 
     // 4. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
@@ -188,16 +222,34 @@ export async function downloadAsset(
       })
       // 清理半下载文件
       try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-      throw err
-    } finally {
-      // 流式传输已结束（成功 finish 或抛错）才停 watchdog。
-      clearTimeout(timer)
+      // 流式传输错误分类：区分磁盘空间不足和其他错误
+      if (err instanceof Error && (err.message.includes('ENOSPC') || err.message.includes('disk space'))) {
+        throw new UpdateError(
+          'insufficient disk space',
+          'downloading',
+          'UPDATE_DISK_SPACE',
+        )
+      }
+      // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
+      if (err instanceof UpdateError) {
+        throw err
+      }
+      throw new UpdateError(
+        `download stream error: ${err instanceof Error ? err.message : String(err)}`,
+        'downloading',
+        'UPDATE_NETWORK_FAILED',
+      )
     }
 
     // 5. 下载完成，清除断点续传状态
     clearResumeState()
 
-  // 4. 校验：sha256 优先，缺失降级 size，再缺失拒绝
+  } finally {
+    // 流式传输已结束（成功 finish 或抛错）才停 watchdog。
+    clearTimeout(timer)
+  }
+
+  // 6. 校验：sha256 优先，缺失降级 size，再缺失拒绝
   //    [BLOCKER 4] 旧实现 `else if (asset.size && asset.size > 0)`：若 size=0 且无 sha256，
   //    完全跳过校验——攻击者可让下载文件被任意篡改而无校验拦截。改为：
   //    sha256 和非零 size 至少有一个，否则拒绝（正常 release 必有其一）。
@@ -207,6 +259,7 @@ export async function downloadAsset(
       try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] sha256 mismatch cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
       throw new UpdateIntegrityError(
         `sha256 mismatch: expected ${asset.sha256}, got ${actualSha}`,
+        'UPDATE_SHA256_MISMATCH',
       )
     }
   } else if (asset.size && asset.size > 0) {
@@ -225,8 +278,24 @@ export async function downloadAsset(
     )
   }
 
-  // 5. rename .downloading → 最终文件名
-  renameSync(tempPath, finalPath)
+  // 7. rename .downloading → 最终文件名
+  try {
+    renameSync(tempPath, finalPath)
+  } catch (renameErr) {
+    // 权限错误分类
+    if (renameErr instanceof Error && (renameErr.message.includes('EACCES') || renameErr.message.includes('permission'))) {
+      throw new UpdateError(
+        'permission denied during file replacement',
+        'replacing',
+        'UPDATE_PERMISSION_DENIED',
+      )
+    }
+    throw new UpdateError(
+      `file rename failed: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
+      'replacing',
+      'UPDATE_INTEGRITY_FAILED',
+    )
+  }
   return { filePath: finalPath }
 }
 
