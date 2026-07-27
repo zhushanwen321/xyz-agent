@@ -66,11 +66,11 @@ export default defineConfig({
   define: {
     'process.env.XYZ_AGENT_VERSION': JSON.stringify(pkg.version),
   },
-  // 给所有 bundle 顶部加 shebang：server.cjs 作为 npm bin 需要可执行 shebang；
-  // 其余 bundle 加 shebang 无害（Node 把首行 shebang 当注释）。
-  banner: {
-    js: '#!/usr/bin/env node',
-  },
+  // Shebang 由源码自行管理：仅 server.cjs（npm bin 入口）的首行 `#!/usr/bin/env node`
+  // 由 src/server/index.ts 提供，esbuild 保留首行 shebang。
+  // 不用全局 banner：banner 会给所有 bundle（index.cjs/plugin-bootstrap.cjs/cli.cjs）加
+  // shebang，而它们不是可执行文件；且与 server/index.ts 源码 shebang 叠加会产生
+  // 双 shebang（第 2 行 `#!...` 是非法 JS，Node 报 SyntaxError）。
   // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 runtime）
   onSuccess: async () => {
     const { existsSync, statSync } = await import('node:fs')

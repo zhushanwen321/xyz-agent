@@ -45,7 +45,7 @@ import { printStartup } from '../../src/server/bootstrap.js'
 import { fetchPiBinary } from '../../src/server/pi-fetch.js'
 import { detectUrls } from '../../src/server/detect-url.js'
 import { findPiExecutable } from '../../src/infra/pi/process-manager.js'
-import { parseServerArgs, run, printHelp } from '../../src/server/index.js'
+import { parseServerArgs, run, printHelp, _isServerMainEntry } from '../../src/server/index.js'
 
 const mockMain = vi.mocked(main)
 const mockCreateTokenManager = vi.mocked(createTokenManager)
@@ -337,5 +337,62 @@ describe('W4-TC8: 命令分发（run 流程）', () => {
     expect(output).toContain('--version')
     expect(output).toContain('--help')
     expect(output).toContain('XYZ_AGENT_PUBLIC_URL')
+  })
+})
+
+/**
+ * W5-TC9: _isServerMainEntry 纯函数判据（isMainEntry symlink bug 回归）。
+ *
+ * 背景：npm i -g 后 bin/xyz-agent-runtime 是 symlink → dist/server.cjs。
+ * Node 加载时 process.argv[1] 是 symlink 名（不含 'server'），旧判据漏判 → run() 不执行 → 静默退出。
+ * 修复：用 fs.realpathSync 解析 argv[1] 后传入此纯函数匹配。
+ *
+ * 本测试覆盖纯函数本身（输入是 realpath 解析后的真实路径）：
+ *  - 真实场景：dist/server.cjs / src/server/index.ts 应匹配
+ *  - symlink 场景：argv[1] 是 bin/xyz-agent-runtime 名，realpath 后 → .../dist/server.cjs 应匹配
+ *  - 负样本：非入口路径（含 'server' 子串但不是入口，或其它 bin 名）应不匹配
+ */
+describe('W5-TC9: _isServerMainEntry 判据纯函数（symlink bug 回归）', () => {
+  it('TC9.1: 真实打包产物 .../dist/server.cjs 应匹配（posix）', () => {
+    expect(_isServerMainEntry('/usr/local/lib/node_modules/@xyz-agent/runtime/dist/server.cjs')).toBe(true)
+    expect(_isServerMainEntry('/Users/foo/.npm/lib/node_modules/@xyz-agent/runtime/dist/server.cjs')).toBe(true)
+  })
+
+  it('TC9.2: 真实打包产物 Windows 路径（反斜杠）应匹配', () => {
+    expect(_isServerMainEntry('C:\\Program Files\\nodejs\\node_modules\\@xyz-agent\\runtime\\dist\\server.cjs')).toBe(true)
+  })
+
+  it('TC9.3: 源码 src/server/index.ts 应匹配（开发 tsx watch 场景）', () => {
+    expect(_isServerMainEntry('/home/u/xyz/packages/runtime/src/server/index.ts')).toBe(true)
+  })
+
+  it('TC9.4: npm bin symlink realpath 后的真实路径应匹配', () => {
+    // npm bin 场景：argv[1] = /usr/local/bin/xyz-agent-runtime（symlink 名）
+    // realpathSync 解析后 = /usr/local/lib/node_modules/@xyz-agent/runtime/dist/server.cjs
+    const resolvedSymlinkTarget = '/usr/local/lib/node_modules/@xyz-agent/runtime/dist/server.cjs'
+    expect(_isServerMainEntry(resolvedSymlinkTarget)).toBe(true)
+  })
+
+  it('TC9.5: 空字符串 / 非 server 路径应不匹配', () => {
+    expect(_isServerMainEntry('')).toBe(false)
+    expect(_isServerMainEntry('/usr/local/bin/node')).toBe(false)
+  })
+
+  it('TC9.6: symlink 名本身（未经 realpath 解析）应不匹配 — 这是 bug 根源，由上层 realpathSync 负责解析', () => {
+    // bin/xyz-agent-runtime 名字不含 'server.cjs'，纯函数不应误判
+    // 上层 isMainEntry IIFE 必须先 realpathSync(argv[1]) 再传入
+    expect(_isServerMainEntry('/usr/local/bin/xyz-agent-runtime')).toBe(false)
+  })
+
+  it('TC9.7: 旧模糊正则的误匹配样本应不匹配（精准化）', () => {
+    // 旧正则 /server(\.cjs|\.js|\/index\.ts)?$/ 会误匹配以下
+    expect(_isServerMainEntry('/home/foo/my-server/foo.ts')).toBe(false)
+    expect(_isServerMainEntry('/home/foo/server.js')).toBe(false) // 仅 server.cjs（runtime 打包产物）才算入口
+    expect(_isServerMainEntry('/home/foo/anything-with-server-name.ts')).toBe(false)
+  })
+
+  it('TC9.8: server.cjs 不在 dist 目录但路径以 server.cjs 结尾仍应匹配（按文件名判，宽容）', () => {
+    // realpath 后只要文件名是 server.cjs 即可（npm pack 产物结构可能变化）
+    expect(_isServerMainEntry('/some/custom/build/server.cjs')).toBe(true)
   })
 })

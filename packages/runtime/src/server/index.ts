@@ -27,6 +27,7 @@ import { getAppVersion } from '../services/plugin-service/plugin-version-checker
 import { join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { realpathSync } from 'node:fs'
 
 const execFileAsync = promisify(execFile)
 
@@ -269,17 +270,47 @@ export async function run(): Promise<void> {
 }
 
 /**
+ * 判断 scriptPath 是否是 server CLI 入口（wave5 提取的纯函数，可单测）。
+ *
+ * 输入应是 realpathSync 解析 symlink 后的真实路径（npm bin 场景 argv[1] 是 symlink 名，
+ * 不含 'server'，需上层先 realpathSync 再传入）。本函数仅做字符串匹配，不做 IO。
+ *
+ * 判据：精准匹配打包产物 server.cjs 或源 src/server/index.ts。
+ * 不用旧模糊正则 /server(\.cjs|\.js|\/index\.ts)?$/（会误匹配 my-server/foo.ts 等）。
+ * 正则用 [\\/] 兼容 windows 反斜杠。
+ *
+ * @internal 导出仅为单测，外部不应直接调用。
+ */
+export function _isServerMainEntry(scriptPath: string): boolean {
+  if (!scriptPath) return false
+  return /[\\/]server\.cjs$/.test(scriptPath) || /[\\/]src[\\/]server[\\/]index\.ts$/.test(scriptPath)
+}
+
+/**
  * 自动执行入口：仅当本模块被直接作为 CLI 入口运行时触发（非被 import）。
  *
- * 判据：process.argv[1]（脚本路径）以 'server' 结尾（打包产物 server.cjs 或源 src/server/index.ts）。
- * 这避免被测试 import 时副作用执行 run()（测试显式调 run() 驱动）。
+ * 判据：process.argv[1]（脚本路径）经 realpathSync 解析 symlink 后，是 server.cjs（打包产物）
+ * 或 src/server/index.ts（源码）。这避免被测试 import 时副作用执行 run()（测试显式调 run() 驱动）。
  *
- * 判据选择：不用 ESM 的 module-self-ref（CJS bundle 会变 undefined，违反 validate-runtime-bundle.sh [3/6]），
- * 不用 require.main（tsup ESM 产物无 require）。argv[1] 是最 portable 的判据。
+ * 为什么需要 realpathSync：npm i -g 后 bin/xyz-agent-runtime 是 symlink → dist/server.cjs，
+ * Node 加载时 argv[1] 是 symlink 名（不含 'server'），不解析会漏判 → run() 不执行 → 静默退出。
+ * realpathSync 失败（argv[1] 是非文件路径如 tsx watch）回退到原字符串匹配。
+ *
+ * 判据选择约束（wave4 总结）：
+ *  - 禁用 ESM module-self-ref（tsup CJS bundle 把它替换为空对象）
+ *  - 禁用 require.main（tsup ESM 产物无 require）
+ *  - 禁用 globalThis.__dirname（CJS 中 __dirname 是模块局部变量不在 globalThis 上）
+ * argv[1] + realpathSync 是最 portable 的判据。
  */
 const isMainEntry = (() => {
-  const scriptPath = process.argv[1] ?? ''
-  return /server(\.cjs|\.js|\/index\.ts)?$/.test(scriptPath) || /\/server\.cjs$/.test(scriptPath)
+  const argv1 = process.argv[1] ?? ''
+  if (!argv1) return false
+  try {
+    return _isServerMainEntry(realpathSync(argv1))
+  } catch {
+    // realpathSync 失败（文件不存在 / 非文件路径如 tsx watch）回退到原字符串匹配
+    return _isServerMainEntry(argv1)
+  }
 })()
 
 if (isMainEntry) {
