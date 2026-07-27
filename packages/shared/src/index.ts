@@ -3,6 +3,7 @@ export type {
   SetProviderData,
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
   ReplyPayloadMap,
+  BatchDeleteResult,
   SystemPromptConfig,
   CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,

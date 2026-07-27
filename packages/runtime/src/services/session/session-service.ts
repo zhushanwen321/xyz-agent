@@ -14,15 +14,13 @@ import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, isAbsolute, resolve } from 'node:path'
 import { expandHome } from '../../utils/path-utils.js'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, SegmentsMetadataFile } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import type { PiSessionEntry } from '../../infra/pi/pi-protocol.js'
 import { rebuildHistoryFromEntries } from '../../infra/pi/entry-tree-builder.js'
-// paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
-// Node 端从子路径 import
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService, IConfigService,
@@ -240,6 +238,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     thinkingOverride?: string
   }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
+  async deleteByCwd(cwd: string): Promise<BatchDeleteResult> { return this.lifecycle.deleteByCwd(cwd) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
   async forkSession(
