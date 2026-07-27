@@ -39,7 +39,7 @@ echo -e "${BLUE}[Runtime Bundle 验证]${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 RUNTIME_DIR="$PROJECT_ROOT/packages/runtime"
-DIST_RUNTIME="$PROJECT_ROOT/apps/electron/dist/runtime"
+DIST_RUNTIME="$PROJECT_ROOT/packages/runtime/dist"
 BUNDLE_PATH="$DIST_RUNTIME/index.cjs"
 BOOTSTRAP_PATH="$DIST_RUNTIME/plugin-bootstrap.cjs"
 SERVER_PATH="$DIST_RUNTIME/server.cjs"

@@ -75,10 +75,21 @@ extraResources:
   # 同 xyz-agent-extension.js，源文件在 repo root，from 需上两级。
   - from: ../../xyz-system-prompt-extension.js
     to: xyz-system-prompt-extension.js
-  # xyz-settings CLI（从 tsup 打包的 cli.cjs）
+  # xyz-agent runtime bundle（tsup 打包产物）
+  # T1 把 runtime tsup outDir 从 apps/electron/dist/runtime 收回到 packages/runtime/dist，
+  # 但 electron-builder projectDir=apps/electron/，files/asarUnpack 的产物内部路径
+  # `dist/runtime/**/*` 视野看不到 packages/runtime/dist——靠 extraResources 把 4 个 bundle
+  # （index.cjs / plugin-bootstrap.cjs / cli.cjs / server.cjs）拷到产物内部 dist/runtime/，
+  # 让 files/asarUnpack 命中，process-control.ts 的 app.asar.unpacked/dist/runtime/index.cjs 不变。
+  # from 相对 apps/electron/，需上两级到 packages/runtime/dist。
+  - from: ../../packages/runtime/dist
+    to: dist/runtime
+    filter:
+      - "**/*"
+  # xyz-settings CLI（从 tsup 打包的 cli.cjs，与 runtime 同源但单独拷贝）
   # packaged app 中位置：resources/bin/xyz-settings
   # pi Skill 通过绝对路径引用此文件
-  - from: dist/runtime/cli.cjs
+  - from: ../../packages/runtime/dist/cli.cjs
     to: bin/xyz-settings
 
 # NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。

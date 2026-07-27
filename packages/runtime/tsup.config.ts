@@ -33,11 +33,11 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'plugin-bootstrap': 'src/services/plugin-service/plugin-bootstrap.ts',
-    cli: 'src/cli/index.ts',  // xyz-settings CLI 入口（打包后 dist/runtime/cli.cjs）
-    server: 'src/server/index.ts',  // wave4: xyz-agent-runtime server CLI 入口（打包后 dist/runtime/server.cjs）
+    cli: 'src/cli/index.ts',  // xyz-settings CLI 入口（打包后 packages/runtime/dist/cli.cjs）
+    server: 'src/server/index.ts',  // wave4: xyz-agent-runtime server CLI 入口（打包后 packages/runtime/dist/server.cjs）
   },
-  // 输出到 apps/electron/dist/runtime（与 main/preload dist 同级，供 electron-builder 打包）
-  outDir: '../../apps/electron/dist/runtime',
+  // 输出到 packages/runtime/dist（npm 发布产物自包含；Electron 通过 extraResources 拾取）
+  outDir: 'dist',
   format: ['cjs'],
   platform: 'node',  // 自动将所有 Node.js 内置模块标为 external
   target: 'node24',   // 匹配 Electron 42.3.3 内置 Node 24.15.0（ELECTRON_RUN_AS_NODE 实测）
@@ -66,13 +66,18 @@ export default defineConfig({
   define: {
     'process.env.XYZ_AGENT_VERSION': JSON.stringify(pkg.version),
   },
+  // 给所有 bundle 顶部加 shebang：server.cjs 作为 npm bin 需要可执行 shebang；
+  // 其余 bundle 加 shebang 无害（Node 把首行 shebang 当注释）。
+  banner: {
+    js: '#!/usr/bin/env node',
+  },
   // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 runtime）
   onSuccess: async () => {
     const { existsSync, statSync } = await import('node:fs')
     const path = await import('node:path')
 
-    // 验证主 bundle（与 outDir 一致：../../apps/electron/dist/runtime）
-    const bundlePath = path.join('..', '..', 'apps', 'electron', 'dist', 'runtime', 'index.cjs')
+    // 验证主 bundle（与 outDir 一致：dist）
+    const bundlePath = path.join('dist', 'index.cjs')
     if (!existsSync(bundlePath)) {
       throw new Error(`Runtime bundle not found: ${bundlePath}`)
     }
@@ -85,7 +90,7 @@ export default defineConfig({
     }
 
     // 验证 Worker bootstrap（plugin-host.ts 运行时依赖）
-    const bootstrapPath = path.join('..', '..', 'apps', 'electron', 'dist', 'runtime', 'plugin-bootstrap.cjs')
+    const bootstrapPath = path.join('dist', 'plugin-bootstrap.cjs')
     if (!existsSync(bootstrapPath)) {
       throw new Error(`Plugin bootstrap not found: ${bootstrapPath}`)
     }
@@ -93,7 +98,7 @@ export default defineConfig({
     console.log(`[tsup] Plugin bootstrap: ${bootstrapPath} (${bootstrapSizeKB}KB)`)
 
     // 验证 CLI bundle（xyz-settings）
-    const cliPath = path.join('..', '..', 'apps', 'electron', 'dist', 'runtime', 'cli.cjs')
+    const cliPath = path.join('dist', 'cli.cjs')
     if (!existsSync(cliPath)) {
       throw new Error(`CLI bundle not found: ${cliPath}`)
     }
@@ -101,7 +106,7 @@ export default defineConfig({
     console.log(`[tsup] CLI bundle: ${cliPath} (${cliSizeKB}KB)`)
 
     // 验证 server CLI bundle（wave4: xyz-agent-runtime）
-    const serverPath = path.join('..', '..', 'apps', 'electron', 'dist', 'runtime', 'server.cjs')
+    const serverPath = path.join('dist', 'server.cjs')
     if (!existsSync(serverPath)) {
       throw new Error(`Server CLI bundle not found: ${serverPath}`)
     }
