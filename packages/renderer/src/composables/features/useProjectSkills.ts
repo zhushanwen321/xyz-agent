@@ -7,17 +7,41 @@
  * - 新增 useGlobalSkills()：模块级 singleton 缓存，启动拉一次全局 skill（skillRegistry globalCache），
  *   供 landing slash 命令源（FR-5：不再走 settingsStore.skills 配置态扫描）。
  *
+ * Wave3 改动（订阅 skill 缓存失效信号）：
+ * - useGlobalSkills 订阅 config.skillCacheInvalidated scope='global' → loadGlobal(true) force 重拉。
+ *   修复原永久失败 bug：catch 分支不再置 globalLoaded=true，保留旧缓存值，允许下次失效信号触发重试。
+ * - useProjectSkills 用模块级失效版本号机制：scope='project' 信号 → 版本号++ → 各实例 watch 清自己的
+ *   skillsByCwd + 重拉当前 cwd。版本号是模块级 ref，所有实例共享一份订阅（避免每个 Composer 实例重复挂订阅）。
+ *
  * 设计取舍：
  * - useGlobalSkills 用模块级 singleton（cache + loaded flag）：全局 skill 是 AppShell 级数据，
- *   所有 landing CommandPopover 共享一份。首次调用触发 RPC，后续命中缓存。skillRegistry runtime 侧
- *   有 chokidar watcher 自动刷新 globalCache，但 renderer 侧不监听文件变动（landing 浮层打开时拉一次即可，
- *   skill 目录变动是低频操作，重启或切 landing 可覆盖；如需实时刷新后续加 WS 广播）。
+ *   所有 landing CommandPopover 共享一份。首次调用触发 RPC，后续命中缓存。runtime 侧 SkillRegistry
+ *   有 chokidar watcher 自动刷新 globalCache，wave3 起前端订阅 config.skillCacheInvalidated 信号实时重拉。
  * - useProjectSkills 保持实例级 Map<cwd, SkillInfo[]>（按 cwd key 隔离，切 cwd 切分区）。
  *   当前唯一消费者是 landing Composer（单例活跃），per-instance 缓存足够。
+ * - 失效信号用模块级订阅守卫（globalInvalidateSubscribed/projectInvalidateSubscribed）保证只挂一次，
+ *   避免 Composer 每次实例化都重复订阅。project 侧用版本号而非实例级订阅：每个 Composer 实例调
+ *   useProjectSkills，实例级订阅会随实例数重复挂载，版本号 watch 让订阅与实例数解耦。
  */
 import { computed, ref, watch, type Ref } from 'vue'
 import { config as configApi } from '@/api'
 import type { SkillInfo } from '@xyz-agent/shared'
+
+// ── useProjectSkills 失效信号版本号（模块级，所有实例共享）─────────
+// setSkillDirs 改全局配置，所有已缓存 cwd 都可能受影响。收到 scope='project' 失效信号时
+// 版本号++，所有实例的 watch(projectInvalidateVersion) 触发清自己的 skillsByCwd + 重拉当前 cwd。
+// 用版本号而非实例级订阅：每个 Composer 实例调 useProjectSkills，实例级订阅会随实例数重复挂载。
+let projectInvalidateSubscribed = false
+const projectInvalidateVersion = ref(0)
+if (!projectInvalidateSubscribed) {
+  projectInvalidateSubscribed = true
+  configApi.onSkillCacheInvalidated((payload) => {
+    if (payload.scope === 'project') {
+      // 保守策略：清所有 cwd（setSkillDirs 改全局配置，所有 cwd 都可能受影响）
+      projectInvalidateVersion.value++
+    }
+  })
+}
 
 /**
  * @param currentCwd 当前 session/landing 的 cwd ref（null = 未选目录，projectSkills 为空）
@@ -69,36 +93,58 @@ export function useProjectSkills(currentCwd: Ref<string | null>) {
     { immediate: true },
   )
 
+  // 监听模块级失效版本号：版本号变 → 清缓存 → 重拉当前 cwd
+  watch(projectInvalidateVersion, () => {
+    const next = new Map<string, SkillInfo[]>()
+    skillsByCwd.value = next
+    const cwd = currentCwd.value
+    if (cwd && !inFlight.has(cwd)) {
+      void loadFor(cwd)
+    }
+  })
+
   return { projectSkills }
 }
 
 // ── useGlobalSkills：模块级 singleton 缓存 ──────────────────────────
 // 全局 skill 是 AppShell 级数据，所有 landing CommandPopover 共享一份。模块级 singleton 保证
-// 首次调用触发一次 RPC，后续命中缓存（skillRegistry runtime 侧 watcher 自动刷新 globalCache，
-// renderer 侧不监听文件变动，landing 浮层打开时拉一次即可）。
+// 首次调用触发一次 RPC，后续命中缓存。Wave3 改造：订阅 config.skillCacheInvalidated 失效信号，
+// 收到 scope='global' 时 force 重拉（runtime 侧 SkillRegistry 已重扫 globalCache）。
 let globalSkillsCache: SkillInfo[] | null = null
 let globalLoaded = false
 let globalInFlight: Promise<SkillInfo[]> | null = null
+/** 模块级订阅守卫：保证 onSkillCacheInvalidated 只挂一次（AppShell 级常驻订阅）。 */
+let globalInvalidateSubscribed = false
 
 /**
  * 拉取全局 skill（skillRegistry globalCache）。模块级 singleton：
  * - 首次调用触发 configApi.getGlobalSkills() RPC，结果缓存到 globalSkillsCache。
  * - 后续调用命中缓存，返回同一份 ref（响应式）。
  * - in-flight 去重：并发调用共享同一个 Promise，避免重复 RPC。
+ * - force=true 跳过 globalLoaded 守卫强制重拉（失效信号触发）。
+ * - 失败时不置 globalLoaded=true（修复原永久失败 bug），保留旧缓存值允许下次失效信号触发重试。
  *
  * 供 landing slash 命令源（FR-5：不走 settingsStore.skills）。
  */
 export function useGlobalSkills() {
   const globalSkills = ref<SkillInfo[]>(globalSkillsCache ?? [])
 
-  async function loadGlobal(): Promise<void> {
-    if (globalLoaded) {
+  /**
+   * 拉取全局 skill。force=true 跳过 globalLoaded 守卫强制重拉（失效信号触发）。
+   * 失败时不置 globalLoaded=true（修复原永久失败 bug），保留旧缓存值允许下次重试。
+   */
+  async function loadGlobal(force = false): Promise<void> {
+    if (globalLoaded && !force) {
       globalSkills.value = globalSkillsCache ?? []
       return
     }
     if (globalInFlight) {
-      globalSkills.value = await globalInFlight
-      return
+      if (!force) {
+        globalSkills.value = await globalInFlight
+        return
+      }
+      // force=true 时等待 in-flight 完成后再重拉（避免并发覆盖）
+      await globalInFlight
     }
     globalInFlight = (async () => {
       try {
@@ -108,11 +154,10 @@ export function useGlobalSkills() {
         globalSkills.value = skills
         return skills
       } catch (e) {
-        console.warn('[useGlobalSkills] getGlobalSkills failed, globalSkills will be empty:', e)
-        globalSkillsCache = []
-        globalLoaded = true
-        globalSkills.value = []
-        return []
+        // 失败时不置 globalLoaded=true（允许下次失效信号触发重试），保留旧缓存值
+        console.warn('[useGlobalSkills] getGlobalSkills failed, will retry on next trigger:', e)
+        globalSkills.value = globalSkillsCache ?? []
+        return globalSkillsCache ?? []
       } finally {
         globalInFlight = null
       }
@@ -120,8 +165,18 @@ export function useGlobalSkills() {
     await globalInFlight
   }
 
-  // 模块加载即触发（AppShell 级，启动拉一次）。loadGlobal 内部命中缓存/in-flight 去重。
+  // 模块加载即触发首次拉取（AppShell 级）
   void loadGlobal()
+
+  // 订阅失效信号（模块级，只挂一次）。收到 scope='global' 时强制重拉。
+  if (!globalInvalidateSubscribed) {
+    globalInvalidateSubscribed = true
+    configApi.onSkillCacheInvalidated((payload) => {
+      if (payload.scope === 'global') {
+        void loadGlobal(true)
+      }
+    })
+  }
 
   return { globalSkills }
 }

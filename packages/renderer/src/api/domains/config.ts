@@ -151,6 +151,23 @@ export function onSkillDirs(handler: (dirs: SkillDirConfig[]) => void): () => vo
   })
 }
 
+/**
+ * 订阅 skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
+ * 与 onSkills 区分：onSkills 推全量 skill 列表给 settingsStore（settings 弹窗用）；
+ * onSkillCacheInvalidated 推失效信号给 landing composable（runtime 已重扫缓存，前端重拉即拿新值）。
+ *
+ * payload 与 shared protocol.ts 的 config.skillCacheInvalidated 一致：
+ * - scope='global'：全局 skill 变动，所有 panel 刷全局缓存（cwd 缺省）
+ * - scope='project'：项目 skill 变动，cwd 携带变更的项目根（前端按需路由）
+ */
+export function onSkillCacheInvalidated(
+  handler: (payload: { scope: 'global' | 'project'; cwd?: string }) => void,
+): () => void {
+  return events.onGlobalType('config.skillCacheInvalidated', (msg) => {
+    handler(msg.payload as { scope: 'global' | 'project'; cwd?: string })
+  })
+}
+
 export function onAgentDirs(handler: (dirs: SkillDirConfig[]) => void): () => void {
   return events.onGlobalType('config.agentDirs', (msg) => {
     handler(msg.payload.dirs)
