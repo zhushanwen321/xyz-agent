@@ -22,6 +22,9 @@ import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError, UpdateUnsupportedError } from '../update/types.js'
 import { validateRelease } from '../update/validate-release.js'
 
+/** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
+const RESTART_QUIT_DELAY_MS = 500
+
 /**
  * 注册自动升级 IPC handler（update:check + update:perform）。
  *
@@ -62,8 +65,8 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         },
       })
       if (result.triggerRestart) {
-        // 延迟 500ms 给前端时间显示「重启中」，再 quit
-        setTimeout(() => app.quit(), 500)
+        // 延迟 RESTART_QUIT_DELAY_MS 给前端时间显示「重启中」，再 quit
+        setTimeout(() => app.quit(), RESTART_QUIT_DELAY_MS)
       }
       return result
     } catch (err) {

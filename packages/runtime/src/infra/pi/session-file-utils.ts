@@ -183,7 +183,6 @@ export function readPresetBinding(filePath: string): string | undefined {
       return binding.presetId
     }
     return undefined
-  // eslint-disable-next-line taste/no-silent-catch -- no sidecar / invalid → undefined（与 extractSessionOutcome 容错范式一致）
   } catch {
     return undefined
   }

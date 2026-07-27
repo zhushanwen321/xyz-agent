@@ -18,6 +18,19 @@ import type { SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
+/** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
+const RANDOM_TOKEN_RADIX = 36
+/** Math.random().toString(N) 返回形如 "0.xxxx"，跳过前导 "0." 取随机段。 */
+const RANDOM_TOKEN_SLICE_START = 2
+
+/**
+ * 生成短随机字符串，用作 sendBash / abortBash 的代次令牌后缀。
+ * 与 `Date.now()` 拼接保证唯一性，比对即可判定是否被抢收口。
+ */
+function randomTokenSuffix(): string {
+  return Math.random().toString(RANDOM_TOKEN_RADIX).slice(RANDOM_TOKEN_SLICE_START)
+}
+
 export class MessageDispatcher {
   private sendMessageHook: SendMessageHook | null = null
 
@@ -253,7 +266,7 @@ export class MessageDispatcher {
       activeSession.isBashRunning = true
       // [W1] 生成本次 sendBash 的代次令牌：abortBash 在广播 cancelled 终态前会旋转此 token
       // （清 undefined）。await 返回后比对 token，可判定是否被 abortBash 抢先收口。
-      activeSession.bashRunToken = `bash_${Date.now()}_${Math.random().toString(36).slice(2)}`
+      activeSession.bashRunToken = `bash_${Date.now()}_${randomTokenSuffix()}`
     }
     // [W1] 捕获本次 sendBash 的 token 到本地（abortBash 旋转后 activeSession.bashRunToken 已变，
     // 本地 myToken 不变，比对 myToken === activeSession.bashRunToken 即可判定未被抢收口）。
@@ -358,7 +371,7 @@ export class MessageDispatcher {
         // 检测到 activeSession.bashRunToken !== myToken 即静默跳过终态广播，避免双终态。
         // 用新 token 而非清 undefined：若 sendBash 尚未读 myToken（仍在 await），清 undefined
         // 会让 sendBash 误判「无 abort」——而新 token 保证 sendBash 比对必然不等。
-        activeSession.bashRunToken = `abort_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        activeSession.bashRunToken = `abort_${Date.now()}_${randomTokenSuffix()}`
       }
     }
     // 兑底终态：无论 pi 是否响应 abort_bash，都广播 cancelled=true 的 bashResult。
