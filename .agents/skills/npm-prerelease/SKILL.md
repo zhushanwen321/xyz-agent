@@ -40,7 +40,8 @@ description: >-
 ### [MANDATORY] 1. 执行预发布脚本
 
 ```bash
-cd /Users/zhushanwen/Code/xyz-agent-workspace/main
+# <workspace-root> = bare-repo workspace 根目录（含 main、各 feature worktree 子目录）
+cd <workspace-root>/main
 bash scripts/npm-prerelease.sh
 ```
 
