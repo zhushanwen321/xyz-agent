@@ -369,7 +369,7 @@ function onEditStateChange(idx: number, editing: boolean): void {
  * 不能滚出视口顶部（RO 会断开高度不更新）。watch 最后一个 turn 的 isStreaming 驱动 pinStreaming，
  * 逻辑封装在 useStreamingPin（行数规范 + 复用），详见该 composable 头注释。
  */
-useStreamingPin({ items: renderItems, pinStreaming })
+useStreamingPin({ items: renderItems, pinStreaming, sessionId: () => props.sessionId })
 
 /**
  * auto-scroll：stickToBottom guard —— 非贴底时不强制拉回。
