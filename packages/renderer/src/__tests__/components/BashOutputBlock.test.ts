@@ -1,12 +1,12 @@
 /**
- * BashOutputBlock 组件测试（composer-bash-execute W3 TK8 + W4 RO 上报 + 视觉降级）。
+ * BashOutputBlock 组件测试（composer-bash-execute W3 TK8 + W4 RO 上报 + 视觉降级 + 灰阶化）。
  *
  * 验证：
  * - complete 态 exit 0 → command + output + 「exit 0」success 标签
- * - streaming 态 → spinner + 取消按钮；点击取消触发 abortBash
- * - exit N(>0) → 「exit N」danger 标签
+ * - streaming 态 → 双环 loader-spin + 取消按钮；点击取消触发 abortBash
+ * - exit N(>0) → 「exit N」warn 标签（灰阶化：哑光金替代 danger 红，bash exit N 非致命）
  * - excludeFromContext=true → no context 标记
- * - cancelled=true → 「cancelled」标签
+ * - cancelled=true → 「cancelled」neutral-dim 标签
  * - output='' → 「(no output)」
  * - W4T1：注册 useResizeReport 且 RO 回调上报的 key 是 `s-${message.id}`（带 s- 前缀，
  *   与 useVirtualTurnList itemKey 的 system 项格式一致）
@@ -72,7 +72,7 @@ describe('BashOutputBlock', () => {
     expect(tag.classes()).toContain('text-success')
   })
 
-  it('streaming 态 → spinner + 取消按钮存在；点击取消触发 abortBash', async () => {
+  it('streaming 态 → 双环 loader-spin + 取消按钮存在；点击取消触发 abortBash', async () => {
     const msg = makeMessage({
       status: 'streaming',
       bashExecution: {
@@ -86,15 +86,21 @@ describe('BashOutputBlock', () => {
       },
     })
     const wrapper = mountBlock(msg)
-    // streaming 不渲染 status-tag（spinner 无 testid），取消按钮存在
+    // streaming 不渲染 status-tag（spinner 无 status-tag testid），取消按钮存在
     expect(wrapper.find('[data-testid="bash-status-tag"]').exists()).toBe(false)
+    // 灰阶化（§13.2-D）：streaming 态用本分支双环 loader-spin（animate-loader-spin + text-accent），
+    // 替代 main 的 Loader2 animate-spin
+    const spinner = wrapper.find('[data-testid="bash-streaming-spinner"]')
+    expect(spinner.exists()).toBe(true)
+    expect(spinner.classes()).toContain('text-accent')
+    expect(spinner.find('.animate-loader-spin').exists()).toBe(true)
     const cancelBtn = wrapper.find('[data-testid="bash-cancel-btn"]')
     expect(cancelBtn.exists()).toBe(true)
     await cancelBtn.trigger('click')
     expect(mockAbortBash).toHaveBeenCalledWith('sess-1')
   })
 
-  it('exitCode=2 → 「exit 2」标签（danger 类）', () => {
+  it('exitCode=2 → 「exit 2」标签（warn 类，灰阶化：哑光金替代 danger 红）', () => {
     const msg = makeMessage({
       bashExecution: {
         command: 'false',
@@ -109,7 +115,7 @@ describe('BashOutputBlock', () => {
     const wrapper = mountBlock(msg)
     const tag = wrapper.find('[data-testid="bash-status-tag"]')
     expect(tag.text()).toBe('exit 2')
-    expect(tag.classes()).toContain('text-danger')
+    expect(tag.classes()).toContain('text-warn')
   })
 
   it('excludeFromContext=true → 显示 no context 标记', () => {
@@ -145,7 +151,7 @@ describe('BashOutputBlock', () => {
     expect(tag.exists()).toBe(true)
     // i18n 文案随 locale（zh-CN 「已取消」/en-US 「cancelled」），断言非空即可
     expect(tag.text().length).toBeGreaterThan(0)
-    expect(tag.classes()).toContain('text-muted')
+    expect(tag.classes()).toContain('text-neutral-dim')
   })
 
   it('output 为空且非 streaming → 显示 (no output)', () => {
@@ -213,7 +219,7 @@ describe('BashOutputBlock', () => {
     expect(tag.exists()).toBe(true)
     // 超时态走 bashTimeout（zh-CN「已超时」），不应是已取消（zh-CN「已取消」）
     expect(tag.text().length).toBeGreaterThan(0)
-    expect(tag.classes()).toContain('text-muted')
+    expect(tag.classes()).toContain('text-neutral-dim')
     // 验证走的是 timeout 分支而非 cancelled 分支：两个文案 key 不同 → 文案不同
     expect(tag.text()).not.toBe('已取消')
   })
@@ -305,7 +311,7 @@ describe('BashOutputBlock streaming → complete 过渡（PR#116 review gap2）'
     expect(output.text()).toContain('PASS  src/foo.test.ts')
   })
 
-  it('gap2: streaming → 更新到 complete 但 exit N(>0) → exit 标签显示 danger 类', async () => {
+  it('gap2: streaming → 更新到 complete 但 exit N(>0) → exit 标签显示 warn 类（灰阶化）', async () => {
     const streamingMsg = makeMessage({
       status: 'streaming',
       bashExecution: {
@@ -337,12 +343,12 @@ describe('BashOutputBlock streaming → complete 过渡（PR#116 review gap2）'
     })
     await wrapper.setProps({ message: failedMsg })
 
-    // 过渡后：cancel 消失 + exit 2 danger 标签 + output
+    // 过渡后：cancel 消失 + exit 2 warn 标签（灰阶化：哑光金替代 danger）+ output
     expect(wrapper.find('[data-testid="bash-cancel-btn"]').exists()).toBe(false)
     const tag = wrapper.find('[data-testid="bash-status-tag"]')
     expect(tag.exists()).toBe(true)
     expect(tag.text()).toBe('exit 2')
-    expect(tag.classes()).toContain('text-danger')
+    expect(tag.classes()).toContain('text-warn')
     expect(wrapper.find('[data-testid="bash-output"]').exists()).toBe(true)
   })
 })

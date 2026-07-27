@@ -14,6 +14,13 @@
     W4：注册 useResizeReport 上报实测高度——bash 长输出真实高度常达 280-300px，远超
     useVirtualTurnList 的 ESTIMATED_TURN_HEIGHT=200 估算值，不接 RO 会令后续 item offset 算错
     → 视觉重叠。key 必须带 s- 前缀（与 itemKey 的 system 项格式一致，详见 script 注释）。
+
+    灰阶化（main-fusion W4 / §13.2-D）：terminal 图标改 neutral-ico，streaming 态改用本分支
+    双环 loader-spin（复用 Block.vue 的 RUNNING_LOADER_SVG + animate-loader-spin），timeout/
+    cancelled 改 neutral-dim，exit 0 保留 success（唯一彩色例外，成功确认语义），exit N 改 warn
+    （哑光金，bash exit N 是用户命令失败非致命，不该用 danger 红告警权重）。取消按钮/输出文本/
+    截断标记/空输出占位全切到 neutral-* 谱系。结构层零改动（useResizeReport / bashExecution 消费 /
+    exitCode/timeout/cancelled/truncated 语义全保留）。
   -->
   <div
     ref="rootEl"
@@ -23,28 +30,36 @@
     <!-- 头部行：command 文本 + 状态标签（+ no context 标记 + 取消按钮） -->
     <div class="flex items-start justify-between gap-2">
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
-        <!-- S9：Terminal 图标前缀增强 shell prompt 语义（与项目其他 lucide 图标风格一致） -->
-        <Terminal class="size-3 shrink-0 text-muted" />
+        <!-- S9：Terminal 图标前缀增强 shell prompt 语义（灰阶 neutral-ico，§13.2-D） -->
+        <Terminal class="size-3 shrink-0 text-neutral-ico" />
         <span class="min-w-0 flex-1 truncate font-mono text-[11px] leading-snug text-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
         <span
           v-if="bash?.excludeFromContext"
-          class="shrink-0 rounded-sm border border-border px-1 py-0.5 text-[10px] leading-none text-muted"
+          class="shrink-0 rounded-sm border border-border px-1 py-0.5 text-[10px] leading-none text-neutral-dim"
           data-testid="bash-no-context-tag"
         >{{ t('panel.message.bashNoContext') }}</span>
       </div>
       <div class="flex shrink-0 items-center gap-1.5">
-        <span v-if="isStreaming" class="flex items-center gap-1 text-[11px] leading-none text-muted">
-          <Loader2 class="size-3 animate-spin" />
+        <!-- 灰阶化（§13.2-D）：streaming 态改用本分支双环 loader-spin（复用 Block.vue RUNNING_LOADER_SVG +
+             animate-loader-spin，accent 蓝），替代 main 的 Loader2 animate-spin -->
+        <span
+          v-if="isStreaming"
+          class="flex items-center gap-1 text-[11px] leading-none text-accent"
+          data-testid="bash-streaming-spinner"
+        >
+          <!-- eslint-disable-next-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
+          <span class="inline-flex size-3 items-center justify-center animate-loader-spin" v-html="RUNNING_LOADER_SVG" />
         </span>
-        <!-- W5：error==='timeout'（finalizeBashOnly 置位）优先于 cancelled，显示「超时」与「已取消」区分 -->
+        <!-- W5：error==='timeout'（finalizeBashOnly 置位）优先于 cancelled，显示「超时」与「已取消」区分。
+             灰阶化：timeout/cancelled 改 neutral-dim（§13.2-D，非终端语义色） -->
         <span
           v-else-if="isTimeout"
-          class="font-mono text-[11px] leading-none text-muted"
+          class="font-mono text-[11px] leading-none text-neutral-dim"
           data-testid="bash-status-tag"
         >{{ t('panel.message.bashTimeout') }}</span>
         <span
           v-else-if="isCancelled"
-          class="font-mono text-[11px] leading-none text-muted"
+          class="font-mono text-[11px] leading-none text-neutral-dim"
           data-testid="bash-status-tag"
         >{{ t('panel.message.bashCancelled') }}</span>
         <span
@@ -57,7 +72,7 @@
           v-if="isStreaming"
           variant="ghost"
           size="sm"
-          class="h-auto p-0 text-[11px] text-muted hover:text-fg"
+          class="h-auto p-0 text-[11px] text-neutral-dim hover:text-neutral-fg"
           data-testid="bash-cancel-btn"
           @click="onCancel"
         >{{ t('panel.message.bashCancel') }}</Button>
@@ -71,20 +86,21 @@
     -->
     <div
       v-if="!isStreaming && hasOutput"
-      class="max-h-[var(--bash-output-max-height)] overflow-auto px-2 py-1 font-mono text-[11px] leading-relaxed text-muted"
+      class="max-h-[var(--bash-output-max-height)] overflow-auto px-2 py-1 font-mono text-[11px] leading-relaxed text-neutral-mid"
       data-testid="bash-output"
     >
       <pre class="whitespace-pre font-mono">{{ bash?.output }}</pre>
-      <!-- W4：消费 truncated 字段——pi 对超长输出截断时返回 truncated:true，显示截断标记（前端只显示，不自行截断） -->
+      <!-- W4：消费 truncated 字段——pi 对超长输出截断时返回 truncated:true，显示截断标记（前端只显示，不自行截断）。
+           灰阶化（§13.2-D）：截断标记改 neutral-dim italic -->
       <div
         v-if="bash?.truncated"
-        class="mt-1 text-[10px] italic leading-none text-muted"
+        class="mt-1 text-[10px] italic leading-none text-neutral-dim"
         data-testid="bash-output-truncated"
       >{{ t('panel.message.bashOutputTruncated') }}</div>
     </div>
     <p
       v-else-if="!isStreaming && !hasOutput"
-      class="text-[11px] leading-snug text-muted"
+      class="text-[11px] leading-snug text-neutral-dim"
       data-testid="bash-output-empty"
     >{{ t('panel.message.bashNoOutput') }}</p>
   </div>
@@ -93,10 +109,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Loader2, Terminal } from '@lucide/vue'
+import { Terminal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChat } from '@/composables/features/useChat'
 import { useResizeReport } from '@/composables/effects/useResizeReport'
+import { RUNNING_LOADER_SVG } from '@/components/panel/message-stream/block-icon'
 import type { Message } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -126,12 +143,17 @@ const isTimeout = computed(() => props.message.error === 'timeout')
 const isCancelled = computed(() => bash.value?.cancelled === true)
 const hasOutput = computed(() => !!bash.value?.output)
 
-/** exitCode 标签颜色：timeout/cancelled 走 muted；exit 0 绿；exit N(>0) 红 */
+/**
+ * exitCode 标签颜色（灰阶化 §13.2-D）：
+ * - timeout/cancelled → neutral-dim（非终端语义色，中性弱化）
+ * - exit 0 → success（绿，唯一彩色例外——成功确认语义，与 §6 failed 用 warn 对称）
+ * - exit N(>0) → warn（哑光金，CL6 决策：bash exit N 是用户命令失败非致命，不该用 danger 红告警权重）
+ */
 const exitCodeClass = computed(() => {
-  if (isTimeout.value || isCancelled.value) return 'text-muted'
+  if (isTimeout.value || isCancelled.value) return 'text-neutral-dim'
   const code = bash.value?.exitCode
   if (code === 0) return 'text-success'
-  return 'text-danger'
+  return 'text-warn'
 })
 
 function onCancel(): void {
