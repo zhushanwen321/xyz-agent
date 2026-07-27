@@ -87,9 +87,9 @@ describe('ServerMessageBroker W3 M6 (broadcast try-catch)', () => {
     // ws1 也尝试调用了（只是抛错被吞）
     expect(vi.mocked(ws1.send)).toHaveBeenCalledTimes(1)
 
-    // 验证传给 ws2 的 payload 是序列化后的 msg
+    // 验证传给 ws2 的 payload 是序列化后的 msg（P2-s1-w1 起 broadcast 给 envelope 打全局 seq）
     const sent2 = vi.mocked(ws2.send).mock.calls[0][0]
-    expect(JSON.parse(sent2 as string)).toEqual(msg)
+    expect(JSON.parse(sent2 as string)).toEqual({ ...msg, seq: 1 })
   })
 
   it('U9b: broadcast with all clients throwing completes without throwing', async () => {
@@ -177,7 +177,7 @@ describe('ServerMessageBroker L6 (broadcast 单次 stringify)', () => {
     const sent2 = vi.mocked(ws2.send).mock.calls[0][0]
     // 两客户端收到完全相同的字符串
     expect(sent1).toBe(sent2)
-    // 且可反序列化回原 msg
-    expect(JSON.parse(sent1 as string)).toEqual(msg)
+    // 且可反序列化回原 msg + broadcast 注入的 seq（P2-s1-w1）
+    expect(JSON.parse(sent1 as string)).toEqual({ ...msg, seq: 1 })
   })
 })

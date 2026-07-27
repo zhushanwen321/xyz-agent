@@ -780,6 +780,9 @@ export interface ServerMessage<T extends ServerMessageType = ServerMessageType> 
   type: T
   id?: string
   payload: ServerMessageMap[T]
+  // 仅广播消息携带（broker.broadcast 打点），reply/initial state 不带。
+  // P2 可靠投递层：全局单调递增 seq，客户端断线重连凭 lastSeq 回放缺失段。
+  seq?: number
 }
 
 /**

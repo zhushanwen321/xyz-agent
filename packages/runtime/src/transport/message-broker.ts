@@ -17,6 +17,7 @@ import type { ISessionService, IConfigService, IModelService, IMessageBroker, IP
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
 import type { ErrorDetails } from './message-context.js'
 import { WS_OPEN, type ConnectionCtx } from './connection-manager.js'
+import { SeqCounter } from './seq-counter.js'
 
 /** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Map<clientId, ConnectionCtx>）。 */
 export interface ClientPool {
@@ -41,6 +42,11 @@ export interface BrokerServices {
 
 export class ServerMessageBroker implements IMessageBroker {
   private pushId = 0
+  /**
+   * 广播消息的全局单调 seq 计数器（P2 可靠投递层）。
+   * 仅 broadcast 入口调用；reply/sendInitialState 点对点不打 seq（见 spec D1）。
+   */
+  private readonly seqCounter = new SeqCounter()
 
   constructor(
     private pool: ClientPool,
@@ -63,7 +69,11 @@ export class ServerMessageBroker implements IMessageBroker {
     // 现在循环前序列化一次得 payload 字符串，循环内直接 ws.send(payload)。
     let payload: string
     try {
-      payload = JSON.stringify(msg)
+      // P2 可靠投递层：broadcast 入口给 envelope 打全局单调 seq。
+      // 在 stringify 之前注入 → 客户端收到的 JSON 含 seq；stringify 失败时 seq 已自增留空洞。
+      // reply（send）/sendInitialState 不经此路径，天然无 seq（spec D1）。
+      const sequenced = { ...msg, seq: this.seqCounter.assignSeq() }
+      payload = JSON.stringify(sequenced)
     // D4（不等价语义，刻意取舍）：提级后整次广播只 stringify 一次，
     // 一旦失败 → 本次广播对**所有 client 都丢弃**（连原本可正常收的 client 也收不到）。
     // 旧实现（循环内 per-client send 各自 stringify）失败只影响那一个 client，其余 client 照常收到。
