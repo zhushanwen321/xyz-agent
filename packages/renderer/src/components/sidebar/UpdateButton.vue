@@ -24,16 +24,16 @@
           <span class="absolute right-0 top-0 size-[5px] rounded-full bg-danger" data-testid="update-badge" />
         </Button>
       </HoverCardTrigger>
-      <HoverCardContent side="top" class="max-h-[320px] w-[320px] overflow-auto p-3 text-[12px] text-fg">
-        <div class="mb-1.5 text-[11px] font-semibold text-accent">{{ t('sidebar.update.newVersion') }}</div>
+      <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[12px] text-fg">
+        <div class="mb-2 text-[13px] font-semibold text-accent">{{ t('sidebar.update.newVersion') }}</div>
         <!--
           不复用 MarkdownRenderer 组件：该组件位于 panel/message-stream 下，强依赖 fileSearch/fileTree/
           sideDrawer/AmbiguousFilePopover/MermaidRenderer 等 panel 上下文（sessionId 在此无值，文件路径识别/
           代码复制交互无意义且会拖入 shiki WASM）。HoverCard 内 release note 是只读展示，复制/链接交互非必需；
-          如需交互可后续抽取一个轻量只读 MarkdownView 组件再迁移。排版用浏览器默认样式。
+          如需交互可后续抽取一个轻量只读 MarkdownView 组件再迁移。
         -->
         <!-- eslint-disable-next-line vue/no-v-html -- release note 经 markdown-it 渲染（html:false 默认禁裸 HTML + scheme 白名单过滤），与 MarkdownRenderer 同论证 XSS-safe。受控注入点。 -->
-        <div data-testid="update-release-notes" v-html="state.releaseNotesHtml" />
+        <div class="release-notes-markdown" data-testid="update-release-notes" v-html="state.releaseNotesHtml" />
       </HoverCardContent>
     </HoverCard>
 
@@ -141,3 +141,155 @@ async function onOpenFallbackUrl(): Promise<void> {
   await openFallbackUrl()
 }
 </script>
+
+<style scoped>
+/* ── Release Notes Markdown 样式 ──
+   只读展示，不需要代码块复制/文件路径交互等重功能。
+   复用 MarkdownRenderer 的核心排版样式，保持视觉一致性。 */
+
+.release-notes-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-hover) transparent;
+}
+
+.release-notes-markdown :deep(h1),
+.release-notes-markdown :deep(h2),
+.release-notes-markdown :deep(h3),
+.release-notes-markdown :deep(h4) {
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0.8em 0 0.4em;
+  color: var(--fg);
+}
+.release-notes-markdown :deep(h1) { font-size: 1.25em; }
+.release-notes-markdown :deep(h2) { font-size: 1.15em; }
+.release-notes-markdown :deep(h3) { font-size: 1.05em; }
+
+.release-notes-markdown :deep(p) {
+  margin: 0.4em 0;
+  line-height: 1.65;
+}
+
+.release-notes-markdown :deep(ul),
+.release-notes-markdown :deep(ol) {
+  margin: 0.4em 0;
+  padding-left: 1.3em;
+}
+.release-notes-markdown :deep(ul) {
+  list-style-type: disc;
+}
+.release-notes-markdown :deep(ol) {
+  list-style-type: decimal;
+}
+.release-notes-markdown :deep(li) {
+  margin: 0.15em 0;
+  line-height: 1.65;
+}
+.release-notes-markdown :deep(li)::marker {
+  color: var(--fg);
+}
+
+.release-notes-markdown :deep(blockquote) {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 0.8em;
+  margin: 0.5em 0;
+  color: var(--muted);
+}
+
+.release-notes-markdown :deep(a) {
+  color: var(--accent);
+  text-decoration: none;
+}
+.release-notes-markdown :deep(a:hover) {
+  text-decoration: underline;
+}
+
+/* 行内代码 */
+.release-notes-markdown :deep(code:not(pre code)) {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--surface-2);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+}
+
+/* 代码块：简化版（无复制按钮/语言标签，只读展示） */
+.release-notes-markdown :deep(.md-codeblock) {
+  margin: 0.6em 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.release-notes-markdown :deep(.md-codeblock__header) {
+  display: flex;
+  align-items: center;
+  padding: 0.2em 0.6em;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.release-notes-markdown :deep(.md-codeblock__lang) {
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  color: var(--subtle);
+  text-transform: lowercase;
+}
+/* 隐藏复制按钮（只读展示不需要） */
+.release-notes-markdown :deep(.md-codeblock__copy) {
+  display: none;
+}
+.release-notes-markdown :deep(.md-codeblock pre.shiki) {
+  margin: 0;
+  padding: 0.7em 0.9em;
+  border-radius: 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  line-height: 1.55;
+}
+.release-notes-markdown :deep(.md-codeblock pre.shiki code) {
+  font-family: inherit;
+  background: transparent;
+  padding: 0;
+}
+
+/* 表格 */
+.release-notes-markdown :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.9em;
+}
+.release-notes-markdown :deep(th),
+.release-notes-markdown :deep(td) {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.5em;
+  text-align: left;
+}
+.release-notes-markdown :deep(th) {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.release-notes-markdown :deep(hr) {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.8em 0;
+}
+
+/* shiki 双主题切换（与 MarkdownRenderer 一致） */
+.release-notes-markdown :deep(.shiki) {
+  background-color: var(--shiki-dark-bg) !important;
+}
+.release-notes-markdown :deep(.shiki span) {
+  color: var(--shiki-dark);
+}
+
+:global([data-theme="light"]) .release-notes-markdown :deep(.shiki) {
+  background-color: var(--shiki-light-bg) !important;
+}
+:global([data-theme="light"]) .release-notes-markdown :deep(.shiki span) {
+  color: var(--shiki-light);
+}
+</style>

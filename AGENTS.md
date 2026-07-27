@@ -487,6 +487,29 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
 
+### [MANDATORY] Release Notes 必须中英双语
+
+Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->` 和 `<!-- LANG:en -->` 标记分隔。前端会根据用户语言偏好自动提取对应部分。
+
+格式示例：
+```markdown
+<!-- LANG:en -->
+## What's New
+- Fix bug X
+- Add feature Y
+
+<!-- LANG:zh -->
+## 更新内容
+- 修复 bug X
+- 添加功能 Y
+```
+
+注意事项：
+- 英文在前，中文在后（便于 GitHub 默认显示英文）
+- 每个语言部分保持独立的 markdown 结构
+- 标记必须独占一行，前后可有空行
+- 向后兼容：无标记的 release 仍正常显示完整内容
+
 ### [MANDATORY] 必须遵守的规则
 
 **错误做法（禁止）：**

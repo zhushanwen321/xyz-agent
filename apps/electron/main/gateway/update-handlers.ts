@@ -72,15 +72,20 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     } catch (err) {
       // 错误转 update:error 事件（区分 stage / errorCode）
       const win = deps.getMainWindow()
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('update:error', {
-          stage: err instanceof UpdateError ? err.stage : 'replacing',
-          message: err instanceof Error ? err.message : String(err),
-          errorCode: err instanceof UpdateUnsupportedError ? err.errorCode : undefined,
-        })
+      const errorPayload = {
+        stage: err instanceof UpdateError ? err.stage : 'replacing',
+        message: err instanceof Error ? err.message : String(err),
+        errorCode: err instanceof UpdateUnsupportedError ? err.errorCode : undefined,
       }
-      // 透传给 invoke 的 reject（前端 catch）
-      throw err
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('update:error', errorPayload)
+      }
+      // [HISTORICAL] throw 可序列化的普通对象，而非原始 Error。
+      // Electron IPC 使用结构化克隆算法序列化 invoke reject 值，
+      // Error 对象的原生属性（stack 等）不可克隆，会抛 'an object could not be cloned'。
+      // 前端 useAppUpdate 的 onUpdateError 已通过事件通道接收错误详情，
+      // invoke reject 只需传递可序列化的错误摘要。
+      throw { message: errorPayload.message, stage: errorPayload.stage, errorCode: errorPayload.errorCode }
     }
   })
 }

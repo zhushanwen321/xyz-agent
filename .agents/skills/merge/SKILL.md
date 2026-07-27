@@ -133,6 +133,57 @@ bash .agents/skills/merge/scripts/release.sh
 
 从 conventional commits 自动生成 Release Notes（feat/fix/perf/breaking 分组）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
 
+**[MANDATORY] Release Notes 必须中英双语**
+
+Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->` 和 `<!-- LANG:en -->` 标记分隔。前端会根据用户语言偏好自动提取对应部分。
+
+格式示例：
+```markdown
+<!-- LANG:en -->
+## What's New
+- Fix bug X
+- Add feature Y
+
+<!-- LANG:zh -->
+## 更新内容
+- 修复 bug X
+- 添加功能 Y
+```
+
+注意事项：
+- 英文在前，中文在后（便于 GitHub 默认显示英文）
+- 每个语言部分保持独立的 markdown 结构
+- 标记必须独占一行，前后可有空行
+- 向后兼容：无标记的 release 仍正常显示完整内容
+
+**[MANDATORY] 校验 Release Notes 双语格式**
+
+在创建 Release 后，必须校验 Release Notes 包含双语标记：
+
+```bash
+# 获取刚创建的 release body
+RELEASE_BODY=$(gh release view "v${VERSION}" --json body -q '.body')
+
+# 校验是否包含中英双语标记
+if ! echo "$RELEASE_BODY" | grep -q '<!-- LANG:en -->'; then
+  echo "ERROR: Release Notes 缺少英文标记 <!-- LANG:en -->"
+  exit 1
+fi
+
+if ! echo "$RELEASE_BODY" | grep -q '<!-- LANG:zh -->'; then
+  echo "ERROR: Release Notes 缺少中文标记 <!-- LANG:zh -->"
+  exit 1
+fi
+
+echo "✓ Release Notes 双语格式校验通过"
+```
+
+如果校验失败，需要编辑 release 添加双语标记：
+```bash
+# 编辑 release body（保留原有内容，添加语言标记）
+gh release edit "v${VERSION}" --notes-file ./release-notes-bilingual.md
+```
+
 ### 阶段 6: 交付物验证（Electron 特化）
 
 ⚠️ **不可跳过**。这是阶段 7 的硬性前置条件。
