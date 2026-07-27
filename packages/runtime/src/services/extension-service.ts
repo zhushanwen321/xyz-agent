@@ -311,11 +311,15 @@ export class ExtensionService {
     // 追加文件型 extension
     if (existsSync(this.extensionFilePath)) {
       filtered.push(this.extensionFilePath)
+    } else {
+      console.warn(`[extension-service] extension file not found, skipping: ${this.extensionFilePath}`)
     }
     // 追加第二个文件型 extension（system-prompt 扩展，必须在 agent extension 之后：
     // spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
     if (existsSync(this.systemPromptExtensionFilePath)) {
       filtered.push(this.systemPromptExtensionFilePath)
+    } else {
+      console.warn(`[extension-service] extension file not found, skipping: ${this.systemPromptExtensionFilePath}`)
     }
 
     return filtered

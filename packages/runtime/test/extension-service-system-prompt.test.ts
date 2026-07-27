@@ -120,4 +120,21 @@ describe('ExtensionService.getExtensionPaths system-prompt extension', () => {
     expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(true)
     expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(false)
   })
+
+  it('TC5: 两个文件型 extension 都不存在时，各 warn 一次（不再静默 skip）', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(existsSync(agentExtensionPath())).toBe(false)
+    expect(existsSync(systemPromptExtensionPath())).toBe(false)
+
+    const paths = await service.getExtensionPaths()
+
+    // 两个文件都不在结果里
+    expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(false)
+    expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(false)
+    // 各 warn 一次，含 'extension file not found, skipping' 与对应路径
+    const warnCalls = warnSpy.mock.calls.map(c => String(c[0]))
+    expect(warnCalls.some(s => s.includes('extension file not found, skipping') && s.includes('xyz-agent-extension.js'))).toBe(true)
+    expect(warnCalls.some(s => s.includes('extension file not found, skipping') && s.includes('xyz-system-prompt-extension.js'))).toBe(true)
+    warnSpy.mockRestore()
+  })
 })

@@ -6,19 +6,32 @@ import { RpcClient, type RpcClientOptions } from './rpc-client.js'
 import type { IProcessManager } from '../../services/ports/pi-engine.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
+import { getConfigDir } from './pi-paths.js'
 
 // Find pi executable path (cross-platform). Search order:
-// Packaged: Resources/pi/pi-<plat>-<arch>
-// Dev: apps/electron/resources/pi/pi-<plat>-<arch> (prepare-pi-resources.sh 产物)
-//   fallback: PATH (which/where pi) → nvm → common locations
-function findPiExecutable(projectRoot: string): string {
+// 1. XYZ_PI_BIN env (highest priority; remote/standalone-server deployment override)
+// 2. Packaged: Resources/pi/pi-<plat>-<arch>
+// 3. Dev: apps/electron/resources/pi/pi-<plat>-<arch> (prepare-pi-resources.sh 产物)
+// 4. <dataDir>/pi/<binary> (pi-fetch download slot, standalone-server deployment)
+// 5. fallback: PATH (which/where pi) → nvm → common locations
+export function findPiExecutable(projectRoot: string): string {
   const platform = process.platform  // 'darwin' | 'win32' | 'linux'
   const arch = process.arch          // 'arm64' | 'x64'
   const binaryName = platform === 'win32'
     ? `pi-windows-${arch}.exe`
     : `pi-${platform}-${arch}`
 
-  // Packaged mode: use bundled pi binary from resources
+  // 1. XYZ_PI_BIN env (highest priority; remote/standalone-server deployment)
+  const envPiBin = process.env.XYZ_PI_BIN
+  if (envPiBin) {
+    if (existsSync(envPiBin)) {
+      console.log(`[process-manager] using pi from XYZ_PI_BIN: ${envPiBin}`)
+      return envPiBin
+    }
+    console.warn(`[runtime] XYZ_PI_BIN points to non-existent path: ${envPiBin}, continuing fallback`)
+  }
+
+  // 2. Packaged mode: use bundled pi binary from resources
   if (isPackaged()) {
     // Runtime's cwd = process.resourcesPath (set by runtime-manager.ts)
     const bundledPi = join(process.cwd(), 'pi', binaryName)
@@ -43,6 +56,13 @@ function findPiExecutable(projectRoot: string): string {
     return devPi
   }
   console.warn(`[process-manager] resources/pi/${binaryName} not found, falling back to system PATH`)
+
+  // 4. <dataDir>/pi/<binary> (pi-fetch download slot; standalone-server deployment)
+  const dataDirPi = join(getConfigDir(), 'pi', binaryName)
+  if (existsSync(dataDirPi)) {
+    console.log(`[process-manager] using pi from dataDir slot: ${dataDirPi}`)
+    return dataDirPi
+  }
 
   // Development mode fallback: original discovery logic
   const isWindows = process.platform === 'win32'
