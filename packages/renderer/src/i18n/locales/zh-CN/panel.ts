@@ -88,8 +88,6 @@ export default {
     branchCreatedNoFrom: '已创建分支',
     thinkCount: '思考 ×{count}',
     toolCount: '工具 ×{count}',
-    mergedTools: '{n} 个同类操作',
-    mergedThoughts: '{n} 次思考',
     bashCancelled: '已取消',
     bashTimeout: '已超时',
     bashOutputTruncated: '输出已截断',

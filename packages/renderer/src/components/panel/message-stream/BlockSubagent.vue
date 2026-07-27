@@ -7,7 +7,7 @@
     - sync 模式 header 滚动进度（currentTool/turn/tokens）。
     - failed：错误摘要进 body 文本（中性灰 border-l），hover 染 warn（不再鲜红）。
   -->
-  <div class="trace-subagent border-b border-dashed border-border pb-2.5 mb-0.5" data-testid="subagent-block">
+  <div class="trace-subagent border-b border-dashed border-border pb-2.5 mb-0.5 pl-3.5" data-testid="subagent-block">
     <div
       class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13.5px] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
@@ -18,7 +18,7 @@
       <!-- running 态 loader（双环 + accent），其余走 users ICON -->
       <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
       <component :is="BLOCK_ICON_LUCIDE.subagent" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
-      <span class="subagent-tag shrink-0 whitespace-nowrap uppercase tracking-[0.08em] font-semibold text-[12px] text-neutral-fg font-mono">subagent</span>
+      <span class="subagent-tag mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
       <span class="shrink-0 whitespace-nowrap text-neutral-mid">{{ subagentAgent || subagentHeaderLabel }}</span>
       <span v-if="subagentTask" class="min-w-0 truncate text-neutral-dim">· {{ subagentTaskPreview }}</span>
       <!-- 状态/进度（滚动更新）：sync running 显当前工具+turn+tokens -->

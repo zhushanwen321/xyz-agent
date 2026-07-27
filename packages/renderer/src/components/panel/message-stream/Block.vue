@@ -28,8 +28,8 @@
         <!-- 收起态：preview 跟在 label 后（truncate 避免长 preview 撑爆） -->
         <span v-if="!thinkingExpanded" class="min-w-0 truncate text-neutral-dim">· {{ previewText }}</span>
       </div>
-      <!-- 展开态：block 在下一行，pl-6 与 icon 右侧对齐；copy 按钮在左上角（hover 显） -->
-      <div v-if="thinkingExpanded" class="group/think relative mt-1 text-[12px] leading-relaxed">
+      <!-- 展开态：独立 body 块（不再 inline 续行），copy 按钮在左上角 -->
+      <div v-if="thinkingExpanded" class="group/think relative mt-1">
         <Button
           variant="ghost"
           size="icon"
@@ -40,7 +40,7 @@
           <Check v-if="copied === `thinking-${thinkingId ?? 'block'}`" class="size-3 text-success" />
           <CopyIcon v-else class="size-3" />
         </Button>
-        <div class="pl-6 select-text text-neutral-mid">
+        <div class="select-text pl-6 text-[12px] leading-relaxed text-neutral-mid">
           <MarkdownRenderer v-if="!working" :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
           <span v-else>{{ previewText }}</span>
         </div>
@@ -75,7 +75,7 @@
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
-          <span class="workflow-tag shrink-0 whitespace-nowrap uppercase tracking-[0.08em] font-semibold text-[12px] text-neutral-fg font-mono">{{ t('panel.message.workflow') }}</span>
+          <span class="workflow-tag mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
           <span class="shrink-0 whitespace-nowrap">{{ workflowStatusText }}</span>
           <span class="min-w-0 truncate text-neutral-dim">· {{ workflowName }}</span>
         </div>
@@ -187,7 +187,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
+import { Check, ChevronRight, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'

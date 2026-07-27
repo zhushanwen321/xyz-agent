@@ -33,25 +33,17 @@
       <!-- 折叠 trace：working 或 expanded 时展开 -->
       <Transition :css="false" @before-leave="onTraceBeforeLeave" @leave="onTraceLeave" @enter="onTraceEnter">
         <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-          <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-            <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${blk.type}-${bIdx}`">
-              <!-- single 块：原 Block 渲染（与改造前逻辑一致，ref 取 blk.block.ref）。
+            <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
+            <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${bIdx}`">
+              <!-- 单块独立渲染：每个 block 直接输出（不再合并同类块）。
                    agentgraph（subagent/workflow）数据结构同 tool（ref 是 ToolCall），按 tool 提取 ref；
                    type 透传 'agentgraph'，Block.vue 内部靠 toolName 路由 subagent/workflow 分支。 -->
               <Block
-                v-if="blk.kind === 'single'"
-                :type="blk.block.kind"
-                :content="blk.block.kind === 'text' ? (blk.block.ref as string) : blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).content : undefined"
-                :tool="blk.block.kind === 'tool' || blk.block.kind === 'agentgraph' ? (blk.block.ref as ToolCall) : undefined"
-                :thinking-id="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).id : undefined"
-                :collapsed="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).collapsed : undefined"
-                :working="sessionActive"
-                :session-id="sessionId"
-              />
-              <!-- merged 卡片（w2）：连续同类 thinking/tool 折叠成可展开卡，渲染逻辑下沉 MergedBlockCard。 -->
-              <MergedBlockCard
-                v-else
-                :blk="blk"
+                :type="blk.kind"
+                :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
+                :tool="blk.kind === 'tool' || blk.kind === 'agentgraph' ? (blk.ref as ToolCall) : undefined"
+                :thinking-id="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).id : undefined"
+                :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
                 :working="sessionActive"
                 :session-id="sessionId"
               />
@@ -82,16 +74,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MessageTurn } from '@/composables/logic/messageTurns'
+import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
-import { mergeConsecutiveBlocks, type MergedBlock } from '@/composables/logic/mergeBlocks'
 import type { ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 import ChangeSetCard from './ChangeSetCard.vue'
 import UserBubble from './UserBubble.vue'
 import TurnMeta from './TurnMeta.vue'
 import TurnSummary from './TurnSummary.vue'
 import Block from './Block.vue'
-import MergedBlockCard from './MergedBlockCard.vue'
 import { useChatStore } from '@/stores/chat'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
@@ -172,19 +162,17 @@ const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
 
 /**
  * trace 内每个 assistant 的有序块（缓存，避免 v-for 内每次 render 重算）。
- * - 末位 assistant：先 filter 掉 text 块（text 在底部 summary 位渲染，TR-w4-2：filter 在 merge 之前，
- *   避免 text 被并入 merged 组后再过滤破坏时序），再 mergeConsecutiveBlocks 折叠连续同类块。
- * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留），同样 merge 连续 thinking/tool。
- * 消除停止时 text 从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
+ * - 末位 assistant：filter 掉 text 块（text 在底部 summary 位渲染，避免重复输出）。
+ * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留）。
+ * 每个 block 独立渲染（不再合并连续同类块）。
  * streaming 时每 token 触发 re-render，computed 缓存避免对每个 assistant 重跑 expandAssistantBlocks。
  */
-const traceBlocksByAssistant = computed<MergedBlock[][]>(() => {
+const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
   return props.turn.assistants.map((a, i) => {
     const blocks = expandAssistantBlocks(a)
-    const filtered = i === lastAssistantIdx.value
+    return i === lastAssistantIdx.value
       ? blocks.filter((b) => b.kind !== 'text')
       : blocks
-    return mergeConsecutiveBlocks(filtered)
   })
 })
 </script>

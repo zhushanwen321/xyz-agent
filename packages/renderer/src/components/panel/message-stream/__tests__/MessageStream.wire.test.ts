@@ -1,7 +1,7 @@
 /**
  * w4 wave 接线层测试（实际用例：TC-w4-1/2/3/3b/4/6/7/8/9）。
  *
- * 覆盖：Turn.vue 接入 useTurnExpansion（w1）+ mergeConsecutiveBlocks（w2）+ merged 卡片渲染，
+ * 覆盖：Turn.vue 接入 useTurnExpansion（w1）+ 连续同类块独立渲染（合并功能已移除），
  *       MessageStream.vue 挂载 TurnRail（w3）+ 事件路由。
  *
  * 策略（任务指引「务实优先」）：
@@ -188,8 +188,8 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     expect(wrapperB.find('.trace').exists()).toBe(false)
   })
 
-  it('TC-w4-8: 连续同类 tool 调用 → 折成 1 个 merged 卡片（w2 mergeConsecutiveBlocks 接线）', async () => {
-    // 构造 3 个连续 toolCall（同类型，非失败）→ merge 成 1 个 merged 组
+  it('TC-w4-8: 连续同类 tool 调用 → 每个 block 独立渲染（不再合并）', async () => {
+    // 构造 3 个连续 toolCall（同类型，非失败）→ 不再合并，3 个独立 Block
     const tc1 = makeToolCall('tc1')
     const tc2 = makeToolCall('tc2')
     const tc3 = makeToolCall('tc3')
@@ -212,28 +212,11 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     // 展开 trace（complete 态需手动展开）
     await wrapper.find('.turn-meta').trigger('click')
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // merged 卡片存在（3 个连续 tool 折成 1 个）
-    const mergedCards = wrapper.findAll('[data-testid="merged-block-card"]')
-    expect(mergedCards).toHaveLength(1)
-    // 卡片汇总文案含「3 个同类操作」（zh-CN i18n mergedTools）
-    expect(mergedCards[0].text()).toContain('3 个同类操作')
-    // §13.2-B 灰阶化反回归：merged 卡容器用灰阶类（border-neutral-faint + bg-transparent），
-    // 不再用 main 彩色类（border-info/bg-info-soft/border-reasoning/bg-reasoning-soft）。
-    expect(mergedCards[0].classes()).toContain('border-neutral-faint')
-    expect(mergedCards[0].classes()).toContain('bg-transparent')
-    expect(mergedCards[0].classes()).not.toContain('border-info')
-    expect(mergedCards[0].classes()).not.toContain('bg-info-soft')
-    expect(mergedCards[0].classes()).not.toContain('border-reasoning')
-    expect(mergedCards[0].classes()).not.toContain('bg-reasoning-soft')
-    // 默认折叠（items 列表不显示）—— trace-blk 在卡片外是 0 个（全合并了）
-    expect(wrapper.findAll('.trace > * .trace-blk')).toHaveLength(0)
-    // 点击 merged 卡片的 header（含 @click 的 .cursor-pointer 子元素，非根 .merged-card）
-    // → toggle expanded → 展开 items（3 个 Block）
-    // 注：MergedBlockCard 把 @click 绑在 header 子 div 上（非根元素），故需精确定位 header 触发，
-    //   不能 mergedCards[0].trigger('click')（根元素 click 不冒泡到子元素 handler）。
-    await mergedCards[0].find('.cursor-pointer').trigger('click')
-    const items = mergedCards[0].findAll('.trace-blk')
-    expect(items).toHaveLength(3)
+    // 不存在 merged 卡片（合并功能已移除）
+    expect(wrapper.findAll('[data-testid="merged-block-card"]')).toHaveLength(0)
+    // 3 个连续 tool 各自独立渲染（3 个 Block / trace-blk）
+    const blocks = wrapper.findAll('.trace-blk')
+    expect(blocks).toHaveLength(3)
   })
 })
 
