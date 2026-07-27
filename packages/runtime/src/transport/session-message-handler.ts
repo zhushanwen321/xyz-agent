@@ -115,6 +115,29 @@ export class SessionMessageHandler {
           return this.ctx.sendError(ws, 'handoff_failed', errMsg, msg.id, { sessionId })
         }
       }
+      case 'session.abortHandoff': {
+        // abortHandoff：中断进行中的 handoff turn（调 handoffService.abortHandoff → 内部 client.abort + 清 inflight）。
+        // 成功后广播 session.handoffAborted 让前端复位 isHandingOff。
+        const { sessionId } = msg.payload
+        const hs = this.ctx.handoffService
+        if (!hs) {
+          return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
+        }
+        try {
+          await hs.abortHandoff(sessionId)
+          // 广播 handoffAborted（参照 forkNotice L75-79 broadcast 范式）
+          this.ctx.broadcast({
+            type: 'session.handoffAborted',
+            id: this.ctx.nextPushId(),
+            payload: { sessionId },
+          })
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'aborted' })
+        } catch (e) {
+          const errMsg = toErrorMessage(e)
+          console.error('[runtime] session.abortHandoff failed:', errMsg)
+          return this.ctx.sendError(ws, 'handoff_failed', errMsg, msg.id, { sessionId })
+        }
+      }
       case 'session.delete': {
         const delSid = msg.payload.sessionId
         this.ctx.clearExtensionTimeoutsForSession(delSid)

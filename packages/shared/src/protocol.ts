@@ -489,7 +489,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffComplete'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffComplete' | 'session.handoffAborted'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -839,16 +839,19 @@ export interface ServerMessageMapBase {
     branchName?: string
     preview?: string
   }
-  // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff）。
-  // 时机：源 session 的 pi 跑完 /skill:handoff → 取末条 assistant 文档 → xml 包装 →
-  // 新建空白 session 之后。前端据 newSessionId 跳转新 session，据 srcSessionId
-  // 在源 session 标记已交接（配合磁盘 handoff_marker → SessionSummary.handedOffTo）。
-  // doc：纯文本 handoff 文档（不再 xml 包装）。发送职责归位 renderer——前端收到后 ensureStreamSubscription
-  // 再 chatApi.send(doc)，避免 runtime 早 send 导致的时序竞争（pi 流式事件早于前端订阅被丢）。
-  // reply：用户在 composer handoff 模式下键入的备注文本（可选）。
+  // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff，agent-driven 模式）。
+  // 时机：源 session 的 pi 跑完 handoff turn（HANDOFF_PROMPT_TEMPLATE）→ runtime 从 agent_end 提取
+  // 文档文本 → 新建空白 session → 用 newClient.prompt(doc) 把文档注入新 session 触发新 turn 之后。
+  // agent-driven 模式下 doc 由 runtime 直接发给新 session pi（wave1 已实现），不再经广播回传前端——
+  // 广播 payload 仅通知前端复位源 session handingOff + 刷新列表 + 跳转新 session（selectSession 内部
+  // 自带 hydrate + 订阅 + 命令/上下文兜底拉取，前端不再手动 ensureStreamSubscription/send）。
   // sourceLabel：交接来源 session 名称（可选，前端用于构造 handoff badge segment）。
-  // 对齐 fork-ask 模式（useForkActions.ts:109-113）。
-  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string; reply?: string; sourceLabel?: string }
+  'session.handoffComplete': { srcSessionId: string; newSessionId: string; sourceLabel?: string }
+  // session.handoffAborted：fast-handoff 中断后的广播（agent-driven 模式 wave2）。
+  // 时机：用户取消进行中的 handoff（或 abort 兜底）→ runtime 调 handoffService.abortHandoff
+  // （内部 client.abort + 清 inflight）→ 广播此帧让前端复位源 session 的 handingOff 态。
+  // sessionId：被中断的源 session id（与 handoffComplete 的 srcSessionId 同义，单字段简化）。
+  'session.handoffAborted': { sessionId: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
