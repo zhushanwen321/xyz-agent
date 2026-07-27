@@ -96,7 +96,10 @@ RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
 # Smoke-test: both binaries must respond.
 RUN xyz-agent-runtime --version && pi --version
 # node-pty 是 optionalDependencies，npm install 时编译失败不报错（optional），
-# 会发布 broken terminal 镜像（terminal.* RPC 全 broken）。显式 require 验证编译成功。
+# 会发布 broken terminal 镜像（terminal.* RPC 全 broken）。
+# NODE_PATH 指向全局 node_modules 让 require 能解析 node-pty（裸 require 从 cwd 找不到全局包）。
+# node-pty native addon 编译失败时 require 会抛 MODULE_NOT_FOUND 或 native 加载错误。
+ENV NODE_PATH=/usr/local/lib/node_modules
 RUN node -e "require('node-pty'); console.log('node-pty OK')"
 
 # Data directory (persisted volume). XYZ_AGENT_DATA_DIR is read by
