@@ -15,7 +15,8 @@ export default {
   newTaskFailed: '新建任务失败：{msg}',
   deleteSessionFailed: '删除会话失败：{msg}',
   deleteFolderFailed: '删除文件夹会话失败：{msg}',
-  deleteFolderPartialFailed: '{count} 个会话删除失败',
+  // S3：带首个失败原因（error 占位符），让用户感知失败根因。zh-CN 无复数形态。
+  deleteFolderPartialFailed: '{count} 个会话删除失败：{error}',
   renameFailed: '重命名失败：{msg}',
   retry: '重试',
   sessionItem: {

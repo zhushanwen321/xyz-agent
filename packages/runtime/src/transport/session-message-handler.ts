@@ -137,7 +137,13 @@ export class SessionMessageHandler {
         // deleteByCwd 是 best-effort 聚合（永远 resolve），clearExtensionTimeoutsForSession
         // 只对 result.deleted 调用（失败的 session 未真正删除，不需清 timeout）。
         // 与 session.delete 的「先清 timeout 再 delete」顺序相反——批量需先拿到聚合结果才知道清谁。
-        const result = await this.ctx.sessionService.deleteByCwd(msg.payload.cwd)
+        const cwd = msg.payload?.cwd
+        // cwd 非空字符串校验：与 extension-message-handler 的 invalid_payload 范式对齐。
+        // 不走「reply 空 BatchDeleteResult 成功」——那会让前端误判删除成功，掩盖参数错误。
+        if (!cwd || typeof cwd !== 'string') {
+          return this.ctx.sendError(ws, 'invalid_payload', 'session.deleteByCwd requires a non-empty "cwd" string', msg.id)
+        }
+        const result = await this.ctx.sessionService.deleteByCwd(cwd)
         for (const id of result.deleted) {
           this.ctx.clearExtensionTimeoutsForSession(id)
         }

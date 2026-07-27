@@ -399,8 +399,9 @@ export function useSidebar() {
    * 返回 BatchDeleteResult——caller（Sidebar.onDeleteFolder）读 res.failed 决定 toast。
    */
   async function deleteFolder(cwd: string): Promise<BatchDeleteResult> {
-    const wasActiveInFolder = session.groups
-      .flatMap((g) => g.sessions)
+    // 用已派生的 session.list（单一真源 groups → list，与下文回退 session.list[0] 同源），
+    // 避免再 flatMap 一次重复 groups.flatMap(g => g.sessions)（session.ts:list 已是该派生）。
+    const wasActiveInFolder = session.list
       .filter((s) => s.cwd === cwd)
       .some((s) => s.id === session.activeId)
     const res = await sessionApi.removeByCwd(cwd)

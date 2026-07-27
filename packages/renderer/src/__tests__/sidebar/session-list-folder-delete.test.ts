@@ -41,18 +41,13 @@ function mountList() {
 
 /**
  * 定位 folder 标题行的删除按钮。
- * 标题行结构：sticky top-0 容器内含 [Folder icon][cwd 末段][count][删除按钮容器]，
- * 删除按钮容器 ml-auto 包裹 Button（reka Primitive → button 元素）。
- * 用 title 区分初始态（sidebar.sessionItem.delete='删除'）vs 确认态（deleteFolderConfirm）。
+ * S5：用组3 新增的 data-testid="folder-delete-btn" 精确定位，不再依赖 title 匹配——
+ * SessionItem 的 session 级删除按钮 title 同为 '删除'（sidebar.sessionItem.delete），
+ * 旧实现靠 folder 按钮在 DOM 中靠前的顺序才「碰巧」选对，模板重排会静默点错按钮。
+ * folder 按钮单一 testid（初始态/确认态共用），与 SessionItem 的 testid（无 folder-delete-btn）不冲突。
  */
 function findFolderDeleteButton(wrapper: ReturnType<typeof mountList>) {
-  // 模板渲染 <Button> → reka Primitive as=button → <button>，title 透传到 button attribute
-  const buttons = wrapper.findAll('button')
-  // 初始态 title='删除'，确认态 title='确认删除此文件夹下所有会话？'
-  return buttons.find((b) => {
-    const title = b.attributes('title') ?? ''
-    return title === '删除' || title === '确认删除此文件夹下所有会话？'
-  })
+  return wrapper.find('[data-testid="folder-delete-btn"]')
 }
 
 beforeEach(() => {
@@ -64,10 +59,10 @@ describe('SessionList folder 删除按钮首屏渲染', () => {
     const wrapper = mountList()
     // cwd 末段渲染在标题行
     expect(wrapper.text()).toContain('p')
-    // 删除按钮存在（title 为初始态文案）
+    // 删除按钮存在（data-testid 锚定，title 为初始态文案）
     const btn = findFolderDeleteButton(wrapper)
-    expect(btn).toBeTruthy()
-    expect(btn!.attributes('title')).toBe('删除')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBe('删除')
   })
 })
 

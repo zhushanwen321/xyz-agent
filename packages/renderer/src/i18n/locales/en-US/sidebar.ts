@@ -15,7 +15,9 @@ export default {
   newTaskFailed: 'Failed to create task: {msg}',
   deleteSessionFailed: 'Failed to delete session: {msg}',
   deleteFolderFailed: 'Failed to delete folder sessions: {msg}',
-  deleteFolderPartialFailed: '{count} session(s) failed to delete',
+  // S7：用 vue-i18n 复数（'|' 分隔单/复数，调用方 t(key, count, { count, error })），
+  // 替换原 '(s)' hack；带 error 占位符让用户感知首个失败原因（S3）。
+  deleteFolderPartialFailed: '{count} session failed to delete: {error} | {count} sessions failed to delete: {error}',
   renameFailed: 'Rename failed: {msg}',
   retry: 'Retry',
   sessionItem: {

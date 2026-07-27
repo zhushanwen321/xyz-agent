@@ -35,9 +35,26 @@ vi.mock('@/composables/features/useFileTree', () => ({
 }))
 
 // ── mock useChat composable：捕获 disposeSession（cleanupSessionState 副作用）──
+// W4：selectSession 真实连锁会调 useChat().setHistoryTruncated（hydrate 成功路径），
+// 旧 mock 只提供 disposeSession → setHistoryTruncated 抛 TypeError 被 selectSession 的
+// try/catch 吞掉（误走 markHistoryFailed 回退路径），测试靠此吞错才通过、掩盖真实行为。
+// 补全 useChat 全部返回方法（与生产 useChat composable 返回签名对齐），确保 selectSession
+// 走「hydrate 成功」路径而非 catch 回退；未来重构移除 try/catch 也不会静默失败。
 const useChatDisposeMock = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ disposeSession: useChatDisposeMock }),
+  useChat: () => ({
+    send: vi.fn(),
+    steer: vi.fn(),
+    followUp: vi.fn(),
+    abort: vi.fn(),
+    compact: vi.fn(),
+    editAndResend: vi.fn(),
+    hydrateHistory: vi.fn(() => Promise.resolve()),
+    loadMoreHistory: vi.fn(() => Promise.resolve()),
+    hasMoreHistory: vi.fn(() => false),
+    setHistoryTruncated: vi.fn(),
+    disposeSession: useChatDisposeMock,
+  }),
 }))
 
 // ── mock api 域：removeByCwd 是 deleteFolder 的核心 WS 调用 ──
@@ -137,6 +154,8 @@ describe('useSidebar.deleteFolder 全成功（W2TC2）', () => {
     session.activeId = 's2'
 
     removeByCwdMock.mockResolvedValueOnce({ cwd: '/p', deleted: ['s1', 's2'], failed: [] })
+    const navigation = useNavigationStore()
+    const pushSpy = vi.spyOn(navigation, 'push')
 
     const res = await sidebar.deleteFolder('/p')
 
@@ -149,6 +168,11 @@ describe('useSidebar.deleteFolder 全成功（W2TC2）', () => {
     // wasActiveInFolder=true → list 非空（s3 留存）→ selectSession(s3.id) 分支
     //（cleanupSessionState 内 removeFromList 已把 activeId 重置，selectSession 切到 s3）
     expect(switchSessionMock).toHaveBeenCalledWith('s3')
+    // S6：消除「选中下一个」vs「catch 回退空态」歧义——确认走 selectSession 成功分支：
+    // selectSession 内部 navigation.push 带 sessionId（{ view:'chat', sessionId:'s3' }）；
+    // catch 回退分支 push 的是无 sessionId 的 { view:'chat' }。两者通过有无 sessionId 区分。
+    expect(pushSpy).toHaveBeenCalledWith({ view: 'chat', sessionId: 's3' })
+    expect(pushSpy).not.toHaveBeenCalledWith({ view: 'chat' })
 
     scope.stop()
   })

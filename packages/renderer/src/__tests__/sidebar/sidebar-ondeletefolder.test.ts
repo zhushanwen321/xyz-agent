@@ -29,21 +29,32 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 // ── mock useSidebar：注入可控 deleteFolder ──
+// W5：focusedSessionId / focusedSession 必须是真实 Vue ref（非裸 { value } 对象），
+// 否则 Sidebar 模板 `:active-id="focusedSessionId"` / `:active-session-id` 把对象传给
+// 期望 String|Null 的子组件，触发 Vue "Invalid prop" 警告（shallowMount 下无害，
+// 改 mount 会变真 bug）。真实 ref 模板自动解包为 null，且 .value 访问语义不变。
+// vi.hoisted 只放需被测试断言的 vi.fn（无需 import）；ref 字段放在 vi.mock 工厂内
+// （工厂在所有 import 完成后才执行，可安全用 ref），通过 shared 注入。
 const sidebarMocks = vi.hoisted(() => ({
   selectSession: vi.fn(),
   deleteSession: vi.fn(),
   deleteFolder: vi.fn(),
   renameSession: vi.fn(),
   newSession: vi.fn(),
-  focusedSessionId: { value: null },
-  focusedSession: { value: null },
   goOverview: vi.fn(),
   loadSessions: vi.fn(() => Promise.resolve()),
   syncSessionToPanel: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => sidebarMocks,
-}))
+vi.mock('@/composables/features/useSidebar', async () => {
+  const { ref } = await import('vue')
+  return {
+    useSidebar: () => ({
+      ...sidebarMocks,
+      focusedSessionId: ref<string | null>(null),
+      focusedSession: ref(null),
+    }),
+  }
+})
 
 // ── mock stores（Sidebar setup 期读取）──
 vi.mock('@/stores/sidebar', () => ({
@@ -55,15 +66,18 @@ vi.mock('@/stores/session', () => ({
 vi.mock('@/stores/fileTree', () => ({
   useFileTreeStore: () => ({ fileCount: 0, getTree: () => null }),
 }))
-vi.mock('@/stores/panel', () => ({
-  usePanelStore: () => ({
-    currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
-    activePanelId: 'panel-root',
-    focusedSessionId: { value: null },
-    findPanelBySession: () => null,
-    loadSession: vi.fn(),
-  }),
-}))
+vi.mock('@/stores/panel', async () => {
+  const { ref } = await import('vue')
+  return {
+    usePanelStore: () => ({
+      currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
+      activePanelId: 'panel-root',
+      focusedSessionId: ref<string | null>(null),
+      findPanelBySession: () => null,
+      loadSession: vi.fn(),
+    }),
+  }
+})
 vi.mock('@/stores/subagent', () => ({
   useSubagentStore: () => ({
     recordsOf: () => ({ value: [] }),
@@ -104,9 +118,14 @@ vi.mock('@/composables/features/useWorkflowListSync', () => ({ useWorkflowListSy
 vi.mock('@/composables/features/useSidebarSubagentActions', () => ({
   useSidebarSubagentActions: () => ({ onSelectSubagent: vi.fn(), onCancelSubagent: vi.fn(), onRetrySubagents: vi.fn() }),
 }))
-vi.mock('@/composables/features/useSearchModal', () => ({
-  useSearchModal: () => ({ isOpen: { value: false }, open: vi.fn(), close: vi.fn() }),
-}))
+vi.mock('@/composables/features/useSearchModal', async () => {
+  const { ref } = await import('vue')
+  return {
+    // W5：isOpen 必须是真实 Vue ref（Sidebar 模板 v-model:open="isOpen" 传给 SearchModal 的
+    // Boolean prop open），裸 { value } 对象会触发 "Invalid prop: Expected Boolean, got Object"。
+    useSearchModal: () => ({ isOpen: ref(false), open: vi.fn(), close: vi.fn() }),
+  }
+})
 vi.mock('@/composables/usePlatformShortcut', () => ({ usePlatformShortcut: () => ({ formatKbd: () => '⌘K' }) }))
 
 // ── mock api/events（onMounted 的 loadSessions / app.info 订阅）──
@@ -151,8 +170,9 @@ describe('Sidebar onDeleteFolder（W2TC6）', () => {
 
     expect(sidebarMocks.deleteFolder).toHaveBeenCalledWith('/p')
     expect(toastErrorMock).toHaveBeenCalledTimes(1)
-    // 文案来自 zh-CN locale（vitest-i18n-setup 注入真实 t）：deleteFolderPartialFailed = '{count} 个会话删除失败'
-    expect(toastErrorMock).toHaveBeenCalledWith('1 个会话删除失败')
+    // 文案来自 zh-CN locale（vitest-i18n-setup 注入真实 t，支持 vue-i18n 复数签名 t(key, count, params)）：
+    // deleteFolderPartialFailed = '{count} 个会话删除失败：{error}'，count=1 + error=EPERM → '1 个会话删除失败：EPERM'
+    expect(toastErrorMock).toHaveBeenCalledWith('1 个会话删除失败：EPERM')
     wrapper.unmount()
   })
 

@@ -105,4 +105,28 @@ describe('W1: SessionLifecycle.deleteByCwd — folder 维度批量删除', () =>
     expect(deleteSpy).toHaveBeenCalledWith('s3')
     expect(result).toEqual({ cwd: '/p', deleted: ['s3'], failed: [] })
   })
+
+  it('W1TC1b 全部 reject → deleted=[] 且 failed 含全部，循环不中断', async () => {
+    // setup：folder('/p') 下 2 session（s1, s2），delete spy 对两者都 mockRejectedValue
+    const { lifecycle, svc, sessionStore, deleteSpy } = makeHarness()
+    ;(sessionStore.scanSessions as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: 's1', cwd: '/p', filePath: '/p/s1.jsonl' } as ScannedSessionMeta,
+      { id: 's2', cwd: '/p', filePath: '/p/s2.jsonl' } as ScannedSessionMeta,
+    ])
+    ;(svc.getActiveSummaries as ReturnType<typeof vi.fn>).mockReturnValue([])
+    deleteSpy.mockRejectedValue(new Error('EPERM'))
+
+    const result: BatchDeleteResult = await lifecycle.deleteByCwd('/p')
+
+    // 全失败：deleted=[]，failed 包含全部 session（continue 语义，第一个失败不阻断第二个）
+    expect(result.cwd).toBe('/p')
+    expect(result.deleted).toEqual([])
+    expect(result.failed).toHaveLength(2)
+    expect(result.failed).toEqual([
+      { sessionId: 's1', error: 'EPERM' },
+      { sessionId: 's2', error: 'EPERM' },
+    ])
+    // delete 被调 2 次（每个 session 一次，第一个失败不阻断第二个）
+    expect(deleteSpy).toHaveBeenCalledTimes(2)
+  })
 })

@@ -29,6 +29,7 @@
             <Button
               variant="ghost"
               size="icon"
+              data-testid="folder-delete-btn"
               :class="folderConfirmingCwd === g.cwd
                 ? 'size-[22px] rounded-sm border border-danger bg-danger text-fg'
                 : 'size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
@@ -178,8 +179,8 @@ provide('sessionItemEsc', escCount)
 /**
  * folder 维度删除的两段式确认态（与 SessionItem.confirming 同范式）。
  * 存当前确认的 cwd（同时只允许一个 folder 处于确认态）；二次点击同 cwd 才 emit deleteFolder。
- * Esc / mouseleave（模板兜底）复位——folder 按钮直接用本组件持有的 escCount 同源 ref，
- * 不需 inject（SessionList 是 provide 源头）。
+ * Esc / mouseleave / 点击外部（onClickOutside）复位——folder 按钮直接用本组件持有的 escCount
+ * 同源 ref，不需 inject（SessionList 是 provide 源头）。
  */
 const folderConfirmingCwd = ref<string | null>(null)
 function onFolderRemoveClick(cwd: string): void {
@@ -196,6 +197,24 @@ function onFolderMouseLeave(cwd: string): void {
 }
 watch(escCount, () => {
   if (folderConfirmingCwd.value) folderConfirmingCwd.value = null
+})
+
+/**
+ * S4：点击 folder 确认按钮外部时复位确认态（与 SessionItem.onClickOutside 同范式）。
+ * folder 标题行处于 v-for 循环（多个 folder），不便逐项挂 onClickOutside ref，故用
+ * 单一 window pointerdown 监听（pointerdown 先于 click，比 click 更早收口确认态）。
+ *
+ * 同级 folder 按钮冲突规避：点击另一 folder 的删除按钮时，该按钮的 @click.stop 会切
+ * folderConfirmingCwd 到新 cwd。若此处无条件复位 '' 会覆盖新值。故只在「点击目标不在任何
+ * folder 删除按钮内」时复位——新 cwd 的切换由 onFolderRemoveClick 自行处理，互不干扰。
+ * 用 [data-testid="folder-delete-btn"] 锚定 folder 删除按钮（S5 前置 testid），与 SessionItem
+ * 的 session 删除按钮 testid 区分。
+ */
+useEventListener(window, 'pointerdown', (e: PointerEvent) => {
+  if (!folderConfirmingCwd.value) return
+  const target = e.target as Element | null
+  if (target?.closest('[data-testid="folder-delete-btn"]')) return
+  folderConfirmingCwd.value = null
 })
 
 // 显式声明 props 已读（避免某些 lint 规则误报未使用）。

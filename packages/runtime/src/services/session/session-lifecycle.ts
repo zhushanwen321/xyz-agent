@@ -202,7 +202,11 @@ export class SessionLifecycle {
    * 不调广播——广播由 caller（session-message-handler）控制。
    *
    * cwd 匹配用字面 === ：依赖 caller 传入与 summary.cwd 一致的字符串
-   * （前端 folder 删除按钮传的是 listPersistedSessions 返回的原始 cwd，不经规范化）。
+   *（前端 folder 删除按钮传的是 listPersistedSessions 返回的原始 cwd，不经规范化）。
+   *
+   * 故意包含 hidden session（与 SessionScanner.listAll 的 !s.hidden 过滤不同）：
+   * folder 删除是按 cwd 的彻底清理，hidden session 也属于该 cwd。
+   * 若未来要改为排除 hidden，需同步评估前端列表（listAll 过滤）与删除的语义对齐。
    */
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> {
     const cwdSessions = new Set<string>()
@@ -219,6 +223,7 @@ export class SessionLifecycle {
         await this.delete(id)
         deleted.push(id)
       } catch (e) {
+        console.warn(`[session-lifecycle] deleteByCwd: failed to delete ${id}`, toErrorMessage(e))
         failed.push({ sessionId: id, error: toErrorMessage(e) })
       }
     }

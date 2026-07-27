@@ -349,15 +349,19 @@ async function onDeleteSession(id: string): Promise<void> {
 }
 
 /**
- * 删除指定 cwd 下所有 session（folder 维度批量删除，SessionList 两段式确认后触发）。
- * 调 deleteFolder 走 WS removeByCwd + 循环 cleanupSessionState + 统一回退；读 res.failed
- * 决定提示——部分失败时 toast（用户需感知哪些没删成）；全成功时不提示（符合「无进度反馈」要求）。
+ * 删除指定 cwd 下所有 session（folder 批量删除）。部分失败时 toast 带首个 error 原因
+ * （vue-i18n 复数 t(key, plural, {named})，见 vue-i18n.d.ts:1189）；全成功不提示。
  */
 async function onDeleteFolder(cwd: string): Promise<void> {
   try {
     const res = await deleteFolder(cwd)
     if (res.failed.length > 0) {
-      toastError(t('sidebar.deleteFolderPartialFailed', { count: res.failed.length }))
+      const firstError = res.failed[0]?.error ?? ''
+      toastError(
+        t('sidebar.deleteFolderPartialFailed', res.failed.length, {
+          named: { count: res.failed.length, error: firstError },
+        }),
+      )
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
