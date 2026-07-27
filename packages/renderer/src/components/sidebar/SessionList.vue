@@ -24,7 +24,7 @@
           <div
             class="ml-auto"
             :class="folderConfirmingCwd === g.cwd ? 'flex' : 'flex opacity-0 group-hover:opacity-100'"
-            @mouseleave="if (folderConfirmingCwd === g.cwd) folderConfirmingCwd = null"
+            @mouseleave="onFolderMouseLeave(g.cwd)"
           >
             <Button
               variant="ghost"
@@ -189,6 +189,10 @@ function onFolderRemoveClick(cwd: string): void {
   }
   folderConfirmingCwd.value = null
   emit('deleteFolder', cwd)
+}
+/** 鼠标离开 folder 按钮区域时复位确认态（与 Esc 同源，防止误确认） */
+function onFolderMouseLeave(cwd: string): void {
+  if (folderConfirmingCwd.value === cwd) folderConfirmingCwd.value = null
 }
 watch(escCount, () => {
   if (folderConfirmingCwd.value) folderConfirmingCwd.value = null
