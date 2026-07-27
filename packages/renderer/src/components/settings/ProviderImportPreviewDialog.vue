@@ -134,7 +134,7 @@ function sourceLabel(source: string): string {
         <div
           v-if="preview.parseError"
           data-testid="preview-parse-error"
-          class="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+          class="flex items-start gap-1.5 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[12px] text-warn"
         >
           <AlertTriangle class="size-4 shrink-0 mt-0.5" />
           <span>{{ t('settings.provider.importPreview.parseError', { message: preview.parseError }) }}</span>
@@ -144,7 +144,7 @@ function sourceLabel(source: string): string {
         <div
           v-if="preview.warnings?.length"
           data-testid="preview-top-warnings"
-          class="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+          class="flex items-start gap-1.5 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[12px] text-warn"
         >
           <AlertTriangle class="size-4 shrink-0 mt-0.5" />
           <ul class="flex flex-col gap-0.5">
@@ -181,7 +181,7 @@ function sourceLabel(source: string): string {
             <span
               v-if="!p.apiKeyExtracted"
               data-testid="key-warning"
-              class="flex items-center gap-0.5 text-warning"
+              class="flex items-center gap-0.5 text-warn"
               :title="t('settings.provider.importPreview.keyNotExtracted')"
             >
               <KeyRound class="size-3.5" />
@@ -191,7 +191,7 @@ function sourceLabel(source: string): string {
             <span
               v-if="p.conflict === 'duplicate-id'"
               data-testid="conflict-badge"
-              class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] text-warning"
+              class="rounded-sm bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn"
             >
               {{ t('settings.provider.importPreview.conflict') }}
             </span>
@@ -209,7 +209,7 @@ function sourceLabel(source: string): string {
               <component :is="expandedWarnings.has(p.id) ? ChevronDown : ChevronRight" class="size-3" />
               {{ t('settings.provider.importPreview.warnings') }} ({{ p.warnings.length }})
             </Button>
-            <ul v-if="expandedWarnings.has(p.id)" class="mt-1 list-disc pl-4 text-[11px] text-warning">
+            <ul v-if="expandedWarnings.has(p.id)" class="mt-1 list-disc pl-4 text-[11px] text-warn">
               <li v-for="(w, i) in p.warnings" :key="i">{{ w }}</li>
             </ul>
           </div>
