@@ -11,6 +11,7 @@
  * - B3：无 contentBlocks（降级）→ 旧顺序 text→thinking→tool
  * - B4：contentBlocks 引用不存在的 thinking/toolCall id → 跳过（防御异常数据）
  * - B5：空 contentBlocks + 无内容 → 空数组
+ * - B6/B7：subagent/workflow toolCall → kind=agentgraph（contentBlocks 路径 + 降级路径）
  *
  * 运行：npx vitest run src/__tests__/composables/message-turns.test.ts
  */
@@ -156,5 +157,47 @@ describe('expandAssistantBlocks —— 单条 assistant 内部块按时序展开
   it('B5: 空 contentBlocks + 无内容 → 空数组', () => {
     const msg = makeMsg({ content: '', contentBlocks: [] })
     expect(expandAssistantBlocks(msg)).toEqual([])
+  })
+
+  /* ── agentgraph 识别：subagent/workflow toolCall 解为 kind='agentgraph'（IF3）── */
+
+  it('B6: 有 contentBlocks 时 subagent/workflow toolCall → kind=agentgraph（contentBlocks 路径）', () => {
+    // subagent/workflow 是图结构重型操作，按 toolName 识别为 agentgraph（不是普通 tool）
+    const msg = makeMsg({
+      content: 'done',
+      toolCalls: [
+        { id: 'sa1', toolName: 'subagent', input: {}, status: 'completed', startTime: 0 },
+        { id: 'wf1', toolName: 'workflow', input: {}, status: 'completed', startTime: 0 },
+        { id: 'grep1', toolName: 'grep', input: {}, status: 'completed', startTime: 0 },
+      ],
+      contentBlocks: [
+        { type: 'text', refId: 'text' },
+        { type: 'toolCall', refId: 'sa1' },
+        { type: 'toolCall', refId: 'wf1' },
+        { type: 'toolCall', refId: 'grep1' },
+      ],
+    })
+    const result = expandAssistantBlocks(msg)
+    // subagent + workflow → agentgraph；grep → 普通 tool
+    expect(result.map((b) => b.kind)).toEqual(['text', 'agentgraph', 'agentgraph', 'tool'])
+    // ref 仍是 ToolCall（数据结构不变，仅 kind 不同）
+    const saRef = result[1].ref as { id: string; toolName: string }
+    expect(saRef.id).toBe('sa1')
+    expect(saRef.toolName).toBe('subagent')
+  })
+
+  it('B7: 无 contentBlocks（降级）时 subagent/workflow toolCall → kind=agentgraph（fallback 路径同步识别）', () => {
+    // 降级路径（无 contentBlocks）同样按 toolName 识别 agentgraph，与 contentBlocks 路径一致
+    const msg = makeMsg({
+      content: '文本',
+      toolCalls: [
+        { id: 'sa1', toolName: 'subagent', input: {}, status: 'completed', startTime: 0 },
+        { id: 'grep1', toolName: 'grep', input: {}, status: 'completed', startTime: 0 },
+      ],
+      // 无 contentBlocks → 走降级路径
+    })
+    const result = expandAssistantBlocks(msg)
+    // 降级顺序 text→tool：subagent 标 agentgraph，grep 标 tool
+    expect(result.map((b) => b.kind)).toEqual(['text', 'agentgraph', 'tool'])
   })
 })
