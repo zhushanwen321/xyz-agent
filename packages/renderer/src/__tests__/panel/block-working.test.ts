@@ -49,8 +49,8 @@ describe('Block working 态 · thinking 块', () => {
       props: { type: 'thinking', content: LONG_THINKING, working: true },
       global: { stubs: { MarkdownRenderer: mdStub } },
     })
-    // streaming 进行中：内容在 header 行内联显示（截断预览），不在 .trace-think-body
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false)
+    // streaming 进行中：内容在 header 行内联显示（截断预览），无独立 body div
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false)
     // 内容以截断形式出现在 header 行（previewText 截断到 60 字符）
     expect(wrapper.text()).toContain(LONG_THINKING.slice(0, 60))
     // 收起预览前缀 · 不应出现（streaming 态用无前缀的内联预览）
@@ -63,7 +63,7 @@ describe('Block working 态 · thinking 块', () => {
       global: { stubs: { MarkdownRenderer: mdStub } },
     })
     // 展开态容器不存在 = 收起
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false)
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false)
     // 预览截断标志出现
     expect(wrapper.text()).toContain('…')
   })
@@ -77,7 +77,7 @@ describe('Block working 态 · thinking 块', () => {
     expect(header.exists()).toBe(true)
     await header.trigger('click')
     // working 态点击无效：.trace-think-body 仍不存在，内容仍在 header 行内联
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false)
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false)
     expect(wrapper.text()).toContain(LONG_THINKING.slice(0, 60))
   })
 
@@ -87,11 +87,11 @@ describe('Block working 态 · thinking 块', () => {
       global: { stubs: { MarkdownRenderer: mdStub } },
     })
     const header = wrapper.find('.cursor-pointer')
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false) // 初始收起
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false) // 初始收起
     await header.trigger('click')
-    expect(wrapper.find('.trace-think-body').exists()).toBe(true) // 展开后正文出现
+    expect(wrapper.find('.stub-md-render').exists()).toBe(true) // 展开后正文出现
     await header.trigger('click')
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false) // 再收起
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false) // 再收起
   })
 })
 

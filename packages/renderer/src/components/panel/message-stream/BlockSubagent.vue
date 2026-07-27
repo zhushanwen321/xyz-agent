@@ -14,7 +14,7 @@
       :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
       @click="toggleTool"
     >
-      <ChevronRight class="size-2.5 shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90' : ''" />
+      <ChevronRight class="size-3 shrink-0 transition-transform text-neutral-mid" :class="toolExpanded ? 'rotate-90' : ''" />
       <!-- running 态 loader（双环 + accent），其余走 users ICON -->
       <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
       <component :is="BLOCK_ICON_LUCIDE.subagent" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
@@ -41,10 +41,20 @@
         <span v-if="subagentProgressDetail.durationMs != null">{{ formatDuration(subagentProgressDetail.durationMs) }}</span>
         <span v-if="subagentProgressDetail.currentTool" class="truncate text-neutral-mid">→ {{ subagentProgressDetail.currentTool }}</span>
       </div>
-      <!-- 最终输出：复制按钮 overlay 在右上角 -->
+      <!-- 最终输出：copy 按钮在左上角（border-l 旁） -->
       <div v-if="result" class="group/result relative mt-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+          :title="t('panel.message.copy')"
+          @click.stop="copy(result, `subagent-${tool.id}`)"
+        >
+          <Check v-if="copied === `subagent-${tool.id}`" class="size-3 text-success" />
+          <CopyIcon v-else class="size-3" />
+        </Button>
         <div
-          class="subagent-result select-text border-l-2 border-neutral-faint pl-2 font-mono text-[12px] leading-snug"
+          class="subagent-result select-text border-l-2 border-neutral-faint pl-6 font-mono text-[12px] leading-snug"
           :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
         >
           <template v-if="parsedSubagentOutput">
@@ -55,16 +65,6 @@
           </template>
           <span v-else class="whitespace-pre-wrap select-text">{{ result }}</span>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="absolute top-0 right-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
-          :title="t('panel.message.copy')"
-          @click.stop="copy(result, `subagent-${tool.id}`)"
-        >
-          <Check v-if="copied === `subagent-${tool.id}`" class="size-3 text-success" />
-          <CopyIcon v-else class="size-3" />
-        </Button>
       </div>
     </template>
   </div>

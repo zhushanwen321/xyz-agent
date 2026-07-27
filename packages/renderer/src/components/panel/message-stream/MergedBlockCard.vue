@@ -23,7 +23,7 @@
       @keydown.space.prevent="expanded = !expanded"
     >
       <ChevronRight
-        class="size-2.5 shrink-0 text-neutral-dim transition-transform"
+        class="size-3 shrink-0 text-neutral-mid transition-transform"
         :class="expanded ? 'rotate-90 text-accent' : ''"
       />
       <component :is="headerIcon" class="size-[13px] shrink-0 text-neutral-ico transition-colors hover:text-neutral-ico-hover" />
