@@ -53,11 +53,13 @@ export function handleCompletion(
   if (now - lastPlayTime < DEBOUNCE_MS) return
   lastPlayTime = now
 
-  // 6. 播放提示音
+  // 6. 播放提示音（读用户设置的 successSound/errorSound，空则用平台默认）
+  const successName = settingsStore.system.successSound
+  const errorName = settingsStore.system.errorSound
   if (stopReason === 'error') {
-    playError()
+    void playError(errorName)
   } else {
-    playSuccess()
+    void playSuccess(successName)
   }
 }
 

@@ -21,6 +21,14 @@ export interface SystemSettings {
   fontSize?: 'small' | 'medium' | 'large'
   /** 后台完成提示音开关 */
   completionSound?: boolean
+  /**
+   * 成功完成提示音：系统声音 id（如 'Glass' / 'complete' / 'Windows Notify System Generic'）。
+   * undefined / 空串 → 用平台默认（mac=Glass, win=Windows Notify System Generic, linux=complete）。
+   * 跨平台失效兜底：保存的 id 在当前平台不存在时，playByName 回落到平台默认。
+   */
+  successSound?: string
+  /** 失败完成提示音：语义同 successSound，默认 mac=Funk / win=Windows Notify Email / linux=message-new-instant */
+  errorSound?: string
 }
 
 const SYSTEM_KEY = 'xyz-agent:system-settings'

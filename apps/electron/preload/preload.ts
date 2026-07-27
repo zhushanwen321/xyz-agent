@@ -142,6 +142,15 @@ export interface ElectronAPI {
   onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string }) => void): () => void
   /** 不支持当前平台时，打开备用下载页（release 页面） */
   openUpdateFallbackUrl(url: string): Promise<void>
+  // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）──
+  /** 列出当前平台可用的系统提示音（existsSync 过滤后的精选清单） */
+  listSystemSounds(): Promise<{ platform: string; sounds: Array<{ id: string; name: string }> }>
+  /**
+   * 播放系统提示音。mac/linux 由 main spawn 命令播放；win 返回 wav base64
+   * 由 renderer 用 new Audio() 播（wav 是 Chromium 原生格式）。
+   * 失败静默 resolve（提示音失败不阻塞对话流）。
+   */
+  playSystemSound(name: string): Promise<{ audioData?: string; mimeType?: string }>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -258,4 +267,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('update:error', handler)
   },
   openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
+  // ── 系统提示音 ──────────────────────────────────────────────
+  listSystemSounds: () => ipcRenderer.invoke('sound:list'),
+  playSystemSound: (name: string) => ipcRenderer.invoke('sound:play', name),
 } satisfies ElectronAPI)

@@ -6,8 +6,9 @@ import * as markers from '../useSessionMarkers'
 import { useSettingsStore } from '@/stores/settings'
 
 vi.mock('../useCompletionSound', () => ({
-  playSuccess: vi.fn(),
-  playError: vi.fn(),
+  // playSuccess/playError 现在是 async + 接受可选声音名参数
+  playSuccess: vi.fn<(name?: string) => Promise<void>>().mockResolvedValue(undefined),
+  playError: vi.fn<(name?: string) => Promise<void>>().mockResolvedValue(undefined),
 }))
 
 vi.mock('../useSessionMarkers', () => ({
@@ -72,5 +73,24 @@ describe('useCompletionNotify', () => {
     handleCompletion('s1', 'stop', 'other-sid')
     expect(sound.playSuccess).not.toHaveBeenCalled()
     expect(markers.markUnread).toHaveBeenCalledWith('s1')
+  })
+
+  it('设置 successSound 时透传给 playSuccess', () => {
+    const settingsStore = useSettingsStore()
+    settingsStore.system = { ...settingsStore.system, successSound: 'Hero' }
+    handleCompletion('s1', 'stop', 'other-sid')
+    expect(sound.playSuccess).toHaveBeenCalledWith('Hero')
+  })
+
+  it('设置 errorSound 时透传给 playError', () => {
+    const settingsStore = useSettingsStore()
+    settingsStore.system = { ...settingsStore.system, errorSound: 'Sosumi' }
+    handleCompletion('s1', 'error', 'other-sid')
+    expect(sound.playError).toHaveBeenCalledWith('Sosumi')
+  })
+
+  it('未设置声音名时传 undefined（playSuccess 内部 fallback 到平台默认）', () => {
+    handleCompletion('s1', 'stop', 'other-sid')
+    expect(sound.playSuccess).toHaveBeenCalledWith(undefined)
   })
 })
