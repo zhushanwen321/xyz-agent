@@ -168,6 +168,19 @@ export class ServerMessageBroker implements IMessageBroker {
   broadcastSkillList(): void {
     this.broadcast(this.buildSkillListMsg())
   }
+  /**
+   * 广播 skill 缓存失效信号（让 landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
+   * 与 broadcastSkillList 区分：
+   *   - broadcastSkillList = 全量列表推送到 settingsStore.skills（settings 弹窗用）
+   *   - broadcastSkillCacheInvalidated = 失效信号给 landing composable（runtime 已重扫缓存，前端重拉即拿新值）
+   */
+  broadcastSkillCacheInvalidated(scope: 'global' | 'project', cwd?: string): void {
+    this.broadcast({
+      type: 'config.skillCacheInvalidated',
+      id: this.nextPushId(),
+      payload: { scope, cwd },
+    })
+  }
   broadcastAgentList(): void {
     this.broadcast(this.buildAgentListMsg())
   }

@@ -21,6 +21,7 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
   broadcastProviderList(): void
   broadcastSkillList(): void
+  broadcastSkillCacheInvalidated(scope: 'global' | 'project', cwd?: string): void
   broadcastAgentList(): void
   broadcastSkillDirs(): void
   broadcastAgentDirs(): void
@@ -103,9 +104,20 @@ export class SettingsMessageHandler {
         // ADR-0020 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
         this.ctx.configService.setSkillDirs(msg.payload.dirs)
         this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
-        // 目录变更 → skill 列表重算 + 目录配置广播
-        this.ctx.broadcastSkillList()
+        // 触发 SkillRegistry 重建（close 旧 watcher → 重扫 globalCache → 重挂 watcher 含新路径）+ 清 projectCache。
+        // rebuildGlobal 内部 notifyGlobalChange → onChange → 广播 config.skillCacheInvalidated('global') + reloadOrchestrator。
+        // invalidateAllProjects 后显式广播 ('project')——让前端 useProjectSkills 也失效重拉。
+        // best-effort：失败只记日志，不阻塞 WS 消息处理（reply/broadcastSkillDirs 已立即返回）。
+        void this.ctx.skillRegistry.rebuildGlobal()
+          .then(() => {
+            this.ctx.skillRegistry.invalidateAllProjects()
+            this.ctx.broadcastSkillCacheInvalidated('project')
+          })
+          .catch((e: unknown) => {
+            console.error('[settings-handler] skillRegistry.rebuildGlobal failed after setSkillDirs:', e)
+          })
         this.ctx.broadcastSkillDirs()
+        this.ctx.broadcastSkillList()
         return true
       }
       case 'config.setSkill': {

@@ -38,6 +38,19 @@ export interface SkillRegistryConfigStore {
   getPiAgentDir(): string
 }
 
+/**
+ * skill 变更事件（onChange 回调参数）。
+ * scope='global' 时 cwd 缺省（全局变动影响所有）；scope='project' 时 cwd 携带变更的项目根。
+ * affectedSessionIds：受影响的活跃 session（reloadOrchestrator 用，按 cwd 过滤后的子集）。
+ */
+export interface SkillChangeEvent {
+  scope: 'global' | 'project'
+  /** scope='project' 时携带，表示哪个 cwd 的 skill 变动。global 变动无 cwd。 */
+  cwd?: string
+  /** 受影响的活跃 session 列表（reloadOrchestrator 用）。global=全部活跃；project=cwd 匹配的活跃。 */
+  affectedSessionIds: string[]
+}
+
 /** sessionService 的窄接口：查活跃 session 列表 + 按 sid 查 cwd（项目 skill 变更定位受影响 session）。 */
 export interface SkillRegistrySessionService {
   getActiveSessionIds(): string[]
@@ -97,7 +110,7 @@ export class SkillRegistry {
    */
   private readonly projectInFlight = new Map<string, Promise<SkillInfo[]>>()
   private globalWatcher: FSWatcher | null = null
-  private readonly changeHandlers = new Set<(affectedSessionIds: string[]) => void>()
+  private readonly changeHandlers = new Set<(event: SkillChangeEvent) => void>()
   private readonly debounceTimers = new Map<string, NodeJS.Timeout>()
   private readonly scanFn: SkillScanFn
 
@@ -111,21 +124,44 @@ export class SkillRegistry {
    */
   async initGlobal(): Promise<void> {
     this.globalCache = await this.scanFn('')
-    // watch 范围 = scan 范围（SSOT）：只 watch 实际存在的全局 skill 目录，不递归 watch 整个父目录。
+    this.setupGlobalWatcher()
+  }
+
+  /**
+   * 挂全局 watcher（initGlobal 启动期 + rebuildGlobal 重建共用）。
+   * watch 范围 = scan 范围（SSOT）：只 watch 实际存在的全局 skill 目录。
+   */
+  private setupGlobalWatcher(): void {
     const dirs = resolveGlobalSkillDirs(this.options.configStore, this.options.configDir).filter(d => existsSync(d))
-    if (dirs.length > 0) {
-      // 幂等防护：若已存在 globalWatcher（重试逻辑/测试重复调用），先 close 旧的避免泄漏。
-      this.globalWatcher?.close().catch(() => {})
-      this.globalWatcher = watch(dirs, {
-        ignored: WATCH_IGNORED,
-        ignoreInitial: true,
-        persistent: true,
-      })
-      this.setupWatcher(this.globalWatcher, 'global', GLOBAL_KEY, async () => {
-        this.globalCache = await this.scanFn('')
-        await this.notifyGlobalChange()
-      })
-    }
+    if (dirs.length === 0) return
+    // 幂等防护：若已存在 globalWatcher（重试/重建），先 close 旧的避免泄漏。
+    this.globalWatcher?.close().catch(() => {})
+    this.globalWatcher = watch(dirs, {
+      ignored: WATCH_IGNORED,
+      ignoreInitial: true,
+      persistent: true,
+    })
+    this.setupWatcher(this.globalWatcher, 'global', GLOBAL_KEY, async () => {
+      this.globalCache = await this.scanFn('')
+      await this.notifyGlobalChange()
+    })
+  }
+
+  /**
+   * 重建全局 watcher + 重扫 globalCache（settings 改 skill 扫描路径后调用）。
+   * close 旧 watcher → 重扫缓存 → 用新目录列表重挂 watcher（新路径纳入视野）→ 通知上游。
+   * 低频操作（用户手动改 settings），不加 in-flight 守卫。
+   */
+  async rebuildGlobal(): Promise<void> {
+    // close 旧 watcher（await 避免 fd 抖动，新旧 watcher 短暂并发）
+    await this.globalWatcher?.close().catch(() => {})
+    this.globalWatcher = null
+    // 重扫缓存
+    this.globalCache = await this.scanFn('')
+    // 重挂 watcher（读最新 configStore，新路径纳入视野）
+    this.setupGlobalWatcher()
+    // 通知上游（触发 onChange → 广播 config.skillCacheInvalidated + reloadOrchestrator）
+    await this.notifyGlobalChange()
   }
 
   /** 当前全局 skill 缓存（启动期扫描结果，watcher 变动后自动刷新）。 */
@@ -184,6 +220,20 @@ export class SkillRegistry {
   }
 
   /**
+   * 清空所有项目级缓存 + close 所有 project watcher（settings 改 skill 相对路径后调用）。
+   * 下次 getProjectSkills(cwd) 会重扫重建。setSkillDirs 改了相对路径配置，所有已缓存 cwd 都可能受影响，
+   * 故清整个 projectCache（保守策略，skill 扫描快，O(N) 重扫可接受）。
+   * 不发广播——由调用方显式 broadcastSkillCacheInvalidated('project')。
+   */
+  invalidateAllProjects(): void {
+    for (const watcher of this.projectWatchers.values()) {
+      watcher.close().catch(() => {})
+    }
+    this.projectWatchers.clear()
+    this.projectCache.clear()
+  }
+
+  /**
    * 挂项目 watcher（getProjectSkills 首次挂载与 refreshProjectWatcher 补挂共用，避免重复代码）。
    * watch 范围 = scan 范围（SSOT）：只 watch 传入的实际存在项目 skill 子目录。
    */
@@ -214,9 +264,9 @@ export class SkillRegistry {
 
   /**
    * 注册 skill 变更回调。返回 unsubscribe 函数（组件卸载时调，防泄漏）。
-   * 回调参数 affectedSessionIds：全局变动传所有活跃 session；项目变动传 cwd 匹配的 session。
+   * 回调参数 SkillChangeEvent：全局变动 scope='global'（cwd 缺省）；项目变动 scope='project'（带 cwd）。
    */
-  onChange(handler: (affectedSessionIds: string[]) => void): () => void {
+  onChange(handler: (event: SkillChangeEvent) => void): () => void {
     this.changeHandlers.add(handler)
     return () => {
       this.changeHandlers.delete(handler)
@@ -230,7 +280,7 @@ export class SkillRegistry {
   async notifyGlobalChange(): Promise<void> {
     const ids = this.options.sessionService.getActiveSessionIds()
     for (const handler of this.changeHandlers) {
-      handler(ids)
+      handler({ scope: 'global', affectedSessionIds: ids })
     }
   }
 
@@ -240,11 +290,9 @@ export class SkillRegistry {
   async notifyProjectChange(cwd: string): Promise<void> {
     const allIds = this.options.sessionService.getActiveSessionIds()
     const getSessionCwd = this.options.sessionService.getSessionCwd
-    const affected = getSessionCwd
-      ? allIds.filter(sid => getSessionCwd(sid) === cwd)
-      : allIds
+    const affected = getSessionCwd ? allIds.filter(sid => getSessionCwd(sid) === cwd) : allIds
     for (const handler of this.changeHandlers) {
-      handler(affected)
+      handler({ scope: 'project', cwd, affectedSessionIds: affected })
     }
   }
 

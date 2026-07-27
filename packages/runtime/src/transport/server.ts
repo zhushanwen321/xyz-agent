@@ -143,6 +143,7 @@ export class RuntimeServer implements IMessageBroker {
       broadcast: (msg) => this.broker.broadcast(msg),
       broadcastProviderList: () => this.broker.broadcastProviderList(),
       broadcastSkillList: () => this.broker.broadcastSkillList(),
+      broadcastSkillCacheInvalidated: (scope: 'global' | 'project', cwd?: string) => this.broker.broadcastSkillCacheInvalidated(scope, cwd),
       broadcastAgentList: () => this.broker.broadcastAgentList(),
       broadcastSkillDirs: () => this.broker.broadcastSkillDirs(),
       broadcastAgentDirs: () => this.broker.broadcastAgentDirs(),
@@ -260,6 +261,11 @@ export class RuntimeServer implements IMessageBroker {
    * 供 index.ts 注入到 HandoffService（与 session-message-handler 的 create/fork/delete/rename 一致）。
    */
   broadcastSessionList(): void { this.broker.broadcastSessionList() }
+  /**
+   * W2：暴露 broker 的 skill 缓存失效广播，供 index.ts 的 skillRegistry.onChange 回调调用
+   * （skill 变动 → 广播 config.skillCacheInvalidated 让 landing composable 失效缓存重拉）。
+   */
+  broadcastSkillCacheInvalidated(scope: 'global' | 'project', cwd?: string): void { this.broker.broadcastSkillCacheInvalidated(scope, cwd) }
   nextPushId(): string { return this.broker.nextPushId() }
 
   // ── Message routing ───────────────────────────────────────────

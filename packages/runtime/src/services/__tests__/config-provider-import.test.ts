@@ -53,6 +53,7 @@ function mockContext(): SettingsHandlerContext {
     broadcast: vi.fn(),
     broadcastProviderList: vi.fn(),
     broadcastSkillList: vi.fn(),
+    broadcastSkillCacheInvalidated: vi.fn(),
     broadcastAgentList: vi.fn(),
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),

@@ -87,7 +87,7 @@ describe('skillRegistry (W1)', () => {
     reg.onChange(onChangeSpy)
     // 模拟全局目录变动
     await reg._notifyGlobalChange()
-    expect(onChangeSpy).toHaveBeenCalledWith(['sid-a', 'sid-b'])
+    expect(onChangeSpy).toHaveBeenCalledWith({ scope: 'global', affectedSessionIds: ['sid-a', 'sid-b'] })
   })
 
   it('U4: getProjectSkills 只 watch 项目 skill 子目录，不递归 watch 整个 cwd（EMFILE 根因防护）', async () => {
@@ -239,7 +239,7 @@ describe('skillRegistry (W1)', () => {
       await reg.getProjectSkills(cwd)
       // 5 次同类错误 → 熔断 → notifyProjectChange(cwd) → affected = cwd 匹配的 ['sid-x']
       for (let i = 0; i < 5; i++) fakeWatcher.emit('error', emfile())
-      expect(onChangeSpy).toHaveBeenCalledWith(['sid-x'])
+      expect(onChangeSpy).toHaveBeenCalledWith({ scope: 'project', cwd, affectedSessionIds: ['sid-x'] })
     } finally {
       reg.dispose()
       rmSync(cwd, { recursive: true, force: true })
@@ -261,5 +261,147 @@ describe('skillRegistry (W1)', () => {
     expect(configRoots[0]).not.toBe(process.cwd())
     // S5 用 os.tmpdir() 下不存在的子路径作为 root
     expect(configRoots[0]).toContain(tmpdir())
+  })
+})
+
+// ── W2：runtime 侧重建 watcher + onChange 携带变更详情 + 广播失效信号 ──
+// TC1: rebuildGlobal 重挂 watcher 含新路径（settings 改 skill 扫描路径后调用）
+// TC2: rebuildGlobal close 旧 watcher（避免 fd 泄漏）
+// TC3: invalidateAllProjects 清空 projectCache + projectWatchers
+// TC4: onChange 收到 SkillChangeEvent 对象（global/project 两种 scope）
+describe('skillRegistry (W2 rebuild)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('TC1: rebuildGlobal 重挂 watcher 含新路径（新 skillDir 纳入 watch 视野）', async () => {
+    const chokidar = await import('chokidar')
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    // 准备两个全局 skill 目录（模拟 settings 改路径后新增的目录）
+    const dirA = mkdtempSync(join(tmpdir(), 'skill-w2-tc1-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'skill-w2-tc1-b-'))
+    // 动态切 configStore：initGlobal 时只 watch [dirA]；rebuildGlobal 后 watch [dirA, dirB]
+    const currentDirs = { value: [dirA] }
+    const reg = new SkillRegistry({
+      configStore: {
+        getSkillPaths: () => currentDirs.value,
+        getPiAgentDir: () => '/pi',
+      } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => [] } as never,
+      _scanFn: vi.fn().mockResolvedValue([]),
+    } as never)
+    try {
+      await reg.initGlobal()
+      // initGlobal 后清空 watch 调用计数，便于隔离 rebuildGlobal 的调用
+      vi.mocked(chokidar.watch).mockClear()
+      // 模拟 settings 改路径：新增 dirB
+      currentDirs.value = [dirA, dirB]
+      await reg.rebuildGlobal()
+      // rebuildGlobal 应重新挂一次 watcher
+      expect(chokidar.watch).toHaveBeenCalledTimes(1)
+      const watchArgs = vi.mocked(chokidar.watch).mock.calls[0]
+      const watchedPaths = watchArgs[0] as string[]
+      // 核心：新路径 dirB 纳入 watch 视野（rebuild 读最新 configStore）
+      expect(watchedPaths).toContain(dirA)
+      expect(watchedPaths).toContain(dirB)
+    } finally {
+      reg.dispose()
+      rmSync(dirA, { recursive: true, force: true })
+      rmSync(dirB, { recursive: true, force: true })
+    }
+  })
+
+  it('TC2: rebuildGlobal close 旧 watcher（避免 fd 泄漏）', async () => {
+    const chokidar = await import('chokidar')
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const dir = mkdtempSync(join(tmpdir(), 'skill-w2-tc2-'))
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [dir], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => [] } as never,
+      _scanFn: vi.fn().mockResolvedValue([]),
+    } as never)
+    // 用自定义 watcher 覆盖默认 mock：close 为 spy，便于断言 rebuildGlobal 是否 close 了旧 watcher
+    const oldWatcher = new EventEmitter()
+    const closeSpy = vi.fn().mockResolvedValue(undefined)
+    ;(oldWatcher as unknown as { close: ReturnType<typeof vi.fn> }).close = closeSpy
+    vi.mocked(chokidar.watch).mockReturnValueOnce(oldWatcher as never)
+    try {
+      await reg.initGlobal()
+      // 重建：应 close 旧 watcher
+      await reg.rebuildGlobal()
+      expect(closeSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      reg.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('TC3: invalidateAllProjects 清空 projectCache + close 所有 project watcher', async () => {
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const cwdA = mkdtempSync(join(tmpdir(), 'skill-w2-tc3-a-'))
+    const cwdB = mkdtempSync(join(tmpdir(), 'skill-w2-tc3-b-'))
+    mkdirSync(join(cwdA, '.xyz-agent', 'skills'), { recursive: true })
+    mkdirSync(join(cwdB, '.xyz-agent', 'skills'), { recursive: true })
+    const scanSpy = vi.fn().mockResolvedValue([])
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: { getActiveSessionIds: () => [] } as never,
+      _scanFn: scanSpy,
+    } as never)
+    // 自定义 watcher（带 close spy）覆盖默认 mock，断言 invalidateAllProjects close 了所有 watcher
+    const watcherA = new EventEmitter()
+    const closeSpyA = vi.fn().mockResolvedValue(undefined)
+    ;(watcherA as unknown as { close: ReturnType<typeof vi.fn> }).close = closeSpyA
+    const watcherB = new EventEmitter()
+    const closeSpyB = vi.fn().mockResolvedValue(undefined)
+    ;(watcherB as unknown as { close: ReturnType<typeof vi.fn> }).close = closeSpyB
+    const chokidar = await import('chokidar')
+    vi.mocked(chokidar.watch)
+      .mockReturnValueOnce(watcherA as never)
+      .mockReturnValueOnce(watcherB as never)
+    try {
+      // 首次扫描两个项目，各自挂 watcher + 缓存
+      await reg.getProjectSkills(cwdA)
+      await reg.getProjectSkills(cwdB)
+      // invalidateAllProjects：close 所有 watcher + 清缓存
+      reg.invalidateAllProjects()
+      expect(closeSpyA).toHaveBeenCalledTimes(1)
+      expect(closeSpyB).toHaveBeenCalledTimes(1)
+      // 清空后再次 getProjectSkills：scanFn 应被重新调用（缓存已清，重新扫描）
+      const scanBefore = scanSpy.mock.calls.length
+      await reg.getProjectSkills(cwdA)
+      expect(scanSpy.mock.calls.length).toBeGreaterThan(scanBefore)
+    } finally {
+      reg.dispose()
+      rmSync(cwdA, { recursive: true, force: true })
+      rmSync(cwdB, { recursive: true, force: true })
+    }
+  })
+
+  it('TC4: onChange 收到 SkillChangeEvent 对象（global scope 带 affectedSessionIds / project scope 带 cwd）', async () => {
+    const { SkillRegistry } = await import('../src/services/skill-registry.js')
+    const cwd = '/proj-tc4'
+    const reg = new SkillRegistry({
+      configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+      configDir: '/cfg',
+      sessionService: {
+        getActiveSessionIds: () => ['sid-1', 'sid-2'],
+        getSessionCwd: (sid: string) => (sid === 'sid-1' ? cwd : '/other'),
+      } as never,
+    } as never)
+    const events: Array<{ scope: string; cwd?: string; affectedSessionIds: string[] }> = []
+    reg.onChange((event) => events.push(event))
+
+    // 全局变动：scope='global'，cwd 缺省，affectedSessionIds=全部活跃
+    await reg.notifyGlobalChange()
+    expect(events[0]).toMatchObject({ scope: 'global', affectedSessionIds: ['sid-1', 'sid-2'] })
+    expect(events[0].cwd).toBeUndefined()
+
+    // 项目变动：scope='project'，cwd 携带，affectedSessionIds=cwd 匹配的活跃 session
+    await reg.notifyProjectChange(cwd)
+    expect(events[1]).toMatchObject({ scope: 'project', cwd, affectedSessionIds: ['sid-1'] })
   })
 })

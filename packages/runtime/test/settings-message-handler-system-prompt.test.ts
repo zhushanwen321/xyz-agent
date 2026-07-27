@@ -76,6 +76,7 @@ function makeHandler() {
     broadcast: vi.fn((m: ServerMessage) => broadcasts.push(m)),
     broadcastProviderList: vi.fn(),
     broadcastSkillList: vi.fn(),
+    broadcastSkillCacheInvalidated: vi.fn(),
     broadcastAgentList: vi.fn(),
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
