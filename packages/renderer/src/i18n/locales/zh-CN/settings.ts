@@ -108,6 +108,9 @@ export default {
     fieldType: '类型',
     fieldTypeHint: '决定 baseUrl 默认值与是否需要 API Key',
     selectTypePlaceholder: '选择类型',
+    apiAnthropic: 'Anthropic Messages',
+    apiOpenai: 'OpenAI Compatible',
+    apiOpenaiResponses: 'OpenAI Responses API',
     fieldBaseUrl: 'Base URL',
     fieldApiKey: 'API Key',
     apiKeyHint: '仅本地加密存储',
@@ -405,5 +408,6 @@ export default {
       sendSessionIdHeader: { label: '发送 session_id 头', hint: '启用缓存时发 OpenAI session_id 头。' },
       supportsLongCacheRetention: { label: '长缓存保留', hint: 'cacheRetention=long 时发 prompt_cache_retention:"24h"。' },
     },
+    jsonInvalid: 'JSON 格式错误',
   },
 }

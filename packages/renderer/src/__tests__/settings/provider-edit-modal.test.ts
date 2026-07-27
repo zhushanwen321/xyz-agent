@@ -331,10 +331,22 @@ describe('编辑模式打开后模型清单回填可见（inject ref 解包回�
     await flushPromises()
 
     // providerFixture 含 1 个 model: claude-sonnet-4-5
-    // 观察者视角断言：model id 在 DOM 里可见
-    const bodyText = document.body.textContent ?? ''
-    expect(bodyText).toContain('claude-sonnet-4-5')
-    expect(bodyText).not.toContain('暂无模型')
+    // 回归点：inject ref 未解包时 localModels.length 为 undefined → v-if="!localModels.length"
+    // 的空状态 div 渲染、model 行不渲染。用 locale-invariant 的结构断言验证 model 行真实存在，
+    // 避免 locale 切换（en-US 显示 "No models"）时文案断言 false positive。
+    //
+    // ModelListSection.vue 把 model id 渲染进 <span class="flex-1 truncate font-mono text-fg">，
+    // 空状态是 <div class="py-8 text-center text-[12px] text-muted">——两者 class 都是结构契约，
+    // 不随 locale 变化。
+    const modelIdSpans = document.body.querySelectorAll('span.truncate.font-mono')
+    expect(modelIdSpans.length, 'model 行应作为 DOM 元素结构性渲染').toBeGreaterThan(0)
+    expect(
+      Array.from(modelIdSpans).some((s) => (s.textContent ?? '').includes('claude-sonnet-4-5')),
+      'model 行应含 model id',
+    ).toBe(true)
+    // 空状态 div（v-if="!localModels.length"）不应渲染——'py-8.text-center' 是其独有 class 组合
+    const emptyState = document.body.querySelector('.py-8.text-center')
+    expect(emptyState, '空状态不应渲染（localModels 已解包）').toBeNull()
   })
 })
 

@@ -24,20 +24,32 @@ export interface CompatFieldOption {
   labelKeySuffix: string
 }
 
-export interface CompatFieldMeta {
+/** 字段元数据公共部分（与 type 无关的列）。 */
+interface CompatFieldMetaBase {
   field: string
   labelKey: string
   hintKey: string
-  type: CompatFieldType
   group: CompatFieldGroup
-  /** type=select 时的选项；select 字段必须提供。 */
-  options?: CompatFieldOption[]
-  /**
- * 选项 label 的 i18n key 前缀。默认 'settings.compat.thinkingFormat.options'；
- * maxTokensField / cacheControlFormat 等字段用自己的 options 命名空间。
- */
-  optionsKeyPrefix?: string
 }
+
+/**
+ * 判别联合：select 类型必须提供 options（缺了会渲染空 Select），switch/text 无 options。
+ * - switch: 布尔开关，无 options
+ * - select: 枚举下拉，options 必填（optionsKeyPrefix 可选，默认 thinkingFormat 命名空间）
+ * - text:   object/JSON 高级字段，无 options，渲染 JSON 编辑器
+ */
+export type CompatFieldMeta =
+  | (CompatFieldMetaBase & { type: 'switch' })
+  | (CompatFieldMetaBase & {
+      type: 'select'
+      options: CompatFieldOption[]
+      /**
+       * 选项 label 的 i18n key 前缀。默认 'settings.compat.thinkingFormat.options'；
+       * maxTokensField 等字段用自己的 options 命名空间。
+       */
+      optionsKeyPrefix?: string
+    })
+  | (CompatFieldMetaBase & { type: 'text' })
 
 // openai-completions 的 19 个字段（按 essential/advanced 分组）
 export const OPENAI_COMPAT_FIELDS: CompatFieldMeta[] = [
@@ -138,17 +150,9 @@ export const OPENAI_COMPAT_FIELDS: CompatFieldMeta[] = [
     type: 'switch',
     group: 'advanced',
   },
-  {
-    field: 'cacheControlFormat',
-    labelKey: 'settings.compat.openai.cacheControlFormat.label',
-    hintKey: 'settings.compat.openai.cacheControlFormat.hint',
-    type: 'select',
-    group: 'advanced',
-    optionsKeyPrefix: 'settings.compat.openai.cacheControlFormat.options',
-    options: [
-      { value: 'anthropic', labelKeySuffix: 'anthropic' },
-    ],
-  },
+  // cacheControlFormat 已从 UI 字段列表移除：唯一有效值 'anthropic' 单选下拉无意义，
+  // 改由 CompatEditor.applyPreset 在应用 anthropic 相关预设时自动注入（见该处注释）。
+  // i18n key settings.compat.openai.cacheControlFormat.* 保留不删（语义文档化）。
   {
     field: 'supportsLongCacheRetention',
     labelKey: 'settings.compat.openai.supportsLongCacheRetention.label',

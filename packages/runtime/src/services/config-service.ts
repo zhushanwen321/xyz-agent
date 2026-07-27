@@ -187,8 +187,21 @@ export class ConfigService implements IConfigService {
         if (typeof m.enabled === 'boolean') model.enabled = m.enabled
         // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
         // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
-        if (m.compat !== undefined && typeof m.compat === 'object') {
-          model.compat = m.compat
+        // 类型守卫对齐 isValidThinkingLevelMap：必须排除 null（typeof null === 'object'）
+        // 与数组（typeof [] === 'object'），否则下游遍历 null 会崩或把数组当对象写入。
+        if (m.compat != null && typeof m.compat === 'object' && !Array.isArray(m.compat)) {
+          // sanitize compat（守卫通过后、赋值前）：
+          // - 剔除 __proto__/prototype/constructor 防 prototype pollution（compat 类型是
+          //   Record<string, unknown> 前向兼容扩展点，不能假定 key 安全）
+          // - 剔除 undefined value（避免 JSON 序列化丢 key 造成困惑）
+          // 不做 key 白名单：compat schema 未稳定，白名单会限制前向扩展。
+          const sanitized: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(m.compat)) {
+            if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue
+            if (v === undefined) continue
+            sanitized[k] = v
+          }
+          model.compat = sanitized
         } else if (m.compat === undefined && base.compat) {
           // 前端 clearAll 发 undefined → 删除盘上已有的 compat（对齐 thinkingLevelMap undefined 分支），
           // 否则 base spread 会保留旧 compat，导致「清除所有 compat」按钮失效。

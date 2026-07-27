@@ -114,11 +114,11 @@ function getValue(field: string): unknown {
 }
 
 /**
- * immutable 更新单个字段。switch/select 写入新值；text 字段（openRouterRouting 等）
- * CompatField 不 emit change，因此不会进这里。
+ * immutable 更新单个字段。接收 CompatField 的单 payload 对象（{ field, value }）。
+ * switch/select/text 三类字段均经此入口（text 字段在 JSON 校验通过后 emit）。
  */
-function setValue(field: string, value: unknown): void {
-  emit('update:modelValue', { ...props.modelValue, [field]: value })
+function setValue(payload: { field: string; value: unknown }): void {
+  emit('update:modelValue', { ...props.modelValue, [payload.field]: payload.value })
 }
 
 /** 清空 compat：emit undefined。 */
@@ -126,8 +126,22 @@ function clearAll(): void {
   emit('update:modelValue', undefined)
 }
 
-/** 应用预设：整体替换 compat（emit 预设的 compat 对象）。 */
-function applyPreset(preset: { compat: Record<string, unknown> }): void {
-  emit('update:modelValue', { ...preset.compat })
+/**
+ * 应用预设：merge 模式——preset 字段覆盖同名字段，用户已存在但不在 preset 中的字段保留。
+ * （spread 顺序：现有字段在前，preset 覆盖在后。）
+ *
+ * 另外：cacheControlFormat 已从 UI 字段列表移除（单选下拉无意义），但语义需保留。
+ * 应用 anthropic 相关预设时自动注入 { cacheControlFormat: 'anthropic' }（若 preset
+ * 数据已显式提供该字段则保持，不重复覆盖）。
+ */
+function applyPreset(preset: { api?: string; compat: Record<string, unknown> }): void {
+  const existingCompat = props.modelValue ?? {}
+  const merged: Record<string, unknown> = { ...existingCompat, ...preset.compat }
+  // anthropic 相关预设（anthropic-messages API，或 preset 已声明 cacheControlFormat）
+  // → 确保 cacheControlFormat='anthropic'（唯一有效值），不暴露无意义单选 UI。
+  if (preset.api === 'anthropic-messages' && merged.cacheControlFormat === undefined) {
+    merged.cacheControlFormat = 'anthropic'
+  }
+  emit('update:modelValue', merged)
 }
 </script>

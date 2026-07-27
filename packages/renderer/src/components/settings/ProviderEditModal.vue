@@ -43,10 +43,12 @@
                 <SelectValue :placeholder="t('settings.providerEdit.selectTypePlaceholder')" />
               </SelectTrigger>
               <SelectContent>
-                <!-- value 严格对齐 PROVIDER_API_TYPES（pi 终值，runtime 不再翻译别名）。
-                     pi 不支持 ollama 作为 api 标识：本地 ollama 用 OpenAI Compatible + baseUrl=http://localhost:11434 即可。 -->
-                <SelectItem value="anthropic-messages">Anthropic Messages</SelectItem>
-                <SelectItem value="openai-completions">OpenAI Compatible</SelectItem>
+                <!-- value 严格对齐 pi 支持的 api 终值（KNOWN_PI_API_TYPES）。
+                     pi 不支持 ollama 作为 api 标识：本地 ollama 用 OpenAI Compatible + baseUrl=http://localhost:11434 即可。
+                     openai-responses 透传 RESPONSES_COMPAT_FIELDS（compat-fields.ts），不可省否则死代码。 -->
+                <SelectItem value="anthropic-messages">{{ t('settings.providerEdit.apiAnthropic') }}</SelectItem>
+                <SelectItem value="openai-completions">{{ t('settings.providerEdit.apiOpenai') }}</SelectItem>
+                <SelectItem value="openai-responses">{{ t('settings.providerEdit.apiOpenaiResponses') }}</SelectItem>
               </SelectContent>
             </Select>
           </div>

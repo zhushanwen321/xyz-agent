@@ -108,6 +108,9 @@ export default {
     fieldType: 'Type',
     fieldTypeHint: 'Determines default baseUrl and whether an API key is required',
     selectTypePlaceholder: 'Select type',
+    apiAnthropic: 'Anthropic Messages',
+    apiOpenai: 'OpenAI Compatible',
+    apiOpenaiResponses: 'OpenAI Responses API',
     fieldBaseUrl: 'Base URL',
     fieldApiKey: 'API Key',
     apiKeyHint: 'Stored encrypted locally only',
@@ -323,7 +326,7 @@ export default {
     unset: 'Unset (use default)',
     noEssential: 'This API type usually needs no compat config',
     advancedJsonHint: 'Advanced (edit json)',
-    presetLabel: 'Domestic model presets',
+    presetLabel: 'Chinese model presets',
     preset: {
       deepseek: { label: 'DeepSeek', hint: 'DeepSeek-V3.x/V4: thinking param (type=enabled/disabled) + reasoning_effort, must echo reasoning_content' },
       glm: { label: 'GLM (z.ai)', hint: 'Zhipu GLM-4.5+/5.x: thinking param (type=enabled/disabled), no reasoning_effort support' },
@@ -405,5 +408,6 @@ export default {
       sendSessionIdHeader: { label: 'Send session_id header', hint: 'Send the OpenAI session_id header when caching is enabled.' },
       supportsLongCacheRetention: { label: 'Long cache retention', hint: 'Send prompt_cache_retention:"24h" when cacheRetention=long.' },
     },
+    jsonInvalid: 'Invalid JSON',
   },
 }

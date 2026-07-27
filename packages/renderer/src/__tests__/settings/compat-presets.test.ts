@@ -40,7 +40,13 @@ describe('compat 预设配置（COMPAT_PRESETS）', () => {
   })
 
   describe('各预设的 compat 配置正确性（调研结论固化）', () => {
-    const findPreset = (id: string) => COMPAT_PRESETS.find(p => p.id === id)!
+    // 不用非空断言 `!`：preset id 被删/改名时，find 返回 undefined，后续 `.compat` 会抛晦涩的
+    // "Cannot read properties of undefined"。这里显式 expect，失败时给出可定位的诊断信息。
+    const findPreset = (id: string) => {
+      const p = COMPAT_PRESETS.find(p => p.id === id)
+      expect(p, `preset "${id}" not found in COMPAT_PRESETS`).toBeDefined()
+      return p!
+    }
 
     it('DeepSeek: thinkingFormat=deepseek + 支持 reasoning_effort + 需回传 reasoning_content', () => {
       const compat = findPreset('deepseek').compat
@@ -99,6 +105,34 @@ describe('compat 预设配置（COMPAT_PRESETS）', () => {
     it('所有预设的 api 字段与 COMPAT_PRESETS 声明一致', () => {
       for (const p of COMPAT_PRESETS) {
         expect(['openai-completions', 'anthropic-messages', 'openai-responses']).toContain(p.api)
+      }
+    })
+  })
+
+  /**
+   * COMPAT_PRESETS 是静态数据，被 CompatEditor 读取并通过 i18n key（settings.compat.preset.<id>）
+   * 渲染 label/hint。任一字段缺失会导致运行时 undefined 或 i18n 回退到 key 原文。这里固化数据形状契约，
+   * 防止后续手改时静默破坏（如删 id、空 compat、api 写错枚举值）。
+   */
+  describe('COMPAT_PRESETS 数据形状契约', () => {
+    it('每个 preset 有非空字符串 id、合法 api 枚举、且 compat 为非空对象', () => {
+      expect(COMPAT_PRESETS.length, 'COMPAT_PRESETS 不应为空').toBeGreaterThan(0)
+      const seenIds: string[] = []
+      for (const p of COMPAT_PRESETS) {
+        expect(typeof p.id, `preset id 应为字符串，实际为 ${typeof p.id}`).toBe('string')
+        expect(p.id.length, 'preset id 不应为空字符串').toBeGreaterThan(0)
+        expect(seenIds, `preset id "${p.id}" 重复`).not.toContain(p.id)
+        seenIds.push(p.id)
+
+        expect(p.api, `preset "${p.id}" 的 api 必须是合法枚举值`).toBeOneOf([
+          'openai-completions',
+          'anthropic-messages',
+          'openai-responses',
+        ])
+
+        expect(p.compat, `preset "${p.id}" 的 compat 应为对象`).toBeTypeOf('object')
+        expect(p.compat, `preset "${p.id}" 的 compat 不应为 null`).not.toBeNull()
+        expect(Object.keys(p.compat).length, `preset "${p.id}" 的 compat 不应为空对象`).toBeGreaterThan(0)
       }
     })
   })

@@ -112,7 +112,8 @@
               <col class="w-[14%]" />
               <col class="w-[11%]" />
               <col class="w-[15%]" />
-              <col class="w-[7%]" />
+              <!-- 编辑列：7% 在窄视口下 <40px 会让 Pencil 按钮溢出/换行，故加 min-width（col 不支持 Tailwind class，用 inline style） -->
+              <col class="w-[7%]" style="min-width: 40px" />
             </colgroup>
             <TableHeader>
               <TableRow class="hover:bg-transparent">

@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { inject, unref, computed } from 'vue'
+import { inject, unref, computed, type Ref, type ComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, ImageIcon, X, Settings2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -207,19 +207,19 @@ interface ModelListDeps {
     contextWindow: number | undefined
     thinking: string | undefined
   }
-  localModels: LocalModel[]
+  localModels: Ref<LocalModel[]>
   toggleNewInput: (type: 'text' | 'image') => void
   toggleInput: (m: LocalModel, type: 'text' | 'image') => void
   updateCtx: (m: LocalModel, value: number) => void
   pickStrategy: (m: LocalModel, strategy: ThinkingStrategy) => void
   getStrategyFromMap: (map?: Record<string, string | null>) => ThinkingStrategy
   removeModel: (index: number) => void
-  /** 展开了 compat 编辑器的 model id 集合 */
+  /** 展开了 compat 编辑器的 model id 集合（reactive Set，直接 mutate） */
   expandedCompat: Set<string>
   /** 切换某 model 的 compat 编辑器展开 */
   toggleCompatExpand: (modelId: string) => void
   /** provider 级 api（model 级 api 缺失时的回退，用于 compat 字段集判断） */
-  providerApi: string
+  providerApi: ComputedRef<string>
 }
 
 const deps = inject<ModelListDeps>('modelListDeps')!

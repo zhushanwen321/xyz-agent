@@ -160,7 +160,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   /**
    * 打开时的初始快照（用于 isDirty 对比，D13 取消确认）。
    * 每次 provider 变化重置编辑态后记录；手动改 form/localModels 后 isDirty=true。
-   * 快照基础字段（name/api/baseUrl/authHeader）+ apiKey 状态（是否清空）+ models 的 id 列表
+   * 快照基础字段（name/api/baseUrl/authHeader）+ apiKey 状态（是否清空）+ models 整体序列化
    * + headers（W3 D7：headers 改也算 dirty）。
    */
   interface FormSnapshot {
@@ -169,8 +169,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     baseUrl: string
     /** apiKey 是否被「清除」（哨兵态或用户输入了值都算 dirty） */
     apiKeyChanged: boolean
-    /** models 的 id 列表（顺序无关，按集合对比增删） */
-    modelIds: string[]
+    /** models 整体序列化（增删 + 内部字段如 compat/thinkingLevelMap/contextWindow/input 改都触发 dirty） */
+    modelsJson: string
     /** provider 级 authHeader（W3 D7） */
     authHeader: boolean
     /** provider 级 headers 序列化（W3 D7：JSON 串对比，键值任一变更即 dirty） */
@@ -185,7 +185,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
       api: form.api,
       baseUrl: form.baseUrl,
       apiKeyChanged: form.apiKey !== '',
-      modelIds: localModels.value.map((m) => m.id),
+      modelsJson: JSON.stringify(localModels.value),
       authHeader: form.authHeader,
       headersJson: JSON.stringify(form.headers),
     }
@@ -193,7 +193,9 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
 
   /**
    * form 相对初始快照是否有变更（D13 取消确认 + W3 过期快照刷新用）。
-   * 对比 name/api/baseUrl/apiKey 状态/models 的 id 集合/authHeader/headers。snapshot=null（未初始化）→ false。
+   * 对比 name/api/baseUrl/apiKey 状态/models 整体/authHeader/headers。snapshot=null（未初始化）→ false。
+   * models 用 JSON 串整体对比：增删 id 与内部字段（compat/thinkingLevelMap/contextWindow/input 等）
+   * 任一变更都判 dirty——避免用户改 compat 等字段后 isDirty=false 静默丢改（问题 1）。
    */
   const isDirty = computed<boolean>(() => {
     const s = snapshot.value
@@ -204,12 +206,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     // apiKey：用户输入了值 或 点了清除（哨兵）都算变更
     const apiKeyChangedNow = form.apiKey !== ''
     if (apiKeyChangedNow !== s.apiKeyChanged) return true
-    // models id 集合对比（增删即 dirty；内部字段改不算——按 id 对比足够覆盖取消确认场景）
-    const currentIds = new Set(localModels.value.map((m) => m.id))
-    if (currentIds.size !== s.modelIds.length) return true
-    for (const id of s.modelIds) {
-      if (!currentIds.has(id)) return true
-    }
+    // models 整体对比（增删 + 内部字段改都触发 dirty）
+    if (JSON.stringify(localModels.value) !== s.modelsJson) return true
     // W3 D7：authHeader / headers 变更即 dirty
     if (form.authHeader !== s.authHeader) return true
     if (JSON.stringify(form.headers) !== s.headersJson) return true
@@ -230,14 +228,16 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   /** 动作错误（保存/测试/发现失败时显示在底栏，非静默吞） */
   const actionError = ref('')
 
-  /** 展开了 compat 编辑器的 model id 集合（手风琴态） */
-  const expandedCompat = ref<Set<string>>(new Set())
-  /** 切换某 model 的 compat 编辑器展开/收起 */
+  /**
+   * 展开了 compat 编辑器的 model id 集合（手风琴态）。
+   * 用 reactive Set（Vue 3.5+ 支持）+ 直接 mutate（add/delete），避免每次 toggle 复制整集。
+   * per-provider-edit-session 状态：openModal 切换 provider 时 .clear() 重置。
+   */
+  const expandedCompat = reactive<Set<string>>(new Set())
+  /** 切换某 model 的 compat 编辑器展开/收起（直接 mutate，不 new Set 复制——问题 5） */
   function toggleCompatExpand(modelId: string): void {
-    const next = new Set(expandedCompat.value)
-    if (next.has(modelId)) next.delete(modelId)
-    else next.add(modelId)
-    expandedCompat.value = next
+    if (expandedCompat.has(modelId)) expandedCompat.delete(modelId)
+    else expandedCompat.add(modelId)
   }
 
   // ── provider 同步：打开/切换 provider 时重置编辑态 ──
@@ -261,7 +261,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         showAddModel.value = false
         actionError.value = ''
         localModels.value = p.models.map((m) => ({ ...m }))
-        expandedCompat.value = new Set()
+        expandedCompat.clear()
       } else {
         // 新增模式：重置为初始空状态（providerRef 变 null 时触发，避免残留上次编辑数据）
         form.name = ''
@@ -277,7 +277,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
         showAddModel.value = false
         actionError.value = ''
         localModels.value = []
-        expandedCompat.value = new Set()
+        expandedCompat.clear()
       }
       // 记录初始快照（isDirty 对比基线）。重置后立即捕获，确保用户首次输入才变 dirty。
       captureSnapshot()

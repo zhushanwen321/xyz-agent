@@ -226,7 +226,7 @@ describe('ProviderPage W1 robustness', () => {
     expect(err.text()).toContain('网络错误')
   })
 
-  it('U2: thinking pill 可点击打开编辑弹窗（修问题 2：model 行需有编辑入口）', async () => {
+  it('U2: thinking pill 处于可交互状态（enabled + 有 title）且 model 行有独立编辑按钮', async () => {
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
@@ -241,6 +241,9 @@ describe('ProviderPage W1 robustness', () => {
     expect(pill.exists()).toBe(true)
     // pill 现在可点击（不再 disabled），点击触发 openEdit 打开编辑弹窗。
     // 修问题 2：原 disabled pill 让用户误以为「不能编辑」，现改为点击进编辑弹窗。
+    // 注：点击 → 打开 ProviderEditModal 的链路依赖 settingsStore/providers 初始化，
+    // 完整 click→dialog 断言由 provider-edit-modal.test.ts 覆盖；这里只验证 pill 处于
+    // 可交互状态（enabled + 有 title 提示）这一前置契约。
     expect(pill.attributes('disabled')).toBeUndefined()
     expect(pill.attributes('title')).toBeDefined()
     // 同时 model 行新增独立铅笔编辑按钮（data-testid="model-edit-btn"）
