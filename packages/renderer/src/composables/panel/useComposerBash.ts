@@ -5,8 +5,13 @@
  * 分流入口：命中 `!`/`!!` 前缀时执行 bash（不经 LLM turn），返回 true 表示已处理
  * （调用方不再走普通 send / compact 分支）。
  *
- * bash 不走 segment 提取（原始 shell 文本透传 pi bash RPC），失败时仅恢复 draft 纯文本
- * （无 image/skill/file chip 可丢）。错误 toast 由 useChat.sendBash 内部处理。
+ * bash 不走 segment 提取（原始 shell 文本透传 pi bash RPC）。
+ *
+ * 错误策略：useChat.sendBash 内部已 try/catch + toast 且不重抛（与 send/abort/compact
+ * 对称），故 trySendBash 失败时不再恢复 draft 输入。已知限制：sendBash 失败时 !command
+ * 文本会丢失（草稿已在 clearInput 时清空）。长期治理方向：把 toast + restoreInput 收敛到
+ * 调用方（本 composable），让 sendBash 改为抛错；但该改动牵连 submitFirstMessage 直调
+ * sendBash 的完成转换路径，本次（W6/S10/S12 PR#116 review）不做。
  */
 import { computed, type ComputedRef, type Ref } from 'vue'
 import { useChat } from '@/composables/features/useChat'
@@ -27,12 +32,10 @@ export type BashCommandExtract =
   | { type: 'command'; command: string; excludeFromContext: boolean }
 
 export interface ComposerBashOptions {
-  /** draft 文本（双向：trySendBash 失败时 restoreInput 写回） */
+  /** draft 文本（isBashMode 派生源） */
   draft: Ref<string>
   /** 清空输入（乐观 UI：提交前先清） */
   clearInput: () => void
-  /** 恢复纯文本草稿（失败时回填） */
-  restoreInput: (text: string) => void
   /** 发送中状态（trySendBash 期间置 true） */
   isSending: Ref<boolean>
   /** session id（landing 态为 null，调用方需保证 trySendBash 在非 landing 分支调用） */
@@ -75,13 +78,11 @@ export function useComposerBash(opts: ComposerBashOptions): UseComposerBash {
   }
 
   async function trySendBash(rawText: string): Promise<boolean> {
-    const trimmed = rawText.trim()
-    if (!trimmed.startsWith('!')) return false
-
-    const isExcluded = trimmed.startsWith('!!')
-    const cmd = trimmed.slice(isExcluded ? BANG_DOUBLE : BANG_SINGLE).trim()
+    // S12：复用 extractBashCommand 统一 !/!! 前缀解析，消除重复的 slice/trim/判空逻辑。
+    const extracted = extractBashCommand(rawText)
+    if (extracted.type === 'not-bash') return false
     // 空命令：不提交但视为已处理（保持 bash 模式，保留前缀供继续输入）
-    if (!cmd) return true
+    if (extracted.type === 'empty') return true
 
     const sid = opts.sessionId()
     if (!sid) return false
@@ -89,15 +90,12 @@ export function useComposerBash(opts: ComposerBashOptions): UseComposerBash {
     opts.clearInput()
     opts.isSending.value = true
     try {
-      await sendBash(sid, cmd, isExcluded)
-    } catch (e) {
-      // [W4] sendBash 内部已 toast（与 send 同策略），此处恢复草稿避免输入丢失。
-      // 非预期异常（TypeError 等）也记录日志，避免用户无反馈。
-      console.warn('[useComposerBash] trySendBash failed:', e)
-      opts.restoreInput(rawText)
+      await sendBash(sid, extracted.command, extracted.excludeFromContext)
     } finally {
       opts.isSending.value = false
     }
+    // [W6/S10] sendBash 内部已 try/catch + toast 且不重抛（与 send/abort/compact 对称），
+    // 故此处不再 catch：失败时草稿不恢复（已知限制，见模块头注释）。错误已通过 toast 消化。
     return true
   }
 

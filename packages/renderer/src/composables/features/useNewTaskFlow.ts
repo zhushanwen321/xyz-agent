@@ -239,8 +239,11 @@ export function useNewTaskFlow() {
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
         const cwd = pendingCwd.value ?? workspaceStore.defaultCwd
-        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
-        const label = deriveSessionLabel(trimmed)
+        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)。
+        // [S5 PR#116 review] bash 首发（!cmd/!!cmd）时用 command 部分（去 !/!! 前缀）作 label
+        // 来源，避免 session 名带 `!` 前缀（「!ls」体验不佳）。bashCommand.command 已是去前缀后的纯命令。
+        const labelSource = bashCommand ? bashCommand.command : trimmed
+        const label = deriveSessionLabel(labelSource)
         const created = await sessionApi.create(cwd, label)
         // INV-7: runtime create 内部可能因 cwd 失效降级 homedir，比对 session.cwd
         // 与请求 cwd 不一致则 toast 通知用户（D-008 选中失效 cwd 降级）。

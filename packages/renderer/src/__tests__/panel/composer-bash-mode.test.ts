@@ -150,4 +150,26 @@ describe('Composer bash 模式（! / !! 前缀分流）', () => {
     await wrapper.vm.$nextTick()
     expect(box().classes()).toContain('composer-bash-mode')
   })
+
+  /**
+   * [W6/S10 PR#116 review] trySendBash 失败时不恢复 draft（已知限制）。
+   *
+   * useChat.sendBash 内部已 try/catch + toast 且不重抛（与 send/abort/compact 对称），
+   * 故 trySendBash 不再 try/catch + restoreInput。失败时草稿不恢复——错误已通过 toast 消化。
+   * 本用例锁死该契约：sendBash resolve 后 clearInput 已执行（草稿清空），ComposerInput
+   * 的 setText（restore 入口）未被调用。
+   */
+  it('W6: sendBash resolve 后 clearInput 已清空，setText（恢复入口）未被调', async () => {
+    const wrapper = mountComposer({ sessionId: 's1' })
+    const input = wrapper.findComponent(ComposerInputMock)
+    await typeAndEnter(wrapper, '!ls -la')
+
+    expect(chatApiMock.sendBash).toHaveBeenCalledOnce()
+    expect(chatApiMock.sendBash).toHaveBeenCalledWith('s1', 'ls -la', false)
+    // clearInput 被调（乐观 UI：提交前已清空 draft）
+    expect(input.vm.clear).toHaveBeenCalled()
+    // setText 是 restoreInput 的底层入口（useComposerRestore.restoreInput → inputRef.setText），
+    // sendBash resolve 路径下不应被调（无恢复语义）
+    expect(input.vm.setText).not.toHaveBeenCalled()
+  })
 })

@@ -254,6 +254,29 @@ describe('useNewTaskFlow 状态机', () => {
       expect(apiMock.chatBash).toHaveBeenCalledWith(expect.any(String), 'pwd', true)
     })
 
+    /**
+     * [S5 PR#116 review] bash 首发 session label 不应带 `!`/`!!` 前缀。
+     * 事故：原实现 label 取 firstTextSeg.text（含 `!` 前缀），session 名为「!ls」体验不佳。
+     * 修复：bashCommand 传入时 label 用 command 部分（已去前缀）。本用例锁死该行为。
+     */
+    it('S5: bash 首发 session label 用 command 部分（去 !/!! 前缀）', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage(
+        textToSegments('!ls -la'),
+        undefined,
+        { command: 'ls -la', excludeFromContext: false },
+      )
+      // create 的 label 参数取自 bashCommand.command（"ls -la"），不带 `!` 前缀
+      expect(apiMock.create).toHaveBeenCalledWith('/repo', 'ls -la')
+      // 反向断言：label 绝不以 `!` 开头
+      const labelArg = apiMock.create.mock.calls[0]?.[1]
+      expect(labelArg).toBeTruthy()
+      expect(labelArg!.startsWith('!')).toBe(false)
+    })
+
     it('无 bashCommand → 仍走 chat.send（普通首发，回归防护）', async () => {
       setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
       workspaceStoreMock.defaultCwd = '/repo'

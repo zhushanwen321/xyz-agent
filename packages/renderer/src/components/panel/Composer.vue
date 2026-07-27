@@ -323,7 +323,7 @@ const hasInput = computed(() => draft.value.trim().length > 0)
 
 // bash 命令模式（composer-bash-execute）：isBashMode + trySendBash 分流提取到 useComposerBash
 const composerBash = useComposerBash({
-  draft, clearInput, restoreInput, isSending,
+  draft, clearInput, isSending,
   sessionId: () => props.sessionId,
 })
 const isBashMode = composerBash.isBashMode
