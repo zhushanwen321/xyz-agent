@@ -1,12 +1,20 @@
 <template>
   <!--
-    展示组件 · turn 导航 rail（IF4，w3 wave）。
+    展示组件 · turn 导航 rail（IF4，w2 灰阶化重写）。
     功能：
     - 常驻右侧窄条，hover 弹出全 turn 列表浮层（mini-map + 快速跳转）
     - 窄条上有 viewport indicator 标记当前 turn 在窄条上的纵向位置
     - 浮层内每个节点两行：user 行（User 图标 + user 文本）+ agent 行（Bot 图标 + agent 摘要）
-    - 状态融入 Bot 图标颜色（失败红 / 进行中蓝脉冲 / 完成灰），不再用独立状态点
+    - 状态融入 Bot 图标颜色（失败哑光金 warn 常驻 / 进行中 accent + loader-spin / 完成中性灰 ico）
     - toggle 按钮 hover 浮出（渐进披露），active 节点常驻可见，垂直居中于节点右侧
+
+    灰阶化（W2，§13.2-C + CL5 修正）：
+    - failed 图标常驻 text-warn（非 hover 渐显——rail 是全局导航，一眼可辨失败位置）
+    - failed 文本 text-neutral-mid（hover 升 text-neutral-fg）
+    - active 图标 text-accent + 双环 loader-spin 微缩（复用 Block.vue 的 RUNNING_LOADER_SVG）
+    - done 图标 text-neutral-ico；user 行图标 text-neutral-ico，文本 text-neutral-fg
+    - chevron text-neutral-dim
+    - spine/viewport/panel 的 bg-surface-hover/border-accent/bg-accent-soft 保留（中性灰+accent，不冲突）
 
     设计约束：
     - 纯展示组件，turns/activeTurnIndex/sessionActive/expandedTurns 全由父组件传入
@@ -45,37 +53,44 @@
           :class="idx === activeTurnIndex ? 'active bg-accent-soft ring-1 ring-inset ring-accent-ring' : ''"
           @click="emit('jump', idx)"
         >
-          <!-- user 行：User 图标 + user 文本（无 user 时整行省略，首条 assistant 边缘 turn） -->
+          <!-- user 行：User 图标（text-neutral-ico）+ user 文本（text-neutral-fg）。
+               无 user 时整行省略（首条 assistant 边缘 turn）。 -->
           <div v-if="turn.user" class="flex min-w-0 items-center gap-1.5">
-            <User class="size-3 shrink-0 text-muted" />
-            <span class="flex-1 truncate pr-6 text-[11px] leading-tight text-fg">
+            <User class="size-3 shrink-0 text-neutral-ico" />
+            <span class="flex-1 truncate pr-6 text-[11px] leading-tight text-neutral-fg">
               {{ summarizeTurnForRail(turn) || ' ' }}
             </span>
           </div>
-          <!-- agent 行：Bot 图标（状态色）+ agent 摘要。
-               状态融入图标：失败=红 / 进行中=蓝脉冲 / 完成=灰（不抢视觉）。
+          <!-- agent 行：状态图标（failed=warn 常驻 / active=accent loader-spin / done=neutral-ico）+ agent 摘要。
+               failed 文本 text-neutral-mid（hover 升 text-neutral-fg），其余 text-neutral-mid。
                agent 摘要文本优先（content 截断），空则 fallback 计数（N thoughts · M tools），
                全空显「进行中…」占位（含 assistant=[] 的 pending turn）。 -->
           <div class="flex min-w-0 items-center gap-1.5">
+            <!-- active 态：双环 loader-spin（微缩，复用 Block.vue 的 RUNNING_LOADER_SVG，accent 蓝） -->
+            <!-- eslint-disable-next-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
+            <span v-if="isActiveTurn(turn, idx)" data-testid="rail-agent-icon" class="inline-flex size-3 shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" />
+            <!-- 非 active 态：Bot 图标（failed=warn 常驻 / done=neutral-ico） -->
             <Bot
+              v-else
               data-testid="rail-agent-icon"
               class="size-3 shrink-0 transition-colors"
-              :class="agentIconClass(turn, idx)"
+              :class="agentIconClass(turn)"
             />
             <span
-              class="flex-1 truncate pr-6 text-[11px] leading-tight"
-              :class="hasFailedTool(turn) ? 'text-danger' : 'text-muted'"
+              class="flex-1 truncate pr-6 text-[11px] leading-tight transition-colors"
+              :class="hasFailedTool(turn) ? 'text-neutral-mid hover:text-neutral-fg' : 'text-neutral-mid'"
             >
               {{ summarizeAssistantForRail(turn) || t('panel.message.railInProgress') }}
             </span>
           </div>
           <!-- 折展 toggle 按钮：hover/focus 浮出（渐进披露），active 节点常驻可见（用户决策）。
                图标语义：ChevronDown=折叠态（向下展开）/ ChevronUp=展开态（向上收起），直观不混语义。
+               chevron 用 text-neutral-dim（中性灰，不抢视觉）。
                「当前位置」标记不再借用 chevron 方向，由节点底色 bg-accent-soft + ring 独立承担。 -->
           <Button
             variant="ghost"
             size="icon"
-            class="absolute right-1 top-1/2 h-5 w-5 shrink-0 -translate-y-1/2 opacity-0 transition-opacity group-hover/rail-node:opacity-100 group-focus-within/rail-node:opacity-100"
+            class="absolute right-1 top-1/2 h-5 w-5 shrink-0 -translate-y-1/2 text-neutral-dim opacity-0 transition-opacity group-hover/rail-node:opacity-100 group-focus-within/rail-node:opacity-100"
             :class="idx === activeTurnIndex ? '!opacity-100' : ''"
             data-testid="rail-toggle"
             :data-expanded="isTurnExpanded(idx)"
@@ -102,6 +117,7 @@ import { Button } from '@/components/ui/button'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { hasFailedTool } from '@/composables/logic/messageTurns'
 import { summarizeTurnForRail, summarizeAssistantForRail } from '@/composables/logic/summarizeTurn'
+import { RUNNING_LOADER_SVG } from '@/components/panel/message-stream/block-icon'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -151,6 +167,14 @@ function isTurnExpanded(idx: number): boolean {
 }
 
 /**
+ * 判断指定 turn 是否为「激活态」（sessionActive 且当前激活）。
+ * 激活态用 loader-spin 双环图标（accent 蓝），非激活态用 Bot 图标按 agentIconClass 着色。
+ */
+function isActiveTurn(_turn: MessageTurn, idx: number): boolean {
+  return props.sessionActive && idx === props.activeTurnIndex
+}
+
+/**
  * rail 横向定位：根据 panelRightEdge 算 right 偏移。
  * panelRightEdge 给定时 → 贴面板右侧（内缩 8px，与「右侧导航 rail」语义一致）；
  * 缺省 → 贴视口右侧 8px（CSS fallback 路径，用于独立预览/无 panel 场景）。
@@ -177,21 +201,19 @@ const viewportStyle = computed(() => {
 })
 
 /**
- * agent 行 Bot 图标的着色 class（状态融入图标，替代原独立状态点）：
- * - failed（hasFailedTool）→ text-danger（红，最显眼的告警色，drives user 复查）
- * - active（sessionActive 且当前激活）→ text-accent + animate-pulse-accent（蓝脉冲，进行中信号）
- * - 其余 → text-muted（完成态，中性灰，不抢视觉，区别于 user 行的 text-fg）
+ * agent 行 Bot 图标的着色 class（仅非 active 态调用；active 态走 loader-spin）：
+ * - failed（hasFailedTool）→ text-warn（常驻哑光金，CL5 修正——rail 是全局导航，一眼可辨失败位置，
+ *   不沿用 §6 Block 块的「hover 渐显」。多个历史 failed 全染红会视觉污染，但 warn 哑光金克制）
+ * - 其余（done 态）→ text-neutral-ico（中性灰 ICON 色，不抢视觉，区别于 user 行的 text-neutral-fg）
  *
- * 优先级：failed > active > ok —— 失败优先于进行中（失败信息更需要被注意到，
- * 即便 turn 正在 streaming，过往的失败也要标记）。
+ * 优先级：failed > ok —— 失败信息需要被注意到（即便 turn 正在 streaming，过往失败也要标记）。
+ * active 态由 isActiveTurn 提前分流到 loader-spin，不进本函数。
  *
- * 保持普通函数形式（非 computed）：依赖循环变量 turn + idx，要转 computed 需引入
- * 按 turns/activeTurnIndex/sessionActive 映射的 computed 数组，复杂度收益不成正比。
- * 开销可接受——调用次数 = rail 节点数（≤ turns 数，通常 <20），每次仅字符串拼接。
+ * 保持普通函数形式（非 computed）：依赖循环变量 turn，转 computed 需引入按 turns 映射的数组，
+ * 复杂度收益不成正比。开销可接受——调用次数 = rail 节点数（≤ turns 数，通常 <20）。
  */
-function agentIconClass(turn: MessageTurn, idx: number): string {
-  if (hasFailedTool(turn)) return 'text-danger'
-  if (props.sessionActive && idx === props.activeTurnIndex) return 'text-accent animate-pulse-accent'
-  return 'text-muted'
+function agentIconClass(turn: MessageTurn): string {
+  if (hasFailedTool(turn)) return 'text-warn'
+  return 'text-neutral-ico'
 }
 </script>
