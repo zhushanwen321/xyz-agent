@@ -86,19 +86,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the runtime from the builder's tgz (self-contained bundle).
-# node-pty (optional dep) compiles from source here.
 COPY --from=builder /build/packages/runtime/xyz-agent-runtime-*.tgz /tmp/
 RUN npm install -g /tmp/xyz-agent-runtime-*.tgz && rm /tmp/*.tgz
+
+# node-pty 是 runtime 的 optionalDependencies，npm install -g 时编译失败会被 optional 语义
+# 静默吞掉（镜像 build 成功但 terminal.* RPC 全 broken）。显式 npm install -g node-pty
+# 强制编译（失败则 build fail），保证镜像内 node-pty 可用。版本与 runtime package.json 对齐。
+RUN npm install -g node-pty@^1.0.0
 
 # Install pi (locked to 0.80.3 — project SSOT). bin=pi lands in /usr/local/bin.
 RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
 
 # Smoke-test: both binaries must respond.
 RUN xyz-agent-runtime --version && pi --version
-# node-pty 是 optionalDependencies，npm install 时编译失败不报错（optional），
-# 会发布 broken terminal 镜像（terminal.* RPC 全 broken）。
-# NODE_PATH 指向全局 node_modules 让 require 能解析 node-pty（裸 require 从 cwd 找不到全局包）。
-# node-pty native addon 编译失败时 require 会抛 MODULE_NOT_FOUND 或 native 加载错误。
+# node-pty smoke test：用 NODE_PATH 解析全局 node_modules（裸 require 从 cwd 找不到全局包）。
+# native addon 编译失败时 require 会抛 MODULE_NOT_FOUND 或 native 加载错误。
 ENV NODE_PATH=/usr/local/lib/node_modules
 RUN node -e "require('node-pty'); console.log('node-pty OK')"
 
