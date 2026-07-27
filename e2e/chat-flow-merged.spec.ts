@@ -41,12 +41,24 @@ async function activateSession(page: import('@playwright/test').Page): Promise<v
 /**
  * 在当前 session 发送消息（contenteditable composer，pressSequentially 触发 input）。
  * 发送后等待 stop-btn 出现（message_start 后 isGenerating=true）。
+ *
+ * contenteditable 输入有偶发丢字竞态（pressSequentially 时 input 未聚焦或光标未定位），
+ * 用 retry 兜底：若输入后文本未完整写入，清空重试（最多 3 次）。
  */
 async function sendMessage(page: import('@playwright/test').Page, text: string): Promise<void> {
   const input = page.getByRole('textbox')
-  await input.click()
-  await input.pressSequentially(text)
-  await expect(input).toContainText(text)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await input.click()
+    await input.focus()
+    // 清空残留（前次失败可能留半截文本）
+    await input.press('ControlOrMeta+A')
+    await input.press('Backspace')
+    await input.pressSequentially(text, { delay: 10 })
+    // 验证文本完整写入；失败则重试
+    const ok = await input.innerText().then((s) => s.includes(text)).catch(() => false)
+    if (ok) break
+    if (attempt === 2) throw new Error(`composer 输入失败：3 次重试后文本仍未写入（"${text}"）`)
+  }
   await input.press('Enter')
   // 等 busy 态（stop-btn 出现证明流式已启动）。
   // 给足 10s 超时：mock send 有 TIMING.ack 延迟 + message_start 处理链路，5s 偶发不够。
