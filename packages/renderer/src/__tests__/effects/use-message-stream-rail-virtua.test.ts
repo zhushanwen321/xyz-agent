@@ -1,11 +1,13 @@
 /**
- * useMessageStreamRail 双轨单测（cw wave w2 / W2TC1-W2TC3）。
+ * useMessageStreamRail 单测（cw wave w4 / W2TC2）。
  *
- * 验证 vlistRef 可选入参的双轨行为：
- * - W2TC1 不传 vlistRef → onJump 写 scrollEl.scrollTop（旧路径，offsetOf + topOffset 公式）
- * - W2TC2 传 mock vlistRef → onJump 调 vlist.scrollToIndex(renderIdx, {align:'start'})，不写 scrollTop
+ * [cw wave w4] 单一 virtua 路径：vlistRef 必填，onJump/updateActiveTurnIndex 都走 virta API。
+ * 保留 W2TC2（virtua 路径）用例；W2TC1（旧路径 scrollTop 写入）/ W2TC3（null fallback）随
+ * offsetOf/topOffset 删除 + vlistRef 必填化而移除（virta handle 由消费方保证挂载后注入）。
+ *
+ * 验证：
+ * - W2TC2 传 mock vlistRef → onJump 调 vlist.scrollToIndex(renderIdx, {align:'start'})
  * - W2TC2 传 mock vlistRef → updateActiveTurnIndex 调 vlist.findItemIndex(scrollOffset)
- * - W2TC3 传 vlistRef=ref(null) → onJump/updateActiveTurnIndex fallback 旧路径（virtua 未就绪）
  *
  * mock 策略：用 createMockVlist 造满足 VirtualizerHandle 接口的 mock，注入 vlistRef。
  * composable 内 onMounted/onScopeDispose 需 active component instance，用 host 组件包裹
@@ -48,20 +50,17 @@ function makeRenderItems(): RenderItem[] {
  * 需 active component instance，用 host 组件包裹避免「no active effect scope」warning）。
  * 返回 rail composable 返回值 + host wrapper（unmount 触发 onScopeDispose 清理）。
  *
- * 参考 MessageStream.wire.test.ts:261-288 的 mountRail helper 构造 deps。
+ * [cw wave w4] vlistRef 必填：默认注入 createMockVlist()，virtua 路径专用。
  */
 function mountRail(opts: {
   renderItems?: RenderItem[]
   scrollEl?: HTMLElement | null
-  offsetOf?: (idx: number) => number
-  topOffset?: number
   vlistRef?: Ref<VirtualizerHandle | null>
 }): { rail: ReturnType<typeof useMessageStreamRail>; wrapper: ReturnType<typeof mount> } {
   const sessionId = computed(() => 's-rail-virtua-test')
   const renderItemsRef = ref<RenderItem[]>(opts.renderItems ?? makeRenderItems())
   const scrollElRef = ref<HTMLElement | null>(opts.scrollEl ?? null)
-  const offsetOfFn = opts.offsetOf ?? ((idx: number) => idx * 100)
-  const topOffset = computed(() => opts.topOffset ?? 0)
+  const vlistRef = opts.vlistRef ?? ref<VirtualizerHandle | null>(createMockVlist())
   let rail!: ReturnType<typeof useMessageStreamRail>
   const Host = defineComponent({
     setup() {
@@ -69,9 +68,7 @@ function mountRail(opts: {
         sessionId,
         renderItems: renderItemsRef,
         scrollEl: scrollElRef,
-        offsetOf: offsetOfFn,
-        topOffset,
-        vlistRef: opts.vlistRef,
+        vlistRef,
       })
       return () => h('div')
     },
@@ -93,71 +90,31 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-// ── W2TC1: 不传 vlistRef → 旧路径（scrollTop 写入） ──────────────────
-
-describe('useMessageStreamRail · W2TC1: 不传 vlistRef（旧路径）', () => {
-  it('onJump 写 scrollEl.scrollTop = offsetOf(renderIdx) + topOffset（不调 virtua）', () => {
-    const scrollEl = makeScrollEl()
-    // offsetOf(idx) = idx*100，rail jump idx=1 → renderItems 下标也是 1 → offsetOf(1)=100
-    // topOffset=44 → scrollTop 应 = 144
-    const { rail } = mountRail({ scrollEl, topOffset: 44, offsetOf: (i) => i * 100 })
-
-    rail.onJump(1)
-
-    expect(scrollEl.scrollTop).toBe(144)
-  })
-
-  it('onJump 不传 topOffset（默认 0）→ scrollTop = offsetOf(renderIdx)', () => {
-    const scrollEl = makeScrollEl()
-    const { rail } = mountRail({ scrollEl, offsetOf: (i) => i * 50 })
-
-    rail.onJump(2) // renderIdx=2 → offsetOf(2)=100
-
-    expect(scrollEl.scrollTop).toBe(100)
-  })
-
-  it('updateActiveTurnIndex 按 scrollTop 比例推算 activeTurnIndex（旧路径）', () => {
-    const scrollEl = makeScrollEl()
-    // scrollHeight=600/clientHeight=200 → max=400；scrollTop=200 → ratio=0.5
-    // railTurns.length=3 → floor(0.5*3)=1
-    const { rail } = mountRail({ scrollEl })
-    scrollEl.scrollTop = 200
-
-    rail.updateActiveTurnIndex()
-
-    expect(rail.activeTurnIndex.value).toBe(1)
-  })
-})
-
 // ── W2TC2: 传 mock vlistRef → virtua 路径 ──────────────────────────
 
 describe('useMessageStreamRail · W2TC2: 传 mock vlistRef（virtua 路径）', () => {
-  it('onJump 调 vlist.scrollToIndex(renderIdx, {align:"start"})，不写 scrollEl.scrollTop', () => {
+  it('onJump 调 vlist.scrollToIndex(renderIdx, {align:"start"})', () => {
     const scrollEl = makeScrollEl()
     const mock = createMockVlist()
     const vlistRef = ref<VirtualizerHandle | null>(mock)
-    const { rail } = mountRail({ scrollEl, vlistRef, topOffset: 44, offsetOf: (i) => i * 100 })
+    const { rail } = mountRail({ scrollEl, vlistRef })
 
     rail.onJump(1) // renderItems 下标=1
 
     expect(mock.scrollToIndex).toHaveBeenCalledWith(1, { align: 'start' })
-    // 旧路径未被触发：scrollTop 保持初始 0
-    expect(scrollEl.scrollTop).toBe(0)
   })
 
   it('updateActiveTurnIndex 调 vlist.findItemIndex(v.scrollOffset)，写 activeTurnIndex', () => {
-    const scrollEl = makeScrollEl()
     // findItemIndex mock：返回固定 2（模拟 vlist 当前可见首项）
     const findItemIndex = vi.fn(() => 2)
     const mock = createMockVlist({ scrollOffset: 500, findItemIndex })
     const vlistRef = ref<VirtualizerHandle | null>(mock)
-    const { rail } = mountRail({ scrollEl, vlistRef })
+    const { rail } = mountRail({ vlistRef })
 
     rail.updateActiveTurnIndex()
 
     expect(findItemIndex).toHaveBeenCalledWith(500)
     expect(rail.activeTurnIndex.value).toBe(2)
-    // 不读 scrollEl 比例（旧路径不应被触发）
   })
 
   it('onJump rail idx 映射回 renderItems 下标（系统提示行穿插场景）', () => {
@@ -179,29 +136,16 @@ describe('useMessageStreamRail · W2TC2: 传 mock vlistRef（virtua 路径）', 
 
     expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'start' })
   })
-})
 
-// ── W2TC3: 传 vlistRef=ref(null) → fallback 旧路径（virtua 未就绪） ────
-
-describe('useMessageStreamRail · W2TC3: vlistRef=ref(null) fallback 旧路径', () => {
-  it('onJump vlistRef.value=null → 写 scrollEl.scrollTop（旧路径）', () => {
-    const scrollEl = makeScrollEl()
-    const vlistRef = ref<VirtualizerHandle | null>(null)
-    const { rail } = mountRail({ scrollEl, vlistRef, topOffset: 10, offsetOf: (i) => i * 100 })
-
-    rail.onJump(1) // offsetOf(1)=100 + topOffset 10 = 110
-
-    expect(scrollEl.scrollTop).toBe(110)
-  })
-
-  it('updateActiveTurnIndex vlistRef.value=null → 比例推算（旧路径）', () => {
+  it('[cw wave w4] vlistRef.value=null（首帧未挂载）→ onJump/updateActiveTurnIndex 早返回 no-op', () => {
+    // vlistRef 必填但 value 可能为 null（首帧未挂载 / session 切换 dispose）：composable 不抛错，no-op。
     const scrollEl = makeScrollEl()
     const vlistRef = ref<VirtualizerHandle | null>(null)
     const { rail } = mountRail({ scrollEl, vlistRef })
-    scrollEl.scrollTop = 400 // ratio=1.0 → floor(1.0*3)=3 → clamp to length-1=2
 
-    rail.updateActiveTurnIndex()
-
-    expect(rail.activeTurnIndex.value).toBe(2)
+    expect(() => rail.onJump(1)).not.toThrow()
+    expect(() => rail.updateActiveTurnIndex()).not.toThrow()
+    // activeTurnIndex 保持初始 0（未调 findItemIndex）
+    expect(rail.activeTurnIndex.value).toBe(0)
   })
 })

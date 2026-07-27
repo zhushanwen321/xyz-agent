@@ -1,12 +1,13 @@
 /**
- * useMessageStreamNotices 双轨单测（cw wave w2 / W2TC7-W2TC9）。
+ * useMessageStreamNotices 单测（cw wave w4 / W2TC8）。
  *
- * 验证 totalHeight/vlistBottom 可选入参的双轨基线解析（透传给 useNoticeStack）：
- * - W2TC7 传 totalHeight=1000 + topOffset=44 → handoffNoticeTop 用 1000+44（旧路径）
- * - W2TC8 传 vlistBottom=1200 + topOffset=44 → 用 1200 替代 totalHeight
- * - W2TC9 同时传 vlistBottom=1200 + totalHeight=1000 → 用 1200（vlistBottom 优先）
+ * 验证 vlistBottom 基线解析（透传给 useNoticeStack）：
+ * - W2TC8 传 vlistBottom=1200 + topOffset=44 → handoffNoticeTop=1244（virtua 路径）
  *
- * 公式（useNoticeStack.ts:58-76，COMPACTING_NOTICE_HEIGHT=HANDOFF_NOTICE_HEIGHT=46）：
+ * [cw wave w4] 删 W2TC7（totalHeight 旧路径）与 W2TC9（vlistBottom/totalHeight 优先级）：
+ * totalHeight 字段已删，virtua 是单一滚动 owner，末项底部统一由 vlistBottom 提供。
+ *
+ * 公式（useNoticeStack.ts，COMPACTING_NOTICE_HEIGHT=HANDOFF_NOTICE_HEIGHT=46）：
  *   handoffNoticeTop = resolveBase() + topOffset + (isCompacting ? 46 : 0)
  *   dispatchingTop   = handoffNoticeTop + (isHandingOff ? 46 : 0)
  *   forkNoticeBaseTop = dispatchingTop + (isDispatching && !hasWorkingTurn ? 46 : 0)
@@ -53,14 +54,12 @@ beforeEach(() => {
  * hasWorkingTurn 默认 false（验基线公式时不叠 dispatching 占位）。
  */
 function setup(opts: {
-  totalHeight?: number
   vlistBottom?: number
   topOffset?: number
   hasWorkingTurn?: () => boolean
 }) {
   const sessionId = computed(() => 's-notices-test')
-  const totalHeight = opts.totalHeight != null ? computed(() => opts.totalHeight!) : undefined
-  const vlistBottom = opts.vlistBottom != null ? computed(() => opts.vlistBottom!) : undefined
+  const vlistBottom = computed(() => opts.vlistBottom ?? 0)
   const topOffset = computed(() => opts.topOffset ?? 0)
   const hasWorkingTurn = opts.hasWorkingTurn ?? (() => false)
 
@@ -69,7 +68,6 @@ function setup(opts: {
   scope.run(() => {
     ret = useMessageStreamNotices({
       sessionId,
-      totalHeight,
       vlistBottom,
       topOffset,
       hasWorkingTurn,
@@ -78,31 +76,22 @@ function setup(opts: {
   return { scope, ret: ret! }
 }
 
-// ── W2TC7: 传 totalHeight（旧路径） ────────────────────────────────
+// ── W2TC8: 传 vlistBottom（virtua 路径） ────────────────────────────
 
-describe('useMessageStreamNotices · W2TC7: 传 totalHeight（旧路径）', () => {
-  it('totalHeight=1000 + topOffset=44 → handoffNoticeTop=1044（1000+44，无占位）', () => {
-    const { ret } = setup({ totalHeight: 1000, topOffset: 44 })
-    expect(ret.handoffNoticeTop.value).toBe(1044)
-    // dispatching/fork 同基线（无 handoff/dispatching 占位）
-    expect(ret.dispatchingTop.value).toBe(1044)
-    expect(ret.forkNoticeBaseTop.value).toBe(1044)
-  })
-
-  it('totalHeight=1000 + isCompacting=true → handoffNoticeTop=1000+46=1046（叠 compacting 占位）', () => {
-    chatState.value.isCompacting = true
-    const { ret } = setup({ totalHeight: 1000 })
-    // topOffset 默认 0 → 1000 + 0 + 46(compacting) = 1046
-    expect(ret.handoffNoticeTop.value).toBe(1046)
-  })
-})
-
-// ── W2TC8: 传 vlistBottom（virtua 路径替代 totalHeight） ────────────
-
-describe('useMessageStreamNotices · W2TC8: 传 vlistBottom（替代 totalHeight）', () => {
-  it('vlistBottom=1200 + topOffset=44 → handoffNoticeTop=1244（用 1200 替代 totalHeight）', () => {
+describe('useMessageStreamNotices · W2TC8: vlistBottom 基线', () => {
+  it('vlistBottom=1200 + topOffset=44 → handoffNoticeTop=1244', () => {
     const { ret } = setup({ vlistBottom: 1200, topOffset: 44 })
     expect(ret.handoffNoticeTop.value).toBe(1244)
+    // dispatching/fork 同基线（无 handoff/dispatching 占位）
+    expect(ret.dispatchingTop.value).toBe(1244)
+    expect(ret.forkNoticeBaseTop.value).toBe(1244)
+  })
+
+  it('vlistBottom=1000 + isCompacting=true → handoffNoticeTop=1000+46=1046（叠 compacting 占位）', () => {
+    chatState.value.isCompacting = true
+    const { ret } = setup({ vlistBottom: 1000 })
+    // topOffset 默认 0 → 1000 + 0 + 46(compacting) = 1046
+    expect(ret.handoffNoticeTop.value).toBe(1046)
   })
 
   it('vlistBottom=1200 + isHandingOff=true → dispatchingTop=handoff+46', () => {
@@ -123,16 +112,3 @@ describe('useMessageStreamNotices · W2TC8: 传 vlistBottom（替代 totalHeight
   })
 })
 
-// ── W2TC9: 同时传 vlistBottom + totalHeight → vlistBottom 优先 ──────
-
-describe('useMessageStreamNotices · W2TC9: vlistBottom 优先于 totalHeight', () => {
-  it('vlistBottom=1200 + totalHeight=1000 → handoffNoticeTop=1200（用 1200）', () => {
-    const { ret } = setup({ vlistBottom: 1200, totalHeight: 1000 })
-    expect(ret.handoffNoticeTop.value).toBe(1200)
-  })
-
-  it('vlistBottom=1200 + totalHeight=1000 + topOffset=44 → handoffNoticeTop=1244', () => {
-    const { ret } = setup({ vlistBottom: 1200, totalHeight: 1000, topOffset: 44 })
-    expect(ret.handoffNoticeTop.value).toBe(1244)
-  })
-})

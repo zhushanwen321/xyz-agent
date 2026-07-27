@@ -5,7 +5,7 @@
  *   Composer → useChat.send → store.appendUser + api.chat.send
  *            → api.transport.send(ws) → mock 回流 ServerMessage
  *            → api.events.streamSubscribe → store.applyMessageEvent（message.* 单一入口）
- *            → MessageStream 响应式渲染 + useChatScroll.scrollToBottom
+ *            → MessageStream 响应式渲染 + useVirtuaFollow.followIfStuck
  *
  * hydrate：首次进入 session 调 api.chat.getHistory 注入历史 fixture（含 tool_call/summary），
  * 让 UC-2 切换会话可见块类型丰富度（G2-006）。

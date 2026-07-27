@@ -139,8 +139,8 @@ describe('MessageStream bashExecution 路由', () => {
  * W5 共存场景集成测试（bash-align-pi-tui-w4::w5-tests-regression W5T1）。
  *
  * 背景：w2 放开 bash↔streaming 并发后，共存场景下 bash 消息 append 到 messages 末尾，
- * streaming assistant turn 变成倒数第二项。w3 单测了 useVirtualTurnList 的 pinStreaming
- * 算法（W3T1-T3），但未集成测 MessageStream——本用例补这条缺口。
+ * streaming assistant turn 变成倒数第二项。w3 单测了 useStreamingPin 的 pinnedIndexes
+ * 算法（W3T1-T3，喂 virtua <Virtualizer :keepMounted>），但未集成测 MessageStream——本用例补这条缺口。
  *
  * 验证（mount 后）：
  * - streaming assistant turn 的 DOM 节点存在（在窗口内、未被虚拟列表卸载）

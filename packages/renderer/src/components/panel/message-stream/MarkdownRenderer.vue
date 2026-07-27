@@ -69,7 +69,7 @@ let renderSeq = 0
 // ── H2 流式 markdown 渲染 rAF trailing 节流（perf-streaming-md-throttle）──
 // 每个 text_delta/thinking_delta token 触发 watch → renderMarkdownSegments 全量重解析（md.render
 // + 每块 codeToHtml 同步阻塞主线程）。rAF trailing 把一帧内多次 content/localFiles 变化合并为
-// 单次渲染，消除流式卡顿。复用 M4 useChatScroll 的 rAF 节流模式（延迟求值守卫）。
+// 单次渲染，消除流式卡顿。rAF trailing 节流模式与 useVirtuaFollow.followIfStuck 同款（延迟求值守卫）。
 let rafId: number | null = null
 let pendingContent = ''
 let pendingFilePaths: Set<string> = new Set()

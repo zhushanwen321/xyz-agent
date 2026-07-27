@@ -83,11 +83,6 @@ vi.mock('@/composables/panel/useTurnElapsed', () => ({
   useTurnElapsed: () => ({ elapsed: { value: '5s' } }),
 }))
 
-// ── mock useResizeReport ──
-vi.mock('@/composables/effects/useResizeReport', () => ({
-  useResizeReport: vi.fn(),
-}))
-
 // ── mock useStickGuard / useTraceTransition ──
 vi.mock('@/composables/effects/useStickGuard', () => ({
   useStickGuard: () => null,

@@ -1,11 +1,12 @@
 /**
- * useForkNoticeStream 双轨单测（cw wave w2 / W2TC10-W2TC11）。
+ * useForkNoticeStream 单测（cw wave w4 / W2TC10-W2TC11）。
  *
- * 验证 forkNoticeBaseTop 优先级链（injectedBaseTop > vlistBottom > totalHeight > 0）：
+ * 验证 forkNoticeBaseTop 优先级链（injectedBaseTop > vlistBottom）：
  * - W2TC10 传 injectedBaseTop=500 → forkNoticeBaseTop=500（短路）；forkNoticeTop(1)=500+FORK_NOTICE_HEIGHT
  * - W2TC11 不传 injectedBaseTop，传 vlistBottom=1200 + topOffset=44 → baseTop=1244
- * - W2TC11b 传 totalHeight=1000（无 vlistBottom/injected）→ baseTop=1000+topOffset（旧路径）
- * - W2TC11c 传 vlistBottom + totalHeight（无 injected）→ vlistBottom 优先
+ *
+ * [cw wave w4] 删 W2TC11b（totalHeight 旧路径）与 W2TC11c（vlistBottom/totalHeight 优先级）：
+ * totalHeight 字段已删，基线优先级链简化为 injectedBaseTop > vlistBottom。
  *
  * FORK_NOTICE_HEIGHT=40（useForkNoticeStream.ts:22 私有常量，未导出）。通过 forkNoticeTop(idx)
  * 的垂直堆叠步进断言：forkNoticeTop(idx) = forkNoticeBaseTop + idx * 40。
@@ -40,7 +41,6 @@ beforeEach(() => {
 function setup(opts: {
   injectedBaseTop?: number
   vlistBottom?: number
-  totalHeight?: number
   topOffset?: number
   isCompacting?: boolean
   isHandingOff?: boolean
@@ -50,8 +50,7 @@ function setup(opts: {
   const sessionId = () => 's-fork-test'
   const injectedBaseTop =
     opts.injectedBaseTop != null ? computed(() => opts.injectedBaseTop!) : undefined
-  const vlistBottom = opts.vlistBottom != null ? computed(() => opts.vlistBottom!) : undefined
-  const totalHeight = opts.totalHeight != null ? computed(() => opts.totalHeight!) : undefined
+  const vlistBottom = computed(() => opts.vlistBottom ?? 0)
   const topOffset = computed(() => opts.topOffset ?? 0)
   const isCompacting = computed(() => opts.isCompacting ?? false)
   const isDispatching = computed(() => opts.isDispatching ?? false)
@@ -62,7 +61,6 @@ function setup(opts: {
   let ret: ReturnType<typeof useForkNoticeStream> | undefined
   scope.run(() => {
     ret = useForkNoticeStream(sessionId, {
-      totalHeight,
       vlistBottom,
       topOffset,
       isCompacting,
@@ -88,11 +86,10 @@ describe('useForkNoticeStream · W2TC10: injectedBaseTop 短路', () => {
     expect(ret.forkNoticeTop(2)).toBe(580)
   })
 
-  it('injectedBaseTop=500 短路：忽略 totalHeight/vlistBottom/占位状态', () => {
-    // 即使传 totalHeight=9999 + isCompacting=true，injectedBaseTop 仍优先
+  it('injectedBaseTop=500 短路：忽略 vlistBottom/占位状态', () => {
+    // 即使传 vlistBottom=8888 + isCompacting=true，injectedBaseTop 仍优先
     const { ret } = setup({
       injectedBaseTop: 500,
-      totalHeight: 9999,
       vlistBottom: 8888,
       isCompacting: true,
       isHandingOff: true,
@@ -102,9 +99,9 @@ describe('useForkNoticeStream · W2TC10: injectedBaseTop 短路', () => {
   })
 })
 
-// ── W2TC11: vlistBottom / totalHeight 基线链 ────────────────────────
+// ── W2TC11: vlistBottom 基线 ────────────────────────────────────────
 
-describe('useForkNoticeStream · W2TC11: vlistBottom/totalHeight 基线链', () => {
+describe('useForkNoticeStream · W2TC11: vlistBottom 基线', () => {
   it('W2TC11: vlistBottom=1200 + topOffset=44 → forkNoticeTop(0)=1244（1200+44）', () => {
     const { ret } = setup({ vlistBottom: 1200, topOffset: 44 })
 
@@ -112,22 +109,10 @@ describe('useForkNoticeStream · W2TC11: vlistBottom/totalHeight 基线链', () 
     expect(ret.forkNoticeTop(1)).toBe(1284) // 1244 + 40
   })
 
-  it('W2TC11b: 仅 totalHeight=1000 + topOffset=44 → forkNoticeTop(0)=1044（旧路径）', () => {
-    const { ret } = setup({ totalHeight: 1000, topOffset: 44 })
-
-    expect(ret.forkNoticeTop(0)).toBe(1044)
-  })
-
-  it('W2TC11c: vlistBottom=1200 + totalHeight=1000 → 用 1200（vlistBottom 优先）', () => {
-    const { ret } = setup({ vlistBottom: 1200, totalHeight: 1000, topOffset: 0 })
-
-    expect(ret.forkNoticeTop(0)).toBe(1200)
-  })
-
-  it('W2TC11d: 无任何基线（totalHeight/vlistBottom/injectedBaseTop 都不传）→ fallback 0', () => {
+  it('W2TC11d: 无 injectedBaseTop + vlistBottom 默认 0 → forkNoticeTop(0)=topOffset', () => {
     const { ret } = setup({ topOffset: 0 })
 
-    // base = 0 ?? 0 ?? 0 = 0；forkNoticeTop(0) = 0 + topOffset(0)
+    // base = vlistBottom(0) + topOffset(0) = 0
     expect(ret.forkNoticeTop(0)).toBe(0)
   })
 
@@ -169,3 +154,4 @@ describe('useForkNoticeStream · W2TC11: vlistBottom/totalHeight 基线链', () 
     expect(ret.forkNoticeTop(0)).toBe(1200)
   })
 })
+

@@ -11,19 +11,17 @@
     与普通 system 提示行（SystemNotice）区分靠 header 的 command + exit 标签等语义标识，
     不再靠卡片背景。与 toolCall 互斥（bash 不走工具链，不挂 assistant turn）。
 
-    W4：注册 useResizeReport 上报实测高度——bash 长输出真实高度常达 280-300px，远超
-    useVirtualTurnList 的 ESTIMATED_TURN_HEIGHT=200 估算值，不接 RO 会令后续 item offset 算错
-    → 视觉重叠。key 必须带 s- 前缀（与 itemKey 的 system 项格式一致，详见 script 注释）。
+    [cw wave w3] virtua ListItem 内部 RO 观测根元素高度，应用层无需自行上报——
+    BashOutputBlock 作为 Virtualizer 子项挂载后由 virtua 统一接管测高，无需注册 useResizeReport。
 
     灰阶化（main-fusion W4 / §13.2-D）：terminal 图标改 neutral-ico，streaming 态改用本分支
     双环 loader-spin（复用 Block.vue 的 RUNNING_LOADER_SVG + animate-loader-spin），timeout/
     cancelled 改 neutral-dim，exit 0 保留 success（唯一彩色例外，成功确认语义），exit N 改 warn
     （哑光金，bash exit N 是用户命令失败非致命，不该用 danger 红告警权重）。取消按钮/输出文本/
-    截断标记/空输出占位全切到 neutral-* 谱系。结构层零改动（useResizeReport / bashExecution 消费 /
+    截断标记/空输出占位全切到 neutral-* 谱系。结构层零改动（bashExecution 消费 /
     exitCode/timeout/cancelled/truncated 语义全保留）。
   -->
   <div
-    ref="rootEl"
     class="bash-output-block flex flex-col gap-1.5 py-2"
     data-testid="bash-output-block"
   >
@@ -107,12 +105,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Terminal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useChat } from '@/composables/features/useChat'
-import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { RUNNING_LOADER_SVG } from '@/components/panel/message-stream/block-icon'
 import type { Message } from '@xyz-agent/shared'
 
@@ -125,15 +122,7 @@ const props = defineProps<{
 const { t } = useI18n()
 const { abortBash } = useChat()
 
-/** BashOutputBlock 根元素 ref，供 useResizeReport observe 测高 */
-const rootEl = ref<HTMLElement | null>(null)
-
-// 注册 RO 上报实测高度给虚拟滚动。
-// 注意 key 必须是 `s-${id}`：useVirtualTurnList 的 itemKey 对 system 项（bashExecution 是 system 消息）
-// 用 s- 前缀（`s-${message.id}`）。若上报不带前缀，高度写不进 heights Map → 仍走 200px 估算
-// → 长输出（真实 280-300px）后续 item offset 算错 → 视觉重叠。非虚拟列表环境下 useResizeReport
-// inject 拿不到 registry 会优雅降级 no-op，不抛错。
-useResizeReport(rootEl, () => `s-${props.message.id}`)
+// [cw wave w3] virtua ListItem 内部 RO 观测根元素，应用层无需自行上报高度。
 
 const bash = computed(() => props.message.bashExecution)
 const isStreaming = computed(() => props.message.status === 'streaming')

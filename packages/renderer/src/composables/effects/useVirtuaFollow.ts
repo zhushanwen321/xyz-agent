@@ -1,18 +1,18 @@
 /**
  * useVirtuaFollow —— virtua-based message-stream follow 状态机（R2 effects 层）。
  *
- * follow 状态机（重写自 useChatScroll，w1 新旧并存，w4 删旧）。
+ * 设计起源：follow 状态机迁移自早期 useChatScroll（手写 DOM scrollTop 方案），现已是
+ * 单一 virtua 路径实现（旧手写方案于 cw wave w4 删除）。
  *
  * 核心不变量（INVAR-M4-2）：**stickToBottom = false（脱离锚定）只由确定的用户输入信号
  * （onWheel deltaY<0）驱动，onScroll 永远不把 stickToBottom 翻 false，只单向翻真
- * （distance≤40 → true）。** 这与 useChatScroll.ts 的不变量一致，迁移自其语义。
+ * （distance≤40 → true）。** 该不变量迁移自早期 useChatScroll 的语义。
  *
- * 与 useChatScroll 的差异：
- * - 滚动操作由原生 DOM scrollTo 改为 virtua VirtualizerHandle.scrollToIndex
- * - lastIndex 不再从 DOM 子元素算，而从 v.findItemIndex(v.scrollSize) 派生（virta 内部
- *   维护测量缓存，按 offset 反查 nearest item index）
- * - pause/resumeStickGuard 改为计数器（useChatScroll 是布尔），支持嵌套 pause
- *   （W1TC9 修复点：trace 折叠 transition 嵌套调用时不致早 resume）
+ * virtua 路径实现要点：
+ * - 滚动操作用 virtua VirtualizerHandle.scrollToIndex（替代早期原生 DOM scrollTo）
+ * - lastIndex 从 v.findItemIndex(v.scrollSize) 派生（virta 内部维护测量缓存，按 offset 反查 nearest item index）
+ * - pause/resumeStickGuard 用计数器（支持嵌套 pause，W1TC9 修复点：trace 折叠 transition
+ *   嵌套调用时不致早 resume；早期 useChatScroll 是布尔，不支持嵌套）
  *
  * 设计要点（对照 design.md §4.2 + W1C6）：
  * - followIfStuck 用 rAF schedule，rAF 回调内**重读** stickToBottom：避免「调用时贴底
@@ -59,7 +59,7 @@ export function useVirtuaFollow(opts: {
   )
 
   /**
-   * stickGuard 暂停计数器（W1TC9 修复点，对照 useChatScroll.ts 的 stickGuardPaused 布尔）。
+   * stickGuard 暂停计数器（W1TC9 修复点；早期 useChatScroll 是布尔，这里改计数器）。
    * 背景：trace 块 CSS transition 收缩高度时程序性 clamp 会让 distance 瞬变，可能误触发
    * onScroll 的贴底恢复分支。transition 期间 pauseStickGuard()，结束后 resumeStickGuard()。
    * 用计数器支持嵌套（外层 transition 套内层 transition），count>0 即 guard 生效。

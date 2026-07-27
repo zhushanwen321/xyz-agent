@@ -2,20 +2,23 @@
  * useStickGuard —— trace 折叠 transition 期间的 stickToBottom 守卫暂停注入。
  *
  * 背景 [HISTORICAL]：对话完成时（isSessionActive true→false），trace 块 CSS transition
- * 收缩高度，浏览器 clamp scrollTop 大幅减小，useChatScroll.onScroll 的「scrollTop 减小→false」
+ * 收缩高度，浏览器 clamp scrollTop 大幅减小，scroll follow 状态机的「scrollTop 减小→false」
  * 分支误判为用户上滑 → stickToBottom 翻 false → scrollToBottom 被 guard 拦截 → 界面停中间。
  *
  * 暂停机制：Turn.vue 的 trace `<Transition>` JS hooks 在 before-leave 调 pause、leave-done 调 resume，
  * 期间 onScroll 跳过「scrollTop 减小→false」分支（仍保留「distance≤40→true」贴底恢复）。
  * wheel 上滑（deltaY<0）不受影响——纯用户信号优先级最高，暂停只针对程序性 clamp 误判。
  *
- * provide/inject 模式（复刻 useResizeReport）：MessageStream.vue provide（持有 useChatScroll
- * 导出的 pauseStickGuard/resumeStickGuard），Turn.vue inject 后在 transition hooks 内调用。
+ * provide/inject 模式：MessageStream.vue provide（持有 scroll follow composable 导出的
+ * pauseStickGuard/resumeStickGuard），Turn.vue inject 后在 transition hooks 内调用。
  * 优雅降级：非 MessageStream 环境（如纯单测 mount Turn）inject 返回 null → hooks 跳过 pause/resume。
+ *
+ * [cw wave w3/w4] pause/resume 来源为 useVirtuaFollow 计数器版（旧滚动 composable 布尔版有 P5 bug，
+ * 已在 w3 切到 virtua 时一并移除）。
  */
 import { inject, provide, type InjectionKey } from 'vue'
 
-/** 暂停/恢复 stickToBottom 守卫的接口（useChatScroll 导出的两个函数） */
+/** 暂停/恢复 stickToBottom 守卫的接口（scroll follow composable 导出的两个函数） */
 export interface StickGuard {
   pause: () => void
   resume: () => void
@@ -30,11 +33,11 @@ export const STICK_GUARD_KEY: InjectionKey<StickGuard> = Symbol('stick-guard')
 /**
  * 父组件（MessageStream）侧：provide stick guard，供子树 Turn 的 trace transition hooks 注入。
  *
- * @param guard useChatScroll 导出的 pauseStickGuard/resumeStickGuard
+ * @param guard scroll follow composable 导出的 pauseStickGuard/resumeStickGuard
  * @example
  * ```ts
  * // MessageStream.vue setup
- * const { pauseStickGuard, resumeStickGuard } = useChatScroll()
+ * const { pauseStickGuard, resumeStickGuard } = useVirtuaFollow({ vlistRef })
  * provideStickGuard({ pause: pauseStickGuard, resume: resumeStickGuard })
  * ```
  */

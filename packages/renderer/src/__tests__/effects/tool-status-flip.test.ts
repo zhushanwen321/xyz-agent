@@ -6,21 +6,19 @@
  * - 方案 a：mount Block，改 props.tool.status（叶子组件单元回归）
  * - 方案 b：mount Turn，改 turn.assistants[0].toolCalls[0].status（单 turn 链路回归）
  * - 方案 c：mount MessageStream（真 store + 真虚拟滚动层），applyMessageEvent 走 tool_call_end 路径
- * - 方案 d：虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算（真 computed）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/effects/tool-status-flip.test.ts
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, defineComponent, effectScope, h, nextTick, ref } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import Block from '@/components/panel/message-stream/Block.vue'
 import Turn from '@/components/panel/message-stream/Turn.vue'
 import MessageStream from '@/components/panel/MessageStream.vue'
 import { useChatStore } from '@/stores/chat'
-import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import type { ToolCall, Message, ServerMessage } from '@xyz-agent/shared'
-import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
+import type { MessageTurn } from '@/composables/logic/messageTurns'
 
 const NOW = Date.now()
 
@@ -335,8 +333,8 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
 })
 
 /* ─────────────────────── 方案 c（叶子）：直接验证 traceBlocks 响应式 ───────────────────────
- * 不 mount MessageStream（虚拟滚动层响应式在 use-virtual-turn-list.test.ts 与下方方案 d
- * 已覆盖），而是聚焦验证「Turn 把 toolCall 引用的 status 变化（不可变替换）传给 Block」是否响应式。
+ * 不 mount MessageStream（虚拟滚动层窗口化由 virta <Virtualizer> 内部负责），而是聚焦验证
+ * 「Turn 把 toolCall 引用的 status 变化（不可变替换）传给 Block」是否响应式。
  * ------------------------------------------------------------------------- */
 describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻转）', () => {
   it('c1: 不可变替换 turn prop（模拟 store commit）— 应翻转', async () => {
@@ -362,97 +360,7 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
   })
 })
 
-/* ─────────────────────── 方案 d：虚拟滚动响应式——真 computed（Wave1 已从 liveComputed 改为真 computed）───────────────────────
- * 复刻 MessageStream.vue 的真实装配：renderItems 是真 computed（包 ref 数据源），
- * useVirtualTurnList 的 items getter 读 renderItems.value。visibleItems 是真 computed，
- * 内部读 visibleRange.value（Wave1 后为真 computed）+ renderItems.value（真 computed）。
- *
- * Wave1 修复后行为：heights 变化（reportHeight）经 triggerRef(heights) 失效 layout/visibleRange；
- * scrollTop 变化经 onScrollUpdate() 写入响应式 ref 失效 visibleRange。两者都应触发 visibleItems 重算。
- * ------------------------------------------------------------------------- */
+/* [cw wave w4] 方案 d（虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算）随
+ *   useVirtualTurnList 删除而移除：virta <Virtualizer> 内部维护测量缓存 + RO，响应式窗口化由 virta 负责，
+ *   不再是应用层职责。tool status 翻转链路覆盖由方案 a（Block）/ b（Turn）/ c（MessageStream + leaf）保持。 */
 
-function turnItemR(index: number, key: string): RenderItem {
-  return {
-    kind: 'turn',
-    turn: {
-      index,
-      user: { id: `u-${key}`, role: 'user', content: 'q', status: 'complete', timestamp: NOW } as never,
-      assistants: [],
-      isStreaming: false,
-      hasFoldable: false,
-    },
-  }
-}
-
-describe('方案 d: 虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算', () => {
-  /**
-   * flush pending rAF 回调（happy-dom 的 rAF 是异步——经 setImmediate 调度）。
-   * onScrollUpdate / reportHeight 改 rAF trailing 节流后（W-VS1/W-VS3），
-   * 需 await 一个宏任务让 rAF 落地，响应式 ref 才更新、visibleRange 才重算。
-   */
-  async function flushRaf(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
-
-  it('d1: reportHeight 后 heights 变 → visibleRange 重算（非过时）', async () => {
-    const scope = effectScope()
-    let assertCount = 0
-    await scope.run(async () => {
-      const data = ref<RenderItem[]>([turnItemR(1, 'k1'), turnItemR(2, 'k2'), turnItemR(3, 'k3')])
-      const renderItems = computed(() => data.value)
-      const scrollEl = document.createElement('div')
-      Object.defineProperty(scrollEl, 'scrollTop', { configurable: true, writable: true, value: 0 })
-      Object.defineProperty(scrollEl, 'clientHeight', { configurable: true, writable: true, value: 200 })
-      Object.defineProperty(scrollEl, 'scrollHeight', { configurable: true, writable: true, value: 9999 })
-
-      const vl = useVirtualTurnList({
-        items: () => renderItems.value,
-        scrollEl: () => scrollEl,
-        estimatedHeight: () => 200,
-        buffer: () => 0,
-      })
-      // 初始化 scrollTop/viewportHeight 响应式 ref（Wave1：visibleRange 是真 computed，
-      // 依赖响应式 scrollTop/viewportHeight；不调 onScrollUpdate 则用 ref 初始值 0）。
-      // onScrollUpdate 改 rAF trailing（W-VS1）：需 await flushRaf 让 scrollTop/clientHeight 写入 ref。
-      vl.onScrollUpdate()
-      await flushRaf()
-
-      // visibleItems 复刻 MessageStream.vue 真实派生
-      const visibleItems = computed(() => {
-        const { startIndex, endIndex } = vl.visibleRange.value
-        const items = renderItems.value
-        const arr: number[] = []
-        for (let i = startIndex; i <= endIndex && i < items.length; i++) arr.push(i)
-        return arr
-      })
-
-      // 初始：3 turn 各 200，视口 200，buffer 0 → 窗口必含至少 1 项
-      const initialCount = visibleItems.value.length
-      expect(initialCount).toBeGreaterThan(0)
-      assertCount++
-
-      // reportHeight 让 k1 变成 50px（变小，但末项钉扎保证全 3 项仍渲染）。
-      // reportHeight 改批量 rAF flush（W-VS3）：需 await flushRaf 让 heights 写入 + triggerRef。
-      vl.reportHeight('u-k1', 50)
-      await flushRaf()
-      // visibleItems 是真 computed；heights 变化经 triggerRef 失效 layout→visibleRange→visibleItems。
-      const countAfterHeight = visibleItems.value.length
-      expect(countAfterHeight).toBeGreaterThan(0)
-      assertCount++
-
-      // 滚动：改 DOM scrollTop + 调 onScrollUpdate（Wave1：把 DOM scrollTop 写入响应式 ref）
-      scrollEl.scrollTop = 400
-      vl.onScrollUpdate()
-      await flushRaf()
-      // k1=50, k2=200, k3=200 → offsets=[0,50,250], total=450
-      // scrollTop=400 在 turn2 内（offset 250-450）；buffer 0 → 窗口 [2,2]
-      const rangeAfterScroll = vl.visibleRange.value
-      expect(rangeAfterScroll.startIndex).toBe(2)
-      expect(rangeAfterScroll.endIndex).toBe(2)
-      assertCount++
-    })
-    scope.stop()
-    // 防回归：三个断言都被执行（非短路跳过）
-    expect(assertCount).toBe(3)
-  })
-})

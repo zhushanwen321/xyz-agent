@@ -258,7 +258,7 @@ const lastRenderTurn = computed(() => {
 const vlistRef = shallowRef<VirtualizerHandle | null>(null)
 
 /** [cw wave w3] 滚动容器 el（virta Virtualizer 的 parentElement，自定义 ::-webkit-scrollbar + pt-5 留白）。
- *  useMessageStreamRail 读它做 activeTurnIndex（双轨期旧路径 fallback）+ closest('section') 算 panelRightEdge。 */
+ *  useMessageStreamRail 读它做 closest('section') 算 panelRightEdge（virta handle vlistRef 接管 jump/active 定位）。 */
 const scrollEl = ref<HTMLElement | null>(null)
 
 /** 像素常量（design §4.1 附录 A）：itemSize 是 virta 的初始估算 hint（非强制，virta 自动从实测项重估）。
@@ -375,14 +375,12 @@ const {
 
 /* TurnRail（w4 wave IF4）：状态 + 事件路由下沉 useMessageStreamRail（script ≤300 行规范）。
    railTurns 派生自 renderItems；rail 内部调 useTurnExpansion（与 Turn.vue 各自 per-instance Map，w1 设计）。
-   [cw wave w3] 切到 virta 路径：vlistRef 注入，rail.onJump/updateActiveTurnIndex 走 virta API
-   （scrollToIndex/findItemIndex）；offsetOf 旧路径 fallback no-op（virta 路径不读）。 */
+   [cw wave w4] 单一 virtua 路径：vlistRef 必填，rail.onJump/updateActiveTurnIndex 走 virta API
+   （scrollToIndex/findItemIndex）；virta startMargin 已接管 load-more 占位，offsetOf/topOffset 旧通路删除。 */
 const rail = useMessageStreamRail({
   sessionId,
   renderItems,
   scrollEl,
-  offsetOf: () => 0,
-  topOffset,
   vlistRef,
 })
 const { railTurns, activeTurnIndex, panelRightEdge, expandedTurns, onJump, onToggle } = rail
