@@ -50,6 +50,7 @@ function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManaged
     isGenerating: false,
     isCompacting: false,
     isBashRunning: false,
+    bashRunToken: undefined,
     labelPersisted: false,
     ...overrides,
   }
@@ -243,10 +244,10 @@ describe('MessageDispatcher sendBash —— 正常路径（T5）', () => {
   })
 })
 
-describe('MessageDispatcher sendBash —— 错误路径（T6）', () => {
+describe('MessageDispatcher sendBash —— 错误路径（T6, S2 对称兜底）', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('T6: client.bash reject → 广播 message.error{message} + finally isBashRunning 复位 + 返回 {blocked:true}', async () => {
+  it('T6: client.bash reject → 广播 message.error{message} + 补发 bashResult 终态（S2 对称兜底）+ finally isBashRunning 复位 + 返回 {blocked:true}', async () => {
     const { dispatcher, broadcasts, session } = makeMocks({ bashError: new Error('pi boom') })
     const result = await dispatcher.sendBash('s1', 'git status')
 
@@ -254,13 +255,24 @@ describe('MessageDispatcher sendBash —— 错误路径（T6）', () => {
     const errMsg = broadcasts.find((m) => m.type === 'message.error')
     expect(errMsg).toBeDefined()
     expect(errMsg!.payload).toMatchObject({ sessionId: 's1', message: 'pi boom' })
+    // [S2] 与 abortBash 对称兜底：前端 message.error handler 只收口 streaming assistant
+    // （不收口 role:'system' 的 streaming bash），故补发 bashResult 终态让 bash 收口。
+    const end = findBashResult(broadcasts)
+    expect(end).toBeDefined()
+    expect(end!.payload).toMatchObject({
+      sessionId: 's1',
+      command: 'git status',
+      cancelled: false,
+      exitCode: null,
+      truncated: false,
+      excludeFromContext: false,
+    })
+    expect(typeof end!.payload.output).toBe('string')
+    expect(end!.payload.output).toContain('pi boom')
     // finally isBashRunning 复位
     expect(session.isBashRunning).toBe(false)
     // 返回 blocked（无 rejected 字段——执行失败非预检拒绝）
     expect(result).toEqual({ blocked: true })
-    // 不广播 bashResult 终态（错误路径）
-    const end = findBashResult(broadcasts)
-    expect(end).toBeUndefined()
   })
 })
 

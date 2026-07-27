@@ -93,7 +93,7 @@ function makeLifecycle(opts: MakeOpts = {}) {
 
   const session: IManagedSessionView = {
     id: forkMock.forkedId, cwd: '/repo', label: 'fork', modelId: 'p/m',
-    createdAt: 1, lastActiveAt: 1, tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false,
+    createdAt: 1, lastActiveAt: 1, tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
     labelPersisted: false,
   }
 

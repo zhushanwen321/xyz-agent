@@ -826,7 +826,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
-      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false,
+      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
       adapter, sessionFilePath,
       hidden,
       parentSession,

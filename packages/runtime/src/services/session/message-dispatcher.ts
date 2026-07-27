@@ -251,7 +251,13 @@ export class MessageDispatcher {
         return { blocked: true, rejected: true }
       }
       activeSession.isBashRunning = true
+      // [W1] 生成本次 sendBash 的代次令牌：abortBash 在广播 cancelled 终态前会旋转此 token
+      // （清 undefined）。await 返回后比对 token，可判定是否被 abortBash 抢先收口。
+      activeSession.bashRunToken = `bash_${Date.now()}_${Math.random().toString(36).slice(2)}`
     }
+    // [W1] 捕获本次 sendBash 的 token 到本地（abortBash 旋转后 activeSession.bashRunToken 已变，
+    // 本地 myToken 不变，比对 myToken === activeSession.bashRunToken 即可判定未被抢收口）。
+    const myToken = activeSession?.bashRunToken
 
     // ── bashStart 广播（实时反馈，与 bashResult 终态对称）──
     const excludeFlag = !!excludeFromContext
@@ -263,6 +269,14 @@ export class MessageDispatcher {
     // ── 调 pi bash + 广播终态 ──
     try {
       const result = await client.bash(command, excludeFromContext)
+      // [W1] 竞态守卫：await 期间若 abortBash 被调用，它已置 isBashRunning=false 并广播
+      // cancelled bashResult 终态（且旋转了 bashRunToken）。此处若再广播带真实 output 的
+      // bashResult 会导致前端收到两条终态（先 cancelled 后真实结果），渲染错乱。
+      // 检测 token 变化即说明被 abort 抢先收口，静默跳过本次广播。
+      if (activeSession && myToken !== undefined && activeSession.bashRunToken !== myToken) {
+        console.warn(`[message-dispatcher] sendBash: aborted during await, skip duplicate terminal. sid=${sessionId}`)
+        return { blocked: true }
+      }
       this.broker.broadcast({
         type: 'message.bashResult',
         payload: {
@@ -280,10 +294,41 @@ export class MessageDispatcher {
     } catch (e) {
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] sendBash failed: sessionId=${sessionId}`, errMsg)
+      // [W1] 竞态守卫：若 await 抛错是因 abortBash 抢先收口（如 abort_bash 触发 pi 关闭流），
+      // 已有 cancelled bashResult 广播，此处不再发 message.error，避免双重报错。
+      if (activeSession && myToken !== undefined && activeSession.bashRunToken !== myToken) {
+        console.warn(`[message-dispatcher] sendBash: aborted during await (catch), skip duplicate error. sid=${sessionId}`)
+        return { blocked: true }
+      }
+      // [S2] 对称兜底：与 abortBash「无论成败都广播 bashResult 终态」对称。
+      // 前端 message.error handler 只收口 streaming **assistant** 消息（finalizeSession 按
+      // role==='assistant' 过滤），不收口 role==='system' 的 streaming bash 消息——
+      // 若只发 message.error，前端 bash 气泡会卡在 streaming 态。故此处补发一条
+      // cancelled:false + exitCode:null + output 含错误信息的 bashResult 终态让 bash 收口。
+      this.broker.broadcast({
+        type: 'message.bashResult',
+        payload: {
+          sessionId,
+          command,
+          output: `[bash error] ${errMsg}`,
+          exitCode: null,
+          cancelled: false,
+          truncated: false,
+          excludeFromContext: excludeFlag,
+          timestamp: Date.now(),
+        },
+      })
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
       return { blocked: true }
     } finally {
-      if (activeSession) activeSession.isBashRunning = false
+      if (activeSession) {
+        activeSession.isBashRunning = false
+        // [W1] 复位 token：仅当 token 仍是本次 sendBash 的（未被 abortBash 旋转、
+        // 也未被下一次 sendBash 覆盖）时才清，避免误清 abortBash 或后续 sendBash 的标记。
+        if (myToken !== undefined && activeSession.bashRunToken === myToken) {
+          activeSession.bashRunToken = undefined
+        }
+      }
     }
     return { blocked: false }
   }
@@ -307,7 +352,14 @@ export class MessageDispatcher {
       // 与 abort() 的错误兑底一致：不 throw，避免请求级 envelope 双重报错。
       console.error(`[message-dispatcher] abortBash failed: sessionId=${sessionId}`, toErrorMessage(e))
     } finally {
-      if (activeSession) activeSession.isBashRunning = false
+      if (activeSession) {
+        activeSession.isBashRunning = false
+        // [W1] 旋转 token：通知 sendBash「已被 abort 抢先收口」。sendBash 在 await 返回后
+        // 检测到 activeSession.bashRunToken !== myToken 即静默跳过终态广播，避免双终态。
+        // 用新 token 而非清 undefined：若 sendBash 尚未读 myToken（仍在 await），清 undefined
+        // 会让 sendBash 误判「无 abort」——而新 token 保证 sendBash 比对必然不等。
+        activeSession.bashRunToken = `abort_${Date.now()}_${Math.random().toString(36).slice(2)}`
+      }
     }
     // 兑底终态：无论 pi 是否响应 abort_bash，都广播 cancelled=true 的 bashResult。
     // pi 卡死时不发任何事件，靠这条让前端 isBashRunning 复位（与 abort 广播 message.complete 同理）。
@@ -361,6 +413,26 @@ export class MessageDispatcher {
     }
 
     console.log('[message-dispatcher] compact: start, sessionId=' + sessionId + ', customInstructions=' + (customInstructions ? `"${customInstructions}"` : '(none)'))
+
+    // [W3] busy 预检：与 sendBash/sendMessage 的 isCompacting 拒绝对称。
+    // compact 期间若 isBashRunning（pi 单 bash slot，compact 重写上下文会读到半压缩状态）或
+    // isGenerating（pi 正在跑 LLM turn，compact 重写上下文会与 streaming 竞态），必须拒。
+    // 互斥此前只单向（sendBash/sendMessage 拒 isCompacting，但 compact 自身不预检 busy），
+    // 导致 compact 可在 bash/generating 进行中启动 → 竞态。此处补齐双向互斥。
+    const active = this.svc.getSessionByClient(client)
+    if (active && (active.isBashRunning || active.isGenerating)) {
+      const reason = active.isBashRunning ? 'bash running' : 'agent generating'
+      const errMsg = `Cannot compact while ${reason}`
+      console.warn(`[message-dispatcher] compact preemptive reject (busy), sid=${sessionId}, reason=${reason}`)
+      // 广播 session.compacted{error} 让前端流式通道收口（与下方 client.compact 失败路径对称）。
+      this.broker.broadcast({
+        type: 'session.compacted',
+        payload: { sessionId, status: 'compacted', error: errMsg },
+      })
+      // 抛错让 session-message-handler 补请求级 error envelope（与 client.compact 失败路径对称）。
+      throw new Error(errMsg)
+    }
+
     this.broker.broadcast({
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
@@ -368,7 +440,7 @@ export class MessageDispatcher {
     // [W3, U6] compact 期间用 isCompacting 互斥 sendPrompt（pi 在压缩上下文，
     // 此时 prompt 会与压缩竞态导致卡死）。与 isGenerating 不同：compact 不开 isGenerating，
     // 否则前端会把 session 误显示为 active（实际在压缩）。finally 兜底确保异常/成功都复位。
-    const active = this.svc.getSessionByClient(client)
+    // active 已在上方 busy 预检处取出（W3 复用）。
     if (active) active.isCompacting = true
     try {
       let result

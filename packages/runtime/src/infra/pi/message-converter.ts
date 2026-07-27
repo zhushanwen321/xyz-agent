@@ -300,15 +300,18 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
     // 转成带 bashExecution 字段的 system 消息——bash 是元信息非用户输入（W3 WC5 决策），
     // 与实时路径（message.bashResult effect 创建 system 消息）统一走 BashOutputBlock 渲染。
     // exitCode undefined → null（与 dispatcher 广播 bashResult 时 `?? null` 对称，防 JSON 丢值）。
+    // [S3] timestamp `?? Date.now()` 兜底，与 compactionSummary/branchSummary/custom 分支对齐
+    // （pi 理论上必填 timestamp，但 malformed 时缺字段会让 timestamp=undefined→前端 NaN）。
     // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 bash 执行记录经此分支还原。
     if (m.role === 'bashExecution') {
-      const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
+      const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp?: number; fullOutputPath?: string }
+      const ts = bm.timestamp ?? Date.now()
       result.push({
         id: crypto.randomUUID(),
         role: 'system',
         content: '',
         status: 'complete',
-        timestamp: bm.timestamp,
+        timestamp: ts,
         bashExecution: {
           command: bm.command,
           output: bm.output,
@@ -316,7 +319,7 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
           cancelled: bm.cancelled,
           truncated: bm.truncated,
           excludeFromContext: !!bm.excludeFromContext,
-          timestamp: bm.timestamp,
+          timestamp: ts,
           ...(bm.fullOutputPath !== undefined && { fullOutputPath: bm.fullOutputPath }),
         },
       } satisfies Message)
