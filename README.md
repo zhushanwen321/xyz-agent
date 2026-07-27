@@ -92,6 +92,22 @@ node $PW http://localhost:9222 evaluate "document.title"     # 执行 JS
 | `VITE_MOCK` | 设为 `true` 在 ws-client 层拦截所有 WS 消息 | — |
 | `XYZ_AGENT_DATA_DIR` | 自定义数据目录（dev 模式默认 `~/.xyz-agent-dev`，与 pi 的 `~/.pi/agent/` 完全隔离）| `~/.xyz-agent` |
 
+## Server 模式 / 远程部署
+
+xyz-agent 除了 Electron 桌面形态，还提供独立 server runtime（`@xyz-agent/runtime` npm 包），无需 Electron 即可启动 WebSocket 服务，供 APP / 浏览器远程连接。适用于远程开发、家庭服务器部署、团队共享等场景。
+
+```bash
+# 安装
+npm install -g @xyz-agent/runtime
+
+# 启动（默认 host 0.0.0.0:3210，首启自动生成 token）
+xyz-agent-runtime --host 0.0.0.0 --port 3210 --print-qr
+```
+
+**部署文档 SSOT**：三种安装方式（npm / Docker / 源码）+ 三种网络拓扑（Tailscale / LAN / 公网反代）+ 反代配置（nginx/caddy）+ token 管理 + 环境变量全表 + systemd 守护 + 故障排查，见 [docs/deployment/server.md](docs/deployment/server.md)。
+
+npm 包详细参数见 [packages/runtime/README.md](packages/runtime/README.md)。Docker 镜像 `ghcr.io/zhushanwen321/xyz-agent-server` 配置见 [apps/server/](apps/server/)。
+
 ## 核心功能（v3 UI）
 
 v3 前端于 2026-06 完成 L0–L4 递归骨架重建（W01–W20 视觉验收全部 PASS），冷蓝暗色设计系统（ADR-0018）。设计 SSOT 见 [docs/page-design/v3/](docs/page-design/v3/)，术语见 [领域术语表](docs/architecture/context.md#v3-ui-结构术语2026-06-重构)。
