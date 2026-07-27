@@ -10,39 +10,38 @@
     审批按钮 DEFERRED（G-018），v1 不渲染。failed 救生按钮不做（agent 自处理，design.md 决策 3）。
   -->
   <div class="trace-blk py-2" :class="blockClass" :data-testid="testId">
-    <!-- thinking 块：header 可点击 toggle，长 reasoning 独立再折叠（本地折叠态，由 collapsed prop 初始化） -->
+    <!-- thinking 块：同行展开（float 布局——第一行环绕 label，第二行起从最左侧开始） -->
     <div v-if="type === 'thinking'" class="trace-think">
-      <!--
-        flex 两段式（P0-2 方案 B）：header 独占一行（chevron + icon + label + 收起态 preview），
-        展开体作为 block 在下一行渲染（pl-6 与 icon 对齐）。与 tool/subagent/workflow 展开体一致，
-        避免 MarkdownRenderer 输出 <p> block 元素进 inline-block 容器导致强制换行。
-      -->
       <div
-        class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[12.5px] font-medium text-neutral-mid transition-colors hover:text-neutral-fg"
+        class="think-head group/think relative block overflow-hidden cursor-pointer select-none"
         :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
         @click="toggleThinking"
       >
-        <ChevronRight class="size-[14px] shrink-0 transition-transform text-neutral-dim" :class="thinkingExpanded ? 'rotate-90 text-accent' : ''" />
-        <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
-        <span class="shrink-0">{{ t('panel.message.thinkingBlock') }}</span>
-        <!-- 收起态：preview 跟在 label 后（truncate 避免长 preview 撑爆） -->
-        <span v-if="!thinkingExpanded" class="min-w-0 truncate text-neutral-dim">· {{ previewText }}</span>
-      </div>
-      <!-- 展开态：独立 body 块（不再 inline 续行），copy 按钮在左上角 -->
-      <div v-if="thinkingExpanded" class="group/think relative mt-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/think:opacity-100"
-          :title="t('panel.message.copy')"
-          @click.stop="content && copy(content, `thinking-${thinkingId ?? 'block'}`)"
-        >
-          <Check v-if="copied === `thinking-${thinkingId ?? 'block'}`" class="size-3 text-success" />
-          <CopyIcon v-else class="size-3" />
-        </Button>
-        <div class="select-text pl-6 text-[12px] leading-relaxed text-neutral-mid">
+        <!-- label 组浮动：chevron + icon + "思考" + ·，只占第一行高度 -->
+        <span class="think-label-float inline-flex h-[1.7em] items-center gap-1.5 whitespace-nowrap float-left">
+          <ChevronRight class="size-[14px] shrink-0 text-neutral-dim transition-transform" :class="thinkingExpanded ? 'rotate-90 text-accent' : ''" />
+          <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
+          <span class="text-[12.5px] font-medium text-neutral-mid">{{ t('panel.message.thinkingBlock') }}</span>
+          <span class="text-neutral-faint">·</span>
+        </span>
+        <!-- 内容 block：从最左占满，第一行环绕 float label，第二行起回到容器左缘 -->
+        <div v-if="!thinkingExpanded" class="think-content-collapsed truncate text-[12px] text-neutral-dim">
+          {{ previewText }}
+        </div>
+        <div v-else class="think-content-expanded text-[12px] leading-[1.7] text-neutral-dim">
+          <!-- copy 按钮浮在内容右上角（hover 显） -->
+          <Button
+            variant="ghost"
+            size="icon"
+            class="think-copy-btn absolute top-0 right-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/think:opacity-100"
+            :title="t('panel.message.copy')"
+            @click.stop="content && copy(content, `thinking-${thinkingId ?? 'block'}`)"
+          >
+            <Check v-if="copied === `thinking-${thinkingId ?? 'block'}`" class="size-3 text-success" />
+            <CopyIcon v-else class="size-3" />
+          </Button>
           <MarkdownRenderer v-if="!working" :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
-          <span v-else>{{ previewText }}</span>
+          <span v-else class="whitespace-pre-wrap">{{ previewText }}</span>
         </div>
       </div>
     </div>
@@ -62,12 +61,12 @@
       <!-- ── subagent 块：委托 BlockSubagent ── -->
       <BlockSubagent v-if="isSubagent" :tool="tool!" :session-id="sessionId" />
 
-      <!-- ── workflow 块：list-checks ICON + WORKFLOW. prefix + 状态动词 + workflow 名 ── -->
-      <div v-else-if="isWorkflow" class="trace-workflow" data-testid="workflow-block">
+      <!-- ── workflow 块：action + name + slug + runId + list-tree GUI ── -->
+      <div v-else-if="isWorkflow" class="trace-workflow border-b border-dashed border-border pl-3.5 pb-2.5 mb-0.5" data-testid="workflow-block">
         <div
           data-testid="tool-block-header"
-          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium text-neutral-fg transition-opacity hover:opacity-80"
-          :class="workflowStatusClass"
+          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium transition-opacity hover:opacity-80"
+          :class="isFailed ? 'text-neutral-mid' : 'text-neutral-fg'"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
@@ -76,11 +75,24 @@
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="workflow-tag mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
-          <span class="shrink-0 whitespace-nowrap">{{ workflowStatusText }}</span>
-          <span class="min-w-0 truncate text-neutral-dim">· {{ workflowName }}</span>
+          <!-- action（muted） -->
+          <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[11.5px] text-neutral-mid">{{ workflowFields.action }}</span>
+          <!-- name（accent） -->
+          <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[12px] text-accent">{{ workflowFields.name }}</span>
+          <!-- slug（accent，· 分隔） -->
+          <template v-if="workflowFields.slug">
+            <span class="text-neutral-faint">·</span>
+            <span class="shrink-0 whitespace-nowrap font-mono text-[12px] text-accent">{{ workflowFields.slug }}</span>
+          </template>
+          <!-- runId 前 8 位（dim） -->
+          <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[11px] text-neutral-dim">{{ workflowFields.runId }}</span>
+        </div>
+        <!-- args.task 首行预览（run action） -->
+        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-5 truncate text-[12px] text-neutral-dim">
+          {{ workflowArgsTaskPreview }}
         </div>
         <template v-if="toolExpanded">
-          <!-- workflow 详情区：copy 按钮在左上角 -->
+          <!-- workflow 详情区：copy 按钮在左上角 + list-tree GUI 组件（来自 details.__gui__） -->
           <div v-if="result" class="group/result relative mt-1 text-[12px] leading-snug text-neutral-mid select-text">
             <Button
               variant="ghost"
@@ -287,22 +299,37 @@ const toolStatusClass = computed(() => {
   return 'text-neutral-fg'
 })
 
-/** workflow 状态动词（Done/Running/Failed）+ header 色 */
-const workflowStatusText = computed(() => {
-  if (isRunning.value) return t('panel.message.workflowRunning')
-  if (isFailed.value) return t('panel.message.workflowFailed')
-  return t('panel.message.workflowDone')
-})
-const workflowStatusClass = computed(() => {
-  if (isRunning.value) return 'text-accent'
-  return ''
+/** workflow 顶层 input 安全读取（拍平 schema：action/name/slug/args/runId 都在顶层） */
+const workflowInputObj = computed(() => {
+  const input = props.tool?.input as Record<string, unknown> | undefined
+  return input && typeof input === 'object' ? input : {}
 })
 
-/** workflow 名（从 input.name 提取，pi-workflow 的 workflow tool input 含 name 字段） */
-const workflowName = computed(() => {
-  const input = props.tool?.input as Record<string, unknown> | undefined
-  if (input && typeof input.name === 'string') return input.name
-  return toolName.value
+/** workflow runId 显示截断长度（对齐 tool-render.ts 的 RUNID_SHORT） */
+const RUNID_DISPLAY_LENGTH = 8
+
+/** workflow 标题行字段：action / name / slug / runId-short */
+const workflowFields = computed(() => {
+  const input = workflowInputObj.value
+  const action = typeof input.action === 'string' ? input.action : ''
+  const name = typeof input.name === 'string' ? input.name : ''
+  const slug = typeof input.slug === 'string' ? input.slug : ''
+  const runIdRaw = typeof input.runId === 'string' ? input.runId : ''
+  const runIdShort = runIdRaw ? runIdRaw.slice(0, RUNID_DISPLAY_LENGTH) : ''
+  return { action, name, slug, runId: runIdShort }
+})
+
+/** workflow args.task 首行预览（run action，args 是对象取 task 字段，截断 60 字符） */
+const ARGS_TASK_PREVIEW_LIMIT = 60
+const workflowArgsTaskPreview = computed(() => {
+  const input = workflowInputObj.value
+  const args = input.args
+  if (!args || typeof args !== 'object') return ''
+  const task = (args as Record<string, unknown>).task
+  if (typeof task !== 'string') return ''
+  const firstLine = task.split('\n').find((l) => l.trim())?.trim() ?? ''
+  if (firstLine.length <= ARGS_TASK_PREVIEW_LIMIT) return firstLine
+  return `${firstLine.slice(0, ARGS_TASK_PREVIEW_LIMIT)}…`
 })
 
 /**

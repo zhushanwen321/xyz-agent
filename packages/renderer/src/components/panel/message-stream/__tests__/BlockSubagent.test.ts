@@ -1,11 +1,14 @@
 /**
- * BlockSubagent.vue 组件测试（subagent 三态渲染）。
+ * BlockSubagent.vue 组件测试。
  *
- * W3 Demo H 视觉更新：去卡片化（users ICON + SUBAGENT. prefix + 左缩进/dashed）+
- * running 双环 loader（去 reasoning 紫）+ failed hover warn（去鲜红）。
- * - completed：users ICON + 'subagent' prefix + agent 名 + Check 图标（中性灰）
- * - running：滚动进度文本 + 双环 loader（animate-loader-spin）
- * - failed：错误摘要进 body（中性灰 border-l），hover 染 warn（不再鲜红）
+ * 适配 @zhushanwen/pi-subagent-workflow（重写 fork）的真实数据结构：
+ * - input 顶层拍平：action / agent / slug / model / thinkingLevel / task 都在顶层（非 startParam 嵌套）
+ * - output 是 JSON 字符串，含 bgResponse: { status, mode, message }
+ * - 异步 background 执行：只展示发起参数（input），看不到执行过程（detail 永远 undefined）
+ *
+ * 标题行：subagent + agent + · + slug + (model · thinking X)
+ * 第二行：task 首行预览（截断 60）
+ * 展开体：task 完整内容 + background 状态行
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/components/panel/message-stream/__tests__/BlockSubagent.test.ts
  */
@@ -14,11 +17,17 @@ import { mount } from '@vue/test-utils'
 import BlockSubagent from '@/components/panel/message-stream/BlockSubagent.vue'
 import type { ToolCall } from '@xyz-agent/shared'
 
+/** 构造真实形态的 subagent ToolCall（顶层拍平 input） */
 function makeSubagent(over: Partial<ToolCall> = {}): ToolCall {
   return {
     id: 'tc-sub-1',
     toolName: 'subagent',
-    input: { agent: 'test-writer', task: '写测试' },
+    input: {
+      action: 'start',
+      agent: 'researcher',
+      slug: 'research-trace-ui',
+      task: '调研 trace UI 渲染方案',
+    },
     status: 'completed',
     startTime: 1000,
     endTime: 2000,
@@ -26,95 +35,250 @@ function makeSubagent(over: Partial<ToolCall> = {}): ToolCall {
   }
 }
 
-describe('W2TC1: BlockSubagent completed 态渲染', () => {
-  it('渲染 users ICON + subagent prefix + agent 名 + Check 完成图标（中性灰）', () => {
+describe('BlockSubagent: 标题行渲染（顶层 input 拍平字段）', () => {
+  it('渲染 subagent prefix + agent（accent）+ · + slug（accent）', () => {
     const wrapper = mount(BlockSubagent, {
       props: { tool: makeSubagent(), sessionId: 's1' },
     })
-    const html = wrapper.html()
-    // users ICON 存在（lucide-users 的 svg，size-[13px]）
-    expect(html).toContain('size-[13px]')
-    // 'subagent' prefix 文案（CSS 大写 SUBAGENT.）
-    expect(wrapper.text()).toContain('subagent')
-    // agent 名 'test-writer'
-    expect(wrapper.text()).toContain('test-writer')
-    // task 预览 '写测试'（< TASK_PREVIEW_LIMIT 48，不截断）
-    expect(wrapper.text()).toContain('写测试')
-    // completed 态显 Check 图标（中性灰 text-neutral-mid），无鲜红/鲜绿
-    expect(wrapper.find('.text-neutral-mid').exists()).toBe(true)
-    expect(wrapper.find('.text-danger').exists()).toBe(false)
-    expect(wrapper.find('.text-success').exists()).toBe(false)
-    // Check 图标（lucide-check svg）存在
-    expect(wrapper.find('svg.lucide-check').exists()).toBe(true)
+    const text = wrapper.text()
+    // subagent prefix 文案（CSS 大写 SUBAGENT.）
+    expect(text).toContain('subagent')
+    // agent 名（顶层 input.agent，非默认值）
+    expect(text).toContain('researcher')
+    // slug（顶层 input.slug）
+    expect(text).toContain('research-trace-ui')
+    // agent / slug 走 accent 色
+    expect(wrapper.find('.text-accent').exists()).toBe(true)
   })
-})
 
-describe('W2TC2: BlockSubagent running 态滚动进度', () => {
-  it('渲染滚动进度文本（turn + tokens）+ 双环 loader（animate-loader-spin）', () => {
+  it('无 input.agent 时回退默认 general-purpose', () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({ input: { action: 'start', task: 'do something' } }),
+      },
+    })
+    expect(wrapper.text()).toContain('general-purpose')
+  })
+
+  it('有 model + thinkingLevel 时渲染括号（model accent，括号/· thinking dim）', () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
-          status: 'running',
-          detail: { progress: [{ currentTool: 'bash', turnCount: 3, tokens: 1200 }] },
+          input: {
+            action: 'start',
+            agent: 'researcher',
+            slug: 'rs',
+            model: 'anthropic/claude-sonnet-4',
+            thinkingLevel: 'high',
+            task: 'task',
+          },
         }),
       },
     })
     const text = wrapper.text()
-    // running 态滚动进度：subagentLiveInfo = 'bash · turn 3 · 1.2k tokens'
-    expect(text).toContain('turn 3')
-    expect(text).toContain('1.2k tokens')
-    expect(text).toContain('bash')
-    // 双环 loader class 存在（animate-loader-spin + text-accent），无旧的脉冲点/reasoning 紫
+    expect(text).toContain('anthropic/claude-sonnet-4')
+    expect(text).toContain('thinking high')
+  })
+
+  it('有 model 无 thinkingLevel 时只渲染括号 + model', () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({
+          input: {
+            action: 'start',
+            agent: 'researcher',
+            model: 'openai/gpt-4o',
+            task: 'task',
+          },
+        }),
+      },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('openai/gpt-4o')
+    expect(text).not.toContain('thinking')
+  })
+})
+
+describe('BlockSubagent: task 首行预览（截断 60）', () => {
+  it('task 取首个非空行，未超长不截断', () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({ input: { action: 'start', task: '单行短任务' } }),
+      },
+    })
+    expect(wrapper.text()).toContain('单行短任务')
+  })
+
+  it('task 含换行时只取首行', () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({
+          input: {
+            action: 'start',
+            task: '首行任务描述\n第二行不该出现\n第三行也不该',
+          },
+        }),
+      },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('首行任务描述')
+    expect(text).not.toContain('第二行不该出现')
+    expect(text).not.toContain('第三行也不该')
+  })
+
+  it('首行超 60 字符时截断并以 … 结尾', () => {
+    const longFirstLine = 'a'.repeat(80)
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({ input: { action: 'start', task: longFirstLine } }),
+      },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('…')
+    // 截断后首行长度 = 60 + …，不应包含完整 80 字符
+    expect(text).not.toContain('a'.repeat(80))
+  })
+
+  it('task 首行为空时跳过空行取下一个非空行', () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({
+          input: { action: 'start', task: '\n\n实际首行\n其他' },
+        }),
+      },
+    })
+    expect(wrapper.text()).toContain('实际首行')
+  })
+})
+
+describe('BlockSubagent: 展开体（task 完整 + background 状态行）', () => {
+  it('completed 态默认收起，点击后展开 task 完整内容', async () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({
+          input: { action: 'start', task: '完整 task 内容' },
+        }),
+      },
+    })
+    // 默认收起：展开体不可见
+    expect(wrapper.find('.subagent-task-full').exists()).toBe(false)
+    // 点击 header 展开
+    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
+    expect(wrapper.find('.subagent-task-full').exists()).toBe(true)
+    expect(wrapper.find('.subagent-task-full').text()).toContain('完整 task 内容')
+  })
+
+  it('展开体渲染 background 状态行（output.bgResponse.message）', async () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({
+          input: { action: 'start', task: 'task' },
+          output: JSON.stringify({
+            action: 'start',
+            subagentId: '1338dda5',
+            sessionFile: null,
+            slug: 'rs',
+            bgResponse: {
+              status: 'running',
+              mode: 'background',
+              message: 'detached, will notify on completion (auto-injected message, do not poll)',
+            },
+          }),
+        }),
+      },
+    })
+    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
+    const text = wrapper.text()
+    expect(text).toContain('background ·')
+    expect(text).toContain('detached, will notify on completion')
+    // 状态点 blink 动画 class
+    expect(wrapper.find('.subagent-status-dot').exists()).toBe(true)
+  })
+
+  it('output.bgResponse 无 message 但 status=running 时回退默认文案', async () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({
+          input: { action: 'start', task: 'task' },
+          output: JSON.stringify({
+            action: 'start',
+            bgResponse: { status: 'running', mode: 'background' },
+          }),
+        }),
+      },
+    })
+    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
+    expect(wrapper.text()).toContain('running detached · will notify on completion')
+  })
+
+  it('output 非合法 JSON 时无 background 状态行', async () => {
+    const wrapper = mount(BlockSubagent, {
+      props: {
+        tool: makeSubagent({
+          input: { action: 'start', task: 'task' },
+          output: 'plain text not json',
+        }),
+      },
+    })
+    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
+    expect(wrapper.text()).not.toContain('background ·')
+  })
+})
+
+describe('BlockSubagent: running / failed / unfinished 态', () => {
+  it('running 态渲染双环 loader（animate-loader-spin + text-accent）', () => {
+    const wrapper = mount(BlockSubagent, {
+      props: { tool: makeSubagent({ status: 'running' }) },
+    })
     expect(wrapper.find('.animate-loader-spin.text-accent').exists()).toBe(true)
+    // 不再有旧的脉冲点 / reasoning 紫
     expect(wrapper.find('.animate-working-pulse').exists()).toBe(false)
     expect(wrapper.find('.bg-reasoning').exists()).toBe(false)
   })
 
-  it('running 态无 progress 快照时回退到 panel.message.running 文案', () => {
+  it('running 态无 progress 快照字段（detail 永远 undefined，异步 background）', () => {
     const wrapper = mount(BlockSubagent, {
-      props: { tool: makeSubagent({ status: 'running' }) }, // 无 detail
+      props: { tool: makeSubagent({ status: 'running', detail: undefined }) },
     })
-    // 无 progress → subagentLiveInfo 为空 → 显 '运行中'（panel.message.running）
-    expect(wrapper.text()).toContain('运行中')
-    // loader 仍在（running 态指示）
+    const text = wrapper.text()
+    // 不应渲染旧的进度字段
+    expect(text).not.toContain('turn ')
+    expect(text).not.toContain('tokens')
+    // loader 仍在
     expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
   })
-})
 
-describe('W2TC3: BlockSubagent failed 态（Demo H hover warn）', () => {
-  it('渲染 AlertTriangle ICON + 中性灰 header + result 左边框（border-neutral-faint，hover warn）', () => {
+  it('failed 态强制展开（错误须直视）', () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
           status: 'error',
-          output: 'subagent crashed: EBUSY',
+          input: { action: 'start', task: 'failed task' },
         }),
       },
     })
-    // failed 态 header 中性灰（text-neutral-mid），无鲜红 text-danger
+    // failed 强制展开：task 完整体直接可见
+    expect(wrapper.find('.subagent-task-full').exists()).toBe(true)
+    // header 中性灰
     expect(wrapper.find('.text-neutral-mid').exists()).toBe(true)
-    expect(wrapper.find('.text-danger').exists()).toBe(false)
-    // 无 Check（failed 不显完成图标）
-    expect(wrapper.find('svg.lucide-check').exists()).toBe(false)
-    // failed 强制展开（toolExpanded = isFailed || !toolCollapsed）→ result 区可见
-    expect(wrapper.text()).toContain('subagent crashed: EBUSY')
-    // result 区左边框（border-neutral-faint，Demo H 去鲜红 + hover warn）
-    expect(wrapper.find('.border-l-2.border-neutral-faint').exists()).toBe(true)
-    expect(wrapper.find('.border-l-2.border-danger').exists()).toBe(false)
-    // hover warn 类存在（hover:border-warn 在 class 列表中，用 html 字符串检查）
-    expect(wrapper.html()).toContain('hover:border-warn')
   })
 
-  it('failed 态根 div 是 trace-subagent（无鲜红框，Demo H 去卡片化）', () => {
+  it('unfinished 态渲染 panel.message.noResult 文案', () => {
     const wrapper = mount(BlockSubagent, {
-      props: { tool: makeSubagent({ status: 'error', output: 'err' }) },
+      props: { tool: makeSubagent({ status: 'end_not_received' }) },
     })
-    // BlockSubagent 根 div 是 trace-subagent，不含鲜红框 class（Demo H 去卡片化）
+    expect(wrapper.text()).toContain('未收到结果')
+  })
+
+  it('根 div 是 trace-subagent（去卡片化，底部 dashed 分割）', () => {
+    const wrapper = mount(BlockSubagent, {
+      props: { tool: makeSubagent() },
+    })
     const root = wrapper.find('.trace-subagent')
     expect(root.exists()).toBe(true)
+    expect(root.classes()).toContain('border-b')
+    expect(root.classes()).toContain('border-dashed')
     expect(root.classes()).not.toContain('border-danger')
     expect(root.classes()).not.toContain('bg-danger-soft')
-    // Demo H 去卡片化：底部 dashed 分割线（左对齐，无缩进）
-    expect(root.classes()).toContain('border-b')
   })
 })

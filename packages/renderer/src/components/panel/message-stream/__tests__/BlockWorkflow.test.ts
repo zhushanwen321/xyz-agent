@@ -1,5 +1,9 @@
 /**
- * W3TC5 —— workflow 块渲染测试（Demo H：list-checks ICON + WORKFLOW. prefix + 状态动词 + 详情 3 态）。
+ * W3TC5 —— workflow 块渲染测试（Demo H：action + name + slug + runId + list-tree GUI 详情 3 态）。
+ *
+ * workflow 顶层 input 拍平 schema：action / name / slug / args / runId 都在顶层。
+ * 标题行字段顺序：workflow prefix · action(muted) · name(accent) · · slug(accent) · runId[0:8](dim)。
+ * 第二行：args.task 首行预览（run action，截断 60 字符）。
  *
  * 3 态 fixture：
  * - ① details.__gui__={type:'list-tree',items:[...]} → GuiComponentRenderer（stub 验证挂载）
@@ -42,7 +46,12 @@ function makeWorkflow(over: Partial<ToolCall> = {}): ToolCall {
   return {
     id: 'tc-wf-1',
     toolName: 'workflow',
-    input: { name: 'email-validation-refactor' },
+    input: {
+      action: 'run',
+      name: 'email-validation-refactor',
+      slug: 'email-refactor',
+      args: { task: '扫描 validator 并替换 regex' },
+    },
     status: 'completed',
     startTime: 1000,
     endTime: 5000,
@@ -141,7 +150,7 @@ describe('W3TC5: workflow 块 3 态详情渲染', () => {
         },
       },
     )
-    // workflow 块 header 在（含 WORKFLOW. prefix + 状态动词 + workflow 名）
+    // workflow 块 header 在（含 workflow prefix + action + name + slug + runId）
     const wfBlock = wrapper.find('[data-testid="workflow-block"]')
     expect(wfBlock.exists()).toBe(true)
     // workflow 名可见
@@ -152,8 +161,8 @@ describe('W3TC5: workflow 块 3 态详情渲染', () => {
   })
 })
 
-describe('W3TC4: workflow 块去卡片化视觉（WORKFLOW. prefix + 状态动词）', () => {
-  it('header 含 workflow-tag（CSS 大写 WORKFLOW.）+ 状态动词 + workflow 名', () => {
+describe('W3TC4: workflow 块标题行字段（action + name + slug + runId + args.task 预览）', () => {
+  it('run action：header 含 workflow prefix + action + name + · + slug（runId 无则不显示）', () => {
     const wrapper = mount(
       Block,
       {
@@ -170,13 +179,100 @@ describe('W3TC4: workflow 块去卡片化视觉（WORKFLOW. prefix + 状态动�
         },
       },
     )
-    // workflow-tag span 存在（源码小写 workflow，CSS 大写 WORKFLOW.）
+    // workflow-tag span 存在（源码小写 workflow，CSS 大写）
     expect(wrapper.find('.workflow-tag').exists()).toBe(true)
     expect(wrapper.text()).toContain('workflow')
-    // 状态动词（completed → workflowDone 「已完成」）
-    expect(wrapper.text()).toContain('已完成')
-    // workflow 名
+    // action（muted）
+    expect(wrapper.text()).toContain('run')
+    // name（accent）
     expect(wrapper.text()).toContain('email-validation-refactor')
+    // slug（accent，· 分隔）
+    expect(wrapper.text()).toContain('email-refactor')
+    // run action 无顶层 runId，不显示
+    expect(wrapper.text()).not.toContain('wf-')
+    // args.task 首行预览
+    expect(wrapper.text()).toContain('扫描 validator 并替换 regex')
+  })
+
+  it('status action：header 含 action + runId[0:8]（dim）', () => {
+    const wrapper = mount(
+      Block,
+      {
+        props: {
+          type: 'tool',
+          tool: makeWorkflow({
+            status: 'completed',
+            input: { action: 'status' },
+          }),
+        },
+        global: {
+          stubs: {
+            GuiComponentRenderer: GuiStub,
+            AnsiText: AnsiStub,
+            MarkdownRenderer: MdStub,
+          },
+        },
+      },
+    )
+    // action（muted）
+    expect(wrapper.text()).toContain('status')
+    // status action 无 name（不显示 name）
+    expect(wrapper.text()).not.toContain('email-validation-refactor')
+  })
+
+  it('pause action 带 runId：runId 前 8 位显示', () => {
+    const wrapper = mount(
+      Block,
+      {
+        props: {
+          type: 'tool',
+          tool: makeWorkflow({
+            status: 'completed',
+            input: { action: 'pause', runId: 'wf-abcd1234-efgh-5678' },
+          }),
+        },
+        global: {
+          stubs: {
+            GuiComponentRenderer: GuiStub,
+            AnsiText: AnsiStub,
+            MarkdownRenderer: MdStub,
+          },
+        },
+      },
+    )
+    // action
+    expect(wrapper.text()).toContain('pause')
+    // runId 前 8 位
+    expect(wrapper.text()).toContain('wf-abcd1')
+    // 完整 runId 不显示（只显前 8）
+    expect(wrapper.text()).not.toContain('wf-abcd1234-efgh-5678')
+  })
+
+  it('args.task 超 60 字符截断 + 末尾 …', () => {
+    const longTask = '扫描'.repeat(40) // 80 字符
+    const wrapper = mount(
+      Block,
+      {
+        props: {
+          type: 'tool',
+          tool: makeWorkflow({
+            status: 'completed',
+            input: { action: 'run', name: 'wf-x', args: { task: longTask } },
+          }),
+        },
+        global: {
+          stubs: {
+            GuiComponentRenderer: GuiStub,
+            AnsiText: AnsiStub,
+            MarkdownRenderer: MdStub,
+          },
+        },
+      },
+    )
+    // 截断后含末尾 …
+    expect(wrapper.text()).toContain('…')
+    // 完整长 task 不显示（已截断）
+    expect(wrapper.text()).not.toContain(longTask)
   })
 
   it('running 态 header 含双环 loader（animate-loader-spin + accent）', () => {
@@ -198,7 +294,29 @@ describe('W3TC4: workflow 块去卡片化视觉（WORKFLOW. prefix + 状态动�
     )
     // running 态双环 loader
     expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
-    // 状态动词染 accent（running → workflowRunning 「运行中」）
-    expect(wrapper.text()).toContain('运行中')
+    // 字段仍可见（name）
+    expect(wrapper.text()).toContain('email-validation-refactor')
+  })
+
+  it('不再渲染旧的状态动词（已完成/运行中/失败）', () => {
+    const wrapper = mount(
+      Block,
+      {
+        props: {
+          type: 'tool',
+          tool: makeWorkflow({ status: 'completed' }),
+        },
+        global: {
+          stubs: {
+            GuiComponentRenderer: GuiStub,
+            AnsiText: AnsiStub,
+            MarkdownRenderer: MdStub,
+          },
+        },
+      },
+    )
+    // 旧 workflowStatusText 已删除，不再出现状态动词
+    expect(wrapper.text()).not.toContain('已完成')
+    expect(wrapper.text()).not.toContain('运行中')
   })
 })
