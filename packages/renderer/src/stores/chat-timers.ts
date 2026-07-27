@@ -53,7 +53,16 @@ export function initTimers(
 
   // ── bash timer ──
 
-  /** bashStartEffect 挂载 bash 专用超时 timer */
+  /**
+   * bashStartEffect 挂载 bash 专用超时 timer。
+   *
+   * [W8 PR#116 review] bash timer 是 per-session（非 per-message）：armBashTimer 先
+   * clearSessionTimer(bashTimers, sessionId) 再 set，每个 session 只保留一个 timer。
+   * 这依赖 runtime 层 isBashRunning 互斥的硬保证——sendBash 预检会拒绝 isBashRunning===true
+   * 的请求（runtime message-dispatcher / bash service 保证同时只有一个 streaming bash）。
+   * 在此互斥约束下，store 层 per-session timer 是安全的：不会有第二个 streaming bash 与之共存。
+   * 若将来 runtime 放开 bash 并发，此处需改为 per-message timer（以 bash 消息 id 为 key）。
+   */
   function armBashTimer(sessionId: string): void {
     clearSessionTimer(bashTimers, sessionId)
     bashTimers.set(sessionId, setTimeout(() => {

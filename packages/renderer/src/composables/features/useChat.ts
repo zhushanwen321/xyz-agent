@@ -13,6 +13,7 @@
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
@@ -371,8 +372,13 @@ export function useChat() {
     } catch (e) {
       // [W2] RPC 失败时 bashResult 广播不会到达，bash 消息永久卡在 streaming。
       // 主动找到 streaming bash 消息并标记为 error 态兜底。
+      // [B2 PR#116 review] 必须用 storeToRefs(chat).messages 拿 store 真正的 shallowRef：
+      // chat.messages 经 Pinia setup store 访问时自动解包为 Map（非 ref），`{ value: chat.messages }`
+      // 构造的 plain wrapper 让 markBashError 内部的 messages.value 赋值只改写临时对象的 .value，
+      // store 真正的 shallowRef 永远不更新（catch 形同虚设）。storeToRefs 返回真 ref，写回才生效。
       const msg = e instanceof Error ? e.message : String(e)
-      markBashError({ value: chat.messages }, sid, msg, chat.clearBashTimer)
+      const { messages: messagesRef } = storeToRefs(chat)
+      markBashError(messagesRef, sid, msg, chat.clearBashTimer)
       const { error } = useToast()
       error(t('composable.stopFailed', { msg }))
     }

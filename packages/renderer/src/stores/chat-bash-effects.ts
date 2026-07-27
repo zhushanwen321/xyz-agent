@@ -19,6 +19,23 @@ import { commitMessages, type MessagesRef } from './chat-mutations'
 type Payload = Record<string, unknown>
 
 /**
+ * [S7 PR#116 review] 找到 messages 里最后一条 streaming bash 消息的索引（无则 -1）。
+ *
+ * bash 消息通常在末尾（bashResultEffect/markBashError/finalizeBashOnly 均按此假设从后搜）。
+ * 此前三处各自重复 `[...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')`
+ * + `prev.length-1-reversedIdx` 算 realIdx，逻辑漂移风险高（任一处漏改即不一致）。抽出复用。
+ *
+ * 判定条件：`m.bashExecution`（bash 消息标志，由 bashStartEffect 创建时设置）+ `status === 'streaming'`。
+ * runtime isBashRunning 互斥保证同一 session 同时只有一个 streaming bash，故 findLast 即唯一目标。
+ */
+export function findLastStreamingBashIndex(messages: Message[], sessionId?: string): number {
+  // sessionId 仅作日志/可读性占位，定位靠 messages 内容（与原三处实现一致）。
+  void sessionId
+  const reversedIdx = [...messages].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
+  return reversedIdx === -1 ? -1 : messages.length - 1 - reversedIdx
+}
+
+/**
  * message.bashStart：append 一条 streaming 态 system 消息，承载 command + excludeFromContext。
  * bashResult 到达后锢定该消息（status==='streaming' + bashExecution）更新为 complete。
  *
@@ -53,10 +70,9 @@ export const bashStartEffect: MessageEffectHandler = (ctx: MessageEffectContext,
 export const bashResultEffect: MessageEffectHandler = (ctx: MessageEffectContext, sid: string, payload: Payload) => {
   const { messages, clearBashTimer } = ctx
   const prev = messages.value.get(sid) ?? []
-  // [S6] findLastIndex 优化：bash 消息在末尾，从后往前搜索更快
-  const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
-  if (reversedIdx === -1) return
-  const realIdx = prev.length - 1 - reversedIdx
+  // [S7] 复用 findLastStreamingBashIndex，与 markBashError/finalizeBashOnly 一致。
+  const realIdx = findLastStreamingBashIndex(prev, sid)
+  if (realIdx === -1) return
   const target = prev[realIdx]
   const updated: Message = {
     ...target,
@@ -88,6 +104,10 @@ export const bashEffects: Partial<Record<ServerMessage['type'], MessageEffectHan
  * bash 消息会永久卡在 streaming。此方法在 useChat.abortBash catch 中调用兜底。
  *
  * 导出为独立函数（非 effect handler），由 useChat 直接调用。
+ *
+ * [B2 PR#116 review] 调用方必须传入 store 真正的 messages ref（storeToRefs(chat).messages），
+ * 不可传 `{ value: chat.messages }` 这样的 plain wrapper——后者只改写临时对象的 .value，
+ * store 真正的 shallowRef 不会被更新（catch 形同虚设）。
  */
 export function markBashError(
   messages: MessagesRef,
@@ -96,9 +116,9 @@ export function markBashError(
   clearBashTimer?: (sid: string) => void,
 ): void {
   const prev = messages.value.get(sessionId) ?? []
-  const reversedIdx = [...prev].reverse().findIndex(m => m.bashExecution && m.status === 'streaming')
-  if (reversedIdx === -1) return
-  const realIdx = prev.length - 1 - reversedIdx
+  // [S7] 复用 findLastStreamingBashIndex，与 bashResultEffect/finalizeBashOnly 一致。
+  const realIdx = findLastStreamingBashIndex(prev, sessionId)
+  if (realIdx === -1) return
   const next = prev.map((m, i) => i === realIdx ? {
     ...m,
     status: 'error' as const,
