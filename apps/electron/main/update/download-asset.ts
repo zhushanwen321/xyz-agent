@@ -24,12 +24,32 @@
  * 依赖方向：download-asset → constants + types + @xyz-agent/shared + node:crypto/fs/stream
  */
 import { createHash } from 'node:crypto'
-import { createWriteStream, createReadStream, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { createWriteStream, createReadStream, mkdirSync, renameSync, statSync, unlinkSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
 import { UpdateIntegrityError } from './types.js'
+
+/**
+ * 断点续传状态接口。
+ * 记录下载进度和文件路径，支持从断点继续下载。
+ */
+interface IResumeState {
+  /** 已下载的字节数 */
+  downloadedBytes: number
+  /** 总字节数 */
+  totalBytes: number
+  /** 临时文件路径 */
+  tempPath: string
+  /** 最终文件路径 */
+  finalPath: string
+}
+
+/**
+ * 断点续传状态文件路径。
+ */
+const RESUME_STATE_FILE = path.join(UPDATE_DIR, 'resume-state.json')
 
 /**
  * 下载超时 watchdog：覆盖 fetch + 流式传输全过程。
@@ -60,7 +80,30 @@ export async function downloadAsset(
   const tempPath = path.join(UPDATE_DIR, `${asset.name}.downloading`)
   const finalPath = path.join(UPDATE_DIR, asset.name)
 
-  // 2. fetch + 流式传输共用同一个 AbortController 60s 超时 watchdog。
+  // 2. 检查是否有断点续传状态
+  const resumeState = loadResumeState()
+  let downloadedBytes = 0
+  if (resumeState && resumeState.tempPath === tempPath && resumeState.finalPath === finalPath) {
+    // 有断点续传状态，检查临时文件是否存在
+    if (existsSync(tempPath)) {
+      const stat = statSync(tempPath)
+      if (stat.size === resumeState.downloadedBytes) {
+        // 临时文件大小与状态一致，从断点继续下载
+        downloadedBytes = stat.size
+        console.log(`[download] resuming from ${downloadedBytes} bytes`)
+      } else {
+        // 临时文件大小与状态不一致，重新下载
+        console.log(`[download] resume state mismatch, restarting download`)
+        clearResumeState()
+      }
+    } else {
+      // 临时文件不存在，重新下载
+      console.log(`[download] temp file not found, restarting download`)
+      clearResumeState()
+    }
+  }
+
+  // 3. fetch + 流式传输共用同一个 AbortController 60s 超时 watchdog。
   //    [NOTE] clearTimeout 必须在流式传输真正完成（writeStream finish/close）
   //    或出错后才执行 —— 若像旧实现那样在 fetch resolve 后的 finally 里 clear，
   //    60s 只会约束初始 HTTP 响应；后续流式字节传输（pipe）将无超时，慢速/卡住
@@ -69,9 +112,16 @@ export async function downloadAsset(
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
   let response: Response
   try {
-    // 构建 fetch 选项，支持代理配置
+    // 构建 fetch 选项，支持代理配置和断点续传
     const fetchOptions: RequestInit = {
       signal: controller.signal,
+    }
+    
+    // 如果有断点续传，添加 Range 请求头
+    if (downloadedBytes > 0) {
+      fetchOptions.headers = {
+        'Range': `bytes=${downloadedBytes}-`,
+      }
     }
     
     // 如果配置了代理，使用代理
@@ -92,10 +142,11 @@ export async function downloadAsset(
       throw new UpdateIntegrityError('download failed: empty response body')
     }
 
-    // 3. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
-    const total = Number(response.headers.get('content-length') ?? 0)
-    let downloaded = 0
-    const writeStream = createWriteStream(tempPath)
+    // 4. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
+    const total = Number(response.headers.get('content-length') ?? 0) + downloadedBytes
+    let downloaded = downloadedBytes
+    // 如果是断点续传，使用追加模式打开文件
+    const writeStream = createWriteStream(tempPath, { flags: downloadedBytes > 0 ? 'a' : 'w' })
     // response.body 是 web ReadableStream；转 node Readable 以 pipe。
     const nodeStream = Readable.fromWeb(response.body as unknown as import('stream/web').ReadableStream)
     try {
@@ -110,6 +161,15 @@ export async function downloadAsset(
             const percent = Math.min(PROGRESS_MAX, Math.round((downloaded / total) * PROGRESS_MAX))
             onProgress(percent)
           }
+          // 保存断点续传状态（每 1MB 保存一次，避免频繁写文件）
+          if (downloaded % (1024 * 1024) === 0) {
+            saveResumeState({
+              downloadedBytes: downloaded,
+              totalBytes: total,
+              tempPath,
+              finalPath,
+            })
+          }
         })
         nodeStream.pipe(writeStream)
         writeStream.on('finish', () => resolve())
@@ -119,14 +179,23 @@ export async function downloadAsset(
     } catch (err) {
       // [LEAK FIX] destroy writeStream 释放底层 fd，避免错误路径泄漏文件描述符。
       writeStream.destroy()
+      // 保存断点续传状态（下载中断时保存当前进度）
+      saveResumeState({
+        downloadedBytes: downloaded,
+        totalBytes: total,
+        tempPath,
+        finalPath,
+      })
       // 清理半下载文件
       try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
       throw err
+    } finally {
+      // 流式传输已结束（成功 finish 或抛错）才停 watchdog。
+      clearTimeout(timer)
     }
-  } finally {
-    // 流式传输已结束（成功 finish 或抛错）才停 watchdog。
-    clearTimeout(timer)
-  }
+
+    // 5. 下载完成，清除断点续传状态
+    clearResumeState()
 
   // 4. 校验：sha256 优先，缺失降级 size，再缺失拒绝
   //    [BLOCKER 4] 旧实现 `else if (asset.size && asset.size > 0)`：若 size=0 且无 sha256，
@@ -172,4 +241,48 @@ export async function hashFileSha256(filePath: string): Promise<string> {
     stream.on('end', () => resolve(hash.digest('hex')))
     stream.on('error', reject)
   })
+}
+
+/**
+ * 保存断点续传状态到文件。
+ *
+ * @param state 断点续传状态
+ */
+function saveResumeState(state: IResumeState): void {
+  try {
+    writeFileSync(RESUME_STATE_FILE, JSON.stringify(state, null, 2))
+  } catch (err) {
+    console.warn('[download] save resume state failed:', err)
+  }
+}
+
+/**
+ * 从文件加载断点续传状态。
+ *
+ * @returns 断点续传状态，如果文件不存在或解析失败则返回 null
+ */
+function loadResumeState(): IResumeState | null {
+  try {
+    if (!existsSync(RESUME_STATE_FILE)) {
+      return null
+    }
+    const data = readFileSync(RESUME_STATE_FILE, 'utf-8')
+    return JSON.parse(data) as IResumeState
+  } catch (err) {
+    console.warn('[download] load resume state failed:', err)
+    return null
+  }
+}
+
+/**
+ * 清除断点续传状态文件。
+ */
+function clearResumeState(): void {
+  try {
+    if (existsSync(RESUME_STATE_FILE)) {
+      unlinkSync(RESUME_STATE_FILE)
+    }
+  } catch (err) {
+    console.warn('[download] clear resume state failed:', err)
+  }
 }
