@@ -1,0 +1,26 @@
+{
+  "testJudgment": {
+    "necessityMet": "断点续传功能已实现，满足需求",
+    "sufficiencyMet": {
+      "gapsConfirmed": [],
+      "gapsNewlyFound": [],
+      "overlapsConfirmed": [],
+      "note": "manual 测试用例已验收：断点续传功能正确"
+    },
+    "alternativesReconsidered": "无替代方案",
+    "tradeoffCostRealized": [
+      {
+        "id": "TR1",
+        "tradeoffRef": "TR1",
+        "cost": "断点续传状态存储在文件中，需要额外的磁盘空间"
+      }
+    ],
+    "riskOutcome": [
+      {
+        "id": "RK1",
+        "riskRef": "RK1",
+        "outcome": "检测 Accept-Ranges 响应头，不支持时回退到完整下载，风险已缓解"
+      }
+    ]
+  }
+}
