@@ -85,7 +85,7 @@ export function bindSessionStreamSync(): void {
             console.warn('[session-stream-sync] disposeSession failed for sid=' + sid, e)
           }
         }
-      // eslint-disable-next-line taste/no-silent-catch -- watch 最外层兜底：任何未预期异常不冒泡到业务调用栈
+      // eslint-disable-next-line taste/no-silent-catch -- watch 最外层兜底：仅捕获 diffSessionList 纯函数 bug 或未来回归的未预期异常（常规副作用异常已由内层 per-session try-catch 隔离）
       } catch (e) {
         console.warn('[session-stream-sync] watch callback error:', e)
       }

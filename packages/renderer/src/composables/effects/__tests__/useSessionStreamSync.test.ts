@@ -103,12 +103,14 @@ describe('bindSessionStreamSync', () => {
   })
 
   it('TC8: scope.stop() 后 watch 退订，append 不再触发 ensureStreamSubscription', () => {
+    // 不清 mock：通过比较 scope.stop() 前后的调用次数差证明 watch 已取消。
+    // clearAllMocks 会把计数清零，断言通过不能证明 watch 真的解绑（验证空洞）。
+    const beforeCount = ensureStreamSubscriptionMock.mock.calls.length
     scope.stop()
-    vi.clearAllMocks()
-    // stop 后再 append（store 已存在，新 scope 已 stop，但 store 调用仍安全）
+    // stop 后再 append（store 已存在，scope 已 stop，但 store 调用仍安全）
     sessionStore.appendSession(mkSession('s-after-stop'))
-    expect(ensureStreamSubscriptionMock).not.toHaveBeenCalled()
-    expect(disposeSessionMock).not.toHaveBeenCalled()
+    // watch 已取消：appendSession 不触发 ensureStreamSubscription，调用次数应保持不变
+    expect(ensureStreamSubscriptionMock.mock.calls.length).toBe(beforeCount)
   })
 
   it('TC9: 异常隔离——单 session ensureStreamSubscription throw 不阻断其余', () => {
@@ -128,19 +130,27 @@ describe('bindSessionStreamSync', () => {
     expect(warnMsg).toContain('s1')
   })
 
-  it('TC10: watch 最外层兜底——回调内 throw 不冒泡到 appendSession 调用栈', () => {
-    // ensureStreamSubscription + disposeSession 都 throw，模拟 watch 回调内遍历抛错
-    ensureStreamSubscriptionMock.mockImplementation(() => {
-      throw new Error('ensure-boom')
-    })
+  it('TC10: removed 路径内层 try-catch 隔离——disposeSession 抛错不冒泡到 removeFromList 调用栈', () => {
+    // 诚实降级说明：原 TC10 声称测"最外层 try-catch 防冒泡"，但用 ensureStreamSubscription/disposeSession
+    // 抛错只能到达内层 per-session try-catch（源码 added/removed 循环内已有 try-catch 吞掉），最外层
+    // catch 不可达——实测为验证空洞（断言全绿但没测到声称的分支）。
+    // 唯一能穿透到最外层 catch 的是 diffSessionList 抛错，但 diffSessionList 是同模块 export，
+    // ESM 模块绑定下 spyOn 命名空间对象无法覆盖源码内的直接引用（已实测 spy 不生效），强行注入需
+    // 重构生产代码（过度）。因此降级为名副其实地测内层 try-catch：
+    // - TC9 已覆盖 added 路径（ensureStreamSubscription 抛错隔离）；
+    // - 本 TC10 覆盖 removed 路径——disposeSession 抛错被内层 catch 吞，不冒泡 + 记录 warn。
     disposeSessionMock.mockImplementation(() => {
       throw new Error('dispose-boom')
     })
-    // try 内调 appendSession——watch 回调内 throw 应被最外层 try-catch 兜住，不冒泡
+    sessionStore.appendSession(mkSession('s1'))
+    // try 内调 removeFromList——disposeSession 抛错应被内层 try-catch 兜住，不冒泡
     expect(() => {
-      sessionStore.appendSession(mkSession('s-bubble'))
+      sessionStore.removeFromList('s1')
     }).not.toThrow()
-    // 兜底 warn 被调用（内层 ensure warn 或最外层 watch warn）
+    // 内层 catch 记录 warn，消息含 sid（区别于最外层 watch callback error）
     expect(console.warn).toHaveBeenCalled()
+    const warnMsg = JSON.stringify((console.warn as ReturnType<typeof vi.fn>).mock.calls)
+    expect(warnMsg).toContain('s1')
+    expect(warnMsg).toContain('disposeSession failed')
   })
 })
