@@ -20,6 +20,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as TOML from '@iarna/toml'
 import type { PiModelDefinition } from '../../../infra/pi/pi-provider-store.js'
+import { logger } from '../../../infra/logger.js'
 import type { ParseResult, ParsedProvider } from '../provider-parser.js'
 
 /**
@@ -80,8 +81,13 @@ export function parseCodexProviders(homeDir: string): ParseResult | null {
   if (existsSync(authPath)) {
     try {
       authData = JSON.parse(readFileSync(authPath, 'utf8')) as CodexAuthJson
-    } catch {
-      // auth.json 解析失败不阻断 config.toml 的解析（auth 仅作 openai provider 的 key 回退）
+    } catch (e) {
+      // auth.json 解析失败不阻断 config.toml 解析（auth 仅作 openai provider 的 key 回退）。
+      // 安全红线（DM1/ES5）：只记错误消息本身（JSON parse error 是语法错误，不含 key 内容），
+      // 绝不记 auth 文件内容 / 解析对象 / 任何 key 值。
+      logger.warn('[migration:codex] auth.json parse failed, skipping', {
+        error: e instanceof Error ? e.message : String(e),
+      })
     }
   }
 

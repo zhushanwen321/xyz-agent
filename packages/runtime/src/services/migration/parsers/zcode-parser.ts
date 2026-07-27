@@ -98,15 +98,18 @@ export function parseZcodeProviders(homeDir: string): ParseResult | null {
     const apiKey = entry.options?.apiKey
     const apiKeyExtracted = !!apiKey
 
-    // models 转换：ZCode model def → PiModelDefinition
-    const models: PiModelDefinition[] = Object.entries(entry.models ?? {}).map(([modelId, m]) => ({
-      id: modelId,
-      name: m.name ?? modelId,
-      contextWindow: m.limit?.context,
-      maxTokens: m.limit?.output,
-      reasoning: m.reasoning?.enabled,
-      thinkingLevelMap: inferThinkingLevelMap(m.reasoning),
-    }))
+    // models 转换：ZCode model def → PiModelDefinition（for...of 风格，与同文件 line 79 一致）
+    const models: PiModelDefinition[] = []
+    for (const [modelId, m] of Object.entries(entry.models ?? {})) {
+      models.push({
+        id: modelId,
+        name: m.name ?? modelId,
+        contextWindow: m.limit?.context,
+        maxTokens: m.limit?.output,
+        reasoning: m.reasoning?.enabled,
+        thinkingLevelMap: inferThinkingLevelMap(m.reasoning),
+      })
+    }
 
     providers.push({
       name: entry.name ?? id,
