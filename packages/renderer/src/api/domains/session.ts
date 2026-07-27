@@ -180,9 +180,9 @@ export function subagentAction(
 
 /**
  * 触发 fast-handoff（痛点3，FR-fast-handoff）。
- * runtime 让源 session 的 pi 跑 /skill:handoff：取末条 assistant 文档 → 注入新空白 session。
+ * runtime HandoffService 让源 session 跑 handoff turn 生成文档 → 新建 session 由 runtime 注入 doc。
  * 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
- * reply 原样拼到 /skill:handoff 后作 args（用户备注）。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
+ * reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
  * reply 是 message.status ack（前端不读 payload，等广播）。
  */
 export function handoff(sessionId: string, reply?: string): Promise<void> {
@@ -190,7 +190,7 @@ export function handoff(sessionId: string, reply?: string): Promise<void> {
 }
 
 /**
- * 取消进行中的 handoff（对称 abortHandoff 委托 SessionService.abort 中断 pi turn）。
+ * 取消进行中的 handoff（委托 HandoffService.abortHandoff 中断 handoff inflight：client.abort + 清 listener/timer）。
  * 无进行中 handoff 时 no-op。reply message.status ack。
  */
 export function abortHandoff(sessionId: string): Promise<void> {

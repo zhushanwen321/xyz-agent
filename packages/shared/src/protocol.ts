@@ -237,13 +237,13 @@ export interface ClientMessageMap {
     includeFrom?: boolean
     label?: string
   }
-  // handoff：在源 session 触发 fast-handoff——runtime 让源 session 的 pi 跑 /skill:handoff
-  // 生成文档，agent_end 后取末条 assistant 文档 → 新建空白 session 注入首条 → 广播跳转。
-  // 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
-  // reply 原样拼到 /skill:handoff 后作 args（用户备注）。
+  // handoff：在源 session 触发 fast-handoff（agent-driven 模式）——runtime HandoffService 让源 session
+  // 跑 handoff turn（内置 HANDOFF_PROMPT_TEMPLATE）生成文档 → 从 agent_end 提取 text → 新建 session
+  // 由 runtime 注入 doc 触发新 turn。与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，
+  // 只注入文档（"打包交接到新线程"）。reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。
   // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
   'session.handoff': { sessionId: string; reply?: string }
-  // abortHandoff：取消进行中的 handoff。委托 SessionService.abort 中断 pi turn，
+  // abortHandoff：中断进行中的 handoff（runtime client.abort + 清 listener/timer/inflight）。
   // onTurnEnd 检测 aborted 标记跳过新建/注入。无进行中 handoff 时 no-op。
   'session.abortHandoff': { sessionId: string }
   // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
@@ -1152,8 +1152,8 @@ export interface ReplyPayloadMap {
   'session.compact': void         // reply session.compacted
   'session.delete': void          // reply session.deleted
   'session.deleteByCwd': BatchDeleteResult // reply session.deletedByCwd（前端读 deleted/failed 列表）
-  // session.handoff：触发后 pi 异步跑 /skill:handoff，完成经 session.handoffComplete 独立广播通道推回。
-  // reply message.status ack（前端不读 payload，等 handoffComplete 广播跳转新 session）。
+  // session.handoff：触发后 runtime HandoffService 异步让源 session 跑 handoff turn 生成文档，
+  // 完成经 session.handoffComplete 独立广播通道推回。reply message.status ack（前端不读 payload，等广播跳转新 session）。
   'session.handoff': void         // reply message.status
   // session.abortHandoff：取消进行中 handoff，reply message.status ack（与 message.abort 同模式）。
   'session.abortHandoff': void    // reply message.status

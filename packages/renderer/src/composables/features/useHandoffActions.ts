@@ -6,7 +6,7 @@
  *
  * 与 fork 的差异：
  * - fork 从指定 assistant 分叉（需 fromMessageId 锚点）；handoff 始终从末条 assistant 打包文档
- *   （pi 跑 /skill:handoff 自取末条 assistant），无 fromMessageId 参数。
+ *   （runtime 让源 session 跑 handoff turn 生成文档），无 fromMessageId 参数。
  * - fork 完成后留原线 + forkNotice 反馈行；handoff 完成后跳转到新 session（useHandoffEffect
  *   订阅 session.handoffComplete → selectSession(newSessionId)），无反馈行组件。
  * - handoff 进行中显「正在交接…」瞬时提示（isHandingOff，chat store handingOffSessions Set）。
@@ -29,13 +29,13 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
   const chat = useChatStore()
 
   /**
-   * 触发 handoff：让源 session 的 pi 跑 /skill:handoff（取末条 assistant 文档 → 新空白 session）。
-   * reply 原样拼到 /skill:handoff 后作 args（用户备注）。
+   * 触发 handoff：runtime 让源 session 跑 handoff turn 生成文档 → runtime 从 agent_end 提取 text
+   * → 新建 session 注入 doc 触发新 turn。reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。
    * 置 handingOff=true 给 UI 即时反馈；完成由 useHandoffEffect 订阅 session.handoffComplete 复位 + 跳转。
    * 失败时复位 handingOff + rethrow（调用方决定 toast 反馈，参照 forkSession 的 rethrow 模式）。
    *
-   * @param srcSessionId 源 session（取末条 assistant 文档）
-   * @param reply 可选用户备注（拼到 /skill:handoff 后作 args）
+   * @param srcSessionId 源 session（runtime 从其 agent_end 提取文档）
+   * @param reply 可选用户备注（sanitize 后拼到 handoff prompt 末尾）
    */
   async function handoff(srcSessionId: string, reply?: string): Promise<void> {
     chat.setHandingOff(srcSessionId, true)
@@ -49,22 +49,23 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
   }
 
   /**
-   * 取消进行中的 handoff（乐观清 handingOff 反馈 + 委托 abortHandoff RPC 中断 pi turn）。
-   * runtime abort 后不会广播 session.handoffComplete（onTurnEnd 检测 aborted 跳过新建），
-   * 故乐观清 handingOff（与 fork 的 abort 对称）。RPC 失败静默——UI 已清，无进一步回滚空间。
+   * 取消进行中的 handoff（乐观清 handingOff 反馈 + 委托 abortHandoff RPC 中断 handoff inflight）。
+   * runtime abort（client.abort + 清 listener/timer）后不会广播 session.handoffComplete
+   * （onTurnEnd 检测 aborted 跳过新建），故乐观清 handingOff（与 fork 的 abort 对称）。
+   * RPC 失败静默——UI 已清，无进一步回滚空间。
    */
   async function abortHandoff(sessionId: string): Promise<void> {
     chat.setHandingOff(sessionId, false)
     await sessionApi.abortHandoff(sessionId).catch((e) => {
-      // RPC 失败留诊断线索：abort 没成功时 pi turn 仍会跑完，可能稍后跳新 session（用户以为已取消）。
-      console.warn('[handoff] abortHandoff RPC failed, pi turn may continue:', e)
+      // RPC 失败留诊断线索：abort 没成功时 handoff turn 仍会跑完，可能稍后跳新 session（用户以为已取消）。
+      console.warn('[handoff] abortHandoff RPC failed, handoff turn may continue:', e)
     })
   }
 
   /**
    * 找当前焦点 session 的末条 assistant 消息（⌘H 全局快捷键默认 handoff 点）。
    * 全局快捷键无 hover 上下文，按对称 fork 的 lastAssistantOfFocused 默认从末条 assistant handoff。
-   * handoff 无需 messageId（pi /skill:handoff 自取末条 assistant），故只返回 { sessionId }。
+   * handoff 无需 messageId（runtime 从 agent_end 提取文档），故只返回 { sessionId }。
    * 无焦点 session 或无 assistant 消息时返回 null（调用方静默 no-op）。
    */
   function lastAssistantOfFocused(): { sessionId: string } | null {
@@ -78,7 +79,7 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
   }
 
   /**
-   * 从末条 assistant 直接 handoff（⌘H）：pi 打包末条 assistant 文档到新 session。
+   * 从末条 assistant 直接 handoff（⌘H）：runtime 从末条 assistant 跑 handoff turn 提取文档到新 session。
    * 完成经 session.handoffComplete 广播 → useHandoffEffect 跳转新 session。
    * 无末条 assistant 时静默 no-op（无文档可打包）。
    */

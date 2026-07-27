@@ -41,7 +41,9 @@ export function bindHandoffEffect(): void {
     void loadSessions().catch((e) => {
       console.warn('[handoff-effect] loadSessions failed:', e)
     }).then(() => {
-      void selectSession(newSessionId)
+      // return（非 void）：让 selectSession 的 rejection 传播到下方 .catch 兜底，
+      // 否则 void 会吞掉被 reject 的 promise → unhandledRejection（wave2 回归修复）。
+      return selectSession(newSessionId)
     }).catch((e) => {
       console.warn('[handoff-effect] selectSession failed:', e)
     })

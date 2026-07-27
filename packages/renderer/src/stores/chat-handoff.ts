@@ -15,7 +15,7 @@ import type { Ref } from 'vue'
 /**
  * handingOff 超时兜底阈值（C2+M1）：handoff 成功后复位完全依赖 session.handoffComplete 广播，
  * 若广播丢失（HMR/App 重挂/时序竞态/断连窗口），源 session 会永久卡「正在交接」。
- * 取 60s：handoff 跑 pi /skill:handoff 打包文档可能十几秒，留充足窗口；超时后清 handingOff
+ * 取 60s：agent 跑 handoff turn 生成文档可能十几秒，留充足窗口；超时后清 handingOff
  * （UI「正在交接…」块消失，用户可重新点 handoff）。store 不直接 toast（关注点分离）。
  */
 const HANDING_OFF_TIMEOUT_MS = 60_000
