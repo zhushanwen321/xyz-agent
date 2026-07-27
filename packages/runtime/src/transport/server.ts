@@ -170,6 +170,7 @@ export class RuntimeServer implements IMessageBroker {
       broadcastSessionList: () => this.broker.broadcastSessionList(),
       clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),
       broadcast: (msg) => this.broker.broadcast(msg),
+      clearSessionBuffer: (sessionId) => this.broker.clearSessionBuffer(sessionId),
     })
     this.extensionHandler = new ExtensionMessageHandler({
       ...messaging,

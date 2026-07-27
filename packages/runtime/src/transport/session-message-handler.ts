@@ -16,6 +16,11 @@ export interface SessionHandlerContext extends MessageHandlerContext {
   clearExtensionTimeoutsForSession(sessionId: string): void
   /** 广播一条 ServerMessage 给所有连接（FR-12：fork 后广播 session.forkNotice）。 */
   broadcast(msg: ServerMessage): void
+  /**
+   * 清除某 session 的 ring buffer 桶（P2-s1-w2 / PC-W2.6）。
+   * session 销毁时调，移除整桶不推进 evictedWatermark（ES6：session 已删，客户端清分区不再期待其消息）。
+   */
+  clearSessionBuffer(sessionId: string): void
 }
 
 export class SessionMessageHandler {
@@ -84,6 +89,9 @@ export class SessionMessageHandler {
         const delSid = msg.payload.sessionId
         this.ctx.clearExtensionTimeoutsForSession(delSid)
         await this.ctx.sessionService.delete(delSid)
+        // P2-s1-w2：session 销毁清 ring buffer 桶（ES6 不推进 watermark——session 已删，
+        // 客户端收到 session.deleted 清分区，不该再期待该 session 消息）。
+        this.ctx.clearSessionBuffer(delSid)
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
         return this.ctx.broadcastSessionList()
       }
