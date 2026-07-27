@@ -134,6 +134,9 @@ export class SessionMessageHandler {
         return this.ctx.broadcastSessionList()
       }
       case 'session.deleteByCwd': {
+        // deleteByCwd 是 best-effort 聚合（永远 resolve），clearExtensionTimeoutsForSession
+        // 只对 result.deleted 调用（失败的 session 未真正删除，不需清 timeout）。
+        // 与 session.delete 的「先清 timeout 再 delete」顺序相反——批量需先拿到聚合结果才知道清谁。
         const result = await this.ctx.sessionService.deleteByCwd(msg.payload.cwd)
         for (const id of result.deleted) {
           this.ctx.clearExtensionTimeoutsForSession(id)

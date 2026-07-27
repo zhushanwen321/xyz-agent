@@ -200,6 +200,9 @@ export class SessionLifecycle {
    * 查询合并 active（getActiveSummaries）+ persisted（scanSessions）去重，
    * 覆盖 active 但 JSONL 未 flush 的边界场景（AGENTS.md 关键规则 #6）。
    * 不调广播——广播由 caller（session-message-handler）控制。
+   *
+   * cwd 匹配用字面 === ：依赖 caller 传入与 summary.cwd 一致的字符串
+   * （前端 folder 删除按钮传的是 listPersistedSessions 返回的原始 cwd，不经规范化）。
    */
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> {
     const cwdSessions = new Set<string>()
@@ -216,7 +219,7 @@ export class SessionLifecycle {
         await this.delete(id)
         deleted.push(id)
       } catch (e) {
-        failed.push({ sessionId: id, error: (e as Error).message })
+        failed.push({ sessionId: id, error: toErrorMessage(e) })
       }
     }
     return { cwd, deleted, failed }
