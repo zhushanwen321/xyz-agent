@@ -58,3 +58,15 @@ export const MODEL_NOT_CONFIGURED = 'MODEL_NOT_CONFIGURED'
 
 /** session 数量达到 MAX_SESSIONS 上限的错误码（wave1 远程化，前端据此提示用户关闭旧 session） */
 export const SESSION_LIMIT_REACHED = 'session_limit_reached'
+
+/**
+ * terminal 不可用（node-pty native 模块缺失/加载失败）（wave5 远程化）。
+ *
+ * node-pty 是 native 模块，@xyz-agent/runtime 单独 npm 全局安装时若宿主机缺 build-essential，
+ * 加载会抛 MODULE_NOT_FOUND。terminal-service 模块加载不崩（pty=null 哨兵），
+ * spawn/write/resize/kill 入口守卫抛此码。
+ *
+ * 已列入 shared TerminalErrorCode 联合（M2 fix），terminal-message-handler 透传此 code 给前端，
+ * 前端可精确分支提示「请安装 build-essential 后重装 node-pty」。
+ */
+export const TERMINAL_UNAVAILABLE = 'terminal_unavailable'

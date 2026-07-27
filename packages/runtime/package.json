@@ -1,10 +1,20 @@
 {
   "name": "@xyz-agent/runtime",
   "version": "0.6.0",
-  "private": true,
   "type": "module",
+  "main": "./dist/index.cjs",
   "bin": {
-    "xyz-agent-runtime": "../../apps/electron/dist/runtime/server.cjs"
+    "xyz-agent-runtime": "./dist/server.cjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -14,17 +24,19 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:*",
-    "@xyz-agent/shared": "workspace:*",
     "chokidar": "^4.0.1",
     "fast-glob": "^3.3.3",
-    "node-pty": "^1.0.0",
     "qrcode-terminal": "^0.12.0",
     "semver": "^6.3.1",
     "tar": "^7.5.16",
     "ws": "^8"
   },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  },
   "devDependencies": {
+    "@xyz-agent/extension-protocol": "workspace:*",
+    "@xyz-agent/shared": "workspace:*",
     "@types/node": "^22",
     "@types/semver": "^7.7.1",
     "@types/ws": "^8",

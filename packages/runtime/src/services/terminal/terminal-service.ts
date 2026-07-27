@@ -19,10 +19,44 @@
  *
  * 日志：直接用 console.*（initLogger 已 patch 全局，tee 到文件，见架构约定 #4）。
  */
-import * as pty from 'node-pty'
 import { execFileSync } from 'node:child_process'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ITerminalService } from '../ports/terminal-service.js'
+import { TERMINAL_UNAVAILABLE } from '../../utils/errors.js'
+
+// node-pty 是 native 模块，@xyz-agent/runtime 单独 npm 全局安装时若宿主机缺
+// build-essential，加载会抛 MODULE_NOT_FOUND。此处用「懒加载动态 import + 哨兵」
+// 而非顶层静态 import：模块加载不崩，terminal.* RPC 在首次 spawn 时检测到 pty=null
+// 抛 terminal_unavailable，其余 runtime 功能（file/session/...）不受影响。
+//
+// 为什么懒加载而非模块加载时 require？
+//   1. tsup 产物是 CJS（format: cjs），esbuild 拒绝顶层 await（CJS 不支持）；
+//   2. vitest 的 vi.mock/vi.doMock 不拦截 require()（仅拦截 ESM import），用 require
+//      会让测试无法模拟 node-pty 缺失；动态 import() 同时被 tsup 保留（external）和
+//      vitest 拦截，是唯一两环境都 OK 的加载方式。
+//   3. validate-runtime-bundle.sh 禁用 ESM 元信息 API（运行时不可用），故不能走
+//      createRequire 路线（需 ESM 模块 URL）。
+//
+// ptyLoadAttempted 用于同步方法（write/resize/kill/destroyPty）的守卫：
+// 若 spawn 已尝试加载且失败，ptyMap 必为空，这些方法抛 terminal_unavailable；
+// 若从未 spawn 过（懒加载未触发），保持原 no-op 契约（防竞态）。
+let pty: typeof import('node-pty') | null = null
+let ptyLoadAttempted = false
+
+/**
+ * 懒加载 node-pty（首次 spawn 调用）。结果缓存到模块级 `pty`，后续调用幂等。
+ * 失败（native 模块缺失/编译失败）置 `pty=null`，不抛——由调用方守卫决定降级行为。
+ */
+async function loadPty(): Promise<typeof import('node-pty') | null> {
+  if (ptyLoadAttempted) return pty
+  ptyLoadAttempted = true
+  try {
+    pty = await import('node-pty')
+  } catch {
+    pty = null
+  }
+  return pty
+}
 
 /** TerminalService 依赖。 */
 export interface TerminalServiceDeps {
@@ -62,7 +96,7 @@ function nextPushId(): string {
 }
 
 export class TerminalService implements ITerminalService {
-  private readonly ptyMap = new Map<string, pty.IPty>()
+  private readonly ptyMap = new Map<string, import('node-pty').IPty>()
 
   constructor(private deps: TerminalServiceDeps) {}
 
@@ -73,13 +107,20 @@ export class TerminalService implements ITerminalService {
       return
     }
 
+    // node-pty 缺失守卫：npm 全局安装无 build-essential 时加载失败，terminal 功能禁用。
+    // 抛 terminal_unavailable（错误码常量见 utils/errors.ts），不崩溃整个 runtime。
+    const ptyImpl = await loadPty()
+    if (!ptyImpl) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
+
     const { shell, shellArgs } = this.resolveShell()
     const spawnCwd = cwd ?? process.cwd()
     console.log(`[terminal] spawn: sid=${sid} shell=${shell} cwd=${spawnCwd} cols=${cols} rows=${rows}`)
 
-    let proc: pty.IPty
+    let proc: import('node-pty').IPty
     try {
-      proc = pty.spawn(shell, shellArgs, {
+      proc = ptyImpl.spawn(shell, shellArgs, {
         name: 'xterm-256color',
         cols,
         rows,
@@ -123,6 +164,11 @@ export class TerminalService implements ITerminalService {
   }
 
   write(sid: string, data: string): void {
+    // node-pty 加载失败守卫（spawn 已尝试且 pty=null 时 ptyMap 必空，抛错而非静默 no-op）。
+    // 未尝试加载时保持 no-op 契约（防 spawn 尚未就绪的竞态）。
+    if (ptyLoadAttempted && !pty) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
     const proc = this.ptyMap.get(sid)
     if (!proc) return // no-op：PTY 未就绪或已退出（竞态安全）
     try {
@@ -134,6 +180,9 @@ export class TerminalService implements ITerminalService {
   }
 
   resize(sid: string, cols: number, rows: number): void {
+    if (ptyLoadAttempted && !pty) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
     const proc = this.ptyMap.get(sid)
     if (!proc) return
     try {
@@ -145,6 +194,9 @@ export class TerminalService implements ITerminalService {
   }
 
   kill(sid: string): void {
+    if (ptyLoadAttempted && !pty) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
     const proc = this.ptyMap.get(sid)
     if (!proc) return
     try {
@@ -161,6 +213,11 @@ export class TerminalService implements ITerminalService {
   }
 
   destroyPty(sid: string): void {
+    // 无 node-pty 缺失守卫：destroyPty 被 sessionService.setOnSessionDelete 回调调用
+    // （index.ts:343-346 removeSessionEntry → onSessionDelete → destroyPty），路径无 try/catch。
+    // 抛错会中断 session 删除/进程退出清理（session 文件终态缺失、前端收不到 session.exited）。
+    // 即便 ptyLoadAttempted=true 且 pty=null（node-pty 缺失），ptyMap 必空 → 下行 if (!proc) return 自然兜底，
+    // 保持 ports 契约「sid 无 PTY 时 no-op」。
     const proc = this.ptyMap.get(sid)
     if (!proc) return
     console.log(`[terminal] destroyPty (session delete): sid=${sid}`)

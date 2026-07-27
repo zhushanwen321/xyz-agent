@@ -144,6 +144,7 @@ export type TerminalErrorCode =
   | 'not_found'        // 操作的 sessionId 无对应 PTY
   | 'resize_failed'    // pty.resize 失败
   | 'kill_failed'      // pty.kill 失败
+  | 'terminal_unavailable' // node-pty native 模块缺失/加载失败（宿主机缺 build-essential）
 /** handler 对未知错误归一的兜底字面量（非 TerminalService 主动抛出，单列让 renderer switch 可穷尽） */
 export type TerminalUnknownErrorCode = 'terminal_failed'
 /** envelope code 字段的完整联合（业务码 + 兜底） */
