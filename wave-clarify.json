@@ -1,0 +1,19 @@
+{
+  "clarifications": [
+    {
+      "id": "CL1",
+      "question": "超时时间：当前 DOWNLOAD_TIMEOUT_MS=300s(5分钟)，用户要求增加到 3600s(1小时)。是否需要区分 release-checker 的 fetch 超时(当前10s)和 download-asset 的下载超时(当前300s)？",
+      "resolution": "fetch 超时保持 10s 不变（API 响应快），只增加下载超时到 3600s。"
+    },
+    {
+      "id": "CL2",
+      "question": "代理配置存储位置：是放在 xyz-agent 的 config.json 中，还是放在 settings.json 中？",
+      "resolution": "放在 xyz-agent 的 config.json 中，因为这是网络层配置，不是 pi agent 的设置。需要在 settings UI 中添加代理配置界面。"
+    },
+    {
+      "id": "CL3",
+      "question": "代理配置需要支持哪些字段？",
+      "resolution": "支持 http_proxy 和 https_proxy 两个字段，格式为 URL（如 http://127.0.0.1:7890）。支持 PAC 模式（自动检测系统代理）和手动配置模式。"
+    }
+  ]
+}

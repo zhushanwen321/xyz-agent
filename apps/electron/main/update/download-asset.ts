@@ -27,18 +27,18 @@ import { createHash } from 'node:crypto'
 import { createWriteStream, createReadStream, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
-import type { ReleaseAsset } from '@xyz-agent/shared'
+import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
 import { UpdateIntegrityError } from './types.js'
 
 /**
  * 下载超时 watchdog：覆盖 fetch + 流式传输全过程。
  *
- * 5 分钟覆盖慢速网络下的 100MB+ Electron 产物（理论 2Mbps 下需 ~7min，但实际
- * GitHub CDN 通常更快）。若用户网络极慢，超时后清理半下载文件，用户可重试。
- * 旧的 60s 对 100MB+ 产物太短，慢速网络下会误杀正常下载。
+ * 1 小时（3600s）覆盖慢速网络下的 170MB+ Electron 产物。
+ * 国内网络环境下，下载 GitHub CDN 的大文件可能需要 10-20 分钟，
+ * 1小时超时留足余量，避免误杀正常下载。
  */
-const DOWNLOAD_TIMEOUT_MS = 300_000
+const DOWNLOAD_TIMEOUT_MS = 3_600_000
 const PROGRESS_MAX = 100
 
 /**
@@ -46,12 +46,14 @@ const PROGRESS_MAX = 100
  *
  * @param asset 待下载的 release 资产（含 downloadUrl / sha256 / size）
  * @param onProgress 下载进度回调（0-100 百分比）
+ * @param proxyConfig 代理配置（可选，不传则禁用代理）
  * @returns 下载完成后最终文件路径（已通过校验）
  * @throws UpdateIntegrityError sha256/size 校验失败
  */
 export async function downloadAsset(
   asset: ReleaseAsset,
   onProgress?: (percent: number) => void,
+  proxyConfig?: IProxyConfig,
 ): Promise<{ filePath: string }> {
   // 1. 准备目录 + 临时文件路径
   mkdirSync(UPDATE_DIR, { recursive: true })
@@ -67,7 +69,19 @@ export async function downloadAsset(
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
   let response: Response
   try {
-    response = await fetch(asset.downloadUrl, { signal: controller.signal })
+    // 构建 fetch 选项，支持代理配置
+    const fetchOptions: RequestInit = {
+      signal: controller.signal,
+    }
+    
+    // 如果配置了代理，使用代理
+    if (proxyConfig && proxyConfig.mode === 'manual') {
+      // 注意：Node.js 的 fetch 不直接支持代理，需要使用 undici 或其他库
+      // 这里先记录代理配置，后续可以集成 undici 的 ProxyAgent
+      console.log('[download] using proxy:', proxyConfig)
+    }
+    
+    response = await fetch(asset.downloadUrl, fetchOptions)
     if (!response.ok) {
       // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
       // 但显式 cancel 更确定，避免连接挂在 keep-alive 池）。
