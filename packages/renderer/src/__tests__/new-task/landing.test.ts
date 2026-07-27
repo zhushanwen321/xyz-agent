@@ -24,6 +24,8 @@ import type { DerivedStatus } from '@/types'
 const flowMock = vi.hoisted(() => ({
   // landing 态 session/cwd/branch 真源 computed refs（landing.vue 的 composerSid/cwd/branch 依赖）
   currentSessionId: { value: null as string | null },
+  // pi-launch-presets wave2: Landing 透传 launchPresetId 给 PresetSelectChip，需 currentSession
+  currentSession: { value: null as { launchPresetId?: string } | null },
   currentCwd: { value: null as string | null },
   presetCwd: vi.fn(),
   gitInfo: { value: null as { branch: string } | null },
@@ -78,6 +80,8 @@ const panelStubs = {
  *  Composer 内部逻辑不在此测（首屏冒烟 landing-smoke.test.ts 才验真实 composer）。 */
 const landingStubs = {
   Composer: { template: '<div data-testid="composer-stub"><slot name="meta-row" /></div>' },
+  // pi-launch-presets wave2: PresetSelectChip stub（避免触发其 Popover/HoverCard 重依赖）
+  PresetSelectChip: { template: '<div data-testid="chip-preset-stub" />' },
 }
 
 function mountPanel(overrides: Record<string, unknown> = {}) {
@@ -208,6 +212,16 @@ describe('Landing 组件（presentational）', () => {
     await wrapper.find('[data-testid="chip-branch"]').trigger('click')
     expect(flowMock.openBranchPopover).toHaveBeenCalled()
   })
+
+  it('TC-6 #meta-row slot 挂载 PresetSelectChip（pi-launch-presets wave2 集成回归）', () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+      global: { stubs: landingStubs },
+    })
+    // PresetSelectChip stub 带 testid，断言它与 directory/branch chip 同级存在于 meta-row
+    expect(wrapper.find('[data-testid="chip-preset-stub"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
+  })
 })
 
 describe('Landing getHistory 失败重试（T1.8）', () => {
@@ -243,6 +257,8 @@ describe('Landing openDirDialog 异常处理（W3: AC-5.6）', () => {
       template: '<div data-testid="dir-select-stub" />',
       emits: ['select', 'open-dir-dialog', 'close'],
     },
+    // pi-launch-presets wave2: PresetSelectChip stub（避免触发其重依赖）
+    PresetSelectChip: { template: '<div data-testid="chip-preset-stub" />' },
   }
 
   it('W3-U1: openDirDialog reject → toastError 被调（IPC 招错有反馈，AC-5.6）', async () => {

@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ProviderSource } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -127,6 +127,47 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.scannedAgents', { agents: this.ctx.configService.scanAgents(msg.payload.sources, existingIds), success: true })
         // 修裂缝①：扫描后广播最新 agent 列表
         this.ctx.broadcastAgentList()
+        return true
+      }
+      case 'config.detectSources': {
+        // W1 迁移功能：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
+        // 只读检测（不读文件内容），reply 检测结果数组。无副作用，无需广播。
+        const sources = this.ctx.configService.detectSources()
+        this.ctx.reply(ws, msg.id, 'config.sourcesDetected', { sources })
+        return true
+      }
+      case 'config.previewImportProviders': {
+        // W2 迁移：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
+        // result 可能是 { importId, preview }（成功）或 { error }（源未安装等），reply 原样转发。
+        // 前端按有无 error 字段判断成败。无广播（按需 RPC，apply 后才广播 provider 列表）。
+        // W1：payload 字段校验——source 必须是已知 ProviderSource，否则 sendError。
+        const source = msg.payload?.source
+        const VALID_SOURCES: ProviderSource[] = ['pi', 'zcode', 'codex', 'claude']
+        if (typeof source !== 'string' || !VALID_SOURCES.includes(source as ProviderSource)) {
+          this.ctx.sendError(ws, 'invalid_payload', 'config.previewImportProviders requires a valid "source" (pi|zcode|codex|claude)', msg.id)
+          return true
+        }
+        const result = this.ctx.configService.previewImportProviders(source as ProviderSource)
+        this.ctx.reply(ws, msg.id, 'config.providersPreviewed', result)
+        return true
+      }
+      case 'config.applyImportProviders': {
+        // W2 迁移：Step2 应用导入（写 models.json）。result 可能是 { result }（成功）或 { error }（缓存过期等）。
+        // apply 成功后广播 provider 列表（与 setProvider/deleteProvider 对称，让所有 panel 同步新增的 provider）。
+        // W1：payload 字段校验——importId 必须是字符串，selectedIds 必须是字符串数组，否则 sendError。
+        const importId = msg.payload?.importId
+        const selectedIds = msg.payload?.selectedIds
+        if (typeof importId !== 'string' || !importId.trim() ||
+            !Array.isArray(selectedIds) || !selectedIds.every((id: unknown) => typeof id === 'string')) {
+          this.ctx.sendError(ws, 'invalid_payload', 'config.applyImportProviders requires a non-empty "importId" string and "selectedIds" string array', msg.id)
+          return true
+        }
+        const result = this.ctx.configService.applyImportProviders(importId, selectedIds as string[])
+        this.ctx.reply(ws, msg.id, 'config.providersImported', result)
+        // 仅成功时广播（result 有 result 字段 = 成功；有 error 字段 = 失败，不广播）
+        if ('result' in result) {
+          this.ctx.broadcastProviderList()
+        }
         return true
       }
       case 'config.setAgentDirs': {

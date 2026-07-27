@@ -18,6 +18,8 @@
           <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
           <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
         </div>
+        <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
+        <UpdateButton class="ml-auto" />
       </div>
 
       <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
@@ -187,11 +189,13 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useCommandStore } from '@/stores/command'
+import { usePresetStore } from '@/stores/preset'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useChat } from '@/composables/features/useChat'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
+import UpdateButton from './UpdateButton.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
@@ -204,6 +208,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
 import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
+import { useAppUpdate } from '@/composables/features/useAppUpdate'
 import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -374,6 +379,14 @@ onMounted(() => {
 })
 
 /**
+ * 启动 30s 自动升级检测（w4：useAppUpdate.initAutoCheck，UpdateButton 消费检测到的状态）。
+ * 在 setup 顶层同步调用（非 onMounted）：initAutoCheck 内部用 setTimeout 延迟 30s，不需等 DOM 挂载；
+ * onScopeDispose（initAutoCheck 内注册的清理）必须在活跃 effect scope 内同步绑定，
+ * 放 onMounted 回调内虽能工作（onMounted 在组件 scope 内同步跑）但脆弱且注释误导，故提到 setup 顶层。
+ */
+useAppUpdate().initAutoCheck()
+
+/**
  * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。
  * - ⌘K toggle（AC-7.1 变更项：再按关闭，原 =true 改 !searchOpen）
  * - ⌘N 新建 session（shell spec §五）
@@ -396,6 +409,10 @@ const keymap: KeymapEntry[] = [
   { key: 'k', action: () => { searchModal.toggle() } },
   { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
   { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
+  // FR-16：⌘⇧P 打开启动预设选择 Popover（与 useAppCommands 注册的 open-preset-select 同源）。
+  // commandId 让 shortcutOverrides 生效（设置页可重录）；shift 守卫确保仅 ⌘⇧P 触发，避免 ⌘P 误命中。
+  // 默认无 override 时走 fallback：mod + 'p' + shift；fallback 的默认 shortcut 在 useAppCommands 声明为 'shift+p'。
+  { key: 'p', shift: true, commandId: 'open-preset-select', action: () => { usePresetStore().requestOpen() } },
   // FR-16 fork 快捷键：⌘G 从末条 assistant 后台 fork（留在原线）；⌘⇧G 进 composer fork 模式。
   // shift 守卫（keydown handler 内）区分同 key 的 shift/非 shift 项，避免 ⌘G 误命中 ⌘⇧G。
   // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。

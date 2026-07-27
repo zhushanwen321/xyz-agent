@@ -190,7 +190,7 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
 
   for (let i = 0; i < raw.length; i++) {
     const item = raw[i]
-    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number }
+    const m = item as PiHistoryMessage | PiHistoryToolResult | { role: 'compactionSummary'; summary?: string; tokensBefore?: number; timestamp?: number } | { role: 'custom'; customType: string; content?: string; details?: Record<string, unknown>; timestamp?: number } | { role: 'branchSummary'; summary?: string; fromId?: string; timestamp?: number } | { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp: number; fullOutputPath?: string }
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
@@ -292,6 +292,37 @@ export function convertPiHistory(raw: unknown[], entryIds?: string[]): Message[]
         },
         timestamp: bm.timestamp ?? Date.now(),
       })
+      continue
+    }
+
+    // bashExecution：pi bash 执行记录（composer-bash-execute）。
+    // pi get_messages 返回 role:'bashExecution'（与 message entry 平级的顶层 entry 类型），
+    // 转成带 bashExecution 字段的 system 消息——bash 是元信息非用户输入（W3 WC5 决策），
+    // 与实时路径（message.bashResult effect 创建 system 消息）统一走 BashOutputBlock 渲染。
+    // exitCode undefined → null（与 dispatcher 广播 bashResult 时 `?? null` 对称，防 JSON 丢值）。
+    // [S3] timestamp `?? Date.now()` 兜底，与 compactionSummary/branchSummary/custom 分支对齐
+    // （pi 理论上必填 timestamp，但 malformed 时缺字段会让 timestamp=undefined→前端 NaN）。
+    // AGENTS.md 规则 7.5：对话流状态必须可重开恢复——重开 session 时 bash 执行记录经此分支还原。
+    if (m.role === 'bashExecution') {
+      const bm = m as { role: 'bashExecution'; command: string; output: string; exitCode?: number; cancelled: boolean; truncated: boolean; excludeFromContext?: boolean; timestamp?: number; fullOutputPath?: string }
+      const ts = bm.timestamp ?? Date.now()
+      result.push({
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: '',
+        status: 'complete',
+        timestamp: ts,
+        bashExecution: {
+          command: bm.command,
+          output: bm.output,
+          exitCode: bm.exitCode ?? null,
+          cancelled: bm.cancelled,
+          truncated: bm.truncated,
+          excludeFromContext: !!bm.excludeFromContext,
+          timestamp: ts,
+          ...(bm.fullOutputPath !== undefined && { fullOutputPath: bm.fullOutputPath }),
+        },
+      } satisfies Message)
       continue
     }
 

@@ -15,6 +15,7 @@ import { readFile } from 'node:fs/promises'
 import { join, isAbsolute, resolve } from 'node:path'
 import { expandHome } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
@@ -46,10 +47,23 @@ import { SessionScanner } from './session-scanner.js'
 import { toErrorMessage, isEnoent } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
+import { PresetService, type PresetResolution } from '../preset-service.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
   adapter: IEventAdapter
+  /**
+   * launch preset id 的内存态持有（W-RT-4，设计文档 §4.2）。
+   *
+   * session 活跃期间 .preset.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
+   *（persistPresetBinding 的 existsSync 守卫跳过），此时内存态兜底持有 presetId，
+   * 供 forkSession 在 active 期读源 session preset（W-RT-5）。
+   *
+   * 不放 IManagedSessionView（types.ts 非 slice 范围）：session-lifecycle 经
+   * svc.getSession(id) 拿到 ManagedSession 实例后，as 转换读写此字段（patch 模式，
+   * 见 lifecycle W-RT-4/5 实现注释）。toSummary 一并透传到 SessionSummary.launchPresetId。
+   */
+  launchPresetId?: string
 }
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
@@ -100,6 +114,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 未注入时 getReplaceSystemPrompt 返回 undefined（pi 走默认系统提示词）。
    */
   private configService: IConfigService | null = null
+  /**
+   * PresetService 引用（组合根注入）。getLaunchPresetOptions 委托用——
+   * spawn pi 时按用户选定的 launch preset 构建 extension/skill/tool args。
+   * 经 setter 注入（同 setConfigService 模式），未注入时 getLaunchPresetOptions
+   * 返回 undefined（调用方 session-lifecycle fallback 到现有 getExtensionPaths/getSkillPaths）。
+   * 见 pi-launch-presets 设计文档 §8.1。
+   */
+  private presetService: PresetService | null = null
   /**
    * W5：message.complete 广播回调（组合根注入 ReloadOrchestrator.onMessageComplete）。
    * 经 setter 注入（同 setModelContextWindowResolver 模式），避免构造参数环
@@ -188,6 +210,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.configService = configService
   }
 
+  /**
+   * 注入 PresetService（组合根在所有服务构造后调用）。
+   * getLaunchPresetOptions 委托用——spawn pi 时按 launch preset 构建 args。
+   * 与 setConfigService 同模式（setter 注入，避免破坏现有测试构造点）。
+   */
+  setPresetService(presetService: PresetService): void {
+    this.presetService = presetService
+  }
+
   /** W5：注入 message.complete 回调（组合根绑 ReloadOrchestrator.onMessageComplete）。 */
   setOnMessageComplete(handler: (sessionId: string) => void): void {
     this.onMessageComplete = handler
@@ -200,7 +231,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
-  async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
+  async create(cwd?: string, label?: string, options?: {
+    hidden?: boolean
+    presetId?: string
+    /** Landing Model Chip 传入值，覆盖 preset.modelOverride（设计文档 §5.2 优先级）。 */
+    modelOverride?: string
+    /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（设计文档 §5.2 优先级）。 */
+    thinkingOverride?: string
+  }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
   async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
@@ -284,6 +322,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
+  async sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
+  }
+  async abortBash(sessionId: string): Promise<void> { return this.dispatcher.abortBash(sessionId) }
   async steerMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.steerMessage(sessionId, content) }
   async followUpMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.followUpMessage(sessionId, content) }
   async compact(sessionId: string, customInstructions?: string): Promise<void> { return this.dispatcher.compact(sessionId, customInstructions) }
@@ -721,6 +763,31 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.configService?.getReplaceSystemPrompt()
   }
 
+  /**
+   * 按 launch presetId 解析 pi 启动参数（委托 PresetService.resolve）。
+   *
+   * 供 session-lifecycle 的 create/restoreSession/forkSession 调用（runtime-lifecycle-integration slice）。
+   * 返回 undefined 仅当 presetService 未注入（组合根未构造，理论上不会发生）。
+   *
+   * 找不到指定 preset 时 fallback 到 builtin:full（设计文档 §4.3 runtime 锁定）：
+   * preset 被删 / 历史 session 的 presetId 失效时，用全工具模式兜底而非放弃 preset 解析。
+   * builtin:full 永在（DEFAULT_PRESETS 保证），故理论上不会二次 fallback 失败。
+   *
+   * 设计文档 §8.1 + §4.3：session-lifecycle 拿到 PresetResolution 后覆盖现有
+   * getExtensionPaths/getSkillPaths 结果，并追加 toolArgs/flags 到 pi args。
+   */
+  async getLaunchPresetOptions(presetId: string, cwd: string): Promise<PresetResolution | undefined> {
+    if (!this.presetService) return undefined
+    let preset = this.presetService.getPreset(presetId)
+    if (!preset) {
+      // 找不到 preset 时 fallback 到 builtin:full（设计文档 §4.3）。
+      // 避免返回 undefined 让 session-lifecycle 退到无 tool/thinking args 的旧行为。
+      preset = this.presetService.getPreset(BUILTIN_PRESET_IDS.FULL)
+      if (!preset) return undefined  // 理论上不会发生（builtin 永在）
+    }
+    return this.presetService.resolve(preset, cwd)
+  }
+
   findScannedSession(sessionId: string): ScannedSession | undefined {
     return this.sessionStore.scanSessions().find(s => s.id === sessionId)
   }
@@ -741,6 +808,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       forkEntryId: s.forkEntryId,
       handedOffTo: s.handedOffTo,
       sessionFile: s.sessionFilePath,
+      // W-RT-4/§4.2：active session 的 launchPresetId 透传到 summary（内存态与 sidecar 并列）。
+      // ManagedSession 实例携带此字段；普通 IManagedSessionView 无此字段时为 undefined（安全）。
+      launchPresetId: (s as ManagedSession).launchPresetId,
     }
   }
 
@@ -822,7 +892,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
       createdAt: Date.now(), lastActiveAt: Date.now(),
-      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false,
+      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
       adapter, sessionFilePath,
       hidden,
       parentSession,

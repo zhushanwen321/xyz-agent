@@ -262,6 +262,84 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     expect(m1?.api).toBe('openai-completions')
     expect(m1?.baseUrl).toBe('https://m1.example.com')
   })
+
+  it('model 级 compat 经 setProvider 保存后落盘（修复隐性数据丢失 bug）', () => {
+    // 先建含 m1 的 provider（m1 已有 compat——模拟用户手改 json 配好的）
+    writeModels({
+      providers: {
+        p1: {
+          apiKey: 'sk-x',
+          api: 'openai-completions',
+          models: [{
+            id: 'm1',
+            name: 'M1',
+            compat: { supportsDeveloperRole: false, thinkingFormat: 'deepseek' },
+          }],
+        },
+      },
+    })
+    refreshModels()
+
+    // 前端编辑 provider（不改 m1 的 compat——localModels 经 ...m 展开回传）
+    // bug 复现：setProvider 合并逻辑若不透传 compat，m1.compat 会被静默丢弃
+    configService.setProvider('p1', {
+      models: [
+        { id: 'm1', name: 'M1', compat: { supportsDeveloperRole: false, thinkingFormat: 'deepseek' } },
+      ],
+    })
+
+    const providers = configService.listProviders()
+    const m1 = providers[0]!.models.find(m => m.id === 'm1')
+    expect(m1?.compat).toEqual({ supportsDeveloperRole: false, thinkingFormat: 'deepseek' })
+  })
+
+  it('model 级 compat 显式覆盖：编辑后 compat 更新落盘', () => {
+    writeModels({
+      providers: {
+        p1: {
+          apiKey: 'sk-x',
+          api: 'openai-completions',
+          models: [{ id: 'm1', compat: { supportsDeveloperRole: true } }],
+        },
+      },
+    })
+    refreshModels()
+
+    // 用户在 UI 把 supportsDeveloperRole 改成 false
+    configService.setProvider('p1', {
+      models: [
+        { id: 'm1', compat: { supportsDeveloperRole: false } },
+      ],
+    })
+
+    const m1 = configService.listProviders()[0]!.models.find(m => m.id === 'm1')
+    expect(m1?.compat).toEqual({ supportsDeveloperRole: false })
+  })
+
+  it('setProvider 删除已存在的 compat（compat === undefined 触发删除）', () => {
+    // 1. 先写一个带 compat 的 model（模拟用户已配好的 compat）
+    writeModels({
+      providers: {
+        p1: {
+          apiKey: 'sk-x',
+          api: 'openai-completions',
+          models: [{ id: 'm1', compat: { thinkingFormat: 'xml' } }],
+        },
+      },
+    })
+    refreshModels()
+
+    // 2. setProvider 传 models 不含 compat 字段（compat 为 undefined）——模拟前端 clearAll 按钮
+    //    buildMap() 全 passthrough 时 buildCompat 返回 undefined，前端整体提交 models 时
+    //    该 model 无 compat 键，应触发 else if 删除分支。
+    configService.setProvider('p1', {
+      models: [{ id: 'm1' }],
+    })
+
+    // 3. 读回的 compat 应为 undefined（被 delete，而非保留盘上旧值）
+    const m1 = configService.listProviders()[0]!.models.find(m => m.id === 'm1')
+    expect(m1?.compat).toBeUndefined()
+  })
 })
 
 // ── W1: loadAgents sourceType 必须随来源目录推断（不再恒 'pi'）──────

@@ -63,6 +63,10 @@ import { WindowManager } from './window/window-manager.js'
 import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { BrowserViewManager } from './browser/browser-view-manager.js'
+import { ReleaseChecker } from './release-checker.js'
+import { MockReleaseChecker, DEV_MOCK_UPDATE_ENABLED } from './dev/mock-release-checker.js'
+import { updateOrchestrator } from './update/orchestrator.js'
+import { maybeRollbackInterruptedUpdate } from './update/update-self-healer.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
@@ -143,6 +147,13 @@ const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
     .then(({ win }) => win)
 
 // ── 注册 IPC ─────────────────────────────────────────────────────
+// Release 检测器（自动升级检测后端）：1h 缓存 GitHub /releases/latest
+// dev mock 注入（XYZ_DEV_MOCK_UPDATE=1）：P2 半 E2E 验证用。
+// 返回伪造 LatestReleaseInfo，让前端 UpdateButton 显示「可升级」态供 Playwright 截图。
+// isDev && 双重保护：prod 构建即使环境变量被误设也不会用 mock（MockReleaseChecker 永不实例化）。
+const releaseChecker = isDev && DEV_MOCK_UPDATE_ENABLED
+  ? new MockReleaseChecker()
+  : new ReleaseChecker()
 registerIpcHandlers({
   getMainWindow: () => ctx.mainWindow,
   runtime: ctx.runtime,
@@ -150,6 +161,8 @@ registerIpcHandlers({
   createWindow: createWindowFn,
   windowManager: ctx.windows,
   browserViewManager,
+  releaseChecker,
+  updateOrchestrator,
 })
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
@@ -214,6 +227,10 @@ app.whenReady().then(async () => {
     }
     return net.fetch(`file://${resolved}`)
   })
+
+  // W3：启动自愈——检测上次中断的升级并回滚，必须在 bootstrapMainWindow 之前
+  // （确保 .app bundle 已恢复到可用态再创建窗口，避免加载半截 app 崩溃）
+  await maybeRollbackInterruptedUpdate()
 
   await bootstrapMainWindow()
 })

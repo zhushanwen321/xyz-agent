@@ -22,6 +22,7 @@ import type {
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
+  ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -342,7 +343,7 @@ export const session = {
   },
 
   /** Mock handoff（fast-handoff：stub resolve 即可，E2E 走 runtime 真路径） */
-  async handoff(_sessionId: string, _focus?: string): Promise<void> {
+  async handoff(_sessionId: string, _reply?: string): Promise<void> {
     await sleep(TIMING.ack)
   },
 
@@ -350,6 +351,53 @@ export const session = {
   async abortHandoff(_sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+}
+
+/**
+ * W7（PR#116 review）：按命令关键字分流 mock bash 结果（success/error/empty/timeout 四态）。
+ *
+ * - happy path（默认）：exitCode:0 + '(mock) <command>'（保留原行为）
+ * - 命令含 'fail' → error：exitCode:1 + 'command not found'（覆盖错误态视觉）
+ * - 命令含 'empty' → empty-output：exitCode:0 + ''（覆盖空输出态）
+ * - 命令含 'timeout' → 近似超时：cancelled:true + exitCode:null（覆盖取消态视觉；
+ *   真实 timeout 走 finalizeBashOnly 置 error:'timeout'，bashResultEffect 不读 error，
+ *   不动 store 时 mock 无法注入该标记，用 cancelled 近似 + 长 delay 模拟 timer 到期）
+ * - 命令含 'truncate' → truncated:true（覆盖 W4 截断标记视觉）
+ *
+ * delay 是 bashStart→bashResult 间隔，让 streaming loading 态可见。
+ */
+function resolveBashMockBranch(command: string): { result: Record<string, unknown>; delay: number } {
+  const cmd = command.toLowerCase()
+  // 2s 让 loading 态（spinner + 取消按钮）足够可见；timeout 用 3s 强调 timer 到期节奏
+  const MOCK_BASH_DELAY = 2000
+  if (cmd.includes('timeout')) {
+    return {
+      result: { output: '', exitCode: null, cancelled: true, truncated: false },
+      delay: 3000,
+    }
+  }
+  if (cmd.includes('fail')) {
+    return {
+      result: { output: 'command not found: fail-demo', exitCode: 1, cancelled: false, truncated: false },
+      delay: MOCK_BASH_DELAY,
+    }
+  }
+  if (cmd.includes('empty')) {
+    return {
+      result: { output: '', exitCode: 0, cancelled: false, truncated: false },
+      delay: MOCK_BASH_DELAY,
+    }
+  }
+  if (cmd.includes('truncate')) {
+    return {
+      result: { output: '(mock) long output demo…', exitCode: 0, cancelled: false, truncated: true },
+      delay: MOCK_BASH_DELAY,
+    }
+  }
+  return {
+    result: { output: `(mock) ${command}`, exitCode: 0, cancelled: false, truncated: false },
+    delay: MOCK_BASH_DELAY,
+  }
 }
 
 export const chat = {
@@ -401,6 +449,52 @@ export const chat = {
       payload: { sessionId, stopReason: 'aborted' },
     })
     await sleep(TIMING.ack)
+  },
+
+  // bash 执行（composer-bash-execute）：mock 模式 ack + 广播 bashStart 后，按命令关键字分流
+  // 模拟 success/error/empty/timeout 四态（W7 PR#116 review）+ bashStart→bashResult 间 mockDelay
+  // 让开发者能看到 loading 态（spinner + 取消按钮）。
+  // 不模拟真实 shell 输出（与 send 的 mock 策略一致——只驱动 UI 状态机，不验证业务逻辑）。
+  // happy path：普通命令 → exitCode:0 + '(mock) <command>'（保留原有行为，不破坏）。
+  async bash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<void> {
+    await sleep(TIMING.ack)
+    emit(sessionId, {
+      type: 'message.bashStart',
+      payload: { sessionId, command, excludeFromContext: !!excludeFromContext, timestamp: Date.now() },
+    })
+    // bashStart→bashResult 间 mockDelay 让 loading 态可见（streaming spinner + 取消按钮）。
+    // timeout 分支用更长 delay 模拟 bash timer 到期（真实超时态由 finalizeBashOnly 置
+    // error:'timeout'，此处只能用 cancelled:true 近似——bashResultEffect 不读 error 字段，
+    // 不动 chat-bash-effects.ts 时无法在 mock 注入 error:'timeout'）。
+    const branch = resolveBashMockBranch(command)
+    await sleep(branch.delay)
+    emit(sessionId, {
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command,
+        ...branch.result,
+        excludeFromContext: !!excludeFromContext,
+        timestamp: Date.now(),
+      },
+    })
+  },
+
+  async abortBash(sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    emit(sessionId, {
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command: '',
+        output: '',
+        exitCode: null,
+        cancelled: true,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: Date.now(),
+      },
+    })
   },
 
   /**
@@ -608,6 +702,45 @@ export const config = {
   async scanAgents(_sources: string[]) {
     await sleep(TIMING.ack)
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
+  },
+  /**
+   * W1（cw-2026-07-26-migration-other-agents）：检测本机其他 agent 的 skill/agent 目录。
+   * mock 返回空数组（无真实文件系统扫描）；UI 在 mock 模式下显示「未检测到候选」空态。
+   */
+  async detectSources() {
+    await sleep(TIMING.ack)
+    return []
+  },
+  /** W2：预览导入 provider。mock 返回示例 preview，让 preview→apply 演示链路完整可见。 */
+  async previewImportProviders(source: ProviderSource): Promise<{ importId: string; preview: ProviderImportPreview }> {
+    await sleep(TIMING.ack)
+    const preview: ProviderImportPreview = {
+      source,
+      providers: [{
+        id: 'demo-provider',
+        name: 'Demo Provider',
+        protocol: 'openai-completions',
+        modelCount: 1,
+        apiKeyExtracted: true,
+        conflict: 'none',
+        warnings: [],
+      }],
+    }
+    return { importId: 'mock-import-id', preview }
+  },
+  /** W2：应用导入。mock 触发广播让前端演示看到列表刷新（模拟 runtime apply 后 broadcastProviderList）。 */
+  async applyImportProviders(_importId: string, _selectedIds: string[]): Promise<{ result: ProviderImportResult }> {
+    await sleep(TIMING.ack)
+    // mock 演示：追加一个示例导入 provider 让列表刷新可见
+    const mockImported: ProviderImportedItem = {
+      id: 'imported-demo',
+      name: 'Imported Demo',
+      status: 'imported',
+    }
+    // 这里不真的改 fixtureProviders（mock preview 返回空，无真实 selectedIds 对应），
+    // 但触发广播让前端演示看到列表刷新（模拟 runtime apply 后 broadcastProviderList）
+    broadcastProviders()
+    return { result: { source: 'pi' as ProviderSource, imported: [mockImported], failedCount: 0 } }
   },
   /** ADR-0020 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
   async setAgentDirs(dirs: string[]) {
@@ -887,5 +1020,35 @@ export const workspace = {
   // detect：mock 恒返 not-repo（三态检测，real 轨驱动）
   async detect(_cwd: string): Promise<import('@xyz-agent/shared').ServerMessageMap['workspace.detected']> {
     return { mode: 'not-repo', wsRoot: '', barePath: '', repoRoot: '', defaultBranch: '' }
+  },
+}
+
+// preset 域 mock 占位（pi-launch-presets wave1）：返回空预设列表 + 默认全工具模式 id。
+// 与 real 轨 api/domains/preset.ts 签名同构（list/getDefault/setDefault + CRUD），避免门面三元崩溃。
+// mock 模式无 runtime，preset 演示由 real 轨驱动；此处仅供 landing 渲染不崩。
+import type { PiLaunchPreset } from '@xyz-agent/shared'
+const mockPresets: PiLaunchPreset[] = []
+export const preset = {
+  async list(): Promise<PiLaunchPreset[]> {
+    return mockPresets.map((p) => ({ ...p }))
+  },
+  async getDefault(): Promise<string> {
+    return 'builtin:full'
+  },
+  async setDefault(_presetId: string): Promise<void> {
+    // no-op（mock 模式不持久化）
+  },
+  async create(p: PiLaunchPreset): Promise<PiLaunchPreset> {
+    mockPresets.push({ ...p })
+    return { ...p }
+  },
+  async update(p: PiLaunchPreset): Promise<PiLaunchPreset> {
+    const idx = mockPresets.findIndex((x) => x.id === p.id)
+    if (idx >= 0) mockPresets[idx] = { ...p }
+    return { ...p }
+  },
+  async remove(presetId: string): Promise<void> {
+    const idx = mockPresets.findIndex((x) => x.id === presetId)
+    if (idx >= 0) mockPresets.splice(idx, 1)
   },
 }

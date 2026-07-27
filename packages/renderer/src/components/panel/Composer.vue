@@ -104,7 +104,7 @@
           v-if="isActive"
           variant="ghost"
           size="icon"
-          class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
+          class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-muted hover:bg-danger-soft hover:text-danger"
           :title="t('panel.composer.stop')"
           @click="onAbort"
         >
@@ -112,14 +112,14 @@
         </Button>
         <div
           v-else-if="isCompacting"
-          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-surface-hover text-muted"
+          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-surface-hover text-muted"
           :title="t('panel.composer.compacting')"
         >
           <Loader2 class="size-4 animate-spin" />
         </div>
         <div
           v-else-if="isSending"
-          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-[var(--accent)] text-white"
+          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-[var(--accent)] text-white"
           :title="t('panel.composer.sending')"
         >
           <Loader2 class="size-4 animate-spin" />
@@ -128,7 +128,7 @@
           v-else
           variant="default"
           size="icon"
-          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
+          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
           :disabled="!canSend"
           :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : handoff.handoffMode.value ? t('panel.composer.handoffSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
@@ -173,6 +173,7 @@ import { useComposerRestore } from '@/composables/panel/useComposerRestore'
 import { useComposerSubmit } from '@/composables/panel/useComposerSubmit'
 import { useComposerHandoffMode } from '@/composables/panel/useComposerHandoffMode'
 import { useComposerModeVisual } from '@/composables/panel/useComposerModeVisual'
+import { useComposerBash } from '@/composables/panel/useComposerBash'
 
 const props = withDefaults(
   defineProps<{
@@ -213,10 +214,8 @@ const {
 const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(props.sessionId) : undefined))
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
 const draft = ref('')
-/** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 
-// 命令浮层触发态机 —— 见 useCommandPopoverTrigger
 const sessionIdRef = computed(() => props.sessionId)
 const {
   cmdOpen,
@@ -310,7 +309,7 @@ const handoff = useComposerHandoffMode(sessionIdRef, {
   clearInput,
   restoreInput,
   exitForkMode: fork.exitForkMode,
-  handoff: (srcSessionId, focus) => handoffAction(srcSessionId, focus),
+  handoff: (srcSessionId, reply) => handoffAction(srcSessionId, reply),
 })
 // 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
 // ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。
@@ -319,6 +318,13 @@ watch(() => fork.forkMode.value, (isFork) => {
 })
 
 const hasInput = computed(() => draft.value.trim().length > 0)
+
+// bash 命令模式（composer-bash-execute）：isBashMode + trySendBash 分流提取到 useComposerBash
+const composerBash = useComposerBash({
+  draft, clearInput, isSending,
+  sessionId: () => props.sessionId,
+})
+const isBashMode = composerBash.isBashMode
 
 // 提交动作（steer / followUp / abort）—— 见 useComposerSubmit。onSend 留组件内（fork/landing/compact 分支多）
 const { onSteer, onFollowUp, onAbort } = useComposerSubmit({
@@ -330,7 +336,7 @@ const { onSteer, onFollowUp, onAbort } = useComposerSubmit({
 const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
 const canSend = computed(() => hasInput.value && !isBusy.value)
 
-// composer-box 视觉派生（boxClass / placeholder 三级链：fork > handoff > 默认）—— 见 useComposerModeVisual
+// composer-box 视觉派生（boxClass / placeholder 四级链：fork > handoff > bash > 默认）—— 见 useComposerModeVisual
 const { boxClass, placeholder } = useComposerModeVisual({
   forkBoxClass: fork.forkBoxClass,
   handoffBoxClass: handoff.handoffBoxClass,
@@ -339,17 +345,12 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isActive,
   hasInput,
   isSending,
+  isBashMode,
 })
-
 /**
- * 发送：S2 → S5（sending）→ S6（streaming）→ 完成。分支优先级：
- * 1. fork 模式 → forkSessionAsk（详见 useComposerForkMode）。
- * 2. handoff 模式 → handleHandoffSend（详见 useComposerHandoffMode，与 fork 互斥）。
- * 3. landing 态 → submitFirstMessage（延迟 create session；用 variant 而非 sessionId 判定，
- *    landing 态 sessionId 可能是公共 id 非真实 session）。
- * 4. /compact slash chip → 专用 compact RPC（#6），不发 prompt 给 pi。检测 '/compact' 或
- *    '/compact <指令>'，与 pi TUI interactive-mode.ts:2656 对齐。必须在此拦截：pi RPC 不解析 builtin slash。
- * 5. 普通发送 → useChat.send。
+ * 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。
+ * landing 与 active 两条路径合并：landing 走 submitFirstMessage，active 走 trySendBash / /compact / send。
+ * 失败均 restoreSegments 回滚草稿（W8）。
  */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
@@ -358,25 +359,27 @@ async function onSend(): Promise<void> {
   const text = draft.value
   if (fork.forkMode.value && await fork.handleForkSend(text)) return
   if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
+  const segments = inputRef.value?.getSegments() ?? [] // 先快照（clearInput 会清空 DOM）
   if (props.variant === 'landing') {
-    // 先快照 segments（clearInput 会清空 DOM，必须在清空前提取）——与 normal 态一致。
-    // landing 态 image/skill/file segment 都需完整传递到 submitFirstMessage，丢段会导致丢图。
-    const segments = inputRef.value?.getSegments() ?? []
+    // landing bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
+    const bashExtract = composerBash.extractBashCommand(text)
+    if (bashExtract.type === 'empty') return
     clearInput()
     isSending.value = true
     try {
-      await flow.submitFirstMessage(segments, localThinkingLevel.value)
+      // B6：preset 透传走 flow.pendingPreset，不在此读 store 第二真源
+      const bashCommand = bashExtract.type === 'command' ? bashExtract : undefined
+      await flow.submitFirstMessage(segments, localThinkingLevel.value, bashCommand)
     } catch (e) {
-      // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
-      // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
       restoreSegments(segments)
-      const msg = e instanceof Error ? e.message : String(e)
-      toastError(t('panel.panel.taskFailed', { error: msg }))
+      toastError(t('panel.panel.taskFailed', { error: e instanceof Error ? e.message : String(e) }))
     } finally {
       isSending.value = false
     }
     return
   }
+  // active 态：bash 分流（!/!! 前缀，必须在 /compact 前）+ /compact + 普通发送
+  if (await composerBash.trySendBash(text)) return
   const trimmed = text.trim()
   if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
     const customInstructions = trimmed.startsWith('/compact ')
@@ -386,19 +389,13 @@ async function onSend(): Promise<void> {
     await compact(props.sessionId!, customInstructions)
     return
   }
-  // segments 先快照（clearInput 会清空 DOM）
-  const segments = inputRef.value?.getSegments() ?? []
   clearInput()
   isSending.value = true
   try {
     await send(props.sessionId!, segments)
   } catch (e) {
-    // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免输入丢失。
-    // W8：恢复 text + image/skill/file chip（原 restoreInput(text) 只恢复纯文本，
-    // chip 被拍平成字面量路径，用户粘的图丢失可视化）。详见 restoreSegments。
     restoreSegments(segments)
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('panel.panel.sendFailed', { error: msg }))
+    toastError(t('panel.panel.sendFailed', { error: e instanceof Error ? e.message : String(e) }))
   } finally {
     isSending.value = false
   }

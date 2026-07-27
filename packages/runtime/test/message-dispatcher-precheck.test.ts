@@ -35,6 +35,8 @@ function makeMockSession(isGenerating: boolean): IManagedSessionView {
     inputTokens: 0,
     isGenerating,
     isCompacting: false,
+    isBashRunning: false,
+    bashRunToken: undefined,
     labelPersisted: false,
   }
 }

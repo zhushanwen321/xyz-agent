@@ -19,6 +19,8 @@ import Landing from '@/components/new-task/Landing.vue'
 const flowMock = vi.hoisted(() => ({
   // Landing.vue 的 composerSid/cwd/branch computed 真源；默认空（首次启动态）
   currentSessionId: { value: null as string | null },
+  // pi-launch-presets wave2: Landing 透传 launchPresetId 给 PresetSelectChip，需 currentSession
+  currentSession: { value: null as { launchPresetId?: string } | null },
   currentCwd: { value: null as string | null },
   currentModel: { value: null as string | null },
   gitInfo: { value: { branch: 'main' } as { branch: string } | null },

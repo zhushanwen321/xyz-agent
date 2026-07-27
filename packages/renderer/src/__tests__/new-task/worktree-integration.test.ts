@@ -102,6 +102,8 @@ const flowStartCreateWorktree = vi.fn<() => void>()
 const flowMock = {
   state: readonly(flowState) as DeepReadonly<Ref<string>>,
   currentSessionId: readonly(ref(null)) as DeepReadonly<Ref<string | null>>,
+  // pi-launch-presets wave2: Landing 透传 launchPresetId 给 PresetSelectChip，需 currentSession
+  currentSession: readonly(ref(null)) as DeepReadonly<Ref<{ launchPresetId?: string } | null>>,
   currentCwd: readonly(flowCurrentCwd) as DeepReadonly<Ref<string | null>>,
   currentModel: readonly(ref(null)) as DeepReadonly<Ref<string | null>>,
   gitInfo: readonly(flowGitInfo) as DeepReadonly<Ref<typeof flowGitInfo.value>>,

@@ -2,8 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
-import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine, PiSessionStats, PiCompactionResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
+import { ENV_WHITELIST_PREFIXES, type ThinkingLevel } from '@xyz-agent/shared'
+import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
@@ -13,7 +13,12 @@ const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
 function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
   const safe: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix) || key === prefix)) {
+    // [S4] key.startsWith(prefix) 已覆盖 key === prefix 的精确匹配场景
+    // （任何字符串 s 都满足 s.startsWith(s)===true，如 PATH.startsWith('PATH')），
+    // 故无需再 `|| key === prefix`（该子句恒为冗余）。
+    // 白名单 ENV_WHITELIST_PREFIXES（PATH/HOME/USER/LANG/TERM/NODE_/...）均为「前缀」语义，
+    // 不存在「不以 prefix 开头但精确等于 prefix」的 env 名——确认无 env 丢失风险。
+    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix))) {
       safe[key] = value
     }
   }
@@ -54,6 +59,25 @@ export interface RpcClientOptions {
   sessionId?: string
   /** 替换 pi 核心系统提示词（走 --system-prompt CLI，仅新建会话生效）。空白时不传。 */
   systemPrompt?: string
+  /**
+   * 工具白名单（替换语义，映射 pi `--tools <comma-joined>`，附录 A.1）。
+   * 非空时以逗号连接 push，只启用列出的工具。与 excludeTools/noTools 互斥；
+   * 同时出现多个时 rpc-client 按 noTools > tools > excludeTools 优先级取一个并 warn（W-RT-6）。
+   */
+  tools?: string[]
+  /**
+   * 工具黑名单（叠加语义，映射 pi `--exclude-tools <comma-joined>`，附录 A.1）。
+   * 在 pi 默认启用集合之上排除列出的工具。与 tools/noTools 互斥（见 tools 注释的优先级）。
+   */
+  excludeTools?: string[]
+  /** 禁用所有工具（built-in + extension + custom），映射 pi `--no-tools`。与 tools/excludeTools 互斥。 */
+  noTools?: boolean
+  /** 禁用所有 skill，映射 pi `--no-skills`。调用方同时需清空 skillPaths。 */
+  noSkills?: boolean
+  /** 禁用 context files（AGENTS.md/CLAUDE.md 自动发现），映射 pi `--no-context-files`。 */
+  noContextFiles?: boolean
+  /** 覆盖思考级别，映射 pi `--thinking <level>`（注意：非 --thinking-level，附录 A.4）。 */
+  thinkingLevel?: ThinkingLevel
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -141,6 +165,37 @@ export class RpcClient implements IPiEngine {
       for (const extPath of this.options.extensionPaths) {
         args.push('--extension', extPath)
       }
+    }
+    // Preset 启动参数（设计文档 §2.5 / 附录 A）：6 个字段映射到 pi CLI args。
+    // tools/excludeTools 用逗号连接（pi 单参数多值语义）；开关类 push 单 flag；
+    // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level）。
+    // W-RT-6：tools/excludeTools/noTools 三者互斥，按优先级 noTools > tools > excludeTools 取一个，
+    // 同时出现多个时 warn（不抛错，避免运行时炸），保持单写者语义清晰。
+    const hasTools = !!this.options.tools?.length
+    const hasExcludeTools = !!this.options.excludeTools?.length
+    const hasNoTools = !!this.options.noTools
+    if (
+      (hasNoTools && hasTools)
+      || (hasNoTools && hasExcludeTools)
+      || (hasTools && hasExcludeTools)
+    ) {
+      console.warn('[rpc] conflicting tool options detected, using priority: noTools > tools > excludeTools')
+    }
+    if (hasNoTools) {
+      args.push('--no-tools')
+    } else if (hasTools) {
+      args.push('--tools', this.options.tools!.join(','))
+    } else if (hasExcludeTools) {
+      args.push('--exclude-tools', this.options.excludeTools!.join(','))
+    }
+    if (this.options.noSkills) {
+      args.push('--no-skills')
+    }
+    if (this.options.noContextFiles) {
+      args.push('--no-context-files')
+    }
+    if (this.options.thinkingLevel) {
+      args.push('--thinking', this.options.thinkingLevel)
     }
 
     // 使用 pi 的 sessions 目录
@@ -474,6 +529,34 @@ export class RpcClient implements IPiEngine {
   async compact(customInstructions?: string): Promise<PiCompactionResult> {
     const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
     return msg.data as unknown as PiCompactionResult
+  }
+
+  /**
+   * 直接执行 bash 命令（pi bash RPC）。
+   *
+   * excludeFromContext 透传规则：undefined 时不传该键（走 pi 默认），显式 true/false 时透传。
+   * bash 可能长跑，复用 COMPACT_TIMEOUT_MS（300s）避免误超时。
+   * 返回值归一为 PiBashResult（sendCommand 已归一 data ?? payload，此处按结构断言）。
+   */
+  async bash(command: string, excludeFromContext?: boolean): Promise<PiBashResult> {
+    const args = excludeFromContext !== undefined ? { command, excludeFromContext } : { command }
+    const msg = await this.sendCommand('bash', args, COMPACT_TIMEOUT_MS)
+    // [W6] shape guard：pi 返回 malformed 数据时 fallback，避免下游因 undefined 字段崩溃。
+    // [S1] fallback 不用 exitCode:1（会被前端误读为「命令失败」，实为 pi 协议异常），
+    // 改用 exitCode:undefined（PiBashResult.exitCode 类型 number|undefined，dispatcher 广播时
+    // `?? null` 归一为 null，前端 BashOutputBlock 渲染为「无 exit code」而非「失败」），
+    // 并在 output 写诊断提示让用户可见协议异常（而非空 output 静默吞错）。
+    const data = msg.data as Record<string, unknown> | undefined
+    if (typeof data !== 'object' || data === null || !('output' in data)) {
+      console.warn('[rpc] bash: malformed PiBashResult from pi, using fallback. data=', msg.data)
+      return { output: '[protocol error: malformed bash response from pi]', exitCode: undefined, cancelled: false, truncated: false }
+    }
+    return data as unknown as PiBashResult
+  }
+
+  /** 取消进行中的 bash 执行（pi abort_bash 命令）。 */
+  abortBash(): Promise<PiMessage> {
+    return this.sendCommand('abort_bash')
   }
 
   /**

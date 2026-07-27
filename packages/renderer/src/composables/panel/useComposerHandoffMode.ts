@@ -21,30 +21,8 @@ import { useToast } from '@/composables/useToast'
 import { useHandoffModeChannel } from '@/composables/panel/useHandoffModeChannel'
 import type ComposerInput from '@/components/panel/ComposerInput.vue'
 
-/** handoff 发送副作用依赖（由 Composer 注入，避免重复持有 draft/isSending 真源） */
-interface HandoffDeps {
-  /** ComposerInput 实例 ref：enterHandoffMode 聚焦输入框用 */
-  inputRef: Ref<InstanceType<typeof ComposerInput> | null>
-  /** 发送中标志位 setter（handoff 发送期间置 true，结束复位） */
-  setSending: (value: boolean) => void
-  /** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
-  clearInput: () => void
-  /** 发送失败时恢复草稿到输入区 */
-  restoreInput: (text: string) => void
-  /** 互斥：进入 handoff 模式时退出 fork 模式（forkSource 残留指向错误 session） */
-  exitForkMode: () => void
-  /** handoff 编排（features 层跨 api + stores）：handleHandoffSend 调用触发 /skill:handoff */
-  handoff: (srcSessionId: string, focus?: string) => Promise<void>
-}
-
-/**
- * @param sessionId 当前 session id（null = landing 态，signal 守卫用）
- * @param deps 发送副作用依赖（含 exitForkMode 做互斥）
- */
-export function useComposerHandoffMode(
-  sessionId: ComputedRef<string | null>,
-  deps: HandoffDeps,
-): {
+/** useComposerHandoffMode 返回类型（从函数内联类型提取为命名 interface，便于复用 + 阅读） */
+export interface ComposerHandoffModeReturn {
   handoffMode: Ref<boolean>
   /** { value: boolean } 包装对象，给 defineExpose 用（不被 Vue 解包） */
   handoffModeRef: { readonly value: boolean }
@@ -58,7 +36,32 @@ export function useComposerHandoffMode(
   handleHandoffEsc: (e: KeyboardEvent) => boolean
   /** handoff 模式发送：调 handoff(srcId, text) + exitHandoffMode，返回 true 表示已消费；否则返回 false */
   handleHandoffSend: (text: string) => Promise<boolean>
-  } {
+}
+
+/** handoff 发送副作用依赖（由 Composer 注入，避免重复持有 draft/isSending 真源） */
+interface HandoffDeps {
+  /** ComposerInput 实例 ref：enterHandoffMode 聚焦输入框用 */
+  inputRef: Ref<InstanceType<typeof ComposerInput> | null>
+  /** 发送中标志位 setter（handoff 发送期间置 true，结束复位） */
+  setSending: (value: boolean) => void
+  /** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
+  clearInput: () => void
+  /** 发送失败时恢复草稿到输入区 */
+  restoreInput: (text: string) => void
+  /** 互斥：进入 handoff 模式时退出 fork 模式（forkSource 残留指向错误 session） */
+  exitForkMode: () => void
+  /** handoff 编排（features 层跨 api + stores）：handleHandoffSend 调用触发 /skill:handoff */
+  handoff: (srcSessionId: string, reply?: string) => Promise<void>
+}
+
+/**
+ * @param sessionId 当前 session id（null = landing 态，signal 守卫用）
+ * @param deps 发送副作用依赖（含 exitForkMode 做互斥）
+ */
+export function useComposerHandoffMode(
+  sessionId: ComputedRef<string | null>,
+  deps: HandoffDeps,
+): ComposerHandoffModeReturn {
   const { t } = useI18n()
   const { error: toastError } = useToast()
   // handoff 编排经 deps 注入（Composer 从 useSidebar 取，避免本 composable 重复实例化 useSidebar）。
@@ -118,21 +121,21 @@ export function useComposerHandoffMode(
 
   /**
    * handoff 模式发送：调 handoff(srcSessionId, text)（pi 跑 /skill:handoff 打包末条 assistant 文档到新 session）。
-   * focus=text 拼到 /skill:handoff 后作 args（描述新 session 重点）。
+   * reply=text 拼到 /skill:handoff 后作 args（用户备注）。
    * 成功后退出 handoff 模式（等 session.handoffComplete 广播跳转）；
    * 失败时 restoreInput 保草稿 + toast 反馈。
-   * @param text 当前 draft（作 handoff focus 备注）
+   * @param text 当前 draft（作 handoff reply 备注）
    * @returns true 表示已消费（onSend 开头短路，不走普通 send 流程）；非 handoff 模式返回 false
    */
   async function handleHandoffSend(text: string): Promise<boolean> {
     if (!handoffMode.value || !handoffSource.value) return false
     const { srcSessionId } = handoffSource.value
-    // focus 备注可选：空文本也允许（pi 跑 /skill:handoff 无 args）。空则 undefined 不传 focus。
-    const focus = text.trim() || undefined
+    // reply 备注可选：空文本也允许（pi 跑 /skill:handoff 无 args）。空则 undefined 不传 reply。
+    const reply = text.trim() || undefined
     deps.clearInput()
     deps.setSending(true)
     try {
-      await handoffAction(srcSessionId, focus)
+      await handoffAction(srcSessionId, reply)
     } catch (e) {
       // handoff 触发失败 → restoreInput 保草稿（与 fork handleForkSend 对称）
       deps.restoreInput(text)

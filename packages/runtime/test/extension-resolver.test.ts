@@ -10,6 +10,8 @@ vi.mock('node:fs', () => ({
   readFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   renameSync: vi.fn(),
+  // canonicalizePath 用 realpathSync 做 key 规范化；默认原样返回（测试内按需 override）
+  realpathSync: vi.fn((p: string) => p),
 }))
 
 vi.mock('node:path', () => ({
@@ -19,13 +21,14 @@ vi.mock('node:path', () => ({
   resolve: vi.fn((...args: string[]) => args.join('/')),
 }))
 
-import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, statSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 
 const mockedExistsSync = vi.mocked(existsSync)
 const mockedReaddirSync = vi.mocked(readdirSync)
 const mockedStatSync = vi.mocked(statSync)
 const mockedReadFileSync = vi.mocked(readFileSync)
+const mockedRealpathSync = vi.mocked(realpathSync)
 
 function mockDir(dirPath: string, entries: string[] = ['ext-a', 'ext-b', 'shared']): void {
   mockedExistsSync.mockImplementation((p: unknown) => {
@@ -624,8 +627,170 @@ describe('ExtensionResolver', () => {
       resolver = new ExtensionResolver({})
       const result = resolver.scanDiscoveryExtensions([dir])
       // my-ext.ts 被收集（isFile + .ts 后缀），node_modules 和 .hidden 被跳过
+      // key 现在是 canonicalPath（realpathSync fallback 原值，因 /discovery 路径不存在）
       expect(result.size).toBe(1)
-      expect(result.has('my-ext')).toBe(true)
+      expect(result.has(`${dir}/my-ext.ts`)).toBe(true)
+    })
+
+    it('deduplicates index.ts entries by canonicalPath (not all keyed "index")', () => {
+      // [HISTORICAL] 修复验证：多个 discovery directory 中的 extension 都以 index.ts 作为
+      // 入口文件时，dedup key 应使用 canonicalPath（realpath）而不是统一的 "index"，
+      // 否则除第一个外全部被丢弃。
+      // 模拟两个 discovery dir：
+      //   dirA/deepseek-thinking/index.ts → key = realpath → 该路径
+      //   dirA/stock-tools/index.ts       → key = realpath → 该路径
+      //   dirB/kelly-tools/index.ts       → key = realpath → 该路径
+      // 三者 canonicalPath 互不相同，都应保留。
+      const dirA = '/discovery/dirA'
+      const dirB = '/discovery/dirB'
+      mockedExistsSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return false
+        // dirA 存在
+        if (p === dirA) return true
+        if (p === `${dirA}/package.json`) return false
+        if (p === `${dirA}/index.ts`) return false
+        if (p === `${dirA}/index.js`) return false
+        // dirB 存在
+        if (p === dirB) return true
+        if (p === `${dirB}/package.json`) return false
+        if (p === `${dirB}/index.ts`) return false
+        if (p === `${dirB}/index.js`) return false
+        // 子目录的 index.ts（resolveExtensionEntries 在 fallback 检查时用）
+        if (p === `${dirA}/deepseek-thinking/index.ts`) return true
+        if (p === `${dirA}/deepseek-thinking/index.js`) return false
+        if (p === `${dirA}/stock-tools/index.ts`) return true
+        if (p === `${dirA}/stock-tools/index.js`) return false
+        if (p === `${dirB}/kelly-tools/index.ts`) return true
+        if (p === `${dirB}/kelly-tools/index.js`) return false
+        return false
+      }) as unknown as typeof existsSync)
+
+      mockedStatSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        return { isDirectory: () => true } as import('node:fs').Stats
+      }) as unknown as typeof statSync)
+
+      // realpathSync 默认原样返回（canonicalizePath mock 实现已设为 (p)=>p）
+      // 无需额外设置：三个路径各自不同 → 三个不同 key
+
+      // dirA 子目录：deepseek-thinking/index.ts, stock-tools/index.ts
+      // dirB 子目录：kelly-tools/index.ts
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === dirA) {
+          return [
+            { name: 'deepseek-thinking', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
+            { name: 'stock-tools', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
+          ]
+        }
+        if (p === dirB) {
+          return [
+            { name: 'kelly-tools', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
+          ]
+        }
+        throw new Error('not found')
+      }) as unknown as typeof readdirSync)
+
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions([dirA, dirB])
+      // 三个 extension 都应归入 Map（key 为各自 canonicalPath）
+      expect(result.size).toBe(3)
+      expect(result.has(`${dirA}/deepseek-thinking/index.ts`)).toBe(true)
+      expect(result.has(`${dirA}/stock-tools/index.ts`)).toBe(true)
+      expect(result.has(`${dirB}/kelly-tools/index.ts`)).toBe(true)
+      // 不应有任何 key 为 "index"（所有入口都是 index.ts，但 key 为 canonicalPath）
+      expect(result.has('index')).toBe(false)
+    })
+
+    it('deduplicates same-named subdirectories across discovery dirs by canonicalPath', () => {
+      // [HISTORICAL] 回归防护：两个 discovery 目录下都有同名 tools 子目录（tools/index.ts），
+      // 按子目录名去重会碰撞（都叫 "tools"），按 canonicalPath 去重应各自独立保留。
+      const dirA = '/discovery/dirA'
+      const dirB = '/discovery/dirB'
+      mockedExistsSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === dirA || p === dirB) return true
+        if (p === `${dirA}/package.json` || p === `${dirB}/package.json`) return false
+        if (p === `${dirA}/index.ts` || p === `${dirB}/index.ts`) return false
+        if (p === `${dirA}/index.js` || p === `${dirB}/index.js`) return false
+        if (p === `${dirA}/tools/index.ts`) return true
+        if (p === `${dirA}/tools/index.js`) return false
+        if (p === `${dirB}/tools/index.ts`) return true
+        if (p === `${dirB}/tools/index.js`) return false
+        return false
+      }) as unknown as typeof existsSync)
+
+      mockedStatSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        return { isDirectory: () => true } as import('node:fs').Stats
+      }) as unknown as typeof statSync)
+
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === dirA || p === dirB) {
+          return [
+            { name: 'tools', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
+          ]
+        }
+        throw new Error('not found')
+      }) as unknown as typeof readdirSync)
+
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions([dirA, dirB])
+      // 两个同名 tools 子目录，canonicalPath 不同 → 都保留
+      expect(result.size).toBe(2)
+      expect(result.has(`${dirA}/tools/index.ts`)).toBe(true)
+      expect(result.has(`${dirB}/tools/index.ts`)).toBe(true)
+    })
+
+    it('deduplicates symlink-equivalent paths via realpath', () => {
+      // [HISTORICAL] 回归防护：同一物理 extension 经 symlink 访问，realpath 解析后
+      // 应识别为同一路径只保留一份（canonicalizePath 调用 realpathSync）。
+      const dirA = '/discovery/dirA'
+      const dirB = '/discovery/dirB'
+      const realTarget = '/real/extensions/shared-ext/index.ts'
+      mockedExistsSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === dirA || p === dirB) return true
+        if (p === `${dirA}/package.json` || p === `${dirB}/package.json`) return false
+        if (p === `${dirA}/index.ts` || p === `${dirB}/index.ts`) return false
+        if (p === `${dirA}/index.js` || p === `${dirB}/index.js`) return false
+        if (p === `${dirA}/link-ext/index.ts`) return true
+        if (p === `${dirA}/link-ext/index.js`) return false
+        if (p === `${dirB}/link-ext/index.ts`) return true
+        if (p === `${dirB}/link-ext/index.js`) return false
+        return false
+      }) as unknown as typeof existsSync)
+
+      mockedStatSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        return { isDirectory: () => true } as import('node:fs').Stats
+      }) as unknown as typeof statSync)
+
+      // 关键：两个不同访问路径的 realpath 指向同一真实路径 → canonicalizePath 返回相同 key
+      mockedRealpathSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') return p
+        if (p === `${dirA}/link-ext/index.ts` || p === `${dirB}/link-ext/index.ts`) {
+          return realTarget
+        }
+        return p
+      }) as unknown as typeof realpathSync)
+
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === dirA || p === dirB) {
+          return [
+            { name: 'link-ext', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
+          ]
+        }
+        throw new Error('not found')
+      }) as unknown as typeof readdirSync)
+
+      resolver = new ExtensionResolver({})
+      const result = resolver.scanDiscoveryExtensions([dirA, dirB])
+      // 两个 symlink 指向同一真实路径 → realpath 相同 → 只保留 1 个
+      expect(result.size).toBe(1)
+      expect(result.has(realTarget)).toBe(true)
     })
 
     it('resolve integrates discovery source with priority (discovery > settings)', () => {
