@@ -44,16 +44,17 @@ function makeTool(over: Partial<ToolCall> = {}): ToolCall {
 }
 
 describe('Block working 态 · thinking 块', () => {
-  it('U1: working=true → 正文展开（非收起预览）', () => {
+  it('U1: working=true → 内容在 header 行内联显示（plain text，非 .trace-think-body）', () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: LONG_THINKING, working: true },
       global: { stubs: { MarkdownRenderer: mdStub } },
     })
-    // thinking 展开态容器（.trace-think-body）存在 = 展开
-    expect(wrapper.find('.trace-think-body').exists()).toBe(true)
-    expect(wrapper.text()).toContain(LONG_THINKING)
-    // 收起预览（含 …）不应出现
-    expect(wrapper.text()).not.toContain('…')
+    // streaming 进行中：内容在 header 行内联显示（截断预览），不在 .trace-think-body
+    expect(wrapper.find('.trace-think-body').exists()).toBe(false)
+    // 内容以截断形式出现在 header 行（previewText 截断到 60 字符）
+    expect(wrapper.text()).toContain(LONG_THINKING.slice(0, 60))
+    // 收起预览前缀 · 不应出现（streaming 态用无前缀的内联预览）
+    expect(wrapper.text()).not.toContain('·')
   })
 
   it('U2: working=false → 仅预览行（截断 60 字符）', () => {
@@ -67,7 +68,7 @@ describe('Block working 态 · thinking 块', () => {
     expect(wrapper.text()).toContain('…')
   })
 
-  it('U3: working=true 点击 header 不切换折叠态', async () => {
+  it('U3: working=true 点击 header 不切换折叠态（内容仍在 header 行内联）', async () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: LONG_THINKING, working: true },
       global: { stubs: { MarkdownRenderer: mdStub } },
@@ -75,8 +76,9 @@ describe('Block working 态 · thinking 块', () => {
     const header = wrapper.find('.cursor-pointer')
     expect(header.exists()).toBe(true)
     await header.trigger('click')
-    // 正文仍展开（working 强制，点击无效）
-    expect(wrapper.find('.trace-think-body').exists()).toBe(true)
+    // working 态点击无效：.trace-think-body 仍不存在，内容仍在 header 行内联
+    expect(wrapper.find('.trace-think-body').exists()).toBe(false)
+    expect(wrapper.text()).toContain(LONG_THINKING.slice(0, 60))
   })
 
   it('U4: working=false 点击 header 可 toggle', async () => {

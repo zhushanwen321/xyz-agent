@@ -30,7 +30,7 @@
       <span class="normal-case tracking-normal">{{ summary }}</span>
     </div>
     <!-- 展开后：items 列表（每个 item 渲染独立 Block） -->
-    <div v-if="expanded" class="mt-1 flex flex-col gap-0.5">
+    <div v-if="expanded" class="mt-1 flex flex-col gap-0.5 select-text">
       <Block
         v-for="(item, iIdx) in blk.items"
         :key="`${blk.type}-${iIdx}`"

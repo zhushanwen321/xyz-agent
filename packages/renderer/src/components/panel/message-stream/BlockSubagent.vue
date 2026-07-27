@@ -9,7 +9,7 @@
   -->
   <div class="trace-subagent pl-[14px] border-b border-dashed border-border pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
-      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium transition-opacity hover:opacity-80"
+      class="group flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
       :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
       @click="toggleTool"
@@ -25,8 +25,22 @@
       <span v-if="isRunning" class="ml-0.5 inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-accent">
         <span class="truncate">{{ subagentLiveInfo || t('panel.message.running') }}</span>
       </span>
-      <Check v-else-if="!isFailed && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
+      <!-- completed 态：显示 progress metadata（turn/tokens/duration） -->
+      <template v-else-if="!isFailed && !isUnfinished">
+        <span v-if="subagentCompletedMeta" class="shrink-0 text-neutral-dim">{{ subagentCompletedMeta }}</span>
+        <Check class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
+      </template>
       <span v-else-if="isUnfinished" class="ml-0.5 whitespace-nowrap text-neutral-dim">{{ t('panel.message.noResult') }}</span>
+      <!-- copy 按钮（hover 显示） -->
+      <button
+        v-if="result"
+        class="ml-auto shrink-0 rounded-sm p-0.5 text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover:opacity-100"
+        :title="t('panel.message.copy')"
+        @click.stop="copy(result, `subagent-${tool.id}`)"
+      >
+        <Check v-if="copied === `subagent-${tool.id}`" class="size-3 text-success" />
+        <CopyIcon v-else class="size-3" />
+      </button>
     </div>
     <template v-if="toolExpanded">
       <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
@@ -40,10 +54,16 @@
       <!-- 最终输出：failed 默认中性灰（border-l-2 border-neutral-faint），hover 染 warn；其余中性 mid -->
       <div
         v-if="result"
-        class="subagent-result mt-1 inline-flex items-start gap-1 pl-0.5 font-mono text-[12px] leading-snug whitespace-pre-wrap border-l-2 pl-2"
+        class="subagent-result mt-1 select-text border-l-2 pl-2 font-mono text-[12px] leading-snug"
         :class="isFailed ? 'border-neutral-faint text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'border-neutral-faint text-neutral-mid'"
       >
-        <span>{{ result }}</span>
+        <template v-if="parsedSubagentOutput">
+          <span class="whitespace-pre-wrap">{{ parsedSubagentOutput.summary }}</span>
+          <div v-if="parsedSubagentOutput.stats.length" class="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-neutral-dim">
+            <span v-for="(stat, i) in parsedSubagentOutput.stats" :key="i">{{ stat }}</span>
+          </div>
+        </template>
+        <span v-else class="whitespace-pre-wrap select-text">{{ result }}</span>
       </div>
     </template>
   </div>
@@ -52,12 +72,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight, Check } from '@lucide/vue'
+import { Copy as CopyIcon, ChevronRight, Check } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
 import { formatTokens, formatDuration } from './format-utils'
+import { useCopy } from '@/composables/effects/useCopy'
 
 const { t } = useI18n()
+const { copied, copy } = useCopy()
 
 const props = defineProps<{
   tool: ToolCall
@@ -175,6 +197,38 @@ function extractProgressSnapshot(detail: unknown): Record<string, unknown> | nul
 const subagentHeaderColor = computed(() => {
   if (isFailed.value) return 'text-neutral-mid'
   return 'text-neutral-fg'
+})
+
+/** completed 态 progress metadata（turn/tokens/duration），与 running 态 liveInfo 对称 */
+const subagentCompletedMeta = computed(() => {
+  const progress = subagentProgressDetail.value
+  if (!progress) return ''
+  const parts: string[] = []
+  if (progress.turnCount != null) parts.push(`turn ${progress.turnCount}`)
+  if (progress.tokens != null) parts.push(formatTokens(progress.tokens as number))
+  if (progress.durationMs != null) parts.push(formatDuration(progress.durationMs as number))
+  return parts.join(' · ')
+})
+
+/** 尝试解析 subagent output 为结构化信息（JSON → summary + stats，纯文本 → null） */
+const parsedSubagentOutput = computed(() => {
+  const raw = result.value?.trim()
+  if (!raw) return null
+  // 尝试 JSON parse（pi-subagents 可能返回结构化结果）
+  try {
+    const data = JSON.parse(raw)
+    if (typeof data === 'object' && data !== null) {
+      const summary = data.summary ?? data.result ?? data.message ?? ''
+      const stats: string[] = []
+      if (data.filesChanged != null) stats.push(`${data.filesChanged} files`)
+      if (data.linesAdded != null) stats.push(`+${data.linesAdded}`)
+      if (data.linesRemoved != null) stats.push(`-${data.linesRemoved}`)
+      if (data.testsPassed != null) stats.push(`${data.testsPassed} tests`)
+      if (summary) return { summary: String(summary), stats }
+    }
+  } catch { /* output is plain text, not JSON — expected for most subagent results */ return null }
+  // 纯文本：直接返回，不结构化
+  return null
 })
 </script>
 
