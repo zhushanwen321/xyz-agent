@@ -57,6 +57,9 @@ export function parseServerArgs(argv: string[]): ServerArgs {
   const args: ServerArgs = {
     host: process.env.XYZ_AGENT_HOST ?? DEFAULT_HOST,
     port: parseInt(process.env.XYZ_AGENT_PORT ?? String(DEFAULT_PORT), 10) || DEFAULT_PORT,
+    // 与 --host/--port 同策略：XYZ_AGENT_TOKEN_FILE env 作默认，--token-file 参数覆盖 env。
+    // <dataDir>/token 默认由 run() 兜（parseServerArgs 不接 dataDir）。
+    tokenFile: process.env.XYZ_AGENT_TOKEN_FILE,
     printQr: false,
     qrMode: 'browser',
     printAllUrls: false,

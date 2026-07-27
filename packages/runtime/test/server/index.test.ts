@@ -150,6 +150,49 @@ describe('W4-TC7: parseServerArgs 参数解析', () => {
   })
 })
 
+/**
+ * W6-TC7-env: --token-file 读 XYZ_AGENT_TOKEN_FILE env 回退。
+ *
+ * 背景：runtime README 列了 XYZ_AGENT_TOKEN_FILE env，但 server CLI 的 parseServerArgs 只识别
+ * --token-file 参数，不读 env。--host 读 XYZ_AGENT_HOST、--port 读 XYZ_AGENT_PORT，
+ * --token-file 应对齐同一策略（env 作默认，CLI 参数覆盖 env）。
+ *
+ * tokenFile 默认值 <dataDir>/token 在 run() 中应用（run L193），parseServerArgs 本身
+ * 不接 dataDir，故 env 与参数都缺时 parseServerArgs 返回 undefined（由 run 兜默认）。
+ */
+describe('W6-TC7: --token-file XYZ_AGENT_TOKEN_FILE env 回退', () => {
+  beforeEach(() => {
+    // 清 env 避免测试间污染
+    delete process.env.XYZ_AGENT_TOKEN_FILE
+  })
+  afterEach(() => {
+    delete process.env.XYZ_AGENT_TOKEN_FILE
+  })
+
+  it('TC7-env.1: 不传 --token-file 时读 XYZ_AGENT_TOKEN_FILE env', () => {
+    process.env.XYZ_AGENT_TOKEN_FILE = '/custom/token-from-env'
+    const args = parseServerArgs([]) // 无 --token-file 参数
+    expect(args.tokenFile).toBe('/custom/token-from-env')
+  })
+
+  it('TC7-env.2: --token-file 参数优先于 XYZ_AGENT_TOKEN_FILE env', () => {
+    process.env.XYZ_AGENT_TOKEN_FILE = '/env-token'
+    const args = parseServerArgs(['--token-file', '/cli-token'])
+    expect(args.tokenFile).toBe('/cli-token')
+  })
+
+  it('TC7-env.3: --token-file=value 参数也优先于 env（等号形式）', () => {
+    process.env.XYZ_AGENT_TOKEN_FILE = '/env-token'
+    const args = parseServerArgs(['--token-file=/cli-token-eq'])
+    expect(args.tokenFile).toBe('/cli-token-eq')
+  })
+
+  it('TC7-env.4: 都不传时 tokenFile 为 undefined（<dataDir>/token 默认由 run() 兜）', () => {
+    const args = parseServerArgs([])
+    expect(args.tokenFile).toBeUndefined()
+  })
+})
+
 describe('W4-TC8: 命令分发（run 流程）', () => {
   let stdoutSpy: ReturnType<typeof vi.spyOn>
   let stderrSpy: ReturnType<typeof vi.spyOn>
