@@ -8,6 +8,7 @@
   <div
     v-if="turn.assistants.length > 0"
     :class="sessionActive ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))]' : ''"
+    :data-testid="`turn-meta-${turnIndex}`"
   >
     <Button
       variant="ghost"

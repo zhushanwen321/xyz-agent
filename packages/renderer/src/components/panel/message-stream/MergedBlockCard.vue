@@ -16,6 +16,7 @@
     :aria-expanded="expanded"
   >
     <div
+      data-testid="merged-block-card-header"
       class="flex cursor-pointer select-none items-center gap-1.5 text-[11px] font-medium text-neutral-mid transition-colors hover:text-neutral-fg"
       @click="expanded = !expanded"
       @keydown.enter.prevent="expanded = !expanded"
@@ -36,6 +37,7 @@
         :type="item.kind"
         :content="item.kind === 'thinking' ? (item.ref as ThinkingBlock).content : undefined"
         :tool="item.kind === 'tool' ? (item.ref as ToolCall) : undefined"
+        :thinking-id="item.kind === 'thinking' ? (item.ref as ThinkingBlock).id : undefined"
         :collapsed="item.kind === 'thinking' ? (item.ref as ThinkingBlock).collapsed : undefined"
         :working="working"
         :session-id="sessionId"

@@ -4,7 +4,7 @@
     组合 UserBubble + TurnMeta + TurnSummary 三个子组件。
     保留：rootEl（虚拟滚动测量）+ trace 区 Block 编排 + ChangeSetCard。
   -->
-  <div ref="rootEl" class="flex flex-col gap-3.5 pb-5">
+  <div ref="rootEl" class="flex flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
     <!-- user 区：UserBubble 子组件 -->
     <UserBubble
       v-if="turn.user"
@@ -40,6 +40,7 @@
                 :type="blk.block.kind"
                 :content="blk.block.kind === 'text' ? (blk.block.ref as string) : blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).content : undefined"
                 :tool="blk.block.kind === 'tool' ? (blk.block.ref as ToolCall) : undefined"
+                :thinking-id="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).id : undefined"
                 :collapsed="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).collapsed : undefined"
                 :working="sessionActive"
                 :session-id="sessionId"

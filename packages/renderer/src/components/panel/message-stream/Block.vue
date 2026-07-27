@@ -9,7 +9,7 @@
     - failed：无鲜红全展开（红框已删），改中性灰默认 + hover 染 warn，错误摘要进 body 文本。
     审批按钮 DEFERRED（G-018），v1 不渲染。failed 救生按钮不做（agent 自处理，design.md 决策 3）。
   -->
-  <div class="trace-blk py-2" :class="blockClass">
+  <div class="trace-blk py-2" :class="blockClass" :data-testid="testId">
     <!-- thinking 块：header 可点击 toggle，长 reasoning 独立再折叠（本地折叠态，由 collapsed prop 初始化） -->
     <div v-if="type === 'thinking'" class="trace-think">
       <div
@@ -154,6 +154,8 @@ const props = defineProps<{
   type: 'thinking' | 'tool' | 'text'
   /** thinking / text 内容 */
   content?: string
+  /** thinking 块 id（thinking 类型时由父组件透传，用于 data-testid 精确锚定；其他类型忽略） */
+  thinkingId?: string
   /** tool_call 数据（type==='tool' 时必填） */
   tool?: ToolCall
   /** thinking 块初始折叠态（来自 ThinkingBlock.collapsed，默认收起） */
@@ -313,6 +315,20 @@ const { isBash, runInTerminal } = useRunInTerminal({
  *  failed 块改中性灰默认 + hover 染 warn（scoped .tool-header / .tool-result hover 处理）。
  *  保留 blockClass 钩子以备未来整体块级视觉（如 running 高亮条），当前返回空串。 */
 const blockClass = computed(() => '')
+
+/** data-testid 锚点：按块类型拼接可定位 id，供 E2E 精确断言特定块。
+ *  格式：block-tool-${tool.id}（type==='tool' 且有 tool）/ block-thinking-${thinkingId}（type==='thinking'）。
+ *  无 id（text / thinking 无 id）时回退 undefined（不输出 data-testid 属性，避免污染选择器）。 */
+const testId = computed(() => {
+  if (props.type === 'tool') {
+    const id = props.tool?.id
+    return id ? `block-tool-${id}` : undefined
+  }
+  if (props.type === 'thinking') {
+    return props.thinkingId ? `block-thinking-${props.thinkingId}` : undefined
+  }
+  return undefined
+})
 </script>
 
 <style scoped>
