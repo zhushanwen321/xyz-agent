@@ -17,7 +17,7 @@
  * （核心粘合价值，deletion test 证明不可删）。
  */
 import { computed, onScopeDispose } from 'vue'
-import type { PanelLeaf, SessionGroup } from '@xyz-agent/shared'
+import type { PanelLeaf, SessionGroup, BatchDeleteResult } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
@@ -311,20 +311,16 @@ export function useSidebar() {
   }
 
   /**
-   * 删除 session（API + 从列表移除）。
-   * 删除当前 active 时回退到列表首项（若无则停留空态）。
+   * 单 session 的本地状态清理（panel 解绑 + 跨 store 分区释放）。
    *
-   * [W1 / S3] 跨 store 清理：删除时同步清 fileTree（4 个 per-session Map）+ chat
-   * （messages/hydrated/pendingSend 等 8+ ref + timer）+ WS 流式订阅（streamSubscriptions）。
-   * 此前注释称「chat store 残留无害」，但频繁建删 session 后内存单调增长且 WS 订阅泄漏。
+   * 从 deleteSession 主体提取（供 deleteFolder 复用）：删 session 后同步清 panel 绑定 +
+   * 全部 per-session store 分区 + WS 流式订阅 + 派生状态缓存，防内存泄漏与悬空引用。
+   * 与 deleteSession 不同——这里不做 WS 删除（调用方已保证 session 在后端已删），
+   * 也不做 wasActive 回退（deleteFolder 统一在循环结束后回退）。
    *
-   * [W1 / S4] 删 active 后 selectSession(next) 失败兜底：removeFromList 已把 activeId
-   * 回退到 list[0]，若随后的 selectSession(next) 因网络抖动 reject，activeId=next 但 panel
-   * 空载 → 跨 store 撕裂。失败时 fallback 到 navigation.push({ view: 'chat' }) 空态。
+   * @param id 已删 session id（WS 删除已完成）
    */
-  async function deleteSession(id: string): Promise<void> {
-    await sessionApi.remove(id)
-    const wasActive = session.activeId === id
+  function cleanupSessionState(id: string): void {
     // 删除的 session 若绑定到 panel，清空 panel 绑定，避免悬空引用指向已删 session。
     const boundPanel = panel.findPanelBySession(id)
     if (boundPanel) panel.loadSession(boundPanel.id, null)
@@ -363,6 +359,22 @@ export function useSidebar() {
     // 防已销毁 session 的 per-session 状态条目在 Map 中积累导致内存泄漏（AC-8）。
     // 与 invalidateStatusCache 并列——两者同构（都是单例 composable 的 per-session Map 分区释放）。
     triggerSessionCleanups(id)
+  }
+
+  /**
+   * 删除 session（API + 本地状态清理）。
+   * 删除当前 active 时回退到列表首项（若无则停留空态）。
+   *
+   * [W1 / S3] 跨 store 清理由 cleanupSessionState 统一承担（panel 解绑 + 全部 per-session 分区释放）。
+   *
+   * [W1 / S4] 删 active 后 selectSession(next) 失败兜底：cleanupSessionState 已把 activeId
+   * 回退到 list[0]，若随后的 selectSession(next) 因网络抖动 reject，activeId=next 但 panel
+   * 空载 → 跨 store 撕裂。失败时 fallback 到 navigation.push({ view: 'chat' }) 空态。
+   */
+  async function deleteSession(id: string): Promise<void> {
+    await sessionApi.remove(id)
+    const wasActive = session.activeId === id
+    cleanupSessionState(id)
     if (wasActive) {
       const next = session.list[0]
       if (next) {
@@ -376,6 +388,38 @@ export function useSidebar() {
         navigation.push({ view: 'chat' })
       }
     }
+  }
+
+  /**
+   * 批量删除指定 cwd（folder）下所有 session。
+   *
+   * 调 sessionApi.removeByCwd 拿 BatchDeleteResult，对 res.deleted 逐个调
+   * cleanupSessionState（复用 deleteSession 提取的清理逻辑）。wasActiveInFolder
+   * 在调 WS 前快照，循环结束后统一回退（不依赖 removeFromList 中间态）。
+   * 返回 BatchDeleteResult——caller（Sidebar.onDeleteFolder）读 res.failed 决定 toast。
+   */
+  async function deleteFolder(cwd: string): Promise<BatchDeleteResult> {
+    const wasActiveInFolder = session.groups
+      .flatMap((g) => g.sessions)
+      .filter((s) => s.cwd === cwd)
+      .some((s) => s.id === session.activeId)
+    const res = await sessionApi.removeByCwd(cwd)
+    for (const sid of res.deleted) {
+      cleanupSessionState(sid)
+    }
+    if (wasActiveInFolder) {
+      const next = session.list[0]
+      if (next) {
+        try {
+          await selectSession(next.id)
+        } catch {
+          navigation.push({ view: 'chat' })
+        }
+      } else {
+        navigation.push({ view: 'chat' })
+      }
+    }
+    return res
   }
 
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
@@ -532,6 +576,7 @@ export function useSidebar() {
     syncSessionToPanel,
     renameSession,
     deleteSession,
+    deleteFolder,
     forkSession,
     forkSessionAsk,
     forkFromLastAssistant,

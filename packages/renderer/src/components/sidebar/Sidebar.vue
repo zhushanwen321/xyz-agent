@@ -100,6 +100,7 @@
             @new-session="onNewSession"
             @rename="onRenameSession"
             @delete="onDeleteSession"
+            @delete-folder="onDeleteFolder"
             @stop-branch="onStopBranch"
           />
         </template>
@@ -222,7 +223,7 @@ const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
 const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -344,6 +345,23 @@ async function onDeleteSession(id: string): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     toastError(t('sidebar.deleteSessionFailed', { msg }))
+  }
+}
+
+/**
+ * 删除指定 cwd 下所有 session（folder 维度批量删除，SessionList 两段式确认后触发）。
+ * 调 deleteFolder 走 WS removeByCwd + 循环 cleanupSessionState + 统一回退；读 res.failed
+ * 决定提示——部分失败时 toast（用户需感知哪些没删成）；全成功时不提示（符合「无进度反馈」要求）。
+ */
+async function onDeleteFolder(cwd: string): Promise<void> {
+  try {
+    const res = await deleteFolder(cwd)
+    if (res.failed.length > 0) {
+      toastError(t('sidebar.deleteFolderPartialFailed', { count: res.failed.length }))
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(t('sidebar.deleteFolderFailed', { msg }))
   }
 }
 

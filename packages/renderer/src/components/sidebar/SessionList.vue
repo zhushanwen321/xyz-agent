@@ -10,7 +10,7 @@
       <div
         v-for="g in groups"
         :key="g.cwd"
-        class="group-section flex flex-col gap-0.5"
+        class="group group-section flex flex-col gap-0.5"
       >
         <!-- 组标题：cwd 末段（长路径只显末段防溢出，与 SessionItem.dirName 同一信息原子）。
              sticky 贴顶用 bg-bg 不透明（侧边栏底色透明融合 bg，header 同色遮住滚过的 item 文字） -->
@@ -20,6 +20,27 @@
             {{ dirNameOf(g.cwd) }}
           </span>
           <span class="font-mono text-[10px] text-subtle opacity-60">{{ g.sessions.length }}</span>
+          <!-- folder 维度批量删除按钮（两段式确认，与 SessionItem.delete 一致） -->
+          <div
+            class="ml-auto"
+            :class="folderConfirmingCwd === g.cwd ? 'flex' : 'flex opacity-0 group-hover:opacity-100'"
+            @mouseleave="if (folderConfirmingCwd === g.cwd) folderConfirmingCwd = null"
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              :class="folderConfirmingCwd === g.cwd
+                ? 'size-[18px] rounded-sm border border-danger bg-danger text-fg'
+                : 'size-[18px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
+              :title="folderConfirmingCwd === g.cwd
+                ? t('sidebar.sessionList.deleteFolderConfirm')
+                : t('sidebar.sessionItem.delete')"
+              @click.stop="onFolderRemoveClick(g.cwd)"
+            >
+              <Check v-if="folderConfirmingCwd === g.cwd" class="size-[11px]" />
+              <Trash2 v-else class="size-[11px]" />
+            </Button>
+          </div>
         </div>
         <!-- 每条 session 渲染 SessionItem；当前激活 session 下方紧跟其分支小列表
              （spec §2 层③ 方案3：仅当前 session 展开自己的分支，不破坏其他 session 扁平结构）。
@@ -67,9 +88,9 @@
 <script setup lang="ts">
 import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
-import { computed, provide, ref } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, Folder } from '@lucide/vue'
+import { Plus, Folder, Trash2, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -94,6 +115,8 @@ const emit = defineEmits<{
   newSession: []
   /** 停止后台分支 session（FR-19，ForkGroup 两段式确认后调 abort） */
   stopBranch: [sessionId: string]
+  /** 删除指定 cwd 下所有 session（folder 维度批量删除，两段式确认后由 Sidebar 调 deleteFolder） */
+  deleteFolder: [cwd: string]
 }>()
 
 /** 全部 session 总数（空态判定，跨组汇总） */
@@ -151,6 +174,25 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   if (e.key === 'Escape') escCount.value++
 })
 provide('sessionItemEsc', escCount)
+
+/**
+ * folder 维度删除的两段式确认态（与 SessionItem.confirming 同范式）。
+ * 存当前确认的 cwd（同时只允许一个 folder 处于确认态）；二次点击同 cwd 才 emit deleteFolder。
+ * Esc / mouseleave（模板兜底）复位——folder 按钮直接用本组件持有的 escCount 同源 ref，
+ * 不需 inject（SessionList 是 provide 源头）。
+ */
+const folderConfirmingCwd = ref<string | null>(null)
+function onFolderRemoveClick(cwd: string): void {
+  if (folderConfirmingCwd.value !== cwd) {
+    folderConfirmingCwd.value = cwd
+    return
+  }
+  folderConfirmingCwd.value = null
+  emit('deleteFolder', cwd)
+}
+watch(escCount, () => {
+  if (folderConfirmingCwd.value) folderConfirmingCwd.value = null
+})
 
 // 显式声明 props 已读（避免某些 lint 规则误报未使用）。
 void props

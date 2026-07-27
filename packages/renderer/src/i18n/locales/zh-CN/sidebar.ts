@@ -14,6 +14,8 @@ export default {
   workflowOpFailed: '工作流操作失败：{msg}',
   newTaskFailed: '新建任务失败：{msg}',
   deleteSessionFailed: '删除会话失败：{msg}',
+  deleteFolderFailed: '删除文件夹会话失败：{msg}',
+  deleteFolderPartialFailed: '{count} 个会话删除失败',
   renameFailed: '重命名失败：{msg}',
   retry: '重试',
   sessionItem: {
@@ -28,6 +30,7 @@ export default {
   sessionList: {
     empty: '暂无会话',
     newSession: '新建会话',
+    deleteFolderConfirm: '确认删除此文件夹下所有会话？',
   },
   forkGroup: {
     title: '本会话的分支',

@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /**
@@ -92,6 +92,11 @@ export function rename(sessionId: string, label: string): Promise<void> {
 /** 删除 session（从列表移除） */
 export function remove(sessionId: string): Promise<void> {
   return command('session.delete', { sessionId })
+}
+
+/** 删除指定 cwd（folder）下所有 session（folder 维度批量删除，reply 含 deleted/failed 列表） */
+export function removeByCwd(cwd: string): Promise<BatchDeleteResult> {
+  return command('session.deleteByCwd', { cwd })
 }
 
 /**

@@ -22,6 +22,7 @@ import type {
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
+  BatchDeleteResult,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -291,6 +292,24 @@ export const session = {
     delete fixtureMessages[sessionId]
     // 模拟 runtime delete 后 broadcastSessionList
     pushSessionList()
+  },
+
+  /**
+   * Mock：folder 维度批量删除（与 real session.removeByCwd 同构）。
+   * best-effort 聚合 deleted/failed——mock 永远成功（fixture 删除不抛），failed 始终空。
+   */
+  async removeByCwd(cwd: string): Promise<BatchDeleteResult> {
+    await sleep(TIMING.ack)
+    const targets = fixtureSessions.filter((s) => s.cwd === cwd)
+    const deleted: string[] = []
+    for (const s of targets) {
+      fixtureSessions.splice(fixtureSessions.findIndex((x) => x.id === s.id), 1)
+      delete fixtureMessages[s.id]
+      deleted.push(s.id)
+    }
+    // 模拟 runtime deleteByCwd 后单次 broadcastSessionList
+    pushSessionList()
+    return { cwd, deleted, failed: [] }
   },
 
   /** 设置思考等级（mock：持久到 fixture session.thinkingLevel，runtime 确认属后续联调） */

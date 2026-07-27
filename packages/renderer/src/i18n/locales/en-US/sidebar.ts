@@ -14,6 +14,8 @@ export default {
   workflowOpFailed: 'Workflow operation failed: {msg}',
   newTaskFailed: 'Failed to create task: {msg}',
   deleteSessionFailed: 'Failed to delete session: {msg}',
+  deleteFolderFailed: 'Failed to delete folder sessions: {msg}',
+  deleteFolderPartialFailed: '{count} session(s) failed to delete',
   renameFailed: 'Rename failed: {msg}',
   retry: 'Retry',
   sessionItem: {
@@ -28,6 +30,7 @@ export default {
   sessionList: {
     empty: 'No sessions',
     newSession: 'New session',
+    deleteFolderConfirm: 'Delete all sessions in this folder?',
   },
   forkGroup: {
     title: 'Branches',
