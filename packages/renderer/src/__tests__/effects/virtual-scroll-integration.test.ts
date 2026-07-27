@@ -1,6 +1,11 @@
 /**
  * 虚拟滚动 W3/W4 集成层测试（review_fix）。
  *
+ * [cw wave w3] 本文件整体 skip：MessageStream.vue 已切到 virtua/vue <Virtualizer>，
+ *   useVirtualTurnList 脱节（不再被 MessageStream 引用）。原断言（vm.visibleRange /
+ *   vm.totalHeight / setScroll 模拟 scrollTop / 末项钉扎 INVAR-10）依赖手写协调循环内部
+ *   响应式 ref，virta 路径下全部不成立。w4 删本文件，w3 期间整体 skip 占位。
+ *
  * 背景：H1 虚拟滚动分 4 个 Wave——W1 useVirtualTurnList（纯逻辑，12 单测）+ W2
  * useResizeReport（RO 上报，8 单测）已有单测；但 W3（MessageStream.vue 窗口化改造：
  * 全量 v-for → spacer + visibleItems absolute 定位）+ W4（Turn.vue inject useResizeReport
@@ -161,7 +166,7 @@ afterEach(() => {
 // ────────────────────────────────────────────────────────────────
 // 场景 1：M4 回归——虚拟化不破坏 useChatScroll（mount 不崩 + 滚动 API 仍工作）
 // ────────────────────────────────────────────────────────────────
-describe('虚拟滚动集成 · 场景 1：虚拟化不破坏 useChatScroll（E3 变体 / M4 回归）', () => {
+describe.skip('虚拟滚动集成 · 场景 1：虚拟化不破坏 useChatScroll（E3 变体 / M4 回归）', () => {
   it('mount MessageStream 不崩（W3 窗口化 + W4 useChatScroll 集成正常）', async () => {
     const chat = useChatStore()
     chat.hydrate('s1', makeHistory(3))
@@ -207,7 +212,7 @@ describe('虚拟滚动集成 · 场景 1：虚拟化不破坏 useChatScroll（E3
 // ────────────────────────────────────────────────────────────────
 // 场景 2：核心收益——虚拟化后 DOM 只渲染可见窗口（远小于全量 turn 数）
 // ────────────────────────────────────────────────────────────────
-describe('虚拟滚动集成 · 场景 2：DOM 只渲染可见窗口（核心收益验证）', () => {
+describe.skip('虚拟滚动集成 · 场景 2：DOM 只渲染可见窗口（核心收益验证）', () => {
   /**
    * 25 turn × 估算 200px/turn（MessageStream ESTIMATED_TURN_HEIGHT=200），buffer=2。
    * 滚到底部区：totalHeight=5000，viewport=600，scrollTop=4400（近底，看最后几个 turn）。
@@ -309,7 +314,7 @@ describe('虚拟滚动集成 · 场景 2：DOM 只渲染可见窗口（核心收
 // ────────────────────────────────────────────────────────────────
 // 场景 3：空态——renderItems 为空时显示欢迎语不崩
 // ────────────────────────────────────────────────────────────────
-describe('虚拟滚动集成 · 场景 3：空态（renderItems 为空显示欢迎语不崩）', () => {
+describe.skip('虚拟滚动集成 · 场景 3：空态（renderItems 为空显示欢迎语不崩）', () => {
   it('空消息列表 mount 不崩 + totalHeight=0（SR12/INVAR-9 空态守恒）', async () => {
     const chat = useChatStore()
     // hydrate 空历史（标记 session 已加载，messages 为空数组）

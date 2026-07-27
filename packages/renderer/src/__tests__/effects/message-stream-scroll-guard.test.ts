@@ -1,6 +1,13 @@
 /**
  * scrollAdjustDelta 补偿 guard 测试（fix-scroll-jump-during-streaming）。
  *
+ * [cw wave w3] 整文件 skip：MessageStream.vue 已切到 virtua <Virtualizer>，手写
+ *   scrollAdjustDelta 通路（useVirtualTurnList + MessageStream delta watch + provideTurnResizeRegistry）
+ *   全部物理消失——virta 单一 scrollTop owner + $fixScrollJump 自动补偿（design §4.4）。
+ *   AC1/AC2/AC3/AC3b/TC3/TC4/TC5（7 用例）所防护的「delta 补偿与 scrollToBottom 竞争」bug 不存在。
+ *   反回归目标（防流式跳变）由 virta 内部 $fixScrollJump 同帧原子性保证（库已测，design §7.2A 不再测）。
+ *   w4 删本文件（连同 useChatScroll/useVirtualTurnList/useSettlingGuard），w3 期间整体 skip 占位。
+ *
  * 背景：isGenerating 流式期间用户轻微滚动会「一下子滑到非常上面的对话」。根因是
  * MessageStream.vue 补偿 watch（watch(scrollAdjustDelta, flush:'post')）在用户主动
  * 滚动期间也施加 scrollTop += delta，把视口往上方推。修复方案 A（CL1 决策）：
@@ -142,7 +149,7 @@ afterEach(() => {
 // ────────────────────────────────────────────────────────────────
 // AC1：用户主动滚动（stickToBottom=false）期间，scrollAdjustDelta 不施加到 scrollTop
 // ────────────────────────────────────────────────────────────────
-describe('AC1：用户主动滚动期间 scrollAdjustDelta 不施加', () => {
+describe.skip('AC1：用户主动滚动期间 scrollAdjustDelta 不施加', () => {
   it('stickToBottom=false 时，视口上方 turn 实测化产生的 delta 不推高 scrollTop', async () => {
     const chat = useChatStore()
     chat.hydrate('s1', makeHistory(10))
@@ -176,7 +183,7 @@ describe('AC1：用户主动滚动期间 scrollAdjustDelta 不施加', () => {
 // ────────────────────────────────────────────────────────────────
 // AC2：脱离锚定期间 delta 清零，回归底部后无陈旧施加
 // ────────────────────────────────────────────────────────────────
-describe('AC2：delta 清零不残留', () => {
+describe.skip('AC2：delta 清零不残留', () => {
   it('stickToBottom=false 期间累积的 delta 被清零，回到底部后不施加陈旧 offset', async () => {
     const chat = useChatStore()
     chat.hydrate('s2', makeHistory(10))
@@ -217,7 +224,7 @@ describe('AC2：delta 清零不残留', () => {
 // ────────────────────────────────────────────────────────────────
 // AC3：贴底态（stickToBottom=true）补偿行为不变
 // ────────────────────────────────────────────────────────────────
-describe('AC3：贴底态 delta 不施加（guard 翻转后）', () => {
+describe.skip('AC3：贴底态 delta 不施加（guard 翻转后）', () => {
   it('stickToBottom=true 时视口上方 turn 实测化，delta 不施加（由 scrollToBottom 主导）', async () => {
     const chat = useChatStore()
     chat.hydrate('s3', makeHistory(10))
@@ -245,7 +252,7 @@ describe('AC3：贴底态 delta 不施加（guard 翻转后）', () => {
   })
 })
 
-describe('AC3b：负 delta 贴底态不跳变（核心 bug 回归）', () => {
+describe.skip('AC3b：负 delta 贴底态不跳变（核心 bug 回归）', () => {
   it('stickToBottom=true 时负 delta（trace 收起）不把 scrollTop 往上拉', async () => {
     const chat = useChatStore()
     chat.hydrate('s3b', makeHistory(10))
@@ -297,7 +304,7 @@ function triggerNegativeAboveViewportDelta(): void {
   injectedRegistry.reportHeight('u1', 60)
 }
 
-describe('TC3：session 切换后 settling guard 跳过负 delta 施加', () => {
+describe.skip('TC3：session 切换后 settling guard 跳过负 delta 施加', () => {
   it('切换 session 期间负 delta 不把 scrollTop 往上拉（让 scrollToBottom 跟随主导贴底）', async () => {
     const chat = useChatStore()
     chat.hydrate('s1', makeHistory(10))
@@ -332,7 +339,7 @@ describe('TC3：session 切换后 settling guard 跳过负 delta 施加', () => 
   })
 })
 
-describe('TC4：非切换场景 settling 已 false 时正常补偿施加', () => {
+describe.skip('TC4：非切换场景 settling 已 false 时正常补偿施加', () => {
   it('mount 后等 settling 翻 false，正 delta 在贴底态正常施加到 scrollTop', async () => {
     const chat = useChatStore()
     chat.hydrate('s4', makeHistory(10))
@@ -363,7 +370,7 @@ describe('TC4：非切换场景 settling 已 false 时正常补偿施加', () =>
   })
 })
 
-describe('TC5：用户上滑脱离锚定后 delta 不施加（ba26c322 guard 回归）', () => {
+describe.skip('TC5：用户上滑脱离锚定后 delta 不施加（ba26c322 guard 回归）', () => {
   it('wheel 上滑脱离锚定后，视口上方 turn 实测化产生的 delta 不改变 scrollTop', async () => {
     const chat = useChatStore()
     chat.hydrate('s5', makeHistory(10))

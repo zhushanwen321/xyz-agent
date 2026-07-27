@@ -2,9 +2,10 @@
   <!--
     编排器 · Turn（message-stream 单个回合，W4 拆分后）。
     组合 UserBubble + TurnMeta + TurnSummary 三个子组件。
-    保留：rootEl（虚拟滚动测量）+ trace 区 Block 编排 + ChangeSetCard。
+    保留：trace 区 Block 编排 + ChangeSetCard。
+    [cw wave w3] 不再自持 root ref + 高度上报——virta 内部 RO 测高（design §4.4）。
   -->
-  <div ref="rootEl" class="flex flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
+  <div class="flex flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
     <!-- user 区：UserBubble 子组件 -->
     <UserBubble
       v-if="turn.user"
@@ -80,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
 import { mergeConsecutiveBlocks, type MergedBlock } from '@/composables/logic/mergeBlocks'
@@ -94,7 +95,6 @@ import MergedBlockCard from './MergedBlockCard.vue'
 import { useChatStore } from '@/stores/chat'
 import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
-import { useResizeReport } from '@/composables/effects/useResizeReport'
 import { useStickGuard, useTraceTransition } from '@/composables/effects/useStickGuard'
 
 const props = withDefaults(
@@ -121,10 +121,6 @@ const lastAssistant = computed(() => {
   const as = props.turn.assistants
   return as[as.length - 1] ?? null
 })
-
-/** 虚拟滚动高度测量（W4） */
-const rootEl = ref<HTMLElement | null>(null)
-useResizeReport(rootEl, () => props.turn.user?.id ?? props.turn.assistants[0]?.id ?? '')
 
 /**
  * isStreaming（turn 级）：文本正在流式生成。

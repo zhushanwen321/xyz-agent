@@ -17,12 +17,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, nextTick, ref, defineComponent, h } from 'vue'
+import { computed, nextTick, ref, shallowRef, defineComponent, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import type { VirtualizerHandle } from 'virtua/vue'
 import Turn from '../Turn.vue'
 import TurnRail from '../TurnRail.vue'
 import MessageStream from '../../MessageStream.vue'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
+import { createMockVlist } from '@/__tests__/effects/_virtua-mock-helper'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
 import { useChatStore } from '@/stores/chat'
 import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
@@ -257,6 +259,10 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
    * mount 一个 host 组件，setup 内调 useMessageStreamRail（composable 内 onMounted/onScopeDispose
    * 需 active component instance，用 host 组件包裹避免「no active effect scope」warning）。
    * 返回 rail composable 返回值 + host wrapper（unmount 触发 onScopeDispose 清理）。
+   *
+   * [cw wave w3] 加 vlistRef?: shallowRef<VirtualizerHandle|null> 入参：传则走 virtua 路径
+   * （onJump 用 v.scrollToIndex，updateActiveTurnIndex 用 v.findItemIndex）；
+   * 不传走旧路径（scrollEl.scrollTop + 比例推算）。双轨兼容。
    */
   function mountRail(opts: {
     sessionId?: string
@@ -264,12 +270,14 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     scrollEl?: HTMLElement | null
     offsetOf?: (idx: number) => number
     topOffset?: number
+    vlistRef?: ReturnType<typeof shallowRef<VirtualizerHandle | null>>
   } = {}): { rail: ReturnType<typeof useMessageStreamRail>; wrapper: ReturnType<typeof mount> } {
     const sessionId = computed(() => opts.sessionId ?? 's-rail-test')
     const renderItemsRef = ref<RenderItem[]>(opts.renderItems ?? makeRenderItems())
     const scrollElRef = ref<HTMLElement | null>(opts.scrollEl ?? null)
     const offsetOfFn = opts.offsetOf ?? ((idx: number) => idx * 100)
     const topOffset = computed(() => opts.topOffset ?? 0)
+    const vlistRef = opts.vlistRef ?? shallowRef<VirtualizerHandle | null>(null)
     let rail!: ReturnType<typeof useMessageStreamRail>
     const Host = defineComponent({
       setup() {
@@ -279,6 +287,7 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
           scrollEl: scrollElRef,
           offsetOf: offsetOfFn,
           topOffset,
+          vlistRef,
         })
         return () => h('div')
       },
@@ -339,7 +348,7 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     wrapper.unmount()
   })
 
-  it('TC-w4-6: onJump(idx) → scrollEl.scrollTop = offsetOf(renderIdx) + topOffset（不抛错）', () => {
+  it('TC-w4-6a: 旧路径（无 vlistRef）onJump(idx) → scrollEl.scrollTop = offsetOf(renderIdx) + topOffset（不抛错）', () => {
     // 模拟 scrollEl（happy-dom HTMLElement 支持 scrollTop 赋值）
     const scrollEl = document.createElement('div')
     const { rail, wrapper } = mountRail({ scrollEl, topOffset: 10 })
@@ -349,6 +358,20 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     // onJump(2) → renderItems 下标 2 → scrollTop = 2*100 + 10
     rail.onJump(2)
     expect(scrollEl.scrollTop).toBe(210)
+    wrapper.unmount()
+  })
+
+  it('TC-w4-6b: [cw wave w3] virtua 路径（传 vlistRef）onJump(idx) → vlistRef.scrollToIndex(renderIdx, {align:"start"})', () => {
+    // virta 路径：rail.onJump 用 v.scrollToIndex 替代 scrollEl.scrollTop 写入（design §4.1/§3.3）
+    const scrollToIndex = vi.fn()
+    const vlistRef = shallowRef<VirtualizerHandle | null>(createMockVlist({ scrollToIndex }))
+    const { rail, wrapper } = mountRail({ vlistRef })
+    // onJump(1) → railTurns[1]=index=2 → renderItems 下标 1（makeRenderItems：turn/index=1,2,3 各占 0,1,2）
+    rail.onJump(1)
+    expect(scrollToIndex).toHaveBeenCalledWith(1, { align: 'start' })
+    // onJump(2) → renderItems 下标 2
+    rail.onJump(2)
+    expect(scrollToIndex).toHaveBeenLastCalledWith(2, { align: 'start' })
     wrapper.unmount()
   })
 })

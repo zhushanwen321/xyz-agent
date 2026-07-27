@@ -27,8 +27,10 @@ import type { RenderItem } from '@/composables/logic/messageTurns'
 export interface UseStreamingPinOptions {
   /** 渲染项列表 getter（turn + system 穿插），用于定位最后一个 turn 的数组下标 */
   items: ComputedRef<RenderItem[]>
-  /** pinStreaming 入口（来自 useVirtualTurnList），idx>=0 钉扎、-1 释放 */
-  pinStreaming: (idx: number) => void
+  /** pinStreaming 入口（来自 useVirtualTurnList），idx>=0 钉扎、-1 释放。
+   *  [cw wave w3] 改可选：w3 切换到 virtua 后，钉扎改由 :keepMounted 消费 pinnedIndexes 输出，
+   *  pinStreaming 调用路径不再需要（MessageStream.vue 不传）。guard 由 watch 内 if (pinStreaming) 保护。 */
+  pinStreaming?: (idx: number) => void
   /** 当前 session id getter（捕获跨 session 切换，streaming→streaming 时强制重钉，M3） */
   sessionId: () => string
   /** [cw wave w2] 编辑中的 turn 下标（-1 表示无编辑），用于 virtua 多项钉扎（pinnedIndexes 输出）。
@@ -84,10 +86,14 @@ export function useStreamingPin(options: UseStreamingPinOptions): {
   // watch 源用 [isStreaming, sessionId] 数组：sessionId 变化时强制重算（M3 跨 session streaming→streaming）。
   // immediate: 挂载时已 streaming 也施加 pin（M3 挂载场景）。
   // flush:post: 在 resetSession(pre flush) 之后跑，保证重钉不被覆盖（详见文件头注释 M3-3）。
+  // [cw wave w3] pinStreaming 改可选：w3 virtua 路径不传（钉扎走 pinnedIndexes/:keepMounted），
+  //   guard `if (pinStreaming)` 让旧 watch 在 virtua 路径下 no-op（不抛 pinStreaming is not a function）。
   watch(
     [() => lastTurn.value?.isStreaming ?? false, sessionId],
     ([streaming]) => {
-      pinStreaming(streaming && lastTurnIdx.value >= 0 ? lastTurnIdx.value : -1)
+      if (pinStreaming) {
+        pinStreaming(streaming && lastTurnIdx.value >= 0 ? lastTurnIdx.value : -1)
+      }
     },
     { immediate: true, flush: 'post' },
   )
