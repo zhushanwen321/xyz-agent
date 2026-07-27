@@ -40,6 +40,15 @@ export interface SendStreamDeps {
 /** mock 固定回复前缀（不模拟失败，D7）—— 仅 runSendStream 使用 */
 const CANNED_REPLY = '好的，我来处理这个请求。（mock 模拟回复）'
 
+/**
+ * E2E 场景分支专用保持时长（ms）—— 远大于 TIMING.toolGap(90ms)。
+ *
+ * 场景 1/2 的核心断言依赖「在 streaming 中间态断言 merged 卡」(toBeVisible 轮询 100ms 间隔)，
+ * 默认 TIMING 的窗口（90-250ms）太短，轮询易错过 merged 卡的可见窗口导致 flaky。
+ * E2E 分支是测试专用慢路径，确定性优先于真实时序，故用固定 2000ms 宽裕窗口。
+ */
+const SCENARIO_HOLD_MS = 2000
+
 /** 按字符/词切分，证明逐块推送 —— 仅 runSendStream 使用 */
 function splitChunks(text: string): string[] {
   return text.match(/[\u4e00-\u9fa5]|[A-Za-z]+|\s+|[^\sA-Za-z\u4e00-\u9fa5]/g) ?? [text]
@@ -55,6 +64,16 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
     id: messageId,
     payload: { sessionId, messageId },
   })
+
+  // ── E2E 专用分支：场景 1（并发 running tool 中途失败）/ 场景 2（连续 thinking 块）──
+  // 关键字触发后短路默认序列（thinking/tool/text/file_changes），直接跑自定义流后 complete 返回。
+  // 这些分支专供 chat-flow-merged.spec.ts 验证 streaming 边界行为，不污染默认路径。
+  if (/test-fail-mid-stream/i.test(text)) {
+    return emitFailMidStreamBranch(sessionId, { nextId, emit, sleep, isCancelled, TIMING })
+  }
+  if (/test-multi-thinking/i.test(text)) {
+    return emitMultiThinkingBranch(sessionId, { nextId, emit, sleep, isCancelled, TIMING })
+  }
 
   // FR-1：auto_retry 演示（关键词触发，让 RetryIndicator 渲染可验证）。
   // 默认不触发（不污染每条消息）；用户输入含 'retry' 时模拟一次瞬态失败→重试→恢复。
@@ -448,6 +467,168 @@ async function emitGoalBranch(sessionId: string, deps: BranchDepsWithPush): Prom
       lines: [
         '\x1b[36m◆ fix-auth-bug\x1b[0m\x1b[90m Turn 3\x1b[0m\x1b[33m | 36% tokens\x1b[0m\x1b[33m | 40% time\x1b[0m',
       ],
+    },
+  })
+}
+
+/**
+ * 场景 1 分支（fail-mid-stream）：并发 2 个 running tool，A 完成、B 失败。
+ *
+ * 关键设计：两个 tool_call_start 连发（A 和 B 同时进入 running），构造 mergeConsecutiveBlocks
+ * 合并窗口（连续 2 个 running tool 合并成 merged 卡）。随后 A→completed、B→error，触发
+ * merged→single 重排（v-for key 从 merged-tool 变 single-tool，MergedBlockCard 卸载重挂）。
+ *
+ * 流序列：
+ *   message_start → thinking → toolA start → toolB start（A B 同时 running = 合并窗口）
+ *   → [toolGap 给测试断言 merged 卡 + 手动展开]
+ *   → toolA end(completed) → toolB end(error, isError)  ← 触发 merged 卡重排
+ *   → textDelta → complete
+ *
+ * 顺序流（A 完成→B 启动）测不出合并边界 bug，故必须并发 running。
+ */
+async function emitFailMidStreamBranch(sessionId: string, deps: BranchDeps): Promise<void> {
+  const { nextId, emit, sleep, isCancelled, TIMING } = deps
+  const messageId = nextId('m')
+
+  // thinking 块（单段，证明流式开始）
+  await sleep(TIMING.startGap)
+  if (isCancelled(sessionId)) return
+  const thinkingId = nextId('th')
+  emit(sessionId, { type: 'message.thinking_start', payload: { sessionId, thinkingId } })
+  for (const chunk of splitChunks('正在读取文件……')) {
+    if (isCancelled(sessionId)) return
+    await sleep(TIMING.chunk)
+    emit(sessionId, { type: 'message.thinking_delta', payload: { sessionId, delta: chunk } })
+  }
+  emit(sessionId, { type: 'message.thinking_end', payload: { sessionId } })
+
+  // tool A: read_file（running，不发 end）—— 进入 running 态
+  await sleep(TIMING.toolGap)
+  if (isCancelled(sessionId)) return
+  const toolAId = nextId('tc')
+  emit(sessionId, {
+    type: 'message.tool_call_start',
+    payload: { sessionId, toolCallId: toolAId, toolName: 'read_file', input: { path: 'A.txt' } },
+  })
+
+  // tool B: read_file（running，紧跟 A 后立即发）—— A B 同时 running，构造 merged 合并窗口
+  // 关键：B 不等 A 完成。两个 tool 都处于 running 时 mergeConsecutiveBlocks 合并成 merged 卡。
+  await sleep(TIMING.chunk)
+  if (isCancelled(sessionId)) return
+  const toolBId = nextId('tc')
+  emit(sessionId, {
+    type: 'message.tool_call_start',
+    payload: { sessionId, toolCallId: toolBId, toolName: 'read_file', input: { path: 'B.txt' } },
+  })
+
+  // 留宽裕时间让测试断言 merged 卡出现 + 手动展开/收起交互。
+  // 用 SCENARIO_HOLD_MS（远大于 TIMING.toolGap）而非默认 toolGap：默认 90ms 窗口太短，
+  // 测试 toBeVisible 轮询（100ms 间隔）易错过 merged 卡（A B 同时 running 到 B 失败的窗口仅约 250ms）。
+  // 测试分支可慢，确定性优先于真实时序。
+  await sleep(SCENARIO_HOLD_MS)
+  if (isCancelled(sessionId)) return
+
+  // tool A end: completed —— A 完成，但 B 仍 running，此时两块仍属连续 tool（一 completed 一 running），
+  // mergeBlocks 不拆（仅 failed/unfinished 断开合并），merged 卡仍存在
+  emit(sessionId, {
+    type: 'message.tool_call_end',
+    payload: {
+      sessionId,
+      toolCallId: toolAId,
+      toolName: 'read_file',
+      output: 'content A',
+      status: 'completed',
+    },
+  })
+
+  await sleep(TIMING.toolGap)
+  if (isCancelled(sessionId)) return
+  // tool B end: error —— B 失败，isFailedTool=true 断开合并链，merged 卡卸载重排为两个 single 块
+  // 这是触发场景 1 核心 bug 的时刻（MergedBlockCard expanded ref 随卸载丢失）
+  emit(sessionId, {
+    type: 'message.tool_call_end',
+    payload: {
+      sessionId,
+      toolCallId: toolBId,
+      toolName: 'read_file',
+      output: 'File not found',
+      status: 'error',
+      error: 'File not found',
+    },
+  })
+
+  // 文本流式（证明流继续）
+  for (const chunk of splitChunks('读取完成。')) {
+    if (isCancelled(sessionId)) return
+    await sleep(TIMING.chunk)
+    emit(sessionId, {
+      type: 'message.text_delta',
+      id: messageId,
+      payload: { sessionId, messageId, delta: chunk },
+    })
+  }
+
+  // complete（含 usage，对齐全局 complete 帧结构）
+  if (isCancelled(sessionId)) return
+  await sleep(TIMING.done)
+  emit(sessionId, {
+    type: 'message.complete',
+    id: messageId,
+    payload: {
+      sessionId,
+      messageId,
+      stopReason: 'complete',
+      usage: { inputTokens: 1280, outputTokens: 642, totalTokens: 1922 },
+    },
+  })
+}
+
+/**
+ * 场景 2 分支（multi-thinking）：3 个连续 thinking 块逐个到达。
+ *
+ * 关键设计：第 1 块以 single 显，第 2 块到达触发 single→merged 重排（merged 卡首次 mount），
+ * 第 3 块加入已有 merged 卡（只 update items，不重 mount）。
+ *
+ * 量化判定（场景 2 核心断言）：merged 卡 mount 次数应 = 1。
+ *   - mount 次数 === 1：第 2 块触发 merged 卡创建，第 3 块只 update → 无闪烁（无 bug）
+ *   - mount 次数 > 1：每加一块 merged 卡都重挂 → 闪烁 bug（v-for key 含 blk.kind 变化）
+ *
+ * 流序列（每个 thinking 块：thinking_start → delta×N → thinking_end，间隔 toolGap 构造边界）：
+ *   message_start → [th1: start→delta→end] → [th2: start→delta→end] → [th3: start→delta→end] → complete
+ *
+ * 无 tool/text/file_changes（纯 thinking 边界验证，排除其他块干扰 mount 计数）。
+ */
+async function emitMultiThinkingBranch(sessionId: string, deps: BranchDeps): Promise<void> {
+  const { nextId, emit, sleep, isCancelled, TIMING } = deps
+  const messageId = nextId('m')
+  const thoughts = ['分析需求……', '设计方案……', '实现代码……']
+
+  await sleep(TIMING.startGap)
+  for (const thought of thoughts) {
+    if (isCancelled(sessionId)) return
+    const thinkingId = nextId('th')
+    emit(sessionId, { type: 'message.thinking_start', payload: { sessionId, thinkingId } })
+    for (const chunk of splitChunks(thought)) {
+      if (isCancelled(sessionId)) return
+      await sleep(TIMING.chunk)
+      emit(sessionId, { type: 'message.thinking_delta', payload: { sessionId, delta: chunk } })
+    }
+    emit(sessionId, { type: 'message.thinking_end', payload: { sessionId } })
+    // 块间间隔（让 mergeConsecutiveBlocks 重算 + Vue 渲染，构造 single→merged 边界）
+    await sleep(TIMING.toolGap)
+  }
+
+  // complete
+  if (isCancelled(sessionId)) return
+  await sleep(TIMING.done)
+  emit(sessionId, {
+    type: 'message.complete',
+    id: messageId,
+    payload: {
+      sessionId,
+      messageId,
+      stopReason: 'complete',
+      usage: { inputTokens: 1280, outputTokens: 642, totalTokens: 1922 },
     },
   })
 }
