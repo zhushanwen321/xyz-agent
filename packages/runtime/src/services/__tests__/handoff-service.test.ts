@@ -1,22 +1,86 @@
 /**
- * HandoffService 单元测试。
+ * HandoffService 单元测试（agent-driven）。
  *
- * 覆盖新同步流程：runHandoff 从历史组装文档 + 新建 session + 广播。
- * 不再依赖 pi skill / onTurnEnd / abort / cancelInflight。
+ * 覆盖新流程：runHandoff 让源 session 跑 handoff turn → 从 agent_end 提取 doc →
+ * 新建 session + 注入 doc + 广播（无 doc/reply 字段，DM3）。abort / timeout /
+ * 空文档 / 并发守卫 / extractFinalTextFromAgentEnd / buildHandoffPrompt 全覆盖。
+ *
+ * 测试框架：vitest（禁止 node:test）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { HandoffService, REPLY_MAX_LENGTH, MAX_MESSAGES, MSG_TRUNCATE_LENGTH } from '../handoff-service.js'
+import {
+  HandoffService,
+  HANDOFF_TIMEOUT_MS,
+  extractFinalTextFromAgentEnd,
+} from '../handoff-service.js'
+import { HANDOFF_PROMPT_TEMPLATE, REPLY_MAX_LENGTH, buildHandoffPrompt } from '../handoff-prompt.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import type { SessionService } from '../session/session-service.js'
-import type { Message, Segment } from '@xyz-agent/shared'
+import type { IPiEngine } from '../ports/pi-engine.js'
+import type { Message } from '@xyz-agent/shared'
 
-function createMockSessionService(overrides: Partial<SessionService> = {}): SessionService {
+/**
+ * Mock IPiEngine：记录 onEvent 注册的 listener，提供 emit 触发。
+ * prompt/abort 默认立即 resolve（fire-and-forget ack）。
+ */
+interface MockClient {
+  prompt: ReturnType<typeof vi.fn>
+  abort: ReturnType<typeof vi.fn>
+  onEvent: ReturnType<typeof vi.fn>
+  exited: boolean
+  _listeners: Set<(event: unknown) => void>
+  /** 触发所有已注册 listener（单参数 event，符合 PiEventListener 签名）。 */
+  emit(event: unknown): void
+}
+
+function createMockClient(): MockClient {
+  const listeners = new Set<(event: unknown) => void>()
+  const client: MockClient = {
+    prompt: vi.fn(async () => ({})),
+    abort: vi.fn(async () => ({})),
+    exited: false,
+    _listeners: listeners,
+    onEvent: vi.fn((listener: (event: unknown) => void) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    }),
+    emit(event: unknown) {
+      for (const l of listeners) l(event)
+    },
+  }
+  return client
+}
+
+function createMockSessionService(opts: {
+  srcSessionId: string
+  newSessionId?: string
+  srcClient: MockClient
+  newClient: MockClient
+}): SessionService {
+  const newSessionId = opts.newSessionId ?? 'new-1'
   return {
-    getHistory: vi.fn(),
-    getSession: vi.fn(),
-    create: vi.fn(),
-    markHandedOff: vi.fn(),
-    ...overrides,
+    getHistory: vi.fn(async () => ({
+      messages: [makeMessage('user', 'hi')] as Message[],
+      truncated: false,
+    })),
+    getSession: vi.fn(() => ({
+      cwd: '/tmp',
+      label: 'src',
+      sessionFilePath: '/tmp/s.json',
+    })) as unknown as SessionService['getSession'],
+    create: vi.fn(async () => ({
+      id: newSessionId,
+      label: 'handoff from src',
+      cwd: '/tmp',
+    })) as unknown as SessionService['create'],
+    markHandedOff: vi.fn() as unknown as SessionService['markHandedOff'],
+    ensureActive: vi.fn(async (sessionId: string) => {
+      if (sessionId === opts.srcSessionId) return opts.srcClient as unknown as IPiEngine
+      if (sessionId === newSessionId) return opts.newClient as unknown as IPiEngine
+      throw new Error(`ensureActive: unexpected sessionId ${sessionId}`)
+    }) as unknown as SessionService['ensureActive'],
   } as unknown as SessionService
 }
 
@@ -28,7 +92,7 @@ function createMockBroker(): IMessageBroker {
 
 function makeMessage(role: 'user' | 'assistant', content: string): Message {
   return {
-    id: `msg-${role}-${Date.now()}`,
+    id: `msg-${role}`,
     role,
     content,
     status: 'done' as const,
@@ -36,181 +100,247 @@ function makeMessage(role: 'user' | 'assistant', content: string): Message {
 }
 
 describe('HandoffService', () => {
-  let sessionService: ReturnType<typeof createMockSessionService>
   let broker: ReturnType<typeof createMockBroker>
   let broadcastSessionList: () => void
   let nextPushId: () => string
+  let srcClient: MockClient
+  let newClient: MockClient
+  let sessionService: SessionService
   let service: HandoffService
 
   beforeEach(() => {
-    sessionService = createMockSessionService()
     broker = createMockBroker()
     broadcastSessionList = vi.fn()
     nextPushId = vi.fn(() => 'push-123')
+    srcClient = createMockClient()
+    newClient = createMockClient()
+    sessionService = createMockSessionService({
+      srcSessionId: 'src-1',
+      newSessionId: 'new-1',
+      srcClient,
+      newClient,
+    })
     service = new HandoffService({ sessionService, broker, broadcastSessionList, nextPushId })
   })
 
-  it('TC1: runHandoff creates new session + broadcasts with doc', async () => {
-    const messages = [
-      makeMessage('user', 'hello'),
-      makeMessage('assistant', 'hi there'),
-    ]
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue({
-      label: 'test-session',
-      cwd: '/work',
-    } as never)
-    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-session-id' } as never)
+  it('TC1: runHandoff 主路径 — agent_end 提取 doc，新建 session 注入 doc，广播无 doc/reply', async () => {
+    const runPromise = service.runHandoff('src-1')
 
-    await service.runHandoff('src-session-id')
+    // 等一微任务让 ensureActive + onEvent + prompt 注册完成
+    await new Promise((r) => setTimeout(r, 0))
 
-    expect(sessionService.create).toHaveBeenCalledWith('/work', 'handoff from test-session')
-    expect(sessionService.markHandedOff).toHaveBeenCalledWith('src-session-id', 'new-session-id')
+    expect(srcClient.onEvent).toHaveBeenCalled()
+    expect(srcClient.prompt).toHaveBeenCalledTimes(1)
+    expect(srcClient.prompt).toHaveBeenCalledWith(expect.stringContaining(HANDOFF_PROMPT_TEMPLATE))
+
+    // emit agent_end with text content
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'doc content' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+
+    await runPromise
+
+    // new session 注入 doc
+    expect(newClient.prompt).toHaveBeenCalledWith('doc content')
+    // 广播
     expect(broadcastSessionList).toHaveBeenCalled()
     expect(broker.broadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'session.handoffComplete',
         id: 'push-123',
-        payload: expect.objectContaining({
-          srcSessionId: 'src-session-id',
-          newSessionId: 'new-session-id',
-          sourceLabel: 'test-session',
-          doc: expect.stringContaining('Handoff from test-session'),
-          reply: undefined,
-        }),
+        payload: {
+          sessionId: 'src-1',
+          srcSessionId: 'src-1',
+          newSessionId: 'new-1',
+          sourceLabel: 'src',
+        },
       }),
     )
-    // doc should contain message content
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { doc: string } }
-    expect(call.payload.doc).toContain('**User:**')
-    expect(call.payload.doc).toContain('hello')
-    expect(call.payload.doc).toContain('**Assistant:**')
-    expect(call.payload.doc).toContain('hi there')
+    // payload 不含 doc / reply 字段（DM3 协议变更）
+    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: Record<string, unknown> }
+    expect(call.payload).not.toHaveProperty('doc')
+    expect(call.payload).not.toHaveProperty('reply')
+
+    // listener 已清理（detach 调用 → _listeners 空 → inflight 清空）
+    expect(srcClient._listeners.size).toBe(0)
+    // inflight 已清空：再调 runHandoff 不会同步 reject 'already in progress'
+    // （会卡在 await agentEndPromise，我们立即 abort 掉避免悬挂）
+    const again = service.runHandoff('src-1').catch(() => {})
+    await new Promise((r) => setTimeout(r, 0))
+    await service.abortHandoff('src-1')
+    await again
   })
 
-  it('TC2: runHandoff with reply includes reply in payload', async () => {
-    const messages = [makeMessage('user', 'test'), makeMessage('assistant', 'done')]
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
-    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
-
-    await service.runHandoff('src-id', 'focus on the bug')
-
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { reply: string | undefined } }
-    expect(call.payload.reply).toBe('focus on the bug')
-  })
-
-  it('TC2b: reply with newlines is sanitized', async () => {
-    const messages = [makeMessage('user', 'test'), makeMessage('assistant', 'done')]
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
-    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
-
-    await service.runHandoff('src-id', 'line1\nline2\rline3')
-
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { reply: string | undefined } }
-    expect(call.payload.reply).toBe('line1 line2 line3')
-  })
-
-  it('TC3: runHandoff on empty history throws', async () => {
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages: [], truncated: false })
-
-    await expect(service.runHandoff('src-id')).rejects.toThrow('handoff: no history to handoff')
-  })
-
-  it('TC4: concurrent handoff rejected', async () => {
-    // Use a deferred promise to keep first call inflight
-    let resolveFirst!: (v: { messages: Message[]; truncated: false }) => void
-    const firstBlocker = new Promise<{ messages: Message[]; truncated: false }>((resolve) => { resolveFirst = resolve })
-    vi.mocked(sessionService.getHistory).mockReturnValueOnce(firstBlocker)
-
-    // Start first handoff (will block on getHistory)
-    const first = service.runHandoff('src-id').catch(() => {})
-
-    // Wait a tick for the first call to enter the inflight set
+  it('TC2: reply 追加到 prompt；广播无 reply 字段', async () => {
+    const runPromise = service.runHandoff('src-1', 'focus on tests')
     await new Promise((r) => setTimeout(r, 0))
 
-    // Second attempt should be rejected while first is in flight
-    await expect(service.runHandoff('src-id')).rejects.toThrow('handoff already in progress')
+    expect(srcClient.prompt).toHaveBeenCalledWith(
+      expect.stringContaining('focus on tests'),
+    )
+    expect(srcClient.prompt).toHaveBeenCalledWith(
+      expect.stringContaining(HANDOFF_PROMPT_TEMPLATE),
+    )
 
-    // Let first complete (with empty history so it throws, but that's fine for the test)
-    resolveFirst({ messages: [], truncated: false })
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'd' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+    await runPromise
+
+    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: Record<string, unknown> }
+    expect(call.payload).not.toHaveProperty('reply')
+  })
+
+  it('TC3: agent_end 末条 content 无 text → rejects（empty），create 未调，未广播', async () => {
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'write', input: {} }],
+          stopReason: 'stop',
+        },
+      ],
+      willRetry: false,
+    })
+
+    await expect(runPromise).rejects.toThrow('empty')
+    expect(sessionService.create).not.toHaveBeenCalled()
+    expect(broker.broadcast).not.toHaveBeenCalled()
+  })
+
+  it('TC4: timeout — 不 emit agent_end，advance timer → rejects（timeout），create 未调', async () => {
+    vi.useFakeTimers()
+    try {
+      const runPromise = service.runHandoff('src-1')
+      // 预挂 catch，避免 timer 触发的 reject 在 await expect 之前成为 unhandled rejection
+      const expectPromise = expect(runPromise).rejects.toThrow('timeout')
+      // 让 ensureActive / onEvent / prompt（async resolve）跑完
+      await vi.advanceTimersByTimeAsync(0)
+
+      // 推进到超时
+      await vi.advanceTimersByTimeAsync(HANDOFF_TIMEOUT_MS)
+
+      await expectPromise
+      expect(sessionService.create).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('TC5: 并发守卫 — 同 session 再调 runHandoff 同步 reject（already in progress）', async () => {
+    // 第一次不 emit agent_end，保持 pending
+    const first = service.runHandoff('src-1').catch(() => {})
+    await new Promise((r) => setTimeout(r, 0))
+
+    await expect(service.runHandoff('src-1')).rejects.toThrow('already in progress')
+
+    // 让第一个干净收尾（emit 空 doc 触发 reject 清理 inflight）
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 'x' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
     await first
   })
 
-  it('TC5: throws when session not found', async () => {
-    const messages = [makeMessage('user', 'test'), makeMessage('assistant', 'done')]
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue(undefined)
+  it('TC6: abortHandoff — abort 调用，runHandoff rejects（abort），未广播', async () => {
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
 
-    await expect(service.runHandoff('src-id')).rejects.toThrow('handoff: source session not found')
+    await service.abortHandoff('src-1')
+
+    expect(srcClient.abort).toHaveBeenCalledTimes(1)
+    await expect(runPromise).rejects.toThrow('abort')
+    expect(broker.broadcast).not.toHaveBeenCalled()
   })
 
-  it('TC6: reply 截断 — 超长 reply 被截断到 REPLY_MAX_LENGTH', async () => {
-    const messages = [makeMessage('user', 'test')]
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
-    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
-
-    const longReply = 'x'.repeat(6000)
-    await service.runHandoff('src-id', longReply)
-
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { reply: string | undefined } }
-    expect(call.payload.reply).toBeDefined()
-    expect(call.payload.reply!.length).toBe(REPLY_MAX_LENGTH)
+  it('TC7: abortHandoff 幂等 — inflight 空时 no-op，abort 未调', async () => {
+    await service.abortHandoff('src-1') // 不抛
+    expect(srcClient.abort).not.toHaveBeenCalled()
   })
 
-  it('TC7: 单条消息截断 — 超长 content 带 truncated 后缀', async () => {
-    const longContent = 'a'.repeat(3000)
-    const messages = [makeMessage('user', longContent)]
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
-    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
+  it('TC8: abort 失败兜底 — abort 抛错，abortHandoff 仍 resolve，runHandoff rejects（abort），console.warn 被调', async () => {
+    srcClient.abort = vi.fn(async () => {
+      throw new Error('pi dead')
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    await service.runHandoff('src-id')
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
 
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { doc: string } }
-    expect(call.payload.doc).toContain('a'.repeat(MSG_TRUNCATE_LENGTH) + '...[truncated]')
-    // 截断后不应包含完整 3000 字符
-    expect(call.payload.doc).not.toContain('a'.repeat(3001))
+    await expect(service.abortHandoff('src-1')).resolves.toBeUndefined()
+    await expect(runPromise).rejects.toThrow('abort')
+
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
-  it('TC8: MAX_MESSAGES 限制 — 30 条消息只取最后 20 条', async () => {
-    const messages = Array.from({ length: 30 }, (_, i) => makeMessage('user', `msg-${i}`))
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages, truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
-    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
+  describe('extractFinalTextFromAgentEnd', () => {
+    it('TC9a: 正常单 text block', () => {
+      const result = extractFinalTextFromAgentEnd([
+        { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+      ])
+      expect(result).toBe('hello')
+    })
 
-    await service.runHandoff('src-id')
+    it('TC9b: 多 text block join', () => {
+      const result = extractFinalTextFromAgentEnd([
+        { role: 'assistant', content: [{ type: 'text', text: 'hello ' }, { type: 'text', text: 'world' }] },
+      ])
+      expect(result).toBe('hello world')
+    })
 
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { doc: string } }
-    // 应包含 msg-10（第 20 条从后数，索引 10）到 msg-29
-    expect(call.payload.doc).toContain('msg-10')
-    expect(call.payload.doc).toContain('msg-29')
-    // 不应包含 msg-9（被 MAX_MESSAGES 裁掉的前 10 条）
-    expect(call.payload.doc).not.toContain('msg-9')
-    expect(call.payload.doc).not.toContain('msg-0')
+    it('TC9c: messages undefined → ""', () => {
+      expect(extractFinalTextFromAgentEnd(undefined)).toBe('')
+    })
+
+    it('TC9d: messages 空数组 → ""', () => {
+      expect(extractFinalTextFromAgentEnd([])).toBe('')
+    })
+
+    it('TC9e: 末条 content 非 text（tool_use）→ ""', () => {
+      const result = extractFinalTextFromAgentEnd([
+        { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'write', input: {} }] },
+      ])
+      expect(result).toBe('')
+    })
+
+    it('TC9f: content 是 string（非数组）→ ""', () => {
+      const result = extractFinalTextFromAgentEnd([
+        { role: 'assistant', content: 'plain string content' },
+      ])
+      expect(result).toBe('')
+    })
   })
 
-  it('TC9: Segment[] content 正确提取文本', async () => {
-    const segContent: Segment[] = [
-      { type: 'text', text: 'hello ' } as Segment,
-      { type: 'text', text: 'world' } as Segment,
-    ]
-    const msg: Message = {
-      id: 'msg-seg',
-      role: 'user',
-      content: segContent,
-      status: 'done' as const,
-    } as unknown as Message
+  describe('buildHandoffPrompt', () => {
+    it('TC10a: reply 含换行 + 超长 → sanitize 后追加 focus 后缀（无 \\n，长度 ≤ REPLY_MAX_LENGTH）', () => {
+      const longReply = 'line1\nline2\rline3\n' + 'x'.repeat(6000)
+      const result = buildHandoffPrompt(longReply)
+      expect(result).toContain('The next session will focus on:')
+      expect(result).toContain(HANDOFF_PROMPT_TEMPLATE)
+      // 结果不含原始换行（sanitize 后的 focus 后缀无 CR/LF）
+      const suffix = result.slice(result.indexOf('The next session will focus on:'))
+      expect(suffix).not.toMatch(/[\r\n]/)
+      // sanitize 部分（前缀 + 空格之后的全部内容）长度受控
+      const FOCUS_PREFIX = 'The next session will focus on: '
+      const focusContent = suffix.slice(FOCUS_PREFIX.length)
+      expect(focusContent.length).toBeLessThanOrEqual(REPLY_MAX_LENGTH)
+      expect(focusContent).not.toMatch(/[\r\n]/)
+    })
 
-    vi.mocked(sessionService.getHistory).mockResolvedValue({ messages: [msg], truncated: false })
-    vi.mocked(sessionService.getSession).mockReturnValue({ label: 's1', cwd: '/w' } as never)
-    vi.mocked(sessionService.create).mockResolvedValue({ id: 'new-id' } as never)
-
-    await service.runHandoff('src-id')
-
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: { doc: string } }
-    expect(call.payload.doc).toContain('hello world')
+    it('TC10b: reply=undefined → 纯 template 无 focus 后缀', () => {
+      const result = buildHandoffPrompt(undefined)
+      expect(result).toBe(HANDOFF_PROMPT_TEMPLATE)
+      expect(result).not.toContain('focus on:')
+    })
   })
 })
