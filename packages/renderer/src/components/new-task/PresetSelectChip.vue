@@ -197,9 +197,12 @@ watch(() => store.defaultPresetId, (newDefault) => {
       </Button>
     </PopoverTrigger>
     <PopoverContent side="top" align="start" :collision-padding="8" :side-offset="8" class="w-[280px] p-0">
-      <!-- head（W-RN-1：bg-white/[0.015] → bg-surface-2 语义类，与 PopoverContent 的 bg-bg-elevated 区分头/体层级） -->
+      <!-- head：透明背景 + border-b 分割，与 DirSelectPopover 搜索框区 / BranchSelectPopover 标题栏
+           的头部样式对齐（三者头部都无背景色，靠 border-b 分割，露出 PopoverContent 的 bg-elevated）。
+           历史背景：曾用 bg-surface-2 给头部加深色块，视觉上像粗边框/双层条带，与 dir/branch 头部
+           透明背景不一致，故去掉对齐。 -->
       <div
-        class="flex items-center justify-between border-b border-border bg-surface-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+        class="flex items-center justify-between border-b border-border px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>
