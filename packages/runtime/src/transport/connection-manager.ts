@@ -20,9 +20,11 @@ import type { ClientMessage } from '@xyz-agent/shared'
 import { toErrorMessage } from '../utils/errors.js'
 import type { ErrorDetails } from './message-context.js'
 import { createTokenManager, type TokenManager } from './token.js'
+import type { FileEndpoint } from './file-endpoint.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
+const HTTP_INTERNAL_ERROR = 500
 const MAX_WS_CLOSE_CODE = 4000
 const HEARTBEAT_TIMEOUT_MS = 45_000
 /** 认证超时：新连接进入 pending 后 5s 内须完成首条 auth 消息，否则关闭。 */
@@ -65,6 +67,11 @@ export interface ConnectionManagerOptions {
   tokenManager?: TokenManager
   /** 服务端版本号：auth.ok 回复携带（前端据此做兼容判定）。默认 '0.0.0'。 */
   serverVersion?: string
+  /**
+   * wave2 远程化：HTTP /file 端点（图片预览签名 URL 校验 + 流式）。
+   * 未配置时 /file 走 404（向后兼容——本地 Electron 模式不需要此端点）。
+   */
+  fileEndpoint?: FileEndpoint
 }
 
 export class ConnectionManager {
@@ -83,6 +90,8 @@ export class ConnectionManager {
   private readonly tokenManager: TokenManager
   /** 已解析的服务端版本号（opts.serverVersion 缺省时 '0.0.0'）。 */
   private readonly serverVersion: string
+  /** wave2：HTTP /file 端点（可选——未配置时 /file 走 404）。start() 前可经 setFileEndpoint 延迟绑定。 */
+  private fileEndpoint?: FileEndpoint
 
   constructor(
     private port: number,
@@ -92,10 +101,23 @@ export class ConnectionManager {
     // 解析可选 opts 为确定值：tokenManager 缺省 → 无 tokenFile（开放模式）；serverVersion 缺省 → '0.0.0'。
     this.tokenManager = opts.tokenManager ?? createTokenManager({})
     this.serverVersion = opts.serverVersion ?? '0.0.0'
+    this.fileEndpoint = opts.fileEndpoint
     this.httpServer = createServer((req, res) => {
       if (req.url === '/health') {
         res.writeHead(HTTP_OK, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
+      } else if (this.fileEndpoint && req.url && req.url.startsWith('/file')) {
+        // wave2 远程化：转交 FileEndpoint.handle（签名校验 + 白名单 + 流式）。
+        // handle 内部已完成所有状态码判定；此处只兜底未捕获异常（不应发生，防御性）。
+        // 读 this.fileEndpoint（非构造期捕获）：允许 start 前经 setFileEndpoint 延迟绑定
+        // （index.ts 中 sessionService 在 server 构造后才创建，fileEndpoint 依赖它）。
+        this.fileEndpoint.handle(req, res).catch((e) => {
+          console.error('[runtime] /file endpoint error:', e)
+          if (!res.headersSent) {
+            res.writeHead(HTTP_INTERNAL_ERROR, { 'Content-Type': 'text/plain' })
+            res.end('internal error')
+          }
+        })
       } else {
         res.writeHead(HTTP_NOT_FOUND)
         res.end()
@@ -111,6 +133,17 @@ export class ConnectionManager {
       }
     }
     this.wss = new WebSocketServer(wssOpts)
+  }
+
+  /**
+   * wave2 远程化：延迟绑定 fileEndpoint。
+   * 场景：index.ts 中 sessionService 在 RuntimeServer 构造后才 new（依赖 server 注入），
+   * 而 fileEndpoint 依赖 sessionService（取活跃 cwd）——故 server 构造时 fileEndpoint 尚不可得。
+   * 此 setter 允许在 start() 前注入。createServer 回调读 this.fileEndpoint（非构造期捕获），
+   * 故延迟绑定生效。
+   */
+  setFileEndpoint(ep: FileEndpoint): void {
+    this.fileEndpoint = ep
   }
 
   /** 启动 HTTP + WS 监听；注册 connection 回调。 */

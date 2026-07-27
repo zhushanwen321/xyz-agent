@@ -1,5 +1,6 @@
 import { RuntimeServer } from './transport/server.js'
 import { createTokenManager } from './transport/token.js'
+import { createFileEndpoint } from './transport/file-endpoint.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
@@ -254,6 +255,13 @@ async function main(opts?: { host?: string; port?: number; tokenFile?: string })
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
+  // wave2 远程化：FileEndpoint（HTTP /file + signUrl HMAC）。依赖 sessionService（取活跃 cwd 作白名单前缀）
+  // + tokenManager（与 WS 认证同源签名），故在此 Phase 创建（sessionService 刚 new 完）。
+  // server 构造时 sessionService 尚未存在，故 fileEndpoint 经 setFileEndpoint 延迟绑定：
+  //   - HTTP 路由侧：conn.setFileEndpoint（start 监听前生效，回调读 this.fileEndpoint 非构造期捕获）
+  //   - RPC 侧：setServices 时读 this.fileEndpoint 注入 FileMessageHandler（file.signUrl）
+  const fileEndpoint = createFileEndpoint({ tokenManager, sessionService, bindHost: host })
+  server.setFileEndpoint(fileEndpoint)
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
   const gitService = new GitService({ sessionService, executor: new GitExecutor() })

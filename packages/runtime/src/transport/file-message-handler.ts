@@ -18,12 +18,15 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { IFileService } from '../interfaces.js'
+import type { FileEndpoint } from './file-endpoint.js'
 import { FileError } from '../services/file-error.js'
 import { sendHandlerError } from './handler-utils.js'
 
 /** File handler 的上下文（extends 共享发消息契约 + 领域依赖） */
 export interface FileHandlerContext extends MessageHandlerContext {
   fileService: IFileService
+  /** wave2 远程化：file.signUrl 走 FileEndpoint（HTTP 端点 + HMAC 签名）。 */
+  fileEndpoint: FileEndpoint
 }
 
 export class FileMessageHandler {
@@ -42,6 +45,7 @@ export class FileMessageHandler {
     'file.write.create',
     'file.write.rename',
     'file.write.delete',
+    'file.signUrl',
   ]
 
   async handleFileMessage(msg: ClientMessage, ws: WsType): Promise<void> {
@@ -86,6 +90,18 @@ export class FileMessageHandler {
           return this.ctx.reply(ws, msg.id, 'file.read:result', { content: result.content, truncated: result.truncated, path })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId ?? '', e)
+        }
+      }
+      case 'file.signUrl': {
+        // wave2 远程化：为文件路径签发临时可访问的 HTTP URL（替代 renderer local-file://）。
+        // 委托 FileEndpoint.signUrl（HMAC 签名 + realpath）；失败转 file_failed。
+        // sessionId 传空串（file.signUrl 无 session 语义，签名 URL 自带白名单守门）。
+        const { path } = msg.payload
+        try {
+          const result = await this.ctx.fileEndpoint.signUrl(path)
+          return this.ctx.reply(ws, msg.id, 'file.signUrl:result', result)
+        } catch (e) {
+          return this.sendFileError(ws, msg.id, '', e)
         }
       }
       case 'file.write.create': {

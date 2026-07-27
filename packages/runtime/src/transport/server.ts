@@ -29,6 +29,7 @@ import { FileMessageHandler } from './file-message-handler.js'
 import { WorkspaceMessageHandler } from './workspace-message-handler.js'
 import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import { TerminalMessageHandler } from './terminal-message-handler.js'
+import type { FileEndpoint } from './file-endpoint.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
@@ -47,6 +48,18 @@ export class RuntimeServer implements IMessageBroker {
   private pluginService!: IPluginService
   private gitService?: GitService
   private fileService?: FileService
+  /** wave2 远程化：HTTP /file 端点（可选，connOpts.fileEndpoint 透传；setServices 时注入 file handler）。 */
+  private fileEndpoint?: FileEndpoint
+
+  /**
+   * wave2 远程化：延迟绑定 fileEndpoint（sessionService 在本类构造后才创建，
+   * fileEndpoint 依赖它）。透传给 ConnectionManager.setFileEndpoint（HTTP 路由）。
+   * 必须在 setServices（注入 FileMessageHandler RPC 侧）+ start（HTTP 监听）前调用。
+   */
+  setFileEndpoint(ep: FileEndpoint): void {
+    this.fileEndpoint = ep
+    this.conn.setFileEndpoint(ep)
+  }
   /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
   private skillRegistry?: SkillRegistry
 
@@ -79,7 +92,9 @@ export class RuntimeServer implements IMessageBroker {
     this.projectRoot = projectRoot ?? process.cwd()
     // ConnectionManager 注入回调：连接建立 → broker 推送 initial state；
     // 消息到达 → server.handleMessage 路由；解析/兜底错误 → broker.sendError。
-    // connOpts 透传 host/tokenManager/serverVersion；缺省时 ConnectionManager 内部解析默认值。
+    // connOpts 透传 host/tokenManager/serverVersion/fileEndpoint；缺省时 ConnectionManager 内部解析默认值。
+    // fileEndpoint 由本类持引用，setServices 时注入 FileMessageHandler（RPC 侧 signUrl）。
+    this.fileEndpoint = connOpts?.fileEndpoint
     this.conn = new ConnectionManager(port, {
       onConnect: (ws) => this.broker.sendInitialState(ws),
       onMessage: (msg, ws) => this.handleMessage(msg, ws),
@@ -176,9 +191,13 @@ export class RuntimeServer implements IMessageBroker {
       })
     }
     if (this.fileService) {
+      // wave2：FileMessageHandler 同时处理 file.read/tree/write.*（依赖 fileService）和
+      // file.signUrl（依赖 fileEndpoint）。组合根 index.ts 保证两者同时装配；
+      // fileEndpoint 缺省（如未配置远程模式）时 file.signUrl case 会运行时报错（极少数 dev 场景）。
       this.fileMessageHandler = new FileMessageHandler({
         ...messaging,
         fileService: this.fileService,
+        fileEndpoint: this.fileEndpoint!,
       })
     }
     if (workspace) {
