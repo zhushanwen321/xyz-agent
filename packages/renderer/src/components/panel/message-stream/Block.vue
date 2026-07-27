@@ -20,13 +20,13 @@
         <ChevronRight class="size-2.5 shrink-0 transition-transform text-neutral-dim" :class="thinkingExpanded ? 'rotate-90' : ''" />
         <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
         <span class="shrink-0 whitespace-nowrap">{{ t('panel.message.thinkingBlock') }}</span>
-        <!-- streaming 进行中：icon 同行内联显示内容（plain text，快速可读） -->
+        <!-- streaming 展开中：内容在 icon 同行继续，不换行 -->
         <span v-if="working && thinkingExpanded" class="ml-0.5 min-w-0 truncate text-neutral-dim">{{ previewText }}</span>
         <!-- 收起态：预览摘要 -->
         <span v-else-if="!thinkingExpanded" class="ml-0.5 min-w-0 truncate text-neutral-dim">· {{ previewText }}</span>
       </div>
       <!-- 非 working 展开态：完整 markdown 渲染（streaming 结束后用户手动展开） -->
-      <div v-if="!working && thinkingExpanded" class="trace-think-body mt-1 pl-[18px] text-[12px] leading-relaxed text-neutral-mid">
+      <div v-if="!working && thinkingExpanded" class="trace-think-body mt-0.5 text-[12px] leading-relaxed text-neutral-mid">
         <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
       </div>
     </div>
@@ -64,11 +64,21 @@
           <span class="min-w-0 truncate text-neutral-dim">· {{ workflowName }}</span>
         </div>
         <template v-if="toolExpanded">
-          <!-- workflow 详情区 3 态：① __gui__→GuiComponentRenderer（list-tree）；② output 文本→AnsiText/纯文本；③ 都无→只 header -->
-          <div v-if="result" class="mt-1 pl-[18px] text-[12px] leading-snug text-neutral-mid select-text">
+          <!-- workflow 详情区：3 态渲染 + 复制按钮 overlay -->
+          <div v-if="result" class="group/result relative mt-1 text-[12px] leading-snug text-neutral-mid select-text">
             <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
             <AnsiText v-else-if="outputRaw" :content="outputRaw" />
             <span v-else class="whitespace-pre-wrap">{{ result }}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="absolute top-0 right-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+              :title="t('panel.message.copy')"
+              @click.stop="copy(result, `tool-${tool!.id}`)"
+            >
+              <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
+              <CopyIcon v-else class="size-3" />
+            </Button>
           </div>
         </template>
       </div>
@@ -77,7 +87,7 @@
       <div v-else>
         <div
           data-testid="tool-block-header"
-          class="tool-header group flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[12.5px] font-medium transition-opacity hover:opacity-80"
+          class="tool-header flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[12.5px] font-medium transition-opacity hover:opacity-80"
           :class="toolStatusClass"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
@@ -91,29 +101,17 @@
           <!-- 状态指示：completed 显 Check（中性），failed 由 AlertTriangle 表达不重复，running 由 loader 表达 -->
           <Check v-if="!isFailed && !isRunning && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
           <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-neutral-dim whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
-          <!-- 操作按钮区：copy + terminal（hover 显示） -->
-          <div class="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-            <button
-              v-if="result"
-              class="rounded-sm p-0.5 text-neutral-dim hover:text-neutral-fg"
-              :title="t('panel.message.copy')"
-              @click.stop="copy(result, `tool-${tool!.id}`)"
-            >
-              <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
-              <CopyIcon v-else class="size-3" />
-            </button>
-            <Button
-              v-if="isBash && !isRunning && sessionId"
-              variant="ghost"
-              size="icon"
-              data-testid="tool-run-in-terminal"
-              class="size-5 rounded-sm p-0 text-neutral-dim hover:text-accent"
-              :title="t('panel.terminal.runInTerminal')"
-              @click.stop="runInTerminal"
-            >
-              <TerminalIcon class="size-3" />
-            </Button>
-          </div>
+          <Button
+            v-if="isBash && !isRunning && sessionId"
+            variant="ghost"
+            size="icon"
+            data-testid="tool-run-in-terminal"
+            class="ml-auto size-5 shrink-0 rounded-sm p-0 text-neutral-dim hover:text-accent"
+            :title="t('panel.terminal.runInTerminal')"
+            @click.stop="runInTerminal"
+          >
+            <TerminalIcon class="size-3" />
+          </Button>
         </div>
         <template v-if="toolExpanded">
           <!-- 补充细节条：失败错误摘要 + 行数/字符数 + 耗时。对齐 subagent 展开体信息架构 -->
@@ -128,15 +126,26 @@
               }"
             >{{ item.text }}</span>
           </div>
-          <!-- 结果区：failed 默认中性灰（border-l-2 border-neutral-faint），hover 染 warn；其余中性 mid -->
-          <div
-            v-if="result"
-            class="tool-result mt-1 font-mono text-[12px] leading-snug whitespace-pre-wrap border-l-2 pl-[18px] select-text"
-            :class="isFailed ? 'border-neutral-faint text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'border-neutral-faint text-neutral-mid'"
-          >
-            <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
-            <AnsiText v-else-if="outputRaw" :content="outputRaw" />
-            <span v-else>{{ result }}</span>
+          <!-- 结果区：failed 默认中性灰，hover 染 warn；复制按钮 overlay 在右上角 -->
+          <div v-if="result" class="group/result relative mt-1">
+            <div
+              class="tool-result font-mono text-[12px] leading-snug whitespace-pre-wrap border-l-2 border-neutral-faint pl-2 select-text"
+              :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
+            >
+              <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
+              <AnsiText v-else-if="outputRaw" :content="outputRaw" />
+              <span v-else>{{ result }}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="absolute top-0 right-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+              :title="t('panel.message.copy')"
+              @click.stop="copy(result, `tool-${tool!.id}`)"
+            >
+              <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
+              <CopyIcon v-else class="size-3" />
+            </Button>
           </div>
         </template>
       </div>

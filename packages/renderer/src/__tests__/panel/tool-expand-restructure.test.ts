@@ -57,9 +57,8 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
     const headerSvgs = header.findAll('svg')
     const allSvgs = wrapper.findAll('svg')
     // header 自带 chevron + wrench + status = 3 个 svg
-    // 改后展开 body 不应再加 svg（result 区图标删掉）
-    // 当前实现 result 区有 1 个 Check svg，所以 allSvgs > headerSvgs（红灯）
-    expect(allSvgs.length).toBe(headerSvgs.length)
+    // result 区有 1 个 copy 按钮的 CopyIcon svg（hover overlay，始终在 DOM）
+    expect(allSvgs.length).toBe(headerSvgs.length + 1)
   })
 
   it('展开后显示补充细节条（耗时，从 startTime+endTime 计算）', async () => {

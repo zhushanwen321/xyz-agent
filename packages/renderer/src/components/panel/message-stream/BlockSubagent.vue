@@ -7,9 +7,9 @@
     - sync 模式 header 滚动进度（currentTool/turn/tokens）。
     - failed：错误摘要进 body 文本（中性灰 border-l），hover 染 warn（不再鲜红）。
   -->
-  <div class="trace-subagent pl-[14px] border-b border-dashed border-border pb-2.5 mb-0.5" data-testid="subagent-block">
+  <div class="trace-subagent border-b border-dashed border-border pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
-      class="group flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium transition-opacity hover:opacity-80"
+      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
       :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
       @click="toggleTool"
@@ -31,16 +31,6 @@
         <Check class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
       </template>
       <span v-else-if="isUnfinished" class="ml-0.5 whitespace-nowrap text-neutral-dim">{{ t('panel.message.noResult') }}</span>
-      <!-- copy 按钮（hover 显示） -->
-      <button
-        v-if="result"
-        class="ml-auto shrink-0 rounded-sm p-0.5 text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover:opacity-100"
-        :title="t('panel.message.copy')"
-        @click.stop="copy(result, `subagent-${tool.id}`)"
-      >
-        <Check v-if="copied === `subagent-${tool.id}`" class="size-3 text-success" />
-        <CopyIcon v-else class="size-3" />
-      </button>
     </div>
     <template v-if="toolExpanded">
       <!-- sync 模式：progress 快照详情（toolCount/turn/tokens/duration）+ 最终输出 -->
@@ -51,19 +41,30 @@
         <span v-if="subagentProgressDetail.durationMs != null">{{ formatDuration(subagentProgressDetail.durationMs) }}</span>
         <span v-if="subagentProgressDetail.currentTool" class="truncate text-neutral-mid">→ {{ subagentProgressDetail.currentTool }}</span>
       </div>
-      <!-- 最终输出：failed 默认中性灰（border-l-2 border-neutral-faint），hover 染 warn；其余中性 mid -->
-      <div
-        v-if="result"
-        class="subagent-result mt-1 select-text border-l-2 pl-2 font-mono text-[12px] leading-snug"
-        :class="isFailed ? 'border-neutral-faint text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'border-neutral-faint text-neutral-mid'"
-      >
-        <template v-if="parsedSubagentOutput">
-          <span class="whitespace-pre-wrap">{{ parsedSubagentOutput.summary }}</span>
-          <div v-if="parsedSubagentOutput.stats.length" class="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-neutral-dim">
-            <span v-for="(stat, i) in parsedSubagentOutput.stats" :key="i">{{ stat }}</span>
-          </div>
-        </template>
-        <span v-else class="whitespace-pre-wrap select-text">{{ result }}</span>
+      <!-- 最终输出：复制按钮 overlay 在右上角 -->
+      <div v-if="result" class="group/result relative mt-1">
+        <div
+          class="subagent-result select-text border-l-2 border-neutral-faint pl-2 font-mono text-[12px] leading-snug"
+          :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
+        >
+          <template v-if="parsedSubagentOutput">
+            <span class="whitespace-pre-wrap">{{ parsedSubagentOutput.summary }}</span>
+            <div v-if="parsedSubagentOutput.stats.length" class="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-neutral-dim">
+              <span v-for="(stat, i) in parsedSubagentOutput.stats" :key="i">{{ stat }}</span>
+            </div>
+          </template>
+          <span v-else class="whitespace-pre-wrap select-text">{{ result }}</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="absolute top-0 right-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+          :title="t('panel.message.copy')"
+          @click.stop="copy(result, `subagent-${tool.id}`)"
+        >
+          <Check v-if="copied === `subagent-${tool.id}`" class="size-3 text-success" />
+          <CopyIcon v-else class="size-3" />
+        </Button>
       </div>
     </template>
   </div>
@@ -76,6 +77,7 @@ import { Copy as CopyIcon, ChevronRight, Check } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
 import { formatTokens, formatDuration } from './format-utils'
+import { Button } from '@/components/ui/button'
 import { useCopy } from '@/composables/effects/useCopy'
 
 const { t } = useI18n()

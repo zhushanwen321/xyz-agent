@@ -114,8 +114,7 @@ describe('W2TC3: BlockSubagent failed 态（Demo H hover warn）', () => {
     expect(root.exists()).toBe(true)
     expect(root.classes()).not.toContain('border-danger')
     expect(root.classes()).not.toContain('bg-danger-soft')
-    // Demo H 去卡片化：左缩进 + 底部 dashed（Tailwind classes）
-    expect(root.classes()).toContain('pl-[14px]')
+    // Demo H 去卡片化：底部 dashed 分割线（左对齐，无缩进）
     expect(root.classes()).toContain('border-b')
   })
 })
