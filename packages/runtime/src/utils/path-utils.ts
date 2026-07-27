@@ -9,6 +9,7 @@
  * config-service / skill-dir-config / pi-provider-store 各自复制了同一份逻辑，
  * 注释自承「与 scanner-base.expandHome 对齐」。现统一自此 import。
  */
+import { realpathSync } from 'node:fs'
 import { relative, resolve, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -66,4 +67,15 @@ export function extractRepoName(url: string): string {
   const last = parts[parts.length - 1] ?? ''
   const name = last.endsWith(GIT_SUFFIX) ? last.slice(0, -GIT_SUFFIX.length) : last
   return name || 'repo'
+}
+
+/** 规范化路径为 realpath（解析符号链接）。
+ *  realpathSync 失败（文件不存在/权限）时返回原值，不抛异常。
+ *  用于 extension 去重 key 计算等需要稳定唯一路径的场景。 */
+export function canonicalizePath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
 }

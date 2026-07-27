@@ -9,7 +9,7 @@
   -->
   <Dialog :open="open" @update:open="requestClose">
     <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
-    <DialogContent hide-close class="flex max-w-[780px] flex-col overflow-hidden p-0">
+    <DialogContent hide-close class="flex max-h-[85vh] max-w-[780px] flex-col overflow-hidden p-0">
       <!-- 标题栏。DialogTitle/DialogDescription 给 reka-ui a11y context（视觉用自绘 span） -->
       <div class="flex items-center justify-between border-b border-border px-5 py-4">
         <DialogTitle class="text-[15px] font-semibold text-neutral-fg">{{ provider ? t('settings.providerEdit.editTitle') : t('settings.providerEdit.addTitle') }}</DialogTitle>
@@ -43,10 +43,12 @@
                 <SelectValue :placeholder="t('settings.providerEdit.selectTypePlaceholder')" />
               </SelectTrigger>
               <SelectContent>
-                <!-- value 严格对齐 PROVIDER_API_TYPES（pi 终值，runtime 不再翻译别名）。
-                     pi 不支持 ollama 作为 api 标识：本地 ollama 用 OpenAI Compatible + baseUrl=http://localhost:11434 即可。 -->
-                <SelectItem value="anthropic-messages">Anthropic Messages</SelectItem>
-                <SelectItem value="openai-completions">OpenAI Compatible</SelectItem>
+                <!-- value 严格对齐 pi 支持的 api 终值（KNOWN_PI_API_TYPES）。
+                     pi 不支持 ollama 作为 api 标识：本地 ollama 用 OpenAI Compatible + baseUrl=http://localhost:11434 即可。
+                     openai-responses 透传 RESPONSES_COMPAT_FIELDS（compat-fields.ts），不可省否则死代码。 -->
+                <SelectItem value="anthropic-messages">{{ t('settings.providerEdit.apiAnthropic') }}</SelectItem>
+                <SelectItem value="openai-completions">{{ t('settings.providerEdit.apiOpenai') }}</SelectItem>
+                <SelectItem value="openai-responses">{{ t('settings.providerEdit.apiOpenaiResponses') }}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -323,6 +325,7 @@ const {
   saving,
   actionError,
   isDirty,
+  expandedCompat,
   getStrategyFromMap,
   testConnection,
   autoDiscover,
@@ -334,6 +337,7 @@ const {
   pickStrategy,
   addModel,
   removeModel,
+  toggleCompatExpand,
   // W3 D7：headers CRUD
   addHeader,
   removeHeader,
@@ -350,6 +354,10 @@ provide('modelListDeps', {
   pickStrategy,
   getStrategyFromMap,
   removeModel,
+  expandedCompat,
+  toggleCompatExpand,
+  // provider 级 api：model 级 api 缺失时的回退（compat 字段集 + 预设按钮按 api 类型过滤）
+  providerApi: computed(() => form.api),
 })
 
 // ── D13：取消/关闭统一入口，有未保存改动时二次确认 ──

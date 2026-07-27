@@ -166,14 +166,18 @@ const props = defineProps<{
   streaming?: boolean
   /** 所属 session（透传给 MarkdownRenderer 供文件路径打开 DetailPane 用） */
   sessionId?: string | null
+  /** 强制展开（merged 卡片场景：外层已折叠，内层 Block 不应再各自收起）。
+   *  true 时 thinking/tool 强制展开且不可手动收，与 working 态语义一致但独立于 working
+   *  （working 绑定 session 进行中，forceExpand 绑定外层折叠容器展开）。 */
+  forceExpand?: boolean
 }>()
 
 /* ── thinking 折叠：working 态强制展开且不可收（draft §1）；非 working 由本地态 toggle ── */
 const thinkingCollapsed = ref(props.collapsed ?? true)
-const thinkingExpanded = computed(() => props.working || !thinkingCollapsed.value)
+const thinkingExpanded = computed(() => props.working || props.forceExpand || !thinkingCollapsed.value)
 
 function toggleThinking(): void {
-  if (props.working) return
+  if (props.working || props.forceExpand) return
   thinkingCollapsed.value = !thinkingCollapsed.value
 }
 
@@ -274,9 +278,10 @@ const guiComponent = computed<GuiComponent | undefined>(() => {
  * 仅 failed 强制展开（错误须直视，不可收起）。
  */
 const toolCollapsed = ref(true)
-const toolExpanded = computed(() => isFailed.value || !toolCollapsed.value)
+const toolExpanded = computed(() => isFailed.value || props.forceExpand || !toolCollapsed.value)
 
 function toggleTool(): void {
+  if (props.forceExpand) return
   toolCollapsed.value = !toolCollapsed.value
 }
 

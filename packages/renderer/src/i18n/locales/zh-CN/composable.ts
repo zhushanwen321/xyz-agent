@@ -5,6 +5,7 @@ export default {
   nextTurnSendFailed: '下轮消息发送失败：{msg}',
   stopFailed: '停止失败：{msg}',
   compactFailed: '压缩失败：{msg}',
+  bashFailed: 'Bash 执行失败：{msg}',
   providerNameRequired: '供应商名称不能为空',
   duplicateHeaderKey: '存在重复的 header key，将以最后出现的值为准',
   modelNameRequired: '模型名称不能为空',

@@ -54,12 +54,18 @@
             @edit-state-change="onEditStateChange(vi.idx, $event.editing)"
           />
           <BgNotifyCard v-else-if="vi.item.message.bgNotify" :message="vi.item.message" />
+          <!-- bash 执行结果气泡（composer-bash-execute W3）：role:'system' + bashExecution -->
+          <BashOutputBlock
+            v-else-if="vi.item.message.bashExecution"
+            :message="vi.item.message"
+            :session-id="sessionId"
+          />
           <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
           <div
-            v-else-if="getGuiComponent(vi.item.message)"
+            v-else-if="extractGuiComponent(vi.item.message)"
             class="py-1 pl-1 font-mono text-[12px] leading-snug text-neutral-fg"
           >
-            <GuiComponentRenderer :component="getGuiComponent(vi.item.message)!" />
+            <GuiComponentRenderer :component="extractGuiComponent(vi.item.message)!" />
           </div>
           <SystemNotice v-else :message="vi.item.message" />
         </div>
@@ -149,6 +155,18 @@
         <ChevronDown class="size-4" />
       </Button>
     </Transition>
+
+    <!-- TurnRail（w4 wave IF4）：右侧导航 rail，hover 弹出 turn 列表 + viewport indicator。
+         纯展示组件，展开态/activeTurnIndex/事件全路由到此层（useTurnExpansion 与 Turn.vue 共享）。 -->
+    <TurnRail
+      :turns="railTurns"
+      :active-turn-index="activeTurnIndex"
+      :session-active="isSessionActive"
+      :panel-right-edge="panelRightEdge"
+      :expanded-turns="expandedTurns"
+      @jump="onJump"
+      @toggle="onToggle"
+    />
   </div>
 </template>
 
@@ -169,15 +187,17 @@ import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubage
 import Turn from './message-stream/Turn.vue'
 import SystemNotice from './message-stream/SystemNotice.vue'
 import BgNotifyCard from './message-stream/BgNotifyCard.vue'
+import BashOutputBlock from './message-stream/BashOutputBlock.vue'
 import GuiComponentRenderer from './message-stream/GuiComponentRenderer.vue'
+import TurnRail from './message-stream/TurnRail.vue'
 import ForkNotice from './ForkNotice.vue'
-import type { GuiComponent } from '@xyz-agent/extension-protocol'
-import { extractGui } from '@xyz-agent/extension-protocol'
-import { type Message } from '@xyz-agent/shared'
+import { extractGuiComponent } from '@/composables/logic/guiComponent'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
 import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
+import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
+import { useStreamingPin } from '@/composables/panel/useStreamingPin'
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
@@ -192,14 +212,10 @@ const { t } = useI18n()
 const chat = useChatStore()
 const subagentStore = useSubagentStore()
 
-/** W4 H4：加载更多历史 loading 状态 + handler（封装进 useLoadMoreHistory） */
+/** W4 H4：加载更多历史 loading 状态 + handler（封装进 useLoadMoreHistory）。 */
 const { loadingMore, showLoadMore, handleLoadMore } = useLoadMoreHistory(() => props.sessionId)
 
-/**
- * 当前 session 的消息（响应式）。
- * 直接读 messages ref 的 Map.get 建立对 Map 的依赖（storeToRefs 等价），
- * appendUser/applyMessageEvent 的 Map.set 触发更新。
- */
+/** 当前 session 的消息（直接 Map.get 建立 Map 依赖，storeToRefs 等价；Map.set 触发更新）。 */
 const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
 
 /** subagent 虚拟 session running 时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。 */
@@ -208,14 +224,12 @@ const forceWorking = computed(() => {
   return subagentStore.isRunning(extractMainSessionId(props.sessionId), extractSubagentId(props.sessionId))
 })
 
-/** session 级「对话进行中」信号（CW wave session-active-ssot T4）：驱动 Turn 的 sticky/折叠 disabled/
- *  trace 展开/完成收起等「进行中」UI。逻辑提取至 useSessionActive composable（行数规范 + 复用）。
- *  ask-user 期间（waiting 态）或 subagent 后台跑（working 态）都保持 true → 对话流不收起（M3 修复）。 */
+/** session 级「对话进行中」信号（session-active-ssot T4）：驱动 Turn sticky/折叠 disabled/trace 展开等。
+ *  ask-user（waiting）或 subagent 后台跑（working）都保持 true → 对话流不收起（M3 修复）。 */
 const isSessionActive = useSessionActive(computed(() => props.sessionId), forceWorking)
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。
- *  先用 filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0035，读 pi CustomMessage.display
- *  字段非黑名单），再转渲染项。 */
+ *  filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0035，读 display 字段非黑名单）。 */
 const renderItems = computed(() =>
   toRenderItems(filterDisplayableMessages(currentMessages.value), forceWorking.value),
 )
@@ -229,25 +243,14 @@ const lastRenderTurn = computed(() => {
   return null
 })
 
-/**
- * 虚拟滚动（W3）：窗口化渲染，视口外 turn 不挂载，长对话 DOM 从 O(N) 降到 O(视口可见)。
- * items getter 返回完整 renderItems（含 turn + system）；高度缓存键用首消息 id（防 truncateFrom 张冠李戴）。
- * ── 像素常量与 DOM 强绑定（B2）──
- * 高度常量直接参与 absolute 定位 top，依赖模板对应 DOM 块真实高度；改 padding/字号/icon 必须同步，
- * 否则定位静默漂移（dev-only assertConstantHeights 见下方会实测对比并 console.warn）。
- * COMPACTING_NOTICE_HEIGHT / HANDOFF_NOTICE_HEIGHT 已下沉到 useMessageStreamNotices。
- */
-/** 虚拟滚动估算高度（未实测 turn 的初始高度经验值；ResizeObserver 上报实测值后即被替换）。 */
+/** 虚拟滚动（W3）：窗口化渲染，视口外 turn 不挂载，长对话 DOM 从 O(N) 降到 O(可见)。
+ *  items getter 返回完整 renderItems；高度缓存键用首消息 id（防 truncateFrom 张冠李戴）。
+ *  像素常量（B2）强绑 DOM：直接参与 abs 定位 top，改 padding/字号/icon 必须同步，否则定位静默漂移
+ *  （dev-only assertConstantHeights 实测对比并 warn）。COMPACTING/HANDOFF_HEIGHT 已下沉到 notices。 */
 const ESTIMATED_TURN_HEIGHT = 200
 /** 虚拟滚动上下 buffer turn 数（快速滚动时预渲染视口外的 turn，防白屏） */
 const VIRTUAL_BUFFER_TURNS = 2
-/**
- * load-more 按钮预留高度。
- * 强绑定 DOM：模板 load-more 块（abs top=0，`flex justify-center py-2` 内含 `Button size="sm"`）。
- *   实际高度 = Button(h-8=32px) + py-2(8px*2=16px) ≈ 48px；常量取 44 是历史值（略偏小，
- *   topOffset 给 turn 留的避让空间略紧但未致遮挡，保持现状避免引入定位回归）。
- *   若改 Button size / py-* / icon size，必须重测并同步此常量（dev 断言会提醒）。
- */
+/** load-more 按钮预留高度（B2 强绑 DOM：Button h-8 + py-2 ≈ 48px，取 44 为历史值，避免定位回归）。 */
 const LOAD_MORE_RESERVED_HEIGHT = 44
 
 const virtualList = useVirtualTurnList({
@@ -256,22 +259,15 @@ const virtualList = useVirtualTurnList({
   estimatedHeight: () => ESTIMATED_TURN_HEIGHT,
   buffer: () => VIRTUAL_BUFFER_TURNS,
 })
-const { totalHeight, visibleRange, offsetOf } = virtualList
+const { totalHeight, visibleRange, offsetOf, pinStreaming } = virtualList
 
-/**
- * load-more 按钮占的顶部预留高度：显示 load-more 且有 turns 时为 LOAD_MORE_RESERVED_HEIGHT，
- * 否则 0。所有 turn 的 abs 定位 top = offsetOf(idx) + topOffset，load-more 按钮 abs 定位 top=0，
- * 两者在垂直方向不重叠（修复 load-more 被首条 turn 遮挡的 BLOCKER）。
- */
+/** load-more 顶部预留高度：显示且有 turns 时为 LOAD_MORE_RESERVED_HEIGHT，否则 0。
+ *  turn abs top = offsetOf(idx) + topOffset，与 load-more（top=0）垂直不重叠（修 load-more 被遮挡 BLOCKER）。 */
 const topOffset = computed(() =>
   showLoadMore.value && renderItems.value.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0,
 )
 
-/**
- * B2 dev-only 常量高度漂移检测：绑定对应 DOM 块，ResizeObserver 实测高度 vs 像素常量，
- * 不匹配时 console.warn（提示 padding/字号/icon 改动未同步常量）。生产构建被 import.meta.env.DEV
- * 守卫裁剪，零运行时开销。逻辑封装在 useConstantHeightAssert，此处只注册常量并取回 ref 绑模板。
- */
+/** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。 */
 const [loadMoreEl, compactingNoticeEl] = useConstantHeightAssert([
   { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
   { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
@@ -293,11 +289,8 @@ provideTurnResizeRegistry({
   reportHeight: (key, h) => virtualList.reportHeight(key, h),
 })
 
-/**
- * 末尾瞬时块（compacting/handoff/dispatching）的状态 computed + 垂直堆叠定位 + 取消 handler
- * 聚合到 useMessageStreamNotices（M2 + fast-handoff）。内部委托 useNoticeStack 做堆叠计算，
- * 消除占位叠加的三处重复计算（reviewer m4）。顺序（自上而下）：compacting → handoff → dispatching → fork 行。
- */
+/** 末尾瞬时块（compacting/handoff/dispatching）状态 + 垂直堆叠定位 + 取消 handler（M2 + fast-handoff）。
+ *  内部委托 useNoticeStack 消除占位叠加重复计算（reviewer m4）。顺序：compacting → handoff → dispatching → fork 行。 */
 const {
   isCompacting,
   isHandingOff,
@@ -315,7 +308,7 @@ const {
 })
 
 /** ForkNotice 反馈行（transient，RV1）：feed 消费 + 定位 + 交互封装在 useForkNoticeStream。
- *  [M2] 注入 useMessageStreamNotices 的 forkNoticeBaseTop（消除占位叠加重复计算）。 */
+ *  [M2] 注入 forkNoticeBaseTop 消除占位叠加重复计算。 */
 const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
   useForkNoticeStream(() => props.sessionId, {
     totalHeight,
@@ -329,15 +322,6 @@ const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkN
     injectedBaseTop: forkNoticeBaseTop,
   })
 
-/**
- * 从 system 消息的 details.__gui__ 提取结构化渲染组件（extension GUI 协议 E5）。
- * customStart 把含 __gui__ 的 details 存进 system 消息；无 __gui__ 返回 undefined，
- * 由模板落回 SystemNotice 纯文本兜底。封装为函数避免模板里重复调用 extractGui。
- */
-function getGuiComponent(message: Message): GuiComponent | undefined {
-  return extractGui(message.details)?.component
-}
-
 /** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话） */
 const lastUserTurnIdx = computed(() => {
   for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
@@ -349,44 +333,46 @@ const lastUserTurnIdx = computed(() => {
 
 /**
  * editing 钉扎（SR5，B9）：编辑中的 turn 滚出视口会卸载丢失 Turn.vue 的 draftText。
- * Turn.vue watch isEditingThisUser 变化时 emit edit-state-change，据此钉住（editing=true）
- * 或释放（editing=false）该 turn 在窗口内。编辑只发生在 lastUserTurn，idx 即其数组下标。
+ *  据此钉住（editing=true）/释放（editing=false）该 turn 在窗口内。编辑只发生在 lastUserTurn。
  */
 function onEditStateChange(idx: number, editing: boolean): void {
   virtualList.pinEditing(editing ? idx : -1)
 }
 
-/**
- * auto-scroll：stickToBottom guard —— 非贴底时不强制拉回。
- * showJumpButton 驱动「回到底部」浮层显隐（= !stickToBottom，修复 W3：点击后上滑按钮重现）。
- * contentEl 绑定内容 wrapper，供 useChatScroll 的 ResizeObserver 观察异步渲染抖动。
- * 注：useChatScroll 仍导出 unreadBelow（标记下方有未读新内容），本组件暂未使用故不解构。
- */
+/** streaming 钉扎（W3，对齐 editing 钉扎 SR5）：streaming turn 不能滚出视口顶（RO 会断开高度更新）。
+ *  watch 最后一个 turn 的 isStreaming 驱动 pinStreaming，逻辑在 useStreamingPin。 */
+useStreamingPin({ items: renderItems, pinStreaming, sessionId: () => props.sessionId })
+
+/** auto-scroll stickToBottom guard：非贴底不强制拉回。showJumpButton 驱动「回到底部」浮层（= !stickToBottom）。
+ *  contentEl 供 useChatScroll 的 ResizeObserver 观察异步渲染抖动。 */
 const { scrollEl, contentEl, stickToBottom, showJumpButton, onScroll, scrollToBottom, pauseStickGuard, resumeStickGuard } = useChatScroll()
-// session 切换 settling 窗口（详见 useSettlingGuard）：settling 期间 delta watch 跳过施加，让 scrollToBottom 贴底
+// session 切换 settling 窗口（详见 useSettlingGuard）：settling 期间 delta watch 跳过施加
 const { settling, startSettling } = useSettlingGuard()
 
-/**
- * provide stick guard pause/resume 给 Turn.vue（trace 折叠 transition 期间暂停 onScroll 误判）。
- * Turn.vue inject 后在 <Transition> 的 @before-leave / @leave-done 时调用。
- */
+/* TurnRail（w4 wave IF4）：状态 + 事件路由下沉 useMessageStreamRail（script ≤300 行规范）。
+   railTurns 派生自 renderItems；rail 内部调 useTurnExpansion（与 Turn.vue 各自 per-instance Map，w1 设计）。 */
+const rail = useMessageStreamRail({
+  sessionId: computed(() => props.sessionId),
+  renderItems,
+  scrollEl,
+  offsetOf,
+  topOffset,
+})
+const { railTurns, activeTurnIndex, panelRightEdge, expandedTurns, onJump, onToggle } = rail
+
+/** provide stick guard pause/resume 给 Turn.vue（trace 折叠 transition 期间暂停 onScroll 误判）。 */
 provideStickGuard({ pause: pauseStickGuard, resume: resumeStickGuard })
 
-/**
- * scroll 事件聚合 handler：useChatScroll.onScroll 维护 stickToBottom（贴底判定），
- * virtualList.onScrollUpdate 把 DOM scrollTop/clientHeight 同步进响应式 ref 驱动
- * visibleRange 失效重算（纯滚动场景下窗口跟随收敛，修复 liveComputed 假 computed 的 BLOCKER）。
- */
+/** scroll 事件聚合 handler：onScroll 维护 stickToBottom；virtualList.onScrollUpdate 把 scrollTop/clientHeight
+ *  同步进响应式 ref 驱动 visibleRange 重算（修 liveComputed 假 computed BLOCKER）；rail 更新 viewport indicator。 */
 function handleScroll(): void {
   onScroll()
   virtualList.onScrollUpdate()
+  rail.updateActiveTurnIndex()
 }
 
-/**
- * scrollEl 挂载后立即同步一次 scrollTop/viewportHeight：virtualList 的 visibleRange 是
- * 真 computed，初始 scrollTop/viewportHeight ref 均为 0，需读 DOM 真值写入 ref 才能让
- * 窗口基于真实视口定位（否则首次渲染窗口按 viewportHeight=0 算，仅末项钉扎撑场）。
- */
+/** scrollEl 挂载后同步一次 scrollTop/viewportHeight：visibleRange 是真 computed，初始 ref 均为 0，
+ *  需读 DOM 真值才能让窗口基于真实视口定位（否则首渲染按 viewportHeight=0 算，仅末项钉扎撑场）。 */
 watch(
   scrollEl,
   (el) => {
@@ -395,11 +381,8 @@ watch(
   { immediate: true },
 )
 
-/**
- * 滚动触发编排（消息/notice 变化 → scrollToBottom）：首次挂载滚到底、消息条数变化、
- * 流式 text 追加、notice（压缩中/正在交接）显隐四类触发，下沉到 useMessageStreamScroll
- * （script setup ≤300 行规范 + 单一变化轴复用）。切换 session 的滚动留在下方（依赖 virtualList + settling）。
- */
+/** 滚动触发编排（消息/notice 变化 → scrollToBottom）：挂载滚到底、消息条数变化、流式 text 追加、
+ *  notice 显隐四类触发，下沉到 useMessageStreamScroll。切换 session 的滚动留在下方（依赖 virtualList + settling）。 */
 useMessageStreamScroll({
   currentMessages,
   lastRenderTurn,
@@ -409,8 +392,7 @@ useMessageStreamScroll({
   scrollToBottom,
 })
 
-// 切换 session → 重置虚拟列表高度缓存（不同 session 键语义不同，复用致错位，SR10/INVAR-8）
-//   + 强制滚到底（展示最新内容，不受 guard）
+// 切换 session → 重置虚拟列表高度缓存（不同 session 键语义不同，复用致错位 SR10/INVAR-8）+ 强制滚到底（展示最新）+ 开 settling
 watch(
   () => props.sessionId,
   () => {
@@ -420,22 +402,18 @@ watch(
   },
 )
 
-// 视口锚定补偿（SR4/INVAR-2）：视口上方 turn 从估算切实测时 scrollTop 需补偿，防用户所见内容跳。
-// reportHeight 累积 delta，此处应用后清零防重复。flush:'post'（W19）保证本帧 rAF flush 已结束、delta 全部累积到位。
-// [fix-scroll-jump-during-streaming] guard：stickToBottom=false（用户上滑脱离）时视口由用户掌控，历史 delta
-// 无意义，跳过施加但仍清零（防陈旧 offset 拉偏）。
+// 视口锚定补偿（SR4/INVAR-2）：上方 turn 从估算切实测时 scrollTop 需补偿防跳。flush:'post'（W19）保证 delta 累积到位。
+// [fix-scroll-jump] guard：贴底态跳过 delta（由 scrollToBottom 统一跟随到底），非贴底态正常补偿。
 watch(
   () => virtualList.scrollAdjustDelta.value,
   (delta) => {
     if (delta !== 0 && scrollEl.value) {
-      // FR1/FR2：stickToBottom=false（用户上滑）或 settling（session 切换首轮）期间跳过施加，仅清零
-      // [fix-scroll-jump] 翻转 guard：贴底态跳过 delta（由 scrollToBottom 统一跟随到底），
-      // 非贴底态正常补偿（保持视口中段内容稳定）。
-      // 旧 guard (stickToBottom && !settling) 在负 delta（trace 收起）时与 scrollToBottom 冲突导致跳变。
+      // FR1/FR2：stickToBottom=false（用户上滑）或 settling 期间跳过施加，仅清零（防陈旧 offset 拉偏）。
+      // [fix-scroll-jump] 翻转 guard：贴底跳过、非贴底补偿。旧 guard (stickToBottom && !settling) 在负 delta（trace 收起）时与 scrollToBottom 冲突致跳变。
       if (!stickToBottom.value && !settling.value) {
         scrollEl.value.scrollTop += delta
       }
-      // 清零，防下次 reportHeight 残留值导致重复补偿（两个分支都清零——FR3 贴底原行为 + FR2 脱离丢弃）
+      // 清零防下次 reportHeight 残留值重复补偿（FR3 贴底原行为 + FR2 脱离丢弃）
       virtualList.scrollAdjustDelta.value = 0
     }
   },

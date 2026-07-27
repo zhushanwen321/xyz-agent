@@ -1,6 +1,6 @@
 {
   "name": "@xyz-agent/electron",
-  "version": "0.8.19",
+  "version": "0.8.28",
   "private": true,
   "description": "AI Agent Desktop Workstation",
   "author": {
@@ -28,6 +28,7 @@
     "@xyz-agent/runtime": "workspace:*",
     "@xyz-agent/shared": "workspace:*",
     "@types/markdown-it-footnote": "^3.0.4",
+    "compare-versions": "^6.1.1",
     "electron-store": "^10",
     "is-glob": "^4.0.3",
     "markdown-it-footnote": "^4.0.0"

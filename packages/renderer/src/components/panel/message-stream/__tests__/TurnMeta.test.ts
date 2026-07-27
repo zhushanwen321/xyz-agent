@@ -5,14 +5,20 @@
  * - W4TC1: badge 灰阶化（thinkCount/toolCount badge 从彩色改为中性灰 bg-surface-2 text-neutral-mid）
  * - W4TC2: sticky + streaming 状态（sessionActive 时 turn-meta sticky，streaming 态文字染 accent）
  *
+ * W1 main-fusion 后：TurnMeta 直接调 useTurnExpansion（共享 store），不再走 expanded prop / update:expanded emit。
+ * 测试需 setActivePinia + 传 turnIndex/sessionId，chevron 展开态通过 store 预置 isExpanded(sid, idx) 驱动。
+ *
  * 运行：cd packages/renderer && npx vitest run src/components/panel/message-stream/__tests__/TurnMeta.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import TurnMeta from '@/components/panel/message-stream/TurnMeta.vue'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
+import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 
 const NOW = Date.now()
+const SID = 'sess-turnmeta-test'
 
 function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
   return {
@@ -31,21 +37,32 @@ function mountMeta(props: {
   isStreaming?: boolean
   thinkCount?: number
   toolCount?: number
+  /** 是否在挂载前预置该 turn 为展开（store 写入），驱动 chevron rotate-90 */
   expanded?: boolean
   elapsed?: string
 }) {
+  const turn = props.turn ?? makeTurn()
+  if (props.expanded) {
+    // 预置 store：让 isExpanded(SID, turn.index) = true（chevron rotate-90 由 store 派生）
+    useTurnExpansion({ value: SID } as never).expand(turn.index)
+  }
   return mount(TurnMeta, {
     props: {
-      turn: props.turn ?? makeTurn(),
+      turn,
       sessionActive: props.sessionActive ?? false,
       isStreaming: props.isStreaming ?? false,
       thinkCount: props.thinkCount ?? 1,
       toolCount: props.toolCount ?? 1,
-      expanded: props.expanded ?? false,
       elapsed: props.elapsed ?? '5s',
+      turnIndex: turn.index,
+      sessionId: SID,
     },
   })
 }
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
 
 describe('W4TC1: TurnMeta badge 灰阶化', () => {
   it('thinkCount badge 使用 bg-surface-2 text-neutral-mid（不再是 bg-reasoning-soft text-reasoning）', () => {
@@ -133,11 +150,14 @@ describe('W4TC2: TurnMeta sticky + streaming 状态', () => {
     expect(wrapper.find('.turn-meta').attributes('disabled')).toBeDefined()
   })
 
-  it('非 sessionActive + hasFoldable → turn-meta 可点击 + emit update:expanded', async () => {
-    const wrapper = mountMeta({ sessionActive: false, expanded: false })
+  it('非 sessionActive + hasFoldable → turn-meta 可点击 + 切换 useTurnExpansion store 展开态', async () => {
+    const turn = makeTurn()
+    const { isExpanded } = useTurnExpansion({ value: SID } as never)
+    expect(isExpanded(turn.index)).toBe(false)
+    const wrapper = mountMeta({ sessionActive: false, turn })
     await wrapper.find('.turn-meta').trigger('click')
-    expect(wrapper.emitted('update:expanded')).toBeTruthy()
-    expect(wrapper.emitted('update:expanded')![0]).toEqual([true])
+    // 点击 → store 内该 turn 变为展开（不再 emit，直接 mutate 共享 store）
+    expect(isExpanded(turn.index)).toBe(true)
   })
 
   it('hasFoldable=false + 非 sessionActive → 无 chevron', () => {
@@ -149,12 +169,12 @@ describe('W4TC2: TurnMeta sticky + streaming 状态', () => {
   })
 
   it('hasFoldable=true + 非 sessionActive → 有 chevron + expanded 时 rotate-90', async () => {
+    // 非 expanded → 无 rotate-90
     const wrapper = mountMeta({ sessionActive: false, expanded: false })
     expect(wrapper.find('.chev').exists()).toBe(true)
-    // 非 expanded → 无 rotate-90
     expect(wrapper.find('.chev').classes()).not.toContain('rotate-90')
-    // expanded → 有 rotate-90
-    await wrapper.setProps({ expanded: true })
-    expect(wrapper.find('.chev').classes()).toContain('rotate-90')
+    // expanded → 有 rotate-90（store 预置展开态驱动）
+    const wrapper2 = mountMeta({ sessionActive: false, expanded: true })
+    expect(wrapper2.find('.chev').classes()).toContain('rotate-90')
   })
 })

@@ -19,7 +19,7 @@
           : 'cursor-pointer hover:text-neutral-fg',
       ]"
       :disabled="sessionActive || !turn.hasFoldable"
-      @click="emit('update:expanded', !expanded)"
+      @click="toggle(turnIndex)"
     >
       <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
       <Loader2 v-if="isStreaming" class="size-3 shrink-0 animate-spin text-accent" />
@@ -31,7 +31,7 @@
       <ChevronRight
         v-if="turn.hasFoldable && !sessionActive"
         class="chev size-[9px] text-neutral-dim transition-transform duration-[var(--duration)] ease-[var(--ease)]"
-        :class="expanded ? 'rotate-90 text-accent' : ''"
+        :class="isExpanded(turnIndex) ? 'rotate-90 text-accent' : ''"
       />
       <!-- H 设计 badge 灰阶化：bg-surface-2 text-neutral-mid 替代 bg-reasoning-soft/bg-info-soft -->
       <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-neutral-mid">
@@ -46,24 +46,31 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Brain, ChevronRight, Loader2, Wrench } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
+import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 
-defineProps<{
+const props = defineProps<{
   turn: MessageTurn
   sessionActive: boolean
   isStreaming: boolean
   thinkCount: number
   toolCount: number
-  expanded: boolean
   elapsed: string
+  /** 当前 turn 在 session 内的序列下标（useTurnExpansion store key） */
+  turnIndex: number
+  /** session id（useTurnExpansion per-session 分区 key） */
+  sessionId: string
 }>()
 
-const emit = defineEmits<{
-  'update:expanded': [value: boolean]
-}>()
+const { isExpanded, toggle } = useTurnExpansion(
+  // 局部 computed：sessionId 是 string prop（非 null），但 useTurnExpansion 期望 Ref<string | null>，
+  // 包一层 computed 保持签名兼容（store 内部 null sid no-op 语义在此场景不触发）。
+  computed(() => props.sessionId ?? null),
+)
 
 const { t } = useI18n()
 </script>

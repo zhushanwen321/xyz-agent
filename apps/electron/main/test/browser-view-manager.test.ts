@@ -292,22 +292,26 @@ describe('BrowserViewManager', () => {
   })
 
   describe('hide / show', () => {
-    it('hide 记录当前 rect 并 setBounds 隐藏；show 恢复 rect', () => {
+    it('hide 从 contentView 移除 view 并 setBounds 隐藏；show 重新挂载并恢复 rect', () => {
       const win = makeWindow()
       const mgr = new BrowserViewManager(makeWindowManager('win-1', win))
       mgr.create('sess-1', 'win-1')
-      // 模拟 view 当前在某个非零 rect
-      createdViews[0].getBounds.mockReturnValue({ x: 10, y: 10, width: 200, height: 300 })
+      // 通过 setRect 设置 lastRect（由 setRect 正确维护，hide 不再覆盖）
+      mgr.setRect('sess-1', { x: 10, y: 10, width: 200, height: 300 })
 
       mgr.hide('sess-1')
-      // hide 时 setBounds 为 {0,0,0,0}
+      // hide 时从 contentView 移除 + setBounds 为 {0,0,0,0}
       const hideBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
       expect(hideBoundsCall).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+      // 验证 view 从 contentView 移除
+      expect(win.contentView.removeChildView).toHaveBeenCalledTimes(1)
 
       mgr.show('sess-1')
-      // show 恢复到 hide 前记录的 rect
+      // show 时重新挂载到 contentView + 恢复 lastRect
       const showBoundsCall = createdViews[0].setBounds.mock.calls.at(-1)![0]
       expect(showBoundsCall).toEqual({ x: 10, y: 10, width: 200, height: 300 })
+      // 验证 view 重新挂载到 contentView
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(2) // create + show
     })
 
     it('hide/show 不存在的 session 幂等无操作', () => {

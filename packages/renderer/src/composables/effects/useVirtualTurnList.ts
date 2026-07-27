@@ -10,6 +10,7 @@
  *   调用方据此补偿 scrollTop（应用后清零），防用户所见内容跳（SR4/INVAR-2）
  * - 末项钉扎：endIndex=max(computedEnd, lastIndex) 恒成立（SR3/INVAR-10）
  * - editing 钉扎：pinEditing(idx) 后 startIndex 不超过 idx（SR5）
+ * - streaming 钉扎：pinStreaming(idx) 后 startIndex 不超过 idx（共存期间防 RO 断开，SR5 同款）
  *
  * ── computeWindow 派生性（INVAR-1a）─────────────────────────────
  * 窗口依赖 (scrollTop, viewportHeight, offsets, buffer)，其中 scrollTop/viewportHeight
@@ -72,6 +73,9 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
   const heights = shallowRef<Map<string, number>>(new Map())
   /** editing 钉扎索引（pinEditing 设置，-1 表示无钉扎） */
   const editingPinIndex = ref(-1)
+  /** streaming 钉扎索引（pinStreaming 设置，-1 表示无钉扎）。
+   *  共存场景（streaming + bash）下 streaming turn 不能滚出视口顶部，否则 RO 断开高度不更新。 */
+  const streamingPinIndex = ref(-1)
   /** 视口锚定补偿量：reportHeight 时若该 turn 在视口上方则累加 measured-旧值（调用方应用后清零） */
   const scrollAdjustDelta: Ref<number> = ref(0)
 
@@ -244,6 +248,13 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
       if (endIndex < startIndex) endIndex = startIndex
     }
 
+    // 5. streaming 钉扎：共存期间（streaming + bash 同时跑）streaming turn 不能滚出视口顶部，
+    //    否则 ResizeObserver 断开、高度不再更新、布局错乱（与 editing 钉扎 SR5 同款，作用于 startIndex）。
+    if (streamingPinIndex.value >= 0 && startIndex > streamingPinIndex.value) {
+      startIndex = streamingPinIndex.value
+      if (endIndex < startIndex) endIndex = startIndex
+    }
+
     return { startIndex, endIndex }
   })
 
@@ -311,6 +322,11 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     editingPinIndex.value = idx
   }
 
+  /** streaming 钉扎：startIndex 不超过 idx（防共存期间 streaming turn 滚出视口 RO 断开） */
+  function pinStreaming(idx: number): void {
+    streamingPinIndex.value = idx
+  }
+
   /** session 切换重置：清空 heights，totalHeight 回全估算（SR10/INVAR-8）。
    *  同时取消 pending rAF（scroll/height flush）并丢弃待处理高度上报——它们引用旧 session
    *  的 key，若 flush 进新 session 的 heights Map 会张冠李戴（INVAR-8 一致性）。 */
@@ -330,6 +346,7 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     // viewportHeight 不重置——滚动容器尺寸未变，复用实际高度避免首帧 visibleRange 窗口为 0 渲染异常。
     scrollTop.value = 0
     editingPinIndex.value = -1
+    streamingPinIndex.value = -1
   }
 
   return {
@@ -339,6 +356,7 @@ export function useVirtualTurnList(options: UseVirtualTurnListOptions) {
     reportHeight,
     scrollAdjustDelta,
     pinEditing,
+    pinStreaming,
     resetSession,
     onScrollUpdate,
   }

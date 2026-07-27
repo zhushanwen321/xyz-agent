@@ -16,6 +16,14 @@ export default {
   deleteSessionFailed: 'Failed to delete session: {msg}',
   renameFailed: 'Rename failed: {msg}',
   retry: 'Retry',
+  update: {
+    newVersion: 'New version available',
+    downloading: 'Downloading {percent}%',
+    replacing: 'Replacing',
+    restarting: 'Restarting',
+    error: 'Update failed',
+    goToDownload: 'Go to download',
+  },
   sessionItem: {
     rename: 'Rename',
     delete: 'Delete',

@@ -12,6 +12,13 @@ import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
+import type { PiLaunchPreset, PresetUsageEntry, ThinkingLevel } from './pi-preset'
+import type { SourceDetectResult } from './migration'
+import type {
+  ProviderSource,
+  ProviderImportPreview,
+  ProviderImportResult,
+} from './migration'
 
 // ── Client → Runtime message types
 
@@ -40,6 +47,7 @@ export type ClientMessageType =
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
+  | 'message.bash' | 'message.abortBash'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
@@ -78,6 +86,17 @@ export type ClientMessageType =
   | 'config.setBareSetupScript' | 'config.getBareSetupScript'
   | 'config.setTimeout' | 'config.getTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
+  | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
+  | 'preset.create' | 'preset.update' | 'preset.delete'
+  | 'preset.recordUsage' | 'preset.getUsage'
+  | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
+  | 'preset.export' | 'preset.import'
+  // 迁移：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
+  // 只读检测，不读文件内容（安全）。reply config.sourcesDetected。
+  | 'config.detectSources'
+  // 迁移 W2：Provider 导入两步流。Step1 preview（脱敏，apiKey 不进前端）→ Step2 apply（写 models.json）。
+  // reply config.providersPreviewed / config.providersImported。
+  | 'config.previewImportProviders' | 'config.applyImportProviders'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -158,7 +177,21 @@ export type TerminalEnvelopeCode = TerminalErrorCode | TerminalUnknownErrorCode
 export interface ClientMessageMap {
   'ping': Record<string, never>
   // hidden:true 创建隐藏 session（公共 session），不进 sidebar 列表，仅供内部使用。
-  'session.create': { cwd?: string; label?: string; hidden?: boolean }
+  // presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1）。runtime 写入 .preset.json sidecar，
+  // restoreSession 据此重建 pi args。可选——省略时 runtime 用默认预设。透传链路见 wave3。
+  // modelOverride / thinkingOverride：Landing Model/Thinking Chip 的覆盖值（设计文档 §5.2）。
+  // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
+  //   - modelOverride：模型 ID 字符串（如 'anthropic/claude-sonnet-4'），覆盖 preset.modelOverride
+  //   - thinkingOverride：ThinkingLevel 值（'off'|'minimal'|'low'|'medium'|'high'|'xhigh'），覆盖 preset.thinkingLevel
+  // 两者均可选——省略时按 preset 字段或全局默认回退。
+  'session.create': {
+    cwd?: string
+    label?: string
+    hidden?: boolean
+    presetId?: string
+    modelOverride?: string
+    thinkingOverride?: ThinkingLevel
+  }
   'session.delete': { sessionId: string }
   'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
@@ -192,11 +225,11 @@ export interface ClientMessageMap {
     label?: string
   }
   // handoff：在源 session 触发 fast-handoff——runtime 让源 session 的 pi 跑 /skill:handoff
-  // 生成文档，agent_end 后取末条 assistant 文档 → xml 包装 → 新建空白 session 注入首条 → 广播跳转。
+  // 生成文档，agent_end 后取末条 assistant 文档 → 新建空白 session 注入首条 → 广播跳转。
   // 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
-  // focus 原样拼到 /skill:handoff 后作 args（pi 按首个空格切分）。
+  // reply 原样拼到 /skill:handoff 后作 args（用户备注）。
   // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
-  'session.handoff': { sessionId: string; focus?: string }
+  'session.handoff': { sessionId: string; reply?: string }
   // abortHandoff：取消进行中的 handoff。委托 SessionService.abort 中断 pi turn，
   // onTurnEnd 检测 aborted 标记跳过新建/注入。无进行中 handoff 时 no-op。
   'session.abortHandoff': { sessionId: string }
@@ -218,6 +251,11 @@ export interface ClientMessageMap {
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
+  // message.bash：composer 直接执行 bash 命令（不经 LLM turn）。command 原样透传 pi bash RPC，
+  // excludeFromContext 控制是否进 LLM 上下文（pi bash excludeFromContext 参数，透传不转换）。
+  'message.bash': { sessionId: string; command: string; excludeFromContext?: boolean }
+  // message.abortBash：取消进行中的 bash 执行（调 pi abort_bash）。
+  'message.abortBash': { sessionId: string }
   'config.getProviders': Record<string, never>
   'config.setProvider': { providerId: string } & SetProviderData
   'config.deleteProvider': { providerId: string }
@@ -353,6 +391,42 @@ export interface ClientMessageMap {
   'config.setDefaultBaseBranch': { baseBranch: string }
   /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
   'config.getDefaultBaseBranch': Record<string, never>
+  // pi 启动预设域（设计文档 pi-launch-presets.md）。
+  // preset.list：列出全部预设（内置 + 自定义）；preset.getDefault：读全局默认预设 id；
+  // preset.setDefault：设全局默认预设（写入 pi-presets.json）。均按需 RPC，无 server-push 广播。
+  'preset.list': Record<string, never>
+  'preset.getDefault': Record<string, never>
+  'preset.setDefault': { presetId: string }
+  // preset CRUD（本 slice 新增）：preset.create 创建自定义预设；preset.update 更新预设（含内置预设用户编辑）；
+  // preset.delete 删除自定义预设（内置不可删，runtime PresetGuardError 拦截）。
+  'preset.create': { preset: PiLaunchPreset }
+  'preset.update': { preset: PiLaunchPreset }
+  'preset.delete': { presetId: string }
+  // FR-14：预设使用统计（session 创建时 runtime 调 recordUsage，前端调 getUsage 拉排序数据）
+  'preset.recordUsage': { presetId: string }
+  'preset.getUsage': Record<string, never>
+  // FR-15：per-cwd 默认预设（前端调 getCwdDefault/setCwdDefault/getCwdDefaults）
+  'preset.getCwdDefault': { cwd: string }
+  'preset.setCwdDefault': { cwd: string; presetId: string }
+  'preset.getCwdDefaults': Record<string, never>
+  // FR-13：预设导入/导出（前端传 JSON 字符串，runtime 解析/生成）。
+  // json 是 `JSON.stringify(PresetExportPayload)` 的结果——只含 presets/defaultPresetId/version
+  // 三字段，故意排除 usage/perCwdDefaults（runtime 本地状态，不随预设分享）。
+  // 见 pi-preset.ts 的 PresetExportPayload 类型。
+  'preset.export': Record<string, never>
+  'preset.import': { json: string }
+  /** config.detectSources：检测本机其他 agent 的 skill/agent 配置目录（无参数，只读检测）。 */
+  'config.detectSources': Record<string, never>
+  /**
+   * config.previewImportProviders：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
+   * source 是迁移源（pi/zcode/codex/claude）。
+   */
+  'config.previewImportProviders': { source: ProviderSource }
+  /**
+   * config.applyImportProviders：Step2 应用导入（写 models.json）。
+   * importId 来自 Step1 preview 的 reply；selectedIds 是用户勾选的 provider id 列表。
+   */
+  'config.applyImportProviders': { importId: string; selectedIds: string[] }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -410,6 +484,7 @@ export type ServerMessageType =
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end'
+  | 'message.bashStart' | 'message.bashResult'
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
@@ -466,6 +541,14 @@ export type ServerMessageType =
   | 'config.bareSetupScript'
   | 'config.worktreeTimeout'
   | 'config.defaultBaseBranch'
+  | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
+  | 'preset.create' | 'preset.update' | 'preset.delete'
+  | 'preset.recordUsage' | 'preset.getUsage'
+  | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
+  | 'preset.export' | 'preset.import'
+  | 'config.sourcesDetected'
+  // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
+  | 'config.providersPreviewed' | 'config.providersImported'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -677,6 +760,33 @@ export interface ServerMessageMapBase {
   /** config.defaultBaseBranch：config.getDefaultBaseBranch 的 reply。 */
   'config.defaultBaseBranch': { baseBranch: string }
 
+  // ── preset 域 reply（设计文档 pi-launch-presets.md，runtime PresetMessageHandler reply）──
+  // 仅登记 payload 消费型 reply（domain 读 reply 字段）。
+  // ack 型（setDefault/delete/recordUsage/setCwdDefault）刻意不登记——runtime 回 {} 空对象，
+  // 留作 Record<string, unknown> 占位（与 ServerMessageMapBase 收录原则一致：「未消费/协议待定」走占位）。
+  // preset.list：preset.list 的 reply（payload 消费型，domain 读 presets 列表）。
+  'preset.list': { presets: PiLaunchPreset[] }
+  // preset.getDefault：preset.getDefault 的 reply。presetId 始终是 string——
+  // runtime getDefaultPresetId() 在未配置时兜底返回 'builtin:full'（设计文档 §5.3）。
+  'preset.getDefault': { presetId: string }
+  // preset.create：preset.create 的 reply（回显创建后的预设，含 runtime 规范化结果）。
+  'preset.create': { preset: PiLaunchPreset }
+  // preset.update：preset.update 的 reply（回显更新后的预设）。
+  'preset.update': { preset: PiLaunchPreset }
+  // preset.getUsage：preset.getUsage 的 reply（FR-14）。key=presetId, value=PresetUsageEntry。
+  'preset.getUsage': { usage: Record<string, PresetUsageEntry> }
+  // preset.getCwdDefault：preset.getCwdDefault 的 reply（FR-15）。presetId 始终是 string——
+  // runtime getCwdDefaultPresetId(cwd) 在未配置时兜底返回 'builtin:full'。
+  'preset.getCwdDefault': { presetId: string }
+  // preset.getCwdDefaults：preset.getCwdDefaults 的 reply（FR-15）。key=cwd 绝对路径, value=presetId。
+  'preset.getCwdDefaults': { defaults: Record<string, string> }
+  // preset.export：preset.export 的 reply（FR-13）。json 是 `JSON.stringify(PresetExportPayload)`
+  //   的结果——只含 presets/defaultPresetId/version 三字段，排除 usage/perCwdDefaults。
+  //   见 pi-preset.ts 的 PresetExportPayload 类型。
+  'preset.export': { json: string }
+  // preset.import：preset.import 的 reply（FR-13）。count = 成功导入的预设数量。
+  'preset.import': { count: number }
+
   // ── RPC reply（W1 方案C 补全：精确 payload，对齐 runtime handler 的 reply 调用字面量）──
   // session.created：session.create / session.fork 的成功 reply。
   // session 是 SessionSummary（session-message-handler.ts:36/56 reply { session }）。
@@ -698,10 +808,12 @@ export interface ServerMessageMapBase {
   // 时机：源 session 的 pi 跑完 /skill:handoff → 取末条 assistant 文档 → xml 包装 →
   // 新建空白 session 之后。前端据 newSessionId 跳转新 session，据 srcSessionId
   // 在源 session 标记已交接（配合磁盘 handoff_marker → SessionSummary.handedOffTo）。
-  // doc：xml 包装后的 handoff 文档。发送职责归位 renderer——前端收到后 ensureStreamSubscription
+  // doc：纯文本 handoff 文档（不再 xml 包装）。发送职责归位 renderer——前端收到后 ensureStreamSubscription
   // 再 chatApi.send(doc)，避免 runtime 早 send 导致的时序竞争（pi 流式事件早于前端订阅被丢）。
+  // reply：用户在 composer handoff 模式下键入的备注文本（可选）。
+  // sourceLabel：交接来源 session 名称（可选，前端用于构造 handoff badge segment）。
   // 对齐 fork-ask 模式（useForkActions.ts:109-113）。
-  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string }
+  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string; reply?: string; sourceLabel?: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
@@ -745,6 +857,22 @@ export interface ServerMessageMapBase {
   // config.scannedAgents：scanAgents reply（settings-message-handler.ts:99 reply { agents, success: true }）。
   // agents 是扫描发现结果，形状为 ScannedAgentInfo（含 sourceType/alreadyImported），非已加载的 AgentInfo。
   'config.scannedAgents': { agents: ScannedAgentInfo[]; success: boolean }
+  // config.sourcesDetected：detectSources reply（settings-message-handler.ts reply { sources }）。
+  // sources 是本机其他 agent（Claude/Codex/Pi/ZCode）skill/agent 目录的检测结果（只读，不读文件内容）。
+  'config.sourcesDetected': { sources: SourceDetectResult[] }
+  // config.providersPreviewed：previewImportProviders reply（W2 迁移）。
+  // 成功 { importId, preview }（preview 脱敏，只含 apiKeyExtracted 布尔，无 apiKey 值）；
+  // 失败 { error: { code, message } }（如 SOURCE_NOT_INSTALLED）。
+  // importId 供 applyImportProviders 第二步使用。前端按有无 error 字段判断成败。
+  'config.providersPreviewed':
+    | { importId: string; preview: ProviderImportPreview }
+    | { error: { code: string; message: string } }
+  // config.providersImported：applyImportProviders reply（W2 迁移）。
+  // 成功 { result }（含 imported/skipped/failed 三态条目 + failedCount）；
+  // 失败 { error: { code, message } }（如 PREVIEW_EXPIRED）。前端按有无 error 字段判断成败。
+  'config.providersImported':
+    | { result: ProviderImportResult }
+    | { error: { code: string; message: string } }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -770,6 +898,29 @@ export interface ServerMessageMapBase {
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
   'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
   'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
+  // message.bashStart：bash 执行开始广播（与 message.bashResult 对称的实时反馈）。
+  // excludeFromContext 透传自请求（前端据此渲染「不进上下文」标记）。
+  'message.bashStart': {
+    sessionId: string
+    command: string
+    excludeFromContext: boolean
+    timestamp: number
+  }
+  // message.bashResult：bash 执行结束广播（含 output/exitCode/cancelled 等终态字段）。
+  // exitCode 用 number|null：pi 返回 number|undefined，runtime 广播时统一 `?? null` 防 JSON 丢值。
+  // cancelled=true 也可能是 abortBash 触发的兜底终态（与 abort 广播 message.complete{aborted} 对称）。
+  'message.bashResult': {
+    sessionId: string
+    command: string
+    output: string
+    exitCode: number | null
+    cancelled: boolean
+    truncated: boolean
+    excludeFromContext: boolean
+    timestamp: number
+    /** pi truncated 时的完整输出文件路径（前端按需读取全文） */
+    fullOutputPath?: string
+  }
   // pi CustomMessage 注入（扩展经 pi.sendMessage 向对话流注入结构化通知，如 subagent-bg-notify）。
   // event-adapter 把 pi message_start{role:'custom', customType, content, details} 翻译为此帧。
   // 前端 customStart effect 建 role:'system' 消息（保留 customType/details），按 customType 渲染。
@@ -826,6 +977,10 @@ export interface ReplyPayloadMap {
   'config.getProviders': ServerMessageMap['config.providers']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
+  'config.detectSources': ServerMessageMap['config.sourcesDetected']
+  // W2 迁移：provider 导入两步流 reply（payload 消费型，前端读 importId/preview/result/error）。
+  'config.previewImportProviders': ServerMessageMap['config.providersPreviewed']
+  'config.applyImportProviders': ServerMessageMap['config.providersImported']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
   'config.getProjectSkills': ServerMessageMap['config.projectSkills']
@@ -899,6 +1054,27 @@ export interface ReplyPayloadMap {
   'config.getTimeout': ServerMessageMap['config.worktreeTimeout']
   'config.setDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
   'config.getDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
+  // preset 域（设计文档 pi-launch-presets.md）：runtime PresetMessageHandler reply。
+  // 全部引用 ServerMessageMapBase 中登记的精确 payload 形状（W-SH-1 收紧，SSOT）。
+  //  - preset.list / getDefault / getUsage / getCwdDefault / getCwdDefaults / export / import
+  //    → payload 消费型（domain 读 reply 字段）
+  //  - preset.setDefault / delete / recordUsage / setCwdDefault
+  //    → ack 型（domain register<void>，默认预设/cwd 默认变更无独立广播通道）
+  'preset.list': ServerMessageMap['preset.list']
+  'preset.getDefault': ServerMessageMap['preset.getDefault']
+  'preset.setDefault': void
+  // preset CRUD：create/update 返回 { preset }（payload 消费型），delete ack 型。
+  'preset.create': ServerMessageMap['preset.create']
+  'preset.update': ServerMessageMap['preset.update']
+  'preset.delete': void
+  // FR-14/FR-15/FR-13 reply（payload 消费型 vs ack 型）
+  'preset.recordUsage': void
+  'preset.getUsage': ServerMessageMap['preset.getUsage']
+  'preset.getCwdDefault': ServerMessageMap['preset.getCwdDefault']
+  'preset.setCwdDefault': void
+  'preset.getCwdDefaults': ServerMessageMap['preset.getCwdDefaults']
+  'preset.export': ServerMessageMap['preset.export']
+  'preset.import': ServerMessageMap['preset.import']
 
   // ── ack 型（value = void，domain register<void> 不读 reply payload）──
   'config.deleteAgent': void      // reply config.agentDeleted
@@ -927,6 +1103,10 @@ export interface ReplyPayloadMap {
   'git.stage': void               // reply message.status
   'git.unstage': void             // reply message.status
   'message.abort': void           // reply message.status
+  // message.bash / message.abortBash：reply message.status（sent/rejected/aborted ack）。
+  // bash 是 fire-and-forget 型——实际结果经 message.bashStart/bashResult 广播通道推回（不走 reply）。
+  'message.bash': void             // reply message.status
+  'message.abortBash': void        // reply message.status
   'message.follow_up': void       // reply message.status
   'message.send': void            // reply message.status
   'message.steer': void           // reply message.status

@@ -16,6 +16,10 @@ import type {
   AgentInfo,
   ScannedSkillInfo,
   ScannedAgentInfo,
+  SourceDetectResult,
+  ProviderSource,
+  ProviderImportPreview,
+  ProviderImportResult,
   PluginInfo,
   GitStatusResult,
   FileNode,
@@ -75,6 +79,18 @@ export interface SessionCreateOptions {
    * 用于 landing 态命令源等内部场景。
    */
   hidden?: boolean
+  /** Launch preset id（设计文档 §4.1），绑定到新 session 并解析为 pi 启动参数。 */
+  presetId?: string
+  /**
+   * Landing Model Chip 传入值，覆盖 preset.modelOverride。
+   * 优先级（设计文档 §5.2）：Landing Chip > preset.modelOverride > 全局默认。
+   */
+  modelOverride?: string
+  /**
+   * Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel。
+   * 优先级（设计文档 §5.2）：Landing Chip > preset.thinkingLevel > 全局默认。
+   */
+  thinkingOverride?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */
@@ -92,6 +108,15 @@ export interface ISessionService {
   sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>
   sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }>
   abort(sessionId: string): Promise<void>
+  /**
+   * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
+   *
+   * 返回语义与 sendMessage 对称：{ blocked: true, rejected?: true } 表示预检拒绝或执行失败。
+   * excludeFromContext 透传给 pi bash RPC（控制是否进 LLM 上下文）。
+   */
+  sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }>
+  /** 取消进行中的 bash 执行（pi abort_bash）。 */
+  abortBash(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string, customInstructions?: string): Promise<void>
   getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
@@ -251,6 +276,33 @@ export interface IConfigService {
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
+  /**
+   * 检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录（W1 迁移功能）。
+   * 只读检测，不读文件内容；返回每个源的安装状态 + 资源计数。
+   */
+  detectSources(): SourceDetectResult[]
+  /**
+   * W2 迁移：预览从其他 agent 源导入的 provider 列表（脱敏，不含 apiKey 值）。
+   *
+   * 安全红线（DM1）：返回的 ProviderImportPreview 只含 apiKeyExtracted 布尔，**不含 apiKey 明文**。
+   * 完整配置（含 apiKey 明文）暂存在 runtime 内存缓存（5min TTL），由 applyImportProviders 消费。
+   *
+   * @param source 迁移源（pi/zcode/codex/claude）。
+   * @returns 成功 { importId, preview }；源未安装 { error: { code: 'SOURCE_NOT_INSTALLED', message } }。
+   *          importId 供 applyImportProviders 第二步使用。
+   */
+  previewImportProviders(source: ProviderSource): { importId: string; preview: ProviderImportPreview } | { error: { code: string; message: string } }
+  /**
+   * W2 迁移：应用导入（写入 models.json）。从缓存取完整配置 → 剥离 _ 元数据 → 逐个 upsertProvider。
+   *
+   * apply 成功后立即删缓存（一次性，防 importId 复用）。apply 时再次查冲突（preview 后 models.json 可能被改），
+   * 同名 provider 标 skipped（不覆写）。
+   *
+   * @param importId previewImportProviders 返回的 importId。
+   * @param selectedIds 用户勾选导入的 provider id 列表（对应源里的 provider 名）。
+   * @returns 成功 { result }；缓存过期/不存在 { error: { code: 'PREVIEW_EXPIRED', message } }。
+   */
+  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } }
   /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
@@ -304,6 +356,11 @@ export interface IExtensionService {
   setAutoUpgrade(name: string, autoUpgrade: boolean): Promise<void>
   /** 启用的 extension 路径列表（供 pi --extension 参数）。cwd 用于解析相对的 discovery extension 目录。 */
   getExtensionPaths(cwd?: string): Promise<string[]>
+  /**
+   * builtin 文件型 extension 路径（existsSync 过滤后），永远注入不受 preset.extensionMode 影响。
+   * 设计文档 §2.3：供 PresetService.resolveExtensionPaths 复用。
+   */
+  getBuiltinExtensionPaths(): string[]
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>
   installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>

@@ -73,6 +73,16 @@
         </Button>
       </div>
 
+      <!-- 从其他 Agent 导入（W1：Skill/Agent 目录导入，cw-2026-07-26-migration-other-agents）-->
+      <div class="border-t border-border px-3 py-2">
+        <SourceImportSection
+          :kind="kind"
+          :existing-dirs="localDirs.filter((d) => d.enabled).map((d) => d.path)"
+          :disabled="disabled"
+          @import="onImportFromAgents"
+        />
+      </div>
+
       <!-- 添加自定义路径入口（ADR-0020 §5 自定义 discovery 目录）-->
       <div class="border-t border-border px-3 py-2">
         <div class="flex items-center gap-2">
@@ -116,6 +126,7 @@ import { GripVertical, Trash2 } from '@lucide/vue'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import SourceImportSection from './SourceImportSection.vue'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -259,6 +270,25 @@ function onAddPath(): void {
 function onRemove(index: number): void {
   if (props.disabled) return
   localDirs.value = localDirs.value.filter((_, i) => i !== index)
+  emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
+}
+
+/**
+ * 从其他 Agent 导入（W1）：把源 agent 候选目录 append 到 localDirs。
+ * 去重——已存在的 path 跳过；默认 enabled=true；append 到末尾（最低优先级，可再拖排序）。
+ * 去重模式与 onAddPath 一致（按 path 字面相等）。
+ */
+function onImportFromAgents(paths: string[]): void {
+  if (props.disabled) return
+  const existing = new Set(localDirs.value.map((d) => d.path))
+  const additions: SkillDirConfig[] = []
+  for (const path of paths) {
+    if (existing.has(path)) continue
+    existing.add(path)
+    additions.push({ path, enabled: true })
+  }
+  if (additions.length === 0) return
+  localDirs.value = [...localDirs.value, ...additions]
   emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
 }
 </script>

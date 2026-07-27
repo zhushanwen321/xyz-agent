@@ -27,6 +27,12 @@ interface ModeVisualDeps {
   hasInput: ComputedRef<boolean>
   /** 是否发送中 —— 发送中 composer-box 半透明。Composer 持 ref，模式 composable 持 computed，故取并集 */
   isSending: Ref<boolean> | ComputedRef<boolean>
+  /**
+   * bash 模式（composer-bash-execute）：draft 以 `!` 前缀触发，warning 边框 + bash placeholder。
+   * 与 fork/handoff 模式不同，bash 不是「模式开关」而是 draft 派生的瞬时态，优先级低于 fork/handoff
+   * （fork/handoff 模式时 bash 视觉不叠加），高于默认态。
+   */
+  isBashMode?: ComputedRef<boolean>
 }
 
 /**
@@ -39,24 +45,34 @@ export function useComposerModeVisual(deps: ModeVisualDeps): {
 } {
   const { t } = useI18n()
 
-  /** composer-box class：fork/handoff 模式 > 流式 steer 呼吸 > 普通聚焦 ring；发送中叠半透明 */
+  /**
+   * composer-box class：fork/handoff 模式 > bash 模式 > 流式 steer 呼吸 > 普通聚焦 ring；发送中叠半透明。
+   * bash 模式优先级低于 fork/handoff（fork/handoff 是显式模式开关，bash 仅 draft 前缀派生），
+   * 避免在 fork/handoff 模式下被 bash 前缀输入覆盖视觉。
+   */
   const boxClass = computed<Array<string | false>>(() => [
     deps.forkBoxClass.value
       || deps.handoffBoxClass.value
-      || (deps.isActive.value
-        ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
-        : deps.hasInput.value
-          ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
-          : ''),
+      || (deps.isBashMode?.value
+        ? 'composer-bash-mode border-[var(--warning)] shadow-[0_0_0_2px_var(--warning-soft)]'
+        : deps.isActive.value
+          ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
+          : deps.hasInput.value
+            ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
+            : ''),
     deps.isSending.value && 'opacity-[0.55]',
   ])
 
-  /** placeholder：fork > handoff > 流式 steerHint / 普通 inputHint */
+  /** placeholder：fork > handoff > bash > 流式 steerHint / 普通 inputHint */
   const placeholder = computed(
     () =>
       deps.forkPlaceholder.value
       ?? deps.handoffPlaceholder.value
-      ?? (deps.isActive.value ? t('panel.composer.steerHint') : t('panel.composer.inputHint')),
+      ?? (deps.isBashMode?.value
+        ? t('panel.composer.bashPlaceholder')
+        : deps.isActive.value
+          ? t('panel.composer.steerHint')
+          : t('panel.composer.inputHint')),
   )
 
   return { boxClass, placeholder }

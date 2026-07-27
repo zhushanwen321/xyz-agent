@@ -20,6 +20,7 @@ import DirSelectPopover from './DirSelectPopover.vue'
 import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
 import CreateWorktreeModal from './CreateWorktreeModal.vue'
+import PresetSelectChip from './PresetSelectChip.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useToast } from '@/composables/useToast'
@@ -163,6 +164,16 @@ function onSelectWorktree(payload: { path: string }): void {
 function onRetry(): void {
   emit('retry')
 }
+/**
+ * onPresetSelect — PresetSelectChip emit select 的接收点（B6 透传链路修复）。
+ *
+ * 用户在 landing 态真实点击选预设（非默认回显）→ 写 flow.pendingPreset（对齐 pendingCwd/pendingModel
+ * 范式），submitFirstMessage create session 时透传 sessionApi.create。Composer.onSend 不再
+ * 直接读 store.selectedPresetId（已删除第二真源），统一经 flow 单一真源。
+ */
+function onPresetSelect(payload: { presetId: string }): void {
+  flow.setPendingPreset(payload.presetId)
+}
 </script>
 
 <template>
@@ -241,6 +252,12 @@ function onRetry(): void {
               />
             </PopoverContent>
           </Popover>
+          <span aria-hidden="true" class="h-3.5 w-px bg-border" />
+          <PresetSelectChip
+            :session-id="composerSid"
+            :launch-preset-id="flow.currentSession.value?.launchPresetId"
+            @select="onPresetSelect"
+          />
         </div>
       </template>
     </Composer>

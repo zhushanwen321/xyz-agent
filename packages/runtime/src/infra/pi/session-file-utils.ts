@@ -113,6 +113,83 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
 }
 
 /**
+ * 计算 session preset sidecar 路径（S-RT-3）。
+ *
+ * 统一管理 `<sessionFile>.preset.json` 的路径拼接（原 persistPresetBinding/readPresetBinding
+ * 各自硬编码 `filePath + '.preset.json'`）。提取为 helper 后：
+ *   - 单点维护后缀（未来若改命名规则只改这里）
+ *   - 调用方语义清晰（presetSidecarPath(filePath) 比 filePath + '.preset.json' 更自解释）
+ *
+ * 注意：与 `.meta.json`（session 终态 sidecar）并列但独立，由 metaSidecarPath 风格的
+ * 专用 helper 各自管理（meta sidecar 当前内联在 persistSessionEnd/extractSessionOutcome，
+ * 属 session-lifecycle 范围，本文件不重构）。
+ */
+export function presetSidecarPath(filePath: string): string {
+  return filePath + '.preset.json'
+}
+
+/**
+ * 将 launch preset 绑定持久化到 sidecar `.preset.json`（设计文档 §4）。
+ *
+ * session create 成功后调用，记录该 session 启动时使用的 preset id。与 `.meta.json`
+ * （终态语义）分离：preset 是 launch 配置（create 时写），session_end 是终态（结束时写），
+ * 生命周期不同故独立文件，避免互相覆盖。
+ *
+ * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**（与 persistSessionEnd 一致）：
+ * pi 延迟写入窗口内 existsSync=false → 静默跳过（ES-RL-1）。active session 即使磁盘无文件
+ * 也经 SessionScanner.listAll 合并内存 Map 显示，preset 绑定丢失仅影响 fork/restore 的
+ * preset 继承，不阻断主流程。
+ *
+ * @param filePath session JSONL 绝对路径（sidecar = presetSidecarPath(filePath)）
+ * @param presetId launch preset id（如 'builtin:full'）
+ */
+export function persistPresetBinding(filePath: string, presetId: string): void {
+  if (!filePath) return
+  if (!existsSync(filePath)) {
+    // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过（ES-RL-1）。
+    return
+  }
+  const binding = { presetId, version: 1 as const }
+  try {
+    // 原子写（tmpfile + rename）：与 persistSessionEnd 一致，防止并发读读到半写的 sidecar。
+    // S-RT-3：路径经 presetSidecarPath helper 统一拼接。
+    atomicWrite(presetSidecarPath(filePath), JSON.stringify(binding), `preset-${Date.now()}`)
+    // sidecar 写入后主动失效 sessionMetaCache（与 persistSessionEnd L108 一致）：
+    // 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
+    sessionMetaCache.delete(filePath)
+  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
+  } catch (e) {
+    console.error(`[session-file-utils] persistPresetBinding failed: ${filePath}`, e)
+  }
+}
+
+/**
+ * 从 `.preset.json` sidecar 读取 launch preset 绑定（设计文档 §4）。
+ *
+ * scanSessionMeta 第四读：与 name/outcome/handedOffTo 同批次提取，结果合并进
+ * ScannedSessionMeta.launchPresetId，享受 sessionMetaCache 缓存（禁止在 scannedToSummary
+ * 独立读文件，session-scanner.ts:67-69 注释）。
+ *
+ * @returns presetId 字符串；sidecar 不存在/损坏/presetId 非字符串 → undefined
+ */
+export function readPresetBinding(filePath: string): string | undefined {
+  // S-RT-3：路径经 presetSidecarPath helper 统一拼接。
+  const sidecarPath = presetSidecarPath(filePath)
+  try {
+    const raw = readFileSync(sidecarPath, 'utf-8')
+    const binding = JSON.parse(raw)
+    // 类型守卫：presetId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
+    if (binding && typeof binding.presetId === 'string') {
+      return binding.presetId
+    }
+    return undefined
+  // eslint-disable-next-line taste/no-silent-catch -- no sidecar / invalid → undefined（与 extractSessionOutcome 容错范式一致）
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 从 .jsonl 文件提取最后一条 session_end 的 outcome（W4，ADR 0036）。
  *
  * W2 尾读优化：先尾读找尾部最后一条 session_end。persistSessionEnd 是 session 结束时
@@ -364,6 +441,11 @@ export interface ScannedSessionMeta {
   forkEntryId?: string
   /** handoff 目标 session id（FR-5，从 JSONL handoff_marker 尾读）。 */
   handedOffTo?: string
+  /**
+   * 该 session 启动时绑定的 launch preset id（从 .preset.json sidecar 读，设计文档 §4）。
+   * undefined 表示无 sidecar（历史 session / create 时未绑定 preset）。
+   */
+  launchPresetId?: string
 }
 
 /**
@@ -436,6 +518,9 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
   const name = extractSessionName(filePath)
   const outcome = extractSessionOutcome(filePath)
   const handedOffTo = extractHandedOff(filePath)
+  // 第四读：preset binding sidecar（设计文档 §4），与 name/outcome/handedOffTo 同批次
+  // 提取，结果合并进 meta.launchPresetId，享受 sessionMetaCache 缓存。
+  const launchPresetId = readPresetBinding(filePath)
   const meta: ScannedSessionMeta = {
     id: header.id,
     filePath,
@@ -448,6 +533,7 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     parentSession: header.parentSession,
     forkEntryId: header.forkEntryId,
     handedOffTo,
+    launchPresetId,
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta
