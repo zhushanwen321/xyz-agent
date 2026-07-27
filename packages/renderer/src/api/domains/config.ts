@@ -24,6 +24,7 @@ import type {
   ProviderSource,
   ProviderImportPreview,
   ProviderImportResult,
+  SkillCacheInvalidatedPayload,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -161,10 +162,10 @@ export function onSkillDirs(handler: (dirs: SkillDirConfig[]) => void): () => vo
  * - scope='project'：项目 skill 变动，cwd 携带变更的项目根（前端按需路由）
  */
 export function onSkillCacheInvalidated(
-  handler: (payload: { scope: 'global' | 'project'; cwd?: string }) => void,
+  handler: (payload: SkillCacheInvalidatedPayload) => void,
 ): () => void {
   return events.onGlobalType('config.skillCacheInvalidated', (msg) => {
-    handler(msg.payload as { scope: 'global' | 'project'; cwd?: string })
+    handler(msg.payload)
   })
 }
 

@@ -219,6 +219,31 @@ describe('useGlobalSkills / useProjectSkills (Wave3: 订阅失效信号)', () =>
     expect(inv.onSkillCacheInvalidated.mock.calls.length).toBe(callsBefore)
   })
 
+  it('TC2-B1: Composer 重挂后失效信号仍刷新活跃实例（globalSkills 模块级共享 ref）', async () => {
+    const getGlobalSkills = vi.fn().mockResolvedValue(SKILL_1)
+    const inv = makeInvalidateMock()
+    vi.doMock('@/api', () => ({ config: { getGlobalSkills, onSkillCacheInvalidated: inv.onSkillCacheInvalidated } }))
+
+    const { useGlobalSkills } = await import('@/composables/features/useProjectSkills')
+    // 第一次挂载（模拟首个 Composer 实例）
+    const first = useGlobalSkills()
+    await vi.waitFor(() => expect(first.globalSkills.value).toEqual(SKILL_1))
+    expect(getGlobalSkills).toHaveBeenCalledTimes(1)
+
+    // 重挂：再次调用 useGlobalSkills（模拟 Composer unmount→remount，拿到新返回值）
+    const second = useGlobalSkills()
+
+    // B1 回归断言：两次返回的 globalSkills 是同一个模块级 ref（共享，非各自独立）
+    expect(second.globalSkills).toBe(first.globalSkills)
+
+    // runtime 重扫后缓存更新，派发 global 失效信号 → 活跃实例（second）应刷新
+    getGlobalSkills.mockResolvedValue(SKILL_1_2)
+    inv.emitGlobal()
+    await vi.waitFor(() => expect(second.globalSkills.value).toEqual(SKILL_1_2))
+    expect(first.globalSkills.value).toEqual(SKILL_1_2) // 同一 ref，first 也同步
+    expect(getGlobalSkills).toHaveBeenCalledTimes(2)
+  })
+
   it('TC3: useProjectSkills 订阅 project scope 失效信号清缓存重拉（版本号机制）', async () => {
     const getProjectSkills = vi.fn().mockResolvedValue(SKILL_A)
     const inv = makeInvalidateMock()
