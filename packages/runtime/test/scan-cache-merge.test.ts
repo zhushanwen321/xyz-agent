@@ -153,7 +153,7 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     expect(result).toHaveLength(0)
   })
 
-  it('AC-merge-1: 3 文件冷缓存 → readFileSync 总数 ≤ 6（三读合一，非 9；尾读命中则 ≤3）', () => {
+  it('AC-merge-1: 3 文件冷缓存 → readFileSync 总数 ≤ 6（四读合一，非 12；尾读命中则 ≤4）', () => {
     pathsMock.getSessionsDir.mockReturnValue(tmpSessionsDir)
     makeSessionFile('s1', 'n1', 'done', new Date(1000))
     makeSessionFile('s2', 'n2', 'error', new Date(2000))
@@ -163,8 +163,11 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     scanPiSessions()
     // B7 sidecar 方案后每文件读取：parseSessionHeader(1) + extractSessionName 尾读/fallback(1)
     // + extractSessionOutcome sidecar(1) + JSONL fallback(1) = 4 readFileSync/文件。
-    // 小文件尾读窗口覆盖全文件，session_info 不在最尾 → findLastEntryField fallback 全量读。
+    // wave2 preset sidecar 四读合一：+ readPresetBinding(1) = 5 readFileSync/文件。
+    // 此用例的 makeSessionFile 写 outcome 到 sidecar 且保留 JSONL session_end →
+    // extractSessionOutcome 先读 sidecar(1) 再 fallback JSONL(1)，加上 handedOffTo
+    // 尾读 fallback(1) → 实际每文件 6 readFileSync。
     // 关键约束：缓存命中时（下一个用例）readFileSync 不增加。
-    expect(fsState.readCount).toBeLessThanOrEqual(12) // 3 文件 × 4
+    expect(fsState.readCount).toBeLessThanOrEqual(18) // 3 文件 × 6
   })
 })

@@ -20,7 +20,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { recommendedExtensions } from '@xyz-agent/shared'
+import { recommendedExtensions, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
@@ -45,6 +45,32 @@ const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 // eslint-disable-next-line no-magic-numbers
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
+
+/**
+ * W-SH-2 编译期一致性断言：extension-service 的 builtinExts 顺序必须与 shared 的
+ * BUILTIN_EXTENSION_FILES 完全一致（name 字段引用常量做 SSOT）。若 shared 常量变更
+ *（增删项/改顺序），下面类型断言会 tsc 报错，强制同步此处 path 推导逻辑。
+ *
+ * 断言顺序：[0]=xyz-agent-extension.js / [1]=xyz-system-prompt-extension.js /
+ * [2]=xyz-client-msg-id-mapper.js（与 getExtensionFilePath 默认 + 显式 fileName 推导对应）。
+ */
+type _AssertBuiltinExtOrder<
+  A extends string,
+  B extends string,
+  C extends string,
+> = A extends 'xyz-agent-extension.js'
+  ? B extends 'xyz-system-prompt-extension.js'
+    ? C extends 'xyz-client-msg-id-mapper.js'
+      ? true
+      : never
+    : never
+  : never
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _AssertBuiltinExtOrderCheck = _AssertBuiltinExtOrder<
+  (typeof BUILTIN_EXTENSION_FILES)[0],
+  (typeof BUILTIN_EXTENSION_FILES)[1],
+  (typeof BUILTIN_EXTENSION_FILES)[2]
+>
 
 // ── Error classes ─────────────────────────────────────────────────
 
@@ -238,12 +264,17 @@ export class ExtensionService {
       let version = ''
       let description = ''
 
+      let tools: string[] | undefined
       try {
         const raw = readFileSync(pkgJsonPath, 'utf-8')
-        const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string }
+        const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string; pi?: { tools?: string[] } }
         name = pkg.name ?? name
         version = pkg.version ?? ''
         description = pkg.description ?? ''
+        // FR-11：从 package.json pi.tools 读取扩展提供的工具列表
+        if (Array.isArray(pkg.pi?.tools)) {
+          tools = pkg.pi.tools.filter((t): t is string => typeof t === 'string')
+        }
       } catch (e) {
         log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${toErrorMessage(e)}`)
       }
@@ -263,6 +294,7 @@ export class ExtensionService {
         enabled: !isDisabled,
         source: isUserInstalled ? 'user-installed' : 'built-in',
         autoUpgrade: isAutoUpgrade,
+        ...(tools && { tools }),
       })
     }
 
@@ -313,26 +345,48 @@ export class ExtensionService {
       return !disabledSet.has(`npm:${pkgName}`)
     })
 
-    // builtin extension：existsSync 为 false 时 warn（防 dev 模式路径漂移静默失效，
-    // 正是本次 PR 修复的 monorepo 重构遗留 bug 的温床）。与 getSkillPaths L703 同模式。
+    // builtin extension：经 getBuiltinExtensionPaths() 注入（设计文档 §2.3，
+    // pi-launch-presets 设计要求 builtin 永远前置，提取为独立方法供 PresetService.resolve 复用）。
+    filtered.push(...this.getBuiltinExtensionPaths())
+
+    return filtered
+  }
+
+  /**
+   * 返回 builtin 文件型 extension 的绝对路径（existsSync 过滤后）。
+   *
+   * 设计文档 §2.3：3 个 builtin（xyz-agent-extension.js / xyz-system-prompt-extension.js /
+   * xyz-client-msg-id-mapper.js）永远注入，不受 preset.extensionMode 影响。
+   *
+   * 提取自原 getExtensionPaths L318-333 的内联 builtinExts 数组 + 过滤循环（行为不变）。
+   * 公开方法供 PresetService.resolveExtensionPaths 复用，避免重复 builtin 逻辑。
+   *
+   * 顺序约束：system-prompt 扩展必须在 agent extension 之后（spec §4 链式位置——
+   * 最后追加 → 链上靠后，快照≈最终生效值）。client-msg-id-mapper 位置无关，追加末尾稳定。
+   */
+  getBuiltinExtensionPaths(): string[] {
+    // W-SH-2：name 字段引用 shared 常量 BUILTIN_EXTENSION_FILES，保证此处与 shared SSOT 一致。
+    // 用一致性断言锁死顺序（编译期检查，若 shared 常量变更此处会 tsc 报错提醒同步）。
     const builtinExts: Array<{ path: string; name: string }> = [
-      // 追加顺序有意义：system-prompt 扩展必须在 agent extension 之后
-      // （spec §4 链式位置——最后追加 → 链上靠后，快照≈最终生效值）
-      { path: this.extensionFilePath, name: 'xyz-agent-extension.js' },
-      { path: this.systemPromptExtensionFilePath, name: 'xyz-system-prompt-extension.js' },
-      // client-msg-id-mapper：input hook 剥标记 + appendEntry 写映射。
-      // 位置无关（不参与 system prompt 链式快照），追加在最后保持稳定顺序。
-      { path: this.clientMsgIdMapperFilePath, name: 'xyz-client-msg-id-mapper.js' },
+      { path: this.extensionFilePath, name: BUILTIN_EXTENSION_FILES[0] },
+      { path: this.systemPromptExtensionFilePath, name: BUILTIN_EXTENSION_FILES[1] },
+      { path: this.clientMsgIdMapperFilePath, name: BUILTIN_EXTENSION_FILES[2] },
     ]
+    const paths: string[] = []
     for (const ext of builtinExts) {
       if (existsSync(ext.path)) {
-        filtered.push(ext.path)
+        paths.push(ext.path)
+      } else if (this.packaged) {
+        // W-RT-7：packaged 模式下 builtin 文件缺失 = 打包错误（installer 漏拷文件），
+        // fail-fast 抛错让用户/CI 立即感知，而非静默降级（builtin 缺失会导致系统提示词/
+        // msg id 映射失效，pi 行为严重退化）。dev 模式仍只 warn（路径漂移常见，非致命）。
+        throw new Error(`[extension] builtin extension missing in packaged build: ${ext.name} (path: ${ext.path})`)
       } else {
+        // existsSync 为 false 时 warn（防 dev 模式路径漂移静默失效，与 getSkillPaths L703 同模式）。
         log.warn(`builtin extension not found, skipping: ${ext.name} (path: ${ext.path})`)
       }
     }
-
-    return filtered
+    return paths
   }
 
   /**

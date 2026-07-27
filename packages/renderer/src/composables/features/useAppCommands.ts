@@ -19,6 +19,7 @@
 import type { AppCommand } from '@/lib/search-types'
 import { useCommandStore } from '@/stores/command'
 import { useSidebarStore } from '@/stores/sidebar'
+import { usePresetStore } from '@/stores/preset'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -38,6 +39,7 @@ export interface AppCommandActions {
 export function registerAppCommands(actions: AppCommandActions): void {
   const sidebarStore = useSidebarStore()
   const commandStore = useCommandStore()
+  const presetStore = usePresetStore()
 
   /** 将存储的 key（如 'n' / 'shift+n'）转为显示用的修饰键符号 */
   function displayShortcut(key: string): string {
@@ -66,6 +68,8 @@ export function registerAppCommands(actions: AppCommandActions): void {
     { id: 'new-session', name: t('settings.command.new-session'), shortcut: resolveShortcut('new-session', 'n'), action: actions.newSession },
     { id: 'toggle-sidebar', name: t('settings.command.toggle-sidebar'), shortcut: resolveShortcut('toggle-sidebar', 'b'), action: () => sidebarStore.toggleCollapsed() },
     { id: 'go-overview', name: t('settings.command.go-overview'), action: actions.goOverview },
+    // FR-16：Cmd+Shift+P 打开预设选择 Popover
+    { id: 'open-preset-select', name: t('settings.command.open-preset-select', '选择启动预设'), shortcut: resolveShortcut('open-preset-select', 'shift+p'), action: () => presetStore.requestOpen() },
   ]
 
   commandStore.registerApp(appCommands)

@@ -75,6 +75,18 @@ export interface SessionCreateOptions {
    * 用于 landing 态命令源等内部场景。
    */
   hidden?: boolean
+  /** Launch preset id（设计文档 §4.1），绑定到新 session 并解析为 pi 启动参数。 */
+  presetId?: string
+  /**
+   * Landing Model Chip 传入值，覆盖 preset.modelOverride。
+   * 优先级（设计文档 §5.2）：Landing Chip > preset.modelOverride > 全局默认。
+   */
+  modelOverride?: string
+  /**
+   * Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel。
+   * 优先级（设计文档 §5.2）：Landing Chip > preset.thinkingLevel > 全局默认。
+   */
+  thinkingOverride?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */
@@ -313,6 +325,11 @@ export interface IExtensionService {
   setAutoUpgrade(name: string, autoUpgrade: boolean): Promise<void>
   /** 启用的 extension 路径列表（供 pi --extension 参数）。cwd 用于解析相对的 discovery extension 目录。 */
   getExtensionPaths(cwd?: string): Promise<string[]>
+  /**
+   * builtin 文件型 extension 路径（existsSync 过滤后），永远注入不受 preset.extensionMode 影响。
+   * 设计文档 §2.3：供 PresetService.resolveExtensionPaths 复用。
+   */
+  getBuiltinExtensionPaths(): string[]
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>
   installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>

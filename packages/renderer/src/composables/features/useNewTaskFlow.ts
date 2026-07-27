@@ -15,7 +15,7 @@
  * + composables/features(useChat/useModel) + composables/new-task/*（子 composable）。
  * 不直接 import transport（经 api/domains）。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import { session as sessionApi } from '@/api'
 import * as events from '@/api/events'
@@ -105,6 +105,13 @@ export function useNewTaskFlow() {
     createInFlight,
   } = useNewTaskFlowState()
 
+  /**
+   * Landing 态用户选定的预设 id（session.create 透传用）。
+   * 对齐 pendingCwd/pendingModel 范式：landing 态记录选定值，submitFirstMessage 时透传。
+   * startFlow 时重置为 null。PresetSelectChip 通过 setPendingPreset 写入。
+   */
+  const pendingPreset = ref<string | null>(null)
+
   // 受控写入口 controller（父编排器独占）：setter 不再模块级 export，杜绝子 composable /
   // 组件越权 import 调用。本编排器独占后，按需把具体 setter 作为参数下发给子 composable。
   const controller = useNewTaskFlowController()
@@ -183,6 +190,7 @@ export function useNewTaskFlow() {
     // 进 landing：预设 cwd（有则 chip 所见即所得，无则空 chip 态）
     pendingCwd.value = presetCwd ?? null
     pendingModel.value = null
+    pendingPreset.value = null
     controller.bindCurrentSession(null)
     // 强制不变量：landing 态无 session 绑定。清 activeId + active panel leaf.sessionId，
     // 让 Panel 的 sessionId prop 变 null → 渲染落到 Landing（而非旧会话 MessageStream）。
@@ -222,6 +230,12 @@ export function useNewTaskFlow() {
    * @param thinkingLevel 可选思考等级（landing 态 Composer 选定值）
    * @param bashCommand [S10] bash 命令参数。仅当 extractBashCommand.type === 'command' 时传入，
    *   undefined = 非 bash 走普通 send。调用方控制流保证此契约（Composer.vue 按 type 分支）。
+   *
+   * presetId（preset 透传）：landing 态用户在 PresetSelectChip 选定的预设。
+   * 透传链路（B6 修复）：PresetSelectChip emit select → Landing.vue onPresetSelect →
+   * flow.setPendingPreset 写 pendingPreset；这里 submitFirstMessage create session 时读
+   * pendingPreset.value 透传 sessionApi.create。Composer onSend 不再直接读 store.selectedPresetId，
+   * 统一走 flow 单一真源（与 pendingCwd/pendingModel 范式一致）。
    */
   async function submitFirstMessage(segments: Segment[], thinkingLevel?: string, bashCommand?: { command: string; excludeFromContext: boolean }): Promise<void> {
     // segments 不能为空；含 text 段时提取首段文本作 session label
@@ -244,7 +258,9 @@ export function useNewTaskFlow() {
         // 来源，避免 session 名带 `!` 前缀（「!ls」体验不佳）。bashCommand.command 已是去前缀后的纯命令。
         const labelSource = bashCommand ? bashCommand.command : trimmed
         const label = deriveSessionLabel(labelSource)
-        const created = await sessionApi.create(cwd, label)
+        // preset 透传（B6）：pendingPreset 由 Landing.vue 接 PresetSelectChip @select
+        // → flow.setPendingPreset 写入；startFlow 时清为 null（不残留到下次 landing）。
+        const created = await sessionApi.create(cwd, label, pendingPreset.value ?? undefined)
         // INV-7: runtime create 内部可能因 cwd 失效降级 homedir，比对 session.cwd
         // 与请求 cwd 不一致则 toast 通知用户（D-008 选中失效 cwd 降级）。
         if (cwd && created.cwd !== cwd) {
@@ -370,6 +386,18 @@ export function useNewTaskFlow() {
     pendingModel.value = model
   }
 
+  /**
+   * setPendingPreset —— landing 态记录用户选定但尚未透传的预设 id。
+   *
+   * 对齐 pendingCwd/pendingModel 范式。PresetSelectChip emit select 时调用，
+   * submitFirstMessage create session 时透传给 sessionApi.create。
+   * 守卫：仅 landing 态生效。
+   */
+  function setPendingPreset(presetId: string): void {
+    if (state.value !== 'landing') return
+    pendingPreset.value = presetId
+  }
+
   // ── compose 子 composable（分支 + 选目录）── 传 computed 值的 getter，解耦于父内部 ──
   // branch 子 composable 需要飞行标记 setter + 守卫失败回 idle 的 transitionUnchecked，
   // 由父编排器从独占 controller 中按需注入（setter 不再模块级 export，无法被子 composable 直接 import）。
@@ -428,6 +456,7 @@ export function useNewTaskFlow() {
     submitFirstMessage,
     presetCwd,
     setPendingModel,
+    setPendingPreset,
     openDirPopover: dirSelect.openDirPopover,
     openBranchPopover: branch.openBranchPopover,
     selectWorkspace: dirSelect.selectWorkspace,

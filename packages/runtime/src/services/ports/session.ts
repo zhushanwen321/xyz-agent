@@ -23,6 +23,8 @@ export interface ScannedSessionMeta {
   forkEntryId?: string
   /** handoff 目标 session id（FR-5，与 infra/pi/session-file-utils 版本对齐）。 */
   handedOffTo?: string
+  /** launch preset 绑定（从 .preset.json sidecar 读，与 infra/pi/session-file-utils 版本对齐）。 */
+  launchPresetId?: string
 }
 
 /** session 终态类型（W4，ADR 0036）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */
@@ -40,6 +42,8 @@ export interface ISessionStore {
   persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void
   /** 持久化 session 终态（W4，ADR 0036）。 */
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void
+  /** 持久化 launch preset 绑定到 .preset.json sidecar（设计文档 §4）。 */
+  persistPresetBinding(filePath: string, presetId: string): void
   /** 读取 session 终态（W5）；无 session_end entry 返回 null（历史 session）。 */
   extractSessionOutcome(filePath: string): SessionOutcome | null
   /** 清除 session 元信息缓存的 stale 条目（session 删除/重命名后调用，避免无界增长）。 */

@@ -13,6 +13,7 @@ import {
   scanPiSessions,
   persistSessionName,
   persistSessionEnd,
+  persistPresetBinding,
   extractSessionOutcome,
   patchSessionCwd,
   invalidateSessionMetaCache,
@@ -36,6 +37,10 @@ export class PiSessionStore implements ISessionStore {
 
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void {
     persistSessionEnd(filePath, outcome, reason)
+  }
+
+  persistPresetBinding(filePath: string, presetId: string): void {
+    persistPresetBinding(filePath, presetId)
   }
 
   extractSessionOutcome(filePath: string): SessionOutcome | null {

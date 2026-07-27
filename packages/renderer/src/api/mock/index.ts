@@ -342,7 +342,7 @@ export const session = {
   },
 
   /** Mock handoff（fast-handoff：stub resolve 即可，E2E 走 runtime 真路径） */
-  async handoff(_sessionId: string, _focus?: string): Promise<void> {
+  async handoff(_sessionId: string, _reply?: string): Promise<void> {
     await sleep(TIMING.ack)
   },
 
@@ -980,5 +980,35 @@ export const workspace = {
   // detect：mock 恒返 not-repo（三态检测，real 轨驱动）
   async detect(_cwd: string): Promise<import('@xyz-agent/shared').ServerMessageMap['workspace.detected']> {
     return { mode: 'not-repo', wsRoot: '', barePath: '', repoRoot: '', defaultBranch: '' }
+  },
+}
+
+// preset 域 mock 占位（pi-launch-presets wave1）：返回空预设列表 + 默认全工具模式 id。
+// 与 real 轨 api/domains/preset.ts 签名同构（list/getDefault/setDefault + CRUD），避免门面三元崩溃。
+// mock 模式无 runtime，preset 演示由 real 轨驱动；此处仅供 landing 渲染不崩。
+import type { PiLaunchPreset } from '@xyz-agent/shared'
+const mockPresets: PiLaunchPreset[] = []
+export const preset = {
+  async list(): Promise<PiLaunchPreset[]> {
+    return mockPresets.map((p) => ({ ...p }))
+  },
+  async getDefault(): Promise<string> {
+    return 'builtin:full'
+  },
+  async setDefault(_presetId: string): Promise<void> {
+    // no-op（mock 模式不持久化）
+  },
+  async create(p: PiLaunchPreset): Promise<PiLaunchPreset> {
+    mockPresets.push({ ...p })
+    return { ...p }
+  },
+  async update(p: PiLaunchPreset): Promise<PiLaunchPreset> {
+    const idx = mockPresets.findIndex((x) => x.id === p.id)
+    if (idx >= 0) mockPresets[idx] = { ...p }
+    return { ...p }
+  },
+  async remove(presetId: string): Promise<void> {
+    const idx = mockPresets.findIndex((x) => x.id === presetId)
+    if (idx >= 0) mockPresets.splice(idx, 1)
   },
 }

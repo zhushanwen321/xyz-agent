@@ -23,12 +23,14 @@ export async function list(): Promise<SessionGroup[]> {
 /**
  * 创建新 session（#1 cwd 透传，位置参数 create(cwd?, label?)，issues #1 方案 A）。
  * cwd=undefined → payload 不含 cwd 键（runtime 回退 process.cwd()，AC-1.2 回归）。
+ * presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1），透传给 runtime。
  * reply envelope 是 { session }，解包 .session。
  */
-export async function create(cwd?: string, label?: string): Promise<SessionSummary> {
-  const payload: { cwd?: string; label?: string } = {}
+export async function create(cwd?: string, label?: string, presetId?: string): Promise<SessionSummary> {
+  const payload: { cwd?: string; label?: string; presetId?: string } = {}
   if (cwd !== undefined) payload.cwd = cwd
   if (label !== undefined) payload.label = label
+  if (presetId !== undefined) payload.presetId = presetId
   const reply = await command('session.create', payload)
   return reply.session
 }
@@ -173,13 +175,13 @@ export function subagentAction(
 
 /**
  * 触发 fast-handoff（痛点3，FR-fast-handoff）。
- * runtime 让源 session 的 pi 跑 /skill:handoff：取末条 assistant 文档 → xml 包装 → 注入新空白 session。
+ * runtime 让源 session 的 pi 跑 /skill:handoff：取末条 assistant 文档 → 注入新空白 session。
  * 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
- * focus 原样拼到 /skill:handoff 后作 args。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
+ * reply 原样拼到 /skill:handoff 后作 args（用户备注）。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
  * reply 是 message.status ack（前端不读 payload，等广播）。
  */
-export function handoff(sessionId: string, focus?: string): Promise<void> {
-  return command('session.handoff', { sessionId, focus })
+export function handoff(sessionId: string, reply?: string): Promise<void> {
+  return command('session.handoff', { sessionId, reply })
 }
 
 /**

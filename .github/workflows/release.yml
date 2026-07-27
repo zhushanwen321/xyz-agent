@@ -48,6 +48,31 @@ jobs:
       - name: List artifacts
         run: find release-artifacts -type f | sort
 
+      # 三平台并行构建各自输出 manifest-<platform>.json（见 build.yml generate-manifest 步），
+      # download-artifact merge-multiple 把它们都拉到 release-artifacts/。
+      # 这里用 jq 合并三份为一个 manifest.json（assets 字段取并集），让 app 内自动升级
+      # fallback fetch 一个 manifest 就能查到全平台 asset 的 sha256。
+      # 若某平台产物缺失（极少见，如该平台无 .AppImage），manifest-{platform}.json 也缺失，
+      # jq -s 仍能处理剩余的（assets 取并集，version/releasedAt 取第一份）。
+      - name: Merge platform manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-artifacts
+          # 没有 manifest-*.json 时跳过（兼容本地/旧构建），保留可能存在的 manifest.json
+          if ! ls manifest-*.json >/dev/null 2>&1; then
+            echo "[merge] 未找到 manifest-*.json，跳过合并"
+            exit 0
+          fi
+          # jq -s 把多个 JSON 对象 slurp 成数组：
+          #   version / releasedAt 取第一份（三平台构建自同一 package.json，值一致）
+          #   assets 取所有平台 assets 的并集（mac/win/linux 各自的 .dmg/.exe/.AppImage 等）
+          jq -s '{ version: .[0].version, releasedAt: .[0].releasedAt, assets: (map(.assets) | add) }' \
+            manifest-*.json > manifest.json
+          rm -f manifest-*.json
+          echo "[merge] 合并后的 manifest.json："
+          cat manifest.json
+
       - name: Read version
         id: changelog
         run: |

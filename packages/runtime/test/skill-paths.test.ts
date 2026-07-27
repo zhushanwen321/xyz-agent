@@ -74,7 +74,9 @@ const existingPaths = new Set<string>([path.normalize('/project')])
 vi.mock('node:fs', () => ({
   existsSync: (p: string) => existingPaths.has(path.normalize(p)),
   mkdirSync: vi.fn(),
-  readFileSync: vi.fn(),
+  // restoreSession 读源 JSONL 做 session_end strip（session-lifecycle L283）。
+  // 返回空字符串 = 空 JSONL，stripSessionEndEntries 安全返回空字符串。
+  readFileSync: vi.fn(() => ''),
   writeFileSync: vi.fn(),
   appendFileSync: vi.fn(),
   readdirSync: vi.fn(() => []),
@@ -87,9 +89,11 @@ vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-// Mock @xyz-agent/shared barrel — provide constants needed by rpc-client
+// Mock @xyz-agent/shared barrel — provide constants needed by rpc-client + session-lifecycle
 vi.mock('@xyz-agent/shared', () => ({
   ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP'],
+  // session-lifecycle.restoreSession L259 用 BUILTIN_PRESET_IDS.FULL 兜底历史 session 的 presetId
+  BUILTIN_PRESET_IDS: { FULL: 'builtin:full', ORCHESTRATOR: 'builtin:orchestrator', READONLY: 'builtin:readonly' },
 }))
 
 // Mock @xyz-agent/shared/paths — getDataDir 被 pi-paths 子路径 import（Node-only，隔离于 barrel）

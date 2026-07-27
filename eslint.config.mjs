@@ -73,6 +73,23 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] Turn.vue 是 message-stream 的唯一 turn 聚合组件：user 气泡（含 image segment
+  // 缩略图）+ assistant summary + trace 区（merged/single 双分支 + Transition 动画）+ streaming
+  // 光标 + fork/复制 等操作行。conversation-density slice（merged 卡片）与 main 的 image-attach
+  // + trace Transition 合并后行数超 500（template ≤400 / script setup ≤300 均合规，仅总行数超标）。
+  // 拆分需先理清 user/summary/trace/action 四块的职责边界，属独立重构任务。短期 override 避免阻塞。
+  //
+  // [HISTORICAL·模板结构角度] 同文件还有一处历史 override（原 PR #112 补充）：Turn.vue 也是单回合
+  // 展示的唯一组件，模板结构（350+ 行）与 script setup（300 行）职责内聚，拆分子组件需传递 15+
+  // props/slots，收益不抵成本。useTurnActions 已提取 handler 层，剩余为模板渲染逻辑。
+  // 该条与上方 conversation-density 角度的说明规则相同（max-lines: off），原为两处独立 override 块，
+  // 现合并为一处（ESLint 合并规则使其功能无碍，合并仅为消除冗余），保留两段决策注释供追溯。
+  {
+    files: ['packages/renderer/src/components/panel/message-stream/Turn.vue'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] useChatStore 是 Pinia chat store 的唯一 setup 函数（defineStore('chat', () => {...})），
   // 包含所有 chat state（messages Map 分区 / streaming / pending / retry / queue）+ 全部 action
   // （appendUser/appendPending/applyMessageEvent/finalize/hydrate/truncateFrom 等 30+ 方法）。
@@ -87,6 +104,16 @@ export default [
     rules: {
       'max-lines-per-function': 'off',
       'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] useProviderEdit 是 Provider 编辑弹窗的唯一 composable 工厂（同 chat.ts 性质），
+  // 承载 form/localModels/headerRows 状态 + test/discover/save 编排 + 模型/headers CRUD +
+  // compat 编辑器展开态 + isDirty 快照 + 过期刷新 watch。职责内聚但函数体超 300 行。
+  // 与 chat.ts setup 同理：唯一聚合中心，max-lines-per-function 规则不适用，override 避免误报。
+  {
+    files: ['packages/renderer/src/composables/features/useProviderEdit.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
     },
   },
 ];

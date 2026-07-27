@@ -214,10 +214,8 @@ const {
 const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(props.sessionId) : undefined))
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
 const draft = ref('')
-/** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 
-// 命令浮层触发态机 —— 见 useCommandPopoverTrigger
 const sessionIdRef = computed(() => props.sessionId)
 const {
   cmdOpen,
@@ -311,7 +309,7 @@ const handoff = useComposerHandoffMode(sessionIdRef, {
   clearInput,
   restoreInput,
   exitForkMode: fork.exitForkMode,
-  handoff: (srcSessionId, focus) => handoffAction(srcSessionId, focus),
+  handoff: (srcSessionId, reply) => handoffAction(srcSessionId, reply),
 })
 // 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
 // ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。
@@ -349,7 +347,11 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isSending,
   isBashMode,
 })
-/** 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。注意：script setup 已达 300 行上限，新增逻辑必须先提取 composable（见 useComposer* 系列）。 */
+/**
+ * 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。
+ * landing 与 active 两条路径合并：landing 走 submitFirstMessage，active 走 trySendBash / /compact / send。
+ * 失败均 restoreSegments 回滚草稿（W8）。
+ */
 async function onSend(): Promise<void> {
   // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
   const canHandoffSend = handoff.handoffMode.value && !isBusy.value
@@ -357,30 +359,28 @@ async function onSend(): Promise<void> {
   const text = draft.value
   if (fork.forkMode.value && await fork.handleForkSend(text)) return
   if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
+  const segments = inputRef.value?.getSegments() ?? [] // 先快照（clearInput 会清空 DOM）
   if (props.variant === 'landing') {
-    // 先快照 segments（clearInput 会清空 DOM）；landing 态 sessionId 可能是公共 id，用 variant 判定
-    const segments = inputRef.value?.getSegments() ?? []
-    // landing 态 bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
+    // landing bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
     const bashExtract = composerBash.extractBashCommand(text)
     if (bashExtract.type === 'empty') return
     clearInput()
     isSending.value = true
     try {
+      // B6：preset 透传走 flow.pendingPreset，不在此读 store 第二真源
       const bashCommand = bashExtract.type === 'command' ? bashExtract : undefined
       await flow.submitFirstMessage(segments, localThinkingLevel.value, bashCommand)
     } catch (e) {
-      // W8：恢复 text + image/skill/file chip（restoreSegments 详见 useComposerRestore）
       restoreSegments(segments)
-      const msg = e instanceof Error ? e.message : String(e)
-      toastError(t('panel.panel.taskFailed', { error: msg }))
+      toastError(t('panel.panel.taskFailed', { error: e instanceof Error ? e.message : String(e) }))
     } finally {
       isSending.value = false
     }
     return
   }
-  const trimmed = text.trim()
-  // bash 分流（!/!! 前缀，见 useComposerBash）：必须在 fork/handoff/landing 后、/compact 前
+  // active 态：bash 分流（!/!! 前缀，必须在 /compact 前）+ /compact + 普通发送
   if (await composerBash.trySendBash(text)) return
+  const trimmed = text.trim()
   if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
     const customInstructions = trimmed.startsWith('/compact ')
       ? trimmed.slice('/compact '.length).trim() || undefined
@@ -389,17 +389,13 @@ async function onSend(): Promise<void> {
     await compact(props.sessionId!, customInstructions)
     return
   }
-  // segments 先快照（clearInput 会清空 DOM）
-  const segments = inputRef.value?.getSegments() ?? []
   clearInput()
   isSending.value = true
   try {
     await send(props.sessionId!, segments)
   } catch (e) {
-    // 发送失败恢复草稿（restoreSegments 同 W8）
     restoreSegments(segments)
-    const msg = e instanceof Error ? e.message : String(e)
-    toastError(t('panel.panel.sendFailed', { error: msg }))
+    toastError(t('panel.panel.sendFailed', { error: e instanceof Error ? e.message : String(e) }))
   } finally {
     isSending.value = false
   }

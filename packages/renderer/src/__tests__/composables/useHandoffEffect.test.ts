@@ -87,6 +87,7 @@ import * as events from '@/api/events'
 const HANDOFF_DOC = '<handoff_document>context for new session</handoff_document>'
 const SRC = 'src-1'
 const NEW = 'new-1'
+const SOURCE_LABEL = 'src-session'
 
 let scope: ReturnType<typeof effectScope> | null = null
 
@@ -117,12 +118,14 @@ afterEach(() => {
 
 /** 构造一条 session.handoffComplete ServerMessage 并经 global 通道派发（走真实 events 路径） */
 function emitHandoffComplete(
-  overrides: Partial<{ srcSessionId: string; newSessionId: string; doc: string }> = {},
+  overrides: Partial<{ srcSessionId: string; newSessionId: string; doc: string; reply?: string; sourceLabel?: string }> = {},
 ): void {
   const payload = {
     srcSessionId: overrides.srcSessionId ?? SRC,
     newSessionId: overrides.newSessionId ?? NEW,
     doc: overrides.doc ?? HANDOFF_DOC,
+    reply: overrides.reply,
+    sourceLabel: overrides.sourceLabel ?? SOURCE_LABEL,
   }
   const msg = { type: 'session.handoffComplete', payload } as ServerMessage<'session.handoffComplete'>
   events.dispatchGlobal(msg)
@@ -161,12 +164,15 @@ describe('useHandoffEffect.bindHandoffEffect', () => {
     expect(chat.isHandingOff(SRC)).toBe(false)
     // ensureStreamSubscription 已对 newSessionId 建订阅（方案 2：订阅早于 send）
     expect(useChatMock.ensureStreamSubscription).toHaveBeenCalledWith(NEW, chat, sessionStore)
+    // chatApi.send 仍接纯文档文本（不含 badge 前缀）
     expect(apiMock.chat.send).toHaveBeenCalledWith(NEW, HANDOFF_DOC)
-    // [AGENTS #5 用户可见断言] 新 session messages 含首条 user，内容是 handoff 文档
+    // [AGENTS #5 用户可见断言] 新 session messages 含首条 user，segments 含 handoff badge
     const msgs = chat.getMessages(NEW)
     expect(msgs.length).toBeGreaterThanOrEqual(1)
     expect(msgs[0].role).toBe('user')
-    expect(normalizeContent(msgs[0].content)).toBe(HANDOFF_DOC)
+    // segments 包含 handoff badge + text，normalizeContent 产出 [handoff from ...] doc
+    // segmentsToText 在 chip→text 边界补空格分隔符
+    expect(normalizeContent(msgs[0].content)).toBe(`[handoff from ${SOURCE_LABEL}] ${HANDOFF_DOC}`)
     // 跳转到新 session
     expect(sidebarMock.selectSession).toHaveBeenCalledWith(NEW)
   })
@@ -185,7 +191,9 @@ describe('useHandoffEffect.bindHandoffEffect', () => {
     // [AGENTS #5 用户可见断言] appendUser 注入的 user 消息仍在
     const msgs = chat.getMessages(NEW)
     expect(msgs.some((m) => m.role === 'user')).toBe(true)
-    expect(normalizeContent(msgs.find((m) => m.role === 'user')!.content)).toBe(HANDOFF_DOC)
+    expect(normalizeContent(msgs.find((m) => m.role === 'user')!.content)).toBe(
+      `[handoff from ${SOURCE_LABEL}] ${HANDOFF_DOC}`,
+    )
   })
 
   it('U2b [C1 真实契约] hydrate 预标记后，即便 selectSession 走 getHistory 路径也不覆盖 appendUser 注入的消息', async () => {
@@ -220,7 +228,9 @@ describe('useHandoffEffect.bindHandoffEffect', () => {
     expect(apiMock.chat.getHistory).not.toHaveBeenCalled()
     const msgsAfter = chat.getMessages(NEW)
     expect(msgsAfter.some((m) => m.role === 'user')).toBe(true)
-    expect(normalizeContent(msgsAfter.find((m) => m.role === 'user')!.content)).toBe(HANDOFF_DOC)
+    expect(normalizeContent(msgsAfter.find((m) => m.role === 'user')!.content)).toBe(
+      `[handoff from ${SOURCE_LABEL}] ${HANDOFF_DOC}`,
+    )
     // STALE 未混入
     expect(msgsAfter.some((m) => normalizeContent(m.content).includes('STALE'))).toBe(false)
   })
@@ -329,12 +339,32 @@ describe('useHandoffEffect.bindHandoffEffect', () => {
     // [AGENTS #5 用户可见] appendUser 注入的 user 消息仍在
     const msgs = chat.getMessages(NEW)
     expect(msgs.some((m) => m.role === 'user')).toBe(true)
-    expect(normalizeContent(msgs.find((m) => m.role === 'user')!.content)).toBe(HANDOFF_DOC)
+    expect(normalizeContent(msgs.find((m) => m.role === 'user')!.content)).toBe(
+      `[handoff from ${SOURCE_LABEL}] ${HANDOFF_DOC}`,
+    )
     // [W4] loadSessions 失败已 warn（降级日志，保留排查线索）
     const listWarn = warnSpy.mock.calls.find((c) =>
       String(c[0]).includes('loadSessions failed'),
     )
     expect(listWarn).toBeDefined()
     warnSpy.mockRestore()
+  })
+
+  it('U7 [W3] reply 字段：doc + reply 拼接为 send 文本，segments 含 handoff badge + text', async () => {
+    const chat = useChatStore()
+    const REPLY = '请聚焦于安全模块'
+
+    emitHandoffComplete({ reply: REPLY })
+    await settle()
+
+    // send 传拼接文本（doc + reply 分隔）
+    expect(apiMock.chat.send).toHaveBeenCalledWith(NEW, `${HANDOFF_DOC}\n\n---\n${REPLY}`)
+    // segments 含 handoff badge + text（text 内含 doc + reply 拼接）
+    const msgs = chat.getMessages(NEW)
+    expect(msgs.length).toBeGreaterThanOrEqual(1)
+    expect(msgs[0].role).toBe('user')
+    expect(normalizeContent(msgs[0].content)).toBe(
+      `[handoff from ${SOURCE_LABEL}] ${HANDOFF_DOC}\n\n---\n${REPLY}`,
+    )
   })
 })
