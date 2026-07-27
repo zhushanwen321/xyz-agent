@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { handleCompletion, __resetDebounceForTest } from '../useCompletionNotify'
 import * as sound from '../useCompletionSound'
 import * as markers from '../useSessionMarkers'
+import { useBackgroundWork } from '../features/useBackgroundWork'
 import { useSettingsStore } from '@/stores/settings'
 
 vi.mock('../useCompletionSound', () => ({
@@ -15,9 +16,19 @@ vi.mock('../useSessionMarkers', () => ({
   markUnread: vi.fn(),
 }))
 
+// useBackgroundWork 默认 mock：hasBackgroundWork 返回 false。
+// 既有 10 个用例默认假设无 background work（非 background 场景），保持行为不变。
+// TC6/TC7/TC8 用 vi.mocked(useBackgroundWork).mockReturnValue 覆盖返回值。
+vi.mock('../features/useBackgroundWork', () => ({
+  useBackgroundWork: vi.fn(() => ({ hasBackgroundWork: () => false })),
+}))
+
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  // 重置 useBackgroundWork mock 到默认实现（hasBackgroundWork=false），
+  // 避免上一个用例的 mockReturnValue 污染下一个用例。
+  vi.mocked(useBackgroundWork).mockReturnValue({ hasBackgroundWork: () => false })
   __resetDebounceForTest()
   // 默认设置 completionSound = true
   const settingsStore = useSettingsStore()
@@ -92,5 +103,37 @@ describe('useCompletionNotify', () => {
   it('未设置声音名时传 undefined（playSuccess 内部 fallback 到平台默认）', () => {
     handleCompletion('s1', 'stop', 'other-sid')
     expect(sound.playSuccess).toHaveBeenCalledWith(undefined)
+  })
+
+  // ── background work 守卫（CW wave completion-sound-bg-guard）──
+
+  it('TC6: background work 仍在跑 → 跳过提示音 + 不标记未读（守卫命中）', () => {
+    vi.mocked(useBackgroundWork).mockReturnValue({ hasBackgroundWork: () => true })
+    handleCompletion('s1', 'stop', 'other-sid')
+    expect(sound.playSuccess).not.toHaveBeenCalled()
+    expect(sound.playError).not.toHaveBeenCalled()
+    expect(markers.markUnread).not.toHaveBeenCalled()
+  })
+
+  it('TC7: background 全 done → 正常触发提示音 + 标记未读（守卫放行）', () => {
+    vi.mocked(useBackgroundWork).mockReturnValue({ hasBackgroundWork: () => false })
+    handleCompletion('s1', 'stop', 'other-sid')
+    expect(sound.playSuccess).toHaveBeenCalledOnce()
+    expect(markers.markUnread).toHaveBeenCalledWith('s1')
+  })
+
+  it('TC8: aborted + background 仍在跑 → 仍跳过（aborted 守卫先短路，与 background 守卫并列都不触发）', () => {
+    vi.mocked(useBackgroundWork).mockReturnValue({ hasBackgroundWork: () => true })
+    handleCompletion('s1', 'aborted', 'other-sid')
+    expect(sound.playSuccess).not.toHaveBeenCalled()
+    expect(sound.playError).not.toHaveBeenCalled()
+    expect(markers.markUnread).not.toHaveBeenCalled()
+  })
+
+  it('TC9: background error 态完成 → 守卫放行后走 error 路径（playError）', () => {
+    vi.mocked(useBackgroundWork).mockReturnValue({ hasBackgroundWork: () => false })
+    handleCompletion('s1', 'error', 'other-sid')
+    expect(sound.playError).toHaveBeenCalledOnce()
+    expect(markers.markUnread).toHaveBeenCalledWith('s1')
   })
 })

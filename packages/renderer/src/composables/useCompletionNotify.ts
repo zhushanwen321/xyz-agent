@@ -9,12 +9,14 @@
  *
  * 触发条件：
  *   仅「后台完成」响（sid !== focusedSessionId || document.visibilityState !== 'visible'）
+ *   background subagent/workflow 仍在跑时不响（守卫，详见 handleCompletion 内注释）
  *   stopReason: stop（成功）和 error（失败）都响，aborted 不响
  *   1s 防抖（多 session 同时完成只响一次）
  *   读取 settingsStore.system.completionSound 开关
  */
 import { playSuccess, playError } from '@/composables/useCompletionSound'
 import { markUnread } from '@/composables/useSessionMarkers'
+import { useBackgroundWork } from '@/composables/features/useBackgroundWork'
 import { useSettingsStore } from '@/stores/settings'
 
 /** 上次播放提示音的时间戳（模块级，防抖用） */
@@ -37,23 +39,29 @@ export function handleCompletion(
   // 1. 过滤 stopReason：aborted 不触发
   if (stopReason === 'aborted') return
 
-  // 2. 判定后台完成：sid !== focusedSessionId 或页面不可见
+  // 2. background subagent/workflow 守卫：主 turn 结束但 background 任务仍在跑时不触发完成提示。
+  // pi extension（pi-subagent-workflow）会在 subagent 完成时用 triggerTurn:steer 续跑主 agent，
+  // 最终 message.complete 到达时 background 已全 done，此时守卫放行自然响。
+  // 若此刻响，会在 subagent 还在跑时就误报「完成」（用户报告的 bug）。
+  if (useBackgroundWork().hasBackgroundWork(sessionId)) return
+
+  // 3. 判定后台完成：sid !== focusedSessionId 或页面不可见
   const isBackground = sessionId !== focusedSessionId || document.visibilityState !== 'visible'
   if (!isBackground) return
 
-  // 3. 标记未读（无论是否播放提示音，都标记）
+  // 4. 标记未读（无论是否播放提示音，都标记）
   markUnread(sessionId)
 
-  // 4. 读取设置开关
+  // 5. 读取设置开关
   const settingsStore = useSettingsStore()
   if (settingsStore.system.completionSound === false) return
 
-  // 5. 1s 防抖
+  // 6. 1s 防抖
   const now = Date.now()
   if (now - lastPlayTime < DEBOUNCE_MS) return
   lastPlayTime = now
 
-  // 6. 播放提示音（读用户设置的 successSound/errorSound，空则用平台默认）
+  // 7. 播放提示音（读用户设置的 successSound/errorSound，空则用平台默认）
   const successName = settingsStore.system.successSound
   const errorName = settingsStore.system.errorSound
   if (stopReason === 'error') {
