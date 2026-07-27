@@ -215,6 +215,14 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     expect(mergedCards).toHaveLength(1)
     // 卡片汇总文案含「3 个同类操作」（zh-CN i18n mergedTools）
     expect(mergedCards[0].text()).toContain('3 个同类操作')
+    // §13.2-B 灰阶化反回归：merged 卡容器用灰阶类（border-neutral-faint + bg-transparent），
+    // 不再用 main 彩色类（border-info/bg-info-soft/border-reasoning/bg-reasoning-soft）。
+    expect(mergedCards[0].classes()).toContain('border-neutral-faint')
+    expect(mergedCards[0].classes()).toContain('bg-transparent')
+    expect(mergedCards[0].classes()).not.toContain('border-info')
+    expect(mergedCards[0].classes()).not.toContain('bg-info-soft')
+    expect(mergedCards[0].classes()).not.toContain('border-reasoning')
+    expect(mergedCards[0].classes()).not.toContain('bg-reasoning-soft')
     // 默认折叠（items 列表不显示）—— trace-blk 在卡片外是 0 个（全合并了）
     expect(wrapper.findAll('.trace > * .trace-blk')).toHaveLength(0)
     // 点击 merged 卡片的 header（含 @click 的 .cursor-pointer 子元素，非根 .merged-card）
