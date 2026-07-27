@@ -124,7 +124,12 @@ export function useVirtuaFollow(opts: {
   function followIfStuck(): void {
     const run = (): void => {
       // INVAR-M4-2: rAF 内重读 stickToBottom，避免调用时贴底→用户上滑→仍被扯回
-      if (!stickToBottom.value) return
+      if (!stickToBottom.value) {
+        // U15 即时语义（迁移自 useChatScroll.ts:243）：非贴底时新内容到达 → 标记 unreadBelow，
+        // 让 showJumpButton 浮层（= !stickToBottom && unreadBelow）出现，用户可点「回到底部」。
+        unreadBelow.value = true
+        return
+      }
       const v = vlistRef.value
       // 边界3: rAF 触发时 vlistRef 可能已 dispose（session 切换）→ null check
       if (!v) return

@@ -123,15 +123,19 @@ describe('useVirtuaFollow (cw wave w1 W1TC1-W1TC9)', () => {
     expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end' })
   })
 
-  it('W1TC6 followIfStuck stickToBottom=false 不调 scrollToIndex', async () => {
+  it('W1TC6 followIfStuck stickToBottom=false 不调 scrollToIndex，但置 unreadBelow=true（U15 语义）', async () => {
     vlistRef.value = mock
-    const { stickToBottom, followIfStuck } = useVirtuaFollow({ vlistRef, onStickChange })
+    const { stickToBottom, unreadBelow, followIfStuck } = useVirtuaFollow({ vlistRef, onStickChange })
     stickToBottom.value = false
+    expect(unreadBelow.value).toBe(false)
 
     followIfStuck()
     await vi.advanceTimersByTimeAsync(16)
 
     expect(mock.scrollToIndex).not.toHaveBeenCalled()
+    // U15 即时语义（迁移自 useChatScroll.ts:243）：非贴底时新内容到达 → 标记 unreadBelow
+    // 让 showJumpButton 浮层（= !stickToBottom && unreadBelow）出现，用户可点「回到底部」
+    expect(unreadBelow.value).toBe(true)
   })
 
   it('W1TC7 followIfStuck rAF 内重读 stickToBottom（INVAR-M4-2）：调用后立即上滑→rAF 不滚', async () => {
