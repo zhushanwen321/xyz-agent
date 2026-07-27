@@ -151,7 +151,7 @@ import { useToolMeta } from '@/composables/panel/useToolMeta'
 const { t } = useI18n()
 
 const props = defineProps<{
-  type: 'thinking' | 'tool' | 'text'
+  type: 'thinking' | 'tool' | 'text' | 'agentgraph'
   /** thinking / text 内容 */
   content?: string
   /** thinking 块 id（thinking 类型时由父组件透传，用于 data-testid 精确锚定；其他类型忽略） */
@@ -317,10 +317,11 @@ const { isBash, runInTerminal } = useRunInTerminal({
 const blockClass = computed(() => '')
 
 /** data-testid 锚点：按块类型拼接可定位 id，供 E2E 精确断言特定块。
- *  格式：block-tool-${tool.id}（type==='tool' 且有 tool）/ block-thinking-${thinkingId}（type==='thinking'）。
+ *  格式：block-tool-${tool.id}（type==='tool'/'agentgraph' 且有 tool）/ block-thinking-${thinkingId}（type==='thinking'）。
+ *  agentgraph（subagent/workflow）数据结构同 tool（ToolCall 有 id），故共用 block-tool 前缀。
  *  无 id（text / thinking 无 id）时回退 undefined（不输出 data-testid 属性，避免污染选择器）。 */
 const testId = computed(() => {
-  if (props.type === 'tool') {
+  if (props.type === 'tool' || props.type === 'agentgraph') {
     const id = props.tool?.id
     return id ? `block-tool-${id}` : undefined
   }

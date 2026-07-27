@@ -13,7 +13,7 @@
  * - 遇到 system 消息 → 产出独立 SystemNotice 项（不并入 turn）
  * - streaming 中的 turn（最后一条 assistant status==='streaming'）→ working 态，默认展开 trace
  */
-import { normalizeContent } from '@xyz-agent/shared'
+import { normalizeContent, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /** 一个渲染回合：起点 user + 其后的 assistant 消息序列 */
@@ -153,10 +153,22 @@ export function hasFailedTool(turn: MessageTurn): boolean {
  * - text: ref 是 content 字符串（整条 assistant 的纯文本，因 pi agent-loop 每 turn
  *   只 emit 一次 assistant message_start，text_delta 全部 append 到同一 content 字段）
  * - thinking/tool: ref 指向对应数组的元素对象
+ * - agentgraph: subagent/workflow 的 tool_call（图结构重型操作，独立醒目展示，永不合并）。
+ *   数据结构仍是 ToolCall，但 kind 单列为 agentgraph，使其在 mergeBlocks 中成为断点。
  */
 export interface OrderedBlock {
-  kind: 'thinking' | 'tool' | 'text'
+  kind: 'thinking' | 'tool' | 'text' | 'agentgraph'
   ref: ThinkingBlock | ToolCall | string
+}
+
+/**
+ * 判断 toolName 是否属于 agentgraph（subagent/workflow）。
+ * agentgraph 是数据层一等公民——subagent/workflow 是图结构重型操作，应独立醒目展示，
+ * 不与普通 tool 合并也不相互合并。识别依据是 toolName（SUBAGENT/WORKFLOW SSOT），
+ * 与 Block.vue 的 isSubagent/isWorkflow 判断同源。
+ */
+function isAgentgraphToolName(toolName: string): boolean {
+  return SUBAGENT_TOOL_NAMES.has(toolName) || WORKFLOW_TOOL_NAMES.has(toolName)
 }
 
 /**
@@ -184,16 +196,23 @@ export function expandAssistantBlocks(msg: Message): OrderedBlock[] {
         if (th) result.push({ kind: 'thinking', ref: th })
       } else if (b.type === 'toolCall') {
         const tc = msg.toolCalls?.find((t) => t.id === b.refId)
-        if (tc) result.push({ kind: 'tool', ref: tc })
+        if (tc) {
+          // subagent/workflow 是图结构重型操作 → agentgraph kind（独立展示，不合并）
+          const kind = isAgentgraphToolName(tc.toolName) ? 'agentgraph' : 'tool'
+          result.push({ kind, ref: tc })
+        }
       }
     }
     return result
   }
-  // 降级：无 contentBlocks，旧顺序 text→thinking→tool
+  // 降级：无 contentBlocks，旧顺序 text→thinking→tool（同步识别 agentgraph）
   const fallback: OrderedBlock[] = []
   const text = normalizeContent(msg.content)
   if (text.trim()) fallback.push({ kind: 'text', ref: text })
   for (const th of msg.thinking ?? []) fallback.push({ kind: 'thinking', ref: th })
-  for (const tc of msg.toolCalls ?? []) fallback.push({ kind: 'tool', ref: tc })
+  for (const tc of msg.toolCalls ?? []) {
+    const kind = isAgentgraphToolName(tc.toolName) ? 'agentgraph' : 'tool'
+    fallback.push({ kind, ref: tc })
+  }
   return fallback
 }

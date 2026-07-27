@@ -4,20 +4,22 @@
  * 用途：Turn trace 区把「连续的正常 thinking」或「连续的正常 tool」折成一个可展开的
  * merged 块，压缩视觉噪声（draft-message-stream w2）。text 块是最终输出，永远独立；
  * 失败 tool 需单独醒目展示，断开合并链让用户一眼看到错误位置。
+ * agentgraph（subagent/workflow）永不合并——它们是图结构重型操作，应独立醒目展示，
+ * 既不与普通 tool 合并也不相互合并。
  */
 import type { ToolCall } from '@xyz-agent/shared'
 import type { OrderedBlock } from './messageTurns'
 
-/** 未参与合并的独立块（text、失败 tool、孤立单个 thinking/tool）。 */
+/** 未参与合并的独立块（text、agentgraph、失败 tool、孤立单个 thinking/tool）。 */
 export interface MergedBlockSingle {
   kind: 'single'
-  type: 'thinking' | 'tool' | 'text'
+  type: 'thinking' | 'tool' | 'text' | 'agentgraph'
   block: OrderedBlock
 }
 
 /**
  * 连续同类块的合并组（>=2 个）。
- * type 限定为 thinking|tool：text 永不合并、失败 tool 永不并入组，
+ * type 限定为 thinking|tool：text 永不合并、失败 tool 永不并入组、agentgraph 永不合并，
  * 故 merged 组只可能由这两种 kind 构成。
  */
 export interface MergedBlockGroup {
@@ -31,9 +33,11 @@ export type MergedBlock = MergedBlockSingle | MergedBlockGroup
 /**
  * 失败判断——与 Block.vue L198 同源：status==='error' 视为失败。
  * 失败块独立输出，不参与任何合并（错误需醒目单独展示，不应被埋进折叠组里）。
+ * 仅检查 kind==='tool'：agentgraph（subagent/workflow）虽也是 ToolCall 数据，
+ * 但其失败/独立展示由断点逻辑（block.kind==='agentgraph'）单独处理，不走此函数。
  */
 function isFailedTool(block: OrderedBlock): boolean {
-  // text（ref:string）和 thinking 直接跳过；仅 tool 需查 status。
+  // text（ref:string）和 thinking 直接跳过；仅普通 tool 需查 status。
   // 用 ToolCall 精确断言（kind==='tool' 后 ref 收窄为 ToolCall，含 status: ToolCallStatus，
   // 'error' 是其字面量成员），避免宽 { status?: string } 断言丢失类型契约。
   if (block.kind !== 'tool') return false
@@ -69,6 +73,8 @@ function flush(currentGroup: OrderedBlock[]): MergedBlock[] {
  *
  * 决策表：
  * - text：先 flush 缓冲，text 本身独立 single（text 是收尾输出，不合并）
+ * - agentgraph：先 flush 缓冲，agentgraph 本身独立 single（图结构重型操作，独立醒目展示，
+ *   既不与普通 tool 合并也不与其他 agentgraph 合并）
  * - 失败 tool：先 flush 缓冲，失败 tool 独立 single（错误需醒目，断开合并链）
  * - 正常 thinking/tool：同类则并入当前缓冲，异类先 flush 再起新缓冲
  *
@@ -79,8 +85,8 @@ export function mergeConsecutiveBlocks(blocks: OrderedBlock[]): MergedBlock[] {
   let currentGroup: OrderedBlock[] = []
 
   for (const block of blocks) {
-    // text 与失败 tool 是「断点」：独立输出，不进 currentGroup
-    if (block.kind === 'text' || isFailedTool(block)) {
+    // text / agentgraph / 失败 tool 是「断点」：独立输出，不进 currentGroup
+    if (block.kind === 'text' || block.kind === 'agentgraph' || isFailedTool(block)) {
       result.push(...flush(currentGroup))
       currentGroup = []
       result.push({ kind: 'single', type: block.kind, block })

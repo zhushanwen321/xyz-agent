@@ -34,12 +34,14 @@
         <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
           <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
             <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${blk.type}-${bIdx}`">
-              <!-- single 块：原 Block 渲染（与改造前逻辑一致，ref 取 blk.block.ref） -->
+              <!-- single 块：原 Block 渲染（与改造前逻辑一致，ref 取 blk.block.ref）。
+                   agentgraph（subagent/workflow）数据结构同 tool（ref 是 ToolCall），按 tool 提取 ref；
+                   type 透传 'agentgraph'，Block.vue 内部靠 toolName 路由 subagent/workflow 分支。 -->
               <Block
                 v-if="blk.kind === 'single'"
                 :type="blk.block.kind"
                 :content="blk.block.kind === 'text' ? (blk.block.ref as string) : blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).content : undefined"
-                :tool="blk.block.kind === 'tool' ? (blk.block.ref as ToolCall) : undefined"
+                :tool="blk.block.kind === 'tool' || blk.block.kind === 'agentgraph' ? (blk.block.ref as ToolCall) : undefined"
                 :thinking-id="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).id : undefined"
                 :collapsed="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).collapsed : undefined"
                 :working="sessionActive"
