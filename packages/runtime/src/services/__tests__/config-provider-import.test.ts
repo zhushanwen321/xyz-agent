@@ -14,9 +14,17 @@
  *         → 收到 config.providersImported，payload.result.imported 是数组 + broadcastProviderList 被调。
  *   - T8b：preview 返回 error（源未安装）→ reply 仍 config.providersPreviewed（含 error 字段），不报错。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { SettingsMessageHandler, type SettingsHandlerContext } from '../../transport/settings-message-handler.js'
+import { previewImport } from '../migration/provider-importer.js'
+import { _resetCacheForTest } from '../migration/preview-cache.js'
 import type { ClientMessage, ProviderImportPreview, ProviderImportResult } from '@xyz-agent/shared'
+// Pi fixture（真实模型/Key 形状，假 Key），用于 T10 端到端
+import piModelsFixture from '../migration/parsers/__tests__/fixtures/pi-models.json' with { type: 'json' }
+import piAuthFixture from '../migration/parsers/__tests__/fixtures/pi-auth.json' with { type: 'json' }
 
 // ── mock helpers ─────────────────────────────────────────────
 
@@ -185,5 +193,80 @@ describe('config.previewImportProviders / config.applyImportProviders WS round-t
     )
     // apply 失败不广播（result 不含 result 字段）
     expect(ctx.broadcastProviderList).not.toHaveBeenCalled()
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// T10 端到端：previewImport('pi') 走真实 parseProviders（不 mock）+ 真实 Pi fixture
+// ══════════════════════════════════════════════════════════════════
+//
+// W2 的 WS round-trip 测试（上方 describe）vi.mock 了 parseProviders，验证的是 handler↔configService
+// 的接线，与真实解析逻辑解耦。本测试不 mock parseProviders / provider-parser，
+// 把真实 Pi fixture（pi-models.json + pi-auth.json）写到临时 HOME 的 ~/.pi/agent/，
+// 调真实的 previewImport('pi')，断言 preview.providers 含真实 Pi provider 数据
+// （deepseek-router + zhipu，gemini 被丢弃），而非 W2 Mock 的固定值。
+//
+// 安全：apiKey 明文绝不进 preview（脱敏红线）。fixture 全用假 key。
+
+describe('T10: previewImport 端到端（真实 parseProviders + 真实 Pi fixture）', () => {
+  let prevHome: string | undefined
+  let fakeHome: string
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    _resetCacheForTest()
+    prevHome = process.env.HOME
+    fakeHome = mkdtempSync(join(tmpdir(), 'pi-e2e-'))
+    // 写真实 Pi fixture 到 <fakeHome>/.pi/agent/
+    const piAgentDir = join(fakeHome, '.pi', 'agent')
+    mkdirSync(piAgentDir, { recursive: true })
+    writeFileSync(join(piAgentDir, 'models.json'), JSON.stringify(piModelsFixture))
+    writeFileSync(join(piAgentDir, 'auth.json'), JSON.stringify(piAuthFixture))
+    process.env.HOME = fakeHome
+  })
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    rmSync(fakeHome, { recursive: true, force: true })
+  })
+
+  it('previewImport(pi) 返回真实 Pi provider（deepseek-router + zhipu，gemini 丢弃），非 Mock 固定值', () => {
+    const out = previewImport('pi')
+
+    // 成功（有 importId）
+    expect('importId' in out).toBe(true)
+    if (!('importId' in out)) throw new Error('preview should succeed')
+    expect(out.importId).toBeTruthy()
+
+    // 真实 Pi fixture：deepseek-router + zhipu（gemini 协议不支持被丢弃）
+    expect(out.preview.source).toBe('pi')
+    const ids = out.preview.providers.map((p) => p.id)
+    expect(ids).toEqual(expect.arrayContaining(['deepseek-router', 'zhipu']))
+    expect(ids).not.toContain('gemini')
+    expect(out.preview.providers).toHaveLength(2)
+
+    // deepseek-router 真实数据（非 W2 Mock 固定值）
+    const deepseek = out.preview.providers.find((p) => p.id === 'deepseek-router')!
+    expect(deepseek.protocol).toBe('anthropic-messages')
+    expect(deepseek.modelCount).toBe(2) // deepseek-chat + deepseek-reasoner
+    expect(deepseek.apiKeyExtracted).toBe(true)
+    expect(deepseek.conflict).toBe('none')
+
+    // zhipu：auth.json 提取到 key（注意：preview 只暴露 apiKeyExtracted 布尔，不暴露 key 值）
+    const zhipu = out.preview.providers.find((p) => p.id === 'zhipu')!
+    expect(zhipu.protocol).toBe('openai-completions')
+    expect(zhipu.modelCount).toBe(2) // glm-4.6 + glm-4.5-air
+    expect(zhipu.apiKeyExtracted).toBe(true)
+  })
+
+  it('previewImport 脱敏红线：preview JSON 不含 Pi fixture 的明文 key', () => {
+    const out = previewImport('pi')
+    const serialized = JSON.stringify(out)
+
+    // 红线：apiKey 明文绝不进 preview 序列化结果
+    expect(serialized).not.toContain('sk-fake-deepseek-from-auth')
+    expect(serialized).not.toContain('sk-fake-zhipu-from-auth')
+    expect(serialized).not.toContain('sk-fake-zhipu-in-models')
   })
 })
