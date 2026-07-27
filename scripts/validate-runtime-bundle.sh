@@ -76,13 +76,18 @@ echo -e "${GREEN}[OK] server.cjs 存在${NC}"
 echo ""
 echo -e "${BLUE}[2/6] 检查依赖是否打包（noExternal）...${NC}"
 
-# 从 package.json 读取 dependencies（过滤 workspace:* 协议依赖——它们被 tsup inline，
-# 包名在 bundle 中消失是预期行为，第 4 步 grep 包名检查不适用）
+# 从 package.json 读取 dependencies + optionalDependencies（去重）。
+# 必须合并 optionalDependencies：node-pty 在 722321bdc 从 dependencies 移到 optionalDependencies，
+# 若只读 dependencies 会漏掉 node-pty → [2/6] 不再打印它为 native external、[4/6] 不再验证它
+# 在 bundle 里保持 require('node-pty')（若有人误加进 tsup noExternal 会捕获不到）。
+# 过滤 workspace:* 协议依赖——它们被 tsup inline，包名在 bundle 中消失是预期行为，第 4 步 grep 不适用。
 RUNTIME_PKG="$RUNTIME_DIR/package.json"
 DEPS=$(node -e "
 const p=require('$RUNTIME_PKG');
-const deps=p.dependencies||{};
-console.log(Object.keys(deps).filter(k=>!deps[k].startsWith('workspace:')).join('\n'));
+const filter=(o)=>Object.entries(o||{}).filter(([,v])=>!String(v).startsWith('workspace:')).map(([k])=>k);
+const deps=filter(p.dependencies);
+const opt=filter(p.optionalDependencies);
+console.log([...new Set([...deps,...opt])].join('\n'));
 ")
 
 # 从 tsup.config.ts 读取 noExternal 配置

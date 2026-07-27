@@ -12,9 +12,15 @@
  * 用法：node tools/verify-remote-auth.cjs
  * 退出码：0 = 全部 PASS，1 = 任一步 FAIL（打印哪步失败 + 预期/实际对比）
  *
- * 注：runtime 日志行 `[runtime] listening on <host>:<port>` 打印的是「请求的」端口（--port 入参），
- * 端口为 0 时实际 OS 分配端口无法从日志解析。故本脚本用固定端口 + 端口占用探测选可用端口
- * （复用 verify-terminal.cjs 的固定端口范式）。
+ * 注：本脚本启动 server.cjs（远程 CLI 入口，package.json bin 指向），其输出含两段：
+ *   1. printStartup（bootstrap.ts）走 process.stdout.write，含 "WS server listening on host:port"、
+ *      "token generated"、"detected network" 等（token 明文落 stdout）。
+ *   2. main()（index.ts，被 server.cjs 调用）走 console.log，含 "[runtime] listening on host:port"
+ *      和 "[runtime] ready"。
+ * 本脚本检测 "[runtime] ready" 作为 ready 标志（server.cjs 与 index.cjs 都会打印，因 main() 复用）。
+ * runtime 日志行打印的是「请求的」端口（--port 入参），端口为 0 时实际 OS 分配端口无法从日志解析。
+ * 故本脚本用固定端口 + 端口占用探测选可用端口（复用 verify-terminal.cjs 的固定端口范式）。
+ * token 不依赖 stdout 解析（stdout 含明文 token 仅作诊断），从 token-file 读取用于认证测试。
  */
 'use strict'
 
@@ -27,7 +33,10 @@ const path = require('node:path')
 const http = require('node:http')
 
 const REPO_ROOT = path.resolve(__dirname, '..')
-const RUNTIME_DIST = path.join(REPO_ROOT, 'packages', 'runtime', 'dist', 'index.cjs')
+// 改跑 server.cjs（package.json bin 字段 xyz-agent-runtime 指向的实际远程 CLI 入口）。
+// 原跑 index.cjs（Electron-supervisor 组合根）不覆盖 printStartup + parseServerArgs + symlink
+// shebang 链路。server.cjs 内部调用 main()（来自 index.ts），同样打印 [runtime] ready。
+const RUNTIME_DIST = path.join(REPO_ROOT, 'packages', 'runtime', 'dist', 'server.cjs')
 // 固定端口基（与 verify-terminal.cjs 同范式）：进程退出会立刻释放，正常无占用。
 // 启动前探测，被占用则递增找下一个可用端口。
 const PORT_BASE = parseInt(process.env.VERIFY_REMOTE_AUTH_PORT || '13591', 10)
