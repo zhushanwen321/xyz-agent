@@ -127,6 +127,20 @@ describe('bindSessionStreamSync 边界验证（w2）', () => {
     // b/c 被 disposeSession 后 messages 清空（chat.ts:846 disposeSession 删 messages key）
     expect(chatStore.getMessages('b').length).toBe(0)
     expect(chatStore.getMessages('c').length).toBe(0)
+
+    // 补强（m1）：证明 b/c 不只是 messages 被清，订阅（events.on）也真的被拆。
+    // disposeSession 内部 streamSubscriptions.delete + 调 unsub（events.off）——若漏删订阅，
+    // 下面 dispatch 仍会投递到 b 的旧 handler，applyMessageEvent 重新建 streaming assistant，length 变 1。
+    events.dispatchSession('b', {
+      type: 'message.message_start',
+      payload: { sessionId: 'b', messageId: 'm-b-2' },
+    } as ServerMessage)
+    expect(chatStore.getMessages('b').length).toBe(0) // 订阅已拆，事件被丢弃
+    events.dispatchSession('c', {
+      type: 'message.message_start',
+      payload: { sessionId: 'c', messageId: 'm-c-2' },
+    } as ServerMessage)
+    expect(chatStore.getMessages('c').length).toBe(0)
   })
 
   it('TC2: 从未交互 session（仅 appendSession 进 list）收 message.start+complete 后 isGenerating 翻 false', () => {
@@ -211,8 +225,27 @@ describe('bindSessionStreamSync 边界验证（w2）', () => {
     // 非作用域绑定——单 scope.stop 不会拆订阅。真实 HMR 会整模块重载（useChat 模块重新求值，
     // streamSubscriptions Map 重置），此处用 resetChatModuleState 精确建模该重载。
     scope.stop()
-    resetChatModuleState()
+
+    // 关键断言（TC5 核心，填补验证空洞）：在 resetChatModuleState 之前，append 一个全新 session
+    // 并推事件——若 scope.stop() 真的取消了旧 watch，旧 watch 不会响应 list 变化给 sid-new
+    // 建订阅，dispatchSession(sid-new) 无订阅者，messages 保持 0。
+    // 这一步真正区分了「旧 watch 已取消」与「旧 watch 仍存活但被幂等短路掩盖」：
+    //   若 scope.stop 未生效（旧 watch 仍存活），appendSession(sid-new) 会触发旧 watch 调
+    //   ensureStreamSubscription(sid-new) 建订阅 → 推事件后 messages 变 1，断言失败。
+    //   只有旧 watch 真被取消时，sid-new 才会因无订阅而 messages===0。
+    // 故意保留 sid1 的旧订阅（模块级，未 reset）——只验旧 watch 对新 list 项的不响应，
+    // sid1 旧订阅与 sid-new 无关，不影响本断言。
+    const sidNew = 's-hmr-new'
+    sessionStore.appendSession(mkSession(sidNew))
+    events.dispatchSession(sidNew, {
+      type: 'message.message_start',
+      payload: { sessionId: sidNew, messageId: 'm-new' },
+    } as ServerMessage)
+    expect(chatStore.getMessages(sidNew).length).toBe(0) // 旧 watch 已取消，sid-new 无订阅
+
+    // 清模块级订阅（模拟 HMR 整模块重载的剩余部分）。
     // 旧订阅已清——sid1 再推事件不应到（messages 不变）
+    resetChatModuleState()
     events.dispatchSession(sid1, {
       type: 'message.message_start',
       payload: { sessionId: sid1, messageId: 'm2' },
