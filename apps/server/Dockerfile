@@ -19,11 +19,10 @@
 #   node-pty prebuilds ship darwin + win32 only (no linux). Inside a linux container
 #   it MUST be compiled from source, which needs python3 + make + g++. We compile it
 #   in the runtime stage (Approach A: simple & reliable over image-size optimization).
-#   NOTE: scripts/fix-node-pty-permissions.sh (root postinstall) is NOT run by
-#   `npm install -g <runtime-tgz>` — and it does not need to be. Both bugs it fixes
-#   are irrelevant to a from-source linux build: (1) the 644 spawn-helper permission
-#   is a prebuild-tarball artifact only, and node-gyp emits 755; (2) the asar
-#   double-replace only triggers when __dirname contains 'app.asar' (Electron only).
+#   The builder stage does NOT need the toolchain: `pnpm install --ignore-scripts`
+#   (see below) skips all postinstall scripts including node-pty's native build,
+#   and the builder only runs `tsup build` (pure JS, no native addon loading).
+#   node-pty is recompiled in the runtime stage via `npm install -g <runtime-tgz>`.
 #
 # Build context is the repo root:
 #   docker build -f apps/server/Dockerfile -t xyz-agent-server:dev .
@@ -35,11 +34,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim AS builder
 
-# node-pty compiles from source inside this stage too (pnpm install hoists it),
-# so the C/C++/python3 toolchain is required.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
+# --ignore-scripts 跳过 node-pty 编译（builder 只构建 bundle，不运行 node-pty；
+# runtime 阶段 npm install -g 会重新编译 node-pty，需要工具链）。builder 只跑
+# `tsup build`（纯 JS）+ `npm pack`，不需 python3/make/g++ C/C++ 工具链。
 
 WORKDIR /build
 
@@ -54,16 +51,14 @@ RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY packages/ ./packages/
 COPY apps/electron/package.json ./apps/electron/package.json
-# scripts/fix-node-pty-permissions.sh is invoked by the root package.json
-# postinstall hook during `pnpm install`. Without it the install fails.
-COPY scripts/fix-node-pty-permissions.sh ./scripts/fix-node-pty-permissions.sh
 
 # Install workspace dependencies (frozen lockfile for reproducibility).
 # --ignore-scripts: 跳过所有 install/postinstall scripts。理由：
 #   1. wave5 把 runtime bin 改为 ./dist/server.cjs（包内路径），但 dist 在 build 前不存在，
 #      pnpm 装 workspace 链接时尝试 chmod dist/server.cjs 会 ENOENT 失败。
 #      --ignore-scripts 跳过 bin 链接的 chmod 步骤。
-#   2. root postinstall (scripts/fix-node-pty-permissions.sh) 在 Linux 源码构建是 no-op。
+#   2. root postinstall (scripts/fix-node-pty-permissions.sh) 被跳过——它在 Linux 源码构建
+#      本就是 no-op（两个 bug 只影响 prebuild tarball / Electron asar 场景）。
 #   3. node-pty 的 native 编译脚本也被跳过——但 builder 阶段只需构建 bundle（tsup），
 #      不运行 node-pty；runtime 阶段会 npm install -g 重新编译 node-pty。
 # 代价：builder 阶段不能跑任何依赖 node-pty 的代码（本就不需要）。
@@ -91,8 +86,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the runtime from the builder's tgz (self-contained bundle).
-# node-pty (optional dep) compiles from source here; both known upstream
-# node-pty packaging bugs are N/A for a from-source linux build (see header).
+# node-pty (optional dep) compiles from source here.
 COPY --from=builder /build/packages/runtime/xyz-agent-runtime-*.tgz /tmp/
 RUN npm install -g /tmp/xyz-agent-runtime-*.tgz && rm /tmp/*.tgz
 
@@ -101,6 +95,9 @@ RUN npm install -g @earendil-works/pi-coding-agent@0.80.3
 
 # Smoke-test: both binaries must respond.
 RUN xyz-agent-runtime --version && pi --version
+# node-pty 是 optionalDependencies，npm install 时编译失败不报错（optional），
+# 会发布 broken terminal 镜像（terminal.* RPC 全 broken）。显式 require 验证编译成功。
+RUN node -e "require('node-pty'); console.log('node-pty OK')"
 
 # Data directory (persisted volume). XYZ_AGENT_DATA_DIR is read by
 # packages/shared/src/paths.ts:41 (getDataDir).
@@ -115,6 +112,12 @@ EXPOSE 3210
 # (packages/runtime/src/transport/connection-manager.ts:114 → {status:'ok'}).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:3210/health || exit 1
+
+# 安全：降权到非 root 用户。node:22-bookworm-slim 自带 node 用户（uid 1000）。
+# 远程 agent 通过 node-pty spawn shell 访问挂载的宿主目录，root 是提权隐患。
+# USER node 前（root 时）chown /data，否则 node 用户写 token（/data/token）失败。
+RUN chown -R node:node /data
+USER node
 
 # server CLI defaults: --host 0.0.0.0 --port 3210 (packages/runtime/src/server/index.ts).
 # token-file defaults to <dataDir>/token = /data/token (created 0600 on first start).

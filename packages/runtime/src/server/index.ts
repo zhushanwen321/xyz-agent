@@ -59,7 +59,10 @@ export function parseServerArgs(argv: string[]): ServerArgs {
     port: parseInt(process.env.XYZ_AGENT_PORT ?? String(DEFAULT_PORT), 10) || DEFAULT_PORT,
     // 与 --host/--port 同策略：XYZ_AGENT_TOKEN_FILE env 作默认，--token-file 参数覆盖 env。
     // <dataDir>/token 默认由 run() 兜（parseServerArgs 不接 dataDir）。
-    tokenFile: process.env.XYZ_AGENT_TOKEN_FILE,
+    // env 显式设为空字符串（如 `XYZ_AGENT_TOKEN_FILE= xyz-agent-runtime`）时归一化为
+    // undefined：空值合并（??）只对 null/undefined 合并，'' 会让 createTokenManager
+    // 尝试写空路径。用 `|| undefined` 把空串当未设置处理，由 run() 兜默认 <dataDir>/token。
+    tokenFile: process.env.XYZ_AGENT_TOKEN_FILE || undefined,
     printQr: false,
     qrMode: 'browser',
     printAllUrls: false,

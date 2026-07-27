@@ -54,7 +54,7 @@ docker build -t xyz-agent-server -f apps/server/Dockerfile .
 
 - **必须挂载 `/data` 卷**：镜像内 `XYZ_AGENT_DATA_DIR=/data`，token / sessions / logs / pi 全在此目录。不挂卷则每次容器重启 token 变更，所有客户端掉线。
 - **挂载项目目录**：把要操作的项目挂进容器（如 `-v ~/projects:/projects`），session cwd 以**容器内视角**为准（如 `/projects/myrepo`），不是宿主机路径。
-- **pi 随容器平台下载**：镜像在当前架构（amd64/arm64）首启时下载匹配的 pi 二进制到 `/data/pi/`。
+- **pi 随镜像预装**：Docker 镜像在 build 阶段通过 `npm install -g @earendil-works/pi-coding-agent@0.80.3` 预装 pi（版本与项目 SSOT 一致），无需首启下载。pi 位于 `/usr/local/bin/pi`，`findPiExecutable` 直接命中。
 
 ### 1.3 从源码构建（fallback，适合开发者）
 

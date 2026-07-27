@@ -42,11 +42,9 @@ docs
 e2e
 tools
 scripts
-# Re-include the node-pty permission/patch helper: the builder stage runs
-# `pnpm install --frozen-lockfile` at the workspace root, which executes the
-# root package.json postinstall (`bash scripts/fix-node-pty-permissions.sh`).
-# Without this file the build fails. The script is a no-op on linux source builds.
-!scripts/fix-node-pty-permissions.sh
+# Note: scripts/ used to be re-included for fix-node-pty-permissions.sh, but the
+# Dockerfile now uses `pnpm install --ignore-scripts` (root postinstall skipped),
+# so neither scripts/ nor the helper is needed in the build context.
 .github
 .changeset
 .cw

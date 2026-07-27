@@ -191,6 +191,21 @@ describe('W6-TC7: --token-file XYZ_AGENT_TOKEN_FILE env 回退', () => {
     const args = parseServerArgs([])
     expect(args.tokenFile).toBeUndefined()
   })
+
+  /**
+   * TC7-env.5: XYZ_AGENT_TOKEN_FILE 设为空字符串时按 undefined 处理。
+   *
+   * 背景：tokenFile: process.env.XYZ_AGENT_TOKEN_FILE 直接读 env。空值合并（??）
+   * 只对 null/undefined 合并，env 显式设为 '' 时返回 ''（非 undefined）。下游
+   * createTokenManager({tokenFile:''}) 会尝试写空路径（ENOENT / 误写当前目录）。
+   * 修复：env 为空字符串时归一化为 undefined，由 run() 兜默认 <dataDir>/token。
+   * 这与典型 shell 场景一致：`XYZ_AGENT_TOKEN_FILE= xyz-agent-runtime`（export 空）。
+   */
+  it('TC7-env.5: XYZ_AGENT_TOKEN_FILE 为空字符串时 tokenFile 应为 undefined（不传空路径给 tokenManager）', () => {
+    process.env.XYZ_AGENT_TOKEN_FILE = ''
+    const args = parseServerArgs([])
+    expect(args.tokenFile).toBeUndefined()
+  })
 })
 
 describe('W4-TC8: 命令分发（run 流程）', () => {
