@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES, type ThinkingLevel } from '@xyz-agent/shared'
-import type { IPiEngine, PiSessionStats, PiCompactionResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
@@ -13,7 +13,12 @@ const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
 function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
   const safe: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix) || key === prefix)) {
+    // [S4] key.startsWith(prefix) 已覆盖 key === prefix 的精确匹配场景
+    // （任何字符串 s 都满足 s.startsWith(s)===true，如 PATH.startsWith('PATH')），
+    // 故无需再 `|| key === prefix`（该子句恒为冗余）。
+    // 白名单 ENV_WHITELIST_PREFIXES（PATH/HOME/USER/LANG/TERM/NODE_/...）均为「前缀」语义，
+    // 不存在「不以 prefix 开头但精确等于 prefix」的 env 名——确认无 env 丢失风险。
+    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix))) {
       safe[key] = value
     }
   }
@@ -524,6 +529,34 @@ export class RpcClient implements IPiEngine {
   async compact(customInstructions?: string): Promise<PiCompactionResult> {
     const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
     return msg.data as unknown as PiCompactionResult
+  }
+
+  /**
+   * 直接执行 bash 命令（pi bash RPC）。
+   *
+   * excludeFromContext 透传规则：undefined 时不传该键（走 pi 默认），显式 true/false 时透传。
+   * bash 可能长跑，复用 COMPACT_TIMEOUT_MS（300s）避免误超时。
+   * 返回值归一为 PiBashResult（sendCommand 已归一 data ?? payload，此处按结构断言）。
+   */
+  async bash(command: string, excludeFromContext?: boolean): Promise<PiBashResult> {
+    const args = excludeFromContext !== undefined ? { command, excludeFromContext } : { command }
+    const msg = await this.sendCommand('bash', args, COMPACT_TIMEOUT_MS)
+    // [W6] shape guard：pi 返回 malformed 数据时 fallback，避免下游因 undefined 字段崩溃。
+    // [S1] fallback 不用 exitCode:1（会被前端误读为「命令失败」，实为 pi 协议异常），
+    // 改用 exitCode:undefined（PiBashResult.exitCode 类型 number|undefined，dispatcher 广播时
+    // `?? null` 归一为 null，前端 BashOutputBlock 渲染为「无 exit code」而非「失败」），
+    // 并在 output 写诊断提示让用户可见协议异常（而非空 output 静默吞错）。
+    const data = msg.data as Record<string, unknown> | undefined
+    if (typeof data !== 'object' || data === null || !('output' in data)) {
+      console.warn('[rpc] bash: malformed PiBashResult from pi, using fallback. data=', msg.data)
+      return { output: '[protocol error: malformed bash response from pi]', exitCode: undefined, cancelled: false, truncated: false }
+    }
+    return data as unknown as PiBashResult
+  }
+
+  /** 取消进行中的 bash 执行（pi abort_bash 命令）。 */
+  abortBash(): Promise<PiMessage> {
+    return this.sendCommand('abort_bash')
   }
 
   /**

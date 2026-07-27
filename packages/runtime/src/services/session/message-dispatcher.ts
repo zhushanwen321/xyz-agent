@@ -93,7 +93,8 @@ export class MessageDispatcher {
     if (activeSession) {
       // [D-009 预检] busy 时拒绝（send.rejected 广播，不调 pi.prompt）
       // [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
-      if (activeSession.isGenerating || activeSession.isCompacting) {
+      // [composer-bash-execute W1] 加 isBashRunning：bash 执行中 prompt 会与 bash 竞态，双向互斥。
+      if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
         this.broker.broadcast({
           type: 'send.rejected',
@@ -196,6 +197,187 @@ export class MessageDispatcher {
     })
   }
 
+  /**
+   * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
+   *
+   * 与 sendMessage 共享 ensureActive 骨架，但 busy 预检语义不同（W2 起）：
+   * sendBash 仅 bash↔bash / bash↔compacting 互斥，允许 AI streaming（isGenerating）期间执行 bash，
+   * 对齐 pi-tui——pi 把 bash RPC 排入 _pendingBashMessages 待当前 turn 结束后按 JSONL 顺序回放，
+   * 对 RPC 透明。sendMessage 仍保留 isGenerating 三者互斥（spec OQ-1：本期不放宽 prompt 路径）。
+   *
+   * 不走 sendPrompt（bash 不调 client.prompt，不需 BeforeSend hook、不需图片附件、不触发 isGenerating 流式态）。
+   *
+   * 生命周期：bashStart 广播（开始）→ pi bash RPC → bashResult 广播（终态）。
+   * 返回 { blocked: true } 表示被预检拒绝（send.rejected 已广播）或执行失败（message.error 已广播），
+   * 调用方（session-message-handler）据此走对应 ack 路径，与 sendMessage 的返回语义对称。
+   */
+  async sendBash(
+    sessionId: string,
+    command: string,
+    excludeFromContext?: boolean,
+  ): Promise<{ blocked: boolean; rejected?: boolean }> {
+    // ── ensureActive(必要时 restore)──
+    let client: IPiEngine
+    try {
+      client = await this.svc.ensureActive(sessionId)
+    } catch (e) {
+      const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
+      console.error(`[message-dispatcher] sendBash: ${errMsg}`)
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: errMsg },
+      })
+      throw e
+    }
+
+    // ── busy 预检（W2: bash↔streaming 放宽并发，对齐 pi-tui）──
+    // 语义变化（w2）：bash 不再与 AI streaming（isGenerating）互斥，允许 streaming 期间执行 bash。
+    // 原因（spec C1）：pi 把 bash RPC 排入 _pendingBashMessages，待当前 turn 结束后按 JSONL
+    // 顺序回放——对 RPC 透明，runtime 侧无需排队等待。对齐 pi-tui 行为（pi-tui 允许 streaming 时发 bash）。
+    // 保留的互斥（仍 reject）：
+    // - isBashRunning：bash↔bash 互斥——pi 单 bash slot，并发会乱序。
+    // - isCompacting：bash↔compact 互斥——compact 重写上下文，期间 bash 会读到半压缩状态。
+    // 注意：sendMessage（sendPrompt）预检仍保留 isGenerating/isBashRunning/isCompacting 三者互斥，
+    // 本期不放宽（spec OQ-1）——pi prompt 在 isStreaming 时强制要求 streamingBehavior 参数，
+    // sendMessage 预检拒 isGenerating 是安全网。
+    const activeSession = this.svc.getSessionByClient(client)
+    if (activeSession) {
+      if (activeSession.isCompacting || activeSession.isBashRunning) {
+        console.warn(`[message-dispatcher] sendBash preemptive reject (busy), sid=${sessionId}`)
+        this.broker.broadcast({
+          type: 'send.rejected',
+          payload: { sessionId, reason: 'busy', message: 'Agent 正在处理' },
+        })
+        return { blocked: true, rejected: true }
+      }
+      activeSession.isBashRunning = true
+      // [W1] 生成本次 sendBash 的代次令牌：abortBash 在广播 cancelled 终态前会旋转此 token
+      // （清 undefined）。await 返回后比对 token，可判定是否被 abortBash 抢先收口。
+      activeSession.bashRunToken = `bash_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    }
+    // [W1] 捕获本次 sendBash 的 token 到本地（abortBash 旋转后 activeSession.bashRunToken 已变，
+    // 本地 myToken 不变，比对 myToken === activeSession.bashRunToken 即可判定未被抢收口）。
+    const myToken = activeSession?.bashRunToken
+
+    // ── bashStart 广播（实时反馈，与 bashResult 终态对称）──
+    const excludeFlag = !!excludeFromContext
+    this.broker.broadcast({
+      type: 'message.bashStart',
+      payload: { sessionId, command, excludeFromContext: excludeFlag, timestamp: Date.now() },
+    })
+
+    // ── 调 pi bash + 广播终态 ──
+    try {
+      const result = await client.bash(command, excludeFromContext)
+      // [W1] 竞态守卫：await 期间若 abortBash 被调用，它已置 isBashRunning=false 并广播
+      // cancelled bashResult 终态（且旋转了 bashRunToken）。此处若再广播带真实 output 的
+      // bashResult 会导致前端收到两条终态（先 cancelled 后真实结果），渲染错乱。
+      // 检测 token 变化即说明被 abort 抢先收口，静默跳过本次广播。
+      if (activeSession && myToken !== undefined && activeSession.bashRunToken !== myToken) {
+        console.warn(`[message-dispatcher] sendBash: aborted during await, skip duplicate terminal. sid=${sessionId}`)
+        return { blocked: true }
+      }
+      this.broker.broadcast({
+        type: 'message.bashResult',
+        payload: {
+          sessionId,
+          command,
+          output: result.output,
+          exitCode: result.exitCode ?? null,
+          cancelled: result.cancelled,
+          truncated: result.truncated,
+          excludeFromContext: excludeFlag,
+          timestamp: Date.now(),
+          ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
+        },
+      })
+    } catch (e) {
+      const errMsg = toErrorMessage(e)
+      console.error(`[message-dispatcher] sendBash failed: sessionId=${sessionId}`, errMsg)
+      // [W1] 竞态守卫：若 await 抛错是因 abortBash 抢先收口（如 abort_bash 触发 pi 关闭流），
+      // 已有 cancelled bashResult 广播，此处不再发 message.error，避免双重报错。
+      if (activeSession && myToken !== undefined && activeSession.bashRunToken !== myToken) {
+        console.warn(`[message-dispatcher] sendBash: aborted during await (catch), skip duplicate error. sid=${sessionId}`)
+        return { blocked: true }
+      }
+      // [S2] 对称兜底：与 abortBash「无论成败都广播 bashResult 终态」对称。
+      // 前端 message.error handler 只收口 streaming **assistant** 消息（finalizeSession 按
+      // role==='assistant' 过滤），不收口 role==='system' 的 streaming bash 消息——
+      // 若只发 message.error，前端 bash 气泡会卡在 streaming 态。故此处补发一条
+      // cancelled:false + exitCode:null + output 含错误信息的 bashResult 终态让 bash 收口。
+      this.broker.broadcast({
+        type: 'message.bashResult',
+        payload: {
+          sessionId,
+          command,
+          output: `[bash error] ${errMsg}`,
+          exitCode: null,
+          cancelled: false,
+          truncated: false,
+          excludeFromContext: excludeFlag,
+          timestamp: Date.now(),
+        },
+      })
+      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
+      return { blocked: true }
+    } finally {
+      if (activeSession) {
+        activeSession.isBashRunning = false
+        // [W1] 复位 token：仅当 token 仍是本次 sendBash 的（未被 abortBash 旋转、
+        // 也未被下一次 sendBash 覆盖）时才清，避免误清 abortBash 或后续 sendBash 的标记。
+        if (myToken !== undefined && activeSession.bashRunToken === myToken) {
+          activeSession.bashRunToken = undefined
+        }
+      }
+    }
+    return { blocked: false }
+  }
+
+  /**
+   * 取消进行中的 bash 执行（pi abort_bash）。
+   *
+   * 与 abort() 对称：失败不 throw（console.error 兑底），finally 兑底广播 bashResult{cancelled:true}
+   * 终态——与 abort 广播 message.complete{aborted} 对称，前端据 bashResult 收口 isBashRunning 态。
+   */
+  async abortBash(sessionId: string): Promise<void> {
+    const client = this.getClientOrThrow(sessionId, 'abortBash')
+    const activeSession = this.svc.getSessionByClient(client)
+    // [W1] 守卫：当前没有 bash 在运行时短路返回，避免无条件广播 bashResult{cancelled:true}
+    // 与 abort() 不需要守卫不同——abort 的 isGenerating 可能在 pi 卡死时残留，必须强制终态；
+    // 而 isBashRunning 仅在 sendBash 显式置 true，用户对同一 session 重复 abortBash 时应静默跳过。
+    if (!activeSession?.isBashRunning) return
+    try {
+      await client.abortBash()
+    } catch (e) {
+      // 与 abort() 的错误兑底一致：不 throw，避免请求级 envelope 双重报错。
+      console.error(`[message-dispatcher] abortBash failed: sessionId=${sessionId}`, toErrorMessage(e))
+    } finally {
+      if (activeSession) {
+        activeSession.isBashRunning = false
+        // [W1] 旋转 token：通知 sendBash「已被 abort 抢先收口」。sendBash 在 await 返回后
+        // 检测到 activeSession.bashRunToken !== myToken 即静默跳过终态广播，避免双终态。
+        // 用新 token 而非清 undefined：若 sendBash 尚未读 myToken（仍在 await），清 undefined
+        // 会让 sendBash 误判「无 abort」——而新 token 保证 sendBash 比对必然不等。
+        activeSession.bashRunToken = `abort_${Date.now()}_${Math.random().toString(36).slice(2)}`
+      }
+    }
+    // 兑底终态：无论 pi 是否响应 abort_bash，都广播 cancelled=true 的 bashResult。
+    // pi 卡死时不发任何事件，靠这条让前端 isBashRunning 复位（与 abort 广播 message.complete 同理）。
+    this.broker.broadcast({
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command: '',
+        output: '',
+        exitCode: null,
+        cancelled: true,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: Date.now(),
+      },
+    })
+  }
+
   async steerMessage(sessionId: string, content: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'steer')
     await client.steer(content)
@@ -210,12 +392,12 @@ export class MessageDispatcher {
    * D8: abort/steer/followUp 共享的「getClient → 空抛」骨架（此前 3 处逐行平行，只差方法名）。
    * @param op 调用方方法名，仅用于构造诊断串。
    */
-  private getClientOrThrow(sessionId: string, op: 'abort' | 'steer' | 'followUp'): IPiEngine {
+  private getClientOrThrow(sessionId: string, op: 'abort' | 'steer' | 'followUp' | 'abortBash'): IPiEngine {
     const client = this.pm.getClient(sessionId)
     if (!client) {
       // abort 的历史报错串是 "Session X not found"（无前缀），steer/followUp 带 [message-dispatcher] 前缀。
       // 保持原样以免破坏依赖报错文本的测试。
-      throw op === 'abort'
+      throw op === 'abort' || op === 'abortBash'
         ? new Error(`Session ${sessionId} not found`)
         : new Error(`[message-dispatcher] ${op}: session ${sessionId} not active`)
     }
@@ -231,6 +413,26 @@ export class MessageDispatcher {
     }
 
     console.log('[message-dispatcher] compact: start, sessionId=' + sessionId + ', customInstructions=' + (customInstructions ? `"${customInstructions}"` : '(none)'))
+
+    // [W3] busy 预检：与 sendBash/sendMessage 的 isCompacting 拒绝对称。
+    // compact 期间若 isBashRunning（pi 单 bash slot，compact 重写上下文会读到半压缩状态）或
+    // isGenerating（pi 正在跑 LLM turn，compact 重写上下文会与 streaming 竞态），必须拒。
+    // 互斥此前只单向（sendBash/sendMessage 拒 isCompacting，但 compact 自身不预检 busy），
+    // 导致 compact 可在 bash/generating 进行中启动 → 竞态。此处补齐双向互斥。
+    const active = this.svc.getSessionByClient(client)
+    if (active && (active.isBashRunning || active.isGenerating)) {
+      const reason = active.isBashRunning ? 'bash running' : 'agent generating'
+      const errMsg = `Cannot compact while ${reason}`
+      console.warn(`[message-dispatcher] compact preemptive reject (busy), sid=${sessionId}, reason=${reason}`)
+      // 广播 session.compacted{error} 让前端流式通道收口（与下方 client.compact 失败路径对称）。
+      this.broker.broadcast({
+        type: 'session.compacted',
+        payload: { sessionId, status: 'compacted', error: errMsg },
+      })
+      // 抛错让 session-message-handler 补请求级 error envelope（与 client.compact 失败路径对称）。
+      throw new Error(errMsg)
+    }
+
     this.broker.broadcast({
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
@@ -238,7 +440,7 @@ export class MessageDispatcher {
     // [W3, U6] compact 期间用 isCompacting 互斥 sendPrompt（pi 在压缩上下文，
     // 此时 prompt 会与压缩竞态导致卡死）。与 isGenerating 不同：compact 不开 isGenerating，
     // 否则前端会把 session 误显示为 active（实际在压缩）。finally 兜底确保异常/成功都复位。
-    const active = this.svc.getSessionByClient(client)
+    // active 已在上方 busy 预检处取出（W3 复用）。
     if (active) active.isCompacting = true
     try {
       let result

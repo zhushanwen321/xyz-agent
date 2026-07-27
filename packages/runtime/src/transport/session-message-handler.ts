@@ -32,6 +32,7 @@ export class SessionMessageHandler {
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
+    'message.bash', 'message.abortBash',
   ]
 
   async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
@@ -262,6 +263,28 @@ export class SessionMessageHandler {
         const abortSid = msg.payload.sessionId
         await this.ctx.sessionService.abort(abortSid)
         return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: abortSid, status: 'aborted' })
+      }
+      case 'message.bash': {
+        // 与 message.send 对称：调 dispatcher.sendBash → 按 result.rejected/blocked 走 ack 路径。
+        // rejected（预检拒绝）：send.rejected 已广播，reply message.status{rejected} 让 pending 干净 resolve。
+        // blocked（执行失败）：message.error 已广播（错误气泡），走 error envelope 让 pending.reject。
+        // 正常：reply message.status{sent}。实际 bash 结果经 message.bashStart/bashResult 广播通道推回（fire-and-forget）。
+        const { sessionId, command, excludeFromContext } = msg.payload
+        const result = await this.ctx.sessionService.sendBash(sessionId, command, excludeFromContext)
+        if (result.rejected) {
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'rejected' })
+        }
+        if (result.blocked) {
+          return this.ctx.sendError(ws, 'message_blocked', 'Bash execution failed', msg.id, { sessionId })
+        }
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
+      }
+      case 'message.abortBash': {
+        // 与 message.abort 对称：调 dispatcher.abortBash，reply message.status{aborted}。
+        // 终态经 message.bashResult{cancelled:true} 广播推回（dispatcher.abortBash 兑底），不依赖 reply。
+        const abortBashSid = msg.payload.sessionId
+        await this.ctx.sessionService.abortBash(abortBashSid)
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: abortBashSid, status: 'aborted' })
       }
     }
   }

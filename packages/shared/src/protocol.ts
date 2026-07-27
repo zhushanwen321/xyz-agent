@@ -41,6 +41,7 @@ export type ClientMessageType =
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
+  | 'message.bash' | 'message.abortBash'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
@@ -238,6 +239,11 @@ export interface ClientMessageMap {
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
+  // message.bash：composer 直接执行 bash 命令（不经 LLM turn）。command 原样透传 pi bash RPC，
+  // excludeFromContext 控制是否进 LLM 上下文（pi bash excludeFromContext 参数，透传不转换）。
+  'message.bash': { sessionId: string; command: string; excludeFromContext?: boolean }
+  // message.abortBash：取消进行中的 bash 执行（调 pi abort_bash）。
+  'message.abortBash': { sessionId: string }
   'config.getProviders': Record<string, never>
   'config.setProvider': { providerId: string } & SetProviderData
   'config.deleteProvider': { providerId: string }
@@ -454,6 +460,7 @@ export type ServerMessageType =
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end'
+  | 'message.bashStart' | 'message.bashResult'
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
@@ -848,6 +855,29 @@ export interface ServerMessageMapBase {
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
   'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
   'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
+  // message.bashStart：bash 执行开始广播（与 message.bashResult 对称的实时反馈）。
+  // excludeFromContext 透传自请求（前端据此渲染「不进上下文」标记）。
+  'message.bashStart': {
+    sessionId: string
+    command: string
+    excludeFromContext: boolean
+    timestamp: number
+  }
+  // message.bashResult：bash 执行结束广播（含 output/exitCode/cancelled 等终态字段）。
+  // exitCode 用 number|null：pi 返回 number|undefined，runtime 广播时统一 `?? null` 防 JSON 丢值。
+  // cancelled=true 也可能是 abortBash 触发的兜底终态（与 abort 广播 message.complete{aborted} 对称）。
+  'message.bashResult': {
+    sessionId: string
+    command: string
+    output: string
+    exitCode: number | null
+    cancelled: boolean
+    truncated: boolean
+    excludeFromContext: boolean
+    timestamp: number
+    /** pi truncated 时的完整输出文件路径（前端按需读取全文） */
+    fullOutputPath?: string
+  }
   // pi CustomMessage 注入（扩展经 pi.sendMessage 向对话流注入结构化通知，如 subagent-bg-notify）。
   // event-adapter 把 pi message_start{role:'custom', customType, content, details} 翻译为此帧。
   // 前端 customStart effect 建 role:'system' 消息（保留 customType/details），按 customType 渲染。
@@ -1026,6 +1056,10 @@ export interface ReplyPayloadMap {
   'git.stage': void               // reply message.status
   'git.unstage': void             // reply message.status
   'message.abort': void           // reply message.status
+  // message.bash / message.abortBash：reply message.status（sent/rejected/aborted ack）。
+  // bash 是 fire-and-forget 型——实际结果经 message.bashStart/bashResult 广播通道推回（不走 reply）。
+  'message.bash': void             // reply message.status
+  'message.abortBash': void        // reply message.status
   'message.follow_up': void       // reply message.status
   'message.send': void            // reply message.status
   'message.steer': void           // reply message.status

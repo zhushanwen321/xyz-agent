@@ -42,6 +42,9 @@ const apiMock = vi.hoisted(() => ({
   // submitFirstMessage → useChat.send → chatApi.send/streamSubscribe 需要 mock 占位
   chatSend: vi.fn((): Promise<void> => Promise.resolve()),
   streamSubscribe: vi.fn((): (() => void) => () => {}),
+  // composer-bash-execute: landing 态 bash 首发 → useChat.sendBash → chatApi.bash
+  chatBash: vi.fn((): Promise<void> => Promise.resolve()),
+  chatAbortBash: vi.fn((): Promise<void> => Promise.resolve()),
 }))
 
 vi.mock('@/api', () => ({
@@ -50,7 +53,7 @@ vi.mock('@/api', () => ({
   // 给空返回避免 unhandled rejection
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },
-  chat: { send: apiMock.chatSend, streamSubscribe: apiMock.streamSubscribe },
+  chat: { send: apiMock.chatSend, streamSubscribe: apiMock.streamSubscribe, bash: apiMock.chatBash, abortBash: apiMock.chatAbortBash },
   workspace: { detect: vi.fn().mockResolvedValue({ mode: 'not-repo', isBareMode: false, wsRoot: '', repoRoot: '' }) },
   worktree: { list: vi.fn().mockResolvedValue([]) },
 }))
@@ -206,6 +209,83 @@ describe('useNewTaskFlow 状态机', () => {
       await flow.startFlow()
       await flow.submitFirstMessage(textToSegments('hello'))
       expect(toastMock.error).not.toHaveBeenCalled()
+    })
+  })
+
+  /**
+   * composer-bash-execute: landing 态 bash 首发（!/!! 前缀）。
+   *
+   * 防护：landing 态输入 !cmd 不应走 chat.send（当普通消息发给 LLM），应走 chat.sendBash。
+   * 事故：原 onSend 分流顺序 landing > bash，landing 分支提前 return，bash 命令被当普通消息发。
+   * 修复：landing 分支提取 bashCommand 传给 submitFirstMessage，发送阶段改调 sendBash。
+   */
+  describe('submitFirstMessage bash 首发（landing 态 !/!! 前缀）', () => {
+    beforeEach(() => {
+      apiMock.chatSend.mockClear()
+      apiMock.chatBash.mockClear()
+    })
+
+    it('bashCommand 传入 → 调 chat.bash（sendBash），不调 chat.send', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage(
+        textToSegments('!echo hi'),
+        undefined,
+        { command: 'echo hi', excludeFromContext: false },
+      )
+      expect(apiMock.chatBash).toHaveBeenCalledTimes(1)
+      expect(apiMock.chatBash).toHaveBeenCalledWith(expect.any(String), 'echo hi', false)
+      // 关键：不调 chat.send（bash 不走 LLM turn）
+      expect(apiMock.chatSend).not.toHaveBeenCalled()
+    })
+
+    it('bashCommand excludeFromContext=true → chat.bash 第三参数 true', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage(
+        textToSegments('!!pwd'),
+        undefined,
+        { command: 'pwd', excludeFromContext: true },
+      )
+      expect(apiMock.chatBash).toHaveBeenCalledWith(expect.any(String), 'pwd', true)
+    })
+
+    /**
+     * [S5 PR#116 review] bash 首发 session label 不应带 `!`/`!!` 前缀。
+     * 事故：原实现 label 取 firstTextSeg.text（含 `!` 前缀），session 名为「!ls」体验不佳。
+     * 修复：bashCommand 传入时 label 用 command 部分（已去前缀）。本用例锁死该行为。
+     */
+    it('S5: bash 首发 session label 用 command 部分（去 !/!! 前缀）', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage(
+        textToSegments('!ls -la'),
+        undefined,
+        { command: 'ls -la', excludeFromContext: false },
+      )
+      // create 的 label 参数取自 bashCommand.command（"ls -la"），不带 `!` 前缀
+      // 第三参数 presetId=undefined（main 的 preset 透传，pendingPreset 为 null 时降级 undefined）
+      expect(apiMock.create).toHaveBeenCalledWith('/repo', 'ls -la', undefined)
+      // 反向断言：label 绝不以 `!` 开头
+      const labelArg = apiMock.create.mock.calls[0]?.[1]
+      expect(labelArg).toBeTruthy()
+      expect(labelArg!.startsWith('!')).toBe(false)
+    })
+
+    it('无 bashCommand → 仍走 chat.send（普通首发，回归防护）', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      workspaceStoreMock.defaultCwd = '/repo'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage(textToSegments('hello'))
+      expect(apiMock.chatSend).toHaveBeenCalledTimes(1)
+      expect(apiMock.chatBash).not.toHaveBeenCalled()
     })
   })
 

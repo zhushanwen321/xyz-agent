@@ -34,6 +34,7 @@ export default {
     handoffChip: '交接到新 session · 当前输入将发送到新会话',
     handoffSend: '交接并发送到新 session',
     handoffExit: '退出交接模式',
+    bashPlaceholder: '运行 bash 命令…（!! 前缀排除出上下文）',
   },
   message: {
     copy: '复制',
@@ -85,6 +86,13 @@ export default {
     toolCount: '工具 ×{count}',
     mergedTools: '{n} 个同类操作',
     mergedThoughts: '{n} 次思考',
+    bashCancelled: '已取消',
+    bashTimeout: '已超时',
+    bashOutputTruncated: '输出已截断',
+    bashNoOutput: '（无输出）',
+    bashNoContext: '不进上下文',
+    bashCancel: '取消',
+    bashUnknownCommand: '(未知命令)',
   },
   git: {
     title: 'Git',

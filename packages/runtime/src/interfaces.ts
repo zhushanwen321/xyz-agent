@@ -104,6 +104,15 @@ export interface ISessionService {
   sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>
   sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }>
   abort(sessionId: string): Promise<void>
+  /**
+   * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
+   *
+   * 返回语义与 sendMessage 对称：{ blocked: true, rejected?: true } 表示预检拒绝或执行失败。
+   * excludeFromContext 透传给 pi bash RPC（控制是否进 LLM 上下文）。
+   */
+  sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }>
+  /** 取消进行中的 bash 执行（pi abort_bash）。 */
+  abortBash(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string, customInstructions?: string): Promise<void>
   getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>

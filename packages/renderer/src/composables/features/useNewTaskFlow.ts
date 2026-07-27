@@ -205,6 +205,10 @@ export function useNewTaskFlow() {
    * - 无绑定 session（未选目录直接输入发送，用 workspaceStore.defaultCwd 兑底 create）→ create 后发送
    * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
    *
+   * bash 首发（composer-bash-execute）：landing 态输入 !/!! 前缀时，Composer 提取 bashCommand
+   * 传入，session 创建 + panel 载入流程不变，仅发送阶段改调 chat.sendBash（不走 LLM turn，
+   * 不经 segments 提取）。segments 仍作为 session label 来源 + 非空校验。
+   *
    * segments 来自 Composer DOM 快照（getSegments），含 text / skill / file / mention / image 段。
    * landing 态可能纯图（含 image 但无 text），用户只贴图不写字也允许发送——入参校验只要求 segments
    * 非空，不强制 text 段存在。session label 从首段 text 段取（无 text 段时 deriveSessionLabel('')
@@ -222,13 +226,18 @@ export function useNewTaskFlow() {
    * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
    * 用 runtime 默认。
    *
+   * @param segments 结构化 segments（含 text/image/skill/file/mention 段）
+   * @param thinkingLevel 可选思考等级（landing 态 Composer 选定值）
+   * @param bashCommand [S10] bash 命令参数。仅当 extractBashCommand.type === 'command' 时传入，
+   *   undefined = 非 bash 走普通 send。调用方控制流保证此契约（Composer.vue 按 type 分支）。
+   *
    * presetId（preset 透传）：landing 态用户在 PresetSelectChip 选定的预设。
    * 透传链路（B6 修复）：PresetSelectChip emit select → Landing.vue onPresetSelect →
    * flow.setPendingPreset 写 pendingPreset；这里 submitFirstMessage create session 时读
    * pendingPreset.value 透传 sessionApi.create。Composer onSend 不再直接读 store.selectedPresetId，
    * 统一走 flow 单一真源（与 pendingCwd/pendingModel 范式一致）。
    */
-  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string): Promise<void> {
+  async function submitFirstMessage(segments: Segment[], thinkingLevel?: string, bashCommand?: { command: string; excludeFromContext: boolean }): Promise<void> {
     // segments 不能为空；含 text 段时提取首段文本作 session label
     const firstTextSeg = segments.find((s): s is Extract<Segment, { type: 'text' }> => s.type === 'text')
     const trimmed = firstTextSeg?.text?.trim() ?? ''
@@ -244,8 +253,11 @@ export function useNewTaskFlow() {
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
         const cwd = pendingCwd.value ?? workspaceStore.defaultCwd
-        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
-        const label = deriveSessionLabel(trimmed)
+        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)。
+        // [S5 PR#116 review] bash 首发（!cmd/!!cmd）时用 command 部分（去 !/!! 前缀）作 label
+        // 来源，避免 session 名带 `!` 前缀（「!ls」体验不佳）。bashCommand.command 已是去前缀后的纯命令。
+        const labelSource = bashCommand ? bashCommand.command : trimmed
+        const label = deriveSessionLabel(labelSource)
         // preset 透传（B6）：pendingPreset 由 Landing.vue 接 PresetSelectChip @select
         // → flow.setPendingPreset 写入；startFlow 时清为 null（不残留到下次 landing）。
         const created = await sessionApi.create(cwd, label, pendingPreset.value ?? undefined)
@@ -331,7 +343,13 @@ export function useNewTaskFlow() {
           toastWarning(t('composable.imageMigratePartialFailed', { count: needsMigrateImages.length - migrated.size }))
         }
       }
-      await chat.send(newSid, finalSegments)
+      // 发送阶段：bash 首发（landing 态 !/!! 前缀）走 sendBash，否则普通 send
+      // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于上面的 tmpdir 迁移流程（bash 无图片段，无副作用）
+      if (bashCommand) {
+        await chat.sendBash(newSid, bashCommand.command, bashCommand.excludeFromContext)
+      } else {
+        await chat.send(newSid, finalSegments)
+      }
       transition('completed') // landing→completed（首发成功，终态）
     } finally {
       controller.setCreateInFlight(false)

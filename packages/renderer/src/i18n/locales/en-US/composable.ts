@@ -5,6 +5,7 @@ export default {
   nextTurnSendFailed: 'Failed to send next turn: {msg}',
   stopFailed: 'Failed to stop: {msg}',
   compactFailed: 'Failed to compact: {msg}',
+  bashFailed: 'Failed to run bash: {msg}',
   providerNameRequired: 'Provider name is required',
   duplicateHeaderKey: 'Duplicate header key detected, the last value will be used',
   modelNameRequired: 'Model name is required',

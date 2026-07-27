@@ -55,6 +55,21 @@ export interface PiCompactionResult {
 }
 
 /**
+ * pi bash RPC 返回的执行结果（agent-session.ts BashResult）。
+ *
+ * dispatcher.sendBash 调 client.bash 后读 output/exitCode/cancelled/truncated 广播
+ * message.bashResult。fullOutputPath 是 pi 截断后写入磁盘的完整输出文件路径
+ * （truncated=true 时有值，前端可按需读取全文）。
+ */
+export interface PiBashResult {
+  output: string
+  exitCode: number | undefined
+  cancelled: boolean
+  truncated: boolean
+  fullOutputPath?: string
+}
+
+/**
  * pi 当前上下文占用估算（get_session_stats.contextUsage）。
  * pi 从 session 历史实时估算，处理了 compaction 边界。
  * tokens=null 表示 compaction 后未跑新 turn，占用未知。
@@ -158,6 +173,15 @@ export interface IPiEngine {
   compact(customInstructions?: string): Promise<PiCompactionResult>
   /** 清空当前会话上下文（pi clear 命令）。 */
   clear(): Promise<PiMessage>
+  /**
+   * 直接执行 bash 命令（pi bash 命令，不经 LLM turn）。
+   *
+   * excludeFromContext 控制是否进 LLM 上下文：undefined 时不传该参数（走 pi 默认），
+   * 显式 true/false 透传给 pi bash RPC。返回 BashResult 供 dispatcher 广播 message.bashResult。
+   */
+  bash(command: string, excludeFromContext?: boolean): Promise<PiBashResult>
+  /** 取消进行中的 bash 执行（pi abort_bash 命令）。 */
+  abortBash(): Promise<PiMessage>
 
   // ── 进程生命周期（本进程自身） ──
   /** 启动 pi 子进程。由 ProcessManager.createSession 内部调用，service 一般不直接调。 */

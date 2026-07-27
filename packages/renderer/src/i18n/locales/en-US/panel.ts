@@ -34,6 +34,7 @@ export default {
     handoffChip: 'Hand off to new session · your input goes to the new session',
     handoffSend: 'Hand off & send to new session',
     handoffExit: 'Exit handoff mode',
+    bashPlaceholder: 'Run bash command… (!! prefix excludes from context)',
   },
   message: {
     copy: 'Copy',
@@ -85,6 +86,13 @@ export default {
     toolCount: 'Tool ×{count}',
     mergedTools: '{n} similar actions',
     mergedThoughts: '{n} thoughts',
+    bashCancelled: 'cancelled',
+    bashTimeout: 'timeout',
+    bashOutputTruncated: 'Output truncated',
+    bashNoOutput: '(no output)',
+    bashNoContext: 'no context',
+    bashCancel: 'Cancel',
+    bashUnknownCommand: '(unknown command)',
   },
   git: {
     title: 'Git',

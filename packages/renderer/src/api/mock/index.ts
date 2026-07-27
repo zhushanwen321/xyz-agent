@@ -352,6 +352,53 @@ export const session = {
   },
 }
 
+/**
+ * W7（PR#116 review）：按命令关键字分流 mock bash 结果（success/error/empty/timeout 四态）。
+ *
+ * - happy path（默认）：exitCode:0 + '(mock) <command>'（保留原行为）
+ * - 命令含 'fail' → error：exitCode:1 + 'command not found'（覆盖错误态视觉）
+ * - 命令含 'empty' → empty-output：exitCode:0 + ''（覆盖空输出态）
+ * - 命令含 'timeout' → 近似超时：cancelled:true + exitCode:null（覆盖取消态视觉；
+ *   真实 timeout 走 finalizeBashOnly 置 error:'timeout'，bashResultEffect 不读 error，
+ *   不动 store 时 mock 无法注入该标记，用 cancelled 近似 + 长 delay 模拟 timer 到期）
+ * - 命令含 'truncate' → truncated:true（覆盖 W4 截断标记视觉）
+ *
+ * delay 是 bashStart→bashResult 间隔，让 streaming loading 态可见。
+ */
+function resolveBashMockBranch(command: string): { result: Record<string, unknown>; delay: number } {
+  const cmd = command.toLowerCase()
+  // 2s 让 loading 态（spinner + 取消按钮）足够可见；timeout 用 3s 强调 timer 到期节奏
+  const MOCK_BASH_DELAY = 2000
+  if (cmd.includes('timeout')) {
+    return {
+      result: { output: '', exitCode: null, cancelled: true, truncated: false },
+      delay: 3000,
+    }
+  }
+  if (cmd.includes('fail')) {
+    return {
+      result: { output: 'command not found: fail-demo', exitCode: 1, cancelled: false, truncated: false },
+      delay: MOCK_BASH_DELAY,
+    }
+  }
+  if (cmd.includes('empty')) {
+    return {
+      result: { output: '', exitCode: 0, cancelled: false, truncated: false },
+      delay: MOCK_BASH_DELAY,
+    }
+  }
+  if (cmd.includes('truncate')) {
+    return {
+      result: { output: '(mock) long output demo…', exitCode: 0, cancelled: false, truncated: true },
+      delay: MOCK_BASH_DELAY,
+    }
+  }
+  return {
+    result: { output: `(mock) ${command}`, exitCode: 0, cancelled: false, truncated: false },
+    delay: MOCK_BASH_DELAY,
+  }
+}
+
 export const chat = {
   /** 拉 session 历史（深拷贝 fixture，避免外部突变污染） */
   async getHistory(sessionId: string): Promise<{ messages: Message[]; historyTruncated: boolean }> {
@@ -401,6 +448,52 @@ export const chat = {
       payload: { sessionId, stopReason: 'aborted' },
     })
     await sleep(TIMING.ack)
+  },
+
+  // bash 执行（composer-bash-execute）：mock 模式 ack + 广播 bashStart 后，按命令关键字分流
+  // 模拟 success/error/empty/timeout 四态（W7 PR#116 review）+ bashStart→bashResult 间 mockDelay
+  // 让开发者能看到 loading 态（spinner + 取消按钮）。
+  // 不模拟真实 shell 输出（与 send 的 mock 策略一致——只驱动 UI 状态机，不验证业务逻辑）。
+  // happy path：普通命令 → exitCode:0 + '(mock) <command>'（保留原有行为，不破坏）。
+  async bash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<void> {
+    await sleep(TIMING.ack)
+    emit(sessionId, {
+      type: 'message.bashStart',
+      payload: { sessionId, command, excludeFromContext: !!excludeFromContext, timestamp: Date.now() },
+    })
+    // bashStart→bashResult 间 mockDelay 让 loading 态可见（streaming spinner + 取消按钮）。
+    // timeout 分支用更长 delay 模拟 bash timer 到期（真实超时态由 finalizeBashOnly 置
+    // error:'timeout'，此处只能用 cancelled:true 近似——bashResultEffect 不读 error 字段，
+    // 不动 chat-bash-effects.ts 时无法在 mock 注入 error:'timeout'）。
+    const branch = resolveBashMockBranch(command)
+    await sleep(branch.delay)
+    emit(sessionId, {
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command,
+        ...branch.result,
+        excludeFromContext: !!excludeFromContext,
+        timestamp: Date.now(),
+      },
+    })
+  },
+
+  async abortBash(sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    emit(sessionId, {
+      type: 'message.bashResult',
+      payload: {
+        sessionId,
+        command: '',
+        output: '',
+        exitCode: null,
+        cancelled: true,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: Date.now(),
+      },
+    })
   },
 
   /**
