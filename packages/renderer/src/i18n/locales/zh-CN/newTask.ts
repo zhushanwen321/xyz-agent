@@ -80,6 +80,7 @@ export default {
   presetSelect: {
     title: '选择启动预设',
     setAsDefault: '设为默认',
+    alreadyDefault: '已是默认',
     presetLockedTooltip: '此 Session 使用 {name} 模式创建，不可更改',
     legacySessionTooltip: '（历史 session，未记录预设）',
     legacyPresetName: '全工具模式',

@@ -61,7 +61,7 @@ describe('PresetSelectChip landing 态（TC-1/TC-2/TC-3）', () => {
     store.setDefaultPresetId('builtin:full')
 
     const wrapper = mount(PresetSelectChip, {
-      props: { sessionId: null },
+      props: { sessionId: null, presetOpen: false },
       global: { stubs },
     })
     await flushPromises()
@@ -79,17 +79,17 @@ describe('PresetSelectChip landing 态（TC-1/TC-2/TC-3）', () => {
     store.setDefaultPresetId('builtin:full')
 
     const wrapper = mount(PresetSelectChip, {
-      props: { sessionId: null },
+      props: { sessionId: null, presetOpen: false },
       global: { stubs },
     })
     await flushPromises()
 
-    // Popover stub 无条件渲染 slot，预设按钮在 DOM。点第 2 个预设（Orchestrator）
-    const presetBtns = wrapper.find('[data-testid="popover-content"]').findAll('button')
-    // popover-content 内：3 个预设 button + 1 个 set-default 区域可能无 button（Checkbox 是 div）
-    // 找文本含「Orchestrator」的按钮点
-    const orchestratorBtn = presetBtns.find((b) => b.text().includes('Orchestrator'))!
-    await orchestratorBtn.trigger('click')
+    // Popover stub 无条件渲染 slot，预设项在 DOM（RadioGroupItem + Label）。
+    // 点第 2 个预设（Orchestrator）—— 用 preset-option testid 定位 RadioGroupItem，
+    // 触发其父 Label 的 click（RadioGroupItem 是 button[role=radio]，Label 包裹它）。
+    const orchestratorItem = wrapper.find('[data-testid="preset-option-builtin:orchestrator"]')
+    expect(orchestratorItem.exists()).toBe(true)
+    await orchestratorItem.trigger('click')
     await flushPromises()
 
     // 触发按钮文案更新为「Orchestrator」
@@ -106,15 +106,14 @@ describe('PresetSelectChip landing 态（TC-1/TC-2/TC-3）', () => {
     store.setDefaultPresetId('builtin:full')
 
     const wrapper = mount(PresetSelectChip, {
-      props: { sessionId: null },
+      props: { sessionId: null, presetOpen: false },
       global: { stubs },
     })
     await flushPromises()
 
     // 先选第 2 预设（Orchestrator），selectedPresetId 与默认不同
-    const presetBtns = wrapper.find('[data-testid="popover-content"]').findAll('button')
-    const orchestratorBtn = presetBtns.find((b) => b.text().includes('Orchestrator'))!
-    await orchestratorBtn.trigger('click')
+    const orchestratorItem = wrapper.find('[data-testid="preset-option-builtin:orchestrator"]')
+    await orchestratorItem.trigger('click')
     await flushPromises()
 
     // 勾选 Checkbox（reka-ui Checkbox 渲染为 button[role=checkbox]，点击触发 update:model-value）
@@ -133,7 +132,7 @@ describe('PresetSelectChip 已创建锁定态（TC-4）', () => {
     store.setPresets(FIXTURE_PRESETS)
 
     const wrapper = mount(PresetSelectChip, {
-      props: { sessionId: 's1', launchPresetId: 'builtin:readonly' },
+      props: { sessionId: 's1', launchPresetId: 'builtin:readonly', presetOpen: false },
       global: { stubs },
     })
     await flushPromises()
@@ -158,7 +157,7 @@ describe('PresetSelectChip 历史 session 态（TC-5）', () => {
     store.setPresets(FIXTURE_PRESETS)
 
     const wrapper = mount(PresetSelectChip, {
-      props: { sessionId: 's1' }, // launchPresetId 省略 = undefined = 历史 session
+      props: { sessionId: 's1', presetOpen: false }, // launchPresetId 省略 = undefined = 历史 session
       global: { stubs },
     })
     await flushPromises()

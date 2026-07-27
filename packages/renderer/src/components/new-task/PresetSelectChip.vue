@@ -3,12 +3,18 @@
  * PresetSelectChip —— pi 启动预设选择 chip（设计文档 pi-launch-presets.md §3 / §5.4）。
  *
  * 三态（由 props.sessionId + props.launchPresetId 派生）：
- * 1. landing 态（sessionId=null）：Popover 可展开，列预设（Button+Check 实现 RadioGroup 语义）+
- *    描述 + 「设为默认」Checkbox。selectedPresetId 本地 ref，初值在 loadPresets 后设为 defaultPresetId。
+ * 1. landing 态（sessionId=null）：Popover 可展开，列预设（RadioGroup + RadioGroupItem 原语，
+ *    标准 radio 键盘可达）+ 描述 + 「设为默认」Checkbox。selectedPresetId 本地 ref，初值在
+ *    loadPresets 后设为 defaultPresetId。
  * 2. 已创建态（sessionId!=null + launchPresetId 有值）：Lock 图标 + 预设名 + HoverCard tooltip
  *    「此 Session 使用 {预设名} 模式创建，不可更改」。不展开 Popover。
  * 3. 历史 session（sessionId!=null + launchPresetId undefined）：Lock 图标 + 「全工具模式」+
  *    HoverCard tooltip 加注「（历史 session，未记录预设）」。
+ *
+ * 互斥（preset 互斥 wave）：Popover 展开态不再用本地 open ref，改由父组件经 v-model:presetOpen
+ * 透传的 prop 驱动。Landing.vue 的 isPresetOpen computed 接 flow.state==='preset-popover'，
+ * 与 dir/branch popover 共享 NewTaskFlowState 单实例状态机，三 popover 互斥（开 preset 自动
+ * 关 dir/branch，反之亦然）。组件本身不读 flow——只声明 presetOpen prop + emit update:presetOpen。
  *
  * 数据流（B6 修复）：onMounted 调 usePiPresets().loadPresets() 拉预设列表 + 默认预设写 store
  * （presets/defaultPresetId/loadError）。选中态用本地 ref selectedPresetId（仅回显），透传走
@@ -23,14 +29,16 @@
  * 「未加载（presets=[] + loadError=null）」与「加载失败（presets=[] + loadError 有值）」，
  * 不再因 RPC 永久 reject 卡「加载中…」。
  *
- * 范式参考：ThinkingLevelPopover.vue（Popover+TriggerButton+Content + Button+Check RadioGroup 语义）。
+ * 范式参考：ThinkingLevelPopover.vue（Popover+TriggerButton+Content + RadioGroup 原语）。
  */
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, Lock, SlidersHorizontal } from '@lucide/vue'
+import { ChevronDown, Lock, SlidersHorizontal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { usePresetStore } from '@/stores/preset'
 import { usePiPresets } from '@/composables/features/usePiPresets'
@@ -41,19 +49,25 @@ const props = defineProps<{
   sessionId: string | null
   /** session 创建时锁定的预设 id（SessionSummary.launchPresetId）。undefined=历史 session */
   launchPresetId?: string
+  /**
+   * Popover 展开态（仅 landing 态用）。由父组件经 v-model:presetOpen 透传，派生自
+   * NewTaskFlowState==='preset-popover'，与 dir/branch popover 共享 flow 单实例状态机互斥。
+   * 组件只声明 + emit update，不读 flow（flow 耦合在 Landing.vue）。
+   */
+  presetOpen: boolean
 }>()
 
 const emit = defineEmits<{
   /** landing 态用户真实点击选定预设变化（session.create 透传用，单参数对象） */
   select: [{ presetId: string }]
+  /** v-model:presetOpen 同步（Popover 内部 open 变化回传父组件） */
+  'update:presetOpen': [boolean]
 }>()
 
 const { t } = useI18n()
 const store = usePresetStore()
 const { loadPresets, setDefault } = usePiPresets()
 
-/** Popover 展开态（仅 landing 态用） */
-const open = ref(false)
 /**
  * landing 态触发按钮回显的预设 id（纯本地交互态，不放 store——B6：store 不再持有 selectedPresetId）。
  * 初值 '' —— onMounted loadPresets 完成后设为 store.defaultPresetId（仅回显，不 emit）。
@@ -128,10 +142,12 @@ onMounted(async () => {
 
 // FR-16：键盘快捷键 Cmd+Shift+P → 打开 PresetSelectChip Popover
 // store.openRequest 由 useAppCommands 的快捷键 action 递增，watch 到变化后打开。
+// preset 互斥 wave：展开态交父组件 flow 单实例状态机，这里 emit update:presetOpen=true，
+// Landing.vue 的 isPresetOpen setter 调 flow.openPresetPopover（自动关 dir/branch popover）。
 watch(() => store.openRequest, async () => {
   if (!isLanding.value) return
   await nextTick()
-  open.value = true
+  emit('update:presetOpen', true)
 })
 
 /**
@@ -157,7 +173,7 @@ async function onToggleDefault(checked: boolean | string): Promise<void> {
 
 // store.defaultPresetId 变化时（外部 setDefault），同步 selectedPresetId 若用户未主动选过
 watch(() => store.defaultPresetId, (newDefault) => {
-  if (isLanding.value && newDefault && !open.value) {
+  if (isLanding.value && newDefault && !props.presetOpen) {
     // 仅在 Popover 未展开时回显（避免用户正在选时被覆盖）。纯本地回显，不 emit。
     selectedPresetId.value = newDefault
   }
@@ -165,65 +181,68 @@ watch(() => store.defaultPresetId, (newDefault) => {
 </script>
 
 <template>
-  <!-- landing 态：Popover 可选预设 -->
-  <Popover v-if="isLanding" v-model:open="open">
+  <!-- landing 态：Popover 可选预设（preset 互斥 wave：open 态由父 v-model:presetOpen 驱动，不再本地 open ref） -->
+  <Popover v-if="isLanding" :open="presetOpen" @update:open="$emit('update:presetOpen', $event)">
     <PopoverTrigger as-child>
       <Button
         data-testid="chip-preset"
         variant="ghost"
         class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
-        :class="{ '!text-accent': !selectedPresetId }"
+        :class="{ '!text-accent': selectedPresetId && selectedPresetId === store.defaultPresetId }"
       >
         <SlidersHorizontal class="shrink-0" />
         <span class="font-mono">{{ selectedPresetName }}</span>
         <ChevronDown
           class="ml-px size-[9px] shrink-0 transition-transform duration-200"
-          :class="open && 'rotate-180'"
+          :class="presetOpen && 'rotate-180'"
         />
       </Button>
     </PopoverTrigger>
-    <PopoverContent side="top" class="w-[320px] p-0">
+    <PopoverContent side="top" align="start" :collision-padding="8" :side-offset="8" class="w-[280px] p-0">
       <!-- head（W-RN-1：bg-white/[0.015] → bg-surface-2 语义类，与 PopoverContent 的 bg-bg-elevated 区分头/体层级） -->
       <div
         class="flex items-center justify-between border-b border-border bg-surface-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>
-      <!-- 预设列表（Button + Check 实现 RadioGroup 语义，ui 无 RadioGroup） -->
+      <!-- 预设列表（RadioGroup + RadioGroupItem 原语：标准 radio 键盘可达，替代旧 ghost Button + 自绘圆点） -->
       <div v-if="store.presets.length === 0" class="px-2.5 py-3 text-[12px] text-subtle">
         {{ emptyHint }}
       </div>
-      <Button
-        v-for="preset in store.presets"
-        :key="preset.id"
-        variant="ghost"
-        class="flex w-full flex-col items-start gap-0.5 rounded-none px-2.5 py-2 text-muted hover:bg-surface-hover hover:text-fg"
-        :class="selectedPresetId === preset.id && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
-        @click="onSelectPreset(preset)"
+      <RadioGroup
+        v-else
+        :model-value="selectedPresetId"
+        class="gap-0"
+        @update:model-value="(val) => { const p = store.presets.find((x) => x.id === val); if (p) onSelectPreset(p) }"
       >
-        <div class="flex w-full items-center gap-2">
-          <span
-            class="size-[7px] shrink-0 rounded-full"
-            :class="selectedPresetId === preset.id ? 'bg-accent' : 'bg-subtle'"
-          />
-          <span class="flex-1 text-left text-[13px]">{{ preset.name }}</span>
-          <Check
-            class="size-[13px] text-accent transition-opacity"
-            :class="selectedPresetId === preset.id ? 'opacity-100' : 'opacity-0'"
-          />
-        </div>
-        <span v-if="preset.description" class="pl-[15px] text-left text-[11px] text-subtle">
-          {{ preset.description }}
-        </span>
-      </Button>
-      <!-- 设为默认（分隔线 + Checkbox） -->
+        <Label
+          v-for="preset in store.presets"
+          :key="preset.id"
+          class="flex w-full cursor-pointer flex-col items-start gap-0.5 px-2.5 py-2 text-muted hover:bg-surface-hover hover:text-fg"
+          :class="selectedPresetId === preset.id && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
+        >
+          <div class="flex w-full items-center gap-2">
+            <RadioGroupItem
+              :value="preset.id"
+              :data-testid="`preset-option-${preset.id}`"
+            />
+            <span class="flex-1 text-left text-[13px]">{{ preset.name }}</span>
+          </div>
+          <span v-if="preset.description" class="pl-[15px] text-left text-[11px] text-subtle">
+            {{ preset.description }}
+          </span>
+        </Label>
+      </RadioGroup>
+      <!-- 设为默认（分隔线 + Checkbox）。已是默认时 disabled：全局默认至少一个，不能取消到空，只能选其他预设替代 -->
       <div class="flex items-center gap-2 border-t border-border px-2.5 py-2">
         <Checkbox
           :model-value="isDefaultChecked"
+          :disabled="isDefaultChecked"
           data-testid="checkbox-set-default"
           @update:model-value="onToggleDefault"
         />
         <span class="text-[12px] text-muted">{{ t('newTask.presetSelect.setAsDefault') }}</span>
+        <span v-if="isDefaultChecked" class="text-[10px] text-subtle">· {{ t('newTask.presetSelect.alreadyDefault') }}</span>
       </div>
     </PopoverContent>
   </Popover>
