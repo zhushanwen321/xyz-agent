@@ -59,9 +59,15 @@ COPY apps/electron/package.json ./apps/electron/package.json
 COPY scripts/fix-node-pty-permissions.sh ./scripts/fix-node-pty-permissions.sh
 
 # Install workspace dependencies (frozen lockfile for reproducibility).
-# The root postinstall (scripts/fix-node-pty-permissions.sh) runs automatically;
-# it is a no-op on the linux source build of node-pty inside this stage.
-RUN pnpm install --frozen-lockfile
+# --ignore-scripts: 跳过所有 install/postinstall scripts。理由：
+#   1. wave5 把 runtime bin 改为 ./dist/server.cjs（包内路径），但 dist 在 build 前不存在，
+#      pnpm 装 workspace 链接时尝试 chmod dist/server.cjs 会 ENOENT 失败。
+#      --ignore-scripts 跳过 bin 链接的 chmod 步骤。
+#   2. root postinstall (scripts/fix-node-pty-permissions.sh) 在 Linux 源码构建是 no-op。
+#   3. node-pty 的 native 编译脚本也被跳过——但 builder 阶段只需构建 bundle（tsup），
+#      不运行 node-pty；runtime 阶段会 npm install -g 重新编译 node-pty。
+# 代价：builder 阶段不能跑任何依赖 node-pty 的代码（本就不需要）。
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Build the runtime bundle (tsup). tsup.config.ts reads apps/electron/package.json
 # to inject XYZ_AGENT_VERSION at build time.
