@@ -10,7 +10,7 @@
  * 业务逻辑在 services，经 handler 调用；本类不含领域计算，只做路由与编排。
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
@@ -143,7 +143,7 @@ export class RuntimeServer implements IMessageBroker {
       broadcast: (msg) => this.broker.broadcast(msg),
       broadcastProviderList: () => this.broker.broadcastProviderList(),
       broadcastSkillList: () => this.broker.broadcastSkillList(),
-      broadcastSkillCacheInvalidated: (scope: 'global' | 'project', cwd?: string) => this.broker.broadcastSkillCacheInvalidated(scope, cwd),
+      broadcastSkillCacheInvalidated: (scope: SkillCacheScope, cwd?: string) => this.broker.broadcastSkillCacheInvalidated(scope, cwd),
       broadcastAgentList: () => this.broker.broadcastAgentList(),
       broadcastSkillDirs: () => this.broker.broadcastSkillDirs(),
       broadcastAgentDirs: () => this.broker.broadcastAgentDirs(),
@@ -265,7 +265,7 @@ export class RuntimeServer implements IMessageBroker {
    * W2：暴露 broker 的 skill 缓存失效广播，供 index.ts 的 skillRegistry.onChange 回调调用
    * （skill 变动 → 广播 config.skillCacheInvalidated 让 landing composable 失效缓存重拉）。
    */
-  broadcastSkillCacheInvalidated(scope: 'global' | 'project', cwd?: string): void { this.broker.broadcastSkillCacheInvalidated(scope, cwd) }
+  broadcastSkillCacheInvalidated(scope: SkillCacheScope, cwd?: string): void { this.broker.broadcastSkillCacheInvalidated(scope, cwd) }
   nextPushId(): string { return this.broker.nextPushId() }
 
   // ── Message routing ───────────────────────────────────────────

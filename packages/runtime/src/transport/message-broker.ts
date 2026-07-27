@@ -12,7 +12,7 @@
  * broadcast 遍历 ConnectionManager.clients；sendInitialState 依赖 services 取数据。
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ServerMessage, ServerMessageMap, ServerMessageType } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageMap, ServerMessageType, SkillCacheScope } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
 import type { ErrorDetails } from './message-context.js'
@@ -174,12 +174,13 @@ export class ServerMessageBroker implements IMessageBroker {
    *   - broadcastSkillList = 全量列表推送到 settingsStore.skills（settings 弹窗用）
    *   - broadcastSkillCacheInvalidated = 失效信号给 landing composable（runtime 已重扫缓存，前端重拉即拿新值）
    */
-  broadcastSkillCacheInvalidated(scope: 'global' | 'project', cwd?: string): void {
-    this.broadcast({
-      type: 'config.skillCacheInvalidated',
+  broadcastSkillCacheInvalidated(scope: SkillCacheScope, cwd?: string): void {
+    const msg = {
+      type: 'config.skillCacheInvalidated' as const,
       id: this.nextPushId(),
       payload: { scope, cwd },
-    })
+    } satisfies ServerMessage<'config.skillCacheInvalidated'>
+    this.broadcast(msg)
   }
   broadcastAgentList(): void {
     this.broadcast(this.buildAgentListMsg())
