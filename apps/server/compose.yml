@@ -1,0 +1,38 @@
+# apps/server/compose.yml — xyz-agent server 一键部署
+#
+# 用法：
+#   cd apps/server && docker compose up -d
+#   docker compose logs -f          # 看启动输出（含 token 首次生成）
+#   docker compose down             # 停止清理
+#
+# 首次启动 token 自动生成在 volume /data/token（mode 0600）。
+# 查看容器内 token: docker compose exec server cat /data/token
+# 完整部署文档: docs/deployment/server.md
+
+services:
+  server:
+    # 镜像二选一：
+    # (1) 拉 ghcr 预构建镜像（推荐，CI 已发布）
+    image: ghcr.io/zhushanwen321/xyz-agent-server:latest
+    # (2) 本地 build（首次或无网络时）
+    # build:
+    #   context: ../..
+    #   dockerfile: apps/server/Dockerfile
+
+    container_name: xyz-agent-server
+    ports:
+      - "3210:3210"
+    volumes:
+      - xyz-agent-data:/data
+    environment:
+      # 可选环境变量（按需取消注释）：
+      # XYZ_AGENT_ALLOWED_ORIGINS: "https://your.domain.com"
+      # XYZ_AGENT_PROJECT_ROOTS: "/home/projects,/workspace"
+      # XYZ_AGENT_MAX_SESSIONS: "20"
+      # XYZ_AGENT_PUBLIC_URL: "https://your.domain.com"
+      XYZ_AGENT_DATA_DIR: /data
+    restart: unless-stopped
+    # HEALTHCHECK 已在 Dockerfile 定义，compose 自动继承
+
+volumes:
+  xyz-agent-data:
