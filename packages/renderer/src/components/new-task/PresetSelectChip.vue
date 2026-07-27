@@ -36,9 +36,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronDown, Lock, SlidersHorizontal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Popover, PopoverContent, PopoverTrigger, PopoverListItem } from '@/components/ui/popover'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { usePresetStore } from '@/stores/preset'
 import { usePiPresets } from '@/composables/features/usePiPresets'
@@ -205,34 +203,27 @@ watch(() => store.defaultPresetId, (newDefault) => {
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>
-      <!-- 预设列表（RadioGroup + RadioGroupItem 原语：标准 radio 键盘可达，替代旧 ghost Button + 自绘圆点） -->
+      <!-- 预设列表（PopoverListItem：与 DirSelect/BranchSelect 列表项统一选择态视觉范式——
+           selected 走 surface-2 + accent inset ring + 尾部 Check，不再用 RadioGroup 自绘圆点。
+           取舍：一致性优先于 RadioGroup 的标准 ↑↓ 键盘导航；单选语义靠 selected + click 实现） -->
       <div v-if="store.presets.length === 0" class="px-2.5 py-3 text-[12px] text-subtle">
         {{ emptyHint }}
       </div>
-      <RadioGroup
+      <PopoverListItem
+        v-for="preset in store.presets"
         v-else
-        :model-value="selectedPresetId"
-        class="gap-0"
-        @update:model-value="(val) => { const p = store.presets.find((x) => x.id === val); if (p) onSelectPreset(p) }"
+        :key="preset.id"
+        :test-id="`preset-option-${preset.id}`"
+        :selected="selectedPresetId === preset.id"
+        @click="onSelectPreset(preset)"
       >
-        <Label
-          v-for="preset in store.presets"
-          :key="preset.id"
-          class="flex w-full cursor-pointer flex-col items-start gap-0.5 px-2.5 py-2 text-muted hover:bg-surface-hover hover:text-fg"
-          :class="selectedPresetId === preset.id && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
-        >
-          <div class="flex w-full items-center gap-2">
-            <RadioGroupItem
-              :value="preset.id"
-              :data-testid="`preset-option-${preset.id}`"
-            />
-            <span class="flex-1 text-left text-[13px]">{{ preset.name }}</span>
-          </div>
-          <span v-if="preset.description" class="pl-[15px] text-left text-[11px] text-subtle">
+        <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+          <span class="truncate text-fg">{{ preset.name }}</span>
+          <span v-if="preset.description" class="truncate text-[11px] text-subtle">
             {{ preset.description }}
           </span>
-        </Label>
-      </RadioGroup>
+        </span>
+      </PopoverListItem>
       <!-- 设为默认（分隔线 + Checkbox）。已是默认时 disabled：全局默认至少一个，不能取消到空，只能选其他预设替代 -->
       <div class="flex items-center gap-2 border-t border-border px-2.5 py-2">
         <Checkbox
