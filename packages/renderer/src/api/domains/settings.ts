@@ -101,6 +101,27 @@ export async function getDefaultBaseBranch(): Promise<DefaultBaseBranchReply> {
   return command('config.getDefaultBaseBranch', {})
 }
 
+// ── 代理配置（update:getProxyConfig / update:setProxyConfig / update:testProxy）──
+// 代理配置通过 Electron IPC 直接与 main 进程通信（不走 runtime WS），
+// 因为升级模块运行在 main 进程中。
+// 使用 lib/ipc.ts 适配层，符合 renderer 对 electronAPI 的唯一适配点规范。
+import { getProxyConfig as getProxyConfigIpc, setProxyConfig as setProxyConfigIpc, testProxy as testProxyIpc } from '@/lib/ipc'
+
+/** 读取代理配置。 */
+export async function getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig> {
+  return getProxyConfigIpc()
+}
+
+/** 保存代理配置。 */
+export async function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void> {
+  await setProxyConfigIpc(config)
+}
+
+/** 测试代理连接。 */
+export async function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
+  return testProxyIpc(config)
+}
+
 // ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──
 export function getSystem(): Promise<SystemSettings> {
   const raw = localStorage.getItem(SYSTEM_KEY)

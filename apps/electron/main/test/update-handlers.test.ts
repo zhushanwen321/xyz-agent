@@ -254,3 +254,67 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
     expect(sendSpy).not.toHaveBeenCalled()
   })
 })
+
+// ── 代理配置 IPC ───────────────────────────────────────────────
+describe('update-handlers: proxy config IPC', () => {
+  beforeEach(() => {
+    handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('update:getProxyConfig 返回默认配置（文件不存在）', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:getProxyConfig')!
+    const result = await handler({}, {})
+    expect(result).toEqual({ mode: 'system' })
+  })
+
+  it('update:setProxyConfig 保存配置 + update:getProxyConfig 读取', async () => {
+    registerUpdateHandlers({} as never)
+    const setHandler = handlers.get('update:setProxyConfig')!
+    const getHandler = handlers.get('update:getProxyConfig')!
+
+    // 保存手动配置
+    await setHandler({}, {
+      mode: 'manual',
+      httpProxy: 'http://127.0.0.1:7890',
+      httpsProxy: 'http://127.0.0.1:7890',
+    })
+
+    // 读取验证
+    const result = await getHandler({}, {})
+    expect(result).toEqual({
+      mode: 'manual',
+      httpProxy: 'http://127.0.0.1:7890',
+      httpsProxy: 'http://127.0.0.1:7890',
+    })
+  })
+
+  it('update:setProxyConfig 校验无效模式', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:setProxyConfig')!
+    await expect(handler({}, { mode: 'invalid' })).rejects.toThrow('Invalid proxy mode')
+  })
+
+  it('update:setProxyConfig 手动模式缺少 httpProxy 报错', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:setProxyConfig')!
+    await expect(handler({}, { mode: 'manual' })).rejects.toThrow('HTTP proxy is required in manual mode')
+  })
+
+  it('update:setProxyConfig 手动模式无效 URL 报错', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:setProxyConfig')!
+    await expect(handler({}, {
+      mode: 'manual',
+      httpProxy: 'not-a-url',
+    })).rejects.toThrow('Invalid proxy URL format')
+  })
+
+  it('update:testProxy disabled 模式直接返回成功', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:testProxy')!
+    const result = await handler({}, { mode: 'disabled' })
+    expect(result).toEqual({ success: true, message: 'Proxy disabled' })
+  })
+})

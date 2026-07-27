@@ -25,6 +25,8 @@ export default {
     presetDesc: 'Manage Pi launch parameter presets and tool/extension access policies',
     worktree: 'Worktree',
     worktreeDesc: 'Configure worktree creation parameters and setup scripts',
+    update: 'Update',
+    updateDesc: 'Configure auto-update and proxy settings',
   },
   // ── SystemPrompt page (SystemPromptPage) ──
   systemPrompt: {
@@ -393,6 +395,27 @@ export default {
     defaultBaseBranchPlaceholder: 'origin/main',
     saved: 'Worktree settings saved',
     saveFailed: 'Save failed',
+  },
+  // ── Update proxy page (UpdatePage) ──
+  update: {
+    sectionTitle: 'Proxy Configuration',
+    sectionDesc: 'Configure network proxy for GitHub access',
+    proxyMode: 'Proxy Mode',
+    proxyModeSystem: 'System Proxy (auto-detect)',
+    proxyModeManual: 'Manual Configuration',
+    proxyModeDisabled: 'Disable Proxy',
+    httpProxy: 'HTTP Proxy',
+    httpProxyPlaceholder: 'e.g. http://127.0.0.1:7890',
+    httpsProxy: 'HTTPS Proxy',
+    httpsProxyPlaceholder: 'e.g. http://127.0.0.1:7890',
+    testProxy: 'Test Proxy',
+    testing: 'Testing...',
+    testSuccess: 'Proxy connection successful',
+    testFailed: 'Proxy connection failed: {msg}',
+    testDisabled: 'Proxy disabled, skipping test',
+    save: 'Save',
+    saved: 'Proxy configuration saved',
+    saveFailed: 'Save failed: {msg}',
   },
   // ── Compat editor (CompatEditor / CompatField) ──
   compat: {

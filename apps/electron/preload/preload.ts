@@ -142,6 +142,13 @@ export interface ElectronAPI {
   onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string }) => void): () => void
   /** 不支持当前平台时，打开备用下载页（release 页面） */
   openUpdateFallbackUrl(url: string): Promise<void>
+  // ── 代理配置 ────────────────────────────────────────────────────
+  /** 获取当前代理配置 */
+  getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig>
+  /** 保存代理配置 */
+  setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void>
+  /** 测试代理连接 */
+  testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -258,4 +265,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('update:error', handler)
   },
   openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
+  // ── 代理配置 ────────────────────────────────────────────────────
+  getProxyConfig: () => ipcRenderer.invoke('update:getProxyConfig'),
+  setProxyConfig: (config) => ipcRenderer.invoke('update:setProxyConfig', config),
+  testProxy: (config) => ipcRenderer.invoke('update:testProxy', config),
 } satisfies ElectronAPI)

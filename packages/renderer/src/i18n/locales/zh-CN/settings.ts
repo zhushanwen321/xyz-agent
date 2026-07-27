@@ -25,6 +25,8 @@ export default {
     presetDesc: '管理 Pi 启动参数预设与工具/扩展访问策略',
     worktree: 'Worktree',
     worktreeDesc: '配置 worktree 创建参数与初始化脚本',
+    update: '更新',
+    updateDesc: '配置自动升级与代理设置',
   },
   // ── SystemPrompt 页（SystemPromptPage）──
   systemPrompt: {
@@ -393,6 +395,27 @@ export default {
     defaultBaseBranchPlaceholder: 'origin/main',
     saved: 'Worktree 配置已保存',
     saveFailed: '保存失败',
+  },
+  // ── 更新代理页（UpdatePage）──
+  update: {
+    sectionTitle: '代理配置',
+    sectionDesc: '配置网络代理以访问 GitHub 服务',
+    proxyMode: '代理模式',
+    proxyModeSystem: '系统代理（自动检测）',
+    proxyModeManual: '手动配置',
+    proxyModeDisabled: '禁用代理',
+    httpProxy: 'HTTP 代理',
+    httpProxyPlaceholder: '如 http://127.0.0.1:7890',
+    httpsProxy: 'HTTPS 代理',
+    httpsProxyPlaceholder: '如 http://127.0.0.1:7890',
+    testProxy: '测试代理',
+    testing: '测试中...',
+    testSuccess: '代理连接成功',
+    testFailed: '代理连接失败: {msg}',
+    testDisabled: '代理已禁用，跳过测试',
+    save: '保存',
+    saved: '代理配置已保存',
+    saveFailed: '保存失败: {msg}',
   },
   // ── Compat 编辑器（CompatEditor / CompatField）──
   compat: {

@@ -302,3 +302,20 @@ export function onUpdateError(cb: (e: { stage: string; message: string; errorCod
 export function openUpdateFallbackUrl(url: string): Promise<void> {
   return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
 }
+
+// ── 代理配置 ────────────────────────────────────────────────────────
+
+/** 获取当前代理配置。无 IPC 时返回默认配置 */
+export function getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig> {
+  return api?.getProxyConfig() ?? Promise.resolve({ mode: 'system' })
+}
+
+/** 保存代理配置。无 IPC 时 no-op */
+export function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void> {
+  return api?.setProxyConfig(config) ?? Promise.resolve()
+}
+
+/** 测试代理连接。无 IPC 时返回成功（跳过测试） */
+export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
+  return api?.testProxy(config) ?? Promise.resolve({ success: true, message: 'No IPC available' })
+}

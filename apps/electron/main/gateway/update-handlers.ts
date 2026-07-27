@@ -45,6 +45,7 @@ function readProxyConfig(): IProxyConfig {
   } catch {
     return { mode: 'system' }
   }
+}
 
 /** 写入代理配置。 */
 function writeProxyConfig(config: IProxyConfig): void {
