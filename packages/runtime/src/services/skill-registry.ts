@@ -84,6 +84,43 @@ const GLOBAL_KEY = '__global__'
 const WATCH_IGNORED = /(^|[\/\\])(node_modules|dist|build|\.git|\.next|coverage|out)([\/\\]|$)/
 
 /**
+ * chokidar 轮询间隔（ms）：usePolling 模式下 stat 轮询的节奏。
+ * 默认 chokidar interval=100ms 偏激进（高频 stat 全目录），skill 目录变动是低频用户操作，
+ * 1500ms 足够实时（用户创建 skill 后 1.5s 内刷新，配合 DEBOUNCE_MS 总延迟 <2s），同时把 stat 开销压到可忽略。
+ */
+const WATCH_POLL_INTERVAL_MS = 1500
+
+/**
+ * chokidar watcher 配置（全局 + 项目级共用）。
+ *
+ * usePolling:true 的根因（2026-07-27 端到端验收发现的预存 bug）：
+ * chokidar v4（2024-09）移除了内置的 native fsevents 绑定（Changelog v4: "remove glob support
+ * and bundled fsevents"），macOS 上退化为纯 Node fs.watch（基于 FSEvents stream，但 chokidar 不再
+ * 用原生绑定做 reliable 事件归并）。结果是 fs.watch 在 macOS 上对「已 watch 目录下新建子目录 /
+ * 新文件」事件**不可靠**——存在 nodejs/node#52601 描述的启动竞态（fs.watch 返回后到真正开始监听
+ * 之间有不确定延迟，窗口期内创建的事件被吞），且 FSEvents 的事件 coalescing 也会丢事件。
+ *
+ * 实测复现：在已扫描的 skill 目录下 `mkdir new-skill && echo body > new-skill/SKILL.md`，
+ * 连续 5 次运行 watcher 的 'all' 事件触发率 ~40%（flaky），landing 浮层长期不刷新。
+ *
+ * 根因修复：在这些 watcher 上启用 usePolling:true（chokidar README 明确推荐的 macOS 可靠监听方式，
+ * 也即 fs.watchFile stat-polling 后端）。由于 W1/W4 已把 watch 范围收窄到几个 skill 容器目录
+ * （resolveGlobalSkillDirs / resolveProjectSkillDirs，浅层、条目少），stat 轮询开销可忽略，
+ * 不会重蹈 2026-07-22 EMFILE 事故（那是 watch 整个 home 目录十万文件导致 fd 耗尽；
+ * usePolling 用 stat 不占 fd，反而更安全）。轮询间隔 WATCH_POLL_INTERVAL_MS 调到 1500ms 平衡实时性与开销。
+ *
+ * 场景1（settings 改路径 → rebuildGlobal → 刷新）不依赖 watcher，不受影响继续工作。
+ */
+const WATCH_OPTIONS = {
+  ignored: WATCH_IGNORED,
+  ignoreInitial: true,
+  persistent: true,
+  usePolling: true,
+  interval: WATCH_POLL_INTERVAL_MS,
+  binaryInterval: WATCH_POLL_INTERVAL_MS,
+} as const
+
+/**
  * watcher 连续同类错误熔断阈值：达到则 close 该 watcher。背景：chokidar 遇 EMFILE 会自动重试 watch，
  * 但 fd 已耗尽时重试必再失败 → 死循环刷屏（2026-07-22 事故中 10899 次，撑账 2.9MB stderr）。
  * 熔断后停止重试，释放该 watcher 占用的句柄，让 pi spawn 等关键操作能拿到 fd。
@@ -136,11 +173,7 @@ export class SkillRegistry {
     if (dirs.length === 0) return
     // 幂等防护：若已存在 globalWatcher（重试/重建），先 close 旧的避免泄漏。
     this.globalWatcher?.close().catch(() => {})
-    this.globalWatcher = watch(dirs, {
-      ignored: WATCH_IGNORED,
-      ignoreInitial: true,
-      persistent: true,
-    })
+    this.globalWatcher = watch(dirs, WATCH_OPTIONS)
     this.setupWatcher(this.globalWatcher, 'global', GLOBAL_KEY, async () => {
       this.globalCache = await this.scanFn('')
       await this.notifyGlobalChange()
@@ -265,11 +298,7 @@ export class SkillRegistry {
    * watch 范围 = scan 范围（SSOT）：只 watch 传入的实际存在项目 skill 子目录。
    */
   private setupProjectWatcher(cwd: string, dirs: string[]): void {
-    const watcher = watch(dirs, {
-      ignored: WATCH_IGNORED,
-      ignoreInitial: true,
-      persistent: true,
-    })
+    const watcher = watch(dirs, WATCH_OPTIONS)
     this.setupWatcher(watcher, `project:${cwd}`, cwd, async () => {
       this.projectCache.set(cwd, await this.scanFn(cwd))
       await this.notifyProjectChange(cwd)

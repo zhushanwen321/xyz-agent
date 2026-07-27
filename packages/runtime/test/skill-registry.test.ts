@@ -112,10 +112,12 @@ describe('skillRegistry (W1)', () => {
       // 核心断言：watch 的是 skill 子目录，不是整个 cwd（原 bug）
       expect(watchedPaths).toContain(join(cwd, '.xyz-agent', 'skills'))
       expect(watchedPaths).not.toContain(cwd)
-      // options 断言：ignored 正则 + ignoreInitial:true（防几余重扫 + node_modules 排除被删）
+      // options 断言：ignored 正则 + ignoreInitial:true（防几余重扫 + node_modules 排除被删）+
+      // usePolling:true（W5 根因修复：chokidar v4 移除 fsevents 后 macOS fs.watch 对新建子目录不可靠）
       expect(watchArgs[1]).toMatchObject({
         ignored: expect.any(RegExp),
         ignoreInitial: true,
+        usePolling: true,
       })
     } finally {
       reg.dispose()
