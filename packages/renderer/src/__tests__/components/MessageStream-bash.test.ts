@@ -72,6 +72,57 @@ describe('MessageStream bashExecution 路由', () => {
     // SystemNotice stub 不应出现（bash 消息走 BashOutputBlock 分支）
     expect(wrapper.find('[data-testid="system-notice-stub"]').exists()).toBe(false)
   })
+
+  /**
+   * gap3 首屏冒烟用例（PR#116 review gap3）：mount MessageStream + hydrate 一条 bash 消息，
+   * 下钻断言 BashOutputBlock 内部三个 DOM testid 节点同时存在（不只 findComponent 实例存在）。
+   *
+   * 审查要求：T10 只断言了 BashOutputBlock 组件实例存在（findComponent），未下钻到内部 testid，
+   * 无法防护「组件挂了但内部 render 为空 / testid 缺失 / v-if 误判」事故。本用例补这条：mount 后
+   * 直接 find DOM 节点，验证 bash-output-block / bash-output / bash-status-tag 三节点齐全。
+   *
+   * 前置确认：BashOutputBlock.vue 已具备三个 testid（G4 新增了 bash-output-truncated），
+   * 无需改产品代码暴露 testid。
+   */
+  it('gap3: hydrate bash 消息 → DOM 同时存在 bash-output-block + bash-output + bash-status-tag 三 testid', async () => {
+    const chat = useChatStore()
+    const sid = 'sess-bash-smoke'
+    const bashMsg: Message = {
+      id: 'bash-smoke-1',
+      role: 'system',
+      content: '',
+      status: 'complete',
+      bashExecution: {
+        command: 'ls -la',
+        output: 'total 0\ndrwxr-xr-x  2 root root 4096 Jul 26 10:00 .',
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+        excludeFromContext: false,
+        timestamp: 1000,
+      },
+      timestamp: 1000,
+    } as Message
+    chat.hydrate(sid, [bashMsg])
+
+    const wrapper = mountStream(sid)
+    // 等 mount + 虚拟列表 visibleRange 收敛（首屏单条消息必在窗口内）
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // ── 下钻到 BashOutputBlock 内部 DOM testid（不只 findComponent 实例存在）──
+    // bash-output-block：根容器
+    const block = wrapper.find('[data-testid="bash-output-block"]')
+    expect(block.exists()).toBe(true)
+    // bash-output：输出区（complete + hasOutput 才渲染）
+    const output = wrapper.find('[data-testid="bash-output"]')
+    expect(output.exists()).toBe(true)
+    expect(output.text()).toContain('total 0')
+    // bash-status-tag：exit 标签（complete 态渲染，显示「exit 0」）
+    const tag = wrapper.find('[data-testid="bash-status-tag"]')
+    expect(tag.exists()).toBe(true)
+    expect(tag.text()).toBe('exit 0')
+  })
 })
 
 /**
