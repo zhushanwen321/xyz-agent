@@ -122,7 +122,6 @@ export class PresetService {
     private readonly configStore: IConfigStore,
     // extensionService 本 wave 不用，但 wave2 的 resolve 依赖它（getBuiltinExtensionPaths/scanExtensions）。
     // 提前对齐双参构造，避免 wave2 改构造签名 → 破坏 wave3 组合根 + 所有测试构造点。
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 见上注释（wave2 启用）
     private readonly extensionService: IExtensionService,
   ) {}
 

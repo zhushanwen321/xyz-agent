@@ -16,6 +16,9 @@
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 import type { IReleaseChecker } from '../interfaces.js'
 
+/** SHA-256 摘要的十六进制字符长度（mock 占位用 'a' 填充，长度必须合法否则下游校验报错）。 */
+const SHA256_HEX_LENGTH = 64
+
 /**
  * 伪造的 LatestReleaseInfo。
  *
@@ -48,7 +51,7 @@ const MOCK_RELEASE: LatestReleaseInfo = {
       name: 'xyz-agent-mac-arm64.zip',
       downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v999.999.999/xyz-agent-mac-arm64.zip',
       size: 0,
-      sha256: 'a'.repeat(64),
+      sha256: 'a'.repeat(SHA256_HEX_LENGTH),
     },
   },
 }

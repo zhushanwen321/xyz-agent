@@ -19,14 +19,31 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/command-popover-landing.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage, SkillInfo } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 import { useSettingsStore } from '@/stores/settings'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
+
+// Wave3 TC5：useGlobalSkills 走真实 events 订阅链路（dispatchGlobal → handler → loadGlobal(true) → DOM 刷新）。
+// onSkillCacheInvalidated 接真实 events.onGlobalType，使广播能端到端触达 composable。
+// getGlobalSkills 为可控 mock（TC5 中途改返回值模拟 runtime 重扫后缓存更新）。
+const getGlobalSkillsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]))
+vi.mock('@/api', async () => {
+  const realEvents = await import('@/api/events')
+  return {
+    config: {
+      getGlobalSkills: getGlobalSkillsMock,
+      onSkillCacheInvalidated: (handler: (p: { scope: 'global' | 'project'; cwd?: string }) => void) =>
+        realEvents.onGlobalType('config.skillCacheInvalidated', (msg) => {
+          handler(msg.payload as { scope: 'global' | 'project'; cwd?: string })
+        }),
+    },
+  }
+})
 
 // fixture：对照 api/mock/settings-data.ts fixtureSkills（7 条，name 不带 /）
 const LANDING_SKILLS: SkillInfo[] = [
@@ -393,5 +410,66 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
     const btns = bodyItemButtons()
     // 0 项——证明 settingsStore.skills 的 7 条未被读取（FR-5：不走 settingsStore.skills）
     expect(btns).toHaveLength(0)
+  })
+
+  // ── Wave3 TC5：渲染 gate（MANDATORY，架构约定 #5-8）──
+  // 端到端验证：广播 config.skillCacheInvalidated {scope:'global'} → useGlobalSkills 订阅回调
+  // → loadGlobal(true) force 重拉 → globalSkills ref 刷新 → CommandPopover DOM 反映新 skill 列表。
+  // 用 wrapper 组件调 useGlobalSkills() 拿响应式 globalSkills，传给 CommandPopover（模拟 Composer.vue 的接线）。
+  it('TC5: 广播 global scope 失效信号 → landing slash 浮层 DOM 反映 globalSkills 刷新', async () => {
+    // lazy import：避免顶层 import 触发 useProjectSkills 模块加载（其顶层订阅依赖 mock 已挂载，OK）。
+    const { useGlobalSkills } = await import('@/composables/features/useProjectSkills')
+
+    const SKILL_1: SkillInfo[] = [
+      { id: 'sk-1', name: 'skill1', description: 'one', enabled: true, source: 'agents', effective: true },
+    ]
+    const SKILL_1_2: SkillInfo[] = [
+      { id: 'sk-1', name: 'skill1', description: 'one', enabled: true, source: 'agents', effective: true },
+      { id: 'sk-2', name: 'skill2', description: 'two', enabled: true, source: 'agents', effective: true },
+    ]
+
+    // wrapper：模拟 Composer.vue 接线（useGlobalSkills → CommandPopover globalSkills prop）
+    const Harness = defineComponent({
+      name: 'GlobalSkillsHarness',
+      setup() {
+        const { globalSkills } = useGlobalSkills()
+        return () =>
+          h(CommandPopover, {
+            open: true,
+            type: 'slash',
+            variant: 'landing',
+            sessionId: undefined,
+            query: '',
+            globalSkills: globalSkills.value,
+          })
+      },
+    })
+
+    // 初始 getGlobalSkills resolve([skill1]) → 渲染 1 项 /skill:skill1
+    getGlobalSkillsMock.mockResolvedValue(SKILL_1)
+    wrapper = mount(Harness, { attachTo: document.body })
+    await flushPromises()
+    await nextTick()
+
+    await vi.waitFor(() => {
+      const btns = bodyItemButtons()
+      expect(btns).toHaveLength(1)
+      expect(btns[0].textContent).toContain('skill1')
+    })
+
+    // mock 改返回 [skill1, skill2]（模拟 runtime 重扫 globalCache 后缓存更新）
+    getGlobalSkillsMock.mockResolvedValue(SKILL_1_2)
+    // 派发 global scope 失效信号 → loadGlobal(true) force 重拉 → globalSkills ref 刷新 → DOM 更新
+    events.dispatchGlobal({
+      type: 'config.skillCacheInvalidated',
+      payload: { scope: 'global' },
+    } as ServerMessage<'config.skillCacheInvalidated'>)
+
+    await vi.waitFor(() => {
+      const btns = bodyItemButtons()
+      expect(btns).toHaveLength(2)
+      expect(btns.some((b) => b.textContent?.includes('skill1'))).toBe(true)
+      expect(btns.some((b) => b.textContent?.includes('skill2'))).toBe(true)
+    })
   })
 })

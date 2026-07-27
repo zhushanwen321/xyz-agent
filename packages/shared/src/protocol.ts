@@ -494,6 +494,7 @@ export type ServerMessageType =
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
   | 'config.skillDirs' | 'config.agentDirs' | 'config.extensionDirs'
+  | 'config.skillCacheInvalidated'
   | 'config.systemPrompt'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
@@ -550,6 +551,17 @@ export type ServerMessageType =
   // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
   | 'config.providersPreviewed' | 'config.providersImported'
 
+/** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
+export type SkillCacheScope = 'global' | 'project'
+
+/** config.skillCacheInvalidated 消息的 payload。scope='project' 时 cwd 携带变更的项目根；
+ *  setSkillDirs 改全局配置触发的 project 广播 cwd 仍缺省（影响所有 cwd，非单个 cwd 变更）。 */
+export interface SkillCacheInvalidatedPayload {
+  scope: SkillCacheScope
+  /** scope='project' 时携带变更的项目根；setSkillDirs 全局配置变更场景缺省（影响所有 cwd）。 */
+  cwd?: string
+}
+
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
  *
@@ -568,6 +580,13 @@ export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
   'config.providers': { providers: ProviderInfo[] }
   'config.skills': { skills: SkillInfo[] }
+  /**
+   * skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
+   * 与 config.skills 区分：config.skills 推全量列表给 settingsStore；本 type 推失效信号给 landing composable。
+   * scope='global' 时 cwd 缺省（所有 panel 刷全局）；scope='project' 时 cwd 携带变更的项目根（前端按 cwd 路由）。
+   * setSkillDirs 改全局配置触发的 project 广播 cwd 仍缺省（影响所有 cwd，非单个 cwd 变更）。
+   */
+  'config.skillCacheInvalidated': SkillCacheInvalidatedPayload
   'config.agents': { agents: AgentInfo[] }
   /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
   'config.skillDirs': { dirs: SkillDirConfig[] }
