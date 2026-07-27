@@ -42,6 +42,7 @@ RUNTIME_DIR="$PROJECT_ROOT/packages/runtime"
 DIST_RUNTIME="$PROJECT_ROOT/apps/electron/dist/runtime"
 BUNDLE_PATH="$DIST_RUNTIME/index.cjs"
 BOOTSTRAP_PATH="$DIST_RUNTIME/plugin-bootstrap.cjs"
+SERVER_PATH="$DIST_RUNTIME/server.cjs"
 
 # ── 1. Build 产物存在（index.cjs + plugin-bootstrap.cjs）────────────
 echo ""
@@ -62,6 +63,14 @@ if [ ! -f "$BOOTSTRAP_PATH" ]; then
     exit 1
 fi
 echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs${NC}"
+
+# wave4: server.cjs（xyz-agent-runtime CLI）产物存在检查
+if [ ! -f "$SERVER_PATH" ]; then
+    echo -e "${RED}[ERROR] server.cjs 不存在: $SERVER_PATH${NC}"
+    echo -e "${YELLOW}[FIX] tsup entry 必须包含 src/server/index.ts，输出为 server.cjs${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[OK] server.cjs 存在${NC}"
 
 # ── 2. 依赖打包检查 ─────────────────────────────────────────────────
 echo ""
@@ -139,6 +148,12 @@ echo -e "${GREEN}[OK] 无 import.meta / fileURLToPath 引用${NC}"
 echo ""
 echo -e "${BLUE}[4/6] 检查产物是否包含所有依赖...${NC}"
 
+# wave4 后业务 entry 不止 index.cjs：server.cjs（xyz-agent-runtime CLI）含 server 专用依赖
+# （如 qrcode-terminal，index.cjs 不 import 它，只在 server.cjs 出现）。
+# 因此对每个 dep，检查它是否在「任一业务 bundle」出现即可。
+# 注意：plugin-bootstrap.cjs 是 Worker Thread 入口（独立 chunk），不含 runtime deps，故排除。
+BUSINESS_BUNDLES="$BUNDLE_PATH $SERVER_PATH"
+
 for dep in $DEPS; do
     if [ -z "$dep" ]; then continue; fi
     # native module 保持 external，bundle 里是 require("dep") 而非打包源码；
@@ -147,8 +162,22 @@ for dep in $DEPS; do
     if [ -f "$DEP_DIR/binding.gyp" ] || [ -d "$DEP_DIR/prebuilds" ] || find "$DEP_DIR" -name '*.node' 2>/dev/null | grep -q .; then
         continue
     fi
-    if ! grep -q "$dep" "$BUNDLE_PATH"; then
-        echo -e "${RED}[ERROR] 产物缺少依赖 $dep（noExternal 可能遗漏）${NC}"
+    # workspace 包被 tsup inline 后，包名可能以路径形式残留（如 @xyz-agent/foo → ../foo/src/...），
+    # `grep -q "@xyz-agent/foo"` 匹配不到。去 scope 后用 foo 匹配更宽松，避免误报。
+    # （注：workspace:* dep 已在 [2/6] 过滤，这里保留 de-scope 逻辑作为防御性匹配。）
+    DEP_MATCH="$dep"
+    case "$dep" in
+        @*/*) DEP_MATCH="${dep#*/}" ;;
+    esac
+    found=false
+    for bundle in $BUSINESS_BUNDLES; do
+        if [ -f "$bundle" ] && { grep -q -- "$dep" "$bundle" 2>/dev/null || grep -q -- "$DEP_MATCH" "$bundle" 2>/dev/null; }; then
+            found=true
+            break
+        fi
+    done
+    if [ "$found" = false ]; then
+        echo -e "${RED}[ERROR] 产物缺少依赖 $dep（在 index.cjs 和 server.cjs 都未找到，noExternal 可能遗漏）${NC}"
         exit 1
     fi
 done

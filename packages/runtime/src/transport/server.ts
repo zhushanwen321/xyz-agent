@@ -60,6 +60,14 @@ export class RuntimeServer implements IMessageBroker {
     this.fileEndpoint = ep
     this.conn.setFileEndpoint(ep)
   }
+
+  /**
+   * wave4 远程化：注入静态 Web 资源 handler（server CLI --serve-web 模式）。
+   * 透传给 ConnectionManager.setStaticHandler（HTTP 路由）。必须在 start（HTTP 监听）前调用。
+   */
+  setStaticHandler(handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>): void {
+    this.conn.setStaticHandler(handler)
+  }
   /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
   private skillRegistry?: SkillRegistry
 

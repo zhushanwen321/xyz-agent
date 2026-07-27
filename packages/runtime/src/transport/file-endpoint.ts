@@ -23,7 +23,7 @@
  * - 白名单 isAllowed 用 isUnderOrEqual（词法判定，realpath 结果 vs [dataDir / 活跃 session cwd / projectRoots / tmpdir]）。
  * - 扩展名白名单（仅图片）：替代 local-file:// 的 renderer 图片预览用途，最小暴露面。
  *
- * 不含：业务路由（connection-manager 只在 url 以 /file 开头时转交）、token 生成/校验
+ * 不含：业务路由（connection-manager 在 pathname === '/file' 时转交）、token 生成/校验
  * （TokenManager）、session 管理（SessionService 只读 getActiveSummaries 取 cwd）。
  */
 import { createHmac, timingSafeEqual } from 'node:crypto'

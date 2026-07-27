@@ -84,12 +84,13 @@ function parseArgs(): { port: number; projectRoot?: string; host: string; tokenF
   return { port, projectRoot, host, tokenFile }
 }
 
-async function main(opts?: { host?: string; port?: number; tokenFile?: string }): Promise<void> {
+export async function main(opts?: { host?: string; port?: number; tokenFile?: string; serveWeb?: string }): Promise<void> {
   const parsed = parseArgs()
   // opts（外部编程式调用）优先于 parseArgs（CLI/env），无参时完全走 parseArgs 默认（Electron 零回归）。
   const port = opts?.port ?? parsed.port
   const host = opts?.host ?? parsed.host
   const tokenFile = opts?.tokenFile ?? parsed.tokenFile
+  const serveWeb = opts?.serveWeb
   const { projectRoot } = parsed
   const effectiveRoot = projectRoot ?? process.cwd()
   const tokenManager = createTokenManager({ tokenFile })
@@ -262,6 +263,12 @@ async function main(opts?: { host?: string; port?: number; tokenFile?: string })
   //   - RPC 侧：setServices 时读 this.fileEndpoint 注入 FileMessageHandler（file.signUrl）
   const fileEndpoint = createFileEndpoint({ tokenManager, sessionService, bindHost: host })
   server.setFileEndpoint(fileEndpoint)
+  // wave4 远程化：server CLI --serve-web <dist> 模式注入静态 Web handler（SPA 资源 + 客户端路由 fallback）。
+  // 与 setFileEndpoint 同模式：start() 前注入即生效；serveWeb 缺省（Electron 默认）时不注入，零回归。
+  if (serveWeb) {
+    const { createStaticWebHandler } = await import('./server/static-web.js')
+    server.setStaticHandler(createStaticWebHandler(serveWeb))
+  }
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
   const gitService = new GitService({ sessionService, executor: new GitExecutor() })
@@ -425,7 +432,41 @@ async function main(opts?: { host?: string; port?: number; tokenFile?: string })
   }
 }
 
-main().catch((e) => {
-  console.error('[runtime] fatal:', e)
-  process.exit(1)
-})
+/**
+ * 判定当前进程是否应以「runtime 主入口」身份自动执行 main()。
+ *
+ * 背景（Bug 1, CRITICAL）：原正则 `/index(\.cjs|\.js|\.ts)?$/` 匹配任何以 index 结尾的
+ * 路径，导致 dev 模式跑 `tsx src/server/index.ts`（server CLI 入口）时，server/index.ts
+ * import 本模块（`../index.js`），被 import 的本模块因 argv[1]='.../src/server/index.ts'
+ * 匹配正则，顶层 main() 误触发，与 server/index.ts 自身的 main() 重复启动 → EADDRINUSE。
+ *
+ * 修复：正则严格锚定「真正的 runtime 入口」路径片段：
+ *  - packaged：`<sep>index.cjs`（dist/runtime/index.cjs，Electron spawn 或 CLI 直跑）
+ *  - dev：`<sep>src<sep>index.ts`（tsx src/index.ts，严格匹配 src/index.ts）
+ * 用 `<sep>src<sep>index` 锚定（路径分隔符 + src + 分隔符 + index），不会匹配
+ * `src/server/index.ts`（CLI bin，会显式调 main()）。
+ *
+ * 导出纯函数（前缀 _ 表示内部 API）：便于单测，避免动态 import + 模块缓存副作用复杂度。
+ *
+ * @param scriptPath process.argv[1]（脚本入口路径），可能为 undefined/''
+ */
+export function _isRuntimeMainEntry(scriptPath: string): boolean {
+  if (!scriptPath) return false
+  // packaged runtime 入口：.../index.cjs（跨平台分隔符 [\\/]）
+  if (/[\\/]index\.cjs$/.test(scriptPath)) return true
+  // dev runtime 入口：.../src/index.ts（严格锚定 src/index.ts，排除 src/server/index.ts）
+  if (/[\\/]src[\\/]index\.ts$/.test(scriptPath)) return true
+  return false
+}
+
+// 自动执行入口：仅当本模块被 Electron supervisor / CLI 直接作为 runtime 入口运行时触发。
+// 被 server/index.ts（dev）或 server.cjs（packaged）import 时，argv[1] 是 server 入口，
+// _isRuntimeMainEntry 返回 false → 跳过顶层 main()，仅暴露 export（server 侧显式调 main）。
+const __isRuntimeMainEntry = _isRuntimeMainEntry(process.argv[1] ?? '')
+
+if (__isRuntimeMainEntry) {
+  main().catch((e) => {
+    console.error('[runtime] fatal:', e)
+    process.exit(1)
+  })
+}

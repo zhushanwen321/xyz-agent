@@ -3,6 +3,9 @@
   "version": "0.6.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "xyz-agent-runtime": "../../apps/electron/dist/runtime/server.cjs"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
@@ -16,6 +19,7 @@
     "chokidar": "^4.0.1",
     "fast-glob": "^3.3.3",
     "node-pty": "^1.0.0",
+    "qrcode-terminal": "^0.12.0",
     "semver": "^6.3.1",
     "tar": "^7.5.16",
     "ws": "^8"

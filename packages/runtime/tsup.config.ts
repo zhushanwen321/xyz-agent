@@ -1,17 +1,40 @@
 import { defineConfig } from 'tsup'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import type { Plugin as EsbuildPlugin } from 'esbuild'
 
 // XYZ_AGENT_VERSION 展示应用版本（与 electron 包一致），读 apps/electron/package.json。
 // runtime 自己的 package.json version（0.4.7-beta）是包内部版本，不对外展示。
 const pkgPath = resolve(__dirname, '../../apps/electron/package.json')
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string }
 
+/**
+ * qrcode-terminal 的 lib/main.js 用 legacy 八进制转义 `\033`（ANSI 颜色码），
+ * 打包为 noExternal 时 esbuild 因 tsconfig strict 模式拒绝（strict 禁止 octal escape）。
+ * 本 onLoad 插件把 `\033` 等价改写为 `\x1b`（hex escape，strict 允许），ANSI 语义不变。
+ * 仅作用于 qrcode-terminal/lib 下的 .js 文件，不影响其它产物。
+ */
+const fixQrcodeTerminalOctal: EsbuildPlugin = {
+  name: 'fix-qrcode-terminal-octal',
+  setup(build) {
+    build.onLoad({ filter: /qrcode-terminal[\\/]+lib[\\/]+.*\.js$/ }, async (args) => {
+      const contents = readFileSync(args.path, 'utf-8')
+      // \033 (octal ESC) → \x1b (hex ESC)，ANSI 转义语义完全等价
+      const fixed = contents.replace(/\\033/g, '\\x1b')
+      return {
+        contents: fixed,
+        loader: 'js',
+      }
+    })
+  },
+}
+
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'plugin-bootstrap': 'src/services/plugin-service/plugin-bootstrap.ts',
     cli: 'src/cli/index.ts',  // xyz-settings CLI 入口（打包后 dist/runtime/cli.cjs）
+    server: 'src/server/index.ts',  // wave4: xyz-agent-runtime server CLI 入口（打包后 dist/runtime/server.cjs）
   },
   // 输出到 apps/electron/dist/runtime（与 main/preload dist 同级，供 electron-builder 打包）
   outDir: '../../apps/electron/dist/runtime',
@@ -29,7 +52,7 @@ export default defineConfig({
   // ══════════════════════════════════════════════════════════════
   // @xyz-agent/shared：workspace 包（纯 TS 类型 + 工具函数），必须打包进 bundle，
   // 否则打包后 require('@xyz-agent/shared') 找不到（runtime 子进程无 node_modules）
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', 'chokidar'],
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', 'chokidar', 'qrcode-terminal'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，
@@ -39,6 +62,7 @@ export default defineConfig({
   splitting: false,
   sourcemap: false,
   minify: false,
+  esbuildPlugins: [fixQrcodeTerminalOctal],
   define: {
     'process.env.XYZ_AGENT_VERSION': JSON.stringify(pkg.version),
   },
@@ -75,6 +99,21 @@ export default defineConfig({
     }
     const cliSizeKB = Math.round(statSync(cliPath).size / BYTES_PER_KB)
     console.log(`[tsup] CLI bundle: ${cliPath} (${cliSizeKB}KB)`)
+
+    // 验证 server CLI bundle（wave4: xyz-agent-runtime）
+    const serverPath = path.join('..', '..', 'apps', 'electron', 'dist', 'runtime', 'server.cjs')
+    if (!existsSync(serverPath)) {
+      throw new Error(`Server CLI bundle not found: ${serverPath}`)
+    }
+    const serverSizeKB = Math.round(statSync(serverPath).size / BYTES_PER_KB)
+    console.log(`[tsup] Server CLI bundle: ${serverPath} (${serverSizeKB}KB)`)
+    // Bug 4：server.cjs 体积下限校验（仿 index.cjs）。server.cjs 含 qrcode-terminal，
+    // 体积通常 > index.cjs；下限取 100KB（与 index.cjs 同阈值，保守：低于此值几乎必然
+    // 是 bundle 损坏/依赖缺失，如 qrcode-terminal 未打或 runtime main 未内联）。
+    const MIN_SERVER_BUNDLE_SIZE_KB = 100
+    if (serverSizeKB < MIN_SERVER_BUNDLE_SIZE_KB) {
+      throw new Error(`Server CLI bundle too small (${serverSizeKB}KB < ${MIN_SERVER_BUNDLE_SIZE_KB}KB), likely missing dependencies`)
+    }
 
     console.log('[tsup] Runtime bundle validated ✓')
   },

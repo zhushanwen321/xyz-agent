@@ -14,7 +14,7 @@
  * 不含：消息路由（server.ts handleMessage）、消息发送（broker）、业务逻辑（handlers）。
  * 连接建立后把 ws + 解析出的 msg 通过注入的回调交给上层（RuntimeServer）处理。
  */
-import { createServer, type Server as HttpServer } from 'node:http'
+import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage } from '@xyz-agent/shared'
 import { toErrorMessage } from '../utils/errors.js'
@@ -92,6 +92,10 @@ export class ConnectionManager {
   private readonly serverVersion: string
   /** wave2：HTTP /file 端点（可选——未配置时 /file 走 404）。start() 前可经 setFileEndpoint 延迟绑定。 */
   private fileEndpoint?: FileEndpoint
+  /** wave4 远程化：静态 Web 资源 handler（可选——server CLI --serve-web 模式）。
+   *  /health 与 /file 已认领的请求不转交；其余 GET 请求转交此 handler（SPA fallback）。
+   *  start() 前可经 setStaticHandler 延迟绑定（createServer 回调读 this，运行时解析）。 */
+  private staticHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<void>
 
   constructor(
     private port: number,
@@ -103,16 +107,32 @@ export class ConnectionManager {
     this.serverVersion = opts.serverVersion ?? '0.0.0'
     this.fileEndpoint = opts.fileEndpoint
     this.httpServer = createServer((req, res) => {
-      if (req.url === '/health') {
+      // 用 URL 解析 pathname，剥离 query/fragment 后再匹配路由，避免 /file?token=x 这类
+      // 带查询串的请求因 req.url !== '/file' 而漏匹配。req.url 形如 '/path?query'（相对路径），
+      // 需传 base 才能用 URL 构造（http://x 为虚拟 base，仅用于解析，无副作用）。
+      const pathname = new URL(req.url ?? '', 'http://x').pathname
+      if (pathname === '/health') {
         res.writeHead(HTTP_OK, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
-      } else if (this.fileEndpoint && req.url && req.url.startsWith('/file')) {
+      } else if (this.fileEndpoint && pathname === '/file') {
         // wave2 远程化：转交 FileEndpoint.handle（签名校验 + 白名单 + 流式）。
         // handle 内部已完成所有状态码判定；此处只兜底未捕获异常（不应发生，防御性）。
         // 读 this.fileEndpoint（非构造期捕获）：允许 start 前经 setFileEndpoint 延迟绑定
         // （index.ts 中 sessionService 在 server 构造后才创建，fileEndpoint 依赖它）。
+        // Bug 3：精确匹配 pathname === '/file'，避免 startsWith('/file') 误匹配 /filenames、
+        // /file-backup 等未来静态路由（全转给 fileEndpoint 会抢资源）。
         this.fileEndpoint.handle(req, res).catch((e) => {
           console.error('[runtime] /file endpoint error:', e)
+          if (!res.headersSent) {
+            res.writeHead(HTTP_INTERNAL_ERROR, { 'Content-Type': 'text/plain' })
+            res.end('internal error')
+          }
+        })
+      } else if (this.staticHandler) {
+        // wave4 远程化：未认领的请求转交静态 Web handler（SPA 资源 + 客户端路由 fallback）。
+        // /health 与 /file 已在上游认领，此分支只服务前端静态文件。
+        this.staticHandler(req, res).catch((e) => {
+          console.error('[runtime] static web handler error:', e)
           if (!res.headersSent) {
             res.writeHead(HTTP_INTERNAL_ERROR, { 'Content-Type': 'text/plain' })
             res.end('internal error')
@@ -144,6 +164,16 @@ export class ConnectionManager {
    */
   setFileEndpoint(ep: FileEndpoint): void {
     this.fileEndpoint = ep
+  }
+
+  /**
+   * wave4 远程化：注入静态 Web 资源 handler（server CLI --serve-web 模式）。
+   *
+   * 与 setFileEndpoint 同模式：createServer 回调读 this.staticHandler（非构造期捕获），
+   * 故 start() 前注入即生效。未配置时（Electron 默认 / 旧路径）请求走 404，零回归。
+   */
+  setStaticHandler(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>): void {
+    this.staticHandler = handler
   }
 
   /** 启动 HTTP + WS 监听；注册 connection 回调。 */
