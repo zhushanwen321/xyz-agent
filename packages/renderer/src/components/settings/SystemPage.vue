@@ -337,6 +337,9 @@ onMounted(async () => {
  */
 async function previewSound(kind: 'success' | 'error', name: string, trackId: string): Promise<void> {
   if (!name) return // 未知平台无默认，静默
+  // 防重入：正在播放时拒绝新点击（SoundPreviewButton 的 pointer-events-none 是视觉兜底，
+  // 这里是逻辑兜底——防止键盘/快速连点触发的重叠播放）
+  if (previewingKey.value) return
   const key = `${kind}:${trackId}`
   previewingKey.value = key
   try {
