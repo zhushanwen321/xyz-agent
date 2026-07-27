@@ -21,7 +21,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     v-bind="forwarded"
     :class="
       cn(
-        'relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm py-1.5 pl-2.5 pr-8 text-[13px] text-fg outline-none transition-colors data-[highlighted]:bg-surface-hover data-[highlighted]:text-fg data-[state=checked]:text-accent',
+        'group/item relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm py-1.5 pl-2.5 pr-8 text-[13px] text-fg outline-none transition-colors data-[highlighted]:bg-surface-hover data-[highlighted]:text-fg data-[state=checked]:text-accent',
         props.class,
       )
     "
@@ -33,6 +33,19 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       <SelectItemText>
         <slot />
       </SelectItemText>
+    </span>
+    <!-- 可选 #action slot：选项右侧 append 区（Check 指示器左旁）。
+         仅当调用方传 #action 时渲染，原有仅传文案的调用零影响。
+         用法场景：SystemPage 提示音选择，每个声音项右侧带试听按钮。
+         注意：#action 内的可交互元素自身应处理事件（@click.stop 等），这里容器层
+         已 @click.stop / @pointerdown.stop 兜底阻止冒泡到 SelectItem 触发选中。 -->
+    <span
+      v-if="$slots.action"
+      class="flex items-center justify-center opacity-0 transition-opacity group-data-[highlighted]/item:opacity-100"
+      @click.stop
+      @pointerdown.stop
+    >
+      <slot name="action" />
     </span>
     <span class="absolute right-2 flex size-4 items-center justify-center">
       <SelectItemIndicator>

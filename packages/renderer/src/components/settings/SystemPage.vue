@@ -81,62 +81,74 @@
         <!-- 成功音 -->
         <div class="flex items-center justify-between px-4 py-3">
           <Label class="text-[12px] text-fg">{{ t('settings.system.successSound') }}</Label>
-          <div class="flex items-center gap-2">
-            <Select
-              :model-value="system.successSound || SOUND_DEFAULT"
-              @update:model-value="onSuccessSoundChange"
-            >
-              <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="SOUND_DEFAULT">{{ t('settings.system.soundDefault') }}</SelectItem>
-                <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">{{ s.name }}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant="ghost"
-              size="sm"
-              data-testid="preview-success-sound"
-              class="h-8 gap-1 px-2 text-[11px] text-accent"
-              :disabled="previewing === 'success'"
-              @click="previewSound('success')"
-            >
-              <Loader2 v-if="previewing === 'success'" class="size-3 animate-spin" />
-              <Volume2 v-else class="size-3" />
-              {{ previewing === 'success' ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
-            </Button>
-          </div>
+          <Select
+            :model-value="system.successSound || SOUND_DEFAULT"
+            @update:model-value="onSuccessSoundChange"
+          >
+            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem :value="SOUND_DEFAULT">
+                {{ t('settings.system.soundDefault') }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === 'success:default'"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-success-default`"
+                    @click="previewSound('success', getDefaultSound(currentPlatform, 'success'), 'default')"
+                  />
+                </template>
+              </SelectItem>
+              <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
+                {{ s.name }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === `success:${s.id}`"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-success-${s.id}`"
+                    @click="previewSound('success', s.id, s.id)"
+                  />
+                </template>
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <!-- 失败音 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
           <Label class="text-[12px] text-fg">{{ t('settings.system.errorSound') }}</Label>
-          <div class="flex items-center gap-2">
-            <Select
-              :model-value="system.errorSound || SOUND_DEFAULT"
-              @update:model-value="onErrorSoundChange"
-            >
-              <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="SOUND_DEFAULT">{{ t('settings.system.soundDefault') }}</SelectItem>
-                <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">{{ s.name }}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant="ghost"
-              size="sm"
-              data-testid="preview-error-sound"
-              class="h-8 gap-1 px-2 text-[11px] text-accent"
-              :disabled="previewing === 'error'"
-              @click="previewSound('error')"
-            >
-              <Loader2 v-if="previewing === 'error'" class="size-3 animate-spin" />
-              <Volume2 v-else class="size-3" />
-              {{ previewing === 'error' ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
-            </Button>
-          </div>
+          <Select
+            :model-value="system.errorSound || SOUND_DEFAULT"
+            @update:model-value="onErrorSoundChange"
+          >
+            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem :value="SOUND_DEFAULT">
+                {{ t('settings.system.soundDefault') }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === 'error:default'"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-error-default`"
+                    @click="previewSound('error', getDefaultSound(currentPlatform, 'error'), 'default')"
+                  />
+                </template>
+              </SelectItem>
+              <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
+                {{ s.name }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === `error:${s.id}`"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-error-${s.id}`"
+                    @click="previewSound('error', s.id, s.id)"
+                  />
+                </template>
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
     </div>
@@ -232,7 +244,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
-import { Loader2, Volume2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -241,12 +252,13 @@ import { useCommandStore } from '@/stores/command'
 import { listSystemSounds } from '@/lib/ipc'
 import { playByName } from '@/composables/useCompletionSound'
 import { getDefaultSound } from '@/composables/sound-defaults'
+import SoundPreviewButton from './SoundPreviewButton.vue'
 import type { SystemSettings } from '@/stores/settings'
 
 /** 系统声音清单项（id=播放标识，name=显示名） */
 interface SoundInfo { id: string; name: string }
 
-const props = defineProps<{
+defineProps<{
   system: SystemSettings
 }>()
 
@@ -293,8 +305,12 @@ function onErrorSoundChange(value: unknown): void {
 /** 试听 loading 持续时间（ms）：afplay 启动几乎瞬时，给 loading 态一个最小可见窗口 */
 const PREVIEW_LOADING_MS = 300
 
-/** 试听中的类型（'success' | 'error' | null），用于按钮 loading 态 */
-const previewing = ref<'success' | 'error' | null>(null)
+/**
+ * 正在试听的声音复合 key（`<kind>:<soundId | 'default'>`），用于该项 loading 态。
+ * 复合 key 区分 success/error 两个 Select 各自的「系统默认」与具体声音项，
+ * 任意时刻只允许一个试听（点新的会覆盖旧的 key）。
+ */
+const previewingKey = ref<string | null>(null)
 
 onMounted(async () => {
   // 拉当前平台可用声音清单（existsSync 过滤后的精选）。经 lib/ipc 门面（B1），
@@ -309,19 +325,27 @@ onMounted(async () => {
 })
 
 /**
- * 试听提示音。点的是当前选中的声音，未选则用平台默认。
- * @param kind 'success' 成功音 / 'error' 失败音
+ * 试听提示音（下拉项内 per-item 试听）。
+ *
+ * 设计变更：原方案是「选完声音后点外部试听按钮」，现改为「下拉列表每项右侧带试听按钮」，
+ * 用户可直接对比试听每个候选声音，不必先选中。外部独立试听按钮已移除（同时消除试听时
+ * 按钮文案变化「试听/试听中」导致的布局位移问题）。
+ *
+ * @param kind    'success' 成功音 / 'error' 失败音（用于区分两个 Select）
+ * @param name    实际播放的声音名（系统默认项传 getDefaultSound 解析出的平台默认）
+ * @param trackId 用于 loading 复合 key 的项标识（'default' 或具体声音 id）
  */
-async function previewSound(kind: 'success' | 'error'): Promise<void> {
-  const selected = kind === 'success' ? props.system.successSound : props.system.errorSound
-  const name = (selected && selected.trim()) || getDefaultSound(currentPlatform, kind)
+async function previewSound(kind: 'success' | 'error', name: string, trackId: string): Promise<void> {
   if (!name) return // 未知平台无默认，静默
-  previewing.value = kind
+  const key = `${kind}:${trackId}`
+  previewingKey.value = key
   try {
     await playByName(name)
   } finally {
     // 播放是 fire-and-forget，给个短延迟让 loading 态可见（afplay 启动几乎瞬时）
-    setTimeout(() => { previewing.value = null }, PREVIEW_LOADING_MS)
+    setTimeout(() => {
+      if (previewingKey.value === key) previewingKey.value = null
+    }, PREVIEW_LOADING_MS)
   }
 }
 
