@@ -39,9 +39,14 @@
         <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[var(--text-xs)]">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
         <span v-else class="text-neutral-dim font-mono text-[var(--text-xs)]">)</span>
       </template>
-      <!-- 终态指示：完成（Check）/ 未收到结果（text）。failed 不加额外标记（维持现状） -->
+      <!-- 终态指示：完成（Check）/ 未收到结果（CircleDashed + text）。failed 不加额外标记（维持现状）。
+           unfinished 用 text-neutral-mid（6.78:1 过 AA），不用 dim（3.56:1 不过 AA，critique 第 3 轮）。
+           CircleDashed（中性灰，非 Check 非 warn）表达"状态不确定/未收到"。 -->
       <Check v-if="!isFailed && !isRunning && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
-      <span v-else-if="isUnfinished" class="ml-0.5 whitespace-nowrap text-neutral-dim">{{ t('panel.message.noResult') }}</span>
+      <template v-else-if="isUnfinished">
+        <CircleDashed class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
+        <span class="ml-0.5 whitespace-nowrap text-neutral-mid">{{ t('panel.message.noResult') }}</span>
+      </template>
     </div>
     <!-- task 首行预览（收起态可见，dim） -->
     <div v-if="subagentTaskPreview" class="mt-0.5 pl-5 truncate text-[var(--text-sm)] text-neutral-dim">
@@ -82,7 +87,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy as CopyIcon, ChevronRight, Check } from '@lucide/vue'
+import { Copy as CopyIcon, ChevronRight, Check, CircleDashed } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
 import { Button } from '@/components/ui/button'

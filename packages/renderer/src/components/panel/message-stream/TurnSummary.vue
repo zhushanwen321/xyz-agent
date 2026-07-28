@@ -49,31 +49,29 @@
         <span class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
         <Button
           variant="ghost"
-          size="sm"
-          class="fork-btn h-6 gap-1 px-1.5 text-accent hover:bg-accent-soft hover:text-accent-hover"
+          size="icon"
+          class="fork-btn relative size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
           data-testid="fork-background-btn"
           :title="t('panel.message.forkBackground')"
           @click="onFork(lastAssistant)"
         >
           <GitFork class="size-3" />
-          <span class="text-[var(--text-xs)]">{{ t('panel.message.forkBackgroundLabel') }}</span>
-          <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
+          <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
         </Button>
         <!--
-          fork-ask：与 fork-bg 同 ghost 样式（critique P2：移除 bg-accent-soft 常驻 tint，
-          kbd badge 是唯一 accent signal）。
+          fork-ask：与 fork-bg 同 ghost icon-only 样式（critique P3：同族图标同尺寸，
+          仅靠 kbd（shift+g）和 title 区分）。
         -->
         <Button
           variant="ghost"
-          size="sm"
-          class="fork-ask-btn h-6 gap-1 px-1.5 text-accent hover:bg-accent-soft hover:text-accent-hover"
+          size="icon"
+          class="fork-ask-btn relative size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
           data-testid="fork-ask-btn"
           :title="t('panel.message.forkAsk')"
           @click="onForkAsk(lastAssistant)"
         >
-          <GitFork class="size-3.5 fill-current" />
-          <span class="text-[var(--text-xs)]">{{ t('panel.message.forkAskLabel') }}</span>
-          <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-neutral-dim">{{ formatKbd('shift+g') }}</span>
+          <GitFork class="size-3 fill-current" />
+          <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('shift+g') }}</span>
         </Button>
         <span class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
         <!-- ⋯ overflow：copy-MD / handoff / handoff-ask -->

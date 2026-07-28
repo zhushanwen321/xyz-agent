@@ -131,9 +131,14 @@
           <component :is="headerBlockIcon" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
           <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ argPath }}</span>
-          <!-- 状态指示：completed 显 Check（中性），failed 由 AlertTriangle 表达不重复，running 由 loader 表达 -->
+          <!-- 状态指示：completed 显 Check（中性），failed 由 AlertTriangle 表达不重复，running 由 loader 表达。
+               unfinished（end_not_received）显 CircleDashed + 文字（中性 mid 色阶，过 WCAG AA）——非 Check（未完成）
+               也非 warn（未收到≠失败，可能是 WS 断连后会恢复）。文字用 text-neutral-mid 而非 dim（dim 3.56:1 不过 AA）。 -->
           <Check v-if="!isFailed && !isRunning && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
-          <span v-else-if="isUnfinished" class="ml-0.5 normal-case tracking-normal text-neutral-dim whitespace-nowrap">{{ t('panel.message.noResult') }}</span>
+          <template v-else-if="isUnfinished">
+            <CircleDashed class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
+            <span class="ml-0.5 normal-case tracking-normal whitespace-nowrap text-neutral-mid">{{ t('panel.message.noResult') }}</span>
+          </template>
           <Button
             v-if="isBash && !isRunning && sessionId"
             variant="ghost"
@@ -202,7 +207,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronRight, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
+import { Check, ChevronRight, CircleDashed, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
@@ -294,11 +299,12 @@ const headerBlockIcon = computed(() => {
   return kind === 'running' ? BLOCK_ICON_LUCIDE['tool-other'] : BLOCK_ICON_LUCIDE[kind]
 })
 
-/** 普通 tool header 状态色：running 染 accent，failed/unfinished 中性灰，completed 中性 */
+/** 普通 tool header 状态色：running 染 accent，failed/unfinished 中性灰，completed 中性。
+ *  unfinished 用 text-neutral-mid（6.78:1 过 AA），不用 dim（3.56:1 不过 AA，critique 第 3 轮）。 */
 const toolStatusClass = computed(() => {
   if (isRunning.value) return 'text-accent'
   if (isFailed.value) return 'text-neutral-mid'
-  if (isUnfinished.value) return 'text-neutral-dim'
+  if (isUnfinished.value) return 'text-neutral-mid'
   return 'text-neutral-fg'
 })
 
