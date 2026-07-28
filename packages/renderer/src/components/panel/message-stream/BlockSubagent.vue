@@ -5,19 +5,15 @@
     标题行：subagent + agent + · + slug + (model · thinking X)
     第二行：task 首行预览（截断 60）
     展开体：task 完整内容 + background 状态行
-    视觉（demo h）：左缩进 14px + 底部 dashed 分割 + subagent prefix tag（统一 uppercase-mono，无装饰点）
+    视觉：纯缩进无边框 + 默认收起无 chevron + subagent prefix tag（统一 uppercase-mono，无装饰点）
   -->
-  <div class="trace-subagent border-b border-dashed border-border pl-3.5 pb-2.5 mb-0.5" data-testid="subagent-block">
+  <div class="trace-subagent pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
       class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
       :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
       @click="toggleTool"
     >
-      <ChevronRight
-        class="size-[14px] shrink-0 transition-transform text-neutral-dim"
-        :class="toolExpanded ? 'rotate-90 text-accent' : ''"
-      />
       <!-- running 态 loader（双环 + accent），其余走 users ICON -->
       <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
       <component
@@ -49,7 +45,7 @@
       </template>
     </div>
     <!-- task 首行预览（收起态可见，dim） -->
-    <div v-if="subagentTaskPreview" class="mt-0.5 pl-5 truncate text-[length:var(--text-sm)] text-neutral-dim">
+    <div v-if="subagentTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim">
       {{ subagentTaskPreview }}
     </div>
     <template v-if="toolExpanded">
@@ -59,7 +55,7 @@
           v-if="subagentTask"
           variant="ghost"
           size="icon"
-          class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+          class="absolute top-0 left-1 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
           :title="t('panel.message.copy')"
           @click.stop="copy(subagentTask, `subagent-${tool.id}`)"
         >
@@ -69,12 +65,12 @@
         <!-- task 完整内容（无标题，surface-2 代码块样式，pre-wrap 保留换行） -->
         <div
           v-if="subagentTask"
-          class="subagent-task-full ml-5 whitespace-pre-wrap rounded-sm border border-border bg-surface-2 px-2.5 py-1.5 text-[length:var(--text-sm)] leading-[1.65] text-neutral-mid"
+          class="subagent-task-full pl-4 whitespace-pre-wrap py-1.5 text-[length:var(--text-sm)] leading-[1.65] text-neutral-mid"
         >{{ subagentTask }}</div>
         <!-- background 状态行（来自 output.bgResponse，带状态点 blink 动画） -->
         <div
           v-if="bgStatusText"
-          class="ml-5 mt-1.5 flex items-center gap-2 rounded-sm border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-[length:var(--text-xs)] text-neutral-dim"
+          class="pl-4 mt-1.5 flex items-center gap-2 py-1.5 font-mono text-[length:var(--text-xs)] text-neutral-dim"
         >
           <span class="inline-block size-1.5 animate-blink rounded-full bg-accent"></span>
           background · {{ bgStatusText }}
@@ -87,7 +83,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy as CopyIcon, ChevronRight, Check, CircleDashed } from '@lucide/vue'
+import { Copy as CopyIcon, Check, CircleDashed } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
 import { Button } from '@/components/ui/button'

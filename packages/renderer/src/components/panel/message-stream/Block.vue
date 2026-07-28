@@ -13,23 +13,19 @@
     <!-- thinking 块：同行展开（float 布局——第一行环绕 label，第二行起从最左侧开始） -->
     <div v-if="type === 'thinking'" class="trace-think">
       <div
-        class="think-head group/think relative block overflow-hidden cursor-pointer select-none"
+        class="group/think relative cursor-pointer select-none"
         :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
         @click="toggleThinking"
       >
-        <!-- label 组浮动：chevron + icon + "思考" + ·，只占第一行高度 -->
-        <span class="think-label-float inline-flex h-[1.7em] items-center gap-1.5 whitespace-nowrap float-left">
-          <ChevronRight class="size-[14px] shrink-0 text-neutral-dim transition-transform" :class="thinkingExpanded ? 'rotate-90 text-accent' : ''" />
+        <!-- 摘要行：flex 布局，clickable toggle -->
+        <div class="flex items-center gap-1.5">
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
           <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.thinkingBlock') }}</span>
-          <!-- · 分隔符：仅非 working 态显示。working（streaming）态内容直接跟在"思考"后，更紧凑 -->
-          <span v-if="!working" class="text-neutral-faint">·</span>
-        </span>
-        <!-- 内容 block：从最左占满，第一行环绕 float label，第二行起缩进到 chevron 之后（pl-5） -->
-        <div v-if="!thinkingExpanded" class="think-content-collapsed truncate text-[length:var(--text-sm)] text-neutral-dim">
-          {{ previewText }}
+          <span v-if="!working && !thinkingExpanded" class="text-neutral-faint">·</span>
+          <span v-if="!thinkingExpanded" class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim">{{ previewText }}</span>
         </div>
-        <div v-else class="think-content-expanded pl-5 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
+        <!-- 展开内容：pl-4 纯缩进，无 border/背景 -->
+        <div v-if="thinkingExpanded" class="think-content-expanded pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
           <!-- copy 按钮浮在内容右上角（hover 显） -->
           <Button
             variant="ghost"
@@ -49,7 +45,7 @@
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
          streaming 光标已移到 Turn.vue trace 末尾（保证永远在最后一行，不受 contentBlocks 时序影响）。 -->
-    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[length:var(--text-sm)] leading-relaxed text-neutral-mid">
+    <div v-else-if="type === 'text'" class="pb-2 text-[length:var(--text-sm)] leading-relaxed text-neutral-mid">
       <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
     </div>
 
@@ -63,7 +59,7 @@
       <BlockSubagent v-if="isSubagent" :tool="tool!" :session-id="sessionId" />
 
       <!-- ── workflow 块：action + name + slug + runId + list-tree GUI ── -->
-      <div v-else-if="isWorkflow" class="trace-workflow border-b border-dashed border-border pl-3.5 pb-2.5 mb-0.5" data-testid="workflow-block">
+      <div v-else-if="isWorkflow" class="trace-workflow pb-2.5 mb-0.5" data-testid="workflow-block">
         <div
           data-testid="tool-block-header"
           class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium transition-opacity hover:opacity-80"
@@ -71,7 +67,6 @@
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
-          <ChevronRight class="size-[14px] shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90 text-accent' : ''" />
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
@@ -91,7 +86,7 @@
           <Check v-if="!isFailed && !isRunning" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
         </div>
         <!-- args.task 首行预览（run action） -->
-        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-5 truncate text-[length:var(--text-sm)] text-neutral-dim">
+        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim">
           {{ workflowArgsTaskPreview }}
         </div>
         <template v-if="toolExpanded">
@@ -107,7 +102,7 @@
               <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
               <CopyIcon v-else class="size-3" />
             </Button>
-            <div class="pl-6">
+            <div class="pl-4">
               <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
               <AnsiText v-else-if="outputRaw" :content="outputRaw" />
               <span v-else class="whitespace-pre-wrap">{{ result }}</span>
@@ -125,7 +120,6 @@
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
-          <ChevronRight class="size-[14px] shrink-0 transition-transform text-neutral-dim" :class="toolExpanded ? 'rotate-90 text-accent' : ''" />
           <!-- running 态 loader（双环 + accent），其余走 BLOCK_ICON_LUCIDE[iconKind] -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="headerBlockIcon" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
@@ -190,7 +184,7 @@
               </Button>
             </div>
             <div
-              class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap border-l-2 border-neutral-faint pl-6 select-text"
+              class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 select-text"
               :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
             >
               <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
@@ -207,7 +201,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronRight, CircleDashed, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
+import { Check, CircleDashed, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
