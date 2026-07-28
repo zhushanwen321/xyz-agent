@@ -61,6 +61,7 @@ export default {
     workflowRunning: 'Running',
     workflowFailed: 'Failed',
     copyMarkdown: 'Copy as Markdown',
+    moreActions: 'More actions',
     forkBackground: 'Fork to background (branch from this reply, stay on current line)',
     forkBackgroundLabel: 'Fork',
     forkAsk: 'Fork to ask (ask in a new branch, isolated from main line)',

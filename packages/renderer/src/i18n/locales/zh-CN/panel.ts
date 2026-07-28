@@ -61,6 +61,7 @@ export default {
     workflowRunning: '运行中',
     workflowFailed: '失败',
     copyMarkdown: '复制为 Markdown',
+    moreActions: '更多操作',
     forkBackground: 'fork 后台（从该回复分叉新会话，留在当前线）',
     forkBackgroundLabel: 'fork 后台',
     forkAsk: 'fork 提问（在新分支追问，与主线隔离）',

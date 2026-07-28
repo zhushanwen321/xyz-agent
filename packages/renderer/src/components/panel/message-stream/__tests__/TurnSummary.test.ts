@@ -120,16 +120,20 @@ describe('W4TC4: TurnSummary hover actions', () => {
     expect(btn.exists()).toBe(true)
   })
 
-  it('handoff-btn 存在（data-testid）', () => {
+  it('handoff-btn 在 overflow 菜单内（打开 more-actions 后可见）', async () => {
     const wrapper = mountSummary()
-    const btn = wrapper.find('[data-testid="handoff-btn"]')
-    expect(btn.exists()).toBe(true)
+    // handoff 现收进 Popover overflow，关闭态 content unmount；先打开 trigger
+    await wrapper.find('[data-testid="more-actions-btn"]').trigger('click')
+    // PopoverPortal teleport 到 document.body
+    const btn = document.body.querySelector('[data-testid="handoff-btn"]')
+    expect(btn).toBeTruthy()
   })
 
-  it('handoff-ask-btn 存在（data-testid）', () => {
+  it('handoff-ask-btn 在 overflow 菜单内（打开 more-actions 后可见）', async () => {
     const wrapper = mountSummary()
-    const btn = wrapper.find('[data-testid="handoff-ask-btn"]')
-    expect(btn.exists()).toBe(true)
+    await wrapper.find('[data-testid="more-actions-btn"]').trigger('click')
+    const btn = document.body.querySelector('[data-testid="handoff-ask-btn"]')
+    expect(btn).toBeTruthy()
   })
 
   it('fork/handoff 按钮在 subagent session 隐藏', () => {
