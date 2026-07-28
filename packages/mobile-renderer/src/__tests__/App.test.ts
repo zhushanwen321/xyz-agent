@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import type { Ref } from 'vue'
+import { setActivePinia, createPinia } from 'pinia'
 
 // 可控的 connectionState ref（App.vue 通过 useConnection().state 读）
 const stateRef = ref<'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed'>('disconnected')
@@ -55,6 +56,7 @@ function setLocation(href: string): void {
 
 beforeEach(async () => {
   vi.resetModules()
+  setActivePinia(createPinia())
   stateRef.value = 'disconnected'
   initMock.mockClear()
   isRemoteModeMock.mockClear()

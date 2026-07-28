@@ -14,6 +14,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomTabBar from './BottomTabBar.vue'
+import SessionsTab from '@/components/sessions/SessionsTab.vue'
 import type { MobileTab } from './types'
 
 const { t } = useI18n()
@@ -31,12 +32,10 @@ const activeTab = ref<MobileTab>('sessions')
       <span class="text-sm font-semibold">{{ t('mobile.shell.title') }}</span>
     </header>
 
-    <!-- Content（flex-1 overflow-hidden，KeepAlive 三 tab 占位） -->
+    <!-- Content（flex-1 overflow-hidden，KeepAlive 三 tab content） -->
     <main class="mobile-content flex-1 overflow-hidden" data-testid="mobile-content">
       <KeepAlive>
-        <section v-if="activeTab === 'sessions'" key="sessions" data-testid="mobile-tab-content-sessions" class="h-full p-4 text-sm text-muted">
-          sessions
-        </section>
+        <SessionsTab v-if="activeTab === 'sessions'" key="sessions" data-testid="mobile-tab-content-sessions" />
         <section v-else-if="activeTab === 'files'" key="files" data-testid="mobile-tab-content-files" class="h-full p-4 text-sm text-muted">
           files
         </section>

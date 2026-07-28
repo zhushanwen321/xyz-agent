@@ -11,4 +11,33 @@ export default {
     connect: '连接',
     hintUnrecognized: '无法识别连接信息，支持 ws://、http://、deep-link、URL/Token 多行四种格式',
   },
+  session: {
+    new: '新建',
+    empty: '暂无会话，点 + 新建',
+  },
+  chat: {
+    back: '返回',
+    empty: '发送消息开始对话',
+    composerPlaceholder: '输入消息…',
+    roleUser: '你',
+    roleAssistant: 'Agent',
+  },
+  newSession: {
+    title: '新建会话',
+    promptPlaceholder: '描述任务…',
+    cwdLabel: '服务器路径',
+    cwdPlaceholder: '输入服务器路径，如 ~/projects/xyz-agent',
+    submit: '创建并开始',
+    cancel: '取消',
+    errorCreate: '创建会话失败：{msg}',
+  },
+  settings: {
+    title: '设置',
+    connectionInfo: '连接信息',
+    host: '主机',
+    token: 'Token',
+    disconnect: '断开连接',
+    theme: '主题',
+    deviceName: '设备名',
+  },
 }
