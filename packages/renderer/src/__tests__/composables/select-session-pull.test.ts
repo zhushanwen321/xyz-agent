@@ -40,11 +40,20 @@ vi.mock('@/api/events', () => ({
   dispatchSession: vi.fn(),
 }))
 
+vi.mock('@/composables/useMessageBusSubscription', () => ({
+  subscribeSession: vi.fn().mockResolvedValue(undefined),
+  getSubscriptionState: vi.fn(),
+  clearSubscription: vi.fn(),
+  updateLastSeenSeq: vi.fn(),
+  resetSubscriptionStates: vi.fn(),
+}))
+
 // file tree 依赖（selectSession 会调 loadTree——保留，文件树不在 stateSnapshot 覆盖范围）
 vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 import { session as sessionApi } from '@/api'
+import { subscribeSession } from '@/composables/useMessageBusSubscription'
 import { useSidebar } from '@/composables/features/useSidebar'
 
 beforeEach(() => {
@@ -78,5 +87,34 @@ describe('wave:remove-bandaids: selectSession 不再主动拉 subagent/workflow 
 
     expect(sessionApi.getSubagents).not.toHaveBeenCalled()
     expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
+  })
+
+  it('selectSession 调 subscribeSession 回流 commands/context', async () => {
+    const sidebar = useSidebar()
+    await sidebar.selectSession('sess-A')
+
+    // selectSession 切会话后应调 subscribeSession，触发 stateSnapshot dispatch 回流 stores
+    expect(subscribeSession).toHaveBeenCalledWith('sess-A')
+  })
+
+  it('多次切会话每次都调 subscribeSession（幂等，不产生额外 RPC）', async () => {
+    const sidebar = useSidebar()
+    await sidebar.selectSession('sess-A')
+    await sidebar.selectSession('sess-B')
+    await sidebar.selectSession('sess-A')
+
+    // 三次切换各调一次 subscribeSession（内部幂等守卫：已 subscribed 且 fromSeq 未指定时跳过 RPC）
+    expect(subscribeSession).toHaveBeenCalledTimes(3)
+    expect(subscribeSession).toHaveBeenCalledWith('sess-A')
+    expect(subscribeSession).toHaveBeenCalledWith('sess-B')
+  })
+
+  it('subscribeSession 失败不阻塞切会话', async () => {
+    vi.mocked(subscribeSession).mockRejectedValueOnce(new Error('subscribe failed'))
+    const sidebar = useSidebar()
+    // 不应抛出——subscribeSession 失败被 catch 消化
+    await expect(sidebar.selectSession('sess-A')).resolves.toBeUndefined()
+    // switchSession 仍应被调用（切会话逻辑完成）
+    expect(sessionApi.switchSession).toHaveBeenCalledWith('sess-A')
   })
 })

@@ -38,6 +38,7 @@ import { invalidateStatusCache } from '@/composables/features/useSessionDerivati
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { clearUnread } from '@/composables/useSessionMarkers'
+import { subscribeSession } from '@/composables/useMessageBusSubscription'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
 import { useHandoffActions } from '@/composables/features/useHandoffActions'
@@ -164,9 +165,10 @@ export function useSidebar() {
    * landing 态覆盖：initApp/点新建后停在 landing，此时点侧栏历史会话须 cancelFlow,
    * 否则 state 残留 landing → isLandingView 仍 true → composer 被误抑制（new-task 渲染撕裂）。
    *
-   * commands/context/subagents 不在此主动拉取（wave:remove-bandaids：删除 4 处主动拉取 RPC 兜底）。
-   * 这些状态由 useChat.ensureStreamSubscription → subscribeSession → applySnapshot 的 stateSnapshot
-   * dispatch 提供（routeInbound 兜底分支据此更新 commandStore/contextStore/subagentStore）。
+   * commands/context/subagents 由 subscribeSession → stateSnapshot dispatch 提供：
+   * selectSession 直接调 subscribeSession(sid)（幂等，已 subscribed 时跳过 RPC），
+   * stateSnapshot 回流更新 commandStore/contextStore/subagentStore/workflowStore。
+   * useChat.ensureStreamSubscription（send 路径）仍保留作为发消息时的兜底 subscribe。
    * workflows 经 streamRing 内 session.workflowUpdate 增量信号 → triggerWorkflowReload → loadWorkflows
    * RPC（store 自身方法保留），与 useWorkflowListSync focusedSessionId watch 首拉互补覆盖。
    */
@@ -179,6 +181,15 @@ export function useSidebar() {
     session.activeId = id
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
     clearUnread(id)
+    // subscribeSession 回流 commands/context/subagents/workflows stateSnapshot（wave:fix-message-bus-seq）。
+    // subscribeSession 内部幂等（已 subscribed 且 fromSeq 未指定时跳过 RPC），重复调用安全。
+    // 失败时不阻塞切会话（subscribeSession 内部已 console.warn 消化，不抛出）。
+    try {
+      await subscribeSession(id)
+    } catch (e) {
+      // subscribeSession 失败不阻塞切会话（内部已有 console.warn，此处兜底记录）
+      console.warn('[selectSession] subscribeSession failed:', e)
+    }
     // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）
     chat.touchLru(id)
     syncSessionToPanel(id)
