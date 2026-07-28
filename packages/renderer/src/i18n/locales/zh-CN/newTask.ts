@@ -25,7 +25,6 @@ export default {
     createBtn: '创建并切换',
   },
   dirSelect: {
-    remoteNotSupported: 'v1 暂未支持远程连接',
     searchPlaceholder: '搜索工作区',
     noRecent: '暂无最近工作区 · 选择一个本地目录开始',
     openFolder: '打开文件夹',

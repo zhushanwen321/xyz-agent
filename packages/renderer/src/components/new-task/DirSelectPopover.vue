@@ -18,12 +18,13 @@
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, FolderPlus } from '@lucide/vue'
+import { Folder, FolderPlus, Globe } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
 import { dirNameOf, parentDirNameOf } from '@/composables/logic/path'
+import { isRemoteMode } from '@/lib/remote/connection-config'
 import type { RecentWorkspaceRecord } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -34,6 +35,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select', payload: { cwd: string }): void
   (e: 'open-dir-dialog'): void
+  (e: 'remote-connect'): void
   (e: 'close'): void
 }>()
 
@@ -47,7 +49,11 @@ const root = ref<HTMLElement | null>(null)
  *  双保险：即便 runtime 返超量也只显 6 项 */
 const MAX_DISPLAY = 6
 
-/** 尾部动作项数（只剩「打开文件夹」一项） */
+/** 远程模式（一次性求值——modal reload 后整页重建，组件重挂时重新求值；不 watch）。
+ *  远程模式：隐藏「打开文件夹」（远程无本地 OS dialog）+ 显「远程连接」+ 搜索框 Enter 支持手动路径。 */
+const isRemote = isRemoteMode()
+
+/** 尾部动作项数（远程模式=远程连接，本地模式=打开文件夹，互斥故恒 1） */
 const ACTION_ITEM_COUNT = 1
 
 /** W3: 改接 workspaceStore.records（取代旧 session.list 派生） */
@@ -106,8 +112,13 @@ function openFolder(): void {
   emit('open-dir-dialog')
 }
 
+function openRemoteConnect(): void {
+  emit('remote-connect')
+}
+
 /**
- * 扁平化激活：列表项区间 → selectWorkspace，尾部动作项（idx === listLen）→ openFolder()。
+ * 扁平化激活：列表项区间 → selectWorkspace，尾部动作项（idx === listLen）→ 按模式
+ * 调 openFolder（本地）或 openRemoteConnect（远程）。
  */
 function activate(idx: number): void {
   const listLen = filtered.value.length
@@ -115,8 +126,34 @@ function activate(idx: number): void {
     selectWorkspace(filtered.value[idx])
     return
   }
-  // 动作项：仅 open-dir 一项
-  openFolder()
+  // 动作项：本地=open-dir，远程=remote-connect（互斥，恒 1 项）
+  if (isRemote) {
+    openRemoteConnect()
+  } else {
+    openFolder()
+  }
+}
+
+/**
+ * 搜索框 Enter：远程模式 + filtered 无命中 → 把 search 当手动路径 emit('select')（R5 mitigation，
+ * 避免新增第二个 Input；远程无本地 OS 文件夹可打开，手动路径是主入口）。
+ * 远程模式 filtered 有命中 → 选中 filtered[0]（首条 record）。
+ * 本地模式：return 不处理（让 Enter 冒泡到根 onKeydown 走原 useFlatListNav 激活 activeIndex）。
+ *
+ * 远程模式下 stopPropagation + preventDefault 防止冒泡到根 onKeydown 二次激活（重复 emit select）。
+ */
+function onSearchEnter(e: KeyboardEvent): void {
+  if (!isRemote) return // 本地模式交给根 onKeydown 处理（保留原 Enter 导航行为）
+  e.stopPropagation()
+  e.preventDefault()
+  if (filtered.value.length > 0) {
+    selectWorkspace(filtered.value[0]!)
+    return
+  }
+  const cwd = search.value.trim()
+  if (cwd) {
+    emit('select', { cwd })
+  }
 }
 
 // 键盘导航收敛到 logic/useFlatListNav（与 BranchSelectPopover 共用）。
@@ -134,12 +171,14 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
     class="w-[320px] max-h-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
     @keydown="onKeydown"
   >
-    <!-- 搜索 input（sticky 顶部，spec §3.2） -->
+    <!-- 搜索 input（sticky 顶部，spec §3.2）。
+         远程模式：Enter 无 records 命中时把 search 当手动路径 emit('select')（IF5）。 -->
     <div class="border-b border-border p-2">
       <Input
         v-model="search"
         :placeholder="t('newTask.dirSelect.searchPlaceholder')"
         class="h-8 bg-surface-2 text-[13px]"
+        @keydown.enter="onSearchEnter"
       />
     </div>
 
@@ -175,8 +214,10 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       <!-- 分隔线 -->
       <div class="my-1 h-px bg-border" />
 
-      <!-- 动作项：打开文件夹（空态时即 Primary 入口，spec §6） -->
+      <!-- 动作项：本地模式显「打开文件夹」（空态时即 Primary 入口，spec §6），
+           远程模式隐藏（远程无本地 OS dialog 可触发） -->
       <PopoverActionItem
+        v-if="!isRemote"
         test-id="action-open-dir"
         :active="isActiveItem(openDirIdx)"
         @click="openFolder"
@@ -186,6 +227,20 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
           <FolderPlus class="shrink-0 text-subtle" />
         </template>
         {{ t('newTask.dirSelect.openFolder') }}
+      </PopoverActionItem>
+
+      <!-- 动作项：远程模式显「远程连接」（spec §九:230-239），emit remote-connect 由 Landing 接打开 modal -->
+      <PopoverActionItem
+        v-else
+        test-id="action-remote-connect"
+        :active="isActiveItem(openDirIdx)"
+        @click="openRemoteConnect"
+        @mouseenter="activeIndex = openDirIdx"
+      >
+        <template #icon>
+          <Globe class="shrink-0 text-subtle" />
+        </template>
+        {{ t('newTask.dirSelect.remoteConnect') }}
       </PopoverActionItem>
     </div>
   </div>
