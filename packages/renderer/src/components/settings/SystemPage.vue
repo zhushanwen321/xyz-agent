@@ -251,7 +251,7 @@ import { Switch } from '@/components/ui/switch'
 import { useCommandStore } from '@/stores/command'
 import { listSystemSounds } from '@/lib/ipc'
 import { playByName } from '@/composables/useCompletionSound'
-import { getDefaultSound } from '@/composables/sound-defaults'
+import { getDefaultSound, detectPlatform } from '@/composables/sound-defaults'
 import SoundPreviewButton from './SoundPreviewButton.vue'
 import type { SystemSettings } from '@/stores/settings'
 
@@ -273,20 +273,17 @@ const { t } = useI18n()
 /** 当前平台可用的系统声音清单（onMounted 拉取） */
 const soundList = ref<SoundInfo[]>([])
 
-/** 当前平台标识（用于 resolve 试听声音名） */
-const currentPlatform: 'darwin' | 'win32' | 'linux' | 'other' = (() => {
-  if (typeof navigator === 'undefined') return 'other'
-  const p = navigator.platform.toLowerCase()
-  if (p.includes('mac')) return 'darwin'
-  if (p.includes('win')) return 'win32'
-  if (p.includes('linux')) return 'linux'
-  return 'other'
-})()
+/** 当前平台标识（用于 resolve 试听「系统默认」项的平台默认声音名） */
+const currentPlatform = detectPlatform()
 
 /**
  * SelectItem 选中「系统默认」时的 sentinel value。
  * reka-ui 禁止 SelectItem value=""（空串是 Select 清空选择的保留值），
  * 故用此 sentinel 占位，change 时映射回空串存入 settings（空串=用平台默认）。
+ *
+ * 注意：此 sentinel 字符串不得与任何系统声音 id 冲突（系统声音 id 是系统原生名如
+ * 'Glass' / 'complete' / 'Windows Notify System Generic'，绝不会是 '__default__'）。
+ * 若未来新增自定义声音 id 命名空间，需避开此保留值。
  */
 const SOUND_DEFAULT = '__default__'
 

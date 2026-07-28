@@ -317,10 +317,15 @@ export async function listSystemSounds(): Promise<{
 
 /**
  * 按名字播放系统提示音。mac/linux 由 main spawn 播；win 返回 wav base64 由调用方播。
- * name 为空或未知时 main 侧静默 resolve。失败静默（提示音失败不阻塞对话流）。
+ * name 为空或未知时：若提供 kind，main 回落到平台默认（W3）；否则静默 resolve。
+ * 失败静默（提示音失败不阻塞对话流）。
+ *
+ * @param name 声音 id
+ * @param kind 逻辑分类（成功/失败），跨平台失效时回落到对应平台默认；试听可不传
  */
 export async function playSystemSound(
   name: string,
+  kind?: 'success' | 'error',
 ): Promise<{ audioData?: string; mimeType?: string }> {
-  return api?.playSystemSound?.(name) ?? {}
+  return api?.playSystemSound?.(name, kind) ?? {}
 }

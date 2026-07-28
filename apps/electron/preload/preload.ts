@@ -149,8 +149,11 @@ export interface ElectronAPI {
    * 播放系统提示音。mac/linux 由 main spawn 命令播放；win 返回 wav base64
    * 由 renderer 用 new Audio() 播（wav 是 Chromium 原生格式）。
    * 失败静默 resolve（提示音失败不阻塞对话流）。
+   *
+   * @param name 声音 id；不在当前平台精选清单内时，若提供 kind 则回落到平台默认（W3 跨平台失效兜底）
+   * @param kind 逻辑分类（成功/失败），用于跨平台失效时回落到对应默认；试听已知声音可不传
    */
-  playSystemSound(name: string): Promise<{ audioData?: string; mimeType?: string }>
+  playSystemSound(name: string, kind?: 'success' | 'error'): Promise<{ audioData?: string; mimeType?: string }>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -269,5 +272,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
   // ── 系统提示音 ──────────────────────────────────────────────
   listSystemSounds: () => ipcRenderer.invoke('sound:list'),
-  playSystemSound: (name: string) => ipcRenderer.invoke('sound:play', name),
+  playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),
 } satisfies ElectronAPI)

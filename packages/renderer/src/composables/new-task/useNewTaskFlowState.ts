@@ -142,7 +142,14 @@ export function transition(target: NewTaskFlowState): void {
  * openOverlay —— 统一的 overlay 互斥入口（landing 态打开任意 overlay）。
  *
  * 语义：当前已在任意 overlay 态（dir/branch/preset-popover 等）时，先归 landing（所有 overlay→landing
- * 在 ALLOWED 内合法），再 transition 到 target。当前在 landing/idle 时直接 transition。
+ * 在 ALLOWED 内合法），再 transition 到 target。当前在 landing 时直接 transition。
+ *
+ * 幂等早退（W6）：当前已在 target 态时直接返回，避免 landing→target 短暂闪烁（overlay 被卸载重建）。
+ *
+ * 前置条件（W7）：调用方必须处于 landing 或任意 overlay 态。从 idle 调用会 throw（ALLOWED['idle']
+ * 只允许 'landing'）——这是有意的：overlay 入口（openDirPopover/openBranchPopover/openPresetPopover/
+ * openWorktreeModal）只应在 flow 已启动（startFlow 后 state=landing）时调用，从 idle 调用说明上游漏了
+ * startFlow，throw 暴露该 bug 而非静默走 transition('landing') 绕过 startFlow 的初始化副作用。
  *
  * 存在意义：消除 openDirPopover / openBranchPopover / openPresetPopover 各自手写"其他 overlay 态"
  * 互斥分支的重复与遗漏风险——曾经各处只列举当时的其他态，新增 overlay 态（如 preset-popover）时
@@ -153,6 +160,7 @@ export function transition(target: NewTaskFlowState): void {
  * 调用方若需来源守卫（如 openBranchPopover 的 git 守卫），在调 openOverlay 前自行处理。
  */
 export function openOverlay(target: NewTaskFlowState): void {
+  if (state.value === target) return // 幂等：已在 target，早退防 landing→target 闪烁
   if (OVERLAY_STATES.has(state.value)) {
     transition('landing')
   }

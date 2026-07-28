@@ -85,7 +85,9 @@ export function bindSessionStreamSync(): void {
             console.warn('[session-stream-sync] disposeSession failed for sid=' + sid, e)
           }
         }
-      // eslint-disable-next-line taste/no-silent-catch -- watch 最外层兜底：仅捕获 diffSessionList 纯函数 bug 或未来回归的未预期异常（常规副作用异常已由内层 per-session try-catch 隔离）
+      // 防御性后备：常规副作用异常已由内层 per-session try-catch 隔离，本层只兜 diffSessionList 纯函数 bug 或未来回归。
+      // 无测试覆盖：diffSessionList 是同模块 export，ESM 模块绑定下 spy 无法覆盖源码内直接引用（详见 useSessionStreamSync.test.ts TC10 降级说明），保护的是纯函数 diffSessionList。
+      // eslint-disable-next-line taste/no-silent-catch -- 见上，防御性后备 + console.warn 已记录
       } catch (e) {
         console.warn('[session-stream-sync] watch callback error:', e)
       }

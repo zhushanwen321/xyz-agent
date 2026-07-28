@@ -40,18 +40,29 @@ describe('useCompletionSound', () => {
     const { playSuccess } = await loadModule()
     await playSuccess()
     expect(mockPlaySystemSound).toHaveBeenCalledTimes(1)
+    // W3：playSuccess 转发 kind='success'（main 据此回落平台默认）
+    expect(mockPlaySystemSound).toHaveBeenCalledWith(expect.any(String), 'success')
   })
 
   it('playError 调用 electronAPI.playSystemSound', async () => {
     const { playError } = await loadModule()
     await playError()
     expect(mockPlaySystemSound).toHaveBeenCalledTimes(1)
+    // W3：playError 转发 kind='error'
+    expect(mockPlaySystemSound).toHaveBeenCalledWith(expect.any(String), 'error')
   })
 
   it('playByName 传入指定名字时透传给 IPC', async () => {
     const { playByName } = await loadModule()
     await playByName('Hero')
-    expect(mockPlaySystemSound).toHaveBeenCalledWith('Hero')
+    // playByName 现转发可选 kind（W3）；不传时为 undefined
+    expect(mockPlaySystemSound).toHaveBeenCalledWith('Hero', undefined)
+  })
+
+  it('playByName 传 kind 时透传给 IPC（W3 跨平台失效兜底用）', async () => {
+    const { playByName } = await loadModule()
+    await playByName('Hero', 'success')
+    expect(mockPlaySystemSound).toHaveBeenCalledWith('Hero', 'success')
   })
 
   it('electronAPI 不存在时不抛错（安全降级）', async () => {

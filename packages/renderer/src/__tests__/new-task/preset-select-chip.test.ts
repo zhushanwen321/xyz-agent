@@ -84,9 +84,9 @@ describe('PresetSelectChip landing 态（TC-1/TC-2/TC-3）', () => {
     })
     await flushPromises()
 
-    // Popover stub 无条件渲染 slot，预设项在 DOM（RadioGroupItem + Label）。
-    // 点第 2 个预设（Orchestrator）—— 用 preset-option testid 定位 RadioGroupItem，
-    // 触发其父 Label 的 click（RadioGroupItem 是 button[role=radio]，Label 包裹它）。
+    // Popover stub 无条件渲染 slot，预设项在 DOM（PopoverListItem）。
+    // 点第 2 个预设（Orchestrator）—— 用 preset-option testid 定位 PopoverListItem，
+    // 触发其 click（PopoverListItem 是 Button，click 即选预设）。
     const orchestratorItem = wrapper.find('[data-testid="preset-option-builtin:orchestrator"]')
     expect(orchestratorItem.exists()).toBe(true)
     await orchestratorItem.trigger('click')

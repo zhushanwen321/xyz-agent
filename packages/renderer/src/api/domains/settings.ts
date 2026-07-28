@@ -24,7 +24,8 @@ export interface SystemSettings {
   /**
    * 成功完成提示音：系统声音 id（如 'Glass' / 'complete' / 'Windows Notify System Generic'）。
    * undefined / 空串 → 用平台默认（mac=Glass, win=Windows Notify System Generic, linux=complete）。
-   * 跨平台失效兜底：保存的 id 在当前平台不存在时，playByName 回落到平台默认。
+   * 跨平台失效兜底（W3）：保存的 id 在当前平台不存在时（如 mac 的 'Hero' 切到 linux），
+   * main 侧 sound:play 据 kind 回落到对应平台默认（成功音→平台默认成功音），不再静默。
    */
   successSound?: string
   /** 失败完成提示音：语义同 successSound，默认 mac=Funk / win=Windows Notify Email / linux=message-new-instant */

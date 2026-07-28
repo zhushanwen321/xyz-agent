@@ -228,13 +228,6 @@ const deleteTargetName = computed(() =>
 const restoring = ref<Set<string>>(new Set())
 
 /**
- * 每个预设卡片的展开态（id → 在集合中表示展开）。
- *
- * 自定义预设默认展开（用户刚建的、意图编辑），内置预设默认折叠（当作只读文档扫视，
- * 避免首屏 3 个内置卡片全展开淹没自定义项）。展开态由本地 Set 持有，用户手动切换后
- * 记忆到组件生命周期结束；列表变化（新建/删除）时新预设按 builtin 决定初始态。
- */
-/**
  * expandedIds —— 每个预设卡片的展开态（id → 是否展开）。
  *
  * 初始化为空 Set，由下方 watch(presets) 在预设加载/新增时按 builtin 决定初始态：
@@ -298,6 +291,9 @@ function modeSummary(mode: ToolMode | ExtensionMode, list: string[] | undefined)
       return t('settings.preset.summaryAllowlist', { count: list?.length ?? 0 })
     case 'denylist':
       return t('settings.preset.summaryDenylist', { count: list?.length ?? 0 })
+    default:
+      // 未来 ToolMode/ExtensionMode 加枚举值时兜底返回空，避免静默返回 undefined
+      return ''
   }
 }
 

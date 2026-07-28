@@ -14,11 +14,21 @@
  * - 清单是模块级常量，不读用户输入构造路径
  *
  * 失败语义：播放失败 console.error 后 resolve（不 throw）——提示音失败不该打断对话流。
+ *
+ * 跨平台失效兜底（W3）：用户在 mac 选了具体音名（如 'Hero'），切到 linux 后该音不存在。
+ * sound:play 收到 name + kind 时，isKnownSound 失败则回落到 DEFAULT_SUCCESS_PLATFORM[platform]
+ * / DEFAULT_ERROR_PLATFORM[platform]，不再静默 no-op（完成提示音静默会让用户误以为没触发）。
  */
 import { ipcMain } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
+import {
+  DEFAULT_SUCCESS_PLATFORM,
+  DEFAULT_ERROR_PLATFORM,
+  type SoundKind,
+  type SoundPlatform,
+} from '@xyz-agent/shared'
 
 // ── 平台声音清单（精选，语义适合「完成提示」）──
 
@@ -48,18 +58,10 @@ const LINUX_SOUNDS = [
   'complete', 'message-new-instant', 'service-login', 'bell', 'window-attention', 'message',
 ] as const
 
-/** 各平台默认成功音 id（用户未设置 successSound 时用） */
-const DEFAULT_SUCCESS: Record<string, string> = {
-  darwin: 'Glass',
-  win32: 'Windows Notify System Generic',
-  linux: 'complete',
-}
-/** 各平台默认失败音 id */
-const DEFAULT_ERROR: Record<string, string> = {
-  darwin: 'Funk',
-  win32: 'Windows Notify Email',
-  linux: 'message-new-instant',
-}
+/**
+ * DEFAULT_SUCCESS_PLATFORM / DEFAULT_ERROR_PLATFORM SSOT 来自 @xyz-agent/shared
+ * （main 与 renderer 共享同一份字面量，消除双写——见 W4）。
+ */
 
 /** SoundInfo：id=播放用标识，name=显示名（不翻译，用系统原生名） */
 export interface SoundInfo {
@@ -82,12 +84,15 @@ export interface SoundPlayResult {
 // ── 命令存在性探测（Linux 播放器 fallback 用）──
 
 /**
- * 探测命令是否在 PATH（用 `command -v`，POSIX 通用）。
- * 同步包装：spawnSync 比 spawn 更适合「探测」，且只跑一次结果可缓存。
+ * 探测命令是否在 PATH：直接 spawn 该命令跑 `--version`，成功（exit 0）即存在。
+ *
+ * 跨平台：不依赖 shell builtin（旧实现用 POSIX `command -v` + shell:true，Windows 失效）。
+ * `--version` 是 paplay/pw-play/aplay 共通的支持参数；某些命令对未知 flag 也 exit 0，
+ * 但对不存在命令 spawnSync 会抛错或非零 exit，足够探测用途。
  */
 function commandExists(cmd: string): boolean {
   try {
-    const r = spawnSync('command', ['-v', cmd], { shell: true, stdio: 'ignore' })
+    const r = spawnSync(cmd, ['--version'], { stdio: 'ignore' })
     return r.status === 0
   } catch {
     return false
@@ -149,47 +154,76 @@ const SOUND_LIST_BY_PLATFORM: Record<string, readonly string[]> = {
   linux: LINUX_SOUNDS,
 }
 
+/** 受支持的平台（用于把 Node 的 Platform 收窄为 SoundPlatform） */
+const KNOWN_PLATFORMS: readonly SoundPlatform[] = ['darwin', 'win32', 'linux']
+
+/** 收窄 process.platform 为 SoundPlatform，未知平台返回 null */
+function toSoundPlatform(p: string): SoundPlatform | null {
+  return (KNOWN_PLATFORMS as readonly string[]).includes(p) ? (p as SoundPlatform) : null
+}
+
 /** 校验 name 在当前平台精选清单内（防借道） */
-function isKnownSound(name: string, platform: string): boolean {
-  const known = SOUND_LIST_BY_PLATFORM[platform] ?? []
-  return known.includes(name)
+function isKnownSound(name: string, platform: SoundPlatform): boolean {
+  return SOUND_LIST_BY_PLATFORM[platform].includes(name)
 }
 
 /**
  * macOS 播放：spawn afplay（fire-and-forget，unref 不阻塞主进程退出）。
  * afplay 是用户态命令，无沙箱限制，自己管理播放时长。
+ * 文件不存在时记录警告并返回空对象（统一 existsSync 守卫，避免 spawn 不存在的路径
+ * 导致 child.on('error') 静默吞错——见 S4）。
  */
-function playMac(name: string): void {
+function playMac(name: string): SoundPlayResult {
   const path = join(MAC_SOUND_DIR, `${name}.aiff`)
+  if (!existsSync(path)) {
+    console.warn(`[sound] sound file not found: ${name}`)
+    return {}
+  }
   const child = spawn('afplay', [path], { stdio: 'ignore', detached: true })
   child.on('error', (err) => console.error('[sound] afplay failed:', err))
   child.unref()
+  return {}
 }
 
 /**
  * Linux 播放：探测 paplay/pw-play/aplay，spawn 后 unref。
- * 无可用播放器时静默 no-op（不抛错，提示音失败不该打断对话流）。
+ * 无可用播放器或声音文件不存在时返回空对象（统一 existsSync 守卫——见 S4，
+ * 避免 spawn 不存在的路径让 child.on('error') 静默吞错）。
  */
-function playLinux(name: string): void {
+function playLinux(name: string): SoundPlayResult {
   const cmd = getLinuxPlayer()
-  if (!cmd) return
+  if (!cmd) return {}
   const path = join(LINUX_SOUND_DIR, `${name}.oga`)
+  if (!existsSync(path)) {
+    console.warn(`[sound] sound file not found: ${name}`)
+    return {}
+  }
   const child = spawn(cmd, [path], { stdio: 'ignore', detached: true })
   child.on('error', (err) => console.error(`[sound] ${cmd} failed:`, err))
   child.unref()
+  return {}
 }
 
 /**
  * Windows 播放：读 wav 为 base64 返回，由 renderer 用 new Audio() 播。
  * 不 spawn（PowerShell 重），wav 是 Chromium 原生支持格式。
  * 文件不存在时返回空对象（renderer 静默 no-op）。
+ *
+ * base64 缓存（S1）：试听场景连点多个声音对比时，同一声音重复读盘浪费 IO。
+ * 模块级 Map 按 name 缓存（win32 路径唯一，key 用 name 即可），首次播放后命中。
  */
+const winSoundBase64Cache = new Map<string, SoundPlayResult>()
+
 function playWin(name: string): SoundPlayResult {
+  const cached = winSoundBase64Cache.get(name)
+  if (cached) return cached
   const path = join(WIN_SOUND_DIR, `${name}.wav`)
   if (!existsSync(path)) return {}
   try {
     const buf = readFileSync(path)
-    return { audioData: buf.toString('base64'), mimeType: 'audio/wav' }
+    const result: SoundPlayResult = { audioData: buf.toString('base64'), mimeType: 'audio/wav' }
+    winSoundBase64Cache.set(name, result)
+    return result
   } catch (err) {
     console.error('[sound] read wav failed:', err)
     return {}
@@ -197,46 +231,66 @@ function playWin(name: string): SoundPlayResult {
 }
 
 /**
+ * 按 name + 平台分发播放。name 必须在精选清单内（调用方已校验）。
+ */
+function playByName(platform: SoundPlatform, name: string): SoundPlayResult {
+  switch (platform) {
+    case 'darwin': return playMac(name)
+    case 'linux': return playLinux(name)
+    case 'win32': return playWin(name)
+    default: return {}
+  }
+}
+
+/**
  * 注册系统提示音 IPC handler。
  *
  * - sound:list：返回当前平台可用声音清单（existsSync 过滤）
- * - sound:play：按平台分发播放。name 必须在精选清单内，否则 resolve 空结果（防借道）
+ * - sound:play：按平台分发播放。name 必须在精选清单内，否则按 kind 回落到平台默认（W3）；
+ *   kind 缺省（试听未知声音）时静默 resolve 空结果（防借道）
+ *
+ * 幂等：开头 removeHandler 两个 channel，重复注册不抛
+ * "Attempted to register a second handler"（B1）。removeHandler 对未注册 channel 不抛错，安全。
  */
 export function registerSoundHandlers(): void {
+  // B1：幂等保护——重复注册时先解绑旧 handler，避免 electron 抛 second handler 错误。
+  // removeHandler 对未注册的 channel 是 no-op（不抛错），故首次调用也安全。
+  ipcMain.removeHandler('sound:list')
+  ipcMain.removeHandler('sound:play')
+
   ipcMain.handle('sound:list', (): SoundListResult => {
     return listForPlatform(process.platform)
   })
 
-  ipcMain.handle('sound:play', (_event, name: string): SoundPlayResult => {
+  ipcMain.handle('sound:play', (_event, name: string, kind?: SoundKind): SoundPlayResult => {
+    const platform = toSoundPlatform(process.platform)
+    if (!platform) return {} // 不支持的平台（freebsd/aix 等）静默 no-op
     // 安全校验：name 必须在当前平台精选清单内（防借道 spawn/read 任意路径）
-    if (!name || !isKnownSound(name, process.platform)) {
+    if (!name || !isKnownSound(name, platform)) {
+      // W3 跨平台失效兜底：用户在 mac 选了 'Hero' 切到 linux，该音不存在。
+      // 提供 kind 时回落到对应平台默认（不再静默——完成音静默会让用户误以为没触发）；
+      // 无 kind（试听未知声音）时仍静默 resolve 空结果（防借道，且试听本就来自已过滤清单）。
+      if (kind) {
+        const fallback = kind === 'success'
+          ? DEFAULT_SUCCESS_PLATFORM[platform]
+          : DEFAULT_ERROR_PLATFORM[platform]
+        console.warn(`[sound] unknown sound "${name}" on ${platform}, falling back to default ${kind}: ${fallback}`)
+        try {
+          return playByName(platform, fallback)
+        } catch (err) {
+          console.error('[sound] fallback play failed:', err)
+          return {}
+        }
+      }
       console.warn('[sound] unknown sound name, ignored:', name)
       return {}
     }
     try {
-      switch (process.platform) {
-        case 'darwin':
-          playMac(name)
-          return {}
-        case 'linux':
-          playLinux(name)
-          return {}
-        case 'win32':
-          return playWin(name)
-        default:
-          return {}
-      }
+      return playByName(platform, name)
     } catch (err) {
       // 播放失败不抛错：提示音是锦上添花，不该让对话流卡住
       console.error('[sound] play failed:', err)
       return {}
     }
   })
-}
-
-/** 导出默认声音映射（renderer 查询平台默认用，避免重复定义） */
-export function getDefaultSound(platform: string, kind: 'success' | 'error'): string {
-  return kind === 'success'
-    ? (DEFAULT_SUCCESS[platform] ?? '')
-    : (DEFAULT_ERROR[platform] ?? '')
 }

@@ -8,14 +8,30 @@ import { cn } from '@/lib/utils'
 /**
  * CollapsibleTrigger —— 折叠触发器（reka-ui CollapsibleTrigger 封装）。
  * 默认 as-child 透传（配合 Button 等组件使用，不额外渲染 button 元素）。
+ *
+ * testId 透传到根元素 data-testid（与 PopoverListItem 同款测试锚点模式）。
  */
-const props = defineProps<CollapsibleTriggerProps & { class?: HTMLAttributes['class'] }>()
-const delegatedProps = reactiveOmit(props, 'class')
+const props = withDefaults(
+  defineProps<
+    CollapsibleTriggerProps & {
+      class?: HTMLAttributes['class']
+      /** 测试锚点（data-testid） */
+      testId?: string
+    }
+  >(),
+  {},
+)
+const delegatedProps = reactiveOmit(props, 'class', 'testId')
 const forwarded = useForwardProps(delegatedProps)
 </script>
 
 <template>
-  <RekaCollapsibleTrigger v-bind="forwarded" as-child :class="cn('', props.class)">
+  <RekaCollapsibleTrigger
+    v-bind="forwarded"
+    :data-testid="props.testId"
+    as-child
+    :class="cn('', props.class)"
+  >
     <slot />
   </RekaCollapsibleTrigger>
 </template>

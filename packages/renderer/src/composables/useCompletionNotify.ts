@@ -9,7 +9,9 @@
  *
  * 触发条件：
  *   仅「后台完成」响（sid !== focusedSessionId || document.visibilityState !== 'visible'）
- *   background subagent/workflow 仍在跑时不响（守卫，详见 handleCompletion 内注释）
+ *   background subagent/workflow 仍在跑时不响：守卫 hasBackgroundWork 提前 return。
+ *     pi extension（pi-subagent-workflow）在 subagent 完成时用 triggerTurn:steer 续跑主 agent，
+ *     最终 message.complete 到达时 background 已全 done、守卫放行——此刻才是 session 真正完成。
  *   stopReason: stop（成功）和 error（失败）都响，aborted 不响
  *   1s 防抖（多 session 同时完成只响一次）
  *   读取 settingsStore.system.completionSound 开关
@@ -49,7 +51,8 @@ export function handleCompletion(
   const isBackground = sessionId !== focusedSessionId || document.visibilityState !== 'visible'
   if (!isBackground) return
 
-  // 4. 标记未读（无论是否播放提示音，都标记）
+  // 4. 标记未读：能走到这里说明已通过 background work 守卫（session 真正完成），无论是否响铃都标记。
+  //    守卫命中时上面已提前 return——此时 session 尚未真正完成，pi 会重触发 message.complete，故不标未读。
   markUnread(sessionId)
 
   // 5. 读取设置开关

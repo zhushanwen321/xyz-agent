@@ -3,8 +3,8 @@
  * PresetSelectChip —— pi 启动预设选择 chip（设计文档 pi-launch-presets.md §3 / §5.4）。
  *
  * 三态（由 props.sessionId + props.launchPresetId 派生）：
- * 1. landing 态（sessionId=null）：Popover 可展开，列预设（RadioGroup + RadioGroupItem 原语，
- *    标准 radio 键盘可达）+ 描述 + 「设为默认」Checkbox。selectedPresetId 本地 ref，初值在
+ * 1. landing 态（sessionId=null）：Popover 可展开，列预设（PopoverListItem 项 + selected
+ *    单选语义）+ 描述 + 「设为默认」Checkbox。selectedPresetId 本地 ref，初值在
  *    loadPresets 后设为 defaultPresetId。
  * 2. 已创建态（sessionId!=null + launchPresetId 有值）：Lock 图标 + 预设名 + HoverCard tooltip
  *    「此 Session 使用 {预设名} 模式创建，不可更改」。不展开 Popover。
@@ -29,7 +29,7 @@
  * 「未加载（presets=[] + loadError=null）」与「加载失败（presets=[] + loadError 有值）」，
  * 不再因 RPC 永久 reject 卡「加载中…」。
  *
- * 范式参考：ThinkingLevelPopover.vue（Popover+TriggerButton+Content + RadioGroup 原语）。
+ * 范式参考：DirSelectPopover/BranchSelectPopover（Popover + PopoverListItem 项，selected 单选语义）。
  */
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -149,7 +149,7 @@ watch(() => store.openRequest, async () => {
 })
 
 /**
- * landing 态用户真实点击选预设（RadioGroup 语义：单选 + 立即选中）。
+ * landing 态用户真实点击选预设（PopoverListItem selected 单选语义：点一项即选中）。
  * B6：仅此处 emit select——透传源是 NewTaskFlow.pendingPreset（父组件 Landing.vue 接收写入），
  * 不再读写 store.selectedPresetId（已删除）。本地 selectedPresetId 只管 trigger 回显。
  */
@@ -202,7 +202,7 @@ watch(() => store.defaultPresetId, (newDefault) => {
            历史背景：曾用 bg-surface-2 给头部加深色块，视觉上像粗边框/双层条带，与 dir/branch 头部
            透明背景不一致，故去掉对齐。 -->
       <div
-        class="flex items-center justify-between border-b border-border px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+        class="flex items-center justify-between border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>
