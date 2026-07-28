@@ -59,6 +59,7 @@ const mockServices = {
   modelService: { aggregateModels: () => [] },
   pluginService: undefined,
   extensionService: undefined,
+  extensionTimeoutMgr: { getAllPendingRequests: () => [] },
   projectRoot: '/mock',
   appInfo: { appVersion: '0.0.0', piVersion: '0.0.0' },
 } as unknown as BrokerServices

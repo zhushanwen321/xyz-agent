@@ -162,6 +162,7 @@ export class RuntimeServer implements IMessageBroker {
       modelService: this.modelService,
       pluginService: this.pluginService,
       extensionService: this.extensionService,
+      extensionTimeoutMgr: this.extensionTimeoutMgr,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
     })

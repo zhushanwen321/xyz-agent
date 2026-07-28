@@ -1,0 +1,25 @@
+/**
+ * Renderer 本地类型（非 shared 协议类型）。
+ *
+ * - NavEntry: 导航历史栈条目（D1 状态驱动路由）
+ * - DerivedStatus: SessionStatus 前端派生 5 态（D6，shared 只有 'active'|'idle'）
+ */
+/** 导航历史栈条目（plan-frontend §4） */
+export type NavEntry = {
+  view: 'chat' | 'overview' | 'settings'
+  sessionId?: string
+  activeTab?: string
+}
+
+/** SessionStatus 前端派生状态：9 态扩展版（方案 C 优化版 v3 + working 后台任务态）
+ * working：主 agent turn 已结束但有 background subagent/workflow 仍在 running/paused。 */
+export type DerivedStatus =
+  | 'streaming'
+  | 'pending'
+  | 'compacting'
+  | 'waiting'
+  | 'retrying'
+  | 'working'
+  | 'done'
+  | 'stopped'
+  | 'error'

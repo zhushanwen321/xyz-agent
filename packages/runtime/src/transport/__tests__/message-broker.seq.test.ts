@@ -60,6 +60,7 @@ const mockServices = {
   modelService: { aggregateModels: () => [] },
   pluginService: undefined,
   extensionService: undefined,
+  extensionTimeoutMgr: { getAllPendingRequests: () => [] },
   projectRoot: '/mock',
   appInfo: { appVersion: '0.0.0', piVersion: '0.0.0' },
 } as unknown as BrokerServices
@@ -195,5 +196,83 @@ describe('ServerMessageBroker seq 打点（P2-s1-w1）', () => {
     const msgs = sentMessages(ws)
     expect(msgs).toHaveLength(1)
     expect(msgs[0].seq).toBe(2) // 空洞 seq=1 永不出现在客户端
+  })
+})
+
+// ── P3 D3：sendInitialState 第 14 段 extension.pendingRequestsBatch ──
+
+describe('ServerMessageBroker sendInitialState 第 14 段（P3 pending 补发）', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** 构造带自定义 extensionTimeoutMgr 的 services（其余字段沿用 mockServices）。 */
+  function servicesWithPending(pending: unknown[]): BrokerServices {
+    return {
+      ...mockServices,
+      extensionTimeoutMgr: { getAllPendingRequests: () => pending },
+    } as unknown as BrokerServices
+  }
+
+  it('TC-W2.1: 第 14 段推送 extension.pendingRequestsBatch（含 pending，点对点无 seq）', async () => {
+    const { ServerMessageBroker } = await import('../message-broker.js')
+    const ws = makeMockWs()
+    const pending = [
+      { requestId: 'r1', sessionId: 's1', method: 'select', payload: { title: 'A' }, receivedAt: 1 },
+    ]
+    const broker = new ServerMessageBroker(singlePool(ws), servicesWithPending(pending))
+
+    broker.sendInitialState(ws)
+
+    const msgs = sentMessages(ws)
+    const batch = msgs.find((m) => m.type === 'extension.pendingRequestsBatch')
+    expect(batch).toBeDefined()
+    expect(batch!.seq).toBeUndefined() // 点对点不打 seq
+    expect('seq' in batch!).toBe(false)
+    const payload = batch!.payload as { requests: unknown[] }
+    expect(payload.requests).toHaveLength(1)
+    const req = payload.requests[0] as Record<string, unknown>
+    expect(req.requestId).toBe('r1')
+    expect(req.sessionId).toBe('s1')
+    expect(req.method).toBe('select')
+  })
+
+  it('TC-W2.2: 第 14 段 requests 为空时仍推送空数组（非省略段落）', async () => {
+    const { ServerMessageBroker } = await import('../message-broker.js')
+    const ws = makeMockWs()
+    const broker = new ServerMessageBroker(singlePool(ws), servicesWithPending([]))
+
+    broker.sendInitialState(ws)
+
+    const msgs = sentMessages(ws)
+    const batch = msgs.find((m) => m.type === 'extension.pendingRequestsBatch')
+    expect(batch).toBeDefined()
+    const payload = batch!.payload as { requests: unknown[] }
+    expect(payload.requests).toEqual([])
+  })
+
+  it('TC-W2.3: 第 14 段 getAllPendingRequests 抛错时不阻塞其余段（ES2 容错）', async () => {
+    const { ServerMessageBroker } = await import('../message-broker.js')
+    const ws = makeMockWs()
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const services: BrokerServices = {
+      ...mockServices,
+      extensionTimeoutMgr: { getAllPendingRequests: () => { throw new Error('boom') } },
+    } as unknown as BrokerServices
+    const broker = new ServerMessageBroker(singlePool(ws), services)
+
+    // 不应抛错（外层 try/catch 兜底）
+    expect(() => broker.sendInitialState(ws)).not.toThrow()
+
+    const msgs = sentMessages(ws)
+    // 其余段仍推送（app.info 等同步段）
+    expect(msgs.some((m) => m.type === 'app.info')).toBe(true)
+    expect(msgs.some((m) => m.type === 'config.sessions')).toBe(true)
+    // 第 14 段失败 → 不含 extension.pendingRequestsBatch
+    expect(msgs.some((m) => m.type === 'extension.pendingRequestsBatch')).toBe(false)
+    // 失败记日志
+    expect(errSpy).toHaveBeenCalled()
+    const logged = errSpy.mock.calls.map((c) => String(c[0])).join(' ')
+    expect(logged).toContain('extension.pendingRequestsBatch')
   })
 })

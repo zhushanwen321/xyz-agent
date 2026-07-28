@@ -16,6 +16,7 @@ import type { WebSocket as WsType } from 'ws'
 import type { ServerMessage, ServerMessageMap, ServerMessageType } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
+import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import type { ErrorDetails } from './message-context.js'
 import { WS_OPEN, type ConnectionCtx } from './connection-manager.js'
 import { SeqCounter } from './seq-counter.js'
@@ -45,6 +46,11 @@ export interface BrokerServices {
   pluginService: IPluginService | undefined
   /** extension service（sendInitialState 推 config.extensions 段需要；可选，未注入则跳过该段）。 */
   extensionService: IExtensionService | undefined
+  /**
+   * extension timeout manager（sendInitialState 第 14 段聚合 pending UI 请求需要，P3 D3）。
+   * 必填：第 14 段恒定推送（即使空数组），getAllPendingRequests 总可调（server.ts:78 字段构造即初始化）。
+   */
+  extensionTimeoutMgr: ExtensionTimeoutManager
   projectRoot: string
   /** 应用 + pi 版本号（sendInitialState 推 app.info）。 */
   appInfo: { appVersion: string; piVersion: string }
@@ -431,6 +437,21 @@ export class ServerMessageBroker implements IMessageBroker {
               this.send(ws, { type: 'config.extensions', id: this.nextPushId(), payload: { extensions } })
             })
             .catch((e) => console.error(`[runtime] sendInitialState: config.extensions scan failed:`, e))
+        },
+      },
+      {
+        // step 14: 挂起的 extension UI 请求（审批/ask-user/select/input/editor）—— P3 D3。
+        // 【R1-C1】独立 type extension.pendingRequestsBatch（非 extension.pendingRequests reply 形态）。
+        // 数据源 = ExtensionTimeoutManager.getAllPendingRequests（跨 session 聚合，与 getPendingRequests
+        // RPC 同源 pendingRequests Map）。点对点 send（随 initial state 发给新连接），不打 seq、不入 buffer
+        // （与现有 13 段一致）。冷启动/长断线/页面 reload 场景补发审批挂起请求唤醒 pi。
+        // 短断线由 P2 ring buffer 回放覆盖（extension.ui_request 是广播，天然入 buffer）；
+        // 冷启动时序竞争（AppShell 未挂载）由 onConnected 后 getPendingRequests 兜底（D4 双通路）。
+        // requests 为空时推空数组（保持段顺序确定性，前端 handler no-op）。
+        label: 'extension.pendingRequestsBatch',
+        run: () => {
+          const requests = this.services.extensionTimeoutMgr.getAllPendingRequests()
+          this.send(ws, { type: 'extension.pendingRequestsBatch', id: this.nextPushId(), payload: { requests } })
         },
       },
     ]

@@ -6,7 +6,7 @@ import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
-import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod } from './extension'
+import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod, PendingUiRequest } from './extension'
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
@@ -415,6 +415,7 @@ export type ServerMessageType =
   | 'extension.discovered' | 'extension.installCancelled'
   | 'extension.recommended'
   | 'extension.pendingRequests'
+  | 'extension.pendingRequestsBatch'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.exited'
@@ -703,6 +704,12 @@ export interface ServerMessageMapBase {
   // requests 元素是 runtime PendingUIRequest（runtime 专有类型，未下沉 shared），
   // 用 unknown[] 保持 shared 依赖最小化（与 extension.ui_request 的 askUserQuestions:unknown[] 先例一致）。
   'extension.pendingRequests': { sessionId: string; requests: unknown[] }
+  // extension.pendingRequestsBatch：sendInitialState 第 14 段点对点推送（P3 D3 决策）。
+  // 与 extension.pendingRequests（getPendingRequests RPC reply，单 session 带 sessionId）形态区分：
+  // 本 type 是全局聚合（跨所有 session），payload 不带顶层 sessionId。
+  // requests 元素是精确类型 PendingUiRequest（与 extension.pendingRequests 的 unknown[] 占位对比——
+  // 新 type 主动设计给精确类型，实现 tsc 双向保护：构造侧字段错误编译期暴露，消费侧 payload 精确收窄）。
+  'extension.pendingRequestsBatch': { requests: PendingUiRequest[] }
   // file.read:result：file.read reply（file-message-handler.ts:86 reply { content, truncated, path }，runtime 不发 sessionId）。
   // sessionId optional 对齐前端 file.ts:47 register（无 sessionId）+ rpc-type-pairing.test U1（带 sessionId 样本）。
   'file.read:result': { sessionId?: string; content: string; truncated: boolean; path: string }

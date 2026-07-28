@@ -340,9 +340,12 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   })
   // R3：session 删除（主动 delete / 进程异常退出）清 pendingReload 残留。
   // Terminal：同步销毁该 session 绑定的 PTY（kill 进程 + 清 ptyMap）。
+  // P3 SC4：清该 session 的 pending UI 请求缓存（孤儿 pending 修复——pi 崩溃时 pending 残留会
+  // 随下次 sendInitialState 第 14 段推给新连接的客户端，前端按 sessionId 写 store 但该 session 已死）。
   sessionService.setOnSessionDelete((sid) => {
     reloadOrchestrator.clearPending(sid)
     terminalService.destroyPty(sid)
+    server.clearExtensionTimeoutsForSession(sid)
   })
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）

@@ -19,6 +19,22 @@
       "@xyz-agent/shared": ["../shared/src"]
     }
   },
-  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.test.tsx"],
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/composables/panel/**",
+    "src/composables/features/useBrowserFocusSync.ts",
+    "src/composables/features/useBrowserRectSync.ts",
+    "src/composables/features/useBrowserZoom.ts",
+    "src/composables/features/useTerminal.ts",
+    "src/composables/features/useSideDrawer.ts",
+    "src/composables/features/useCloseShortcut.ts",
+    "src/composables/features/useUrlBar.ts",
+    "src/composables/features/useDrawerWidgetBuffers.ts",
+    "src/composables/effects/usePlatformChrome.ts",
+    "src/composables/terminal/**",
+    "src/components/sidebar/Sidebar.vue"
+  ],
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"]
 }

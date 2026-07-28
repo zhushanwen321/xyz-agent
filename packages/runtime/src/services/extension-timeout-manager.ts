@@ -211,4 +211,35 @@ export class ExtensionTimeoutManager {
     const requests = Array.from(sessionCache.values())
     return requests.map(r => ({ ...r, ...r.payload }))
   }
+
+  /**
+   * 聚合所有 session 的 pending UI 请求（跨 session 全局快照，非破坏只读）。
+   *
+   * 用于 sendInitialState 第 14 段（P3 D3）：新连接 auth 后随 initial state 点对点推送，
+   * 让冷启动/长断线/页面 reload 的客户端恢复审批挂起状态（短断线由 P2 ring buffer 回放覆盖）。
+   *
+   * 遍历 pendingRequests Map 各子 Map 收集条目，返回原始 PendingUIRequest 结构（requestId/
+   * sessionId/method/payload/receivedAt，不解包——跨 session 聚合后前端按 sessionId 分流填入
+   * 对应 store 分区，解包形态 PendingUIRequestResolved 会拍平 payload 与现有 onUIRequest 的
+   * ExtensionUIRequest 形状不一致）。
+   *
+   * 异常容忍（ES1）：单条 try/catch 跳过结构异常条目（如并发 race 塞入 undefined），不中断聚合。
+   * 返回顺序依赖 Map 插入序（ES2015+ 规范保证），同一状态多次调用结果序一致。
+   */
+  getAllPendingRequests(): PendingUIRequest[] {
+    const all: PendingUIRequest[] = []
+    for (const sessionCache of this.pendingRequests.values()) {
+      for (const req of sessionCache.values()) {
+        try {
+          // 防御：并发 race 可能使 req 为 undefined 或缺字段。异常条目跳过不中断聚合。
+          if (!req || typeof req.requestId !== 'string') continue
+          all.push(req)
+        // eslint-disable-next-line taste/no-silent-catch -- 聚合是 best-effort 快照，单条异常不能丢弃其余条目
+        } catch {
+          continue
+        }
+      }
+    }
+    return all
+  }
 }
