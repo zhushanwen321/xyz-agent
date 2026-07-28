@@ -19,6 +19,7 @@
 | [08-real-track-manual.md](./08-real-track-manual.md) | real 轨手工测试（给 ai-agent 照着执行） | — | ✅ | — |
 | [09-subagent-workflow-panel.md](./09-subagent-workflow-panel.md) | Subagent/Workflow 面板（Agents/Flows tab + subagent 对话流切换） | ✅ | ⚠️ real-track CDP | ⚠️ 手工 CDP（mock 返回空，real-track 手工冒烟） |
 | [10-settings-system-prompt.md](./10-settings-system-prompt.md) | 系统提示词配置（替换 pi 核心 / 追加注入 / 快照预览） | ✅ | ✅ | — |
+| [11-remote-mode.md](./11-remote-mode.md) | 远程模式连接（粘贴连接 / Landing 状态条 / DetailPane 远程图片 / 4001 错误变体） | ✅ | ✅ | ⚠️ 手工全链路（跨进程 server CLI + dev Electron） |
 
 > 图例：✅ = 可测且稳定 / ⚠️ = 有约束或待补 / ❌ = 不可测（需手工）。
 > **已落地** = spec 文件存在于 `e2e/` 且能跑通；**范例** = 文档内有完整可跑代码但尚未落地为 spec 文件。
