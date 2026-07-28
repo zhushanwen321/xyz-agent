@@ -14,11 +14,17 @@
  *
  * token 失效（4001 close code）：ws-client 转 failed 态（failReason=auth），App 渲染 MobileConnectScreen，
  * 用户重新粘贴（connection-config 仍保留 profile，可重新 activateRemote 覆盖 token）。
+ *
+ * 失败态存档保留策略（spec §四）：
+ *  - auth 失败（failReason='auth'，token 失效 4001 / 握手失败）→ 清存档（deactivateRemote），
+ *    让用户重新粘贴（旧 token 已无效）。
+ *  - network/replaced 失败 → 保留存档（用户可手动重连，避免网络抖动后重新粘贴连接信息）。
  */
 import { onMounted, ref, watch } from 'vue'
 import { useConnection } from '@/composables/useConnection'
 import { parseConnectionInfo } from '@/lib/remote/parse-connect-info'
 import { saveProfile, activateRemote, isRemoteMode, deactivateRemote } from '@/lib/remote/connection-config'
+import { getFailReason } from '@/lib/ws-client'
 import type { RemoteServerProfile } from '@/lib/remote/types'
 import MobileShell from '@/components/shell/MobileShell.vue'
 import MobileConnectScreen from '@/components/remote/MobileConnectScreen.vue'
@@ -81,13 +87,17 @@ async function onConnected(): Promise<void> {
   await init()
 }
 
-// 失败态（auth 失败 4001 / 网络失败）：清远程模式回 MobileConnectScreen 让用户重连
-// （state='failed' 时 App 渲染 MobileConnectScreen，但 connection-config 仍保留 profile；
-// 用户可重新粘贴覆盖 token，或点断开 deactivateRemote 清存档）
+// 失败态存档保留策略（spec §四）：
+//  - auth 失败（failReason='auth'，token 失效 4001 / 握手失败）→ 清存档（deactivateRemote），
+//    让用户重新粘贴（旧 token 已无效，保留无意义）。
+//  - network/replaced 失败 → 保留存档（用户可手动重连，避免网络抖动后重新粘贴连接信息）。
+//    state='failed' 时 App 渲染 MobileConnectScreen，connection-config 仍保留 profile 供重连。
 watch(state, (newState) => {
   if (newState === 'failed') {
-    // auth 失败时清存档（token 失效），让用户重新粘贴
-    deactivateRemote()
+    // 仅 auth 失败清存档；network/replaced 保留存档以便用户手动重连（spec §四）
+    if (getFailReason().value === 'auth') {
+      deactivateRemote()
+    }
   }
 })
 </script>

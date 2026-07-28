@@ -5,13 +5,15 @@
  *  - AC8a: 无 token（无 location.hash + 无远程存档）→ 渲染 MobileConnectScreen（粘贴框 DOM）
  *  - AC8b: location.hash 含 #token= → 自动解析 + init 连接流程启动
  *  - 连接成功（state=connected）→ 渲染 MobileShell
+ *  - [Major2 fix] 失败态存档保留策略：failReason='auth' → 清存档；failReason='network' → 保留存档
  *
  * Mock 策略：
  *  - useConnection: state ref 可控，init spy
  *  - connection-config: isRemoteMode/saveProfile/activateRemote/deactivateRemote spy
+ *  - ws-client: getFailReason 返回可控 failReason ref（决定失败态是否清存档）
  *  - location.hash 通过 vi.spyOn(window.history/location) 或 delete window.location 重设
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import type { Ref } from 'vue'
@@ -28,6 +30,9 @@ const { isRemoteModeMock, saveProfileMock, activateRemoteMock, deactivateRemoteM
   deactivateRemoteMock: vi.fn(),
 }))
 
+// 可控的 failReason ref（Major2：决定失败态是否清存档）
+const failReasonRef = ref<'auth' | 'replaced' | 'network' | null>(null)
+
 vi.mock('@/composables/useConnection', () => ({
   useConnection: () => ({ state: stateRef, init: initMock }),
 }))
@@ -37,6 +42,10 @@ vi.mock('@/lib/remote/connection-config', () => ({
   saveProfile: saveProfileMock,
   activateRemote: activateRemoteMock,
   deactivateRemote: deactivateRemoteMock,
+}))
+
+vi.mock('@/lib/ws-client', () => ({
+  getFailReason: () => failReasonRef,
 }))
 
 // 动态 import App（在 mock 之后）
@@ -58,6 +67,7 @@ beforeEach(async () => {
   vi.resetModules()
   setActivePinia(createPinia())
   stateRef.value = 'disconnected'
+  failReasonRef.value = null
   initMock.mockClear()
   isRemoteModeMock.mockClear()
   saveProfileMock.mockClear()
@@ -68,10 +78,26 @@ beforeEach(async () => {
   setLocation('http://localhost:1421/')
 })
 
+// 收集每个用例的 wrapper，afterEach 统一 unmount 避免残留 watch(state) 串扰。
+// （App.vue 的 watch(state) 在组件存活时持续触发，多用例累积的 watcher 会让
+//   deactivateRemote 被重复调用，污染「调用次数」断言。）
+const wrappers: Array<{ unmount: () => void }> = []
+afterEach(() => {
+  while (wrappers.length > 0) {
+    const w = wrappers.pop()
+    try {
+      w!.unmount()
+    } catch {
+      // 已 unmount 或异常，吞掉
+    }
+  }
+})
+
 describe('App.vue 连接门控（P4-s2-w2 AC8）', () => {
   it('AC8a: 无 token（无 hash + 无远程存档）→ 渲染 MobileConnectScreen（粘贴框 DOM）', async () => {
     const App = await loadApp()
     const wrapper = mount(App)
+    wrappers.push(wrapper)
     // 等待 onMounted 异步完成
     await vi.dynamicImportSettled()
     await new Promise((r) => setTimeout(r, 0))
@@ -86,7 +112,7 @@ describe('App.vue 连接门控（P4-s2-w2 AC8）', () => {
     // http-url 格式：http://host:port/#token=xxx
     setLocation('http://1.2.3.4:7420/#token=abc123')
     const App = await loadApp()
-    mount(App)
+    wrappers.push(mount(App))
     await vi.dynamicImportSettled()
     await new Promise((r) => setTimeout(r, 0))
 
@@ -101,6 +127,7 @@ describe('App.vue 连接门控（P4-s2-w2 AC8）', () => {
     stateRef.value = 'connected'
     const App = await loadApp()
     const wrapper = mount(App)
+    wrappers.push(wrapper)
     await vi.dynamicImportSettled()
     await new Promise((r) => setTimeout(r, 0))
 
@@ -114,10 +141,54 @@ describe('App.vue 连接门控（P4-s2-w2 AC8）', () => {
   it('已有远程存档（isRemoteMode=true，无 hash）→ 自动 init 连接', async () => {
     isRemoteModeMock.mockReturnValue(true)
     const App = await loadApp()
-    mount(App)
+    wrappers.push(mount(App))
     await vi.dynamicImportSettled()
     await new Promise((r) => setTimeout(r, 0))
 
     expect(initMock).toHaveBeenCalledOnce()
+  })
+})
+
+// ── [Major2 fix] 失败态存档保留策略 ──
+describe('App.vue 失败态存档保留策略（Major2 fix：spec §四）', () => {
+  it('failReason=auth（token 失效）→ 清存档（deactivateRemote）', async () => {
+    const App = await loadApp()
+    wrappers.push(mount(App))
+    await vi.dynamicImportSettled()
+    await new Promise((r) => setTimeout(r, 0))
+
+    // 模拟 auth 失败：state → failed 且 failReason='auth'
+    failReasonRef.value = 'auth'
+    stateRef.value = 'failed'
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(deactivateRemoteMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('failReason=network（网络抖动）→ 保留存档（不调 deactivateRemote）', async () => {
+    const App = await loadApp()
+    wrappers.push(mount(App))
+    await vi.dynamicImportSettled()
+    await new Promise((r) => setTimeout(r, 0))
+
+    // 模拟网络失败：state → failed 且 failReason='network'
+    failReasonRef.value = 'network'
+    stateRef.value = 'failed'
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(deactivateRemoteMock).not.toHaveBeenCalled()
+  })
+
+  it('failReason=replaced（被挤下线）→ 保留存档（不调 deactivateRemote）', async () => {
+    const App = await loadApp()
+    wrappers.push(mount(App))
+    await vi.dynamicImportSettled()
+    await new Promise((r) => setTimeout(r, 0))
+
+    failReasonRef.value = 'replaced'
+    stateRef.value = 'failed'
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(deactivateRemoteMock).not.toHaveBeenCalled()
   })
 })

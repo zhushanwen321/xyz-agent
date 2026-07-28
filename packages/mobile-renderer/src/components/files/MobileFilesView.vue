@@ -7,10 +7,15 @@
  * 不引入桌面 FileView/FileTreeRow（含右键/拖拽/新建删除，spec D6 砍）。
  *
  * P4 简化：只渲染树 + 展开/折叠，文件内容 detail 留 P9（spec §十.2）。
+ *
+ * 数据加载（对齐 renderer FileView.vue）：onMounted + watch(sessionId) 调 useFileTree().loadTree(sid)
+ * 触发 fileApi.tree RPC。MobileShell 不挂载桌面 Sidebar，故不能依赖 Sidebar 的 selectSession 触发加载，
+ * 本组件自行驱动首加载（sessionId 非空时）。loadTree 内部已缓存复用，重复调用幂等无额外 RPC。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useFileTreeStore } from '@/stores/fileTree'
+import { useFileTree } from '@/composables/features/useFileTree'
 import MobileFileTreeNode from './MobileFileTreeNode.vue'
 
 const props = defineProps<{ sessionId: string }>()
@@ -18,10 +23,25 @@ const emit = defineEmits<{ select: [path: string] }>()
 
 const { t } = useI18n()
 const fileTreeStore = useFileTreeStore()
+const { loadTree } = useFileTree()
 
 const tree = computed(() => fileTreeStore.getTree(props.sessionId) ?? [])
 /** 本地展开集合（简化版，移动端 P4 用本地状态） */
 const expanded = ref<Set<string>>(new Set())
+
+/**
+ * 切 session 触发 loadTree（首加载）。与 renderer FileView.vue 同模式：
+ * immediate watch（mount 即首次触发）+ 后续 sessionId 变化重触发。
+ * loadTree 内部缓存复用（getTree 有值时 rehydrate 后直接返回），不重复发 RPC。
+ * sessionId 为空时不调（避免无谓 RPC；空串非合法 session）。
+ */
+watch(
+  () => props.sessionId,
+  (sid) => {
+    if (sid) void loadTree(sid)
+  },
+  { immediate: true },
+)
 
 function toggle(path: string): void {
   const next = new Set(expanded.value)

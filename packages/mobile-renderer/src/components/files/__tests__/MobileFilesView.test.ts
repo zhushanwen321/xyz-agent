@@ -7,11 +7,22 @@
  *  - 空态显示 mobile.files.empty
  *  - 展开/折叠递归渲染子节点
  *  - 点击文件节点 emit select(path)
+ *  - [Major1 fix] mount + sessionId 变化触发 fileApi.tree RPC（loadTree 链路）
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import type { FileNode } from '@xyz-agent/shared'
+
+// Mock fileApi.tree / gitApi.status（vi.hoisted 避免 TDZ；loadTree 调 fileApi.tree 触发 RPC）
+// loadTree 内 Promise.allSettled([fileApi.tree, gitApi.status])，两域均需 mock 否则走 transport 报错。
+const { treeMock, statusMock } = vi.hoisted(() => ({
+  treeMock: vi.fn(() => Promise.resolve([] as FileNode[])),
+  statusMock: vi.fn(() => Promise.resolve({ isRepo: false, files: [] })),
+}))
+vi.mock('@/api/domains/file', () => ({ tree: treeMock, expand: vi.fn() }))
+vi.mock('@/api/domains/git', () => ({ status: statusMock }))
+
 import MobileFilesView from '../MobileFilesView.vue'
 
 /** 构造 mock 文件树 fixture。 */
@@ -29,6 +40,9 @@ function mockTree(): FileNode[] {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  treeMock.mockClear()
+  statusMock.mockClear()
+  treeMock.mockResolvedValue([])
 })
 
 describe('MobileFilesView（P4-s4-w1 AC7 文件树只读）', () => {
@@ -96,5 +110,40 @@ describe('MobileFilesView（P4-s4-w1 AC7 文件树只读）', () => {
     await fileNode.trigger('click')
     expect(wrapper.emitted('select')).toBeTruthy()
     expect(wrapper.emitted('select')![0]).toEqual(['/proj/readme.md'])
+  })
+
+  // ── [Major1 fix] loadTree 链路：mount + sessionId 变化触发 fileApi.tree RPC ──
+  describe('loadTree 链路（Major1 fix：触发 fileApi.tree RPC）', () => {
+    it('mount 时（sessionId 非空）触发 fileApi.tree RPC', async () => {
+      // store 无缓存 → loadTree 发 RPC
+      mount(MobileFilesView, { props: { sessionId: 's1' } })
+      // loadTree 是 async（watch immediate 触发），等微任务
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(treeMock).toHaveBeenCalledWith('s1')
+    })
+
+    it('sessionId 变化时重触发 fileApi.tree RPC', async () => {
+      treeMock.mockResolvedValue(mockTree())
+      const wrapper = mount(MobileFilesView, { props: { sessionId: 's1' } })
+      await new Promise((r) => setTimeout(r, 0))
+      // s1 已缓存（treeMock resolve 后 setTree），切 s2 触发新 RPC
+      wrapper.setProps({ sessionId: 's2' })
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(treeMock).toHaveBeenCalledWith('s2')
+    })
+
+    it('store 已缓存时不重复发 RPC（loadTree 缓存复用）', async () => {
+      const { useFileTreeStore } = await import('@/stores/fileTree')
+      const store = useFileTreeStore()
+      store.setTree('cached', mockTree()) // 预置缓存
+
+      mount(MobileFilesView, { props: { sessionId: 'cached' } })
+      await new Promise((r) => setTimeout(r, 0))
+
+      // 已缓存 → loadTree 走 rehydrate 分支，不调 fileApi.tree
+      expect(treeMock).not.toHaveBeenCalled()
+    })
   })
 })
