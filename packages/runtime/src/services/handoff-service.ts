@@ -22,7 +22,6 @@
  */
 import type { IMessageBroker } from '../interfaces.js'
 import type { SessionService } from './session/session-service.js'
-import type { Message } from '@xyz-agent/shared'
 import type { IPiEngine } from './ports/pi-engine.js'
 import type { PiAgentEndEvent, PiAgentEndMessage } from '../infra/pi/pi-protocol.js'
 import { buildHandoffPrompt } from './handoff-prompt.js'
