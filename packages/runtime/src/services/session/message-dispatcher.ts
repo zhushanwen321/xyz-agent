@@ -42,6 +42,15 @@ export class MessageDispatcher {
   setLeaseManager(lm: import('./lease-manager.js').LeaseManager): void {
     this.leaseManager = lm
   }
+  /**
+   * P5 presence：lease 状态变化时触发 presence 重推（spec D9 触发点 4：isOperating 变化）。
+   * 组合根注入 conn.broadcastPresence（经 SessionService.setPresenceRefreshCallback 转发）。
+   * acquire 成功（新 owner isOperating=true）+ release（owner 释放 isOperating=false）后调。
+   */
+  private presenceRefresh: (() => void) | null = null
+  setPresenceRefreshCallback(cb: () => void): void {
+    this.presenceRefresh = cb
+  }
 
   /**
    * 返回 { blocked: true } 表示消息被 BeforeSend hook 拦截（已广播 message.error 错误气泡），
@@ -139,6 +148,8 @@ export class MessageDispatcher {
           return { blocked: true, rejected: true }
         }
         // lease acquired/renewed → 继续 sendPrompt
+        // P5 presence：acquire 成功 isOperating 变化，触发 presence 重推。
+        this.presenceRefresh?.()
       } else if (activeSession.isGenerating) {
         // 降级路径：leaseManager 未注入或无 clientId，走旧 isGenerating 预检（向后兼容）。
         console.warn(`[message-dispatcher] preemptive reject (busy, legacy), sid=${sessionId}`)
@@ -171,6 +182,7 @@ export class MessageDispatcher {
       // 【审查 M3】acquire 后 sendPrompt 失败立即释放 lease，避免 lease 持有 30s 锁死 session
       // （失败后 isGenerating 已复位，但 lease 不释放会让其他客户端被 busy 拒绝 30s）。
       this.leaseManager?.release(sessionId, 'send_failed')
+      this.presenceRefresh?.()
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
       // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
       // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
@@ -243,6 +255,7 @@ export class MessageDispatcher {
       if (active) active.isGenerating = false
       // P5 lease：abort 路径释放 lease（失败也释放，避免锁死）。
       this.leaseManager?.release(sessionId, 'aborted')
+      this.presenceRefresh?.()
       // W4：abort 失败（异常退出）写 stopped 终态
       this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed: ${errMsg}`)
       this.broker.broadcast({
@@ -261,6 +274,7 @@ export class MessageDispatcher {
     if (active) active.isGenerating = false
     // P5 lease：abort 成功释放 lease（审查 C2：abort 复用 message.abort，补 release 'aborted'）。
     this.leaseManager?.release(sessionId, 'aborted')
+    this.presenceRefresh?.()
     // W4：用户主动 abort 写 stopped 终态
     this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
     this.broker.broadcast({

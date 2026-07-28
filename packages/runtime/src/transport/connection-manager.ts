@@ -16,11 +16,12 @@
  */
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
-import type { ClientMessage } from '@xyz-agent/shared'
+import type { ClientMessage, PresenceConnection } from '@xyz-agent/shared'
 import { toErrorMessage } from '../utils/errors.js'
 import type { ErrorDetails } from './message-context.js'
 import { createTokenManager, type TokenManager } from './token.js'
 import type { FileEndpoint } from './file-endpoint.js'
+import type { ISessionServiceInternal } from '../services/session/session-internal.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -117,6 +118,12 @@ export interface ConnectionCallbacks {
    * 可选——未注入时（开放模式）handleConnection 不走此路径。
    */
   onAuthSuccess?(ws: WsType, clientId: string, input: AuthReplayInput): Promise<ReplayDecision>
+  /**
+   * P5 presence：broadcastPresence 触发时调（server 注入实现 broadcast presence.update）。
+   * 可选——未注入时 broadcastPresence no-op（向后兼容 lease-core slice 的空 onDisconnect）。
+   * 入参 connections 是全量 PresenceConnection[]（connection-manager.buildPresenceList 构造）。
+   */
+  onPresenceUpdate?(connections: PresenceConnection[]): void
 }
 
 export interface ConnectionManagerOptions {
@@ -141,6 +148,12 @@ export class ConnectionManager {
    * key=clientId（同 clientId 唯一，新连接踢旧）；value=ConnectionCtx。
    */
   readonly clients = new Map<string, ConnectionCtx>()
+  /**
+   * P5 presence：per-client 活跃 session 记录（R1-M4 命名统一）。
+   * key=clientId，value=sessionId|null（null=客户端在看非 session 视图，如 settings）。
+   * 由 session.setActive RPC 更新，broadcastPresence 构造 presence 列表时读。
+   */
+  private readonly activeSessions = new Map<string, string | null>()
   /** 未认证 pending 连接（认证通过后移出，超时/失败关闭后移出）。不参与广播。 */
   private readonly pending = new Set<WsType>()
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
@@ -155,6 +168,11 @@ export class ConnectionManager {
    *  /health 与 /file 已认领的请求不转交；其余 GET 请求转交此 handler（SPA fallback）。
    *  start() 前可经 setStaticHandler 延迟绑定（createServer 回调读 this，运行时解析）。 */
   private staticHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<void>
+  /**
+   * P5 presence：sessionService 内部接口（buildPresenceList 算 isOperating 用 allSessions 查 busyOwnerId）。
+   * 经 setSessionService 延迟绑定（sessionService 在 server 构造后才创建）。
+   */
+  private sessionService: ISessionServiceInternal | null = null
 
   constructor(
     private port: number,
@@ -235,6 +253,73 @@ export class ConnectionManager {
     this.staticHandler = handler
   }
 
+  /**
+   * P5 presence：注入 sessionService 内部接口（buildPresenceList 算 isOperating 用）。
+   * sessionService 在 server.setServices 时才创建，经此 setter 延迟绑定。未注入时 isOperating 全 false。
+   */
+  setSessionService(svc: ISessionServiceInternal): void {
+    this.sessionService = svc
+  }
+
+  /**
+   * P5 presence：设置某 clientId 的活跃 session（session.setActive RPC 调）。
+   * 更新 activeSessions Map + 触发 broadcastPresence（activeSessionId 变化让其他客户端看到）。
+   * clientId 不在 clients 时 no-op（已下线，broadcastPresence 遍历 clients 时不会出现）。
+   */
+  setActiveSession(clientId: string, sessionId: string | null): void {
+    if (!this.clients.has(clientId)) return
+    this.activeSessions.set(clientId, sessionId)
+    this.broadcastPresence()
+  }
+
+  /** P5 presence：取某 clientId 的活跃 session（P7 resolver 用）。不存在返回 undefined。 */
+  getActiveSession(clientId: string): string | null | undefined {
+    return this.activeSessions.get(clientId)
+  }
+
+  /**
+   * P5 presence：构造全量 presence 列表（PresenceConnection[]）。
+   * 遍历 clients（clientId/deviceName）+ activeSessions（activeSessionId）+ sessionService.allSessions
+   * （算 isOperating = 某 session 的 busyOwnerId===clientId）。
+   * sessionService 未注入时 isOperating 全 false（降级）。
+   */
+  buildPresenceList(): PresenceConnection[] {
+    // 收集所有持有 lease 的 clientId（isOperating=true）
+    const operatingClients = new Set<string>()
+    if (this.sessionService) {
+      try {
+        for (const session of this.sessionService.allSessions()) {
+          if (session.busyOwnerId) operatingClients.add(session.busyOwnerId)
+        }
+      // eslint-disable-next-line taste/no-silent-catch -- presence 是瞬态，sessionService.allSessions 不可用（如测试 mock 不完整）时降级 isOperating 全 false，不阻断认证/连接流程
+      } catch (e) {
+        console.warn('[connection-manager] buildPresenceList allSessions failed, isOperating degraded to false:', e)
+      }
+    }
+    const list: PresenceConnection[] = []
+    for (const [clientId, ctx] of this.clients) {
+      list.push({
+        clientId,
+        deviceName: ctx.deviceName,
+        activeSessionId: this.activeSessions.get(clientId) ?? null,
+        isOperating: operatingClients.has(clientId),
+      })
+    }
+    return list
+  }
+
+  /**
+   * P5 presence：广播 presence.update（全量列表）给所有连接。
+   * 触发点：onConnect（上线）、onDisconnect（下线）、setActiveSession（切换）、lease 变化（dispatcher 调）。
+   * 无连接时 no-op（broadcast 遍历空 pool）。
+   */
+  broadcastPresence(): void {
+    const connections = this.buildPresenceList()
+    // 经注入的 broadcast 回调广播（connection-manager 不直接持有 broker，避免环）。
+    // server.ts 在 onConnect/onMessage 注入时，需提供 onPresenceUpdate 回调；未注入时 no-op。
+    this.callbacks.onPresenceUpdate?.(connections)
+  }
+
   /** 启动 HTTP + WS 监听；注册 connection 回调。 */
   start(): Promise<void> {
     const host = this.opts.host ?? '127.0.0.1'
@@ -264,6 +349,8 @@ export class ConnectionManager {
       this.clients.set(ctx.clientId, ctx)
       console.log(`[runtime] client connected (total: ${this.clients.size})`)
       this.callbacks.onConnect(ws, 'local')
+      // P5 presence：连接上线触发 presence 重推（通知其他客户端新设备在线）。
+      this.broadcastPresence()
       this.resetHeartbeat(ws)
       this.attachMessageHandler(ws, 'local')
       this.attachLifecycleHandlers(ws, 'local')
@@ -383,6 +470,8 @@ export class ConnectionManager {
     this.resetHeartbeat(ws)
     this.attachMessageHandler(ws, clientId)
     this.attachLifecycleHandlers(ws, clientId)
+    // P5 presence：认证成功上线触发 presence 重推（通知其他客户端新设备在线）。
+    this.broadcastPresence()
   }
 
   /**
@@ -403,10 +492,13 @@ export class ConnectionManager {
    * ReplayMeta 字段全可选，JSON.stringify 自动忽略 undefined（向后兼容旧客户端只读 serverVersion/clientId）。
    */
   private replyAuth(ws: WsType, id: string | undefined, clientId: string, meta: ReplayMeta): void {
+    // P5 presence：auth.ok 顺带带 presence 全量列表（spec D10，省首次 round-trip）。
+    // buildPresenceList 含当前刚入池的 clientId（已 clients.set），客户端首连即知在线设备。
+    const presence = this.buildPresenceList()
     const payload = JSON.stringify({
       type: 'auth.ok',
       id,
-      payload: { serverVersion: this.serverVersion, clientId, ...meta },
+      payload: { serverVersion: this.serverVersion, clientId, ...meta, presence },
     })
     if (ws.readyState === WS_OPEN) ws.send(payload)
   }
@@ -448,12 +540,15 @@ export class ConnectionManager {
       // P5 onDisconnect：仅当关闭的是当前连接（非被踢占的旧连接）才回调，避免误通知新连接下线。
       // 踢占场景：kickExistingClient 关闭旧 ws 时 clientId 已被新 ws 占用（ctx.ws!==ws），跳过回调。
       if (isCurrent) {
+        this.activeSessions.delete(clientId)
         try {
           this.callbacks.onDisconnect(ws, clientId)
         // eslint-disable-next-line taste/no-silent-catch -- onDisconnect 是 presence 推送等副作用，失败不应阻断 close 清理
         } catch (e) {
           console.error('[runtime] onDisconnect callback error:', e)
         }
+        // P5 presence：连接下线触发 presence 重推（通知其他客户端该设备离线）。
+        this.broadcastPresence()
       }
     })
     ws.on('error', (err) => {
@@ -465,12 +560,14 @@ export class ConnectionManager {
       this.clearHeartbeat(ws)
       this.clearAuthTimer(ws)
       if (isCurrent) {
+        this.activeSessions.delete(clientId)
         try {
           this.callbacks.onDisconnect(ws, clientId)
         // eslint-disable-next-line taste/no-silent-catch -- 同 close 路径
         } catch (e) {
           console.error('[runtime] onDisconnect callback error:', e)
         }
+        this.broadcastPresence()
       }
     })
   }

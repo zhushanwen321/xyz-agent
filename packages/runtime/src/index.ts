@@ -265,6 +265,9 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // reaper 每 5s 扫过期 lease（spec D7②），进程退出时 clear（与 recentWorkspacesStore flush timer 同模式）。
   const leaseManager = new LeaseManager(sessionService, server)
   sessionService.setLeaseManager(leaseManager)
+  // P5 presence：lease 变化（acquire/release）触发 presence 重推（spec D9 触发点 4：isOperating 变化）。
+  // sessionService 转发给 dispatcher + handleTurnEndSideEffects，回调调 conn.broadcastPresence。
+  sessionService.setPresenceRefreshCallback(() => server.broadcastPresence())
   const leaseReaperTimer = setInterval(() => {
     try {
       leaseManager.sweepExpired()

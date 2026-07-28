@@ -160,7 +160,11 @@ describe('ConnectionManager wave1 auth (TC2: auth happy path)', () => {
     expect(parsed.type).toBe('auth.ok')
     expect(parsed.id).toBe('req1')
     // P2-s2：cb 未注入 onAuthSuccess → 走 else 分支 replyAuth({resumed:false})，payload 含 resumed。
-    expect(parsed.payload).toEqual({ serverVersion: '9.9.9', clientId: 'client-A', resumed: false })
+    // P5 presence：auth.ok 顺带带 presence 全量列表（spec D10）。presence 含刚入池的 client-A。
+    expect(parsed.payload).toMatchObject({ serverVersion: '9.9.9', clientId: 'client-A', resumed: false })
+    expect(parsed.payload.presence).toEqual([
+      expect.objectContaining({ clientId: 'client-A', deviceName: 'mac' }),
+    ])
 
     // 入池 + onConnect
     expect(cm.clients.get('client-A')?.deviceName).toBe('mac')
@@ -805,10 +809,10 @@ describe('P2-s2 replyAuth ReplayMeta serialization (TC-W2.1~W2.4)', () => {
     connect(cm, ws)
     await sendAuth(ws, { token: 'real', clientId: 'c1' })
 
-    // auth.ok payload 只含 serverVersion/clientId/resumed（bootId/serverSeq/replayedCount/seqReset undefined 被忽略）
+    // auth.ok payload 含 serverVersion/clientId/resumed + P5 presence（bootId/serverSeq/replayedCount/seqReset undefined 被忽略）
     const authOkRaw = vi.mocked(ws.send).mock.calls[0][0] as string
     const parsed = JSON.parse(authOkRaw)
-    expect(Object.keys(parsed.payload).sort()).toEqual(['clientId', 'resumed', 'serverVersion'])
+    expect(Object.keys(parsed.payload).sort()).toEqual(['clientId', 'presence', 'resumed', 'serverVersion'])
     expect(parsed.payload.resumed).toBe(false)
   })
 

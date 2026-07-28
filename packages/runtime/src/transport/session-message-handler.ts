@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage, PresenceConnection } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_LIMIT_REACHED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
@@ -26,6 +26,14 @@ export interface SessionHandlerContext extends MessageHandlerContext {
    * 可选——未注入时 deviceName 兜底 ''。
    */
   getDeviceName?(clientId: string): string | undefined
+  /**
+   * P5 presence：设置 clientId 的活跃 session（session.setActive RPC 调，触发 presence 重推）。
+   */
+  setActiveSession(clientId: string, sessionId: string | null): void
+  /**
+   * P5 presence：构造全量 presence 列表（presence.list RPC reply 用）。
+   */
+  buildPresenceList(): PresenceConnection[]
 }
 
 export class SessionMessageHandler {
@@ -38,6 +46,8 @@ export class SessionMessageHandler {
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
+    // P5 presence：客户端切 panel 上报活跃 session（触发 presence 重推）；resume 路径主动拉 presence。
+    'session.setActive', 'presence.list',
   ]
 
   async handleSessionMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
@@ -165,6 +175,16 @@ export class SessionMessageHandler {
       case 'session.getAgentCallFilePath': {
         const filePath = await this.ctx.sessionService.getAgentCallFilePath(msg.payload.sessionId, msg.payload.agentCallSessionId)
         return this.ctx.reply(ws, msg.id, 'session.agentCallFilePath', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, filePath })
+      }
+      case 'session.setActive': {
+        // P5 presence：客户端切 panel 时上报活跃 session（presence.update 依赖 activeSessionId）。
+        // setActiveSession 内部触发 broadcastPresence（全量 presence.update 广播）。
+        this.ctx.setActiveSession(clientId, msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.setActive:result', {})
+      }
+      case 'presence.list': {
+        // P5 presence：resume 路径（短断线无 auth.ok）主动拉 presence 全量列表。
+        return this.ctx.reply(ws, msg.id, 'presence.list:result', { connections: this.ctx.buildPresenceList() })
       }
       case 'session.workflowAction': {
         await this.ctx.sessionService.workflowAction(msg.payload.sessionId, msg.payload.action, msg.payload.runId)

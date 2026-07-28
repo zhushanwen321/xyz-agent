@@ -7,6 +7,7 @@ export type {
   CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
   TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
+  PresenceConnection,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {

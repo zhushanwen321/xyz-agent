@@ -205,6 +205,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.leaseManager = lm
     this.dispatcher.setLeaseManager(lm)
   }
+  /**
+   * P5 presence：注入 presence 刷新回调（lease 变化时触发 presence 重推，spec D9 触发点 4）。
+   * 转发给 dispatcher（acquire/release 后调）+ handleTurnEndSideEffects（turn_end release 后调）。
+   */
+  setPresenceRefreshCallback(cb: () => void): void {
+    this.dispatcher.setPresenceRefreshCallback(cb)
+    this.presenceRefresh = cb
+  }
+  private presenceRefresh: (() => void) | null = null
   /** 取注入的 LeaseManager（adapterFactory 闭包构造 interpreter 时取，供 pingTick renew + turn-end release）。 */
   getLeaseManager(): import('./lease-manager.js').LeaseManager | null {
     return this.leaseManager
@@ -653,6 +662,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // P5 lease：turn-end（agent_end）释放 lease（spec D7①）。leaseManager 经组合根 setLeaseManager 注入，
     // 未注入时 no-op（向后兼容）。release 广播 session.idle{reason:'turn_end'}。
     this.leaseManager?.release(sessionId, 'turn_end')
+    // P5 presence：lease 释放 isOperating 变化，触发 presence 重推。
+    this.presenceRefresh?.()
     this.tryPersistLabel(session)
     // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
     const outcome = stopReason === 'error' ? 'error'

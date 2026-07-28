@@ -108,7 +108,9 @@ export class RuntimeServer implements IMessageBroker {
       onConnect: (ws, _clientId) => this.broker.sendInitialState(ws),
       onMessage: (msg, ws, clientId) => this.handleMessage(msg, ws, clientId),
       // P5 onDisconnect：连接下线回调（presence-client slice 接 presence 重推；本 wave 空实现避免 server 持 presence 依赖）。
-      onDisconnect: (_ws, _clientId) => { /* presence 推送在 presence-client slice 接入 */ },
+      onDisconnect: (_ws, _clientId) => { /* presence 重推在 connection-manager 内部触发 onPresenceUpdate */ },
+      // P5 presence：connection-manager broadcastPresence 触发时广播 presence.update（全量列表）。
+      onPresenceUpdate: (connections) => this.broker.broadcast({ type: 'presence.update', payload: { connections } }),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
       // P2-s2：认证成功后调 broker.getReplayPlan 决定 resume/reset/冷启动。
       // this.broker 在 setServices 构造（lazy），onAuthSuccess 运行时读取（auth 发生在 start 后，
@@ -155,6 +157,9 @@ export class RuntimeServer implements IMessageBroker {
     this.configService = config
     this.modelService = model
     this.skillRegistry = skillRegistry
+    // P5 presence：注入 sessionService 内部接口给 connection-manager（buildPresenceList 算 isOperating 用）。
+    // session 经 setServices 传入，此处转为 ISessionServiceInternal（SessionService 实现两接口）。
+    this.conn.setSessionService(session as unknown as import('../services/session/session-internal.js').ISessionServiceInternal)
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
 
@@ -218,6 +223,9 @@ export class RuntimeServer implements IMessageBroker {
       clearSessionBuffer: (sessionId) => this.broker.clearSessionBuffer(sessionId),
       // P5 lease：取 clientId 连接的 deviceName（message.send 透传 dispatcher）。
       getDeviceName: (clientId) => this.conn.clients.get(clientId)?.deviceName,
+      // P5 presence：setActiveSession（session.setActive RPC）+ buildPresenceList（presence.list RPC）委托 conn。
+      setActiveSession: (clientId, sessionId) => this.conn.setActiveSession(clientId, sessionId),
+      buildPresenceList: () => this.conn.buildPresenceList(),
     })
     this.extensionHandler = new ExtensionMessageHandler({
       ...messaging,
@@ -308,6 +316,8 @@ export class RuntimeServer implements IMessageBroker {
   // P5 lease/presence：定向投递委托（点对点，不打 seq 不入桶）。
   sendToClient(clientId: string, msg: ServerMessage): void { this.broker.sendToClient(clientId, msg) }
   broadcastExcept(excludeClientId: string, msg: ServerMessage): void { this.broker.broadcastExcept(excludeClientId, msg) }
+  /** P5 presence：触发 presence 全量重推（lease 变化/setActive/上下线经 connection-manager 调）。 */
+  broadcastPresence(): void { this.conn.broadcastPresence() }
 
   // ── Message routing ───────────────────────────────────────────
 
