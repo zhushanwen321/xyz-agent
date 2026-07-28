@@ -21,7 +21,7 @@
         <span class="think-label-float inline-flex h-[1.7em] items-center gap-1.5 whitespace-nowrap float-left">
           <ChevronRight class="size-[14px] shrink-0 text-neutral-dim transition-transform" :class="thinkingExpanded ? 'rotate-90 text-accent' : ''" />
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
-          <span class="text-[var(--text-sm)] font-medium text-neutral-mid">{{ t('panel.message.thinkingBlock') }}</span>
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.thinkingBlock') }}</span>
           <!-- · 分隔符：仅非 working 态显示。working（streaming）态内容直接跟在"思考"后，更紧凑 -->
           <span v-if="!working" class="text-neutral-faint">·</span>
         </span>
@@ -75,7 +75,7 @@
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
-          <span class="workflow-tag mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
           <!-- action（muted） -->
           <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[var(--text-xs)] text-neutral-mid">{{ workflowFields.action }}</span>
           <!-- name（accent） -->
@@ -418,17 +418,3 @@ const testId = computed(() => {
 })
 </script>
 
-<style scoped>
-/* Demo H 去卡片化：workflow-tag ::after accent 蓝点。
-   Tailwind 无法表达 ::after content，走 scoped style（三层结构 escape hatch）。 */
-.workflow-tag::after {
-  content: '';
-  display: inline-block;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-left: 5px;
-  vertical-align: middle;
-}
-</style>

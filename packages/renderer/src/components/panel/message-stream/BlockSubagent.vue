@@ -5,7 +5,7 @@
     标题行：subagent + agent + · + slug + (model · thinking X)
     第二行：task 首行预览（截断 60）
     展开体：task 完整内容 + background 状态行
-    视觉（demo h）：左缩进 14px + 底部 dashed 分割 + subagent prefix tag（::after 蓝点）
+    视觉（demo h）：左缩进 14px + 底部 dashed 分割 + subagent prefix tag（统一 uppercase-mono，无装饰点）
   -->
   <div class="trace-subagent border-b border-dashed border-border pl-3.5 pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
@@ -26,7 +26,7 @@
         class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover"
         :class="isFailed ? 'hover:text-warn' : ''"
       />
-      <span class="subagent-tag mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
+      <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
       <span class="shrink-0 whitespace-nowrap font-mono text-[var(--text-sm)] text-accent">{{ subagentAgent }}</span>
       <template v-if="subagentSlug">
         <span class="text-neutral-faint">·</span>
@@ -192,19 +192,5 @@ const bgStatusText = computed(() => {
 </script>
 
 <style scoped>
-/* Demo H 去卡片化：subagent-tag ::after accent 蓝点。
-   Tailwind 无法表达 ::after content，走 scoped style（三层结构 escape hatch）。
-   源码写小写 subagent，渲染自动大写 SUBAGENT（CSS text-transform）。 */
-.subagent-tag::after {
-  content: '';
-  display: inline-block;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-left: 5px;
-  vertical-align: middle;
-}
-
 /* background 状态点用 animate-blink（tailwind.config 内置），无需自定义 keyframes */
 </style>

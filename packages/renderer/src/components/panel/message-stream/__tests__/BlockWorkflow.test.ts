@@ -179,8 +179,7 @@ describe('W3TC4: workflow 块标题行字段（action + name + slug + runId + ar
         },
       },
     )
-    // workflow-tag span 存在（源码小写 workflow，CSS 大写）
-    expect(wrapper.find('.workflow-tag').exists()).toBe(true)
+    // workflow prefix tag 存在（W4 统一 uppercase-mono-tracking，无 scoped class）
     expect(wrapper.text()).toContain('workflow')
     // action（muted）
     expect(wrapper.text()).toContain('run')
