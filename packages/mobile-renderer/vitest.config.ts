@@ -10,6 +10,7 @@ export default defineConfig({
     environment: 'happy-dom',
     globals: true,
     include: ['src/**/*.{test,spec}.ts'],
+    setupFiles: ['./src/__tests__/vitest-i18n-setup.ts'],
   },
   plugins: [vue()],
   resolve: {

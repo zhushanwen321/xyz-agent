@@ -11,6 +11,7 @@ import shell from './zh-CN/shell'
 import extensionUI from './zh-CN/extensionUI'
 import search from './zh-CN/search'
 import composable from './zh-CN/composable'
+import mobile from './zh-CN/mobile'
 
 export default {
   common,
@@ -26,4 +27,5 @@ export default {
   extensionUI,
   search,
   composable,
+  mobile,
 }

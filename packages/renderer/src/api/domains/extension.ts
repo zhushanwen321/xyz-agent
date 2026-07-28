@@ -19,6 +19,7 @@ import type {
   ExtensionDiscoveredPayload,
   ExtensionInteractMethod,
   RecommendedExtension,
+  PendingUiRequest,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as transport from '../transport'
@@ -201,4 +202,41 @@ export async function getPendingRequests(sessionId: string): Promise<ExtensionUI
     r != null && typeof r === 'object' &&
     typeof (r as Record<string, unknown>).requestId === 'string' &&
     typeof (r as Record<string, unknown>).method === 'string')
+}
+
+// ── P3 D3：pending UI 请求批量补发（sendInitialState 第 14 段，冷启动/长断线审批唤醒）──
+
+/**
+ * 把跨 session 聚合的 PendingUiRequest 映射为 store 消费的 ExtensionUIRequest。
+ *
+ * 解包逻辑与 getPendingRequests 的 PendingUIRequestResolved 形态对齐（payload 字段提到顶层），
+ * 让 batch 补发的请求与实时 extension.ui_request 帧走同一 store.addRequest 入口、同一渲染路径。
+ *
+ * 类型守卫（ES3）：异常条目（requestId/method/sessionId 非合法 string）返回 undefined，caller 跳过。
+ *
+ * @returns ExtensionUIRequest 形状（payload 解包到顶层）；异常条目返回 undefined
+ */
+export function mapPendingToUIRequest(req: PendingUiRequest): ExtensionUIRequest | undefined {
+  // 类型守卫：防御 batch 含异常条目（结构损坏/并发 race）
+  if (!req || typeof req !== 'object') return undefined
+  if (typeof req.requestId !== 'string' || typeof req.sessionId !== 'string' || typeof req.method !== 'string') {
+    return undefined
+  }
+  // payload 解包到顶层（与 runtime PendingUIRequestResolved = PendingUIRequest & payload 解包同构）
+  return { ...req, ...req.payload } as ExtensionUIRequest
+}
+
+/**
+ * 订阅 extension.pendingRequestsBatch 全局推送（sendInitialState 第 14 段，P3 D3）。
+ *
+ * payload 不带顶层 sessionId（跨 session 聚合），routeInbound 走 dispatchGlobal 通道。
+ * handler 收到 requests 数组（PendingUiRequest[]，每个元素自带 sessionId）。
+ *
+ * 安装点：bindPendingRequestsBatchEffect（App.vue setup 全局单例），早于 WS initial state 推送注册。
+ * 冷启动兜底（onConnected 后 getPendingRequests）由 useExtensionUI.subscribe 现状已调（D4 双通路）。
+ */
+export function onPendingRequestsBatch(handler: (requests: PendingUiRequest[]) => void): () => void {
+  return events.onGlobalType('extension.pendingRequestsBatch', (msg) => {
+    handler(msg.payload.requests)
+  })
 }

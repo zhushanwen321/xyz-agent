@@ -76,6 +76,7 @@ import RemoteConnectModal from '@/components/remote/RemoteConnectModal.vue'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
+import { bindPendingRequestsBatchEffect } from '@/composables/effects/usePendingRequestsBatchEffect'
 // ws-client 单例只读 ref：failReason/isRemote 远程化扩展（wave1 ae71e6540）。
 // App 直接读 ws-client 模块而非 useConnection 返回值——useConnection 不暴露这俩 ref，
 // 且 App-w8 测试 mock useConnection 不影响此处模块 import（解耦测试契约）。
@@ -95,6 +96,10 @@ const { onConnected } = useSidebar()
 // useForkBranchNotify diff 分支状态 → 状态变化反馈行）。App setup 是全局 effect 作用域，
 // onScopeDispose 随 App 卸载退订（单实例，与 events.onGlobalType 范式一致）。
 bindForkNoticeEffect()
+// P3 D3：审批唤醒批量补发全局订阅（extension.pendingRequestsBatch，sendInitialState 第 14 段）。
+// 冷启动/长断线/页面 reload 时服务端主动推送跨 session 聚合的 pending UI 请求，唤醒审批挂起状态。
+// setup 同步注册（早于 onMounted 的 init() 异步连接），确保 WS initial state 到达时 handler 已就绪。
+bindPendingRequestsBatchEffect()
 onMounted(() => { void init() })
 // [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
 // - 首次 connected → initApp（内部含 workspaceStore.load + presetCwd）
