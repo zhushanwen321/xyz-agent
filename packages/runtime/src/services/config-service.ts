@@ -129,6 +129,16 @@ export class ConfigService implements IConfigService {
     return this.configStore.readModels().version ?? 0
   }
 
+  /**
+   * 持久化默认模型（写 settings.json，非 models.json）。
+   *
+   * **P6 D3 CAS 范围说明**：本方法**不纳入 config CAS**（无 expectedVersion / 不抛 VersionConflictError）。
+   * spec §3.3 列举 set 路径时提到 setDefaultModel，但 §2.3 R3-M2 已澄清 setDefaultModel 改的是
+   * settings.json（与 models.json 是两个独立 JsonStore 实例，version 不共享）。实施决策（与客户端
+   * `renderer/src/api/domains/config.ts` 对齐）：setDefaultModel 不走 CAS，状态变更经
+   * config.defaults 广播推回。models.json 的 version 字段（getConfigVersion）只覆盖
+   * setProvider/deleteProvider，与 spec §2.3 目标 schema 一致。
+   */
   setDefaultModel(provider: string, modelId: string): void {
     this.configStore.setDefaultModel(provider, modelId)
   }

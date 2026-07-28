@@ -597,6 +597,52 @@ describe('WorktreeService.create() per-key mutex (P6 D5)', () => {
     }
   })
 
+  it('TC1b: 并发两个 create 同分支但不同 workspaceHint（同 repo 的子目录 vs 根）——仍按 repoRoot 串行化', async () => {
+    // 回归 P6 修复：mutex key 必须用 detection 推导的 repoRoot，而非前端传入的 workspaceHint。
+    // 否则同一 repo 的根目录（/project）与子目录（/project/src）会落到不同 key，
+    // 绕过串行化导致并发 create 同分支两条都尝试 git worktree add。
+    // bare-workspace 检测向上找 .bare：/project 与 /project/src 都收敛到 repoRoot=/project。
+    const createdPaths = new Set<string>()
+    const existingPaths = new Set<string>(['/project/.bare'])
+    const fs = mockFs(existingPaths)
+    fs.existsSync = vi.fn((p: string) => {
+      if (createdPaths.has(p)) return true
+      return existingPaths.has(p)
+    })
+    const gitExecutor = mockGitExecutor()
+    gitExecutor.exec = vi.fn(async (cwd: string, command: string, args?: string[]) => {
+      if (command === 'worktree' && args?.[0] === 'add') {
+        await delayMs(30)
+        const newWtPath = args?.[3] ?? ''
+        if (newWtPath) createdPaths.add(newWtPath)
+      }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+
+    const deps: WorktreeServiceDeps = {
+      gitExecutor,
+      shellRunner: mockShellRunner(),
+      gitInfoReader: mockGitInfoReader(),
+      configService: mockConfigService(),
+      fs,
+    }
+    const service = new WorktreeService(deps)
+
+    // 两次 create 同 branch，workspaceHint 分别为 repo 根与子目录（不同 hint 但同 repo）
+    const p1 = service.create({ branch: 'feat-x', workspaceHint: '/project' })
+    const p2 = service.create({ branch: 'feat-x', workspaceHint: '/project/src' })
+    const results = await Promise.allSettled([p1, p2])
+
+    // 串行化生效：第一个成功，第二个看到分支已存在报 WORKTREE_EXISTS。
+    // 若 key 仍用 workspaceHint，两条会并发都成功（bug）——此断言会失败暴露回归。
+    const fulfilled = results.filter(r => r.status === 'fulfilled')
+    const rejected = results.filter(r => r.status === 'rejected')
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    const rejectedReason = rejected[0].status === 'rejected' ? rejected[0].reason : null
+    expect(rejectedReason).toMatchObject({ code: 'WORKTREE_EXISTS' })
+  })
+
   it('TC2/AC14: 并发两个 create 不同分支互不阻塞', async () => {
     const existingPaths = new Set<string>(['/project/.bare'])
     const fs = mockFs(existingPaths)
