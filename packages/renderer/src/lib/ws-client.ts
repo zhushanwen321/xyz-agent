@@ -23,8 +23,16 @@
  * 10. 本地模式（currentAuthOpts === null）逐字节不变：onopen 即 connected、onclose 退避、
  *     setFailed() 时 failReason=null、isRemote=false。
  *
+ * [wave2 RTT] 新增不变量（本地+远程通用，mock 不介入）：
+ * 11. 心跳 ping 带 envelope 顶层 id（buildPingId = `<timestamp>-<random>`），payload 仍 {}（零协议变更，
+ *     server.ts:241 broker.reply 透传 msg.id 回 pong）。ping 发送前判 pendingPingId===null（in-flight=1）。
+ * 12. onmessage 收到 pong 时（intercept 放行后）：msg.id===pendingPingId → 计算 RTT=Date.now()-sentAt
+ *     → push 滑动窗口（FIFO，N=20）→ 清 pending；id 不匹配 → 忽略（不报错，不进 messageHandler）。
+ * 13. RTT 窗口生命周期：connect 开头 / onclose 任何分支 / disconnect 三处 resetRtt（清窗口 + pending）。
+ *     getRttStats() 返回窗口快照 {min,max,avg,p50,last,count}（空窗口 count=0 其余 undefined）。
+ *
  * 依赖方向：依赖 remote/probe（buildAuthMessage）；暴露 connect/disconnect/send/getState/onMessage
- * + failReason/isRemote 只读 ref（远程化扩展）。
+ * + failReason/isRemote 只读 ref（远程化扩展）+ getRttStats（RTT 快照）。
  */
 import { ref, readonly } from 'vue'
 import type { Ref, DeepReadonly } from 'vue'
@@ -64,6 +72,23 @@ export interface ConnectOpts {
   auth?: AuthOpts
 }
 
+/**
+ * RTT 统计快照（wave2 RTT）。getRttStats() 返回的窗口统计形状。
+ * count 必填（0..N）；其余字段在 count===0 时为 undefined，count>0 时为有限正数（ms 单位）。
+ * - min/max：窗口内最小/最大 RTT
+ * - avg：算术平均
+ * - p50：中位数（窗口排序后取中间）
+ * - last：最新一条样本
+ */
+export interface RttStats {
+  min?: number
+  max?: number
+  avg?: number
+  p50?: number
+  last?: number
+  count: number
+}
+
 // ── 常量 ────────────────────────────────────────────────────
 const HEARTBEAT_INTERVAL_MS = 15_000
 const RECONNECT_BASE_DELAY_MS = 1_000
@@ -75,6 +100,8 @@ const MAX_RECONNECT_ATTEMPTS = 20
 const MAX_RECONNECT_DURATION_MS = 60_000
 /** 远程 auth 握手超时（spec §7.5 + §4.1）：onopen 发 auth 后 10s 内未收 auth.ok → 主动 close 走 failed(auth) */
 const AUTH_TIMEOUT_MS = 10_000
+/** RTT 滑动窗口大小（wave2 RTT）：保留最近 N 条样本，超出 FIFO shift 最旧 */
+const RTT_WINDOW_SIZE = 20
 
 /** 服务端 close code：auth 失败（spec §7.4 / runtime ConnectionManager TC3） */
 const CLOSE_CODE_AUTH_FAILURE = 4001
@@ -122,6 +149,20 @@ let authId: string | null = null
  */
 let authTimedOut = false
 
+// ── RTT 状态（wave2）────────────────────────────────────────
+/**
+ * RTT 滑动窗口（最近 RTT_WINDOW_SIZE 条样本，ms）。普通数组非 ref（getRttStats 计算快照，无需响应式）。
+ * connect/onclose/disconnect 时 resetRtt 清空。
+ */
+let rttWindow: number[] = []
+/**
+ * 当前 in-flight ping 的 id（in-flight=1：同一时刻最多一个未配对的 ping）。
+ * startHeartbeat 发 ping 前判 null 才发；recordRtt 配对成功后清空。
+ */
+let pendingPingId: string | null = null
+/** 当前 in-flight ping 的发送时间戳（Date.now()），配对 pong 后计算 RTT=Date.now()-pendingPingSentAt */
+let pendingPingSentAt: number | null = null
+
 // Vite HMR：热重载前保存 url，重载后自动重连
 let hmrUrl = (import.meta.hot?.data as { wsUrl?: string } | undefined)?.wsUrl ?? null
 
@@ -151,6 +192,36 @@ export function getFailReason(): DeepReadonly<Ref<FailReason>> {
 /** 是否远程模式（只读 ref，从 connect auth opts 推导）。 */
 export function getIsRemote(): DeepReadonly<Ref<boolean>> {
   return readonly(isRemoteRef)
+}
+
+/**
+ * 返回当前 RTT 滑动窗口统计快照（wave2 RTT）。
+ *
+ * 计算 min/max/avg/p50/last/count（窗口空时 count=0 其余 undefined）。
+ * 非响应式——UI（Landing 状态条）轮询消费；窗口数据存模块级普通数组（无需触发响应式）。
+ */
+export function getRttStats(): RttStats {
+  const n = rttWindow.length
+  if (n === 0) return { count: 0 }
+  let min = rttWindow[0]!
+  let max = rttWindow[0]!
+  let sum = 0
+  for (const v of rttWindow) {
+    if (v < min) min = v
+    if (v > max) max = v
+    sum += v
+  }
+  const sorted = [...rttWindow].sort((a, b) => a - b)
+  // eslint-disable-next-line no-magic-numbers -- 中位数索引：n 个样本排序后取中间（除 2）
+  const p50 = sorted[Math.floor((n - 1) / 2)]!
+  return {
+    min,
+    max,
+    avg: sum / n,
+    p50,
+    last: rttWindow[n - 1],
+    count: n,
+  }
 }
 
 /**
@@ -211,6 +282,8 @@ export function connect(url: string, opts?: ConnectOpts): void {
   // 新连接前清 auth 握手状态（防止上一轮残余）
   authId = null
   authTimedOut = false
+  // 新连接前清 RTT 窗口（重连后网络条件可能不同，旧样本无参考价值；in-flight ping 永远收不到 pong）
+  resetRtt()
   ws = new WebSocket(url)
   console.log('[ws] connecting to', url, currentAuthOpts ? '(remote auth)' : '(local)')
 
@@ -255,6 +328,12 @@ export function connect(url: string, opts?: ConnectOpts): void {
       const msg = JSON.parse(event.data) as ServerMessage
       // intercept 优先：远程模式 auth 握手期消化 auth 回复 + 丢弃握手期业务消息
       if (intercept(msg)) return
+      // RTT 配对（auth 已完成或本地模式）：pong 是传输层 reply，统一在 RTT 层消化不进 messageHandler。
+      // id 匹配 pending ping → 记录 RTT；id 不匹配（stray/broadcast pong）→ 忽略。
+      if (msg.type === ('pong' as ServerMessage['type'])) {
+        recordRtt(msg.id)
+        return
+      }
       messageHandler?.(msg)
     // eslint-disable-next-line taste/no-silent-catch -- 非 JSON 消息解析失败，跳过
     } catch (e) {
@@ -266,6 +345,8 @@ export function connect(url: string, opts?: ConnectOpts): void {
     if (gen !== wsGeneration) return // 旧 WS 残余回调，不干扰新连接
     stopHeartbeat()
     clearAuthTimer()
+    // 清 RTT 窗口（覆盖所有 close 分支：4001/4002/auth 超时/退避。重连后从 0 重新积累）
+    resetRtt()
     // ── 远程模式失败分流（spec §4.2）：4001/4002/超时不重连，直接 failed ──
     if (event.code === CLOSE_CODE_AUTH_FAILURE) {
       console.warn('[ws] closed by server: auth failure (4001)')
@@ -308,6 +389,8 @@ export function disconnect(): void {
   // 清 auth 握手状态（防止残余 intercept 介入下次连接）
   authId = null
   authTimedOut = false
+  // 清 RTT 窗口（主动断开，in-flight ping 永远收不到 pong）
+  resetRtt()
   if (ws) {
     // 先摘回调再 close，避免触发 onclose → scheduleReconnect
     ws.onclose = null
@@ -362,6 +445,7 @@ export function __resetForTest(): void {
   reconnectStartedAt = null
   authId = null
   authTimedOut = false
+  resetRtt()
   clearTimers()
   if (ws) {
     // 摘回调避免触发 onclose 干扰重置后的状态
@@ -441,9 +525,13 @@ function scheduleReconnect(): void {
 
 function startHeartbeat(): void {
   heartbeatTimer = setInterval(() => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      send({ type: 'ping', payload: {} })
-    }
+    if (ws?.readyState !== WebSocket.OPEN) return
+    // in-flight=1：上一条 ping 的 pong 还没回来则 skip 本轮（不覆盖 sentAt，保证样本语义干净）
+    if (pendingPingId !== null) return
+    const id = buildPingId()
+    pendingPingId = id
+    pendingPingSentAt = Date.now()
+    send({ type: 'ping', id, payload: {} })
   }, HEARTBEAT_INTERVAL_MS)
 }
 
@@ -459,6 +547,45 @@ function clearAuthTimer(): void {
     clearTimeout(authTimer)
     authTimer = null
   }
+}
+
+// ── RTT 内部（wave2）────────────────────────────────────────
+
+/**
+ * 生成 ping id（`<timestamp>-<random>`）。
+ * timestamp 前缀便于 debug 排序，random 后缀防同毫秒冲突（心跳 15s 间隔几乎不可能，兜底）。
+ */
+function buildPingId(): string {
+  // eslint-disable-next-line no-magic-numbers -- base36 编码 + slice(2,8) 去 '0.' 前缀取 6 位随机尾
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * 配对 pong 与 pending ping，记录 RTT 样本（onmessage 收到 pong 时调）。
+ *
+ * @param id 收到的 pong 的 envelope id
+ * @returns true=配对成功已记录 RTT（消化不进 messageHandler）/ false=id 不匹配或无 pending（忽略）
+ *
+ * 配对成功：RTT=Date.now()-pendingPingSentAt → push 窗口（FIFO 截断 N）→ 清 pending。
+ * id 不匹配：忽略（runtime 可能广播或延迟的旧 pong），不报错不污染窗口。
+ */
+function recordRtt(id: string | undefined): boolean {
+  if (pendingPingId === null || pendingPingSentAt === null) return false
+  if (id !== pendingPingId) return false
+  const rtt = Date.now() - pendingPingSentAt
+  rttWindow.push(rtt)
+  // FIFO 截断：超出窗口大小丢弃最旧
+  if (rttWindow.length > RTT_WINDOW_SIZE) rttWindow.shift()
+  pendingPingId = null
+  pendingPingSentAt = null
+  return true
+}
+
+/** 清空 RTT 窗口 + pending ping 状态（connect/onclose/disconnect 调用）。 */
+function resetRtt(): void {
+  rttWindow = []
+  pendingPingId = null
+  pendingPingSentAt = null
 }
 
 function clearTimers(): void {

@@ -1,15 +1,26 @@
 /**
- * ws-client auth 握手 + close code 分流测试（wave1 p1-s2-w1）。
+ * ws-client auth 握手 + close code 分流 + RTT 测量测试。
  *
- * 覆盖 8 个 TC（plan.json TC1-TC8）：
- *  - TC1: onopen 远程模式发 auth payload 且不带 lastSeq
- *  - TC2: auth.ok 前不 connected，auth.ok 后翻 connected
- *  - TC3: 4001 → failed(auth) 不重连
- *  - TC4: 4002 → failed(replaced) 不重连
- *  - TC5: 10s auth 超时 → failed(auth)
- *  - TC6: 重连复用 auth opts
- *  - TC7: 本地模式零回归（无 auth opts 时 onopen 即 connected、failReason null、isRemote false）
- *  - TC8: intercept 在 auth 完成前消化其他消息（丢弃+warn，不进 messageHandler）
+ * 覆盖 17 个 TC：
+ *  - TC1-TC8（wave1 auth 握手）：
+ *    - TC1: onopen 远程模式发 auth payload 且不带 lastSeq
+ *    - TC2: auth.ok 前不 connected，auth.ok 后翻 connected
+ *    - TC3: 4001 → failed(auth) 不重连
+ *    - TC4: 4002 → failed(replaced) 不重连
+ *    - TC5: 10s auth 超时 → failed(auth)
+ *    - TC6: 重连复用 auth opts
+ *    - TC7: 本地模式零回归（无 auth opts 时 onopen 即 connected、failReason null、isRemote false）
+ *    - TC8: intercept 在 auth 完成前消化其他消息（丢弃+warn，不进 messageHandler）
+ *  - TC9-TC17（wave2 RTT 测量）：
+ *    - TC9:  ping 带 envelope 顶层 id（payload 仍 {}）
+ *    - TC10: pong 按 id 配对计算 RTT（in-flight=1）
+ *    - TC11: 滑动窗口 N=20 FIFO（第 21 条丢弃最旧）
+ *    - TC12: getRttStats 窗口空时返回 count=0 数值字段 undefined
+ *    - TC13: in-flight=1：上一条 pong 未回时心跳 skip 新 ping
+ *    - TC14: id 不匹配的 pong 被忽略（不污染窗口，不报错）
+ *    - TC15: 断开清空窗口（onclose + disconnect）
+ *    - TC16: 远程模式 RTT 不破坏 auth 握手（TC1-TC8 零回归）
+ *    - TC17: getRttStats 统计字段正确性（min/max/avg/p50/last）
  *
  * 框架：vitest + happy-dom（禁止 node:test，遵守 AGENTS 测试规范）。
  *
@@ -386,5 +397,358 @@ describe('TC8: intercept auth 完成前消化其他消息', () => {
     expect(getState().value).toBe('connected')
 
     unsub()
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC9-TC17: RTT 测量（wave2）
+//
+// 共享辅助：本地模式 connect + open，返回 ws-client 模块的动态导入。
+// RTT 心跳 15s 一次，用 vi.useFakeTimers({shouldAdvanceTime:true}) 推进时间触发心跳。
+// ping→pong 延迟用 advanceTimersByTime 精确控制，断言容差范围。
+// ──────────────────────────────────────────────────────────
+
+/** 抓取最后一条 ping 消息（从 sentMessages 反向找 type=ping）。返回解析后对象或 null。 */
+function getLastPing(ws: MockWebSocket): { type: string; id?: string; payload: Record<string, never> } | null {
+  for (let i = ws.sentMessages.length - 1; i >= 0; i--) {
+    const parsed = JSON.parse(ws.sentMessages[i]!) as { type: string; id?: string }
+    if (parsed.type === 'ping') {
+      return parsed as { type: string; id?: string; payload: Record<string, never> }
+    }
+  }
+  return null
+}
+
+// ──────────────────────────────────────────────────────────
+// TC9: ping 带 envelope 顶层 id 发送（payload 仍 {}）
+// ──────────────────────────────────────────────────────────
+describe('TC9: ping 带 envelope id', () => {
+  it('本地模式心跳 ping 带 id 字段（格式 timestamp-random），payload 恒为 {}', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, getState, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210') // 本地模式
+    await waitForWs()
+    lastWs!.triggerOpen()
+    expect(getState().value).toBe('connected')
+
+    // 推进 15s+ 触发首次心跳 ping
+    vi.advanceTimersByTime(15_100)
+
+    const ping = getLastPing(lastWs!)
+    expect(ping).not.toBeNull()
+    expect(ping!.type).toBe('ping')
+    // id 非空字符串
+    expect(typeof ping!.id).toBe('string')
+    expect(ping!.id!.length).toBeGreaterThan(0)
+    // 格式匹配 timestamp-random（数字-字母数字）
+    expect(ping!.id).toMatch(/^\d+-[a-z0-9]+$/)
+    // payload 恒为空对象（零协议变更）
+    expect(ping!.payload).toEqual({})
+    // 窗口空（未收 pong）
+    expect(getRttStats().count).toBe(0)
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC10: pong 按 id 配对计算 RTT（in-flight=1）
+// ──────────────────────────────────────────────────────────
+describe('TC10: pong 配对计算 RTT', () => {
+  it('发 ping 后模拟 50ms 延迟回 pong → getRttStats().count=1, last=50ms', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    // mock Date.now 让 RTT 测量值可预测（pendingPingSentAt 与 pong 到达时的差 = sentAtDelta）。
+    // fake timer 的 setInterval 在绝对调度点触发，advanceTimersByTime 推进时 Date.now 可能残留
+    // 前一轮延迟偏移，故用 spy 精确控制 buildPingId/pendingPingSentAt/recordRtt 三处 Date.now 读值。
+    const spy = vi.spyOn(Date, 'now')
+    let tick = 1_000_000
+    spy.mockImplementation(() => tick)
+
+    const { connect, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    // 推进 15s 触发心跳发 ping（pendingPingSentAt = tick = 1_000_000）
+    vi.advanceTimersByTime(15_000)
+    const ping = getLastPing(lastWs!)
+    expect(ping).not.toBeNull()
+
+    // 模拟 50ms 网络延迟：Date.now 推进 50ms 后回 pong → RTT = tick - sentAt = 50
+    tick += 50
+    lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping!.id, payload: {} }))
+
+    const stats = getRttStats()
+    expect(stats.count).toBe(1)
+    expect(stats.last).toBe(50)
+    spy.mockRestore()
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC11: 滑动窗口 N=20 FIFO（第 21 条丢弃最旧）
+// ──────────────────────────────────────────────────────────
+describe('TC11: 滑动窗口 N=20 FIFO', () => {
+  it('连续 21 次 ping/pong → count=20（第 1 条被 shift）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    // 循环 21 次：每次推进 15s 发 ping + 立即回 pong
+    for (let i = 0; i < 21; i++) {
+      vi.advanceTimersByTime(15_000)
+      const ping = getLastPing(lastWs!)
+      if (!ping) {
+        // in-flight 占位时可能 skip（前一条 pong 未回），但这里每轮立即配对不会 skip
+        throw new Error(`iteration ${i}: expected ping but got none`)
+      }
+      // 立即回 pong（RTT≈0，重点验证窗口大小）
+      lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping.id, payload: {} }))
+    }
+
+    const stats = getRttStats()
+    expect(stats.count).toBe(20) // 不是 21，FIFO 丢弃最旧
+    // 数值字段均为有限数
+    expect(stats.min).toBeTypeOf('number')
+    expect(stats.max).toBeTypeOf('number')
+    expect(stats.avg).toBeTypeOf('number')
+    expect(stats.p50).toBeTypeOf('number')
+    expect(stats.last).toBeTypeOf('number')
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC12: getRttStats 窗口空时返回 count=0 数值字段 undefined
+// ──────────────────────────────────────────────────────────
+describe('TC12: 窗口空态 getRttStats', () => {
+  it('刚 connect 未收 pong → getRttStats() 返回 count=0，数值字段全 undefined', async () => {
+    const { connect, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    const stats = getRttStats()
+    expect(stats.count).toBe(0)
+    expect(stats.min).toBeUndefined()
+    expect(stats.max).toBeUndefined()
+    expect(stats.avg).toBeUndefined()
+    expect(stats.p50).toBeUndefined()
+    expect(stats.last).toBeUndefined()
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC13: in-flight=1：上一条 pong 未回时心跳 skip 新 ping
+// ──────────────────────────────────────────────────────────
+describe('TC13: in-flight=1 skip 新 ping', () => {
+  it('发 ping1 后 pong 没回，下一轮心跳 skip（30s 内只发 1 条 ping）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    // 15s：发 ping1
+    vi.advanceTimersByTime(15_000)
+    const ping1 = getLastPing(lastWs!)
+    expect(ping1).not.toBeNull()
+    const ping1Id = ping1!.id
+
+    // 再推进 15s（pong1 没回）：心跳应 skip，不发 ping2
+    vi.advanceTimersByTime(15_000)
+    const ping2 = getLastPing(lastWs!)
+    // 最后一条 ping 仍是 ping1（id 未变）
+    expect(ping2).not.toBeNull()
+    expect(ping2!.id).toBe(ping1Id)
+    // 统计 sentMessages 中 ping 总数 = 1
+    const pingCount = lastWs!.sentMessages.filter((s) => {
+      try {
+        return (JSON.parse(s) as { type: string }).type === 'ping'
+      } catch {
+        return false
+      }
+    }).length
+    expect(pingCount).toBe(1)
+    // 窗口仍空（pong1 没回来）
+    expect(getRttStats().count).toBe(0)
+
+    // 现在 pong1 回来配对后，下一轮心跳才能发 ping2
+    lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping1Id, payload: {} }))
+    expect(getRttStats().count).toBe(1)
+    vi.advanceTimersByTime(15_000)
+    const ping3 = getLastPing(lastWs!)
+    expect(ping3).not.toBeNull()
+    expect(ping3!.id).not.toBe(ping1Id) // 新 ping，id 不同
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC14: id 不匹配的 pong 被忽略
+// ──────────────────────────────────────────────────────────
+describe('TC14: id 不匹配的 pong 忽略', () => {
+  it('收到 id≠pendingPingId 的 pong → count 不增，pending 不清，不进 messageHandler', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, getRttStats, onMessage } = await import('@/lib/ws-client')
+    const handler = vi.fn()
+    const unsub = onMessage(handler)
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    vi.advanceTimersByTime(15_000)
+    const ping = getLastPing(lastWs!)
+    expect(ping).not.toBeNull()
+
+    // 收到 id 不匹配的 stray pong
+    lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: 'stray-other-id', payload: {} }))
+
+    // 窗口未记录样本
+    expect(getRttStats().count).toBe(0)
+    // messageHandler 未被调用（pong 被 RTT 层消化，不进业务回调）
+    expect(handler).not.toHaveBeenCalled()
+
+    // 后续真实 pong（id 匹配）仍能正常配对
+    lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping!.id, payload: {} }))
+    expect(getRttStats().count).toBe(1)
+
+    unsub()
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC15: 断开清空窗口（onclose + disconnect）
+// ──────────────────────────────────────────────────────────
+describe('TC15: 断开清空窗口', () => {
+  it('积累样本后 triggerClose(1006) → getRttStats().count=0', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    // 积累 2 条样本
+    for (let i = 0; i < 2; i++) {
+      vi.advanceTimersByTime(15_000)
+      const ping = getLastPing(lastWs!)
+      lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping!.id, payload: {} }))
+    }
+    expect(getRttStats().count).toBe(2)
+
+    // 断开（1006 退避重连分支）
+    lastWs!.triggerClose(1006)
+    expect(getRttStats().count).toBe(0) // 窗口清空
+  })
+
+  it('积累样本后 disconnect() → getRttStats().count=0', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, disconnect, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    vi.advanceTimersByTime(15_000)
+    const ping = getLastPing(lastWs!)
+    lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping!.id, payload: {} }))
+    expect(getRttStats().count).toBe(1)
+
+    disconnect()
+    expect(getRttStats().count).toBe(0) // 窗口清空
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC16: 远程模式 RTT 不破坏 auth 握手（零回归）
+// ──────────────────────────────────────────────────────────
+describe('TC16: 远程模式 auth 握手 + RTT 共存', () => {
+  it('远程 auth.ok 翻 connected 后心跳 ping 带 id，pong 配对正常', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, getState, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210', { auth: { token: 't1', clientId: 'c1' } })
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    // auth 握手期：state 仍 connecting，RTT 不介入
+    expect(getState().value).toBe('connecting')
+
+    // 收到 auth.ok 翻转 connected（与 TC2 一致，RTT 改造不影响）
+    lastWs!.triggerMessage(
+      JSON.stringify({
+        type: 'auth.ok',
+        id: FIXED_AUTH_ID,
+        payload: { serverVersion: '1.0.0', clientId: 'c1' },
+      }),
+    )
+    expect(getState().value).toBe('connected')
+
+    // auth 完成后心跳 ping 带 id
+    vi.advanceTimersByTime(15_000)
+    const ping = getLastPing(lastWs!)
+    expect(ping).not.toBeNull()
+    expect(ping!.id).toMatch(/^\d+-[a-z0-9]+$/)
+
+    // pong 配对正常
+    lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping!.id, payload: {} }))
+    expect(getRttStats().count).toBe(1)
+  })
+
+  it('auth 握手期收到 pong 被 intercept 消化（不进 RTT 配对，不进 messageHandler）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { connect, getState, getRttStats, onMessage } = await import('@/lib/ws-client')
+    const handler = vi.fn()
+    const unsub = onMessage(handler)
+    // 抑制 intercept 的 warn（握手期业务消息丢弃告警）
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    connect('ws://host:3210', { auth: { token: 't1', clientId: 'c1' } })
+    await waitForWs()
+    lastWs!.triggerOpen()
+    expect(getState().value).toBe('connecting') // auth 未完成
+
+    // auth 握手期收到 pong（authId 非空 → intercept 消化，RTT 不介入）
+    lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: 'some-id', payload: {} }))
+    expect(getRttStats().count).toBe(0) // RTT 未记录
+    expect(handler).not.toHaveBeenCalled() // 未进 messageHandler
+
+    warnSpy.mockRestore()
+    unsub()
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC17: getRttStats 统计字段正确性（min/max/avg/p50/last）
+// ──────────────────────────────────────────────────────────
+describe('TC17: getRttStats 统计字段正确性', () => {
+  it('5 条样本（10/20/30/40/50ms）→ min=10,max=50,avg=30,p50=30,last=50', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    // mock Date.now 让 RTT 测量值可预测（fake timer setInterval 调度残留会污染测量，故用 spy 精确控制）。
+    // 每条样本：advanceTimersByTime(15000) 触发心跳发 ping（sentAt=tick），tick += delay 后回 pong → RTT=delay。
+    const spy = vi.spyOn(Date, 'now')
+    let tick = 1_000_000
+    spy.mockImplementation(() => tick)
+
+    const { connect, getRttStats } = await import('@/lib/ws-client')
+    connect('ws://host:3210')
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    const delays = [10, 20, 30, 40, 50]
+    for (const delay of delays) {
+      // 推进 15s 触发心跳（pendingPingSentAt = tick 当前值）
+      vi.advanceTimersByTime(15_000)
+      const ping = getLastPing(lastWs!)
+      if (!ping) throw new Error('expected ping')
+      // 推进 delay ms → pong 到达时 RTT = tick - sentAt = delay
+      tick += delay
+      lastWs!.triggerMessage(JSON.stringify({ type: 'pong', id: ping.id, payload: {} }))
+    }
+
+    const stats = getRttStats()
+    expect(stats.count).toBe(5)
+    expect(stats.min).toBe(10)
+    expect(stats.max).toBe(50)
+    expect(stats.avg).toBe(30) // (10+20+30+40+50)/5 = 30
+    expect(stats.p50).toBe(30) // 中位数：5 样本排序后第 3 个 = 30
+    expect(stats.last).toBe(50) // 最后一条 = 50
+    spy.mockRestore()
   })
 })
