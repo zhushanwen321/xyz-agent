@@ -76,7 +76,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy as CopyIcon } from '@lucide/vue'
+import { Check, Copy as CopyIcon } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
 import { Button } from '@/components/ui/button'

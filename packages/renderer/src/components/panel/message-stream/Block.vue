@@ -155,16 +155,12 @@
                 <span
                   v-for="(item, idx) in filteredMetaItems"
                   :key="idx"
-                  :class="{
-                    'text-neutral-mid font-semibold': item.tone === 'danger',
-                    'text-neutral-mid': item.tone === 'info',
-                    'text-neutral-dim': item.tone === 'muted',
-                  }"
+                  class="text-neutral-dim"
                 >{{ item.text }}</span>
               </div>
               <div
                 class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 select-text"
-                :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
+                :class="isFailed ? 'text-neutral-mid hover:text-neutral-fg' : 'text-neutral-mid'"
               >
                 <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
                 <AnsiText v-else-if="outputRaw" :content="outputRaw" />
@@ -176,11 +172,7 @@
               <span
                 v-for="(item, idx) in filteredMetaItems"
                 :key="idx"
-                :class="{
-                  'text-neutral-mid font-semibold': item.tone === 'danger',
-                  'text-neutral-mid': item.tone === 'info',
-                  'text-neutral-dim': item.tone === 'muted',
-                }"
+                class="text-neutral-dim"
               >{{ item.text }}</span>
             </div>
           </div>
@@ -229,18 +221,14 @@ const props = defineProps<{
   streaming?: boolean
   /** 所属 session（透传给 MarkdownRenderer 供文件路径打开 DetailPane 用） */
   sessionId?: string | null
-  /** 强制展开（merged 卡片场景：外层已折叠，内层 Block 不应再各自收起）。
-   *  true 时 thinking/tool 强制展开且不可手动收，与 working 态语义一致但独立于 working
-   *  （working 绑定 session 进行中，forceExpand 绑定外层折叠容器展开）。 */
-  forceExpand?: boolean
 }>()
 
 /* ── thinking 折叠：working 态强制展开且不可收（draft §1）；非 working 由本地态 toggle ── */
 const thinkingCollapsed = ref(props.collapsed ?? true)
-const thinkingExpanded = computed(() => props.working || props.forceExpand || !thinkingCollapsed.value)
+const thinkingExpanded = computed(() => props.working || !thinkingCollapsed.value)
 
 function toggleThinking(): void {
-  if (props.working || props.forceExpand) return
+  if (props.working) return
   thinkingCollapsed.value = !thinkingCollapsed.value
 }
 
@@ -372,10 +360,9 @@ const guiComponent = computed<GuiComponent | undefined>(() => {
  * 1 行即可观察进度，点击才展开详情）。failed 不再强制展开（摘要行已含错误状态色）。
  */
 const toolCollapsed = ref(true)
-const toolExpanded = computed(() => props.forceExpand || !toolCollapsed.value)
+const toolExpanded = computed(() => !toolCollapsed.value)
 
 function toggleTool(): void {
-  if (props.forceExpand) return
   toolCollapsed.value = !toolCollapsed.value
 }
 
@@ -397,7 +384,7 @@ const argPath = computed(() => {
 
 
 /** Demo H：failed 红框已删（blockClass 不再返回 border-danger/bg-danger-soft）。
- *  failed 块改中性灰默认 + hover 染 warn（scoped .tool-header / .tool-result hover 处理）。
+ *  failed 块改中性灰默认 + hover 文字加深（hover:text-neutral-fg）。
  *  保留 blockClass 钩子以备未来整体块级视觉（如 running 高亮条），当前返回空串。 */
 const blockClass = computed(() => '')
 

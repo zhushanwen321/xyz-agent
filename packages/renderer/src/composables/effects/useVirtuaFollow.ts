@@ -20,7 +20,7 @@
  * - followToBottom(force=true) 是用户「回到底部」浮层点击：同步强制滚（不走 rAF），
  *   让用户点击的即时反馈最强
  */
-import { ref, computed } from 'vue'
+import { ref, computed, onScopeDispose } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { VirtualizerHandle } from 'virtua/vue'
 
@@ -112,6 +112,12 @@ export function useVirtuaFollow(opts: {
   }
 
   /**
+   * 待执行的 rAF 句柄（null = 无 pending）。连续 followIfStuck 会先 cancel 旧 rAF 再调度新 rAF，
+   * 避免叠加多个 pending 回调；scope dispose 时（session 切换/组件卸载）取消 pending rAF 防泄漏。
+   */
+  let pendingRafId: number | null = null
+
+  /**
    * 跟随到底部（仅在贴底时生效）。
    *
    * INVAR-M4-2【关键】：stickToBottom guard 在 rAF 执行时重新读取，而非调用时捕获。
@@ -120,9 +126,13 @@ export function useVirtuaFollow(opts: {
    * rAF schedule：与 useChatScroll.ts:218-255 的 flushScroll 同款语义。rAF 回调内：
    * - 边界3: rAF 触发时 vlistRef 可能已 dispose（session 切换）→ null check
    * - rAF 内重读 stickToBottom，false 则跳过（INVAR-M4-2）
+   *
+   * 句柄生命周期：调度时保存 pendingRafId，回调进入即清 null；连续调用先 cancel 旧句柄。
+   * onScopeDispose 兜底取消 pending rAF（composable 在 setup 同步调用，scope 必然活跃）。
    */
   function followIfStuck(): void {
     const run = (): void => {
+      pendingRafId = null
       // INVAR-M4-2: rAF 内重读 stickToBottom，避免调用时贴底→用户上滑→仍被扯回
       if (!stickToBottom.value) {
         // U15 即时语义（迁移自 useChatScroll.ts:243）：非贴底时新内容到达 → 标记 unreadBelow，
@@ -138,12 +148,24 @@ export function useVirtuaFollow(opts: {
       v.scrollToIndex(lastIdx, { align: 'end' })
     }
     if (typeof requestAnimationFrame !== 'undefined') {
-      requestAnimationFrame(run)
+      // 连续 followIfStuck：先 cancel 旧 rAF，避免多个 pending 回调叠加
+      if (pendingRafId !== null) cancelAnimationFrame(pendingRafId)
+      pendingRafId = requestAnimationFrame(run)
     } else {
-      // 测试 / SSR 环境兜底（无 rAF）：用 microtask 推进，保持「异步重读」语义
+      // 测试 / SSR 环境兜底（无 rAF）：用 microtask 推进，保持「异步重读」语义。
+      // microtask 无法取消，接受其执行（run 内 null check / stickToBottom 重读保证安全）。
       Promise.resolve().then(run)
     }
   }
+
+  // scope dispose（session 切换/组件卸载）兜底取消 pending rAF，防泄漏。
+  // composable 在 setup 同步调用 → scope 必然活跃（测试无 scope 时 onScopeDispose 为 no-op，不抛错）。
+  onScopeDispose(() => {
+    if (pendingRafId !== null) {
+      cancelAnimationFrame(pendingRafId)
+      pendingRafId = null
+    }
+  })
 
   /**
    * 滚动到底部。

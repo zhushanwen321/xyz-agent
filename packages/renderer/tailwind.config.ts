@@ -21,9 +21,6 @@ export default {
           hover: 'var(--surface-hover)',
           2: 'var(--surface-2)',
         },
-        fg: 'var(--neutral-fg)',
-        muted: 'var(--neutral-mid)',
-        subtle: 'var(--neutral-dim)',
         neutral: {
           fg: 'var(--neutral-fg)',
           mid: 'var(--neutral-mid)',
@@ -96,6 +93,8 @@ export default {
           '70%': { 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
           '100%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0)' },
         },
+        // 注意：rgba 值对应暗色 --warn (#b08a3e)。亮色 --warn (#8a6a2e) 下 pulse 环会有色相差，
+        // 已知限制——keyframe 无法读运行时 CSS 变量，需后续用 CSS @property 或独立动画方案解决。
         'pulse-warn': {
           '0%': { 'box-shadow': '0 0 0 0 rgba(176, 138, 62, 0.5)' },
           '70%': { 'box-shadow': '0 0 0 5px rgba(176, 138, 62, 0)' },

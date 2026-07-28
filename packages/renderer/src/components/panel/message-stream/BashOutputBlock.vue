@@ -30,7 +30,7 @@
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
         <!-- S9：Terminal 图标前缀增强 shell prompt 语义（灰阶 neutral-ico，§13.2-D） -->
         <Terminal class="size-3 shrink-0 text-neutral-ico" />
-        <span class="min-w-0 flex-1 truncate font-mono text-[length:var(--text-xs)] leading-snug text-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
+        <span class="min-w-0 flex-1 truncate font-mono text-[length:var(--text-xs)] leading-snug text-neutral-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
         <span
           v-if="bash?.excludeFromContext"
           class="shrink-0 rounded-sm border border-border px-1 py-0.5 text-[length:var(--text-2xs)] leading-none text-neutral-dim"

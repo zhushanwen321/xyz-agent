@@ -7,7 +7,7 @@
   <div class="flex flex-col gap-4">
     <!-- 工具模式 -->
     <div>
-      <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+      <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
         {{ t('settings.preset.toolMode') }}
       </Label>
       <div class="flex items-center gap-1.5">
@@ -17,7 +17,7 @@
           variant="ghost"
           size="dense"
           class="rounded-sm text-[11px]"
-          :class="preset.toolMode === m.value ? 'bg-surface-hover text-fg ring-1 ring-inset ring-accent' : 'text-muted hover:text-fg'"
+          :class="preset.toolMode === m.value ? 'bg-surface-hover text-neutral-fg ring-1 ring-inset ring-accent' : 'text-neutral-mid hover:text-neutral-fg'"
           :disabled="disabled"
           @click="onToolModeChange(m.value)"
         >
@@ -37,10 +37,10 @@
             :disabled="disabled"
             @update:model-value="(checked) => onToolToggle(tool, checked === true)"
           />
-          <span class="text-[11px] text-fg">{{ tool }}</span>
+          <span class="text-[11px] text-neutral-fg">{{ tool }}</span>
           <span
             class="text-[9px]"
-            :class="isDefaultEnabled(tool) ? 'text-success' : 'text-subtle'"
+            :class="isDefaultEnabled(tool) ? 'text-success' : 'text-neutral-dim'"
           >{{ isDefaultEnabled(tool) ? t('settings.preset.defaultOn') : t('settings.preset.defaultOff') }}</span>
         </Label>
       </div>
@@ -48,7 +48,7 @@
 
     <!-- 扩展模式 -->
     <div>
-      <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+      <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
         {{ t('settings.preset.extensionMode') }}
       </Label>
       <div class="flex items-center gap-1.5">
@@ -58,7 +58,7 @@
           variant="ghost"
           size="dense"
           class="rounded-sm text-[11px]"
-          :class="preset.extensionMode === m.value ? 'bg-surface-hover text-fg ring-1 ring-inset ring-accent' : 'text-muted hover:text-fg'"
+          :class="preset.extensionMode === m.value ? 'bg-surface-hover text-neutral-fg ring-1 ring-inset ring-accent' : 'text-neutral-mid hover:text-neutral-fg'"
           :disabled="disabled"
           @click="onExtModeChange(m.value)"
         >
@@ -67,7 +67,7 @@
       </div>
       <!-- allowlist/denylist Checkbox 列表 -->
       <div v-if="preset.extensionMode === 'allowlist' || preset.extensionMode === 'denylist'" class="mt-2 flex flex-wrap gap-2">
-        <div v-if="!availableExtensions.length" class="text-[11px] text-muted">
+        <div v-if="!availableExtensions.length" class="text-[11px] text-neutral-mid">
           {{ t('settings.preset.noExtensions') }}
         </div>
         <Label
@@ -81,7 +81,7 @@
             :disabled="disabled"
             @update:model-value="(checked) => onExtToggle(ext, checked === true)"
           />
-          <span class="text-[11px] text-fg">{{ ext }}</span>
+          <span class="text-[11px] text-neutral-fg">{{ ext }}</span>
         </Label>
       </div>
     </div>

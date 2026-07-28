@@ -171,7 +171,7 @@ watch(() => store.defaultPresetId, (newDefault) => {
       <Button
         data-testid="chip-preset"
         variant="ghost"
-        class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+        class="h-auto gap-1.5 px-2 py-1 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-3.5"
         :class="{ '!text-accent': !selectedPresetId }"
       >
         <SlidersHorizontal class="shrink-0" />
@@ -185,26 +185,26 @@ watch(() => store.defaultPresetId, (newDefault) => {
     <PopoverContent side="top" class="w-[320px] p-0">
       <!-- head（W-RN-1：bg-white/[0.015] → bg-surface-2 语义类，与 PopoverContent 的 bg-bg-elevated 区分头/体层级） -->
       <div
-        class="flex items-center justify-between border-b border-border bg-surface-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+        class="flex items-center justify-between border-b border-border bg-surface-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-neutral-dim"
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>
       <!-- 预设列表（Button + Check 实现 RadioGroup 语义，ui 无 RadioGroup） -->
-      <div v-if="store.presets.length === 0" class="px-2.5 py-3 text-[12px] text-subtle">
+      <div v-if="store.presets.length === 0" class="px-2.5 py-3 text-[12px] text-neutral-dim">
         {{ emptyHint }}
       </div>
       <Button
         v-for="preset in store.presets"
         :key="preset.id"
         variant="ghost"
-        class="flex w-full flex-col items-start gap-0.5 rounded-none px-2.5 py-2 text-muted hover:bg-surface-hover hover:text-fg"
+        class="flex w-full flex-col items-start gap-0.5 rounded-none px-2.5 py-2 text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         :class="selectedPresetId === preset.id && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
         @click="onSelectPreset(preset)"
       >
         <div class="flex w-full items-center gap-2">
           <span
             class="size-[7px] shrink-0 rounded-full"
-            :class="selectedPresetId === preset.id ? 'bg-accent' : 'bg-subtle'"
+            :class="selectedPresetId === preset.id ? 'bg-accent' : 'bg-neutral-dim'"
           />
           <span class="flex-1 text-left text-[13px]">{{ preset.name }}</span>
           <Check
@@ -212,7 +212,7 @@ watch(() => store.defaultPresetId, (newDefault) => {
             :class="selectedPresetId === preset.id ? 'opacity-100' : 'opacity-0'"
           />
         </div>
-        <span v-if="preset.description" class="pl-[15px] text-left text-[11px] text-subtle">
+        <span v-if="preset.description" class="pl-[15px] text-left text-[11px] text-neutral-dim">
           {{ preset.description }}
         </span>
       </Button>
@@ -223,7 +223,7 @@ watch(() => store.defaultPresetId, (newDefault) => {
           data-testid="checkbox-set-default"
           @update:model-value="onToggleDefault"
         />
-        <span class="text-[12px] text-muted">{{ t('newTask.presetSelect.setAsDefault') }}</span>
+        <span class="text-[12px] text-neutral-mid">{{ t('newTask.presetSelect.setAsDefault') }}</span>
       </div>
     </PopoverContent>
   </Popover>
@@ -234,13 +234,13 @@ watch(() => store.defaultPresetId, (newDefault) => {
       <Button
         data-testid="chip-preset-locked"
         variant="ghost"
-        class="h-auto cursor-default gap-1.5 px-2 py-1 text-[12px] text-subtle hover:bg-transparent hover:text-subtle [&_svg]:size-3.5"
+        class="h-auto cursor-default gap-1.5 px-2 py-1 text-[12px] text-neutral-dim hover:bg-transparent hover:text-neutral-dim [&_svg]:size-3.5"
       >
         <Lock class="shrink-0" />
         <span class="font-mono">{{ lockedPresetName }}</span>
       </Button>
     </HoverCardTrigger>
-    <HoverCardContent side="top" class="max-w-[280px] px-2.5 py-1.5 text-[11px] text-muted">
+    <HoverCardContent side="top" class="max-w-[280px] px-2.5 py-1.5 text-[11px] text-neutral-mid">
       {{ lockedTooltip }}
     </HoverCardContent>
   </HoverCard>

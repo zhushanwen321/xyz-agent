@@ -184,7 +184,7 @@
                   <Button
                     variant="ghost"
                     data-testid="model-edit-btn"
-                    class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-[13px]"
+                    class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
                     :title="t('settings.provider.editModelTitle')"
                     @click.stop="openEdit(p)"
                   >

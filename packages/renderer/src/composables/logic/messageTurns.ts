@@ -170,7 +170,7 @@ export function hasFailedTool(turn: MessageTurn): boolean {
  *   只 emit 一次 assistant message_start，text_delta 全部 append 到同一 content 字段）
  * - thinking/tool: ref 指向对应数组的元素对象
  * - agentgraph: subagent/workflow 的 tool_call（图结构重型操作，独立醒目展示，永不合并）。
- *   数据结构仍是 ToolCall，但 kind 单列为 agentgraph，使其在 mergeBlocks 中成为断点。
+ *   数据结构仍是 ToolCall，但 kind 单列为 agentgraph，使其作为独立 kind 渲染（Block.vue 内部按 toolName 路由 subagent/workflow 分支），不与普通 tool 复用展示。
  */
 export interface OrderedBlock {
   kind: 'thinking' | 'tool' | 'text' | 'agentgraph'

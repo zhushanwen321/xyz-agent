@@ -114,7 +114,7 @@ function sourceLabel(source: string): string {
       </DialogHeader>
 
       <!-- 加载中 -->
-      <div v-if="loading" class="flex items-center gap-2 py-8 text-[12px] text-muted">
+      <div v-if="loading" class="flex items-center gap-2 py-8 text-[12px] text-neutral-mid">
         <Loader2 class="size-4 animate-spin" />
         {{ t('settings.loadPaths.importFromAgents.loading') }}
       </div>
@@ -153,7 +153,7 @@ function sourceLabel(source: string): string {
         </div>
 
         <!-- 空列表（无 parseError 也无 providers） -->
-        <div v-if="!preview.providers.length" class="py-8 text-center text-[12px] text-muted">
+        <div v-if="!preview.providers.length" class="py-8 text-center text-[12px] text-neutral-mid">
           {{ t('settings.providerEdit.noModels') }}
         </div>
 
@@ -173,9 +173,9 @@ function sourceLabel(source: string): string {
               :aria-label="p.name"
               @update:model-value="onToggle(p.id, $event)"
             />
-            <span class="font-mono text-fg">{{ p.id }}</span>
-            <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-muted">{{ p.protocol }}</span>
-            <span class="text-subtle">{{ t('settings.provider.modelsCount', { count: p.modelCount }) }}</span>
+            <span class="font-mono text-neutral-fg">{{ p.id }}</span>
+            <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-mid">{{ p.protocol }}</span>
+            <span class="text-neutral-dim">{{ t('settings.provider.modelsCount', { count: p.modelCount }) }}</span>
 
             <!-- API Key 未提取警告 -->
             <span
@@ -203,7 +203,7 @@ function sourceLabel(source: string): string {
               variant="ghost"
               size="dense"
               data-testid="warnings-toggle"
-              class="h-5 px-1 text-[11px] text-muted hover:text-fg"
+              class="h-5 px-1 text-[11px] text-neutral-mid hover:text-neutral-fg"
               @click="toggleWarnings(p.id)"
             >
               <component :is="expandedWarnings.has(p.id) ? ChevronDown : ChevronRight" class="size-3" />
@@ -216,7 +216,7 @@ function sourceLabel(source: string): string {
         </div>
 
         <!-- 底部统计 -->
-        <div class="flex flex-wrap gap-3 pt-1 text-[11px] text-muted">
+        <div class="flex flex-wrap gap-3 pt-1 text-[11px] text-neutral-mid">
           <span>{{ t('settings.provider.importPreview.statImportable', { count: statImportable }) }}</span>
           <span>{{ t('settings.provider.importPreview.statConflict', { count: statConflict }) }}</span>
           <span>{{ t('settings.provider.importPreview.statKeyMissing', { count: statKeyMissing }) }}</span>

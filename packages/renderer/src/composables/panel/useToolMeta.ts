@@ -6,7 +6,7 @@
  *  - 行数/字符数：pi 协议不返回文件元信息（exit code / fileSize 均无），前端从 output 自算。
  *    read 工具 output 是文件内容，行数/字符数有统计意义；bash output 是命令输出，行数有参考价值；
  *    edit/write 等 output 是简短确认（如 "done"），行数无意义不展示。
- *  - 失败态首项（错误性质）用 danger 色强调。
+ *  - 失败态错误摘要已移至内容区（displayContent 兜底 tool.error），meta 仅保留中性 muted 项。
  *
  * formatDuration 由 Block.vue 传入（该函数同时服务 template，避免循环依赖）。
  */
@@ -14,8 +14,8 @@ import { computed, type ComputedRef } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
 
 export interface MetaItem {
-  /** 高亮态：failed 首项用 danger，普通信息用 info（蓝），其余默认 muted */
-  tone: 'danger' | 'info' | 'muted'
+  /** 高亮态。当前只产出 muted（中性灰 dim）；保留枚举字段以备后续状态色扩展。 */
+  tone: 'muted'
   text: string
 }
 
