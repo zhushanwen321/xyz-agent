@@ -11,6 +11,14 @@ import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, M
 import { command } from '../request'
 
 /**
+ * handoff RPC 超时：对齐 runtime HandoffService.HANDOFF_TIMEOUT_MS（600s）+ 60s 余量（agent_end 后的 create/broadcast）。
+ * 不直接 import runtime 包（跨包依赖不可行），本地定义并手动对齐——runtime 改值时这里同步更新。
+ * 不走 pending.ts DEFAULT_TIMEOUT_MS（65s）：65s 后前端 RPC 超时 reject → useHandoffActions 复位 handingOff（按钮可重点），
+ * 但 runtime runHandoff 仍最长跑 600s，用户重试会撞 runtime already in progress。
+ */
+const HANDOFF_RPC_TIMEOUT_MS = 660_000
+
+/**
  * 列出所有 session，按 cwd 分组（对齐后端 SessionGroup[]，D7）。
  * reply payload 是 { groups: SessionGroup[] }，解包 .groups。
  * type=config.sessions（原 session.list，W2 重命名）。
@@ -186,7 +194,8 @@ export function subagentAction(
  * reply 是 message.status ack（前端不读 payload，等广播）。
  */
 export function handoff(sessionId: string, reply?: string): Promise<void> {
-  return command('session.handoff', { sessionId, reply })
+  // 对齐 runtime 长任务超时（见 HANDOFF_RPC_TIMEOUT_MS 注释）。
+  return command('session.handoff', { sessionId, reply }, HANDOFF_RPC_TIMEOUT_MS)
 }
 
 /**

@@ -117,20 +117,25 @@ export class SessionMessageHandler {
       }
       case 'session.abortHandoff': {
         // abortHandoff：中断进行中的 handoff turn（调 handoffService.abortHandoff → 内部 client.abort + 清 inflight）。
-        // 成功后广播 session.handoffAborted 让前端复位 isHandingOff。
+        // W1：abortHandoff 返回 boolean——只有 inflight 真存在（真正 abort）才广播 session.handoffAborted
+        // 让前端复位 isHandingOff；inflight 无（no-op，如用户重复点取消、或 handoff 已完成）不广播，
+        // 避免前端先收 aborted 再收 complete 的 UX 抖动。reply message.status{aborted} 始终发（RPC ack）。
         const { sessionId } = msg.payload
         const hs = this.ctx.handoffService
         if (!hs) {
           return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
         }
         try {
-          await hs.abortHandoff(sessionId)
-          // 广播 handoffAborted（参照 forkNotice L75-79 broadcast 范式）
-          this.ctx.broadcast({
-            type: 'session.handoffAborted',
-            id: this.ctx.nextPushId(),
-            payload: { sessionId },
-          })
+          const aborted = await hs.abortHandoff(sessionId)
+          if (aborted) {
+            // 真正中断了 → 广播 handoffAborted（参照 forkNotice L75-79 broadcast 范式）
+            this.ctx.broadcast({
+              type: 'session.handoffAborted',
+              id: this.ctx.nextPushId(),
+              payload: { sessionId },
+            })
+          }
+          // 无论 aborted 与否都 reply ack（RPC ack 让 renderer pending resolve）
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'aborted' })
         } catch (e) {
           const errMsg = toErrorMessage(e)

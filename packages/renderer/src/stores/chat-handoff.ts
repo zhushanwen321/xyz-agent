@@ -15,10 +15,14 @@ import type { Ref } from 'vue'
 /**
  * handingOff 超时兜底阈值（C2+M1）：handoff 成功后复位完全依赖 session.handoffComplete 广播，
  * 若广播丢失（HMR/App 重挂/时序竞态/断连窗口），源 session 会永久卡「正在交接」。
- * 取 60s：agent 跑 handoff turn 生成文档可能十几秒，留充足窗口；超时后清 handingOff
- * （UI「正在交接…」块消失，用户可重新点 handoff）。store 不直接 toast（关注点分离）。
+ *
+ * 取 700_000（11min40s）：兜底需晚于 RPC 超时（session.ts HANDOFF_RPC_TIMEOUT_MS=660_000）才复位——
+ * 否则用户在 RPC 超时后/兜底复位后重试 handoff，会撞 runtime runHandoff 仍在跑（runtime HANDOFF_TIMEOUT_MS
+ * 最长 600s）的 already in progress。故兜底 = RPC 超时 660s + 40s 缓冲，保证 runtime 早已 reject/resolve
+ * 后兜底才复位，避免重试竞态。超时后清 handingOff（UI「正在交接…」块消失，用户可重新点 handoff）。
+ * store 不直接 toast（关注点分离）。
  */
-const HANDING_OFF_TIMEOUT_MS = 60_000
+const HANDING_OFF_TIMEOUT_MS = 700_000
 
 /** handingOff 控制器（chat store 经 createHandoffController() 组合）。 */
 export interface HandoffController {

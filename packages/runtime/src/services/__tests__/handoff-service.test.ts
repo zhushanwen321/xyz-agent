@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   HandoffService,
   HANDOFF_TIMEOUT_MS,
+  HANDOFF_EXIT_POLL_MS,
   extractFinalTextFromAgentEnd,
 } from '../handoff-service.js'
 import { HANDOFF_PROMPT_TEMPLATE, REPLY_MAX_LENGTH, buildHandoffPrompt } from '../handoff-prompt.js'
@@ -151,7 +152,6 @@ describe('HandoffService', () => {
         type: 'session.handoffComplete',
         id: 'push-123',
         payload: {
-          sessionId: 'src-1',
           srcSessionId: 'src-1',
           newSessionId: 'new-1',
           sourceLabel: 'src',
@@ -159,9 +159,12 @@ describe('HandoffService', () => {
       }),
     )
     // payload 不含 doc / reply 字段（DM3 协议变更）
+    // W5：也不含多余的 sessionId（协议类型只有 srcSessionId/newSessionId/sourceLabel，
+    // sessionId 会被前端 routeInbound 误当路由字段）
     const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: Record<string, unknown> }
     expect(call.payload).not.toHaveProperty('doc')
     expect(call.payload).not.toHaveProperty('reply')
+    expect(call.payload).not.toHaveProperty('sessionId')
 
     // listener 已清理（detach 调用 → _listeners 空 → inflight 清空）
     expect(srcClient._listeners.size).toBe(0)
@@ -251,23 +254,23 @@ describe('HandoffService', () => {
     await first
   })
 
-  it('TC6: abortHandoff — abort 调用，runHandoff rejects（abort），未广播', async () => {
+  it('TC6: abortHandoff — abort 调用，runHandoff rejects（abort），未广播，返回 true', async () => {
     const runPromise = service.runHandoff('src-1')
     await new Promise((r) => setTimeout(r, 0))
 
-    await service.abortHandoff('src-1')
+    await expect(service.abortHandoff('src-1')).resolves.toBe(true)
 
     expect(srcClient.abort).toHaveBeenCalledTimes(1)
     await expect(runPromise).rejects.toThrow('abort')
     expect(broker.broadcast).not.toHaveBeenCalled()
   })
 
-  it('TC7: abortHandoff 幂等 — inflight 空时 no-op，abort 未调', async () => {
-    await service.abortHandoff('src-1') // 不抛
+  it('TC7: abortHandoff 幂等 — inflight 空时 no-op，abort 未调，返回 false', async () => {
+    await expect(service.abortHandoff('src-1')).resolves.toBe(false) // no-op，不抛
     expect(srcClient.abort).not.toHaveBeenCalled()
   })
 
-  it('TC8: abort 失败兜底 — abort 抛错，abortHandoff 仍 resolve，runHandoff rejects（abort），console.warn 被调', async () => {
+  it('TC8: abort 失败兜底 — abort 抛错，abortHandoff 仍 resolve（true），runHandoff rejects（abort），console.warn 被调', async () => {
     srcClient.abort = vi.fn(async () => {
       throw new Error('pi dead')
     })
@@ -276,11 +279,54 @@ describe('HandoffService', () => {
     const runPromise = service.runHandoff('src-1')
     await new Promise((r) => setTimeout(r, 0))
 
-    await expect(service.abortHandoff('src-1')).resolves.toBeUndefined()
+    await expect(service.abortHandoff('src-1')).resolves.toBe(true)
     await expect(runPromise).rejects.toThrow('abort')
 
     expect(warnSpy).toHaveBeenCalled()
     warnSpy.mockRestore()
+  })
+
+  it('TC8b: W3 pi 中途退出 — srcClient.exited=true 后 runHandoff rejects（source pi exited），不挂到 timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const runPromise = service.runHandoff('src-1')
+      // 预挂 catch，避免 reject 成为 unhandled rejection
+      const expectPromise = expect(runPromise).rejects.toThrow('source pi exited')
+      // 让 ensureActive / onEvent / prompt（async resolve）跑完
+      await vi.advanceTimersByTimeAsync(0)
+
+      // 模拟 pi 中途崩溃：srcClient.exited 置 true
+      srcClient.exited = true
+      // 推进一个轮询间隔（HANDOFF_EXIT_POLL_MS）让退出探测定时器命中
+      await vi.advanceTimersByTimeAsync(HANDOFF_EXIT_POLL_MS)
+
+      await expectPromise
+      // 远未到 timeout（10 分钟），证明 exit 探测命中而非超时
+      expect(broker.broadcast).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('TC8c: W4 settle 后 abort no-op — agent_end resolve 后再 abort 不抛错且广播未发（已 settle 的 promise 不再 reject）', async () => {
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    // emit agent_end → finalize resolve（内部已 cleanupInflight 移除 entry）
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'doc' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+    await runPromise
+
+    // settle 后再 abort：inflight 已空 → no-op 返回 false（不广播、不重复 reject）
+    await expect(service.abortHandoff('src-1')).resolves.toBe(false)
+    // runHandoff 主路径已广播 session.handoffComplete，不应再叠加 handoffAborted
+    const aborted = vi.mocked(broker.broadcast).mock.calls.some(
+      (c) => (c[0] as { type?: string }).type === 'session.handoffAborted',
+    )
+    expect(aborted).toBe(false)
   })
 
   describe('extractFinalTextFromAgentEnd', () => {
@@ -319,6 +365,21 @@ describe('HandoffService', () => {
       ])
       expect(result).toBe('')
     })
+
+    it('TC9g: S1 text 字段非 string（{type:"text", text:123}）→ 过滤掉 → ""', () => {
+      // pi 若发畸形 {type:'text', text:123}，不应被拼成 "123"；归一化为空文档走 empty reject。
+      const result = extractFinalTextFromAgentEnd([
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 123 as unknown as string },
+            { type: 'text', text: { nested: true } as unknown as string },
+          ],
+          stopReason: 'stop',
+        },
+      ])
+      expect(result).toBe('')
+    })
   })
 
   describe('buildHandoffPrompt', () => {
@@ -341,6 +402,20 @@ describe('HandoffService', () => {
       const result = buildHandoffPrompt(undefined)
       expect(result).toBe(HANDOFF_PROMPT_TEMPLATE)
       expect(result).not.toContain('focus on:')
+    })
+
+    it('TC10c: S3 reply 含 tab/NUL 等控制字符 → sanitize 全部 strip + 折叠空白（不进 prompt）', () => {
+      // \t=tab, \0=NUL, \x0b=vertical tab, \x1b=ESC, \x7f=DEL——均属 C0 控制字符集 + DEL，
+      // 须被 strip 成空格再折叠，避免畸形空白注入 prompt。
+      const dirty = 'a\tb\x00c\x0bd\x1be\x7ff\t\t\tg'
+      const result = buildHandoffPrompt(dirty)
+      const suffix = result.slice(result.indexOf('The next session will focus on:'))
+      const FOCUS_PREFIX = 'The next session will focus on: '
+      const focusContent = suffix.slice(FOCUS_PREFIX.length)
+      // 控制字符全部被替换 / 折叠：结果只剩字母 + 单空格分隔
+      expect(focusContent).toBe('a b c d e f g')
+      expect(focusContent).not.toMatch(/[\x00-\x1F\x7F]/)
+      expect(focusContent).not.toMatch(/\s{2,}/)
     })
   })
 })

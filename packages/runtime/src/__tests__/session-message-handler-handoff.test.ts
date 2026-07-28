@@ -1,8 +1,9 @@
 /**
  * SessionMessageHandler handoff abort 路由测试（agent-driven wave2）。
  *
- * 锁定 session.abortHandoff 的 ack / 广播 / 错误路由：
- * - TC3: 正常路径 → handoffService.abortHandoff(sid) resolve → broadcast handoffAborted + reply message.status{aborted}
+ * 锁定 session.abortHandoff 的 ack / 广播 / 错误路由（W1：abortHandoff 返回 boolean）：
+ * - TC3: 正常路径 → abortHandoff(sid) resolve(true) → broadcast handoffAborted + reply message.status{aborted}
+ * - TC3b: no-op 路径 → abortHandoff(sid) resolve(false)（无 inflight）→ 不广播，但仍 reply ack
  * - TC4: handoffService 未注入（undefined）→ sendError('handoff_unsupported')，不 reply / broadcast
  * - TC5: abortHandoff reject → sendError('handoff_failed')，不 reply / broadcast
  *
@@ -58,9 +59,10 @@ function msg(type: string, payload: Record<string, unknown>, id = 'req-1'): Clie
 const WS = {} as never
 
 describe('SessionMessageHandler —— session.abortHandoff 路由', () => {
-  // TC3: 主路径 → abortHandoff resolve → broadcast handoffAborted + reply message.status{aborted}
-  it('TC3: session.abortHandoff → 调 abortHandoff(sid) + broadcast session.handoffAborted + reply message.status{aborted}', async () => {
-    const abortHandoff = vi.fn().mockResolvedValue(undefined)
+  // TC3: 主路径 → abortHandoff resolve(true) → broadcast handoffAborted + reply message.status{aborted}
+  // W1：abortHandoff 返回 boolean，true=真正中断才广播；本用例 inflight 存在 → true。
+  it('TC3: session.abortHandoff（true）→ 调 abortHandoff(sid) + broadcast session.handoffAborted + reply message.status{aborted}', async () => {
+    const abortHandoff = vi.fn().mockResolvedValue(true)
     const { ctx, cap, handler } = makeHandler({ handoffService: { abortHandoff } })
     await handler.handleSessionMessage(
       msg('session.abortHandoff', { sessionId: 's1' }),
@@ -88,6 +90,32 @@ describe('SessionMessageHandler —— session.abortHandoff 路由', () => {
     expect(cap.errors).toHaveLength(0)
     // nextPushId 被调（广播 id 用）
     expect(ctx.nextPushId).toHaveBeenCalled()
+  })
+
+  // TC3b: W1 no-op 路径 → abortHandoff resolve(false)（无 inflight）→ 不广播但仍 reply ack
+  it('TC3b: session.abortHandoff（false / no-op）→ 不 broadcast handoffAborted，仍 reply message.status{aborted}', async () => {
+    const abortHandoff = vi.fn().mockResolvedValue(false)
+    const { ctx, cap, handler } = makeHandler({ handoffService: { abortHandoff } })
+    await handler.handleSessionMessage(
+      msg('session.abortHandoff', { sessionId: 's1' }),
+      WS,
+    )
+
+    // abortHandoff 仍被调（handler 不预判，由 service 返回值决定是否广播）
+    expect(abortHandoff).toHaveBeenCalledTimes(1)
+    expect(abortHandoff).toHaveBeenCalledWith('s1')
+    // no-op 不广播 handoffAborted（前端不重复复位，避免 aborted→complete 抖动）
+    expect(cap.broadcasts).toHaveLength(0)
+    // RPC ack 始终发（让 renderer pending resolve）
+    expect(cap.replies).toHaveLength(1)
+    expect(cap.replies[0]).toMatchObject({
+      id: 'req-1',
+      type: 'message.status',
+      payload: { sessionId: 's1', status: 'aborted' },
+    })
+    expect(cap.errors).toHaveLength(0)
+    // no-op 不广播 → nextPushId 不该被调
+    expect(ctx.nextPushId).not.toHaveBeenCalled()
   })
 
   // TC4: handoffService 未注入 → sendError('handoff_unsupported')，不 reply / broadcast
